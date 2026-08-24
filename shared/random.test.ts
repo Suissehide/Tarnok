@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { makeRandom, randomRange } from './random';
+import { makeRandom } from './random';
 
 describe('makeRandom', () => {
   it('rend la meme suite pour la meme graine', () => {
@@ -35,16 +35,5 @@ describe('makeRandom', () => {
     const values = new Set([rng(), rng(), rng(), rng()]);
 
     expect(values.size).toBeGreaterThan(1);
-  });
-});
-
-describe('randomRange', () => {
-  it('reste dans les bornes', () => {
-    const rng = makeRandom(7);
-    for (let i = 0; i < 1000; i++) {
-      const v = randomRange(rng, -50, 50);
-      expect(v).toBeGreaterThanOrEqual(-50);
-      expect(v).toBeLessThan(50);
-    }
   });
 });

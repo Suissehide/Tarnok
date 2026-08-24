@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { ARCHETYPES, archetypeOf, PIETAILLE_COUNT } from './archetypes';
+import { ARCHETYPES, archetypeOf, FOOTSOLDIER_COUNT } from './archetypes';
 
 describe('ARCHETYPES', () => {
   it('indexe chaque archetype a sa position dans le tableau', () => {
@@ -32,7 +32,7 @@ describe('ARCHETYPES', () => {
   });
 
   it("n'a que des cellules de 192 px en pietaille — c'est ce qui tient dans l'atlas", () => {
-    for (let i = 0; i < PIETAILLE_COUNT; i++) {
+    for (let i = 0; i < FOOTSOLDIER_COUNT; i++) {
       expect(archetypeOf(i).cell).toBe(192);
     }
   });

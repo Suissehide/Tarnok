@@ -29,11 +29,6 @@ export class PlayerHistory {
   readonly #x = new Float32Array(DEPTH * MAX_PLAYERS);
   readonly #y = new Float32Array(DEPTH * MAX_PLAYERS);
   readonly #counts = new Uint8Array(DEPTH);
-  #recorded = 0;
-
-  get size(): number {
-    return Math.min(this.#recorded, DEPTH);
-  }
 
   record(tick: number, xs: readonly number[], ys: readonly number[]): void {
     const slot = ((tick % DEPTH) + DEPTH) % DEPTH;
@@ -44,7 +39,6 @@ export class PlayerHistory {
       this.#x[slot * MAX_PLAYERS + p] = xs[p] ?? 0;
       this.#y[slot * MAX_PLAYERS + p] = ys[p] ?? 0;
     }
-    this.#recorded++;
   }
 
   /**

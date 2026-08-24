@@ -23,15 +23,6 @@ describe('PlayerHistory', () => {
     expect(h.delayed(0)).toBeNull();
   });
 
-  it('ne garde pas un historique sans fin', () => {
-    const h = new PlayerHistory();
-    for (let tick = 0; tick < 5000; tick++) {
-      h.record(tick, [tick], [tick]);
-    }
-
-    expect(h.size).toBeLessThanOrEqual(16);
-  });
-
   it('rend le meme resultat aux deux bouts : c est tout le point', () => {
     // Le serveur enregistre a chaque tick ; le client enregistre a la reception
     // des snapshots. Tant que le tick demande est present des deux cotes, ils

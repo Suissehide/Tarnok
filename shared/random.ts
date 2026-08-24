@@ -23,8 +23,3 @@ export function makeRandom(seed: number): () => number {
     return state / 0x1_0000_0000;
   };
 }
-
-/** Tirage uniforme dans [min, max). */
-export function randomRange(rng: () => number, min: number, max: number): number {
-  return min + rng() * (max - min);
-}

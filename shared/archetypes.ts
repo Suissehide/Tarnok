@@ -28,7 +28,7 @@ export interface Archetype {
  * Les cellules font toutes 192 px en pietaille : c'est ce qui permet un
  * rangement par etageres quasi optimal dans l'atlas (§9.2 de la spec).
  */
-const PIETAILLE: readonly Omit<Archetype, 'id'>[] = [
+const FOOTSOLDIERS: readonly Omit<Archetype, 'id'>[] = [
   { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 95 },
   { name: 'gnoll', sheet: 'Gnoll/Gnoll_Walk.png', frames: 8, cell: 192, speed: 85 },
   { name: 'spider', sheet: 'Spider/Spider_Run.png', frames: 5, cell: 192, speed: 115 },
@@ -86,9 +86,9 @@ const ELITES: readonly Omit<Archetype, 'id'>[] = [
 ];
 
 /** Nombre d'archetypes de pietaille. Les elites viennent apres, dans le tableau. */
-export const PIETAILLE_COUNT = PIETAILLE.length;
+export const FOOTSOLDIER_COUNT = FOOTSOLDIERS.length;
 
-export const ARCHETYPES: readonly Archetype[] = [...PIETAILLE, ...ELITES].map((a, id) => ({
+export const ARCHETYPES: readonly Archetype[] = [...FOOTSOLDIERS, ...ELITES].map((a, id) => ({
   ...a,
   id,
 }));
