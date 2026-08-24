@@ -3,8 +3,9 @@ import { makeRandom } from './random';
 
 /**
  * Un ordre de vague : la seule chose que le serveur decide et diffuse pour la
- * horde. 18 octets, une fois par vague, contre ~150 ko/s si l'on repliquait les
- * positions (§2.1 de la spec de l'etape 2).
+ * horde. 19 octets sur le fil (18 de charge utile + 1 octet de type), une
+ * fois par vague, contre ~150 ko/s si l'on repliquait les positions (§2.1 de
+ * la spec de l'etape 2).
  */
 export interface WaveOrder {
   waveId: number;

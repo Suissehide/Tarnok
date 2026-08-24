@@ -45,7 +45,7 @@ existe pour lui — mais n'est pas câblé.
 | --- | --- | --- |
 | Les 4 joueurs | positions, 30 Hz | 26 o par snapshot |
 | **La horde** | **rien** | **0 octet, quel que soit N** |
-| Ordre de vague | 1 message | 18 octets, une fois par vague |
+| Ordre de vague | 1 message | 19 octets (18 de charge utile + 1 d'octet de type), une fois par vague |
 | Graine de carte | 1 message | 4 octets, au `WELCOME` |
 
 Répliquer naïvement 1 000 ennemis à 30 Hz coûterait **~150 ko/s par joueur**. Le banc de
@@ -87,10 +87,12 @@ sans recyclage, ce qui évite la classe de bugs « l'entité 12 n'est pas la mê
 
 ## 3. L'ordre de vague
 
-Le seul message que le serveur décide et diffuse pour la horde. **18 octets.**
+Le seul message que le serveur décide et diffuse pour la horde. **19 octets sur le fil : 1
+octet de type + 18 octets de charge utile.**
 
 | Champ | Type | Rôle |
 | --- | --- | --- |
+| *(type de message)* | `u8` | `MSG.WAVE_ORDER`, comme tout message du protocole (§7) |
 | `waveId` | `u16` | base des identités, et ordre de la vague |
 | `spawnTick` | `u32` | tick d'apparition, en temps serveur |
 | `seed` | `u32` | graine du tirage des positions |
@@ -137,8 +139,10 @@ cadence divergerait sans retour.
 ```
 x, y            Float32Array
 archetype       Uint8Array
-waveIndex       Uint16Array   // pour retrouver l'identité
-animPhase       Uint8Array    // décalage d'animation, tiré à l'apparition
+waveId          Uint16Array   // vague d'origine, base de l'identité arithmétique (§2.3)
+indexInWave     Uint16Array   // rang dans la vague, avec waveId : pour retrouver l'identité
+animPhase       Uint8Array    // décalage d'animation, dérivé de l'index (§9.3)
+targetField     Uint8Array    // index du champ suivi : le joueur le plus proche
 count           number        // les entités vivantes occupent [0, count)
 ```
 
@@ -146,7 +150,11 @@ Interface :
 
 - `spawn(order: WaveOrder)` — instancie `count` entités selon la formation.
 - `step(dt, fields)` — un pas fixe : chaque entité lit le gradient de sa cellule.
-- `positionsFor(render)` — remplit les tableaux du rendu.
+- `retarget(playerX, playerY)` — réaffecte `targetField` au joueur le plus proche.
+
+Le rendu (`front/src/render/horde-renderer.ts`) lit directement les tableaux exposés par
+`Horde` — pas de méthode `positionsFor` intermédiaire : à cette échelle, une copie
+supplémentaire coûterait plus qu'elle ne rapporte.
 
 **Le serveur et le client exécutent le même code.** Le serveur reste néanmoins autoritaire :
 c'est son état qui fera foi à l'étape 3.
@@ -271,7 +279,7 @@ Trois changements, tous additifs.
 | Message | Changement |
 | --- | --- |
 | `WELCOME` | `+ mapSeed u32` |
-| `WAVE_ORDER` | **nouveau**, 18 octets (§3) |
+| `WAVE_ORDER` | **nouveau**, 19 octets sur le fil, dont 18 de charge utile (§3) |
 | `SNAPSHOT` | inchangé — les 4 joueurs, à 30 Hz |
 
 Le décodeur lève déjà sur un buffer tronqué et sur un type inconnu ; les tests existants de
@@ -368,9 +376,12 @@ image et le nombre d'images.
 
 ### 9.3 Animation
 
-Chaque entité a une `animPhase` tirée à l'apparition. La phase décale le cycle : sans elle,
-mille crânes marchent au pas, ce qui se voit immédiatement. À 10 images par seconde, comme
-le pack (§12.2).
+Chaque entité a une `animPhase` **dérivée de son index dans la vague** à l'apparition — pas
+tirée au hasard : `(index × 7 + waveId × 3) mod frames`. La phase décale le cycle : sans elle,
+mille crânes marchent au pas, ce qui se voit immédiatement. Dérivée plutôt que tirée, elle
+reste identique sur toutes les simulations sans le moindre octet supplémentaire sur le fil —
+et une capture d'écran de debug reste comparable d'une simulation à l'autre. À 10 images par
+seconde, comme le pack (§12.2).
 
 **L'animation est purement cosmétique et n'entre pas dans le contrat de réplication.** Deux
 clients peuvent afficher des images différentes du même ennemi sans conséquence.
