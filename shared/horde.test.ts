@@ -137,6 +137,66 @@ describe('Horde.step', () => {
   });
 });
 
+describe('Horde.spawnCatchingUp', () => {
+  it('avec missedTicks a zero, donne exactement le meme resultat que spawn', () => {
+    const fields = fieldsTowards(4000, 4000);
+    const a = new Horde(1000);
+    const b = new Horde(1000);
+
+    a.spawn(order({ count: 100 }));
+    b.spawnCatchingUp(order({ count: 100 }), 0, DT, fields);
+
+    expect(a.count).toBe(b.count);
+    expect([...a.x.slice(0, 100)]).toEqual([...b.x.slice(0, 100)]);
+    expect([...a.y.slice(0, 100)]).toEqual([...b.y.slice(0, 100)]);
+  });
+
+  it('avec missedTicks positif, les nouvelles entites sont plus avancees', () => {
+    const fields = fieldsTowards(4000, 4000);
+    const rattrape = new Horde(1000);
+    const normal = new Horde(1000);
+
+    rattrape.spawnCatchingUp(order({ count: 100, anchorX: 1000, anchorY: 1000 }), 2, DT, fields);
+    normal.spawn(order({ count: 100, anchorX: 1000, anchorY: 1000 }));
+
+    const avantRattrape = meanDistanceTo(rattrape, 4000, 4000);
+    const avantNormal = meanDistanceTo(normal, 4000, 4000);
+
+    expect(avantRattrape).toBeLessThan(avantNormal);
+  });
+
+  it("n'affecte pas les entites deja presentes", () => {
+    const horde = new Horde(1000);
+    horde.spawn(order({ waveId: 1, count: 50, anchorX: 1000, anchorY: 1000 }));
+    const fields = fieldsTowards(1000, 1000);
+    horde.retarget([1000, 1000, 1000, 1000], [1000, 1000, 1000, 1000]);
+
+    const avantX = [...horde.x.slice(0, 50)];
+    const avantY = [...horde.y.slice(0, 50)];
+
+    horde.spawnCatchingUp(
+      order({ waveId: 2, count: 50, anchorX: 5000, anchorY: 5000 }),
+      5,
+      DT,
+      fields,
+    );
+
+    expect([...horde.x.slice(0, 50)]).toEqual(avantX);
+    expect([...horde.y.slice(0, 50)]).toEqual(avantY);
+  });
+
+  it('produit le meme nombre d entites que spawn, rattrapage ou non', () => {
+    const fields = fieldsTowards(4000, 4000);
+    const a = new Horde(1000);
+    const b = new Horde(1000);
+
+    a.spawn(order({ count: 100 }));
+    b.spawnCatchingUp(order({ count: 100 }), 3, DT, fields);
+
+    expect(b.count).toBe(a.count);
+  });
+});
+
 describe('Horde.retarget', () => {
   it('envoie chaque entite vers le joueur le plus proche', () => {
     const horde = new Horde(10);

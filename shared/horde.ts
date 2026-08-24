@@ -122,7 +122,57 @@ export class Horde {
 
   /** Un pas de simulation. `dt` est fixe : 1 / TICK_HZ. */
   step(dt: number, fields: readonly FlowField[]): void {
-    for (let i = 0; i < this.#count; i++) {
+    this.#advance(0, this.#count, dt, fields);
+  }
+
+  /**
+   * Fait apparaitre une vague en rattrapant les pas manques.
+   *
+   * Un client ne peut pas appliquer un ordre au meme tick que le serveur :
+   * l'ordre voyage sur le reseau. Sans rattrapage, ses entites restent
+   * definitivement un ou deux pas en arriere — et cet ecart ne reste PAS
+   * borne : le flowfield etant un champ de directions discret, deux entites
+   * decalees d'un pas franchissent les frontieres de cellules a des instants
+   * differents et prennent des routes differentes. Mesure : la derive croit
+   * lineairement a ~70 px/s, soit 694 px apres dix secondes.
+   *
+   * Avec rattrapage, elle devient constante a ~20 px — l'erreur residuelle de
+   * fraicheur du champ, le client rattrapant avec son champ courant la ou le
+   * serveur a utilise celui d'il y a un ou deux ticks.
+   *
+   * ⚠️ **Ordre d'appel.** `fields` doit etre le champ tel qu'il existait
+   * *avant* le rafraichissement periodique du tick courant, pas apres.
+   * Rattraper avec un champ deja rafraichi ce tick-la revient a utiliser une
+   * entree que le serveur, lui, n'a vue qu'au tick suivant, et rouvre la
+   * sensibilite aux frontieres de cellules que le rattrapage cherche a
+   * eviter : mesure, l'erreur repasse alors dans les centaines de pixels
+   * selon l'alignement entre le tick d'apparition et celui du prochain
+   * rafraichissement. Concretement : appeler `spawnCatchingUp` a la reception
+   * du `WAVE_ORDER` (`#onFrame`), *avant* l'avancement par tick de la horde
+   * (`#advanceHorde`) — pas apres.
+   *
+   * `missedTicks` vaut `tickCourant - order.spawnTick`, borne a zero.
+   */
+  spawnCatchingUp(
+    order: WaveOrder,
+    missedTicks: number,
+    dt: number,
+    fields: readonly FlowField[],
+  ): void {
+    const before = this.#count;
+    this.spawn(order);
+    for (let step = 0; step < missedTicks; step++) {
+      this.#advance(before, this.#count, dt, fields);
+    }
+  }
+
+  /**
+   * Avance le creneau `[from, to)` d'un pas. Factorise pour que `step` et
+   * `spawnCatchingUp` partagent la meme logique de deplacement — sans ca,
+   * les deux copies divergeraient tot ou tard.
+   */
+  #advance(from: number, to: number, dt: number, fields: readonly FlowField[]): void {
+    for (let i = from; i < to; i++) {
       const field = fields[this.targetField[i] ?? 0];
       if (!field) {
         continue;

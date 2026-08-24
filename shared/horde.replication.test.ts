@@ -301,4 +301,96 @@ describe("le livrable de l'etape 2", () => {
     // garantie, juste un filet contre une explosion.
     expect(stats.maxDrift).toBeLessThan(800);
   });
+
+  it('avec spawnCatchingUp, la derive tardive redevient constante et petite', () => {
+    // Meme scenario que le test precedent — meme apparition tardive de 1 a 2
+    // ticks — mais chaque participant rattrape ses pas manques a l'apparition
+    // via `Horde.spawnCatchingUp`. Mesure : la derive tombe de ~694 px a
+    // ~20 px et cesse de croitre avec le temps (§6.2 de la spec).
+    const mapSeed = 0x5eed_1a7e;
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+
+    const SPAWN_TICK = 100;
+    const END = 400;
+    const SPAWN_DELAY: readonly number[] = [0, 1, 1, 2, 2];
+
+    const order: WaveOrder = {
+      waveId: 1,
+      spawnTick: SPAWN_TICK,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = [0, 1, 2, 3].map((p) => 3000 + Math.cos(tick * 0.02 + p) * 1500);
+      const ys = [0, 1, 2, 3].map((p) => 3000 + Math.sin(tick * 0.02 + p) * 1500);
+
+      parts.forEach((p, i) => {
+        p.history.record(tick, xs, ys);
+
+        // Le rattrapage consomme le champ **avant** le rafraichissement
+        // periodique de ce tick, pas apres : sur un vrai client, un
+        // `WAVE_ORDER` est traite des sa reception (`#onFrame`), independamment
+        // et generalement avant l'avancement de la horde du meme tick
+        // (`#advanceHorde`). Rattraper avec un champ deja rafraichi ce tick-la
+        // reviendrait a utiliser une entree que le serveur, lui, n'a vue qu'au
+        // tick suivant — et rouvre la meme sensibilite aux frontieres de
+        // cellules que le rattrapage cherche a eviter (§6.2 de la spec).
+        const delay = SPAWN_DELAY[i] ?? 0;
+        if (tick === SPAWN_TICK + delay) {
+          p.horde.spawnCatchingUp(order, delay, DT, p.fields);
+        }
+
+        if (tick % stepsPerField === 0) {
+          const seen = p.history.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+
+        p.horde.step(DT, p.fields);
+      });
+
+      for (const p of parts.slice(1)) {
+        const count = Math.min(reference.horde.count, p.horde.count);
+        for (let i = 0; i < count; i++) {
+          const drift = Math.hypot(
+            (p.horde.x[i] ?? 0) - (reference.horde.x[i] ?? 0),
+            (p.horde.y[i] ?? 0) - (reference.horde.y[i] ?? 0),
+          );
+          if (drift > stats.maxDrift) {
+            stats.maxDrift = drift;
+          }
+
+          if (p.horde.entityIdAt(i) !== reference.horde.entityIdAt(i)) {
+            stats.identityMismatches++;
+          }
+        }
+      }
+    }
+
+    process.stdout.write(
+      `derive due a une apparition tardive, avec rattrapage : ${stats.maxDrift.toFixed(3)} px\n`,
+    );
+
+    expect(stats.identityMismatches).toBe(0);
+    // Le double des 20,3 px mesures : marge pour ne pas etre fragile, tout en
+    // verrouillant que le rattrapage ramene bien la derive a une constante
+    // petite plutot qu'a une croissance lineaire.
+    expect(stats.maxDrift).toBeLessThan(40);
+  });
 });
