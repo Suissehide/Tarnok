@@ -1134,7 +1134,14 @@ mécanisme ferait sans ses corrections.
 et rejouent. Assertions : **identités strictement égales**, dérive sous 2 px.
 
 **10. Mort trop vieille pour l'historique.** Une mort datée d'un tick sorti de l'anneau doit
-être appliquée au présent **et signalée**, sans planter. Vérifie que le signalement a lieu.
+être appliquée au présent, **signalée**, sans planter — et **la dérive qui en résulte doit
+être mesurée et affichée**.
+
+> Ce dernier point n'est pas décoratif : c'est l'obligation que la porte de la tâche 0 a
+> laissée derrière elle. Son verdict est tombé dans la bande « à borner », dont la contrepartie
+> écrite d'avance est « on borne `ROLLBACK_DEPTH_TICKS` **et on mesure la dérive résiduelle** ».
+> La borne est `ROLLBACK_DEPTH_TICKS = 8` ; ce scénario est l'endroit où l'on paie l'autre
+> moitié. Sans le chiffre, la porte n'est qu'à demi franchie.
 
 > ⚠️ Ce fichier modélise ses clients **lui-même**, comme à l'étape 2 — il n'importe pas
 > `GameClient`. Le signalement testé ici est donc un compteur dans la boucle client du test,
