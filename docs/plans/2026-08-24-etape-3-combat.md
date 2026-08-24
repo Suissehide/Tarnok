@@ -522,7 +522,7 @@ export const SEPARATION_STRENGTH = 1200;
 ```ts
 import { describe, expect, it } from 'vitest';
 
-import { SEPARATION_RADIUS, TICK_HZ } from './constants';
+import { SEPARATION_CELL, SEPARATION_RADIUS, TICK_HZ } from './constants';
 import { Horde } from './horde';
 import { SeparationGrid } from './separation';
 import { FORMATION, type WaveOrder } from './waves';
@@ -564,17 +564,27 @@ describe('SeparationGrid.apply', () => {
   });
 
   it('ne touche pas deux entites plus eloignees que le rayon', () => {
-    const loin = SEPARATION_RADIUS * 3;
+    // ⚠️ L'ecart est choisi STRICTEMENT entre le rayon (28) et la cellule (56).
+    //
+    // La premiere version de ce test les placait a 84 px. A cette distance la
+    // paire tombe a deux cellules d'ecart, donc la recherche sur les neuf
+    // cellules voisines ne l'examine meme pas : le test passait par le
+    // decoupage de la grille, sans jamais atteindre la comparaison de rayon
+    // qu'il pretend couvrir. Verifie en supprimant `d2 > r2` de la production —
+    // les cinq tests passaient toujours.
+    //
+    // A 42 px la paire EST examinee, et seule la comparaison de rayon la rejette.
+    const ecart = (SEPARATION_RADIUS + SEPARATION_CELL) / 2;
     const horde = hordeAt([
       [3000, 3000],
-      [3000 + loin, 3000],
+      [3000 + ecart, 3000],
     ]);
     const grid = new SeparationGrid(100);
 
     grid.apply(horde, DT);
 
     expect(horde.x[0]).toBe(3000);
-    expect(horde.x[1]).toBe(3000 + loin);
+    expect(horde.x[1]).toBe(3000 + ecart);
   });
 
   it('repousse symetriquement : les deux bougent autant, en sens oppose', () => {
