@@ -1,0 +1,33 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+
+COPY package*.json ./
+COPY front/package.json front/
+COPY back/package.json back/
+RUN npm ci
+
+COPY . .
+
+# ⚠️ Piege connu, herite d'InkPoint (§5 du plan) : Vite **inline** ces valeurs
+# au moment du build, pas au demarrage du conteneur. Les passer en variables
+# d'environnement du conteneur ne sert a rien — le bundle livre retomberait sur
+# localhost, et sur un site en HTTPS chaque connexion serait bloquee en contenu
+# mixte. Le joueur lirait « connexion impossible » pour une erreur de
+# deploiement. Verifier le bundle produit, pas seulement que la CI est verte.
+ARG VITE_API_URL
+ARG VITE_WS_URL
+RUN npm run build -w front
+
+# Garde-fou : si l'ARG a ete oublie, l'URL de repli se serait glissee dans le
+# bundle. On echoue au build plutot qu'en production.
+RUN test -n "$VITE_WS_URL" || (echo "VITE_WS_URL manquant au docker build" && exit 1)
+RUN ! grep -rq "ws://localhost" front/dist/assets \
+    || (echo "Le bundle contient encore ws://localhost — ARG non pris en compte" && exit 1)
+
+FROM nginx:alpine
+# L'entrypoint de nginx:alpine substitue les variables d'environnement dans
+# /etc/nginx/templates/*.template au demarrage. `$uri` et consorts survivent :
+# seules les variables reellement presentes dans l'environnement sont
+# remplacees.
+COPY deploy/nginx.conf.template /etc/nginx/templates/default.conf.template
+COPY --from=build /app/front/dist /usr/share/nginx/html

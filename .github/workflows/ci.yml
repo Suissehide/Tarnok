@@ -1,0 +1,41 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      # Installation a la racine : le lockfile des workspaces y vit, et c'est
+      # `<racine>/node_modules` qui rend `shared/` resolvable depuis les deux
+      # paquets.
+      - run: npm ci
+
+      # `biome check` verifie format ET lint en une passe, et echoue si un
+      # fichier n'est pas formate : pas de debat de style en revue.
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build -w front
+
+      # Les assets Tiny Swords ne doivent jamais entrer dans l'historique : la
+      # licence Pixel Frog interdit la redistribution, meme apres modification,
+      # et ce depot est public. Une fois committes, les retirer demande une
+      # reecriture — donc on echoue ici plutot que la.
+      - name: aucun asset sous licence dans le depot
+        run: |
+          if git ls-files | grep -E '^assets/tinyswords|^docs/maquettes/.*\.html$'; then
+            echo "::error::Des fichiers derives de Tiny Swords sont versionnes (voir NOTICE-assets.md)."
+            exit 1
+          fi
+          echo "OK : rien de derive du pack n'est versionne."

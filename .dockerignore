@@ -1,0 +1,25 @@
+# Sans cette ligne, `COPY . .` recopie le node_modules de la machine hote
+# par-dessus celui installe par `npm ci` dans l'image. Sur macOS, les binaires
+# natifs (esbuild, biome) sont des Mach-O : le build echoue en « Exec format
+# error » a l'interieur d'une image Linux.
+node_modules
+**/node_modules
+
+dist
+**/dist
+
+# Les assets Tiny Swords n'entrent pas dans le contexte de build : la licence
+# Pixel Frog interdit la redistribution, et une image Docker en est une. En
+# production, nginx les proxifie depuis MinIO (deploy/nginx.conf.template).
+assets
+
+.git
+.github
+.husky
+docs
+tools
+*.log
+.env
+**/.env
+.DS_Store
+**/.DS_Store

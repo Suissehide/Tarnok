@@ -1,0 +1,23 @@
+FROM node:22-alpine AS build
+WORKDIR /app
+
+COPY package*.json ./
+COPY front/package.json front/
+COPY back/package.json back/
+RUN npm ci
+
+COPY . .
+RUN npm run build -w back
+
+FROM node:22-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+
+# esbuild bundle avec `--packages=external` : les dependances runtime restent
+# dans node_modules, il faut donc les emporter.
+COPY --from=build /app/node_modules node_modules
+COPY --from=build /app/back/dist back/dist
+COPY --from=build /app/back/package.json back/
+
+EXPOSE 3000
+CMD ["node", "back/dist/server.js"]

@@ -1,0 +1,44 @@
+server {
+  listen 80;
+  server_name _;
+
+  root /usr/share/nginx/html;
+  index index.html;
+
+  gzip on;
+  gzip_types text/css application/javascript application/json image/svg+xml;
+
+  # Le bundle est empreinte : il peut etre cache sans limite. index.html, non —
+  # sinon un deploiement ne se voit jamais.
+  location /assets/ {
+    expires 1y;
+    add_header Cache-Control "public, immutable";
+  }
+
+  # Les assets Tiny Swords ne sont ni dans le depot (public, licence Pixel Frog :
+  # redistribution interdite meme apres modification) ni dans cette image. Ils
+  # vivent sur MinIO, et nginx les sert sous un chemin same-origin pour que le
+  # CSS n'ait jamais a connaitre l'URL du bucket.
+  #
+  # `proxy_pass` passe par une **variable** a dessein. Avec une URL litterale,
+  # nginx resout l'hote au demarrage et refuse de demarrer si le DNS ne repond
+  # pas — un hoquet de MinIO au boot emporterait alors tout le site, pas
+  # seulement les images. Avec une variable et un `resolver`, la resolution a
+  # lieu a la requete : une panne de MinIO se traduit par des assets en 502, et
+  # le jeu continue de se charger.
+  resolver ${ASSETS_RESOLVER} valid=30s ipv6=off;
+
+  location ~ ^/tinyswords/(?<asset_path>.*)$ {
+    set $assets_upstream "${ASSETS_UPSTREAM}";
+    proxy_pass $assets_upstream/$asset_path;
+    proxy_ssl_server_name on;
+    expires 30d;
+    add_header Cache-Control "public";
+  }
+
+  # Application a page unique : toute route inconnue rend index.html. Le front
+  # ne proxifie pas l'API — le sous-domaine s'en charge.
+  location / {
+    try_files $uri $uri/ /index.html;
+  }
+}
