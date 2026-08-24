@@ -346,20 +346,65 @@ describe('Horde.kill', () => {
   it('emmene toutes les proprietes de l entite deplacee, pas seulement sa position', () => {
     // La compaction deplace la derniere entite dans le trou. Si un seul tableau
     // etait oublie, cette entite garderait l'archetype ou la cible du mort —
-    // et l'etape 3 le paierait en sprites melanges.
+    // et l'etape 3 le paierait en sprites melanges, ou pire en monstres qui
+    // poursuivent le champ de flux d'un autre joueur.
+    //
+    // ⚠️ Les SEPT tableaux sont verifies, un par un. Une premiere version de ce
+    // test n'en verifiait que deux — `archetype` et `animPhase` — alors que son
+    // nom promet « pas seulement sa position ». Verifie : supprimer la copie de
+    // `x`, de `y` ou de `targetField` laissait les 26 tests verts.
+    //
+    // Si un tableau est ajoute a `Horde`, il doit apparaitre ICI et dans
+    // `#removeAt`. Les deux listes se tiennent.
     const horde = new Horde(1000);
     horde.spawn(order({ waveId: 1, archetype: 0, count: 5 }));
     horde.spawn(order({ waveId: 2, archetype: 3, count: 5 }));
-    const dernier = horde.entityIdAt(horde.count - 1);
-    const archetypeAttendu = horde.archetype[horde.count - 1];
-    const phaseAttendue = horde.animPhase[horde.count - 1];
+    const last = horde.count - 1;
+    // Valeurs distinctives : deux entites qui partagent deja une valeur ne
+    // prouveraient rien d'une copie manquante.
+    horde.x[last] = 1234.5;
+    horde.y[last] = 6789.5;
+    horde.targetField[last] = 3;
+    const attendu = {
+      entityId: horde.entityIdAt(last),
+      x: horde.x[last],
+      y: horde.y[last],
+      archetype: horde.archetype[last],
+      waveId: horde.waveId[last],
+      indexInWave: horde.indexInWave[last],
+      animPhase: horde.animPhase[last],
+      targetField: horde.targetField[last],
+    };
 
     horde.kill([horde.entityIdAt(0)]);
 
-    const slot = horde.slotOf(dernier);
+    const slot = horde.slotOf(attendu.entityId);
     expect(slot).toBe(0);
-    expect(horde.archetype[slot]).toBe(archetypeAttendu);
-    expect(horde.animPhase[slot]).toBe(phaseAttendue);
+    expect(horde.x[slot]).toBe(attendu.x);
+    expect(horde.y[slot]).toBe(attendu.y);
+    expect(horde.archetype[slot]).toBe(attendu.archetype);
+    expect(horde.waveId[slot]).toBe(attendu.waveId);
+    expect(horde.indexInWave[slot]).toBe(attendu.indexInWave);
+    expect(horde.animPhase[slot]).toBe(attendu.animPhase);
+    expect(horde.targetField[slot]).toBe(attendu.targetField);
+  });
+
+  it('ignore une identite inconnue melangee a une connue', () => {
+    // ⚠️ C'est le seul cas qui rende le filtre `slot >= 0` porteur. Avec une
+    // identite inconnue SEULE, le garde de doublon la confond avec `previous`
+    // initialise a -1 et masque le defaut par hasard : la mutation passe. Une
+    // inconnue melangee a une connue ne beneficie plus de cette coincidence.
+    //
+    // Sans le filtre, `#removeAt(-1)` decremente `#count` en ecrivant dans le
+    // vide — l'ecriture a un indice negatif sur un tableau type est un no-op
+    // silencieux — et une entite vivante disparait du compte.
+    const horde = new Horde(1000);
+    horde.spawn(order({ count: 10 }));
+    const cible = horde.entityIdAt(4);
+
+    expect(horde.kill([cible, 999_999])).toBe(1);
+    expect(horde.count).toBe(9);
+    expect(horde.slotOf(cible)).toBe(-1);
   });
 });
 
