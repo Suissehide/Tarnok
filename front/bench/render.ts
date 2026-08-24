@@ -428,6 +428,110 @@ function animatedSweep(): SweepResult {
   return { rows, ceilings: ceilingsOf(rows), renderer: 'webgl', userAgent: navigator.userAgent };
 }
 
+interface AnimationProof {
+  animated: boolean;
+  changedPixels: number;
+  totalPixels: number;
+}
+
+/**
+ * Preuve programmatique — pas visuelle — que `uvs` dynamique anime les particules.
+ *
+ * `measure()` boucle en synchrone : le navigateur ne peint jamais entre deux
+ * appels a `render()`, et la scene mesuree est detruite juste apres. Une
+ * capture d'ecran ne peut donc structurellement rien montrer. On compare ici
+ * les pixels rendus avant et apres un changement de texture ; c'est
+ * verifiable sans jamais afficher l'image a l'ecran, et reproductible.
+ *
+ * Les particules restent a position fixe (`advance()` n'est pas appele) : on
+ * isole ainsi l'effet du changement de texture de celui d'un deplacement, qui
+ * rendrait la comparaison de pixels ininterpretable.
+ */
+function proveAnimation(): AnimationProof {
+  const FRAMES = 8;
+  const CELL = 64;
+  const COUNT = 10;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL * FRAMES;
+  canvas.height = CELL;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  for (let f = 0; f < FRAMES; f++) {
+    ctx.fillStyle = `hsl(${(f * 360) / FRAMES} 70% 55%)`;
+    ctx.fillRect(f * CELL + 4, 4, CELL - 8, CELL - 8);
+  }
+  const atlas = Texture.from(canvas);
+  const frames = Array.from(
+    { length: FRAMES },
+    (_, f) =>
+      new Texture({
+        source: atlas.source,
+        frame: new Rectangle(f * CELL, 0, CELL, CELL),
+      }),
+  );
+
+  const container = new ParticleContainer({
+    dynamicProperties: { position: true, uvs: true, color: false, rotation: false },
+  });
+  const particles: Particle[] = [];
+  // Grille fixe, pas de dispersion aleatoire : la preuve doit etre rejouable
+  // a l'identique, et ne faire varier qu'une seule chose a la fois.
+  for (let i = 0; i < COUNT; i++) {
+    const p = new Particle({
+      texture: frames[0] as Texture,
+      x: (i % 5) * CELL,
+      y: Math.floor(i / 5) * CELL,
+    });
+    particles.push(p);
+    container.addParticle(p);
+  }
+  app.stage.addChild(container);
+
+  try {
+    app.renderer.render(app.stage);
+    const before = app.renderer.extract.pixels({ target: container });
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      if (!p) {
+        continue;
+      }
+      // Une autre image de l'atlas : teinte differente garantie par construction.
+      p.texture = frames[(i + 1) % FRAMES] as Texture;
+    }
+    container.update();
+    app.renderer.render(app.stage);
+    const after = app.renderer.extract.pixels({ target: container });
+
+    const totalPixels = before.width * before.height;
+    let changedPixels = 0;
+    for (let px = 0; px < before.pixels.length; px += 4) {
+      if (
+        before.pixels[px] !== after.pixels[px] ||
+        before.pixels[px + 1] !== after.pixels[px + 1] ||
+        before.pixels[px + 2] !== after.pixels[px + 2] ||
+        before.pixels[px + 3] !== after.pixels[px + 3]
+      ) {
+        changedPixels++;
+      }
+    }
+
+    return {
+      // Seuil pour absorber un eventuel bruit de rasterisation isole sans
+      // laisser passer un « rien n'a change » qui ressemblerait a un succes.
+      animated: changedPixels > totalPixels * 0.01,
+      changedPixels,
+      totalPixels,
+    };
+  } finally {
+    app.stage.removeChild(container);
+    container.destroy();
+  }
+}
+
 /** fps reels sur la duree demandee. Exige un onglet au premier plan. */
 async function fpsRun(count: number, seconds: number): Promise<Record<string, number | string>> {
   const scene = buildParticleScene(count);
@@ -542,6 +646,19 @@ wire('run-fps', 'Mesure fps', async () => {
   renderTable('fps réels sur 20 s', rows);
 });
 
+// Cablage dedie plutot qu'un `wire(...)` : le resultat doit rester lisible
+// dans la ligne de statut, alors que `wire` l'ecrase par « prêt. » a la fin
+// de chaque action.
+const proveButton = document.getElementById('run-prove') as HTMLButtonElement | null;
+proveButton?.addEventListener('click', () => {
+  proveButton.disabled = true;
+  const result = proveAnimation();
+  setStatus(
+    `preuve : ${result.animated ? 'animation confirmee' : 'AUCUN CHANGEMENT — uvs dynamique ne fonctionne pas'} — ${result.changedPixels}/${result.totalPixels} pixels changés.`,
+  );
+  proveButton.disabled = false;
+});
+
 // Point d'entree pour piloter le banc depuis la console ou un outil : il rend
 // du JSON, ce qui permet de recuperer les chiffres sans lire le tableau.
 declare global {
@@ -550,10 +667,11 @@ declare global {
       sweep: () => SweepResult;
       particleBudget: () => SweepResult;
       animatedSweep: () => SweepResult;
+      proveAnimation: () => AnimationProof;
       fpsRun: (count: number, seconds: number) => Promise<Record<string, number | string>>;
     };
   }
 }
 
-window.__tarnokBench = { sweep, particleBudget, animatedSweep, fpsRun };
+window.__tarnokBench = { sweep, particleBudget, animatedSweep, proveAnimation, fpsRun };
 setStatus('prêt.');
