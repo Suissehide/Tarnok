@@ -450,7 +450,9 @@ interface AnimationProof {
 function proveAnimation(): AnimationProof {
   const FRAMES = 8;
   const CELL = 64;
-  const COUNT = 10;
+  const COLS = 5;
+  const ROWS = 2;
+  const COUNT = COLS * ROWS;
 
   const canvas = document.createElement('canvas');
   canvas.width = CELL * FRAMES;
@@ -482,13 +484,25 @@ function proveAnimation(): AnimationProof {
   for (let i = 0; i < COUNT; i++) {
     const p = new Particle({
       texture: frames[0] as Texture,
-      x: (i % 5) * CELL,
-      y: Math.floor(i / 5) * CELL,
+      x: (i % COLS) * CELL,
+      y: Math.floor(i / COLS) * CELL,
     });
     particles.push(p);
     container.addParticle(p);
   }
   app.stage.addChild(container);
+
+  // ParticleContainer ne calcule pas ses bornes (cout de performance) : sans
+  // `boundsArea` explicite, `bounds` reste un rectangle vide (0,0,0,0) et
+  // `extract.pixels()` n'extrait qu'un seul pixel — ce n'est pas l'animation
+  // qui serait en cause, seulement l'extraction. Une marge d'une cellule de
+  // chaque cote absorbe un eventuel anchor centre (0.5) sur les particules.
+  container.boundsArea = new Rectangle(
+    -CELL,
+    -CELL,
+    COLS * CELL + 2 * CELL,
+    ROWS * CELL + 2 * CELL,
+  );
 
   try {
     app.renderer.render(app.stage);
