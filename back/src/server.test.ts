@@ -201,4 +201,33 @@ describe('la socket de jeu', () => {
 
     expect(code).toBe(4004);
   });
+
+  /**
+   * La formulation testable de « sans position sur le fil ».
+   *
+   * Bien meilleure qu'une inspection de code : elle survit aux
+   * refactorisations. Si quelqu'un ajoute un jour des positions de monstres
+   * dans le snapshot, ce test le voit tout de suite.
+   */
+  it('ne fait pas grossir le trafic avec le nombre d ennemis', async () => {
+    const code = await createRoomCode();
+    const { ws } = await connect(code);
+
+    let octets = 0;
+    ws.on('message', (data: ArrayBuffer) => {
+      octets += data.byteLength;
+    });
+
+    // On laisse tourner assez longtemps pour que des vagues sortent.
+    await new Promise((r) => setTimeout(r, 1500));
+    const octetsAvant = octets;
+    octets = 0;
+    await new Promise((r) => setTimeout(r, 1500));
+    const octetsApres = octets;
+
+    // Entre les deux fenetres, la horde a grossi de plusieurs centaines
+    // d'entites. Le trafic, lui, ne doit pas suivre : il reste domine par les
+    // 30 snapshots par seconde de 4 joueurs.
+    expect(octetsApres).toBeLessThan(octetsAvant * 2);
+  }, 10_000);
 });
