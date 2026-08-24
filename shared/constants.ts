@@ -103,3 +103,12 @@ export const SEPARATION_CELL = 56;
  * La baisser est un choix de performance avant d'etre un choix de sensation.
  */
 export const SEPARATION_STRENGTH = 1200;
+
+/**
+ * Profondeur de l'historique de horde, en ticks, pour le rejeu du §3.2.
+ *
+ * ⚠️ Doit rester **superieure a la latence maximale attendue**, exprimee en
+ * ticks. Huit ticks valent 266 ms a 30 Hz. Au-dela, une mort est appliquee au
+ * present et **signalee** — jamais appliquee en silence.
+ */
+export const ROLLBACK_DEPTH_TICKS = 8;

@@ -17,6 +17,25 @@ export function entityIdOf(waveId: number, index: number): number {
 }
 
 /**
+ * Instantane de l'etat de la horde, pour `HordeHistory` (§3.2).
+ *
+ * Les sept memes tableaux que `Horde`, plus le compte. `HordeHistory` en
+ * alloue un par creneau de son anneau, une seule fois, et `saveState` /
+ * `restoreState` s'en servent comme tampons a copier par `.set()` — jamais de
+ * nouveau tableau a chaque tick.
+ */
+export interface HordeState {
+  count: number;
+  x: Float32Array;
+  y: Float32Array;
+  archetype: Uint8Array;
+  waveId: Uint16Array;
+  indexInWave: Uint16Array;
+  animPhase: Uint8Array;
+  targetField: Uint8Array;
+}
+
+/**
  * L'etat de la horde, en tableaux typés.
  *
  * Jamais un objet par ennemi (§4.4 de l'orientation) : a 1 500 entites, le cout
@@ -157,6 +176,39 @@ export class Horde {
       }
     }
     return -1;
+  }
+
+  /**
+   * Copie l'etat courant dans `out`, un instantane pre-alloue par l'appelant.
+   *
+   * Sert `HordeHistory.record`, appele a chaque tick : recevoir le tampon en
+   * parametre plutot que d'en allouer un ici est ce qui garde cette methode
+   * hors du ramasse-miettes.
+   *
+   * ⚠️ Les SEPT tableaux, plus le compte. Meme piege que `#removeAt` : en
+   * oublier un laisse la suite verte jusqu'a ce qu'un rejeu s'appuie dessus.
+   */
+  saveState(out: HordeState): void {
+    out.count = this.#count;
+    out.x.set(this.x);
+    out.y.set(this.y);
+    out.archetype.set(this.archetype);
+    out.waveId.set(this.waveId);
+    out.indexInWave.set(this.indexInWave);
+    out.animPhase.set(this.animPhase);
+    out.targetField.set(this.targetField);
+  }
+
+  /** Inverse de `saveState` : remplace l'etat courant par `state`. */
+  restoreState(state: HordeState): void {
+    this.#count = state.count;
+    this.x.set(state.x);
+    this.y.set(state.y);
+    this.archetype.set(state.archetype);
+    this.waveId.set(state.waveId);
+    this.indexInWave.set(state.indexInWave);
+    this.animPhase.set(state.animPhase);
+    this.targetField.set(state.targetField);
   }
 
   #removeAt(slot: number): void {
