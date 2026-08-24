@@ -533,10 +533,17 @@ function proveAnimation(): AnimationProof {
       }
     }
 
+    // Seuil derive de la geometrie, pas choisi a l'instinct : chaque
+    // particule repeint le rectangle plein dessine dans l'atlas (`CELL - 8`
+    // de cote, pas la cellule entiere qui inclut une bordure transparente
+    // inchangee) ; on exige qu'au moins la moitie de cette aire cumulee ait
+    // change de couleur pour parler d'animation.
+    const paintedAreaPerParticle = (CELL - 8) * (CELL - 8);
+    const expectedPaintedArea = COUNT * paintedAreaPerParticle;
+    const animatedThreshold = expectedPaintedArea / 2;
+
     return {
-      // Seuil pour absorber un eventuel bruit de rasterisation isole sans
-      // laisser passer un « rien n'a change » qui ressemblerait a un succes.
-      animated: changedPixels > totalPixels * 0.01,
+      animated: changedPixels > animatedThreshold,
       changedPixels,
       totalPixels,
     };
