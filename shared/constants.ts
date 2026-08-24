@@ -75,3 +75,31 @@ export const FLOWFIELD_CELL = 64;
 
 /** Recalcul du flowfield, en passes par seconde. §3.5 : 5 a 10 Hz. */
 export const FLOWFIELD_HZ = 10;
+
+/**
+ * Rayon en deca duquel deux entites se repoussent.
+ *
+ * ⚠️ Doit rester inferieur ou egal a la moitie de `SEPARATION_CELL` : c'est ce
+ * qui garantit qu'un voisin en interaction est forcement dans la cellule
+ * courante ou l'une des huit adjacentes. Les augmenter separement casse la
+ * recherche de voisins sans qu'aucun test unitaire ne le voie.
+ */
+export const SEPARATION_RADIUS = 28;
+
+/** Cote d'une cellule de la grille de separation. */
+export const SEPARATION_CELL = 56;
+
+/**
+ * Raideur de la repulsion, en pixels monde par seconde, multipliee par la
+ * fraction de recouvrement `(R - d) / R`.
+ *
+ * ⚠️ **Ce n'est pas un reglage de sensation.** Cette constante fixe la densite
+ * d'equilibre de la horde, et le cout de la separation croit avec le CARRE de
+ * cette densite. A 120 px/s la repulsion perd contre le flowfield : l'equilibre
+ * n'est jamais atteint et le banc de la tache 0 franchit la porte du §3.3 pour
+ * cette seule raison. A 1200 px/s la horde se stabilise a ~4 voisins par entite
+ * au lieu de ~29, et le rejeu passe de 3,8 ms a 1,3 ms.
+ *
+ * La baisser est un choix de performance avant d'etre un choix de sensation.
+ */
+export const SEPARATION_STRENGTH = 1200;
