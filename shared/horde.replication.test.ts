@@ -513,4 +513,218 @@ describe("le livrable de l'etape 2", () => {
     // deux sequences ne sont pas compatibles entre elles.
     expect(stats.maxDrift).toBeLessThan(200);
   });
+
+  /**
+   * C1 — le defaut que les cinq scenarios ci-dessus ne peuvent pas voir.
+   *
+   * Ils donnent tous, a TOUS les participants, exactement le meme tableau de
+   * positions sous exactement la meme cle de tick — `p.history.record(tick,
+   * xs, ys)`, ou `tick` est la variable de boucle commune. Structurellement,
+   * ca ne peut pas reveler le bug reel : `SnapshotBuffer.latest()` (cote
+   * client) jette le tick du serveur, et le client enregistre alors le
+   * contenu du dernier snapshot recu sous SA PROPRE cle de tick locale — qui
+   * n'a plus aucune raison de coincider avec le tick auquel ce contenu a ete
+   * produit cote serveur.
+   *
+   * Les deux scenarios ci-dessous modelisent ce que fait REELLEMENT le
+   * reseau, chacun avec une sequence de client differente :
+   *
+   * - la reference joue le serveur : elle enregistre les positions
+   *   ARRONDIES du tick courant sous ce tick (le client ne connaitra jamais
+   *   que la version quantifiee en int16 du protocole, jamais le flottant) ;
+   * - chaque client recoit ces memes positions arrondies avec 1 a 3 ticks de
+   *   retard reseau ;
+   * - le compteur de tick local de chaque client demarre DECALE, comme le
+   *   produirait un `WELCOME` lui-meme arrive apres un temps de trajet.
+   */
+  function makeC1Scenario(options: {
+    /** Enregistre sous le tick local du client plutot que sous le tick serveur d'origine. */
+    recordUnderLocalClientTick: boolean;
+    /** Recale en continu le compteur de tick local sur le dernier tick serveur connu. */
+    resyncLocalClientTick: boolean;
+  }): DriftStats {
+    const mapSeed = 0xdec1de5;
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+
+    const SPAWN_TICK = 50;
+    const END = 500;
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const round = (v: number) => Math.round(v);
+
+    // Retard reseau de reception des positions, en ticks : 1 a 3, comme
+    // l'annonce le constat C1. Zero pour la reference : c'est le serveur.
+    const NETWORK_DELAY: readonly number[] = [0, 1, 2, 3, 2];
+    // Decalage initial du compteur de tick client, tel que le produirait un
+    // WELCOME arrive apres un temps de trajet non nul — jamais zero en vrai.
+    const CLOCK_SKEW: readonly number[] = [0, 4, 7, 2, 5];
+    // Tolerance de retard : au-dela, le compteur local est considere trop en
+    // retard sur le tick serveur connu (onglet en arriere-plan, sursaut de
+    // latence) et on le rattrape plutot que de laisser l'ecart s'installer
+    // pour de bon (correction C1.3). Volontairement asymetrique : le
+    // compteur local a de bonnes raisons d'etre EN AVANCE sur le dernier
+    // snapshot connu — c'est la latence reseau elle-meme, deja absorbee par
+    // `FIELD_INPUT_DELAY_TICKS` — donc seul un retard doit corriger.
+    //
+    // La valeur elle-meme est mesuree, pas devinee : ce champ de directions
+    // discret est sensible au point de faire la difference entre 0 et plus de
+    // 600 px de derive selon qu'un retard persistant de 1 ou de 2 ticks est
+    // tolere (voir le rapport final). D'ou une tolerance serree.
+    const CATCHUP_TOLERANCE = 1;
+
+    // Compteur de tick local de chaque client, initialise en retard comme le
+    // ferait un WELCOME tardif. Index 0 (la reference) n'est jamais lu.
+    const localTick = parts.map((_, i) => -(CLOCK_SKEW[i] ?? 0));
+
+    const order: WaveOrder = {
+      waveId: 1,
+      spawnTick: SPAWN_TICK,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+
+    const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
+
+    for (let tick = 0; tick < END; tick++) {
+      parts.forEach((p, i) => {
+        if (tick === SPAWN_TICK) {
+          // Spawn synchrone, sans latence : ce scenario isole la derive du
+          // flowfield due a C1, pas celle de l'apparition tardive (scenarios
+          // precedents).
+          p.horde.spawn(order);
+        }
+
+        if (i === 0) {
+          // Le serveur : positions arrondies, enregistrees sous le tick vrai.
+          const xs = [0, 1, 2, 3].map((pl) => round(3000 + Math.cos(tick * 0.02 + pl) * 1500));
+          const ys = [0, 1, 2, 3].map((pl) => round(3000 + Math.sin(tick * 0.02 + pl) * 1500));
+          p.history.record(tick, xs, ys);
+          if (tick % stepsPerField === 0) {
+            const seen = p.history.delayed(tick);
+            if (seen) {
+              for (let f = 0; f < 4; f++) {
+                p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+              }
+              p.horde.retarget(seen.x, seen.y);
+            }
+          }
+          p.horde.step(DT, p.fields);
+          return;
+        }
+
+        // Un client : recoit les positions du tick `tick - latence`, deja
+        // arrondies par le serveur qui les a emises.
+        const delay = NETWORK_DELAY[i] ?? 0;
+        const receivedServerTick = Math.max(0, tick - delay);
+        const rxs = [0, 1, 2, 3].map((pl) =>
+          round(3000 + Math.cos(receivedServerTick * 0.02 + pl) * 1500),
+        );
+        const rys = [0, 1, 2, 3].map((pl) =>
+          round(3000 + Math.sin(receivedServerTick * 0.02 + pl) * 1500),
+        );
+
+        if (options.resyncLocalClientTick) {
+          const current = localTick[i] ?? 0;
+          // Rattrapage a SENS UNIQUE : on ne corrige que si le compteur local
+          // est trop EN RETARD sur le dernier tick serveur connu. Etre en
+          // avance de `delay` ticks est le fonctionnement normal — le
+          // compteur local suit le temps reel, le dernier snapshot connu est
+          // necessairement plus vieux que maintenant. Recaler aussi dans ce
+          // sens-la reviendrait a figer en permanence le compteur local sur
+          // le tick (deja perime) du dernier snapshot recu, ce qui annule
+          // l'absorption de latence de `FIELD_INPUT_DELAY_TICKS`.
+          localTick[i] =
+            receivedServerTick - current > CATCHUP_TOLERANCE ? receivedServerTick : current + 1;
+        } else {
+          // Jamais recale : c'est exactement le defaut C1.b — le compteur
+          // avance a son propre rythme, indefiniment decale.
+          localTick[i] = (localTick[i] ?? 0) + 1;
+        }
+
+        const key = options.recordUnderLocalClientTick ? (localTick[i] ?? 0) : receivedServerTick;
+        p.history.record(key, rxs, rys);
+
+        const queryTick = localTick[i] ?? 0;
+        if (queryTick % stepsPerField === 0) {
+          const seen = p.history.delayed(queryTick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        p.horde.step(DT, p.fields);
+      });
+
+      for (const p of parts.slice(1)) {
+        const count = Math.min(reference.horde.count, p.horde.count);
+        for (let i = 0; i < count; i++) {
+          const drift = Math.hypot(
+            (p.horde.x[i] ?? 0) - (reference.horde.x[i] ?? 0),
+            (p.horde.y[i] ?? 0) - (reference.horde.y[i] ?? 0),
+          );
+          if (drift > stats.maxDrift) {
+            stats.maxDrift = drift;
+          }
+          if (p.horde.entityIdAt(i) !== reference.horde.entityIdAt(i)) {
+            stats.identityMismatches++;
+          }
+        }
+      }
+    }
+
+    return stats;
+  }
+
+  it(
+    'C1 — sans les corrections, le client indexe l historique sous son propre tick, ' +
+      'jamais recale : la derive explose',
+    () => {
+      const stats = makeC1Scenario({
+        recordUnderLocalClientTick: true,
+        resyncLocalClientTick: false,
+      });
+
+      process.stdout.write(
+        `C1 AVANT correction (tick local jamais recale) : derive maximale ${stats.maxDrift.toFixed(3)} px\n`,
+      );
+
+      // L'identite reste exacte : ce defaut est purement une derive de
+      // position, pas de comptabilite d'entites.
+      expect(stats.identityMismatches).toBe(0);
+      // Le point du test : la derive n'est PAS bornee a une valeur cosmetique
+      // comme dans les scenarios precedents. Si cette assertion passait, ce
+      // scenario ne modeliserait pas la latence reelle et devrait etre repris.
+      expect(stats.maxDrift).toBeGreaterThan(DRIFT_LIMIT_PX * 20);
+    },
+  );
+
+  it(
+    'C1 — avec les corrections (tick serveur, recalage continu), la derive sous latence ' +
+      'simulee redevient petite',
+    () => {
+      const stats = makeC1Scenario({
+        recordUnderLocalClientTick: false,
+        resyncLocalClientTick: true,
+      });
+
+      process.stdout.write(
+        `C1 APRES correction (tick serveur, recale en continu) : derive maximale ${stats.maxDrift.toFixed(3)} px\n`,
+      );
+
+      expect(stats.identityMismatches).toBe(0);
+      // Meme ordre de grandeur que le rattrapage a l'apparition (scenario
+      // precedent) : l'erreur residuelle de fraicheur du champ, pas une
+      // derive qui grossit avec le temps.
+      expect(stats.maxDrift).toBeLessThan(40);
+    },
+  );
 });
