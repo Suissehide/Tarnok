@@ -269,6 +269,77 @@ describe('Horde.retarget', () => {
   });
 });
 
+describe('Horde.kill', () => {
+  it('retire les entites demandees', () => {
+    const horde = new Horde(1000);
+    horde.spawn(order({ waveId: 1, count: 10 }));
+    const cible = horde.entityIdAt(3);
+
+    expect(horde.kill([cible])).toBe(1);
+    expect(horde.count).toBe(9);
+    expect(horde.slotOf(cible)).toBe(-1);
+  });
+
+  it('ignore une identite inconnue sans planter', () => {
+    const horde = new Horde(1000);
+    horde.spawn(order({ count: 5 }));
+
+    expect(horde.kill([999_999])).toBe(0);
+    expect(horde.count).toBe(5);
+  });
+
+  it('donne le meme resultat quel que soit l ordre de la liste', () => {
+    // Le protocole trie les identites, mais rien n'empeche un appelant de
+    // passer une liste desordonnee : le resultat doit etre identique, sinon
+    // deux clients compacteraient differemment.
+    const a = new Horde(1000);
+    const b = new Horde(1000);
+    a.spawn(order({ count: 20 }));
+    b.spawn(order({ count: 20 }));
+    const ids = [a.entityIdAt(2), a.entityIdAt(7), a.entityIdAt(15)];
+
+    a.kill(ids);
+    b.kill([...ids].reverse());
+
+    const idsDe = (h: Horde): number[] =>
+      Array.from({ length: h.count }, (_, i) => h.entityIdAt(i));
+    expect(idsDe(a)).toEqual(idsDe(b));
+  });
+
+  it('preserve toutes les entites survivantes', () => {
+    const horde = new Horde(1000);
+    horde.spawn(order({ count: 10 }));
+    const avant = new Set(Array.from({ length: 10 }, (_, i) => horde.entityIdAt(i)));
+    const morts = [horde.entityIdAt(0), horde.entityIdAt(9)];
+
+    horde.kill(morts);
+
+    const apres = new Set(Array.from({ length: horde.count }, (_, i) => horde.entityIdAt(i)));
+    for (const id of avant) {
+      expect(apres.has(id)).toBe(!morts.includes(id));
+    }
+  });
+
+  it('emmene toutes les proprietes de l entite deplacee, pas seulement sa position', () => {
+    // La compaction deplace la derniere entite dans le trou. Si un seul tableau
+    // etait oublie, cette entite garderait l'archetype ou la cible du mort —
+    // et l'etape 3 le paierait en sprites melanges.
+    const horde = new Horde(1000);
+    horde.spawn(order({ waveId: 1, archetype: 0, count: 5 }));
+    horde.spawn(order({ waveId: 2, archetype: 3, count: 5 }));
+    const dernier = horde.entityIdAt(horde.count - 1);
+    const archetypeAttendu = horde.archetype[horde.count - 1];
+    const phaseAttendue = horde.animPhase[horde.count - 1];
+
+    horde.kill([horde.entityIdAt(0)]);
+
+    const slot = horde.slotOf(dernier);
+    expect(slot).toBe(0);
+    expect(horde.archetype[slot]).toBe(archetypeAttendu);
+    expect(horde.animPhase[slot]).toBe(phaseAttendue);
+  });
+});
+
 function meanDistanceTo(horde: Horde, x: number, y: number): number {
   let total = 0;
   for (let i = 0; i < horde.count; i++) {

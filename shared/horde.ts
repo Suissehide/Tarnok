@@ -108,6 +108,62 @@ export class Horde {
   }
 
   /**
+   * Retire des entites par identite, et rend combien ont ete retirees.
+   *
+   * La compaction deplace la derniere entite dans le trou — `O(1)` par mort. Ce
+   * qui compte pour la replication : **le resultat ne doit pas dependre de
+   * l'ordre de la liste**. On retire donc par indice decroissant, ce qui rend
+   * l'operation commutative : une entite deplacee ne peut jamais l'etre vers un
+   * trou qu'on va rouvrir ensuite.
+   *
+   * Sans ca, deux clients recevant les memes morts dans un ordre different
+   * finiraient avec des tableaux differemment agences, et l'indice `i` cesserait
+   * de designer la meme entite — l'invariant que le test de replication verifie
+   * par comparaison d'identites.
+   */
+  kill(entityIds: readonly number[]): number {
+    const slots: number[] = [];
+    for (const id of entityIds) {
+      const slot = this.slotOf(id);
+      if (slot >= 0) {
+        slots.push(slot);
+      }
+    }
+    slots.sort((a, b) => b - a);
+
+    let removed = 0;
+    for (const slot of slots) {
+      this.#removeAt(slot);
+      removed++;
+    }
+    return removed;
+  }
+
+  /** Index du creneau portant cette identite, ou -1. */
+  slotOf(entityId: number): number {
+    for (let i = 0; i < this.#count; i++) {
+      if (this.entityIdAt(i) === entityId) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  #removeAt(slot: number): void {
+    const last = this.#count - 1;
+    if (slot !== last) {
+      this.x[slot] = this.x[last] ?? 0;
+      this.y[slot] = this.y[last] ?? 0;
+      this.archetype[slot] = this.archetype[last] ?? 0;
+      this.waveId[slot] = this.waveId[last] ?? 0;
+      this.indexInWave[slot] = this.indexInWave[last] ?? 0;
+      this.animPhase[slot] = this.animPhase[last] ?? 0;
+      this.targetField[slot] = this.targetField[last] ?? 0;
+    }
+    this.#count = last;
+  }
+
+  /**
    * Reaffecte chaque entite au joueur le plus proche.
    *
    * Appele a la cadence du flowfield (10 Hz), pas a chaque tick : changer de
