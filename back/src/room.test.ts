@@ -260,4 +260,38 @@ describe('Room et la horde', () => {
 
     expect(room.mapSeed).toBe(graine);
   });
+
+  it(
+    'signale dans ses metriques une vague tronquee par la capacite, ' +
+      'plutot que de tronquer en silence',
+    () => {
+      // La horde sature a MAX_ENTITIES tant que rien ne meurt (§11 de la
+      // spec — les morts arrivent a l'etape 3). Une troncature muette serait
+      // un piege : ce test verrouille qu'elle reste visible dans le HUD.
+      const room = new Room();
+      room.join(1);
+      // De quoi voir arriver plusieurs vagues et, une fois la horde pleine,
+      // au moins une troncature.
+      for (let i = 0; i < TICK_HZ * 130; i++) {
+        room.step(DT);
+      }
+
+      expect(room.horde.count).toBeGreaterThan(0);
+      expect(room.metrics.truncatedSpawns).toBeGreaterThan(0);
+    },
+  );
+
+  it('remet le compteur de troncatures a zero au drainage', () => {
+    const room = new Room();
+    room.join(1);
+    for (let i = 0; i < TICK_HZ * 130; i++) {
+      room.step(DT);
+    }
+    expect(room.metrics.truncatedSpawns).toBeGreaterThan(0);
+
+    const drained = room.drainMetrics();
+
+    expect(drained.truncatedSpawns).toBeGreaterThan(0);
+    expect(room.metrics.truncatedSpawns).toBe(0);
+  });
 });

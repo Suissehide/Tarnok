@@ -116,6 +116,7 @@ class Session {
     'ko/s emis': number;
     'ko/s par joueur': number;
     'us encodage / snapshot': number;
+    'vagues tronquees': number;
   } {
     const room = this.room.drainMetrics();
     const wireBytes = this.#wireBytes;
@@ -129,6 +130,10 @@ class Session {
       'ko/s emis': round2(wireBytes / 1024 / seconds),
       'ko/s par joueur': round2(wireBytes / players / 1024 / seconds),
       'us encodage / snapshot': round2(room.encodeMicros / Math.max(1, room.snapshots)),
+      // La horde sature a 4 000 entites tant que rien ne meurt (§11 de la
+      // spec, differe a l'etape 3) : ce compteur rend cette saturation
+      // visible dans le HUD plutot que silencieuse, comme le veut le §4.6.
+      'vagues tronquees': room.truncatedSpawns,
     };
   }
 

@@ -47,6 +47,14 @@ export interface RoomMetrics {
   encodeMicros: number;
   /** Nombre de snapshots encodes depuis le dernier drainage. */
   snapshots: number;
+  /**
+   * Nombre de vagues tronquees par `Horde.spawn` depuis le dernier drainage —
+   * la horde a atteint sa capacite et une partie de la vague n'est jamais
+   * apparue. Attendu a l'etape 2 (rien ne meurt encore, §11 de la spec), mais
+   * doit rester visible dans le HUD (§4.6) plutot que silencieux : une
+   * troncature muette est un piege pour l'etape 3.
+   */
+  truncatedSpawns: number;
 }
 
 /**
@@ -90,7 +98,7 @@ export class Room {
   #tick = 0;
   /** Tick des positions ayant servi au dernier calcul des champs. Voir `fieldInputTick`. */
   #fieldInputTick = 0;
-  #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0 };
+  #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
   /** Reutilise d'un snapshot a l'autre : pas d'allocation par tick. */
   readonly #scratch: PlayerSnapshot[] = [];
 
@@ -190,11 +198,17 @@ export class Room {
       p.y = clamp(p.y + p.moveY * PLAYER_SPEED * dt, 0, MAP_SIZE);
     }
 
+    // Arrondies, comme sur le fil (constat C1.4) : le client ne connaitra
+    // jamais que la version quantifiee en int16 du protocole (`encodeSnapshot`
+    // arrondit deja). Si le serveur alimentait son propre flowfield avec des
+    // positions flottantes, les deux cotes enracineraient leur BFS dans des
+    // cellules differentes une fois par cellule et par axe — le serveur doit
+    // s'imposer l'arrondi comme il s'impose deja le retard.
     const xs: number[] = [];
     const ys: number[] = [];
     for (const p of this.#players.values()) {
-      xs.push(p.x);
-      ys.push(p.y);
+      xs.push(Math.round(p.x));
+      ys.push(Math.round(p.y));
     }
     this.#history.record(this.#tick, xs, ys);
 
@@ -215,7 +229,12 @@ export class Room {
 
     const order = this.#director.due(this.#tick, xs, ys);
     if (order) {
+      const before = this.horde.count;
       this.horde.spawn(order);
+      // Rend visible une troncature silencieuse : voir `RoomMetrics.truncatedSpawns`.
+      if (this.horde.count - before < order.count) {
+        this.#metrics.truncatedSpawns++;
+      }
       this.#pendingOrders.push(order);
     }
 
@@ -240,7 +259,7 @@ export class Room {
   /** Rend les compteurs accumules et les remet a zero. */
   drainMetrics(): RoomMetrics {
     const drained = this.#metrics;
-    this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0 };
+    this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
     return drained;
   }
 }
