@@ -1,5 +1,5 @@
 import { archetypeOf } from './archetypes';
-import { MAP_SIZE, MAX_PER_WAVE } from './constants';
+import { MAP_SIZE, MAX_ENTITIES, MAX_PER_WAVE } from './constants';
 import type { FlowField } from './flowfield';
 import { formationPositions, type WaveOrder } from './waves';
 
@@ -27,6 +27,13 @@ export function entityIdOf(waveId: number, index: number): number {
  * identique — l'ensemble des identites, les archetypes — l'est par arithmetique
  * entiere. Les positions, elles, ont le droit de deriver de quelques pixels
  * (§2.2 de la spec).
+ *
+ * ⚠️ **La capacite doit etre identique sur le serveur et sur chaque client.**
+ * `spawn` tronque quand elle est atteinte ; deux simulations qui tronquent a des
+ * endroits differents n'ont plus le meme ensemble d'entites, et rien ne le
+ * signalerait — ni erreur, ni test rouge, juste des ennemis qui different d'un
+ * poste a l'autre. La valeur par defaut du constructeur est la pour que le cas
+ * nominal soit correct sans que personne n'ait a y penser.
  */
 export class Horde {
   readonly x: Float32Array;
@@ -41,7 +48,7 @@ export class Horde {
 
   #count = 0;
 
-  constructor(readonly capacity: number) {
+  constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
     this.archetype = new Uint8Array(capacity);

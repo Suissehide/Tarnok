@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAX_ENTITIES } from './constants';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
 import { FORMATION, type WaveOrder } from './waves';
@@ -83,6 +84,10 @@ describe('Horde.spawn', () => {
     horde.spawn(order({ waveId: 2, count: 80 }));
 
     expect(horde.count).toBe(100);
+  });
+
+  it('prend MAX_ENTITIES comme capacite par defaut, pour que deux simulations tronquent pareil', () => {
+    expect(new Horde().capacity).toBe(MAX_ENTITIES);
   });
 });
 
