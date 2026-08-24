@@ -37,6 +37,25 @@ export interface RenderState {
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
 /**
+ * Tolerance de retard du compteur de tick local de la horde sur le tick
+ * serveur porte par le dernier snapshot recu.
+ *
+ * Volontairement asymetrique et serree. Etre EN AVANCE du tick serveur connu
+ * est le fonctionnement normal — la latence reseau fait que le dernier
+ * snapshot recu decrit toujours un instant deja passe — et ne doit jamais
+ * declencher de recalage : le faire reviendrait a figer en permanence le
+ * compteur local sur un tick perime, annulant l'absorption de latence de
+ * `FIELD_INPUT_DELAY_TICKS`. Etre EN RETARD, en revanche, ne devrait jamais
+ * arriver en fonctionnement normal — seulement apres une perte de pas (onglet
+ * en arriere-plan, §6.1c de la spec) — et doit se corriger immediatement : le
+ * flowfield est un champ de directions discret, mesure (voir
+ * `shared/horde.replication.test.ts`, scenarios C1) a etre assez sensible
+ * pour faire la difference entre 0 et plus de 600 px de derive selon qu'un
+ * retard persistant d'un ou de deux ticks est tolere.
+ */
+const HORDE_TICK_LAG_TOLERANCE = 1;
+
+/**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
  * Il ne dessine rien et ne lit pas le clavier — il recoit une fonction qui lui
@@ -85,7 +104,10 @@ export class GameClient {
   /**
    * Tick courant de la horde locale. Expose pour l'observabilite, comme
    * `Room.fieldInputTick` cote serveur : c'est ce qui permet de verrouiller
-   * par test que le compteur reste aligne sur le tick absolu recu au WELCOME.
+   * par test que le compteur reste aligne sur le tick absolu recu au WELCOME,
+   * puis recale en continu sur celui des snapshots recus (voir `#onFrame`) —
+   * sans quoi il resterait en permanence en retard du temps de trajet du
+   * WELCOME, pour toute la vie de la connexion (constat C1.b).
    */
   get hordeTick(): number {
     return this.#lastHordeTick;
@@ -205,6 +227,14 @@ export class GameClient {
 
     this.#buffer.push(msg, performance.now());
 
+    // Recalage continu (constat C1.b/c) : sans lui, le compteur reste calé
+    // sur le retard du WELCOME pour toute la vie de la connexion, et un
+    // onglet remis au premier plan après une pause ne rattrape jamais les pas
+    // perdus. Voir `HORDE_TICK_LAG_TOLERANCE`.
+    if (msg.tick - this.#lastHordeTick > HORDE_TICK_LAG_TOLERANCE) {
+      this.#lastHordeTick = msg.tick;
+    }
+
     const mine =
       this.#localId === null ? undefined : msg.players.find((p) => p.id === this.#localId);
     if (!mine) {
@@ -240,11 +270,16 @@ export class GameClient {
     }
 
     // Les positions telles que le client les connait : celles du dernier
-    // snapshot recu. Le serveur lira les memes, grace au retard qu'il s'impose.
+    // snapshot recu, enregistrees sous le tick SERVEUR auquel elles ont ete
+    // calculees — jamais sous le tick local `tick` (constat C1.a). Le serveur
+    // enregistre les siennes sous son propre tick reel ; si le client
+    // enregistrait les memes positions sous une cle differente, `delayed()`
+    // ne lirait plus la meme chose des deux cotes, meme quand le compteur
+    // local est par ailleurs bien recale.
     const snapshot = this.#buffer.latest();
     if (snapshot) {
       this.#history.record(
-        tick,
+        snapshot.tick,
         snapshot.players.map((p) => p.x),
         snapshot.players.map((p) => p.y),
       );

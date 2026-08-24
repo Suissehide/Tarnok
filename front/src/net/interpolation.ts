@@ -9,7 +9,7 @@ import type { PlayerSnapshot, SnapshotMessage } from '@shared/protocol';
  * encadrant l'instant qu'on dessine. Sans ce retard, chaque snapshot en retard
  * ou perdu produit un a-coup, et tout tremble.
  *
- * Le prix est une centaine de millisecondes de latence visuelle sur les *autres*
+ * Le prix est `INTERP_DELAY_MS` (60 ms) de latence visuelle sur les *autres*
  * joueurs. Le sien est predit localement (voir `prediction.ts`), donc le joueur
  * ne sent pas ce retard sur ses propres commandes.
  */
@@ -21,9 +21,10 @@ interface Sample {
 }
 
 /**
- * Profondeur d'historique. A SNAPSHOT_HZ = 20, huit echantillons couvrent
- * 400 ms, soit quatre fois le retard d'interpolation : de quoi encaisser une
- * rafale de retard sans laisser l'historique grossir indefiniment.
+ * Profondeur d'historique. A SNAPSHOT_HZ = 30, huit echantillons couvrent
+ * environ 267 ms, soit plus de quatre fois le retard d'interpolation : de quoi
+ * encaisser une rafale de retard sans laisser l'historique grossir
+ * indefiniment.
  */
 const MAX_SAMPLES = 8;
 
@@ -52,10 +53,19 @@ export class SnapshotBuffer {
     }
   }
 
-  /** Le snapshot le plus recent, sans interpolation ni retard. */
-  latest(): { players: readonly PlayerSnapshot[] } | null {
+  /**
+   * Le snapshot le plus recent, sans interpolation ni retard.
+   *
+   * Rend aussi `tick` — le tick SERVEUR auquel ces positions ont ete
+   * calculees, pas celui du client. C'est ce qui manquait : un appelant qui
+   * jette `tick` et reenregistre ce contenu sous sa PROPRE cle de tick locale
+   * associe deux ticks qui n'ont aucune raison de coincider. `PlayerHistory`
+   * n'a de sens que si les deux cotes indexent sous le meme tick (§5 de la
+   * spec de l'etape 2) ; voir `GameClient#advanceHorde`.
+   */
+  latest(): { tick: number; players: readonly PlayerSnapshot[] } | null {
     const newest = this.#samples[this.#samples.length - 1];
-    return newest ? { players: newest.players } : null;
+    return newest ? { tick: newest.tick, players: newest.players } : null;
   }
 
   /** Positions interpolees a l'instant `now`, avec INTERP_DELAY_MS de retard. */
