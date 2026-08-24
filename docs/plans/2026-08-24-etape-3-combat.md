@@ -847,6 +847,11 @@ dupliquer, les deux messages ne diffèrent que par leur octet de type.
 
 `SNAPSHOT_PLAYER_BYTES` passe de 5 à **8** (`id u8 · x i16 · y i16 · hp u8 · xp u16`).
 
+> ⚠️ **`hp` et `xp` n'existent pas encore côté serveur** — c'est la tâche 9 qui les fait
+> vivre. Cette tâche câble le transport : `Room` remplit `hp` avec `PLAYER_MAX_HP` et `xp`
+> avec `0`. Ne pas inventer de comptabilité ici. `hp` tient sur un octet (`PLAYER_MAX_HP` vaut
+> 100), `xp` sur deux — vérifier les bornes dans les tests d'encodage.
+
 > Le test d'indépendance réseau de l'étape 2 dérive son plafond de ces constantes : il
 > suivra tout seul. C'est pour ça qu'il avait été écrit ainsi.
 
@@ -987,6 +992,12 @@ et rejouent. Assertions : **identités strictement égales**, dérive sous 2 px.
 **10. Mort trop vieille pour l'historique.** Une mort datée d'un tick sorti de l'anneau doit
 être appliquée au présent **et signalée**, sans planter. Vérifie que le signalement a lieu.
 
+> ⚠️ Ce fichier modélise ses clients **lui-même**, comme à l'étape 2 — il n'importe pas
+> `GameClient`. Le signalement testé ici est donc un compteur dans la boucle client du test,
+> et la latence doit **dépasser `ROLLBACK_DEPTH_TICKS` (8)** pour que le scénario morde : à
+> 1-3 ticks, l'anneau absorbe tout et le test ne prouve rien. La tâche 10 recâblera le même
+> signal dans `GameClient`.
+
 ⚠️ **Écris ces trois scénarios avant de toucher au client**, et vérifie que le 9 échoue tant
 que le rejeu n'existe pas. S'il passe du premier coup, il ne modélise pas ce qu'il prétend.
 
@@ -1076,8 +1087,14 @@ ordres de vague. Compter les octets dans `#wireBytes`.
   }
 ```
 
-`#replayTick` doit exécuter **exactement** les étapes 5 à 8 de la séquence serveur, dans le
-même ordre, sur l'état retardé correspondant.
+`#replayTick` exécute les étapes **5, 6, 7 et le déplacement des projectiles** de la séquence
+serveur, dans cet ordre, sur l'état retardé correspondant.
+
+> ⚠️ **Le rejeu client ne rejoue PAS l'arbitrage.** Les étapes 8 (dégâts), 9 (contact) et 10
+> (ramassage) appartiennent au serveur : le client qui les rejouerait déciderait de morts que
+> le serveur n'a pas prononcées, et divergerait précisément là où on cherche à converger. Le
+> client rejoue le **mouvement** — horde, séparation, projectiles — et rien d'autre. Les morts
+> lui arrivent, il ne les invente pas.
 
 - [ ] **Étape 2 : exposer le compteur de morts tardives**
 
@@ -1122,7 +1139,7 @@ passe le budget VFX, pas dans un halo permanent.
 files ? Le tir a-t-il du punch ? Le gel est-il lisible ? La mort est-elle comprise ?
 - [ ] **Rejouer les trois bancs** — la séparation change le coût du pas de simulation, donc
 les chiffres de l'étape 1 sont périmés.
-- [ ] Écrire `docs/plans/2026-XX-XX-etape-3-resultats.md` : les trois dérives du §8, les
+- [ ] Écrire `docs/plans/2026-08-24-etape-3-resultats.md` : les trois dérives du §8, les
 chiffres de bancs avant/après, ce qui reste ouvert.
 - [ ] Mettre à jour le `README.md`.
 - [ ] Commit : `docs: resultats de l'etape 3`
