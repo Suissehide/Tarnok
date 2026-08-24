@@ -54,7 +54,23 @@ export class Stage {
     // (ajoutes plus tard via `#spriteFor`), sinon les joueurs disparaissent
     // sous la horde.
     this.#horde.attach(this.#world);
-    await this.#horde.load();
+
+    // Constat I4 : sans ce try/catch, un atlas absent (404 sur le manifeste,
+    // deploiement ou l'atlas n'a pas ete depose sur MinIO) fait echouer cette
+    // promesse. `main.ts` fait `await stage.init(...)` au niveau module ; une
+    // rejection y arrete l'evaluation du module AVANT que les gestionnaires de
+    // clic ne soient installes — lobby mort, sans le moindre message. Mieux
+    // vaut demarrer sans horde visible que bloquer tout le jeu pour un asset
+    // manquant. `HordeRenderer.draw` sait deja ne rien faire tant que
+    // `#loaded` est faux.
+    try {
+      await this.#horde.load();
+    } catch (cause) {
+      console.error(
+        "atlas de la horde indisponible, la horde ne sera pas dessinee. L'a-t-on deploye sur MinIO ? (voir docs/plans/2026-08-24-etape-2-resultats.md §5.1)",
+        cause,
+      );
+    }
   }
 
   get canvas(): HTMLCanvasElement {
