@@ -74,6 +74,8 @@ def main() -> None:
 
         sheet = Image.open(path).convert("RGBA")
         cell = sheet.height
+        if cell == 0:
+            sys.exit(f"{relative} : hauteur nulle, planche invalide")
         if sheet.width % cell != 0:
             sys.exit(f"{relative} : largeur {sheet.width} non multiple de {cell}")
         frames = sheet.width // cell
