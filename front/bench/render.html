@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tarnok — banc de rendu</title>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        background: #14110f;
+        color: #d8cfc4;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      #panel {
+        position: fixed;
+        inset: 0 auto auto 0;
+        z-index: 10;
+        padding: 12px 16px;
+        background: rgb(20 17 15 / 0.9);
+        border-right: 1px solid #4a3f36;
+        border-bottom: 1px solid #4a3f36;
+        max-height: 100vh;
+        overflow: auto;
+        font-size: 12px;
+      }
+      button {
+        background: #2a2420;
+        color: #e0a45e;
+        border: 1px solid #4a3f36;
+        padding: 6px 12px;
+        margin: 2px 4px 8px 0;
+        cursor: pointer;
+        font: inherit;
+      }
+      button:hover {
+        border-color: #e0a45e;
+      }
+      button:disabled {
+        opacity: 0.4;
+        cursor: wait;
+      }
+      table {
+        border-collapse: collapse;
+        margin-top: 8px;
+      }
+      th,
+      td {
+        border: 1px solid #4a3f36;
+        padding: 3px 8px;
+        text-align: right;
+      }
+      th {
+        color: #e0a45e;
+      }
+      td:first-child,
+      th:first-child {
+        text-align: left;
+      }
+      .note {
+        max-width: 46ch;
+        color: #8a7a68;
+        line-height: 1.5;
+        margin: 8px 0 0;
+      }
+      .ok {
+        color: #93c47d;
+      }
+      .ko {
+        color: #e06666;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="panel">
+      <strong>Banc de rendu — étape 1</strong>
+      <div>
+        <button id="run-sweep" type="button">Coût par image (sprites vs ParticleContainer)</button>
+        <button id="run-particles" type="button">Budget de particules d'effet</button>
+        <button id="run-fps" type="button">fps réels, 20 s (onglet au premier plan)</button>
+      </div>
+      <div id="status">prêt.</div>
+      <div id="results"></div>
+      <p class="note">
+        Les deux premières mesures rendent en boucle serrée, sans
+        <code>requestAnimationFrame</code> : elles restent valides même si l'onglet passe en
+        arrière-plan, où rAF est suspendu. Elles chiffrent le coût <em>CPU</em> de soumission
+        d'une image — exactement le poste que le §4.3 désigne comme le danger. Le troisième
+        bouton, lui, mesure des fps réels et exige un onglet au premier plan.
+      </p>
+    </div>
+    <script type="module" src="/bench/render.ts"></script>
+  </body>
+</html>

@@ -222,7 +222,15 @@ export async function buildServer(): Promise<FastifyInstance> {
   // §4.6 : la metrique qui a plafonne Riot n'est ni le CPU ni la RAM, c'est
   // l'overhead reseau. Elle existe des la premiere version, sinon elle
   // n'existera jamais.
+  //
+  // Debrayable par TARNOK_METRICS=off : les bancs de l'etape 1 montent
+  // cinquante salons, et cinquante lignes de tableau toutes les cinq secondes
+  // noieraient le resultat qu'on cherche a lire.
+  const metricsEnabled = process.env.TARNOK_METRICS !== 'off';
   const metricsTimer = setInterval(() => {
+    if (!metricsEnabled) {
+      return;
+    }
     const rows = [...sessions.values()]
       .filter((s) => s.playerCount > 0)
       .map((s) => s.drainMetrics());
