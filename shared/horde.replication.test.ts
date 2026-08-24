@@ -393,4 +393,124 @@ describe("le livrable de l'etape 2", () => {
     // petite plutot qu'a une croissance lineaire.
     expect(stats.maxDrift).toBeLessThan(40);
   });
+
+  it('reproduit la configuration reelle : un serveur et quatre clients, chacun dans son propre ordre de tick', () => {
+    // Les deux tests precedents ont chacun valide un seul ordre — soit tout le
+    // monde en sequence serveur, soit tout le monde en sequence client — mais
+    // jamais confronte les deux entre eux. Or la partie reelle n'est ni l'un
+    // ni l'autre : c'est UN serveur qui suit `Room.step`
+    // (enregistrement -> rafraichissement -> spawn simple -> avancement) et
+    // QUATRE clients qui suivent `GameClient#advanceHorde`
+    // (rattrapage -> enregistrement -> rafraichissement -> avancement). Rien
+    // n'avait encore mesure la derive entre ces deux ordres.
+    const mapSeed = 0x5eed_1a7e;
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+
+    const SPAWN_TICK = 100;
+    const END = 400;
+    // Retard d'apparition : 0 pour la reference (le serveur apparait au tick
+    // exact, sans rattrapage a se faire a lui-meme), 1 ou 2 ticks pour les
+    // quatre clients (33 a 66 ms de latence reseau simulee).
+    const SPAWN_DELAY: readonly number[] = [0, 1, 1, 2, 2];
+
+    const order: WaveOrder = {
+      waveId: 1,
+      spawnTick: SPAWN_TICK,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = [0, 1, 2, 3].map((p) => 3000 + Math.cos(tick * 0.02 + p) * 1500);
+      const ys = [0, 1, 2, 3].map((p) => 3000 + Math.sin(tick * 0.02 + p) * 1500);
+
+      parts.forEach((p, i) => {
+        if (i === 0) {
+          // Sequence du serveur (`Room.step`, tache 9) : enregistrement,
+          // rafraichissement periodique, puis apparition simple — le serveur
+          // n'est jamais en retard sur son propre tick, donc pas de
+          // rattrapage a faire.
+          p.history.record(tick, xs, ys);
+
+          if (tick % stepsPerField === 0) {
+            const seen = p.history.delayed(tick);
+            if (seen) {
+              for (let f = 0; f < 4; f++) {
+                p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+              }
+              p.horde.retarget(seen.x, seen.y);
+            }
+          }
+
+          if (tick === SPAWN_TICK) {
+            p.horde.spawn(order);
+          }
+
+          p.horde.step(DT, p.fields);
+          return;
+        }
+
+        // Sequence du client (`GameClient#advanceHorde`, tache 13) : les
+        // ordres en attente s'appliquent EN TETE de tick, avant tout
+        // enregistrement et tout rafraichissement du champ.
+        const delay = SPAWN_DELAY[i] ?? 0;
+        if (tick === SPAWN_TICK + delay) {
+          p.horde.spawnCatchingUp(order, delay, DT, p.fields);
+        }
+
+        p.history.record(tick, xs, ys);
+
+        if (tick % stepsPerField === 0) {
+          const seen = p.history.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+
+        p.horde.step(DT, p.fields);
+      });
+
+      for (const p of parts.slice(1)) {
+        const count = Math.min(reference.horde.count, p.horde.count);
+        for (let i = 0; i < count; i++) {
+          const drift = Math.hypot(
+            (p.horde.x[i] ?? 0) - (reference.horde.x[i] ?? 0),
+            (p.horde.y[i] ?? 0) - (reference.horde.y[i] ?? 0),
+          );
+          if (drift > stats.maxDrift) {
+            stats.maxDrift = drift;
+          }
+
+          if (p.horde.entityIdAt(i) !== reference.horde.entityIdAt(i)) {
+            stats.identityMismatches++;
+          }
+        }
+      }
+    }
+
+    process.stdout.write(
+      `derive serveur (record->rafraichissement->spawn) vs client (rattrapage->record->rafraichissement) : ${stats.maxDrift.toFixed(3)} px\n`,
+    );
+
+    expect(stats.identityMismatches).toBe(0);
+    // Borne large et deliberement distincte de DRIFT_LIMIT_PX : ce test ne
+    // verrouille pas une garantie fine puisque les deux ordres different
+    // reellement, il attrape seulement une explosion qui signalerait que les
+    // deux sequences ne sont pas compatibles entre elles.
+    expect(stats.maxDrift).toBeLessThan(200);
+  });
 });
