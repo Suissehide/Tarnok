@@ -82,6 +82,15 @@ export class GameClient {
     return this.#localId;
   }
 
+  /**
+   * Tick courant de la horde locale. Expose pour l'observabilite, comme
+   * `Room.fieldInputTick` cote serveur : c'est ce qui permet de verrouiller
+   * par test que le compteur reste aligne sur le tick absolu recu au WELCOME.
+   */
+  get hordeTick(): number {
+    return this.#lastHordeTick;
+  }
+
   connect(): void {
     this.#setStatus('connecting');
     const ws = new WebSocket(this.url);
@@ -169,6 +178,12 @@ export class GameClient {
 
     if (msg.type === MSG.WELCOME) {
       this.#localId = msg.playerId;
+      // Le tick du salon est ABSOLU et grandit pendant toute sa vie. Sans cet
+      // alignement, `spawnTick - tickLocal` serait negatif pour tout joueur qui
+      // rejoint apres le premier, le rattrapage ne s'executerait jamais, et le
+      // rafraichissement du champ serait dephase de facon permanente par
+      // rapport au serveur.
+      this.#lastHordeTick = msg.tick;
       // Le client **regenere** la carte depuis la graine, il ne la recoit pas :
       // envoyer 8 836 cellules couterait plus cher que tout le protocole.
       const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
