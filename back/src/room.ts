@@ -1,5 +1,20 @@
-import { MAP_SIZE, MAX_PLAYERS, PLAYER_SPEED } from '@shared/constants';
+import {
+  FLOWFIELD_CELL,
+  FLOWFIELD_HZ,
+  MAP_SIZE,
+  MAX_ENTITIES,
+  MAX_PLAYERS,
+  PLAYER_SPEED,
+  TICK_HZ,
+} from '@shared/constants';
+import { FlowField } from '@shared/flowfield';
+import { Horde } from '@shared/horde';
+import { PlayerHistory } from '@shared/player-history';
 import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
+import type { WaveOrder } from '@shared/waves';
+import { applyObstacles, generateObstacles } from '@shared/worldmap';
+
+import { WaveDirector } from './wave-director';
 
 /**
  * Le salon ne connait pas le reseau.
@@ -32,6 +47,14 @@ export interface RoomMetrics {
   encodeMicros: number;
   /** Nombre de snapshots encodes depuis le dernier drainage. */
   snapshots: number;
+  /**
+   * Nombre de vagues tronquees par `Horde.spawn` depuis le dernier drainage —
+   * la horde a atteint sa capacite et une partie de la vague n'est jamais
+   * apparue. Attendu a l'etape 2 (rien ne meurt encore, §11 de la spec), mais
+   * doit rester visible dans le HUD (§4.6) plutot que silencieux : une
+   * troncature muette est un piege pour l'etape 3.
+   */
+  truncatedSpawns: number;
 }
 
 /**
@@ -64,14 +87,51 @@ function isNewer(a: number, b: number): boolean {
 }
 
 export class Room {
+  /** Graine de la carte d'obstacles, tiree a la creation du salon. */
+  readonly mapSeed: number = (Math.random() * 0xffff_ffff) >>> 0;
+  readonly horde = new Horde(MAX_ENTITIES);
   readonly #players = new Map<number, PlayerState>();
+  readonly #fields: FlowField[];
+  readonly #history = new PlayerHistory();
+  readonly #director: WaveDirector;
+  #pendingOrders: WaveOrder[] = [];
   #tick = 0;
-  #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0 };
+  /** Tick des positions ayant servi au dernier calcul des champs. Voir `fieldInputTick`. */
+  #fieldInputTick = 0;
+  #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
   /** Reutilise d'un snapshot a l'autre : pas d'allocation par tick. */
   readonly #scratch: PlayerSnapshot[] = [];
 
+  constructor() {
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(this.mapSeed, probe.cols, probe.rows);
+    this.#fields = Array.from({ length: MAX_PLAYERS }, () => {
+      const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      applyObstacles(f, mask);
+      return f;
+    });
+    this.#director = new WaveDirector(this.mapSeed ^ 0x5bf0_3a17);
+  }
+
+  /** Ordres de vague a diffuser. Le serveur les vide a chaque tick. */
+  drainWaveOrders(): WaveOrder[] {
+    const orders = this.#pendingOrders;
+    this.#pendingOrders = [];
+    return orders;
+  }
+
   get tick(): number {
     return this.#tick;
+  }
+
+  /**
+   * Tick dont proviennent les positions ayant servi au dernier calcul des
+   * champs. Doit rester en retard de `FIELD_INPUT_DELAY_TICKS` sur le tick
+   * courant : c'est ce retard, que le serveur s'impose a lui-meme, qui rend son
+   * champ reproductible par le client.
+   */
+  get fieldInputTick(): number {
+    return this.#fieldInputTick;
   }
 
   get playerCount(): number {
@@ -137,6 +197,48 @@ export class Room {
       p.x = clamp(p.x + p.moveX * PLAYER_SPEED * dt, 0, MAP_SIZE);
       p.y = clamp(p.y + p.moveY * PLAYER_SPEED * dt, 0, MAP_SIZE);
     }
+
+    // Arrondies, comme sur le fil (constat C1.4) : le client ne connaitra
+    // jamais que la version quantifiee en int16 du protocole (`encodeSnapshot`
+    // arrondit deja). Si le serveur alimentait son propre flowfield avec des
+    // positions flottantes, les deux cotes enracineraient leur BFS dans des
+    // cellules differentes une fois par cellule et par axe — le serveur doit
+    // s'imposer l'arrondi comme il s'impose deja le retard.
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const p of this.#players.values()) {
+      xs.push(Math.round(p.x));
+      ys.push(Math.round(p.y));
+    }
+    this.#history.record(this.#tick, xs, ys);
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    if (this.#tick % stepsPerField === 0) {
+      // ⚠️ Les positions **retardees**, pas les courantes. Le serveur s'impose
+      // le retard qu'il inflige au client : c'est ce qui rend les deux champs
+      // identiques (§5 de la spec de l'etape 2).
+      const seen = this.#history.delayed(this.#tick);
+      if (seen) {
+        this.#fieldInputTick = seen.tick;
+        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
+          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        this.horde.retarget(seen.x, seen.y);
+      }
+    }
+
+    const order = this.#director.due(this.#tick, xs, ys);
+    if (order) {
+      const before = this.horde.count;
+      this.horde.spawn(order);
+      // Rend visible une troncature silencieuse : voir `RoomMetrics.truncatedSpawns`.
+      if (this.horde.count - before < order.count) {
+        this.#metrics.truncatedSpawns++;
+      }
+      this.#pendingOrders.push(order);
+    }
+
+    this.horde.step(dt, this.#fields);
   }
 
   snapshot(out: Outbox): void {
@@ -157,7 +259,7 @@ export class Room {
   /** Rend les compteurs accumules et les remet a zero. */
   drainMetrics(): RoomMetrics {
     const drained = this.#metrics;
-    this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0 };
+    this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
     return drained;
   }
 }

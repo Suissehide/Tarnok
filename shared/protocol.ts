@@ -8,7 +8,7 @@
  * echange d'octets a l'encodage comme au decodage.
  */
 
-export const MSG = { WELCOME: 1, SNAPSHOT: 2, INPUT: 3 } as const;
+export const MSG = { WELCOME: 1, SNAPSHOT: 2, INPUT: 3, WAVE_ORDER: 4 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
 
@@ -23,6 +23,8 @@ export interface WelcomeMessage {
   type: typeof MSG.WELCOME;
   playerId: number;
   tick: number;
+  /** Graine de la carte d'obstacles : le client la **regenere**, il ne la recoit pas. */
+  mapSeed: number;
 }
 
 export interface SnapshotMessage {
@@ -38,12 +40,25 @@ export interface InputMessage {
   moveY: number;
 }
 
-export type Message = WelcomeMessage | SnapshotMessage | InputMessage;
+export interface WaveOrderMessage {
+  type: typeof MSG.WAVE_ORDER;
+  waveId: number;
+  spawnTick: number;
+  seed: number;
+  archetype: number;
+  formation: number;
+  anchorX: number;
+  anchorY: number;
+  count: number;
+}
 
-export const WELCOME_BYTES = 6;
+export type Message = WelcomeMessage | SnapshotMessage | InputMessage | WaveOrderMessage;
+
+export const WELCOME_BYTES = 10;
 export const INPUT_BYTES = 5;
 export const SNAPSHOT_HEADER_BYTES = 6;
 export const SNAPSHOT_PLAYER_BYTES = 5;
+export const WAVE_ORDER_BYTES = 19;
 
 /**
  * Ouvre une vue sur le buffer en exigeant une taille minimale.
@@ -130,19 +145,77 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
   return { type: MSG.SNAPSHOT, tick: v.getUint32(1, true), players };
 }
 
-/** S -> C, a la connexion : l'identifiant attribue et le tick courant du salon. */
-export function encodeWelcome(playerId: number, tick: number): ArrayBuffer {
+/**
+ * S -> C, a la connexion : l'identifiant attribue, le tick courant du salon et
+ * la graine de la carte d'obstacles.
+ */
+export function encodeWelcome(playerId: number, tick: number, mapSeed: number): ArrayBuffer {
   const buf = new ArrayBuffer(WELCOME_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.WELCOME);
   v.setUint8(1, playerId);
   v.setUint32(2, tick >>> 0, true);
+  v.setUint32(6, mapSeed >>> 0, true);
   return buf;
 }
 
 export function decodeWelcome(buf: ArrayBuffer): WelcomeMessage {
   const v = viewOf(buf, WELCOME_BYTES);
-  return { type: MSG.WELCOME, playerId: v.getUint8(1), tick: v.getUint32(2, true) };
+  return {
+    type: MSG.WELCOME,
+    playerId: v.getUint8(1),
+    tick: v.getUint32(2, true),
+    mapSeed: v.getUint32(6, true),
+  };
+}
+
+/**
+ * S -> C : l'ordre de faire apparaitre une vague. 19 octets, **quel que soit le
+ * nombre d'entites**.
+ *
+ * C'est la mise en oeuvre du §3.3 : on ne replique pas la horde, on replique
+ * son generateur. Repliquer 1 000 ennemis a 30 Hz couterait ~150 ko/s.
+ *
+ * Le parametre est un type structurel inline plutot que `WaveOrder` de
+ * `shared/waves.ts` : le protocole ne doit pas dependre du module de vagues.
+ */
+export function encodeWaveOrder(order: {
+  waveId: number;
+  spawnTick: number;
+  seed: number;
+  archetype: number;
+  formation: number;
+  anchorX: number;
+  anchorY: number;
+  count: number;
+}): ArrayBuffer {
+  const buf = new ArrayBuffer(WAVE_ORDER_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.WAVE_ORDER);
+  v.setUint16(1, order.waveId & 0xffff, true);
+  v.setUint32(3, order.spawnTick >>> 0, true);
+  v.setUint32(7, order.seed >>> 0, true);
+  v.setUint8(11, order.archetype);
+  v.setUint8(12, order.formation);
+  v.setInt16(13, Math.round(order.anchorX), true);
+  v.setInt16(15, Math.round(order.anchorY), true);
+  v.setUint16(17, order.count & 0xffff, true);
+  return buf;
+}
+
+export function decodeWaveOrder(buf: ArrayBuffer): WaveOrderMessage {
+  const v = viewOf(buf, WAVE_ORDER_BYTES);
+  return {
+    type: MSG.WAVE_ORDER,
+    waveId: v.getUint16(1, true),
+    spawnTick: v.getUint32(3, true),
+    seed: v.getUint32(7, true),
+    archetype: v.getUint8(11),
+    formation: v.getUint8(12),
+    anchorX: v.getInt16(13, true),
+    anchorY: v.getInt16(15, true),
+    count: v.getUint16(17, true),
+  };
 }
 
 /** Lit le premier octet et aiguille. */
@@ -156,6 +229,8 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeSnapshot(buf);
     case MSG.INPUT:
       return decodeInput(buf);
+    case MSG.WAVE_ORDER:
+      return decodeWaveOrder(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }

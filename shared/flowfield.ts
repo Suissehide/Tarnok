@@ -43,6 +43,20 @@ export class FlowField {
   readonly dirY: Float32Array;
   readonly blocked: Uint8Array;
 
+  #revision = 0;
+
+  /**
+   * Nombre de recalculs subis par ce champ.
+   *
+   * En lecture seule de l'exterieur : c'est la donnee sur laquelle
+   * `Horde.spawnCatchingUp` s'appuie pour detecter un rafraichissement survenu
+   * au mauvais moment. La rendre inscriptible permettrait de neutraliser ce
+   * garde-fou sans que rien ne le signale.
+   */
+  get revision(): number {
+    return this.#revision;
+  }
+
   /**
    * File du parcours en largeur, allouee une fois pour toutes.
    *
@@ -87,6 +101,8 @@ export class FlowField {
    * cellules pour chercher le plus petit voisin.
    */
   update(targetX: number, targetY: number): void {
+    this.#revision++;
+
     const { cols, rows, dist, dirX, dirY, blocked } = this;
     const queue = this.#queue;
 

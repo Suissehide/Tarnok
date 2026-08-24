@@ -64,7 +64,47 @@ function join(code: string): void {
   hud.classList.add('flex');
   hudCode.textContent = code;
 
-  stage.run((now, dt) => client.update(now, dt));
+  stage.run((now, dt) => {
+    const state = client.update(now, dt);
+    stage.drawHorde(client.horde, now);
+    return state;
+  });
+
+  // Poignee de debogage, en developpement seulement.
+  //
+  // Le ticker Pixi passe par `requestAnimationFrame`, suspendu dans un onglet en
+  // arriere-plan : impossible d'y verifier quoi que ce soit sans pouvoir avancer
+  // les images a la main. C'est ce qui a produit un faux bug de replication a
+  // l'etape 0 — une capture d'ecran d'un onglet cache montre une image perimee.
+  //
+  // Utile au-dela des tests : le §4.6 de l'orientation demande un HUD de debug
+  // plutot que des logs.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __tarnok?: unknown }).__tarnok = {
+      client,
+      stage,
+      /**
+       * Avance et dessine `count` images, sans dependre de rAF.
+       *
+       * Rend aussi a chaque image : `draw` / `drawHorde` ne font que mettre a
+       * jour la scene en memoire, c'est le ticker Pixi (rAF, donc suspendu
+       * hors focus) qui la peint d'ordinaire. Sans ce rendu force, `step`
+       * avancerait la simulation sans que le canevas ne le montre jamais.
+       */
+      step(count = 1, dt = 1 / 60): void {
+        for (let i = 0; i < count; i++) {
+          const state = client.update(performance.now(), dt);
+          stage.drawHorde(client.horde, performance.now());
+          stage.draw(state);
+          stage.renderNow();
+        }
+      },
+      /** Force un rendu immediat, sans attendre le ticker (suspendu hors focus). */
+      render(): void {
+        stage.renderNow();
+      },
+    };
+  }
 }
 
 function onStatus(status: ConnectionStatus): void {

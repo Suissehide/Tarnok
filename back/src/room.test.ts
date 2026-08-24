@@ -1,4 +1,4 @@
-import { MAP_SIZE, PLAYER_SPEED, TICK_HZ } from '@shared/constants';
+import { FIELD_INPUT_DELAY_TICKS, MAP_SIZE, PLAYER_SPEED, TICK_HZ } from '@shared/constants';
 import { decodeSnapshot } from '@shared/protocol';
 import { describe, expect, it } from 'vitest';
 
@@ -211,5 +211,87 @@ describe('Room.snapshot', () => {
 describe('la carte tient dans un int16', () => {
   it('MAP_SIZE ne peut pas depasser ce que le protocole sait encoder', () => {
     expect(MAP_SIZE).toBeLessThanOrEqual(32767);
+  });
+});
+
+describe('Room et la horde', () => {
+  it('fait apparaitre des vagues au fil du temps', () => {
+    const room = new Room();
+    room.join(1);
+    for (let i = 0; i < TICK_HZ * 20; i++) {
+      room.step(DT);
+    }
+
+    expect(room.horde.count).toBeGreaterThan(0);
+  });
+
+  it('met les ordres de vague dans une file que le serveur vide', () => {
+    const room = new Room();
+    room.join(1);
+    for (let i = 0; i < TICK_HZ * 20; i++) {
+      room.step(DT);
+    }
+
+    const ordres = room.drainWaveOrders();
+
+    expect(ordres.length).toBeGreaterThan(0);
+    expect(room.drainWaveOrders()).toHaveLength(0);
+  });
+
+  it('calcule ses champs sur des positions retardees, jamais sur les courantes', () => {
+    const room = new Room();
+    room.join(1);
+    for (let i = 0; i < TICK_HZ; i++) {
+      room.step(DT);
+    }
+
+    // Le serveur s'impose le retard qu'il inflige au client. Si cette
+    // difference tombe a zero, c'est qu'il calcule sur les positions
+    // courantes — et son champ devient irreproductible cote client.
+    expect(room.tick - room.fieldInputTick).toBe(FIELD_INPUT_DELAY_TICKS);
+  });
+
+  it('a une graine de carte stable pendant toute la vie du salon', () => {
+    const room = new Room();
+    const graine = room.mapSeed;
+    for (let i = 0; i < 100; i++) {
+      room.step(DT);
+    }
+
+    expect(room.mapSeed).toBe(graine);
+  });
+
+  it(
+    'signale dans ses metriques une vague tronquee par la capacite, ' +
+      'plutot que de tronquer en silence',
+    () => {
+      // La horde sature a MAX_ENTITIES tant que rien ne meurt (§11 de la
+      // spec — les morts arrivent a l'etape 3). Une troncature muette serait
+      // un piege : ce test verrouille qu'elle reste visible dans le HUD.
+      const room = new Room();
+      room.join(1);
+      // De quoi voir arriver plusieurs vagues et, une fois la horde pleine,
+      // au moins une troncature.
+      for (let i = 0; i < TICK_HZ * 130; i++) {
+        room.step(DT);
+      }
+
+      expect(room.horde.count).toBeGreaterThan(0);
+      expect(room.metrics.truncatedSpawns).toBeGreaterThan(0);
+    },
+  );
+
+  it('remet le compteur de troncatures a zero au drainage', () => {
+    const room = new Room();
+    room.join(1);
+    for (let i = 0; i < TICK_HZ * 130; i++) {
+      room.step(DT);
+    }
+    expect(room.metrics.truncatedSpawns).toBeGreaterThan(0);
+
+    const drained = room.drainMetrics();
+
+    expect(drained.truncatedSpawns).toBeGreaterThan(0);
+    expect(room.metrics.truncatedSpawns).toBe(0);
   });
 });

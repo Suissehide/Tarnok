@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
-import { decode, encodeWelcome, MSG } from '@shared/protocol';
+import { decode, encodeWaveOrder, encodeWelcome, MSG } from '@shared/protocol';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -79,7 +79,7 @@ class Session {
     this.#clients.set(id, ws);
 
     ws.binaryType = 'arraybuffer';
-    ws.send(encodeWelcome(id, this.room.tick));
+    ws.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
     ws.on('message', (data: ArrayBuffer) => {
       this.#onFrame(id, ws, data);
     });
@@ -116,6 +116,7 @@ class Session {
     'ko/s emis': number;
     'ko/s par joueur': number;
     'us encodage / snapshot': number;
+    'vagues tronquees': number;
   } {
     const room = this.room.drainMetrics();
     const wireBytes = this.#wireBytes;
@@ -129,6 +130,10 @@ class Session {
       'ko/s emis': round2(wireBytes / 1024 / seconds),
       'ko/s par joueur': round2(wireBytes / players / 1024 / seconds),
       'us encodage / snapshot': round2(room.encodeMicros / Math.max(1, room.snapshots)),
+      // La horde sature a 4 000 entites tant que rien ne meurt (§11 de la
+      // spec, differe a l'etape 3) : ce compteur rend cette saturation
+      // visible dans le HUD plutot que silencieuse, comme le veut le §4.6.
+      'vagues tronquees': room.truncatedSpawns,
     };
   }
 
@@ -148,6 +153,18 @@ class Session {
   }
 
   #broadcast(): void {
+    // Les ordres de vague partent avant le snapshot du meme tick : un client
+    // doit connaitre la vague avant de voir bouger les joueurs qu'elle vise.
+    for (const order of this.room.drainWaveOrders()) {
+      const buf = encodeWaveOrder(order);
+      for (const ws of this.#clients.values()) {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(buf);
+          this.#wireBytes += buf.byteLength;
+        }
+      }
+    }
+
     this.#outbox.buffers.length = 0;
     this.room.snapshot(this.#outbox);
 

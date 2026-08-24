@@ -35,25 +35,7 @@ export function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-/**
- * Generateur pseudo-aleatoire deterministe.
- *
- * `Math.random` rendrait chaque execution du banc incomparable a la precedente :
- * on ne saurait pas si un ecart vient du code ou du tirage. Ici, deux passes du
- * banc voient exactement la meme carte et les memes positions de depart.
- */
-export function makeRandom(seed: number): () => number {
-  let state = seed >>> 0;
-  return () => {
-    // xorshift32
-    state ^= state << 13;
-    state >>>= 0;
-    state ^= state >>> 17;
-    state ^= state << 5;
-    state >>>= 0;
-    return state / 0x1_0000_0000;
-  };
-}
+export { makeRandom } from '@shared/random';
 
 export function machineDescription(): string {
   const os = process.platform;

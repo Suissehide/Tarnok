@@ -45,7 +45,7 @@ existe pour lui — mais n'est pas câblé.
 | --- | --- | --- |
 | Les 4 joueurs | positions, 30 Hz | 26 o par snapshot |
 | **La horde** | **rien** | **0 octet, quel que soit N** |
-| Ordre de vague | 1 message | 18 octets, une fois par vague |
+| Ordre de vague | 1 message | 19 octets (18 de charge utile + 1 d'octet de type), une fois par vague |
 | Graine de carte | 1 message | 4 octets, au `WELCOME` |
 
 Répliquer naïvement 1 000 ennemis à 30 Hz coûterait **~150 ko/s par joueur**. Le banc de
@@ -87,10 +87,12 @@ sans recyclage, ce qui évite la classe de bugs « l'entité 12 n'est pas la mê
 
 ## 3. L'ordre de vague
 
-Le seul message que le serveur décide et diffuse pour la horde. **18 octets.**
+Le seul message que le serveur décide et diffuse pour la horde. **19 octets sur le fil : 1
+octet de type + 18 octets de charge utile.**
 
 | Champ | Type | Rôle |
 | --- | --- | --- |
+| *(type de message)* | `u8` | `MSG.WAVE_ORDER`, comme tout message du protocole (§7) |
 | `waveId` | `u16` | base des identités, et ordre de la vague |
 | `spawnTick` | `u32` | tick d'apparition, en temps serveur |
 | `seed` | `u32` | graine du tirage des positions |
@@ -137,8 +139,10 @@ cadence divergerait sans retour.
 ```
 x, y            Float32Array
 archetype       Uint8Array
-waveIndex       Uint16Array   // pour retrouver l'identité
-animPhase       Uint8Array    // décalage d'animation, tiré à l'apparition
+waveId          Uint16Array   // vague d'origine, base de l'identité arithmétique (§2.3)
+indexInWave     Uint16Array   // rang dans la vague, avec waveId : pour retrouver l'identité
+animPhase       Uint8Array    // décalage d'animation, dérivé de l'index (§9.3)
+targetField     Uint8Array    // index du champ suivi : le joueur le plus proche
 count           number        // les entités vivantes occupent [0, count)
 ```
 
@@ -146,7 +150,11 @@ Interface :
 
 - `spawn(order: WaveOrder)` — instancie `count` entités selon la formation.
 - `step(dt, fields)` — un pas fixe : chaque entité lit le gradient de sa cellule.
-- `positionsFor(render)` — remplit les tableaux du rendu.
+- `retarget(playerX, playerY)` — réaffecte `targetField` au joueur le plus proche.
+
+Le rendu (`front/src/render/horde-renderer.ts`) lit directement les tableaux exposés par
+`Horde` — pas de méthode `positionsFor` intermédiaire : à cette échelle, une copie
+supplémentaire coûterait plus qu'elle ne rapporte.
 
 **Le serveur et le client exécutent le même code.** Le serveur reste néanmoins autoritaire :
 c'est son état qui fera foi à l'étape 3.
@@ -215,6 +223,53 @@ mesure** : le banc de l'étape 1 donne 0,47 ko/s par joueur contre 5-15 estimés
 Passer à 30 Hz coûte ~0,7 ko/s — toujours dix fois sous l'estimation. C'est exactement à ça
 que sert un banc : dépenser une marge mesurée pour acheter de la réactivité.
 
+### 6.2 L'apparition tardive, et pourquoi le client doit rattraper
+
+> **Mesuré pendant l'implémentation, le 24 août 2026.** Ce paragraphe corrige une
+> hypothèse du §3.3 de l'orientation, fausse d'un facteur 40.
+
+Un client **ne peut pas** faire apparaître une vague au même tick que le serveur : l'ordre
+voyage sur le réseau. Il l'appliquera un ou deux ticks plus tard (33 à 66 ms), et ses
+entités auront donc été avancées d'un ou deux pas de moins.
+
+Le §3.3 de l'orientation suppose que c'est bénin — « une divergence de trois pixels sur un
+monstre qui vit deux secondes est invisible ». **C'est faux.** Mesure sur cinq simulations,
+1 000 entités, apparition retardée de 1 à 2 ticks :
+
+| Âge de l'entité | Sans rattrapage | Avec rattrapage |
+| --- | --- | --- |
+| 0,5 s | 25,7 px | **20,3 px** |
+| 1 s | 52,8 px | **20,3 px** |
+| 2 s | **122,7 px** | **20,3 px** |
+| 4 s | 279,1 px | **20,3 px** |
+| 10 s | 694,7 px | **20,3 px** |
+
+Sans rattrapage, la dérive croît **linéairement, à ~70 px/s**, sans borne.
+
+**La cause n'est pas celle qu'on croit.** Ce n'est pas la bascule de cible de `retarget` —
+vérifié par expérience : en forçant une cible unique, donc aucune bascule possible, la
+dérive reste à 714 px. C'est **le flowfield lui-même**. Il donne huit directions discrètes
+par cellule de 64 px : deux entités décalées d'un seul pas franchissent les frontières de
+cellules à des instants différents, prennent des directions différentes, et l'écart
+s'installe. Un champ de directions discret est intrinsèquement sensible aux conditions
+initiales.
+
+**Décision : le client rattrape les pas manqués à l'apparition.** Il connaît `spawnTick`
+(il est dans l'ordre de vague) et son propre tick ; en appliquant l'ordre, il avance les
+**nouvelles** entités du nombre de pas manqués, avec son champ courant.
+
+La dérive devient alors **constante à 20,3 px**, quel que soit l'âge — elle ne croît plus.
+Les 20 px résiduels sont l'erreur de fraîcheur du champ : le client rattrape avec le champ
+d'aujourd'hui, là où le serveur a utilisé ceux d'il y a un ou deux ticks. Un tiers de
+sprite, ce qui rentre dans la « ressemblance » du §12.1 — cette fois pour de vrai, avec un
+chiffre.
+
+**Ce que ça change pour la suite.** La leçon dépasse l'apparition : *toute* différence
+d'état initial entre deux simulations s'amplifie linéairement au lieu de rester bornée. Le
+mécanisme du §3.3 ne tolère donc pas les approximations « petites » — il exige que les
+entrées soient identiques. C'est à garder en tête à l'étape 3, quand les morts viendront
+retirer des entités et qu'un décalage d'un tick sur une mort produira le même effet.
+
 ---
 
 ## 7. Protocole
@@ -224,7 +279,7 @@ Trois changements, tous additifs.
 | Message | Changement |
 | --- | --- |
 | `WELCOME` | `+ mapSeed u32` |
-| `WAVE_ORDER` | **nouveau**, 18 octets (§3) |
+| `WAVE_ORDER` | **nouveau**, 19 octets sur le fil, dont 18 de charge utile (§3) |
 | `SNAPSHOT` | inchangé — les 4 joueurs, à 30 Hz |
 
 Le décodeur lève déjà sur un buffer tronqué et sur un type inconnu ; les tests existants de
@@ -321,9 +376,12 @@ image et le nombre d'images.
 
 ### 9.3 Animation
 
-Chaque entité a une `animPhase` tirée à l'apparition. La phase décale le cycle : sans elle,
-mille crânes marchent au pas, ce qui se voit immédiatement. À 10 images par seconde, comme
-le pack (§12.2).
+Chaque entité a une `animPhase` **dérivée de son index dans la vague** à l'apparition — pas
+tirée au hasard : `(index × 7 + waveId × 3) mod frames`. La phase décale le cycle : sans elle,
+mille crânes marchent au pas, ce qui se voit immédiatement. Dérivée plutôt que tirée, elle
+reste identique sur toutes les simulations sans le moindre octet supplémentaire sur le fil —
+et une capture d'écran de debug reste comparable d'une simulation à l'autre. À 10 images par
+seconde, comme le pack (§12.2).
 
 **L'animation est purement cosmétique et n'entre pas dans le contrat de réplication.** Deux
 clients peuvent afficher des images différentes du même ennemi sans conséquence.

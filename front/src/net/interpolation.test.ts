@@ -85,6 +85,31 @@ describe('SnapshotBuffer.sample', () => {
   });
 });
 
+describe('SnapshotBuffer.latest', () => {
+  it('rend le dernier snapshot recu, sans retard', () => {
+    const buffer = new SnapshotBuffer();
+    buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0 }]), 0);
+    buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0 }]), 50);
+
+    expect(buffer.latest()?.players[0]?.x).toBe(100);
+  });
+
+  it('rend le tick SERVEUR du dernier snapshot, pas un compteur local', () => {
+    // C'est la piece qui manquait (constat C1) : sans le tick, l'appelant ne
+    // peut qu'enregistrer ce contenu sous sa propre cle de tick, qui n'a
+    // aucune raison de coincider avec celle du serveur.
+    const buffer = new SnapshotBuffer();
+    buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0 }]), 0);
+    buffer.push(snapshot(7, [{ id: 1, x: 100, y: 0 }]), 50);
+
+    expect(buffer.latest()?.tick).toBe(7);
+  });
+
+  it('rend null quand rien n est arrive', () => {
+    expect(new SnapshotBuffer().latest()).toBeNull();
+  });
+});
+
 describe('SnapshotBuffer.push', () => {
   it('ignore un snapshot arrive dans le desordre', () => {
     const buffer = new SnapshotBuffer();

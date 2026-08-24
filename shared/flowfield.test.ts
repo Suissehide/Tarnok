@@ -117,4 +117,14 @@ describe('FlowField.update', () => {
     expect(before).toBeGreaterThan(0.9);
     expect(after).toBeLessThan(-0.9);
   });
+
+  it('incremente revision a chaque recalcul, pour detecter un rafraichissement', () => {
+    const field = new FlowField(900, 100);
+
+    expect(field.revision).toBe(0);
+    field.update(450, 450);
+    expect(field.revision).toBe(1);
+    field.update(450, 450);
+    expect(field.revision).toBe(2);
+  });
 });

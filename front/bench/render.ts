@@ -15,7 +15,15 @@
  * valides dans un onglet en arriere-plan, ou rAF est suspendu.
  */
 
-import { Application, Container, Particle, ParticleContainer, Sprite, Texture } from 'pixi.js';
+import {
+  Application,
+  Container,
+  Particle,
+  ParticleContainer,
+  Rectangle,
+  Sprite,
+  Texture,
+} from 'pixi.js';
 
 const SPRITE_COUNTS = [500, 1000, 1500, 3000, 6000];
 const PARTICLE_COUNTS = [500, 2000, 5000, 10_000, 20_000];
@@ -161,6 +169,76 @@ function buildSpriteScene(count: number): Scene {
     destroy(): void {
       app.stage.removeChild(container);
       container.destroy({ children: true });
+    },
+  };
+}
+
+/**
+ * Scene de horde animee : un seul atlas, chaque particule change d'image.
+ *
+ * C'est le montage exact du §9 de la spec de l'etape 2. On le prouve ici avant
+ * d'ecrire le rendu du jeu, parce que si `uvs` dynamique ne fonctionne pas, la
+ * conception du rendu est a refaire.
+ */
+function buildAnimatedScene(count: number): Scene {
+  const FRAMES = 8;
+  const CELL = 64;
+  // Atlas synthetique : une bande de 8 images de 64, chacune d'une teinte
+  // differente pour qu'un defaut d'animation se voie a l'oeil nu.
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL * FRAMES;
+  canvas.height = CELL;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  for (let f = 0; f < FRAMES; f++) {
+    ctx.fillStyle = `hsl(${(f * 360) / FRAMES} 70% 55%)`;
+    ctx.fillRect(f * CELL + 4, 4, CELL - 8, CELL - 8);
+  }
+  const atlas = Texture.from(canvas);
+  const frames = Array.from(
+    { length: FRAMES },
+    (_, f) =>
+      new Texture({
+        source: atlas.source,
+        frame: new Rectangle(f * CELL, 0, CELL, CELL),
+      }),
+  );
+
+  const container = new ParticleContainer({
+    dynamicProperties: { position: true, uvs: true, color: false, rotation: false },
+  });
+  const particles: Particle[] = [];
+  const phase: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const p = new Particle({
+      texture: frames[0] as Texture,
+      x: Math.random() * WORLD,
+      y: Math.random() * WORLD,
+    });
+    particles.push(p);
+    phase.push(Math.floor(Math.random() * FRAMES));
+    container.addParticle(p);
+  }
+  app.stage.addChild(container);
+
+  return {
+    advance(t: number): void {
+      const base = Math.floor(t * 10);
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        if (!p) {
+          continue;
+        }
+        p.x += Math.cos(t + i) * 0.5;
+        p.y += Math.sin(t + i) * 0.5;
+        p.texture = frames[(base + (phase[i] ?? 0)) % FRAMES] as Texture;
+      }
+    },
+    destroy(): void {
+      app.stage.removeChild(container);
+      container.destroy();
     },
   };
 }
@@ -326,6 +404,155 @@ function particleBudget(): SweepResult {
   };
 }
 
+/** Horde animee : le montage du §9 de la spec, mesure comme les autres. */
+function animatedSweep(): SweepResult {
+  const rows: Row[] = [];
+  for (const count of SPRITE_COUNTS) {
+    const scene = buildAnimatedScene(count);
+    try {
+      const m = measure(scene);
+      rows.push({
+        mode: 'horde animee (atlas + uvs)',
+        count,
+        medianMs: round2(m.medianMs),
+        p95Ms: round2(m.p95Ms),
+        advanceMs: round2(m.advanceMs),
+        renderMs: round2(m.renderMs),
+        fpsEquivalent: m.medianMs > 0 ? Math.round(1000 / m.medianMs) : 0,
+        withinBudget: m.p95Ms < FRAME_BUDGET_MS,
+      });
+    } finally {
+      scene.destroy();
+    }
+  }
+  return { rows, ceilings: ceilingsOf(rows), renderer: 'webgl', userAgent: navigator.userAgent };
+}
+
+interface AnimationProof {
+  animated: boolean;
+  changedPixels: number;
+  totalPixels: number;
+}
+
+/**
+ * Preuve programmatique — pas visuelle — que `uvs` dynamique anime les particules.
+ *
+ * `measure()` boucle en synchrone : le navigateur ne peint jamais entre deux
+ * appels a `render()`, et la scene mesuree est detruite juste apres. Une
+ * capture d'ecran ne peut donc structurellement rien montrer. On compare ici
+ * les pixels rendus avant et apres un changement de texture ; c'est
+ * verifiable sans jamais afficher l'image a l'ecran, et reproductible.
+ *
+ * Les particules restent a position fixe (`advance()` n'est pas appele) : on
+ * isole ainsi l'effet du changement de texture de celui d'un deplacement, qui
+ * rendrait la comparaison de pixels ininterpretable.
+ */
+function proveAnimation(): AnimationProof {
+  const FRAMES = 8;
+  const CELL = 64;
+  const COLS = 5;
+  const ROWS = 2;
+  const COUNT = COLS * ROWS;
+
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL * FRAMES;
+  canvas.height = CELL;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  for (let f = 0; f < FRAMES; f++) {
+    ctx.fillStyle = `hsl(${(f * 360) / FRAMES} 70% 55%)`;
+    ctx.fillRect(f * CELL + 4, 4, CELL - 8, CELL - 8);
+  }
+  const atlas = Texture.from(canvas);
+  const frames = Array.from(
+    { length: FRAMES },
+    (_, f) =>
+      new Texture({
+        source: atlas.source,
+        frame: new Rectangle(f * CELL, 0, CELL, CELL),
+      }),
+  );
+
+  const container = new ParticleContainer({
+    dynamicProperties: { position: true, uvs: true, color: false, rotation: false },
+  });
+  const particles: Particle[] = [];
+  // Grille fixe, pas de dispersion aleatoire : la preuve doit etre rejouable
+  // a l'identique, et ne faire varier qu'une seule chose a la fois.
+  for (let i = 0; i < COUNT; i++) {
+    const p = new Particle({
+      texture: frames[0] as Texture,
+      x: (i % COLS) * CELL,
+      y: Math.floor(i / COLS) * CELL,
+    });
+    particles.push(p);
+    container.addParticle(p);
+  }
+  app.stage.addChild(container);
+
+  // ParticleContainer ne calcule pas ses bornes (cout de performance) : sans
+  // `boundsArea` explicite, `bounds` reste un rectangle vide (0,0,0,0) et
+  // `extract.pixels()` n'extrait qu'un seul pixel — ce n'est pas l'animation
+  // qui serait en cause, seulement l'extraction. Une marge d'une cellule de
+  // chaque cote absorbe un eventuel anchor centre (0.5) sur les particules.
+  container.boundsArea = new Rectangle(
+    -CELL,
+    -CELL,
+    COLS * CELL + 2 * CELL,
+    ROWS * CELL + 2 * CELL,
+  );
+
+  try {
+    app.renderer.render(app.stage);
+    const before = app.renderer.extract.pixels({ target: container });
+
+    for (let i = 0; i < particles.length; i++) {
+      const p = particles[i];
+      if (!p) {
+        continue;
+      }
+      // Une autre image de l'atlas : teinte differente garantie par construction.
+      p.texture = frames[(i + 1) % FRAMES] as Texture;
+    }
+    container.update();
+    app.renderer.render(app.stage);
+    const after = app.renderer.extract.pixels({ target: container });
+
+    const totalPixels = before.width * before.height;
+    let changedPixels = 0;
+    for (let px = 0; px < before.pixels.length; px += 4) {
+      if (
+        before.pixels[px] !== after.pixels[px] ||
+        before.pixels[px + 1] !== after.pixels[px + 1] ||
+        before.pixels[px + 2] !== after.pixels[px + 2] ||
+        before.pixels[px + 3] !== after.pixels[px + 3]
+      ) {
+        changedPixels++;
+      }
+    }
+
+    // Seuil derive de la geometrie, pas choisi a l'instinct : chaque
+    // particule repeint le rectangle plein dessine dans l'atlas (`CELL - 8`
+    // de cote, pas la cellule entiere qui inclut une bordure transparente
+    // inchangee) ; on exige qu'au moins la moitie de cette aire cumulee ait
+    // change de couleur pour parler d'animation.
+    const paintedAreaPerParticle = (CELL - 8) * (CELL - 8);
+    const expectedPaintedArea = COUNT * paintedAreaPerParticle;
+    const animatedThreshold = expectedPaintedArea / 2;
+
+    return {
+      animated: changedPixels > animatedThreshold,
+      changedPixels,
+      totalPixels,
+    };
+  } finally {
+    app.stage.removeChild(container);
+    container.destroy();
+  }
+}
+
 /** fps reels sur la duree demandee. Exige un onglet au premier plan. */
 async function fpsRun(count: number, seconds: number): Promise<Record<string, number | string>> {
   const scene = buildParticleScene(count);
@@ -428,12 +655,29 @@ wire('run-particles', "Budget d'effets", () => {
   renderTable("Budget de particules d'effet", result.rows);
 });
 
+wire('run-animated', 'Horde animée', () => {
+  renderTable('Horde animée (un atlas, uvs dynamiques)', animatedSweep().rows);
+});
+
 wire('run-fps', 'Mesure fps', async () => {
   const rows: Record<string, number | string>[] = [];
   for (const count of [1500, 3000, 6000]) {
     rows.push(await fpsRun(count, 20));
   }
   renderTable('fps réels sur 20 s', rows);
+});
+
+// Cablage dedie plutot qu'un `wire(...)` : le resultat doit rester lisible
+// dans la ligne de statut, alors que `wire` l'ecrase par « prêt. » a la fin
+// de chaque action.
+const proveButton = document.getElementById('run-prove') as HTMLButtonElement | null;
+proveButton?.addEventListener('click', () => {
+  proveButton.disabled = true;
+  const result = proveAnimation();
+  setStatus(
+    `preuve : ${result.animated ? 'animation confirmee' : 'AUCUN CHANGEMENT — uvs dynamique ne fonctionne pas'} — ${result.changedPixels}/${result.totalPixels} pixels changés.`,
+  );
+  proveButton.disabled = false;
 });
 
 // Point d'entree pour piloter le banc depuis la console ou un outil : il rend
@@ -443,10 +687,12 @@ declare global {
     __tarnokBench: {
       sweep: () => SweepResult;
       particleBudget: () => SweepResult;
+      animatedSweep: () => SweepResult;
+      proveAnimation: () => AnimationProof;
       fpsRun: (count: number, seconds: number) => Promise<Record<string, number | string>>;
     };
   }
 }
 
-window.__tarnokBench = { sweep, particleBudget, fpsRun };
+window.__tarnokBench = { sweep, particleBudget, animatedSweep, proveAnimation, fpsRun };
 setStatus('prêt.');

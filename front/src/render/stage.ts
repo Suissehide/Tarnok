@@ -1,14 +1,21 @@
 import { MAP_SIZE } from '@shared/constants';
-import { Application, Container, Graphics } from 'pixi.js';
+import type { Horde } from '@shared/horde';
+import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type { RenderState } from '../net/client';
+import { ASSETS_BASE } from '../ui/config';
+import { HordeRenderer } from './horde-renderer';
 
 /**
- * Rendu de l'etape 0 : un carre par joueur, une caméra par client.
+ * La scene du jeu : la carte, la horde, et un carre par joueur.
  *
- * On ne parle pas encore de `ParticleContainer` ni d'atlas : c'est le sujet de
- * l'etape 1, et la decision d'y passer doit venir d'une mesure, pas d'une
- * intuition. Ici, quatre `Graphics` suffisent et ne prejugent de rien.
+ * Les joueurs restent quatre `Graphics` — a cette echelle, un objet par
+ * entite ne coute rien, et rien ne justifierait le batching. La horde, elle,
+ * est deleguee a `HordeRenderer` : c'est la ou vit le `ParticleContainer` et
+ * l'atlas de la tache 11-12, la decision d'y passer etant venue d'une mesure
+ * (etape 1), pas d'une intuition. `Stage` ne fait qu'orchestrer les deux :
+ * ordre d'affichage, camera commune, et le rectangle de vue qui sert de
+ * culling a la horde (`viewRect`).
  */
 
 /** Un anneau colore par joueur : avec quatre cameras, il faut savoir qui est qui (§6.6). */
@@ -23,6 +30,9 @@ export class Stage {
   readonly #app = new Application();
   readonly #world = new Container();
   readonly #sprites = new Map<number, Graphics>();
+  // Corrigé par rapport au brief : `readonly` assigné dans `init()` ne
+  // compile pas sous `strictPropertyInitialization`. Initialisation directe.
+  #horde = new HordeRenderer(ASSETS_BASE);
 
   async init(parent: HTMLElement): Promise<void> {
     await this.#app.init({
@@ -39,6 +49,28 @@ export class Stage {
     this.#world.scale.set(1, VERTICAL_SQUASH);
     this.#app.stage.addChild(this.#world);
     this.#world.addChild(mapBorder());
+
+    // Ordre d'affichage : apres la grille, avant les carres des joueurs
+    // (ajoutes plus tard via `#spriteFor`), sinon les joueurs disparaissent
+    // sous la horde.
+    this.#horde.attach(this.#world);
+
+    // Constat I4 : sans ce try/catch, un atlas absent (404 sur le manifeste,
+    // deploiement ou l'atlas n'a pas ete depose sur MinIO) fait echouer cette
+    // promesse. `main.ts` fait `await stage.init(...)` au niveau module ; une
+    // rejection y arrete l'evaluation du module AVANT que les gestionnaires de
+    // clic ne soient installes — lobby mort, sans le moindre message. Mieux
+    // vaut demarrer sans horde visible que bloquer tout le jeu pour un asset
+    // manquant. `HordeRenderer.draw` sait deja ne rien faire tant que
+    // `#loaded` est faux.
+    try {
+      await this.#horde.load();
+    } catch (cause) {
+      console.error(
+        "atlas de la horde indisponible, la horde ne sera pas dessinee. L'a-t-on deploye sur MinIO ? (voir docs/plans/2026-08-24-etape-2-resultats.md §5.1)",
+        cause,
+      );
+    }
   }
 
   get canvas(): HTMLCanvasElement {
@@ -71,6 +103,33 @@ export class Stage {
     }
 
     this.#centerOn(state);
+  }
+
+  /**
+   * Force un rendu immediat, sans attendre le ticker.
+   *
+   * Le ticker Pixi passe par `requestAnimationFrame`, suspendu dans un onglet
+   * en arriere-plan : la scene peut etre a jour en memoire (apres `draw` /
+   * `drawHorde`) sans que le canevas ne le reflete jamais. Utile a la poignee
+   * de debogage `__tarnok` (developpement uniquement), mais reste publique et
+   * anodine — elle ne fuit pas l'`Application` Pixi complete.
+   */
+  renderNow(): void {
+    this.#app.renderer.render(this.#app.stage);
+  }
+
+  /** Rectangle du monde actuellement visible, pour le culling. */
+  viewRect(): Rectangle {
+    return new Rectangle(
+      -this.#world.x,
+      -this.#world.y / VERTICAL_SQUASH,
+      this.#app.screen.width,
+      this.#app.screen.height / VERTICAL_SQUASH,
+    );
+  }
+
+  drawHorde(horde: Horde, timeMs: number): void {
+    this.#horde.draw(horde, this.viewRect(), timeMs);
   }
 
   destroy(): void {

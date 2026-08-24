@@ -2925,13 +2925,41 @@ Dans `#onFrame`, dans la branche `MSG.WELCOME` :
     }
 ```
 
-- [ ] **Étape 3 : appliquer les ordres de vague**
+- [ ] **Étape 3 : mettre les ordres de vague en file, sans les appliquer**
 
-Toujours dans `#onFrame`, avant le test `msg.type !== MSG.SNAPSHOT` :
+> ⚠️ **Amendement du 24 août 2026, fondé sur une mesure.** Cette étape disait
+> initialement `this.horde.spawn(msg)` directement dans le gestionnaire de message.
+> **C'est faux, et ça coûte cher.** Voir le §6.2 de la spec : un ordre appliqué au moment
+> où il arrive fait apparaître les entités un ou deux ticks trop tard, et cet écart ne
+> reste pas borné — il croît linéairement à ~70 px/s, jusqu'à 694 px après dix secondes.
+>
+> Deux corrections indissociables :
+> 1. **Rattraper les pas manqués**, avec `Horde.spawnCatchingUp`.
+> 2. **L'appliquer au bon moment du tick** — avant le rafraîchissement du champ, jamais
+>    après. Mesuré : appelé après, le rattrapage donne 782 px, soit **pire que de ne rien
+>    faire**. Appelé avant, il donne 0 à 49 px.
+>
+> D'où la mise en file : le gestionnaire de message ne fait qu'empiler, et c'est la boucle
+> à pas fixe qui applique, à un point unique et au bon endroit.
+
+Ajouter un champ à `GameClient` :
+
+```ts
+  /**
+   * Ordres recus mais pas encore appliques.
+   *
+   * Le gestionnaire de message ne fait QUE empiler. L'application a lieu dans
+   * `#advanceHorde`, avant le rafraichissement du champ — l'ordre inverse
+   * multiplie la derive par trente-cinq (§6.2 de la spec).
+   */
+  readonly #pendingOrders: WaveOrderMessage[] = [];
+```
+
+Puis, dans `#onFrame`, avant le test `msg.type !== MSG.SNAPSHOT` :
 
 ```ts
     if (msg.type === MSG.WAVE_ORDER) {
-      this.horde.spawn(msg);
+      this.#pendingOrders.push(msg);
       return;
     }
 ```
@@ -2965,6 +2993,21 @@ Et la méthode :
       return;
     }
     const tick = this.#lastHordeTick++;
+
+    // ⚠️ LES ORDRES EN ATTENTE S'APPLIQUENT ICI, EN PREMIER — avant le
+    // rafraichissement du champ plus bas. Mesure (§6.2 de la spec) : dans cet
+    // ordre, la derive due a la latence reste bornee autour de 20 a 50 px ;
+    // dans l'ordre inverse, elle monte a 782 px, soit pire que de ne pas
+    // rattraper du tout. C'est la seule raison pour laquelle les ordres sont
+    // mis en file plutot qu'appliques a la reception.
+    while (this.#pendingOrders.length > 0) {
+      const order = this.#pendingOrders.shift();
+      if (order) {
+        // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
+        const missed = Math.max(0, tick - order.spawnTick);
+        this.horde.spawnCatchingUp(order, missed, dt, this.#fields);
+      }
+    }
 
     // Les positions telles que le client les connait : celles du dernier
     // snapshot recu. Le serveur lira les memes, grace au retard qu'il s'impose.

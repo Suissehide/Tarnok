@@ -1,5 +1,23 @@
-import { INPUT_HZ } from '@shared/constants';
-import { decode, encodeInput, MSG, type PlayerSnapshot } from '@shared/protocol';
+import {
+  FLOWFIELD_CELL,
+  FLOWFIELD_HZ,
+  INPUT_HZ,
+  MAP_SIZE,
+  MAX_ENTITIES,
+  MAX_PLAYERS,
+  TICK_HZ,
+} from '@shared/constants';
+import { FlowField } from '@shared/flowfield';
+import { Horde } from '@shared/horde';
+import { PlayerHistory } from '@shared/player-history';
+import {
+  decode,
+  encodeInput,
+  MSG,
+  type PlayerSnapshot,
+  type WaveOrderMessage,
+} from '@shared/protocol';
+import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { SnapshotBuffer } from './interpolation';
 import { PredictedPlayer } from './prediction';
@@ -19,6 +37,25 @@ export interface RenderState {
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
 /**
+ * Tolerance de retard du compteur de tick local de la horde sur le tick
+ * serveur porte par le dernier snapshot recu.
+ *
+ * Volontairement asymetrique et serree. Etre EN AVANCE du tick serveur connu
+ * est le fonctionnement normal — la latence reseau fait que le dernier
+ * snapshot recu decrit toujours un instant deja passe — et ne doit jamais
+ * declencher de recalage : le faire reviendrait a figer en permanence le
+ * compteur local sur un tick perime, annulant l'absorption de latence de
+ * `FIELD_INPUT_DELAY_TICKS`. Etre EN RETARD, en revanche, ne devrait jamais
+ * arriver en fonctionnement normal — seulement apres une perte de pas (onglet
+ * en arriere-plan, §6.1c de la spec) — et doit se corriger immediatement : le
+ * flowfield est un champ de directions discret, mesure (voir
+ * `shared/horde.replication.test.ts`, scenarios C1) a etre assez sensible
+ * pour faire la difference entre 0 et plus de 600 px de derive selon qu'un
+ * retard persistant d'un ou de deux ticks est tolere.
+ */
+const HORDE_TICK_LAG_TOLERANCE = 1;
+
+/**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
  * Il ne dessine rien et ne lit pas le clavier — il recoit une fonction qui lui
@@ -34,6 +71,22 @@ export class GameClient {
   #seq = 0;
   #status: ConnectionStatus = 'closed';
 
+  readonly horde = new Horde(MAX_ENTITIES);
+  #fields: FlowField[] = [];
+  readonly #history = new PlayerHistory();
+  /** Accumulateur de pas fixes : la horde avance a 30 Hz, comme le serveur. */
+  #hordeAcc = 0;
+  #lastHordeTick = 0;
+
+  /**
+   * Ordres recus mais pas encore appliques.
+   *
+   * Le gestionnaire de message ne fait QUE empiler. L'application a lieu dans
+   * `#advanceHorde`, avant le rafraichissement du champ — l'ordre inverse
+   * multiplie la derive par trente-cinq (§6.2 de la spec).
+   */
+  readonly #pendingOrders: WaveOrderMessage[] = [];
+
   constructor(
     private readonly url: string,
     private readonly readInput: () => InputAxes,
@@ -46,6 +99,18 @@ export class GameClient {
 
   get localId(): number | null {
     return this.#localId;
+  }
+
+  /**
+   * Tick courant de la horde locale. Expose pour l'observabilite, comme
+   * `Room.fieldInputTick` cote serveur : c'est ce qui permet de verrouiller
+   * par test que le compteur reste aligne sur le tick absolu recu au WELCOME,
+   * puis recale en continu sur celui des snapshots recus (voir `#onFrame`) —
+   * sans quoi il resterait en permanence en retard du temps de trajet du
+   * WELCOME, pour toute la vie de la connexion (constat C1.b).
+   */
+  get hordeTick(): number {
+    return this.#lastHordeTick;
   }
 
   connect(): void {
@@ -90,6 +155,21 @@ export class GameClient {
     const axes = this.readInput();
     this.#local?.predict(axes.x, axes.y, dt);
 
+    // La horde avance au **pas fixe** du serveur, pas au rythme des images :
+    // deux clients a 60 et 144 fps appliqueraient sinon des suites de `dt`
+    // differentes, et la derive serait proportionnelle au temps de vie.
+    const STEP = 1 / TICK_HZ;
+    this.#hordeAcc += dt;
+    let steps = 0;
+    while (this.#hordeAcc >= STEP && steps < 5) {
+      this.#advanceHorde(STEP);
+      this.#hordeAcc -= STEP;
+      steps++;
+    }
+    if (steps === 5) {
+      this.#hordeAcc = 0;
+    }
+
     const players = this.#buffer.sample(now);
     const local = this.#local;
     if (local && this.#localId !== null) {
@@ -120,6 +200,25 @@ export class GameClient {
 
     if (msg.type === MSG.WELCOME) {
       this.#localId = msg.playerId;
+      // Le tick du salon est ABSOLU et grandit pendant toute sa vie. Sans cet
+      // alignement, `spawnTick - tickLocal` serait negatif pour tout joueur qui
+      // rejoint apres le premier, le rattrapage ne s'executerait jamais, et le
+      // rafraichissement du champ serait dephase de facon permanente par
+      // rapport au serveur.
+      this.#lastHordeTick = msg.tick;
+      // Le client **regenere** la carte depuis la graine, il ne la recoit pas :
+      // envoyer 8 836 cellules couterait plus cher que tout le protocole.
+      const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      const mask = generateObstacles(msg.mapSeed, probe.cols, probe.rows);
+      this.#fields = Array.from({ length: MAX_PLAYERS }, () => {
+        const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+        applyObstacles(f, mask);
+        return f;
+      });
+      return;
+    }
+    if (msg.type === MSG.WAVE_ORDER) {
+      this.#pendingOrders.push(msg);
       return;
     }
     if (msg.type !== MSG.SNAPSHOT) {
@@ -127,6 +226,14 @@ export class GameClient {
     }
 
     this.#buffer.push(msg, performance.now());
+
+    // Recalage continu (constat C1.b/c) : sans lui, le compteur reste calé
+    // sur le retard du WELCOME pour toute la vie de la connexion, et un
+    // onglet remis au premier plan après une pause ne rattrape jamais les pas
+    // perdus. Voir `HORDE_TICK_LAG_TOLERANCE`.
+    if (msg.tick - this.#lastHordeTick > HORDE_TICK_LAG_TOLERANCE) {
+      this.#lastHordeTick = msg.tick;
+    }
 
     const mine =
       this.#localId === null ? undefined : msg.players.find((p) => p.id === this.#localId);
@@ -139,6 +246,57 @@ export class GameClient {
     } else {
       this.#local.reconcile(mine.x, mine.y);
     }
+  }
+
+  #advanceHorde(dt: number): void {
+    if (this.#fields.length === 0) {
+      return;
+    }
+    const tick = this.#lastHordeTick++;
+
+    // ⚠️ LES ORDRES EN ATTENTE S'APPLIQUENT ICI, EN PREMIER — avant le
+    // rafraichissement du champ plus bas. Mesure (§6.2 de la spec) : dans cet
+    // ordre, la derive due a la latence reste bornee autour de 20 a 50 px ;
+    // dans l'ordre inverse, elle monte a 782 px, soit pire que de ne pas
+    // rattraper du tout. C'est la seule raison pour laquelle les ordres sont
+    // mis en file plutot qu'appliques a la reception.
+    while (this.#pendingOrders.length > 0) {
+      const order = this.#pendingOrders.shift();
+      if (order) {
+        // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
+        const missed = Math.max(0, tick - order.spawnTick);
+        this.horde.spawnCatchingUp(order, missed, dt, this.#fields);
+      }
+    }
+
+    // Les positions telles que le client les connait : celles du dernier
+    // snapshot recu, enregistrees sous le tick SERVEUR auquel elles ont ete
+    // calculees — jamais sous le tick local `tick` (constat C1.a). Le serveur
+    // enregistre les siennes sous son propre tick reel ; si le client
+    // enregistrait les memes positions sous une cle differente, `delayed()`
+    // ne lirait plus la meme chose des deux cotes, meme quand le compteur
+    // local est par ailleurs bien recale.
+    const snapshot = this.#buffer.latest();
+    if (snapshot) {
+      this.#history.record(
+        snapshot.tick,
+        snapshot.players.map((p) => p.x),
+        snapshot.players.map((p) => p.y),
+      );
+    }
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    if (tick % stepsPerField === 0) {
+      const seen = this.#history.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
+          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        this.horde.retarget(seen.x, seen.y);
+      }
+    }
+
+    this.horde.step(dt, this.#fields);
   }
 
   #setStatus(status: ConnectionStatus): void {

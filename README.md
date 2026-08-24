@@ -14,7 +14,13 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | --- | --- | --- |
 | 0 | Socle : dépôt, workspaces, CI, salon WebSocket minimal | ✅ |
 | 1 | Bancs de performance | ✅ — [résultats](docs/plans/2026-08-24-banc-resultats.md) |
-| 2 | Horde : flowfield, vagues data-driven, rendu batché | à venir |
+| 2 | Horde : flowfield, vagues data-driven, rendu batché | ✅ — [résultats](docs/plans/2026-08-24-etape-2-resultats.md) |
+| 3 | Combat : armes, projectiles, dégâts serveur, expérience | à venir |
+
+**Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
+19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du
+§3.3 de la spec d'orientation, et elle est mesurée : dérive de 0,000 px, identités
+strictement égales.
 
 Le découpage complet est au §13 de la spec.
 
