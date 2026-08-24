@@ -50,7 +50,7 @@ qu'un tick de décalage ne se résorbe plus.
 | `ROLLBACK_DEPTH_TICKS` | 8 | **doit être > la latence maximale en ticks** ; 8 ticks = 266 ms, au-delà de quoi une mort est appliquée au présent **et signalée** |
 | `SEPARATION_RADIUS` | 28 px | **doit être ≤ moitié de `SEPARATION_CELL`** pour que les huit voisines suffisent |
 | `SEPARATION_CELL` | 56 px | = `2 × SEPARATION_RADIUS` |
-| `SEPARATION_STRENGTH` | 120 px/s | réglage de sensation ; sans effet sur le déterminisme |
+| `SEPARATION_STRENGTH` | **1200 px/s** | **le principal levier de coût**, pas un réglage de sensation — voir ci-dessous |
 | `ORB_LIFETIME_TICKS` | 600 (20 s) | dérivé des deux côtés, donc aucune valeur ne doit dépendre d'une horloge murale |
 | `ORB_PICKUP_RADIUS` | 90 px | arbitré serveur |
 | `PLAYER_MAX_HP` | 100 | |
@@ -60,6 +60,34 @@ qu'un tick de décalage ne se résorbe plus.
 | `XP_PER_ORB` | 1 | |
 | `LEVEL_FREEZE_TICKS` | 60 (2 s) | l'étape 4 le portera à 20 s plafonnées (§7.4) |
 | `LEVEL_RESUME_TICKS` | 30 (1 s) | reprise progressive (§7.4) |
+
+> ### Pourquoi `SEPARATION_STRENGTH` n'est pas un réglage de sensation
+>
+> La première version de ce tableau la donnait à 120 px/s en la qualifiant de « réglage de
+> sensation, sans effet sur le déterminisme ». La seconde moitié est vraie ; la première a
+> fait échouer la porte de la tâche 0, et la mesure explique pourquoi.
+>
+> Cette constante fixe la **densité d'équilibre** de la horde, et le coût de la séparation
+> croît avec le carré de cette densité. À 120 px/s la répulsion perd contre le flowfield :
+> l'équilibre n'est jamais atteint, la densité continue de monter tant que des monstres
+> arrivent, et l'on paie plein tarif pour un entassement à ~11 px d'écart alors que le rayon
+> en demande 28. Mesuré à 1 500 entités, entre le tick 60 et le tick 360 :
+>
+> | Force | Voisins à t60 → t360 | Pas (ms) | Rejeu de 3 ticks |
+> | --- | --- | --- | --- |
+> | 120 | 11,5 → **29,0** — jamais stable | 0,94 | 3,8 ms |
+> | 600 | 5,5 → 8,3 | 0,46 | 1,8 ms |
+> | **1200** | **3,5 → 4,0 — stable** | **0,33** | **1,3 ms** |
+> | 2000 | 2,3 → 2,3 | 0,27 | 1,1 ms |
+>
+> 1200 px/s n'est pas une vitesse : c'est une **raideur**, multipliée par la fraction de
+> recouvrement `(R − d) / R`. Deux entités à 27 px l'une de l'autre se poussent de 1,4 px par
+> tick ; seules celles qui se superposent vraiment reçoivent une grosse impulsion. Le
+> mécanisme s'auto-limite.
+>
+> ⚠️ **Ne pas plafonner le déplacement par tick.** Essayé à `R / 2` : le coût *empire* (47
+> voisins au lieu de 37 à 4 000 entités), parce que brider la poussée empêche l'entassement
+> de se relâcher. Le remède aggrave le mal.
 
 ## Structure des fichiers
 
@@ -133,7 +161,7 @@ const WARMUP_STEPS = 60;
 
 const SEPARATION_RADIUS = 28;
 const SEPARATION_CELL = 56;
-const SEPARATION_STRENGTH = 120;
+const SEPARATION_STRENGTH = 1200;
 
 /**
  * Grille spatiale jetable, ecrite ici pour mesurer la FORME de l'algorithme
@@ -147,6 +175,8 @@ class Separation {
   readonly #cols: number;
   readonly #cellStart: Int32Array;
   readonly #cellCount: Int32Array;
+  readonly #cursor: Int32Array;
+  readonly #cellIdx: Int32Array;
   readonly #order: Int32Array;
   readonly #pushX: Float32Array;
   readonly #pushY: Float32Array;
@@ -156,6 +186,8 @@ class Separation {
     const cells = this.#cols * this.#cols;
     this.#cellStart = new Int32Array(cells + 1);
     this.#cellCount = new Int32Array(cells);
+    this.#cursor = new Int32Array(cells + 1);
+    this.#cellIdx = new Int32Array(capacity);
     this.#order = new Int32Array(capacity);
     this.#pushX = new Float32Array(capacity);
     this.#pushY = new Float32Array(capacity);
@@ -164,36 +196,41 @@ class Separation {
   apply(horde: Horde, dt: number): void {
     const n = horde.count;
     const cols = this.#cols;
+    const hx = horde.x;
+    const hy = horde.y;
     this.#cellCount.fill(0);
     this.#pushX.fill(0, 0, n);
     this.#pushY.fill(0, 0, n);
 
     // Tri par comptage dans la grille : deux passes lineaires, zero allocation.
-    const cellOf = (i: number): number => {
-      const cx = Math.min(cols - 1, Math.max(0, Math.floor((horde.x[i] ?? 0) / SEPARATION_CELL)));
-      const cy = Math.min(cols - 1, Math.max(0, Math.floor((horde.y[i] ?? 0) / SEPARATION_CELL)));
-      return cy * cols + cx;
-    };
+    // La cellule de chaque entite est calculee UNE fois et memorisee.
     for (let i = 0; i < n; i++) {
-      this.#cellCount[cellOf(i)] = (this.#cellCount[cellOf(i)] ?? 0) + 1;
+      const cx = Math.min(cols - 1, Math.max(0, Math.floor((hx[i] ?? 0) / SEPARATION_CELL)));
+      const cy = Math.min(cols - 1, Math.max(0, Math.floor((hy[i] ?? 0) / SEPARATION_CELL)));
+      const c = cy * cols + cx;
+      this.#cellIdx[i] = c;
+      this.#cellCount[c] = (this.#cellCount[c] ?? 0) + 1;
     }
     let running = 0;
     for (let c = 0; c < this.#cellCount.length; c++) {
       this.#cellStart[c] = running;
+      this.#cursor[c] = running;
       running += this.#cellCount[c] ?? 0;
     }
     this.#cellStart[this.#cellCount.length] = running;
-    const cursor = this.#cellStart.slice();
     for (let i = 0; i < n; i++) {
-      const c = cellOf(i);
-      this.#order[cursor[c] ?? 0] = i;
-      cursor[c] = (cursor[c] ?? 0) + 1;
+      const c = this.#cellIdx[i] ?? 0;
+      this.#order[this.#cursor[c] ?? 0] = i;
+      this.#cursor[c] = (this.#cursor[c] ?? 0) + 1;
     }
 
+    // Chaque paire est examinee UNE fois (j > i) et la force appliquee aux deux
+    // entites, egale et opposee. Visiter (i, j) puis (j, i) doublerait le travail
+    // pour recalculer exactement la meme chose au signe pres.
     const r2 = SEPARATION_RADIUS * SEPARATION_RADIUS;
     for (let i = 0; i < n; i++) {
-      const xi = horde.x[i] ?? 0;
-      const yi = horde.y[i] ?? 0;
+      const xi = hx[i] ?? 0;
+      const yi = hy[i] ?? 0;
       const cx = Math.min(cols - 1, Math.max(0, Math.floor(xi / SEPARATION_CELL)));
       const cy = Math.min(cols - 1, Math.max(0, Math.floor(yi / SEPARATION_CELL)));
 
@@ -209,19 +246,23 @@ class Separation {
           const to = this.#cellStart[c + 1] ?? 0;
           for (let k = from; k < to; k++) {
             const j = this.#order[k] ?? 0;
-            if (j === i) {
+            if (j <= i) {
               continue;
             }
-            const dx = xi - (horde.x[j] ?? 0);
-            const dy = yi - (horde.y[j] ?? 0);
+            const dx = xi - (hx[j] ?? 0);
+            const dy = yi - (hy[j] ?? 0);
             const d2 = dx * dx + dy * dy;
             if (d2 > r2 || d2 === 0) {
               continue;
             }
             const d = Math.sqrt(d2);
             const push = (SEPARATION_RADIUS - d) / SEPARATION_RADIUS;
-            this.#pushX[i] = (this.#pushX[i] ?? 0) + (dx / d) * push;
-            this.#pushY[i] = (this.#pushY[i] ?? 0) + (dy / d) * push;
+            const ux = (dx / d) * push;
+            const uy = (dy / d) * push;
+            this.#pushX[i] = (this.#pushX[i] ?? 0) + ux;
+            this.#pushY[i] = (this.#pushY[i] ?? 0) + uy;
+            this.#pushX[j] = (this.#pushX[j] ?? 0) - ux;
+            this.#pushY[j] = (this.#pushY[j] ?? 0) - uy;
           }
         }
       }
@@ -229,8 +270,8 @@ class Separation {
 
     const speed = SEPARATION_STRENGTH * dt;
     for (let i = 0; i < n; i++) {
-      horde.x[i] = (horde.x[i] ?? 0) + (this.#pushX[i] ?? 0) * speed;
-      horde.y[i] = (horde.y[i] ?? 0) + (this.#pushY[i] ?? 0) * speed;
+      hx[i] = (hx[i] ?? 0) + (this.#pushX[i] ?? 0) * speed;
+      hy[i] = (hy[i] ?? 0) + (this.#pushY[i] ?? 0) * speed;
     }
   }
 }
@@ -257,10 +298,54 @@ function makeHorde(count: number): { horde: Horde; fields: FlowField[] } {
   return { horde, fields };
 }
 
-function measure(count: number, withSeparation: boolean): { median: number; p95: number } {
+/**
+ * Nombre moyen de voisins dans le rayon, par force brute.
+ *
+ * ⚠️ C'est la mesure de controle, et elle n'est pas decorative. Le cout de la
+ * separation croit avec le CARRE de la densite : une horde qui s'entasse a 29
+ * voisins par entite au lieu de 4 coute huit fois plus cher, sans qu'aucune
+ * ligne de code soit en cause. La premiere execution de ce banc a franchi la
+ * porte du §3.3 pour exactement cette raison — une force de repulsion trop
+ * faible pour atteindre son equilibre. Sans cette colonne, on aurait conclu que
+ * l'architecture etait trop chere.
+ *
+ * Se lit par paire avec la stabilite : si la densite a la fin depasse nettement
+ * celle du milieu, l'equilibre n'est pas atteint et le chiffre de cout ne veut
+ * rien dire — il ne mesure qu'un instantane d'un entassement qui grossit encore.
+ */
+function meanNeighbours(horde: Horde): number {
+  const n = horde.count;
+  const r2 = SEPARATION_RADIUS * SEPARATION_RADIUS;
+  let total = 0;
+  for (let i = 0; i < n; i++) {
+    for (let j = 0; j < n; j++) {
+      if (i === j) {
+        continue;
+      }
+      const dx = (horde.x[i] ?? 0) - (horde.x[j] ?? 0);
+      const dy = (horde.y[i] ?? 0) - (horde.y[j] ?? 0);
+      if (dx * dx + dy * dy <= r2) {
+        total++;
+      }
+    }
+  }
+  return total / n;
+}
+
+interface Measurement {
+  median: number;
+  p95: number;
+  /** Voisins moyens juste apres la chauffe. */
+  neighboursEarly: number;
+  /** Voisins moyens a la fin — doit rester proche du precedent. */
+  neighboursLate: number;
+}
+
+function measure(count: number, withSeparation: boolean): Measurement {
   const { horde, fields } = makeHorde(count);
   const sep = new Separation(4000);
   const times: number[] = [];
+  let neighboursEarly = 0;
   for (let step = 0; step < WARMUP_STEPS + MEASURED_STEPS; step++) {
     const started = performance.now();
     horde.step(DT, fields);
@@ -268,12 +353,20 @@ function measure(count: number, withSeparation: boolean): { median: number; p95:
       sep.apply(horde, DT);
     }
     const elapsed = performance.now() - started;
+    if (step === WARMUP_STEPS) {
+      neighboursEarly = meanNeighbours(horde);
+    }
     if (step >= WARMUP_STEPS) {
       times.push(elapsed);
     }
   }
   const s = stats(times);
-  return { median: s.median, p95: s.p95 };
+  return {
+    median: s.median,
+    p95: s.p95,
+    neighboursEarly,
+    neighboursLate: meanNeighbours(horde),
+  };
 }
 
 function main(): void {
@@ -284,13 +377,18 @@ function main(): void {
     const sans = measure(n, false);
     const avec = measure(n, true);
     const rejeu4 = avec.median * 4;
+    // Densite stable = l'equilibre est atteint et le cout veut dire quelque chose.
+    const stable = avec.neighboursLate <= avec.neighboursEarly * 1.5;
     return {
       entites: n,
       'pas sans separation (ms)': round2(sans.median),
       'pas avec separation (ms)': round2(avec.median),
       'cout de la separation (ms)': round2(avec.median - sans.median),
+      'voisins (debut)': round2(avec.neighboursEarly),
+      'voisins (fin)': round2(avec.neighboursLate),
+      equilibre: stable ? 'atteint' : 'NON ATTEINT',
       'rejeu de 3 ticks (ms)': round2(rejeu4),
-      verdict: rejeu4 < 1 ? 'OK' : rejeu4 < 4 ? 'a borner' : 'rouvrir le §3.2',
+      verdict: !stable ? 'mesure invalide' : rejeu4 < 1 ? 'OK' : rejeu4 < 4 ? 'a borner' : 'rouvrir le §3.2',
     };
   });
   console.table(rows);
@@ -300,6 +398,17 @@ function main(): void {
     `\n-> A la cible de 1 500 entites (§4.1), un rejeu de trois ticks coute ` +
       `${cible?.['rejeu de 3 ticks (ms)']} ms sur un budget d'image de 16,7 ms.`,
   );
+  console.log(
+    `   Densite : ${cible?.['voisins (debut)']} -> ${cible?.['voisins (fin)']} voisins ` +
+      `(${cible?.equilibre}).`,
+  );
+  if (rows.some((r) => r.equilibre !== 'atteint')) {
+    console.log(
+      `\n⚠️  Un effectif au moins n'a PAS atteint son equilibre de densite. Son chiffre de\n` +
+        `   cout ne mesure pas l'algorithme, il mesure un entassement qui grossit encore.\n` +
+        `   Corriger SEPARATION_STRENGTH avant de lire le verdict.`,
+    );
+  }
 }
 
 main();
@@ -326,6 +435,11 @@ Attendu : un tableau, et une ligne de verdict pour 1 500 entités.
 > ⚠️ **Rapporte le chiffre tel quel.** Ne l'interprète pas, ne l'arrondis pas dans le sens
 > qui arrange. Les trois issues sont écrites d'avance dans le tableau ci-dessus précisément
 > pour que le résultat décide, et pas l'inverse.
+>
+> ⚠️ **Mais lis d'abord la colonne « équilibre ».** Si un effectif affiche `NON ATTEINT`, son
+> chiffre de coût ne mesure pas l'algorithme — il mesure un entassement qui grossit encore, et
+> le verdict qui en découle ne veut rien dire. C'est exactement ce qui s'est produit à la
+> première exécution de ce banc.
 >
 > **Si le verdict est « rouvrir le §3.2 », arrête-toi et dis-le.** C'est un résultat, pas un
 > échec — c'est même la raison d'être de cette tâche.
@@ -368,8 +482,20 @@ export const SEPARATION_RADIUS = 28;
 /** Cote d'une cellule de la grille de separation. */
 export const SEPARATION_CELL = 56;
 
-/** Vitesse de repoussement, en pixels monde par seconde. Reglage de sensation. */
-export const SEPARATION_STRENGTH = 120;
+/**
+ * Raideur de la repulsion, en pixels monde par seconde, multipliee par la
+ * fraction de recouvrement `(R - d) / R`.
+ *
+ * ⚠️ **Ce n'est pas un reglage de sensation.** Cette constante fixe la densite
+ * d'equilibre de la horde, et le cout de la separation croit avec le CARRE de
+ * cette densite. A 120 px/s la repulsion perd contre le flowfield : l'equilibre
+ * n'est jamais atteint et le banc de la tache 0 franchit la porte du §3.3 pour
+ * cette seule raison. A 1200 px/s la horde se stabilise a ~4 voisins par entite
+ * au lieu de ~29, et le rejeu passe de 3,8 ms a 1,3 ms.
+ *
+ * La baisser est un choix de performance avant d'etre un choix de sensation.
+ */
+export const SEPARATION_STRENGTH = 1200;
 ```
 
 - [ ] **Étape 2 : écrire le test qui échoue**
@@ -548,8 +674,16 @@ ajoutant l'en-tête suivant :
  */
 ```
 
-**Ne garde pas le `cursor = this.#cellStart.slice()` du banc** : il alloue à chaque appel.
-Utilise un `Int32Array` membre, rempli depuis `#cellStart` au début de chaque passe.
+Le banc de la tâche 0 contient déjà la version corrigée : **parcours symétrique** (`j > i`,
+force appliquée aux deux entités, égale et opposée), cellule calculée une seule fois par
+entité et mémorisée dans `#cellIdx`, curseur pré-alloué dans `#cursor` plutôt qu'un
+`this.#cellStart.slice()` qui allouerait à chaque appel, et tableaux `hx`/`hy` hissés hors
+de la boucle interne. Reprends-la telle quelle.
+
+> ⚠️ Le parcours symétrique n'est pas qu'une optimisation (~1,4× sur le pas complet) : c'est
+> aussi ce qui rend la symétrie **exacte** plutôt qu'approchée. Le troisième test ci-dessus —
+> « repousse symétriquement » — l'exige au cinquième chiffre. Un parcours asymétrique le
+> passerait par chance, pas par construction.
 
 - [ ] **Étape 5 : vérifier que le test passe**
 
