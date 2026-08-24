@@ -116,19 +116,18 @@ describe('SeparationGrid.apply', () => {
     expect([...a.x.slice(0, 4)]).toEqual([...b.x.slice(0, 4)]);
   });
 
-  it('n alloue pas a chaque appel', () => {
-    // On ne mesure pas la memoire : on verifie que la grille est reutilisable
-    // sans se degrader, ce qui attraperait une reallocation par appel.
-    const horde = hordeAt([
-      [3000, 3000],
-      [3010, 3000],
-    ]);
-    const grid = new SeparationGrid(100);
-
-    expect(() => {
-      for (let i = 0; i < 1000; i++) {
-        grid.apply(horde, DT);
-      }
-    }).not.toThrow();
-  });
+  // ⚠️ Il n'y a PAS de test « n'alloue pas a chaque appel ». La premiere version
+  // de ce plan en contenait un — mille appels enveloppes dans `not.toThrow()`,
+  // avec un commentaire affirmant qu'il « attraperait une reallocation par
+  // appel ». Il ne l'attrapait pas : verifie en reintroduisant le
+  // `this.#cellStart.slice()` par appel, les six tests passaient toujours.
+  //
+  // L'absence d'allocation est une propriete de PERFORMANCE, et un test unitaire
+  // ne sait pas l'observer sans exposer les tableaux prives — c'est-a-dire sans
+  // ajouter du code de test dans une classe de production. Son gardien est le
+  // banc (`npm run bench:sep -w back`), ou une allocation par appel se verrait
+  // dans l'ecart entre mediane et p95.
+  //
+  // Un test qui ne teste rien est pire que pas de test : il fabrique de la
+  // confiance. On le supprime plutot que de le maquiller.
 });
