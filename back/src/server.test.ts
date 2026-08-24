@@ -1,5 +1,14 @@
 import type { AddressInfo } from 'node:net';
-import { decode, encodeInput, type Message, MSG, type SnapshotMessage } from '@shared/protocol';
+import { SNAPSHOT_HZ } from '@shared/constants';
+import {
+  decode,
+  encodeInput,
+  type Message,
+  MSG,
+  SNAPSHOT_HEADER_BYTES,
+  SNAPSHOT_PLAYER_BYTES,
+  type SnapshotMessage,
+} from '@shared/protocol';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -42,12 +51,16 @@ async function connect(code: string): Promise<{ ws: WebSocket; playerId: number 
   return { ws, playerId: welcome.playerId };
 }
 
-function nextMessage(ws: WebSocket, match: (m: Message) => boolean): Promise<Message> {
+function nextMessage(
+  ws: WebSocket,
+  match: (m: Message) => boolean,
+  timeoutMs = 3000,
+): Promise<Message> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
       cleanup();
-      reject(new Error('aucun message correspondant en 3 s'));
-    }, 3000);
+      reject(new Error(`aucun message correspondant en ${timeoutMs} ms`));
+    }, timeoutMs);
 
     function cleanup(): void {
       clearTimeout(timer);
@@ -208,26 +221,66 @@ describe('la socket de jeu', () => {
    * Bien meilleure qu'une inspection de code : elle survit aux
    * refactorisations. Si quelqu'un ajoute un jour des positions de monstres
    * dans le snapshot, ce test le voit tout de suite.
+   *
+   * Deux pieges evites par construction :
+   * - Comparer deux fenetres l'une a l'autre ne prouve rien si aucune vague
+   *   n'est sortie pendant l'une d'elles (WaveDirector n'en emet qu'une
+   *   toutes les 6 s) : on attend un premier WAVE_ORDER, preuve observable
+   *   que des centaines d'entites existent deja, avant de commencer a
+   *   mesurer.
+   * - Comparer a la fenetre precedente ne verrait pas une regression ou des
+   *   positions de monstres seraient presentes des le debut et de taille
+   *   stable : on compare a une valeur absolue, deduite du format de trame.
    */
   it('ne fait pas grossir le trafic avec le nombre d ennemis', async () => {
     const code = await createRoomCode();
     const { ws } = await connect(code);
 
-    let octets = 0;
+    let bytesReceived = 0;
+    let entitiesSpawned = 0;
     ws.on('message', (data: ArrayBuffer) => {
-      octets += data.byteLength;
+      bytesReceived += data.byteLength;
+      const msg = decode(data);
+      if (msg.type === MSG.WAVE_ORDER) {
+        entitiesSpawned += msg.count;
+      }
     });
 
-    // On laisse tourner assez longtemps pour que des vagues sortent.
-    await new Promise((r) => setTimeout(r, 1500));
-    const octetsAvant = octets;
-    octets = 0;
-    await new Promise((r) => setTimeout(r, 1500));
-    const octetsApres = octets;
+    // Preuve qu'une horde existe avant de mesurer, plutot qu'une
+    // temporisation aveugle : on attend le premier WAVE_ORDER (periode de
+    // 6 s, delai genereux ci-dessous).
+    await nextMessage(ws, (m) => m.type === MSG.WAVE_ORDER, 10_000);
 
-    // Entre les deux fenetres, la horde a grossi de plusieurs centaines
-    // d'entites. Le trafic, lui, ne doit pas suivre : il reste domine par les
-    // 30 snapshots par seconde de 4 joueurs.
-    expect(octetsApres).toBeLessThan(octetsAvant * 2);
-  }, 10_000);
+    // On ne mesure qu'a partir d'ici : la horde est deja apparue, mais son
+    // volume ne doit toujours pas se voir sur le fil.
+    bytesReceived = 0;
+    const windowMs = 3000;
+    await new Promise((r) => setTimeout(r, windowMs));
+
+    // Ce que doit peser le trafic, si et seulement si aucune position de
+    // monstre ne transite : un en-tete de snapshot plus un joueur, a
+    // SNAPSHOT_HZ.
+    const expectedBytesPerSecond = (SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES) * SNAPSHOT_HZ;
+    const expectedBytes = expectedBytesPerSecond * (windowMs / 1000);
+
+    // Marge x5 : elle absorbe un ordre de vague occasionnel (19 octets, rare
+    // sur une fenetre de 3 s), la gigue de cadence et l'en-tete WebSocket,
+    // tout en restant deux ordres de grandeur sous ce que couterait la
+    // replication de la horde (des centaines d'entites x 5 octets x 30
+    // fois par seconde).
+    const maxBytes = expectedBytes * 5;
+
+    process.stdout.write(
+      `horde apparue : ${entitiesSpawned} entites -- trafic mesure sur ${windowMs} ms : ` +
+        `${bytesReceived} octets (attendu ~${expectedBytes.toFixed(0)}, plafond ${maxBytes.toFixed(0)})\n`,
+    );
+
+    expect(entitiesSpawned).toBeGreaterThan(0);
+    expect(
+      bytesReceived,
+      `trafic de ${bytesReceived} octets sur ${windowMs} ms, attendu au plus ` +
+        `${maxBytes.toFixed(0)} octets (base ${expectedBytes.toFixed(0)} x 5) alors que la horde ` +
+        `compte deja ${entitiesSpawned} entites`,
+    ).toBeLessThan(maxBytes);
+  }, 20_000);
 });
