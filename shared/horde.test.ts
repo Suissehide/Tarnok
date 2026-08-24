@@ -197,6 +197,62 @@ describe('Horde.spawnCatchingUp', () => {
   });
 });
 
+describe('Horde.spawnCatchingUp — garde-fou de fraicheur des champs', () => {
+  it("dans l'ordre correct (rattrapage avant le rafraichissement du tick), ne leve pas", () => {
+    const horde = new Horde(1000);
+    const fields = fieldsTowards(4000, 4000);
+
+    // `step` a deja tourne au moins une fois : la horde est « avancee ».
+    horde.step(DT, fields);
+
+    // Aucun `update` sur les champs depuis ce `step` : le rattrapage voit les
+    // memes revisions qu'au dernier pas, comme dans l'ordre correct d'un tick.
+    expect(() => {
+      horde.spawnCatchingUp(order({ count: 50 }), 2, DT, fields);
+    }).not.toThrow();
+  });
+
+  it('precede par un rafraichissement du champ, leve — et le message parle de l ordre', () => {
+    const horde = new Horde(1000);
+    const fields = fieldsTowards(4000, 4000);
+
+    horde.step(DT, fields);
+    // Rafraichissement periodique du tick, appele — a tort — avant le
+    // rattrapage plutot qu'apres.
+    fields[0]?.update(1000, 1000);
+
+    expect(() => {
+      horde.spawnCatchingUp(order({ count: 50 }), 2, DT, fields);
+    }).toThrow(/avant tout appel a FlowField\.update/);
+  });
+
+  it('sur une horde jamais avancee (tout premier ordre), ne leve pas', () => {
+    const horde = new Horde(1000);
+    const fields = fieldsTowards(4000, 4000);
+    // Un rafraichissement a deja eu lieu, mais `step` n'a encore jamais
+    // tourne : rien n'a ete releve, donc rien a comparer.
+    fields[0]?.update(1000, 1000);
+
+    expect(() => {
+      horde.spawnCatchingUp(order({ count: 50 }), 2, DT, fields);
+    }).not.toThrow();
+  });
+
+  it("n'affecte pas le comportement nominal de step", () => {
+    const horde = new Horde(1000);
+    const fields = fieldsTowards(4000, 4000);
+    horde.spawn(order({ count: 50 }));
+    horde.retarget([4000, 4000, 4000, 4000], [4000, 4000, 4000, 4000]);
+
+    const avant = meanDistanceTo(horde, 4000, 4000);
+    for (let i = 0; i < 100; i++) {
+      horde.step(DT, fields);
+    }
+
+    expect(meanDistanceTo(horde, 4000, 4000)).toBeLessThan(avant);
+  });
+});
+
 describe('Horde.retarget', () => {
   it('envoie chaque entite vers le joueur le plus proche', () => {
     const horde = new Horde(10);

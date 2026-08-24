@@ -44,6 +44,12 @@ export class FlowField {
   readonly blocked: Uint8Array;
 
   /**
+   * Incremente a chaque `update`. Sert a detecter qu'un champ a ete rafraichi
+   * entre deux pas de horde — voir `Horde.spawnCatchingUp`.
+   */
+  revision = 0;
+
+  /**
    * File du parcours en largeur, allouee une fois pour toutes.
    *
    * Le champ est recalcule 5 a 10 fois par seconde et par joueur : une file qui
@@ -87,6 +93,8 @@ export class FlowField {
    * cellules pour chercher le plus petit voisin.
    */
   update(targetX: number, targetY: number): void {
+    this.revision++;
+
     const { cols, rows, dist, dirX, dirY, blocked } = this;
     const queue = this.#queue;
 

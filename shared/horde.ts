@@ -48,6 +48,13 @@ export class Horde {
 
   #count = 0;
 
+  /**
+   * Revisions des champs relevees a la fin du dernier `step`. `null` tant que
+   * `step` n'a encore jamais tourne : le tout premier ordre d'une horde neuve
+   * n'a rien a comparer. Sert de garde-fou a `spawnCatchingUp` — voir la.
+   */
+  #lastFieldRevisions: Map<FlowField, number> | null = null;
+
   constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
@@ -123,6 +130,7 @@ export class Horde {
   /** Un pas de simulation. `dt` est fixe : 1 / TICK_HZ. */
   step(dt: number, fields: readonly FlowField[]): void {
     this.#advance(0, this.#count, dt, fields);
+    this.#recordFieldRevisions(fields);
   }
 
   /**
@@ -152,6 +160,10 @@ export class Horde {
    * (`#advanceHorde`) — pas apres.
    *
    * `missedTicks` vaut `tickCourant - order.spawnTick`, borne a zero.
+   *
+   * ⚠️ Leve si un champ a ete rafraichi entre le dernier `step` et cet appel
+   * — le garde-fou qui transforme l'erreur d'ordre ci-dessus en echec net
+   * plutot qu'en derive silencieuse. Voir `#assertFieldsNotRefreshed`.
    */
   spawnCatchingUp(
     order: WaveOrder,
@@ -159,6 +171,10 @@ export class Horde {
     dt: number,
     fields: readonly FlowField[],
   ): void {
+    if (missedTicks > 0) {
+      this.#assertFieldsNotRefreshed(fields);
+    }
+
     const before = this.#count;
     this.spawn(order);
     for (let step = 0; step < missedTicks; step++) {
@@ -183,6 +199,47 @@ export class Horde {
       const cell = field.indexAt(ex, ey);
       this.x[i] = clamp(ex + (field.dirX[cell] ?? 0) * speed, 0, MAP_SIZE);
       this.y[i] = clamp(ey + (field.dirY[cell] ?? 0) * speed, 0, MAP_SIZE);
+    }
+  }
+
+  /** Releve la revision courante de chaque champ. Appele a la fin de `step`. */
+  #recordFieldRevisions(fields: readonly FlowField[]): void {
+    const revisions = this.#lastFieldRevisions ?? new Map<FlowField, number>();
+    for (const field of fields) {
+      if (field) {
+        revisions.set(field, field.revision);
+      }
+    }
+    this.#lastFieldRevisions = revisions;
+  }
+
+  /**
+   * Refuse un rattrapage qui arriverait trop tard.
+   *
+   * Dans l'ordre correct d'un tick — rattrapage, puis rafraichissement
+   * periodique du flowfield, puis `step` — un champ vu ici porte encore la
+   * revision relevee au dernier `step`. Si elle a change, c'est qu'un
+   * `update` a eu lieu entre-temps : le rattrapage consommerait un champ plus
+   * frais que celui que le serveur a utilise pour les ticks manques, ce qui
+   * rouvre la sensibilite aux frontieres de cellules que le rattrapage
+   * cherche justement a eviter (mesure : la derive repasse de ~20 a ~780 px,
+   * voir le test de replication). Ne s'applique que si la horde a deja ete
+   * avancee au moins une fois — le tout premier ordre n'a rien a comparer.
+   */
+  #assertFieldsNotRefreshed(fields: readonly FlowField[]): void {
+    if (!this.#lastFieldRevisions) {
+      return;
+    }
+    for (const field of fields) {
+      const seen = this.#lastFieldRevisions.get(field);
+      if (seen !== undefined && seen !== field.revision) {
+        throw new Error(
+          'spawnCatchingUp appele apres le rafraichissement du champ : les pas rattrapes ' +
+            'utiliseraient un champ plus frais que celui du serveur, et la derive passe de ' +
+            '~20 a ~780 px. Appliquer les ordres en attente EN TETE de tick, avant tout ' +
+            'appel a FlowField.update.',
+        );
+      }
     }
   }
 }
