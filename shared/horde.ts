@@ -97,6 +97,11 @@ export class Horde {
       // La phase se derive de l'index, pas d'un tirage : elle doit etre la meme
       // partout pour qu'une capture d'ecran de debug soit comparable.
       this.animPhase[slot] = (i * 7 + order.waveId * 3) % frames;
+      // Remis a zero explicitement (constat I3) : aujourd'hui inoffensif, les
+      // creneaux n'etant jamais reutilises tant que rien ne meurt. A l'etape
+      // 3, un compactage apres une mort reutilisera ce creneau, et sans cette
+      // ligne une entite neuve heriterait de la cible du mort qu'elle remplace.
+      this.targetField[slot] = 0;
     }
 
     this.#count += count;
