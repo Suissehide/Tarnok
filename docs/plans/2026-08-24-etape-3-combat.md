@@ -378,7 +378,17 @@ function main(): void {
     const avec = measure(n, true);
     const rejeu4 = avec.median * 4;
     // Densite stable = l'equilibre est atteint et le cout veut dire quelque chose.
-    const stable = avec.neighboursLate <= avec.neighboursEarly * 1.5;
+    //
+    // ⚠️ Le seuil absolu n'est pas une commodite. Un rapport debut/fin sur une
+    // valeur proche de 1 mesure du bruit : a 250 entites la densite passe de 0,9
+    // a 2,2 voisins, soit un facteur 2,4 — pour un pas a 0,12 ms. Signaler ca
+    // comme « mesure invalide » rendrait la colonne rouge en permanence, et une
+    // alerte qu'on apprend a ignorer ne protege plus de rien.
+    //
+    // La question posee est « ce chiffre de cout veut-il dire quelque chose ? ».
+    // Une horde a moins de 8 voisins par entite n'est pas dans un regime couteux,
+    // quelle que soit sa trajectoire.
+    const stable = avec.neighboursLate < 8 || avec.neighboursLate <= avec.neighboursEarly * 1.5;
     return {
       entites: n,
       'pas sans separation (ms)': round2(sans.median),
