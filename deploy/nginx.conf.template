@@ -26,12 +26,24 @@ server {
   # seulement les images. Avec une variable et un `resolver`, la resolution a
   # lieu a la requete : une panne de MinIO se traduit par des assets en 502, et
   # le jeu continue de se charger.
+  #
+  # ⚠️ nginx ne sait pas signer une requete S3 (AWS SigV4). Les objets vises par
+  # `${ASSETS_BASE_URL}` doivent donc etre lisibles **sans credentials**. Une
+  # politique de lecture anonyme sur `s3:GetObject` suffit — surtout **pas** sur
+  # `s3:ListBucket`, qui exposerait le pack entier comme un depot d'assets et
+  # ressemblerait, elle, a une redistribution.
   resolver ${ASSETS_RESOLVER} valid=30s ipv6=off;
 
   location ~ ^/tinyswords/(?<asset_path>.*)$ {
-    set $assets_upstream "${ASSETS_UPSTREAM}";
-    proxy_pass $assets_upstream/$asset_path;
+    # Une seule variable porte la base complete — endpoint, bucket et prefixe
+    # eventuel — parce que « bucket » et « prefixe » ne se devinent pas depuis
+    # l'exterieur et que les recomposer ici invite a se tromper d'un segment.
+    set $assets_base "${ASSETS_BASE_URL}";
+    proxy_pass $assets_base/$asset_path;
     proxy_ssl_server_name on;
+    # On ne relaie ni les en-tetes S3 ni les erreurs XML de MinIO au navigateur.
+    proxy_hide_header x-amz-request-id;
+    proxy_hide_header x-amz-id-2;
     expires 30d;
     add_header Cache-Control "public";
   }

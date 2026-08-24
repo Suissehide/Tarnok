@@ -76,7 +76,7 @@ Le placeholder est [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords) (
 **La licence interdit la redistribution, même après modification**, et ce dépôt est public :
 les assets n'y sont donc pas, et ne sont pas non plus dans les images Docker.
 
-Ils vivent sur MinIO, sous le préfixe `tarnok/` :
+Ils vivent sur MinIO, bucket `tarnok`, à la racine :
 
 ```bash
 cp deploy/.env.example .env   # renseigner les MINIO_*
@@ -84,8 +84,9 @@ cp deploy/.env.example .env   # renseigner les MINIO_*
 ```
 
 En production, nginx les sert sous le même chemin `/tinyswords/` en proxifiant MinIO, ce qui
-fait que le CSS ne connaît jamais d'URL de bucket. Détails dans
-[`NOTICE-assets.md`](NOTICE-assets.md).
+fait que le CSS ne connaît jamais d'URL de bucket. Le bucket doit accorder `s3:GetObject` en
+anonyme — et surtout pas `s3:ListBucket`. La politique exacte et le piège
+console-contre-API-S3 sont dans [`NOTICE-assets.md`](NOTICE-assets.md).
 
 ## Conventions
 

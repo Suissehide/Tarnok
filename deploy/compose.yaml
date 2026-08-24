@@ -11,7 +11,7 @@ services:
         VITE_API_URL: https://${TRAEFIK_API_HOST}
     environment:
       # Substituees dans nginx.conf.template au demarrage du conteneur.
-      ASSETS_UPSTREAM: ${MINIO_PUBLIC_URL}/${MINIO_BUCKET}/tarnok
+      ASSETS_BASE_URL: ${ASSETS_BASE_URL}
       # DNS embarque de Docker sur un reseau defini par l'utilisateur. On le
       # passe explicitement : le `NGINX_LOCAL_RESOLVERS` de l'image nginx n'est
       # pas visible par envsubst, et un resolver non substitue empeche nginx de
