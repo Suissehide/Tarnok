@@ -214,6 +214,25 @@ C++ mature et une équipe dédiée. La sensation de masse se fabrique par des **
 denses de chair à canon qui meurt en une touche** et par un rendu qui exagère — pas par
 un compteur.
 
+> **Mesuré à l'étape 1, le 24 août 2026** — voir
+> [`../plans/2026-08-24-banc-resultats.md`](../plans/2026-08-24-banc-resultats.md).
+>
+> **4 000 entités tiennent un pas de simulation en 0,87 ms de p95, sans atteindre la
+> limite** (budget : 11 ms). Le nombre d'entités n'est pas le facteur limitant : de 250 à
+> 4 000, le coût d'un pas passe de 0,84 à 0,87 ms, parce que le flowfield coûte
+> `O(cellules)` et non `O(ennemis)`. Le coût réel est celui des champs — 23 ns par cellule
+> visitée — et il fixe la taille de carte, pas la densité. La cible de 800 à 1 500 tient
+> donc telle quelle, et le scaling ×N du §5 avec elle.
+>
+> Réserve, et elle est importante : le banc ne mesure que le flowfield et le déplacement.
+> Ni séparation entre entités, ni collisions, ni dégâts, ni zone d'intérêt — **aucun de ces
+> systèmes n'existe encore**, et ce sont eux qui scalent mal avec N. Le chiffre ci-dessus
+> dit que l'architecture n'a pas de défaut rédhibitoire, pas qu'on tiendra 1 500 entités
+> une fois le jeu écrit. À rejouer à la fin des étapes 2 et 3.
+>
+> Mesuré sur une machine trop rapide (Apple M5 Pro). La colonne « machine faible » du
+> tableau de résultats est **à remplir avant l'étape 3**.
+
 ### 4.2 Le flowfield, dès le premier prototype
 
 C'est l'enseignement principal du post-mortem de Riot : leur pathfinding A\* par agent
@@ -875,6 +894,24 @@ l'or. À trancher avant l'étape 3.
 « Immense » doit devenir un nombre. Il dépend directement du résultat de l'étape 1 : la
 grille de flowfield coûte en `O(cellules)`, et une carte de 10 000 × 10 000 px à 64 px par
 cellule fait ~24 000 cellules par champ, quatre fois.
+
+> **Chiffré à l'étape 1** — voir
+> [`../plans/2026-08-24-banc-resultats.md`](../plans/2026-08-24-banc-resultats.md).
+>
+> **Cellule retenue : 64 px. Recalcul à 10 Hz**, dont le surcoût par rapport à 5 Hz est
+> inférieur à 0,05 ms.
+>
+> Le coût est linéaire : **23 ns par cellule visitée**. Le budget de 11 ms autorise donc
+> ~117 000 cellules par champ à quatre champs, soit une carte de ~21 000 px de côté sur la
+> machine de mesure, ~11 000 px sur une machine quatre fois plus lente.
+>
+> **Proposition : 10 000 × 10 000 px** — confortable sur les deux, et très en dessous du
+> plafond de 32 767 qu'impose la quantification des positions en `int16` (§3.6). Cette
+> contrainte-là est dure et vaut d'être notée : au-delà, c'est le format de trame qu'il
+> faut rouvrir, pas un réglage.
+>
+> `MAP_SIZE` reste à 6 000 dans `shared/constants.ts` tant que l'étape 2 n'a pas de vagues
+> à mettre dans une carte plus grande.
 
 ### 15.3 Classement mondial ?
 
