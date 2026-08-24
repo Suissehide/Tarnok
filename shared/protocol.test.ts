@@ -4,9 +4,11 @@ import {
   decode,
   decodeInput,
   decodeSnapshot,
+  decodeWaveOrder,
   decodeWelcome,
   encodeInput,
   encodeSnapshot,
+  encodeWaveOrder,
   encodeWelcome,
   MSG,
 } from './protocol';
@@ -72,12 +74,50 @@ describe('encodeSnapshot / decodeSnapshot', () => {
 });
 
 describe('encodeWelcome / decodeWelcome', () => {
-  it("rend l'identifiant attribue et le tick courant", () => {
-    expect(decodeWelcome(encodeWelcome(3, 900))).toEqual({
+  it("rend l'identifiant attribue, le tick courant et la graine de carte", () => {
+    expect(decodeWelcome(encodeWelcome(3, 900, 0xdead_beef))).toEqual({
       type: MSG.WELCOME,
       playerId: 3,
       tick: 900,
+      mapSeed: 0xdead_beef,
     });
+  });
+});
+
+describe('encodeWaveOrder / decodeWaveOrder', () => {
+  const order = {
+    waveId: 7,
+    spawnTick: 1234,
+    seed: 0x1234_5678,
+    archetype: 2,
+    formation: 3,
+    anchorX: -1200,
+    anchorY: 5900,
+    count: 1000,
+  };
+
+  it("rend exactement l'ordre encode", () => {
+    expect(decodeWaveOrder(encodeWaveOrder(order))).toEqual({
+      type: MSG.WAVE_ORDER,
+      ...order,
+    });
+  });
+
+  it('tient en 19 octets : 1 de type et 18 de charge utile', () => {
+    expect(encodeWaveOrder(order).byteLength).toBe(19);
+  });
+
+  it('ne grossit pas avec le nombre d entites — c est tout le sujet du §3.3', () => {
+    const petite = encodeWaveOrder({ ...order, count: 10 });
+    const enorme = encodeWaveOrder({ ...order, count: 4000 });
+
+    expect(enorme.byteLength).toBe(petite.byteLength);
+  });
+
+  it('leve sur un buffer tronque', () => {
+    const tronque = encodeWaveOrder(order).slice(0, 12);
+
+    expect(() => decodeWaveOrder(tronque)).toThrow(/tronqu/i);
   });
 });
 
@@ -85,7 +125,22 @@ describe('decode', () => {
   it('aiguille sur le premier octet', () => {
     expect(decode(encodeInput(7, 1, 0))).toMatchObject({ type: MSG.INPUT, seq: 7 });
     expect(decode(encodeSnapshot(8, []))).toMatchObject({ type: MSG.SNAPSHOT, tick: 8 });
-    expect(decode(encodeWelcome(1, 9))).toMatchObject({ type: MSG.WELCOME, playerId: 1 });
+    expect(decode(encodeWelcome(1, 9, 0))).toMatchObject({ type: MSG.WELCOME, playerId: 1 });
+  });
+
+  it('aiguille aussi sur un ordre de vague', () => {
+    const buf = encodeWaveOrder({
+      waveId: 1,
+      spawnTick: 2,
+      seed: 3,
+      archetype: 0,
+      formation: 0,
+      anchorX: 0,
+      anchorY: 0,
+      count: 5,
+    });
+
+    expect(decode(buf)).toMatchObject({ type: MSG.WAVE_ORDER, waveId: 1 });
   });
 
   it('leve sur un type de message inconnu', () => {

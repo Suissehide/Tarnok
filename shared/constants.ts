@@ -1,17 +1,47 @@
 /** Simulation serveur, en pas par seconde. §3.5 : 20 Hz reste possible si la sensation tient. */
 export const TICK_HZ = 30;
 
-/** Diffusion serveur -> clients. Volontairement plus basse que la simulation. */
-export const SNAPSHOT_HZ = 20;
+/**
+ * Diffusion serveur -> clients.
+ *
+ * 30 Hz et non les 15-20 du §3.5 de l'orientation. L'ecart est **paye par la
+ * mesure** : le banc de l'etape 1 donne 0,47 ko/s par joueur contre 5-15
+ * estimes au §3.3. Il fallait cette cadence pour qu'un tampon d'interpolation
+ * de 60 ms contienne plus d'un intervalle — a 20 Hz il n'en contenait que 1,2,
+ * et la moindre gigue le vidait.
+ */
+export const SNAPSHOT_HZ = 30;
 
 /** Entrees client -> serveur. */
 export const INPUT_HZ = 30;
 
 /**
- * Retard du tampon d'interpolation client. Sans lui, le rendu tremble : il faut
- * toujours avoir deux snapshots encadrant l'instant qu'on affiche.
+ * Retard du tampon d'interpolation client.
+ *
+ * 60 ms plutot que 100 : ca ramene le decalage visuel du corps d'un allie de
+ * 26 a 15 px. Tenable seulement parce que la diffusion est passee a 30 Hz.
  */
-export const INTERP_DELAY_MS = 100;
+export const INTERP_DELAY_MS = 60;
+
+/**
+ * Retard, en ticks, applique aux positions de joueurs qui alimentent le
+ * flowfield — **des deux cotes**.
+ *
+ * Le serveur s'impose le retard qu'il inflige au client. Sans ca, les deux
+ * cotes calculent leur champ a partir d'entrees differentes, les directions
+ * divergent, et une erreur de direction ne se rattrape pas : elle s'accumule a
+ * chaque pas. Voir §5 de la spec de l'etape 2.
+ *
+ * Ne coute rien de perceptible : le champ n'est deja recalcule qu'a 10 Hz, soit
+ * une granularite de 100 ms.
+ */
+export const FIELD_INPUT_DELAY_TICKS = 3;
+
+/** Plafond d'entites vivantes par salon. */
+export const MAX_ENTITIES = 4000;
+
+/** Identites reservees par vague. Voir `entityIdOf`. */
+export const MAX_PER_WAVE = 4096;
 
 /**
  * Constante de temps de la reconciliation client, en millisecondes.

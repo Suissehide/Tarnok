@@ -64,6 +64,14 @@ function isNewer(a: number, b: number): boolean {
 }
 
 export class Room {
+  /**
+   * Graine de la carte d'obstacles, tiree a la creation du salon.
+   *
+   * PROVISOIRE : cette ligne n'existe que pour que le protocole compile des la
+   * tache 5. La tache 9 la remplace par une initialisation dans le
+   * constructeur — ne pas ajouter une seconde declaration a ce moment-la.
+   */
+  readonly mapSeed: number = (Math.random() * 0xffff_ffff) >>> 0;
   readonly #players = new Map<number, PlayerState>();
   #tick = 0;
   #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0 };

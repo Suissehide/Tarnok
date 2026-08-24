@@ -79,7 +79,7 @@ class Session {
     this.#clients.set(id, ws);
 
     ws.binaryType = 'arraybuffer';
-    ws.send(encodeWelcome(id, this.room.tick));
+    ws.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
     ws.on('message', (data: ArrayBuffer) => {
       this.#onFrame(id, ws, data);
     });
