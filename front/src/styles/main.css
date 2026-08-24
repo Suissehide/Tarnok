@@ -1,9 +1,15 @@
 @import "tailwindcss";
 
 /*
- * §6.6 : l'environnement doit rester sombre et desature. Ce n'est pas une
- * preference esthetique, c'est ce qui rendra six couleurs elementaires
- * saturees distinguables sur des sprites minuscules a l'etape 5.
+ * §6.6 : l'environnement de jeu doit rester sombre et desature. C'est une
+ * contrainte technique — elle rendra six couleurs elementaires saturees
+ * distinguables sur des sprites minuscules a l'etape 5 — et elle porte sur le
+ * terrain de jeu, pas sur les menus. Le lobby peut donc etre chaud et lisible,
+ * a condition que la scene, elle, reste noire (voir render/stage.ts).
+ *
+ * L'habillage vient du kit UI de Tiny Swords, servi sous `/tinyswords/` : en
+ * dev par un middleware Vite, en production par un proxy nginx vers MinIO. Rien
+ * ici ne connait l'URL du stockage.
  */
 @theme {
   --color-forge-900: #14110f;
@@ -11,6 +17,9 @@
   --color-forge-700: #2a2420;
   --color-forge-600: #4a3f36;
   --color-ember-400: #e0a45e;
+  --color-parchment: #f2e4cd;
+  /* Le brun d'encre du pack : c'est lui qui se lit sur le parchemin. */
+  --color-ink: #4a3520;
 }
 
 html,
@@ -18,6 +27,120 @@ body {
   height: 100%;
   margin: 0;
   background: var(--color-forge-900);
-  color: #d8cfc4;
+  color: var(--color-parchment);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  cursor:
+    url("/tinyswords/UI/Pointers/01.png") 4 2,
+    auto;
+}
+
+/* Le pack est du pixel art : tout lissage le transforme en bouillie. */
+img,
+.ts-panel,
+.ts-button,
+.ts-ribbon {
+  image-rendering: pixelated;
+}
+
+/*
+ * Les planches 9-slices font 192x192, soit une grille de trois tuiles de 64.
+ * `border-image-slice: 64` decoupe donc pile sur les tuiles ; la largeur de
+ * bordure decide a quelle taille les coins sont rendus. On reste sur des
+ * fractions simples de 64 pour ne pas broyer les pixels des coins.
+ */
+.ts-panel {
+  border-style: solid;
+  border-width: 32px;
+  border-image-source: url("/tinyswords/UI/Banners/Carved_9Slides.png");
+  border-image-slice: 64 fill;
+  border-image-repeat: repeat;
+  /* Le parchemin est clair : le texte qui s'y pose doit etre sombre. */
+  color: var(--color-ink);
+}
+
+.ts-button {
+  border-style: solid;
+  border-width: 28px;
+  border-image-source: url("/tinyswords/UI/Buttons/Button_Blue_9Slides.png");
+  border-image-slice: 64 fill;
+  border-image-repeat: repeat;
+  min-height: 72px;
+  color: var(--color-parchment);
+  text-shadow: 0 2px 0 rgb(0 0 0 / 0.45);
+  letter-spacing: 0.08em;
+  transition: transform 60ms steps(2);
+}
+
+.ts-button:hover {
+  border-image-source: url("/tinyswords/UI/Buttons/Button_Hover_9Slides.png");
+}
+
+.ts-button:active {
+  border-image-source: url("/tinyswords/UI/Buttons/Button_Blue_9Slides_Pressed.png");
+  transform: translateY(2px);
+}
+
+.ts-button:disabled {
+  border-image-source: url("/tinyswords/UI/Buttons/Button_Disable_9Slides.png");
+  color: var(--color-forge-600);
+  text-shadow: none;
+  cursor: not-allowed;
+}
+
+.ts-button--red {
+  border-image-source: url("/tinyswords/UI/Buttons/Button_Red_9Slides.png");
+}
+
+.ts-button--red:hover {
+  border-image-source: url("/tinyswords/UI/Buttons/Button_Hover_9Slides.png");
+}
+
+.ts-button--red:active {
+  border-image-source: url("/tinyswords/UI/Buttons/Button_Red_9Slides_Pressed.png");
+}
+
+/*
+ * Ruban 3-slices : 192x64. Les deux pans bruns font 64 px de large chacun ;
+ * les rendre a une autre largeur que la hauteur du ruban les deforme. On garde
+ * donc `border-width` horizontal egal a la hauteur.
+ */
+.ts-ribbon {
+  --ribbon-height: 72px;
+  border-style: solid;
+  border-width: 0 var(--ribbon-height);
+  border-image-source: url("/tinyswords/UI/Ribbons/Ribbon_Yellow_3Slides.png");
+  border-image-slice: 0 64 fill;
+  border-image-repeat: repeat;
+  height: var(--ribbon-height);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-ink);
+  text-shadow: none;
+}
+
+/*
+ * Le champ de saisie n'emprunte rien au pack : aucune planche n'a l'air d'un
+ * champ, et en detourner une donnait un bloc de parchemin ou l'on ne voyait
+ * plus ce qu'on tapait. Un creux sombre se lit, et le code saisi ressort.
+ */
+.ts-input {
+  background: #241c14;
+  border: 3px solid #6b5540;
+  box-shadow: inset 0 3px 0 rgb(0 0 0 / 0.45);
+  color: var(--color-ember-400);
+  text-align: center;
+  letter-spacing: 0.4em;
+  text-transform: uppercase;
+  outline: none;
+  padding: 0 0.5rem;
+}
+
+.ts-input:focus {
+  border-color: var(--color-ember-400);
+}
+
+.ts-input::placeholder {
+  color: #6b5540;
+  letter-spacing: 0.3em;
 }
