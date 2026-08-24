@@ -1,7 +1,10 @@
 import { MAP_SIZE } from '@shared/constants';
-import { Application, Container, Graphics } from 'pixi.js';
+import type { Horde } from '@shared/horde';
+import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type { RenderState } from '../net/client';
+import { ASSETS_BASE } from '../ui/config';
+import { HordeRenderer } from './horde-renderer';
 
 /**
  * Rendu de l'etape 0 : un carre par joueur, une caméra par client.
@@ -23,6 +26,9 @@ export class Stage {
   readonly #app = new Application();
   readonly #world = new Container();
   readonly #sprites = new Map<number, Graphics>();
+  // Corrigé par rapport au brief : `readonly` assigné dans `init()` ne
+  // compile pas sous `strictPropertyInitialization`. Initialisation directe.
+  #horde = new HordeRenderer(ASSETS_BASE);
 
   async init(parent: HTMLElement): Promise<void> {
     await this.#app.init({
@@ -39,6 +45,12 @@ export class Stage {
     this.#world.scale.set(1, VERTICAL_SQUASH);
     this.#app.stage.addChild(this.#world);
     this.#world.addChild(mapBorder());
+
+    // Ordre d'affichage : apres la grille, avant les carres des joueurs
+    // (ajoutes plus tard via `#spriteFor`), sinon les joueurs disparaissent
+    // sous la horde.
+    this.#horde.attach(this.#world);
+    await this.#horde.load();
   }
 
   get canvas(): HTMLCanvasElement {
@@ -71,6 +83,20 @@ export class Stage {
     }
 
     this.#centerOn(state);
+  }
+
+  /** Rectangle du monde actuellement visible, pour le culling. */
+  viewRect(): Rectangle {
+    return new Rectangle(
+      -this.#world.x,
+      -this.#world.y / VERTICAL_SQUASH,
+      this.#app.screen.width,
+      this.#app.screen.height / VERTICAL_SQUASH,
+    );
+  }
+
+  drawHorde(horde: Horde, timeMs: number): void {
+    this.#horde.draw(horde, this.viewRect(), timeMs);
   }
 
   destroy(): void {

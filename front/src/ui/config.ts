@@ -14,6 +14,13 @@
 
 export const API_URL = import.meta.env.VITE_API_URL ?? defaultApiUrl();
 
+/**
+ * Racine same-origin du pack Tiny Swords : servie en developpement par le
+ * middleware Vite de `vite.config.ts`, en production par le proxy nginx vers
+ * MinIO. Jamais une URL de bucket codee en dur.
+ */
+export const ASSETS_BASE = '/tinyswords';
+
 export function gameSocketUrl(roomCode: string): string {
   const base = import.meta.env.VITE_WS_URL ?? defaultWsUrl();
   return `${base}?room=${encodeURIComponent(roomCode)}`;
