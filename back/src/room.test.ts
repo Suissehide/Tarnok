@@ -1,4 +1,4 @@
-import { MAP_SIZE, PLAYER_SPEED, TICK_HZ } from '@shared/constants';
+import { FIELD_INPUT_DELAY_TICKS, MAP_SIZE, PLAYER_SPEED, TICK_HZ } from '@shared/constants';
 import { decodeSnapshot } from '@shared/protocol';
 import { describe, expect, it } from 'vitest';
 
@@ -238,17 +238,17 @@ describe('Room et la horde', () => {
     expect(room.drainWaveOrders()).toHaveLength(0);
   });
 
-  it('alimente son flowfield avec les positions retardees, comme le client', () => {
-    // On ne peut pas observer le champ directement ; on verifie que le salon a
-    // bien un historique et qu'il ne plante pas avant qu'il soit profond.
+  it('calcule ses champs sur des positions retardees, jamais sur les courantes', () => {
     const room = new Room();
     room.join(1);
+    for (let i = 0; i < TICK_HZ; i++) {
+      room.step(DT);
+    }
 
-    expect(() => {
-      for (let i = 0; i < 5; i++) {
-        room.step(DT);
-      }
-    }).not.toThrow();
+    // Le serveur s'impose le retard qu'il inflige au client. Si cette
+    // difference tombe a zero, c'est qu'il calcule sur les positions
+    // courantes — et son champ devient irreproductible cote client.
+    expect(room.tick - room.fieldInputTick).toBe(FIELD_INPUT_DELAY_TICKS);
   });
 
   it('a une graine de carte stable pendant toute la vie du salon', () => {

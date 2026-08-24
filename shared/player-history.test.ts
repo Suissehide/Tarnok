@@ -13,6 +13,7 @@ describe('PlayerHistory', () => {
     const vu = h.delayed(10);
 
     expect(vu?.x[0]).toBe((10 - FIELD_INPUT_DELAY_TICKS) * 100);
+    expect(vu?.tick).toBe(10 - FIELD_INPUT_DELAY_TICKS);
   });
 
   it("rend null tant que l'historique n'est pas assez profond", () => {
@@ -59,5 +60,7 @@ describe('PlayerHistory', () => {
     // Au tick 20, on voudrait le tick 17 — jamais enregistre. On s'accroche au
     // plus recent disponible plutot que de figer la horde.
     expect(h.delayed(20)?.x[0]).toBe(1000);
+    // Et ce tick de repli doit etre annonce tel quel : 10, pas 17.
+    expect(h.delayed(20)?.tick).toBe(10);
   });
 });

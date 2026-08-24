@@ -201,4 +201,104 @@ describe("le livrable de l'etape 2", () => {
     expect(stats.identityMismatches).toBe(0);
     expect(stats.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
   });
+
+  it('mesure la derive due a une apparition tardive (latence reseau simulee)', () => {
+    // Ce test ne verrouille pas une garantie, il MESURE un phenomene attendu.
+    // `Room.step` (tache 9) fait apparaitre une vague au tick decide par le
+    // serveur ; un client reel ne peut pas faire de meme au meme tick — l'ordre
+    // met du temps a traverser le reseau. Il l'appliquera donc un ou deux ticks
+    // plus tard (33 a 66 ms a 30 Hz), et ses entites auront alors ete avancees
+    // d'un ou deux pas de moins que celles du serveur : c'est une consequence
+    // de la latence, pas un bug de replication. Le chiffre mesure ici sert a
+    // decider, a la tache 13, si le client doit rattraper les pas manques ou
+    // simplement partir en retard.
+    const mapSeed = 0x5eed_1a7e;
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+
+    const SPAWN_TICK = 100;
+    const END = 400;
+    // Retard d'apparition par participant, en ticks : 0 pour la reference (le
+    // serveur), 1 tick pour deux clients (33 ms de latence), 2 ticks pour les
+    // deux autres (66 ms).
+    const SPAWN_DELAY: readonly number[] = [0, 1, 1, 2, 2];
+
+    const order: WaveOrder = {
+      waveId: 1,
+      spawnTick: SPAWN_TICK,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = [0, 1, 2, 3].map((p) => 3000 + Math.cos(tick * 0.02 + p) * 1500);
+      const ys = [0, 1, 2, 3].map((p) => 3000 + Math.sin(tick * 0.02 + p) * 1500);
+
+      parts.forEach((p, i) => {
+        p.history.record(tick, xs, ys);
+
+        if (tick % stepsPerField === 0) {
+          const seen = p.history.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+
+        if (tick === SPAWN_TICK + (SPAWN_DELAY[i] ?? 0)) {
+          p.horde.spawn(order);
+        }
+
+        p.horde.step(DT, p.fields);
+      });
+
+      // On ne compare que les entites que la reference ET le participant ont
+      // deja fait apparaitre : avant que son ordre (retarde) n'arrive, un
+      // participant n'a simplement pas encore ces entites — ce n'est pas un
+      // mesappariement d'identite, juste une absence temporaire.
+      for (const p of parts.slice(1)) {
+        const count = Math.min(reference.horde.count, p.horde.count);
+        for (let i = 0; i < count; i++) {
+          const drift = Math.hypot(
+            (p.horde.x[i] ?? 0) - (reference.horde.x[i] ?? 0),
+            (p.horde.y[i] ?? 0) - (reference.horde.y[i] ?? 0),
+          );
+          if (drift > stats.maxDrift) {
+            stats.maxDrift = drift;
+          }
+
+          if (p.horde.entityIdAt(i) !== reference.horde.entityIdAt(i)) {
+            stats.identityMismatches++;
+          }
+        }
+      }
+    }
+
+    process.stdout.write(
+      `derive due a une apparition tardive (1-2 ticks) : ${stats.maxDrift.toFixed(3)} px\n`,
+    );
+
+    // L'identite est arithmetique (shared/horde.ts) : elle ne depend que de
+    // waveId et de l'index dans la vague, jamais du tick d'apparition. Elle
+    // doit donc rester strictement identique, meme quand les horloges
+    // d'apparition different.
+    expect(stats.identityMismatches).toBe(0);
+    // Pas de seuil serre ici : ce cas n'est pas cense respecter DRIFT_LIMIT_PX,
+    // puisqu'un ou deux pas de simulation manquent reellement. La mesure
+    // attendue est ~694 px (voir §6.2 de la spec) ; cette borne n'est pas une
+    // garantie, juste un filet contre une explosion.
+    expect(stats.maxDrift).toBeLessThan(800);
+  });
 });

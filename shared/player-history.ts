@@ -18,6 +18,8 @@ import { FIELD_INPUT_DELAY_TICKS, MAX_PLAYERS } from './constants';
 const DEPTH = 16;
 
 export interface PlayerPositions {
+  /** Tick dont proviennent ces positions. Peut etre anterieur au tick demande. */
+  tick: number;
   x: number[];
   y: number[];
 }
@@ -92,6 +94,6 @@ export class PlayerHistory {
       x.push(this.#x[slot * MAX_PLAYERS + p] ?? 0);
       y.push(this.#y[slot * MAX_PLAYERS + p] ?? 0);
     }
-    return { x, y };
+    return { tick, x, y };
   }
 }

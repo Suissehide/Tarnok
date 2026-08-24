@@ -88,6 +88,8 @@ export class Room {
   readonly #director: WaveDirector;
   #pendingOrders: WaveOrder[] = [];
   #tick = 0;
+  /** Tick des positions ayant servi au dernier calcul des champs. Voir `fieldInputTick`. */
+  #fieldInputTick = 0;
   #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0 };
   /** Reutilise d'un snapshot a l'autre : pas d'allocation par tick. */
   readonly #scratch: PlayerSnapshot[] = [];
@@ -112,6 +114,16 @@ export class Room {
 
   get tick(): number {
     return this.#tick;
+  }
+
+  /**
+   * Tick dont proviennent les positions ayant servi au dernier calcul des
+   * champs. Doit rester en retard de `FIELD_INPUT_DELAY_TICKS` sur le tick
+   * courant : c'est ce retard, que le serveur s'impose a lui-meme, qui rend son
+   * champ reproductible par le client.
+   */
+  get fieldInputTick(): number {
+    return this.#fieldInputTick;
   }
 
   get playerCount(): number {
@@ -193,6 +205,7 @@ export class Room {
       // identiques (§5 de la spec de l'etape 2).
       const seen = this.#history.delayed(this.#tick);
       if (seen) {
+        this.#fieldInputTick = seen.tick;
         for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
           this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
         }
