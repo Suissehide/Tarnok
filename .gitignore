@@ -1,0 +1,28 @@
+node_modules/
+dist/
+.DS_Store
+*.log
+
+# Environnement local
+.env
+.env.local
+back/.env
+front/.env
+deploy/.env
+
+# Sorties d'outillage
+coverage/
+.vite/
+*.tsbuildinfo
+
+# --- Assets Tiny Swords ---
+# Licence Pixel Frog : usage commercial autorise, credit facultatif, mais
+# REDISTRIBUTION INTERDITE, meme apres modification. Ce depot est public :
+# rien de derive du pack ne doit y entrer. Les assets vivent sur MinIO
+# (prefixe `tarnok/`) et se recuperent avec `tools/fetch-assets.sh`.
+assets/tinyswords/
+assets/tinyswords-derived/
+#
+# Les deux maquettes ci-dessous embarquent des sprites du pack en base64.
+docs/maquettes/themes.html
+docs/maquettes/rendu.html
