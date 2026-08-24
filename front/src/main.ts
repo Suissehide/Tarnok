@@ -69,6 +69,30 @@ function join(code: string): void {
     stage.drawHorde(client.horde, now);
     return state;
   });
+
+  // Poignee de debogage, en developpement seulement.
+  //
+  // Le ticker Pixi passe par `requestAnimationFrame`, suspendu dans un onglet en
+  // arriere-plan : impossible d'y verifier quoi que ce soit sans pouvoir avancer
+  // les images a la main. C'est ce qui a produit un faux bug de replication a
+  // l'etape 0 — une capture d'ecran d'un onglet cache montre une image perimee.
+  //
+  // Utile au-dela des tests : le §4.6 de l'orientation demande un HUD de debug
+  // plutot que des logs.
+  if (import.meta.env.DEV) {
+    (window as unknown as { __tarnok?: unknown }).__tarnok = {
+      client,
+      stage,
+      /** Avance et dessine `count` images, sans dependre de rAF. */
+      step(count = 1, dt = 1 / 60): void {
+        for (let i = 0; i < count; i++) {
+          const state = client.update(performance.now(), dt);
+          stage.drawHorde(client.horde, performance.now());
+          stage.draw(state);
+        }
+      },
+    };
+  }
 }
 
 function onStatus(status: ConnectionStatus): void {
