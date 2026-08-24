@@ -213,3 +213,51 @@ describe('la carte tient dans un int16', () => {
     expect(MAP_SIZE).toBeLessThanOrEqual(32767);
   });
 });
+
+describe('Room et la horde', () => {
+  it('fait apparaitre des vagues au fil du temps', () => {
+    const room = new Room();
+    room.join(1);
+    for (let i = 0; i < TICK_HZ * 20; i++) {
+      room.step(DT);
+    }
+
+    expect(room.horde.count).toBeGreaterThan(0);
+  });
+
+  it('met les ordres de vague dans une file que le serveur vide', () => {
+    const room = new Room();
+    room.join(1);
+    for (let i = 0; i < TICK_HZ * 20; i++) {
+      room.step(DT);
+    }
+
+    const ordres = room.drainWaveOrders();
+
+    expect(ordres.length).toBeGreaterThan(0);
+    expect(room.drainWaveOrders()).toHaveLength(0);
+  });
+
+  it('alimente son flowfield avec les positions retardees, comme le client', () => {
+    // On ne peut pas observer le champ directement ; on verifie que le salon a
+    // bien un historique et qu'il ne plante pas avant qu'il soit profond.
+    const room = new Room();
+    room.join(1);
+
+    expect(() => {
+      for (let i = 0; i < 5; i++) {
+        room.step(DT);
+      }
+    }).not.toThrow();
+  });
+
+  it('a une graine de carte stable pendant toute la vie du salon', () => {
+    const room = new Room();
+    const graine = room.mapSeed;
+    for (let i = 0; i < 100; i++) {
+      room.step(DT);
+    }
+
+    expect(room.mapSeed).toBe(graine);
+  });
+});

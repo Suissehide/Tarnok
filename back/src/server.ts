@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
-import { decode, encodeWelcome, MSG } from '@shared/protocol';
+import { decode, encodeWaveOrder, encodeWelcome, MSG } from '@shared/protocol';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -148,6 +148,18 @@ class Session {
   }
 
   #broadcast(): void {
+    // Les ordres de vague partent avant le snapshot du meme tick : un client
+    // doit connaitre la vague avant de voir bouger les joueurs qu'elle vise.
+    for (const order of this.room.drainWaveOrders()) {
+      const buf = encodeWaveOrder(order);
+      for (const ws of this.#clients.values()) {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(buf);
+          this.#wireBytes += buf.byteLength;
+        }
+      }
+    }
+
     this.#outbox.buffers.length = 0;
     this.room.snapshot(this.#outbox);
 

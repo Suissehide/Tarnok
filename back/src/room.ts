@@ -1,5 +1,20 @@
-import { MAP_SIZE, MAX_PLAYERS, PLAYER_SPEED } from '@shared/constants';
+import {
+  FLOWFIELD_CELL,
+  FLOWFIELD_HZ,
+  MAP_SIZE,
+  MAX_ENTITIES,
+  MAX_PLAYERS,
+  PLAYER_SPEED,
+  TICK_HZ,
+} from '@shared/constants';
+import { FlowField } from '@shared/flowfield';
+import { Horde } from '@shared/horde';
+import { PlayerHistory } from '@shared/player-history';
 import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
+import type { WaveOrder } from '@shared/waves';
+import { applyObstacles, generateObstacles } from '@shared/worldmap';
+
+import { WaveDirector } from './wave-director';
 
 /**
  * Le salon ne connait pas le reseau.
@@ -64,19 +79,36 @@ function isNewer(a: number, b: number): boolean {
 }
 
 export class Room {
-  /**
-   * Graine de la carte d'obstacles, tiree a la creation du salon.
-   *
-   * PROVISOIRE : cette ligne n'existe que pour que le protocole compile des la
-   * tache 5. La tache 9 la remplace par une initialisation dans le
-   * constructeur — ne pas ajouter une seconde declaration a ce moment-la.
-   */
+  /** Graine de la carte d'obstacles, tiree a la creation du salon. */
   readonly mapSeed: number = (Math.random() * 0xffff_ffff) >>> 0;
+  readonly horde = new Horde(MAX_ENTITIES);
   readonly #players = new Map<number, PlayerState>();
+  readonly #fields: FlowField[];
+  readonly #history = new PlayerHistory();
+  readonly #director: WaveDirector;
+  #pendingOrders: WaveOrder[] = [];
   #tick = 0;
   #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0 };
   /** Reutilise d'un snapshot a l'autre : pas d'allocation par tick. */
   readonly #scratch: PlayerSnapshot[] = [];
+
+  constructor() {
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(this.mapSeed, probe.cols, probe.rows);
+    this.#fields = Array.from({ length: MAX_PLAYERS }, () => {
+      const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      applyObstacles(f, mask);
+      return f;
+    });
+    this.#director = new WaveDirector(this.mapSeed ^ 0x5bf0_3a17);
+  }
+
+  /** Ordres de vague a diffuser. Le serveur les vide a chaque tick. */
+  drainWaveOrders(): WaveOrder[] {
+    const orders = this.#pendingOrders;
+    this.#pendingOrders = [];
+    return orders;
+  }
 
   get tick(): number {
     return this.#tick;
@@ -145,6 +177,36 @@ export class Room {
       p.x = clamp(p.x + p.moveX * PLAYER_SPEED * dt, 0, MAP_SIZE);
       p.y = clamp(p.y + p.moveY * PLAYER_SPEED * dt, 0, MAP_SIZE);
     }
+
+    const xs: number[] = [];
+    const ys: number[] = [];
+    for (const p of this.#players.values()) {
+      xs.push(p.x);
+      ys.push(p.y);
+    }
+    this.#history.record(this.#tick, xs, ys);
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    if (this.#tick % stepsPerField === 0) {
+      // ⚠️ Les positions **retardees**, pas les courantes. Le serveur s'impose
+      // le retard qu'il inflige au client : c'est ce qui rend les deux champs
+      // identiques (§5 de la spec de l'etape 2).
+      const seen = this.#history.delayed(this.#tick);
+      if (seen) {
+        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
+          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        this.horde.retarget(seen.x, seen.y);
+      }
+    }
+
+    const order = this.#director.due(this.#tick, xs, ys);
+    if (order) {
+      this.horde.spawn(order);
+      this.#pendingOrders.push(order);
+    }
+
+    this.horde.step(dt, this.#fields);
   }
 
   snapshot(out: Outbox): void {
