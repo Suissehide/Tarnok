@@ -64,7 +64,11 @@ function join(code: string): void {
   hud.classList.add('flex');
   hudCode.textContent = code;
 
-  stage.run((now, dt) => client.update(now, dt));
+  stage.run((now, dt) => {
+    const state = client.update(now, dt);
+    stage.drawHorde(client.horde, now);
+    return state;
+  });
 }
 
 function onStatus(status: ConnectionStatus): void {

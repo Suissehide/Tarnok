@@ -52,6 +52,12 @@ export class SnapshotBuffer {
     }
   }
 
+  /** Le snapshot le plus recent, sans interpolation ni retard. */
+  latest(): { players: readonly PlayerSnapshot[] } | null {
+    const newest = this.#samples[this.#samples.length - 1];
+    return newest ? { players: newest.players } : null;
+  }
+
   /** Positions interpolees a l'instant `now`, avec INTERP_DELAY_MS de retard. */
   sample(now: number): PlayerSnapshot[] {
     if (this.#samples.length === 0) {

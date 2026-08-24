@@ -1,5 +1,23 @@
-import { INPUT_HZ } from '@shared/constants';
-import { decode, encodeInput, MSG, type PlayerSnapshot } from '@shared/protocol';
+import {
+  FLOWFIELD_CELL,
+  FLOWFIELD_HZ,
+  INPUT_HZ,
+  MAP_SIZE,
+  MAX_ENTITIES,
+  MAX_PLAYERS,
+  TICK_HZ,
+} from '@shared/constants';
+import { FlowField } from '@shared/flowfield';
+import { Horde } from '@shared/horde';
+import { PlayerHistory } from '@shared/player-history';
+import {
+  decode,
+  encodeInput,
+  MSG,
+  type PlayerSnapshot,
+  type WaveOrderMessage,
+} from '@shared/protocol';
+import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { SnapshotBuffer } from './interpolation';
 import { PredictedPlayer } from './prediction';
@@ -33,6 +51,22 @@ export class GameClient {
   #localId: number | null = null;
   #seq = 0;
   #status: ConnectionStatus = 'closed';
+
+  readonly horde = new Horde(MAX_ENTITIES);
+  #fields: FlowField[] = [];
+  readonly #history = new PlayerHistory();
+  /** Accumulateur de pas fixes : la horde avance a 30 Hz, comme le serveur. */
+  #hordeAcc = 0;
+  #lastHordeTick = 0;
+
+  /**
+   * Ordres recus mais pas encore appliques.
+   *
+   * Le gestionnaire de message ne fait QUE empiler. L'application a lieu dans
+   * `#advanceHorde`, avant le rafraichissement du champ — l'ordre inverse
+   * multiplie la derive par trente-cinq (§6.2 de la spec).
+   */
+  readonly #pendingOrders: WaveOrderMessage[] = [];
 
   constructor(
     private readonly url: string,
@@ -90,6 +124,21 @@ export class GameClient {
     const axes = this.readInput();
     this.#local?.predict(axes.x, axes.y, dt);
 
+    // La horde avance au **pas fixe** du serveur, pas au rythme des images :
+    // deux clients a 60 et 144 fps appliqueraient sinon des suites de `dt`
+    // differentes, et la derive serait proportionnelle au temps de vie.
+    const STEP = 1 / TICK_HZ;
+    this.#hordeAcc += dt;
+    let steps = 0;
+    while (this.#hordeAcc >= STEP && steps < 5) {
+      this.#advanceHorde(STEP);
+      this.#hordeAcc -= STEP;
+      steps++;
+    }
+    if (steps === 5) {
+      this.#hordeAcc = 0;
+    }
+
     const players = this.#buffer.sample(now);
     const local = this.#local;
     if (local && this.#localId !== null) {
@@ -120,6 +169,19 @@ export class GameClient {
 
     if (msg.type === MSG.WELCOME) {
       this.#localId = msg.playerId;
+      // Le client **regenere** la carte depuis la graine, il ne la recoit pas :
+      // envoyer 8 836 cellules couterait plus cher que tout le protocole.
+      const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      const mask = generateObstacles(msg.mapSeed, probe.cols, probe.rows);
+      this.#fields = Array.from({ length: MAX_PLAYERS }, () => {
+        const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+        applyObstacles(f, mask);
+        return f;
+      });
+      return;
+    }
+    if (msg.type === MSG.WAVE_ORDER) {
+      this.#pendingOrders.push(msg);
       return;
     }
     if (msg.type !== MSG.SNAPSHOT) {
@@ -139,6 +201,52 @@ export class GameClient {
     } else {
       this.#local.reconcile(mine.x, mine.y);
     }
+  }
+
+  #advanceHorde(dt: number): void {
+    if (this.#fields.length === 0) {
+      return;
+    }
+    const tick = this.#lastHordeTick++;
+
+    // ⚠️ LES ORDRES EN ATTENTE S'APPLIQUENT ICI, EN PREMIER — avant le
+    // rafraichissement du champ plus bas. Mesure (§6.2 de la spec) : dans cet
+    // ordre, la derive due a la latence reste bornee autour de 20 a 50 px ;
+    // dans l'ordre inverse, elle monte a 782 px, soit pire que de ne pas
+    // rattraper du tout. C'est la seule raison pour laquelle les ordres sont
+    // mis en file plutot qu'appliques a la reception.
+    while (this.#pendingOrders.length > 0) {
+      const order = this.#pendingOrders.shift();
+      if (order) {
+        // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
+        const missed = Math.max(0, tick - order.spawnTick);
+        this.horde.spawnCatchingUp(order, missed, dt, this.#fields);
+      }
+    }
+
+    // Les positions telles que le client les connait : celles du dernier
+    // snapshot recu. Le serveur lira les memes, grace au retard qu'il s'impose.
+    const snapshot = this.#buffer.latest();
+    if (snapshot) {
+      this.#history.record(
+        tick,
+        snapshot.players.map((p) => p.x),
+        snapshot.players.map((p) => p.y),
+      );
+    }
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    if (tick % stepsPerField === 0) {
+      const seen = this.#history.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
+          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        this.horde.retarget(seen.x, seen.y);
+      }
+    }
+
+    this.horde.step(dt, this.#fields);
   }
 
   #setStatus(status: ConnectionStatus): void {
