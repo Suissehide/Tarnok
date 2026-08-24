@@ -83,13 +83,25 @@ function join(code: string): void {
     (window as unknown as { __tarnok?: unknown }).__tarnok = {
       client,
       stage,
-      /** Avance et dessine `count` images, sans dependre de rAF. */
+      /**
+       * Avance et dessine `count` images, sans dependre de rAF.
+       *
+       * Rend aussi a chaque image : `draw` / `drawHorde` ne font que mettre a
+       * jour la scene en memoire, c'est le ticker Pixi (rAF, donc suspendu
+       * hors focus) qui la peint d'ordinaire. Sans ce rendu force, `step`
+       * avancerait la simulation sans que le canevas ne le montre jamais.
+       */
       step(count = 1, dt = 1 / 60): void {
         for (let i = 0; i < count; i++) {
           const state = client.update(performance.now(), dt);
           stage.drawHorde(client.horde, performance.now());
           stage.draw(state);
+          stage.renderNow();
         }
+      },
+      /** Force un rendu immediat, sans attendre le ticker (suspendu hors focus). */
+      render(): void {
+        stage.renderNow();
       },
     };
   }

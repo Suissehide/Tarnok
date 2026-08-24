@@ -89,6 +89,19 @@ export class Stage {
     this.#centerOn(state);
   }
 
+  /**
+   * Force un rendu immediat, sans attendre le ticker.
+   *
+   * Le ticker Pixi passe par `requestAnimationFrame`, suspendu dans un onglet
+   * en arriere-plan : la scene peut etre a jour en memoire (apres `draw` /
+   * `drawHorde`) sans que le canevas ne le reflete jamais. Utile a la poignee
+   * de debogage `__tarnok` (developpement uniquement), mais reste publique et
+   * anodine — elle ne fuit pas l'`Application` Pixi complete.
+   */
+  renderNow(): void {
+    this.#app.renderer.render(this.#app.stage);
+  }
+
   /** Rectangle du monde actuellement visible, pour le culling. */
   viewRect(): Rectangle {
     return new Rectangle(
