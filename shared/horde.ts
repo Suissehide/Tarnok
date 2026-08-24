@@ -132,7 +132,17 @@ export class Horde {
     slots.sort((a, b) => b - a);
 
     let removed = 0;
+    let previous = -1;
     for (const slot of slots) {
+      // Une identite listee deux fois designe le meme creneau. Le retirer deux
+      // fois supprimerait l'entite VIVANTE que la premiere passe vient d'y
+      // deplacer — un monstre disparait sans que rien ne le signale, et les
+      // clients divergent en silence. Le tri decroissant met les doublons cote
+      // a cote, donc un seul test suffit.
+      if (slot === previous) {
+        continue;
+      }
+      previous = slot;
       this.#removeAt(slot);
       removed++;
     }

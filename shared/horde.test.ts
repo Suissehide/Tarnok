@@ -288,6 +288,11 @@ describe('Horde.kill', () => {
     expect(horde.count).toBe(5);
   });
 
+  // ⚠️ Note sur le test ci-dessous : il compare deux executions du MEME code,
+  // donc il prouve qu'un tri deterministe existe, pas qu'il est decroissant.
+  // C'est « preserve toutes les entites survivantes » qui porte cette
+  // exigence — verifie : passer le tri en croissant le fait echouer, et lui
+  // seul. Les deux se tiennent ; ne pas supprimer l'un en gardant l'autre.
   it('donne le meme resultat quel que soit l ordre de la liste', () => {
     // Le protocole trie les identites, mais rien n'empeche un appelant de
     // passer une liste desordonnee : le resultat doit etre identique, sinon
@@ -304,6 +309,24 @@ describe('Horde.kill', () => {
     const idsDe = (h: Horde): number[] =>
       Array.from({ length: h.count }, (_, i) => h.entityIdAt(i));
     expect(idsDe(a)).toEqual(idsDe(b));
+  });
+
+  it('ne retire qu une fois une identite listee deux fois', () => {
+    // Rien dans le protocole ne garantit l'unicite : deux armes qui achevent la
+    // meme entite au meme tick peuvent l'inscrire deux fois dans le lot. Sans
+    // garde, la seconde passe supprime l'entite vivante deplacee dans le trou.
+    const horde = new Horde(1000);
+    horde.spawn(order({ count: 10 }));
+    const cible = horde.entityIdAt(3);
+    const survivants = new Set(
+      Array.from({ length: 10 }, (_, i) => horde.entityIdAt(i)).filter((id) => id !== cible),
+    );
+
+    expect(horde.kill([cible, cible])).toBe(1);
+    expect(horde.count).toBe(9);
+
+    const apres = new Set(Array.from({ length: horde.count }, (_, i) => horde.entityIdAt(i)));
+    expect(apres).toEqual(survivants);
   });
 
   it('preserve toutes les entites survivantes', () => {
