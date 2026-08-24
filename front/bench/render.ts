@@ -15,7 +15,15 @@
  * valides dans un onglet en arriere-plan, ou rAF est suspendu.
  */
 
-import { Application, Container, Particle, ParticleContainer, Sprite, Texture } from 'pixi.js';
+import {
+  Application,
+  Container,
+  Particle,
+  ParticleContainer,
+  Rectangle,
+  Sprite,
+  Texture,
+} from 'pixi.js';
 
 const SPRITE_COUNTS = [500, 1000, 1500, 3000, 6000];
 const PARTICLE_COUNTS = [500, 2000, 5000, 10_000, 20_000];
@@ -161,6 +169,76 @@ function buildSpriteScene(count: number): Scene {
     destroy(): void {
       app.stage.removeChild(container);
       container.destroy({ children: true });
+    },
+  };
+}
+
+/**
+ * Scene de horde animee : un seul atlas, chaque particule change d'image.
+ *
+ * C'est le montage exact du §9 de la spec de l'etape 2. On le prouve ici avant
+ * d'ecrire le rendu du jeu, parce que si `uvs` dynamique ne fonctionne pas, la
+ * conception du rendu est a refaire.
+ */
+function buildAnimatedScene(count: number): Scene {
+  const FRAMES = 8;
+  const CELL = 64;
+  // Atlas synthetique : une bande de 8 images de 64, chacune d'une teinte
+  // differente pour qu'un defaut d'animation se voie a l'oeil nu.
+  const canvas = document.createElement('canvas');
+  canvas.width = CELL * FRAMES;
+  canvas.height = CELL;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  for (let f = 0; f < FRAMES; f++) {
+    ctx.fillStyle = `hsl(${(f * 360) / FRAMES} 70% 55%)`;
+    ctx.fillRect(f * CELL + 4, 4, CELL - 8, CELL - 8);
+  }
+  const atlas = Texture.from(canvas);
+  const frames = Array.from(
+    { length: FRAMES },
+    (_, f) =>
+      new Texture({
+        source: atlas.source,
+        frame: new Rectangle(f * CELL, 0, CELL, CELL),
+      }),
+  );
+
+  const container = new ParticleContainer({
+    dynamicProperties: { position: true, uvs: true, color: false, rotation: false },
+  });
+  const particles: Particle[] = [];
+  const phase: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const p = new Particle({
+      texture: frames[0] as Texture,
+      x: Math.random() * WORLD,
+      y: Math.random() * WORLD,
+    });
+    particles.push(p);
+    phase.push(Math.floor(Math.random() * FRAMES));
+    container.addParticle(p);
+  }
+  app.stage.addChild(container);
+
+  return {
+    advance(t: number): void {
+      const base = Math.floor(t * 10);
+      for (let i = 0; i < particles.length; i++) {
+        const p = particles[i];
+        if (!p) {
+          continue;
+        }
+        p.x += Math.cos(t + i) * 0.5;
+        p.y += Math.sin(t + i) * 0.5;
+        p.texture = frames[(base + (phase[i] ?? 0)) % FRAMES] as Texture;
+      }
+    },
+    destroy(): void {
+      app.stage.removeChild(container);
+      container.destroy();
     },
   };
 }
@@ -326,6 +404,30 @@ function particleBudget(): SweepResult {
   };
 }
 
+/** Horde animee : le montage du §9 de la spec, mesure comme les autres. */
+function animatedSweep(): SweepResult {
+  const rows: Row[] = [];
+  for (const count of SPRITE_COUNTS) {
+    const scene = buildAnimatedScene(count);
+    try {
+      const m = measure(scene);
+      rows.push({
+        mode: 'horde animee (atlas + uvs)',
+        count,
+        medianMs: round2(m.medianMs),
+        p95Ms: round2(m.p95Ms),
+        advanceMs: round2(m.advanceMs),
+        renderMs: round2(m.renderMs),
+        fpsEquivalent: m.medianMs > 0 ? Math.round(1000 / m.medianMs) : 0,
+        withinBudget: m.p95Ms < FRAME_BUDGET_MS,
+      });
+    } finally {
+      scene.destroy();
+    }
+  }
+  return { rows, ceilings: ceilingsOf(rows), renderer: 'webgl', userAgent: navigator.userAgent };
+}
+
 /** fps reels sur la duree demandee. Exige un onglet au premier plan. */
 async function fpsRun(count: number, seconds: number): Promise<Record<string, number | string>> {
   const scene = buildParticleScene(count);
@@ -428,6 +530,10 @@ wire('run-particles', "Budget d'effets", () => {
   renderTable("Budget de particules d'effet", result.rows);
 });
 
+wire('run-animated', 'Horde animée', () => {
+  renderTable('Horde animée (un atlas, uvs dynamiques)', animatedSweep().rows);
+});
+
 wire('run-fps', 'Mesure fps', async () => {
   const rows: Record<string, number | string>[] = [];
   for (const count of [1500, 3000, 6000]) {
@@ -443,10 +549,11 @@ declare global {
     __tarnokBench: {
       sweep: () => SweepResult;
       particleBudget: () => SweepResult;
+      animatedSweep: () => SweepResult;
       fpsRun: (count: number, seconds: number) => Promise<Record<string, number | string>>;
     };
   }
 }
 
-window.__tarnokBench = { sweep, particleBudget, fpsRun };
+window.__tarnokBench = { sweep, particleBudget, animatedSweep, fpsRun };
 setStatus('prêt.');
