@@ -28,12 +28,20 @@ describe('generateObstacles', () => {
     expect(ratio).toBeLessThan(0.15);
   });
 
-  it('laisse le centre libre : c est la que les joueurs apparaissent', () => {
+  it('laisse toute la zone d apparition libre, pas seulement son centre', () => {
     const cols = 40;
-    const mask = generateObstacles(11, cols, 40);
-    const centre = Math.floor(20) * cols + Math.floor(20);
-
-    expect(mask[centre]).toBe(0);
+    const rows = 40;
+    // Plusieurs graines : avec une seule, le test passerait par chance meme si
+    // la protection de la zone etait supprimee.
+    for (const seed of [11, 12, 13, 101, 999]) {
+      const mask = generateObstacles(seed, cols, rows);
+      // Bornes: centre (20) +/- SPAWN_CLEARANCE (4) = [16, 24]
+      for (let cy = 16; cy <= 24; cy++) {
+        for (let cx = 16; cx <= 24; cx++) {
+          expect(mask[cy * cols + cx]).toBe(0);
+        }
+      }
+    }
   });
 });
 
@@ -56,6 +64,20 @@ describe('applyObstacles', () => {
     applyObstacles(field, vide);
 
     expect(field.blocked[1 * field.cols + 1]).toBe(0);
+  });
+
+  it('efface au-dela d un masque plus court que le champ', () => {
+    const field = new FlowField(400, 100);
+    field.block(1, 1);
+    const dernier = field.cols * field.rows - 1;
+    expect(field.blocked[dernier]).toBe(0);
+    field.blocked[dernier] = 1;
+
+    // Masque volontairement tronque : sans le `fill(0)`, la queue du champ
+    // garderait ses obstacles precedents.
+    applyObstacles(field, new Uint8Array(2));
+
+    expect(field.blocked[dernier]).toBe(0);
   });
 
   it('donne le meme champ a deux instances qui partagent le masque', () => {

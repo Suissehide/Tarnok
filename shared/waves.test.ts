@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAP_SIZE } from './constants';
 import { FORMATION, formationPositions, type WaveOrder } from './waves';
 
 function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
@@ -76,6 +77,17 @@ describe('formationPositions', () => {
     for (let i = 0; i < 300; i++) {
       expect(x[i]).toBeGreaterThanOrEqual(0);
       expect(y[i]).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('ne laisse aucune position depasser MAP_SIZE', () => {
+    const { x, y } = positionsOf(
+      order({ anchorX: MAP_SIZE - 20, anchorY: MAP_SIZE - 20, count: 300 }),
+    );
+
+    for (let i = 0; i < 300; i++) {
+      expect(x[i]).toBeLessThanOrEqual(MAP_SIZE);
+      expect(y[i]).toBeLessThanOrEqual(MAP_SIZE);
     }
   });
 });

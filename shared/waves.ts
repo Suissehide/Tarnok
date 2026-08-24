@@ -45,6 +45,26 @@ export function formationPositions(order: WaveOrder, outX: Float32Array, outY: F
   const rng = makeRandom(order.seed);
   const { count, anchorX, anchorY } = order;
 
+  // Precalcul des parametres constants selon la formation
+  let heading = 0;
+  const clusterCentres: Array<{ cx: number; cy: number }> = [];
+
+  if (order.formation === FORMATION.COLUMN) {
+    // L'orientation vient de la graine : deux vagues successives au meme
+    // endroit ne se superposent pas.
+    heading = makeRandom(order.seed ^ 0x5f37_1d2b)() * Math.PI * 2;
+  } else if (order.formation === FORMATION.CLUSTER) {
+    // Grappes denses : c'est ce qui fabrique la sensation de masse (§4.1),
+    // pas le compteur. Precalcul des centres pour eviter de recreer le generateur
+    // a chaque iteration.
+    for (let c = 0; c < CLUSTER_COUNT; c++) {
+      const clusterRng = makeRandom(order.seed + c * 0x9e37_79b9);
+      const cx = (clusterRng() - 0.5) * CLUSTER_SPREAD;
+      const cy = (clusterRng() - 0.5) * CLUSTER_SPREAD;
+      clusterCentres.push({ cx, cy });
+    }
+  }
+
   for (let i = 0; i < count; i++) {
     let dx = 0;
     let dy = 0;
@@ -58,9 +78,6 @@ export function formationPositions(order: WaveOrder, outX: Float32Array, outY: F
         break;
       }
       case FORMATION.COLUMN: {
-        // L'orientation vient de la graine : deux vagues successives au meme
-        // endroit ne se superposent pas.
-        const heading = makeRandom(order.seed ^ 0x5f37_1d2b)() * Math.PI * 2;
         const along = (rng() - 0.5) * COLUMN_LENGTH;
         const across = (rng() - 0.5) * COLUMN_WIDTH;
         dx = Math.cos(heading) * along - Math.sin(heading) * across;
@@ -68,16 +85,15 @@ export function formationPositions(order: WaveOrder, outX: Float32Array, outY: F
         break;
       }
       case FORMATION.CLUSTER: {
-        // Grappes denses : c'est ce qui fabrique la sensation de masse (§4.1),
-        // pas le compteur.
         const cluster = i % CLUSTER_COUNT;
-        const clusterRng = makeRandom(order.seed + cluster * 0x9e37_79b9);
-        const cx = (clusterRng() - 0.5) * CLUSTER_SPREAD;
-        const cy = (clusterRng() - 0.5) * CLUSTER_SPREAD;
-        const angle = rng() * Math.PI * 2;
-        const radius = Math.sqrt(rng()) * CLUSTER_RADIUS;
-        dx = cx + Math.cos(angle) * radius;
-        dy = cy + Math.sin(angle) * radius;
+        const centre = clusterCentres[cluster];
+        if (centre) {
+          const { cx, cy } = centre;
+          const angle = rng() * Math.PI * 2;
+          const radius = Math.sqrt(rng()) * CLUSTER_RADIUS;
+          dx = cx + Math.cos(angle) * radius;
+          dy = cy + Math.sin(angle) * radius;
+        }
         break;
       }
       default: {
