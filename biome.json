@@ -20,6 +20,9 @@
   "javascript": {
     "formatter": { "quoteStyle": "single", "semicolons": "always", "trailingCommas": "all" }
   },
+  "css": {
+    "parser": { "tailwindDirectives": true }
+  },
   "linter": {
     "enabled": true,
     "rules": {

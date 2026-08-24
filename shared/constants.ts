@@ -14,6 +14,18 @@ export const INPUT_HZ = 30;
 export const INTERP_DELAY_MS = 100;
 
 /**
+ * Constante de temps de la reconciliation client, en millisecondes.
+ *
+ * Quand le serveur contredit la prediction locale, on ne teleporte pas : on
+ * laisse l'ecart s'eteindre exponentiellement. A 33 ms, il est retombe a 5 %
+ * apres une centaine de millisecondes — le « ~100 ms » du plan.
+ *
+ * Reconciliation naive, volontairement : le rejeu d'entrees appartient a
+ * l'etape 2.
+ */
+export const RECONCILE_TAU_MS = 33;
+
+/**
  * Cote de la carte, en pixels monde. Provisoire : le §15.2 de la spec dit que ce
  * chiffre se tranche avec le resultat du banc de l'etape 1, parce que le cout du
  * flowfield est en O(cellules).

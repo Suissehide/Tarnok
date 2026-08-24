@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tarnok</title>
+  </head>
+  <body>
+    <div id="app" class="relative h-full w-full overflow-hidden">
+      <div id="stage" class="absolute inset-0"></div>
+
+      <div
+        id="lobby"
+        class="absolute inset-0 z-10 flex flex-col items-center justify-center gap-6 bg-forge-900/95"
+      >
+        <h1 class="text-4xl tracking-[0.3em] text-ember-400">TARNOK</h1>
+        <p class="max-w-md text-center text-sm text-forge-600">
+          Étape 0 — deux onglets, un code de salon, et c'est le serveur qui décide des
+          positions. Déplacement aux flèches ou WASD.
+        </p>
+
+        <div class="flex flex-col items-center gap-3">
+          <button
+            id="create"
+            type="button"
+            class="w-64 border border-ember-400 px-6 py-3 text-ember-400 hover:bg-ember-400 hover:text-forge-900"
+          >
+            Créer un salon
+          </button>
+
+          <div class="flex gap-2">
+            <input
+              id="code"
+              maxlength="4"
+              placeholder="CODE"
+              autocomplete="off"
+              class="w-40 border border-forge-600 bg-forge-800 px-4 py-3 text-center uppercase tracking-[0.4em] outline-none focus:border-ember-400"
+            />
+            <button
+              id="join"
+              type="button"
+              class="border border-forge-600 px-6 py-3 hover:border-ember-400 hover:text-ember-400"
+            >
+              Rejoindre
+            </button>
+          </div>
+        </div>
+
+        <p id="error" class="h-5 text-sm text-red-400"></p>
+      </div>
+
+      <div
+        id="hud"
+        class="pointer-events-none absolute left-4 top-4 z-10 hidden flex-col gap-1 text-sm"
+      >
+        <span>salon <b id="hud-code" class="text-ember-400"></b></span>
+        <span id="hud-status" class="text-forge-600"></span>
+      </div>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

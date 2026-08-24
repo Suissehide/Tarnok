@@ -155,6 +155,42 @@ describe('la socket de jeu', () => {
     expect(snap.players.map((p) => p.id)).toEqual([a.playerId]);
   });
 
+  /**
+   * Le livrable de l'etape 0, sans navigateur.
+   *
+   * La verification a deux onglets est trompeuse : un onglet en arriere-plan a
+   * son `requestAnimationFrame` suspendu, donc il ne redessine pas — et une
+   * capture d'ecran montre alors une image perimee qu'on prend pour un bug de
+   * replication. Ce test-la ne depend d'aucun rendu.
+   */
+  it('montre a chaque joueur le deplacement de l autre, arbitre par le serveur', async () => {
+    const code = await createRoomCode();
+    const mover = await connect(code);
+    const watcher = await connect(code);
+
+    const start = (await nextSnapshot(watcher.ws, (s) => s.players.length === 2)).players.find(
+      (p) => p.id === mover.playerId,
+    );
+    if (!start) {
+      throw new Error('le joueur qui bouge est absent du snapshot');
+    }
+
+    for (let seq = 1; seq <= 20; seq++) {
+      mover.ws.send(encodeInput(seq, 127, 0));
+      await new Promise((r) => setTimeout(r, 10));
+    }
+
+    // C'est bien l'observateur, sur sa propre socket, qui voit l'autre bouger.
+    const seen = await nextSnapshot(watcher.ws, (s) => {
+      const other = s.players.find((p) => p.id === mover.playerId);
+      return other !== undefined && other.x > start.x + 20;
+    });
+
+    const other = seen.players.find((p) => p.id === mover.playerId);
+    expect(other?.x).toBeGreaterThan(start.x + 20);
+    expect(other?.y).toBe(start.y);
+  });
+
   it('ferme la socket sur un code de salon inconnu', async () => {
     const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=ZZZZ`);
     openSockets.push(ws);

@@ -1,0 +1,23 @@
+@import "tailwindcss";
+
+/*
+ * §6.6 : l'environnement doit rester sombre et desature. Ce n'est pas une
+ * preference esthetique, c'est ce qui rendra six couleurs elementaires
+ * saturees distinguables sur des sprites minuscules a l'etape 5.
+ */
+@theme {
+  --color-forge-900: #14110f;
+  --color-forge-800: #1d1916;
+  --color-forge-700: #2a2420;
+  --color-forge-600: #4a3f36;
+  --color-ember-400: #e0a45e;
+}
+
+html,
+body {
+  height: 100%;
+  margin: 0;
+  background: var(--color-forge-900);
+  color: #d8cfc4;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
