@@ -7,11 +7,15 @@ import { ASSETS_BASE } from '../ui/config';
 import { HordeRenderer } from './horde-renderer';
 
 /**
- * Rendu de l'etape 0 : un carre par joueur, une caméra par client.
+ * La scene du jeu : la carte, la horde, et un carre par joueur.
  *
- * On ne parle pas encore de `ParticleContainer` ni d'atlas : c'est le sujet de
- * l'etape 1, et la decision d'y passer doit venir d'une mesure, pas d'une
- * intuition. Ici, quatre `Graphics` suffisent et ne prejugent de rien.
+ * Les joueurs restent quatre `Graphics` — a cette echelle, un objet par
+ * entite ne coute rien, et rien ne justifierait le batching. La horde, elle,
+ * est deleguee a `HordeRenderer` : c'est la ou vit le `ParticleContainer` et
+ * l'atlas de la tache 11-12, la decision d'y passer etant venue d'une mesure
+ * (etape 1), pas d'une intuition. `Stage` ne fait qu'orchestrer les deux :
+ * ordre d'affichage, camera commune, et le rectangle de vue qui sert de
+ * culling a la horde (`viewRect`).
  */
 
 /** Un anneau colore par joueur : avec quatre cameras, il faut savoir qui est qui (§6.6). */
