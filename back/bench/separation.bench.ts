@@ -246,8 +246,15 @@ function main(): void {
     // alerte qu'on apprend a ignorer ne protege plus de rien.
     //
     // La question posee est « ce chiffre de cout veut-il dire quelque chose ? ».
-    // Une horde a moins de 8 voisins par entite n'est pas dans un regime couteux,
-    // quelle que soit sa trajectoire.
+    // Une horde a moins de 8 voisins par entite reste dans un regime bon marche :
+    // meme mal stabilisee, elle ne peut pas rendre le verdict faux.
+    //
+    // ⚠️ Le OU court-circuite : une trajectoire 1,0 -> 7,9 voisins passe pour
+    // « atteint » alors qu'elle est clairement encore en transitoire. C'est
+    // assume — a cette densite le pas coute ~0,4 ms et le verdict ne change pas
+    // de bande. Mais la ligne qui porte la porte (1 500 entites) ne s'appuie PAS
+    // sur ce plancher : elle passe le test de rapport toute seule, 3,4 -> 4,0
+    // voisins. Si un jour ce n'est plus vrai, resserrer le plancher.
     const stable = avec.neighboursLate < 8 || avec.neighboursLate <= avec.neighboursEarly * 1.5;
     return {
       entites: n,
