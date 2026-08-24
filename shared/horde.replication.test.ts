@@ -35,6 +35,86 @@ function makeParticipant(mapSeed: number): {
   return { horde, fields, history: new PlayerHistory() };
 }
 
+type Participant = ReturnType<typeof makeParticipant>;
+
+/** Cumule les deux mesures de divergence sur la duree d'un test. */
+interface DriftStats {
+  maxDrift: number;
+  identityMismatches: number;
+}
+
+/**
+ * Fait avancer toutes les simulations de `fromTick` (inclus) a `toTick`
+ * (exclu), en accumulant dans `stats` la derive maximale et le nombre de
+ * mesappariements d'identite observes.
+ *
+ * Factorise la boucle commune aux deux tests : elle seule sait comment
+ * nourrir l'historique de joueurs, recalculer les champs a la cadence de
+ * `FLOWFIELD_HZ` a partir des positions retardees, et faire avancer chaque
+ * horde d'un pas.
+ */
+function advance(
+  parts: readonly Participant[],
+  fromTick: number,
+  toTick: number,
+  stats: DriftStats,
+): void {
+  const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+  const reference = parts[0];
+  if (!reference) {
+    throw new Error('aucun participant');
+  }
+
+  for (let tick = fromTick; tick < toTick; tick++) {
+    // Les joueurs bougent : un champ fige ne prouverait rien.
+    const xs = [0, 1, 2, 3].map((p) => 3000 + Math.cos(tick * 0.02 + p) * 1500);
+    const ys = [0, 1, 2, 3].map((p) => 3000 + Math.sin(tick * 0.02 + p) * 1500);
+
+    for (const p of parts) {
+      p.history.record(tick, xs, ys);
+
+      if (tick % stepsPerField === 0) {
+        // Les positions du tick retarde, pas celles du tick courant.
+        const seen = p.history.delayed(tick);
+        if (seen) {
+          for (let f = 0; f < 4; f++) {
+            p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+          }
+          p.horde.retarget(seen.x, seen.y);
+        }
+      }
+
+      p.horde.step(DT, p.fields);
+    }
+
+    // 1. L'ensemble des identites doit etre STRICTEMENT egal.
+    for (const p of parts.slice(1)) {
+      expect(p.horde.count).toBe(reference.horde.count);
+    }
+
+    // 2. Comparer position et identite par indice n'a de sens que si
+    // l'indice designe la meme entite chez tous les participants. Rien ne le
+    // garantit a priori : deux participants qui compacteraient differemment
+    // apres une mort auraient le meme `count` mais pas les memes entites aux
+    // memes indices, et la comparaison de position deviendrait muette.
+    for (const p of parts.slice(1)) {
+      for (let i = 0; i < reference.horde.count; i++) {
+        const drift = Math.hypot(
+          (p.horde.x[i] ?? 0) - (reference.horde.x[i] ?? 0),
+          (p.horde.y[i] ?? 0) - (reference.horde.y[i] ?? 0),
+        );
+        if (drift > stats.maxDrift) {
+          stats.maxDrift = drift;
+        }
+
+        if (p.horde.entityIdAt(i) !== reference.horde.entityIdAt(i)) {
+          stats.identityMismatches++;
+        }
+      }
+    }
+  }
+}
+
 describe("le livrable de l'etape 2", () => {
   it('fait converger 1 000 ennemis identiquement sur cinq simulations', () => {
     const mapSeed = 0xc0ff_ee12;
@@ -54,88 +134,71 @@ describe("le livrable de l'etape 2", () => {
       p.horde.spawn(order);
     }
 
-    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
-    let maxDrift = 0;
-
-    for (let tick = 0; tick < STEPS; tick++) {
-      // Les joueurs bougent : un champ fige ne prouverait rien.
-      const xs = [0, 1, 2, 3].map((p) => 3000 + Math.cos(tick * 0.02 + p) * 1500);
-      const ys = [0, 1, 2, 3].map((p) => 3000 + Math.sin(tick * 0.02 + p) * 1500);
-
-      for (const p of parts) {
-        p.history.record(tick, xs, ys);
-
-        if (tick % stepsPerField === 0) {
-          // Les positions du tick retarde, pas celles du tick courant.
-          const seen = p.history.delayed(tick);
-          if (seen) {
-            for (let f = 0; f < 4; f++) {
-              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
-            }
-            p.horde.retarget(seen.x, seen.y);
-          }
-        }
-
-        p.horde.step(DT, p.fields);
-      }
-
-      // 1. L'ensemble des identites doit etre STRICTEMENT egal.
-      const reference = parts[0];
-      if (!reference) {
-        throw new Error('aucun participant');
-      }
-      for (const p of parts.slice(1)) {
-        expect(p.horde.count).toBe(reference.horde.count);
-      }
-
-      // 2. La position a le droit de deriver, mais de facon bornee.
-      for (const p of parts.slice(1)) {
-        for (let i = 0; i < reference.horde.count; i++) {
-          const drift = Math.hypot(
-            (p.horde.x[i] ?? 0) - (reference.horde.x[i] ?? 0),
-            (p.horde.y[i] ?? 0) - (reference.horde.y[i] ?? 0),
-          );
-          if (drift > maxDrift) {
-            maxDrift = drift;
-          }
-        }
-      }
-    }
+    const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
+    advance(parts, 0, STEPS, stats);
 
     // Le chiffre est affiche pour etre lisible plutot que cache : c'est lui qui
-    // permettra de confirmer ou d'ajuster le seuil (§12 de la spec).
-    console.log(`derive maximale observee : ${maxDrift.toFixed(3)} px sur ${STEPS} pas`);
-
-    expect(maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
-  });
-
-  it('donne les memes identites a toutes les simulations', () => {
-    const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(1));
-    const order: WaveOrder = {
-      waveId: 9,
-      spawnTick: 0,
-      seed: 42,
-      archetype: 1,
-      formation: FORMATION.RING,
-      anchorX: 2000,
-      anchorY: 2000,
-      count: 500,
-    };
-    for (const p of parts) {
-      p.horde.spawn(order);
-    }
-
-    const reference = parts[0];
-    if (!reference) {
-      throw new Error('aucun participant');
-    }
-    const ids = Array.from({ length: reference.horde.count }, (_, i) =>
-      reference.horde.entityIdAt(i),
+    // permettra de confirmer ou d'ajuster le seuil (§12 de la spec). Vitest 4
+    // n'imprime les `console.log` que pour les tests en echec : ecrire
+    // directement sur le flux du process contourne cette interception.
+    process.stdout.write(
+      `derive maximale observee : ${stats.maxDrift.toFixed(3)} px sur ${STEPS} pas\n`,
     );
 
-    for (const p of parts.slice(1)) {
-      const autres = Array.from({ length: p.horde.count }, (_, i) => p.horde.entityIdAt(i));
-      expect(autres).toEqual(ids);
+    expect(stats.identityMismatches).toBe(0);
+    expect(stats.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+  });
+
+  it('reste identique quand une seconde vague apparait en cours de partie', () => {
+    // Le premier test ne couvre que `spawn` sur une horde vide. En vrai, le
+    // serveur emet une vague toutes les six secondes environ : `spawn`
+    // s'exerce aussi sur une horde deja peuplee, avec la comptabilite de
+    // capacite que ca implique. C'est ce cas que ce test verifie, plutot que
+    // de dupliquer la premiere assertion sans avancer la simulation.
+    const mapSeed = 0x7a11_0c0d;
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
+
+    const firstWave: WaveOrder = {
+      waveId: 1,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: 600,
+    };
+    for (const p of parts) {
+      p.horde.spawn(firstWave);
     }
+
+    const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
+    const FIRST_LEG = 100;
+    const SECOND_LEG = 200;
+
+    advance(parts, 0, FIRST_LEG, stats);
+
+    const secondWave: WaveOrder = {
+      waveId: 2,
+      spawnTick: FIRST_LEG,
+      seed: 0x1234_5678,
+      archetype: 1,
+      formation: FORMATION.RING,
+      anchorX: 4000,
+      anchorY: 2000,
+      count: 400,
+    };
+    for (const p of parts) {
+      p.horde.spawn(secondWave);
+    }
+
+    advance(parts, FIRST_LEG, FIRST_LEG + SECOND_LEG, stats);
+
+    process.stdout.write(
+      `derive maximale observee (seconde vague) : ${stats.maxDrift.toFixed(3)} px sur ${FIRST_LEG + SECOND_LEG} pas\n`,
+    );
+
+    expect(stats.identityMismatches).toBe(0);
+    expect(stats.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
   });
 });
