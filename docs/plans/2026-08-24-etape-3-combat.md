@@ -638,21 +638,20 @@ describe('SeparationGrid.apply', () => {
     expect([...a.x.slice(0, 4)]).toEqual([...b.x.slice(0, 4)]);
   });
 
-  it('n alloue pas a chaque appel', () => {
-    // On ne mesure pas la memoire : on verifie que la grille est reutilisable
-    // sans se degrader, ce qui attraperait une reallocation par appel.
-    const horde = hordeAt([
-      [3000, 3000],
-      [3010, 3000],
-    ]);
-    const grid = new SeparationGrid(100);
-
-    expect(() => {
-      for (let i = 0; i < 1000; i++) {
-        grid.apply(horde, DT);
-      }
-    }).not.toThrow();
-  });
+  // ⚠️ Il n'y a PAS de test « n'alloue pas a chaque appel ». La premiere version
+  // de ce plan en contenait un — mille appels enveloppes dans `not.toThrow()`,
+  // avec un commentaire affirmant qu'il « attraperait une reallocation par
+  // appel ». Il ne l'attrapait pas : verifie en reintroduisant le
+  // `this.#cellStart.slice()` par appel, les six tests passaient toujours.
+  //
+  // L'absence d'allocation est une propriete de PERFORMANCE, et un test unitaire
+  // ne sait pas l'observer sans exposer les tableaux prives — c'est-a-dire sans
+  // ajouter du code de test dans une classe de production. Son gardien est le
+  // banc (`npm run bench:sep -w back`), ou une allocation par appel se verrait
+  // dans l'ecart entre mediane et p95.
+  //
+  // Un test qui ne teste rien est pire que pas de test : il fabrique de la
+  // confiance. On le supprime plutot que de le maquiller.
 });
 ```
 
@@ -697,10 +696,16 @@ entité et mémorisée dans `#cellIdx`, curseur pré-alloué dans `#cursor` plut
 `this.#cellStart.slice()` qui allouerait à chaque appel, et tableaux `hx`/`hy` hissés hors
 de la boucle interne. Reprends-la telle quelle.
 
-> ⚠️ Le parcours symétrique n'est pas qu'une optimisation (~1,4× sur le pas complet) : c'est
-> aussi ce qui rend la symétrie **exacte** plutôt qu'approchée. Le troisième test ci-dessus —
-> « repousse symétriquement » — l'exige au cinquième chiffre. Un parcours asymétrique le
-> passerait par chance, pas par construction.
+> ⚠️ **Le parcours symétrique est une optimisation, et rien d'autre** (~1,4× sur le pas
+> complet). Une version antérieure de ce plan affirmait qu'il rendait en plus la symétrie
+> « exacte plutôt qu'approchée ». C'est faux, et ça a été vérifié en retirant le garde
+> `j > i` : les six tests passaient toujours, au bit près. La raison est que la soustraction
+> IEEE 754 est exactement anti-symétrique — `xi - xj` et `xj - xi` sont opposés sans erreur,
+> donc les deux parcours calculent les mêmes forces.
+>
+> Le test « repousse symétriquement » garde donc quelque chose de plus modeste et de plus
+> utile : **une erreur de signe** dans l'application des forces. Vérifié aussi : celle-là le
+> fait bien échouer.
 
 - [ ] **Étape 5 : vérifier que le test passe**
 
