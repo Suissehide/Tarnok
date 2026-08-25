@@ -752,11 +752,29 @@ describe("le livrable de l'etape 2", () => {
 describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', () => {
   const WAVE_ID = 1;
   // Assez tot pour laisser la horde se former sous la separation avant la
-  // premiere mort, assez espace (12 ticks) pour que chaque lot ait fini de se
+  // premiere mort, assez espace (~12 ticks) pour que chaque lot ait fini de se
   // propager a tous les participants avant le suivant — sans quoi deux lots en
   // vol se melangeraient et la mesure ne distinguerait plus rien.
-  const DEATH_START = 150;
-  const DEATH_INTERVAL = 12;
+  //
+  // ⚠️ 151 et 13, PAS 150 et 12 : les deux valeurs sont choisies pour ne JAMAIS
+  // etre multiples de `stepsPerField` (3, = TICK_HZ/FLOWFIELD_HZ). Avec 150 et
+  // 12 (tous deux multiples de 3), chaque `deathTick` qui atteint reellement
+  // `primeFieldForReplay` tombe pile sur une frontiere de rafraichissement — et
+  // sur une frontiere, amorcer le champ AU tick de la mort ou au DERNIER
+  // rafraichissement du (`lastDue`) donnent la meme reponse, puisque les deux
+  // coincident. Un `primeFieldForReplay` qui utiliserait directement `atTick`
+  // au lieu de le ramener a `lastDue` — c'est-a-dire correct seulement sur les
+  // frontieres, faux ailleurs — passerait alors inapercu : ce fut le cas ici
+  // (ronde de correction 1), les dix tests passaient et le scenario 9
+  // rapportait toujours 0,000 px, malgre l'erreur. Avec 151 et 13 (13 n'est
+  // pas multiple de 3), les `deathTick` successifs parcourent les trois restes
+  // possibles modulo 3 (151%3=1, 164%3=2, 177%3=0, ...) : un rejeu qui ne
+  // ramenerait pas correctement `atTick` a `lastDue` echoue desormais sur les
+  // deux tiers des lots. Verifie par instrumentation (voir le rapport de la
+  // tache 8, section « Ronde de correction 1 ») : zero appel non aligne avec
+  // l'ancien calendrier, une majorite d'appels non alignes avec celui-ci.
+  const DEATH_START = 151;
+  const DEATH_INTERVAL = 13;
   const DEATH_BATCH = 12;
   const DEATH_BATCHES = 18;
   // Retard reseau d'application de la mort, en ticks : 0 pour la reference (le
