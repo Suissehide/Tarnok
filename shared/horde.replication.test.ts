@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { FLOWFIELD_CELL, FLOWFIELD_HZ, MAP_SIZE, TICK_HZ } from './constants';
+import { FLOWFIELD_CELL, FLOWFIELD_HZ, MAP_SIZE, ROLLBACK_DEPTH_TICKS, TICK_HZ } from './constants';
 import { FlowField } from './flowfield';
-import { Horde } from './horde';
+import { entityIdOf, Horde } from './horde';
+import { HordeHistory } from './horde-history';
 import { PlayerHistory } from './player-history';
+import { SeparationGrid } from './separation';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
 
@@ -727,4 +729,559 @@ describe("le livrable de l'etape 2", () => {
       expect(stats.maxDrift).toBeLessThan(40);
     },
   );
+});
+
+/**
+ * Le livrable de l'etape 3 : la replication survit-elle aux morts, une fois la
+ * separation en jeu ?
+ *
+ * La separation COUPLE les entites (`shared/separation.ts`) : retirer un
+ * ennemi ne decale plus une seule entite mais des dizaines, de proche en
+ * proche. Une mort appliquee un tick trop tard ne se noie plus dans le bruit —
+ * elle propage un ecart qui ne s'eteint plus. L'etape 2 a mesure ce que ca
+ * donne pour l'apparition tardive d'une vague : 694 px apres dix secondes, sans
+ * borne. La parade est le rejeu : `HordeHistory` (tache 3) restaure la horde au
+ * tick de la mort, l'applique, puis rejoue le mouvement jusqu'au present.
+ *
+ * Comme le reste du fichier, ce bloc modelise ses clients lui-meme plutot que
+ * d'importer `GameClient` : c'est la seule maniere de controler la latence
+ * observee ici. Le signal "mort trop vieille" est donc un compteur local
+ * (`lateDeaths`), pas celui de `GameClient` — la tache 10 recablera le meme
+ * signal a cet endroit-la.
+ */
+describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', () => {
+  const WAVE_ID = 1;
+  // Assez tot pour laisser la horde se former sous la separation avant la
+  // premiere mort, assez espace (12 ticks) pour que chaque lot ait fini de se
+  // propager a tous les participants avant le suivant — sans quoi deux lots en
+  // vol se melangeraient et la mesure ne distinguerait plus rien.
+  const DEATH_START = 150;
+  const DEATH_INTERVAL = 12;
+  const DEATH_BATCH = 12;
+  const DEATH_BATCHES = 18;
+  // Retard reseau d'application de la mort, en ticks : 0 pour la reference (le
+  // serveur arbitre et applique au meme instant), 1 a 3 pour les clients — comme
+  // l'exige la tache 8. Bien en-deca de ROLLBACK_DEPTH_TICKS(8) : les scenarios
+  // 8 et 9 verifient ce que fait — ou ne fait pas — le rejeu DANS la portee de
+  // l'anneau ; le scenario 10, plus bas, verifie ce qui se passe en dehors.
+  const CLIENT_DELAY: readonly number[] = [0, 1, 2, 3, 2];
+
+  interface DeathParticipant {
+    horde: Horde;
+    fields: FlowField[];
+    playerHistory: PlayerHistory;
+    separation: SeparationGrid;
+    hordeHistory: HordeHistory;
+    /** Compteur de morts appliquees au present faute d'anneau assez profond (scenario 10). */
+    lateDeaths: number;
+  }
+
+  function makeDeathParticipant(mapSeed: number): DeathParticipant {
+    const horde = new Horde(4000);
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(mapSeed, probe.cols, probe.rows);
+    const fields = Array.from({ length: 4 }, () => {
+      const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      applyObstacles(f, mask);
+      return f;
+    });
+    return {
+      horde,
+      fields,
+      playerHistory: new PlayerHistory(),
+      separation: new SeparationGrid(horde.capacity),
+      hordeHistory: new HordeHistory(horde.capacity),
+      lateDeaths: 0,
+    };
+  }
+
+  interface DeathBatch {
+    tick: number;
+    ids: number[];
+  }
+
+  /**
+   * Calendrier de morts, pur et connu d'avance : quel index de vague meurt a
+   * quel tick serveur. Arithmetique plutot que tire au sort — `shared/` n'a pas
+   * le droit a `Math.random` (voir `random.ts`) — et surtout INDEPENDANT de
+   * l'etat simule : le serveur et chaque client recoivent exactement les memes
+   * identites, seul le moment ou ils les appliquent differe.
+   */
+  function makeDeathSchedule(): DeathBatch[] {
+    const schedule: DeathBatch[] = [];
+    for (let b = 0; b < DEATH_BATCHES; b++) {
+      const ids: number[] = [];
+      for (let k = 0; k < DEATH_BATCH; k++) {
+        ids.push(entityIdOf(WAVE_ID, b * DEATH_BATCH + k));
+      }
+      schedule.push({ tick: DEATH_START + b * DEATH_INTERVAL, ids });
+    }
+    return schedule;
+  }
+
+  /**
+   * Associe a chaque index de vague le creneau qui le porte actuellement, ou -1
+   * s'il est mort.
+   *
+   * Une mort compacte le tableau (`Horde.kill`) : deux participants qui n'ont
+   * pas encore recu la meme mort ont des tableaux ranges differemment, et
+   * comparer par INDICE DE CRENEAU comparerait alors deux entites differentes —
+   * pas un bug de replication, un artefact de la methode de mesure. Comparer
+   * par IDENTITE (l'index de vague, qui ne bouge jamais, contrairement au
+   * creneau) evite le piege.
+   */
+  function slotByWaveIndex(horde: Horde): Int32Array {
+    const out = new Int32Array(ENTITIES).fill(-1);
+    for (let slot = 0; slot < horde.count; slot++) {
+      const idx = horde.indexInWave[slot] ?? 0;
+      if (idx < ENTITIES) {
+        out[idx] = slot;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Derive maximale entre deux hordes, appariees par identite plutot que par
+   * indice de creneau (voir `slotByWaveIndex`). Une entite morte d'un seul cote
+   * — la fenetre normale entre l'application serveur et l'application client
+   * retardee — est ignoree : c'est une absence temporaire, pas une derive de
+   * position a mesurer.
+   */
+  function measureDrift(reference: Horde, participant: Horde): number {
+    const refSlots = slotByWaveIndex(reference);
+    const partSlots = slotByWaveIndex(participant);
+    let maxDrift = 0;
+    for (let e = 0; e < ENTITIES; e++) {
+      const rs = refSlots[e] ?? -1;
+      const ps = partSlots[e] ?? -1;
+      if (rs < 0 || ps < 0) {
+        continue;
+      }
+      const drift = Math.hypot(
+        (participant.x[ps] ?? 0) - (reference.x[rs] ?? 0),
+        (participant.y[ps] ?? 0) - (reference.y[rs] ?? 0),
+      );
+      if (drift > maxDrift) {
+        maxDrift = drift;
+      }
+    }
+    return maxDrift;
+  }
+
+  /** Index de vague encore vivants, tries : pour comparer deux ensembles d'identites terme a terme. */
+  function aliveWaveIndices(horde: Horde): number[] {
+    const out: number[] = [];
+    for (let slot = 0; slot < horde.count; slot++) {
+      out.push(horde.indexInWave[slot] ?? 0);
+    }
+    return out.sort((a, b) => a - b);
+  }
+
+  /**
+   * Un pas de rejeu : les etapes 5, 6, 7 de la sequence serveur (rafraichir le
+   * champ si du, avancer la horde, appliquer la separation) — jamais
+   * l'arbitrage (etapes 8-10), qui reste la prerogative du serveur. Rejouer
+   * l'arbitrage prononcerait des morts que le serveur n'a pas decidees, et
+   * ferait diverger le client precisement la ou le rejeu cherche a le faire
+   * converger.
+   *
+   * Reecrit aussi l'anneau pour ce tick avec l'etat corrige : une mort
+   * suivante qui viserait l'un de ces ticks doit restaurer la version rejouee,
+   * pas l'ancienne version — celle d'avant la correction qu'on vient de faire.
+   */
+  function replayTick(p: DeathParticipant, tick: number, stepsPerField: number): void {
+    if (tick % stepsPerField === 0) {
+      const seen = p.playerHistory.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < 4; f++) {
+          p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        p.horde.retarget(seen.x, seen.y);
+      }
+    }
+    p.horde.step(DT, p.fields);
+    p.separation.apply(p.horde, DT);
+    p.hordeHistory.record(tick, p.horde);
+  }
+
+  /**
+   * Applique une mort en retard SANS rejeu : directement sur l'etat present.
+   * C'est le defaut que la tache 3 corrige — voir le scenario 8.
+   */
+  function applyDeathWithoutReplay(p: DeathParticipant, ids: readonly number[]): void {
+    p.horde.kill(ids);
+  }
+
+  /**
+   * Remet le champ a son contenu du tick `atTick`, avant de commencer le rejeu.
+   *
+   * ⚠️ Piege qu'un premier essai de ce fichier a bel et bien fait tomber dans
+   * ce test (derive mesuree : 709 px, l'ordre de grandeur des 694/769 px de
+   * l'etape 2 — voir le rapport de la tache 8). `HordeHistory.restore` remet la
+   * HORDE a l'etat du tick de la mort, mais le `FlowField` est un objet mutable
+   * PARTAGE, jamais restaure par l'anneau : au moment ou le rejeu commence, il
+   * porte encore le contenu du DERNIER rafraichissement reel — celui du tick
+   * present, plusieurs generations plus frais que ce que le serveur avait sous
+   * les yeux au tick de la mort. `replayTick` ne rafraichit qu'aux ticks
+   * effectivement dus (`tick % stepsPerField === 0`) ; tant que le rejeu n'a pas
+   * atteint le premier de ces ticks, il avancerait avec un champ trop frais —
+   * exactement le defaut documente sur `Horde.spawnCatchingUp`. Cette fonction
+   * revient d'abord au dernier rafraichissement du a `atTick` ou avant, pour que
+   * le rejeu reparte d'un champ dont l'age correspond a celui du tick restaure.
+   */
+  function primeFieldForReplay(p: DeathParticipant, atTick: number, stepsPerField: number): void {
+    const lastDue = atTick - (((atTick % stepsPerField) + stepsPerField) % stepsPerField);
+    const seen = p.playerHistory.delayed(lastDue);
+    if (seen) {
+      for (let f = 0; f < 4; f++) {
+        p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+      }
+    }
+  }
+
+  /**
+   * Applique une mort en retard AVEC rejeu : restaure l'etat du tick de la
+   * mort, applique, rejoue jusqu'au present. Si ce tick est sorti de l'anneau
+   * (`ROLLBACK_DEPTH_TICKS`), retombe sur une application au present et le
+   * SIGNALE via `p.lateDeaths` plutot que de le faire en silence — le pendant
+   * de `GameClient#applyDeaths` (tache 10).
+   */
+  function applyDeathWithReplay(
+    p: DeathParticipant,
+    deathTick: number,
+    ids: readonly number[],
+    currentTick: number,
+    stepsPerField: number,
+  ): void {
+    if (!p.hordeHistory.restore(deathTick, p.horde)) {
+      p.lateDeaths += ids.length;
+      p.horde.kill(ids);
+      return;
+    }
+    p.horde.kill(ids);
+    primeFieldForReplay(p, deathTick, stepsPerField);
+    for (let t = deathTick + 1; t <= currentTick; t++) {
+      replayTick(p, t, stepsPerField);
+    }
+  }
+
+  interface DeathScenarioResult {
+    reference: Horde;
+    clients: DeathParticipant[];
+    maxDrift: number;
+    travelled: number;
+  }
+
+  /**
+   * Le scenario commun aux tests 8 et 9 : cinq participants (un serveur, quatre
+   * clients), une horde de 1000 entites sous separation active, et un
+   * calendrier de morts que le serveur applique a l'instant decide tandis que
+   * chaque client l'apprend 1 a 3 ticks plus tard. `withReplay` bascule entre
+   * les deux strategies d'application — c'est la SEULE difference entre les
+   * scenarios 8 et 9, comme le demande le plan.
+   *
+   * Le mouvement des joueurs, lui, n'est PAS retarde ici : la latence testee
+   * est celle DES MORTS, isolee de la latence de position deja couverte par les
+   * scenarios C1 plus haut. Melanger les deux rendrait impossible de dire
+   * laquelle produit quelle part de la derive mesuree.
+   */
+  function runDeathScenario(mapSeed: number, withReplay: boolean): DeathScenarioResult {
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeDeathParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+    const clients = parts.slice(1);
+
+    const order: WaveOrder = {
+      waveId: WAVE_ID,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    for (const p of parts) {
+      p.horde.spawn(order);
+    }
+
+    const schedule = makeDeathSchedule();
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const END = DEATH_START + DEATH_BATCHES * DEATH_INTERVAL + 60;
+
+    let maxDrift = 0;
+    let travelled = 0;
+    let prevX = 0;
+    let prevY = 0;
+    let hasPrev = false;
+    // Un index de vague qui n'entre jamais dans le calendrier de morts (0..215
+    // seulement) : il survit tout le run, et sert a prouver que la horde a
+    // reellement avance — une derive nulle peut vouloir dire "rien n'a bouge"
+    // autant que "replication parfaite".
+    const trackedId = entityIdOf(WAVE_ID, ENTITIES - 1);
+    // Vrai tant qu'un client n'a pas encore recu (et, si `withReplay`, rejoue)
+    // une mort que le serveur a deja decidee. Pendant cette fenetre, le client
+    // porte encore des voisins que le serveur a deja retires : la separation
+    // les pousse different, et cet ecart est du au transit reseau lui-meme, pas
+    // a une imprecision du rejeu — le rejeu ne peut corriger que ce qui arrive
+    // APRES qu'il ait tourne, jamais les instants ou le message est encore en
+    // vol. Le mesurer la melangerait avec la seule chose que 8 et 9 cherchent a
+    // isoler : la qualite de la correction UNE FOIS appliquee. Meme principe
+    // que « on ne compare que les entites deja apparues » pour l'apparition
+    // tardive, applique cette fois a la disparition.
+    const pendingDeath: boolean[] = clients.map(() => false);
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = [0, 1, 2, 3].map((pl) => 3000 + Math.cos(tick * 0.02 + pl) * 1500);
+      const ys = [0, 1, 2, 3].map((pl) => 3000 + Math.sin(tick * 0.02 + pl) * 1500);
+
+      for (const p of parts) {
+        p.playerHistory.record(tick, xs, ys);
+        if (tick % stepsPerField === 0) {
+          const seen = p.playerHistory.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        p.horde.step(DT, p.fields);
+        p.separation.apply(p.horde, DT);
+      }
+
+      // Le serveur arbitre et applique a l'instant meme : il n'a jamais besoin
+      // de rejeu pour ses propres decisions, seuls les clients en ont besoin.
+      let decidedThisTick = false;
+      for (const batch of schedule) {
+        if (batch.tick === tick) {
+          reference.horde.kill(batch.ids);
+          decidedThisTick = true;
+        }
+      }
+      if (decidedThisTick) {
+        pendingDeath.fill(true);
+      }
+
+      // Chaque client enregistre SON etat — avant de savoir quoi que ce soit
+      // d'une mort qui arriverait tout juste — puis regarde si un message de
+      // mort programme plus tot arrive precisement maintenant, avec son propre
+      // retard.
+      clients.forEach((p, i) => {
+        p.hordeHistory.record(tick, p.horde);
+        const delay = CLIENT_DELAY[i + 1] ?? 0;
+        for (const batch of schedule) {
+          if (batch.tick + delay === tick) {
+            if (withReplay) {
+              applyDeathWithReplay(p, batch.tick, batch.ids, tick, stepsPerField);
+            } else {
+              applyDeathWithoutReplay(p, batch.ids);
+            }
+            pendingDeath[i] = false;
+          }
+        }
+      });
+
+      clients.forEach((p, i) => {
+        if (pendingDeath[i]) {
+          return;
+        }
+        const drift = measureDrift(reference.horde, p.horde);
+        if (drift > maxDrift) {
+          maxDrift = drift;
+        }
+      });
+
+      const trackedSlot = reference.horde.slotOf(trackedId);
+      if (trackedSlot >= 0) {
+        const x = reference.horde.x[trackedSlot] ?? 0;
+        const y = reference.horde.y[trackedSlot] ?? 0;
+        if (hasPrev) {
+          travelled += Math.hypot(x - prevX, y - prevY);
+        }
+        prevX = x;
+        prevY = y;
+        hasPrev = true;
+      }
+    }
+
+    return { reference: reference.horde, clients, maxDrift, travelled };
+  }
+
+  const TOTAL_KILLED = DEATH_BATCHES * DEATH_BATCH;
+
+  it('scenario 8 — sans rejeu, morts + separation laissent une derive mesurable, le pendant des 694/769 px de l etape 2', () => {
+    const result = runDeathScenario(0xd1e5_0008, false);
+
+    process.stdout.write(
+      `scenario 8 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+        `horde deplacee de ${result.travelled.toFixed(1)} px, ${TOTAL_KILLED} entites tuees sur ${ENTITIES}\n`,
+    );
+
+    // Le scenario ne prouve rien si rien n'est mort ou si rien n'a bouge (barre
+    // de qualite de la tache 8) : ces trois assertions n'ont d'autre role que de
+    // garantir que le chiffre affiche plus haut mesure quelque chose de reel.
+    expect(result.reference.count).toBe(ENTITIES - TOTAL_KILLED);
+    expect(TOTAL_KILLED).toBeGreaterThan(100);
+    expect(result.travelled).toBeGreaterThan(500);
+
+    // Borne large et volontaire : ce scenario existe pour que la derive EXISTE,
+    // pas pour rester petite. La borne basse verifie que le chiffre est
+    // reellement significatif — sinon les scenarios 8 et 9 rapporteraient tous
+    // les deux ~0 et la latence simulee ne prouverait rien (barre de qualite de
+    // la tache 8). La borne haute reste un filet contre une explosion, pas une
+    // garantie de precision.
+    expect(result.maxDrift).toBeGreaterThan(20);
+    expect(result.maxDrift).toBeLessThan(800);
+  });
+
+  it('scenario 9 — avec rejeu, les identites restent strictement egales et la derive retombe sous 2 px', () => {
+    const result = runDeathScenario(0xd1e5_0009, true);
+
+    process.stdout.write(
+      `scenario 9 (avec rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px\n`,
+    );
+
+    expect(result.reference.count).toBe(ENTITIES - TOTAL_KILLED);
+    expect(TOTAL_KILLED).toBeGreaterThan(100);
+    expect(result.travelled).toBeGreaterThan(500);
+
+    for (const p of result.clients) {
+      // 1 a 3 ticks de retard tient largement dans ROLLBACK_DEPTH_TICKS(8) :
+      // aucune mort ne devrait tomber dans le cas "trop vieux pour l'anneau"
+      // (scenario 10).
+      expect(p.lateDeaths).toBe(0);
+      expect(p.horde.count).toBe(result.reference.count);
+      // Assertion demandee par la tache : les identites sont STRICTEMENT
+      // egales, pas seulement leur nombre. `toEqual` sur deux tableaux tries
+      // donne, en cas d'echec, l'index de vague precis qui differe.
+      expect(aliveWaveIndices(p.horde)).toEqual(aliveWaveIndices(result.reference));
+    }
+
+    expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+  });
+
+  it('scenario 10 — une mort trop vieille pour l anneau est appliquee au present, signalee, sans planter, et sa derive residuelle mesuree', () => {
+    const mapSeed = 0xd1e5_0010;
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeDeathParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+    const clients = parts.slice(1);
+
+    const order: WaveOrder = {
+      waveId: WAVE_ID,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    for (const p of parts) {
+      p.horde.spawn(order);
+    }
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const DEATH_TICK = 100;
+    const DEATH_IDS = Array.from({ length: 20 }, (_, k) => entityIdOf(WAVE_ID, k));
+    // Strictement au-dela de ROLLBACK_DEPTH_TICKS(8), avec de la marge : sinon
+    // l'anneau absorbe tout et ce scenario ne prouve rien (avertissement de la
+    // tache 8).
+    const LATE_DELAY = ROLLBACK_DEPTH_TICKS + 4;
+    const END = DEATH_TICK + LATE_DELAY + 60;
+
+    let maxDrift = 0;
+    let travelled = 0;
+    let prevX = 0;
+    let prevY = 0;
+    let hasPrev = false;
+    const trackedId = entityIdOf(WAVE_ID, ENTITIES - 1);
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = [0, 1, 2, 3].map((pl) => 3000 + Math.cos(tick * 0.02 + pl) * 1500);
+      const ys = [0, 1, 2, 3].map((pl) => 3000 + Math.sin(tick * 0.02 + pl) * 1500);
+
+      for (const p of parts) {
+        p.playerHistory.record(tick, xs, ys);
+        if (tick % stepsPerField === 0) {
+          const seen = p.playerHistory.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        p.horde.step(DT, p.fields);
+        p.separation.apply(p.horde, DT);
+      }
+
+      if (tick === DEATH_TICK) {
+        reference.horde.kill(DEATH_IDS);
+      }
+
+      for (const p of clients) {
+        p.hordeHistory.record(tick, p.horde);
+        if (tick === DEATH_TICK + LATE_DELAY) {
+          applyDeathWithReplay(p, DEATH_TICK, DEATH_IDS, tick, stepsPerField);
+        }
+      }
+
+      // « Derive residuelle » se lit APRES application : entre DEATH_TICK et
+      // son application tardive, le client porte encore les vingt entites que
+      // le serveur a deja retirees, et la separation pousse leurs voisins
+      // different — un ecart du au transit du message, pas au chemin de
+      // secours qu'on cherche a mesurer ici (meme raisonnement que pour les
+      // scenarios 8/9, voir `pendingDeath` plus haut).
+      if (tick >= DEATH_TICK + LATE_DELAY) {
+        for (const p of clients) {
+          const drift = measureDrift(reference.horde, p.horde);
+          if (drift > maxDrift) {
+            maxDrift = drift;
+          }
+        }
+      }
+
+      const trackedSlot = reference.horde.slotOf(trackedId);
+      if (trackedSlot >= 0) {
+        const x = reference.horde.x[trackedSlot] ?? 0;
+        const y = reference.horde.y[trackedSlot] ?? 0;
+        if (hasPrev) {
+          travelled += Math.hypot(x - prevX, y - prevY);
+        }
+        prevX = x;
+        prevY = y;
+        hasPrev = true;
+      }
+    }
+
+    process.stdout.write(
+      `scenario 10 (mort a retard ${LATE_DELAY} ticks > ROLLBACK_DEPTH_TICKS=${ROLLBACK_DEPTH_TICKS}) : ` +
+        `derive residuelle ${maxDrift.toFixed(3)} px\n`,
+    );
+
+    expect(reference.horde.count).toBe(ENTITIES - DEATH_IDS.length);
+    expect(travelled).toBeGreaterThan(500);
+
+    for (const p of clients) {
+      // Signalee : le compteur de morts tardives a bien vu passer les 20 morts
+      // trop vieilles pour l'anneau.
+      expect(p.lateDeaths).toBe(DEATH_IDS.length);
+      // Appliquee quand meme, sans planter : le compte final converge vers
+      // celui du serveur malgre l'absence de rejeu pour cette mort-la.
+      expect(p.horde.count).toBe(reference.horde.count);
+    }
+
+    // La derive residuelle est mesuree et affichee (obligation de la tache 8),
+    // pas verrouillee finement : ce chemin de secours n'a jamais pretendu
+    // preserver la precision du rejeu, seulement eviter le silence et le crash.
+    expect(Number.isFinite(maxDrift)).toBe(true);
+    expect(maxDrift).toBeLessThan(2000);
+  });
 });
