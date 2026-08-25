@@ -1683,3 +1683,77 @@ genre est d'être submergé **après** avoir été à l'aise, pas dès la premi�
 git commit -m "feat(back): faire monter les vagues, rendre la run jouable"
 ```
 
+---
+
+## Tâche 15 : les monstres sortent de la carte
+
+**Deux symptômes rapportés, une seule cause.** « Certains monstres apparaissent mais ne bougent
+jamais » et « un gros souci de clignotement avec le z-index ».
+
+### Ce que la mesure dit
+
+Run réelle, générateur de vagues, obstacles, joueur près d'un bord, 1200 ticks :
+
+```
+MAP_SIZE = 6000, bandes de tri valides : 0..93
+x dans [-6579.8, 8485.8]
+y dans [-8612.0, 7665.8]
+echantillons hors bande : 2718
+```
+
+**Rien ne borne la position des entités.** La séparation à 1200 px/s pousse plus fort que le
+champ de flux ne tire dès qu'un entassement se forme contre un bord, et les entités giclent
+hors du monde. La force a été portée à cette valeur pour passer la porte de la tâche 0 ; le
+coût caché apparaît ici.
+
+### Pourquoi le rendu se casse en silence
+
+`bandOf(y) = Math.floor(y / DEPTH_BAND)` sort de la plage `[0, BAND_COUNT)`. L'écriture
+`counts[band]` sur un `Int32Array` hors bornes est un **no-op silencieux** — la même propriété
+du langage qui avait déjà mordu à la tâche 7 sur la troncature de capacité.
+
+Conséquence en chaîne : les sommes préfixées sont fausses ; en seconde passe,
+`offsets[band] ?? 0` rend `0` pour ces entités, qui s'écrivent donc toutes au curseur de la
+bande 0 et **s'écrasent mutuellement** ; des cases de `#sorted` ne sont jamais écrites de
+l'image et **conservent l'indice de l'image précédente**.
+
+D'où les deux symptômes exactement : un sprite qui affiche une entité qui n'est plus à cet
+indice paraît **figé**, et l'ordre de dessin change d'une image à l'autre sans raison —
+**clignotement**.
+
+> ⚠️ Ce n'est **pas** un défaut de réplication : les deux côtés exécutent le même code et
+> sortent de la carte identiquement. Le test de réplication ne pouvait pas le voir, et sa horde
+> centrée ne s'approche jamais d'un bord.
+
+### Les deux correctifs, et pourquoi les deux
+
+- [ ] **Étape 1 : borner les positions dans `shared/`.** Après le déplacement et après la
+  séparation, contraindre `x` et `y` à `[0, MAP_SIZE]`. Dans `shared/`, donc appliqué
+  identiquement des deux côtés — un clamp côté client seul créerait la divergence qu'il
+  prétend éviter.
+
+  Test : une horde poussée contre un bord ne sort jamais de `[0, MAP_SIZE]`, quel que soit le
+  nombre de ticks. Vérifier par mutation que le retrait du clamp le fait échouer.
+
+- [ ] **Étape 2 : rendre `bandOf` incapable de sortir de la plage**, par `Math.min` /
+  `Math.max` sur `[0, BAND_COUNT - 1]`.
+
+  ⚠️ **Faire les deux, pas l'un ou l'autre.** L'étape 1 supprime la cause d'aujourd'hui ;
+  l'étape 2 fait que la même cause, réapparue autrement demain, dégrade l'ordre de dessin au
+  lieu de corrompre le tampon. Un tri par comptage qui fait confiance à sa clé est une bombe à
+  retardement, et celle-ci a déjà explosé une fois.
+
+  Test : `bandOf` sur des valeurs hors carte — négatives, au-delà de `MAP_SIZE` — reste dans la
+  plage. Et un test de rendu qui dessine une horde dont une entité est hors carte, vérifiant
+  qu'aucun indice de `#sorted` n'est périmé.
+
+- [ ] **Étape 3 : vérifier que la réplication n'a pas bougé** — 750,039 / 0,000 / 433,988 px.
+  Le clamp modifie les trajectoires près des bords ; si ces chiffres changent, comprendre
+  pourquoi avant d'aller plus loin.
+
+- [ ] **Étape 4 : commit**
+
+```bash
+git commit -m "fix(shared): borner les entites a la carte, et le tri de profondeur a ses bandes"
+```
+
