@@ -2008,3 +2008,60 @@ gauche-droite s'éteint sans qu'on ait à le traiter au rendu.
 ```bash
 git commit -m "feat(shared): chaque entite recalcule sa trajectoire par intervalle"
 ```
+
+---
+
+## Tâche 20 : le rattrapage ne suit plus le même modèle de mouvement
+
+**Régression introduite par la tâche 19, et mesurée :**
+
+```
+derive due a une apparition tardive, avec rattrapage : 1220,431 px   ← valait 0,000
+derive serveur vs client                             : 1220,431 px   ← valait 0,000
+```
+
+C'était le livrable de l'étape 2. Le rejeu sur mort tient toujours (scénario 9 à 0,000), mais
+le rattrapage à l'apparition est cassé.
+
+### La cause, et elle n'est pas subtile
+
+`spawn` pose `vx = vy = 0`. `spawnCatchingUp` rattrape les ticks manqués en avançant **le long
+du champ** (`#advanceAlongField`), alors que la boucle normale avance **selon la vitesse
+tenue** (`#advanceByVelocity`).
+
+Avant la tâche 19, les deux chemins suivaient le champ : ils coïncidaient. Depuis, ils
+appliquent deux physiques différentes, donc ils divergent **dès le premier tick** — par
+structure, pas par approximation.
+
+La tâche 19 avait tranché de laisser le rattrapage « délibérément hors du mécanisme de phase »,
+en jugeant le gain nul. **La mesure dit 1220 px.**
+
+### Un corollaire de jeu, à traiter en même temps
+
+Puisque `spawn` pose une vitesse nulle, **un monstre qui apparaît reste immobile jusqu'à
+`STEERING_RECOMPUTE_TICKS - 1` ticks** — 300 ms — le temps que sa phase arrive. Ça se voit à
+l'écran et ça n'a aucune raison d'être.
+
+- [ ] **Étape 1 : un seul modèle de mouvement.** Le rattrapage doit simuler exactement ce que
+  fait la boucle normale — vitesse tenue, recalcul sur phase — et non une approximation le long
+  du champ. Supprimer `#advanceAlongField` si plus rien ne l'appelle : un chemin de code qui
+  applique une physique que le jeu n'a plus est pire que pas de chemin du tout.
+
+- [ ] **Étape 2 : une entité naît avec sa vitesse.** `spawn` calcule son orientation initiale
+  au lieu de la laisser à zéro. Test : une entité fraîchement apparue se déplace dès le tick
+  suivant.
+
+- [ ] **Étape 3 : les seuils élargis par la tâche 19 reviennent à leur valeur.** Ils avaient été
+  ouverts pour absorber cette régression ; ils doivent se refermer. **Si un test ne repasse pas
+  à 0,000 px, c'est le correctif qui est incomplet — pas le seuil qui est trop strict.**
+
+- [ ] **Étape 4 : vérifier.** `apparition tardive avec rattrapage` et `serveur vs client` à
+  **0,000 px**, scénario 9 toujours à **0,000 px**, et le banc `bench:sep` pour confirmer que le
+  gain de la tâche 19 n'est pas perdu.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "fix(shared): un seul modele de mouvement pour le rattrapage"
+```
+
