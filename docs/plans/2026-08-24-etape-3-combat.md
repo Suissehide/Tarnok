@@ -1406,6 +1406,37 @@ ordres de vague. Compter les octets dans `#wireBytes`.
 `#replayTick` exécute les étapes **5, 6, 7 et le déplacement des projectiles** de la séquence
 serveur, dans cet ordre, sur l'état retardé correspondant.
 
+> ⚠️ **Le champ de flux n'est pas dans l'anneau, et il faut le réamorcer avant de rejouer.**
+> Ce piège a été mesuré à la tâche 8, où il coûtait **79 px** de dérive résiduelle sur un
+> scénario qui aurait dû rendre zéro.
+>
+> `HordeHistory.restore` remet la *horde* à l'état du tick de la mort. Mais `FlowField` est un
+> objet **mutable et partagé**, que l'anneau ne sauvegarde jamais : au moment où le rejeu
+> démarre, il porte encore le contenu du **dernier rafraîchissement réel** — celui du tick
+> présent, plusieurs générations plus frais que ce que le serveur avait sous les yeux au tick
+> restauré. Et comme le rejeu ne rafraîchit qu'aux ticks effectivement dus
+> (`tick % stepsPerField === 0`), il avance avec un champ trop frais jusqu'à en croiser un.
+>
+> C'est exactement le défaut déjà documenté sur `Horde.spawnCatchingUp` à l'étape 2 : le bon
+> mécanisme dans le mauvais ordre est pire que rien.
+>
+> Avant la première itération du rejeu, il faut donc **revenir au dernier rafraîchissement dû
+> à ce tick ou avant** :
+>
+> ```ts
+> const lastDue = atTick - (((atTick % stepsPerField) + stepsPerField) % stepsPerField);
+> const seen = this.#playerHistory.delayed(lastDue);
+> if (seen) {
+>   for (let f = 0; f < MAX_PLAYERS; f++) {
+>     this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+>   }
+> }
+> ```
+>
+> `shared/horde.replication.test.ts` en contient la version de référence, sous le nom
+> `primeFieldForReplay`. **Lis-la avant d'écrire celle du client** : le test est le contrat, et
+> il mesure 0,000 px.
+
 > ⚠️ **Le rejeu client ne rejoue PAS l'arbitrage.** Les étapes 8 (dégâts), 9 (contact) et 10
 > (ramassage) appartiennent au serveur : le client qui les rejouerait déciderait de morts que
 > le serveur n'a pas prononcées, et divergerait précisément là où on cherche à converger. Le
