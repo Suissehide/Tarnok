@@ -101,6 +101,12 @@ export class Projectiles {
    * degats a partir de sa propre salve — ce n'est jamais le cas, `fireSalvo`
    * ne fait que deplacer un projectile.
    */
+  /**
+   * ⚠️ **Aucun appelant en production depuis la tache 13.** La visee suit le
+   * curseur, donc les salves partent par `fireSalvoDirected`. Conserve pour
+   * l'etape 4 (armes a tete chercheuse) ; ne decrit pas le comportement
+   * actuel du jeu.
+   */
   fireSalvo(
     weapon: Weapon,
     tick: number,

@@ -1,6 +1,18 @@
 import type { Horde } from './horde';
 
 /**
+ * ⚠️ **Aucun appelant en production depuis la tache 13.** L'auteur a choisi que
+ * la visee suive le curseur : la direction de tir vient desormais de la souris,
+ * transite dans `INPUT` puis dans le `SNAPSHOT`, et plus personne ne cherche
+ * « l'ennemi le plus proche ».
+ *
+ * Ce module est conserve plutot que supprime parce que l'etape 4 tranchera la
+ * question de l'arsenal, ou une arme a tete chercheuse le rendrait utile tel
+ * quel. Mais tant que rien ne l'appelle, **il ne decrit pas le comportement du
+ * jeu** : ne pas le lire comme la preuve que le ciblage serait automatique.
+ */
+
+/**
  * L'auto-visee deterministe du §5.3 : le plus proche ennemi vivant, dans
  * `horde`, a portee de `maxRange` depuis `(fromX, fromY)`.
  *
