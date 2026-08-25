@@ -402,19 +402,20 @@ describe("le livrable de l'etape 2", () => {
     );
 
     expect(stats.identityMismatches).toBe(0);
-    // ⚠️ Avant la tache 19, le rattrapage ramenait cette derive a une
-    // constante petite (20,3 px) — verrouille alors a 40 px. Depuis la tache
-    // 19, ce n'est plus vrai : le residu de rattrapage (~20 px, inchange)
-    // suffit a faire tomber deux participants dans des cellules de flowfield
-    // differentes a l'occasion, et la direction qui en resulte est tenue
-    // jusqu'a `STEERING_RECOMPUTE_TICKS` fois plus longtemps qu'avant avant
-    // toute chance de correction — la repulsion, couplee entre voisins,
-    // propage ensuite l'ecart. Le rattrapage REDUIT toujours la derive par
-    // rapport a son absence (1220 px ici contre ~1450 px sans rattrapage,
-    // scenario precedent) mais ne l'annule plus. Mesure sur cette fenetre de
-    // 400 pas ; elle continue de croitre au-dela (voir le rapport de la
-    // tache 19) — a rouvrir si l'auteur veut la re-borner explicitement.
-    expect(stats.maxDrift).toBeLessThan(1500);
+    // Le double des 20,3 px mesures a l'origine (tache 13) : marge pour ne
+    // pas etre fragile, tout en verrouillant que le rattrapage ramene bien la
+    // derive a une constante petite plutot qu'a une croissance lineaire.
+    //
+    // ⚠️ La tache 19 avait fait monter cette mesure a 1220 px : le rattrapage
+    // avancait alors le long du champ (`#advanceAlongField`) pendant que la
+    // boucle normale avancait selon une vitesse tenue (`#advanceByVelocity`)
+    // — deux physiques differentes, qui divergeaient des le premier tick. La
+    // tache 20 unifie les deux chemins : le rattrapage recalcule desormais la
+    // trajectoire par phase et avance par vitesse tenue, EXACTEMENT comme la
+    // boucle normale, restreint aux seules entites qu'il vient de faire
+    // naitre (voir la doc de `Horde.spawnCatchingUp`). Mesure : retour a
+    // 0,000 px, exactement comme avant la tache 19.
+    expect(stats.maxDrift).toBeLessThan(40);
   });
 
   it('reproduit la configuration reelle : un serveur et quatre clients, chacun dans son propre ordre de tick', () => {
@@ -541,10 +542,11 @@ describe("le livrable de l'etape 2", () => {
     // reellement, il attrape seulement une explosion qui signalerait que les
     // deux sequences ne sont pas compatibles entre elles.
     //
-    // ⚠️ 200 px avant la tache 19 ; le meme residu de rattrapage combine a la
-    // meme sensibilite de cellule de flowfield tenue plus longtemps qu'avant
-    // (voir le test precedent) fait monter la mesure ici aussi.
-    expect(stats.maxDrift).toBeLessThan(1500);
+    // ⚠️ La tache 19 avait fait monter cette mesure a 1220 px, pour la meme
+    // raison que le test precedent (deux physiques de rattrapage differentes,
+    // voir sa doc) ; la tache 20 l'unifie et ramene la mesure a 0,000 px,
+    // exactement comme avant la tache 19 — d'ou le retour a 200 px.
+    expect(stats.maxDrift).toBeLessThan(200);
   });
 
   /**

@@ -10,7 +10,7 @@ import {
   STEERING_REPULSION_STRENGTH,
 } from './constants';
 import type { FlowField } from './flowfield';
-import { formationPositions, type ObstacleField, type WaveOrder } from './waves';
+import { formationPositions, type WaveOrder } from './waves';
 
 /**
  * L'identite est **arithmetique**, pas negociee.
@@ -168,12 +168,28 @@ export class Horde {
   /**
    * Fait apparaitre une vague. Tronque plutot que de deborder.
    *
-   * `obstacles`, si fourni, empeche `formationPositions` de faire naitre une
+   * `field`, si fourni, empeche `formationPositions` de faire naitre une
    * entite en plein mur (tache 18) — voir sa doc. N'importe lequel des quatre
    * champs de flux convient : ils partagent tous le meme masque, pose une
    * seule fois par `applyObstacles` a la construction de la salle/du client.
+   *
+   * ⚠️ **`field` sert AUSSI a poser la vitesse initiale (tache 20).** Avant
+   * cette tache, une entite naissait avec `vx = vy = 0` et restait
+   * visuellement figee jusqu'a `STEERING_RECOMPUTE_TICKS - 1` pas (300 ms) —
+   * le temps que sa phase de recalcul arrive. Ca se voyait a l'ecran et
+   * n'avait aucune raison d'etre : desormais, si un champ est fourni, chaque
+   * entite recoit d'emblee la direction du champ (mise a l'echelle de sa
+   * vitesse d'archetype) a l'endroit meme ou elle apparait — la MEME formule
+   * que la contribution « champ » de `#recomputeSteering`, sans la
+   * repulsion : celle-ci depend des positions des AUTRES entites, qui
+   * peuvent avoir deja derive differemment entre le serveur et un client en
+   * retard (§ voir `spawnCatchingUp`), alors que la position de naissance,
+   * elle, est une fonction pure de `order.seed` — identique partout, quel
+   * que soit le moment ou `spawn` est appele. Sans `field` (beaucoup de
+   * tests unitaires, qui ne testent pas le mouvement), le comportement
+   * reste : `vx = vy = 0`.
    */
-  spawn(order: WaveOrder, obstacles?: ObstacleField): void {
+  spawn(order: WaveOrder, field?: FlowField): void {
     const room = this.capacity - this.#count;
     const count = Math.min(order.count, room, MAX_PER_WAVE);
     if (count <= 0) {
@@ -182,14 +198,18 @@ export class Horde {
 
     const px = new Float32Array(count);
     const py = new Float32Array(count);
-    formationPositions({ ...order, count }, px, py, obstacles);
+    formationPositions({ ...order, count }, px, py, field);
 
-    const frames = archetypeOf(order.archetype).frames;
+    const archetype = archetypeOf(order.archetype);
+    const frames = archetype.frames;
+    const speed = archetype.speed;
 
     for (let i = 0; i < count; i++) {
       const slot = this.#count + i;
-      this.x[slot] = px[i] ?? 0;
-      this.y[slot] = py[i] ?? 0;
+      const ex = px[i] ?? 0;
+      const ey = py[i] ?? 0;
+      this.x[slot] = ex;
+      this.y[slot] = ey;
       this.archetype[slot] = order.archetype;
       this.waveId[slot] = order.waveId;
       this.indexInWave[slot] = i;
@@ -205,17 +225,18 @@ export class Horde {
       // `stopped = 1` d'un mort qui occupait ce creneau traverserait le
       // joueur sans jamais l'attaquer, jusqu'au prochain `retarget`.
       this.stopped[slot] = 0;
-      // Meme raisonnement encore (tache 19) : une entite neuve qui heriterait
-      // de la vitesse tenue par le mort qui occupait ce creneau partirait dans
-      // SA direction a lui, potentiellement a l'oppose du champ qui devrait
-      // la guider. Zero est un choix delibere, pas juste « neutre » : cette
-      // entite reste immobile jusqu'a son propre tick de phase
-      // (`entityIdAt(slot) % STEERING_RECOMPUTE_TICKS`), au plus
-      // `STEERING_RECOMPUTE_TICKS - 1` pas plus tard — le meme cout, deja
-      // assume par le reste de la horde, que « une entite reagit jusqu'a
-      // 300 ms en retard » (voir le rapport de la tache 19).
-      this.vx[slot] = 0;
-      this.vy[slot] = 0;
+      // Tache 20 : direction du champ (`targetField` vaut 0 ci-dessus, donc
+      // c'est bien `field` — le champ 0 — qui doit servir ici), sans
+      // repulsion (voir la doc de la methode). Zero si aucun champ n'est
+      // fourni : meme comportement qu'avant cette tache.
+      if (field) {
+        const cell = field.indexAt(ex, ey);
+        this.vx[slot] = (field.dirX[cell] ?? 0) * speed;
+        this.vy[slot] = (field.dirY[cell] ?? 0) * speed;
+      } else {
+        this.vx[slot] = 0;
+        this.vy[slot] = 0;
+      }
     }
 
     this.#count += count;
@@ -424,9 +445,39 @@ export class Horde {
    * differents et prennent des routes differentes. Mesure : la derive croit
    * lineairement a ~70 px/s, soit 694 px apres dix secondes.
    *
-   * Avec rattrapage, elle devient constante a ~20 px — l'erreur residuelle de
-   * fraicheur du champ, le client rattrapant avec son champ courant la ou le
-   * serveur a utilise celui d'il y a un ou deux ticks.
+   * ⚠️ **Un seul modele de mouvement (tache 20).** Rattraper un pas manque
+   * doit reproduire EXACTEMENT ce que `step` aurait fait ce tick-la pour ces
+   * memes entites : recalculer leur trajectoire si c'est leur tour de phase
+   * (`#recomputeSteering`), puis avancer selon la vitesse tenue
+   * (`#advanceByVelocity`) — jamais une avance directe le long du champ
+   * (`#advanceAlongField`, supprimee). Avant la tache 19, les deux chemins
+   * (le rattrapage et la boucle normale) suivaient tous deux le champ : ils
+   * coincidaient par construction. Depuis que la boucle normale tient une
+   * vitesse entre deux recalculs de phase, un rattrapage qui continuait a
+   * suivre le champ directement appliquait une PHYSIQUE DIFFERENTE de celle
+   * du reste de la horde, et divergeait des le premier tick — mesure,
+   * jusqu'a 1220 px sur ce seul mecanisme. Restreint a `[before, #count)` —
+   * seules les entites que CET APPEL vient de faire naitre : les entites
+   * deja presentes ont deja ete avancees par leurs propres appels a `step`,
+   * les re-avancer ici les ferait avancer deux fois.
+   *
+   * Le tick simule pour le pas `step` (0-indexe) du rattrapage est
+   * `order.spawnTick + step` : c'est le tick ABSOLU auquel le serveur, lui,
+   * a reellement appele `step` pour faire avancer ces entites — celui qui
+   * decide, via `entityIdAt`, qui recalcule sa trajectoire ce pas-la (meme
+   * raisonnement que le parametre `tick` de `step`, voir sa doc).
+   *
+   * Ce que le rattrapage reste incapable de reproduire, meme ainsi : les
+   * POSITIONS des voisins deja presents au moment ou `#recomputeSteering`
+   * calcule leur repulsion. Le serveur, a chaque tick manque, voyait ces
+   * voisins a LEUR position d'alors ; le rattrapage, execute d'un coup au
+   * present, ne voit que leur position ACTUELLE. Pour la horde neuve elle-
+   * meme (aucune entite preexistante dans `[before, #count)` au moment ou
+   * elle apparait), ce n'est pas une approximation : rien d'autre n'existe
+   * encore dans cette plage, donc la repulsion s'y calcule sur des positions
+   * aussi fraiches que la simulation de reference. C'est seulement quand le
+   * rattrapage doit aussi composer avec une horde deja peuplee que ce residu
+   * (documente historiquement a ~20 px) peut reapparaitre.
    *
    * ⚠️ **Ordre d'appel.** `fields` doit etre le champ tel qu'il existait
    * *avant* le rafraichissement periodique du tick courant, pas apres.
@@ -458,46 +509,15 @@ export class Horde {
     const before = this.#count;
     // `fields[0]` : n'importe lequel des quatre porte le meme masque
     // d'obstacles (voir la doc de `spawn`) ; le rattrapage cliente doit eviter
-    // les murs exactement comme le fait `Room.step` cote serveur.
+    // les murs exactement comme le fait `Room.step` cote serveur. C'est aussi
+    // ce meme appel qui pose desormais la vitesse initiale de ces entites
+    // (voir la doc de `spawn`) : identique a celle que le serveur leur a
+    // posee, puisque c'est la MEME fonction, appelee avec le MEME champ gele.
     this.spawn(order, fields[0]);
     for (let step = 0; step < missedTicks; step++) {
-      this.#advanceAlongField(before, this.#count, dt, fields);
-    }
-  }
-
-  /**
-   * Avance le creneau `[from, to)` d'un pas, en lisant la direction du champ
-   * DIRECTEMENT plutot que via une vitesse tenue — reserve au rattrapage
-   * (`spawnCatchingUp`).
-   *
-   * ⚠️ **Delibrement hors du mecanisme de phase de la tache 19.** Le
-   * rattrapage etait deja une approximation avant cette tache (erreur
-   * residuelle de fraicheur du champ, ~20 px, voir la doc de
-   * `spawnCatchingUp`) et n'a jamais inclus la repulsion entre entites — la
-   * separation d'alors s'appliquait a part, jamais dans cette boucle. Y
-   * ajouter le calendrier de phase compliquerait ce chemin pour un gain nul :
-   * les entites neuves recevront leur premiere vraie vitesse tenue au plus
-   * `STEERING_RECOMPUTE_TICKS - 1` pas plus tard, via `#recomputeSteering`,
-   * exactement comme n'importe quelle entite fraichement apparue par `spawn`
-   * (voir sa doc sur `vx`/`vy`).
-   */
-  #advanceAlongField(from: number, to: number, dt: number, fields: readonly FlowField[]): void {
-    for (let i = from; i < to; i++) {
-      // Tache 17.2 : une entite a portee de contact s'arrete plutot que de
-      // traverser le joueur. `stopped` vient de `retarget`, voir sa doc.
-      if (this.stopped[i]) {
-        continue;
-      }
-      const field = fields[this.targetField[i] ?? 0];
-      if (!field) {
-        continue;
-      }
-      const speed = archetypeOf(this.archetype[i] ?? 0).speed * dt;
-      const ex = this.x[i] ?? 0;
-      const ey = this.y[i] ?? 0;
-      const cell = field.indexAt(ex, ey);
-      this.x[i] = clamp(ex + (field.dirX[cell] ?? 0) * speed, 0, MAP_SIZE);
-      this.y[i] = clamp(ey + (field.dirY[cell] ?? 0) * speed, 0, MAP_SIZE);
+      const tick = order.spawnTick + step;
+      this.#recomputeSteering(tick, fields, before, this.#count);
+      this.#advanceByVelocity(before, this.#count, dt);
     }
   }
 
@@ -542,8 +562,23 @@ export class Horde {
    * compense par le fait qu'un seul tick sur `STEERING_RECOMPUTE_TICKS`
    * declenche la recherche de voisins par entite (le gain mesure, voir le
    * rapport de la tache 19).
+   *
+   * `from`/`to` restreignent QUELLES entites peuvent recalculer ce tick-la —
+   * la grille de voisins, elle, reste TOUJOURS construite sur les `#count`
+   * entites entieres, actives ou non dans cette plage : une entite hors
+   * plage reste un intrant valide pour la repulsion de celles qui recalculent
+   * (tache 19), seule SA PROPRE vitesse a elle ne doit pas changer. Par
+   * defaut `[0, #count)` — le comportement de `step`, tout le monde eligible.
+   * `spawnCatchingUp` (tache 20) restreint a `[before, #count)` : seules les
+   * entites qu'IL vient de faire naitre peuvent recalculer, jamais celles
+   * deja presentes, deja avancees par leurs propres appels a `step`.
    */
-  #recomputeSteering(tick: number, fields: readonly FlowField[]): void {
+  #recomputeSteering(
+    tick: number,
+    fields: readonly FlowField[],
+    from = 0,
+    to: number = this.#count,
+  ): void {
     const n = this.#count;
     if (n === 0) {
       return;
@@ -555,7 +590,7 @@ export class Horde {
     const r2 = SEPARATION_RADIUS * SEPARATION_RADIUS;
     const cols = this.#gridCols;
 
-    for (let i = 0; i < n; i++) {
+    for (let i = from; i < to; i++) {
       if (this.entityIdAt(i) % K !== phase) {
         continue;
       }

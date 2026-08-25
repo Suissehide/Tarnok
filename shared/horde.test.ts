@@ -174,6 +174,11 @@ describe('Horde.spawnCatchingUp', () => {
   });
 
   it("n'affecte pas les entites deja presentes", () => {
+    // Mutation visee (tache 20) : appeler `#recomputeSteering` sur la plage
+    // ENTIERE (`[0, #count)`) plutot que restreinte a `[before, #count)` dans
+    // `spawnCatchingUp` — les entites de la vague 1, deja presentes, se
+    // verraient recalculer une trajectoire (et donc une vitesse non nulle)
+    // au passage d'un rattrapage qui ne les concerne pourtant pas.
     const horde = new Horde(1000);
     horde.spawn(order({ waveId: 1, count: 50, anchorX: 1000, anchorY: 1000 }));
     const fields = fieldsTowards(1000, 1000);
@@ -181,6 +186,8 @@ describe('Horde.spawnCatchingUp', () => {
 
     const avantX = [...horde.x.slice(0, 50)];
     const avantY = [...horde.y.slice(0, 50)];
+    const avantVx = [...horde.vx.slice(0, 50)];
+    const avantVy = [...horde.vy.slice(0, 50)];
 
     horde.spawnCatchingUp(
       order({ waveId: 2, count: 50, anchorX: 5000, anchorY: 5000 }),
@@ -191,6 +198,13 @@ describe('Horde.spawnCatchingUp', () => {
 
     expect([...horde.x.slice(0, 50)]).toEqual(avantX);
     expect([...horde.y.slice(0, 50)]).toEqual(avantY);
+    // Position ET vitesse (tache 20) : une entite recalculee a tort par le
+    // rattrapage garderait la MEME position ce tick-la (le recalcul ne fait
+    // que poser `vx`/`vy`, `#advanceByVelocity` n'est jamais appele sur
+    // cette plage) mais pas la meme vitesse — verifier seulement x/y laisse
+    // ce defaut passer inapercu.
+    expect([...horde.vx.slice(0, 50)]).toEqual(avantVx);
+    expect([...horde.vy.slice(0, 50)]).toEqual(avantVy);
   });
 
   it('produit le meme nombre d entites que spawn, rattrapage ou non', () => {
@@ -1019,6 +1033,161 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       expect(b.horde.y[i]).toBe(a.horde.y[i]);
     }
   });
+});
+
+describe('tache 20 : un seul modele de mouvement pour le rattrapage', () => {
+  it('spawn pose une vitesse non nulle des l apparition, sans attendre le premier recalcul de phase', () => {
+    // Mutation visee : revenir a `vx = vy = 0` inconditionnel dans `spawn`
+    // (le comportement d'avant la tache 20) — une entite fraichement
+    // apparue resterait figee jusqu'a `STEERING_RECOMPUTE_TICKS - 1` pas
+    // (300 ms), un defaut visible a l'ecran. Verifie AVANT tout appel a
+    // `step` : seule `spawn` elle-meme a pu poser cette vitesse.
+    const fields = fieldsTowards(4000, 1000);
+    const field = fields[0];
+    if (!field) {
+      throw new Error('champ manquant');
+    }
+
+    const horde = new Horde(10);
+    // Ancre loin de la cible et de tout bord : le champ y porte a coup sur
+    // une direction non nulle (pas d'obstacle ici, donc pas de cellule
+    // inatteignable).
+    horde.spawn(
+      order({ count: 5, anchorX: 1000, anchorY: 1000, formation: FORMATION.SCATTER }),
+      field,
+    );
+
+    for (let i = 0; i < horde.count; i++) {
+      expect(Math.hypot(horde.vx[i] ?? 0, horde.vy[i] ?? 0)).toBeGreaterThan(0);
+    }
+  });
+
+  it('sans champ fourni, spawn garde le comportement d avant : vitesse nulle', () => {
+    // Sanity inverse du test precedent : la nouvelle branche de `spawn` ne
+    // doit s'activer que si un champ est passe, pas devenir le nouveau
+    // comportement par defaut partout (la plupart des tests de ce fichier
+    // spawnent sans champ et n'ont rien a voir avec ce mecanisme).
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 5, formation: FORMATION.SCATTER }));
+
+    for (let i = 0; i < horde.count; i++) {
+      expect(horde.vx[i]).toBe(0);
+      expect(horde.vy[i]).toBe(0);
+    }
+  });
+
+  it('une entite fraichement apparue avance des le tick suivant, sans attendre sa phase', () => {
+    // Mutation visee : la meme que le test precedent, mais observee par le
+    // mouvement plutot que par la vitesse brute — c'est le symptome que le
+    // corollaire du brief decrit (« ca se voit a l'ecran »). Le tick choisi
+    // ne correspond PAS a la phase de recalcul de l'entite : si elle bouge
+    // quand meme, ce ne peut etre que la vitesse posee par `spawn`, jamais
+    // un recalcul de `#recomputeSteering`.
+    const K = STEERING_RECOMPUTE_TICKS;
+    const fields = fieldsTowards(4000, 1000);
+    const field = fields[0];
+    if (!field) {
+      throw new Error('champ manquant');
+    }
+
+    const horde = new Horde(10);
+    horde.spawn(
+      order({ waveId: 1, count: 1, anchorX: 1000, anchorY: 1000, formation: FORMATION.SCATTER }),
+      field,
+    );
+    const phase = horde.entityIdAt(0) % K;
+    const tick = phase === 0 ? 1 : 0;
+    expect(tick % K).not.toBe(phase);
+
+    const beforeX = horde.x[0] ?? 0;
+    const beforeY = horde.y[0] ?? 0;
+    horde.step(DT, fields, tick);
+
+    expect(Math.hypot((horde.x[0] ?? 0) - beforeX, (horde.y[0] ?? 0) - beforeY)).toBeGreaterThan(0);
+  });
+
+  it(
+    'un rattrapage tardif finit EXACTEMENT comme une apparition a l heure : position ET ' +
+      'vitesse, tick par tick, sur plusieurs cycles de phase',
+    () => {
+      // Mutation visee : reintroduire `#advanceAlongField` (l'ancienne
+      // physique du rattrapage, le long du champ) dans la boucle de
+      // `spawnCatchingUp`, a la place de `#recomputeSteering` +
+      // `#advanceByVelocity`. Les deux hordes ci-dessous partagent le meme
+      // champ, la meme cible, le meme ordre de vague — la SEULE difference
+      // est que l'une apparait a l'heure et l'autre rattrape `DELAY` pas.
+      // Sous un seul modele de mouvement, elles doivent coincider AU BIT
+      // PRES des que le rattrapage a rejoue les pas manques — pas seulement
+      // au tick ou elles se rejoignent, mais a chaque tick ensuite, a
+      // travers plusieurs cycles complets de `STEERING_RECOMPUTE_TICKS`.
+      const K = STEERING_RECOMPUTE_TICKS;
+      const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+      const SPAWN_TICK = 10;
+      const DELAY = 2;
+      const END = SPAWN_TICK + 5 * K;
+
+      const wave: WaveOrder = {
+        waveId: 1,
+        spawnTick: SPAWN_TICK,
+        seed: 0x51ee_d001,
+        archetype: 0,
+        formation: FORMATION.CLUSTER,
+        anchorX: 3000,
+        anchorY: 3000,
+        count: 40,
+      };
+
+      const onTimeFields = fieldsTowards(3000, 3000);
+      const lateFields = fieldsTowards(3000, 3000);
+      const onTime = new Horde(200);
+      const late = new Horde(200);
+
+      for (let tick = 0; tick < END; tick++) {
+        // Cible mobile : un champ fige ne prouverait rien (voir le reste de
+        // ce fichier). Les deux cotes voient EXACTEMENT la meme cible au
+        // meme tick — seule la latence d'APPARITION est sous test ici.
+        const tx = 4500 + Math.cos(tick * 0.05) * 800;
+        const ty = 1500 + Math.sin(tick * 0.05) * 800;
+
+        // Rattrapage EN TETE de tick, avant tout rafraichissement — l'ordre
+        // que documente `spawnCatchingUp`.
+        if (tick === SPAWN_TICK + DELAY) {
+          late.spawnCatchingUp(wave, DELAY, DT, lateFields);
+        }
+
+        if (tick % stepsPerField === 0) {
+          for (const f of onTimeFields) {
+            f.update(tx, ty);
+          }
+          for (const f of lateFields) {
+            f.update(tx, ty);
+          }
+          onTime.retarget([tx, tx, tx, tx], [ty, ty, ty, ty]);
+          late.retarget([tx, tx, tx, tx], [ty, ty, ty, ty]);
+        }
+
+        if (tick === SPAWN_TICK) {
+          onTime.spawn(wave, onTimeFields[0]);
+        }
+
+        onTime.step(DT, onTimeFields, tick);
+        late.step(DT, lateFields, tick);
+
+        if (tick >= SPAWN_TICK + DELAY) {
+          expect(late.count).toBe(onTime.count);
+          for (let i = 0; i < onTime.count; i++) {
+            expect(late.x[i]).toBe(onTime.x[i]);
+            expect(late.y[i]).toBe(onTime.y[i]);
+            expect(late.vx[i]).toBe(onTime.vx[i]);
+            expect(late.vy[i]).toBe(onTime.vy[i]);
+          }
+        }
+      }
+
+      // Le test ne prouverait rien si la horde n'avait jamais bouge.
+      expect(meanDistanceTo(onTime, 3000, 3000)).toBeGreaterThan(0);
+    },
+  );
 });
 
 function meanDistanceTo(horde: Horde, x: number, y: number): number {
