@@ -1869,3 +1869,72 @@ git commit -m "feat: les monstres s'arretent et attaquent au contact"
 > en production l'application les charge de là, et l'ancien atlas n'aura ni les clips d'attaque
 > ni les boîtes englobantes.
 
+---
+
+## Tâche 18 : les monstres se téléportent, et finissent dans les murs
+
+Deux symptômes rapportés — « les monstres se téléportent dans tous les sens quand il y a un
+gros groupe » et « plein de petits paquets de 1, 2 ou 3 mobs qui ne bougent pas » — reliés par
+la mesure.
+
+### Ce que la mesure dit
+
+```
+force = 1200 px/s, rayon = 28 px
+poussée d'UN voisin en recouvrement total : 40,0 px/tick
+
+déplacements dus à la SEULE séparation, 1500 ticks :
+  médiane 9,2 px   p95 32,7 px   p99 45,2 px   MAXIMUM 96,8 px en un tick
+
+horde finale 489 :
+  entrées dans un obstacle pendant la séparation : 48
+  entités actuellement DANS un obstacle          : 185
+  entités immobiles depuis 300+ ticks            : 12, dont 12 dans un obstacle
+```
+
+**Les douze immobiles sont les douze dans un mur.** Corrélation totale.
+
+Trois défauts qui s'enchaînent :
+
+1. **Les forces de séparation s'additionnent sans borne.** Un voisin en recouvrement total
+   pousse de 40 px par tick ; dix voisins poussent dix fois plus. D'où 96,8 px en un tick —
+   2900 px/s, **onze fois la vitesse du joueur**. C'est la téléportation.
+2. **Rien n'empêche d'engendrer une vague dans un obstacle.** 185 entités dans les murs pour
+   48 franchissements : l'essentiel y est né. `formationPositions` ne consulte pas le masque.
+3. **Une cellule bloquée n'a aucune direction**, donc une entité qui s'y trouve — quelle qu'en
+   soit la raison — y reste pour toujours.
+
+### Les trois correctifs, et pourquoi les trois
+
+- [ ] **Étape 1 : borner la poussée accumulée**, par entité et par tick. La borne naturelle est
+  déjà dans les constantes : **la poussée d'un seul voisin en recouvrement total**,
+  `SEPARATION_STRENGTH / TICK_HZ`. Elle se lit « quel que soit l'entassement, on ne pousse
+  jamais plus fort qu'une paire collée ». Dérivée, pas choisie au ressenti.
+
+  ⚠️ **Mesurer l'effet sur la densité d'équilibre.** Un essai antérieur de plafonnement, à
+  force 120, avait *empiré* le coût (47 voisins au lieu de 37) : brider la poussée empêchait
+  l'entassement de se relâcher. À 1200 l'équilibre est atteint et la médiane est à 9 px, donc
+  le plafond ne devrait mordre que sur la queue — **mais il faut le vérifier**, pas le
+  supposer. Le banc `bench:sep` donne la réponse.
+
+- [ ] **Étape 2 : ne pas faire naître dans un mur.** Dans `shared/`, donc identiquement des deux
+  côtés. Un décalage déterministe vers la cellule libre la plus proche, jamais un tirage.
+
+- [ ] **Étape 3 : une cellule bloquée doit offrir une sortie.** C'est le filet, et c'est lui qui
+  rend la classe entière impossible : quelle que soit la façon dont une entité arrive dans un
+  mur, elle doit pouvoir en sortir. Un second parcours depuis les cellules atteintes vers les
+  bloquées, en `O(cellules)` comme le premier.
+
+  Les étapes 1 et 2 suppriment les causes connues ; l'étape 3 fait qu'une cause inconnue, plus
+  tard, dégrade au lieu de figer. Faire les trois.
+
+- [ ] **Étape 4 : vérifier.** Aucune entité immobile plus de N ticks hors de la cellule du
+  joueur ; aucun déplacement de séparation au-delà du plafond. Et la réplication : le scénario 9
+  doit rester à **0,000 px** — les autres chiffres peuvent bouger.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "fix(shared): borner la poussee de separation et sortir des murs"
+```
+
