@@ -245,14 +245,17 @@ export class Room {
   snapshot(out: Outbox): void {
     this.#scratch.length = 0;
     for (const p of this.#players.values()) {
-      // ⚠️ hp/xp n'existent pas encore cote serveur (tache 9) : on cable le
-      // transport avec des valeurs fixes plutot que d'inventer une
-      // comptabilite de degats ou d'experience ici.
-      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: PLAYER_MAX_HP, xp: 0 });
+      // ⚠️ hp n'existe pas encore cote serveur (tache 9) : on cable le
+      // transport avec une valeur fixe plutot que d'inventer une
+      // comptabilite de degats ici.
+      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: PLAYER_MAX_HP });
     }
 
+    // ⚠️ xp n'existe pas non plus (tache 9) : 0 tant que rien ne le fait
+    // vivre. C'est un champ d'equipe (§2 de la spec d'orientation), pas un
+    // champ par joueur : il vit dans l'en-tete du snapshot, pas dans `#scratch`.
     const started = performance.now();
-    const buf = encodeSnapshot(this.#tick, this.#scratch);
+    const buf = encodeSnapshot(this.#tick, 0, this.#scratch);
     this.#metrics.encodeMicros += (performance.now() - started) * 1000;
     this.#metrics.bytesSent += buf.byteLength;
     this.#metrics.snapshots++;

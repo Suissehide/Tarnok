@@ -189,8 +189,8 @@ describe('Room.snapshot', () => {
   });
 
   it(
-    'cable hp et xp avec des valeurs fixes : ni degats ni experience ' +
-      "n'existent encore cote serveur (tache 9)",
+    'cable hp (personnel) et xp (d equipe) avec des valeurs fixes : ni degats ni ' +
+      "experience n'existent encore cote serveur (tache 9)",
     () => {
       const room = new Room();
       room.join(1);
@@ -202,9 +202,9 @@ describe('Room.snapshot', () => {
       if (!first) {
         throw new Error('aucun snapshot emis');
       }
-      const [player] = decodeSnapshot(first).players;
-      expect(player?.hp).toBe(PLAYER_MAX_HP);
-      expect(player?.xp).toBe(0);
+      const decoded = decodeSnapshot(first);
+      expect(decoded.players[0]?.hp).toBe(PLAYER_MAX_HP);
+      expect(decoded.xp).toBe(0);
     },
   );
 
@@ -216,8 +216,8 @@ describe('Room.snapshot', () => {
 
     room.snapshot(out);
 
-    // 6 octets d'en-tete + 8 par joueur (SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES).
-    expect(room.metrics.bytesSent).toBe(22);
+    // 8 octets d'en-tete + 6 par joueur (SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES).
+    expect(room.metrics.bytesSent).toBe(20);
     expect(room.metrics.snapshots).toBe(1);
     expect(room.metrics.encodeMicros).toBeGreaterThanOrEqual(0);
   });

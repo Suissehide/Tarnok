@@ -54,45 +54,53 @@ describe('encodeInput / decodeInput', () => {
 });
 
 describe('encodeSnapshot / decodeSnapshot', () => {
-  it('rend les positions arrondies a l entier, avec les pv et l experience', () => {
-    const buf = encodeSnapshot(42, [
-      { id: 1, x: 100.4, y: 200.6, hp: 80, xp: 350 },
-      { id: 2, x: -3.2, y: 5999.9, hp: 42, xp: 12000 },
+  it('rend les positions arrondies a l entier, les pv personnels et l experience d equipe', () => {
+    const buf = encodeSnapshot(42, 12_000, [
+      { id: 1, x: 100.4, y: 200.6, hp: 80 },
+      { id: 2, x: -3.2, y: 5999.9, hp: 42 },
     ]);
 
     expect(decodeSnapshot(buf)).toEqual({
       type: MSG.SNAPSHOT,
       tick: 42,
+      xp: 12_000,
       players: [
-        { id: 1, x: 100, y: 201, hp: 80, xp: 350 },
-        { id: 2, x: -3, y: 6000, hp: 42, xp: 12000 },
+        { id: 1, x: 100, y: 201, hp: 80 },
+        { id: 2, x: -3, y: 6000, hp: 42 },
       ],
     });
   });
 
   it('encode un salon vide sans joueur', () => {
-    expect(decodeSnapshot(encodeSnapshot(0, [])).players).toEqual([]);
+    expect(decodeSnapshot(encodeSnapshot(0, 0, [])).players).toEqual([]);
   });
 
   it('tient un numero de tick sur 32 bits', () => {
-    expect(decodeSnapshot(encodeSnapshot(4_294_967_295, [])).tick).toBe(4_294_967_295);
+    expect(decodeSnapshot(encodeSnapshot(4_294_967_295, 0, [])).tick).toBe(4_294_967_295);
   });
 
   it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets', () => {
-    const buf = encodeSnapshot(1, [
-      { id: 1, x: 0, y: 0, hp: 1, xp: 0 },
-      { id: 2, x: 0, y: 0, hp: 1, xp: 0 },
-      { id: 3, x: 0, y: 0, hp: 1, xp: 0 },
+    const buf = encodeSnapshot(1, 0, [
+      { id: 1, x: 0, y: 0, hp: 1 },
+      { id: 2, x: 0, y: 0, hp: 1 },
+      { id: 3, x: 0, y: 0, hp: 1 },
     ]);
 
     expect(buf.byteLength).toBe(SNAPSHOT_HEADER_BYTES + 3 * SNAPSHOT_PLAYER_BYTES);
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(8);
+    expect(SNAPSHOT_HEADER_BYTES).toBe(8);
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(6);
   });
 
-  it('tient les pv sur un octet et l experience sur deux (bornes u8 / u16)', () => {
-    const buf = encodeSnapshot(1, [{ id: 1, x: 0, y: 0, hp: 255, xp: 65_535 }]);
+  it('tient les pv personnels sur un octet (u8, borne 255)', () => {
+    const buf = encodeSnapshot(1, 0, [{ id: 1, x: 0, y: 0, hp: 255 }]);
 
-    expect(decodeSnapshot(buf).players[0]).toEqual({ id: 1, x: 0, y: 0, hp: 255, xp: 65_535 });
+    expect(decodeSnapshot(buf).players[0]).toEqual({ id: 1, x: 0, y: 0, hp: 255 });
+  });
+
+  it("tient l'experience d'equipe sur deux octets (u16, borne 65 535)", () => {
+    const buf = encodeSnapshot(1, 65_535, []);
+
+    expect(decodeSnapshot(buf).xp).toBe(65_535);
   });
 
   it('PLAYER_MAX_HP tient dans un octet (u8)', () => {
@@ -100,9 +108,9 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   });
 
   it("leve quand l'en-tete annonce plus de joueurs que le buffer n'en contient", () => {
-    const truncated = encodeSnapshot(1, [
-      { id: 1, x: 0, y: 0, hp: 1, xp: 0 },
-      { id: 2, x: 0, y: 0, hp: 1, xp: 0 },
+    const truncated = encodeSnapshot(1, 0, [
+      { id: 1, x: 0, y: 0, hp: 1 },
+      { id: 2, x: 0, y: 0, hp: 1 },
     ]).slice(0, 9);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
@@ -188,23 +196,24 @@ describe('encodePickups / decodePickups', () => {
 });
 
 describe('encodeLevelUp / decodeLevelUp', () => {
-  it("rend le tick de gel, l'identifiant du joueur et le niveau atteint", () => {
-    const decoded = decodeLevelUp(encodeLevelUp(1234, 2, 7));
+  it("rend le tick de gel et le niveau atteint par l'equipe, sans identifiant de joueur", () => {
+    const decoded = decodeLevelUp(encodeLevelUp(1234, 7));
 
-    expect(decoded).toEqual({ type: MSG.LEVEL_UP, tick: 1234, playerId: 2, level: 7 });
+    expect(decoded).toEqual({ type: MSG.LEVEL_UP, tick: 1234, level: 7 });
+    expect(decoded).not.toHaveProperty('playerId');
   });
 
   it('tient exactement LEVEL_UP_BYTES octets', () => {
-    expect(encodeLevelUp(1, 1, 1).byteLength).toBe(LEVEL_UP_BYTES);
-    expect(LEVEL_UP_BYTES).toBe(7);
+    expect(encodeLevelUp(1, 1).byteLength).toBe(LEVEL_UP_BYTES);
+    expect(LEVEL_UP_BYTES).toBe(6);
   });
 
   it('tient le niveau sur un octet (u8), jusqu a 255', () => {
-    expect(decodeLevelUp(encodeLevelUp(1, 1, 255)).level).toBe(255);
+    expect(decodeLevelUp(encodeLevelUp(1, 255)).level).toBe(255);
   });
 
   it('leve sur un buffer tronque plutot que de rendre un gel fantaisiste', () => {
-    const truncated = encodeLevelUp(1, 1, 1).slice(0, LEVEL_UP_BYTES - 1);
+    const truncated = encodeLevelUp(1, 1).slice(0, LEVEL_UP_BYTES - 1);
 
     expect(() => decodeLevelUp(truncated)).toThrow(/tronqu/i);
   });
@@ -292,7 +301,7 @@ describe('encodeWaveOrder / decodeWaveOrder', () => {
 describe('decode', () => {
   it('aiguille sur le premier octet', () => {
     expect(decode(encodeInput(7, 1, 0))).toMatchObject({ type: MSG.INPUT, seq: 7 });
-    expect(decode(encodeSnapshot(8, []))).toMatchObject({ type: MSG.SNAPSHOT, tick: 8 });
+    expect(decode(encodeSnapshot(8, 0, []))).toMatchObject({ type: MSG.SNAPSHOT, tick: 8 });
     expect(decode(encodeWelcome(1, 9, 0))).toMatchObject({ type: MSG.WELCOME, playerId: 1 });
   });
 
@@ -302,7 +311,7 @@ describe('decode', () => {
   });
 
   it('aiguille aussi sur le niveau et la fin de run', () => {
-    expect(decode(encodeLevelUp(1, 1, 5))).toMatchObject({ type: MSG.LEVEL_UP, tick: 1 });
+    expect(decode(encodeLevelUp(1, 5))).toMatchObject({ type: MSG.LEVEL_UP, tick: 1 });
     expect(decode(encodeRunOver(1, 1, 1, 1))).toMatchObject({ type: MSG.RUN_OVER, tick: 1 });
   });
 

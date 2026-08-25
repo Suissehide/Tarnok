@@ -30,6 +30,8 @@ export interface InputAxes {
 export interface RenderState {
   /** Identifiant du joueur local, ou null tant que le WELCOME n'est pas arrive. */
   localId: number | null;
+  /** Experience de l'equipe — commune a tous, pas un champ par joueur. */
+  xp: number;
   /** Positions a dessiner : les autres interpolees, la sienne predite. */
   players: PlayerSnapshot[];
 }
@@ -69,11 +71,12 @@ export class GameClient {
   #local: PredictedPlayer | null = null;
   #localId: number | null = null;
   /**
-   * Derniers pv/xp connus du joueur local, tels que portes par le dernier
-   * snapshot : la prediction ne simule que la position, pas ces compteurs.
+   * Derniers pv (personnels) connus du joueur local, tels que portes par le
+   * dernier snapshot : la prediction ne simule que la position, pas les pv.
    */
   #localHp = 0;
-  #localXp = 0;
+  /** Experience de l'equipe, telle que portee par le dernier snapshot. */
+  #teamXp = 0;
   #seq = 0;
   #status: ConnectionStatus = 'closed';
 
@@ -185,7 +188,6 @@ export class GameClient {
         x: local.renderX,
         y: local.renderY,
         hp: this.#localHp,
-        xp: this.#localXp,
       };
       if (index >= 0) {
         players[index] = predicted;
@@ -194,7 +196,7 @@ export class GameClient {
       }
     }
 
-    return { localId: this.#localId, players };
+    return { localId: this.#localId, xp: this.#teamXp, players };
   }
 
   #sendInput(): void {
@@ -247,15 +249,19 @@ export class GameClient {
       this.#lastHordeTick = msg.tick;
     }
 
+    // `xp` est celui de l'equipe : porte par le snapshot entier, pas par un
+    // bloc joueur — on le lit a chaque snapshot, meme si `mine` reste
+    // introuvable ci-dessous.
+    this.#teamXp = msg.xp;
+
     const mine =
       this.#localId === null ? undefined : msg.players.find((p) => p.id === this.#localId);
     if (!mine) {
       return;
     }
-    // Pas predits, contrairement a la position : on prend simplement la
+    // Pas predit, contrairement a la position : on prend simplement la
     // derniere valeur connue du serveur.
     this.#localHp = mine.hp;
-    this.#localXp = mine.xp;
     if (this.#local === null) {
       // Premier snapshot ou l'on se voit : on se pose la, sans adoucissement.
       this.#local = new PredictedPlayer(mine.x, mine.y);

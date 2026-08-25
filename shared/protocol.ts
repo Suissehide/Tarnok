@@ -24,18 +24,20 @@ export type MsgType = (typeof MSG)[keyof typeof MSG];
 /**
  * Position d'un joueur telle qu'elle passe sur le fil : quantifiee a l'entier.
  *
- * `hp` et `xp` n'existent pas encore cote serveur (la tache 9 les fait vivre) :
- * cette version cable seulement le transport, `Room` remplit `hp` avec
- * `PLAYER_MAX_HP` et `xp` avec 0.
+ * `hp` n'existe pas encore cote serveur (la tache 9 le fait vivre) : cette
+ * version cable seulement le transport, `Room` le remplit avec `PLAYER_MAX_HP`.
+ *
+ * Pas de `xp` ici : l'experience est **celle de l'equipe**, pas d'un joueur
+ * (§2 de la spec d'orientation — un seul etalage de cartes pour tout le
+ * monde). La porter par joueur creerait deux sources de verite pour un seul
+ * nombre ; elle vit dans `SnapshotMessage.xp`.
  */
 export interface PlayerSnapshot {
   id: number;
   x: number;
   y: number;
-  /** Points de vie, sur un octet. */
+  /** Points de vie, personnels, sur un octet. */
   hp: number;
-  /** Experience, sur deux octets. */
-  xp: number;
 }
 
 export interface WelcomeMessage {
@@ -49,6 +51,8 @@ export interface WelcomeMessage {
 export interface SnapshotMessage {
   type: typeof MSG.SNAPSHOT;
   tick: number;
+  /** Experience de l'equipe, commune a tous les joueurs. Sur deux octets. */
+  xp: number;
   players: PlayerSnapshot[];
 }
 
@@ -93,7 +97,11 @@ export interface PickupsMessage {
 }
 
 /**
- * S -> C : un joueur atteint un nouveau niveau.
+ * S -> C : l'equipe atteint un nouveau niveau.
+ *
+ * Pas de `playerId` : l'experience est celle de l'equipe, pas d'un joueur
+ * (§2 de la spec d'orientation — un seul etalage de cartes pour tout le
+ * monde). Personne ne monte de niveau individuellement.
  *
  * ⚠️ `tick` est celui auquel le **gel** prend effet, pas celui de l'emission —
  * la meme raison que pour `DeathsMessage.tick` : sans ce tick partage, chaque
@@ -103,7 +111,6 @@ export interface PickupsMessage {
 export interface LevelUpMessage {
   type: typeof MSG.LEVEL_UP;
   tick: number;
-  playerId: number;
   level: number;
 }
 
@@ -133,8 +140,10 @@ export type Message =
 
 export const WELCOME_BYTES = 10;
 export const INPUT_BYTES = 5;
-export const SNAPSHOT_HEADER_BYTES = 6;
-export const SNAPSHOT_PLAYER_BYTES = 8;
+/** `type u8 · tick u32 · playerCount u8 · xp u16` — xp est celui de l'equipe. */
+export const SNAPSHOT_HEADER_BYTES = 8;
+/** `id u8 · x i16 · y i16 · hp u8` — pas de xp ici, voir `PlayerSnapshot`. */
+export const SNAPSHOT_PLAYER_BYTES = 6;
 export const WAVE_ORDER_BYTES = 19;
 
 /** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
@@ -142,8 +151,8 @@ export const DEATHS_HEADER_BYTES = 7;
 /** Une identite d'entite, sur le fil : u32. */
 export const DEATH_ID_BYTES = 4;
 
-/** `type u8 · tick u32 · playerId u8 · level u8`. */
-export const LEVEL_UP_BYTES = 7;
+/** `type u8 · tick u32 · level u8`. */
+export const LEVEL_UP_BYTES = 6;
 /** `type u8 · tick u32 · survivedTicks u32 · level u8 · kills u32`. */
 export const RUN_OVER_BYTES = 14;
 
@@ -194,20 +203,31 @@ export function decodeInput(buf: ArrayBuffer): InputMessage {
   };
 }
 
-/** S -> C : positions des joueurs, 6 octets d'en-tete puis 8 par joueur. */
-export function encodeSnapshot(tick: number, players: readonly PlayerSnapshot[]): ArrayBuffer {
+/**
+ * S -> C : positions des joueurs, 8 octets d'en-tete puis 6 par joueur.
+ *
+ * `xp` est un parametre a part, pas un champ de `players[i]` : c'est celui de
+ * l'**equipe**, commun a tous (§2 de la spec d'orientation), et il vit dans
+ * l'en-tete plutot que d'etre repete — et donc potentiellement divergent —
+ * dans chaque bloc joueur.
+ */
+export function encodeSnapshot(
+  tick: number,
+  xp: number,
+  players: readonly PlayerSnapshot[],
+): ArrayBuffer {
   const buf = new ArrayBuffer(SNAPSHOT_HEADER_BYTES + players.length * SNAPSHOT_PLAYER_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.SNAPSHOT);
   v.setUint32(1, tick >>> 0, true);
   v.setUint8(5, players.length);
+  v.setUint16(6, xp, true);
   let o = SNAPSHOT_HEADER_BYTES;
   for (const p of players) {
     v.setUint8(o, p.id);
     v.setInt16(o + 1, Math.round(p.x), true);
     v.setInt16(o + 3, Math.round(p.y), true);
     v.setUint8(o + 5, p.hp);
-    v.setUint16(o + 6, p.xp, true);
     o += SNAPSHOT_PLAYER_BYTES;
   }
   return buf;
@@ -228,12 +248,16 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
       x: v.getInt16(o + 1, true),
       y: v.getInt16(o + 3, true),
       hp: v.getUint8(o + 5),
-      xp: v.getUint16(o + 6, true),
     });
     o += SNAPSHOT_PLAYER_BYTES;
   }
 
-  return { type: MSG.SNAPSHOT, tick: v.getUint32(1, true), players };
+  return {
+    type: MSG.SNAPSHOT,
+    tick: v.getUint32(1, true),
+    xp: v.getUint16(6, true),
+    players,
+  };
 }
 
 /**
@@ -296,17 +320,16 @@ export function decodePickups(buf: ArrayBuffer): PickupsMessage {
 }
 
 /**
- * S -> C : un joueur atteint un nouveau niveau, 7 octets.
+ * S -> C : l'equipe atteint un nouveau niveau, 6 octets.
  *
  * `tick` est celui du gel, pas de l'emission — voir `LevelUpMessage`.
  */
-export function encodeLevelUp(tick: number, playerId: number, level: number): ArrayBuffer {
+export function encodeLevelUp(tick: number, level: number): ArrayBuffer {
   const buf = new ArrayBuffer(LEVEL_UP_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.LEVEL_UP);
   v.setUint32(1, tick >>> 0, true);
-  v.setUint8(5, playerId);
-  v.setUint8(6, level);
+  v.setUint8(5, level);
   return buf;
 }
 
@@ -315,8 +338,7 @@ export function decodeLevelUp(buf: ArrayBuffer): LevelUpMessage {
   return {
     type: MSG.LEVEL_UP,
     tick: v.getUint32(1, true),
-    playerId: v.getUint8(5),
-    level: v.getUint8(6),
+    level: v.getUint8(5),
   };
 }
 

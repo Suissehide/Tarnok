@@ -5,17 +5,21 @@ import { describe, expect, it } from 'vitest';
 import { SnapshotBuffer } from './interpolation';
 
 /**
- * hp/xp ne sont pas le sujet de ces tests (l'interpolation de position l'est) :
- * on leur donne une valeur par defaut plutot que de l'imposer a chaque appel.
+ * hp n'est pas le sujet de ces tests (l'interpolation de position l'est) : on
+ * lui donne une valeur par defaut plutot que de l'imposer a chaque appel. xp
+ * n'existe plus par joueur (c'est un champ d'equipe, sur `SnapshotMessage`) :
+ * on le fixe a 0 par defaut, sauf pour les tests qui le portent explicitement.
  */
 function snapshot(
   tick: number,
-  players: { id: number; x: number; y: number; hp?: number; xp?: number }[],
+  players: { id: number; x: number; y: number; hp?: number }[],
+  xp = 0,
 ): SnapshotMessage {
   return {
     type: MSG.SNAPSHOT,
     tick,
-    players: players.map((p) => ({ hp: PLAYER_MAX_HP, xp: 0, ...p })),
+    xp,
+    players: players.map((p) => ({ hp: PLAYER_MAX_HP, ...p })),
   };
 }
 
@@ -29,20 +33,20 @@ describe('SnapshotBuffer.sample', () => {
     // rendu vaut 25 ms, soit pile entre les deux snapshots.
     const sampled = buffer.sample(INTERP_DELAY_MS + 25);
 
-    expect(sampled).toEqual([{ id: 1, x: 50, y: 150, hp: PLAYER_MAX_HP, xp: 0 }]);
+    expect(sampled).toEqual([{ id: 1, x: 50, y: 150, hp: PLAYER_MAX_HP }]);
   });
 
-  it('porte les pv et l experience du snapshot d arrivee, sans les interpoler', () => {
+  it('porte les pv du snapshot d arrivee, sans les interpoler', () => {
     const buffer = new SnapshotBuffer();
-    buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0, hp: 80, xp: 100 }]), 0);
-    buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0, hp: 55, xp: 400 }]), 50);
+    buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0, hp: 80 }]), 0);
+    buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0, hp: 55 }]), 50);
 
-    // Position a mi-chemin (voir le premier test), mais hp/xp ne sont pas des
-    // positions : ce sont des compteurs discrets, on prend ceux du snapshot
-    // d'arrivee tels quels.
+    // Position a mi-chemin (voir le premier test), mais hp n'est pas une
+    // position : c'est un compteur discret, on prend celui du snapshot
+    // d'arrivee tel quel.
     const sampled = buffer.sample(INTERP_DELAY_MS + 25);
 
-    expect(sampled[0]).toMatchObject({ hp: 55, xp: 400 });
+    expect(sampled[0]).toMatchObject({ hp: 55 });
   });
 
   it('rend un quart du chemin au quart du temps', () => {
@@ -59,7 +63,7 @@ describe('SnapshotBuffer.sample', () => {
     buffer.push(snapshot(2, [{ id: 1, x: 999, y: 999 }]), 50);
 
     // Temps de rendu negatif : on n'a pas encore de quoi interpoler.
-    expect(buffer.sample(0)).toEqual([{ id: 1, x: 10, y: 20, hp: PLAYER_MAX_HP, xp: 0 }]);
+    expect(buffer.sample(0)).toEqual([{ id: 1, x: 10, y: 20, hp: PLAYER_MAX_HP }]);
   });
 
   it('ne va pas plus loin que le dernier snapshot recu', () => {
@@ -94,7 +98,6 @@ describe('SnapshotBuffer.sample', () => {
       x: 500,
       y: 500,
       hp: PLAYER_MAX_HP,
-      xp: 0,
     });
   });
 
