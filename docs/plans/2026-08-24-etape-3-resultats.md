@@ -14,9 +14,9 @@ retirer un ennemi en déplace des dizaines — et les **morts arrivent en retard
 
 | Scénario | Dérive maximale |
 | --- | --- |
-| Morts + séparation, **sans** rejeu | **686,369 px** |
+| Morts + séparation, **sans** rejeu | **687,893 px** |
 | Morts + séparation, **avec** rejeu | **0,000 px** |
-| Mort sortie de l'anneau, appliquée au présent et signalée | **433,988 px** |
+| Mort sortie de l'anneau, appliquée au présent et signalée | **424,601 px** |
 
 216 morts sur 1000, horde déplacée de 5829 px. (Le chiffre sans rejeu valait 750,039 px
 avant que les monstres ne s'arrêtent au contact : l'arrêt change les trajectoires, et c'est
