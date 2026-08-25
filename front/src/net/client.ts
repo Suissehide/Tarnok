@@ -14,6 +14,7 @@ import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { PlayerHistory } from '@shared/player-history';
+import { Projectiles } from '@shared/projectiles';
 import {
   decode,
   encodeInput,
@@ -22,6 +23,8 @@ import {
   type WaveOrderMessage,
 } from '@shared/protocol';
 import { SeparationGrid } from '@shared/separation';
+import { nearestTarget } from '@shared/targeting';
+import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { SnapshotBuffer } from './interpolation';
@@ -164,6 +167,97 @@ export class DerivedOrbs {
   }
 }
 
+/** Capacite du reservoir de projectiles cote client — meme valeur que `PROJECTILE_CAPACITY` de `back/src/room.ts`, pour la meme raison (§5.2). */
+const PROJECTILE_CAPACITY = 256;
+
+/** Capacite du reservoir de flashes d'impact — un burst cosmetique reste petit, jamais toute la horde a la fois. */
+const HIT_FLASH_CAPACITY = 128;
+
+/**
+ * Duree de vie d'un flash d'impact, en millisecondes horloge murale — §4.3 :
+ * « un flash court, large et genereux… pas un halo permanent ». Pas en ticks
+ * comme `DerivedOrbs` : un flash est purement cosmetique, jamais arbitre, donc
+ * rien n'exige qu'il se calcule identiquement des deux cotes (voir le
+ * commentaire de `GameClient#advanceHorde` sur `Projectiles.collide`).
+ * L'horloge murale donne une animation lisse, independante de la cadence des
+ * pas de simulation.
+ */
+export const HIT_FLASH_LIFETIME_MS = 220;
+
+/**
+ * Bilan de fin de run, tel que porte par `RUN_OVER` (§7 de la spec). Recopie
+ * sous un nom local plutot que reexportee telle quelle : `main.ts` n'a besoin
+ * que de ces trois champs, pas de `type`/`tick` qui n'interessent que le
+ * protocole.
+ */
+export interface RunOverSummary {
+  survivedTicks: number;
+  level: number;
+  kills: number;
+}
+
+/**
+ * Flashs d'impact, cote client — purement cosmetiques, jamais arbitres.
+ *
+ * Nes de `Projectiles.collide` (voir `GameClient#advanceHorde`), qui ne
+ * consomme que les propres projectiles du client et ne touche jamais `horde`
+ * ni `hp` : ce n'est PAS de l'arbitrage de degats (reserve au serveur, §5.4),
+ * seulement la meme divergence acceptee que documentee sur `fireSalvo`. Deux
+ * clients peuvent donc voir des flashs legerement differents — sans
+ * consequence, puisqu'aucune decision de jeu n'en depend.
+ *
+ * Tableaux types, meme regle que `DerivedOrbs` et `Horde` (§4.4 de
+ * l'orientation) — un burst d'impacts simultane ne doit jamais allouer un
+ * objet par flash.
+ */
+export class HitFlashes {
+  readonly x: Float32Array;
+  readonly y: Float32Array;
+  /** Horloge murale de naissance (`performance.now()`), voir `HIT_FLASH_LIFETIME_MS`. */
+  readonly bornMs: Float64Array;
+  #count = 0;
+
+  constructor(readonly capacity: number) {
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.bornMs = new Float64Array(capacity);
+  }
+
+  get count(): number {
+    return this.#count;
+  }
+
+  /** Fait naitre un flash. Ignore silencieusement si la capacite (un burst reste petit) est atteinte. */
+  spawn(x: number, y: number, nowMs: number): void {
+    if (this.#count >= this.capacity) {
+      return;
+    }
+    const slot = this.#count++;
+    this.x[slot] = x;
+    this.y[slot] = y;
+    this.bornMs[slot] = nowMs;
+  }
+
+  /** Retire les flashs dont la duree de vie a expire. */
+  expire(nowMs: number): void {
+    for (let i = this.#count - 1; i >= 0; i--) {
+      if (nowMs - (this.bornMs[i] ?? 0) >= HIT_FLASH_LIFETIME_MS) {
+        this.#removeAt(i);
+      }
+    }
+  }
+
+  #removeAt(slot: number): void {
+    const last = this.#count - 1;
+    if (slot !== last) {
+      this.x[slot] = this.x[last] ?? 0;
+      this.y[slot] = this.y[last] ?? 0;
+      this.bornMs[slot] = this.bornMs[last] ?? 0;
+    }
+    this.#count = last;
+  }
+}
+
 /**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
@@ -184,6 +278,13 @@ export class GameClient {
   #localHp = 0;
   /** Experience de l'equipe, telle que portee par le dernier snapshot. */
   #teamXp = 0;
+  /**
+   * Niveau de l'equipe, tel que porte par le dernier `LEVEL_UP` (ou `RUN_OVER`
+   * au bilan). Ne peut PAS se deriver de `#teamXp` seul : `xp` est remis a
+   * l'excedent apres chaque niveau (`Room#gainXp`), donc la valeur cumulee
+   * est perdue cote fil — voir `RunOverSummary` et le HUD (§4.6).
+   */
+  #level = 1;
   #seq = 0;
   #status: ConnectionStatus = 'closed';
 
@@ -200,6 +301,20 @@ export class GameClient {
   readonly #hordeHistory = new HordeHistory(MAX_ENTITIES);
   /** Orbes derives des morts (§6.1), jamais transmis. Lecture publique pour le rendu et le HUD. */
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
+
+  /**
+   * Projectiles, simules localement — **jamais repliques**, exactement comme
+   * documente sur `shared/projectiles.ts` : chaque cote (serveur, chaque
+   * client) tire ses propres salves a partir de donnees deja partagees
+   * (l'arme, le tick, la horde). `#fireWeapons` est le miroir client de
+   * `Room#fireWeapons` (back/src/room.ts). Lecture publique pour le rendu
+   * (tache 11).
+   */
+  readonly projectiles = new Projectiles(PROJECTILE_CAPACITY);
+  /** Cooldown par joueur, cote client — miroir de `Player.lastFireTick` cote serveur. */
+  readonly #lastFireTick = new Map<number, number>();
+  /** Flashs d'impact derives des collisions locales (§4.3). Lecture publique pour le rendu. */
+  readonly hitFlashes = new HitFlashes(HIT_FLASH_CAPACITY);
 
   /**
    * Nombre cumule d'identites tuees en dehors de la portee de `HordeHistory`
@@ -237,6 +352,8 @@ export class GameClient {
     private readonly url: string,
     private readonly readInput: () => InputAxes,
     private readonly onStatusChange: (status: ConnectionStatus) => void,
+    /** Appele une seule fois, a la reception de `RUN_OVER` (§7 de la spec). */
+    private readonly onRunOver: (summary: RunOverSummary) => void = () => undefined,
   ) {}
 
   get status(): ConnectionStatus {
@@ -245,6 +362,11 @@ export class GameClient {
 
   get localId(): number | null {
     return this.#localId;
+  }
+
+  /** Niveau courant de l'equipe, pour le HUD (§4.6). Voir `#level`. */
+  get level(): number {
+    return this.#level;
   }
 
   /**
@@ -317,7 +439,7 @@ export class GameClient {
     this.#hordeAcc += dt;
     let steps = 0;
     while (this.#hordeAcc >= STEP && steps < 5) {
-      this.#advanceHorde(STEP);
+      this.#advanceHorde(STEP, now);
       this.#hordeAcc -= STEP;
       steps++;
     }
@@ -401,6 +523,18 @@ export class GameClient {
       // deviendrait une source de divergence au lieu d'une pause commune.
       this.#freezeUntilTick = msg.tick + LEVEL_FREEZE_TICKS - 1;
       this.#resumeEndTick = this.#freezeUntilTick + LEVEL_RESUME_TICKS;
+      // Contrairement au gel, le niveau affiche au HUD peut se mettre a jour
+      // des la reception : ce n'est pas une simulation partagee qui doit
+      // diverger identiquement des deux cotes, seulement un chiffre a
+      // afficher.
+      this.#level = msg.level;
+      return;
+    }
+    if (msg.type === MSG.RUN_OVER) {
+      // Une seule fois par salon (§7) : `Room` ne met `RUN_OVER` en file
+      // qu'une fois (`#runOver`), donc rien ici n'a besoin de garde
+      // supplementaire cote client.
+      this.onRunOver({ survivedTicks: msg.survivedTicks, level: msg.level, kills: msg.kills });
       return;
     }
     if (msg.type !== MSG.SNAPSHOT) {
@@ -438,7 +572,8 @@ export class GameClient {
     }
   }
 
-  #advanceHorde(dt: number): void {
+  /** `nowMs` est l'horloge murale du navigateur (`performance.now()`), portee par `update()` — voir `HitFlashes`. */
+  #advanceHorde(dt: number, nowMs: number): void {
     if (this.#fields.length === 0) {
       return;
     }
@@ -505,6 +640,42 @@ export class GameClient {
     this.horde.step(dt * scale, this.#fields);
     this.#separation.apply(this.horde, dt * scale);
 
+    // Tir, deplacement des projectiles, collision — miroir cosmetique de
+    // l'etape 8 de `Room.step` (back/src/room.ts). Gate par le meme garde de
+    // gel que le rafraichissement du champ ci-dessus (le serveur ne tire pas
+    // non plus pendant le gel strict, son `step()` y revient avant). Le
+    // ralentissement de la reprise (`scale`), lui, ne s'applique QU'au
+    // deplacement des projectiles, jamais au tir lui-meme — meme regle que
+    // `Room#movementScale` : « le tir automatique… n'est modere par aucune
+    // rampe ».
+    //
+    // ⚠️ Les projectiles ne sont PAS rejoues par `#replayTick` : leur position
+    // ne depend que de leur propre vitesse, jamais de la horde — contrairement
+    // au mouvement de la horde, il n'y a donc rien a corriger apres une mort
+    // tardive. Les y rejouer les ferait avancer deux fois pour les ticks deja
+    // simules en temps reel (une fois ici, une fois au rejeu) : une regression
+    // silencieuse, pas une amelioration. C'est pour cette meme raison que le
+    // pseudo-code du brief de la tache 10 (« le rejeu deplace aussi les
+    // projectiles ») n'a pas ete suivi a la lettre ici — voir le rapport de
+    // la tache 11.
+    if (tick > this.#freezeUntilTick) {
+      this.#fireWeapons(tick, snapshot?.players ?? []);
+      this.projectiles.step(dt * scale);
+      // Collision purement cosmetique : `collide` ne lit `horde` qu'en
+      // lecture (position, `slotOf`) et ne consomme que les propres
+      // projectiles du client — jamais un degat, jamais un `kill`. Arbitrer
+      // reellement les degats ici serait exactement l'erreur que le §3.2 et
+      // `#applyDeaths` interdisent deja au rejeu : prononcer une mort que le
+      // serveur n'a pas prononcee.
+      this.projectiles.collide(this.horde, (entityId) => {
+        const slot = this.horde.slotOf(entityId);
+        if (slot >= 0) {
+          this.hitFlashes.spawn(this.horde.x[slot] ?? 0, this.horde.y[slot] ?? 0, nowMs);
+        }
+      });
+    }
+    this.hitFlashes.expire(nowMs);
+
     // Instantane pour le rejeu (§3.2) : DOIT etre pris a chaque tick, gel ou
     // pas, sans quoi une mort qui viserait un tick gele serait « trop vieille »
     // a tort — l'anneau la jugerait absente plutot que simplement inchangee.
@@ -513,6 +684,53 @@ export class GameClient {
     // `DerivedOrbs.expire`.
     this.orbs.expire(tick);
     this.#drainPendingDeaths(tick);
+  }
+
+  /**
+   * Tire les salves dues, cote client — miroir de `Room#fireWeapons`
+   * (back/src/room.ts), pour que les projectiles affiches correspondent a ce
+   * que chaque joueur voit tirer.
+   *
+   * Purement cosmetique : les degats restent arbitres par le serveur (§5.4),
+   * jamais deduits d'ici. Meme divergence acceptee que documentee sur
+   * `Projectiles.fireSalvo` — un client peut viser un monstre que le serveur
+   * a deja tue (ou l'inverse), selon la latence de propagation des morts
+   * (§3.2). Seule l'arme neutre de base est tiree (§6.1 — l'etalage de cartes
+   * est hors etape), comme cote serveur.
+   *
+   * `players` vient du dernier snapshot connu (voir l'appelant) : le client
+   * n'a pas de position « vraie » continue pour les joueurs distants, il n'a
+   * que la derniere connue — meme source que `#localHp`/`#teamXp`. Le joueur
+   * local, lui, utilise sa position simulee (`#local.simX/simY`), plus a jour
+   * que le dernier snapshot recu.
+   */
+  #fireWeapons(tick: number, players: readonly PlayerSnapshot[]): void {
+    if (this.horde.count === 0 || players.length === 0) {
+      return;
+    }
+    const weapon = weaponOf(0);
+    // Portee = distance que le projectile peut parcourir avant d'expirer —
+    // identique au calcul de `Room#fireWeapons`.
+    const range = (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
+
+    for (const p of players) {
+      if (p.hp <= 0) {
+        continue;
+      }
+      const last = this.#lastFireTick.get(p.id) ?? Number.NEGATIVE_INFINITY;
+      if (tick - last < weapon.cooldownTicks) {
+        continue;
+      }
+      const local = p.id === this.#localId ? this.#local : null;
+      const x = local ? local.simX : p.x;
+      const y = local ? local.simY : p.y;
+      const targetId = nearestTarget(this.horde, x, y, range);
+      if (targetId < 0) {
+        continue;
+      }
+      this.projectiles.fireSalvo(weapon, tick, x, y, targetId, this.horde);
+      this.#lastFireTick.set(p.id, tick);
+    }
   }
 
   /**

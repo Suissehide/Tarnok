@@ -1,10 +1,12 @@
-import { MAP_SIZE } from '@shared/constants';
+import { MAP_SIZE, TICK_HZ } from '@shared/constants';
 import type { Horde } from '@shared/horde';
+import type { Projectiles } from '@shared/projectiles';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
-import type { RenderState } from '../net/client';
+import type { DerivedOrbs, HitFlashes, RenderState, RunOverSummary } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
 import { HordeRenderer } from './horde-renderer';
+import { ImpactFlashRenderer, OrbRenderer, ProjectileRenderer } from './projectile-renderer';
 
 /**
  * La scene du jeu : la carte, la horde, et un carre par joueur.
@@ -33,6 +35,9 @@ export class Stage {
   // Corrigé par rapport au brief : `readonly` assigné dans `init()` ne
   // compile pas sous `strictPropertyInitialization`. Initialisation directe.
   #horde = new HordeRenderer(ASSETS_BASE);
+  readonly #orbs = new OrbRenderer();
+  readonly #projectiles = new ProjectileRenderer();
+  readonly #impactFlashes = new ImpactFlashRenderer();
 
   async init(parent: HTMLElement): Promise<void> {
     await this.#app.init({
@@ -52,8 +57,20 @@ export class Stage {
 
     // Ordre d'affichage : apres la grille, avant les carres des joueurs
     // (ajoutes plus tard via `#spriteFor`), sinon les joueurs disparaissent
-    // sous la horde.
+    // sous la horde. Les orbes (ramassage au sol) passent avant la horde ;
+    // les projectiles et les flashs d'impact passent apres, pour rester
+    // visibles par-dessus les monstres qu'ils visent.
+    this.#orbs.attach(this.#world);
     this.#horde.attach(this.#world);
+    this.#projectiles.attach(this.#world);
+    this.#impactFlashes.attach(this.#world);
+
+    // Textures procedurales (canevas 2D) : aucun fetch reseau, ne peut pas
+    // echouer comme le chargement de l'atlas ci-dessous — pas de try/catch
+    // necessaire ici.
+    this.#orbs.load();
+    this.#projectiles.load();
+    this.#impactFlashes.load();
 
     // Constat I4 : sans ce try/catch, un atlas absent (404 sur le manifeste,
     // deploiement ou l'atlas n'a pas ete depose sur MinIO) fait echouer cette
@@ -132,6 +149,19 @@ export class Stage {
     this.#horde.draw(horde, this.viewRect(), timeMs);
   }
 
+  drawOrbs(orbs: DerivedOrbs, timeMs: number): void {
+    this.#orbs.draw(orbs, this.viewRect(), timeMs);
+  }
+
+  drawProjectiles(projectiles: Projectiles): void {
+    this.#projectiles.draw(projectiles, this.viewRect());
+  }
+
+  /** `nowMs` doit etre la meme horloge murale que celle passee a `GameClient` (voir `ImpactFlashRenderer`). */
+  drawImpactFlashes(flashes: HitFlashes, nowMs: number): void {
+    this.#impactFlashes.draw(flashes, nowMs);
+  }
+
   destroy(): void {
     this.#app.destroy(true, { children: true });
   }
@@ -175,4 +205,56 @@ function mapBorder(): Graphics {
   grid.stroke({ color: 0x2a2420, width: 2 });
   grid.rect(0, 0, MAP_SIZE, MAP_SIZE).stroke({ color: 0x4a3f36, width: 6 });
   return grid;
+}
+
+/**
+ * Contenu du HUD (§4.6 : un HUD, pas des logs), separe de son ecriture DOM
+ * dans `main.ts` — cette fonction est PURE, sans Pixi ni `document`, pour
+ * rester testable sans navigateur : c'est elle qui porte « le HUD reflete
+ * les points de vie et l'experience du snapshot ».
+ */
+export interface HudInfo {
+  hp: number;
+  xp: number;
+  level: number;
+  timer: string;
+}
+
+/**
+ * `level` et `hordeTick` ne sont pas dans `RenderState` : le niveau vient de
+ * `GameClient.level` (derive des `LEVEL_UP`, pas de l'xp seul — voir sa
+ * doc), et le tick de `GameClient.hordeTick`. Le HUD lit donc les deux
+ * directement sur le client, en plus de `state`.
+ */
+export function hudInfo(state: RenderState, level: number, hordeTick: number): HudInfo {
+  const me = state.players.find((p) => p.id === state.localId);
+  return {
+    hp: me?.hp ?? 0,
+    xp: state.xp,
+    level,
+    timer: formatTimer(hordeTick),
+  };
+}
+
+/** `ticks` -> `m:ss`, a `TICK_HZ` pas par seconde. Utilise par le HUD et par `formatSummary`. */
+export function formatTimer(ticks: number): string {
+  const totalSeconds = Math.max(0, Math.floor(ticks / TICK_HZ));
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${minutes}:${String(seconds).padStart(2, '0')}`;
+}
+
+/** Contenu de l'ecran de bilan, tel que porte par `RUN_OVER` (§7) — pure, meme raison que `hudInfo`. */
+export interface SummaryInfo {
+  time: string;
+  level: number;
+  kills: number;
+}
+
+export function formatSummary(summary: RunOverSummary): SummaryInfo {
+  return {
+    time: formatTimer(summary.survivedTicks),
+    level: summary.level,
+    kills: summary.kills,
+  };
 }

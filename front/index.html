@@ -48,6 +48,43 @@
           SALON&nbsp;<b id="hud-code"></b>
         </div>
         <span id="hud-status" class="pl-2 text-xs text-forge-600"></span>
+
+        <!--
+          §4.6 : un HUD plutot que des logs — pv, niveau, chronometre.
+          Pas de `.ts-panel` ici : ses bordures 9-slices font 32px, beaucoup
+          trop lourdes pour un petit readout de coin d'ecran — meme raison
+          que `.ts-input` (voir styles/main.css) n'emprunte rien au pack.
+        -->
+        <div
+          class="mt-2 flex flex-col gap-1 rounded border border-forge-600 bg-forge-800/90 px-3 py-2 text-sm text-ember-400"
+        >
+          <span>PV&nbsp;<b id="hud-hp"></b></span>
+          <span>Niveau&nbsp;<b id="hud-level"></b></span>
+          <span id="hud-timer"></span>
+        </div>
+
+        <!-- Panneau de debogage : c'est ici, et seulement ici, qu'on apprend
+             qu'une mort est arrivee trop tard pour etre rejouee (§4.6). -->
+        <div class="pl-2 text-[10px] text-forge-600">
+          morts tardives&nbsp;<span id="hud-late-deaths">0</span>
+        </div>
+      </div>
+
+      <div
+        id="summary"
+        class="absolute inset-0 z-20 hidden items-center justify-center bg-forge-900/95"
+      >
+        <div class="flex w-[min(28rem,90vw)] flex-col items-center">
+          <div class="ts-ribbon z-10 w-full -mb-6 text-xl tracking-[0.3em]">RUN TERMINEE</div>
+          <div class="ts-panel flex w-full flex-col items-center gap-3 pt-6 text-center">
+            <p>Temps survécu&nbsp;: <b id="summary-time"></b></p>
+            <p>Niveau atteint&nbsp;: <b id="summary-level"></b></p>
+            <p>Ennemis tués&nbsp;: <b id="summary-kills"></b></p>
+            <button id="summary-restart" type="button" class="ts-button mt-2">
+              Retour au lobby
+            </button>
+          </div>
+        </div>
       </div>
     </div>
 

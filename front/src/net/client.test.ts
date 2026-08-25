@@ -15,16 +15,18 @@ import {
   encodeDeaths,
   encodeLevelUp,
   encodePickups,
+  encodeRunOver,
   encodeSnapshot,
   encodeWaveOrder,
   encodeWelcome,
 } from '@shared/protocol';
 import { SeparationGrid } from '@shared/separation';
 import { FORMATION, type WaveOrder } from '@shared/waves';
+import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GameClient } from './client';
+import { GameClient, HIT_FLASH_LIFETIME_MS } from './client';
 
 /**
  * Faux `WebSocket` : ni connexion reseau ni serveur, juste de quoi capturer
@@ -751,5 +753,214 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
     expect(duringFreezeTravel).toBe(0);
     // Le monde reprend : ce n'est pas un gel permanent.
     expect(afterResumeTravel).toBeGreaterThan(50);
+  });
+});
+
+describe('GameClient — niveau de l equipe (tache 11)', () => {
+  it('demarre a 1, et LEVEL_UP le met a jour des la reception (pas au tick date, contrairement au gel)', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+
+    expect(client.level).toBe(1);
+
+    // Le tick (5000) est loin dans le futur : seul le GEL doit attendre ce
+    // tick, le niveau affiche au HUD, lui, n'a aucune raison d'attendre.
+    socket.emit('message', { data: encodeLevelUp(5000, 3) });
+
+    expect(client.level).toBe(3);
+  });
+});
+
+describe('GameClient — bilan de run (RUN_OVER, tache 11)', () => {
+  it('declenche onRunOver avec les trois chiffres exacts du message, une seule fois, sans les permuter', () => {
+    const onRunOver = vi.fn();
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn(), onRunOver);
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+
+    socket.emit('message', { data: encodeRunOver(500, 480, 7, 213) });
+
+    expect(onRunOver).toHaveBeenCalledTimes(1);
+    expect(onRunOver).toHaveBeenCalledWith({ survivedTicks: 480, level: 7, kills: 213 });
+  });
+
+  it("n'appelle pas onRunOver tant que RUN_OVER n'est pas arrive", () => {
+    const onRunOver = vi.fn();
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn(), onRunOver);
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', { data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]) });
+    client.update(0, 0);
+
+    expect(onRunOver).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Tir automatique cote client (tache 11) — miroir cosmetique de
+ * `Room#fireWeapons`/`resolveProjectileDamage` (back/src/room.ts,
+ * back/src/combat.ts). Voir le commentaire de `GameClient#advanceHorde` :
+ * jamais d'arbitrage de degats ici, seulement de quoi dessiner une salve et
+ * un flash d'impact.
+ */
+describe('GameClient — tir automatique et impact cote client (tache 11)', () => {
+  const MS_PER_TICK = 1000 / TICK_HZ;
+
+  /**
+   * Fait apparaitre un unique monstre puis lit sa position REELLE apres coup,
+   * plutot que de supposer qu'elle tombe pres de l'ancre : `formationPositions`
+   * (`shared/waves.ts`) disperse meme `FORMATION.CLUSTER` sur plusieurs
+   * centaines de pixels (`CLUSTER_SPREAD = 800`), donc deviner un ecart fixe
+   * a l'ancre est fragile — lire la position posee, deterministe pour une
+   * graine donnee, ne l'est pas.
+   */
+  function setupWithOneMonster(
+    mapSeed: number,
+    waveId: number,
+  ): { client: GameClient; socket: FakeSocket; monsterX: number; monsterY: number } {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+    const order: WaveOrder = {
+      waveId,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 1,
+    };
+    socket.emit('message', { data: encodeWaveOrder(order) });
+
+    // Tick d'amorce : fait naitre le monstre (les ordres en attente
+    // s'appliquent en tete d'`#advanceHorde`) SANS pretendre a une position de
+    // joueur pertinente — aucune assertion sur le tir ne porte sur ce tick.
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]),
+    });
+    client.update(0, STEP);
+    if (client.horde.count !== 1) {
+      throw new Error(`amorce du test : horde.count=${client.horde.count}, attendu 1`);
+    }
+
+    return {
+      client,
+      socket,
+      monsterX: client.horde.x[0] ?? 0,
+      monsterY: client.horde.y[0] ?? 0,
+    };
+  }
+
+  it(
+    'tire sur le monstre le plus proche a portee, et le projectile finit par le toucher ' +
+      '(un flash d impact apparait)',
+    () => {
+      const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0010, 70);
+      // 50 px : bien en-deca de la portee de la dague (~333 px), et le
+      // monstre fonce droit sur le joueur (auto-cible du flowfield) — la
+      // meme ligne que celle visee par la salve.
+      const PLAYER = { x: monsterX - 50, y: monsterY };
+
+      let firedAtTick = -1;
+      for (let tick = 1; tick <= 40; tick++) {
+        socket.emit('message', {
+          data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]),
+        });
+        client.update(tick * MS_PER_TICK, STEP);
+        if (firedAtTick < 0 && client.projectiles.count > 0) {
+          firedAtTick = tick;
+        }
+        if (client.hitFlashes.count > 0) {
+          break;
+        }
+      }
+
+      expect(firedAtTick).toBeGreaterThanOrEqual(0);
+      expect(client.hitFlashes.count).toBeGreaterThan(0);
+    },
+  );
+
+  it("ne tire pas si aucun monstre n'est a portee", () => {
+    const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0014, 74);
+    // 2000 px : tres au-dela de la portee de la dague (~333 px), quelle que
+    // soit la position reelle du monstre.
+    const PLAYER = { x: monsterX + 2000, y: monsterY };
+    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+
+    for (let tick = 1; tick <= 20; tick++) {
+      socket.emit('message', { data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]) });
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('ne tire pas pour un joueur a 0 pv, meme avec un monstre a portee', () => {
+    const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0012, 72);
+    const PLAYER = { x: monsterX - 50, y: monsterY };
+    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+
+    for (let tick = 1; tick <= 20; tick++) {
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 0 }]),
+      });
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it('respecte le cooldown de l arme : jamais plus d une salve toutes les cooldownTicks images', () => {
+    const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0011, 71);
+    // 300 px : a portee, mais assez loin pour laisser le temps d'observer
+    // plusieurs fenetres de cooldown avant que la premiere salve ne touche.
+    const PLAYER = { x: monsterX - 300, y: monsterY };
+    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+
+    const TICKS = 90;
+    for (let tick = 1; tick <= TICKS; tick++) {
+      socket.emit('message', { data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]) });
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+
+    const cooldown = weaponOf(0).cooldownTicks;
+    const maxPossibleShots = Math.floor(TICKS / cooldown) + 1;
+    expect(spy.mock.calls.length).toBeGreaterThan(0);
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(maxPossibleShots);
+  });
+
+  it('un flash d impact expire apres HIT_FLASH_LIFETIME_MS, jamais avant (verifie aux deux bornes)', () => {
+    const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0013, 73);
+    // Tres proche : collision quasi immediate, avant que le cooldown (500 ms)
+    // ne permette une seconde salve — la fenetre de 220 ms testee ci-dessous
+    // ne peut donc contenir qu'un seul flash.
+    const PLAYER = { x: monsterX - 20, y: monsterY };
+
+    let hitNowMs = -1;
+    for (let tick = 1; tick <= 20 && hitNowMs < 0; tick++) {
+      socket.emit('message', { data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]) });
+      const nowMs = tick * MS_PER_TICK;
+      client.update(nowMs, STEP);
+      if (client.hitFlashes.count > 0) {
+        hitNowMs = nowMs;
+      }
+    }
+
+    expect(hitNowMs).toBeGreaterThanOrEqual(0);
+    expect(client.hitFlashes.count).toBe(1);
+
+    // Encore la juste avant l'echeance.
+    client.update(hitNowMs + HIT_FLASH_LIFETIME_MS - 1, STEP);
+    expect(client.hitFlashes.count).toBe(1);
+
+    // Disparu pile a l'echeance, pas un tick plus tard.
+    client.update(hitNowMs + HIT_FLASH_LIFETIME_MS, STEP);
+    expect(client.hitFlashes.count).toBe(0);
   });
 });

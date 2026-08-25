@@ -1,6 +1,11 @@
 import { Keyboard } from './input/keyboard';
-import { type ConnectionStatus, GameClient } from './net/client';
-import { Stage } from './render/stage';
+import {
+  type ConnectionStatus,
+  GameClient,
+  type RenderState,
+  type RunOverSummary,
+} from './net/client';
+import { formatSummary, hudInfo, Stage } from './render/stage';
 import './styles/main.css';
 
 import { API_URL, gameSocketUrl } from './ui/config';
@@ -17,6 +22,14 @@ const lobby = el('lobby');
 const hud = el('hud');
 const hudCode = el('hud-code');
 const hudStatus = el('hud-status');
+const hudHp = el('hud-hp');
+const hudLevel = el('hud-level');
+const hudTimer = el('hud-timer');
+const hudLateDeaths = el('hud-late-deaths');
+const summary = el('summary');
+const summaryTime = el('summary-time');
+const summaryLevel = el('summary-level');
+const summaryKills = el('summary-kills');
 const errorLine = el('error');
 const codeInput = el<HTMLInputElement>('code');
 
@@ -56,7 +69,7 @@ function join(code: string): void {
     return;
   }
 
-  const client = new GameClient(gameSocketUrl(code), () => keyboard.axes(), onStatus);
+  const client = new GameClient(gameSocketUrl(code), () => keyboard.axes(), onStatus, showSummary);
   client.connect();
 
   lobby.classList.add('hidden');
@@ -64,10 +77,31 @@ function join(code: string): void {
   hud.classList.add('flex');
   hudCode.textContent = code;
 
-  stage.run((now, dt) => {
+  /**
+   * Une image complete : avance le client, dessine chaque calque, met a jour
+   * le HUD (§4.6 — un HUD, pas des logs). Factorise entre le ticker Pixi
+   * (`stage.run`, qui appelle lui-meme `stage.draw`) et la poignee de
+   * debogage `step()` ci-dessous, qui doit `draw` explicitement puisqu'elle
+   * n'emprunte pas le ticker.
+   */
+  function renderFrame(now: number, dt: number): RenderState {
     const state = client.update(now, dt);
     stage.drawHorde(client.horde, now);
+    stage.drawOrbs(client.orbs, now);
+    stage.drawProjectiles(client.projectiles);
+    stage.drawImpactFlashes(client.hitFlashes, now);
+    updateHud(state, client);
     return state;
+  }
+
+  stage.run(renderFrame);
+
+  el<HTMLButtonElement>('summary-restart').addEventListener('click', () => {
+    client.disconnect();
+    // Reinitialisation la plus sure : `Stage`/`Keyboard` ne sont pas concus
+    // pour etre demontes puis reutilises, et un salon termine n'a de toute
+    // facon plus rien a offrir que revenir au lobby.
+    window.location.reload();
   });
 
   // Poignee de debogage, en developpement seulement.
@@ -93,8 +127,7 @@ function join(code: string): void {
        */
       step(count = 1, dt = 1 / 60): void {
         for (let i = 0; i < count; i++) {
-          const state = client.update(performance.now(), dt);
-          stage.drawHorde(client.horde, performance.now());
+          const state = renderFrame(performance.now(), dt);
           stage.draw(state);
           stage.renderNow();
         }
@@ -116,4 +149,23 @@ function onStatus(status: ConnectionStatus): void {
     closed: 'serveur injoignable — les carrés se figent',
   };
   hudStatus.textContent = label[status];
+}
+
+/** Ecrit le HUD dans le DOM a partir du contenu pur calcule par `hudInfo` (§4.6). */
+function updateHud(state: RenderState, client: GameClient): void {
+  const info = hudInfo(state, client.level, client.hordeTick);
+  hudHp.textContent = `${info.hp}`;
+  hudLevel.textContent = `${info.level}`;
+  hudTimer.textContent = `Temps ${info.timer}`;
+  hudLateDeaths.textContent = `${client.lateDeaths}`;
+}
+
+/** Affiche l'ecran de bilan (§7) — appele une seule fois, a la reception de `RUN_OVER`. */
+function showSummary(result: RunOverSummary): void {
+  const info = formatSummary(result);
+  summaryTime.textContent = info.time;
+  summaryLevel.textContent = `${info.level}`;
+  summaryKills.textContent = `${info.kills}`;
+  summary.classList.remove('hidden');
+  summary.classList.add('flex');
 }
