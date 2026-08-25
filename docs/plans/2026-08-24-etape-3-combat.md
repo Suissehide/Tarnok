@@ -60,6 +60,19 @@ qu'un tick de décalage ne se résorbe plus.
 | `XP_PER_ORB` | 1 | |
 | `LEVEL_FREEZE_TICKS` | 60 (2 s) | l'étape 4 le portera à 20 s plafonnées (§7.4) |
 | `LEVEL_RESUME_TICKS` | 30 (1 s) | reprise progressive (§7.4) |
+| `PROJECTILE_HIT_RADIUS` | 32 px | **doit être ≥ `max(projectileSpeed) / TICK_HZ`**, sinon un projectile traverse un ennemi entre deux ticks. Marge actuelle : 2 px — voir ci-dessous |
+
+> ### La marge anti-tunnel est de deux pixels
+>
+> L'arme la plus rapide de la table vaut 900 px/s, soit **30 px par tick** à 30 Hz, contre un
+> rayon de touche de 32 px. Une arme à 960 px/s traverserait ses cibles sans les toucher, et
+> rien ne le signalerait : le projectile continue sa route, l'ennemi reste vivant, personne ne
+> lève d'exception.
+>
+> ⚠️ **Cette contrainte doit être vérifiée par un test, pas par ce commentaire.** Un test qui
+> parcourt `WEAPONS` et vérifie `projectileSpeed / TICK_HZ ≤ PROJECTILE_HIT_RADIUS` transforme
+> le couplage en échec de suite le jour où quelqu'un ajoute une arme rapide. C'est la leçon du
+> tableau ci-dessus : une contrainte écrite en prose ne protège personne.
 
 > ### Pourquoi `SEPARATION_STRENGTH` n'est pas un réglage de sensation
 >
