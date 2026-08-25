@@ -1557,3 +1557,129 @@ compaction. `HordeState` est défini une fois en tâche 3 et consommé tel quel 
 par mort : à cent morts sur quatre mille entités, c'est 400 000 comparaisons par tick. Si le
 banc de la tâche 0 ou celui de la tâche 12 montre que ça compte, remplacer par une table
 d'identité vers créneau — mais **mesurer avant**, pas avant d'avoir mesuré.
+
+---
+
+# Addendum — ce que la vérification manuelle a trouvé
+
+La tâche 12 a été jouée par l'auteur du jeu, au premier plan, sur une vraie run. Verdict en
+trois points :
+
+- **la masse respire** — la séparation fait son travail, les files de l'étape 2 ont disparu ;
+- **le tir est faible et ne suit pas le curseur** ;
+- **impossible de tester la montée de niveau : trop de monstres.**
+
+Le premier point valide la tâche 1. Les deux autres ouvrent les tâches 13 et 14.
+
+> **Ce qu'aucun test ne pouvait voir.** La réplication est à 0,000 px, le combat est arbitré,
+> 266 tests sont verts — et le jeu est injouable. Le générateur de vagues est resté celui de
+> l'étape 2, calibré pour un test de charge de rendu à 1000 entités : **~37 apparitions par
+> seconde contre 2 morts par seconde**, un facteur 18. Ajouter le combat n'a retouché aucun de
+> ces réglages, et rien dans la suite ne pouvait le signaler.
+>
+> C'est la justification de la tâche 12 telle qu'elle était écrite, et elle vaut d'être notée :
+> la vérification manuelle n'est pas une formalité de clôture, c'est le seul instrument qui
+> mesure cette classe de défaut.
+
+---
+
+## Tâche 13 : la visée suit le curseur
+
+**Décision de l'auteur**, contre le §5.3 de la spec d'étape et le §5 de l'orientation, qui
+partaient tous deux sur une visée automatique. La cadence reste automatique ; c'est la
+**direction** qui devient une entrée joueur.
+
+**Ce que ça change au contrat.** La direction de tir cesse d'être *dérivable* : elle vient de
+la souris, donc elle doit transiter. Deux ajouts, et une discipline.
+
+| Message | Ajout | Octets |
+| --- | --- | --- |
+| `INPUT` | `aimX i8 · aimY i8` | 5 → **7** |
+| `SNAPSHOT`, bloc joueur | `aimX i8 · aimY i8` | 6 → **8** |
+
+`INPUT` porte la visée du joueur local vers le serveur. Le `SNAPSHOT` la redistribue à tous,
+**parce que chaque client dérive aussi les salves des alliés** pour les afficher : sans leur
+visée, il ne saurait pas où dessiner leurs projectiles.
+
+Coût : 4 joueurs × 2 octets × 30 Hz = 240 o/s. Sans rapport avec le nombre d'entités, donc le
+test d'indépendance réseau reste valide.
+
+> ⚠️ **La quantification doit être identique des deux côtés.** La direction part quantifiée sur
+> un `i8` (−127 à 127). Le client doit tirer avec **les valeurs qu'il a envoyées**, jamais avec
+> son flottant d'origine — sinon les deux côtés visent à une fraction de degré près et les
+> salves divergent systématiquement, pas transitoirement.
+>
+> C'est exactement la discipline déjà appliquée aux positions des joueurs pour le flowfield :
+> le serveur s'impose l'arrondi qu'il inflige au client (`Math.round` avant
+> `PlayerHistory.record`). Même raison, même remède.
+
+> ⚠️ **Direction nulle = pas de tir.** Curseur pile sur le joueur, ou souris jamais bougée :
+> `(0, 0)` n'a pas de direction. Ne pas tirer est déterministe — les deux côtés voient le même
+> zéro. Choisir une direction par défaut ne le serait pas.
+
+**Fichiers :**
+- Modifier : `shared/protocol.ts`, `shared/projectiles.ts` (tir par direction),
+  `front/src/input/` (capture souris), `front/src/net/client.ts`, `back/src/room.ts`
+- Modifier : les tests de chacun
+
+**Interfaces :**
+- Produit : `Projectiles.fireSalvoDirected(weapon, tick, x, y, dirX, dirY): void` — une salve
+  dans une direction donnée, sans cible ni horde. `fireSalvo` (par cible) reste, mais
+  **plus personne ne l'appelle pour l'arme de base** : dire dans le rapport si elle et
+  `nearestTarget` deviennent du code mort, et proposer.
+
+- [ ] **Étape 1 : le protocole**, en suivant la discipline de la tâche 4 — aller-retour,
+  **taille totale exacte** contre les constantes, tampon tronqué qui lève. Un aller-retour seul
+  n'attrape pas un décalage d'octet, encodeur et décodeur partageant la faute.
+
+- [ ] **Étape 2 : la capture souris.** La position du curseur en monde, moins celle du joueur,
+  normalisée, quantifiée. Le curseur vit en coordonnées écran : la conversion passe par la même
+  caméra que le rendu, sinon la visée dérive quand la caméra bouge.
+
+- [ ] **Étape 3 : le tir par direction**, serveur et client, en miroir exact.
+
+- [ ] **Étape 4 : vérifier que la réplication n'a pas bougé** — 750,039 / 0,000 / 433,988 px.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "feat: la visee suit le curseur"
+```
+
+---
+
+## Tâche 14 : rendre la run jouable
+
+Le générateur de vagues n'a jamais été retouché depuis l'étape 2, où il servait à charger le
+rendu. Chiffres actuels, solo :
+
+| | |
+| --- | --- |
+| Vagues | 120 à 320 monstres toutes les 6 s → **~37/s** |
+| Dague de base | 15 ticks de cooldown, 1 projectile → **2 morts/s** |
+| Contact | 8 dégâts toutes les 0,5 s sur 100 pv → **mort en ~6 s** encerclé |
+| Niveau 2 | 10 orbes — inatteignable à ce rythme |
+
+**Ce qu'on cherche**, et c'est un objectif de sensation, pas une formule : au début, tuer à peu
+près aussi vite que ça apparaît ; ensuite se faire déborder progressivement. Le fantasme du
+genre est d'être submergé **après** avoir été à l'aise, pas dès la première vague.
+
+- [ ] **Étape 1 : faire monter les vagues** au lieu de partir au maximum. Le générateur doit
+  croître avec le numéro de vague, borné par `MAX_ENTITIES`. Un test doit vérifier que la
+  progression est **monotone et bornée** — pas la valeur exacte, qui est un réglage.
+
+- [ ] **Étape 2 : muscler l'arme de base**, pour que la montée de niveau soit atteignable.
+
+- [ ] **Étape 3 : vérifier que la montée de niveau arrive.** Un test d'intégration serveur qui
+  joue assez de ticks pour atteindre le niveau 2 et l'assène. Sans lui, on règle à l'aveugle.
+
+> ⚠️ **Ne pas régler en aveugle.** Chaque changement de constante doit s'accompagner du chiffre
+> qu'il vise — apparitions par seconde, morts par seconde, temps jusqu'au niveau 2. Le rapport
+> les donne. C'est la seule façon de savoir si le réglage suivant va dans le bon sens.
+
+- [ ] **Étape 4 : commit**
+
+```bash
+git commit -m "feat(back): faire monter les vagues, rendre la run jouable"
+```
+
