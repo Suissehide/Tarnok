@@ -2,13 +2,17 @@ import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   INPUT_HZ,
+  LEVEL_FREEZE_TICKS,
+  LEVEL_RESUME_TICKS,
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
+  ORB_LIFETIME_TICKS,
   TICK_HZ,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
+import { HordeHistory } from '@shared/horde-history';
 import { PlayerHistory } from '@shared/player-history';
 import {
   decode,
@@ -17,6 +21,7 @@ import {
   type PlayerSnapshot,
   type WaveOrderMessage,
 } from '@shared/protocol';
+import { SeparationGrid } from '@shared/separation';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { SnapshotBuffer } from './interpolation';
@@ -57,6 +62,108 @@ export type ConnectionStatus = 'connecting' | 'open' | 'closed';
  */
 const HORDE_TICK_LAG_TOLERANCE = 1;
 
+/** Pas fixe de la simulation de horde, partage entre l'avancement normal et le rejeu. */
+const FIXED_DT = 1 / TICK_HZ;
+
+/** Cadence de rafraichissement du champ, en pas : meme calcul que `Room.step` et `Horde.replication.test.ts`. */
+const STEPS_PER_FIELD = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+
+/** Un lot de morts en attente d'application, tel que recu par `DEATHS` (§3.1). */
+interface PendingDeathBatch {
+  tick: number;
+  ids: number[];
+}
+
+/**
+ * Orbes vivants, cote client — **derives des morts, jamais transmis** (§6.1 de
+ * la spec). Meme raisonnement que `OrbField` cote serveur (`back/src/combat.ts`),
+ * duplique ici plutot qu'importe : le client ne peut dependre que de `shared/`,
+ * et `back/` connait `ws`/`fastify` (regle Biome, voir `room.ts`).
+ *
+ * `PICKUPS` dit quelles identites ont ete ramassees ; l'existence et la
+ * position de l'orbe, elles, ne transitent jamais — `GameClient` les pose a la
+ * position de l'entite au moment de sa mort, lue depuis la horde restauree par
+ * `HordeHistory` (voir `GameClient#applyDeaths`), avant compaction par `kill`.
+ *
+ * Tableaux types, jamais un objet par orbe — meme regle que `Horde` et
+ * `Projectiles` (§4.4 de l'orientation).
+ */
+export class DerivedOrbs {
+  /** Identite du monstre qui a laisse l'orbe. */
+  readonly id: Uint32Array;
+  readonly x: Float32Array;
+  readonly y: Float32Array;
+  /** Tick de la mort qui a fait apparaitre l'orbe : sert au calcul de peremption. */
+  readonly bornTick: Uint32Array;
+  #count = 0;
+
+  constructor(readonly capacity: number) {
+    this.id = new Uint32Array(capacity);
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.bornTick = new Uint32Array(capacity);
+  }
+
+  get count(): number {
+    return this.#count;
+  }
+
+  /** Fait apparaitre un orbe. Ignore silencieusement si la capacite (tres large) est atteinte. */
+  spawn(entityId: number, x: number, y: number, tick: number): void {
+    if (this.#count >= this.capacity) {
+      return;
+    }
+    const slot = this.#count++;
+    this.id[slot] = entityId;
+    this.x[slot] = x;
+    this.y[slot] = y;
+    this.bornTick[slot] = tick;
+  }
+
+  /** Retire les orbes ramasses : identites recues par `PICKUPS`. */
+  remove(entityIds: readonly number[]): void {
+    for (const entityId of entityIds) {
+      const slot = this.#slotOf(entityId);
+      if (slot >= 0) {
+        this.#removeAt(slot);
+      }
+    }
+  }
+
+  /**
+   * Retire les orbes dont la duree de vie a expire — calcul DERIVE (§6.1),
+   * identique des deux cotes a partir du seul `tick - bornTick`, jamais
+   * transmis ni arbitre par un message.
+   */
+  expire(tick: number): void {
+    for (let i = this.#count - 1; i >= 0; i--) {
+      if (tick - (this.bornTick[i] ?? 0) >= ORB_LIFETIME_TICKS) {
+        this.#removeAt(i);
+      }
+    }
+  }
+
+  #slotOf(entityId: number): number {
+    for (let i = 0; i < this.#count; i++) {
+      if (this.id[i] === entityId) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  #removeAt(slot: number): void {
+    const last = this.#count - 1;
+    if (slot !== last) {
+      this.id[slot] = this.id[last] ?? 0;
+      this.x[slot] = this.x[last] ?? 0;
+      this.y[slot] = this.y[last] ?? 0;
+      this.bornTick[slot] = this.bornTick[last] ?? 0;
+    }
+    this.#count = last;
+  }
+}
+
 /**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
@@ -86,6 +193,36 @@ export class GameClient {
   /** Accumulateur de pas fixes : la horde avance a 30 Hz, comme le serveur. */
   #hordeAcc = 0;
   #lastHordeTick = 0;
+
+  /** Separation de la horde (etape 7 de la sequence serveur), rejouee a l'identique. */
+  readonly #separation = new SeparationGrid(MAX_ENTITIES);
+  /** Anneau d'etats de horde, pour le rejeu des morts en retard (§3.2). */
+  readonly #hordeHistory = new HordeHistory(MAX_ENTITIES);
+  /** Orbes derives des morts (§6.1), jamais transmis. Lecture publique pour le rendu et le HUD. */
+  readonly orbs = new DerivedOrbs(MAX_ENTITIES);
+
+  /**
+   * Nombre cumule d'identites tuees en dehors de la portee de `HordeHistory`
+   * (`ROLLBACK_DEPTH_TICKS`) : appliquees au present plutot qu'au tick de la
+   * mort, faute de pouvoir revenir en arriere. Lecture seule, pour le HUD de
+   * debug (§4.6 de l'orientation demande un HUD, pas des logs) et pour les tests.
+   */
+  #lateDeaths = 0;
+
+  /** Lots de morts recus mais pas encore appliques. Meme discipline que `#pendingOrders`. */
+  readonly #pendingDeaths: PendingDeathBatch[] = [];
+
+  /**
+   * Dernier tick du gel courant (inclus), et dernier tick de la reprise
+   * progressive qui suit. `-1` hors gel — et non `0` comme cote serveur
+   * (`Room` commence son compteur a 1, jamais `GameClient`, dont le tout
+   * premier tick reel peut valoir `0` — voir `#onFrame`/WELCOME). Avec `0`
+   * comme sentinelle, `#movementScale(0)` rendrait `0` (gel) des le tout
+   * premier tick d'une connexion fraiche, sans qu'aucun `LEVEL_UP` ne soit
+   * jamais arrive : `-1` ecarte ce cas plutot que de le tolerer.
+   */
+  #freezeUntilTick = -1;
+  #resumeEndTick = -1;
 
   /**
    * Ordres recus mais pas encore appliques.
@@ -120,6 +257,15 @@ export class GameClient {
    */
   get hordeTick(): number {
     return this.#lastHordeTick;
+  }
+
+  /**
+   * Nombre cumule de morts appliquees au present, faute d'anneau assez
+   * profond pour les rejouer (`ROLLBACK_DEPTH_TICKS`). Lecture seule : voir
+   * `#lateDeaths`.
+   */
+  get lateDeaths(): number {
+    return this.#lateDeaths;
   }
 
   connect(): void {
@@ -235,6 +381,28 @@ export class GameClient {
       this.#pendingOrders.push(msg);
       return;
     }
+    if (msg.type === MSG.DEATHS) {
+      // Comme les ordres de vague : le gestionnaire ne fait QU'empiler,
+      // l'application (restauration, rejeu) a lieu dans `#advanceHorde`, au
+      // tick local qui vient d'etre simule — voir `#applyDeaths`.
+      this.#pendingDeaths.push({ tick: msg.tick, ids: msg.ids });
+      return;
+    }
+    if (msg.type === MSG.PICKUPS) {
+      // Pur retrait derive : aucune position ni existence d'orbe ne transite,
+      // seules les identites ramassees le font (voir `DerivedOrbs`).
+      this.orbs.remove(msg.ids);
+      return;
+    }
+    if (msg.type === MSG.LEVEL_UP) {
+      // ⚠️ `msg.tick` est le tick auquel le gel PREND EFFET, pas celui de
+      // l'emission (voir `LevelUpMessage`) : geler a la reception ferait geler
+      // chaque client a un tick different selon sa latence, et le gel
+      // deviendrait une source de divergence au lieu d'une pause commune.
+      this.#freezeUntilTick = msg.tick + LEVEL_FREEZE_TICKS - 1;
+      this.#resumeEndTick = this.#freezeUntilTick + LEVEL_RESUME_TICKS;
+      return;
+    }
     if (msg.type !== MSG.SNAPSHOT) {
       return;
     }
@@ -298,6 +466,11 @@ export class GameClient {
     // enregistrait les memes positions sous une cle differente, `delayed()`
     // ne lirait plus la meme chose des deux cotes, meme quand le compteur
     // local est par ailleurs bien recale.
+    //
+    // ⚠️ Non gate par le gel : le serveur continue d'emettre des snapshots
+    // pendant le gel (positions inchangees mais tick qui avance), donc cet
+    // enregistrement reste la verite du serveur, gel ou pas. Le gater
+    // ouvrirait un trou dans l'anneau court de `PlayerHistory` pour rien.
     const snapshot = this.#buffer.latest();
     if (snapshot) {
       this.#history.record(
@@ -307,8 +480,13 @@ export class GameClient {
       );
     }
 
-    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
-    if (tick % stepsPerField === 0) {
+    // Le rafraichissement du champ et le reciblage, eux, SONT gates par le
+    // gel : le serveur ne les execute pas non plus pendant le gel (`Room.step`
+    // revient avant d'y arriver). Sans ce garde, le client rafraichirait un
+    // champ — et reciblerait la horde — a un instant ou le serveur ne l'a pas
+    // fait, ce qui desynchronise `targetField` independamment de toute
+    // difference de position.
+    if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
       const seen = this.#history.delayed(tick);
       if (seen) {
         for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
@@ -318,7 +496,150 @@ export class GameClient {
       }
     }
 
-    this.horde.step(dt, this.#fields);
+    // Le mouvement (horde ET separation) est module par `#movementScale` :
+    // `0` pendant le gel strict, une rampe pendant la reprise, `1` sinon —
+    // exactement le facteur que `Room.step` applique a son propre `dt`. A `0`
+    // le pas ne fait litteralement rien (deplacement nul, poussees de
+    // separation nulles) : inutile de le sauter par un `if` separe.
+    const scale = this.#movementScale(tick);
+    this.horde.step(dt * scale, this.#fields);
+    this.#separation.apply(this.horde, dt * scale);
+
+    // Instantane pour le rejeu (§3.2) : DOIT etre pris a chaque tick, gel ou
+    // pas, sans quoi une mort qui viserait un tick gele serait « trop vieille »
+    // a tort — l'anneau la jugerait absente plutot que simplement inchangee.
+    this.#hordeHistory.record(tick, this.horde);
+    // Peremption des orbes : calcul DERIVE (§6.1), jamais arbitre — voir
+    // `DerivedOrbs.expire`.
+    this.orbs.expire(tick);
+    this.#drainPendingDeaths(tick);
+  }
+
+  /**
+   * Applique tous les lots de morts recus mais pas encore traites, au tick
+   * local `currentTick` — celui que `#advanceHorde` vient tout juste de
+   * simuler et d'enregistrer dans `#hordeHistory`.
+   *
+   * L'ordre d'arrivee (FIFO) est suppose etre l'ordre chronologique des morts
+   * cote serveur : WebSocket preserve l'ordre des trames sur une meme
+   * connexion, et `Room.step` n'emet jamais deux `DEATHS` hors ordre. Rejouer
+   * un lot plus recent AVANT un lot plus ancien effacerait la correction du
+   * second par le rejeu du premier — voir le rapport de la tache 10.
+   */
+  #drainPendingDeaths(currentTick: number): void {
+    while (this.#pendingDeaths.length > 0) {
+      const batch = this.#pendingDeaths.shift();
+      if (batch) {
+        this.#applyDeaths(batch.tick, batch.ids, currentTick);
+      }
+    }
+  }
+
+  /**
+   * Applique un lot de morts par rejeu (§3.2) : restaure la horde au tick de
+   * la mort, tue, rejoue jusqu'au present. Appliquer directement au present
+   * laisserait un ecart d'un ou plusieurs ticks s'installer — et la
+   * separation (tache 1) le propage a des dizaines de voisines plutot que de
+   * l'absorber : mesure a l'etape 2, l'equivalent sans rejeu croit sans borne
+   * jusqu'a 694 px en dix secondes (scenario 8 de `horde.replication.test.ts`).
+   *
+   * Les orbes sont derives ICI, a la position lue dans la horde restauree —
+   * juste avant `kill`, comme `resolveProjectileDamage` cote serveur lit la
+   * position juste avant sa propre compaction (voir `back/src/combat.ts`).
+   *
+   * ⚠️ Le rejeu ne rejoue QUE le mouvement — champ, horde, separation — jamais
+   * l'arbitrage (degats, contact, ramassages) : ce sont les etapes 8 a 10 de
+   * `Room.step`, prerogative exclusive du serveur. Un client qui les rejouerait
+   * prononcerait des morts que le serveur n'a pas decidees, et divergerait
+   * precisement la ou le rejeu cherche a converger.
+   */
+  #applyDeaths(deathTick: number, ids: readonly number[], currentTick: number): void {
+    if (!this.#hordeHistory.restore(deathTick, this.horde)) {
+      // Trop vieux pour l'anneau (`ROLLBACK_DEPTH_TICKS`) : applique au
+      // present, et SIGNALE — une degradation silencieuse est un piege (§4.6
+      // de l'orientation demande un HUD, pas des logs). Scenario 10 de
+      // `horde.replication.test.ts` mesure la derive residuelle de ce chemin.
+      this.#spawnOrbs(ids, deathTick);
+      this.#lateDeaths += ids.length;
+      this.horde.kill(ids);
+      return;
+    }
+    this.#spawnOrbs(ids, deathTick);
+    this.horde.kill(ids);
+    // ⚠️ Le champ de flux n'est pas dans l'anneau : `HordeHistory.restore`
+    // remet la HORDE au tick de la mort, mais `FlowField` est un objet mutable
+    // PARTAGE que l'anneau ne sauvegarde jamais. Sans ce reamorcage, le rejeu
+    // demarrerait avec le contenu du DERNIER rafraichissement reel — celui du
+    // tick present, plusieurs generations plus frais que ce que le serveur
+    // avait sous les yeux au tick restaure. Mesure a la tache 8 : 79 px de
+    // derive residuelle sur un scenario qui aurait du rendre zero.
+    this.#primeFieldForReplay(deathTick);
+    for (let t = deathTick + 1; t <= currentTick; t++) {
+      this.#replayTick(t);
+    }
+  }
+
+  /** Fait apparaitre un orbe par identite morte, a sa position dans la horde COURANTE (avant `kill`). */
+  #spawnOrbs(ids: readonly number[], tick: number): void {
+    for (const id of ids) {
+      const slot = this.horde.slotOf(id);
+      if (slot >= 0) {
+        this.orbs.spawn(id, this.horde.x[slot] ?? 0, this.horde.y[slot] ?? 0, tick);
+      }
+    }
+  }
+
+  /**
+   * Remet le champ a son contenu du dernier rafraichissement du a `atTick` ou
+   * avant — jamais `atTick` lui-meme, sauf s'il tombe pile sur une frontiere.
+   * Version de reference : `primeFieldForReplay` de `shared/horde.replication.test.ts`.
+   */
+  #primeFieldForReplay(atTick: number): void {
+    const lastDue = atTick - (((atTick % STEPS_PER_FIELD) + STEPS_PER_FIELD) % STEPS_PER_FIELD);
+    const seen = this.#history.delayed(lastDue);
+    if (seen) {
+      for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
+        this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+      }
+    }
+  }
+
+  /**
+   * Un pas de rejeu : rafraichit le champ si du, avance la horde, applique la
+   * separation — les etapes 4, 6, 7 de la sequence serveur, jamais
+   * l'arbitrage (8 a 10). Reecrit aussi l'anneau pour ce tick : une mort
+   * suivante qui viserait l'un de ces ticks doit restaurer la version
+   * rejouee, pas l'ancienne version d'avant correction.
+   */
+  #replayTick(tick: number): void {
+    if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
+      const seen = this.#history.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
+          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        this.horde.retarget(seen.x, seen.y);
+      }
+    }
+    const scale = this.#movementScale(tick);
+    this.horde.step(FIXED_DT * scale, this.#fields);
+    this.#separation.apply(this.horde, FIXED_DT * scale);
+    this.#hordeHistory.record(tick, this.horde);
+  }
+
+  /**
+   * Facteur applique au `dt` de tout ce qui bouge (horde, separation) : `0`
+   * pendant le gel strict, une rampe de `0` (exclu) a `1` pendant les
+   * `LEVEL_RESUME_TICKS` qui suivent, `1` en fonctionnement normal. Miroir
+   * exact de `Room#movementScale` cote serveur — necessaire pour que le rejeu
+   * d'un tick gele ou en reprise avance exactement comme le serveur l'a fait.
+   */
+  #movementScale(tick: number): number {
+    if (tick > this.#resumeEndTick) {
+      return 1;
+    }
+    const sinceFreezeEnd = tick - this.#freezeUntilTick;
+    return Math.min(1, Math.max(0, sinceFreezeEnd / LEVEL_RESUME_TICKS));
   }
 
   #setStatus(status: ConnectionStatus): void {
