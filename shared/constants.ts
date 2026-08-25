@@ -38,19 +38,6 @@ export const INTERP_DELAY_MS = 60;
 export const FIELD_INPUT_DELAY_TICKS = 3;
 
 /**
- * Retard, en ticks, applique a l'etat de horde que lit l'auto-visee (§5.3 de
- * la spec).
- *
- * Egal a `FIELD_INPUT_DELAY_TICKS`, et pas recopie : viser dans un etat plus
- * frais que celui du flowfield ferait designer des cibles differentes d'un
- * poste a l'autre, exactement comme deux flowfields calcules sur des entrees
- * differentes divergent. Deux constantes distinctes seraient deux passes a
- * garder d'accord — les decoupler serait recreer, pour l'auto-visee, le bug
- * que `FIELD_INPUT_DELAY_TICKS` existe pour eviter au flowfield.
- */
-export const TARGETING_DELAY_TICKS = FIELD_INPUT_DELAY_TICKS;
-
-/**
  * Rayon de detection d'un coup entre un projectile et une entite (§5.2) : la
  * largeur de la zone de contact autour de la trajectoire, pas une garantie de
  * non-traversee a elle seule.
@@ -225,14 +212,16 @@ export const LEVEL_RESUME_TICKS = 30;
  * Base de la courbe d'experience : le seuil pour passer du niveau `n` a
  * `n + 1` vaut `LEVEL_XP_BASE * n * playerCount`.
  *
- * ⚠️ **Absente du tableau « Coherence des constantes » du plan** — la tache 9
- * l'a ajoutee : §5 de la spec d'orientation exige que « la courbe
- * d'experience [soit] multipliee par N » des cette etape, « sans quoi une
- * equipe de quatre joueurs gele quatre fois plus souvent qu'un joueur seul »
- * (§7.4), et rien dans le plan de l'etape 3 ne fournit de formule. Sans effet
- * visible en solo (N=1, seul mode verifiable cette etape).
+ * Ajoutee en tache 9, absente du plan d'origine — enregistree depuis au
+ * tableau « Coherence des constantes ». La multiplication par `playerCount`
+ * est la exigee des cette etape (et non differee a l'etape 4) par le §5 de la
+ * spec d'orientation : « la courbe d'experience est multipliee par N », «
+ * sans ca une equipe de quatre joueurs gele quatre fois plus souvent qu'un
+ * joueur seul » (§7.4). Sans effet visible en solo (N=1, seul mode
+ * verifiable cette etape) — la formule existe pour que l'etape 4 n'ait pas a
+ * la rouvrir.
  *
- * Doit rester assez petite pour qu'un SEUL seuil (pas le cumul de la run)
+ * ⚠️ Doit rester assez petite pour qu'un SEUL seuil (pas le cumul de la run)
  * tienne sur les 16 bits de `SnapshotMessage.xp` : `xp` est remis a
  * l'excedent apres chaque niveau plutot que cumule sur toute la run (voir
  * `Room.#gainXp`), donc le plus grand seuil pratique — quelques centaines a

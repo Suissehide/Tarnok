@@ -43,6 +43,20 @@ function positionOf(room: Room, id: number): { x: number; y: number } {
   return { x: found.x, y: found.y };
 }
 
+function hpOf(room: Room, id: number): number {
+  const out = collector();
+  room.snapshot(out);
+  const first = out.sent[0];
+  if (!first) {
+    throw new Error('aucun snapshot emis');
+  }
+  const found = decodeSnapshot(first).players.find((p) => p.id === id);
+  if (!found) {
+    throw new Error(`joueur ${id} absent du snapshot`);
+  }
+  return found.hp;
+}
+
 describe('Room.step', () => {
   it('avance un joueur a PLAYER_SPEED pixels par seconde a fond a droite', () => {
     const room = new Room();
@@ -492,11 +506,29 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // Le joueur se met en mouvement seulement MAINTENANT, pour observer le
     // gel : un joueur qui bouge doit s'arreter net des le tick d'effet.
     room.applyInput(1, 1, 127, 0);
+    // Un monstre au contact, pose juste avant le gel : le mouvement seul ne
+    // suffit pas a prouver que « le monde » est gele au sens du §6.2 — sans
+    // ce monstre, un gel qui suspendrait le DEPLACEMENT mais laisserait le
+    // COMBAT continuer (tir automatique, contact, ramassage — aucun des
+    // trois n'est modere par la rampe de vitesse, voir `#movementScale`)
+    // passerait ce test inapercu, puisque plus aucun monstre n'est a portee
+    // a cet instant. Verifie par mutation : retirer le garde de tete de
+    // `step()` sans ce monstre laissait ce test vert.
     const atTrigger = positionOf(room, 1);
+    spawnMonsterAt(room, 9000, atTrigger.x, atTrigger.y);
+    const hpAtTrigger = hpOf(room, 1);
+    const hordeCountAtTrigger = room.horde.count;
+    room.drainDeaths(); // vide les morts accumulees pendant la phase de collecte, avant de mesurer
+
     for (let i = 0; i < LEVEL_FREEZE_TICKS; i++) {
       room.step(DT);
     }
     expect(positionOf(room, 1)).toEqual(atTrigger);
+    // Le combat aussi est suspendu : ni degats de contact, ni mort du
+    // monstre pose au tick precedent.
+    expect(hpOf(room, 1)).toBe(hpAtTrigger);
+    expect(room.horde.count).toBe(hordeCountAtTrigger);
+    expect(room.drainDeaths()).toEqual([]);
 
     // Reprend : apres le gel et la rampe de reprise, le joueur bouge de
     // nouveau.
@@ -530,11 +562,23 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect(runOver?.survivedTicks).toBeGreaterThan(0);
     expect(runOver?.level).toBeGreaterThanOrEqual(1);
 
-    // Une seule fois : aucun RUN_OVER supplementaire meme si le salon
-    // continue d'etre avance (le joueur restant a 0 pv indefiniment).
+    // Sentinelle de mouvement : verifier seulement `drainRunOver()` ne
+    // prouverait pas que le SALON ENTIER s'est arrete, seulement que le
+    // message ne repart pas. Le deplacement d'un joueur n'est gate par AUCUNE
+    // verification de `hp` dans `Room.step` (contrairement au tir et au
+    // contact, verifies dans `combat.ts`) : sans le garde de tete de `step()`,
+    // un joueur a 0 pv continuerait de glisser sur la carte si une entree de
+    // mouvement lui arrivait encore. On lui en envoie une maintenant, apres
+    // la mort, pour verifier qu'elle reste sans effet.
+    room.applyInput(1, 2, 127, 0);
+    const atRunOver = positionOf(room, 1);
+
+    // Une seule fois : aucun RUN_OVER supplementaire, et plus rien n'avance,
+    // meme si le salon continue d'etre avance.
     for (let i = 0; i < 100; i++) {
       room.step(DT);
       expect(room.drainRunOver()).toBeNull();
     }
+    expect(positionOf(room, 1)).toEqual(atRunOver);
   });
 });

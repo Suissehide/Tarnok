@@ -9,10 +9,21 @@ import type { Horde } from './horde';
  * le trou), et la cible doit rester valable entre le moment ou l'on vise et
  * celui ou le projectile arrive.
  *
- * L'appelant est responsable de passer l'etat de horde au bon tick — celui
- * de `T − TARGETING_DELAY_TICKS` (§5.3) — cette fonction elle-meme n'a aucune
- * notion du temps, exactement comme `SeparationGrid.apply` n'a aucune notion
- * de vague.
+ * ⚠️ **Vise sur l'etat COURANT de `horde`, jamais retarde.** Une premiere
+ * version de cette doc demandait un retard `T − K` (par analogie avec le
+ * flowfield), corrigee en tache 9 : le retard du flowfield fonctionne parce
+ * qu'il porte sur des POSITIONS DE JOUEURS, repliquees avec un delai connu
+ * des deux cotes — serveur et client peuvent s'accorder exactement sur « ce
+ * qu'etait cette position il y a K ticks ». La horde, elle, est DERIVEE et
+ * jamais repliquee : son desaccord entre deux participants ne vient pas d'une
+ * latence d'entree qu'un retard pourrait absorber, mais de la PROPAGATION DES
+ * MORTS (§3.2) — et retarder la lecture n'y change rien, sauf a faire tenir
+ * un second anneau d'etats complet, jamais budgete par le banc de la tache 0.
+ * La divergence de cible qui en resulte entre deux participants est acceptee,
+ * exactement comme documente sur `Projectiles.fireSalvo`. Cette fonction n'a
+ * de toute facon aucune notion du temps, exactement comme
+ * `SeparationGrid.apply` n'a aucune notion de vague — c'est a l'appelant de
+ * lui passer l'etat qu'il souhaite interroger.
  *
  * **A egalite de distance, le plus petit identifiant gagne.** Une
  * comparaison flottante stricte laisserait le departage a l'ordre de

@@ -315,24 +315,24 @@ export class Room {
    * 11. mettre en file morts et ramassages pour diffusion
    * ```
    *
-   * ⚠️ **Etapes 4 et 5 : l'ordre reel diverge du libelle du brief, sciemment.**
-   * Le brief de cette tache enonce « 4. appliquer les ordres de vague, 5.
-   * rafraichir les champs ». Mais `shared/horde.replication.test.ts` — le
-   * contrat de replication que cette tache doit egaler — documente
-   * explicitement la sequence serveur comme « enregistrement -> rafraichissement
-   * -> apparition simple » (rafraichissement AVANT apparition), et c'etait deja
-   * le comportement de ce fichier avant la tache 9. Les deux sources
-   * concordent entre elles et contredisent le libelle du brief ; ce fichier
-   * suit les deux sources concordantes plutot que le libelle, pour ne pas
-   * rouvrir un contrat de replication deja verifie a 0,000 px (scenario 9).
-   * Signale dans le rapport de la tache 9.
+   * ⚠️ **Etapes 4 et 5 : le rafraichissement precede l'engendrement, depuis
+   * l'etape 2 — un ordre unique, pas un choix fait ici.** `shared/horde.replication.test.ts`
+   * documente cette meme sequence serveur (« enregistrement -> rafraichissement
+   * -> apparition simple ») et c'est cet ordre-la, precisement, que ses
+   * scenarios verifient a 0,000 px de derive avec rejeu (scenario 9). Le code
+   * de cette methode existait deja dans cet ordre avant la tache 9 — c'est le
+   * code eprouve qui fait foi. Ne pas inverser sans rejouer ce scenario.
    */
   step(dt: number): void {
     this.#tick++;
 
     if (this.#runOver) {
       // Fin de run : plus rien n'avance, mais le tick continue de compter —
-      // c'est lui qui date le message deja mis en file.
+      // c'est lui qui date le message deja mis en file. C'est le SEUL garde
+      // qui porte cette garantie (verifie par mutation) : rien dans le
+      // deplacement des joueurs plus bas ne verifie `hp`, donc sans ce
+      // retour un joueur a 0 pv continuerait de glisser sur la carte si une
+      // entree de mouvement lui arrivait encore.
       return;
     }
 
@@ -340,6 +340,14 @@ export class Room {
       // Gel (§6.2) : le monde ne bouge pas, mais le tick continue d'avancer —
       // c'est lui qui date le LEVEL_UP deja mis en file, pour que les clients
       // figent au meme tick plutot qu'a la reception.
+      //
+      // ⚠️ Ce garde n'est PAS redondant avec `#movementScale()` plus bas.
+      // Le facteur de vitesse ne module que le DEPLACEMENT (joueurs, horde,
+      // separation, projectiles) ; le tir automatique, le contact et les
+      // ramassages ne sont moderes par aucune rampe. Sans ce retour, un
+      // monstre pose au contact d'un joueur continuerait a lui infliger des
+      // degats PENDANT le gel — verifie par mutation : le retirer fait
+      // baisser les pv du joueur alors que le monde est cense etre fige.
       return;
     }
 
@@ -454,19 +462,24 @@ export class Room {
    * Construire une progression d'armes maintenant anticiperait ce que l'etape
    * 4 doit trancher avec un vrai choix du joueur.
    *
-   * ⚠️ **Ciblage sur l'etat COURANT de la horde, pas sur un etat retarde de
-   * `TARGETING_DELAY_TICKS`.** Le §5.3 de la spec demande T-K des deux cotes
-   * « pour que la direction visee soit identique ». Mais `fireSalvo` documente
-   * elle-meme (`shared/projectiles.ts`) que cette divergence cote-a-cote est
-   * ACCEPTEE : les degats restent arbitres par le serveur quel que soit ce sur
-   * quoi un client a vise. Pour le SERVEUR precisement, choisir sur l'etat
-   * courant est strictement equivalent en correction — il est toujours
-   * coherent avec lui-meme au moment ou `resolveProjectileDamage` resout la
-   * collision, quelques lignes plus bas dans le MEME tick — et evite d'ajouter
-   * un second anneau `HordeHistory` (coute mesure : `.set()` sur sept
-   * tableaux de MAX_ENTITIES a chaque tick, jamais budgete par le banc de la
-   * tache 0) pour un gain purement cosmetique cote client. `TARGETING_DELAY_TICKS`
-   * reste donc inutilise ici ; la tache 10 (client) en aura l'usage reel.
+   * ⚠️ **Ciblage sur l'etat COURANT de la horde — corrige au plan en ronde de
+   * relecture de la tache 9.** Une premiere version de cette doc (et de la
+   * spec, §5.3) demandait un retard `T − K`, par analogie avec le flowfield.
+   * L'analogie ne tient pas : le retard du flowfield marche parce qu'il porte
+   * sur des POSITIONS DE JOUEURS, repliquees avec un delai connu des deux
+   * cotes — serveur et client peuvent s'accorder exactement sur « cette
+   * position il y a K ticks ». La horde, elle, est DERIVEE et jamais
+   * repliquee : son desaccord entre deux participants ne vient pas d'une
+   * latence d'entree qu'un retard pourrait absorber, mais de la PROPAGATION
+   * DES MORTS (§3.2) — retarder la lecture n'y change rien, sauf a faire
+   * tenir au serveur un second anneau `HordeHistory` complet (`.set()` sur
+   * sept tableaux de MAX_ENTITIES a chaque tick), jamais budgete par le banc
+   * de la tache 0, pour un gain purement cosmetique cote client. Les deux
+   * cotes visent donc sur l'etat courant ; la divergence transitoire de cible
+   * qui en resulte est acceptee, exactement comme documente sur
+   * `Projectiles.fireSalvo`. Se rouvre si la verification manuelle de la
+   * tache 12 rend l'ecart visible (un tir qui part vers un monstre deja
+   * mort).
    */
   #fireWeapons(tick: number): void {
     if (this.horde.count === 0 || this.#players.size === 0) {
@@ -546,12 +559,14 @@ export class Room {
    * Detecte la fin de run — tous les joueurs presents a 0 pv (§6.3) — et met
    * `RUN_OVER` en file **une seule fois**.
    *
-   * ⚠️ Garde explicite sur `#runOver` : sans elle, ce message repartirait a
-   * chaque tick suivant la mort, puisque « tous les joueurs sont a 0 pv »
-   * reste vrai indefiniment ensuite.
+   * Pas de garde sur `#runOver` ICI : `step()` ne l'appelle jamais une fois
+   * `#runOver` vrai (son propre garde de tete rend cet appel inatteignable),
+   * donc un second garde ici serait mort — verifie par mutation, sa
+   * suppression ne fait echouer aucun test. C'est le garde de `step()` qui
+   * porte a lui seul la garantie « une seule fois ».
    */
   #checkRunOver(): void {
-    if (this.#runOver || this.#players.size === 0) {
+    if (this.#players.size === 0) {
       return;
     }
     for (const p of this.#players.values()) {
