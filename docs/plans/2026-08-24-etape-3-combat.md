@@ -1433,8 +1433,21 @@ ordres de vague. Compter les octets dans `#wireBytes`.
   }
 ```
 
-`#replayTick` exécute les étapes **5, 6, 7 et le déplacement des projectiles** de la séquence
-serveur, dans cet ordre, sur l'état retardé correspondant.
+`#replayTick` exécute les étapes **4, 6 et 7** de la séquence serveur — rafraîchir le champ si
+dû, avancer la horde, appliquer la séparation — dans cet ordre.
+
+> ⚠️ **Le rejeu ne déplace PAS les projectiles.** Une version antérieure de ce plan le
+> demandait. C'était une erreur.
+>
+> La position d'un projectile ne dépend que de sa propre vitesse, jamais de la horde :
+> contrairement au mouvement des monstres, une mort tardive n'a rien à y corriger. Les rejouer
+> les ferait donc avancer **deux fois** sur les ticks déjà simulés en temps réel — une fois à
+> l'aller, une fois au rejeu. Une régression silencieuse, pas une amélioration.
+>
+> La collision, elle, lit bien la horde : le client a donc pu enregistrer un impact cosmétique
+> sur une entité que le serveur avait déjà tuée. Ce n'est pas rattrapé, et c'est **accepté** —
+> même raisonnement que sur `fireSalvo` : les projectiles ne sont pas répliqués et les dégâts
+> sont arbitrés par le serveur.
 
 > ⚠️ **Le champ de flux n'est pas dans l'anneau, et il faut le réamorcer avant de rejouer.**
 > Ce piège a été mesuré à la tâche 8, où il coûtait **79 px** de dérive résiduelle sur un
