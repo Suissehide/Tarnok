@@ -1,20 +1,29 @@
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
+  LEVEL_FREEZE_TICKS,
+  LEVEL_RESUME_TICKS,
+  LEVEL_XP_BASE,
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   TICK_HZ,
+  XP_PER_ORB,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
 import { PlayerHistory } from '@shared/player-history';
+import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
+import { SeparationGrid } from '@shared/separation';
+import { nearestTarget } from '@shared/targeting';
 import type { WaveOrder } from '@shared/waves';
+import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
+import { type ContactPlayer, OrbField, resolveContact, resolveProjectileDamage } from './combat';
 import { WaveDirector } from './wave-director';
 
 /**
@@ -23,14 +32,14 @@ import { WaveDirector } from './wave-director';
  * Il recoit des entrees, avance d'un pas fixe, et ecrit ses sorties dans une
  * outbox que l'appelant vide. C'est ce qui rendra le passage en `worker_threads`
  * (un salon par worker, §3 de la spec) mecanique au lieu d'etre une reecriture —
- * et c'est verifie par une regle Biome sur ce fichier, pas seulement par la
- * discipline.
+ * et c'est verifie par une regle Biome sur ce fichier (et sur `combat.ts`), pas
+ * seulement par la discipline.
  */
 export interface Outbox {
   push(msg: ArrayBuffer): void;
 }
 
-export interface PlayerState {
+export interface PlayerState extends ContactPlayer {
   id: number;
   x: number;
   y: number;
@@ -39,6 +48,12 @@ export interface PlayerState {
   moveY: number;
   /** Derniere sequence d'entree appliquee, sur 16 bits. */
   lastSeq: number;
+  /** Points de vie, personnels (voir `combat.ts`). */
+  hp: number;
+  /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
+  contactInvulnTicks: number;
+  /** Dernier tick auquel ce joueur a tire. `-Infinity` : jamais — tire des que possible. */
+  lastFireTick: number;
 }
 
 export interface RoomMetrics {
@@ -51,11 +66,31 @@ export interface RoomMetrics {
   /**
    * Nombre de vagues tronquees par `Horde.spawn` depuis le dernier drainage —
    * la horde a atteint sa capacite et une partie de la vague n'est jamais
-   * apparue. Attendu a l'etape 2 (rien ne meurt encore, §11 de la spec), mais
-   * doit rester visible dans le HUD (§4.6) plutot que silencieux : une
-   * troncature muette est un piege pour l'etape 3.
+   * apparue. Reste possible a l'etape 3 (les morts vident la horde mais une
+   * vague ponctuelle peut toujours depasser la capacite instantanee) : ce
+   * compteur reste donc utile, pas seulement un vestige de l'etape 2.
    */
   truncatedSpawns: number;
+}
+
+/** Un lot d'identites datees, pour DEATHS et PICKUPS (§3.1 / §6.1 de la spec). */
+export interface IdBatch {
+  tick: number;
+  ids: number[];
+}
+
+/** Une montee de niveau, datee au tick ou le gel prend effet (§6.2). */
+export interface LevelUpEvent {
+  tick: number;
+  level: number;
+}
+
+/** La fin d'une run, une seule fois (§6.3). */
+export interface RunOverEvent {
+  tick: number;
+  survivedTicks: number;
+  level: number;
+  kills: number;
 }
 
 /**
@@ -71,6 +106,18 @@ const SPAWN_OFFSETS: readonly (readonly [number, number])[] = [
 
 /** Un axe d'entree tient sur un octet signe : on le ramene dans [-1, 1]. */
 const AXIS_SCALE = 1 / 127;
+
+/**
+ * Capacite de la file de projectiles du salon.
+ *
+ * ⚠️ Cette etape ne cable que l'arme neutre de base (§6.1) — voir la doc de
+ * `#fireWeapons` pour pourquoi. A un projectile par joueur et par cooldown
+ * (15 ticks, vie 20 ticks), quatre joueurs entretiennent au plus quelques
+ * projectiles simultanes chacun : 256 laisse une marge large sans jamais
+ * avoir ete mesuree comme necessaire — a revisiter si l'etape 4 ajoute des
+ * armes a cadence plus rapide.
+ */
+const PROJECTILE_CAPACITY = 256;
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -95,13 +142,39 @@ export class Room {
   readonly #fields: FlowField[];
   readonly #history = new PlayerHistory();
   readonly #director: WaveDirector;
+  readonly #separation = new SeparationGrid(MAX_ENTITIES);
+  readonly #projectiles = new Projectiles(PROJECTILE_CAPACITY);
+  readonly #orbs = new OrbField(MAX_ENTITIES);
   #pendingOrders: WaveOrder[] = [];
+  #pendingDeaths: IdBatch[] = [];
+  #pendingPickups: IdBatch[] = [];
+  #pendingLevelUps: LevelUpEvent[] = [];
+  #pendingRunOver: RunOverEvent | null = null;
   #tick = 0;
   /** Tick des positions ayant servi au dernier calcul des champs. Voir `fieldInputTick`. */
   #fieldInputTick = 0;
   #metrics: RoomMetrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
   /** Reutilise d'un snapshot a l'autre : pas d'allocation par tick. */
   readonly #scratch: PlayerSnapshot[] = [];
+
+  /** Experience de l'equipe, EN COURS DE NIVEAU : remise a l'excedent a chaque montee, jamais cumulee sur toute la run. */
+  #xp = 0;
+  /** Niveau courant de l'equipe, commence a 1. */
+  #level = 1;
+  /** Ennemis tues depuis le debut de la run, cumule pour `RUN_OVER.kills`. */
+  #totalKills = 0;
+
+  /**
+   * Dernier tick du gel courant (inclus) : tant que `#tick <= #freezeUntilTick`,
+   * `step` ne fait qu'incrementer le tick et revient. `0` hors gel, puisque le
+   * premier tick reel vaut 1.
+   */
+  #freezeUntilTick = 0;
+  /** Dernier tick de la reprise progressive qui suit le gel (voir `#movementScale`). */
+  #resumeEndTick = 0;
+
+  /** Vrai une fois que `RUN_OVER` a ete mis en file — la simulation s'arrete alors pour de bon. */
+  #runOver = false;
 
   constructor() {
     const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
@@ -119,6 +192,34 @@ export class Room {
     const orders = this.#pendingOrders;
     this.#pendingOrders = [];
     return orders;
+  }
+
+  /** Lots de morts a diffuser (§3.1), un par tick ou quelqu'un est mort. */
+  drainDeaths(): IdBatch[] {
+    const out = this.#pendingDeaths;
+    this.#pendingDeaths = [];
+    return out;
+  }
+
+  /** Lots de ramassages a diffuser (§6.1), un par tick ou un orbe a ete pris. */
+  drainPickups(): IdBatch[] {
+    const out = this.#pendingPickups;
+    this.#pendingPickups = [];
+    return out;
+  }
+
+  /** Montees de niveau a diffuser (§6.2), datees au tick ou le gel prend effet. */
+  drainLevelUps(): LevelUpEvent[] {
+    const out = this.#pendingLevelUps;
+    this.#pendingLevelUps = [];
+    return out;
+  }
+
+  /** Fin de run a diffuser, ou `null` si elle n'a pas encore eu lieu (ou deja ete diffusee). */
+  drainRunOver(): RunOverEvent | null {
+    const out = this.#pendingRunOver;
+    this.#pendingRunOver = null;
+    return out;
   }
 
   get tick(): number {
@@ -159,6 +260,9 @@ export class Room {
       moveX: 0,
       moveY: 0,
       lastSeq: 0,
+      hp: PLAYER_MAX_HP,
+      contactInvulnTicks: 0,
+      lastFireTick: Number.NEGATIVE_INFINITY,
     });
     return true;
   }
@@ -191,12 +295,60 @@ export class Room {
     p.moveY = ny;
   }
 
-  /** Un pas de simulation. dt est fixe : 1 / TICK_HZ. */
+  /**
+   * Un pas de simulation. `dt` est fixe : 1 / TICK_HZ.
+   *
+   * ⚠️ **L'ordre compte, et il doit rester identique cote client (tache 10).**
+   * Sequence retenue (voir aussi `combat.ts`, qui porte les etapes 8 a 10) :
+   *
+   * ```
+   * 1. tick++
+   * 2. deplacer les joueurs
+   * 3. enregistrer l'historique de positions (arrondi !)
+   * 4. rafraichir les champs si du (tick % stepsPerField)
+   * 5. appliquer les ordres de vague en attente
+   * 6. avancer la horde
+   * 7. appliquer la separation
+   * 8. tirer les salves dues, avancer les projectiles, resoudre les collisions
+   * 9. arbitrer le contact avec les joueurs
+   * 10. resoudre les ramassages d'orbes
+   * 11. mettre en file morts et ramassages pour diffusion
+   * ```
+   *
+   * ⚠️ **Etapes 4 et 5 : l'ordre reel diverge du libelle du brief, sciemment.**
+   * Le brief de cette tache enonce « 4. appliquer les ordres de vague, 5.
+   * rafraichir les champs ». Mais `shared/horde.replication.test.ts` — le
+   * contrat de replication que cette tache doit egaler — documente
+   * explicitement la sequence serveur comme « enregistrement -> rafraichissement
+   * -> apparition simple » (rafraichissement AVANT apparition), et c'etait deja
+   * le comportement de ce fichier avant la tache 9. Les deux sources
+   * concordent entre elles et contredisent le libelle du brief ; ce fichier
+   * suit les deux sources concordantes plutot que le libelle, pour ne pas
+   * rouvrir un contrat de replication deja verifie a 0,000 px (scenario 9).
+   * Signale dans le rapport de la tache 9.
+   */
   step(dt: number): void {
     this.#tick++;
+
+    if (this.#runOver) {
+      // Fin de run : plus rien n'avance, mais le tick continue de compter —
+      // c'est lui qui date le message deja mis en file.
+      return;
+    }
+
+    if (this.#tick <= this.#freezeUntilTick) {
+      // Gel (§6.2) : le monde ne bouge pas, mais le tick continue d'avancer —
+      // c'est lui qui date le LEVEL_UP deja mis en file, pour que les clients
+      // figent au meme tick plutot qu'a la reception.
+      return;
+    }
+
+    const movementScale = this.#movementScale();
+    const scaledDt = dt * movementScale;
+
     for (const p of this.#players.values()) {
-      p.x = clamp(p.x + p.moveX * PLAYER_SPEED * dt, 0, MAP_SIZE);
-      p.y = clamp(p.y + p.moveY * PLAYER_SPEED * dt, 0, MAP_SIZE);
+      p.x = clamp(p.x + p.moveX * PLAYER_SPEED * scaledDt, 0, MAP_SIZE);
+      p.y = clamp(p.y + p.moveY * PLAYER_SPEED * scaledDt, 0, MAP_SIZE);
     }
 
     // Arrondies, comme sur le fil (constat C1.4) : le client ne connaitra
@@ -239,23 +391,41 @@ export class Room {
       this.#pendingOrders.push(order);
     }
 
-    this.horde.step(dt, this.#fields);
+    this.horde.step(scaledDt, this.#fields);
+    this.#separation.apply(this.horde, scaledDt);
+
+    this.#fireWeapons(this.#tick);
+    const deadIds = resolveProjectileDamage(
+      this.#projectiles,
+      scaledDt,
+      this.horde,
+      this.#orbs,
+      this.#tick,
+    );
+    if (deadIds.length > 0) {
+      this.#totalKills += deadIds.length;
+      this.#pendingDeaths.push({ tick: this.#tick, ids: deadIds });
+    }
+
+    resolveContact([...this.#players.values()], this.horde);
+
+    const pickedIds = this.#orbs.resolvePickups([...this.#players.values()], this.#tick);
+    if (pickedIds.length > 0) {
+      this.#pendingPickups.push({ tick: this.#tick, ids: pickedIds });
+      this.#gainXp(pickedIds.length * XP_PER_ORB);
+    }
+
+    this.#checkRunOver();
   }
 
   snapshot(out: Outbox): void {
     this.#scratch.length = 0;
     for (const p of this.#players.values()) {
-      // ⚠️ hp n'existe pas encore cote serveur (tache 9) : on cable le
-      // transport avec une valeur fixe plutot que d'inventer une
-      // comptabilite de degats ici.
-      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: PLAYER_MAX_HP });
+      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: p.hp });
     }
 
-    // ⚠️ xp n'existe pas non plus (tache 9) : 0 tant que rien ne le fait
-    // vivre. C'est un champ d'equipe (§2 de la spec d'orientation), pas un
-    // champ par joueur : il vit dans l'en-tete du snapshot, pas dans `#scratch`.
     const started = performance.now();
-    const buf = encodeSnapshot(this.#tick, 0, this.#scratch);
+    const buf = encodeSnapshot(this.#tick, this.#xp, this.#scratch);
     this.#metrics.encodeMicros += (performance.now() - started) * 1000;
     this.#metrics.bytesSent += buf.byteLength;
     this.#metrics.snapshots++;
@@ -268,5 +438,133 @@ export class Room {
     const drained = this.#metrics;
     this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
     return drained;
+  }
+
+  /**
+   * Tire les salves dues (etape 8, premiere moitie) : chaque joueur vivant,
+   * dont le cooldown est ecoule, vise l'ennemi le plus proche a portee et
+   * tire.
+   *
+   * ⚠️ **Decision de conception, absente du brief.** Seule l'arme neutre de
+   * base (`WEAPONS[0]`, §6.1) est tiree, par tous les joueurs, pendant toute
+   * cette etape. Le §6.2 de la spec evoque « monter une arme automatiquement »
+   * a chaque niveau, mais le tableau « Hors de l'etape » de la meme spec place
+   * explicitement l'etalage de cartes — et tout ce qui change l'arsenal d'un
+   * joueur — a l'etape 4 : « le gel est cable ici, l'etalage s'y branchera ».
+   * Construire une progression d'armes maintenant anticiperait ce que l'etape
+   * 4 doit trancher avec un vrai choix du joueur.
+   *
+   * ⚠️ **Ciblage sur l'etat COURANT de la horde, pas sur un etat retarde de
+   * `TARGETING_DELAY_TICKS`.** Le §5.3 de la spec demande T-K des deux cotes
+   * « pour que la direction visee soit identique ». Mais `fireSalvo` documente
+   * elle-meme (`shared/projectiles.ts`) que cette divergence cote-a-cote est
+   * ACCEPTEE : les degats restent arbitres par le serveur quel que soit ce sur
+   * quoi un client a vise. Pour le SERVEUR precisement, choisir sur l'etat
+   * courant est strictement equivalent en correction — il est toujours
+   * coherent avec lui-meme au moment ou `resolveProjectileDamage` resout la
+   * collision, quelques lignes plus bas dans le MEME tick — et evite d'ajouter
+   * un second anneau `HordeHistory` (coute mesure : `.set()` sur sept
+   * tableaux de MAX_ENTITIES a chaque tick, jamais budgete par le banc de la
+   * tache 0) pour un gain purement cosmetique cote client. `TARGETING_DELAY_TICKS`
+   * reste donc inutilise ici ; la tache 10 (client) en aura l'usage reel.
+   */
+  #fireWeapons(tick: number): void {
+    if (this.horde.count === 0 || this.#players.size === 0) {
+      return;
+    }
+    const weapon = weaponOf(0);
+    // Portee = distance que le projectile peut parcourir avant d'expirer :
+    // viser au-dela serait tirer sur une cible que le projectile n'atteindra
+    // jamais.
+    const range = (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
+
+    for (const p of this.#players.values()) {
+      if (p.hp <= 0) {
+        continue;
+      }
+      if (tick - p.lastFireTick < weapon.cooldownTicks) {
+        continue;
+      }
+      const targetId = nearestTarget(this.horde, p.x, p.y, range);
+      if (targetId < 0) {
+        continue;
+      }
+      this.#projectiles.fireSalvo(weapon, tick, p.x, p.y, targetId, this.horde);
+      p.lastFireTick = tick;
+    }
+  }
+
+  /**
+   * Facteur applique au `dt` de tout ce qui bouge (joueurs, horde, separation,
+   * projectiles) : `0` pendant le gel strict (jamais atteint ici — `step`
+   * revient avant), une rampe de `0` (exclu) a `1` pendant les
+   * `LEVEL_RESUME_TICKS` qui suivent, `1` en fonctionnement normal.
+   *
+   * ⚠️ **La reprise doit etre PROGRESSIVE, pas un interrupteur.** Sans rampe,
+   * un monstre reste colle au joueur au moment du gel et le touche des le
+   * premier tick de la reprise, sans lui laisser le temps de reagir (§6.2,
+   * comme *Swarm*).
+   */
+  #movementScale(): number {
+    if (this.#tick > this.#resumeEndTick) {
+      return 1;
+    }
+    const sinceFreezeEnd = this.#tick - this.#freezeUntilTick;
+    return Math.min(1, Math.max(0, sinceFreezeEnd / LEVEL_RESUME_TICKS));
+  }
+
+  /**
+   * Ajoute de l'experience a l'equipe et fait monter les niveaux que le total
+   * franchit (§6.2). Une pile plutot qu'un simple `if` : un gros lot de
+   * ramassages au meme tick peut franchir plusieurs seuils d'un coup.
+   *
+   * Chaque niveau obtenu programme SON PROPRE gel, mis bout a bout apres celui
+   * qui serait deja en file : deux montees dans un meme lot ne doivent pas se
+   * chevaucher.
+   */
+  #gainXp(amount: number): void {
+    this.#xp += amount;
+    while (this.#xp >= this.#xpToNextLevel()) {
+      this.#xp -= this.#xpToNextLevel();
+      this.#level++;
+      // Le gel prend effet au tick SUIVANT le dernier deja programme (ou le
+      // tick courant, s'il n'y en a pas) — jamais a l'emission : §6.2, meme
+      // raison que pour DEATHS.
+      const freezeStart = Math.max(this.#tick, this.#resumeEndTick) + 1;
+      this.#freezeUntilTick = freezeStart + LEVEL_FREEZE_TICKS - 1;
+      this.#resumeEndTick = this.#freezeUntilTick + LEVEL_RESUME_TICKS;
+      this.#pendingLevelUps.push({ tick: freezeStart, level: this.#level });
+    }
+  }
+
+  /** Seuil pour passer du niveau courant au suivant. Voir `LEVEL_XP_BASE`. */
+  #xpToNextLevel(): number {
+    return LEVEL_XP_BASE * this.#level * Math.max(1, this.#players.size);
+  }
+
+  /**
+   * Detecte la fin de run — tous les joueurs presents a 0 pv (§6.3) — et met
+   * `RUN_OVER` en file **une seule fois**.
+   *
+   * ⚠️ Garde explicite sur `#runOver` : sans elle, ce message repartirait a
+   * chaque tick suivant la mort, puisque « tous les joueurs sont a 0 pv »
+   * reste vrai indefiniment ensuite.
+   */
+  #checkRunOver(): void {
+    if (this.#runOver || this.#players.size === 0) {
+      return;
+    }
+    for (const p of this.#players.values()) {
+      if (p.hp > 0) {
+        return;
+      }
+    }
+    this.#runOver = true;
+    this.#pendingRunOver = {
+      tick: this.#tick,
+      survivedTicks: this.#tick,
+      level: this.#level,
+      kills: this.#totalKills,
+    };
   }
 }

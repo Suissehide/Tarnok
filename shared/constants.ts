@@ -151,3 +151,91 @@ export const SEPARATION_STRENGTH = 1200;
  * present et **signalee** — jamais appliquee en silence.
  */
 export const ROLLBACK_DEPTH_TICKS = 8;
+
+/**
+ * Degats infliges par un contact avec un ennemi, par intervalle (§3.4 /
+ * §6.3). Ce qui borne la duree de survie au contact permanent n'est PAS
+ * cette valeur seule mais son rapport a `PLAYER_MAX_HP` et
+ * `CONTACT_INTERVAL_TICKS` — voir la doc de ce dernier.
+ */
+export const CONTACT_DAMAGE = 8;
+
+/**
+ * Intervalle minimum, en ticks, entre deux touches de contact pour un MEME
+ * joueur — une invulnerabilite courte apres chaque touche, pas par paire
+ * joueur/monstre.
+ *
+ * ⚠️ Sans elle, un joueur plante dans la horde perdrait `CONTACT_DAMAGE` a
+ * CHAQUE tick (30 fois par seconde a `TICK_HZ`) et mourrait en
+ * `PLAYER_MAX_HP / CONTACT_DAMAGE` ticks — moins d'une demi-seconde — au lieu
+ * d'environ `PLAYER_MAX_HP / CONTACT_DAMAGE` INTERVALLES de 15 ticks, soit
+ * plusieurs secondes. C'est cette constante qui separe les deux regimes.
+ */
+export const CONTACT_INTERVAL_TICKS = 15;
+
+/**
+ * Rayon de contact entre un joueur et un monstre, en pixels monde.
+ *
+ * §3.4 : hitbox GENEREUSE, l'arbitrage penche en faveur du joueur — un
+ * monstre doit visiblement recouper le sprite du joueur, pas seulement
+ * l'effleurer au pixel pres.
+ */
+export const CONTACT_RADIUS = 34;
+
+/**
+ * Duree de vie d'un orbe non ramasse, en ticks (20 s a `TICK_HZ`).
+ *
+ * ⚠️ Doit se calculer IDENTIQUEMENT des deux cotes a partir du seul
+ * `tick - bornTick` (§6.1) : aucune horloge murale ne doit jamais entrer
+ * dans ce calcul, sous peine de faire disparaitre l'orbe a des instants
+ * differents pour le serveur (qui arbitre le ramassage) et pour un client
+ * (qui l'affiche).
+ */
+export const ORB_LIFETIME_TICKS = 600;
+
+/** Rayon de ramassage d'un orbe, en pixels monde. Arbitre par le serveur (§6.1) — jamais derive cote client. */
+export const ORB_PICKUP_RADIUS = 90;
+
+/** Experience gagnee par orbe ramasse, avant multiplication par la courbe de niveau. */
+export const XP_PER_ORB = 1;
+
+/**
+ * Duree du gel, en ticks, a chaque montee de niveau — « le monde et le
+ * chronometre se figent » (§6.2).
+ *
+ * ⚠️ Cette etape la fixe a 2 s, juste assez pour que le message `LEVEL_UP`
+ * soit lisible avant la reprise ; l'etape 4 la portera a 20 s plafonnees pour
+ * laisser le temps de l'etalage de cartes (§7.4 de l'orientation) — ne pas
+ * confondre les deux regimes en reutilisant cette valeur ailleurs.
+ */
+export const LEVEL_FREEZE_TICKS = 60;
+
+/**
+ * Duree de reprise progressive apres le gel, en ticks (1 s), pendant
+ * laquelle le mouvement (joueurs, horde, projectiles) est ralenti d'un
+ * facteur croissant de 0 a 1.
+ *
+ * ⚠️ Sans elle, un monstre reste colle au joueur au moment du gel et le
+ * touche des la reprise, sans lui laisser le temps de reagir — le §6.2 cite
+ * *Swarm* pour cette meme raison.
+ */
+export const LEVEL_RESUME_TICKS = 30;
+
+/**
+ * Base de la courbe d'experience : le seuil pour passer du niveau `n` a
+ * `n + 1` vaut `LEVEL_XP_BASE * n * playerCount`.
+ *
+ * ⚠️ **Absente du tableau « Coherence des constantes » du plan** — la tache 9
+ * l'a ajoutee : §5 de la spec d'orientation exige que « la courbe
+ * d'experience [soit] multipliee par N » des cette etape, « sans quoi une
+ * equipe de quatre joueurs gele quatre fois plus souvent qu'un joueur seul »
+ * (§7.4), et rien dans le plan de l'etape 3 ne fournit de formule. Sans effet
+ * visible en solo (N=1, seul mode verifiable cette etape).
+ *
+ * Doit rester assez petite pour qu'un SEUL seuil (pas le cumul de la run)
+ * tienne sur les 16 bits de `SnapshotMessage.xp` : `xp` est remis a
+ * l'excedent apres chaque niveau plutot que cumule sur toute la run (voir
+ * `Room.#gainXp`), donc le plus grand seuil pratique — quelques centaines a
+ * quatre joueurs et niveau dix — reste tres loin de 65535.
+ */
+export const LEVEL_XP_BASE = 10;

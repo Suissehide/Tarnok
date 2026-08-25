@@ -1,7 +1,16 @@
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
-import { decode, encodeWaveOrder, encodeWelcome, MSG } from '@shared/protocol';
+import {
+  decode,
+  encodeDeaths,
+  encodeLevelUp,
+  encodePickups,
+  encodeRunOver,
+  encodeWaveOrder,
+  encodeWelcome,
+  MSG,
+} from '@shared/protocol';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -152,29 +161,46 @@ class Session {
     }
   }
 
-  #broadcast(): void {
-    // Les ordres de vague partent avant le snapshot du meme tick : un client
-    // doit connaitre la vague avant de voir bouger les joueurs qu'elle vise.
-    for (const order of this.room.drainWaveOrders()) {
-      const buf = encodeWaveOrder(order);
-      for (const ws of this.#clients.values()) {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(buf);
-          this.#wireBytes += buf.byteLength;
-        }
+  /**
+   * Diffuse `buf` a chaque client ouvert, et compte les octets reellement
+   * pousses sur le fil — `#wireBytes` ne doit compter que ce qui part
+   * vraiment, jamais ce qui est simplement encode.
+   */
+  #send(buf: ArrayBuffer): void {
+    for (const ws of this.#clients.values()) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(buf);
+        this.#wireBytes += buf.byteLength;
       }
+    }
+  }
+
+  #broadcast(): void {
+    // Les ordres de vague, les morts, les ramassages, les montees de niveau
+    // et la fin de run partent tous avant le snapshot DU MEME TICK : un
+    // client doit connaitre l'evenement avant de voir l'etat qui en decoule
+    // (§3.1 / §6.1 / §6.2 de la spec).
+    for (const order of this.room.drainWaveOrders()) {
+      this.#send(encodeWaveOrder(order));
+    }
+    for (const batch of this.room.drainDeaths()) {
+      this.#send(encodeDeaths(batch.tick, batch.ids));
+    }
+    for (const batch of this.room.drainPickups()) {
+      this.#send(encodePickups(batch.tick, batch.ids));
+    }
+    for (const levelUp of this.room.drainLevelUps()) {
+      this.#send(encodeLevelUp(levelUp.tick, levelUp.level));
+    }
+    const runOver = this.room.drainRunOver();
+    if (runOver) {
+      this.#send(encodeRunOver(runOver.tick, runOver.survivedTicks, runOver.level, runOver.kills));
     }
 
     this.#outbox.buffers.length = 0;
     this.room.snapshot(this.#outbox);
-
     for (const buf of this.#outbox.buffers) {
-      for (const ws of this.#clients.values()) {
-        if (ws.readyState === ws.OPEN) {
-          ws.send(buf);
-          this.#wireBytes += buf.byteLength;
-        }
-      }
+      this.#send(buf);
     }
   }
 

@@ -58,7 +58,7 @@
   },
   "overrides": [
     {
-      "includes": ["back/src/room.ts"],
+      "includes": ["back/src/room.ts", "back/src/combat.ts"],
       "linter": {
         "rules": {
           "style": {
@@ -66,8 +66,8 @@
               "level": "error",
               "options": {
                 "paths": {
-                  "ws": "room.ts ne connait pas le reseau : il ecrit dans une Outbox (§2.7 du plan). C'est ce qui rendra le passage en worker_threads mecanique.",
-                  "fastify": "room.ts ne connait pas le serveur HTTP : il ecrit dans une Outbox (§2.7 du plan)."
+                  "ws": "room.ts et combat.ts ne connaissent pas le reseau : ils ecrivent dans une Outbox (§2.7 du plan). C'est ce qui rendra le passage en worker_threads mecanique.",
+                  "fastify": "room.ts et combat.ts ne connaissent pas le serveur HTTP : ils ecrivent dans une Outbox (§2.7 du plan)."
                 }
               }
             }
