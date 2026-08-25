@@ -4,6 +4,7 @@ import {
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
+  PLAYER_MAX_HP,
   PLAYER_SPEED,
   TICK_HZ,
 } from '@shared/constants';
@@ -244,7 +245,10 @@ export class Room {
   snapshot(out: Outbox): void {
     this.#scratch.length = 0;
     for (const p of this.#players.values()) {
-      this.#scratch.push({ id: p.id, x: p.x, y: p.y });
+      // ⚠️ hp/xp n'existent pas encore cote serveur (tache 9) : on cable le
+      // transport avec des valeurs fixes plutot que d'inventer une
+      // comptabilite de degats ou d'experience ici.
+      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: PLAYER_MAX_HP, xp: 0 });
     }
 
     const started = performance.now();

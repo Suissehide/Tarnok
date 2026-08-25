@@ -8,15 +8,34 @@
  * echange d'octets a l'encodage comme au decodage.
  */
 
-export const MSG = { WELCOME: 1, SNAPSHOT: 2, INPUT: 3, WAVE_ORDER: 4 } as const;
+export const MSG = {
+  WELCOME: 1,
+  SNAPSHOT: 2,
+  INPUT: 3,
+  WAVE_ORDER: 4,
+  DEATHS: 5,
+  PICKUPS: 6,
+  LEVEL_UP: 7,
+  RUN_OVER: 8,
+} as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
 
-/** Position d'un joueur telle qu'elle passe sur le fil : quantifiee a l'entier. */
+/**
+ * Position d'un joueur telle qu'elle passe sur le fil : quantifiee a l'entier.
+ *
+ * `hp` et `xp` n'existent pas encore cote serveur (la tache 9 les fait vivre) :
+ * cette version cable seulement le transport, `Room` remplit `hp` avec
+ * `PLAYER_MAX_HP` et `xp` avec 0.
+ */
 export interface PlayerSnapshot {
   id: number;
   x: number;
   y: number;
+  /** Points de vie, sur un octet. */
+  hp: number;
+  /** Experience, sur deux octets. */
+  xp: number;
 }
 
 export interface WelcomeMessage {
@@ -52,13 +71,45 @@ export interface WaveOrderMessage {
   count: number;
 }
 
-export type Message = WelcomeMessage | SnapshotMessage | InputMessage | WaveOrderMessage;
+/**
+ * S -> C : identites mortes ou ramassees pendant ce tick, batchees.
+ *
+ * `DEATHS` et `PICKUPS` partagent exactement cette forme (voir `encodeIdBatch`
+ * / `decodeIdBatch`) : ils ne different que par leur octet de type. Les
+ * identites sont **triees en ordre croissant** — c'est l'ordre canonique
+ * d'application, celui qui garantit que deux clients recevant le meme lot en
+ * tirent des tableaux identiques.
+ */
+export interface DeathsMessage {
+  type: typeof MSG.DEATHS;
+  tick: number;
+  ids: number[];
+}
+
+export interface PickupsMessage {
+  type: typeof MSG.PICKUPS;
+  tick: number;
+  ids: number[];
+}
+
+export type Message =
+  | WelcomeMessage
+  | SnapshotMessage
+  | InputMessage
+  | WaveOrderMessage
+  | DeathsMessage
+  | PickupsMessage;
 
 export const WELCOME_BYTES = 10;
 export const INPUT_BYTES = 5;
 export const SNAPSHOT_HEADER_BYTES = 6;
-export const SNAPSHOT_PLAYER_BYTES = 5;
+export const SNAPSHOT_PLAYER_BYTES = 8;
 export const WAVE_ORDER_BYTES = 19;
+
+/** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
+export const DEATHS_HEADER_BYTES = 7;
+/** Une identite d'entite, sur le fil : u32. */
+export const DEATH_ID_BYTES = 4;
 
 /**
  * Ouvre une vue sur le buffer en exigeant une taille minimale.
@@ -107,7 +158,7 @@ export function decodeInput(buf: ArrayBuffer): InputMessage {
   };
 }
 
-/** S -> C : positions des joueurs, 6 octets d'en-tete puis 5 par joueur. */
+/** S -> C : positions des joueurs, 6 octets d'en-tete puis 8 par joueur. */
 export function encodeSnapshot(tick: number, players: readonly PlayerSnapshot[]): ArrayBuffer {
   const buf = new ArrayBuffer(SNAPSHOT_HEADER_BYTES + players.length * SNAPSHOT_PLAYER_BYTES);
   const v = new DataView(buf);
@@ -119,6 +170,8 @@ export function encodeSnapshot(tick: number, players: readonly PlayerSnapshot[])
     v.setUint8(o, p.id);
     v.setInt16(o + 1, Math.round(p.x), true);
     v.setInt16(o + 3, Math.round(p.y), true);
+    v.setUint8(o + 5, p.hp);
+    v.setUint16(o + 6, p.xp, true);
     o += SNAPSHOT_PLAYER_BYTES;
   }
   return buf;
@@ -138,11 +191,72 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
       id: v.getUint8(o),
       x: v.getInt16(o + 1, true),
       y: v.getInt16(o + 3, true),
+      hp: v.getUint8(o + 5),
+      xp: v.getUint16(o + 6, true),
     });
     o += SNAPSHOT_PLAYER_BYTES;
   }
 
   return { type: MSG.SNAPSHOT, tick: v.getUint32(1, true), players };
+}
+
+/**
+ * Coeur commun de `DEATHS` et `PICKUPS` : `type u8 · tick u32 · count u16 ·
+ * id u32 x count`. Les deux messages ne different que par leur octet de type,
+ * factoriser evite de dupliquer un decalage d'octet dans deux fonctions.
+ *
+ * Les identites sont triees en ordre croissant a l'encodage : c'est l'ordre
+ * canonique d'application (voir `DeathsMessage`), impose ici plutot que
+ * laisse a la discretion de chaque appelant.
+ */
+function encodeIdBatch(type: number, tick: number, ids: readonly number[]): ArrayBuffer {
+  const sorted = [...ids].sort((a, b) => a - b);
+  const buf = new ArrayBuffer(DEATHS_HEADER_BYTES + sorted.length * DEATH_ID_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, type);
+  v.setUint32(1, tick >>> 0, true);
+  v.setUint16(5, sorted.length, true);
+  let o = DEATHS_HEADER_BYTES;
+  for (const id of sorted) {
+    v.setUint32(o, id >>> 0, true);
+    o += DEATH_ID_BYTES;
+  }
+  return buf;
+}
+
+function decodeIdBatch(buf: ArrayBuffer): { tick: number; ids: number[] } {
+  const head = viewOf(buf, DEATHS_HEADER_BYTES);
+  const count = head.getUint16(5, true);
+  // Comme pour le snapshot : on confronte le compte annonce a la taille
+  // reelle du buffer avant de boucler, plutot que de lire hors des bornes.
+  const v = viewOf(buf, DEATHS_HEADER_BYTES + count * DEATH_ID_BYTES);
+
+  const ids: number[] = [];
+  let o = DEATHS_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    ids.push(v.getUint32(o, true));
+    o += DEATH_ID_BYTES;
+  }
+
+  return { tick: v.getUint32(1, true), ids };
+}
+
+/** S -> C : identites mortes ce tick. Voir `encodeIdBatch`. */
+export function encodeDeaths(tick: number, ids: readonly number[]): ArrayBuffer {
+  return encodeIdBatch(MSG.DEATHS, tick, ids);
+}
+
+export function decodeDeaths(buf: ArrayBuffer): DeathsMessage {
+  return { type: MSG.DEATHS, ...decodeIdBatch(buf) };
+}
+
+/** S -> C : orbes ramasses ce tick. Voir `encodeIdBatch`. */
+export function encodePickups(tick: number, ids: readonly number[]): ArrayBuffer {
+  return encodeIdBatch(MSG.PICKUPS, tick, ids);
+}
+
+export function decodePickups(buf: ArrayBuffer): PickupsMessage {
+  return { type: MSG.PICKUPS, ...decodeIdBatch(buf) };
 }
 
 /**
@@ -231,6 +345,10 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeInput(buf);
     case MSG.WAVE_ORDER:
       return decodeWaveOrder(buf);
+    case MSG.DEATHS:
+      return decodeDeaths(buf);
+    case MSG.PICKUPS:
+      return decodePickups(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }

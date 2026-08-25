@@ -1,5 +1,5 @@
 import { TICK_HZ } from '@shared/constants';
-import { encodeWaveOrder, encodeWelcome } from '@shared/protocol';
+import { encodeSnapshot, encodeWaveOrder, encodeWelcome } from '@shared/protocol';
 import { FORMATION } from '@shared/waves';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -115,4 +115,25 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
     );
     expect(client.horde.count).toBe(10);
   });
+});
+
+describe('GameClient — hp/xp du joueur local', () => {
+  it(
+    'reprend hp et xp du dernier snapshot pour le joueur local predit, ' +
+      'la prediction ne simule que la position',
+    () => {
+      const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+      client.connect();
+      const socket = latestSocket();
+
+      socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+      socket.emit('message', {
+        data: encodeSnapshot(0, [{ id: 1, x: 10, y: 20, hp: 42, xp: 777 }]),
+      });
+
+      const state = client.update(0, 0);
+
+      expect(state.players.find((p) => p.id === 1)).toMatchObject({ hp: 42, xp: 777 });
+    },
+  );
 });

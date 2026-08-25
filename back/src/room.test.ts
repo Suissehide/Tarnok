@@ -1,4 +1,10 @@
-import { FIELD_INPUT_DELAY_TICKS, MAP_SIZE, PLAYER_SPEED, TICK_HZ } from '@shared/constants';
+import {
+  FIELD_INPUT_DELAY_TICKS,
+  MAP_SIZE,
+  PLAYER_MAX_HP,
+  PLAYER_SPEED,
+  TICK_HZ,
+} from '@shared/constants';
 import { decodeSnapshot } from '@shared/protocol';
 import { describe, expect, it } from 'vitest';
 
@@ -182,6 +188,26 @@ describe('Room.snapshot', () => {
     expect(out.sent).toHaveLength(1);
   });
 
+  it(
+    'cable hp et xp avec des valeurs fixes : ni degats ni experience ' +
+      "n'existent encore cote serveur (tache 9)",
+    () => {
+      const room = new Room();
+      room.join(1);
+      const out = collector();
+
+      room.snapshot(out);
+
+      const first = out.sent[0];
+      if (!first) {
+        throw new Error('aucun snapshot emis');
+      }
+      const [player] = decodeSnapshot(first).players;
+      expect(player?.hp).toBe(PLAYER_MAX_HP);
+      expect(player?.xp).toBe(0);
+    },
+  );
+
   it("compte les octets emis et les micro-secondes d'encodage (§4.6)", () => {
     const room = new Room();
     room.join(1);
@@ -190,8 +216,8 @@ describe('Room.snapshot', () => {
 
     room.snapshot(out);
 
-    // 6 octets d'en-tete + 5 par joueur.
-    expect(room.metrics.bytesSent).toBe(16);
+    // 6 octets d'en-tete + 8 par joueur (SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES).
+    expect(room.metrics.bytesSent).toBe(22);
     expect(room.metrics.snapshots).toBe(1);
     expect(room.metrics.encodeMicros).toBeGreaterThanOrEqual(0);
   });
@@ -203,7 +229,7 @@ describe('Room.snapshot', () => {
 
     const drained = room.drainMetrics();
 
-    expect(drained.bytesSent).toBe(11);
+    expect(drained.bytesSent).toBe(14);
     expect(room.metrics.bytesSent).toBe(0);
   });
 });

@@ -67,6 +67,14 @@ export const MAP_SIZE = 6000;
 
 export const MAX_PLAYERS = 4;
 
+/**
+ * Points de vie maximum d'un joueur.
+ *
+ * ⚠️ Doit tenir sur un octet (`SNAPSHOT_PLAYER_BYTES` encode `hp` en `u8`) :
+ * ne jamais depasser 255.
+ */
+export const PLAYER_MAX_HP = 100;
+
 /** Vitesse d'un joueur, en pixels monde par seconde. */
 export const PLAYER_SPEED = 260;
 

@@ -68,6 +68,12 @@ export class GameClient {
   readonly #buffer = new SnapshotBuffer();
   #local: PredictedPlayer | null = null;
   #localId: number | null = null;
+  /**
+   * Derniers pv/xp connus du joueur local, tels que portes par le dernier
+   * snapshot : la prediction ne simule que la position, pas ces compteurs.
+   */
+  #localHp = 0;
+  #localXp = 0;
   #seq = 0;
   #status: ConnectionStatus = 'closed';
 
@@ -174,7 +180,13 @@ export class GameClient {
     const local = this.#local;
     if (local && this.#localId !== null) {
       const index = players.findIndex((p) => p.id === this.#localId);
-      const predicted = { id: this.#localId, x: local.renderX, y: local.renderY };
+      const predicted = {
+        id: this.#localId,
+        x: local.renderX,
+        y: local.renderY,
+        hp: this.#localHp,
+        xp: this.#localXp,
+      };
       if (index >= 0) {
         players[index] = predicted;
       } else {
@@ -240,6 +252,10 @@ export class GameClient {
     if (!mine) {
       return;
     }
+    // Pas predits, contrairement a la position : on prend simplement la
+    // derniere valeur connue du serveur.
+    this.#localHp = mine.hp;
+    this.#localXp = mine.xp;
     if (this.#local === null) {
       // Premier snapshot ou l'on se voit : on se pose la, sans adoucissement.
       this.#local = new PredictedPlayer(mine.x, mine.y);

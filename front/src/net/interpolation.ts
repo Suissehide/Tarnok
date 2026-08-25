@@ -109,6 +109,10 @@ export class SnapshotBuffer {
     // On boucle sur le snapshot d'arrivee : un joueur qui vient de partir ne
     // doit pas rester affiche, et un joueur qui vient d'arriver apparait a sa
     // position plutot que de glisser depuis un point qu'il n'a jamais occupe.
+    //
+    // hp et xp ne sont pas interpoles : ce sont des compteurs discrets, pas
+    // des positions continues. On garde ceux du snapshot d'arrivee, comme
+    // l'id.
     return to.players.map((target) => {
       const previous = from.players.find((p) => p.id === target.id);
       if (!previous) {
@@ -118,6 +122,8 @@ export class SnapshotBuffer {
         id: target.id,
         x: lerp(previous.x, target.x, t),
         y: lerp(previous.y, target.y, t),
+        hp: target.hp,
+        xp: target.xp,
       };
     });
   }
