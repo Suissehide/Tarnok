@@ -34,8 +34,8 @@ import type { Horde } from './horde';
  * La divergence de cible qui en resulte entre deux participants est acceptee,
  * exactement comme documente sur `Projectiles.fireSalvo`. Cette fonction n'a
  * de toute facon aucune notion du temps, exactement comme
- * `SeparationGrid.apply` n'a aucune notion de vague — c'est a l'appelant de
- * lui passer l'etat qu'il souhaite interroger.
+ * `Horde#recomputeSteering` (tache 19) n'a aucune notion de vague — c'est a
+ * l'appelant de lui passer l'etat qu'il souhaite interroger.
  *
  * **A egalite de distance, le plus petit identifiant gagne.** Une
  * comparaison flottante stricte laisserait le departage a l'ordre de

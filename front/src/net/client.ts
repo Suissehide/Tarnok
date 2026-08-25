@@ -23,7 +23,6 @@ import {
   quantizeAxis,
   type WaveOrderMessage,
 } from '@shared/protocol';
-import { SeparationGrid } from '@shared/separation';
 import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
@@ -301,8 +300,6 @@ export class GameClient {
   #hordeAcc = 0;
   #lastHordeTick = 0;
 
-  /** Separation de la horde (etape 7 de la sequence serveur), rejouee a l'identique. */
-  readonly #separation = new SeparationGrid(MAX_ENTITIES);
   /** Anneau d'etats de horde, pour le rejeu des morts en retard (§3.2). */
   readonly #hordeHistory = new HordeHistory(MAX_ENTITIES);
   /** Orbes derives des morts (§6.1), jamais transmis. Lecture publique pour le rendu et le HUD. */
@@ -687,14 +684,15 @@ export class GameClient {
       }
     }
 
-    // Le mouvement (horde ET separation) est module par `#movementScale` :
-    // `0` pendant le gel strict, une rampe pendant la reprise, `1` sinon —
-    // exactement le facteur que `Room.step` applique a son propre `dt`. A `0`
-    // le pas ne fait litteralement rien (deplacement nul, poussees de
-    // separation nulles) : inutile de le sauter par un `if` separe.
+    // Le mouvement de la horde est module par `#movementScale` : `0` pendant
+    // le gel strict, une rampe pendant la reprise, `1` sinon — exactement le
+    // facteur que `Room.step` applique a son propre `dt`. A `0` le pas ne
+    // fait litteralement rien (deplacement nul) : inutile de le sauter par un
+    // `if` separe. `tick` reste le tick ABSOLU, non mis a l'echelle : c'est
+    // lui qui decide la phase de recalcul de trajectoire (tache 19), et cette
+    // phase ne doit jamais deraper au gre du gel.
     const scale = this.#movementScale(tick);
-    this.horde.step(dt * scale, this.#fields);
-    this.#separation.apply(this.horde, dt * scale);
+    this.horde.step(dt * scale, this.#fields, tick);
 
     // Tir, deplacement des projectiles, collision — miroir cosmetique de
     // l'etape 8 de `Room.step` (back/src/room.ts). Gate par le meme garde de
@@ -895,11 +893,15 @@ export class GameClient {
   }
 
   /**
-   * Un pas de rejeu : rafraichit le champ si du, avance la horde, applique la
-   * separation — les etapes 4, 6, 7 de la sequence serveur, jamais
-   * l'arbitrage (8 a 10). Reecrit aussi l'anneau pour ce tick : une mort
-   * suivante qui viserait l'un de ces ticks doit restaurer la version
-   * rejouee, pas l'ancienne version d'avant correction.
+   * Un pas de rejeu : rafraichit le champ si du, recalcule la trajectoire des
+   * entites en phase puis avance la horde — les etapes 4 et 6 de la sequence
+   * serveur, jamais l'arbitrage (7 a 9). Reecrit aussi l'anneau pour ce tick :
+   * une mort suivante qui viserait l'un de ces ticks doit restaurer la
+   * version rejouee, pas l'ancienne version d'avant correction.
+   *
+   * ⚠️ `tick` doit etre le meme tick ABSOLU que celui utilise par la
+   * simulation d'origine (voir `Horde.step`) : c'est lui qui determine la
+   * phase de recalcul de trajectoire, pas un compteur propre au rejeu.
    */
   #replayTick(tick: number): void {
     if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
@@ -912,14 +914,13 @@ export class GameClient {
       }
     }
     const scale = this.#movementScale(tick);
-    this.horde.step(FIXED_DT * scale, this.#fields);
-    this.#separation.apply(this.horde, FIXED_DT * scale);
+    this.horde.step(FIXED_DT * scale, this.#fields, tick);
     this.#hordeHistory.record(tick, this.horde);
   }
 
   /**
-   * Facteur applique au `dt` de tout ce qui bouge (horde, separation) : `0`
-   * pendant le gel strict, une rampe de `0` (exclu) a `1` pendant les
+   * Facteur applique au `dt` de tout ce qui bouge (la horde) : `0` pendant
+   * le gel strict, une rampe de `0` (exclu) a `1` pendant les
    * `LEVEL_RESUME_TICKS` qui suivent, `1` en fonctionnement normal. Miroir
    * exact de `Room#movementScale` cote serveur — necessaire pour que le rejeu
    * d'un tick gele ou en reprise avance exactement comme le serveur l'a fait.

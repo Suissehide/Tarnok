@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 import { FLOWFIELD_CELL, MAP_SIZE, TICK_HZ } from './constants';
 import { FlowField } from './flowfield';
 import { Horde } from './horde';
-import { SeparationGrid } from './separation';
 import { FORMATION, type WaveOrder } from './waves';
 
 const DT = 1 / TICK_HZ;
@@ -13,9 +12,10 @@ const DT = 1 / TICK_HZ;
  *
  * Recette mesuree par le diagnostic (voir le rapport de la tache 15) : un
  * joueur colle a un coin de la carte tire tout le champ vers ce coin, une
- * horde dense y forme un entassement, et `SEPARATION_STRENGTH` (1200 px/s)
- * pousse plus fort que le champ ne tire en retour — sans clamp, les entites
- * giclent hors du monde.
+ * horde dense y forme un entassement, et la repulsion (tache 19 :
+ * `STEERING_REPULSION_STRENGTH`, 420 px/s, plus la vitesse propre de
+ * l'archetype) pousse plus fort que le champ ne tire en retour — sans clamp,
+ * les entites giclent hors du monde.
  */
 describe('les entites ne quittent jamais la carte', () => {
   it(
@@ -46,8 +46,6 @@ describe('les entites ne quittent jamais la carte', () => {
       field.update(0, 0);
       const fields = [field];
 
-      const grid = new SeparationGrid(N);
-
       let minX = Number.POSITIVE_INFINITY;
       let maxX = Number.NEGATIVE_INFINITY;
       let minY = Number.POSITIVE_INFINITY;
@@ -55,8 +53,7 @@ describe('les entites ne quittent jamais la carte', () => {
 
       const TICKS = 1200;
       for (let t = 0; t < TICKS; t++) {
-        horde.step(DT, fields);
-        grid.apply(horde, DT);
+        horde.step(DT, fields, t);
 
         for (let i = 0; i < horde.count; i++) {
           const x = horde.x[i] ?? 0;

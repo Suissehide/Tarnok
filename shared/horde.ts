@@ -1,5 +1,14 @@
 import { archetypeOf } from './archetypes';
-import { CONTACT_RADIUS, MAP_SIZE, MAX_ENTITIES, MAX_PER_WAVE } from './constants';
+import {
+  CONTACT_RADIUS,
+  MAP_SIZE,
+  MAX_ENTITIES,
+  MAX_PER_WAVE,
+  SEPARATION_CELL,
+  SEPARATION_RADIUS,
+  STEERING_RECOMPUTE_TICKS,
+  STEERING_REPULSION_STRENGTH,
+} from './constants';
 import type { FlowField } from './flowfield';
 import { formationPositions, type ObstacleField, type WaveOrder } from './waves';
 
@@ -19,15 +28,25 @@ export function entityIdOf(waveId: number, index: number): number {
 /**
  * Instantane de l'etat de la horde, pour `HordeHistory` (§3.2).
  *
- * Les huit memes tableaux que `Horde` (`stopped` depuis la tache 17.2), plus
- * le compte. `HordeHistory` en alloue un par creneau de son anneau, une seule
- * fois, et `saveState` / `restoreState` s'en servent comme tampons a copier
- * par `.set()` — jamais de nouveau tableau a chaque tick.
+ * Les NEUF memes tableaux que `Horde` (`stopped` depuis la tache 17.2, `vx`/`vy`
+ * depuis la tache 19), plus le compte. `HordeHistory` en alloue un par creneau
+ * de son anneau, une seule fois, et `saveState` / `restoreState` s'en servent
+ * comme tampons a copier par `.set()` — jamais de nouveau tableau a chaque tick.
+ *
+ * ⚠️ **`vx`/`vy` DOIVENT faire partie de cet instantane.** Une entite qui vient
+ * de recalculer sa trajectoire (tache 19) tient sa vitesse jusqu'a `K` ticks
+ * plus tard : un rejeu qui restaurerait tout SAUF la vitesse ferait repartir
+ * une entite dans une direction perimee, ou nulle, a la place de celle qu'elle
+ * tenait reellement au tick restaure. Le scenario 9 de
+ * `shared/horde.replication.test.ts` — rejeu, derive attendue a 0,000 px — est
+ * l'endroit exact ou l'oubli se verrait.
  */
 export interface HordeState {
   count: number;
   x: Float32Array;
   y: Float32Array;
+  vx: Float32Array;
+  vy: Float32Array;
   archetype: Uint8Array;
   waveId: Uint16Array;
   indexInWave: Uint16Array;
@@ -58,6 +77,19 @@ export interface HordeState {
 export class Horde {
   readonly x: Float32Array;
   readonly y: Float32Array;
+  /**
+   * Vitesse tenue, en pixels monde par seconde — tache 19.
+   *
+   * Recalculee (direction du champ + repulsion sommee) un tick sur
+   * `STEERING_RECOMPUTE_TICKS`, la phase venant de `entityIdAt` (voir
+   * `#recomputeSteering`) ; tous les autres ticks, `#advanceByVelocity` s'en
+   * sert telle quelle. C'est cette conservation — pas de recalcul, pas de
+   * renversement possible d'un tick a l'autre — qui remplace la force de
+   * separation appliquee en continu (`shared/separation.ts`, supprime) : voir
+   * le rapport de la tache 19 pour les quatre principes mesures avant celui-ci.
+   */
+  readonly vx: Float32Array;
+  readonly vy: Float32Array;
   readonly archetype: Uint8Array;
   readonly waveId: Uint16Array;
   readonly indexInWave: Uint16Array;
@@ -89,15 +121,40 @@ export class Horde {
    */
   #lastFieldRevisions: Map<FlowField, number> | null = null;
 
+  /**
+   * Grille de recherche de voisins pour `#recomputeSteering` (tache 19) —
+   * memes cinq tableaux et meme tri par comptage que l'ancien
+   * `SeparationGrid`, desormais internes a `Horde` puisque la repulsion
+   * alimente directement `vx`/`vy` plutot que de deplacer une position a
+   * part. Pre-alloues une fois, jamais reconstruits : c'est ce qui garde
+   * `#buildNeighbourGrid` hors du ramasse-miettes.
+   */
+  readonly #gridCols: number;
+  readonly #cellStart: Int32Array;
+  readonly #cellCount: Int32Array;
+  readonly #cursor: Int32Array;
+  readonly #cellIdx: Int32Array;
+  readonly #order: Int32Array;
+
   constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
+    this.vx = new Float32Array(capacity);
+    this.vy = new Float32Array(capacity);
     this.archetype = new Uint8Array(capacity);
     this.waveId = new Uint16Array(capacity);
     this.indexInWave = new Uint16Array(capacity);
     this.animPhase = new Uint8Array(capacity);
     this.targetField = new Uint8Array(capacity);
     this.stopped = new Uint8Array(capacity);
+
+    this.#gridCols = Math.ceil(MAP_SIZE / SEPARATION_CELL);
+    const cells = this.#gridCols * this.#gridCols;
+    this.#cellStart = new Int32Array(cells + 1);
+    this.#cellCount = new Int32Array(cells);
+    this.#cursor = new Int32Array(cells + 1);
+    this.#cellIdx = new Int32Array(capacity);
+    this.#order = new Int32Array(capacity);
   }
 
   get count(): number {
@@ -148,6 +205,17 @@ export class Horde {
       // `stopped = 1` d'un mort qui occupait ce creneau traverserait le
       // joueur sans jamais l'attaquer, jusqu'au prochain `retarget`.
       this.stopped[slot] = 0;
+      // Meme raisonnement encore (tache 19) : une entite neuve qui heriterait
+      // de la vitesse tenue par le mort qui occupait ce creneau partirait dans
+      // SA direction a lui, potentiellement a l'oppose du champ qui devrait
+      // la guider. Zero est un choix delibere, pas juste « neutre » : cette
+      // entite reste immobile jusqu'a son propre tick de phase
+      // (`entityIdAt(slot) % STEERING_RECOMPUTE_TICKS`), au plus
+      // `STEERING_RECOMPUTE_TICKS - 1` pas plus tard — le meme cout, deja
+      // assume par le reste de la horde, que « une entite reagit jusqu'a
+      // 300 ms en retard » (voir le rapport de la tache 19).
+      this.vx[slot] = 0;
+      this.vy[slot] = 0;
     }
 
     this.#count += count;
@@ -212,14 +280,17 @@ export class Horde {
    * parametre plutot que d'en allouer un ici est ce qui garde cette methode
    * hors du ramasse-miettes.
    *
-   * ⚠️ Les HUIT tableaux, plus le compte (`stopped` depuis la tache 17.2).
-   * Meme piege que `#removeAt` : en oublier un laisse la suite verte jusqu'a
-   * ce qu'un rejeu s'appuie dessus.
+   * ⚠️ Les NEUF tableaux, plus le compte (`stopped` depuis la tache 17.2,
+   * `vx`/`vy` depuis la tache 19). Meme piege que `#removeAt` : en oublier un
+   * laisse la suite verte jusqu'a ce qu'un rejeu s'appuie dessus — voir
+   * l'avertissement sur `HordeState` pour `vx`/`vy` specifiquement.
    */
   saveState(out: HordeState): void {
     out.count = this.#count;
     out.x.set(this.x);
     out.y.set(this.y);
+    out.vx.set(this.vx);
+    out.vy.set(this.vy);
     out.archetype.set(this.archetype);
     out.waveId.set(this.waveId);
     out.indexInWave.set(this.indexInWave);
@@ -233,6 +304,8 @@ export class Horde {
     this.#count = state.count;
     this.x.set(state.x);
     this.y.set(state.y);
+    this.vx.set(state.vx);
+    this.vy.set(state.vy);
     this.archetype.set(state.archetype);
     this.waveId.set(state.waveId);
     this.indexInWave.set(state.indexInWave);
@@ -246,6 +319,8 @@ export class Horde {
     if (slot !== last) {
       this.x[slot] = this.x[last] ?? 0;
       this.y[slot] = this.y[last] ?? 0;
+      this.vx[slot] = this.vx[last] ?? 0;
+      this.vy[slot] = this.vy[last] ?? 0;
       this.archetype[slot] = this.archetype[last] ?? 0;
       this.waveId[slot] = this.waveId[last] ?? 0;
       this.indexInWave[slot] = this.indexInWave[last] ?? 0;
@@ -298,9 +373,43 @@ export class Horde {
     }
   }
 
-  /** Un pas de simulation. `dt` est fixe : 1 / TICK_HZ. */
-  step(dt: number, fields: readonly FlowField[]): void {
-    this.#advance(0, this.#count, dt, fields);
+  /**
+   * Un pas de simulation. `dt` est fixe : 1 / TICK_HZ. `tick` est le tick
+   * ABSOLU de la simulation (`Room.tick` cote serveur, le compteur local
+   * aligne dessus cote client) — jamais un compteur qui repartirait de zero
+   * par horde, puisque c'est lui qui decide, via `entityIdAt`, quelles
+   * entites recalculent leur trajectoire ce tick (tache 19). Un rejeu
+   * (`HordeHistory`) doit rappeler `step` avec le MEME tick absolu que celui
+   * qu'il rejoue, pas avec un compteur local au rejeu : sans ca, une entite
+   * ne recalculerait pas a la meme phase que la simulation d'origine, et le
+   * rejeu cesserait de reproduire exactement ce qui s'est passe.
+   *
+   * Recalcule d'abord la trajectoire (direction du champ + repulsion
+   * sommee) des entites dont c'est le tour, PUIS avance tout le monde le
+   * long de sa vitesse tenue — dans cet ordre, pour que l'avancement de ce
+   * tick utilise deja la vitesse fraichement recalculee plutot que celle
+   * d'il y a `STEERING_RECOMPUTE_TICKS` pas.
+   *
+   * ⚠️ **`dt <= 0` est un NO-OP STRICT, y compris pour `vx`/`vy`.** Avant la
+   * tache 19, un `dt` nul rendait deja `#advance` sans effet (vitesse
+   * multipliee par `dt`), donc peu importait que `GameClient` appelle `step`
+   * pendant le gel (`dt * movementScale = 0`) alors que `Room.step`, cote
+   * serveur, ne l'appelle JAMAIS pendant le gel strict (retour anticipe avant
+   * meme de calculer `scaledDt`) : les deux ne faisaient rien, de toute facon.
+   * Mais `#recomputeSteering` ecrit `vx`/`vy` INDEPENDAMMENT de `dt` — sans ce
+   * garde, le client continuerait de recalculer la vitesse des entites en
+   * phase PENDANT le gel, alors que le serveur, lui, ne touche pas du tout a
+   * la horde ce tick-la : `vx`/`vy` divergeraient en silence des la reprise,
+   * exactement le genre de defaut que le scenario 9 de
+   * `shared/horde.replication.test.ts` existe pour attraper. Ce garde retablit
+   * l'invariant que tout le reste de ce fichier suppose deja : `dt <= 0` ne
+   * fait litteralement rien.
+   */
+  step(dt: number, fields: readonly FlowField[], tick: number): void {
+    if (dt > 0) {
+      this.#recomputeSteering(tick, fields);
+      this.#advanceByVelocity(0, this.#count, dt);
+    }
     this.#recordFieldRevisions(fields);
   }
 
@@ -352,16 +461,27 @@ export class Horde {
     // les murs exactement comme le fait `Room.step` cote serveur.
     this.spawn(order, fields[0]);
     for (let step = 0; step < missedTicks; step++) {
-      this.#advance(before, this.#count, dt, fields);
+      this.#advanceAlongField(before, this.#count, dt, fields);
     }
   }
 
   /**
-   * Avance le creneau `[from, to)` d'un pas. Factorise pour que `step` et
-   * `spawnCatchingUp` partagent la meme logique de deplacement — sans ca,
-   * les deux copies divergeraient tot ou tard.
+   * Avance le creneau `[from, to)` d'un pas, en lisant la direction du champ
+   * DIRECTEMENT plutot que via une vitesse tenue — reserve au rattrapage
+   * (`spawnCatchingUp`).
+   *
+   * ⚠️ **Delibrement hors du mecanisme de phase de la tache 19.** Le
+   * rattrapage etait deja une approximation avant cette tache (erreur
+   * residuelle de fraicheur du champ, ~20 px, voir la doc de
+   * `spawnCatchingUp`) et n'a jamais inclus la repulsion entre entites — la
+   * separation d'alors s'appliquait a part, jamais dans cette boucle. Y
+   * ajouter le calendrier de phase compliquerait ce chemin pour un gain nul :
+   * les entites neuves recevront leur premiere vraie vitesse tenue au plus
+   * `STEERING_RECOMPUTE_TICKS - 1` pas plus tard, via `#recomputeSteering`,
+   * exactement comme n'importe quelle entite fraichement apparue par `spawn`
+   * (voir sa doc sur `vx`/`vy`).
    */
-  #advance(from: number, to: number, dt: number, fields: readonly FlowField[]): void {
+  #advanceAlongField(from: number, to: number, dt: number, fields: readonly FlowField[]): void {
     for (let i = from; i < to; i++) {
       // Tache 17.2 : une entite a portee de contact s'arrete plutot que de
       // traverser le joueur. `stopped` vient de `retarget`, voir sa doc.
@@ -378,6 +498,152 @@ export class Horde {
       const cell = field.indexAt(ex, ey);
       this.x[i] = clamp(ex + (field.dirX[cell] ?? 0) * speed, 0, MAP_SIZE);
       this.y[i] = clamp(ey + (field.dirY[cell] ?? 0) * speed, 0, MAP_SIZE);
+    }
+  }
+
+  /**
+   * Avance le creneau `[from, to)` d'un pas le long de sa vitesse TENUE
+   * (`vx`/`vy`) — le chemin normal de `step`, tache 19. Ne touche jamais aux
+   * champs : toute la direction est deja capturee dans la vitesse par
+   * `#recomputeSteering`.
+   */
+  #advanceByVelocity(from: number, to: number, dt: number): void {
+    for (let i = from; i < to; i++) {
+      // Tache 17.2 : une entite a portee de contact s'arrete plutot que de
+      // traverser le joueur, quelle que soit la vitesse qu'elle tient par
+      // ailleurs.
+      if (this.stopped[i]) {
+        continue;
+      }
+      const ex = this.x[i] ?? 0;
+      const ey = this.y[i] ?? 0;
+      this.x[i] = clamp(ex + (this.vx[i] ?? 0) * dt, 0, MAP_SIZE);
+      this.y[i] = clamp(ey + (this.vy[i] ?? 0) * dt, 0, MAP_SIZE);
+    }
+  }
+
+  /**
+   * Recalcule `vx`/`vy` des entites dont c'est le tour ce tick (tache 19) :
+   * direction du champ vise, plus repulsion sommee sur TOUS les voisins dans
+   * `SEPARATION_RADIUS`, plafonnee comme un seul voisin en recouvrement total
+   * (meme raisonnement que l'ancien `SeparationGrid`, tache 18) puis mise a
+   * l'echelle de `STEERING_REPULSION_STRENGTH`.
+   *
+   * ⚠️ **La phase choisit l'entite qui recalcule, pas la paire qui interagit.**
+   * L'ancien `SeparationGrid` visitait chaque PAIRE une fois (`j > i`) et
+   * appliquait la force aux deux membres a la fois — une optimisation valide
+   * tant que tout le monde recalcule a chaque tick. Ici, une entite qui
+   * recalcule doit voir TOUS ses voisins, actifs ou non, meme ceux qui ne
+   * recalculent pas ce tick-ci : leur position courante est toujours un
+   * intrant valide, seule LEUR PROPRE vitesse ne change pas maintenant. Le
+   * parcours symetrique casserait cette independance (une entite hors phase
+   * verrait sa vitesse modifiee hors de son propre tick de recalcul) ; il
+   * disparait donc, au prix de visiter deux fois plus de paires — largement
+   * compense par le fait qu'un seul tick sur `STEERING_RECOMPUTE_TICKS`
+   * declenche la recherche de voisins par entite (le gain mesure, voir le
+   * rapport de la tache 19).
+   */
+  #recomputeSteering(tick: number, fields: readonly FlowField[]): void {
+    const n = this.#count;
+    if (n === 0) {
+      return;
+    }
+    this.#buildNeighbourGrid(n);
+
+    const K = STEERING_RECOMPUTE_TICKS;
+    const phase = ((tick % K) + K) % K;
+    const r2 = SEPARATION_RADIUS * SEPARATION_RADIUS;
+    const cols = this.#gridCols;
+
+    for (let i = 0; i < n; i++) {
+      if (this.entityIdAt(i) % K !== phase) {
+        continue;
+      }
+
+      const xi = this.x[i] ?? 0;
+      const yi = this.y[i] ?? 0;
+
+      let pushX = 0;
+      let pushY = 0;
+      const cx = Math.min(cols - 1, Math.max(0, Math.floor(xi / SEPARATION_CELL)));
+      const cy = Math.min(cols - 1, Math.max(0, Math.floor(yi / SEPARATION_CELL)));
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const nx = cx + ox;
+          const ny = cy + oy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= cols) {
+            continue;
+          }
+          const c = ny * cols + nx;
+          const from = this.#cellStart[c] ?? 0;
+          const to = this.#cellStart[c + 1] ?? 0;
+          for (let k = from; k < to; k++) {
+            const j = this.#order[k] ?? 0;
+            if (j === i) {
+              continue;
+            }
+            const dx = xi - (this.x[j] ?? 0);
+            const dy = yi - (this.y[j] ?? 0);
+            const d2 = dx * dx + dy * dy;
+            if (d2 > r2 || d2 === 0) {
+              continue;
+            }
+            const d = Math.sqrt(d2);
+            const push = (SEPARATION_RADIUS - d) / SEPARATION_RADIUS;
+            pushX += (dx / d) * push;
+            pushY += (dy / d) * push;
+          }
+        }
+      }
+
+      const mag = Math.sqrt(pushX * pushX + pushY * pushY);
+      if (mag > 1) {
+        pushX /= mag;
+        pushY /= mag;
+      }
+
+      let fx = 0;
+      let fy = 0;
+      const field = fields[this.targetField[i] ?? 0];
+      if (field) {
+        const speed = archetypeOf(this.archetype[i] ?? 0).speed;
+        const cell = field.indexAt(xi, yi);
+        fx = (field.dirX[cell] ?? 0) * speed;
+        fy = (field.dirY[cell] ?? 0) * speed;
+      }
+
+      this.vx[i] = fx + pushX * STEERING_REPULSION_STRENGTH;
+      this.vy[i] = fy + pushY * STEERING_REPULSION_STRENGTH;
+    }
+  }
+
+  /**
+   * Construit la grille de recherche de voisins pour les `n` premieres
+   * entites, par tri par comptage (deux passes lineaires, zero allocation) —
+   * repris tel quel de l'ancien `SeparationGrid.apply`.
+   */
+  #buildNeighbourGrid(n: number): void {
+    const cols = this.#gridCols;
+    this.#cellCount.fill(0);
+
+    for (let i = 0; i < n; i++) {
+      const cx = Math.min(cols - 1, Math.max(0, Math.floor((this.x[i] ?? 0) / SEPARATION_CELL)));
+      const cy = Math.min(cols - 1, Math.max(0, Math.floor((this.y[i] ?? 0) / SEPARATION_CELL)));
+      const c = cy * cols + cx;
+      this.#cellIdx[i] = c;
+      this.#cellCount[c] = (this.#cellCount[c] ?? 0) + 1;
+    }
+    let running = 0;
+    for (let c = 0; c < this.#cellCount.length; c++) {
+      this.#cellStart[c] = running;
+      this.#cursor[c] = running;
+      running += this.#cellCount[c] ?? 0;
+    }
+    this.#cellStart[this.#cellCount.length] = running;
+    for (let i = 0; i < n; i++) {
+      const c = this.#cellIdx[i] ?? 0;
+      this.#order[this.#cursor[c] ?? 0] = i;
+      this.#cursor[c] = (this.#cursor[c] ?? 0) + 1;
     }
   }
 

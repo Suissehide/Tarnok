@@ -10,7 +10,7 @@
     "bench": "npm run bench:sim && npm run bench:net && npm run bench:sep",
     "bench:sim": "tsx bench/sim.bench.ts",
     "bench:net": "tsx bench/net.bench.ts",
-    "bench:sep": "tsx bench/separation.bench.ts",
+    "bench:sep": "tsx bench/steering.bench.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

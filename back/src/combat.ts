@@ -35,7 +35,7 @@ import type { Projectiles } from '@shared/projectiles';
  *
  * Interface structurelle plutot que classe : `Room.PlayerState` la satisfait
  * directement, sans adaptateur — `resolveContact` et `resolvePickups`
- * modifient les objets qu'on leur passe EN PLACE, comme `SeparationGrid.apply`
+ * modifient les objets qu'on leur passe EN PLACE, comme `Horde.step`
  * modifie une `Horde` en place.
  */
 export interface ContactPlayer {
@@ -211,7 +211,7 @@ export function resolveProjectileDamage(
  * par paire joueur/monstre.
  *
  * Modifie `players` EN PLACE (hp, contactInvulnTicks) : pas de retour, comme
- * `SeparationGrid.apply` modifie une `Horde` en place.
+ * `Horde.step` modifie une `Horde` en place.
  */
 export function resolveContact(players: readonly ContactPlayer[], horde: Horde): void {
   const r2 = CONTACT_RADIUS * CONTACT_RADIUS;

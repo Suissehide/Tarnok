@@ -21,12 +21,21 @@ function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
 
 describe('HordeHistory', () => {
   it('un aller-retour enregistrer / restaurer rend exactement l etat sauvegarde, champ par champ', () => {
+    // ⚠️ NEUF tableaux, pas sept : c'est exactement le defaut R13 (voir le
+    // rapport de la tache 19) — un test qui n'en verifie qu'une partie reste
+    // vert quand une copie manque dans `saveState`/`restoreState`. `vx`/`vy`
+    // (tache 19) sont ICI au meme titre que les sept autres, verifies un par
+    // un par corruption puis restauration : supprimer la copie de l'UN
+    // QUELCONQUE de ces neuf tableaux dans `saveState` ou `restoreState` doit
+    // faire echouer la ligne qui lui correspond, et elle seule.
     const horde = new Horde(20);
     horde.spawn(order({ waveId: 1, archetype: 2, count: 3 }));
     // Valeurs distinctives, posees a la main : le spawn seul ne fait pas
-    // varier x/y/targetField assez pour prouver qu'ils sont bien copies.
+    // varier x/y/vx/vy/targetField assez pour prouver qu'ils sont bien copies.
     horde.x[0] = 111.5;
     horde.y[0] = 222.5;
+    horde.vx[0] = 45.5;
+    horde.vy[0] = -67.5;
     horde.targetField[0] = 3;
     horde.stopped[0] = 1;
 
@@ -37,6 +46,8 @@ describe('HordeHistory', () => {
       count: horde.count,
       x: horde.x[0] ?? 0,
       y: horde.y[0] ?? 0,
+      vx: horde.vx[0] ?? 0,
+      vy: horde.vy[0] ?? 0,
       archetype: horde.archetype[0] ?? 0,
       waveId: horde.waveId[0] ?? 0,
       indexInWave: horde.indexInWave[0] ?? 0,
@@ -50,6 +61,8 @@ describe('HordeHistory', () => {
     // ne pas perturber le creneau 0 par compaction).
     horde.x[0] = 999.5;
     horde.y[0] = 888.5;
+    horde.vx[0] = -12.5;
+    horde.vy[0] = 34.5;
     horde.archetype[0] = (attendu.archetype + 1) % 256;
     horde.waveId[0] = attendu.waveId + 1;
     horde.indexInWave[0] = attendu.indexInWave + 1;
@@ -65,6 +78,8 @@ describe('HordeHistory', () => {
     expect(horde.count).toBe(attendu.count);
     expect(horde.x[0]).toBe(attendu.x);
     expect(horde.y[0]).toBe(attendu.y);
+    expect(horde.vx[0]).toBe(attendu.vx);
+    expect(horde.vy[0]).toBe(attendu.vy);
     expect(horde.archetype[0]).toBe(attendu.archetype);
     expect(horde.waveId[0]).toBe(attendu.waveId);
     expect(horde.indexInWave[0]).toBe(attendu.indexInWave);

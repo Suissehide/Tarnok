@@ -17,7 +17,6 @@ import { Horde } from '@shared/horde';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
-import { SeparationGrid } from '@shared/separation';
 import type { WaveOrder } from '@shared/waves';
 import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -150,7 +149,6 @@ export class Room {
   readonly #fields: FlowField[];
   readonly #history = new PlayerHistory();
   readonly #director: WaveDirector;
-  readonly #separation = new SeparationGrid(MAX_ENTITIES);
   readonly #projectiles = new Projectiles(PROJECTILE_CAPACITY);
   readonly #orbs = new OrbField(MAX_ENTITIES);
   #pendingOrders: WaveOrder[] = [];
@@ -320,7 +318,7 @@ export class Room {
    * Un pas de simulation. `dt` est fixe : 1 / TICK_HZ.
    *
    * ⚠️ **L'ordre compte, et il doit rester identique cote client (tache 10).**
-   * Sequence retenue (voir aussi `combat.ts`, qui porte les etapes 8 a 10) :
+   * Sequence retenue (voir aussi `combat.ts`, qui porte les etapes 7 a 9) :
    *
    * ```
    * 1. tick++
@@ -328,12 +326,14 @@ export class Room {
    * 3. enregistrer l'historique de positions (arrondi !)
    * 4. rafraichir les champs si du (tick % stepsPerField)
    * 5. appliquer les ordres de vague en attente
-   * 6. avancer la horde
-   * 7. appliquer la separation
-   * 8. tirer les salves dues, avancer les projectiles, resoudre les collisions
-   * 9. arbitrer le contact avec les joueurs
-   * 10. resoudre les ramassages d'orbes
-   * 11. mettre en file morts et ramassages pour diffusion
+   * 6. avancer la horde — `Horde.step` recalcule d'abord la trajectoire des
+   *    entites dont c'est le tour (direction du champ + repulsion sommee,
+   *    tache 19), puis avance tout le monde ; l'ancienne etape separee
+   *    « appliquer la separation » a fusionne dans cet appel unique
+   * 7. tirer les salves dues, avancer les projectiles, resoudre les collisions
+   * 8. arbitrer le contact avec les joueurs
+   * 9. resoudre les ramassages d'orbes
+   * 10. mettre en file morts et ramassages pour diffusion
    * ```
    *
    * ⚠️ **Etapes 4 et 5 : le rafraichissement precede l'engendrement, depuis
@@ -423,8 +423,7 @@ export class Room {
       this.#pendingOrders.push(order);
     }
 
-    this.horde.step(scaledDt, this.#fields);
-    this.#separation.apply(this.horde, scaledDt);
+    this.horde.step(scaledDt, this.#fields, this.#tick);
 
     this.#fireWeapons(this.#tick);
     const deadIds = resolveProjectileDamage(

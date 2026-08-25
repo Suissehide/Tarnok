@@ -19,9 +19,9 @@ import type { Horde, HordeState } from './horde';
  * la `Horde` qu'ils accompagnent — `Horde.capacity` est fixe, donc un etat qui
  * ne l'egalerait pas ne pourrait pas recevoir une copie complete. `record` ne
  * fait ensuite que des `.set()` dans ces tampons : **aucune allocation par
- * tick**, pour la meme raison que `FlowField` pre-alloue sa file et que
- * `SeparationGrid` pre-alloue son curseur — un ramasse-miettes visible dans
- * les mesures de la tache 0.
+ * tick**, pour la meme raison que `FlowField` pre-alloue sa file et que la
+ * grille de voisins de `Horde` (tache 19) pre-alloue son curseur — un
+ * ramasse-miettes visible dans les mesures de la tache 0.
  */
 export class HordeHistory {
   readonly #ticks: Int32Array;
@@ -33,6 +33,8 @@ export class HordeHistory {
       count: 0,
       x: new Float32Array(capacity),
       y: new Float32Array(capacity),
+      vx: new Float32Array(capacity),
+      vy: new Float32Array(capacity),
       archetype: new Uint8Array(capacity),
       waveId: new Uint16Array(capacity),
       indexInWave: new Uint16Array(capacity),

@@ -722,8 +722,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // ⚠️ En ANNEAU, pas alignes sur un segment (regression constatee tache
     // 14, en durcissant l'arme). Dix monstres colles en ligne, espaces de 2 px,
     // sont tous a moins de `SEPARATION_RADIUS` (28 px) les uns des autres : la
-    // repulsion de `SeparationGrid` les pousse activement pendant qu'ils
-    // attendent leur tour d'etre cibles, et le dernier abattu peut deriver
+    // repulsion (tache 19 : `Horde#recomputeSteering`) les pousse activement
+    // pendant qu'ils attendent leur tour d'etre cibles, et le dernier abattu peut deriver
     // au-dela d'`ORB_PICKUP_RADIUS` (90 px) avant de mourir — verifie en
     // mesurant sa distance au joueur a l'instant de sa mort : 116 px avec
     // l'arme reglee tache 14, contre 90 px de rayon de ramassage. Un anneau a

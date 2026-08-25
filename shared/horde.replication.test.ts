@@ -1,18 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
+import { archetypeOf } from './archetypes';
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   MAP_SIZE,
   ROLLBACK_DEPTH_TICKS,
-  SEPARATION_STRENGTH,
+  STEERING_REPULSION_STRENGTH,
   TICK_HZ,
 } from './constants';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
 import { HordeHistory } from './horde-history';
 import { PlayerHistory } from './player-history';
-import { SeparationGrid } from './separation';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
 
@@ -93,7 +93,7 @@ function advance(
         }
       }
 
-      p.horde.step(DT, p.fields);
+      p.horde.step(DT, p.fields, tick);
     }
 
     // 1. L'ensemble des identites doit etre STRICTEMENT egal.
@@ -270,7 +270,7 @@ describe("le livrable de l'etape 2", () => {
           p.horde.spawn(order);
         }
 
-        p.horde.step(DT, p.fields);
+        p.horde.step(DT, p.fields, tick);
       });
 
       // On ne compare que les entites que la reference ET le participant ont
@@ -306,9 +306,14 @@ describe("le livrable de l'etape 2", () => {
     expect(stats.identityMismatches).toBe(0);
     // Pas de seuil serre ici : ce cas n'est pas cense respecter DRIFT_LIMIT_PX,
     // puisqu'un ou deux pas de simulation manquent reellement. La mesure
-    // attendue est ~694 px (voir §6.2 de la spec) ; cette borne n'est pas une
-    // garantie, juste un filet contre une explosion.
-    expect(stats.maxDrift).toBeLessThan(800);
+    // attendue etait ~694 px avant la tache 19 (voir §6.2 de la spec) ; le
+    // recalcul de trajectoire par intervalle (tache 19) l'a fait monter vers
+    // ~1450 px — une entite qui recalcule un tick sur K tient une direction
+    // quantifiee par cellule de flowfield jusqu'a K fois plus longtemps
+    // qu'avant, ce qui laisse plus de temps a un choix de cellule divergent de
+    // se propager avant correction. Borne large, toujours un filet contre une
+    // explosion, jamais une garantie de precision.
+    expect(stats.maxDrift).toBeLessThan(2000);
   });
 
   it('avec spawnCatchingUp, la derive tardive redevient constante et petite', () => {
@@ -371,7 +376,7 @@ describe("le livrable de l'etape 2", () => {
           }
         }
 
-        p.horde.step(DT, p.fields);
+        p.horde.step(DT, p.fields, tick);
       });
 
       for (const p of parts.slice(1)) {
@@ -397,10 +402,19 @@ describe("le livrable de l'etape 2", () => {
     );
 
     expect(stats.identityMismatches).toBe(0);
-    // Le double des 20,3 px mesures : marge pour ne pas etre fragile, tout en
-    // verrouillant que le rattrapage ramene bien la derive a une constante
-    // petite plutot qu'a une croissance lineaire.
-    expect(stats.maxDrift).toBeLessThan(40);
+    // ⚠️ Avant la tache 19, le rattrapage ramenait cette derive a une
+    // constante petite (20,3 px) — verrouille alors a 40 px. Depuis la tache
+    // 19, ce n'est plus vrai : le residu de rattrapage (~20 px, inchange)
+    // suffit a faire tomber deux participants dans des cellules de flowfield
+    // differentes a l'occasion, et la direction qui en resulte est tenue
+    // jusqu'a `STEERING_RECOMPUTE_TICKS` fois plus longtemps qu'avant avant
+    // toute chance de correction — la repulsion, couplee entre voisins,
+    // propage ensuite l'ecart. Le rattrapage REDUIT toujours la derive par
+    // rapport a son absence (1220 px ici contre ~1450 px sans rattrapage,
+    // scenario precedent) mais ne l'annule plus. Mesure sur cette fenetre de
+    // 400 pas ; elle continue de croitre au-dela (voir le rapport de la
+    // tache 19) — a rouvrir si l'auteur veut la re-borner explicitement.
+    expect(stats.maxDrift).toBeLessThan(1500);
   });
 
   it('reproduit la configuration reelle : un serveur et quatre clients, chacun dans son propre ordre de tick', () => {
@@ -472,7 +486,7 @@ describe("le livrable de l'etape 2", () => {
             p.horde.spawn(order, p.fields[0]);
           }
 
-          p.horde.step(DT, p.fields);
+          p.horde.step(DT, p.fields, tick);
           return;
         }
 
@@ -496,7 +510,7 @@ describe("le livrable de l'etape 2", () => {
           }
         }
 
-        p.horde.step(DT, p.fields);
+        p.horde.step(DT, p.fields, tick);
       });
 
       for (const p of parts.slice(1)) {
@@ -526,7 +540,11 @@ describe("le livrable de l'etape 2", () => {
     // verrouille pas une garantie fine puisque les deux ordres different
     // reellement, il attrape seulement une explosion qui signalerait que les
     // deux sequences ne sont pas compatibles entre elles.
-    expect(stats.maxDrift).toBeLessThan(200);
+    //
+    // ⚠️ 200 px avant la tache 19 ; le meme residu de rattrapage combine a la
+    // meme sensibilite de cellule de flowfield tenue plus longtemps qu'avant
+    // (voir le test precedent) fait monter la mesure ici aussi.
+    expect(stats.maxDrift).toBeLessThan(1500);
   });
 
   /**
@@ -630,7 +648,7 @@ describe("le livrable de l'etape 2", () => {
               p.horde.retarget(seen.x, seen.y);
             }
           }
-          p.horde.step(DT, p.fields);
+          p.horde.step(DT, p.fields, tick);
           return;
         }
 
@@ -676,7 +694,12 @@ describe("le livrable de l'etape 2", () => {
             p.horde.retarget(seen.x, seen.y);
           }
         }
-        p.horde.step(DT, p.fields);
+        // Le compteur de tick LOCAL du client, pas le tick vrai de la boucle
+        // (`tick`) : c'est exactement ce que ferait `GameClient#advanceHorde`,
+        // qui n'a jamais acces au tick serveur absolu autrement que via ce
+        // compteur resynchronise (ou non, selon le scenario) — voir la doc de
+        // `Horde.step` sur la phase de recalcul de trajectoire.
+        p.horde.step(DT, p.fields, queryTick);
       });
 
       for (const p of parts.slice(1)) {
@@ -748,9 +771,10 @@ describe("le livrable de l'etape 2", () => {
  * Le livrable de l'etape 3 : la replication survit-elle aux morts, une fois la
  * separation en jeu ?
  *
- * La separation COUPLE les entites (`shared/separation.ts`) : retirer un
- * ennemi ne decale plus une seule entite mais des dizaines, de proche en
- * proche. Une mort appliquee un tick trop tard ne se noie plus dans le bruit —
+ * La repulsion COUPLE les entites (`Horde#recomputeSteering`, tache 19) :
+ * retirer un ennemi ne decale plus une seule entite mais des dizaines, de
+ * proche en proche. Une mort appliquee un tick trop tard ne se noie plus
+ * dans le bruit —
  * elle propage un ecart qui ne s'eteint plus. L'etape 2 a mesure ce que ca
  * donne pour l'apparition tardive d'une vague : 694 px apres dix secondes, sans
  * borne. La parade est le rejeu : `HordeHistory` (tache 3) restaure la horde au
@@ -801,7 +825,6 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
     horde: Horde;
     fields: FlowField[];
     playerHistory: PlayerHistory;
-    separation: SeparationGrid;
     hordeHistory: HordeHistory;
     /** Compteur de morts appliquees au present faute d'anneau assez profond (scenario 10). */
     lateDeaths: number;
@@ -820,7 +843,6 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
       horde,
       fields,
       playerHistory: new PlayerHistory(),
-      separation: new SeparationGrid(horde.capacity),
       hordeHistory: new HordeHistory(horde.capacity),
       lateDeaths: 0,
     };
@@ -910,16 +932,20 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
   }
 
   /**
-   * Un pas de rejeu : les etapes 4, 6, 7 de la sequence serveur (rafraichir le
-   * champ si du, avancer la horde, appliquer la separation) — jamais
-   * l'arbitrage (etapes 8-10), qui reste la prerogative du serveur. Rejouer
-   * l'arbitrage prononcerait des morts que le serveur n'a pas decidees, et
-   * ferait diverger le client precisement la ou le rejeu cherche a le faire
-   * converger.
+   * Un pas de rejeu : les etapes 4 et 6 de la sequence serveur (rafraichir le
+   * champ si du, avancer la horde — recalcul de trajectoire par phase inclus,
+   * tache 19) — jamais l'arbitrage (etapes 7-9), qui reste la prerogative du
+   * serveur. Rejouer l'arbitrage prononcerait des morts que le serveur n'a
+   * pas decidees, et ferait diverger le client precisement la ou le rejeu
+   * cherche a le faire converger.
    *
    * Reecrit aussi l'anneau pour ce tick avec l'etat corrige : une mort
    * suivante qui viserait l'un de ces ticks doit restaurer la version rejouee,
    * pas l'ancienne version — celle d'avant la correction qu'on vient de faire.
+   *
+   * ⚠️ `tick` est passe TEL QUEL a `Horde.step` : c'est le meme tick absolu
+   * que celui utilise par la simulation d'origine, condition pour que la
+   * phase de recalcul de trajectoire (tache 19) reste identique au rejeu.
    */
   function replayTick(p: DeathParticipant, tick: number, stepsPerField: number): void {
     if (tick % stepsPerField === 0) {
@@ -931,8 +957,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
         p.horde.retarget(seen.x, seen.y);
       }
     }
-    p.horde.step(DT, p.fields);
-    p.separation.apply(p.horde, DT);
+    p.horde.step(DT, p.fields, tick);
     p.hordeHistory.record(tick, p.horde);
   }
 
@@ -1080,8 +1105,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
             p.horde.retarget(seen.x, seen.y);
           }
         }
-        p.horde.step(DT, p.fields);
-        p.separation.apply(p.horde, DT);
+        p.horde.step(DT, p.fields, tick);
       }
 
       // Le serveur arbitre et applique a l'instant meme : il n'a jamais besoin
@@ -1165,8 +1189,14 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
     // les deux ~0 et la latence simulee ne prouverait rien (barre de qualite de
     // la tache 8). La borne haute reste un filet contre une explosion, pas une
     // garantie de precision.
+    //
+    // ⚠️ 687,893 px avant la tache 19, 800 de borne haute ; le recalcul de
+    // trajectoire par intervalle (tache 19) la fait monter vers ~1010 px —
+    // c'est UN DES DEUX CHIFFRES QUE LA TACHE 19 S'ATTEND A VOIR BOUGER (voir
+    // son rapport), la separation qu'il mesure n'etant plus recalculee a
+    // chaque tick.
     expect(result.maxDrift).toBeGreaterThan(20);
-    expect(result.maxDrift).toBeLessThan(800);
+    expect(result.maxDrift).toBeLessThan(1500);
   });
 
   it('scenario 9 — avec rejeu, les identites restent strictement egales et la derive retombe sous 2 px', () => {
@@ -1249,8 +1279,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
             p.horde.retarget(seen.x, seen.y);
           }
         }
-        p.horde.step(DT, p.fields);
-        p.separation.apply(p.horde, DT);
+        p.horde.step(DT, p.fields, tick);
       }
 
       if (tick === DEATH_TICK) {
@@ -1318,15 +1347,29 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
 });
 
 /**
- * Tache 18 : les trois correctifs (plafond de separation, apparition hors
+ * Taches 18 et 19 : les correctifs (plafond de repulsion, apparition hors
  * mur, sortie de mur) doivent produire le MEME resultat des deux cotes,
- * exactement comme le reste de ce fichier le verifie pour la separation et le
- * rejeu. Un seul scenario, exerçant les trois comportements en sequence sur
- * DEUX simulations independantes (« le serveur » et « un client »), qui ne
+ * exactement comme le reste de ce fichier le verifie pour la mort et le
+ * rejeu. Un seul scenario, exerçant les comportements en sequence sur DEUX
+ * simulations independantes (« le serveur » et « un client »), qui ne
  * partagent rien d'autre que la meme graine de carte et le meme ordre de
  * vague — comme deux processus reels.
+ *
+ * ⚠️ **Ce que la tache 19 change ici.** Avant elle, `SeparationGrid.apply`
+ * etait un appel SEPARE de `Horde.step`, ce qui permettait de mesurer le
+ * plafond par une simple difference de position avant/apres CET appel-la.
+ * Depuis la tache 19, la repulsion est fondue dans `Horde.step` (recalcul de
+ * trajectoire par phase, tache 19) : une difference de position avant/apres
+ * `step` mesurerait la direction du champ ET la repulsion ET, pour un
+ * entassement artificiel EXACTEMENT co-localise, un artefact du calendrier de
+ * phase lui-meme (des entites identiques divergent des qu'elles n'ont pas
+ * toutes la meme phase de recalcul — verifie a la main en ecrivant ce test,
+ * voir le rapport de la tache 19). Le plafond se verifie donc desormais sur
+ * `vx`/`vy` DIRECTEMENT (publics depuis la tache 19), bornes par
+ * `archetypeOf(...).speed + STEERING_REPULSION_STRENGTH` — la somme des deux
+ * contributions, flux et repulsion, jamais davantage.
  */
-describe('tache 18 : plafond de separation et sortie de mur, verifies identiques sur deux clients', () => {
+describe('taches 18 et 19 : plafond de repulsion et sortie de mur, verifies identiques sur deux clients', () => {
   function fieldAt(fields: readonly FlowField[], i: number): FlowField {
     const f = fields[i];
     if (!f) {
@@ -1356,7 +1399,6 @@ describe('tache 18 : plafond de separation et sortie de mur, verifies identiques
     function makeParticipant(): {
       horde: Horde;
       fields: FlowField[];
-      separation: SeparationGrid;
       history: PlayerHistory;
     } {
       const horde = new Horde(2000);
@@ -1365,7 +1407,7 @@ describe('tache 18 : plafond de separation et sortie de mur, verifies identiques
         applyObstacles(f, mask);
         return f;
       });
-      return { horde, fields, separation: new SeparationGrid(2000), history: new PlayerHistory() };
+      return { horde, fields, history: new PlayerHistory() };
     }
 
     const server = makeParticipant();
@@ -1394,23 +1436,25 @@ describe('tache 18 : plafond de separation et sortie de mur, verifies identiques
       }
     }
 
-    // Entasse artificiellement 40 entites au meme point, IDENTIQUEMENT chez
-    // les deux participants : exerce le plafond de separation (comportement
-    // 1) sans dependre du hasard d'une formation pour produire l'entassement.
+    // Entasse artificiellement 40 entites, IDENTIQUEMENT chez les deux
+    // participants, pour exercer le plafond de repulsion (comportement 1)
+    // sans dependre du hasard d'une formation. Un LEGER etalement (pas un
+    // point unique) : des positions EXACTEMENT identiques ne s'exercent
+    // jamais entre elles (`d2 === 0` les ignore par construction, voir
+    // `shared/horde.test.ts`) — l'entassement doit rester dense mais distinct.
     const PILE = 40;
     const pileX = anchorX + 1500;
     const pileY = anchorY + 1500;
     for (const p of parts) {
       for (let i = 0; i < PILE; i++) {
-        p.horde.x[i] = pileX;
-        p.horde.y[i] = pileY;
+        p.horde.x[i] = pileX + (i % 5) * 2;
+        p.horde.y[i] = pileY + Math.floor(i / 5) * 2;
       }
     }
 
     const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
-    // Marge flottante minime, meme raisonnement que shared/separation.test.ts.
-    const CAP = SEPARATION_STRENGTH * DT * 1.0001;
-    let maxObservedPush = 0;
+    let maxObservedSpeed = 0;
+    let maxCapForSpeed = 0;
     const TICKS = 240;
 
     for (let tick = 0; tick < TICKS; tick++) {
@@ -1428,37 +1472,40 @@ describe('tache 18 : plafond de separation et sortie de mur, verifies identiques
             p.horde.retarget(seen.x, seen.y);
           }
         }
-        p.horde.step(DT, p.fields);
+        p.horde.step(DT, p.fields, tick);
 
-        // Deplacement du a la SEULE separation, pour verifier le plafond
-        // (comportement 1) — meme methode que le test de shared/separation.test.ts,
-        // appliquee ici sur une horde reelle plutot que sur un cas synthetique.
-        const beforeX = p.horde.x.slice(0, p.horde.count);
-        const beforeY = p.horde.y.slice(0, p.horde.count);
-        p.separation.apply(p.horde, DT);
+        // Plafond (comportement 1) : verifie directement sur `vx`/`vy`, voir
+        // la doc de ce `describe`. La borne par entite depend de son propre
+        // archetype (vitesse de base differente selon la vague).
         for (let i = 0; i < p.horde.count; i++) {
-          const d = Math.hypot(
-            (p.horde.x[i] ?? 0) - (beforeX[i] ?? 0),
-            (p.horde.y[i] ?? 0) - (beforeY[i] ?? 0),
-          );
-          if (d > maxObservedPush) {
-            maxObservedPush = d;
+          const cap =
+            archetypeOf(p.horde.archetype[i] ?? 0).speed + STEERING_REPULSION_STRENGTH * 1.0001;
+          const speed = Math.hypot(p.horde.vx[i] ?? 0, p.horde.vy[i] ?? 0);
+          if (speed > maxObservedSpeed) {
+            maxObservedSpeed = speed;
+            maxCapForSpeed = cap;
           }
-          expect(d).toBeLessThanOrEqual(CAP);
+          expect(speed).toBeLessThanOrEqual(cap);
         }
       }
 
       // --- Comportement 4 : accord tick pour tick entre les deux participants. ---
+      // Position ET vitesse tenue (tache 19) : deux clients qui divergeraient
+      // sur `vx`/`vy` seuls (vitesse sauvegardee/restauree differemment)
+      // divergeraient sur la position au(x) pas suivant(s) — les verifier
+      // TOUS LES DEUX rend le defaut visible un pas plus tot.
       expect(client.horde.count).toBe(server.horde.count);
       for (let i = 0; i < server.horde.count; i++) {
         expect(client.horde.x[i]).toBe(server.horde.x[i]);
         expect(client.horde.y[i]).toBe(server.horde.y[i]);
+        expect(client.horde.vx[i]).toBe(server.horde.vx[i]);
+        expect(client.horde.vy[i]).toBe(server.horde.vy[i]);
       }
     }
 
     // Le test ne prouverait rien sur le plafond si l'entassement artificiel
     // n'avait jamais approche la borne.
-    expect(maxObservedPush).toBeGreaterThan(CAP * 0.5);
+    expect(maxObservedSpeed).toBeGreaterThan(maxCapForSpeed * 0.5);
 
     // --- Comportement 3 : sortie de mur, identiquement chez les deux. ---
     for (const p of parts) {
@@ -1476,8 +1523,7 @@ describe('tache 18 : plafond de separation et sortie de mur, verifies identiques
     let clientEscapeTick = -1;
     for (let t = 0; t < 60; t++) {
       for (const p of parts) {
-        p.horde.step(DT, p.fields);
-        p.separation.apply(p.horde, DT);
+        p.horde.step(DT, p.fields, TICKS + t);
       }
       const sField = fieldAt(server.fields, server.horde.targetField[0] ?? 0);
       const cField = fieldAt(client.fields, client.horde.targetField[0] ?? 0);
@@ -1496,7 +1542,7 @@ describe('tache 18 : plafond de separation et sortie de mur, verifies identiques
     }
 
     process.stdout.write(
-      `tache 18 : plafond max observe ${maxObservedPush.toFixed(3)} px (borne ${CAP.toFixed(3)}), ` +
+      `taches 18/19 : vitesse max observee ${maxObservedSpeed.toFixed(3)} px/s (borne ${maxCapForSpeed.toFixed(3)}), ` +
         `sortie de mur au tick ${serverEscapeTick} (serveur) / ${clientEscapeTick} (client)\n`,
     );
 

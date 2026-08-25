@@ -21,7 +21,6 @@ import {
   encodeWaveOrder,
   encodeWelcome,
 } from '@shared/protocol';
-import { SeparationGrid } from '@shared/separation';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -189,7 +188,6 @@ interface ReferenceServer {
   horde: Horde;
   fields: FlowField[];
   playerHistory: PlayerHistory;
-  separation: SeparationGrid;
 }
 
 function makeReferenceServer(mapSeed: number, capacity: number): ReferenceServer {
@@ -205,7 +203,6 @@ function makeReferenceServer(mapSeed: number, capacity: number): ReferenceServer
     horde,
     fields,
     playerHistory: new PlayerHistory(),
-    separation: new SeparationGrid(capacity),
   };
 }
 
@@ -347,8 +344,7 @@ function runClientDeathScenario(params: {
         ref.horde.retarget(seen.x, seen.y);
       }
     }
-    ref.horde.step(STEP, ref.fields);
-    ref.separation.apply(ref.horde, STEP);
+    ref.horde.step(STEP, ref.fields, tick);
 
     // Le serveur de reference arbitre et applique a l'instant meme : lui seul
     // decide QUAND une mort a lieu, jamais avec latence sur lui-meme.

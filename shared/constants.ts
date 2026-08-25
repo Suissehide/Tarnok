@@ -103,7 +103,8 @@ export const FLOWFIELD_CELL = 64;
 export const FLOWFIELD_HZ = 10;
 
 /**
- * Rayon en deca duquel deux entites se repoussent.
+ * Rayon en deca duquel deux entites se repoussent, dans le calcul de
+ * repulsion de la tache 19 (`Horde` — recherche de voisins par grille).
  *
  * ⚠️ Doit rester inferieur ou egal a la moitie de `SEPARATION_CELL` : c'est ce
  * qui garantit qu'un voisin en interaction est forcement dans la cellule
@@ -112,23 +113,42 @@ export const FLOWFIELD_HZ = 10;
  */
 export const SEPARATION_RADIUS = 28;
 
-/** Cote d'une cellule de la grille de separation. */
+/** Cote d'une cellule de la grille de recherche de voisins (tache 19). */
 export const SEPARATION_CELL = 56;
 
 /**
- * Raideur de la repulsion, en pixels monde par seconde, multipliee par la
- * fraction de recouvrement `(R - d) / R`.
+ * Cadence a laquelle CHAQUE ENTITE recalcule sa trajectoire (direction du champ
+ * + repulsion sommee), en ticks — tache 19. Le reste du temps, l'entite CONSERVE
+ * sa vitesse et se contente d'avancer : c'est ce qui remplace la force de
+ * separation appliquee a chaque pas (§3.3 de la spec, quatre principes mesures,
+ * voir le rapport de la tache 19).
  *
- * ⚠️ **Ce n'est pas un reglage de sensation.** Cette constante fixe la densite
- * d'equilibre de la horde, et le cout de la separation croit avec le CARRE de
- * cette densite. A 120 px/s la repulsion perd contre le flowfield : l'equilibre
- * n'est jamais atteint et le banc de la tache 0 franchit la porte du §3.3 pour
- * cette seule raison. A 1200 px/s la horde se stabilise a ~4 voisins par entite
- * au lieu de ~29, et le rejeu passe de 3,8 ms a 1,3 ms.
- *
- * La baisser est un choix de performance avant d'etre un choix de sensation.
+ * ⚠️ **Ce n'est pas un reglage de sensation, et il se choisit AVEC
+ * `STEERING_REPULSION_STRENGTH`, jamais separement.** 9 (300 ms a `TICK_HZ`) est
+ * la valeur mesuree : elle divise par neuf le nombre d'entites qui executent la
+ * recherche de voisins a chaque tick — coeur du gain de 4,53 a 0,74 ms mesure a
+ * 4000 entites (`npm run bench:sep -w back`) — tout en genant l'oscillation
+ * gauche-droite du sprite PAR CONSTRUCTION : une vitesse tenue ne peut plus se
+ * renverser d'un tick a l'autre.
  */
-export const SEPARATION_STRENGTH = 1200;
+export const STEERING_RECOMPUTE_TICKS = 9;
+
+/**
+ * Raideur de la repulsion, en pixels monde par seconde, multipliee par la
+ * fraction de recouvrement `(R - d) / R` puis sommee sur tous les voisins —
+ * remplace `SEPARATION_STRENGTH` (tache 19), qui pilotait une force reappliquee
+ * a chaque pas plutot qu'une composante de vitesse tenue `STEERING_RECOMPUTE_TICKS`
+ * pas durant.
+ *
+ * ⚠️ **Se choisit AVEC `STEERING_RECOMPUTE_TICKS`, jamais separement** — voir sa
+ * doc. Plus faible que l'ancienne valeur (1200) : la repulsion n'est plus
+ * corrigee a chaque pas, donc une valeur trop forte, tenue 300 ms, ferait
+ * largement depasser sa cible a une entite repoussee. 420 px/s, plafonnes comme
+ * avant a l'equivalent d'UN SEUL voisin en recouvrement total, donne un saut
+ * maximal mesure de 17,2 px a 4000 entites (`npm run bench:sep -w back`),
+ * contre 40,0 px avant.
+ */
+export const STEERING_REPULSION_STRENGTH = 420;
 
 /**
  * Profondeur de l'historique de horde, en ticks, pour le rejeu du §3.2.
