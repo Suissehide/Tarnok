@@ -4,6 +4,7 @@ import {
   LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
+  ORB_LIFETIME_TICKS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
 } from '@shared/constants';
@@ -591,6 +592,75 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     expect(client.orbs.count).toBe(1);
     expect(client.orbs.id[0]).toBe(killedIds[1]);
   });
+
+  it(
+    'un orbe non ramasse expire apres ORB_LIFETIME_TICKS : encore present juste avant, ' +
+      'disparu pile a l echeance (verifie aux deux bornes)',
+    () => {
+      // Meme raisonnement que l'expiration des projectiles (§6.1) : un seul
+      // cote de la fenetre ne prouve rien, un decalage d'un cran passerait
+      // inapercu. Ce test verifie les deux bornes dans la MEME execution.
+      const WAVE_ID = 60;
+      const ENTITIES = 5;
+
+      const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+      client.connect();
+      const socket = latestSocket();
+
+      const mapSeed = 0xc1e2_0007;
+      socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+      const order: WaveOrder = {
+        waveId: WAVE_ID,
+        spawnTick: 0,
+        seed: 0x51ee_d001,
+        archetype: 0,
+        formation: FORMATION.CLUSTER,
+        anchorX: 1200,
+        anchorY: 1200,
+        count: ENTITIES,
+      };
+      socket.emit('message', { data: encodeWaveOrder(order) });
+
+      const killedId = entityIdOf(WAVE_ID, 0);
+      const DEATH_TICK = 10;
+      const DELAY = 2;
+      // `bornTick` de l'orbe = DEATH_TICK (voir `#applyDeaths` : les orbes
+      // sont dates au tick de la mort, jamais a celui de sa livraison).
+      const JUST_BEFORE = DEATH_TICK + ORB_LIFETIME_TICKS - 1;
+      const AT_LIFETIME = DEATH_TICK + ORB_LIFETIME_TICKS;
+      const END = AT_LIFETIME + 5;
+
+      let sawJustBefore = false;
+      let sawAtLifetime = false;
+
+      for (let tick = 0; tick < END; tick++) {
+        socket.emit('message', {
+          data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100 }]),
+        });
+        if (tick === DEATH_TICK + DELAY) {
+          socket.emit('message', { data: encodeDeaths(DEATH_TICK, [killedId]) });
+        }
+        client.update(tick * STEP, STEP);
+
+        // Borne basse : encore la juste avant l'echeance.
+        if (tick === JUST_BEFORE) {
+          expect(client.orbs.count).toBe(1);
+          sawJustBefore = true;
+        }
+        // Borne haute : disparu pile a l'echeance, pas un tick plus tard.
+        if (tick === AT_LIFETIME) {
+          expect(client.orbs.count).toBe(0);
+          sawAtLifetime = true;
+        }
+      }
+
+      // Garde-fou sur le scenario lui-meme : si ces deux ticks n'ont jamais
+      // ete visites, les assertions ci-dessus n'ont jamais tourne et le test
+      // passerait pour la mauvaise raison.
+      expect(sawJustBefore).toBe(true);
+      expect(sawAtLifetime).toBe(true);
+    },
+  );
 });
 
 describe('GameClient — le gel est date, pas applique a la reception (tache 10)', () => {

@@ -520,11 +520,21 @@ export class GameClient {
    * local `currentTick` — celui que `#advanceHorde` vient tout juste de
    * simuler et d'enregistrer dans `#hordeHistory`.
    *
-   * L'ordre d'arrivee (FIFO) est suppose etre l'ordre chronologique des morts
-   * cote serveur : WebSocket preserve l'ordre des trames sur une meme
-   * connexion, et `Room.step` n'emet jamais deux `DEATHS` hors ordre. Rejouer
-   * un lot plus recent AVANT un lot plus ancien effacerait la correction du
-   * second par le rejeu du premier — voir le rapport de la tache 10.
+   * ⚠️ Suppose que la file reste dans l'ordre chronologique des ticks
+   * SERVEUR des lots, pas seulement dans l'ordre de leur reception. Deux
+   * faits, tous deux vrais aujourd'hui et tous deux necessaires, portent
+   * cette hypothese :
+   *   1. `Room.step` (voir `room.ts`) n'empile jamais qu'UN SEUL `DEATHS` par
+   *      tick, dans le tableau `#pendingDeaths` du serveur, donc l'emission
+   *      elle-meme est deja triee par tick croissant, sans jamais interfoliation.
+   *   2. WebSocket, sur une MEME connexion TCP, livre les trames dans leur
+   *      ordre d'emission — jamais de reordonnancement, jamais de duplication.
+   * Aucune des deux n'est reverifiee ici : ce n'est pas une garde, c'est une
+   * hypothese documentee, dont la rupture romprait un invariant que rien
+   * dans ce fichier ne produit aujourd'hui (voir le rapport de la tache 10,
+   * qui explique pourquoi une garde contre un desordre que rien ne cause n'a
+   * pas ete ajoutee). Rejouer un lot plus recent AVANT un lot plus ancien
+   * effacerait la correction du second par le rejeu du premier.
    */
   #drainPendingDeaths(currentTick: number): void {
     while (this.#pendingDeaths.length > 0) {
