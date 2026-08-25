@@ -60,19 +60,31 @@ qu'un tick de décalage ne se résorbe plus.
 | `XP_PER_ORB` | 1 | |
 | `LEVEL_FREEZE_TICKS` | 60 (2 s) | l'étape 4 le portera à 20 s plafonnées (§7.4) |
 | `LEVEL_RESUME_TICKS` | 30 (1 s) | reprise progressive (§7.4) |
-| `PROJECTILE_HIT_RADIUS` | 32 px | **doit être ≥ `max(projectileSpeed) / TICK_HZ`**, sinon un projectile traverse un ennemi entre deux ticks. Marge actuelle : 2 px — voir ci-dessous |
+| `PROJECTILE_HIT_RADIUS` | 32 px | rayon de touche, **sans contrainte de vitesse** — la collision balaie le segment, voir ci-dessous |
 
-> ### La marge anti-tunnel est de deux pixels
+> ### La collision balaie le segment, elle n'échantillonne pas le point d'arrivée
 >
-> L'arme la plus rapide de la table vaut 900 px/s, soit **30 px par tick** à 30 Hz, contre un
-> rayon de touche de 32 px. Une arme à 960 px/s traverserait ses cibles sans les toucher, et
-> rien ne le signalerait : le projectile continue sa route, l'ennemi reste vivant, personne ne
-> lève d'exception.
+> Première version : `collide` comparait la distance entre l'ennemi et la position **d'arrivée**
+> du projectile. On avait alors ajouté une contrainte `PROJECTILE_HIT_RADIUS ≥
+> max(projectileSpeed) / TICK_HZ`, en croyant qu'elle empêchait le tunnel. **Elle ne
+> l'empêchait pas.** Cas mesuré, avec l'arme à 900 px/s (30 px par tick) et un rayon de 32 :
 >
-> ⚠️ **Cette contrainte doit être vérifiée par un test, pas par ce commentaire.** Un test qui
-> parcourt `WEAPONS` et vérifie `projectileSpeed / TICK_HZ ≤ PROJECTILE_HIT_RADIUS` transforme
-> le couplage en échec de suite le jour où quelqu'un ajoute une arme rapide. C'est la leçon du
-> tableau ci-dessus : une contrainte écrite en prose ne protège personne.
+> - le projectile va de `(0, 0)` à `(30, 0)` en un tick ;
+> - un ennemi en `(15, 30)` est à 30 px du segment — **dans le rayon** ;
+> - mais il est à 33,5 px de *chacune des deux extrémités* — **hors du rayon**.
+>
+> Aucune touche. La contrainte protégeait seulement les cibles pile sur l'axe de tir ; celles
+> qui passaient sur le côté, au milieu du pas, étaient traversées en silence. Et le défaut
+> empirait avec la vitesse, c'est-à-dire là où la contrainte prétendait protéger.
+>
+> ⚠️ **La parade est géométrique, pas numérique** : `collide` mesure la distance de l'ennemi
+> au **segment parcouru** — `step` conserve la position précédente dans `#prevX` / `#prevY`, et
+> `collide` s'en sert. Le tunnel devient alors impossible quelle que soit la vitesse.
+>
+> **La contrainte de vitesse est donc supprimée**, et le test qui la vérifiait avec elle : il
+> garderait un proxy devenu inutile, et bloquerait une arme rapide parfaitement légitime. À sa
+> place, un test qui reproduit le cas ci-dessus — deux extrémités hors du rayon, segment
+> dedans — et exige la touche. Il teste la protection réelle au lieu de son approximation.
 
 > ### Pourquoi `SEPARATION_STRENGTH` n'est pas un réglage de sensation
 >
@@ -1237,6 +1249,12 @@ projectile arrive.
 **Interfaces :**
 - Produit : `class Projectiles` — tableaux typés, `fireSalvo(weapon, tick, x, y, targetId, horde)`,
   `step(dt)`, `collide(horde, onHit)`.
+
+> ⚠️ `step` conserve la position d'avant le déplacement dans `#prevX` / `#prevY`, et `collide`
+> mesure la distance de l'ennemi au **segment** `prev → courant`, jamais au seul point
+> d'arrivée. Deux tableaux de plus, et le tunnel devient impossible quelle que soit la vitesse
+> de l'arme. Voir la note sur `PROJECTILE_HIT_RADIUS` en tête de plan pour le cas mesuré qui
+> l'impose.
 
 - [ ] **Étape 1 : les tests**
 
