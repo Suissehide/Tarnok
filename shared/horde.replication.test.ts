@@ -897,7 +897,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
   }
 
   /**
-   * Un pas de rejeu : les etapes 5, 6, 7 de la sequence serveur (rafraichir le
+   * Un pas de rejeu : les etapes 4, 6, 7 de la sequence serveur (rafraichir le
    * champ si du, avancer la horde, appliquer la separation) — jamais
    * l'arbitrage (etapes 8-10), qui reste la prerogative du serveur. Rejouer
    * l'arbitrage prononcerait des morts que le serveur n'a pas decidees, et
