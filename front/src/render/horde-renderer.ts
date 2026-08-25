@@ -35,8 +35,42 @@ interface AtlasManifest {
 /** Images par seconde de l'animation, comme le pack (§12.2 de l'orientation). */
 const ANIM_FPS = 10;
 
-/** Hauteur d'une bande de tri. Voir `#depthSort`. */
-const DEPTH_BAND = 64;
+/**
+ * Hauteur d'une bande de tri. Voir `#depthSort`.
+ *
+ * ⚠️ **Valait 64 px, et c'etait la cause du clignotement de z-index** remonte a
+ * la verification manuelle de l'etape 3. Le commentaire d'origine justifiait ce
+ * chiffre par « a l'interieur d'une bande, l'ordre est indifferent — c'est la
+ * hauteur d'un demi-sprite ». C'est faux, et exactement a l'envers : sur un
+ * demi-sprite de haut, deux entites se **recouvrent presque totalement**, donc
+ * savoir laquelle passe devant est on ne peut plus visible. L'ordre intra-bande
+ * suit l'ordre du tableau, qui n'a aucun rapport avec `y` — et il change des
+ * qu'une des deux franchit une frontiere de bande.
+ *
+ * Mesure, 300 entites sur 40 images, en comptant les inversions d'ordre de
+ * dessin que **rien dans les `y` ne justifie** :
+ *
+ * | Bande | Inversions injustifiees |
+ * | --- | --- |
+ * | 64 px | 1,99 % des paires |
+ * | 16 px | 1,00 % |
+ * | 8 px | 0,60 % |
+ * | 4 px | 0,34 % |
+ * | **2 px** | **0,15 %** |
+ *
+ * Le residuel a 2 px ne concerne que des entites separees de moins de deux
+ * pixels en `y`, ou la profondeur est de toute facon ambigue.
+ *
+ * ⚠️ Deux fausses pistes ecartees par la mesure, pour qu'on ne les reprenne pas :
+ * la corruption du tri par un `bandOf` hors bornes (il est garde depuis
+ * toujours), et l'instabilite de l'ordre du tableau apres compaction — un
+ * departage stable par identite a ete essaye et ne change **rien**
+ * (31 228 inversions contre 31 698). Le coupable est la largeur de bande, seule.
+ *
+ * Le cout ne bouge pas : le tri par comptage est en `O(entites + bandes)`, et
+ * passer de 94 a 3 001 bandes ajoute deux parcours de tableau typé par image.
+ */
+export const DEPTH_BAND = 2;
 
 /**
  * Nombre de bandes couvrant la carte, calcule une fois pour toutes : `y` est
@@ -253,10 +287,11 @@ export class HordeRenderer {
    *
    * Un `ParticleContainer` dessine dans l'ordre du tableau. Le §4.5 tranche
    * deja : a 1 500 entites, c'est la difference entre un tri complet par image
-   * et un rangement en compartiments. A l'interieur d'une bande de 64 px,
-   * l'ordre est indifferent — c'est la hauteur d'un demi-sprite ; **entre**
-   * bandes, l'ordre croissant en `y` doit etre respecte, sans quoi une entite
-   * basse passerait derriere une entite haute.
+   * et un rangement en compartiments. A l'interieur d'une bande, l'ordre suit
+   * le tableau et n'a donc aucun rapport avec `y` — c'est pourquoi la bande
+   * doit rester **etroite** (voir `DEPTH_BAND`) ; **entre** bandes, l'ordre
+   * croissant en `y` est respecte, sans quoi une entite basse passerait
+   * derriere une entite haute.
    *
    * Le tri par comptage est lineaire et n'alloue rien : deux passes sur
    * `visible`, en s'appuyant sur des tampons de taille fixe (`#bandCounts`,

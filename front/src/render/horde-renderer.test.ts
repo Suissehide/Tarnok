@@ -3,7 +3,7 @@ import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
-import { BAND_COUNT, bandOf, sortByDepth } from './horde-renderer';
+import { BAND_COUNT, bandOf, DEPTH_BAND, sortByDepth } from './horde-renderer';
 
 /**
  * Tache 15 : `bandOf` ne doit jamais pouvoir sortir de `[0, BAND_COUNT)`.
@@ -27,9 +27,16 @@ describe('bandOf reste dans [0, BAND_COUNT) meme hors carte', () => {
   });
 
   it('laisse les ordonnees valides inchangees', () => {
+    // ⚠️ Derive de `DEPTH_BAND`, jamais code en dur. La premiere version
+    // affirmait `bandOf(63) === 0` et `bandOf(64) === 1` — vrai pour une bande
+    // de 64 px, faux des qu'on la retrecit. Passer la bande de 64 a 2 px pour
+    // corriger le clignotement a fait echouer ce test alors que `bandOf` etait
+    // parfaitement correcte : le test gardait la valeur d'une constante, pas le
+    // comportement de la fonction.
     expect(bandOf(0)).toBe(0);
-    expect(bandOf(63)).toBe(0);
-    expect(bandOf(64)).toBe(1);
+    expect(bandOf(DEPTH_BAND - 1)).toBe(0);
+    expect(bandOf(DEPTH_BAND)).toBe(1);
+    expect(bandOf(DEPTH_BAND * 7 + 1)).toBe(7);
   });
 });
 
