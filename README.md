@@ -15,12 +15,24 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 0 | Socle : dépôt, workspaces, CI, salon WebSocket minimal | ✅ |
 | 1 | Bancs de performance | ✅ — [résultats](docs/plans/2026-08-24-banc-resultats.md) |
 | 2 | Horde : flowfield, vagues data-driven, rendu batché | ✅ — [résultats](docs/plans/2026-08-24-etape-2-resultats.md) |
-| 3 | Combat : armes, projectiles, dégâts serveur, expérience | à venir |
+| 3 | Combat : tir, morts répliquées, orbes, niveaux, fin de run | ✅ — [résultats](docs/plans/2026-08-24-etape-3-resultats.md) |
 
 **Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
 19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du
 §3.3 de la spec d'orientation, et elle est mesurée : dérive de 0,000 px, identités
 strictement égales.
+
+Et elle survit au combat. La séparation **couple** les entités — retirer un ennemi en déplace
+des dizaines — et les morts arrivent en retard. Le client revient donc au tick de la mort,
+l'applique, et rejoue :
+
+| | Dérive |
+| --- | --- |
+| Morts + séparation, **sans** rejeu | 750,039 px |
+| Morts + séparation, **avec** rejeu | **0,000 px** |
+
+Le chiffre de gauche compte autant que celui de droite : il mesure ce que le mécanisme ferait
+sans ses corrections.
 
 Le découpage complet est au §13 de la spec.
 
@@ -48,7 +60,7 @@ npm run lint          # biome check : format + lint en une passe, échoue si non
 npm run format        # biome check --write : corrige
 npm run typecheck     # tsc --noEmit sur les deux paquets
 npm test              # vitest
-npm run bench -w back # bancs de simulation et réseau
+npm run bench -w back # bancs de simulation, réseau et séparation
 ```
 
 Le banc de rendu est une page : `npm run dev -w front`, puis `/bench/render.html`.
@@ -56,7 +68,7 @@ Le banc de rendu est une page : `npm run dev -w front`, puis `/bench/render.html
 ## Structure
 
 ```
-shared/    protocole binaire, flowfield, constantes — code partagé, sans package.json
+shared/    protocole binaire, flowfield, séparation, combat — code partagé, sans package.json
 front/     client TypeScript : PixiJS v8, Tailwind, Vite
 back/      serveur : Fastify (HTTP) + ws (jeu)
 deploy/    Dockerfiles, compose Traefik, template nginx
