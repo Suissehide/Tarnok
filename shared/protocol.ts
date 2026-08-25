@@ -92,13 +92,44 @@ export interface PickupsMessage {
   ids: number[];
 }
 
+/**
+ * S -> C : un joueur atteint un nouveau niveau.
+ *
+ * ⚠️ `tick` est celui auquel le **gel** prend effet, pas celui de l'emission —
+ * la meme raison que pour `DeathsMessage.tick` : sans ce tick partage, chaque
+ * client figerait a la reception, donc a un tick different selon sa latence,
+ * et le gel deviendrait une source de divergence au lieu d'une pause commune.
+ */
+export interface LevelUpMessage {
+  type: typeof MSG.LEVEL_UP;
+  tick: number;
+  playerId: number;
+  level: number;
+}
+
+/**
+ * S -> C : fin de run, une seule fois. `kills` tient sur 32 bits — une run
+ * longue depasse 65 535 ennemis tues, et le message ne part qu'une fois par
+ * run, donc son cout n'a pas a etre minimise au meme titre qu'un message
+ * frequent.
+ */
+export interface RunOverMessage {
+  type: typeof MSG.RUN_OVER;
+  tick: number;
+  survivedTicks: number;
+  level: number;
+  kills: number;
+}
+
 export type Message =
   | WelcomeMessage
   | SnapshotMessage
   | InputMessage
   | WaveOrderMessage
   | DeathsMessage
-  | PickupsMessage;
+  | PickupsMessage
+  | LevelUpMessage
+  | RunOverMessage;
 
 export const WELCOME_BYTES = 10;
 export const INPUT_BYTES = 5;
@@ -110,6 +141,11 @@ export const WAVE_ORDER_BYTES = 19;
 export const DEATHS_HEADER_BYTES = 7;
 /** Une identite d'entite, sur le fil : u32. */
 export const DEATH_ID_BYTES = 4;
+
+/** `type u8 · tick u32 · playerId u8 · level u8`. */
+export const LEVEL_UP_BYTES = 7;
+/** `type u8 · tick u32 · survivedTicks u32 · level u8 · kills u32`. */
+export const RUN_OVER_BYTES = 14;
 
 /**
  * Ouvre une vue sur le buffer en exigeant une taille minimale.
@@ -260,6 +296,59 @@ export function decodePickups(buf: ArrayBuffer): PickupsMessage {
 }
 
 /**
+ * S -> C : un joueur atteint un nouveau niveau, 7 octets.
+ *
+ * `tick` est celui du gel, pas de l'emission — voir `LevelUpMessage`.
+ */
+export function encodeLevelUp(tick: number, playerId: number, level: number): ArrayBuffer {
+  const buf = new ArrayBuffer(LEVEL_UP_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.LEVEL_UP);
+  v.setUint32(1, tick >>> 0, true);
+  v.setUint8(5, playerId);
+  v.setUint8(6, level);
+  return buf;
+}
+
+export function decodeLevelUp(buf: ArrayBuffer): LevelUpMessage {
+  const v = viewOf(buf, LEVEL_UP_BYTES);
+  return {
+    type: MSG.LEVEL_UP,
+    tick: v.getUint32(1, true),
+    playerId: v.getUint8(5),
+    level: v.getUint8(6),
+  };
+}
+
+/** S -> C : fin de run, une seule fois, 14 octets. Voir `RunOverMessage`. */
+export function encodeRunOver(
+  tick: number,
+  survivedTicks: number,
+  level: number,
+  kills: number,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(RUN_OVER_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.RUN_OVER);
+  v.setUint32(1, tick >>> 0, true);
+  v.setUint32(5, survivedTicks >>> 0, true);
+  v.setUint8(9, level);
+  v.setUint32(10, kills >>> 0, true);
+  return buf;
+}
+
+export function decodeRunOver(buf: ArrayBuffer): RunOverMessage {
+  const v = viewOf(buf, RUN_OVER_BYTES);
+  return {
+    type: MSG.RUN_OVER,
+    tick: v.getUint32(1, true),
+    survivedTicks: v.getUint32(5, true),
+    level: v.getUint8(9),
+    kills: v.getUint32(10, true),
+  };
+}
+
+/**
  * S -> C, a la connexion : l'identifiant attribue, le tick courant du salon et
  * la graine de la carte d'obstacles.
  */
@@ -349,6 +438,10 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeDeaths(buf);
     case MSG.PICKUPS:
       return decodePickups(buf);
+    case MSG.LEVEL_UP:
+      return decodeLevelUp(buf);
+    case MSG.RUN_OVER:
+      return decodeRunOver(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }

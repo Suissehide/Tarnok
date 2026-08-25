@@ -7,17 +7,23 @@ import {
   decode,
   decodeDeaths,
   decodeInput,
+  decodeLevelUp,
   decodePickups,
+  decodeRunOver,
   decodeSnapshot,
   decodeWaveOrder,
   decodeWelcome,
   encodeDeaths,
   encodeInput,
+  encodeLevelUp,
   encodePickups,
+  encodeRunOver,
   encodeSnapshot,
   encodeWaveOrder,
   encodeWelcome,
+  LEVEL_UP_BYTES,
   MSG,
+  RUN_OVER_BYTES,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
 } from './protocol';
@@ -181,6 +187,60 @@ describe('encodePickups / decodePickups', () => {
   });
 });
 
+describe('encodeLevelUp / decodeLevelUp', () => {
+  it("rend le tick de gel, l'identifiant du joueur et le niveau atteint", () => {
+    const decoded = decodeLevelUp(encodeLevelUp(1234, 2, 7));
+
+    expect(decoded).toEqual({ type: MSG.LEVEL_UP, tick: 1234, playerId: 2, level: 7 });
+  });
+
+  it('tient exactement LEVEL_UP_BYTES octets', () => {
+    expect(encodeLevelUp(1, 1, 1).byteLength).toBe(LEVEL_UP_BYTES);
+    expect(LEVEL_UP_BYTES).toBe(7);
+  });
+
+  it('tient le niveau sur un octet (u8), jusqu a 255', () => {
+    expect(decodeLevelUp(encodeLevelUp(1, 1, 255)).level).toBe(255);
+  });
+
+  it('leve sur un buffer tronque plutot que de rendre un gel fantaisiste', () => {
+    const truncated = encodeLevelUp(1, 1, 1).slice(0, LEVEL_UP_BYTES - 1);
+
+    expect(() => decodeLevelUp(truncated)).toThrow(/tronqu/i);
+  });
+});
+
+describe('encodeRunOver / decodeRunOver', () => {
+  it('rend le temps survecu, le niveau et le nombre d ennemis tues', () => {
+    const decoded = decodeRunOver(encodeRunOver(9000, 500_000, 12, 100_000));
+
+    expect(decoded).toEqual({
+      type: MSG.RUN_OVER,
+      tick: 9000,
+      survivedTicks: 500_000,
+      level: 12,
+      kills: 100_000,
+    });
+  });
+
+  it('tient exactement RUN_OVER_BYTES octets', () => {
+    expect(encodeRunOver(1, 1, 1, 1).byteLength).toBe(RUN_OVER_BYTES);
+    expect(RUN_OVER_BYTES).toBe(14);
+  });
+
+  it('tient les tues sur 32 bits, pas 16 : une run longue depasse 65 535 ennemis', () => {
+    const decoded = decodeRunOver(encodeRunOver(1, 1, 1, 100_000));
+
+    expect(decoded.kills).toBe(100_000);
+  });
+
+  it('leve sur un buffer tronque plutot que de rendre un resultat fantaisiste', () => {
+    const truncated = encodeRunOver(1, 1, 1, 1).slice(0, RUN_OVER_BYTES - 1);
+
+    expect(() => decodeRunOver(truncated)).toThrow(/tronqu/i);
+  });
+});
+
 describe('encodeWelcome / decodeWelcome', () => {
   it("rend l'identifiant attribue, le tick courant et la graine de carte", () => {
     expect(decodeWelcome(encodeWelcome(3, 900, 0xdead_beef))).toEqual({
@@ -239,6 +299,11 @@ describe('decode', () => {
   it('aiguille aussi sur les morts et les ramassages', () => {
     expect(decode(encodeDeaths(1, [1, 2]))).toMatchObject({ type: MSG.DEATHS, tick: 1 });
     expect(decode(encodePickups(1, [1, 2]))).toMatchObject({ type: MSG.PICKUPS, tick: 1 });
+  });
+
+  it('aiguille aussi sur le niveau et la fin de run', () => {
+    expect(decode(encodeLevelUp(1, 1, 5))).toMatchObject({ type: MSG.LEVEL_UP, tick: 1 });
+    expect(decode(encodeRunOver(1, 1, 1, 1))).toMatchObject({ type: MSG.RUN_OVER, tick: 1 });
   });
 
   it('aiguille aussi sur un ordre de vague', () => {
