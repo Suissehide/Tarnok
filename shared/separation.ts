@@ -119,6 +119,36 @@ export class SeparationGrid {
 
     const speed = SEPARATION_STRENGTH * dt;
     for (let i = 0; i < n; i++) {
+      // Tache 18 : bornage de la poussee ACCUMULEE, par entite et par tick.
+      //
+      // `pushX`/`pushY` sont la somme, sur tous les voisins en recouvrement,
+      // d'un vecteur de norme au plus 1 chacun (`(R - d) / R`, maximal a d=0).
+      // Sans borne, dix voisins pleinement chevauches poussent DIX FOIS plus
+      // fort qu'un seul — mesure : 96,8 px en un seul tick, 2900 px/s, onze
+      // fois la vitesse du joueur. C'est la teleportation rapportee en jeu.
+      //
+      // La borne retenue est la poussee d'UN SEUL voisin en recouvrement
+      // total : on ramene la norme du vecteur accumule a 1 au maximum avant
+      // de multiplier par `speed`. Ca se lit « quel que soit l'entassement,
+      // on n'est jamais pousse plus fort qu'une paire collee ne pousserait
+      // seule » — une consequence du rayon et de la raideur deja choisis,
+      // pas un reglage invente a cote.
+      //
+      // ⚠️ Mesure, pas suppose : un essai anterieur de plafonnement du
+      // DEPLACEMENT, a une epoque ou SEPARATION_STRENGTH valait 120, avait
+      // EMPIRE le cout (47 voisins d'equilibre au lieu de 37) — brider la
+      // poussee empechait l'entassement de se relacher. A 1200 l'equilibre
+      // est deja atteint avant le plafond (voir `back/bench/separation.bench.ts`,
+      // colonnes "voisins (debut/fin)" avant/apres cette modification) : le
+      // plafond ne mord que sur la queue de distribution, il ne change pas le
+      // regime.
+      let px = this.#pushX[i] ?? 0;
+      let py = this.#pushY[i] ?? 0;
+      const mag = Math.sqrt(px * px + py * py);
+      if (mag > 1) {
+        px /= mag;
+        py /= mag;
+      }
       // Bornage a la carte (tache 15) : contre un bord, la separation pousse
       // plus fort que le flowfield ne tire en retour (voir la doc de
       // SEPARATION_STRENGTH), et rien d'autre ne borne cette ecriture — c'est
@@ -126,8 +156,8 @@ export class SeparationGrid {
       // clamper (le mouvement le fait dans `Horde.#advance`, l'apparition via
       // `formationPositions`). Sans ce clamp, une entite giclee hors carte
       // corrompt en silence le tri de profondeur du rendu (voir `bandOf`).
-      hx[i] = clamp((hx[i] ?? 0) + (this.#pushX[i] ?? 0) * speed, 0, MAP_SIZE);
-      hy[i] = clamp((hy[i] ?? 0) + (this.#pushY[i] ?? 0) * speed, 0, MAP_SIZE);
+      hx[i] = clamp((hx[i] ?? 0) + px * speed, 0, MAP_SIZE);
+      hy[i] = clamp((hy[i] ?? 0) + py * speed, 0, MAP_SIZE);
     }
   }
 }

@@ -412,7 +412,10 @@ export class Room {
     const order = this.#director.due(this.#tick, xs, ys);
     if (order) {
       const before = this.horde.count;
-      this.horde.spawn(order);
+      // `this.#fields[0]` : les quatre champs partagent le meme masque
+      // d'obstacles (`applyObstacles` au constructeur) — n'importe lequel
+      // convient pour eviter de faire naitre une entite en plein mur (tache 18).
+      this.horde.spawn(order, this.#fields[0]);
       // Rend visible une troncature silencieuse : voir `RoomMetrics.truncatedSpawns`.
       if (this.horde.count - before < order.count) {
         this.#metrics.truncatedSpawns++;

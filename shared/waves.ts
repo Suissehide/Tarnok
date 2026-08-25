@@ -35,14 +35,109 @@ function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
 }
 
+function clampInt(v: number, min: number, max: number): number {
+  return v < min ? min : v > max ? max : v;
+}
+
+/**
+ * Ce que `formationPositions` doit connaitre d'un champ pour eviter d'y faire
+ * naitre une entite. Une interface structurelle plutot qu'un import du type
+ * `FlowField` : n'importe quel objet qui porte ces quatre champs — un
+ * `FlowField` en particulier, sans conversion — convient, et `shared/waves.ts`
+ * n'a pas besoin de connaitre le reste de sa classe.
+ */
+export interface ObstacleField {
+  readonly cols: number;
+  readonly rows: number;
+  readonly cellSize: number;
+  readonly blocked: Uint8Array;
+}
+
+/**
+ * Decale, DETERMINISTIQUEMENT, une position tombee dans une cellule muree vers
+ * la cellule libre la plus proche — tache 18.
+ *
+ * ⚠️ Jamais un tirage, jamais une boucle dont le nombre d'iterations pourrait
+ * differer d'un cote a l'autre (§ contraintes de determinisme de `shared/`) :
+ * l'expansion se fait en anneaux carres de rayon croissant, dans un ordre de
+ * balayage FIXE (lignes du haut vers le bas, colonnes de gauche a droite dans
+ * chaque ligne). Meme masque, meme position de depart => meme resultat, sur
+ * le serveur comme sur chaque client.
+ *
+ * Ecrit directement dans `outX`/`outY` : cette fonction ne s'execute qu'a
+ * l'apparition d'une vague, jamais par tick, mais un objet ou un tableau
+ * intermediaire par entite reste un gaspillage evitable pour zero benefice.
+ */
+function nudgeOutOfObstacle(
+  obstacles: ObstacleField,
+  x: number,
+  y: number,
+  outX: Float32Array,
+  outY: Float32Array,
+  i: number,
+): void {
+  const { cols, rows, cellSize, blocked } = obstacles;
+  const cx = clampInt(Math.floor(x / cellSize), 0, cols - 1);
+  const cy = clampInt(Math.floor(y / cellSize), 0, rows - 1);
+
+  if (blocked[cy * cols + cx] !== 1) {
+    outX[i] = x;
+    outY[i] = y;
+    return;
+  }
+
+  const maxRadius = Math.max(cols, rows);
+  for (let r = 1; r <= maxRadius; r++) {
+    for (let dy = -r; dy <= r; dy++) {
+      const ny = cy + dy;
+      if (ny < 0 || ny >= rows) {
+        continue;
+      }
+      // Seul le CONTOUR de l'anneau de rayon r nous interesse : l'interieur a
+      // deja ete balaye par les rayons plus petits.
+      const onHorizontalEdge = Math.abs(dy) === r;
+      for (let dx = -r; dx <= r; dx++) {
+        if (!onHorizontalEdge && Math.abs(dx) !== r) {
+          continue;
+        }
+        const nx = cx + dx;
+        if (nx < 0 || nx >= cols) {
+          continue;
+        }
+        if (blocked[ny * cols + nx] === 0) {
+          outX[i] = (nx + 0.5) * cellSize;
+          outY[i] = (ny + 0.5) * cellSize;
+          return;
+        }
+      }
+    }
+  }
+
+  // Carte entierement muree : cas degenere qui ne devrait jamais survenir en
+  // pratique (BLOCKED_RATIO = 0.06, voir shared/worldmap.ts). On degrade sans
+  // planter plutot que de boucler indefiniment ou de lever une exception.
+  outX[i] = x;
+  outY[i] = y;
+}
+
 /**
  * Remplit `outX` / `outY` avec les positions d'apparition de la vague.
  *
  * Fonction pure de `(seed, count, formation, ancre)` : c'est elle qui garantit
  * que deux clients font apparaitre la meme vague au meme endroit sans qu'un
  * seul octet de position ne transite.
+ *
+ * `obstacles`, si fourni, evite de faire naitre une entite en plein mur (tache
+ * 18) : 185 des 489 entites d'une horde mesuree y naissaient directement,
+ * faute de ce controle — `retarget`/`step` ne les en sortaient jamais, puisqu'une
+ * cellule muree ne portait alors aucune direction (voir `shared/flowfield.ts`).
  */
-export function formationPositions(order: WaveOrder, outX: Float32Array, outY: Float32Array): void {
+export function formationPositions(
+  order: WaveOrder,
+  outX: Float32Array,
+  outY: Float32Array,
+  obstacles?: ObstacleField,
+): void {
   const rng = makeRandom(order.seed);
   const { count, anchorX, anchorY } = order;
 
@@ -108,7 +203,14 @@ export function formationPositions(order: WaveOrder, outX: Float32Array, outY: F
       }
     }
 
-    outX[i] = clamp(anchorX + dx, 0, MAP_SIZE);
-    outY[i] = clamp(anchorY + dy, 0, MAP_SIZE);
+    const px = clamp(anchorX + dx, 0, MAP_SIZE);
+    const py = clamp(anchorY + dy, 0, MAP_SIZE);
+
+    if (obstacles) {
+      nudgeOutOfObstacle(obstacles, px, py, outX, outY, i);
+    } else {
+      outX[i] = px;
+      outY[i] = py;
+    }
   }
 }

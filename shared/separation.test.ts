@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { SEPARATION_CELL, SEPARATION_RADIUS, TICK_HZ } from './constants';
+import { SEPARATION_CELL, SEPARATION_RADIUS, SEPARATION_STRENGTH, TICK_HZ } from './constants';
 import { Horde } from './horde';
 import { SeparationGrid } from './separation';
 import { FORMATION, type WaveOrder } from './waves';
@@ -124,6 +124,38 @@ describe('SeparationGrid.apply', () => {
     grid.apply(b, DT);
 
     expect([...a.x.slice(0, 4)]).toEqual([...b.x.slice(0, 4)]);
+  });
+
+  it('borne le deplacement d une entite quel que soit le nombre de voisins entasses', () => {
+    // Tache 18 : dix voisins, tous a 0,001 px de la victime dans la MEME
+    // direction (+x). Chacun pousse la victime en -x avec une norme proche de
+    // 1 (recouvrement quasi total) ; sans plafond, les dix s'additionnent
+    // presque exactement puisqu'ils poussent tous dans le meme sens — la
+    // poussee accumulee vaudrait ~10, dix fois la borne visee.
+    //
+    // ⚠️ Les dix voisins partagent tous la MEME position entre eux (d2 = 0
+    // entre deux voisins) : la production les ignore mutuellement (`d2 === 0`
+    // saute la paire), mais chacun reste a distance non nulle de la victime et
+    // continue de la pousser — c'est la seule chose que ce test mesure.
+    const n = 10;
+    const positions: [number, number][] = [[3000, 3000]];
+    for (let k = 0; k < n; k++) {
+      positions.push([3000.001, 3000]);
+    }
+    const horde = hordeAt(positions);
+    const grid = new SeparationGrid(100);
+
+    grid.apply(horde, DT);
+
+    const cap = SEPARATION_STRENGTH * DT;
+    const deplacement = Math.hypot((horde.x[0] ?? 0) - 3000, (horde.y[0] ?? 0) - 3000);
+
+    // Marge flottante minime : le plafond normalise a une norme de 1 avant de
+    // multiplier par `speed`, une comparaison stricte serait fragile au dernier bit.
+    expect(deplacement).toBeLessThanOrEqual(cap * 1.0001);
+    // Le test ne prouve rien si le plafond ne mordait pas : sans lui, dix
+    // voisins colles pousseraient plusieurs fois plus fort que la borne.
+    expect(deplacement).toBeGreaterThan(cap * 0.5);
   });
 
   // ⚠️ Il n'y a PAS de test « n'alloue pas a chaque appel ». La premiere version

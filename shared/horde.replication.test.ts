@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { FLOWFIELD_CELL, FLOWFIELD_HZ, MAP_SIZE, ROLLBACK_DEPTH_TICKS, TICK_HZ } from './constants';
+import {
+  FLOWFIELD_CELL,
+  FLOWFIELD_HZ,
+  MAP_SIZE,
+  ROLLBACK_DEPTH_TICKS,
+  SEPARATION_STRENGTH,
+  TICK_HZ,
+} from './constants';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
 import { HordeHistory } from './horde-history';
@@ -456,7 +463,13 @@ describe("le livrable de l'etape 2", () => {
           }
 
           if (tick === SPAWN_TICK) {
-            p.horde.spawn(order);
+            // `p.fields[0]` : tache 18, evite de faire naitre une entite en
+            // plein mur — exactement ce que fait `Room.step` cote serveur
+            // (`back/src/room.ts`). Un appel sans obstacles ici desaccorderait
+            // ce test de son propre modele : le client, lui, passe TOUJOURS
+            // par `spawnCatchingUp`, qui applique deja ce meme evitement (voir
+            // sa doc dans `shared/horde.ts`).
+            p.horde.spawn(order, p.fields[0]);
           }
 
           p.horde.step(DT, p.fields);
@@ -1301,5 +1314,193 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
     // preserver la precision du rejeu, seulement eviter le silence et le crash.
     expect(Number.isFinite(maxDrift)).toBe(true);
     expect(maxDrift).toBeLessThan(2000);
+  });
+});
+
+/**
+ * Tache 18 : les trois correctifs (plafond de separation, apparition hors
+ * mur, sortie de mur) doivent produire le MEME resultat des deux cotes,
+ * exactement comme le reste de ce fichier le verifie pour la separation et le
+ * rejeu. Un seul scenario, exerçant les trois comportements en sequence sur
+ * DEUX simulations independantes (« le serveur » et « un client »), qui ne
+ * partagent rien d'autre que la meme graine de carte et le meme ordre de
+ * vague — comme deux processus reels.
+ */
+describe('tache 18 : plafond de separation et sortie de mur, verifies identiques sur deux clients', () => {
+  function fieldAt(fields: readonly FlowField[], i: number): FlowField {
+    const f = fields[i];
+    if (!f) {
+      throw new Error('champ manquant');
+    }
+    return f;
+  }
+
+  it('deux simulations independantes s accordent sur les trois comportements, tick pour tick', () => {
+    const mapSeed = 0x7a58_18ac;
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(mapSeed, probe.cols, probe.rows);
+
+    // Un mur force explicitement a l'ancre de la vague : garantit que
+    // l'evitement d'apparition (comportement 2) est reellement exerce, plutot
+    // que de dependre du hasard de `generateObstacles` pour cette graine.
+    // `mask` est calcule UNE fois puis copie dans chaque participant par
+    // `applyObstacles` (comme le fait deja le reste de ce fichier) : c'est
+    // fidele a la realite, ou deux cotes qui regenerent independamment la
+    // meme graine obtiennent par construction le meme masque (§5.1).
+    const anchorCol = 10;
+    const anchorRow = 10;
+    mask[anchorRow * probe.cols + anchorCol] = 1;
+    const anchorX = (anchorCol + 0.5) * FLOWFIELD_CELL;
+    const anchorY = (anchorRow + 0.5) * FLOWFIELD_CELL;
+
+    function makeParticipant(): {
+      horde: Horde;
+      fields: FlowField[];
+      separation: SeparationGrid;
+      history: PlayerHistory;
+    } {
+      const horde = new Horde(2000);
+      const fields = Array.from({ length: 4 }, () => {
+        const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+        applyObstacles(f, mask);
+        return f;
+      });
+      return { horde, fields, separation: new SeparationGrid(2000), history: new PlayerHistory() };
+    }
+
+    const server = makeParticipant();
+    const client = makeParticipant();
+    const parts = [server, client];
+
+    const order: WaveOrder = {
+      waveId: 1,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX,
+      anchorY,
+      count: 300,
+    };
+    for (const p of parts) {
+      p.horde.spawn(order, fieldAt(p.fields, 0));
+    }
+
+    // --- Comportement 2 : aucune naissance en plein mur, chez les DEUX. ---
+    for (const p of parts) {
+      const f = fieldAt(p.fields, 0);
+      for (let i = 0; i < p.horde.count; i++) {
+        expect(f.blocked[f.indexAt(p.horde.x[i] ?? 0, p.horde.y[i] ?? 0)]).toBe(0);
+      }
+    }
+
+    // Entasse artificiellement 40 entites au meme point, IDENTIQUEMENT chez
+    // les deux participants : exerce le plafond de separation (comportement
+    // 1) sans dependre du hasard d'une formation pour produire l'entassement.
+    const PILE = 40;
+    const pileX = anchorX + 1500;
+    const pileY = anchorY + 1500;
+    for (const p of parts) {
+      for (let i = 0; i < PILE; i++) {
+        p.horde.x[i] = pileX;
+        p.horde.y[i] = pileY;
+      }
+    }
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    // Marge flottante minime, meme raisonnement que shared/separation.test.ts.
+    const CAP = SEPARATION_STRENGTH * DT * 1.0001;
+    let maxObservedPush = 0;
+    const TICKS = 240;
+
+    for (let tick = 0; tick < TICKS; tick++) {
+      const xs = [0, 1, 2, 3].map((pl) => 3000 + Math.cos(tick * 0.02 + pl) * 1500);
+      const ys = [0, 1, 2, 3].map((pl) => 3000 + Math.sin(tick * 0.02 + pl) * 1500);
+
+      for (const p of parts) {
+        p.history.record(tick, xs, ys);
+        if (tick % stepsPerField === 0) {
+          const seen = p.history.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        p.horde.step(DT, p.fields);
+
+        // Deplacement du a la SEULE separation, pour verifier le plafond
+        // (comportement 1) — meme methode que le test de shared/separation.test.ts,
+        // appliquee ici sur une horde reelle plutot que sur un cas synthetique.
+        const beforeX = p.horde.x.slice(0, p.horde.count);
+        const beforeY = p.horde.y.slice(0, p.horde.count);
+        p.separation.apply(p.horde, DT);
+        for (let i = 0; i < p.horde.count; i++) {
+          const d = Math.hypot(
+            (p.horde.x[i] ?? 0) - (beforeX[i] ?? 0),
+            (p.horde.y[i] ?? 0) - (beforeY[i] ?? 0),
+          );
+          if (d > maxObservedPush) {
+            maxObservedPush = d;
+          }
+          expect(d).toBeLessThanOrEqual(CAP);
+        }
+      }
+
+      // --- Comportement 4 : accord tick pour tick entre les deux participants. ---
+      expect(client.horde.count).toBe(server.horde.count);
+      for (let i = 0; i < server.horde.count; i++) {
+        expect(client.horde.x[i]).toBe(server.horde.x[i]);
+        expect(client.horde.y[i]).toBe(server.horde.y[i]);
+      }
+    }
+
+    // Le test ne prouverait rien sur le plafond si l'entassement artificiel
+    // n'avait jamais approche la borne.
+    expect(maxObservedPush).toBeGreaterThan(CAP * 0.5);
+
+    // --- Comportement 3 : sortie de mur, identiquement chez les deux. ---
+    for (const p of parts) {
+      p.horde.x[0] = anchorX;
+      p.horde.y[0] = anchorY;
+      p.horde.targetField[0] = 0;
+      // Sans ca, une entite reconnue "a portee de contact" lors d'un
+      // `retarget` anterieur resterait immobile (tache 17.2) quelle que soit
+      // la sortie de mur offerte par le champ — un faux negatif sans rapport
+      // avec ce qu'on verifie ici.
+      p.horde.stopped[0] = 0;
+    }
+
+    let serverEscapeTick = -1;
+    let clientEscapeTick = -1;
+    for (let t = 0; t < 60; t++) {
+      for (const p of parts) {
+        p.horde.step(DT, p.fields);
+        p.separation.apply(p.horde, DT);
+      }
+      const sField = fieldAt(server.fields, server.horde.targetField[0] ?? 0);
+      const cField = fieldAt(client.fields, client.horde.targetField[0] ?? 0);
+      if (
+        serverEscapeTick < 0 &&
+        sField.blocked[sField.indexAt(server.horde.x[0] ?? 0, server.horde.y[0] ?? 0)] === 0
+      ) {
+        serverEscapeTick = t;
+      }
+      if (
+        clientEscapeTick < 0 &&
+        cField.blocked[cField.indexAt(client.horde.x[0] ?? 0, client.horde.y[0] ?? 0)] === 0
+      ) {
+        clientEscapeTick = t;
+      }
+    }
+
+    process.stdout.write(
+      `tache 18 : plafond max observe ${maxObservedPush.toFixed(3)} px (borne ${CAP.toFixed(3)}), ` +
+        `sortie de mur au tick ${serverEscapeTick} (serveur) / ${clientEscapeTick} (client)\n`,
+    );
+
+    expect(serverEscapeTick).toBeGreaterThanOrEqual(0);
+    expect(serverEscapeTick).toBe(clientEscapeTick);
   });
 });

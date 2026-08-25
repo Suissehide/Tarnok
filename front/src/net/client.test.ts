@@ -300,7 +300,11 @@ function runClientDeathScenario(params: {
     anchorY: 1200,
     count: entities,
   };
-  ref.horde.spawn(order);
+  // `ref.fields[0]` : tache 18, evite de faire naitre une entite en plein mur
+  // — exactement ce que fait `Room.step` cote serveur. Sans ca, cette
+  // reference desaccorde son propre modele du serveur, puisque `GameClient`,
+  // lui, applique deja cet evitement via `spawnCatchingUp`.
+  ref.horde.spawn(order, ref.fields[0]);
 
   const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
   client.connect();

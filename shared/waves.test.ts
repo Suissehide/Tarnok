@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAP_SIZE } from './constants';
-import { FORMATION, formationPositions, type WaveOrder } from './waves';
+import { FLOWFIELD_CELL, MAP_SIZE } from './constants';
+import { FORMATION, formationPositions, type ObstacleField, type WaveOrder } from './waves';
 
 function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
   return {
@@ -89,6 +89,88 @@ describe('formationPositions', () => {
       expect(x[i]).toBeLessThanOrEqual(MAP_SIZE);
       expect(y[i]).toBeLessThanOrEqual(MAP_SIZE);
     }
+  });
+});
+
+function makeObstacleField(
+  cols: number,
+  rows: number,
+  cellSize: number,
+  blockedCells: ReadonlyArray<readonly [number, number]>,
+): ObstacleField {
+  const blocked = new Uint8Array(cols * rows);
+  for (const [cx, cy] of blockedCells) {
+    blocked[cy * cols + cx] = 1;
+  }
+  return { cols, rows, cellSize, blocked };
+}
+
+describe('formationPositions, evitement des murs (tache 18)', () => {
+  const cellSize = FLOWFIELD_CELL;
+  const cols = Math.ceil(MAP_SIZE / cellSize);
+  const rows = cols;
+  const anchorCol = Math.floor(cols / 2);
+  const anchorRow = Math.floor(rows / 2);
+
+  // Un pate de mur de 7x7 cellules centre exactement sur l'ancre : assez
+  // large pour que plusieurs positions SCATTER, calculees sans connaissance de
+  // l'obstacle, y tombent directement (verifie plus bas par la premiere
+  // assertion — un test qui ne le verifierait pas pourrait passer alors que
+  // la mitigation est absente).
+  const blockedCells: [number, number][] = [];
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
+      blockedCells.push([anchorCol + dx, anchorRow + dy]);
+    }
+  }
+  const obstacles = makeObstacleField(cols, rows, cellSize, blockedCells);
+  const anchorX = (anchorCol + 0.5) * cellSize;
+  const anchorY = (anchorRow + 0.5) * cellSize;
+
+  function cellOf(x: number, y: number): number {
+    const cx = Math.min(cols - 1, Math.max(0, Math.floor(x / cellSize)));
+    const cy = Math.min(rows - 1, Math.max(0, Math.floor(y / cellSize)));
+    return cy * cols + cx;
+  }
+
+  it('une vague ancree en plein mur ne fait naitre aucune entite a l interieur d un obstacle', () => {
+    const o = order({ formation: FORMATION.SCATTER, count: 400, anchorX, anchorY });
+
+    // Sans le masque, une partie des positions calculees tombe dans le pate
+    // de murs : sinon ce test ne prouverait rien (l'ancre serait, par
+    // accident, deja loin de tout obstacle).
+    const rawX = new Float32Array(o.count);
+    const rawY = new Float32Array(o.count);
+    formationPositions(o, rawX, rawY);
+    let rawInWall = 0;
+    for (let i = 0; i < o.count; i++) {
+      if (obstacles.blocked[cellOf(rawX[i] ?? 0, rawY[i] ?? 0)] === 1) {
+        rawInWall++;
+      }
+    }
+    expect(rawInWall).toBeGreaterThan(0);
+
+    const x = new Float32Array(o.count);
+    const y = new Float32Array(o.count);
+    formationPositions(o, x, y, obstacles);
+
+    for (let i = 0; i < o.count; i++) {
+      expect(obstacles.blocked[cellOf(x[i] ?? 0, y[i] ?? 0)]).toBe(0);
+    }
+  });
+
+  it('le decalage est deterministe : deux appels identiques rendent les memes positions nudgees', () => {
+    const o = order({ formation: FORMATION.CLUSTER, count: 150, anchorX, anchorY });
+    const ax = new Float32Array(o.count);
+    const ay = new Float32Array(o.count);
+    const bx = new Float32Array(o.count);
+    const by = new Float32Array(o.count);
+
+    formationPositions(o, ax, ay, obstacles);
+    formationPositions(o, bx, by, obstacles);
+
+    expect([...ax]).toEqual([...bx]);
+    expect([...ay]).toEqual([...by]);
   });
 });
 

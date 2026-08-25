@@ -1,7 +1,7 @@
 import { archetypeOf } from './archetypes';
 import { CONTACT_RADIUS, MAP_SIZE, MAX_ENTITIES, MAX_PER_WAVE } from './constants';
 import type { FlowField } from './flowfield';
-import { formationPositions, type WaveOrder } from './waves';
+import { formationPositions, type ObstacleField, type WaveOrder } from './waves';
 
 /**
  * L'identite est **arithmetique**, pas negociee.
@@ -108,8 +108,15 @@ export class Horde {
     return entityIdOf(this.waveId[slot] ?? 0, this.indexInWave[slot] ?? 0);
   }
 
-  /** Fait apparaitre une vague. Tronque plutot que de deborder. */
-  spawn(order: WaveOrder): void {
+  /**
+   * Fait apparaitre une vague. Tronque plutot que de deborder.
+   *
+   * `obstacles`, si fourni, empeche `formationPositions` de faire naitre une
+   * entite en plein mur (tache 18) — voir sa doc. N'importe lequel des quatre
+   * champs de flux convient : ils partagent tous le meme masque, pose une
+   * seule fois par `applyObstacles` a la construction de la salle/du client.
+   */
+  spawn(order: WaveOrder, obstacles?: ObstacleField): void {
     const room = this.capacity - this.#count;
     const count = Math.min(order.count, room, MAX_PER_WAVE);
     if (count <= 0) {
@@ -118,7 +125,7 @@ export class Horde {
 
     const px = new Float32Array(count);
     const py = new Float32Array(count);
-    formationPositions({ ...order, count }, px, py);
+    formationPositions({ ...order, count }, px, py, obstacles);
 
     const frames = archetypeOf(order.archetype).frames;
 
@@ -340,7 +347,10 @@ export class Horde {
     }
 
     const before = this.#count;
-    this.spawn(order);
+    // `fields[0]` : n'importe lequel des quatre porte le meme masque
+    // d'obstacles (voir la doc de `spawn`) ; le rattrapage cliente doit eviter
+    // les murs exactement comme le fait `Room.step` cote serveur.
+    this.spawn(order, fields[0]);
     for (let step = 0; step < missedTicks; step++) {
       this.#advance(before, this.#count, dt, fields);
     }

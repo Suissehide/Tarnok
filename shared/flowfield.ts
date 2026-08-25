@@ -150,6 +150,86 @@ export class FlowField {
         queue[tail++] = neighbour;
       }
     }
+
+    this.#carveExitsFromWalls(cols, rows, blocked, dirX, dirY, dist, queue);
+  }
+
+  /**
+   * Deuxieme parcours (tache 18) : offre une sortie a TOUTE cellule muree,
+   * quelle que soit la raison pour laquelle une entite s'y trouve.
+   *
+   * C'est le filet, distinct des deux autres correctifs de la tache : borner
+   * la separation et eviter de faire naitre une entite en plein mur
+   * suppriment les causes CONNUES d'un monstre coince dans un obstacle, mais
+   * une cause future, non prevue ici, doit degrader plutot que figer une
+   * entite pour toujours — c'est exactement ce qu'empechait l'absence de
+   * direction sur une cellule bloquee (`dirX`/`dirY` a `(0, 0)`, jamais
+   * ecrits par le premier parcours qui les saute explicitement).
+   *
+   * BFS en largeur, en O(cellules) comme le premier : on part de TOUTES les
+   * cellules deja atteintes (la frontiere du premier parcours) et on avance
+   * uniquement dans les cellules MUREES pas encore pourvues d'une sortie. Le
+   * sentinel « pas encore visitee par cette passe » est `dirX === 0 && dirY
+   * === 0` : jamais vrai pour une cellule muree deja traitee, puisque
+   * `NEIGHBOURS` ne contient jamais `(0, 0)` — la direction assignee a une
+   * norme non nulle.
+   *
+   * ⚠️ Ne touche PAS les cellules libres mais inatteignables (une poche isolee
+   * par des murs tout autour) : ce n'est pas la meme classe de defaut — une
+   * entite qui s'y trouve n'est pas « dans un mur », elle est dans une zone
+   * legitimement libre mais coupee du reste de la carte, un probleme de
+   * connectivite hors du perimetre de cette tache. Seules les cellules dont
+   * `blocked[cellule] === 1` sont concernees ici.
+   *
+   * Reutilise `#queue` : aucune allocation, comme le premier parcours.
+   */
+  #carveExitsFromWalls(
+    cols: number,
+    rows: number,
+    blocked: Uint8Array,
+    dirX: Float32Array,
+    dirY: Float32Array,
+    dist: Int32Array,
+    queue: Int32Array,
+  ): void {
+    let head = 0;
+    let tail = 0;
+    const cells = cols * rows;
+    for (let c = 0; c < cells; c++) {
+      if (dist[c] !== UNREACHED) {
+        queue[tail++] = c;
+      }
+    }
+
+    while (head < tail) {
+      const current = queue[head++] ?? 0;
+      const cx = current % cols;
+      const cy = (current - cx) / cols;
+
+      for (const [dx, dy] of NEIGHBOURS) {
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= cols || ny >= rows) {
+          continue;
+        }
+
+        const neighbour = ny * cols + nx;
+        if (blocked[neighbour] !== 1) {
+          continue;
+        }
+        if (dirX[neighbour] !== 0 || dirY[neighbour] !== 0) {
+          continue;
+        }
+
+        // Meme convention que le premier parcours : on pointe du voisin
+        // (dans le mur) vers la cellule courante (plus proche de la sortie).
+        const inv = dx !== 0 && dy !== 0 ? Math.SQRT1_2 : 1;
+        dirX[neighbour] = -dx * inv;
+        dirY[neighbour] = -dy * inv;
+
+        queue[tail++] = neighbour;
+      }
+    }
   }
 }
 

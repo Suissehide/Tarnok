@@ -587,6 +587,81 @@ describe('Horde.kill', () => {
   });
 });
 
+describe('tache 18 : pas de naissance en plein mur, sortie d un mur garantie', () => {
+  it('Horde.spawn evite les cellules murees quand on lui passe un champ', () => {
+    const field = new FlowField(6000, 64);
+    // Un pate de mur autour de l'ancre, assez large pour que plusieurs des
+    // positions SCATTER calculees SANS le champ y tombent directement (verifie
+    // par la premiere boucle ci-dessous).
+    const anchorCol = field.indexAt(1000, 1000) % field.cols;
+    const anchorRow = Math.floor(field.indexAt(1000, 1000) / field.cols);
+    for (let dy = -3; dy <= 3; dy++) {
+      for (let dx = -3; dx <= 3; dx++) {
+        field.block(anchorCol + dx, anchorRow + dy);
+      }
+    }
+    field.update(1000, 1000); // cible hors du pate, sans effet sur `blocked`
+
+    const withoutObstacles = new Horde(500);
+    withoutObstacles.spawn(order({ count: 400, anchorX: 1000, anchorY: 1000 }));
+    let rawInWall = 0;
+    for (let i = 0; i < withoutObstacles.count; i++) {
+      const cell = field.indexAt(withoutObstacles.x[i] ?? 0, withoutObstacles.y[i] ?? 0);
+      if (field.blocked[cell] === 1) {
+        rawInWall++;
+      }
+    }
+    // Le test ne prouverait rien si le pate de mur, par accident, ne genait
+    // aucune position brute.
+    expect(rawInWall).toBeGreaterThan(0);
+
+    const withObstacles = new Horde(500);
+    withObstacles.spawn(order({ count: 400, anchorX: 1000, anchorY: 1000 }), field);
+    for (let i = 0; i < withObstacles.count; i++) {
+      const cell = field.indexAt(withObstacles.x[i] ?? 0, withObstacles.y[i] ?? 0);
+      expect(field.blocked[cell]).toBe(0);
+    }
+  });
+
+  it('une entite coincee dans un mur en ressort au bout de quelques pas de Horde.step', () => {
+    const field = new FlowField(6000, 64);
+    // Un mur epais de 3 cellules entre l'entite et la cible : sans la sortie
+    // de secours (tache 18), la cellule centrale ne porterait aucune
+    // direction et l'entite y resterait figee pour toujours.
+    const startCol = field.indexAt(1000, 1000) % field.cols;
+    const startRow = Math.floor(field.indexAt(1000, 1000) / field.cols);
+    for (let k = 0; k < 3; k++) {
+      field.block(startCol + k, startRow);
+    }
+    field.update(3000, 1000);
+    const fields = [field, field, field, field];
+
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: 5000, anchorY: 5000 })); // loin du mur, position ecrasee juste apres
+    // Centre de la cellule bloquee du milieu (colonne startCol+1, ligne
+    // startRow). ⚠️ Piege verifie a la main lors de l'ecriture de ce test :
+    // une premiere version utilisait la MEME formule pour x et y (1000 + 32),
+    // ce qui place l'entite ligne startRow+1 — jamais bloquee — et le test
+    // passait meme avec la sortie de secours desactivee, sans rien prouver.
+    // D'ou l'assertion de precondition juste en dessous.
+    horde.x[0] = (startCol + 1 + 0.5) * 64;
+    horde.y[0] = (startRow + 0.5) * 64;
+    expect(field.blocked[field.indexAt(horde.x[0] ?? 0, horde.y[0] ?? 0)]).toBe(1);
+
+    let escaped = false;
+    for (let t = 0; t < 60; t++) {
+      horde.step(DT, fields);
+      const cell = field.indexAt(horde.x[0] ?? 0, horde.y[0] ?? 0);
+      if (field.blocked[cell] === 0) {
+        escaped = true;
+        break;
+      }
+    }
+
+    expect(escaped).toBe(true);
+  });
+});
+
 function meanDistanceTo(horde: Horde, x: number, y: number): number {
   let total = 0;
   for (let i = 0; i < horde.count; i++) {
