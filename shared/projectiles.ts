@@ -63,6 +63,17 @@ export class Projectiles {
    * Si `targetId` ne designe plus une entite vivante dans `horde`, la salve
    * ne part pas : sans cible, aucune direction ne serait deterministe des
    * deux cotes, donc rien ne se tire plutot que de deviner.
+   *
+   * **Cette regle peut faire diverger serveur et client, et c'est accepte.**
+   * Les deux tirent depuis l'etat retarde a `T − TARGETING_DELAY_TICKS`. Si
+   * une mort n'est pas encore parvenue au client, son etat retarde peut
+   * encore contenir la cible que le serveur, lui, a deja retiree du sien —
+   * donc l'un saute le tir pendant que l'autre le lance, ou l'inverse.
+   * L'ecart est purement visuel et se resorbe au rejeu du §3.2 : les
+   * projectiles ne sont jamais repliques, et les degats restent arbitres par
+   * le serveur (§5.4). Ce qui serait inacceptable, ce serait qu'un client
+   * tire une conclusion sur les degats a partir de sa propre salve — ce
+   * n'est jamais le cas, `fireSalvo` ne fait que deplacer un projectile.
    */
   fireSalvo(
     weapon: Weapon,

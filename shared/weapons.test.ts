@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { PROJECTILE_HIT_RADIUS, TICK_HZ } from './constants';
 import { WEAPONS, weaponOf } from './weapons';
 
 describe('WEAPONS', () => {
@@ -30,6 +31,20 @@ describe('WEAPONS', () => {
 
   it('cable au moins une arme a plusieurs projectiles, pour prouver que la forme tient', () => {
     expect(WEAPONS.some((w) => w.projectileCount > 1)).toBe(true);
+  });
+
+  it('reste sous le rayon anti-tunnel : aucun projectile ne peut sauter par-dessus une cible en un tick', () => {
+    // Si `projectileSpeed / TICK_HZ` depasse `PROJECTILE_HIT_RADIUS`, le
+    // projectile peut parcourir en un seul pas une distance superieure au
+    // rayon de collision : il traverse sa cible sans jamais la toucher
+    // (« tunneling »). Rien ne le signalerait a l'execution — le projectile
+    // continue sa route, l'ennemi reste vivant, aucune exception. Ce test
+    // transforme cette contrainte de prose (voir le commentaire de
+    // `PROJECTILE_HIT_RADIUS` dans `shared/constants.ts`) en echec de suite
+    // le jour ou une arme plus rapide est ajoutee.
+    for (const w of WEAPONS) {
+      expect(w.projectileSpeed / TICK_HZ).toBeLessThanOrEqual(PROJECTILE_HIT_RADIUS);
+    }
   });
 });
 
