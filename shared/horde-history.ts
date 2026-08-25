@@ -38,6 +38,7 @@ export class HordeHistory {
       indexInWave: new Uint16Array(capacity),
       animPhase: new Uint8Array(capacity),
       targetField: new Uint8Array(capacity),
+      stopped: new Uint8Array(capacity),
     }));
   }
 

@@ -28,6 +28,7 @@ describe('HordeHistory', () => {
     horde.x[0] = 111.5;
     horde.y[0] = 222.5;
     horde.targetField[0] = 3;
+    horde.stopped[0] = 1;
 
     const history = new HordeHistory(horde.capacity);
     history.record(5, horde);
@@ -41,6 +42,7 @@ describe('HordeHistory', () => {
       indexInWave: horde.indexInWave[0] ?? 0,
       animPhase: horde.animPhase[0] ?? 0,
       targetField: horde.targetField[0] ?? 0,
+      stopped: horde.stopped[0] ?? 0,
     };
 
     // Corrompt CHAQUE champ individuellement, avec une valeur differente de
@@ -53,6 +55,7 @@ describe('HordeHistory', () => {
     horde.indexInWave[0] = attendu.indexInWave + 1;
     horde.animPhase[0] = (attendu.animPhase + 1) % 256;
     horde.targetField[0] = (attendu.targetField + 1) % 4;
+    horde.stopped[0] = attendu.stopped === 1 ? 0 : 1;
     horde.kill([horde.entityIdAt(horde.count - 1)]);
     expect(horde.count).toBe(attendu.count - 1); // sanity : le compte a bien change
 
@@ -67,6 +70,7 @@ describe('HordeHistory', () => {
     expect(horde.indexInWave[0]).toBe(attendu.indexInWave);
     expect(horde.animPhase[0]).toBe(attendu.animPhase);
     expect(horde.targetField[0]).toBe(attendu.targetField);
+    expect(horde.stopped[0]).toBe(attendu.stopped);
   });
 
   it('restaurer un tick jamais enregistre rend false et ne modifie pas la horde', () => {

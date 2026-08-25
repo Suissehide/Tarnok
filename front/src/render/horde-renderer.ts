@@ -20,6 +20,26 @@ import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture
  * objet jete soixante fois par seconde.
  */
 
+/** Une planche empaquetee (course ou attaque) : ses images, dans l'ordre du cycle. */
+interface AtlasClip {
+  frames: number;
+  rects: { x: number; y: number; w: number; h: number }[];
+}
+
+/**
+ * Boite englobante du contenu NON TRANSPARENT d'un archetype, en pixels de
+ * cellule native — publiee par `tools/build_monster_atlas.py` (tache 17.1),
+ * union sur TOUTES les images (course + attaque) pour donner une echelle
+ * unique qui ne varie pas d'une image d'animation a l'autre. Voir
+ * `contentSizePx`.
+ */
+interface ContentBounds {
+  readonly x: number;
+  readonly y: number;
+  readonly w: number;
+  readonly h: number;
+}
+
 interface AtlasManifest {
   image: string;
   size: number;
@@ -27,8 +47,8 @@ interface AtlasManifest {
     id: number;
     name: string;
     cell: number;
-    frames: number;
-    rects: { x: number; y: number; w: number; h: number }[];
+    bounds: ContentBounds;
+    clips: { run: AtlasClip; attack: AtlasClip };
   }[];
 }
 
@@ -174,36 +194,69 @@ export function sortByDepth(
  * exactement ce qui a produit ce defaut ; le tableau « Coherence des
  * constantes » du plan existe pour l'empecher.
  *
- * La relation choisie est la plus simple qui se laisse enoncer sans ajouter
- * un second reglage a cote du premier : la largeur dessinee (le diametre de
- * la cellule apres mise a l'echelle) EGALE le diametre de la hitbox de tir.
- * Un facteur de generosite supplementaire (« un peu plus grand pour que ca se
- * voie ») retomberait dans le meme piege — un nombre choisi au ressenti, non
- * derive de la hitbox qu'il est cense representer.
+ * ⚠️ Tache 17.1 : la tache 16 appelait cette fonction avec la CELLULE (192 px)
+ * — mais une cellule de Tiny Swords est en grande partie vide, la creature
+ * n'en occupe qu'une fraction. Ramener le CADRE a la hitbox rend alors le
+ * CORPS bien plus petit qu'elle, exactement l'inverse du but (« les monstres
+ * sont minuscules » remonte en jeu). Cette fonction reste correcte et
+ * inchangee — c'est `sizePx` qui doit desormais etre la taille du CONTENU
+ * (`contentSizePx`), jamais celle de la cellule. Voir le site d'appel dans
+ * `load()`.
  *
- * Prend la cellule native en parametre plutot qu'une constante figee : les
- * plus gros archetypes de `shared/archetypes.ts` (ours, panda, tortue,
- * minotaure, troll) ont une cellule de 256 a 384 px, pas 192 — la meme
- * formule doit les ramener au meme diametre a l'ecran, puisque
- * `PROJECTILE_HIT_RADIUS` ne varie pas par archetype.
+ * La relation choisie est la plus simple qui se laisse enoncer sans ajouter
+ * un second reglage a cote du premier : la largeur dessinee du CONTENU EGALE
+ * le diametre de la hitbox de tir. Un facteur de generosite supplementaire
+ * (« un peu plus grand pour que ca se voie ») retomberait dans le meme piege
+ * — un nombre choisi au ressenti, non derive de la hitbox qu'il est cense
+ * representer.
+ *
+ * Prend la taille en parametre plutot qu'une constante figee : les plus gros
+ * archetypes de `shared/archetypes.ts` (ours, panda, tortue, minotaure,
+ * troll) ont une cellule de 256 a 384 px, pas 192 — la meme formule doit les
+ * ramener au meme diametre a l'ecran, puisque `PROJECTILE_HIT_RADIUS` ne
+ * varie pas par archetype.
  */
-export function spriteScale(cellPx: number, hitRadiusPx: number): number {
-  if (cellPx <= 0) {
+export function spriteScale(sizePx: number, hitRadiusPx: number): number {
+  if (sizePx <= 0) {
     return 1;
   }
-  return (2 * hitRadiusPx) / cellPx;
+  return (2 * hitRadiusPx) / sizePx;
 }
 
-/** Applique `spriteScale` a chaque cellule de l'atlas — un facteur par archetype. */
+/** Applique `spriteScale` a une taille par archetype — un facteur par archetype. */
 export function archetypeScales(
-  cellsPx: readonly number[],
+  sizesPx: readonly number[],
   hitRadiusPx: number,
 ): Float32Array<ArrayBuffer> {
-  const out = new Float32Array(cellsPx.length);
-  for (let i = 0; i < cellsPx.length; i++) {
-    out[i] = spriteScale(cellsPx[i] ?? 0, hitRadiusPx);
+  const out = new Float32Array(sizesPx.length);
+  for (let i = 0; i < sizesPx.length; i++) {
+    out[i] = spriteScale(sizesPx[i] ?? 0, hitRadiusPx);
   }
   return out;
+}
+
+/**
+ * Taille de reference d'un contenu d'atlas, pour `spriteScale` (tache 17.1) :
+ * la plus GRANDE des deux dimensions de sa boite englobante.
+ *
+ * Pas la largeur ni la hauteur seules : une silhouette allongee dans un sens
+ * (un lezard qui court, tres large et peu haut) ne doit pas recevoir une
+ * echelle calculee sur sa dimension la plus petite, ce qui la ferait deborder
+ * du diametre de la hitbox precisement dans le sens ou elle s'etend le plus.
+ */
+export function contentSizePx(bounds: { readonly w: number; readonly h: number }): number {
+  return Math.max(bounds.w, bounds.h);
+}
+
+/**
+ * Choix du clip anime a dessiner (tache 17.2) : RENDU PUR, deduit de l'etat
+ * d'arret DEJA simule (`horde.stopped`, `shared/horde.ts`) — jamais recalcule
+ * ici a partir d'une distance, jamais transmis sur le fil. Isolee pour se
+ * tester sans le reseau/canevas qu'exige `load()`, meme raison que
+ * `spriteScale`/`facingScaleX` plus haut.
+ */
+export function selectClip<T>(stopped: boolean, run: T, attack: T): T {
+  return stopped ? attack : run;
 }
 
 /**
@@ -268,9 +321,15 @@ export class HordeRenderer {
   });
   /** Réservoir de particules réutilisées : aucune allocation en régime établi. */
   readonly #pool: Particle[] = [];
-  /** `#frames[archetype][image]`. */
-  #frames: Texture[][] = [];
-  /** `#scale[archetype]` : voir `spriteScale`, calculee une fois dans `load()`. */
+  /**
+   * `#runFrames[archetype][image]` / `#attackFrames[archetype][image]` —
+   * tache 17.2 : deux clips par archetype, choisis par `selectClip` selon
+   * `horde.stopped`. Auparavant un seul `#frames` (course uniquement) :
+   * l'atlas n'embarquait pas l'attaque.
+   */
+  #runFrames: Texture[][] = [];
+  #attackFrames: Texture[][] = [];
+  /** `#scale[archetype]` : voir `spriteScale`/`contentSizePx`, calculee une fois dans `load()`. */
   #scale = new Float32Array(0);
   #loaded = false;
 
@@ -315,21 +374,25 @@ export class HordeRenderer {
     // par `Assets.load` pour recuperer l'atlas depuis son URL.
     const atlas = await Assets.load<Texture>(`${this.assetsBase}/derived/${manifest.image}`);
 
-    this.#frames = manifest.archetypes.map((a) =>
-      a.rects.map(
+    const texturesOf = (clip: AtlasClip): Texture[] =>
+      clip.rects.map(
         (r) =>
           new Texture({
             source: atlas.source,
             frame: new Rectangle(r.x, r.y, r.w, r.h),
           }),
-      ),
-    );
+      );
+    this.#runFrames = manifest.archetypes.map((a) => texturesOf(a.clips.run));
+    this.#attackFrames = manifest.archetypes.map((a) => texturesOf(a.clips.attack));
     // Un facteur d'echelle par archetype, DERIVE de `PROJECTILE_HIT_RADIUS` —
-    // voir `spriteScale`. Les archetypes n'ont pas tous la meme cellule
-    // native (192 a 384 px, `shared/archetypes.ts`), la hitbox de tir, elle,
-    // ne varie pas : chacun doit donc recevoir SON propre facteur.
+    // voir `spriteScale`. Tache 17.1 : a partir du CONTENU non transparent
+    // (`contentSizePx`), pas de la cellule — une cellule de Tiny Swords est en
+    // grande partie vide, et la rapporter a la hitbox rendait le corps de la
+    // creature bien plus petit qu'elle. Les archetypes n'ont pas tous la meme
+    // cellule native (192 a 384 px, `shared/archetypes.ts`), la hitbox de
+    // tir, elle, ne varie pas : chacun doit donc recevoir SON propre facteur.
     this.#scale = archetypeScales(
-      manifest.archetypes.map((a) => a.cell),
+      manifest.archetypes.map((a) => contentSizePx(a.bounds)),
       PROJECTILE_HIT_RADIUS,
     );
     this.#loaded = true;
@@ -392,7 +455,12 @@ export class HordeRenderer {
       const i = sorted[n] ?? 0;
       const particle = this.#pool[n];
       const archetype = horde.archetype[i] ?? 0;
-      const frames = this.#frames[archetype];
+      // Tache 17.2 : le clip est du rendu pur, deduit de l'etat d'arret DEJA
+      // simule (`horde.stopped`) — voir `selectClip`. Jamais recalcule ici a
+      // partir d'une distance : ce calcul-la vit dans `Horde.retarget`
+      // (`shared/horde.ts`), pour rester identique des deux cotes.
+      const stopped = (horde.stopped[i] ?? 0) === 1;
+      const frames = selectClip(stopped, this.#runFrames[archetype], this.#attackFrames[archetype]);
       if (!particle || !frames || frames.length === 0) {
         continue;
       }
@@ -465,7 +533,7 @@ export class HordeRenderer {
   }
 
   #ensurePool(needed: number): void {
-    const first = this.#frames[0]?.[0];
+    const first = this.#runFrames[0]?.[0];
     if (!first) {
       return;
     }

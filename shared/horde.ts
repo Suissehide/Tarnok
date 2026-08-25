@@ -1,5 +1,5 @@
 import { archetypeOf } from './archetypes';
-import { MAP_SIZE, MAX_ENTITIES, MAX_PER_WAVE } from './constants';
+import { CONTACT_RADIUS, MAP_SIZE, MAX_ENTITIES, MAX_PER_WAVE } from './constants';
 import type { FlowField } from './flowfield';
 import { formationPositions, type WaveOrder } from './waves';
 
@@ -19,10 +19,10 @@ export function entityIdOf(waveId: number, index: number): number {
 /**
  * Instantane de l'etat de la horde, pour `HordeHistory` (§3.2).
  *
- * Les sept memes tableaux que `Horde`, plus le compte. `HordeHistory` en
- * alloue un par creneau de son anneau, une seule fois, et `saveState` /
- * `restoreState` s'en servent comme tampons a copier par `.set()` — jamais de
- * nouveau tableau a chaque tick.
+ * Les huit memes tableaux que `Horde` (`stopped` depuis la tache 17.2), plus
+ * le compte. `HordeHistory` en alloue un par creneau de son anneau, une seule
+ * fois, et `saveState` / `restoreState` s'en servent comme tampons a copier
+ * par `.set()` — jamais de nouveau tableau a chaque tick.
  */
 export interface HordeState {
   count: number;
@@ -33,6 +33,7 @@ export interface HordeState {
   indexInWave: Uint16Array;
   animPhase: Uint8Array;
   targetField: Uint8Array;
+  stopped: Uint8Array;
 }
 
 /**
@@ -64,6 +65,20 @@ export class Horde {
   readonly animPhase: Uint8Array;
   /** Index du champ suivi : le joueur le plus proche. */
   readonly targetField: Uint8Array;
+  /**
+   * `1` si l'entite est a portee de contact (`CONTACT_RADIUS`) du joueur
+   * qu'elle vise, `0` sinon — tache 17.2. DERIVE dans `retarget`, a partir des
+   * positions de joueurs deja retardees que l'appelant lui passe : voir sa
+   * doc pour pourquoi c'est ce qui rend l'arret identique des deux cotes.
+   *
+   * ⚠️ **Simulation, pas rendu** : c'est ce booleen, et lui seul, qui doit
+   * decider si une entite avance encore dans `#advance`. Le rendu (choix du
+   * clip course/attaque, `front/src/render/horde-renderer.ts`) le LIT mais ne
+   * le calcule jamais — sans quoi deux clients dessineraient une attaque a
+   * des instants differents pour une raison qui n'aurait plus rien de
+   * cosmetique.
+   */
+  readonly stopped: Uint8Array;
 
   #count = 0;
 
@@ -82,6 +97,7 @@ export class Horde {
     this.indexInWave = new Uint16Array(capacity);
     this.animPhase = new Uint8Array(capacity);
     this.targetField = new Uint8Array(capacity);
+    this.stopped = new Uint8Array(capacity);
   }
 
   get count(): number {
@@ -121,6 +137,10 @@ export class Horde {
       // 3, un compactage apres une mort reutilisera ce creneau, et sans cette
       // ligne une entite neuve heriterait de la cible du mort qu'elle remplace.
       this.targetField[slot] = 0;
+      // Meme raisonnement (tache 17.2) : une entite neuve qui heriterait de
+      // `stopped = 1` d'un mort qui occupait ce creneau traverserait le
+      // joueur sans jamais l'attaquer, jusqu'au prochain `retarget`.
+      this.stopped[slot] = 0;
     }
 
     this.#count += count;
@@ -185,8 +205,9 @@ export class Horde {
    * parametre plutot que d'en allouer un ici est ce qui garde cette methode
    * hors du ramasse-miettes.
    *
-   * ⚠️ Les SEPT tableaux, plus le compte. Meme piege que `#removeAt` : en
-   * oublier un laisse la suite verte jusqu'a ce qu'un rejeu s'appuie dessus.
+   * ⚠️ Les HUIT tableaux, plus le compte (`stopped` depuis la tache 17.2).
+   * Meme piege que `#removeAt` : en oublier un laisse la suite verte jusqu'a
+   * ce qu'un rejeu s'appuie dessus.
    */
   saveState(out: HordeState): void {
     out.count = this.#count;
@@ -197,6 +218,7 @@ export class Horde {
     out.indexInWave.set(this.indexInWave);
     out.animPhase.set(this.animPhase);
     out.targetField.set(this.targetField);
+    out.stopped.set(this.stopped);
   }
 
   /** Inverse de `saveState` : remplace l'etat courant par `state`. */
@@ -209,6 +231,7 @@ export class Horde {
     this.indexInWave.set(state.indexInWave);
     this.animPhase.set(state.animPhase);
     this.targetField.set(state.targetField);
+    this.stopped.set(state.stopped);
   }
 
   #removeAt(slot: number): void {
@@ -221,17 +244,34 @@ export class Horde {
       this.indexInWave[slot] = this.indexInWave[last] ?? 0;
       this.animPhase[slot] = this.animPhase[last] ?? 0;
       this.targetField[slot] = this.targetField[last] ?? 0;
+      this.stopped[slot] = this.stopped[last] ?? 0;
     }
     this.#count = last;
   }
 
   /**
-   * Reaffecte chaque entite au joueur le plus proche.
+   * Reaffecte chaque entite au joueur le plus proche, et decide si elle est
+   * a portee de contact (tache 17.2).
    *
    * Appele a la cadence du flowfield (10 Hz), pas a chaque tick : changer de
-   * cible chaque tick fait vibrer les trajectoires.
+   * cible chaque tick fait vibrer les trajectoires. C'est aussi, DELIBEREMENT,
+   * la cadence a laquelle `stopped` se met a jour : `playerX`/`playerY` sont
+   * deja les positions RETARDEES que l'appelant lit dans `PlayerHistory`
+   * (§5 de la spec) pour alimenter le flowfield — les memes des deux cotes,
+   * par construction. Decider l'arret ici, a partir de cette meme donnee,
+   * plutot que dans `#advance` a partir d'on ne sait quoi, c'est ce qui
+   * garantit qu'un serveur et un client s'arretent au meme tick : voir le
+   * test « Horde s'arrete au contact de facon deterministe ».
+   *
+   * ⚠️ Ne PAS relire les positions de joueurs courantes ici, meme si elles
+   * semblent plus a jour — c'est exactement ce qui romprait la replication
+   * (meme piege que `spawnCatchingUp`, documente plus haut). L'arbitrage des
+   * degats, lui, reste au serveur et sur les positions courantes
+   * (`resolveContact`, `back/src/combat.ts`) : le leger decalage entre
+   * « s'arrete » et « touche » est sans consequence, le serveur tranche.
    */
   retarget(playerX: readonly number[], playerY: readonly number[]): void {
+    const contactR2 = CONTACT_RADIUS * CONTACT_RADIUS;
     for (let i = 0; i < this.#count; i++) {
       const ex = this.x[i] ?? 0;
       const ey = this.y[i] ?? 0;
@@ -247,6 +287,7 @@ export class Horde {
         }
       }
       this.targetField[i] = best;
+      this.stopped[i] = bestDist <= contactR2 ? 1 : 0;
     }
   }
 
@@ -312,6 +353,11 @@ export class Horde {
    */
   #advance(from: number, to: number, dt: number, fields: readonly FlowField[]): void {
     for (let i = from; i < to; i++) {
+      // Tache 17.2 : une entite a portee de contact s'arrete plutot que de
+      // traverser le joueur. `stopped` vient de `retarget`, voir sa doc.
+      if (this.stopped[i]) {
+        continue;
+      }
       const field = fields[this.targetField[i] ?? 0];
       if (!field) {
         continue;

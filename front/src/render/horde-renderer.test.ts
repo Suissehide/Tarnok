@@ -6,10 +6,12 @@ import { describe, expect, it } from 'vitest';
 import {
   BAND_COUNT,
   bandOf,
+  contentSizePx,
   DEPTH_BAND,
   FACING_DEAD_ZONE_PX,
   FACING_MAX_STEP_PX,
   facingScaleX,
+  selectClip,
   sortByDepth,
   spriteScale,
 } from './horde-renderer';
@@ -186,5 +188,47 @@ describe('facingScaleX deduit le sens du sprite du seul deplacement horizontal',
   it('au-dela du pas plausible (creneau recompacte), conserve le sens precedent plutot que de suivre le saut', () => {
     expect(facingScaleX(FACING_MAX_STEP_PX * 2, -1)).toBe(-1);
     expect(facingScaleX(-FACING_MAX_STEP_PX * 2, 1)).toBe(1);
+  });
+});
+
+/**
+ * Tache 17.1 : une cellule d'atlas Tiny Swords de 192 px est en grande partie
+ * VIDE — la creature n'en occupe qu'une fraction. `spriteScale(cellPx, ...)`
+ * (tache 16) ramenait le CADRE a la hitbox, ce qui rend le CORPS bien plus
+ * petit qu'elle. `contentSizePx` est la mesure qui doit desormais nourrir
+ * `spriteScale` : la plus grande dimension de la boite englobante du contenu
+ * NON TRANSPARENT (`tools/build_monster_atlas.py` la calcule et la publie
+ * dans le manifeste, voir `bounds` dans `AtlasManifest`).
+ *
+ * On retient la plus grande des deux dimensions, pas la largeur ni la hauteur
+ * seules : une silhouette allongee horizontalement (un lezard qui court) ne
+ * doit pas se voir attribuer une echelle calculee sur sa hauteur, plus
+ * petite, ce qui la ferait deborder de son propre diametre de hitbox dans le
+ * sens ou elle est justement la plus etendue.
+ */
+describe('contentSizePx retient la plus grande dimension de la boite englobante du contenu', () => {
+  it('rend la largeur quand elle domine (silhouette large et basse)', () => {
+    expect(contentSizePx({ w: 150, h: 80 })).toBe(150);
+  });
+
+  it('rend la hauteur quand elle domine (silhouette haute et etroite)', () => {
+    expect(contentSizePx({ w: 80, h: 150 })).toBe(150);
+  });
+});
+
+/**
+ * Tache 17.2 : le choix du clip est du RENDU PUR, derive de l'etat d'arret
+ * DEJA simule (`horde.stopped`, voir `shared/horde.ts`) — jamais recalcule ni
+ * envoye sur le fil. `selectClip` isole cette seule decision pour qu'elle se
+ * teste sans dependre du chargement de l'atlas (reseau/canevas absents en
+ * test, meme raison que `sortByDepth`/`spriteScale` plus haut dans ce fichier).
+ */
+describe("selectClip choisit l'attaque a l'arret, la course sinon", () => {
+  it('rend le clip d attaque quand l entite est arretee', () => {
+    expect(selectClip(true, 'course', 'attaque')).toBe('attaque');
+  });
+
+  it('rend le clip de course quand l entite avance', () => {
+    expect(selectClip(false, 'course', 'attaque')).toBe('course');
   });
 });

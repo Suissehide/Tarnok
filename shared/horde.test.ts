@@ -1,8 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
-import { MAX_ENTITIES } from './constants';
+import { CONTACT_RADIUS, FLOWFIELD_HZ, MAX_ENTITIES, TICK_HZ } from './constants';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
+import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
 
 const DT = 1 / 30;
@@ -267,6 +268,180 @@ describe('Horde.retarget', () => {
     expect(horde.targetField[0]).toBe(0);
     expect(horde.targetField[1]).toBe(1);
   });
+
+  /**
+   * Tache 17.2 : l'arret au contact se decide ICI, dans `retarget` — au meme
+   * endroit et a la meme cadence que le reciblage, a partir des positions
+   * DEJA retardees que l'appelant lui passe (§5 de la spec, voir
+   * `PlayerHistory.delayed`). `Horde` ne sait rien du reseau ; il ne fait que
+   * comparer sa propre position, deja identique des deux cotes par
+   * construction, a celle qu'on lui donne.
+   */
+  it('marque une entite arretee quand son joueur le plus proche est a portee de contact', () => {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 2, formation: FORMATION.SCATTER }));
+    horde.x[0] = 100;
+    horde.y[0] = 100;
+    horde.x[1] = 5000;
+    horde.y[1] = 5000;
+
+    // Le joueur associe a l'entite 0 est colle a elle ; celui associe a
+    // l'entite 1 en reste tres eloigne.
+    horde.retarget([100, 5900], [100, 5900]);
+
+    expect(horde.stopped[0]).toBe(1);
+    expect(horde.stopped[1]).toBe(0);
+  });
+
+  /**
+   * Fixe la portee d'arret sur `CONTACT_RADIUS` precisement — pas sur un
+   * nombre invente a cote (`SEPARATION_RADIUS`, `PROJECTILE_HIT_RADIUS`, ou
+   * une constante propre qui se degraderait sans jamais suivre l'arbitrage
+   * serveur). Une entite juste EN DECA doit s'arreter, une entite juste
+   * AU-DELA doit continuer d'avancer.
+   */
+  it("utilise CONTACT_RADIUS comme portee d'arret, pas un nombre invente a cote", () => {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 2, formation: FORMATION.SCATTER }));
+    horde.x[0] = 1000;
+    horde.y[0] = 1000;
+    horde.x[1] = 5000;
+    horde.y[1] = 5000;
+
+    horde.retarget([1000 + CONTACT_RADIUS - 1, 5000 + CONTACT_RADIUS + 1], [1000, 5000]);
+
+    expect(horde.stopped[0]).toBe(1);
+    expect(horde.stopped[1]).toBe(0);
+  });
+});
+
+/**
+ * Tache 17.2 : une entite arretee cesse d'avancer, meme si le champ continue
+ * de la tirer fort ailleurs — sans quoi elle traverserait quand meme le
+ * joueur, exactement le defaut remonte en jeu.
+ */
+describe('Horde.step laisse une entite arretee sur place', () => {
+  it("une entite marquee arretee (retarget) n'avance plus, meme apres plusieurs pas", () => {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, formation: FORMATION.SCATTER }));
+    horde.x[0] = 1000;
+    horde.y[0] = 1000;
+    // Champ qui tire fortement ailleurs : si le garde-fou d'arret manquait,
+    // l'entite s'en rapprocherait visiblement en 100 pas.
+    const fields = fieldsTowards(4000, 4000);
+
+    // Le joueur cible est colle a l'entite : elle doit s'arreter des ce
+    // reciblage.
+    horde.retarget([1000, 1000, 1000, 1000], [1000, 1000, 1000, 1000]);
+    expect(horde.stopped[0]).toBe(1); // sanity : le garde teste bien un cas arrete
+
+    const beforeX = horde.x[0];
+    const beforeY = horde.y[0];
+    for (let i = 0; i < 100; i++) {
+      horde.step(DT, fields);
+    }
+
+    expect(horde.x[0]).toBe(beforeX);
+    expect(horde.y[0]).toBe(beforeY);
+  });
+});
+
+/**
+ * Tache 17.2, garde-fou explicitement demande par le brief : « un monstre
+ * arrive a portee cesse d'avancer, et les deux cotes s'arretent au meme
+ * tick ». Rejoue la boucle production (`PlayerHistory.record/delayed`,
+ * `retarget` a la cadence du flowfield, `step` a chaque tick — exactement le
+ * montage de `Room.step` et `GameClient#advanceHorde`) deux fois de suite,
+ * sur deux graphes d'objets independants, et verifie que :
+ *  - le monstre a REELLEMENT avance avant de s'arreter (sinon le test ne
+ *    prouverait rien : une horde immobile depuis le premier tick "s'arrete"
+ *    trivialement) ;
+ *  - il s'arrete au MEME tick des deux cotes ;
+ *  - il reste immobile apres.
+ */
+describe("Horde s'arrete au contact de facon deterministe", () => {
+  it('un monstre qui approche cesse d avancer une fois a portee, au meme tick des deux simulations', () => {
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const MAP = 6000;
+    const CELL = 64;
+    // Le joueur marche vers (TARGET_X, FIXED_Y) pendant RAMP_TICKS puis s'y
+    // IMMOBILISE : sans palier final, un joueur qui continue tout droit finit
+    // par depasser un monstre deja a l'arret et rouvre la distance — ce n'est
+    // pas un defaut (l'arret n'a pas a etre un cliquet : un monstre distance
+    // doit pouvoir se remettre a poursuivre), mais ca rendrait ce test
+    // instable pour une raison etrangere a ce qu'il verifie. Voir le rapport
+    // de la tache 17 pour la mesure qui a fait choisir ce palier.
+    const TOTAL_TICKS = 500;
+    const RAMP_TICKS = 200;
+    const START_X = 0;
+    const TARGET_X = 2500;
+    const FIXED_Y = 3000;
+
+    interface RunResult {
+      /** Tick de la DERNIERE transition 0 -> 1 : celle qui tient jusqu'a la fin. */
+      stopTick: number;
+      positions: { x: number; y: number }[];
+    }
+
+    function playerXAt(tick: number): number {
+      const t = Math.min(1, tick / RAMP_TICKS);
+      return START_X + (TARGET_X - START_X) * t;
+    }
+
+    function run(): RunResult {
+      const horde = new Horde(4);
+      horde.spawn(order({ count: 1, formation: FORMATION.SCATTER }));
+      // Position fixe et connue : la formation SCATTER disperse sur 900 px,
+      // ce que ce test n'a pas besoin de negocier.
+      horde.x[0] = 3000;
+      horde.y[0] = FIXED_Y;
+
+      const fields = [new FlowField(MAP, CELL)];
+      const history = new PlayerHistory();
+      const positions: { x: number; y: number }[] = [];
+      let stopTick = -1;
+      let wasStopped = false;
+
+      for (let tick = 0; tick < TOTAL_TICKS; tick++) {
+        history.record(tick, [playerXAt(tick)], [FIXED_Y]);
+        if (tick % stepsPerField === 0) {
+          const seen = history.delayed(tick);
+          if (seen) {
+            fields[0]?.update(seen.x[0] ?? 0, seen.y[0] ?? 0);
+            horde.retarget(seen.x, seen.y);
+          }
+        }
+        horde.step(DT, fields);
+        positions.push({ x: horde.x[0] ?? 0, y: horde.y[0] ?? 0 });
+        const isStopped = horde.stopped[0] === 1;
+        if (isStopped && !wasStopped) {
+          stopTick = tick;
+        }
+        wasStopped = isStopped;
+      }
+
+      return { stopTick, positions };
+    }
+
+    const a = run();
+    const b = run();
+
+    expect(a.stopTick).toBeGreaterThan(0);
+    expect(a.stopTick).toBe(b.stopTick);
+
+    // Elle a REELLEMENT avance avant de s'arreter : sans cette assertion, une
+    // horde immobile depuis le premier tick « s'arreterait » trivialement et
+    // le test ne prouverait rien.
+    const early = a.positions[5] ?? { x: 0, y: 0 };
+    const justBefore = a.positions[a.stopTick - 1] ?? early;
+    expect(Math.hypot(justBefore.x - early.x, justBefore.y - early.y)).toBeGreaterThan(50);
+
+    // Et elle reste immobile jusqu'au bout une fois arretee pour de bon.
+    const atStop = a.positions[a.stopTick] ?? { x: 0, y: 0 };
+    const atEnd = a.positions[a.positions.length - 1] ?? atStop;
+    expect(atEnd.x).toBe(atStop.x);
+    expect(atEnd.y).toBe(atStop.y);
+  });
 });
 
 describe('Horde.kill', () => {
@@ -349,10 +524,11 @@ describe('Horde.kill', () => {
     // et l'etape 3 le paierait en sprites melanges, ou pire en monstres qui
     // poursuivent le champ de flux d'un autre joueur.
     //
-    // ⚠️ Les SEPT tableaux sont verifies, un par un. Une premiere version de ce
-    // test n'en verifiait que deux — `archetype` et `animPhase` — alors que son
-    // nom promet « pas seulement sa position ». Verifie : supprimer la copie de
-    // `x`, de `y` ou de `targetField` laissait les 26 tests verts.
+    // ⚠️ Les HUIT tableaux sont verifies, un par un (`stopped` depuis la
+    // tache 17.2). Une premiere version de ce test n'en verifiait que deux —
+    // `archetype` et `animPhase` — alors que son nom promet « pas seulement sa
+    // position ». Verifie : supprimer la copie de `x`, de `y` ou de
+    // `targetField` laissait les 26 tests verts.
     //
     // Si un tableau est ajoute a `Horde`, il doit apparaitre ICI et dans
     // `#removeAt`. Les deux listes se tiennent.
@@ -365,6 +541,7 @@ describe('Horde.kill', () => {
     horde.x[last] = 1234.5;
     horde.y[last] = 6789.5;
     horde.targetField[last] = 3;
+    horde.stopped[last] = 1;
     const attendu = {
       entityId: horde.entityIdAt(last),
       x: horde.x[last],
@@ -374,6 +551,7 @@ describe('Horde.kill', () => {
       indexInWave: horde.indexInWave[last],
       animPhase: horde.animPhase[last],
       targetField: horde.targetField[last],
+      stopped: horde.stopped[last],
     };
 
     horde.kill([horde.entityIdAt(0)]);
@@ -387,6 +565,7 @@ describe('Horde.kill', () => {
     expect(horde.indexInWave[slot]).toBe(attendu.indexInWave);
     expect(horde.animPhase[slot]).toBe(attendu.animPhase);
     expect(horde.targetField[slot]).toBe(attendu.targetField);
+    expect(horde.stopped[slot]).toBe(attendu.stopped);
   });
 
   it('ignore une identite inconnue melangee a une connue', () => {
