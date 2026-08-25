@@ -307,7 +307,7 @@ describe('Room et la horde', () => {
 
   /**
    * Pre-remplit la horde pres de sa capacite, loin du joueur — hors de portee
-   * d'arme (333 px pour l'arme de base) et de contact (34 px) — pour observer
+   * d'arme (~607 px pour l'arme de base, tache 14) et de contact (34 px) — pour observer
    * une troncature SANS attendre qu'un vrai combat vide la horde ou tue le
    * joueur. Depuis la tache 9, la horde ne sature plus « tant que rien ne
    * meurt » (§11 de la spec, vrai a l'etape 2 seulement) : un joueur seul,
@@ -338,11 +338,13 @@ describe('Room et la horde', () => {
       // reste visible dans le HUD (§4.6).
       const room = new Room();
       room.join(1);
-      fillHordeFarFromPlayer(room, MAX_ENTITIES - 50);
+      fillHordeFarFromPlayer(room, MAX_ENTITIES - 10);
 
       // Une seule periode de vague (PERIOD_TICKS = TICK_HZ * 6) suffit : la
-      // horde pre-remplie ne laisse plus de place pour les 120 a 320 entites
-      // que WaveDirector va vouloir faire apparaitre.
+      // horde pre-remplie ne laisse que 10 places, strictement sous le
+      // plancher de la toute premiere vague (`WAVE1_MIN_COUNT`, tache 14 —
+      // rampe de `WaveDirector`) — la troncature est donc garantie quel que
+      // soit le tirage, sans dependre du reglage exact de la rampe.
       for (let i = 0; i < TICK_HZ * 6; i++) {
         room.step(DT);
       }
@@ -355,7 +357,7 @@ describe('Room et la horde', () => {
   it('remet le compteur de troncatures a zero au drainage', () => {
     const room = new Room();
     room.join(1);
-    fillHordeFarFromPlayer(room, MAX_ENTITIES - 50);
+    fillHordeFarFromPlayer(room, MAX_ENTITIES - 10);
     for (let i = 0; i < TICK_HZ * 6; i++) {
       room.step(DT);
     }
@@ -396,8 +398,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     const room = new Room();
     room.join(1);
     const before = positionOf(room, 1);
-    // A portee de l'arme de base (333 px) mais hors de CONTACT_RADIUS (34 px)
-    // : isole le chemin "degats de projectile" du chemin "contact".
+    // A portee de l'arme de base (~607 px, tache 14) mais hors de
+    // CONTACT_RADIUS (34 px) : isole le chemin "degats de projectile" du
+    // chemin "contact".
     const targetId = spawnMonsterAt(room, 500, before.x + 100, before.y);
 
     let deaths: { tick: number; ids: number[] }[] = [];
@@ -416,11 +419,15 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     room.join(1);
     const before = positionOf(room, 1);
     // Contact et arme partagent la meme cible potentielle des qu'un monstre
-    // est a portee de contact (34 px < 333 px de portee d'arme) : avec un
-    // seul monstre, l'arme le tue au tick 1 (tir depuis la position exacte du
-    // joueur, donc a distance nulle) et le contact ne voit plus jamais rien.
-    // Plusieurs monstres au meme point : un seul meurt par fenetre de
-    // cooldown (15 ticks), les autres restent pour continuer a faire mal.
+    // est a portee de contact (34 px < ~607 px de portee d'arme, tache 14) :
+    // avec un seul monstre, l'arme le tue au tick 1 (tir depuis la position
+    // exacte du joueur, donc a distance nulle) et le contact ne voit plus
+    // jamais rien. Plusieurs monstres au meme point absorbent les tirs
+    // suivants (au plus un par fenetre de cooldown de l'arme, 7 ticks depuis
+    // la tache 14) — mais ce que ce test verrouille, c'est que meme si tous
+    // finissent par mourir, l'absence de degats jusqu'au tick 15 vient de la
+    // fenetre d'invulnerabilite de CONTACT (elle decompte tick par tick,
+    // qu'un monstre touche ou non), jamais du hasard de qui reste vivant.
     for (let i = 0; i < 3; i++) {
       spawnMonsterAt(room, 500 + i, before.x, before.y);
     }
@@ -485,8 +492,27 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // monstre) plus vite qu'il ne peut les abattre, ce qui a ete verifie en
     // premiere version de ce test — le niveau n'arrivait qu'apres avoir
     // heurte le bord de la carte.
+    //
+    // ⚠️ En ANNEAU, pas alignes sur un segment (regression constatee tache
+    // 14, en durcissant l'arme). Dix monstres colles en ligne, espaces de 2 px,
+    // sont tous a moins de `SEPARATION_RADIUS` (28 px) les uns des autres : la
+    // repulsion de `SeparationGrid` les pousse activement pendant qu'ils
+    // attendent leur tour d'etre cibles, et le dernier abattu peut deriver
+    // au-dela d'`ORB_PICKUP_RADIUS` (90 px) avant de mourir — verifie en
+    // mesurant sa distance au joueur a l'instant de sa mort : 116 px avec
+    // l'arme reglee tache 14, contre 90 px de rayon de ramassage. Un anneau a
+    // 50 px, espace de `2 * 50 * sin(pi/10) ≈ 30,9 px` entre voisins
+    // immediats — juste au-dessus de `SEPARATION_RADIUS` — ne declenche
+    // aucune repulsion mutuelle : chaque monstre reste a portee de ramassage
+    // jusqu'a sa mort, quelle que soit la cadence de l'arme.
     for (let i = 0; i < 10; i++) {
-      spawnMonsterAt(room, 1000 + i, before.x + 60 + i * 2, before.y);
+      const angle = (i / 10) * Math.PI * 2;
+      spawnMonsterAt(
+        room,
+        1000 + i,
+        before.x + Math.cos(angle) * 50,
+        before.y + Math.sin(angle) * 50,
+      );
     }
 
     let levelUps: { tick: number; level: number }[] = [];
@@ -581,4 +607,47 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     }
     expect(positionOf(room, 1)).toEqual(atRunOver);
   });
+});
+
+describe('la run est jouable (tache 14)', () => {
+  /**
+   * Integration bout-en-bout : AUCUN monstre ni vague injecte a la main —
+   * seulement `WaveDirector`, l'arme de base et le ramassage d'orbes, exactement
+   * le pipeline qu'un vrai client declenche. Un joueur immobile (le pire cas :
+   * aucune approche active des orbes) doit tout de meme atteindre le niveau 2.
+   *
+   * Avant cette tache, ce test aurait echoue : la horde partait a 120-320
+   * entites des la premiere vague (~37 apparitions/s) contre 2 morts/s pour la
+   * dague de base, et le joueur mourait encercle en ~20 s — bien avant les 10
+   * orbes necessaires. Voir le rapport de la tache pour les mesures.
+   *
+   * Budget de 100 s (3000 ticks) : le banc `back/bench/_probe.ts` (jete,
+   * mesures dans le rapport) situe le niveau 2 entre 35 et 64 s sur une
+   * vingtaine d'essais avec un joueur passif — la graine de carte tiree au
+   * hasard a chaque `Room` (`Room.mapSeed`) fait varier ce delai d'un essai a
+   * l'autre. 100 s laisse une marge large sans figer de graine.
+   */
+  it('un joueur passif atteint le niveau 2 via le pipeline reel (vagues, arme de base, orbes)', () => {
+    const room = new Room();
+    room.join(1);
+
+    let levelUps: { tick: number; level: number }[] = [];
+    let totalDeaths = 0;
+    let totalPickups = 0;
+    const budget = TICK_HZ * 100;
+    for (let i = 0; i < budget && levelUps.length === 0; i++) {
+      room.step(DT);
+      totalDeaths += room.drainDeaths().reduce((n, d) => n + d.ids.length, 0);
+      totalPickups += room.drainPickups().reduce((n, p) => n + p.ids.length, 0);
+      levelUps = levelUps.concat(room.drainLevelUps());
+    }
+
+    expect(levelUps.length).toBeGreaterThan(0);
+    expect(levelUps[0]?.level).toBe(2);
+    // Garde-fou contre un test qui ne prouverait rien (§ « ne jamais rien
+    // tuer ») : la montee de niveau doit venir de vrais monstres tues et de
+    // vrais orbes ramasses, pas d'un chemin degenere.
+    expect(totalDeaths).toBeGreaterThan(0);
+    expect(totalPickups).toBeGreaterThan(0);
+  }, 30_000);
 });

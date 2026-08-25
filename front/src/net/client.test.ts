@@ -5,6 +5,7 @@ import {
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   ORB_LIFETIME_TICKS,
+  PROJECTILE_HIT_RADIUS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
 } from '@shared/constants';
@@ -862,10 +863,19 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
       '(un flash d impact apparait)',
     () => {
       const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0010, 70);
-      // 50 px : bien en-deca de la portee de la dague (~333 px), et le
-      // monstre fonce droit sur le joueur (auto-cible du flowfield) — la
-      // meme ligne que celle visee par la salve.
-      const PLAYER = { x: monsterX - 50, y: monsterY };
+      // Distance CALCULEE, pas une constante en dur : elle doit laisser au
+      // moins un tick de vol au projectile avant l'impact, quelle que soit la
+      // vitesse de l'arme (reglee tache 14 — voir le rapport). Un decalage
+      // fixe trop petit ferait toucher des le meme tick que celui du tir : la
+      // boucle observerait `hitFlashes` avant d'avoir jamais vu
+      // `projectiles.count > 0`, et `firedAtTick` resterait a -1 comme
+      // constate lors du reglage de cette tache. Le monstre fonce droit sur
+      // le joueur (auto-cible du flowfield) — la meme ligne que celle visee
+      // par la salve.
+      const weapon = weaponOf(0);
+      const perTickTravel = weapon.projectileSpeed / TICK_HZ;
+      const offset = Math.round(perTickTravel * 3 + PROJECTILE_HIT_RADIUS);
+      const PLAYER = { x: monsterX - offset, y: monsterY };
 
       let firedAtTick = -1;
       for (let tick = 1; tick <= 40; tick++) {
@@ -888,8 +898,8 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
 
   it("ne tire pas si aucun monstre n'est a portee", () => {
     const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0014, 74);
-    // 2000 px : tres au-dela de la portee de la dague (~333 px), quelle que
-    // soit la position reelle du monstre.
+    // 2000 px : tres au-dela de la portee de la dague (~607 px, tache 14),
+    // quelle que soit la position reelle du monstre.
     const PLAYER = { x: monsterX + 2000, y: monsterY };
     const spy = vi.spyOn(client.projectiles, 'fireSalvo');
 
@@ -937,9 +947,9 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
 
   it('un flash d impact expire apres HIT_FLASH_LIFETIME_MS, jamais avant (verifie aux deux bornes)', () => {
     const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0013, 73);
-    // Tres proche : collision quasi immediate, avant que le cooldown (500 ms)
-    // ne permette une seconde salve — la fenetre de 220 ms testee ci-dessous
-    // ne peut donc contenir qu'un seul flash.
+    // Tres proche : collision quasi immediate, avant que le cooldown de
+    // l'arme (7 ticks, tache 14) ne permette une seconde salve — la fenetre
+    // de 220 ms testee ci-dessous ne peut donc contenir qu'un seul flash.
     const PLAYER = { x: monsterX - 20, y: monsterY };
 
     let hitNowMs = -1;

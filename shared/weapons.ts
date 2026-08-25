@@ -40,11 +40,20 @@ export interface Weapon {
 const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
   {
     // Arme neutre de base (§6.1) : faible, sans element, hors slots.
+    //
+    // ⚠️ Reglage mesure, tache 14 : voir le rapport pour les chiffres. Ces
+    // valeurs restaient celles de l'etape 2 — 2 morts/s theoriques contre
+    // ~37 apparitions/s en moyenne, la montee de niveau (10 orbes) etait
+    // inatteignable avant que le joueur ne meure encercle. La portee et la
+    // cadence montent : la portee pour engager la horde plus tot (elle met
+    // plusieurs secondes a traverser `ANCHOR_RADIUS`), la cadence pour que le
+    // rythme de mise a mort suive celui de la premiere vague, desormais
+    // ramenee par `WaveDirector` (voir `waveCountBounds`).
     name: 'dague',
-    cooldownTicks: 15,
+    cooldownTicks: 7,
     damage: 5,
-    projectileSpeed: 500,
-    projectileLifeTicks: 20,
+    projectileSpeed: 650,
+    projectileLifeTicks: 28,
     projectileCount: 1,
     spreadRadians: 0.05,
   },
