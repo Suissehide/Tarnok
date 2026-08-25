@@ -40,10 +40,14 @@ const DEPTH_BAND = 64;
 
 /**
  * Nombre de bandes couvrant la carte, calcule une fois pour toutes : `y` est
- * borne a `[0, MAP_SIZE]` par la simulation (`clamp` dans `shared/horde.ts`),
- * donc ce nombre ne varie jamais en cours de partie.
+ * borne a `[0, MAP_SIZE]` par la simulation (`shared/horde.ts`,
+ * `shared/separation.ts`), donc ce nombre ne varie jamais en cours de partie.
+ *
+ * Exporte pour le test (tache 15) : `bandOf` et `sortByDepth` se verifient
+ * directement sans passer par `draw()`, qui exige un atlas charge (reseau,
+ * indisponible en test).
  */
-const BAND_COUNT = Math.floor(MAP_SIZE / DEPTH_BAND) + 1;
+export const BAND_COUNT = Math.floor(MAP_SIZE / DEPTH_BAND) + 1;
 
 /** Marge autour de la vue, pour qu'une entite n'apparaisse pas en plein ecran. */
 const CULL_MARGIN = 128;
@@ -64,8 +68,12 @@ const BOUNDS_MARGIN = 256;
  * indice hors bornes silencieux dans un tableau type (lecture `undefined`,
  * ecriture ignoree) corromprait le tri sans jamais lever d'erreur. Le clamp
  * est le prix, negligeable, de ne jamais avoir a s'en inquieter.
+ *
+ * Exportee (tache 15) : c'est la seule garde entre une position hors carte
+ * et une ecriture hors bornes dans `sortByDepth`, donc elle merite un test
+ * direct plutot qu'une confiance aveugle dans son appelant.
  */
-function bandOf(y: number): number {
+export function bandOf(y: number): number {
   const band = Math.floor(y / DEPTH_BAND);
   if (band < 0) {
     return 0;
@@ -74,6 +82,51 @@ function bandOf(y: number): number {
     return BAND_COUNT - 1;
   }
   return band;
+}
+
+/**
+ * Tri en profondeur par comptage, pur : deux passes lineaires sur `visible`,
+ * sans allocation, ecrivant dans les tampons fournis par l'appelant.
+ *
+ * Extrait de `HordeRenderer#depthSort` (tache 15) pour etre teste directement
+ * sans dependre du chargement de l'atlas (reseau/canevas absents en test) —
+ * la classe elle-meme se contente d'appeler cette fonction avec ses propres
+ * tampons prives, comportement inchange.
+ */
+export function sortByDepth(
+  y: Float32Array,
+  visible: Int32Array,
+  visibleCount: number,
+  bandCounts: Uint32Array,
+  bandOffsets: Uint32Array,
+  sorted: Int32Array,
+): void {
+  bandCounts.fill(0);
+
+  // Passe 1 : combien d'entites dans chaque bande.
+  for (let n = 0; n < visibleCount; n++) {
+    const i = visible[n] ?? 0;
+    const band = bandOf(y[i] ?? 0);
+    bandCounts[band] = (bandCounts[band] ?? 0) + 1;
+  }
+
+  // Sommes prefixees : offset de depart de chaque bande dans `sorted`.
+  bandOffsets[0] = 0;
+  for (let b = 0; b < BAND_COUNT; b++) {
+    bandOffsets[b + 1] = (bandOffsets[b] ?? 0) + (bandCounts[b] ?? 0);
+  }
+
+  // Passe 2 : place chaque entite a son offset. `bandCounts` est reutilise
+  // comme curseur d'ecriture par bande — les sommes prefixees ci-dessus n'en
+  // ont plus besoin, ca evite un troisieme tableau.
+  bandCounts.fill(0);
+  for (let n = 0; n < visibleCount; n++) {
+    const i = visible[n] ?? 0;
+    const band = bandOf(y[i] ?? 0);
+    const cursor = (bandOffsets[band] ?? 0) + (bandCounts[band] ?? 0);
+    sorted[cursor] = i;
+    bandCounts[band] = (bandCounts[band] ?? 0) + 1;
+  }
 }
 
 export class HordeRenderer {
@@ -214,37 +267,8 @@ export class HordeRenderer {
    * cout-la.
    */
   #depthSort(horde: Horde, visible: Int32Array, visibleCount: number): Int32Array {
-    const counts = this.#bandCounts;
-    counts.fill(0);
-
-    // Passe 1 : combien d'entites dans chaque bande.
-    for (let n = 0; n < visibleCount; n++) {
-      const i = visible[n] ?? 0;
-      const band = bandOf(horde.y[i] ?? 0);
-      counts[band] = (counts[band] ?? 0) + 1;
-    }
-
-    // Sommes prefixees : offset de depart de chaque bande dans `#sorted`.
-    const offsets = this.#bandOffsets;
-    offsets[0] = 0;
-    for (let b = 0; b < BAND_COUNT; b++) {
-      offsets[b + 1] = (offsets[b] ?? 0) + (counts[b] ?? 0);
-    }
-
-    // Passe 2 : place chaque entite a son offset. `counts` est reutilise comme
-    // curseur d'ecriture par bande — les sommes prefixees ci-dessus n'en ont
-    // plus besoin, ca evite un troisieme tableau.
-    counts.fill(0);
-    const sorted = this.#sorted;
-    for (let n = 0; n < visibleCount; n++) {
-      const i = visible[n] ?? 0;
-      const band = bandOf(horde.y[i] ?? 0);
-      const cursor = (offsets[band] ?? 0) + (counts[band] ?? 0);
-      sorted[cursor] = i;
-      counts[band] = (counts[band] ?? 0) + 1;
-    }
-
-    return sorted;
+    sortByDepth(horde.y, visible, visibleCount, this.#bandCounts, this.#bandOffsets, this.#sorted);
+    return this.#sorted;
   }
 
   /**

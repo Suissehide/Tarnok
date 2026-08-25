@@ -119,8 +119,19 @@ export class SeparationGrid {
 
     const speed = SEPARATION_STRENGTH * dt;
     for (let i = 0; i < n; i++) {
-      hx[i] = (hx[i] ?? 0) + (this.#pushX[i] ?? 0) * speed;
-      hy[i] = (hy[i] ?? 0) + (this.#pushY[i] ?? 0) * speed;
+      // Bornage a la carte (tache 15) : contre un bord, la separation pousse
+      // plus fort que le flowfield ne tire en retour (voir la doc de
+      // SEPARATION_STRENGTH), et rien d'autre ne borne cette ecriture — c'est
+      // le seul chemin de `shared/` qui deplace une position sans deja
+      // clamper (le mouvement le fait dans `Horde.#advance`, l'apparition via
+      // `formationPositions`). Sans ce clamp, une entite giclee hors carte
+      // corrompt en silence le tri de profondeur du rendu (voir `bandOf`).
+      hx[i] = clamp((hx[i] ?? 0) + (this.#pushX[i] ?? 0) * speed, 0, MAP_SIZE);
+      hy[i] = clamp((hy[i] ?? 0) + (this.#pushY[i] ?? 0) * speed, 0, MAP_SIZE);
     }
   }
+}
+
+function clamp(v: number, min: number, max: number): number {
+  return v < min ? min : v > max ? max : v;
 }
