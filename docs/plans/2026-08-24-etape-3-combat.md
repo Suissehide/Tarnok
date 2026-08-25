@@ -1808,3 +1808,64 @@ corps, le projectile passe au travers : la hitbox est un disque aux pieds du spr
 git commit -m "fix(front): accorder la taille des sprites a celle des hitbox"
 ```
 
+---
+
+## Tâche 17 : la créature, pas sa cellule — et l'attaque au contact
+
+Deux retours de jeu, deux causes distinctes qui se règlent au même endroit : **l'atlas**.
+
+### 17.1 Les monstres sont minuscules
+
+La tâche 16 a dérivé l'échelle de dessin de `PROJECTILE_HIT_RADIUS`, ce qui était le bon
+principe — mais elle ramène la **cellule d'atlas** à 64 px. Or une cellule de 192 px de Tiny
+Swords est en grande partie **vide** : la créature n'en occupe qu'une fraction. Ramener la
+cellule à la taille de la hitbox rend donc la créature bien plus petite qu'elle.
+
+Le principe reste juste, la grandeur mesurée était fausse. **La hitbox représente le corps du
+monstre, donc c'est au corps qu'il faut l'accorder** — pas au cadre qui l'entoure.
+
+Le constructeur d'atlas doit émettre, par archétype, la **boîte englobante du contenu non
+transparent**, et l'échelle s'en déduit. Ça reste mécanique : aucun nombre choisi au ressenti.
+
+### 17.2 Les monstres traversent le joueur sans jamais l'attaquer
+
+Ils devraient **s'arrêter et jouer leur animation d'attaque** dès qu'ils sont à portée.
+
+Les planches existent déjà dans les assets — `_Run.png`, `_Attack.png`, `_Idle.png` par
+monstre — mais `tools/build_monster_atlas.py` n'embarque que la course.
+
+> ⚠️ **L'arrêt est de la simulation, donc il se réplique.** Les deux côtés doivent décider
+> l'arrêt à partir de la **même** donnée : les positions retardées, celles qui alimentent déjà
+> le flowfield, et non les positions courantes. Sinon un monstre s'arrête chez l'un et avance
+> chez l'autre, et la dérive repart.
+>
+> L'arbitrage des dégâts, lui, reste au serveur et sur les positions courantes. Le léger
+> décalage entre « s'arrête » et « touche » est sans conséquence : le serveur tranche.
+
+> ⚠️ **Le choix de l'animation est du rendu**, et se déduit de l'état d'arrêt déjà simulé.
+
+- [ ] **Étape 1 : l'atlas embarque course + attaque**, et publie la boîte englobante du contenu
+  par archétype. Le manifeste gagne de quoi distinguer les deux clips.
+
+- [ ] **Étape 2 : l'échelle se dérive du contenu**, pas de la cellule. Le test de relation de la
+  tâche 16 doit suivre — et vérifier la **relation**, jamais les valeurs du jour.
+
+- [ ] **Étape 3 : l'arrêt au contact, dans `shared/`**, sur les positions retardées. Test : un
+  monstre arrivé à portée cesse d'avancer, et les deux côtés s'arrêtent au même tick.
+
+- [ ] **Étape 4 : l'animation d'attaque** quand le monstre est arrêté, la course sinon.
+
+- [ ] **Étape 5 : vérifier la réplication** — 750,039 / 0,000 / 433,988 px. Ces chiffres vont
+  probablement **bouger** : l'arrêt change les trajectoires. C'est légitime — mais le scénario 9
+  doit rester à **0,000 px**, sans quoi l'arrêt n'est pas déterministe.
+
+- [ ] **Étape 6 : commit**
+
+```bash
+git commit -m "feat: les monstres s'arretent et attaquent au contact"
+```
+
+> 📤 **L'atlas régénéré doit être re-téléversé sur MinIO** (`monsters.png`, `monsters.json`) :
+> en production l'application les charge de là, et l'ancien atlas n'aura ni les clips d'attaque
+> ni les boîtes englobantes.
+
