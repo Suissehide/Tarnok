@@ -6,9 +6,13 @@ import type { Weapon } from './weapons';
  * Les projectiles : simules localement, jamais repliques (§5.2 de la spec).
  *
  * Un tir est entierement determine par des donnees que serveur et clients
- * possedent deja — l'arme, le tick, la position du tireur, la cible choisie
- * par `nearestTarget` — donc les deux cotes calculent les memes salves aux
- * memes ticks sans qu'un seul octet ne transite. Le test de derivation de ce
+ * possedent deja — l'arme, le tick, la position du tireur, et (§5.3 revu par
+ * la tache 13 : la visee suit le curseur, ce n'est plus une auto-visee sur la
+ * horde) la direction visee, transmise sur un octet signe par `INPUT` et
+ * `SNAPSHOT`. C'est ce SEUL octet qui transite ; la salve elle-meme (position,
+ * vitesse, degats de chaque projectile) reste calculee identiquement des deux
+ * cotes a partir de la meme direction quantifiee — voir `fireSalvoDirected` et
+ * `quantizeAxis` dans `shared/protocol.ts`. Le test de derivation de ce
  * fichier verrouille cette propriete : deux instances independantes, memes
  * entrees, memes projectiles.
  *
@@ -112,8 +116,49 @@ export class Projectiles {
 
     const dx = (horde.x[targetSlot] ?? 0) - x;
     const dy = (horde.y[targetSlot] ?? 0) - y;
-    const baseAngle = Math.atan2(dy, dx);
+    this.#emit(weapon, tick, x, y, Math.atan2(dy, dx));
+  }
 
+  /**
+   * Tire une salve de `weapon` depuis `(x, y)`, dans la direction `(dirX,
+   * dirY)` — decision de la tache 13 : la visee suit le curseur, elle n'est
+   * plus derivee d'une cible (voir `fireSalvo`, qui reste pour d'eventuelles
+   * armes futures a ciblage automatique, mais que plus personne n'appelle
+   * pour l'arme de base).
+   *
+   * `(dirX, dirY) = (0, 0)` ne tire pas : c'est la direction qu'envoie un
+   * curseur pile sur le joueur, ou une souris jamais bougee, et les DEUX
+   * cotes (serveur, chaque client) la voient identique — ne pas tirer est
+   * deterministe, choisir une direction par defaut ne le serait pas.
+   *
+   * Seul l'ANGLE de `(dirX, dirY)` compte (`Math.atan2` ignore la norme) :
+   * l'appelant peut donc passer la paire quantifiee sur un octet signe
+   * (-127..127) telle quelle, sans la renormaliser — c'est d'ailleurs ce qui
+   * est exige : voir `quantizeAxis` dans `shared/protocol.ts`, dont la doc
+   * explique pourquoi tirer avec un flottant non quantifie desynchroniserait
+   * durablement serveur et client.
+   */
+  fireSalvoDirected(
+    weapon: Weapon,
+    tick: number,
+    x: number,
+    y: number,
+    dirX: number,
+    dirY: number,
+  ): void {
+    if (dirX === 0 && dirY === 0) {
+      return;
+    }
+    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX));
+  }
+
+  /**
+   * Coeur commun a `fireSalvo` et `fireSalvoDirected` : pose `weapon.projectileCount`
+   * projectiles, repartis symetriquement autour de `baseAngle`. Factorise pour
+   * qu'un decalage d'octet ou de formule ne puisse pas diverger entre les deux
+   * points d'entree — seul le calcul de l'angle differe entre eux.
+   */
+  #emit(weapon: Weapon, tick: number, x: number, y: number, baseAngle: number): void {
     const n = weapon.projectileCount;
     const room = this.capacity - this.#count;
     const toFire = Math.min(n, room);

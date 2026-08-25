@@ -20,16 +20,22 @@ import {
   encodeInput,
   MSG,
   type PlayerSnapshot,
+  quantizeAxis,
   type WaveOrderMessage,
 } from '@shared/protocol';
 import { SeparationGrid } from '@shared/separation';
-import { nearestTarget } from '@shared/targeting';
 import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { SnapshotBuffer } from './interpolation';
 import { PredictedPlayer } from './prediction';
 
+/**
+ * Une paire d'axes dans [-1, 1] — reutilisee telle quelle pour le deplacement
+ * ET pour la visee (tache 13) : les deux sont structurellement la meme chose,
+ * un vecteur 2D normalise, seule leur INTERPRETATION differe (`readInput` vs
+ * `readAim` ci-dessous).
+ */
 export interface InputAxes {
   x: number;
   y: number;
@@ -348,12 +354,30 @@ export class GameClient {
    */
   readonly #pendingOrders: WaveOrderMessage[] = [];
 
+  /**
+   * Visee locale, quantifiee (tache 13) — memes entiers que ceux envoyes par
+   * le prochain `INPUT`. Recalculee a chaque `update()` a partir de
+   * `readAim()`, PUIS figee pour toute la duree de cet appel (elle peut
+   * avancer plusieurs pas de simulation fixes, voir `update`) : c'est ce qui
+   * garantit que `#fireWeapons` tire avec la valeur quantifiee, jamais avec
+   * le flottant brut renvoye par `readAim` (voir `quantizeAxis`).
+   */
+  #localAim: { x: number; y: number } = { x: 0, y: 0 };
+
   constructor(
     private readonly url: string,
     private readonly readInput: () => InputAxes,
     private readonly onStatusChange: (status: ConnectionStatus) => void,
     /** Appele une seule fois, a la reception de `RUN_OVER` (§7 de la spec). */
     private readonly onRunOver: (summary: RunOverSummary) => void = () => undefined,
+    /**
+     * Rend la direction visee, en coordonnees MONDE, deja normalisee (ou
+     * `(0, 0)` si le joueur ne vise nulle part) — voir `front/src/input/mouse.ts`
+     * et `Stage.screenToWorld`. Par defaut, ne vise jamais : les tests qui ne
+     * s'interessent pas au tir n'ont donc rien a fournir ici, `(0, 0)` etant
+     * deja « pas de tir » (tache 13).
+     */
+    private readonly readAim: () => InputAxes = () => ({ x: 0, y: 0 }),
   ) {}
 
   get status(): ConnectionStatus {
@@ -362,6 +386,18 @@ export class GameClient {
 
   get localId(): number | null {
     return this.#localId;
+  }
+
+  /**
+   * Position AFFICHEE du joueur local (`PredictedPlayer.renderX/renderY`), ou
+   * `null` tant qu'aucun snapshot ne l'a fait exister. Sert a `main.ts` pour
+   * convertir le curseur (coordonnees monde, via `Stage.screenToWorld`) en
+   * direction de visee (tache 13) : cette position est CELLE que la camera
+   * centre (voir `Stage#centerOn`), donc la direction calculee a partir
+   * d'elle correspond exactement a ce que l'ecran montre.
+   */
+  get localPosition(): { x: number; y: number } | null {
+    return this.#local ? { x: this.#local.renderX, y: this.#local.renderY } : null;
   }
 
   /** Niveau courant de l'equipe, pour le HUD (§4.6). Voir `#level`. */
@@ -432,6 +468,16 @@ export class GameClient {
     const axes = this.readInput();
     this.#local?.predict(axes.x, axes.y, dt);
 
+    // Visee locale (tache 13) : lue puis QUANTIFIEE une seule fois pour toute
+    // la duree de cet appel — voir la doc de `#localAim`. `readAim` rend deja
+    // une direction normalisee ou nulle ; la mise a l'echelle par 127 avant
+    // `quantizeAxis` reproduit exactement ce que `#sendInput` envoie sur le
+    // fil (memes constantes, meme fonction), pour que `#fireWeapons` ne tire
+    // jamais avec un flottant plus precis que ce que le serveur pourra jamais
+    // recevoir.
+    const aim = this.readAim();
+    this.#localAim = { x: quantizeAxis(aim.x * 127), y: quantizeAxis(aim.y * 127) };
+
     // La horde avance au **pas fixe** du serveur, pas au rythme des images :
     // deux clients a 60 et 144 fps appliqueraient sinon des suites de `dt`
     // differentes, et la derive serait proportionnelle au temps de vie.
@@ -456,6 +502,8 @@ export class GameClient {
         x: local.renderX,
         y: local.renderY,
         hp: this.#localHp,
+        aimX: this.#localAim.x,
+        aimY: this.#localAim.y,
       };
       if (index >= 0) {
         players[index] = predicted;
@@ -473,8 +521,16 @@ export class GameClient {
       return;
     }
     const axes = this.readInput();
+    // Visee (tache 13) : `encodeInput` applique `quantizeAxis` en interne,
+    // exactement la meme fonction que celle utilisee par `update()` pour
+    // `#localAim` — c'est ce qui garantit que le tir local et l'entree
+    // envoyee au serveur reposent sur la meme discipline de quantification,
+    // meme si les deux lectures de `readAim()`/`readInput()` ne tombent pas
+    // au meme instant (cadences d'envoi et de simulation decouplees, comme
+    // deja le cas pour le deplacement).
+    const aim = this.readAim();
     this.#seq = (this.#seq + 1) & 0xffff;
-    ws.send(encodeInput(this.#seq, axes.x * 127, axes.y * 127));
+    ws.send(encodeInput(this.#seq, axes.x * 127, axes.y * 127, aim.x * 127, aim.y * 127));
   }
 
   #onFrame(data: ArrayBuffer): void {
@@ -692,26 +748,31 @@ export class GameClient {
    * que chaque joueur voit tirer.
    *
    * Purement cosmetique : les degats restent arbitres par le serveur (§5.4),
-   * jamais deduits d'ici. Meme divergence acceptee que documentee sur
-   * `Projectiles.fireSalvo` — un client peut viser un monstre que le serveur
-   * a deja tue (ou l'inverse), selon la latence de propagation des morts
-   * (§3.2). Seule l'arme neutre de base est tiree (§6.1 — l'etalage de cartes
-   * est hors etape), comme cote serveur.
+   * jamais deduits d'ici. Seule l'arme neutre de base est tiree (§6.1 —
+   * l'etalage de cartes est hors etape), comme cote serveur.
+   *
+   * ⚠️ **La visee suit le curseur (tache 13), plus de ciblage.** Ce fichier ne
+   * cible donc plus rien dans `horde` : `nearestTarget` et `fireSalvo` (par
+   * cible) restent disponibles ailleurs mais ne sont plus appeles ici, voir
+   * le rapport de la tache 13. Une visee nulle ne tire pas — meme regle que
+   * cote serveur, voir `Projectiles.fireSalvoDirected`.
    *
    * `players` vient du dernier snapshot connu (voir l'appelant) : le client
    * n'a pas de position « vraie » continue pour les joueurs distants, il n'a
    * que la derniere connue — meme source que `#localHp`/`#teamXp`. Le joueur
    * local, lui, utilise sa position simulee (`#local.simX/simY`), plus a jour
-   * que le dernier snapshot recu.
+   * que le dernier snapshot recu — et de meme, sa visee locale
+   * (`#localAim`, DEJA quantifiee, voir `update()`) plutot que celle,
+   * retardee par l'aller-retour reseau, que porterait son propre bloc dans
+   * `players`. Les allies, eux, n'ont pas d'autre source que ce bloc : sans
+   * leur visee transmise par `SNAPSHOT`, ce client ne saurait pas ou dessiner
+   * leurs projectiles (voir la doc de `PlayerSnapshot`).
    */
   #fireWeapons(tick: number, players: readonly PlayerSnapshot[]): void {
-    if (this.horde.count === 0 || players.length === 0) {
+    if (players.length === 0) {
       return;
     }
     const weapon = weaponOf(0);
-    // Portee = distance que le projectile peut parcourir avant d'expirer —
-    // identique au calcul de `Room#fireWeapons`.
-    const range = (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
 
     for (const p of players) {
       if (p.hp <= 0) {
@@ -724,11 +785,12 @@ export class GameClient {
       const local = p.id === this.#localId ? this.#local : null;
       const x = local ? local.simX : p.x;
       const y = local ? local.simY : p.y;
-      const targetId = nearestTarget(this.horde, x, y, range);
-      if (targetId < 0) {
+      const aimX = local ? this.#localAim.x : p.aimX;
+      const aimY = local ? this.#localAim.y : p.aimY;
+      if (aimX === 0 && aimY === 0) {
         continue;
       }
-      this.projectiles.fireSalvo(weapon, tick, x, y, targetId, this.horde);
+      this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY);
       this.#lastFireTick.set(p.id, tick);
     }
   }

@@ -18,7 +18,6 @@ import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
 import { SeparationGrid } from '@shared/separation';
-import { nearestTarget } from '@shared/targeting';
 import type { WaveOrder } from '@shared/waves';
 import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -46,6 +45,15 @@ export interface PlayerState extends ContactPlayer {
   /** Axe de deplacement normalise, dans [-1, 1]. */
   moveX: number;
   moveY: number;
+  /**
+   * Direction de visee (tache 13), telle que recue par `INPUT` : deja
+   * quantifiee sur un octet signe (-127..127), jamais renormalisee ici — seul
+   * `Math.atan2` en tirera un angle (voir `Projectiles.fireSalvoDirected`),
+   * et l'angle ne depend pas de la norme du vecteur. `(0, 0)` : ce joueur ne
+   * tire pas ce tick.
+   */
+  aimX: number;
+  aimY: number;
   /** Derniere sequence d'entree appliquee, sur 16 bits. */
   lastSeq: number;
   /** Points de vie, personnels (voir `combat.ts`). */
@@ -259,6 +267,8 @@ export class Room {
       y: MAP_SIZE / 2 + offset[1],
       moveX: 0,
       moveY: 0,
+      aimX: 0,
+      aimY: 0,
       lastSeq: 0,
       hp: PLAYER_MAX_HP,
       contactInvulnTicks: 0,
@@ -274,8 +284,16 @@ export class Room {
   /**
    * Une entree d'un joueur absent est ignoree sans bruit : a la deconnexion, des
    * trames peuvent encore arriver apres le `leave`, et ce n'est pas une erreur.
+   *
+   * `aimX`/`aimY` (tache 13) sont bornes comme `moveX`/`moveY` mais jamais
+   * renormalises : contrairement au deplacement, seul l'ANGLE de la visee
+   * compte (`Math.atan2` dans `Projectiles.fireSalvoDirected` ignore la
+   * norme), donc rien ne justifie d'imposer un cercle unite ici. Les valeurs
+   * par defaut sont `0`, pour que les tests de deplacement existants (qui
+   * n'appellent `applyInput` qu'avec quatre arguments) restent silencieux sur
+   * la visee — `(0, 0)` signifiant deja « pas de tir ».
    */
-  applyInput(id: number, seq: number, moveX: number, moveY: number): void {
+  applyInput(id: number, seq: number, moveX: number, moveY: number, aimX = 0, aimY = 0): void {
     const p = this.#players.get(id);
     if (!p || !isNewer(seq, p.lastSeq)) {
       return;
@@ -293,6 +311,9 @@ export class Room {
     }
     p.moveX = nx;
     p.moveY = ny;
+
+    p.aimX = clamp(aimX, -127, 127);
+    p.aimY = clamp(aimY, -127, 127);
   }
 
   /**
@@ -429,7 +450,7 @@ export class Room {
   snapshot(out: Outbox): void {
     this.#scratch.length = 0;
     for (const p of this.#players.values()) {
-      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: p.hp });
+      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: p.hp, aimX: p.aimX, aimY: p.aimY });
     }
 
     const started = performance.now();
@@ -450,8 +471,8 @@ export class Room {
 
   /**
    * Tire les salves dues (etape 8, premiere moitie) : chaque joueur vivant,
-   * dont le cooldown est ecoule, vise l'ennemi le plus proche a portee et
-   * tire.
+   * dont le cooldown est ecoule et dont la visee n'est pas nulle, tire dans
+   * la direction qu'il vise.
    *
    * ⚠️ **Decision de conception, absente du brief.** Seule l'arme neutre de
    * base (`WEAPONS[0]`, §6.1) est tiree, par tous les joueurs, pendant toute
@@ -462,34 +483,25 @@ export class Room {
    * Construire une progression d'armes maintenant anticiperait ce que l'etape
    * 4 doit trancher avec un vrai choix du joueur.
    *
-   * ⚠️ **Ciblage sur l'etat COURANT de la horde — corrige au plan en ronde de
-   * relecture de la tache 9.** Une premiere version de cette doc (et de la
-   * spec, §5.3) demandait un retard `T − K`, par analogie avec le flowfield.
-   * L'analogie ne tient pas : le retard du flowfield marche parce qu'il porte
-   * sur des POSITIONS DE JOUEURS, repliquees avec un delai connu des deux
-   * cotes — serveur et client peuvent s'accorder exactement sur « cette
-   * position il y a K ticks ». La horde, elle, est DERIVEE et jamais
-   * repliquee : son desaccord entre deux participants ne vient pas d'une
-   * latence d'entree qu'un retard pourrait absorber, mais de la PROPAGATION
-   * DES MORTS (§3.2) — retarder la lecture n'y change rien, sauf a faire
-   * tenir au serveur un second anneau `HordeHistory` complet (`.set()` sur
-   * sept tableaux de MAX_ENTITIES a chaque tick), jamais budgete par le banc
-   * de la tache 0, pour un gain purement cosmetique cote client. Les deux
-   * cotes visent donc sur l'etat courant ; la divergence transitoire de cible
-   * qui en resulte est acceptee, exactement comme documente sur
-   * `Projectiles.fireSalvo`. Se rouvre si la verification manuelle de la
-   * tache 12 rend l'ecart visible (un tir qui part vers un monstre deja
-   * mort).
+   * ⚠️ **La visee suit le curseur, decision de l'auteur (tache 13), contre le
+   * §5.3 de la spec d'etape et le §5 de l'orientation, qui partaient tous
+   * deux sur une auto-visee.** La cadence reste automatique (le cooldown
+   * ci-dessus) ; c'est la DIRECTION qui est une entree joueur, portee par
+   * `PlayerState.aimX`/`aimY` — voir leur doc et celle d'`applyInput`. Ce
+   * fichier ne cible donc plus rien dans `horde` : `fireSalvo` (par cible) et
+   * `nearestTarget` restent disponibles ailleurs mais ne sont plus appeles
+   * ici, voir le rapport de la tache 13.
+   *
+   * Une visee nulle ne tire pas : `(0, 0)` est la direction qu'envoie un
+   * curseur pile sur le joueur, ou une souris jamais bougee, et les DEUX
+   * cotes la voient identique — ne pas tirer est deterministe, choisir une
+   * direction par defaut ne le serait pas (voir `Projectiles.fireSalvoDirected`).
    */
   #fireWeapons(tick: number): void {
-    if (this.horde.count === 0 || this.#players.size === 0) {
+    if (this.#players.size === 0) {
       return;
     }
     const weapon = weaponOf(0);
-    // Portee = distance que le projectile peut parcourir avant d'expirer :
-    // viser au-dela serait tirer sur une cible que le projectile n'atteindra
-    // jamais.
-    const range = (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
 
     for (const p of this.#players.values()) {
       if (p.hp <= 0) {
@@ -498,11 +510,10 @@ export class Room {
       if (tick - p.lastFireTick < weapon.cooldownTicks) {
         continue;
       }
-      const targetId = nearestTarget(this.horde, p.x, p.y, range);
-      if (targetId < 0) {
+      if (p.aimX === 0 && p.aimY === 0) {
         continue;
       }
-      this.#projectiles.fireSalvo(weapon, tick, p.x, p.y, targetId, this.horde);
+      this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY);
       p.lastFireTick = tick;
     }
   }

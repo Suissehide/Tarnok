@@ -113,7 +113,10 @@ export class SnapshotBuffer {
     // hp n'est pas interpole : c'est un compteur discret, pas une position
     // continue. On garde celui du snapshot d'arrivee, comme l'id. (xp n'est
     // plus ici : c'est un champ d'equipe, porte par `SnapshotMessage.xp`, pas
-    // par `PlayerSnapshot`.)
+    // par `PlayerSnapshot`.) aimX/aimY (tache 13) suivent la meme regle que
+    // hp : une direction quantifiee sur un octet n'a rien a gagner a etre
+    // interpolee entre deux valeurs deja discretes, et `#fireWeapons` doit de
+    // toute facon utiliser la visee du snapshot d'arrivee, pas un melange.
     return to.players.map((target) => {
       const previous = from.players.find((p) => p.id === target.id);
       if (!previous) {
@@ -124,6 +127,8 @@ export class SnapshotBuffer {
         x: lerp(previous.x, target.x, t),
         y: lerp(previous.y, target.y, t),
         hp: target.hp,
+        aimX: target.aimX,
+        aimY: target.aimY,
       };
     });
   }

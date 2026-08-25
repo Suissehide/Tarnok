@@ -8,9 +8,11 @@ import {
   PLAYER_SPEED,
   TICK_HZ,
 } from '@shared/constants';
-import { decodeSnapshot } from '@shared/protocol';
+import { Projectiles } from '@shared/projectiles';
+import { decodeSnapshot, SNAPSHOT_HEADER_BYTES, SNAPSHOT_PLAYER_BYTES } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { describe, expect, it } from 'vitest';
+import { weaponOf } from '@shared/weapons';
+import { describe, expect, it, vi } from 'vitest';
 
 import { Room } from './room';
 
@@ -55,6 +57,59 @@ function hpOf(room: Room, id: number): number {
     throw new Error(`joueur ${id} absent du snapshot`);
   }
   return found.hp;
+}
+
+/** Visee telle que redistribuee par le SNAPSHOT (tache 13) — voir `hpOf`. */
+function aimOf(room: Room, id: number): { aimX: number; aimY: number } {
+  const out = collector();
+  room.snapshot(out);
+  const first = out.sent[0];
+  if (!first) {
+    throw new Error('aucun snapshot emis');
+  }
+  const found = decodeSnapshot(first).players.find((p) => p.id === id);
+  if (!found) {
+    throw new Error(`joueur ${id} absent du snapshot`);
+  }
+  return { aimX: found.aimX, aimY: found.aimY };
+}
+
+/**
+ * Fait viser `playerId` vers le monstre vivant le plus proche, comme le
+ * ferait un vrai joueur avec sa souris (tache 13 : la visee n'est plus
+ * derivee, elle doit etre poussee via `applyInput`, tick apres tick).
+ *
+ * Sert aux tests d'integration de ce fichier qui, avant la tache 13,
+ * comptaient sur l'auto-visee du serveur pour faire avancer un pipeline de
+ * combat sans piloter la souris. Aucun monstre vivant : n'envoie rien, la
+ * visee nulle du dernier `applyInput` reste en vigueur (voir `Room.join`,
+ * qui initialise `aimX`/`aimY` a 0).
+ */
+function aimAtNearestMonster(room: Room, playerId: number, seq: number): void {
+  const pos = positionOf(room, playerId);
+  let bestSlot = -1;
+  let bestDist2 = Number.POSITIVE_INFINITY;
+  for (let i = 0; i < room.horde.count; i++) {
+    const dx = (room.horde.x[i] ?? 0) - pos.x;
+    const dy = (room.horde.y[i] ?? 0) - pos.y;
+    const d2 = dx * dx + dy * dy;
+    if (d2 < bestDist2) {
+      bestDist2 = d2;
+      bestSlot = i;
+    }
+  }
+  if (bestSlot < 0) {
+    return;
+  }
+  const dx = (room.horde.x[bestSlot] ?? 0) - pos.x;
+  const dy = (room.horde.y[bestSlot] ?? 0) - pos.y;
+  const len = Math.hypot(dx, dy);
+  if (len === 0) {
+    // Monstre exactement sur le joueur : pas de direction, donc pas de tir —
+    // meme regle que partout ailleurs (§ « direction nulle = pas de tir »).
+    return;
+  }
+  room.applyInput(playerId, seq, 0, 0, (dx / len) * 127, (dy / len) * 127);
 }
 
 describe('Room.step', () => {
@@ -151,6 +206,63 @@ describe('Room.applyInput', () => {
     expect(positionOf(room, 1).x - before.x).toBeCloseTo(PLAYER_SPEED, 0);
     expect(positionOf(room, 1).y).toBe(before.y);
   });
+
+  it("initialise la visee a (0, 0) — pas de tir tant qu aucun INPUT n'est arrive (tache 13)", () => {
+    const room = new Room();
+    room.join(1);
+
+    expect(aimOf(room, 1)).toEqual({ aimX: 0, aimY: 0 });
+  });
+
+  it('borne la visee redistribuee par SNAPSHOT a -127..127, comme le deplacement (tache 13)', () => {
+    const room = new Room();
+    room.join(1);
+
+    room.applyInput(1, 1, 0, 0, 500, -500);
+
+    expect(aimOf(room, 1)).toEqual({ aimX: 127, aimY: -127 });
+  });
+
+  it(
+    'borne la visee AVANT de calculer l angle de tir, pas seulement a la redistribution ' +
+      '(tache 13)',
+    () => {
+      // ⚠️ Le test precedent ne peut PAS attraper le retrait du clamp dans
+      // `applyInput` lui-meme : `encodeSnapshot` requantifie deja aimX/aimY
+      // independamment avant de les mettre sur le fil (`quantizeAxis`), donc
+      // la valeur redistribuee resterait bornee meme sans lui — verifie par
+      // mutation en ecrivant ce test. On espionne donc directement l'appel a
+      // `Projectiles.fireSalvoDirected` pour observer ce que `#fireWeapons`
+      // lui passe REELLEMENT, avant toute reserialisation. `aimX` demesure
+      // (1000) a cote d'un `aimY` modeste (50) : sans clamp, l'angle de tir
+      // serait bien plus plat (`atan2(50, 1000)`) qu'avec (`atan2(50, 127)`).
+      const room = new Room();
+      room.join(1);
+      const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+
+      room.applyInput(1, 1, 0, 0, 1000, 50);
+      room.step(DT);
+
+      expect(spy).toHaveBeenCalled();
+      const [, , , , dirX, dirY] = spy.mock.calls[0] ?? [];
+      expect(dirX).toBe(127);
+      expect(dirY).toBe(50);
+      spy.mockRestore();
+    },
+  );
+
+  it('ne normalise PAS la visee au cercle unite, contrairement au deplacement (tache 13)', () => {
+    // ⚠️ Seul l'angle de la visee compte (`Math.atan2` dans
+    // `Projectiles.fireSalvoDirected` ignore la norme) : rien ne justifie de
+    // lui imposer le meme cercle unite qu'au deplacement (§ « on avance 41 %
+    // plus vite en diagonale »), qui n'a de sens que pour une VITESSE.
+    const room = new Room();
+    room.join(1);
+
+    room.applyInput(1, 1, 0, 0, 100, 100);
+
+    expect(aimOf(room, 1)).toEqual({ aimX: 100, aimY: 100 });
+  });
 });
 
 describe('Room.join / Room.leave', () => {
@@ -234,8 +346,10 @@ describe('Room.snapshot', () => {
 
     room.snapshot(out);
 
-    // 8 octets d'en-tete + 6 par joueur (SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES).
-    expect(room.metrics.bytesSent).toBe(20);
+    // En-tete + 2 joueurs (SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES) —
+    // derive des constantes, pas une valeur en dur : leur taille a change avec
+    // la visee (tache 13), et ce test ne doit pas avoir a le savoir.
+    expect(room.metrics.bytesSent).toBe(SNAPSHOT_HEADER_BYTES + 2 * SNAPSHOT_PLAYER_BYTES);
     expect(room.metrics.snapshots).toBe(1);
     expect(room.metrics.encodeMicros).toBeGreaterThanOrEqual(0);
   });
@@ -247,7 +361,7 @@ describe('Room.snapshot', () => {
 
     const drained = room.drainMetrics();
 
-    expect(drained.bytesSent).toBe(14);
+    expect(drained.bytesSent).toBe(SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES);
     expect(room.metrics.bytesSent).toBe(0);
   });
 });
@@ -405,6 +519,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
     let deaths: { tick: number; ids: number[] }[] = [];
     for (let i = 0; i < 30 && deaths.length === 0; i++) {
+      // Visee tache 13 : sans elle, aimX/aimY restent a (0, 0) — voir
+      // `Room.join` — et l'arme ne tire jamais.
+      aimAtNearestMonster(room, 1, i + 1);
       room.step(DT);
       deaths = deaths.concat(room.drainDeaths());
     }
@@ -412,6 +529,113 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect(room.horde.count).toBe(0);
     expect(deaths.length).toBeGreaterThan(0);
     expect(deaths[0]?.ids).toEqual([targetId]);
+  });
+
+  it('ne tire jamais sur un monstre a portee si la visee reste nulle (tache 13)', () => {
+    // ⚠️ C'est LA regle centrale de la tache 13 : la proximite d'un monstre ne
+    // suffit plus a declencher un tir, contrairement a l'ancienne auto-visee
+    // (§5.3 d'origine). Sans `aimAtNearestMonster`, ce test doit voir le
+    // monstre survivre indefiniment malgre sa portee.
+    const room = new Room();
+    room.join(1);
+    const before = positionOf(room, 1);
+    spawnMonsterAt(room, 501, before.x + 100, before.y);
+
+    for (let i = 0; i < 30; i++) {
+      room.step(DT);
+    }
+
+    expect(room.horde.count).toBe(1);
+    expect(room.drainDeaths()).toEqual([]);
+  });
+
+  it('une visee nulle ne consomme pas le cooldown : le premier tir reel part sans delai supplementaire', () => {
+    // ⚠️ Ce test existe parce qu'une mutation qui retire le garde « visee
+    // nulle » de `#fireWeapons` (en laissant `Projectiles.fireSalvoDirected`
+    // seul juge, via son propre garde interne) ne fait echouer AUCUN autre
+    // test de ce fichier : `horde.count` et les morts restent inchanges tant
+    // que la visee est nulle, dans les deux versions — la salve ne part
+    // jamais, `Projectiles` s'en charge deja. La seule difference observable
+    // est que `p.lastFireTick` avancerait quand meme a chaque tick de
+    // cooldown ecoule, meme sans salve : le VRAI premier tir, une fois la
+    // visee non nulle, serait alors retarde d'un cooldown complet.
+    //
+    // Un seul salon (pas de comparaison entre deux salons independants : leur
+    // `mapSeed` tire au hasard change la trajectoire du monstre pres des
+    // obstacles et aurait rendu la comparaison instable). Le monstre est gele
+    // a une distance FIXE du joueur tant que la visee reste nulle — sans quoi
+    // il se rapproche via le flowfield, ce qui fausserait le temps de vol
+    // mesure apres coup.
+    const weapon = weaponOf(0);
+    const room = new Room();
+    room.join(1);
+    const before = positionOf(room, 1);
+    const spawnX = before.x + 80;
+    const spawnY = before.y;
+    spawnMonsterAt(room, 504, spawnX, spawnY);
+
+    // ⚠️ Duree d'amorcage choisie a DESSEIN pas multiple du cooldown : sur un
+    // multiple exact, la mutation retiree ci-dessus (garde de visee nulle)
+    // finit par re-tomber en phase avec un vrai cooldown par pur hasard
+    // arithmetique, et le test ne prouve plus rien (constate en ecrivant ce
+    // test). `cooldownTicks + 3` garantit un reste non nul.
+    let seq = 1;
+    for (let i = 0; i < weapon.cooldownTicks + 3; i++) {
+      room.applyInput(1, seq++, 0, 0, 0, 0);
+      room.step(DT);
+      room.horde.x[0] = spawnX;
+      room.horde.y[0] = spawnY;
+    }
+
+    // Visee reelle, maintenant : un tir correct part DES CE TICK (le
+    // cooldown n'a jamais ete entame par la phase de visee nulle qui
+    // precede). Le monstre, plus attire par le flowfield que repousse (il se
+    // rapproche encore du joueur pendant que le projectile vole), rend la
+    // mort quasi immediate : mesure a 1 tick apres le tir sur ce reglage.
+    // Sans le garde de visee nulle, le cooldown est arme des la phase de
+    // visee (0, 0) et retarde le premier tir REEL de plusieurs ticks —
+    // mesure a 5 ticks post-visee sur ce meme reglage, une fois le garde
+    // retire (verifie par mutation). Le seuil ci-dessous separe nettement
+    // les deux : tres au-dessus du cas correct, tres en-dessous du cas
+    // mutant.
+    room.applyInput(1, seq++, 0, 0, 127, 0);
+
+    let deathTick = -1;
+    for (let i = 0; i < 60 && deathTick < 0; i++) {
+      room.step(DT);
+      if (room.drainDeaths().length > 0) {
+        deathTick = i;
+      }
+    }
+
+    expect(deathTick).toBeGreaterThanOrEqual(0);
+    expect(deathTick).toBeLessThanOrEqual(2);
+  });
+
+  it('tire dans la direction visee, pas necessairement vers le monstre le plus proche (tache 13)', () => {
+    // ⚠️ Preuve que le tir est DIRIGE, pas cible : un monstre A l'ouest est le
+    // plus proche, mais le joueur vise plein est, ou un second monstre B,
+    // deux fois plus loin, se trouve pile sur la ligne de mire. Avec l'ancien
+    // ciblage automatique (nearestTarget), A aurait ete tue en premier ; avec
+    // la visee au curseur, seul B peut l'etre.
+    const room = new Room();
+    room.join(1);
+    const before = positionOf(room, 1);
+    const nearId = spawnMonsterAt(room, 502, before.x - 50, before.y);
+    const farId = spawnMonsterAt(room, 503, before.x + 300, before.y);
+
+    room.applyInput(1, 1, 0, 0, 127, 0); // plein est
+
+    let deaths: { tick: number; ids: number[] }[] = [];
+    for (let i = 0; i < 60 && deaths.length === 0; i++) {
+      room.step(DT);
+      deaths = deaths.concat(room.drainDeaths());
+    }
+
+    expect(deaths.length).toBeGreaterThan(0);
+    expect(deaths[0]?.ids).toEqual([farId]);
+    // Le monstre le plus proche, hors de la ligne de mire, est toujours vivant.
+    expect(room.horde.slotOf(nearId)).toBeGreaterThanOrEqual(0);
   });
 
   it('endommage un joueur au contact et arrete d en faire mal pendant la fenetre d invulnerabilite', () => {
@@ -468,6 +692,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     let ticks = 0;
     let xp = 0;
     while (xp === 0 && ticks < 60) {
+      // Visee tache 13 : voir le commentaire du test precedent.
+      aimAtNearestMonster(room, 1, ticks + 1);
       room.step(DT);
       ticks++;
       const out = collector();
@@ -518,6 +744,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     let levelUps: { tick: number; level: number }[] = [];
     let ticks = 0;
     while (levelUps.length === 0 && ticks < 1000) {
+      // Visee tache 13 : sans elle, l'arme ne tire jamais et l'anneau ne meurt
+      // jamais — voir le commentaire du premier test de cette description.
+      aimAtNearestMonster(room, 1, ticks + 1);
       room.step(DT);
       ticks++;
       levelUps = levelUps.concat(room.drainLevelUps());
@@ -531,7 +760,12 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
     // Le joueur se met en mouvement seulement MAINTENANT, pour observer le
     // gel : un joueur qui bouge doit s'arreter net des le tick d'effet.
-    room.applyInput(1, 1, 127, 0);
+    //
+    // ⚠️ `ticks + 1`, pas `1` : la boucle de visee ci-dessus a deja fait
+    // avancer `lastSeq` bien au-dela de 1 (tache 13) — envoyer `seq: 1`
+    // maintenant serait rejete par `isNewer` comme une entree perimee, et ce
+    // mouvement n'aurait jamais lieu.
+    room.applyInput(1, ticks + 1, 127, 0);
     // Un monstre au contact, pose juste avant le gel : le mouvement seul ne
     // suffit pas a prouver que « le monde » est gele au sens du §6.2 — sans
     // ce monstre, un gel qui suspendrait le DEPLACEMENT mais laisserait le
@@ -613,10 +847,17 @@ describe('la run est jouable (tache 14)', () => {
   /**
    * Integration bout-en-bout : AUCUN monstre ni vague injecte a la main —
    * seulement `WaveDirector`, l'arme de base et le ramassage d'orbes, exactement
-   * le pipeline qu'un vrai client declenche. Un joueur immobile (le pire cas :
+   * le pipeline qu'un vrai client declenche. Un joueur IMMOBILE (le pire cas :
    * aucune approche active des orbes) doit tout de meme atteindre le niveau 2.
    *
-   * Avant cette tache, ce test aurait echoue : la horde partait a 120-320
+   * ⚠️ « Passif » porte sur le DEPLACEMENT, pas sur la visee (tache 13) : la
+   * visee est desormais une entree joueur, jamais automatique — un joueur qui
+   * ne vise litteralement rien (souris jamais bougee) ne tirerait jamais, quel
+   * que soit le reglage de l'arme. `aimAtNearestMonster` simule donc la souris
+   * d'un joueur qui suit la menace la plus proche sans bouger les pieds —
+   * exactement ce qu'un vrai joueur ferait dans cette situation.
+   *
+   * Avant la tache 14, ce test aurait echoue : la horde partait a 120-320
    * entites des la premiere vague (~37 apparitions/s) contre 2 morts/s pour la
    * dague de base, et le joueur mourait encercle en ~20 s — bien avant les 10
    * orbes necessaires. Voir le rapport de la tache pour les mesures.
@@ -636,6 +877,7 @@ describe('la run est jouable (tache 14)', () => {
     let totalPickups = 0;
     const budget = TICK_HZ * 100;
     for (let i = 0; i < budget && levelUps.length === 0; i++) {
+      aimAtNearestMonster(room, 1, i + 1);
       room.step(DT);
       totalDeaths += room.drainDeaths().reduce((n, d) => n + d.ids.length, 0);
       totalPickups += room.drainPickups().reduce((n, p) => n + p.ids.length, 0);

@@ -34,6 +34,8 @@ function fakeEntities(count: number): PlayerSnapshot[] {
     x: 1000 + i * 37,
     y: 2000 - i * 19,
     hp: PLAYER_MAX_HP,
+    aimX: 90,
+    aimY: -60,
   }));
 }
 
@@ -122,7 +124,9 @@ async function benchRooms(rooms: number): Promise<RoomResult> {
         setInterval(() => {
           if (ws.readyState === ws.OPEN) {
             seq = (seq + 1) & 0xffff;
-            ws.send(encodeInput(seq, 127, 40));
+            // Visee non nulle (tache 13) : un vrai client vise presque toujours
+            // quelque chose, la charge montante doit en tenir compte.
+            ws.send(encodeInput(seq, 127, 40, 90, -60));
           }
         }, 1000 / INPUT_HZ),
       );

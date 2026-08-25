@@ -110,6 +110,80 @@ describe('Projectiles.fireSalvo', () => {
   });
 });
 
+/**
+ * `fireSalvoDirected` (tache 13) : une salve dans une direction donnee, sans
+ * cible ni horde — c'est ce qu'appellent desormais `Room#fireWeapons` et
+ * `GameClient#fireWeapons` pour l'arme de base, la visee venant du curseur.
+ */
+describe('Projectiles.fireSalvoDirected', () => {
+  it('une salve produit projectileCount projectiles, dans la direction donnee', () => {
+    const projectiles = new Projectiles(50);
+
+    projectiles.fireSalvoDirected(SPREAD, 0, 0, 0, 1, 0);
+
+    expect(projectiles.count).toBe(SPREAD.projectileCount);
+  });
+
+  it('ne tire pas quand la direction est nulle (0, 0) — regle centrale de la tache 13', () => {
+    const projectiles = new Projectiles(50);
+
+    projectiles.fireSalvoDirected(SINGLE, 0, 0, 0, 0, 0);
+
+    expect(projectiles.count).toBe(0);
+  });
+
+  it('seul l angle de (dirX, dirY) compte, pas sa norme', () => {
+    // Un client transmet dirX/dirY quantifies sur un octet signe (-127..127) :
+    // la salve doit partir identiquement, que la paire soit (1, 0) ou
+    // (127, 0) — sinon un client qui envoie sa direction sans la renormaliser
+    // d'abord tirerait plus vite ou plus loin selon la distance au curseur,
+    // ce qui n'a pas de sens physique et n'est jamais ce que fait le code de
+    // production (voir `quantizeAxis` dans `shared/protocol.ts`).
+    const unit = new Projectiles(50);
+    const scaled = new Projectiles(50);
+
+    unit.fireSalvoDirected(SINGLE, 0, 10, 20, 1, 0);
+    scaled.fireSalvoDirected(SINGLE, 0, 10, 20, 127, 0);
+    unit.step(1);
+    scaled.step(1);
+
+    expect(unit.x[0]).toBeCloseTo(scaled.x[0] ?? 0, 5);
+    expect(unit.y[0]).toBeCloseTo(scaled.y[0] ?? 0, 5);
+  });
+
+  it('la dispersion est symetrique autour de la direction visee', () => {
+    const projectiles = new Projectiles(50);
+
+    // Direction plein est (1, 0) : angle de base 0, comme le test equivalent
+    // de `fireSalvo` sur une cible plein est.
+    projectiles.fireSalvoDirected(SPREAD, 0, 0, 0, 1, 0);
+    projectiles.step(1);
+
+    const angles: number[] = [];
+    for (let i = 0; i < projectiles.count; i++) {
+      angles.push(Math.atan2(projectiles.y[i] ?? 0, projectiles.x[i] ?? 0));
+    }
+    angles.sort((a, b) => a - b);
+
+    expect(angles.length).toBe(3);
+    expect(angles[0]).toBeCloseTo(-(angles[2] ?? 0), 5);
+    expect(angles[1]).toBeCloseTo(0, 5);
+    expect(Math.abs(angles[0] ?? 0)).toBeCloseTo(SPREAD.spreadRadians / 2, 5);
+  });
+
+  it('vise dans la direction (dirX, dirY), quelle que soit la position du tireur', () => {
+    const projectiles = new Projectiles(50);
+
+    // Plein nord (y croissant vers le bas dans ce repere, comme le reste du
+    // jeu) : dirX = 0, dirY = 1.
+    projectiles.fireSalvoDirected(SINGLE, 0, 500, 500, 0, 1);
+    projectiles.step(1);
+
+    expect(projectiles.x[0]).toBeCloseTo(500, 5);
+    expect(projectiles.y[0] ?? 0).toBeGreaterThan(500);
+  });
+});
+
 describe('Projectiles.step — duree de vie', () => {
   it('un projectile est encore vivant a life - 1 pas, et expire au pas life', () => {
     const horde = new Horde(10);

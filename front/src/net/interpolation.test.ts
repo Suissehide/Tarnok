@@ -9,17 +9,19 @@ import { SnapshotBuffer } from './interpolation';
  * lui donne une valeur par defaut plutot que de l'imposer a chaque appel. xp
  * n'existe plus par joueur (c'est un champ d'equipe, sur `SnapshotMessage`) :
  * on le fixe a 0 par defaut, sauf pour les tests qui le portent explicitement.
+ * Meme regle pour aimX/aimY (tache 13) : `(0, 0)`, « pas de tir », sauf pour
+ * le test qui porte specifiquement sur la visee.
  */
 function snapshot(
   tick: number,
-  players: { id: number; x: number; y: number; hp?: number }[],
+  players: { id: number; x: number; y: number; hp?: number; aimX?: number; aimY?: number }[],
   xp = 0,
 ): SnapshotMessage {
   return {
     type: MSG.SNAPSHOT,
     tick,
     xp,
-    players: players.map((p) => ({ hp: PLAYER_MAX_HP, ...p })),
+    players: players.map((p) => ({ hp: PLAYER_MAX_HP, aimX: 0, aimY: 0, ...p })),
   };
 }
 
@@ -33,7 +35,22 @@ describe('SnapshotBuffer.sample', () => {
     // rendu vaut 25 ms, soit pile entre les deux snapshots.
     const sampled = buffer.sample(INTERP_DELAY_MS + 25);
 
-    expect(sampled).toEqual([{ id: 1, x: 50, y: 150, hp: PLAYER_MAX_HP }]);
+    expect(sampled).toEqual([{ id: 1, x: 50, y: 150, hp: PLAYER_MAX_HP, aimX: 0, aimY: 0 }]);
+  });
+
+  it('porte la visee du snapshot d arrivee, sans l interpoler (tache 13)', () => {
+    // ⚠️ Meme raisonnement que le test des pv juste au-dessus : la mutation
+    // qui remplacerait `target.aimX`/`aimY` par `previous.aimX`/`aimY` (ou par
+    // une moyenne) doit faire echouer ce test. On choisit donc deux valeurs
+    // qui DIFFERENT visiblement entre les deux snapshots, jamais deux valeurs
+    // qui coincideraient par accident.
+    const buffer = new SnapshotBuffer();
+    buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0, aimX: 40, aimY: -20 }]), 0);
+    buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0, aimX: -90, aimY: 60 }]), 50);
+
+    const sampled = buffer.sample(INTERP_DELAY_MS + 25);
+
+    expect(sampled[0]).toMatchObject({ aimX: -90, aimY: 60 });
   });
 
   it('porte les pv du snapshot d arrivee, sans les interpoler', () => {
@@ -63,7 +80,9 @@ describe('SnapshotBuffer.sample', () => {
     buffer.push(snapshot(2, [{ id: 1, x: 999, y: 999 }]), 50);
 
     // Temps de rendu negatif : on n'a pas encore de quoi interpoler.
-    expect(buffer.sample(0)).toEqual([{ id: 1, x: 10, y: 20, hp: PLAYER_MAX_HP }]);
+    expect(buffer.sample(0)).toEqual([
+      { id: 1, x: 10, y: 20, hp: PLAYER_MAX_HP, aimX: 0, aimY: 0 },
+    ]);
   });
 
   it('ne va pas plus loin que le dernier snapshot recu', () => {
@@ -98,6 +117,8 @@ describe('SnapshotBuffer.sample', () => {
       x: 500,
       y: 500,
       hp: PLAYER_MAX_HP,
+      aimX: 0,
+      aimY: 0,
     });
   });
 

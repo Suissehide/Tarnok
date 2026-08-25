@@ -21,6 +21,7 @@ import {
   encodeSnapshot,
   encodeWaveOrder,
   encodeWelcome,
+  INPUT_BYTES,
   LEVEL_UP_BYTES,
   MSG,
   RUN_OVER_BYTES,
@@ -29,35 +30,65 @@ import {
 } from './protocol';
 
 describe('encodeInput / decodeInput', () => {
-  it("rend exactement l'entree encodee", () => {
-    const decoded = decodeInput(encodeInput(1234, -100, 27));
+  it("rend exactement l'entree encodee, visee comprise (tache 13)", () => {
+    const decoded = decodeInput(encodeInput(1234, -100, 27, 90, -60));
 
-    expect(decoded).toEqual({ type: MSG.INPUT, seq: 1234, moveX: -100, moveY: 27 });
+    expect(decoded).toEqual({
+      type: MSG.INPUT,
+      seq: 1234,
+      moveX: -100,
+      moveY: 27,
+      aimX: 90,
+      aimY: -60,
+    });
   });
 
-  it('borne les axes a -127..127 au lieu de deborder sur un octet signe', () => {
-    const decoded = decodeInput(encodeInput(0, 500, -500));
+  it('borne le deplacement ET la visee a -127..127 au lieu de deborder sur un octet signe', () => {
+    const decoded = decodeInput(encodeInput(0, 500, -500, 500, -500));
 
     expect(decoded.moveX).toBe(127);
     expect(decoded.moveY).toBe(-127);
+    expect(decoded.aimX).toBe(127);
+    expect(decoded.aimY).toBe(-127);
   });
 
   it('fait le tour du compteur de sequence sur 16 bits', () => {
-    expect(decodeInput(encodeInput(65535, 0, 0)).seq).toBe(65535);
+    expect(decodeInput(encodeInput(65535, 0, 0, 0, 0)).seq).toBe(65535);
+  });
+
+  // ⚠️ Ce test ne pourrait PAS attraper un decalage d'octet entre aimX et
+  // aimY (un aller-retour seul ne le peut jamais, encodeur et decodeur
+  // partageant la meme erreur) : c'est la raison d'etre du test de taille
+  // exacte ci-dessous, et de celui de troncature plus bas, qui portent sur
+  // le format lui-meme plutot que sur le seul aller-retour.
+  it('tient exactement INPUT_BYTES octets (5 -> 7, tache 13 : +aimX +aimY)', () => {
+    expect(encodeInput(1, 1, 1, 1, 1).byteLength).toBe(INPUT_BYTES);
+    expect(INPUT_BYTES).toBe(7);
   });
 
   it('leve sur un buffer tronque plutot que de rendre une entree fantaisiste', () => {
-    const truncated = encodeInput(1, 1, 1).slice(0, 3);
+    const truncated = encodeInput(1, 1, 1, 1, 1).slice(0, 3);
+
+    expect(() => decodeInput(truncated)).toThrow(/tronqu/i);
+  });
+
+  // ⚠️ Distinct du test de troncature generique ci-dessus : celui-ci coupe
+  // PILE avant les deux octets de visee ajoutes par la tache 13 (l'entree
+  // faisait 5 octets avant elle). Sans cette coupe precise, un decalage qui
+  // ecrirait aimX/aimY hors de INPUT_BYTES pourrait passer inapercu tant que
+  // le buffer alloue est assez grand pour absorber l'erreur.
+  it('leve sur un buffer tronque juste avant la visee (5 octets, tache 13)', () => {
+    const truncated = encodeInput(1, 1, 1, 90, -60).slice(0, 5);
 
     expect(() => decodeInput(truncated)).toThrow(/tronqu/i);
   });
 });
 
 describe('encodeSnapshot / decodeSnapshot', () => {
-  it('rend les positions arrondies a l entier, les pv personnels et l experience d equipe', () => {
+  it('rend les positions arrondies a l entier, les pv personnels, la visee et l experience d equipe', () => {
     const buf = encodeSnapshot(42, 12_000, [
-      { id: 1, x: 100.4, y: 200.6, hp: 80 },
-      { id: 2, x: -3.2, y: 5999.9, hp: 42 },
+      { id: 1, x: 100.4, y: 200.6, hp: 80, aimX: 90, aimY: -60 },
+      { id: 2, x: -3.2, y: 5999.9, hp: 42, aimX: 0, aimY: 0 },
     ]);
 
     expect(decodeSnapshot(buf)).toEqual({
@@ -65,8 +96,8 @@ describe('encodeSnapshot / decodeSnapshot', () => {
       tick: 42,
       xp: 12_000,
       players: [
-        { id: 1, x: 100, y: 201, hp: 80 },
-        { id: 2, x: -3, y: 6000, hp: 42 },
+        { id: 1, x: 100, y: 201, hp: 80, aimX: 90, aimY: -60 },
+        { id: 2, x: -3, y: 6000, hp: 42, aimX: 0, aimY: 0 },
       ],
     });
   });
@@ -79,22 +110,35 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     expect(decodeSnapshot(encodeSnapshot(4_294_967_295, 0, [])).tick).toBe(4_294_967_295);
   });
 
-  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets', () => {
+  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (6 -> 8, tache 13)', () => {
     const buf = encodeSnapshot(1, 0, [
-      { id: 1, x: 0, y: 0, hp: 1 },
-      { id: 2, x: 0, y: 0, hp: 1 },
-      { id: 3, x: 0, y: 0, hp: 1 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
+      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
+      { id: 3, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
     ]);
 
     expect(buf.byteLength).toBe(SNAPSHOT_HEADER_BYTES + 3 * SNAPSHOT_PLAYER_BYTES);
     expect(SNAPSHOT_HEADER_BYTES).toBe(8);
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(6);
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(8);
   });
 
   it('tient les pv personnels sur un octet (u8, borne 255)', () => {
-    const buf = encodeSnapshot(1, 0, [{ id: 1, x: 0, y: 0, hp: 255 }]);
+    const buf = encodeSnapshot(1, 0, [{ id: 1, x: 0, y: 0, hp: 255, aimX: 0, aimY: 0 }]);
 
-    expect(decodeSnapshot(buf).players[0]).toEqual({ id: 1, x: 0, y: 0, hp: 255 });
+    expect(decodeSnapshot(buf).players[0]).toEqual({
+      id: 1,
+      x: 0,
+      y: 0,
+      hp: 255,
+      aimX: 0,
+      aimY: 0,
+    });
+  });
+
+  it('borne la visee redistribuee a -127..127, comme celle d un INPUT (tache 13)', () => {
+    const buf = encodeSnapshot(1, 0, [{ id: 1, x: 0, y: 0, hp: 1, aimX: 500, aimY: -500 }]);
+
+    expect(decodeSnapshot(buf).players[0]).toMatchObject({ aimX: 127, aimY: -127 });
   });
 
   it("tient l'experience d'equipe sur deux octets (u16, borne 65 535)", () => {
@@ -109,9 +153,21 @@ describe('encodeSnapshot / decodeSnapshot', () => {
 
   it("leve quand l'en-tete annonce plus de joueurs que le buffer n'en contient", () => {
     const truncated = encodeSnapshot(1, 0, [
-      { id: 1, x: 0, y: 0, hp: 1 },
-      { id: 2, x: 0, y: 0, hp: 1 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
+      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
     ]).slice(0, 9);
+
+    expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
+  });
+
+  // ⚠️ Coupe PILE avant les deux octets de visee du premier joueur (bloc de
+  // 8 octets, tache 13 : les 6 premiers passent, aimX/aimY manquent). Sans ce
+  // test precis, un decalage qui placerait aimX/aimY hors du bloc pourrait
+  // passer inapercu tant que le buffer alloue reste assez grand.
+  it('leve sur un buffer tronque juste avant la visee du joueur (tache 13)', () => {
+    const truncated = encodeSnapshot(1, 0, [
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 90, aimY: -60 },
+    ]).slice(0, SNAPSHOT_HEADER_BYTES + 6);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
   });
@@ -300,7 +356,7 @@ describe('encodeWaveOrder / decodeWaveOrder', () => {
 
 describe('decode', () => {
   it('aiguille sur le premier octet', () => {
-    expect(decode(encodeInput(7, 1, 0))).toMatchObject({ type: MSG.INPUT, seq: 7 });
+    expect(decode(encodeInput(7, 1, 0, 0, 0))).toMatchObject({ type: MSG.INPUT, seq: 7 });
     expect(decode(encodeSnapshot(8, 0, []))).toMatchObject({ type: MSG.SNAPSHOT, tick: 8 });
     expect(decode(encodeWelcome(1, 9, 0))).toMatchObject({ type: MSG.WELCOME, playerId: 1 });
   });

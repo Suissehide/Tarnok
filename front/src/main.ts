@@ -1,7 +1,9 @@
 import { Keyboard } from './input/keyboard';
+import { Mouse } from './input/mouse';
 import {
   type ConnectionStatus,
   GameClient,
+  type InputAxes,
   type RenderState,
   type RunOverSummary,
 } from './net/client';
@@ -36,6 +38,10 @@ const codeInput = el<HTMLInputElement>('code');
 const keyboard = new Keyboard();
 const stage = new Stage();
 await stage.init(el('stage'));
+// La souris s'ecoute sur le canevas du jeu, cree par `stage.init` juste
+// au-dessus : c'est lui qui sert de reference pour les coordonnees ecran
+// (tache 13), et `Stage.screenToWorld` partage la meme camera.
+const mouse = new Mouse(stage.canvas);
 
 el<HTMLButtonElement>('create').addEventListener('click', () => {
   void createRoom();
@@ -69,13 +75,43 @@ function join(code: string): void {
     return;
   }
 
-  const client = new GameClient(gameSocketUrl(code), () => keyboard.axes(), onStatus, showSummary);
+  const client = new GameClient(
+    gameSocketUrl(code),
+    () => keyboard.axes(),
+    onStatus,
+    showSummary,
+    readAim,
+  );
   client.connect();
 
   lobby.classList.add('hidden');
   hud.classList.remove('hidden');
   hud.classList.add('flex');
   hudCode.textContent = code;
+
+  /**
+   * Direction visee (tache 13) : position du curseur en monde, moins celle du
+   * joueur local, normalisee. `(0, 0)` — nulle plutot qu'une direction par
+   * defaut — tant que la souris n'a jamais bouge, ou que le joueur local
+   * n'existe pas encore (avant le premier snapshot qui le fait apparaitre) :
+   * les deux sont deja « pas de tir » pour `GameClient` (voir sa doc).
+   *
+   * Le curseur vit en coordonnees ECRAN ; `stage.screenToWorld` fait la
+   * conversion avec la MEME camera que celle qui dessine `client`, sinon la
+   * visee deriverait des que la camera bouge.
+   */
+  function readAim(): InputAxes {
+    const screen = mouse.screenPosition();
+    const local = client.localPosition;
+    if (!screen || !local) {
+      return { x: 0, y: 0 };
+    }
+    const world = stage.screenToWorld(screen.x, screen.y);
+    const dx = world.x - local.x;
+    const dy = world.y - local.y;
+    const len = Math.hypot(dx, dy);
+    return len === 0 ? { x: 0, y: 0 } : { x: dx / len, y: dy / len };
+  }
 
   /**
    * Une image complete : avance le client, dessine chaque calque, met a jour

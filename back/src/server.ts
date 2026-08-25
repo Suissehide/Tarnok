@@ -157,7 +157,7 @@ class Session {
       return;
     }
     if (msg.type === MSG.INPUT) {
-      this.room.applyInput(id, msg.seq, msg.moveX, msg.moveY);
+      this.room.applyInput(id, msg.seq, msg.moveX, msg.moveY, msg.aimX, msg.aimY);
     }
   }
 

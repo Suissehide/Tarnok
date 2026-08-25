@@ -135,6 +135,24 @@ export class Stage {
     this.#app.renderer.render(this.#app.stage);
   }
 
+  /**
+   * Convertit un point ECRAN (par exemple la position du curseur, relative au
+   * canevas) en coordonnees MONDE, via la MEME camera que celle qui positionne
+   * `#world` dans `#centerOn` — jamais une reconstruction approximative a
+   * cote. C'est la regle de la tache 13 : le curseur vit en coordonnees
+   * ecran, la visee est une direction monde, et faire cette conversion
+   * ailleurs qu'ici ferait deriver la visee des que la camera bouge.
+   *
+   * `VERTICAL_SQUASH` n'affecte que l'axe Y (§4.5 : vue de dessus ecrasee),
+   * d'ou la division qui n'apparait que sur `y`.
+   */
+  screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
+    return {
+      x: screenX - this.#world.x,
+      y: (screenY - this.#world.y) / VERTICAL_SQUASH,
+    };
+  }
+
   /** Rectangle du monde actuellement visible, pour le culling. */
   viewRect(): Rectangle {
     return new Rectangle(

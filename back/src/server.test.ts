@@ -142,7 +142,7 @@ describe('la socket de jeu', () => {
     // Plein gaz vers la droite, repete : le serveur applique la derniere entree
     // recue a chacun de ses pas.
     for (let seq = 1; seq <= 20; seq++) {
-      ws.send(encodeInput(seq, 127, 0));
+      ws.send(encodeInput(seq, 127, 0, 0, 0));
       await new Promise((r) => setTimeout(r, 10));
     }
 
@@ -189,7 +189,7 @@ describe('la socket de jeu', () => {
     }
 
     for (let seq = 1; seq <= 20; seq++) {
-      mover.ws.send(encodeInput(seq, 127, 0));
+      mover.ws.send(encodeInput(seq, 127, 0, 0, 0));
       await new Promise((r) => setTimeout(r, 10));
     }
 

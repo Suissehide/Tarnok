@@ -31,6 +31,13 @@ export type MsgType = (typeof MSG)[keyof typeof MSG];
  * (§2 de la spec d'orientation — un seul etalage de cartes pour tout le
  * monde). La porter par joueur creerait deux sources de verite pour un seul
  * nombre ; elle vit dans `SnapshotMessage.xp`.
+ *
+ * `aimX`/`aimY` (tache 13) : la direction de visee de CE joueur, quantifiee
+ * sur un octet signe, exactement comme elle a transite dans son `INPUT`. Le
+ * `SNAPSHOT` la redistribue a tous parce que chaque client derive aussi les
+ * salves de ses allies pour les dessiner (§5.2/§5.3 revus) — sans leur visee,
+ * il ne saurait pas ou poser leurs projectiles. `(0, 0)` signifie « ce joueur
+ * ne tire pas », jamais une direction par defaut.
  */
 export interface PlayerSnapshot {
   id: number;
@@ -38,6 +45,10 @@ export interface PlayerSnapshot {
   y: number;
   /** Points de vie, personnels, sur un octet. */
   hp: number;
+  /** Composante X de la visee, quantifiee (-127..127). Voir la doc de l'interface. */
+  aimX: number;
+  /** Composante Y de la visee, quantifiee (-127..127). Voir la doc de l'interface. */
+  aimY: number;
 }
 
 export interface WelcomeMessage {
@@ -61,6 +72,15 @@ export interface InputMessage {
   seq: number;
   moveX: number;
   moveY: number;
+  /**
+   * Direction de visee (tache 13), en coordonnees MONDE, deja normalisee cote
+   * client puis quantifiee sur un octet signe — jamais derivable comme le
+   * ciblage automatique du §5.3 d'origine, elle vient de la souris et doit
+   * donc transiter. `(0, 0)` : le joueur ne tire pas ce tick (curseur pile
+   * sur lui, ou souris jamais bougee) — voir `PlayerSnapshot`.
+   */
+  aimX: number;
+  aimY: number;
 }
 
 export interface WaveOrderMessage {
@@ -139,11 +159,12 @@ export type Message =
   | RunOverMessage;
 
 export const WELCOME_BYTES = 10;
-export const INPUT_BYTES = 5;
+/** `type u8 · seq u16 · moveX i8 · moveY i8 · aimX i8 · aimY i8` (tache 13 : 5 -> 7). */
+export const INPUT_BYTES = 7;
 /** `type u8 · tick u32 · playerCount u8 · xp u16` — xp est celui de l'equipe. */
 export const SNAPSHOT_HEADER_BYTES = 8;
-/** `id u8 · x i16 · y i16 · hp u8` — pas de xp ici, voir `PlayerSnapshot`. */
-export const SNAPSHOT_PLAYER_BYTES = 6;
+/** `id u8 · x i16 · y i16 · hp u8 · aimX i8 · aimY i8` (tache 13 : 6 -> 8) — pas de xp ici, voir `PlayerSnapshot`. */
+export const SNAPSHOT_PLAYER_BYTES = 8;
 export const WAVE_ORDER_BYTES = 19;
 
 /** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
@@ -171,7 +192,19 @@ function viewOf(buf: ArrayBuffer, minBytes: number): DataView {
   return new DataView(buf);
 }
 
-function clampAxis(v: number): number {
+/**
+ * Arrondit et borne un axe sur l'intervalle d'un octet signe (-127..127) —
+ * -128 est exclu pour rester symetrique, comme `moveX`/`moveY` l'ont toujours
+ * ete.
+ *
+ * Exportee (tache 13) : c'est la MEME fonction que le client doit appliquer a
+ * sa visee avant de tirer localement, pas seulement avant d'encoder. Sinon le
+ * client tire avec son flottant d'origine pendant que le serveur ne voit
+ * jamais que la version quantifiee recue par `INPUT` — un ecart systematique
+ * d'une fraction de degre, pas transitoire. Meme discipline que
+ * `Math.round(p.x)` avant `PlayerHistory.record` cote serveur (tache 9).
+ */
+export function quantizeAxis(v: number): number {
   const r = Math.round(v);
   if (r > 127) {
     return 127;
@@ -182,14 +215,22 @@ function clampAxis(v: number): number {
   return r;
 }
 
-/** C -> S : une entree, 5 octets. */
-export function encodeInput(seq: number, moveX: number, moveY: number): ArrayBuffer {
+/** C -> S : une entree, 7 octets (tache 13 : +aimX +aimY). */
+export function encodeInput(
+  seq: number,
+  moveX: number,
+  moveY: number,
+  aimX: number,
+  aimY: number,
+): ArrayBuffer {
   const buf = new ArrayBuffer(INPUT_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.INPUT);
   v.setUint16(1, seq & 0xffff, true);
-  v.setInt8(3, clampAxis(moveX));
-  v.setInt8(4, clampAxis(moveY));
+  v.setInt8(3, quantizeAxis(moveX));
+  v.setInt8(4, quantizeAxis(moveY));
+  v.setInt8(5, quantizeAxis(aimX));
+  v.setInt8(6, quantizeAxis(aimY));
   return buf;
 }
 
@@ -200,16 +241,23 @@ export function decodeInput(buf: ArrayBuffer): InputMessage {
     seq: v.getUint16(1, true),
     moveX: v.getInt8(3),
     moveY: v.getInt8(4),
+    aimX: v.getInt8(5),
+    aimY: v.getInt8(6),
   };
 }
 
 /**
- * S -> C : positions des joueurs, 8 octets d'en-tete puis 6 par joueur.
+ * S -> C : positions des joueurs, 8 octets d'en-tete puis 8 par joueur
+ * (tache 13 : +aimX +aimY, 6 -> 8).
  *
  * `xp` est un parametre a part, pas un champ de `players[i]` : c'est celui de
  * l'**equipe**, commun a tous (§2 de la spec d'orientation), et il vit dans
  * l'en-tete plutot que d'etre repete — et donc potentiellement divergent —
  * dans chaque bloc joueur.
+ *
+ * `aimX`/`aimY` sont quantifies par `quantizeAxis`, comme dans `encodeInput` :
+ * un joueur ne peut de toute facon jamais transmettre plus que cette
+ * precision, le serveur n'a donc rien a arrondir de plus en la retransmettant.
  */
 export function encodeSnapshot(
   tick: number,
@@ -228,6 +276,8 @@ export function encodeSnapshot(
     v.setInt16(o + 1, Math.round(p.x), true);
     v.setInt16(o + 3, Math.round(p.y), true);
     v.setUint8(o + 5, p.hp);
+    v.setInt8(o + 6, quantizeAxis(p.aimX));
+    v.setInt8(o + 7, quantizeAxis(p.aimY));
     o += SNAPSHOT_PLAYER_BYTES;
   }
   return buf;
@@ -248,6 +298,8 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
       x: v.getInt16(o + 1, true),
       y: v.getInt16(o + 3, true),
       hp: v.getUint8(o + 5),
+      aimX: v.getInt8(o + 6),
+      aimY: v.getInt8(o + 7),
     });
     o += SNAPSHOT_PLAYER_BYTES;
   }

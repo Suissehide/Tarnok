@@ -27,7 +27,7 @@ import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GameClient, HIT_FLASH_LIFETIME_MS } from './client';
+import { GameClient, HIT_FLASH_LIFETIME_MS, type InputAxes } from './client';
 
 /**
  * Faux `WebSocket` : ni connexion reseau ni serveur, juste de quoi capturer
@@ -152,7 +152,7 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
 
       socket.emit('message', { data: encodeWelcome(1, 0, 0) });
       socket.emit('message', {
-        data: encodeSnapshot(0, 777, [{ id: 1, x: 10, y: 20, hp: 42 }]),
+        data: encodeSnapshot(0, 777, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
       });
 
       const state = client.update(0, 0);
@@ -168,7 +168,7 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
 
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
-      data: encodeSnapshot(0, 777, [{ id: 1, x: 10, y: 20, hp: 42 }]),
+      data: encodeSnapshot(0, 777, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
     });
 
     const state = client.update(0, 0);
@@ -355,7 +355,7 @@ function runClientDeathScenario(params: {
       }
     }
 
-    const players = xs.map((x, i) => ({ id: i, x, y: ys[i] ?? 0, hp: 100 }));
+    const players = xs.map((x, i) => ({ id: i, x, y: ys[i] ?? 0, hp: 100, aimX: 0, aimY: 0 }));
     socket.emit('message', { data: encodeSnapshot(tick, 0, players) });
 
     // Livraison retardee au client : latence reseau simulee, comme l'exige la
@@ -573,7 +573,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
 
     for (let tick = 0; tick < DEATH_TICK + DELAY + 5; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100 }]),
+        data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
       });
       if (tick === DEATH_TICK + DELAY) {
         socket.emit('message', { data: encodeDeaths(DEATH_TICK, killedIds) });
@@ -638,7 +638,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
 
       for (let tick = 0; tick < END; tick++) {
         socket.emit('message', {
-          data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100 }]),
+          data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
         });
         if (tick === DEATH_TICK + DELAY) {
           socket.emit('message', { data: encodeDeaths(DEATH_TICK, [killedId]) });
@@ -710,7 +710,7 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
 
     for (let tick = 0; tick < END; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100 }]),
+        data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
       });
       // Envoye bien avant que le gel ne prenne effet : si le client gelait a
       // la reception, tout mouvement s'arreterait des ce tick au lieu de
@@ -794,7 +794,9 @@ describe('GameClient — bilan de run (RUN_OVER, tache 11)', () => {
     client.connect();
     const socket = latestSocket();
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
-    socket.emit('message', { data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+    });
     client.update(0, 0);
 
     expect(onRunOver).not.toHaveBeenCalled();
@@ -802,14 +804,20 @@ describe('GameClient — bilan de run (RUN_OVER, tache 11)', () => {
 });
 
 /**
- * Tir automatique cote client (tache 11) — miroir cosmetique de
- * `Room#fireWeapons`/`resolveProjectileDamage` (back/src/room.ts,
+ * Tir automatique cote client (tache 11, visee revue tache 13) — miroir
+ * cosmetique de `Room#fireWeapons`/`resolveProjectileDamage` (back/src/room.ts,
  * back/src/combat.ts). Voir le commentaire de `GameClient#advanceHorde` :
  * jamais d'arbitrage de degats ici, seulement de quoi dessiner une salve et
  * un flash d'impact.
+ *
+ * ⚠️ Depuis la tache 13, la visee vient de `readAim`, plus d'un ciblage
+ * automatique sur la horde : chaque test doit donc fournir une direction, pas
+ * seulement une position de joueur a portee.
  */
-describe('GameClient — tir automatique et impact cote client (tache 11)', () => {
+describe('GameClient — tir automatique et impact cote client (tache 11/13)', () => {
   const MS_PER_TICK = 1000 / TICK_HZ;
+  /** Le monstre est toujours pose a droite du joueur dans ces tests : viser a droite l'engage. */
+  const AIM_RIGHT: InputAxes = { x: 1, y: 0 };
 
   /**
    * Fait apparaitre un unique monstre puis lit sa position REELLE apres coup,
@@ -818,12 +826,17 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
    * centaines de pixels (`CLUSTER_SPREAD = 800`), donc deviner un ecart fixe
    * a l'ancre est fragile — lire la position posee, deterministe pour une
    * graine donnee, ne l'est pas.
+   *
+   * `readAim` par defaut vise a droite (`AIM_RIGHT`) : tous les appelants
+   * placent leur joueur a gauche du monstre. Le test de visee nulle le
+   * redefinit explicitement.
    */
   function setupWithOneMonster(
     mapSeed: number,
     waveId: number,
+    readAim: () => InputAxes = () => AIM_RIGHT,
   ): { client: GameClient; socket: FakeSocket; monsterX: number; monsterY: number } {
-    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn(), undefined, readAim);
     client.connect();
     const socket = latestSocket();
     socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
@@ -843,7 +856,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
     // s'appliquent en tete d'`#advanceHorde`) SANS pretendre a une position de
     // joueur pertinente — aucune assertion sur le tir ne porte sur ce tick.
     socket.emit('message', {
-      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]),
+      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
     });
     client.update(0, STEP);
     if (client.horde.count !== 1) {
@@ -859,7 +872,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
   }
 
   it(
-    'tire sur le monstre le plus proche a portee, et le projectile finit par le toucher ' +
+    'vise le monstre en direction duquel pointe readAim, et le projectile finit par le toucher ' +
       '(un flash d impact apparait)',
     () => {
       const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0010, 70);
@@ -871,7 +884,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
       // `projectiles.count > 0`, et `firedAtTick` resterait a -1 comme
       // constate lors du reglage de cette tache. Le monstre fonce droit sur
       // le joueur (auto-cible du flowfield) — la meme ligne que celle visee
-      // par la salve.
+      // par la salve (visee AIM_RIGHT, droit sur le monstre).
       const weapon = weaponOf(0);
       const perTickTravel = weapon.projectileSpeed / TICK_HZ;
       const offset = Math.round(perTickTravel * 3 + PROJECTILE_HIT_RADIUS);
@@ -880,7 +893,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
       let firedAtTick = -1;
       for (let tick = 1; tick <= 40; tick++) {
         socket.emit('message', {
-          data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]),
+          data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
         });
         client.update(tick * MS_PER_TICK, STEP);
         if (firedAtTick < 0 && client.projectiles.count > 0) {
@@ -896,29 +909,36 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
     },
   );
 
-  it("ne tire pas si aucun monstre n'est a portee", () => {
-    const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0014, 74);
-    // 2000 px : tres au-dela de la portee de la dague (~607 px, tache 14),
-    // quelle que soit la position reelle du monstre.
-    const PLAYER = { x: monsterX + 2000, y: monsterY };
-    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+  it('ne tire pas quand la visee est nulle, meme avec un monstre tout pres (tache 13)', () => {
+    // ⚠️ C'est LA regle centrale de la tache 13 : curseur pile sur le joueur,
+    // ou souris jamais bougee, `(0, 0)` ne tire pas — deterministe des deux
+    // cotes. Contrairement a l'ancien ciblage automatique, la proximite du
+    // monstre n'entre plus en jeu : c'est uniquement `readAim` qui gate ici.
+    const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0014, 74, () => ({
+      x: 0,
+      y: 0,
+    }));
+    const PLAYER = { x: monsterX - 50, y: monsterY };
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
 
     for (let tick = 1; tick <= 20; tick++) {
-      socket.emit('message', { data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]) });
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+      });
       client.update(tick * MS_PER_TICK, STEP);
     }
 
     expect(spy).not.toHaveBeenCalled();
   });
 
-  it('ne tire pas pour un joueur a 0 pv, meme avec un monstre a portee', () => {
+  it('ne tire pas pour un joueur a 0 pv, meme avec une visee non nulle', () => {
     const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0012, 72);
     const PLAYER = { x: monsterX - 50, y: monsterY };
-    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
 
     for (let tick = 1; tick <= 20; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 0 }]),
+        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 0, aimX: 0, aimY: 0 }]),
       });
       client.update(tick * MS_PER_TICK, STEP);
     }
@@ -928,14 +948,17 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
 
   it('respecte le cooldown de l arme : jamais plus d une salve toutes les cooldownTicks images', () => {
     const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0011, 71);
-    // 300 px : a portee, mais assez loin pour laisser le temps d'observer
-    // plusieurs fenetres de cooldown avant que la premiere salve ne touche.
+    // 300 px : loin du monstre, mais assez proche pour laisser le temps
+    // d'observer plusieurs fenetres de cooldown avant que la premiere salve
+    // ne touche.
     const PLAYER = { x: monsterX - 300, y: monsterY };
-    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
 
     const TICKS = 90;
     for (let tick = 1; tick <= TICKS; tick++) {
-      socket.emit('message', { data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]) });
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+      });
       client.update(tick * MS_PER_TICK, STEP);
     }
 
@@ -954,7 +977,9 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
 
     let hitNowMs = -1;
     for (let tick = 1; tick <= 20 && hitNowMs < 0; tick++) {
-      socket.emit('message', { data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]) });
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+      });
       const nowMs = tick * MS_PER_TICK;
       client.update(nowMs, STEP);
       if (client.hitFlashes.count > 0) {
@@ -975,8 +1000,9 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
   });
 });
 
-describe('GameClient — deux proprietes du tir que le code affirme (tache 11)', () => {
+describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', () => {
   const MS_PER_TICK = 1000 / TICK_HZ;
+  const AIM_RIGHT: InputAxes = { x: 1, y: 0 };
 
   it('tire depuis la position PREDITE du joueur local, pas depuis celle du dernier snapshot', () => {
     // ⚠️ Ce test existe parce que la mutation « jeter la prediction locale »
@@ -989,7 +1015,13 @@ describe('GameClient — deux proprietes du tir que le code affirme (tache 11)',
     // position FIXE pendant que l'entree pousse la prediction vers la droite.
     // L'assertion porte sur l'origine reelle de la salve, pas sur un effet
     // indirect : avec la mutation, elle vaudrait exactement `SNAPSHOT_X`.
-    const client = new GameClient('ws://test', () => ({ x: 1, y: 0 }), vi.fn());
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 1, y: 0 }),
+      vi.fn(),
+      undefined,
+      () => AIM_RIGHT,
+    );
     client.connect();
     const socket = latestSocket();
     socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0020) });
@@ -1004,19 +1036,25 @@ describe('GameClient — deux proprietes du tir que le code affirme (tache 11)',
       count: 1,
     };
     socket.emit('message', { data: encodeWaveOrder(order) });
-    socket.emit('message', { data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+    });
     client.update(0, STEP);
     expect(client.horde.count).toBe(1);
 
     const monsterX = client.horde.x[0] ?? 0;
     const monsterY = client.horde.y[0] ?? 0;
-    // Le snapshot fige le joueur a gauche du monstre, a portee de la dague.
+    // Le snapshot fige le joueur a gauche du monstre — la visee AIM_RIGHT
+    // pointe donc bien vers lui, quelle que soit la position reellement
+    // utilisee pour l'origine de la salve (l'objet de ce test).
     const SNAPSHOT_X = monsterX - 100;
-    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
 
     for (let tick = 1; tick <= 30 && spy.mock.calls.length === 0; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, x: SNAPSHOT_X, y: monsterY, hp: 100 }]),
+        data: encodeSnapshot(tick, 0, [
+          { id: 1, x: SNAPSHOT_X, y: monsterY, hp: 100, aimX: 0, aimY: 0 },
+        ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
     }
@@ -1028,12 +1066,120 @@ describe('GameClient — deux proprietes du tir que le code affirme (tache 11)',
     expect(originX).toBeGreaterThan(SNAPSHOT_X + 1);
   });
 
+  it(
+    'tire avec la visee QUANTIFIEE (i8), jamais avec le flottant brut rendu par readAim ' +
+      '(tache 13)',
+    () => {
+      // ⚠️ C'est le coeur de la discipline de la tache 13 : la direction part
+      // sur le fil quantifiee sur un octet signe. Si `#localAim` utilisait le
+      // flottant brut de `readAim` au lieu de le faire passer par
+      // `quantizeAxis`, cette assertion echouerait — 0.6 * 127 = 76,2, jamais
+      // 76. Le vecteur (0.6, 0.8) est choisi PRECISEMENT parce que ses deux
+      // composantes, une fois mises a l'echelle par 127, ne tombent PAS sur un
+      // entier : un vecteur qui coinciderait deja avec sa version quantifiee
+      // (comme (1, 0), utilise par les autres tests de ce fichier) ne
+      // prouverait rien.
+      const client = new GameClient(
+        'ws://test',
+        () => ({ x: 0, y: 0 }),
+        vi.fn(),
+        undefined,
+        () => ({ x: 0.6, y: 0.8 }),
+      );
+      client.connect();
+      const socket = latestSocket();
+      socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0023) });
+      socket.emit('message', {
+        data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+      });
+      // Le spy est pose AVANT le tout premier `update()` : c'est celui-la qui
+      // tire (cooldown jamais entame), et le rater ferait attendre la
+      // prochaine fenetre de cooldown (7 ticks) pour rien.
+      const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+      client.update(0, STEP);
+      for (let tick = 1; tick <= 5 && spy.mock.calls.length === 0; tick++) {
+        socket.emit('message', {
+          data: encodeSnapshot(tick, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+        });
+        client.update(tick * MS_PER_TICK, STEP);
+      }
+
+      expect(spy).toHaveBeenCalled();
+      const [, , , , dirX, dirY] = spy.mock.calls[0] ?? [];
+      expect(dirX).toBe(76);
+      expect(dirY).toBe(102);
+    },
+  );
+
+  it('tire avec la visee LOCALE quantifiee, pas avec celle (retardee) du dernier snapshot recu', () => {
+    // ⚠️ Discipline de la tache 13 : le joueur local tire avec `#localAim`
+    // (fraiche, calculee a chaque `update()`), jamais avec le bloc `aimX`/
+    // `aimY` que son PROPRE snapshot rapporte — celui-ci a fait l'aller-retour
+    // reseau et peut retarder d'un ou plusieurs ticks sur la souris reelle. On
+    // fait diverger les deux volontairement : le snapshot annonce une visee
+    // opposee (quantifiee : `aimX: -127`) a celle que `readAim` fournit
+    // reellement (`AIM_RIGHT`) — si `#fireWeapons` utilisait le snapshot pour
+    // le joueur local, la salve partirait a gauche, jamais vers le monstre a
+    // droite.
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      () => AIM_RIGHT,
+    );
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0021) });
+    const order: WaveOrder = {
+      waveId: 81,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 1,
+    };
+    socket.emit('message', { data: encodeWaveOrder(order) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+    });
+    client.update(0, STEP);
+    expect(client.horde.count).toBe(1);
+
+    const monsterX = client.horde.x[0] ?? 0;
+    const monsterY = client.horde.y[0] ?? 0;
+    const PLAYER = { x: monsterX - 50, y: monsterY };
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+
+    for (let tick = 1; tick <= 20 && spy.mock.calls.length === 0; tick++) {
+      socket.emit('message', {
+        // Le snapshot ment sur la visee (AIM_LEFT quantifiee) : si le code
+        // s'y fiait pour le joueur local, aucun tir ne toucherait jamais le
+        // monstre, a droite.
+        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: -127, aimY: 0 }]),
+      });
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+
+    expect(spy).toHaveBeenCalled();
+    const [, , , , dirX] = spy.mock.calls[0] ?? [];
+    expect(dirX).toBeGreaterThan(0);
+  });
+
   it('ne tire pas pendant le gel, et retire des la reprise', () => {
     // ⚠️ Ce test existe parce que remplacer la garde `tick > #freezeUntilTick`
     // par `if (true)` laissait les dix-huit tests verts : aucun n'exercait gel
     // et tir ensemble. Les deux moities comptent — verifier seulement que le
     // tir s'arrete laisserait passer un gel permanent.
-    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      () => AIM_RIGHT,
+    );
     client.connect();
     const socket = latestSocket();
     socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0022) });
@@ -1048,7 +1194,9 @@ describe('GameClient — deux proprietes du tir que le code affirme (tache 11)',
       count: 1,
     };
     socket.emit('message', { data: encodeWaveOrder(order) });
-    socket.emit('message', { data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+    });
     client.update(0, STEP);
     expect(client.horde.count).toBe(1);
 
@@ -1056,14 +1204,14 @@ describe('GameClient — deux proprietes du tir que le code affirme (tache 11)',
     const monsterY = client.horde.y[0] ?? 0;
     const PLAYER = { x: monsterX - 50, y: monsterY };
     const snapshot = (tick: number): ArrayBuffer =>
-      encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]);
+      encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]);
 
     // Le gel prend effet au tick 2 : le message part avant, comme le fait le
     // serveur, et c'est le tick DATE qui compte.
     const FREEZE_START = 2;
     socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
 
-    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     // Fenetre de gel strict : `#advanceHorde` ne tire pas tant que
     // `tick <= #freezeUntilTick`.
     const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
