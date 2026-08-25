@@ -50,6 +50,17 @@ export const FIELD_INPUT_DELAY_TICKS = 3;
  */
 export const TARGETING_DELAY_TICKS = FIELD_INPUT_DELAY_TICKS;
 
+/**
+ * Rayon de collision entre un projectile et une entite (§5.2).
+ *
+ * ⚠️ Doit rester superieur a la distance parcourue par le projectile le plus
+ * rapide en un seul tick — `projectileSpeed / TICK_HZ` — sous peine de
+ * traversees sans collision (« tunneling ») a haute vitesse. L'arme la plus
+ * rapide du plan (900 px/s) parcourt ~30 px par tick a 30 Hz ; ce rayon lui
+ * laisse une marge.
+ */
+export const PROJECTILE_HIT_RADIUS = 32;
+
 /** Plafond d'entites vivantes par salon. */
 export const MAX_ENTITIES = 4000;
 
