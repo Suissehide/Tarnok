@@ -1093,8 +1093,14 @@ dupliquer, les deux messages ne diffèrent que par leur octet de type.
 
 | Message | Disposition | Octets |
 | --- | --- | --- |
-| `LEVEL_UP` | `type u8 · tick u32 · playerId u8 · level u8` | 7 |
+| `LEVEL_UP` | `type u8 · tick u32 · level u8` | 6 |
 | `RUN_OVER` | `type u8 · tick u32 · survivedTicks u32 · level u8 · kills u32` | 14 |
+
+> ⚠️ **`LEVEL_UP` ne porte pas d'identifiant de joueur, et c'est structurel.** Le §2 de la
+> spec d'orientation est explicite : « **L'expérience est globale** : ce qu'un joueur ramasse
+> fait monter toute l'équipe, en même temps », et « un seul étalage de cartes pour toute
+> l'équipe ». Personne ne monte de niveau individuellement — c'est l'équipe qui monte, et le
+> gel est commun. Un `playerId` ici inviterait à croire le contraire.
 
 > ⚠️ **Le tick de `LEVEL_UP` est celui où le gel prend effet, pas celui de l'émission.** Le
 > §6.2 de la spec l'exige : sans lui, chaque client figerait à la réception, donc à un tick
@@ -1104,7 +1110,20 @@ dupliquer, les deux messages ne diffèrent que par leur octet de type.
 > `kills` tient sur 32 bits et non 16 : une run longue dépasse 65 535 ennemis tués, et le
 > message ne part qu'une fois par run — l'économie de deux octets ne se discute pas.
 
-`SNAPSHOT_PLAYER_BYTES` passe de 5 à **8** (`id u8 · x i16 · y i16 · hp u8 · xp u16`).
+Le `SNAPSHOT` gagne les points de vie et l'expérience, **mais pas au même endroit** :
+
+| Bloc | Disposition | Octets |
+| --- | --- | --- |
+| En-tête | `type u8 · tick u32 · playerCount u8 · xp u16` | 6 → **8** |
+| Par joueur | `id u8 · x i16 · y i16 · hp u8` | 5 → **6** |
+
+> ⚠️ **L'expérience est dans l'en-tête, pas dans le bloc joueur.** Les points de vie sont
+> personnels, l'expérience est celle de l'équipe. La mettre par joueur créerait **deux
+> sources de vérité pour un seul nombre** — et le jour où elles divergent, un joueur voit le
+> niveau 4 pendant que son voisin voit le niveau 3, sans qu'aucun test unitaire ne l'ait vu.
+>
+> Accessoirement c'est moins cher : à quatre joueurs, `8 + 4 × 6 = 32` octets contre
+> `6 + 4 × 8 = 38`.
 
 > ⚠️ **`hp` et `xp` n'existent pas encore côté serveur** — c'est la tâche 9 qui les fait
 > vivre. Cette tâche câble le transport : `Room` remplit `hp` avec `PLAYER_MAX_HP` et `xp`
