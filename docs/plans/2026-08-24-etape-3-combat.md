@@ -1938,3 +1938,73 @@ Trois défauts qui s'enchaînent :
 git commit -m "fix(shared): borner la poussee de separation et sortir des murs"
 ```
 
+---
+
+## Tâche 19 : décaler la séparation dans le temps
+
+**Origine : une observation de l'auteur.** « Sur Swarm, les monstres se déplacent par petits
+à-coups et pas en même temps, peut-être pour régler ce souci ? » — oui, et la mesure le
+confirme sur tous les axes.
+
+### Ce qui ne marchait pas, et pourquoi
+
+Trois principes ont été mesurés avant celui-ci. Aucun ne s'en sortait :
+
+| Principe | Saut max | Gaspillage | Voisins | Verdict |
+| --- | --- | --- | --- | --- |
+| Force sommée, plafond 40 px (actuel) | 40,0 px | 9,2 px/tick | 5,2 | téléporte et vibre |
+| Relaxation en position (½ pénétration) | **102,3 px** | — | — | pire : les corrections s'additionnent aussi |
+| Relaxation **moyennée** | 5,9 px | 0,57 | **359** | ne sépare plus du tout |
+| Plafond resserré à 7 px | 7,0 px | 2,6 | 29,4 | densité ×6, coût ×2 |
+
+La relaxation moyennée échoue pour une raison physique qui vaut d'être retenue : **au milieu
+d'un tas uniforme, la poussée moyenne est nulle par symétrie.** Seule la *somme* pousse les
+entités intérieures vers l'extérieur. Sommer est donc correct ; c'est de la borne que venait le
+problème, et aucune valeur de borne ne réconciliait saut, oscillation et densité.
+
+### Ce qui marche
+
+Une entité ne se repousse qu'**un tick sur K**, sa phase venant de son **identité** —
+arithmétique, donc identique des deux côtés, sans un octet de plus sur le fil.
+
+| | Actuel (cap 40, K=1) | **cap 14, K=3** |
+| --- | --- | --- |
+| 1500 — rejeu ×4 | 1,31 ms | **1,04 ms** |
+| 1500 — saut max | 40,0 px | **14,0 px** |
+| 1500 — gaspillage | 9,22 px/tick | **1,32 px/tick** |
+| 4000 — rejeu ×4 | 4,53 ms | **2,97 ms** |
+| 4000 — saut max | 40,0 px | **14,0 px** |
+| 4000 — gaspillage | 10,51 | **1,26** |
+
+Moins cher, trois fois moins de saut, sept fois moins d'oscillation. Et à 4 000 entités ça
+répare la régression de la tâche 18, qui avait porté le rejeu à ~4,5 ms — au bord du seuil qui
+rouvre le §3.2.
+
+Contrepartie assumée : la densité monte (5,2 → 13,3 voisins à 1500). Les monstres s'agglutinent
+davantage — ce qui est plutôt le comportement attendu d'une horde.
+
+- [ ] **Étape 1 : la phase, dérivée de l'identité.** `entityIdAt(i) % K === tick % K`. Aucune
+  table, aucun champ, aucun tirage.
+
+  ⚠️ Le parcours symétrique `j > i` **disparaît** : une entité active doit voir *tous* ses
+  voisins, actifs ou non. Le coût par entité active monte, mais seules `1/K` le paient — le
+  bilan est celui du tableau. Ne pas essayer de garder les deux.
+
+- [ ] **Étape 2 : le plafond descend de 40 à 14 px.** Il ne se règle plus à la main : `K` et le
+  plafond se choisissent **ensemble**, et le banc `bench:sep` doit publier les deux.
+
+- [ ] **Étape 3 : le sprite ne doit plus battre.** L'auteur voit des monstres immobiles dont le
+  sprite alterne gauche-droite très vite. L'orientation se déduit du déplacement instantané, qui
+  change de signe à chaque vibration. Il lui faut une **hystérésis** : ne retourner que si le
+  déplacement horizontal dépasse un seuil, et garder la dernière orientation sinon. C'est du
+  rendu — rien dans `shared/`, rien sur le fil.
+
+- [ ] **Étape 4 : vérifier.** `bench:sep` avec saut maximal et gaspillage en colonnes ; le
+  scénario 9 de la réplication doit rester à **0,000 px**.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "feat(shared): decaler la separation dans le temps"
+```
+
