@@ -14,11 +14,13 @@ retirer un ennemi en déplace des dizaines — et les **morts arrivent en retard
 
 | Scénario | Dérive maximale |
 | --- | --- |
-| Morts + séparation, **sans** rejeu | **750,039 px** |
+| Morts + séparation, **sans** rejeu | **686,369 px** |
 | Morts + séparation, **avec** rejeu | **0,000 px** |
 | Mort sortie de l'anneau, appliquée au présent et signalée | **433,988 px** |
 
-216 morts sur 1000, horde déplacée de 5829 px. Une dérive de zéro sur une horde immobile ne
+216 morts sur 1000, horde déplacée de 5829 px. (Le chiffre sans rejeu valait 750,039 px
+avant que les monstres ne s'arrêtent au contact : l'arrêt change les trajectoires, et c'est
+légitime. Ce qui ne l'aurait pas été, c'est que le scénario 9 quitte zéro.) Une dérive de zéro sur une horde immobile ne
 vaudrait rien ; ces deux chiffres sont là pour qu'on puisse le vérifier.
 
 La ligne à 750 px est la plus utile du tableau. Elle mesure ce que le mécanisme ferait **sans

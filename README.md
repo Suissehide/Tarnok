@@ -28,7 +28,7 @@ l'applique, et rejoue :
 
 | | Dérive |
 | --- | --- |
-| Morts + séparation, **sans** rejeu | 750,039 px |
+| Morts + séparation, **sans** rejeu | 686,369 px |
 | Morts + séparation, **avec** rejeu | **0,000 px** |
 
 Le chiffre de gauche compte autant que celui de droite : il mesure ce que le mécanisme ferait
