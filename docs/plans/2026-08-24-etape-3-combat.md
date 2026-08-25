@@ -1757,3 +1757,54 @@ indice paraît **figé**, et l'ordre de dessin change d'une image à l'autre san
 git commit -m "fix(shared): borner les entites a la carte, et le tri de profondeur a ses bandes"
 ```
 
+---
+
+## Tâche 16 : les sprites ne correspondent à rien
+
+Quatre retours de jeu, une racine commune pour les deux premiers : **rien ne relie la taille
+dessinée d'un monstre à la taille que la simulation lui prête.**
+
+### Mesuré
+
+| | Taille à l'écran |
+| --- | --- |
+| Sprite de monstre | **192 × 192 px** (taille native de l'atlas, dessinée 1:1) |
+| Joueur | 36 × 36 px (`PLAYER_RADIUS = 18`) |
+| Hitbox de contact | 68 px de diamètre (`CONTACT_RADIUS = 34`) |
+| Hitbox de tir | 64 px (`PROJECTILE_HIT_RADIUS = 32`) |
+| Séparation | 56 px (`SEPARATION_RADIUS = 28`) |
+| Portée d'un tir | 333 px, sur une vue de 1728 px |
+
+Un monstre est donc **trois fois sa propre hitbox** et **cinq fois le joueur**. On tire sur le
+corps, le projectile passe au travers : la hitbox est un disque aux pieds du sprite.
+
+- [ ] **Étape 1 : dériver l'échelle des sprites de la hitbox, pas l'inverse.** La constante qui
+  fait foi est `PROJECTILE_HIT_RADIUS` ; l'échelle de dessin s'en déduit. Écrire l'inverse —
+  une échelle réglée à la main à côté d'une hitbox réglée à la main — c'est exactement ce qui a
+  produit ce défaut, et ce que le tableau « Cohérence des constantes » existe pour empêcher.
+
+  Un test doit vérifier la relation, pas les valeurs : la largeur dessinée d'un monstre reste
+  du même ordre que sa hitbox. Il doit échouer si l'une bouge sans l'autre.
+
+- [ ] **Étape 2 : orienter les sprites.** Ils ne se retournent pas vers leur cible. Le
+  `ParticleContainer` de la horde déclare `dynamicProperties: { position: true }` ; le retournement
+  passe par `scaleX = ±1`, qui appartient à `vertex`. Le conteneur des flashs utilise déjà
+  `scaleX`, donc le chemin est connu.
+
+  ⚠️ **C'est du rendu pur, et ça ne doit pas devenir de la simulation.** L'orientation se déduit
+  de ce que le client a déjà sous la main — pas d'un nouveau champ dans `Horde`, pas d'un octet
+  de plus sur le fil.
+
+- [ ] **Étape 3 : des projectiles nets et d'une portée lisible.** La texture est un dégradé
+  radial : le projectile *est* une tache floue. Et 333 px de portée font un cinquième de
+  l'écran. Donner un chiffre visé, pas un ressenti.
+
+- [ ] **Étape 4 : vérifier que la réplication n'a pas bougé** — 750,039 / 0,000 / 433,988 px.
+  Rien ici ne devrait la toucher : si elle bouge, c'est que du rendu a fui dans la simulation.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "fix(front): accorder la taille des sprites a celle des hitbox"
+```
+
