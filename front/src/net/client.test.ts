@@ -964,3 +964,110 @@ describe('GameClient — tir automatique et impact cote client (tache 11)', () =
     expect(client.hitFlashes.count).toBe(0);
   });
 });
+
+describe('GameClient — deux proprietes du tir que le code affirme (tache 11)', () => {
+  const MS_PER_TICK = 1000 / TICK_HZ;
+
+  it('tire depuis la position PREDITE du joueur local, pas depuis celle du dernier snapshot', () => {
+    // ⚠️ Ce test existe parce que la mutation « jeter la prediction locale »
+    // (`const x = p.x` au lieu de `local ? local.simX : p.x`) laissait les
+    // dix-huit tests de ce fichier verts. Le commentaire de `#fireWeapons`
+    // affirme pourtant que le joueur local tire depuis sa position simulee,
+    // « plus a jour que le dernier snapshot recu ».
+    //
+    // On fait diverger les deux volontairement : le snapshot repete une
+    // position FIXE pendant que l'entree pousse la prediction vers la droite.
+    // L'assertion porte sur l'origine reelle de la salve, pas sur un effet
+    // indirect : avec la mutation, elle vaudrait exactement `SNAPSHOT_X`.
+    const client = new GameClient('ws://test', () => ({ x: 1, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0020) });
+    const order: WaveOrder = {
+      waveId: 80,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 1,
+    };
+    socket.emit('message', { data: encodeWaveOrder(order) });
+    socket.emit('message', { data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]) });
+    client.update(0, STEP);
+    expect(client.horde.count).toBe(1);
+
+    const monsterX = client.horde.x[0] ?? 0;
+    const monsterY = client.horde.y[0] ?? 0;
+    // Le snapshot fige le joueur a gauche du monstre, a portee de la dague.
+    const SNAPSHOT_X = monsterX - 100;
+    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+
+    for (let tick = 1; tick <= 30 && spy.mock.calls.length === 0; tick++) {
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, [{ id: 1, x: SNAPSHOT_X, y: monsterY, hp: 100 }]),
+      });
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+
+    expect(spy).toHaveBeenCalled();
+    const originX = spy.mock.calls[0]?.[2] ?? 0;
+    // La prediction a pousse le joueur vers la droite : l'origine doit s'en
+    // ressentir. Avec la mutation, `originX === SNAPSHOT_X` a l'unite pres.
+    expect(originX).toBeGreaterThan(SNAPSHOT_X + 1);
+  });
+
+  it('ne tire pas pendant le gel, et retire des la reprise', () => {
+    // ⚠️ Ce test existe parce que remplacer la garde `tick > #freezeUntilTick`
+    // par `if (true)` laissait les dix-huit tests verts : aucun n'exercait gel
+    // et tir ensemble. Les deux moities comptent — verifier seulement que le
+    // tir s'arrete laisserait passer un gel permanent.
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0022) });
+    const order: WaveOrder = {
+      waveId: 82,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 1,
+    };
+    socket.emit('message', { data: encodeWaveOrder(order) });
+    socket.emit('message', { data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100 }]) });
+    client.update(0, STEP);
+    expect(client.horde.count).toBe(1);
+
+    const monsterX = client.horde.x[0] ?? 0;
+    const monsterY = client.horde.y[0] ?? 0;
+    const PLAYER = { x: monsterX - 50, y: monsterY };
+    const snapshot = (tick: number): ArrayBuffer =>
+      encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100 }]);
+
+    // Le gel prend effet au tick 2 : le message part avant, comme le fait le
+    // serveur, et c'est le tick DATE qui compte.
+    const FREEZE_START = 2;
+    socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
+
+    const spy = vi.spyOn(client.projectiles, 'fireSalvo');
+    // Fenetre de gel strict : `#advanceHorde` ne tire pas tant que
+    // `tick <= #freezeUntilTick`.
+    const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
+    for (let tick = FREEZE_START; tick <= FREEZE_END; tick++) {
+      socket.emit('message', { data: snapshot(tick) });
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+    expect(spy).not.toHaveBeenCalled();
+
+    // La reprise rend le tir : ce n'est pas un gel permanent.
+    for (let tick = FREEZE_END + 1; tick <= FREEZE_END + 30; tick++) {
+      socket.emit('message', { data: snapshot(tick) });
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+    expect(spy).toHaveBeenCalled();
+  });
+});
