@@ -46,7 +46,7 @@ qu'un tick de décalage ne se résorbe plus.
 | --- | --- | --- |
 | `TICK_HZ` | 30 | existant |
 | `FIELD_INPUT_DELAY_TICKS` | 3 | existant — le flowfield lit `T − 3` |
-| `TARGETING_DELAY_TICKS` | **= `FIELD_INPUT_DELAY_TICKS`** | l'auto-visée lit le **même** état que le flowfield ; les découpler créerait deux passés à garder d'accord |
+| ~~`TARGETING_DELAY_TICKS`~~ | **supprimée** | l'auto-visée lit l'état courant des deux côtés — voir ci-dessous |
 | `ROLLBACK_DEPTH_TICKS` | 8 | **doit être > la latence maximale en ticks** ; 8 ticks = 266 ms, au-delà de quoi une mort est appliquée au présent **et signalée** |
 | `SEPARATION_RADIUS` | 28 px | **doit être ≤ moitié de `SEPARATION_CELL`** pour que les huit voisines suffisent |
 | `SEPARATION_CELL` | 56 px | = `2 × SEPARATION_RADIUS` |
@@ -61,6 +61,31 @@ qu'un tick de décalage ne se résorbe plus.
 | `LEVEL_FREEZE_TICKS` | 60 (2 s) | l'étape 4 le portera à 20 s plafonnées (§7.4) |
 | `LEVEL_RESUME_TICKS` | 30 (1 s) | reprise progressive (§7.4) |
 | `PROJECTILE_HIT_RADIUS` | 32 px | rayon de touche, **sans contrainte de vitesse** — la collision balaie le segment, voir ci-dessous |
+| `LEVEL_XP_BASE` | à fixer par la tâche 9 | seuil du premier niveau ; l'étape 4 le multipliera par N joueurs (§5 de l'orientation) |
+
+> ### Pourquoi l'auto-visée ne lit PAS un état retardé
+>
+> Le §5.3 de la spec d'étape demande `T − K` des deux côtés « pour que la direction visée soit
+> identique ». L'intention est bonne, le moyen ne marche pas ici, et la tâche 9 l'a montré.
+>
+> Le retard `T − K` fonctionne pour le flowfield parce qu'il porte sur les **positions des
+> joueurs**, qui sont répliquées avec un délai connu : les deux côtés peuvent donc s'accorder
+> exactement. Le ciblage, lui, dépend de la **horde**, qui est *dérivée* et non répliquée. Son
+> désaccord ne vient pas de la latence d'entrée mais de la **propagation des morts** — et
+> retarder la lecture n'y change rien tant que le serveur devrait, pour s'aligner, tenir un
+> second anneau d'états complet (`.set()` sur sept tableaux de `MAX_ENTITIES` à chaque tick,
+> jamais budgété par le banc de la tâche 0).
+>
+> **Décision : les deux côtés visent sur l'état courant**, et la divergence transitoire est
+> acceptée — c'est la même que celle déjà documentée sur `fireSalvo`. Les projectiles ne sont
+> pas répliqués et les dégâts sont arbitrés par le serveur : l'écart est visuel et se résorbe
+> au rejeu.
+>
+> `TARGETING_DELAY_TICKS` est donc **supprimée** plutôt que laissée inutilisée. Une constante
+> qui nomme un mécanisme absent est pire qu'aucune constante.
+>
+> ⚠️ **À rouvrir si la vérification manuelle de la tâche 12 rend l'écart visible** — un tir qui
+> part vers un monstre déjà mort se remarque. C'est là qu'on le saura, pas ici.
 
 > ### La collision balaie le segment, elle n'échantillonne pas le point d'arrivée
 >
@@ -1350,15 +1375,20 @@ retenue, à reproduire à l'identique à la tâche 10 :
 1. tick++
 2. deplacer les joueurs
 3. enregistrer l'historique de positions (arrondi !)
-4. appliquer les ordres de vague en attente
-5. recalculer les champs si du (tick % stepsPerField)
+4. rafraichir les champs si du (tick % stepsPerField)
+5. appliquer les ordres de vague en attente
 6. avancer la horde
 7. appliquer la separation
-8. avancer les projectiles, resoudre les collisions
+8. tirer les salves dues, avancer les projectiles, resoudre les collisions
 9. arbitrer le contact avec les joueurs
 10. resoudre les ramassages d'orbes
 11. mettre en file morts et ramassages pour diffusion
 ```
+
+> ⚠️ **Étapes 4 et 5 : rafraîchir AVANT d'engendrer.** Une version antérieure de ce plan les
+> donnait dans l'ordre inverse. C'était une erreur : `back/src/room.ts` et le test de
+> réplication — celui qui mesure 0,000 px — font tous deux le rafraîchissement d'abord, depuis
+> l'étape 2. L'ordre écrit ici est celui du code éprouvé, pas l'inverse.
 
 - [ ] **Étape 4 : le gel**
 
