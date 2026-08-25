@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { PROJECTILE_HIT_RADIUS } from './constants';
+import { PROJECTILE_HIT_RADIUS, TICK_HZ } from './constants';
 import { Horde } from './horde';
 import { Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
@@ -50,6 +50,18 @@ const SPREAD: Weapon = {
   projectileLifeTicks: 10,
   projectileCount: 3,
   spreadRadians: Math.PI / 2,
+};
+
+/** Une arme rapide, pour exercer le balayage de segment de `collide`. */
+const FAST: Weapon = {
+  id: 2,
+  name: 'test-rapide',
+  cooldownTicks: 30,
+  damage: 9,
+  projectileSpeed: 900,
+  projectileLifeTicks: 30,
+  projectileCount: 1,
+  spreadRadians: 0,
 };
 
 describe('Projectiles.fireSalvo', () => {
@@ -149,6 +161,130 @@ describe('Projectiles.collide', () => {
 
     expect(hits).toEqual([]);
     expect(projectiles.count).toBe(1); // ni touche, ni consomme
+  });
+
+  it('detecte un ennemi qui coupe le SEGMENT parcouru pendant le pas, meme hors du rayon aux deux extremites', () => {
+    // Reproduction du defaut trouve en revue : un echantillonnage au seul
+    // point d'arrivee manque une cible qui coupe la trajectoire sur le cote,
+    // au milieu du pas — et le defaut s'aggrave avec la vitesse.
+    //
+    // `FAST` va de (0,0) a (30,0) en un tick (900 px/s a 30 Hz). Un ennemi en
+    // (15,30) est a 30 px du SEGMENT (0,0)-(30,0) — dans le rayon de 32 —
+    // mais a ~33,5 px de CHACUNE des deux extremites — hors du rayon. Un
+    // `collide` qui n'echantillonnerait que le point de depart ou le point
+    // d'arrivee la manquerait ; le balayage de segment la touche.
+    const horde = new Horde(10);
+    const targetId = addOne(horde, 1, 1000, 0); // loin sur l'axe : angle de tir nul
+    const projectiles = new Projectiles(50);
+    projectiles.fireSalvo(FAST, 0, 0, 0, targetId, horde);
+
+    const victimId = addOne(horde, 2, 15, 30);
+
+    projectiles.step(1 / TICK_HZ); // avance de (0,0) a (30,0)
+
+    const hits: { entityId: number; damage: number }[] = [];
+    projectiles.collide(horde, (entityId, damage) => hits.push({ entityId, damage }));
+
+    expect(hits).toEqual([{ entityId: victimId, damage: FAST.damage }]);
+    expect(projectiles.count).toBe(0);
+  });
+});
+
+describe('Projectiles.fireSalvo — capacite', () => {
+  it('tronque une salve qui depasserait la capacite, sans toucher aux projectiles deja en vol', () => {
+    const horde = new Horde(10);
+    const targetId = addOne(horde, 1, 100, 0);
+    // Capacite pile remplie par une seule salve de SPREAD.
+    const projectiles = new Projectiles(SPREAD.projectileCount);
+
+    projectiles.fireSalvo(SPREAD, 0, 0, 0, targetId, horde);
+    expect(projectiles.count).toBe(SPREAD.projectileCount);
+
+    const beforeX = Array.from(projectiles.x.slice(0, projectiles.count));
+    const beforeY = Array.from(projectiles.y.slice(0, projectiles.count));
+
+    // Plus une seule place : cette salve devrait etre entierement rejetee.
+    projectiles.fireSalvo(SINGLE, 1, 999, 999, targetId, horde);
+
+    expect(projectiles.count).toBe(SPREAD.projectileCount); // jamais au-dela de la capacite
+    expect(Array.from(projectiles.x.slice(0, projectiles.count))).toEqual(beforeX);
+    expect(Array.from(projectiles.y.slice(0, projectiles.count))).toEqual(beforeY);
+  });
+});
+
+describe('Projectiles — bornTick et compaction', () => {
+  it('le projectile deplace dans le trou par la compaction porte le bon bornTick', () => {
+    const horde = new Horde(10);
+    // Loin de toute position de tir ci-dessous, pour ne pas coincider avec un
+    // projectile et fausser le compte de coups.
+    const targetId = addOne(horde, 1, 1000, 0);
+    const projectiles = new Projectiles(50);
+
+    // Trois projectiles, tires a des ticks distincts et a des positions
+    // distinctes (pour ne toucher que celui vise par le test).
+    projectiles.fireSalvo(SINGLE, 10, 0, 0, targetId, horde); // slot 0
+    projectiles.fireSalvo(SINGLE, 20, 50, 0, targetId, horde); // slot 1, sera consomme
+    projectiles.fireSalvo(SINGLE, 30, 100, 0, targetId, horde); // slot 2, dernier -> deplace dans le trou
+
+    expect(projectiles.bornTick[0]).toBe(10);
+    expect(projectiles.bornTick[1]).toBe(20);
+    expect(projectiles.bornTick[2]).toBe(30);
+
+    // Un ennemi pile sur le projectile du milieu, assez loin des deux autres
+    // pour ne toucher que lui.
+    addOne(horde, 2, 50, 0);
+    projectiles.collide(horde, () => {
+      // Seule la compaction nous interesse ici, pas les degats.
+    });
+
+    expect(projectiles.count).toBe(2);
+    // Le dernier projectile (tick 30) a ete deplace dans le trou laisse par
+    // celui du milieu (tick 20) : sans la compaction de `bornTick`, la
+    // valeur au creneau 1 resterait perimee a 20.
+    expect(projectiles.bornTick[1]).toBe(30);
+  });
+
+  it('la position de depart de segment suit la compaction, meme sans step() entre deux collide()', () => {
+    // `#prevX`/`#prevY` ne sont pas exposes (contrairement a `bornTick`) —
+    // trouve en mutant leur compaction dans `#removeAt` : aucun des dix
+    // autres tests ne l'a vu passer au rouge. Sans elle, le SEGMENT teste
+    // par un `collide()` ulterieur melangerait le `prev` de l'occupant
+    // retire avec la position courante — correctement compactee, elle —
+    // du projectile deplace dans le trou : un segment fantome qui n'a
+    // jamais ete parcouru par personne.
+    const horde = new Horde(10);
+    const targetId = addOne(horde, 1, 1000, 0); // plein est, loin de tout le reste
+
+    const projectiles = new Projectiles(50);
+    projectiles.fireSalvo(SINGLE, 0, 0, 0, targetId, horde); // slot 0
+    projectiles.fireSalvo(SINGLE, 0, 500, 0, targetId, horde); // slot 1, dernier -> deplace dans le trou
+
+    projectiles.step(1); // slot 0 : (0,0)->(100,0) ; slot 1 : (500,0)->(600,0)
+
+    // Un ennemi pile sur le projectile 0 : le consomme, ce qui deplace le
+    // projectile 1 (dernier) dans le trou laisse au creneau 0.
+    const triggerId = addOne(horde, 2, 100, 0);
+    projectiles.collide(horde, () => {
+      // Seule la compaction nous interesse ici, pas les degats.
+    });
+    expect(projectiles.count).toBe(1);
+
+    // Retire cet ennemi de la horde : sinon, pile sur l'axe (0,0)-(600,0), il
+    // masquerait le segment fantome en se faisant toucher lui-meme a nouveau
+    // (distance nulle), quelle que soit la version de `#removeAt` testee.
+    horde.kill([triggerId]);
+
+    // Un ennemi proche du segment FANTOME (0,0)->(600,0) — celui qu'on
+    // obtiendrait si `prev` n'avait pas suivi la compaction, melangeant le
+    // prev de l'ancien occupant du creneau 0 avec la position courante,
+    // elle correctement compactee, du survivant — mais loin du VRAI segment
+    // qu'il a reellement parcouru, (500,0)->(600,0).
+    const decoyId = addOne(horde, 3, 250, 20);
+
+    const hits: { entityId: number; damage: number }[] = [];
+    projectiles.collide(horde, (entityId, damage) => hits.push({ entityId, damage }));
+
+    expect(hits.some((h) => h.entityId === decoyId)).toBe(false);
   });
 });
 

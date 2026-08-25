@@ -51,13 +51,20 @@ export const FIELD_INPUT_DELAY_TICKS = 3;
 export const TARGETING_DELAY_TICKS = FIELD_INPUT_DELAY_TICKS;
 
 /**
- * Rayon de collision entre un projectile et une entite (§5.2).
+ * Rayon de detection d'un coup entre un projectile et une entite (§5.2) : la
+ * largeur de la zone de contact autour de la trajectoire, pas une garantie de
+ * non-traversee a elle seule.
  *
- * ⚠️ Doit rester superieur a la distance parcourue par le projectile le plus
- * rapide en un seul tick — `projectileSpeed / TICK_HZ` — sous peine de
- * traversees sans collision (« tunneling ») a haute vitesse. L'arme la plus
- * rapide du plan (900 px/s) parcourt ~30 px par tick a 30 Hz ; ce rayon lui
- * laisse une marge.
+ * Ce qui empeche le « tunneling » a haute vitesse, c'est la GEOMETRIE de
+ * `Projectiles.collide` — elle teste la distance de l'entite au SEGMENT
+ * parcouru pendant le tick, pas seulement au point d'arrivee — et non la
+ * valeur de cette constante. Une premiere version la contraignait a rester
+ * superieure a `projectileSpeed / TICK_HZ` pour l'arme la plus rapide ; ce
+ * raisonnement etait faux : il ne protegeait que les cibles pile sur l'axe
+ * de tir, et manquait en silence toute cible qui coupait la trajectoire sur
+ * le cote au milieu du pas — un defaut qui s'aggravait avec la vitesse,
+ * c'est-a-dire exactement la ou la contrainte pretendait proteger. Voir le
+ * test de reproduction dans `shared/projectiles.test.ts`.
  */
 export const PROJECTILE_HIT_RADIUS = 32;
 

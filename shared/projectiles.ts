@@ -27,25 +27,46 @@ export class Projectiles {
   /** Position courante, publique en lecture pour le rendu — comme `Horde.x` / `Horde.y`. */
   readonly x: Float32Array;
   readonly y: Float32Array;
+  /**
+   * Tick de tir. Public en lecture : la tache 11 en aura besoin pour le
+   * rendu (par exemple un fondu a l'apparition), et `#removeAt` doit le
+   * compacter comme tout le reste — l'exposer permet de le verifier depuis
+   * un test sans ajouter de code de test dans la classe.
+   */
+  readonly bornTick: Uint32Array;
 
   readonly #vx: Float32Array;
   readonly #vy: Float32Array;
   readonly #damage: Float32Array;
   /** Pas restants avant expiration. Decremente a chaque `step`. */
   readonly #ticksRemaining: Int32Array;
-  /** Tick de tir, pour le debogage et un futur rendu qui en tiendrait compte. */
-  readonly #bornTick: Uint32Array;
+  /**
+   * Position au DEBUT du pas de simulation qui vient de s'ecouler — alimentee
+   * par `step`, lue par `collide`. Voir la doc de `collide` : c'est ce qui
+   * permet de tester le SEGMENT parcouru pendant le pas plutot que le seul
+   * point d'arrivee.
+   *
+   * Stockee plutot que reconstruite par `x - vx * dt` : reconstruire
+   * imposerait a `collide` de connaitre le `dt` du dernier `step`, donc un
+   * ordre d'appel implicite entre les deux methodes. La stocker rend
+   * `collide` correcte quel que soit le moment ou elle est appelee apres
+   * `step`.
+   */
+  readonly #prevX: Float32Array;
+  readonly #prevY: Float32Array;
 
   #count = 0;
 
   constructor(readonly capacity: number) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
+    this.bornTick = new Uint32Array(capacity);
     this.#vx = new Float32Array(capacity);
     this.#vy = new Float32Array(capacity);
     this.#damage = new Float32Array(capacity);
     this.#ticksRemaining = new Int32Array(capacity);
-    this.#bornTick = new Uint32Array(capacity);
+    this.#prevX = new Float32Array(capacity);
+    this.#prevY = new Float32Array(capacity);
   }
 
   get count(): number {
@@ -105,11 +126,16 @@ export class Projectiles {
       const slot = this.#count + i;
       this.x[slot] = x;
       this.y[slot] = y;
+      // Avant le premier `step`, le segment parcouru est un point : prev =
+      // position de depart. Un `collide` appele avant tout mouvement teste
+      // donc simplement le point de tir, comme attendu.
+      this.#prevX[slot] = x;
+      this.#prevY[slot] = y;
       this.#vx[slot] = Math.cos(angle) * weapon.projectileSpeed;
       this.#vy[slot] = Math.sin(angle) * weapon.projectileSpeed;
       this.#damage[slot] = weapon.damage;
       this.#ticksRemaining[slot] = weapon.projectileLifeTicks;
-      this.#bornTick[slot] = tick;
+      this.bornTick[slot] = tick;
     }
 
     this.#count += toFire;
@@ -118,6 +144,10 @@ export class Projectiles {
   /** Un pas de simulation. Appele exactement une fois par tick, `dt` fixe. */
   step(dt: number): void {
     for (let i = 0; i < this.#count; i++) {
+      // Capture la position de DEBUT de pas avant de la faire avancer : c'est
+      // le point de depart du segment que `collide` testera.
+      this.#prevX[i] = this.x[i] ?? 0;
+      this.#prevY[i] = this.y[i] ?? 0;
       this.x[i] = (this.x[i] ?? 0) + (this.#vx[i] ?? 0) * dt;
       this.y[i] = (this.y[i] ?? 0) + (this.#vy[i] ?? 0) * dt;
       this.#ticksRemaining[i] = (this.#ticksRemaining[i] ?? 0) - 1;
@@ -137,6 +167,17 @@ export class Projectiles {
    * Resout les collisions avec `horde` : pour chaque projectile touchant une
    * entite, appelle `onHit(entityId, damage)` et consomme le projectile.
    *
+   * **Teste le SEGMENT parcouru pendant le dernier `step`, pas seulement le
+   * point d'arrivee.** Un projectile rapide peut parcourir plusieurs
+   * dizaines de pixels en un seul tick ; une entite qui coupe sa trajectoire
+   * AU MILIEU du pas peut se trouver hors du rayon des deux extremites tout
+   * en etant a l'interieur du rayon du segment lui-meme — c'est exactement
+   * le cas que le test de reproduction de ce fichier verifie : une entite a
+   * 30 px du segment mais a ~33,5 px de chacune de ses deux extremites,
+   * touchee uniquement parce que la distance mesuree est celle au segment.
+   * Se limiter au point d'arrivee la manquerait, et le defaut s'aggraverait
+   * avec la vitesse — precisement la ou on voudrait le plus de fiabilite.
+   *
    * A egalite, le plus petit identifiant gagne — meme departage que
    * `nearestTarget`, pour la meme raison : le resultat ne doit pas dependre
    * de l'ordre des entites dans le tableau.
@@ -145,15 +186,15 @@ export class Projectiles {
     const r2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
 
     for (let i = this.#count - 1; i >= 0; i--) {
-      const px = this.x[i] ?? 0;
-      const py = this.y[i] ?? 0;
+      const ax = this.#prevX[i] ?? 0;
+      const ay = this.#prevY[i] ?? 0;
+      const bx = this.x[i] ?? 0;
+      const by = this.y[i] ?? 0;
 
       let bestId = -1;
       let bestDist2 = Number.POSITIVE_INFINITY;
       for (let e = 0; e < horde.count; e++) {
-        const dx = (horde.x[e] ?? 0) - px;
-        const dy = (horde.y[e] ?? 0) - py;
-        const d2 = dx * dx + dy * dy;
+        const d2 = distanceToSegmentSquared(horde.x[e] ?? 0, horde.y[e] ?? 0, ax, ay, bx, by);
         if (d2 > r2) {
           continue;
         }
@@ -176,12 +217,45 @@ export class Projectiles {
     if (slot !== last) {
       this.x[slot] = this.x[last] ?? 0;
       this.y[slot] = this.y[last] ?? 0;
+      this.bornTick[slot] = this.bornTick[last] ?? 0;
       this.#vx[slot] = this.#vx[last] ?? 0;
       this.#vy[slot] = this.#vy[last] ?? 0;
       this.#damage[slot] = this.#damage[last] ?? 0;
       this.#ticksRemaining[slot] = this.#ticksRemaining[last] ?? 0;
-      this.#bornTick[slot] = this.#bornTick[last] ?? 0;
+      this.#prevX[slot] = this.#prevX[last] ?? 0;
+      this.#prevY[slot] = this.#prevY[last] ?? 0;
     }
     this.#count = last;
   }
+}
+
+/**
+ * Distance au carre entre le point `(px, py)` et le SEGMENT `(ax, ay)` —
+ * `(bx, by)`. Projection classique, parametre borne a `[0, 1]` pour rester
+ * sur le segment plutot que sur la droite qui le porte.
+ *
+ * Au carre pour eviter une racine par paire projectile/entite : seule la
+ * comparaison au carre du rayon compte dans `collide`.
+ */
+function distanceToSegmentSquared(
+  px: number,
+  py: number,
+  ax: number,
+  ay: number,
+  bx: number,
+  by: number,
+): number {
+  const abx = bx - ax;
+  const aby = by - ay;
+  const abLenSq = abx * abx + aby * aby;
+  const t = abLenSq > 0 ? clamp01(((px - ax) * abx + (py - ay) * aby) / abLenSq) : 0;
+  const cx = ax + abx * t;
+  const cy = ay + aby * t;
+  const dx = px - cx;
+  const dy = py - cy;
+  return dx * dx + dy * dy;
+}
+
+function clamp01(t: number): number {
+  return t < 0 ? 0 : t > 1 ? 1 : t;
 }
