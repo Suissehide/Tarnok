@@ -1089,6 +1089,21 @@ export const DEATH_ID_BYTES = 4;
 `encodePickups` a exactement la même forme — **factorise l'encodage** plutôt que de le
 dupliquer, les deux messages ne diffèrent que par leur octet de type.
 
+`LEVEL_UP` et `RUN_OVER` sont **datés** eux aussi, et leur contenu vient du §7 de la spec :
+
+| Message | Disposition | Octets |
+| --- | --- | --- |
+| `LEVEL_UP` | `type u8 · tick u32 · playerId u8 · level u8` | 7 |
+| `RUN_OVER` | `type u8 · tick u32 · survivedTicks u32 · level u8 · kills u32` | 14 |
+
+> ⚠️ **Le tick de `LEVEL_UP` est celui où le gel prend effet, pas celui de l'émission.** Le
+> §6.2 de la spec l'exige : sans lui, chaque client figerait à la réception, donc à un tick
+> différent selon sa latence — et le gel deviendrait une source de divergence au lieu d'une
+> pause commune. C'est la même raison qui date les morts.
+>
+> `kills` tient sur 32 bits et non 16 : une run longue dépasse 65 535 ennemis tués, et le
+> message ne part qu'une fois par run — l'économie de deux octets ne se discute pas.
+
 `SNAPSHOT_PLAYER_BYTES` passe de 5 à **8** (`id u8 · x i16 · y i16 · hp u8 · xp u16`).
 
 > ⚠️ **`hp` et `xp` n'existent pas encore côté serveur** — c'est la tâche 9 qui les fait
