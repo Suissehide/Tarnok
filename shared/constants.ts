@@ -37,6 +37,19 @@ export const INTERP_DELAY_MS = 60;
  */
 export const FIELD_INPUT_DELAY_TICKS = 3;
 
+/**
+ * Retard, en ticks, applique a l'etat de horde que lit l'auto-visee (§5.3 de
+ * la spec).
+ *
+ * Egal a `FIELD_INPUT_DELAY_TICKS`, et pas recopie : viser dans un etat plus
+ * frais que celui du flowfield ferait designer des cibles differentes d'un
+ * poste a l'autre, exactement comme deux flowfields calcules sur des entrees
+ * differentes divergent. Deux constantes distinctes seraient deux passes a
+ * garder d'accord — les decoupler serait recreer, pour l'auto-visee, le bug
+ * que `FIELD_INPUT_DELAY_TICKS` existe pour eviter au flowfield.
+ */
+export const TARGETING_DELAY_TICKS = FIELD_INPUT_DELAY_TICKS;
+
 /** Plafond d'entites vivantes par salon. */
 export const MAX_ENTITIES = 4000;
 
