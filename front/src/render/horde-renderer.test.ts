@@ -1,9 +1,18 @@
-import { MAP_SIZE } from '@shared/constants';
+import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
-import { BAND_COUNT, bandOf, DEPTH_BAND, sortByDepth } from './horde-renderer';
+import {
+  BAND_COUNT,
+  bandOf,
+  DEPTH_BAND,
+  FACING_DEAD_ZONE_PX,
+  FACING_MAX_STEP_PX,
+  facingScaleX,
+  sortByDepth,
+  spriteScale,
+} from './horde-renderer';
 
 /**
  * Tache 15 : `bandOf` ne doit jamais pouvoir sortir de `[0, BAND_COUNT)`.
@@ -98,5 +107,84 @@ describe('sortByDepth ne corrompt pas #sorted avec des entites hors carte', () =
       expect(asSet.has(i)).toBe(true);
     }
     expect(written).not.toContain(-1);
+  });
+});
+
+/**
+ * Tache 16 : un sprite de monstre se dessinait a 192 px (la cellule native de
+ * l'atlas, dessinee 1:1) pour une hitbox de tir de 64 px de diametre
+ * (`PROJECTILE_HIT_RADIUS = 32`) — trois fois trop grand, un projectile qui
+ * touche visiblement le corps passait au travers.
+ *
+ * `spriteScale` est la relation qui remplace « une echelle reglee a la main a
+ * cote d'une hitbox reglee a la main » : elle DERIVE l'echelle de dessin de
+ * `PROJECTILE_HIT_RADIUS`, pour n'importe quelle cellule native. Les deux
+ * tests ci-dessous verifient la RELATION, pas un nombre fige — exactement la
+ * legon de `bandOf(63) === 0` rappelee plus haut dans ce fichier : un test qui
+ * pin la valeur d'aujourd'hui ne proteg rien du defaut de demain.
+ */
+describe('spriteScale derive la taille dessinee de PROJECTILE_HIT_RADIUS', () => {
+  it('le diametre dessine egale le diametre de la hitbox de tir, quelle que soit la cellule native', () => {
+    // Cellules reellement presentes dans l'atlas (voir shared/archetypes.ts) :
+    // 192 px pour la pietaille courante, jusqu'a 384 px pour le troll.
+    for (const cell of [128, 192, 256, 320, 384]) {
+      const scale = spriteScale(cell, PROJECTILE_HIT_RADIUS);
+      expect(scale * cell).toBeCloseTo(2 * PROJECTILE_HIT_RADIUS, 5);
+    }
+  });
+
+  it('suit PROJECTILE_HIT_RADIUS si la constante bouge — rien de fige a cote', () => {
+    const cell = 192;
+    const scaleAujourdhui = spriteScale(cell, PROJECTILE_HIT_RADIUS);
+    const scaleRayonDouble = spriteScale(cell, PROJECTILE_HIT_RADIUS * 2);
+    // Doubler le rayon de hitbox doit doubler l'echelle : une implementation
+    // qui ignorerait son parametre `hitRadiusPx` (par ex. `64 / cellPx` en
+    // dur) passerait le premier test mais pas celui-ci.
+    expect(scaleRayonDouble).toBeCloseTo(scaleAujourdhui * 2, 5);
+  });
+});
+
+/**
+ * Tache 16, etape 2 : les monstres ne se retournaient jamais vers leur
+ * direction de deplacement. `facingScaleX` deduit le signe de `scaleX`
+ * (`vertex` dans le `ParticleContainer`, voir le commentaire de la classe)
+ * du seul deplacement horizontal observe entre deux images — jamais d'un
+ * champ ajoute a `Horde` ni d'un octet de plus sur le fil.
+ *
+ * Deux gardes, testees separement :
+ * - `FACING_DEAD_ZONE_PX` : sous ce seuil, `dx` est trop proche de zero pour
+ *   trancher un sens (deplacement quasi vertical, ou entite immobile entre
+ *   deux ticks de simulation — le rendu tourne plus vite que la simulation) ;
+ *   on conserve le sens precedent plutot que de papillotter sur un signe qui
+ *   n'a plus de sens visuel.
+ * - `FACING_MAX_STEP_PX` : au-dessus de ce seuil, `dx` est trop grand pour
+ *   etre un deplacement reel d'une image a l'autre (le tableau `Horde` est
+ *   compacte par `#removeAt` — swap avec la derniere entite vivante — un
+ *   creneau peut donc changer d'identite d'une image a l'autre et produire un
+ *   `dx` de plusieurs centaines de pixels qui n'est le deplacement de
+ *   PERSONNE) ; on conserve aussi le sens precedent plutot que de suivre ce
+ *   saut.
+ */
+describe('facingScaleX deduit le sens du sprite du seul deplacement horizontal', () => {
+  const plausible = (FACING_DEAD_ZONE_PX + FACING_MAX_STEP_PX) / 2;
+
+  it('un pas plausible vers la droite donne +1, quel que soit le sens precedent', () => {
+    expect(facingScaleX(plausible, -1)).toBe(1);
+    expect(facingScaleX(plausible, 1)).toBe(1);
+  });
+
+  it('un pas plausible vers la gauche donne -1, quel que soit le sens precedent', () => {
+    expect(facingScaleX(-plausible, 1)).toBe(-1);
+    expect(facingScaleX(-plausible, -1)).toBe(-1);
+  });
+
+  it('sous la zone morte, conserve le sens precedent plutot que de papillotter', () => {
+    expect(facingScaleX(FACING_DEAD_ZONE_PX / 2, -1)).toBe(-1);
+    expect(facingScaleX(-FACING_DEAD_ZONE_PX / 2, 1)).toBe(1);
+  });
+
+  it('au-dela du pas plausible (creneau recompacte), conserve le sens precedent plutot que de suivre le saut', () => {
+    expect(facingScaleX(FACING_MAX_STEP_PX * 2, -1)).toBe(-1);
+    expect(facingScaleX(-FACING_MAX_STEP_PX * 2, 1)).toBe(1);
   });
 });

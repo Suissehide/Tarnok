@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { TICK_HZ } from './constants';
 import { WEAPONS, weaponOf } from './weapons';
 
 describe('WEAPONS', () => {
@@ -30,6 +31,47 @@ describe('WEAPONS', () => {
 
   it('cable au moins une arme a plusieurs projectiles, pour prouver que la forme tient', () => {
     expect(WEAPONS.some((w) => w.projectileCount > 1)).toBe(true);
+  });
+});
+
+/**
+ * Tache 16, etape 3 : « les tirs ne sont pas infini en distance » — 333 px
+ * (la portee d'AVANT la tache 14, qui l'a portee a 650 * 28 / 30 ≈ 606,7 px,
+ * voir `WEAPON_DEFS[0]` ci-dessus) faisaient un cinquieme d'un ecran mesure a
+ * 1728 px. Ce chiffre du brief est donc perime sur le code actuel — mais la
+ * demande reste valide : viser une FRACTION d'ecran plutot qu'un ressenti, et
+ * proteger ce choix par un test plutot que par la seule lecture du chiffre
+ * dans un commentaire.
+ */
+describe('portee du tir (tache 16, etape 3)', () => {
+  /**
+   * Repere de conception, pas une constante d'execution : la vue se
+   * redimensionne a la fenetre (`resizeTo: parent`, `front/src/render/stage.ts`),
+   * rien dans le code ne fixe de largeur d'ecran. 1728 px est la largeur
+   * mesuree par l'auteur en jouant (brief de la tache 16) — une resolution de
+   * calibrage courante (MacBook Pro 16", en points), pas un contrat
+   * technique. Un test qui la reference documente l'intention de reglage sans
+   * pretendre qu'elle est garantie a l'execution.
+   */
+  const REFERENCE_VIEWPORT_PX = 1728;
+
+  /**
+   * Bande visee, exprimee en fraction de `REFERENCE_VIEWPORT_PX` :
+   * - en dessous de 25 %, on retombe pres du defaut signale par le brief
+   *   (l'ancienne portee de 333 px faisait 19,3 % de 1728 px) ;
+   * - au-dessus de 50 %, la portee couvrirait plus de la moitie de l'ecran, ce
+   *   qui videe la notion meme de « portee limitee » a vue.
+   */
+  const MIN_VIEWPORT_FRACTION = 0.25;
+  const MAX_VIEWPORT_FRACTION = 0.5;
+
+  it("la portee de l'arme neutre de base reste une fraction lisible d'un ecran de reference", () => {
+    const dague = weaponOf(0);
+    const rangePx = (dague.projectileSpeed * dague.projectileLifeTicks) / TICK_HZ;
+    const fraction = rangePx / REFERENCE_VIEWPORT_PX;
+
+    expect(fraction).toBeGreaterThanOrEqual(MIN_VIEWPORT_FRACTION);
+    expect(fraction).toBeLessThanOrEqual(MAX_VIEWPORT_FRACTION);
   });
 });
 

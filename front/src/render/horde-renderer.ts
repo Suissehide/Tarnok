@@ -1,4 +1,4 @@
-import { MAP_SIZE } from '@shared/constants';
+import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import type { Horde } from '@shared/horde';
 import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
@@ -163,14 +163,115 @@ export function sortByDepth(
   }
 }
 
+/**
+ * Echelle de dessin d'un monstre, DERIVEE de `PROJECTILE_HIT_RADIUS` — jamais
+ * l'inverse.
+ *
+ * Tache 16 : un sprite se dessinait a 192 px (la cellule native de l'atlas,
+ * dessinee 1:1) pour une hitbox de tir de 64 px de diametre — trois fois trop
+ * grand, on tirait sur le corps et le projectile passait au travers. Ecrire
+ * une echelle reglee a la main a cote d'une hitbox reglee a la main est
+ * exactement ce qui a produit ce defaut ; le tableau « Coherence des
+ * constantes » du plan existe pour l'empecher.
+ *
+ * La relation choisie est la plus simple qui se laisse enoncer sans ajouter
+ * un second reglage a cote du premier : la largeur dessinee (le diametre de
+ * la cellule apres mise a l'echelle) EGALE le diametre de la hitbox de tir.
+ * Un facteur de generosite supplementaire (« un peu plus grand pour que ca se
+ * voie ») retomberait dans le meme piege — un nombre choisi au ressenti, non
+ * derive de la hitbox qu'il est cense representer.
+ *
+ * Prend la cellule native en parametre plutot qu'une constante figee : les
+ * plus gros archetypes de `shared/archetypes.ts` (ours, panda, tortue,
+ * minotaure, troll) ont une cellule de 256 a 384 px, pas 192 — la meme
+ * formule doit les ramener au meme diametre a l'ecran, puisque
+ * `PROJECTILE_HIT_RADIUS` ne varie pas par archetype.
+ */
+export function spriteScale(cellPx: number, hitRadiusPx: number): number {
+  if (cellPx <= 0) {
+    return 1;
+  }
+  return (2 * hitRadiusPx) / cellPx;
+}
+
+/** Applique `spriteScale` a chaque cellule de l'atlas — un facteur par archetype. */
+export function archetypeScales(
+  cellsPx: readonly number[],
+  hitRadiusPx: number,
+): Float32Array<ArrayBuffer> {
+  const out = new Float32Array(cellsPx.length);
+  for (let i = 0; i < cellsPx.length; i++) {
+    out[i] = spriteScale(cellsPx[i] ?? 0, hitRadiusPx);
+  }
+  return out;
+}
+
+/**
+ * En dessous de ce deplacement horizontal (en px, entre deux images
+ * consecutives), `dx` est trop proche de zero pour trancher un sens sans
+ * bruit : un deplacement quasi vertical, ou une entite immobile entre deux
+ * pas de simulation (le rendu tourne a la cadence de l'ecran, la simulation a
+ * `TICK_HZ` — la plupart des images ne changent aucune position). Voir
+ * `facingScaleX`.
+ */
+export const FACING_DEAD_ZONE_PX = 0.05;
+
+/**
+ * Au-dessus de ce deplacement horizontal, `dx` est trop grand pour etre le
+ * deplacement REEL d'une entite d'une image a l'autre — c'est le signe qu'un
+ * creneau a change d'identite, pas qu'un monstre a bondi.
+ *
+ * `Horde.#removeAt` compacte par permutation avec la derniere entite vivante
+ * (voir `shared/horde.ts`) : un creneau peut donc porter une entite
+ * differente d'une image a l'autre, avec une position sans rapport. Le pas le
+ * plus rapide qu'un VRAI monstre puisse franchir en un tick est borne par
+ * `archetypeOf(...).speed` (95 a 130 px/s dans `shared/archetypes.ts`) plus
+ * la repulsion de separation au pire cas de recouvrement
+ * (`SEPARATION_STRENGTH = 1200 px/s` dans `shared/constants.ts`) : soit, a
+ * `TICK_HZ = 30`, environ 4,3 + 40 = 44 px par tick. Ce seuil double cette
+ * borne avec une marge confortable, tout en restant tres inferieur a la
+ * distance separant deux points choisis sans rapport sur une carte de
+ * `MAP_SIZE = 6000` px — c'est cet ecart d'ordre de grandeur qui rend le
+ * departage fiable, pas une precision au pixel pres.
+ */
+export const FACING_MAX_STEP_PX = 96;
+
+/**
+ * Signe de `scaleX` d'un sprite de monstre, DEDUIT du seul deplacement
+ * horizontal observe depuis la derniere image (`dx = x - xPrecedent`).
+ *
+ * ⚠️ Rendu pur : aucun champ nouveau dans `Horde`, aucun octet de plus sur le
+ * fil (voir la doc de `HordeRenderer#draw`). Tout ce qu'il faut est deja dans
+ * `horde.x`, que le client possede a chaque image.
+ *
+ * Deux gardes (voir leurs constantes) : sous `FACING_DEAD_ZONE_PX`, `dx` ne
+ * permet pas de trancher un sens ; au-dessus de `FACING_MAX_STEP_PX`, `dx` ne
+ * peut pas etre un vrai deplacement. Dans les deux cas, on conserve `previous`
+ * plutot que de papillotter ou de suivre un saut de compaction.
+ */
+export function facingScaleX(dx: number, previous: 1 | -1): 1 | -1 {
+  const magnitude = Math.abs(dx);
+  if (magnitude < FACING_DEAD_ZONE_PX || magnitude > FACING_MAX_STEP_PX) {
+    return previous;
+  }
+  return dx > 0 ? 1 : -1;
+}
+
 export class HordeRenderer {
   readonly #container = new ParticleContainer({
-    dynamicProperties: { position: true, uvs: true, color: false, rotation: false },
+    // `vertex` : necessaire pour que `scaleX`/`scaleY` (mise a l'echelle
+    // depuis la hitbox, orientation gauche/droite) soient reteleversees a
+    // chaque image — voir `spriteScale` et `facingScaleX`. Le conteneur des
+    // flashs d'impact (`projectile-renderer.ts`) fait deja ce meme choix pour
+    // la meme raison.
+    dynamicProperties: { position: true, uvs: true, vertex: true, color: false, rotation: false },
   });
   /** Réservoir de particules réutilisées : aucune allocation en régime établi. */
   readonly #pool: Particle[] = [];
   /** `#frames[archetype][image]`. */
   #frames: Texture[][] = [];
+  /** `#scale[archetype]` : voir `spriteScale`, calculee une fois dans `load()`. */
+  #scale = new Float32Array(0);
   #loaded = false;
 
   /**
@@ -183,6 +284,17 @@ export class HordeRenderer {
   readonly #bandCounts = new Uint32Array(BAND_COUNT);
   /** Sommes prefixees : offset de depart de chaque bande dans `#sorted`. */
   readonly #bandOffsets = new Uint32Array(BAND_COUNT + 1);
+  /**
+   * `#prevX[slot]` : abscisse tenue par ce creneau a l'image precedente, et
+   * `#facing[slot]` (-1 ou 1) : le sens qui en a ete deduit. Tous deux
+   * dimensionnes sur `horde.capacity` et jamais realloues, meme discipline
+   * que `#visible`/`#sorted` — voir `#ensureSortBuffers`.
+   *
+   * Purement cosmetique : aucune des deux valeurs ne sort jamais de ce
+   * fichier, ni ne participe a la simulation (tache 16, etape 2).
+   */
+  #prevX = new Float32Array(0);
+  #facing = new Int8Array(0);
 
   constructor(private readonly assetsBase: string) {
     // Bornes explicites couvrant la carte entiere : voir le commentaire de
@@ -211,6 +323,14 @@ export class HordeRenderer {
             frame: new Rectangle(r.x, r.y, r.w, r.h),
           }),
       ),
+    );
+    // Un facteur d'echelle par archetype, DERIVE de `PROJECTILE_HIT_RADIUS` —
+    // voir `spriteScale`. Les archetypes n'ont pas tous la meme cellule
+    // native (192 a 384 px, `shared/archetypes.ts`), la hitbox de tir, elle,
+    // ne varie pas : chacun doit donc recevoir SON propre facteur.
+    this.#scale = archetypeScales(
+      manifest.archetypes.map((a) => a.cell),
+      PROJECTILE_HIT_RADIUS,
     );
     this.#loaded = true;
   }
@@ -246,6 +366,16 @@ export class HordeRenderer {
     for (let i = 0; i < horde.count; i++) {
       const x = horde.x[i] ?? 0;
       const y = horde.y[i] ?? 0;
+
+      // Orientation (tache 16, etape 2) : deduite ici, sur TOUTE la horde et
+      // pas seulement les entites visibles, dans cette meme passe deja en
+      // O(horde.count) — pas de second parcours pour un cout de rendu qui ne
+      // doit pas grandir. Une entite hors-vue garde ainsi un sens a jour des
+      // qu'elle revient dans le cadre, au lieu d'un sens fige perime.
+      const previousFacing: 1 | -1 = (this.#facing[i] ?? 0) === -1 ? -1 : 1;
+      this.#facing[i] = facingScaleX(x - (this.#prevX[i] ?? 0), previousFacing);
+      this.#prevX[i] = x;
+
       if (x >= minX && x <= maxX && y >= minY && y <= maxY) {
         visible[visibleCount] = i;
         visibleCount++;
@@ -261,7 +391,8 @@ export class HordeRenderer {
     for (let n = 0; n < visibleCount; n++) {
       const i = sorted[n] ?? 0;
       const particle = this.#pool[n];
-      const frames = this.#frames[horde.archetype[i] ?? 0];
+      const archetype = horde.archetype[i] ?? 0;
+      const frames = this.#frames[archetype];
       if (!particle || !frames || frames.length === 0) {
         continue;
       }
@@ -271,6 +402,14 @@ export class HordeRenderer {
       // La phase decale le cycle : sans elle, mille cranes marchent au pas, et
       // ca se voit immediatement.
       particle.texture = frames[(animStep + (horde.animPhase[i] ?? 0)) % frames.length] as Texture;
+      // Taille DERIVEE de la hitbox de tir (`spriteScale`), retournee vers la
+      // gauche quand l'entite s'y deplace (`facingScaleX`) : l'atlas dessine
+      // ses cycles de course vers la droite (verifie sur les feuilles source),
+      // donc `scaleX` negatif est la seule des deux mises a l'echelle a
+      // changer de signe.
+      const scale = this.#scale[archetype] ?? 1;
+      particle.scaleX = scale * (this.#facing[i] === -1 ? -1 : 1);
+      particle.scaleY = scale;
       children.push(particle);
     }
 
@@ -318,6 +457,11 @@ export class HordeRenderer {
     }
     this.#visible = new Int32Array(capacity);
     this.#sorted = new Int32Array(capacity);
+    // Memes garanties que les deux tableaux ci-dessus (ne grandit jamais que
+    // vers le haut, jamais realloue hors de cette fonction) : voir la doc de
+    // `#prevX`/`#facing`.
+    this.#prevX = new Float32Array(capacity);
+    this.#facing = new Int8Array(capacity);
   }
 
   #ensurePool(needed: number): void {

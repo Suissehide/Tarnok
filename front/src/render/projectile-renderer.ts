@@ -63,6 +63,41 @@ function makeGlowTexture(diameter: number, color: string): Texture {
   return Texture.from(canvas);
 }
 
+/**
+ * Disque NET pour le tir, distinct de `makeGlowTexture` (tache 16, etape 3 :
+ * « le projectile EST une tache floue »).
+ *
+ * `makeGlowTexture` etale son degrade sur les 100 % du rayon — exactement ce
+ * qui produit l'effet flou, voulu pour un halo (flash d'impact, orbe) mais
+ * pas pour un projectile qu'on doit pouvoir suivre des yeux en vol. Ici, le
+ * coeur est plein de `0` a `CORE_FRACTION`, la couleur reste PLEINE (pas de
+ * degrade) jusqu'a `EDGE_FRACTION`, et seule la derniere tranche
+ * (`EDGE_FRACTION` a `1`) s'estompe — juste assez pour lisser le contour d'un
+ * disque aussi petit sans le rendre crenele, jamais pour le flouter.
+ */
+function makeBoltTexture(diameter: number, color: string): Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = diameter;
+  canvas.height = diameter;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  const r = diameter / 2;
+  const CORE_FRACTION = 0.5;
+  const EDGE_FRACTION = 0.8;
+  const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
+  gradient.addColorStop(0, '#ffffff');
+  gradient.addColorStop(CORE_FRACTION, color);
+  gradient.addColorStop(EDGE_FRACTION, color);
+  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
+  ctx.fillStyle = gradient;
+  ctx.beginPath();
+  ctx.arc(r, r, r, 0, Math.PI * 2);
+  ctx.fill();
+  return Texture.from(canvas);
+}
+
 /** Rendu batché des projectiles (`shared/projectiles.ts`). */
 export class ProjectileRenderer {
   readonly #container = new ParticleContainer({
@@ -95,7 +130,7 @@ export class ProjectileRenderer {
    * test unitaire de ce fichier.
    */
   load(): void {
-    this.#texture = makeGlowTexture(20, '#f2c14e');
+    this.#texture = makeBoltTexture(20, '#f2c14e');
   }
 
   draw(projectiles: Projectiles, view: Rectangle): void {
