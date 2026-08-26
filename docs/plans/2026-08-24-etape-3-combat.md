@@ -2133,3 +2133,77 @@ que font les bullet heavens du genre, et c'est le prix de ne jamais être éject
 git commit -m "feat(shared): la repulsion devie la trajectoire au lieu de propulser"
 ```
 
+---
+
+## Tâche 22 : ils reculent, et ils s'empilent
+
+**Trois retours de l'auteur, une mesure qui les explique ensemble :** « ils s'arrêtent de bouger
+un instant », « si je ne bouge plus, plus aucun monstre ne bouge », « quand ils se contournent,
+souvent ils reculent au lieu de venir vers moi ».
+
+### Ce que la mesure dit
+
+800 entités dispersées autour du joueur, 10 s :
+
+| Poids de répulsion | Approche | Reculent | Distance finale |
+| --- | --- | --- | --- |
+| **4** (actuel) | 41 % de la vitesse propre | **289 / 800** | **209 px — ils n'arrivent jamais** |
+| 1 | 56 % | 223 | 62 px |
+| **0,5** | 58 % | 155 | 42 px |
+
+À poids 4 la répulsion domine le champ **4 contre 1** : le monstre privilégie l'évitement de ses
+voisins sur le fait de rejoindre le joueur. **36 % de la horde s'éloigne à tout instant**, et
+elle se stabilise à 209 px sans jamais arriver.
+
+Et « plus rien ne bouge » n'est pas un blocage : à poids 0,5, **462 monstres sur 800 se
+retrouvent à moins de 34 px du joueur** — donc arrêtés par la règle de contact, en train
+d'attaquer. Sauf que 462 corps dans un disque de 34 px font 8 px² chacun : ils sont empilés au
+même point. **Le pilotage dévie mais ne résout jamais un chevauchement.**
+
+### Une piste écartée par la mesure
+
+Propager l'arrêt de proche en proche — s'arrêter si un voisin arrêté nous touche — pour former
+un mur. Résultat : **les 800 s'arrêtent**, à 300 px de rayon médian. L'arrêt se propage à
+travers toute la horde et fige tout le monde, y compris très loin du joueur. Ne pas y revenir.
+
+### Ce qui marche
+
+Pilotage pour la direction, **plus** une correction de position **bornée** pour défaire les
+chevauchements — la combinaison qu'emploient les jeux du genre.
+
+| Poids / correction | Saut max | Dans 34 px | Rayon médian | Reculent |
+| --- | --- | --- | --- | --- |
+| 4 / — (actuel) | 3,2 px | 66 | 209 px | 289 |
+| 0,5 / — | 3,2 px | **462 empilés** | 33 px | 155 |
+| **0,5 / 4 px** | **7,2 px** | **51** | **116 px** | **23** |
+
+Les monstres forment un **anneau** autour du joueur au lieu d'un tas, et les fuyards tombent de
+155 à 23. Le déplacement maximal reste 7,2 px — la vitesse propre plus la borne de correction.
+Toujours aucune propulsion.
+
+- [ ] **Étape 1 : `STEERING_REPULSION_WEIGHT` passe de 4 à 0,5.** Le champ doit dominer la
+  répulsion, pas l'inverse : un monstre dévie pour éviter ses voisins, il ne renonce pas à sa
+  cible.
+
+- [ ] **Étape 2 : une correction de position bornée**, accumulée puis appliquée **en bloc**
+  comme le reste (sinon le résultat dépend de l'ordre du tableau, et deux clients compactent
+  différemment). Bornée à 4 px par entité et par tick — la borne est ce qui interdit la
+  propulsion, elle n'est pas négociable.
+
+  ⚠️ Elle s'applique **à chaque tick**, pas seulement au recalcul de trajectoire : un
+  chevauchement est un fait géométrique du présent, pas une décision tenue 300 ms.
+
+- [ ] **Étape 3 : deux tests.** Le déplacement total d'une entité ne dépasse jamais sa vitesse
+  propre plus la borne, à n'importe quelle densité. Et une horde lâchée sur un joueur immobile
+  forme un anneau : moins de N entités dans le rayon de contact après 10 s, là où l'empilement
+  en mettait 462.
+
+- [ ] **Étape 4 : la réplication.** `apparition tardive avec rattrapage`, `serveur vs client` et
+  le scénario 9 doivent **tous rester à 0,000 px**.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "fix(shared): la horde forme un anneau au lieu de s'empiler"
+```
+
