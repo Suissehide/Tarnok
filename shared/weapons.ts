@@ -1,3 +1,6 @@
+import { WEAPON_MAX_LEVEL } from './constants';
+import { passiveOf } from './passives';
+
 /**
  * Les armes, pilotees par la donnee (§5.1 de la spec).
  *
@@ -5,6 +8,12 @@
  * que Riot a deplace son spawn du script vers de la donnee pour tenir la
  * charge. Un systeme unique lit cette table ; ajouter une arme au pool des
  * quarante du §6.2 sera du contenu, pas de l'architecture.
+ *
+ * Depuis l'etape 4 (§3.3, §7.5) : une arme MONTE de niveau jusqu'a
+ * `maxLevel`, puis la carte proposee devient l'evolution — a condition que
+ * `evolutionPassiveId` soit deja possede. C'est la distinction structurante
+ * avec un passif, qui lui s'empile sans jamais monter de niveau (voir
+ * `shared/passives.ts`).
  */
 export interface Weapon {
   id: number;
@@ -28,6 +37,23 @@ export interface Weapon {
    * strictement positifs quelle que soit l'arme (voir le test).
    */
   spreadRadians: number;
+  /**
+   * Niveau maximum de cette arme (§7.5). Vaut `WEAPON_MAX_LEVEL` pour toute
+   * arme draftable ; l'arme neutre de base (hors slots, §6.1) ne monte jamais
+   * de niveau et vaut 1 par construction — jamais consultee par le draft.
+   */
+  maxLevel: number;
+  /**
+   * Passif requis pour proposer l'evolution une fois `maxLevel` atteint
+   * (§7.5). -1 : cette arme n'evolue pas.
+   *
+   * ⚠️ Quand ce champ n'est pas -1, il DOIT designer un passif existant de
+   * `PASSIVES` : une reference morte ne se verrait nulle part avant qu'un
+   * joueur drafte cette arme au niveau maximum, plusieurs taches plus tard.
+   * C'est pourquoi la construction de `WEAPONS` ci-dessous verifie chaque
+   * reference au chargement du module plutot que d'attendre le draft.
+   */
+  evolutionPassiveId: number;
 }
 
 /**
@@ -49,6 +75,9 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     // plusieurs secondes a traverser `ANCHOR_RADIUS`), la cadence pour que le
     // rythme de mise a mort suive celui de la premiere vague, desormais
     // ramenee par `WaveDirector` (voir `waveCountBounds`).
+    //
+    // Hors slots (§6.1) : ne monte jamais de niveau via le draft, `maxLevel`
+    // vaut 1 par construction et n'est jamais lu par `Loadout`.
     name: 'dague',
     cooldownTicks: 7,
     damage: 5,
@@ -56,6 +85,8 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 28,
     projectileCount: 1,
     spreadRadians: 0.05,
+    maxLevel: 1,
+    evolutionPassiveId: -1,
   },
   {
     // Plusieurs projectiles en eventail : prouve que la dispersion tient,
@@ -67,6 +98,8 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 12,
     projectileCount: 5,
     spreadRadians: Math.PI / 3,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: -1,
   },
   {
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
@@ -78,10 +111,98 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 40,
     projectileCount: 1,
     spreadRadians: 0.05,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: -1,
+  },
+  {
+    // Cadence tres rapide, courte portee : un cone continu au contact.
+    name: 'lance-flammes',
+    cooldownTicks: 5,
+    damage: 3,
+    projectileSpeed: 300,
+    projectileLifeTicks: 10,
+    projectileCount: 3,
+    spreadRadians: 0.6,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: -1,
+  },
+  {
+    // Cadence tres lente, degats massifs : l'extreme oppose du lance-flammes.
+    name: 'grenade',
+    cooldownTicks: 75,
+    damage: 40,
+    projectileSpeed: 350,
+    projectileLifeTicks: 45,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: -1,
+  },
+  {
+    // Milieu de gamme, sert de reference pour les armes voisines.
+    name: 'chakram',
+    cooldownTicks: 35,
+    damage: 12,
+    projectileSpeed: 500,
+    projectileLifeTicks: 35,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: -1,
+  },
+  {
+    // Deux projectiles paralleles, dispersion etroite.
+    name: 'fleches-jumelles',
+    cooldownTicks: 20,
+    damage: 7,
+    projectileSpeed: 600,
+    projectileLifeTicks: 25,
+    projectileCount: 2,
+    spreadRadians: 0.15,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: -1,
+  },
+  {
+    // Salve tres large a courte portee : l'autre extreme de la dispersion,
+    // face a `eventail`.
+    name: 'canon-a-mitraille',
+    cooldownTicks: 50,
+    damage: 6,
+    projectileSpeed: 550,
+    projectileLifeTicks: 8,
+    projectileCount: 8,
+    spreadRadians: Math.PI / 2,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: -1,
+  },
+  {
+    // Seule arme du catalogue a evoluer (§7.5) : au niveau maximum, un joueur
+    // qui possede deja le passif « puissance » (id 2, degats) se voit
+    // proposer l'evolution plutot qu'une nouvelle carte de niveau.
+    name: 'sceptre-arcanique',
+    cooldownTicks: 40,
+    damage: 10,
+    projectileSpeed: 480,
+    projectileLifeTicks: 30,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    maxLevel: WEAPON_MAX_LEVEL,
+    evolutionPassiveId: 2,
   },
 ];
 
 export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({ ...w, id }));
+
+// Garde-fou : une reference d'evolution vers un passif inexistant resterait
+// invisible jusqu'a ce qu'un joueur drafte cette arme au niveau maximum
+// (tache 3, plusieurs taches plus tard). `passiveOf` leve immediatement si
+// l'id est incorrect : une table mal formee casse au CHARGEMENT du module,
+// jamais silencieusement en jeu.
+for (const w of WEAPONS) {
+  if (w.evolutionPassiveId !== -1) {
+    passiveOf(w.evolutionPassiveId);
+  }
+}
 
 export function weaponOf(id: number): Weapon {
   const found = WEAPONS[id];

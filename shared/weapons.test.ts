@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { TICK_HZ } from './constants';
+import { passiveOf } from './passives';
 import { WEAPONS, weaponOf } from './weapons';
 
 describe('WEAPONS', () => {
@@ -10,8 +11,9 @@ describe('WEAPONS', () => {
     });
   });
 
-  it('compte exactement trois armes', () => {
-    expect(WEAPONS.length).toBe(3);
+  it('compte entre huit et dix armes', () => {
+    expect(WEAPONS.length).toBeGreaterThanOrEqual(8);
+    expect(WEAPONS.length).toBeLessThanOrEqual(10);
   });
 
   it('donne des valeurs strictement positives a chaque arme', () => {
@@ -22,6 +24,7 @@ describe('WEAPONS', () => {
       expect(w.projectileLifeTicks).toBeGreaterThan(0);
       expect(w.projectileCount).toBeGreaterThan(0);
       expect(w.spreadRadians).toBeGreaterThan(0);
+      expect(w.maxLevel).toBeGreaterThan(0);
     }
   });
 
@@ -31,6 +34,21 @@ describe('WEAPONS', () => {
 
   it('cable au moins une arme a plusieurs projectiles, pour prouver que la forme tient', () => {
     expect(WEAPONS.some((w) => w.projectileCount > 1)).toBe(true);
+  });
+});
+
+describe('evolutionPassiveId', () => {
+  it('vaut -1, ou designe un passif existant', () => {
+    for (const w of WEAPONS) {
+      if (w.evolutionPassiveId === -1) {
+        continue;
+      }
+      expect(() => passiveOf(w.evolutionPassiveId)).not.toThrow();
+    }
+  });
+
+  it('cable au moins une arme qui evolue, sinon cette nature de carte ne serait jamais testee', () => {
+    expect(WEAPONS.some((w) => w.evolutionPassiveId !== -1)).toBe(true);
   });
 });
 

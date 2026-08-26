@@ -261,10 +261,15 @@ export const XP_PER_ORB = 1;
  * Duree du gel, en ticks, a chaque montee de niveau — « le monde et le
  * chronometre se figent » (§6.2).
  *
- * ⚠️ Cette etape la fixe a 2 s, juste assez pour que le message `LEVEL_UP`
- * soit lisible avant la reprise ; l'etape 4 la portera a 20 s plafonnees pour
- * laisser le temps de l'etalage de cartes (§7.4 de l'orientation) — ne pas
- * confondre les deux regimes en reutilisant cette valeur ailleurs.
+ * Valeur de l'etape 3. ⚠️ Ce commentaire annoncait a tort que l'etape 4
+ * porterait cette meme constante a 20 s : la decision finalement retenue
+ * (voir le journal de l'etape 4, ruling R2) est de la SUPPRIMER en tache 6 et
+ * de la remplacer par un mecanisme different — une fenetre `DRAFT_WINDOW_TICKS`
+ * qui se referme des que tout le monde a pose un jeton, et non plus une duree
+ * fixe. Ne pas reutiliser cette constante pour le gel du draft.
+ *
+ * Encore vivante a ce stade de l'etape 4 : six lectures dans `back/` et
+ * `front/` en dependent, retirees toutes ensemble en tache 6 seulement.
  */
 export const LEVEL_FREEZE_TICKS = 60;
 
@@ -299,3 +304,59 @@ export const LEVEL_RESUME_TICKS = 30;
  * quatre joueurs et niveau dix — reste tres loin de 65535.
  */
 export const LEVEL_XP_BASE = 10;
+
+/**
+ * Nombre de slots d'armes d'un joueur (§6.1).
+ *
+ * ⚠️ Les cinq sont TOUS draftes — aucun n'est attribue d'avance. L'arme
+ * neutre de base (`WEAPONS[0]`) tire toujours mais ne consomme pas de slot :
+ * la modifier sans lire `Room#fireWeapons` casserait cette exception.
+ */
+export const WEAPON_SLOTS = 5;
+
+/**
+ * Nombre de slots de passifs d'un joueur (§6.1).
+ *
+ * ⚠️ Borne le nombre de passifs DISTINCTS possedes, pas le nombre de cartes
+ * prises : un passif deja possede s'empile dans son slot existant sans en
+ * consommer un nouveau (modele Risk of Rain, §3.3). L'extension a 6 slots par
+ * evenements de run est hors perimetre de cette etape.
+ */
+export const PASSIVE_SLOTS = 3;
+
+/**
+ * Niveau maximum d'une arme draftee (§7.5).
+ *
+ * ⚠️ Au-dela de ce niveau, la carte proposee pour cette arme n'est plus une
+ * carte de niveau mais l'evolution — a condition que le passif requis
+ * (`Weapon.evolutionPassiveId`) soit deja possede. Cette valeur ne s'applique
+ * pas a l'arme neutre de base, qui reste hors slots et ne monte jamais de
+ * niveau.
+ */
+export const WEAPON_MAX_LEVEL = 5;
+
+/**
+ * Duree de la fenetre de draft, en ticks (20 s a `TICK_HZ`).
+ *
+ * ⚠️ Plafond du §7.4 valable seulement a PLUSIEURS joueurs : en solo, la
+ * fenetre se referme des que l'unique joueur a clique, pas apres ce delai.
+ */
+export const DRAFT_WINDOW_TICKS = 600;
+
+/**
+ * Duree de la fenetre de repioche apres un conflit, en ticks (5 s a `TICK_HZ`,
+ * §7.2 point 4).
+ */
+export const DRAFT_REPICK_TICKS = 150;
+
+/**
+ * Cartes supplementaires dans l'etalage, au-dela du nombre de joueurs
+ * (§7.2 point 1) : un etalage a N joueurs compte `N + SPREAD_BONUS` cartes.
+ *
+ * ⚠️ Contrainte non evidente : l'etalage doit rester STRICTEMENT plus grand
+ * que le nombre de joueurs, sinon une repioche peut n'avoir plus rien a
+ * offrir. A 4 joueurs et 7 cartes (`SPREAD_BONUS = 3`), quatre prises laissent
+ * trois cartes : la borne tient. La changer sans verifier ca casse la
+ * repioche du §7.2 point 4.
+ */
+export const SPREAD_BONUS = 3;
