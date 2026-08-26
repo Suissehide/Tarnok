@@ -169,9 +169,36 @@ export class Horde {
    * tableau — deux clients qui compactent differemment apres des morts
    * (`#removeAt`) obtiendraient alors des positions differentes pour un
    * chevauchement pourtant identique. Voir `#applyDeoverlap`.
+   *
+   * ⚠️ **Depuis la tache 23, l'accumulation est PAR PRIORITE, plus symetrique.**
+   * Une entite n'accumule ici une correction que contre les voisins dont elle
+   * est DERRIERE (voir `#isBehind`) — celle de devant n'accumule rien pour
+   * cette paire. Le meme tampon, la meme discipline « accumuler puis
+   * appliquer en bloc », mais chaque paire n'est plus visitee que par CELUI
+   * qui cede.
    */
   readonly #correctionX: Float32Array;
   readonly #correctionY: Float32Array;
+
+  /**
+   * Cache de priorite (tache 23) : la distance-cellule au champ vise de
+   * chaque entite, pour les `#count` entites, recalculee UNE FOIS par tick
+   * par `#buildPriorityCache` — jamais par paire.
+   *
+   * ⚠️ **Sans ce cache, `#isBehind` coute cher au mauvais endroit.** Une
+   * premiere version appelait `#fieldDistAt` directement dans les boucles de
+   * voisins de `#recomputeSteering` ET `#applyDeoverlap` : chaque VISITE d'un
+   * voisin (pas chaque entite) refaisait le meme calcul de cellule pour ce
+   * voisin, potentiellement des dizaines de fois par tick au lieu d'une
+   * seule. Mesure au banc (`bench:sep`) : le pas simple passait de 4,13 a
+   * 6,08 ms a 4000 entites (plus cher qu'avant la tache 23) MALGRE une
+   * densite de voisins divisee par plus de deux — la priorite gagnait sur un
+   * axe et perdait sur l'autre. Precalculer une fois par entite, puis lire
+   * un flottant dans ce tableau a chaque visite, elimine cette redondance.
+   * Pre-alloue une fois, jamais reconstruit : meme discipline que le reste
+   * de cette classe.
+   */
+  readonly #priorityDist: Float32Array;
 
   constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
@@ -195,6 +222,8 @@ export class Horde {
 
     this.#correctionX = new Float32Array(capacity);
     this.#correctionY = new Float32Array(capacity);
+
+    this.#priorityDist = new Float32Array(capacity);
   }
 
   get count(): number {
@@ -605,6 +634,18 @@ export class Horde {
    * TICK, en plus de l'avancement par vitesse que `#advanceByVelocity` vient
    * de faire.
    *
+   * ⚠️ **Depuis la tache 23, la correction se decide PAR PRIORITE, plus par
+   * symetrie.** Avant, CHAQUE membre d'une paire en chevauchement calculait
+   * sa propre moitie de la correction (`overlap * 0.5`), et les deux moities
+   * combinees ecartaient la paire de `overlap` au total. Desormais, seule
+   * l'entite DERRIERE (voir `#isBehind` — le plus grand `dist` au champ vise,
+   * departage par le plus petit identifiant) accumule une correction contre
+   * un voisin donne, et elle encaisse l'ecart EN ENTIER (`overlap`, sans
+   * `* 0.5`) : celle de devant n'accumule rien pour cette paire, et ne bouge
+   * donc pas d'un pixel a cause d'elle. Le total ecarte la paire de la meme
+   * distance qu'avant (`overlap`), mais un seul des deux le calcule — d'ou le
+   * gain de cout mesure au banc (`bench:sep`, rapport de la tache 23).
+   *
    * ⚠️ **Reutilise la grille de voisins DEJA construite par `#recomputeSteering`
    * au meme tick** (voir `step`/`spawnCatchingUp`, qui appellent toujours les
    * deux dans cet ordre) — jamais reconstruite ici. Cette grille reflete les
@@ -637,6 +678,17 @@ export class Horde {
    * — meme convention que `#advanceByVelocity` et `#recomputeSteering` : les
    * entites hors plage restent des voisins valides (on peut se pousser LOIN
    * D'ELLES), seule LEUR PROPRE position ne change pas via cet appel.
+   *
+   * ⚠️ **Lit `#priorityDist` (distance-cellule au champ vise), jamais
+   * `fields` directement.** Ce cache est rempli UNE FOIS par tick par
+   * `#recomputeSteering` (`#buildPriorityCache`), toujours appele juste
+   * avant (voir `step`/`spawnCatchingUp`) — la meme reutilisation que la
+   * grille de voisins ci-dessus, pour la meme raison : relire le flowfield
+   * ICI, par paire visitee, ferait le meme calcul en double pour chaque
+   * voisin (mesure au banc, voir la doc de `#priorityDist`). La distance
+   * elle-meme ne sert QU'A decider qui, d'une paire, est derriere — jamais a
+   * orienter la correction, qui reste purement geometrique (`dx`/`dy` entre
+   * les deux positions).
    */
   #applyDeoverlap(from: number, to: number): void {
     if (to <= from) {
@@ -652,6 +704,8 @@ export class Horde {
     for (let i = from; i < to; i++) {
       const xi = this.x[i] ?? 0;
       const yi = this.y[i] ?? 0;
+      const idI = this.entityIdAt(i);
+      const distI = this.#priorityDist[i] ?? 0;
       let pushX = 0;
       let pushY = 0;
 
@@ -672,6 +726,13 @@ export class Horde {
             if (j === i) {
               continue;
             }
+            // Tache 23 : verifie la priorite AVANT toute geometrie — le cas
+            // le moins cher (comparer deux entiers) elimine la moitie des
+            // paires sans jamais calculer de racine carree pour celle de
+            // devant, qui n'a rien a accumuler contre ce voisin-la.
+            if (!this.#isBehind(distI, idI, this.#priorityDist[j] ?? 0, this.entityIdAt(j))) {
+              continue;
+            }
             const dx = xi - (this.x[j] ?? 0);
             const dy = yi - (this.y[j] ?? 0);
             const d2 = dx * dx + dy * dy;
@@ -683,11 +744,11 @@ export class Horde {
             }
             const d = Math.sqrt(d2);
             const overlap = r - d;
-            // Moitie chacun : si i ET j executent ce meme calcul (l'un pour
-            // l'autre), leurs deux corrections se combinent pour ecarter la
-            // paire exactement de `overlap`, pas du double.
-            pushX += (dx / d) * overlap * 0.5;
-            pushY += (dy / d) * overlap * 0.5;
+            // Tache 23 : celui de derriere encaisse TOUT l'ecart — plus de
+            // `* 0.5`, puisque celui de devant, lui, n'accumule rien pour
+            // cette paire (voir le garde-fou de priorite ci-dessus).
+            pushX += (dx / d) * overlap;
+            pushY += (dy / d) * overlap;
           }
         }
       }
@@ -751,6 +812,15 @@ export class Horde {
    * declenche la recherche de voisins par entite (le gain mesure, voir le
    * rapport de la tache 19).
    *
+   * ⚠️ **Depuis la tache 23, la repulsion sommee ne porte plus que sur les
+   * voisins dont l'entite est DERRIERE** (voir `#isBehind` : le plus grand
+   * `dist` au champ vise est le plus loin derriere, departage par le plus
+   * petit identifiant). Une entite EN AVANT d'un voisin n'accumule rien
+   * contre lui — c'est ce voisin, derriere, qui devie pour l'eviter, jamais
+   * l'inverse. Ce n'est pas le meme axe que la phase ci-dessus : la phase dit
+   * QUI recalcule ce tick, la priorite dit QUELS voisins, parmi ceux vus,
+   * comptent dans la somme.
+   *
    * `from`/`to` restreignent QUELLES entites peuvent recalculer ce tick-la —
    * la grille de voisins, elle, reste TOUJOURS construite sur les `#count`
    * entites entieres, actives ou non dans cette plage : une entite hors
@@ -772,6 +842,9 @@ export class Horde {
       return;
     }
     this.#buildNeighbourGrid(n);
+    // Tache 23 : une lecture de flowfield par entite, ici, pas par paire
+    // visitee plus bas — voir la doc de `#priorityDist`.
+    this.#buildPriorityCache(n, fields);
 
     const K = STEERING_RECOMPUTE_TICKS;
     const phase = ((tick % K) + K) % K;
@@ -779,12 +852,14 @@ export class Horde {
     const cols = this.#gridCols;
 
     for (let i = from; i < to; i++) {
-      if (this.entityIdAt(i) % K !== phase) {
+      const idI = this.entityIdAt(i);
+      if (idI % K !== phase) {
         continue;
       }
 
       const xi = this.x[i] ?? 0;
       const yi = this.y[i] ?? 0;
+      const distI = this.#priorityDist[i] ?? 0;
 
       let pushX = 0;
       let pushY = 0;
@@ -803,6 +878,11 @@ export class Horde {
           for (let k = from; k < to; k++) {
             const j = this.#order[k] ?? 0;
             if (j === i) {
+              continue;
+            }
+            // Tache 23 : ne compter, dans la somme, que les voisins dont je
+            // suis DERRIERE — voir la doc de la methode.
+            if (!this.#isBehind(distI, idI, this.#priorityDist[j] ?? 0, this.entityIdAt(j))) {
               continue;
             }
             const dx = xi - (this.x[j] ?? 0);
@@ -852,6 +932,61 @@ export class Horde {
         this.vx[i] = fx * speed;
         this.vy[i] = fy * speed;
       }
+    }
+  }
+
+  /**
+   * Distance de l'entite `i` au champ qu'elle vise, en cellules de flowfield
+   * (tache 23) — la mesure de priorite : le plus grand `dist` est le plus
+   * loin derriere le joueur vise, donc c'est cette entite qui cede (voir
+   * `#isBehind`).
+   *
+   * ⚠️ **Traite comme « infiniment derriere » (jamais comme « devant ») :**
+   * - un champ absent (`fields[targetField[i]]` indefini — jamais en
+   *   production, seulement dans des tests qui n'en fournissent aucun) ;
+   * - une cellule inatteignable (`FlowField.dist` vaut `-1` — voir sa doc,
+   *   `UNREACHED`).
+   * Une entite sans mesure de distance fiable ne doit jamais, par un -1 ou un
+   * 0 par defaut, sembler PLUS PRES du joueur qu'un voisin correctement
+   * repere, et donc l'empecher a tort de ceder a sa place.
+   */
+  #fieldDistAt(i: number, fields: readonly FlowField[]): number {
+    const field = fields[this.targetField[i] ?? 0];
+    if (!field) {
+      return Number.POSITIVE_INFINITY;
+    }
+    const cell = field.indexAt(this.x[i] ?? 0, this.y[i] ?? 0);
+    const raw = field.dist[cell] ?? 0;
+    return raw < 0 ? Number.POSITIVE_INFINITY : raw;
+  }
+
+  /**
+   * Vrai si l'entite de priorite (`distSelf`, `idSelf`) doit CEDER face a
+   * celle de priorite (`distOther`, `idOther`) — tache 23, la regle centrale
+   * de l'evitement par priorite.
+   *
+   * Le plus grand `dist` (le plus loin du joueur vise) est derriere, donc
+   * cede. **A egalite exacte de distance, le plus petit identifiant gagne** —
+   * meme convention que `nearestTarget` et `Projectiles.collide` : le
+   * resultat ne doit jamais dependre de l'ordre du tableau, faute de quoi
+   * deux clients qui compactent differemment apres des morts (`#removeAt`)
+   * decideraient differemment qui cede pour un chevauchement pourtant
+   * identique.
+   */
+  #isBehind(distSelf: number, idSelf: number, distOther: number, idOther: number): boolean {
+    return distSelf > distOther || (distSelf === distOther && idSelf > idOther);
+  }
+
+  /**
+   * Remplit `#priorityDist` pour les `n` premieres entites (tache 23) — une
+   * seule lecture de flowfield par entite, jamais par paire. Appele UNE FOIS
+   * par tick, juste apres `#buildNeighbourGrid` dans `#recomputeSteering` —
+   * jamais dans `#applyDeoverlap`, qui reutilise ce meme cache, exactement
+   * comme il reutilise deja la grille de voisins (voir sa doc).
+   */
+  #buildPriorityCache(n: number, fields: readonly FlowField[]): void {
+    for (let i = 0; i < n; i++) {
+      this.#priorityDist[i] = this.#fieldDistAt(i, fields);
     }
   }
 

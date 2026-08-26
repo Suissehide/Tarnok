@@ -6,6 +6,7 @@ import {
   DEOVERLAP_MAX_PX,
   FLOWFIELD_HZ,
   MAX_ENTITIES,
+  SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
   TICK_HZ,
 } from './constants';
@@ -919,39 +920,57 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // une simple regression qui plafonnerait `#applyDeoverlap` a une valeur
     // trop petite (ou la supprimerait) resterait invisible a un seuil moins
     // exigeant que celui-ci.
+    //
+    // ⚠️ **Tache 23 : ce n'est plus forcement la « victime » (creneau 0) qui
+    // sature.** Sous la priorite, la victime — la plus proche de la cible du
+    // champ — ne cede a AUCUN de ses dix voisins (tous plus loin qu'elle) :
+    // elle n'est plus corrigee du tout par `#applyDeoverlap`. C'est un AUTRE
+    // membre du tas (celui le plus loin derriere, qui cede a la quasi
+    // totalite des neuf autres) qui accumule la plus grosse correction et
+    // approche la borne — verifie par mesure ad hoc (rapport de la tache 23) :
+    // la borne combinee reste atteinte au pixel pres, juste par un creneau
+    // different. L'assertion ci-dessus, qui parcourt TOUTES les entites, reste
+    // donc valide sans changement.
     expect(maxDisplacement).toBeGreaterThan(COMBINED_BOUND * 0.9);
   });
 
   it('un monstre pile sur sa cible et entoure symetriquement ne produit jamais de NaN (tache 21 : cas degenere)', () => {
     // Le VRAI cas degenere de la doc de `#recomputeSteering` : la somme
     // « direction du champ + repulsion ponderee » s'annule EXACTEMENT, pas
-    // approximativement. Deux conditions, toutes deux exactes en virgule
-    // flottante :
-    //  1. la victime est PILE sur la cible de son champ, ou `FlowField` rend
-    //     (0, 0) par construction (voir sa doc) — direction de champ nulle ;
-    //  2. ses quatre voisins, aux points cardinaux et a EGALE distance,
-    //     s'annulent deux a deux par symetrie EXACTE (`+a` et `-a` calcules a
-    //     partir de la MEME magnitude, en IEEE754 `a + (-a) = 0` sans reste)
-    //     — repulsion nulle.
-    // Somme nulle + nulle = nulle : diviser cette somme par sa propre norme,
-    // sans garde-fou, donne EXACTEMENT `0 / 0 = NaN`.
+    // approximativement.
+    //
+    // ⚠️ **Mecanisme reecrit pour la tache 23.** Avant, la repulsion
+    // s'annulait par symetrie vectorielle (quatre voisins cardinaux
+    // equidistants, `+a` et `-a` s'annulant deux a deux). Depuis la priorite,
+    // la repulsion ne se resume plus par paire symetrique : ici, la victime
+    // et ses quatre voisins sont installes dans la MEME cellule de flowfield
+    // (`D = 20` px, bien en-deca de la demi-largeur de cellule 32 px) —
+    // exactement A EGALITE de `dist`. A egalite, le plus petit identifiant
+    // gagne (tache 23) : la victime est l'entite 0, la plus petite identite
+    // du groupe, donc elle ne cede JAMAIS a aucun de ses quatre voisins —
+    // elle n'accumule RIEN contre eux, quelle que soit leur position. La
+    // repulsion est donc nulle par ABSENCE d'accumulation, pas par
+    // annulation vectorielle — mais le code exerce, bit pour bit, le MEME
+    // garde-fou : la victime est PILE sur sa cible (direction de champ
+    // nulle), la repulsion accumulee est nulle, la somme est nulle, et la
+    // diviser sans garde-fou donnerait EXACTEMENT `0 / 0 = NaN`.
     //
     // Mutation visee : supprimer le garde-fou du cas degenere et diviser
     // inconditionnellement (voir le rapport de la tache 21, mutation 2 —
     // reproduite a la main pour verifier ce test, ce qu'un simple contexte
-    // n'aurait pas suffi a garantir). Un test qui ne verifierait que la NORME
-    // finale ne verrait rien : `Math.hypot(NaN, NaN)` est `NaN`, et
-    // `toBeLessThanOrEqual` echoue en silence dessus, alors que
-    // `Number.isFinite` le demasque sans ambiguite.
-    const ORIGIN_X = 3000;
-    const ORIGIN_Y = 3000;
-    const D = 20; // < SEPARATION_RADIUS (28), assez pour pousser, pas assez pour sortir de la cellule de champ.
+    // n'aurait pas suffi a garantir ; revalidee tache 23). Un test qui ne
+    // verifierait que la NORME finale ne verrait rien : `Math.hypot(NaN,
+    // NaN)` est `NaN`, et `toBeLessThanOrEqual` echoue en silence dessus,
+    // alors que `Number.isFinite` le demasque sans ambiguite.
+    const ORIGIN_X = 2976; // Centre d'une cellule de flowfield (64 px) : ...
+    const ORIGIN_Y = 2976; // ... les 4 voisins a +-D restent dans LA MEME cellule.
+    const D = 20; // < demi-largeur de cellule (32) : garantit l'egalite de dist.
     const horde = new Horde(5);
     horde.spawn(order({ count: 5, formation: FORMATION.SCATTER }));
     // La victime, EXACTEMENT sur la cible de son champ...
     horde.x[0] = ORIGIN_X;
     horde.y[0] = ORIGIN_Y;
-    // ...entouree aux quatre points cardinaux, a EGALE distance.
+    // ...entouree aux quatre points cardinaux, dans la MEME cellule.
     horde.x[1] = ORIGIN_X + D;
     horde.y[1] = ORIGIN_Y;
     horde.x[2] = ORIGIN_X - D;
@@ -973,11 +992,16 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // quoi ce test ne serait pas le cas degenere qu'il pretend etre.
     expect(field0.dirX[cell] ?? -1).toBe(0);
     expect(field0.dirY[cell] ?? -1).toBe(0);
+    // Sanity (tache 23) : les cinq points partagent bien la MEME cellule —
+    // condition necessaire a l'egalite de `dist` dont ce test depend.
+    for (let i = 1; i < horde.count; i++) {
+      expect(field0.indexAt(horde.x[i] ?? 0, horde.y[i] ?? 0)).toBe(cell);
+    }
 
     // Phase de recalcul de la victime : les quatre voisins, d'identite
     // superieure, recalculent a une phase LATER dans le cycle (voir plus
-    // bas) — la symetrie exacte posee ci-dessus tient donc encore intacte au
-    // moment ou la victime recalcule pour la PREMIERE fois.
+    // bas) — la victime recalcule donc seule, avant que quiconque n'ait pu
+    // bouger.
     const victimPhase = horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS;
     for (let i = 1; i < horde.count; i++) {
       expect(horde.entityIdAt(i) % STEERING_RECOMPUTE_TICKS).toBeGreaterThan(victimPhase);
@@ -1007,13 +1031,22 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
 
   it('un monstre entoure de voisins dont la repulsion s annule continue de suivre son champ (tache 21)', () => {
     // Complement du test precedent : ici, la victime n'est PAS sur sa cible
-    // (champ non nul), et ses voisins symetriques annulent seulement la
-    // REPULSION (pas la somme entiere). Mutation visee : une implementation
-    // qui traiterait « repulsion nulle » comme le cas degenere (au lieu de
-    // « somme totale nulle ») et retomberait a tort sur une vitesse nulle,
-    // alors que la victime devrait continuer de suivre son champ normalement.
-    const ORIGIN_X = 3000;
-    const ORIGIN_Y = 3000;
+    // (champ non nul), et la repulsion accumulee est nulle (pas la somme
+    // entiere). Mutation visee : une implementation qui traiterait
+    // « repulsion nulle » comme le cas degenere (au lieu de « somme totale
+    // nulle ») et retomberait a tort sur une vitesse nulle, alors que la
+    // victime devrait continuer de suivre son champ normalement.
+    //
+    // ⚠️ **Mecanisme reecrit pour la tache 23**, meme raisonnement que le
+    // test precedent : victime et voisins dans la MEME cellule de flowfield
+    // (egalite exacte de `dist`), victime = identite la plus petite du
+    // groupe => elle ne cede a aucun de ses quatre voisins => repulsion
+    // accumulee nulle, PAR ABSENCE d'accumulation. La direction du champ,
+    // elle, est non nulle (la cible est ailleurs) : la somme MELANGEE reste
+    // donc non nulle, et le code doit suivre la branche NORMALE (jamais le
+    // garde-fou degenere) pour aboutir exactement a la direction du champ.
+    const ORIGIN_X = 2976;
+    const ORIGIN_Y = 2976;
     const D = 20;
     const horde = new Horde(5);
     horde.spawn(order({ count: 5, formation: FORMATION.SCATTER }));
@@ -1040,6 +1073,13 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     const fx = field0.dirX[cell] ?? 0;
     const fy = field0.dirY[cell] ?? 0;
     expect(Math.hypot(fx, fy)).toBeGreaterThan(0.9); // sanity : champ bien non nul.
+    // Sanity (tache 23) : les cinq points partagent bien la MEME cellule —
+    // condition necessaire a l'egalite de `dist` dont ce test depend, MEME
+    // quand la cible du champ est ailleurs (`dist` depend de la cellule, pas
+    // du point exact).
+    for (let i = 1; i < horde.count; i++) {
+      expect(field0.indexAt(horde.x[i] ?? 0, horde.y[i] ?? 0)).toBe(cell);
+    }
 
     const victimPhase = horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS;
     for (let i = 1; i < horde.count; i++) {
@@ -1074,6 +1114,17 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // Deux entites presque colles, toutes deux posees PILE sur la cible de
     // leur champ (flux nul, meme piege evite que le test precedent) : tout
     // `vx`/`vy` mesure est donc ENTIEREMENT la repulsion.
+    //
+    // ⚠️ **Depuis la tache 23, la relation n'est plus symetrique.** Les deux
+    // entites sont a EGALE distance-cellule de la cible (meme cellule) : a
+    // egalite, le plus petit identifiant gagne, donc le creneau 0 (identite
+    // la plus petite) ne cede JAMAIS a l'autre — sa vitesse de repulsion doit
+    // rester EXACTEMENT nulle, pas seulement non verifiee. Seul le creneau 1
+    // (identite la plus grande) cede et porte une repulsion non nulle. Le
+    // piege que ce test attrape reste le meme (`j > i` empecherait le creneau
+    // de PLUS HAUT indice de voir celui de PLUS BAS indice), mais l'assertion
+    // change : ce n'est plus « les deux bougent », c'est « seul celui de
+    // derriere bouge, et celui de devant reste a zero au bit pres ».
     const TARGET_X = 3000;
     const TARGET_Y = 3000;
     const horde = new Horde(2);
@@ -1103,12 +1154,16 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       horde.step(DT, fields, tick);
     }
 
-    // Le creneau DE PLUS HAUT INDICE (1) doit, lui aussi, porter une vitesse
-    // de repulsion non nulle — c'est precisement ce que `j > i` lui
-    // interdirait.
+    // Le creneau DE PLUS HAUT INDICE (1, identite la plus grande) doit porter
+    // une vitesse de repulsion non nulle — c'est precisement ce que `j > i`
+    // lui interdirait, et ce que la priorite (tache 23) lui impose puisqu'il
+    // cede a egalite de distance.
     expect(Math.hypot(horde.vx[1] ?? 0, horde.vy[1] ?? 0)).toBeGreaterThan(0);
-    // Sanity : le creneau 0 la voit aussi (jamais concerne par le piege).
-    expect(Math.hypot(horde.vx[0] ?? 0, horde.vy[0] ?? 0)).toBeGreaterThan(0);
+    // Le creneau 0 (identite la plus petite) ne cede JAMAIS a egalite : sa
+    // vitesse de repulsion doit rester EXACTEMENT nulle, au bit pres — pas
+    // seulement « non testee ».
+    expect(horde.vx[0]).toBe(0);
+    expect(horde.vy[0]).toBe(0);
   });
 
   it('deux clients simules independamment s accordent tick pour tick, y compris a travers un rejeu (rollback)', () => {
@@ -1383,7 +1438,7 @@ describe('tache 20 : un seul modele de mouvement pour le rattrapage', () => {
   );
 });
 
-describe('tache 22 : la horde forme un anneau plutot que de s empiler', () => {
+describe('tache 22/23 : la horde forme un anneau plutot que de s empiler', () => {
   it(
     'une horde lachee sur un joueur immobile s etale en anneau : bien moins ' +
       'que les 462 entites empilees sans correction, et la horde a reellement converge',
@@ -1399,15 +1454,34 @@ describe('tache 22 : la horde forme un anneau plutot que de s empiler', () => {
       // raison inverse. D'ou la seconde assertion : le rayon median doit
       // rester petit, preuve que la horde est bien ARRIVEE et pas seulement
       // dispersee au loin.
+      //
+      // ⚠️ **Duree portee a 1500 pas (tache 23), pas 300.** Avec l'evitement
+      // par priorite, chaque paire n'est plus corrigee que par CELUI de
+      // derriere (l'autre n'accumule rien) : la horde converge vers le MEME
+      // anneau, mais plus lentement — mesure ad hoc (script hors depot) :
+      // rayon median 209 px a 10 s (300 pas, identique au chiffre de
+      // stagnation de l'ANCIEN poids 4, par pure coincidence de calendrier,
+      // pas parce qu'elle stagne : la mesure continue de baisser), 157 px a
+      // 30 s, puis un plateau stable a 148-158 px a partir de 35-40 s (1000+
+      // pas) jusqu'a 3600 pas (2 min), jamais en dessous. Mesurer a 10 s
+      // confondrait donc a tort une convergence reelle mais lente avec une
+      // stagnation — d'ou la duree portee a 1500 pas (50 s), largement dans
+      // le plateau. Voir le rapport de la tache 23 pour la mesure complete et
+      // la verification par mutation (poids remis a 4 : le median reste
+      // alors bloque a 226-237 px meme a 2 min, jamais sous 200).
       const N = 800;
       const PLAYER_X = 3000;
       const PLAYER_Y = 3000;
-      const TOTAL_TICKS = 300; // 10 s a TICK_HZ = 30, meme duree que la mesure du rapport.
+      const TOTAL_TICKS = 1500; // 50 s a TICK_HZ = 30 : voir la note ci-dessus.
       // Valeurs mesurees dans le rapport de la tache 22 (repulsion seule,
       // sans correction de position) : le point de comparaison, pas une
       // borne que ce test cherche a reproduire au pixel pres.
       const STACKED_COUNT_WITHOUT_CORRECTION = 462;
-      const STALL_RADIUS_AT_OLD_WEIGHT = 209;
+      // Rayon en-deca duquel la horde est reputee ARRIVEE (tache 23) : marge
+      // confortable sous le plateau mesure (148-158 px) et tres en-deca du
+      // point de stagnation d'une repulsion qui dominerait le champ (226-237
+      // px, verifie par mutation — voir la note ci-dessus).
+      const ARRIVED_RADIUS = 200;
 
       const horde = new Horde(N);
       const fields = fieldsTowards(PLAYER_X, PLAYER_Y);
@@ -1456,14 +1530,268 @@ describe('tache 22 : la horde forme un anneau plutot que de s empiler', () => {
       // suffit a distinguer un anneau d'un tas, sans etre fragile au bruit
       // d'un tirage particulier.
       expect(insideContact).toBeLessThan(STACKED_COUNT_WITHOUT_CORRECTION / 2);
-      // Et la horde a REELLEMENT converge : nettement en deca du rayon ou
-      // elle stagnait a l'ancien poids de repulsion (209 px, sans jamais
-      // arriver) — mesure ici autour de 121 px, marge confortable sous les
-      // 157 px (75 % du rayon de stagnation) sans coller au pixel pres a une
-      // mesure ponctuelle.
-      expect(median).toBeLessThan(STALL_RADIUS_AT_OLD_WEIGHT * 0.75);
+      // Et la horde a REELLEMENT converge, pas seulement dispersee au loin —
+      // voir la note sur `ARRIVED_RADIUS` ci-dessus pour la mesure qui motive
+      // ce seuil et la mutation qui le justifie.
+      expect(median).toBeLessThan(ARRIVED_RADIUS);
     },
   );
+});
+
+describe('tache 23 : evitement par priorite, celui de derriere cede', () => {
+  it(
+    'deux entites qui se chevauchent : seule celle de derriere bouge, celle de ' +
+      'devant ne bouge pas d un seul pixel',
+    () => {
+      // Mutation visee : reintroduire la moitie chacun (`* 0.5`) dans
+      // `#applyDeoverlap` au lieu du filtre de priorite — l'ancien
+      // comportement symetrique de la tache 22, ou LES DEUX membres d'une
+      // paire en chevauchement bougent. Verifiee plus bas.
+      //
+      // Deux entites a des distances DIFFERENTES (pas une egalite) du champ
+      // qu'elles visent : `FRONT` tombe dans une cellule de flowfield plus
+      // proche de la cible que `BEHIND` (64 px de cote, la frontiere de
+      // cellule tombe entre les deux), tout en restant a 15 px l'une de
+      // l'autre — bien EN DECA de `SEPARATION_RADIUS` (chevauchement reel).
+      // `FRONT` est donc strictement DEVANT `BEHIND` au sens de la priorite
+      // (tache 23) : c'est `BEHIND` qui doit ceder.
+      const FRONT_X = 3010; // cellule 47 : plus proche de la cible (5000, *).
+      const FRONT_Y = 3000;
+      const BEHIND_X = 2995; // cellule 46 : plus loin de la cible.
+      const BEHIND_Y = 3000;
+      // Sanity geometrique, verifiee ci-dessous par assertion : les deux
+      // positions sont bien a moins de `SEPARATION_RADIUS` l'une de l'autre.
+      expect(Math.hypot(FRONT_X - BEHIND_X, FRONT_Y - BEHIND_Y)).toBeLessThan(SEPARATION_RADIUS);
+
+      const horde = new Horde(2);
+      horde.spawn(order({ count: 2, formation: FORMATION.SCATTER })); // sans champ : vx = vy = 0.
+      horde.x[0] = FRONT_X;
+      horde.y[0] = FRONT_Y;
+      horde.x[1] = BEHIND_X;
+      horde.y[1] = BEHIND_Y;
+
+      const fields = fieldsTowards(5000, 3000);
+      // Joueurs loin : aucune des deux entites ne s'arrete au contact.
+      horde.retarget([100_000, 100_000, 100_000, 100_000], [100_000, 100_000, 100_000, 100_000]);
+
+      const field0 = fields[0];
+      if (!field0) {
+        throw new Error('champ manquant');
+      }
+      // Sanity : les deux entites tombent bien dans des cellules DIFFERENTES,
+      // et `FRONT` est bien la plus proche de la cible — sans quoi ce test ne
+      // serait pas le cas non-egalitaire qu'il pretend etre.
+      const cellFront = field0.indexAt(FRONT_X, FRONT_Y);
+      const cellBehind = field0.indexAt(BEHIND_X, BEHIND_Y);
+      expect(cellFront).not.toBe(cellBehind);
+      expect(field0.dist[cellFront] ?? -1).toBeLessThan(field0.dist[cellBehind] ?? -1);
+
+      // Tick 0 : ni l'identite 4096 (`FRONT`, phase 1) ni 4097 (`BEHIND`,
+      // phase 2) ne recalculent leur trajectoire ce tick-la (`entityIdOf`
+      // pour un seul wave, indices 0 et 1) — tout mouvement observe vient
+      // donc UNIQUEMENT de `#applyDeoverlap`, jamais de la vitesse.
+      expect(horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS).not.toBe(0);
+      expect(horde.entityIdAt(1) % STEERING_RECOMPUTE_TICKS).not.toBe(0);
+
+      horde.step(1 / TICK_HZ, fields, 0);
+
+      // Le coeur de l'assertion : `FRONT` ne bouge pas d'un SEUL pixel — exact,
+      // pas approximatif.
+      expect(horde.x[0]).toBe(FRONT_X);
+      expect(horde.y[0]).toBe(FRONT_Y);
+      expect(horde.vx[0]).toBe(0);
+      expect(horde.vy[0]).toBe(0);
+      // `BEHIND`, lui, cede : il s'est ecarte de `FRONT`, borne par
+      // `DEOVERLAP_MAX_PX` (le chevauchement, 13 px, depasse largement la
+      // borne de 4 px par tick).
+      expect(horde.x[1]).not.toBe(BEHIND_X);
+      const moved = Math.hypot((horde.x[1] ?? 0) - BEHIND_X, (horde.y[1] ?? 0) - BEHIND_Y);
+      expect(moved).toBeCloseTo(DEOVERLAP_MAX_PX, 5);
+      // Et il s'est ecarte dans le bon sens : plus LOIN de `FRONT`, pas plus pres.
+      expect(horde.x[1] ?? 0).toBeLessThan(BEHIND_X);
+    },
+  );
+
+  it(
+    'la distance au champ decide, l identite ne depart age qu a egalite : ' +
+      'une identite plus grande devant ne cede pas a une plus petite derriere',
+    () => {
+      // Mutation visee : un cache de priorite jamais rafraichi (ou toujours a
+      // zero) — `#buildPriorityCache` non appele, ou appele une seule fois a
+      // la construction plutot qu'a chaque tick. Toutes les distances
+      // paraitraient alors EGALES (0), et le departage retomberait
+      // systematiquement sur l'identite SEULE, jamais sur la distance
+      // reelle. Ce defaut serait invisible au test precedent : `FRONT` y a
+      // deja la plus PETITE identite, donc `FRONT` gagnerait de toute facon,
+      // que ce soit par sa distance ou par coincidence d'identite. Ici,
+      // `FRONT` recoit deliberement l'identite la plus GRANDE des deux : si
+      // la distance ne comptait pas, le departage par identite ferait CEDER
+      // `FRONT`, l'exact inverse de ce que ce test attend.
+      const FRONT_X = 3010; // cellule 47 : plus proche de la cible.
+      const FRONT_Y = 3000;
+      const BEHIND_X = 2995; // cellule 46 : plus loin.
+      const BEHIND_Y = 3000;
+
+      const horde = new Horde(2);
+      // `FRONT` recoit le wave le plus GRAND (identite plus grande) ; `BEHIND`
+      // le plus petit — le contraire de ce qu'un departage par identite
+      // seule choisirait.
+      horde.spawn(order({ waveId: 5, count: 1, formation: FORMATION.SCATTER }));
+      horde.spawn(order({ waveId: 1, count: 1, formation: FORMATION.SCATTER }));
+      horde.x[0] = FRONT_X;
+      horde.y[0] = FRONT_Y;
+      horde.x[1] = BEHIND_X;
+      horde.y[1] = BEHIND_Y;
+
+      const fields = fieldsTowards(5000, 3000);
+      horde.retarget([100_000, 100_000, 100_000, 100_000], [100_000, 100_000, 100_000, 100_000]);
+
+      const field0 = fields[0];
+      if (!field0) {
+        throw new Error('champ manquant');
+      }
+      // Sanity : `FRONT` porte bien l'identite la plus GRANDE, et est bien
+      // la plus proche de la cible (distance-cellule la plus petite) — les
+      // deux conditions qui rendent ce test capable de distinguer priorite
+      // par distance et departage par identite.
+      expect(horde.entityIdAt(0)).toBeGreaterThan(horde.entityIdAt(1));
+      const cellFront = field0.indexAt(FRONT_X, FRONT_Y);
+      const cellBehind = field0.indexAt(BEHIND_X, BEHIND_Y);
+      expect(field0.dist[cellFront] ?? -1).toBeLessThan(field0.dist[cellBehind] ?? -1);
+      // Ni l'une ni l'autre ne recalcule sa trajectoire au tick 0 : tout
+      // mouvement observe vient uniquement de `#applyDeoverlap`.
+      expect(horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS).not.toBe(0);
+      expect(horde.entityIdAt(1) % STEERING_RECOMPUTE_TICKS).not.toBe(0);
+
+      horde.step(1 / TICK_HZ, fields, 0);
+
+      // `FRONT` reste immobile MALGRE son identite plus grande : la distance
+      // l'a emporte.
+      expect(horde.x[0]).toBe(FRONT_X);
+      expect(horde.y[0]).toBe(FRONT_Y);
+      // `BEHIND` cede MALGRE son identite plus petite.
+      expect(horde.x[1]).not.toBe(BEHIND_X);
+      expect(horde.x[1] ?? 0).toBeLessThan(BEHIND_X);
+    },
+  );
+
+  it(
+    'a egalite de distance au champ, le departage par identite tient quel que ' +
+      'soit l ordre de construction des deux hordes',
+    () => {
+      // Mutation visee : un departage qui, au lieu du plus petit identifiant,
+      // s'appuierait sur l'ordre du tableau (indice de creneau) — invisible
+      // tant qu'on ne construit la MEME paire d'identites dans les DEUX ordres
+      // de creneau possibles, comme `shared/separation.test.ts` le faisait
+      // pour la separation symetrique (tache 18).
+      //
+      // Deux entites A ET B, memes deux identites dans les deux hordes
+      // (`SMALL_WAVE` < `BIG_WAVE`, donc identite(SMALL_WAVE) <
+      // identite(BIG_WAVE)), mais spawnees dans un ordre OPPOSE d'une horde a
+      // l'autre — donc a des creneaux (indices de tableau) opposes.
+      const SMALL_WAVE = 1;
+      const BIG_WAVE = 2;
+      const TARGET_X = 3000;
+      const TARGET_Y = 3000;
+      // A EGALITE exacte de distance-cellule : les deux positions tombent
+      // dans la MEME cellule de flowfield (64 px de cote), bien EN DECA de
+      // `SEPARATION_RADIUS` l'une de l'autre (chevauchement reel).
+      const POS_A = { x: TARGET_X, y: TARGET_Y };
+      const POS_B = { x: TARGET_X + 0.5, y: TARGET_Y };
+
+      function build(firstWave: number, secondWave: number): Horde {
+        const horde = new Horde(2);
+        // L'ORDRE D'APPEL varie ; les identites resultantes (`firstWave` /
+        // `secondWave`), elles, ne dependent QUE du waveId, pas du creneau.
+        horde.spawn(order({ waveId: firstWave, count: 1, formation: FORMATION.SCATTER }));
+        horde.spawn(order({ waveId: secondWave, count: 1, formation: FORMATION.SCATTER }));
+        return horde;
+      }
+
+      // Horde a : creneau 0 = petite identite, creneau 1 = grande identite.
+      const a = build(SMALL_WAVE, BIG_WAVE);
+      a.x[0] = POS_A.x;
+      a.y[0] = POS_A.y;
+      a.x[1] = POS_B.x;
+      a.y[1] = POS_B.y;
+
+      // Horde b : ORDRE INVERSE — creneau 0 = grande identite, creneau 1 =
+      // petite identite. Memes deux identites, memes deux positions, juste
+      // echangees de creneau.
+      const b = build(BIG_WAVE, SMALL_WAVE);
+      b.x[0] = POS_B.x;
+      b.y[0] = POS_B.y;
+      b.x[1] = POS_A.x;
+      b.y[1] = POS_A.y;
+
+      const smallId = entityIdOf(SMALL_WAVE, 0);
+      const bigId = entityIdOf(BIG_WAVE, 0);
+      // Sanity : la petite identite occupe bien des creneaux OPPOSES dans les
+      // deux hordes — sans quoi ce test ne construirait pas l'ordre inverse
+      // qu'il pretend construire.
+      expect(a.entityIdAt(0)).toBe(smallId);
+      expect(b.entityIdAt(1)).toBe(smallId);
+      expect(a.entityIdAt(1)).toBe(bigId);
+      expect(b.entityIdAt(0)).toBe(bigId);
+
+      const fieldsA = fieldsTowards(TARGET_X, TARGET_Y);
+      const fieldsB = fieldsTowards(TARGET_X, TARGET_Y);
+      const far = [100_000, 100_000, 100_000, 100_000];
+      a.retarget(far, far);
+      b.retarget(far, far);
+
+      // Tick 0 : ni l'une ni l'autre des deux identites ne recalcule sa
+      // trajectoire (`entityIdOf(SMALL_WAVE, 0) % K` et
+      // `entityIdOf(BIG_WAVE, 0) % K` different tous deux de 0 — verifie ici
+      // plutot que suppose, puisque `SMALL_WAVE`/`BIG_WAVE` sont arbitraires).
+      const K = STEERING_RECOMPUTE_TICKS;
+      expect(smallId % K).not.toBe(0);
+      expect(bigId % K).not.toBe(0);
+
+      a.step(1 / TICK_HZ, fieldsA, 0);
+      b.step(1 / TICK_HZ, fieldsB, 0);
+
+      const slotOfSmallInA = a.slotOf(smallId);
+      const slotOfBigInA = a.slotOf(bigId);
+      const slotOfSmallInB = b.slotOf(smallId);
+      const slotOfBigInB = b.slotOf(bigId);
+
+      // Le coeur du test : la PETITE identite ne bouge JAMAIS, quel que soit
+      // le creneau qu'elle occupe.
+      expect(a.x[slotOfSmallInA]).toBe(POS_A.x);
+      expect(a.y[slotOfSmallInA]).toBe(POS_A.y);
+      expect(b.x[slotOfSmallInB]).toBe(POS_A.x);
+      expect(b.y[slotOfSmallInB]).toBe(POS_A.y);
+
+      // La GRANDE identite, elle, cede TOUJOURS — de la MEME distance, dans
+      // les deux hordes.
+      expect(a.x[slotOfBigInA]).not.toBe(POS_B.x);
+      expect(b.x[slotOfBigInB]).not.toBe(POS_B.x);
+      const movedInA = Math.hypot(
+        (a.x[slotOfBigInA] ?? 0) - POS_B.x,
+        (a.y[slotOfBigInA] ?? 0) - POS_B.y,
+      );
+      const movedInB = Math.hypot(
+        (b.x[slotOfBigInB] ?? 0) - POS_B.x,
+        (b.y[slotOfBigInB] ?? 0) - POS_B.y,
+      );
+      expect(movedInA).toBeCloseTo(movedInB, 5);
+      expect(movedInA).toBeGreaterThan(0);
+    },
+  );
+
+  // Le troisieme test demande par le brief — « le deplacement total reste
+  // borne par la vitesse propre plus la correction, a n'importe quelle
+  // densite » — est deja couvert par le test existant (taches 21/22)
+  // « aucun deplacement ne depasse la vitesse propre PLUS la borne de
+  // de-chevauchement en un tick, meme entassee », plus haut dans ce fichier :
+  // sa fixture (une victime plus dix voisins presque colles) reste une pile
+  // dense sous la priorite, et j'ai verifie (voir son commentaire tache 23,
+  // et le rapport de la tache 23) que la saturation du plafond combine reste
+  // observee — juste par un creneau different de la pile, puisque la
+  // « victime » elle-meme, la plus proche de la cible, ne cede plus a aucun
+  // de ses dix voisins. Ecrire un second test redondant sur la meme
+  // proposition n'aurait rien ajoute.
 });
 
 function meanDistanceTo(horde: Horde, x: number, y: number): number {
