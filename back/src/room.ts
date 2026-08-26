@@ -20,7 +20,7 @@ import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
 import type { WaveOrder } from '@shared/waves';
-import { weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { type ContactPlayer, OrbField, resolveContact, resolveProjectileDamage } from './combat';
@@ -62,8 +62,21 @@ export interface PlayerState extends ContactPlayer {
   hp: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
   contactInvulnTicks: number;
-  /** Dernier tick auquel ce joueur a tire. `-Infinity` : jamais — tire des que possible. */
-  lastFireTick: number;
+  /**
+   * Dernier tick auquel ce joueur a tire, **par arme** : indice = identifiant
+   * d'arme, `-Infinity` = jamais, donc tire des que possible.
+   *
+   * ⚠️ **Un compteur par arme, pas un pour le joueur.** Avec un compteur
+   * unique, l'arsenal entier se recharge a la cadence de l'arme qui vient de
+   * tirer : drafter une grenade (75 ticks) briderait la dague neutre (7 ticks)
+   * a une salve toutes les 75. Le joueur perdrait en puissance a chaque carte
+   * prise — l'inverse exact de ce que le draft promet.
+   *
+   * Un `Float64Array` et pas un `Map` : `-Infinity` y tient, l'indice EST
+   * l'identifiant (meme convention que `WEAPONS`), et la table est lue a
+   * chaque tick pour chaque joueur.
+   */
+  lastFireTick: Float64Array;
   /**
    * Ce que ce joueur possede : armes draftees avec leur niveau, passifs
    * empiles. Naît ici (tache 6), consomme par les taches 7 et 8.
@@ -139,12 +152,18 @@ const AXIS_SCALE = 1 / 127;
 /**
  * Capacite de la file de projectiles du salon.
  *
- * ⚠️ Cette etape ne cable que l'arme neutre de base (§6.1) — voir la doc de
- * `#fireWeapons` pour pourquoi. A un projectile par joueur et par cooldown
- * (15 ticks, vie 20 ticks), quatre joueurs entretiennent au plus quelques
- * projectiles simultanes chacun : 256 laisse une marge large sans jamais
- * avoir ete mesuree comme necessaire — a revisiter si l'etape 4 ajoute des
- * armes a cadence plus rapide.
+ * ⚠️ **Revisite a la tache 7 de l'etape 4, et desormais MESUREE** — la note
+ * precedente disait « marge large sans jamais avoir ete mesuree ».
+ *
+ * Un joueur entretient au plus `projectileCount * ceil(projectileLifeTicks /
+ * cooldownTicks)` projectiles par arme. Sur le catalogue actuel, les cinq
+ * pires armes valent 8 (canon-a-mitraille), 6 (lance-flammes), 5 (eventail),
+ * 4 (fleches-jumelles) et 1, plus 4 pour l'arme neutre : **28 par joueur**,
+ * donc **112 a quatre joueurs avec cinq slots pleins**. 256 tient, avec un
+ * facteur 2,3 de marge.
+ *
+ * A recalculer si une arme au `projectileCount` eleve entre au catalogue :
+ * c'est ce produit-la qui domine, pas la cadence seule.
  */
 const PROJECTILE_CAPACITY = 256;
 
@@ -340,7 +359,7 @@ export class Room {
       lastSeq: 0,
       hp: PLAYER_MAX_HP,
       contactInvulnTicks: 0,
-      lastFireTick: Number.NEGATIVE_INFINITY,
+      lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout: new Loadout(),
     });
     return true;
@@ -585,21 +604,31 @@ export class Room {
     if (this.#players.size === 0) {
       return;
     }
-    const weapon = weaponOf(0);
 
     for (const p of this.#players.values()) {
       if (p.hp <= 0) {
         continue;
       }
-      if (tick - p.lastFireTick < weapon.cooldownTicks) {
-        continue;
-      }
       if (p.aimX === 0 && p.aimY === 0) {
         continue;
       }
-      this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY);
-      p.lastFireTick = tick;
+      // ⚠️ L'arme neutre d'abord, et TOUJOURS : elle vit hors des slots (§6.1),
+      // ne figure dans aucun `Loadout`, et ne disparait jamais de l'arsenal.
+      this.#fireOne(p, BASE_WEAPON_ID, tick);
+      for (const id of p.loadout.weaponIds) {
+        this.#fireOne(p, id, tick);
+      }
     }
+  }
+
+  /** Tire une salve de cette arme si sa propre recharge est faite. */
+  #fireOne(p: PlayerState, weaponId: number, tick: number): void {
+    const weapon = weaponOf(weaponId);
+    if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < weapon.cooldownTicks) {
+      return;
+    }
+    this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY);
+    p.lastFireTick[weaponId] = tick;
   }
 
   /**

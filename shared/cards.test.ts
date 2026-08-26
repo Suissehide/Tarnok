@@ -4,7 +4,7 @@ import { CARD, drawSpread } from './cards';
 import { SPREAD_BONUS, WEAPON_MAX_LEVEL } from './constants';
 import { Loadout } from './loadout';
 import { makeRandom } from './random';
-import { WEAPONS } from './weapons';
+import { BASE_WEAPON_ID, WEAPONS } from './weapons';
 
 /** Une arme qui evolue, avec le passif qu'elle exige — pose par la tache 1. */
 const EVOLVING = WEAPONS.find((w) => w.evolutionPassiveId >= 0);
@@ -143,6 +143,23 @@ describe('drawSpread', () => {
       const spread = drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed));
       const cles = spread.map((c) => `${c.nature}:${c.refId}:${c.owner}`);
       expect(new Set(cles).size).toBe(cles.length);
+    }
+  });
+  it("n'offre JAMAIS l'arme neutre, qui vit hors des slots", () => {
+    // ⚠️ Defaut reel, trouve en ecrivant la tache 7 : `buildPool` parcourait
+    // `WEAPONS` en entier, arme neutre comprise. La prendre aurait occupe un
+    // slot pour une arme deja possedee — et `Room#fireWeapons`, qui tire
+    // toujours l'arme de base EN PLUS des slots, l'aurait fait tirer deux fois
+    // par tick. Aucun test ne le voyait.
+    //
+    // On balaie assez de graines pour que chaque carte du pool sorte au moins
+    // une fois : un seul tirage ne prouverait rien.
+    for (let seed = 1; seed <= 200; seed++) {
+      const spread = drawSpread(equipe(new Loadout()), makeRandom(seed));
+      for (const carte of spread) {
+        const estArme = carte.nature === CARD.NEW_WEAPON || carte.nature === CARD.WEAPON_LEVEL;
+        expect(estArme && carte.refId === BASE_WEAPON_ID).toBe(false);
+      }
     }
   });
 });

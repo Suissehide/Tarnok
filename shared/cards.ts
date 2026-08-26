@@ -1,7 +1,7 @@
 import { SPREAD_BONUS, WEAPON_MAX_LEVEL } from './constants';
 import type { Loadout } from './loadout';
 import { PASSIVES } from './passives';
-import { WEAPONS } from './weapons';
+import { BASE_WEAPON_ID, WEAPONS } from './weapons';
 
 /**
  * Les quatre natures de carte du §7.5 de l'orientation.
@@ -67,8 +67,13 @@ function buildPool(loadouts: ReadonlyMap<number, Loadout>): Card[] {
   }
 
   // Armes neuves : ouvertes a tous, sauf si l'equipe les porte deja.
+  //
+  // ⚠️ L'arme neutre est exclue du pool : elle vit hors des slots (§6.1) et
+  // tout le monde l'a des le depart. La proposer gaspillerait une carte, et la
+  // prendre occuperait un slot pour rien tout en la faisant tirer deux fois par
+  // tick (voir `BASE_WEAPON_ID` et `Room#fireWeapons`).
   for (const w of WEAPONS) {
-    if (!portees.has(w.id)) {
+    if (w.id !== BASE_WEAPON_ID && !portees.has(w.id)) {
       pool.push({ nature: CARD.NEW_WEAPON, refId: w.id, owner: 0 });
     }
   }

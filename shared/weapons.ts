@@ -193,6 +193,17 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
 
 export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({ ...w, id }));
 
+/**
+ * L'arme neutre de base du §6.1 : celle avec laquelle toute run commence.
+ *
+ * ⚠️ **Elle vit HORS des slots.** Elle ne figure dans aucun `Loadout`, n'est
+ * jamais proposee par le draft (voir `buildPool`), ne monte jamais de niveau,
+ * et tire quand meme a chaque tick. Ce n'est pas un detail de reglage : si le
+ * draft la proposait, la prendre occuperait un slot pour une arme deja
+ * possedee et la ferait tirer DEUX fois par tick.
+ */
+export const BASE_WEAPON_ID = 0;
+
 // Garde-fou : une reference d'evolution vers un passif inexistant resterait
 // invisible jusqu'a ce qu'un joueur drafte cette arme au niveau maximum
 // (tache 3, plusieurs taches plus tard). `passiveOf` leve immediatement si

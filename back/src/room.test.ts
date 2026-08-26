@@ -871,6 +871,87 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     return cartes;
   }
 
+  /**
+   * Compte les salves par arme sur `ticks` pas, visee fixe et non nulle.
+   * Rend une table `id d'arme -> nombre de salves`.
+   */
+  function salvesParArme(room: Room, ticks: number): Map<number, number> {
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    for (let i = 0; i < ticks; i++) {
+      room.step(DT);
+    }
+    const compte = new Map<number, number>();
+    for (const [arme] of spy.mock.calls) {
+      compte.set(arme.id, (compte.get(arme.id) ?? 0) + 1);
+    }
+    spy.mockRestore();
+    return compte;
+  }
+
+  it('une arme draftee tire EN PLUS de l arme neutre, chacune a sa propre cadence', () => {
+    const room = new Room();
+    room.join(1);
+    // La grenade (id 4) est l'arme la plus lente du catalogue : 75 ticks de
+    // recharge contre 7 pour la dague neutre. L'ecart est ce qui rend le
+    // defaut visible.
+    const GRENADE = 4;
+    const DAGUE = 0;
+    const grenade = weaponOf(GRENADE);
+    const dague = weaponOf(DAGUE);
+    expect(grenade.cooldownTicks).toBeGreaterThan(dague.cooldownTicks * 5);
+
+    const inv = room.loadoutOf(1);
+    if (!inv) {
+      throw new Error('inventaire manquant');
+    }
+    inv.addWeapon(GRENADE);
+
+    const TICKS = 300;
+    const compte = salvesParArme(room, TICKS);
+
+    // Les deux ont tire.
+    expect(compte.get(DAGUE) ?? 0).toBeGreaterThan(0);
+    expect(compte.get(GRENADE) ?? 0).toBeGreaterThan(0);
+
+    // ⚠️ **Le coeur de cette tache.** Chacune tire a SA cadence. Avec un
+    // `lastFireTick` unique pour tout l'arsenal, la dague serait bridee a la
+    // cadence de la grenade et les deux compteurs seraient EGAUX — un test qui
+    // se contenterait de « des projectiles existent » passerait sans rien voir.
+    //
+    // `+1` de tolerance : la premiere salve part au tick 1 (recharge jamais
+    // faite), donc le compte vaut `floor((TICKS - 1) / cooldown) + 1`.
+    const attenduDague = Math.floor((TICKS - 1) / dague.cooldownTicks) + 1;
+    const attenduGrenade = Math.floor((TICKS - 1) / grenade.cooldownTicks) + 1;
+    expect(compte.get(DAGUE)).toBe(attenduDague);
+    expect(compte.get(GRENADE)).toBe(attenduGrenade);
+  });
+
+  it('l arme neutre reste hors slots : cinq armes draftees font six salves au meme tick', () => {
+    const room = new Room();
+    room.join(1);
+    const inv = room.loadoutOf(1);
+    if (!inv) {
+      throw new Error('inventaire manquant');
+    }
+    const DRAFTEES = [1, 2, 3, 5, 6];
+    for (const id of DRAFTEES) {
+      inv.addWeapon(id);
+    }
+    expect(inv.weaponSlotsUsed).toBe(DRAFTEES.length);
+
+    // Un seul tick : aucune arme n'a jamais tire, donc toutes sont dues.
+    const compte = salvesParArme(room, 1);
+
+    // ⚠️ SIX, pas cinq. L'arme neutre du §6.1 vit hors des slots : elle ne
+    // figure dans aucun `Loadout` et tire quand meme. Un `#fireWeapons` qui
+    // se contenterait de parcourir `weaponIds` en oubliant l'arme de base
+    // ferait cinq salves — et le joueur qui drafte sa premiere arme perdrait
+    // celle avec laquelle il a commence.
+    expect([...compte.values()].reduce((a, b) => a + b, 0)).toBe(DRAFTEES.length + 1);
+    expect([...compte.keys()].sort((a, b) => a - b)).toEqual([0, ...DRAFTEES]);
+  });
+
   it('la carte disputee ne va qu au gagnant : le perdant ne recoit rien de ce tour', () => {
     const room = new Room();
     room.join(1);
