@@ -1,14 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { archetypeOf } from './archetypes';
-import {
-  FLOWFIELD_CELL,
-  FLOWFIELD_HZ,
-  MAP_SIZE,
-  ROLLBACK_DEPTH_TICKS,
-  STEERING_REPULSION_STRENGTH,
-  TICK_HZ,
-} from './constants';
+import { FLOWFIELD_CELL, FLOWFIELD_HZ, MAP_SIZE, ROLLBACK_DEPTH_TICKS, TICK_HZ } from './constants';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
 import { HordeHistory } from './horde-history';
@@ -1349,7 +1342,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
 });
 
 /**
- * Taches 18 et 19 : les correctifs (plafond de repulsion, apparition hors
+ * Taches 18, 19 et 21 : les correctifs (plafond de repulsion, apparition hors
  * mur, sortie de mur) doivent produire le MEME resultat des deux cotes,
  * exactement comme le reste de ce fichier le verifie pour la mort et le
  * rejeu. Un seul scenario, exerçant les comportements en sequence sur DEUX
@@ -1367,11 +1360,20 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
  * phase lui-meme (des entites identiques divergent des qu'elles n'ont pas
  * toutes la meme phase de recalcul — verifie a la main en ecrivant ce test,
  * voir le rapport de la tache 19). Le plafond se verifie donc desormais sur
- * `vx`/`vy` DIRECTEMENT (publics depuis la tache 19), bornes par
- * `archetypeOf(...).speed + STEERING_REPULSION_STRENGTH` — la somme des deux
- * contributions, flux et repulsion, jamais davantage.
+ * `vx`/`vy` DIRECTEMENT (publics depuis la tache 19).
+ *
+ * ⚠️ **Ce que la tache 21 change ici.** Le plafond n'est plus la SOMME des
+ * deux contributions (`archetypeOf(...).speed + STEERING_REPULSION_STRENGTH`,
+ * l'ancienne formule ADDITIVE) : melanger les directions puis ne remettre a
+ * l'echelle qu'UNE SEULE fois par la vitesse propre rend cette somme sans
+ * objet — la norme de `vx`/`vy` ne peut plus jamais depasser
+ * `archetypeOf(...).speed` SEULE, quelle que soit la repulsion. Cette borne
+ * etant desormais INTRINSEQUE (voir `shared/horde.test.ts` pour l'unite qui
+ * la verifie sur un entassement dedie), la verifier ICI, a l'echelle d'un
+ * scenario de replication realiste, est une confirmation supplementaire —
+ * pas la seule preuve.
  */
-describe('taches 18 et 19 : plafond de repulsion et sortie de mur, verifies identiques sur deux clients', () => {
+describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies identiques sur deux clients', () => {
   function fieldAt(fields: readonly FlowField[], i: number): FlowField {
     const f = fields[i];
     if (!f) {
@@ -1477,11 +1479,11 @@ describe('taches 18 et 19 : plafond de repulsion et sortie de mur, verifies iden
         p.horde.step(DT, p.fields, tick);
 
         // Plafond (comportement 1) : verifie directement sur `vx`/`vy`, voir
-        // la doc de ce `describe`. La borne par entite depend de son propre
-        // archetype (vitesse de base differente selon la vague).
+        // la doc de ce `describe`. Depuis la tache 21, la borne par entite
+        // est SA PROPRE vitesse d'archetype, SEULE — plus de terme de
+        // repulsion a additionner, quelle que soit la densite autour d'elle.
         for (let i = 0; i < p.horde.count; i++) {
-          const cap =
-            archetypeOf(p.horde.archetype[i] ?? 0).speed + STEERING_REPULSION_STRENGTH * 1.0001;
+          const cap = archetypeOf(p.horde.archetype[i] ?? 0).speed * 1.0001; // marge flottante minime.
           const speed = Math.hypot(p.horde.vx[i] ?? 0, p.horde.vy[i] ?? 0);
           if (speed > maxObservedSpeed) {
             maxObservedSpeed = speed;
@@ -1505,8 +1507,11 @@ describe('taches 18 et 19 : plafond de repulsion et sortie de mur, verifies iden
       }
     }
 
-    // Le test ne prouverait rien sur le plafond si l'entassement artificiel
-    // n'avait jamais approche la borne.
+    // Depuis la tache 21, cette borne est intrinseque : toute entite dont le
+    // champ est non nul l'atteint exactement, entassement ou pas (voir
+    // `shared/horde.test.ts` pour la mesure qui isole vraiment l'effet de la
+    // densite). Ici, ce n'est plus une preuve que le pic a ete exerce, mais
+    // une garantie que le mouvement observe n'est pas degenere a zero.
     expect(maxObservedSpeed).toBeGreaterThan(maxCapForSpeed * 0.5);
 
     // --- Comportement 3 : sortie de mur, identiquement chez les deux. ---

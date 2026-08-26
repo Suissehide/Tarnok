@@ -5,12 +5,15 @@
  * comme deux passes distinctes : la separation recalculait sa repulsion a
  * CHAQUE tick, pour CHAQUE entite. Depuis la tache 19, les deux sont fondues
  * dans `Horde.step` — chaque entite ne recalcule sa trajectoire (direction du
- * champ + repulsion sommee) qu'un tick sur `STEERING_RECOMPUTE_TICKS`, et
- * conserve sa vitesse le reste du temps. Ce banc mesure ce que ca coute
- * REELLEMENT — pas separement, ce que le rapport de la tache 19 explique
- * pourquoi ca n'aurait plus de sens : `K` et le plafond se choisissent
- * ENSEMBLE, jamais l'un sans l'autre, et se publient donc dans le meme
- * tableau, avec le saut maximal en colonne.
+ * champ melangee a la repulsion, tache 21) qu'un tick sur
+ * `STEERING_RECOMPUTE_TICKS`, et conserve sa vitesse le reste du temps. Ce
+ * banc mesure ce que ca coute REELLEMENT — pas separement.
+ *
+ * Depuis la tache 21, le saut maximal par tick n'est plus une consequence
+ * REGLEE de `K` et du poids de repulsion : il est devenu INTRINSEQUE (la
+ * vitesse propre de l'archetype, quelle que soit la densite). Ce banc publie
+ * quand meme le saut maximal observe, en colonne, pour verifier PAR LA MESURE
+ * que cette borne tient a l'echelle — pas pour la regler.
  *
  *   npm run bench:sep -w back
  */
@@ -20,7 +23,7 @@ import {
   MAP_SIZE,
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
-  STEERING_REPULSION_STRENGTH,
+  STEERING_REPULSION_WEIGHT,
   TICK_HZ,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
@@ -139,7 +142,7 @@ function main(): void {
   console.log(
     `K = STEERING_RECOMPUTE_TICKS = ${STEERING_RECOMPUTE_TICKS} ` +
       `(${round2((1000 * STEERING_RECOMPUTE_TICKS) / TICK_HZ)} ms a ${TICK_HZ} Hz), ` +
-      `plafond de repulsion = STEERING_REPULSION_STRENGTH = ${STEERING_REPULSION_STRENGTH} px/s, ` +
+      `poids de repulsion = STEERING_REPULSION_WEIGHT = ${STEERING_REPULSION_WEIGHT} (sans dimension), ` +
       `rayon ${SEPARATION_RADIUS} px\n`,
   );
 
@@ -178,14 +181,14 @@ function main(): void {
   );
   console.log(
     `   Saut maximal observe : ${cible1500?.['saut maximal (px)']} px (1 500) / ` +
-      `${cible4000?.['saut maximal (px)']} px (4 000) — a comparer aux 40,0 px de l'ancien plafond,` +
-      ` reapplique a chaque tick.`,
+      `${cible4000?.['saut maximal (px)']} px (4 000) — borne intrinseque depuis la tache 21 : la` +
+      ` vitesse propre de l'archetype, jamais depassee quelle que soit la densite.`,
   );
   if (rows.some((r) => r.equilibre !== 'atteint')) {
     console.log(
       `\n⚠️  Un effectif au moins n'a PAS atteint son equilibre de densite. Son chiffre de\n` +
         `   cout ne mesure pas l'algorithme, il mesure un entassement qui grossit encore.\n` +
-        `   Corriger STEERING_REPULSION_STRENGTH avant de lire le verdict.`,
+        `   Corriger STEERING_REPULSION_WEIGHT avant de lire le verdict.`,
     );
   }
 }

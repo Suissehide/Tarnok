@@ -7,10 +7,25 @@ import {
   SEPARATION_CELL,
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
-  STEERING_REPULSION_STRENGTH,
+  STEERING_REPULSION_WEIGHT,
 } from './constants';
 import type { FlowField } from './flowfield';
 import { formationPositions, type WaveOrder } from './waves';
+
+/**
+ * Marge sous laquelle la norme du melange (direction du champ + repulsion
+ * ponderee) est traitee comme nulle, dans `#recomputeSteering` (tache 21).
+ *
+ * Bien au-dessus de l'epsilon flottant : ce n'est pas une tolerance
+ * d'arrondi, c'est le seuil qui distingue « le vecteur s'annule vraiment »
+ * (retomber sur la direction du champ) de « il est juste tres court »
+ * (le normaliser normalement). Les deux contributions melangees sont chacune
+ * de norme au plus quelques unites (direction de champ unitaire, repulsion
+ * plafonnee a 1 puis ponderee par `STEERING_REPULSION_WEIGHT`), donc `1e-6`
+ * ne peut etre franchi que par une annulation reelle, jamais par du bruit
+ * d'arrondi ordinaire.
+ */
+const STEERING_DEGENERATE_EPSILON = 1e-6;
 
 /**
  * L'identite est **arithmetique**, pas negociee.
@@ -80,13 +95,19 @@ export class Horde {
   /**
    * Vitesse tenue, en pixels monde par seconde — tache 19.
    *
-   * Recalculee (direction du champ + repulsion sommee) un tick sur
-   * `STEERING_RECOMPUTE_TICKS`, la phase venant de `entityIdAt` (voir
-   * `#recomputeSteering`) ; tous les autres ticks, `#advanceByVelocity` s'en
-   * sert telle quelle. C'est cette conservation — pas de recalcul, pas de
-   * renversement possible d'un tick a l'autre — qui remplace la force de
-   * separation appliquee en continu (`shared/separation.ts`, supprime) : voir
-   * le rapport de la tache 19 pour les quatre principes mesures avant celui-ci.
+   * Recalculee un tick sur `STEERING_RECOMPUTE_TICKS`, la phase venant de
+   * `entityIdAt` (voir `#recomputeSteering`) ; tous les autres ticks,
+   * `#advanceByVelocity` s'en sert telle quelle. C'est cette conservation —
+   * pas de recalcul, pas de renversement possible d'un tick a l'autre — qui
+   * remplace la force de separation appliquee en continu (`shared/separation.ts`,
+   * supprime) : voir le rapport de la tache 19 pour les quatre principes
+   * mesures avant celui-ci.
+   *
+   * ⚠️ **Depuis la tache 21, sa NORME ne depasse jamais `archetypeOf(...).speed`.**
+   * `#recomputeSteering` melange la direction du champ et celle de la
+   * repulsion PUIS remet a l'echelle de la vitesse propre — il ne les ADDITIONNE
+   * plus. Un monstre ne peut donc plus etre propulse plus vite qu'il ne
+   * marche, quelle que soit la densite autour de lui.
    */
   readonly vx: Float32Array;
   readonly vy: Float32Array;
@@ -405,11 +426,12 @@ export class Horde {
    * ne recalculerait pas a la meme phase que la simulation d'origine, et le
    * rejeu cesserait de reproduire exactement ce qui s'est passe.
    *
-   * Recalcule d'abord la trajectoire (direction du champ + repulsion
-   * sommee) des entites dont c'est le tour, PUIS avance tout le monde le
-   * long de sa vitesse tenue — dans cet ordre, pour que l'avancement de ce
-   * tick utilise deja la vitesse fraichement recalculee plutot que celle
-   * d'il y a `STEERING_RECOMPUTE_TICKS` pas.
+   * Recalcule d'abord la trajectoire (direction du champ melangee a la
+   * repulsion, puis remise a l'echelle de la vitesse propre — tache 21) des
+   * entites dont c'est le tour, PUIS avance tout le monde le long de sa
+   * vitesse tenue — dans cet ordre, pour que l'avancement de ce tick utilise
+   * deja la vitesse fraichement recalculee plutot que celle d'il y a
+   * `STEERING_RECOMPUTE_TICKS` pas.
    *
    * ⚠️ **`dt <= 0` est un NO-OP STRICT, y compris pour `vx`/`vy`.** Avant la
    * tache 19, un `dt` nul rendait deja `#advance` sans effet (vitesse
@@ -544,10 +566,31 @@ export class Horde {
 
   /**
    * Recalcule `vx`/`vy` des entites dont c'est le tour ce tick (tache 19) :
-   * direction du champ vise, plus repulsion sommee sur TOUS les voisins dans
-   * `SEPARATION_RADIUS`, plafonnee comme un seul voisin en recouvrement total
-   * (meme raisonnement que l'ancien `SeparationGrid`, tache 18) puis mise a
-   * l'echelle de `STEERING_REPULSION_STRENGTH`.
+   * direction du champ vise, MELANGEE (pas additionnee, tache 21) a la
+   * repulsion sommee sur TOUS les voisins dans `SEPARATION_RADIUS` — celle-ci
+   * plafonnee comme un seul voisin en recouvrement total (meme raisonnement
+   * que l'ancien `SeparationGrid`, tache 18) puis ponderee par
+   * `STEERING_REPULSION_WEIGHT` — avant de normaliser le tout et de remettre a
+   * l'echelle de la vitesse propre de l'archetype.
+   *
+   * ⚠️ **Dévier, pas propulser (tache 21).** Additionner la repulsion a la
+   * vitesse (l'ancienne formule, tache 19) laissait le total depasser
+   * largement la vitesse propre — mesure jusqu'a plusieurs dizaines de px par
+   * tick, une entite manifestement PROPULSEE plutot que gênee. Melanger les
+   * DIRECTIONS puis ne remettre a l'echelle qu'UNE SEULE fois, par la vitesse
+   * propre, rend ce depassement structurellement impossible : `Math.hypot(vx,
+   * vy)` ne peut plus jamais exceder `archetypeOf(...).speed`, quelle que soit
+   * la densite de voisins. Voir `STEERING_REPULSION_WEIGHT` pour le reglage
+   * choisi et le rapport de la tache 21 pour la mesure.
+   *
+   * ⚠️ **Cas degenere : ne JAMAIS normaliser un vecteur nul.** Si la direction
+   * du champ et la repulsion ponderee s'annulent presque exactement (un
+   * monstre parfaitement entoure, ou immobile sur sa cible et symetriquement
+   * serre), leur somme a une norme quasi nulle — la diviser produirait `NaN`,
+   * qui se propagerait en silence dans `x`/`y` puis dans toute la horde (rien
+   * qui ne verifie que des magnitudes ne le verrait). Dans ce cas, on retombe
+   * sur la direction du champ SEULE (deja unitaire, ou nulle si l'entite est
+   * sur sa cible) plutot que de diviser par cette norme quasi nulle.
    *
    * ⚠️ **La phase choisit l'entite qui recalcule, pas la paire qui interagit.**
    * L'ancien `SeparationGrid` visitait chaque PAIRE une fois (`j > i`) et
@@ -637,18 +680,33 @@ export class Horde {
         pushY /= mag;
       }
 
+      // Direction du champ, UNITAIRE (jamais mise a l'echelle ici) : c'est ce
+      // qui permet de la MELANGER avec la repulsion avant de ne remettre a
+      // l'echelle qu'UNE SEULE fois, par la vitesse propre, plus bas.
       let fx = 0;
       let fy = 0;
       const field = fields[this.targetField[i] ?? 0];
       if (field) {
-        const speed = archetypeOf(this.archetype[i] ?? 0).speed;
         const cell = field.indexAt(xi, yi);
-        fx = (field.dirX[cell] ?? 0) * speed;
-        fy = (field.dirY[cell] ?? 0) * speed;
+        fx = field.dirX[cell] ?? 0;
+        fy = field.dirY[cell] ?? 0;
       }
 
-      this.vx[i] = fx + pushX * STEERING_REPULSION_STRENGTH;
-      this.vy[i] = fy + pushY * STEERING_REPULSION_STRENGTH;
+      const speed = archetypeOf(this.archetype[i] ?? 0).speed;
+      const blendX = fx + pushX * STEERING_REPULSION_WEIGHT;
+      const blendY = fy + pushY * STEERING_REPULSION_WEIGHT;
+      const blendMag = Math.sqrt(blendX * blendX + blendY * blendY);
+
+      if (blendMag > STEERING_DEGENERATE_EPSILON) {
+        this.vx[i] = (blendX / blendMag) * speed;
+        this.vy[i] = (blendY / blendMag) * speed;
+      } else {
+        // Cas degenere (voir la doc de la methode) : la somme s'annule, on ne
+        // la divise JAMAIS — on retombe sur la direction du champ seule, deja
+        // unitaire (ou nulle si l'entite est pile sur sa cible).
+        this.vx[i] = fx * speed;
+        this.vy[i] = fy * speed;
+      }
     }
   }
 

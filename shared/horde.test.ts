@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
+import { archetypeOf } from './archetypes';
 import {
   CONTACT_RADIUS,
   FLOWFIELD_HZ,
   MAX_ENTITIES,
   STEERING_RECOMPUTE_TICKS,
-  STEERING_REPULSION_STRENGTH,
   TICK_HZ,
 } from './constants';
 import { FlowField } from './flowfield';
@@ -831,50 +831,216 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     expect(firstNonZeroTick).toBe(phaseParIdentite);
   });
 
-  it('aucun deplacement ne depasse le plafond de repulsion, meme entassee', () => {
-    // Isole la repulsion de la direction du champ : les entites sont posees
-    // PILE sur la cible de leur champ, ou `FlowField` rend (0, 0) par
-    // construction (voir sa doc) — tout `vx`/`vy` mesure ici est donc
-    // ENTIEREMENT la repulsion, sans avoir besoin de reproduire la formule de
-    // `#recomputeSteering` dans ce test pour la soustraire.
-    const TARGET_X = 3000;
-    const TARGET_Y = 3000;
-    const N = 11; // une « victime » plus dix voisins presque colles.
+  it('aucun deplacement ne depasse la vitesse propre en un tick, meme entassee (tache 21 : devier, pas propulser)', () => {
+    // ⚠️ Le champ doit rester NON NUL ici, contrairement a l'ancien test
+    // « plafond de repulsion » (tache 19) qui isolait la repulsion en posant
+    // les entites PILE sur leur cible. Depuis la tache 21, la repulsion est
+    // ponderee par un poids SANS DIMENSION (`STEERING_REPULSION_WEIGHT = 4`,
+    // bien plus petit que l'ancienne raideur en px/s) : sur un champ nul, meme
+    // une regression qui reintroduirait l'ADDITION (`vx = fx*vitesse +
+    // pushX*POIDS`) resterait sous la borne (poids max 4 px/s, negligeable
+    // devant les ~95 px/s d'une vitesse propre) et ce test ne verrait RIEN.
+    // Avec un champ non nul et des voisins places pour pousser dans le MEME
+    // sens que lui, la regression additive fait depasser la borne meme avec
+    // ce petit poids — voir la mutation en tete de ce fichier de tests.
+    const ORIGIN_X = 1000;
+    const ORIGIN_Y = 3000;
+    const N = 11; // une « victime » plus dix voisins presque colles, tous derriere elle.
     const horde = new Horde(N);
     horde.spawn(order({ count: N, formation: FORMATION.SCATTER }));
-    horde.x[0] = TARGET_X;
-    horde.y[0] = TARGET_Y;
-    for (let i = 1; i < N; i++) {
-      // Meme piege documente dans shared/separation.test.ts (tache 18) :
-      // EXACTEMENT la meme position donnerait d2 = 0, une paire ignoree par
-      // construction plutot que plafonnee. 0,001 px suffit a rester a
-      // l'interieur de SEPARATION_RADIUS tout en evitant ce piege.
-      horde.x[i] = TARGET_X + 0.001;
-      horde.y[i] = TARGET_Y;
-    }
-    const fields = fieldsTowards(TARGET_X, TARGET_Y);
-    horde.retarget(
-      [TARGET_X, TARGET_X, TARGET_X, TARGET_X],
-      [TARGET_Y, TARGET_Y, TARGET_Y, TARGET_Y],
-    );
+    horde.x[0] = ORIGIN_X;
+    horde.y[0] = ORIGIN_Y;
 
-    let maxSpeed = 0;
-    const CAP = STEERING_REPULSION_STRENGTH * 1.0001; // marge flottante minime.
+    const fields = fieldsTowards(5000, ORIGIN_Y);
+    // Direction REELLE du champ a la position de la victime, lue plutot que
+    // supposee (1, 0) : seul ce qui compte pour la mutation ci-dessus, c'est
+    // que les voisins poussent dans le MEME sens qu'elle, quelle que soit
+    // cette direction.
+    const field0 = fields[0];
+    if (!field0) {
+      throw new Error('champ manquant');
+    }
+    const cell = field0.indexAt(ORIGIN_X, ORIGIN_Y);
+    const fx = field0.dirX[cell] ?? 0;
+    const fy = field0.dirY[cell] ?? 0;
+    expect(Math.hypot(fx, fy)).toBeGreaterThan(0.9); // sanity : champ bien non nul.
+
+    for (let i = 1; i < N; i++) {
+      // « Derriere » la victime par rapport au champ : la direction de
+      // l'entite vers ce voisin est `-(fx, fy)`, donc la repulsion qu'il lui
+      // inflige pointe `+(fx, fy)` — le MEME sens que le champ.
+      horde.x[i] = ORIGIN_X - i * 2 * fx;
+      horde.y[i] = ORIGIN_Y - i * 2 * fy;
+    }
+    // Joueurs loin de la victime : contrairement a la cible du champ, un
+    // joueur proche la mettrait a portee de contact (tache 17.2) et
+    // l'arreterait (`stopped`), ce qui rendrait ce test aveugle a un
+    // deplacement pourtant illegal (`#advanceByVelocity` n'avance jamais une
+    // entite arretee).
+    horde.retarget([0, 0, 0, 0], [0, 0, 0, 0]);
+
+    const ownSpeed = archetypeOf(0).speed;
+    const BOUND = ownSpeed * DT * 1.0001; // marge flottante minime.
+    let maxDisplacement = 0;
+
     for (let tick = 0; tick < STEERING_RECOMPUTE_TICKS + 2; tick++) {
+      const beforeX = horde.x.slice(0, horde.count);
+      const beforeY = horde.y.slice(0, horde.count);
       horde.step(DT, fields, tick);
       for (let i = 0; i < horde.count; i++) {
-        const speed = Math.hypot(horde.vx[i] ?? 0, horde.vy[i] ?? 0);
-        expect(speed).toBeLessThanOrEqual(CAP);
-        if (speed > maxSpeed) {
-          maxSpeed = speed;
+        const d = Math.hypot(
+          (horde.x[i] ?? 0) - (beforeX[i] ?? 0),
+          (horde.y[i] ?? 0) - (beforeY[i] ?? 0),
+        );
+        expect(d).toBeLessThanOrEqual(BOUND);
+        if (d > maxDisplacement) {
+          maxDisplacement = d;
         }
       }
     }
 
-    // Le test ne prouverait rien sur le plafond si l'entassement n'avait
-    // jamais approche la borne (voir la meme remarque dans
-    // shared/separation.test.ts, tache 18).
-    expect(maxSpeed).toBeGreaterThan(CAP * 0.5);
+    // Le test ne prouverait rien sur la borne si l'entassement n'avait jamais
+    // approche la vitesse propre.
+    expect(maxDisplacement).toBeGreaterThan(BOUND * 0.5);
+  });
+
+  it('un monstre pile sur sa cible et entoure symetriquement ne produit jamais de NaN (tache 21 : cas degenere)', () => {
+    // Le VRAI cas degenere de la doc de `#recomputeSteering` : la somme
+    // « direction du champ + repulsion ponderee » s'annule EXACTEMENT, pas
+    // approximativement. Deux conditions, toutes deux exactes en virgule
+    // flottante :
+    //  1. la victime est PILE sur la cible de son champ, ou `FlowField` rend
+    //     (0, 0) par construction (voir sa doc) — direction de champ nulle ;
+    //  2. ses quatre voisins, aux points cardinaux et a EGALE distance,
+    //     s'annulent deux a deux par symetrie EXACTE (`+a` et `-a` calcules a
+    //     partir de la MEME magnitude, en IEEE754 `a + (-a) = 0` sans reste)
+    //     — repulsion nulle.
+    // Somme nulle + nulle = nulle : diviser cette somme par sa propre norme,
+    // sans garde-fou, donne EXACTEMENT `0 / 0 = NaN`.
+    //
+    // Mutation visee : supprimer le garde-fou du cas degenere et diviser
+    // inconditionnellement (voir le rapport de la tache 21, mutation 2 —
+    // reproduite a la main pour verifier ce test, ce qu'un simple contexte
+    // n'aurait pas suffi a garantir). Un test qui ne verifierait que la NORME
+    // finale ne verrait rien : `Math.hypot(NaN, NaN)` est `NaN`, et
+    // `toBeLessThanOrEqual` echoue en silence dessus, alors que
+    // `Number.isFinite` le demasque sans ambiguite.
+    const ORIGIN_X = 3000;
+    const ORIGIN_Y = 3000;
+    const D = 20; // < SEPARATION_RADIUS (28), assez pour pousser, pas assez pour sortir de la cellule de champ.
+    const horde = new Horde(5);
+    horde.spawn(order({ count: 5, formation: FORMATION.SCATTER }));
+    // La victime, EXACTEMENT sur la cible de son champ...
+    horde.x[0] = ORIGIN_X;
+    horde.y[0] = ORIGIN_Y;
+    // ...entouree aux quatre points cardinaux, a EGALE distance.
+    horde.x[1] = ORIGIN_X + D;
+    horde.y[1] = ORIGIN_Y;
+    horde.x[2] = ORIGIN_X - D;
+    horde.y[2] = ORIGIN_Y;
+    horde.x[3] = ORIGIN_X;
+    horde.y[3] = ORIGIN_Y + D;
+    horde.x[4] = ORIGIN_X;
+    horde.y[4] = ORIGIN_Y - D;
+
+    const fields = fieldsTowards(ORIGIN_X, ORIGIN_Y);
+    horde.retarget([0, 0, 0, 0], [0, 0, 0, 0]);
+
+    const field0 = fields[0];
+    if (!field0) {
+      throw new Error('champ manquant');
+    }
+    const cell = field0.indexAt(ORIGIN_X, ORIGIN_Y);
+    // Sanity : le champ est bien nul exactement la ou on le suppose, sans
+    // quoi ce test ne serait pas le cas degenere qu'il pretend etre.
+    expect(field0.dirX[cell] ?? -1).toBe(0);
+    expect(field0.dirY[cell] ?? -1).toBe(0);
+
+    // Phase de recalcul de la victime : les quatre voisins, d'identite
+    // superieure, recalculent a une phase LATER dans le cycle (voir plus
+    // bas) — la symetrie exacte posee ci-dessus tient donc encore intacte au
+    // moment ou la victime recalcule pour la PREMIERE fois.
+    const victimPhase = horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS;
+    for (let i = 1; i < horde.count; i++) {
+      expect(horde.entityIdAt(i) % STEERING_RECOMPUTE_TICKS).toBeGreaterThan(victimPhase);
+    }
+
+    // Un seul pas, exactement au tick de phase de la victime : suffisant pour
+    // exercer le cas degenere une fois, dans la configuration EXACTE decrite
+    // ci-dessus, avant que les voisins n'aient eu l'occasion de bouger.
+    horde.step(DT, fields, victimPhase);
+
+    for (let i = 0; i < horde.count; i++) {
+      // Le coeur de l'assertion : JAMAIS de NaN, pour AUCUNE entite — pas
+      // seulement la victime au centre.
+      expect(Number.isFinite(horde.vx[i] ?? NaN)).toBe(true);
+      expect(Number.isFinite(horde.vy[i] ?? NaN)).toBe(true);
+      expect(Number.isFinite(horde.x[i] ?? NaN)).toBe(true);
+      expect(Number.isFinite(horde.y[i] ?? NaN)).toBe(true);
+    }
+
+    // Le cas degenere retombe sur la direction du champ SEULE — ici nulle —
+    // jamais sur un `NaN` : la victime reste immobile, pas indeterminee.
+    expect(horde.vx[0]).toBe(0);
+    expect(horde.vy[0]).toBe(0);
+    expect(horde.x[0]).toBe(ORIGIN_X);
+    expect(horde.y[0]).toBe(ORIGIN_Y);
+  });
+
+  it('un monstre entoure de voisins dont la repulsion s annule continue de suivre son champ (tache 21)', () => {
+    // Complement du test precedent : ici, la victime n'est PAS sur sa cible
+    // (champ non nul), et ses voisins symetriques annulent seulement la
+    // REPULSION (pas la somme entiere). Mutation visee : une implementation
+    // qui traiterait « repulsion nulle » comme le cas degenere (au lieu de
+    // « somme totale nulle ») et retomberait a tort sur une vitesse nulle,
+    // alors que la victime devrait continuer de suivre son champ normalement.
+    const ORIGIN_X = 3000;
+    const ORIGIN_Y = 3000;
+    const D = 20;
+    const horde = new Horde(5);
+    horde.spawn(order({ count: 5, formation: FORMATION.SCATTER }));
+    horde.x[0] = ORIGIN_X;
+    horde.y[0] = ORIGIN_Y;
+    horde.x[1] = ORIGIN_X + D;
+    horde.y[1] = ORIGIN_Y;
+    horde.x[2] = ORIGIN_X - D;
+    horde.y[2] = ORIGIN_Y;
+    horde.x[3] = ORIGIN_X;
+    horde.y[3] = ORIGIN_Y + D;
+    horde.x[4] = ORIGIN_X;
+    horde.y[4] = ORIGIN_Y - D;
+
+    // Champ non nul : la cible est ailleurs que la position de la victime.
+    const fields = fieldsTowards(5000, ORIGIN_Y);
+    horde.retarget([0, 0, 0, 0], [0, 0, 0, 0]);
+
+    const field0 = fields[0];
+    if (!field0) {
+      throw new Error('champ manquant');
+    }
+    const cell = field0.indexAt(ORIGIN_X, ORIGIN_Y);
+    const fx = field0.dirX[cell] ?? 0;
+    const fy = field0.dirY[cell] ?? 0;
+    expect(Math.hypot(fx, fy)).toBeGreaterThan(0.9); // sanity : champ bien non nul.
+
+    const victimPhase = horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS;
+    for (let i = 1; i < horde.count; i++) {
+      expect(horde.entityIdAt(i) % STEERING_RECOMPUTE_TICKS).toBeGreaterThan(victimPhase);
+    }
+
+    horde.step(DT, fields, victimPhase);
+
+    for (let i = 0; i < horde.count; i++) {
+      expect(Number.isFinite(horde.vx[i] ?? NaN)).toBe(true);
+      expect(Number.isFinite(horde.vy[i] ?? NaN)).toBe(true);
+    }
+
+    const ownSpeed = archetypeOf(0).speed;
+    // Repulsion nulle => la vitesse tenue est EXACTEMENT la direction du
+    // champ mise a l'echelle de la vitesse propre — la victime avance,
+    // elle ne se fige pas.
+    expect(horde.vx[0] ?? 0).toBeCloseTo(fx * ownSpeed, 5);
+    expect(horde.vy[0] ?? 0).toBeCloseTo(fy * ownSpeed, 5);
   });
 
   it('une entite qui recalcule voit TOUS ses voisins, meme ceux d un indice de creneau INFERIEUR', () => {

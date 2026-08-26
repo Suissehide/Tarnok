@@ -12,10 +12,9 @@ const DT = 1 / TICK_HZ;
  *
  * Recette mesuree par le diagnostic (voir le rapport de la tache 15) : un
  * joueur colle a un coin de la carte tire tout le champ vers ce coin, une
- * horde dense y forme un entassement, et la repulsion (tache 19 :
- * `STEERING_REPULSION_STRENGTH`, 420 px/s, plus la vitesse propre de
- * l'archetype) pousse plus fort que le champ ne tire en retour — sans clamp,
- * les entites giclent hors du monde.
+ * horde dense y forme un entassement, et la repulsion (tache 19, devenue
+ * deviation de trajectoire a la tache 21) pousse la victime vers le bord —
+ * sans clamp, les entites giclent hors du monde.
  */
 describe('les entites ne quittent jamais la carte', () => {
   it(

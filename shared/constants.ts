@@ -118,37 +118,48 @@ export const SEPARATION_CELL = 56;
 
 /**
  * Cadence a laquelle CHAQUE ENTITE recalcule sa trajectoire (direction du champ
- * + repulsion sommee), en ticks — tache 19. Le reste du temps, l'entite CONSERVE
- * sa vitesse et se contente d'avancer : c'est ce qui remplace la force de
- * separation appliquee a chaque pas (§3.3 de la spec, quatre principes mesures,
- * voir le rapport de la tache 19).
+ * melangee a la repulsion, tache 21), en ticks — tache 19. Le reste du temps,
+ * l'entite CONSERVE sa vitesse et se contente d'avancer : c'est ce qui remplace
+ * la force de separation appliquee a chaque pas (§3.3 de la spec, quatre
+ * principes mesures, voir le rapport de la tache 19).
  *
- * ⚠️ **Ce n'est pas un reglage de sensation, et il se choisit AVEC
- * `STEERING_REPULSION_STRENGTH`, jamais separement.** 9 (300 ms a `TICK_HZ`) est
- * la valeur mesuree : elle divise par neuf le nombre d'entites qui executent la
- * recherche de voisins a chaque tick — coeur du gain de 4,53 a 0,74 ms mesure a
- * 4000 entites (`npm run bench:sep -w back`) — tout en genant l'oscillation
- * gauche-droite du sprite PAR CONSTRUCTION : une vitesse tenue ne peut plus se
- * renverser d'un tick a l'autre.
+ * 9 (300 ms a `TICK_HZ`) est la valeur mesuree : elle divise par neuf le nombre
+ * d'entites qui executent la recherche de voisins a chaque tick — coeur du
+ * gain de 4,53 a 0,74 ms mesure a 4000 entites (`npm run bench:sep -w back`) —
+ * tout en genant l'oscillation gauche-droite du sprite PAR CONSTRUCTION : une
+ * vitesse tenue ne peut plus se renverser d'un tick a l'autre.
+ *
+ * Depuis la tache 21, ce choix ne conditionne plus le SAUT MAXIMAL par tick :
+ * celui-ci est devenu intrinseque a la vitesse propre de l'archetype (voir
+ * `STEERING_REPULSION_WEIGHT`), quelle que soit la cadence de recalcul. `K`
+ * reste un reglage de reactivite — a quelle vitesse un monstre reagit a une
+ * horde qui se densifie — pas de securite.
  */
 export const STEERING_RECOMPUTE_TICKS = 9;
 
 /**
- * Raideur de la repulsion, en pixels monde par seconde, multipliee par la
- * fraction de recouvrement `(R - d) / R` puis sommee sur tous les voisins —
- * remplace `SEPARATION_STRENGTH` (tache 19), qui pilotait une force reappliquee
- * a chaque pas plutot qu'une composante de vitesse tenue `STEERING_RECOMPUTE_TICKS`
- * pas durant.
+ * Poids SANS DIMENSION de la repulsion dans le melange de directions (tache
+ * 21) : `direction = normaliser(direction_du_champ + poussee * POIDS)`, puis
+ * `vitesse = direction * vitesse_propre_de_l_archetype`.
  *
- * ⚠️ **Se choisit AVEC `STEERING_RECOMPUTE_TICKS`, jamais separement** — voir sa
- * doc. Plus faible que l'ancienne valeur (1200) : la repulsion n'est plus
- * corrigee a chaque pas, donc une valeur trop forte, tenue 300 ms, ferait
- * largement depasser sa cible a une entite repoussee. 420 px/s, plafonnes comme
- * avant a l'equivalent d'UN SEUL voisin en recouvrement total, donne un saut
- * maximal mesure de 17,2 px a 4000 entites (`npm run bench:sep -w back`),
- * contre 40,0 px avant.
+ * Remplace `STEERING_REPULSION_STRENGTH` (tache 19), une raideur en px/s qui
+ * s'AJOUTAIT a la vitesse et pouvait donc la faire largement depasser la
+ * vitesse propre du monstre — de la PROPULSION. Melanger des DIRECTIONS puis
+ * remettre a l'echelle de la vitesse propre rend ce depassement structurellement
+ * impossible : la borne n'est plus une constante a regler, elle est
+ * INTRINSEQUE (la vitesse resultante ne peut jamais depasser `archetypeOf(...).speed`,
+ * qu'il y ait 0 ou 1000 voisins). Voir le test « aucun deplacement ne depasse
+ * la vitesse propre... » de `shared/horde.test.ts`.
+ *
+ * 4 est la valeur mesuree (`npm run bench:sep -w back`) : elle donne un saut
+ * maximal de 3,2 px a 4000 entites — exactement la vitesse propre du squelette
+ * (95 px/s / 30 Hz) — pour 15,9 voisins moyens en regime stable et un cout de
+ * 0,21 ms, contre 7,0 voisins et 0,15 ms pour l'ancienne formule additive (qui,
+ * elle, pouvait sauter de plusieurs dizaines de px par tick). Contrepartie
+ * assumee : les monstres se chevauchent davantage — c'est le prix de ne jamais
+ * etre ejecte.
  */
-export const STEERING_REPULSION_STRENGTH = 420;
+export const STEERING_REPULSION_WEIGHT = 4;
 
 /**
  * Profondeur de l'historique de horde, en ticks, pour le rejeu du §3.2.

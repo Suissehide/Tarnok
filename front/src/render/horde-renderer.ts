@@ -278,14 +278,15 @@ export const FACING_DEAD_ZONE_PX = 0.05;
  * (voir `shared/horde.ts`) : un creneau peut donc porter une entite
  * differente d'une image a l'autre, avec une position sans rapport. Le pas le
  * plus rapide qu'un VRAI monstre puisse franchir en un tick est borne par sa
- * vitesse tenue (tache 19) : `archetypeOf(...).speed` (95 a 130 px/s dans
- * `shared/archetypes.ts`) plus la repulsion au pire cas de recouvrement
- * (`STEERING_REPULSION_STRENGTH = 420 px/s` dans `shared/constants.ts`) : soit,
- * a `TICK_HZ = 30`, environ 4,3 + 14 = 18 px par tick — moins que la moitie de
- * la borne d'avant la tache 19 (44 px, avec l'ancienne separation appliquee a
- * chaque tick). Ce seuil garde une marge encore plus confortable qu'avant,
- * tout en restant tres inferieur a la distance separant deux points choisis
- * sans rapport sur une carte de `MAP_SIZE = 6000` px — c'est cet ecart
+ * vitesse tenue (tache 19), et depuis la tache 21 cette borne est INTRINSEQUE :
+ * `archetypeOf(...).speed` SEULE (95 a 130 px/s dans `shared/archetypes.ts`),
+ * la repulsion ne pouvant plus s'y ajouter (elle devie la direction, elle ne
+ * propulse plus) — soit, a `TICK_HZ = 30`, 3,2 a 4,3 px par tick, quelle que
+ * soit la densite de voisins. Ce seuil garde donc une marge tres large,
+ * heritee d'une epoque ou la borne etait plus lache (44 px avant la tache 19,
+ * 18 px entre les taches 19 et 21) et jamais resserree depuis faute de raison
+ * de le faire : il reste tres inferieur a la distance separant deux points
+ * choisis sans rapport sur une carte de `MAP_SIZE = 6000` px — c'est cet ecart
  * d'ordre de grandeur qui rend le departage fiable, pas une precision au
  * pixel pres.
  */
