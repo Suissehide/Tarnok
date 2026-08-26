@@ -27,6 +27,7 @@ const hudStatus = el('hud-status');
 const hudHp = el('hud-hp');
 const hudLevel = el('hud-level');
 const hudTimer = el('hud-timer');
+const hudFreeze = el('hud-freeze');
 const hudLateDeaths = el('hud-late-deaths');
 const summary = el('summary');
 const summaryTime = el('summary-time');
@@ -189,11 +190,15 @@ function onStatus(status: ConnectionStatus): void {
 
 /** Ecrit le HUD dans le DOM a partir du contenu pur calcule par `hudInfo` (§4.6). */
 function updateHud(state: RenderState, client: GameClient): void {
-  const info = hudInfo(state, client.level, client.hordeTick);
+  const info = hudInfo(state, client.level, client.hordeTick, client.isFrozen);
   hudHp.textContent = `${info.hp}`;
   hudLevel.textContent = `${info.level}`;
   hudTimer.textContent = `Temps ${info.timer}`;
   hudLateDeaths.textContent = `${client.lateDeaths}`;
+  // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
+  // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent
+  // comme un plantage plutot que comme une pause voulue.
+  hudFreeze.classList.toggle('hidden', !info.frozen);
 }
 
 /** Affiche l'ecran de bilan (§7) — appele une seule fois, a la reception de `RUN_OVER`. */

@@ -46,8 +46,15 @@ export class PredictedPlayer {
     return this.#y + this.#errorY;
   }
 
-  /** `moveX` et `moveY` sont normalises dans [-1, 1]. */
-  predict(moveX: number, moveY: number, dt: number): void {
+  /**
+   * `moveX` et `moveY` sont normalises dans [-1, 1]. `scale` (tache 24) est le
+   * meme facteur que `Room#movementScale` cote serveur : `0` pendant le gel
+   * strict de la montee de niveau, une rampe pendant la reprise, `1` par
+   * defaut. Ne module QUE le deplacement, jamais l'extinction de l'ecart de
+   * reconciliation ci-dessous — celle-ci reste une pure animation d'affichage,
+   * sans lien avec la simulation que le serveur gele ou pas.
+   */
+  predict(moveX: number, moveY: number, dt: number, scale = 1): void {
     let nx = moveX;
     let ny = moveY;
     const len = Math.hypot(nx, ny);
@@ -56,8 +63,8 @@ export class PredictedPlayer {
       ny /= len;
     }
 
-    this.#x = clamp(this.#x + nx * PLAYER_SPEED * dt, 0, MAP_SIZE);
-    this.#y = clamp(this.#y + ny * PLAYER_SPEED * dt, 0, MAP_SIZE);
+    this.#x = clamp(this.#x + nx * PLAYER_SPEED * dt * scale, 0, MAP_SIZE);
+    this.#y = clamp(this.#y + ny * PLAYER_SPEED * dt * scale, 0, MAP_SIZE);
 
     // Extinction exponentielle : monotone par construction, donc jamais
     // d'oscillation autour de la position serveur, et independante de la

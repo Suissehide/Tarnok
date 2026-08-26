@@ -236,21 +236,31 @@ export interface HudInfo {
   xp: number;
   level: number;
   timer: string;
+  /** Vrai pendant le gel de montee de niveau (tache 24) — voir `GameClient.isFrozen`. */
+  frozen: boolean;
 }
 
 /**
- * `level` et `hordeTick` ne sont pas dans `RenderState` : le niveau vient de
- * `GameClient.level` (derive des `LEVEL_UP`, pas de l'xp seul — voir sa
- * doc), et le tick de `GameClient.hordeTick`. Le HUD lit donc les deux
- * directement sur le client, en plus de `state`.
+ * `level`, `hordeTick` et `frozen` ne sont pas dans `RenderState` : le niveau
+ * vient de `GameClient.level` (derive des `LEVEL_UP`, pas de l'xp seul — voir
+ * sa doc), le tick de `GameClient.hordeTick`, et `frozen` de
+ * `GameClient.isFrozen` (tache 24). Le HUD lit donc les trois directement sur
+ * le client, en plus de `state`. `frozen` vaut `false` par defaut : aucun
+ * appelant existant (avant la tache 24) n'a a fournir cet argument.
  */
-export function hudInfo(state: RenderState, level: number, hordeTick: number): HudInfo {
+export function hudInfo(
+  state: RenderState,
+  level: number,
+  hordeTick: number,
+  frozen = false,
+): HudInfo {
   const me = state.players.find((p) => p.id === state.localId);
   return {
     hp: me?.hp ?? 0,
     xp: state.xp,
     level,
     timer: formatTimer(hordeTick),
+    frozen,
   };
 }
 

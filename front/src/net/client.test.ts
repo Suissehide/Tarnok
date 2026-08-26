@@ -757,6 +757,109 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
   });
 });
 
+describe('GameClient — la prediction locale honore le gel de niveau (tache 24)', () => {
+  it(
+    'une entree de deplacement envoyee pendant le gel ne deplace pas le joueur predit ; ' +
+      'la meme entree, envoyee apres la reprise, le deplace',
+    () => {
+      // Entree CONSTANTE tout du long : c'est la meme commande qui doit rester
+      // sans effet pendant le gel, puis reprendre effet apres — pas une entree
+      // differente selon la phase.
+      const client = new GameClient('ws://test', () => ({ x: 1, y: 0 }), vi.fn());
+      client.connect();
+      const socket = latestSocket();
+
+      socket.emit('message', { data: encodeWelcome(1, 0, 0xc0ff_ee01) });
+      // Fait apparaitre le joueur local : seul ce premier snapshot compte,
+      // aucun autre n'est envoye ensuite — sans quoi `reconcile` ecraserait la
+      // prediction a chaque tick et rendrait tout mouvement invisible,
+      // gel ou pas (voir `PredictedPlayer.reconcile`).
+      socket.emit('message', {
+        data: encodeSnapshot(0, 0, [{ id: 1, x: 500, y: 500, hp: 100, aimX: 0, aimY: 0 }]),
+      });
+
+      const FREEZE_START = 10;
+      const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
+      const RESUME_END = FREEZE_END + LEVEL_RESUME_TICKS;
+      const END = RESUME_END + 30;
+      socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
+
+      let duringFreezeTravel = 0;
+      let afterResumeTravel = 0;
+      let prevX: number | null = null;
+
+      for (let tick = 0; tick < END; tick++) {
+        const state = client.update(tick * STEP, STEP);
+        const me = state.players.find((p) => p.id === 1);
+        const x = me?.x ?? 0;
+        if (prevX !== null) {
+          const d = Math.abs(x - prevX);
+          if (tick >= FREEZE_START && tick <= FREEZE_END) {
+            duringFreezeTravel += d;
+          } else if (tick > RESUME_END) {
+            afterResumeTravel += d;
+          }
+        }
+        prevX = x;
+      }
+
+      process.stdout.write(
+        `[tache 24] joueur predit : pendant=${duringFreezeTravel.toFixed(3)}px, ` +
+          `apres=${afterResumeTravel.toFixed(1)}px\n`,
+      );
+
+      // Fige pendant le gel strict : sinon le joueur avance en prediction
+      // pendant que la horde s'arrete, et se fait remettre en place au
+      // prochain snapshot — c'est exactement le rubber-band rapporte.
+      expect(duringFreezeTravel).toBe(0);
+      // Un gel permanent laisserait aussi `duringFreezeTravel` a zero : cette
+      // seconde moitie est ce qui l'exclut.
+      expect(afterResumeTravel).toBeGreaterThan(50);
+    },
+  );
+});
+
+describe('GameClient — isFrozen, pour l indication HUD du gel (tache 24)', () => {
+  it('vaut faux avant le gel, vrai pendant le gel et sa rampe de reprise, puis de nouveau faux', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0xc0ff_ee02) });
+
+    expect(client.isFrozen).toBe(false);
+
+    const FREEZE_START = 10;
+    const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
+    const RESUME_END = FREEZE_END + LEVEL_RESUME_TICKS;
+    socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
+
+    // Bien avant FREEZE_START : encore faux, marge de securite loin de la
+    // frontiere pour ne pas dependre d'un decalage d'un tick pres.
+    for (let tick = 0; tick < FREEZE_START - 5; tick++) {
+      client.update(tick * STEP, STEP);
+    }
+    expect(client.isFrozen).toBe(false);
+
+    // Au milieu du gel strict, puis au milieu de la rampe de reprise : vrai
+    // dans les deux cas, c'est toute la perturbation qui doit se voir.
+    for (let tick = FREEZE_START - 5; tick < FREEZE_START + 5; tick++) {
+      client.update(tick * STEP, STEP);
+    }
+    expect(client.isFrozen).toBe(true);
+
+    for (let tick = FREEZE_START + 5; tick < RESUME_END - 5; tick++) {
+      client.update(tick * STEP, STEP);
+    }
+    expect(client.isFrozen).toBe(true);
+
+    // Bien apres RESUME_END : redevenu faux.
+    for (let tick = RESUME_END - 5; tick < RESUME_END + 10; tick++) {
+      client.update(tick * STEP, STEP);
+    }
+    expect(client.isFrozen).toBe(false);
+  });
+});
+
 describe('GameClient — niveau de l equipe (tache 11)', () => {
   it('demarre a 1, et LEVEL_UP le met a jour des la reception (pas au tick date, contrairement au gel)', () => {
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());

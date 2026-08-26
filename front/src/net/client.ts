@@ -415,6 +415,30 @@ export class GameClient {
   }
 
   /**
+   * Vrai pendant le gel de montee de niveau **et sa rampe de reprise**
+   * (tache 24).
+   *
+   * Sert la seule indication a l'ecran d'ici l'etalage de cartes de l'etape 4 :
+   * deux secondes ou plus rien ne bouge, sans explication, se lisent comme un
+   * plantage — l'auteur les a d'ailleurs signalees comme telles.
+   *
+   * ⚠️ Couvre la **rampe** autant que le gel strict : c'est toute la
+   * perturbation qui doit se voir, pas seulement sa moitie la plus visible. Un
+   * accesseur qui s'eteindrait a la fin du gel laisserait une seconde de
+   * ralenti inexpliquee.
+   */
+  get isFrozen(): boolean {
+    if (this.#resumeEndTick < 0) {
+      return false;
+    }
+    // Le gel prend effet au tick DATE par le `LEVEL_UP`, pas a sa reception :
+    // `#freezeUntilTick` est sa borne haute, d'ou la soustraction pour
+    // retrouver son debut.
+    const debut = this.#freezeUntilTick - LEVEL_FREEZE_TICKS + 1;
+    return this.#lastHordeTick >= debut && this.#lastHordeTick <= this.#resumeEndTick;
+  }
+
+  /**
    * Nombre cumule de morts appliquees au present, faute d'anneau assez
    * profond pour les rejouer (`ROLLBACK_DEPTH_TICKS`). Lecture seule : voir
    * `#lateDeaths`.
@@ -463,7 +487,17 @@ export class GameClient {
    */
   update(now: number, dt: number): RenderState {
     const axes = this.readInput();
-    this.#local?.predict(axes.x, axes.y, dt);
+    // ⚠️ **La prediction locale honore le gel de niveau** (tache 24). Sans ce
+    // facteur, `Room.step` figeait tout le monde — joueur compris, il retourne
+    // tot pendant le gel — pendant que le client continuait d'avancer son
+    // personnage en local, puis se faisait remettre en place par le snapshot
+    // suivant. L'auteur voyait « les monstres se figent » et un retour
+    // elastique de son propre personnage.
+    //
+    // Le tick de reference est celui de la horde, c'est-a-dire le tick SERVEUR
+    // recale en continu : `#freezeUntilTick` et `#resumeEndTick` sont dates
+    // dans ce repere par le message `LEVEL_UP`, jamais dans un tick local.
+    this.#local?.predict(axes.x, axes.y, dt, this.#movementScale(this.#lastHordeTick));
 
     // Visee locale (tache 13) : lue puis QUANTIFIEE une seule fois pour toute
     // la duree de cet appel — voir la doc de `#localAim`. `readAim` rend deja

@@ -51,6 +51,22 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
 
     expect(hudInfo(state, 1, 0).hp).toBe(0);
   });
+
+  it(
+    "reprend l'indicateur de gel tel que fourni par l appelant (GameClient.isFrozen), " +
+      'pas derive de l etat (tache 24) — et vaut faux par defaut',
+    () => {
+      const state: RenderState = {
+        localId: 1,
+        xp: 0,
+        players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }],
+      };
+
+      expect(hudInfo(state, 1, 0, true).frozen).toBe(true);
+      expect(hudInfo(state, 1, 0, false).frozen).toBe(false);
+      expect(hudInfo(state, 1, 0).frozen).toBe(false);
+    },
+  );
 });
 
 describe('formatTimer — ticks -> m:ss, a TICK_HZ pas par seconde', () => {

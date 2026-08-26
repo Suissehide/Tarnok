@@ -63,6 +63,23 @@
           <span id="hud-timer"></span>
         </div>
 
+        <!--
+          Tache 24 : indication minimale du gel de montee de niveau — l'etalage
+          de cartes proprement dit arrive a l'etape 4, mais deux secondes ou
+          plus rien ne bouge, sans un mot d'explication a l'ecran, se lisent
+          comme un plantage. Meme registre visuel que le reste du petit
+          readout ci-dessus (pas de `.ts-ribbon`/`.ts-panel` : leurs bordures
+          9-slices sont bien trop lourdes pour ce coin d'ecran — voir le
+          commentaire plus haut). Cache par defaut, `main.ts` ne l'affiche que
+          pendant `GameClient.isFrozen`.
+        -->
+        <div
+          id="hud-freeze"
+          class="hidden rounded border border-ember-400 bg-forge-800/90 px-3 py-1 text-sm font-bold tracking-[0.1em] text-ember-400"
+        >
+          Niveau supérieur — pause…
+        </div>
+
         <!-- Panneau de debogage : c'est ici, et seulement ici, qu'on apprend
              qu'une mort est arrivee trop tard pour etre rejouee (§4.6). -->
         <div class="pl-2 text-[10px] text-forge-600">

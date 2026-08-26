@@ -39,6 +39,39 @@ describe('PredictedPlayer.predict', () => {
   });
 });
 
+describe('PredictedPlayer.predict — echelle de gel (tache 24)', () => {
+  it('une echelle de 0 immobilise le joueur predit ; la meme entree avec une echelle de 1 le deplace', () => {
+    const frozen = new PredictedPlayer(0, 0);
+    const moving = new PredictedPlayer(0, 0);
+
+    frozen.predict(1, 0, DT, 0);
+    moving.predict(1, 0, DT, 1);
+
+    expect(frozen.renderX).toBe(0);
+    expect(moving.renderX).toBeGreaterThan(0);
+  });
+
+  it('une rampe intermediaire (0.5) avance a la moitie de la vitesse normale', () => {
+    const half = new PredictedPlayer(0, 0);
+    const full = new PredictedPlayer(0, 0);
+
+    half.predict(1, 0, DT, 0.5);
+    full.predict(1, 0, DT, 1);
+
+    expect(half.renderX).toBeCloseTo(full.renderX / 2, 5);
+  });
+
+  it("omise, l'echelle vaut 1 par defaut — aucun appelant existant ne se retrouve fige", () => {
+    const withoutScale = new PredictedPlayer(0, 0);
+    const withScale1 = new PredictedPlayer(0, 0);
+
+    withoutScale.predict(1, 0, DT);
+    withScale1.predict(1, 0, DT, 1);
+
+    expect(withoutScale.renderX).toBeCloseTo(withScale1.renderX, 10);
+  });
+});
+
 describe('PredictedPlayer.reconcile', () => {
   it('ne teleporte pas a l arrivee d une correction serveur', () => {
     const player = new PredictedPlayer(0, 0);
