@@ -3,7 +3,13 @@ import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
-import type { DerivedOrbs, HitFlashes, RenderState, RunOverSummary } from '../net/client';
+import type {
+  DerivedOrbs,
+  HitFlashes,
+  ObstacleMap,
+  RenderState,
+  RunOverSummary,
+} from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
 import { HordeRenderer } from './horde-renderer';
 import { ImpactFlashRenderer, OrbRenderer, ProjectileRenderer } from './projectile-renderer';
@@ -38,6 +44,8 @@ export class Stage {
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();
   readonly #impactFlashes = new ImpactFlashRenderer();
+  /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
+  #obstaclesDrawn = false;
 
   async init(parent: HTMLElement): Promise<void> {
     await this.#app.init({
@@ -163,6 +171,27 @@ export class Stage {
     );
   }
 
+  /**
+   * Dessine les obstacles de la carte (tache 28) — appele une seule fois,
+   * depuis le `onMapReady` passe a `GameClient`, qui ne se declenche qu'a la
+   * reception de WELCOME (voir sa doc dans `client.ts`). `map` porte le MEME
+   * masque que celui applique aux `FlowField` du client : le rendu ne
+   * regenere jamais sa propre carte, ce qui garantirait sinon des rochers
+   * dessines a des cellules differentes de celles ou les monstres butent
+   * reellement.
+   */
+  drawObstacles(map: ObstacleMap): void {
+    if (this.#obstaclesDrawn) {
+      return;
+    }
+    this.#obstaclesDrawn = true;
+    // Index 1 : juste au-dessus de la grille (`mapBorder`, ajoutee en premier
+    // dans `init`), en dessous des orbes/horde/projectiles/flashs et des
+    // carres de joueurs, tous ajoutes ensuite — les rochers sont du terrain,
+    // pas un calque qui doit passer devant les entites.
+    this.#world.addChildAt(mapObstacles(map.mask, map.cols, map.rows, map.cellSize), 1);
+  }
+
   drawHorde(horde: Horde, timeMs: number): void {
     this.#horde.draw(horde, this.viewRect(), timeMs);
   }
@@ -223,6 +252,59 @@ function mapBorder(): Graphics {
   grid.stroke({ color: 0x2a2420, width: 2 });
   grid.rect(0, 0, MAP_SIZE, MAP_SIZE).stroke({ color: 0x4a3f36, width: 6 });
   return grid;
+}
+
+/** Gris pierre, dans la meme famille terreuse que la bordure ci-dessus (§4.5). */
+const OBSTACLE_FILL = 0x4f4a42;
+const OBSTACLE_STROKE = 0x2f2b26;
+
+/**
+ * Coin haut-gauche (coordonnees MONDE) de chaque cellule bloquee de `mask`.
+ *
+ * PURE, sans Pixi — testable sans navigateur, meme raison que `hudInfo`
+ * ci-dessous. C'est cette fonction qui porte « le rendu consulte le MEME
+ * masque que le champ de flux » (tache 28) : un masque decale d'une cellule,
+ * ou regenere avec une autre graine, se voit directement dans les
+ * coordonnees qu'elle rend — voir `stage.test.ts`.
+ */
+export function obstacleCells(
+  mask: Uint8Array,
+  cols: number,
+  rows: number,
+  cellSize: number,
+): { x: number; y: number }[] {
+  const cells: { x: number; y: number }[] = [];
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      if ((mask[cy * cols + cx] ?? 0) !== 0) {
+        cells.push({ x: cx * cellSize, y: cy * cellSize });
+      }
+    }
+  }
+  return cells;
+}
+
+/**
+ * Tous les obstacles en UN SEUL objet Pixi — jamais un par cellule (§4.3) :
+ * ~506 cellules bloquees sur cette carte, et le terrain est statique, donc
+ * le construire une fois suffit. Meme discipline que `mapBorder` juste
+ * au-dessus : on accumule les rectangles, puis un SEUL `.fill()`/`.stroke()`
+ * les peint tous d'un coup.
+ *
+ * Remplissage uni plutot qu'un sprite de l'atlas Tiny Swords : ce dernier
+ * n'a pas de tuile "rocher" derivee par `tools/build_monster_atlas.py`
+ * (seuls les monstres le sont), et en fabriquer une pour ce seul usage
+ * aurait ajoute un chargement reseau asynchrone (et son echec possible, cf.
+ * la doc de `Stage.init` sur l'atlas de la horde) pour un gain visuel
+ * marginal sur un aplat dans la meme palette terreuse que le cadre.
+ */
+function mapObstacles(mask: Uint8Array, cols: number, rows: number, cellSize: number): Graphics {
+  const g = new Graphics();
+  for (const cell of obstacleCells(mask, cols, rows, cellSize)) {
+    g.rect(cell.x, cell.y, cellSize, cellSize);
+  }
+  g.fill(OBSTACLE_FILL).stroke({ color: OBSTACLE_STROKE, width: 1, alpha: 0.5 });
+  return g;
 }
 
 /**

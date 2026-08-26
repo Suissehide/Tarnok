@@ -40,6 +40,18 @@ export interface InputAxes {
   y: number;
 }
 
+/**
+ * Masque d'obstacles livre au rendu (tache 28), avec la geometrie qui va
+ * avec — `cols`/`rows`/`cellSize` viennent du MEME `FlowField` sonde que
+ * celui qui a servi a generer `mask`, jamais recalcules a cote.
+ */
+export interface ObstacleMap {
+  mask: Uint8Array;
+  cols: number;
+  rows: number;
+  cellSize: number;
+}
+
 export interface RenderState {
   /** Identifiant du joueur local, ou null tant que le WELCOME n'est pas arrive. */
   localId: number | null;
@@ -375,6 +387,15 @@ export class GameClient {
      * deja « pas de tir » (tache 13).
      */
     private readonly readAim: () => InputAxes = () => ({ x: 0, y: 0 }),
+    /**
+     * Appele une seule fois, a la reception de `WELCOME` — c'est le seul
+     * moment ou la carte d'obstacles existe (tache 28). Livre exactement le
+     * masque et la geometrie (`cols`/`rows`/`cellSize`) qui alimentent
+     * `#fields` juste en dessous : c'est ce qui garantit au rendu de dessiner
+     * les MEMES cellules murees que celles que le champ de flux evite, plutot
+     * que de regenerer un masque a cote qui pourrait diverger.
+     */
+    private readonly onMapReady: (map: ObstacleMap) => void = () => undefined,
   ) {}
 
   get status(): ConnectionStatus {
@@ -584,6 +605,10 @@ export class GameClient {
         applyObstacles(f, mask);
         return f;
       });
+      // Meme `mask`, memes `probe.cols`/`probe.rows`/`probe.cellSize` que ceux
+      // qui viennent d'alimenter `#fields` ci-dessus : c'est la condition du
+      // §5.1 appliquee au rendu, pas seulement a la simulation (tache 28).
+      this.onMapReady({ mask, cols: probe.cols, rows: probe.rows, cellSize: probe.cellSize });
       return;
     }
     if (msg.type === MSG.WAVE_ORDER) {

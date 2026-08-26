@@ -82,6 +82,9 @@ function join(code: string): void {
     onStatus,
     showSummary,
     readAim,
+    // Tache 28 : la carte n'existe qu'a partir du WELCOME (graine recue),
+    // donc on ne peut dessiner les obstacles qu'a ce moment-la — jamais avant.
+    (map) => stage.drawObstacles(map),
   );
   client.connect();
 

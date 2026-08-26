@@ -26,7 +26,7 @@ import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GameClient, HIT_FLASH_LIFETIME_MS, type InputAxes } from './client';
+import { GameClient, HIT_FLASH_LIFETIME_MS, type InputAxes, type ObstacleMap } from './client';
 
 /**
  * Faux `WebSocket` : ni connexion reseau ni serveur, juste de quoi capturer
@@ -137,6 +137,66 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
       expect.anything(),
     );
     expect(client.horde.count).toBe(10);
+  });
+});
+
+describe('GameClient — livre le masque d obstacles au rendu (tache 28)', () => {
+  it('livre au rendu exactement le meme masque et la meme geometrie que ceux appliques aux champs de flux', () => {
+    // Mutation testee : que le WELCOME livre a `onMapReady` un masque
+    // regenere a part (autre graine, ou memes `cols`/`rows` mais decale
+    // d'une cellule) plutot que CELUI qui vient d'alimenter `#fields`
+    // ci-dessus dans `client.ts` fait echouer ce test — les deux tableaux
+    // divergeraient presque partout, pas seulement sur une cellule.
+    const mapSeed = 0x51ee_d0;
+    const onMapReady = vi.fn();
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      undefined,
+      onMapReady,
+    );
+    client.connect();
+
+    latestSocket().emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+
+    expect(onMapReady).toHaveBeenCalledTimes(1);
+    const map = onMapReady.mock.calls[0]?.[0] as ObstacleMap;
+
+    // Reconstruit independamment, avec la meme sonde `FlowField` que celle
+    // que `client.ts` utilise pour connaitre `cols`/`rows` avant de tirer le
+    // masque — voir `makeReferenceServer` plus bas, meme discipline.
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const expectedMask = generateObstacles(mapSeed, probe.cols, probe.rows);
+
+    expect(map.cols).toBe(probe.cols);
+    expect(map.rows).toBe(probe.rows);
+    expect(map.cellSize).toBe(probe.cellSize);
+    expect([...map.mask]).toEqual([...expectedMask]);
+  });
+
+  it('le masque livre n est pas vide — un `generateObstacles` appele sans cols/rows le rendrait tel, en silence', () => {
+    // Mutation testee : oublier `cols`/`rows` (ou les passer a zero) sur le
+    // chemin qui alimente `onMapReady` rend `generateObstacles` silencieux —
+    // voir sa doc — et ce test est la seule garantie que le masque livre au
+    // rendu contient reellement des cellules murees.
+    const onMapReady = vi.fn();
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      undefined,
+      onMapReady,
+    );
+    client.connect();
+
+    latestSocket().emit('message', { data: encodeWelcome(1, 0, 0x51ee_d0) });
+
+    const map = onMapReady.mock.calls[0]?.[0] as ObstacleMap;
+    const blocked = map.mask.reduce((n, v) => n + v, 0);
+    expect(blocked).toBeGreaterThan(0);
   });
 });
 
