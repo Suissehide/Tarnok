@@ -228,6 +228,20 @@ export class FlowField {
    * cellule est posee **au moment ou on la decouvre**, en pointant vers la
    * cellule d'ou l'on vient : on evite ainsi une seconde passe sur toutes les
    * cellules pour chercher le plus petit voisin.
+   *
+   * ⚠️ **Si la cellule cible est bloquee, le parcours ne part pas d'elle**
+   * (tache 27) : rien ne serait explore, et le champ ressortirait
+   * integralement vide — plus aucun monstre de la carte n'aurait de
+   * direction, alors que le probleme ne concerne qu'un joueur pousse,
+   * teleporte ou simplement debout sur un rocher (rien n'empeche
+   * aujourd'hui de marcher sur un obstacle). On amorce a la place depuis la
+   * cellule libre la plus proche (`#nearestFreeCell`), choisie de facon
+   * deterministe pour que serveur et client — qui recalculent chacun ce
+   * champ depuis la meme position de joueur — retombent sur exactement la
+   * meme cellule de depart. La cellule cible elle-meme reste bloquee et ne
+   * recoit donc aucune direction de ce premier parcours ; c'est la seconde
+   * passe, `#carveExitsFromWalls` (tache 18), qui lui en offre une, comme a
+   * n'importe quelle autre cellule muree.
    */
   update(targetX: number, targetY: number): void {
     this.#revision++;
@@ -239,10 +253,14 @@ export class FlowField {
     dirX.fill(0);
     dirY.fill(0);
 
-    const start = this.indexAt(targetX, targetY);
-    if (blocked[start] === 1) {
-      // Cible dans un mur : personne ne converge, plutot que de converger vers
-      // n'importe quoi.
+    const targetCell = this.indexAt(targetX, targetY);
+    const start =
+      blocked[targetCell] === 1
+        ? this.#nearestFreeCell(targetCell, cols, rows, blocked)
+        : targetCell;
+    if (start === UNREACHED) {
+      // Cible dans un mur ET aucune cellule libre nulle part sur la carte :
+      // cas degenere (carte entierement obstruee), personne ne peut converger.
       return;
     }
 
@@ -281,6 +299,67 @@ export class FlowField {
     }
 
     this.#carveExitsFromWalls(cols, rows, blocked, dirX, dirY, dist, queue);
+  }
+
+  /**
+   * Cellule libre la plus proche de `from` (tache 27), au sens de la
+   * distance de Tchebychev — la meme metrique que le parcours en largeur a
+   * huit voisins de `update`, ou une diagonale coute exactement comme un pas
+   * orthogonal. Utilisee quand la cellule cible est bloquee : amorcer le
+   * parcours depuis cette cellule plutot que de renoncer, pour que le champ
+   * ne sorte jamais entierement vide (un joueur sur un rocher ne doit pas
+   * figer toute la horde).
+   *
+   * Deterministe et sans allocation : parcourt les anneaux carres autour de
+   * `from` par rayon croissant (0, 1, 2, ...), et a l'interieur d'un anneau
+   * dans l'ordre croissant de `y` puis de `x` — qui est aussi l'ordre
+   * croissant d'index de cellule (`y * cols + x`), puisque `x` reste borne a
+   * `cols`. Le premier index libre trouve est donc a la fois le plus proche
+   * ET, a egalite de rayon, le plus petit index : aucun tirage, aucun ordre
+   * herite d'une iteration de `Map` ou d'objet. Server et client, recevant
+   * le meme masque et la meme position cible, produisent donc exactement la
+   * meme cellule de depart.
+   *
+   * Ne cherche PAS le plus proche au sens du chemin contournant les
+   * obstacles (ce serait un second BFS, alloue ou non trivial) : juste la
+   * cellule libre geometriquement la plus proche pour amorcer le vrai
+   * parcours juste apres. Rend `UNREACHED` si la carte entiere est bloquee.
+   */
+  #nearestFreeCell(from: number, cols: number, rows: number, blocked: Uint8Array): number {
+    const cx = from % cols;
+    const cy = (from - cx) / cols;
+    const maxRadius = Math.max(cols, rows);
+
+    for (let r = 0; r <= maxRadius; r++) {
+      const yMin = cy - r;
+      const yMax = cy + r;
+      for (let y = yMin; y <= yMax; y++) {
+        if (y < 0 || y >= rows) {
+          continue;
+        }
+        const onHorizontalEdge = y === yMin || y === yMax;
+        const xMin = cx - r;
+        const xMax = cx + r;
+        for (let x = xMin; x <= xMax; x++) {
+          if (x < 0 || x >= cols) {
+            continue;
+          }
+          // Sur les lignes interieures de l'anneau, seuls les deux bords
+          // verticaux appartiennent au rayon `r` : le reste a deja ete
+          // visite (rayon plus petit) ou le sera (rayon plus grand).
+          if (!onHorizontalEdge && x !== xMin && x !== xMax) {
+            continue;
+          }
+
+          const idx = y * cols + x;
+          if (blocked[idx] !== 1) {
+            return idx;
+          }
+        }
+      }
+    }
+
+    return UNREACHED;
   }
 
   /**

@@ -134,6 +134,121 @@ describe('FlowField, avec obstacles', () => {
   });
 });
 
+describe('FlowField.update, cible sur un obstacle (tache 27)', () => {
+  it('ne vide jamais le champ : depuis une cellule bloquee, le parcours atteint autant de cellules que depuis une cellule libre voisine', () => {
+    // Mesure a l'origine de la tache : un joueur poste sur un obstacle
+    // faisait tomber le nombre de cellules atteintes a 0/8836, contre ~8330
+    // depuis une position libre — plus aucun monstre de la carte n'avait de
+    // direction. Mutation visee : supprimer le repli vers la cellule libre
+    // la plus proche (revenir a un simple `return` quand la cible est
+    // bloquee) fait chuter `reachedFromBlocked` a 0 tout en laissant
+    // `reachedFromFreeNeighbour` inchange — l'egalite ci-dessous echoue.
+    //
+    // Fixture sur un VRAI masque : `generateObstacles` prend
+    // `(seed, cols, rows)` — l'appeler avec un seul argument rend un masque
+    // vide en silence, ce qui a deja coute trois diagnostics faux dans cette
+    // meme zone (voir le brief de la tache 27). On verifie donc explicitement
+    // que le masque contient des cellules bloquees avant de s'appuyer dessus.
+    const MAP_SIZE = 6000;
+    const CELL = 64;
+    const cols = Math.ceil(MAP_SIZE / CELL);
+    const rows = cols;
+    const mask = generateObstacles(1, cols, rows);
+
+    const hasBlockedCell = mask.some((cell) => cell === 1);
+    expect(hasBlockedCell).toBe(true);
+
+    // Premiere cellule bloquee, loin du bord, qui a au moins un voisin libre
+    // (sinon elle ne temoignerait de rien : une poche entierement muree est
+    // un defaut de connectivite distinct, hors perimetre de cette tache).
+    let targetCell = -1;
+    let freeNeighbourCell = -1;
+    for (let cy = 10; cy < rows - 10 && targetCell === -1; cy++) {
+      for (let cx = 10; cx < cols - 10; cx++) {
+        const idx = cy * cols + cx;
+        if (mask[idx] !== 1) {
+          continue;
+        }
+        for (let dy = -1; dy <= 1 && freeNeighbourCell === -1; dy++) {
+          for (let dx = -1; dx <= 1; dx++) {
+            if (dx === 0 && dy === 0) {
+              continue;
+            }
+            const neighbourIdx = (cy + dy) * cols + (cx + dx);
+            if (mask[neighbourIdx] !== 1) {
+              freeNeighbourCell = neighbourIdx;
+              break;
+            }
+          }
+        }
+        if (freeNeighbourCell !== -1) {
+          targetCell = idx;
+        }
+      }
+    }
+    expect(targetCell).toBeGreaterThanOrEqual(0);
+    expect(freeNeighbourCell).toBeGreaterThanOrEqual(0);
+
+    const cellCentre = (cell: number): [number, number] => {
+      const cx = cell % cols;
+      const cy = (cell - cx) / cols;
+      return [cx * CELL + CELL / 2, cy * CELL + CELL / 2];
+    };
+
+    const fieldOnObstacle = new FlowField(MAP_SIZE, CELL);
+    applyObstacles(fieldOnObstacle, mask);
+    fieldOnObstacle.update(...cellCentre(targetCell));
+
+    const fieldOnFreeNeighbour = new FlowField(MAP_SIZE, CELL);
+    applyObstacles(fieldOnFreeNeighbour, mask);
+    fieldOnFreeNeighbour.update(...cellCentre(freeNeighbourCell));
+
+    const countReached = (field: FlowField): number => {
+      let reached = 0;
+      for (const d of field.dist) {
+        if (d !== -1) {
+          reached++;
+        }
+      }
+      return reached;
+    };
+
+    const reachedFromBlocked = countReached(fieldOnObstacle);
+    const reachedFromFreeNeighbour = countReached(fieldOnFreeNeighbour);
+
+    // Garde-fou : si les deux valaient 0, l'egalite passerait pour de
+    // mauvaises raisons (masque vide, appel `generateObstacles` casse).
+    expect(reachedFromFreeNeighbour).toBeGreaterThan(0);
+    expect(reachedFromBlocked).toBe(reachedFromFreeNeighbour);
+  });
+
+  it("brise les egalites de facon deterministe : entre plusieurs cellules libres a distance egale, c'est toujours la plus petite en index qui amorce le parcours", () => {
+    // Grille 3x3 : la cellule centrale (1,1), index 4, est bloquee — c'est la
+    // cible. Les huit voisines sont TOUTES libres et TOUTES a distance de
+    // Tchebychev 1 : une egalite totale. La regle enoncee dans le brief est
+    // "plus petit index de cellule" ; en parcours ligne par ligne, colonne
+    // par colonne, la plus petite est l'index 0, la cellule (0,0).
+    //
+    // Mutation visee : un repli qui choisirait la premiere cellule libre
+    // trouvee dans un ordre different (par exemple l'ordre du tableau
+    // `NEIGHBOURS`, qui commence par (1,0) puis (-1,0)...) retomberait sur
+    // une autre cellule que l'index 0, et l'assertion sur `dist[0]` echouerait.
+    const field = new FlowField(300, 100); // cols = rows = 3
+    field.block(1, 1);
+    field.update(150, 150); // centre de la cellule bloquee (1, 1)
+
+    expect(field.dist[0]).toBe(0);
+    // Aucune autre cellule ne doit avoir ete choisie comme depart : une seule
+    // cellule a distance 0.
+    for (let i = 1; i < field.dist.length; i++) {
+      if (i === 4) {
+        continue; // la cible elle-meme, toujours bloquee, jamais atteinte par ce parcours.
+      }
+      expect(field.dist[i]).not.toBe(0);
+    }
+  });
+});
+
 describe('FlowField.indexAt', () => {
   it('borne les positions hors carte au lieu de sortir du tableau', () => {
     const field = new FlowField(300, 100);
