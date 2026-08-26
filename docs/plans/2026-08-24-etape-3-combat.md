@@ -2263,3 +2263,68 @@ l'ordre des morts et le départage de l'auto-visée.
 git commit -m "feat(shared): l'evitement se decide par priorite, celui de derriere cede"
 ```
 
+---
+
+## Tâche 24 : le gel de niveau ne gèle pas le joueur, côté client
+
+**Symptôme rapporté :** « il y a parfois de mini freezes de tous les monstres uniquement — plus
+personne ne se déplace — pendant 1 s ».
+
+**Ce n'est pas un bug aléatoire : c'est le gel de montée de niveau**, incomplet côté client.
+
+`Room.step` retourne tôt pendant le gel (`back/src/room.ts:360`), donc le serveur fige
+**tout**, joueur compris. Mais `GameClient` prédit le déplacement local **sans condition**
+(`front/src/net/client.ts:466`, `this.#local?.predict(...)`). Pendant les deux secondes de gel,
+les monstres s'arrêtent — correctement — pendant que le personnage continue d'avancer en local,
+puis se fait remettre en place par le snapshot suivant.
+
+Le joueur voit donc « les monstres se figent » et un retour élastique de son propre personnage.
+
+- [ ] **Étape 1 : la prédiction locale honore le gel.** Elle doit appliquer le même facteur que
+  `Room#movementScale` — zéro pendant le gel strict, rampe pendant la reprise. Le client connaît
+  déjà `#freezeUntilTick` et `#resumeEndTick` : ils servent déjà à la horde, ligne 715.
+
+- [ ] **Étape 2 : le gel doit se voir.** Deux secondes où plus rien ne bouge, sans explication à
+  l'écran, se lisent comme un plantage. Le §7 de l'orientation prévoit l'étalage de cartes à
+  l'étape 4 ; d'ici là, une indication minimale suffit — mais il en faut une.
+
+- [ ] **Étape 3 : test.** Une entrée de déplacement envoyée pendant le gel ne déplace pas le
+  joueur prédit ; la même entrée après la reprise le déplace. Les deux moitiés, sinon un gel
+  permanent passerait.
+
+- [ ] **Étape 4 : commit**
+
+```bash
+git commit -m "fix(front): la prediction locale honore le gel de niveau"
+```
+
+---
+
+## Piste écartée : l'évitement latéral
+
+L'auteur décrivait « dévie légèrement vers l'extérieur ». J'en ai déduit qu'il fallait ne garder
+que la composante **perpendiculaire** au cap — contourner sans jamais reculer. **Mesuré, c'est
+franchement pire :**
+
+| | Actuel | Latéral seul |
+| --- | --- | --- |
+| Reculent | 7 / 800 | **185** |
+| Empilés dans 34 px | 19 | **243** |
+| Rayon médian | 160 px | 54 px |
+
+En supprimant la composante arrière, l'évitement ne peut plus **extraire** une entité d'un tas.
+Elles s'empilent, et le pilotage se dégrade ensuite. Ne pas y revenir sans une idée neuve.
+
+## Reste ouvert : les groupes bloqués
+
+Mesuré : **314 entités sur 800 n'approchent pas de 20 px en dix secondes.** Le symptôme est
+réel et massif.
+
+Mais la métrique confond deux populations : celles qui sont arrivées à l'anneau et y stationnent
+légitimement, et celles qui sont réellement coincées. **Tant qu'on ne sait pas les séparer, on
+ne peut pas proposer de correctif** — on réglerait à l'aveugle sur un chiffre qui mélange un
+comportement voulu et un défaut.
+
+Prochaine étape sur ce point : une métrique qui distingue « stationne près du joueur » de
+« oscille loin de lui sans progresser ».
+
