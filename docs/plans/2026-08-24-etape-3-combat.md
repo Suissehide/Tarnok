@@ -2065,3 +2065,71 @@ l'écran et ça n'a aucune raison d'être.
 git commit -m "fix(shared): un seul modele de mouvement pour le rattrapage"
 ```
 
+---
+
+## Tâche 21 : dévier, ne pas propulser
+
+**Origine : l'auteur.** « Ils continuent de se pousser dans tous les sens, il faudrait peut-être
+juste qu'ils changent légèrement de trajectoire au lieu d'être propulsés ? Comment font-ils dans
+les autres jeux ? »
+
+C'est la formulation exacte du comportement de pilotage à la Reynolds, celui qu'emploient les
+RTS et les MOBA.
+
+### La différence, en une ligne de code
+
+Aujourd'hui, la répulsion **s'ajoute** à la vitesse :
+
+```
+v = direction_du_champ × vitesse_propre  +  poussée × STEERING_REPULSION_STRENGTH
+```
+
+Le total peut donc dépasser largement la vitesse du monstre — mesuré à **62-70 px par tick**
+pour une vitesse propre de 3,2 px. C'est la propulsion.
+
+Le pilotage mélange les **directions**, puis ramène à la vitesse propre :
+
+```
+v = normaliser(direction_du_champ + poussée × poids) × vitesse_propre
+```
+
+| | Saut max par tick | Voisins @4000 | Coût @4000 |
+| --- | --- | --- | --- |
+| Additif (actuel) | 62 à 70 px | 7,0 | 0,15 ms |
+| **Pilotage, poids 4** | **3,2 px** | 15,9 | 0,21 ms |
+
+**3,2 px est exactement la vitesse propre du squelette.** La borne cesse d'être une constante à
+régler : elle devient **intrinsèque**. Un monstre ne peut plus aller plus vite qu'il ne marche.
+
+### Ce que ça simplifie, et ce que ça coûte
+
+`STEERING_REPULSION_STRENGTH` — une force en px/s qui couplait au coût *et* à la stabilité, et
+qui a produit à elle seule les tâches 18, 19 et 20 — disparaît au profit d'un **poids sans
+dimension**. Il dit « à quel point j'évite mes voisins » et ne peut structurellement plus
+affecter la vitesse.
+
+Contrepartie assumée : les monstres se chevauchent davantage (15,9 voisins contre 7,0). C'est ce
+que font les bullet heavens du genre, et c'est le prix de ne jamais être éjecté.
+
+- [ ] **Étape 1 : mélanger les directions, normaliser, multiplier par la vitesse propre.**
+  Supprimer `STEERING_REPULSION_STRENGTH` et le plafond de déplacement : tous deux deviennent
+  sans objet. Une constante qui nomme un mécanisme absent est pire qu'aucune constante.
+
+  ⚠️ **Cas dégénéré** : si la somme des directions s'annule (`m ≈ 0`), retomber sur la direction
+  du champ. Ne jamais normaliser un vecteur nul.
+
+- [ ] **Étape 2 : un test qui verrouille la borne intrinsèque.** Aucune entité ne se déplace de
+  plus que sa vitesse propre en un tick, **quelle que soit la densité**. Le monter avec un tas
+  volontairement dense — sinon il ne prouve rien. Mutation : revenir à l'addition le fait
+  échouer.
+
+- [ ] **Étape 3 : vérifier la réplication.** `apparition tardive avec rattrapage`,
+  `serveur vs client`, et le scénario 9 doivent **tous rester à 0,000 px**. Les chiffres « sans
+  correction » peuvent bouger.
+
+- [ ] **Étape 4 : commit**
+
+```bash
+git commit -m "feat(shared): la repulsion devie la trajectoire au lieu de propulser"
+```
+
