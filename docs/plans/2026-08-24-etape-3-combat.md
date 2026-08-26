@@ -2207,3 +2207,59 @@ Toujours aucune propulsion.
 git commit -m "fix(shared): la horde forme un anneau au lieu de s'empiler"
 ```
 
+---
+
+## Tâche 23 : celui de derrière cède
+
+**Origine : l'auteur, troisième observation juste d'affilée.** « Quand deux monstres vont se
+chevaucher, celui derrière dévie légèrement vers l'extérieur, j'ai l'impression. »
+
+C'est l'évitement **par priorité**, et il bat la répulsion symétrique sur tous les axes.
+
+| | Symétrique (tâche 22) | **Priorité** |
+| --- | --- | --- |
+| Empilés dans 34 px | 51 | **16** |
+| Reculent | 23 | **12** |
+| Rayon médian | 116 px | **189 px** |
+| Coût | 0,31 ms | **0,23 ms** |
+| Saut max | 7,2 px | 7,2 px |
+
+Moins cher, parce qu'**un seul des deux** calcule sa correction. Et moitié moins de fuyards,
+parce que le rang de devant n'encaisse plus rien : ce n'est plus une question de réglage, c'est
+structurellement impossible.
+
+> **Ce que ça dit sur la démarche.** Quatre principes de répulsion ont été mesurés avant
+> celui-ci — force sommée, relaxation, relaxation moyennée, correction bornée — et tous
+> cherchaient la bonne **loi de force**. Le problème n'en était pas une : c'était une question
+> de **priorité**. Aucune valeur de constante ne pouvait y répondre.
+
+### Qui est devant ?
+
+Le champ de flux le sait déjà : `dist` est la distance au joueur en cellules. Le plus grand
+`dist` est derrière, donc il cède. Égalité départagée par le plus petit identifiant — comme
+l'ordre des morts et le départage de l'auto-visée.
+
+**Rien à ajouter à l'état, rien sur le fil.**
+
+- [ ] **Étape 1 : la priorité, dans le pilotage et dans le dé-chevauchement.** Une entité
+  n'accumule une correction que contre les voisins dont elle est **derrière**. Celui de derrière
+  encaisse tout l'écart, pas la moitié.
+
+- [ ] **Étape 2 : le parcours symétrique `j > i` disparaît définitivement.** La relation n'est
+  plus symétrique : chaque entité doit voir tous ses voisins pour savoir desquels elle est
+  derrière.
+
+- [ ] **Étape 3 : trois tests.** Deux entités qui se chevauchent — seule celle de derrière
+  bouge, celle de devant ne bouge **pas d'un pixel**. Le départage à égalité de rang tient sur
+  l'identifiant, quel que soit l'ordre du tableau. Et le déplacement total reste borné par la
+  vitesse propre plus la correction.
+
+- [ ] **Étape 4 : la réplication.** `apparition tardive avec rattrapage`, `serveur vs client` et
+  le scénario 9 à **0,000 px**.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "feat(shared): l'evitement se decide par priorite, celui de derriere cede"
+```
+
