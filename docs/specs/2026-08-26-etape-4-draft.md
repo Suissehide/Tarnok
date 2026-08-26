@@ -184,11 +184,20 @@ Quatre messages, tous datés par tick.
 | `DRAFT_OPEN` | S → C | les cartes, le tick d'échéance |
 | `DRAFT_TOKEN` | C → S | la carte sur laquelle je pose |
 | `DRAFT_INTENTS` | S → C | qui a posé sur quoi |
-| `DRAFT_RESULT` | S → C | attributions, conflits perdus, ouverture de repioche |
+| `DRAFT_RESULT` | S → C | attributions, conflits perdus, **et le tick où le gel prend fin** |
 
 `DRAFT_INTENTS` est le seul à cadence soutenue : un octet par joueur, pendant la fenêtre, une
 fois par niveau. **Sans rapport avec le nombre d'entités** — le test d'indépendance réseau de
 l'étape 2 reste valide et doit le rester.
+
+> ⚠️ **`DRAFT_RESULT` doit porter la fin du gel, et ce n'était pas dans la première version de
+> cette spec.** À l'étape 3 le client la calculait lui-même — `msg.tick + LEVEL_FREEZE_TICKS - 1`
+> — parce que le gel durait une constante.
+>
+> Ce n'est plus vrai : la fenêtre dure jusqu'à ce que tout le monde ait posé son jeton, et en solo
+> elle se ferme au clic. **Le client ne peut plus la déduire.** Sans ce champ, chaque client
+> devinerait une fin différente — précisément la divergence que le gel daté par tick existait pour
+> empêcher. `LEVEL_FREEZE_TICKS` disparaît donc, et ses six usages actuels avec elle.
 
 ## 6. Les slots
 
