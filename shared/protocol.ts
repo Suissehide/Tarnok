@@ -195,8 +195,20 @@ export const WELCOME_BYTES = 10;
 export const INPUT_BYTES = 7;
 /** `type u8 · tick u32 · playerCount u8 · xp u16` — xp est celui de l'equipe. */
 export const SNAPSHOT_HEADER_BYTES = 8;
-/** `id u8 · x i16 · y i16 · hp u8 · aimX i8 · aimY i8` (tache 13 : 6 -> 8) — pas de xp ici, voir `PlayerSnapshot`. */
-export const SNAPSHOT_PLAYER_BYTES = 8;
+/**
+ * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8` — pas de xp ici, voir
+ * `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de l'etape 4 :
+ * 8 -> 9.
+ *
+ * ⚠️ **`hp` est passe de `u8` a `u16` a la tache 8 de l'etape 4**, et ce
+ * n'etait pas prevu au plan. Le passif « vitalite » ajoute 20 points de vie
+ * maximum par carte : a partir de la huitieme (100 + 8 * 20 = 260), un `u8`
+ * repliait silencieusement le joueur a 4 points de vie. Un plafond a 255
+ * aurait rendu la carte inerte sans le dire. L'octet supplementaire par joueur
+ * et par snapshot coute moins de 1 % du trafic mesure a l'etape 3
+ * (1,09 ko/s par joueur).
+ */
+export const SNAPSHOT_PLAYER_BYTES = 9;
 export const WAVE_ORDER_BYTES = 19;
 
 /** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
@@ -331,9 +343,9 @@ export function encodeSnapshot(
     v.setUint8(o, p.id);
     v.setInt16(o + 1, Math.round(p.x), true);
     v.setInt16(o + 3, Math.round(p.y), true);
-    v.setUint8(o + 5, p.hp);
-    v.setInt8(o + 6, quantizeAxis(p.aimX));
-    v.setInt8(o + 7, quantizeAxis(p.aimY));
+    v.setUint16(o + 5, p.hp, true);
+    v.setInt8(o + 7, quantizeAxis(p.aimX));
+    v.setInt8(o + 8, quantizeAxis(p.aimY));
     o += SNAPSHOT_PLAYER_BYTES;
   }
   return buf;
@@ -353,9 +365,9 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
       id: v.getUint8(o),
       x: v.getInt16(o + 1, true),
       y: v.getInt16(o + 3, true),
-      hp: v.getUint8(o + 5),
-      aimX: v.getInt8(o + 6),
-      aimY: v.getInt8(o + 7),
+      hp: v.getUint16(o + 5, true),
+      aimX: v.getInt8(o + 7),
+      aimY: v.getInt8(o + 8),
     });
     o += SNAPSHOT_PLAYER_BYTES;
   }

@@ -88,8 +88,10 @@ export const MAX_PLAYERS = 4;
 /**
  * Points de vie maximum d'un joueur.
  *
- * ⚠️ Doit tenir sur un octet (`SNAPSHOT_PLAYER_BYTES` encode `hp` en `u8`) :
- * ne jamais depasser 255.
+ * ⚠️ Ce n'est plus qu'une valeur de DEPART : le passif « vitalite » l'augmente
+ * de 20 par carte prise, et `PlayerState.maxHp` porte le total courant. Le
+ * snapshot encode `hp` en `u16` depuis la tache 8 de l'etape 4, precisement
+ * pour que ce total ne soit borne par aucun detail de transport.
  */
 export const PLAYER_MAX_HP = 100;
 

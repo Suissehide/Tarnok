@@ -151,11 +151,12 @@ export class Projectiles {
     y: number,
     dirX: number,
     dirY: number,
+    damage = weapon.damage,
   ): void {
     if (dirX === 0 && dirY === 0) {
       return;
     }
-    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX));
+    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX), damage);
   }
 
   /**
@@ -164,7 +165,14 @@ export class Projectiles {
    * qu'un decalage d'octet ou de formule ne puisse pas diverger entre les deux
    * points d'entree — seul le calcul de l'angle differe entre eux.
    */
-  #emit(weapon: Weapon, tick: number, x: number, y: number, baseAngle: number): void {
+  #emit(
+    weapon: Weapon,
+    tick: number,
+    x: number,
+    y: number,
+    baseAngle: number,
+    damage = weapon.damage,
+  ): void {
     const n = weapon.projectileCount;
     const room = this.capacity - this.#count;
     const toFire = Math.min(n, room);
@@ -185,12 +193,25 @@ export class Projectiles {
       this.#prevY[slot] = y;
       this.#vx[slot] = Math.cos(angle) * weapon.projectileSpeed;
       this.#vy[slot] = Math.sin(angle) * weapon.projectileSpeed;
-      this.#damage[slot] = weapon.damage;
+      this.#damage[slot] = damage;
       this.#ticksRemaining[slot] = weapon.projectileLifeTicks;
       this.bornTick[slot] = tick;
     }
 
     this.#count += toFire;
+  }
+
+  /**
+   * Degats portes par le projectile de ce slot.
+   *
+   * ⚠️ **Ce nombre ne module rien pour l'instant** : la pietaille n'a aucune
+   * reserve de points de vie (voir la doc de `resolveCombat`), donc un
+   * projectile qui touche est toujours letal. Il est transporte pour
+   * l'affichage et les elites futures — et c'est le SEUL endroit ou l'effet
+   * des passifs de degats est observable aujourd'hui.
+   */
+  damageAt(slot: number): number {
+    return this.#damage[slot] ?? 0;
   }
 
   /** Un pas de simulation. Appele exactement une fois par tick, `dt` fixe. */

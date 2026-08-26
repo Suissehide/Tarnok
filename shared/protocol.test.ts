@@ -122,7 +122,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     expect(decodeSnapshot(encodeSnapshot(4_294_967_295, 0, [])).tick).toBe(4_294_967_295);
   });
 
-  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (6 -> 8, tache 13)', () => {
+  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (6 -> 8 -> 9)', () => {
     const buf = encodeSnapshot(1, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
       { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
@@ -131,7 +131,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
 
     expect(buf.byteLength).toBe(SNAPSHOT_HEADER_BYTES + 3 * SNAPSHOT_PLAYER_BYTES);
     expect(SNAPSHOT_HEADER_BYTES).toBe(8);
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(8);
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(9);
   });
 
   it('tient les pv personnels sur un octet (u8, borne 255)', () => {

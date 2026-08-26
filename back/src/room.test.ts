@@ -9,14 +9,15 @@ import {
   PLAYER_SPEED,
   TICK_HZ,
 } from '@shared/constants';
+import { passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import { decodeSnapshot, SNAPSHOT_HEADER_BYTES, SNAPSHOT_PLAYER_BYTES } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, WEAPONS, weaponOf } from '@shared/weapons';
 import { describe, expect, it, vi } from 'vitest';
 
 import { OUTCOME } from './draft';
-import { type DraftOpenEvent, Room } from './room';
+import { cooldownWithBonus, type DraftOpenEvent, MAX_FIRE_RATE_BONUS, Room } from './room';
 
 const DT = 1 / TICK_HZ;
 
@@ -872,6 +873,30 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   }
 
   /**
+   * Ticks auxquels chaque arme a tire, sur `ticks` pas, visee fixe et non nulle.
+   *
+   * ⚠️ Rester SOUS 360 ticks quand on mesure une cadence : c'est la periode du
+   * generateur de vagues. Passe ce cap, les monstres apparaissent, meurent sous
+   * le tir automatique, font monter de niveau — et le draft qui s'ouvre gele le
+   * monde jusqu'a ce qu'un jeton soit pose. Plus une seule salve ensuite.
+   */
+  function ticksDeSalves(room: Room, ticks: number): Map<number, number[]> {
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    for (let i = 0; i < ticks; i++) {
+      room.step(DT);
+    }
+    const parArme = new Map<number, number[]>();
+    for (const [arme, tick] of spy.mock.calls) {
+      const liste = parArme.get(arme.id) ?? [];
+      liste.push(tick);
+      parArme.set(arme.id, liste);
+    }
+    spy.mockRestore();
+    return parArme;
+  }
+
+  /**
    * Compte les salves par arme sur `ticks` pas, visee fixe et non nulle.
    * Rend une table `id d'arme -> nombre de salves`.
    */
@@ -950,6 +975,212 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // celle avec laquelle il a commence.
     expect([...compte.values()].reduce((a, b) => a + b, 0)).toBe(DRAFTEES.length + 1);
     expect([...compte.keys()].sort((a, b) => a - b)).toEqual([0, ...DRAFTEES]);
+  });
+
+  describe('les passifs empiles changent un nombre mesurable (tache 8)', () => {
+    const VITALITE = 0;
+    const CADENCE = 1;
+    const PUISSANCE = 2;
+    const FOUGUE = 3;
+
+    /** Donne `n` fois la carte de passif `id` au joueur 1, par le vrai chemin. */
+    function prend(room: Room, id: number, n: number): void {
+      const carte: Card = { nature: CARD.PASSIVE, refId: id, owner: 0 };
+      for (let i = 0; i < n; i++) {
+        room.grantCard(1, carte);
+      }
+    }
+
+    it('deux cartes de cadence retirent DEUX FOIS ce qu une seule retire', () => {
+      const magnitude = passiveOf(CADENCE).magnitude;
+      // La grenade, l'arme la plus lente du catalogue : sur la dague (7 ticks),
+      // `round(7 * 0,92)` et `round(7 * 0,84)` valent tous deux 6 et
+      // l'empilement serait invisible — voir le test de monotonie qui suit.
+      const GRENADE = 4;
+      const base = weaponOf(GRENADE).cooldownTicks;
+
+      /** Intervalle constate entre deux salves de la grenade, avec `cartes` cartes. */
+      function intervalle(cartes: number): number {
+        const room = new Room();
+        room.join(1);
+        room.grantCard(1, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 });
+        prend(room, CADENCE, cartes);
+        // 300 ticks : trois intervalles de grenade, et surtout SOUS la periode
+        // du generateur de vagues (voir `ticksDeSalves`).
+        const tirs = ticksDeSalves(room, 300).get(GRENADE) ?? [];
+        expect(tirs.length).toBeGreaterThanOrEqual(3);
+        const ecarts = tirs.slice(1).map((t, i) => t - (tirs[i] ?? 0));
+        // Un intervalle unique : la cadence est stable, pas moyennee.
+        expect(new Set(ecarts).size).toBe(1);
+        return ecarts[0] ?? 0;
+      }
+
+      const attendu = (cartes: number): number =>
+        Math.max(1, Math.round(base * (1 - magnitude * cartes)));
+
+      expect(intervalle(0)).toBe(attendu(0));
+      expect(intervalle(1)).toBe(attendu(1));
+      // **Le coeur de la tache.** Le modele Risk of Rain veut que CHAQUE carte
+      // ajoute son bonus. Un code qui regarderait « ce passif est possede »
+      // sans compter les exemplaires donnerait le meme intervalle qu'a une
+      // carte — et un test qui se contenterait de « c'est plus rapide qu'a
+      // zero carte » ne le verrait pas.
+      expect(intervalle(2)).toBe(attendu(2));
+      expect(intervalle(2)).toBeLessThan(intervalle(1));
+      expect(intervalle(1)).toBeLessThan(intervalle(0));
+      // Et le second pas retire bien autant que le premier, a l'arrondi pres.
+      const premierPas = intervalle(0) - intervalle(1);
+      const secondPas = intervalle(1) - intervalle(2);
+      expect(Math.abs(premierPas - secondPas)).toBeLessThanOrEqual(1);
+    });
+
+    it('la cadence ne se degrade JAMAIS quand on prend une carte de plus', () => {
+      // ⚠️ Le corollaire du test precedent, et le vrai risque de l'arrondi :
+      // sur une arme rapide l'empilement peut ne rien changer, mais il ne doit
+      // jamais RETIRER de cadence. Balaie tout le catalogue, de zero a douze
+      // cartes — au-dela de la douzieme, le plafond `MAX_FIRE_RATE_BONUS`
+      // aplatit la courbe, ce qui reste monotone.
+      const magnitude = passiveOf(CADENCE).magnitude;
+      for (const arme of WEAPONS) {
+        let precedent = Number.POSITIVE_INFINITY;
+        for (let cartes = 0; cartes <= 12; cartes++) {
+          const recharge = cooldownWithBonus(arme.cooldownTicks, magnitude * cartes);
+          expect(recharge).toBeLessThanOrEqual(precedent);
+          expect(recharge).toBeGreaterThanOrEqual(1);
+          precedent = recharge;
+        }
+      }
+    });
+
+    it('cooldownWithBonus : le plafond et le plancher, chacun sans l autre', () => {
+      // ⚠️ Ces deux gardes se couvrent MUTUELLEMENT par le jeu : tant que le
+      // plafond tient a 0,75, aucune arme du catalogue n'atteint le plancher,
+      // et tant que le plancher tient, retirer le plafond ne casse pas la
+      // monotonie. Les deux mutations survivaient donc a 323 tests. Elles
+      // s'eprouvent ici directement, a des valeurs que le catalogue actuel
+      // n'atteint pas — mais qu'une arme future atteindra.
+
+      // Le PLAFOND : sans lui, un bonus de 5 donnerait une recharge negative,
+      // ramenee a 1 par le plancher — l'arme tirerait a chaque tick.
+      expect(cooldownWithBonus(100, 5)).toBe(25);
+      expect(cooldownWithBonus(100, MAX_FIRE_RATE_BONUS)).toBe(25);
+      // Au-dela du plafond, plus rien ne bouge : la carte suivante est inutile,
+      // et c'est assume.
+      expect(cooldownWithBonus(100, 0.9)).toBe(cooldownWithBonus(100, 0.75));
+
+      // Le PLANCHER : une arme a un seul tick de recharge, au plafond, arrondit
+      // a zero. Une recharge nulle ferait tirer plusieurs fois par tick si la
+      // boucle de tir changeait.
+      expect(cooldownWithBonus(1, MAX_FIRE_RATE_BONUS)).toBe(1);
+      expect(cooldownWithBonus(2, MAX_FIRE_RATE_BONUS)).toBeGreaterThanOrEqual(1);
+
+      // Un bonus negatif ne RALENTIT jamais : `Math.max(bonus, 0)`.
+      expect(cooldownWithBonus(50, -1)).toBe(50);
+    });
+
+    it('deux cartes de vitalite ajoutent DEUX FOIS les points de vie, et soignent d autant', () => {
+      const magnitude = passiveOf(VITALITE).magnitude;
+      const room = new Room();
+      room.join(1);
+      expect(hpOf(room, 1)).toBe(PLAYER_MAX_HP);
+
+      prend(room, VITALITE, 1);
+      expect(hpOf(room, 1)).toBe(PLAYER_MAX_HP + magnitude);
+      prend(room, VITALITE, 1);
+      expect(hpOf(room, 1)).toBe(PLAYER_MAX_HP + magnitude * 2);
+    });
+
+    it('les points de vie depassent 255 sans se replier — le snapshot les porte sur deux octets', () => {
+      // ⚠️ Ce test garde l'elargissement `u8 -> u16` de `SNAPSHOT_PLAYER_BYTES`
+      // (tache 8). Avec un `u8`, huit cartes de vitalite (100 + 160 = 260)
+      // rendaient 4 points de vie au decodage : le joueur passait de presque
+      // trois barres de vie a la mort en un ramassage.
+      const magnitude = passiveOf(VITALITE).magnitude;
+      const cartes = Math.ceil((256 - PLAYER_MAX_HP) / magnitude);
+      const room = new Room();
+      room.join(1);
+      prend(room, VITALITE, cartes);
+
+      const attendu = PLAYER_MAX_HP + magnitude * cartes;
+      expect(attendu).toBeGreaterThan(255);
+      // `hpOf` lit le SNAPSHOT decode, pas l'etat interne : c'est bien le
+      // transport qu'on eprouve ici.
+      expect(hpOf(room, 1)).toBe(attendu);
+    });
+
+    it('deux cartes de fougue font parcourir DEUX FOIS le supplement d une seule', () => {
+      const magnitude = passiveOf(FOUGUE).magnitude;
+
+      function parcours(cartes: number): number {
+        const room = new Room();
+        room.join(1);
+        prend(room, FOUGUE, cartes);
+        const depart = positionOf(room, 1);
+        room.applyInput(1, 1, 127, 0);
+        const TICKS = 60;
+        for (let i = 0; i < TICKS; i++) {
+          room.step(DT);
+        }
+        return positionOf(room, 1).x - depart.x;
+      }
+
+      const sans = parcours(0);
+      const une = parcours(1);
+      const deux = parcours(2);
+
+      const supplement = une - sans;
+      expect(supplement).toBeGreaterThan(0);
+      // La magnitude est en pixels par SECONDE : sur `TICKS` ticks a
+      // `TICK_HZ`, le supplement attendu vaut `magnitude * TICKS / TICK_HZ`.
+      const attendu = (magnitude * 60) / TICK_HZ;
+      // Tolerance d'un pixel : `positionOf` lit le snapshot, ou les positions
+      // sont arrondies a l'entier.
+      expect(deux - sans).toBeGreaterThanOrEqual(supplement * 2 - 1);
+      expect(deux - sans).toBeLessThanOrEqual(supplement * 2 + 1);
+      // Et le supplement vaut bien la magnitude annoncee, sur une seconde
+      // pleine de deplacement.
+      expect(supplement).toBeCloseTo(attendu, 0);
+    });
+
+    it('deux cartes de puissance doublent le bonus de degats porte par le projectile', () => {
+      // ⚠️ **Ce nombre ne change AUCUNE issue de combat aujourd'hui** : la
+      // pietaille n'a pas de reserve de points de vie (voir `resolveCombat`),
+      // un projectile qui touche est toujours letal. Le bonus est neanmoins
+      // calcule et transporte, et c'est ici qu'on le verifie — sans quoi les
+      // deux passifs de degats du catalogue seraient du code mort silencieux.
+      const magnitude = passiveOf(PUISSANCE).magnitude;
+      const base = weaponOf(BASE_WEAPON_ID).damage;
+
+      function degatsDuPremierTir(cartes: number): number {
+        const room = new Room();
+        room.join(1);
+        prend(room, PUISSANCE, cartes);
+        const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+        room.applyInput(1, 1, 0, 0, 127, 0);
+        room.step(DT);
+        const appel = spy.mock.calls[0];
+        spy.mockRestore();
+        if (!appel) {
+          throw new Error('aucune salve');
+        }
+        return appel[6] ?? base;
+      }
+
+      expect(degatsDuPremierTir(0)).toBeCloseTo(base, 5);
+      expect(degatsDuPremierTir(1)).toBeCloseTo(base * (1 + magnitude), 5);
+      expect(degatsDuPremierTir(2)).toBeCloseTo(base * (1 + magnitude * 2), 5);
+    });
+
+    it('les passifs d un joueur ne changent rien pour son voisin', () => {
+      // Un `Loadout` par joueur, et pas un pour le salon : sans ca, la
+      // premiere carte prise en cooperatif profiterait a toute l'equipe.
+      const room = new Room();
+      room.join(1);
+      room.join(2);
+      prend(room, FOUGUE, 3);
+      expect(room.loadoutOf(1)?.bonus('speed')).toBe(passiveOf(FOUGUE).magnitude * 3);
+      expect(room.loadoutOf(2)?.bonus('speed')).toBe(0);
+    });
   });
 
   it('la carte disputee ne va qu au gagnant : le perdant ne recoit rien de ce tour', () => {

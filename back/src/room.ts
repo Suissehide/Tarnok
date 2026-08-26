@@ -1,4 +1,4 @@
-import { CARD, drawSpread } from '@shared/cards';
+import { CARD, type Card, drawSpread } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -60,6 +60,11 @@ export interface PlayerState extends ContactPlayer {
   lastSeq: number;
   /** Points de vie, personnels (voir `combat.ts`). */
   hp: number;
+  /**
+   * Points de vie maximum de CE joueur : `PLAYER_MAX_HP` plus le bonus des
+   * cartes de vitalite empilees. Personnel, comme `hp`.
+   */
+  maxHp: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
   contactInvulnTicks: number;
   /**
@@ -148,6 +153,29 @@ const SPAWN_OFFSETS: readonly (readonly [number, number])[] = [
 
 /** Un axe d'entree tient sur un octet signe : on le ramene dans [-1, 1]. */
 const AXIS_SCALE = 1 / 127;
+
+/**
+ * Reduction maximale de cadence, toutes cartes « cadence » confondues.
+ *
+ * ⚠️ Le bonus est une FRACTION retiree (0,08 par carte) : treize cartes
+ * donneraient 1,04, donc une recharge negative — l'arme tirerait a chaque
+ * tick, et une quatorzieme ne changerait plus rien puisque le plancher d'un
+ * tick est deja atteint. Plafonner ici garde la courbe lisible et laisse la
+ * derniere carte utile.
+ */
+export const MAX_FIRE_RATE_BONUS = 0.75;
+
+/**
+ * Recharge d'une arme apres application des passifs de cadence.
+ *
+ * Le plancher d'UN tick n'est pas cosmetique : a zero, `tick - lastFireTick`
+ * vaut toujours au moins la recharge et l'arme tirerait plusieurs fois par
+ * tick si la boucle changeait.
+ */
+export function cooldownWithBonus(base: number, bonus: number): number {
+  const reduction = Math.min(Math.max(bonus, 0), MAX_FIRE_RATE_BONUS);
+  return Math.max(1, Math.round(base * (1 - reduction)));
+}
 
 /**
  * Capacite de la file de projectiles du salon.
@@ -358,6 +386,7 @@ export class Room {
       aimY: 0,
       lastSeq: 0,
       hp: PLAYER_MAX_HP,
+      maxHp: PLAYER_MAX_HP,
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout: new Loadout(),
@@ -477,8 +506,11 @@ export class Room {
     const scaledDt = dt * movementScale;
 
     for (const p of this.#players.values()) {
-      p.x = clamp(p.x + p.moveX * PLAYER_SPEED * scaledDt, 0, MAP_SIZE);
-      p.y = clamp(p.y + p.moveY * PLAYER_SPEED * scaledDt, 0, MAP_SIZE);
+      // Vitesse propre a ce joueur : les cartes « fougue » empilees s'ajoutent
+      // a `PLAYER_SPEED`, en pixels monde par seconde.
+      const speed = PLAYER_SPEED + p.loadout.bonus('speed');
+      p.x = clamp(p.x + p.moveX * speed * scaledDt, 0, MAP_SIZE);
+      p.y = clamp(p.y + p.moveY * speed * scaledDt, 0, MAP_SIZE);
     }
 
     // Arrondies, comme sur le fil (constat C1.4) : le client ne connaitra
@@ -621,13 +653,21 @@ export class Room {
     }
   }
 
-  /** Tire une salve de cette arme si sa propre recharge est faite. */
+  /**
+   * Tire une salve de cette arme si sa propre recharge est faite, passifs
+   * empiles appliques (tache 8).
+   *
+   * Le catalogue `WEAPONS` n'est JAMAIS modifie : les bonus se calculent ici,
+   * a chaque tir, a partir de l'inventaire du joueur.
+   */
   #fireOne(p: PlayerState, weaponId: number, tick: number): void {
     const weapon = weaponOf(weaponId);
-    if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < weapon.cooldownTicks) {
+    const cooldown = cooldownWithBonus(weapon.cooldownTicks, p.loadout.bonus('fireRate'));
+    if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY);
+    const damage = weapon.damage * (1 + p.loadout.bonus('damage'));
+    this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY, damage);
     p.lastFireTick[weaponId] = tick;
   }
 
@@ -687,7 +727,7 @@ export class Room {
       if (!card || !player) {
         continue;
       }
-      this.#applyCard(player, card.nature, card.refId);
+      this.grantCard(r.playerId, card);
     }
 
     const termine = this.#draft.phase === 'closed';
@@ -702,8 +742,20 @@ export class Room {
     });
   }
 
-  /** Range une carte obtenue dans l'inventaire de son preneur. */
-  #applyCard(player: PlayerState, nature: number, refId: number): void {
+  /**
+   * Range une carte dans l'inventaire de son preneur, et applique ce qui en
+   * decoule immediatement (les points de vie de « vitalite »).
+   *
+   * **C'est le seul chemin par lequel une carte entre dans un inventaire.**
+   * Public pour cette raison : passer par `loadoutOf(id).addPassive(...)`
+   * sauterait le soin, et deux chemins d'entree divergeraient tot ou tard.
+   */
+  grantCard(playerId: number, card: Card): void {
+    const player = this.#players.get(playerId);
+    if (!player) {
+      return;
+    }
+    const { nature, refId } = card;
     switch (nature) {
       case CARD.NEW_WEAPON:
         player.loadout.addWeapon(refId);
@@ -712,9 +764,17 @@ export class Room {
       case CARD.EVOLUTION:
         player.loadout.levelUpWeapon(refId);
         break;
-      case CARD.PASSIVE:
+      case CARD.PASSIVE: {
         player.loadout.addPassive(refId);
+        // ⚠️ Le gain de vie maximum est AUSSI un soin du meme montant. Sans
+        // ca la carte « vitalite » ne ferait rien de perceptible : rien ne
+        // soigne dans cette etape, donc un plafond releve sans les points qui
+        // vont avec ne se verrait qu'apres avoir encaisse des degats.
+        const nouveauMax = PLAYER_MAX_HP + player.loadout.bonus('maxHp');
+        player.hp += nouveauMax - player.maxHp;
+        player.maxHp = nouveauMax;
         break;
+      }
       default:
         break;
     }
