@@ -110,6 +110,11 @@ export const FLOWFIELD_HZ = 10;
  * qui garantit qu'un voisin en interaction est forcement dans la cellule
  * courante ou l'une des huit adjacentes. Les augmenter separement casse la
  * recherche de voisins sans qu'aucun test unitaire ne le voie.
+ *
+ * Reutilise tel quel par `#applyDeoverlap` (tache 22) comme rayon de
+ * chevauchement : la meme notion de « personnelle » que la repulsion de
+ * pilotage decide deja, pas une seconde distance a maintenir en phase avec
+ * la premiere.
  */
 export const SEPARATION_RADIUS = 28;
 
@@ -151,15 +156,50 @@ export const STEERING_RECOMPUTE_TICKS = 9;
  * qu'il y ait 0 ou 1000 voisins). Voir le test « aucun deplacement ne depasse
  * la vitesse propre... » de `shared/horde.test.ts`.
  *
- * 4 est la valeur mesuree (`npm run bench:sep -w back`) : elle donne un saut
- * maximal de 3,2 px a 4000 entites — exactement la vitesse propre du squelette
- * (95 px/s / 30 Hz) — pour 15,9 voisins moyens en regime stable et un cout de
- * 0,21 ms, contre 7,0 voisins et 0,15 ms pour l'ancienne formule additive (qui,
- * elle, pouvait sauter de plusieurs dizaines de px par tick). Contrepartie
- * assumee : les monstres se chevauchent davantage — c'est le prix de ne jamais
- * etre ejecte.
+ * ⚠️ **4 s'est revele trop haut (tache 22).** A cette valeur, la repulsion
+ * domine le champ 4 contre 1 : mesure sur 800 entites dispersees autour du
+ * joueur pendant 10 s, 289 sur 800 s'eloignaient de leur cible a tout
+ * instant et la horde se stabilisait a 209 px de rayon SANS JAMAIS ARRIVER —
+ * « ils s'arretent de bouger », « si je ne bouge plus, plus aucun monstre ne
+ * bouge ». **0,5** est la valeur qui laisse le champ dominer : approche a 58 %
+ * de la vitesse propre au lieu de 41 %, et le nombre de fuyards tombe de 289 a
+ * 155. Seule, cette valeur fait converger la horde vers un TAS (462 sur 800 a
+ * moins de 34 px les uns des autres, empiles) — c'est `DEOVERLAP_MAX_PX`,
+ * PAS ce poids, qui defait cet empilement. Voir le rapport de la tache 22.
  */
-export const STEERING_REPULSION_WEIGHT = 4;
+export const STEERING_REPULSION_WEIGHT = 0.5;
+
+/**
+ * Deplacement maximal, en pixels, qu'une correction de position peut
+ * infliger a UNE SEULE entite en UN SEUL tick pour defaire un chevauchement
+ * avec un voisin (tache 22, `Horde` — `#applyDeoverlap`).
+ *
+ * A `STEERING_REPULSION_WEIGHT = 0,5`, le pilotage seul fait converger 462
+ * entites sur 800 a moins de `CONTACT_RADIUS` les unes des autres — un TAS,
+ * pas une horde, chacune sur 8 px² : « quand ils se contournent, souvent ils
+ * reculent » n'etait qu'une moitie du symptome, l'autre etant que le
+ * pilotage DEVIE pour eviter un chevauchement mais ne le RESOUT jamais. Cette
+ * borne est ce qui manquait : une correction de POSITION, pas de vitesse,
+ * qui rapproche deux entites qui se chevauchent de leur distance de confort
+ * (`SEPARATION_RADIUS`) sans jamais depasser ces quelques pixels par tick.
+ *
+ * ⚠️ **La borne interdit la propulsion, elle n'est pas un reglage a monter.**
+ * Une piste ecartee par la mesure (propager l'arret de voisin en voisin pour
+ * former un mur) figeait les 800 entites a 300 px de rayon median — l'arret
+ * se propageait a travers toute la horde. Une borne trop large romprait le
+ * meme invariant que `STEERING_REPULSION_WEIGHT` : `#advanceByVelocity`
+ * garantit deja qu'aucune entite ne se deplace plus vite que sa propre
+ * vitesse en un tick, et cette correction s'AJOUTE a ce deplacement — elle
+ * doit donc rester petite devant lui pour ne jamais lire, a l'ecran, comme
+ * une propulsion.
+ *
+ * 4 est la valeur mesuree (`npm run bench:sep -w back`) : combinee au poids
+ * de 0,5 ci-dessus, elle fait passer le nombre d'entites a moins de
+ * `CONTACT_RADIUS` de 462 (empilees) a 51 (un ANNEAU autour du joueur), le
+ * rayon median de 33 a 116 px, et les fuyards de 155 a 23 — pour un saut
+ * maximal observe de 7,2 px (la vitesse propre plus cette borne), jamais plus.
+ */
+export const DEOVERLAP_MAX_PX = 4;
 
 /**
  * Profondeur de l'historique de horde, en ticks, pour le rejeu du §3.2.

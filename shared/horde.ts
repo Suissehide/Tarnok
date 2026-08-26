@@ -1,6 +1,7 @@
 import { archetypeOf } from './archetypes';
 import {
   CONTACT_RADIUS,
+  DEOVERLAP_MAX_PX,
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PER_WAVE,
@@ -157,6 +158,21 @@ export class Horde {
   readonly #cellIdx: Int32Array;
   readonly #order: Int32Array;
 
+  /**
+   * Tampon d'accumulation de la correction de position (tache 22,
+   * `#applyDeoverlap`) — pre-alloue une fois, jamais un objet par entite ni
+   * un tableau reconstruit a chaque tick. Une entite ACCUMULE ici la somme de
+   * ses chevauchements avec chaque voisin AVANT que quoi que ce soit ne soit
+   * ecrit dans `x`/`y` : appliquer une correction des qu'elle est calculee,
+   * pendant la meme boucle, ferait deja bouger le voisin j avant que i ait fini
+   * de considerer TOUS ses voisins, et le resultat dependrait de l'ordre du
+   * tableau — deux clients qui compactent differemment apres des morts
+   * (`#removeAt`) obtiendraient alors des positions differentes pour un
+   * chevauchement pourtant identique. Voir `#applyDeoverlap`.
+   */
+  readonly #correctionX: Float32Array;
+  readonly #correctionY: Float32Array;
+
   constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
@@ -176,6 +192,9 @@ export class Horde {
     this.#cursor = new Int32Array(cells + 1);
     this.#cellIdx = new Int32Array(capacity);
     this.#order = new Int32Array(capacity);
+
+    this.#correctionX = new Float32Array(capacity);
+    this.#correctionY = new Float32Array(capacity);
   }
 
   get count(): number {
@@ -429,9 +448,19 @@ export class Horde {
    * Recalcule d'abord la trajectoire (direction du champ melangee a la
    * repulsion, puis remise a l'echelle de la vitesse propre — tache 21) des
    * entites dont c'est le tour, PUIS avance tout le monde le long de sa
-   * vitesse tenue — dans cet ordre, pour que l'avancement de ce tick utilise
-   * deja la vitesse fraichement recalculee plutot que celle d'il y a
-   * `STEERING_RECOMPUTE_TICKS` pas.
+   * vitesse tenue, PUIS defait les chevauchements restants par une correction
+   * de position bornee (tache 22, `#applyDeoverlap`) — dans cet ordre, pour
+   * que l'avancement de ce tick utilise deja la vitesse fraichement
+   * recalculee plutot que celle d'il y a `STEERING_RECOMPUTE_TICKS` pas, et
+   * que la correction de chevauchement s'applique a la geometrie REELLE du
+   * tick (positions apres avancement), pas a celle d'avant.
+   *
+   * ⚠️ **`#applyDeoverlap` s'execute a CHAQUE tick, jamais seulement au
+   * recalcul de trajectoire.** Un chevauchement est un fait geometrique du
+   * PRESENT, pas une decision tenue `STEERING_RECOMPUTE_TICKS` pas comme la
+   * direction de pilotage : le geler jusqu'au prochain recalcul laisserait
+   * des entites deja arretees (`stopped`, tache 17.2) empilees au meme point
+   * jusqu'a 300 ms, exactement le symptome que la tache 22 corrige.
    *
    * ⚠️ **`dt <= 0` est un NO-OP STRICT, y compris pour `vx`/`vy`.** Avant la
    * tache 19, un `dt` nul rendait deja `#advance` sans effet (vitesse
@@ -452,6 +481,7 @@ export class Horde {
     if (dt > 0) {
       this.#recomputeSteering(tick, fields);
       this.#advanceByVelocity(0, this.#count, dt);
+      this.#applyDeoverlap(0, this.#count);
     }
     this.#recordFieldRevisions(fields);
   }
@@ -467,11 +497,13 @@ export class Horde {
    * differents et prennent des routes differentes. Mesure : la derive croit
    * lineairement a ~70 px/s, soit 694 px apres dix secondes.
    *
-   * ⚠️ **Un seul modele de mouvement (tache 20).** Rattraper un pas manque
-   * doit reproduire EXACTEMENT ce que `step` aurait fait ce tick-la pour ces
-   * memes entites : recalculer leur trajectoire si c'est leur tour de phase
-   * (`#recomputeSteering`), puis avancer selon la vitesse tenue
-   * (`#advanceByVelocity`) — jamais une avance directe le long du champ
+   * ⚠️ **Un seul modele de mouvement (tache 20, etendu tache 22).** Rattraper
+   * un pas manque doit reproduire EXACTEMENT ce que `step` aurait fait ce
+   * tick-la pour ces memes entites : recalculer leur trajectoire si c'est leur
+   * tour de phase (`#recomputeSteering`), avancer selon la vitesse tenue
+   * (`#advanceByVelocity`), PUIS defaire les chevauchements restants
+   * (`#applyDeoverlap`, tache 22 — s'applique a CHAQUE pas rattrape, pas
+   * seulement au dernier) — jamais une avance directe le long du champ
    * (`#advanceAlongField`, supprimee). Avant la tache 19, les deux chemins
    * (le rattrapage et la boucle normale) suivaient tous deux le champ : ils
    * coincidaient par construction. Depuis que la boucle normale tient une
@@ -540,6 +572,7 @@ export class Horde {
       const tick = order.spawnTick + step;
       this.#recomputeSteering(tick, fields, before, this.#count);
       this.#advanceByVelocity(before, this.#count, dt);
+      this.#applyDeoverlap(before, this.#count);
     }
   }
 
@@ -561,6 +594,118 @@ export class Horde {
       const ey = this.y[i] ?? 0;
       this.x[i] = clamp(ex + (this.vx[i] ?? 0) * dt, 0, MAP_SIZE);
       this.y[i] = clamp(ey + (this.vy[i] ?? 0) * dt, 0, MAP_SIZE);
+    }
+  }
+
+  /**
+   * Correction de position BORNEE qui defait les chevauchements entre voisins
+   * (tache 22) — jamais une force ajoutee a la vitesse comme l'ancienne
+   * `STEERING_REPULSION_STRENGTH` (tache 19, additive, supprimee) : ceci
+   * deplace directement `x`/`y`, borne a `DEOVERLAP_MAX_PX` PAR ENTITE ET PAR
+   * TICK, en plus de l'avancement par vitesse que `#advanceByVelocity` vient
+   * de faire.
+   *
+   * ⚠️ **Reutilise la grille de voisins DEJA construite par `#recomputeSteering`
+   * au meme tick** (voir `step`/`spawnCatchingUp`, qui appellent toujours les
+   * deux dans cet ordre) — jamais reconstruite ici. Cette grille reflete les
+   * positions D'AVANT `#advanceByVelocity` ; l'ecart entre la cellule d'un
+   * voisin et sa position reelle apres ce pas est de l'ordre de sa vitesse
+   * propre par tick, tres en-deca de `SEPARATION_CELL` : sans consequence
+   * pratique, et reconstruire doublerait le cout de cette passe pour rien
+   * (voir le rapport de la tache 22, `bench:sep`).
+   *
+   * ⚠️ **Accumule dans `#correctionX`/`#correctionY` PUIS applique en bloc** —
+   * jamais position par position pendant le calcul : sans quoi une entite j
+   * deja deplacee changerait la correction que i, visite ensuite, calculerait
+   * pour le MEME chevauchement, et le resultat dependrait de l'ordre du
+   * tableau. Deux clients qui compactent differemment apres des morts
+   * (`#removeAt`) verraient alors deux resultats differents pour un
+   * chevauchement pourtant identique — la meme discipline que le reste de ce
+   * fichier (`kill`, `#recomputeSteering`).
+   *
+   * S'applique aussi aux entites `stopped` (tache 17.2) : DELIBEREMENT,
+   * puisque ce sont precisement elles qui, sans cette correction, restent
+   * empilees au meme point apres etre arrivees a portee de contact (462 sur
+   * 800, mesure). Les repousser les unes des autres, bornees, est ce qui
+   * forme un ANNEAU autour du joueur au lieu d'un tas. `#advanceByVelocity`
+   * continue, lui, de ne jamais faire AVANCER une entite arretee : les deux
+   * regles ne se contredisent pas — l'une porte sur le deplacement par
+   * vitesse, l'autre sur la resolution d'un chevauchement geometrique du
+   * present.
+   *
+   * `from`/`to` restreint QUELLES entites RECOIVENT une correction ce tick-la
+   * — meme convention que `#advanceByVelocity` et `#recomputeSteering` : les
+   * entites hors plage restent des voisins valides (on peut se pousser LOIN
+   * D'ELLES), seule LEUR PROPRE position ne change pas via cet appel.
+   */
+  #applyDeoverlap(from: number, to: number): void {
+    if (to <= from) {
+      return;
+    }
+    this.#correctionX.fill(0, from, to);
+    this.#correctionY.fill(0, from, to);
+
+    const r = SEPARATION_RADIUS;
+    const r2 = r * r;
+    const cols = this.#gridCols;
+
+    for (let i = from; i < to; i++) {
+      const xi = this.x[i] ?? 0;
+      const yi = this.y[i] ?? 0;
+      let pushX = 0;
+      let pushY = 0;
+
+      const cx = Math.min(cols - 1, Math.max(0, Math.floor(xi / SEPARATION_CELL)));
+      const cy = Math.min(cols - 1, Math.max(0, Math.floor(yi / SEPARATION_CELL)));
+      for (let oy = -1; oy <= 1; oy++) {
+        for (let ox = -1; ox <= 1; ox++) {
+          const nx = cx + ox;
+          const ny = cy + oy;
+          if (nx < 0 || ny < 0 || nx >= cols || ny >= cols) {
+            continue;
+          }
+          const c = ny * cols + nx;
+          const cellFrom = this.#cellStart[c] ?? 0;
+          const cellTo = this.#cellStart[c + 1] ?? 0;
+          for (let k = cellFrom; k < cellTo; k++) {
+            const j = this.#order[k] ?? 0;
+            if (j === i) {
+              continue;
+            }
+            const dx = xi - (this.x[j] ?? 0);
+            const dy = yi - (this.y[j] ?? 0);
+            const d2 = dx * dx + dy * dy;
+            // `d2 === 0` : meme convention que `#recomputeSteering` — un
+            // chevauchement EXACTEMENT total n'a pas de direction a en
+            // deduire sans arbitraire, voir sa doc pour le meme choix.
+            if (d2 > r2 || d2 === 0) {
+              continue;
+            }
+            const d = Math.sqrt(d2);
+            const overlap = r - d;
+            // Moitie chacun : si i ET j executent ce meme calcul (l'un pour
+            // l'autre), leurs deux corrections se combinent pour ecarter la
+            // paire exactement de `overlap`, pas du double.
+            pushX += (dx / d) * overlap * 0.5;
+            pushY += (dy / d) * overlap * 0.5;
+          }
+        }
+      }
+      this.#correctionX[i] = pushX;
+      this.#correctionY[i] = pushY;
+    }
+
+    for (let i = from; i < to; i++) {
+      let cx = this.#correctionX[i] ?? 0;
+      let cy = this.#correctionY[i] ?? 0;
+      const mag = Math.sqrt(cx * cx + cy * cy);
+      if (mag > DEOVERLAP_MAX_PX) {
+        const scale = DEOVERLAP_MAX_PX / mag;
+        cx *= scale;
+        cy *= scale;
+      }
+      this.x[i] = clamp((this.x[i] ?? 0) + cx, 0, MAP_SIZE);
+      this.y[i] = clamp((this.y[i] ?? 0) + cy, 0, MAP_SIZE);
     }
   }
 

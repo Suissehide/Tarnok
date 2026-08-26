@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { archetypeOf } from './archetypes';
 import {
   CONTACT_RADIUS,
+  DEOVERLAP_MAX_PX,
   FLOWFIELD_HZ,
   MAX_ENTITIES,
   STEERING_RECOMPUTE_TICKS,
@@ -831,18 +832,27 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     expect(firstNonZeroTick).toBe(phaseParIdentite);
   });
 
-  it('aucun deplacement ne depasse la vitesse propre en un tick, meme entassee (tache 21 : devier, pas propulser)', () => {
+  it('aucun deplacement ne depasse la vitesse propre PLUS la borne de de-chevauchement en un tick, meme entassee (taches 21 et 22)', () => {
     // ⚠️ Le champ doit rester NON NUL ici, contrairement a l'ancien test
     // « plafond de repulsion » (tache 19) qui isolait la repulsion en posant
     // les entites PILE sur leur cible. Depuis la tache 21, la repulsion est
-    // ponderee par un poids SANS DIMENSION (`STEERING_REPULSION_WEIGHT = 4`,
+    // ponderee par un poids SANS DIMENSION (`STEERING_REPULSION_WEIGHT = 0,5`,
     // bien plus petit que l'ancienne raideur en px/s) : sur un champ nul, meme
     // une regression qui reintroduirait l'ADDITION (`vx = fx*vitesse +
-    // pushX*POIDS`) resterait sous la borne (poids max 4 px/s, negligeable
+    // pushX*POIDS`) resterait sous la borne (poids max 0,5 px/s, negligeable
     // devant les ~95 px/s d'une vitesse propre) et ce test ne verrait RIEN.
     // Avec un champ non nul et des voisins places pour pousser dans le MEME
     // sens que lui, la regression additive fait depasser la borne meme avec
     // ce petit poids — voir la mutation en tete de ce fichier de tests.
+    //
+    // Tache 22 : le meme entassement — deliberement dense, des voisins a 2 px
+    // les uns des autres, tous BIEN EN DECA de `SEPARATION_RADIUS` (28 px) —
+    // sert AUSSI a saturer `#applyDeoverlap` : la borne totale a verifier
+    // n'est donc plus `vitesse_propre * dt` seule, mais CETTE valeur PLUS
+    // `DEOVERLAP_MAX_PX`. Sans un entassement aussi serre, la correction de
+    // position resterait sous sa propre borne sans jamais l'atteindre, et ce
+    // test ne prouverait rien sur elle — d'ou l'exigence de la tache : « a
+    // n'importe quelle densite », construit sur un tas deliberement dense.
     const ORIGIN_X = 1000;
     const ORIGIN_Y = 3000;
     const N = 11; // une « victime » plus dix voisins presque colles, tous derriere elle.
@@ -880,7 +890,12 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     horde.retarget([0, 0, 0, 0], [0, 0, 0, 0]);
 
     const ownSpeed = archetypeOf(0).speed;
-    const BOUND = ownSpeed * DT * 1.0001; // marge flottante minime.
+    // Tache 22 : deplacement max legitime en UN tick = avancement par vitesse
+    // (borne intrinseque, tache 21) PLUS correction de de-chevauchement
+    // (borne explicite, tache 22) — les deux s'appliquent au MEME tick, dans
+    // cet ordre (voir `Horde.step`), et peuvent donc s'additionner.
+    const COMBINED_BOUND = ownSpeed * DT + DEOVERLAP_MAX_PX;
+    const BOUND = COMBINED_BOUND + 1e-3; // marge flottante minime.
     let maxDisplacement = 0;
 
     for (let tick = 0; tick < STEERING_RECOMPUTE_TICKS + 2; tick++) {
@@ -899,9 +914,12 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       }
     }
 
-    // Le test ne prouverait rien sur la borne si l'entassement n'avait jamais
-    // approche la vitesse propre.
-    expect(maxDisplacement).toBeGreaterThan(BOUND * 0.5);
+    // Le test ne prouverait rien sur LA SOMME des deux bornes si l'entassement
+    // n'avait jamais fait approcher le deplacement observe de leur total —
+    // une simple regression qui plafonnerait `#applyDeoverlap` a une valeur
+    // trop petite (ou la supprimerait) resterait invisible a un seuil moins
+    // exigeant que celui-ci.
+    expect(maxDisplacement).toBeGreaterThan(COMBINED_BOUND * 0.9);
   });
 
   it('un monstre pile sur sa cible et entoure symetriquement ne produit jamais de NaN (tache 21 : cas degenere)', () => {
@@ -1070,9 +1088,18 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       [TARGET_Y, TARGET_Y, TARGET_Y, TARGET_Y],
     );
 
-    // Assez de pas pour que CHAQUE creneau ait recalcule au moins une fois,
-    // quelle que soit sa phase.
-    for (let tick = 0; tick < 2 * STEERING_RECOMPUTE_TICKS; tick++) {
+    // Assez de pas pour que CHAQUE creneau ait recalcule AU MOINS UNE FOIS,
+    // pas plus : depuis la tache 22, `Horde.step` ecarte aussi les deux
+    // entites d'une correction de position bornee (`#applyDeoverlap`, EN
+    // PLUS de la repulsion de pilotage mesuree ici) — courir jusqu'a
+    // `2 * STEERING_RECOMPUTE_TICKS` comme avant les laisserait largement
+    // depasser `SEPARATION_RADIUS`, la repulsion s'annulerait ALORS
+    // legitimement (elles ne sont plus voisines), et le test ne mesurerait
+    // plus la meme chose. On s'arrete donc au premier recalcul de CHAQUE
+    // creneau.
+    const phase0 = horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS;
+    const phase1 = horde.entityIdAt(1) % STEERING_RECOMPUTE_TICKS;
+    for (let tick = 0; tick <= Math.max(phase0, phase1); tick++) {
       horde.step(DT, fields, tick);
     }
 
@@ -1352,6 +1379,89 @@ describe('tache 20 : un seul modele de mouvement pour le rattrapage', () => {
 
       // Le test ne prouverait rien si la horde n'avait jamais bouge.
       expect(meanDistanceTo(onTime, 3000, 3000)).toBeGreaterThan(0);
+    },
+  );
+});
+
+describe('tache 22 : la horde forme un anneau plutot que de s empiler', () => {
+  it(
+    'une horde lachee sur un joueur immobile s etale en anneau : bien moins ' +
+      'que les 462 entites empilees sans correction, et la horde a reellement converge',
+    () => {
+      // Mutation visee : supprimer `#applyDeoverlap` (ou vider sa borne a
+      // zero) laisse le pilotage seul faire converger la horde vers un TAS —
+      // mesure : 462 entites sur 800 a moins de `CONTACT_RADIUS` les unes des
+      // autres, sur 8 px² chacune (rapport de la tache 22). Un test qui ne
+      // verifierait QUE ce compte serait aveugle a une regression OPPOSEE :
+      // `STEERING_REPULSION_WEIGHT` remis a 4 ferait STAGNER la horde loin du
+      // joueur (rayon median mesure a 209 px, elle n'arrive jamais) — ce qui
+      // produit AUSSI un compte faible dans le rayon de contact, pour une
+      // raison inverse. D'ou la seconde assertion : le rayon median doit
+      // rester petit, preuve que la horde est bien ARRIVEE et pas seulement
+      // dispersee au loin.
+      const N = 800;
+      const PLAYER_X = 3000;
+      const PLAYER_Y = 3000;
+      const TOTAL_TICKS = 300; // 10 s a TICK_HZ = 30, meme duree que la mesure du rapport.
+      // Valeurs mesurees dans le rapport de la tache 22 (repulsion seule,
+      // sans correction de position) : le point de comparaison, pas une
+      // borne que ce test cherche a reproduire au pixel pres.
+      const STACKED_COUNT_WITHOUT_CORRECTION = 462;
+      const STALL_RADIUS_AT_OLD_WEIGHT = 209;
+
+      const horde = new Horde(N);
+      const fields = fieldsTowards(PLAYER_X, PLAYER_Y);
+      horde.spawn(
+        order({ count: N, formation: FORMATION.SCATTER, anchorX: PLAYER_X, anchorY: PLAYER_Y }),
+        fields[0],
+      );
+
+      const history = new PlayerHistory();
+      const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+      const px = [PLAYER_X, PLAYER_X, PLAYER_X, PLAYER_X];
+      const py = [PLAYER_Y, PLAYER_Y, PLAYER_Y, PLAYER_Y];
+
+      for (let tick = 0; tick < TOTAL_TICKS; tick++) {
+        history.record(tick, px, py);
+        if (tick % stepsPerField === 0) {
+          const seen = history.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            horde.retarget(seen.x, seen.y);
+          }
+        }
+        horde.step(DT, fields, tick);
+      }
+
+      const radii: number[] = [];
+      let insideContact = 0;
+      for (let i = 0; i < horde.count; i++) {
+        const r = Math.hypot((horde.x[i] ?? 0) - PLAYER_X, (horde.y[i] ?? 0) - PLAYER_Y);
+        radii.push(r);
+        if (r <= CONTACT_RADIUS) {
+          insideContact++;
+        }
+      }
+      radii.sort((a, b) => a - b);
+      const median = radii[Math.floor(radii.length / 2)] ?? 0;
+
+      process.stdout.write(
+        `anneau (tache 22) : ${insideContact}/${N} a moins de ${CONTACT_RADIUS} px, ` +
+          `rayon median ${median.toFixed(1)} px\n`,
+      );
+
+      // Bien moins que le tas mesure sans correction de position — la moitie
+      // suffit a distinguer un anneau d'un tas, sans etre fragile au bruit
+      // d'un tirage particulier.
+      expect(insideContact).toBeLessThan(STACKED_COUNT_WITHOUT_CORRECTION / 2);
+      // Et la horde a REELLEMENT converge : nettement en deca du rayon ou
+      // elle stagnait a l'ancien poids de repulsion (209 px, sans jamais
+      // arriver) — mesure ici autour de 121 px, marge confortable sous les
+      // 157 px (75 % du rayon de stagnation) sans coller au pixel pres a une
+      // mesure ponctuelle.
+      expect(median).toBeLessThan(STALL_RADIUS_AT_OLD_WEIGHT * 0.75);
     },
   );
 });
