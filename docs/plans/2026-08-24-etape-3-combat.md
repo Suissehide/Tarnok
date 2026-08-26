@@ -2388,7 +2388,29 @@ git commit -m "feat(shared): lire le champ de flux par interpolation"
 
 ---
 
-## Tâche 26 : l'anneau mort autour du joueur
+## Tâche 26 : l'anneau mort autour du joueur — ⛔ SANS OBJET
+
+> **Fermée sans être implémentée.** La tâche 25 (lecture interpolée du champ) l'a comblé en
+> effet de bord, et la mesure le confirme après coup :
+>
+> ```
+> 25020 positions autour du joueur, hors portee de contact :
+>   direction NULLE            : 0  (0,0 %)
+>   direction qui ELOIGNE      : 0  (0,0 %)
+>   distance max ou nulle      : 0 px   (etait 79 px)
+> ```
+>
+> Le `(0, 0)` de la cellule cible se mélange désormais aux trois cellules voisines, qui portent
+> une vraie direction : toute position hors portée de contact reçoit une direction qui rapproche.
+>
+> **Mesuré avant de dispatcher, précisément pour ça.** Implémenter aurait ajouté du code et un
+> risque pour corriger un défaut déjà corrigé.
+>
+> Le diagnostic reste ci-dessous : il documente la cause de « plus personne ne bouge tant que je
+> ne bouge pas », et il servira de test de non-régression si l'interpolation était un jour
+> remise en cause.
+
+### Le diagnostic d'origine
 
 **Origine : l'auteur, et sa description contenait le diagnostic.** « Ça arrive quand je joue, et
 aléatoirement à un endroit précis ça fait ça, le jeu continue de tourner mais tant que je ne
