@@ -2535,3 +2535,45 @@ git commit -m "fix(shared): un joueur sur un obstacle ne doit pas vider le champ
 > arrive — un joueur poussé, téléporté ou apparaissant sur un rocher ne doit jamais figer la
 > carte.
 
+---
+
+## Tâche 28 : les obstacles ne sont pas dessinés
+
+**Origine : l'auteur, et c'est l'information qui manquait.** « Ah y'a des rochers, pour moi la
+map est complètement noire. »
+
+`front/src/render/stage.ts` ne dessine que `mapBorder()` — une grille et un cadre. **Les
+obstacles ne sont jamais rendus.** Le client les génère pourtant : `client.ts` appelle
+`generateObstacles(msg.mapSeed, …)` pour alimenter son champ de flux, puis n'en fait rien
+visuellement.
+
+Le joueur évolue donc sur une carte où **5,7 % du terrain** est :
+- infranchissable pour les monstres,
+- invisible pour lui,
+- et traversable par lui.
+
+C'est la raison pour laquelle le blocage de la tâche 27 était irreproductible : il faut marcher
+sur un rocher qu'on ne voit pas.
+
+> **Ce que ça dit de la vérification.** Six tâches ont cherché ce défaut dans l'évitement entre
+> monstres. Aucune mesure ne pouvait le trouver, parce que toutes portaient sur la simulation —
+> où les obstacles existent bel et bien. Il fallait quelqu'un qui **regarde l'écran** et dise
+> « la carte est noire ».
+
+- [ ] **Étape 1 : dessiner les obstacles**, à partir du même masque que celui du champ de flux,
+  reconstruit depuis `mapSeed`. Une seule source : si le rendu régénérait le masque autrement,
+  on afficherait des rochers là où la simulation n'en a pas.
+
+- [ ] **Étape 2 : un seul objet de rendu, pas un par cellule.** 506 cellules bloquées ; le §4.3
+  est catégorique sur le coût d'un objet par entité. La carte est statique — la dessiner une fois
+  suffit.
+
+- [ ] **Étape 3 : un test.** Le rendu consulte le **même masque** que le champ de flux. Mutation :
+  décaler le masque d'une cellule doit le faire échouer.
+
+- [ ] **Étape 4 : commit**
+
+```bash
+git commit -m "feat(front): dessiner les obstacles de la carte"
+```
+
