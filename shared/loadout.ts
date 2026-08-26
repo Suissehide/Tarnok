@@ -56,8 +56,8 @@ export class Loadout {
   /** Nombre de passifs DISTINCTS possedes — jamais le nombre de cartes prises. */
   get passiveSlotsUsed(): number {
     let n = 0;
-    for (let id = 0; id < this.#passiveStacks.length; id++) {
-      if ((this.#passiveStacks[id] ?? 0) > 0) {
+    for (const stacks of this.#passiveStacks) {
+      if (stacks > 0) {
         n++;
       }
     }

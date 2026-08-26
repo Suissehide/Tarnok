@@ -15,7 +15,6 @@ import { PASSIVES } from './passives';
 const ARME_A = 1;
 const ARME_B = 2;
 const PASSIF_A = 1;
-const PASSIF_B = 2;
 
 describe('Loadout — les armes', () => {
   it('refuse la meme arme deux fois : l exclusivite du §6.2 est binaire', () => {
@@ -62,7 +61,9 @@ describe('Loadout — les armes', () => {
 describe('Loadout — les passifs empilent', () => {
   it('empile : deux cartes du meme passif doublent le bonus', () => {
     const p = PASSIVES[PASSIF_A];
-    if (!p) throw new Error('fixture : passif absent');
+    if (!p) {
+      throw new Error('fixture : passif absent');
+    }
     const l = new Loadout();
 
     l.addPassive(PASSIF_A);
@@ -101,7 +102,9 @@ describe('Loadout — les passifs empilent', () => {
   it('ne melange pas les bonus de deux kinds differents', () => {
     const a = PASSIVES[PASSIF_A];
     const b = PASSIVES.find((x) => x.kind !== a?.kind);
-    if (!a || !b) throw new Error('fixture : deux kinds distincts requis');
+    if (!a || !b) {
+      throw new Error('fixture : deux kinds distincts requis');
+    }
     const l = new Loadout();
     l.addPassive(a.id);
     expect(l.bonus(a.kind)).toBeCloseTo(a.magnitude, 6);
