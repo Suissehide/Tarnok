@@ -143,13 +143,33 @@ Le solo justifie son exception. On monte de niveau toutes les ~14 s en début de
 secondes de gel à chaque fois rendraient une run solo majoritairement figée. Le §7.4 s'inquiète
 déjà de ce coût à quatre joueurs.
 
-`LEVEL_FREEZE_TICKS` passe donc de 60 (2 s, valeur provisoire de l'étape 3) à la fenêtre réelle.
+`LEVEL_FREEZE_TICKS` valait 60 ticks (2 s) à l'étape 3, en attendant cette étape. Il est
+remplacé par deux constantes, parce que ce sont deux durées différentes et non un réglage
+unique :
+
+| Constante | Valeur | Ce qui la contraint |
+| --- | --- | --- |
+| `DRAFT_WINDOW_TICKS` | 600 (20 s) | plafond du §7.4, **à plusieurs seulement** |
+| `DRAFT_REPICK_TICKS` | 150 (5 s) | §7.2 point 4 |
+
+En solo, aucune des deux ne s'applique : le gel dure jusqu'au clic. `LEVEL_RESUME_TICKS` (30, la
+rampe de reprise) est inchangé — il vient de l'étape 3 et fonctionne.
 
 ### 4.4 Deux bornes de robustesse
 
-**Un joueur absent ne bloque jamais.** À l'échéance, le serveur attribue selon un score simple
-(§7.2 point 6). Ce n'est pas un cas rare : un onglet en arrière-plan ne rend rien mais reste
-connecté, et ça arrivera constamment pendant les tests à quatre onglets.
+**Un joueur absent ne bloque jamais.** À l'échéance, le serveur attribue d'office. Ce n'est pas
+un cas rare : un onglet en arrière-plan ne rend rien mais reste connecté, et ça arrivera
+constamment pendant les tests à quatre onglets.
+
+La règle, **déterministe et sans réglage** — c'est ce que le §7.2 point 6 appelle « un score
+simple » :
+
+1. la carte dont il est le seul éligible (`owner` à son identifiant), s'il y en a une —
+   c'est une montée de niveau ou une évolution, personne d'autre n'en veut ;
+2. sinon la première carte libre de l'étalage, dans l'ordre du tirage.
+
+Un joueur absent ne peut donc jamais priver un joueur présent d'une carte qu'il vise : sa
+première option ne concerne que lui, et sa seconde s'efface devant tout jeton posé.
 
 **La repioche ne peut pas boucler.** Si les perdants d'une repioche se reconflictent, pas de
 troisième tour : un gagnant est tiré, les autres reçoivent l'attribution automatique. Sans cette
@@ -232,8 +252,6 @@ non une bascule.
 
 ## 10. Questions laissées ouvertes
 
-- **Le score d'attribution automatique** (§7.2 point 6) reste à définir. « Simple » suffit tant
-  qu'il est déterministe et qu'il ne bloque jamais.
 - **L'équilibrage des passifs** — de combien empile une carte — est un réglage, à faire à l'œil
   comme celui des vagues à l'étape 3.
 - **Le multijoueur réel n'a toujours jamais été joué** (hérité de l'étape 3). Le test modélise
