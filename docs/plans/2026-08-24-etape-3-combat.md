@@ -2386,3 +2386,66 @@ Interpoler la lit comme un champ continu, et la sensibilité s'effondre avec.
 git commit -m "feat(shared): lire le champ de flux par interpolation"
 ```
 
+---
+
+## Tâche 26 : l'anneau mort autour du joueur
+
+**Origine : l'auteur, et sa description contenait le diagnostic.** « Ça arrive quand je joue, et
+aléatoirement à un endroit précis ça fait ça, le jeu continue de tourner mais tant que je ne
+bouge pas, plus personne ne bouge. »
+
+« À un endroit précis » et « débloqué dès que je bouge » désignent une seule chose : **la cellule
+de champ de flux du joueur.**
+
+### Mesuré
+
+```
+direction sur la cellule du joueur : (0, 0)
+portee de contact                  : 34 px
+distance maximale ou la direction est nulle : 79 px
+```
+
+`FlowField` pose `(0, 0)` sur la cellule cible — « la direction est nulle sur la cible et sur
+l'inatteignable ». Mais une cellule fait **64 px de côté**, et la portée de contact n'est que de
+**34 px**.
+
+Il existe donc un **anneau mort entre 34 et 79 px** du joueur : un monstre qui s'y trouve n'a
+aucune direction — il ne bouge pas — et n'est pas à portée de contact — il n'attaque pas. Il
+reste planté.
+
+**7,2 % des positions** échantillonnées autour du joueur tombent dans cet anneau. Comme toute la
+horde converge vers lui, elle s'y accumule.
+
+Et ça se débloque quand le joueur bouge, parce que la cellule cible change.
+
+> C'est un défaut du **champ de flux**, pas de l'évitement. Les tâches 18 à 23 ont toutes cherché
+> la cause dans la répulsion ; elle n'y était pas. Le symptôme « des groupes bloqués » les a
+> occupées pendant cinq tâches.
+
+### Ce qu'il faut
+
+- [ ] **Étape 1 : la cellule cible doit porter une direction.** Elle doit pointer vers la
+  position **exacte** du joueur, pas vers rien. Le champ connaît sa cible : il l'a reçue en
+  argument de `update`. Une entité dans la cellule cible doit continuer d'avancer vers le joueur
+  jusqu'à la portée de contact, où la règle d'arrêt de la tâche 17 prend le relais.
+
+  ⚠️ La direction doit se calculer **à partir de la position réelle de l'entité**, pas d'une
+  direction unique posée sur toute la cellule : sinon la moitié de la cellule reçoit une
+  direction qui l'éloigne du joueur.
+
+- [ ] **Étape 2 : vérifier qu'il ne reste aucune zone morte.** Un test qui balaie les positions
+  autour du joueur et exige que **toute** position hors portée de contact ait une direction non
+  nulle qui rapproche. Mutation : remettre `(0, 0)` sur la cible le fait échouer.
+
+- [ ] **Étape 3 : la même question pour l'inatteignable.** La tâche 18 a ajouté une sortie pour
+  les cellules bloquées ; vérifier qu'elle couvre aussi les cellules libres mais non atteintes.
+
+- [ ] **Étape 4 : la réplication.** `apparition tardive avec rattrapage`, `serveur vs client` et
+  le scénario 9 à **0,000 px**.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "fix(shared): supprimer l'anneau mort autour de la cible"
+```
+
