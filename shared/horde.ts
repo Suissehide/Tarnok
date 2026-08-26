@@ -200,6 +200,16 @@ export class Horde {
    */
   readonly #priorityDist: Float32Array;
 
+  /**
+   * Tampon de sortie pour `FlowField.sampleDirection` (tache 25) — deux
+   * flottants, jamais reconstruits, reutilises a chaque lecture de direction
+   * (`spawn` comme `#recomputeSteering`). Ecrit puis lu immediatement, jamais
+   * conserve entre deux appels : la lecture suivante ecrase la precedente
+   * avant que quoi que ce soit d'autre ne s'execute (JS est mono-thread),
+   * donc le partager entre les deux appelants ne cree aucune interference.
+   */
+  readonly #dirSample: Float32Array = new Float32Array(2);
+
   constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
@@ -299,9 +309,13 @@ export class Horde {
       // repulsion (voir la doc de la methode). Zero si aucun champ n'est
       // fourni : meme comportement qu'avant cette tache.
       if (field) {
-        const cell = field.indexAt(ex, ey);
-        this.vx[slot] = (field.dirX[cell] ?? 0) * speed;
-        this.vy[slot] = (field.dirY[cell] ?? 0) * speed;
+        // Tache 25 : direction interpolee, pas la lecture par cellule — les
+        // deux DOIVENT lire de la meme facon partout (`FlowField.sampleDirection`),
+        // sans quoi serveur et client apparaitraient avec des vitesses
+        // initiales differentes.
+        field.sampleDirection(ex, ey, this.#dirSample);
+        this.vx[slot] = (this.#dirSample[0] ?? 0) * speed;
+        this.vy[slot] = (this.#dirSample[1] ?? 0) * speed;
       } else {
         this.vx[slot] = 0;
         this.vy[slot] = 0;
@@ -912,9 +926,10 @@ export class Horde {
       let fy = 0;
       const field = fields[this.targetField[i] ?? 0];
       if (field) {
-        const cell = field.indexAt(xi, yi);
-        fx = field.dirX[cell] ?? 0;
-        fy = field.dirY[cell] ?? 0;
+        // Tache 25 : meme lecture interpolee que dans `spawn` — voir sa doc.
+        field.sampleDirection(xi, yi, this.#dirSample);
+        fx = this.#dirSample[0] ?? 0;
+        fy = this.#dirSample[1] ?? 0;
       }
 
       const speed = archetypeOf(this.archetype[i] ?? 0).speed;

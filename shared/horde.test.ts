@@ -14,6 +14,7 @@ import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
 import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
+import { applyObstacles, generateObstacles } from './worldmap';
 
 const DT = 1 / 30;
 
@@ -746,16 +747,31 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // recalcul lui-meme.
     const horde = new Horde(10);
     horde.spawn(order({ count: 1, formation: FORMATION.SCATTER }));
-    horde.x[0] = 3000;
-    horde.y[0] = 3000;
-    const fields = fieldsTowards(6000, 3000);
-    horde.retarget([6000, 6000, 6000, 6000], [3000, 3000, 3000, 3000]);
+    // Centre EXACT d'une cellule de flowfield (64 px) sur les deux axes
+    // (tache 25) : depuis l'interpolation bilineaire, une position
+    // quelconque a l'interieur d'une cellule ne rend plus forcement la meme
+    // direction que le centre de cette cellule — seul le centre exact
+    // degenere en la lecture par cellule pure (voir `FlowField.sampleDirection`).
+    // Ce test verifie la conservation de la vitesse TENUE, pas la geometrie
+    // du champ : le centrage evite qu'une composante d'interpolation
+    // parasite la sanity check `vyApresRecalcul` ci-dessous.
+    horde.x[0] = 2976;
+    horde.y[0] = 2976;
+    // Vitesse explicitement nulle : sans ca, l'entite garderait la vitesse
+    // que `spawn` lui a posee a SA position de formation initiale (tache 20),
+    // pas a (2976, 2976), et deriverait avant meme le premier recalcul —
+    // inoffensif avec l'ancienne lecture par cellule (uniforme sur toute la
+    // cellule), plus depuis l'interpolation.
+    horde.vx[0] = 0;
+    horde.vy[0] = 0;
+    const fields = fieldsTowards(6000, 2976);
+    horde.retarget([6000, 6000, 6000, 6000], [2976, 2976, 2976, 2976]);
 
     const K = STEERING_RECOMPUTE_TICKS;
     const phase = horde.entityIdAt(0) % K;
 
     // Avance jusqu'au premier recalcul (tick === phase) pour partir d'une
-    // vitesse fraichement posee, tournee vers (6000, 3000).
+    // vitesse fraichement posee, tournee vers (6000, 2976).
     for (let tick = 0; tick <= phase; tick++) {
       horde.step(DT, fields, tick);
     }
@@ -770,9 +786,9 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // Si elle la TIENT, comme le veut la tache 19, `vx`/`vy` doivent rester
     // EXACTEMENT ce qu'ils etaient, jusqu'a son prochain tick de phase.
     for (const f of fields) {
-      f.update(3000, 0);
+      f.update(2976, 0);
     }
-    horde.retarget([3000, 3000, 3000, 3000], [0, 0, 0, 0]);
+    horde.retarget([2976, 2976, 2976, 2976], [0, 0, 0, 0]);
 
     for (let k = 1; k < K; k++) {
       const tick = phase + k;
@@ -787,7 +803,7 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     const attendu = vxApresRecalcul * DT * (K - 1);
     // Precision a 1 decimale : Float32Array accumule une erreur d'arrondi sur
     // K additions successives, sans rapport avec ce que ce test verifie.
-    expect(horde.x[0] ?? 0).toBeCloseTo(3000 + vxApresRecalcul * DT + attendu, 1);
+    expect(horde.x[0] ?? 0).toBeCloseTo(2976 + vxApresRecalcul * DT + attendu, 1);
   });
 
   it("la phase de recalcul vient de l'identite : deux entites d ids differents ne recalculent pas au meme tick, et l'identite suit une entite compactee dans un nouveau creneau", () => {
@@ -1125,8 +1141,14 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // de PLUS HAUT indice de voir celui de PLUS BAS indice), mais l'assertion
     // change : ce n'est plus « les deux bougent », c'est « seul celui de
     // derriere bouge, et celui de devant reste a zero au bit pres ».
-    const TARGET_X = 3000;
-    const TARGET_Y = 3000;
+    // Centre EXACT d'une cellule de flowfield (tache 25) : sur sa propre
+    // cible, une entite doit rester direction (0, 0) au bit pres pour que
+    // l'assertion `vx[0] === 0` ci-dessous tienne — vrai seulement au centre
+    // de cellule depuis l'interpolation bilineaire (voir
+    // `FlowField.sampleDirection`), plus sur n'importe quel point de la
+    // cellule comme avant cette tache.
+    const TARGET_X = 2976;
+    const TARGET_Y = 2976;
     const horde = new Horde(2);
     horde.spawn(order({ count: 2, formation: FORMATION.SCATTER }));
     horde.x[0] = TARGET_X;
@@ -1792,6 +1814,122 @@ describe('tache 23 : evitement par priorite, celui de derriere cede', () => {
   // « victime » elle-meme, la plus proche de la cible, ne cede plus a aucun
   // de ses dix voisins. Ecrire un second test redondant sur la meme
   // proposition n'aurait rien ajoute.
+});
+
+describe('tache 25 : la horde lit le champ par interpolation, pas par cellule', () => {
+  it('la trajectoire tenue reflete le melange bilineaire, pas la lecture par cellule seule', () => {
+    // Mutation visee : EXACTEMENT celle deja arrivee sur ce plan (rapport de
+    // la tache 25) — un ajout qui fonctionne isole (`FlowField.sampleDirection`,
+    // couvert par `shared/flowfield.test.ts`) mais dont l'appelant, ici
+    // `Horde`, n'a jamais ete branche dessus et continue de lire `dirX`/`dirY`
+    // par cellule. Un test qui ne verifie QUE `FlowField` ne verrait jamais
+    // cette regression : il faut verifier `Horde` elle-meme.
+    //
+    // Deux cellules voisines a angle droit (est vs nord), memes valeurs que
+    // le test equivalent de `shared/flowfield.test.ts` — loin de l'oppose
+    // exact (180°), ou l'interpolation redevient legitimement instable au
+    // point de melange 50/50 (voir sa doc).
+    const field = new FlowField(400, 100);
+    const cellEast = field.indexAt(150, 150); // cellule (1, 1), centre (150, 150)
+    const cellNorth = field.indexAt(250, 150); // cellule (2, 1), centre (250, 150)
+    field.dirX[cellEast] = 1;
+    field.dirY[cellEast] = 0;
+    field.dirX[cellNorth] = 0;
+    field.dirY[cellNorth] = 1;
+    const fields = [field, field, field, field];
+
+    const horde = new Horde(4);
+    horde.spawn(order({ count: 1, formation: FORMATION.SCATTER }));
+    // Position PAS au centre d'une cellule, 1 px avant la frontiere (x =
+    // 200) : la lecture par cellule et le melange bilineaire divergent ici,
+    // c'est le point de tout ce test.
+    horde.x[0] = 199.5;
+    horde.y[0] = 150;
+    horde.vx[0] = 0;
+    horde.vy[0] = 0;
+    // Cible loin de l'entite : aucun risque d'etre arrete par contact.
+    horde.retarget([5000, 5000, 5000, 5000], [5000, 5000, 5000, 5000]);
+
+    const K = STEERING_RECOMPUTE_TICKS;
+    const phase = horde.entityIdAt(0) % K;
+    for (let tick = 0; tick <= phase; tick++) {
+      horde.step(DT, fields, tick);
+    }
+
+    const speed = archetypeOf(0).speed;
+    // Melange bilineaire ATTENDU a (199.5, 150) : tx = 0.495, ty = 0 (meme
+    // ligne que les deux cellules) — calcule ici avec la MEME formule que
+    // `FlowField.sampleDirection`, pas copie de sa sortie, pour que ce test
+    // reste un test de branchement et non une redite du test de la formule.
+    const tx = 199.5 / 100 - 0.5 - Math.floor(199.5 / 100 - 0.5);
+    const blendX = (1 - tx) * 1 + tx * 0;
+    const blendY = (1 - tx) * 0 + tx * 1;
+    const mag = Math.hypot(blendX, blendY);
+    const expectedVx = (blendX / mag) * speed;
+    const expectedVy = (blendY / mag) * speed;
+
+    expect(horde.vx[0] ?? 0).toBeCloseTo(expectedVx, 3);
+    expect(horde.vy[0] ?? 0).toBeCloseTo(expectedVy, 3);
+
+    // Sanity : la lecture par cellule seule donnerait plein est, `vy = 0`,
+    // visiblement different de la valeur bilineaire attendue ci-dessus —
+    // c'est ce contraste qu'une regression de branchement ferait disparaitre.
+    expect(Math.abs(expectedVy)).toBeGreaterThan(speed * 0.3);
+  });
+
+  it('la vitesse initiale posee par spawn reflete elle aussi le melange bilineaire, pas la lecture par cellule seule', () => {
+    // Meme risque que le test precedent, pour `spawn` (tache 20) plutot que
+    // `#recomputeSteering` (tache 19) : ce sont deux lectures DISTINCTES
+    // dans `Horde`, donc deux endroits ou le branchement peut avoir ete
+    // oublie independamment l'un de l'autre.
+    //
+    // Champ REEL (obstacles + BFS complet), pas deux cellules a la main : la
+    // position de naissance vient de `formationPositions`, pas choisie par
+    // ce test. Graine et cible choisies (script d'exploration du rapport de
+    // la tache 25) pour que la position de naissance retombe pres d'un
+    // virage du champ — sans obstacle a proximite, un grand nombre de
+    // cellules voisines partagent exactement la meme direction et le
+    // melange bilineaire coincide alors avec la lecture par cellule par
+    // pure coincidence geometrique, ce qui aurait rendu ce test aveugle a la
+    // regression qu'il vise.
+    const MAP_SIZE = 2000;
+    const CELL = 64;
+    const cols = Math.ceil(MAP_SIZE / CELL);
+    const rows = cols;
+    const mask = generateObstacles(4, cols, rows);
+    const field = new FlowField(MAP_SIZE, CELL);
+    applyObstacles(field, mask);
+    field.update(1900, 1900);
+
+    const horde = new Horde(4);
+    horde.spawn(
+      order({ count: 1, formation: FORMATION.SCATTER, anchorX: 1000, anchorY: 1000 }),
+      field,
+    );
+
+    const ex = horde.x[0] ?? 0;
+    const ey = horde.y[0] ?? 0;
+
+    // Valeur de reference : le MEME appel que celui que `spawn` doit faire,
+    // a la MEME position — un test de branchement, pas une redite de la
+    // formule (deja verifiee et mutee dans `shared/flowfield.test.ts`).
+    const expected = new Float32Array(2);
+    field.sampleDirection(ex, ey, expected);
+    const speed = archetypeOf(0).speed;
+
+    // Sanity : la lecture par cellule seule donnerait ici une direction
+    // MESURABLEMENT differente du melange bilineaire attendu — sinon ce
+    // test ne prouverait rien sur le branchement (voir le commentaire
+    // ci-dessus).
+    const perCellIdx = field.indexAt(ex, ey);
+    const perCellX = field.dirX[perCellIdx] ?? 0;
+    const perCellY = field.dirY[perCellIdx] ?? 0;
+    const contrast = Math.hypot((expected[0] ?? 0) - perCellX, (expected[1] ?? 0) - perCellY);
+    expect(contrast).toBeGreaterThan(0.1);
+
+    expect(horde.vx[0] ?? 0).toBeCloseTo((expected[0] ?? 0) * speed, 3);
+    expect(horde.vy[0] ?? 0).toBeCloseTo((expected[1] ?? 0) * speed, 3);
+  });
 });
 
 function meanDistanceTo(horde: Horde, x: number, y: number): number {

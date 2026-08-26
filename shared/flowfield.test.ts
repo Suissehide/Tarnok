@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { FlowField } from './flowfield';
+import { applyObstacles, generateObstacles } from './worldmap';
 
 describe('FlowField, dimensions', () => {
   it('couvre la carte entiere, meme si le cote n est pas un multiple de la cellule', () => {
@@ -162,5 +163,83 @@ describe('FlowField.update', () => {
     expect(field.revision).toBe(1);
     field.update(450, 450);
     expect(field.revision).toBe(2);
+  });
+});
+
+describe('FlowField.sampleDirection (tache 25)', () => {
+  it("deux positions distantes d'un pixel de part et d'autre d'une frontiere de cellule donnent des directions proches, la ou la lecture par cellule les donnerait tres differentes", () => {
+    // Mutation visee : `sampleDirection` qui retomberait sur la lecture par
+    // cellule (`indexAt` puis lecture directe de `dirX`/`dirY`) au lieu de
+    // melanger les quatre coins environnants — exactement le defaut mesure
+    // au rapport de la tache 25 (1282 demi-tours sur 400 trajets avant,
+    // contre 165 apres, pour un monstre isole).
+    //
+    // Deux cellules voisines directement posees a angle DROIT l'une de
+    // l'autre (est vs nord), pas a l'oppose exact (180°) : a l'oppose exact,
+    // meme une interpolation correcte redevient instable pile au point de
+    // melange 50/50 (les deux contributions s'annulant presque), ce qui
+    // n'est pas le defaut que cette tache corrige — le choisir aurait rendu
+    // ce test fragile sans rien prouver de plus.
+    const field = new FlowField(400, 100);
+    const cellA = field.indexAt(150, 150); // cellule (1, 1), centre (150, 150)
+    const cellB = field.indexAt(250, 150); // cellule (2, 1), centre (250, 150)
+    field.dirX[cellA] = 1;
+    field.dirY[cellA] = 0;
+    field.dirX[cellB] = 0;
+    field.dirY[cellB] = 1;
+
+    // Frontiere de cellule en x = 200 : un pixel de chaque cote.
+    const a = new Float32Array(2);
+    const b = new Float32Array(2);
+    field.sampleDirection(199.5, 150, a);
+    field.sampleDirection(200.5, 150, b);
+
+    const interpolatedDist = Math.hypot((a[0] ?? 0) - (b[0] ?? 0), (a[1] ?? 0) - (b[1] ?? 0));
+    expect(interpolatedDist).toBeLessThan(0.05);
+
+    // Sanity : la lecture par cellule, elle, donnerait bien deux directions
+    // tres differentes ici (angle droit, distance ~1.41) — c'est le
+    // contraste que ce test existe pour verifier.
+    const perCellAx = field.dirX[field.indexAt(199.5, 150)] ?? 0;
+    const perCellAy = field.dirY[field.indexAt(199.5, 150)] ?? 0;
+    const perCellBx = field.dirX[field.indexAt(200.5, 150)] ?? 0;
+    const perCellBy = field.dirY[field.indexAt(200.5, 150)] ?? 0;
+    const perCellDist = Math.hypot(perCellAx - perCellBx, perCellAy - perCellBy);
+    expect(perCellDist).toBeGreaterThan(1);
+  });
+
+  it('une position au bord d une cellule bloquee rend une direction qui ne pointe pas vers le mur', () => {
+    // Fixture avec un VRAI masque d'obstacles (pas une construction a la
+    // main) : `generateObstacles` prend `(seed, cols, rows)` — l'appeler
+    // avec un seul argument rend un masque vide en silence, ce qui a deja
+    // couté deux diagnostics faux dans cette meme zone (voir le brief de la
+    // tache 25).
+    const MAP_SIZE = 1600;
+    const CELL = 64;
+    const cols = Math.ceil(MAP_SIZE / CELL);
+    const rows = cols;
+    const mask = generateObstacles(1, cols, rows);
+    const field = new FlowField(MAP_SIZE, CELL);
+    applyObstacles(field, mask);
+    field.update(1500, 1500);
+
+    // Cellule libre (19, 6) avec un mur immediatement au NORD (19, 5), pour
+    // cette graine — verifie une fois par le script d'exploration du
+    // rapport, pas une coincidence recherchee a la volee dans ce test.
+    const wallCell = 5 * cols + 19;
+    const freeCell = 6 * cols + 19;
+    expect(mask[wallCell]).toBe(1);
+    expect(mask[freeCell]).toBe(0);
+
+    // Un pixel avant la frontiere avec le mur (bord haut de la cellule
+    // libre, en y).
+    const out = new Float32Array(2);
+    field.sampleDirection(1248, 385, out);
+
+    // "Vers le mur" ici, c'est une composante y NEGATIVE (le mur est au
+    // nord, y plus petit). Une direction qui longe le mur ou s'en eloigne a
+    // une composante y NULLE ou POSITIVE — jamais negative au-dela du bruit
+    // flottant.
+    expect(out[1] ?? 0).toBeGreaterThanOrEqual(-1e-3);
   });
 });

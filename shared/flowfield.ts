@@ -31,6 +31,14 @@ const NEIGHBOURS: readonly (readonly [number, number])[] = [
 
 const UNREACHED = -1;
 
+/**
+ * Poids (ou norme) en dessous duquel un resultat est traite comme nul plutot
+ * que divise par une valeur quasi nulle — bruit flottant apres l'annulation
+ * de directions opposees, ou position tombant exactement sur la cible. Voir
+ * `FlowField.sampleDirection`.
+ */
+const SAMPLE_DEGENERATE_EPSILON = 1e-6;
+
 export class FlowField {
   readonly cols: number;
   readonly rows: number;
@@ -90,6 +98,127 @@ export class FlowField {
     const cx = clampInt(Math.floor(x / this.cellSize), 0, this.cols - 1);
     const cy = clampInt(Math.floor(y / this.cellSize), 0, this.rows - 1);
     return cy * this.cols + cx;
+  }
+
+  /**
+   * Direction du champ echantillonnee par interpolation bilineaire (tache
+   * 25) autour de `(x, y)`, plutot que la direction unique de la cellule qui
+   * la contient.
+   *
+   * Une seule direction par cellule de `cellSize` px permet a la direction de
+   * s'inverser de 180° en franchissant une frontiere : avec une vitesse
+   * tenue plusieurs ticks (tache 19), l'entite depasse, recalcule dans la
+   * cellule voisine, et repart en arriere — le va-et-vient mesure au rapport
+   * de la tache 25. Lire les quatre cellules entourant la position et les
+   * melanger au prorata de la distance lit le champ comme continu : une
+   * position legerement differente donne desormais une direction legerement
+   * differente, jamais une direction opposee.
+   *
+   * La grille de melange est centree sur le MILIEU de chaque cellule : au
+   * centre exact d'une cellule, les deux poids valent 0 et 1, et le melange
+   * degenere exactement en la lecture par cellule — c'est ce qui garde
+   * inchangee toute position deja testee pile sur un centre de cellule (voir
+   * `shared/horde.test.ts`, choisi ainsi avant cette tache).
+   *
+   * ⚠️ **Les cellules bloquees sont exclues du melange, jamais lues comme
+   * `(0, 0)`.** Une cellule bloquee porte, depuis `#carveExitsFromWalls`
+   * (tache 18), une direction de secours vers la sortie la plus proche —
+   * utile a une entite deja coincee dans le mur, mais sans rapport avec le
+   * chemin qui longe ce mur depuis l'exterieur. La melanger tirerait la
+   * direction vers cette sortie de secours au lieu de longer l'obstacle.
+   * C'est pour ca qu'on l'exclut par `this.blocked`, PAS par un test `dirX
+   * === 0 && dirY === 0` : ce test ne detecterait plus rien depuis la tache
+   * 18, une cellule muree ordinaire ayant desormais une direction non nulle.
+   * Les poids des cellules restantes sont renormalises par leur somme. Si
+   * les quatre sont bloquees, on retombe sur la lecture par cellule
+   * (`indexAt`).
+   *
+   * Ecrit le resultat dans `out[0]` (x) et `out[1]` (y) : aucun tableau n'est
+   * alloue ici, `out` est un tampon fourni par l'appelant et reutilise a
+   * chaque appel. Cette methode tourne a chaque recalcul de trajectoire
+   * (tache 19) — une entite sur `STEERING_RECOMPUTE_TICKS` par tick — et une
+   * allocation ici deviendrait visible au banc (`bench:sep`).
+   */
+  sampleDirection(x: number, y: number, out: Float32Array): void {
+    const { cellSize, cols, rows, blocked, dirX, dirY } = this;
+
+    const gx = x / cellSize - 0.5;
+    const gy = y / cellSize - 0.5;
+    const floorGx = Math.floor(gx);
+    const floorGy = Math.floor(gy);
+    const tx = gx - floorGx;
+    const ty = gy - floorGy;
+
+    // Coins bornes independamment de la fraction : au bord de la carte, les
+    // deux coins d'un axe designent la meme cellule (« bord duplique »,
+    // convention habituelle d'echantillonnage), et leurs poids s'additionnent
+    // simplement sur cette seule cellule plus bas.
+    const cx0 = clampInt(floorGx, 0, cols - 1);
+    const cx1 = clampInt(floorGx + 1, 0, cols - 1);
+    const cy0 = clampInt(floorGy, 0, rows - 1);
+    const cy1 = clampInt(floorGy + 1, 0, rows - 1);
+
+    let sumX = 0;
+    let sumY = 0;
+    let weight = 0;
+
+    const i00 = cy0 * cols + cx0;
+    const w00 = (1 - tx) * (1 - ty);
+    if (blocked[i00] !== 1) {
+      sumX += w00 * (dirX[i00] ?? 0);
+      sumY += w00 * (dirY[i00] ?? 0);
+      weight += w00;
+    }
+
+    const i10 = cy0 * cols + cx1;
+    const w10 = tx * (1 - ty);
+    if (blocked[i10] !== 1) {
+      sumX += w10 * (dirX[i10] ?? 0);
+      sumY += w10 * (dirY[i10] ?? 0);
+      weight += w10;
+    }
+
+    const i01 = cy1 * cols + cx0;
+    const w01 = (1 - tx) * ty;
+    if (blocked[i01] !== 1) {
+      sumX += w01 * (dirX[i01] ?? 0);
+      sumY += w01 * (dirY[i01] ?? 0);
+      weight += w01;
+    }
+
+    const i11 = cy1 * cols + cx1;
+    const w11 = tx * ty;
+    if (blocked[i11] !== 1) {
+      sumX += w11 * (dirX[i11] ?? 0);
+      sumY += w11 * (dirY[i11] ?? 0);
+      weight += w11;
+    }
+
+    if (weight <= SAMPLE_DEGENERATE_EPSILON) {
+      // Les quatre coins sont dans un mur : rien a melanger, on retombe sur
+      // la lecture par cellule (elle-meme pourvue d'une sortie par
+      // `#carveExitsFromWalls`, sauf poche entierement muree — voir sa doc).
+      const fallback = this.indexAt(x, y);
+      out[0] = dirX[fallback] ?? 0;
+      out[1] = dirY[fallback] ?? 0;
+      return;
+    }
+
+    const blendX = sumX / weight;
+    const blendY = sumY / weight;
+    const mag = Math.hypot(blendX, blendY);
+
+    if (mag <= SAMPLE_DEGENERATE_EPSILON) {
+      // Cible pile sur une des cellules melangees, ou annulation exacte de
+      // directions opposees : meme convention que la lecture par cellule,
+      // (0, 0) plutot qu'une division par une norme quasi nulle.
+      out[0] = 0;
+      out[1] = 0;
+      return;
+    }
+
+    out[0] = blendX / mag;
+    out[1] = blendY / mag;
   }
 
   /**
