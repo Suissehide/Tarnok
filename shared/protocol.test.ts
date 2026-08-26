@@ -4,6 +4,13 @@ import { PLAYER_MAX_HP } from './constants';
 import {
   DEATH_ID_BYTES,
   DEATHS_HEADER_BYTES,
+  DRAFT_CARD_BYTES,
+  DRAFT_INTENT_BYTES,
+  DRAFT_INTENTS_HEADER_BYTES,
+  DRAFT_OPEN_HEADER_BYTES,
+  DRAFT_OUTCOME_BYTES,
+  DRAFT_RESULT_HEADER_BYTES,
+  DRAFT_TOKEN_BYTES,
   decode,
   decodeDeaths,
   decodeInput,
@@ -14,6 +21,10 @@ import {
   decodeWaveOrder,
   decodeWelcome,
   encodeDeaths,
+  encodeDraftIntents,
+  encodeDraftOpen,
+  encodeDraftResult,
+  encodeDraftToken,
   encodeInput,
   encodeLevelUp,
   encodePickups,
@@ -24,6 +35,7 @@ import {
   INPUT_BYTES,
   LEVEL_UP_BYTES,
   MSG,
+  NO_TOKEN,
   RUN_OVER_BYTES,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
@@ -392,5 +404,125 @@ describe('decode', () => {
 
   it('leve sur un buffer vide', () => {
     expect(() => decode(new ArrayBuffer(0))).toThrow(/tronqu/i);
+  });
+});
+
+describe('DRAFT_OPEN', () => {
+  const cartes = [
+    { nature: 0, refId: 3, owner: 0 },
+    { nature: 1, refId: 7, owner: 2 },
+    { nature: 3, refId: 8, owner: 4 },
+  ];
+
+  it('fait un aller-retour exact', () => {
+    const msg = decode(encodeDraftOpen(1234, cartes));
+    expect(msg.type).toBe(MSG.DRAFT_OPEN);
+    if (msg.type !== MSG.DRAFT_OPEN) {
+      throw new Error('type inattendu');
+    }
+    expect(msg.deadlineTick).toBe(1234);
+    expect(msg.cards).toEqual(cartes);
+  });
+
+  it('a la taille exacte annoncee par ses constantes', () => {
+    // ⚠️ C'est cette assertion, et non l'aller-retour, qui attrape un decalage
+    // d'octet : l'encodeur et le decodeur partagent la faute, donc ils se
+    // comprennent meme quand ils ont tort.
+    expect(encodeDraftOpen(1, cartes).byteLength).toBe(
+      DRAFT_OPEN_HEADER_BYTES + cartes.length * DRAFT_CARD_BYTES,
+    );
+    expect(encodeDraftOpen(1, []).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES);
+  });
+
+  it('leve sur un tampon tronque', () => {
+    const buf = encodeDraftOpen(1, cartes);
+    expect(() => decode(buf.slice(0, DRAFT_OPEN_HEADER_BYTES + 1))).toThrow(/tronque/);
+  });
+});
+
+describe('DRAFT_TOKEN', () => {
+  it('fait un aller-retour exact et a la taille annoncee', () => {
+    const msg = decode(encodeDraftToken(5));
+    expect(msg.type).toBe(MSG.DRAFT_TOKEN);
+    if (msg.type !== MSG.DRAFT_TOKEN) {
+      throw new Error('type inattendu');
+    }
+    expect(msg.cardIndex).toBe(5);
+    expect(encodeDraftToken(5).byteLength).toBe(DRAFT_TOKEN_BYTES);
+  });
+
+  it('transporte la sentinelle « aucun jeton » sans la confondre avec la carte 0', () => {
+    const aucun = decode(encodeDraftToken(NO_TOKEN));
+    if (aucun.type !== MSG.DRAFT_TOKEN) {
+      throw new Error('type inattendu');
+    }
+    expect(aucun.cardIndex).toBe(NO_TOKEN);
+    expect(aucun.cardIndex).not.toBe(0);
+  });
+});
+
+describe('DRAFT_INTENTS', () => {
+  const intentions = [
+    { playerId: 1, cardIndex: 4 },
+    { playerId: 3, cardIndex: 0 },
+  ];
+
+  it('fait un aller-retour exact et a la taille annoncee', () => {
+    const msg = decode(encodeDraftIntents(intentions));
+    if (msg.type !== MSG.DRAFT_INTENTS) {
+      throw new Error('type inattendu');
+    }
+    expect(msg.intents).toEqual(intentions);
+    expect(encodeDraftIntents(intentions).byteLength).toBe(
+      DRAFT_INTENTS_HEADER_BYTES + intentions.length * DRAFT_INTENT_BYTES,
+    );
+  });
+
+  it('leve sur un tampon tronque', () => {
+    const buf = encodeDraftIntents(intentions);
+    expect(() => decode(buf.slice(0, DRAFT_INTENTS_HEADER_BYTES + 1))).toThrow(/tronque/);
+  });
+});
+
+describe('DRAFT_RESULT', () => {
+  const issues = [
+    { playerId: 1, cardIndex: 2, outcome: 0 },
+    { playerId: 2, cardIndex: 2, outcome: 1 },
+    { playerId: 4, cardIndex: 6, outcome: 2 },
+  ];
+
+  it('fait un aller-retour exact et a la taille annoncee', () => {
+    const msg = decode(encodeDraftResult(1, 900, issues));
+    if (msg.type !== MSG.DRAFT_RESULT) {
+      throw new Error('type inattendu');
+    }
+    expect(msg.phase).toBe(1);
+    expect(msg.deadlineTick).toBe(900);
+    expect(msg.outcomes).toEqual(issues);
+    expect(encodeDraftResult(1, 900, issues).byteLength).toBe(
+      DRAFT_RESULT_HEADER_BYTES + issues.length * DRAFT_OUTCOME_BYTES,
+    );
+  });
+
+  it('distingue les deux phases, et c est ce qui dit au client quand le gel finit', () => {
+    // ⚠️ Sans ce champ, le client ne peut PAS deduire la fin du gel : la
+    // fenetre dure jusqu'a ce que tout le monde ait pose son jeton, et en solo
+    // elle se ferme au clic. Chaque client en devinerait une differente.
+    const fini = decode(encodeDraftResult(0, 700, issues));
+    const repioche = decode(encodeDraftResult(1, 700, issues));
+    if (fini.type !== MSG.DRAFT_RESULT || repioche.type !== MSG.DRAFT_RESULT) {
+      throw new Error('type inattendu');
+    }
+    expect(fini.phase).toBe(0);
+    expect(repioche.phase).toBe(1);
+  });
+
+  it('leve un message TRONQUE explicite, pas une erreur de bornes fortuite', () => {
+    // ⚠️ Assener seulement `toThrow()` ne prouve rien ici : sans le controle
+    // de longueur, le `DataView` finit par lever tout seul en depassant. La
+    // mutation « retirer le controle » survivait a un test moins precis.
+    // C'est le MESSAGE qui rend ce controle porteur.
+    const buf = encodeDraftResult(0, 1, issues);
+    expect(() => decode(buf.slice(0, DRAFT_RESULT_HEADER_BYTES + 1))).toThrow(/tronque/);
   });
 });

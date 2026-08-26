@@ -17,6 +17,10 @@ export const MSG = {
   PICKUPS: 6,
   LEVEL_UP: 7,
   RUN_OVER: 8,
+  DRAFT_OPEN: 9,
+  DRAFT_TOKEN: 10,
+  DRAFT_INTENTS: 11,
+  DRAFT_RESULT: 12,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -156,7 +160,35 @@ export type Message =
   | DeathsMessage
   | PickupsMessage
   | LevelUpMessage
-  | RunOverMessage;
+  | RunOverMessage
+  | DraftOpenMessage
+  | DraftTokenMessage
+  | DraftIntentsMessage
+  | DraftResultMessage;
+
+export interface DraftOpenMessage {
+  type: typeof MSG.DRAFT_OPEN;
+  deadlineTick: number;
+  cards: WireCard[];
+}
+
+export interface DraftTokenMessage {
+  type: typeof MSG.DRAFT_TOKEN;
+  cardIndex: number;
+}
+
+export interface DraftIntentsMessage {
+  type: typeof MSG.DRAFT_INTENTS;
+  intents: WireIntent[];
+}
+
+export interface DraftResultMessage {
+  type: typeof MSG.DRAFT_RESULT;
+  /** `0` : draft termine, `deadlineTick` est la fin du gel. `1` : repioche ouverte. */
+  phase: number;
+  deadlineTick: number;
+  outcomes: WireOutcome[];
+}
 
 export const WELCOME_BYTES = 10;
 /** `type u8 · seq u16 · moveX i8 · moveY i8 · aimX i8 · aimY i8` (tache 13 : 5 -> 7). */
@@ -169,6 +201,30 @@ export const WAVE_ORDER_BYTES = 19;
 
 /** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
 export const DEATHS_HEADER_BYTES = 7;
+/** `type u8 · deadlineTick u32 · count u8`. */
+export const DRAFT_OPEN_HEADER_BYTES = 6;
+/** Une carte : `nature u8 · refId u8 · owner u8`. */
+export const DRAFT_CARD_BYTES = 3;
+/** `type u8 · cardIndex u8`. */
+export const DRAFT_TOKEN_BYTES = 2;
+/** `type u8 · count u8`. */
+export const DRAFT_INTENTS_HEADER_BYTES = 2;
+/** Une intention : `playerId u8 · cardIndex u8`. */
+export const DRAFT_INTENT_BYTES = 2;
+/** `type u8 · phase u8 · deadlineTick u32 · count u8`. */
+export const DRAFT_RESULT_HEADER_BYTES = 7;
+/** Une issue : `playerId u8 · cardIndex u8 · outcome u8`. */
+export const DRAFT_OUTCOME_BYTES = 3;
+
+/**
+ * « Ce joueur n'a pose aucun jeton. »
+ *
+ * ⚠️ Ne peut pas valoir `0` : la carte d'indice 0 est une carte comme une
+ * autre. Meme raison que `owner = 0` dans `shared/cards.ts` — une sentinelle
+ * n'est utilisable que si sa valeur ne designe rien de reel.
+ */
+export const NO_TOKEN = 255;
+
 /** Une identite d'entite, sur le fil : u32. */
 export const DEATH_ID_BYTES = 4;
 
@@ -516,7 +572,175 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeLevelUp(buf);
     case MSG.RUN_OVER:
       return decodeRunOver(buf);
+    case MSG.DRAFT_OPEN:
+      return decodeDraftOpen(buf);
+    case MSG.DRAFT_TOKEN:
+      return decodeDraftToken(buf);
+    case MSG.DRAFT_INTENTS:
+      return decodeDraftIntents(buf);
+    case MSG.DRAFT_RESULT:
+      return decodeDraftResult(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }
+}
+
+/** Une carte de l'etalage, telle qu'elle transite. Miroir de `Card` de `shared/cards.ts`. */
+export interface WireCard {
+  nature: number;
+  refId: number;
+  owner: number;
+}
+
+/**
+ * S -> C : l'etalage s'ouvre.
+ *
+ * `deadlineTick` est l'echeance de la fenetre. En solo elle ne s'applique pas —
+ * le gel se referme au jeton pose — mais le champ reste renseigne pour que le
+ * client n'ait pas deux chemins de lecture.
+ */
+export function encodeDraftOpen(deadlineTick: number, cards: readonly WireCard[]): ArrayBuffer {
+  const buf = new ArrayBuffer(DRAFT_OPEN_HEADER_BYTES + cards.length * DRAFT_CARD_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.DRAFT_OPEN);
+  v.setUint32(1, deadlineTick >>> 0, true);
+  v.setUint8(5, cards.length);
+  let o = DRAFT_OPEN_HEADER_BYTES;
+  for (const c of cards) {
+    v.setUint8(o, c.nature);
+    v.setUint8(o + 1, c.refId);
+    v.setUint8(o + 2, c.owner);
+    o += DRAFT_CARD_BYTES;
+  }
+  return buf;
+}
+
+/** C -> S : je pose mon jeton, ou je le retire (`NO_TOKEN`). */
+export function encodeDraftToken(cardIndex: number): ArrayBuffer {
+  const buf = new ArrayBuffer(DRAFT_TOKEN_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.DRAFT_TOKEN);
+  v.setUint8(1, cardIndex);
+  return buf;
+}
+
+/** Une intention diffusee : qui vise quoi. */
+export interface WireIntent {
+  playerId: number;
+  cardIndex: number;
+}
+
+/**
+ * S -> C : qui a pose sur quoi.
+ *
+ * Le seul message du draft a cadence soutenue — et le §7.2 point 3 en fait la
+ * condition d'existence de la mecanique : « sans cette visibilite, la
+ * negociation n'existe pas ».
+ */
+export function encodeDraftIntents(intents: readonly WireIntent[]): ArrayBuffer {
+  const buf = new ArrayBuffer(DRAFT_INTENTS_HEADER_BYTES + intents.length * DRAFT_INTENT_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.DRAFT_INTENTS);
+  v.setUint8(1, intents.length);
+  let o = DRAFT_INTENTS_HEADER_BYTES;
+  for (const i of intents) {
+    v.setUint8(o, i.playerId);
+    v.setUint8(o + 1, i.cardIndex);
+    o += DRAFT_INTENT_BYTES;
+  }
+  return buf;
+}
+
+/** L'issue d'un joueur : `0` obtenue, `1` perdue au conflit, `2` attribuee d'office. */
+export interface WireOutcome {
+  playerId: number;
+  cardIndex: number;
+  outcome: number;
+}
+
+/**
+ * S -> C : la resolution.
+ *
+ * ⚠️ **`phase` porte la fin du gel, et sans lui le client ne peut pas la
+ * deduire.** A l'etape 3 il la calculait — `msg.tick + LEVEL_FREEZE_TICKS - 1`
+ * — parce que le gel durait une constante. Ce n'est plus vrai : la fenetre
+ * dure jusqu'a ce que tout le monde ait pose son jeton, et en solo elle se
+ * ferme au clic.
+ *
+ * `phase` vaut `0` quand le draft est termine — `deadlineTick` est alors le
+ * tick ou le gel prend fin — et `1` quand une repioche s'ouvre, auquel cas
+ * `deadlineTick` en est l'echeance.
+ */
+export function encodeDraftResult(
+  phase: number,
+  deadlineTick: number,
+  outcomes: readonly WireOutcome[],
+): ArrayBuffer {
+  const buf = new ArrayBuffer(DRAFT_RESULT_HEADER_BYTES + outcomes.length * DRAFT_OUTCOME_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.DRAFT_RESULT);
+  v.setUint8(1, phase);
+  v.setUint32(2, deadlineTick >>> 0, true);
+  v.setUint8(6, outcomes.length);
+  let o = DRAFT_RESULT_HEADER_BYTES;
+  for (const r of outcomes) {
+    v.setUint8(o, r.playerId);
+    v.setUint8(o + 1, r.cardIndex);
+    v.setUint8(o + 2, r.outcome);
+    o += DRAFT_OUTCOME_BYTES;
+  }
+  return buf;
+}
+
+function decodeDraftOpen(buf: ArrayBuffer): DraftOpenMessage {
+  const v = viewOf(buf, DRAFT_OPEN_HEADER_BYTES);
+  const count = v.getUint8(5);
+  viewOf(buf, DRAFT_OPEN_HEADER_BYTES + count * DRAFT_CARD_BYTES);
+  const cards: WireCard[] = [];
+  let o = DRAFT_OPEN_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    cards.push({ nature: v.getUint8(o), refId: v.getUint8(o + 1), owner: v.getUint8(o + 2) });
+    o += DRAFT_CARD_BYTES;
+  }
+  return { type: MSG.DRAFT_OPEN, deadlineTick: v.getUint32(1, true), cards };
+}
+
+function decodeDraftToken(buf: ArrayBuffer): DraftTokenMessage {
+  const v = viewOf(buf, DRAFT_TOKEN_BYTES);
+  return { type: MSG.DRAFT_TOKEN, cardIndex: v.getUint8(1) };
+}
+
+function decodeDraftIntents(buf: ArrayBuffer): DraftIntentsMessage {
+  const v = viewOf(buf, DRAFT_INTENTS_HEADER_BYTES);
+  const count = v.getUint8(1);
+  viewOf(buf, DRAFT_INTENTS_HEADER_BYTES + count * DRAFT_INTENT_BYTES);
+  const intents: WireIntent[] = [];
+  let o = DRAFT_INTENTS_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    intents.push({ playerId: v.getUint8(o), cardIndex: v.getUint8(o + 1) });
+    o += DRAFT_INTENT_BYTES;
+  }
+  return { type: MSG.DRAFT_INTENTS, intents };
+}
+
+function decodeDraftResult(buf: ArrayBuffer): DraftResultMessage {
+  const v = viewOf(buf, DRAFT_RESULT_HEADER_BYTES);
+  const count = v.getUint8(6);
+  viewOf(buf, DRAFT_RESULT_HEADER_BYTES + count * DRAFT_OUTCOME_BYTES);
+  const outcomes: WireOutcome[] = [];
+  let o = DRAFT_RESULT_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    outcomes.push({
+      playerId: v.getUint8(o),
+      cardIndex: v.getUint8(o + 1),
+      outcome: v.getUint8(o + 2),
+    });
+    o += DRAFT_OUTCOME_BYTES;
+  }
+  return {
+    type: MSG.DRAFT_RESULT,
+    phase: v.getUint8(1),
+    deadlineTick: v.getUint32(2, true),
+    outcomes,
+  };
 }
