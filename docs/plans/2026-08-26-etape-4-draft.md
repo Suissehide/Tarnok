@@ -60,7 +60,7 @@ de l'étape 3 sont nées de l'auteur en train de jouer, et aucune n'aurait été
 | `DRAFT_WINDOW_TICKS` | 600 (20 s) | plafond du §7.4, **à plusieurs seulement** ; en solo la fenêtre se referme au clic |
 | `DRAFT_REPICK_TICKS` | 150 (5 s) | §7.2 point 4 |
 | `LEVEL_RESUME_TICKS` | 30 | existant, inchangé — la rampe de reprise de l'étape 3 |
-| ~~`LEVEL_FREEZE_TICKS`~~ | **supprimée** | valeur provisoire de l'étape 3, remplacée par les deux ci-dessus |
+| ~~`LEVEL_FREEZE_TICKS`~~ | **supprimée en tâche 6, pas avant** | valeur provisoire de l'étape 3. Elle a **six** usages dans `back/` **et** `front/` : la retirer plus tôt casse le build entre deux tâches |
 | `WEAPON_SLOTS` | 5 | §6.1 — **toutes draftées**, aucune attribuée d'avance |
 | `PASSIVE_SLOTS` | 3 | §6.1 ; l'extension à 6 par événements est hors étape |
 | `WEAPON_MAX_LEVEL` | 5 | au-delà, la carte proposée devient l'évolution (§7.5) |
@@ -223,12 +223,23 @@ Dispositions, dans le style des huit messages existants :
 | `DRAFT_OPEN` | `type u8 · deadlineTick u32 · count u8 · (nature u8 · refId u8 · owner u8) × count` | 6 + 3n |
 | `DRAFT_TOKEN` | `type u8 · cardIndex u8` (255 = aucun) | 2 |
 | `DRAFT_INTENTS` | `type u8 · count u8 · (playerId u8 · cardIndex u8) × count` | 2 + 2n |
-| `DRAFT_RESULT` | `type u8 · deadlineTick u32 · count u8 · (playerId u8 · cardIndex u8 · outcome u8) × count` | 6 + 3n |
+| `DRAFT_RESULT` | `type u8 · phase u8 · deadlineTick u32 · count u8 · (playerId u8 · cardIndex u8 · outcome u8) × count` | 7 + 3n |
 
 `outcome` : `0 = obtenue`, `1 = perdue au conflit`, `2 = attribuée d'office`. C'est lui qui dit à
 l'écran s'il faut **illuminer** ou **consumer** la carte (§4.2 de la spec).
 
-`deadlineTick` de `DRAFT_RESULT` porte l'échéance de la **repioche** quand il en ouvre une.
+`phase` : `0 = draft termine`, `1 = repioche ouverte`. Et `deadlineTick` se lit selon `phase` —
+l'échéance de la repioche, ou le tick auquel le gel prend fin.
+
+> ⚠️ **Ce champ n'était pas dans la première version de la spec, et son absence était un défaut.**
+> À l'étape 3, le client calculait la fin du gel lui-même :
+> `#freezeUntilTick = msg.tick + LEVEL_FREEZE_TICKS - 1`. C'était possible parce que le gel durait
+> une constante.
+>
+> **Ce n'est plus le cas.** La fenêtre dure jusqu'à ce que tout le monde ait posé son jeton, et en
+> solo elle se ferme au clic. Le client **ne peut plus déduire** la fin du gel : le serveur doit
+> la lui dire. Sans ce champ, chaque client devinerait une fin différente — exactement la
+> divergence que le gel daté par tick de l'étape 3 existait pour empêcher.
 
 - [ ] **Étape 1 : les tests**, avec la discipline établie à l'étape 3 : aller-retour, **taille
   totale exacte** contre les constantes, et **tampon tronqué qui lève**.
@@ -299,7 +310,23 @@ pas non plus `Room` : il reçoit des identifiants et des cartes, il rend des iss
 
 ## Tâche 6 : intégration au salon
 
-**Fichiers :** modifier `back/src/room.ts`, `back/src/room.test.ts`, `back/src/server.ts`
+**Fichiers :** modifier `back/src/room.ts`, `back/src/room.test.ts`, `back/src/server.ts`,
+`front/src/net/client.ts`
+
+**Interfaces :**
+- Produit : `PlayerState` gagne `loadout: Loadout` — **c'est ici qu'il naît**, et les tâches 7 et
+  8 le consomment.
+- La source aléatoire du draft se dérive de `mapSeed`, comme le générateur de vagues le fait déjà
+  (`new WaveDirector(this.mapSeed ^ 0x5bf0_3a17)`). Une constante de mélange différente, pour que
+  deux tirages indépendants ne se suivent pas.
+
+- [ ] **Étape 0 : retirer `LEVEL_FREEZE_TICKS`.** Elle a **six usages**, dans `back/src/room.ts`,
+  `back/src/room.test.ts`, `front/src/net/client.ts` et `front/src/net/client.test.ts`. Le client
+  s'en sert à deux endroits : pour dater la fin du gel à la réception du `LEVEL_UP`, et pour
+  calculer `isFrozen`.
+
+  **Les deux doivent désormais venir du serveur**, via le `phase`/`deadlineTick` de
+  `DRAFT_RESULT` — voir la tâche 4. C'est la partie la moins évidente de cette tâche.
 
 - [ ] **Étape 1 : le gel devient la fenêtre du draft.** `LEVEL_FREEZE_TICKS` disparaît ; la durée
   du gel est celle du draft, qui se referme quand la machine passe en `closed`.
