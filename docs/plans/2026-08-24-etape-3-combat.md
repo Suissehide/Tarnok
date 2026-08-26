@@ -2471,3 +2471,67 @@ Et ça se débloque quand le joueur bouge, parce que la cellule cible change.
 git commit -m "fix(shared): supprimer l'anneau mort autour de la cible"
 ```
 
+---
+
+## Tâche 27 : le joueur sur un obstacle vide tout le champ de flux
+
+**Origine : l'auteur.** « Tant que je ne bouge pas, plus personne ne bouge » — puis, décisif :
+« j'ai l'impression que c'est des points spécifiques sur la map ».
+
+### Mesuré
+
+Balayage de 256 positions de joueur : **19 (7,4 %) produisent des pièges**, et quand c'est le
+cas, **783 sur 784 points échantillonnés** — la carte entière cesse de converger.
+
+Ce que ces positions ont en commun :
+
+```
+Positions PROBLEMATIQUES : cellule bloquee = true    BFS = 0 / 8836 cellules atteintes
+Positions SAINES         : cellule bloquee = false   BFS = 8330 / 8836
+```
+
+**Quand le joueur se tient sur un obstacle, `FlowField.update` part d'une cellule bloquée et
+n'explore rien.** Le champ est intégralement vide. Tous les monstres de la carte perdent leur
+direction au même instant.
+
+Et le joueur peut marcher sur les obstacles : rien ne l'en empêche.
+
+Les trois observations s'expliquent d'un coup :
+- « des points spécifiques » → les 5,7 % de cellules bloquées ;
+- « tant que je ne bouge pas » → sortir du rocher recalcule le champ et tout repart ;
+- « j'arrive pas à le reproduire » → il faut marcher sur un rocher, ce qui arrive par accident.
+
+> **Six tâches (18 à 23) ont cherché cette cause dans l'évitement entre monstres.** Elle n'y
+> était pas. Le symptôme « des groupes bloqués » était en réalité deux défauts distincts du
+> champ de flux — la lecture discrète (tâche 25) et celui-ci — dont aucun ne concernait la
+> répulsion.
+
+- [ ] **Étape 1 : le champ ne doit jamais être vide.** Si la cellule cible est bloquée, amorcer
+  le parcours depuis la cellule **libre la plus proche**, de façon déterministe — jamais un
+  tirage, jamais un parcours dont l'ordre dépendrait de l'itération d'une `Map`.
+
+  ⚠️ Les deux côtés calculent ce champ à partir de la même position de joueur : le repli doit
+  donc être **identique**, sinon la réplication casse là où elle tenait.
+
+- [ ] **Étape 2 : un test qui verrouille l'invariant.** Pour **toute** position de joueur, y
+  compris sur un obstacle, le parcours atteint le même nombre de cellules que depuis une position
+  libre voisine. Mutation : retirer le repli le fait échouer.
+
+  Le construire sur un vrai masque — et se rappeler que `generateObstacles` prend
+  `(seed, cols, rows)` : appelée avec un seul argument elle rend un masque vide, ce qui a coûté
+  trois diagnostics faux au contrôleur dans ce même domaine.
+
+- [ ] **Étape 3 : la réplication.** `apparition tardive avec rattrapage`, `serveur vs client` et
+  le scénario 9 à **0,000 px**.
+
+- [ ] **Étape 4 : commit**
+
+```bash
+git commit -m "fix(shared): un joueur sur un obstacle ne doit pas vider le champ"
+```
+
+> **Question de conception laissée à l'auteur, séparément :** faut-il aussi empêcher le joueur
+> de marcher sur les obstacles ? Ça se défend, mais le champ doit être robuste quoi qu'il
+> arrive — un joueur poussé, téléporté ou apparaissant sur un rocher ne doit jamais figer la
+> carte.
+
