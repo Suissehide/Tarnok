@@ -2328,3 +2328,61 @@ comportement voulu et un défaut.
 Prochaine étape sur ce point : une métrique qui distingue « stationne près du joueur » de
 « oscille loin de lui sans progresser ».
 
+---
+
+## Tâche 25 : le champ de flux est discret, et c'est lui qui fait osciller
+
+**Origine : l'auteur.** « Il y a encore des mobs isolés qui oscillent sur place sur de petites
+distances, et certains dans la masse qui font demi-tour sans collision ni raison apparente. »
+
+**« Isolé » est le mot qui tranche.** Un monstre sans voisin ne subit aucune répulsion : ni le
+poids, ni la priorité, ni le dé-chevauchement ne peuvent l'expliquer. Il ne reste que le champ.
+
+### Mesuré, un monstre seul, aucun voisin
+
+| | Demi-tours / 400 trajets | Oscillants | N'arrivent jamais |
+| --- | --- | --- | --- |
+| **Actuel** — une direction par cellule | **1282** | 53 | 15 |
+| **Bilinéaire** — direction interpolée | **165** | 28 | 1 |
+
+Une seule direction par cellule de 64 px : franchir une frontière peut retourner la direction
+de 180°. Avec une vitesse tenue `STEERING_RECOMPUTE_TICKS`, le monstre dépasse, recalcule dans
+la cellule voisine, et repart en arrière. Va-et-vient.
+
+C'est la cause racine que l'étape 2 avait **déjà nommée** — « le flowfield étant un champ de
+directions discret, les trajectoires sont sensibles aux conditions initiales » — sans jamais la
+traiter : elle avait été contournée par le rattrapage à l'apparition.
+
+Interpoler la lit comme un champ continu, et la sensibilité s'effondre avec.
+
+- [ ] **Étape 1 : échantillonnage bilinéaire de la direction.** Les quatre cellules entourant la
+  position, pondérées par la distance, puis renormalisées.
+
+  ⚠️ **Les cellules bloquées ne doivent pas entrer dans le mélange.** Leur direction vaut
+  `(0, 0)` : les inclure tirerait la direction *vers* le mur au lieu de le longer. Les exclure
+  et renormaliser les poids restants. Si les quatre sont bloquées, retomber sur la lecture par
+  cellule.
+
+- [ ] **Étape 2 : le coût.** Quatre lectures au lieu d'une, mais **seulement au recalcul de
+  trajectoire** — une entité sur `STEERING_RECOMPUTE_TICKS`. Confirmer au banc que ça ne se voit
+  pas ; si ça se voit, le dire.
+
+- [ ] **Étape 3 : la réplication.** L'interpolation change les trajectoires, donc les chiffres
+  « sans correction » bougeront. **`apparition tardive avec rattrapage`, `serveur vs client` et
+  le scénario 9 doivent rester à 0,000 px.**
+
+  Elle devrait même *aider* : une position légèrement différente donnait une direction
+  radicalement différente, elle donnera désormais une direction légèrement différente. C'est
+  toute la sensibilité aux conditions initiales qui baisse.
+
+- [ ] **Étape 4 : un test qui verrouille la propriété.** Deux positions distantes d'un pixel de
+  part et d'autre d'une frontière de cellule donnent des directions **proches**, là où la
+  lecture par cellule pouvait les donner opposées. Mutation : revenir à la lecture par cellule
+  le fait échouer.
+
+- [ ] **Étape 5 : commit**
+
+```bash
+git commit -m "feat(shared): lire le champ de flux par interpolation"
+```
+
