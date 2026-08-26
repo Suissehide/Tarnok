@@ -1,7 +1,6 @@
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
-  LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   ORB_LIFETIME_TICKS,
@@ -14,6 +13,7 @@ import { entityIdOf, Horde } from '@shared/horde';
 import { PlayerHistory } from '@shared/player-history';
 import {
   encodeDeaths,
+  encodeDraftResult,
   encodeLevelUp,
   encodePickups,
   encodeRunOver,
@@ -238,6 +238,23 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
 
 const STEP = 1 / TICK_HZ;
 const STEPS_PER_FIELD = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+
+/**
+ * Duree de gel choisie par ces tests.
+ *
+ * ⚠️ Ce n'est plus une constante du jeu. Depuis l'etape 4, le gel dure jusqu'a
+ * ce que tout le monde ait pose son jeton — en solo, jusqu'au clic — et **seul
+ * le serveur en connait la fin**, qu'il annonce par `DRAFT_RESULT` de phase 0.
+ * Un test qui la deduirait d'une constante testerait un contrat qui n'existe
+ * plus.
+ *
+ * ⚠️ **137, et surtout pas 60.** 60 etait `LEVEL_FREEZE_TICKS`, l'ancienne
+ * duree fixe. Tant que ces tests gelaient pendant 60 ticks, un client qui
+ * recalculait `msg.tick + 60 - 1` au lieu d'attendre le message se comportait
+ * exactement pareil — mutation appliquee, 80 tests verts. Une duree arbitraire,
+ * egale a aucune constante du jeu, est ce qui rend le contrat verifiable.
+ */
+const GEL_TICKS = 137;
 
 /**
  * Simulation "serveur" de reference, batie directement sur les modules
@@ -755,7 +772,7 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
     // Le gel prend effet a FREEZE_START, pas a la reception du message plus
     // bas (envoye bien avant).
     const FREEZE_START = 200;
-    const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
+    const FREEZE_END = FREEZE_START + GEL_TICKS - 1;
     const RESUME_END = FREEZE_END + LEVEL_RESUME_TICKS;
     const END = RESUME_END + 60;
 
@@ -777,6 +794,12 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
       // FREEZE_START.
       if (tick === 20) {
         socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
+      }
+      // ⚠️ C'est le SERVEUR qui annonce la fin du gel : le client ne peut plus
+      // la deduire (etape 4). Sans ce message, il resterait gele pour toujours
+      // — et c'est bien le comportement voulu.
+      if (tick === FREEZE_END) {
+        socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
       }
 
       client.update(tick * STEP, STEP);
@@ -839,7 +862,7 @@ describe('GameClient — la prediction locale honore le gel de niveau (tache 24)
       });
 
       const FREEZE_START = 10;
-      const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
+      const FREEZE_END = FREEZE_START + GEL_TICKS - 1;
       const RESUME_END = FREEZE_END + LEVEL_RESUME_TICKS;
       const END = RESUME_END + 30;
       socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
@@ -849,6 +872,9 @@ describe('GameClient — la prediction locale honore le gel de niveau (tache 24)
       let prevX: number | null = null;
 
       for (let tick = 0; tick < END; tick++) {
+        if (tick === FREEZE_END) {
+          socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
+        }
         const state = client.update(tick * STEP, STEP);
         const me = state.players.find((p) => p.id === 1);
         const x = me?.x ?? 0;
@@ -889,7 +915,7 @@ describe('GameClient — isFrozen, pour l indication HUD du gel (tache 24)', () 
     expect(client.isFrozen).toBe(false);
 
     const FREEZE_START = 10;
-    const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
+    const FREEZE_END = FREEZE_START + GEL_TICKS - 1;
     const RESUME_END = FREEZE_END + LEVEL_RESUME_TICKS;
     socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
 
@@ -907,12 +933,21 @@ describe('GameClient — isFrozen, pour l indication HUD du gel (tache 24)', () 
     }
     expect(client.isFrozen).toBe(true);
 
-    for (let tick = FREEZE_START + 5; tick < RESUME_END - 5; tick++) {
+    for (let tick = FREEZE_START + 5; tick < FREEZE_END; tick++) {
       client.update(tick * STEP, STEP);
     }
     expect(client.isFrozen).toBe(true);
 
-    // Bien apres RESUME_END : redevenu faux.
+    // Le serveur annonce la fin : c'est la SEULE facon pour le client de
+    // l'apprendre depuis l'etape 4.
+    socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
+    for (let tick = FREEZE_END; tick < RESUME_END - 5; tick++) {
+      client.update(tick * STEP, STEP);
+    }
+    // Toujours vrai pendant la rampe de reprise : c'est toute la perturbation
+    // qui doit se voir, pas seulement sa moitie la plus visible.
+    expect(client.isFrozen).toBe(true);
+
     for (let tick = RESUME_END - 5; tick < RESUME_END + 10; tick++) {
       client.update(tick * STEP, STEP);
     }
@@ -1377,8 +1412,11 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     // Fenetre de gel strict : `#advanceHorde` ne tire pas tant que
     // `tick <= #freezeUntilTick`.
-    const FREEZE_END = FREEZE_START + LEVEL_FREEZE_TICKS - 1;
+    const FREEZE_END = FREEZE_START + GEL_TICKS - 1;
     for (let tick = FREEZE_START; tick <= FREEZE_END; tick++) {
+      if (tick === FREEZE_END) {
+        socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
+      }
       socket.emit('message', { data: snapshot(tick) });
       client.update(tick * MS_PER_TICK, STEP);
     }

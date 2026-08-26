@@ -1,3 +1,4 @@
+import { CARD, type Card } from '@shared/cards';
 import {
   FIELD_INPUT_DELAY_TICKS,
   LEVEL_FREEZE_TICKS,
@@ -14,7 +15,8 @@ import { FORMATION, type WaveOrder } from '@shared/waves';
 import { weaponOf } from '@shared/weapons';
 import { describe, expect, it, vi } from 'vitest';
 
-import { Room } from './room';
+import { OUTCOME } from './draft';
+import { type DraftOpenEvent, Room } from './room';
 
 const DT = 1 / TICK_HZ;
 
@@ -754,9 +756,15 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
     expect(levelUps.length).toBeGreaterThan(0);
     expect(levelUps[0]?.level).toBe(2);
-    // Date au tick d'EFFET, dans le futur par rapport au tick d'emission —
-    // jamais le tick courant au moment de l'emission.
-    expect(levelUps[0]?.tick).toBeGreaterThan(room.tick);
+    // ⚠️ Date du tick ou le gel COMMENCE reellement, qui est desormais le tick
+    // courant : l'etape 4 ouvre l'etalage au moment ou le niveau tombe, au lieu
+    // de programmer un gel de duree constante un tick plus tard.
+    //
+    // La propriete que ce test garde n'a pas change — le message porte un tick
+    // d'effet, et les clients gelent a CE tick plutot qu'a la reception (sans
+    // quoi chacun gelerait selon sa latence). Seul le decalage de `+1`, qui
+    // etait un artefact de la programmation a l'avance, a disparu.
+    expect(levelUps[0]?.tick).toBe(room.tick);
 
     // Le joueur se met en mouvement seulement MAINTENANT, pour observer le
     // gel : un joueur qui bouge doit s'arreter net des le tick d'effet.
@@ -780,7 +788,11 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     const hordeCountAtTrigger = room.horde.count;
     room.drainDeaths(); // vide les morts accumulees pendant la phase de collecte, avant de mesurer
 
-    for (let i = 0; i < LEVEL_FREEZE_TICKS; i++) {
+    // ⚠️ TROIS FOIS l'ancienne duree de gel. C'est le coeur de ce que la tache
+    // 6 change : le gel ne dure plus une constante, il dure jusqu'a ce que le
+    // draft se ferme. Un pas de `LEVEL_FREEZE_TICKS` ne verrait pas la
+    // difference — celui-ci echoue des qu'une duree fixe reapparait.
+    for (let i = 0; i < LEVEL_FREEZE_TICKS * 3; i++) {
       room.step(DT);
     }
     expect(positionOf(room, 1)).toEqual(atTrigger);
@@ -790,12 +802,270 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect(room.horde.count).toBe(hordeCountAtTrigger);
     expect(room.drainDeaths()).toEqual([]);
 
-    // Reprend : apres le gel et la rampe de reprise, le joueur bouge de
-    // nouveau.
+    // La montee de niveau a bien ouvert un etalage, et c'est LUI qui tient le
+    // gel ouvert.
+    const opens = room.drainDraftOpens();
+    expect(opens.length).toBe(1);
+    expect(opens[0]?.cards.length).toBeGreaterThan(0);
+
+    // Le joueur choisit : c'est ce geste, et rien d'autre, qui rend la main.
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    room.step(DT);
+
+    const results = room.drainDraftResults();
+    expect(results.length).toBe(1);
+    // Phase 0 = termine ; `deadlineTick` porte la fin du gel, que le client ne
+    // peut plus deduire (§8 de la spec).
+    expect(results[0]?.phase).toBe(0);
+    expect(results[0]?.deadlineTick).toBe(room.tick);
+    // La carte pointee est bien celle qui a ete gagnee, et elle a atterri dans
+    // l'inventaire — sans quoi le draft serait une ceremonie sans effet.
+    expect(results[0]?.outcomes).toEqual([{ playerId: 1, cardIndex: 0, outcome: 0 }]);
+    const carte = opens[0]?.cards[0];
+    const loadout = room.loadoutOf(1);
+    if (!carte || !loadout) {
+      throw new Error('etalage ou inventaire manquant');
+    }
+    if (carte.nature === CARD.PASSIVE) {
+      expect(loadout.stacksOf(carte.refId)).toBe(1);
+    } else {
+      expect(loadout.levelOf(carte.refId)).toBeGreaterThan(0);
+    }
+
+    // Reprend : apres la fermeture du draft et la rampe de reprise, le joueur
+    // bouge de nouveau.
     for (let i = 0; i < LEVEL_RESUME_TICKS + 30; i++) {
       room.step(DT);
     }
     expect(positionOf(room, 1)).not.toEqual(atTrigger);
+  });
+
+  /**
+   * Amene le salon au niveau 2 et rend l'etalage ouvert. Rend les cartes
+   * tirees. Les monstres sont poses en ANNEAU autour du joueur 1 pour la
+   * raison detaillee dans le test du gel ci-dessus.
+   */
+  function ouvreLEtalage(room: Room, monstres: number): readonly Card[] {
+    const centre = positionOf(room, 1);
+    for (let i = 0; i < monstres; i++) {
+      const angle = (i / monstres) * Math.PI * 2;
+      spawnMonsterAt(
+        room,
+        1000 + i,
+        centre.x + Math.cos(angle) * 50,
+        centre.y + Math.sin(angle) * 50,
+      );
+    }
+    let ticks = 0;
+    let opens: DraftOpenEvent[] = [];
+    while (opens.length === 0 && ticks < 3000) {
+      aimAtNearestMonster(room, 1, ticks + 1);
+      room.step(DT);
+      ticks++;
+      opens = room.drainDraftOpens();
+    }
+    const cartes = opens[0]?.cards;
+    if (!cartes || cartes.length === 0) {
+      throw new Error(`aucun etalage apres ${ticks} ticks`);
+    }
+    return cartes;
+  }
+
+  it('la carte disputee ne va qu au gagnant : le perdant ne recoit rien de ce tour', () => {
+    const room = new Room();
+    room.join(1);
+    room.join(2);
+    // Seuil du niveau 1 a deux joueurs : LEVEL_XP_BASE * 1 * 2 = 20.
+    const cartes = ouvreLEtalage(room, 20);
+    expect(cartes.length).toBeGreaterThan(1);
+
+    // Les deux visent la MEME carte : le conflit est garanti, pas espere.
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    expect(room.setDraftToken(2, 0)).toBe(true);
+    room.step(DT);
+
+    const results = room.drainDraftResults();
+    expect(results.length).toBe(1);
+    const issues = results[0]?.outcomes ?? [];
+    const gagnant = issues.find((o) => o.outcome === OUTCOME.WON);
+    const perdant = issues.find((o) => o.outcome === OUTCOME.LOST);
+    if (!gagnant || !perdant) {
+      throw new Error(`conflit non arbitre : ${JSON.stringify(issues)}`);
+    }
+    expect(gagnant.cardIndex).toBe(0);
+    expect(perdant.cardIndex).toBe(0);
+
+    // ⚠️ Le coeur de ce test : le perdant a POSE son jeton sur la carte 0 et
+    // figure dans le meme lot de resultats que le gagnant. Rien dans la
+    // structure du message ne distingue les deux — seul l'examen de
+    // `outcome` le fait. Sans ce filtre, les deux joueurs empocheraient la
+    // carte 0 et le conflit ne servirait a rien (verifie par mutation :
+    // neutraliser le filtre laissait 310 tests verts).
+    const carte = cartes[0];
+    const inv = room.loadoutOf(perdant.playerId);
+    if (!carte || !inv) {
+      throw new Error('carte ou inventaire manquant');
+    }
+    if (carte.nature === CARD.PASSIVE) {
+      expect(inv.stacksOf(carte.refId)).toBe(0);
+    } else {
+      expect(inv.levelOf(carte.refId)).toBe(0);
+    }
+    // Et le gagnant, lui, l'a bien eue : sans cette moitie, un code qui ne
+    // donnerait la carte a PERSONNE passerait aussi.
+    const invGagnant = room.loadoutOf(gagnant.playerId);
+    if (!invGagnant) {
+      throw new Error('inventaire du gagnant manquant');
+    }
+    if (carte.nature === CARD.PASSIVE) {
+      expect(invGagnant.stacksOf(carte.refId)).toBe(1);
+    } else {
+      expect(invGagnant.levelOf(carte.refId)).toBeGreaterThan(0);
+    }
+  });
+
+  it('deux niveaux gagnes au meme tick ouvrent deux drafts bout a bout, sans repit', () => {
+    const room = new Room();
+    room.join(1);
+    const depart = positionOf(room, 1);
+    // ⚠️ Le tas d'orbes se construit HORS portee de ramassage (200 px contre
+    // ORB_PICKUP_RADIUS = 90) : sinon chaque orbe serait empoche a la mort du
+    // monstre, l'experience arriverait au compte-gouttes et on ne verrait
+    // jamais deux niveaux franchis dans le meme appel a `#gainXp`.
+    //
+    // On respawn au MEME point apres chaque mort, au lieu de poser trente
+    // monstres d'un coup : un monstre vivant marche vers le joueur, donc
+    // trente monstres poses ensemble mourraient echelonnes sur 700 px et le
+    // tas serait etale. La, chacun meurt a quelques pixels de son point
+    // d'apparition.
+    const tas = { x: depart.x + 150, y: depart.y };
+    // Seuils solo : 10 pour le niveau 2, 20 pour le niveau 3 — trente orbes
+    // empoches d'un seul tick franchissent donc DEUX seuils d'un coup.
+    //
+    // ⚠️ On en amasse SOIXANTE, pas trente. Le tas s'etale sur une douzaine de
+    // pixels — un monstre vit entre quatre et huit ticks selon la phase du tir,
+    // et derive vers le joueur pendant ce temps — donc le joueur qui arrive
+    // dessus n'en ramasse d'abord qu'une partie. Mesure : `+4`, `+4`, puis
+    // `+34` d'un coup. Trente orbes ne donnaient que dix-neuf au tick decisif,
+    // soit un seul niveau, et ce test ne prouvait plus rien.
+    const ORBES = 60;
+    let morts = 0;
+    let ticks = 0;
+    let waveId = 1000;
+    // ⚠️ On suit NOTRE monstre par son identite, pas par `horde.count`. Ce
+    // test dure au-dela du tick 360, ou le generateur de vagues lache sa
+    // premiere vague : un compteur global cesserait alors d'atteindre zero et
+    // le tas ne se remplirait plus jamais. Les monstres de cette vague
+    // apparaissent bien plus loin que le tas, donc la visee ne les prend
+    // jamais pour cible avant la fin de la boucle.
+    let courant = -1;
+    while (morts < ORBES && ticks < 700) {
+      if (courant < 0 || room.horde.slotOf(courant) < 0) {
+        courant = spawnMonsterAt(room, waveId++, tas.x, tas.y);
+      }
+      aimAtNearestMonster(room, 1, ticks + 1);
+      room.step(DT);
+      ticks++;
+      for (const lot of room.drainDeaths()) {
+        morts += lot.ids.length;
+      }
+    }
+    expect(morts).toBe(ORBES);
+    // Personne n'a encore monte de niveau : tout est reste par terre.
+    expect(room.drainDraftOpens()).toEqual([]);
+
+    // Le joueur marche sur le tas. `ticks + 1` : voir la note sur `isNewer`
+    // dans le test de la rampe.
+    room.applyInput(1, ticks + 1, 127, 0);
+    let opens: DraftOpenEvent[] = [];
+    let marche = 0;
+    while (opens.length === 0 && marche < 200) {
+      room.step(DT);
+      marche++;
+      opens = room.drainDraftOpens();
+    }
+    expect(opens.length).toBe(1);
+
+    // ⚠️ LE point de ce test. Le premier draft se ferme ; le monde ne doit pas
+    // reprendre la main entre les deux, meme pendant la rampe de reprise — le
+    // second niveau attend et son etalage doit s'ouvrir AU TICK SUIVANT.
+    const positionGelee = positionOf(room, 1);
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    room.step(DT);
+    const premier = room.drainDraftResults();
+    expect(premier.length).toBe(1);
+    expect(premier[0]?.phase).toBe(0);
+
+    room.step(DT);
+    const second = room.drainDraftOpens();
+    expect(second.length).toBe(1);
+    // Le joueur n'a pas avance d'un pixel entre les deux etalages.
+    expect(positionOf(room, 1)).toEqual(positionGelee);
+
+    // Et le second se ferme comme le premier, rendant enfin la main.
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    room.step(DT);
+    expect(room.drainDraftResults()[0]?.phase).toBe(0);
+    for (let i = 0; i < LEVEL_RESUME_TICKS + 10; i++) {
+      room.step(DT);
+    }
+    expect(positionOf(room, 1)).not.toEqual(positionGelee);
+    // ⚠️ On ne verifie PAS qu'aucun troisieme etalage ne s'ouvre ensuite, et
+    // une premiere version de ce test le faisait a tort : une douzaine d'orbes
+    // restent au sol apres les deux niveaux, le joueur les ramasse des qu'il
+    // reprend la main, et un troisieme draft s'ouvre — c'est le jeu qui marche,
+    // pas un defaut.
+  });
+
+  it('la reprise apres le draft est progressive, pas un retour brutal a pleine vitesse', () => {
+    const room = new Room();
+    room.join(1);
+    ouvreLEtalage(room, 10);
+
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    room.step(DT);
+    expect(room.drainDraftResults()[0]?.phase).toBe(0);
+
+    // Le joueur pousse a fond, et ne relachera pas : chaque pas mesure ci-
+    // dessous est donc entierement du a la rampe.
+    //
+    // ⚠️ `room.tick + 1` : `seq` est compare modulo 16 bits (`isNewer`), donc
+    // un grand nombre arbitraire peut passer pour PLUS ANCIEN que la sequence
+    // deja atteinte par la boucle de visee — l'entree serait rejetee en
+    // silence et le joueur ne bougerait jamais (constate en ecrivant ce test).
+    room.applyInput(1, room.tick + 1, 127, 0);
+
+    // ⚠️ On mesure la rampe ENTIERE, pas un tick. Le pas d'un seul tick au
+    // debut de la rampe vaut une fraction de pixel, et `positionOf` lit le
+    // snapshot, ou les positions sont arrondies a l'entier : un test tick a
+    // tick lirait 0 des deux cotes et ne prouverait rien (constate en
+    // ecrivant celui-ci).
+    const debut = positionOf(room, 1);
+    for (let i = 0; i < LEVEL_RESUME_TICKS; i++) {
+      room.step(DT);
+    }
+    const parcouruEnRampe = positionOf(room, 1).x - debut.x;
+
+    // Bien apres la fin de la rampe : la meme duree, a pleine vitesse.
+    for (let i = 0; i < LEVEL_RESUME_TICKS; i++) {
+      room.step(DT);
+    }
+    const reference = positionOf(room, 1);
+    for (let i = 0; i < LEVEL_RESUME_TICKS; i++) {
+      room.step(DT);
+    }
+    const parcouruPlein = positionOf(room, 1).x - reference.x;
+
+    expect(parcouruPlein).toBeGreaterThan(0);
+    // La rampe monte lineairement de 0 a 1 : sur toute sa duree elle parcourt
+    // environ la MOITIE de la distance a pleine vitesse. Sans la ligne qui
+    // date la fin du gel (`#freezeUntilTick = tick` a la fermeture), l'echelle
+    // vaut 1 des le premier tick et les deux distances sont EGALES — mutation
+    // qui survivait aux 310 tests precedents.
+    expect(parcouruEnRampe).toBeLessThan(parcouruPlein * 0.7);
+    // Mais elle avance quand meme : un gel qui ne finirait jamais passerait
+    // aussi la ligne ci-dessus.
+    expect(parcouruEnRampe).toBeGreaterThan(0);
   });
 
   it('signale la fin de run exactement une fois quand tous les joueurs sont a 0 pv', () => {

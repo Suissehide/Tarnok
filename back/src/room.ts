@@ -1,7 +1,7 @@
+import { CARD, drawSpread } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
-  LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
   LEVEL_XP_BASE,
   MAP_SIZE,
@@ -14,14 +14,17 @@ import {
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
+import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
+import { makeRandom } from '@shared/random';
 import type { WaveOrder } from '@shared/waves';
 import { weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { type ContactPlayer, OrbField, resolveContact, resolveProjectileDamage } from './combat';
+import { Draft, OUTCOME } from './draft';
 import { WaveDirector } from './wave-director';
 
 /**
@@ -61,6 +64,11 @@ export interface PlayerState extends ContactPlayer {
   contactInvulnTicks: number;
   /** Dernier tick auquel ce joueur a tire. `-Infinity` : jamais — tire des que possible. */
   lastFireTick: number;
+  /**
+   * Ce que ce joueur possede : armes draftees avec leur niveau, passifs
+   * empiles. Naît ici (tache 6), consomme par les taches 7 et 8.
+   */
+  loadout: Loadout;
 }
 
 export interface RoomMetrics {
@@ -87,6 +95,20 @@ export interface IdBatch {
 }
 
 /** Une montee de niveau, datee au tick ou le gel prend effet (§6.2). */
+/** Un etalage a diffuser, tel que `DRAFT_OPEN` le transporte. */
+export interface DraftOpenEvent {
+  deadlineTick: number;
+  cards: readonly { nature: number; refId: number; owner: number }[];
+}
+
+/** Une resolution a diffuser, telle que `DRAFT_RESULT` la transporte. */
+export interface DraftResultEvent {
+  /** `0` : draft termine, `deadlineTick` est la fin du gel. `1` : repioche. */
+  phase: number;
+  deadlineTick: number;
+  outcomes: readonly { playerId: number; cardIndex: number; outcome: number }[];
+}
+
 export interface LevelUpEvent {
   tick: number;
   level: number;
@@ -155,6 +177,22 @@ export class Room {
   #pendingDeaths: IdBatch[] = [];
   #pendingPickups: IdBatch[] = [];
   #pendingLevelUps: LevelUpEvent[] = [];
+  /** L'etalage en cours. `phase === 'closed'` : aucun draft, le monde tourne. */
+  readonly #draft = new Draft();
+  /**
+   * Source aleatoire du draft, derivee de `mapSeed` comme celle du generateur
+   * de vagues — avec une constante de melange differente, pour que deux
+   * tirages independants ne se suivent pas.
+   *
+   * ⚠️ Le draft ne participe pas au contrat de replication (§2 de la spec de
+   * l'etape 4) : aucun client ne refait ce tirage. La graine sert la
+   * reproductibilite des tests, pas la convergence.
+   */
+  readonly #draftRng = makeRandom((this.mapSeed ^ 0x7a3c_11e5) >>> 0);
+  /** Niveaux gagnes dont le draft n'a pas encore eu lieu. */
+  #pendingLevels = 0;
+  #pendingDraftOpens: DraftOpenEvent[] = [];
+  #pendingDraftResults: DraftResultEvent[] = [];
   #pendingRunOver: RunOverEvent | null = null;
   #tick = 0;
   /** Tick des positions ayant servi au dernier calcul des champs. Voir `fieldInputTick`. */
@@ -215,6 +253,38 @@ export class Room {
   }
 
   /** Montees de niveau a diffuser (§6.2), datees au tick ou le gel prend effet. */
+  /** Les etalages ouverts depuis le dernier drainage. */
+  drainDraftOpens(): DraftOpenEvent[] {
+    const out = this.#pendingDraftOpens;
+    this.#pendingDraftOpens = [];
+    return out;
+  }
+
+  /** Les resolutions depuis le dernier drainage. */
+  drainDraftResults(): DraftResultEvent[] {
+    const out = this.#pendingDraftResults;
+    this.#pendingDraftResults = [];
+    return out;
+  }
+
+  /** Les intentions en cours : qui vise quoi. Vide hors draft. */
+  draftIntents(): ReadonlyMap<number, number> {
+    return this.#draft.intents();
+  }
+
+  /** Pose ou deplace le jeton d'un joueur. Rend `false` si le geste est refuse. */
+  setDraftToken(playerId: number, cardIndex: number): boolean {
+    return this.#draft.setToken(playerId, cardIndex);
+  }
+
+  /**
+   * Ce que ce joueur a accumule au fil des drafts. `undefined` s'il n'est pas
+   * dans le salon.
+   */
+  loadoutOf(playerId: number): Loadout | undefined {
+    return this.#players.get(playerId)?.loadout;
+  }
+
   drainLevelUps(): LevelUpEvent[] {
     const out = this.#pendingLevelUps;
     this.#pendingLevelUps = [];
@@ -271,6 +341,7 @@ export class Room {
       hp: PLAYER_MAX_HP,
       contactInvulnTicks: 0,
       lastFireTick: Number.NEGATIVE_INFINITY,
+      loadout: new Loadout(),
     });
     return true;
   }
@@ -354,6 +425,17 @@ export class Room {
       // deplacement des joueurs plus bas ne verifie `hp`, donc sans ce
       // retour un joueur a 0 pv continuerait de glisser sur la carte si une
       // entree de mouvement lui arrivait encore.
+      return;
+    }
+
+    // Un niveau attend et aucun etalage n'est ouvert : on ouvre.
+    if (this.#draft.phase === 'closed' && this.#pendingLevels > 0) {
+      this.#openDraft();
+    }
+
+    // Un etalage est ouvert : le monde est gele, seule la machine avance.
+    if (this.#draft.phase !== 'closed') {
+      this.#stepDraft();
       return;
     }
 
@@ -531,6 +613,84 @@ export class Room {
    * premier tick de la reprise, sans lui laisser le temps de reagir (§6.2,
    * comme *Swarm*).
    */
+  /**
+   * Ouvre un etalage : tire les cartes, met en file le `LEVEL_UP` **date du
+   * tick courant** et le `DRAFT_OPEN`.
+   *
+   * ⚠️ Le `LEVEL_UP` est date d'ici, pas de `#gainXp` : c'est ici que le gel
+   * commence reellement. Le §6.2 exige que les clients figent au tick indique
+   * et non a la reception, sans quoi chacun figerait selon sa latence.
+   */
+  #openDraft(): void {
+    this.#pendingLevels--;
+    const loadouts = new Map<number, Loadout>();
+    for (const [id, p] of this.#players) {
+      loadouts.set(id, p.loadout);
+    }
+    const spread = drawSpread(loadouts, this.#draftRng);
+    this.#draft.open(this.#tick, spread, [...this.#players.keys()]);
+    this.#pendingLevelUps.push({ tick: this.#tick, level: this.#level });
+    this.#pendingDraftOpens.push({ deadlineTick: this.#draft.deadlineTick, cards: spread });
+  }
+
+  /**
+   * Fait avancer l'etalage d'un tick. Quand une phase se ferme, applique les
+   * cartes et met le resultat en file.
+   *
+   * ⚠️ **`deadlineTick` du resultat porte la fin du gel** quand la phase vaut
+   * `0`. Le client ne peut plus la deduire : la fenetre dure jusqu'a ce que
+   * tout le monde ait pose son jeton, et en solo elle se ferme au clic. Sans
+   * ce champ, chaque client en devinerait une differente — exactement la
+   * divergence que le gel date par tick de l'etape 3 existait pour empecher.
+   */
+  #stepDraft(): void {
+    const issues = this.#draft.step(this.#tick, this.#draftRng);
+    if (!issues) {
+      return;
+    }
+    const spread = this.#draft.spread;
+    for (const r of issues) {
+      if (r.outcome === OUTCOME.LOST) {
+        continue;
+      }
+      const card = spread[r.cardIndex];
+      const player = this.#players.get(r.playerId);
+      if (!card || !player) {
+        continue;
+      }
+      this.#applyCard(player, card.nature, card.refId);
+    }
+
+    const termine = this.#draft.phase === 'closed';
+    if (termine) {
+      this.#freezeUntilTick = this.#tick;
+      this.#resumeEndTick = this.#tick + LEVEL_RESUME_TICKS;
+    }
+    this.#pendingDraftResults.push({
+      phase: termine ? 0 : 1,
+      deadlineTick: termine ? this.#tick : this.#draft.deadlineTick,
+      outcomes: issues,
+    });
+  }
+
+  /** Range une carte obtenue dans l'inventaire de son preneur. */
+  #applyCard(player: PlayerState, nature: number, refId: number): void {
+    switch (nature) {
+      case CARD.NEW_WEAPON:
+        player.loadout.addWeapon(refId);
+        break;
+      case CARD.WEAPON_LEVEL:
+      case CARD.EVOLUTION:
+        player.loadout.levelUpWeapon(refId);
+        break;
+      case CARD.PASSIVE:
+        player.loadout.addPassive(refId);
+        break;
+      default:
+        break;
+    }
+  }
+
   #movementScale(): number {
     if (this.#tick > this.#resumeEndTick) {
       return 1;
@@ -553,13 +713,13 @@ export class Room {
     while (this.#xp >= this.#xpToNextLevel()) {
       this.#xp -= this.#xpToNextLevel();
       this.#level++;
-      // Le gel prend effet au tick SUIVANT le dernier deja programme (ou le
-      // tick courant, s'il n'y en a pas) — jamais a l'emission : §6.2, meme
-      // raison que pour DEATHS.
-      const freezeStart = Math.max(this.#tick, this.#resumeEndTick) + 1;
-      this.#freezeUntilTick = freezeStart + LEVEL_FREEZE_TICKS - 1;
-      this.#resumeEndTick = this.#freezeUntilTick + LEVEL_RESUME_TICKS;
-      this.#pendingLevelUps.push({ tick: freezeStart, level: this.#level });
+      // ⚠️ **Plus rien a programmer ici.** A l'etape 3, le gel durait une
+      // constante, donc on pouvait calculer sa fin d'avance — et il fallait
+      // enchainer les gels a la main quand plusieurs niveaux tombaient d'un
+      // coup. Desormais le gel dure jusqu'a la fermeture du draft : on se
+      // contente de compter les niveaux dus, et `step` ouvre le suivant quand
+      // le precedent se referme. Le chainage disparait de lui-meme.
+      this.#pendingLevels++;
     }
   }
 

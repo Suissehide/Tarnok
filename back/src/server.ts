@@ -4,6 +4,9 @@ import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import {
   decode,
   encodeDeaths,
+  encodeDraftIntents,
+  encodeDraftOpen,
+  encodeDraftResult,
   encodeLevelUp,
   encodePickups,
   encodeRunOver,
@@ -158,6 +161,13 @@ class Session {
     }
     if (msg.type === MSG.INPUT) {
       this.room.applyInput(id, msg.seq, msg.moveX, msg.moveY, msg.aimX, msg.aimY);
+      return;
+    }
+    if (msg.type === MSG.DRAFT_TOKEN) {
+      // Le serveur arbitre : un geste refuse n'est simplement pas enregistre,
+      // et le client le verra a la prochaine diffusion des intentions. Aucun
+      // client ne decide de quoi que ce soit ici (§7.2).
+      this.room.setDraftToken(id, msg.cardIndex);
     }
   }
 
@@ -195,6 +205,19 @@ class Session {
     const runOver = this.room.drainRunOver();
     if (runOver) {
       this.#send(encodeRunOver(runOver.tick, runOver.survivedTicks, runOver.level, runOver.kills));
+    }
+
+    for (const open of this.room.drainDraftOpens()) {
+      this.#send(encodeDraftOpen(open.deadlineTick, open.cards));
+    }
+    const intents = this.room.draftIntents();
+    if (intents.size > 0) {
+      this.#send(
+        encodeDraftIntents([...intents].map(([playerId, cardIndex]) => ({ playerId, cardIndex }))),
+      );
+    }
+    for (const res of this.room.drainDraftResults()) {
+      this.#send(encodeDraftResult(res.phase, res.deadlineTick, res.outcomes));
     }
 
     this.#outbox.buffers.length = 0;

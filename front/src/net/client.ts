@@ -2,7 +2,6 @@ import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   INPUT_HZ,
-  LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   MAX_ENTITIES,
@@ -17,6 +16,7 @@ import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import {
   decode,
+  encodeDraftToken,
   encodeInput,
   MSG,
   type PlayerSnapshot,
@@ -353,6 +353,25 @@ export class GameClient {
    */
   #freezeUntilTick = -1;
   #resumeEndTick = -1;
+  /**
+   * Tick auquel le gel courant a commence, `-1` hors gel.
+   *
+   * ⚠️ **Ce champ existe parce que la fin du gel n'est plus calculable.** A
+   * l'etape 3 le client la deduisait — `msg.tick + LEVEL_FREEZE_TICKS - 1` —
+   * parce que le gel durait une constante. Depuis l'etape 4, il dure jusqu'a ce
+   * que tout le monde ait pose son jeton, et en solo jusqu'au clic : seul le
+   * serveur la connait, et il l'annonce dans `DRAFT_RESULT`. Entre les deux, le
+   * client sait seulement qu'il est gele DEPUIS ce tick.
+   */
+  #freezeStartTick = -1;
+
+  /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien (§7.2). */
+  #draftCards: readonly { nature: number; refId: number; owner: number }[] = [];
+  #draftDeadlineTick = 0;
+  /** `playerId -> cardIndex` : les jetons poses, ceux des autres compris. */
+  #draftIntents = new Map<number, number>();
+  /** La derniere resolution recue — ce qui dit a l'ecran quelle carte illuminer ou consumer. */
+  #draftOutcomes: readonly { playerId: number; cardIndex: number; outcome: number }[] = [];
 
   /**
    * Ordres recus mais pas encore appliques.
@@ -448,15 +467,38 @@ export class GameClient {
    * accesseur qui s'eteindrait a la fin du gel laisserait une seconde de
    * ralenti inexpliquee.
    */
+  /** L'etalage a afficher. Vide quand aucun draft n'est ouvert. */
+  get draftCards(): readonly { nature: number; refId: number; owner: number }[] {
+    return this.#draftCards;
+  }
+
+  /** Echeance de la fenetre courante, pour le chronometre. */
+  get draftDeadlineTick(): number {
+    return this.#draftDeadlineTick;
+  }
+
+  /** Qui vise quoi — c'est cette visibilite qui fait exister la negociation (§7.2 point 3). */
+  get draftIntents(): ReadonlyMap<number, number> {
+    return this.#draftIntents;
+  }
+
+  /** La derniere resolution : quelle carte s'illumine, laquelle se consume. */
+  get draftOutcomes(): readonly { playerId: number; cardIndex: number; outcome: number }[] {
+    return this.#draftOutcomes;
+  }
+
+  /** C -> S : je pose mon jeton, ou je le retire avec `NO_TOKEN`. */
+  placeToken(cardIndex: number): void {
+    this.#ws?.send(encodeDraftToken(cardIndex));
+  }
+
   get isFrozen(): boolean {
-    if (this.#resumeEndTick < 0) {
+    if (this.#freezeStartTick < 0) {
       return false;
     }
-    // Le gel prend effet au tick DATE par le `LEVEL_UP`, pas a sa reception :
-    // `#freezeUntilTick` est sa borne haute, d'ou la soustraction pour
-    // retrouver son debut.
-    const debut = this.#freezeUntilTick - LEVEL_FREEZE_TICKS + 1;
-    return this.#lastHordeTick >= debut && this.#lastHordeTick <= this.#resumeEndTick;
+    return (
+      this.#lastHordeTick >= this.#freezeStartTick && this.#lastHordeTick <= this.#resumeEndTick
+    );
   }
 
   /**
@@ -633,13 +675,45 @@ export class GameClient {
       // l'emission (voir `LevelUpMessage`) : geler a la reception ferait geler
       // chaque client a un tick different selon sa latence, et le gel
       // deviendrait une source de divergence au lieu d'une pause commune.
-      this.#freezeUntilTick = msg.tick + LEVEL_FREEZE_TICKS - 1;
-      this.#resumeEndTick = this.#freezeUntilTick + LEVEL_RESUME_TICKS;
+      // Gel d'une duree INCONNUE : il commence au tick date, et ne finira que
+      // quand `DRAFT_RESULT` l'annoncera. D'ici la, les deux bornes hautes sont
+      // repoussees a l'infini plutot que devinees.
+      this.#freezeStartTick = msg.tick;
+      this.#freezeUntilTick = Number.MAX_SAFE_INTEGER;
+      this.#resumeEndTick = Number.MAX_SAFE_INTEGER;
       // Contrairement au gel, le niveau affiche au HUD peut se mettre a jour
       // des la reception : ce n'est pas une simulation partagee qui doit
       // diverger identiquement des deux cotes, seulement un chiffre a
       // afficher.
       this.#level = msg.level;
+      return;
+    }
+
+    if (msg.type === MSG.DRAFT_OPEN) {
+      this.#draftCards = msg.cards;
+      this.#draftDeadlineTick = msg.deadlineTick;
+      this.#draftOutcomes = [];
+      return;
+    }
+
+    if (msg.type === MSG.DRAFT_INTENTS) {
+      this.#draftIntents = new Map(msg.intents.map((i) => [i.playerId, i.cardIndex]));
+      return;
+    }
+
+    if (msg.type === MSG.DRAFT_RESULT) {
+      this.#draftOutcomes = msg.outcomes;
+      this.#draftIntents = new Map();
+      if (msg.phase === 0) {
+        // ⚠️ **C'est ICI que le client apprend la fin du gel**, et nulle part
+        // ailleurs. Il ne peut pas la deduire : la fenetre dure jusqu'a ce que
+        // tout le monde ait pose son jeton, et en solo elle se ferme au clic.
+        this.#draftCards = [];
+        this.#freezeUntilTick = msg.deadlineTick;
+        this.#resumeEndTick = msg.deadlineTick + LEVEL_RESUME_TICKS;
+      } else {
+        this.#draftDeadlineTick = msg.deadlineTick;
+      }
       return;
     }
     if (msg.type === MSG.RUN_OVER) {

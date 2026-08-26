@@ -45,6 +45,11 @@ export class Draft {
     return this.#phase;
   }
 
+  /** L'etalage en cours — `Room` en a besoin pour appliquer les cartes obtenues. */
+  get spread(): readonly Card[] {
+    return this.#spread;
+  }
+
   get deadlineTick(): number {
     return this.#deadlineTick;
   }
