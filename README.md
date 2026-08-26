@@ -15,7 +15,7 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 0 | Socle : dépôt, workspaces, CI, salon WebSocket minimal | ✅ |
 | 1 | Bancs de performance | ✅ — [résultats](docs/plans/2026-08-24-banc-resultats.md) |
 | 2 | Horde : flowfield, vagues data-driven, rendu batché | ✅ — [résultats](docs/plans/2026-08-24-etape-2-resultats.md) |
-| 3 | Combat : tir, morts répliquées, orbes, niveaux, fin de run | ✅ — [résultats](docs/plans/2026-08-24-etape-3-resultats.md) |
+| 3 | Combat : tir au curseur, morts répliquées, orbes, niveaux, fin de run | ✅ — [résultats](docs/plans/2026-08-24-etape-3-resultats.md) |
 
 **Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
 19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du
@@ -28,7 +28,7 @@ l'applique, et rejoue :
 
 | | Dérive |
 | --- | --- |
-| Morts + séparation, **sans** rejeu | 687,893 px |
+| Morts + séparation, **sans** rejeu | 332,888 px |
 | Morts + séparation, **avec** rejeu | **0,000 px** |
 
 Le chiffre de gauche compte autant que celui de droite : il mesure ce que le mécanisme ferait
