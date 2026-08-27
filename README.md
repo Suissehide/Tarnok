@@ -16,6 +16,7 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 1 | Bancs de performance | ✅ — [résultats](docs/plans/2026-08-24-banc-resultats.md) |
 | 2 | Horde : flowfield, vagues data-driven, rendu batché | ✅ — [résultats](docs/plans/2026-08-24-etape-2-resultats.md) |
 | 3 | Combat : tir au curseur, morts répliquées, orbes, niveaux, fin de run | ✅ — [résultats](docs/plans/2026-08-24-etape-3-resultats.md) |
+| 4 | Draft : étalage à la montée de niveau, jetons visibles, conflits arbitrés | ✅ — [résultats](docs/plans/2026-08-26-etape-4-resultats.md) |
 
 **Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
 19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du

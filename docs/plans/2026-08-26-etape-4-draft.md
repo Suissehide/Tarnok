@@ -1,13 +1,16 @@
 # Étape 4 — le draft : plan d'implémentation
 
-> ⚠️ **Ce plan décrit un modèle de cartes qui n'existe plus.** Il a été exécuté intégralement, puis
-> l'auteur a joué et a corrigé le modèle : plus de niveaux d'arme, plus d'évolutions, plus
-> d'`owner`, plus d'exclusivité d'équipe, plus de repioche. Les armes s'empilent comme les passifs,
-> toute carte est ouverte à tous, et la résolution est un seul moment.
+> ⚠️ **Ce plan a été exécuté, puis le modèle qu'il décrit a changé.** L'auteur a joué et a corrigé
+> le modèle de cartes : plus de niveaux d'arme, plus d'évolutions, plus d'`owner`, plus
+> d'exclusivité d'équipe, plus de repioche. Les armes s'empilent comme les passifs, toute carte est
+> ouverte à tous, et la résolution est un seul moment.
 >
-> **La spec, elle, est à jour** — voir son §9.1, qui liste ce qui est tombé et ce qui l'a remplacé.
-> Ce plan est conservé tel quel comme trace de l'exécution : les tâches 1 à 5 et 10 y décrivent un
-> modèle que le code ne suit plus. Ne pas s'en servir comme référence.
+> Les **tableaux de référence ci-dessous ont été corrigés** : ils décrivent le code tel qu'il est.
+> Les **douze tâches, elles, sont conservées telles qu'écrites** — ce sont les instructions qui ont
+> été suivies, et les réécrire effacerait la trace de ce qui a été fait. La section
+> « Ce qui a changé après l'exécution » dit, tâche par tâche, ce qui ne vaut plus.
+>
+> **La spec fait foi** — voir son §9.1.
 
 > **Pour un agent exécutant :** SOUS-COMPÉTENCE REQUISE — utiliser
 > `superpowers:subagent-driven-development` (recommandé) ou `superpowers:executing-plans`.
@@ -67,32 +70,68 @@ de l'étape 3 sont nées de l'auteur en train de jouer, et aucune n'aurait été
 | Constante | Valeur | Contrainte |
 | --- | --- | --- |
 | `DRAFT_WINDOW_TICKS` | 600 (20 s) | plafond du §7.4, **à plusieurs seulement** ; en solo la fenêtre se referme au clic |
-| `DRAFT_REPICK_TICKS` | 150 (5 s) | §7.2 point 4 |
-| `LEVEL_RESUME_TICKS` | 30 | existant, inchangé — la rampe de reprise de l'étape 3 |
+| ~~`DRAFT_REPICK_TICKS`~~ | **supprimée** | la repioche n'existe plus : le perdant est servi d'office, immédiatement |
+| `LEVEL_RESUME_TICKS` | 30 | existant, inchangé — la rampe de reprise de l'étape 3. ⚠️ **Elle sert aussi, par accident, de fenêtre de révélation** : l'écran disparaît avec elle, soit 1 s pour lire ce qu'on a obtenu |
 | ~~`LEVEL_FREEZE_TICKS`~~ | **supprimée en tâche 6, pas avant** | valeur provisoire de l'étape 3. Elle a **six** usages dans `back/` **et** `front/` : la retirer plus tôt casse le build entre deux tâches |
 | `WEAPON_SLOTS` | 5 | §6.1 — **toutes draftées**, aucune attribuée d'avance |
 | `PASSIVE_SLOTS` | 3 | §6.1 ; l'extension à 6 par événements est hors étape |
-| `WEAPON_MAX_LEVEL` | 5 | au-delà, la carte proposée devient l'évolution (§7.5) |
+| ~~`WEAPON_MAX_LEVEL`~~ | **supprimée** | une arme ne monte pas de niveau, elle s'empile |
 | `SPREAD_BONUS` | 3 | l'étalage fait `joueurs + 3` cartes (§7.2 point 1) |
+| `PROJECTILE_CAPACITY` | **1024** | valait 256 dans `back/` **et** `front/`, recopiée. L'empilement lève la borne : 424 projectiles vivants à seize exemplaires par arme |
 
 > ⚠️ **`SPREAD_BONUS` a une contrainte non évidente.** L'étalage doit rester **strictement plus
-> grand que le nombre de joueurs**, sinon une repioche peut n'avoir plus rien à offrir. À 4
-> joueurs et 7 cartes, quatre prises laissent trois cartes : la borne tient. La changer sans
-> vérifier ça casse la repioche du §7.2 point 4.
+> grand que le nombre de joueurs**, sinon le **remplacement d'un perdant** peut n'avoir plus rien à
+> offrir. À 4 joueurs et 7 cartes, quatre prises laissent trois cartes : la borne tient.
+>
+> Cette contrainte a d'abord été justifiée par la repioche, qui n'existe plus. **Elle reste vraie,
+> pour une autre raison** — c'est le §4.4 de la spec qui l'exige maintenant.
 
 ## Structure des fichiers
 
 | Fichier | Responsabilité |
 | --- | --- |
 | `shared/passives.ts` | table des passifs, pilotée par la donnée — l'index **est** l'identifiant |
-| `shared/weapons.ts` | + niveau maximum, passif d'évolution requis |
-| `shared/cards.ts` | le type `Card`, les quatre natures, le tirage d'un étalage |
-| `shared/loadout.ts` | l'inventaire d'un joueur : armes et niveaux, passifs empilés |
+| `shared/weapons.ts` | table des armes ; `salvoCount`, `cooldownWithBonus` — lues des **deux** côtés du fil |
+| `shared/cards.ts` | le type `Card`, les **deux** natures, le tirage d'un étalage, `applyCardToLoadout` |
+| `shared/loadout.ts` | l'inventaire d'un joueur : armes **et** passifs empilés, `canTake` |
 | `shared/protocol.ts` | + `DRAFT_OPEN`, `DRAFT_TOKEN`, `DRAFT_INTENTS`, `DRAFT_RESULT` |
 | `back/src/draft.ts` | la machine à états, testable sans serveur |
-| `back/src/room.ts` | intègre le draft au gel ; tire depuis les slots |
+| `back/src/room.ts` | intègre le draft au gel ; tire depuis les slots, exemplaires compris |
 | `front/src/net/client.ts` | reçoit les messages, expose l'état de draft |
 | `front/src/ui/draft.ts` | l'écran : cartes, jetons, révélation |
+
+---
+
+## Ce qui a changé après l'exécution
+
+Le plan a été suivi de bout en bout, puis l'auteur a joué. **Six tâches décrivent un modèle que le
+code ne suit plus.** Leurs instructions sont conservées telles quelles — c'est ce qui a été fait —
+mais voici ce qui vaut aujourd'hui.
+
+| Tâche | Ce que le plan dit | Ce que le code fait |
+| --- | --- | --- |
+| **1** — le catalogue | `Weapon` gagne `maxLevel` et `evolutionPassiveId` | ni l'un ni l'autre ; `salvoCount(arme, exemplaires)` à la place |
+| **2** — `Loadout` | armes **avec niveau**, refus du doublon | armes **empilées**, comme les passifs ; `canTake` remplace `owner` |
+| **3** — `cards.ts` | quatre natures, `owner`, exclusivité d'équipe | **deux** natures, pas d'`owner`, aucune exclusion sauf l'arme neutre |
+| **4** — le protocole | carte à 3 octets, `DRAFT_RESULT` avec un octet `phase` | carte à **2** octets, pas de `phase` — un seul résultat par draft |
+| **5** — la machine à états | trois phases, fenêtre de repioche | **deux** phases ; le perdant est servi d'office, immédiatement |
+| **10** — l'écran | état `locked`, ligne de statut « Repioche », deux révélations | ni `locked` ni repioche ; **une** révélation, et les cartes restantes s'estompent |
+
+Les tâches 6 à 9, 11 et 12 restent valables dans leur intention ; seuls leurs exemples de code
+portent l'ancien modèle.
+
+**Ce qui a été ajouté et qu'aucune tâche ne prévoyait :**
+
+- `PROJECTILE_CAPACITY` descend dans `shared/` et passe de 256 à 1024 — l'empilement lève une borne
+  que le plafond de cinq armes ne tenait plus ;
+- `Projectiles.truncatedProjectiles` compte les salves tronquées : une salve qui ne part pas est une
+  carte payée pour rien ;
+- `Room` accepte une **graine** (`new Room(seed?)`) — un test des drafts enchaînés échouait une fois
+  sur quatre, la géométrie du tas d'orbes dépendant des obstacles ;
+- `hp` passe de `u8` à `u16` dans le snapshot — à la huitième carte de vitalité, le joueur se
+  repliait silencieusement à 4 points de vie ;
+- `app.decorate('rooms', registry)` et `buildServer({ roomSeed })`, sans quoi le test d'intégration
+  ne pouvait pas atteindre la `Room` par la vraie socket.
 
 ---
 
