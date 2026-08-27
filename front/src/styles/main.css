@@ -144,3 +144,155 @@ img,
   color: #6b5540;
   letter-spacing: 0.3em;
 }
+
+/*
+ * L'ecran de draft (tache 10 — §4.1, §4.2 et §7.2 de la spec de l'etape 4).
+ *
+ * Deux choses seulement doivent se LIRE ici, et aucune n'est du decor :
+ * qui vise quoi (les jetons), et ce qui arrive a MA carte (l'illumination ou
+ * la consumation). Le reste attend l'etape 5, quand les cartes auront un
+ * element a porter.
+ */
+#draft {
+  background: rgb(20 17 15 / 0.92);
+  transition: background 250ms linear;
+}
+
+/*
+ * A la revelation, le fond s'efface : le gel se termine au tick de fermeture
+ * et le monde repart aussitot sur la rampe `LEVEL_RESUME_TICKS`. Garder un
+ * voile opaque par-dessus un monde qui redemarre cacherait au joueur
+ * exactement ce vers quoi il doit revenir.
+ */
+#draft[data-settled="true"] {
+  background: rgb(20 17 15 / 0);
+}
+
+#draft[data-settled="true"] #draft-sheet {
+  opacity: 0.92;
+}
+
+.draft-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  width: 9rem;
+  min-height: 7rem;
+  padding: 0.75rem 0.5rem 2rem;
+  background: #241c14;
+  border: 3px solid #6b5540;
+  color: var(--color-ember-400);
+  text-align: center;
+  transition:
+    border-color 80ms linear,
+    transform 80ms linear;
+}
+
+.draft-card:not(:disabled):hover {
+  border-color: var(--color-ember-400);
+  transform: translateY(-2px);
+}
+
+.draft-card:disabled {
+  cursor: not-allowed;
+}
+
+.draft-card__nature {
+  font-size: 0.7rem;
+  letter-spacing: 0.2em;
+  color: #8a7355;
+  text-transform: uppercase;
+}
+
+.draft-card__name {
+  font-size: 0.95rem;
+  font-weight: bold;
+  overflow-wrap: anywhere;
+}
+
+/* Les jetons se posent en bas de la carte : c'est la que le regard les cherche. */
+.draft-card__tokens {
+  position: absolute;
+  bottom: 0.4rem;
+  left: 0;
+  right: 0;
+  display: flex;
+  justify-content: center;
+  gap: 0.25rem;
+  min-height: 1.1rem;
+}
+
+.draft-token {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  border: 2px solid #241c14;
+  color: #14110f;
+  font-size: 0.65rem;
+  font-style: normal;
+  font-weight: bold;
+}
+
+/* Mon propre jeton se distingue de ceux des autres, sinon on cherche le sien. */
+.draft-token[data-local="true"] {
+  border-color: var(--color-parchment);
+}
+
+/* Une carte qu'un autre a prise sans que je la vise : eteinte, pas brulee. */
+.draft-card[data-state="taken"] {
+  opacity: 0.35;
+}
+
+/* Une carte reservee a un autre joueur (`owner`, §3.2) : visible, jamais cliquable. */
+.draft-card[data-state="locked"] {
+  opacity: 0.5;
+  border-style: dashed;
+}
+
+/* §4.2 : la carte obtenue s'ILLUMINE. */
+.draft-card[data-state="won"] {
+  animation: draft-illumine 500ms ease-out 2;
+  border-color: var(--color-ember-400);
+}
+
+/* §4.2 : la meme carte se CONSUME chez les perdants, au meme instant. */
+.draft-card[data-state="lost"] {
+  animation: draft-consume 700ms ease-in forwards;
+  border-color: #7a2f1b;
+}
+
+@keyframes draft-illumine {
+  from {
+    background: #241c14;
+    box-shadow: none;
+  }
+  50% {
+    background: #6b5540;
+    box-shadow: 0 0 1.5rem var(--color-ember-400);
+  }
+  to {
+    background: #241c14;
+    box-shadow: 0 0 0.5rem var(--color-ember-400);
+  }
+}
+
+@keyframes draft-consume {
+  from {
+    background: #241c14;
+    color: var(--color-ember-400);
+  }
+  40% {
+    background: #7a2f1b;
+    color: var(--color-parchment);
+  }
+  to {
+    background: #180d09;
+    color: #4a2a1a;
+    opacity: 0.4;
+  }
+}

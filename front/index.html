@@ -87,6 +87,31 @@
         </div>
       </div>
 
+      <!--
+        Tache 10 : l'etalage de cartes (§4.1, §4.2 et §7.2 de la spec de
+        l'etape 4). Les cartes elles-memes sont creees par `ui/draft.ts` a
+        chaque `DRAFT_OPEN` — leur nombre depend du nombre de joueurs
+        (`joueurs + SPREAD_BONUS`), donc rien ici ne peut les prevoir.
+
+        Pas de `.ts-panel` sur le conteneur exterieur : c'est `#draft-sheet`
+        qui le porte, pour que le fond sombre puisse s'effacer a la revelation
+        (voir `[data-settled='true']` dans styles/main.css) sans emporter le
+        parchemin avec lui.
+      -->
+      <div
+        id="draft"
+        data-settled="false"
+        class="absolute inset-0 z-20 hidden items-center justify-center"
+      >
+        <div class="flex w-[min(60rem,94vw)] flex-col items-center">
+          <div class="ts-ribbon z-10 w-full -mb-6 text-xl tracking-[0.3em]">NIVEAU SUPÉRIEUR</div>
+          <div id="draft-sheet" class="ts-panel flex w-full flex-col items-center gap-4 pt-4">
+            <p id="draft-status" class="text-center text-sm font-bold tracking-[0.1em]"></p>
+            <div id="draft-cards" class="flex flex-wrap justify-center gap-3"></div>
+          </div>
+        </div>
+      </div>
+
       <div
         id="summary"
         class="absolute inset-0 z-20 hidden items-center justify-center bg-forge-900/95"

@@ -11,6 +11,7 @@ import { formatSummary, hudInfo, Stage } from './render/stage';
 import './styles/main.css';
 
 import { API_URL, gameSocketUrl } from './ui/config';
+import { DraftScreen } from './ui/draft';
 
 const el = <T extends HTMLElement>(id: string): T => {
   const node = document.getElementById(id);
@@ -88,6 +89,12 @@ function join(code: string): void {
   );
   client.connect();
 
+  // L'etalage du §7.2 : il se met a jour a chaque image, dans `renderFrame`.
+  // Un ecran a part entiere plutot qu'un bout de HUD, parce que c'est le
+  // moment le plus social de la partie (§7.1 de l'orientation) et qu'il doit
+  // montrer les jetons des quatre joueurs.
+  const draftScreen = new DraftScreen(el('draft'), el('draft-status'), el('draft-cards'), client);
+
   lobby.classList.add('hidden');
   hud.classList.remove('hidden');
   hud.classList.add('flex');
@@ -131,6 +138,7 @@ function join(code: string): void {
     stage.drawProjectiles(client.projectiles);
     stage.drawImpactFlashes(client.hitFlashes, now);
     updateHud(state, client);
+    draftScreen.update();
     return state;
   }
 
