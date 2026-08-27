@@ -138,9 +138,9 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     spreadRadians: Math.PI / 2,
   },
   {
-    // Seule arme du catalogue a evoluer (§7.5) : au niveau maximum, un joueur
-    // qui possede deja le passif « puissance » (id 2, degats) se voit
-    // proposer l'evolution plutot qu'une nouvelle carte de niveau.
+    // Arme a projectile unique et longue portee. Elle a un temps ete la seule
+    // du catalogue a « evoluer » ; les evolutions n'existent plus (§9.1 de la
+    // spec), elle s'empile comme les autres.
     name: 'sceptre-arcanique',
     cooldownTicks: 40,
     damage: 10,
@@ -183,21 +183,6 @@ export function weaponOf(id: number): Weapon {
 export const MAX_FIRE_RATE_BONUS = 0.75;
 
 /**
- * Recharge d'une arme apres application des passifs de cadence.
- *
- * Le plancher d'UN tick n'est pas cosmetique : a zero, `tick - lastFireTick`
- * vaut toujours au moins la recharge et l'arme tirerait plusieurs fois par
- * tick si la boucle changeait.
- *
- * ⚠️ **Vit dans `shared/` et pas dans `back/src/room.ts`, ou elle est nee a la
- * tache 8.** Le client la lit aussi, depuis la tache 9 : `GameClient#fireWeapons`
- * est le miroir cosmetique de `Room#fireWeapons`, et deux copies de cette
- * formule divergeraient des la premiere retouche — les projectiles affiches ne
- * partiraient plus a la cadence de ceux que le serveur arbitre. Le client ne
- * peut pas importer `back/` (regle Biome, voir `room.ts`), donc la fonction
- * descend ici plutot que d'etre recopiee.
- */
-/**
  * Nombre de projectiles d'une salve, exemplaires empiles compris.
  *
  * ⚠️ **C'est ici que « l'accumulation des cartes fait la puissance » devient un
@@ -214,6 +199,21 @@ export function salvoCount(weapon: Weapon, stacks: number): number {
   return weapon.projectileCount + Math.max(0, stacks - 1);
 }
 
+/**
+ * Recharge d'une arme apres application des passifs de cadence.
+ *
+ * Le plancher d'UN tick n'est pas cosmetique : a zero, `tick - lastFireTick`
+ * vaut toujours au moins la recharge et l'arme tirerait plusieurs fois par
+ * tick si la boucle changeait.
+ *
+ * ⚠️ **Vit dans `shared/` et pas dans `back/src/room.ts`, ou elle est nee a la
+ * tache 8.** Le client la lit aussi, depuis la tache 9 : `GameClient#fireWeapons`
+ * est le miroir cosmetique de `Room#fireWeapons`, et deux copies de cette
+ * formule divergeraient des la premiere retouche — les projectiles affiches ne
+ * partiraient plus a la cadence de ceux que le serveur arbitre. Le client ne
+ * peut pas importer `back/` (regle Biome, voir `room.ts`), donc la fonction
+ * descend ici plutot que d'etre recopiee.
+ */
 export function cooldownWithBonus(base: number, bonus: number): number {
   const reduction = Math.min(Math.max(bonus, 0), MAX_FIRE_RATE_BONUS);
   return Math.max(1, Math.round(base * (1 - reduction)));

@@ -51,7 +51,17 @@ export interface DraftOutcomeView {
  * j'avais pose mon jeton, et qu'un autre a eue. Une carte qu'un autre a prise
  * sans que je la vise est `taken`, et ne doit pas bruler.
  */
-export type DraftCardState = 'idle' | 'locked' | 'taken' | 'won' | 'lost';
+/**
+ * ⚠️ **`'locked'` a disparu avec `owner`.** Plus aucune carte n'est reservee :
+ * toutes sont ouvertes a tout le monde, et une carte deja visee par un allie
+ * reste posable — c'est la negociation.
+ *
+ * - `won` : elle s'illumine, je l'ai eue ;
+ * - `lost` : elle se consume, je l'ai perdue ;
+ * - `taken` : un autre l'a eue ;
+ * - `idle` : rien de decide, elle s'estompe une fois la resolution passee.
+ */
+export type DraftCardState = 'idle' | 'taken' | 'won' | 'lost';
 
 /** Les memes teintes que les anneaux de joueur du rendu (`stage.ts`) : un joueur, une couleur. */
 const PLAYER_COLORS = ['#e0a45e', '#6fa8dc', '#93c47d', '#c27ba0'];
@@ -219,7 +229,6 @@ export class DraftScreen {
     const source = this.#source;
     const mine = source.localId;
     const settled = source.draftSettled;
-    const participating = this.#participating();
 
     this.#root.dataset.settled = settled ? 'true' : 'false';
 
@@ -240,10 +249,11 @@ export class DraftScreen {
       }
       const state = this.#stateOf(card, index, mine);
       cell.root.dataset.state = state;
-      // Cliquable seulement si la carte m'est offerte, que la negociation est
-      // ouverte, et que j'y participe encore (a la repioche, seuls les
-      // perdants reposent un jeton).
-      cell.root.disabled = settled || !participating || state !== 'idle';
+      // Cliquable tant que la negociation est ouverte. Il n'y a plus rien
+      // d'autre a verifier : toutes les cartes sont offertes a tout le monde,
+      // et la resolution est un seul moment — apres elle, plus personne ne
+      // clique.
+      cell.root.disabled = settled;
       cell.root.dataset.mine =
         mine !== null && source.draftIntents.get(mine) === index ? 'true' : 'false';
 
@@ -254,26 +264,7 @@ export class DraftScreen {
       cell.tokens.replaceChildren(...holders.map((id) => tokenFor(id, id === mine)));
     });
 
-    this.#status.textContent = this.#statusLine(spread, mine, settled, participating);
-  }
-
-  /**
-   * Qui a encore un jeton a poser.
-   *
-   * Au premier tour, tout le monde. A la repioche, les perdants et eux seuls
-   * (§4 : *« les perdants reposent sur ce qui reste »*) — ce que l'ecran
-   * deduit de ses propres issues, faute d'un champ du protocole qui le dise.
-   */
-  #participating(): boolean {
-    const mine = this.#source.localId;
-    if (mine === null || this.#source.draftSettled) {
-      return false;
-    }
-    if (this.#outcomes.length === 0) {
-      return true;
-    }
-    const owned = this.#outcomes.some((o) => o.playerId === mine && o.outcome !== OUTCOME.LOST);
-    return !owned;
+    this.#status.textContent = this.#statusLine(spread, mine, settled);
   }
 
   #stateOf(card: Card, index: number, mine: number | null): DraftCardState {
@@ -326,27 +317,20 @@ export class DraftScreen {
     return 'idle';
   }
 
-  #statusLine(
-    spread: readonly Card[],
-    mine: number | null,
-    settled: boolean,
-    participating: boolean,
-  ): string {
+  #statusLine(spread: readonly Card[], mine: number | null, settled: boolean): string {
     if (settled) {
-      const won = this.#outcomes.find((o) => o.playerId === mine && o.outcome !== OUTCOME.LOST);
-      const card = won ? spread[won.cardIndex] : undefined;
-      // Le cas sans carte existe : un perdant de reconflit a la repioche
-      // repart les mains vides (voir le registre de l'etape 4). Le dire vaut
-      // mieux qu'un ecran muet.
+      const gagnee = this.#outcomes.find((o) => o.playerId === mine && o.outcome !== OUTCOME.LOST);
+      const card = gagnee ? spread[gagnee.cardIndex] : undefined;
+      // ⚠️ On cherche l'issue qui n'est PAS un `LOST` : le perdant d'un conflit
+      // en a deux — la carte disputee qu'il perd, puis celle qu'il obtient a la
+      // place. C'est la seconde qui se lit ici.
+      //
+      // Le cas sans carte reste possible : l'etalage peut n'avoir plus rien que
+      // cet inventaire puisse accueillir. Le dire vaut mieux qu'un ecran muet.
       return card ? `Vous obtenez : ${cardName(card)}` : 'Rien cette fois.';
     }
     const seconds = remainingSeconds(this.#source.draftDeadlineTick, this.#source.hordeTick);
-    if (this.#outcomes.length === 0) {
-      return `Posez votre jeton — ${seconds} s`;
-    }
-    return participating
-      ? `Repioche — ${seconds} s`
-      : `Repioche — les autres choisissent… ${seconds} s`;
+    return `Posez votre jeton — ${seconds} s`;
   }
 }
 

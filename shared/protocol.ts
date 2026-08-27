@@ -184,7 +184,7 @@ export interface DraftIntentsMessage {
 
 export interface DraftResultMessage {
   type: typeof MSG.DRAFT_RESULT;
-  /** `0` : draft termine, `deadlineTick` est la fin du gel. `1` : repioche ouverte. */
+  /** Le tick ou le gel prend fin — le client ne peut pas le deduire. */
   deadlineTick: number;
   outcomes: WireOutcome[];
 }
@@ -214,7 +214,7 @@ export const WAVE_ORDER_BYTES = 19;
 export const DEATHS_HEADER_BYTES = 7;
 /** `type u8 · deadlineTick u32 · count u8`. */
 export const DRAFT_OPEN_HEADER_BYTES = 6;
-/** Une carte : `nature u8 · refId u8 · owner u8`. */
+/** Une carte : `nature u8 · refId u8`. */
 export const DRAFT_CARD_BYTES = 2;
 /** `type u8 · cardIndex u8`. */
 export const DRAFT_TOKEN_BYTES = 2;
@@ -257,8 +257,9 @@ export const OUTCOME = {
  * « Ce joueur n'a pose aucun jeton. »
  *
  * ⚠️ Ne peut pas valoir `0` : la carte d'indice 0 est une carte comme une
- * autre. Meme raison que `owner = 0` dans `shared/cards.ts` — une sentinelle
- * n'est utilisable que si sa valeur ne designe rien de reel.
+ * autre. Une sentinelle n'est utilisable que si sa valeur ne designe rien de
+ * reel — c'est ce qui rendait `owner = 0` legitime, du temps ou `Card` avait
+ * un `owner`.
  */
 export const NO_TOKEN = 255;
 

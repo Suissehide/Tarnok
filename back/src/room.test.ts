@@ -1247,6 +1247,50 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     });
   });
 
+  it('un arsenal lourdement empile ne tronque aucune salve', () => {
+    // ⚠️ **La borne que l'empilement a levee.** Tant qu'une arme ne se prenait
+    // qu'une fois, quatre joueurs a cinq slots pleins tenaient 112 projectiles
+    // simultanes contre 256 de capacite, et la marge tenait toute seule. Chaque
+    // exemplaire elargit desormais la salve d'un projectile, et **le plafond de
+    // cinq armes ne borne plus rien** — mesure : 424 projectiles vivants a seize
+    // exemplaires par arme.
+    //
+    // `Projectiles` tronque en SILENCE quand la capacite est atteinte : la salve
+    // que le joueur a payee en cartes ne partirait pas, sans aucun signal. Ce
+    // test est ce qui rend la constante verifiable. Avec `PROJECTILE_CAPACITY`
+    // ramenee a 256, il rougit.
+    const room = new Room(0x0ca9_ac17);
+    for (const id of [1, 2, 3, 4]) {
+      room.join(id);
+    }
+    const ARMES = [1, 2, 3, 5, 6];
+    const EXEMPLAIRES = 8;
+    for (const id of [1, 2, 3, 4]) {
+      for (const arme of ARMES) {
+        for (let k = 0; k < EXEMPLAIRES; k++) {
+          room.grantCard(id, { nature: CARD.WEAPON, refId: arme });
+        }
+      }
+      room.applyInput(id, 1, 0, 0, 127, 40);
+    }
+
+    // Assez de ticks pour que toutes les armes soient en regime : la plus lente
+    // du catalogue recharge en 75 ticks.
+    //
+    // ⚠️ On garde le PIC, pas le compte final. Les salves ne sont pas en phase :
+    // a un tick donne le reservoir peut etre a moitie vide alors qu'il a frole
+    // sa capacite deux ticks plus tot. Une premiere version lisait le compte au
+    // dernier tick et mesurait 156 la ou le pic depasse 256.
+    let pic = 0;
+    for (let i = 0; i < 300; i++) {
+      room.step(DT);
+      pic = Math.max(pic, room.projectileCount);
+    }
+
+    expect(pic).toBeGreaterThan(256);
+    expect(room.projectilesTronques).toBe(0);
+  });
+
   it('la carte disputee ne va qu au gagnant : le perdant ne recoit rien de ce tour', () => {
     const room = new Room();
     room.join(1);

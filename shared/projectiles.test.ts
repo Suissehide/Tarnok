@@ -5,6 +5,7 @@ import { Horde } from './horde';
 import { Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
 import type { Weapon } from './weapons';
+import { weaponOf } from './weapons';
 
 /**
  * Fait apparaitre une seule entite, avec un `waveId` choisi explicitement
@@ -411,5 +412,32 @@ describe('Projectiles — derivation', () => {
       expect(b.projectiles.x[i]).toBeCloseTo(a.projectiles.x[i] ?? 0, 6);
       expect(b.projectiles.y[i]).toBeCloseTo(a.projectiles.y[i] ?? 0, 6);
     }
+  });
+});
+
+describe('truncatedProjectiles — la salve qui ne part pas ne disparait pas en silence', () => {
+  it('compte exactement ce qui manque, et rien tant que la place suffit', () => {
+    // ⚠️ Ce compteur existe parce que l'empilement a leve la borne : chaque
+    // exemplaire d'arme elargit la salve, et le plafond de cinq armes ne borne
+    // plus rien. Une salve tronquee est une CARTE que le joueur a payee et qui
+    // ne fait rien — ca ne doit jamais disparaitre sans trace.
+    const arme = weaponOf(0);
+    const p = new Projectiles(10);
+    expect(p.truncatedProjectiles).toBe(0);
+
+    // Sept projectiles dans dix places : rien ne manque.
+    p.fireSalvoDirected(arme, 0, 0, 0, 1, 0, arme.damage, 7);
+    expect(p.count).toBe(7);
+    expect(p.truncatedProjectiles).toBe(0);
+
+    // Cinq de plus pour trois places : il en manque exactement deux.
+    p.fireSalvoDirected(arme, 1, 0, 0, 1, 0, arme.damage, 5);
+    expect(p.count).toBe(10);
+    expect(p.truncatedProjectiles).toBe(2);
+
+    // Reservoir plein : la salve entiere manque, et le compteur CUMULE.
+    p.fireSalvoDirected(arme, 2, 0, 0, 1, 0, arme.damage, 4);
+    expect(p.count).toBe(10);
+    expect(p.truncatedProjectiles).toBe(6);
   });
 });

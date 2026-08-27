@@ -178,6 +178,11 @@ export class Projectiles {
     const n = count;
     const room = this.capacity - this.#count;
     const toFire = Math.min(n, room);
+    // Rend visible une troncature silencieuse. Une salve qui ne part pas est
+    // une carte que le joueur a payee et qui ne fait rien : ca ne doit jamais
+    // disparaitre sans trace. Meme motif que `RoomMetrics.truncatedSpawns`
+    // pour les vagues.
+    this.truncatedProjectiles += n - toFire;
 
     for (let i = 0; i < toFire; i++) {
       // Repartition symetrique autour de `baseAngle` : a n = 1, le spread
@@ -215,6 +220,20 @@ export class Projectiles {
   damageAt(slot: number): number {
     return this.#damage[slot] ?? 0;
   }
+
+  /**
+   * Projectiles qu'une salve n'a pas pu poser faute de place, cumules depuis la
+   * creation. Jamais remis a zero par `Projectiles` : c'est `Room` qui draine
+   * ses metriques.
+   *
+   * ⚠️ **Ce compteur existe parce que l'empilement a leve la borne.** Jusqu'a
+   * ce que les armes s'empilent, quatre joueurs a cinq slots pleins tenaient
+   * 112 projectiles simultanes contre une capacite de 256, et la marge tenait
+   * toute seule. Un exemplaire supplementaire elargit desormais la salve sans
+   * borne : la capacite peut etre atteinte, et sans ce compteur la salve
+   * manquante ne se verrait nulle part.
+   */
+  truncatedProjectiles = 0;
 
   /** Un pas de simulation. Appele exactement une fois par tick, `dt` fixe. */
   step(dt: number): void {

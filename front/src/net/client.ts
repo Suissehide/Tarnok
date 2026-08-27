@@ -9,6 +9,7 @@ import {
   MAX_PLAYERS,
   ORB_LIFETIME_TICKS,
   PLAYER_SPEED,
+  PROJECTILE_CAPACITY,
   TICK_HZ,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
@@ -187,9 +188,6 @@ export class DerivedOrbs {
     this.#count = last;
   }
 }
-
-/** Capacite du reservoir de projectiles cote client — meme valeur que `PROJECTILE_CAPACITY` de `back/src/room.ts`, pour la meme raison (§5.2). */
-const PROJECTILE_CAPACITY = 256;
 
 /** Capacite du reservoir de flashes d'impact — un burst cosmetique reste petit, jamais toute la horde a la fois. */
 const HIT_FLASH_CAPACITY = 128;

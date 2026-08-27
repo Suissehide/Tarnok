@@ -339,9 +339,44 @@ export const DRAFT_WINDOW_TICKS = 600;
  * (§7.2 point 1) : un etalage a N joueurs compte `N + SPREAD_BONUS` cartes.
  *
  * ⚠️ Contrainte non evidente : l'etalage doit rester STRICTEMENT plus grand
- * que le nombre de joueurs, sinon une repioche peut n'avoir plus rien a
- * offrir. A 4 joueurs et 7 cartes (`SPREAD_BONUS = 3`), quatre prises laissent
- * trois cartes : la borne tient. La changer sans verifier ca casse la
- * repioche du §7.2 point 4.
+ * que le nombre de joueurs, sinon le **remplacement d'un perdant** peut n'avoir
+ * plus rien a offrir. A 4 joueurs et 7 cartes (`SPREAD_BONUS = 3`), quatre
+ * prises laissent trois cartes : la borne tient.
+ *
+ * Cette contrainte a d'abord ete justifiee par la repioche, qui n'existe plus.
+ * **Elle reste vraie, pour une autre raison** — c'est le §4.4 qui l'exige
+ * maintenant, pas le §7.2 point 4.
  */
 export const SPREAD_BONUS = 3;
+
+/**
+ * Capacite de la file de projectiles d'un salon.
+ *
+ * ⚠️ **Mesuree, puis relevee quand l'empilement a leve la borne.**
+ *
+ * Un joueur entretient au plus `salvoCount(arme, exemplaires) *
+ * ceil(projectileLifeTicks / cooldownTicks)` projectiles par arme. Tant qu'une
+ * arme ne se prenait qu'une fois, quatre joueurs a cinq slots pleins tenaient
+ * **112** projectiles simultanes et 256 laissait un facteur 2,3 de marge.
+ *
+ * Depuis que les armes s'empilent, chaque exemplaire elargit la salve d'un
+ * projectile et **le plafond de cinq armes ne borne plus rien** :
+ *
+ * | Exemplaires par arme | Cartes d'armes | A quatre joueurs |
+ * | --- | --- | --- |
+ * | 1 | ~5 | 112 |
+ * | 4 | ~20 | 196 |
+ * | 6 | ~30 | 252 |
+ * | 8 | ~40 | **308** |
+ * | 10 | ~50 | 364 |
+ *
+ * 1024 couvre une trentaine d'exemplaires par arme. Ce n'est qu'un plafond :
+ * il coute de la memoire (huit tableaux types, ~50 ko par salon), jamais du
+ * temps — c'est le nombre de projectiles VIVANTS qui coute, pas la capacite.
+ *
+ * ⚠️ Vit dans `shared/` et pas dans `back/src/room.ts` : le client dimensionne
+ * son propre reservoir sur la meme valeur, et deux copies divergeraient. Quand
+ * elle est atteinte, `Projectiles.truncatedProjectiles` compte ce qui n'est pas
+ * parti — une salve qui disparait en silence est une carte payee pour rien.
+ */
+export const PROJECTILE_CAPACITY = 1024;

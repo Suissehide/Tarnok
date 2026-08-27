@@ -59,11 +59,6 @@ export function applyCardToLoadout(loadout: Loadout, card: Card): void {
   }
 }
 
-/** Clef d'unicite d'une carte dans un etalage. */
-function keyOf(c: Card): string {
-  return `${c.nature}:${c.refId}`;
-}
-
 /**
  * Construit la reserve de cartes possibles, avant tirage.
  *
@@ -112,13 +107,18 @@ function buildPool(): Card[] {
  *
  * ⚠️ **Les cartes sont distinctes.** Deux cartes identiques dans un meme
  * etalage rendraient un conflit illisible : deux joueurs poseraient sur « la
- * meme » carte sans etre en conflit. Le tirage est donc sans remise.
+ * meme » carte sans etre en conflit.
+ *
+ * Ce sont le `splice` et un pool sans doublon qui le garantissent, a eux deux.
+ * Un `Set` des cartes deja vues doublait cette garde ici : chacune survivait
+ * seule a sa mutation, seule leur suppression conjointe faisait rougir la
+ * suite. **Deux gardes qui se couvrent l'une l'autre ne sont gardees par aucun
+ * test** — c'est la cinquieme occurrence de ce motif dans cette etape.
  */
 export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => number): Card[] {
   const wanted = loadouts.size + SPREAD_BONUS;
   const pool = buildPool();
   const spread: Card[] = [];
-  const vues = new Set<string>();
 
   while (spread.length < wanted && pool.length > 0) {
     const index = Math.min(pool.length - 1, Math.floor(rng() * pool.length));
@@ -126,11 +126,6 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
     if (!card) {
       break;
     }
-    const key = keyOf(card);
-    if (vues.has(key)) {
-      continue;
-    }
-    vues.add(key);
     spread.push(card);
   }
 

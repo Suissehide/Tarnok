@@ -9,6 +9,7 @@ import {
   MAX_PLAYERS,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
+  PROJECTILE_CAPACITY,
   TICK_HZ,
   XP_PER_ORB,
 } from '@shared/constants';
@@ -83,8 +84,8 @@ export interface PlayerState extends ContactPlayer {
    */
   lastFireTick: Float64Array;
   /**
-   * Ce que ce joueur possede : armes draftees avec leur niveau, passifs
-   * empiles. Naît ici (tache 6), consomme par les taches 7 et 8.
+   * Ce que ce joueur possede : armes et passifs, chacun avec son nombre
+   * d'exemplaires — tout s'empile (§3.3 de la spec). Naît ici (tache 6), consomme par les taches 7 et 8.
    */
   loadout: Loadout;
 }
@@ -151,24 +152,6 @@ const SPAWN_OFFSETS: readonly (readonly [number, number])[] = [
 
 /** Un axe d'entree tient sur un octet signe : on le ramene dans [-1, 1]. */
 const AXIS_SCALE = 1 / 127;
-
-/**
- * Capacite de la file de projectiles du salon.
- *
- * ⚠️ **Revisite a la tache 7 de l'etape 4, et desormais MESUREE** — la note
- * precedente disait « marge large sans jamais avoir ete mesuree ».
- *
- * Un joueur entretient au plus `projectileCount * ceil(projectileLifeTicks /
- * cooldownTicks)` projectiles par arme. Sur le catalogue actuel, les cinq
- * pires armes valent 8 (canon-a-mitraille), 6 (lance-flammes), 5 (eventail),
- * 4 (fleches-jumelles) et 1, plus 4 pour l'arme neutre : **28 par joueur**,
- * donc **112 a quatre joueurs avec cinq slots pleins**. 256 tient, avec un
- * facteur 2,3 de marge.
- *
- * A recalculer si une arme au `projectileCount` eleve entre au catalogue :
- * c'est ce produit-la qui domine, pas la cadence seule.
- */
-const PROJECTILE_CAPACITY = 256;
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -314,6 +297,19 @@ export class Room {
   /** Pose ou deplace le jeton d'un joueur. Rend `false` si le geste est refuse. */
   setDraftToken(playerId: number, cardIndex: number): boolean {
     return this.#draft.setToken(playerId, cardIndex);
+  }
+
+  /** Projectiles vivants, pour les bancs et les metriques. */
+  get projectileCount(): number {
+    return this.#projectiles.count;
+  }
+
+  /**
+   * Projectiles qu'une salve n'a pas pu poser faute de place, depuis le debut
+   * de la run. Voir `Projectiles.truncatedProjectiles`.
+   */
+  get projectilesTronques(): number {
+    return this.#projectiles.truncatedProjectiles;
   }
 
   /**

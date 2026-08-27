@@ -248,10 +248,12 @@ img,
   opacity: 0.35;
 }
 
-/* Une carte reservee a un autre joueur (`owner`, §3.2) : visible, jamais cliquable. */
-.draft-card[data-state="locked"] {
-  opacity: 0.5;
-  border-style: dashed;
+/* §4.2 : « les restantes fade simplement ». Une fois la resolution passee, ce
+   qui n'a ete ni gagne ni perdu s'estompe — sans bruler, pour que seuls le
+   gain et la perte attirent l'oeil. */
+#draft[data-settled="true"] .draft-card[data-state="idle"] {
+  opacity: 0.3;
+  transition: opacity 400ms ease-out;
 }
 
 /* §4.2 : la carte obtenue s'ILLUMINE. */
