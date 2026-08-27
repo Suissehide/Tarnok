@@ -27,7 +27,7 @@ import {
   quantizeAxis,
   type WaveOrderMessage,
 } from '@shared/protocol';
-import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { SnapshotBuffer } from './interpolation';
@@ -399,7 +399,7 @@ export class GameClient {
   #freezeStartTick = -1;
 
   /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien (§7.2). */
-  #draftCards: readonly { nature: number; refId: number; owner: number }[] = [];
+  #draftCards: readonly { nature: number; refId: number }[] = [];
   #draftDeadlineTick = 0;
   /**
    * `true` des que la negociation est close (`DRAFT_RESULT` de phase 0), et
@@ -499,7 +499,7 @@ export class GameClient {
   }
 
   /** L'etalage a afficher. Vide quand aucun draft n'est ouvert. */
-  get draftCards(): readonly { nature: number; refId: number; owner: number }[] {
+  get draftCards(): readonly { nature: number; refId: number }[] {
     return this.#draftCards;
   }
 
@@ -818,24 +818,22 @@ export class GameClient {
       this.#draftOutcomes = msg.outcomes;
       this.#draftIntents = new Map();
       this.#draftDeadlineTick = msg.deadlineTick;
-      if (msg.phase === 0) {
-        // ⚠️ **C'est ICI que le client apprend la fin du gel**, et nulle part
-        // ailleurs. Il ne peut pas la deduire : la fenetre dure jusqu'a ce que
-        // tout le monde ait pose son jeton, et en solo elle se ferme au clic.
-        //
-        // ⚠️ **L'etalage n'est PAS vide ici.** Une premiere version le faisait,
-        // et rendait la revelation du §4.2 impossible a dessiner : ce message
-        // est precisement celui qui dit quelle carte s'illumine, et les issues
-        // designent les cartes par leur INDICE dans l'etalage. Le vider ici
-        // laissait l'ecran avec des indices pointant vers rien.
-        //
-        // C'est `draftSettled` qui dit « la negociation est finie », et c'est
-        // l'ecran qui decide quand il arrete de dessiner. Le prochain
-        // `DRAFT_OPEN` remplace l'etalage.
-        this.#draftSettled = true;
-        this.#freezeUntilTick = msg.deadlineTick;
-        this.#resumeEndTick = msg.deadlineTick + LEVEL_RESUME_TICKS;
-      }
+      // ⚠️ **C'est ICI que le client apprend la fin du gel**, et nulle part
+      // ailleurs. Il ne peut pas la deduire : la fenetre dure jusqu'a ce que
+      // tout le monde ait pose son jeton, et en solo elle se ferme au clic.
+      //
+      // ⚠️ **L'etalage n'est PAS vide ici.** Une premiere version le faisait,
+      // et rendait la revelation du §4.2 impossible a dessiner : ce message
+      // est precisement celui qui dit quelle carte s'illumine, et les issues
+      // designent les cartes par leur INDICE dans l'etalage. Le vider ici
+      // laissait l'ecran avec des indices pointant vers rien.
+      //
+      // C'est `draftSettled` qui dit « la negociation est finie », et c'est
+      // l'ecran qui decide quand il arrete de dessiner. Le prochain
+      // `DRAFT_OPEN` remplace l'etalage.
+      this.#draftSettled = true;
+      this.#freezeUntilTick = msg.deadlineTick;
+      this.#resumeEndTick = msg.deadlineTick + LEVEL_RESUME_TICKS;
       return;
     }
     if (msg.type === MSG.RUN_OVER) {
@@ -1129,7 +1127,11 @@ export class GameClient {
       return;
     }
     const damage = weapon.damage * (1 + loadout.bonus('damage'));
-    this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY, damage);
+    // Meme calcul que `Room#fireOne`, meme fonction : chaque exemplaire empile
+    // elargit la salve d'un projectile. Deux formules divergeraient, et le
+    // joueur verrait une salve que le serveur n'arbitre pas.
+    const count = salvoCount(weapon, loadout.stacksOfWeapon(weaponId));
+    this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY, damage, count);
     last[weaponId] = tick;
   }
 

@@ -408,10 +408,17 @@ describe('decode', () => {
 });
 
 describe('DRAFT_OPEN', () => {
+  // ⚠️ **Plus d'octet `owner`.** Il portait l'exclusivite des cartes reservees,
+  // qui n'existe plus : toute carte est ouverte a tout le monde. Une carte
+  // tient donc en DEUX octets, et c'est l'assertion de taille ci-dessous qui
+  // le garde.
+  //
+  // Les trois cartes ne partagent ni nature ni `refId` : un encodeur qui
+  // intervertirait les deux octets se verrait.
   const cartes = [
-    { nature: 0, refId: 3, owner: 0 },
-    { nature: 1, refId: 7, owner: 2 },
-    { nature: 3, refId: 8, owner: 4 },
+    { nature: 0, refId: 3 },
+    { nature: 1, refId: 7 },
+    { nature: 0, refId: 8 },
   ];
 
   it('fait un aller-retour exact', () => {
@@ -432,6 +439,11 @@ describe('DRAFT_OPEN', () => {
       DRAFT_OPEN_HEADER_BYTES + cartes.length * DRAFT_CARD_BYTES,
     );
     expect(encodeDraftOpen(1, []).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES);
+    // ⚠️ La ligne ci-dessus se calcule AVEC la constante : elle passerait sur
+    // une carte de trois octets si la constante mentait aussi. Le chiffre nu
+    // est ce qui garde la disparition de l'octet `owner`.
+    expect(DRAFT_CARD_BYTES).toBe(2);
+    expect(encodeDraftOpen(1, cartes).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES + 6);
   });
 
   it('leve sur un tampon tronque', () => {
@@ -492,29 +504,43 @@ describe('DRAFT_RESULT', () => {
   ];
 
   it('fait un aller-retour exact et a la taille annoncee', () => {
-    const msg = decode(encodeDraftResult(1, 900, issues));
+    const msg = decode(encodeDraftResult(900, issues));
     if (msg.type !== MSG.DRAFT_RESULT) {
       throw new Error('type inattendu');
     }
-    expect(msg.phase).toBe(1);
     expect(msg.deadlineTick).toBe(900);
     expect(msg.outcomes).toEqual(issues);
-    expect(encodeDraftResult(1, 900, issues).byteLength).toBe(
+    expect(encodeDraftResult(900, issues).byteLength).toBe(
       DRAFT_RESULT_HEADER_BYTES + issues.length * DRAFT_OUTCOME_BYTES,
     );
   });
 
-  it('distingue les deux phases, et c est ce qui dit au client quand le gel finit', () => {
-    // ⚠️ Sans ce champ, le client ne peut PAS deduire la fin du gel : la
-    // fenetre dure jusqu'a ce que tout le monde ait pose son jeton, et en solo
-    // elle se ferme au clic. Chaque client en devinerait une differente.
-    const fini = decode(encodeDraftResult(0, 700, issues));
-    const repioche = decode(encodeDraftResult(1, 700, issues));
-    if (fini.type !== MSG.DRAFT_RESULT || repioche.type !== MSG.DRAFT_RESULT) {
-      throw new Error('type inattendu');
+  it('porte la fin du gel, que le client ne peut PAS deduire', () => {
+    // ⚠️ **Il y avait un octet `phase` avant `deadlineTick`.** Il distinguait
+    // « le draft est termine » de « une repioche s'ouvre » ; la repioche n'a
+    // plus lieu, la resolution est un seul moment, et le message n'a plus
+    // qu'un sens possible.
+    //
+    // Ce qui reste indispensable, c'est `deadlineTick` : la fenetre dure
+    // jusqu'a ce que tout le monde ait pose son jeton, et en solo elle se
+    // ferme au clic — chaque client devinerait une fin de gel differente. On
+    // eprouve DEUX echeances distinctes : un champ code en dur passerait avec
+    // une seule.
+    for (const deadline of [700, 0x1234_5678]) {
+      const msg = decode(encodeDraftResult(deadline, issues));
+      if (msg.type !== MSG.DRAFT_RESULT) {
+        throw new Error('type inattendu');
+      }
+      expect(msg.deadlineTick).toBe(deadline);
     }
-    expect(fini.phase).toBe(0);
-    expect(repioche.phase).toBe(1);
+  });
+
+  it('tient sur SIX octets d en-tete : l octet de phase a disparu', () => {
+    // La taille est le seul endroit ou la disparition de `phase` se constate
+    // sans lire le code — et un en-tete de sept octets se decoderait sans
+    // lever, en decalant simplement toutes les issues.
+    expect(DRAFT_RESULT_HEADER_BYTES).toBe(6);
+    expect(encodeDraftResult(900, []).byteLength).toBe(6);
   });
 
   it('leve un message TRONQUE explicite, pas une erreur de bornes fortuite', () => {
@@ -522,7 +548,7 @@ describe('DRAFT_RESULT', () => {
     // de longueur, le `DataView` finit par lever tout seul en depassant. La
     // mutation « retirer le controle » survivait a un test moins precis.
     // C'est le MESSAGE qui rend ce controle porteur.
-    const buf = encodeDraftResult(0, 1, issues);
+    const buf = encodeDraftResult(1, issues);
     expect(() => decode(buf.slice(0, DRAFT_RESULT_HEADER_BYTES + 1))).toThrow(/tronque/);
   });
 });

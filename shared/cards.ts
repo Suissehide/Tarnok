@@ -1,36 +1,32 @@
-import { SPREAD_BONUS, WEAPON_MAX_LEVEL } from './constants';
+import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { BASE_WEAPON_ID, WEAPONS } from './weapons';
 
 /**
- * Les quatre natures de carte du §7.5 de l'orientation.
+ * Les deux natures de carte.
  *
- * L'index EST l'identifiant, comme partout ailleurs dans `shared/`.
+ * ⚠️ **Il y en avait quatre.** `WEAPON_LEVEL` et `EVOLUTION` ont ete retires :
+ * une arme ne monte pas de niveau, elle s'empile comme un passif. Voir le §9
+ * de la spec. L'index EST l'identifiant, comme partout ailleurs dans `shared/`.
  */
 export const CARD = {
-  NEW_WEAPON: 0,
-  WEAPON_LEVEL: 1,
-  PASSIVE: 2,
-  EVOLUTION: 3,
+  WEAPON: 0,
+  PASSIVE: 1,
 } as const;
 
 /**
  * Une carte de l'etalage.
  *
- * `owner` porte a lui seul toute l'exclusivite du draft : `0` signifie
- * « ouvert a tous », sinon c'est le SEUL joueur eligible. Le serveur n'a donc
- * pas de regle separee pour les montees de niveau et les evolutions — il
- * refuse une selection dont `owner` ne correspond pas.
- *
- * ⚠️ Aucun joueur ne porte l'identifiant `0` : c'est ce qui rend la sentinelle
- * utilisable.
+ * ⚠️ **Il n'y a plus d'`owner`.** Il portait l'exclusivite des cartes reservees
+ * a leur porteur — montees de niveau, evolutions — qui n'existent plus. Toute
+ * carte est ouverte a tout le monde, sans exception : c'est ce qui fait du
+ * conflit le regime normal du draft plutot qu'un accident.
  */
 export interface Card {
   nature: number;
   /** Index dans `WEAPONS` ou dans `PASSIVES`, selon `nature`. */
   refId: number;
-  owner: number;
 }
 
 /**
@@ -45,19 +41,15 @@ export interface Card {
  * premiere nature de carte ajoutee, et le client afficherait un arsenal que le
  * serveur n'arbitre pas.
  *
- * Leve exactement comme `Loadout` leve : slots pleins, arme deja possedee,
- * arme non possedee, niveau maximum. C'est l'appelant qui decide quoi en
- * faire — le serveur ne devrait jamais en produire une, le client peut en
- * recevoir une pour un joueur dont il n'a pas vu tout l'historique.
+ * Leve exactement comme `Loadout` leve : slots pleins, identifiant inconnu.
+ * C'est l'appelant qui decide quoi en faire — le serveur ne devrait jamais en
+ * produire une, le client peut en recevoir une pour un joueur dont il n'a pas
+ * vu tout l'historique.
  */
 export function applyCardToLoadout(loadout: Loadout, card: Card): void {
   switch (card.nature) {
-    case CARD.NEW_WEAPON:
+    case CARD.WEAPON:
       loadout.addWeapon(card.refId);
-      break;
-    case CARD.WEAPON_LEVEL:
-    case CARD.EVOLUTION:
-      loadout.levelUpWeapon(card.refId);
       break;
     case CARD.PASSIVE:
       loadout.addPassive(card.refId);
@@ -69,71 +61,40 @@ export function applyCardToLoadout(loadout: Loadout, card: Card): void {
 
 /** Clef d'unicite d'une carte dans un etalage. */
 function keyOf(c: Card): string {
-  return `${c.nature}:${c.refId}:${c.owner}`;
+  return `${c.nature}:${c.refId}`;
 }
 
 /**
  * Construit la reserve de cartes possibles, avant tirage.
  *
- * Trois regles d'exclusion, et une seule non-exclusion qui compte :
+ * ⚠️ **Le pool ne depend de personne.** Sans `owner`, il n'y a plus rien a
+ * reserver ni a exclure : toutes les armes (sauf la neutre) et tous les passifs
+ * y sont, toujours. L'eligibilite d'un JOUEUR devant une carte se derive de son
+ * inventaire au moment ou il pose son jeton — voir `Loadout.canTake`.
  *
- * - une arme portee par **n'importe quel** membre de l'equipe ne peut plus
- *   etre offerte en arme neuve : le §6.2 rend l'exclusivite binaire et
- *   valable pour toute la run, pas « moins probable » ;
- * - un joueur dont les slots d'armes sont pleins n'en recoit plus — pour lui
- *   seul, les autres continuent d'en voir ;
- * - une evolution exige l'arme au niveau maximum **et** le passif associe
- *   (§7.5).
+ * ⚠️ **Aucune exclusivite d'equipe.** Si un allie porte deja le lance-flammes,
+ * la carte reste offerte : *« si quelqu'un a deja pris lance-flammes, je peux
+ * lui voler la carte la prochaine fois »*. Ce n'est pas un vol au sens propre —
+ * chacun garde le sien — mais la carte de CET etalage-ci se dispute.
  *
- * ⚠️ **Les passifs ne s'excluent jamais.** Ils s'empilent (modele Risk of
- * Rain), donc un passif deja possede reste desirable — c'est ce qui fait que
- * toute carte de passif est convoitee par tous les joueurs en permanence, et
- * donc que le conflit est le regime normal du draft plutot qu'un accident.
+ * ⚠️ **Rien ne s'exclut d'etre deja possede.** Armes et passifs s'empilent
+ * pareil : ce qu'on a deja reste desirable, donc toute carte est convoitee par
+ * tous en permanence. C'est ce qui fait du conflit le regime NORMAL du draft.
+ *
+ * L'arme neutre est le seul retrait : elle vit hors des slots (§6.1), tout le
+ * monde l'a des le depart, et la proposer l'empilerait sur elle-meme.
  */
-function buildPool(loadouts: ReadonlyMap<number, Loadout>): Card[] {
+function buildPool(): Card[] {
   const pool: Card[] = [];
 
-  const portees = new Set<number>();
-  for (const loadout of loadouts.values()) {
-    for (const id of loadout.weaponIds) {
-      portees.add(id);
-    }
-  }
-
-  // Armes neuves : ouvertes a tous, sauf si l'equipe les porte deja.
-  //
-  // ⚠️ L'arme neutre est exclue du pool : elle vit hors des slots (§6.1) et
-  // tout le monde l'a des le depart. La proposer gaspillerait une carte, et la
-  // prendre occuperait un slot pour rien tout en la faisant tirer deux fois par
-  // tick (voir `BASE_WEAPON_ID` et `Room#fireWeapons`).
   for (const w of WEAPONS) {
-    if (w.id !== BASE_WEAPON_ID && !portees.has(w.id)) {
-      pool.push({ nature: CARD.NEW_WEAPON, refId: w.id, owner: 0 });
+    if (w.id !== BASE_WEAPON_ID) {
+      pool.push({ nature: CARD.WEAPON, refId: w.id });
     }
   }
 
-  // Passifs : toujours ouverts, jamais exclus.
   for (const p of PASSIVES) {
-    pool.push({ nature: CARD.PASSIVE, refId: p.id, owner: 0 });
-  }
-
-  // Montees de niveau et evolutions : un seul eligible, son porteur.
-  for (const [playerId, loadout] of loadouts) {
-    for (const weaponId of loadout.weaponIds) {
-      const level = loadout.levelOf(weaponId);
-      if (level < WEAPON_MAX_LEVEL) {
-        pool.push({ nature: CARD.WEAPON_LEVEL, refId: weaponId, owner: playerId });
-        continue;
-      }
-      const weapon = WEAPONS[weaponId];
-      if (
-        weapon &&
-        weapon.evolutionPassiveId >= 0 &&
-        loadout.stacksOf(weapon.evolutionPassiveId) > 0
-      ) {
-        pool.push({ nature: CARD.EVOLUTION, refId: weaponId, owner: playerId });
-      }
-    }
+    pool.push({ nature: CARD.PASSIVE, refId: p.id });
   }
 
   return pool;
@@ -155,7 +116,7 @@ function buildPool(loadouts: ReadonlyMap<number, Loadout>): Card[] {
  */
 export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => number): Card[] {
   const wanted = loadouts.size + SPREAD_BONUS;
-  const pool = buildPool(loadouts);
+  const pool = buildPool();
   const spread: Card[] = [];
   const vues = new Set<string>();
 

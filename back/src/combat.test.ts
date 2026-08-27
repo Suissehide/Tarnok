@@ -38,9 +38,6 @@ const SINGLE: Weapon = {
   projectileLifeTicks: 10,
   projectileCount: 1,
   spreadRadians: 0,
-  // Sans effet sur le tir ou le contact testes ici (niveau et evolution).
-  maxLevel: 1,
-  evolutionPassiveId: -1,
 };
 
 function player(x: number, y: number, hp = 100): ContactPlayer {

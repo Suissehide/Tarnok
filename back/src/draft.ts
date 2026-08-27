@@ -1,8 +1,14 @@
 import type { Card } from '@shared/cards';
-import { DRAFT_REPICK_TICKS, DRAFT_WINDOW_TICKS } from '@shared/constants';
+import { DRAFT_WINDOW_TICKS } from '@shared/constants';
+import type { Loadout } from '@shared/loadout';
 import { OUTCOME } from '@shared/protocol';
 
-export type DraftPhase = 'closed' | 'open' | 'repick';
+/**
+ * ⚠️ **Il y avait un troisieme etat, `'repick'`.** La repioche a disparu : la
+ * resolution est un seul moment. Le perdant voit sa carte bruler et une autre
+ * s'illuminer dans la foulee, sans rechoisir.
+ */
+export type DraftPhase = 'closed' | 'open';
 
 export interface DraftOutcome {
   playerId: number;
@@ -25,8 +31,16 @@ export class Draft {
   #phase: DraftPhase = 'closed';
   #deadlineTick = 0;
   #spread: Card[] = [];
-  /** Qui participe encore : au premier tour tout le monde, a la repioche les perdants. */
+  /** Qui participe : tous les joueurs du salon a l'ouverture. */
   #pending: number[] = [];
+  /**
+   * Ce que chacun possede, pour derider ce qu'il peut prendre.
+   *
+   * ⚠️ **C'est ce qui remplace `owner`.** L'eligibilite ne voyage plus sur la
+   * carte : la meme carte peut etre prenable par l'un et pas par l'autre, et
+   * c'est l'inventaire qui le dit (`Loadout.canTake`).
+   */
+  #loadouts: ReadonlyMap<number, Loadout> = new Map();
   /** Cartes deja attribuees, par indice — une carte prise ne se repropose pas. */
   #taken = new Set<number>();
   /** `playerId -> cardIndex`, les jetons poses. */
@@ -58,10 +72,16 @@ export class Draft {
    * Le §4.3 de la spec exempte le solo du plafond de 20 s ; cette exemption
    * tombe du mecanisme general au lieu d'etre un cas particulier.
    */
-  open(tick: number, spread: Card[], playerIds: readonly number[]): void {
+  open(
+    tick: number,
+    spread: Card[],
+    playerIds: readonly number[],
+    loadouts: ReadonlyMap<number, Loadout> = new Map(),
+  ): void {
     this.#phase = 'open';
     this.#spread = spread;
     this.#pending = [...playerIds];
+    this.#loadouts = loadouts;
     this.#taken.clear();
     this.#tokens.clear();
     this.#deadlineTick = tick + DRAFT_WINDOW_TICKS;
@@ -69,24 +89,32 @@ export class Draft {
 
   /**
    * Pose ou deplace le jeton d'un joueur. Rend `false` si le geste est refuse :
-   * carte hors etalage, deja attribuee, reservee a un autre, ou joueur qui n'a
-   * plus a choisir.
+   * carte hors etalage, ou carte que cet inventaire ne peut pas accueillir.
+   *
+   * ⚠️ **Une carte deja visee par un autre joueur reste posable.** C'est le
+   * cœur de la mecanique : *« quand un joueur a selectionne une carte, je peux
+   * poser mon jeton dessus »*. Sans ca il n'y a pas de negociation, seulement
+   * une course au clic.
    */
   setToken(playerId: number, cardIndex: number): boolean {
     if (this.#phase === 'closed' || !this.#pending.includes(playerId)) {
       return false;
     }
     const card = this.#spread[cardIndex];
-    if (!card || this.#taken.has(cardIndex)) {
+    if (!card) {
       return false;
     }
-    // `owner` porte a lui seul l'exclusivite : montees de niveau et evolutions
-    // n'ont pas de regle separee (§3.2 de la spec).
-    if (card.owner !== 0 && card.owner !== playerId) {
+    if (!this.#eligible(playerId, card)) {
       return false;
     }
     this.#tokens.set(playerId, cardIndex);
     return true;
+  }
+
+  /** Ce joueur peut-il accueillir cette carte ? Voir `Loadout.canTake`. */
+  #eligible(playerId: number, card: Card): boolean {
+    const loadout = this.#loadouts.get(playerId);
+    return loadout ? loadout.canTake(card.nature, card.refId) : true;
   }
 
   intents(): ReadonlyMap<number, number> {
@@ -94,10 +122,10 @@ export class Draft {
   }
 
   /**
-   * Fait avancer la machine. Rend les issues quand une phase se ferme, `null`
-   * tant qu'il faut attendre.
+   * Fait avancer la machine. Rend les issues quand le draft se ferme, `null`
+   * tant qu'il faut attendre. **Un seul lot d'issues par draft.**
    *
-   * Une phase se ferme a l'echeance, ou des que tous les participants ont pose
+   * Le draft se ferme a l'echeance, ou des que tous les participants ont pose
    * leur jeton — ce qui, **en solo, arrive au premier clic** : le §4.3 de la
    * spec exempte le solo du plafond de 20 s, parce qu'on monte de niveau
    * toutes les ~14 s et qu'une run solo passerait sinon l'essentiel du temps
@@ -114,19 +142,6 @@ export class Draft {
     }
 
     const issues = this.#resolve(rng);
-    const perdants = issues.filter((r) => r.outcome === OUTCOME.LOST).map((r) => r.playerId);
-
-    // ⚠️ **La repioche ne peut pas boucler** : elle n'a lieu qu'une fois. Un
-    // reconflit au second tour se tranche et se termine — sans cette borne,
-    // des joueurs obstines figeraient la partie (§4.4 de la spec).
-    if (perdants.length > 0 && this.#phase === 'open') {
-      this.#phase = 'repick';
-      this.#pending = perdants;
-      this.#tokens.clear();
-      this.#deadlineTick = tick + DRAFT_REPICK_TICKS;
-      return issues;
-    }
-
     this.#phase = 'closed';
     // ⚠️ **Les jetons meurent avec la negociation.** Sans cette ligne, ils
     // survivaient a la fermeture : `Session#broadcast` diffuse `DRAFT_INTENTS`
@@ -134,29 +149,23 @@ export class Draft {
     // du tour precedent **a chaque tick** jusqu'a l'ouverture suivante. Le
     // joueur voyait son propre jeton deja pose sur une carte du nouvel
     // etalage, et cliquer dessus le RETIRAIT au lieu de le poser (le §4.1 fait
-    // du reclic un retrait). Signale par l'auteur en jouant : « j'ai deja mon
-    // jeton dessus et je peux pas le reprendre ».
+    // du reclic un retrait). Signale par l'auteur en jouant.
     this.#tokens.clear();
-    // ⚠️ **Le §4.4 en toutes lettres** : « si les perdants d'une repioche se
-    // reconflictent, pas de troisieme tour : un gagnant est tire, LES AUTRES
-    // RECOIVENT L'ATTRIBUTION AUTOMATIQUE ».
-    //
-    // Sans ces lignes, un perdant de reconflit repartait **les mains vides** —
-    // il avait pose un jeton, donc l'attribution d'office de `#resolve`, qui ne
-    // sert que les joueurs SANS jeton, ne le voyait pas. Le test qui pretendait
-    // couvrir le cas verifiait `cardIndex >= 0` sur toutes les issues : le
-    // `cardIndex` d'un `LOST` est celui de la carte PERDUE, donc l'assertion
-    // passait pour quelqu'un qui n'obtenait rien.
+
+    // ⚠️ **Le perdant n'a rien a rechoisir : on lui donne, tout de suite.**
+    // *« Si a la fin du timer on s'est pas departage, ca brule la carte si je
+    // l'ai pas eu et ca en illumine une autre. »* Il y avait ici une fenetre de
+    // repioche de 5 s ; elle a disparu, et la resolution est desormais un seul
+    // moment.
     //
     // Le joueur recoit DEUX issues : le `LOST` de la carte disputee, puis
-    // l'`AUTO` de celle qu'il obtient a la place. C'est exactement l'histoire
-    // que le §4.2 demande de raconter — « on voit ce qu'on perd, on voit ce
-    // qu'on obtient a la place ».
-    for (const id of perdants) {
-      const index = this.#autoPick(id);
+    // l'`AUTO` de celle qu'il obtient a la place. C'est ce que l'ecran doit
+    // raconter — on voit ce qu'on perd, on voit ce qu'on obtient a la place.
+    for (const r of issues.filter((x) => x.outcome === OUTCOME.LOST)) {
+      const index = this.#autoPick(r.playerId);
       if (index >= 0) {
         this.#taken.add(index);
-        issues.push({ playerId: id, cardIndex: index, outcome: OUTCOME.AUTO });
+        issues.push({ playerId: r.playerId, cardIndex: index, outcome: OUTCOME.AUTO });
       }
     }
     return issues;
@@ -222,22 +231,20 @@ export class Draft {
   }
 
   /**
-   * L'attribution d'office du §4.4 :
+   * L'attribution d'office : la premiere carte libre que cet inventaire peut
+   * accueillir, dans l'ordre du tirage.
    *
-   * 1. la carte dont il est le **seul eligible**, s'il y en a une — c'est une
-   *    montee de niveau ou une evolution, personne d'autre n'en veut ;
-   * 2. sinon la premiere carte libre, dans l'ordre du tirage.
+   * ⚠️ Il y avait une premiere regle avant celle-ci — « la carte dont il est le
+   * seul eligible » — qui servait les montees de niveau et les evolutions.
+   * Elles n'existent plus, et avec elles la notion de carte reservee.
+   *
+   * L'eligibilite reste consultee : un joueur aux slots d'armes pleins ne se
+   * voit jamais attribuer d'office une arme qu'il ne possede pas.
    */
   #autoPick(playerId: number): number {
     for (let i = 0; i < this.#spread.length; i++) {
       const card = this.#spread[i];
-      if (card && !this.#taken.has(i) && card.owner === playerId) {
-        return i;
-      }
-    }
-    for (let i = 0; i < this.#spread.length; i++) {
-      const card = this.#spread[i];
-      if (card && !this.#taken.has(i) && card.owner === 0) {
+      if (card && !this.#taken.has(i) && this.#eligible(playerId, card)) {
         return i;
       }
     }

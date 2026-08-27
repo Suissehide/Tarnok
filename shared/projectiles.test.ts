@@ -28,13 +28,6 @@ function addOne(horde: Horde, waveId: number, x: number, y: number): number {
   return horde.entityIdAt(slot);
 }
 
-/**
- * Champs sans effet sur `Projectiles` : ces fixtures ne testent que le tir et
- * la collision, jamais le niveau ou l'evolution (voir `shared/weapons.test.ts`
- * pour ces aspects-la).
- */
-const NOT_LEVELED = { maxLevel: 1, evolutionPassiveId: -1 } as const;
-
 /** Une arme a projectile unique, tirant droit sur la cible. */
 const SINGLE: Weapon = {
   id: 0,
@@ -45,7 +38,6 @@ const SINGLE: Weapon = {
   projectileLifeTicks: 5,
   projectileCount: 1,
   spreadRadians: 0,
-  ...NOT_LEVELED,
 };
 
 /** Une arme a plusieurs projectiles, pour verifier la symetrie de la dispersion. */
@@ -58,7 +50,6 @@ const SPREAD: Weapon = {
   projectileLifeTicks: 10,
   projectileCount: 3,
   spreadRadians: Math.PI / 2,
-  ...NOT_LEVELED,
 };
 
 /** Une arme rapide, pour exercer le balayage de segment de `collide`. */
@@ -71,7 +62,6 @@ const FAST: Weapon = {
   projectileLifeTicks: 30,
   projectileCount: 1,
   spreadRadians: 0,
-  ...NOT_LEVELED,
 };
 
 describe('Projectiles.fireSalvo', () => {

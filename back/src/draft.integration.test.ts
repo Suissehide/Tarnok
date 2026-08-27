@@ -19,8 +19,12 @@ import { buildServer } from './server';
 
 /**
  * Le livrable du §13 de la spec de l'etape 4 : **quatre clients reels, sur des
- * sockets reelles**, qui montent de niveau, draftent, entrent en conflit et
- * repiochent.
+ * sockets reelles**, qui montent de niveau, draftent et entrent en conflit.
+ *
+ * ⚠️ **Plus de repioche.** Elle a disparu du modele : la resolution est un
+ * seul moment, et le perdant recoit sa carte de remplacement dans le MEME lot
+ * d'issues. Ce test n'attend donc plus de second `DRAFT_RESULT` — il verifie
+ * au contraire qu'un seul suffit a servir tout le monde.
  *
  * ⚠️ **Pourquoi headless et pas quatre onglets.** `requestAnimationFrame` est
  * suspendu dans un onglet en arriere-plan — mesure a l'etape 2, zero image en
@@ -273,7 +277,7 @@ function outcomesOf(outcomes: readonly WireOutcome[], playerId: number): WireOut
 }
 
 describe('quatre clients reels draftent (livrable du §13)', () => {
-  it('un conflit a lieu, un seul le gagne, les perdants repiochent, l absent est servi d office', async () => {
+  it('un conflit a lieu, un seul le gagne, les perdants sont servis dans le meme lot, l absent aussi', async () => {
     const code = await createRoomCode();
     const room = app.rooms.get(code);
     if (!room) {
@@ -329,11 +333,15 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     for (const open of opens) {
       expect(open).toEqual(spread);
     }
-    // Au premier niveau aucun inventaire n'est garni : toutes les cartes sont
-    // ouvertes a tous. C'est ce qui rend le conflit ci-dessous possible — le
-    // verifier, plutot que le supposer, est exactement ce que le registre
-    // reproche aux fixtures qui masquent.
-    expect(spread.cards.every((card) => card.owner === 0)).toBe(true);
+    // ⚠️ **L'octet `owner` a disparu** : plus aucune carte n'est reservee,
+    // toutes sont ouvertes a tout le monde. Ce qui rend le conflit ci-dessous
+    // possible se verifie donc autrement — l'etalage ne doit contenir que des
+    // natures que le modele connait, et aucune carte en double (deux cartes
+    // identiques rendraient un conflit illisible).
+    expect(spread.cards.every((card) => card.nature === 0 || card.nature === 1)).toBe(true);
+    expect(new Set(spread.cards.map((c) => `${c.nature}:${c.refId}`)).size).toBe(
+      spread.cards.length,
+    );
 
     // ---- 2. Trois joueurs se disputent la meme carte, le quatrieme se tait -
     //
@@ -374,12 +382,14 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     // absent ne bloque jamais », et le cout d'horloge de ce test.
     const first = await waitFor(
       () => a.received.find((m) => m.type === MSG.DRAFT_RESULT) ?? null,
-      'premier DRAFT_RESULT',
+      'DRAFT_RESULT',
       30_000,
     );
     if (first.type !== MSG.DRAFT_RESULT) {
       throw new Error('DRAFT_RESULT attendu');
     }
+    // `deadlineTick` porte la fin du gel : le client ne peut plus la deduire.
+    expect(first.deadlineTick).toBeGreaterThan(0);
     const won = first.outcomes.filter((o) => o.outcome === OUTCOME.WON);
     const lost = first.outcomes.filter((o) => o.outcome === OUTCOME.LOST);
 
@@ -394,8 +404,6 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     ).toBe(2);
     // Un seul joueur obtient la carte contestee.
     expect(won).toHaveLength(1);
-    // Deux perdants restent a servir : la repioche s'ouvre (§4.3, +5 s).
-    expect(first.phase).toBe(1);
     expect(won[0]?.cardIndex).toBe(CONTESTED);
     for (const l of lost) {
       expect(l.cardIndex).toBe(CONTESTED);
@@ -413,74 +421,45 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     // Les quatre joueurs sont tranches au meme message : personne n'attend.
     expect(new Set(first.outcomes.map((o) => o.playerId)).size).toBe(PLAYER_COUNT);
 
-    // ---- 4. La repioche : les deux perdants se reconflictent --------------
+    // ---- 4. Les perdants sont servis DANS LE MEME LOT ---------------------
     //
-    // ⚠️ **Deliberement sur la MEME carte.** Le §4.4 borne la repioche a un
-    // tour : « un gagnant est tire, les autres recoivent l'attribution
-    // automatique ». C'est la ligne que la tache 10 a trouvee manquante et
-    // dont le test d'origine etait creux — il verifiait `cardIndex >= 0` sur
-    // toutes les issues, ce qui passe pour un `LOST`, dont le `cardIndex` est
-    // celui de la carte PERDUE.
-    const taken = new Set(
-      first.outcomes.filter((o) => o.outcome !== OUTCOME.LOST).map((o) => o.cardIndex),
-    );
-    let repickIndex = -1;
-    for (let i = 0; i < spread.cards.length; i++) {
-      if (!taken.has(i)) {
-        repickIndex = i;
-        break;
-      }
-    }
-    expect(
-      repickIndex,
-      "l'etalage doit rester plus grand que le nombre de joueurs",
-    ).toBeGreaterThan(-1);
-
+    // ⚠️ **C'est le point de bascule du modele.** Il y avait ici une seconde
+    // fenetre de 5 s, un second `DRAFT_TOKEN` et un second `DRAFT_RESULT`. Le
+    // perdant ne rechoisit plus : *« ca brule la carte si je l'ai pas eu et ca
+    // en illumine une autre »*. Les deux issues — le `LOST` de la carte
+    // disputee, l'`AUTO` de celle qui la remplace — arrivent ensemble.
     const losers = lost.map((l) => l.playerId);
     for (const id of losers) {
-      const client = clients.find((x) => x.playerId === id);
-      client?.ws.send(encodeDraftToken(repickIndex));
+      const siennes = outcomesOf(first.outcomes, id);
+      expect(siennes, `le joueur ${id} n a pas recu ses DEUX issues`).toHaveLength(2);
+      expect(siennes.filter((o) => o.outcome === OUTCOME.LOST)).toHaveLength(1);
+      const remplacement = siennes.find((o) => o.outcome === OUTCOME.AUTO);
+      expect(remplacement, `le perdant ${id} repart les mains vides`).toBeDefined();
+      expect(remplacement?.cardIndex).not.toBe(CONTESTED);
     }
 
-    const second = await waitFor(
-      () => a.received.filter((m) => m.type === MSG.DRAFT_RESULT)[1] ?? null,
-      'DRAFT_RESULT de la repioche',
-      10_000,
+    // ⚠️ **Deux perdants, donc deux remplacements a separer.** Avec un seul,
+    // rien ne pourrait entrer en collision et le garde qui marque une carte
+    // comme prise passerait inapercu. On les COMPTE, on ne les suppose pas.
+    const remplacements = first.outcomes.filter(
+      (o) => o.outcome === OUTCOME.AUTO && losers.includes(o.playerId),
     );
-    if (second.type !== MSG.DRAFT_RESULT) {
-      throw new Error('DRAFT_RESULT attendu');
-    }
-    // Phase 0 : le draft est termine, `deadlineTick` porte la fin du gel (R3).
-    expect(second.phase).toBe(0);
-    expect(second.deadlineTick).toBeGreaterThan(0);
+    expect(remplacements).toHaveLength(2);
+    expect(new Set(remplacements.map((o) => o.cardIndex)).size).toBe(2);
 
-    // Le reconflit a bien eu lieu : un gagnant tire, un perdant — qu'on
-    // COMPTE, comme au premier tour. Sans ce comptage, une repioche ou les
-    // deux jetons ne se seraient pas rencontres passerait pour une preuve du
-    // §4.4 sans en etre une.
-    const repickWon = second.outcomes.filter((o) => o.outcome === OUTCOME.WON);
-    const repickLost = second.outcomes.filter((o) => o.outcome === OUTCOME.LOST);
-    const repickAuto = second.outcomes.filter((o) => o.outcome === OUTCOME.AUTO);
-    expect(repickWon).toHaveLength(1);
-    expect(repickWon[0]?.cardIndex).toBe(repickIndex);
-    expect(repickLost, 'les deux perdants ne se sont pas reconflictes').toHaveLength(1);
-    expect(repickLost[0]?.cardIndex).toBe(repickIndex);
-    // Et pas de troisieme tour : le perdant du reconflit est servi d'office
-    // dans le MEME message, sur une autre carte.
-    expect(repickAuto).toHaveLength(1);
-    expect(repickAuto[0]?.playerId).toBe(repickLost[0]?.playerId);
-    expect(repickAuto[0]?.cardIndex).not.toBe(repickIndex);
+    // Et AUCUN second message : la resolution est un seul moment. On laisse
+    // passer une seconde pleine de ticks avant de le dire.
+    await new Promise((r) => setTimeout(r, 1000));
+    expect(
+      a.received.filter((m) => m.type === MSG.DRAFT_RESULT),
+      'un second DRAFT_RESULT est arrive : la repioche est de retour',
+    ).toHaveLength(1);
 
     const granted = new Map<number, number>();
-    for (const o of [...first.outcomes, ...second.outcomes]) {
+    for (const o of first.outcomes) {
       if (o.outcome !== OUTCOME.LOST) {
         granted.set(o.playerId, o.cardIndex);
       }
-    }
-    for (const id of losers) {
-      const card = granted.get(id);
-      expect(card, `le perdant ${id} repart les mains vides`).not.toBeUndefined();
-      expect(card).not.toBe(CONTESTED);
     }
 
     // Les quatre joueurs ont chacun une carte, et jamais la meme.

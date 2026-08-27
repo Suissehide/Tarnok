@@ -824,10 +824,12 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     room.step(DT);
 
     const results = room.drainDraftResults();
+    // ⚠️ **UN SEUL resultat par draft** : la repioche a disparu, la resolution
+    // est un seul moment. L'octet `phase` qui distinguait « termine » de
+    // « repioche ouverte » n'existe plus.
     expect(results.length).toBe(1);
-    // Phase 0 = termine ; `deadlineTick` porte la fin du gel, que le client ne
-    // peut plus deduire (§8 de la spec).
-    expect(results[0]?.phase).toBe(0);
+    // `deadlineTick` porte la fin du gel, que le client ne peut plus deduire
+    // (§8 de la spec).
     expect(results[0]?.deadlineTick).toBe(room.tick);
     // La carte pointee est bien celle qui a ete gagnee, et elle a atterri dans
     // l'inventaire — sans quoi le draft serait une ceremonie sans effet.
@@ -840,7 +842,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (carte.nature === CARD.PASSIVE) {
       expect(loadout.stacksOf(carte.refId)).toBe(1);
     } else {
-      expect(loadout.levelOf(carte.refId)).toBeGreaterThan(0);
+      expect(loadout.stacksOfWeapon(carte.refId)).toBe(1);
     }
 
     // Reprend : apres la fermeture du draft et la rampe de reprise, le joueur
@@ -993,6 +995,52 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect([...compte.keys()].sort((a, b) => a - b)).toEqual([0, ...DRAFTEES]);
   });
 
+  it('empiler une arme ELARGIT sa salve d un projectile par exemplaire', () => {
+    // ⚠️ **C'est ici que « l'accumulation des cartes fait la puissance »
+    // devient observable dans le salon.** Une arme ne monte pas de niveau :
+    // chaque carte prise ajoute UN projectile a sa salve. C'est le levier le
+    // plus lisible a l'ecran — on VOIT sa salve s'elargir.
+    //
+    // ⚠️ L'arme choisie tire DEJA plusieurs projectiles (eventail, cinq) : sur
+    // une arme a projectile unique, un code qui rendrait `stacks` au lieu de
+    // `projectileCount + stacks - 1` donnerait exactement les memes nombres.
+    const EVENTAIL = 1;
+    const eventail = weaponOf(EVENTAIL);
+    expect(eventail.projectileCount).toBeGreaterThan(1);
+    const dague = weaponOf(BASE_WEAPON_ID);
+
+    /** Projectiles de la premiere salve d'eventail, avec `exemplaires` cartes prises. */
+    function projectilesDeLaSalve(exemplaires: number): number {
+      const room = new Room();
+      room.join(1);
+      for (let i = 0; i < exemplaires; i++) {
+        room.grantCard(1, { nature: CARD.WEAPON, refId: EVENTAIL });
+      }
+      expect(room.loadoutOf(1)?.stacksOfWeapon(EVENTAIL)).toBe(exemplaires);
+
+      const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+      room.applyInput(1, 1, 0, 0, 127, 0);
+      room.step(DT);
+      const salve = spy.mock.calls.find((c) => c[0].id === EVENTAIL);
+      const neutre = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+      spy.mockRestore();
+      if (!salve || !neutre) {
+        throw new Error('salve manquante');
+      }
+      // ⚠️ L'arme neutre vit hors des slots : elle n'est dans aucun `Loadout`,
+      // donc jamais empilee — sa salve ne bouge pas d'un exemplaire a l'autre.
+      // Sans ce garde, un `stacks` lu au mauvais endroit l'elargirait aussi.
+      expect(neutre[7]).toBe(dague.projectileCount);
+      return salve[7] ?? 0;
+    }
+
+    // Une seule carte n'elargit RIEN : c'est la deuxieme qui ajoute le premier
+    // projectile.
+    expect(projectilesDeLaSalve(1)).toBe(eventail.projectileCount);
+    expect(projectilesDeLaSalve(2)).toBe(eventail.projectileCount + 1);
+    expect(projectilesDeLaSalve(3)).toBe(eventail.projectileCount + 2);
+  });
+
   describe('les passifs empiles changent un nombre mesurable (tache 8)', () => {
     const VITALITE = 0;
     const CADENCE = 1;
@@ -1001,7 +1049,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
     /** Donne `n` fois la carte de passif `id` au joueur 1, par le vrai chemin. */
     function prend(room: Room, id: number, n: number): void {
-      const carte: Card = { nature: CARD.PASSIVE, refId: id, owner: 0 };
+      const carte: Card = { nature: CARD.PASSIVE, refId: id };
       for (let i = 0; i < n; i++) {
         room.grantCard(1, carte);
       }
@@ -1019,7 +1067,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       function intervalle(cartes: number): number {
         const room = new Room();
         room.join(1);
-        room.grantCard(1, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 });
+        room.grantCard(1, { nature: CARD.WEAPON, refId: GRENADE });
         prend(room, CADENCE, cartes);
         // 300 ticks : trois intervalles de grenade, et surtout SOUS la periode
         // du generateur de vagues (voir `ticksDeSalves`).
@@ -1237,7 +1285,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (carte.nature === CARD.PASSIVE) {
       expect(inv.stacksOf(carte.refId)).toBe(0);
     } else {
-      expect(inv.levelOf(carte.refId)).toBe(0);
+      expect(inv.stacksOfWeapon(carte.refId)).toBe(0);
     }
     // Et le gagnant, lui, l'a bien eue : sans cette moitie, un code qui ne
     // donnerait la carte a PERSONNE passerait aussi.
@@ -1248,7 +1296,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (carte.nature === CARD.PASSIVE) {
       expect(invGagnant.stacksOf(carte.refId)).toBe(1);
     } else {
-      expect(invGagnant.levelOf(carte.refId)).toBeGreaterThan(0);
+      expect(invGagnant.stacksOfWeapon(carte.refId)).toBe(1);
     }
   });
 
@@ -1326,7 +1374,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     room.step(DT);
     const premier = room.drainDraftResults();
     expect(premier.length).toBe(1);
-    expect(premier[0]?.phase).toBe(0);
+    expect(premier[0]?.deadlineTick).toBe(room.tick);
 
     room.step(DT);
     const second = room.drainDraftOpens();
@@ -1337,7 +1385,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // Et le second se ferme comme le premier, rendant enfin la main.
     expect(room.setDraftToken(1, 0)).toBe(true);
     room.step(DT);
-    expect(room.drainDraftResults()[0]?.phase).toBe(0);
+    expect(room.drainDraftResults()).toHaveLength(1);
     for (let i = 0; i < LEVEL_RESUME_TICKS + 10; i++) {
       room.step(DT);
     }
@@ -1356,7 +1404,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
     expect(room.setDraftToken(1, 0)).toBe(true);
     room.step(DT);
-    expect(room.drainDraftResults()[0]?.phase).toBe(0);
+    expect(room.drainDraftResults()).toHaveLength(1);
 
     // Le joueur pousse a fond, et ne relachera pas : chaque pas mesure ci-
     // dessous est donc entierement du a la rampe.

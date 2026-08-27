@@ -1,34 +1,46 @@
-import { PASSIVE_SLOTS, WEAPON_MAX_LEVEL, WEAPON_SLOTS } from './constants';
-import { PASSIVES, type PassiveKind, passiveOf } from './passives';
-import { WEAPONS } from './weapons';
+import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
 
 /**
- * Ce qu'un joueur possede : ses armes avec leur niveau, ses passifs avec leur
- * nombre d'exemplaires.
+ * Duplique `CARD.WEAPON` de `cards.ts`.
  *
- * Les deux natures ne se comportent pas pareil, et c'est la distinction
- * structurante du draft (§3.3 de la spec de l'etape 4) :
+ * ⚠️ Pas d'import : `cards.ts` importe deja `loadout.ts` (pour le type
+ * `Loadout`), et l'importer en retour ferait un cycle. La valeur est gardee par
+ * un test d'egalite dans `loadout.test.ts` — une constante recopiee sans garde
+ * est exactement ce qui derive en silence.
+ */
+const CARD_WEAPON = 0;
+
+import { PASSIVES, type PassiveKind, passiveOf } from './passives';
+import { WEAPONS, weaponOf } from './weapons';
+
+/**
+ * Ce qu'un joueur possede : ses armes et ses passifs, chacun avec son nombre
+ * d'exemplaires.
  *
- * - une **arme** monte en niveau, bornee par `WEAPON_MAX_LEVEL`, puis evolue.
- *   Elle est **exclusive a l'echelle de l'equipe** (§6.2 de l'orientation) —
- *   mais `Loadout` ne connait qu'un joueur, donc c'est `drawSpread` qui fait
- *   respecter l'exclusivite entre joueurs ; ici on ne refuse qu'un doublon
- *   chez le meme porteur.
- * - un **passif s'empile** : chaque carte prise ajoute sa `magnitude`, sans
- *   borne. Modele Risk of Rain.
+ * ⚠️ **Les deux natures se comportent PAREIL, et c'est le modele du draft** :
+ * tout s'empile, rien ne monte de niveau. *« C'est l'accumulation des cartes
+ * qui fait la puissance. »* Une arme prise deux fois tire une salve plus
+ * large ; un passif pris deux fois ajoute deux fois sa `magnitude`. Modele
+ * Risk of Rain, applique aux deux.
  *
- * ⚠️ **Un passif deja possede ne consomme pas un second slot.** Seul un passif
- * NOUVEAU en prend un. Compter un slot par carte remplirait l'inventaire en
- * trois cartes, la ou le design attend qu'on empile le meme passif des
- * dizaines de fois sur une run — et l'etalage ne cesserait jamais de proposer
- * des passifs, puisqu'il n'en exclut aucun.
+ * Les niveaux d'arme et les evolutions ont existe un temps dans cette etape,
+ * puis ont ete retires — voir le §9 de la spec.
+ *
+ * ⚠️ **Une carte deja possedee ne consomme pas un second slot.** Seule une
+ * carte NOUVELLE en prend un. Compter un slot par carte remplirait l'inventaire
+ * en trois cartes, la ou le design attend qu'on empile le meme objet des
+ * dizaines de fois sur une run — et l'etalage n'exclut jamais rien.
+ *
+ * ⚠️ **Aucune exclusivite d'equipe.** Si un allie a deja pris le lance-flammes,
+ * je peux le prendre aussi : c'est mon propre exemplaire, pas le sien. Le
+ * conflit ne porte que sur la carte de CET etalage-ci.
  *
  * Tableaux types indexes par identifiant, jamais un objet par entree : le
  * catalogue est petit et fixe.
  */
 export class Loadout {
-  /** `#weaponLevel[id]` : niveau de l'arme, `0` si non possedee. */
-  readonly #weaponLevel = new Uint8Array(WEAPONS.length);
+  /** `#weaponStacks[id]` : nombre de cartes prises pour cette arme, `0` si aucune. */
+  readonly #weaponStacks = new Uint16Array(WEAPONS.length);
   /** `#passiveStacks[id]` : nombre de cartes prises, `0` si aucune. */
   readonly #passiveStacks = new Uint16Array(PASSIVES.length);
   /** Ordre d'acquisition — l'ordre des slots, pas l'ordre des identifiants. */
@@ -39,9 +51,9 @@ export class Loadout {
     return this.#weaponOrder;
   }
 
-  /** Niveau d'une arme, ou `0` si le joueur ne la possede pas. */
-  levelOf(weaponId: number): number {
-    return this.#weaponLevel[weaponId] ?? 0;
+  /** Nombre de cartes prises pour cette arme, ou `0` si elle n'est pas possedee. */
+  stacksOfWeapon(weaponId: number): number {
+    return this.#weaponStacks[weaponId] ?? 0;
   }
 
   /** Nombre de cartes prises pour ce passif, ou `0`. */
@@ -64,26 +76,20 @@ export class Loadout {
     return n;
   }
 
+  /**
+   * Empile une arme. Ne consomme un slot que si le joueur ne la possedait PAS
+   * encore — exactement comme `addPassive`, et pour la meme raison.
+   */
   addWeapon(weaponId: number): void {
-    if (this.levelOf(weaponId) > 0) {
-      throw new Error(`arme deja possedee : ${weaponId}`);
-    }
-    if (this.#weaponOrder.length >= WEAPON_SLOTS) {
+    const stacks = this.stacksOfWeapon(weaponId);
+    if (stacks === 0 && this.#weaponOrder.length >= WEAPON_SLOTS) {
       throw new Error(`slots d'armes pleins (${WEAPON_SLOTS})`);
     }
-    this.#weaponLevel[weaponId] = 1;
-    this.#weaponOrder.push(weaponId);
-  }
-
-  levelUpWeapon(weaponId: number): void {
-    const level = this.levelOf(weaponId);
-    if (level === 0) {
-      throw new Error(`arme non possedee : ${weaponId}`);
+    weaponOf(weaponId); // leve si l'identifiant n'existe pas
+    this.#weaponStacks[weaponId] = stacks + 1;
+    if (stacks === 0) {
+      this.#weaponOrder.push(weaponId);
     }
-    if (level >= WEAPON_MAX_LEVEL) {
-      throw new Error(`arme deja au niveau maximum : ${weaponId}`);
-    }
-    this.#weaponLevel[weaponId] = level + 1;
   }
 
   /**
@@ -97,6 +103,22 @@ export class Loadout {
     }
     passiveOf(passiveId); // leve si l'identifiant n'existe pas
     this.#passiveStacks[passiveId] = stacks + 1;
+  }
+
+  /**
+   * Ce joueur peut-il prendre cette carte ?
+   *
+   * ⚠️ **C'est ce qui remplace `owner`.** L'eligibilite ne se transporte plus
+   * sur la carte : elle se DERIVE de l'inventaire de chacun, donc la meme carte
+   * peut etre prenable par l'un et pas par l'autre sans que l'etalage ait a le
+   * savoir. Une seule regle : on ne peut pas ouvrir un slot qu'on n'a plus.
+   * Empiler ce qu'on possede deja reste toujours possible — c'est le modele.
+   */
+  canTake(nature: number, refId: number): boolean {
+    if (nature === CARD_WEAPON) {
+      return this.stacksOfWeapon(refId) > 0 || this.#weaponOrder.length < WEAPON_SLOTS;
+    }
+    return this.stacksOf(refId) > 0 || this.passiveSlotsUsed < PASSIVE_SLOTS;
   }
 
   /** Somme des `magnitude` de tous les exemplaires possedes de ce genre. */

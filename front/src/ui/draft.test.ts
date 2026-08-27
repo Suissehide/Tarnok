@@ -39,14 +39,18 @@ class FakeClient implements DraftSource {
     this.draftIntents = new Map(pairs);
   }
 
-  /** Simule un `DRAFT_RESULT` : `GameClient` decode un tableau NEUF a chaque message. */
-  result(outcomes: DraftOutcomeView[], phase: 0 | 1): void {
+  /**
+   * Simule un `DRAFT_RESULT` : `GameClient` decode un tableau NEUF a chaque
+   * message.
+   *
+   * ⚠️ **Plus de parametre `phase`.** La repioche a disparu : le message est
+   * emis EXACTEMENT une fois par draft, et il ferme toujours la negociation.
+   */
+  result(outcomes: DraftOutcomeView[]): void {
     this.draftOutcomes = outcomes;
     this.draftIntents = new Map();
-    if (phase === 0) {
-      this.draftSettled = true;
-      this.isFrozen = true;
-    }
+    this.draftSettled = true;
+    this.isFrozen = true;
   }
 }
 
@@ -71,13 +75,19 @@ function harness(): Harness {
   return { root, status, list, client, screen: new DraftScreen(root, status, list, client) };
 }
 
-/** Un etalage lisible : trois cartes ouvertes, une reservee au joueur 2. */
+/**
+ * Un etalage lisible : quatre cartes, toutes OUVERTES A TOUS.
+ *
+ * ⚠️ **Plus aucune carte n'est reservee.** `owner` a disparu avec les montees
+ * de niveau : l'eligibilite se derive de l'inventaire cote serveur, et l'ecran
+ * n'a plus d'etat `locked` a peindre a l'ouverture.
+ */
 function spread(): Card[] {
   return [
-    { nature: CARD.NEW_WEAPON, refId: 1, owner: 0 }, // eventail
-    { nature: CARD.PASSIVE, refId: 1, owner: 0 }, // cadence
-    { nature: CARD.NEW_WEAPON, refId: 3, owner: 0 }, // lance-flammes
-    { nature: CARD.WEAPON_LEVEL, refId: 2, owner: 2 }, // arc-lourd, joueur 2 seul
+    { nature: CARD.WEAPON, refId: 1 }, // eventail
+    { nature: CARD.PASSIVE, refId: 1 }, // cadence
+    { nature: CARD.WEAPON, refId: 3 }, // lance-flammes
+    { nature: CARD.WEAPON, refId: 2 }, // arc-lourd
   ];
 }
 
@@ -150,7 +160,7 @@ describe("DraftScreen — l'etalage", () => {
       'Arme',
       'Passif',
       'Arme',
-      'Niveau',
+      'Arme',
     ]);
     expect(cards(h).map((c) => c.dataset.index)).toEqual(['0', '1', '2', '3']);
   });
@@ -162,23 +172,23 @@ describe("DraftScreen — l'etalage", () => {
     h.screen.update();
     expect(cards(h)[0]).toBe(premiere);
 
-    h.client.draftCards = [{ nature: CARD.PASSIVE, refId: 0, owner: 0 }];
+    h.client.draftCards = [{ nature: CARD.PASSIVE, refId: 0 }];
     h.screen.update();
     expect(cards(h)).toHaveLength(1);
     expect(cards(h)[0]?.querySelector('.draft-card__name')?.textContent).toBe('vitalite');
   });
 
-  it('affiche le chronometre de la fenetre, puis celui de la repioche', () => {
+  it('affiche le chronometre de la fenetre, decompte compris', () => {
     h.client.draftCards = spread();
     h.client.hordeTick = 300;
     h.client.draftDeadlineTick = 300 + 20 * TICK_HZ;
     h.screen.update();
     expect(h.status.textContent).toBe('Posez votre jeton — 20 s');
 
-    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.LOST }], 1);
-    h.client.draftDeadlineTick = 300 + 5 * TICK_HZ;
+    // Le temps passe : c'est bien `hordeTick` qui est lu, pas une constante.
+    h.client.hordeTick = 300 + 12 * TICK_HZ;
     h.screen.update();
-    expect(h.status.textContent).toBe('Repioche — 5 s');
+    expect(h.status.textContent).toBe('Posez votre jeton — 8 s');
   });
 });
 
@@ -268,19 +278,31 @@ describe('DraftScreen — le geste (§4.1 : poser un jeton EST la selection)', (
     expect(h.client.sent).toEqual([NO_TOKEN, 2]);
   });
 
-  it('n envoie rien pour une carte reservee a un autre joueur (§3.2)', () => {
-    expect(cards(h)[3]?.dataset.state).toBe('locked');
-    expect(cards(h)[3]?.disabled).toBe(true);
-    cards(h)[3]?.click();
-    expect(h.client.sent).toEqual([]);
+  it('envoie l indice d une carte qu un AUTRE vise deja : c est ca, la negociation', () => {
+    // ⚠️ **Aucune carte ne se verrouille plus.** Le §7.2 point 3 veut qu'on
+    // puisse poser son jeton sur la carte que quelqu'un d'autre convoite —
+    // sans ca il n'y a pas de negociation, seulement une course au clic. Un
+    // ecran qui desactiverait la carte deja visee rendrait tout conflit
+    // impossible depuis l'interface, quoi que le serveur accepte.
+    h.client.intents([[3, 2]]);
+    h.screen.update();
+    expect(tokensOn(h, 2)).toEqual(['3']);
+    expect(cards(h)[2]?.dataset.state).toBe('idle');
+    expect(cards(h)[2]?.disabled).toBe(false);
+
+    cards(h)[2]?.click();
+    expect(h.client.sent).toEqual([2]);
   });
 
-  it('offre la carte reservee a son seul eligible', () => {
-    h.client.localId = 2;
-    h.screen.update();
-    expect(cards(h)[3]?.dataset.state).toBe('idle');
-    cards(h)[3]?.click();
-    expect(h.client.sent).toEqual([3]);
+  it('offre les quatre cartes a tout le monde, quel que soit le joueur local', () => {
+    for (const id of [1, 2, 3, 4]) {
+      const autre = harness();
+      autre.client.localId = id;
+      autre.client.draftCards = spread();
+      autre.screen.update();
+      expect(statesOf(autre)).toEqual(['idle', 'idle', 'idle', 'idle']);
+      expect(cards(autre).map((c) => c.disabled)).toEqual([false, false, false, false]);
+    }
   });
 });
 
@@ -294,49 +316,40 @@ describe('DraftScreen — la revelation (§4.2)', () => {
 
   it('illumine ma carte et consume celle que j ai perdue, la meme carte chez chacun', () => {
     // Joueurs 1 et 3 visaient la carte 2 ; c'est le 3 qui l'emporte.
-    h.client.result(
-      [
-        { playerId: 3, cardIndex: 2, outcome: OUTCOME.WON },
-        { playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST },
-      ],
-      1,
-    );
+    h.client.result([
+      { playerId: 3, cardIndex: 2, outcome: OUTCOME.WON },
+      { playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST },
+    ]);
     h.screen.update();
 
     // Chez MOI (joueur 1) elle brule. « lost » n'est pas « pas gagnee » : la
-    // carte 0, que personne n'a touchee, reste `idle`, et la carte 1, prise par
-    // un autre sans que je la vise, est `taken`.
+    // carte 0, que personne n'a touchee, reste `idle`.
     expect(statesOf(h)[2]).toBe('lost');
+    expect(statesOf(h)[0]).toBe('idle');
 
     // Le meme etat vu du gagnant : la MEME carte, illuminee.
     const chezLeGagnant = harness();
     chezLeGagnant.client.localId = 3;
     chezLeGagnant.client.draftCards = spread();
     chezLeGagnant.screen.update();
-    chezLeGagnant.client.result(
-      [
-        { playerId: 3, cardIndex: 2, outcome: OUTCOME.WON },
-        { playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST },
-      ],
-      1,
-    );
+    chezLeGagnant.client.result([
+      { playerId: 3, cardIndex: 2, outcome: OUTCOME.WON },
+      { playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST },
+    ]);
     chezLeGagnant.screen.update();
     expect(statesOf(chezLeGagnant)[2]).toBe('won');
   });
 
   it('distingue « prise par un autre » de « perdue par moi »', () => {
-    h.client.result(
-      [
-        { playerId: 2, cardIndex: 1, outcome: OUTCOME.WON },
-        { playerId: 3, cardIndex: 0, outcome: OUTCOME.AUTO },
-        { playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST },
-        { playerId: 4, cardIndex: 2, outcome: OUTCOME.WON },
-      ],
-      1,
-    );
+    h.client.result([
+      { playerId: 2, cardIndex: 1, outcome: OUTCOME.WON },
+      { playerId: 3, cardIndex: 0, outcome: OUTCOME.AUTO },
+      { playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST },
+      { playerId: 4, cardIndex: 2, outcome: OUTCOME.WON },
+    ]);
     h.screen.update();
 
-    expect(statesOf(h)).toEqual(['taken', 'taken', 'lost', 'locked']);
+    expect(statesOf(h)).toEqual(['taken', 'taken', 'lost', 'idle']);
   });
 
   it('ne considere pas comme prise une carte qu un autre a seulement PERDUE', () => {
@@ -346,83 +359,60 @@ describe('DraftScreen — la revelation (§4.2)', () => {
     // survit a tout test de bout en bout (motif R8/R10 du registre).
     //
     // L'ecran, lui, est une fonction de ce qui arrive sur le fil. Ce test
-    // enonce SON contrat, pas une observation du serveur — et le §4.4 de la
-    // spec, qui veut une attribution d'office pour les perdants d'un
-    // reconflit, rendra cet etat atteignable le jour ou il sera respecte.
-    h.client.result([{ playerId: 2, cardIndex: 1, outcome: OUTCOME.LOST }], 1);
+    // enonce SON contrat, pas une observation du serveur.
+    h.client.result([{ playerId: 2, cardIndex: 1, outcome: OUTCOME.LOST }]);
     h.screen.update();
     expect(statesOf(h)[1]).toBe('idle');
-    expect(cards(h)[1]?.disabled).toBe(false);
   });
 
   it("l attribution d office s illumine comme une victoire : c'est une carte obtenue", () => {
-    h.client.result([{ playerId: 1, cardIndex: 1, outcome: OUTCOME.AUTO }], 0);
+    h.client.result([{ playerId: 1, cardIndex: 1, outcome: OUTCOME.AUTO }]);
     h.screen.update();
     expect(statesOf(h)[1]).toBe('won');
     expect(h.status.textContent).toBe('Vous obtenez : cadence');
   });
 
-  it('garde la carte du gagnant du premier tour illuminee jusqu a la fin', () => {
-    // Le `DRAFT_RESULT` de la repioche ne parle QUE des perdants : sans cumul,
-    // la carte du gagnant s'eteindrait au moment meme ou elle doit confirmer.
-    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }], 1);
+  it('montre au perdant ce qu il perd ET ce qu il obtient a la place, DANS LE MEME LOT', () => {
+    // ⚠️ **Le point de bascule du modele, vu de l'ecran.** Il y avait ici
+    // DEUX `DRAFT_RESULT` : celui du conflit, puis celui de la repioche. Le
+    // perdant ne rechoisit plus — *« ca brule la carte si je l'ai pas eu et ca
+    // en illumine une autre »* — donc les deux issues arrivent ensemble, et
+    // l'ecran doit peindre les deux etats d'un seul coup.
+    //
+    // ⚠️ Un ecran qui ne regarderait que la PREMIERE issue d'un joueur
+    // s'arreterait au `LOST` et n'illuminerait rien. On exige donc les deux
+    // etats a la fois, et le statut qui nomme la carte de remplacement.
+    h.client.result([
+      { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.LOST },
+      { playerId: 1, cardIndex: 2, outcome: OUTCOME.AUTO },
+    ]);
     h.screen.update();
-    expect(statesOf(h)[0]).toBe('won');
 
-    h.client.result([{ playerId: 2, cardIndex: 1, outcome: OUTCOME.WON }], 0);
-    h.screen.update();
-    expect(statesOf(h)[0]).toBe('won');
-    expect(statesOf(h)[1]).toBe('taken');
-    expect(h.status.textContent).toBe('Vous obtenez : eventail');
-  });
-
-  it('montre au perdant ce qu il perd ET ce qu il obtient a la place', () => {
-    h.client.result(
-      [
-        { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
-        { playerId: 1, cardIndex: 0, outcome: OUTCOME.LOST },
-      ],
-      1,
-    );
-    h.screen.update();
-    expect(statesOf(h)[0]).toBe('lost');
-    // Pendant la repioche, je reste le seul a devoir choisir.
-    expect(cards(h)[2]?.disabled).toBe(false);
-
-    h.client.result([{ playerId: 1, cardIndex: 2, outcome: OUTCOME.WON }], 0);
-    h.screen.update();
     expect(statesOf(h)[0]).toBe('lost');
     expect(statesOf(h)[2]).toBe('won');
     expect(h.status.textContent).toBe('Vous obtenez : lance-flammes');
   });
 
-  it('le gagnant du premier tour ne repose pas de jeton a la repioche', () => {
-    h.client.result(
-      [
-        { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
-        { playerId: 2, cardIndex: 1, outcome: OUTCOME.WON },
-        { playerId: 3, cardIndex: 1, outcome: OUTCOME.LOST },
-      ],
-      1,
-    );
-    h.screen.update();
-
-    expect(cards(h)[2]?.disabled).toBe(true);
-    cards(h)[2]?.click();
-    expect(h.client.sent).toEqual([]);
-    expect(h.status.textContent).toMatch(/les autres choisissent/);
-  });
-
   it('dit qu il n y a rien quand la resolution ne m attribue aucune carte', () => {
-    // Un perdant de reconflit a la repioche : `Draft#resolve` lui rend `LOST`
-    // sans attribution de repli. Un ecran muet le laisserait croire a un bug.
-    h.client.result([{ playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST }], 0);
+    // Cas limite reel : l'etalage epuise, `Draft#step` ne trouve plus de carte
+    // libre a donner au perdant et son lot ne porte que son `LOST`. Un ecran
+    // muet le laisserait croire a un bug.
+    h.client.result([{ playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST }]);
     h.screen.update();
     expect(h.status.textContent).toBe('Rien cette fois.');
   });
 
+  it('n accepte plus aucun clic une fois la negociation close', () => {
+    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]);
+    h.screen.update();
+    expect(cards(h).every((c) => c.disabled)).toBe(true);
+    cards(h)[2]?.click();
+    expect(h.client.sent).toEqual([]);
+  });
+
   it('remet les issues a zero au draft suivant', () => {
-    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }], 0);
+    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]);
     h.screen.update();
     expect(statesOf(h)[0]).toBe('won');
 
@@ -430,7 +420,7 @@ describe('DraftScreen — la revelation (§4.2)', () => {
     h.client.draftOutcomes = [];
     h.client.draftSettled = false;
     h.screen.update();
-    expect(statesOf(h)).toEqual(['idle', 'idle', 'idle', 'locked']);
+    expect(statesOf(h)).toEqual(['idle', 'idle', 'idle', 'idle']);
     expect(h.status.textContent).toMatch(/Posez votre jeton/);
   });
 });
@@ -444,7 +434,7 @@ describe("DraftScreen — quand l'ecran s'arrete de dessiner (F2)", () => {
   });
 
   it('tient l etalage pendant toute la rampe de reprise, puis disparait', () => {
-    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }], 0);
+    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]);
     h.screen.update();
     // L'etalage SURVIT a la fermeture (`draftSettled` ne veut pas dire « il
     // n'y a plus rien a montrer ») : c'est ce qui rend la revelation dessinable.
@@ -456,14 +446,6 @@ describe("DraftScreen — quand l'ecran s'arrete de dessiner (F2)", () => {
     h.client.isFrozen = false;
     h.screen.update();
     expect(h.root.classList.contains('hidden')).toBe(true);
-  });
-
-  it('ne se retire pas pendant la repioche, ou le gel court toujours', () => {
-    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.LOST }], 1);
-    h.client.isFrozen = false; // pas encore observable : le gel n'a pas de fin connue
-    h.screen.update();
-    expect(h.root.classList.contains('hidden')).toBe(false);
-    expect(h.root.dataset.settled).toBe('false');
   });
 });
 
@@ -494,7 +476,7 @@ describe('le jeton du tour precedent ne survit pas a l etalage suivant', () => {
     h.screen.update();
     expect(tokensOn(h, 1)).toEqual(['1']);
 
-    h.client.result([{ playerId: 1, cardIndex: 1, outcome: OUTCOME.WON }], 0);
+    h.client.result([{ playerId: 1, cardIndex: 1, outcome: OUTCOME.WON }]);
     h.screen.update();
 
     // Second tour : un etalage NEUF, qui contient la meme carte au meme indice.

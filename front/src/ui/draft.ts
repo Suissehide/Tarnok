@@ -68,14 +68,10 @@ export function remainingSeconds(deadlineTick: number, hordeTick: number): numbe
 /** La nature de la carte, en un mot — c'est elle qui dit ce qu'on gagne. */
 export function natureLabel(nature: number): string {
   switch (nature) {
-    case CARD.NEW_WEAPON:
+    case CARD.WEAPON:
       return 'Arme';
-    case CARD.WEAPON_LEVEL:
-      return 'Niveau';
     case CARD.PASSIVE:
       return 'Passif';
-    case CARD.EVOLUTION:
-      return 'Évolution';
     default:
       return '?';
   }
@@ -323,9 +319,11 @@ export class DraftScreen {
     if (takenByOther) {
       return 'taken';
     }
-    // `owner` porte a lui seul l'exclusivite (§3.2) : une montee de niveau ou
-    // une evolution ne concerne que son porteur.
-    return card.owner === 0 || card.owner === mine ? 'idle' : 'locked';
+    // ⚠️ Plus aucune carte n'est reservee : toutes sont ouvertes a tout le
+    // monde. L'etat `'locked'` a disparu avec `owner`, et une carte deja visee
+    // par un allie reste posable — c'est la negociation.
+    void card;
+    return 'idle';
   }
 
   #statusLine(

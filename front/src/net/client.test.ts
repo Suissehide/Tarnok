@@ -810,7 +810,7 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
       // la deduire (etape 4). Sans ce message, il resterait gele pour toujours
       // — et c'est bien le comportement voulu.
       if (tick === FREEZE_END) {
-        socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
+        socket.emit('message', { data: encodeDraftResult(FREEZE_END, []) });
       }
 
       client.update(tick * STEP, STEP);
@@ -884,7 +884,7 @@ describe('GameClient — la prediction locale honore le gel de niveau (tache 24)
 
       for (let tick = 0; tick < END; tick++) {
         if (tick === FREEZE_END) {
-          socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
+          socket.emit('message', { data: encodeDraftResult(FREEZE_END, []) });
         }
         const state = client.update(tick * STEP, STEP);
         const me = state.players.find((p) => p.id === 1);
@@ -951,7 +951,7 @@ describe('GameClient — isFrozen, pour l indication HUD du gel (tache 24)', () 
 
     // Le serveur annonce la fin : c'est la SEULE facon pour le client de
     // l'apprendre depuis l'etape 4.
-    socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
+    socket.emit('message', { data: encodeDraftResult(FREEZE_END, []) });
     for (let tick = FREEZE_END; tick < RESUME_END - 5; tick++) {
       client.update(tick * STEP, STEP);
     }
@@ -1426,7 +1426,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     const FREEZE_END = FREEZE_START + GEL_TICKS - 1;
     for (let tick = FREEZE_START; tick <= FREEZE_END; tick++) {
       if (tick === FREEZE_END) {
-        socket.emit('message', { data: encodeDraftResult(0, FREEZE_END, []) });
+        socket.emit('message', { data: encodeDraftResult(FREEZE_END, []) });
       }
       socket.emit('message', { data: snapshot(tick) });
       client.update(tick * MS_PER_TICK, STEP);
@@ -1492,11 +1492,11 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
    */
   function grant(
     socket: FakeSocket,
-    card: { nature: number; refId: number; owner: number },
+    card: { nature: number; refId: number },
     outcomes: readonly { playerId: number; cardIndex: number; outcome: number }[],
   ): void {
     socket.emit('message', { data: encodeDraftOpen(600, [card]) });
-    socket.emit('message', { data: encodeDraftResult(0, 0, outcomes) });
+    socket.emit('message', { data: encodeDraftResult(0, outcomes) });
   }
 
   /** Fait avancer le client de `ticks` images d'un pas de simulation chacune. */
@@ -1535,13 +1535,17 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   it('un jeton refuse par le serveur ne s affiche pas comme pose', () => {
     // ⚠️ Le §7.2 est categorique : le client ne DECIDE rien. Ce que l'ecran
     // montre vient de `DRAFT_INTENTS`, jamais du geste local — un jeton
-    // affiche des le clic mentirait a chaque refus (carte reservee a un
-    // autre), et le joueur croirait viser une carte que le serveur ne lui
-    // accorde pas.
+    // affiche des le clic mentirait a chaque refus, et le joueur croirait
+    // viser une carte que le serveur ne lui accorde pas.
+    //
+    // ⚠️ **Il n'y a plus de carte reservee.** Le seul refus qui subsiste vient
+    // de l'inventaire (`Loadout.canTake` : des slots d'armes pleins refusent
+    // une arme NOUVELLE) — et le client, lui, n'en sait rien : c'est
+    // precisement pour ca qu'il ne doit rien afficher de facon optimiste.
     const { client, socket } = setup(1);
     const etalage = [
-      { nature: CARD.WEAPON_LEVEL, refId: GRENADE, owner: 2 }, // reservee au joueur 2
-      { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 },
+      { nature: CARD.WEAPON, refId: GRENADE },
+      { nature: CARD.PASSIVE, refId: FOUGUE },
     ];
     socket.emit('message', { data: encodeDraftOpen(600, etalage) });
 
@@ -1550,8 +1554,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 1 }]) });
     expect(client.draftIntents.get(1)).toBe(1);
 
-    // Un second, sur une carte dont `owner` vaut 2 : le serveur le REFUSE et
-    // rediffuse les intentions inchangees.
+    // Un second, que le serveur REFUSE : il rediffuse les intentions
+    // inchangees.
     client.placeToken(0);
 
     // Avant meme la rediffusion, rien n'a bouge a l'ecran : c'est ici qu'un
@@ -1565,7 +1569,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   it('les issues d un autre joueur ne modifient pas mon inventaire', () => {
     const { client, socket } = setup(1);
 
-    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+    grant(socket, { nature: CARD.WEAPON, refId: GRENADE }, [
       { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
     ]);
 
@@ -1580,7 +1584,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // §6.2 s'effondre, et le conflit n'a plus d'enjeu.
     const { client, socket } = setup(1);
 
-    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+    grant(socket, { nature: CARD.WEAPON, refId: GRENADE }, [
       { playerId: 1, cardIndex: 0, outcome: OUTCOME.LOST },
       { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
     ]);
@@ -1596,7 +1600,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // en arriere-plan, cas explicitement decrit comme frequent.
     const { client, socket } = setup(1);
 
-    grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }, [
+    grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE }, [
       { playerId: 1, cardIndex: 0, outcome: OUTCOME.AUTO },
     ]);
 
@@ -1619,13 +1623,13 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // trame ne doit pas dependre de ce que `back/` emet ce mois-ci.
     const { client, socket } = setup(1);
     socket.emit('message', {
-      data: encodeDraftOpen(600, [{ nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }]),
+      data: encodeDraftOpen(600, [{ nature: CARD.PASSIVE, refId: FOUGUE }]),
     });
     socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 0 }]) });
     expect(client.draftIntents.get(1)).toBe(0);
 
     socket.emit('message', {
-      data: encodeDraftResult(0, 300, [{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]),
+      data: encodeDraftResult(300, [{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]),
     });
     // Le jeton perime, rediffuse apres la fermeture.
     socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 0 }]) });
@@ -1634,7 +1638,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // Le meme passif revient — les passifs ne sont JAMAIS exclus (§3.4), donc
     // c'est le cas courant, pas un cas tordu.
     socket.emit('message', {
-      data: encodeDraftOpen(900, [{ nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }]),
+      data: encodeDraftOpen(900, [{ nature: CARD.PASSIVE, refId: FOUGUE }]),
     });
     expect(client.draftIntents.size).toBe(0);
   });
@@ -1648,14 +1652,14 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // illuminer et la revelation etait indessinable.
     const { client, socket } = setup(1);
     const etalage = [
-      { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 },
-      { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 },
+      { nature: CARD.PASSIVE, refId: FOUGUE },
+      { nature: CARD.WEAPON, refId: GRENADE },
     ];
     socket.emit('message', { data: encodeDraftOpen(600, etalage) });
     expect(client.draftSettled).toBe(false);
 
     socket.emit('message', {
-      data: encodeDraftResult(0, 300, [{ playerId: 1, cardIndex: 1, outcome: OUTCOME.WON }]),
+      data: encodeDraftResult(300, [{ playerId: 1, cardIndex: 1, outcome: OUTCOME.WON }]),
     });
 
     // La negociation est close...
@@ -1663,41 +1667,41 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // ...mais la carte que l'issue designe est toujours la, et c'est la bonne.
     expect(client.draftCards).toHaveLength(2);
     const gagnee = client.draftCards[client.draftOutcomes[0]?.cardIndex ?? -1];
-    expect(gagnee).toEqual({ nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 });
+    expect(gagnee).toEqual({ nature: CARD.WEAPON, refId: GRENADE });
 
     // Le prochain etalage remplace le precedent, et rouvre la negociation :
     // c'est LUI qui borne l'affichage, pas la fermeture.
     socket.emit('message', {
-      data: encodeDraftOpen(900, [{ nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }]),
+      data: encodeDraftOpen(900, [{ nature: CARD.PASSIVE, refId: FOUGUE }]),
     });
     expect(client.draftSettled).toBe(false);
     expect(client.draftCards).toHaveLength(1);
   });
 
   it('une issue que le miroir ne peut pas ranger n interrompt pas la reception', () => {
-    // ⚠️ Le miroir d'un joueur DISTANT peut etre incomplet : un client qui
-    // rejoint un salon en cours n'a jamais vu les `DRAFT_RESULT` d'avant sa
-    // connexion. Une montee de niveau peut donc porter sur une arme qu'il ne
-    // lui connait pas — `Loadout.levelUpWeapon` leve — et un indice de carte
-    // peut ne designer aucune carte s'il a manque le `DRAFT_OPEN`. Sans
-    // rattrapage, l'exception remonte hors du gestionnaire de message : le
-    // gel n'est plus date, les issues ne sont plus affichees, et tout ce que
-    // ce message portait d'autre est perdu.
+    // ⚠️ Le client est un decodeur du FIL : il doit survivre a une trame qu'il
+    // ne sait pas ranger. Deux cas concrets — un indice de carte qui ne
+    // designe rien (il a manque le `DRAFT_OPEN` en rejoignant un salon en
+    // cours), et un `refId` que son catalogue ne connait pas (`weaponOf`
+    // leve). Sans rattrapage, l'exception remonte hors du gestionnaire de
+    // message : le gel n'est plus date, les issues ne sont plus affichees, et
+    // tout ce que ce message portait d'autre est perdu.
     const { client, socket } = setup(1);
 
     // Aucun `DRAFT_OPEN` recu : l'indice ne designe rien.
     socket.emit('message', {
-      data: encodeDraftResult(1, 700, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
+      data: encodeDraftResult(700, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
     });
     expect(client.draftOutcomes).toHaveLength(1);
 
-    // Etalage connu, mais une montee de niveau sur une arme que le miroir ne
-    // connait pas a ce joueur.
+    // Etalage connu, mais une arme absente du catalogue de ce client.
+    const INCONNUE = 200;
+    expect(() => weaponOf(INCONNUE)).toThrow();
     socket.emit('message', {
-      data: encodeDraftOpen(600, [{ nature: CARD.WEAPON_LEVEL, refId: GRENADE, owner: 2 }]),
+      data: encodeDraftOpen(600, [{ nature: CARD.WEAPON, refId: INCONNUE }]),
     });
     socket.emit('message', {
-      data: encodeDraftResult(0, 42, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
+      data: encodeDraftResult(42, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
     });
 
     // Le message a ete traite jusqu'au bout : la negociation est marquee close
@@ -1707,7 +1711,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     expect(client.draftSettled).toBe(true);
     expect(client.draftDeadlineTick).toBe(42);
     expect(client.draftOutcomes).toHaveLength(1);
-    expect(client.loadoutOf(2).levelOf(GRENADE)).toBe(0);
+    expect(client.loadoutOf(2).stacksOfWeapon(INCONNUE)).toBe(0);
   });
 
   it('l arme draftee tire — pour son porteur comme pour son allie', () => {
@@ -1717,10 +1721,10 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // parce que l'espion ne voit que l'arme — pas qui tire.
     const { client, socket } = setup(1);
     socket.emit('message', { data: encodeDraftOpen(600, []) });
-    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+    grant(socket, { nature: CARD.WEAPON, refId: GRENADE }, [
       { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
     ]);
-    grant(socket, { nature: CARD.NEW_WEAPON, refId: ARC_LOURD, owner: 0 }, [
+    grant(socket, { nature: CARD.WEAPON, refId: ARC_LOURD }, [
       { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
     ]);
 
@@ -1742,7 +1746,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // la rapide passe d'abord, la rapide sinon. Compter les DEUX est ce qui
     // ferme les deux cas d'un coup.
     const { client, socket } = setup(1);
-    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+    grant(socket, { nature: CARD.WEAPON, refId: GRENADE }, [
       { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
     ]);
 
@@ -1760,6 +1764,46 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     expect(grenade).toBeGreaterThanOrEqual(1);
   });
 
+  it('empiler une arme elargit la salve AFFICHEE, exactement comme celle du serveur', () => {
+    // ⚠️ **Une seule fonction, jamais deux copies.** `salvoCount` vit dans
+    // `shared/weapons.ts` : `Room#fireOne` la lit, ce miroir aussi. Deux
+    // formules divergeraient a la premiere retouche, et le joueur verrait une
+    // salve que le serveur n'arbitre pas — le cas le plus difficile a
+    // diagnostiquer, parce que l'ecran a l'air juste.
+    //
+    // ⚠️ L'eventail tire DEJA cinq projectiles : sur une arme a projectile
+    // unique, un miroir qui rendrait `stacks` au lieu de la vraie formule
+    // donnerait les memes nombres.
+    const EVENTAIL = 1;
+    const eventail = weaponOf(EVENTAIL);
+    expect(eventail.projectileCount).toBeGreaterThan(1);
+
+    function projectilesDeLaSalve(exemplaires: number): number {
+      const { client, socket } = setup(1);
+      for (let i = 0; i < exemplaires; i++) {
+        grant(socket, { nature: CARD.WEAPON, refId: EVENTAIL }, [
+          { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+        ]);
+      }
+      expect(client.loadoutOf(1).stacksOfWeapon(EVENTAIL)).toBe(exemplaires);
+
+      const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+      run(client, socket, 3, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0 }]);
+      const salve = spy.mock.calls.find((c) => c[0].id === EVENTAIL);
+      const neutre = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+      if (!salve || !neutre) {
+        throw new Error('salve manquante');
+      }
+      // L'arme neutre vit hors des slots : jamais empilee, jamais elargie.
+      expect(neutre[7]).toBe(weaponOf(BASE_WEAPON_ID).projectileCount);
+      return salve[7] ?? 0;
+    }
+
+    expect(projectilesDeLaSalve(1)).toBe(eventail.projectileCount);
+    expect(projectilesDeLaSalve(2)).toBe(eventail.projectileCount + 1);
+    expect(projectilesDeLaSalve(3)).toBe(eventail.projectileCount + 2);
+  });
+
   it('les passifs de cadence empiles accelerent le tir AFFICHE', () => {
     // Le serveur applique `cooldownWithBonus` a chaque tir (tache 8) ; le
     // client doit lire LA MEME fonction, pas la cadence brute du catalogue.
@@ -1768,7 +1812,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const CARTES = 3;
     const { client, socket } = setup(1);
     for (let i = 0; i < CARTES; i++) {
-      grant(socket, { nature: CARD.PASSIVE, refId: CADENCE, owner: 0 }, [
+      grant(socket, { nature: CARD.PASSIVE, refId: CADENCE }, [
         { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
       ]);
     }
@@ -1793,7 +1837,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const CARTES = 2;
     const { client, socket } = setup(1);
     for (let i = 0; i < CARTES; i++) {
-      grant(socket, { nature: CARD.PASSIVE, refId: PUISSANCE, owner: 0 }, [
+      grant(socket, { nature: CARD.PASSIVE, refId: PUISSANCE }, [
         { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
       ]);
     }
@@ -1823,7 +1867,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
       data: encodeSnapshot(0, 0, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0 }]),
     });
     for (let i = 0; i < CARTES; i++) {
-      grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }, [
+      grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE }, [
         { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
       ]);
     }

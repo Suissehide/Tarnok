@@ -185,7 +185,6 @@ export interface DraftIntentsMessage {
 export interface DraftResultMessage {
   type: typeof MSG.DRAFT_RESULT;
   /** `0` : draft termine, `deadlineTick` est la fin du gel. `1` : repioche ouverte. */
-  phase: number;
   deadlineTick: number;
   outcomes: WireOutcome[];
 }
@@ -216,15 +215,21 @@ export const DEATHS_HEADER_BYTES = 7;
 /** `type u8 · deadlineTick u32 · count u8`. */
 export const DRAFT_OPEN_HEADER_BYTES = 6;
 /** Une carte : `nature u8 · refId u8 · owner u8`. */
-export const DRAFT_CARD_BYTES = 3;
+export const DRAFT_CARD_BYTES = 2;
 /** `type u8 · cardIndex u8`. */
 export const DRAFT_TOKEN_BYTES = 2;
 /** `type u8 · count u8`. */
 export const DRAFT_INTENTS_HEADER_BYTES = 2;
 /** Une intention : `playerId u8 · cardIndex u8`. */
 export const DRAFT_INTENT_BYTES = 2;
-/** `type u8 · phase u8 · deadlineTick u32 · count u8`. */
-export const DRAFT_RESULT_HEADER_BYTES = 7;
+/**
+ * `type u8 · deadlineTick u32 · count u8`.
+ *
+ * ⚠️ **Il y avait un octet `phase` de plus.** Il distinguait « le draft est
+ * termine » de « une repioche s'ouvre » ; la repioche n'existe plus, la
+ * resolution est un seul moment, donc le message n'a plus qu'un sens possible.
+ */
+export const DRAFT_RESULT_HEADER_BYTES = 6;
 /** Une issue : `playerId u8 · cardIndex u8 · outcome u8`. */
 export const DRAFT_OUTCOME_BYTES = 3;
 
@@ -621,7 +626,6 @@ export function decode(buf: ArrayBuffer): Message {
 export interface WireCard {
   nature: number;
   refId: number;
-  owner: number;
 }
 
 /**
@@ -641,7 +645,6 @@ export function encodeDraftOpen(deadlineTick: number, cards: readonly WireCard[]
   for (const c of cards) {
     v.setUint8(o, c.nature);
     v.setUint8(o + 1, c.refId);
-    v.setUint8(o + 2, c.owner);
     o += DRAFT_CARD_BYTES;
   }
   return buf;
@@ -693,27 +696,25 @@ export interface WireOutcome {
 /**
  * S -> C : la resolution.
  *
- * ⚠️ **`phase` porte la fin du gel, et sans lui le client ne peut pas la
+ * ⚠️ **`deadlineTick` porte la fin du gel, et sans lui le client ne peut pas la
  * deduire.** A l'etape 3 il la calculait — `msg.tick + LEVEL_FREEZE_TICKS - 1`
  * — parce que le gel durait une constante. Ce n'est plus vrai : la fenetre
  * dure jusqu'a ce que tout le monde ait pose son jeton, et en solo elle se
  * ferme au clic.
  *
- * `phase` vaut `0` quand le draft est termine — `deadlineTick` est alors le
- * tick ou le gel prend fin — et `1` quand une repioche s'ouvre, auquel cas
- * `deadlineTick` en est l'echeance.
+ * Ce message est emis EXACTEMENT une fois par draft : la resolution est un seul
+ * moment. La carte gagnee s'illumine, la carte perdue brule, celle qui la
+ * remplace s'illumine a son tour — tout est dans ces `outcomes`.
  */
 export function encodeDraftResult(
-  phase: number,
   deadlineTick: number,
   outcomes: readonly WireOutcome[],
 ): ArrayBuffer {
   const buf = new ArrayBuffer(DRAFT_RESULT_HEADER_BYTES + outcomes.length * DRAFT_OUTCOME_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.DRAFT_RESULT);
-  v.setUint8(1, phase);
-  v.setUint32(2, deadlineTick >>> 0, true);
-  v.setUint8(6, outcomes.length);
+  v.setUint32(1, deadlineTick >>> 0, true);
+  v.setUint8(5, outcomes.length);
   let o = DRAFT_RESULT_HEADER_BYTES;
   for (const r of outcomes) {
     v.setUint8(o, r.playerId);
@@ -731,7 +732,7 @@ function decodeDraftOpen(buf: ArrayBuffer): DraftOpenMessage {
   const cards: WireCard[] = [];
   let o = DRAFT_OPEN_HEADER_BYTES;
   for (let i = 0; i < count; i++) {
-    cards.push({ nature: v.getUint8(o), refId: v.getUint8(o + 1), owner: v.getUint8(o + 2) });
+    cards.push({ nature: v.getUint8(o), refId: v.getUint8(o + 1) });
     o += DRAFT_CARD_BYTES;
   }
   return { type: MSG.DRAFT_OPEN, deadlineTick: v.getUint32(1, true), cards };
@@ -757,7 +758,7 @@ function decodeDraftIntents(buf: ArrayBuffer): DraftIntentsMessage {
 
 function decodeDraftResult(buf: ArrayBuffer): DraftResultMessage {
   const v = viewOf(buf, DRAFT_RESULT_HEADER_BYTES);
-  const count = v.getUint8(6);
+  const count = v.getUint8(5);
   viewOf(buf, DRAFT_RESULT_HEADER_BYTES + count * DRAFT_OUTCOME_BYTES);
   const outcomes: WireOutcome[] = [];
   let o = DRAFT_RESULT_HEADER_BYTES;
@@ -771,8 +772,7 @@ function decodeDraftResult(buf: ArrayBuffer): DraftResultMessage {
   }
   return {
     type: MSG.DRAFT_RESULT,
-    phase: v.getUint8(1),
-    deadlineTick: v.getUint32(2, true),
+    deadlineTick: v.getUint32(1, true),
     outcomes,
   };
 }

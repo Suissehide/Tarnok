@@ -48,7 +48,7 @@ function mesure(slots: number, entites: number): { p95: number; max: number } {
   }
   for (let p = 1; p <= 4; p++) {
     for (let w = 1; w <= slots; w++) {
-      room.grantCard(p, { nature: CARD.NEW_WEAPON, refId: w, owner: 0 });
+      room.grantCard(p, { nature: CARD.WEAPON, refId: w });
     }
     room.applyInput(p, 1, 0, 0, 127, 40);
   }

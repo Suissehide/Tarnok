@@ -327,29 +327,12 @@ export const WEAPON_SLOTS = 5;
 export const PASSIVE_SLOTS = 3;
 
 /**
- * Niveau maximum d'une arme draftee (§7.5).
- *
- * ⚠️ Au-dela de ce niveau, la carte proposee pour cette arme n'est plus une
- * carte de niveau mais l'evolution — a condition que le passif requis
- * (`Weapon.evolutionPassiveId`) soit deja possede. Cette valeur ne s'applique
- * pas a l'arme neutre de base, qui reste hors slots et ne monte jamais de
- * niveau.
- */
-export const WEAPON_MAX_LEVEL = 5;
-
-/**
  * Duree de la fenetre de draft, en ticks (20 s a `TICK_HZ`).
  *
  * ⚠️ Plafond du §7.4 valable seulement a PLUSIEURS joueurs : en solo, la
  * fenetre se referme des que l'unique joueur a clique, pas apres ce delai.
  */
 export const DRAFT_WINDOW_TICKS = 600;
-
-/**
- * Duree de la fenetre de repioche apres un conflit, en ticks (5 s a `TICK_HZ`,
- * §7.2 point 4).
- */
-export const DRAFT_REPICK_TICKS = 150;
 
 /**
  * Cartes supplementaires dans l'etalage, au-dela du nombre de joueurs

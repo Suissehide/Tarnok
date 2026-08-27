@@ -152,11 +152,12 @@ export class Projectiles {
     dirX: number,
     dirY: number,
     damage = weapon.damage,
+    count = weapon.projectileCount,
   ): void {
     if (dirX === 0 && dirY === 0) {
       return;
     }
-    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX), damage);
+    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX), damage, count);
   }
 
   /**
@@ -172,8 +173,9 @@ export class Projectiles {
     y: number,
     baseAngle: number,
     damage = weapon.damage,
+    count = weapon.projectileCount,
   ): void {
-    const n = weapon.projectileCount;
+    const n = count;
     const room = this.capacity - this.#count;
     const toFire = Math.min(n, room);
 

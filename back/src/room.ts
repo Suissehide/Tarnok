@@ -20,7 +20,7 @@ import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, OUTCOME, type PlayerSnapshot } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
 import type { WaveOrder } from '@shared/waves';
-import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { type ContactPlayer, OrbField, resolveContact, resolveProjectileDamage } from './combat';
@@ -116,13 +116,11 @@ export interface IdBatch {
 /** Un etalage a diffuser, tel que `DRAFT_OPEN` le transporte. */
 export interface DraftOpenEvent {
   deadlineTick: number;
-  cards: readonly { nature: number; refId: number; owner: number }[];
+  cards: readonly { nature: number; refId: number }[];
 }
 
 /** Une resolution a diffuser, telle que `DRAFT_RESULT` la transporte. */
 export interface DraftResultEvent {
-  /** `0` : draft termine, `deadlineTick` est la fin du gel. `1` : repioche. */
-  phase: number;
   deadlineTick: number;
   outcomes: readonly { playerId: number; cardIndex: number; outcome: number }[];
 }
@@ -661,7 +659,12 @@ export class Room {
       return;
     }
     const damage = weapon.damage * (1 + p.loadout.bonus('damage'));
-    this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY, damage);
+    // ⚠️ Chaque exemplaire empile de cette arme elargit la salve d'un
+    // projectile : « c'est l'accumulation des cartes qui fait la puissance ».
+    // L'arme neutre n'est jamais empilee, `salvoCount` lui rend son compte de
+    // base sans cas particulier.
+    const count = salvoCount(weapon, p.loadout.stacksOfWeapon(weaponId));
+    this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY, damage, count);
     p.lastFireTick[weaponId] = tick;
   }
 
@@ -691,7 +694,7 @@ export class Room {
       loadouts.set(id, p.loadout);
     }
     const spread = drawSpread(loadouts, this.#draftRng);
-    this.#draft.open(this.#tick, spread, [...this.#players.keys()]);
+    this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts);
     this.#pendingLevelUps.push({ tick: this.#tick, level: this.#level });
     this.#pendingDraftOpens.push({ deadlineTick: this.#draft.deadlineTick, cards: spread });
   }
@@ -700,11 +703,14 @@ export class Room {
    * Fait avancer l'etalage d'un tick. Quand une phase se ferme, applique les
    * cartes et met le resultat en file.
    *
-   * ⚠️ **`deadlineTick` du resultat porte la fin du gel** quand la phase vaut
-   * `0`. Le client ne peut plus la deduire : la fenetre dure jusqu'a ce que
-   * tout le monde ait pose son jeton, et en solo elle se ferme au clic. Sans
-   * ce champ, chaque client en devinerait une differente — exactement la
-   * divergence que le gel date par tick de l'etape 3 existait pour empecher.
+   * ⚠️ **`deadlineTick` du resultat porte la fin du gel.** Le client ne peut
+   * plus la deduire : la fenetre dure jusqu'a ce que tout le monde ait pose son
+   * jeton, et en solo elle se ferme au clic. Sans ce champ, chaque client en
+   * devinerait une differente — exactement la divergence que le gel date par
+   * tick de l'etape 3 existait pour empecher.
+   *
+   * **Un seul resultat par draft** : la repioche a disparu, la resolution est
+   * un seul moment.
    */
   #stepDraft(): void {
     const issues = this.#draft.step(this.#tick, this.#draftRng);
@@ -724,16 +730,9 @@ export class Room {
       this.grantCard(r.playerId, card);
     }
 
-    const termine = this.#draft.phase === 'closed';
-    if (termine) {
-      this.#freezeUntilTick = this.#tick;
-      this.#resumeEndTick = this.#tick + LEVEL_RESUME_TICKS;
-    }
-    this.#pendingDraftResults.push({
-      phase: termine ? 0 : 1,
-      deadlineTick: termine ? this.#tick : this.#draft.deadlineTick,
-      outcomes: issues,
-    });
+    this.#freezeUntilTick = this.#tick;
+    this.#resumeEndTick = this.#tick + LEVEL_RESUME_TICKS;
+    this.#pendingDraftResults.push({ deadlineTick: this.#tick, outcomes: issues });
   }
 
   /**

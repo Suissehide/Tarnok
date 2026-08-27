@@ -1,8 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { TICK_HZ } from './constants';
-import { passiveOf } from './passives';
-import { WEAPONS, weaponOf } from './weapons';
+import { salvoCount, WEAPONS, weaponOf } from './weapons';
 
 describe('WEAPONS', () => {
   it('indexe chaque arme a sa position dans le tableau', () => {
@@ -24,7 +23,6 @@ describe('WEAPONS', () => {
       expect(w.projectileLifeTicks).toBeGreaterThan(0);
       expect(w.projectileCount).toBeGreaterThan(0);
       expect(w.spreadRadians).toBeGreaterThan(0);
-      expect(w.maxLevel).toBeGreaterThan(0);
     }
   });
 
@@ -37,18 +35,59 @@ describe('WEAPONS', () => {
   });
 });
 
-describe('evolutionPassiveId', () => {
-  it('vaut -1, ou designe un passif existant', () => {
+/**
+ * `salvoCount` : la ou « l'accumulation des cartes fait la puissance » devient
+ * un nombre. C'est la SEULE fonction qui traduit des exemplaires empiles en
+ * projectiles — `Room#fireOne` et le miroir client la lisent tous les deux,
+ * jamais une copie.
+ */
+describe('salvoCount', () => {
+  /** `eventail` : cinq projectiles de base. Un compte de base different de 1 est ce qui prouve qu'il est LU. */
+  const EVENTAIL = 1;
+  /** `arc-lourd` : un seul projectile de base. */
+  const ARC_LOURD = 2;
+
+  it('rend le compte de base tant qu on ne possede qu un exemplaire', () => {
+    // ⚠️ Un exemplaire n'elargit RIEN : c'est le deuxieme qui ajoute le
+    // premier projectile. Sans ce cas, une implementation en
+    // `projectileCount + stacks` passerait les tests d empilement ci-dessous
+    // par simple decalage.
     for (const w of WEAPONS) {
-      if (w.evolutionPassiveId === -1) {
-        continue;
-      }
-      expect(() => passiveOf(w.evolutionPassiveId)).not.toThrow();
+      expect(salvoCount(w, 1)).toBe(w.projectileCount);
     }
   });
 
-  it('cable au moins une arme qui evolue, sinon cette nature de carte ne serait jamais testee', () => {
-    expect(WEAPONS.some((w) => w.evolutionPassiveId !== -1)).toBe(true);
+  it("rend aussi le compte de base a zero exemplaire : l'arme neutre passe par le meme chemin", () => {
+    // L'arme neutre du §6.1 ne figure dans aucun `Loadout`, donc son nombre
+    // d'exemplaires vaut toujours zero. Sans le `Math.max(0, ...)`, elle
+    // tirerait un projectile de MOINS que le catalogue n'en annonce.
+    for (const w of WEAPONS) {
+      expect(salvoCount(w, 0)).toBe(w.projectileCount);
+    }
+  });
+
+  it('ajoute UN projectile par exemplaire au-dela du premier', () => {
+    const eventail = weaponOf(EVENTAIL);
+    const arc = weaponOf(ARC_LOURD);
+    // ⚠️ Deux armes aux comptes de base differents (5 et 1), et on verifie la
+    // valeur ABSOLUE, pas seulement la croissance : un `stacks` qui
+    // remplacerait `projectileCount` au lieu de s'y ajouter ferait croitre la
+    // salve tout autant, en oubliant l'arme.
+    expect(eventail.projectileCount).toBe(5);
+    expect(salvoCount(eventail, 2)).toBe(6);
+    expect(salvoCount(eventail, 3)).toBe(7);
+
+    expect(arc.projectileCount).toBe(1);
+    expect(salvoCount(arc, 2)).toBe(2);
+    expect(salvoCount(arc, 3)).toBe(3);
+  });
+
+  it('croit strictement de un a chaque exemplaire supplementaire, sur tout le catalogue', () => {
+    for (const w of WEAPONS) {
+      for (let stacks = 1; stacks <= 12; stacks++) {
+        expect(salvoCount(w, stacks + 1) - salvoCount(w, stacks)).toBe(1);
+      }
+    }
   });
 });
 

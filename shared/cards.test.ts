@@ -1,22 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
 import { CARD, drawSpread } from './cards';
-import { SPREAD_BONUS, WEAPON_MAX_LEVEL } from './constants';
+import { SPREAD_BONUS } from './constants';
 import { Loadout } from './loadout';
+import { PASSIVES } from './passives';
 import { makeRandom } from './random';
 import { BASE_WEAPON_ID, WEAPONS } from './weapons';
 
-/** Une arme qui evolue, avec le passif qu'elle exige — pose par la tache 1. */
-const EVOLVING = WEAPONS.find((w) => w.evolutionPassiveId >= 0);
-if (!EVOLVING) {
-  throw new Error('fixture : aucune arme evolutive dans le catalogue');
-}
-
 function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
-  // ⚠️ Les identifiants de joueur commencent a 1 : `owner = 0` signifie
-  // « ouvert a tous », donc aucun joueur ne peut porter l'identifiant 0.
+  // Les identifiants de joueur commencent a 1, comme partout dans le salon.
   return new Map(loadouts.map((l, i) => [i + 1, l]));
 }
+
+/** Toutes les cartes que `buildPool` peut produire : armes hors neutre, plus passifs. */
+const TAILLE_DU_POOL = WEAPONS.length - 1 + PASSIVES.length;
 
 describe('drawSpread', () => {
   it('tire joueurs + SPREAD_BONUS cartes', () => {
@@ -26,53 +23,63 @@ describe('drawSpread', () => {
     }
   });
 
-  it("n'offre jamais en arme neuve une arme portee par UN AUTRE joueur", () => {
-    // ⚠️ Deux inventaires, un seul porteur. Avec un seul joueur, une exclusion
-    // purement personnelle passerait ce test — or le §6.2 exige l'exclusivite
-    // a l'echelle de l'EQUIPE : l'arme sort du pool pour tout le monde.
-    const arme = WEAPONS[1];
+  it('offre TOUJOURS une arme deja portee par un allie : il n y a aucune exclusivite d equipe', () => {
+    // ⚠️ **C'est le point que l'auteur a signale en jouant** : *« si quelqu'un
+    // a deja pris lance-flammes, je peux lui voler la carte la prochaine
+    // fois »*. Chacun garde son propre exemplaire — ce qui se dispute, c'est
+    // la carte de CET etalage-ci, jamais l'arme de l'autre.
+    //
+    // ⚠️ Le porteur est le DERNIER de l'equipe, deliberement, et le seul a
+    // porter quoi que ce soit : c'est la fixture qui rendait l'ancienne
+    // exclusivite visible, et elle reste celle qui rendrait visible son
+    // retour partiel (« ne consulter que le premier inventaire »).
+    const arme = WEAPONS[3]; // lance-flammes
     if (!arme) {
       throw new Error('fixture : arme absente');
     }
-    // ⚠️ Le porteur est le DERNIER de l'equipe, deliberement. Avec le porteur
-    // en premier, une implementation qui ne consulte que le premier inventaire
-    // — donc une exclusivite PERSONNELLE et non d'equipe — passerait ce test.
-    // Verifie : la mutation « ne regarder que le premier loadout » survivait.
     const autre = new Loadout();
     const porteur = new Loadout();
     porteur.addWeapon(arme.id);
 
-    for (let seed = 1; seed <= 40; seed++) {
-      const spread = drawSpread(equipe(autre, porteur), makeRandom(seed));
-      const offerte = spread.some((c) => c.nature === CARD.NEW_WEAPON && c.refId === arme.id);
-      expect(offerte).toBe(false);
-    }
-  });
-
-  it('donne a une carte de montee de niveau l owner du porteur, jamais 0', () => {
-    const arme = WEAPONS[1];
-    if (!arme) {
-      throw new Error('fixture : arme absente');
-    }
-    // Le porteur est le joueur 2, pas le 1 : un `owner` code en dur a 1
-    // passerait sinon.
-    const autre = new Loadout();
-    const porteur = new Loadout();
-    porteur.addWeapon(arme.id);
-
-    let vues = 0;
+    // On EXIGE de la revoir, on ne se contente pas de « elle n'est pas
+    // interdite » : avec 60 graines et un pool de treize cartes, une carte
+    // encore eligible ressort forcement. Si elle etait exclue, ce compteur
+    // resterait a zero.
+    let revue = 0;
     for (let seed = 1; seed <= 60; seed++) {
-      for (const c of drawSpread(equipe(autre, porteur), makeRandom(seed))) {
-        if (c.nature === CARD.WEAPON_LEVEL) {
-          vues++;
-          expect(c.owner).toBe(2);
-        }
+      const spread = drawSpread(equipe(autre, porteur), makeRandom(seed));
+      if (spread.some((c) => c.nature === CARD.WEAPON && c.refId === arme.id)) {
+        revue++;
       }
     }
-    expect(vues).toBeGreaterThan(0); // sinon le test ne prouve rien
+    expect(revue).toBeGreaterThan(0);
   });
 
-  it('laisse les cartes de passif ouvertes a tous, meme deja possedees', () => {
+  it('offre aussi une arme que le joueur porte DEJA LUI-MEME : les armes s empilent', () => {
+    // Le pendant personnel du precedent. Rien ne s'exclut d'etre deja possede,
+    // ni pour soi ni pour l'equipe — c'est ce qui fait du conflit le regime
+    // NORMAL du draft plutot qu'un accident.
+    const arme = WEAPONS[3];
+    if (!arme) {
+      throw new Error('fixture : arme absente');
+    }
+    const seul = new Loadout();
+    seul.addWeapon(arme.id);
+
+    let revue = 0;
+    for (let seed = 1; seed <= 60; seed++) {
+      if (
+        drawSpread(equipe(seul), makeRandom(seed)).some(
+          (c) => c.nature === CARD.WEAPON && c.refId === arme.id,
+        )
+      ) {
+        revue++;
+      }
+    }
+    expect(revue).toBeGreaterThan(0);
+  });
+
+  it('laisse les cartes de passif ouvertes a tous, meme deja empilees', () => {
     const a = new Loadout();
     const b = new Loadout();
     a.addPassive(1);
@@ -85,45 +92,23 @@ describe('drawSpread', () => {
     let dejaPossedeRevu = false;
     for (let seed = 1; seed <= 60; seed++) {
       for (const c of drawSpread(equipe(a, b), makeRandom(seed))) {
-        if (c.nature === CARD.PASSIVE) {
-          expect(c.owner).toBe(0);
-          if (c.refId === 1) {
-            dejaPossedeRevu = true;
-          }
+        if (c.nature === CARD.PASSIVE && c.refId === 1) {
+          dejaPossedeRevu = true;
         }
       }
     }
     expect(dejaPossedeRevu).toBe(true);
   });
 
-  it('propose l evolution a qui a l arme au maximum ET le passif requis', () => {
-    const pret = new Loadout();
-    pret.addWeapon(EVOLVING.id);
-    for (let n = 1; n < WEAPON_MAX_LEVEL; n++) {
-      pret.levelUpWeapon(EVOLVING.id);
-    }
-    pret.addPassive(EVOLVING.evolutionPassiveId);
-
-    let trouvee = false;
-    for (let seed = 1; seed <= 60 && !trouvee; seed++) {
-      trouvee = drawSpread(equipe(pret), makeRandom(seed)).some(
-        (c) => c.nature === CARD.EVOLUTION && c.refId === EVOLVING.id && c.owner === 1,
-      );
-    }
-    expect(trouvee).toBe(true);
-  });
-
-  it('ne propose PAS l evolution sans le passif requis', () => {
-    // Le §7.5 conditionne l'evolution a la possession du passif associe.
-    const sansPassif = new Loadout();
-    sansPassif.addWeapon(EVOLVING.id);
-    for (let n = 1; n < WEAPON_MAX_LEVEL; n++) {
-      sansPassif.levelUpWeapon(EVOLVING.id);
-    }
-
-    for (let seed = 1; seed <= 60; seed++) {
-      const spread = drawSpread(equipe(sansPassif), makeRandom(seed));
-      expect(spread.some((c) => c.nature === CARD.EVOLUTION)).toBe(false);
+  it('ne connait que deux natures de carte : arme et passif', () => {
+    // Les montees de niveau et les evolutions ont existe un temps puis ont ete
+    // retirees (§9). Une carte d'une troisieme nature traverserait
+    // `applyCardToLoadout` sans rien ranger — le draft deviendrait une
+    // ceremonie sans effet pour cette carte, en silence.
+    for (let seed = 1; seed <= 200; seed++) {
+      for (const c of drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed))) {
+        expect([CARD.WEAPON, CARD.PASSIVE]).toContain(c.nature);
+      }
     }
   });
 
@@ -136,30 +121,55 @@ describe('drawSpread', () => {
     );
   });
 
+  it("ne depend PAS des inventaires : le pool est le meme pour n'importe quelle equipe", () => {
+    // ⚠️ `buildPool` ne prend plus d'argument, et c'est structurel : ce qui
+    // varie d'un joueur a l'autre, c'est son ELIGIBILITE devant une carte
+    // (`Loadout.canTake`), jamais le contenu de l'etalage. A graine egale et a
+    // nombre de joueurs egal, deux equipes aux inventaires opposes voient
+    // exactement le meme etalage.
+    const garnis = [new Loadout(), new Loadout()];
+    garnis[0]?.addWeapon(2);
+    garnis[0]?.addWeapon(2);
+    garnis[0]?.addPassive(3);
+    garnis[1]?.addWeapon(7);
+    garnis[1]?.addPassive(0);
+    for (let seed = 1; seed <= 40; seed++) {
+      expect(drawSpread(equipe(...garnis), makeRandom(seed))).toEqual(
+        drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed)),
+      );
+    }
+  });
+
   it('ne rend jamais deux fois la meme carte dans un etalage', () => {
     // Deux cartes identiques rendraient un conflit impossible a lire : deux
     // joueurs poseraient sur « la meme » carte sans etre en conflit.
     for (let seed = 1; seed <= 40; seed++) {
       const spread = drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed));
-      const cles = spread.map((c) => `${c.nature}:${c.refId}:${c.owner}`);
+      const cles = spread.map((c) => `${c.nature}:${c.refId}`);
       expect(new Set(cles).size).toBe(cles.length);
     }
   });
+
   it("n'offre JAMAIS l'arme neutre, qui vit hors des slots", () => {
     // ⚠️ Defaut reel, trouve en ecrivant la tache 7 : `buildPool` parcourait
-    // `WEAPONS` en entier, arme neutre comprise. La prendre aurait occupe un
-    // slot pour une arme deja possedee — et `Room#fireWeapons`, qui tire
-    // toujours l'arme de base EN PLUS des slots, l'aurait fait tirer deux fois
-    // par tick. Aucun test ne le voyait.
+    // `WEAPONS` en entier, arme neutre comprise. La prendre aurait empile
+    // l'arme que `Room#fireWeapons` tire DEJA hors des slots, et elle aurait
+    // gagne un projectile a chaque carte.
     //
     // On balaie assez de graines pour que chaque carte du pool sorte au moins
     // une fois : un seul tirage ne prouverait rien.
+    const vues = new Set<string>();
     for (let seed = 1; seed <= 200; seed++) {
       const spread = drawSpread(equipe(new Loadout()), makeRandom(seed));
       for (const carte of spread) {
-        const estArme = carte.nature === CARD.NEW_WEAPON || carte.nature === CARD.WEAPON_LEVEL;
-        expect(estArme && carte.refId === BASE_WEAPON_ID).toBe(false);
+        vues.add(`${carte.nature}:${carte.refId}`);
+        expect(carte.nature === CARD.WEAPON && carte.refId === BASE_WEAPON_ID).toBe(false);
       }
     }
+    // ⚠️ **Le garde du garde.** Sans lui, un `buildPool` qui ne rendrait que
+    // trois cartes passerait la boucle ci-dessus sans jamais faire sortir
+    // l'arme neutre — ni rien d'autre. On COMPTE ce que le balayage a vu :
+    // tout le pool, moins l'arme neutre, exactement.
+    expect(vues.size).toBe(TAILLE_DU_POOL);
   });
 });

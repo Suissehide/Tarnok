@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { PASSIVE_SLOTS, WEAPON_MAX_LEVEL, WEAPON_SLOTS } from './constants';
+import { CARD } from './cards';
+import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 
@@ -16,45 +17,120 @@ const ARME_A = 1;
 const ARME_B = 2;
 const PASSIF_A = 1;
 
-describe('Loadout — les armes', () => {
-  it('refuse la meme arme deux fois : l exclusivite du §6.2 est binaire', () => {
+describe('Loadout — les armes EMPILENT, comme les passifs', () => {
+  it('empile la meme arme sans jamais lever : c est le modele du draft', () => {
+    // ⚠️ **Le comportement exactement INVERSE de ce que ce fichier gardait.**
+    // Une arme ne monte pas de niveau et ne s'exclut pas d'elle-meme : chaque
+    // carte prise ajoute un exemplaire, et c'est l'accumulation qui fait la
+    // puissance. Un `addWeapon` qui refuserait un doublon rendrait l'etalage
+    // inutile des la deuxieme carte.
     const l = new Loadout();
     l.addWeapon(ARME_A);
-    expect(() => l.addWeapon(ARME_A)).toThrow();
-    expect(l.weaponSlotsUsed).toBe(1);
+    expect(l.stacksOfWeapon(ARME_A)).toBe(1);
+    for (let i = 0; i < 11; i++) {
+      l.addWeapon(ARME_A);
+    }
+    expect(l.stacksOfWeapon(ARME_A)).toBe(12);
   });
 
-  it('refuse une arme au-dela de WEAPON_SLOTS', () => {
+  it('une arme DEJA possedee ne consomme pas un second slot', () => {
+    // Le pendant strict du test des passifs plus bas : compter un slot par
+    // CARTE remplirait l'inventaire en cinq cartes, la ou le design attend
+    // qu'on empile la meme arme des dizaines de fois sur une run.
+    const l = new Loadout();
+    for (let i = 0; i < 12; i++) {
+      l.addWeapon(ARME_A);
+    }
+    expect(l.weaponSlotsUsed).toBe(1);
+    expect([...l.weaponIds]).toEqual([ARME_A]);
+  });
+
+  it('rend zero pour une arme jamais prise', () => {
+    expect(new Loadout().stacksOfWeapon(ARME_A)).toBe(0);
+  });
+
+  it('refuse une NOUVELLE arme au-dela de WEAPON_SLOTS, jamais une deja possedee', () => {
     const l = new Loadout();
     for (let i = 0; i < WEAPON_SLOTS; i++) {
       l.addWeapon(i + 1);
     }
     expect(l.weaponSlotsUsed).toBe(WEAPON_SLOTS);
     expect(() => l.addWeapon(WEAPON_SLOTS + 1)).toThrow();
+    // ... mais empiler une DEJA possedee reste permis, slots pleins ou non.
+    expect(() => l.addWeapon(ARME_A)).not.toThrow();
+    expect(l.stacksOfWeapon(ARME_A)).toBe(2);
+    expect(l.weaponSlotsUsed).toBe(WEAPON_SLOTS);
+  });
+
+  it('leve sur un identifiant d arme inconnu plutot que de l empiler en silence', () => {
+    const l = new Loadout();
+    expect(() => l.addWeapon(999)).toThrow(/inconnu/i);
+    expect(l.weaponSlotsUsed).toBe(0);
   });
 
   it('conserve l ordre d acquisition', () => {
     const l = new Loadout();
     l.addWeapon(ARME_B);
     l.addWeapon(ARME_A);
+    // Le second exemplaire de la premiere ne la remet pas en fin de liste.
+    l.addWeapon(ARME_B);
     expect([...l.weaponIds]).toEqual([ARME_B, ARME_A]);
   });
+});
 
-  it('monte une arme en niveau, et refuse au-dela du maximum', () => {
+describe('Loadout.canTake — ce qui remplace `owner`', () => {
+  it('accepte tout d un inventaire vide', () => {
     const l = new Loadout();
-    l.addWeapon(ARME_A);
-    expect(l.levelOf(ARME_A)).toBe(1);
-    for (let n = 1; n < WEAPON_MAX_LEVEL; n++) {
-      l.levelUpWeapon(ARME_A);
-    }
-    expect(l.levelOf(ARME_A)).toBe(WEAPON_MAX_LEVEL);
-    expect(() => l.levelUpWeapon(ARME_A)).toThrow();
+    expect(l.canTake(CARD.WEAPON, ARME_A)).toBe(true);
+    expect(l.canTake(CARD.PASSIVE, PASSIF_A)).toBe(true);
   });
 
-  it('refuse de monter une arme non possedee', () => {
+  it('slots d armes pleins : refuse une arme NOUVELLE, jamais une deja possedee', () => {
     const l = new Loadout();
-    expect(l.levelOf(ARME_A)).toBe(0);
-    expect(() => l.levelUpWeapon(ARME_A)).toThrow();
+    for (let i = 0; i < WEAPON_SLOTS; i++) {
+      l.addWeapon(i + 1);
+    }
+    // ⚠️ Les deux moities comptent. « Refuse tout quand c'est plein » serait
+    // aussi faux que « accepte tout » : on ne peut pas ouvrir un slot qu'on
+    // n'a plus, mais empiler ce qu'on possede deja reste TOUJOURS possible.
+    expect(l.canTake(CARD.WEAPON, WEAPON_SLOTS + 1)).toBe(false);
+    expect(l.canTake(CARD.WEAPON, ARME_A)).toBe(true);
+  });
+
+  it('slots de passifs pleins : refuse un passif NOUVEAU, jamais un deja possede', () => {
+    const l = new Loadout();
+    for (let i = 0; i < PASSIVE_SLOTS; i++) {
+      l.addPassive(i);
+    }
+    expect(l.canTake(CARD.PASSIVE, PASSIVE_SLOTS)).toBe(false);
+    expect(l.canTake(CARD.PASSIVE, PASSIF_A)).toBe(true);
+  });
+
+  it('lit la nature de la carte, et lit la BONNE : `CARD_WEAPON` ne derive pas de `CARD.WEAPON`', () => {
+    // ⚠️ **La garde de la constante recopiee.** `loadout.ts` duplique
+    // `CARD.WEAPON` sous le nom `CARD_WEAPON` pour ne pas importer `cards.ts`
+    // en retour (cycle). Elle est privee, donc on l'eprouve par son seul effet
+    // observable : `canTake` choisit la branche ARMES ou la branche PASSIFS
+    // selon elle.
+    //
+    // Les deux inventaires ci-dessous sont deliberement ASYMETRIQUES — l'un
+    // n'a plus de slot d'arme et tous ses slots de passifs, l'autre l'inverse.
+    // Un `CARD_WEAPON` qui derive fait donc lire la branche du type de slot
+    // qui reste LIBRE, et les deux reponses s'inversent. Avec deux inventaires
+    // pleins des deux cotes, la mutation survivrait sans rien changer.
+    const armesPleines = new Loadout();
+    for (let i = 0; i < WEAPON_SLOTS; i++) {
+      armesPleines.addWeapon(i + 1);
+    }
+    expect(armesPleines.passiveSlotsUsed).toBe(0);
+    expect(armesPleines.canTake(CARD.WEAPON, WEAPON_SLOTS + 1)).toBe(false);
+
+    const passifsPleins = new Loadout();
+    for (let i = 0; i < PASSIVE_SLOTS; i++) {
+      passifsPleins.addPassive(i);
+    }
+    expect(passifsPleins.weaponSlotsUsed).toBe(0);
+    expect(passifsPleins.canTake(CARD.PASSIVE, PASSIVE_SLOTS)).toBe(false);
   });
 });
 

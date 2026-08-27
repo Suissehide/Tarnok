@@ -1,6 +1,3 @@
-import { WEAPON_MAX_LEVEL } from './constants';
-import { passiveOf } from './passives';
-
 /**
  * Les armes, pilotees par la donnee (§5.1 de la spec).
  *
@@ -9,11 +6,10 @@ import { passiveOf } from './passives';
  * charge. Un systeme unique lit cette table ; ajouter une arme au pool des
  * quarante du §6.2 sera du contenu, pas de l'architecture.
  *
- * Depuis l'etape 4 (§3.3, §7.5) : une arme MONTE de niveau jusqu'a
- * `maxLevel`, puis la carte proposee devient l'evolution — a condition que
- * `evolutionPassiveId` soit deja possede. C'est la distinction structurante
- * avec un passif, qui lui s'empile sans jamais monter de niveau (voir
- * `shared/passives.ts`).
+ * ⚠️ **Une arme ne monte PAS de niveau.** Elle s'EMPILE, exactement comme un
+ * passif : chaque carte prise ajoute un exemplaire, et c'est l'accumulation
+ * qui fait la puissance. Les niveaux d'arme et les evolutions ont existe un
+ * temps dans cette etape puis ont ete retires — voir le §9 de la spec.
  */
 export interface Weapon {
   id: number;
@@ -37,23 +33,6 @@ export interface Weapon {
    * strictement positifs quelle que soit l'arme (voir le test).
    */
   spreadRadians: number;
-  /**
-   * Niveau maximum de cette arme (§7.5). Vaut `WEAPON_MAX_LEVEL` pour toute
-   * arme draftable ; l'arme neutre de base (hors slots, §6.1) ne monte jamais
-   * de niveau et vaut 1 par construction — jamais consultee par le draft.
-   */
-  maxLevel: number;
-  /**
-   * Passif requis pour proposer l'evolution une fois `maxLevel` atteint
-   * (§7.5). -1 : cette arme n'evolue pas.
-   *
-   * ⚠️ Quand ce champ n'est pas -1, il DOIT designer un passif existant de
-   * `PASSIVES` : une reference morte ne se verrait nulle part avant qu'un
-   * joueur drafte cette arme au niveau maximum, plusieurs taches plus tard.
-   * C'est pourquoi la construction de `WEAPONS` ci-dessous verifie chaque
-   * reference au chargement du module plutot que d'attendre le draft.
-   */
-  evolutionPassiveId: number;
 }
 
 /**
@@ -76,8 +55,7 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     // rythme de mise a mort suive celui de la premiere vague, desormais
     // ramenee par `WaveDirector` (voir `waveCountBounds`).
     //
-    // Hors slots (§6.1) : ne monte jamais de niveau via le draft, `maxLevel`
-    // vaut 1 par construction et n'est jamais lu par `Loadout`.
+    // Hors slots (§6.1) : jamais proposee par le draft, donc jamais empilee.
     name: 'dague',
     cooldownTicks: 7,
     damage: 5,
@@ -85,8 +63,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 28,
     projectileCount: 1,
     spreadRadians: 0.05,
-    maxLevel: 1,
-    evolutionPassiveId: -1,
   },
   {
     // Plusieurs projectiles en eventail : prouve que la dispersion tient,
@@ -98,8 +74,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 12,
     projectileCount: 5,
     spreadRadians: Math.PI / 3,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: -1,
   },
   {
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
@@ -111,8 +85,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 40,
     projectileCount: 1,
     spreadRadians: 0.05,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: -1,
   },
   {
     // Cadence tres rapide, courte portee : un cone continu au contact.
@@ -123,8 +95,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 10,
     projectileCount: 3,
     spreadRadians: 0.6,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: -1,
   },
   {
     // Cadence tres lente, degats massifs : l'extreme oppose du lance-flammes.
@@ -135,8 +105,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 45,
     projectileCount: 1,
     spreadRadians: 0.05,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: -1,
   },
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
@@ -147,8 +115,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 35,
     projectileCount: 1,
     spreadRadians: 0.05,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: -1,
   },
   {
     // Deux projectiles paralleles, dispersion etroite.
@@ -159,8 +125,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 25,
     projectileCount: 2,
     spreadRadians: 0.15,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: -1,
   },
   {
     // Salve tres large a courte portee : l'autre extreme de la dispersion,
@@ -172,8 +136,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 8,
     projectileCount: 8,
     spreadRadians: Math.PI / 2,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: -1,
   },
   {
     // Seule arme du catalogue a evoluer (§7.5) : au niveau maximum, un joueur
@@ -186,8 +148,6 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 30,
     projectileCount: 1,
     spreadRadians: 0.05,
-    maxLevel: WEAPON_MAX_LEVEL,
-    evolutionPassiveId: 2,
   },
 ];
 
@@ -197,23 +157,11 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({ ...w, id
  * L'arme neutre de base du §6.1 : celle avec laquelle toute run commence.
  *
  * ⚠️ **Elle vit HORS des slots.** Elle ne figure dans aucun `Loadout`, n'est
- * jamais proposee par le draft (voir `buildPool`), ne monte jamais de niveau,
- * et tire quand meme a chaque tick. Ce n'est pas un detail de reglage : si le
- * draft la proposait, la prendre occuperait un slot pour une arme deja
- * possedee et la ferait tirer DEUX fois par tick.
+ * jamais proposee par le draft (voir `buildPool`), et tire quand meme a chaque
+ * tick. Ce n'est pas un detail de reglage : si le draft la proposait, la
+ * prendre l'empilerait sur elle-meme et la ferait tirer deux fois par tick.
  */
 export const BASE_WEAPON_ID = 0;
-
-// Garde-fou : une reference d'evolution vers un passif inexistant resterait
-// invisible jusqu'a ce qu'un joueur drafte cette arme au niveau maximum
-// (tache 3, plusieurs taches plus tard). `passiveOf` leve immediatement si
-// l'id est incorrect : une table mal formee casse au CHARGEMENT du module,
-// jamais silencieusement en jeu.
-for (const w of WEAPONS) {
-  if (w.evolutionPassiveId !== -1) {
-    passiveOf(w.evolutionPassiveId);
-  }
-}
 
 export function weaponOf(id: number): Weapon {
   const found = WEAPONS[id];
@@ -249,6 +197,23 @@ export const MAX_FIRE_RATE_BONUS = 0.75;
  * peut pas importer `back/` (regle Biome, voir `room.ts`), donc la fonction
  * descend ici plutot que d'etre recopiee.
  */
+/**
+ * Nombre de projectiles d'une salve, exemplaires empiles compris.
+ *
+ * ⚠️ **C'est ici que « l'accumulation des cartes fait la puissance » devient un
+ * nombre.** Chaque exemplaire au-dela du premier ajoute UN projectile a la
+ * salve, reparti sur le meme `spreadRadians`. C'est le levier le plus lisible
+ * a l'ecran dans un bullet heaven — on VOIT sa salve s'elargir — la ou une
+ * reduction de recharge se devine et ou les degats ne modulent aujourd'hui
+ * aucune issue (la pietaille n'a pas de reserve de points de vie).
+ *
+ * `stacks` a zero rend le compte de base : l'arme neutre, qui n'est jamais
+ * empilee, passe par le meme chemin sans cas particulier.
+ */
+export function salvoCount(weapon: Weapon, stacks: number): number {
+  return weapon.projectileCount + Math.max(0, stacks - 1);
+}
+
 export function cooldownWithBonus(base: number, bonus: number): number {
   const reduction = Math.min(Math.max(bonus, 0), MAX_FIRE_RATE_BONUS);
   return Math.max(1, Math.round(base * (1 - reduction)));

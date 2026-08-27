@@ -217,7 +217,7 @@ class Session {
       );
     }
     for (const res of this.room.drainDraftResults()) {
-      this.#send(encodeDraftResult(res.phase, res.deadlineTick, res.outcomes));
+      this.#send(encodeDraftResult(res.deadlineTick, res.outcomes));
     }
 
     this.#outbox.buffers.length = 0;
