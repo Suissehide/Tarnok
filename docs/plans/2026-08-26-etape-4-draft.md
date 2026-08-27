@@ -1,5 +1,14 @@
 # Étape 4 — le draft : plan d'implémentation
 
+> ⚠️ **Ce plan décrit un modèle de cartes qui n'existe plus.** Il a été exécuté intégralement, puis
+> l'auteur a joué et a corrigé le modèle : plus de niveaux d'arme, plus d'évolutions, plus
+> d'`owner`, plus d'exclusivité d'équipe, plus de repioche. Les armes s'empilent comme les passifs,
+> toute carte est ouverte à tous, et la résolution est un seul moment.
+>
+> **La spec, elle, est à jour** — voir son §9.1, qui liste ce qui est tombé et ce qui l'a remplacé.
+> Ce plan est conservé tel quel comme trace de l'exécution : les tâches 1 à 5 et 10 y décrivent un
+> modèle que le code ne suit plus. Ne pas s'en servir comme référence.
+
 > **Pour un agent exécutant :** SOUS-COMPÉTENCE REQUISE — utiliser
 > `superpowers:subagent-driven-development` (recommandé) ou `superpowers:executing-plans`.
 > Les étapes utilisent des cases à cocher (`- [ ]`).
