@@ -222,3 +222,34 @@ export function weaponOf(id: number): Weapon {
   }
   return found;
 }
+
+/**
+ * Reduction maximale de cadence, toutes cartes « cadence » confondues.
+ *
+ * ⚠️ Le bonus est une FRACTION retiree (0,08 par carte) : treize cartes
+ * donneraient 1,04, donc une recharge negative — l'arme tirerait a chaque
+ * tick, et une quatorzieme ne changerait plus rien puisque le plancher d'un
+ * tick est deja atteint. Plafonner ici garde la courbe lisible et laisse la
+ * derniere carte utile.
+ */
+export const MAX_FIRE_RATE_BONUS = 0.75;
+
+/**
+ * Recharge d'une arme apres application des passifs de cadence.
+ *
+ * Le plancher d'UN tick n'est pas cosmetique : a zero, `tick - lastFireTick`
+ * vaut toujours au moins la recharge et l'arme tirerait plusieurs fois par
+ * tick si la boucle changeait.
+ *
+ * ⚠️ **Vit dans `shared/` et pas dans `back/src/room.ts`, ou elle est nee a la
+ * tache 8.** Le client la lit aussi, depuis la tache 9 : `GameClient#fireWeapons`
+ * est le miroir cosmetique de `Room#fireWeapons`, et deux copies de cette
+ * formule divergeraient des la premiere retouche — les projectiles affiches ne
+ * partiraient plus a la cadence de ceux que le serveur arbitre. Le client ne
+ * peut pas importer `back/` (regle Biome, voir `room.ts`), donc la fonction
+ * descend ici plutot que d'etre recopiee.
+ */
+export function cooldownWithBonus(base: number, bonus: number): number {
+  const reduction = Math.min(Math.max(bonus, 0), MAX_FIRE_RATE_BONUS);
+  return Math.max(1, Math.round(base * (1 - reduction)));
+}

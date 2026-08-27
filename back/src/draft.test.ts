@@ -1,8 +1,9 @@
 import { CARD, type Card } from '@shared/cards';
 import { DRAFT_REPICK_TICKS, DRAFT_WINDOW_TICKS } from '@shared/constants';
+import { OUTCOME } from '@shared/protocol';
 import { describe, expect, it } from 'vitest';
 
-import { Draft, OUTCOME } from './draft';
+import { Draft } from './draft';
 
 /**
  * Etalage d'epreuve.

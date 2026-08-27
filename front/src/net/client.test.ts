@@ -1,18 +1,24 @@
+import { CARD } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   ORB_LIFETIME_TICKS,
+  PLAYER_SPEED,
   PROJECTILE_HIT_RADIUS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde } from '@shared/horde';
+import { passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
+  decode,
   encodeDeaths,
+  encodeDraftIntents,
+  encodeDraftOpen,
   encodeDraftResult,
   encodeLevelUp,
   encodePickups,
@@ -20,9 +26,11 @@ import {
   encodeSnapshot,
   encodeWaveOrder,
   encodeWelcome,
+  MSG,
+  OUTCOME,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, cooldownWithBonus, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -50,8 +58,11 @@ class FakeSocket {
     this.#listeners.set(type, list);
   }
 
-  send(): void {
-    // Rien a envoyer : ce test n'exerce pas le chemin sortant.
+  /** Trames poussees par le client — le chemin SORTANT (`DRAFT_TOKEN`, tache 9). */
+  readonly sent: ArrayBuffer[] = [];
+
+  send(data: ArrayBuffer): void {
+    this.sent.push(data);
   }
 
   close(): void {
@@ -1428,5 +1439,341 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       client.update(tick * MS_PER_TICK, STEP);
     }
     expect(spy).toHaveBeenCalled();
+  });
+});
+
+/**
+ * Le draft, cote client (tache 9 de l'etape 4).
+ *
+ * Deux dettes inscrites au registre par les taches 7 et 8 se soldent ici, et
+ * elles portent la moitie de ce bloc :
+ *
+ * - `#fireWeapons` tirait `weaponOf(0)` et rien d'autre, avec un compteur de
+ *   recharge unique par joueur — la copie de ce que `Room` faisait AVANT la
+ *   tache 7. Aucun projectile d'arme draftee ne s'affichait ;
+ * - la prediction locale avancait a `PLAYER_SPEED` en dur, alors que le
+ *   serveur y ajoute `bonus('speed')` — la premiere carte « fougue » faisait
+ *   decrocher la prediction a chaque tick.
+ *
+ * Les deux se soldent par la meme chose : un `Loadout` par joueur, alimente
+ * par `DRAFT_RESULT`.
+ */
+describe('GameClient — le draft recu et ses effets (tache 9)', () => {
+  const MS_PER_TICK = 1000 / TICK_HZ;
+  /** Une visee non nulle : sans elle, aucune des deux cotes ne tire (tache 13). */
+  const AIM_RIGHT: InputAxes = { x: 1, y: 0 };
+  /** Identifiants du catalogue, nommes ici pour que les tests se relisent. */
+  const GRENADE = 4;
+  const ARC_LOURD = 2;
+  const CADENCE = 1;
+  const PUISSANCE = 2;
+  const FOUGUE = 3;
+
+  function setup(
+    localId = 1,
+    readInput: () => InputAxes = () => ({ x: 0, y: 0 }),
+    readAim: () => InputAxes = () => AIM_RIGHT,
+  ): { client: GameClient; socket: FakeSocket } {
+    const client = new GameClient('ws://test', readInput, vi.fn(), undefined, readAim);
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(localId, 0, 0xd8a5_0001) });
+    return { client, socket };
+  }
+
+  /**
+   * Un tour de draft complet a une seule carte : l'etalage s'ouvre, le serveur
+   * tranche, le gel se referme au tick 0.
+   *
+   * ⚠️ `deadlineTick = 0` sur le resultat n'est pas un detail : c'est lui qui
+   * dit au client que le gel est deja fini. Une echeance dans le futur
+   * empecherait `#fireWeapons` de tirer et remettrait `#movementScale` a zero —
+   * les tests de tir et de vitesse ci-dessous ne mesureraient plus rien.
+   */
+  function grant(
+    socket: FakeSocket,
+    card: { nature: number; refId: number; owner: number },
+    outcomes: readonly { playerId: number; cardIndex: number; outcome: number }[],
+  ): void {
+    socket.emit('message', { data: encodeDraftOpen(600, [card]) });
+    socket.emit('message', { data: encodeDraftResult(0, 0, outcomes) });
+  }
+
+  /** Fait avancer le client de `ticks` images d'un pas de simulation chacune. */
+  function run(
+    client: GameClient,
+    socket: FakeSocket,
+    ticks: number,
+    players: readonly {
+      id: number;
+      x: number;
+      y: number;
+      hp: number;
+      aimX: number;
+      aimY: number;
+    }[],
+    withSnapshots = true,
+  ): void {
+    for (let tick = 1; tick <= ticks; tick++) {
+      if (withSnapshots) {
+        socket.emit('message', { data: encodeSnapshot(tick, 0, players) });
+      }
+      client.update(tick * MS_PER_TICK, STEP);
+    }
+  }
+
+  it('envoie un DRAFT_TOKEN portant l indice de la carte visee (etape 2 du plan)', () => {
+    const { client, socket } = setup();
+
+    client.placeToken(3);
+
+    const jetons = socket.sent.map((f) => decode(f)).filter((m) => m.type === MSG.DRAFT_TOKEN);
+    expect(jetons).toHaveLength(1);
+    expect(jetons[0]).toMatchObject({ cardIndex: 3 });
+  });
+
+  it('un jeton refuse par le serveur ne s affiche pas comme pose', () => {
+    // ⚠️ Le §7.2 est categorique : le client ne DECIDE rien. Ce que l'ecran
+    // montre vient de `DRAFT_INTENTS`, jamais du geste local — un jeton
+    // affiche des le clic mentirait a chaque refus (carte reservee a un
+    // autre), et le joueur croirait viser une carte que le serveur ne lui
+    // accorde pas.
+    const { client, socket } = setup(1);
+    const etalage = [
+      { nature: CARD.WEAPON_LEVEL, refId: GRENADE, owner: 2 }, // reservee au joueur 2
+      { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 },
+    ];
+    socket.emit('message', { data: encodeDraftOpen(600, etalage) });
+
+    // Un premier jeton, accepte : le serveur le rediffuse.
+    client.placeToken(1);
+    socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 1 }]) });
+    expect(client.draftIntents.get(1)).toBe(1);
+
+    // Un second, sur une carte dont `owner` vaut 2 : le serveur le REFUSE et
+    // rediffuse les intentions inchangees.
+    client.placeToken(0);
+
+    // Avant meme la rediffusion, rien n'a bouge a l'ecran : c'est ici qu'un
+    // affichage optimiste se verrait.
+    expect(client.draftIntents.get(1)).toBe(1);
+
+    socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 1 }]) });
+    expect(client.draftIntents.get(1)).toBe(1);
+  });
+
+  it('les issues d un autre joueur ne modifient pas mon inventaire', () => {
+    const { client, socket } = setup(1);
+
+    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+      { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+
+    expect([...client.loadoutOf(2).weaponIds]).toEqual([GRENADE]);
+    expect([...client.loadoutOf(1).weaponIds]).toEqual([]);
+  });
+
+  it('une carte perdue au conflit ne donne rien, la meme carte gagnee la donne', () => {
+    // ⚠️ Les trois issues ne se valent pas : `LOST` (1) est le joueur qui
+    // visait une carte qu'un AUTRE a eue. Les traiter comme les deux autres
+    // donnerait la carte contestee a tous ses pretendants — l'exclusivite du
+    // §6.2 s'effondre, et le conflit n'a plus d'enjeu.
+    const { client, socket } = setup(1);
+
+    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.LOST },
+      { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+
+    expect([...client.loadoutOf(1).weaponIds]).toEqual([]);
+    expect([...client.loadoutOf(2).weaponIds]).toEqual([GRENADE]);
+  });
+
+  it('une attribution d office donne la carte comme une victoire', () => {
+    // Le joueur absent du §4.4 : il n'a pose aucun jeton, le serveur a tranche
+    // pour lui. `AUTO` (2) attribue tout autant que `WON` (0) — un client qui
+    // ne retiendrait que `WON` laisserait invisible tout l'arsenal d'un joueur
+    // en arriere-plan, cas explicitement decrit comme frequent.
+    const { client, socket } = setup(1);
+
+    grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.AUTO },
+    ]);
+
+    expect(client.loadoutOf(1).stacksOf(FOUGUE)).toBe(1);
+  });
+
+  it('une issue que le miroir ne peut pas ranger n interrompt pas la reception', () => {
+    // ⚠️ Le miroir d'un joueur DISTANT peut etre incomplet : un client qui
+    // rejoint un salon en cours n'a jamais vu les `DRAFT_RESULT` d'avant sa
+    // connexion. Une montee de niveau peut donc porter sur une arme qu'il ne
+    // lui connait pas — `Loadout.levelUpWeapon` leve — et un indice de carte
+    // peut ne designer aucune carte s'il a manque le `DRAFT_OPEN`. Sans
+    // rattrapage, l'exception remonte hors du gestionnaire de message : le
+    // gel n'est plus date, les issues ne sont plus affichees, et tout ce que
+    // ce message portait d'autre est perdu.
+    const { client, socket } = setup(1);
+
+    // Aucun `DRAFT_OPEN` recu : l'indice ne designe rien.
+    socket.emit('message', {
+      data: encodeDraftResult(1, 700, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
+    });
+    expect(client.draftOutcomes).toHaveLength(1);
+
+    // Etalage connu, mais une montee de niveau sur une arme que le miroir ne
+    // connait pas a ce joueur.
+    socket.emit('message', {
+      data: encodeDraftOpen(600, [{ nature: CARD.WEAPON_LEVEL, refId: GRENADE, owner: 2 }]),
+    });
+    socket.emit('message', {
+      data: encodeDraftResult(0, 42, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
+    });
+
+    // Le message a ete traite jusqu'au bout : l'etalage vide et le gel date.
+    expect(client.draftCards).toHaveLength(0);
+    expect(client.draftOutcomes).toHaveLength(1);
+    expect(client.loadoutOf(2).levelOf(GRENADE)).toBe(0);
+  });
+
+  it('l arme draftee tire — pour son porteur comme pour son allie', () => {
+    // ⚠️ **La dette de la tache 7.** `#fireWeapons` tirait `weaponOf(0)` et
+    // rien d'autre : aucune arme draftee n'apparaissait a l'ecran, ni la
+    // sienne ni celle des autres. Deux armes DISTINCTES ici, une par joueur,
+    // parce que l'espion ne voit que l'arme — pas qui tire.
+    const { client, socket } = setup(1);
+    socket.emit('message', { data: encodeDraftOpen(600, []) });
+    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    grant(socket, { nature: CARD.NEW_WEAPON, refId: ARC_LOURD, owner: 0 }, [
+      { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 5, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0 },
+      { id: 2, x: 2200, y: 2000, hp: 100, aimX: 127, aimY: 0 },
+    ]);
+
+    const tirees = new Set(spy.mock.calls.map((c) => c[0].id));
+    expect(tirees.has(BASE_WEAPON_ID)).toBe(true);
+    expect(tirees.has(GRENADE)).toBe(true);
+    expect(tirees.has(ARC_LOURD)).toBe(true);
+  });
+
+  it('chaque arme a SA recharge : la grenade ne bride pas la dague, et tire quand meme', () => {
+    // ⚠️ **Le vrai enjeu de la dette.** Avec un compteur unique par joueur,
+    // l'une des deux armes disparait selon l'ordre du parcours : la lente si
+    // la rapide passe d'abord, la rapide sinon. Compter les DEUX est ce qui
+    // ferme les deux cas d'un coup.
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    const TICKS = 70;
+    run(client, socket, TICKS, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0 }]);
+
+    const dague = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).length;
+    const grenade = spy.mock.calls.filter((c) => c[0].id === GRENADE).length;
+
+    // La dague (7 ticks) tire a sa propre cadence, pas a celle de la grenade
+    // (75 ticks) : sur 70 ticks, dix salves — une seule si elle etait bridee.
+    expect(dague).toBe(Math.floor((TICKS - 1) / weaponOf(BASE_WEAPON_ID).cooldownTicks) + 1);
+    // Et la grenade tire au moins une fois : c'est l'autre moitie du piege.
+    expect(grenade).toBeGreaterThanOrEqual(1);
+  });
+
+  it('les passifs de cadence empiles accelerent le tir AFFICHE', () => {
+    // Le serveur applique `cooldownWithBonus` a chaque tir (tache 8) ; le
+    // client doit lire LA MEME fonction, pas la cadence brute du catalogue.
+    // Trois cartes : `round(7 * 0.76) = 5`, un pas visible malgre l'arrondi
+    // qui avale les deux premieres (R9 du registre).
+    const CARTES = 3;
+    const { client, socket } = setup(1);
+    for (let i = 0; i < CARTES; i++) {
+      grant(socket, { nature: CARD.PASSIVE, refId: CADENCE, owner: 0 }, [
+        { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+      ]);
+    }
+    expect(client.loadoutOf(1).stacksOf(CADENCE)).toBe(CARTES);
+
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    const TICKS = 70;
+    run(client, socket, TICKS, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0 }]);
+
+    const base = weaponOf(BASE_WEAPON_ID);
+    const attendue = cooldownWithBonus(base.cooldownTicks, passiveOf(CADENCE).magnitude * CARTES);
+    expect(attendue).toBeLessThan(base.cooldownTicks);
+    const salves = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).length;
+    expect(salves).toBe(Math.floor((TICKS - 1) / attendue) + 1);
+  });
+
+  it('les passifs de degats empiles voyagent avec le projectile affiche', () => {
+    // Inerte sur l'issue — la piétaille n'a pas de reserve de PV et le serveur
+    // arbitre seul (§5.4) — mais pas silencieux pour autant : le nombre porte
+    // par le projectile est son seul point observable, et il doit valoir
+    // exactement ce que `Room#fireOne` calcule.
+    const CARTES = 2;
+    const { client, socket } = setup(1);
+    for (let i = 0; i < CARTES; i++) {
+      grant(socket, { nature: CARD.PASSIVE, refId: PUISSANCE, owner: 0 }, [
+        { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+      ]);
+    }
+
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0 }]);
+
+    const base = weaponOf(BASE_WEAPON_ID);
+    const attendu = base.damage * (1 + passiveOf(PUISSANCE).magnitude * CARTES);
+    expect(attendu).toBeGreaterThan(base.damage);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    expect(tir?.[6]).toBeCloseTo(attendu, 6);
+  });
+
+  it('la prediction locale avance a la vitesse de l inventaire, pas a PLAYER_SPEED', () => {
+    // ⚠️ **La dette de la tache 8.** `Room.step` avance le joueur a
+    // `PLAYER_SPEED + bonus('speed')`. Une prediction cablee sur la constante
+    // prend du retard a CHAQUE tick, et chaque snapshot la ramene en arriere :
+    // le joueur voit une reconciliation permanente. Mesure sur la position
+    // PREDITE (un flottant), jamais sur celle du snapshot — elle y est
+    // arrondie a l'entier, et un pas sous-pixel s'y lirait zero.
+    const CARTES = 2;
+    let entree: InputAxes = { x: 0, y: 0 };
+    const { client, socket } = setup(1, () => entree);
+
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0 }]),
+    });
+    for (let i = 0; i < CARTES; i++) {
+      grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }, [
+        { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+      ]);
+    }
+
+    // Chauffe SANS entree ni snapshot : le resultat a referme le gel au tick 0,
+    // donc la rampe de reprise (`LEVEL_RESUME_TICKS`) court encore. La mesurer
+    // pendant la rampe melerait deux facteurs.
+    const CHAUFFE = LEVEL_RESUME_TICKS + 5;
+    for (let i = 0; i < CHAUFFE; i++) {
+      client.update(i * MS_PER_TICK, STEP);
+    }
+
+    const avant = client.localPosition;
+    entree = { x: 1, y: 0 };
+    const IMAGES = 20;
+    for (let i = 0; i < IMAGES; i++) {
+      client.update((CHAUFFE + i) * MS_PER_TICK, STEP);
+    }
+    const apres = client.localPosition;
+
+    const parcouru = (apres?.x ?? 0) - (avant?.x ?? 0);
+    const vitesse = PLAYER_SPEED + passiveOf(FOUGUE).magnitude * CARTES;
+    expect(parcouru).toBeCloseTo(vitesse * STEP * IMAGES, 6);
+    // Et surtout : PAS la vitesse de base. Sans cette ligne, un `toBeCloseTo`
+    // trop laxiste laisserait passer la constante en dur.
+    expect(parcouru).not.toBeCloseTo(PLAYER_SPEED * STEP * IMAGES, 1);
   });
 });

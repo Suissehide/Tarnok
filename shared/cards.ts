@@ -33,6 +33,40 @@ export interface Card {
   owner: number;
 }
 
+/**
+ * Range une carte dans un inventaire — la SEULE traduction « nature de carte
+ * → mutation d'inventaire » du depot.
+ *
+ * ⚠️ **Serveur et client lisent cette fonction, pas deux copies.** Le serveur
+ * l'appelle depuis `Room#grantCard` (qui y ajoute le soin de « vitalite »,
+ * hors inventaire) ; le client l'appelle a la reception de `DRAFT_RESULT` pour
+ * tenir son miroir des inventaires — dont il derive les armes qui tirent et la
+ * vitesse de sa propre prediction. Deux traductions divergeraient a la
+ * premiere nature de carte ajoutee, et le client afficherait un arsenal que le
+ * serveur n'arbitre pas.
+ *
+ * Leve exactement comme `Loadout` leve : slots pleins, arme deja possedee,
+ * arme non possedee, niveau maximum. C'est l'appelant qui decide quoi en
+ * faire — le serveur ne devrait jamais en produire une, le client peut en
+ * recevoir une pour un joueur dont il n'a pas vu tout l'historique.
+ */
+export function applyCardToLoadout(loadout: Loadout, card: Card): void {
+  switch (card.nature) {
+    case CARD.NEW_WEAPON:
+      loadout.addWeapon(card.refId);
+      break;
+    case CARD.WEAPON_LEVEL:
+    case CARD.EVOLUTION:
+      loadout.levelUpWeapon(card.refId);
+      break;
+    case CARD.PASSIVE:
+      loadout.addPassive(card.refId);
+      break;
+    default:
+      break;
+  }
+}
+
 /** Clef d'unicite d'une carte dans un etalage. */
 function keyOf(c: Card): string {
   return `${c.nature}:${c.refId}:${c.owner}`;

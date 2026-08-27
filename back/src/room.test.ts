@@ -11,13 +11,23 @@ import {
 } from '@shared/constants';
 import { passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
-import { decodeSnapshot, SNAPSHOT_HEADER_BYTES, SNAPSHOT_PLAYER_BYTES } from '@shared/protocol';
+import {
+  decodeSnapshot,
+  OUTCOME,
+  SNAPSHOT_HEADER_BYTES,
+  SNAPSHOT_PLAYER_BYTES,
+} from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { BASE_WEAPON_ID, WEAPONS, weaponOf } from '@shared/weapons';
+import {
+  BASE_WEAPON_ID,
+  cooldownWithBonus,
+  MAX_FIRE_RATE_BONUS,
+  WEAPONS,
+  weaponOf,
+} from '@shared/weapons';
 import { describe, expect, it, vi } from 'vitest';
 
-import { OUTCOME } from './draft';
-import { cooldownWithBonus, type DraftOpenEvent, MAX_FIRE_RATE_BONUS, Room } from './room';
+import { type DraftOpenEvent, Room } from './room';
 
 const DT = 1 / TICK_HZ;
 

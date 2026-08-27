@@ -229,6 +229,26 @@ export const DRAFT_RESULT_HEADER_BYTES = 7;
 export const DRAFT_OUTCOME_BYTES = 3;
 
 /**
+ * Ce qui est arrive a un joueur, tel que l'octet `outcome` de `DRAFT_RESULT`
+ * le transporte (§4.2 de la spec de l'etape 4).
+ *
+ * ⚠️ **Vit ici et pas dans `back/src/draft.ts`, ou il est ne a la tache 5.**
+ * C'est une valeur de fil : `Draft` la produit, `Room` la diffuse, et le
+ * client la relit pour savoir quelles cartes ranger dans son miroir des
+ * inventaires (tache 9). Le client ne peut pas importer `back/` — la
+ * constante descend donc au seul endroit que les deux cotes partagent, plutot
+ * que d'exister en deux exemplaires qui divergeraient.
+ */
+export const OUTCOME = {
+  /** La carte lui revient — elle s'illumine chez lui. */
+  WON: 0,
+  /** Il visait une carte qu'un autre a eue — elle se consume chez lui. */
+  LOST: 1,
+  /** Il n'avait pose aucun jeton : le serveur a tranche pour lui. */
+  AUTO: 2,
+} as const;
+
+/**
  * « Ce joueur n'a pose aucun jeton. »
  *
  * ⚠️ Ne peut pas valoir `0` : la carte d'indice 0 est une carte comme une

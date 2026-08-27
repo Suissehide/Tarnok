@@ -1,4 +1,4 @@
-import { CARD, type Card, drawSpread } from '@shared/cards';
+import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -17,14 +17,14 @@ import { Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
-import { encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
+import { encodeSnapshot, OUTCOME, type PlayerSnapshot } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
 import type { WaveOrder } from '@shared/waves';
-import { BASE_WEAPON_ID, WEAPONS, weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { type ContactPlayer, OrbField, resolveContact, resolveProjectileDamage } from './combat';
-import { Draft, OUTCOME } from './draft';
+import { Draft } from './draft';
 import { WaveDirector } from './wave-director';
 
 /**
@@ -153,29 +153,6 @@ const SPAWN_OFFSETS: readonly (readonly [number, number])[] = [
 
 /** Un axe d'entree tient sur un octet signe : on le ramene dans [-1, 1]. */
 const AXIS_SCALE = 1 / 127;
-
-/**
- * Reduction maximale de cadence, toutes cartes « cadence » confondues.
- *
- * ⚠️ Le bonus est une FRACTION retiree (0,08 par carte) : treize cartes
- * donneraient 1,04, donc une recharge negative — l'arme tirerait a chaque
- * tick, et une quatorzieme ne changerait plus rien puisque le plancher d'un
- * tick est deja atteint. Plafonner ici garde la courbe lisible et laisse la
- * derniere carte utile.
- */
-export const MAX_FIRE_RATE_BONUS = 0.75;
-
-/**
- * Recharge d'une arme apres application des passifs de cadence.
- *
- * Le plancher d'UN tick n'est pas cosmetique : a zero, `tick - lastFireTick`
- * vaut toujours au moins la recharge et l'arme tirerait plusieurs fois par
- * tick si la boucle changeait.
- */
-export function cooldownWithBonus(base: number, bonus: number): number {
-  const reduction = Math.min(Math.max(bonus, 0), MAX_FIRE_RATE_BONUS);
-  return Math.max(1, Math.round(base * (1 - reduction)));
-}
 
 /**
  * Capacite de la file de projectiles du salon.
@@ -755,28 +732,20 @@ export class Room {
     if (!player) {
       return;
     }
-    const { nature, refId } = card;
-    switch (nature) {
-      case CARD.NEW_WEAPON:
-        player.loadout.addWeapon(refId);
-        break;
-      case CARD.WEAPON_LEVEL:
-      case CARD.EVOLUTION:
-        player.loadout.levelUpWeapon(refId);
-        break;
-      case CARD.PASSIVE: {
-        player.loadout.addPassive(refId);
-        // ⚠️ Le gain de vie maximum est AUSSI un soin du meme montant. Sans
-        // ca la carte « vitalite » ne ferait rien de perceptible : rien ne
-        // soigne dans cette etape, donc un plafond releve sans les points qui
-        // vont avec ne se verrait qu'apres avoir encaisse des degats.
-        const nouveauMax = PLAYER_MAX_HP + player.loadout.bonus('maxHp');
-        player.hp += nouveauMax - player.maxHp;
-        player.maxHp = nouveauMax;
-        break;
-      }
-      default:
-        break;
+    // La traduction « nature de carte -> mutation d'inventaire » vit dans
+    // `shared/` : le client la relit telle quelle pour son propre miroir
+    // (tache 9), et deux copies divergeraient.
+    applyCardToLoadout(player.loadout, card);
+    if (card.nature === CARD.PASSIVE) {
+      // ⚠️ Le gain de vie maximum est AUSSI un soin du meme montant. Sans ca
+      // la carte « vitalite » ne ferait rien de perceptible : rien ne soigne
+      // dans cette etape, donc un plafond releve sans les points qui vont avec
+      // ne se verrait qu'apres avoir encaisse des degats. Hors inventaire,
+      // donc hors `applyCardToLoadout` : `hp`/`maxHp` sont des champs de
+      // `PlayerState`, que le client n'arbitre jamais (§5.4).
+      const nouveauMax = PLAYER_MAX_HP + player.loadout.bonus('maxHp');
+      player.hp += nouveauMax - player.maxHp;
+      player.maxHp = nouveauMax;
     }
   }
 

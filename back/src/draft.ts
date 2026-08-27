@@ -1,15 +1,6 @@
 import type { Card } from '@shared/cards';
 import { DRAFT_REPICK_TICKS, DRAFT_WINDOW_TICKS } from '@shared/constants';
-
-/** Ce qui est arrive a un joueur, tel que `DRAFT_RESULT` le transporte. */
-export const OUTCOME = {
-  /** La carte lui revient — elle s'illumine chez lui. */
-  WON: 0,
-  /** Il visait une carte qu'un autre a eue — elle se consume chez lui. */
-  LOST: 1,
-  /** Il n'avait pose aucun jeton : le serveur a tranche pour lui. */
-  AUTO: 2,
-} as const;
+import { OUTCOME } from '@shared/protocol';
 
 export type DraftPhase = 'closed' | 'open' | 'repick';
 

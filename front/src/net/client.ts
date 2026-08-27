@@ -1,3 +1,4 @@
+import { applyCardToLoadout, type Card } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -7,11 +8,13 @@ import {
   MAX_ENTITIES,
   MAX_PLAYERS,
   ORB_LIFETIME_TICKS,
+  PLAYER_SPEED,
   TICK_HZ,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
+import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -19,11 +22,12 @@ import {
   encodeDraftToken,
   encodeInput,
   MSG,
+  OUTCOME,
   type PlayerSnapshot,
   quantizeAxis,
   type WaveOrderMessage,
 } from '@shared/protocol';
-import { weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 
 import { SnapshotBuffer } from './interpolation';
@@ -326,8 +330,37 @@ export class GameClient {
    * (tache 11).
    */
   readonly projectiles = new Projectiles(PROJECTILE_CAPACITY);
-  /** Cooldown par joueur, cote client — miroir de `Player.lastFireTick` cote serveur. */
-  readonly #lastFireTick = new Map<number, number>();
+  /**
+   * Recharge **par joueur ET par arme**, cote client — miroir exact de
+   * `PlayerState.lastFireTick` cote serveur (un `Float64Array` indexe par
+   * identifiant d'arme, `-Infinity` = jamais tire).
+   *
+   * ⚠️ **Un seul compteur par joueur bridait tout l'arsenal.** C'est ce que ce
+   * fichier faisait jusqu'a la tache 9 : la recharge la plus lente qui vient
+   * de partir empechait toutes les autres armes de tirer. Le serveur, lui,
+   * compte par arme depuis la tache 7 — l'affichage aurait donc montre moins
+   * de salves que le serveur n'en arbitre, et de plus en plus a chaque carte
+   * draftee.
+   */
+  readonly #lastFireTick = new Map<number, Float64Array>();
+  /**
+   * Miroir des inventaires, un par joueur, alimente par `DRAFT_RESULT`.
+   *
+   * ⚠️ **Le client ne decide rien ici** (§7.2) : il range ce que le serveur
+   * lui dit d'avoir range, et rien d'autre. Deux usages, tous deux
+   * indispensables :
+   *
+   * - `#fireWeapons` en tire l'arsenal a afficher. Sans lui, aucun projectile
+   *   d'arme draftee ne s'affiche — ni pour son porteur, ni pour ses allies ;
+   * - la prediction locale en tire sa vitesse. Sans elle, la premiere carte
+   *   « fougue » fait decrocher la prediction du serveur a chaque tick.
+   *
+   * ⚠️ **Le miroir peut etre incomplet pour un joueur DISTANT**, et c'est sans
+   * consequence : un client qui rejoint un salon en cours n'a jamais vu les
+   * `DRAFT_RESULT` d'avant sa connexion. Le sien, lui, est exact — le serveur
+   * lui cree un `Loadout` vide au meme instant (`Room.join`).
+   */
+  readonly #loadouts = new Map<number, Loadout>();
   /** Flashs d'impact derives des collisions locales (§4.3). Lecture publique pour le rendu. */
   readonly hitFlashes = new HitFlashes(HIT_FLASH_CAPACITY);
 
@@ -454,19 +487,6 @@ export class GameClient {
     return this.#lastHordeTick;
   }
 
-  /**
-   * Vrai pendant le gel de montee de niveau **et sa rampe de reprise**
-   * (tache 24).
-   *
-   * Sert la seule indication a l'ecran d'ici l'etalage de cartes de l'etape 4 :
-   * deux secondes ou plus rien ne bouge, sans explication, se lisent comme un
-   * plantage — l'auteur les a d'ailleurs signalees comme telles.
-   *
-   * ⚠️ Couvre la **rampe** autant que le gel strict : c'est toute la
-   * perturbation qui doit se voir, pas seulement sa moitie la plus visible. Un
-   * accesseur qui s'eteindrait a la fin du gel laisserait une seconde de
-   * ralenti inexpliquee.
-   */
   /** L'etalage a afficher. Vide quand aucun draft n'est ouvert. */
   get draftCards(): readonly { nature: number; refId: number; owner: number }[] {
     return this.#draftCards;
@@ -492,6 +512,37 @@ export class GameClient {
     this.#ws?.send(encodeDraftToken(cardIndex));
   }
 
+  /**
+   * Ce que ce joueur possede, tel que le client l'a reconstitue depuis les
+   * `DRAFT_RESULT` recus. Meme signature que `Room.loadoutOf` cote serveur,
+   * pour que les deux se comparent directement.
+   *
+   * Cree l'entree a la volee : quatre joueurs au plus, et un inventaire vide
+   * est la bonne reponse pour un joueur qui n'a encore rien drafte.
+   */
+  loadoutOf(playerId: number): Loadout {
+    const found = this.#loadouts.get(playerId);
+    if (found) {
+      return found;
+    }
+    const fresh = new Loadout();
+    this.#loadouts.set(playerId, fresh);
+    return fresh;
+  }
+
+  /**
+   * Vrai pendant le gel de montee de niveau **et sa rampe de reprise**
+   * (tache 24).
+   *
+   * Sert la seule indication a l'ecran d'ici l'etalage de cartes de l'etape 4 :
+   * deux secondes ou plus rien ne bouge, sans explication, se lisent comme un
+   * plantage — l'auteur les a d'ailleurs signalees comme telles.
+   *
+   * ⚠️ Couvre la **rampe** autant que le gel strict : c'est toute la
+   * perturbation qui doit se voir, pas seulement sa moitie la plus visible. Un
+   * accesseur qui s'eteindrait a la fin du gel laisserait une seconde de
+   * ralenti inexpliquee.
+   */
   get isFrozen(): boolean {
     if (this.#freezeStartTick < 0) {
       return false;
@@ -560,7 +611,21 @@ export class GameClient {
     // Le tick de reference est celui de la horde, c'est-a-dire le tick SERVEUR
     // recale en continu : `#freezeUntilTick` et `#resumeEndTick` sont dates
     // dans ce repere par le message `LEVEL_UP`, jamais dans un tick local.
-    this.#local?.predict(axes.x, axes.y, dt, this.#movementScale(this.#lastHordeTick));
+    //
+    // ⚠️ **La vitesse vient de l'inventaire, pas de `PLAYER_SPEED`** (tache 9
+    // de l'etape 4). `Room.step` avance le joueur a
+    // `PLAYER_SPEED + loadout.bonus('speed')` ; des la premiere carte
+    // « fougue » (+15 px/s), une prediction cablee sur la constante avance
+    // moins vite que l'autorite a CHAQUE tick, et chaque snapshot recale le
+    // personnage en arriere — le joueur voit une reconciliation permanente,
+    // exactement le defaut que la prediction existe pour eviter.
+    this.#local?.predict(
+      axes.x,
+      axes.y,
+      dt,
+      this.#movementScale(this.#lastHordeTick),
+      this.#localSpeed(),
+    );
 
     // Visee locale (tache 13) : lue puis QUANTIFIEE une seule fois pour toute
     // la duree de cet appel — voir la doc de `#localAim`. `readAim` rend deja
@@ -607,6 +672,21 @@ export class GameClient {
     }
 
     return { localId: this.#localId, xp: this.#teamXp, players };
+  }
+
+  /**
+   * Vitesse de deplacement du joueur local — meme formule que `Room.step`
+   * (`PLAYER_SPEED + loadout.bonus('speed')`), pas une approximation.
+   *
+   * `PLAYER_SPEED` tant que le WELCOME n'est pas arrive : sans identifiant, il
+   * n'y a pas d'inventaire a consulter, et un inventaire vide vaut de toute
+   * facon exactement `PLAYER_SPEED`.
+   */
+  #localSpeed(): number {
+    if (this.#localId === null) {
+      return PLAYER_SPEED;
+    }
+    return PLAYER_SPEED + this.loadoutOf(this.#localId).bonus('speed');
   }
 
   #sendInput(): void {
@@ -702,6 +782,10 @@ export class GameClient {
     }
 
     if (msg.type === MSG.DRAFT_RESULT) {
+      // ⚠️ AVANT de vider `#draftCards` plus bas : les issues designent les
+      // cartes par leur INDICE dans l'etalage courant, et l'etalage est la
+      // seule chose qui dise ce que cet indice contient.
+      this.#applyDraftOutcomes(msg.outcomes);
       this.#draftOutcomes = msg.outcomes;
       this.#draftIntents = new Map();
       if (msg.phase === 0) {
@@ -755,6 +839,51 @@ export class GameClient {
       this.#local = new PredictedPlayer(mine.x, mine.y);
     } else {
       this.#local.reconcile(mine.x, mine.y);
+    }
+  }
+
+  /**
+   * Range dans les inventaires les cartes que le serveur vient d'attribuer.
+   *
+   * ⚠️ **`OUTCOME.LOST` ne donne rien** : c'est le joueur qui visait une carte
+   * qu'un autre a eue. Seuls `WON` (il l'a gagnee) et `AUTO` (le serveur a
+   * tranche pour lui, §4.4) attribuent. Traiter les trois pareil donnerait la
+   * carte contestee a TOUS ses pretendants — l'exclusivite du §6.2 s'effondre
+   * et le conflit n'aurait plus d'enjeu a l'ecran.
+   *
+   * La traduction elle-meme vit dans `shared/cards.ts` : c'est la MEME
+   * fonction que `Room#grantCard` appelle, pas une seconde copie.
+   */
+  #applyDraftOutcomes(
+    outcomes: readonly { playerId: number; cardIndex: number; outcome: number }[],
+  ): void {
+    for (const issue of outcomes) {
+      if (issue.outcome === OUTCOME.LOST) {
+        continue;
+      }
+      // Un indice qui ne designe aucune carte : le client a manque le
+      // `DRAFT_OPEN` de ce tour (connexion en cours de draft).
+      //
+      // ⚠️ **Cette garde n'est pas verrouillee par un test, et ne peut pas
+      // l'etre** — meme motif que R8 au registre : le `catch` plus bas absorbe
+      // son retrait, puisque `undefined.nature` y leve comme n'importe quoi
+      // d'autre. Ce qui la tient, c'est `noUncheckedIndexedAccess` : la
+      // supprimer ne compile pas (verifie), seul un `as Card` delibere la
+      // defait. Deux gardes qui se couvrent l'une l'autre ne sont gardees par
+      // aucun test — autant l'ecrire que le laisser croire.
+      const card: Card | undefined = this.#draftCards[issue.cardIndex];
+      if (!card) {
+        continue;
+      }
+      try {
+        applyCardToLoadout(this.loadoutOf(issue.playerId), card);
+      } catch {
+        // Miroir incomplet d'un joueur DISTANT : un client qui rejoint un
+        // salon en cours n'a jamais vu les `DRAFT_RESULT` d'avant sa
+        // connexion, donc une montee de niveau peut porter sur une arme qu'il
+        // ne lui connait pas. Purement cosmetique (§5.4 : le serveur arbitre
+        // seul), et le sien reste exact — il commence vide des deux cotes.
+      }
     }
   }
 
@@ -879,8 +1008,15 @@ export class GameClient {
    * que chaque joueur voit tirer.
    *
    * Purement cosmetique : les degats restent arbitres par le serveur (§5.4),
-   * jamais deduits d'ici. Seule l'arme neutre de base est tiree (§6.1 —
-   * l'etalage de cartes est hors etape), comme cote serveur.
+   * jamais deduits d'ici.
+   *
+   * ⚠️ **Parcourt TOUT l'arsenal de chaque joueur, pas la seule arme neutre.**
+   * Jusqu'a la tache 9 ce miroir tirait `weaponOf(0)` et rien d'autre — la
+   * copie de ce que `Room` faisait avant la tache 7 : aucun projectile d'arme
+   * draftee ne s'affichait, ni pour son porteur ni pour ses allies. L'ordre est
+   * celui du serveur : l'arme neutre d'abord, TOUJOURS (elle vit hors des
+   * slots, §6.1, ne figure dans aucun `Loadout` et ne disparait jamais), puis
+   * les armes draftees dans leur ordre d'acquisition.
    *
    * ⚠️ **La visee suit le curseur (tache 13), plus de ciblage.** Ce fichier ne
    * cible donc plus rien dans `horde` : `nearestTarget` et `fireSalvo` (par
@@ -903,14 +1039,9 @@ export class GameClient {
     if (players.length === 0) {
       return;
     }
-    const weapon = weaponOf(0);
 
     for (const p of players) {
       if (p.hp <= 0) {
-        continue;
-      }
-      const last = this.#lastFireTick.get(p.id) ?? Number.NEGATIVE_INFINITY;
-      if (tick - last < weapon.cooldownTicks) {
         continue;
       }
       const local = p.id === this.#localId ? this.#local : null;
@@ -921,9 +1052,47 @@ export class GameClient {
       if (aimX === 0 && aimY === 0) {
         continue;
       }
-      this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY);
-      this.#lastFireTick.set(p.id, tick);
+      const loadout = this.loadoutOf(p.id);
+      this.#fireOne(p.id, BASE_WEAPON_ID, loadout, tick, x, y, aimX, aimY);
+      for (const weaponId of loadout.weaponIds) {
+        this.#fireOne(p.id, weaponId, loadout, tick, x, y, aimX, aimY);
+      }
     }
+  }
+
+  /**
+   * Tire une salve de cette arme si SA PROPRE recharge est faite — miroir de
+   * `Room#fireOne`, passifs empiles compris.
+   *
+   * ⚠️ **`cooldownWithBonus` vient de `shared/weapons.ts`, pas d'une copie
+   * locale** : c'est litteralement la fonction que le serveur applique. Le
+   * multiplicateur de degats l'accompagne pour la meme raison — un projectile
+   * affiche doit porter le meme nombre que celui que le serveur arbitre, meme
+   * si rien ici n'en decide l'issue (§5.4).
+   */
+  #fireOne(
+    playerId: number,
+    weaponId: number,
+    loadout: Loadout,
+    tick: number,
+    x: number,
+    y: number,
+    aimX: number,
+    aimY: number,
+  ): void {
+    const weapon = weaponOf(weaponId);
+    const cooldown = cooldownWithBonus(weapon.cooldownTicks, loadout.bonus('fireRate'));
+    let last = this.#lastFireTick.get(playerId);
+    if (!last) {
+      last = new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY);
+      this.#lastFireTick.set(playerId, last);
+    }
+    if (tick - (last[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
+      return;
+    }
+    const damage = weapon.damage * (1 + loadout.bonus('damage'));
+    this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY, damage);
+    last[weaponId] = tick;
   }
 
   /**

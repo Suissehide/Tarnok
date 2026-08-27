@@ -53,8 +53,17 @@ export class PredictedPlayer {
    * defaut. Ne module QUE le deplacement, jamais l'extinction de l'ecart de
    * reconciliation ci-dessous — celle-ci reste une pure animation d'affichage,
    * sans lien avec la simulation que le serveur gele ou pas.
+   *
+   * ⚠️ **`speed` est un parametre depuis la tache 9 de l'etape 4, et ce n'est
+   * pas une commodite.** Le serveur avance le joueur a
+   * `PLAYER_SPEED + loadout.bonus('speed')` (voir `Room.step`) : des la
+   * premiere carte « fougue » (+15 px/s), une prediction cablee sur
+   * `PLAYER_SPEED` avance moins vite que l'autorite a chaque tick, et le
+   * joueur voit une reconciliation permanente — sa position rattrapee en
+   * arriere par chaque snapshot. La valeur par defaut reste `PLAYER_SPEED` :
+   * c'est exactement ce que vaut un inventaire vide.
    */
-  predict(moveX: number, moveY: number, dt: number, scale = 1): void {
+  predict(moveX: number, moveY: number, dt: number, scale = 1, speed = PLAYER_SPEED): void {
     let nx = moveX;
     let ny = moveY;
     const len = Math.hypot(nx, ny);
@@ -63,8 +72,8 @@ export class PredictedPlayer {
       ny /= len;
     }
 
-    this.#x = clamp(this.#x + nx * PLAYER_SPEED * dt * scale, 0, MAP_SIZE);
-    this.#y = clamp(this.#y + ny * PLAYER_SPEED * dt * scale, 0, MAP_SIZE);
+    this.#x = clamp(this.#x + nx * speed * dt * scale, 0, MAP_SIZE);
+    this.#y = clamp(this.#y + ny * speed * dt * scale, 0, MAP_SIZE);
 
     // Extinction exponentielle : monotone par construction, donc jamais
     // d'oscillation autour de la position serveur, et independante de la
