@@ -1,0 +1,498 @@
+import type { AddressInfo } from 'node:net';
+import { ORB_PICKUP_RADIUS, SPREAD_BONUS } from '@shared/constants';
+import {
+  decode,
+  encodeDraftToken,
+  encodeInput,
+  type Message,
+  MSG,
+  OUTCOME,
+  type SnapshotMessage,
+  type WireOutcome,
+} from '@shared/protocol';
+import { FORMATION, type WaveOrder } from '@shared/waves';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { WebSocket } from 'ws';
+
+import type { Room } from './room';
+import { buildServer } from './server';
+
+/**
+ * Le livrable du §13 de la spec de l'etape 4 : **quatre clients reels, sur des
+ * sockets reelles**, qui montent de niveau, draftent, entrent en conflit et
+ * repiochent.
+ *
+ * ⚠️ **Pourquoi headless et pas quatre onglets.** `requestAnimationFrame` est
+ * suspendu dans un onglet en arriere-plan — mesure a l'etape 2, zero image en
+ * quinze secondes. Trois des quatre onglets ne dessineraient rien, et une
+ * capture d'ecran montrerait une image perimee qu'on prendrait pour un defaut
+ * de replication. C'est ce test-la qui porte la preuve.
+ *
+ * ⚠️ **Pourquoi la vraie socket et pas un `Room` pilote en direct.** Deux
+ * lignes de `Session` n'etaient couvertes par AUCUN test a la fin de la tache
+ * 6 — la diffusion de `DRAFT_OPEN` dans `#broadcast` et la reception de
+ * `DRAFT_TOKEN` dans `#onFrame`. Neutraliser l'une ou l'autre laissait toute
+ * la suite verte. Elles sont la dette « S1/S3 » du registre, et ce fichier est
+ * ce qui la solde : il ne connait l'etalage que par ce que la socket lui
+ * livre, et ne pose ses jetons que par ce qu'elle transporte.
+ *
+ * ⚠️ **Pourquoi les monstres sont poses a la main.** Attendre le generateur de
+ * vagues coute une premiere vague au tick 180 (6 s) d'une taille variable de
+ * 16 a 28 monstres, qui doivent encore traverser `ANCHOR_RADIUS` : lent ET
+ * intermittent. Un anneau pose autour de chaque joueur, comme le fait
+ * `room.test.ts`, amene le premier etalage en une poignee de secondes et sans
+ * hasard. C'est pour ca que `buildServer` decore l'app de son registre.
+ */
+
+/** Graine imposee au salon : ce test ne doit rien devoir au hasard. */
+const ROOM_SEED = 0x7a5c_0d11;
+
+/** Monstres poses autour de chaque joueur a chaque renouvellement. */
+const RING_SIZE = 10;
+
+/**
+ * Rayon de l'anneau, en pixels monde.
+ *
+ * ⚠️ **Doit rester sous `ORB_PICKUP_RADIUS`.** Un orbe naît a la position du
+ * monstre qui vient de mourir : pose l'anneau plus loin que le rayon de
+ * ramassage et les orbes tombent hors de portee, l'experience ne monte
+ * jamais, et le test expire sans jamais dire pourquoi. Le garde ci-dessous
+ * rend cette dependance bruyante plutot que tacite.
+ */
+const RING_RADIUS = 80;
+if (RING_RADIUS >= ORB_PICKUP_RADIUS) {
+  throw new Error("l'anneau doit rester dans le rayon de ramassage des orbes");
+}
+
+/** Quatre joueurs : c'est le nombre que le livrable exige. */
+const PLAYER_COUNT = 4;
+
+type App = Awaited<ReturnType<typeof buildServer>>;
+
+interface Client {
+  ws: WebSocket;
+  playerId: number;
+  /** Tout ce qui est arrive sur CETTE socket, hors snapshots. */
+  received: Message[];
+  seq: number;
+}
+
+let app: App;
+let port: number;
+const openSockets: WebSocket[] = [];
+
+beforeEach(async () => {
+  app = await buildServer({ roomSeed: ROOM_SEED });
+  await app.listen({ port: 0, host: '127.0.0.1' });
+  port = (app.server.address() as AddressInfo).port;
+});
+
+afterEach(async () => {
+  for (const ws of openSockets.splice(0)) {
+    ws.close();
+  }
+  await app.close();
+});
+
+async function createRoomCode(): Promise<string> {
+  const res = await app.inject({ method: 'POST', url: '/rooms' });
+  return res.json<{ code: string }>().code;
+}
+
+/**
+ * Ouvre une socket de jeu, attend le WELCOME, et enregistre desormais tout ce
+ * qui arrive.
+ *
+ * ⚠️ L'enregistrement est **permanent**, pas une attente ponctuelle : la
+ * fenetre de draft dure vingt secondes, pendant lesquelles `DRAFT_INTENTS` et
+ * `DRAFT_RESULT` peuvent arriver a n'importe quel moment. Un `once('message')`
+ * pose apres coup manquerait ce qui est deja passe.
+ */
+async function connect(code: string): Promise<Client> {
+  const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${code}`);
+  ws.binaryType = 'arraybuffer';
+  openSockets.push(ws);
+
+  const received: Message[] = [];
+  const client: Client = { ws, playerId: 0, received, seq: 0 };
+
+  ws.on('message', (data: ArrayBuffer) => {
+    const msg = decode(data);
+    if (msg.type === MSG.WELCOME) {
+      client.playerId = msg.playerId;
+    }
+    // Les snapshots arrivent a 15 Hz pendant toute la manche : les garder
+    // noierait les quelques messages de draft qu'on interroge.
+    if (msg.type !== MSG.SNAPSHOT) {
+      received.push(msg);
+    }
+  });
+
+  await waitFor(() => (client.playerId !== 0 ? client.playerId : null), 'WELCOME', 3000);
+  return client;
+}
+
+/**
+ * Attend qu'une condition observable devienne vraie, en scrutant l'etat deja
+ * accumule. Rend ce que la condition a produit.
+ */
+async function waitFor<T>(probe: () => T | null, what: string, timeoutMs: number): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = probe();
+    if (value !== null) {
+      return value;
+    }
+    if (Date.now() > deadline) {
+      throw new Error(`${what} : rien en ${timeoutMs} ms`);
+    }
+    await new Promise((r) => setTimeout(r, 8));
+  }
+}
+
+/** Le premier snapshot ou les quatre joueurs sont la — il porte leurs positions. */
+function fullSnapshot(ws: WebSocket): Promise<SnapshotMessage> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error('aucun snapshot a quatre joueurs en 3000 ms'));
+    }, 3000);
+    function cleanup(): void {
+      clearTimeout(timer);
+      ws.off('message', onMessage);
+    }
+    function onMessage(data: ArrayBuffer): void {
+      const msg = decode(data);
+      if (msg.type === MSG.SNAPSHOT && msg.players.length === PLAYER_COUNT) {
+        cleanup();
+        resolve(msg);
+      }
+    }
+    ws.on('message', onMessage);
+  });
+}
+
+/**
+ * Pose une entite a une position choisie, hors du generateur de vagues — meme
+ * technique que `spawnMonsterAt` dans `room.test.ts` et `combat.test.ts`.
+ */
+function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): void {
+  const order: WaveOrder = {
+    waveId,
+    spawnTick: room.tick,
+    seed: 1,
+    archetype: 0,
+    formation: FORMATION.SCATTER,
+    anchorX: x,
+    anchorY: y,
+    count: 1,
+  };
+  room.horde.spawn(order);
+  const slot = room.horde.count - 1;
+  room.horde.x[slot] = x;
+  room.horde.y[slot] = y;
+}
+
+/**
+ * Fait monter l'equipe d'un niveau : un anneau de monstres autour de chaque
+ * joueur, renouvele quand la horde se vide, et chaque joueur qui vise en
+ * continu le monstre le plus proche de lui.
+ *
+ * ⚠️ **La visee passe par la socket**, comme le reste : depuis la tache 13 de
+ * l'etape 3, la proximite d'un monstre ne declenche plus rien — sans
+ * `aimX`/`aimY`, l'arme ne tire jamais et l'experience ne monte pas.
+ *
+ * Rend la fonction qui arrete le pilote.
+ */
+function startCombatDriver(
+  room: Room,
+  positions: Map<number, { x: number; y: number }>,
+  clients: readonly Client[],
+): () => void {
+  let waveId = 9000;
+
+  const refill = (): void => {
+    for (const pos of positions.values()) {
+      for (let i = 0; i < RING_SIZE; i++) {
+        const angle = (i / RING_SIZE) * Math.PI * 2;
+        spawnMonsterAt(
+          room,
+          waveId++,
+          pos.x + Math.cos(angle) * RING_RADIUS,
+          pos.y + Math.sin(angle) * RING_RADIUS,
+        );
+      }
+    }
+  };
+
+  const timer = setInterval(() => {
+    if (room.horde.count === 0) {
+      refill();
+    }
+    for (const client of clients) {
+      const pos = positions.get(client.playerId);
+      if (!pos) {
+        continue;
+      }
+      let bestDist2 = Number.POSITIVE_INFINITY;
+      let bestSlot = -1;
+      for (let i = 0; i < room.horde.count; i++) {
+        const dx = (room.horde.x[i] ?? 0) - pos.x;
+        const dy = (room.horde.y[i] ?? 0) - pos.y;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestDist2) {
+          bestDist2 = d2;
+          bestSlot = i;
+        }
+      }
+      if (bestSlot < 0) {
+        continue;
+      }
+      const dx = (room.horde.x[bestSlot] ?? 0) - pos.x;
+      const dy = (room.horde.y[bestSlot] ?? 0) - pos.y;
+      const len = Math.hypot(dx, dy);
+      if (len === 0) {
+        continue;
+      }
+      client.seq++;
+      client.ws.send(
+        encodeInput(client.seq, 0, 0, Math.round((dx / len) * 127), Math.round((dy / len) * 127)),
+      );
+    }
+  }, 10);
+
+  refill();
+  return () => {
+    clearInterval(timer);
+  };
+}
+
+/** Les issues d'un joueur donne, dans un message `DRAFT_RESULT`. */
+function outcomesOf(outcomes: readonly WireOutcome[], playerId: number): WireOutcome[] {
+  return outcomes.filter((o) => o.playerId === playerId);
+}
+
+describe('quatre clients reels draftent (livrable du §13)', () => {
+  it('un conflit a lieu, un seul le gagne, les perdants repiochent, l absent est servi d office', async () => {
+    const code = await createRoomCode();
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('le registre de salons doit etre accessible depuis l app');
+    }
+
+    const clients: Client[] = [];
+    for (let i = 0; i < PLAYER_COUNT; i++) {
+      clients.push(await connect(code));
+    }
+    const [a, b, c, d] = clients;
+    if (!a || !b || !c || !d) {
+      throw new Error('quatre clients attendus');
+    }
+    expect(new Set(clients.map((x) => x.playerId)).size).toBe(PLAYER_COUNT);
+
+    // Les positions viennent du fil, pas d'une constante du serveur : les
+    // joueurs n'envoient aucun deplacement, elles ne bougeront plus.
+    const snap = await fullSnapshot(a.ws);
+    const positions = new Map(snap.players.map((p) => [p.id, { x: p.x, y: p.y }]));
+
+    const startedAt = Date.now();
+    const stopDriver = startCombatDriver(room, positions, clients);
+
+    // ---- 1. L'etalage s'ouvre, et il s'ouvre SUR LA SOCKET ----------------
+    //
+    // ⚠️ Mutation S1 : si `Session#broadcast` cesse de diffuser `DRAFT_OPEN`,
+    // c'est ici que le test rougit. Aucun client ne connaitrait l'etalage,
+    // donc aucun ne pourrait poser de jeton.
+    const opens = await Promise.all(
+      clients.map((client) =>
+        waitFor(
+          () => client.received.find((m) => m.type === MSG.DRAFT_OPEN) ?? null,
+          `DRAFT_OPEN pour le joueur ${client.playerId}`,
+          20_000,
+        ),
+      ),
+    );
+    stopDriver();
+    process.stdout.write(
+      `premier etalage au tick ${room.tick} (${((Date.now() - startedAt) / 1000).toFixed(1)} s ` +
+        `d'horloge) ; echeance de la fenetre au tick ${
+          opens[0]?.type === MSG.DRAFT_OPEN ? opens[0].deadlineTick : -1
+        }\n`,
+    );
+
+    const spread = opens[0];
+    if (!spread || spread.type !== MSG.DRAFT_OPEN) {
+      throw new Error('DRAFT_OPEN attendu');
+    }
+    // §7.2 point 1 : `joueurs + SPREAD_BONUS` cartes, les memes pour tous.
+    expect(spread.cards).toHaveLength(PLAYER_COUNT + SPREAD_BONUS);
+    for (const open of opens) {
+      expect(open).toEqual(spread);
+    }
+    // Au premier niveau aucun inventaire n'est garni : toutes les cartes sont
+    // ouvertes a tous. C'est ce qui rend le conflit ci-dessous possible — le
+    // verifier, plutot que le supposer, est exactement ce que le registre
+    // reproche aux fixtures qui masquent.
+    expect(spread.cards.every((card) => card.owner === 0)).toBe(true);
+
+    // ---- 2. Trois joueurs se disputent la meme carte, le quatrieme se tait -
+    //
+    // ⚠️ Mutation S3 : si `Session#onFrame` ignore `DRAFT_TOKEN`, aucune
+    // intention n'est enregistree, `DRAFT_INTENTS` n'est jamais diffuse, et
+    // l'attente ci-dessous expire. Et si elle ne le faisait pas, l'absence de
+    // `LOST` plus bas le dirait.
+    const CONTESTED = 0;
+    for (const client of [a, b, c]) {
+      client.ws.send(encodeDraftToken(CONTESTED));
+    }
+
+    // La preuve que le serveur a bien recu les trois gestes : il rediffuse les
+    // intentions, et les trois pointent la meme carte.
+    const intents = await waitFor(
+      () =>
+        a.received.find(
+          (m) =>
+            m.type === MSG.DRAFT_INTENTS &&
+            m.intents.length === 3 &&
+            m.intents.every((i) => i.cardIndex === CONTESTED),
+        ) ?? null,
+      'DRAFT_INTENTS portant les trois jetons sur la carte disputee',
+      5000,
+    );
+    if (intents.type !== MSG.DRAFT_INTENTS) {
+      throw new Error('DRAFT_INTENTS attendu');
+    }
+    expect(new Set(intents.intents.map((i) => i.playerId))).toEqual(
+      new Set([a.playerId, b.playerId, c.playerId]),
+    );
+    expect(intents.intents.some((i) => i.playerId === d.playerId)).toBe(false);
+
+    // ---- 3. La resolution : le conflit, et l'attribution d'office ---------
+    //
+    // Le joueur `d` ne pose rien : la fenetre va jusqu'a son echeance
+    // (`DRAFT_WINDOW_TICKS`, 20 s) — c'est precisement le §4.4, « un joueur
+    // absent ne bloque jamais », et le cout d'horloge de ce test.
+    const first = await waitFor(
+      () => a.received.find((m) => m.type === MSG.DRAFT_RESULT) ?? null,
+      'premier DRAFT_RESULT',
+      30_000,
+    );
+    if (first.type !== MSG.DRAFT_RESULT) {
+      throw new Error('DRAFT_RESULT attendu');
+    }
+    const won = first.outcomes.filter((o) => o.outcome === OUTCOME.WON);
+    const lost = first.outcomes.filter((o) => o.outcome === OUTCOME.LOST);
+
+    // ⚠️ **L'assertion centrale, et le defaut n°1 de ce test si elle manque.**
+    // Un draft ou personne n'entre en conflit ne prouve rien du tout : on
+    // COMPTE les perdants, on ne les suppose pas. Elle vient AVANT toutes les
+    // autres pour que ce soit elle qui parle quand la mise en scene se
+    // degrade en silence.
+    expect(
+      lost.length,
+      "aucun conflit n'a eu lieu : trois jetons sur la meme carte devaient faire deux perdants",
+    ).toBe(2);
+    // Un seul joueur obtient la carte contestee.
+    expect(won).toHaveLength(1);
+    // Deux perdants restent a servir : la repioche s'ouvre (§4.3, +5 s).
+    expect(first.phase).toBe(1);
+    expect(won[0]?.cardIndex).toBe(CONTESTED);
+    for (const l of lost) {
+      expect(l.cardIndex).toBe(CONTESTED);
+    }
+    const winnerId = won[0]?.playerId ?? 0;
+    expect([a.playerId, b.playerId, c.playerId]).toContain(winnerId);
+
+    // Le silencieux est servi d'office, et jamais au detriment d'un present :
+    // sa carte n'est pas celle que les trois autres se disputaient.
+    const forSilent = outcomesOf(first.outcomes, d.playerId);
+    expect(forSilent).toHaveLength(1);
+    expect(forSilent[0]?.outcome).toBe(OUTCOME.AUTO);
+    expect(forSilent[0]?.cardIndex).not.toBe(CONTESTED);
+
+    // Les quatre joueurs sont tranches au meme message : personne n'attend.
+    expect(new Set(first.outcomes.map((o) => o.playerId)).size).toBe(PLAYER_COUNT);
+
+    // ---- 4. La repioche : les deux perdants se reconflictent --------------
+    //
+    // ⚠️ **Deliberement sur la MEME carte.** Le §4.4 borne la repioche a un
+    // tour : « un gagnant est tire, les autres recoivent l'attribution
+    // automatique ». C'est la ligne que la tache 10 a trouvee manquante et
+    // dont le test d'origine etait creux — il verifiait `cardIndex >= 0` sur
+    // toutes les issues, ce qui passe pour un `LOST`, dont le `cardIndex` est
+    // celui de la carte PERDUE.
+    const taken = new Set(
+      first.outcomes.filter((o) => o.outcome !== OUTCOME.LOST).map((o) => o.cardIndex),
+    );
+    let repickIndex = -1;
+    for (let i = 0; i < spread.cards.length; i++) {
+      if (!taken.has(i)) {
+        repickIndex = i;
+        break;
+      }
+    }
+    expect(
+      repickIndex,
+      "l'etalage doit rester plus grand que le nombre de joueurs",
+    ).toBeGreaterThan(-1);
+
+    const losers = lost.map((l) => l.playerId);
+    for (const id of losers) {
+      const client = clients.find((x) => x.playerId === id);
+      client?.ws.send(encodeDraftToken(repickIndex));
+    }
+
+    const second = await waitFor(
+      () => a.received.filter((m) => m.type === MSG.DRAFT_RESULT)[1] ?? null,
+      'DRAFT_RESULT de la repioche',
+      10_000,
+    );
+    if (second.type !== MSG.DRAFT_RESULT) {
+      throw new Error('DRAFT_RESULT attendu');
+    }
+    // Phase 0 : le draft est termine, `deadlineTick` porte la fin du gel (R3).
+    expect(second.phase).toBe(0);
+    expect(second.deadlineTick).toBeGreaterThan(0);
+
+    // Le reconflit a bien eu lieu : un gagnant tire, un perdant — qu'on
+    // COMPTE, comme au premier tour. Sans ce comptage, une repioche ou les
+    // deux jetons ne se seraient pas rencontres passerait pour une preuve du
+    // §4.4 sans en etre une.
+    const repickWon = second.outcomes.filter((o) => o.outcome === OUTCOME.WON);
+    const repickLost = second.outcomes.filter((o) => o.outcome === OUTCOME.LOST);
+    const repickAuto = second.outcomes.filter((o) => o.outcome === OUTCOME.AUTO);
+    expect(repickWon).toHaveLength(1);
+    expect(repickWon[0]?.cardIndex).toBe(repickIndex);
+    expect(repickLost, 'les deux perdants ne se sont pas reconflictes').toHaveLength(1);
+    expect(repickLost[0]?.cardIndex).toBe(repickIndex);
+    // Et pas de troisieme tour : le perdant du reconflit est servi d'office
+    // dans le MEME message, sur une autre carte.
+    expect(repickAuto).toHaveLength(1);
+    expect(repickAuto[0]?.playerId).toBe(repickLost[0]?.playerId);
+    expect(repickAuto[0]?.cardIndex).not.toBe(repickIndex);
+
+    const granted = new Map<number, number>();
+    for (const o of [...first.outcomes, ...second.outcomes]) {
+      if (o.outcome !== OUTCOME.LOST) {
+        granted.set(o.playerId, o.cardIndex);
+      }
+    }
+    for (const id of losers) {
+      const card = granted.get(id);
+      expect(card, `le perdant ${id} repart les mains vides`).not.toBeUndefined();
+      expect(card).not.toBe(CONTESTED);
+    }
+
+    // Les quatre joueurs ont chacun une carte, et jamais la meme.
+    expect(granted.size).toBe(PLAYER_COUNT);
+    expect(new Set(granted.values()).size).toBe(PLAYER_COUNT);
+
+    // Et cote serveur, la carte a vraiment atterri dans l'inventaire : sans
+    // ca, on aurait verifie un message et pas un effet.
+    for (const client of clients) {
+      const loadout = room.loadoutOf(client.playerId);
+      const items = (loadout?.weaponSlotsUsed ?? 0) + (loadout?.passiveSlotsUsed ?? 0);
+      expect(items, `l inventaire du joueur ${client.playerId} est reste vide`).toBe(1);
+    }
+  }, 90_000);
+});

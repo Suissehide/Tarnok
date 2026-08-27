@@ -25,9 +25,18 @@ export class RoomRegistry {
     return this.#rooms.size;
   }
 
-  create(): CreatedRoom {
+  /**
+   * Ouvre un salon. `seed` fixe la graine de sa carte — obstacles, generateur
+   * de vagues et tirage du draft en derivent tous (voir `Room.mapSeed`).
+   *
+   * ⚠️ Sans graine, `Room` en tire une au hasard : c'est ce que fait la route
+   * `POST /rooms`. La passer sert le test d'integration a quatre clients, qui
+   * serait sinon intermittent — et un test intermittent est pire qu'un test
+   * absent.
+   */
+  create(seed?: number): CreatedRoom {
     const code = this.#freshCode();
-    const room = new Room();
+    const room = new Room(seed);
     this.#rooms.set(code, room);
     return { code, room };
   }

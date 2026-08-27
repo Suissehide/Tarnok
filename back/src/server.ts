@@ -242,11 +242,41 @@ function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
 
-export async function buildServer(): Promise<FastifyInstance> {
+/**
+ * Le registre de salons est **decore sur l'instance Fastify**, pas seulement
+ * referme dans les routes.
+ *
+ * ⚠️ C'est ce qui rend testable ce qui passe par la vraie socket. Le livrable
+ * du §13 (quatre clients headless) doit poser ses monstres lui-meme plutot
+ * que d'attendre le generateur de vagues — premiere vague au tick 180, de
+ * taille variable : lent ET intermittent. Sans acces au `Room`, un test qui
+ * n'a que des sockets n'a aucun moyen de le faire, et deux lignes de
+ * `Session` (la diffusion de `DRAFT_OPEN`, la reception de `DRAFT_TOKEN`)
+ * restaient sans aucune couverture — verifie par mutation.
+ *
+ * Fastify decore d'ordinaire pour ce motif exact ; les routes ci-dessous
+ * continuent de refermer `registry`.
+ */
+declare module 'fastify' {
+  interface FastifyInstance {
+    rooms: RoomRegistry;
+  }
+}
+
+export interface ServerOptions {
+  /**
+   * Graine imposee a TOUS les salons crees par ce serveur. Absente en
+   * production : `Room` en tire une au hasard. Voir `RoomRegistry.create`.
+   */
+  roomSeed?: number;
+}
+
+export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: process.env.CORS_ORIGIN ?? true });
 
   const registry = new RoomRegistry();
+  app.decorate('rooms', registry);
   const sessions = new Map<string, Session>();
 
   const closeSession = (code: string): void => {
@@ -258,7 +288,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.get('/health', async () => ({ status: 'ok' }));
 
   app.post('/rooms', async (_req, reply) => {
-    const { code, room } = registry.create();
+    const { code, room } = registry.create(options.roomSeed);
     sessions.set(code, new Session(code, room, closeSession));
     return reply.code(201).send({ code });
   });
