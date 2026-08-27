@@ -166,8 +166,81 @@ describe('Draft — la repioche', () => {
     const issues = d.step(100 + DRAFT_WINDOW_TICKS + DRAFT_REPICK_TICKS, fixe(0));
     expect(issues).not.toBeNull();
     expect(d.phase).toBe('closed');
-    // Personne ne repart les mains vides.
-    expect((issues ?? []).every((r) => r.cardIndex >= 0)).toBe(true);
+
+    // ⚠️ **Ce test contenait la seizieme assertion creuse de ce projet.** Elle
+    // disait « personne ne repart les mains vides » et verifiait
+    // `issues.every((r) => r.cardIndex >= 0)`. Le `cardIndex` d'un `LOST` est
+    // celui de la carte PERDUE : l'assertion passait pour un joueur qui
+    // n'obtenait rien. Le §4.4 est pourtant explicite — « un gagnant est tire,
+    // les autres recoivent l'attribution automatique ».
+    //
+    // La vraie verification compte les joueurs qui repartent AVEC quelque
+    // chose. Verifiee par mutation : sans les lignes d'attribution d'office de
+    // `Draft#step`, on lit « expected 1 to be 2 ».
+    const lot = issues ?? [];
+    const servis = new Set(lot.filter((r) => r.outcome !== OUTCOME.LOST).map((r) => r.playerId));
+    expect([...servis].sort((a, b) => a - b)).toEqual(perdants.sort((a, b) => a - b));
+
+    // Et jamais deux fois la meme carte : l'attribution d'office respecte ce
+    // que le gagnant vient de prendre.
+    const prises = lot.filter((r) => r.outcome !== OUTCOME.LOST).map((r) => r.cardIndex);
+    expect(new Set(prises).size).toBe(prises.length);
+
+    // Le perdant du reconflit recoit DEUX issues : la carte perdue, puis celle
+    // qu'il obtient a la place. C'est l'histoire que le §4.2 demande de
+    // raconter a l'ecran.
+    for (const id of perdants) {
+      const siennes = lot.filter((r) => r.playerId === id);
+      expect(siennes.length).toBeGreaterThanOrEqual(1);
+    }
+    const reperdant = lot.find((r) => r.outcome === OUTCOME.LOST)?.playerId;
+    if (reperdant !== undefined) {
+      expect(lot.filter((r) => r.playerId === reperdant)).toHaveLength(2);
+    }
+  });
+
+  it('deux perdants d un reconflit recoivent DEUX cartes differentes', () => {
+    // ⚠️ Ce test existe parce qu'une mutation a survecu au precedent : retirer
+    // `this.#taken.add(index)` de l'attribution d'office ne cassait rien, car
+    // le scenario a trois joueurs ne produit **qu'un seul** perdant au
+    // reconflit — rien ne pouvait entrer en collision.
+    //
+    // Il en faut DEUX. Quatre joueurs sur la meme carte : un gagnant, trois
+    // perdants ; puis les trois sur la meme carte restante : un gagnant, deux
+    // perdants, donc deux attributions d'office qui doivent se partager ce qui
+    // reste.
+    //
+    // ⚠️ Joueurs **1, 4, 5 et 6**, et pas 1 a 4. Les cartes 3 et 5 de
+    // l'etalage d'epreuve sont reservees aux joueurs 3 et 2 : avec eux dans la
+    // partie, chaque perdant recoit SA carte reservee et les deux attributions
+    // divergent sans que le garde y soit pour rien — la mutation survivait a
+    // une premiere version de ce test. Aucun de ces quatre-la n'a de carte
+    // reservee, donc les deux attributions visent la meme carte libre et seul
+    // `#taken` les separe.
+    const d = ouvert([1, 4, 5, 6]);
+    for (const id of [1, 4, 5, 6]) {
+      expect(d.setToken(id, 2)).toBe(true);
+    }
+    const premier = d.step(100 + DRAFT_WINDOW_TICKS, fixe(0)) ?? [];
+    expect(d.phase).toBe('repick');
+    const perdants = premier.filter((r) => r.outcome === OUTCOME.LOST).map((r) => r.playerId);
+    expect(perdants).toHaveLength(3);
+
+    for (const id of perdants) {
+      expect(d.setToken(id, 4)).toBe(true);
+    }
+    const second = d.step(100 + DRAFT_WINDOW_TICKS + DRAFT_REPICK_TICKS, fixe(0)) ?? [];
+    expect(d.phase).toBe('closed');
+
+    const dOffice = second.filter((r) => r.outcome === OUTCOME.AUTO);
+    expect(dOffice).toHaveLength(2);
+    // Deux joueurs distincts, et surtout deux cartes DISTINCTES.
+    expect(new Set(dOffice.map((r) => r.playerId)).size).toBe(2);
+    expect(new Set(dOffice.map((r) => r.cardIndex)).size).toBe(2);
+    // Et aucune ne redonne la carte que le gagnant du reconflit vient de
+    // prendre.
+    const gagnee = second.find((r) => r.outcome === OUTCOME.WON)?.cardIndex;
+    expect(dOffice.every((r) => r.cardIndex !== gagnee)).toBe(true);
   });
 
   it('ne rend jamais deux fois la meme carte a deux joueurs', () => {

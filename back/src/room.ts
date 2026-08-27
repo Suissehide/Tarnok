@@ -189,7 +189,18 @@ function isNewer(a: number, b: number): boolean {
 
 export class Room {
   /** Graine de la carte d'obstacles, tiree a la creation du salon. */
-  readonly mapSeed: number = (Math.random() * 0xffff_ffff) >>> 0;
+  /**
+   * Graine de la carte : obstacles, generateur de vagues, tirage du draft en
+   * derivent tous. Aleatoire par defaut, **injectable** — un salon dont on
+   * fixe la graine se rejoue a l'identique.
+   *
+   * ⚠️ Ce n'est pas un confort de test, c'est ce qui rend certains tests
+   * possibles. Le test des drafts enchainees construit un tas d'orbes dont la
+   * geometrie depend des obstacles ; avec une graine tiree au hasard il
+   * echouait environ une fois sur quatre — un test intermittent est pire
+   * qu'un test absent, parce qu'on finit par l'ignorer.
+   */
+  readonly mapSeed: number;
   readonly horde = new Horde(MAX_ENTITIES);
   readonly #players = new Map<number, PlayerState>();
   readonly #fields: FlowField[];
@@ -212,7 +223,7 @@ export class Room {
    * l'etape 4) : aucun client ne refait ce tirage. La graine sert la
    * reproductibilite des tests, pas la convergence.
    */
-  readonly #draftRng = makeRandom((this.mapSeed ^ 0x7a3c_11e5) >>> 0);
+  readonly #draftRng: () => number;
   /** Niveaux gagnes dont le draft n'a pas encore eu lieu. */
   #pendingLevels = 0;
   #pendingDraftOpens: DraftOpenEvent[] = [];
@@ -244,7 +255,13 @@ export class Room {
   /** Vrai une fois que `RUN_OVER` a ete mis en file — la simulation s'arrete alors pour de bon. */
   #runOver = false;
 
-  constructor() {
+  constructor(mapSeed: number = (Math.random() * 0xffff_ffff) >>> 0) {
+    this.mapSeed = mapSeed;
+    // ⚠️ Initialise ICI, pas a la declaration : depuis que `mapSeed` est
+    // injectable, les initialiseurs de champ s'executent AVANT le corps du
+    // constructeur et liraient une graine encore indefinie. TypeScript le
+    // refuse (TS2729), et c'est bien qu'il le refuse.
+    this.#draftRng = makeRandom((mapSeed ^ 0x7a3c_11e5) >>> 0);
     const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
     const mask = generateObstacles(this.mapSeed, probe.cols, probe.rows);
     this.#fields = Array.from({ length: MAX_PLAYERS }, () => {

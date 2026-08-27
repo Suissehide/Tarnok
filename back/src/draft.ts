@@ -124,8 +124,31 @@ export class Draft {
       this.#pending = perdants;
       this.#tokens.clear();
       this.#deadlineTick = tick + DRAFT_REPICK_TICKS;
-    } else {
-      this.#phase = 'closed';
+      return issues;
+    }
+
+    this.#phase = 'closed';
+    // ⚠️ **Le §4.4 en toutes lettres** : « si les perdants d'une repioche se
+    // reconflictent, pas de troisieme tour : un gagnant est tire, LES AUTRES
+    // RECOIVENT L'ATTRIBUTION AUTOMATIQUE ».
+    //
+    // Sans ces lignes, un perdant de reconflit repartait **les mains vides** —
+    // il avait pose un jeton, donc l'attribution d'office de `#resolve`, qui ne
+    // sert que les joueurs SANS jeton, ne le voyait pas. Le test qui pretendait
+    // couvrir le cas verifiait `cardIndex >= 0` sur toutes les issues : le
+    // `cardIndex` d'un `LOST` est celui de la carte PERDUE, donc l'assertion
+    // passait pour quelqu'un qui n'obtenait rien.
+    //
+    // Le joueur recoit DEUX issues : le `LOST` de la carte disputee, puis
+    // l'`AUTO` de celle qu'il obtient a la place. C'est exactement l'histoire
+    // que le §4.2 demande de raconter — « on voit ce qu'on perd, on voit ce
+    // qu'on obtient a la place ».
+    for (const id of perdants) {
+      const index = this.#autoPick(id);
+      if (index >= 0) {
+        this.#taken.add(index);
+        issues.push({ playerId: id, cardIndex: index, outcome: OUTCOME.AUTO });
+      }
     }
     return issues;
   }

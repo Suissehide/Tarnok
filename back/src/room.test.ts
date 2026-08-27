@@ -1253,7 +1253,11 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   });
 
   it('deux niveaux gagnes au meme tick ouvrent deux drafts bout a bout, sans repit', () => {
-    const room = new Room();
+    // ⚠️ Graine FIXE. La geometrie du tas d'orbes depend des obstacles, qui
+    // derivent de `mapSeed` : avec une graine tiree au hasard, ce test echouait
+    // environ une fois sur quatre. Un test intermittent est pire qu'un test
+    // absent — on finit par l'ignorer.
+    const room = new Room(0x7a11_c0de);
     room.join(1);
     const depart = positionOf(room, 1);
     // ⚠️ Le tas d'orbes se construit HORS portee de ramassage (200 px contre
