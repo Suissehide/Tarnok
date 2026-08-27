@@ -43,7 +43,9 @@ function peuple(room: Room, n: number): void {
 
 function mesure(slots: number, entites: number): { p95: number; max: number } {
   const room = new Room(0x5107_5107);
-  for (const id of [1, 2, 3, 4]) room.join(id);
+  for (const id of [1, 2, 3, 4]) {
+    room.join(id);
+  }
   for (let p = 1; p <= 4; p++) {
     for (let w = 1; w <= slots; w++) {
       room.grantCard(p, { nature: CARD.NEW_WEAPON, refId: w, owner: 0 });

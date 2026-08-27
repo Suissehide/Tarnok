@@ -128,6 +128,15 @@ export class Draft {
     }
 
     this.#phase = 'closed';
+    // ⚠️ **Les jetons meurent avec la negociation.** Sans cette ligne, ils
+    // survivaient a la fermeture : `Session#broadcast` diffuse `DRAFT_INTENTS`
+    // des que `intents()` n'est pas vide, donc le serveur rediffusait le jeton
+    // du tour precedent **a chaque tick** jusqu'a l'ouverture suivante. Le
+    // joueur voyait son propre jeton deja pose sur une carte du nouvel
+    // etalage, et cliquer dessus le RETIRAIT au lieu de le poser (le §4.1 fait
+    // du reclic un retrait). Signale par l'auteur en jouant : « j'ai deja mon
+    // jeton dessus et je peux pas le reprendre ».
+    this.#tokens.clear();
     // ⚠️ **Le §4.4 en toutes lettres** : « si les perdants d'une repioche se
     // reconflictent, pas de troisieme tour : un gagnant est tire, LES AUTRES
     // RECOIVENT L'ATTRIBUTION AUTOMATIQUE ».

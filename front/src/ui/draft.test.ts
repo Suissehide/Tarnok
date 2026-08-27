@@ -466,3 +466,51 @@ describe("DraftScreen — quand l'ecran s'arrete de dessiner (F2)", () => {
     expect(h.root.dataset.settled).toBe('false');
   });
 });
+
+describe('le jeton du tour precedent ne survit pas a l etalage suivant', () => {
+  it('la carte reprise au niveau suivant se selectionne, elle ne se desselectionne pas', () => {
+    // ⚠️ **Defaut signale par l'auteur en jouant, mot pour mot** : « si je
+    // selectionne un passif "Passif 1" et qu'au niveau suivant il est encore
+    // la, j'ai deja mon jeton "1" dessus et je peux pas le reprendre ».
+    //
+    // Deux defauts s'y composaient. Cote serveur, `Draft` gardait ses jetons
+    // apres la fermeture et `Session#broadcast` les rediffusait a chaque tick.
+    // Cote client, `DRAFT_OPEN` ne vidait pas la `Map` des intentions. Le
+    // joueur voyait donc son jeton du tour precedent deja pose — et comme le
+    // §4.1 fait du reclic un RETRAIT, cliquer la carte qu'il voulait envoyait
+    // `NO_TOKEN` au lieu de son indice.
+    //
+    // Le cas est COURANT et pas tordu : les passifs ne sont jamais exclus de
+    // l'etalage (§3.4), donc celui qu'on vient de prendre revient au tour
+    // suivant.
+    const h = harness();
+
+    // Premier tour : je pose sur la carte 1 et je la gagne.
+    h.client.draftCards = spread();
+    h.screen.update();
+    cards(h)[1]?.click();
+    expect(h.client.sent).toEqual([1]);
+    h.client.intents([[1, 1]]);
+    h.screen.update();
+    expect(tokensOn(h, 1)).toEqual(['1']);
+
+    h.client.result([{ playerId: 1, cardIndex: 1, outcome: OUTCOME.WON }], 0);
+    h.screen.update();
+
+    // Second tour : un etalage NEUF, qui contient la meme carte au meme indice.
+    h.client.draftCards = spread();
+    h.client.draftSettled = false;
+    h.client.isFrozen = true;
+    h.client.draftOutcomes = [];
+    h.screen.update();
+
+    // Plus aucun jeton nulle part : personne n'a encore pose.
+    expect(tokensOn(h, 1)).toEqual([]);
+
+    // Et le clic POSE, il ne retire pas.
+    h.client.sent.length = 0;
+    cards(h)[1]?.click();
+    expect(h.client.sent).toEqual([1]);
+    expect(h.client.sent).not.toContain(NO_TOKEN);
+  });
+});

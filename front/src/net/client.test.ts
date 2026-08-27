@@ -1603,6 +1603,42 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     expect(client.loadoutOf(1).stacksOf(FOUGUE)).toBe(1);
   });
 
+  it('un nouvel etalage efface les jetons du precedent', () => {
+    // ⚠️ Le pendant client du defaut signale par l'auteur en jouant.
+    //
+    // **Il a fallu la bonne entree pour que ce test prouve quelque chose.** Une
+    // premiere version enchainait `DRAFT_RESULT` puis `DRAFT_OPEN` : le
+    // resultat vide deja les intentions, donc neutraliser la remise a zero de
+    // `DRAFT_OPEN` ne cassait rien — la garde serveur et la garde client se
+    // couvraient l'une l'autre, quatrieme occurrence de ce motif dans cette
+    // etape.
+    //
+    // L'entree qui les separe est un `DRAFT_INTENTS` **perime**, arrivant apres
+    // le resultat. C'est exactement ce que le serveur emettait avant sa
+    // correction, et le client est un decodeur du FIL : ce qu'il fait d'une
+    // trame ne doit pas dependre de ce que `back/` emet ce mois-ci.
+    const { client, socket } = setup(1);
+    socket.emit('message', {
+      data: encodeDraftOpen(600, [{ nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }]),
+    });
+    socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 0 }]) });
+    expect(client.draftIntents.get(1)).toBe(0);
+
+    socket.emit('message', {
+      data: encodeDraftResult(0, 300, [{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]),
+    });
+    // Le jeton perime, rediffuse apres la fermeture.
+    socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 0 }]) });
+    expect(client.draftIntents.get(1)).toBe(0);
+
+    // Le meme passif revient — les passifs ne sont JAMAIS exclus (§3.4), donc
+    // c'est le cas courant, pas un cas tordu.
+    socket.emit('message', {
+      data: encodeDraftOpen(900, [{ nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }]),
+    });
+    expect(client.draftIntents.size).toBe(0);
+  });
+
   it('l etalage survit a la fermeture : c est la revelation qui en a besoin', () => {
     // ⚠️ **Defaut trouve au balayage pre-vol de la tache 10.** Le client vidait
     // `#draftCards` dans la branche `phase === 0` — c'est-a-dire a l'instant

@@ -199,6 +199,32 @@ describe('Draft — la repioche', () => {
     }
   });
 
+  it('la fermeture ne laisse AUCUN jeton derriere elle', () => {
+    // ⚠️ **Defaut signale par l'auteur en jouant** : « si je selectionne un
+    // passif et qu'au niveau suivant il est encore la, j'ai deja mon jeton
+    // dessus et je peux pas le reprendre ».
+    //
+    // `Session#broadcast` diffuse `DRAFT_INTENTS` des que `intents()` n'est pas
+    // vide. Les jetons survivaient a la fermeture, donc le serveur rediffusait
+    // celui du tour precedent **a chaque tick** jusqu'a l'ouverture suivante.
+    // Le joueur voyait son propre jeton deja pose sur une carte du nouvel
+    // etalage — et comme le §4.1 fait du reclic un RETRAIT, cliquer la carte
+    // qu'il voulait la lui refusait.
+    //
+    // Aucun test ne le voyait : les trois etats de `phase` etaient couverts,
+    // mais rien ne regardait ce que la machine laissait derriere elle.
+    const d = ouvert();
+    d.setToken(1, 0);
+    d.setToken(2, 1);
+    d.setToken(3, 6);
+    expect(d.intents().size).toBe(3);
+
+    const issues = d.step(100 + DRAFT_WINDOW_TICKS, fixe(0));
+    expect(d.phase).toBe('closed');
+    expect(issues).not.toBeNull();
+    expect(d.intents().size).toBe(0);
+  });
+
   it('deux perdants d un reconflit recoivent DEUX cartes differentes', () => {
     // ⚠️ Ce test existe parce qu'une mutation a survecu au precedent : retirer
     // `this.#taken.add(index)` de l'attribution d'office ne cassait rien, car

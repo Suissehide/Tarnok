@@ -797,6 +797,11 @@ export class GameClient {
       this.#draftDeadlineTick = msg.deadlineTick;
       this.#draftOutcomes = [];
       this.#draftSettled = false;
+      // ⚠️ Un etalage neuf : personne n'a encore pose. Le serveur cesse aussi
+      // de diffuser les jetons du tour precedent (voir `Draft#step`), mais
+      // l'invariant tient ici et pas seulement la-bas — un client ne doit
+      // jamais afficher un jeton qui appartient a une negociation revolue.
+      this.#draftIntents = new Map();
       return;
     }
 
