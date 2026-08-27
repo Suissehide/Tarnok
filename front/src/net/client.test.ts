@@ -1603,6 +1603,41 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     expect(client.loadoutOf(1).stacksOf(FOUGUE)).toBe(1);
   });
 
+  it('l etalage survit a la fermeture : c est la revelation qui en a besoin', () => {
+    // ⚠️ **Defaut trouve au balayage pre-vol de la tache 10.** Le client vidait
+    // `#draftCards` dans la branche `phase === 0` — c'est-a-dire a l'instant
+    // PRECIS ou l'ecran doit jouer la revelation du §4.2 : « la carte
+    // finalement obtenue s'illumine pour confirmer ». Les issues designent les
+    // cartes par leur INDICE ; l'etalage vide, l'ecran n'avait rien a
+    // illuminer et la revelation etait indessinable.
+    const { client, socket } = setup(1);
+    const etalage = [
+      { nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 },
+      { nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 },
+    ];
+    socket.emit('message', { data: encodeDraftOpen(600, etalage) });
+    expect(client.draftSettled).toBe(false);
+
+    socket.emit('message', {
+      data: encodeDraftResult(0, 300, [{ playerId: 1, cardIndex: 1, outcome: OUTCOME.WON }]),
+    });
+
+    // La negociation est close...
+    expect(client.draftSettled).toBe(true);
+    // ...mais la carte que l'issue designe est toujours la, et c'est la bonne.
+    expect(client.draftCards).toHaveLength(2);
+    const gagnee = client.draftCards[client.draftOutcomes[0]?.cardIndex ?? -1];
+    expect(gagnee).toEqual({ nature: CARD.NEW_WEAPON, refId: GRENADE, owner: 0 });
+
+    // Le prochain etalage remplace le precedent, et rouvre la negociation :
+    // c'est LUI qui borne l'affichage, pas la fermeture.
+    socket.emit('message', {
+      data: encodeDraftOpen(900, [{ nature: CARD.PASSIVE, refId: FOUGUE, owner: 0 }]),
+    });
+    expect(client.draftSettled).toBe(false);
+    expect(client.draftCards).toHaveLength(1);
+  });
+
   it('une issue que le miroir ne peut pas ranger n interrompt pas la reception', () => {
     // ⚠️ Le miroir d'un joueur DISTANT peut etre incomplet : un client qui
     // rejoint un salon en cours n'a jamais vu les `DRAFT_RESULT` d'avant sa
@@ -1629,8 +1664,12 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
       data: encodeDraftResult(0, 42, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
     });
 
-    // Le message a ete traite jusqu'au bout : l'etalage vide et le gel date.
-    expect(client.draftCards).toHaveLength(0);
+    // Le message a ete traite jusqu'au bout : la negociation est marquee close
+    // et le gel est date. On ne se sert PLUS de « l'etalage est vide » comme
+    // preuve — l'etalage survit desormais a la fermeture, pour que l'ecran
+    // puisse jouer la revelation du §4.2 sur des cartes qui existent encore.
+    expect(client.draftSettled).toBe(true);
+    expect(client.draftDeadlineTick).toBe(42);
     expect(client.draftOutcomes).toHaveLength(1);
     expect(client.loadoutOf(2).levelOf(GRENADE)).toBe(0);
   });

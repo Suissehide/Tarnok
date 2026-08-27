@@ -401,6 +401,17 @@ export class GameClient {
   /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien (§7.2). */
   #draftCards: readonly { nature: number; refId: number; owner: number }[] = [];
   #draftDeadlineTick = 0;
+  /**
+   * `true` des que la negociation est close (`DRAFT_RESULT` de phase 0), et
+   * jusqu'au prochain `DRAFT_OPEN`.
+   *
+   * ⚠️ **Ce n'est pas la meme chose que « l'etalage est vide ».** L'etalage
+   * survit a la fermeture, exactement pour que l'ecran puisse jouer la
+   * revelation du §4.2 — illuminer la carte gagnee, consumer les perdues —
+   * sur des cartes qui existent encore. Ce drapeau est le signal « on ne
+   * negocie plus », pas « il n'y a plus rien a montrer ».
+   */
+  #draftSettled = false;
   /** `playerId -> cardIndex` : les jetons poses, ceux des autres compris. */
   #draftIntents = new Map<number, number>();
   /** La derniere resolution recue — ce qui dit a l'ecran quelle carte illuminer ou consumer. */
@@ -492,9 +503,21 @@ export class GameClient {
     return this.#draftCards;
   }
 
-  /** Echeance de la fenetre courante, pour le chronometre. */
+  /**
+   * Echeance de la fenetre courante, pour le chronometre. A la fermeture, vaut
+   * le tick de fermeture lui-meme : le chronometre lit zero restant, au lieu
+   * de continuer a decompter une echeance perimee.
+   */
   get draftDeadlineTick(): number {
     return this.#draftDeadlineTick;
+  }
+
+  /**
+   * La negociation est close, mais l'etalage reste affichable — c'est pendant
+   * cette phase que se joue la revelation du §4.2.
+   */
+  get draftSettled(): boolean {
+    return this.#draftSettled;
   }
 
   /** Qui vise quoi — c'est cette visibilite qui fait exister la negociation (§7.2 point 3). */
@@ -773,6 +796,7 @@ export class GameClient {
       this.#draftCards = msg.cards;
       this.#draftDeadlineTick = msg.deadlineTick;
       this.#draftOutcomes = [];
+      this.#draftSettled = false;
       return;
     }
 
@@ -788,15 +812,24 @@ export class GameClient {
       this.#applyDraftOutcomes(msg.outcomes);
       this.#draftOutcomes = msg.outcomes;
       this.#draftIntents = new Map();
+      this.#draftDeadlineTick = msg.deadlineTick;
       if (msg.phase === 0) {
         // ⚠️ **C'est ICI que le client apprend la fin du gel**, et nulle part
         // ailleurs. Il ne peut pas la deduire : la fenetre dure jusqu'a ce que
         // tout le monde ait pose son jeton, et en solo elle se ferme au clic.
-        this.#draftCards = [];
+        //
+        // ⚠️ **L'etalage n'est PAS vide ici.** Une premiere version le faisait,
+        // et rendait la revelation du §4.2 impossible a dessiner : ce message
+        // est precisement celui qui dit quelle carte s'illumine, et les issues
+        // designent les cartes par leur INDICE dans l'etalage. Le vider ici
+        // laissait l'ecran avec des indices pointant vers rien.
+        //
+        // C'est `draftSettled` qui dit « la negociation est finie », et c'est
+        // l'ecran qui decide quand il arrete de dessiner. Le prochain
+        // `DRAFT_OPEN` remplace l'etalage.
+        this.#draftSettled = true;
         this.#freezeUntilTick = msg.deadlineTick;
         this.#resumeEndTick = msg.deadlineTick + LEVEL_RESUME_TICKS;
-      } else {
-        this.#draftDeadlineTick = msg.deadlineTick;
       }
       return;
     }

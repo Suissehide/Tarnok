@@ -885,10 +885,16 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   /**
    * Ticks auxquels chaque arme a tire, sur `ticks` pas, visee fixe et non nulle.
    *
-   * ⚠️ Rester SOUS 360 ticks quand on mesure une cadence : c'est la periode du
-   * generateur de vagues. Passe ce cap, les monstres apparaissent, meurent sous
-   * le tir automatique, font monter de niveau — et le draft qui s'ouvre gele le
-   * monde jusqu'a ce qu'un jeton soit pose. Plus une seule salve ensuite.
+   * ⚠️ **Garder la fenetre courte quand on mesure une cadence.** Le generateur
+   * lache une vague toutes les `TICK_HZ * 6` = 180 ticks ; le tir automatique
+   * finit par en tuer assez pour faire monter de niveau, et le draft qui
+   * s'ouvre gele le monde jusqu'a ce qu'un jeton soit pose — plus une seule
+   * salve ensuite.
+   *
+   * Ce n'est donc PAS la periode des vagues qui borne la mesure (une premiere
+   * version de ce commentaire l'affirmait, avec en prime un mauvais chiffre) :
+   * c'est le temps qu'il faut aux morts pour franchir le seuil d'experience.
+   * A 300 ticks et un seul joueur, la marge tient largement.
    */
   function ticksDeSalves(room: Room, ticks: number): Map<number, number[]> {
     const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
