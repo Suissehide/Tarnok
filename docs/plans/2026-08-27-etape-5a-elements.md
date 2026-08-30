@@ -405,14 +405,34 @@ testable qu'en mettant en scène un appelant fautif.
   tick ; le ralentissement multiplie la vitesse dans `Horde.step`.
 
   ⚠️ **Le ralentissement est le premier effet qui touche le DÉPLACEMENT**, donc le contrat de
-  réplication. Le serveur le calcule ; le client doit le calculer **identiquement** — donc il doit
-  connaître la marque, qu'il n'a pas. **Deux issues, à trancher à cette tâche et à écrire dans le
-  commit :**
-  1. le ralentissement s'applique **côté serveur seul**, et la horde répliquée dérive → **mesurer
-     la dérive** et la comparer aux 0,000 px ;
-  2. ou le ralentissement est un effet **de zone**, pas de marque : le client connaît les zones,
-     donc il dérive le même ralentissement sans un octet de plus. **C'est la piste recommandée**,
-     et elle est cohérente avec le §5.2 de la spec.
+  réplication à 0,000 px. **Tranché : l'effet porte sur la ZONE, pas sur la marque.**
+
+  | | Ce que le client sait | Verdict |
+  | --- | --- | --- |
+  | Effet de **marque** | rien — la marque ne voyage pas | il ne peut pas dériver le ralentissement |
+  | Effet de **zone** | tout — les zones sont annoncées, leur mort dérivée | il dérive exactement le même |
+
+  Les deux côtés connaissent les zones et les positions ; les positions sont **bit-identiques**
+  (c'est ce que « 0,000 px » veut dire), donc le prédicat `dx² + dy² < r²` rend le **même booléen**
+  des deux côtés. Zéro octet de plus, zéro divergence.
+
+  ⚠️ **Et l'effet est DATÉ PAR TICK, pas appliqué à la réception.** C'est la leçon du gel de niveau
+  de l'étape 3 : le serveur ralentit depuis `bornTick`, le client reçoit `ZONE` quelques ticks plus
+  tard. S'il applique le ralentissement à la réception, il diverge de la latence exacte.
+
+  Le client doit donc traiter `ZONE` comme il traite déjà `DEATHS` : **revenir au `bornTick` et
+  rejouer**, via `HordeHistory`. La machinerie existe.
+
+  **Et elle a la même limite, déjà mesurée** : l'anneau fait `ROLLBACK_DEPTH_TICKS = 8` ticks. Une
+  `ZONE` qui arrive plus tard tombe hors de l'anneau. L'étape 3 a mesuré ce cas pour les morts —
+  **93,007 px de dérive** quand on applique au présent en le signalant — et c'est le comportement à
+  reprendre : appliquer au présent, compter l'événement, ne pas prétendre que c'est exact.
+
+  **Un troisième chemin est possible et je ne l'ai pas retenu** : ne pas ralentir du tout et faire
+  du Givre un pur marqueur pour la réaction. Ce serait plus sûr et plus pauvre — le §6.3 de
+  l'orientation lui donne « ralentit » comme effet seul, et un élément dont l'effet seul est nul ne
+  se sent pas. **Si la dérive mesurée à l'étape 4 ci-dessous est mauvaise, c'est ce chemin-là qu'il
+  faut prendre**, et le dire, plutôt que de bricoler.
 
 - [ ] **Étape 4 : les tests**, dont un qui **mesure la dérive** entre serveur et client avec du
   Givre en jeu. Le scénario de `shared/horde.replication.test.ts` est le modèle.
