@@ -166,6 +166,35 @@ tick elle dure**. Le joueur est ce qui rend la Synergie du §6.5 possible.
 Un disque teinté, posé là où un projectile élémentaire finit sa course — qu'il ait touché ou non.
 Il vit un nombre de ticks fixe, puis disparaît.
 
+⚠️ **« Un projectile = une zone » ne tient pas, et c'est mesuré.** La cadence d'une arme
+élémentaire deviendrait le principal levier de coût du jeu, et **l'empilement de l'étape 4 la fait
+exploser** — chaque exemplaire ajoute un projectile à la salve :
+
+| Armes élémentaires retenues | Zones vivantes à quatre joueurs |
+| --- | --- |
+| 1 exemplaire chacune | **90** |
+| 4 exemplaires | **209** |
+| 8 exemplaires | **368** |
+
+Contre *« quelques dizaines »* budgétées au §6.6 de l'orientation, et un recouvrement en O(zones²).
+Le lance-flammes seul (18 projectiles/s) en porterait **216 à lui tout seul**.
+
+**Choisir des armes à cadence lente n'est donc pas une parade** : c'est un réglage qui tient
+jusqu'au premier draft. La borne doit vivre dans la règle de pose.
+
+### 5.1 bis La règle de pose, bornée par construction
+
+**Une zone ne s'ajoute pas si elle recouvre déjà une zone du même élément : elle la rafraîchit.**
+Le `bornTick` de l'existante repart, la nouvelle n'est pas créée.
+
+Le nombre de zones devient alors fonction de la **surface couverte**, pas de la cadence ni du
+nombre d'exemplaires. Un joueur qui arrose le même endroit entretient une zone ; un joueur qui
+balaie la carte en pose plusieurs, et c'est le comportement qu'on veut voir.
+
+**Et un plafond dur en second rideau**, avec un compteur, exactement comme `PROJECTILE_CAPACITY` et
+`truncatedProjectiles` de l'étape 4 : une zone qui ne se pose pas faute de place est un effet que le
+joueur a payé et qui ne se voit pas. **Ça ne doit jamais disparaître sans trace.**
+
 **Le précédent existe déjà** : `OrbField` fait exactement ça pour les orbes d'expérience, avec une
 expiration **dérivée** des deux côtés à partir du `bornTick`, sans message de disparition. Les zones
 suivent ce modèle.

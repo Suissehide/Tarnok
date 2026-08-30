@@ -53,12 +53,23 @@ Chaque tâche les respecte, sans les répéter.
 | `MARK_DURATION_TICKS` | **60** (2 s) | ⚠️ **à régler à l'œil, tâche 11.** Trop court, rien ne réagit ; trop long, tout réagit tout le temps |
 | `ZONE_LIFETIME_TICKS` | **90** (3 s) | dérivée des deux côtés depuis `bornTick`, **jamais annoncée** — même modèle que `ORB_LIFETIME_TICKS` |
 | `ZONE_RADIUS` | **70** | > `SEPARATION_RADIUS` (28), sinon une zone ne couvre jamais deux ennemis et le recouvrement ne se voit pas |
+| `ZONE_CAPACITY` | **128** | plafond dur, avec compteur de troncature — second rideau derrière la règle de fusion |
 | `REACTION_RADIUS` | **90** | = `ORB_PICKUP_RADIUS`, pour que le flash couvre visiblement ce qu'il tue |
 | `SYNERGY_MAX` | **20** | tient sur le `u16` déjà prévu dans le snapshot |
 
 > ⚠️ **`ZONE_RADIUS` n'est pas un réglage de sensation.** Le recouvrement de zones est en
 > O(zones²) et le marquage en O(zones × entités) : c'est **le** levier de coût de cette étape,
 > exactement comme `SEPARATION_STRENGTH` l'était à l'étape 3 sans que le tableau le dise.
+>
+> ⚠️ **Et ce n'est pas le seul, contrairement à ce que la première version de ce tableau disait.**
+> La **cadence des armes élémentaires** en est un au moins aussi gros — trouvé à la tâche 2, mesuré :
+> avec « un projectile = une zone », les armes retenues portent 90 zones à quatre joueurs, **209 à
+> quatre exemplaires et 368 à huit**, l'empilement de l'étape 4 faisant le reste. Le lance-flammes
+> seul en porterait 216.
+>
+> **C'est pourquoi la règle de pose fusionne** (§5.1 bis de la spec) : le compte devient fonction de
+> la surface couverte, pas de la cadence. Un tableau de contraintes ne protège que si les
+> contraintes qu'on y écrit sont les bonnes — et celle-ci manquait.
 
 ---
 
@@ -286,6 +297,18 @@ Chaque tâche les respecte, sans les répéter.
   ⚠️ Il vit dans `shared/` et pas dans `back/` : **le client dessine les zones et doit dériver leur
   mort exactement comme le serveur.** Une expiration calculée différemment des deux côtés ferait
   disparaître un quad plus tôt chez l'un — visible, et le début d'une divergence.
+
+- [ ] **Étape 1 bis : la règle de pose, bornée par construction.** `spawn` **ne crée pas** de zone
+  si une zone du même élément recouvre déjà le point : elle rafraîchit son `bornTick`. Le compte
+  devient fonction de la surface, pas de la cadence — voir §5.1 bis de la spec, et les chiffres qui
+  l'imposent.
+
+  Et un plafond dur `ZONE_CAPACITY` avec un compteur de troncature, comme `PROJECTILE_CAPACITY` et
+  `truncatedProjectiles` à l'étape 4. **Une zone qui ne se pose pas est un effet payé qui ne se voit
+  pas : ça ne doit jamais disparaître sans trace.**
+
+  Le test qui compte : **mille poses au même endroit ne font qu'une zone**, et mille poses étalées
+  en font plusieurs. Sans les deux moitiés, une fusion qui avale tout passerait.
 
 - [ ] **Étape 2 : `overlaps(a, b)`.** Deux zones se recouvrent si la distance de leurs centres est
   inférieure à la somme des rayons. **Comparer les carrés**, jamais `Math.hypot` : c'est la
