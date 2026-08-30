@@ -1,8 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
 import { TICK_HZ } from './constants';
-import { ELEMENT } from './elements';
-import { assertWeaponElements, BASE_WEAPON_ID, salvoCount, WEAPONS, weaponOf } from './weapons';
+import { ELEMENT, elementOf } from './elements';
+import {
+  assertWeaponElements,
+  assertWeaponLooks,
+  BASE_WEAPON_ID,
+  PROJECTILE_FADE_REFERENCE_TICKS,
+  projectileAlpha,
+  projectileTrailPx,
+  salvoCount,
+  WEAPONS,
+  weaponOf,
+} from './weapons';
 
 describe('WEAPONS', () => {
   it('indexe chaque arme a sa position dans le tableau', () => {
@@ -24,6 +34,21 @@ describe('WEAPONS', () => {
       expect(w.projectileLifeTicks).toBeGreaterThan(0);
       expect(w.projectileCount).toBeGreaterThan(0);
       expect(w.spreadRadians).toBeGreaterThan(0);
+    }
+  });
+
+  /**
+   * L'apparence (etape 5a, tache 12). ⚠️ **`trailTicks <= projectileLifeTicks`**
+   * n'est pas de la coquetterie : une trainee plus longue que le vol entier
+   * dessinerait le projectile derriere son propre point de depart.
+   */
+  it('donne a chaque arme une apparence aux valeurs tenables', () => {
+    for (const w of WEAPONS) {
+      expect(w.look.diameterPx, w.name).toBeGreaterThan(0);
+      expect(w.look.glow, w.name).toBeGreaterThanOrEqual(0);
+      expect(w.look.glow, w.name).toBeLessThanOrEqual(1);
+      expect(w.look.trailTicks, w.name).toBeGreaterThan(0);
+      expect(w.look.trailTicks, w.name).toBeLessThanOrEqual(w.projectileLifeTicks);
     }
   });
 
@@ -208,5 +233,183 @@ describe('weaponOf', () => {
 
   it('leve sur un identifiant inconnu plutot que de rendre undefined', () => {
     expect(() => weaponOf(99)).toThrow(/inconnu/i);
+  });
+});
+
+/**
+ * L'apparence des projectiles (etape 5a, tache 12), venue de l'auteur en
+ * jouant : *« fais des projectiles differents pour chaque arme »*.
+ *
+ * ⚠️ **« Neuf armes ont une apparence » et « neuf armes ont la MEME
+ * apparence » se ressemblent beaucoup dans un test faible.** D'ou la garde de
+ * chargement `assertWeaponLooks`, et d'ou le fait que ces cas lui donnent des
+ * tables VOLONTAIREMENT cassees : le vrai catalogue est une constante, aucun
+ * test ne peut y glisser un doublon.
+ */
+describe('assertWeaponLooks — neuf armes, neuf apparences', () => {
+  const base = weaponOf(BASE_WEAPON_ID);
+  const avecTeinte = (name: string, tint: number, element: number = ELEMENT.NEUTRE) => ({
+    ...base,
+    name,
+    element,
+    look: { ...base.look, tint },
+  });
+
+  it('accepte le catalogue reel', () => {
+    expect(() => assertWeaponLooks(WEAPONS)).not.toThrow();
+  });
+
+  it('leve quand une arme reprend la teinte de son element', () => {
+    // L'element se lit a la zone au sol et a la marque, jamais au projectile.
+    expect(() =>
+      assertWeaponLooks([avecTeinte('braisette', elementOf(ELEMENT.BRAISE).tint, ELEMENT.BRAISE)]),
+    ).toThrow(/identique a celle de son element/i);
+  });
+
+  it('leve quand deux armes partagent une teinte', () => {
+    expect(() => assertWeaponLooks([avecTeinte('a', 0x123456), avecTeinte('b', 0x123456)])).toThrow(
+      /meme teinte/i,
+    );
+  });
+
+  /**
+   * ⚠️ Le piege de la fixture qui masque, pris a l'avance — comme pour
+   * `assertWeaponElements` : une garde qui s'arreterait a la premiere arme
+   * passerait les deux cas ci-dessus. Le defaut est ici en DERNIERE position,
+   * pour les deux regles.
+   */
+  it('inspecte toute la table, pas seulement la premiere arme', () => {
+    expect(() =>
+      assertWeaponLooks([
+        avecTeinte('a', 0x111111),
+        avecTeinte('b', 0x222222),
+        avecTeinte('c', 0x111111),
+      ]),
+    ).toThrow(/meme teinte/i);
+
+    expect(() =>
+      assertWeaponLooks([
+        avecTeinte('a', 0x111111),
+        avecTeinte('b', 0x222222),
+        avecTeinte('givree', elementOf(ELEMENT.GIVRE).tint, ELEMENT.GIVRE),
+      ]),
+    ).toThrow(/identique a celle de son element/i);
+  });
+
+  /**
+   * La moitie « et les neuf du catalogue, alors ? » : la garde ci-dessus
+   * protege l'AVENIR, ce cas mesure le PRESENT. Les deux armes de Braise et
+   * les deux de Givre sont explicitement confrontees — c'est la paire que
+   * l'auteur a nommee.
+   */
+  it('donne aux neuf armes du catalogue neuf teintes deux a deux distinctes', () => {
+    expect(new Set(WEAPONS.map((w) => w.look.tint)).size).toBe(WEAPONS.length);
+
+    const parElement = (element: number) => WEAPONS.filter((w) => w.element === element);
+    for (const element of [ELEMENT.BRAISE, ELEMENT.GIVRE]) {
+      const [a, b] = parElement(element);
+      expect(a?.look.tint).not.toBe(b?.look.tint);
+      expect(a?.look.tint).not.toBe(elementOf(element).tint);
+      expect(b?.look.tint).not.toBe(elementOf(element).tint);
+    }
+  });
+});
+
+/**
+ * Le fondu de fin de vie, DERIVE de `projectileLifeTicks` (etape 5a, tache
+ * 12) : *« fais-les durer plus longtemps ou fade pour les armes courte portee
+ * comme le lance-flammes »*.
+ *
+ * ⚠️ **Les deux moities, toujours** (R24/R25) : une fonction qui rendrait
+ * toujours 1 passerait tous les cas de l'arc-lourd, et une qui s'eteindrait
+ * toujours passerait tous ceux du lance-flammes. Il faut les deux, et il faut
+ * qu'ils DIFFERENT au meme age relatif.
+ */
+describe('projectileAlpha — la portee se voit', () => {
+  const LANCE_FLAMMES = 3;
+  const ARC_LOURD = 2;
+
+  it('part a pleine opacite, pour chaque arme du catalogue', () => {
+    for (const w of WEAPONS) {
+      expect(projectileAlpha(w.projectileLifeTicks, w.projectileLifeTicks), w.name).toBe(1);
+    }
+  });
+
+  it('laisse l arc-lourd filer NET : il ne s eteint a aucun moment de sa course', () => {
+    const arc = weaponOf(ARC_LOURD);
+    // La RAISON, ecrite plutot que laissee en commentaire : sa portee atteint
+    // la reference, donc son fondu vaut exactement zero.
+    expect(arc.projectileLifeTicks).toBeGreaterThanOrEqual(PROJECTILE_FADE_REFERENCE_TICKS);
+    for (let restant = arc.projectileLifeTicks; restant >= 0; restant--) {
+      expect(projectileAlpha(arc.projectileLifeTicks, restant), `restant=${restant}`).toBe(1);
+    }
+  });
+
+  it('eteint le lance-flammes EN VOL, jusqu a zero', () => {
+    const flammes = weaponOf(LANCE_FLAMMES);
+    const vie = flammes.projectileLifeTicks;
+
+    // Il vit 10 ticks et son fondu couvre les 75 % derniers : des le 8e tick
+    // restant, il a deja commence a s'eteindre.
+    expect(projectileAlpha(vie, 7)).toBeLessThan(1);
+    expect(projectileAlpha(vie, 0)).toBe(0);
+  });
+
+  it('separe les deux : au MEME age relatif, le lance-flammes est plus eteint que l arc-lourd', () => {
+    const flammes = weaponOf(LANCE_FLAMMES);
+    const arc = weaponOf(ARC_LOURD);
+    // Mi-course pour l'un comme pour l'autre.
+    const aMiVie = (w: (typeof WEAPONS)[number]) =>
+      projectileAlpha(w.projectileLifeTicks, w.projectileLifeTicks / 2);
+
+    expect(aMiVie(flammes)).toBeLessThan(aMiVie(arc));
+    expect(aMiVie(arc)).toBe(1);
+  });
+
+  it('n eteint jamais plus une longue portee qu une courte, sur tout le catalogue', () => {
+    // La regle qui rend la table lisible : le fondu croit quand la portee
+    // decroit, sans exception ni cas particulier a retenir.
+    const aMiVie = WEAPONS.map((w) => ({
+      name: w.name,
+      vie: w.projectileLifeTicks,
+      alpha: projectileAlpha(w.projectileLifeTicks, w.projectileLifeTicks / 2),
+    }));
+    for (const a of aMiVie) {
+      for (const b of aMiVie) {
+        if (a.vie < b.vie) {
+          expect(a.alpha, `${a.name} vs ${b.name}`).toBeLessThanOrEqual(b.alpha);
+        }
+      }
+    }
+    // ...et la relation n'est pas vide : au moins deux valeurs differentes.
+    expect(new Set(aMiVie.map((a) => a.alpha)).size).toBeGreaterThan(1);
+  });
+
+  it('ne rend ni NaN ni negatif sur une duree de vie degeneree', () => {
+    expect(projectileAlpha(0, 0)).toBe(1);
+    expect(projectileAlpha(10, -5)).toBe(0);
+  });
+});
+
+/**
+ * La trainee est une DISTANCE reellement parcourue, pas un nombre de pixels
+ * choisi a cote de `projectileSpeed` — meme discipline que `zoneScale` et
+ * `spriteScale`.
+ */
+describe('projectileTrailPx', () => {
+  it('rend les ticks de trainee convertis a la vitesse de l arme', () => {
+    const arc = weaponOf(2);
+    // Valeur ABSOLUE, pas seulement un ordre : 900 px/s pendant 1,6 tick a
+    // 30 Hz. Un `trailTicks` ignore, ou un `TICK_HZ` oublie, rendrait un autre
+    // nombre tout en gardant l'ordre entre armes.
+    expect(arc.projectileSpeed).toBe(900);
+    expect(arc.look.trailTicks).toBe(1.6);
+    expect(projectileTrailPx(arc)).toBeCloseTo((900 * 1.6) / TICK_HZ, 6);
+  });
+
+  it('suit la vitesse : l arme la plus lente ne traine pas comme la plus rapide', () => {
+    const lent = weaponOf(3); // lance-flammes, 300 px/s
+    const rapide = weaponOf(2); // arc-lourd, 900 px/s
+    expect(projectileTrailPx(lent)).toBeLessThan(projectileTrailPx(rapide));
   });
 });

@@ -41,6 +41,9 @@ const SINGLE: Weapon = {
   projectileCount: 1,
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
+  // Trois apparences DIFFERENTES entre les trois armes de test : c'est ce qui
+  // permet aux cas de `weaponAt` ci-dessous de distinguer laquelle a tire.
+  look: { shape: 'lame', diameterPx: 10, tint: 0x111111, glow: 0.2, trailTicks: 1 },
 };
 
 /** Une arme a plusieurs projectiles, pour verifier la symetrie de la dispersion. */
@@ -54,6 +57,7 @@ const SPREAD: Weapon = {
   projectileCount: 3,
   spreadRadians: Math.PI / 2,
   element: ELEMENT.NEUTRE,
+  look: { shape: 'petale', diameterPx: 12, tint: 0x222222, glow: 0.4, trailTicks: 1 },
 };
 
 /** Une arme rapide, pour exercer le balayage de segment de `collide`. */
@@ -67,6 +71,7 @@ const FAST: Weapon = {
   projectileCount: 1,
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
+  look: { shape: 'fleche', diameterPx: 14, tint: 0x333333, glow: 0.6, trailTicks: 2 },
 };
 
 describe('Projectiles.fireSalvo', () => {
@@ -443,5 +448,69 @@ describe('truncatedProjectiles — la salve qui ne part pas ne disparait pas en 
     p.fireSalvoDirected(arme, 2, 0, 0, 1, 0, arme.damage, 4);
     expect(p.count).toBe(10);
     expect(p.truncatedProjectiles).toBe(6);
+  });
+});
+
+/**
+ * Ce que le projectile porte POUR LE RENDU (etape 5a, tache 12) : l'arme qui
+ * l'a tire, son compte a rebours, et sa direction de vol.
+ *
+ * ⚠️ **Rien de tout ceci n'entre dans la simulation.** `weaponAt` est le seul
+ * champ purement cosmetique de la classe ; ce qui decide d'un degat, d'une
+ * marque ou d'une zone reste recopie a cote (`damageAt`, `elementAt`,
+ * `ownerAt`).
+ */
+describe('ce que le rendu lit sur un projectile', () => {
+  it('retient l arme qui a tire, et distingue deux armes differentes', () => {
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(SINGLE, 0, 0, 0, 1, 0, SINGLE.damage, 1);
+    p.fireSalvoDirected(FAST, 0, 0, 0, 1, 0, FAST.damage, 1);
+
+    // ⚠️ Les DEUX moities : un `weaponAt` qui rendrait toujours 0 passerait le
+    // premier creneau seul.
+    expect(p.weaponAt(0)).toBe(SINGLE.id);
+    expect(p.weaponAt(1)).toBe(FAST.id);
+    expect(SINGLE.id).not.toBe(FAST.id);
+  });
+
+  it('compacte l arme comme le reste quand un projectile disparait', () => {
+    // `#removeAt` deplace le DERNIER projectile dans le creneau libere. Un
+    // tableau oublie dans cette copie ferait porter a un projectile l'arme de
+    // son predecesseur — donc la mauvaise apparence, pour toujours.
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 60, 0);
+    expect(cible).toBeGreaterThanOrEqual(0);
+
+    const p = new Projectiles(8);
+    // Creneau 0 : SINGLE, dirige sur la cible. Creneau 1 : FAST, a l'oppose.
+    p.fireSalvoDirected(SINGLE, 0, 0, 0, 1, 0, SINGLE.damage, 1);
+    p.fireSalvoDirected(FAST, 0, 0, 0, -1, 0, FAST.damage, 1);
+    p.step(1);
+    p.collide(horde, () => undefined);
+
+    expect(p.count).toBe(1);
+    expect(p.weaponAt(0)).toBe(FAST.id);
+  });
+
+  it('rend le compte a rebours de vie, decremente a chaque pas', () => {
+    // C'est LUI que `projectileAlpha` lit, et pas `tick - bornTick` : le rendu
+    // n'a donc aucun tick a synchroniser avec la simulation.
+    const p = new Projectiles(4);
+    p.fireSalvoDirected(SINGLE, 0, 0, 0, 1, 0, SINGLE.damage, 1);
+    expect(p.ticksRemainingAt(0)).toBe(SINGLE.projectileLifeTicks);
+
+    p.step(0.01);
+    expect(p.ticksRemainingAt(0)).toBe(SINGLE.projectileLifeTicks - 1);
+    p.step(0.01);
+    expect(p.ticksRemainingAt(0)).toBe(SINGLE.projectileLifeTicks - 2);
+  });
+
+  it('rend la direction de vol, et pas celle du voisin', () => {
+    const p = new Projectiles(4);
+    p.fireSalvoDirected(SINGLE, 0, 0, 0, 1, 0, SINGLE.damage, 1); // vers +x
+    p.fireSalvoDirected(SINGLE, 0, 0, 0, 0, 1, SINGLE.damage, 1); // vers +y
+
+    expect(p.headingAt(0)).toBeCloseTo(0, 6);
+    expect(p.headingAt(1)).toBeCloseTo(Math.PI / 2, 6);
   });
 });

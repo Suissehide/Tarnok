@@ -62,6 +62,9 @@ const SINGLE: Weapon = {
   projectileCount: 1,
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
+  // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
+  // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
+  look: { shape: 'sphere', diameterPx: 10, tint: 0x123456, glow: 0.3, trailTicks: 1 },
 };
 
 function player(x: number, y: number, hp = 100): ContactPlayer {

@@ -162,10 +162,23 @@ function stubCanvas2d(): void {
   const gradient = { addColorStop: noop };
   const context = {
     createRadialGradient: () => gradient,
+    // Tache 12 : l'atlas des projectiles et la texture de trainee dessinent
+    // des chemins et un degrade lineaire, la ou zones/orbes/flashs se
+    // contentaient d'un disque a degrade radial.
+    createLinearGradient: () => gradient,
     fillStyle: '' as unknown,
+    globalCompositeOperation: '' as unknown,
+    save: noop,
+    restore: noop,
+    translate: noop,
     beginPath: noop,
+    closePath: noop,
+    moveTo: noop,
+    lineTo: noop,
+    quadraticCurveTo: noop,
     arc: noop,
     fill: noop,
+    fillRect: noop,
   };
   const canvas = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
   canvas.getContext = (): unknown => context;

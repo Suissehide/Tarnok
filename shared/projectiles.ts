@@ -55,6 +55,20 @@ export class Projectiles {
    * reaction en solo seraient indiscernables au moment de l'impact.
    */
   readonly #by: Uint8Array;
+  /**
+   * Identifiant de l'arme qui a tire, index dans `WEAPONS` — recopie de
+   * `Weapon.id` a l'emission (etape 5a, tache 12).
+   *
+   * ⚠️ **Purement COSMETIQUE, et c'est le seul champ qui le soit.** Il existe
+   * pour que le rendu sache quel projectile dessiner : neuf armes, neuf
+   * apparences (`Weapon.look`). La simulation ne le lit jamais — ce qui decide
+   * d'un degat, d'une marque ou d'une zone est deja recopie a cote
+   * (`#damage`, `#element`, `#by`), justement pour que le tir ne depende pas
+   * d'une table.
+   *
+   * `Uint8Array` : le catalogue en compte neuf, le §6.2 en projette quarante.
+   */
+  readonly #weapon: Uint8Array;
   /** Pas restants avant expiration. Decremente a chaque `step`. */
   readonly #ticksRemaining: Int32Array;
   /**
@@ -83,6 +97,7 @@ export class Projectiles {
     this.#damage = new Float32Array(capacity);
     this.#element = new Uint8Array(capacity);
     this.#by = new Uint8Array(capacity);
+    this.#weapon = new Uint8Array(capacity);
     this.#ticksRemaining = new Int32Array(capacity);
     this.#prevX = new Float32Array(capacity);
     this.#prevY = new Float32Array(capacity);
@@ -220,6 +235,7 @@ export class Projectiles {
       this.#damage[slot] = damage;
       this.#element[slot] = weapon.element;
       this.#by[slot] = by;
+      this.#weapon[slot] = weapon.id;
       this.#ticksRemaining[slot] = weapon.projectileLifeTicks;
       this.bornTick[slot] = tick;
     }
@@ -255,6 +271,40 @@ export class Projectiles {
   /** Index du joueur qui a tire le projectile de ce slot — voir `#by`. */
   ownerAt(slot: number): number {
     return this.#by[slot] ?? 0;
+  }
+
+  /**
+   * Arme qui a tire le projectile de ce slot — voir `#weapon`. Lu par le seul
+   * rendu (`ProjectileRenderer`), qui y trouve la forme, la taille, la teinte,
+   * le halo et la trainee a dessiner.
+   */
+  weaponAt(slot: number): number {
+    return this.#weapon[slot] ?? 0;
+  }
+
+  /**
+   * Pas restants avant expiration — voir `#ticksRemaining`.
+   *
+   * ⚠️ **Le rendu lit CE compte a rebours, jamais `tick - bornTick`.** Les
+   * deux diraient la meme chose tant que le tick du dessin suit exactement
+   * celui de la simulation ; le compte a rebours, lui, le dit sans hypothese
+   * — et il n'oblige pas la boucle de rendu a se faire passer un tick de plus.
+   * C'est ce que `projectileAlpha` attend.
+   */
+  ticksRemainingAt(slot: number): number {
+    return this.#ticksRemaining[slot] ?? 0;
+  }
+
+  /**
+   * Direction de vol du projectile de ce slot, en radians.
+   *
+   * Calculee a la demande plutot que stockee : la vitesse d'un projectile ne
+   * change jamais apres l'emission, mais un onzieme tableau par projectile
+   * couterait de la memoire a chaque tir pour une valeur que seul le rendu
+   * lit, une fois par image et seulement pour ce qui est a l'ecran.
+   */
+  headingAt(slot: number): number {
+    return Math.atan2(this.#vy[slot] ?? 0, this.#vx[slot] ?? 0);
   }
 
   /**
@@ -373,6 +423,7 @@ export class Projectiles {
       this.#damage[slot] = this.#damage[last] ?? 0;
       this.#element[slot] = this.#element[last] ?? 0;
       this.#by[slot] = this.#by[last] ?? 0;
+      this.#weapon[slot] = this.#weapon[last] ?? 0;
       this.#ticksRemaining[slot] = this.#ticksRemaining[last] ?? 0;
       this.#prevX[slot] = this.#prevX[last] ?? 0;
       this.#prevY[slot] = this.#prevY[last] ?? 0;

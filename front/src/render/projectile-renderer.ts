@@ -2,7 +2,16 @@ import { MAP_SIZE, REACTION_RADIUS } from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Projectiles } from '@shared/projectiles';
 import { unpackElementPair } from '@shared/protocol';
-import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
+import {
+  type ProjectileLook,
+  type ProjectileShape,
+  projectileAlpha,
+  projectileTrailPx,
+  WEAPONS,
+  type Weapon,
+  weaponOf,
+} from '@shared/weapons';
+import { Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
 import {
   type DerivedOrbs,
@@ -15,10 +24,11 @@ import {
 /**
  * Rendu des projectiles, des orbes et des flashs d'impact et de reaction.
  *
- * Trois `ParticleContainer`s independants, meme discipline que
- * `HordeRenderer` : bornes explicites (`boundsArea`, voir sa doc — un
- * `ParticleContainer` ne les calcule jamais lui-meme), un reservoir de
- * `Particle` reutilise, aucune allocation en regime etabli dans `draw()`.
+ * Cinq `ParticleContainer`s (les projectiles en comptent deux depuis la tache
+ * 12 : leurs trainees et leurs tetes), meme discipline que `HordeRenderer` :
+ * bornes explicites (`boundsArea`, voir sa doc — un `ParticleContainer` ne les
+ * calcule jamais lui-meme), un reservoir de `Particle` reutilise, aucune
+ * allocation en regime etabli dans `draw()`.
  *
  * Pas de tri en profondeur par bande ici, contrairement a la horde :
  * projectiles, orbes et flashs sont de petits points, sans la hauteur de
@@ -27,10 +37,11 @@ import {
  *
  * Textures procedurales (canvas 2D), pas un asset Tiny Swords : aucun atlas
  * dedie a ces elements n'existe encore sur MinIO (seul `derived/monsters.json`
- * existe a ce jour). Fabriquer un atlas ici sortirait du perimetre de cette
- * tache et risquerait la contrainte de licence (§4 du brief) ; un disque
- * radieux dessine au vol suffit pour un premier passage de rendu et peut
- * etre remplace par de l'art reel sans toucher a l'API de ces classes.
+ * existe a ce jour), et en ajouter un au depot risquerait la contrainte de
+ * licence (§4 du brief). Depuis la tache 12, les projectiles ne sont plus un
+ * simple disque : leur atlas est CUIT au chargement, une case par arme, a
+ * partir de `Weapon.look` — mais toujours au vol, et il peut etre remplace par
+ * de l'art reel sans toucher a l'API de ces classes.
  */
 
 /** Marge des bornes explicites, meme raisonnement que `HordeRenderer.BOUNDS_MARGIN`. */
@@ -72,99 +83,489 @@ function makeGlowTexture(diameter: number, color: string): Texture {
 }
 
 /**
- * Disque NET pour le tir, distinct de `makeGlowTexture` (tache 16, etape 3 :
- * « le projectile EST une tache floue »).
+ * Cote d'une case de l'atlas des projectiles, en pixels.
  *
- * `makeGlowTexture` etale son degrade sur les 100 % du rayon — exactement ce
- * qui produit l'effet flou, voulu pour un halo (flash d'impact, orbe) mais
- * pas pour un projectile qu'on doit pouvoir suivre des yeux en vol. Ici, le
- * coeur est plein de `0` a `CORE_FRACTION`, la couleur reste PLEINE (pas de
- * degrade) jusqu'a `EDGE_FRACTION`, et seule la derniere tranche
- * (`EDGE_FRACTION` a `1`) s'estompe — juste assez pour lisser le contour d'un
- * disque aussi petit sans le rendre crenele, jamais pour le flouter.
+ * Ce n'est PAS la taille a l'ecran — c'est la finesse du dessin, que
+ * `Weapon.look.diameterPx` ramene ensuite a la taille reelle. Meme role que
+ * `ZONE_TEXTURE_DIAMETER` pour les zones.
  */
-function makeBoltTexture(diameter: number, color: string): Texture {
+export const PROJECTILE_CELL_PX = 32;
+
+/** Cases par ligne dans l'atlas. 4 x 4 = 16 cases pour neuf armes aujourd'hui. */
+const PROJECTILE_ATLAS_COLS = 4;
+
+/** Cote de l'atlas, en pixels : une puissance de deux qui contient la grille. */
+export const PROJECTILE_ATLAS_PX = PROJECTILE_CELL_PX * PROJECTILE_ATLAS_COLS;
+
+/**
+ * Part du rayon d'une case occupee par le corps PLEIN du projectile ; le reste
+ * est la place laissee au halo.
+ *
+ * ⚠️ **Fixe, et volontairement pas un champ de `ProjectileLook`.** Deux armes
+ * de meme `diameterPx` doivent occuper la meme place a l'ecran quel que soit
+ * leur halo : sans cette fraction commune, `glow` deviendrait un second
+ * reglage de taille cache derriere un reglage de lumiere, et le joueur ne
+ * pourrait plus comparer deux projectiles.
+ */
+const PROJECTILE_SHAPE_FRACTION = 0.62;
+
+/**
+ * Marge de culling des projectiles, DERIVEE du catalogue : la plus grande
+ * empreinte qu'une arme puisse laisser a l'ecran (sa trainee plus son corps).
+ *
+ * ⚠️ **Le rendu d'avant la tache 12 n'en avait aucune** : un projectile dont
+ * le centre venait de quitter le cadre disparaissait d'un coup. Avec une
+ * trainee, ce qui disparait n'est plus un point mais un trait de plusieurs
+ * dizaines de pixels — et il faut donc continuer a le dessiner tant qu'un
+ * bout de lui peut encore etre dans le cadre. Derivee et non choisie, comme
+ * `zoneScale` : ajouter une arme a longue trainee elargit la marge toute
+ * seule.
+ */
+export const PROJECTILE_CULL_MARGIN = WEAPONS.reduce(
+  (max, w) => Math.max(max, projectileTrailPx(w) + w.look.diameterPx),
+  0,
+);
+
+/**
+ * Rectangle de la case `index` dans l'atlas.
+ *
+ * Leve hors de la grille : un atlas trop petit pour le catalogue ferait
+ * silencieusement dessiner toutes les armes suivantes avec la texture d'une
+ * autre — exactement le defaut que la tache 12 vient corriger.
+ */
+export function projectileCellRect(index: number): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const capacity = PROJECTILE_ATLAS_COLS * PROJECTILE_ATLAS_COLS;
+  if (index < 0 || index >= capacity) {
+    throw new Error(`case de projectile hors atlas : ${index} (capacite ${capacity})`);
+  }
+  return {
+    x: (index % PROJECTILE_ATLAS_COLS) * PROJECTILE_CELL_PX,
+    y: Math.floor(index / PROJECTILE_ATLAS_COLS) * PROJECTILE_CELL_PX,
+    w: PROJECTILE_CELL_PX,
+    h: PROJECTILE_CELL_PX,
+  };
+}
+
+/** `#rrggbb`, pour un `fillStyle` de canevas. */
+function cssTint(tint: number): string {
+  return `#${tint.toString(16).padStart(6, '0')}`;
+}
+
+/** `rgba(...)`, meme teinte a l'opacite demandee. */
+function cssTintAlpha(tint: number, alpha: number): string {
+  const r = (tint >> 16) & 0xff;
+  const g = (tint >> 8) & 0xff;
+  const b = tint & 0xff;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+/**
+ * Le dessin d'une forme, centre sur `(0, 0)` et **pointant vers +x**, de
+ * « rayon » `r`. `draw` fait tourner la particule de `Projectiles.headingAt`,
+ * donc +x est toujours l'avant.
+ *
+ * ⚠️ **La table est un `Record<ProjectileShape, …>`, et c'est la garde.** Le
+ * compilateur refuse une forme du catalogue sans dessin : aucun test n'a besoin
+ * de le verifier, et un test qui le ferait serait une seconde garde derriere
+ * celle-ci.
+ */
+const SHAPE_PAINTERS: Record<ProjectileShape, (ctx: CanvasRenderingContext2D, r: number) => void> =
+  {
+    /** Losange allonge : un fer de lame. */
+    lame: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.lineTo(-0.2 * r, -0.42 * r);
+      ctx.lineTo(-r, 0);
+      ctx.lineTo(-0.2 * r, 0.42 * r);
+      ctx.closePath();
+      ctx.fill();
+    },
+    /** Chevron : une pointe de fleche a ailerons. */
+    fleche: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.lineTo(-r, -0.62 * r);
+      ctx.lineTo(-0.4 * r, 0);
+      ctx.lineTo(-r, 0.62 * r);
+      ctx.closePath();
+      ctx.fill();
+    },
+    /** Goutte pointue vers l'avant, dos arrondi. */
+    petale: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.quadraticCurveTo(-0.1 * r, -0.75 * r, -r, 0);
+      ctx.quadraticCurveTo(-0.1 * r, 0.75 * r, r, 0);
+      ctx.closePath();
+      ctx.fill();
+    },
+    /** Langue de feu : large a l'avant, effilee vers l'ARRIERE. */
+    flamme: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(-r, 0);
+      ctx.quadraticCurveTo(0.1 * r, -0.85 * r, r, 0);
+      ctx.quadraticCurveTo(0.1 * r, 0.85 * r, -r, 0);
+      ctx.closePath();
+      ctx.fill();
+    },
+    /** Disque plein. */
+    sphere: (ctx, r) => {
+      ctx.beginPath();
+      ctx.arc(0, 0, r, 0, Math.PI * 2);
+      ctx.fill();
+    },
+    /** Couronne : la seule forme creuse du catalogue. */
+    anneau: (ctx, r) => {
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.82, 0, Math.PI * 2);
+      ctx.arc(0, 0, r * 0.44, 0, Math.PI * 2, true);
+      ctx.fill('evenodd');
+    },
+    /** Trait tres fin, deux fois plus long que large. */
+    aiguille: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.lineTo(-r, -0.16 * r);
+      ctx.lineTo(-r, 0.16 * r);
+      ctx.closePath();
+      ctx.fill();
+    },
+    /** Petit carre : de la mitraille, pas un trait. */
+    grain: (ctx, r) => {
+      ctx.fillRect(-0.62 * r, -0.62 * r, 1.24 * r, 1.24 * r);
+    },
+    /** Etoile a quatre branches, allongee dans l'axe du vol. */
+    eclat: (ctx, r) => {
+      ctx.beginPath();
+      ctx.moveTo(r, 0);
+      ctx.lineTo(0.22 * r, -0.28 * r);
+      ctx.lineTo(0, -0.72 * r);
+      ctx.lineTo(-0.22 * r, -0.28 * r);
+      ctx.lineTo(-r, 0);
+      ctx.lineTo(-0.22 * r, 0.28 * r);
+      ctx.lineTo(0, 0.72 * r);
+      ctx.lineTo(0.22 * r, 0.28 * r);
+      ctx.closePath();
+      ctx.fill();
+    },
+  };
+
+/**
+ * Peint une case de l'atlas : halo, corps teinte, coeur blanc.
+ *
+ * ⚠️ **La teinte est CUITE dans la case, pas posee par `Particle.tint`.**
+ * `tint` multiplie composante par composante : il ne sait pas garder un coeur
+ * blanc plus clair que le corps colore, alors que c'est exactement ce qui
+ * faisait qu'on suivait l'ancien `makeBoltTexture` des yeux en vol (tache 16,
+ * etape 3 : *« le projectile EST une tache floue »*, corrige en un disque
+ * net). Cuire la couleur rend les trois strates possibles ; l'atlas ne coute
+ * rien de plus, il est dessine une fois au chargement.
+ *
+ * La trainee, elle, fait l'inverse — texture blanche teintee par particule
+ * (voir `makeStreakTexture`) : elle n'a qu'une strate, donc `tint` suffit.
+ */
+function paintProjectileCell(
+  ctx: CanvasRenderingContext2D,
+  look: ProjectileLook,
+  cx: number,
+  cy: number,
+): void {
+  const r = PROJECTILE_CELL_PX / 2;
+  const body = r * PROJECTILE_SHAPE_FRACTION;
+
+  ctx.save();
+  ctx.translate(cx, cy);
+
+  if (look.glow > 0) {
+    const halo = ctx.createRadialGradient(0, 0, body * 0.35, 0, 0, r);
+    halo.addColorStop(0, cssTintAlpha(look.tint, look.glow));
+    halo.addColorStop(1, cssTintAlpha(look.tint, 0));
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  const paint = SHAPE_PAINTERS[look.shape];
+  ctx.fillStyle = cssTint(look.tint);
+  paint(ctx, body);
+  // Coeur blanc, la meme forme reduite : c'est lui qui donne au projectile son
+  // point chaud et le rend suivable a dix pixels de cote.
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+  paint(ctx, body * 0.42);
+
+  ctx.restore();
+}
+
+/**
+ * Cuit l'atlas des projectiles : une case par arme, `look` compris.
+ *
+ * Un seul canevas, donc une seule `TextureSource`, donc **un seul appel de
+ * dessin** pour les neuf apparences : le `ParticleContainer` de Pixi lie la
+ * source de son PREMIER enfant et dessine tout le lot avec (voir
+ * `GlParticleContainerAdaptor`). Neuf conteneurs auraient donne neuf lots.
+ */
+function makeProjectileAtlas(): Texture {
   const canvas = document.createElement('canvas');
-  canvas.width = diameter;
-  canvas.height = diameter;
+  canvas.width = PROJECTILE_ATLAS_PX;
+  canvas.height = PROJECTILE_ATLAS_PX;
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     throw new Error('canvas 2d indisponible');
   }
-  const r = diameter / 2;
-  const CORE_FRACTION = 0.5;
-  const EDGE_FRACTION = 0.8;
-  const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
-  gradient.addColorStop(0, '#ffffff');
-  gradient.addColorStop(CORE_FRACTION, color);
-  gradient.addColorStop(EDGE_FRACTION, color);
-  gradient.addColorStop(1, 'rgba(0, 0, 0, 0)');
-  ctx.fillStyle = gradient;
-  ctx.beginPath();
-  ctx.arc(r, r, r, 0, Math.PI * 2);
-  ctx.fill();
+  for (const weapon of WEAPONS) {
+    const cell = projectileCellRect(weapon.id);
+    paintProjectileCell(ctx, weapon.look, cell.x + cell.w / 2, cell.y + cell.h / 2);
+  }
   return Texture.from(canvas);
 }
 
-/** Rendu batché des projectiles (`shared/projectiles.ts`). */
+/** Longueur de la texture de trainee, en pixels. Ramenee par `draw` a `projectileTrailPx`. */
+export const STREAK_LENGTH_PX = 64;
+/** Epaisseur de la texture de trainee, en pixels. Ramenee par `draw` au calibre de l'arme. */
+export const STREAK_THICKNESS_PX = 16;
+
+/**
+ * La trainee : un degrade BLANC, opaque a droite (la tete) et transparent a
+ * gauche (la queue), adouci sur les bords.
+ *
+ * Blanche pour la meme raison que `makeZoneTexture` : `Particle.tint`
+ * multiplie, donc une texture blanche rend exactement `look.tint`.
+ */
+function makeStreakTexture(): Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = STREAK_LENGTH_PX;
+  canvas.height = STREAK_THICKNESS_PX;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+
+  const along = ctx.createLinearGradient(0, 0, STREAK_LENGTH_PX, 0);
+  along.addColorStop(0, 'rgba(255, 255, 255, 0)');
+  along.addColorStop(1, 'rgba(255, 255, 255, 1)');
+  ctx.fillStyle = along;
+  ctx.fillRect(0, 0, STREAK_LENGTH_PX, STREAK_THICKNESS_PX);
+
+  // Adoucissement transversal : sans lui la trainee est un ruban a bords nets,
+  // qui lit comme une barre et non comme une trace.
+  const across = ctx.createLinearGradient(0, 0, 0, STREAK_THICKNESS_PX);
+  across.addColorStop(0, 'rgba(255, 255, 255, 0)');
+  across.addColorStop(0.5, 'rgba(255, 255, 255, 1)');
+  across.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.globalCompositeOperation = 'destination-in';
+  ctx.fillStyle = across;
+  ctx.fillRect(0, 0, STREAK_LENGTH_PX, STREAK_THICKNESS_PX);
+
+  return Texture.from(canvas);
+}
+
+/**
+ * Epaisseur de la trainee, en fraction du calibre du projectile. Plus fine que
+ * le corps : une trainee aussi large que la tete masquerait la tete.
+ */
+const TRAIL_THICKNESS_FRACTION = 0.6;
+
+/**
+ * Opacite de la trainee, relative a celle du projectile.
+ *
+ * ⚠️ **Le §6.6 vaut ici aussi.** La trainee est additive, et il y en a une par
+ * projectile : a pleine opacite, une salve de lance-flammes suffit a blanchir
+ * la zone de contact — exactement ce que `ZONE_ALPHA` evite pour les zones.
+ */
+export const TRAIL_ALPHA = 0.4;
+
+/**
+ * Ce que le conteneur reteleverse vraiment a chaque image — voir
+ * `ProjectileRenderer.dynamicHeadChannels`.
+ */
+function dynamicChannelsOf(container: ParticleContainer): {
+  uvs: boolean;
+  rotation: boolean;
+  vertex: boolean;
+  color: boolean;
+} {
+  const props = container._properties;
+  return {
+    uvs: props.uvs?.dynamic === true,
+    rotation: props.rotation?.dynamic === true,
+    vertex: props.vertex?.dynamic === true,
+    color: props.color?.dynamic === true,
+  };
+}
+
+/**
+ * Rendu batché des projectiles (`shared/projectiles.ts`) : **une apparence par
+ * arme** (etape 5a, tache 12).
+ *
+ * ⚠️ **Deux quads par projectile, jamais plus — c'est la borne, et elle est
+ * de CONSTRUCTION.** La trainee est un seul quad etire dans l'axe du vol, pas
+ * une file de segments : a `PROJECTILE_CAPACITY` (1024) projectiles, ce
+ * renderer pose au pire **2 048 quads**. Une trainee a six segments en aurait
+ * pose 6 144, et rien dans le code ne l'aurait rappele — le §4.3 de
+ * l'orientation dit que *« le danger est le VFX, pas les sprites »*, et la
+ * tache 4 de cette etape a deja montre ce que « quelques dizaines » devient
+ * quand personne ne compte (368 zones mesurees). Le compte est mesure par
+ * `projectile-renderer.test.ts`, et il ne depend PAS de la longueur des
+ * trainees.
+ *
+ * Deux `ParticleContainer`s : les trainees dessous (additives, une seule
+ * texture blanche teintee par particule), les tetes dessus (l'atlas, une case
+ * par arme). Un `ParticleContainer` ne porte qu'une texture source et qu'un
+ * mode de fusion — les separer n'est pas un choix.
+ */
 export class ProjectileRenderer {
-  readonly #container = new ParticleContainer({
-    // Seule la position bouge d'une image a l'autre ; le reste (teinte,
-    // rotation) ne change jamais une fois la texture choisie.
-    dynamicProperties: { position: true, rotation: false, uvs: false, color: false },
+  readonly #trails = new ParticleContainer({
+    // Additif, comme les zones et le flash de reaction (§6.6) : deux trainees
+    // qui se croisent s'additionnent au lieu de se masquer.
+    blendMode: 'add',
+    // `rotation` : la trainee est orientee dans l'axe du vol. `vertex` : elle
+    // est etiree a la longueur de l'arme. `color` : teinte de l'arme et fondu
+    // de fin de vie. `uvs` : une seule texture, rien a rafraichir.
+    dynamicProperties: { position: true, rotation: true, vertex: true, color: true, uvs: false },
   });
-  readonly #pool: Particle[] = [];
-  #texture: Texture | null = null;
+  readonly #heads = new ParticleContainer({
+    // `uvs` : le reservoir est REUTILISE, et le creneau 3 peut porter une
+    // dague a cette image et une grenade a la suivante — a `false`, la case
+    // d'atlas televersee une fois ne changerait plus jamais et toutes les
+    // armes finiraient dessinees avec la premiere rencontree. C'est la meme
+    // raison qui fait `color: true` sur le conteneur de la horde.
+    dynamicProperties: { position: true, rotation: true, vertex: true, color: true, uvs: true },
+  });
+  /** Le calque, vu du monde : trainees puis tetes. Voir `attach`. */
+  readonly #group = new Container();
+  readonly #headPool: Particle[] = [];
+  readonly #trailPool: Particle[] = [];
+  /** Une case d'atlas par arme, indexee par `Weapon.id`. Vide tant que rien n'est adopte. */
+  #cells: Texture[] = [];
+  #streak: Texture | null = null;
 
   constructor() {
     // Bornes explicites couvrant la carte entiere : voir la doc de fichier.
-    this.#container.boundsArea = mapBoundsArea();
+    this.#heads.boundsArea = mapBoundsArea();
+    this.#trails.boundsArea = mapBoundsArea();
   }
 
   /** Expose pour le test : lit ce que `HordeRenderer` pose aussi dans son constructeur. */
   get boundsArea(): Rectangle {
-    return this.#container.boundsArea as Rectangle;
+    return this.#heads.boundsArea as Rectangle;
   }
 
-  attach(parent: Container): void {
-    parent.addChild(this.#container);
+  /** Idem pour le calque des trainees, qui est un conteneur a part entiere. */
+  get trailBoundsArea(): Rectangle {
+    return this.#trails.boundsArea as Rectangle;
+  }
+
+  /** Expose pour le test : « additif » est une exigence du §6.6, pas un detail. */
+  get trailBlendMode(): string {
+    return this.#trails.blendMode;
   }
 
   /**
-   * Construit la texture procedurale. A appeler apres l'init de
-   * l'`Application` — jamais dans le constructeur : `document` (canevas 2D)
-   * n'existe que dans un navigateur, et ce renderer doit rester
-   * construisible (et son `boundsArea` lisible) sans lui, comme l'exige le
-   * test unitaire de ce fichier.
+   * Les canaux vraiment reteleverses au GPU a chaque image, **lus sur le
+   * conteneur** et jamais sur l'objet passe au constructeur : c'est Pixi qui
+   * traduit `dynamicProperties` en descripteurs, et seule cette traduction dit
+   * ce qui sera reellement rafraichi.
+   *
+   * ⚠️ **Meme motif que `HordeRenderer.dynamicTint`, et pour la meme raison :
+   * la mutation survit sans lui.** Elle a d'abord survecu ici — passer
+   * `uvs: false` sur les tetes laisse 212 tests verts, parce que `draw` pose
+   * bien `head.texture` sur l'objet JS et que le test le relit. Seul le
+   * televersement change : le reservoir de particules etant REUTILISE, la case
+   * d'atlas du premier occupant d'un creneau y resterait pour toujours et les
+   * neuf armes finiraient dessinees avec la meme forme — exactement le defaut
+   * que cette tache corrige.
    */
+  get dynamicHeadChannels(): { uvs: boolean; rotation: boolean; vertex: boolean; color: boolean } {
+    return dynamicChannelsOf(this.#heads);
+  }
+
+  /** Idem pour les trainees, qui n'ont qu'une texture donc pas d'`uvs` a suivre. */
+  get dynamicTrailChannels(): { rotation: boolean; vertex: boolean; color: boolean } {
+    const { rotation, vertex, color } = dynamicChannelsOf(this.#trails);
+    return { rotation, vertex, color };
+  }
+
   /**
-   * Vrai des que `load` a pose sa texture. Expose pour le test, comme
+   * Attache **un seul** enfant au monde, comme tous les autres calques.
+   *
+   * ⚠️ **Un groupe, pas deux enfants poses cote a cote dans le monde.** Le
+   * §6.6 compte six calques et `stage.test.ts` le verifie en comptant les
+   * enfants du monde ; y verser deux conteneurs ferait de « un renderer, un
+   * calque » une regle a exceptions. Le groupe garantit en plus que la trainee
+   * reste immediatement SOUS sa tete — l'ordre est interne, personne ne peut
+   * l'inverser en reordonnant `Stage.#layers`.
+   */
+  attach(parent: Container): void {
+    this.#group.addChild(this.#trails);
+    this.#group.addChild(this.#heads);
+    parent.addChild(this.#group);
+  }
+
+  /**
+   * Vrai des que `load` a pose ses textures. Expose pour le test, comme
    * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
    * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
    * indetectable jusqu'a la tache 9 bis.
    */
   get loaded(): boolean {
-    return this.#texture !== null;
+    return this.#streak !== null;
   }
 
+  /**
+   * Cuit les textures procedurales. A appeler apres l'init de l'`Application`
+   * — jamais dans le constructeur : `document` (canevas 2D) n'existe que dans
+   * un navigateur, et ce renderer doit rester construisible (et son
+   * `boundsArea` lisible) sans lui, comme l'exige le test unitaire de ce
+   * fichier.
+   */
   load(): void {
-    this.#texture = makeBoltTexture(20, '#f2c14e');
+    this.adoptTextures(makeProjectileAtlas(), makeStreakTexture());
+  }
+
+  /**
+   * Decoupe l'atlas et rend le renderer capable de dessiner.
+   *
+   * ⚠️ **Separe de `load` PARCE QUE `load` a besoin d'un canevas 2D**, que
+   * l'environnement de test n'a pas — exactement la raison de
+   * `HordeRenderer.adoptAtlas` (tache 9 bis). Tant que les deux ne faisaient
+   * qu'un, `draw` retournait au premier `if (!texture)` en test et **tout son
+   * corps pouvait etre retire sans qu'une assertion ne bouge.**
+   */
+  adoptTextures(atlas: Texture, streak: Texture): void {
+    this.#cells = WEAPONS.map((w) => {
+      const cell = projectileCellRect(w.id);
+      return new Texture({
+        source: atlas.source,
+        frame: new Rectangle(cell.x, cell.y, cell.w, cell.h),
+      });
+    });
+    this.#streak = streak;
   }
 
   draw(projectiles: Projectiles, view: Rectangle): void {
-    const texture = this.#texture;
-    if (!texture) {
+    const streak = this.#streak;
+    const fallback = this.#cells[0];
+    if (!streak || !fallback) {
       return;
     }
-    this.#ensurePool(projectiles.count, texture);
+    this.#ensurePools(projectiles.count, fallback, streak);
 
-    const minX = view.x;
-    const maxX = view.x + view.width;
-    const minY = view.y;
-    const maxY = view.y + view.height;
+    const minX = view.x - PROJECTILE_CULL_MARGIN;
+    const maxX = view.x + view.width + PROJECTILE_CULL_MARGIN;
+    const minY = view.y - PROJECTILE_CULL_MARGIN;
+    const maxY = view.y + view.height + PROJECTILE_CULL_MARGIN;
 
-    const children = this.#container.particleChildren;
-    children.length = 0;
+    const heads = this.#heads.particleChildren;
+    const trails = this.#trails.particleChildren;
+    heads.length = 0;
+    trails.length = 0;
     let used = 0;
     for (let i = 0; i < projectiles.count; i++) {
       const x = projectiles.x[i] ?? 0;
@@ -172,25 +573,59 @@ export class ProjectileRenderer {
       if (x < minX || x > maxX || y < minY || y > maxY) {
         continue;
       }
-      const particle = this.#pool[used];
-      if (!particle) {
+      const head = this.#headPool[used];
+      const trail = this.#trailPool[used];
+      if (!head || !trail) {
         break;
       }
-      particle.x = x;
-      particle.y = y;
-      children.push(particle);
+
+      const weapon: Weapon = weaponOf(projectiles.weaponAt(i));
+      const look = weapon.look;
+      // Le fondu, DERIVE de `projectileLifeTicks` : le lance-flammes (10
+      // ticks) s'eteint sur les trois quarts de sa course, l'arc-lourd (40)
+      // file net. Voir `projectileAlpha`.
+      const alpha = projectileAlpha(weapon.projectileLifeTicks, projectiles.ticksRemainingAt(i));
+      const heading = projectiles.headingAt(i);
+
+      head.texture = this.#cells[weapon.id] ?? fallback;
+      head.x = x;
+      head.y = y;
+      head.rotation = heading;
+      head.scaleX = look.diameterPx / PROJECTILE_CELL_PX;
+      head.scaleY = head.scaleX;
+      head.alpha = alpha;
+
+      // Ancree a droite (`anchorX: 1`) : le quad s'etend donc vers -x local,
+      // c'est-a-dire DERRIERE le projectile une fois tourne de `heading`.
+      trail.x = x;
+      trail.y = y;
+      trail.rotation = heading;
+      trail.scaleX = projectileTrailPx(weapon) / STREAK_LENGTH_PX;
+      trail.scaleY = (look.diameterPx * TRAIL_THICKNESS_FRACTION) / STREAK_THICKNESS_PX;
+      trail.tint = look.tint;
+      trail.alpha = alpha * TRAIL_ALPHA;
+
+      heads.push(head);
+      trails.push(trail);
       used++;
     }
-    this.#container.update();
+    this.#heads.update();
+    this.#trails.update();
   }
 
+  /** Les trois noeuds, et pas seulement le groupe : `attach` peut n'avoir jamais eu lieu. */
   destroy(): void {
-    this.#container.destroy();
+    this.#trails.destroy();
+    this.#heads.destroy();
+    this.#group.destroy();
   }
 
-  #ensurePool(needed: number, texture: Texture): void {
-    while (this.#pool.length < needed) {
-      this.#pool.push(new Particle({ texture, anchorX: 0.5, anchorY: 0.5 }));
+  #ensurePools(needed: number, head: Texture, streak: Texture): void {
+    while (this.#headPool.length < needed) {
+      this.#headPool.push(new Particle({ texture: head, anchorX: 0.5, anchorY: 0.5 }));
+    }
+    while (this.#trailPool.length < needed) {
+      this.#trailPool.push(new Particle({ texture: streak, anchorX: 1, anchorY: 0.5 }));
     }
   }
 }

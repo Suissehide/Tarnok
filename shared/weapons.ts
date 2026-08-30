@@ -12,7 +12,71 @@
  * temps dans cette etape puis ont ete retires — voir le §9 de la spec.
  */
 
+import { TICK_HZ } from './constants';
 import { ELEMENT, elementOf } from './elements';
+
+/**
+ * Les formes de projectile connues (etape 5a, tache 12).
+ *
+ * ⚠️ **Un NOM, jamais un dessin.** Le dessin vit cote client
+ * (`front/src/render/projectile-renderer.ts`, qui en cuit un atlas au
+ * chargement) ; `shared/` n'a ni canevas ni `document`. C'est exactement le
+ * rapport que `Weapon.element` entretient avec `ELEMENTS` : une reference dans
+ * la donnee, resolue ailleurs.
+ *
+ * **Ajouter une arme reste du contenu** : elle choisit une forme existante,
+ * comme elle choisit un element existant. Ajouter une forme, en revanche, est
+ * un dessin de plus cote client — et `projectile-renderer.test.ts` verifie que
+ * chaque forme du catalogue en a un.
+ */
+export type ProjectileShape =
+  | 'lame'
+  | 'fleche'
+  | 'petale'
+  | 'flamme'
+  | 'sphere'
+  | 'anneau'
+  | 'aiguille'
+  | 'grain'
+  | 'eclat';
+
+/**
+ * L'apparence du projectile d'une arme.
+ *
+ * ⚠️ **La teinte n'est PAS celle de l'element, et `assertWeaponLooks` le
+ * refuse.** Une arme neutre doit rester reconnaissable, et deux armes du meme
+ * element doivent se distinguer l'une de l'autre : l'element se lit a la zone
+ * qu'elle laisse au sol (`ZoneRenderer`) et a la marque sur l'ennemi, pas au
+ * point lumineux qui vole. Neuf armes, neuf teintes.
+ *
+ * ⚠️ **Aucune atténuation ici.** Le fondu de fin de vie se DERIVE de
+ * `projectileLifeTicks` (voir `projectileAlpha`) : un second champ le
+ * decrirait une deuxieme fois, et les deux finiraient par se contredire.
+ */
+export interface ProjectileLook {
+  shape: ProjectileShape;
+  /**
+   * Empreinte dessinee, halo compris, en pixels monde. Le corps plein en
+   * occupe une fraction fixe (voir `PROJECTILE_SHAPE_FRACTION` cote client) :
+   * deux armes de meme `diameterPx` occupent donc la meme place a l'ecran quel
+   * que soit leur `glow`.
+   */
+  diameterPx: number;
+  /** Teinte du projectile, 0xRRGGBB. Voir l'avertissement ci-dessus. */
+  tint: number;
+  /** Intensite du halo, de 0 (aucun) a 1 (aussi opaque que le corps). */
+  glow: number;
+  /**
+   * Longueur de la trainee, exprimee en **ticks de vol**.
+   *
+   * ⚠️ **En ticks, pas en pixels** : la trainee dessine la distance que le
+   * projectile vient REELLEMENT de parcourir (`projectileTrailPx`). Une
+   * longueur en pixels reglee a cote de `projectileSpeed` mentirait des la
+   * premiere retouche de vitesse — meme discipline que `spriteScale` et
+   * `zoneScale`, ou la taille dessinee est derivee de la portee reelle.
+   */
+  trailTicks: number;
+}
 
 export interface Weapon {
   id: number;
@@ -47,6 +111,14 @@ export interface Weapon {
    * du module plutot que d'attendre le tir.
    */
   element: number;
+  /**
+   * L'apparence de ses projectiles — voir `ProjectileLook`.
+   *
+   * ⚠️ Champ OBLIGATOIRE, contrairement a `element` : une arme sans apparence
+   * retomberait sur celle d'une autre, et « neuf armes, neuf apparences »
+   * redeviendrait « neuf armes, un point lumineux » sans que rien ne le dise.
+   */
+  look: ProjectileLook;
 }
 
 /**
@@ -77,6 +149,10 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     //
     // Hors slots (§6.1) : jamais proposee par le draft, donc jamais empilee.
     name: 'dague',
+    // Lame d'acier, etroite et sobre : l'arme que tout le monde porte ne doit
+    // jamais voler la vedette aux huit autres, d'ou le blanc bleute et le halo
+    // le plus discret du catalogue.
+    look: { shape: 'lame', diameterPx: 10, tint: 0xeaf2ff, glow: 0.3, trailTicks: 1 },
     cooldownTicks: 7,
     damage: 5,
     projectileSpeed: 650,
@@ -93,6 +169,11 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // arrose et d'une qui frappe fort — un element qu'on n'applique presque
     // jamais est un systeme qu'on ne sent pas.
     name: 'eventail',
+    // Petale ambre. ⚠️ **Ambre, pas orange de Braise** (0xff7a3c) : c'est la
+    // zone au sol qui dit l'element, pas le projectile — et la grenade, Braise
+    // elle aussi, part sur un vert franc pour qu'on ne confonde jamais les
+    // deux (voir `assertWeaponLooks`).
+    look: { shape: 'petale', diameterPx: 11, tint: 0xffc23d, glow: 0.45, trailTicks: 1 },
     cooldownTicks: 45,
     damage: 4,
     projectileSpeed: 420,
@@ -105,6 +186,11 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
     // aussi l'extreme oppose du DPS instantane.
     name: 'arc-lourd',
+    // Le trait le plus gros, le plus rapide et le plus long du catalogue — et
+    // le seul qui ne s'eteint JAMAIS en vol : sa vie (40 ticks) atteint
+    // `PROJECTILE_FADE_REFERENCE_TICKS`, donc `projectileAlpha` le laisse a
+    // pleine opacite jusqu'au bout. « Il file net », par derivation.
+    look: { shape: 'fleche', diameterPx: 17, tint: 0x9a5cff, glow: 0.25, trailTicks: 1.6 },
     cooldownTicks: 60,
     damage: 25,
     projectileSpeed: 900,
@@ -125,6 +211,12 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // que « un projectile = une zone » (plafond par joueur, ou une zone par
     // salve). Signale a l'auteur, pas tranche ici.
     name: 'lance-flammes',
+    // ⚠️ **Le cas que la tache 12 nomme** : 10 ticks de vie, donc le fondu le
+    // plus long du catalogue (`projectileAlpha` en tire 75 % de sa vie). La
+    // langue de feu s'eteint en vol au lieu de disparaitre d'un coup a bout de
+    // portee — c'est ce que l'auteur voyait manquer en jouant. Halo le plus
+    // fort, trainee la plus courte : tout se passe au contact.
+    look: { shape: 'flamme', diameterPx: 13, tint: 0xff4d2e, glow: 0.7, trailTicks: 1 },
     cooldownTicks: 5,
     damage: 3,
     projectileSpeed: 300,
@@ -140,6 +232,10 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // cadence du catalogue, ce qui donne a la Braise une arme de couverture et
     // une arme de placement.
     name: 'grenade',
+    // Sphere verte, la plus grosse du catalogue : une arme a 40 degats et 75
+    // ticks de recharge doit se voir partir. Vert franc face a l'ambre de
+    // l'eventail — les deux armes de Braise ne se ressemblent pas.
+    look: { shape: 'sphere', diameterPx: 18, tint: 0x39d97a, glow: 0.55, trailTicks: 1.5 },
     cooldownTicks: 75,
     damage: 40,
     projectileSpeed: 350,
@@ -151,6 +247,9 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
     name: 'chakram',
+    // Anneau magenta : la seule forme creuse du catalogue, pour une arme dont
+    // le nom EST un disque perce.
+    look: { shape: 'anneau', diameterPx: 14, tint: 0xff45c8, glow: 0.35, trailTicks: 1.5 },
     cooldownTicks: 35,
     damage: 12,
     projectileSpeed: 500,
@@ -165,6 +264,11 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // seconde, de quoi entretenir des marques de Givre sur un front que la
     // Braise d'un allie viendra faire reagir (§6.2).
     name: 'fleches-jumelles',
+    // Aiguille outremer, la plus fine du catalogue : deux traits paralleles
+    // doivent se lire comme deux traits, pas comme une tache. Outremer face au
+    // turquoise du sceptre — les deux armes de Givre ne se ressemblent pas, et
+    // ni l'une ni l'autre ne porte le bleu de l'element (0x7ad8ff).
+    look: { shape: 'aiguille', diameterPx: 9, tint: 0x2f6bff, glow: 0.3, trailTicks: 1.5 },
     cooldownTicks: 20,
     damage: 7,
     projectileSpeed: 600,
@@ -177,6 +281,9 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // Salve tres large a courte portee : l'autre extreme de la dispersion,
     // face a `eventail`.
     name: 'canon-a-mitraille',
+    // Grain citron, le plus petit du catalogue et la plus courte trainee (un
+    // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
+    look: { shape: 'grain', diameterPx: 7, tint: 0xd6f22b, glow: 0.25, trailTicks: 0.5 },
     cooldownTicks: 50,
     damage: 6,
     projectileSpeed: 550,
@@ -192,6 +299,9 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // Le givre « de placement » : projectile unique, longue portee, cadence
     // moyenne — une zone posee ou on la vise, en face des fleches-jumelles.
     name: 'sceptre-arcanique',
+    // Eclat turquoise a fort halo : l'arme « de placement » du Givre se vise,
+    // donc elle se suit des yeux.
+    look: { shape: 'eclat', diameterPx: 12, tint: 0x28e6d0, glow: 0.6, trailTicks: 1.5 },
     cooldownTicks: 40,
     damage: 10,
     projectileSpeed: 480,
@@ -229,7 +339,125 @@ export function assertWeaponElements(weapons: readonly Weapon[]): void {
   }
 }
 
+/**
+ * Verifie que les neuf apparences se distinguent, et qu'aucune ne se fait
+ * passer pour son element.
+ *
+ * Deux regles, et deux seulement :
+ *
+ * 1. **Aucune arme ne porte la teinte de son element.** L'element se lit a la
+ *    zone au sol et a la marque sur l'ennemi (§6.6) ; un projectile qui la
+ *    reprend rendrait les cinq armes neutres indiscernables entre elles — la
+ *    teinte de `NEUTRE` est `0xffffff`, l'identite du produit, donc « neutre »
+ *    voudrait dire « blanc », et blanc est deja le flash de reaction.
+ * 2. **Deux armes ne partagent jamais une teinte.** C'est le canal qu'on lit a
+ *    un point de dix pixels en mouvement ; la forme, non. Sans cette regle,
+ *    « neuf armes ont une apparence » et « neuf armes ont la MEME apparence »
+ *    se ressemblent beaucoup.
+ *
+ * ⚠️ **Rien sur la FORME.** Exiger neuf formes distinctes interdirait a une
+ * dixieme arme d'en reutiliser une, donc ferait de « ajouter une arme » de
+ * l'architecture. Le catalogue en donne neuf differentes parce que c'est plus
+ * joli, pas parce qu'une garde l'impose.
+ *
+ * Prend la table en parametre pour la meme raison que `assertWeaponElements` :
+ * le vrai catalogue est une constante, aucun test ne peut y glisser un doublon.
+ */
+export function assertWeaponLooks(weapons: readonly Weapon[]): void {
+  const parTeinte = new Map<number, string>();
+  for (const w of weapons) {
+    if (w.look.tint === elementOf(w.element).tint) {
+      throw new Error(`arme « ${w.name} » : teinte de projectile identique a celle de son element`);
+    }
+    const jumelle = parTeinte.get(w.look.tint);
+    if (jumelle !== undefined) {
+      throw new Error(`armes « ${jumelle} » et « ${w.name} » : meme teinte de projectile`);
+    }
+    parTeinte.set(w.look.tint, w.name);
+  }
+}
+
 assertWeaponElements(WEAPONS);
+assertWeaponLooks(WEAPONS);
+
+/**
+ * Duree de vie au-dela de laquelle un projectile ne s'eteint plus du tout,
+ * en ticks.
+ *
+ * ⚠️ **C'est la SEULE constante du fondu**, et l'atténuation de chaque arme
+ * s'en deduit avec sa propre `projectileLifeTicks` — voir `projectileAlpha`.
+ * L'auteur demandait *« fais-les durer plus longtemps ou fade pour les armes
+ * courte portee comme le lance-flammes »* : la portee ne peut pas bouger (elle
+ * est du reglage de jeu), donc c'est le fondu qui la dit.
+ *
+ * 40 est la duree de vie de l'arc-lourd, la plus longue portee reelle du
+ * catalogue hors grenade — `weapons.test.ts` le verifie plutot que de le
+ * laisser en commentaire. Une arme qui l'atteint « file net » : son fondu vaut
+ * exactement zero.
+ */
+export const PROJECTILE_FADE_REFERENCE_TICKS = 40;
+
+/**
+ * Part de sa vie qu'un projectile passe a s'eteindre, de 0 (jamais) a 1 (des
+ * son depart). Interne : `projectileAlpha` est la seule regle publique, pour
+ * qu'aucune mutation de cette formule ne puisse etre masquee par un test qui
+ * la verifierait deux fois.
+ */
+function fadeFraction(lifeTicks: number): number {
+  const brut = 1 - lifeTicks / PROJECTILE_FADE_REFERENCE_TICKS;
+  return brut < 0 ? 0 : brut > 1 ? 1 : brut;
+}
+
+/**
+ * Opacite d'un projectile a `ticksRemaining` ticks de son expiration, pour une
+ * arme dont les projectiles vivent `lifeTicks`.
+ *
+ * ⚠️ **DERIVEE de `projectileLifeTicks`, jamais reglee a cote.** Deux nombres
+ * qui decrivent la meme chose finissent par se contredire — ce depot l'a
+ * rencontre trois fois. Le fondu occupe la part `1 - lifeTicks / REFERENCE` de
+ * la vie du projectile : plus la portee est courte, plus tot il commence.
+ *
+ * | Arme | `projectileLifeTicks` | part de vie en fondu |
+ * | --- | --- | --- |
+ * | canon-a-mitraille | 8 | 80 % |
+ * | **lance-flammes** | **10** | **75 %** |
+ * | eventail | 12 | 70 % |
+ * | dague | 28 | 30 % |
+ * | chakram | 35 | 12,5 % |
+ * | **arc-lourd** | **40** | **0 % — il file net** |
+ * | grenade | 45 | 0 % |
+ *
+ * `ticksRemaining` est le compte a rebours de `Projectiles` (`ticksRemainingAt`),
+ * pas un age calcule depuis une horloge : le rendu n'a donc aucun tick a
+ * synchroniser avec la simulation pour dessiner le bon fondu.
+ */
+export function projectileAlpha(lifeTicks: number, ticksRemaining: number): number {
+  if (lifeTicks <= 0) {
+    return 1;
+  }
+  const fondu = fadeFraction(lifeTicks);
+  const restant = ticksRemaining / lifeTicks;
+  // ⚠️ **Pas de `if (fondu <= 0) return 1;` ici, et c'est deliberé.** Il a
+  // existe, et la mutation l'a trouve MASQUE par la comparaison ci-dessous :
+  // a fondu nul, `restant >= 0` est deja toujours vrai. Deux gardes qui se
+  // couvrent, huitieme occurrence du depot — soldee comme les trois autres,
+  // par une suppression de code.
+  if (restant >= fondu) {
+    return 1;
+  }
+  return restant < 0 ? 0 : restant / fondu;
+}
+
+/**
+ * Longueur de la trainee d'une arme, en pixels monde.
+ *
+ * `look.trailTicks` ticks de vol a `projectileSpeed` : la trainee dessine donc
+ * la distance que le projectile vient de parcourir, et pas un nombre choisi a
+ * cote de sa vitesse.
+ */
+export function projectileTrailPx(weapon: Weapon): number {
+  return (weapon.projectileSpeed * weapon.look.trailTicks) / TICK_HZ;
+}
 
 /**
  * L'arme neutre de base du §6.1 : celle avec laquelle toute run commence.
