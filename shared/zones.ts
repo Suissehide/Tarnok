@@ -102,24 +102,39 @@ export class ZoneField {
    * connait que les zones vivantes ; une zone perimee mais pas encore retiree
    * serait rafraichie au lieu d'etre remplacee — meme contrat d'ordre que
    * `OrbField.resolvePickups`, qui expire avant de resoudre.
+   *
+   * Depuis la tache 6, le balayage se protege LUI-MEME contre ce cas en
+   * sautant les zones que `aliveAt` juge perimees : le contrat d'ordre reste
+   * exige (c'est lui qui borne la memoire), mais le CLIENT, lui, garde
+   * volontairement des zones mortes quelques ticks de plus pour pouvoir
+   * rejouer (voir `aliveAt`), et il applique le meme `spawn`.
+   *
+   * Rend le creneau touche — celui qui vient d'etre cree ou celui qui vient
+   * d'etre rafraichi — ou `-1` si la reserve etait pleine. C'est ce que
+   * `Room` annonce : le message `ZONE` porte le centre STOCKE, jamais celui
+   * du projectile, pour qu'un client qui rejoue la meme pose retombe sur la
+   * meme zone (distance nulle) sans avoir a deviner laquelle fusionner.
    */
-  spawn(element: number, x: number, y: number, playerId: number, tick: number): void {
+  spawn(element: number, x: number, y: number, playerId: number, tick: number): number {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
     for (let i = 0; i < this.#count; i++) {
       if (this.element[i] !== element) {
+        continue;
+      }
+      if (!this.aliveAt(i, tick)) {
         continue;
       }
       const dx = (this.x[i] ?? 0) - x;
       const dy = (this.y[i] ?? 0) - y;
       if (dx * dx + dy * dy < r2) {
         this.bornTick[i] = tick;
-        return;
+        return i;
       }
     }
 
     if (this.#count >= this.capacity) {
       this.truncatedZones++;
-      return;
+      return -1;
     }
 
     const slot = this.#count++;
@@ -128,6 +143,52 @@ export class ZoneField {
     this.y[slot] = y;
     this.by[slot] = playerId;
     this.bornTick[slot] = tick;
+    return slot;
+  }
+
+  /**
+   * La zone `slot` est-elle POSEE et pas encore perimee au tick `tick` ?
+   *
+   * ⚠️ **C'est ce predicat, jamais la simple presence dans le tableau, qui
+   * dit si une zone existe.** Le serveur appelle `expire(tick)` a l'heure, si
+   * bien que chez lui les deux coincident ; le CLIENT, lui, garde ses zones
+   * mortes `ROLLBACK_DEPTH_TICKS` ticks de plus, parce que `HordeHistory` ne
+   * sauvegarde QUE la horde : un rejeu qui repart d'un tick ou la zone vivait
+   * encore doit pouvoir la retrouver. Une zone retiree du tableau est
+   * irrecuperable ; une zone morte laissee dans le tableau est inerte, tant
+   * que tout le monde passe par ce predicat. `expire` n'est donc plus une
+   * regle de jeu, seulement une reprise de memoire.
+   *
+   * Meme borne que `expire` : une zone posee au tick `T` vaut encore au tick
+   * `T + ZONE_LIFETIME_TICKS - 1` et plus au tick `T + ZONE_LIFETIME_TICKS`.
+   */
+  aliveAt(slot: number, tick: number): boolean {
+    const born = this.bornTick[slot] ?? 0;
+    return born <= tick && tick - born < ZONE_LIFETIME_TICKS;
+  }
+
+  /**
+   * La zone `slot` RALENTIT-elle la horde au tick `tick` ?
+   *
+   * ⚠️ **Deux predicats distincts, et il ne faut pas les confondre** — meme
+   * piege que la fusion et le recouvrement (§5.1 bis de la spec), qui ont
+   * deja coute un facteur 2 a la tache 4 :
+   *
+   * | Question | Borne basse |
+   * | --- | --- |
+   * | La zone existe-t-elle au tick T ? (`aliveAt`) | `bornTick <= T` |
+   * | La zone ralentit-elle au tick T ? (`slowsAt`) | `bornTick < T` |
+   *
+   * La difference tient a l'ORDRE du tick serveur : `Room.step` fait avancer
+   * la horde AVANT de resoudre les projectiles, donc une zone posee au tick
+   * `T` n'existe pas encore quand la horde bouge ce tick-la. Elle ne ralentit
+   * qu'a partir de `T + 1`. Sans cette borne stricte, un client qui rejoue
+   * depuis `bornTick` ralentirait un tick de plus que le serveur — un tick de
+   * decalage sur le deplacement, exactement ce que le rejeu existe pour
+   * eviter.
+   */
+  slowsAt(slot: number, tick: number): boolean {
+    return (this.bornTick[slot] ?? 0) < tick && this.aliveAt(slot, tick);
   }
 
   /**

@@ -23,8 +23,16 @@ import { makeRandom } from '@shared/random';
 import type { WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
+import { ZoneField } from '@shared/zones';
 
-import { type ContactPlayer, OrbField, resolveContact, resolveProjectileDamage } from './combat';
+import {
+  type ContactPlayer,
+  markInZones,
+  OrbField,
+  resolveBurn,
+  resolveContact,
+  resolveProjectileDamage,
+} from './combat';
 import { Draft } from './draft';
 import { WaveDirector } from './wave-director';
 
@@ -113,6 +121,22 @@ export interface IdBatch {
   ids: number[];
 }
 
+/**
+ * Une zone posee, telle que `ZONE` la transporte (§5.3 / §8) — element, x, y,
+ * tick de naissance, joueur.
+ *
+ * ⚠️ **Pas de rayon, et pas de mort.** Toutes les zones portent `ZONE_RADIUS`,
+ * une constante que les deux cotes lisent deja ; leur peremption se derive du
+ * seul `bornTick`, comme celle des orbes. Voir `ZoneMessage`.
+ */
+export interface ZoneEvent {
+  element: number;
+  x: number;
+  y: number;
+  bornTick: number;
+  by: number;
+}
+
 /** Une montee de niveau, datee au tick ou le gel prend effet (§6.2). */
 /** Un etalage a diffuser, tel que `DRAFT_OPEN` le transporte. */
 export interface DraftOpenEvent {
@@ -189,6 +213,13 @@ export class Room {
   readonly #director: WaveDirector;
   readonly #projectiles = new Projectiles(PROJECTILE_CAPACITY);
   readonly #orbs = new OrbField(MAX_ENTITIES);
+  /**
+   * Les zones au sol (§5). Vivent ici et nulle part ailleurs cote serveur :
+   * `Room.step` est le seul a respecter le contrat d'ordre « expirer avant de
+   * poser, une fois par tick » que `ZoneField.spawn` exige.
+   */
+  readonly #zones = new ZoneField();
+  #pendingZones: ZoneEvent[] = [];
   #pendingOrders: WaveOrder[] = [];
   #pendingDeaths: IdBatch[] = [];
   #pendingPickups: IdBatch[] = [];
@@ -251,6 +282,25 @@ export class Room {
       return f;
     });
     this.#director = new WaveDirector(this.mapSeed ^ 0x5bf0_3a17);
+  }
+
+  /**
+   * Zones posees a diffuser (§5.3), une par POSE — creation comme
+   * rafraichissement.
+   *
+   * ⚠️ **Un rafraichissement s'annonce aussi, et il le faut.** La regle de
+   * fusion (§5.1 bis) fait repartir le `bornTick` d'une zone existante sans
+   * en creer de nouvelle ; le client, qui derive la mort de ses zones de ce
+   * seul `bornTick`, verrait sinon la sienne mourir avant celle du serveur —
+   * et le ralentissement du Givre divergerait de la duree du rafraichissement.
+   * Le message porte le centre STOCKE, pas celui du projectile, pour que le
+   * `spawn` du client retombe sur la meme zone (distance nulle) sans avoir a
+   * deviner laquelle fusionner.
+   */
+  drainZones(): ZoneEvent[] {
+    const out = this.#pendingZones;
+    this.#pendingZones = [];
+    return out;
   }
 
   /** Ordres de vague a diffuser. Le serveur les vide a chaque tick. */
@@ -544,7 +594,23 @@ export class Room {
       this.#pendingOrders.push(order);
     }
 
-    this.horde.step(scaledDt, this.#fields, this.#tick);
+    // ⚠️ **Expirer AVANT de poser, une fois par tick** — le contrat d'ordre
+    // que `ZoneField.spawn` exige, le meme que `OrbField.resolvePickups`
+    // s'impose a lui-meme.
+    //
+    // ⚠️ **Et AUCUN TEST NE GARDE cet appel — verifie par application, pas
+    // raisonne.** Depuis que `aliveAt` et `slowsAt` decident seuls de ce qui
+    // existe et de ce qui ralentit (voir `ZoneField`), l'expiration n'est plus
+    // une regle de jeu mais une REPRISE DE MEMOIRE : une zone perimee laissee
+    // dans la reserve est deja inerte, et le retirer ne change aucune issue
+    // observable a l'echelle d'un test. Ce qu'il change se voit seulement au
+    // bout de `ZONE_CAPACITY` (128) zones mortes accumulees, quand la reserve
+    // pleine se met a tronquer les poses vivantes — soit bien plus de zones
+    // qu'un test unitaire ne peut en faire naitre en `ZONE_LIFETIME_TICKS`
+    // ticks. Garde, et dit tel quel plutot que de laisser croire a un appel
+    // teste (meme choix que le `slot < 0` de `resolveProjectileDamage`).
+    this.#zones.expire(this.#tick);
+    this.horde.step(scaledDt, this.#fields, this.#tick, this.#zones);
 
     this.#fireWeapons(this.#tick);
     const deadIds = resolveProjectileDamage(
@@ -553,10 +619,22 @@ export class Room {
       this.horde,
       this.#orbs,
       this.#tick,
+      this.#zones,
     );
-    if (deadIds.length > 0) {
-      this.#totalKills += deadIds.length;
-      this.#pendingDeaths.push({ tick: this.#tick, ids: deadIds });
+    this.#announceZones();
+    markInZones(this.horde, this.#zones, this.#tick);
+    const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick);
+    // ⚠️ **UN SEUL lot de morts par tick, brulures comprises.** `GameClient`
+    // documente cette hypothese et s'appuie dessus : deux lots vises au meme
+    // tick, rejoues l'un apres l'autre, verraient le second effacer la
+    // correction du premier (`#drainPendingDeaths`). Les brulures n'ont donc
+    // aucun chemin de mort a elles — elles rejoignent celui de l'etape 3.
+    // Aucun doublon possible : `resolveBurn` tourne APRES la compaction des
+    // morts par projectile, donc les identites de `deadIds` n'existent plus.
+    const allDead = burntIds.length > 0 ? [...deadIds, ...burntIds] : deadIds;
+    if (allDead.length > 0) {
+      this.#totalKills += allDead.length;
+      this.#pendingDeaths.push({ tick: this.#tick, ids: allDead });
     }
 
     resolveContact([...this.#players.values()], this.horde);
@@ -593,6 +671,30 @@ export class Room {
     const drained = this.#metrics;
     this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
     return drained;
+  }
+
+  /**
+   * Met en file un `ZONE` pour chaque zone posee ou rafraichie a ce tick.
+   *
+   * ⚠️ **Aucun compteur a tenir : `bornTick === #tick` EST la trace de la
+   * pose.** La regle de fusion ecrit le tick courant aussi bien quand elle
+   * cree que quand elle rafraichit, donc balayer la reserve apres coup dit
+   * exactement ce qu'un rappel par pose aurait dit — pour un balayage en
+   * O(zones), borne par `ZONE_CAPACITY`, contre une allocation par impact.
+   */
+  #announceZones(): void {
+    for (let z = 0; z < this.#zones.count; z++) {
+      if (this.#zones.bornTick[z] !== this.#tick) {
+        continue;
+      }
+      this.#pendingZones.push({
+        element: this.#zones.element[z] ?? 0,
+        x: this.#zones.x[z] ?? 0,
+        y: this.#zones.y[z] ?? 0,
+        bornTick: this.#tick,
+        by: this.#zones.by[z] ?? 0,
+      });
+    }
   }
 
   /**
@@ -663,7 +765,17 @@ export class Room {
     // L'arme neutre n'est jamais empilee, `salvoCount` lui rend son compte de
     // base sans cas particulier.
     const count = salvoCount(weapon, p.loadout.stacksOfWeapon(weaponId));
-    this.#projectiles.fireSalvoDirected(weapon, tick, p.x, p.y, p.aimX, p.aimY, damage, count);
+    this.#projectiles.fireSalvoDirected(
+      weapon,
+      tick,
+      p.x,
+      p.y,
+      p.aimX,
+      p.aimY,
+      damage,
+      count,
+      p.id,
+    );
     p.lastFireTick[weaponId] = tick;
   }
 

@@ -9,7 +9,9 @@ import {
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   TICK_HZ,
+  ZONE_RADIUS,
 } from '@shared/constants';
+import { ELEMENT, elementOf } from '@shared/elements';
 import { passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -1668,4 +1670,230 @@ describe('la run est jouable (tache 14)', () => {
     expect(totalDeaths).toBeGreaterThan(0);
     expect(totalPickups).toBeGreaterThan(0);
   }, 30_000);
+});
+
+describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 6)', () => {
+  /** La premiere arme de Braise du catalogue — jamais un identifiant recopie. */
+  const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
+  const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+
+  /**
+   * Fait tirer le joueur 1 sur le monstre le plus proche pendant `ticks` pas,
+   * et rend tous les lots de morts et toutes les zones vus au passage.
+   */
+  function joue(
+    room: Room,
+    ticks: number,
+  ): { deaths: { tick: number; ids: number[] }[]; zones: ReturnType<Room['drainZones']> } {
+    const deaths: { tick: number; ids: number[] }[] = [];
+    const zones: ReturnType<Room['drainZones']> = [];
+    for (let i = 0; i < ticks; i++) {
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      deaths.push(...room.drainDeaths());
+      zones.push(...room.drainZones());
+    }
+    return { deaths, zones };
+  }
+
+  /**
+   * Un monstre qui ne meurt pas : reserve de PV gonflee a la main.
+   *
+   * ⚠️ Sans ca, la cible meurt en quelques ticks — et un test qui interroge
+   * `slotOf` apres coup ne trouve plus rien. Ce n'est PAS le rythme de mise a
+   * mort qui est teste ici, ce sont les zones et les marques.
+   */
+  function monstreIndestructible(room: Room, waveId: number, x: number, y: number): number {
+    const id = spawnMonsterAt(room, waveId, x, y);
+    room.horde.hp[room.horde.slotOf(id)] = 1e6;
+    return id;
+  }
+
+  it('une arme de Braise pose des zones, les annonce, et marque puis brule ce qu elle touche', () => {
+    expect(ARME_BRAISE).toBeGreaterThanOrEqual(0);
+    const room = new Room(0xbaa1_5e00);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    const before = positionOf(room, 1);
+    const cible = monstreIndestructible(room, 600, before.x + 100, before.y);
+
+    const { zones } = joue(room, 15);
+
+    expect(zones.length).toBeGreaterThan(0);
+    expect(zones.every((z) => z.element === ELEMENT.BRAISE)).toBe(true);
+    expect(zones.every((z) => z.by === 1)).toBe(true);
+    const slot = room.horde.slotOf(cible);
+    expect(slot).toBeGreaterThanOrEqual(0);
+    expect(room.horde.markAt(slot, room.tick)).toBe(ELEMENT.BRAISE);
+    // La BRULURE descend les PV en plus des impacts d'armes, qui sont entiers :
+    // une partie fractionnaire ne peut venir que d'elle.
+    expect(Number.isInteger(room.horde.hp[slot])).toBe(false);
+  });
+
+  it('une mort par BRULURE part dans le meme lot DEATHS que les morts par projectile', () => {
+    // ⚠️ **Le rejeu de l'etape 3 en depend** : `GameClient#drainPendingDeaths`
+    // suppose « un seul lot par tick » et rejouerait le second par-dessus la
+    // correction du premier. Ce test met en scene un tick ou les deux chemins
+    // tuent : un monstre acheve par la brulure seule (PV mis a un cheveu de
+    // zero, marque a la main) et un autre acheve par un projectile.
+    const GRAINE = 0xbaa1_5e01;
+
+    /**
+     * Rejoue le meme salon deux fois. La premiere passe (`armeLaBrulure` a
+     * `null`) sert a APPRENDRE a quel tick le projectile tue ; la seconde
+     * arme la brulure juste avant, pour que les deux morts tombent au MEME
+     * tick. Rejouable a l'identique : meme graine, memes entrees.
+     */
+    function run(tickDArmement: number | null): {
+      deaths: { tick: number; ids: number[] }[];
+      parProjectile: number;
+      parBrulure: number;
+    } {
+      const room = new Room(GRAINE);
+      room.join(1);
+      const before = positionOf(room, 1);
+      const parProjectile = spawnMonsterAt(room, 601, before.x + 60, before.y);
+      // Assez loin pour que le joueur ne vise jamais celui-la.
+      const parBrulure = spawnMonsterAt(room, 602, before.x - 900, before.y);
+      const deaths: { tick: number; ids: number[] }[] = [];
+      for (let i = 0; i < 30; i++) {
+        if (tickDArmement !== null && room.tick === tickDArmement - 1) {
+          const s = room.horde.slotOf(parBrulure);
+          room.horde.hp[s] = elementOf(ELEMENT.BRAISE).burnPerTick / 2;
+          room.horde.applyMark(s, ELEMENT.BRAISE, 1, room.tick);
+        }
+        aimAtNearestMonster(room, 1, i + 1);
+        room.step(DT);
+        deaths.push(...room.drainDeaths());
+      }
+      return { deaths, parProjectile, parBrulure };
+    }
+
+    const reperage = run(null);
+    const tickProjectile = reperage.deaths.find((b) =>
+      b.ids.includes(reperage.parProjectile),
+    )?.tick;
+    expect(tickProjectile).toBeDefined();
+
+    const { deaths, parProjectile, parBrulure } = run(tickProjectile ?? 0);
+
+    // UN SEUL lot a ce tick-la, portant les DEUX identites.
+    const auTick = deaths.filter((b) => b.tick === tickProjectile);
+    expect(auTick.length).toBe(1);
+    expect(auTick[0]?.ids).toContain(parProjectile);
+    expect(auTick[0]?.ids).toContain(parBrulure);
+  });
+
+  it('une arme de Givre ralentit la horde : le monstre arrive moins loin qu avec une arme neutre', () => {
+    // ⚠️ **La preuve que le ralentissement traverse tout le salon**, du tir a
+    // la position. Deux salons de MEME graine, meme monstre, meme visee : seule
+    // l'arme change.
+    expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
+    const GRAINE = 0xbaa1_5e02;
+
+    function distanceParcourue(armeId: number | null): number {
+      const room = new Room(GRAINE);
+      room.join(1);
+      if (armeId !== null) {
+        room.grantCard(1, { nature: CARD.WEAPON, refId: armeId });
+      }
+      const before = positionOf(room, 1);
+      const cible = monstreIndestructible(room, 610, before.x + 200, before.y);
+      const x0 = room.horde.x[room.horde.slotOf(cible)] ?? 0;
+      const y0 = room.horde.y[room.horde.slotOf(cible)] ?? 0;
+      for (let i = 0; i < 60; i++) {
+        aimAtNearestMonster(room, 1, i + 1);
+        room.step(DT);
+      }
+      const slot = room.horde.slotOf(cible);
+      expect(slot).toBeGreaterThanOrEqual(0);
+      return Math.hypot((room.horde.x[slot] ?? 0) - x0, (room.horde.y[slot] ?? 0) - y0);
+    }
+
+    const neutre = distanceParcourue(null);
+    const givre = distanceParcourue(ARME_GIVRE);
+    expect(neutre).toBeGreaterThan(0);
+    expect(givre).toBeLessThan(neutre);
+  });
+
+  it('un rafraichissement de zone est annonce comme une creation : le bornTick doit voyager', () => {
+    // ⚠️ Sans cette annonce, le client derive la mort de SA zone d'un
+    // `bornTick` perime : elle s'eteint chez lui pendant qu'elle vit encore
+    // chez le serveur, et le ralentissement du Givre diverge de la duree du
+    // rafraichissement.
+    const room = new Room(0xbaa1_5e03);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    const before = positionOf(room, 1);
+    spawnMonsterAt(
+      room,
+      620,
+      before.x + 100,
+      before.y,
+      ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0,
+    );
+
+    const { zones } = joue(room, 40);
+
+    // Beaucoup plus d'annonces que de zones vivantes : ce sont les
+    // rafraichissements. Le compte des annonces au meme endroit le prouve.
+    const parPoint = new Map<string, number>();
+    for (const z of zones) {
+      const cle = `${z.x},${z.y}`;
+      parPoint.set(cle, (parPoint.get(cle) ?? 0) + 1);
+    }
+    expect(zones.length).toBeGreaterThan(parPoint.size);
+    // Et chaque annonce porte le tick auquel elle a ete faite, jamais un tick
+    // fige a la creation.
+    const ticks = new Set(zones.map((z) => z.bornTick));
+    expect(ticks.size).toBeGreaterThan(1);
+  });
+
+  it('une zone marque un ennemi que RIEN n a touche — c est le seul chemin qui le puisse', () => {
+    // ⚠️ **Sans ce test, retirer `markInZones` de `Room.step` ne fait rougir
+    // personne** (mutation appliquee, verifiee) : tous les autres cas ont un
+    // ennemi qui prend un projectile, et le projectile marque deja. Il faut
+    // donc un ennemi que la zone couvre et que RIEN ne touche.
+    //
+    // Le Givre, pas la Braise : la Braise brulerait le second monstre des
+    // qu'il est marque, et ses PV ne prouveraient plus qu'il n'a jamais ete
+    // touche.
+    const room = new Room(0xbaa1_5e05);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const devant = monstreIndestructible(room, 640, before.x + 100, before.y);
+    // Derriere le premier, a moins d'un rayon de zone : les projectiles
+    // s'arretent sur le plus proche, la zone se pose la, et son disque couvre
+    // celui-ci sans qu'il ait rien reçu.
+    const derriere = monstreIndestructible(room, 641, before.x + 100 + ZONE_RADIUS / 2, before.y);
+
+    joue(room, 20);
+
+    const slotDerriere = room.horde.slotOf(derriere);
+    expect(slotDerriere).toBeGreaterThanOrEqual(0);
+    // La preuve qu'il n'a rien pris : ses PV n'ont pas bouge d'un pixel.
+    expect(room.horde.hp[slotDerriere]).toBe(1e6);
+    expect(room.horde.markAt(slotDerriere, room.tick)).toBe(ELEMENT.GIVRE);
+    // Et celui de devant, lui, a bien ete touche — sinon le scenario ne met
+    // rien en scene.
+    expect(room.horde.hp[room.horde.slotOf(devant)]).toBeLessThan(1e6);
+  });
+
+  it('un tick sans pose n annonce rien', () => {
+    // Le garde `bornTick === #tick` de `#announceZones` : sans lui, toutes les
+    // zones vivantes seraient re-annoncees a chaque tick.
+    const room = new Room(0xbaa1_5e04);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    const before = positionOf(room, 1);
+    monstreIndestructible(room, 630, before.x + 100, before.y);
+    joue(room, 20);
+    expect(room.drainZones()).toEqual([]);
+
+    // Un tick de plus, sans visee : rien ne part, donc rien ne se pose.
+    room.applyInput(1, 999, 0, 0, 0, 0);
+    room.step(DT);
+    expect(room.drainZones()).toEqual([]);
+  });
 });

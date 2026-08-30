@@ -12,6 +12,7 @@ import {
   encodeRunOver,
   encodeWaveOrder,
   encodeWelcome,
+  encodeZone,
   MSG,
 } from '@shared/protocol';
 import Fastify, { type FastifyInstance } from 'fastify';
@@ -195,6 +196,9 @@ class Session {
     }
     for (const batch of this.room.drainDeaths()) {
       this.#send(encodeDeaths(batch.tick, batch.ids));
+    }
+    for (const zone of this.room.drainZones()) {
+      this.#send(encodeZone(zone.element, zone.x, zone.y, zone.bornTick, zone.by));
     }
     for (const batch of this.room.drainPickups()) {
       this.#send(encodePickups(batch.tick, batch.ids));

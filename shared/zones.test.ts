@@ -235,3 +235,86 @@ describe('ZoneField — le recouvrement', () => {
     expect(zones.overlaps(0, 1)).toBe(false);
   });
 });
+
+describe('ZoneField — les deux predicats de temps (tache 6)', () => {
+  /**
+   * ⚠️ **`aliveAt` et `slowsAt` ne different que par leur borne BASSE**, et
+   * les confondre coute un tick de decalage sur le deplacement — le pendant
+   * temporel du facteur 2 entre fusion et recouvrement (§5.1 bis).
+   */
+  it('aliveAt vaut des le tick de la pose, slowsAt seulement a partir du suivant', () => {
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 100, 100, 0, 42);
+
+    expect(zones.aliveAt(0, 42)).toBe(true);
+    expect(zones.slowsAt(0, 42)).toBe(false);
+    expect(zones.aliveAt(0, 43)).toBe(true);
+    expect(zones.slowsAt(0, 43)).toBe(true);
+  });
+
+  it('les deux tombent au meme tick de peremption, pas un de plus', () => {
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 100, 100, 0, 0);
+
+    expect(zones.aliveAt(0, ZONE_LIFETIME_TICKS - 1)).toBe(true);
+    expect(zones.slowsAt(0, ZONE_LIFETIME_TICKS - 1)).toBe(true);
+    expect(zones.aliveAt(0, ZONE_LIFETIME_TICKS)).toBe(false);
+    expect(zones.slowsAt(0, ZONE_LIFETIME_TICKS)).toBe(false);
+  });
+
+  it('ni l un ni l autre ne vaut pour un tick ANTERIEUR a la pose', () => {
+    // ⚠️ C'est ce que « date par tick » veut dire cote client : une zone
+    // annoncee au tick 50 et rejouee depuis le tick 40 ne doit rien ralentir
+    // entre 40 et 50, sans quoi le rejeu corrigerait la latence en inventant
+    // un effet que le serveur n'a jamais applique.
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 100, 100, 0, 50);
+
+    expect(zones.aliveAt(0, 49)).toBe(false);
+    expect(zones.slowsAt(0, 49)).toBe(false);
+  });
+});
+
+describe('ZoneField — la pose rend le creneau touche (tache 6)', () => {
+  it('rend le creneau cree, puis le MEME creneau quand elle rafraichit', () => {
+    // Le serveur annonce le centre STOCKE (§5.3) : sans ce retour, il n'aurait
+    // aucun moyen de dire quelle zone une pose vient de rafraichir, et le
+    // client verrait la sienne mourir avant celle du serveur.
+    const zones = new ZoneField();
+    const premier = zones.spawn(ELEMENT.GIVRE, 0, 0, 0, 0);
+    const ailleurs = zones.spawn(ELEMENT.GIVRE, BIEN_LOIN, 0, 0, 0);
+    expect(premier).toBe(0);
+    expect(ailleurs).toBe(1);
+
+    expect(zones.spawn(ELEMENT.GIVRE, ZONE_RADIUS - 1, 0, 0, 5)).toBe(premier);
+    expect(zones.count).toBe(2);
+    expect(zones.bornTick[premier]).toBe(5);
+  });
+
+  it('rend -1 quand la reserve est pleine', () => {
+    const zones = new ZoneField();
+    for (let i = 0; i < ZONE_CAPACITY; i++) {
+      zones.spawn(ELEMENT.GIVRE, i * BIEN_LOIN, 0, 0, 0);
+    }
+    expect(zones.spawn(ELEMENT.GIVRE, ZONE_CAPACITY * BIEN_LOIN, 0, 0, 0)).toBe(-1);
+    expect(zones.truncatedZones).toBe(1);
+  });
+
+  it('ne fusionne PAS avec une zone perimee laissee dans la reserve : elle en cree une neuve', () => {
+    // ⚠️ Le cas du CLIENT, qui garde ses zones mortes `ROLLBACK_DEPTH_TICKS`
+    // ticks pour pouvoir rejouer. Sans le filtre `aliveAt` dans `spawn`, il
+    // rafraichirait un cadavre la ou le serveur a cree une zone neuve — deux
+    // reserves qui divergent, et un ralentissement qui ne tombe plus au meme
+    // endroit.
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 0, 0, 0, 0);
+    // Aucun `expire` : la zone morte reste dans la reserve, exactement comme
+    // chez le client.
+    const neuve = zones.spawn(ELEMENT.GIVRE, 0, 0, 0, ZONE_LIFETIME_TICKS);
+
+    expect(neuve).toBe(1);
+    expect(zones.count).toBe(2);
+    // L'ancienne garde son `bornTick` : elle n'a pas ete rafraichie.
+    expect(zones.bornTick[0]).toBe(0);
+  });
+});

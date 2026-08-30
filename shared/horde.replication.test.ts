@@ -1,13 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
 import { archetypeOf } from './archetypes';
-import { FLOWFIELD_CELL, FLOWFIELD_HZ, MAP_SIZE, ROLLBACK_DEPTH_TICKS, TICK_HZ } from './constants';
+import {
+  FLOWFIELD_CELL,
+  FLOWFIELD_HZ,
+  MAP_SIZE,
+  ROLLBACK_DEPTH_TICKS,
+  TICK_HZ,
+  ZONE_LIFETIME_TICKS,
+} from './constants';
+import { ELEMENT, elementOf } from './elements';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
 import { HordeHistory } from './horde-history';
 import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
+import { ZoneField } from './zones';
 
 const DT = 1 / TICK_HZ;
 const STEPS = 600;
@@ -1555,5 +1564,385 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
 
     expect(serverEscapeTick).toBeGreaterThanOrEqual(0);
     expect(serverEscapeTick).toBe(clientEscapeTick);
+  });
+});
+
+/**
+ * Etape 5a, tache 6 — **le ralentissement du Givre, mesure.**
+ *
+ * C'est le premier effet du projet qui touche le DEPLACEMENT, donc le contrat
+ * de replication a 0,000 px que ce fichier tient depuis l'etape 2. Ce bloc
+ * reprend, trait pour trait, la structure des scenarios 8 / 9 / 10 ci-dessus
+ * — le meme calendrier arithmetique, les memes retards de 1 a 3 ticks, la
+ * meme mesure par identite — en remplacant « une mort arrive en retard » par
+ * « une zone arrive en retard ».
+ *
+ * Trois choses y sont verifiees, et il faut les trois :
+ *
+ * 1. **le ralentissement MORD** (`mordu`) — sans quoi une derive nulle voudrait
+ *    dire « rien ne s'est passe » autant que « replication parfaite ». C'est le
+ *    piege de la fixture qui masque, cinq fois rencontre dans ce depot : on
+ *    COMPTE le cas qu'on croit creer, on ne le suppose pas. Ici, la reference
+ *    avec zones est comparee a une reference sans zones ;
+ * 2. **sans rejeu, ca derive** (scenario Z1) — le pendant du scenario 8 ;
+ * 3. **avec rejeu, ca retombe a zero** (scenario Z2) — le pendant du scenario 9.
+ *
+ * Et le scenario Z3 mesure ce que coute une zone trop vieille pour l'anneau,
+ * comme le scenario 10 le fait pour une mort.
+ */
+describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', () => {
+  const WAVE_ID = 1;
+  // Memes valeurs et meme raisonnement que `DEATH_START` / `DEATH_INTERVAL`
+  // plus haut : 13 n'est pas multiple de `stepsPerField` (3), donc les
+  // `bornTick` successifs parcourent les trois restes modulo 3 et un
+  // `primeFieldForReplay` qui ne ramenerait pas le tick a `lastDue` echoue sur
+  // les deux tiers des lots au lieu de passer inapercu.
+  const ZONE_START = 151;
+  const ZONE_INTERVAL = 13;
+  const ZONE_BATCHES = 18;
+  /**
+   * Les entites sur lesquelles le serveur pose ses zones. Cinq points epars
+   * dans une grappe de mille : chacun couvre des dizaines de voisines, et
+   * ensemble ils exercent le minimum de `#computeSlow` (une entite couverte
+   * par deux zones a la fois).
+   */
+  const ANCHORS: readonly number[] = [100, 300, 500, 700, 900];
+  const CLIENT_DELAY: readonly number[] = [0, 1, 2, 3, 2];
+  const END = ZONE_START + ZONE_BATCHES * ZONE_INTERVAL + 60;
+
+  interface ZoneParticipant {
+    horde: Horde;
+    fields: FlowField[];
+    playerHistory: PlayerHistory;
+    hordeHistory: HordeHistory;
+    zones: ZoneField;
+    /** Zones posees au present faute d'anneau assez profond (scenario Z3). */
+    lateZones: number;
+  }
+
+  /** Ce que le message `ZONE` transporte (§8 de la spec) — rien de plus. */
+  interface ZoneAnnounce {
+    element: number;
+    x: number;
+    y: number;
+    bornTick: number;
+    by: number;
+  }
+
+  function makeZoneParticipant(mapSeed: number): ZoneParticipant {
+    const horde = new Horde(4000);
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(mapSeed, probe.cols, probe.rows);
+    const fields = Array.from({ length: 4 }, () => {
+      const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      applyObstacles(f, mask);
+      return f;
+    });
+    return {
+      horde,
+      fields,
+      playerHistory: new PlayerHistory(),
+      hordeHistory: new HordeHistory(horde.capacity),
+      zones: new ZoneField(),
+      lateZones: 0,
+    };
+  }
+
+  /** Derive maximale entre deux hordes, appariee par identite. Aucune mort ici : les creneaux se correspondent, mais on n'en depend pas. */
+  function maxDriftBetween(reference: Horde, participant: Horde): number {
+    let maxDrift = 0;
+    for (let slot = 0; slot < reference.count; slot++) {
+      const other = participant.slotOf(reference.entityIdAt(slot));
+      if (other < 0) {
+        continue;
+      }
+      const drift = Math.hypot(
+        (participant.x[other] ?? 0) - (reference.x[slot] ?? 0),
+        (participant.y[other] ?? 0) - (reference.y[slot] ?? 0),
+      );
+      if (drift > maxDrift) {
+        maxDrift = drift;
+      }
+    }
+    return maxDrift;
+  }
+
+  function primeFieldForReplay(p: ZoneParticipant, atTick: number, stepsPerField: number): void {
+    const lastDue = atTick - (((atTick % stepsPerField) + stepsPerField) % stepsPerField);
+    const seen = p.playerHistory.delayed(lastDue);
+    if (seen) {
+      for (let f = 0; f < 4; f++) {
+        p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+      }
+    }
+  }
+
+  function replayTick(p: ZoneParticipant, tick: number, stepsPerField: number): void {
+    if (tick % stepsPerField === 0) {
+      const seen = p.playerHistory.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < 4; f++) {
+          p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        p.horde.retarget(seen.x, seen.y);
+      }
+    }
+    p.horde.step(DT, p.fields, tick, p.zones);
+    p.hordeHistory.record(tick, p.horde);
+  }
+
+  /**
+   * Pose une zone annoncee AVEC rejeu : restaure au `bornTick`, pose, rejoue
+   * jusqu'au present. Miroir exact de `GameClient#applyZone`.
+   */
+  function applyZoneWithReplay(
+    p: ZoneParticipant,
+    zone: ZoneAnnounce,
+    currentTick: number,
+    stepsPerField: number,
+  ): void {
+    if (!p.hordeHistory.restore(zone.bornTick, p.horde)) {
+      p.lateZones++;
+      p.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+      return;
+    }
+    p.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+    primeFieldForReplay(p, zone.bornTick, stepsPerField);
+    for (let t = zone.bornTick + 1; t <= currentTick; t++) {
+      replayTick(p, t, stepsPerField);
+    }
+  }
+
+  interface ZoneScenarioResult {
+    reference: Horde;
+    clients: ZoneParticipant[];
+    maxDrift: number;
+    /** Zones effectivement annoncees par la reference — le scenario ne prouve rien a zero. */
+    announced: number;
+  }
+
+  /**
+   * Le scenario commun : cinq participants, mille entites, et un serveur qui
+   * pose des zones de Givre sur cinq de ses propres entites tous les
+   * `ZONE_INTERVAL` ticks. Chaque client l'apprend `delay` ticks plus tard.
+   *
+   * `withReplay` bascule entre les deux strategies — la SEULE difference entre
+   * Z1 et Z2. `delayOverride` sert au scenario Z3 (hors anneau). `element`
+   * sert au temoin sans ralentissement.
+   */
+  function runZoneScenario(
+    mapSeed: number,
+    withReplay: boolean,
+    element: number,
+    delays: readonly number[] = CLIENT_DELAY,
+  ): ZoneScenarioResult {
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeZoneParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+    const clients = parts.slice(1);
+
+    const order: WaveOrder = {
+      waveId: WAVE_ID,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    for (const p of parts) {
+      p.horde.spawn(order);
+    }
+
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const announced: ZoneAnnounce[] = [];
+    let maxDrift = 0;
+    // Vrai tant qu'un client n'a pas encore recu une zone que le serveur a
+    // deja posee : pendant ce transit, il n'est PAS ralenti alors que le
+    // serveur l'est, et cet ecart est du au reseau, pas a la qualite de la
+    // correction. Meme masque que `pendingDeath` des scenarios 8 et 9.
+    const pendingZone: boolean[] = clients.map(() => false);
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = [0, 1, 2, 3].map((pl) => 3000 + Math.cos(tick * 0.02 + pl) * 1500);
+      const ys = [0, 1, 2, 3].map((pl) => 3000 + Math.sin(tick * 0.02 + pl) * 1500);
+
+      for (const p of parts) {
+        p.playerHistory.record(tick, xs, ys);
+        if (tick % stepsPerField === 0) {
+          const seen = p.playerHistory.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        // Le serveur expire a l'heure ; un client garde ses zones mortes
+        // `ROLLBACK_DEPTH_TICKS` ticks de plus pour pouvoir rejouer — voir
+        // `ZoneField.aliveAt`. Les deux repondent la meme chose parce que les
+        // deux passent par le meme predicat, jamais par la presence dans le
+        // tableau.
+        p.zones.expire(p === reference ? tick : tick - ROLLBACK_DEPTH_TICKS);
+        p.horde.step(DT, p.fields, tick, p.zones);
+      }
+
+      // Le serveur pose APRES avoir fait avancer sa horde — l'ordre de
+      // `Room.step`, et la raison pour laquelle une zone ne ralentit qu'a
+      // partir du tick suivant (`ZoneField.slowsAt`).
+      if (tick >= ZONE_START && (tick - ZONE_START) % ZONE_INTERVAL === 0) {
+        let posed = false;
+        for (const idx of ANCHORS) {
+          const slot = reference.horde.slotOf(entityIdOf(WAVE_ID, idx));
+          if (slot < 0) {
+            continue;
+          }
+          // Arrondies, comme sur le fil : `encodeZone` ne transporte que des
+          // `int16`, et le serveur s'impose l'arrondi qu'il inflige au client
+          // (meme discipline que les positions de joueurs, constat C1.4).
+          reference.zones.spawn(
+            element,
+            Math.round(reference.horde.x[slot] ?? 0),
+            Math.round(reference.horde.y[slot] ?? 0),
+            0,
+            tick,
+          );
+          posed = true;
+        }
+        if (posed) {
+          // `bornTick === tick` EST la trace de la pose, creation comme
+          // rafraichissement — voir `Room#announceZones`.
+          for (let z = 0; z < reference.zones.count; z++) {
+            if (reference.zones.bornTick[z] !== tick) {
+              continue;
+            }
+            announced.push({
+              element: reference.zones.element[z] ?? 0,
+              x: reference.zones.x[z] ?? 0,
+              y: reference.zones.y[z] ?? 0,
+              bornTick: tick,
+              by: reference.zones.by[z] ?? 0,
+            });
+            pendingZone.fill(true);
+          }
+        }
+      }
+
+      clients.forEach((p, i) => {
+        p.hordeHistory.record(tick, p.horde);
+        const delay = delays[i + 1] ?? 0;
+        for (const zone of announced) {
+          if (zone.bornTick + delay !== tick) {
+            continue;
+          }
+          if (withReplay) {
+            applyZoneWithReplay(p, zone, tick, stepsPerField);
+          } else {
+            // Sans rejeu : la zone est posee au present, avec son `bornTick`
+            // d'origine. C'est le defaut que le rejeu corrige.
+            p.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+          }
+          pendingZone[i] = false;
+        }
+      });
+
+      clients.forEach((p, i) => {
+        if (pendingZone[i]) {
+          return;
+        }
+        const drift = maxDriftBetween(reference.horde, p.horde);
+        if (drift > maxDrift) {
+          maxDrift = drift;
+        }
+      });
+    }
+
+    return { reference: reference.horde, clients, maxDrift, announced: announced.length };
+  }
+
+  /**
+   * De combien la reference a-t-elle ete freinee ? Compare la meme run avec du
+   * Givre et avec du Neutre — meme graine, meme calendrier, meme geometrie de
+   * zones, seul `slowFactor` change.
+   *
+   * ⚠️ **C'est la garde anti-fixture.** Sans elle, « 0,000 px » ne
+   * distinguerait pas un rejeu exact d'un ralentissement qui ne s'applique a
+   * personne.
+   */
+  function freinage(mapSeed: number): number {
+    const givre = runZoneScenario(mapSeed, true, ELEMENT.GIVRE).reference;
+    const temoin = runZoneScenario(mapSeed, true, ELEMENT.NEUTRE).reference;
+    return maxDriftBetween(temoin, givre);
+  }
+
+  it('scenario Z0 — le ralentissement mord reellement : la horde givree decroche du temoin neutre', () => {
+    const mordu = freinage(0x21e5_0000);
+    process.stdout.write(
+      `scenario Z0 (le Givre mord) : ecart maximal entre horde givree et temoin neutre ${mordu.toFixed(3)} px\n`,
+    );
+    // Derivee de la constante, jamais recopiee : sur `ZONE_LIFETIME_TICKS`
+    // ticks de couverture, une entite de la vitesse la plus lente du bestiaire
+    // perd au moins `(1 - slowFactor)` de son avance. Un dixieme de ce total
+    // suffit largement a distinguer « ca mord » de « ca ne mord pas », et
+    // laisse toute latitude aux entites qui entrent et sortent des disques.
+    const attenduMin =
+      0.1 *
+      (1 - elementOf(ELEMENT.GIVRE).slowFactor) *
+      archetypeOf(0).speed *
+      (ZONE_LIFETIME_TICKS / TICK_HZ);
+    expect(mordu).toBeGreaterThan(attenduMin);
+  });
+
+  it('scenario Z1 — sans rejeu, une zone appliquee au present laisse une derive mesurable', () => {
+    const result = runZoneScenario(0x21e5_0001, false, ELEMENT.GIVRE);
+    process.stdout.write(
+      `scenario Z1 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+        `${result.announced} zones annoncees\n`,
+    );
+    // Le scenario ne prouve rien si rien n'a ete annonce.
+    expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+    // Borne large et volontaire, comme au scenario 8 : ce scenario existe pour
+    // que la derive EXISTE, pas pour qu'elle reste petite.
+    expect(result.maxDrift).toBeGreaterThan(1);
+  });
+
+  it('scenario Z2 — avec rejeu, la derive retombe a zero malgre le Givre', () => {
+    const result = runZoneScenario(0x21e5_0002, true, ELEMENT.GIVRE);
+    process.stdout.write(
+      `scenario Z2 (avec rejeu, Givre en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+        `${result.announced} zones annoncees\n`,
+    );
+    expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+    for (const p of result.clients) {
+      // 1 a 3 ticks de retard tiennent largement dans l'anneau.
+      expect(p.lateZones).toBe(0);
+      expect(p.horde.count).toBe(result.reference.count);
+    }
+    expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+  });
+
+  it('scenario Z3 — une zone trop vieille pour l anneau est posee au present, signalee, et sa derive residuelle mesuree', () => {
+    const LATE_DELAY = ROLLBACK_DEPTH_TICKS + 4;
+    // Le retard doit vraiment sortir de l'anneau, sinon ce scenario mesure la
+    // meme chose que Z2 et ne prouve rien.
+    expect(LATE_DELAY).toBeGreaterThan(ROLLBACK_DEPTH_TICKS);
+    const result = runZoneScenario(0x21e5_0003, true, ELEMENT.GIVRE, [
+      0,
+      LATE_DELAY,
+      LATE_DELAY,
+      LATE_DELAY,
+      LATE_DELAY,
+    ]);
+    const lateZones = result.clients.reduce((sum, p) => sum + p.lateZones, 0);
+    process.stdout.write(
+      `scenario Z3 (zone a retard ${LATE_DELAY} ticks > ROLLBACK_DEPTH_TICKS=${ROLLBACK_DEPTH_TICKS}) : ` +
+        `derive residuelle ${result.maxDrift.toFixed(3)} px, lateZones=${lateZones}\n`,
+    );
+    // La degradation est ASSUMEE, mais jamais silencieuse : elle se compte.
+    expect(lateZones).toBeGreaterThan(0);
+    expect(result.maxDrift).toBeGreaterThan(0);
   });
 });

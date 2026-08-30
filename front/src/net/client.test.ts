@@ -9,7 +9,10 @@ import {
   PROJECTILE_HIT_RADIUS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
+  ZONE_LIFETIME_TICKS,
+  ZONE_RADIUS,
 } from '@shared/constants';
+import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde } from '@shared/horde';
 import { passiveOf } from '@shared/passives';
@@ -26,12 +29,14 @@ import {
   encodeSnapshot,
   encodeWaveOrder,
   encodeWelcome,
+  encodeZone,
   MSG,
   OUTCOME,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
+import { ZoneField } from '@shared/zones';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { GameClient, HIT_FLASH_LIFETIME_MS, type InputAxes, type ObstacleMap } from './client';
@@ -146,6 +151,9 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
       2,
       STEP,
       expect.anything(),
+      // Les zones : le rattrapage doit ralentir comme le serveur l'a fait
+      // pendant les pas manques (tache 6).
+      client.zones,
     );
     expect(client.horde.count).toBe(10);
   });
@@ -1896,5 +1904,469 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // Et surtout : PAS la vitesse de base. Sans cette ligne, un `toBeCloseTo`
     // trop laxiste laisserait passer la constante en dur.
     expect(parcouru).not.toBeCloseTo(PLAYER_SPEED * STEP * IMAGES, 1);
+  });
+});
+
+/**
+ * Etape 5a, tache 6 — **le ralentissement du Givre, mesure de bout en bout**,
+ * avec un VRAI `GameClient` cette fois (le pendant du scenario Z2 de
+ * `shared/horde.replication.test.ts`, qui mesure la meme chose sur un client
+ * modele).
+ *
+ * Meme forme que `runClientDeathScenario` : une reference « serveur » qui pose
+ * ses zones et les annonce, un client qui les recoit `zoneDelayTicks` plus
+ * tard et doit revenir au `bornTick` pour rejouer.
+ */
+function runClientZoneScenario(params: {
+  mapSeed: number;
+  waveId: number;
+  entities: number;
+  zoneTicks: readonly number[];
+  anchors: readonly number[];
+  zoneDelayTicks: number;
+  ticks: number;
+  element: number;
+}): {
+  client: GameClient;
+  reference: Horde;
+  maxDrift: number;
+  announced: number;
+  /** Plus grand nombre de zones vivantes chez le client, et chez la reference. */
+  zonesRecues: number;
+  zonesServeur: number;
+} {
+  const { mapSeed, waveId, entities, zoneTicks, anchors, zoneDelayTicks, ticks, element } = params;
+
+  const ref = makeReferenceServer(mapSeed, entities);
+  const refZones = new ZoneField();
+  const order: WaveOrder = {
+    waveId,
+    spawnTick: 0,
+    seed: 0x51ee_d001,
+    archetype: 0,
+    formation: FORMATION.CLUSTER,
+    anchorX: 1200,
+    anchorY: 1200,
+    count: entities,
+  };
+  ref.horde.spawn(order, ref.fields[0]);
+
+  const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+  client.connect();
+  const socket = latestSocket();
+  socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+  socket.emit('message', { data: encodeWaveOrder(order) });
+
+  const pending: { element: number; x: number; y: number; bornTick: number; by: number }[] = [];
+  let announced = 0;
+  let inFlight = 0;
+  let maxDrift = 0;
+  let zonesRecues = 0;
+  let zonesServeur = 0;
+
+  for (let tick = 0; tick < ticks; tick++) {
+    const xs = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.cos(tick * 0.02 + p) * 1500));
+    const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(tick * 0.02 + p) * 1500));
+
+    ref.playerHistory.record(tick, xs, ys);
+    if (tick % STEPS_PER_FIELD === 0) {
+      const seen = ref.playerHistory.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < 4; f++) {
+          ref.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        ref.horde.retarget(seen.x, seen.y);
+      }
+    }
+    // Expirer avant d'avancer, une fois par tick — le contrat de `Room.step`.
+    refZones.expire(tick);
+    ref.horde.step(STEP, ref.fields, tick, refZones);
+
+    // Le serveur pose APRES avoir fait avancer sa horde, comme `Room.step`.
+    if (zoneTicks.includes(tick)) {
+      for (const idx of anchors) {
+        const slot = ref.horde.slotOf(entityIdOf(waveId, idx));
+        if (slot < 0) {
+          continue;
+        }
+        refZones.spawn(
+          element,
+          Math.round(ref.horde.x[slot] ?? 0),
+          Math.round(ref.horde.y[slot] ?? 0),
+          1,
+          tick,
+        );
+      }
+      for (let z = 0; z < refZones.count; z++) {
+        if (refZones.bornTick[z] !== tick) {
+          continue;
+        }
+        pending.push({
+          element: refZones.element[z] ?? 0,
+          x: refZones.x[z] ?? 0,
+          y: refZones.y[z] ?? 0,
+          bornTick: tick,
+          by: refZones.by[z] ?? 0,
+        });
+        announced++;
+        inFlight++;
+      }
+    }
+
+    const players = xs.map((x, i) => ({ id: i, x, y: ys[i] ?? 0, hp: 100, aimX: 0, aimY: 0 }));
+    socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
+
+    for (let i = pending.length - 1; i >= 0; i--) {
+      const zone = pending[i];
+      if (zone && zone.bornTick + zoneDelayTicks === tick) {
+        socket.emit('message', {
+          data: encodeZone(zone.element, zone.x, zone.y, zone.bornTick, zone.by),
+        });
+        pending.splice(i, 1);
+        inFlight--;
+      }
+    }
+
+    client.update(tick * STEP, STEP);
+    zonesRecues = Math.max(zonesRecues, client.zones.count);
+    zonesServeur = Math.max(zonesServeur, refZones.count);
+
+    // Comme pour les morts : on ne mesure qu'une fois tout livre. Entre la
+    // pose serveur et sa livraison, le client n'est pas ralenti — un ecart du
+    // au transit, pas au rejeu.
+    if (inFlight === 0) {
+      const drift = measureDrift(ref.horde, client.horde, entities);
+      if (drift > maxDrift) {
+        maxDrift = drift;
+      }
+    }
+  }
+
+  return { client, reference: ref.horde, maxDrift, announced, zonesRecues, zonesServeur };
+}
+
+describe('GameClient — les zones de Givre datees par tick (etape 5a, tache 6)', () => {
+  const WAVE_ID = 41;
+  const ENTITIES = 300;
+  // Hors des frontieres de rafraichissement du champ (`STEPS_PER_FIELD` = 3),
+  // pour la meme raison qu'a la tache 8 : sinon un `primeFieldForReplay` qui
+  // n'ecarterait pas `atTick` vers `lastDue` passerait inapercu.
+  const ZONE_TICKS = [100, 113, 127];
+  const ANCHORS = [50, 150, 250];
+
+  it('une ZONE livree dans la portee de l anneau converge par rejeu : derive nulle, lateZones a zero', () => {
+    const DELAY = 3;
+    const result = runClientZoneScenario({
+      mapSeed: 0xc1e2_5a06,
+      waveId: WAVE_ID,
+      entities: ENTITIES,
+      zoneTicks: ZONE_TICKS,
+      anchors: ANCHORS,
+      zoneDelayTicks: DELAY,
+      ticks: 240,
+      element: ELEMENT.GIVRE,
+    });
+
+    process.stdout.write(
+      `[tache 6] zone dans l'anneau (delai ${DELAY}) : derive maximale ` +
+        `${result.maxDrift.toFixed(3)} px, ${result.announced} zones annoncees\n`,
+    );
+
+    // Le scenario ne prouve rien si rien n'a ete annonce ni recu.
+    // Le scenario ne prouve rien si rien n'a ete annonce ni recu — et le
+    // client doit tenir EXACTEMENT la meme reserve que le serveur.
+    expect(result.zonesServeur).toBeGreaterThan(0);
+    expect(result.zonesRecues).toBe(result.zonesServeur);
+    // ⚠️ Plus d'annonces que de zones : ce sont les RAFRAICHISSEMENTS (§5.1
+    // bis). Le client ne peut pas les deriver, donc ils voyagent — sans quoi
+    // sa zone mourrait avant celle du serveur.
+    expect(result.announced).toBeGreaterThan(result.zonesServeur);
+    expect(result.client.lateZones).toBe(0);
+    expect(result.maxDrift).toBeLessThan(1);
+  });
+
+  it('le ralentissement MORD : la meme run en Braise laisse la horde plus loin', () => {
+    // ⚠️ La garde anti-fixture. « 0,000 px » ne distingue pas un rejeu exact
+    // d'un ralentissement qui ne s'applique a personne — il faut comparer a un
+    // element dont le `slowFactor` vaut 1.
+    const commun = {
+      mapSeed: 0xc1e2_5a07,
+      waveId: WAVE_ID,
+      entities: ENTITIES,
+      zoneTicks: ZONE_TICKS,
+      anchors: ANCHORS,
+      zoneDelayTicks: 3,
+      ticks: 240,
+    };
+    const givre = runClientZoneScenario({ ...commun, element: ELEMENT.GIVRE });
+    const braise = runClientZoneScenario({ ...commun, element: ELEMENT.BRAISE });
+
+    const ecart = measureDrift(braise.reference, givre.reference, ENTITIES);
+    process.stdout.write(`[tache 6] le Givre mord : ${ecart.toFixed(3)} px d ecart au temoin\n`);
+    expect(ecart).toBeGreaterThan(1);
+  });
+
+  it('une ZONE trop vieille pour l anneau est posee au present, comptee, sans planter', () => {
+    // ⚠️ La degradation est ASSUMEE mais jamais silencieuse : appliquer au
+    // present, COMPTER l'evenement, ne pas pretendre que c'est exact — meme
+    // regle que `lateDeaths` a l'etape 3.
+    const DELAY = ROLLBACK_DEPTH_TICKS + 4;
+    expect(DELAY).toBeGreaterThan(ROLLBACK_DEPTH_TICKS);
+    const result = runClientZoneScenario({
+      mapSeed: 0xc1e2_5a08,
+      waveId: WAVE_ID,
+      entities: ENTITIES,
+      zoneTicks: ZONE_TICKS,
+      anchors: ANCHORS,
+      zoneDelayTicks: DELAY,
+      ticks: 240,
+      element: ELEMENT.GIVRE,
+    });
+
+    process.stdout.write(
+      `[tache 6] zone hors anneau (delai ${DELAY} > ROLLBACK_DEPTH_TICKS=${ROLLBACK_DEPTH_TICKS}) : ` +
+        `derive residuelle ${result.maxDrift.toFixed(3)} px, lateZones=${result.client.lateZones}\n`,
+    );
+
+    expect(result.client.lateZones).toBe(result.announced);
+    expect(result.maxDrift).toBeGreaterThan(0);
+    expect(result.zonesRecues).toBe(result.zonesServeur);
+  });
+});
+
+describe('GameClient — zones et morts livrees ensemble (etape 5a, tache 6)', () => {
+  it('une ZONE plus ANCIENNE qu une mort livree au meme tick ne fait pas perdre la mort', () => {
+    // ⚠️ **L'ordre de drainage n'est pas interchangeable.** Les deux rejouent,
+    // et un rejeu REECRIT l'anneau depuis son tick de depart. Deaths d'abord,
+    // puis une zone plus ancienne : la restauration au `bornTick` rend un etat
+    // d'AVANT la mort, et le rejeu ecrase l'anneau avec une horde ou l'entite
+    // tuee est toujours vivante — la mort disparait. Les zones passent donc
+    // AVANT (voir `GameClient#drainPendingZones`).
+    const WAVE_ID = 42;
+    const ENTITIES = 200;
+    const ZONE_TICK = 102;
+    const DEATH_TICK = 105;
+    const LIVRAISON = 108;
+    const mapSeed = 0xc1e2_5a09;
+
+    const ref = makeReferenceServer(mapSeed, ENTITIES);
+    const refZones = new ZoneField();
+    const order: WaveOrder = {
+      waveId: WAVE_ID,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    ref.horde.spawn(order, ref.fields[0]);
+    const killedIds = Array.from({ length: 20 }, (_, k) => entityIdOf(WAVE_ID, k));
+
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+    socket.emit('message', { data: encodeWaveOrder(order) });
+
+    let annonce: { element: number; x: number; y: number; by: number } | null = null;
+    for (let tick = 0; tick < 160; tick++) {
+      const xs = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.cos(tick * 0.02 + p) * 1500));
+      const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(tick * 0.02 + p) * 1500));
+      ref.playerHistory.record(tick, xs, ys);
+      if (tick % STEPS_PER_FIELD === 0) {
+        const seen = ref.playerHistory.delayed(tick);
+        if (seen) {
+          for (let f = 0; f < 4; f++) {
+            ref.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+          }
+          ref.horde.retarget(seen.x, seen.y);
+        }
+      }
+      refZones.expire(tick);
+      ref.horde.step(STEP, ref.fields, tick, refZones);
+
+      if (tick === ZONE_TICK) {
+        const slot = ref.horde.slotOf(entityIdOf(WAVE_ID, ENTITIES - 1));
+        refZones.spawn(
+          ELEMENT.GIVRE,
+          Math.round(ref.horde.x[slot] ?? 0),
+          Math.round(ref.horde.y[slot] ?? 0),
+          1,
+          tick,
+        );
+        annonce = { element: ELEMENT.GIVRE, x: refZones.x[0] ?? 0, y: refZones.y[0] ?? 0, by: 1 };
+      }
+      if (tick === DEATH_TICK) {
+        ref.horde.kill(killedIds);
+      }
+
+      const players = xs.map((x, i) => ({ id: i, x, y: ys[i] ?? 0, hp: 100, aimX: 0, aimY: 0 }));
+      socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
+
+      if (tick === LIVRAISON && annonce) {
+        // ⚠️ Dans l'ordre du serveur : `DEATHS` part AVANT `ZONE` dans le meme
+        // lot de diffusion (voir `Server#broadcast`). C'est precisement ce
+        // qui rend le drainage inverse dangereux.
+        socket.emit('message', { data: encodeDeaths(DEATH_TICK, killedIds) });
+        socket.emit('message', {
+          data: encodeZone(annonce.element, annonce.x, annonce.y, ZONE_TICK, annonce.by),
+        });
+      }
+
+      client.update(tick * STEP, STEP);
+    }
+
+    expect(annonce).not.toBeNull();
+    expect(ref.horde.count).toBe(ENTITIES - killedIds.length);
+    expect(client.lateDeaths).toBe(0);
+    expect(client.lateZones).toBe(0);
+    // La mort n'a pas ete perdue par le rejeu de la zone.
+    expect(client.horde.count).toBe(ref.horde.count);
+    expect(aliveWaveIndices(client.horde)).toEqual(aliveWaveIndices(ref.horde));
+    expect(measureDrift(ref.horde, client.horde, ENTITIES)).toBeLessThan(1);
+  });
+});
+
+describe('GameClient — une zone qui meurt PENDANT un rejeu (etape 5a, tache 6)', () => {
+  /**
+   * ⚠️ **`HordeHistory` ne sauvegarde QUE la horde, jamais les zones.** Un
+   * rejeu qui repart d'un tick ou une zone vivait encore doit pouvoir la
+   * retrouver — or une zone retiree du tableau est irrecuperable. Le client
+   * expire donc `ROLLBACK_DEPTH_TICKS` ticks EN RETARD, et c'est
+   * `ZoneField.slowsAt` (jamais la presence dans le tableau) qui decide si
+   * elle agit.
+   *
+   * Sans cette marge, la mutation « le client expire a l'heure » ne fait
+   * rougir AUCUN autre test de ce fichier : les zones des autres scenarios
+   * meurent longtemps apres le dernier rejeu. Il faut donc un scenario ou la
+   * fenetre de rejeu ENJAMBE la peremption d'une zone.
+   */
+  it('reste identique au serveur quand le rejeu enjambe la peremption d une zone', () => {
+    const WAVE_ID = 43;
+    const ENTITIES = 200;
+    const mapSeed = 0xc1e2_5a0a;
+    const SUIVI = entityIdOf(WAVE_ID, ENTITIES - 1);
+    const order: WaveOrder = {
+      waveId: WAVE_ID,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    const xsAt = (tick: number) =>
+      [0, 1, 2, 3].map((p) => Math.round(3000 + Math.cos(tick * 0.02 + p) * 1500));
+    const ysAt = (tick: number) =>
+      [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(tick * 0.02 + p) * 1500));
+
+    /** Fait tourner une reference seule et rend la position de `SUIVI` au tick voulu. */
+    function positionAu(tick: number): { x: number; y: number } {
+      const ref = makeReferenceServer(mapSeed, ENTITIES);
+      ref.horde.spawn(order, ref.fields[0]);
+      for (let t = 0; t <= tick; t++) {
+        ref.playerHistory.record(t, xsAt(t), ysAt(t));
+        if (t % STEPS_PER_FIELD === 0) {
+          const seen = ref.playerHistory.delayed(t);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              ref.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            ref.horde.retarget(seen.x, seen.y);
+          }
+        }
+        ref.horde.step(STEP, ref.fields, t);
+      }
+      const slot = ref.horde.slotOf(SUIVI);
+      return { x: Math.round(ref.horde.x[slot] ?? 0), y: Math.round(ref.horde.y[slot] ?? 0) };
+    }
+
+    // La zone A doit couvrir la horde AU MOMENT de sa peremption : elle est
+    // donc posee la ou la horde SERA, avec un `bornTick` retroactif calcule
+    // depuis la constante de duree de vie — jamais un nombre recopie.
+    const PASSAGE = 187;
+    const ZONE_A_BORN = PASSAGE + 1 - ZONE_LIFETIME_TICKS;
+    // Verifie que la fenetre est bien celle qu'on croit : la zone A vit encore
+    // au tick `PASSAGE` et plus au suivant.
+    expect(PASSAGE - ZONE_A_BORN).toBe(ZONE_LIFETIME_TICKS - 1);
+    const P = positionAu(PASSAGE);
+
+    // La zone B ne sert qu'a DECLENCHER un rejeu qui enjambe la peremption de
+    // A. Posee tres loin, elle ne ralentit personne.
+    const ZONE_B_BORN = PASSAGE - 1;
+    const LIVRAISON_B = ZONE_B_BORN + 4;
+    expect(LIVRAISON_B - ZONE_B_BORN).toBeLessThan(ROLLBACK_DEPTH_TICKS);
+
+    const ref = makeReferenceServer(mapSeed, ENTITIES);
+    const refZones = new ZoneField();
+    ref.horde.spawn(order, ref.fields[0]);
+
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+    socket.emit('message', { data: encodeWaveOrder(order) });
+
+    let maxDrift = 0;
+    let ralentiAuPassage = false;
+    for (let tick = 0; tick <= LIVRAISON_B + 20; tick++) {
+      const xs = xsAt(tick);
+      const ys = ysAt(tick);
+      ref.playerHistory.record(tick, xs, ys);
+      if (tick % STEPS_PER_FIELD === 0) {
+        const seen = ref.playerHistory.delayed(tick);
+        if (seen) {
+          for (let f = 0; f < 4; f++) {
+            ref.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+          }
+          ref.horde.retarget(seen.x, seen.y);
+        }
+      }
+      refZones.expire(tick);
+      if (tick === ZONE_A_BORN) {
+        refZones.spawn(ELEMENT.GIVRE, P.x, P.y, 1, tick);
+      }
+      if (tick === ZONE_B_BORN) {
+        refZones.spawn(ELEMENT.GIVRE, 5500, 5500, 1, tick);
+      }
+      ref.horde.step(STEP, ref.fields, tick, refZones);
+
+      // Preuve que le scenario met bien quelque chose en scene : la zone A
+      // couvre reellement `SUIVI` au tick ou elle expire.
+      if (tick === PASSAGE) {
+        const slot = ref.horde.slotOf(SUIVI);
+        const dx = (ref.horde.x[slot] ?? 0) - P.x;
+        const dy = (ref.horde.y[slot] ?? 0) - P.y;
+        ralentiAuPassage = dx * dx + dy * dy < ZONE_RADIUS * ZONE_RADIUS;
+      }
+
+      const players = xs.map((x, i) => ({ id: i, x, y: ys[i] ?? 0, hp: 100, aimX: 0, aimY: 0 }));
+      socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
+
+      // La zone A est livree tot (elle doit vivre chez le client pendant tout
+      // son age) ; la zone B, elle, arrive en retard et declenche le rejeu.
+      if (tick === ZONE_A_BORN + 2) {
+        socket.emit('message', { data: encodeZone(ELEMENT.GIVRE, P.x, P.y, ZONE_A_BORN, 1) });
+      }
+      if (tick === LIVRAISON_B) {
+        socket.emit('message', { data: encodeZone(ELEMENT.GIVRE, 5500, 5500, ZONE_B_BORN, 1) });
+      }
+
+      client.update(tick * STEP, STEP);
+      if (tick > LIVRAISON_B) {
+        maxDrift = Math.max(maxDrift, measureDrift(ref.horde, client.horde, ENTITIES));
+      }
+    }
+
+    process.stdout.write(
+      `[tache 6] rejeu enjambant la peremption d une zone : derive ${maxDrift.toFixed(3)} px\n`,
+    );
+
+    expect(ralentiAuPassage).toBe(true);
+    expect(client.lateZones).toBe(0);
+    expect(maxDrift).toBeLessThan(0.001);
   });
 });

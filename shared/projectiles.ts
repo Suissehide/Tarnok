@@ -42,6 +42,19 @@ export class Projectiles {
   readonly #vx: Float32Array;
   readonly #vy: Float32Array;
   readonly #damage: Float32Array;
+  /**
+   * Element porte par le projectile, index dans `ELEMENTS` — recopie de
+   * `Weapon.element` a l'emission (etape 5a, tache 6). `ELEMENT.NEUTRE` pour
+   * les cinq armes neutres, qui ne marquent rien et ne posent aucune zone.
+   */
+  readonly #element: Uint8Array;
+  /**
+   * Index du joueur qui a tire — c'est LUI que la marque retient (`Horde.markBy`)
+   * et que la zone porte (`ZoneField.by`), donc lui que la Synergie du §7
+   * comparera. Sans ce tableau, une reaction entre deux joueurs et une
+   * reaction en solo seraient indiscernables au moment de l'impact.
+   */
+  readonly #by: Uint8Array;
   /** Pas restants avant expiration. Decremente a chaque `step`. */
   readonly #ticksRemaining: Int32Array;
   /**
@@ -68,6 +81,8 @@ export class Projectiles {
     this.#vx = new Float32Array(capacity);
     this.#vy = new Float32Array(capacity);
     this.#damage = new Float32Array(capacity);
+    this.#element = new Uint8Array(capacity);
+    this.#by = new Uint8Array(capacity);
     this.#ticksRemaining = new Int32Array(capacity);
     this.#prevX = new Float32Array(capacity);
     this.#prevY = new Float32Array(capacity);
@@ -153,11 +168,12 @@ export class Projectiles {
     dirY: number,
     damage = weapon.damage,
     count = weapon.projectileCount,
+    by = 0,
   ): void {
     if (dirX === 0 && dirY === 0) {
       return;
     }
-    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX), damage, count);
+    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX), damage, count, by);
   }
 
   /**
@@ -174,6 +190,7 @@ export class Projectiles {
     baseAngle: number,
     damage = weapon.damage,
     count = weapon.projectileCount,
+    by = 0,
   ): void {
     const n = count;
     const room = this.capacity - this.#count;
@@ -201,6 +218,8 @@ export class Projectiles {
       this.#vx[slot] = Math.cos(angle) * weapon.projectileSpeed;
       this.#vy[slot] = Math.sin(angle) * weapon.projectileSpeed;
       this.#damage[slot] = damage;
+      this.#element[slot] = weapon.element;
+      this.#by[slot] = by;
       this.#ticksRemaining[slot] = weapon.projectileLifeTicks;
       this.bornTick[slot] = tick;
     }
@@ -222,6 +241,23 @@ export class Projectiles {
   }
 
   /**
+   * Element porte par le projectile de ce slot — voir `#element`.
+   *
+   * Lu par `resolveProjectileDamage` (back) au moment ou le projectile finit
+   * sa course : c'est lui qui decide s'il y a une marque a poser et une zone a
+   * laisser. Le client, lui, ne le lit jamais : ses projectiles sont
+   * cosmetiques, et les zones sont ANNONCEES (§5.3), pas derivees.
+   */
+  elementAt(slot: number): number {
+    return this.#element[slot] ?? 0;
+  }
+
+  /** Index du joueur qui a tire le projectile de ce slot — voir `#by`. */
+  ownerAt(slot: number): number {
+    return this.#by[slot] ?? 0;
+  }
+
+  /**
    * Projectiles qu'une salve n'a pas pu poser faute de place, cumules depuis la
    * creation. Jamais remis a zero par `Projectiles` : c'est `Room` qui draine
    * ses metriques.
@@ -235,8 +271,22 @@ export class Projectiles {
    */
   truncatedProjectiles = 0;
 
-  /** Un pas de simulation. Appele exactement une fois par tick, `dt` fixe. */
-  step(dt: number): void {
+  /**
+   * Un pas de simulation. Appele exactement une fois par tick, `dt` fixe.
+   *
+   * `onExpire`, s'il est fourni, recoit le creneau de chaque projectile qui
+   * meurt de vieillesse, JUSTE AVANT son retrait — donc pendant que sa
+   * position, son element et son tireur sont encore lisibles. C'est la
+   * moitie « n'a rien touche » du §5.1 de la spec : *« un disque teinte, pose
+   * la ou un projectile elementaire finit sa course, QU'IL AIT TOUCHE OU NON »*.
+   * L'autre moitie est le rappel `onHit` de `collide`.
+   *
+   * ⚠️ **Le client ne le fournit jamais.** Ses projectiles sont cosmetiques
+   * et les zones sont annoncees, pas derivees : un client qui poserait ses
+   * propres zones les poserait a quelques pixels de celles du serveur, et
+   * deux zones qui se recouvrent d'un pixel decident d'une reaction (§5.3).
+   */
+  step(dt: number, onExpire?: (slot: number) => void): void {
     for (let i = 0; i < this.#count; i++) {
       // Capture la position de DEBUT de pas avant de la faire avancer : c'est
       // le point de depart du segment que `collide` testera.
@@ -252,6 +302,7 @@ export class Projectiles {
     // etre lui-meme retire par erreur ensuite.
     for (let i = this.#count - 1; i >= 0; i--) {
       if ((this.#ticksRemaining[i] ?? 0) <= 0) {
+        onExpire?.(i);
         this.#removeAt(i);
       }
     }
@@ -276,7 +327,7 @@ export class Projectiles {
    * `nearestTarget`, pour la meme raison : le resultat ne doit pas dependre
    * de l'ordre des entites dans le tableau.
    */
-  collide(horde: Horde, onHit: (entityId: number, damage: number) => void): void {
+  collide(horde: Horde, onHit: (entityId: number, damage: number, slot: number) => void): void {
     const r2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
 
     for (let i = this.#count - 1; i >= 0; i--) {
@@ -300,7 +351,12 @@ export class Projectiles {
       }
 
       if (bestId >= 0) {
-        onHit(bestId, this.#damage[i] ?? 0);
+        // `i` est passe pour que l'appelant puisse lire ce que le projectile
+        // porte d'autre que ses degats — son element, son tireur, sa position
+        // d'impact (etape 5a, tache 6). Valide seulement pendant le rappel :
+        // `#removeAt` juste apres deplace le dernier projectile dans ce
+        // creneau.
+        onHit(bestId, this.#damage[i] ?? 0, i);
         this.#removeAt(i);
       }
     }
@@ -315,6 +371,8 @@ export class Projectiles {
       this.#vx[slot] = this.#vx[last] ?? 0;
       this.#vy[slot] = this.#vy[last] ?? 0;
       this.#damage[slot] = this.#damage[last] ?? 0;
+      this.#element[slot] = this.#element[last] ?? 0;
+      this.#by[slot] = this.#by[last] ?? 0;
       this.#ticksRemaining[slot] = this.#ticksRemaining[last] ?? 0;
       this.#prevX[slot] = this.#prevX[last] ?? 0;
       this.#prevY[slot] = this.#prevY[last] ?? 0;

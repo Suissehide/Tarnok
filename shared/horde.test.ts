@@ -10,13 +10,16 @@ import {
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
   TICK_HZ,
+  ZONE_LIFETIME_TICKS,
+  ZONE_RADIUS,
 } from './constants';
-import { ELEMENT } from './elements';
+import { ELEMENT, elementOf } from './elements';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde, type HordeState } from './horde';
 import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
+import { ZoneField } from './zones';
 
 const DT = 1 / 30;
 
@@ -2140,3 +2143,222 @@ function meanDistanceTo(horde: Horde, x: number, y: number): number {
   }
   return total / horde.count;
 }
+
+describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () => {
+  const GIVRE_FACTEUR = elementOf(ELEMENT.GIVRE).slowFactor;
+
+  /** Une entite unique, immobile a `(x, y)`, avec sa vitesse posee a la main. */
+  function une(x: number, y: number): Horde {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }));
+    horde.x[0] = x;
+    horde.y[0] = y;
+    return horde;
+  }
+
+  /**
+   * Avance `horde` des ticks `0` a `tick - 1`, puis rend la distance parcourue
+   * au tick `tick`.
+   *
+   * ⚠️ **Le chauffage depuis le tick 0 n'est pas decoratif.** Une entite ne
+   * recalcule sa trajectoire qu'un tick sur `STEERING_RECOMPUTE_TICKS`, selon
+   * la phase de son identifiant : demarrer directement au tick vise laisse
+   * `vx`/`vy` a zero, donc une distance parcourue nulle DES DEUX COTES — et
+   * l'assertion passerait en ne comparant que deux zeros. C'est le motif de la
+   * fixture qui masque, cinq fois rencontre dans ce depot.
+   */
+  /** Un seul pas, au tick `tick`, sans chauffage : rend la distance parcourue par l'entite 0. */
+  function pasDe(horde: Horde, fields: FlowField[], tick: number, zones?: ZoneField): number {
+    const x0 = horde.x[0] ?? 0;
+    const y0 = horde.y[0] ?? 0;
+    horde.step(DT, fields, tick, zones);
+    return Math.hypot((horde.x[0] ?? 0) - x0, (horde.y[0] ?? 0) - y0);
+  }
+
+  function pasAu(horde: Horde, fields: FlowField[], tick: number, zones?: ZoneField): number {
+    for (let t = 0; t < tick; t++) {
+      horde.step(DT, fields, t, zones);
+    }
+    const x0 = horde.x[0] ?? 0;
+    const y0 = horde.y[0] ?? 0;
+    horde.step(DT, fields, tick, zones);
+    const d = Math.hypot((horde.x[0] ?? 0) - x0, (horde.y[0] ?? 0) - y0);
+    // Une distance nulle ne prouverait rien : la garde est ici, une fois, pour
+    // tous les tests de ce bloc.
+    expect(d).toBeGreaterThan(0);
+    return d;
+  }
+
+  /**
+   * Tick de mesure : au-dela du premier recalcul de trajectoire de l'entite,
+   * pour que `vx`/`vy` soient poses. Derive de la constante, pas recopie.
+   */
+  const MESURE = STEERING_RECOMPUTE_TICKS + 2;
+
+  it('une entite dans une zone de Givre avance exactement slowFactor fois moins loin', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 1000, 1000, 0, 0);
+
+    const dLibre = pasAu(une(1000, 1000), fields, MESURE);
+    const dGivree = pasAu(une(1000, 1000), fields, MESURE, zones);
+
+    // Derive du facteur de la table, jamais recopie. Precision 3 : `Horde.x`
+    // est un `Float32Array`, dont l'ulp autour de 1 000 px vaut ~6e-5.
+    expect(dGivree).toBeCloseTo(dLibre * GIVRE_FACTEUR, 3);
+  });
+
+  it('une entite HORS de la zone n est pas ralentie, a un pixel du bord', () => {
+    // ⚠️ Un pixel dehors, pas mille : c'est ce qui rend le RAYON porteur, et
+    // pas seulement le fait que la boucle ne ralentit pas tout le monde.
+    const fields = fieldsTowards(5000, 1000);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 1000, 1000, 0, 0);
+    const depart = 1000 + ZONE_RADIUS + 1;
+
+    expect(pasAu(une(depart, 1000), fields, MESURE, zones)).toBe(
+      pasAu(une(depart, 1000), fields, MESURE),
+    );
+  });
+
+  it('une zone de Braise ne ralentit personne — le facteur vient de la table, pas du fait d etre une zone', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.BRAISE, 1000, 1000, 0, 0);
+
+    expect(pasAu(une(1000, 1000), fields, MESURE, zones)).toBe(
+      pasAu(une(1000, 1000), fields, MESURE),
+    );
+  });
+
+  it('ne ralentit PAS au tick de la pose, et ralentit au suivant', () => {
+    // ⚠️ `slowsAt`, pas `aliveAt`. Le serveur pose ses zones APRES avoir fait
+    // avancer sa horde : un client qui ralentirait des le `bornTick`
+    // appliquerait un tick de ralentissement que le serveur n'a jamais joue.
+    const fields = fieldsTowards(5000, 1000);
+    const auTick = new ZoneField();
+    auTick.spawn(ELEMENT.GIVRE, 1000, 1000, 0, MESURE);
+    const auPrecedent = new ZoneField();
+    auPrecedent.spawn(ELEMENT.GIVRE, 1000, 1000, 0, MESURE - 1);
+
+    const reference = pasAu(une(1000, 1000), fields, MESURE);
+    expect(pasAu(une(1000, 1000), fields, MESURE, auTick)).toBe(reference);
+    expect(pasAu(une(1000, 1000), fields, MESURE, auPrecedent)).toBeLessThan(reference);
+  });
+
+  it('une zone perimee laissee dans la reserve ne ralentit plus rien, au tick pres', () => {
+    // ⚠️ **Deux pas CONSECUTIFS de la MEME entite**, et pas deux hordes
+    // paralleles : une horde temoin qui n'aurait jamais vu la zone aurait
+    // suivi un autre chemin pendant tout le chauffage, donc echantillonne le
+    // champ ailleurs — les deux distances differeraient de quelques 1e-5 sans
+    // que ca dise quoi que ce soit de la peremption.
+    //
+    // La zone nait au tick `NAISSANCE` et vit `ZONE_LIFETIME_TICKS` ticks :
+    // elle ralentit encore au dernier, plus au suivant. `Uint32Array` oblige,
+    // `NAISSANCE` doit rester positif — un tick negatif y reboucle vers quatre
+    // milliards et rendrait la zone « pas encore nee ».
+    const NAISSANCE = 5;
+    const dernierVivant = NAISSANCE + ZONE_LIFETIME_TICKS - 1;
+    const fields = fieldsTowards(5000, 1000);
+    const zones = new ZoneField();
+    // ⚠️ **Une TRAINEE de zones, pas une seule.** L'entite avance de quelques
+    // pixels par tick : sur une duree de vie entiere elle parcourt plusieurs
+    // fois `ZONE_RADIUS` et serait sortie d'un disque unique bien avant qu'il
+    // ne perime — le test aurait alors compare « dedans » a « dehors » en
+    // croyant comparer « vivante » a « perimee ». Espacees d'exactement
+    // `ZONE_RADIUS` : la fusion demande une distance STRICTEMENT inferieure,
+    // donc rien ne fusionne et la couverture reste continue (§5.1 bis).
+    for (let k = 0; k <= 8; k++) {
+      zones.spawn(ELEMENT.GIVRE, 1000 + k * ZONE_RADIUS, 1000, 0, NAISSANCE);
+    }
+    expect(zones.count).toBe(9);
+
+    const horde = une(1000, 1000);
+    for (let t = 0; t < dernierVivant; t++) {
+      horde.step(DT, fields, t, zones);
+    }
+    const dVivante = pasDe(horde, fields, dernierVivant, zones);
+    const vitesse = [horde.vx[0], horde.vy[0]];
+    const dMorte = pasDe(horde, fields, dernierVivant + 1, zones);
+
+    // Aucun `expire` : les zones mortes sont bien encore dans la reserve.
+    expect(zones.count).toBe(9);
+    // Garde-fou : les deux pas doivent tenir la MEME vitesse, sinon la
+    // comparaison mesurerait un recalcul de trajectoire, pas la peremption.
+    expect([horde.vx[0], horde.vy[0]]).toEqual(vitesse);
+    expect(dVivante).toBeGreaterThan(0);
+    expect(dVivante).toBeCloseTo(dMorte * GIVRE_FACTEUR, 3);
+  });
+
+  it('deux zones qui se recouvrent rendent le MINIMUM, pas leur produit', () => {
+    // ⚠️ Le produit dependrait de l'ordre du tableau — et l'ordre n'est PAS
+    // garanti identique des deux cotes du fil (compaction par echange,
+    // expiration decalee cote client). Le minimum est commutatif exactement.
+    const fields = fieldsTowards(5000, 1000);
+    const deux = new ZoneField();
+    deux.spawn(ELEMENT.GIVRE, 1000, 1000, 0, 0);
+    // Le centre tombe HORS du premier disque (distance = `ZONE_RADIUS`), donc
+    // rien ne fusionne — mais les deux disques couvrent le point de depart.
+    deux.spawn(ELEMENT.GIVRE, 1000 + ZONE_RADIUS, 1000, 0, 0);
+    expect(deux.count).toBe(2);
+    const seule = new ZoneField();
+    seule.spawn(ELEMENT.GIVRE, 1000, 1000, 0, 0);
+
+    const depart = 1000 + ZONE_RADIUS / 2;
+    // Deux zones ne ralentissent pas plus qu'une : `min(f, f) === f`, alors
+    // que `f * f` serait strictement plus petit.
+    expect(pasAu(une(depart, 1000), fields, MESURE, deux)).toBe(
+      pasAu(une(depart, 1000), fields, MESURE, seule),
+    );
+  });
+
+  it('sans zones, le pas est BIT pour BIT celui d avant la tache 6', () => {
+    // Le contrat de replication de l'etape 2 : le chemin sans zones ne doit
+    // pas bouger d'un ulp. `x * dt * 1` est exact en IEEE754.
+    const fields = fieldsTowards(4000, 4000);
+    const avec = new Horde(4000);
+    const sans = new Horde(4000);
+    avec.spawn(order({ count: 300 }));
+    sans.spawn(order({ count: 300 }));
+    const vide = new ZoneField();
+
+    for (let t = 0; t < 60; t++) {
+      avec.step(DT, fields, t, vide);
+      sans.step(DT, fields, t);
+    }
+
+    for (let i = 0; i < sans.count; i++) {
+      expect(avec.x[i]).toBe(sans.x[i]);
+      expect(avec.y[i]).toBe(sans.y[i]);
+    }
+  });
+
+  it('spawnCatchingUp ralentit aussi les pas rattrapes', () => {
+    // ⚠️ Sans l'appel a `#computeSlow` dans la boucle de rattrapage, celle-ci
+    // utiliserait le facteur du DERNIER `step` — un etat remanent applique a
+    // des entites qui viennent de naitre.
+    const fields = fieldsTowards(5000, 1000);
+    const o = order({ count: 20, anchorX: 1000, anchorY: 1000, spawnTick: 1 });
+
+    // ⚠️ **La zone est posee sur une position REELLE d'entite, pas devinee.**
+    // `FORMATION.SCATTER` disperse les vingt entites sur des centaines de
+    // pixels : une zone posee sur l'ancre pourrait n'en couvrir aucune, et le
+    // test passerait en ne comparant que deux hordes identiques.
+    const reperage = new Horde(100);
+    reperage.spawn(o, fields[0]);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, reperage.x[0] ?? 0, reperage.y[0] ?? 0, 0, 0);
+
+    const givree = new Horde(100);
+    const temoin = new Horde(100);
+    givree.spawnCatchingUp(o, 5, DT, fields, zones);
+    temoin.spawnCatchingUp(o, 5, DT, fields);
+
+    expect(temoin.count).toBe(20);
+    const ecart = Math.hypot(
+      (givree.x[0] ?? 0) - (temoin.x[0] ?? 0),
+      (givree.y[0] ?? 0) - (temoin.y[0] ?? 0),
+    );
+    expect(ecart).toBeGreaterThan(0);
+  });
+});

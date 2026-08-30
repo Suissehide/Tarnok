@@ -4,9 +4,12 @@ import {
   CONTACT_RADIUS,
   ORB_LIFETIME_TICKS,
   ORB_PICKUP_RADIUS,
+  ZONE_RADIUS,
 } from '@shared/constants';
+import { ELEMENT, elementOf } from '@shared/elements';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
+import type { ZoneField } from '@shared/zones';
 
 /**
  * L'arbitrage de combat, cote serveur : degats de projectiles, morts, contact
@@ -184,11 +187,23 @@ export function resolveProjectileDamage(
   horde: Horde,
   orbs: OrbField,
   tick: number,
+  zones?: ZoneField,
 ): number[] {
-  projectiles.step(dt);
+  // ⚠️ **Une zone se pose la ou le projectile FINIT SA COURSE, qu'il ait
+  // touche ou non** (§5.1 de la spec). Les deux fins de course sont a deux
+  // endroits differents de cette classe : la vieillesse, ici dans `step`, et
+  // l'impact, plus bas dans `collide`. N'en cabler qu'une laisserait la moitie
+  // des tirs elementaires sans trace au sol — invisible au type, invisible au
+  // lint.
+  projectiles.step(dt, zones ? (slot) => postZone(zones, projectiles, slot, tick) : undefined);
 
   const dead = new Set<number>();
-  projectiles.collide(horde, (entityId, damage) => {
+  projectiles.collide(horde, (entityId, damage, projectileSlot) => {
+    if (zones) {
+      postZone(zones, projectiles, projectileSlot, tick);
+    }
+    const element = projectiles.elementAt(projectileSlot);
+    const by = projectiles.ownerAt(projectileSlot);
     const slot = horde.slotOf(entityId);
     if (slot < 0) {
       // ⚠️ **INATTEIGNABLE par construction, et AUCUN TEST NE LA GARDE.**
@@ -208,7 +223,31 @@ export function resolveProjectileDamage(
     const reste = (horde.hp[slot] ?? 0) - damage;
     horde.hp[slot] = reste;
     if (reste <= 0) {
+      // ⚠️ **UN ENNEMI QUI MEURT DU MEME IMPACT N'EST PAS MARQUE.** Un mort ne
+      // porte pas d'element : c'est la reaction qui consomme une marque, et il
+      // n'y a plus rien a consommer.
+      //
+      // ⚠️ **Et AUCUN TEST NE GARDE ce `return` — verifie par application, pas
+      // raisonne.** Le plan de l'etape 5a annonce ici la classe de defaut la
+      // plus couteuse du depot (« la marque serait posee sur un creneau que
+      // `kill` va compacter, donc sur une AUTRE entite »). **C'est faux avec le
+      // `Horde` d'aujourd'hui, et la mutation le prouve** : `#removeAt` copie
+      // la DERNIERE entite DANS le creneau libere, donc la marque posee sur le
+      // mourant est ECRASEE par les donnees propres du survivant, jamais
+      // heritee. Et quand le mourant occupe deja le dernier creneau, la marque
+      // survit au-dela du compte — ou `Horde.spawn` la remet a `NEUTRE`
+      // (correctif R16 de l'etape 4). Les deux chemins sont couverts.
+      //
+      // Garde quand meme, et dit tel quel plutot que de laisser croire a une
+      // garde testee (meme choix que le `slot < 0` ci-dessus) : il encode
+      // l'intention, et il redevient porteur le jour ou `#removeAt` cesserait
+      // d'ecraser — un `kill` qui se contenterait de decrementer le compte,
+      // par exemple.
       dead.add(entityId);
+      return;
+    }
+    if (element !== ELEMENT.NEUTRE) {
+      horde.applyMark(slot, element, by, tick);
     }
   });
   if (dead.size === 0) {
@@ -267,4 +306,131 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
       player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
     }
   }
+}
+
+/**
+ * Pose la zone d'un projectile qui vient de finir sa course — creation, ou
+ * rafraichissement de celle qui couvre deja le point (§5.1 bis, la regle qui
+ * BORNE le nombre de zones).
+ *
+ * ⚠️ **Les coordonnees sont ARRONDIES**, exactement comme `Room.step` arrondit
+ * les positions de joueurs avant de nourrir son flowfield (constat C1.4 de
+ * l'etape 2). Le message `ZONE` ne transporte que des `int16` : le client ne
+ * connaitra jamais que la version arrondie. Si le serveur gardait le flottant,
+ * les deux cotes compareraient des disques decales d'un demi-pixel — et le
+ * predicat `dx² + dy² < ZONE_RADIUS²` du ralentissement rendrait des booleens
+ * differents pour les entites pile sur le bord. Le serveur s'impose donc
+ * l'arrondi qu'il inflige au client, comme il s'impose deja son retard.
+ *
+ * Un projectile neutre ne pose rien : c'est le SEUL garde, et il est ici
+ * plutot que dans `ZoneField` — une zone neutre n'aurait ni teinte, ni
+ * brulure, ni ralentissement, mais elle consommerait un creneau de la reserve
+ * et compterait dans le O(zones x entites).
+ */
+function postZone(zones: ZoneField, projectiles: Projectiles, slot: number, tick: number): void {
+  const element = projectiles.elementAt(slot);
+  if (element === ELEMENT.NEUTRE) {
+    return;
+  }
+  zones.spawn(
+    element,
+    Math.round(projectiles.x[slot] ?? 0),
+    Math.round(projectiles.y[slot] ?? 0),
+    projectiles.ownerAt(slot),
+    tick,
+  );
+}
+
+/**
+ * Marque tout ennemi qui se trouve DANS une zone, et rafraichit la marque
+ * tant qu'il y reste (§5.2 de la spec).
+ *
+ * O(zones x entites) — le cout que le §5.2 annonce et que la tache 10 doit
+ * mesurer. Meme balayage que `Horde#computeSlow`, mais **serveur seul** : la
+ * marque ne voyage pas (§2), et c'est elle qui arbitre, donc le client n'a
+ * rien a en deriver.
+ *
+ * ⚠️ **`aliveAt`, pas `slowsAt`.** Ce balayage tourne APRES la pose des zones
+ * du meme tick : une zone posee a ce tick doit marquer immediatement ce
+ * qu'elle couvre. Le ralentissement, lui, ne prend qu'au tick suivant, parce
+ * qu'il porte sur un deplacement DEJA joue quand la zone est posee. Voir la
+ * table de `ZoneField.slowsAt`.
+ *
+ * ⚠️ **La derniere zone visitee gagne, et rien n'arbitre encore.** Un ennemi
+ * couvert par deux zones d'elements differents devrait REAGIR (§6.2) : c'est
+ * la tache 7. Ici, un element SEUL, et la marque est simplement ecrasee.
+ */
+export function markInZones(horde: Horde, zones: ZoneField, tick: number): void {
+  const r2 = ZONE_RADIUS * ZONE_RADIUS;
+  for (let z = 0; z < zones.count; z++) {
+    if (!zones.aliveAt(z, tick)) {
+      continue;
+    }
+    const element = zones.element[z] ?? 0;
+    const by = zones.by[z] ?? 0;
+    const zx = zones.x[z] ?? 0;
+    const zy = zones.y[z] ?? 0;
+    for (let i = 0; i < horde.count; i++) {
+      const dx = (horde.x[i] ?? 0) - zx;
+      const dy = (horde.y[i] ?? 0) - zy;
+      if (dx * dx + dy * dy < r2) {
+        horde.applyMark(i, element, by, tick);
+      }
+    }
+  }
+}
+
+/**
+ * La Braise brule : applique `Element.burnPerTick` a chaque ennemi dont la
+ * marque tient encore, et rend les identites de ceux qui en meurent.
+ *
+ * ⚠️ **Les morts par brulure passent par le `DEATHS` EXISTANT, jamais par un
+ * chemin parallele.** Le rejeu de l'etape 3 en depend : un client apprend qui
+ * meurt par ce seul message, revient au tick de la mort et rejoue. Un second
+ * canal — ou un second lot au meme tick — casserait l'hypothese que
+ * `GameClient#drainPendingDeaths` documente noir sur blanc (« `Room.step`
+ * n'empile jamais qu'UN SEUL `DEATHS` par tick »), et un lot rejoue apres un
+ * autre du meme tick effacerait la correction du premier. C'est donc `Room`
+ * qui FUSIONNE ces identites avec celles des projectiles avant de mettre en
+ * file — voir `Room.step`.
+ *
+ * Les orbes sont derives ici comme dans `resolveProjectileDamage`, a la
+ * position lue AVANT la compaction : le §6.1 de la spec de l'etape 3 fait de
+ * chaque mort un orbe, et le §12 de celle-ci confirme qu'une mort elementaire
+ * n'y fait pas exception — « sinon le systeme elementaire punirait
+ * l'experience de l'equipe ».
+ */
+export function resolveBurn(horde: Horde, orbs: OrbField, tick: number): number[] {
+  const dead: number[] = [];
+  for (let i = 0; i < horde.count; i++) {
+    const burn = elementOf(horde.markAt(i, tick)).burnPerTick;
+    if (burn <= 0) {
+      continue;
+    }
+    const reste = (horde.hp[i] ?? 0) - burn;
+    horde.hp[i] = reste;
+    // ⚠️ **`<= 0`, comme `resolveProjectileDamage` — mais AUCUN TEST NE PEUT
+    // separer cette borne de `< 0` ici, et c'est arithmetique.** `Horde.hp`
+    // est un `Float32Array` et `burnPerTick` vaut 0,1, qui n'y est pas
+    // representable : soustraire le double 0,1 d'une reserve arrondie en
+    // simple precision ne peut jamais tomber sur exactement zero. La mutation
+    // `reste < 0` survit donc a toute la suite — verifie par application. Dit
+    // tel quel plutot que de laisser croire a une borne testee ; la garder
+    // alignee sur celle des projectiles vaut mieux que de la relacher pour une
+    // raison qui tient au format de stockage, pas a la regle.
+    if (reste <= 0) {
+      dead.push(horde.entityIdAt(i));
+    }
+  }
+  if (dead.length === 0) {
+    return dead;
+  }
+  for (const id of dead) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
+    }
+  }
+  horde.kill(dead);
+  return dead;
 }

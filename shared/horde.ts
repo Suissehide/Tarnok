@@ -10,10 +10,12 @@ import {
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
   STEERING_REPULSION_WEIGHT,
+  ZONE_RADIUS,
 } from './constants';
-import { ELEMENT } from './elements';
+import { ELEMENT, elementOf } from './elements';
 import type { FlowField } from './flowfield';
 import { formationPositions, type WaveOrder } from './waves';
+import type { ZoneField } from './zones';
 
 /**
  * Marge sous laquelle la norme du melange (direction du champ + repulsion
@@ -287,6 +289,27 @@ export class Horde {
    */
   readonly #dirSample: Float32Array = new Float32Array(2);
 
+  /**
+   * Facteur de vitesse par entite pour le pas courant — etape 5a, tache 6.
+   * `1` partout quand aucune zone ne ralentit personne, ce qui est le cas de
+   * la quasi-totalite des ticks.
+   *
+   * ⚠️ **Recalcule a CHAQUE avancement, jamais conserve** (voir
+   * `#computeSlow`) : c'est un intermediaire du pas, pas un etat de l'entite.
+   * Il n'est donc NI dans `HordeState`, NI dans `#removeAt` — il n'y a rien a
+   * compacter, puisque rien ne survit au pas qui l'a produit. C'est aussi ce
+   * qui le rend inoffensif pour le rejeu : `HordeHistory` restaure des
+   * positions, et le facteur du tick rejoue se recalcule a partir des zones
+   * et du tick, jamais d'une valeur sauvegardee.
+   *
+   * `Float64Array` et pas `Float32Array` : la valeur lue vient de
+   * `Element.slowFactor`, un double. La stocker en simple precision
+   * l'arrondirait — sans consequence tant que les deux cotes arrondissent
+   * pareil, mais le double garde le facteur EXACTEMENT tel que la table le
+   * donne, et supprime la question.
+   */
+  readonly #slow: Float64Array;
+
   constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
@@ -302,6 +325,7 @@ export class Horde {
     this.mark = new Uint8Array(capacity);
     this.markBy = new Uint8Array(capacity);
     this.markUntil = new Float64Array(capacity);
+    this.#slow = new Float64Array(capacity);
 
     this.#gridCols = Math.ceil(MAP_SIZE / SEPARATION_CELL);
     const cells = this.#gridCols * this.#gridCols;
@@ -694,13 +718,67 @@ export class Horde {
    * l'invariant que tout le reste de ce fichier suppose deja : `dt <= 0` ne
    * fait litteralement rien.
    */
-  step(dt: number, fields: readonly FlowField[], tick: number): void {
+  step(dt: number, fields: readonly FlowField[], tick: number, zones?: ZoneField): void {
     if (dt > 0) {
       this.#recomputeSteering(tick, fields);
+      this.#computeSlow(zones, tick);
       this.#advanceByVelocity(0, this.#count, dt);
       this.#applyDeoverlap(0, this.#count);
     }
     this.#recordFieldRevisions(fields);
+  }
+
+  /**
+   * Remplit `#slow` : pour chaque entite, le plus petit `slowFactor` des zones
+   * qui la couvrent au tick `tick` — `1` si aucune. Etape 5a, tache 6.
+   *
+   * ⚠️ **L'effet porte sur la ZONE, jamais sur la marque, et c'est ce qui le
+   * rend replicable.** La marque ne voyage pas : un client ne pourrait pas
+   * savoir qui est ralenti, et le premier effet touchant le DEPLACEMENT ferait
+   * tomber le contrat de replication a 0,000 px que le projet tient depuis
+   * l'etape 2. Les zones, elles, sont ANNONCEES et leur mort est DERIVEE
+   * (§5.3) : les deux cotes connaissent les memes disques, aux memes ticks, et
+   * comparent des positions bit-identiques — le predicat `dx² + dy² < r²` rend
+   * donc le meme booleen des deux cotes, pour zero octet de plus.
+   *
+   * ⚠️ **Le MINIMUM, jamais le produit.** Deux zones de Givre qui se
+   * recouvrent doivent rendre le meme facteur quel que soit l'ordre du
+   * tableau — et l'ordre, lui, n'est PAS garanti identique des deux cotes :
+   * `#removeAt` compacte en echangeant avec le dernier, et le client expire
+   * ses zones plus tard que le serveur (voir `ZoneField.aliveAt`). Le minimum
+   * est commutatif et associatif exactement ; un produit de flottants ne l'est
+   * pas.
+   *
+   * ⚠️ **`slowsAt`, pas `aliveAt`** — voir `ZoneField.slowsAt` : une zone
+   * posee au tick `T` ne ralentit qu'a partir de `T + 1`, parce que le serveur
+   * fait avancer la horde AVANT de poser ses zones.
+   *
+   * Cout : O(zones x entites), le prix annonce par le §5.2 de la spec. Le
+   * remplissage a `1` a lieu meme sans zones — c'est ce qui rend un
+   * `spawnCatchingUp` sans zones exactement equivalent a l'ancien code plutot
+   * que de lui laisser le facteur du pas precedent.
+   */
+  #computeSlow(zones: ZoneField | undefined, tick: number): void {
+    this.#slow.fill(1, 0, this.#count);
+    if (!zones) {
+      return;
+    }
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    for (let z = 0; z < zones.count; z++) {
+      if (!zones.slowsAt(z, tick)) {
+        continue;
+      }
+      const factor = elementOf(zones.element[z] ?? 0).slowFactor;
+      const zx = zones.x[z] ?? 0;
+      const zy = zones.y[z] ?? 0;
+      for (let i = 0; i < this.#count; i++) {
+        const dx = (this.x[i] ?? 0) - zx;
+        const dy = (this.y[i] ?? 0) - zy;
+        if (dx * dx + dy * dy < r2 && factor < (this.#slow[i] ?? 1)) {
+          this.#slow[i] = factor;
+        }
+      }
+    }
   }
 
   /**
@@ -772,6 +850,7 @@ export class Horde {
     missedTicks: number,
     dt: number,
     fields: readonly FlowField[],
+    zones?: ZoneField,
   ): void {
     if (missedTicks > 0) {
       this.#assertFieldsNotRefreshed(fields);
@@ -788,6 +867,12 @@ export class Horde {
     for (let step = 0; step < missedTicks; step++) {
       const tick = order.spawnTick + step;
       this.#recomputeSteering(tick, fields, before, this.#count);
+      // Meme trio que `step`, dans le meme ordre : rattraper un pas manque
+      // doit reproduire EXACTEMENT ce que le serveur a fait ce tick-la, et
+      // depuis la tache 6 ca inclut le ralentissement. Sans cet appel,
+      // `#slow` porterait encore les valeurs du DERNIER `step` — un etat
+      // rémanent appliqué a des entites qui viennent de naitre.
+      this.#computeSlow(zones, tick);
       this.#advanceByVelocity(before, this.#count, dt);
       this.#applyDeoverlap(before, this.#count);
     }
@@ -809,8 +894,15 @@ export class Horde {
       }
       const ex = this.x[i] ?? 0;
       const ey = this.y[i] ?? 0;
-      this.x[i] = clamp(ex + (this.vx[i] ?? 0) * dt, 0, MAP_SIZE);
-      this.y[i] = clamp(ey + (this.vy[i] ?? 0) * dt, 0, MAP_SIZE);
+      // Tache 6 (etape 5a) : le Givre ralentit. Le facteur module le PAS, pas
+      // la vitesse tenue — `vx`/`vy` restent la trajectoire voulue, recalculee
+      // une fois tous les `STEERING_RECOMPUTE_TICKS`, alors qu'entrer dans une
+      // zone ou en sortir doit se voir au tick meme. A facteur `1` (le cas
+      // general, et le seul avant cette tache) la multiplication est exacte :
+      // le chemin sans zones reste bit-identique a celui d'avant.
+      const slow = this.#slow[i] ?? 1;
+      this.x[i] = clamp(ex + (this.vx[i] ?? 0) * dt * slow, 0, MAP_SIZE);
+      this.y[i] = clamp(ey + (this.vy[i] ?? 0) * dt * slow, 0, MAP_SIZE);
     }
   }
 

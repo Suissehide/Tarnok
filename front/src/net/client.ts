@@ -10,6 +10,7 @@ import {
   ORB_LIFETIME_TICKS,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
+  ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
@@ -27,9 +28,11 @@ import {
   type PlayerSnapshot,
   quantizeAxis,
   type WaveOrderMessage,
+  type ZoneMessage,
 } from '@shared/protocol';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
+import { ZoneField } from '@shared/zones';
 
 import { SnapshotBuffer } from './interpolation';
 import { PredictedPlayer } from './prediction';
@@ -316,6 +319,15 @@ export class GameClient {
 
   /** Anneau d'etats de horde, pour le rejeu des morts en retard (§3.2). */
   readonly #hordeHistory = new HordeHistory(MAX_ENTITIES);
+  /**
+   * Les zones au sol, ANNONCEES par le serveur et jamais derivees (§5.3 de
+   * l'etape 5a) — le client ne peut pas savoir ou finit un projectile serveur.
+   * Leur MORT, elle, se derive du seul `bornTick`, comme celle des orbes.
+   *
+   * Lecture publique : le rendu (tache 9) y lit ses quads teintes, et
+   * `Horde.step` y lit le ralentissement du Givre.
+   */
+  readonly zones = new ZoneField();
   /** Orbes derives des morts (§6.1), jamais transmis. Lecture publique pour le rendu et le HUD. */
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
 
@@ -370,8 +382,25 @@ export class GameClient {
    */
   #lateDeaths = 0;
 
+  /**
+   * Nombre cumule de zones annoncees trop tard pour l'anneau
+   * (`ROLLBACK_DEPTH_TICKS`) : posees au present plutot qu'a leur `bornTick`.
+   *
+   * ⚠️ **Meme degradation que `#lateDeaths`, et pour la meme raison : elle ne
+   * doit jamais etre silencieuse.** Le Givre ralentit le DEPLACEMENT ; une
+   * zone appliquee au present ralentit quelques ticks trop tard, et l'ecart
+   * est exactement la latence excedentaire. L'etape 3 a chiffre le cas
+   * equivalent pour les morts (93,007 px). On applique quand meme — un effet
+   * que le joueur a paye ne doit pas disparaitre — mais on le COMPTE, plutot
+   * que de pretendre a l'exactitude.
+   */
+  #lateZones = 0;
+
   /** Lots de morts recus mais pas encore appliques. Meme discipline que `#pendingOrders`. */
   readonly #pendingDeaths: PendingDeathBatch[] = [];
+
+  /** Zones recues mais pas encore appliquees. Meme discipline que `#pendingDeaths`. */
+  readonly #pendingZones: ZoneMessage[] = [];
 
   /**
    * Dernier tick du gel courant (inclus), et dernier tick de la reprise
@@ -582,6 +611,11 @@ export class GameClient {
     return this.#lateDeaths;
   }
 
+  /** Zones posees au present faute d'anneau assez profond. Voir `#lateZones`. */
+  get lateZones(): number {
+    return this.#lateZones;
+  }
+
   connect(): void {
     this.#setStatus('connecting');
     const ws = new WebSocket(this.url);
@@ -765,6 +799,12 @@ export class GameClient {
       this.#pendingDeaths.push({ tick: msg.tick, ids: msg.ids });
       return;
     }
+    if (msg.type === MSG.ZONE) {
+      // Meme discipline que les morts : empiler ici, appliquer (et rejouer) au
+      // tick local deja simule — voir `#applyZone`.
+      this.#pendingZones.push(msg);
+      return;
+    }
     if (msg.type === MSG.PICKUPS) {
       // Pur retrait derive : aucune position ni existence d'orbe ne transite,
       // seules les identites ramassees le font (voir `DerivedOrbs`).
@@ -939,7 +979,7 @@ export class GameClient {
       if (order) {
         // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
         const missed = Math.max(0, tick - order.spawnTick);
-        this.horde.spawnCatchingUp(order, missed, dt, this.#fields);
+        this.horde.spawnCatchingUp(order, missed, dt, this.#fields, this.zones);
       }
     }
 
@@ -987,8 +1027,19 @@ export class GameClient {
     // `if` separe. `tick` reste le tick ABSOLU, non mis a l'echelle : c'est
     // lui qui decide la phase de recalcul de trajectoire (tache 19), et cette
     // phase ne doit jamais deraper au gre du gel.
+    // ⚠️ **Expirer AVANT d'avancer, comme `Room.step`** — sauf que le client
+    // expire `ROLLBACK_DEPTH_TICKS` ticks EN RETARD, et c'est delibere :
+    // `HordeHistory` ne sauvegarde que la horde, jamais les zones. Un rejeu
+    // qui repart d'un tick ou une zone vivait encore doit pouvoir la
+    // retrouver — une zone retiree du tableau est irrecuperable. Elle reste
+    // donc en memoire quelques ticks de plus, inerte : c'est
+    // `ZoneField.slowsAt`, pas la presence dans le tableau, qui dit si elle
+    // agit (voir sa doc). Le serveur, lui, ne rejoue jamais et expire a
+    // l'heure ; les deux repondent la meme chose parce que les deux passent
+    // par le meme predicat.
+    this.zones.expire(tick - ROLLBACK_DEPTH_TICKS);
     const scale = this.#movementScale(tick);
-    this.horde.step(dt * scale, this.#fields, tick);
+    this.horde.step(dt * scale, this.#fields, tick, this.zones);
 
     // Tir, deplacement des projectiles, collision — miroir cosmetique de
     // l'etape 8 de `Room.step` (back/src/room.ts). Gate par le meme garde de
@@ -1033,6 +1084,7 @@ export class GameClient {
     // Peremption des orbes : calcul DERIVE (§6.1), jamais arbitre — voir
     // `DerivedOrbs.expire`.
     this.orbs.expire(tick);
+    this.#drainPendingZones(tick);
     this.#drainPendingDeaths(tick);
   }
 
@@ -1154,6 +1206,65 @@ export class GameClient {
    * pas ete ajoutee). Rejouer un lot plus recent AVANT un lot plus ancien
    * effacerait la correction du second par le rejeu du premier.
    */
+  /**
+   * Applique toutes les zones recues mais pas encore posees, au tick local
+   * `currentTick`.
+   *
+   * ⚠️ **APPELE AVANT `#drainPendingDeaths`, et l'ordre n'est pas
+   * interchangeable.** Les deux rejouent, et un rejeu REECRIT l'anneau depuis
+   * son tick de depart. Si une mort du tick `D` etait rejouee d'abord, puis
+   * une zone du tick `Z < D`, la restauration au tick `Z` rendrait un etat
+   * d'AVANT la mort, et le rejeu de `Z+1..present` ecraserait l'anneau avec
+   * une horde ou l'entite tuee est toujours vivante : **la mort serait
+   * perdue**. Dans l'autre sens, la zone est deja posee quand la mort rejoue,
+   * donc le rejeu de la mort la reapplique — quel que soit l'ordre des ticks.
+   */
+  #drainPendingZones(currentTick: number): void {
+    while (this.#pendingZones.length > 0) {
+      const zone = this.#pendingZones.shift();
+      if (zone) {
+        this.#applyZone(zone, currentTick);
+      }
+    }
+  }
+
+  /**
+   * Pose une zone annoncee, par rejeu — meme mecanique que `#applyDeaths`, et
+   * pour la meme raison.
+   *
+   * ⚠️ **L'effet est DATE PAR TICK, jamais applique a la reception.** Le
+   * serveur ralentit depuis `bornTick` ; le message arrive quelques ticks plus
+   * tard. L'appliquer au present ferait diverger le client de sa latence
+   * exacte — c'est la lecon du gel de niveau de l'etape 3, transposee au
+   * premier effet qui touche le DEPLACEMENT.
+   *
+   * `bornTick >= currentTick` : rien a rejouer. Une zone ne ralentit qu'a
+   * partir du tick SUIVANT sa pose (voir `ZoneField.slowsAt`), donc son effet
+   * est encore entierement devant nous.
+   *
+   * ⚠️ **La zone est posee AVANT le rejeu**, sans quoi le rejeu avancerait la
+   * horde sans elle et ne corrigerait rien.
+   */
+  #applyZone(zone: ZoneMessage, currentTick: number): void {
+    if (zone.bornTick >= currentTick) {
+      this.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+      return;
+    }
+    if (!this.#hordeHistory.restore(zone.bornTick, this.horde)) {
+      // Trop vieux pour l'anneau : pose au present, et SIGNALE — meme
+      // degradation assumee que pour une mort trop vieille, meme refus de la
+      // faire en silence. Voir `#lateZones`.
+      this.#lateZones++;
+      this.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+      return;
+    }
+    this.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+    this.#primeFieldForReplay(zone.bornTick);
+    for (let t = zone.bornTick + 1; t <= currentTick; t++) {
+      this.#replayTick(t);
+    }
+  }
+
   #drainPendingDeaths(currentTick: number): void {
     while (this.#pendingDeaths.length > 0) {
       const batch = this.#pendingDeaths.shift();
@@ -1254,7 +1365,7 @@ export class GameClient {
       }
     }
     const scale = this.#movementScale(tick);
-    this.horde.step(FIXED_DT * scale, this.#fields, tick);
+    this.horde.step(FIXED_DT * scale, this.#fields, tick, this.zones);
     this.#hordeHistory.record(tick, this.horde);
   }
 
