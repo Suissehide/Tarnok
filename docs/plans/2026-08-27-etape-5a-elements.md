@@ -546,6 +546,32 @@ testable qu'en mettant en scène un appelant fautif.
   pas p95 avec 30 zones vivantes à 1 500 et 4 000 entités. **`ZONE_RADIUS` est le levier**, et le
   tableau des constantes le dit.
 
+- [ ] **Étape 3 bis : borner le trafic des rafraîchissements — trouvé à la tâche 6.**
+
+  La fusion fait repartir le `bornTick` d'une zone existante. **Ce rafraîchissement doit être
+  annoncé**, sinon la zone du client meurt avant celle du serveur. Conséquence non vue à
+  l'écriture : **le trafic `ZONE` suit alors la cadence des armes, pas le nombre de zones vivantes**
+  — exactement le couplage que le §5.1 bis avait supprimé pour le *compte*. Mesuré à la tâche 6 :
+  9 annonces pour 3 zones vivantes sur ~30 ticks.
+
+  | Exemplaires par arme | Annonces/s/joueur | Reçu par chaque client |
+  | --- | --- | --- |
+  | 1 | 21 | **0,90 ko/s** |
+  | 4 | 49 | 2,11 ko/s |
+  | 8 | 86 | **3,70 ko/s** |
+
+  Contre **1,22 ko/s** de trafic total mesuré à l'étape 4. Le rafraîchissement peut donc tripler le
+  trafic, et il est **fonction de la cadence** — le §3.3 de l'orientation exige l'inverse.
+
+  **La parade : l'annonce EST la vérité.** Le `bornTick` qui fait foi est celui de la dernière
+  annonce, et une zone n'est ré-annoncée qu'au plus une fois toutes les `ZONE_LIFETIME_TICKS / 2`.
+  Entre deux annonces, **le serveur ne prolonge pas non plus** — donc les deux côtés lisent le même
+  `bornTick`, sans divergence, et le trafic redevient fonction du **nombre de zones**, que la fusion
+  borne déjà par la surface.
+
+  Le test : entretenir une zone en tirant dessus sans relâche pendant plusieurs vies de zone, et
+  **compter les annonces**. Elles doivent croître avec le temps, pas avec la cadence.
+
 - [ ] **Étape 4 : commit** — `test(back): une reaction inter-joueurs charge la barre`
 
 ---

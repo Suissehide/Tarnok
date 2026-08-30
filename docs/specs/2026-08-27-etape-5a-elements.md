@@ -211,6 +211,17 @@ balaie la carte en pose plusieurs, et c'est le comportement qu'on veut voir.
 `truncatedProjectiles` de l'étape 4 : une zone qui ne se pose pas faute de place est un effet que le
 joueur a payé et qui ne se voit pas. **Ça ne doit jamais disparaître sans trace.**
 
+⚠️ **Le rafraîchissement doit être annoncé, et ça ramène le couplage par une autre porte.** Si le
+serveur fait repartir un `bornTick` sans le dire, la zone du client meurt avant la sienne. Mais
+annoncer chaque fusion fait suivre au trafic la **cadence des armes** — ce que ce paragraphe venait
+d'enlever au *compte*. Mesuré : jusqu'à **3,70 ko/s par client** à huit exemplaires par arme, contre
+1,22 ko/s de trafic total à l'étape 4.
+
+**La parade : l'annonce EST la vérité.** Le `bornTick` qui fait foi est celui de la dernière
+annonce ; une zone n'est ré-annoncée qu'au plus une fois par demi-vie, et **entre deux annonces le
+serveur ne prolonge pas non plus**. Les deux côtés lisent alors le même `bornTick`, et le trafic
+redevient fonction du nombre de zones — que la fusion borne déjà par la surface.
+
 **Le précédent existe déjà** : `OrbField` fait exactement ça pour les orbes d'expérience, avec une
 expiration **dérivée** des deux côtés à partir du `bornTick`, sans message de disparition. Les zones
 suivent ce modèle.
