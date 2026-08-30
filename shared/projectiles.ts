@@ -211,11 +211,11 @@ export class Projectiles {
   /**
    * Degats portes par le projectile de ce slot.
    *
-   * ⚠️ **Ce nombre ne module rien pour l'instant** : la pietaille n'a aucune
-   * reserve de points de vie (voir la doc de `resolveCombat`), donc un
-   * projectile qui touche est toujours letal. Il est transporte pour
-   * l'affichage et les elites futures — et c'est le SEUL endroit ou l'effet
-   * des passifs de degats est observable aujourd'hui.
+   * Depuis l'etape 5a, ce nombre **module l'issue** : `resolveProjectileDamage`
+   * le soustrait de `Horde.hp`, et une pietaille lourde (`HEAVY_HP`) survit ou
+   * non selon les passifs de degats du tireur. Il reste lisible ici parce que
+   * c'est le seul point ou le client peut verifier ce qu'il tire — mais ce
+   * n'est plus le seul endroit ou son effet s'observe.
    */
   damageAt(slot: number): number {
     return this.#damage[slot] ?? 0;

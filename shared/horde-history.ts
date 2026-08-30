@@ -41,6 +41,7 @@ export class HordeHistory {
       animPhase: new Uint8Array(capacity),
       targetField: new Uint8Array(capacity),
       stopped: new Uint8Array(capacity),
+      hp: new Float32Array(capacity),
     }));
   }
 

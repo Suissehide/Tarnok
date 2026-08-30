@@ -1,3 +1,4 @@
+import { ARCHETYPES, HEAVY_HP } from '@shared/archetypes';
 import { CARD, type Card } from '@shared/cards';
 import {
   FIELD_INPUT_DELAY_TICKS,
@@ -465,13 +466,19 @@ describe('Room et la horde', () => {
       // reste visible dans le HUD (§4.6).
       const room = new Room();
       room.join(1);
-      fillHordeFarFromPlayer(room, MAX_ENTITIES - 10);
+      fillHordeFarFromPlayer(room, MAX_ENTITIES - 1);
 
       // Une seule periode de vague (PERIOD_TICKS = TICK_HZ * 6) suffit : la
-      // horde pre-remplie ne laisse que 10 places, strictement sous le
-      // plancher de la toute premiere vague (`WAVE1_MIN_COUNT`, tache 14 —
-      // rampe de `WaveDirector`) — la troncature est donc garantie quel que
-      // soit le tirage, sans dependre du reglage exact de la rampe.
+      // horde pre-remplie ne laisse qu'UNE place, donc toute vague de deux
+      // entites ou plus tronque, quel que soit le reglage de la rampe.
+      //
+      // ⚠️ **Ce test etait intermittent, et c'est l'etape 5a qui l'a revele.**
+      // Il laissait 10 places en se fiant a « strictement sous le plancher de
+      // la premiere vague (`WAVE1_MIN_COUNT`) » — vrai tant que ce plancher
+      // valait 16. L'etape 7 bis l'a ramene a 10 : une vague de 10 tenait
+      // pile, ne tronquait rien, et le test echouait environ une fois sur
+      // neuf. La constante n'est pas exportee ; la fixture ne doit donc pas
+      // dependre de sa valeur du tout.
       for (let i = 0; i < TICK_HZ * 6; i++) {
         room.step(DT);
       }
@@ -484,7 +491,8 @@ describe('Room et la horde', () => {
   it('remet le compteur de troncatures a zero au drainage', () => {
     const room = new Room();
     room.join(1);
-    fillHordeFarFromPlayer(room, MAX_ENTITIES - 10);
+    // Une seule place libre : voir l'avertissement du test precedent.
+    fillHordeFarFromPlayer(room, MAX_ENTITIES - 1);
     for (let i = 0; i < TICK_HZ * 6; i++) {
       room.step(DT);
     }
@@ -502,12 +510,12 @@ describe('Room et la horde', () => {
  * mecanisme normal de `WaveDirector` — meme technique que dans
  * `combat.test.ts` et les tests `shared/*.test.ts`.
  */
-function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): number {
+function spawnMonsterAt(room: Room, waveId: number, x: number, y: number, archetype = 0): number {
   const order: WaveOrder = {
     waveId,
     spawnTick: room.tick,
     seed: 1,
-    archetype: 0,
+    archetype,
     formation: FORMATION.SCATTER,
     anchorX: x,
     anchorY: y,
@@ -1207,11 +1215,10 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     });
 
     it('deux cartes de puissance doublent le bonus de degats porte par le projectile', () => {
-      // ⚠️ **Ce nombre ne change AUCUNE issue de combat aujourd'hui** : la
-      // pietaille n'a pas de reserve de points de vie (voir `resolveCombat`),
-      // un projectile qui touche est toujours letal. Le bonus est neanmoins
-      // calcule et transporte, et c'est ici qu'on le verifie — sans quoi les
-      // deux passifs de degats du catalogue seraient du code mort silencieux.
+      // Le nombre transporte. Qu'il change une ISSUE — un ennemi lourd qui
+      // meurt en moins d'impacts — est verifie par le test suivant : c'est la
+      // dette de l'etape 4 (« `damage` ne module aucune issue ») qui se solde
+      // la, pas ici.
       const magnitude = passiveOf(PUISSANCE).magnitude;
       const base = weaponOf(BASE_WEAPON_ID).damage;
 
@@ -1233,6 +1240,69 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       expect(degatsDuPremierTir(0)).toBeCloseTo(base, 5);
       expect(degatsDuPremierTir(1)).toBeCloseTo(base * (1 + magnitude), 5);
       expect(degatsDuPremierTir(2)).toBeCloseTo(base * (1 + magnitude * 2), 5);
+    });
+
+    it('deux cartes de puissance font mourir un ennemi lourd en MOINS d impacts', () => {
+      // ⚠️ **La dette de l'etape 4, soldee.** « Puissance » et « acier »
+      // calculaient un bonus qui ne modulait aucune issue : la pietaille
+      // n'avait pas de PV, un projectile qui touche etait toujours letal. Le
+      // test precedent ne garde que le NOMBRE ; celui-ci garde l'ISSUE.
+      //
+      // Compte les IMPACTS, pas les ticks : la cadence est identique dans les
+      // trois cas (« puissance » ne la touche pas), mais compter des ticks
+      // ferait dependre le resultat du temps de vol du projectile.
+      const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+      expect(LOURD).toBeGreaterThanOrEqual(0);
+
+      function impactsPourTuer(cartes: number): number {
+        const room = new Room(0x5a5a_1234);
+        room.join(1);
+        prend(room, PUISSANCE, cartes);
+        const pos = positionOf(room, 1);
+        // 500 px : dans la portee de la dague (~607 px, tache 14) et hors de
+        // CONTACT_RADIUS, pour isoler le chemin « degats de projectile ».
+        const cible = spawnMonsterAt(room, 900, pos.x + 500, pos.y, LOURD);
+        let impacts = 0;
+        let reste = HEAVY_HP;
+        // Sous 180 ticks : la periode du generateur de vagues. Au-dela, un
+        // autre monstre pourrait devenir la cible la plus proche.
+        for (let t = 0; t < 170; t++) {
+          aimAtNearestMonster(room, 1, t + 1);
+          room.step(DT);
+          const slot = room.horde.slotOf(cible);
+          if (slot < 0) {
+            return impacts + 1; // l'impact qui vient de l'achever
+          }
+          const courant = room.horde.hp[slot] ?? 0;
+          if (courant !== reste) {
+            impacts++;
+            reste = courant;
+          }
+        }
+        throw new Error("l'ennemi lourd n'est jamais mort");
+      }
+
+      const degats = weaponOf(BASE_WEAPON_ID).damage;
+      const magnitude = passiveOf(PUISSANCE).magnitude;
+      const impacts = (cartes: number) => Math.ceil(HEAVY_HP / (degats * (1 + magnitude * cartes)));
+
+      // Sanity : c'est bien QUATRE impacts de dague qu'il faut sans carte —
+      // sinon la fixture ne met pas en scene le cas qu'on croit.
+      expect(impactsPourTuer(0)).toBe(4);
+      expect(impacts(0)).toBe(4);
+
+      // ⚠️ **DEUX cartes ne suffisent pas, contrairement a ce que le plan
+      // annonce, et c'est le motif R9 de l'etape 4 : le nombre d'impacts est
+      // un ENTIER, et le bonus une fraction.** 20 PV / (5 x 1,2) = 3,33, donc
+      // toujours quatre impacts. Il en faut QUATRE (+40 % : 20 / 7 = 2,86)
+      // pour que le palier tombe. Ecrit ici plutot que corrige en silence :
+      // quelqu'un qui lirait le plan croirait le test faux.
+      expect(impactsPourTuer(2)).toBe(4);
+      expect(impacts(2)).toBe(4);
+
+      // **L'issue change.** C'est ce qui separe cette etape de l'etape 4.
+      expect(impactsPourTuer(4)).toBe(3);
+      expect(impactsPourTuer(4)).toBeLessThan(impactsPourTuer(0));
     });
 
     it('les passifs d un joueur ne changent rien pour son voisin', () => {
@@ -1561,6 +1631,18 @@ describe('la run est jouable (tache 14)', () => {
    * vingtaine d'essais avec un joueur passif — la graine de carte tiree au
    * hasard a chaque `Room` (`Room.mapSeed`) fait varier ce delai d'un essai a
    * l'autre. 100 s laisse une marge large sans figer de graine.
+   *
+   * ⚠️ **C'est LA garde de l'etape 7 bis de l'etape 5a** (« moins d'ennemi au
+   * debut »). Moins d'ennemis, c'est moins d'orbes, et le seuil de niveau ne
+   * bouge pas : un debut trop maigre repousserait la premiere arme au lieu de
+   * l'avancer. Remesure sur 40 graines apres la baisse de `WAVE1_*` (16-28 ->
+   * 10-18) et l'allongement de `RAMP_WAVES` (20 -> 30) : mediane **41,3 s**,
+   * maximum **50,1 s**, zero echec — contre 36,8 / 44,5 avant.
+   *
+   * ⚠️ Le meme releve a montre que des vagues LOURDES des le debut faisaient
+   * perdre la run avant le niveau 2 dans 3 essais sur 20 : ce test serait
+   * devenu intermittent a 15 %. C'est ce qui a impose `HEAVY_FIRST_WAVE`
+   * (`wave-director.ts`).
    */
   it('un joueur passif atteint le niveau 2 via le pipeline reel (vagues, arme de base, orbes)', () => {
     const room = new Room();

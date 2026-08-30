@@ -18,15 +18,20 @@ import type { Projectiles } from '@shared/projectiles';
  * `worker_threads` mecanique, et ce qui permet de tester l'arbitrage ici sans
  * lancer de serveur.
  *
- * ⚠️ **Decision de conception, absente du plan.** Les monstres de pietaille
- * (`shared/archetypes.ts`) n'ont aucune reserve de points de vie : le tableau
- * « Coherence des constantes » du plan d'etape 3 ne definit ni `MONSTER_HP`
- * ni aucun equivalent, alors qu'il est exhaustif sur tout le reste. Le §4.1
- * de la spec d'orientation les decrit comme de la « chair a canon ». Un
- * projectile qui touche est donc TOUJOURS letal pour cette etape :
- * `Weapon.damage` reste transporte (affichage, futures elites du §3.3 —
- * hors perimetre) mais ne module aucune reserve de PV ici. Voir le rapport
- * de la tache 9 pour la justification complete.
+ * ⚠️ **Depuis l'etape 5a, la pietaille a une reserve de points de vie** —
+ * `Archetype.hp`, posee par `Horde.spawn`, soustraite ICI et nulle part
+ * ailleurs. `Weapon.damage` cesse d'etre inerte, et avec lui les deux passifs
+ * de degats (« puissance », « acier ») qui ne modulaient aucune issue a
+ * l'etape 4.
+ *
+ * Le rythme de mise a mort de l'etape 3 est preserve **par construction** :
+ * `LIGHT_HP` vaut exactement les degats de la dague, donc la pietaille legere
+ * meurt toujours en un coup. Seule la pietaille lourde (`HEAVY_HP`, quatre
+ * coups) change quelque chose — assez pour porter une marque elementaire et
+ * reagir, ce que le §3.3 de la spec exige.
+ *
+ * **Les PV ne quittent jamais le serveur** (§2 de la spec) : le client apprend
+ * qui meurt par `DEATHS`, comme depuis l'etape 3. Rien de nouveau sur le fil.
  */
 
 /**
@@ -161,14 +166,17 @@ export class OrbField {
  * monstre AVANT sa compaction par `Horde.kill`. Rend les identites mortes ce
  * tick (pour le message DEATHS).
  *
- * ⚠️ **Deduplique avant `horde.kill`.** Deux projectiles peuvent toucher la
- * MEME entite au meme tick (deux tireurs convergents) : `Projectiles.collide`
- * consomme chaque projectile independamment et ne sait pas qu'une autre
- * touche a deja ete enregistree ce tick. Sans deduplication, la meme identite
- * serait listee deux fois dans le lot diffuse — ce que le §3.1 de la spec
- * interdit (« triees en ordre croissant » suppose des identites uniques) et
- * que `Horde.kill` ne fait que tolerer defensivement (voir sa doc). Le `Set`
- * ci-dessous rend cette garantie structurelle plutot que defensive.
+ * ⚠️ **Le `Set` de deduplication reste indispensable, pour une raison qui a
+ * CHANGE a l'etape 5a.** Il ne protege plus contre « deux projectiles tuent le
+ * meme ennemi au meme tick » — avec des PV, le second impact ne « tue » plus,
+ * il descend une reserve deja a zero. Il protege contre le fait que la MEME
+ * identite soit listee deux fois dans le lot : deux projectiles qui achevent
+ * la meme entite au meme tick passent tous les deux par `reste <= 0`, et sans
+ * le `Set` l'identite partirait deux fois dans `DEATHS` — ce que le §3.1 de la
+ * spec de l'etape 3 interdit (« triees en ordre croissant » suppose des
+ * identites uniques) et que `Horde.kill` ne fait que tolerer defensivement
+ * (voir sa doc, et le doublon y supprimerait l'entite VIVANTE deplacee dans le
+ * creneau). Le `Set` rend cette garantie structurelle plutot que defensive.
  */
 export function resolveProjectileDamage(
   projectiles: Projectiles,
@@ -180,8 +188,28 @@ export function resolveProjectileDamage(
   projectiles.step(dt);
 
   const dead = new Set<number>();
-  projectiles.collide(horde, (entityId) => {
-    dead.add(entityId);
+  projectiles.collide(horde, (entityId, damage) => {
+    const slot = horde.slotOf(entityId);
+    if (slot < 0) {
+      // ⚠️ **INATTEIGNABLE par construction, et AUCUN TEST NE LA GARDE.**
+      // `collide` ne rend que des identites lues dans la horde elle-meme, et
+      // rien ne compacte entre les deux : la seule compaction est le
+      // `horde.kill` final, plus bas. La mutation « remplacer cette condition
+      // par `false` » survit donc a toute la suite — verifie par application,
+      // pas raisonne.
+      //
+      // Gardee quand meme, et dit tel quel plutot que de laisser croire a une
+      // garde testee (meme choix qu'a R10 de l'etape 4) : sans elle,
+      // `horde.hp[-1] = ...` est un no-op SILENCIEUX sur un tableau type —
+      // des degats qui disparaissent sans trace le jour ou un appelant futur
+      // compacterait entre `collide` et ce rappel.
+      return;
+    }
+    const reste = (horde.hp[slot] ?? 0) - damage;
+    horde.hp[slot] = reste;
+    if (reste <= 0) {
+      dead.add(entityId);
+    }
   });
   if (dead.size === 0) {
     return [];

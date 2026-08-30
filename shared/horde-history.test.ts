@@ -21,13 +21,19 @@ function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
 
 describe('HordeHistory', () => {
   it('un aller-retour enregistrer / restaurer rend exactement l etat sauvegarde, champ par champ', () => {
-    // ⚠️ NEUF tableaux, pas sept : c'est exactement le defaut R13 (voir le
-    // rapport de la tache 19) — un test qui n'en verifie qu'une partie reste
-    // vert quand une copie manque dans `saveState`/`restoreState`. `vx`/`vy`
-    // (tache 19) sont ICI au meme titre que les sept autres, verifies un par
-    // un par corruption puis restauration : supprimer la copie de l'UN
-    // QUELCONQUE de ces neuf tableaux dans `saveState` ou `restoreState` doit
-    // faire echouer la ligne qui lui correspond, et elle seule.
+    // ⚠️ ONZE tableaux, pas sept ni neuf : c'est exactement le defaut R13
+    // (voir le rapport de la tache 19) — un test qui n'en verifie qu'une
+    // partie reste vert quand une copie manque dans `saveState`/`restoreState`.
+    // `vx`/`vy` (tache 19) et `hp` (etape 5a) sont ICI au meme titre que les
+    // huit autres, verifies un par un par corruption puis restauration :
+    // supprimer la copie de l'UN QUELCONQUE de ces onze tableaux dans
+    // `saveState` ou `restoreState` doit faire echouer la ligne qui lui
+    // correspond, et elle seule.
+    //
+    // ⚠️ `hp` n'est lu que par le serveur, qui ne rejoue jamais — le laisser
+    // hors de l'instantane « marcherait » aujourd'hui. C'est precisement
+    // pourquoi il y est : deux listes a tenir a jour au lieu d'une, c'est la
+    // classe de defaut que ce depot paie le plus cher.
     const horde = new Horde(20);
     horde.spawn(order({ waveId: 1, archetype: 2, count: 3 }));
     // Valeurs distinctives, posees a la main : le spawn seul ne fait pas
@@ -38,6 +44,7 @@ describe('HordeHistory', () => {
     horde.vy[0] = -67.5;
     horde.targetField[0] = 3;
     horde.stopped[0] = 1;
+    horde.hp[0] = 13.5;
 
     const history = new HordeHistory(horde.capacity);
     history.record(5, horde);
@@ -54,6 +61,7 @@ describe('HordeHistory', () => {
       animPhase: horde.animPhase[0] ?? 0,
       targetField: horde.targetField[0] ?? 0,
       stopped: horde.stopped[0] ?? 0,
+      hp: horde.hp[0] ?? 0,
     };
 
     // Corrompt CHAQUE champ individuellement, avec une valeur differente de
@@ -69,6 +77,7 @@ describe('HordeHistory', () => {
     horde.animPhase[0] = (attendu.animPhase + 1) % 256;
     horde.targetField[0] = (attendu.targetField + 1) % 4;
     horde.stopped[0] = attendu.stopped === 1 ? 0 : 1;
+    horde.hp[0] = attendu.hp + 1;
     horde.kill([horde.entityIdAt(horde.count - 1)]);
     expect(horde.count).toBe(attendu.count - 1); // sanity : le compte a bien change
 
@@ -86,6 +95,7 @@ describe('HordeHistory', () => {
     expect(horde.animPhase[0]).toBe(attendu.animPhase);
     expect(horde.targetField[0]).toBe(attendu.targetField);
     expect(horde.stopped[0]).toBe(attendu.stopped);
+    expect(horde.hp[0]).toBe(attendu.hp);
   });
 
   it('restaurer un tick jamais enregistre rend false et ne modifie pas la horde', () => {

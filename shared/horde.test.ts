@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { archetypeOf } from './archetypes';
+import { ARCHETYPES, archetypeOf, HEAVY_HP, LIGHT_HP } from './archetypes';
 import {
   CONTACT_RADIUS,
   DEOVERLAP_MAX_PX,
@@ -79,6 +79,48 @@ describe('Horde.spawn', () => {
 
     expect(horde.entityIdAt(0)).toBe(entityIdOf(3, 0));
     expect(horde.archetype[0]).toBe(2);
+  });
+
+  /**
+   * Etape 5a : la reserve de PV se DERIVE de l'archetype, donc les deux cotes
+   * la posent identiquement sans un octet de plus sur le fil. Deux archetypes
+   * de PV differents dans le meme test : une mutation qui poserait une
+   * constante (`this.hp[slot] = 5`) au lieu de lire l'archetype passerait avec
+   * un seul.
+   */
+  it('remplit les PV depuis l archetype, pas depuis une constante', () => {
+    const leger = ARCHETYPES.find((a) => a.hp === LIGHT_HP);
+    const lourd = ARCHETYPES.find((a) => a.hp === HEAVY_HP);
+    expect(leger).toBeDefined();
+    expect(lourd).toBeDefined();
+
+    const horde = new Horde(1000);
+    horde.spawn(order({ waveId: 1, archetype: leger?.id ?? 0, count: 3 }));
+    horde.spawn(order({ waveId: 2, archetype: lourd?.id ?? 0, count: 3 }));
+
+    expect([...horde.hp.slice(0, 3)]).toEqual([LIGHT_HP, LIGHT_HP, LIGHT_HP]);
+    expect([...horde.hp.slice(3, 6)]).toEqual([HEAVY_HP, HEAVY_HP, HEAVY_HP]);
+  });
+
+  /**
+   * ⚠️ Meme raison que `targetField` et `stopped` : un creneau recycle apres
+   * une mort doit repartir a PLEINE reserve. Sans l'ecriture inconditionnelle
+   * dans `spawn`, une entite neuve heriterait des PV entames du monstre qu'elle
+   * remplace — et mourrait au premier coup en se faisant passer pour une
+   * pietaille lourde.
+   */
+  it('rend ses PV pleins a un creneau recycle apres une mort', () => {
+    const lourd = ARCHETYPES.find((a) => a.hp === HEAVY_HP);
+    const horde = new Horde(1000);
+    horde.spawn(order({ waveId: 1, archetype: lourd?.id ?? 0, count: 2 }));
+    horde.hp[0] = 1; // entame par un projectile
+    horde.hp[1] = 2;
+    horde.kill([horde.entityIdAt(0), horde.entityIdAt(1)]);
+    expect(horde.count).toBe(0);
+
+    horde.spawn(order({ waveId: 2, archetype: lourd?.id ?? 0, count: 2 }));
+
+    expect([...horde.hp.slice(0, 2)]).toEqual([HEAVY_HP, HEAVY_HP]);
   });
 
   it('disperse les phases d animation : mille crânes ne marchent pas au pas', () => {
@@ -542,60 +584,88 @@ describe('Horde.kill', () => {
     }
   });
 
+  /**
+   * Les tableaux que `#removeAt` doit recopier, **enumeres depuis une liste
+   * unique**.
+   *
+   * ⚠️ **Le piege connu de ce depot.** A l'etape 3, le test qui portait ce nom
+   * verifiait DEUX tableaux sur sept : supprimer la copie de `x`, de `y` ou de
+   * `targetField` laissait la suite verte. L'entite deplacee dans le creneau
+   * libere gardait alors une propriete du mort qu'elle remplace — a l'etape
+   * 5a, ses PV entames, donc un monstre qui meurt d'un coup au lieu de quatre
+   * ou l'inverse.
+   *
+   * Une liste ecrite a la main ne suffit pas : elle vieillit. Le test verifie
+   * donc AUSSI qu'elle couvre exactement les tableaux que porte l'instance
+   * (`tableauxDe`) — ajouter un tableau a `Horde` sans l'ajouter ici fait
+   * rougir la couverture, et l'ajouter ici sans l'ajouter a `#removeAt` fait
+   * rougir la copie. Compter les lignes de `#removeAt` serait fragile ;
+   * comparer aux proprietes de l'instance ne l'est pas.
+   */
+  const CHAMPS = [
+    'x',
+    'y',
+    'vx',
+    'vy',
+    'archetype',
+    'waveId',
+    'indexInWave',
+    'animPhase',
+    'targetField',
+    'stopped',
+    'hp',
+  ] as const;
+
+  /** Les noms des proprietes de `horde` qui sont des tableaux types. */
+  function tableauxDe(horde: Horde): string[] {
+    const vue = horde as unknown as Record<string, unknown>;
+    return Object.keys(vue)
+      .filter((cle) => ArrayBuffer.isView(vue[cle]))
+      .sort();
+  }
+
+  /** Acces indexe generique aux tableaux publics, pour boucler sur `CHAMPS`. */
+  function tableau(
+    horde: Horde,
+    champ: (typeof CHAMPS)[number],
+  ): Float32Array | Uint8Array | Uint16Array {
+    return horde[champ];
+  }
+
   it('emmene toutes les proprietes de l entite deplacee, pas seulement sa position', () => {
-    // La compaction deplace la derniere entite dans le trou. Si un seul tableau
-    // etait oublie, cette entite garderait l'archetype ou la cible du mort —
-    // et l'etape 3 le paierait en sprites melanges, ou pire en monstres qui
-    // poursuivent le champ de flux d'un autre joueur.
-    //
-    // ⚠️ Les NEUF tableaux sont verifies, un par un (`stopped` depuis la
-    // tache 17.2, `vx`/`vy` depuis la tache 19). Une premiere version de ce
-    // test n'en verifiait que deux — `archetype` et `animPhase` — alors que
-    // son nom promet « pas seulement sa position ». Verifie : supprimer la
-    // copie de `x`, de `y` ou de `targetField` laissait les 26 tests verts.
-    //
-    // Si un tableau est ajoute a `Horde`, il doit apparaitre ICI et dans
-    // `#removeAt`. Les deux listes se tiennent.
     const horde = new Horde(1000);
     horde.spawn(order({ waveId: 1, archetype: 0, count: 5 }));
     horde.spawn(order({ waveId: 2, archetype: 3, count: 5 }));
+
+    // 1. La liste couvre bien TOUT ce que l'instance porte.
+    expect(tableauxDe(horde)).toEqual([...CHAMPS].sort());
+
+    // 2. Valeurs distinctives sur l'entite qui va etre deplacee : deux entites
+    //    qui partagent deja une valeur ne prouveraient rien d'une copie
+    //    manquante. Toutes tiennent sur un `Uint8Array`, le plus etroit des
+    //    trois types en jeu.
     const last = horde.count - 1;
-    // Valeurs distinctives : deux entites qui partagent deja une valeur ne
-    // prouveraient rien d'une copie manquante.
-    horde.x[last] = 1234.5;
-    horde.y[last] = 6789.5;
-    horde.vx[last] = 12.5;
-    horde.vy[last] = -34.5;
-    horde.targetField[last] = 3;
-    horde.stopped[last] = 1;
-    const attendu = {
-      entityId: horde.entityIdAt(last),
-      x: horde.x[last],
-      y: horde.y[last],
-      vx: horde.vx[last],
-      vy: horde.vy[last],
-      archetype: horde.archetype[last],
-      waveId: horde.waveId[last],
-      indexInWave: horde.indexInWave[last],
-      animPhase: horde.animPhase[last],
-      targetField: horde.targetField[last],
-      stopped: horde.stopped[last],
-    };
+    CHAMPS.forEach((champ, i) => {
+      tableau(horde, champ)[last] = 100 + i;
+    });
+    const attendu = new Map<string, number>(
+      CHAMPS.map((champ) => [champ, tableau(horde, champ)[last] ?? 0]),
+    );
+    const entityId = horde.entityIdAt(last);
+
+    // 3. La VICTIME porte une valeur differente sur chaque champ — sans ca,
+    //    une copie manquante serait masquee par une coincidence de fixture.
+    for (const champ of CHAMPS) {
+      expect(tableau(horde, champ)[0]).not.toBe(attendu.get(champ));
+    }
 
     horde.kill([horde.entityIdAt(0)]);
 
-    const slot = horde.slotOf(attendu.entityId);
+    const slot = horde.slotOf(entityId);
     expect(slot).toBe(0);
-    expect(horde.x[slot]).toBe(attendu.x);
-    expect(horde.y[slot]).toBe(attendu.y);
-    expect(horde.vx[slot]).toBe(attendu.vx);
-    expect(horde.vy[slot]).toBe(attendu.vy);
-    expect(horde.archetype[slot]).toBe(attendu.archetype);
-    expect(horde.waveId[slot]).toBe(attendu.waveId);
-    expect(horde.indexInWave[slot]).toBe(attendu.indexInWave);
-    expect(horde.animPhase[slot]).toBe(attendu.animPhase);
-    expect(horde.targetField[slot]).toBe(attendu.targetField);
-    expect(horde.stopped[slot]).toBe(attendu.stopped);
+    for (const champ of CHAMPS) {
+      expect(tableau(horde, champ)[slot], `champ ${champ}`).toBe(attendu.get(champ));
+    }
   });
 
   it('ignore une identite inconnue melangee a une connue', () => {
@@ -1221,6 +1291,7 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       animPhase: Uint8Array;
       targetField: Uint8Array;
       stopped: Uint8Array;
+      hp: Float32Array;
     }
 
     class HordeHistoryLike {
@@ -1239,6 +1310,7 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
           animPhase: new Uint8Array(this.capacity),
           targetField: new Uint8Array(this.capacity),
           stopped: new Uint8Array(this.capacity),
+          hp: new Float32Array(this.capacity),
         };
         horde.saveState(state);
         this.#states.set(tick, state);

@@ -1,3 +1,4 @@
+import { ARCHETYPES, HEAVY_HP, LIGHT_HP } from '@shared/archetypes';
 import { CONTACT_DAMAGE, CONTACT_INTERVAL_TICKS, CONTACT_RADIUS } from '@shared/constants';
 import { Horde } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
@@ -10,12 +11,12 @@ import { type ContactPlayer, OrbField, resolveContact, resolveProjectileDamage }
 const DT = 1 / 30;
 
 /** Fait apparaitre une seule entite a une position controlee, avec un waveId choisi pour controler son identite. */
-function addOne(horde: Horde, waveId: number, x: number, y: number): number {
+function addOne(horde: Horde, waveId: number, x: number, y: number, archetype = 0): number {
   const order: WaveOrder = {
     waveId,
     spawnTick: 0,
     seed: 1,
-    archetype: 0,
+    archetype,
     formation: FORMATION.SCATTER,
     anchorX: x,
     anchorY: y,
@@ -99,6 +100,109 @@ describe('resolveProjectileDamage', () => {
     expect(deadIds).toEqual([targetId]);
     expect(horde.count).toBe(0);
     expect(orbs.count).toBe(1); // un seul orbe, pas deux
+  });
+});
+
+describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
+  /** L'identifiant du premier archetype a `HEAVY_HP` PV. */
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? -1;
+
+  /**
+   * Tire un projectile sur `targetId` et avance jusqu'a ce qu'il touche ou
+   * expire. Rend les identites mortes a ce tick-la (vide si l'ennemi a
+   * survecu).
+   */
+  function frappe(
+    horde: Horde,
+    orbs: OrbField,
+    targetId: number,
+    tick: number,
+    arme: Weapon = SINGLE,
+  ): number[] {
+    const projectiles = new Projectiles(10);
+    projectiles.fireSalvo(arme, tick, 0, 0, targetId, horde);
+    const avant = projectiles.count;
+    expect(avant).toBeGreaterThan(0); // sanity : la salve est bien partie
+    for (let i = 0; i < 20; i++) {
+      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i);
+      if (morts.length > 0) {
+        return morts;
+      }
+      if (projectiles.count === 0) {
+        return []; // touche sans tuer, ou expire
+      }
+    }
+    throw new Error('le projectile ne touche jamais');
+  }
+
+  it('un ennemi lourd (20 PV) survit a trois impacts de 5 et meurt au quatrieme', () => {
+    // ⚠️ **Le test qui compte.** C'est la seule chose qui separe « les degats
+    // sont soustraits » de « le premier impact tue », et c'est ce qui rend les
+    // deux passifs de degats capables de changer une issue.
+    const horde = new Horde(10);
+    const targetId = addOne(horde, 1, 100, 0, LOURD);
+    const orbs = new OrbField(10);
+    expect(horde.hp[0]).toBe(HEAVY_HP);
+
+    for (let coup = 1; coup <= 3; coup++) {
+      expect(frappe(horde, orbs, targetId, coup * 40)).toEqual([]);
+      expect(horde.count).toBe(1);
+      expect(horde.hp[0]).toBe(HEAVY_HP - SINGLE.damage * coup);
+      expect(orbs.count).toBe(0);
+    }
+
+    expect(frappe(horde, orbs, targetId, 400)).toEqual([targetId]);
+    expect(horde.count).toBe(0);
+    expect(orbs.count).toBe(1);
+  });
+
+  it('un ennemi leger meurt au premier impact — le rythme de l etape 3, inchange', () => {
+    // La contrepartie de la porte du §3.3 : `LIGHT_HP` vaut les degats de la
+    // dague, donc rien ne change pour la pietaille legere.
+    const horde = new Horde(10);
+    const targetId = addOne(horde, 1, 100, 0, LEGER);
+    const orbs = new OrbField(10);
+
+    expect(frappe(horde, orbs, targetId, 0)).toEqual([targetId]);
+    expect(horde.count).toBe(0);
+  });
+
+  it('une arme qui frappe pile la reserve tue : la borne est <= 0, pas < 0', () => {
+    // ⚠️ La mutation `reste <= 0` -> `reste < 0`. Sans ce cas, un ennemi
+    // ramene a exactement zero PV resterait vivant a 0 PV, invulnerable a rien
+    // mais bien present — et il faudrait un impact de plus pour chaque mort.
+    const horde = new Horde(10);
+    const targetId = addOne(horde, 1, 100, 0, LOURD);
+    const orbs = new OrbField(10);
+    const pile: Weapon = { ...SINGLE, damage: HEAVY_HP };
+
+    expect(frappe(horde, orbs, targetId, 0, pile)).toEqual([targetId]);
+    expect(horde.count).toBe(0);
+  });
+
+  it('les degats vont a l entite TOUCHEE, pas au creneau qui porte son indice', () => {
+    // ⚠️ La compaction de `Horde.kill` deplace la derniere entite dans le trou :
+    // confondre « identite » et « creneau » ferait descendre les PV d'un
+    // monstre au hasard. Deux lourds, on tue le premier par quatre impacts, et
+    // le second doit etre INTACT.
+    const horde = new Horde(10);
+    const premier = addOne(horde, 1, 100, 0, LOURD);
+    addOne(horde, 2, -4000, -4000, LOURD);
+    const orbs = new OrbField(10);
+
+    for (let coup = 1; coup <= 3; coup++) {
+      frappe(horde, orbs, premier, coup * 40);
+    }
+    expect(horde.hp[horde.slotOf(premier)]).toBe(HEAVY_HP - SINGLE.damage * 3);
+    // Le second n'a rien pris.
+    const survivant = horde.entityIdAt(horde.slotOf(premier) === 0 ? 1 : 0);
+    expect(horde.hp[horde.slotOf(survivant)]).toBe(HEAVY_HP);
+
+    expect(frappe(horde, orbs, premier, 400)).toEqual([premier]);
+    // Et apres compaction, le survivant garde SES PV, pas ceux du mort.
+    expect(horde.count).toBe(1);
+    expect(horde.hp[0]).toBe(HEAVY_HP);
   });
 });
 

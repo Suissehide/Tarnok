@@ -44,10 +44,19 @@ export function entityIdOf(waveId: number, index: number): number {
 /**
  * Instantane de l'etat de la horde, pour `HordeHistory` (§3.2).
  *
- * Les NEUF memes tableaux que `Horde` (`stopped` depuis la tache 17.2, `vx`/`vy`
- * depuis la tache 19), plus le compte. `HordeHistory` en alloue un par creneau
- * de son anneau, une seule fois, et `saveState` / `restoreState` s'en servent
- * comme tampons a copier par `.set()` — jamais de nouveau tableau a chaque tick.
+ * **Les ONZE memes tableaux que `Horde`, sans exception** (`stopped` depuis la
+ * tache 17.2, `vx`/`vy` depuis la tache 19, `hp` depuis l'etape 5a), plus le
+ * compte. `HordeHistory` en alloue un par creneau de son anneau, une seule
+ * fois, et `saveState` / `restoreState` s'en servent comme tampons a copier
+ * par `.set()` — jamais de nouveau tableau a chaque tick.
+ *
+ * ⚠️ **La liste est la MEME que celle de `#removeAt`, et c'est delibere.**
+ * `hp` n'est lu que par le serveur, qui ne rejoue rien : le laisser hors de
+ * l'instantane aurait « marche » aujourd'hui. Ce sont alors DEUX listes a
+ * tenir a jour au lieu d'une, et le dossier de ce depot dit ce que ca coute —
+ * le test « emmene toutes les proprietes » de l'etape 3 en verifiait deux sur
+ * sept. Le cout de l'inclure est de `ROLLBACK_DEPTH_TICKS` (8) tampons de
+ * `Float32Array(capacity)`, soit ~128 ko cote client.
  *
  * ⚠️ **`vx`/`vy` DOIVENT faire partie de cet instantane.** Une entite qui vient
  * de recalculer sa trajectoire (tache 19) tient sa vitesse jusqu'a `K` ticks
@@ -69,6 +78,7 @@ export interface HordeState {
   animPhase: Uint8Array;
   targetField: Uint8Array;
   stopped: Uint8Array;
+  hp: Float32Array;
 }
 
 /**
@@ -133,6 +143,22 @@ export class Horde {
    * cosmetique.
    */
   readonly stopped: Uint8Array;
+  /**
+   * Reserve de points de vie restante, posee par `spawn` depuis
+   * `archetypeOf(...).hp` — etape 5a, §3.2 de la spec.
+   *
+   * ⚠️ **Seul le serveur la soustrait.** Le client la porte quand meme, parce
+   * que c'est le MEME code qui tourne des deux cotes et que la valeur de
+   * depart se derive de l'archetype, qui voyage deja dans l'ordre de vague :
+   * la remplir ne coute pas un octet sur le fil. Rien cote client ne la lit —
+   * il apprend qui meurt par `DEATHS`, exactement comme depuis l'etape 3
+   * (§2 de la spec).
+   *
+   * `Float32Array` et pas un entier : les degats sont fractionnaires des que
+   * le passif « puissance » ou « acier » entre en jeu
+   * (`weapon.damage * (1 + loadout.bonus('damage'))`).
+   */
+  readonly hp: Float32Array;
 
   #count = 0;
 
@@ -221,6 +247,7 @@ export class Horde {
     this.animPhase = new Uint8Array(capacity);
     this.targetField = new Uint8Array(capacity);
     this.stopped = new Uint8Array(capacity);
+    this.hp = new Float32Array(capacity);
 
     this.#gridCols = Math.ceil(MAP_SIZE / SEPARATION_CELL);
     const cells = this.#gridCols * this.#gridCols;
@@ -282,6 +309,7 @@ export class Horde {
     const archetype = archetypeOf(order.archetype);
     const frames = archetype.frames;
     const speed = archetype.speed;
+    const hp = archetype.hp;
 
     for (let i = 0; i < count; i++) {
       const slot = this.#count + i;
@@ -304,6 +332,12 @@ export class Horde {
       // `stopped = 1` d'un mort qui occupait ce creneau traverserait le
       // joueur sans jamais l'attaquer, jusqu'au prochain `retarget`.
       this.stopped[slot] = 0;
+      // Etape 5a : la reserve de PV se derive de l'archetype, donc les deux
+      // cotes posent la meme valeur de depart sans un octet de plus. Ecrite
+      // sans condition, pour la meme raison que `targetField` et `stopped`
+      // ci-dessus : un creneau recycle apres une mort garderait sinon les PV
+      // entames du monstre qu'il remplace.
+      this.hp[slot] = hp;
       // Tache 20 : direction du champ (`targetField` vaut 0 ci-dessus, donc
       // c'est bien `field` — le champ 0 — qui doit servir ici), sans
       // repulsion (voir la doc de la methode). Zero si aucun champ n'est
@@ -384,10 +418,11 @@ export class Horde {
    * parametre plutot que d'en allouer un ici est ce qui garde cette methode
    * hors du ramasse-miettes.
    *
-   * ⚠️ Les NEUF tableaux, plus le compte (`stopped` depuis la tache 17.2,
-   * `vx`/`vy` depuis la tache 19). Meme piege que `#removeAt` : en oublier un
-   * laisse la suite verte jusqu'a ce qu'un rejeu s'appuie dessus — voir
-   * l'avertissement sur `HordeState` pour `vx`/`vy` specifiquement.
+   * ⚠️ Les ONZE tableaux, plus le compte (`stopped` depuis la tache 17.2,
+   * `vx`/`vy` depuis la tache 19, `hp` depuis l'etape 5a). Meme piege que
+   * `#removeAt` : en oublier un laisse la suite verte jusqu'a ce qu'un rejeu
+   * s'appuie dessus — voir l'avertissement sur `HordeState` pour `vx`/`vy`
+   * specifiquement.
    */
   saveState(out: HordeState): void {
     out.count = this.#count;
@@ -401,6 +436,7 @@ export class Horde {
     out.animPhase.set(this.animPhase);
     out.targetField.set(this.targetField);
     out.stopped.set(this.stopped);
+    out.hp.set(this.hp);
   }
 
   /** Inverse de `saveState` : remplace l'etat courant par `state`. */
@@ -416,8 +452,20 @@ export class Horde {
     this.animPhase.set(state.animPhase);
     this.targetField.set(state.targetField);
     this.stopped.set(state.stopped);
+    this.hp.set(state.hp);
   }
 
+  /**
+   * Deplace la derniere entite dans le creneau libere.
+   *
+   * ⚠️ **LES ONZE TABLEAUX, sans exception.** En oublier un laisse l'entite
+   * deplacee avec une propriete du mort qu'elle remplace — a l'etape 5a, ses
+   * PV entames. Le defaut ne se voit ni au type ni au lint : il se voit au
+   * test « emmene toutes les proprietes » de `horde.test.ts`, qui enumere
+   * depuis une liste unique ET verifie que cette liste couvre bien tous les
+   * tableaux de l'instance. Ajouter un tableau a `Horde` sans l'ajouter ici le
+   * fait rougir.
+   */
   #removeAt(slot: number): void {
     const last = this.#count - 1;
     if (slot !== last) {
@@ -431,6 +479,7 @@ export class Horde {
       this.animPhase[slot] = this.animPhase[last] ?? 0;
       this.targetField[slot] = this.targetField[last] ?? 0;
       this.stopped[slot] = this.stopped[last] ?? 0;
+      this.hp[slot] = this.hp[last] ?? 0;
     }
     this.#count = last;
   }

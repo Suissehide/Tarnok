@@ -22,13 +22,63 @@ export interface Archetype {
   cell: number;
   /** Vitesse de deplacement, en pixels monde par seconde. */
   speed: number;
+  /**
+   * Reserve de points de vie de depart (etape 5a, §3.2 de la spec).
+   *
+   * **Les deux cotes derivent la meme valeur sans un octet de plus** :
+   * l'archetype voyage deja dans l'ordre de vague de 19 octets, donc
+   * `Horde.spawn` la pose identiquement sur le serveur et sur chaque client.
+   * Seul le serveur soustrait les degats — le client n'a jamais besoin de
+   * connaitre les PV, il apprend qui meurt par `DEATHS` (§2 de la spec).
+   */
+  hp: number;
+}
+
+/**
+ * PV de la pietaille legere. **Egal a `damage` de la dague** (`shared/weapons.ts`,
+ * arme 0) : elle meurt donc en un coup, exactement comme avant que les PV
+ * n'existent, et le rythme de mise a mort de l'etape 3 est preserve a
+ * l'identique. C'est le point de depart de la porte du §3.3 de la spec.
+ *
+ * ⚠️ Si la dague change de degats, cette valeur doit suivre — le test
+ * `archetypes.test.ts` les compare.
+ */
+export const LIGHT_HP = 5;
+
+/**
+ * PV de la pietaille lourde : quatre coups de dague.
+ *
+ * Un ennemi qui meurt en un coup ne porte jamais d'element assez longtemps
+ * pour reagir (§3.3) : il faut donc que la reserve VARIE par archetype, et
+ * c'est la premiere fois que choisir un archetype veut dire autre chose qu'un
+ * sprite et une vitesse.
+ */
+export const HEAVY_HP = 20;
+
+/**
+ * Les quatre archetypes de pietaille lourde, par nom.
+ *
+ * **Le choix est du contenu, pas un role** : ce sont les quatre pietailles les
+ * plus LENTES du pack (80 a 90 px/s), parce que « lourd et lent » se lit sans
+ * explication a l'ecran — la vitesse est le seul autre attribut visible.
+ *
+ * ⚠️ **`gnoll` est dans `STEP2_ARCHETYPES`, et ce n'est pas un hasard.** Le
+ * generateur de vagues ne tire que dans ces quatre-la : une pietaille lourde
+ * qui n'y figurerait pas n'apparaitrait JAMAIS, la porte du §3.3 mesurerait un
+ * rythme de mise a mort inchange, et la mesure ne prouverait rien. Un test
+ * garde cette intersection.
+ */
+const HEAVY_NAMES: readonly string[] = ['gnoll', 'snake', 'bomb-fish', 'hex-shaman'];
+
+function hpOf(name: string): number {
+  return HEAVY_NAMES.includes(name) ? HEAVY_HP : LIGHT_HP;
 }
 
 /**
  * Les cellules font toutes 192 px en pietaille : c'est ce qui permet un
  * rangement par etageres quasi optimal dans l'atlas (§9.2 de la spec).
  */
-const FOOTSOLDIERS: readonly Omit<Archetype, 'id'>[] = [
+const FOOTSOLDIERS: readonly Omit<Archetype, 'id' | 'hp'>[] = [
   { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 95 },
   { name: 'gnoll', sheet: 'Gnoll/Gnoll_Walk.png', frames: 8, cell: 192, speed: 85 },
   { name: 'spider', sheet: 'Spider/Spider_Run.png', frames: 5, cell: 192, speed: 115 },
@@ -70,7 +120,7 @@ const FOOTSOLDIERS: readonly Omit<Archetype, 'id'>[] = [
 ];
 
 /** Hors perimetre de l'etape 2 : regime de replication different (§3.3). */
-const ELITES: readonly Omit<Archetype, 'id'>[] = [
+const ELITES: readonly Omit<Archetype, 'id' | 'hp'>[] = [
   {
     name: 'spear-goblin',
     sheet: 'Spear Goblin/Spear Goblin_Run.png',
@@ -88,9 +138,17 @@ const ELITES: readonly Omit<Archetype, 'id'>[] = [
 /** Nombre d'archetypes de pietaille. Les elites viennent apres, dans le tableau. */
 export const FOOTSOLDIER_COUNT = FOOTSOLDIERS.length;
 
+/**
+ * ⚠️ **Les elites prennent `LIGHT_HP` faute de mieux.** Elles ne sont
+ * recensees ici que pour que les ajouter soit du contenu (§3.3 de la spec
+ * d'orientation) : le generateur ne les tire jamais, et c'est l'etape 6 qui
+ * leur donnera une reserve digne d'un boss. Leur laisser 5 PV est un
+ * placeholder assume, pas un reglage.
+ */
 export const ARCHETYPES: readonly Archetype[] = [...FOOTSOLDIERS, ...ELITES].map((a, id) => ({
   ...a,
   id,
+  hp: hpOf(a.name),
 }));
 
 /** Les quatre cables a l'etape 2, choisis pour leurs silhouettes distinctes. */

@@ -1,4 +1,6 @@
+import { archetypeOf, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
 import { MAX_ENTITIES, TICK_HZ } from '@shared/constants';
+import type { WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
 import { WaveDirector, waveCountBounds } from './wave-director';
@@ -56,6 +58,66 @@ describe('WaveDirector', () => {
     for (let tick = 0; tick < TICK_HZ * 30; tick++) {
       expect(a.due(tick, [3000], [3000])).toEqual(b.due(tick, [3000], [3000]));
     }
+  });
+});
+
+describe('la part de pietaille lourde dans les vagues (etape 5a)', () => {
+  /** Les `n` premiers ordres produits par une graine donnee. */
+  function vagues(seed: number, n: number): WaveOrder[] {
+    const d = new WaveDirector(seed);
+    const out: WaveOrder[] = [];
+    for (let tick = 0; out.length < n && tick < TICK_HZ * 6 * (n + 5); tick++) {
+      const o = d.due(tick, [3000], [3000]);
+      if (o) {
+        out.push(o);
+      }
+    }
+    return out;
+  }
+
+  const estLourde = (o: WaveOrder): boolean => archetypeOf(o.archetype).hp === HEAVY_HP;
+
+  /**
+   * ⚠️ **La fixture qui masque, prise a l'avance.** Si aucun archetype tirable
+   * n'etait lourd, TOUTES les assertions de ce bloc passeraient sans rien
+   * prouver : « aucune vague lourde avant la vague 6 » serait vrai parce
+   * qu'aucune vague n'est lourde du tout, jamais.
+   */
+  it('a bien au moins un archetype lourd a tirer — sinon rien de ce qui suit ne prouve quoi que ce soit', () => {
+    expect(STEP2_ARCHETYPES.some((id) => archetypeOf(id).hp === HEAVY_HP)).toBe(true);
+  });
+
+  it('ne lache aucune vague lourde avant la sixieme, sur toutes les graines essayees', () => {
+    // Le joueur n'a que la dague avant son premier draft : une vague lourde
+    // des le debut lui coute quatre fois plus de tirs et fait s'accumuler la
+    // horde. Mesure : 3 runs solo perdues sur 20 avant le niveau 2 sans cette
+    // borne. Voir `HEAVY_FIRST_WAVE`.
+    for (let seed = 1; seed <= 40; seed++) {
+      const cinq = vagues(seed, 5);
+      expect(cinq).toHaveLength(5);
+      expect(cinq.filter(estLourde)).toEqual([]);
+    }
+  });
+
+  it('en lache ensuite, en minorite : ni jamais, ni tout le temps', () => {
+    // Les deux mutations que cette assertion attrape : `HEAVY_WAVE_SHARE = 0`
+    // (plus jamais de lourds, donc plus rien a marquer d'un element) et
+    // `HEAVY_WAVE_SHARE = 1` (que des lourds, et le rythme de mise a mort
+    // s'effondre). Balayage de graines plutot qu'une seule : la part est un
+    // tirage, une graine unique pourrait n'en produire aucune par hasard.
+    let lourdes = 0;
+    let total = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      for (const o of vagues(seed, 30).slice(5)) {
+        total++;
+        if (estLourde(o)) {
+          lourdes++;
+        }
+      }
+    }
+    expect(total).toBeGreaterThan(500); // sanity : l'echantillon existe
+    expect(lourdes).toBeGreaterThan(0);
+    expect(lourdes / total).toBeLessThan(0.5);
   });
 });
 
