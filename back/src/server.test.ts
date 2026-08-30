@@ -1,17 +1,23 @@
 import type { AddressInfo } from 'node:net';
+import { CARD } from '@shared/cards';
 import { SNAPSHOT_HZ } from '@shared/constants';
+import { ELEMENT } from '@shared/elements';
 import {
   decode,
   encodeInput,
   type Message,
   MSG,
+  packElementPair,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
   type SnapshotMessage,
 } from '@shared/protocol';
+import { FORMATION, type WaveOrder } from '@shared/waves';
+import { WEAPONS } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
+import type { Room } from './room';
 import { buildServer } from './server';
 
 type App = Awaited<ReturnType<typeof buildServer>>;
@@ -89,6 +95,28 @@ function nextSnapshot(
   match: (s: SnapshotMessage) => boolean,
 ): Promise<SnapshotMessage> {
   return nextMessage(ws, (m) => m.type === MSG.SNAPSHOT && match(m)) as Promise<SnapshotMessage>;
+}
+
+/**
+ * Pose une entite a une position choisie, hors du generateur de vagues — meme
+ * technique que `spawnMonsterAt` dans `room.test.ts` et `combat.test.ts`.
+ */
+function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): number {
+  const order: WaveOrder = {
+    waveId,
+    spawnTick: room.tick,
+    seed: 1,
+    archetype: 0,
+    formation: FORMATION.SCATTER,
+    anchorX: x,
+    anchorY: y,
+    count: 1,
+  };
+  room.horde.spawn(order);
+  const slot = room.horde.count - 1;
+  room.horde.x[slot] = x;
+  room.horde.y[slot] = y;
+  return room.horde.entityIdAt(slot);
 }
 
 describe('GET /health', () => {
@@ -283,4 +311,65 @@ describe('la socket de jeu', () => {
         `compte deja ${entitiesSpawned} entites`,
     ).toBeLessThan(maxBytes);
   }, 20_000);
+});
+
+describe('la reaction sur le fil (etape 5a, tache 7)', () => {
+  /**
+   * ⚠️ **La diffusion de `REACTION` n'etait couverte par AUCUN test** —
+   * mutation appliquee, elle survivait, exactement comme les deux lignes de
+   * `Session` que la tache 6 de l'etape 4 avait laissees nues (dette « S1/S3 »
+   * du registre). La supprimer laisserait toute la suite verte, et la reaction
+   * n'arriverait simplement jamais chez personne.
+   *
+   * Le salon est pilote depuis le test (`app.rooms`, decore par
+   * `buildServer`), mais la PREUVE ne passe que par la socket : c'est le
+   * message decode qui est interroge, jamais `room.drainReactions()`.
+   */
+  it('diffuse la reaction aux clients, avec un couple canonicalise', async () => {
+    const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+    expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
+
+    const code = await createRoomCode();
+    const { ws, playerId } = await connect(code);
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('salon introuvable');
+    }
+    room.grantCard(playerId, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+
+    // La position du joueur vient du SNAPSHOT, pas d'un champ prive : le test
+    // ne connait le monde que par ce que la socket lui livre.
+    const snap = await nextSnapshot(ws, (m) => m.players.length > 0);
+    const moi = snap.players[0];
+    const cibleX = (moi?.x ?? 0) + 100;
+    const cibleY = moi?.y ?? 0;
+    const cible = spawnMonsterAt(room, 900, cibleX, cibleY);
+
+    let seq = 0;
+    const pilote = setInterval(() => {
+      const slot = room.horde.slotOf(cible);
+      if (slot >= 0) {
+        // Increvable, immobile, et marque de Braise par un AUTRE joueur : le
+        // decor tient tant que la reaction n'a pas eu lieu.
+        room.horde.hp[slot] = 1e6;
+        room.horde.x[slot] = cibleX;
+        room.horde.y[slot] = cibleY;
+        room.horde.applyMark(slot, ELEMENT.BRAISE, playerId + 1, room.tick);
+      }
+      seq = (seq + 1) & 0xffff;
+      ws.send(encodeInput(seq, 0, 0, 127, 0));
+    }, 20);
+
+    try {
+      const msg = await nextMessage(ws, (m) => m.type === MSG.REACTION, 10_000);
+      if (msg.type !== MSG.REACTION) {
+        throw new Error('REACTION attendu');
+      }
+      expect(msg.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
+      // Tache 7 : le transport est cable, la regle de Synergie ne l'est pas.
+      expect(msg.synergyCharge).toBe(false);
+    } finally {
+      clearInterval(pilote);
+    }
+  }, 15_000);
 });

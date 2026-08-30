@@ -9,6 +9,7 @@ import {
   encodeDraftResult,
   encodeLevelUp,
   encodePickups,
+  encodeReaction,
   encodeRunOver,
   encodeWaveOrder,
   encodeWelcome,
@@ -199,6 +200,21 @@ class Session {
     }
     for (const zone of this.room.drainZones()) {
       this.#send(encodeZone(zone.element, zone.x, zone.y, zone.bornTick, zone.by));
+    }
+    // Apres les morts : le flash annonce ce que le lot DEATHS du meme tick a
+    // deja emporte. `pair` est deja canonicalise par `packElementPair` cote
+    // salon — deux clients doivent dessiner le meme flash pour Braise+Givre et
+    // pour Givre+Braise.
+    for (const reaction of this.room.drainReactions()) {
+      this.#send(
+        encodeReaction(
+          reaction.pair,
+          reaction.x,
+          reaction.y,
+          reaction.tick,
+          reaction.synergyCharge,
+        ),
+      );
     }
     for (const batch of this.room.drainPickups()) {
       this.#send(encodePickups(batch.tick, batch.ids));

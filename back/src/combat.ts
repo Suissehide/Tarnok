@@ -4,11 +4,14 @@ import {
   CONTACT_RADIUS,
   ORB_LIFETIME_TICKS,
   ORB_PICKUP_RADIUS,
+  REACTION_DAMAGE,
+  REACTION_RADIUS,
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
+import { packElementPair } from '@shared/protocol';
 import type { ZoneField } from '@shared/zones';
 
 /**
@@ -163,6 +166,271 @@ export class OrbField {
 }
 
 /**
+ * Une reaction qui vient d'etre declenchee, avant qu'elle ne soit resolue et
+ * annoncee — etape 5a, §6 de la spec.
+ *
+ * ⚠️ **Porte les DEUX joueurs, alors que le message `REACTION` n'en porte
+ * aucun.** C'est exactement la distinction du §6.1 (constat R20 de la tache
+ * 5) : le serveur COMPARE deux identites, le fil ne transporte que le booleen
+ * qui en sort. `markBy` et `by` existent donc ici, et nulle part ailleurs —
+ * c'est la tache 8 qui les comparera pour charger la barre de Synergie. A
+ * cette tache, `Room` annonce toujours `synergyCharge: false`.
+ */
+export interface ReactionTrigger {
+  /** Le couple d'elements, deja canonicalise par `packElementPair`. */
+  pair: number;
+  x: number;
+  y: number;
+  /** Joueur qui avait applique le PREMIER element : la marque, ou la zone deja posee. */
+  markBy: number;
+  /** Joueur qui applique le SECOND element — celui qui declenche. */
+  by: number;
+}
+
+/**
+ * Les reactions declenchees pendant un tick, et la borne du §6.2 :
+ * **une reaction par ennemi et par tick, au plus.**
+ *
+ * ⚠️ **Les reactions sont COLLECTEES pendant le tick et resolues a la fin,
+ * jamais au fil de l'eau.** Resoudre une reaction tue, et tuer compacte la
+ * horde (`Horde.kill`) : le faire depuis `markInZones` ou depuis le rappel de
+ * `Projectiles.collide` invaliderait les indices de la boucle qui tourne. Un
+ * declencheur ne retient donc qu'une POSITION, qui ne bouge pas, jamais un
+ * creneau, qui bouge.
+ *
+ * ⚠️ **La borne se compte par IDENTITE, pas par creneau**, pour la meme
+ * raison : `resolveProjectileDamage` compacte la horde entre le moment ou un
+ * projectile declenche et celui ou une zone declencherait. Les identites, elles,
+ * survivent a la compaction (`Horde.entityIdAt`).
+ *
+ * ⚠️ **Ce que la borne empeche n'est PAS ce que le §6.2 decrit, et la
+ * difference se compte.** La spec dit : *« une zone Givre posee sur vingt
+ * ennemis marques Braise declenche vingt reactions au meme tick »*. Vingt est
+ * le compte AVEC la borne aussi — elle est par ENNEMI, pas par tick, et
+ * l'etouffer a une seule reaction eteindrait dix-neuf flashs legitimes. Ce
+ * qu'elle empeche, c'est la MULTIPLICATION : des zones d'elements alternes
+ * remarquent un ennemi entre deux reactions, et il rebondit de l'une a l'autre
+ * autant de fois qu'il y a de zones sur lui. Trois zones Givre/Braise/Givre
+ * sur vingt ennemis font quarante reactions sans la borne, vingt avec —
+ * chacune infligeant `REACTION_DAMAGE` a tout ce qui l'entoure. Le §6.2 a
+ * raison sur le risque (*« la cascade est un risque de cout autant que de
+ * lisibilite »*), pas sur le chiffre qui l'illustre.
+ */
+export class Reactions {
+  #pending: ReactionTrigger[] = [];
+  /** Identites ayant deja reagi depuis le dernier `drain`. */
+  readonly #reacted = new Set<number>();
+
+  /** Nombre de reactions en attente de resolution. */
+  get count(): number {
+    return this.#pending.length;
+  }
+
+  /**
+   * Declenche une reaction SUR un ennemi, si sa borne du tick le permet.
+   *
+   * Rend `true` si la reaction a lieu — c'est cette reponse, et elle seule,
+   * qui dit a l'appelant si la marque se consomme (§4.3) ou si le second
+   * element se contente de la remplacer.
+   */
+  onEntity(entityId: number, trigger: ReactionTrigger): boolean {
+    if (this.#reacted.has(entityId)) {
+      return false;
+    }
+    this.#reacted.add(entityId);
+    this.#pending.push(trigger);
+    return true;
+  }
+
+  /**
+   * Declenche les reactions dues a la zone qui vient d'etre CREEE dans le
+   * creneau `created` : une par zone vivante d'un autre element dont le disque
+   * coupe le sien (§5.2 / §6.2).
+   *
+   * ⚠️ **`overlaps`, pas la regle de fusion — c'est le facteur 2 de R19.**
+   * Deux zones reagissent quand leurs DISQUES sont secants (distance
+   * < `2 × ZONE_RADIUS`, ce que `ZoneField.overlaps` calcule) ; la fusion a la
+   * pose, elle, regarde si le CENTRE tombe dans une zone existante (distance
+   * < `ZONE_RADIUS`). Confondre les deux a deja coute un facteur 2 a la tache
+   * 4, et le confondre ICI ferait rater les recouvrements les plus francs.
+   *
+   * ⚠️ **A LA CREATION DE LA SECONDE, une seule fois** (§6.2) : c'est pour ca
+   * que l'appelant ne passe ici que sur une zone reellement creee, jamais sur
+   * un rafraichissement. Sinon deux zones qui se recouvrent reagiraient a
+   * CHAQUE tick de leur vie commune — et une arme elementaire entretient une
+   * zone par fusion, donc indefiniment.
+   *
+   * ⚠️ **La borne par ennemi ne s'applique pas ici : il n'y a pas d'ennemi.**
+   * Ce qui borne ce chemin, c'est qu'il ne tourne qu'a la creation d'une zone,
+   * et que la regle de fusion borne deja le nombre de creations par la surface
+   * couverte.
+   *
+   * ⚠️ **Aucune zone n'est consommee, contrairement au §5.2 de la spec.** Voir
+   * le rapport de cette tache : la mort d'une zone n'est jamais annoncee (§8),
+   * le client la derive du seul `bornTick`, et le Givre RALENTIT (tache 6).
+   * Un serveur qui retirerait une zone que le client garde ferait diverger le
+   * deplacement — le contrat a 0,000 px du §2 tombe. Le §6.2, lui, borne deja
+   * ce chemin a une fois par couple ; c'est cette borne-la qui est
+   * implementee.
+   */
+  onZoneCreated(zones: ZoneField, created: number, tick: number): void {
+    const element = zones.element[created] ?? 0;
+    const by = zones.by[created] ?? 0;
+    for (let i = 0; i < zones.count; i++) {
+      // ⚠️ **Deux gardes ont ete RETIREES ici, mutation a l'appui** — chacune
+      // survivait parce qu'une autre la couvrait :
+      //
+      // - `i === created`, la zone qui vient de naitre : elle porte forcement
+      //   `element`, donc la comparaison ci-dessous l'ecarte deja ;
+      // - `other === ELEMENT.NEUTRE` : `postZone` est le SEUL createur de
+      //   zones et il refuse deja l'element neutre.
+      //
+      // Une garde qu'aucun test ne peut faire rougir est une garde qu'on
+      // croit avoir.
+      const other = zones.element[i] ?? 0;
+      if (other === element) {
+        continue;
+      }
+      if (!zones.aliveAt(i, tick) || !zones.overlaps(created, i)) {
+        continue;
+      }
+      this.#pending.push({
+        pair: packElementPair(other, element),
+        // « A la frontiere commune » (§5.2) : le milieu des deux centres. Deux
+        // disques de meme rayon qui se coupent y ont leur corde commune, et
+        // c'est le seul point que les deux zones designent sans arbitraire.
+        x: ((zones.x[i] ?? 0) + (zones.x[created] ?? 0)) / 2,
+        y: ((zones.y[i] ?? 0) + (zones.y[created] ?? 0)) / 2,
+        markBy: zones.by[i] ?? 0,
+        by,
+      });
+    }
+  }
+
+  /**
+   * Rend les reactions du tick et **remet la borne par ennemi a zero**.
+   *
+   * Les deux ensemble, delibrement : la borne est « par tick », et un appelant
+   * qui viderait la file sans vider l'ensemble des ennemis ayant reagi
+   * empecherait toute reaction pour le reste de la partie.
+   */
+  drain(): ReactionTrigger[] {
+    const out = this.#pending;
+    this.#pending = [];
+    this.#reacted.clear();
+    return out;
+  }
+}
+
+/**
+ * Applique un element sur l'ennemi du creneau `slot` : **le §6.2 en entier, et
+ * le seul endroit ou il est decide.**
+ *
+ * | Ce que porte l'ennemi | Ce qui arrive |
+ * | --- | --- |
+ * | rien (ou une marque perimee) | la marque se pose |
+ * | le MEME element | la marque se rafraichit — **pas de reaction** |
+ * | un AUTRE element | reaction, et la marque se CONSOMME (§4.3) |
+ *
+ * ⚠️ **Un ennemi ressort NU d'une reaction.** Le second element n'est pas pose
+ * a la place du premier : les deux se sont consommes. Poser le declencheur
+ * ferait de deux zones d'elements opposes une machine a reactions — l'ennemi
+ * y rebondirait d'un element a l'autre a chaque tick, ce que la borne par
+ * ennemi n'empeche qu'A L'INTERIEUR d'un tick.
+ *
+ * ⚠️ **Quand la borne du tick est atteinte, le second element se contente de
+ * remplacer le premier.** Il n'y a pas de troisieme comportement : ni file
+ * d'attente, ni reaction reportee au tick suivant. Une reaction differee
+ * s'appliquerait a des positions qui ont bouge, et une file croitrait avec la
+ * densite de la horde.
+ */
+function applyElement(
+  horde: Horde,
+  reactions: Reactions | undefined,
+  slot: number,
+  element: number,
+  by: number,
+  tick: number,
+): void {
+  const porte = horde.markAt(slot, tick);
+  if (reactions && porte !== ELEMENT.NEUTRE && porte !== element) {
+    const declenche = reactions.onEntity(horde.entityIdAt(slot), {
+      pair: packElementPair(porte, element),
+      x: horde.x[slot] ?? 0,
+      y: horde.y[slot] ?? 0,
+      markBy: horde.markBy[slot] ?? 0,
+      by,
+    });
+    if (declenche) {
+      // La marque se consomme : `NEUTRE` n'est pas un cas particulier de la
+      // table des elements (voir `shared/elements.ts`), donc la reposer par le
+      // chemin normal suffit — pas de second setter a maintenir sur `Horde`.
+      horde.applyMark(slot, ELEMENT.NEUTRE, 0, tick);
+      return;
+    }
+  }
+  horde.applyMark(slot, element, by, tick);
+}
+
+/**
+ * Resout les reactions collectees pendant le tick : `REACTION_DAMAGE` a tout
+ * ennemi dans `REACTION_RADIUS` de chaque point, et rend les identites de ceux
+ * qui en meurent.
+ *
+ * ⚠️ **Les morts passent par le `DEATHS` EXISTANT, jamais par un chemin
+ * parallele** — meme contrainte que les brulures de la tache 6, et pour la
+ * meme raison : `GameClient#drainPendingDeaths` suppose un seul lot par tick,
+ * et deux lots rejoues l'un apres l'autre effaceraient la correction du
+ * premier. C'est `Room.step` qui FUSIONNE ces identites avec celles des
+ * projectiles et des brulures.
+ *
+ * ⚠️ **Tous les degats d'abord, la compaction ensuite.** Tuer entre deux
+ * reactions deplacerait les entites dans les creneaux liberes, et la seconde
+ * reaction frapperait des voisins choisis par l'ordre du tableau plutot que
+ * par la geometrie. Le `Set` dedoublonne pour la meme raison qu'ailleurs :
+ * deux reactions qui achevent le meme ennemi ne doivent pas lister son
+ * identite deux fois dans `DEATHS`.
+ *
+ * L'ennemi qui a declenche la reaction n'a pas de traitement a part : il est a
+ * distance nulle du point, donc dans le rayon, donc touche comme les autres.
+ */
+export function applyReactions(
+  horde: Horde,
+  orbs: OrbField,
+  tick: number,
+  triggers: readonly ReactionTrigger[],
+): number[] {
+  const r2 = REACTION_RADIUS * REACTION_RADIUS;
+  const dead = new Set<number>();
+  for (const t of triggers) {
+    for (let i = 0; i < horde.count; i++) {
+      const dx = (horde.x[i] ?? 0) - t.x;
+      const dy = (horde.y[i] ?? 0) - t.y;
+      if (dx * dx + dy * dy >= r2) {
+        continue;
+      }
+      const reste = (horde.hp[i] ?? 0) - REACTION_DAMAGE;
+      horde.hp[i] = reste;
+      if (reste <= 0) {
+        dead.add(horde.entityIdAt(i));
+      }
+    }
+  }
+  if (dead.size === 0) {
+    return [];
+  }
+  const deadIds = [...dead];
+  for (const id of deadIds) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
+    }
+  }
+  horde.kill(deadIds);
+  return deadIds;
+}
+
+/**
  * Etape 8 de la sequence serveur : avance les projectiles, resout les
  * collisions, tue les entites touchees et fait apparaitre leurs orbes — dans
  * cet ordre, pour que la position capturee par l'orbe soit encore celle du
@@ -188,6 +456,7 @@ export function resolveProjectileDamage(
   orbs: OrbField,
   tick: number,
   zones?: ZoneField,
+  reactions?: Reactions,
 ): number[] {
   // ⚠️ **Une zone se pose la ou le projectile FINIT SA COURSE, qu'il ait
   // touche ou non** (§5.1 de la spec). Les deux fins de course sont a deux
@@ -195,12 +464,15 @@ export function resolveProjectileDamage(
   // l'impact, plus bas dans `collide`. N'en cabler qu'une laisserait la moitie
   // des tirs elementaires sans trace au sol — invisible au type, invisible au
   // lint.
-  projectiles.step(dt, zones ? (slot) => postZone(zones, projectiles, slot, tick) : undefined);
+  projectiles.step(
+    dt,
+    zones ? (slot) => postZone(zones, projectiles, slot, tick, reactions) : undefined,
+  );
 
   const dead = new Set<number>();
   projectiles.collide(horde, (entityId, damage, projectileSlot) => {
     if (zones) {
-      postZone(zones, projectiles, projectileSlot, tick);
+      postZone(zones, projectiles, projectileSlot, tick, reactions);
     }
     const element = projectiles.elementAt(projectileSlot);
     const by = projectiles.ownerAt(projectileSlot);
@@ -247,7 +519,10 @@ export function resolveProjectileDamage(
       return;
     }
     if (element !== ELEMENT.NEUTRE) {
-      horde.applyMark(slot, element, by, tick);
+      // Le §6.2, premiere ligne : un ennemi deja marque d'un AUTRE element
+      // reagit ; marque du MEME, il ne fait que rafraichir. `applyElement`
+      // porte les deux cas, exactement comme pour les zones.
+      applyElement(horde, reactions, slot, element, by, tick);
     }
   });
   if (dead.size === 0) {
@@ -327,18 +602,38 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
  * brulure, ni ralentissement, mais elle consommerait un creneau de la reserve
  * et compterait dans le O(zones x entites).
  */
-function postZone(zones: ZoneField, projectiles: Projectiles, slot: number, tick: number): void {
+function postZone(
+  zones: ZoneField,
+  projectiles: Projectiles,
+  slot: number,
+  tick: number,
+  reactions?: Reactions,
+): void {
   const element = projectiles.elementAt(slot);
   if (element === ELEMENT.NEUTRE) {
     return;
   }
-  zones.spawn(
+  // ⚠️ **Le compte AVANT la pose est le seul moyen de distinguer une creation
+  // d'un rafraichissement.** `spawn` rend le creneau touche dans les deux cas
+  // (c'est ce dont `Room.#announceZones` a besoin), et le §6.2 ne fait reagir
+  // deux zones qu'a LA CREATION DE LA SECONDE. Sans cette distinction, une
+  // arme qui entretient une zone par fusion declencherait une reaction a
+  // chaque tir, indefiniment.
+  const avant = zones.count;
+  const creneau = zones.spawn(
     element,
     Math.round(projectiles.x[slot] ?? 0),
     Math.round(projectiles.y[slot] ?? 0),
     projectiles.ownerAt(slot),
     tick,
   );
+  // ⚠️ **Pas de `creneau >= 0` en plus : la comparaison des comptes le couvre
+  // deja** (mutation appliquee, elle survivait). `spawn` ne rend `-1` que
+  // reserve pleine, et alors elle n'a rien cree non plus — les deux gardes
+  // repondraient toujours ensemble, et la seconde ne pourrait jamais rougir.
+  if (reactions && zones.count > avant) {
+    reactions.onZoneCreated(zones, creneau, tick);
+  }
 }
 
 /**
@@ -356,11 +651,24 @@ function postZone(zones: ZoneField, projectiles: Projectiles, slot: number, tick
  * qu'il porte sur un deplacement DEJA joue quand la zone est posee. Voir la
  * table de `ZoneField.slowsAt`.
  *
- * ⚠️ **La derniere zone visitee gagne, et rien n'arbitre encore.** Un ennemi
- * couvert par deux zones d'elements differents devrait REAGIR (§6.2) : c'est
- * la tache 7. Ici, un element SEUL, et la marque est simplement ecrasee.
+ * ⚠️ **Un ennemi couvert par une zone d'un AUTRE element que sa marque REAGIT**
+ * (§6.2, seconde ligne), et c'est `applyElement` qui en decide — la marque
+ * n'est plus jamais ecrasee en silence. La borne « une reaction par ennemi et
+ * par tick » vit dans `Reactions` : ce balayage la traverse plusieurs fois par
+ * tick des que deux zones se chevauchent, et sans elle chaque paire de zones
+ * multiplierait les reactions par le nombre d'ennemis dans leur intersection.
+ *
+ * ⚠️ **`reactions` n'est PAS optionnel ici, contrairement a
+ * `resolveProjectileDamage`.** Il n'existe aucun appelant legitime qui
+ * marquerait par zone sans arbitrer les reactions : ce serait le §6.2 desactive
+ * en silence.
  */
-export function markInZones(horde: Horde, zones: ZoneField, tick: number): void {
+export function markInZones(
+  horde: Horde,
+  zones: ZoneField,
+  tick: number,
+  reactions: Reactions,
+): void {
   const r2 = ZONE_RADIUS * ZONE_RADIUS;
   for (let z = 0; z < zones.count; z++) {
     if (!zones.aliveAt(z, tick)) {
@@ -374,7 +682,7 @@ export function markInZones(horde: Horde, zones: ZoneField, tick: number): void 
       const dx = (horde.x[i] ?? 0) - zx;
       const dy = (horde.y[i] ?? 0) - zy;
       if (dx * dx + dy * dy < r2) {
-        horde.applyMark(i, element, by, tick);
+        applyElement(horde, reactions, i, element, by, tick);
       }
     }
   }

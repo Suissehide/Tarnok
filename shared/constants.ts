@@ -472,3 +472,39 @@ export const ZONE_CAPACITY = 128;
  * oubli, c'est le comportement voulu.
  */
 export const SYNERGY_MAX = 20;
+
+/**
+ * Rayon du Choc thermique, en pixels monde — etape 5a, §6.1 de la spec.
+ *
+ * Vaut `ORB_PICKUP_RADIUS` (90) par choix du plan : le flash du §9 est
+ * « court, large, genereux », et il doit couvrir VISIBLEMENT ce qu'il tue. Un
+ * rayon plus petit que le flash ferait mourir des ennemis hors du dessin ; un
+ * rayon plus grand tuerait hors champ.
+ *
+ * ⚠️ **Vit dans `shared/` bien que la reaction soit arbitree par le SERVEUR
+ * seul.** Le client ne s'en sert que pour dimensionner le flash (tache 9), et
+ * jamais pour decider qui meurt : les morts arrivent par `DEATHS`, comme
+ * depuis l'etape 3. Deux copies du nombre feraient un flash decale de ce qu'il
+ * est cense montrer.
+ */
+export const REACTION_RADIUS = 90;
+
+/**
+ * Degats bruts d'un Choc thermique sur chaque ennemi dans `REACTION_RADIUS` —
+ * etape 5a, §6.1 : *« degats bruts massifs sur une cible, et sur les ennemis
+ * dans un rayon court »*.
+ *
+ * ⚠️ **Ni la spec ni le plan ne donnaient de valeur** (constat de la tache 7) :
+ * les deux decrivent l'effet, aucun ne le chiffre. 25 est choisi ici pour que
+ * « massif » veuille dire quelque chose — c'est plus que `HEAVY_HP` (20), donc
+ * la reaction tue la pietaille lourde d'un coup, la ou la Braise seule ne fait
+ * qu'entamer sa reserve (6 degats sur une marque entiere). C'est la difference
+ * que le §9 demande a l'oeil de lire : *« l'etat persistant est discret, la
+ * reaction est spectaculaire »*.
+ *
+ * ⚠️ **C'est un REGLAGE DE JEU, pas un invariant**, exactement comme
+ * `MARK_DURATION_TICKS` : il se juge en jeu (tache 11), et **aucun test ne
+ * doit ecrire 25 en dur** — les assertions se derivent de cette constante, ou
+ * la comparent a `HEAVY_HP`.
+ */
+export const REACTION_DAMAGE = 25;

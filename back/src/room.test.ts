@@ -8,6 +8,7 @@ import {
   MAX_ENTITIES,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
+  REACTION_DAMAGE,
   TICK_HZ,
   ZONE_RADIUS,
 } from '@shared/constants';
@@ -17,6 +18,7 @@ import { Projectiles } from '@shared/projectiles';
 import {
   decodeSnapshot,
   OUTCOME,
+  packElementPair,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
 } from '@shared/protocol';
@@ -1895,5 +1897,230 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     room.applyInput(1, 999, 0, 0, 0, 0);
     room.step(DT);
     expect(room.drainZones()).toEqual([]);
+  });
+});
+
+describe('la reaction dans le salon (etape 5a, tache 7)', () => {
+  const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0;
+
+  it('annonce la reaction : couple canonicalise, position, tick — et la Synergie encore a zero', () => {
+    // ⚠️ Deux joueurs mis en scene DES MAINTENANT, alors que la tache 7 ne
+    // compare rien : le joueur 2 entretient la marque de Braise, le joueur 1
+    // la declenche au Givre. C'est ce couple-la que la tache 8 lira dans
+    // `ReactionTrigger` — le chemin doit deja etre praticable.
+    expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
+    const room = new Room(0xbaa1_5e07);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 700, before.x + 100, before.y, LOURD);
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+
+    const reactions: ReturnType<Room['drainReactions']> = [];
+    for (let i = 0; i < 20; i++) {
+      // Le joueur 2 remet sa marque a chaque tick : sans ca, la premiere
+      // reaction la consomme et la zone de Givre reprend la place.
+      const slot = room.horde.slotOf(cible);
+      room.horde.applyMark(slot, ELEMENT.BRAISE, 2, room.tick);
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions.push(...room.drainReactions());
+    }
+
+    expect(reactions.length).toBeGreaterThan(0);
+    const first = reactions[0];
+    // ⚠️ Le SEUL chemin legitime pour le couple : sans canonicalisation,
+    // Braise+Givre et Givre+Braise porteraient deux octets differents pour le
+    // meme evenement, et deux clients dessineraient deux flashs differents.
+    expect(first?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
+    expect(first?.tick).toBeGreaterThan(0);
+    // La reaction a lieu SUR l'ennemi, pas sur le joueur.
+    expect(Math.hypot((first?.x ?? 0) - (before.x + 100), (first?.y ?? 0) - before.y)).toBeLessThan(
+      ZONE_RADIUS,
+    );
+    // ⚠️ Tache 7 : le transport est cable, la regle ne l'est pas encore. La
+    // tache 8 comparera `markBy` et `by` ; jusque-la, jamais de charge.
+    expect(reactions.every((r) => r.synergyCharge === false)).toBe(true);
+  });
+
+  it('un tick sans reaction n annonce rien', () => {
+    // Le pendant de « un tick sans pose n annonce rien » : sans ce test, une
+    // file qui ne se viderait jamais passerait inapercue.
+    const room = new Room(0xbaa1_5e08);
+    room.join(1);
+    spawnMonsterAt(room, 701, 2000, 2000, LOURD);
+    for (let i = 0; i < 10; i++) {
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+    }
+    expect(room.drainReactions()).toEqual([]);
+  });
+
+  it('les morts d une reaction partent dans le lot DEATHS EXISTANT, un seul par tick', () => {
+    // ⚠️ **Le rejeu de l'etape 3 en depend** : `GameClient#drainPendingDeaths`
+    // suppose « un seul lot par tick » et rejouerait le second par-dessus la
+    // correction du premier. Un amas de pietaille lourde marquee Braise, un
+    // projectile de Givre : la reaction en tue plusieurs D UN COUP, et tout
+    // doit tenir dans le lot du tick.
+    const room = new Room(0xbaa1_5e09);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const amas: number[] = [];
+    for (let i = 0; i < 5; i++) {
+      const id = spawnMonsterAt(room, 710 + i, before.x + 100, before.y + i * 8, LOURD);
+      amas.push(id);
+    }
+
+    const deaths: { tick: number; ids: number[] }[] = [];
+    for (let i = 0; i < 30; i++) {
+      for (const id of amas) {
+        const slot = room.horde.slotOf(id);
+        if (slot >= 0) {
+          room.horde.applyMark(slot, ELEMENT.BRAISE, 2, room.tick);
+        }
+      }
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      deaths.push(...room.drainDeaths());
+    }
+
+    // La reaction a bien eu lieu, et elle a tue : sans ca le test ne prouve
+    // rien. `REACTION_DAMAGE > HEAVY_HP`, donc un choc emporte tout l'amas.
+    const gros = deaths.find((b) => b.ids.length >= 3);
+    expect(gros).toBeDefined();
+
+    // UN SEUL lot par tick, sur toute la course.
+    const ticks = deaths.map((b) => b.tick);
+    expect(new Set(ticks).size).toBe(ticks.length);
+    // Et aucune identite listee deux fois : les trois passes (projectiles,
+    // reactions, brulures) tournent chacune apres la compaction de la
+    // precedente.
+    const ids = deaths.flatMap((b) => b.ids);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
+  const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0;
+
+  it('une reaction declenchee par un IMPACT est annoncee — le chemin le plus facile a perdre', () => {
+    // ⚠️ **Mutation appliquee, elle survivait avant ce test.** Vider les
+    // reactions AVANT `markInZones` jette celles que les projectiles et les
+    // poses de zone ont deja declenchees, et le salon continue d'en annoncer
+    // par les zones : le defaut passe inapercu si le decor produit des
+    // reactions par plusieurs chemins a la fois. Ce test n'en laisse QU UN.
+    //
+    // Deux passes, comme pour les brulures : la premiere APPREND a quel tick
+    // le premier projectile touche (aucune marque, donc aucune reaction — et
+    // c'est verifie), la seconde pose la marque de Braise juste avant ce
+    // tick-la. Une seule marque, une seule reaction, et elle ne peut venir que
+    // de l'impact : la premiere zone de Givre nait de ce meme impact, et la
+    // marque est deja consommee quand `markInZones` la balaie.
+    const GRAINE = 0xbaa1_5e0a;
+
+    function run(tickDArmement: number | null): {
+      reactions: ReturnType<Room['drainReactions']>;
+      impact: number | null;
+    } {
+      const room = new Room(GRAINE);
+      room.join(1);
+      room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+      const before = positionOf(room, 1);
+      const cible = spawnMonsterAt(room, 720, before.x + 120, before.y, LOURD);
+      // Increvable : on teste la marque et la reaction, pas la mise a mort.
+      room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+      const reactions: ReturnType<Room['drainReactions']> = [];
+      let impact: number | null = null;
+      for (let i = 0; i < 40; i++) {
+        if (tickDArmement !== null && room.tick === tickDArmement - 1) {
+          room.horde.applyMark(room.horde.slotOf(cible), ELEMENT.BRAISE, 2, room.tick);
+        }
+        aimAtNearestMonster(room, 1, i + 1);
+        room.step(DT);
+        reactions.push(...room.drainReactions());
+        if (impact === null && (room.horde.hp[room.horde.slotOf(cible)] ?? 0) < 1e6) {
+          impact = room.tick;
+        }
+      }
+      return { reactions, impact };
+    }
+
+    const sonde = run(null);
+    expect(sonde.impact).not.toBeNull();
+    // ⚠️ La sonde ne masque rien : sans marque, ce decor ne produit AUCUNE
+    // reaction. Ce qui suit ne peut donc venir que de la marque armee.
+    expect(sonde.reactions).toEqual([]);
+
+    const { reactions } = run(sonde.impact);
+    expect(reactions.length).toBe(1);
+    expect(reactions[0]?.tick).toBe(sonde.impact);
+    expect(reactions[0]?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
+  });
+
+  it('une mort par REACTION part dans le meme lot DEATHS qu une mort par projectile', () => {
+    // ⚠️ **Mutation appliquee, elle survivait avant ce test.** Mettre les
+    // morts de reaction dans un lot A PART passe inapercu tant que la reaction
+    // est la SEULE a tuer ce tick-la : il n'y a alors qu'un lot de toute
+    // facon. C'est la fixture qui masque, et il faut donc un tick ou les DEUX
+    // chemins tuent.
+    //
+    // `GameClient#drainPendingDeaths` suppose « un seul lot par tick » et
+    // rejouerait le second par-dessus la correction du premier.
+    const GRAINE = 0xbaa1_5e0b;
+
+    /**
+     * Premiere passe (`tickDArmement` a `null`) : apprendre a quel tick le
+     * projectile tue. Seconde : donner a la victime de la reaction exactement
+     * `REACTION_DAMAGE` points de vie juste avant ce tick-la, et la marquer,
+     * pour que les deux morts tombent ensemble.
+     */
+    function run(tickDArmement: number | null): {
+      deaths: { tick: number; ids: number[] }[];
+      parProjectile: number;
+      parReaction: number;
+    } {
+      const room = new Room(GRAINE);
+      room.join(1);
+      room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+      const before = positionOf(room, 1);
+      // Le plus proche : c'est lui que la visee suit, et il meurt sous les
+      // projectiles (HEAVY_HP contre plusieurs salves).
+      const parProjectile = spawnMonsterAt(room, 730, before.x + 120, before.y, LOURD);
+      // A moins d'un ZONE_RADIUS du premier : les zones de Givre posees a
+      // chaque impact le couvrent. Increvable jusqu'a l'armement, sinon une
+      // fleche perdue le tuerait avant l'heure.
+      const parReaction = spawnMonsterAt(room, 731, before.x + 120, before.y + 55, LOURD);
+      room.horde.hp[room.horde.slotOf(parReaction)] = 1e6;
+      const deaths: { tick: number; ids: number[] }[] = [];
+      for (let i = 0; i < 60; i++) {
+        if (tickDArmement !== null && room.tick === tickDArmement - 1) {
+          const s = room.horde.slotOf(parReaction);
+          room.horde.hp[s] = REACTION_DAMAGE;
+          room.horde.applyMark(s, ELEMENT.BRAISE, 2, room.tick);
+        }
+        aimAtNearestMonster(room, 1, i + 1);
+        room.step(DT);
+        deaths.push(...room.drainDeaths());
+      }
+      return { deaths, parProjectile, parReaction };
+    }
+
+    const reperage = run(null);
+    const tickProjectile = reperage.deaths.find((b) =>
+      b.ids.includes(reperage.parProjectile),
+    )?.tick;
+    expect(tickProjectile).toBeDefined();
+    // La sonde ne masque rien : sans marque, l'autre monstre ne meurt pas.
+    expect(reperage.deaths.some((b) => b.ids.includes(reperage.parReaction))).toBe(false);
+
+    const { deaths, parProjectile, parReaction } = run(tickProjectile ?? 0);
+
+    const auTick = deaths.filter((b) => b.tick === tickProjectile);
+    expect(auTick.length).toBe(1);
+    expect(auTick[0]?.ids).toContain(parProjectile);
+    expect(auTick[0]?.ids).toContain(parReaction);
   });
 });

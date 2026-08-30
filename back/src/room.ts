@@ -26,9 +26,11 @@ import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 
 import {
+  applyReactions,
   type ContactPlayer,
   markInZones,
   OrbField,
+  Reactions,
   resolveBurn,
   resolveContact,
   resolveProjectileDamage,
@@ -137,6 +139,29 @@ export interface ZoneEvent {
   by: number;
 }
 
+/**
+ * Une reaction a diffuser, telle que `REACTION` la transporte (§6.1 / §8) —
+ * couple d'elements, ou, quand, et **un seul bit** : la Synergie a-t-elle
+ * ete chargee.
+ *
+ * ⚠️ **Pas les deux identites** (constat R20 de la tache 5). Le serveur
+ * COMPARE le joueur qui a marque et celui qui declenche ; le fil ne porte que
+ * le booleen qui en sort. Envoyer deux identites que le client ne pourrait que
+ * recomparer l'inviterait a refaire l'arbitrage — donc a diverger. Les deux
+ * joueurs vivent dans `ReactionTrigger`, cote combat, et n'en sortent pas.
+ *
+ * ⚠️ **`synergyCharge` vaut toujours `false` a la tache 7.** C'est la tache 8
+ * qui compare `markBy` et `by` ; le transport est cable d'abord, comme `hp`
+ * l'a ete a l'etape 3 avant que le serveur ne le fasse vivre.
+ */
+export interface ReactionEvent {
+  pair: number;
+  x: number;
+  y: number;
+  tick: number;
+  synergyCharge: boolean;
+}
+
 /** Une montee de niveau, datee au tick ou le gel prend effet (§6.2). */
 /** Un etalage a diffuser, tel que `DRAFT_OPEN` le transporte. */
 export interface DraftOpenEvent {
@@ -219,7 +244,14 @@ export class Room {
    * poser, une fois par tick » que `ZoneField.spawn` exige.
    */
   readonly #zones = new ZoneField();
+  /**
+   * Les reactions du tick en cours (§6). Collectees par les trois chemins du
+   * §6.2 — impact, entree en zone, recouvrement de zones — puis resolues et
+   * videes a la fin de `step`, jamais au fil de l'eau : voir `Reactions`.
+   */
+  readonly #reactions = new Reactions();
   #pendingZones: ZoneEvent[] = [];
+  #pendingReactions: ReactionEvent[] = [];
   #pendingOrders: WaveOrder[] = [];
   #pendingDeaths: IdBatch[] = [];
   #pendingPickups: IdBatch[] = [];
@@ -300,6 +332,17 @@ export class Room {
   drainZones(): ZoneEvent[] {
     const out = this.#pendingZones;
     this.#pendingZones = [];
+    return out;
+  }
+
+  /**
+   * Reactions a diffuser (§6.1). Rares — contrairement aux zones, rien ne les
+   * entretient : chacune consomme la marque, ou nait d'une zone qui vient
+   * d'etre creee et ne se rejoue jamais.
+   */
+  drainReactions(): ReactionEvent[] {
+    const out = this.#pendingReactions;
+    this.#pendingReactions = [];
     return out;
   }
 
@@ -620,18 +663,48 @@ export class Room {
       this.#orbs,
       this.#tick,
       this.#zones,
+      this.#reactions,
     );
     this.#announceZones();
-    markInZones(this.horde, this.#zones, this.#tick);
+    markInZones(this.horde, this.#zones, this.#tick, this.#reactions);
+    // ⚠️ **Les reactions se resolvent ICI, apres les DEUX chemins qui les
+    // declenchent, et une seule fois.** `Reactions` ne fait que collecter :
+    // resoudre au fil de l'eau tuerait des entites pendant que
+    // `Projectiles.collide` ou `markInZones` balaient encore la horde par
+    // indice de creneau. `drain` remet du meme coup la borne « une reaction
+    // par ennemi et par tick » a zero.
+    const triggers = this.#reactions.drain();
+    const reactedIds = applyReactions(this.horde, this.#orbs, this.#tick, triggers);
+    for (const t of triggers) {
+      // `synergyCharge` reste a `false` : c'est la tache 8 qui comparera
+      // `t.markBy` et `t.by`. Le couple d'elements, lui, est deja canonicalise
+      // par `packElementPair` cote combat — sans quoi Braise+Givre et
+      // Givre+Braise porteraient deux octets differents pour le meme
+      // evenement, et deux clients dessineraient deux flashs differents.
+      this.#pendingReactions.push({
+        pair: t.pair,
+        x: t.x,
+        y: t.y,
+        tick: this.#tick,
+        synergyCharge: false,
+      });
+    }
     const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick);
-    // ⚠️ **UN SEUL lot de morts par tick, brulures comprises.** `GameClient`
-    // documente cette hypothese et s'appuie dessus : deux lots vises au meme
-    // tick, rejoues l'un apres l'autre, verraient le second effacer la
-    // correction du premier (`#drainPendingDeaths`). Les brulures n'ont donc
-    // aucun chemin de mort a elles — elles rejoignent celui de l'etape 3.
-    // Aucun doublon possible : `resolveBurn` tourne APRES la compaction des
-    // morts par projectile, donc les identites de `deadIds` n'existent plus.
-    const allDead = burntIds.length > 0 ? [...deadIds, ...burntIds] : deadIds;
+    // ⚠️ **UN SEUL lot de morts par tick, brulures ET reactions comprises.**
+    // `GameClient` documente cette hypothese et s'appuie dessus : deux lots
+    // vises au meme tick, rejoues l'un apres l'autre, verraient le second
+    // effacer la correction du premier (`#drainPendingDeaths`). Ni les
+    // brulures ni les reactions n'ont donc de chemin de mort a elles — elles
+    // rejoignent celui de l'etape 3.
+    //
+    // Aucun doublon possible, et l'ORDRE est ce qui le garantit : chacune des
+    // trois passes tourne APRES la compaction de la precedente, donc les
+    // identites deja listees n'existent plus dans la horde quand la suivante
+    // la balaie.
+    const allDead =
+      reactedIds.length > 0 || burntIds.length > 0
+        ? [...deadIds, ...reactedIds, ...burntIds]
+        : deadIds;
     if (allDead.length > 0) {
       this.#totalKills += allDead.length;
       this.#pendingDeaths.push({ tick: this.#tick, ids: allDead });
