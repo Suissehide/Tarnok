@@ -366,8 +366,11 @@ describe('la reaction sur le fil (etape 5a, tache 7)', () => {
         throw new Error('REACTION attendu');
       }
       expect(msg.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
-      // Tache 7 : le transport est cable, la regle de Synergie ne l'est pas.
-      expect(msg.synergyCharge).toBe(false);
+      // ⚠️ La marque est posee par `playerId + 1`, et c'est `playerId` qui
+      // declenche : deux joueurs differents, donc une charge (§7). Le bit
+      // traverse la socket jusqu'ici — la regle de la tache 8 est bien celle
+      // que le client recoit, pas seulement celle que `Room` calcule.
+      expect(msg.synergyCharge).toBe(true);
     } finally {
       clearInterval(pilote);
     }

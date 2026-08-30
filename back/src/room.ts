@@ -10,6 +10,7 @@ import {
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
+  SYNERGY_MAX,
   TICK_HZ,
   XP_PER_ORB,
 } from '@shared/constants';
@@ -150,9 +151,9 @@ export interface ZoneEvent {
  * recomparer l'inviterait a refaire l'arbitrage — donc a diverger. Les deux
  * joueurs vivent dans `ReactionTrigger`, cote combat, et n'en sortent pas.
  *
- * ⚠️ **`synergyCharge` vaut toujours `false` a la tache 7.** C'est la tache 8
- * qui compare `markBy` et `by` ; le transport est cable d'abord, comme `hp`
- * l'a ete a l'etape 3 avant que le serveur ne le fasse vivre.
+ * `synergyCharge` est le resultat de cette comparaison, faite dans `step` :
+ * vrai quand les deux joueurs different. Il dit ce que la reaction A VALU,
+ * pas ou en est la barre — le total, lui, voyage dans le `SNAPSHOT`.
  */
 export interface ReactionEvent {
   pair: number;
@@ -286,6 +287,22 @@ export class Room {
   #level = 1;
   /** Ennemis tues depuis le debut de la run, cumule pour `RUN_OVER.kills`. */
   #totalKills = 0;
+
+  /**
+   * Le compteur de Synergie de l'EQUIPE (§7 de la spec, « le cœur du projet »
+   * du §6.5 de l'orientation).
+   *
+   * ⚠️ **UN SEUL NOMBRE, pour tout le salon** — comme `#xp`, et pas un par
+   * joueur. C'est le defaut que l'etape 3 a commis puis corrige sur
+   * l'experience : deux sources de verite pour un seul nombre. Il ne sort
+   * d'ici que par l'en-tete du `SNAPSHOT`, jamais par le bloc d'un joueur.
+   *
+   * ⚠️ **Il monte et ne descend JAMAIS a cette etape.** L'ultime d'equipe que
+   * la barre pleine declenche est hors perimetre (§1) : rien ne la depense,
+   * donc `SYNERGY_MAX` est un plafond voulu, pas un oubli. Le jour ou l'ultime
+   * arrive, c'est ici qu'il soustraira.
+   */
+  #synergy = 0;
 
   /**
    * Dernier tick du gel courant (inclus) : tant que `#tick <= #freezeUntilTick`,
@@ -676,17 +693,38 @@ export class Room {
     const triggers = this.#reactions.drain();
     const reactedIds = applyReactions(this.horde, this.#orbs, this.#tick, triggers);
     for (const t of triggers) {
-      // `synergyCharge` reste a `false` : c'est la tache 8 qui comparera
-      // `t.markBy` et `t.by`. Le couple d'elements, lui, est deja canonicalise
-      // par `packElementPair` cote combat — sans quoi Braise+Givre et
-      // Givre+Braise porteraient deux octets differents pour le meme
-      // evenement, et deux clients dessineraient deux flashs differents.
+      // ⚠️ **LA REGLE DU §7, en une comparaison, et elle n'existe qu'ICI.**
+      // Deux joueurs differents a l'origine de la reaction — l'un a applique
+      // le premier element, l'autre le second — et l'equipe gagne une charge.
+      // Le meme joueur des deux cotes : la reaction a lieu, elle ne rapporte
+      // rien. C'est ce que le §6.5 de l'orientation appelle « le cœur du
+      // projet » : un outil de regroupement qui fonctionne PAR LE GAIN, jamais
+      // par la punition — rien n'est retire au joueur qui joue seul.
+      //
+      // ⚠️ **En solo la barre ne monte donc JAMAIS, par construction** : un
+      // seul joueur ne peut poser que sa propre identite des deux cotes, et
+      // aucun code n'a a le verifier. C'est voulu, pas un effet de bord.
+      //
+      // ⚠️ **Le bit annonce la COMPARAISON, pas le mouvement de la barre.** A
+      // plafond atteint, une reaction inter-joueurs porte toujours
+      // `synergyCharge: true` : le §6.1 dit « un seul bit : la reaction a-t-elle
+      // charge la Synergie », et la comparaison est ce qui ne rend qu'un
+      // booleen (R20). Le TOTAL, lui, voyage dans le `SNAPSHOT` et fait foi
+      // pour la jauge — le client n'a donc rien a recalculer.
+      const charge = t.markBy !== t.by;
+      if (charge) {
+        this.#synergy = Math.min(SYNERGY_MAX, this.#synergy + 1);
+      }
+      // Le couple d'elements, lui, est deja canonicalise par `packElementPair`
+      // cote combat — sans quoi Braise+Givre et Givre+Braise porteraient deux
+      // octets differents pour le meme evenement, et deux clients
+      // dessineraient deux flashs differents.
       this.#pendingReactions.push({
         pair: t.pair,
         x: t.x,
         y: t.y,
         tick: this.#tick,
-        synergyCharge: false,
+        synergyCharge: charge,
       });
     }
     const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick);
@@ -728,10 +766,9 @@ export class Room {
     }
 
     const started = performance.now();
-    // Zero en attendant la tache 8 de l'etape 5a, qui fait naitre le compteur
-    // de Synergie dans ce salon : la tache 5 ne cable que le transport, comme
-    // `hp` l'a ete a l'etape 3 avant que le serveur ne le fasse vivre.
-    const buf = encodeSnapshot(this.#tick, this.#xp, 0, this.#scratch);
+    // `#xp` et `#synergy` cote a cote, tous deux dans l'EN-TETE : deux donnees
+    // d'equipe, deux nombres uniques, aucun bloc de joueur ne les porte.
+    const buf = encodeSnapshot(this.#tick, this.#xp, this.#synergy, this.#scratch);
     this.#metrics.encodeMicros += (performance.now() - started) * 1000;
     this.#metrics.bytesSent += buf.byteLength;
     this.#metrics.snapshots++;

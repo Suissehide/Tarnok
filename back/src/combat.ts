@@ -172,9 +172,9 @@ export class OrbField {
  * ⚠️ **Porte les DEUX joueurs, alors que le message `REACTION` n'en porte
  * aucun.** C'est exactement la distinction du §6.1 (constat R20 de la tache
  * 5) : le serveur COMPARE deux identites, le fil ne transporte que le booleen
- * qui en sort. `markBy` et `by` existent donc ici, et nulle part ailleurs —
- * c'est la tache 8 qui les comparera pour charger la barre de Synergie. A
- * cette tache, `Room` annonce toujours `synergyCharge: false`.
+ * qui en sort. `markBy` et `by` existent donc ici, et nulle part ailleurs — la
+ * comparaison qui charge la barre de Synergie (§7) est faite par `Room.step`,
+ * qui est aussi le seul endroit ou la barre existe.
  */
 export interface ReactionTrigger {
   /** Le couple d'elements, deja canonicalise par `packElementPair`. */

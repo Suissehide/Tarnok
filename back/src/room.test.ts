@@ -9,6 +9,7 @@ import {
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   REACTION_DAMAGE,
+  SYNERGY_MAX,
   TICK_HZ,
   ZONE_RADIUS,
 } from '@shared/constants';
@@ -75,6 +76,25 @@ function hpOf(room: Room, id: number): number {
     throw new Error(`joueur ${id} absent du snapshot`);
   }
   return found.hp;
+}
+
+/**
+ * La barre de Synergie de l'EQUIPE (§7 de l'etape 5a).
+ *
+ * ⚠️ **Lue par le SEUL chemin qui la publie : l'en-tete du `SNAPSHOT`.** Pas
+ * de `get synergy()` sur `Room` a cote — un accesseur de confort ferait une
+ * seconde source de verite pour un seul nombre, exactement le defaut que
+ * l'etape 3 a commis sur l'experience. Passer par le fil prouve du meme coup
+ * qu'il n'y a QU UN nombre, partage, et aucun par joueur.
+ */
+function synergyOf(room: Room): number {
+  const out = collector();
+  room.snapshot(out);
+  const first = out.sent[0];
+  if (!first) {
+    throw new Error('aucun snapshot emis');
+  }
+  return decodeSnapshot(first).synergy;
 }
 
 /** Visee telle que redistribuee par le SNAPSHOT (tache 13) — voir `hpOf`. */
@@ -1904,11 +1924,11 @@ describe('la reaction dans le salon (etape 5a, tache 7)', () => {
   const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0;
 
-  it('annonce la reaction : couple canonicalise, position, tick — et la Synergie encore a zero', () => {
-    // ⚠️ Deux joueurs mis en scene DES MAINTENANT, alors que la tache 7 ne
-    // compare rien : le joueur 2 entretient la marque de Braise, le joueur 1
-    // la declenche au Givre. C'est ce couple-la que la tache 8 lira dans
-    // `ReactionTrigger` — le chemin doit deja etre praticable.
+  it('annonce la reaction : couple canonicalise, position, tick', () => {
+    // Le joueur 2 entretient la marque de Braise, le joueur 1 la declenche au
+    // Givre. Ce test-ci ne regarde que le TRANSPORT — couple, ou, quand ; la
+    // regle de Synergie que ce couple d'identites declenche a son propre
+    // `describe` plus bas (tache 8).
     expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
     const room = new Room(0xbaa1_5e07);
     room.join(1);
@@ -1939,9 +1959,6 @@ describe('la reaction dans le salon (etape 5a, tache 7)', () => {
     expect(Math.hypot((first?.x ?? 0) - (before.x + 100), (first?.y ?? 0) - before.y)).toBeLessThan(
       ZONE_RADIUS,
     );
-    // ⚠️ Tache 7 : le transport est cable, la regle ne l'est pas encore. La
-    // tache 8 comparera `markBy` et `by` ; jusque-la, jamais de charge.
-    expect(reactions.every((r) => r.synergyCharge === false)).toBe(true);
   });
 
   it('un tick sans reaction n annonce rien', () => {
@@ -2122,5 +2139,156 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
     expect(auTick.length).toBe(1);
     expect(auTick[0]?.ids).toContain(parProjectile);
     expect(auTick[0]?.ids).toContain(parReaction);
+  });
+});
+
+/**
+ * **Le livrable du §13, arbitre cote serveur** : *« une reaction inter-joueurs
+ * charge la barre, une reaction solo non »*. La tache 10 le rejouera sur
+ * quatre sockets reelles ; ici, c'est la REGLE elle-meme qui est mise a
+ * l'epreuve, la ou elle vit.
+ */
+describe('le compteur de Synergie (etape 5a, tache 8)', () => {
+  const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
+  const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0;
+  const GRAINE = 0xbaa1_5e0c;
+
+  /**
+   * Le decor des deux moities, au SEUL detail qui les separe : `markBy`.
+   *
+   * Deux joueurs dans le salon des deux cotes, le meme monstre au meme
+   * endroit, la meme graine, le meme nombre de ticks. Le joueur 1 tire au
+   * Givre et declenche ; qui a pose la Braise est le seul parametre. Tout le
+   * reste — physique, positions, ticks — est bit pour bit identique, et le
+   * test le VERIFIE plutot que de le supposer.
+   *
+   * ⚠️ **Le joueur 2 est reellement dans le salon, meme dans la moitie ou il
+   * ne fait rien.** Un decor ou il n'existerait que comme un numero pose sur
+   * une marque laisserait planer le doute : la barre ne monte-t-elle pas parce
+   * que le joueur est le meme, ou parce qu'il n'y a personne d'autre ? Il ne
+   * vise jamais (`Room.join` met la visee a zero, et rien ne la pousse), donc
+   * il ne tire pas et ne trouble rien.
+   *
+   * ⚠️ **Et ce `join(2)` n'est GARDE par aucune assertion — sonde appliquee,
+   * pas raisonnee.** Le retirer laisse ces trois tests verts : la regle du §7
+   * ne compare que deux indices, elle ne demande a personne d'etre connecte.
+   * Il reste ici parce qu'un decor ou le joueur 2 ne serait qu'un numero pose
+   * sur une marque laisserait le doute entier — mais il est dit tel quel,
+   * plutot que credite d'un test qui ne le tient pas (meme choix que le garde
+   * de `#checkRunOver`). Ce qui prouve reellement que la charge survit a une
+   * vraie socket, c'est `server.test.ts`, et la tache 10 a quatre clients.
+   */
+  function scene(markBy: number, ticks: number) {
+    const room = new Room(GRAINE);
+    room.join(1);
+    room.join(2);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 800, before.x + 100, before.y, LOURD);
+    // Increvable : ce sont les charges qui sont comptees, pas la mise a mort.
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+
+    const reactions: ReturnType<Room['drainReactions']> = [];
+    for (let i = 0; i < ticks; i++) {
+      // La marque se consomme a chaque reaction (§4.3) : la reposer chaque
+      // tick est ce qui rend la reaction repetable, donc la barre comptable.
+      room.horde.applyMark(room.horde.slotOf(cible), ELEMENT.BRAISE, markBy, room.tick);
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions.push(...room.drainReactions());
+    }
+    return { synergie: synergyOf(room), reactions };
+  }
+
+  /** Une reaction sans son bit de charge : ce qui doit etre identique des deux cotes. */
+  function sansCharge(r: { pair: number; x: number; y: number; tick: number }) {
+    return { pair: r.pair, x: r.x, y: r.y, tick: r.tick };
+  }
+
+  it('deux joueurs differents chargent la barre ; le meme joueur des deux cotes ne charge RIEN', () => {
+    expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
+    const aDeux = scene(2, 15);
+    const seul = scene(1, 15);
+
+    // ⚠️ **La seconde moitie est celle qui porte le sens.** Un compteur qui
+    // monterait a CHAQUE reaction — donc sans aucune comparaison — passerait
+    // la premiere assertion sans broncher. C'est exactement le mecanisme que
+    // le §6.5 de l'orientation appelle « le cœur du projet » : la cooperation
+    // devient une ressource visible, et elle ne se gagne QUE des que deux
+    // joueurs sont dans la meme melee.
+    expect(aDeux.synergie).toBeGreaterThan(0);
+    expect(seul.synergie).toBe(0);
+
+    // ⚠️ **Et la preuve que le decor separe vraiment les deux cas** (constat
+    // R24 de la tache 7 : une illustration qui ne les separe pas est une
+    // assertion creuse). Sans ce qui suit, « la barre ne bouge pas » se lirait
+    // aussi bien « aucune reaction n'a eu lieu » — et le test passerait avec
+    // un salon ou plus rien ne reagit.
+    // PLUSIEURS reactions, pas une : « toutes sans charge » sur un echantillon
+    // de un ne dirait pas grand-chose. Ce decor en produit une douzaine.
+    expect(seul.reactions.length).toBeGreaterThan(3);
+    expect(seul.reactions.map(sansCharge)).toEqual(aDeux.reactions.map(sansCharge));
+
+    // Le bit annonce, reaction par reaction, ce que la comparaison a rendu.
+    expect(aDeux.reactions.every((r) => r.synergyCharge)).toBe(true);
+    expect(seul.reactions.every((r) => r.synergyCharge)).toBe(false);
+    // Une charge par reaction inter-joueurs, pas une de plus ni de moins.
+    expect(aDeux.synergie).toBe(aDeux.reactions.length);
+  });
+
+  it('un seul joueur, ses deux armes elementaires : la reaction a lieu et ne rapporte rien — par construction', () => {
+    // ⚠️ **Aucune marque posee a la main ici.** Le joueur 1 porte une arme de
+    // Braise ET une de Givre : il marque et declenche lui-meme, par le jeu.
+    // C'est la preuve que « en solo la barre ne monte jamais » est une
+    // propriete DU MODELE et pas une convention du harnais — un joueur seul ne
+    // peut ecrire que sa propre identite des deux cotes de la comparaison, et
+    // aucune ligne de code n'a a le verifier.
+    //
+    // C'est voulu, pas un effet de bord : le §6.5 en fait un outil de
+    // regroupement qui fonctionne PAR LE GAIN, jamais par la punition. Le
+    // joueur seul ne perd rien — sa reaction fait ses degats comme celle de
+    // n'importe qui. Il ne gagne simplement pas la charge d'equipe.
+    expect(ARME_BRAISE).toBeGreaterThanOrEqual(0);
+    const room = new Room(0xbaa1_5e0d);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 810, before.x + 100, before.y, LOURD);
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+
+    const reactions: ReturnType<Room['drainReactions']> = [];
+    for (let i = 0; i < 60; i++) {
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions.push(...room.drainReactions());
+    }
+
+    // La reaction a bien lieu — sinon le test ne prouve rien du tout.
+    expect(reactions.length).toBeGreaterThan(0);
+    expect(reactions.every((r) => r.synergyCharge === false)).toBe(true);
+    expect(synergyOf(room)).toBe(0);
+  });
+
+  it('la barre plafonne a SYNERGY_MAX, et rien ne la depense jamais', () => {
+    // ⚠️ **Le plafond est le comportement VOULU, pas un oubli.** L'ultime
+    // d'equipe que la barre pleine declenche est hors perimetre de l'etape 5a
+    // (§1) : a cette etape la barre se charge, s'affiche, et ne se depense
+    // JAMAIS. Le dire ici, sinon quelqu'un « corrigera » un jour ce plafond en
+    // le prenant pour un compteur qu'on aurait oublie de remettre a zero.
+    const assezDeReactions = SYNERGY_MAX * 3;
+    const { synergie, reactions } = scene(2, assezDeReactions);
+
+    // Le decor a produit STRICTEMENT plus de charges que le plafond : sans ce
+    // compte, un plafond jamais atteint se lirait comme un plafond respecte.
+    expect(reactions.filter((r) => r.synergyCharge).length).toBeGreaterThan(SYNERGY_MAX);
+    expect(synergie).toBe(SYNERGY_MAX);
+
+    // ⚠️ Et le bit continue de dire vrai une fois la barre pleine : il annonce
+    // la COMPARAISON — deux joueurs differents — pas le mouvement de la jauge.
+    // Le total, lui, fait foi dans le SNAPSHOT, et le client n'a rien a
+    // recalculer.
+    expect(reactions[reactions.length - 1]?.synergyCharge).toBe(true);
   });
 });
