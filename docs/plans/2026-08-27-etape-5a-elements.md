@@ -625,6 +625,108 @@ test ne peut donc atteindre `renderFrame`, et **sept mutations survivent** rien 
 
 ---
 
+## Tâches 12 à 14 : ce que la vérification manuelle a trouvé
+
+**Ces trois tâches viennent de l'auteur en train de jouer, comme les quinze de l'étape 3.** Elles
+n'étaient dans aucun plan.
+
+> *« Fais des projectiles différents pour chaque arme, en forme, taille, couleur, halo, avec une
+> traînée, et fais-les durer plus longtemps ou fade pour les armes courte portée comme le
+> lance-flammes. Je ne vois pas la marque sur les ennemis, fais un anneau sous leurs pieds plutôt
+> que changer leur couleur. Les ennemis sont trop petits par rapport à la taille des projectiles et
+> la hitbox semble plus basse. »*
+
+---
+
+## Tâche 12 : un projectile par arme
+
+**Fichiers :** modifier `shared/weapons.ts`, `front/src/render/projectile-renderer.ts`, leurs tests
+
+Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une seule apparence.
+
+- [ ] **Étape 1 : la donnée, pas le code.** `Weapon` gagne un descriptif visuel — forme, diamètre,
+  teinte, halo, traînée, atténuation. Même motif que tout le reste de `shared/` : une table, l'index
+  est l'identifiant, **ajouter une arme reste du contenu**.
+
+  ⚠️ **La teinte du projectile n'est PAS celle de l'élément.** Une arme neutre doit être
+  reconnaissable, et deux armes du même élément doivent se distinguer. L'élément se lit à la zone
+  qu'elle laisse et à l'anneau sous l'ennemi (tâche 13) — pas au projectile.
+
+- [ ] **Étape 2 : la traînée.** Un projectile laisse une trace derrière lui. ⚠️ **C'est le poste de
+  coût de cette tâche** : `PROJECTILE_CAPACITY` vaut 1024 et une traînée de N segments multiplie les
+  quads par N. Mesurer, et borner par construction plutôt que par espoir — le §4.3 de l'orientation
+  dit que *« le danger est le VFX, pas les sprites »*.
+
+- [ ] **Étape 3 : la portée se voit.** Le lance-flammes (vie 10 ticks) doit s'éteindre en fondu ;
+  l'arc-lourd (40 ticks) doit filer net. **L'atténuation se dérive de `projectileLifeTicks`**, elle
+  n'est pas un réglage séparé — sinon les deux dérivent l'un de l'autre.
+
+- [ ] **Étape 4 : commit** — `feat(front): un projectile par arme`
+
+---
+
+## Tâche 13 : la marque devient un anneau au sol
+
+**Fichiers :** modifier `front/src/render/`, `front/src/render/frame.ts`, leurs tests
+
+> *« Je ne vois pas la marque sur les ennemis, fais un anneau sous leurs pieds plutôt que changer
+> leur couleur. »*
+
+- [ ] **Étape 1 : remplacer, pas ajouter.** La teinte de sprite disparaît. `markTint` et le
+  `color: true` du conteneur de horde partent avec elle — **du code que rien ne lit est du code qui
+  ment**.
+
+- [ ] **Étape 2 : l'anneau.** Sous les pieds, teinté par l'élément, sur le calque des zones (le plus
+  bas) pour qu'il passe sous les créatures.
+
+  ⚠️ **Écart assumé au §6.6 de l'orientation, et il coûte.** La hiérarchie y donnait la teinte de
+  sprite comme **gratuite** (« 0 » dans le batch Pixi) et réservait l'anneau au cas « deux éléments
+  avant réaction ». Un anneau par ennemi marqué coûte **un quad par ennemi marqué**. À 1 500
+  entités dans une zone, c'est 1 500 quads.
+
+  **Mesurer, et borner** : au minimum le culling hors caméra, comme `selectZones` le fait déjà.
+
+- [ ] **Étape 3 : commit** — `feat(front): la marque elementaire devient un anneau au sol`
+
+---
+
+## Tâche 14 : l'échelle et l'ancre
+
+**Fichiers :** modifier `front/src/render/horde-renderer.ts`, ses tests
+
+> *« Les ennemis sont trop petits par rapport à la taille des projectiles et la hitbox semble plus
+> basse. »*
+
+**Mesuré avant d'agir** :
+
+| | |
+| --- | --- |
+| hitbox | cercle de rayon 32 px, **centré sur la position** |
+| sprite | 64 px de haut, **ancré à 0,75** — il s'étend de `y-48` à `y+16` |
+| centre visuel du corps | **`y - 16 px`**, soit 25 % du corps au-dessus de la hitbox |
+| texture d'impact | 48 px, soit **75 %** du diamètre de la créature, plus au flash |
+
+**« La hitbox semble plus basse » n'est pas une impression : elle l'est de 16 px.**
+
+- [ ] **Étape 1 : l'ancre.** Le corps doit se centrer sur la position, puisque **tout le reste y est
+  centré** — contact, ramassage, séparation, tir. C'est l'ancre qui est fausse, pas les rayons.
+
+  ⚠️ **Et l'anneau de la tâche 13 doit être sous les PIEDS**, donc décalé vers le bas du corps, pas
+  posé sur la position. Les deux tâches se rencontrent ici.
+
+- [ ] **Étape 2 : le rapport de taille.** Deux leviers, et le plan tranche : **les projectiles
+  rétrécissent** (tâche 12 leur donne des tailles propres), et la créature gagne un facteur de corps
+  **modeste et documenté**.
+
+  ⚠️ **L'étape 3 a corrigé le défaut INVERSE** — des sprites dessinés à 192 px pour une hitbox de
+  64 — et `spriteScale` existe précisément pour lier les deux. **Un facteur de corps rend la hitbox
+  menteuse dans l'autre sens** : le garder petit, et l'écrire dans la doc de `spriteScale` au lieu
+  de le glisser dans un nombre.
+
+- [ ] **Étape 3 : commit** — `fix(front): centrer le corps sur la hitbox et revoir l'echelle`
+
+---
+
 ## Tâche 11 : vérification manuelle et clôture
 
 - [ ] **Jouer une run, au premier plan.** Un onglet en arrière-plan a son `requestAnimationFrame`
