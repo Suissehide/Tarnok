@@ -230,7 +230,16 @@ suivent ce modèle.
 
 - un ennemi **dans** une zone reçoit sa marque élémentaire, rafraîchie tant qu'il y reste ;
 - **deux zones d'éléments différents qui se recouvrent réagissent**, à la frontière commune ;
-- une zone qui réagit se consomme.
+- une zone qui réagit **ne se consomme PAS**.
+
+⚠️ **Une première version de ce paragraphe disait le contraire, et c'était une contradiction dure
+avec le §2 et le §8.** La mort d'une zone n'est jamais annoncée : le client la dérive du seul
+`bornTick`. Retirer côté serveur une zone que le client garde ferait donc diverger **le
+déplacement**, puisque le Givre ralentit. Ce serait une divergence silencieuse, dans le seul
+mécanisme que tout le projet protège depuis l'étape 2.
+
+La borne est ailleurs, et elle suffit : le §6.2 ne déclenche le couple de zones **qu'une fois, à la
+création de la seconde**.
 
 C'est la seconde voie du §6.3 : *« une réaction se déclenche de deux façons : un ennemi déjà affecté
 reçoit un second élément, **ou deux zones au sol se recouvrent** »*.
@@ -275,9 +284,23 @@ diverger.
 | Deux zones d'éléments différents qui se recouvrent | oui, une fois, à la création de la seconde |
 | Ennemi marqué Braise, touché par un projectile Braise | non — la marque se rafraîchit |
 
-**Une réaction par ennemi et par tick, au plus.** Sans cette borne, une zone Givre posée sur vingt
-ennemis marqués Braise déclenche vingt réactions au même tick, chacune infligeant des dégâts de
-zone à ses voisins : la cascade est un risque de coût autant que de lisibilité.
+**Une réaction par ennemi et par tick, au plus.**
+
+⚠️ **L'illustration de la première version de ce paragraphe ne prouvait rien.** Elle disait : *« une
+zone Givre posée sur vingt ennemis marqués Braise déclenche vingt réactions »*. Vingt est aussi le
+compte **avec** la borne, puisque la borne est *par ennemi* — l'exemple ne distingue pas les deux
+cas.
+
+Ce que la borne empêche réellement, c'est la multiplication par des zones d'éléments **alternés** au
+même tick :
+
+| Décor | Sans borne | Avec borne |
+| --- | --- | --- |
+| 20 ennemis Braise, une zone Givre | 20 | **20** — l'exemple d'origine, muet |
+| 20 ennemis, zones Givre / Braise / Givre au même tick | **40** | **20** |
+
+Sans elle, chaque réaction inflige des dégâts de zone à ses voisins et la cascade est un risque de
+coût autant que de lisibilité.
 
 ## 7. Le compteur de Synergie
 

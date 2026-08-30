@@ -55,6 +55,7 @@ Chaque tâche les respecte, sans les répéter.
 | `ZONE_RADIUS` | **70** | > `SEPARATION_RADIUS` (28), sinon une zone ne couvre jamais deux ennemis. ⚠️ Sert **aussi** de rayon de fusion : c'est donc lui qui décide du *nombre* de zones, pas seulement de leur coût unitaire |
 | `ZONE_CAPACITY` | **128** | plafond dur, avec compteur de troncature — second rideau derrière la règle de fusion |
 | `REACTION_RADIUS` | **90** | = `ORB_PICKUP_RADIUS`, pour que le flash couvre visiblement ce qu'il tue |
+| `REACTION_DAMAGE` | **25** | > `HEAVY_HP` (20) : un choc vide son rayon. **Raisonné, pas joué** — réglage de la tâche 11 |
 | `SYNERGY_MAX` | **20** | tient sur le `u16` déjà prévu dans le snapshot |
 
 > ⚠️ **`ZONE_RADIUS` n'est pas un réglage de sensation.** Le recouvrement de zones est en
@@ -459,10 +460,9 @@ testable qu'en mettant en scène un appelant fautif.
 
 - [ ] **Étape 2 : la borne d'une réaction par ennemi et par tick.**
 
-  Sans elle, une zone Givre posée sur vingt ennemis marqués Braise déclenche vingt réactions au même
-  tick, chacune infligeant des dégâts de zone à ses voisins. **C'est un risque de coût autant que de
-  lisibilité**, et le test doit le mettre en scène : vingt ennemis marqués, une zone posée dessus,
-  compter les réactions.
+  ⚠️ **Ne mets pas en scène « vingt ennemis, une zone » : ça ne prouve rien.** Vingt est aussi le
+  compte avec la borne, puisqu'elle est *par ennemi*. Le décor qui distingue les deux cas est
+  **plusieurs zones d'éléments alternés au même tick** — 40 réactions sans borne, 20 avec.
 
 - [ ] **Étape 3 : la réaction tue par `REACTION_RADIUS`**, et les morts passent par le `DEATHS`
   existant — **aucun chemin de mort parallèle**. Le rejeu de l'étape 3 en dépend.
