@@ -1,0 +1,466 @@
+# Étape 5a — les éléments : plan d'implémentation
+
+> **Pour un agent exécutant :** SOUS-COMPÉTENCE REQUISE — utiliser
+> `superpowers:subagent-driven-development` (recommandé) ou `superpowers:executing-plans` pour
+> exécuter ce plan tâche par tâche. Les étapes utilisent des cases à cocher (`- [ ]`).
+
+**But :** la piétaille gagne des points de vie, deux éléments marquent les ennemis et le sol, leur
+rencontre déclenche une réaction, et une réaction entre deux joueurs charge la barre de Synergie.
+
+**Architecture :** l'état élémentaire ne coûte **rien par entité sur le fil**. Les PV vivent côté
+serveur seul — `DEATHS` suffit depuis l'étape 3. Les zones au sol sont annoncées à la création et
+leur mort est **dérivée** des deux côtés, comme les orbes. Seules les réactions sont annoncées.
+
+**Pile :** TypeScript strict, workspaces npm, Vitest, PixiJS v8, Biome.
+
+**Spec :** [`../specs/2026-08-27-etape-5a-elements.md`](../specs/2026-08-27-etape-5a-elements.md)
+
+---
+
+## Contraintes globales
+
+Chaque tâche les respecte, sans les répéter.
+
+- **Porte de commit** : `npm run lint`, `npm run typecheck`, `npx vitest run --root back`,
+  `npx vitest run --root front`, `npm run build --workspace front` — tous verts **avant** de
+  commiter, et on lit le **verdict**, jamais la fin de la sortie. Deux commits sont déjà partis
+  avec le lint rouge dans ce dépôt pour cette raison exacte.
+- **Mutation testing** : appliquer la mutation sur le disque, relancer, vérifier qu'elle rougit,
+  restaurer. **Dix-sept assertions de ce dépôt ne gardaient rien.** Le motif ne varie jamais : le
+  test met en scène la bonne intention et rate la ligne qu'il nomme.
+- **Quand une mutation survit, chercher d'abord si une AUTRE garde la masque**, avant d'écrire un
+  test. Six occurrences à l'étape 4, dont trois soldées par une **suppression de code**.
+- **Ne jamais tuer un processus par motif** (`pkill -f`) : l'auteur joue sur les ports 5173 et 3100.
+- Aucun asset au dépôt — licence Tiny Swords, dépôt public.
+- Commits : sujet en minuscules, en français, type parmi `build|chore|ci|docs|feat|fix|perf|refactor|revert|style|test`.
+  Utiliser `git commit -F -` avec un heredoc *quoté* : les backticks dans un `-m` entre guillemets
+  doubles sont interprétés par le shell.
+- `shared/` interdit `Math.random` et `Date.now` : tout ce qui y vit tourne des deux côtés du fil.
+
+---
+
+## Cohérence des constantes
+
+> À l'étape 3, ce tableau a évité plusieurs défauts et en a causé un : une constante y était donnée
+> comme « sans effet sur le déterminisme » — vrai pour le déterminisme, faux pour le **coût**, dont
+> c'était le principal levier. **Le tableau ne protège que si les contraintes qu'on y écrit sont les
+> bonnes.**
+
+| Constante | Valeur de départ | Contrainte |
+| --- | --- | --- |
+| `Archetype.hp` (légère) | **5** | = `damage` de la dague : la piétaille meurt en un coup, **le rythme de l'étape 3 est préservé à l'identique** |
+| `Archetype.hp` (lourde) | **20** | quatre coups de dague — assez pour porter une marque et réagir |
+| `MARK_DURATION_TICKS` | **60** (2 s) | ⚠️ **à régler à l'œil, tâche 11.** Trop court, rien ne réagit ; trop long, tout réagit tout le temps |
+| `ZONE_LIFETIME_TICKS` | **90** (3 s) | dérivée des deux côtés depuis `bornTick`, **jamais annoncée** — même modèle que `ORB_LIFETIME_TICKS` |
+| `ZONE_RADIUS` | **70** | > `SEPARATION_RADIUS` (28), sinon une zone ne couvre jamais deux ennemis et le recouvrement ne se voit pas |
+| `REACTION_RADIUS` | **90** | = `ORB_PICKUP_RADIUS`, pour que le flash couvre visiblement ce qu'il tue |
+| `SYNERGY_MAX` | **20** | tient sur le `u16` déjà prévu dans le snapshot |
+
+> ⚠️ **`ZONE_RADIUS` n'est pas un réglage de sensation.** Le recouvrement de zones est en
+> O(zones²) et le marquage en O(zones × entités) : c'est **le** levier de coût de cette étape,
+> exactement comme `SEPARATION_STRENGTH` l'était à l'étape 3 sans que le tableau le dise.
+
+---
+
+## Structure des fichiers
+
+| Fichier | Responsabilité |
+| --- | --- |
+| `shared/elements.ts` | **créer** — la table des éléments, l'index **est** l'identifiant |
+| `shared/archetypes.ts` | + `hp` |
+| `shared/weapons.ts` | + `element` |
+| `shared/horde.ts` | + `hp`, `mark`, `markBy`, `markUntil` — quatre tableaux par entité |
+| `shared/zones.ts` | **créer** — `ZoneField`, calqué sur `OrbField` |
+| `shared/protocol.ts` | + `ZONE`, `REACTION` ; la Synergie dans le `SNAPSHOT` |
+| `back/src/combat.ts` | les dégâts soustraient ; le marquage ; les réactions |
+| `back/src/room.ts` | intègre zones, marques, réactions et Synergie au tick |
+| `front/src/net/client.ts` | reçoit `ZONE` et `REACTION`, dérive l'expiration |
+| `front/src/render/` | quad teinté, teinte de sprite, flash de réaction, jauge de Synergie |
+
+---
+
+## Tâche 1 : les PV de la piétaille — **la porte**
+
+**Fichiers :** modifier `shared/archetypes.ts`, `shared/horde.ts`, `back/src/combat.ts`, leurs tests
+
+**Interfaces :**
+- Produit : `Archetype.hp: number` ; `Horde.hp: Float32Array` ; `resolveCombat` soustrait au lieu de tuer.
+
+- [ ] **Étape 1 : `Archetype` gagne `hp`.** Les vingt archétypes existants prennent **5** ;
+  **quatre d'entre eux passent à 20** et deviennent la piétaille lourde. Le choix des quatre est
+  libre — ce sont des sprites, pas des rôles, aujourd'hui.
+
+- [ ] **Étape 2 : `Horde` gagne `hp`.**
+
+  ⚠️ **Le piège connu de ce dépôt.** `Horde.#removeAt` recopie **dix** tableaux du dernier créneau
+  vers celui qu'on libère. Un tableau oublié laisse l'entité déplacée avec les PV de celle qui vient
+  de mourir. À l'étape 3, le test « emmène toutes les propriétés » vérifiait **2 tableaux sur 7** et
+  n'a rien attrapé.
+
+  Le test à écrire vérifie **tous** les tableaux, en les énumérant depuis une liste unique :
+
+  ```ts
+  const CHAMPS = ['x', 'y', 'vx', 'vy', 'archetype', 'waveId', 'indexInWave',
+                  'animPhase', 'targetField', 'stopped', 'hp'] as const;
+  // et une assertion que CHAMPS couvre bien tout ce que #removeAt recopie :
+  // compter les lignes de #removeAt est fragile ; comparer a la liste des
+  // proprietes tableau de l'instance ne l'est pas.
+  ```
+
+- [ ] **Étape 3 : `spawn` remplit `hp` depuis l'archétype.** Les deux côtés dérivent la même valeur
+  de départ — l'archétype voyage déjà dans l'ordre de vague de 19 octets.
+
+- [ ] **Étape 4 : `resolveCombat` soustrait.**
+
+  ```ts
+  projectiles.collide(horde, (entityId, damage) => {
+    const slot = horde.slotOf(entityId);
+    if (slot < 0) return;
+    const reste = (horde.hp[slot] ?? 0) - damage;
+    horde.hp[slot] = reste;
+    if (reste <= 0) deadIds.add(entityId);
+  });
+  ```
+
+  ⚠️ **Le `Set` de déduplication reste indispensable**, et pour une raison qui change : il ne
+  protège plus contre « deux projectiles tuent le même ennemi au même tick » mais contre « le même
+  identifiant listé deux fois dans `horde.kill` », que `kill` ne fait que tolérer défensivement.
+
+- [ ] **Étape 5 : le test qui compte.** Un ennemi à 20 PV touché par la dague (5 dégâts) **survit à
+  trois impacts et meurt au quatrième**. Vérifier par mutation qu'un `<=` changé en `<` se voit.
+
+- [ ] **Étape 6 : les deux passifs de dégâts se réveillent.** « Puissance » et « acier » ne
+  modulaient aucune issue à l'étape 4. Le test : deux cartes de « puissance » font mourir un ennemi
+  lourd en **moins d'impacts**. C'est la dette de l'étape 4 qui se solde ici.
+
+- [ ] **Étape 7 : la porte.** Rejouer `back/bench/sim.bench.ts` et mesurer le **rythme de mise à
+  mort** à quatre joueurs, avec la proportion de lourds visée.
+
+  **Trois issues, engagées AVANT la mesure** (§3.3 de la spec) :
+  1. dans ±20 % du rythme de l'étape 3 → **on garde** ;
+  2. chute de plus de 20 % → **on rééquilibre la proportion de lourds**, jamais les PV ;
+  3. la horde s'accumule sans plafonner → **on rouvre `waveCountBounds`**.
+
+  **Écrire le verdict dans le commit**, quel qu'il soit.
+
+- [ ] **Étape 8 : commit** — `feat(shared): la pietaille gagne une reserve de points de vie`
+
+---
+
+## Tâche 2 : le catalogue des éléments
+
+**Fichiers :** créer `shared/elements.ts`, `shared/elements.test.ts` ; modifier `shared/weapons.ts`
+
+**Interfaces :**
+- Produit : `ELEMENT = { NEUTRE: 0, BRAISE: 1, GIVRE: 2 }` ; `Weapon.element: number`.
+
+- [ ] **Étape 1 : la table.** Même motif que `passives.ts` et `weapons.ts` — l'index **est**
+  l'identifiant, rien à synchroniser entre serveur et clients.
+
+  ```ts
+  export interface Element {
+    id: number;
+    name: string;
+    /** Teinte du sprite et du quad, en 0xRRGGBB. */
+    tint: number;
+    /** Degats par tick tant que la marque tient. 0 : aucun. */
+    burnPerTick: number;
+    /** Facteur de vitesse applique a l'ennemi marque. 1 : aucun. */
+    slowFactor: number;
+  }
+  ```
+
+  Braise : `burnPerTick > 0`, `slowFactor = 1`. Givre : `burnPerTick = 0`, `slowFactor < 1`.
+  `NEUTRE` occupe l'index 0 et n'a aucun effet — **un élément neutre n'est pas un cas particulier,
+  c'est une entrée de la table**, comme `BASE_WEAPON_ID` l'est pour les armes.
+
+- [ ] **Étape 2 : `Weapon` gagne `element`, à `NEUTRE` par défaut.** Deux armes passent en Braise,
+  deux en Givre. **L'arme de base reste neutre** — le §6.3 en fait *« un socle pour les joueurs qui
+  ne veulent pas jouer le système »*.
+
+- [ ] **Étape 3 : le test qui n'est pas creux.** Vérifier que **chaque élément du catalogue a au
+  moins une arme**, et qu'aucune arme ne référence un élément inexistant. Une référence morte ne se
+  verrait qu'au premier tir de cette arme, plusieurs tâches plus tard.
+
+- [ ] **Étape 4 : commit** — `feat(shared): le catalogue des elements`
+
+---
+
+## Tâche 3 : la marque élémentaire sur un ennemi
+
+**Fichiers :** modifier `shared/horde.ts`, `shared/constants.ts`, leurs tests
+
+**Interfaces :**
+- Produit : `Horde.mark`, `Horde.markBy`, `Horde.markUntil` (`Uint8Array`, `Uint8Array`,
+  `Float64Array`) ; `MARK_DURATION_TICKS`.
+
+- [ ] **Étape 1 : trois tableaux, et le même piège.** `#removeAt` en recopie désormais **quatorze**.
+  Le test de la tâche 1 les couvre par construction s'il énumère depuis une liste unique ; le
+  vérifier plutôt que le supposer.
+
+- [ ] **Étape 2 : `mark(slot, element, playerId, tick)`.** Écrit les trois tableaux et pose
+  `markUntil = tick + MARK_DURATION_TICKS`.
+
+  ⚠️ **`markBy` est ce qui rend la Synergie possible** (§7 de la spec). Sans lui, on ne peut pas
+  distinguer une réaction entre deux joueurs d'une réaction en solo, et le §6.5 de l'orientation
+  — *« le cœur du projet »* — n'a plus de données.
+
+- [ ] **Étape 3 : la marque expire, et l'expiration est DÉRIVÉE.** `markUntil` se compare au tick
+  courant ; rien n'est annoncé. Même modèle que `ORB_LIFETIME_TICKS`.
+
+- [ ] **Étape 4 : le test.** Une marque posée au tick T vaut encore au tick
+  `T + MARK_DURATION_TICKS - 1` et plus au tick `T + MARK_DURATION_TICKS`.
+
+  ⚠️ **Tester les DEUX bornes.** Un test qui ne vérifie que « ça expire un jour » passe avec
+  n'importe quelle durée.
+
+- [ ] **Étape 5 : commit** — `feat(shared): la marque elementaire et son expiration derivee`
+
+---
+
+## Tâche 4 : les zones au sol
+
+**Fichiers :** créer `shared/zones.ts`, `shared/zones.test.ts` ; modifier `shared/constants.ts`
+
+**Interfaces :**
+- Produit : `ZoneField` — `spawn(element, x, y, playerId, tick)`, `expire(tick)`,
+  `count`, tableaux publics `element`, `x`, `y`, `by`, `bornTick`.
+
+- [ ] **Étape 1 : calquer `OrbField`.** `back/src/combat.ts` en contient déjà un exemplaire complet
+  et éprouvé : capacité fixe, tableaux typés, **retrait par indice décroissant**, expiration dérivée
+  du `bornTick`. Le lire avant d'écrire, et suivre sa forme.
+
+  ⚠️ Il vit dans `shared/` et pas dans `back/` : **le client dessine les zones et doit dériver leur
+  mort exactement comme le serveur.** Une expiration calculée différemment des deux côtés ferait
+  disparaître un quad plus tôt chez l'un — visible, et le début d'une divergence.
+
+- [ ] **Étape 2 : `overlaps(a, b)`.** Deux zones se recouvrent si la distance de leurs centres est
+  inférieure à la somme des rayons. **Comparer les carrés**, jamais `Math.hypot` : c'est la
+  convention de tout le dépôt (`resolvePickups`, `resolveContact`, `collide`).
+
+- [ ] **Étape 3 : le test qui ne triche pas.** Deux zones **exactement tangentes** ne se recouvrent
+  pas ; deux zones à un pixel de moins se recouvrent. Le cas limite est le seul qui distingue un
+  `<` d'un `<=`.
+
+- [ ] **Étape 4 : commit** — `feat(shared): les zones au sol, expiration derivee`
+
+---
+
+## Tâche 5 : le protocole
+
+**Fichiers :** modifier `shared/protocol.ts`, `shared/protocol.test.ts`
+
+**Interfaces :**
+- Produit : `MSG.ZONE`, `MSG.REACTION` ; `encodeZone`, `encodeReaction` ; la Synergie dans le snapshot.
+
+- [ ] **Étape 1 : `ZONE`.** `type u8 · element u8 · x i16 · y i16 · bornTick u32 · by u8` = **12
+  octets**. Un message par zone, à la création.
+
+  ⚠️ **La mort d'une zone n'est JAMAIS annoncée** : elle se dérive du `bornTick`. Un message de
+  disparition doublerait le trafic pour une information que les deux côtés calculent déjà.
+
+- [ ] **Étape 2 : `REACTION`.** `type u8 · pair u8 · x i16 · y i16 · tick u32 · synergie u8` = **11
+  octets**. `synergie` vaut 1 quand deux joueurs différents sont à l'origine, 0 sinon.
+
+  ⚠️ **La charge voyage DANS `REACTION`**, pas dans un message à part : les deux arrivent toujours
+  ensemble et un second message ne porterait rien de plus.
+
+- [ ] **Étape 3 : la Synergie dans le `SNAPSHOT`.** Un `u16` d'équipe, à côté de l'expérience.
+  `SNAPSHOT_HEADER_BYTES` passe de 8 à 10.
+
+  ⚠️ **Un seul nombre pour l'équipe, jamais un par joueur.** L'étape 3 a fait l'erreur inverse avec
+  l'expérience — deux sources de vérité pour un seul nombre — et l'implémenteur l'avait signalée.
+
+- [ ] **Étape 4 : les tests d'aller-retour**, avec une **assertion de taille en chiffre nu**
+  (`expect(SNAPSHOT_HEADER_BYTES).toBe(10)`) : c'est ce qui attrape un décalage d'octet, pas une
+  comparaison à la constante elle-même.
+
+  ⚠️ Le test de troncature doit utiliser `toThrow(/tronque/)` et **jamais** `toThrow()` nu : un
+  `RangeError` de `DataView` le ferait passer même sans le contrôle de longueur. Défaut réel de
+  l'étape 4.
+
+- [ ] **Étape 5 : commit** — `feat(shared): les messages ZONE et REACTION`
+
+---
+
+## Tâche 6 : marquer, brûler, ralentir
+
+**Fichiers :** modifier `back/src/combat.ts`, `back/src/room.ts`, leurs tests
+
+- [ ] **Étape 1 : un projectile élémentaire marque ce qu'il touche.** Dans `resolveCombat`, après
+  la soustraction : si l'arme porte un élément et que l'ennemi survit, poser la marque.
+
+  ⚠️ **Un ennemi qui meurt du même impact n'est pas marqué** — la marque serait posée sur un
+  créneau que `kill` va compacter, donc sur une **autre** entité. C'est la classe de défaut la plus
+  coûteuse de ce dépôt.
+
+- [ ] **Étape 2 : un ennemi dans une zone est marqué**, et la marque se rafraîchit tant qu'il y
+  reste. O(zones × entités) : c'est le coût que la tâche 10 doit mesurer.
+
+- [ ] **Étape 3 : la Braise brûle, le Givre ralentit.** Les dégâts sur la durée s'appliquent au
+  tick ; le ralentissement multiplie la vitesse dans `Horde.step`.
+
+  ⚠️ **Le ralentissement est le premier effet qui touche le DÉPLACEMENT**, donc le contrat de
+  réplication. Le serveur le calcule ; le client doit le calculer **identiquement** — donc il doit
+  connaître la marque, qu'il n'a pas. **Deux issues, à trancher à cette tâche et à écrire dans le
+  commit :**
+  1. le ralentissement s'applique **côté serveur seul**, et la horde répliquée dérive → **mesurer
+     la dérive** et la comparer aux 0,000 px ;
+  2. ou le ralentissement est un effet **de zone**, pas de marque : le client connaît les zones,
+     donc il dérive le même ralentissement sans un octet de plus. **C'est la piste recommandée**,
+     et elle est cohérente avec le §5.2 de la spec.
+
+- [ ] **Étape 4 : les tests**, dont un qui **mesure la dérive** entre serveur et client avec du
+  Givre en jeu. Le scénario de `shared/horde.replication.test.ts` est le modèle.
+
+- [ ] **Étape 5 : commit** — `feat(back): marquer, bruler, ralentir`
+
+---
+
+## Tâche 7 : la réaction
+
+**Fichiers :** modifier `back/src/combat.ts`, `back/src/room.ts`, leurs tests
+
+- [ ] **Étape 1 : les quatre déclencheurs** du §6.2 de la spec, et **eux seuls** :
+  ennemi marqué + projectile d'un autre élément ; ennemi marqué + entrée dans une zone d'un autre
+  élément ; deux zones d'éléments différents qui se recouvrent (**une seule fois, à la création de
+  la seconde**) ; et surtout **pas** le même élément, qui rafraîchit la marque.
+
+- [ ] **Étape 2 : la borne d'une réaction par ennemi et par tick.**
+
+  Sans elle, une zone Givre posée sur vingt ennemis marqués Braise déclenche vingt réactions au même
+  tick, chacune infligeant des dégâts de zone à ses voisins. **C'est un risque de coût autant que de
+  lisibilité**, et le test doit le mettre en scène : vingt ennemis marqués, une zone posée dessus,
+  compter les réactions.
+
+- [ ] **Étape 3 : la réaction tue par `REACTION_RADIUS`**, et les morts passent par le `DEATHS`
+  existant — **aucun chemin de mort parallèle**. Le rejeu de l'étape 3 en dépend.
+
+- [ ] **Étape 4 : le test de non-régression le plus important.** Rejouer
+  `shared/horde.replication.test.ts` : **les trois chiffres doivent rester à 0,000 px** avec des
+  réactions en jeu. C'est le §2 de la spec.
+
+- [ ] **Étape 5 : commit** — `feat(back): le choc thermique`
+
+---
+
+## Tâche 8 : le compteur de Synergie
+
+**Fichiers :** modifier `back/src/room.ts`, `back/src/room.test.ts`
+
+- [ ] **Étape 1 : la règle, en une ligne.** À la réaction, comparer `markBy` et le joueur qui
+  déclenche : **différents → une charge**. Même joueur → la réaction a lieu, elle ne rapporte rien.
+
+- [ ] **Étape 2 : le test qui porte le livrable du §13.**
+
+  ```
+  joueur 1 marque Braise, joueur 2 applique Givre  -> la barre monte
+  joueur 1 marque Braise, joueur 1 applique Givre  -> la barre ne bouge PAS
+  ```
+
+  ⚠️ **Les deux moitiés, toujours.** Un test qui ne vérifie que la première passe avec un compteur
+  qui monte à chaque réaction — et c'est exactement le défaut que la spec d'orientation appelle
+  « le cœur du projet ».
+
+- [ ] **Étape 3 : la barre plafonne à `SYNERGY_MAX` et n'est jamais dépensée** à cette étape
+  (l'ultime est hors périmètre). Le test le dit explicitement, pour qu'on ne prenne pas le plafond
+  pour un oubli.
+
+- [ ] **Étape 4 : commit** — `feat(back): le compteur de Synergie`
+
+---
+
+## Tâche 9 : le client reçoit et dessine
+
+**Fichiers :** modifier `front/src/net/client.ts`, `front/src/render/`, leurs tests
+
+- [ ] **Étape 1 : recevoir `ZONE` et `REACTION`**, et **dériver l'expiration des zones** avec la
+  même constante que le serveur. Aucun message de disparition à attendre.
+
+- [ ] **Étape 2 : la teinte de sprite est COSMÉTIQUE et approximée.** Le client marque ce que ses
+  propres projectiles touchent, et ce qui est dans une zone. **Il peut se tromper, et ça ne coûte
+  rien** — la réaction, elle, vient du serveur. Le dire dans le code, sinon quelqu'un « corrigera »
+  cette approximation un jour en la rendant autoritaire.
+
+- [ ] **Étape 3 : le rendu**, selon la hiérarchie du §6.6 :
+  quad teinté additif pour la zone · teinte de sprite pour l'ennemi marqué (**gratuite** dans le
+  batch Pixi) · flash court et large pour la réaction · jauge de Synergie dans le HUD.
+
+  ⚠️ **L'état persistant est discret, la réaction est spectaculaire.** Si les ennemis marqués
+  brillent en permanence, plus rien ne se lit et le budget de particules part en bruit de fond.
+
+- [ ] **Étape 4 : le rendu se teste sous jsdom** là où il est observable, et l'expiration des zones
+  se teste tout court. `front/src/ui/draft.test.ts` est le modèle.
+
+- [ ] **Étape 5 : commit** — `feat(front): les zones, les teintes et le flash de reaction`
+
+---
+
+## Tâche 10 : quatre clients, en headless — **le livrable du §13**
+
+**Fichiers :** étendre `back/src/draft.integration.test.ts` ou en créer un voisin
+
+- [ ] **Étape 1 : quatre clients réels, sur des sockets réelles.** Le harnais existe déjà
+  (`app.decorate('rooms', registry)`, `buildServer({ roomSeed })`) — le réutiliser, ne pas le
+  réinventer. Poser les monstres soi-même : le générateur de vagues est lent **et flaky**.
+
+- [ ] **Étape 2 : ce que le test doit assener**, et pas seulement « ça n'a pas planté » :
+  - une réaction **a eu lieu** — sinon le test ne prouve rien, et c'est le défaut le plus probable ;
+  - une réaction **entre deux joueurs charge** la barre ;
+  - la **même réaction en solo ne charge rien** ;
+  - **deux zones qui se recouvrent réagissent** ;
+  - les **trois chiffres de réplication restent à 0,000 px**.
+
+- [ ] **Étape 3 : mesurer le coût.** Étendre `back/bench/slots.bench.ts` ou en écrire un voisin :
+  pas p95 avec 30 zones vivantes à 1 500 et 4 000 entités. **`ZONE_RADIUS` est le levier**, et le
+  tableau des constantes le dit.
+
+- [ ] **Étape 4 : commit** — `test(back): une reaction inter-joueurs charge la barre`
+
+---
+
+## Tâche 11 : vérification manuelle et clôture
+
+- [ ] **Jouer une run, au premier plan.** Un onglet en arrière-plan a son `requestAnimationFrame`
+  suspendu ; la poignée `window.__tarnok` permet d'avancer les images à la main.
+
+- [ ] **Régler `MARK_DURATION_TICKS` à l'œil.** C'est la question que la spec laisse explicitement
+  ouverte, et l'auteur a tranché : **à tester en jeu**. `tsx watch` relance le back tout seul —
+  éditer la constante, recharger la page. Partir de 60 (2 s), essayer 30 et 120.
+
+- [ ] **Ce qui relève du jugement**, et que rien n'automatise :
+  - une piétaille avec des PV **se sent-elle** encore comme de la chair à canon, ou comme une
+    éponge ?
+  - la réaction se lit-elle **sans explication** ?
+  - la teinte élémentaire se distingue-t-elle à 1 500 entités sur des sprites minuscules — *« le
+    problème visuel le plus difficile du projet »* (§6.6) ;
+  - la barre de Synergie donne-t-elle envie de se regrouper, ou passe-t-elle inaperçue ?
+
+- [ ] **Rejouer les quatre bancs** — les PV changent le rythme de mise à mort, les zones changent le
+  coût du tick.
+
+- [ ] Écrire `docs/plans/2026-08-27-etape-5a-resultats.md` et mettre à jour le `README.md`.
+
+- [ ] **Commit** — `docs: resultats de l'etape 5a`
+
+---
+
+## Auto-relecture
+
+**Couverture de la spec.** §1 périmètre → tâches 1 à 9 ; §2 non-atteinte à la réplication →
+tâches 6 étape 4, 7 étape 4 et 10 étape 2 ; §3 les PV → tâche 1 ; §4 les éléments → tâches 2 et 3 ;
+§5 les zones → tâche 4 ; §6 la réaction → tâche 7 ; §7 la Synergie → tâche 8 ; §8 le protocole →
+tâche 5 ; §9 l'encodage visuel → tâche 9 ; §10 vérification → tâches 10 et 11 ; §12 questions
+ouvertes → tâche 11.
+
+**Le risque le plus mal couvert par ce plan**, et il est nommé plutôt que caché : **le
+ralentissement du Givre touche le déplacement, donc le contrat de réplication.** La tâche 6 étape 3
+lui donne deux issues et recommande la seconde (l'effet de zone, que le client dérive), mais c'est
+le seul endroit de ce plan où un choix d'architecture reste ouvert à l'exécution. Si l'implémenteur
+trouve une troisième voie, **qu'il la signale au lieu de choisir en silence** — onze erreurs du plan
+de l'étape 3 ont été rattrapées comme ça.
+
+**Cohérence des types.** `ELEMENT.NEUTRE = 0` est à la fois l'index 0 de la table et la valeur par
+défaut de `Weapon.element` : une seule valeur, pas deux conventions. `Horde.mark` vaut `0` pour
+« aucune marque » **et** `ELEMENT.NEUTRE` — c'est délibéré, et le dire, parce qu'une sentinelle qui
+coïncide avec une valeur réelle est exactement ce que `NO_TOKEN` évite à l'étape 4.

@@ -290,7 +290,9 @@ le modèle du §4.3 ne produit jamais.
 ## 12. Questions laissées ouvertes
 
 - **Combien de temps dure une marque élémentaire ?** Trop court, aucune réaction n'a lieu ; trop
-  long, tout réagit tout le temps. À régler à l'œil, comme la cadence des armes à l'étape 3.
+  long, tout réagit tout le temps. **Tranché : à tester en jeu.** `MARK_DURATION_TICKS` part de 60
+  (2 s) ; `tsx watch` relance le back tout seul, donc le régler revient à éditer un nombre et
+  recharger la page. C'est la tâche 11 du plan.
 - **Un ennemi qui meurt d'une réaction laisse-t-il un orbe ?** Oui par défaut — sinon le système
   élémentaire punirait l'expérience de l'équipe. À vérifier au playtest.
 - **La proportion de piétaille lourde dans les vagues** est le vrai levier de difficulté de cette
