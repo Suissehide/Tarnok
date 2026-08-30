@@ -400,3 +400,56 @@ export const PROJECTILE_CAPACITY = 1024;
  * intermittents des qu'il est passe a 10.
  */
 export const MARK_DURATION_TICKS = 60;
+
+/**
+ * Duree de vie d'une zone au sol, en ticks (3 s a `TICK_HZ`) — etape 5a,
+ * §5.1 de la spec.
+ *
+ * ⚠️ **Derivee des deux cotes depuis `bornTick`, jamais annoncee**, exactement
+ * comme `ORB_LIFETIME_TICKS`. La zone est annoncee A LA CREATION (§5.3 : le
+ * client ne peut pas savoir ou finit un projectile serveur, les siens etant
+ * cosmetiques depuis l'etape 3), mais sa MORT ne coute rien sur le fil : les
+ * deux cotes comparent `tick - bornTick` a cette constante et obtiennent la
+ * meme reponse. Une expiration calculee autrement d'un cote ferait disparaitre
+ * un quad plus tot chez l'un — visible, et le debut d'une divergence.
+ */
+export const ZONE_LIFETIME_TICKS = 90;
+
+/**
+ * Rayon d'une zone au sol, en pixels monde — etape 5a, §5.1.
+ *
+ * ⚠️ **Superieur a `SEPARATION_RADIUS` (28), et ce n'est pas un reglage de
+ * sensation.** Sous cette borne, une zone ne couvrirait jamais deux ennemis a
+ * la fois — la horde se tient a une distance de confort de 28 px — et le
+ * recouvrement du §5.2 ne se verrait jamais.
+ *
+ * ⚠️ **C'est un levier de cout de premier ordre** : le recouvrement de zones
+ * est en O(zones²) et le marquage en O(zones × entites). Ce n'est pas le seul
+ * (voir `ZoneField.spawn` : la cadence des armes elementaires en etait un au
+ * moins aussi gros, jusqu'a ce que la regle de pose l'annule).
+ *
+ * Il sert aussi de rayon de FUSION a la pose : deux zones du meme element
+ * finissent donc toujours a plus de `ZONE_RADIUS` l'une de l'autre, ce qui
+ * borne leur nombre par la surface couverte.
+ */
+export const ZONE_RADIUS = 70;
+
+/**
+ * Capacite de la reserve de zones au sol d'un salon — second rideau derriere
+ * la regle de fusion de `ZoneField.spawn` (§5.1 bis).
+ *
+ * La borne PREMIERE est la regle de pose, pas ce plafond : sans elle, « un
+ * projectile = une zone » portait 90 zones a quatre joueurs a un exemplaire
+ * par arme, **209 a quatre exemplaires et 368 a huit** (l'empilement de
+ * l'etape 4 elargissant chaque salve), contre « quelques dizaines » budgetees
+ * au §6.6 de l'orientation. La fusion rend le compte fonction de la SURFACE
+ * couverte, pas de la cadence ni du nombre d'exemplaires ; 128 couvre
+ * largement ce que quatre joueurs peuvent teindre en `ZONE_LIFETIME_TICKS`.
+ *
+ * ⚠️ Vit dans `shared/` et pas dans `back/`, meme raison que
+ * `PROJECTILE_CAPACITY` : le client dimensionne sa propre reserve sur cette
+ * valeur, et deux copies divergeraient. Quand elle est atteinte,
+ * `ZoneField.truncatedZones` compte ce qui n'a pas ete pose — une zone qui ne
+ * se pose pas est un effet que le joueur a paye et qui ne se voit pas.
+ */
+export const ZONE_CAPACITY = 128;
