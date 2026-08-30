@@ -1,4 +1,9 @@
-import { ZONE_CAPACITY, ZONE_LIFETIME_TICKS, ZONE_RADIUS } from './constants';
+import {
+  ZONE_CAPACITY,
+  ZONE_LIFETIME_TICKS,
+  ZONE_RADIUS,
+  ZONE_REFRESH_INTERVAL_TICKS,
+} from './constants';
 
 /**
  * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, pose la
@@ -80,8 +85,9 @@ export class ZoneField {
    * recouvrement en O(zones²). Choisir des armes lentes n'etait pas une
    * parade : c'est un reglage qui tient jusqu'au premier draft.
    *
-   * Une zone du meme element qui couvre deja le point voit donc son
-   * `bornTick` repartir, et rien n'est cree. **Le compte devient fonction de
+   * Une zone du meme element qui couvre deja le point est donc prolongee — au
+   * plus une fois par `ZONE_REFRESH_INTERVAL_TICKS`, voir plus bas — et rien
+   * n'est cree. **Le compte devient fonction de
    * la SURFACE couverte**, pas de la cadence ni du nombre d'exemplaires : deux
    * zones du meme element finissent toujours a plus de `ZONE_RADIUS` l'une de
    * l'autre. Un joueur qui arrose le meme endroit entretient une zone ; un
@@ -127,7 +133,21 @@ export class ZoneField {
       const dx = (this.x[i] ?? 0) - x;
       const dy = (this.y[i] ?? 0) - y;
       if (dx * dx + dy * dy < r2) {
-        this.bornTick[i] = tick;
+        // ⚠️ **AU PLUS une prolongation par `ZONE_REFRESH_INTERVAL_TICKS`, et
+        // le silence est aussi une decision** (§5.1 bis, tache 10). Prolonger
+        // ici oblige a annoncer — sinon la zone du client meurt avant celle du
+        // serveur — et annoncer chaque fusion fait suivre au trafic la cadence
+        // des armes : 9,67 ko/s par client a 30 zones arrosees sans relache
+        // (banc `zones`), contre 1,22 ko/s de trafic TOTAL a l'etape 4.
+        //
+        // Alors on ne prolonge pas. **L'annonce EST la verite** : le
+        // `bornTick` qui fait foi est celui de la derniere annonce, des DEUX
+        // cotes — le client applique ce meme `spawn` sur le meme etat, donc il
+        // repond la meme chose au meme tick, et il n'y a jamais deux dates de
+        // peremption pour une seule zone.
+        if (tick - (this.bornTick[i] ?? 0) >= ZONE_REFRESH_INTERVAL_TICKS) {
+          this.bornTick[i] = tick;
+        }
         return i;
       }
     }

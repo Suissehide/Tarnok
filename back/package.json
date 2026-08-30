@@ -7,7 +7,7 @@
     "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
     "build": "esbuild src/server.ts --bundle --platform=node --format=esm --target=node22 --packages=external --tsconfig=tsconfig.json --outfile=dist/server.js",
     "start": "node dist/server.js",
-    "bench": "npm run bench:sim && npm run bench:net && npm run bench:sep && npm run bench:slots",
+    "bench": "npm run bench:sim && npm run bench:net && npm run bench:sep && npm run bench:slots && npm run bench:zones",
     "bench:sim": "tsx bench/sim.bench.ts",
     "bench:net": "tsx bench/net.bench.ts",
     "bench:sep": "tsx bench/steering.bench.ts",
@@ -15,7 +15,8 @@
     "bench:kills": "tsx bench/kills.bench.ts",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "bench:zones": "tsx bench/zones.bench.ts"
   },
   "dependencies": {
     "@fastify/cors": "^11.3.0",

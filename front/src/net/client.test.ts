@@ -12,6 +12,7 @@ import {
   TICK_HZ,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
+  ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
@@ -1935,6 +1936,18 @@ function runClientZoneScenario(params: {
   zoneDelayTicks: number;
   ticks: number;
   element: number;
+  /**
+   * Ticks auxquels le serveur re-arrose les points DEJA poses au premier
+   * `zoneTicks`, sans bouger d'un pixel — le chemin du RAFRAICHISSEMENT
+   * (§5.1 bis).
+   *
+   * ⚠️ **Des points fixes, jamais les ancres.** Une ancre est une entite, et
+   * une entite parcourt plus d'un `ZONE_RADIUS` en
+   * `ZONE_REFRESH_INTERVAL_TICKS` ticks : arroser une ancre a nouveau CREE une
+   * zone, elle n'en prolonge aucune. Sans point fixe, ce scenario ne
+   * mettrait jamais en scene le cas qu'il pretend tester.
+   */
+  refreshTicks?: readonly number[];
 }): {
   client: GameClient;
   reference: Horde;
@@ -1944,7 +1957,17 @@ function runClientZoneScenario(params: {
   zonesRecues: number;
   zonesServeur: number;
 } {
-  const { mapSeed, waveId, entities, zoneTicks, anchors, zoneDelayTicks, ticks, element } = params;
+  const {
+    mapSeed,
+    waveId,
+    entities,
+    zoneTicks,
+    anchors,
+    zoneDelayTicks,
+    ticks,
+    element,
+    refreshTicks = [],
+  } = params;
 
   const ref = makeReferenceServer(mapSeed, entities);
   const refZones = new ZoneField();
@@ -1967,6 +1990,8 @@ function runClientZoneScenario(params: {
   socket.emit('message', { data: encodeWaveOrder(order) });
 
   const pending: { element: number; x: number; y: number; bornTick: number; by: number }[] = [];
+  /** Centres poses au premier `zoneTicks`, re-arroses aux `refreshTicks`. */
+  const points: { x: number; y: number }[] = [];
   let announced = 0;
   let inFlight = 0;
   let maxDrift = 0;
@@ -1992,19 +2017,24 @@ function runClientZoneScenario(params: {
     ref.horde.step(STEP, ref.fields, tick, refZones);
 
     // Le serveur pose APRES avoir fait avancer sa horde, comme `Room.step`.
-    if (zoneTicks.includes(tick)) {
-      for (const idx of anchors) {
-        const slot = ref.horde.slotOf(entityIdOf(waveId, idx));
-        if (slot < 0) {
-          continue;
+    if (zoneTicks.includes(tick) || refreshTicks.includes(tick)) {
+      if (refreshTicks.includes(tick)) {
+        for (const point of points) {
+          refZones.spawn(element, point.x, point.y, 1, tick);
         }
-        refZones.spawn(
-          element,
-          Math.round(ref.horde.x[slot] ?? 0),
-          Math.round(ref.horde.y[slot] ?? 0),
-          1,
-          tick,
-        );
+      } else {
+        for (const idx of anchors) {
+          const slot = ref.horde.slotOf(entityIdOf(waveId, idx));
+          if (slot < 0) {
+            continue;
+          }
+          const px = Math.round(ref.horde.x[slot] ?? 0);
+          const py = Math.round(ref.horde.y[slot] ?? 0);
+          refZones.spawn(element, px, py, 1, tick);
+          if (tick === zoneTicks[0]) {
+            points.push({ x: px, y: py });
+          }
+        }
       }
       for (let z = 0; z < refZones.count; z++) {
         if (refZones.bornTick[z] !== tick) {
@@ -2062,6 +2092,13 @@ describe('GameClient — les zones de Givre datees par tick (etape 5a, tache 6)'
   // n'ecarterait pas `atTick` vers `lastDue` passerait inapercu.
   const ZONE_TICKS = [100, 113, 127];
   const ANCHORS = [50, 150, 250];
+  /**
+   * Un tick d'arrosage des MEMES points, au-dela de
+   * `ZONE_REFRESH_INTERVAL_TICKS` : c'est ce qui produit une prolongation, et
+   * donc une re-annonce. Sous l'intervalle, la parade de l'etape 3 bis ne
+   * prolonge pas — et n'annonce rien.
+   */
+  const REFRESH_TICKS = [(ZONE_TICKS[0] ?? 0) + ZONE_REFRESH_INTERVAL_TICKS];
 
   it('une ZONE livree dans la portee de l anneau converge par rejeu : derive nulle, lateZones a zero', () => {
     const DELAY = 3;
@@ -2074,6 +2111,7 @@ describe('GameClient — les zones de Givre datees par tick (etape 5a, tache 6)'
       zoneDelayTicks: DELAY,
       ticks: 240,
       element: ELEMENT.GIVRE,
+      refreshTicks: REFRESH_TICKS,
     });
 
     process.stdout.write(

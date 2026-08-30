@@ -11,10 +11,12 @@ import {
   REACTION_DAMAGE,
   SYNERGY_MAX,
   TICK_HZ,
+  ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
+  ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
-import { passiveOf } from '@shared/passives';
+import { PASSIVES, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
   decodeSnapshot,
@@ -1838,37 +1840,162 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     expect(givre).toBeLessThan(neutre);
   });
 
-  it('un rafraichissement de zone est annonce comme une creation : le bornTick doit voyager', () => {
-    // ⚠️ Sans cette annonce, le client derive la mort de SA zone d'un
-    // `bornTick` perime : elle s'eteint chez lui pendant qu'elle vit encore
-    // chez le serveur, et le ralentissement du Givre diverge de la duree du
-    // rafraichissement.
-    const room = new Room(0xbaa1_5e03);
+  /**
+   * **Etape 3 bis de la tache 10 : le trafic des rafraichissements, borne.**
+   *
+   * Une prolongation DOIT etre annoncee — sinon le client derive la mort de SA
+   * zone d'un `bornTick` perime, elle s'eteint chez lui pendant qu'elle vit
+   * encore chez le serveur, et le ralentissement du Givre diverge. Mais
+   * annoncer chaque fusion fait suivre au trafic la **cadence des armes**,
+   * exactement le couplage que la regle de pose venait de supprimer pour le
+   * COMPTE : 9,67 ko/s par client a 30 zones arrosees a chaque tick (banc
+   * `zones`), contre 1,22 ko/s de trafic TOTAL a l'etape 4.
+   *
+   * La parade est dans `ZoneField.spawn` : **l'annonce EST la verite**, une
+   * prolongation par `ZONE_REFRESH_INTERVAL_TICKS` au plus, et entre deux le
+   * serveur ne prolonge pas non plus. Les annonces doivent donc croitre avec
+   * le TEMPS, jamais avec la cadence.
+   */
+  function annoncesEntretenues(
+    graine: number,
+    ticks: number,
+    cartesDeCadence: number,
+  ): { zones: ReturnType<Room['drainZones']>; cooldown: number } {
+    const room = new Room(graine);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const cadence = PASSIVES.find((p) => p.kind === 'fireRate')?.id ?? -1;
+    for (let k = 0; k < cartesDeCadence; k++) {
+      room.grantCard(1, { nature: CARD.PASSIVE, refId: cadence });
+    }
+    const before = positionOf(room, 1);
+    // Increvable : ce sont les annonces qui sont comptees, pas la mise a mort.
+    // Un monstre qui meurt cesserait d'arreter les projectiles, et la zone
+    // entretenue se deplacerait avec eux.
+    const cible = spawnMonsterAt(room, 620, before.x + 100, before.y);
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+
+    const { zones } = joue(room, ticks);
+    const loadout = room.loadoutOf(1);
+    return {
+      zones,
+      cooldown: cooldownWithBonus(
+        weaponOf(ARME_GIVRE).cooldownTicks,
+        loadout?.bonus('fireRate') ?? 0,
+      ),
+    };
+  }
+
+  it('le salon expose combien de zones il porte, et combien il en a perdues', () => {
+    // ⚠️ **Sans ce lecteur, `ZoneField.truncatedZones` n'avait AUCUN appelant
+    // hors de son propre test unitaire** : le second rideau de
+    // `ZONE_CAPACITY` se serait declenche sans que rien ne le dise. Meme motif
+    // que `projectilesTronques`.
+    const room = new Room(0xbaa1_5e0f);
     room.join(1);
     room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
     const before = positionOf(room, 1);
-    spawnMonsterAt(
-      room,
-      620,
-      before.x + 100,
-      before.y,
-      ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0,
-    );
+    const cible = spawnMonsterAt(room, 660, before.x + 100, before.y);
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
 
-    const { zones } = joue(room, 40);
+    expect(room.zoneCount).toBe(0);
+    const { zones } = joue(room, 20);
 
-    // Beaucoup plus d'annonces que de zones vivantes : ce sont les
-    // rafraichissements. Le compte des annonces au meme endroit le prouve.
-    const parPoint = new Map<string, number>();
-    for (const z of zones) {
+    // Le compte du salon EST celui des points annonces : deux facons
+    // independantes de compter la meme chose, et elles doivent s'accorder.
+    expect(room.zoneCount).toBe(new Set(zones.map((z) => `${z.x},${z.y}`)).size);
+    expect(room.zoneCount).toBeGreaterThan(0);
+    // ⚠️ **`zonesTronquees` n'est GARDE par rien de plus que ce zero** —
+    // mutation appliquee, « rendre 0 » survit. Remplir 128 creneaux demande
+    // plus de zones que quatre joueurs n'en posent en une duree de vie, et
+    // aucun test unitaire ne peut les faire naitre a un cout raisonnable. Dit
+    // tel quel plutot que credite d'un test qui ne le tient pas — meme choix
+    // que le `slot < 0` de `resolveProjectileDamage`.
+    expect(room.zonesTronquees).toBe(0);
+  });
+
+  it('une zone entretenue n est re-annoncee qu une fois par demi-vie : le trafic suit le TEMPS', () => {
+    const long = annoncesEntretenues(0xbaa1_5e03, ZONE_LIFETIME_TICKS * 3, 0);
+
+    // ⚠️ **« Plusieurs annonces au meme point » ne prouve RIEN.** Une zone
+    // jamais prolongee MOURRAIT au bout de `ZONE_LIFETIME_TICKS` et renaitrait
+    // au meme pixel au tir suivant : deux annonces au meme point, exactement
+    // comme un rafraichissement. Ce qui les separe, c'est l'ECART — une
+    // prolongation arrive STRICTEMENT AVANT la peremption, une renaissance
+    // jamais.
+    const parPoint = new Map<string, number[]>();
+    for (const z of long.zones) {
       const cle = `${z.x},${z.y}`;
-      parPoint.set(cle, (parPoint.get(cle) ?? 0) + 1);
+      const suite = parPoint.get(cle) ?? [];
+      suite.push(z.bornTick);
+      parPoint.set(cle, suite);
     }
-    expect(zones.length).toBeGreaterThan(parPoint.size);
+    const ecarts = [...parPoint.values()].flatMap((suite) =>
+      suite.slice(1).map((t, i) => t - (suite[i] ?? 0)),
+    );
+    expect(
+      ecarts.some((e) => e < ZONE_LIFETIME_TICKS),
+      'aucune zone n a ete PROLONGEE : elles sont seulement mortes et renees',
+    ).toBe(true);
     // Et chaque annonce porte le tick auquel elle a ete faite, jamais un tick
     // fige a la creation.
-    const ticks = new Set(zones.map((z) => z.bornTick));
-    expect(ticks.size).toBeGreaterThan(1);
+    expect(new Set(long.zones.map((z) => z.bornTick)).size).toBeGreaterThan(1);
+
+    // ⚠️ **Le compte des TIRS, sinon « peu d'annonces » se lirait « peu de
+    // poses ».** La cadence de l'arme est strictement plus serree que
+    // l'intervalle de prolongation : sans la parade, chaque volee annoncerait.
+    expect(long.cooldown).toBeLessThan(ZONE_REFRESH_INTERVAL_TICKS);
+    const volees = Math.floor((ZONE_LIFETIME_TICKS * 3) / long.cooldown);
+    expect(long.zones.length).toBeLessThan(volees);
+
+    // Croit avec le temps : trois fois moins de ticks, moins d'annonces.
+    const court = annoncesEntretenues(0xbaa1_5e03, ZONE_LIFETIME_TICKS, 0);
+    expect(court.zones.length).toBeLessThan(long.zones.length);
+  });
+
+  it('et PAS avec la cadence : la meme duree, une arme plus rapide, le meme plafond d annonces', () => {
+    // ⚠️ **C'est l'assertion du §3.3 de l'orientation** — le trafic ne doit
+    // dependre ni du nombre d'entites ni de la cadence des armes. Les cartes
+    // de cadence multiplient les poses ; les annonces, elles, ne doivent pas
+    // bouger d'un message.
+    const ticks = ZONE_LIFETIME_TICKS * 3;
+    const lente = annoncesEntretenues(0xbaa1_5e0e, ticks, 0);
+    const rapide = annoncesEntretenues(0xbaa1_5e0e, ticks, 4);
+
+    // Le decor a bien change de cadence : sans ce compte, deux runs identiques
+    // rendraient trivialement le meme nombre d'annonces.
+    const ratioCadence = lente.cooldown / rapide.cooldown;
+    // 1,3 et pas davantage : `MAX_FIRE_RATE_BONUS` plafonne le gain de
+    // cadence, et un seuil derive de ce plafond vaut mieux qu'un nombre choisi.
+    expect(ratioCadence).toBeGreaterThan(1.3);
+
+    // ⚠️ **La borne se lit PAR POINT, parce que c'est par zone qu'elle vit.**
+    // Une arme plus rapide couvre un peu plus de terrain — le monstre avance
+    // entre deux volees — donc elle peut CREER une zone de plus ; ce qu'elle
+    // ne doit jamais faire, c'est en re-annoncer une plus souvent.
+    for (const run of [lente, rapide]) {
+      const parPoint = new Map<string, number[]>();
+      for (const z of run.zones) {
+        const cle = `${z.x},${z.y}`;
+        const suite = parPoint.get(cle) ?? [];
+        suite.push(z.bornTick);
+        parPoint.set(cle, suite);
+      }
+      const ecarts = [...parPoint.values()].flatMap((suite) =>
+        suite.slice(1).map((t, i) => t - (suite[i] ?? 0)),
+      );
+      // Le decor entretient bien AU MOINS une zone : sinon « jamais plus
+      // serre que l'intervalle » se lirait « jamais rafraichie ».
+      expect(ecarts.some((e) => e < ZONE_LIFETIME_TICKS)).toBe(true);
+      for (const e of ecarts) {
+        expect(e, `deux annonces du meme point a ${e} ticks d ecart`).toBeGreaterThanOrEqual(
+          ZONE_REFRESH_INTERVAL_TICKS,
+        );
+      }
+    }
+
+    // Et globalement : le trafic ne suit PAS le rapport des cadences.
+    expect(rapide.zones.length / lente.zones.length).toBeLessThan(ratioCadence);
   });
 
   it('une zone marque un ennemi que RIEN n a touche — c est le seul chemin qui le puisse', () => {

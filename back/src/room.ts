@@ -423,6 +423,35 @@ export class Room {
   }
 
   /**
+   * Zones au sol vivantes, pour les bancs — le recouvrement est en O(zones²)
+   * et le marquage en O(zones x entites) (§5.2), donc c'est CE nombre, et pas
+   * le nombre de projectiles, qui pilote le cout des zones dans un pas.
+   *
+   * ⚠️ Compte les creneaux occupes, pas les zones que `aliveAt` juge encore
+   * vivantes : `Room.step` expire a l'heure (voir le contrat d'ordre de
+   * `ZoneField.spawn`), donc les deux coincident cote serveur. Ce ne serait
+   * PAS vrai cote client, qui garde ses zones mortes `ROLLBACK_DEPTH_TICKS`
+   * ticks de plus pour pouvoir rejouer.
+   */
+  get zoneCount(): number {
+    return this.#zones.count;
+  }
+
+  /**
+   * Zones qu'une pose n'a pas pu creer faute de place, depuis le debut de la
+   * run. Voir `ZoneField.truncatedZones`.
+   *
+   * ⚠️ **Une zone qui ne se pose pas est un effet que le joueur a paye et qui
+   * ne se voit pas** (§5.1 bis) : sans ce lecteur, `truncatedZones` n'avait
+   * AUCUN appelant hors de son propre test unitaire, et le second rideau de
+   * `ZONE_CAPACITY` se serait declenche sans que rien ne le dise. Meme motif
+   * que `projectilesTronques` juste au-dessus.
+   */
+  get zonesTronquees(): number {
+    return this.#zones.truncatedZones;
+  }
+
+  /**
    * Ce que ce joueur a accumule au fil des drafts. `undefined` s'il n'est pas
    * dans le salon.
    */

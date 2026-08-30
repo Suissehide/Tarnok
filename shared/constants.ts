@@ -416,6 +416,37 @@ export const MARK_DURATION_TICKS = 60;
 export const ZONE_LIFETIME_TICKS = 90;
 
 /**
+ * Intervalle minimal entre deux prolongations d'une meme zone — etape 5a,
+ * §5.1 bis de la spec, tache 10.
+ *
+ * ⚠️ **C'est une regle de JEU, pas un reglage de trafic, et c'est le seul
+ * moyen de n'avoir qu'une verite.** La fusion fait repartir le `bornTick`
+ * d'une zone existante ; ce rafraichissement DOIT etre annonce, sinon la zone
+ * du client meurt avant celle du serveur et le ralentissement du Givre — donc
+ * le DEPLACEMENT — diverge. Mais annoncer chaque fusion fait suivre au trafic
+ * la cadence des armes, exactement le couplage que la regle de pose venait de
+ * supprimer pour le COMPTE : chaque zone arrosee a chaque tick vaut
+ * `TICK_HZ` messages par seconde, soit **9,67 ko/s par client a 30 zones**
+ * (banc `zones`), contre 1,22 ko/s de trafic TOTAL a l'etape 4.
+ *
+ * **La parade : l'annonce EST la verite.** Une zone n'est prolongee — donc
+ * annoncee — qu'au plus une fois par intervalle, et **entre deux annonces le
+ * serveur ne prolonge pas non plus**. Les deux cotes lisent alors exactement
+ * le meme `bornTick`, sans divergence possible, et le trafic redevient
+ * fonction du seul NOMBRE de zones, que la fusion borne deja par la surface.
+ *
+ * ⚠️ **La demi-vie, et pas moins.** Une zone entretenue doit survivre : avec
+ * un intervalle superieur a `ZONE_LIFETIME_TICKS`, une zone arrosee sans
+ * relache mourrait quand meme, et « un joueur qui arrose le meme endroit
+ * entretient une zone » deviendrait faux. La demi-vie laisse une marge d'une
+ * demi-vie entiere entre la derniere prolongation possible et la peremption.
+ *
+ * ⚠️ **Derive, jamais recopiee** : un `45` en dur ici cesserait de suivre
+ * `ZONE_LIFETIME_TICKS` a son premier reglage a l'oeil (tache 11).
+ */
+export const ZONE_REFRESH_INTERVAL_TICKS = Math.floor(ZONE_LIFETIME_TICKS / 2);
+
+/**
  * Rayon d'une zone au sol, en pixels monde — etape 5a, §5.1.
  *
  * ⚠️ **Superieur a `SEPARATION_RADIUS` (28), et ce n'est pas un reglage de

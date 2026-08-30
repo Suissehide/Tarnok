@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { ZONE_CAPACITY, ZONE_LIFETIME_TICKS, ZONE_RADIUS } from './constants';
+import {
+  ZONE_CAPACITY,
+  ZONE_LIFETIME_TICKS,
+  ZONE_RADIUS,
+  ZONE_REFRESH_INTERVAL_TICKS,
+} from './constants';
 import { ELEMENT } from './elements';
 import { ZoneField } from './zones';
 
@@ -91,11 +96,58 @@ describe('ZoneField — la pose', () => {
   it('la fusion rafraichit le bornTick, et laisse le poseur d origine', () => {
     const zones = new ZoneField();
     zones.spawn(ELEMENT.BRAISE, 500, 500, 2, 0);
-    zones.spawn(ELEMENT.BRAISE, 500, 500, 3, 40);
+    zones.spawn(ELEMENT.BRAISE, 500, 500, 3, ZONE_REFRESH_INTERVAL_TICKS);
 
     expect(zones.count).toBe(1);
-    expect(zones.bornTick[0]).toBe(40);
+    expect(zones.bornTick[0]).toBe(ZONE_REFRESH_INTERVAL_TICKS);
     expect(zones.by[0]).toBe(2);
+  });
+
+  /**
+   * **L'annonce EST la verite** (§5.1 bis, tache 10). Une zone n'est prolongee
+   * qu'au plus une fois par `ZONE_REFRESH_INTERVAL_TICKS` : entre deux, le
+   * serveur ne prolonge PAS non plus, sans quoi il faudrait annoncer chaque
+   * fusion et le trafic suivrait la cadence des armes au lieu du nombre de
+   * zones (mesure : 9,67 ko/s par client a 30 zones arrosees a chaque tick,
+   * contre 1,22 ko/s de trafic total a l'etape 4).
+   *
+   * ⚠️ **La date exacte compte des deux cotes.** Le client applique ce meme
+   * `spawn` : s'il prolongeait un tick plus tot ou plus tard que le serveur,
+   * sa zone de Givre mourrait a un autre tick, et le ralentissement — donc le
+   * DEPLACEMENT — divergerait. On teste donc le tick d'avant et le tick pile.
+   */
+  it('ne prolonge pas avant l intervalle, et prolonge pile a l intervalle', () => {
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.BRAISE, 500, 500, 2, 0);
+
+    expect(zones.spawn(ELEMENT.BRAISE, 500, 500, 2, ZONE_REFRESH_INTERVAL_TICKS - 1)).toBe(0);
+    expect(zones.bornTick[0], 'la zone a ete prolongee avant l intervalle').toBe(0);
+
+    expect(zones.spawn(ELEMENT.BRAISE, 500, 500, 2, ZONE_REFRESH_INTERVAL_TICKS)).toBe(0);
+    expect(zones.bornTick[0]).toBe(ZONE_REFRESH_INTERVAL_TICKS);
+  });
+
+  /**
+   * Le chiffre que la parade borne, mis en scene : une zone arrosee a CHAQUE
+   * tick pendant plusieurs vies de zone. Les prolongations doivent croitre
+   * avec le TEMPS, jamais avec la cadence.
+   */
+  it('une zone arrosee a chaque tick n est prolongee qu une fois par intervalle', () => {
+    const zones = new ZoneField();
+    const ticks = ZONE_LIFETIME_TICKS * 4;
+    let prolongations = 0;
+    for (let tick = 0; tick <= ticks; tick++) {
+      zones.expire(tick);
+      zones.spawn(ELEMENT.BRAISE, 500, 500, 0, tick);
+      if (zones.bornTick[0] === tick && tick > 0) {
+        prolongations++;
+      }
+    }
+
+    // Le decor a bien arrose a chaque tick : sans ce compte, « peu de
+    // prolongations » se lirait aussi bien « peu de poses ».
+    expect(ticks).toBeGreaterThan(ZONE_REFRESH_INTERVAL_TICKS * 4);
+    expect(prolongations).toBe(Math.floor(ticks / ZONE_REFRESH_INTERVAL_TICKS));
   });
 
   /**
@@ -155,11 +207,11 @@ describe('ZoneField — le plafond', () => {
     }
     expect(zones.count).toBe(ZONE_CAPACITY);
 
-    zones.spawn(ELEMENT.BRAISE, 0, 0, 0, 40);
+    zones.spawn(ELEMENT.BRAISE, 0, 0, 0, ZONE_REFRESH_INTERVAL_TICKS);
 
     expect(zones.count).toBe(ZONE_CAPACITY);
     expect(zones.truncatedZones).toBe(0);
-    expect(zones.bornTick[0]).toBe(40);
+    expect(zones.bornTick[0]).toBe(ZONE_REFRESH_INTERVAL_TICKS);
   });
 });
 
@@ -286,9 +338,19 @@ describe('ZoneField — la pose rend le creneau touche (tache 6)', () => {
     expect(premier).toBe(0);
     expect(ailleurs).toBe(1);
 
+    // ⚠️ **Le creneau est rendu meme quand la zone n'est PAS prolongee** —
+    // c'est ce que `postZone` distingue par le COMPTE, pas par ce retour. Une
+    // pose sous l'intervalle touche bien une zone existante ; elle ne la
+    // prolonge simplement pas, et n'a donc rien a annoncer.
     expect(zones.spawn(ELEMENT.GIVRE, ZONE_RADIUS - 1, 0, 0, 5)).toBe(premier);
     expect(zones.count).toBe(2);
-    expect(zones.bornTick[premier]).toBe(5);
+    expect(zones.bornTick[premier]).toBe(0);
+
+    expect(zones.spawn(ELEMENT.GIVRE, ZONE_RADIUS - 1, 0, 0, ZONE_REFRESH_INTERVAL_TICKS)).toBe(
+      premier,
+    );
+    expect(zones.count).toBe(2);
+    expect(zones.bornTick[premier]).toBe(ZONE_REFRESH_INTERVAL_TICKS);
   });
 
   it('rend -1 quand la reserve est pleine', () => {
