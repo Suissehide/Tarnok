@@ -84,7 +84,7 @@ Chaque tâche les respecte, sans les répéter.
 **Fichiers :** modifier `shared/archetypes.ts`, `shared/horde.ts`, `back/src/combat.ts`, leurs tests
 
 **Interfaces :**
-- Produit : `Archetype.hp: number` ; `Horde.hp: Float32Array` ; `resolveCombat` soustrait au lieu de tuer.
+- Produit : `Archetype.hp: number` ; `Horde.hp: Float32Array` ; `resolveProjectileDamage` soustrait au lieu de tuer.
 
 - [ ] **Étape 1 : `Archetype` gagne `hp`.** Les vingt archétypes existants prennent **5** ;
   **quatre d'entre eux passent à 20** et deviennent la piétaille lourde. Le choix des quatre est
@@ -110,7 +110,7 @@ Chaque tâche les respecte, sans les répéter.
 - [ ] **Étape 3 : `spawn` remplit `hp` depuis l'archétype.** Les deux côtés dérivent la même valeur
   de départ — l'archétype voyage déjà dans l'ordre de vague de 19 octets.
 
-- [ ] **Étape 4 : `resolveCombat` soustrait.**
+- [ ] **Étape 4 : `resolveProjectileDamage` soustrait.**
 
   ```ts
   projectiles.collide(horde, (entityId, damage) => {
@@ -130,11 +130,32 @@ Chaque tâche les respecte, sans les répéter.
   trois impacts et meurt au quatrième**. Vérifier par mutation qu'un `<=` changé en `<` se voit.
 
 - [ ] **Étape 6 : les deux passifs de dégâts se réveillent.** « Puissance » et « acier » ne
-  modulaient aucune issue à l'étape 4. Le test : deux cartes de « puissance » font mourir un ennemi
-  lourd en **moins d'impacts**. C'est la dette de l'étape 4 qui se solde ici.
+  modulaient aucune issue à l'étape 4. C'est la dette de l'étape 4 qui se solde ici.
 
-- [ ] **Étape 7 : la porte.** Rejouer `back/bench/sim.bench.ts` et mesurer le **rythme de mise à
-  mort** à quatre joueurs, avec la proportion de lourds visée.
+  ⚠️ **Correction — une première version de ce plan écrivait « deux cartes de puissance font mourir
+  un ennemi lourd en moins d'impacts ». C'est arithmétiquement FAUX**, et c'est le motif R9 de
+  l'étape 4 : le bonus est une fraction, le nombre d'impacts est un entier, et l'arrondi avale les
+  premières cartes.
+
+  | Cartes de « puissance » | Dégâts | Impacts pour 20 PV |
+  | --- | --- | --- |
+  | 0 | 5,00 | 4 |
+  | 1 | 5,50 | 4 |
+  | 2 | 6,00 | **4** |
+  | 3 | 6,50 | 4 |
+  | **4** | 7,00 | **3** |
+
+  **Il en faut quatre.** Le test doit le dire, et vérifier le palier là où il est — un test écrit
+  sur « deux » aurait échoué et fait croire à un défaut de câblage.
+
+- [ ] **Étape 7 : la porte.** Mesurer le **rythme de mise à mort** à quatre joueurs, avec la
+  proportion de lourds visée.
+
+  ⚠️ **Correction — `sim.bench.ts` ne peut PAS le mesurer.** Il a sa propre classe `Horde` locale et
+  ne fait qu'avancer des positions : aucun combat, aucune mort. Une première version de ce plan
+  demandait de le rejouer, ce qui est inexécutable. Un banc dédié (`kills.bench.ts`) est le bon
+  outil — **exactement le constat de la tâche 12 de l'étape 4**, où aucun des trois bancs ne
+  mesurait ce que la tâche demandait.
 
   **Trois issues, engagées AVANT la mesure** (§3.3 de la spec) :
   1. dans ±20 % du rythme de l'étape 3 → **on garde** ;
@@ -318,7 +339,7 @@ Chaque tâche les respecte, sans les répéter.
 
 **Fichiers :** modifier `back/src/combat.ts`, `back/src/room.ts`, leurs tests
 
-- [ ] **Étape 1 : un projectile élémentaire marque ce qu'il touche.** Dans `resolveCombat`, après
+- [ ] **Étape 1 : un projectile élémentaire marque ce qu'il touche.** Dans `resolveProjectileDamage`, après
   la soustraction : si l'arme porte un élément et que l'ennemi survit, poser la marque.
 
   ⚠️ **Un ennemi qui meurt du même impact n'est pas marqué** — la marque serait posée sur un
