@@ -357,14 +357,21 @@ testable qu'en mettant en scène un appelant fautif.
 **Interfaces :**
 - Produit : `MSG.ZONE`, `MSG.REACTION` ; `encodeZone`, `encodeReaction` ; la Synergie dans le snapshot.
 
-- [ ] **Étape 1 : `ZONE`.** `type u8 · element u8 · x i16 · y i16 · bornTick u32 · by u8` = **12
+- [ ] **Étape 1 : `ZONE`.** `type u8 · element u8 · x i16 · y i16 · bornTick u32 · by u8` = **11
   octets**. Un message par zone, à la création.
+
+  ⚠️ **Onze, pas douze.** Une première version de ce plan écrivait 12 : la spec disait « ~12 »,
+  un ordre de grandeur, et je l'ai durci en chiffre exact **sans recompter**. La liste de champs
+  fait foi. L'octet manquant était le `rayon` que la table du §8 de la spec listait encore, et qui
+  n'a pas à voyager — voir §5.3.
 
   ⚠️ **La mort d'une zone n'est JAMAIS annoncée** : elle se dérive du `bornTick`. Un message de
   disparition doublerait le trafic pour une information que les deux côtés calculent déjà.
 
 - [ ] **Étape 2 : `REACTION`.** `type u8 · pair u8 · x i16 · y i16 · tick u32 · synergie u8` = **11
-  octets**. `synergie` vaut 1 quand deux joueurs différents sont à l'origine, 0 sinon.
+  octets**. Le couple tient sur un octet, **un quartet par élément, canonicalisé** : le §6.2 est
+  symétrique, donc Braise+Givre et Givre+Braise doivent porter le même octet, sinon deux clients
+  dessinent deux flashs différents pour un événement identique. `synergie` vaut 1 quand deux joueurs différents sont à l'origine, 0 sinon.
 
   ⚠️ **La charge voyage DANS `REACTION`**, pas dans un message à part : les deux arrivent toujours
   ensemble et un second message ne porterait rien de plus.

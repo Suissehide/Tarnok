@@ -47,8 +47,8 @@ posée avant d'écrire une ligne :
 | --- | --- | --- |
 | PV d'un ennemi | **serveur seul** | rien — `DEATHS` suffit, déjà en place depuis l'étape 3 |
 | Élément porté par un ennemi | serveur pour l'arbitrage ; **approximé** côté client pour la teinte | rien |
-| Zone au sol | annoncée à la création | ~12 octets, quelques dizaines vivantes |
-| Réaction | annoncée | ~10 octets, rare |
+| Zone au sol | annoncée à la création | **11 octets**, quelques dizaines vivantes |
+| Réaction | annoncée | **11 octets**, rare |
 
 **Le client n'a jamais besoin de connaître les PV.** Il apprend qui meurt par `DEATHS`, exactement
 comme aujourd'hui. Une teinte de sprite est **cosmétique** : si le client marque un ennemi que le
@@ -231,8 +231,14 @@ l'étape 3, tirés depuis une position prédite puis réconciliée. Une zone dé
 dériverait de quelques pixels, et deux zones qui se recouvrent d'un pixel décident d'une réaction.
 
 **Elles sont donc annoncées à la création, et leur mort est dérivée** — même partage que les orbes.
-Quelques dizaines vivantes, ~12 octets chacune : c'est le budget que le §6.6 avait déjà posé
+Quelques dizaines vivantes, 11 octets chacune : c'est le budget que le §6.6 avait déjà posé
 (*« grand quad teinté, additif, quelques dizaines de quads »*).
+
+⚠️ **Le rayon ne voyage PAS.** Une première version de ce document le listait dans `ZONE`. Toutes
+les zones portent le même `ZONE_RADIUS`, qui est une constante de `shared/` que les deux côtés
+lisent déjà : l'annoncer en ferait une **seconde source de vérité pour un seul nombre** — le défaut
+exact que le §7 reproche à l'expérience par joueur. Le jour où une zone portera un rayon propre,
+c'est un octet de plus, pas un changement de modèle.
 
 ## 6. La réaction
 
@@ -241,7 +247,13 @@ Quelques dizaines vivantes, ~12 octets chacune : c'est le budget que le §6.6 av
 Braise + Givre. Dégâts bruts massifs sur la cible, et sur les ennemis dans un rayon court.
 
 **Elle est arbitrée par le serveur et annoncée**, parce qu'elle tue. Le message porte où, quel
-couple d'éléments, et **les deux joueurs à l'origine** — c'est ce que la Synergie consomme.
+couple d'éléments, et **un seul bit : la réaction a-t-elle chargé la Synergie**.
+
+⚠️ **Pas les deux identités.** Une première version de ce paragraphe disait « les deux joueurs à
+l'origine », ce qui décrit ce que le serveur **compare**, pas ce que le message **porte**. La
+comparaison ne rend qu'un booléen, et le total voyage dans le `SNAPSHOT`. Envoyer deux identités que
+le client ne pourrait que recomparer inviterait à refaire l'arbitrage côté client — donc à le faire
+diverger.
 
 ### 6.2 Ce qui la déclenche, exactement
 
@@ -282,8 +294,8 @@ Deux messages nouveaux, tous deux datés par tick.
 
 | Message | Sens | Contenu |
 | --- | --- | --- |
-| `ZONE` | S → C | élément, x, y, rayon, tick de naissance, joueur |
-| `REACTION` | S → C | couple d'éléments, x, y, tick, **charge de Synergie ou non** |
+| `ZONE` | S → C | élément, x, y, tick de naissance, joueur — **11 octets** |
+| `REACTION` | S → C | couple d'éléments, x, y, tick, **charge de Synergie ou non** — 11 octets |
 
 La charge de Synergie voyage **dans** `REACTION` plutôt que dans un message à part : les deux
 arrivent toujours ensemble, et un second message ne porterait rien de plus.
