@@ -104,12 +104,57 @@ export const DEPTH_BAND = 2;
  */
 export const BAND_COUNT = Math.floor(MAP_SIZE / DEPTH_BAND) + 1;
 
+/**
+ * Ancre verticale du sprite d'un monstre : **le corps est centre sur la
+ * position**.
+ *
+ * ⚠️ **Valait 0,75, et c'est ce que la verification manuelle de l'etape 5a a
+ * remonte** : *« la hitbox semble plus basse »*. Elle l'etait de 16 px. Le
+ * commentaire d'origine (etape 2) justifiait 0,75 ainsi : *« place les pieds
+ * du sprite sur la position logique, pas son centre : c'est ce qui fait que le
+ * tri par `y` correspond a ce que l'oeil attend »* — la convention habituelle
+ * de la vue de dessus, ou une entite « est » la ou elle pose les pieds.
+ *
+ * **Ce que l'intention d'origine ne voyait pas** : dans ce jeu, une entite
+ * n'« est » pas ses pieds. TOUT ce qui la touche est un cercle centre sur sa
+ * position — le tir (`PROJECTILE_HIT_RADIUS`), le contact (`CONTACT_RADIUS`),
+ * le ramassage (`ORB_PICKUP_RADIUS`), la separation (`SEPARATION_RADIUS`).
+ * Avec 0,75, le sprite (64 px de haut une fois mis a l'echelle) s'etendait de
+ * `y-48` a `y+16` : son centre visuel etait a `y-16`, soit **un quart du corps
+ * au-dessus de la hitbox**. On visait le corps, et le projectile passait sous
+ * les pieds.
+ *
+ * **Ce que ce changement casse, et il casse quelque chose** : les pieds ne
+ * sont plus sur la position, ils sont a `y + hauteurDessinee / 2`. Deux
+ * consequences, toutes deux assumees :
+ * - le tri en profondeur (`#depthSort`) trie toujours par `horde.y`, donc par
+ *   le CENTRE des corps et non par les pieds. L'ordre entre deux entites est
+ *   inchange (le decalage est le meme pour toutes, a silhouette egale), mais
+ *   la ligne de contact au sol de chaque sprite descend de 16 px par rapport a
+ *   la position qui la classe ;
+ * - **l'anneau au sol de la tache 13 ne peut plus etre pose sur la position**
+ *   s'il doit etre « sous les pieds » : il lui faudra ce meme decalage vers le
+ *   bas. C'est pourquoi la tache 14 passe avant la 13.
+ *
+ * `0,5` n'est pas un reglage : c'est la definition de « centre ». Le reglage
+ * de sensation de ce fichier est `BODY_SCALE`, et lui seul — d'ou une
+ * constante NON exportee : le test lit l'ancre sur la particule reellement
+ * dessinee et y attend `0,5`, ce qu'aucune constante recopiee ne prouverait.
+ */
+const BODY_ANCHOR_Y = 0.5;
+
 /** Marge autour de la vue, pour qu'une entite n'apparaisse pas en plein ecran. */
 const CULL_MARGIN = 128;
 
 /**
  * Marge des bornes explicites du `ParticleContainer`, pour absorber les
- * sprites qui depassent leur point d'ancrage (pieds, §12.3 de l'orientation).
+ * sprites qui depassent leur point d'ancrage — au plus une demi-hauteur de
+ * corps dans chaque sens depuis la tache 14, l'ancre etant centree
+ * (`BODY_ANCHOR_Y`), contre trois quarts vers le haut auparavant. La marge de
+ * 256 px couvre les deux tres largement : un corps dessine fait
+ * `2 * PROJECTILE_HIT_RADIUS * BODY_SCALE` = 80 px.
+ * (Le commentaire d'origine renvoyait a un « §12.3 de l'orientation » qui
+ * n'existe pas — la section 12 s'arrete a 12.2.)
  * Un `ParticleContainer` ne calcule pas ses bornes automatiquement — sans
  * `boundsArea`, son getter de bornes renvoie un rectangle vide statique, et le
  * culling comme toute extraction se comportent mal.
@@ -185,6 +230,38 @@ export function sortByDepth(
 }
 
 /**
+ * Facteur de CORPS : de combien le corps dessine deborde la hitbox de tir.
+ *
+ * ⚠️ **C'est un reglage de sensation, et le seul de ce fichier.** Il vient de
+ * la verification manuelle de l'etape 5a — *« les ennemis sont trop petits par
+ * rapport a la taille des projectiles »* — et il est ecrit ici, nomme, plutot
+ * que glisse dans le corps de `spriteScale` : un test qui le recopierait en
+ * dur garderait une valeur, pas un comportement (voir `bandOf(63) === 0` dans
+ * le test, et `WAVE1_MIN_COUNT` a la tache 1).
+ *
+ * **Ce qu'il coute, dit franchement** : la hitbox MENT de
+ * `PROJECTILE_HIT_RADIUS * (BODY_SCALE - 1)` = 8 px. Un tir qui frole le bord
+ * du corps sans l'atteindre passe au travers. C'est le defaut de la tache 16
+ * de l'etape 3 (« les hitbox sont mauvaises »), en beaucoup plus petit et dans
+ * l'autre sens.
+ *
+ * **Pourquoi 8 px restent acceptables** : le projectile lui-meme est un POINT
+ * pour la collision (`Projectiles.collide` teste la distance de l'entite au
+ * segment parcouru) alors qu'il se dessine avec une empreinte allant jusqu'a
+ * 18 px de diametre (`ProjectileLook.diameterPx`, tache 12). Il porte donc
+ * deja un mensonge de 9 px, de meme nature et dans le meme sens. Le corps
+ * reste sous cette borne — il n'ajoute pas un ecart plus grand que celui que
+ * le rendu des projectiles assume deja. C'est la regle qui borne ce reglage,
+ * et le test la verifie a partir du catalogue d'armes, pas d'un nombre.
+ *
+ * **L'autre moitie de la correction n'est pas ici** : la tache 12 a fait
+ * passer les projectiles de 20 px uniformes a 7-18 px selon l'arme. Le rapport
+ * de taille se corrige des deux cotes ; c'est pour ca que ce facteur peut
+ * rester petit.
+ */
+export const BODY_SCALE = 1.25;
+
+/**
  * Echelle de dessin d'un monstre, DERIVEE de `PROJECTILE_HIT_RADIUS` — jamais
  * l'inverse.
  *
@@ -204,12 +281,18 @@ export function sortByDepth(
  * (`contentSizePx`), jamais celle de la cellule. Voir le site d'appel dans
  * `load()`.
  *
- * La relation choisie est la plus simple qui se laisse enoncer sans ajouter
- * un second reglage a cote du premier : la largeur dessinee du CONTENU EGALE
- * le diametre de la hitbox de tir. Un facteur de generosite supplementaire
- * (« un peu plus grand pour que ca se voie ») retomberait dans le meme piege
- * — un nombre choisi au ressenti, non derive de la hitbox qu'il est cense
- * representer.
+ * La relation reste la plus simple qui se laisse enoncer : la largeur dessinee
+ * du CONTENU vaut le diametre de la hitbox de tir, a `BODY_SCALE` pres.
+ *
+ * ⚠️ **Tache 14 de l'etape 5a : ce paragraphe disait exactement l'inverse.**
+ * Il refusait tout facteur de generosite — *« un peu plus grand pour que ca se
+ * voie »* — comme « un nombre choisi au ressenti, non derive de la hitbox
+ * qu'il est cense representer ». La verification manuelle a tranche contre :
+ * *« les ennemis sont trop petits par rapport a la taille des projectiles »*.
+ * Le facteur existe donc, mais il est NOMME et BORNE (voir `BODY_SCALE`) au
+ * lieu d'etre dissous dans cette formule — ce qui garde intacte la seule chose
+ * que le paragraphe d'origine protegeait vraiment : que personne ne puisse
+ * regler la taille d'un monstre sans voir a cote de combien la hitbox ment.
  *
  * Prend la taille en parametre plutot qu'une constante figee : les plus gros
  * archetypes de `shared/archetypes.ts` (ours, panda, tortue, minotaure,
@@ -221,7 +304,7 @@ export function spriteScale(sizePx: number, hitRadiusPx: number): number {
   if (sizePx <= 0) {
     return 1;
   }
-  return (2 * hitRadiusPx) / sizePx;
+  return (2 * hitRadiusPx * BODY_SCALE) / sizePx;
 }
 
 /** Applique `spriteScale` a une taille par archetype — un facteur par archetype. */
@@ -630,7 +713,11 @@ export class HordeRenderer {
       return;
     }
     while (this.#pool.length < needed) {
-      this.#pool.push(new Particle({ texture: first, anchorX: 0.5, anchorY: 0.75 }));
+      // Le corps est centre sur la position, en `x` comme en `y` — tout ce qui
+      // touche l'entite est un cercle centre sur cette meme position. Voir
+      // `BODY_ANCHOR_Y` pour ce que l'ancre a 0,75 visait, et ce que la
+      // recentrer casse.
+      this.#pool.push(new Particle({ texture: first, anchorX: 0.5, anchorY: BODY_ANCHOR_Y }));
     }
   }
 }

@@ -2,6 +2,7 @@ import { MAP_SIZE, MARK_DURATION_TICKS, PROJECTILE_HIT_RADIUS } from '@shared/co
 import { ELEMENT, elementOf } from '@shared/elements';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
+import { WEAPONS } from '@shared/weapons';
 import {
   Container,
   type Particle,
@@ -16,6 +17,7 @@ import {
   type AtlasClip,
   type AtlasManifest,
   BAND_COUNT,
+  BODY_SCALE,
   bandOf,
   contentSizePx,
   DEPTH_BAND,
@@ -139,12 +141,18 @@ describe('sortByDepth ne corrompt pas #sorted avec des entites hors carte', () =
  * pin la valeur d'aujourd'hui ne proteg rien du defaut de demain.
  */
 describe('spriteScale derive la taille dessinee de PROJECTILE_HIT_RADIUS', () => {
-  it('le diametre dessine egale le diametre de la hitbox de tir, quelle que soit la cellule native', () => {
+  it('le diametre dessine vaut le diametre de la hitbox de tir a BODY_SCALE pres, quelle que soit la cellule native', () => {
     // Cellules reellement presentes dans l'atlas (voir shared/archetypes.ts) :
     // 192 px pour la pietaille courante, jusqu'a 384 px pour le troll.
+    //
+    // ⚠️ `BODY_SCALE` est DERIVE de la constante, jamais recopie : c'est un
+    // reglage de sensation (tache 14), et deux tests sont devenus
+    // intermittents a la tache 1 pour avoir recopie `WAVE1_MIN_COUNT`. Ce que
+    // ce test garde, c'est la RELATION — le diametre dessine suit la hitbox,
+    // quelle que soit la valeur du facteur.
     for (const cell of [128, 192, 256, 320, 384]) {
       const scale = spriteScale(cell, PROJECTILE_HIT_RADIUS);
-      expect(scale * cell).toBeCloseTo(2 * PROJECTILE_HIT_RADIUS, 5);
+      expect(scale * cell).toBeCloseTo(2 * PROJECTILE_HIT_RADIUS * BODY_SCALE, 5);
     }
   });
 
@@ -156,6 +164,39 @@ describe('spriteScale derive la taille dessinee de PROJECTILE_HIT_RADIUS', () =>
     // qui ignorerait son parametre `hitRadiusPx` (par ex. `64 / cellPx` en
     // dur) passerait le premier test mais pas celui-ci.
     expect(scaleRayonDouble).toBeCloseTo(scaleAujourdhui * 2, 5);
+  });
+});
+
+/**
+ * Tache 14 : *« les ennemis sont trop petits par rapport a la taille des
+ * projectiles »*. La correction se fait des deux cotes — la tache 12 a fait
+ * passer les projectiles de 20 px uniformes a 7-18 px selon l'arme, et le
+ * corps de la creature gagne `BODY_SCALE`.
+ *
+ * ⚠️ **Ce facteur rend la hitbox menteuse dans l'AUTRE sens que le defaut de
+ * l'etape 3** (des sprites de 192 px pour une hitbox de 64) : un tir qui frole
+ * le bord du corps sans atteindre le cercle passe au travers. Ce qui le rend
+ * acceptable est une borne, pas une opinion : le projectile est un POINT pour
+ * la collision alors qu'il se dessine avec une empreinte — il porte deja un
+ * mensonge de meme nature, de la moitie de son plus grand diametre. Le corps
+ * doit rester sous cette borne.
+ *
+ * **Les deux moities** : « le corps grandit » et « il ne grandit pas trop » se
+ * gardent separement — un `BODY_SCALE` a 1 passerait le second tout seul.
+ */
+describe('BODY_SCALE — un corps plus grand que sa hitbox, mais borne', () => {
+  it('agrandit le corps, sinon la tache 14 ne corrige rien', () => {
+    expect(BODY_SCALE).toBeGreaterThan(1);
+  });
+
+  it('ne fait pas mentir la hitbox plus que le rendu des projectiles ne la fait deja mentir', () => {
+    const mensongeDuCorps = PROJECTILE_HIT_RADIUS * (BODY_SCALE - 1);
+    // Le plus gros projectile du catalogue, derive de la table des armes et
+    // non recopie : ajouter une arme plus grosse desserre la borne toute
+    // seule, en retrecir une la resserre.
+    const mensongeDuPlusGrosProjectile = Math.max(...WEAPONS.map((w) => w.look.diameterPx)) / 2;
+
+    expect(mensongeDuCorps).toBeLessThanOrEqual(mensongeDuPlusGrosProjectile);
   });
 });
 
@@ -310,8 +351,24 @@ describe('markTint — la teinte elementaire du sprite (§6.6)', () => {
  * qui est justement `0xffffff` — donc le cas NON marque passerait tout seul.
  * Seul l'ennemi marque prouve que la ligne existe.
  */
+/**
+ * ⚠️ **La cellule, le contenu, la largeur et la hauteur valent tous des
+ * nombres DIFFERENTS, et c'est delibere.** La premiere version de cette
+ * fixture avait `cell: 32` et `bounds: { w: 32, h: 32 }` : l'echelle calculee
+ * depuis la cellule, depuis la largeur du contenu, depuis sa hauteur ou depuis
+ * la bonne valeur y donnaient toutes le meme resultat, et le test de l'echelle
+ * posee par `draw` (plus bas) n'aurait distingue aucune de ces mutations. Avec
+ * une cellule de 64, un contenu de 24x40, seule `contentSizePx(bounds) = 40`
+ * rend l'echelle attendue.
+ */
+const FIXTURE_CELL_PX = 64;
+const FIXTURE_BOUNDS = { x: 12, y: 8, w: 24, h: 40 } as const;
+
 function syntheticAtlas(): { manifest: AtlasManifest; atlas: Texture } {
-  const clip: AtlasClip = { frames: 1, rects: [{ x: 0, y: 0, w: 32, h: 32 }] };
+  const clip: AtlasClip = {
+    frames: 1,
+    rects: [{ x: 0, y: 0, w: FIXTURE_CELL_PX, h: FIXTURE_CELL_PX }],
+  };
   return {
     manifest: {
       image: 'atlas.png',
@@ -320,8 +377,8 @@ function syntheticAtlas(): { manifest: AtlasManifest; atlas: Texture } {
         {
           id: 0,
           name: 'synthetique',
-          cell: 32,
-          bounds: { x: 0, y: 0, w: 32, h: 32 },
+          cell: FIXTURE_CELL_PX,
+          bounds: { ...FIXTURE_BOUNDS },
           clips: { run: clip, attack: clip },
         },
       ],
@@ -413,5 +470,43 @@ describe('HordeRenderer.draw — la teinte elementaire arrive bien sur la partic
    */
   it('reteleverse la teinte a chaque image', () => {
     expect(new HordeRenderer('/assets-de-test').dynamicTint).toBe(true);
+  });
+});
+
+/**
+ * Tache 14 : *« les ennemis sont trop petits par rapport a la taille des
+ * projectiles et la hitbox semble plus basse »*.
+ *
+ * Ces deux assertions ne sont possibles que depuis la tache 9 bis : l'ancre et
+ * l'echelle ne se lisent nulle part ailleurs que sur la particule reellement
+ * dessinee. `spriteScale` et `contentSizePx` se testent purement plus haut ;
+ * ici on garde le CABLAGE — que `draw` pose bien ce que `adoptAtlas` a
+ * calcule, et depuis le CONTENU de l'atlas, pas depuis sa cellule.
+ */
+describe('HordeRenderer.draw — le corps est centre sur la position et a la bonne taille', () => {
+  it("centre le corps sur la position : l'ancre verticale est au milieu du sprite", () => {
+    const horde = twoEnemies();
+    const particle = particleOf(drawnParticles(horde), horde, 0);
+
+    // 0,5 n'est pas un reglage a deriver d'une constante : c'est la definition
+    // de « centre ». A 0,75 (l'ancre d'origine, les pieds sur la position), le
+    // corps montait de 25 % de sa hauteur au-dessus de la hitbox — les 16 px
+    // que l'auteur a vus.
+    expect(particle.anchorY).toBe(0.5);
+    expect(particle.anchorX).toBe(0.5);
+  });
+
+  it('met le sprite a l echelle du CONTENU de l atlas, pas de sa cellule', () => {
+    const horde = twoEnemies();
+    const particle = particleOf(drawnParticles(horde), horde, 0);
+
+    // Attendue derivee de la fixture : `contentSizePx({ w: 24, h: 40 }) = 40`,
+    // et non la cellule de 64 ni la largeur de 24 — voir `FIXTURE_BOUNDS`.
+    const attendue = spriteScale(contentSizePx(FIXTURE_BOUNDS), PROJECTILE_HIT_RADIUS);
+
+    expect(particle.scaleY).toBeCloseTo(attendue, 5);
+    // `scaleX` porte en plus le SENS (`facingScaleX`) : c'est sa valeur
+    // absolue qui doit valoir la meme echelle.
+    expect(Math.abs(particle.scaleX)).toBeCloseTo(attendue, 5);
   });
 });
