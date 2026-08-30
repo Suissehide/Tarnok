@@ -80,7 +80,7 @@ Chaque tâche les respecte, sans les répéter.
 | `shared/elements.ts` | **créer** — la table des éléments, l'index **est** l'identifiant |
 | `shared/archetypes.ts` | + `hp` |
 | `shared/weapons.ts` | + `element` |
-| `shared/horde.ts` | + `hp`, `mark`, `markBy`, `markUntil` — quatre tableaux par entité |
+| `shared/horde.ts` | + `hp`, `mark`, `markBy`, `markUntil` — quatre tableaux par entité, plus `applyMark` / `markAt` |
 | `shared/zones.ts` | **créer** — `ZoneField`, calqué sur `OrbField` |
 | `shared/protocol.ts` | + `ZONE`, `REACTION` ; la Synergie dans le `SNAPSHOT` |
 | `back/src/combat.ts` | les dégâts soustraient ; le marquage ; les réactions |
@@ -258,12 +258,33 @@ Chaque tâche les respecte, sans les répéter.
 - Produit : `Horde.mark`, `Horde.markBy`, `Horde.markUntil` (`Uint8Array`, `Uint8Array`,
   `Float64Array`) ; `MARK_DURATION_TICKS`.
 
-- [ ] **Étape 1 : trois tableaux, et le même piège.** `#removeAt` en recopie désormais **quatorze**.
-  Le test de la tâche 1 les couvre par construction s'il énumère depuis une liste unique ; le
-  vérifier plutôt que le supposer.
+- [ ] **Étape 1 : trois tableaux, et le même piège — mais à QUATRE endroits, pas trois.**
 
-- [ ] **Étape 2 : `mark(slot, element, playerId, tick)`.** Écrit les trois tableaux et pose
+  Le plan ne citait que `#removeAt`, `saveState` et `restoreState`. **Il oubliait `spawn`, qui est
+  le plus dangereux des quatre** : un créneau libéré garde le contenu du mort, donc sans remise à
+  zéro un monstre neuf naît **marqué Braise par un joueur qu'il n'a jamais croisé** — capable de
+  déclencher une réaction *et une charge de Synergie* au premier projectile Givre. Trouvé à
+  l'exécution.
+
+  | Site | Ce qu'il faut y faire |
+  | --- | --- |
+  | `#removeAt` | recopier les trois tableaux du dernier créneau |
+  | `saveState` / `restoreState` | les porter pour le rejeu |
+  | **`spawn`** | **les remettre à zéro** — le créneau est peut-être recyclé |
+
+  ⚠️ **Et il y a trois listes de tableaux à tenir à jour, pas une.** Outre la liste unique de la
+  tâche 1 : `HordeHistoryLike` dans `horde.test.ts` recopiait la forme de `HordeState` à la main
+  (fermée par un `import type`), et le test d'aller-retour de `horde-history.test.ts` énumérait sans
+  garde de couverture (fermée par la même assertion). **Une liste recopiée sans garde vieillit en
+  silence** — c'est le motif de la constante recopiée, appliqué aux formes.
+
+- [ ] **Étape 2 : `applyMark(slot, element, playerId, tick)`.** Écrit les trois tableaux et pose
   `markUntil = tick + MARK_DURATION_TICKS`.
+
+  ⚠️ **Correction — une première version de ce plan appelait cette méthode `mark`**, tout en
+  demandant un **tableau** `Horde.mark`. Les deux ne peuvent pas coexister sur la même classe. Les
+  noms de tableaux gagnent : c'est la convention de toute la classe, et c'est eux que la liste
+  unique du test énumère.
 
   ⚠️ **`markBy` est ce qui rend la Synergie possible** (§7 de la spec). Sans lui, on ne peut pas
   distinguer une réaction entre deux joueurs d'une réaction en solo, et le §6.5 de l'orientation
