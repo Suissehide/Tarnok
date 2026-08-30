@@ -477,7 +477,9 @@ testable qu'en mettant en scène un appelant fautif.
 
 ## Tâche 8 : le compteur de Synergie
 
-**Fichiers :** modifier `back/src/room.ts`, `back/src/room.test.ts`
+**Fichiers :** modifier `back/src/room.ts`, `back/src/room.test.ts`, `back/src/combat.ts`
+(un commentaire qui promet `synergyCharge: false`), **`back/src/server.test.ts`** — une assertion y
+devient fausse, et un implémenteur qui s'en tiendrait à la liste casserait la suite
 
 - [ ] **Étape 1 : la règle, en une ligne.** À la réaction, comparer `markBy` et le joueur qui
   déclenche : **différents → une charge**. Même joueur → la réaction a lieu, elle ne rapporte rien.
@@ -496,6 +498,13 @@ testable qu'en mettant en scène un appelant fautif.
 - [ ] **Étape 3 : la barre plafonne à `SYNERGY_MAX` et n'est jamais dépensée** à cette étape
   (l'ultime est hors périmètre). Le test le dit explicitement, pour qu'on ne prenne pas le plafond
   pour un oubli.
+
+  ⚠️ **Le décor doit produire STRICTEMENT PLUS de charges que le plafond**, sinon « un plafond jamais
+  atteint » se lit comme « un plafond respecté ». Même famille que R24.
+
+  ⚠️ **Et le bit `synergyCharge` reste à 1 quand la barre est pleine** : il porte la comparaison, pas
+  l'état de la jauge. Un bit asservi à la jauge obligerait le client à connaître le plafond pour
+  interpréter le message.
 
 - [ ] **Étape 4 : commit** — `feat(back): le compteur de Synergie`
 

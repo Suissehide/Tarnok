@@ -322,6 +322,12 @@ snapshot**, pas un par joueur.
 **En solo la barre ne monte jamais**, par construction, et c'est voulu — le §6.5 en fait un outil de
 regroupement qui fonctionne *par le gain, jamais par la punition*.
 
+⚠️ **Quand la barre est pleine, le bit vaut quand même 1.** Ce document ne le disait pas, et il y a
+deux lectures possibles : le bit est **la comparaison**, ou le bit est « la jauge a bougé ». C'est la
+première qui vaut — le §6.1 dit que la comparaison ne rend qu'un booléen, et le total fait foi dans
+le `SNAPSHOT`, donc le client n'a rien à recalculer. Un bit asservi à la jauge obligerait le client à
+connaître le plafond pour interpréter le message.
+
 ## 8. Le protocole
 
 Deux messages nouveaux, tous deux datés par tick.
