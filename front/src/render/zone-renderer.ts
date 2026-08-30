@@ -203,6 +203,16 @@ export class ZoneRenderer {
     parent.addChild(this.#container);
   }
 
+  /**
+   * Vrai des que `load` a pose sa texture. Expose pour le test, comme
+   * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
+   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
+   * indetectable jusqu'a la tache 9 bis.
+   */
+  get loaded(): boolean {
+    return this.#texture !== null;
+  }
+
   /** Texture procedurale — hors du constructeur, meme raison que les autres renderers. */
   load(): void {
     this.#texture = makeZoneTexture(ZONE_TEXTURE_DIAMETER);

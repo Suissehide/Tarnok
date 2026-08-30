@@ -22,7 +22,7 @@ import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture
  */
 
 /** Une planche empaquetee (course ou attaque) : ses images, dans l'ordre du cycle. */
-interface AtlasClip {
+export interface AtlasClip {
   frames: number;
   rects: { x: number; y: number; w: number; h: number }[];
 }
@@ -34,14 +34,14 @@ interface AtlasClip {
  * unique qui ne varie pas d'une image d'animation a l'autre. Voir
  * `contentSizePx`.
  */
-interface ContentBounds {
+export interface ContentBounds {
   readonly x: number;
   readonly y: number;
   readonly w: number;
   readonly h: number;
 }
 
-interface AtlasManifest {
+export interface AtlasManifest {
   image: string;
   size: number;
   archetypes: {
@@ -336,8 +336,9 @@ export function facingScaleX(dx: number, previous: 1 | -1): 1 | -1 {
  * ⚠️ **Ce que cette teinte montre est APPROXIME cote client**, et sans
  * consequence : voir `GameClient#markLocally`, qui porte la regle en entier.
  *
- * Pure et exportee, comme `spriteScale`/`facingScaleX`/`selectClip` : `draw()`
- * exige un atlas charge (reseau + canevas), indisponible en test.
+ * Pure et exportee, comme `spriteScale`/`facingScaleX`/`selectClip`. Depuis la
+ * tache 9 bis, `draw()` est lui aussi testable (voir `adoptAtlas`) : les deux
+ * niveaux sont gardes, la regle ici et sa pose sur la particule la-bas.
  */
 export function markTint(horde: Horde, slot: number, tick: number): number {
   return elementOf(horde.markAt(slot, tick)).tint;
@@ -414,7 +415,22 @@ export class HordeRenderer {
     // `Texture.from` est synchrone : elle ne telecharge rien. Il faut passer
     // par `Assets.load` pour recuperer l'atlas depuis son URL.
     const atlas = await Assets.load<Texture>(`${this.assetsBase}/derived/${manifest.image}`);
+    this.adoptAtlas(manifest, atlas);
+  }
 
+  /**
+   * Decoupe l'atlas et rend le renderer capable de dessiner.
+   *
+   * ⚠️ **Separe de `load` PARCE QUE `load` va sur le reseau** (tache 9 bis) :
+   * un `fetch` et un `Assets.load` qu'aucun environnement de test n'a. Tant
+   * que les deux etaient une seule methode, `draw` retournait toujours au
+   * premier `if (!this.#loaded)` en test, et **tout son corps — la teinte
+   * elementaire du §6.6 comprise — pouvait etre retire sans qu'une seule
+   * assertion ne bouge.** Verifie par mutation a l'etape 5a. Avec ce point
+   * d'accroche, `horde-renderer.test.ts` adopte un atlas synthetique et
+   * mesure ce que `draw` pose reellement sur les particules.
+   */
+  adoptAtlas(manifest: AtlasManifest, atlas: Texture): void {
     const texturesOf = (clip: AtlasClip): Texture[] =>
       clip.rects.map(
         (r) =>
@@ -437,6 +453,25 @@ export class HordeRenderer {
       PROJECTILE_HIT_RADIUS,
     );
     this.#loaded = true;
+  }
+
+  /** Vrai des que l'atlas est decoupe — meme lecture que sur les calques procéduraux. */
+  get loaded(): boolean {
+    return this.#loaded;
+  }
+
+  /**
+   * Vrai si la TEINTE est reteleversee au GPU a chaque image.
+   *
+   * Lue sur le conteneur lui-meme, jamais sur l'objet passe au constructeur :
+   * c'est Pixi qui traduit `dynamicProperties` en descripteurs, et seule cette
+   * traduction dit ce qui sera vraiment reteleverse. A `false`, la teinte
+   * posee dans `draw` serait envoyee une fois puis jamais rafraichie, et un
+   * ennemi garderait la couleur du precedent occupant de son creneau —
+   * mutation qui survivait a 170 tests verts avant la tache 9 bis.
+   */
+  get dynamicTint(): boolean {
+    return this.#container._properties.color?.dynamic === true;
   }
 
   attach(parent: Container): void {
@@ -528,13 +563,12 @@ export class HordeRenderer {
       // Teinte elementaire (§6.6) : posee sur TOUTE la horde, sans jamais
       // tester l'element — `ELEMENT.NEUTRE` porte l'identite. Voir `markTint`.
       //
-      // ⚠️ **Cette ligne, comme tout le corps de `draw`, n'est gardee par
-      // aucun test** : `draw` retourne tant que l'atlas n'est pas charge, et le
-      // charger demande un `fetch` et un canevas que l'environnement de test
-      // n'a pas. Verifie par mutation (etape 5a) : la retirer, ou remettre
-      // `color: false` sur le conteneur, laisse la suite verte. Ce qui est
-      // garde, c'est `markTint` elle-meme — meme partage que `spriteScale`,
-      // `facingScaleX` et `selectClip` depuis l'etape 3.
+      // Cette ligne A ETE non gardee pendant toute la tache 9 : `draw`
+      // retournait au premier `if (!this.#loaded)` en test, faute d'atlas.
+      // `adoptAtlas` (tache 9 bis) a ouvert le corps de `draw` a la suite, et
+      // c'est `horde-renderer.test.ts` qui la garde desormais — un ennemi
+      // marque ET un ennemi nu dans la meme image, parce que la valeur par
+      // defaut de `Particle.tint` est justement `0xffffff`.
       particle.tint = markTint(horde, i, tick);
       children.push(particle);
     }

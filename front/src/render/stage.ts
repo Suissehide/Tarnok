@@ -42,6 +42,17 @@ const PLAYER_RADIUS = 18;
 /** §4.5 : vue de dessus, tres legerement ecrasee. Pas d'isometrique. */
 const VERTICAL_SQUASH = 0.82;
 
+/** Un calque du monde : il s'attache a la scene, et sait dire si sa texture est posee. */
+interface SceneLayer {
+  attach(parent: Container): void;
+  readonly loaded: boolean;
+}
+
+/** Un calque dont la texture est procedurale, donc chargeable sans reseau. */
+interface ProceduralLayer extends SceneLayer {
+  load(): void;
+}
+
 export class Stage {
   readonly #app = new Application();
   readonly #world = new Container();
@@ -56,6 +67,40 @@ export class Stage {
   readonly #reactionFlashes = new ReactionFlashRenderer();
   /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
   #obstaclesDrawn = false;
+
+  /**
+   * Les calques du monde, **du sol vers le ciel** : l'ordre de ce tableau EST
+   * la hierarchie du §6.6 traduite en z-order.
+   *
+   * ⚠️ **Les zones EN PREMIER, et le flash de reaction EN DERNIER.** Une zone
+   * est du terrain teinte, discret, que rien ne doit masquer les monstres qui
+   * s'y trouvent ; la reaction est l'evenement le plus rare et le plus mortel
+   * du jeu, et elle passe devant tout le reste. Les orbes (au sol) avant la
+   * horde ; les projectiles et les flashs apres, pour rester visibles par-
+   * dessus les monstres qu'ils visent.
+   */
+  readonly #layers: readonly SceneLayer[] = [
+    this.#zones,
+    this.#orbs,
+    this.#horde,
+    this.#projectiles,
+    this.#impactFlashes,
+    this.#reactionFlashes,
+  ];
+
+  /**
+   * Les calques dont la texture est PROCEDURALE (canevas 2D) : aucun fetch
+   * reseau, donc rien qui puisse echouer comme l'atlas de la horde. C'est
+   * exactement `#layers` moins `#horde`, dont le chargement est asynchrone et
+   * a son propre rattrapage d'echec dans `init`.
+   */
+  readonly #procedural: readonly ProceduralLayer[] = [
+    this.#zones,
+    this.#orbs,
+    this.#projectiles,
+    this.#impactFlashes,
+    this.#reactionFlashes,
+  ];
 
   async init(parent: HTMLElement): Promise<void> {
     await this.#app.init({
@@ -73,32 +118,11 @@ export class Stage {
     this.#app.stage.addChild(this.#world);
     this.#world.addChild(mapBorder());
 
-    // Ordre d'affichage : apres la grille, avant les carres des joueurs
+    // Les calques du monde : apres la grille, avant les carres des joueurs
     // (ajoutes plus tard via `#spriteFor`), sinon les joueurs disparaissent
-    // sous la horde. Les zones puis les orbes (tous deux au sol) passent avant
-    // la horde ; les projectiles et les flashs passent apres, pour rester
-    // visibles par-dessus les monstres qu'ils visent.
-    //
-    // ⚠️ **Les zones EN PREMIER, et le flash de reaction EN DERNIER** : c'est
-    // la hierarchie du §6.6 traduite en ordre de calques. Une zone est du
-    // terrain teinte, discret, que rien ne doit masquer les monstres qui s'y
-    // trouvent ; la reaction est l'evenement le plus rare et le plus mortel du
-    // jeu, et elle passe devant tout le reste.
-    this.#zones.attach(this.#world);
-    this.#orbs.attach(this.#world);
-    this.#horde.attach(this.#world);
-    this.#projectiles.attach(this.#world);
-    this.#impactFlashes.attach(this.#world);
-    this.#reactionFlashes.attach(this.#world);
-
-    // Textures procedurales (canevas 2D) : aucun fetch reseau, ne peut pas
-    // echouer comme le chargement de l'atlas ci-dessous — pas de try/catch
-    // necessaire ici.
-    this.#zones.load();
-    this.#orbs.load();
-    this.#projectiles.load();
-    this.#impactFlashes.load();
-    this.#reactionFlashes.load();
+    // sous la horde. Voir `composeWorld` — c'est la seule partie de `init` que
+    // la suite sait executer.
+    this.composeWorld(this.#world);
 
     // Constat I4 : sans ce try/catch, un atlas absent (404 sur le manifeste,
     // deploiement ou l'atlas n'a pas ete depose sur MinIO) fait echouer cette
@@ -118,14 +142,52 @@ export class Stage {
     }
   }
 
+  /**
+   * Attache les calques du monde dans leur ordre d'affichage, puis charge
+   * leurs textures procedurales.
+   *
+   * ⚠️ **Separee de `init` PARCE QUE `init` construit une `Application` Pixi**
+   * — un contexte WebGL qu'aucun environnement de test ne fournit. Tant que
+   * cette composition vivait dans `init`, retirer un calque entier (« les
+   * zones ni attachees ni chargees ») laissait la suite verte a 170 tests.
+   * Ceci s'execute sans GPU : voir `stage.test.ts`.
+   *
+   * `HordeRenderer.load` n'en fait pas partie : elle va sur le reseau, et son
+   * echec a un traitement a elle dans `init`.
+   */
+  composeWorld(world: Container): void {
+    for (const layer of this.#layers) {
+      layer.attach(world);
+    }
+    for (const layer of this.#procedural) {
+      layer.load();
+    }
+  }
+
+  /**
+   * Etat de chargement de chaque calque du monde, dans l'ordre d'affichage.
+   * Expose pour le test, comme `boundsArea` sur les renderers : c'est la seule
+   * lecture qui distingue « attache » de « charge ».
+   */
+  get layersLoaded(): readonly boolean[] {
+    return this.#layers.map((layer) => layer.loaded);
+  }
+
   get canvas(): HTMLCanvasElement {
     return this.#app.canvas;
   }
 
-  /** Branche la boucle de rendu. `frame` rend l'etat a dessiner. */
-  run(frame: (now: number, dt: number) => RenderState): void {
+  /**
+   * Branche la boucle de rendu.
+   *
+   * ⚠️ **`frame` dessine tout, y compris les joueurs.** Le ticker n'appelle
+   * plus `draw` lui-meme depuis la tache 9 bis : sinon la moitie de l'image
+   * (les carres des joueurs et la camera) resterait hors de `composeFrame`,
+   * donc hors de portee du test — exactement la faille qu'on solde ici.
+   */
+  run(frame: (now: number, dt: number) => void): void {
     this.#app.ticker.add((ticker) => {
-      this.draw(frame(performance.now(), ticker.deltaMS / 1000));
+      frame(performance.now(), ticker.deltaMS / 1000);
     });
   }
 

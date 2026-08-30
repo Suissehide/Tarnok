@@ -6,7 +6,8 @@ import { beforeEach, describe, expect, it } from 'vitest';
 // que `draft.test.ts` — c'est ce qui permet de verifier le CABLAGE vers
 // `index.html` et pas seulement la fonction qui ecrit dedans.
 import indexHtml from '../../index.html?raw';
-import { paintSynergy, synergyRatio } from './hud';
+import type { HudInfo } from '../render/stage';
+import { type HudElements, paintHud, paintSynergy, synergyRatio } from './hud';
 
 /**
  * Étape 5a, §9 : *« la barre de Synergie : une jauge dans le HUD, visible de
@@ -114,5 +115,78 @@ describe('paintSynergy — ce que le joueur voit', () => {
 
     expect(dom.fill.style.width).toBe('0%');
     expect(dom.label.textContent).toBe(`0 / ${SYNERGY_MAX}`);
+  });
+});
+
+/**
+ * Tache 9 bis : le HUD entier, monte sur le vrai `index.html`.
+ *
+ * ⚠️ **C'est ici que meurt la mutation « `paintSynergy` retiree ».** Avant
+ * cette suite, l'appel vivait dans `main.ts` : la fonction etait gardee, le
+ * fait de l'appeler ne l'etait pas. La distinction n'est pas theorique — trois
+ * etapes de suite ont perdu une ligne de cablage exactement comme ca.
+ */
+function hudElements(): HudElements {
+  document.body.innerHTML = indexHtml;
+  const pick = (id: string): HTMLElement => {
+    const node = document.getElementById(id);
+    if (!node) {
+      throw new Error(`#${id} absent de index.html`);
+    }
+    return node;
+  };
+  return {
+    hp: pick('hud-hp'),
+    level: pick('hud-level'),
+    timer: pick('hud-timer'),
+    lateDeaths: pick('hud-late-deaths'),
+    synergyFill: pick('hud-synergy-fill'),
+    synergyLabel: pick('hud-synergy-label'),
+    freeze: pick('hud-freeze'),
+  };
+}
+
+const INFO: HudInfo = { hp: 73, xp: 500, level: 4, timer: '2:07', frozen: false };
+
+describe('paintHud — chaque case du HUD recoit son ecriture', () => {
+  let el: HudElements;
+
+  beforeEach(() => {
+    el = hudElements();
+  });
+
+  it('ecrit les points de vie du joueur local', () => {
+    paintHud(el, INFO, 0, 0);
+    expect(el.hp.textContent).toBe('73');
+  });
+
+  it('ecrit le niveau', () => {
+    paintHud(el, INFO, 0, 0);
+    expect(el.level.textContent).toBe('4');
+  });
+
+  it('ecrit le chronometre, prefixe', () => {
+    paintHud(el, INFO, 0, 0);
+    expect(el.timer.textContent).toBe('Temps 2:07');
+  });
+
+  it('ecrit le compteur de morts tardives — le chiffre de diagnostic du §2', () => {
+    paintHud(el, INFO, 12, 0);
+    expect(el.lateDeaths.textContent).toBe('12');
+  });
+
+  it('peint la jauge de Synergie', () => {
+    paintHud(el, INFO, 0, SYNERGY_MAX / 2);
+    expect(el.synergyFill.style.width).toBe('50%');
+    expect(el.synergyLabel.textContent).toBe(`${SYNERGY_MAX / 2} / ${SYNERGY_MAX}`);
+  });
+
+  /** Tache 24 : le gel de niveau, la dette non gardee de l'etape 3. */
+  it('montre le bandeau de gel pendant le gel, et le cache sinon', () => {
+    paintHud(el, { ...INFO, frozen: true }, 0, 0);
+    expect(el.freeze.classList.contains('hidden')).toBe(false);
+
+    paintHud(el, { ...INFO, frozen: false }, 0, 0);
+    expect(el.freeze.classList.contains('hidden')).toBe(true);
   });
 });

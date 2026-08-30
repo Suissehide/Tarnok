@@ -7,12 +7,32 @@ import {
   type RenderState,
   type RunOverSummary,
 } from './net/client';
+import { composeFrame } from './render/frame';
 import { formatSummary, hudInfo, Stage } from './render/stage';
 import './styles/main.css';
 
 import { API_URL, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
-import { paintSynergy } from './ui/hud';
+import { type HudElements, paintHud } from './ui/hud';
+
+/**
+ * Le DEMARRAGE, et rien d'autre : recherches DOM, `await stage.init()`,
+ * gestionnaires de clic, et le cablage des trois objets vivants (client,
+ * scene, ecrans) vers `composeFrame`.
+ *
+ * ⚠️ **Ce module n'est pas importable en test, et c'est assume.** Il fait son
+ * `await stage.init()` au niveau module ; l'importer executerait tout le
+ * demarrage et construirait une `Application` Pixi qu'aucun environnement de
+ * test ne sait instancier. La consequence a coute trois etapes : le gel de
+ * niveau (etape 3), `draftScreen.update()` (etape 4), puis `drawZones`,
+ * `drawReactionFlashes` et `paintSynergy` (etape 5a) ont tous vecu ici sans
+ * qu'une seule assertion ne les garde.
+ *
+ * La regle qui en sort, et qui tient tant que ce fichier reste maigre : **tout
+ * ce qui DECIDE vit ailleurs** — `composeFrame` (`render/frame.ts`) pour ce
+ * qui est dessine, `paintHud` (`ui/hud.ts`) pour ce qui est ecrit,
+ * `Stage.composeWorld` pour les calques. Ici, il ne reste que les appels.
+ */
 
 const el = <T extends HTMLElement>(id: string): T => {
   const node = document.getElementById(id);
@@ -39,6 +59,17 @@ const summaryLevel = el('summary-level');
 const summaryKills = el('summary-kills');
 const errorLine = el('error');
 const codeInput = el<HTMLInputElement>('code');
+
+/** Les sept cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
+const hudElements: HudElements = {
+  hp: hudHp,
+  level: hudLevel,
+  timer: hudTimer,
+  lateDeaths: hudLateDeaths,
+  synergyFill: hudSynergyFill,
+  synergyLabel: hudSynergyLabel,
+  freeze: hudFreeze,
+};
 
 const keyboard = new Keyboard();
 const stage = new Stage();
@@ -128,40 +159,32 @@ function join(code: string): void {
   }
 
   /**
-   * Une image complete : avance le client, dessine chaque calque, met a jour
-   * le HUD (§4.6 — un HUD, pas des logs). Factorise entre le ticker Pixi
-   * (`stage.run`, qui appelle lui-meme `stage.draw`) et la poignee de
-   * debogage `step()` ci-dessous, qui doit `draw` explicitement puisqu'elle
-   * n'emprunte pas le ticker.
+   * Les deux ecrans HTML de l'image : le HUD (§4.6) et l'etalage de cartes
+   * (§7.2). Une paire d'appels, sans regle — la regle vit dans `paintHud` et
+   * dans `DraftScreen.update`, toutes deux gardees sous jsdom.
+   */
+  const screens = {
+    updateHud: (state: RenderState): void => {
+      paintHud(
+        hudElements,
+        hudInfo(state, client.level, client.hordeTick, client.isFrozen),
+        client.lateDeaths,
+        state.synergy,
+      );
+    },
+    updateDraft: (): void => draftScreen.update(),
+  };
+
+  /**
+   * Une image complete. Le CONTENU de la boucle vit dans `composeFrame`
+   * (`render/frame.ts`), ou chaque calque a son assertion ; il ne reste ici
+   * que les trois objets vivants qu'on lui donne.
    *
-   * ⚠️ **AUCUNE LIGNE DE CETTE FONCTION N'EST GARDEE PAR UN TEST, et il faut
-   * le savoir avant d'en retirer une.** Verifie par mutation a l'etape 5a :
-   * supprimer `stage.drawZones`, `stage.drawReactionFlashes` ou
-   * `paintSynergy` laisse la suite entierement verte. Ce module fait
-   * `await stage.init()` au niveau module — il n'est donc pas importable en
-   * test — et `Stage` construit une `Application` Pixi que ni `node` ni jsdom
-   * ne savent instancier. C'est la meme dette que `draftScreen.update()`
-   * depuis l'etape 4, dite plutot que masquee.
-   *
-   * Ce qui EST garde, c'est tout ce qui a pu en etre sorti : la selection des
-   * zones (`selectZones`), la teinte (`markTint`), la geometrie du flash
-   * (`reactionFlashScale`, `reactionTint`) et la jauge (`paintSynergy`, sous
-   * jsdom). Il ne reste ici que les appels.
+   * Factorise entre le ticker Pixi (`stage.run`) et la poignee de debogage
+   * `step()` ci-dessous, qui n'emprunte pas le ticker.
    */
   function renderFrame(now: number, dt: number): RenderState {
-    const state = client.update(now, dt);
-    // Étape 5a, §9 : les zones au sol EN PREMIER — c'est le calque le plus bas
-    // (voir l'ordre d'attache dans `Stage.init`), et `client.hordeTick` est ce
-    // qui les fait mourir, avec le meme predicat que le serveur.
-    stage.drawZones(client.zones, client.hordeTick);
-    stage.drawHorde(client.horde, now, client.hordeTick);
-    stage.drawOrbs(client.orbs, now);
-    stage.drawProjectiles(client.projectiles);
-    stage.drawImpactFlashes(client.hitFlashes, now);
-    stage.drawReactionFlashes(client.reactionFlashes, now);
-    updateHud(state, client);
-    draftScreen.update();
-    return state;
+    return composeFrame(client, stage, screens, now, dt);
   }
 
   stage.run(renderFrame);
@@ -190,15 +213,14 @@ function join(code: string): void {
       /**
        * Avance et dessine `count` images, sans dependre de rAF.
        *
-       * Rend aussi a chaque image : `draw` / `drawHorde` ne font que mettre a
-       * jour la scene en memoire, c'est le ticker Pixi (rAF, donc suspendu
-       * hors focus) qui la peint d'ordinaire. Sans ce rendu force, `step`
+       * Rend aussi a chaque image : `composeFrame` ne fait que mettre a jour
+       * la scene en memoire, c'est le ticker Pixi (rAF, donc suspendu hors
+       * focus) qui la peint d'ordinaire. Sans ce rendu force, `step`
        * avancerait la simulation sans que le canevas ne le montre jamais.
        */
       step(count = 1, dt = 1 / 60): void {
         for (let i = 0; i < count; i++) {
-          const state = renderFrame(performance.now(), dt);
-          stage.draw(state);
+          renderFrame(performance.now(), dt);
           stage.renderNow();
         }
       },
@@ -219,23 +241,6 @@ function onStatus(status: ConnectionStatus): void {
     closed: 'serveur injoignable — les carrés se figent',
   };
   hudStatus.textContent = label[status];
-}
-
-/** Ecrit le HUD dans le DOM a partir du contenu pur calcule par `hudInfo` (§4.6). */
-function updateHud(state: RenderState, client: GameClient): void {
-  const info = hudInfo(state, client.level, client.hordeTick, client.isFrozen);
-  hudHp.textContent = `${info.hp}`;
-  hudLevel.textContent = `${info.level}`;
-  hudTimer.textContent = `Temps ${info.timer}`;
-  hudLateDeaths.textContent = `${client.lateDeaths}`;
-  // Étape 5a, §9 : la jauge de Synergie. Le total vient du snapshot (donnee
-  // d'equipe, comme l'xp), la regle d'affichage vit dans `ui/hud.ts` — voir
-  // sa doc pour savoir pourquoi elle n'est pas ecrite ici.
-  paintSynergy(hudSynergyFill, hudSynergyLabel, state.synergy);
-  // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
-  // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent
-  // comme un plantage plutot que comme une pause voulue.
-  hudFreeze.classList.toggle('hidden', !info.frozen);
 }
 
 /** Affiche l'ecran de bilan (§7) — appele une seule fois, a la reception de `RUN_OVER`. */

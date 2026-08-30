@@ -1,5 +1,7 @@
 import { SYNERGY_MAX } from '@shared/constants';
 
+import type { HudInfo } from '../render/stage';
+
 /**
  * La jauge de Synergie du HUD — derniere ligne de la hierarchie du §6.6 :
  * *« la barre de Synergie : une jauge dans le HUD, visible de tous »*.
@@ -46,4 +48,53 @@ export function synergyRatio(synergy: number): number {
 export function paintSynergy(fill: HTMLElement, label: HTMLElement, synergy: number): void {
   fill.style.width = `${synergyRatio(synergy) * 100}%`;
   label.textContent = `${synergy} / ${SYNERGY_MAX}`;
+}
+
+/**
+ * Les elements du HUD, tels que `index.html` les nomme.
+ *
+ * Passes en argument plutot que cherches ici : `paintHud` reste alors une
+ * fonction qui ecrit dans ce qu'on lui donne, et le test peut lui donner le
+ * vrai `index.html` monte sous jsdom — c'est ce qui verifie le CABLAGE, et
+ * pas seulement l'ecriture.
+ */
+export interface HudElements {
+  hp: HTMLElement;
+  level: HTMLElement;
+  timer: HTMLElement;
+  lateDeaths: HTMLElement;
+  synergyFill: HTMLElement;
+  synergyLabel: HTMLElement;
+  freeze: HTMLElement;
+}
+
+/**
+ * Ecrit tout le HUD (§4.6 : un HUD, pas des logs) a partir du contenu pur
+ * calcule par `hudInfo`.
+ *
+ * ⚠️ **Tache 9 bis : cette fonction vivait dans `main.ts`, donc nulle part.**
+ * Retirer l'appel a `paintSynergy` y laissait la suite entierement verte a 170
+ * tests — la jauge de Synergie, *« le coeur du projet »* (§7), n'etait gardee
+ * par rien d'autre que sa propre fonction, jamais par le fait qu'on l'appelle.
+ * Ici, une mutation qui retire une seule de ces lignes rougit.
+ *
+ * `lateDeaths` et `synergy` ne sont pas dans `HudInfo` : le premier vient de
+ * `GameClient.lateDeaths` (compteur de diagnostic, §2), le second de
+ * `RenderState.synergy` (donnee d'equipe du snapshot, comme l'xp).
+ */
+export function paintHud(
+  el: HudElements,
+  info: HudInfo,
+  lateDeaths: number,
+  synergy: number,
+): void {
+  el.hp.textContent = `${info.hp}`;
+  el.level.textContent = `${info.level}`;
+  el.timer.textContent = `Temps ${info.timer}`;
+  el.lateDeaths.textContent = `${lateDeaths}`;
+  paintSynergy(el.synergyFill, el.synergyLabel, synergy);
+  // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
+  // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme
+  // un plantage plutot que comme une pause voulue.
+  el.freeze.classList.toggle('hidden', !info.frozen);
 }

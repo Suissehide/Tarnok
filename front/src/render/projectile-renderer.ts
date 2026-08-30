@@ -137,6 +137,16 @@ export class ProjectileRenderer {
    * construisible (et son `boundsArea` lisible) sans lui, comme l'exige le
    * test unitaire de ce fichier.
    */
+  /**
+   * Vrai des que `load` a pose sa texture. Expose pour le test, comme
+   * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
+   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
+   * indetectable jusqu'a la tache 9 bis.
+   */
+  get loaded(): boolean {
+    return this.#texture !== null;
+  }
+
   load(): void {
     this.#texture = makeBoltTexture(20, '#f2c14e');
   }
@@ -204,6 +214,16 @@ export class OrbRenderer {
 
   attach(parent: Container): void {
     parent.addChild(this.#container);
+  }
+
+  /**
+   * Vrai des que `load` a pose sa texture. Expose pour le test, comme
+   * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
+   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
+   * indetectable jusqu'a la tache 9 bis.
+   */
+  get loaded(): boolean {
+    return this.#texture !== null;
   }
 
   load(): void {
@@ -298,6 +318,16 @@ export class ImpactFlashRenderer {
 
   attach(parent: Container): void {
     parent.addChild(this.#container);
+  }
+
+  /**
+   * Vrai des que `load` a pose sa texture. Expose pour le test, comme
+   * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
+   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
+   * indetectable jusqu'a la tache 9 bis.
+   */
+  get loaded(): boolean {
+    return this.#texture !== null;
   }
 
   load(): void {
@@ -469,6 +499,16 @@ export class ReactionFlashRenderer {
    * coloree rendrait la teinte du couple d'elements fausse (meme raison que
    * `makeZoneTexture`).
    */
+  /**
+   * Vrai des que `load` a pose sa texture. Expose pour le test, comme
+   * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
+   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
+   * indetectable jusqu'a la tache 9 bis.
+   */
+  get loaded(): boolean {
+    return this.#texture !== null;
+  }
+
   load(): void {
     this.#texture = makeGlowTexture(REACTION_TEXTURE_DIAMETER, '#ffffff');
   }

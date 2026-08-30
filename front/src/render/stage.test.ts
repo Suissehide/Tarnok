@@ -1,16 +1,20 @@
+// @vitest-environment jsdom
 import { TICK_HZ } from '@shared/constants';
-import { describe, expect, it } from 'vitest';
+import { Container } from 'pixi.js';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import type { RenderState } from '../net/client';
-import { formatSummary, formatTimer, hudInfo, obstacleCells } from './stage';
+import { formatSummary, formatTimer, hudInfo, obstacleCells, Stage } from './stage';
 
 /**
  * `hudInfo`/`formatSummary`/`formatTimer` sont des fonctions PURES, sans Pixi
  * ni `document` — voir leur doc dans `stage.ts`. C'est ce qui les rend
- * testables sans navigateur : `Stage` lui-meme (Pixi `Application`) ne l'est
- * pas dans cet environnement (`vitest`, `environment: 'node'`), donc c'est ici
- * — et seulement ici — que « le HUD reflete les pv et l'xp du snapshot » et
- * « le bilan affiche les chiffres portes par RUN_OVER » peuvent s'asserter.
+ * testables sans navigateur : c'est ici — et seulement ici — que « le HUD
+ * reflete les pv et l'xp du snapshot » et « le bilan affiche les chiffres
+ * portes par RUN_OVER » peuvent s'asserter.
+ *
+ * Depuis la tache 9 bis, `Stage.composeWorld` s'y ajoute : voir le dernier
+ * bloc, et la raison pour laquelle ce fichier tourne sous jsdom.
  */
 describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
   it('lit les pv du joueur local, pas d un autre joueur', () => {
@@ -132,5 +136,66 @@ describe('obstacleCells — geometrie des cellules bloquees, pour le dessin des 
     const mask = new Uint8Array(6);
 
     expect(obstacleCells(mask, 3, 2, 10)).toEqual([]);
+  });
+});
+
+/**
+ * Tache 9 bis : **la composition de la scene, gardee pour la premiere fois.**
+ *
+ * `Stage.init` construit une `Application` Pixi — un contexte WebGL qu'aucun
+ * environnement de test ne fournit — et c'est ce qui mettait TOUT `init` hors
+ * de portee : retirer un calque entier (« les zones ni attachees ni
+ * chargees ») laissait la suite verte a 170 tests. `composeWorld` est la part
+ * de `init` qui ne touche pas au GPU, et elle s'execute ici.
+ *
+ * Le contexte 2D est bouchonne : jsdom n'en fournit pas (il faudrait le paquet
+ * `canvas`), et les textures des calques sont procedurales. On ne verifie pas
+ * ce que le degrade dessine — c'est du pixel, invisible a un test — mais
+ * qu'une texture a bien ete POSEE sur chaque calque, ce qui est exactement la
+ * moitie « ni chargee » de la mutation.
+ */
+function stubCanvas2d(): void {
+  // Chaque methode ne fait rien EXPRES : le bouchon existe pour que
+  // `makeZoneTexture` & consorts aillent jusqu'a leur `Texture.from`, pas pour
+  // reproduire un rendu 2D.
+  const noop = (): void => undefined;
+  const gradient = { addColorStop: noop };
+  const context = {
+    createRadialGradient: () => gradient,
+    fillStyle: '' as unknown,
+    beginPath: noop,
+    arc: noop,
+    fill: noop,
+  };
+  const canvas = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
+  canvas.getContext = (): unknown => context;
+}
+
+describe('Stage.composeWorld — chaque calque attache ET charge', () => {
+  beforeAll(stubCanvas2d);
+
+  it('attache les six calques du monde', () => {
+    const world = new Container();
+    new Stage().composeWorld(world);
+
+    // Zones, orbes, horde, projectiles, flashs d'impact, flashs de reaction :
+    // le §6.6 en compte six, et un calque oublie est un calque invisible.
+    expect(world.children).toHaveLength(6);
+  });
+
+  it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {
+    const stage = new Stage();
+    stage.composeWorld(new Container());
+
+    // Dans l'ordre d'affichage : zones, orbes, HORDE, projectiles, flashs
+    // d'impact, flashs de reaction. Seule la horde reste `false` — son atlas
+    // se fetch, et `init` le charge a part avec son propre rattrapage d'echec.
+    expect(stage.layersLoaded).toEqual([true, true, false, true, true, true]);
+  });
+
+  it('ne charge rien tant que le monde n a pas ete compose', () => {
+    // La moitie basse de la mutation : sans elle, un `layersLoaded` qui
+    // rendrait `true` partout passerait le test precedent sans rien garder.
+    expect(new Stage().layersLoaded).toEqual([false, false, false, false, false, false]);
   });
 });

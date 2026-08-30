@@ -2,9 +2,19 @@ import { MAP_SIZE, MARK_DURATION_TICKS, PROJECTILE_HIT_RADIUS } from '@shared/co
 import { ELEMENT, elementOf } from '@shared/elements';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
+import {
+  Container,
+  type Particle,
+  type ParticleContainer,
+  Rectangle,
+  Texture,
+  TextureSource,
+} from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
 import {
+  type AtlasClip,
+  type AtlasManifest,
   BAND_COUNT,
   bandOf,
   contentSizePx,
@@ -12,6 +22,7 @@ import {
   FACING_DEAD_ZONE_PX,
   FACING_MAX_STEP_PX,
   facingScaleX,
+  HordeRenderer,
   markTint,
   selectClip,
   sortByDepth,
@@ -282,5 +293,125 @@ describe('markTint — la teinte elementaire du sprite (§6.6)', () => {
     // qui la figerait garderait une valeur, pas un comportement.
     expect(markTint(horde, 0, 100 + MARK_DURATION_TICKS - 1)).toBe(elementOf(ELEMENT.BRAISE).tint);
     expect(markTint(horde, 0, 100 + MARK_DURATION_TICKS)).toBe(0xffffff);
+  });
+});
+
+/**
+ * Tache 9 bis : **le corps de `draw`, atteint pour la premiere fois.**
+ *
+ * `draw` retournait au premier `if (!this.#loaded)` dans tout environnement de
+ * test, parce que `load` fetch un manifeste et un atlas. Deux mutations y
+ * survivaient a 170 tests verts : retirer la pose de la teinte, et remettre
+ * `color: false` sur le conteneur. `adoptAtlas` separe le decoupage du reseau,
+ * et un atlas synthetique suffit alors a mesurer ce que `draw` pose vraiment.
+ *
+ * ⚠️ **Les deux moities, comme pour `markTint`** (R24/R25) : un `draw` qui ne
+ * poserait jamais la teinte laisserait `Particle.tint` a sa valeur par defaut,
+ * qui est justement `0xffffff` — donc le cas NON marque passerait tout seul.
+ * Seul l'ennemi marque prouve que la ligne existe.
+ */
+function syntheticAtlas(): { manifest: AtlasManifest; atlas: Texture } {
+  const clip: AtlasClip = { frames: 1, rects: [{ x: 0, y: 0, w: 32, h: 32 }] };
+  return {
+    manifest: {
+      image: 'atlas.png',
+      size: 64,
+      archetypes: [
+        {
+          id: 0,
+          name: 'synthetique',
+          cell: 32,
+          bounds: { x: 0, y: 0, w: 32, h: 32 },
+          clips: { run: clip, attack: clip },
+        },
+      ],
+    },
+    atlas: new Texture({ source: new TextureSource({ width: 64, height: 64 }) }),
+  };
+}
+
+/** Deux ennemis poses, le creneau 0 marque a la Braise au tick `TINT_TICK`. */
+const TINT_TICK = 100;
+
+function drawnParticles(horde: Horde): Particle[] {
+  const renderer = new HordeRenderer('/assets-de-test');
+  const { manifest, atlas } = syntheticAtlas();
+  renderer.adoptAtlas(manifest, atlas);
+
+  const world = new Container();
+  renderer.attach(world);
+  renderer.draw(horde, new Rectangle(0, 0, MAP_SIZE, MAP_SIZE), 0, TINT_TICK);
+
+  const container = world.children[0] as ParticleContainer;
+  // `particleChildren` est type `IParticle[]`, qui ne porte pas `tint` (seul
+  // son encodage `color`) ; le reservoir de `HordeRenderer`, lui, ne contient
+  // que des `Particle`.
+  return [...(container.particleChildren as Particle[])];
+}
+
+function twoEnemies(): Horde {
+  const horde = new Horde(4);
+  const order: WaveOrder = {
+    waveId: 1,
+    spawnTick: 0,
+    seed: 3,
+    archetype: 0,
+    formation: FORMATION.SCATTER,
+    anchorX: 3000,
+    anchorY: 3000,
+    count: 2,
+  };
+  horde.spawn(order);
+  return horde;
+}
+
+/** La particule dessinee a la position du creneau `slot` — l'ordre de `draw` est celui de la PROFONDEUR. */
+function particleOf(particles: Particle[], horde: Horde, slot: number): Particle {
+  const found = particles.find((p) => p.x === horde.x[slot] && p.y === horde.y[slot]);
+  if (!found) {
+    throw new Error(`aucune particule dessinee pour le creneau ${slot}`);
+  }
+  return found;
+}
+
+describe('HordeRenderer.draw — la teinte elementaire arrive bien sur la particule', () => {
+  it('dessine une particule par ennemi visible', () => {
+    const horde = twoEnemies();
+    expect(drawnParticles(horde)).toHaveLength(2);
+  });
+
+  it('pose la teinte de l element sur l ennemi MARQUE', () => {
+    const horde = twoEnemies();
+    horde.applyMark(0, ELEMENT.BRAISE, 1, TINT_TICK);
+
+    const marked = particleOf(drawnParticles(horde), horde, 0);
+    expect(marked.tint).toBe(elementOf(ELEMENT.BRAISE).tint);
+  });
+
+  it('laisse l ennemi NON marque a l identite, dans la meme image', () => {
+    const horde = twoEnemies();
+    horde.applyMark(0, ELEMENT.BRAISE, 1, TINT_TICK);
+
+    const plain = particleOf(drawnParticles(horde), horde, 1);
+    expect(plain.tint).toBe(0xffffff);
+  });
+
+  it('distingue deux elements : le Givre ne rend pas la teinte de la Braise', () => {
+    const horde = twoEnemies();
+    horde.applyMark(0, ELEMENT.GIVRE, 1, TINT_TICK);
+
+    const marked = particleOf(drawnParticles(horde), horde, 0);
+    expect(marked.tint).toBe(elementOf(ELEMENT.GIVRE).tint);
+    expect(marked.tint).not.toBe(elementOf(ELEMENT.BRAISE).tint);
+  });
+
+  /**
+   * ⚠️ **`color` dynamique, sinon la teinte est televersee une fois puis
+   * jamais rafraichie** — et un ennemi garde la couleur du precedent occupant
+   * de son creneau. Rien dans `draw` ne le montre : le drapeau ne se lit que
+   * sur le conteneur.
+   */
+  it('reteleverse la teinte a chaque image', () => {
+    expect(new HordeRenderer('/assets-de-test').dynamicTint).toBe(true);
   });
 });
