@@ -37,6 +37,9 @@ class RecordingStage implements FrameStage {
   drawZones(...args: unknown[]): void {
     this.#record('zones', ...args);
   }
+  drawMarks(...args: unknown[]): void {
+    this.#record('marques', ...args);
+  }
   drawHorde(...args: unknown[]): void {
     this.#record('horde', ...args);
   }
@@ -136,9 +139,28 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(stage.argsOf('zones')).toEqual([client.zones, client.hordeTick]);
   });
 
-  it('dessine la horde, avec l horloge murale ET le tick — jamais deux fois la meme', () => {
+  /**
+   * ⚠️ **Tache 13 : c'est ce calque qui porte desormais le piege du tick.**
+   * Il lit la MEME horde que `drawHorde`, mais au tick de simulation — celui
+   * qui fait expirer une marque. Passer `now` a la place laisserait des anneaux
+   * allumes ou eteints au hasard, et l'ecart entre `NOW` et `hordeTick` dans ce
+   * double est ce qui le rend visible.
+   */
+  it('dessine les anneaux de marque, avec la horde et le TICK de horde', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('horde')).toEqual([client.horde, NOW, client.hordeTick]);
+    expect(stage.argsOf('marques')).toEqual([client.horde, client.hordeTick]);
+  });
+
+  /**
+   * ⚠️ **La horde ne recoit plus le tick depuis la tache 13** : il ne servait
+   * qu'a la teinte elementaire de son sprite, partie au sol. Un argument de
+   * plus, que personne ne lirait, serait du code qui ment — et la moitie
+   * « jamais l'horloge a la place du tick » de l'ancienne assertion vit
+   * maintenant sur `drawMarks`, juste au-dessus.
+   */
+  it('dessine la horde avec la seule horloge murale', () => {
+    const { stage, client } = compose();
+    expect(stage.argsOf('horde')).toEqual([client.horde, NOW]);
   });
 
   it('dessine les orbes', () => {
@@ -189,6 +211,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     const { stage } = compose();
     expect(stage.order).toEqual([
       'zones',
+      'marques',
       'horde',
       'orbes',
       'projectiles',

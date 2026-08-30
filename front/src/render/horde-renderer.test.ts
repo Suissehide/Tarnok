@@ -1,5 +1,4 @@
-import { MAP_SIZE, MARK_DURATION_TICKS, PROJECTILE_HIT_RADIUS } from '@shared/constants';
-import { ELEMENT, elementOf } from '@shared/elements';
+import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS } from '@shared/weapons';
@@ -25,7 +24,6 @@ import {
   FACING_MAX_STEP_PX,
   facingScaleX,
   HordeRenderer,
-  markTint,
   selectClip,
   sortByDepth,
   spriteScale,
@@ -288,68 +286,17 @@ describe("selectClip choisit l'attaque a l'arret, la course sinon", () => {
 });
 
 /**
- * Étape 5a, §9 : *« un element sur un ennemi : teinte du sprite »*. La teinte
- * est ce que le §6.6 appelle « le probleme visuel le plus difficile du
- * projet », et c'est aussi la ligne dont le cout doit rester nul — d'ou une
- * fonction qui ne teste JAMAIS l'element et s'appuie sur `ELEMENT.NEUTRE =
- * 0xffffff`, l'identite du produit que fait `Particle.tint`.
- *
- * ⚠️ **Les deux moities, toujours** (R24/R25) : « rien ne se teinte » et
- * « tout se teinte pareil » se ressemblent beaucoup dans un test faible. Un
- * `markTint` qui rendrait toujours `0xffffff` passerait le cas non marque ; un
- * qui rendrait toujours la teinte de la Braise passerait le cas marque. Il
- * faut donc, dans le meme fichier, un marque QUI CHANGE et un non marque QUI
- * NE CHANGE PAS.
- */
-describe('markTint — la teinte elementaire du sprite (§6.6)', () => {
-  it('teint un ennemi marque de la couleur de son element', () => {
-    const horde = new Horde(4);
-    horde.applyMark(0, ELEMENT.BRAISE, 1, 100);
-
-    expect(markTint(horde, 0, 100)).toBe(elementOf(ELEMENT.BRAISE).tint);
-  });
-
-  it('distingue deux elements : la Braise et le Givre ne rendent pas la meme teinte', () => {
-    const horde = new Horde(4);
-    horde.applyMark(0, ELEMENT.BRAISE, 1, 100);
-    horde.applyMark(1, ELEMENT.GIVRE, 1, 100);
-
-    expect(markTint(horde, 0, 100)).not.toBe(markTint(horde, 1, 100));
-  });
-
-  it("laisse un ennemi NON marque a l'identite 0xffffff — le sprite est rendu inchange", () => {
-    const horde = new Horde(4);
-
-    // Aucune marque posee : le tableau vaut `ELEMENT.NEUTRE`, et c'est la
-    // seule chose qui rend la teinte gratuite pour toute la horde.
-    expect(markTint(horde, 0, 100)).toBe(0xffffff);
-  });
-
-  it('rend l identite des que la marque a EXPIRE, sans qu aucun balayage ne l efface', () => {
-    const horde = new Horde(4);
-    horde.applyMark(0, ELEMENT.BRAISE, 1, 100);
-
-    // Derive de la constante partagee, jamais un nombre en dur : la duree de
-    // marque est un reglage de la tache 11 (« a tester en jeu »), et un test
-    // qui la figerait garderait une valeur, pas un comportement.
-    expect(markTint(horde, 0, 100 + MARK_DURATION_TICKS - 1)).toBe(elementOf(ELEMENT.BRAISE).tint);
-    expect(markTint(horde, 0, 100 + MARK_DURATION_TICKS)).toBe(0xffffff);
-  });
-});
-
-/**
  * Tache 9 bis : **le corps de `draw`, atteint pour la premiere fois.**
  *
  * `draw` retournait au premier `if (!this.#loaded)` dans tout environnement de
- * test, parce que `load` fetch un manifeste et un atlas. Deux mutations y
- * survivaient a 170 tests verts : retirer la pose de la teinte, et remettre
- * `color: false` sur le conteneur. `adoptAtlas` separe le decoupage du reseau,
- * et un atlas synthetique suffit alors a mesurer ce que `draw` pose vraiment.
+ * test, parce que `load` fetch un manifeste et un atlas. `adoptAtlas` separe le
+ * decoupage du reseau, et un atlas synthetique suffit alors a mesurer ce que
+ * `draw` pose vraiment.
  *
- * ⚠️ **Les deux moities, comme pour `markTint`** (R24/R25) : un `draw` qui ne
- * poserait jamais la teinte laisserait `Particle.tint` a sa valeur par defaut,
- * qui est justement `0xffffff` — donc le cas NON marque passerait tout seul.
- * Seul l'ennemi marque prouve que la ligne existe.
+ * ⚠️ **Ce bloc gardait la teinte elementaire jusqu'a la tache 13.** Elle a
+ * disparu du sprite — invisible en jeu — au profit d'un anneau au sol
+ * (`mark-renderer.test.ts`). Ce qui reste ici est ce que `draw` pose encore :
+ * une particule par ennemi visible, son ancre et son echelle (tache 14).
  */
 /**
  * ⚠️ **La cellule, le contenu, la largeur et la hauteur valent tous des
@@ -387,9 +334,6 @@ function syntheticAtlas(): { manifest: AtlasManifest; atlas: Texture } {
   };
 }
 
-/** Deux ennemis poses, le creneau 0 marque a la Braise au tick `TINT_TICK`. */
-const TINT_TICK = 100;
-
 function drawnParticles(horde: Horde): Particle[] {
   const renderer = new HordeRenderer('/assets-de-test');
   const { manifest, atlas } = syntheticAtlas();
@@ -397,12 +341,11 @@ function drawnParticles(horde: Horde): Particle[] {
 
   const world = new Container();
   renderer.attach(world);
-  renderer.draw(horde, new Rectangle(0, 0, MAP_SIZE, MAP_SIZE), 0, TINT_TICK);
+  renderer.draw(horde, new Rectangle(0, 0, MAP_SIZE, MAP_SIZE), 0);
 
   const container = world.children[0] as ParticleContainer;
-  // `particleChildren` est type `IParticle[]`, qui ne porte pas `tint` (seul
-  // son encodage `color`) ; le reservoir de `HordeRenderer`, lui, ne contient
-  // que des `Particle`.
+  // `particleChildren` est type `IParticle[]` ; le reservoir de
+  // `HordeRenderer`, lui, ne contient que des `Particle`.
   return [...(container.particleChildren as Particle[])];
 }
 
@@ -431,45 +374,10 @@ function particleOf(particles: Particle[], horde: Horde, slot: number): Particle
   return found;
 }
 
-describe('HordeRenderer.draw — la teinte elementaire arrive bien sur la particule', () => {
+describe('HordeRenderer.draw — ce que le corps de draw pose vraiment', () => {
   it('dessine une particule par ennemi visible', () => {
     const horde = twoEnemies();
     expect(drawnParticles(horde)).toHaveLength(2);
-  });
-
-  it('pose la teinte de l element sur l ennemi MARQUE', () => {
-    const horde = twoEnemies();
-    horde.applyMark(0, ELEMENT.BRAISE, 1, TINT_TICK);
-
-    const marked = particleOf(drawnParticles(horde), horde, 0);
-    expect(marked.tint).toBe(elementOf(ELEMENT.BRAISE).tint);
-  });
-
-  it('laisse l ennemi NON marque a l identite, dans la meme image', () => {
-    const horde = twoEnemies();
-    horde.applyMark(0, ELEMENT.BRAISE, 1, TINT_TICK);
-
-    const plain = particleOf(drawnParticles(horde), horde, 1);
-    expect(plain.tint).toBe(0xffffff);
-  });
-
-  it('distingue deux elements : le Givre ne rend pas la teinte de la Braise', () => {
-    const horde = twoEnemies();
-    horde.applyMark(0, ELEMENT.GIVRE, 1, TINT_TICK);
-
-    const marked = particleOf(drawnParticles(horde), horde, 0);
-    expect(marked.tint).toBe(elementOf(ELEMENT.GIVRE).tint);
-    expect(marked.tint).not.toBe(elementOf(ELEMENT.BRAISE).tint);
-  });
-
-  /**
-   * ⚠️ **`color` dynamique, sinon la teinte est televersee une fois puis
-   * jamais rafraichie** — et un ennemi garde la couleur du precedent occupant
-   * de son creneau. Rien dans `draw` ne le montre : le drapeau ne se lit que
-   * sur le conteneur.
-   */
-  it('reteleverse la teinte a chaque image', () => {
-    expect(new HordeRenderer('/assets-de-test').dynamicTint).toBe(true);
   });
 });
 

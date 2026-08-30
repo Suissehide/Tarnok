@@ -57,7 +57,13 @@ export interface FrameClient {
  */
 export interface FrameStage {
   drawZones(zones: ZoneField, tick: number): void;
-  drawHorde(horde: Horde, timeMs: number, tick: number): void;
+  /**
+   * Les anneaux de marque, sous les pieds des ennemis marques (tache 13). Ils
+   * lisent la horde comme `drawHorde`, mais au TICK de simulation : c'est lui
+   * qui fait expirer une marque.
+   */
+  drawMarks(horde: Horde, tick: number): void;
+  drawHorde(horde: Horde, timeMs: number): void;
   drawOrbs(orbs: DerivedOrbs, timeMs: number): void;
   drawProjectiles(projectiles: Projectiles): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
@@ -80,13 +86,15 @@ export interface FrameScreens {
  * Avance le client d'une image et dessine tout ce qui en depend.
  *
  * ⚠️ **L'ORDRE EST LE §6.6.** Les zones au sol en premier (le calque le plus
- * bas), le flash de reaction en dernier des effets de monde, puis les carres
- * des joueurs et la camera (`draw`). Le meme ordre que l'attache des calques
- * dans `Stage.composeWorld`.
+ * bas), puis les anneaux de marque qui s'y posent, le flash de reaction en
+ * dernier des effets de monde, puis les carres des joueurs et la camera
+ * (`draw`). Le meme ordre que l'attache des calques dans `Stage.composeWorld`.
  *
  * `now` est l'horloge MURALE (animations, flashs) et `client.hordeTick` le
- * tick de simulation (zones, marques) : les deux ne sont pas interchangeables,
- * et `drawHorde` recoit les deux.
+ * tick de simulation (zones, marques) : les deux ne sont pas interchangeables.
+ * Depuis la tache 13, la horde ne recoit plus que l'horloge murale — la marque
+ * elementaire a quitte son sprite pour le calque `drawMarks`, qui prend le
+ * tick.
  */
 export function composeFrame(
   client: FrameClient,
@@ -97,7 +105,8 @@ export function composeFrame(
 ): RenderState {
   const state = client.update(now, dt);
   stage.drawZones(client.zones, client.hordeTick);
-  stage.drawHorde(client.horde, now, client.hordeTick);
+  stage.drawMarks(client.horde, client.hordeTick);
+  stage.drawHorde(client.horde, now);
   stage.drawOrbs(client.orbs, now);
   stage.drawProjectiles(client.projectiles);
   stage.drawImpactFlashes(client.hitFlashes, now);

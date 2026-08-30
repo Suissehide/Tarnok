@@ -14,6 +14,7 @@ import type {
 } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
 import { HordeRenderer } from './horde-renderer';
+import { MarkRingRenderer } from './mark-renderer';
 import {
   ImpactFlashRenderer,
   OrbRenderer,
@@ -61,6 +62,7 @@ export class Stage {
   // compile pas sous `strictPropertyInitialization`. Initialisation directe.
   #horde = new HordeRenderer(ASSETS_BASE);
   readonly #zones = new ZoneRenderer();
+  readonly #marks = new MarkRingRenderer();
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();
   readonly #impactFlashes = new ImpactFlashRenderer();
@@ -78,9 +80,15 @@ export class Stage {
    * du jeu, et elle passe devant tout le reste. Les orbes (au sol) avant la
    * horde ; les projectiles et les flashs apres, pour rester visibles par-
    * dessus les monstres qu'ils visent.
+   *
+   * ⚠️ **Les anneaux de marque juste apres les zones** (tache 13) : ils se
+   * posent SOUS les pieds des creatures, donc ils doivent passer sous elles.
+   * Au-dessus des zones, parce qu'ils marquent un ennemi individuel sur le sol
+   * que la zone vient de teindre en grand.
    */
   readonly #layers: readonly SceneLayer[] = [
     this.#zones,
+    this.#marks,
     this.#orbs,
     this.#horde,
     this.#projectiles,
@@ -96,6 +104,7 @@ export class Stage {
    */
   readonly #procedural: readonly ProceduralLayer[] = [
     this.#zones,
+    this.#marks,
     this.#orbs,
     this.#projectiles,
     this.#impactFlashes,
@@ -274,17 +283,19 @@ export class Stage {
     this.#world.addChildAt(mapObstacles(map.mask, map.cols, map.rows, map.cellSize), 1);
   }
 
-  /**
-   * `tick` sert la teinte elementaire, `timeMs` l'animation — voir
-   * `HordeRenderer.draw`.
-   */
-  drawHorde(horde: Horde, timeMs: number, tick: number): void {
-    this.#horde.draw(horde, this.viewRect(), timeMs, tick);
+  /** `timeMs` est l'horloge murale de l'animation — voir `HordeRenderer.draw`. */
+  drawHorde(horde: Horde, timeMs: number): void {
+    this.#horde.draw(horde, this.viewRect(), timeMs);
   }
 
   /** `tick` decide quelles zones sont encore vivantes — voir `ZoneRenderer.draw`. */
   drawZones(zones: ZoneField, tick: number): void {
     this.#zones.draw(zones, tick, this.viewRect());
+  }
+
+  /** `tick` decide quelles marques sont encore vivantes — voir `MarkRingRenderer.draw`. */
+  drawMarks(horde: Horde, tick: number): void {
+    this.#marks.draw(horde, tick, this.viewRect());
   }
 
   drawOrbs(orbs: DerivedOrbs, timeMs: number): void {

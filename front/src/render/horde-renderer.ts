@@ -1,5 +1,4 @@
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
-import { elementOf } from '@shared/elements';
 import type { Horde } from '@shared/horde';
 import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
@@ -11,8 +10,17 @@ import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture
  * JavaScript par objet et par transform ». Le banc de l'etape 1 a chiffre
  * l'ecart avec des objets `Sprite` : x6.
  *
- * `uvs` en propriete dynamique permet l'animation ; `color` donnera gratuitement
- * la teinte elementaire du §6.6 a l'etape 5, sans rien reecrire ici.
+ * `uvs` en propriete dynamique permet l'animation.
+ *
+ * ⚠️ **Ce fichier a longtemps annonce que `color` donnerait « gratuitement la
+ * teinte elementaire du §6.6 a l'etape 5 ». La promesse a ete tenue, puis
+ * retiree** (tache 13 de l'etape 5a) : la teinte etait bien gratuite, et bien
+ * invisible — *« je ne vois pas la marque sur les ennemis »*. Elle multipliait
+ * un sprite deja sombre et bariole par une couleur d'element, ce qui ne change
+ * presque rien a ce qu'on lit. La marque est passee au sol, sous les pieds,
+ * dans `mark-renderer.ts` ; `markTint`, le `color` dynamique du conteneur et le
+ * `tick` que `draw` recevait sont partis avec elle. **Ce renderer ne connait
+ * plus les elements.**
  *
  * Aucun de `draw()`, `#depthSort()` ou `#ensurePool()` n'alloue en regime
  * etabli : reservoir de particules, tableaux de comptage et tableau
@@ -397,36 +405,6 @@ export function facingScaleX(dx: number, previous: 1 | -1): 1 | -1 {
   return dx > 0 ? 1 : -1;
 }
 
-/**
- * Teinte du sprite d'un ennemi au tick `tick` : celle de l'element qu'il
- * porte, ou `0xffffff` s'il n'en porte aucun.
- *
- * C'est la deuxieme ligne de la hierarchie du §6.6 — *« un element sur un
- * ennemi : teinte du sprite, gratuite dans le batch Pixi, cout 0 »*.
- *
- * ⚠️ **AUCUN test de l'element, et c'est tout l'interet.** `ELEMENT.NEUTRE`
- * porte `0xffffff`, l'identite du produit composante par composante que fait
- * `Particle.tint` : un ennemi non marque recoit donc une teinte qui ne change
- * rien, par le meme chemin que les autres. Toute la horde se teint sans une
- * seule branche par entite — un `if (element !== NEUTRE)` a 1 500 entites et
- * 60 images par seconde couterait exactement ce que le §4.3 interdit, et la
- * tache 2 a construit la table des elements pour l'eviter.
- *
- * ⚠️ **`markAt`, jamais `horde.mark` directement** : une marque EXPIRE, et son
- * expiration est derivee du seul `markUntil` (voir `Horde.markAt`). Lire le
- * tableau laisserait les ennemis teintes bien apres la fin de leur marque.
- *
- * ⚠️ **Ce que cette teinte montre est APPROXIME cote client**, et sans
- * consequence : voir `GameClient#markLocally`, qui porte la regle en entier.
- *
- * Pure et exportee, comme `spriteScale`/`facingScaleX`/`selectClip`. Depuis la
- * tache 9 bis, `draw()` est lui aussi testable (voir `adoptAtlas`) : les deux
- * niveaux sont gardes, la regle ici et sa pose sur la particule la-bas.
- */
-export function markTint(horde: Horde, slot: number, tick: number): number {
-  return elementOf(horde.markAt(slot, tick)).tint;
-}
-
 export class HordeRenderer {
   readonly #container = new ParticleContainer({
     // `vertex` : necessaire pour que `scaleX`/`scaleY` (mise a l'echelle
@@ -435,14 +413,12 @@ export class HordeRenderer {
     // flashs d'impact (`projectile-renderer.ts`) fait deja ce meme choix pour
     // la meme raison.
     //
-    // `color` : la teinte elementaire du §6.6 (voir `markTint`). Le
-    // commentaire de tete de ce fichier l'annonçait depuis l'etape 1 —
-    // « `color` donnera GRATUITEMENT la teinte elementaire du §6.6 a l'etape 5,
-    // sans rien reecrire ici » : c'est ce drapeau, et rien d'autre, qui rend
-    // la promesse. A `false`, la teinte posee dans `draw` serait televersee une
-    // fois puis jamais rafraichie, et un ennemi garderait la couleur du
-    // precedent occupant de son creneau.
-    dynamicProperties: { position: true, uvs: true, vertex: true, color: true, rotation: false },
+    // `color` : FAUX depuis la tache 13. Il a porte la teinte elementaire du
+    // §6.6 le temps des taches 9 a 12 ; la marque est maintenant un anneau au
+    // sol (`mark-renderer.ts`), et plus rien ici n'ecrit `Particle.tint`.
+    // Reteleverser a chaque image une couleur que personne ne pose serait un
+    // canal paye pour rien, sur le plus gros batch du jeu.
+    dynamicProperties: { position: true, uvs: true, vertex: true, color: false, rotation: false },
   });
   /** Réservoir de particules réutilisées : aucune allocation en régime établi. */
   readonly #pool: Particle[] = [];
@@ -507,11 +483,12 @@ export class HordeRenderer {
    * ⚠️ **Separe de `load` PARCE QUE `load` va sur le reseau** (tache 9 bis) :
    * un `fetch` et un `Assets.load` qu'aucun environnement de test n'a. Tant
    * que les deux etaient une seule methode, `draw` retournait toujours au
-   * premier `if (!this.#loaded)` en test, et **tout son corps — la teinte
-   * elementaire du §6.6 comprise — pouvait etre retire sans qu'une seule
-   * assertion ne bouge.** Verifie par mutation a l'etape 5a. Avec ce point
-   * d'accroche, `horde-renderer.test.ts` adopte un atlas synthetique et
-   * mesure ce que `draw` pose reellement sur les particules.
+   * premier `if (!this.#loaded)` en test, et **tout son corps pouvait etre
+   * retire sans qu'une seule assertion ne bouge.** Verifie par mutation a
+   * l'etape 5a. Avec ce point d'accroche, `horde-renderer.test.ts` adopte un
+   * atlas synthetique et mesure ce que `draw` pose reellement sur les
+   * particules — ce qui a d'abord garde la teinte elementaire, et garde
+   * aujourd'hui l'ancre et l'echelle de la tache 14.
    */
   adoptAtlas(manifest: AtlasManifest, atlas: Texture): void {
     const texturesOf = (clip: AtlasClip): Texture[] =>
@@ -543,20 +520,6 @@ export class HordeRenderer {
     return this.#loaded;
   }
 
-  /**
-   * Vrai si la TEINTE est reteleversee au GPU a chaque image.
-   *
-   * Lue sur le conteneur lui-meme, jamais sur l'objet passe au constructeur :
-   * c'est Pixi qui traduit `dynamicProperties` en descripteurs, et seule cette
-   * traduction dit ce qui sera vraiment reteleverse. A `false`, la teinte
-   * posee dans `draw` serait envoyee une fois puis jamais rafraichie, et un
-   * ennemi garderait la couleur du precedent occupant de son creneau —
-   * mutation qui survivait a 170 tests verts avant la tache 9 bis.
-   */
-  get dynamicTint(): boolean {
-    return this.#container._properties.color?.dynamic === true;
-  }
-
   attach(parent: Container): void {
     parent.addChild(this.#container);
   }
@@ -569,12 +532,12 @@ export class HordeRenderer {
    * trivial : la fenetre visible est un rectangle aligne sur les axes du monde.
    */
   /**
-   * `tick` est le tick de horde du client (`GameClient.hordeTick`) : il ne
-   * sert qu'a la teinte elementaire (`markTint`), dont l'expiration est
-   * DERIVEE d'un tick absolu. `timeMs`, lui, reste l'horloge murale de
-   * l'animation — les deux ne sont pas interchangeables.
+   * `timeMs` est l'horloge MURALE de l'animation. **Ce renderer ne recoit plus
+   * le tick de horde depuis la tache 13** : il ne servait qu'a la teinte
+   * elementaire, et un parametre que plus personne ne lit est du code qui ment.
+   * C'est `MarkRingRenderer.draw` qui le recoit desormais.
    */
-  draw(horde: Horde, view: Rectangle, timeMs: number, tick: number): void {
+  draw(horde: Horde, view: Rectangle, timeMs: number): void {
     if (!this.#loaded) {
       return;
     }
@@ -643,16 +606,6 @@ export class HordeRenderer {
       const scale = this.#scale[archetype] ?? 1;
       particle.scaleX = scale * (this.#facing[i] === -1 ? -1 : 1);
       particle.scaleY = scale;
-      // Teinte elementaire (§6.6) : posee sur TOUTE la horde, sans jamais
-      // tester l'element — `ELEMENT.NEUTRE` porte l'identite. Voir `markTint`.
-      //
-      // Cette ligne A ETE non gardee pendant toute la tache 9 : `draw`
-      // retournait au premier `if (!this.#loaded)` en test, faute d'atlas.
-      // `adoptAtlas` (tache 9 bis) a ouvert le corps de `draw` a la suite, et
-      // c'est `horde-renderer.test.ts` qui la garde desormais — un ennemi
-      // marque ET un ennemi nu dans la meme image, parce que la valeur par
-      // defaut de `Particle.tint` est justement `0xffffff`.
-      particle.tint = markTint(horde, i, tick);
       children.push(particle);
     }
 
