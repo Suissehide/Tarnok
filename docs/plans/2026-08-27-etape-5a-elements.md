@@ -143,6 +143,37 @@ Chaque tâche les respecte, sans les répéter.
 
   **Écrire le verdict dans le commit**, quel qu'il soit.
 
+- [ ] **Étape 7 bis : moins d'ennemis au début — décision de l'auteur, prise d'avance.**
+
+  > *« On fera moins d'ennemi au début, le temps d'obtenir des armes. »*
+
+  L'issue 3 est donc **pré-autorisée** : `waveCountBounds` s'ouvre sans avoir à remonter la
+  question. Les valeurs actuelles de `back/src/wave-director.ts` :
+
+  | Constante | Actuelle |
+  | --- | --- |
+  | `WAVE1_MIN_COUNT` | 16 |
+  | `WAVE1_MAX_COUNT` | 28 |
+  | `RAMP_WAVES` | 20 |
+  | `STEADY_MIN_COUNT` | 120 |
+  | `STEADY_MAX_COUNT` | 320 |
+
+  **Ce qu'il faut faire baisser, c'est le DÉBUT, pas le régime établi.** Le raisonnement de
+  l'auteur est le temps d'obtenir des armes : la première arme arrive au premier draft, donc au
+  premier niveau, donc après ~10 orbes en solo. La première vague tombe au tick 180 (6 s).
+
+  Deux leviers, et ils ne font pas la même chose :
+  - **baisser `WAVE1_*`** rend les premières vagues plus petites — c'est ce que l'auteur demande ;
+  - **augmenter `RAMP_WAVES`** étale la montée sur plus de vagues, donc laisse plus de temps avant
+    le régime établi.
+
+  **Les deux, et le dire dans le commit avec les chiffres retenus.** Ne pas toucher à
+  `STEADY_*` : le régime établi est ce que les bancs mesurent, et le §4.1 de l'orientation y tient.
+
+  ⚠️ **Vérifier que le niveau 2 reste atteignable.** Le test « le niveau 2 est atteignable » de
+  l'étape 3 existe ; moins d'ennemis, c'est moins d'orbes, et le seuil ne bouge pas. Un début trop
+  maigre repousserait la première arme au lieu de l'avancer — l'inverse exact de l'intention.
+
 - [ ] **Étape 8 : commit** — `feat(shared): la pietaille gagne une reserve de points de vie`
 
 ---
