@@ -184,8 +184,24 @@ jusqu'au premier draft. La borne doit vivre dans la règle de pose.
 
 ### 5.1 bis La règle de pose, bornée par construction
 
-**Une zone ne s'ajoute pas si elle recouvre déjà une zone du même élément : elle la rafraîchit.**
+**Une zone ne s'ajoute pas si son centre tombe DANS une zone du même élément : elle la rafraîchit.**
 Le `bornTick` de l'existante repart, la nouvelle n'est pas créée.
+
+⚠️ **« Dans une zone », pas « recouvre une zone ».** Une première version de ce paragraphe disait
+« recouvre », c'est-à-dire disques sécants, soit une distance de centres inférieure à **deux**
+rayons. Conséquence : deux zones du même élément se retrouveraient toujours à plus d'un diamètre
+l'une de l'autre et **ne se recouvriraient jamais** — une traînée de tir aurait des trous visibles
+entre les disques. Trouvé à l'exécution.
+
+Ce sont donc **deux prédicats distincts**, et il ne faut pas les confondre :
+
+| Question | Prédicat |
+| --- | --- |
+| Faut-il fusionner à la pose ? | le **centre** tombe dans une zone existante — distance < `ZONE_RADIUS` |
+| Deux zones réagissent-elles ? | les **disques** sont sécants — distance < `2 × ZONE_RADIUS` |
+
+La borne tient dans les deux cas — les centres restent à au moins un rayon l'un de l'autre, donc le
+compte reste fonction de la surface — mais seul le premier laisse une traînée continue.
 
 Le nombre de zones devient alors fonction de la **surface couverte**, pas de la cadence ni du
 nombre d'exemplaires. Un joueur qui arrose le même endroit entretient une zone ; un joueur qui

@@ -52,7 +52,7 @@ Chaque tâche les respecte, sans les répéter.
 | `Archetype.hp` (lourde) | **20** | quatre coups de dague — assez pour porter une marque et réagir |
 | `MARK_DURATION_TICKS` | **60** (2 s) | ⚠️ **à régler à l'œil, tâche 11.** Trop court, rien ne réagit ; trop long, tout réagit tout le temps |
 | `ZONE_LIFETIME_TICKS` | **90** (3 s) | dérivée des deux côtés depuis `bornTick`, **jamais annoncée** — même modèle que `ORB_LIFETIME_TICKS` |
-| `ZONE_RADIUS` | **70** | > `SEPARATION_RADIUS` (28), sinon une zone ne couvre jamais deux ennemis et le recouvrement ne se voit pas |
+| `ZONE_RADIUS` | **70** | > `SEPARATION_RADIUS` (28), sinon une zone ne couvre jamais deux ennemis. ⚠️ Sert **aussi** de rayon de fusion : c'est donc lui qui décide du *nombre* de zones, pas seulement de leur coût unitaire |
 | `ZONE_CAPACITY` | **128** | plafond dur, avec compteur de troncature — second rideau derrière la règle de fusion |
 | `REACTION_RADIUS` | **90** | = `ORB_PICKUP_RADIUS`, pour que le flash couvre visiblement ce qu'il tue |
 | `SYNERGY_MAX` | **20** | tient sur le `u16` déjà prévu dans le snapshot |
@@ -308,8 +308,15 @@ Chaque tâche les respecte, sans les répéter.
 **Fichiers :** créer `shared/zones.ts`, `shared/zones.test.ts` ; modifier `shared/constants.ts`
 
 **Interfaces :**
-- Produit : `ZoneField` — `spawn(element, x, y, playerId, tick)`, `expire(tick)`,
-  `count`, tableaux publics `element`, `x`, `y`, `by`, `bornTick`.
+- Produit : `ZoneField` — `spawn(element, x, y, playerId, tick)`, `expire(tick)`, `overlaps(a, b)`,
+  `count`, `truncatedZones`, tableaux publics `element`, `x`, `y`, `by`, `bornTick`.
+
+⚠️ **Contrat d'ordre :** `spawn` suppose que l'appelant a appelé `expire(tick)` **d'abord**, une
+fois par tick — même contrat que `OrbField.resolvePickups`, qui expire avant de résoudre. Sans ça,
+une zone périmée mais pas encore retirée serait *rafraîchie* au lieu d'être remplacée. **C'est à la
+tâche qui intègre `ZoneField` dans `Room.step` de le respecter**, pas à `spawn` de s'en défendre —
+une garde défensive ici serait le motif « deux gardes qui se couvrent », et la seconde ne serait
+testable qu'en mettant en scène un appelant fautif.
 
 - [ ] **Étape 1 : calquer `OrbField`.** `back/src/combat.ts` en contient déjà un exemplaire complet
   et éprouvé : capacité fixe, tableaux typés, **retrait par indice décroissant**, expiration dérivée
