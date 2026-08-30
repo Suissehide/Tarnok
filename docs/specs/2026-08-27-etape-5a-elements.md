@@ -213,14 +213,33 @@ joueur a payé et qui ne se voit pas. **Ça ne doit jamais disparaître sans tra
 
 ⚠️ **Le rafraîchissement doit être annoncé, et ça ramène le couplage par une autre porte.** Si le
 serveur fait repartir un `bornTick` sans le dire, la zone du client meurt avant la sienne. Mais
-annoncer chaque fusion fait suivre au trafic la **cadence des armes** — ce que ce paragraphe venait
-d'enlever au *compte*. Mesuré : jusqu'à **3,70 ko/s par client** à huit exemplaires par arme, contre
-1,22 ko/s de trafic total à l'étape 4.
+annoncer chaque fusion fait suivre au trafic le **nombre de zones × la fréquence de tick**, ce qui
+est sans rapport avec ce que le §3.3 autorise.
+
+⚠️ **Une première version de ce paragraphe chiffrait 3,70 ko/s, et se trompait dans les deux
+sens.** Elle comptait par *pose* ; le serveur annonce par *zone*, donc une salve de quarante
+projectiles qui fusionnent dans un même disque ne produit qu'un message. Dans un salon réaliste le
+trafic n'était que de 0,13 ko/s — mais la **borne**, elle, est bien pire que ce que j'annonçais :
+
+| Zones vivantes, arrosées à chaque tick | Sans la parade | Avec |
+| --- | --- | --- |
+| 15 | 4,83 ko/s | **0,10** |
+| 30 | **9,67 ko/s** | **0,19** |
+| 60 | 19,34 ko/s | **0,39** |
+
+contre 1,22 ko/s de trafic total à l'étape 4. **C'est la borne qui compte, pas le cas moyen** — et
+elle valait deux fois et demie mon estimation.
 
 **La parade : l'annonce EST la vérité.** Le `bornTick` qui fait foi est celui de la dernière
 annonce ; une zone n'est ré-annoncée qu'au plus une fois par demi-vie, et **entre deux annonces le
 serveur ne prolonge pas non plus**. Les deux côtés lisent alors le même `bornTick`, et le trafic
 redevient fonction du nombre de zones — que la fusion borne déjà par la surface.
+
+⚠️ **La règle vit dans `ZoneField.spawn`, pas dans `Room`**, et ce n'est pas un détail de rangement :
+c'est ce qui rend « l'annonce est la vérité » vrai **par construction**. Le client applique le même
+`spawn` sur le même état, donc il répond la même chose au même tick. Une règle vivant dans `Room`
+laisserait au client une seconde interprétation du `bornTick` — donc une divergence à démontrer au
+lieu d'une identité.
 
 **Le précédent existe déjà** : `OrbField` fait exactement ça pour les orbes d'expérience, avec une
 expiration **dérivée** des deux côtés à partir du `bornTick`, sans message de disparition. Les zones

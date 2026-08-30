@@ -599,14 +599,18 @@ test ne peut donc atteindre `renderFrame`, et **sept mutations survivent** rien 
   — exactement le couplage que le §5.1 bis avait supprimé pour le *compte*. Mesuré à la tâche 6 :
   9 annonces pour 3 zones vivantes sur ~30 ticks.
 
-  | Exemplaires par arme | Annonces/s/joueur | Reçu par chaque client |
-  | --- | --- | --- |
-  | 1 | 21 | **0,90 ko/s** |
-  | 4 | 49 | 2,11 ko/s |
-  | 8 | 86 | **3,70 ko/s** |
+  ⚠️ **Les chiffres d'une première version de ce plan étaient faux dans les deux sens.** Ils
+  comptaient par *pose* ; le serveur annonce par *zone*. La borne réelle est « nombre de zones ×
+  fréquence de tick », mesurée :
 
-  Contre **1,22 ko/s** de trafic total mesuré à l'étape 4. Le rafraîchissement peut donc tripler le
-  trafic, et il est **fonction de la cadence** — le §3.3 de l'orientation exige l'inverse.
+  | Zones vivantes, arrosées à chaque tick | Sans la parade | Avec |
+  | --- | --- | --- |
+  | 15 | 4,83 ko/s | **0,10** |
+  | 30 | **9,67 ko/s** | **0,19** |
+  | 60 | 19,34 ko/s | **0,39** |
+
+  Contre **1,22 ko/s** de trafic total à l'étape 4. Dans un salon réaliste le trafic n'était que de
+  0,13 ko/s — **mais c'est la borne qui compte**, et elle valait deux fois et demie l'estimation.
 
   **La parade : l'annonce EST la vérité.** Le `bornTick` qui fait foi est celui de la dernière
   annonce, et une zone n'est ré-annoncée qu'au plus une fois toutes les `ZONE_LIFETIME_TICKS / 2`.
