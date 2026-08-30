@@ -577,7 +577,10 @@ export class Room {
     }
 
     const started = performance.now();
-    const buf = encodeSnapshot(this.#tick, this.#xp, this.#scratch);
+    // Zero en attendant la tache 8 de l'etape 5a, qui fait naitre le compteur
+    // de Synergie dans ce salon : la tache 5 ne cable que le transport, comme
+    // `hp` l'a ete a l'etape 3 avant que le serveur ne le fasse vivre.
+    const buf = encodeSnapshot(this.#tick, this.#xp, 0, this.#scratch);
     this.#metrics.encodeMicros += (performance.now() - started) * 1000;
     this.#metrics.bytesSent += buf.byteLength;
     this.#metrics.snapshots++;

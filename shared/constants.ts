@@ -453,3 +453,22 @@ export const ZONE_RADIUS = 70;
  * se pose pas est un effet que le joueur a paye et qui ne se voit pas.
  */
 export const ZONE_CAPACITY = 128;
+
+/**
+ * Plafond du compteur de Synergie de l'equipe (§7 de l'etape 5a).
+ *
+ * ⚠️ **Une donnee d'EQUIPE, un seul nombre**, comme l'experience : il voyage
+ * dans l'en-tete du `SNAPSHOT`, pas dans le bloc de chaque joueur (voir
+ * `SnapshotMessage.synergy`).
+ *
+ * ⚠️ **Tient tres largement dans le `u16` du snapshot** — 20 contre 65 535 —
+ * et `protocol.test.ts` le verifie plutot que de le supposer. C'est la lecon
+ * de l'etape 4 : `hp` etait encode sur un octet, le passif « vitalite » a
+ * pousse un joueur a 260 PV, et il se repliait en silence a 4 PV au decodage.
+ * Un champ elargi par une carte de contenu ne doit jamais se decouvrir en jeu.
+ *
+ * La barre se CHARGE a cette etape et ne se depense jamais : l'ultime d'equipe
+ * du §6.5 de l'orientation est hors perimetre. Le plafond n'est donc pas un
+ * oubli, c'est le comportement voulu.
+ */
+export const SYNERGY_MAX = 20;

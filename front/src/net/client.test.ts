@@ -222,7 +222,7 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
 
       socket.emit('message', { data: encodeWelcome(1, 0, 0) });
       socket.emit('message', {
-        data: encodeSnapshot(0, 777, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(0, 777, 0, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
       });
 
       const state = client.update(0, 0);
@@ -238,7 +238,7 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
 
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
-      data: encodeSnapshot(0, 777, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
+      data: encodeSnapshot(0, 777, 0, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
     });
 
     const state = client.update(0, 0);
@@ -444,7 +444,7 @@ function runClientDeathScenario(params: {
     }
 
     const players = xs.map((x, i) => ({ id: i, x, y: ys[i] ?? 0, hp: 100, aimX: 0, aimY: 0 }));
-    socket.emit('message', { data: encodeSnapshot(tick, 0, players) });
+    socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
     // Livraison retardee au client : latence reseau simulee, comme l'exige la
     // tache 10.
@@ -661,7 +661,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
 
     for (let tick = 0; tick < DEATH_TICK + DELAY + 5; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
       });
       if (tick === DEATH_TICK + DELAY) {
         socket.emit('message', { data: encodeDeaths(DEATH_TICK, killedIds) });
@@ -726,7 +726,9 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
 
       for (let tick = 0; tick < END; tick++) {
         socket.emit('message', {
-          data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
+          data: encodeSnapshot(tick, 0, 0, [
+            { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 },
+          ]),
         });
         if (tick === DEATH_TICK + DELAY) {
           socket.emit('message', { data: encodeDeaths(DEATH_TICK, [killedId]) });
@@ -798,7 +800,7 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
 
     for (let tick = 0; tick < END; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
       });
       // Envoye bien avant que le gel ne prenne effet : si le client gelait a
       // la reception, tout mouvement s'arreterait des ce tick au lieu de
@@ -869,7 +871,7 @@ describe('GameClient — la prediction locale honore le gel de niveau (tache 24)
       // prediction a chaque tick et rendrait tout mouvement invisible,
       // gel ou pas (voir `PredictedPlayer.reconcile`).
       socket.emit('message', {
-        data: encodeSnapshot(0, 0, [{ id: 1, x: 500, y: 500, hp: 100, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 500, y: 500, hp: 100, aimX: 0, aimY: 0 }]),
       });
 
       const FREEZE_START = 10;
@@ -1004,7 +1006,7 @@ describe('GameClient — bilan de run (RUN_OVER, tache 11)', () => {
     const socket = latestSocket();
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
-      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
     });
     client.update(0, 0);
 
@@ -1065,7 +1067,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     // s'appliquent en tete d'`#advanceHorde`) SANS pretendre a une position de
     // joueur pertinente — aucune assertion sur le tir ne porte sur ce tick.
     socket.emit('message', {
-      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
     });
     client.update(0, STEP);
     if (client.horde.count !== 1) {
@@ -1102,7 +1104,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
       let firedAtTick = -1;
       for (let tick = 1; tick <= 40; tick++) {
         socket.emit('message', {
-          data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+          data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
         });
         client.update(tick * MS_PER_TICK, STEP);
         if (firedAtTick < 0 && client.projectiles.count > 0) {
@@ -1132,7 +1134,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
 
     for (let tick = 1; tick <= 20; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
       });
       client.update(tick * MS_PER_TICK, STEP);
     }
@@ -1147,7 +1149,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
 
     for (let tick = 1; tick <= 20; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 0, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 0, aimX: 0, aimY: 0 }]),
       });
       client.update(tick * MS_PER_TICK, STEP);
     }
@@ -1166,7 +1168,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     const TICKS = 90;
     for (let tick = 1; tick <= TICKS; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
       });
       client.update(tick * MS_PER_TICK, STEP);
     }
@@ -1187,7 +1189,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     let hitNowMs = -1;
     for (let tick = 1; tick <= 20 && hitNowMs < 0; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
       });
       const nowMs = tick * MS_PER_TICK;
       client.update(nowMs, STEP);
@@ -1246,7 +1248,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     };
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
-      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
     });
     client.update(0, STEP);
     expect(client.horde.count).toBe(1);
@@ -1261,7 +1263,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
 
     for (let tick = 1; tick <= 30 && spy.mock.calls.length === 0; tick++) {
       socket.emit('message', {
-        data: encodeSnapshot(tick, 0, [
+        data: encodeSnapshot(tick, 0, 0, [
           { id: 1, x: SNAPSHOT_X, y: monsterY, hp: 100, aimX: 0, aimY: 0 },
         ]),
       });
@@ -1299,7 +1301,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       const socket = latestSocket();
       socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0023) });
       socket.emit('message', {
-        data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+        data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
       });
       // Le spy est pose AVANT le tout premier `update()` : c'est celui-la qui
       // tire (cooldown jamais entame), et le rater ferait attendre la
@@ -1308,7 +1310,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       client.update(0, STEP);
       for (let tick = 1; tick <= 5 && spy.mock.calls.length === 0; tick++) {
         socket.emit('message', {
-          data: encodeSnapshot(tick, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+          data: encodeSnapshot(tick, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
         });
         client.update(tick * MS_PER_TICK, STEP);
       }
@@ -1352,7 +1354,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     };
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
-      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
     });
     client.update(0, STEP);
     expect(client.horde.count).toBe(1);
@@ -1367,7 +1369,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
         // Le snapshot ment sur la visee (AIM_LEFT quantifiee) : si le code
         // s'y fiait pour le joueur local, aucun tir ne toucherait jamais le
         // monstre, a droite.
-        data: encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: -127, aimY: 0 }]),
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: -127, aimY: 0 }]),
       });
       client.update(tick * MS_PER_TICK, STEP);
     }
@@ -1404,7 +1406,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     };
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
-      data: encodeSnapshot(0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
     });
     client.update(0, STEP);
     expect(client.horde.count).toBe(1);
@@ -1413,7 +1415,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     const monsterY = client.horde.y[0] ?? 0;
     const PLAYER = { x: monsterX - 50, y: monsterY };
     const snapshot = (tick: number): ArrayBuffer =>
-      encodeSnapshot(tick, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]);
+      encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]);
 
     // Le gel prend effet au tick 2 : le message part avant, comme le fait le
     // serveur, et c'est le tick DATE qui compte.
@@ -1516,7 +1518,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   ): void {
     for (let tick = 1; tick <= ticks; tick++) {
       if (withSnapshots) {
-        socket.emit('message', { data: encodeSnapshot(tick, 0, players) });
+        socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
       }
       client.update(tick * MS_PER_TICK, STEP);
     }
@@ -1864,7 +1866,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const { client, socket } = setup(1, () => entree);
 
     socket.emit('message', {
-      data: encodeSnapshot(0, 0, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0 }]),
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0 }]),
     });
     for (let i = 0; i < CARTES; i++) {
       grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE }, [

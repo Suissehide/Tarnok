@@ -49,12 +49,12 @@ function benchEncoding(): void {
 
     // Rodage : sans lui on mesure la compilation JIT.
     for (let i = 0; i < 2000; i++) {
-      encodeSnapshot(i, 0, entities);
+      encodeSnapshot(i, 0, 0, entities);
     }
 
     for (let i = 0; i < ENCODE_ITERATIONS; i++) {
       const started = performance.now();
-      const buf = encodeSnapshot(i, 0, entities);
+      const buf = encodeSnapshot(i, 0, 0, entities);
       durations.push((performance.now() - started) * 1000);
       bytes = buf.byteLength;
     }

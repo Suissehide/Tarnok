@@ -16,11 +16,13 @@ function snapshot(
   tick: number,
   players: { id: number; x: number; y: number; hp?: number; aimX?: number; aimY?: number }[],
   xp = 0,
+  synergy = 0,
 ): SnapshotMessage {
   return {
     type: MSG.SNAPSHOT,
     tick,
     xp,
+    synergy,
     players: players.map((p) => ({ hp: PLAYER_MAX_HP, aimX: 0, aimY: 0, ...p })),
   };
 }

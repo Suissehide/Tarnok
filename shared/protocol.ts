@@ -21,6 +21,8 @@ export const MSG = {
   DRAFT_TOKEN: 10,
   DRAFT_INTENTS: 11,
   DRAFT_RESULT: 12,
+  ZONE: 13,
+  REACTION: 14,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -68,6 +70,18 @@ export interface SnapshotMessage {
   tick: number;
   /** Experience de l'equipe, commune a tous les joueurs. Sur deux octets. */
   xp: number;
+  /**
+   * Charge du compteur de Synergie de l'EQUIPE (§7 de l'etape 5a), sur deux
+   * octets, exactement comme `xp` et pour la meme raison.
+   *
+   * ⚠️ **Un seul nombre pour l'equipe, jamais un par joueur.** Le §7 le dit
+   * mot pour mot : *« la barre est une donnee d'equipe, comme l'experience de
+   * l'etape 3 : un seul nombre dans le snapshot »*. Le porter dans
+   * `PlayerSnapshot` creerait deux sources de verite pour un seul nombre —
+   * l'erreur que l'etape 3 a faite avec l'experience, signalee a l'epoque par
+   * l'implementeur, et qui a valu son deplacement dans l'en-tete.
+   */
+  synergy: number;
   players: PlayerSnapshot[];
 }
 
@@ -152,6 +166,71 @@ export interface RunOverMessage {
   kills: number;
 }
 
+/**
+ * S -> C : une zone au sol vient d'etre posee (§5.3 de l'etape 5a).
+ *
+ * Annoncee A LA CREATION parce que le client ne peut pas savoir ou finit un
+ * projectile serveur : les siens sont cosmetiques depuis l'etape 3, tires
+ * depuis une position predite puis reconciliee. Une zone derivee localement
+ * deriverait de quelques pixels, et deux zones qui se recouvrent d'un pixel
+ * decident d'une reaction.
+ *
+ * ⚠️ **La MORT d'une zone n'est JAMAIS annoncee.** Elle se derive de
+ * `bornTick` et de `ZONE_LIFETIME_TICKS`, des deux cotes — c'est le modele de
+ * `ORB_LIFETIME_TICKS` depuis l'etape 3 (§6.1) et celui de `ZoneField.expire`.
+ * Un `ZONE_GONE` doublerait le trafic des zones pour une information que les
+ * deux cotes calculent deja.
+ *
+ * ⚠️ **Pas de rayon sur le fil.** Toutes les zones portent `ZONE_RADIUS`, une
+ * constante de `shared/` que les deux cotes lisent — l'annoncer en ferait une
+ * seconde source de verite pour un seul nombre. Le jour ou une zone portera un
+ * rayon propre, c'est un octet de plus, pas un changement de modele.
+ *
+ * `by` est l'indice du joueur qui l'a posee : c'est lui que la Synergie du §7
+ * compare a celui de la marque.
+ */
+export interface ZoneMessage {
+  type: typeof MSG.ZONE;
+  /** Index dans `ELEMENTS` de `shared/elements.ts`. */
+  element: number;
+  x: number;
+  y: number;
+  /** Tick de la pose. La peremption s'en derive, elle n'est pas annoncee. */
+  bornTick: number;
+  /** Identifiant du joueur a l'origine de la zone. */
+  by: number;
+}
+
+/**
+ * S -> C : une reaction a eu lieu (§6 de l'etape 5a).
+ *
+ * Elle est arbitree par le serveur et annoncee parce qu'elle **tue** — a la
+ * difference de la teinte elementaire, qui est cosmetique et que le client
+ * approxime (§2 de la spec).
+ *
+ * ⚠️ **La charge de Synergie voyage ICI, pas dans un message a part** (§8) :
+ * les deux arrivent toujours ensemble, et un second message ne porterait rien
+ * de plus.
+ *
+ * ⚠️ **Le message ne porte PAS les deux identifiants de joueurs**, bien que le
+ * §6.1 de la spec l'annonce ainsi. Le §7 est explicite sur l'usage : c'est le
+ * SERVEUR qui compare le joueur de la marque et celui du declencheur, et la
+ * comparaison ne rend qu'un booleen. Le total de la barre voyage dans le
+ * `SNAPSHOT`. Le client n'a donc rien a faire de deux identites qu'il ne
+ * pourrait que recomparer — et les envoyer inviterait a refaire l'arbitrage
+ * cote client, donc a le faire diverger.
+ */
+export interface ReactionMessage {
+  type: typeof MSG.REACTION;
+  /** Le couple d'elements, empaquete par `packElementPair`. */
+  pair: number;
+  x: number;
+  y: number;
+  tick: number;
+  /** Cette reaction a-t-elle charge la barre d'equipe ? Voir `packElementPair`. */
+  synergyCharge: boolean;
+}
+
 export type Message =
   | WelcomeMessage
   | SnapshotMessage
@@ -164,7 +243,9 @@ export type Message =
   | DraftOpenMessage
   | DraftTokenMessage
   | DraftIntentsMessage
-  | DraftResultMessage;
+  | DraftResultMessage
+  | ZoneMessage
+  | ReactionMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -192,8 +273,16 @@ export interface DraftResultMessage {
 export const WELCOME_BYTES = 10;
 /** `type u8 · seq u16 · moveX i8 · moveY i8 · aimX i8 · aimY i8` (tache 13 : 5 -> 7). */
 export const INPUT_BYTES = 7;
-/** `type u8 · tick u32 · playerCount u8 · xp u16` — xp est celui de l'equipe. */
-export const SNAPSHOT_HEADER_BYTES = 8;
+/**
+ * `type u8 · tick u32 · playerCount u8 · xp u16 · synergy u16` — xp et synergy
+ * sont ceux de l'EQUIPE (tache 5 de l'etape 5a : 8 -> 10).
+ *
+ * Les deux nombres d'equipe vivent dans l'en-tete plutot que d'etre repetes —
+ * et donc potentiellement divergents — dans chaque bloc joueur. Deux octets par
+ * snapshot, quel que soit le nombre de joueurs ; les porter par joueur en
+ * couterait deux par joueur pour la meme information recopiee.
+ */
+export const SNAPSHOT_HEADER_BYTES = 10;
 /**
  * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8` — pas de xp ici, voir
  * `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de l'etape 4 :
@@ -265,6 +354,23 @@ export const NO_TOKEN = 255;
 
 /** Une identite d'entite, sur le fil : u32. */
 export const DEATH_ID_BYTES = 4;
+
+/**
+ * `type u8 · element u8 · x i16 · y i16 · bornTick u32 · by u8` = **11 octets**.
+ *
+ * ⚠️ **Le plan annonce 12 octets pour cette liste de champs ; elle en fait
+ * 11.** La spec (§2 et §5.3) ecrit « ~12 octets », un ordre de grandeur, et le
+ * plan a durci l'approximation en chiffre exact sans la recompter. L'octet
+ * manquant est vraisemblablement le `rayon` que la table du §8 de la spec
+ * listait encore : il n'est pas sur le fil (voir `ZoneMessage`), le compte
+ * tombe donc a 11. La liste de champs fait foi, pas le total.
+ *
+ * Aucun message de disparition : la mort d'une zone se derive de `bornTick`.
+ */
+export const ZONE_BYTES = 11;
+
+/** `type u8 · pair u8 · x i16 · y i16 · tick u32 · synergie u8` = 11 octets. */
+export const REACTION_BYTES = 11;
 
 /** `type u8 · tick u32 · level u8`. */
 export const LEVEL_UP_BYTES = 6;
@@ -341,13 +447,14 @@ export function decodeInput(buf: ArrayBuffer): InputMessage {
 }
 
 /**
- * S -> C : positions des joueurs, 8 octets d'en-tete puis 8 par joueur
- * (tache 13 : +aimX +aimY, 6 -> 8).
+ * S -> C : positions des joueurs, `SNAPSHOT_HEADER_BYTES` d'en-tete puis
+ * `SNAPSHOT_PLAYER_BYTES` par joueur.
  *
- * `xp` est un parametre a part, pas un champ de `players[i]` : c'est celui de
- * l'**equipe**, commun a tous (§2 de la spec d'orientation), et il vit dans
- * l'en-tete plutot que d'etre repete — et donc potentiellement divergent —
- * dans chaque bloc joueur.
+ * `xp` et `synergy` sont des parametres a part, pas des champs de
+ * `players[i]` : ce sont ceux de l'**equipe**, communs a tous (§2 de la spec
+ * d'orientation, §7 de celle de l'etape 5a), et ils vivent dans l'en-tete
+ * plutot que d'etre repetes — et donc potentiellement divergents — dans chaque
+ * bloc joueur.
  *
  * `aimX`/`aimY` sont quantifies par `quantizeAxis`, comme dans `encodeInput` :
  * un joueur ne peut de toute facon jamais transmettre plus que cette
@@ -356,6 +463,7 @@ export function decodeInput(buf: ArrayBuffer): InputMessage {
 export function encodeSnapshot(
   tick: number,
   xp: number,
+  synergy: number,
   players: readonly PlayerSnapshot[],
 ): ArrayBuffer {
   const buf = new ArrayBuffer(SNAPSHOT_HEADER_BYTES + players.length * SNAPSHOT_PLAYER_BYTES);
@@ -364,6 +472,7 @@ export function encodeSnapshot(
   v.setUint32(1, tick >>> 0, true);
   v.setUint8(5, players.length);
   v.setUint16(6, xp, true);
+  v.setUint16(8, synergy, true);
   let o = SNAPSHOT_HEADER_BYTES;
   for (const p of players) {
     v.setUint8(o, p.id);
@@ -402,7 +511,107 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
     type: MSG.SNAPSHOT,
     tick: v.getUint32(1, true),
     xp: v.getUint16(6, true),
+    synergy: v.getUint16(8, true),
     players,
+  };
+}
+
+/**
+ * Empaquette un couple d'elements sur UN octet : le plus petit identifiant
+ * dans le quartet de poids fort, le plus grand dans celui de poids faible.
+ *
+ * ⚠️ **Canonique, donc insensible a l'ordre d'arrivee.** Un choc thermique
+ * declenche par un projectile Givre sur une marque Braise et le meme par un
+ * projectile Braise sur une marque Givre sont **la meme reaction** (§6.2 : le
+ * tableau des declencheurs est symetrique), et ils doivent porter le meme
+ * octet — sinon deux clients dessineraient deux flashs differents pour un
+ * evenement identique, et une table de reactions indexee par `pair` aurait
+ * deux entrees pour une seule ligne du §6.3.
+ *
+ * ⚠️ **Un quartet, pas un octet par element**, parce que le couple tient alors
+ * dans le meme octet que le `pair u8` du §8. Seize elements possibles pour six
+ * prevus au §6.3 de l'orientation — `protocol.test.ts` garde la marge en
+ * confrontant `ELEMENTS.length` a 16 plutot qu'en la supposant.
+ */
+export function packElementPair(a: number, b: number): number {
+  const lo = Math.min(a, b);
+  const hi = Math.max(a, b);
+  return ((lo & 0x0f) << 4) | (hi & 0x0f);
+}
+
+/** L'inverse de `packElementPair` : les deux elements, du plus petit au plus grand. */
+export function unpackElementPair(pair: number): [number, number] {
+  return [(pair >> 4) & 0x0f, pair & 0x0f];
+}
+
+/**
+ * S -> C : une zone au sol vient d'etre posee, 11 octets. Voir `ZoneMessage`
+ * pour ce qui n'y est PAS — le rayon, et surtout la mort de la zone.
+ */
+export function encodeZone(
+  element: number,
+  x: number,
+  y: number,
+  bornTick: number,
+  by: number,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(ZONE_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.ZONE);
+  v.setUint8(1, element);
+  v.setInt16(2, Math.round(x), true);
+  v.setInt16(4, Math.round(y), true);
+  v.setUint32(6, bornTick >>> 0, true);
+  v.setUint8(10, by);
+  return buf;
+}
+
+export function decodeZone(buf: ArrayBuffer): ZoneMessage {
+  const v = viewOf(buf, ZONE_BYTES);
+  return {
+    type: MSG.ZONE,
+    element: v.getUint8(1),
+    x: v.getInt16(2, true),
+    y: v.getInt16(4, true),
+    bornTick: v.getUint32(6, true),
+    by: v.getUint8(10),
+  };
+}
+
+/**
+ * S -> C : une reaction a eu lieu, 11 octets.
+ *
+ * `synergyCharge` est le booleen du §7 — deux joueurs differents a l'origine —
+ * deja arbitre par le serveur, et il voyage DANS ce message : les deux
+ * arrivent toujours ensemble (§8).
+ */
+export function encodeReaction(
+  pair: number,
+  x: number,
+  y: number,
+  tick: number,
+  synergyCharge: boolean,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(REACTION_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.REACTION);
+  v.setUint8(1, pair);
+  v.setInt16(2, Math.round(x), true);
+  v.setInt16(4, Math.round(y), true);
+  v.setUint32(6, tick >>> 0, true);
+  v.setUint8(10, synergyCharge ? 1 : 0);
+  return buf;
+}
+
+export function decodeReaction(buf: ArrayBuffer): ReactionMessage {
+  const v = viewOf(buf, REACTION_BYTES);
+  return {
+    type: MSG.REACTION,
+    pair: v.getUint8(1),
+    x: v.getInt16(2, true),
+    y: v.getInt16(4, true),
+    tick: v.getUint32(6, true),
+    synergyCharge: v.getUint8(10) !== 0,
   };
 }
 
@@ -618,6 +827,10 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeDraftIntents(buf);
     case MSG.DRAFT_RESULT:
       return decodeDraftResult(buf);
+    case MSG.ZONE:
+      return decodeZone(buf);
+    case MSG.REACTION:
+      return decodeReaction(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }

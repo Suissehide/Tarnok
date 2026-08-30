@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { PLAYER_MAX_HP } from './constants';
+import { PLAYER_MAX_HP, SYNERGY_MAX, ZONE_LIFETIME_TICKS } from './constants';
+import { ELEMENT, ELEMENTS } from './elements';
 import {
   DEATH_ID_BYTES,
   DEATHS_HEADER_BYTES,
@@ -16,10 +17,12 @@ import {
   decodeInput,
   decodeLevelUp,
   decodePickups,
+  decodeReaction,
   decodeRunOver,
   decodeSnapshot,
   decodeWaveOrder,
   decodeWelcome,
+  decodeZone,
   encodeDeaths,
   encodeDraftIntents,
   encodeDraftOpen,
@@ -28,17 +31,23 @@ import {
   encodeInput,
   encodeLevelUp,
   encodePickups,
+  encodeReaction,
   encodeRunOver,
   encodeSnapshot,
   encodeWaveOrder,
   encodeWelcome,
+  encodeZone,
   INPUT_BYTES,
   LEVEL_UP_BYTES,
   MSG,
   NO_TOKEN,
+  packElementPair,
+  REACTION_BYTES,
   RUN_OVER_BYTES,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
+  unpackElementPair,
+  ZONE_BYTES,
 } from './protocol';
 
 describe('encodeInput / decodeInput', () => {
@@ -97,8 +106,12 @@ describe('encodeInput / decodeInput', () => {
 });
 
 describe('encodeSnapshot / decodeSnapshot', () => {
-  it('rend les positions arrondies a l entier, les pv personnels, la visee et l experience d equipe', () => {
-    const buf = encodeSnapshot(42, 12_000, [
+  // ⚠️ Toutes les valeurs de l'en-tete sont DISTINCTES — tick 42, xp 12 000,
+  // synergie 7 — parce qu'un aller-retour ne voit pas un decalage qui echange
+  // deux champs de meme valeur. C'est la seule facon d'assener que la Synergie
+  // ne s'ecrit pas par-dessus l'experience.
+  it('rend les positions arrondies a l entier, les pv personnels, la visee, l experience et la synergie d equipe', () => {
+    const buf = encodeSnapshot(42, 12_000, 7, [
       { id: 1, x: 100.4, y: 200.6, hp: 80, aimX: 90, aimY: -60 },
       { id: 2, x: -3.2, y: 5999.9, hp: 42, aimX: 0, aimY: 0 },
     ]);
@@ -107,6 +120,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
       type: MSG.SNAPSHOT,
       tick: 42,
       xp: 12_000,
+      synergy: 7,
       players: [
         { id: 1, x: 100, y: 201, hp: 80, aimX: 90, aimY: -60 },
         { id: 2, x: -3, y: 6000, hp: 42, aimX: 0, aimY: 0 },
@@ -115,27 +129,30 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   });
 
   it('encode un salon vide sans joueur', () => {
-    expect(decodeSnapshot(encodeSnapshot(0, 0, [])).players).toEqual([]);
+    expect(decodeSnapshot(encodeSnapshot(0, 0, 0, [])).players).toEqual([]);
   });
 
   it('tient un numero de tick sur 32 bits', () => {
-    expect(decodeSnapshot(encodeSnapshot(4_294_967_295, 0, [])).tick).toBe(4_294_967_295);
+    expect(decodeSnapshot(encodeSnapshot(4_294_967_295, 0, 0, [])).tick).toBe(4_294_967_295);
   });
 
-  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (6 -> 8 -> 9)', () => {
-    const buf = encodeSnapshot(1, 0, [
+  // Les deux tailles sont assenees EN CHIFFRES NUS, jamais comparees a
+  // elles-memes : c'est ce qui attrape un decalage d'octet. Une assertion
+  // `toBe(SNAPSHOT_HEADER_BYTES)` serait vraie quoi qu'il arrive.
+  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (8 -> 10 avec la synergie)', () => {
+    const buf = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
       { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
       { id: 3, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
     ]);
 
     expect(buf.byteLength).toBe(SNAPSHOT_HEADER_BYTES + 3 * SNAPSHOT_PLAYER_BYTES);
-    expect(SNAPSHOT_HEADER_BYTES).toBe(8);
+    expect(SNAPSHOT_HEADER_BYTES).toBe(10);
     expect(SNAPSHOT_PLAYER_BYTES).toBe(9);
   });
 
   it('tient les pv personnels sur un octet (u8, borne 255)', () => {
-    const buf = encodeSnapshot(1, 0, [{ id: 1, x: 0, y: 0, hp: 255, aimX: 0, aimY: 0 }]);
+    const buf = encodeSnapshot(1, 0, 0, [{ id: 1, x: 0, y: 0, hp: 255, aimX: 0, aimY: 0 }]);
 
     expect(decodeSnapshot(buf).players[0]).toEqual({
       id: 1,
@@ -148,26 +165,50 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   });
 
   it('borne la visee redistribuee a -127..127, comme celle d un INPUT (tache 13)', () => {
-    const buf = encodeSnapshot(1, 0, [{ id: 1, x: 0, y: 0, hp: 1, aimX: 500, aimY: -500 }]);
+    const buf = encodeSnapshot(1, 0, 0, [{ id: 1, x: 0, y: 0, hp: 1, aimX: 500, aimY: -500 }]);
 
     expect(decodeSnapshot(buf).players[0]).toMatchObject({ aimX: 127, aimY: -127 });
   });
 
   it("tient l'experience d'equipe sur deux octets (u16, borne 65 535)", () => {
-    const buf = encodeSnapshot(1, 65_535, []);
+    const buf = encodeSnapshot(1, 65_535, 0, []);
 
     expect(decodeSnapshot(buf).xp).toBe(65_535);
+  });
+
+  it('tient la synergie d equipe sur deux octets (u16, borne 65 535)', () => {
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 65_535, [])).synergy).toBe(65_535);
+  });
+
+  // ⚠️ La lecon de l'etape 4 : `hp` etait encode sur un octet, le passif
+  // « vitalite » a pousse un joueur a 260 PV, et il se repliait en silence a
+  // 4 PV au decodage. Un champ n'est pas assez large parce qu'il en a l'air :
+  // on confronte la valeur que le JEU produit reellement a la largeur du
+  // champ, sans jamais reecrire 20 en dur (le plafond est un reglage).
+  it('SYNERGY_MAX tient dans le u16 du snapshot, sans repli silencieux', () => {
+    expect(SYNERGY_MAX).toBeLessThanOrEqual(65_535);
+    expect(decodeSnapshot(encodeSnapshot(1, 0, SYNERGY_MAX, [])).synergy).toBe(SYNERGY_MAX);
   });
 
   it('PLAYER_MAX_HP tient dans un octet (u8)', () => {
     expect(PLAYER_MAX_HP).toBeLessThanOrEqual(255);
   });
 
+  // ⚠️ Coupe PILE avant les deux octets de synergie (en-tete de 10 : les 8
+  // premiers passent, la synergie manque). Sans lui, un en-tete qui
+  // n'exigerait que ses 8 octets d'avant rendrait une synergie fantaisiste au
+  // lieu de lever.
+  it('leve sur un en-tete tronque juste avant la synergie d equipe', () => {
+    const truncated = encodeSnapshot(1, 12_000, 7, []).slice(0, SNAPSHOT_HEADER_BYTES - 2);
+
+    expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
+  });
+
   it("leve quand l'en-tete annonce plus de joueurs que le buffer n'en contient", () => {
-    const truncated = encodeSnapshot(1, 0, [
+    const truncated = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
       { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
-    ]).slice(0, 9);
+    ]).slice(0, SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
   });
@@ -177,7 +218,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // test precis, un decalage qui placerait aimX/aimY hors du bloc pourrait
   // passer inapercu tant que le buffer alloue reste assez grand.
   it('leve sur un buffer tronque juste avant la visee du joueur (tache 13)', () => {
-    const truncated = encodeSnapshot(1, 0, [
+    const truncated = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 90, aimY: -60 },
     ]).slice(0, SNAPSHOT_HEADER_BYTES + 6);
 
@@ -369,7 +410,7 @@ describe('encodeWaveOrder / decodeWaveOrder', () => {
 describe('decode', () => {
   it('aiguille sur le premier octet', () => {
     expect(decode(encodeInput(7, 1, 0, 0, 0))).toMatchObject({ type: MSG.INPUT, seq: 7 });
-    expect(decode(encodeSnapshot(8, 0, []))).toMatchObject({ type: MSG.SNAPSHOT, tick: 8 });
+    expect(decode(encodeSnapshot(8, 0, 0, []))).toMatchObject({ type: MSG.SNAPSHOT, tick: 8 });
     expect(decode(encodeWelcome(1, 9, 0))).toMatchObject({ type: MSG.WELCOME, playerId: 1 });
   });
 
@@ -396,6 +437,32 @@ describe('decode', () => {
     });
 
     expect(decode(buf)).toMatchObject({ type: MSG.WAVE_ORDER, waveId: 1 });
+  });
+
+  // ⚠️ Les deux nouveaux types partagent la meme taille (11 octets) : sans
+  // aiguillage sur le premier octet, une zone se decoderait en reaction sans
+  // qu'aucune borne ne proteste. On assene donc un champ propre a chacun, pas
+  // seulement le type.
+  it('aiguille aussi sur une zone au sol et sur une reaction (etape 5a)', () => {
+    expect(decode(encodeZone(ELEMENT.GIVRE, 10, 20, 30, 2))).toEqual({
+      type: MSG.ZONE,
+      element: ELEMENT.GIVRE,
+      x: 10,
+      y: 20,
+      bornTick: 30,
+      by: 2,
+    });
+
+    expect(
+      decode(encodeReaction(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE), 40, 50, 60, true)),
+    ).toEqual({
+      type: MSG.REACTION,
+      pair: packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE),
+      x: 40,
+      y: 50,
+      tick: 60,
+      synergyCharge: true,
+    });
   });
 
   it('leve sur un type de message inconnu', () => {
@@ -550,5 +617,177 @@ describe('DRAFT_RESULT', () => {
     // C'est le MESSAGE qui rend ce controle porteur.
     const buf = encodeDraftResult(1, issues);
     expect(() => decode(buf.slice(0, DRAFT_RESULT_HEADER_BYTES + 1))).toThrow(/tronque/);
+  });
+});
+
+describe('packElementPair / unpackElementPair', () => {
+  it('rend le meme octet quel que soit l ordre des deux elements', () => {
+    expect(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE)).toBe(
+      packElementPair(ELEMENT.GIVRE, ELEMENT.BRAISE),
+    );
+  });
+
+  // ⚠️ La moitie qui manque toujours : « le meme octet » serait aussi vrai
+  // d'une fonction qui rend une constante. Deux couples differents doivent
+  // porter deux octets differents, sinon le client dessinerait le meme flash
+  // pour deux reactions du §6.3.
+  it('donne un octet different a chaque couple distinct', () => {
+    const braiseGivre = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
+    const neutreGivre = packElementPair(ELEMENT.NEUTRE, ELEMENT.GIVRE);
+    const neutreBraise = packElementPair(ELEMENT.NEUTRE, ELEMENT.BRAISE);
+
+    expect(new Set([braiseGivre, neutreGivre, neutreBraise]).size).toBe(3);
+  });
+
+  it('rend les deux elements au depaquetage, du plus petit au plus grand', () => {
+    expect(unpackElementPair(packElementPair(ELEMENT.GIVRE, ELEMENT.BRAISE))).toEqual([
+      ELEMENT.BRAISE,
+      ELEMENT.GIVRE,
+    ]);
+  });
+
+  it('depaquette tous les couples du catalogue, sans confondre les deux quartets', () => {
+    for (const a of ELEMENTS) {
+      for (const b of ELEMENTS) {
+        const [lo, hi] = unpackElementPair(packElementPair(a.id, b.id));
+
+        expect(lo).toBe(Math.min(a.id, b.id));
+        expect(hi).toBe(Math.max(a.id, b.id));
+      }
+    }
+  });
+
+  // Le couple tient sur UN octet parce que chaque element tient sur un
+  // quartet. Six elements sont prevus au §6.3 de l'orientation, seize
+  // rentrent : la marge est verifiee, pas supposee — un dix-septieme element
+  // replierait les couples en silence, exactement comme `hp` sur un octet a
+  // l'etape 4.
+  it('garde la marge du quartet : au plus seize elements', () => {
+    expect(ELEMENTS.length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe('encodeZone / decodeZone', () => {
+  // Les six champs sont assenes, sur six valeurs TOUTES DISTINCTES : un
+  // aller-retour qui n'en verifierait que deux passerait meme si les quatre
+  // autres etaient ecrases, et deux champs de meme valeur masqueraient un
+  // decalage d'octet qui les echange.
+  it('rend exactement la zone encodee, ses six champs', () => {
+    expect(decodeZone(encodeZone(ELEMENT.GIVRE, -1234, 5678, 90_001, 3))).toEqual({
+      type: MSG.ZONE,
+      element: ELEMENT.GIVRE,
+      x: -1234,
+      y: 5678,
+      bornTick: 90_001,
+      by: 3,
+    });
+  });
+
+  it('tient exactement ZONE_BYTES octets, et ZONE_BYTES en fait 11', () => {
+    expect(encodeZone(ELEMENT.BRAISE, 1, 1, 1, 1).byteLength).toBe(ZONE_BYTES);
+    expect(ZONE_BYTES).toBe(11);
+  });
+
+  // ⚠️ Les deux valeurs sont choisies pour que l'ARRONDI et la TRONCATURE ne
+  // donnent pas le meme resultat : `DataView.setInt16` tronque vers zero, donc
+  // 100,4 passerait a 100 dans les deux cas et un `Math.round` retire ne se
+  // verrait pas. 100,6 et -3,6 le voient.
+  it('arrondit la position a l entier, comme le snapshot', () => {
+    const decoded = decodeZone(encodeZone(ELEMENT.BRAISE, 100.6, -3.6, 0, 0));
+
+    expect(decoded.x).toBe(101);
+    expect(decoded.y).toBe(-4);
+  });
+
+  // ⚠️ `bornTick` porte la DATE DE PEREMPTION de la zone a lui tout seul : la
+  // mort n'est jamais annoncee, les deux cotes la derivent de ce tick et de
+  // `ZONE_LIFETIME_TICKS`. Un tick replie en silence ferait donc disparaitre
+  // un quad au mauvais moment chez le client, sans qu'aucun message ne
+  // contredise jamais l'erreur. Le compteur de ticks d'un salon est le meme
+  // u32 que celui du snapshot : on le mene a sa borne.
+  it('tient un tick de naissance sur 32 bits, jusqu a 4 294 967 295', () => {
+    const born = 4_294_967_295 - ZONE_LIFETIME_TICKS;
+    const decoded = decodeZone(encodeZone(ELEMENT.BRAISE, 0, 0, born, 0));
+
+    expect(decoded.bornTick).toBe(born);
+    expect(decodeZone(encodeZone(ELEMENT.BRAISE, 0, 0, 4_294_967_295, 0)).bornTick).toBe(
+      4_294_967_295,
+    );
+  });
+
+  it('leve un message TRONQUE explicite sur un tampon court, pas une erreur de bornes fortuite', () => {
+    const truncated = encodeZone(ELEMENT.GIVRE, 1, 2, 3, 4).slice(0, ZONE_BYTES - 1);
+
+    expect(() => decodeZone(truncated)).toThrow(/tronqu/);
+  });
+
+  it('ne grossit pas avec la duree de vie : aucune date de peremption sur le fil', () => {
+    expect(encodeZone(ELEMENT.BRAISE, 0, 0, 0, 0).byteLength).toBe(
+      encodeZone(ELEMENT.GIVRE, 0, 0, ZONE_LIFETIME_TICKS, 0).byteLength,
+    );
+  });
+});
+
+describe('encodeReaction / decodeReaction', () => {
+  it('rend exactement la reaction encodee, ses cinq champs', () => {
+    const pair = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
+
+    expect(decodeReaction(encodeReaction(pair, -300, 411, 77, true))).toEqual({
+      type: MSG.REACTION,
+      pair,
+      x: -300,
+      y: 411,
+      tick: 77,
+      synergyCharge: true,
+    });
+  });
+
+  // ⚠️ **Les deux moities, toujours.** Un aller-retour qui ne verifie que la
+  // charge passe avec un encodeur qui met 1 en dur — et la Synergie du §7,
+  // « le coeur du projet », monterait alors a chaque reaction, solo comprise.
+  it('rend une reaction SANS charge de synergie, celle d un joueur seul', () => {
+    const pair = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
+
+    expect(decodeReaction(encodeReaction(pair, -300, 411, 77, false))).toEqual({
+      type: MSG.REACTION,
+      pair,
+      x: -300,
+      y: 411,
+      tick: 77,
+      synergyCharge: false,
+    });
+  });
+
+  it('tient exactement REACTION_BYTES octets, et REACTION_BYTES en fait 11', () => {
+    expect(encodeReaction(1, 1, 1, 1, true).byteLength).toBe(REACTION_BYTES);
+    expect(REACTION_BYTES).toBe(11);
+  });
+
+  // La charge coute ZERO octet de plus : elle voyage dans ce message plutot
+  // que dans un second (§8), et une reaction chargee pese donc exactement ce
+  // que pese une reaction solo.
+  it('ne coute pas un octet de plus quand elle charge la barre', () => {
+    expect(encodeReaction(1, 0, 0, 0, true).byteLength).toBe(
+      encodeReaction(1, 0, 0, 0, false).byteLength,
+    );
+  });
+
+  // Memes valeurs discriminantes que pour la zone : -12,6 et 7,6 separent
+  // l'arrondi de la troncature de `DataView`.
+  it('arrondit la position a l entier', () => {
+    const decoded = decodeReaction(encodeReaction(0, -12.6, 7.6, 0, false));
+
+    expect(decoded.x).toBe(-13);
+    expect(decoded.y).toBe(8);
+  });
+
+  it('tient un tick sur 32 bits', () => {
+    expect(decodeReaction(encodeReaction(0, 0, 0, 4_294_967_295, false)).tick).toBe(4_294_967_295);
+  });
+
+  it('leve un message TRONQUE explicite sur un tampon court', () => {
+    const truncated = encodeReaction(1, 2, 3, 4, true).slice(0, REACTION_BYTES - 1);
+
+    expect(() => decodeReaction(truncated)).toThrow(/tronqu/);
   });
 });
