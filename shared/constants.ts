@@ -380,3 +380,23 @@ export const SPREAD_BONUS = 3;
  * parti — une salve qui disparait en silence est une carte payee pour rien.
  */
 export const PROJECTILE_CAPACITY = 1024;
+
+/**
+ * Duree d'une marque elementaire sur un ennemi, en ticks (2 s a `TICK_HZ`) —
+ * etape 5a, §4.3 de la spec.
+ *
+ * ⚠️ **L'expiration est DERIVEE, jamais annoncee**, exactement comme celle des
+ * orbes (`ORB_LIFETIME_TICKS`) : `Horde.markUntil` porte le tick d'expiration,
+ * et `Horde.markAt` le compare au tick courant. Aucune horloge murale, aucun
+ * message de disparition — un `MARK_EXPIRED` doublerait le trafic pour une
+ * information que les deux cotes calculent deja.
+ *
+ * ⚠️ **C'est un REGLAGE DE JEU, pas un invariant.** Trop court, aucune
+ * reaction n'a le temps d'avoir lieu ; trop long, tout reagit tout le temps.
+ * La valeur se juge a l'oeil (§12 de la spec, tache 11 du plan), donc **aucun
+ * test ne doit ecrire 60 en dur** : les assertions se derivent de cette
+ * constante. Le depot vient de payer l'erreur inverse — deux tests de
+ * troncature de vague se fiaient a `WAVE1_MIN_COUNT = 16` et sont devenus
+ * intermittents des qu'il est passe a 10.
+ */
+export const MARK_DURATION_TICKS = 60;

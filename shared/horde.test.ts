@@ -5,13 +5,15 @@ import {
   CONTACT_RADIUS,
   DEOVERLAP_MAX_PX,
   FLOWFIELD_HZ,
+  MARK_DURATION_TICKS,
   MAX_ENTITIES,
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
   TICK_HZ,
 } from './constants';
+import { ELEMENT } from './elements';
 import { FlowField } from './flowfield';
-import { entityIdOf, Horde } from './horde';
+import { entityIdOf, Horde, type HordeState } from './horde';
 import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
@@ -593,7 +595,9 @@ describe('Horde.kill', () => {
    * `targetField` laissait la suite verte. L'entite deplacee dans le creneau
    * libere gardait alors une propriete du mort qu'elle remplace — a l'etape
    * 5a, ses PV entames, donc un monstre qui meurt d'un coup au lieu de quatre
-   * ou l'inverse.
+   * ou l'inverse, ou **la marque elementaire du mort**, donc un ennemi indemne
+   * qui declenche une reaction et une charge de Synergie pour un element que
+   * personne ne lui a applique.
    *
    * Une liste ecrite a la main ne suffit pas : elle vieillit. Le test verifie
    * donc AUSSI qu'elle couvre exactement les tableaux que porte l'instance
@@ -614,6 +618,9 @@ describe('Horde.kill', () => {
     'targetField',
     'stopped',
     'hp',
+    'mark',
+    'markBy',
+    'markUntil',
   ] as const;
 
   /** Les noms des proprietes de `horde` qui sont des tableaux types. */
@@ -628,7 +635,7 @@ describe('Horde.kill', () => {
   function tableau(
     horde: Horde,
     champ: (typeof CHAMPS)[number],
-  ): Float32Array | Uint8Array | Uint16Array {
+  ): Float32Array | Float64Array | Uint8Array | Uint16Array {
     return horde[champ];
   }
 
@@ -1279,26 +1286,17 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       return { horde, history: new HordeHistoryLike(horde.capacity) };
     }
 
-    interface HordeHistoryLikeState {
-      count: number;
-      x: Float32Array;
-      y: Float32Array;
-      vx: Float32Array;
-      vy: Float32Array;
-      archetype: Uint8Array;
-      waveId: Uint16Array;
-      indexInWave: Uint16Array;
-      animPhase: Uint8Array;
-      targetField: Uint8Array;
-      stopped: Uint8Array;
-      hp: Float32Array;
-    }
-
+    // ⚠️ **`HordeState` importe, jamais recopie ici.** Une copie locale de la
+    // forme etait une TROISIEME liste de tableaux a tenir a jour (avec
+    // `#removeAt` et `HordeHistory`), et c'est exactement la classe de defaut
+    // que ce depot paie le plus cher : elle vieillit en silence. Ajouter un
+    // tableau a `Horde` casse desormais la compilation ici, au lieu de laisser
+    // ce rejeu miniature travailler sur un instantane incomplet.
     class HordeHistoryLike {
-      readonly #states = new Map<number, HordeHistoryLikeState>();
+      readonly #states = new Map<number, HordeState>();
       constructor(private readonly capacity: number) {}
       record(tick: number, horde: Horde): void {
-        const state: HordeHistoryLikeState = {
+        const state: HordeState = {
           count: 0,
           x: new Float32Array(this.capacity),
           y: new Float32Array(this.capacity),
@@ -1311,6 +1309,9 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
           targetField: new Uint8Array(this.capacity),
           stopped: new Uint8Array(this.capacity),
           hp: new Float32Array(this.capacity),
+          mark: new Uint8Array(this.capacity),
+          markBy: new Uint8Array(this.capacity),
+          markUntil: new Float64Array(this.capacity),
         };
         horde.saveState(state);
         this.#states.set(tick, state);
@@ -2001,6 +2002,134 @@ describe('tache 25 : la horde lit le champ par interpolation, pas par cellule', 
 
     expect(horde.vx[0] ?? 0).toBeCloseTo((expected[0] ?? 0) * speed, 3);
     expect(horde.vy[0] ?? 0).toBeCloseTo((expected[1] ?? 0) * speed, 3);
+  });
+});
+
+describe('etape 5a, tache 3 : la marque elementaire et son expiration derivee', () => {
+  it('applyMark ecrit les trois tableaux et pose l expiration a tick + MARK_DURATION_TICKS', () => {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 3 }));
+
+    horde.applyMark(1, ELEMENT.BRAISE, 2, 100);
+
+    expect(horde.mark[1]).toBe(ELEMENT.BRAISE);
+    expect(horde.markBy[1]).toBe(2);
+    // Derive de la constante, JAMAIS le chiffre 60 : `MARK_DURATION_TICKS`
+    // est un reglage de jeu que l'auteur ajustera a l'oeil (tache 11), et un
+    // test qui le verrouille casse au premier reglage. Le depot vient de payer
+    // exactement ca sur `WAVE1_MIN_COUNT`.
+    expect(horde.markUntil[1]).toBe(100 + MARK_DURATION_TICKS);
+    // Les voisins ne sont pas touches : `applyMark` ecrit UN creneau.
+    expect(horde.mark[0]).toBe(ELEMENT.NEUTRE);
+    expect(horde.mark[2]).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('markBy distingue deux joueurs — c est ce que la Synergie consomme', () => {
+    // ⚠️ Sans ce tableau, une reaction entre deux joueurs et une reaction en
+    // solo sont indiscernables, et le §6.5 de l'orientation — « le coeur du
+    // projet » — n'a plus de donnees (§7 de la spec). Deux marques posees par
+    // deux joueurs differents doivent rester distinctes.
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 2 }));
+
+    horde.applyMark(0, ELEMENT.BRAISE, 0, 10);
+    horde.applyMark(1, ELEMENT.BRAISE, 3, 10);
+
+    expect(horde.markBy[0]).toBe(0);
+    expect(horde.markBy[1]).toBe(3);
+    expect(horde.markBy[0]).not.toBe(horde.markBy[1]);
+  });
+
+  it('une marque vaut encore au dernier tick de sa duree et plus au suivant', () => {
+    // ⚠️ **LES DEUX BORNES.** Un test qui verifie seulement « ca expire un
+    // jour » passe avec n'importe quelle duree — y compris une duree fausse
+    // d'un tick, ou une comparaison `<=` au lieu de `<`.
+    expect(MARK_DURATION_TICKS).toBeGreaterThan(0); // sinon les deux bornes se confondent
+    const T = 500;
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1 }));
+
+    horde.applyMark(0, ELEMENT.GIVRE, 1, T);
+
+    expect(horde.markAt(0, T)).toBe(ELEMENT.GIVRE);
+    expect(horde.markAt(0, T + MARK_DURATION_TICKS - 1)).toBe(ELEMENT.GIVRE);
+    expect(horde.markAt(0, T + MARK_DURATION_TICKS)).toBe(ELEMENT.NEUTRE);
+    expect(horde.markAt(0, T + MARK_DURATION_TICKS + 1)).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('la marque vaut exactement MARK_DURATION_TICKS ticks, comptes un par un', () => {
+    // Le compte ferme les deux bornes a la fois : un decalage d'un tick d'un
+    // cote OU de l'autre change ce total, une duree fausse aussi. Toujours
+    // derive de la constante, jamais du chiffre.
+    const T = 7;
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1 }));
+    horde.applyMark(0, ELEMENT.BRAISE, 0, T);
+
+    let valides = 0;
+    for (let tick = T; tick <= T + MARK_DURATION_TICKS * 2; tick++) {
+      if (horde.markAt(0, tick) !== ELEMENT.NEUTRE) {
+        valides++;
+      }
+    }
+
+    expect(valides).toBe(MARK_DURATION_TICKS);
+  });
+
+  it('une entite jamais marquee ne porte aucun element, a aucun tick', () => {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 3 }));
+
+    expect(horde.markAt(0, 0)).toBe(ELEMENT.NEUTRE);
+    expect(horde.markAt(0, 10_000)).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('rien ne balaie les marques perimees : l expiration est DERIVEE, pas effacee', () => {
+    // ⚠️ Le pendant de `ORB_LIFETIME_TICKS` : aucune passe ne parcourt la
+    // horde pour nettoyer, aucun message ne dit qu'une marque est tombee. Les
+    // tableaux gardent donc leur contenu au-dela de l'expiration, et c'est
+    // `markAt` — et lui seul — qui repond. Un test qui lirait `horde.mark`
+    // directement se croirait marque pour toujours.
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1 }));
+    horde.applyMark(0, ELEMENT.BRAISE, 2, 0);
+
+    const bienApres = MARK_DURATION_TICKS * 10;
+    expect(horde.markAt(0, bienApres)).toBe(ELEMENT.NEUTRE);
+    expect(horde.mark[0]).toBe(ELEMENT.BRAISE);
+    expect(horde.markBy[0]).toBe(2);
+  });
+
+  it('une entite neuve dans un creneau recycle ne herite pas de la marque du mort', () => {
+    const horde = new Horde(10);
+    horde.spawn(order({ waveId: 1, count: 2 }));
+    // Les DEUX entites sont marquees : sans ca, le compactage de `kill`
+    // deplacerait une entite non marquee dans le creneau 0 et le test
+    // passerait meme si `spawn` n'effacait rien — la fixture rendrait le cas
+    // impossible.
+    horde.applyMark(0, ELEMENT.BRAISE, 1, 0);
+    horde.applyMark(1, ELEMENT.GIVRE, 3, 0);
+
+    horde.kill([horde.entityIdAt(0), horde.entityIdAt(1)]);
+
+    // Le cas qu'on croit creer, COMPTE et pas suppose : le creneau 0 est libre
+    // ET porte encore une marque ENCORE VALIDE au tick ou l'on va renaitre.
+    // Sans cette verification, une fixture ou la marque serait deja tombee (ou
+    // le creneau deja propre) rendrait le test vert quoi que fasse `spawn`.
+    expect(horde.count).toBe(0);
+    expect(horde.mark[0]).toBe(ELEMENT.BRAISE);
+    expect(horde.markBy[0]).toBe(1);
+    expect(horde.markUntil[0]).toBeGreaterThan(1);
+
+    horde.spawn(order({ waveId: 2, count: 1 }));
+
+    // Le cas qu'on croit creer, COMPTE et pas suppose : le creneau reutilise
+    // est bien celui qui portait une marque encore valide.
+    expect(horde.count).toBe(1);
+    expect(horde.mark[0]).toBe(ELEMENT.NEUTRE);
+    expect(horde.markAt(0, 1)).toBe(ELEMENT.NEUTRE);
+    expect(horde.markBy[0]).toBe(0);
+    expect(horde.markUntil[0]).toBe(0);
   });
 });
 

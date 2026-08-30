@@ -42,6 +42,9 @@ export class HordeHistory {
       targetField: new Uint8Array(capacity),
       stopped: new Uint8Array(capacity),
       hp: new Float32Array(capacity),
+      mark: new Uint8Array(capacity),
+      markBy: new Uint8Array(capacity),
+      markUntil: new Float64Array(capacity),
     }));
   }
 

@@ -3,6 +3,7 @@ import {
   CONTACT_RADIUS,
   DEOVERLAP_MAX_PX,
   MAP_SIZE,
+  MARK_DURATION_TICKS,
   MAX_ENTITIES,
   MAX_PER_WAVE,
   SEPARATION_CELL,
@@ -10,6 +11,7 @@ import {
   STEERING_RECOMPUTE_TICKS,
   STEERING_REPULSION_WEIGHT,
 } from './constants';
+import { ELEMENT } from './elements';
 import type { FlowField } from './flowfield';
 import { formationPositions, type WaveOrder } from './waves';
 
@@ -44,19 +46,20 @@ export function entityIdOf(waveId: number, index: number): number {
 /**
  * Instantane de l'etat de la horde, pour `HordeHistory` (§3.2).
  *
- * **Les ONZE memes tableaux que `Horde`, sans exception** (`stopped` depuis la
- * tache 17.2, `vx`/`vy` depuis la tache 19, `hp` depuis l'etape 5a), plus le
- * compte. `HordeHistory` en alloue un par creneau de son anneau, une seule
- * fois, et `saveState` / `restoreState` s'en servent comme tampons a copier
- * par `.set()` — jamais de nouveau tableau a chaque tick.
+ * **Les QUATORZE memes tableaux que `Horde`, sans exception** (`stopped`
+ * depuis la tache 17.2, `vx`/`vy` depuis la tache 19, `hp` puis
+ * `mark`/`markBy`/`markUntil` depuis l'etape 5a), plus le compte.
+ * `HordeHistory` en alloue un par creneau de son anneau, une seule fois, et
+ * `saveState` / `restoreState` s'en servent comme tampons a copier par
+ * `.set()` — jamais de nouveau tableau a chaque tick.
  *
  * ⚠️ **La liste est la MEME que celle de `#removeAt`, et c'est delibere.**
- * `hp` n'est lu que par le serveur, qui ne rejoue rien : le laisser hors de
- * l'instantane aurait « marche » aujourd'hui. Ce sont alors DEUX listes a
- * tenir a jour au lieu d'une, et le dossier de ce depot dit ce que ca coute —
- * le test « emmene toutes les proprietes » de l'etape 3 en verifiait deux sur
- * sept. Le cout de l'inclure est de `ROLLBACK_DEPTH_TICKS` (8) tampons de
- * `Float32Array(capacity)`, soit ~128 ko cote client.
+ * `hp` et la marque ne sont lus que par le serveur, qui ne rejoue rien : les
+ * laisser hors de l'instantane aurait « marche » aujourd'hui. Ce sont alors
+ * DEUX listes a tenir a jour au lieu d'une, et le dossier de ce depot dit ce
+ * que ca coute — le test « emmene toutes les proprietes » de l'etape 3 en
+ * verifiait deux sur sept. Le cout de l'inclure est de `ROLLBACK_DEPTH_TICKS`
+ * (8) tampons de `Float32Array(capacity)`, soit ~128 ko cote client.
  *
  * ⚠️ **`vx`/`vy` DOIVENT faire partie de cet instantane.** Une entite qui vient
  * de recalculer sa trajectoire (tache 19) tient sa vitesse jusqu'a `K` ticks
@@ -79,6 +82,9 @@ export interface HordeState {
   targetField: Uint8Array;
   stopped: Uint8Array;
   hp: Float32Array;
+  mark: Uint8Array;
+  markBy: Uint8Array;
+  markUntil: Float64Array;
 }
 
 /**
@@ -159,6 +165,51 @@ export class Horde {
    * (`weapon.damage * (1 + loadout.bonus('damage'))`).
    */
   readonly hp: Float32Array;
+  /**
+   * Element porte par l'entite — `ELEMENT.NEUTRE` (0) quand elle n'en porte
+   * aucun. Etape 5a, §4.3 de la spec.
+   *
+   * ⚠️ **Au plus UN element a la fois, et c'est delibere.** Un ennemi marque
+   * Braise que touche du Givre ne devient pas « Braise + Givre » : il REAGIT,
+   * et la marque se consomme (taches 6 et 7 — rien ne la consomme encore
+   * ici). Stocker un couple demanderait une seconde donnee par entite, ce que
+   * cette etape refuse explicitement (§11 : le gel sur accumulation est
+   * reporte pour exactement cette raison).
+   *
+   * ⚠️ **Ne pas le lire directement pour savoir si l'entite est marquee** :
+   * la marque expire, et son expiration est DERIVEE (voir `markUntil`).
+   * `markAt(slot, tick)` est le seul lecteur correct.
+   */
+  readonly mark: Uint8Array;
+  /**
+   * Index du joueur qui a pose la marque courante (`markBy[slot]`), sans
+   * signification quand l'entite n'est pas marquee.
+   *
+   * ⚠️ **C'est CE tableau qui rend la Synergie possible** (§7 de la spec, et
+   * le §6.5 de l'orientation qui l'appelle *« le coeur du projet »*). A la
+   * reaction, le serveur compare ce joueur a celui du projectile ou de la
+   * zone qui la declenche : differents, l'equipe gagne une charge ; le meme,
+   * la reaction a lieu mais ne rapporte rien. Sans lui, une reaction entre
+   * deux joueurs et une reaction en solo sont litteralement indiscernables,
+   * et il n'y a plus rien a compter.
+   */
+  readonly markBy: Uint8Array;
+  /**
+   * Tick ABSOLU auquel la marque cesse de valoir — `tick + MARK_DURATION_TICKS`
+   * au moment de la pose. `0` quand l'entite n'a jamais ete marquee, ce qui la
+   * rend expiree pour tout tick >= 0 sans cas particulier.
+   *
+   * ⚠️ **L'expiration est DERIVEE, jamais annoncee** — meme modele que
+   * `ORB_LIFETIME_TICKS` pour les orbes (§6.1 de l'etape 3) : les deux cotes
+   * comparent ce nombre au tick courant et obtiennent la meme reponse, sans un
+   * octet sur le fil et sans qu'aucune horloge murale n'entre dans le calcul.
+   *
+   * `Float64Array` et pas `Uint32Array` : c'est une SOMME d'un tick absolu et
+   * d'une duree, donc elle doit rester exacte au-dela de ce que le tick lui-
+   * meme atteint, sans reboucler a zero — un `markUntil` qui deborderait
+   * rendrait une entite marquee eternellement.
+   */
+  readonly markUntil: Float64Array;
 
   #count = 0;
 
@@ -248,6 +299,9 @@ export class Horde {
     this.targetField = new Uint8Array(capacity);
     this.stopped = new Uint8Array(capacity);
     this.hp = new Float32Array(capacity);
+    this.mark = new Uint8Array(capacity);
+    this.markBy = new Uint8Array(capacity);
+    this.markUntil = new Float64Array(capacity);
 
     this.#gridCols = Math.ceil(MAP_SIZE / SEPARATION_CELL);
     const cells = this.#gridCols * this.#gridCols;
@@ -338,6 +392,15 @@ export class Horde {
       // ci-dessus : un creneau recycle apres une mort garderait sinon les PV
       // entames du monstre qu'il remplace.
       this.hp[slot] = hp;
+      // Etape 5a : une entite neuve ne porte aucune marque. Meme raisonnement
+      // que `targetField`, `stopped` et `hp` ci-dessus, et c'est le cas le
+      // plus vicieux des quatre : sans ces trois lignes, un creneau recycle
+      // apres une mort ferait naitre un monstre deja marque Braise PAR un
+      // joueur qu'il n'a jamais croise, donc capable de declencher une
+      // reaction — et une charge de Synergie — au premier projectile Givre.
+      this.mark[slot] = ELEMENT.NEUTRE;
+      this.markBy[slot] = 0;
+      this.markUntil[slot] = 0;
       // Tache 20 : direction du champ (`targetField` vaut 0 ci-dessus, donc
       // c'est bien `field` — le champ 0 — qui doit servir ici), sans
       // repulsion (voir la doc de la methode). Zero si aucun champ n'est
@@ -418,8 +481,9 @@ export class Horde {
    * parametre plutot que d'en allouer un ici est ce qui garde cette methode
    * hors du ramasse-miettes.
    *
-   * ⚠️ Les ONZE tableaux, plus le compte (`stopped` depuis la tache 17.2,
-   * `vx`/`vy` depuis la tache 19, `hp` depuis l'etape 5a). Meme piege que
+   * ⚠️ Les QUATORZE tableaux, plus le compte (`stopped` depuis la tache 17.2,
+   * `vx`/`vy` depuis la tache 19, `hp` puis `mark`/`markBy`/`markUntil` depuis
+   * l'etape 5a). Meme piege que
    * `#removeAt` : en oublier un laisse la suite verte jusqu'a ce qu'un rejeu
    * s'appuie dessus — voir l'avertissement sur `HordeState` pour `vx`/`vy`
    * specifiquement.
@@ -437,6 +501,9 @@ export class Horde {
     out.targetField.set(this.targetField);
     out.stopped.set(this.stopped);
     out.hp.set(this.hp);
+    out.mark.set(this.mark);
+    out.markBy.set(this.markBy);
+    out.markUntil.set(this.markUntil);
   }
 
   /** Inverse de `saveState` : remplace l'etat courant par `state`. */
@@ -453,14 +520,69 @@ export class Horde {
     this.targetField.set(state.targetField);
     this.stopped.set(state.stopped);
     this.hp.set(state.hp);
+    this.mark.set(state.mark);
+    this.markBy.set(state.markBy);
+    this.markUntil.set(state.markUntil);
+  }
+
+  /**
+   * Pose une marque elementaire sur le creneau `slot` — etape 5a, §4.3.
+   *
+   * ⚠️ **S'appelle `applyMark` et pas `mark`, contrairement au plan.** Le plan
+   * de l'etape 5a demande a la fois un TABLEAU `Horde.mark` et une METHODE
+   * `mark(slot, element, playerId, tick)` : les deux ne peuvent pas coexister
+   * sur la meme classe. Les noms de tableaux l'emportent — ils sont la
+   * convention de toute cette classe et la liste unique du test
+   * « emmene toutes les proprietes » les enumere — donc c'est la methode qui
+   * est renommee.
+   *
+   * ⚠️ **Ecrase la marque precedente sans rien arbitrer.** Un ennemi porte au
+   * plus UN element (§4.3) : c'est l'appelant (tache 6, `back/src/combat.ts`)
+   * qui decide, AVANT d'appeler, s'il rafraichit une marque de meme element ou
+   * s'il declenche une reaction pour un element different. Cette methode ne
+   * fait que poser la donnee — rien ici ne consomme la marque.
+   *
+   * ⚠️ **Appeler avec le tick ABSOLU de la simulation**, jamais un compteur
+   * local : `markUntil` est compare au meme tick absolu par `markAt`, des deux
+   * cotes du fil, exactement comme le `bornTick` d'un orbe.
+   */
+  applyMark(slot: number, element: number, playerId: number, tick: number): void {
+    this.mark[slot] = element;
+    this.markBy[slot] = playerId;
+    this.markUntil[slot] = tick + MARK_DURATION_TICKS;
+  }
+
+  /**
+   * L'element porte par le creneau `slot` au tick `tick`, ou `ELEMENT.NEUTRE`
+   * si la marque a expire (ou n'a jamais ete posee).
+   *
+   * ⚠️ **L'expiration est DERIVEE ICI, elle n'est jamais annoncee ni
+   * balayee.** Aucune passe ne parcourt la horde pour effacer les marques
+   * perimees, et aucun message ne dit qu'une marque est tombee : les deux
+   * cotes comparent `markUntil` au tick courant et obtiennent la meme reponse.
+   * Meme partage que `ORB_LIFETIME_TICKS` (§6.1 de l'etape 3).
+   *
+   * La borne est STRICTE des deux cotes, et c'est ce qui rend la duree
+   * exacte : une marque posee au tick `T` vaut encore au tick
+   * `T + MARK_DURATION_TICKS - 1` et plus au tick `T + MARK_DURATION_TICKS`,
+   * soit exactement `MARK_DURATION_TICKS` ticks de validite.
+   */
+  markAt(slot: number, tick: number): number {
+    return tick < (this.markUntil[slot] ?? 0)
+      ? (this.mark[slot] ?? ELEMENT.NEUTRE)
+      : ELEMENT.NEUTRE;
   }
 
   /**
    * Deplace la derniere entite dans le creneau libere.
    *
-   * ⚠️ **LES ONZE TABLEAUX, sans exception.** En oublier un laisse l'entite
-   * deplacee avec une propriete du mort qu'elle remplace — a l'etape 5a, ses
-   * PV entames. Le defaut ne se voit ni au type ni au lint : il se voit au
+   * ⚠️ **LES QUATORZE TABLEAUX, sans exception.** En oublier un laisse
+   * l'entite deplacee avec une propriete du mort qu'elle remplace — a l'etape
+   * 5a, ses PV entames, ou **la marque elementaire de celui qui vient de
+   * mourir**, avec le joueur qui l'avait posee : un monstre indemne devient
+   * alors capable de declencher une reaction, et une charge de Synergie, pour
+   * un element que personne ne lui a jamais applique. Le defaut ne se voit ni
+   * au type ni au lint : il se voit au
    * test « emmene toutes les proprietes » de `horde.test.ts`, qui enumere
    * depuis une liste unique ET verifie que cette liste couvre bien tous les
    * tableaux de l'instance. Ajouter un tableau a `Horde` sans l'ajouter ici le
@@ -480,6 +602,9 @@ export class Horde {
       this.targetField[slot] = this.targetField[last] ?? 0;
       this.stopped[slot] = this.stopped[last] ?? 0;
       this.hp[slot] = this.hp[last] ?? 0;
+      this.mark[slot] = this.mark[last] ?? 0;
+      this.markBy[slot] = this.markBy[last] ?? 0;
+      this.markUntil[slot] = this.markUntil[last] ?? 0;
     }
     this.#count = last;
   }

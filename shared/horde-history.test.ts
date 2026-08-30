@@ -21,19 +21,24 @@ function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
 
 describe('HordeHistory', () => {
   it('un aller-retour enregistrer / restaurer rend exactement l etat sauvegarde, champ par champ', () => {
-    // ⚠️ ONZE tableaux, pas sept ni neuf : c'est exactement le defaut R13
+    // ⚠️ QUATORZE tableaux, pas sept ni onze : c'est exactement le defaut R13
     // (voir le rapport de la tache 19) — un test qui n'en verifie qu'une
     // partie reste vert quand une copie manque dans `saveState`/`restoreState`.
-    // `vx`/`vy` (tache 19) et `hp` (etape 5a) sont ICI au meme titre que les
-    // huit autres, verifies un par un par corruption puis restauration :
-    // supprimer la copie de l'UN QUELCONQUE de ces onze tableaux dans
-    // `saveState` ou `restoreState` doit faire echouer la ligne qui lui
-    // correspond, et elle seule.
+    // `vx`/`vy` (tache 19), `hp` puis `mark`/`markBy`/`markUntil` (etape 5a)
+    // sont ICI au meme titre que les autres, verifies un par un par corruption
+    // puis restauration : supprimer la copie de l'UN QUELCONQUE de ces
+    // quatorze tableaux dans `saveState` ou `restoreState` doit faire echouer
+    // la ligne qui lui correspond, et elle seule.
     //
-    // ⚠️ `hp` n'est lu que par le serveur, qui ne rejoue jamais — le laisser
-    // hors de l'instantane « marcherait » aujourd'hui. C'est precisement
-    // pourquoi il y est : deux listes a tenir a jour au lieu d'une, c'est la
-    // classe de defaut que ce depot paie le plus cher.
+    // ⚠️ `hp` et la marque ne sont lus que par le serveur, qui ne rejoue
+    // jamais — les laisser hors de l'instantane « marcherait » aujourd'hui.
+    // C'est precisement pourquoi ils y sont : deux listes a tenir a jour au
+    // lieu d'une, c'est la classe de defaut que ce depot paie le plus cher.
+    //
+    // ⚠️ Et une liste ecrite a la main vieillit. Le test verifie donc AUSSI
+    // (`champsVerifies` plus bas) qu'elle couvre exactement les tableaux que
+    // porte l'instance — meme garde que le test « emmene toutes les
+    // proprietes » de `horde.test.ts`, pour la meme raison.
     const horde = new Horde(20);
     horde.spawn(order({ waveId: 1, archetype: 2, count: 3 }));
     // Valeurs distinctives, posees a la main : le spawn seul ne fait pas
@@ -45,6 +50,9 @@ describe('HordeHistory', () => {
     horde.targetField[0] = 3;
     horde.stopped[0] = 1;
     horde.hp[0] = 13.5;
+    horde.mark[0] = 2;
+    horde.markBy[0] = 3;
+    horde.markUntil[0] = 4242;
 
     const history = new HordeHistory(horde.capacity);
     history.record(5, horde);
@@ -62,7 +70,20 @@ describe('HordeHistory', () => {
       targetField: horde.targetField[0] ?? 0,
       stopped: horde.stopped[0] ?? 0,
       hp: horde.hp[0] ?? 0,
+      mark: horde.mark[0] ?? 0,
+      markBy: horde.markBy[0] ?? 0,
+      markUntil: horde.markUntil[0] ?? 0,
     };
+
+    // La liste ci-dessus couvre-t-elle bien TOUS les tableaux de l'instance ?
+    // Ajouter un tableau a `Horde` sans l'ajouter ici fait rougir cette ligne,
+    // au lieu de laisser un instantane incomplet passer inapercu jusqu'a ce
+    // qu'un rejeu s'appuie dessus.
+    const champsVerifies = Object.keys(attendu).filter((cle) => cle !== 'count');
+    const tableauxDeLInstance = Object.keys(horde as unknown as Record<string, unknown>).filter(
+      (cle) => ArrayBuffer.isView((horde as unknown as Record<string, unknown>)[cle]),
+    );
+    expect(champsVerifies.slice().sort()).toEqual(tableauxDeLInstance.slice().sort());
 
     // Corrompt CHAQUE champ individuellement, avec une valeur differente de
     // celle sauvegardee, plus le compte (via kill sur une AUTRE entite, pour
@@ -78,6 +99,9 @@ describe('HordeHistory', () => {
     horde.targetField[0] = (attendu.targetField + 1) % 4;
     horde.stopped[0] = attendu.stopped === 1 ? 0 : 1;
     horde.hp[0] = attendu.hp + 1;
+    horde.mark[0] = (attendu.mark + 1) % 256;
+    horde.markBy[0] = (attendu.markBy + 1) % 256;
+    horde.markUntil[0] = attendu.markUntil + 1;
     horde.kill([horde.entityIdAt(horde.count - 1)]);
     expect(horde.count).toBe(attendu.count - 1); // sanity : le compte a bien change
 
@@ -96,6 +120,9 @@ describe('HordeHistory', () => {
     expect(horde.targetField[0]).toBe(attendu.targetField);
     expect(horde.stopped[0]).toBe(attendu.stopped);
     expect(horde.hp[0]).toBe(attendu.hp);
+    expect(horde.mark[0]).toBe(attendu.mark);
+    expect(horde.markBy[0]).toBe(attendu.markBy);
+    expect(horde.markUntil[0]).toBe(attendu.markUntil);
   });
 
   it('restaurer un tick jamais enregistre rend false et ne modifie pas la horde', () => {
