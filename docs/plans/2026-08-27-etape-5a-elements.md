@@ -536,6 +536,42 @@ devient fausse, et un implémenteur qui s'en tiendrait à la liste casserait la 
 
 ---
 
+## Tâche 9 bis : rendre `main.ts` testable — **la dette qui mord pour la troisième fois**
+
+**Fichiers :** modifier `front/src/main.ts`, créer `front/src/main.test.ts`
+
+**Ce n'est pas au plan d'origine.** Elle y entre parce que le défaut a maintenant trois occurrences
+et que chacune a été découverte *après coup* :
+
+| Étape | Ce qui n'était gardé par rien | Découvert |
+| --- | --- | --- |
+| 3 | le gel de niveau côté client — le paramètre existait, le câblage non | par mutation, 76 tests verts |
+| 4 | `draftScreen.update()` dans la boucle de rendu | par le sous-agent, 117 tests verts |
+| 5a | `drawZones`, `drawReactionFlashes`, `paintSynergy` | par le sous-agent, **170 tests verts** |
+
+**La cause est unique et structurelle** : `main.ts` fait ses recherches DOM et son `await
+stage.init()` **au niveau module**, donc l'importer dans un test exécute tout le démarrage. Aucun
+test ne peut donc atteindre `renderFrame`, et **sept mutations survivent** rien qu'à la tâche 9.
+
+- [ ] **Étape 1 : séparer le câblage du démarrage.** Extraire de `main.ts` une fonction pure —
+  `composeFrame(state, cibles)` ou équivalent — qui **décide ce qui est dessiné**, sans rien
+  instancier. `main.ts` garde le démarrage et l'appelle.
+
+  ⚠️ **Ne déplace pas le problème.** Le critère est vérifiable : une mutation qui retire un appel de
+  dessin doit rougir. Si elle survit encore, l'extraction n'a rien extrait.
+
+- [ ] **Étape 2 : le test.** Un double de `Stage` qui enregistre ce qu'on lui demande de dessiner, et
+  une assertion que **chaque calque reçoit son appel** — zones, horde, projectiles, flashs, joueurs,
+  orbes, HUD.
+
+- [ ] **Étape 3 : la mutation qui juge.** Retirer chacun des appels, un par un, et vérifier que
+  chacun rougit. **C'est la seule mesure qui compte** — les sept survivantes de la tâche 9 doivent
+  toutes mourir.
+
+- [ ] **Étape 4 : commit** — `refactor(front): rendre la boucle de rendu testable`
+
+---
+
 ## Tâche 10 : quatre clients, en headless — **le livrable du §13**
 
 **Fichiers :** étendre `back/src/draft.integration.test.ts` ou en créer un voisin
