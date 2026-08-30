@@ -98,13 +98,24 @@ veut dire autre chose qu'un sprite et une vitesse.
 | Piétaille légère | 5 | meurt en un coup de dague — le rythme de l'étape 3, inchangé |
 | Piétaille lourde | 15 à 25 | survit deux à cinq coups : **assez pour porter un élément** |
 
-**Trois issues, engagées AVANT la mesure**, comme le §3.3 de l'étape 3 :
+**Le réglage se juge en jeu, pas au banc.** Décision de l'auteur :
 
-1. le rythme de mise à mort reste dans ±20 % de celui de l'étape 3 → **on garde** ;
-2. il chute de plus de 20 % → **on rééquilibre la proportion de lourds dans les vagues**, pas les
-   PV, parce que c'est le générateur qui porte la difficulté ;
-3. la horde s'accumule sans plafonner → **on rouvre `waveCountBounds`**, et cette spec le dit
-   d'avance pour ne pas le trancher sous la pression du résultat.
+> *« Pas besoin de mesurer le rythme de mise à mort, je testerai et ferai des retours. »*
+
+`back/bench/kills.bench.ts` existe et a servi une fois — il a montré que `hp = 5` ne coûte rien
+(+0,9 %) et que 20 % de piétaille lourde coûte −12,8 %. Il reste **disponible à la demande**
+(`npm run bench:kills -w back`) pour vérifier qu'un changement ultérieur ne ruine pas le rythme en
+silence, mais **il ne fait plus partie de la chaîne `npm run bench` et n'est plus une porte.**
+
+Les leviers de réglage, dans l'ordre où il faut les toucher :
+
+| Levier | Départ | Ce qu'il fait |
+| --- | --- | --- |
+| `HEAVY_WAVE_SHARE` | 0,20 | part de piétaille lourde dans une vague |
+| `HEAVY_FIRST_WAVE` | 6 | avant cette vague, aucun lourd |
+| `WAVE1_MIN/MAX_COUNT` | 10 / 18 | taille des premières vagues |
+| `RAMP_WAVES` | 30 | sur combien de vagues la montée s'étale |
+| `Archetype.hp` | 5 / 20 | **en dernier** — c'est ce qui déplace tout le reste |
 
 ### 3.4 Ce qui n'est PAS visible
 

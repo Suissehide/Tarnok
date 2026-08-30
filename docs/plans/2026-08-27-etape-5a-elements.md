@@ -157,12 +157,13 @@ Chaque tâche les respecte, sans les répéter.
   outil — **exactement le constat de la tâche 12 de l'étape 4**, où aucun des trois bancs ne
   mesurait ce que la tâche demandait.
 
-  **Trois issues, engagées AVANT la mesure** (§3.3 de la spec) :
-  1. dans ±20 % du rythme de l'étape 3 → **on garde** ;
-  2. chute de plus de 20 % → **on rééquilibre la proportion de lourds**, jamais les PV ;
-  3. la horde s'accumule sans plafonner → **on rouvre `waveCountBounds`**.
+  **Le réglage se juge en jeu — décision de l'auteur, prise après la tâche 1** :
 
-  **Écrire le verdict dans le commit**, quel qu'il soit.
+  > *« Pas besoin de mesurer le rythme de mise à mort, je testerai et ferai des retours. »*
+
+  Le banc `kills.bench.ts` reste disponible (`npm run bench:kills -w back`) mais **quitte la chaîne
+  `npm run bench` et cesse d'être une porte.** Les trois issues qui étaient engagées d'avance ne
+  s'appliquent plus : c'est l'œil qui tranche.
 
 - [ ] **Étape 7 bis : moins d'ennemis au début — décision de l'auteur, prise d'avance.**
 
@@ -488,8 +489,9 @@ Chaque tâche les respecte, sans les répéter.
     problème visuel le plus difficile du projet »* (§6.6) ;
   - la barre de Synergie donne-t-elle envie de se regrouper, ou passe-t-elle inaperçue ?
 
-- [ ] **Rejouer les quatre bancs** — les PV changent le rythme de mise à mort, les zones changent le
-  coût du tick.
+- [ ] **Rejouer les bancs de la chaîne** (`npm run bench -w back`) — les zones changent le coût du
+  tick. **Le rythme de mise à mort n'y est plus** : il se juge en jeu, et `bench:kills` reste à la
+  demande pour vérifier qu'un changement ne l'a pas ruiné en silence.
 
 - [ ] Écrire `docs/plans/2026-08-27-etape-5a-resultats.md` et mettre à jour le `README.md`.
 
