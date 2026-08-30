@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { PROJECTILE_HIT_RADIUS, TICK_HZ } from './constants';
+import { ELEMENT } from './elements';
 import { Horde } from './horde';
 import { Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
@@ -39,6 +40,7 @@ const SINGLE: Weapon = {
   projectileLifeTicks: 5,
   projectileCount: 1,
   spreadRadians: 0,
+  element: ELEMENT.NEUTRE,
 };
 
 /** Une arme a plusieurs projectiles, pour verifier la symetrie de la dispersion. */
@@ -51,6 +53,7 @@ const SPREAD: Weapon = {
   projectileLifeTicks: 10,
   projectileCount: 3,
   spreadRadians: Math.PI / 2,
+  element: ELEMENT.NEUTRE,
 };
 
 /** Une arme rapide, pour exercer le balayage de segment de `collide`. */
@@ -63,6 +66,7 @@ const FAST: Weapon = {
   projectileLifeTicks: 30,
   projectileCount: 1,
   spreadRadians: 0,
+  element: ELEMENT.NEUTRE,
 };
 
 describe('Projectiles.fireSalvo', () => {

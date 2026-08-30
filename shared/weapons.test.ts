@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { TICK_HZ } from './constants';
-import { salvoCount, WEAPONS, weaponOf } from './weapons';
+import { ELEMENT } from './elements';
+import { assertWeaponElements, BASE_WEAPON_ID, salvoCount, WEAPONS, weaponOf } from './weapons';
 
 describe('WEAPONS', () => {
   it('indexe chaque arme a sa position dans le tableau', () => {
@@ -32,6 +33,74 @@ describe('WEAPONS', () => {
 
   it('cable au moins une arme a plusieurs projectiles, pour prouver que la forme tient', () => {
     expect(WEAPONS.some((w) => w.projectileCount > 1)).toBe(true);
+  });
+});
+
+describe("l'element porte par une arme (etape 5a)", () => {
+  /**
+   * §4.2 : *« deux passent en Braise, deux en Givre, les cinq autres restent
+   * neutres »*. Compter, plutot que de faire confiance a la lecture de la
+   * table : c'est le seul endroit ou une arme elementaire oubliee ou ajoutee
+   * en trop se voit — plus loin dans l'etape, elle se contenterait de ne pas
+   * poser de zone.
+   */
+  it('cable exactement deux armes par element, et laisse les autres neutres', () => {
+    const compte = (element: number) => WEAPONS.filter((w) => w.element === element).length;
+
+    expect(compte(ELEMENT.BRAISE)).toBe(2);
+    expect(compte(ELEMENT.GIVRE)).toBe(2);
+    expect(compte(ELEMENT.NEUTRE)).toBe(WEAPONS.length - 4);
+  });
+
+  /**
+   * ⚠️ **L'arme de base reste neutre, et ce n'est pas un oubli.** Le §6.3 de
+   * l'orientation en fait *« un socle pour les joueurs qui ne veulent pas
+   * jouer le systeme »* : elle est la seule arme que tout le monde porte a
+   * chaque tick, donc lui donner un element marquerait la horde entiere en
+   * permanence et rendrait le systeme elementaire subi plutot que choisi.
+   */
+  it('laisse neutre l arme de base, avec laquelle toute run commence', () => {
+    expect(weaponOf(BASE_WEAPON_ID).element).toBe(ELEMENT.NEUTRE);
+  });
+
+  /**
+   * L'omission vaut `NEUTRE` (§4.2) : c'est la ligne ABSENTE qui est le cas
+   * courant dans `WEAPON_DEFS`. Sans ce test, un defaut mal ecrit rendrait
+   * `undefined` — et `undefined` n'est ni un element ni une erreur, il
+   * traverserait tout le systeme en ne marquant jamais rien.
+   */
+  it('donne un element defini a chaque arme, meme a celles qui ne le declarent pas', () => {
+    for (const w of WEAPONS) {
+      expect(typeof w.element, `arme « ${w.name} »`).toBe('number');
+    }
+  });
+});
+
+/**
+ * La garde de chargement du module. Elle prend la table en parametre pour
+ * qu'un test puisse lui en donner une cassee : le vrai catalogue est une
+ * constante, aucun test ne peut y glisser une reference morte.
+ */
+describe('assertWeaponElements', () => {
+  it('accepte le catalogue reel', () => {
+    expect(() => assertWeaponElements(WEAPONS)).not.toThrow();
+  });
+
+  it('leve sur une arme qui designe un element inexistant', () => {
+    const base = weaponOf(BASE_WEAPON_ID);
+    expect(() => assertWeaponElements([{ ...base, element: 99 }])).toThrow(/element inconnu/i);
+  });
+
+  /**
+   * ⚠️ Le piege de la fixture qui masque, pris a l'avance : une garde qui
+   * s'arreterait a la premiere arme passerait le test ci-dessus si la seule
+   * arme cassee etait la premiere. La reference morte est ici la DERNIERE.
+   */
+  it('inspecte toute la table, pas seulement la premiere arme', () => {
+    const base = weaponOf(BASE_WEAPON_ID);
+    expect(() => assertWeaponElements([base, base, { ...base, element: 99 }])).toThrow(
+      /element inconnu/i,
+    );
   });
 });
 

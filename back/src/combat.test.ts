@@ -1,5 +1,6 @@
 import { ARCHETYPES, HEAVY_HP, LIGHT_HP } from '@shared/archetypes';
 import { CONTACT_DAMAGE, CONTACT_INTERVAL_TICKS, CONTACT_RADIUS } from '@shared/constants';
+import { ELEMENT } from '@shared/elements';
 import { Horde } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -39,6 +40,7 @@ const SINGLE: Weapon = {
   projectileLifeTicks: 10,
   projectileCount: 1,
   spreadRadians: 0,
+  element: ELEMENT.NEUTRE,
 };
 
 function player(x: number, y: number, hp = 100): ContactPlayer {

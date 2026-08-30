@@ -11,6 +11,9 @@
  * qui fait la puissance. Les niveaux d'arme et les evolutions ont existe un
  * temps dans cette etape puis ont ete retires — voir le §9 de la spec.
  */
+
+import { ELEMENT, elementOf } from './elements';
+
 export interface Weapon {
   id: number;
   name: string;
@@ -33,6 +36,17 @@ export interface Weapon {
    * strictement positifs quelle que soit l'arme (voir le test).
    */
   spreadRadians: number;
+  /**
+   * Element porte par les projectiles de cette arme, index dans `ELEMENTS`
+   * (`shared/elements.ts`). `ELEMENT.NEUTRE` : l'arme ne marque rien et ne
+   * pose aucune zone.
+   *
+   * ⚠️ Ce champ DOIT designer un element existant : une reference morte ne se
+   * verrait qu'au premier tir de cette arme, plusieurs taches plus tard.
+   * `assertWeaponElements` ci-dessous verifie chaque reference au CHARGEMENT
+   * du module plutot que d'attendre le tir.
+   */
+  element: number;
 }
 
 /**
@@ -41,8 +55,14 @@ export interface Weapon {
  *
  * La premiere entree est l'arme neutre de base du §6.1 : faible, sans
  * element, hors slots — celle avec laquelle une run commence toujours.
+ *
+ * `element` est le seul champ optionnel : l'omettre vaut `ELEMENT.NEUTRE`
+ * (§4.2 de la spec de l'etape 5a). Cinq armes sur neuf sont neutres et le
+ * restent — *« un socle pour les joueurs qui ne veulent pas jouer le
+ * systeme »* (§6.3 de l'orientation) — donc c'est la ligne ABSENTE qui est le
+ * cas courant, et les quatre armes elementaires se lisent d'un coup d'oeil.
  */
-const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
+const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number })[] = [
   {
     // Arme neutre de base (§6.1) : faible, sans element, hors slots.
     //
@@ -67,6 +87,11 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
   {
     // Plusieurs projectiles en eventail : prouve que la dispersion tient,
     // pas seulement le tir a projectile unique.
+    //
+    // La braise « large » : cinq projectiles etales sur 60°, donc un front de
+    // marques sur toute une vague. Chaque element a besoin d'une arme qui
+    // arrose et d'une qui frappe fort — un element qu'on n'applique presque
+    // jamais est un systeme qu'on ne sent pas.
     name: 'eventail',
     cooldownTicks: 45,
     damage: 4,
@@ -74,6 +99,7 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 12,
     projectileCount: 5,
     spreadRadians: Math.PI / 3,
+    element: ELEMENT.BRAISE,
   },
   {
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
@@ -88,6 +114,16 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
   },
   {
     // Cadence tres rapide, courte portee : un cone continu au contact.
+    //
+    // ⚠️ **Elle reste NEUTRE, et c'est un choix contre son nom.** C'etait la
+    // Braise evidente ; elle tire 18 projectiles par seconde (3 toutes les 5
+    // ticks). A une zone au sol par projectile qui finit sa course
+    // (§5.1 de la spec) et `ZONE_LIFETIME_TICKS` a 90, elle porterait a elle
+    // seule ~54 zones vivantes par joueur, la ou le §5.3 budgete *« quelques
+    // dizaines »* pour la partie entiere — et le recouvrement de zones est en
+    // O(zones²). La rendre elementaire demande d'abord une regle de pose autre
+    // que « un projectile = une zone » (plafond par joueur, ou une zone par
+    // salve). Signale a l'auteur, pas tranche ici.
     name: 'lance-flammes',
     cooldownTicks: 5,
     damage: 3,
@@ -98,6 +134,11 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
   },
   {
     // Cadence tres lente, degats massifs : l'extreme oppose du lance-flammes.
+    //
+    // La braise « lourde » : une zone toutes les deux secondes et demie, posee
+    // ou l'explosion finit. Elle et l'eventail couvrent les deux extremes de
+    // cadence du catalogue, ce qui donne a la Braise une arme de couverture et
+    // une arme de placement.
     name: 'grenade',
     cooldownTicks: 75,
     damage: 40,
@@ -105,6 +146,7 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 45,
     projectileCount: 1,
     spreadRadians: 0.05,
+    element: ELEMENT.BRAISE,
   },
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
@@ -118,6 +160,10 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
   },
   {
     // Deux projectiles paralleles, dispersion etroite.
+    //
+    // Le givre « rapide », en face de l'eventail : trois projectiles par
+    // seconde, de quoi entretenir des marques de Givre sur un front que la
+    // Braise d'un allie viendra faire reagir (§6.2).
     name: 'fleches-jumelles',
     cooldownTicks: 20,
     damage: 7,
@@ -125,6 +171,7 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 25,
     projectileCount: 2,
     spreadRadians: 0.15,
+    element: ELEMENT.GIVRE,
   },
   {
     // Salve tres large a courte portee : l'autre extreme de la dispersion,
@@ -141,6 +188,9 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     // Arme a projectile unique et longue portee. Elle a un temps ete la seule
     // du catalogue a « evoluer » ; les evolutions n'existent plus (§9.1 de la
     // spec), elle s'empile comme les autres.
+    //
+    // Le givre « de placement » : projectile unique, longue portee, cadence
+    // moyenne — une zone posee ou on la vise, en face des fleches-jumelles.
     name: 'sceptre-arcanique',
     cooldownTicks: 40,
     damage: 10,
@@ -148,10 +198,38 @@ const WEAPON_DEFS: readonly Omit<Weapon, 'id'>[] = [
     projectileLifeTicks: 30,
     projectileCount: 1,
     spreadRadians: 0.05,
+    element: ELEMENT.GIVRE,
   },
 ];
 
-export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({ ...w, id }));
+export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
+  ...w,
+  id,
+  element: w.element ?? ELEMENT.NEUTRE,
+}));
+
+/**
+ * Verifie que chaque arme designe un element existant.
+ *
+ * ⚠️ **Prend la table en parametre au lieu de lire `WEAPONS`**, pour une
+ * raison de test et une seule : le catalogue est une constante, aucun test ne
+ * peut y glisser une reference morte, donc une garde qui ne lirait que
+ * `WEAPONS` serait du code qu'aucune mutation ne peut tuer. Avec un parametre,
+ * `weapons.test.ts` lui donne une table volontairement cassee et verifie
+ * qu'elle leve.
+ *
+ * Appelee au CHARGEMENT du module, juste en dessous : une table mal formee
+ * casse au demarrage, jamais silencieusement au premier tir de l'arme fautive
+ * — plusieurs taches plus tard. C'est le motif que `evolutionPassiveId` avait
+ * a l'etape 4, retire avec les evolutions.
+ */
+export function assertWeaponElements(weapons: readonly Weapon[]): void {
+  for (const w of weapons) {
+    elementOf(w.element);
+  }
+}
+
+assertWeaponElements(WEAPONS);
 
 /**
  * L'arme neutre de base du §6.1 : celle avec laquelle toute run commence.
