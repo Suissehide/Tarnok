@@ -17,6 +17,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
     const state: RenderState = {
       localId: 2,
       xp: 0,
+      synergy: 0,
       players: [
         { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 },
         { id: 2, x: 0, y: 0, hp: 37, aimX: 0, aimY: 0 },
@@ -30,6 +31,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
     const state: RenderState = {
       localId: 1,
       xp: 654,
+      synergy: 0,
       players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }],
     };
 
@@ -40,6 +42,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
     const state: RenderState = {
       localId: 1,
       xp: 0,
+      synergy: 0,
       players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }],
     };
 
@@ -47,7 +50,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
   });
 
   it('rend hp=0 quand le joueur local est absent de RenderState.players (pas encore de WELCOME)', () => {
-    const state: RenderState = { localId: null, xp: 0, players: [] };
+    const state: RenderState = { localId: null, xp: 0, synergy: 0, players: [] };
 
     expect(hudInfo(state, 1, 0).hp).toBe(0);
   });
@@ -59,6 +62,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
       const state: RenderState = {
         localId: 1,
         xp: 0,
+        synergy: 0,
         players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }],
       };
 

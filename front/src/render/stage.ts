@@ -1,18 +1,26 @@
 import { MAP_SIZE, TICK_HZ } from '@shared/constants';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
+import type { ZoneField } from '@shared/zones';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type {
   DerivedOrbs,
   HitFlashes,
   ObstacleMap,
+  ReactionFlashes,
   RenderState,
   RunOverSummary,
 } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
 import { HordeRenderer } from './horde-renderer';
-import { ImpactFlashRenderer, OrbRenderer, ProjectileRenderer } from './projectile-renderer';
+import {
+  ImpactFlashRenderer,
+  OrbRenderer,
+  ProjectileRenderer,
+  ReactionFlashRenderer,
+} from './projectile-renderer';
+import { ZoneRenderer } from './zone-renderer';
 
 /**
  * La scene du jeu : la carte, la horde, et un carre par joueur.
@@ -41,9 +49,11 @@ export class Stage {
   // Corrigé par rapport au brief : `readonly` assigné dans `init()` ne
   // compile pas sous `strictPropertyInitialization`. Initialisation directe.
   #horde = new HordeRenderer(ASSETS_BASE);
+  readonly #zones = new ZoneRenderer();
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();
   readonly #impactFlashes = new ImpactFlashRenderer();
+  readonly #reactionFlashes = new ReactionFlashRenderer();
   /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
   #obstaclesDrawn = false;
 
@@ -65,20 +75,30 @@ export class Stage {
 
     // Ordre d'affichage : apres la grille, avant les carres des joueurs
     // (ajoutes plus tard via `#spriteFor`), sinon les joueurs disparaissent
-    // sous la horde. Les orbes (ramassage au sol) passent avant la horde ;
-    // les projectiles et les flashs d'impact passent apres, pour rester
+    // sous la horde. Les zones puis les orbes (tous deux au sol) passent avant
+    // la horde ; les projectiles et les flashs passent apres, pour rester
     // visibles par-dessus les monstres qu'ils visent.
+    //
+    // ⚠️ **Les zones EN PREMIER, et le flash de reaction EN DERNIER** : c'est
+    // la hierarchie du §6.6 traduite en ordre de calques. Une zone est du
+    // terrain teinte, discret, que rien ne doit masquer les monstres qui s'y
+    // trouvent ; la reaction est l'evenement le plus rare et le plus mortel du
+    // jeu, et elle passe devant tout le reste.
+    this.#zones.attach(this.#world);
     this.#orbs.attach(this.#world);
     this.#horde.attach(this.#world);
     this.#projectiles.attach(this.#world);
     this.#impactFlashes.attach(this.#world);
+    this.#reactionFlashes.attach(this.#world);
 
     // Textures procedurales (canevas 2D) : aucun fetch reseau, ne peut pas
     // echouer comme le chargement de l'atlas ci-dessous — pas de try/catch
     // necessaire ici.
+    this.#zones.load();
     this.#orbs.load();
     this.#projectiles.load();
     this.#impactFlashes.load();
+    this.#reactionFlashes.load();
 
     // Constat I4 : sans ce try/catch, un atlas absent (404 sur le manifeste,
     // deploiement ou l'atlas n'a pas ete depose sur MinIO) fait echouer cette
@@ -192,8 +212,17 @@ export class Stage {
     this.#world.addChildAt(mapObstacles(map.mask, map.cols, map.rows, map.cellSize), 1);
   }
 
-  drawHorde(horde: Horde, timeMs: number): void {
-    this.#horde.draw(horde, this.viewRect(), timeMs);
+  /**
+   * `tick` sert la teinte elementaire, `timeMs` l'animation — voir
+   * `HordeRenderer.draw`.
+   */
+  drawHorde(horde: Horde, timeMs: number, tick: number): void {
+    this.#horde.draw(horde, this.viewRect(), timeMs, tick);
+  }
+
+  /** `tick` decide quelles zones sont encore vivantes — voir `ZoneRenderer.draw`. */
+  drawZones(zones: ZoneField, tick: number): void {
+    this.#zones.draw(zones, tick, this.viewRect());
   }
 
   drawOrbs(orbs: DerivedOrbs, timeMs: number): void {
@@ -207,6 +236,11 @@ export class Stage {
   /** `nowMs` doit etre la meme horloge murale que celle passee a `GameClient` (voir `ImpactFlashRenderer`). */
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void {
     this.#impactFlashes.draw(flashes, nowMs);
+  }
+
+  /** Meme horloge murale que `drawImpactFlashes` — voir `ReactionFlashRenderer`. */
+  drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void {
+    this.#reactionFlashes.draw(flashes, nowMs);
   }
 
   destroy(): void {

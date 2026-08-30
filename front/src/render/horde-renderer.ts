@@ -1,4 +1,5 @@
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
+import { elementOf } from '@shared/elements';
 import type { Horde } from '@shared/horde';
 import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
@@ -313,6 +314,35 @@ export function facingScaleX(dx: number, previous: 1 | -1): 1 | -1 {
   return dx > 0 ? 1 : -1;
 }
 
+/**
+ * Teinte du sprite d'un ennemi au tick `tick` : celle de l'element qu'il
+ * porte, ou `0xffffff` s'il n'en porte aucun.
+ *
+ * C'est la deuxieme ligne de la hierarchie du §6.6 — *« un element sur un
+ * ennemi : teinte du sprite, gratuite dans le batch Pixi, cout 0 »*.
+ *
+ * ⚠️ **AUCUN test de l'element, et c'est tout l'interet.** `ELEMENT.NEUTRE`
+ * porte `0xffffff`, l'identite du produit composante par composante que fait
+ * `Particle.tint` : un ennemi non marque recoit donc une teinte qui ne change
+ * rien, par le meme chemin que les autres. Toute la horde se teint sans une
+ * seule branche par entite — un `if (element !== NEUTRE)` a 1 500 entites et
+ * 60 images par seconde couterait exactement ce que le §4.3 interdit, et la
+ * tache 2 a construit la table des elements pour l'eviter.
+ *
+ * ⚠️ **`markAt`, jamais `horde.mark` directement** : une marque EXPIRE, et son
+ * expiration est derivee du seul `markUntil` (voir `Horde.markAt`). Lire le
+ * tableau laisserait les ennemis teintes bien apres la fin de leur marque.
+ *
+ * ⚠️ **Ce que cette teinte montre est APPROXIME cote client**, et sans
+ * consequence : voir `GameClient#markLocally`, qui porte la regle en entier.
+ *
+ * Pure et exportee, comme `spriteScale`/`facingScaleX`/`selectClip` : `draw()`
+ * exige un atlas charge (reseau + canevas), indisponible en test.
+ */
+export function markTint(horde: Horde, slot: number, tick: number): number {
+  return elementOf(horde.markAt(slot, tick)).tint;
+}
+
 export class HordeRenderer {
   readonly #container = new ParticleContainer({
     // `vertex` : necessaire pour que `scaleX`/`scaleY` (mise a l'echelle
@@ -320,7 +350,15 @@ export class HordeRenderer {
     // chaque image — voir `spriteScale` et `facingScaleX`. Le conteneur des
     // flashs d'impact (`projectile-renderer.ts`) fait deja ce meme choix pour
     // la meme raison.
-    dynamicProperties: { position: true, uvs: true, vertex: true, color: false, rotation: false },
+    //
+    // `color` : la teinte elementaire du §6.6 (voir `markTint`). Le
+    // commentaire de tete de ce fichier l'annonçait depuis l'etape 1 —
+    // « `color` donnera GRATUITEMENT la teinte elementaire du §6.6 a l'etape 5,
+    // sans rien reecrire ici » : c'est ce drapeau, et rien d'autre, qui rend
+    // la promesse. A `false`, la teinte posee dans `draw` serait televersee une
+    // fois puis jamais rafraichie, et un ennemi garderait la couleur du
+    // precedent occupant de son creneau.
+    dynamicProperties: { position: true, uvs: true, vertex: true, color: true, rotation: false },
   });
   /** Réservoir de particules réutilisées : aucune allocation en régime établi. */
   readonly #pool: Particle[] = [];
@@ -412,7 +450,13 @@ export class HordeRenderer {
    * camera voit. Le §4.5 rappelle pourquoi la vue de dessus rend ce filtrage
    * trivial : la fenetre visible est un rectangle aligne sur les axes du monde.
    */
-  draw(horde: Horde, view: Rectangle, timeMs: number): void {
+  /**
+   * `tick` est le tick de horde du client (`GameClient.hordeTick`) : il ne
+   * sert qu'a la teinte elementaire (`markTint`), dont l'expiration est
+   * DERIVEE d'un tick absolu. `timeMs`, lui, reste l'horloge murale de
+   * l'animation — les deux ne sont pas interchangeables.
+   */
+  draw(horde: Horde, view: Rectangle, timeMs: number, tick: number): void {
     if (!this.#loaded) {
       return;
     }
@@ -481,6 +525,17 @@ export class HordeRenderer {
       const scale = this.#scale[archetype] ?? 1;
       particle.scaleX = scale * (this.#facing[i] === -1 ? -1 : 1);
       particle.scaleY = scale;
+      // Teinte elementaire (§6.6) : posee sur TOUTE la horde, sans jamais
+      // tester l'element — `ELEMENT.NEUTRE` porte l'identite. Voir `markTint`.
+      //
+      // ⚠️ **Cette ligne, comme tout le corps de `draw`, n'est gardee par
+      // aucun test** : `draw` retourne tant que l'atlas n'est pas charge, et le
+      // charger demande un `fetch` et un canevas que l'environnement de test
+      // n'a pas. Verifie par mutation (etape 5a) : la retirer, ou remettre
+      // `color: false` sur le conteneur, laisse la suite verte. Ce qui est
+      // garde, c'est `markTint` elle-meme — meme partage que `spriteScale`,
+      // `facingScaleX` et `selectClip` depuis l'etape 3.
+      particle.tint = markTint(horde, i, tick);
       children.push(particle);
     }
 

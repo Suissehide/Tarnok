@@ -4,6 +4,7 @@ import {
   FLOWFIELD_HZ,
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
+  MARK_DURATION_TICKS,
   ORB_LIFETIME_TICKS,
   PLAYER_SPEED,
   PROJECTILE_HIT_RADIUS,
@@ -25,6 +26,7 @@ import {
   encodeDraftResult,
   encodeLevelUp,
   encodePickups,
+  encodeReaction,
   encodeRunOver,
   encodeSnapshot,
   encodeWaveOrder,
@@ -32,14 +34,21 @@ import {
   encodeZone,
   MSG,
   OUTCOME,
+  packElementPair,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { BASE_WEAPON_ID, cooldownWithBonus, weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { GameClient, HIT_FLASH_LIFETIME_MS, type InputAxes, type ObstacleMap } from './client';
+import {
+  GameClient,
+  HIT_FLASH_LIFETIME_MS,
+  type InputAxes,
+  type ObstacleMap,
+  REACTION_FLASH_LIFETIME_MS,
+} from './client';
 
 /**
  * Faux `WebSocket` : ni connexion reseau ni serveur, juste de quoi capturer
@@ -2368,5 +2377,348 @@ describe('GameClient — une zone qui meurt PENDANT un rejeu (etape 5a, tache 6)
     expect(ralentiAuPassage).toBe(true);
     expect(client.lateZones).toBe(0);
     expect(maxDrift).toBeLessThan(0.001);
+  });
+});
+
+/**
+ * ---------------------------------------------------------------------------
+ * Étape 5a, tache 9 : ce que le client RECOIT et ce qu'il APPROXIME.
+ * ---------------------------------------------------------------------------
+ *
+ * Deux regimes, et toute la tache tient dans leur difference :
+ *
+ * | Ce qui est montre | D'ou ca vient | Ce qui se passe si c'est faux |
+ * | --- | --- | --- |
+ * | le flash de reaction | ANNONCE (`REACTION`) | on dessine une mort qui n'a pas eu lieu |
+ * | la barre de Synergie | ANNONCEE (`SNAPSHOT`) | on ment sur une ressource d'equipe |
+ * | la teinte d'un ennemi | APPROXIMEE localement | rien — voir `GameClient#markLocally` |
+ */
+
+/** Fait naitre un unique monstre et rend sa position REELLE — voir la doc de `setupWithOneMonster`. */
+function setupOneMonster(
+  mapSeed: number,
+  waveId: number,
+  readAim: () => InputAxes = () => ({ x: 0, y: 0 }),
+): { client: GameClient; socket: FakeSocket; monsterX: number; monsterY: number } {
+  const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn(), undefined, readAim);
+  client.connect();
+  const socket = latestSocket();
+  socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+  socket.emit('message', {
+    data: encodeWaveOrder({
+      waveId,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 1,
+    }),
+  });
+  socket.emit('message', {
+    data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+  });
+  client.update(0, 1 / TICK_HZ);
+  if (client.horde.count !== 1) {
+    throw new Error(`amorce du test : horde.count=${client.horde.count}, attendu 1`);
+  }
+  return { client, socket, monsterX: client.horde.x[0] ?? 0, monsterY: client.horde.y[0] ?? 0 };
+}
+
+describe('GameClient — la reaction annoncee (tache 9)', () => {
+  const PAIR = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('fait naitre un flash a l endroit annonce, avec son couple d elements et son bit de Synergie', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+
+    socket.emit('message', { data: encodeReaction(PAIR, 1234, -567, 42, true) });
+
+    expect(client.reactionFlashes.count).toBe(1);
+    expect(client.reactionFlashes.x[0]).toBe(1234);
+    expect(client.reactionFlashes.y[0]).toBe(-567);
+    expect(client.reactionFlashes.pair[0]).toBe(PAIR);
+    expect(client.reactionFlashes.charged[0]).toBe(1);
+  });
+
+  it('distingue une reaction SOLO d une reaction chargee — le bit vient du serveur, pas d un calcul local', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+
+    socket.emit('message', { data: encodeReaction(PAIR, 10, 10, 1, false) });
+
+    expect(client.reactionFlashes.charged[0]).toBe(0);
+  });
+
+  it('ne tue personne : une reaction est un DESSIN cote client, les morts arrivent par DEATHS', () => {
+    // ⚠️ La reaction TUE cote serveur (`REACTION_DAMAGE`), et c'est
+    // precisement pourquoi elle est arbitree la-bas. Un client qui appliquerait
+    // les degats ici prononcerait une mort que le serveur n'a pas prononcee —
+    // exactement ce que `#applyDeaths` et le §3.2 interdisent au rejeu.
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0001, 90);
+    const avant = client.horde.count;
+
+    socket.emit('message', { data: encodeReaction(PAIR, monsterX, monsterY, 1, true) });
+    client.update(1000, 1 / TICK_HZ);
+
+    expect(client.horde.count).toBe(avant);
+  });
+
+  it('un flash de reaction expire apres REACTION_FLASH_LIFETIME_MS, jamais avant (deux bornes)', () => {
+    const NAISSANCE = 5_000;
+    vi.spyOn(performance, 'now').mockReturnValue(NAISSANCE);
+
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', { data: encodeReaction(PAIR, 0, 0, 1, true) });
+
+    expect(client.reactionFlashes.count).toBe(1);
+
+    // Encore la juste avant l'echeance.
+    client.update(NAISSANCE + REACTION_FLASH_LIFETIME_MS - 1, 1 / TICK_HZ);
+    expect(client.reactionFlashes.count).toBe(1);
+
+    // Disparu pile a l'echeance, pas une image plus tard.
+    client.update(NAISSANCE + REACTION_FLASH_LIFETIME_MS, 1 / TICK_HZ);
+    expect(client.reactionFlashes.count).toBe(0);
+  });
+
+  it(
+    'dure plus longtemps qu un flash d impact : « l etat persistant est discret, ' +
+      'la reaction est spectaculaire » (§6.6)',
+    () => {
+      // Un flash d'impact accompagne CHAQUE projectile qui touche — des
+      // dizaines par seconde ; une reaction est rare et elle tue. Les deux
+      // durees egales, les deux evenements se confondraient et le budget VFX
+      // repartirait en bruit de fond.
+      expect(REACTION_FLASH_LIFETIME_MS).toBeGreaterThan(HIT_FLASH_LIFETIME_MS);
+    },
+  );
+});
+
+describe('GameClient — la barre de Synergie (tache 9)', () => {
+  it('reprend le total du dernier snapshot, dans le RenderState comme dans le getter', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 777, 13, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
+    });
+
+    const state = client.update(0, 0);
+
+    // ⚠️ **13, et surtout pas la meme valeur que l'xp.** Le snapshot porte les
+    // deux nombres d'equipe cote a cote dans son en-tete : un test qui leur
+    // donnerait la meme valeur passerait avec un decodeur qui les intervertit.
+    expect(state.synergy).toBe(13);
+    expect(state.xp).toBe(777);
+    expect(client.synergy).toBe(13);
+  });
+
+  it('vaut zero tant qu aucun snapshot n est arrive', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    latestSocket().emit('message', { data: encodeWelcome(1, 0, 0) });
+
+    expect(client.synergy).toBe(0);
+  });
+
+  it('ne se DEDUIT pas des REACTION recues : le total fait foi, le client ne recompte rien', () => {
+    // ⚠️ Le §7 est explicite : le bit porte la COMPARAISON, le total voyage
+    // dans le `SNAPSHOT`. Un client qui incrementerait sa propre barre a
+    // chaque reaction chargee divergerait de l'autorite des la premiere
+    // reaction manquee (connexion en cours de partie, plafond atteint).
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 4, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+    });
+
+    for (let i = 0; i < 5; i++) {
+      socket.emit('message', {
+        data: encodeReaction(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE), 0, 0, i, true),
+      });
+    }
+
+    expect(client.synergy).toBe(4);
+  });
+});
+
+/**
+ * La teinte elementaire (§9, deuxieme ligne) est **cosmetique et approximee** :
+ * voir la doc de `GameClient#markLocally`, qui porte la regle en entier.
+ *
+ * ⚠️ **Les deux moities, toujours** (R24/R25) : « aucun ennemi n'est jamais
+ * teinte » et « tous les ennemis sont teints tout le temps » se ressemblent
+ * beaucoup dans un test faible. Chaque cas positif ci-dessous a donc son
+ * negatif.
+ */
+describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 9)', () => {
+  it('une zone annoncee teint les ennemis qu elle couvre, de SON element', () => {
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0002, 91);
+    expect(client.horde.markAt(0, 1)).toBe(ELEMENT.NEUTRE);
+
+    socket.emit('message', { data: encodeZone(ELEMENT.GIVRE, monsterX, monsterY, 1, 2) });
+    // Deux images : la premiere pose la zone (les zones se drainent en FIN de
+    // tick), la seconde la balaie.
+    client.update(1000, 1 / TICK_HZ);
+    client.update(2000, 1 / TICK_HZ);
+
+    expect(client.horde.markAt(0, client.hordeTick - 1)).toBe(ELEMENT.GIVRE);
+  });
+
+  it('une zone LOIN des ennemis n en teint aucun', () => {
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0003, 92);
+
+    // 10 x `ZONE_RADIUS` : hors de portee, quoi qu'ait bouge le monstre.
+    socket.emit('message', {
+      data: encodeZone(ELEMENT.GIVRE, monsterX + 10 * ZONE_RADIUS, monsterY, 1, 2),
+    });
+    client.update(1000, 1 / TICK_HZ);
+    client.update(2000, 1 / TICK_HZ);
+
+    expect(client.horde.markAt(0, client.hordeTick - 1)).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('un projectile ELEMENTAIRE du joueur local teint l ennemi qu il touche', () => {
+    // Arme a projectile UNIQUE et dispersion etroite : la seule qui touche a
+    // coup sur une cible isolee. Choisie par ses proprietes, jamais par un
+    // identifiant en dur — le catalogue est du contenu, il bouge.
+    const arme = WEAPONS.find((w) => w.element === ELEMENT.GIVRE && w.projectileCount === 1);
+    if (!arme) {
+      throw new Error('aucune arme elementaire a projectile unique dans le catalogue');
+    }
+
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0004, 93, () => ({
+      x: 1,
+      y: 0,
+    }));
+
+    // Le chemin REEL d'acquisition d'une arme : l'etalage puis son resultat.
+    // Echeance a 0 pour ne rien geler — le gel bloquerait le tir.
+    socket.emit('message', {
+      data: encodeDraftOpen(0, [{ nature: CARD.WEAPON, refId: arme.id }]),
+    });
+    socket.emit('message', {
+      data: encodeDraftResult(0, [{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]),
+    });
+    expect(client.loadoutOf(1).weaponIds).toContain(arme.id);
+
+    const perTickTravel = arme.projectileSpeed / TICK_HZ;
+    const offset = Math.round(perTickTravel * 3 + PROJECTILE_HIT_RADIUS);
+    const PLAYER = { x: monsterX - offset, y: monsterY };
+
+    let marque: number = ELEMENT.NEUTRE;
+    for (let tick = 1; tick <= 40 && marque === ELEMENT.NEUTRE; tick++) {
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+      });
+      client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
+      marque = client.horde.markAt(0, client.hordeTick - 1);
+    }
+
+    expect(marque).toBe(ELEMENT.GIVRE);
+  });
+
+  it('une arme NEUTRE n efface pas la marque d un autre element', () => {
+    // ⚠️ C'est le seul effet OBSERVABLE de la garde `element !== NEUTRE` du
+    // rappel de collision : poser une marque neutre sur un ennemi non marque
+    // ne se verrait pas (0xffffff est deja l'identite), mais l'EFFACEMENT
+    // d'une marque de Braise par un coup de dague, si. Le serveur porte la
+    // meme garde, au meme endroit (`resolveProjectileDamage`).
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0005, 94, () => ({
+      x: 1,
+      y: 0,
+    }));
+    // L'arme de base est neutre : c'est elle, et elle seule, qui va toucher.
+    expect(weaponOf(BASE_WEAPON_ID).element).toBe(ELEMENT.NEUTRE);
+
+    client.horde.applyMark(0, ELEMENT.BRAISE, 2, client.hordeTick);
+    const PLAYER = { x: monsterX - 20, y: monsterY };
+
+    let touche = false;
+    for (let tick = 1; tick <= 20 && !touche; tick++) {
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0 }]),
+      });
+      client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
+      touche = client.hitFlashes.count > 0;
+    }
+
+    expect(touche).toBe(true);
+    expect(client.horde.markAt(0, client.hordeTick - 1)).toBe(ELEMENT.BRAISE);
+  });
+});
+
+/**
+ * ⚠️ **Ce test existe parce qu'une mutation a SURVECU** : retirer le
+ * `aliveAt` du balayage de zones du client laissait toute la suite verte.
+ *
+ * La raison est une garde qui en masque une autre — le motif le plus cher de
+ * ce depot. Le client expire ses zones `ROLLBACK_DEPTH_TICKS` ticks EN RETARD
+ * (il en a besoin pour rejouer), donc une zone perimee reste dans le tableau
+ * huit ticks de plus. Sans `aliveAt`, elle continue d'y teindre pendant ces
+ * huit ticks — et comme une marque dure `MARK_DURATION_TICKS` (60), l'ecart ne
+ * se voit qu'a la toute fin de la teinte, huit ticks plus tard que prevu.
+ *
+ * Le decor doit donc tenir un ennemi DANS une zone pendant toute la vie de
+ * celle-ci, puis observer les deux bornes de l'extinction. Le joueur est place
+ * sur l'ennemi : au contact, la horde s'arrete (`Horde.stopped`), donc l'ennemi
+ * ne quitte pas le disque — ce que la derniere assertion verifie plutot que de
+ * le supposer.
+ */
+describe('GameClient — la teinte s eteint quand la ZONE meurt, pas quand le tableau se vide', () => {
+  it('la teinte tient MARK_DURATION_TICKS apres le DERNIER tick de vie de la zone, pas huit de plus', () => {
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0006, 95);
+    const NAISSANCE = 1;
+    const DERNIER_TICK_VIVANT = NAISSANCE + ZONE_LIFETIME_TICKS - 1;
+    const EXTINCTION = DERNIER_TICK_VIVANT + MARK_DURATION_TICKS;
+
+    socket.emit('message', {
+      data: encodeZone(ELEMENT.GIVRE, monsterX, monsterY, NAISSANCE, 2),
+    });
+
+    let teinteAvant: number = ELEMENT.NEUTRE;
+    let teinteApres: number = ELEMENT.BRAISE;
+    for (let tick = 1; tick <= EXTINCTION + 4; tick++) {
+      // Le joueur pose sur le monstre : il s'arrete au contact et reste dans
+      // le disque.
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, 0, [
+          { id: 1, x: monsterX, y: monsterY, hp: 100, aimX: 0, aimY: 0 },
+        ]),
+      });
+      client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
+      if (tick === EXTINCTION - 1) {
+        teinteAvant = client.horde.markAt(0, EXTINCTION - 1);
+      }
+      if (tick === EXTINCTION) {
+        teinteApres = client.horde.markAt(0, EXTINCTION);
+      }
+    }
+
+    // ⚠️ Le decor tient-il vraiment ? Un monstre qui aurait quitte le disque
+    // avant la mort de la zone ferait passer la seconde assertion pour une
+    // bonne raison et la premiere pour une mauvaise.
+    const dx = (client.horde.x[0] ?? 0) - monsterX;
+    const dy = (client.horde.y[0] ?? 0) - monsterY;
+    expect(Math.hypot(dx, dy)).toBeLessThan(ZONE_RADIUS);
+
+    expect(teinteAvant).toBe(ELEMENT.GIVRE);
+    expect(teinteApres).toBe(ELEMENT.NEUTRE);
   });
 });

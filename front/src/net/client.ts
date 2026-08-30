@@ -12,7 +12,9 @@ import {
   PROJECTILE_CAPACITY,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
+  ZONE_RADIUS,
 } from '@shared/constants';
+import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
@@ -65,6 +67,17 @@ export interface RenderState {
   localId: number | null;
   /** Experience de l'equipe — commune a tous, pas un champ par joueur. */
   xp: number;
+  /**
+   * Charge de la barre de Synergie, commune a toute l'equipe — **un seul
+   * nombre dans le snapshot**, exactement comme `xp` (§7 et §8 de la spec de
+   * l'etape 5a), et pour la meme raison : c'est une ressource d'equipe, pas
+   * une statistique par joueur.
+   *
+   * Le client ne la calcule jamais : il l'affiche. La comparaison qui la fait
+   * monter — deux joueurs differents a l'origine d'une reaction — est arbitree
+   * serveur, et le bit qui en resulte voyage dans `REACTION`.
+   */
+  synergy: number;
   /** Positions a dessiner : les autres interpolees, la sienne predite. */
   players: PlayerSnapshot[];
 }
@@ -281,6 +294,113 @@ export class HitFlashes {
 }
 
 /**
+ * Duree de vie d'un flash de reaction, en millisecondes horloge murale.
+ *
+ * ⚠️ **Plus longue que `HIT_FLASH_LIFETIME_MS` (220 ms), et c'est toute la
+ * hierarchie du §6.6.** *« L'etat persistant est discret, la reaction est
+ * spectaculaire »* : le flash d'impact accompagne chaque projectile qui
+ * touche — des dizaines par seconde — donc il doit rester bref ; la reaction
+ * est rare et elle TUE, donc c'est la que passe le budget VFX. Deux fois plus
+ * long reste « court » : au-dela, plusieurs reactions voisines se
+ * recouvriraient en un halo continu, exactement ce que le §6.6 exclut.
+ *
+ * En millisecondes et pas en ticks, meme raison que `HIT_FLASH_LIFETIME_MS` :
+ * un flash n'arbitre rien, donc rien n'exige qu'il se calcule identiquement
+ * des deux cotes du fil.
+ */
+export const REACTION_FLASH_LIFETIME_MS = 440;
+
+/**
+ * Capacite du reservoir de flashs de reaction.
+ *
+ * Bien plus petite que `HIT_FLASH_CAPACITY` (128) : une reaction demande deux
+ * elements differents sur la meme cible, elle est rare par construction (§6.2),
+ * et la borne serveur « une reaction par ennemi et par tick » la borne encore.
+ */
+const REACTION_FLASH_CAPACITY = 64;
+
+/**
+ * Flashs de reaction, cote client — **annonces par le serveur**, jamais
+ * derives, a la difference des flashs d'impact juste au-dessus.
+ *
+ * C'est la seule chose de tout le systeme elementaire que le client ne devine
+ * pas : la reaction TUE (§6.1 de la spec), donc elle est arbitree serveur et
+ * annoncee par `REACTION`. La teinte des ennemis, elle, est approximee
+ * localement — voir `GameClient#markLocally`.
+ *
+ * Tableaux types, meme regle que `HitFlashes` et `DerivedOrbs`.
+ */
+export class ReactionFlashes {
+  readonly x: Float32Array;
+  readonly y: Float32Array;
+  /**
+   * Couple d'elements, tel qu'empaquete par `packElementPair` — deux quartets
+   * dans un octet. Le rendu en derive sa teinte (`reactionTint`) ; ce fichier
+   * ne l'interprete jamais.
+   */
+  readonly pair: Uint8Array;
+  /**
+   * `1` si cette reaction a charge la barre de Synergie, c'est-a-dire si deux
+   * joueurs DIFFERENTS en sont a l'origine (§7 de la spec).
+   *
+   * ⚠️ **Le client ne recalcule PAS cette comparaison, il la lit.** Le message
+   * ne porte volontairement pas les deux identites (§6.1) : les recomparer ici
+   * serait refaire l'arbitrage cote client, donc l'occasion de le faire
+   * diverger. Le TOTAL de la barre, lui, vit dans le `SNAPSHOT`.
+   */
+  readonly charged: Uint8Array;
+  /** Horloge murale de naissance (`performance.now()`), voir `REACTION_FLASH_LIFETIME_MS`. */
+  readonly bornMs: Float64Array;
+  #count = 0;
+
+  constructor(readonly capacity: number) {
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.pair = new Uint8Array(capacity);
+    this.charged = new Uint8Array(capacity);
+    this.bornMs = new Float64Array(capacity);
+  }
+
+  get count(): number {
+    return this.#count;
+  }
+
+  /** Fait naitre un flash. Ignore silencieusement si la capacite est atteinte. */
+  spawn(x: number, y: number, pair: number, charged: boolean, nowMs: number): void {
+    if (this.#count >= this.capacity) {
+      return;
+    }
+    const slot = this.#count++;
+    this.x[slot] = x;
+    this.y[slot] = y;
+    this.pair[slot] = pair;
+    this.charged[slot] = charged ? 1 : 0;
+    this.bornMs[slot] = nowMs;
+  }
+
+  /** Retire les flashs dont la duree de vie a expire. */
+  expire(nowMs: number): void {
+    for (let i = this.#count - 1; i >= 0; i--) {
+      if (nowMs - (this.bornMs[i] ?? 0) >= REACTION_FLASH_LIFETIME_MS) {
+        this.#removeAt(i);
+      }
+    }
+  }
+
+  #removeAt(slot: number): void {
+    const last = this.#count - 1;
+    if (slot !== last) {
+      this.x[slot] = this.x[last] ?? 0;
+      this.y[slot] = this.y[last] ?? 0;
+      this.pair[slot] = this.pair[last] ?? 0;
+      this.charged[slot] = this.charged[last] ?? 0;
+      this.bornMs[slot] = this.bornMs[last] ?? 0;
+    }
+    this.#count = last;
+  }
+}
+
+/**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
  * Il ne dessine rien et ne lit pas le clavier — il recoit une fonction qui lui
@@ -300,6 +420,14 @@ export class GameClient {
   #localHp = 0;
   /** Experience de l'equipe, telle que portee par le dernier snapshot. */
   #teamXp = 0;
+  /**
+   * Charge de Synergie de l'equipe, telle que portee par le dernier snapshot
+   * (§7). Lue, jamais deduite : le client ne compte pas les `REACTION` chargees
+   * pour la reconstituer — un client connecte en cours de partie en aurait
+   * manque, et un client qui recompterait pourrait diverger du seul total qui
+   * fasse foi.
+   */
+  #teamSynergy = 0;
   /**
    * Niveau de l'equipe, tel que porte par le dernier `LEVEL_UP` (ou `RUN_OVER`
    * au bilan). Ne peut PAS se deriver de `#teamXp` seul : `xp` est remis a
@@ -373,6 +501,11 @@ export class GameClient {
   readonly #loadouts = new Map<number, Loadout>();
   /** Flashs d'impact derives des collisions locales (§4.3). Lecture publique pour le rendu. */
   readonly hitFlashes = new HitFlashes(HIT_FLASH_CAPACITY);
+  /**
+   * Flashs de reaction, ANNONCES par `REACTION` (§6.1). Lecture publique pour
+   * le rendu — voir `ReactionFlashes`.
+   */
+  readonly reactionFlashes = new ReactionFlashes(REACTION_FLASH_CAPACITY);
 
   /**
    * Nombre cumule d'identites tuees en dehors de la portee de `HordeHistory`
@@ -616,6 +749,18 @@ export class GameClient {
     return this.#lateZones;
   }
 
+  /**
+   * Charge de Synergie de l'equipe, telle que portee par le dernier snapshot.
+   *
+   * Doublon assume de `RenderState.synergy` : le HUD la lit dans l'etat de
+   * rendu (comme `xp`), et ce getter existe pour les tests et pour tout
+   * appelant qui n'a pas d'etat de rendu sous la main — exactement comme
+   * `level` a cote.
+   */
+  get synergy(): number {
+    return this.#teamSynergy;
+  }
+
   connect(): void {
     this.#setStatus('connecting');
     const ws = new WebSocket(this.url);
@@ -726,7 +871,7 @@ export class GameClient {
       }
     }
 
-    return { localId: this.#localId, xp: this.#teamXp, players };
+    return { localId: this.#localId, xp: this.#teamXp, synergy: this.#teamSynergy, players };
   }
 
   /**
@@ -803,6 +948,23 @@ export class GameClient {
       // Meme discipline que les morts : empiler ici, appliquer (et rejouer) au
       // tick local deja simule — voir `#applyZone`.
       this.#pendingZones.push(msg);
+      return;
+    }
+    if (msg.type === MSG.REACTION) {
+      // ⚠️ **Applique A LA RECEPTION, pas au tick date — a l'oppose exact de
+      // `ZONE` juste au-dessus, et la difference est le coeur du §2 de la
+      // spec.** Une zone RALENTIT : elle touche le deplacement, donc elle doit
+      // etre posee au tick que le serveur a date, quitte a rejouer. Un flash de
+      // reaction ne touche rien : il ne fait que se voir. Le dater par tick
+      // demanderait de convertir un tick en horloge murale pour une animation
+      // dont personne ne peut mesurer les quelques dizaines de millisecondes
+      // de retard — meme arbitrage que `HitFlashes`, qui est en horloge murale
+      // pour cette raison exacte.
+      //
+      // ⚠️ **Le client ne rejoue rien et ne tue personne ici.** Les morts de la
+      // reaction arrivent par le `DEATHS` existant (§7 du plan : « aucun chemin
+      // de mort parallele »), et c'est le rejeu de l'etape 3 qui les place.
+      this.reactionFlashes.spawn(msg.x, msg.y, msg.pair, msg.synergyCharge, performance.now());
       return;
     }
     if (msg.type === MSG.PICKUPS) {
@@ -899,6 +1061,10 @@ export class GameClient {
     // bloc joueur — on le lit a chaque snapshot, meme si `mine` reste
     // introuvable ci-dessous.
     this.#teamXp = msg.xp;
+    // Meme raisonnement que `xp` juste au-dessus : donnee d'EQUIPE, portee par
+    // le snapshot entier et pas par un bloc joueur, donc lue a chaque snapshot
+    // meme quand `mine` reste introuvable ci-dessous.
+    this.#teamSynergy = msg.synergy;
 
     const mine =
       this.#localId === null ? undefined : msg.players.find((p) => p.id === this.#localId);
@@ -1040,6 +1206,10 @@ export class GameClient {
     this.zones.expire(tick - ROLLBACK_DEPTH_TICKS);
     const scale = this.#movementScale(tick);
     this.horde.step(dt * scale, this.#fields, tick, this.zones);
+    // Teinte elementaire, moitie « zones » — voir `#markInZones`. Place ici,
+    // apres le deplacement, comme `Room.step` place `markInZones` apres avoir
+    // avance sa horde.
+    this.#markInZones(tick);
 
     // Tir, deplacement des projectiles, collision — miroir cosmetique de
     // l'etape 8 de `Room.step` (back/src/room.ts). Gate par le meme garde de
@@ -1068,14 +1238,24 @@ export class GameClient {
       // reellement les degats ici serait exactement l'erreur que le §3.2 et
       // `#applyDeaths` interdisent deja au rejeu : prononcer une mort que le
       // serveur n'a pas prononcee.
-      this.projectiles.collide(this.horde, (entityId) => {
+      this.projectiles.collide(this.horde, (entityId, _damage, projectileSlot) => {
         const slot = this.horde.slotOf(entityId);
-        if (slot >= 0) {
-          this.hitFlashes.spawn(this.horde.x[slot] ?? 0, this.horde.y[slot] ?? 0, nowMs);
+        if (slot < 0) {
+          return;
+        }
+        this.hitFlashes.spawn(this.horde.x[slot] ?? 0, this.horde.y[slot] ?? 0, nowMs);
+        // Teinte elementaire, moitie « mes propres projectiles » — voir
+        // `#markLocally`. Le test `element !== NEUTRE` recopie celui de
+        // `resolveProjectileDamage` (back/src/combat.ts) : une arme neutre ne
+        // marque rien, et surtout n'EFFACE pas la marque d'une autre.
+        const element = this.projectiles.elementAt(projectileSlot);
+        if (element !== ELEMENT.NEUTRE) {
+          this.#markLocally(slot, element, this.projectiles.ownerAt(projectileSlot), tick);
         }
       });
     }
     this.hitFlashes.expire(nowMs);
+    this.reactionFlashes.expire(nowMs);
 
     // Instantane pour le rejeu (§3.2) : DOIT etre pris a chaque tick, gel ou
     // pas, sans quoi une mort qui viserait un tick gele serait « trop vieille »
@@ -1086,6 +1266,87 @@ export class GameClient {
     this.orbs.expire(tick);
     this.#drainPendingZones(tick);
     this.#drainPendingDeaths(tick);
+  }
+
+  /**
+   * Pose une marque elementaire **cosmetique** sur un ennemi.
+   *
+   * ⚠️⚠️ **CETTE MARQUE EST UNE APPROXIMATION, ET ELLE DOIT LE RESTER.**
+   * C'est le §2 de la spec de l'etape 5a, en toutes lettres : *« une teinte de
+   * sprite est cosmetique : si le client marque un ennemi que le serveur
+   * n'avait pas marque, personne ne meurt de travers »*. Le client marque ce
+   * que SES PROPRES projectiles touchent (des projectiles eux-memes cosmetiques
+   * depuis l'etape 3, tires d'une position predite puis reconciliee) et ce qui
+   * tombe dans une zone annoncee. Il se trompe donc regulierement, dans les
+   * deux sens :
+   *
+   * | Ce que le serveur fait et que ce client ne fait pas | Consequence |
+   * | --- | --- |
+   * | consommer la marque quand une reaction a lieu (§4.3) | un ennemi reste teinte un peu trop longtemps |
+   * | marquer depuis les projectiles des AUTRES joueurs | un ennemi teinte chez son tireur, pas ici |
+   * | ne pas marquer un ennemi tue du meme impact | une teinte d'un tick sur un mourant |
+   *
+   * **Et ca ne coute rien**, parce que rien de ce que ce fichier ecrit ici
+   * n'entre dans une decision :
+   *
+   * - `Horde.step` ne lit JAMAIS `mark` — le ralentissement du Givre vient des
+   *   ZONES (`ZoneField.slowsAt`, via `Horde#computeSlow`), qui sont annoncees
+   *   et datees par tick. Une marque fausse ne peut donc pas deplacer une
+   *   entite d'un pixel ;
+   * - les degats, les morts et les reactions sont arbitres serveur et annonces
+   *   (`DEATHS`, `REACTION`). Le client n'en prononce aucun.
+   *
+   * ⚠️ **NE PAS « CORRIGER » CETTE APPROXIMATION EN LA RENDANT AUTORITAIRE.**
+   * Rendre la marque exacte cote client demanderait d'y refaire l'arbitrage
+   * des reactions — donc de prononcer localement ce que le serveur seul
+   * prononce, et d'inviter la divergence dans le seul mecanisme que tout le
+   * projet protege depuis l'etape 2 (trois chiffres de replication a 0,000 px).
+   * Le bon reflexe, si la teinte parait fausse, est de la juger a l'oeil : elle
+   * n'a pas d'autre juge, et elle n'en merite pas d'autre.
+   */
+  #markLocally(slot: number, element: number, by: number, tick: number): void {
+    this.horde.applyMark(slot, element, by, tick);
+  }
+
+  /**
+   * Teinte les ennemis couverts par une zone — moitie « zones » de
+   * l'approximation decrite sur `#markLocally`, et miroir COSMETIQUE de
+   * `markInZones` (back/src/combat.ts).
+   *
+   * ⚠️ **Miroir de la moitie qui teinte, jamais de celle qui arbitre.** Le
+   * balayage serveur passe par `applyElement`, qui declenche les reactions du
+   * §6.2 ; celui-ci pose la marque et rien d'autre. Une reaction decidee ici
+   * serait une reaction que le serveur n'a pas prononcee.
+   *
+   * ⚠️ **`aliveAt`, pas `slowsAt`** — meme table que cote serveur : une zone
+   * posee au tick `T` teinte immediatement ce qu'elle couvre, alors qu'elle ne
+   * ralentit qu'a partir de `T + 1` (le deplacement de `T` etait deja joue).
+   * Confondre les deux ferait clignoter la teinte d'un tick a la pose de chaque
+   * zone.
+   *
+   * Cout : O(zones x entites) par tick, le meme que celui que le §5.2 annonce
+   * cote serveur. C'est la contrepartie assumee de la seule ligne du §9 qui
+   * soit gratuite a l'affichage (« teinte du sprite — 0 ») : la teinte ne coute
+   * rien au rendu, c'est la savoir qui coute.
+   */
+  #markInZones(tick: number): void {
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    for (let z = 0; z < this.zones.count; z++) {
+      if (!this.zones.aliveAt(z, tick)) {
+        continue;
+      }
+      const element = this.zones.element[z] ?? 0;
+      const by = this.zones.by[z] ?? 0;
+      const zx = this.zones.x[z] ?? 0;
+      const zy = this.zones.y[z] ?? 0;
+      for (let i = 0; i < this.horde.count; i++) {
+        const dx = (this.horde.x[i] ?? 0) - zx;
+        const dy = (this.horde.y[i] ?? 0) - zy;
+        if (dx * dx + dy * dy < r2) {
+          this.#markLocally(i, element, by, tick);
+        }
+      }
+    }
   }
 
   /**

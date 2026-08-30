@@ -12,6 +12,7 @@ import './styles/main.css';
 
 import { API_URL, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
+import { paintSynergy } from './ui/hud';
 
 const el = <T extends HTMLElement>(id: string): T => {
   const node = document.getElementById(id);
@@ -30,6 +31,8 @@ const hudLevel = el('hud-level');
 const hudTimer = el('hud-timer');
 const hudFreeze = el('hud-freeze');
 const hudLateDeaths = el('hud-late-deaths');
+const hudSynergyFill = el('hud-synergy-fill');
+const hudSynergyLabel = el('hud-synergy-label');
 const summary = el('summary');
 const summaryTime = el('summary-time');
 const summaryLevel = el('summary-level');
@@ -130,13 +133,32 @@ function join(code: string): void {
    * (`stage.run`, qui appelle lui-meme `stage.draw`) et la poignee de
    * debogage `step()` ci-dessous, qui doit `draw` explicitement puisqu'elle
    * n'emprunte pas le ticker.
+   *
+   * ⚠️ **AUCUNE LIGNE DE CETTE FONCTION N'EST GARDEE PAR UN TEST, et il faut
+   * le savoir avant d'en retirer une.** Verifie par mutation a l'etape 5a :
+   * supprimer `stage.drawZones`, `stage.drawReactionFlashes` ou
+   * `paintSynergy` laisse la suite entierement verte. Ce module fait
+   * `await stage.init()` au niveau module — il n'est donc pas importable en
+   * test — et `Stage` construit une `Application` Pixi que ni `node` ni jsdom
+   * ne savent instancier. C'est la meme dette que `draftScreen.update()`
+   * depuis l'etape 4, dite plutot que masquee.
+   *
+   * Ce qui EST garde, c'est tout ce qui a pu en etre sorti : la selection des
+   * zones (`selectZones`), la teinte (`markTint`), la geometrie du flash
+   * (`reactionFlashScale`, `reactionTint`) et la jauge (`paintSynergy`, sous
+   * jsdom). Il ne reste ici que les appels.
    */
   function renderFrame(now: number, dt: number): RenderState {
     const state = client.update(now, dt);
-    stage.drawHorde(client.horde, now);
+    // Étape 5a, §9 : les zones au sol EN PREMIER — c'est le calque le plus bas
+    // (voir l'ordre d'attache dans `Stage.init`), et `client.hordeTick` est ce
+    // qui les fait mourir, avec le meme predicat que le serveur.
+    stage.drawZones(client.zones, client.hordeTick);
+    stage.drawHorde(client.horde, now, client.hordeTick);
     stage.drawOrbs(client.orbs, now);
     stage.drawProjectiles(client.projectiles);
     stage.drawImpactFlashes(client.hitFlashes, now);
+    stage.drawReactionFlashes(client.reactionFlashes, now);
     updateHud(state, client);
     draftScreen.update();
     return state;
@@ -206,6 +228,10 @@ function updateHud(state: RenderState, client: GameClient): void {
   hudLevel.textContent = `${info.level}`;
   hudTimer.textContent = `Temps ${info.timer}`;
   hudLateDeaths.textContent = `${client.lateDeaths}`;
+  // Étape 5a, §9 : la jauge de Synergie. Le total vient du snapshot (donnee
+  // d'equipe, comme l'xp), la regle d'affichage vit dans `ui/hud.ts` — voir
+  // sa doc pour savoir pourquoi elle n'est pas ecrite ici.
+  paintSynergy(hudSynergyFill, hudSynergyLabel, state.synergy);
   // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
   // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent
   // comme un plantage plutot que comme une pause voulue.

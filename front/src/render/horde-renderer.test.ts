@@ -1,4 +1,5 @@
-import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
+import { MAP_SIZE, MARK_DURATION_TICKS, PROJECTILE_HIT_RADIUS } from '@shared/constants';
+import { ELEMENT, elementOf } from '@shared/elements';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
@@ -11,6 +12,7 @@ import {
   FACING_DEAD_ZONE_PX,
   FACING_MAX_STEP_PX,
   facingScaleX,
+  markTint,
   selectClip,
   sortByDepth,
   spriteScale,
@@ -230,5 +232,55 @@ describe("selectClip choisit l'attaque a l'arret, la course sinon", () => {
 
   it('rend le clip de course quand l entite avance', () => {
     expect(selectClip(false, 'course', 'attaque')).toBe('course');
+  });
+});
+
+/**
+ * Étape 5a, §9 : *« un element sur un ennemi : teinte du sprite »*. La teinte
+ * est ce que le §6.6 appelle « le probleme visuel le plus difficile du
+ * projet », et c'est aussi la ligne dont le cout doit rester nul — d'ou une
+ * fonction qui ne teste JAMAIS l'element et s'appuie sur `ELEMENT.NEUTRE =
+ * 0xffffff`, l'identite du produit que fait `Particle.tint`.
+ *
+ * ⚠️ **Les deux moities, toujours** (R24/R25) : « rien ne se teinte » et
+ * « tout se teinte pareil » se ressemblent beaucoup dans un test faible. Un
+ * `markTint` qui rendrait toujours `0xffffff` passerait le cas non marque ; un
+ * qui rendrait toujours la teinte de la Braise passerait le cas marque. Il
+ * faut donc, dans le meme fichier, un marque QUI CHANGE et un non marque QUI
+ * NE CHANGE PAS.
+ */
+describe('markTint — la teinte elementaire du sprite (§6.6)', () => {
+  it('teint un ennemi marque de la couleur de son element', () => {
+    const horde = new Horde(4);
+    horde.applyMark(0, ELEMENT.BRAISE, 1, 100);
+
+    expect(markTint(horde, 0, 100)).toBe(elementOf(ELEMENT.BRAISE).tint);
+  });
+
+  it('distingue deux elements : la Braise et le Givre ne rendent pas la meme teinte', () => {
+    const horde = new Horde(4);
+    horde.applyMark(0, ELEMENT.BRAISE, 1, 100);
+    horde.applyMark(1, ELEMENT.GIVRE, 1, 100);
+
+    expect(markTint(horde, 0, 100)).not.toBe(markTint(horde, 1, 100));
+  });
+
+  it("laisse un ennemi NON marque a l'identite 0xffffff — le sprite est rendu inchange", () => {
+    const horde = new Horde(4);
+
+    // Aucune marque posee : le tableau vaut `ELEMENT.NEUTRE`, et c'est la
+    // seule chose qui rend la teinte gratuite pour toute la horde.
+    expect(markTint(horde, 0, 100)).toBe(0xffffff);
+  });
+
+  it('rend l identite des que la marque a EXPIRE, sans qu aucun balayage ne l efface', () => {
+    const horde = new Horde(4);
+    horde.applyMark(0, ELEMENT.BRAISE, 1, 100);
+
+    // Derive de la constante partagee, jamais un nombre en dur : la duree de
+    // marque est un reglage de la tache 11 (« a tester en jeu »), et un test
+    // qui la figerait garderait une valeur, pas un comportement.
+    expect(markTint(horde, 0, 100 + MARK_DURATION_TICKS - 1)).toBe(elementOf(ELEMENT.BRAISE).tint);
+    expect(markTint(horde, 0, 100 + MARK_DURATION_TICKS)).toBe(0xffffff);
   });
 });

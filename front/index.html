@@ -61,6 +61,25 @@
           <span>PV&nbsp;<b id="hud-hp"></b></span>
           <span>Niveau&nbsp;<b id="hud-level"></b></span>
           <span id="hud-timer"></span>
+
+          <!--
+            Étape 5a, §9 : la jauge de Synergie, « visible de tous ». C'est une
+            ressource d'ÉQUIPE — le même nombre chez les quatre joueurs, porté
+            par le snapshot à côté de l'expérience — et elle ne se remplit que
+            lorsque deux joueurs différents déclenchent une réaction ensemble
+            (§7). En solo elle ne bouge jamais, par construction.
+
+            Le remplissage est un simple `div` dont `ui/hud.ts` règle la
+            largeur : rien à charger, rien à dessiner par le moteur.
+          -->
+          <div class="mt-1 flex flex-col gap-0.5">
+            <span class="text-[10px] tracking-[0.2em] text-forge-600">
+              SYNERGIE&nbsp;<span id="hud-synergy-label">0 / 20</span>
+            </span>
+            <div class="h-1.5 w-32 overflow-hidden rounded-sm border border-forge-600 bg-forge-900">
+              <div id="hud-synergy-fill" class="h-full w-0 bg-ember-400"></div>
+            </div>
+          </div>
         </div>
 
         <!--
