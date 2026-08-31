@@ -1,3 +1,4 @@
+import { ARCHETYPES, BOSS_ARCHETYPE, BOSS_BODY_SCALE } from '@shared/archetypes';
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -15,6 +16,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type AtlasClip,
   type AtlasManifest,
+  archetypeScales,
   BAND_COUNT,
   BODY_SCALE,
   bandOf,
@@ -416,5 +418,48 @@ describe('HordeRenderer.draw — le corps est centre sur la position et a la bon
     // `scaleX` porte en plus le SENS (`facingScaleX`) : c'est sa valeur
     // absolue qui doit valoir la meme echelle.
     expect(Math.abs(particle.scaleX)).toBeCloseTo(attendue, 5);
+  });
+});
+
+/**
+ * Le facteur de corps du BOSS (etape 6a, tache 3).
+ *
+ * ⚠️ **`BODY_SCALE` reste plafonne, et le boss ne releve pas ce plafond.** Le
+ * bloc ci-dessus mesure de combien la hitbox ment pour un monstre ORDINAIRE et
+ * borne ce mensonge par celui que le rendu des projectiles assume deja. Cette
+ * borne garde les vingt archetypes ; le boss apporte son propre facteur
+ * (`Archetype.bodyScale`), qui MULTIPLIE le commun au lieu de le remplacer. Un
+ * `BODY_SCALE` releve a 3 aurait agrandi tout le bestiaire pour n'en vouloir
+ * qu'un — et fait rougir le plafond, a juste titre.
+ */
+describe('bodyScale — le boss a son propre debordement, pas celui de tout le monde', () => {
+  it('dessine le boss BOSS_BODY_SCALE fois plus grand qu une pietaille de meme cellule', () => {
+    const cell = 192;
+    const pietaille = spriteScale(cell, PROJECTILE_HIT_RADIUS, 1);
+    const boss = spriteScale(cell, PROJECTILE_HIT_RADIUS, BOSS_BODY_SCALE);
+    expect(boss).toBeCloseTo(pietaille * BOSS_BODY_SCALE, 10);
+  });
+
+  /**
+   * **Les deux moities.** « Le boss grandit » passe tout seul si `bodyScale`
+   * etait ignore et `BODY_SCALE` releve — mais alors la pietaille grandirait
+   * aussi. La seconde assertion est celle qui l'interdit.
+   */
+  it('donne son facteur au boss et laisse la pietaille exactement ou elle etait', () => {
+    const tailles = ARCHETYPES.map(() => 192);
+    const echelles = archetypeScales(tailles, PROJECTILE_HIT_RADIUS);
+
+    // Precision 6 et non 10 : `archetypeScales` rend un `Float32Array`, dont
+    // les 24 bits de mantisse ne portent pas dix decimales.
+    expect(echelles[BOSS_ARCHETYPE]).toBeCloseTo(
+      spriteScale(192, PROJECTILE_HIT_RADIUS) * BOSS_BODY_SCALE,
+      6,
+    );
+    for (const a of ARCHETYPES) {
+      if (a.id === BOSS_ARCHETYPE) {
+        continue;
+      }
+      expect(echelles[a.id]).toBeCloseTo(spriteScale(192, PROJECTILE_HIT_RADIUS), 6);
+    }
   });
 });

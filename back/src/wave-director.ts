@@ -1,4 +1,4 @@
-import { archetypeOf, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
+import { archetypeOf, BOSS_ARCHETYPE, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
 import { MAX_ENTITIES, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
 import { waveCountScale } from '@shared/paliers';
 import { makeRandom } from '@shared/random';
@@ -287,11 +287,28 @@ export class WaveDirector {
     // aucun boss n'est encore en jeu.
     const boss = this.#wavesInPalier >= WAVES_PER_PALIER && this.#bossWaveId === null;
 
+    // ⚠️ **Ces deux lignes sont sorties du litteral, et l'ORDRE dans lequel
+    // elles consomment le generateur est le meme qu'avant** : la graine, puis
+    // les deux tirages de `pickArchetype`, puis la formation. Les sortir du
+    // litteral etait necessaire pour que la vague de boss puisse IGNORER le
+    // tirage d'archetype sans s'en abstenir — s'en abstenir decalerait le flux
+    // d'un cran a chaque palier, et deux directeurs de meme graine ne
+    // produiraient plus la meme suite selon la vitesse a laquelle leurs boss
+    // meurent. Meme raison que `tirage` ci-dessus.
+    const seed = (this.#rng() * 0xffff_ffff) >>> 0;
+    const tirageArchetype = pickArchetype(this.#rng, waveNumber);
+
     const order: WaveOrder = {
       waveId: this.#nextWaveId++,
       spawnTick: tick,
-      seed: (this.#rng() * 0xffff_ffff) >>> 0,
-      archetype: pickArchetype(this.#rng, waveNumber),
+      seed,
+      // ⚠️ **Le boss est un ARCHETYPE, pas un type d'entite.** `Horde` ne gagne
+      // aucun tableau, `count` vaut 1, et tout le reste — identite
+      // arithmetique, champ de flux, separation, collision, orbes, marques
+      // elementaires — marche parce que rien n'a ete ecrit pour lui. Ses PV et
+      // sa taille sortent de `shared/archetypes.ts`, et l'echelle du palier lui
+      // est appliquee par `Room` comme a n'importe qui.
+      archetype: boss ? BOSS_ARCHETYPE : tirageArchetype,
       formation: FORMATION_POOL[Math.floor(this.#rng() * FORMATION_POOL.length)] ?? 0,
       anchorX: Math.round((playerX[target] ?? 0) + Math.cos(angle) * radius),
       anchorY: Math.round((playerY[target] ?? 0) + Math.sin(angle) * radius),

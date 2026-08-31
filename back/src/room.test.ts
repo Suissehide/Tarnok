@@ -1,4 +1,4 @@
-import { ARCHETYPES, HEAVY_HP } from '@shared/archetypes';
+import { ARCHETYPES, BOSS_ARCHETYPE, BOSS_HP_BASE, HEAVY_HP, LIGHT_HP } from '@shared/archetypes';
 import { CARD, type Card } from '@shared/cards';
 import {
   FIELD_INPUT_DELAY_TICKS,
@@ -22,7 +22,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { entityIdOf } from '@shared/horde';
-import { hpScale } from '@shared/paliers';
+import { hpScale, palierHp } from '@shared/paliers';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -1804,10 +1804,37 @@ describe('la run est jouable (tache 14)', () => {
    *
    * Avec `new Room()` (graine tiree au hasard), ce test devenait donc
    * intermittent a 2,5 % — *« un test intermittent est pire qu'un test
-   * absent »*. La graine 5 est retenue parce qu'elle passe par le palier 1,
-   * donc par la pietaille a 5,6 PV : le cas DUR, a 53,9 s pour un budget de
-   * 100 s. **Le 1/40 n'est pas resolu, il est mesure** — c'est la porte du §7
-   * de la spec (tache 3) qui doit trancher `PALIER_HP_SCALE`.
+   * absent »*. La graine 5 est retenue parce qu'elle passe par le palier 1 :
+   * le cas DUR, a 53,9 s pour un budget de 100 s.
+   *
+   * ⚠️⚠️ **LE 1/40 EST RESOLU DEPUIS LA TACHE 3, et pas par
+   * `PALIER_HP_SCALE`.** La cause n'etait pas la pente mais la FRONTIERE :
+   * `LIGHT_HP` vaut exactement les degats de la dague, donc la premiere marche
+   * de l'escalier de durabilite doublait le cout de la pietaille legere pour
+   * +12 % de PV. `palierHp` (`shared/paliers.ts`) exempte desormais la chair a
+   * canon de la montee. Meme releve, 40 graines, budget de 100 s :
+   *
+   * | Etat du code | Mediane | Maximum | Echecs |
+   * | --- | --- | --- | --- |
+   * | avec les paliers, sans exemption | 40,9 s | 64,2 s | **1/40** |
+   * | avec l'exemption, boss pas encore reel | 41,3 s | 63,5 s | **0/40** |
+   * | **+ le boss reel (aujourd'hui)** | **40,8 s** | **60,0 s** | **3/40** |
+   *
+   * ⚠️⚠️ **LE 3/40 N'EST PAS UN RETOUR EN ARRIERE : ce n'est pas la meme
+   * cause.** Le boss porte desormais `BOSS_HP_BASE` et apparait a 30 s sur
+   * TOUTES les graines. Un joueur seul vise la menace la plus proche — donc lui
+   * — et verse toute sa production dans 6 000 PV qu'il ne percera pas ; il
+   * cesse de tuer, donc de ramasser des orbes, et la horde l'emporte. Quatre
+   * joueurs le tuent en 87 s (`bench/boss.bench.ts`) ; un joueur, jamais.
+   * Une part en revient au DECOR : `aimAtNearestMonster` vise aveuglement, la
+   * ou un joueur reel laisserait le boss de cote pour continuer a moissonner la
+   * horde. C'est un pire cas de comportement, pas une impossibilite.
+   * **Question laissee ouverte a la tache 12 : un boss doit-il tomber dans une
+   * run solo ?** Rien dans la spec ne repond, et ce jeu vise quatre joueurs.
+   *
+   * La graine reste fixee, et c'est elle qui empeche ce test d'etre
+   * intermittent a 7,5 %. Le releve complet vit dans `bench/niveau2.bench.ts`,
+   * pas ici — ce test mesure une run, pas quarante.
    */
   it('un joueur passif atteint le niveau 2 via le pipeline reel (vagues, arme de base, orbes)', () => {
     const room = new Room(5);
@@ -2798,6 +2825,19 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     expect(room.bossEntityId).toBe(bossId);
 
     // --- 4. Le boss meurt, par le chemin de mort normal du salon.
+    //
+    // ⚠️ **Sa reserve est RAMENEE A UN COUP, et c'est du decor, pas une
+    // triche.** Depuis la tache 3, le boss porte `BOSS_HP_BASE` : un joueur
+    // solo a la dague ne l'entame pas en trente secondes, et ce test
+    // mesurerait alors une DPS au lieu de mesurer un palier. Ce qui est teste
+    // ici est le CHEMIN — les degats du salon, le lot unique de morts, le
+    // verrou qui se relache — et il est identique a 1 PV comme a 6 000. Le
+    // temps de mise a mort reel est mesure ailleurs, au banc
+    // `bench/boss.bench.ts`, qui est la porte du §7.
+    const slotBossAffaibli = room.horde.slotOf(bossId ?? -1);
+    expect(slotBossAffaibli).toBeGreaterThanOrEqual(0);
+    room.horde.hp[slotBossAffaibli] = 1;
+
     let lots: { tick: number; ids: number[] }[] = [];
     for (let t = 0; t < 30 * TICK_HZ && room.palier === 0; t++) {
       const slot = room.horde.slotOf(bossId ?? -1);
@@ -2817,7 +2857,13 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     // l'etape 3 — pas par un second chemin invente pour lui.
     expect(lots.some((l) => l.ids.includes(bossId ?? -1))).toBe(true);
 
-    // --- 5. Au palier 1, les PV d'apparition suivent `hpScale`.
+    // --- 5. Au palier 1, les PV d'apparition suivent `palierHp`.
+    //
+    // ⚠️ **`palierHp`, plus `hpScale`** (tache 3, etape 0) : la pietaille
+    // LEGERE est exemptee de la montee, donc l'ordre ordinaire qui tombe ici
+    // peut tres bien rendre exactement les PV de son archetype. Comparer a
+    // `hpScale(1)` en dur rendrait ce test dependant de l'archetype tire —
+    // c'est-a-dire intermittent au premier changement de graine.
     //
     // Deux vagues, pas une : la premiere donne les PV a l'apparition, la
     // seconde sert de temoin — voir l'assertion finale.
@@ -2841,12 +2887,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     }
 
     expect(pvPalier1).not.toBeNull();
-    expect(pvPalier1?.poses).toBeCloseTo((pvPalier1?.archetype ?? 0) * hpScale(1), 4);
-    // ⚠️ **La moitie qui compte.** L'assertion ci-dessus passe telle quelle
-    // avec une echelle constamment egale a 1 — elle se reduit alors aux PV de
-    // l'archetype, exactement comme au palier 0. Il faut donc dire aussi que
-    // les PV ONT change.
-    expect(pvPalier1?.poses).toBeGreaterThan(pvPalier1?.archetype ?? 0);
+    expect(pvPalier1?.poses).toBeCloseTo(palierHp(pvPalier1?.archetype ?? 0, 1), 4);
 
     // ⚠️ **L'echelle s'applique aux entites NEES a ce tick, pas a la horde
     // entiere.** Un `#scalePalierHp(0)` la reappliquerait a tout le monde a
@@ -2856,6 +2897,30 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     const slotTemoin = room.horde.slotOf(temoin);
     expect(slotTemoin).toBeGreaterThanOrEqual(0);
     expect(room.horde.hp[slotTemoin]).toBeCloseTo(pvPalier1?.poses ?? 0, 4);
+
+    // --- 6. LA MOITIE QUI COMPTE : au palier 1, quelque chose monte VRAIMENT.
+    //
+    // ⚠️ **Sans elle, la section 5 passe avec une echelle constamment egale a
+    // 1** — elle se reduit alors aux PV de l'archetype, exactement comme au
+    // palier 0, et depuis l'exemption de la chair a canon c'est meme le cas le
+    // plus PROBABLE (quatre vagues sur cinq sont legeres). Le temoin choisi est
+    // le boss du palier 1 : c'est le seul dont la montee soit garantie par
+    // construction, sans dependre d'un tirage d'archetype.
+    let pvBoss1: { poses: number; archetype: number } | null = null;
+    for (let t = 0; t < 60 * TICK_HZ && pvBoss1 === null; t++) {
+      room.step(DT);
+      for (const o of room.drainWaveOrders()) {
+        if (o.count === 1) {
+          pvBoss1 = pvALApparition(room, o);
+        }
+      }
+      viderSauf(room, [room.bossEntityId]);
+    }
+
+    expect(pvBoss1).not.toBeNull();
+    expect(pvBoss1?.archetype).toBe(BOSS_HP_BASE);
+    expect(pvBoss1?.poses).toBeCloseTo(BOSS_HP_BASE * hpScale(1), 4);
+    expect(pvBoss1?.poses).toBeGreaterThan(BOSS_HP_BASE);
   }, 30_000);
 
   it("un boss qui n'a pas pu apparaitre est redemande, et personne ne le croit vivant", () => {
@@ -2925,5 +2990,138 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     // vaincu. Sans cette ligne, `bossMissing` et `bossDefeated` seraient
     // interchangeables.
     expect(room.palier).toBe(0);
+  }, 30_000);
+});
+
+/**
+ * Le boss vit DANS la horde (etape 6a, tache 3, etape 2 du plan).
+ *
+ * ⚠️ **Rien n'a ete ecrit pour lui, et c'est ce que ce bloc verifie.**
+ * Identite arithmetique, champ de flux, separation, collision, orbes, marques
+ * elementaires : il est une vague de `count: 1` avec un archetype different, et
+ * tout le reste marche parce que quatre etapes l'ont construit. Le §1.2 de la
+ * spec : *« seules deux choses le distinguent, et elles sont hors de la
+ * horde »*.
+ */
+describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
+  const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
+  const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? 0;
+
+  /**
+   * Un joueur, deux armes elementaires, une cible a portee — **et AUCUNE
+   * marque posee a la main, AUCUN `hp = 1e6`**.
+   *
+   * C'est le point : tous les decors de reaction de l'etape 5a devaient rendre
+   * leur cible increvable pour qu'une marque ait le temps d'etre consommee. Ce
+   * decor-ci ne triche pas, et c'est la reserve de l'archetype qui decide.
+   */
+  function scene(archetype: number): {
+    reactions: ReturnType<Room['drainReactions']>;
+    morte: boolean;
+    pvDepart: number;
+    pvFin: number;
+  } {
+    const room = new Room(0xb055_0001);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const ancre = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 730, ancre.x + 120, ancre.y, archetype);
+    const pvDepart = room.horde.hp[room.horde.slotOf(cible)] ?? 0;
+
+    const reactions: ReturnType<Room['drainReactions']> = [];
+    let morte = false;
+    for (let i = 0; i < 120; i++) {
+      // La cible reste ou elle est : on mesure une reaction, pas une poursuite.
+      const s = room.horde.slotOf(cible);
+      if (s >= 0) {
+        room.horde.x[s] = ancre.x + 120;
+        room.horde.y[s] = ancre.y;
+      }
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions.push(...room.drainReactions());
+      for (const lot of room.drainDeaths()) {
+        morte ||= lot.ids.includes(cible);
+      }
+    }
+    const s = room.horde.slotOf(cible);
+    return { reactions, morte, pvDepart, pvFin: s >= 0 ? (room.horde.hp[s] ?? 0) : 0 };
+  }
+
+  /**
+   * ⚠️ **LES DEUX MOITIES, et la premiere est le piege que l'etape 5a a
+   * paye.** Un banc peuplait de pietaille legere, tuee du meme impact, donc
+   * jamais marquee : il rendait zero partout et paraissait vert. Ici la
+   * pietaille legere EST la moitie temoin — elle doit rendre zero reaction ET
+   * mourir, sinon le zero ne prouve rien. Le boss est la seconde moitie : il
+   * encaisse, donc il porte, donc la reaction se voit.
+   */
+  it('est le premier ennemi sur qui une reaction se voie — la pietaille legere meurt avant', () => {
+    const legere = scene(LEGER);
+    // Le decor a bien tue : le zero qui suit est un zero de MARQUE, pas un
+    // zero de « rien ne s'est passe ».
+    expect(legere.morte).toBe(true);
+    expect(legere.reactions).toEqual([]);
+
+    const boss = scene(BOSS_ARCHETYPE);
+    expect(boss.pvDepart).toBe(BOSS_HP_BASE);
+    // Il porte les marques comme tout le monde, et il vit assez pour qu'elles
+    // se consomment (§4 de la spec).
+    expect(boss.reactions.length).toBeGreaterThan(0);
+    expect(boss.reactions[0]?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
+    // Et il SURVIT a la reaction — c'est ce qui la rend visible plutot que
+    // mortelle : `REACTION_DAMAGE` emporte un lourd entier, pas lui.
+    expect(boss.morte).toBe(false);
+    expect(boss.pvFin).toBeLessThan(boss.pvDepart);
+    expect(boss.pvFin).toBeGreaterThan(REACTION_DAMAGE);
+  }, 30_000);
+
+  /**
+   * L'ordre de boss traverse le generateur sans rien de special : `count: 1`,
+   * l'archetype de boss, et une identite arithmetique comme les autres.
+   *
+   * ⚠️ **`count: 1` est une regle, pas un reglage** (§1.1) : la vie du boss n'a
+   * le droit de voyager que parce qu'il est UN.
+   */
+  it('apparait comme une vague de count 1, avec l archetype de boss', () => {
+    const room = new Room(4242);
+    room.join(1);
+
+    let ordreBoss: WaveOrder | null = null;
+    const ordinaires: WaveOrder[] = [];
+    for (let t = 0; t < 90 * TICK_HZ && ordreBoss === null; t++) {
+      room.step(DT);
+      for (const o of room.drainWaveOrders()) {
+        if (room.bossEntityId !== null && entityIdOf(o.waveId, 0) === room.bossEntityId) {
+          ordreBoss = o;
+        } else {
+          ordinaires.push(o);
+        }
+      }
+      // La horde est videe a chaque tick : ce test mesure un ordre, pas une
+      // survie (voir `viderSauf` plus haut, meme intention).
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        const id = room.horde.entityIdAt(i);
+        if (id !== room.bossEntityId) {
+          ids.push(id);
+        }
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+    }
+
+    expect(ordreBoss).not.toBeNull();
+    expect(ordreBoss?.count).toBe(1);
+    expect(ordreBoss?.archetype).toBe(BOSS_ARCHETYPE);
+    // Le decor a bien produit les DEUX cas : sans vagues ordinaires avant lui,
+    // « le boss a l'archetype de boss » se lirait aussi bien avec un
+    // generateur qui ne sait plus produire que des boss.
+    expect(ordinaires.length).toBeGreaterThanOrEqual(WAVES_PER_PALIER);
+    expect(ordinaires.every((o) => o.archetype !== BOSS_ARCHETYPE)).toBe(true);
+    expect(ordinaires.every((o) => o.count > 1)).toBe(true);
   }, 30_000);
 });

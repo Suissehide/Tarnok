@@ -17,7 +17,7 @@ import {
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
-import { hpScale } from '@shared/paliers';
+import { palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, OUTCOME, type PlayerSnapshot } from '@shared/protocol';
@@ -947,11 +947,23 @@ export class Room {
    * l'echelle vaut exactement 1 et la multiplication est neutre. Un raccourci
    * ici serait une seconde garde couvrant la premiere, et ferait de la boucle
    * un chemin non teste tant qu'aucun test n'atteint le palier 1.
+   *
+   * ⚠️ **Ce n'est plus `hpScale` qui est appele ici mais `palierHp`** (tache 3,
+   * etape 0) : la pietaille LEGERE est exemptee de la montee, parce que
+   * `LIGHT_HP` vaut exactement les degats de la dague et que la premiere marche
+   * de l'escalier de durabilite doublait donc son cout. La regle vit dans
+   * `shared/paliers.ts`, pas ici : elle doit se lire et se tester sans salon.
+   *
+   * ⚠️ **`horde.hp[i]` EST la reserve d'archetype a cet instant precis** —
+   * `Horde.spawn` vient de l'y ecrire et rien ne l'a encore entamee. C'est ce
+   * qui autorise `palierHp` a decider a partir de cette seule valeur ; deplacer
+   * cet appel apres le moindre degat lui ferait comparer une reserve entamee au
+   * seuil de la chair a canon.
    */
   #scalePalierHp(depuis: number): void {
-    const echelle = hpScale(this.#director.palier);
+    const palier = this.#director.palier;
     for (let i = depuis; i < this.horde.count; i++) {
-      this.horde.hp[i] = (this.horde.hp[i] ?? 0) * echelle;
+      this.horde.hp[i] = palierHp(this.horde.hp[i] ?? 0, palier);
     }
   }
 

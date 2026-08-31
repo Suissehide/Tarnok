@@ -2011,6 +2011,14 @@ describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
     }
     // ⚠️ Le serveur, et lui seul. Les clients gardent les PV bruts de
     // l'archetype — c'est tout le sujet de ce bloc.
+    //
+    // ⚠️ **`ARCHETYPE_LOURD`, et ce n'est pas indifferent depuis la tache 3.**
+    // Le salon n'applique plus `hpScale` a travers `palierHp`, qui EXEMPTE la
+    // pietaille legere : avec un archetype leger, `echelleServeur` vaudrait 1
+    // quoi qu'on lui passe et ce bloc mesurerait une derive nulle « parce que
+    // rien n'a change » — exactement le temoin degenere que le test suivant
+    // existe pour ecarter. Sur un lourd, l'echelle passee ici EST celle que le
+    // salon applique.
     for (let i = 0; i < serveur.horde.count; i++) {
       serveur.horde.hp[i] = (serveur.horde.hp[i] ?? 0) * echelleServeur;
     }

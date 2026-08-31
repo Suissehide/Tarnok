@@ -1,3 +1,4 @@
+import { ARCHETYPES } from '@shared/archetypes';
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import type { Horde } from '@shared/horde';
 import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
@@ -307,22 +308,38 @@ export const BODY_SCALE = 1.25;
  * troll) ont une cellule de 256 a 384 px, pas 192 — la meme formule doit les
  * ramener au meme diametre a l'ecran, puisque `PROJECTILE_HIT_RADIUS` ne
  * varie pas par archetype.
+ *
+ * ⚠️ **`bodyScale` (etape 6a, tache 3) est le facteur PROPRE a l'archetype**,
+ * `1` pour toute la pietaille et davantage pour le boss. Il MULTIPLIE
+ * `BODY_SCALE` au lieu de le remplacer : le plafond du test ci-contre continue
+ * de garder la pietaille — ce qu'il mesure, c'est de combien la hitbox ment
+ * pour un monstre ordinaire — et le boss apporte son propre debordement sans
+ * relever ce plafond pour les vingt autres. Voir `Archetype.bodyScale`.
  */
-export function spriteScale(sizePx: number, hitRadiusPx: number): number {
+export function spriteScale(sizePx: number, hitRadiusPx: number, bodyScale = 1): number {
   if (sizePx <= 0) {
     return 1;
   }
-  return (2 * hitRadiusPx * BODY_SCALE) / sizePx;
+  return (2 * hitRadiusPx * BODY_SCALE * bodyScale) / sizePx;
 }
 
-/** Applique `spriteScale` a une taille par archetype — un facteur par archetype. */
+/**
+ * Applique `spriteScale` a une taille par archetype — un facteur par archetype.
+ *
+ * ⚠️ **L'INDICE EST L'IDENTIFIANT D'ARCHETYPE**, ici comme dans `ARCHETYPES` et
+ * comme dans le manifeste de l'atlas (`tools/build_monster_atlas.py` :
+ * *« l'index dans cette liste EST l'identifiant d'archetype »*). C'est ce qui
+ * permet d'aller lire `bodyScale` sans que l'appelant ait a transporter une
+ * seconde liste parallele — et une liste parallele est exactement ce qui finit
+ * par se desynchroniser.
+ */
 export function archetypeScales(
   sizesPx: readonly number[],
   hitRadiusPx: number,
 ): Float32Array<ArrayBuffer> {
   const out = new Float32Array(sizesPx.length);
   for (let i = 0; i < sizesPx.length; i++) {
-    out[i] = spriteScale(sizesPx[i] ?? 0, hitRadiusPx);
+    out[i] = spriteScale(sizesPx[i] ?? 0, hitRadiusPx, ARCHETYPES[i]?.bodyScale ?? 1);
   }
   return out;
 }

@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
+import { ARCHETYPES, HEAVY_HP, LIGHT_HP } from './archetypes';
 import { GOLD_PER_PALIER_BASE, PALIER_COUNT_SCALE, PALIER_HP_SCALE } from './constants';
-import { hpScale, palierGold, waveCountScale } from './paliers';
+import { hpScale, palierGold, palierHp, waveCountScale } from './paliers';
+import { weaponOf } from './weapons';
 
 /**
  * Le test de ces formules a DEUX MOITIES, et elles ne sont pas
@@ -111,5 +113,69 @@ describe('la table du §3 de la spec', () => {
 
   it('utilise bien deux pentes distinctes, une par grandeur', () => {
     expect(PALIER_COUNT_SCALE).not.toBe(PALIER_HP_SCALE);
+  });
+});
+
+/**
+ * `palierHp` — la porte par laquelle `hpScale` entre dans le jeu, et la
+ * decision de l'etape 0 de la tache 3 : **la chair a canon ne monte pas**.
+ *
+ * ⚠️ **DEUX MOITIES, et elles ne se couvrent pas.** « La legere ne monte
+ * jamais » passe toute seule avec `return baseHp` — la difficulte
+ * disparaitrait alors du jeu entier sans qu'un test ne bouge. « La lourde suit
+ * `hpScale` » passe toute seule avec `baseHp * hpScale(k)` — l'escalier de
+ * durabilite reviendrait intact. Il faut les deux, et le troisieme test les
+ * eprouve l'une contre l'autre sur ces deux contre-exemples exacts.
+ */
+describe('palierHp — la chair a canon ne monte pas', () => {
+  /** La dague, arme 0 : c'est SON degat qui definit la frontiere, jamais un 5 recopie. */
+  const DEGATS_DAGUE = weaponOf(0).damage;
+
+  it('laisse la pietaille legere a sa reserve de depart sur dix paliers', () => {
+    for (let k = 0; k <= PALIERS; k++) {
+      expect(palierHp(LIGHT_HP, k)).toBe(LIGHT_HP);
+    }
+  });
+
+  it('fait monter la pietaille lourde exactement a hpScale', () => {
+    for (let k = 0; k <= PALIERS; k++) {
+      expect(palierHp(HEAVY_HP, k)).toBeCloseTo(HEAVY_HP * hpScale(k), 10);
+    }
+    expect(croitStrictement((k) => palierHp(HEAVY_HP, k))).toBe(true);
+  });
+
+  it('ne dit pas la meme chose des deux : les deux raccourcis ratent chacun une moitie', () => {
+    const rienNeMonte = (base: number, _k: number): number => base;
+    const toutMonte = (base: number, k: number): number => base * hpScale(k);
+
+    // Le raccourci « rien ne monte » satisfait la legere et trahit la lourde.
+    expect(rienNeMonte(LIGHT_HP, 5)).toBe(palierHp(LIGHT_HP, 5));
+    expect(rienNeMonte(HEAVY_HP, 5)).not.toBe(palierHp(HEAVY_HP, 5));
+
+    // Le raccourci « tout monte » satisfait la lourde et trahit la legere.
+    expect(toutMonte(HEAVY_HP, 5)).toBeCloseTo(palierHp(HEAVY_HP, 5), 10);
+    expect(toutMonte(LIGHT_HP, 5)).not.toBe(palierHp(LIGHT_HP, 5));
+  });
+
+  /**
+   * ⚠️ **LA raison d'etre de cette fonction, ecrite en test.** La durabilite
+   * se compte en COUPS, pas en points de vie : un point de plus que les degats
+   * de la dague double le nombre de coups. Ce test dit que la pietaille legere
+   * reste a UN coup a tous les paliers — c'est la frontiere de R9 a l'envers,
+   * et rien d'autre ne la garde.
+   */
+  it('garde la pietaille legere a UN coup de dague, a tous les paliers', () => {
+    for (let k = 0; k <= PALIERS; k++) {
+      expect(Math.ceil(palierHp(LIGHT_HP, k) / DEGATS_DAGUE)).toBe(1);
+    }
+    // Et sans l'exemption, la marche est bien la des le palier 1 : le defaut
+    // que la tache 2 a mesure existe, ce test ne le suppose pas.
+    expect(Math.ceil((LIGHT_HP * hpScale(1)) / DEGATS_DAGUE)).toBe(2);
+  });
+
+  it('vaut exactement la reserve de depart au palier 0, quel que soit l archetype', () => {
+    for (const a of ARCHETYPES) {
+      expect(palierHp(a.hp, 0)).toBe(a.hp);
+    }
   });
 });

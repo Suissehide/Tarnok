@@ -13,6 +13,8 @@
     "bench:sep": "tsx bench/steering.bench.ts",
     "bench:slots": "tsx bench/slots.bench.ts",
     "bench:kills": "tsx bench/kills.bench.ts",
+    "bench:boss": "tsx bench/boss.bench.ts",
+    "bench:niveau2": "tsx bench/niveau2.bench.ts",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",

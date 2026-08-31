@@ -1,6 +1,13 @@
-import { archetypeOf, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
+import {
+  archetypeOf,
+  BOSS_ARCHETYPE,
+  BOSS_HP_BASE,
+  HEAVY_HP,
+  LIGHT_HP,
+  STEP2_ARCHETYPES,
+} from '@shared/archetypes';
 import { MAX_ENTITIES, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
-import { waveCountScale } from '@shared/paliers';
+import { palierHp, waveCountScale } from '@shared/paliers';
 import type { WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
@@ -243,6 +250,59 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
   // « deux gardes qui se couvrent » rencontre quinze fois dans ce depot. Et le
   // plafond de `waveCountBounds` lui-meme est deja garde plus haut
   // (« reste bornee par MAX_ENTITIES, meme a un numero de vague extreme »).
+
+  /**
+   * ⚠️ **L'AUTRE MOITIE DU §7 B, et elle a change de forme a la tache 3.** La
+   * question du plan est *« la difficulte diverge-t-elle ? »*, et depuis que
+   * `palierHp` exempte la chair a canon, la reponse ne se lit plus sur
+   * `hpScale` seule : une vague legere de palier 10 pese exactement ce qu'elle
+   * pesait au palier 0, a l'effectif pres. Ce qui monte, c'est le NOMBRE, la
+   * part de lourds, et le boss.
+   *
+   * Le chiffre releve au banc `bench/boss.bench.ts` : la charge d'un palier
+   * (4 vagues au mix reel + le boss) passe de 13 040 PV au palier 0 a 54 767 PV
+   * au palier 10, soit **x4,2**. Ce test garde la FORME de cette courbe — elle
+   * monte, et elle ne s'emballe pas — pas les nombres du releve.
+   */
+  it('fait monter la charge d un palier sans l emballer, sur dix paliers', () => {
+    const moyen = (waveCountBounds(1_000_000).min + waveCountBounds(1_000_000).max) / 2;
+    /** PV a abattre dans un palier `k` : 4 vagues au mix du generateur, plus le boss. */
+    function chargeDuPalier(k: number): number {
+      const effectif = moyen * waveCountScale(k);
+      const parVague = effectif * (0.8 * palierHp(LIGHT_HP, k) + 0.2 * palierHp(HEAVY_HP, k));
+      return WAVES_PER_PALIER * parVague + palierHp(BOSS_HP_BASE, k);
+    }
+
+    for (let k = 0; k < 10; k++) {
+      expect(chargeDuPalier(k + 1)).toBeGreaterThan(chargeDuPalier(k));
+    }
+    const facteur = chargeDuPalier(10) / chargeDuPalier(0);
+    process.stdout.write(
+      `charge d'un palier : x${facteur.toFixed(2)} entre le palier 0 et le 10\n`,
+    );
+    // ⚠️ **Les deux sens comptent** (§3 de la spec) : trop plate, la run n'a
+    // pas de fin ; trop raide, le palier 8 est un mur. Une bande large, parce
+    // que ce qui est garde ici est un ORDRE DE GRANDEUR — le reglage fin se
+    // juge en jeu, pas ici.
+    expect(facteur).toBeGreaterThan(2);
+    expect(facteur).toBeLessThan(10);
+  });
+
+  /**
+   * ⚠️ **« Si le palier 8 depasse `MAX_ENTITIES`, c'est `waveCountBounds` qui
+   * plafonne — le dire, pas le decouvrir. »** Il ne le depasse pas : au palier
+   * 10 la borne haute d'une vague vaut 800, soit 20 % de `MAX_ENTITIES`. Ce
+   * test l'ecrit pour qu'on n'ait pas a le redecouvrir, et il PARLE, parce que
+   * la valeur interessante est le rapport, pas le booleen.
+   */
+  it('dit ou en est le palier 8 vis-a-vis de MAX_ENTITIES', () => {
+    const auPalier8 = plafondAuPalier(8);
+    process.stdout.write(
+      `palier 8 : borne haute d'une vague ${Math.round(auPalier8)} / MAX_ENTITIES ${MAX_ENTITIES} ` +
+        `(${Math.round((100 * auPalier8) / MAX_ENTITIES)} %)\n`,
+    );
+    expect(auPalier8).toBeLessThan(MAX_ENTITIES / 2);
+  });
 });
 
 describe('le palier structure la run (etape 6a, tache 2)', () => {
@@ -301,6 +361,27 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     // Un seul boss sur deux minutes, puisque personne ne l'a tue. Le §1.1 de la
     // spec en fait une regle : la vie du boss ne voyage que parce qu'il est UN.
     expect(emis.filter((e) => e.boss)).toHaveLength(1);
+  });
+
+  /**
+   * L'archetype du boss (etape 6a, tache 3).
+   *
+   * ⚠️ **Les deux moities.** « Le boss a l'archetype de boss » passe tout seul
+   * avec un generateur qui ne saurait plus produire QUE des boss ; « les vagues
+   * ordinaires ne l'ont pas » passe tout seul avec un generateur qui ne
+   * produirait jamais de boss du tout. Il faut compter les deux populations, et
+   * les compter non vides.
+   */
+  it('donne l archetype de boss au boss, et a lui seul', () => {
+    const emis = emissions(1234, 10 * MINUTE, true);
+    const boss = emis.filter((e) => e.boss);
+    const ordinaires = emis.filter((e) => !e.boss);
+
+    expect(boss.length).toBeGreaterThan(1);
+    expect(ordinaires.length).toBeGreaterThan(WAVES_PER_PALIER);
+
+    expect(boss.every((e) => e.order.archetype === BOSS_ARCHETYPE)).toBe(true);
+    expect(ordinaires.every((e) => e.order.archetype !== BOSS_ARCHETYPE)).toBe(true);
   });
 
   it('ne cesse PAS de lacher des vagues pendant le combat de boss', () => {
