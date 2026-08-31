@@ -2,8 +2,14 @@ import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
 
-import type { DerivedOrbs, HitFlashes, ReactionFlashes, RenderState } from '../net/client';
-import type { MagnetPoint } from './orb-renderer';
+import type {
+  DerivedOrbs,
+  HitFlashes,
+  OrbFlights,
+  PickupTarget,
+  ReactionFlashes,
+  RenderState,
+} from '../net/client';
 
 /**
  * Une image complete du jeu : ce qui est dessine, et dans quel ordre.
@@ -40,6 +46,12 @@ export interface FrameClient {
   readonly zones: ZoneField;
   readonly horde: Horde;
   readonly orbs: DerivedOrbs;
+  /**
+   * Les orbes capturees, en vol vers leur ramasseur (tache 20) — une
+   * collection SEPAREE d'`orbs`, comme les flashs : ce que `PICKUPS` retire de
+   * la reserve n'y est plus, et un vol lui survit le temps d'arriver.
+   */
+  readonly orbFlights: OrbFlights;
   readonly projectiles: Projectiles;
   readonly hitFlashes: HitFlashes;
   readonly reactionFlashes: ReactionFlashes;
@@ -66,12 +78,17 @@ export interface FrameStage {
   drawMarks(horde: Horde, tick: number): void;
   drawHorde(horde: Horde, timeMs: number): void;
   /**
-   * Les orbes, et les positions DESSINEES des joueurs : une orbe a portee
-   * glisse vers le joueur le plus proche (tache 17). C'est `RenderState` qui
+   * Les orbes au sol, les orbes en vol, et les positions DESSINEES des joueurs :
+   * une orbe capturee rejoint son ramasseur (tache 20). C'est `RenderState` qui
    * porte ces positions, pas le client — donc `composeFrame` doit passer
    * l'etat qu'elle vient d'obtenir, jamais une autre lecture.
    */
-  drawOrbs(orbs: DerivedOrbs, players: readonly MagnetPoint[], timeMs: number): void;
+  drawOrbs(
+    orbs: DerivedOrbs,
+    flights: OrbFlights,
+    players: readonly PickupTarget[],
+    timeMs: number,
+  ): void;
   drawProjectiles(projectiles: Projectiles): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
@@ -114,7 +131,7 @@ export function composeFrame(
   stage.drawZones(client.zones, client.hordeTick);
   stage.drawMarks(client.horde, client.hordeTick);
   stage.drawHorde(client.horde, now);
-  stage.drawOrbs(client.orbs, state.players, now);
+  stage.drawOrbs(client.orbs, client.orbFlights, state.players, now);
   stage.drawProjectiles(client.projectiles);
   stage.drawImpactFlashes(client.hitFlashes, now);
   stage.drawReactionFlashes(client.reactionFlashes, now);

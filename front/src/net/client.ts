@@ -8,6 +8,7 @@ import {
   MAX_ENTITIES,
   MAX_PLAYERS,
   ORB_LIFETIME_TICKS,
+  ORB_PICKUP_RADIUS,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
   ROLLBACK_DEPTH_TICKS,
@@ -175,6 +176,55 @@ export class DerivedOrbs {
     this.bornTick[slot] = tick;
   }
 
+  /**
+   * Retire les orbes qu'un joueur vient de RAMASSER et les confie a `flights`
+   * — tache 20, sur retour de jeu : *« l'aimantation est plus proche du joueur
+   * et attire l'xp jusqu'a lui, meme s'il l'eloigne »*.
+   *
+   * ## La capture EST le ramassage
+   *
+   * ⚠️ **Le predicat est celui du serveur, au pixel pres : `ORB_PICKUP_RADIUS`,
+   * inchange.** C'est `OrbField.resolvePickups` (`back/src/combat.ts`) qui
+   * arbitre, et rien ici ne decide de l'experience — mais les deux comparent
+   * les MEMES positions repliquees au MEME rayon, donc le vol part a l'instant
+   * ou le serveur ramasse. **L'experience est deja acquise quand le vol
+   * commence**, il ne fait que decorer un fait accompli.
+   *
+   * C'est cela, et rien d'autre, qui autorise l'orbe a suivre un joueur qui
+   * fuit. L'attraction de la tache 17 ne pouvait pas se le permettre : elle
+   * etait une fonction pure de la distance, donc elle revenait sur ses pas des
+   * que le joueur s'eloignait — elle ne promettait rien. Une capture qui
+   * PERSISTE, elle, dessine l'orbe sur un joueur ; elle mentirait si elle
+   * pouvait se declencher sans ramassage.
+   *
+   * ⚠️ **Le premier joueur a portee, pas le plus proche** — meme boucle que le
+   * serveur, qui s'arrete lui aussi au premier. Ce choix n'a d'effet que
+   * cosmetique : l'experience est une ressource d'EQUIPE (`XP_PER_ORB` va au
+   * salon, pas au ramasseur), seule la trajectoire dessinee en depend.
+   *
+   * `PICKUPS` arrivera un aller-retour plus tard et ne trouvera plus rien a
+   * retirer : `remove` ignore silencieusement une identite absente.
+   */
+  capture(players: readonly PickupTarget[], flights: OrbFlights, nowMs: number): void {
+    const r2 = ORB_PICKUP_RADIUS * ORB_PICKUP_RADIUS;
+    // Par indice DECROISSANT, meme raisonnement que `expire` et que
+    // `OrbField.resolvePickups` : un orbe deplace dans un trou par la
+    // compaction ne doit jamais etre saute ensuite.
+    for (let i = this.#count - 1; i >= 0; i--) {
+      const ox = this.x[i] ?? 0;
+      const oy = this.y[i] ?? 0;
+      for (const p of players) {
+        const dx = ox - p.x;
+        const dy = oy - p.y;
+        if (dx * dx + dy * dy <= r2) {
+          flights.spawn(ox, oy, p.id, nowMs);
+          this.#removeAt(i);
+          break;
+        }
+      }
+    }
+  }
+
   /** Retire les orbes ramasses : identites recues par `PICKUPS`. */
   remove(entityIds: readonly number[]): void {
     for (const entityId of entityIds) {
@@ -214,6 +264,124 @@ export class DerivedOrbs {
       this.x[slot] = this.x[last] ?? 0;
       this.y[slot] = this.y[last] ?? 0;
       this.bornTick[slot] = this.bornTick[last] ?? 0;
+    }
+    this.#count = last;
+  }
+}
+
+/**
+ * Ce que la capture a besoin de connaitre d'un joueur : ou il est, et QUI il
+ * est. `PlayerSnapshot` la satisfait sans rien declarer.
+ *
+ * **Jumelle de `PickupPoint`** (`back/src/combat.ts`), a l'identite pres : le
+ * serveur compare des positions et n'a que faire de savoir qui ramasse, alors
+ * que le vol, lui, doit pouvoir retrouver le joueur A CHAQUE IMAGE — c'est
+ * toute la difference entre suivre quelqu'un et viser un point.
+ *
+ * Une interface plutot que `PlayerSnapshot`, pour que le test n'ait pas a
+ * fabriquer un snapshot entier.
+ */
+export interface PickupTarget {
+  readonly id: number;
+  readonly x: number;
+  readonly y: number;
+}
+
+/**
+ * Duree d'un vol d'orbe capturee, en millisecondes horloge murale — tache 20.
+ *
+ * En millisecondes et pas en ticks, exactement comme `HIT_FLASH_LIFETIME_MS` :
+ * **le vol n'arbitre rien**, il decore un ramassage deja acquis (voir
+ * `DerivedOrbs.capture`), donc rien n'exige qu'il se calcule identiquement des
+ * deux cotes du fil. Le serveur, lui, ne connait meme pas cette constante.
+ *
+ * ⚠️ **Assez court pour que l'orbe DEPASSE un joueur qui fuit.** Le vol part
+ * d'au plus `ORB_PICKUP_RADIUS` (90 px) : 200 ms font une vitesse moyenne de
+ * 450 px/s, largement au-dessus de `PLAYER_SPEED` (260). Plus long, l'orbe
+ * trainerait derriere le joueur au lieu d'etre aspiree — c'est une regle, pas
+ * un reglage, et `client.test.ts` la garde par ce rapport-la.
+ */
+export const ORB_FLIGHT_LIFETIME_MS = 200;
+
+/**
+ * Capacite du reservoir de vols.
+ *
+ * Bien plus petite que `MAX_ENTITIES` : un vol vit 200 ms, et seuls les orbes
+ * tenant dans un disque de `ORB_PICKUP_RADIUS` autour d'un joueur peuvent etre
+ * captures ensemble. Meme ordre de grandeur que `REACTION_FLASH_CAPACITY`.
+ */
+const ORB_FLIGHT_CAPACITY = 64;
+
+/**
+ * Orbes CAPTUREES, en vol vers le joueur qui les a ramassees — tache 20.
+ *
+ * ⚠️ **Une collection cosmetique, hors de `DerivedOrbs`, et c'est structurel.**
+ * `DerivedOrbs` est le miroir client de la reserve du serveur : ce qu'elle
+ * contient est dicte par les morts et par `PICKUPS`. Une orbe ramassee n'y est
+ * plus — ni ici, ni cote serveur — donc un vol ne peut pas y vivre comme un
+ * drapeau sur une entree. Il vit ici, avec `HitFlashes` et `ReactionFlashes`
+ * pour voisines : meme forme de tableaux types, meme duree de vie en
+ * millisecondes, meme absence totale d'arbitrage.
+ *
+ * La position DESSINEE n'est pas stockee : elle se calcule a l'image, depuis
+ * la position de depart, l'age du vol et la position COURANTE de la cible —
+ * voir `orbFlightFraction` et `OrbRenderer.draw`. C'est ce qui fait qu'une
+ * orbe suit un joueur qui fuit au lieu de viser l'endroit ou il etait.
+ */
+export class OrbFlights {
+  /** Position de la CAPTURE : la ou l'orbe attendait au sol. Le vol part de la. */
+  readonly fromX: Float32Array;
+  readonly fromY: Float32Array;
+  /** Identite du joueur vise — pas sa position : c'est la position courante qui compte. */
+  readonly targetId: Uint32Array;
+  /** Horloge murale de naissance (`performance.now()`), voir `ORB_FLIGHT_LIFETIME_MS`. */
+  readonly bornMs: Float64Array;
+  #count = 0;
+
+  constructor(readonly capacity: number) {
+    this.fromX = new Float32Array(capacity);
+    this.fromY = new Float32Array(capacity);
+    this.targetId = new Uint32Array(capacity);
+    this.bornMs = new Float64Array(capacity);
+  }
+
+  get count(): number {
+    return this.#count;
+  }
+
+  /** Lance un vol. Ignore silencieusement si la capacite est atteinte. */
+  spawn(x: number, y: number, targetId: number, nowMs: number): void {
+    if (this.#count >= this.capacity) {
+      return;
+    }
+    const slot = this.#count++;
+    this.fromX[slot] = x;
+    this.fromY[slot] = y;
+    this.targetId[slot] = targetId;
+    this.bornMs[slot] = nowMs;
+  }
+
+  /**
+   * Retire les vols arrives. **Un vol se termine quand l'orbe atteint le
+   * joueur**, et `orbFlightFraction` vaut 1 exactement a `ORB_FLIGHT_LIFETIME_MS` :
+   * la meme echeance decrit donc l'arrivee et la fin de vie, il n'y a pas deux
+   * regles a garder d'accord.
+   */
+  expire(nowMs: number): void {
+    for (let i = this.#count - 1; i >= 0; i--) {
+      if (nowMs - (this.bornMs[i] ?? 0) >= ORB_FLIGHT_LIFETIME_MS) {
+        this.#removeAt(i);
+      }
+    }
+  }
+
+  #removeAt(slot: number): void {
+    const last = this.#count - 1;
+    if (slot !== last) {
+      this.fromX[slot] = this.fromX[last] ?? 0;
+      this.fromY[slot] = this.fromY[last] ?? 0;
+      this.targetId[slot] = this.targetId[last] ?? 0;
+      this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
   }
@@ -472,6 +640,11 @@ export class GameClient {
   readonly zones = new ZoneField();
   /** Orbes derives des morts (§6.1), jamais transmis. Lecture publique pour le rendu et le HUD. */
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
+  /**
+   * Orbes capturees, en vol vers leur ramasseur (tache 20) — purement
+   * cosmetique, jamais arbitre. Lecture publique pour le rendu.
+   */
+  readonly orbFlights = new OrbFlights(ORB_FLIGHT_CAPACITY);
 
   /**
    * Projectiles, simules localement — **jamais repliques**, exactement comme
@@ -884,6 +1057,15 @@ export class GameClient {
         players.push(predicted);
       }
     }
+
+    // ⚠️ **Apres `players`, jamais avant, et jamais depuis `#advanceHorde`.**
+    // La capture compare les positions DESSINEES — celle qu'on se predit, celles
+    // qu'on interpole pour les autres — parce que ce sont les seules que l'oeil
+    // voie et que ce sont elles qui portent l'orbe. Un pas de horde peut ne pas
+    // tourner de l'image (accumulateur) ou tourner cinq fois : le ramassage
+    // n'est ni plus ni moins frequent que l'image qui le montre.
+    this.orbFlights.expire(now);
+    this.orbs.capture(players, this.orbFlights, now);
 
     return { localId: this.#localId, xp: this.#teamXp, synergy: this.#teamSynergy, players };
   }

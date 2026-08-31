@@ -1,5 +1,11 @@
 // @vitest-environment jsdom
-import { MAP_SIZE, MAX_ENTITIES, ORB_DROP_ONE_IN, ORB_PICKUP_RADIUS } from '@shared/constants';
+import {
+  MAP_SIZE,
+  MAX_ENTITIES,
+  ORB_DROP_ONE_IN,
+  ORB_PICKUP_RADIUS,
+  PLAYER_SPEED,
+} from '@shared/constants';
 import {
   Container,
   type Particle,
@@ -10,16 +16,14 @@ import {
 } from 'pixi.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import { DerivedOrbs } from '../net/client';
+import { DerivedOrbs, ORB_FLIGHT_LIFETIME_MS, OrbFlights, type PickupTarget } from '../net/client';
 import {
-  type MagnetPoint,
   ORB_ALPHA_MIN,
   ORB_DIAMETER_PX,
-  ORB_MAGNET_RADIUS,
   ORB_TEXTURE_DIAMETER,
   ORB_TINT,
   OrbRenderer,
-  orbPullFraction,
+  orbFlightFraction,
 } from './orb-renderer';
 
 /** Une vue qui couvre toute la carte : le culling ne doit alors rien retirer. */
@@ -36,54 +40,42 @@ const TOUTE_LA_CARTE = new Rectangle(0, 0, MAP_SIZE, MAP_SIZE);
 const avecOrbe = (n: number): number => n * ORB_DROP_ONE_IN;
 
 /**
- * Étape 5a, tache 17 : *« l'xp plus nette aussi, legerement attiree par le
- * joueur s'il passe a cote »*.
+ * Étape 5a, tache 20, sur retour de jeu : *« l'aimantation est plus proche du
+ * joueur et attire l'xp jusqu'a lui, meme s'il l'eloigne »*.
  *
- * ⚠️ **Tout le corps de `OrbRenderer.draw` etait garde par RIEN avant ce
- * fichier**, et quatre mutations appliquees AVANT d'ecrire une ligne de test
- * l'ont montre — `particle.scaleX = 1`, `const pull = 0`, et les deux gardes de
+ * ⚠️ **Tout le corps de `OrbRenderer.draw` etait garde par RIEN avant la tache
+ * 17**, et quatre mutations appliquees AVANT d'ecrire une ligne de test l'ont
+ * montre — `particle.scaleX = 1`, `const pull = 0`, et les deux gardes de
  * chute — toutes vertes a 280 tests. C'est le motif des dix-sept assertions
  * creuses du depot, et la lecon de la tache 16 sur `ZoneRenderer` : `load()`
  * cuit sa texture sur un canevas 2D absent de node, donc `draw` retournait a son
  * premier `if (!texture)` et rien de ce qu'elle fait n'etait atteignable.
  * `adoptTexture` est le point d'accroche qui referme ça.
  */
-describe('orbPullFraction — l aimantation est cosmetique, et l ecart est NUL la ou ça compte', () => {
-  it('ne tire pas du tout un orbe hors du rayon d aimant', () => {
-    expect(orbPullFraction(ORB_MAGNET_RADIUS)).toBe(0);
-    // ⚠️ **La courbe est CONVEXE, et c'est le sujet.** Une attraction lineaire
-    // se lit comme une derive : l'orbe s'eloignerait doucement de sa vraie
-    // place sur toute la distance. Un carre la laisse fremir puis partir d'un
-    // coup — c'est ce qui se lit comme un aimant.
-    //
-    // Verifie par mutation : remplacer `t * t` par `t` laissait 303 tests
-    // verts. A mi-chemin, une droite rendrait 0,5 ; le carre rend 0,25.
-    const mi = (ORB_PICKUP_RADIUS + ORB_MAGNET_RADIUS) / 2;
-    expect(orbPullFraction(mi)).toBeLessThan(0.5);
-    expect(orbPullFraction(mi)).toBeCloseTo(0.25, 5);
-
-    expect(orbPullFraction(ORB_MAGNET_RADIUS + 500)).toBe(0);
+describe('orbFlightFraction — le vol decore un ramassage deja acquis', () => {
+  it('ne bouge pas l orbe a l instant de la capture : elle part de la ou elle etait tombee', () => {
+    expect(orbFlightFraction(0)).toBe(0);
+    expect(orbFlightFraction(-10)).toBe(0);
   });
 
   /**
-   * ⚠️ **L'ASSERTION CENTRALE DE LA TACHE.** Le mouvement est cosmetique : le
-   * client anime, le serveur ne bouge rien et ramasse a `ORB_PICKUP_RADIUS`. Le
-   * risque nomme par le plan — *« le ramassage se declenche la ou l'orbe n'est
-   * plus dessinee »* — est annule par la FORME de cette courbe : a la distance
-   * exacte ou le serveur ramasse, la fraction vaut 1, donc l'orbe est dessinee
-   * SUR le joueur. **L'ecart entre l'orbe dessinee et l'orbe ramassee vaut zero
-   * pixel.**
+   * ⚠️ **L'ASSERTION CENTRALE DE LA TACHE.** La fraction vaut EXACTEMENT 1 a
+   * l'echeance, et la position dessinee est interpolee vers la position
+   * COURANTE du joueur : le vol arrive donc SUR lui, ou qu'il soit alle. C'est
+   * ce qui remplace la surete de la tache 17 — la ou une fonction de la
+   * distance garantissait « dessinee sur le joueur au rayon de ramassage »,
+   * c'est ici le declenchement (`DerivedOrbs.capture`, meme predicat que le
+   * serveur) qui garantit que le vol ne commence jamais avant le ramassage.
    */
-  it('a pose tout le chemin AU rayon de ramassage : l orbe est dessinee sur le joueur pile quand le serveur la prend', () => {
-    expect(orbPullFraction(ORB_PICKUP_RADIUS)).toBe(1);
-    expect(orbPullFraction(ORB_PICKUP_RADIUS - 1)).toBe(1);
-    expect(orbPullFraction(0)).toBe(1);
+  it('a pose tout le chemin a l echeance, exactement, et n en repart jamais', () => {
+    expect(orbFlightFraction(ORB_FLIGHT_LIFETIME_MS)).toBe(1);
+    expect(orbFlightFraction(ORB_FLIGHT_LIFETIME_MS + 1000)).toBe(1);
   });
 
-  it('croit sans jamais reculer entre les deux rayons', () => {
+  it('croit sans jamais reculer, de 0 a 1', () => {
     let precedent = -1;
-    for (let d = ORB_MAGNET_RADIUS; d >= ORB_PICKUP_RADIUS; d -= 1) {
-      const f = orbPullFraction(d);
+    for (let ms = 0; ms <= ORB_FLIGHT_LIFETIME_MS; ms += 1) {
+      const f = orbFlightFraction(ms);
       expect(f).toBeGreaterThanOrEqual(precedent);
       expect(f).toBeLessThanOrEqual(1);
       precedent = f;
@@ -92,26 +84,42 @@ describe('orbPullFraction — l aimantation est cosmetique, et l ecart est NUL l
   });
 
   /**
-   * ⚠️ **`ORB_MAGNET_RADIUS` doit rester STRICTEMENT plus grand que le rayon de
-   * ramassage.** Egaux, la fraction sauterait de 0 a 1 sans intervalle : le
-   * serveur ramasserait au meme instant ou l'attraction commence, et
-   * l'aimantation n'aurait jamais une seule image pour se voir. C'est la
-   * condition d'existence de l'effet, pas un reglage.
+   * ⚠️ **Une courbe en S, pas une droite.** Une interpolation lineaire se lit
+   * comme un glissement regulier : l'orbe demarre d'un coup et percute le
+   * joueur. Le S la decolle en douceur puis la pose. Le milieu ne le prouve
+   * PAS — smoothstep y vaut 0,5 comme la droite : ce sont les quarts qui
+   * separent les deux, et remplacer `t * t * (3 - 2 * t)` par `t` les fait
+   * rougir.
    */
-  it('laisse une vraie course a l attraction, entre le rayon d aimant et celui de ramassage', () => {
-    expect(ORB_MAGNET_RADIUS).toBeGreaterThan(ORB_PICKUP_RADIUS);
-    const milieu = (ORB_MAGNET_RADIUS + ORB_PICKUP_RADIUS) / 2;
-    expect(orbPullFraction(milieu)).toBeGreaterThan(0);
-    expect(orbPullFraction(milieu)).toBeLessThan(1);
+  it('demarre plus lentement et finit plus vite qu une droite', () => {
+    expect(orbFlightFraction(ORB_FLIGHT_LIFETIME_MS / 4)).toBeLessThan(0.25);
+    expect(orbFlightFraction(ORB_FLIGHT_LIFETIME_MS / 2)).toBeCloseTo(0.5, 6);
+    expect(orbFlightFraction((3 * ORB_FLIGHT_LIFETIME_MS) / 4)).toBeGreaterThan(0.75);
+  });
+
+  /**
+   * ⚠️ **Le vol doit DEPASSER un joueur qui fuit, pas le suivre.** Il part
+   * d'au plus `ORB_PICKUP_RADIUS` — c'est la le seul rayon du systeme depuis la
+   * tache 20 — et il a `ORB_FLIGHT_LIFETIME_MS` pour couvrir cette distance :
+   * si la vitesse moyenne qui en resulte tombait sous `PLAYER_SPEED`, l'orbe
+   * trainerait derriere le joueur au lieu d'etre aspiree. Une regle, pas un
+   * reglage.
+   */
+  it('couvre le rayon de ramassage plus vite qu un joueur ne le parcourt', () => {
+    const vitesseMoyenne = ORB_PICKUP_RADIUS / (ORB_FLIGHT_LIFETIME_MS / 1000);
+    expect(vitesseMoyenne).toBeGreaterThan(PLAYER_SPEED);
   });
 });
 
-/** Le corps de `draw`, atteint par `adoptTexture` — voir l'avertissement en tete de fichier. */
-function drawnOrbs(
-  orbs: DerivedOrbs,
-  players: readonly MagnetPoint[],
-  view = TOUTE_LA_CARTE,
-): Particle[] {
+/**
+ * Un calque pret a dessiner, et de quoi relire ce qu'il a pose. La texture est
+ * adoptee comme apres `load()` — voir l'avertissement en tete de fichier.
+ *
+ * Rendu plutot que masque derriere un appel unique parce que **le reservoir de
+ * particules survit d'une image a l'autre** : certaines proprietes ne se
+ * gardent qu'en dessinant DEUX images sur le meme calque (voir la pulsation).
+ */
+function calque(): { renderer: OrbRenderer; particules: () => Particle[] } {
   const renderer = new OrbRenderer();
   renderer.adoptTexture(
     new Texture({
@@ -121,10 +129,30 @@ function drawnOrbs(
 
   const world = new Container();
   renderer.attach(world);
-  renderer.draw(orbs, players, view, 0);
-
   const container = world.children[0] as ParticleContainer;
-  return [...(container.particleChildren as Particle[])];
+  return { renderer, particules: () => [...(container.particleChildren as Particle[])] };
+}
+
+/** Une image unique, sur un calque neuf. */
+function dessine(
+  orbs: DerivedOrbs,
+  flights: OrbFlights,
+  players: readonly PickupTarget[],
+  view = TOUTE_LA_CARTE,
+  timeMs = 0,
+): Particle[] {
+  const { renderer, particules } = calque();
+  renderer.draw(orbs, flights, players, view, timeMs);
+  return particules();
+}
+
+/** Les orbes AU SOL, dessinees : aucun vol en cours. */
+function drawnOrbs(
+  orbs: DerivedOrbs,
+  players: readonly PickupTarget[] = [],
+  view = TOUTE_LA_CARTE,
+): Particle[] {
+  return dessine(orbs, new OrbFlights(8), players, view);
 }
 
 /** Un orbe unique, a la position demandee. */
@@ -135,78 +163,59 @@ function unOrbe(x: number, y: number): DerivedOrbs {
   return orbs;
 }
 
-describe('OrbRenderer.draw — ce que le joueur voit vraiment', () => {
-  it('pose une particule par orbe, a sa vraie position quand personne n est a portee', () => {
-    const drawn = drawnOrbs(unOrbe(1000, 1000), []);
+/** Identite du joueur qui ramasse, dans tous les decors de vol de ce fichier. */
+const RAMASSEUR = 7;
+
+/**
+ * Horloge murale de la capture, dans tous les decors de vol de ce fichier.
+ *
+ * ⚠️ **Jamais zero, et c'est une « fixture qui masque » de moins.** Un vol ne a
+ * l'instant 0 rend `timeMs - bornMs` egal a `timeMs` : oublier la naissance
+ * dans le calcul de l'age serait alors indistinguable, et la mutation a
+ * effectivement survecu tant que ce decor valait 0. Neuvieme occurrence du
+ * motif dans ce depot.
+ */
+const NAISSANCE = 1234.5;
+
+/** Un vol unique, capture en (x, y) par `RAMASSEUR`, a l'instant `NAISSANCE`. */
+function unVol(x: number, y: number, targetId = RAMASSEUR): OrbFlights {
+  const flights = new OrbFlights(8);
+  flights.spawn(x, y, targetId, NAISSANCE);
+  expect(flights.count).toBe(1);
+  return flights;
+}
+
+/** L'horloge murale a laquelle lire un vol, `age` millisecondes apres sa capture. */
+const aLAge = (age: number): number => NAISSANCE + age;
+
+describe('OrbRenderer.draw — les orbes au sol', () => {
+  it('pose une particule par orbe, a sa vraie position', () => {
+    const drawn = drawnOrbs(unOrbe(1000, 1000));
 
     expect(drawn).toHaveLength(1);
     expect(drawn[0]?.x).toBe(1000);
     expect(drawn[0]?.y).toBe(1000);
   });
 
-  it('laisse l orbe ou elle est quand le joueur le plus proche est hors du rayon d aimant', () => {
-    const drawn = drawnOrbs(unOrbe(1000, 1000), [{ x: 1000 + ORB_MAGNET_RADIUS, y: 1000 }]);
-
-    expect(drawn[0]?.x).toBe(1000);
-  });
-
   /**
-   * ⚠️ **L'ecart mesure, en pixels.** A l'instant precis ou le serveur ramasse
-   * — le joueur vient d'entrer dans `ORB_PICKUP_RADIUS` — l'orbe DESSINEE est
-   * a zero pixel du joueur. Elle est en revanche a `ORB_PICKUP_RADIUS` de sa
-   * position VRAIE, et c'est sans consequence : rien, cote client, ne compare
-   * jamais cette position a quoi que ce soit.
+   * ⚠️ **L'AUTRE MOITIE DE LA TACHE 20 : plus rien ne glisse.** L'attraction
+   * par la distance de la tache 17 est SUPPRIMEE, `ORB_MAGNET_RADIUS` avec
+   * elle. Une orbe qu'un joueur touche n'est pas « attiree » : elle est
+   * ramassee — `DerivedOrbs.capture` l'a deja retiree de cette reserve et mise
+   * en vol. Une orbe qui serait encore ici avec un joueur dessus est une orbe
+   * que le serveur n'a pas prise, et la dessiner ailleurs qu'a sa place serait
+   * exactement le mensonge que la tache evite.
    */
-  it('dessine l orbe exactement sur le joueur au rayon de ramassage : zero pixel d ecart', () => {
-    const joueur = { x: 1000 + ORB_PICKUP_RADIUS, y: 1000 };
-    const drawn = drawnOrbs(unOrbe(1000, 1000), [joueur])[0];
+  it('ne deplace plus une orbe au sol, meme avec un joueur colle dessus', () => {
+    const colle = drawnOrbs(unOrbe(1000, 1000), [{ id: 1, x: 1000, y: 1000 }]);
+    expect(colle[0]?.x).toBe(1000);
+    expect(colle[0]?.y).toBe(1000);
 
-    expect(Math.hypot((drawn?.x ?? 0) - joueur.x, (drawn?.y ?? 0) - joueur.y)).toBeCloseTo(0, 6);
-    expect(Math.hypot((drawn?.x ?? 0) - 1000, (drawn?.y ?? 0) - 1000)).toBeCloseTo(
-      ORB_PICKUP_RADIUS,
-      6,
-    );
-  });
-
-  /**
-   * L'aimantation, vue de l'oeil : entre les deux rayons l'orbe a quitte sa
-   * position et s'est RAPPROCHEE du joueur, sans jamais le depasser.
-   */
-  it('fait glisser l orbe vers le joueur entre les deux rayons, sans jamais le depasser', () => {
-    const milieu = (ORB_MAGNET_RADIUS + ORB_PICKUP_RADIUS) / 2;
-    const joueur = { x: 1000 + milieu, y: 1000 };
-    const drawn = drawnOrbs(unOrbe(1000, 1000), [joueur])[0];
-
-    expect(drawn?.x).toBeGreaterThan(1000);
-    expect(drawn?.x).toBeLessThan(joueur.x);
-  });
-
-  /**
-   * ⚠️ **Le plus proche, jamais le premier de la liste** : c'est celui-la que
-   * le serveur verra entrer dans `ORB_PICKUP_RADIUS` en premier
-   * (`OrbField.resolvePickups` s'arrete au premier joueur a portee). Attirer
-   * vers un autre ferait disparaitre l'orbe a l'oppose de son mouvement.
-   */
-  /**
-   * ⚠️ **Les DEUX axes.** Un decor ou le joueur n'est decale qu'en x laisse
-   * `particle.y = y` passer pour de l'aimantation : mutation appliquee, 289
-   * tests verts. L'orbe doit arriver sur le joueur, pas sur sa colonne.
-   */
-  it('attire aussi en Y : l orbe arrive sur le joueur, pas sur sa colonne', () => {
-    const diagonale = ORB_PICKUP_RADIUS / Math.SQRT2;
-    const joueur = { x: 1000 + diagonale, y: 1000 + diagonale };
-    const drawn = drawnOrbs(unOrbe(1000, 1000), [joueur])[0];
-
-    expect(drawn?.x).toBeCloseTo(joueur.x, 6);
-    expect(drawn?.y).toBeCloseTo(joueur.y, 6);
-  });
-
-  it('choisit le joueur le plus proche, pas le premier venu', () => {
-    const loin = { x: 1000 - ORB_MAGNET_RADIUS + 1, y: 1000 };
-    const proche = { x: 1000 + ORB_PICKUP_RADIUS, y: 1000 };
-    const drawn = drawnOrbs(unOrbe(1000, 1000), [loin, proche])[0];
-
-    expect(drawn?.x).toBeCloseTo(proche.x, 6);
+    const aPortee = drawnOrbs(unOrbe(1000, 1000), [
+      { id: 1, x: 1000 + ORB_PICKUP_RADIUS - 1, y: 1000 + 1 },
+    ]);
+    expect(aPortee[0]?.x).toBe(1000);
+    expect(aPortee[0]?.y).toBe(1000);
   });
 
   /**
@@ -218,7 +227,7 @@ describe('OrbRenderer.draw — ce que le joueur voit vraiment', () => {
    * `MARK_RING_TEXTURE_DIAMETER` a la tache 15.
    */
   it('dessine l orbe au diametre voulu, et la texture est plus fine que l affichage', () => {
-    const drawn = drawnOrbs(unOrbe(1000, 1000), [])[0];
+    const drawn = drawnOrbs(unOrbe(1000, 1000))[0];
 
     expect((drawn?.scaleX ?? 0) * ORB_TEXTURE_DIAMETER).toBeCloseTo(ORB_DIAMETER_PX, 6);
     expect(drawn?.scaleY).toBe(drawn?.scaleX);
@@ -226,18 +235,13 @@ describe('OrbRenderer.draw — ce que le joueur voit vraiment', () => {
   });
 
   it('teint l orbe et la centre sur sa position', () => {
-    const drawn = drawnOrbs(unOrbe(1000, 1000), [])[0];
+    const drawn = drawnOrbs(unOrbe(1000, 1000))[0];
 
     expect(drawn?.tint).toBe(ORB_TINT);
     expect(drawn?.anchorX).toBe(0.5);
     expect(drawn?.anchorY).toBe(0.5);
   });
 
-  /**
-   * La pulsation reste, mais resserree : une orbe qui s'efface a moitie n'est
-   * plus « nette ». L'assertion porte sur la BORNE, jamais sur la valeur d'une
-   * phase — celle-ci depend de l'horloge et n'a rien a prouver.
-   */
   /**
    * ⚠️ **`ORB_ALPHA_MIN` est une regle, pas un reglage libre.** Une orbe qui
    * s'efface de plus de moitie n'est plus « nette » : elle redevient le halo
@@ -255,19 +259,12 @@ describe('OrbRenderer.draw — ce que le joueur voit vraiment', () => {
     for (let k = 1; k <= 8; k++) {
       orbs.spawn(avecOrbe(k), 1000 + k, 1000, k * 7);
     }
-    const renderer = new OrbRenderer();
-    renderer.adoptTexture(
-      new Texture({
-        source: new TextureSource({ width: ORB_TEXTURE_DIAMETER, height: ORB_TEXTURE_DIAMETER }),
-      }),
-    );
-    const world = new Container();
-    renderer.attach(world);
+    const { renderer, particules } = calque();
 
     let vu = { min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY };
     for (let ms = 0; ms < 2000; ms += 1) {
-      renderer.draw(orbs, [], TOUTE_LA_CARTE, ms);
-      for (const p of (world.children[0] as ParticleContainer).particleChildren as Particle[]) {
+      renderer.draw(orbs, new OrbFlights(8), [], TOUTE_LA_CARTE, ms);
+      for (const p of particules()) {
         expect(p.alpha).toBeGreaterThanOrEqual(ORB_ALPHA_MIN);
         expect(p.alpha).toBeLessThanOrEqual(1);
         vu = { min: Math.min(vu.min, p.alpha), max: Math.max(vu.max, p.alpha) };
@@ -281,39 +278,38 @@ describe('OrbRenderer.draw — ce que le joueur voit vraiment', () => {
   });
 
   /**
-   * ⚠️ **La marge de culling est celle de l'aimant, et elle sert.** Sans elle,
-   * une orbe dont la position VRAIE vient de sortir du cadre serait ecartee
-   * alors que sa position DESSINEE — tiree vers un joueur qui, lui, est a
-   * l'ecran — y serait encore : elle disparaitrait en pleine aimantation, le
-   * defaut meme que l'auteur a signale sur les anneaux de marque.
+   * ⚠️ **La marge de culling est celle du DESSIN, depuis la tache 20** : une
+   * orbe dont le centre vient de sortir du cadre en montre encore la moitie.
+   * Elle valait `ORB_MAGNET_RADIUS` (180 px) tant qu'une orbe pouvait etre
+   * dessinee loin de sa vraie place ; ce rayon a disparu, et une marge huit
+   * fois trop large est une marge que rien ne justifie.
    */
-  it('garde une orbe juste hors cadre que l aimantation ramene dedans, des QUATRE cotes', () => {
+  it('garde une orbe a cheval sur le bord du cadre, des QUATRE cotes', () => {
     const vue = new Rectangle(0, 0, 800, 800);
-    const dehors = ORB_PICKUP_RADIUS - 1;
-    const cotes: { orbe: [number, number]; joueur: MagnetPoint }[] = [
-      { orbe: [800 + dehors, 400], joueur: { x: 799, y: 400 } },
-      { orbe: [-dehors, 400], joueur: { x: 1, y: 400 } },
-      { orbe: [400, 800 + dehors], joueur: { x: 400, y: 799 } },
-      { orbe: [400, -dehors], joueur: { x: 400, y: 1 } },
+    const dehors = ORB_DIAMETER_PX / 2 - 1;
+    const cotes: [number, number][] = [
+      [800 + dehors, 400],
+      [-dehors, 400],
+      [400, 800 + dehors],
+      [400, -dehors],
     ];
 
-    for (const cas of cotes) {
-      const drawn = drawnOrbs(unOrbe(cas.orbe[0], cas.orbe[1]), [cas.joueur], vue);
-      expect(drawn, `cote ${cas.orbe.join(',')}`).toHaveLength(1);
+    for (const [x, y] of cotes) {
+      expect(drawnOrbs(unOrbe(x, y), [], vue), `cote ${x},${y}`).toHaveLength(1);
     }
   });
 
-  it('ecarte une orbe franchement hors cadre', () => {
+  it('ecarte une orbe entierement hors cadre', () => {
     const vue = new Rectangle(0, 0, 800, 800);
 
-    expect(drawnOrbs(unOrbe(800 + ORB_MAGNET_RADIUS + 1, 400), [], vue)).toHaveLength(0);
+    expect(drawnOrbs(unOrbe(800 + ORB_DIAMETER_PX, 400), [], vue)).toHaveLength(0);
   });
 
   it('ne dessine rien tant qu aucune texture n a ete adoptee', () => {
     const renderer = new OrbRenderer();
     const world = new Container();
     renderer.attach(world);
-    renderer.draw(unOrbe(1000, 1000), [], TOUTE_LA_CARTE, 0);
+    renderer.draw(unOrbe(1000, 1000), unVol(1000, 1000), [], TOUTE_LA_CARTE, 0);
 
     expect((world.children[0] as ParticleContainer).particleChildren).toHaveLength(0);
     expect(renderer.loaded).toBe(false);
@@ -326,6 +322,214 @@ describe('OrbRenderer.draw — ce que le joueur voit vraiment', () => {
       width: MAP_SIZE + 512,
       height: MAP_SIZE + 512,
     });
+  });
+});
+
+describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
+  it('part du point de capture, pas du joueur', () => {
+    const drawn = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      unVol(1000, 1000),
+      [{ id: RAMASSEUR, x: 1000 + ORB_PICKUP_RADIUS, y: 1000 }],
+      TOUTE_LA_CARTE,
+      aLAge(0),
+    );
+
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0]?.x).toBe(1000);
+    expect(drawn[0]?.y).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **LE TEST QUI SEPARE LES DEUX MODELES**, et la seule assertion qui le
+   * fasse. Le joueur capture l'orbe au rayon de ramassage puis S'EN ELOIGNE,
+   * jusqu'a trois fois ce rayon — au-dela des 180 px ou l'aimantation de la
+   * tache 17 rendait deja zero. Avec elle, l'orbe serait dessinee exactement a
+   * sa place au sol, a `3 × ORB_PICKUP_RADIUS` du joueur ; ici elle est SUR
+   * lui, et a trois rayons de la ou elle etait tombee.
+   *
+   * Un test qui verifierait seulement « l'orbe s'est rapprochee » passerait
+   * avec les deux modeles, et ne prouverait rien.
+   */
+  it('finit SUR un joueur qui s eloigne, pas a sa place au sol', () => {
+    const fuyard = { id: RAMASSEUR, x: 1000 + 3 * ORB_PICKUP_RADIUS, y: 1000 };
+    const drawn = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      unVol(1000, 1000),
+      [fuyard],
+      TOUTE_LA_CARTE,
+      aLAge(ORB_FLIGHT_LIFETIME_MS),
+    )[0];
+
+    expect(Math.hypot((drawn?.x ?? 0) - fuyard.x, (drawn?.y ?? 0) - fuyard.y)).toBeCloseTo(0, 6);
+    expect(Math.hypot((drawn?.x ?? 0) - 1000, (drawn?.y ?? 0) - 1000)).toBeCloseTo(
+      3 * ORB_PICKUP_RADIUS,
+      6,
+    );
+  });
+
+  /**
+   * ⚠️ **Les DEUX axes.** Un decor ou le joueur ne fuit qu'en x laisse
+   * `particle.y = fromY` passer pour un vol : c'est la mutation qui a survecu
+   * a 289 tests verts a la tache 17, avec l'aimantation.
+   */
+  it('rejoint aussi en Y : l orbe arrive sur le joueur, pas sur sa colonne', () => {
+    const fuyard = {
+      id: RAMASSEUR,
+      x: 1000 + 2 * ORB_PICKUP_RADIUS,
+      y: 1000 - 2 * ORB_PICKUP_RADIUS,
+    };
+    const drawn = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      unVol(1000, 1000),
+      [fuyard],
+      TOUTE_LA_CARTE,
+      aLAge(ORB_FLIGHT_LIFETIME_MS),
+    )[0];
+
+    expect(drawn?.x).toBeCloseTo(fuyard.x, 6);
+    expect(drawn?.y).toBeCloseTo(fuyard.y, 6);
+  });
+
+  /**
+   * L'image qui compte vraiment : la DERNIERE dessinee avant qu'`OrbFlights.expire`
+   * ne retire le vol. A 60 Hz elle tombe une image avant l'echeance, et l'orbe y
+   * est deja sur le joueur — a moins d'un demi-diametre, donc invisible a l'oeil.
+   */
+  it('est deja arrivee a la derniere image dessinee, un rafraichissement avant l echeance', () => {
+    const fuyard = { id: RAMASSEUR, x: 1000 + 3 * ORB_PICKUP_RADIUS, y: 1000 };
+    const drawn = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      unVol(1000, 1000),
+      [fuyard],
+      TOUTE_LA_CARTE,
+      aLAge(ORB_FLIGHT_LIFETIME_MS - 1000 / 60),
+    )[0];
+
+    expect(Math.hypot((drawn?.x ?? 0) - fuyard.x, (drawn?.y ?? 0) - fuyard.y)).toBeLessThan(
+      ORB_DIAMETER_PX / 2,
+    );
+  });
+
+  /**
+   * ⚠️ **Le joueur qui l'a RAMASSEE, pas le plus proche.** C'est la difference
+   * entre suivre quelqu'un et viser un point : `OrbFlights` porte une identite,
+   * relue a chaque image. Viser le plus proche ferait changer l'orbe de cible
+   * en plein vol quand deux joueurs se croisent.
+   */
+  it('vise le joueur qui l a capturee, meme si un autre est plus pres', () => {
+    const ramasseur = { id: RAMASSEUR, x: 1000 + 4 * ORB_PICKUP_RADIUS, y: 1000 };
+    const voisin = { id: RAMASSEUR + 1, x: 1000 + ORB_PICKUP_RADIUS, y: 1000 };
+    const drawn = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      unVol(1000, 1000),
+      [voisin, ramasseur],
+      TOUTE_LA_CARTE,
+      aLAge(ORB_FLIGHT_LIFETIME_MS),
+    )[0];
+
+    expect(drawn?.x).toBeCloseTo(ramasseur.x, 6);
+  });
+
+  it('ne dessine rien quand le joueur vise n est plus a l ecran', () => {
+    const drawn = dessine(new DerivedOrbs(MAX_ENTITIES), unVol(1000, 1000), [
+      { id: RAMASSEUR + 1, x: 1000, y: 1000 },
+    ]);
+
+    expect(drawn).toHaveLength(0);
+  });
+
+  /**
+   * La pulsation est un APPEL — « je suis la, viens me prendre ». Une orbe deja
+   * ramassee n'appelle plus : elle est pleine, et c'est ce qui la distingue a
+   * l'oeil de celles qui restent au sol.
+   *
+   * ⚠️ **Sur une particule qui pulsait a l'image d'avant**, et pas sur un
+   * calque neuf : le reservoir est REUTILISE d'une image a l'autre, donc une
+   * particule qui vient de servir au sol arrive avec l'opacite de sa
+   * pulsation. Sur un calque neuf, `alpha` vaut deja 1 par defaut — retirer la
+   * ligne de production ne changerait rien, et la mutation survivrait.
+   */
+  it('ne pulse plus une fois capturee, meme sur une particule qui pulsait a l image d avant', () => {
+    const { renderer, particules } = calque();
+    const auSol = unOrbe(1000, 1000);
+    const cible = { id: RAMASSEUR, x: 1100, y: 1000 };
+
+    // L'orbe au sol prend la particule du reservoir et y laisse un creux.
+    let creuxMs = -1;
+    for (let ms = 0; ms < 2000 && creuxMs < 0; ms += 1) {
+      renderer.draw(auSol, new OrbFlights(8), [], TOUTE_LA_CARTE, ms);
+      if ((particules()[0]?.alpha ?? 1) < 1) {
+        creuxMs = ms;
+      }
+    }
+    expect(creuxMs).toBeGreaterThanOrEqual(0);
+
+    // La MEME particule sert au vol a l'image suivante : elle doit repasser
+    // pleine.
+    for (const age of [0, ORB_FLIGHT_LIFETIME_MS / 2, ORB_FLIGHT_LIFETIME_MS]) {
+      renderer.draw(
+        new DerivedOrbs(MAX_ENTITIES),
+        unVol(1000, 1000),
+        [cible],
+        TOUTE_LA_CARTE,
+        aLAge(age),
+      );
+      expect(particules()[0]?.alpha, `a ${age} ms de vol`).toBe(1);
+    }
+  });
+
+  /**
+   * ⚠️ **Culle sur la position DESSINEE, pas sur le point de capture.** Un vol
+   * ne dans le dos de la camera arrive vers un joueur qui, lui, est a l'ecran :
+   * l'ecarter sur son point de depart le ferait manquer tout du long.
+   */
+  it('apparait quand le vol entre dans le cadre, meme parti de tres loin', () => {
+    const vue = new Rectangle(0, 0, 800, 800);
+    const depart: [number, number] = [800 + 4 * ORB_PICKUP_RADIUS, 400];
+    const cible = { id: RAMASSEUR, x: 400, y: 400 };
+
+    const auDepart = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      unVol(...depart),
+      [cible],
+      vue,
+      aLAge(0),
+    );
+    const aLArrivee = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      unVol(...depart),
+      [cible],
+      vue,
+      aLAge(ORB_FLIGHT_LIFETIME_MS),
+    );
+
+    expect(auDepart).toHaveLength(0);
+    expect(aLArrivee).toHaveLength(1);
+    expect(aLArrivee[0]?.x).toBeCloseTo(cible.x, 6);
+  });
+
+  /**
+   * ⚠️ **Le reservoir couvre les DEUX collections.** Le dimensionner sur les
+   * seules orbes au sol laisserait les vols sans particule des que le sol est
+   * plein — et un `break` silencieux les ferait disparaitre a la capture.
+   */
+  it('dessine le sol ET les vols dans la meme image', () => {
+    const orbs = new DerivedOrbs(MAX_ENTITIES);
+    orbs.spawn(avecOrbe(1), 2000, 2000, 0);
+    orbs.spawn(avecOrbe(2), 2100, 2000, 0);
+    const flights = new OrbFlights(8);
+    flights.spawn(1000, 1000, RAMASSEUR, NAISSANCE);
+
+    const drawn = dessine(
+      orbs,
+      flights,
+      [{ id: RAMASSEUR, x: 1200, y: 1000 }],
+      TOUTE_LA_CARTE,
+      aLAge(0),
+    );
+
+    expect(drawn).toHaveLength(3);
   });
 });
 

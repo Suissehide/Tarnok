@@ -7,6 +7,7 @@ import {
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
   ORB_LIFETIME_TICKS,
+  ORB_PICKUP_RADIUS,
   PLAYER_SPEED,
   PROJECTILE_HIT_RADIUS,
   ROLLBACK_DEPTH_TICKS,
@@ -50,6 +51,8 @@ import {
   HIT_FLASH_LIFETIME_MS,
   type InputAxes,
   type ObstacleMap,
+  ORB_FLIGHT_LIFETIME_MS,
+  OrbFlights,
   REACTION_FLASH_LIFETIME_MS,
 } from './client';
 
@@ -677,6 +680,136 @@ describe('DerivedOrbs.spawn — le client filtre les memes morts que le serveur'
   });
 });
 
+/**
+ * Etape 5a, tache 20, sur retour de jeu : *« l'aimantation est plus proche du
+ * joueur et attire l'xp jusqu'a lui, meme s'il l'eloigne »*.
+ *
+ * ⚠️ **Le predicat est celui du serveur, inchange.** `OrbField.resolvePickups`
+ * (`back/src/combat.ts`) arbitre a `ORB_PICKUP_RADIUS` ; la capture cliente
+ * compare les MEMES positions repliquees au MEME rayon, et ne fait rien d'autre
+ * que retirer l'orbe de la reserve pour la mettre en vol. **L'experience est
+ * deja acquise quand le vol commence** — c'est ce qui autorise l'orbe a suivre
+ * un joueur qui fuit sans jamais promettre ce qui n'arrivera pas.
+ *
+ * Ce que la tache 17 avait mis a sa place — `ORB_MAGNET_RADIUS`, une attraction
+ * fonction de la distance — a disparu : un second rayon decrivant le meme
+ * evenement finit toujours par contredire le premier.
+ */
+describe('DerivedOrbs.capture — la capture EST le ramassage (tache 20)', () => {
+  /** Un orbe unique. Le `count` verifie que le decor ne ment pas (`dropsOrb`). */
+  function unOrbeEn(x: number, y: number, id = entityIdOf(9, 0)): DerivedOrbs {
+    const orbs = new DerivedOrbs(8);
+    orbs.spawn(id, x, y, 3);
+    expect(orbs.count).toBe(1);
+    return orbs;
+  }
+
+  /**
+   * ⚠️ **Les deux bornes dans la MEME execution**, comme pour la peremption :
+   * un seul cote de la fenetre ne prouve rien, et un rayon de capture qui
+   * derive du rayon de ramassage rendrait le vol menteur — l'orbe partirait
+   * vers un joueur que le serveur n'a pas encore laisse ramasser.
+   */
+  it('met en vol AU rayon de ramassage exact, et laisse au sol un pixel au-dela', () => {
+    const dedans = unOrbeEn(1000, 1000);
+    const volsDedans = new OrbFlights(8);
+    dedans.capture([{ id: 5, x: 1000 + ORB_PICKUP_RADIUS, y: 1000 }], volsDedans, 1234);
+
+    expect(dedans.count).toBe(0);
+    expect(volsDedans.count).toBe(1);
+
+    const dehors = unOrbeEn(1000, 1000);
+    const volsDehors = new OrbFlights(8);
+    dehors.capture([{ id: 5, x: 1000 + ORB_PICKUP_RADIUS + 1, y: 1000 }], volsDehors, 1234);
+
+    expect(dehors.count).toBe(1);
+    expect(volsDehors.count).toBe(0);
+  });
+
+  /**
+   * Le vol part de la ou l'orbe attendait, vers CELUI qui l'a ramassee : sans
+   * l'identite, il ne pourrait viser que l'endroit ou le joueur etait, et
+   * n'aurait aucun moyen de le suivre s'il s'eloigne.
+   */
+  it('emporte le point de capture, l identite du ramasseur et l heure', () => {
+    const orbs = unOrbeEn(1234, 5678);
+    const vols = new OrbFlights(8);
+
+    orbs.capture([{ id: 42, x: 1234, y: 5678 }], vols, 9_000.5);
+
+    expect(vols.fromX[0]).toBe(1234);
+    expect(vols.fromY[0]).toBe(5678);
+    expect(vols.targetId[0]).toBe(42);
+    expect(vols.bornMs[0]).toBe(9_000.5);
+  });
+
+  /**
+   * ⚠️ **Une orbe ne se ramasse qu'UNE fois**, meme quand deux joueurs la
+   * touchent dans la meme image : la boucle s'arrete au premier a portee,
+   * exactement comme `OrbField.resolvePickups`. Sans cet arret, un tas d'orbes
+   * au milieu d'un groupe lancerait autant de vols que de joueurs autour, tous
+   * pour une seule experience.
+   */
+  it('ne lance qu un seul vol quand deux joueurs touchent la meme orbe', () => {
+    const orbs = unOrbeEn(1000, 1000);
+    const vols = new OrbFlights(8);
+
+    orbs.capture(
+      [
+        { id: 5, x: 1000, y: 1000 },
+        { id: 6, x: 1000, y: 1000 },
+      ],
+      vols,
+      0,
+    );
+
+    expect(orbs.count).toBe(0);
+    expect(vols.count).toBe(1);
+    expect(vols.targetId[0]).toBe(5);
+  });
+
+  /**
+   * ⚠️ **Le tas ramasse d'un coup.** La boucle compacte la reserve en
+   * deplacant la derniere entree dans le trou : parcourue a l'endroit, elle
+   * sauterait l'orbe qui vient d'y atterrir — meme piege que `Horde.kill` et
+   * `OrbField.resolvePickups`, et une seule orbe de decor ne le montrerait
+   * jamais.
+   */
+  it('n oublie aucune orbe d un tas ramasse dans la meme image', () => {
+    const orbs = new DerivedOrbs(8);
+    for (let i = 0; i < 4; i++) {
+      orbs.spawn(entityIdOf(9, i * ORB_DROP_ONE_IN), 1000 + i, 1000, 3);
+    }
+    // Le quatrieme est hors de portee : il doit rester, seul, au sol.
+    orbs.spawn(entityIdOf(9, 99 * ORB_DROP_ONE_IN), 1000 + 10 * ORB_PICKUP_RADIUS, 1000, 3);
+    expect(orbs.count).toBe(5);
+    const vols = new OrbFlights(8);
+
+    orbs.capture([{ id: 1, x: 1000, y: 1000 }], vols, 0);
+
+    expect(vols.count).toBe(4);
+    expect(orbs.count).toBe(1);
+    expect(orbs.x[0]).toBe(1000 + 10 * ORB_PICKUP_RADIUS);
+  });
+
+  /**
+   * ⚠️ **Une seule echeance decrit l'arrivee ET la fin de vie** : la fraction
+   * de `orbFlightFraction` vaut 1 a `ORB_FLIGHT_LIFETIME_MS`, et c'est la que
+   * le vol s'eteint. Les deux bornes dans la meme execution, comme partout
+   * ailleurs dans ce fichier.
+   */
+  it('eteint le vol pile a ORB_FLIGHT_LIFETIME_MS, pas avant', () => {
+    const vols = new OrbFlights(8);
+    vols.spawn(1000, 1000, 5, 1000);
+
+    vols.expire(1000 + ORB_FLIGHT_LIFETIME_MS - 1);
+    expect(vols.count).toBe(1);
+
+    vols.expire(1000 + ORB_FLIGHT_LIFETIME_MS);
+    expect(vols.count).toBe(0);
+  });
+});
+
 describe('GameClient — orbes derivees des morts (tache 10)', () => {
   /**
    * ⚠️ **Le meme filtre, atteint par le VRAI chemin** : un lot `DEATHS` d'une
@@ -775,6 +908,107 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
 
     expect(client.orbs.count).toBe(1);
     expect(client.orbs.id[0]).toBe(killedIds[1]);
+  });
+
+  /**
+   * ⚠️ **Tache 20 : le chemin complet de la capture, par le VRAI chemin.** Les
+   * quatre tests unitaires de `DerivedOrbs.capture` ne prouvent rien tant que
+   * `GameClient.update` ne l'appelle pas — c'est la dette qui a mordu trois
+   * fois dans ce depot (voir `frame.ts`). Ici la capture est declenchee par un
+   * coequipier qui vient se poser sur l'orbe, aux positions DESSINEES.
+   *
+   * ⚠️ **Un COEQUIPIER, pas le joueur local** : sa position dessinee est
+   * exactement celle du snapshot (interpolation), la ou celle du joueur local
+   * est predite puis reconciliee — un decor qui ne saurait pas dire ou est le
+   * joueur ne saurait pas dire a quel rayon il capture.
+   */
+  it('un coequipier qui marche sur une orbe la met en vol, et PICKUPS n a plus rien a retirer', () => {
+    const WAVE_ID = 32;
+    const ENTITIES = 10;
+    const MS_PER_TICK = 1000 / TICK_HZ;
+
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+
+    socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0009) });
+    socket.emit('message', {
+      data: encodeWaveOrder({
+        waveId: WAVE_ID,
+        spawnTick: 0,
+        seed: 0x51ee_d001,
+        archetype: 0,
+        formation: FORMATION.CLUSTER,
+        anchorX: 1200,
+        anchorY: 1200,
+        count: ENTITIES,
+      }),
+    });
+
+    const killedId = entityIdOf(WAVE_ID, 0);
+    const DEATH_TICK = 10;
+    const MOI = { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 };
+    let tick = 0;
+
+    /** Une image : un snapshot, l'horloge murale qui va avec, et le tick qui avance. */
+    const image = (allie: { id: number; x: number; y: number }): number => {
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, 0, [MOI, { ...allie, hp: 100, aimX: 0, aimY: 0 }]),
+      });
+      if (tick === DEATH_TICK + 2) {
+        socket.emit('message', { data: encodeDeaths(DEATH_TICK, [killedId]) });
+      }
+      const nowMs = tick * MS_PER_TICK;
+      client.update(nowMs, STEP);
+      tick++;
+      return nowMs;
+    };
+
+    // L'allie reste d'abord LOIN de la vague : l'orbe tombe et personne ne la
+    // prend.
+    for (let i = 0; i < DEATH_TICK + 4; i++) {
+      image({ id: 2, x: 3000, y: 3000 });
+    }
+    expect(client.orbs.count).toBe(1);
+    expect(client.orbFlights.count).toBe(0);
+    const ox = client.orbs.x[0] ?? 0;
+    const oy = client.orbs.y[0] ?? 0;
+
+    // Puis il vient se poser JUSTE dans le rayon de ramassage : ce que le
+    // serveur arbitre au meme instant, sur les memes positions.
+    //
+    // ⚠️ **Un pixel en deça, pas le rayon pile** : `SNAPSHOT` transporte des
+    // positions ENTIERES, donc une position de joueur posee a `ox + 90` arrive
+    // arrondie et retombe a 90,47 px de l'orbe — dehors. La borne exacte se
+    // verifie sur `DerivedOrbs.capture`, ou aucun encodage ne s'interpose ;
+    // ici, ce qui compte est que le chemin complet passe.
+    let captureMs = -1;
+    for (let i = 0; i < 16 && captureMs < 0; i++) {
+      const nowMs = image({ id: 2, x: Math.round(ox) + ORB_PICKUP_RADIUS - 1, y: oy });
+      if (client.orbFlights.count > 0) {
+        captureMs = nowMs;
+      }
+    }
+
+    expect(captureMs).toBeGreaterThanOrEqual(0);
+    expect(client.orbs.count).toBe(0);
+    expect(client.orbFlights.count).toBe(1);
+    expect(client.orbFlights.fromX[0]).toBe(ox);
+    expect(client.orbFlights.fromY[0]).toBe(oy);
+    expect(client.orbFlights.targetId[0]).toBe(2);
+
+    // `PICKUPS` arrive un aller-retour plus tard : l'orbe a deja quitte la
+    // reserve, il n'y a plus rien a retirer — et le vol, lui, continue.
+    socket.emit('message', { data: encodePickups(tick, [killedId]) });
+    client.update(captureMs + 1, STEP);
+    expect(client.orbs.count).toBe(0);
+    expect(client.orbFlights.count).toBe(1);
+
+    // Le vol s'eteint a son echeance, pas avant : les deux bornes.
+    client.update(captureMs + ORB_FLIGHT_LIFETIME_MS - 1, STEP);
+    expect(client.orbFlights.count).toBe(1);
+    client.update(captureMs + ORB_FLIGHT_LIFETIME_MS, STEP);
+    expect(client.orbFlights.count).toBe(0);
   });
 
   it(

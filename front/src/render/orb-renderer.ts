@@ -1,14 +1,28 @@
-import { MAP_SIZE, ORB_PICKUP_RADIUS } from '@shared/constants';
+import { MAP_SIZE } from '@shared/constants';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
-import type { DerivedOrbs } from '../net/client';
+import {
+  type DerivedOrbs,
+  ORB_FLIGHT_LIFETIME_MS,
+  type OrbFlights,
+  type PickupTarget,
+} from '../net/client';
 
 /**
- * Rendu des orbes d'experience (`DerivedOrbs`, `net/client.ts`) — tache 17 de
- * l'etape 5a, sur retour de jeu :
+ * Rendu des orbes d'experience (`DerivedOrbs` et `OrbFlights`,
+ * `net/client.ts`) — taches 17 puis 20 de l'etape 5a, sur retour de jeu :
  *
  * > *« L'xp plus nette aussi, legerement attiree par le joueur s'il passe a
  * > cote. Moins d'xp qui tombe ou plus par niveau. »*
+ *
+ * > *« L'aimantation est plus proche du joueur et attire l'xp jusqu'a lui,
+ * > meme s'il l'eloigne. »*
+ *
+ * ⚠️ **La tache 20 a REMPLACE l'aimantation, elle ne l'a pas reglee.** Il n'y
+ * a plus de rayon d'aimant ni d'attraction fonction de la distance : une orbe
+ * qu'un joueur touche est RAMASSEE — meme predicat que le serveur, meme rayon
+ * `ORB_PICKUP_RADIUS` — et ce qu'on voit ensuite est un vol, qui decore un
+ * ramassage deja acquis. Voir `orbFlightFraction`.
  *
  * ⚠️ **Un module a part depuis cette tache**, comme `zone-renderer.ts` et
  * `mark-renderer.ts` avant lui. L'orbe vivait dans `projectile-renderer.ts` et
@@ -67,16 +81,17 @@ export const ORB_TINT = 0x7fd858;
 export const ORB_ALPHA_MIN = 0.75;
 
 /**
- * Distance a laquelle l'orbe COMMENCE a etre attiree par un joueur — tache 17 :
- * *« legerement attiree par le joueur s'il passe a cote »*.
+ * Marge de culling : la moitie de ce que l'orbe couvre a l'ecran, meme regle
+ * que `ZoneRenderer.CULL_MARGIN` et `MarkRingRenderer.CULL_MARGIN`. Une orbe
+ * dont le centre vient de sortir du cadre en montre encore la moitie.
  *
- * ⚠️ **Derivee de `ORB_PICKUP_RADIUS`, et strictement plus grande que lui.**
- * Egale, l'aimantation serait invisible : le serveur ramasse des que le joueur
- * entre dans ce rayon, donc l'orbe n'aurait pas une image pour glisser. Le
- * double laisse `ORB_PICKUP_RADIUS` de course a l'attraction, exactement la
- * distance qu'un joueur parcourt en un tiers de seconde (`PLAYER_SPEED`).
+ * ⚠️ **Elle valait `ORB_MAGNET_RADIUS` (180 px) jusqu'a la tache 20**, parce
+ * qu'une orbe pouvait alors etre dessinee tres loin de sa vraie position. Ce
+ * n'est plus le cas : une orbe au sol est dessinee exactement ou elle est, et
+ * une orbe en vol est cullee sur sa position DESSINEE, pas sur son point de
+ * depart.
  */
-export const ORB_MAGNET_RADIUS = 2 * ORB_PICKUP_RADIUS;
+const CULL_MARGIN = ORB_DIAMETER_PX / 2;
 
 /** Fin du coeur plein, en fraction du rayon de la texture. */
 const ORB_CORE_EDGE = 0.42;
@@ -90,60 +105,49 @@ const ORB_RIM_INNER = 0.78;
 const ORB_RIM_PEAK = 0.86;
 
 /**
- * Ce que l'orbe a besoin de connaitre d'un joueur pour se laisser attirer :
- * une position, rien de plus.
+ * Quelle FRACTION du chemin vers son ramasseur une orbe capturee a parcourue,
+ * a l'ecran, `elapsedMs` apres sa capture — tache 20.
  *
- * **Jumelle structurelle de `PickupPoint`** (`back/src/combat.ts`), et
- * volontairement : c'est le meme point que le serveur compare a
- * `ORB_PICKUP_RADIUS` pour decider du ramassage. Une interface plutot que
- * `PlayerSnapshot`, pour que le test n'ait pas a fabriquer un snapshot entier.
+ * ## La surete a change de place ; elle n'a pas disparu
+ *
+ * A la tache 17, l'attraction etait une fonction pure de la DISTANCE, et sa
+ * FORME portait toute la surete : 1 a `ORB_PICKUP_RADIUS`, donc a l'instant du
+ * ramassage l'orbe etait dessinee sur le joueur — ecart nul par construction —
+ * et 0 au-dela, donc une orbe non ramassee restait exactement ou le serveur la
+ * croyait. Le prix de cette surete, c'est qu'elle ne SUIVAIT personne : un
+ * joueur qui s'eloignait la voyait revenir a sa place.
+ *
+ * ⚠️ **Ici, la surete est dans le DECLENCHEMENT, plus dans la courbe.** Un vol
+ * n'existe que la ou le predicat de ramassage du serveur est deja vrai
+ * (`DerivedOrbs.capture`, `ORB_PICKUP_RADIUS` inchange) : l'experience est
+ * acquise avant la premiere image du vol. Une animation qui ne peut pas se
+ * declencher a tort peut se permettre de coller au joueur — elle ne promet
+ * rien qui puisse ne pas arriver. C'est exactement ce qu'une capture naive,
+ * declenchee a un rayon a elle, n'aurait pas pu dire.
+ *
+ * ⚠️ **Elle vaut exactement 1 a l'echeance, et c'est ce qui fait qu'elle
+ * ARRIVE.** La position dessinee est interpolee vers la position COURANTE de
+ * la cible (voir `OrbRenderer.draw`), donc a la fraction 1 l'orbe est sur le
+ * joueur, ou qu'il soit alle entre-temps. Une loi de VITESSE, elle, ne
+ * rattraperait un fuyard qu'a condition d'etre reglee au-dessus de la sienne :
+ * un second reglage a garder d'accord avec `PLAYER_SPEED` et avec chaque carte
+ * « fougue » draftee. Il n'y en a pas.
+ *
+ * Courbe en S (`smoothstep`) plutot que le carre de la tache 17 : le carre
+ * accelerait jusqu'au bout et l'orbe percutait le joueur ; ici elle se decolle
+ * sans a-coup et se pose. Aux 11/12 du vol — la derniere image dessinee a
+ * 60 Hz avant qu'`OrbFlights.expire` ne retire le vol — elle a deja couvert
+ * plus de 97 % du chemin.
  */
-export interface MagnetPoint {
-  readonly x: number;
-  readonly y: number;
-}
-
-/**
- * Quelle FRACTION du chemin vers le joueur l'orbe a deja parcourue, a l'ecran,
- * quand ce joueur est a `distance` d'elle — tache 17, etape 2.
- *
- * ## Le mouvement est COSMETIQUE, et c'est un choix, pas un oubli
- *
- * Le plan laissait deux issues ouvertes : animer l'orbe cote client seul, ou
- * la simuler des deux cotes. **La premiere est retenue**, et le risque qu'elle
- * porte — *« le ramassage se declenche la ou l'orbe n'est plus dessinee »* —
- * est **annule par la forme de cette courbe**, pas par la chance :
- *
- * - a `ORB_MAGNET_RADIUS` et au-dela, la fraction vaut 0 : l'orbe est dessinee
- *   exactement ou le serveur la croit ;
- * - a `ORB_PICKUP_RADIUS` et en deça, elle vaut 1 : l'orbe est dessinee
- *   exactement SUR le joueur.
- *
- * Or `ORB_PICKUP_RADIUS` est precisement la distance a laquelle le serveur
- * ramasse. **A l'instant du ramassage, l'orbe est donc dessinee sur le joueur
- * qui la ramasse — ecart nul.** L'orbe ne disparait jamais ailleurs que la ou
- * l'oeil l'attend, et l'issue 2 (simuler des deux cotes) n'a rien a corriger.
- *
- * ⚠️ **Ce que cette borne ne couvre pas, dit plutot que cache** : le client
- * dessine ses coequipiers avec `INTERP_DELAY_MS` de retard et se predit
- * lui-meme, donc la position qu'il compare n'est pas au pixel celle du
- * serveur. L'ecart residuel est celui de la reconciliation, pas de
- * l'aimantation — au pire `PLAYER_SPEED * INTERP_DELAY_MS`, soit une quinzaine
- * de pixels sur un ALLIE, et il existait deja avant cette tache.
- *
- * La courbe est un carre plutot qu'une droite : l'orbe fremit d'abord, puis
- * part d'un coup. Une attraction lineaire lit comme une derive, pas comme un
- * aimant.
- */
-export function orbPullFraction(distance: number): number {
-  if (distance <= ORB_PICKUP_RADIUS) {
-    return 1;
-  }
-  if (distance >= ORB_MAGNET_RADIUS) {
+export function orbFlightFraction(elapsedMs: number): number {
+  if (elapsedMs <= 0) {
     return 0;
   }
-  const t = (ORB_MAGNET_RADIUS - distance) / (ORB_MAGNET_RADIUS - ORB_PICKUP_RADIUS);
-  return t * t;
+  if (elapsedMs >= ORB_FLIGHT_LIFETIME_MS) {
+    return 1;
+  }
+  const t = elapsedMs / ORB_FLIGHT_LIFETIME_MS;
+  return t * t * (3 - 2 * t);
 }
 
 /**
@@ -189,15 +193,19 @@ function makeOrbTexture(diameter: number): Texture {
 }
 
 /**
- * Rendu batché des orbes derivés (`DerivedOrbs`, `net/client.ts`).
+ * Rendu batché des orbes : celles qui attendent au sol (`DerivedOrbs`) et
+ * celles qui ont ete capturees et volent vers leur ramasseur (`OrbFlights`) —
+ * **un seul calque, une seule texture, un seul reservoir**, parce que c'est le
+ * meme objet a deux instants de sa vie.
  *
- * ⚠️ **Le seul calque dont la position dessinee n'est pas la position du
- * modele** (tache 17) : une orbe a portee glisse vers le joueur. Voir
- * `orbPullFraction` pour ce qui rend ce mensonge sans consequence.
+ * ⚠️ **Le seul calque dont une partie des positions dessinees n'existe dans
+ * aucun modele** (tache 20) : une orbe en vol est placee par une interpolation
+ * entre son point de capture et la position courante de sa cible. Voir
+ * `orbFlightFraction` pour ce qui rend cette invention sans consequence.
  */
 export class OrbRenderer {
   readonly #container = new ParticleContainer({
-    // `position` : l'aimantation deplace l'orbe a chaque image (tache 17).
+    // `position` : une orbe en vol change de place a chaque image (tache 20).
     // `color` : la pulsation fait bouger l'opacite, et le reservoir est
     // reutilise d'une image a l'autre.
     dynamicProperties: { position: true, color: true, rotation: false, uvs: false },
@@ -242,38 +250,46 @@ export class OrbRenderer {
    * ⚠️ **Ajoute a la tache 17, pour la meme raison qu'a la tache 16 sur
    * `ZoneRenderer`** : `load()` cuit sa texture sur un canevas 2D que node ne
    * fournit pas, donc sans ce point d'accroche `draw` retourne a son premier
-   * `if (!texture)` et **tout son corps** — echelle, teinte, aimantation,
-   * culling — reste hors de portee de la suite. Voir `adoptAtlas` (tache 9
-   * bis) et `adoptTextures` (tache 12).
+   * `if (!texture)` et **tout son corps** — echelle, teinte, vols, culling —
+   * reste hors de portee de la suite. Voir `adoptAtlas` (tache 9 bis) et
+   * `adoptTextures` (tache 12).
    */
   adoptTexture(texture: Texture): void {
     this.#texture = texture;
   }
 
   /**
-   * `players` sont les positions DESSINEES des joueurs, telles que
-   * `composeFrame` les lit dans `RenderState` : ce sont elles que l'oeil
-   * compare a l'orbe, donc les seules dont l'aimantation puisse partir.
+   * Les orbes au sol, les orbes en vol, et `players` : les positions DESSINEES
+   * des joueurs, telles que `composeFrame` les lit dans `RenderState`. Ce sont
+   * elles que l'oeil compare a l'orbe, donc les seules vers lesquelles un vol
+   * puisse aller — et ce sont les memes que celles sur lesquelles la capture a
+   * ete decidee, un cran plus tot dans la meme image (`GameClient.update`).
    */
-  draw(orbs: DerivedOrbs, players: readonly MagnetPoint[], view: Rectangle, timeMs: number): void {
+  draw(
+    orbs: DerivedOrbs,
+    flights: OrbFlights,
+    players: readonly PickupTarget[],
+    view: Rectangle,
+    timeMs: number,
+  ): void {
     const texture = this.#texture;
     if (!texture) {
       return;
     }
-    this.#ensurePool(orbs.count, texture);
+    this.#ensurePool(orbs.count + flights.count, texture);
 
-    // ⚠️ **Une marge, depuis la tache 17.** Sans elle, une orbe dont la
-    // position VRAIE vient de sortir du cadre serait ecartee alors que sa
-    // position DESSINEE — tiree vers un joueur qui, lui, est a l'ecran — y
-    // serait encore : elle disparaitrait en pleine aimantation.
-    const minX = view.x - ORB_MAGNET_RADIUS;
-    const maxX = view.x + view.width + ORB_MAGNET_RADIUS;
-    const minY = view.y - ORB_MAGNET_RADIUS;
-    const maxY = view.y + view.height + ORB_MAGNET_RADIUS;
+    const minX = view.x - CULL_MARGIN;
+    const maxX = view.x + view.width + CULL_MARGIN;
+    const minY = view.y - CULL_MARGIN;
+    const maxY = view.y + view.height + CULL_MARGIN;
 
     const children = this.#container.particleChildren;
     children.length = 0;
     let used = 0;
+
+    // Les orbes au sol : dessinees exactement ou elles sont. Depuis la tache
+    // 20, plus aucune ne glisse — celle qu'un joueur touche a quitte cette
+    // reserve pour `flights`, a l'instant meme ou le serveur l'a ramassee.
     for (let i = 0; i < orbs.count; i++) {
       const x = orbs.x[i] ?? 0;
       const y = orbs.y[i] ?? 0;
@@ -284,29 +300,8 @@ export class OrbRenderer {
       if (!particle) {
         break;
       }
-      // Le joueur le PLUS PROCHE, jamais le premier de la liste : c'est lui
-      // que le serveur verra entrer dans `ORB_PICKUP_RADIUS` en premier
-      // (`OrbField.resolvePickups` s'arrete au premier joueur a portee).
-      let best2 = Number.POSITIVE_INFINITY;
-      let bestX = 0;
-      let bestY = 0;
-      for (const p of players) {
-        const dx = p.x - x;
-        const dy = p.y - y;
-        const d2 = dx * dx + dy * dy;
-        if (d2 < best2) {
-          best2 = d2;
-          bestX = p.x;
-          bestY = p.y;
-        }
-      }
-      // Aucune garde `players.length > 0` : sans joueur, `best2` reste
-      // `Infinity`, donc la fraction vaut deja 0 et l'orbe est dessinee ou
-      // elle est. Une seconde garde ici se couvrirait avec la premiere borne
-      // de `orbPullFraction` — le depot en a deja supprime quinze.
-      const pull = orbPullFraction(Math.sqrt(best2));
-      particle.x = x + (bestX - x) * pull;
-      particle.y = y + (bestY - y) * pull;
+      particle.x = x;
+      particle.y = y;
       particle.scaleX = ORB_SCALE;
       particle.scaleY = ORB_SCALE;
       particle.tint = ORB_TINT;
@@ -321,7 +316,54 @@ export class OrbRenderer {
       children.push(particle);
       used++;
     }
+
+    // Les orbes capturees : elles rejoignent leur ramasseur.
+    for (let i = 0; i < flights.count; i++) {
+      const fromX = flights.fromX[i] ?? 0;
+      const fromY = flights.fromY[i] ?? 0;
+      // ⚠️ **La position COURANTE de la cible, pas celle de la capture.**
+      // C'est toute la difference entre suivre un joueur et viser l'endroit ou
+      // il etait : sans cette relecture a chaque image, un joueur qui s'eloigne
+      // verrait l'orbe s'arreter dans son dos.
+      const target = this.#targetOf(flights.targetId[i] ?? 0, players);
+      // Le joueur vise a quitte l'ecran des allies (deconnexion, ou snapshot
+      // qui ne le porte plus) : il n'y a plus de destination, donc plus rien a
+      // dessiner. Le vol s'eteindra tout seul a son echeance.
+      if (!target) {
+        continue;
+      }
+      const f = orbFlightFraction(timeMs - (flights.bornMs[i] ?? 0));
+      const x = fromX + (target.x - fromX) * f;
+      const y = fromY + (target.y - fromY) * f;
+      if (x < minX || x > maxX || y < minY || y > maxY) {
+        continue;
+      }
+      const particle = this.#pool[used];
+      if (!particle) {
+        break;
+      }
+      particle.x = x;
+      particle.y = y;
+      particle.scaleX = ORB_SCALE;
+      particle.scaleY = ORB_SCALE;
+      particle.tint = ORB_TINT;
+      // Pleine opacite, sans pulsation : la pulsation est un appel — « je suis
+      // la, viens me prendre ». Une orbe deja ramassee n'appelle plus.
+      particle.alpha = 1;
+      children.push(particle);
+      used++;
+    }
     this.#container.update();
+  }
+
+  /** Le joueur vise par un vol, ou `undefined` s'il n'est plus dessine. */
+  #targetOf(id: number, players: readonly PickupTarget[]): PickupTarget | undefined {
+    for (const p of players) {
+      if (p.id === id) {
+        return p;
+      }
+    }
+    return undefined;
   }
 
   destroy(): void {

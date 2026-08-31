@@ -4,7 +4,13 @@ import { Projectiles } from '@shared/projectiles';
 import { ZoneField } from '@shared/zones';
 import { describe, expect, it } from 'vitest';
 
-import { DerivedOrbs, HitFlashes, ReactionFlashes, type RenderState } from '../net/client';
+import {
+  DerivedOrbs,
+  HitFlashes,
+  OrbFlights,
+  ReactionFlashes,
+  type RenderState,
+} from '../net/client';
 import { composeFrame, type FrameClient, type FrameScreens, type FrameStage } from './frame';
 
 /**
@@ -83,6 +89,7 @@ class RecordingClient implements FrameClient {
   readonly zones = new ZoneField();
   readonly horde = new Horde(MAX_ENTITIES);
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
+  readonly orbFlights = new OrbFlights(8);
   readonly projectiles = new Projectiles(PROJECTILE_CAPACITY);
   readonly hitFlashes = new HitFlashes(8);
   readonly reactionFlashes = new ReactionFlashes(8);
@@ -165,14 +172,19 @@ describe('composeFrame — chaque calque recoit son appel', () => {
 
   /**
    * ⚠️ **Les POSITIONS DE L'ETAT, pas une autre lecture** (tache 17) : c'est
-   * vers le joueur DESSINE que l'orbe est attiree, et `RenderState.players` est
-   * le seul endroit qui le porte — la position predite pour soi, interpolee
-   * pour les autres. Passer autre chose ferait glisser l'orbe vers un joueur
-   * qui n'est pas a l'ecran la ou on le croit.
+   * vers le joueur DESSINE qu'une orbe capturee vole, et `RenderState.players`
+   * est le seul endroit qui le porte — la position predite pour soi, interpolee
+   * pour les autres. Passer autre chose ferait arriver l'orbe sur un joueur qui
+   * n'est pas a l'ecran la ou on le croit.
+   *
+   * ⚠️ **Les DEUX collections** (tache 20) : les orbes au sol ET les orbes en
+   * vol. Elles sont separees parce que `PICKUPS` ne commande que la premiere —
+   * un calque qui n'en recevrait qu'une ferait disparaitre l'orbe a la capture
+   * au lieu de la faire arriver.
    */
-  it('dessine les orbes, avec les positions dessinees des joueurs', () => {
+  it('dessine les orbes au sol ET en vol, avec les positions dessinees des joueurs', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('orbes')).toEqual([client.orbs, STATE.players, NOW]);
+    expect(stage.argsOf('orbes')).toEqual([client.orbs, client.orbFlights, STATE.players, NOW]);
   });
 
   it('dessine les projectiles', () => {

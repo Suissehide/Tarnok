@@ -8,6 +8,8 @@ import type {
   DerivedOrbs,
   HitFlashes,
   ObstacleMap,
+  OrbFlights,
+  PickupTarget,
   ReactionFlashes,
   RenderState,
   RunOverSummary,
@@ -15,7 +17,7 @@ import type {
 import { ASSETS_BASE } from '../ui/config';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
-import { type MagnetPoint, OrbRenderer } from './orb-renderer';
+import { OrbRenderer } from './orb-renderer';
 import {
   ImpactFlashRenderer,
   ProjectileRenderer,
@@ -300,10 +302,15 @@ export class Stage {
 
   /**
    * `players` sont les positions DESSINEES des joueurs (`RenderState.players`) :
-   * l'orbe est attiree vers la plus proche — voir `orbPullFraction`.
+   * une orbe capturee rejoint celui qui l'a ramassee — voir `orbFlightFraction`.
    */
-  drawOrbs(orbs: DerivedOrbs, players: readonly MagnetPoint[], timeMs: number): void {
-    this.#orbs.draw(orbs, players, this.viewRect(), timeMs);
+  drawOrbs(
+    orbs: DerivedOrbs,
+    flights: OrbFlights,
+    players: readonly PickupTarget[],
+    timeMs: number,
+  ): void {
+    this.#orbs.draw(orbs, flights, players, this.viewRect(), timeMs);
   }
 
   drawProjectiles(projectiles: Projectiles): void {
