@@ -3283,3 +3283,150 @@ describe('les PV du boss suivent le nombre de joueurs (etape 6a, tache 3 bis)', 
     expect(apres).not.toBeCloseTo(bossHp(0, MAX_PLAYERS), 4);
   }, 30_000);
 });
+
+/**
+ * La vie du boss voyage (etape 6a, tache 4).
+ *
+ * ⚠️ **La premiere donnee PAR ENTITE que le fil transporte, et c'est le NOMBRE
+ * qui l'autorise** (§1.1 de la spec) : un seul boss vivant, jamais plus. La
+ * regle est ecrite dans `shared/protocol.ts`, la ou elle risquerait d'etre
+ * pliee ; ce bloc-ci verifie que le salon la sert.
+ */
+describe('la vie du boss voyage dans le snapshot (etape 6a, tache 4)', () => {
+  /** Le boss tel que le FIL le porte — decode, jamais lu dans le salon. */
+  function bossAnnonce(room: Room): { id: number; hp: number } | null {
+    const out: ArrayBuffer[] = [];
+    room.snapshot({ push: (b: ArrayBuffer) => out.push(b) });
+    return decodeSnapshot(out[0] as ArrayBuffer).boss;
+  }
+
+  /** PV du boss dans la horde, source de verite du serveur. */
+  function pvDansLaHorde(room: Room): number {
+    return room.horde.hp[room.horde.slotOf(room.bossEntityId ?? -1)] ?? 0;
+  }
+
+  /** Vide la horde de tout sauf le boss — meme intention que `viderSauf`. */
+  function garderLeBoss(room: Room): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      const id = room.horde.entityIdAt(i);
+      if (id !== room.bossEntityId) {
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  it('annonce null avant, l identite et la vie pendant, et null a nouveau apres la mort', () => {
+    const room = new Room(4242);
+    room.join(1);
+
+    // --- 1. Pas de boss : le fil porte la sentinelle, que `decodeSnapshot`
+    // rend comme un `null`.
+    expect(bossAnnonce(room)).toBeNull();
+
+    // --- 2. Le boss arrive.
+    for (let t = 0; t < 90 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(DT);
+      room.drainWaveOrders();
+      garderLeBoss(room);
+    }
+    expect(room.bossEntityId).not.toBeNull();
+
+    const annonce = bossAnnonce(room);
+    expect(annonce?.id).toBe(room.bossEntityId);
+    // ⚠️ **La vie annoncee EST celle de la horde**, pas une copie tenue a
+    // cote : une seconde source de verite se decalerait au premier degat
+    // soigne autrement — l'erreur que l'etape 3 a faite avec l'experience.
+    expect(annonce?.hp).toBe(Math.round(pvDansLaHorde(room)));
+    expect(annonce?.hp).toBeGreaterThan(0);
+
+    // --- 3. On l'entame POUR DE VRAI, par le chemin de degats du salon : la
+    // vie annoncee suit.
+    const ancre = positionOf(room, 1);
+    const avant = annonce?.hp ?? 0;
+    for (let t = 0; t < 5 * TICK_HZ; t++) {
+      const slot = room.horde.slotOf(room.bossEntityId ?? -1);
+      if (slot >= 0) {
+        room.horde.x[slot] = ancre.x + 120;
+        room.horde.y[slot] = ancre.y;
+      }
+      aimAtNearestMonster(room, 1, 20_000 + t);
+      room.step(DT);
+      room.drainDeaths();
+      garderLeBoss(room);
+    }
+
+    const apres = bossAnnonce(room);
+    expect(apres?.id).toBe(room.bossEntityId);
+    expect(apres?.hp).toBeLessThan(avant);
+    expect(apres?.hp).toBe(Math.round(pvDansLaHorde(room)));
+
+    // --- 4. Il meurt : le fil reprend sa sentinelle. Sa reserve est ramenee a
+    // un coup — ce qui est teste ici est l'ANNONCE, pas une DPS.
+    room.horde.hp[room.horde.slotOf(room.bossEntityId ?? -1)] = 1;
+    for (let t = 0; t < 10 * TICK_HZ && room.bossEntityId !== null; t++) {
+      const slot = room.horde.slotOf(room.bossEntityId ?? -1);
+      if (slot >= 0) {
+        room.horde.x[slot] = ancre.x + 120;
+        room.horde.y[slot] = ancre.y;
+      }
+      aimAtNearestMonster(room, 1, 30_000 + t);
+      room.step(DT);
+      room.drainDeaths();
+      garderLeBoss(room);
+    }
+
+    expect(room.bossEntityId).toBeNull();
+    expect(bossAnnonce(room)).toBeNull();
+  }, 30_000);
+
+  /**
+   * ⚠️ **Le cout est un cout d'EN-TETE, pas un cout par entite** : les huit
+   * octets du boss sont les memes qu'il y ait un joueur ou quatre, et la horde
+   * n'en paie aucun. C'est ce qui distingue « le boss est du cote des joueurs »
+   * d'un debut de replication de la horde.
+   */
+  it('coute les memes octets, horde vide ou pleine, boss annonce ou non', () => {
+    const room = new Room(4242);
+    room.join(1);
+    const taille = (): number => {
+      const out: ArrayBuffer[] = [];
+      room.snapshot({ push: (b: ArrayBuffer) => out.push(b) });
+      return (out[0] as ArrayBuffer).byteLength;
+    };
+
+    // Un joueur, aucune horde, aucun boss.
+    const reference = taille();
+
+    for (let t = 0; t < 90 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(DT);
+      room.drainWaveOrders();
+      garderLeBoss(room);
+    }
+    expect(room.bossEntityId).not.toBeNull();
+    // Le boss annonce ne coute rien de plus : ses huit octets sont dans
+    // l'en-tete de TOUS les snapshots, sentinelle comprise.
+    expect(taille()).toBe(reference);
+
+    room.horde.spawn({
+      waveId: 9000,
+      spawnTick: room.tick,
+      seed: 7,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: MAP_SIZE - 200,
+      anchorY: MAP_SIZE - 200,
+      count: 500,
+    });
+    // Le decor a bien produit une horde : sans ce compte, l'egalite qui suit
+    // ne comparerait rien.
+    expect(room.horde.count).toBeGreaterThan(100);
+    // ⚠️ **Et c'est LA le contrat de replication** : cinq cents entites de
+    // plus, zero octet de plus. Le boss est du cote des joueurs parce qu'il
+    // est UN ; la horde reste serveur seul parce qu'elle est mille.
+    expect(taille()).toBe(reference);
+  }, 30_000);
+});

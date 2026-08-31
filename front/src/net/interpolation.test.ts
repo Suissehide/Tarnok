@@ -24,6 +24,10 @@ function snapshot(
     xp,
     synergy,
     players: players.map((p) => ({ hp: PLAYER_MAX_HP, aimX: 0, aimY: 0, ...p })),
+    // Ce decor n'interpole que des JOUEURS : le boss de la tache 4 (etape 6a)
+    // ne passe pas par `SnapshotBuffer` — il n'a pas de position sur le fil,
+    // seulement une vie. `null` est donc l'etat reel, pas un remplissage.
+    boss: null,
   };
 }
 

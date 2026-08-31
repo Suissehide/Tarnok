@@ -83,6 +83,40 @@ export interface SnapshotMessage {
    */
   synergy: number;
   players: PlayerSnapshot[];
+  /**
+   * Le boss du palier en cours, `null` quand aucun n'est en jeu.
+   *
+   * ⚠️ **La seule donnee PAR ENTITE que ce fil transporte, et c'est le NOMBRE
+   * qui l'autorise.** Le §1.1 de la spec de l'etape 6a : *« un boss par palier,
+   * jamais plus d'un vivant [...] c'est precisement parce qu'ils sont PEU que
+   * les joueurs sont repliques et que la horde ne l'est pas. Le boss est du
+   * cote des joueurs, pas du cote de la horde. »*
+   *
+   * ⚠️ **LA REGLE QUI NE DOIT PAS PLIER, et elle est ecrite ici plutot que
+   * dans un document** : le jour ou un palier fera apparaitre dix boss, ce ne
+   * sera plus un boss mais de la pietaille d'elite, et sa vie redeviendra
+   * SERVEUR SEUL. Ce champ n'est pas un tableau et ne doit pas le devenir : dix
+   * blocs par snapshot rouvriraient le contrat de replication que quatre etapes
+   * tiennent. Ce qui remplacerait ce champ, alors, c'est rien du tout — le
+   * client apprend deja les morts par `DEATHS` et n'a jamais eu besoin des PV
+   * de la horde.
+   */
+  boss: BossSnapshot | null;
+}
+
+/**
+ * Le boss vivant, tel que le `SNAPSHOT` le transporte : son identite et ses
+ * points de vie, une fois par tick.
+ *
+ * ⚠️ **Son identite est une identite d'entite ordinaire** — `waveId *
+ * MAX_PER_WAVE + index`, la meme arithmetique que `DEATHS` transporte depuis
+ * l'etape 3. Le client peut donc la comparer a ce qu'il fait naitre, sans rien
+ * apprendre de nouveau.
+ */
+export interface BossSnapshot {
+  id: number;
+  /** Points de vie courants, arrondis a l'entier. Voir `SNAPSHOT_HEADER_BYTES`. */
+  hp: number;
 }
 
 export interface InputMessage {
@@ -274,15 +308,76 @@ export const WELCOME_BYTES = 10;
 /** `type u8 · seq u16 · moveX i8 · moveY i8 · aimX i8 · aimY i8` (tache 13 : 5 -> 7). */
 export const INPUT_BYTES = 7;
 /**
- * `type u8 · tick u32 · playerCount u8 · xp u16 · synergy u16` — xp et synergy
- * sont ceux de l'EQUIPE (tache 5 de l'etape 5a : 8 -> 10).
+ * `type u8 · tick u32 · playerCount u8 · xp u16 · synergy u16 · bossId u32 ·
+ * bossHp u32` — xp et synergy sont ceux de l'EQUIPE (tache 5 de l'etape 5a :
+ * 8 -> 10), le boss vient de la tache 4 de l'etape 6a (10 -> 18).
  *
- * Les deux nombres d'equipe vivent dans l'en-tete plutot que d'etre repetes —
- * et donc potentiellement divergents — dans chaque bloc joueur. Deux octets par
+ * Les nombres d'equipe vivent dans l'en-tete plutot que d'etre repetes — et
+ * donc potentiellement divergents — dans chaque bloc joueur. Deux octets par
  * snapshot, quel que soit le nombre de joueurs ; les porter par joueur en
- * couterait deux par joueur pour la meme information recopiee.
+ * couterait deux par joueur pour la meme information recopiee. **Le boss suit
+ * la meme regle pour la meme raison** : il est UN (§1.1), donc il est du cote
+ * de l'en-tete.
+ *
+ * ⚠️ **`bossHp` EST UN u32, ET LA LARGEUR A ETE CALCULEE, PAS DEVINEE.** La
+ * lecon de l'etape 4 est ecrite deux paragraphes plus bas : le `hp` du joueur
+ * etait un `u8`, la huitieme carte de vitalite l'a pousse a 260, et il se
+ * repliait EN SILENCE a 4 PV. Le calcul, ici : le boss vaut
+ * `BOSS_HP_PER_PLAYER x 1,12^k x joueurs`, soit **6 000 PV** au palier 0 a
+ * effectif plein, et il croit en `1,12^k` sans plafond.
+ *
+ * | Largeur | Deborde au palier | Soit, a ~5 min par palier |
+ * | --- | --- | --- |
+ * | `u8` (255) | **0** — des le premier boss | jamais tenable |
+ * | `u16` (65 535) | **22** | 1,8 h de jeu |
+ * | **`u32` (4 294 967 295)** | **119** | 9,9 h |
+ *
+ * ⚠️ **Le `u16` est refuse parce que le palier 22 est ATTEIGNABLE.** Rien ne
+ * borne le palier — c'est le §3 de la spec qui en fait *« la duree de vie du
+ * jeu »* — et une soiree longue y arrive. Un `u16` aurait replie le boss du
+ * palier 22 a 7 000 PV en silence : le meme defaut qu'a l'etape 4, au meme
+ * endroit du meme fichier. Les deux octets de plus coutent
+ * `2 x SNAPSHOT_HZ` octets par seconde et par client, sur un trafic mesure a
+ * 1,22 ko/s a l'etape 4. Au palier 119 le boss a 4,3 milliards de PV et le jeu
+ * a cesse d'etre jouable bien avant ; `encodeSnapshot` y borne explicitement
+ * plutot que de laisser `setUint32` replier, et un test le dit.
  */
-export const SNAPSHOT_HEADER_BYTES = 10;
+export const SNAPSHOT_HEADER_BYTES = 18;
+
+/**
+ * Octets qu'il faut avoir recus pour connaitre le nombre de joueurs annonce :
+ * `type u8 · tick u32 · playerCount u8`.
+ *
+ * ⚠️ **Ce n'est PAS une seconde ecriture de `SNAPSHOT_HEADER_BYTES`** — c'est
+ * la borne du premier des deux controles de `decodeSnapshot`, et elle vaut
+ * exactement ce qu'il faut lire pour dimensionner le second. Voir le
+ * commentaire de `decodeSnapshot`.
+ */
+const SNAPSHOT_COUNT_BYTES = 6;
+
+/**
+ * « Aucun boss en jeu. »
+ *
+ * ⚠️ **Zero ne peut PAS etre une identite d'entite, et c'est la seule raison
+ * pour laquelle c'est la bonne sentinelle.** Les identites valent
+ * `waveId * MAX_PER_WAVE + index` (`shared/horde.ts`) avec un `waveId` qui
+ * commence a **1** — la plus petite identite possible vaut donc
+ * `MAX_PER_WAVE` (4 096), et tout l'intervalle `0..4095` est inhabitable. Un
+ * test le derive de `entityIdOf`, il ne le suppose pas.
+ *
+ * Meme regle que `NO_TOKEN = 255` a l'etape 4, choisi parce que la carte 0 est
+ * une carte REELLE : une sentinelle n'est utilisable que si sa valeur ne
+ * designe rien de reel.
+ *
+ * ⚠️ **La sentinelle est sur l'IDENTITE, jamais sur les PV.** Un boss a 0 PV
+ * est un boss (il meurt au tick suivant, par `DEATHS`, comme tout le monde) —
+ * lire « pas de boss » dans un `hp` nul ferait disparaitre sa barre juste
+ * avant sa mort.
+ */
+export const NO_BOSS_ID = 0;
+
+/** Plus grande valeur que `bossHp` peut porter : voir `SNAPSHOT_HEADER_BYTES`. */
+export const BOSS_HP_MAX = 0xffff_ffff;
 /**
  * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8` — pas de xp ici, voir
  * `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de l'etape 4 :
@@ -465,6 +560,7 @@ export function encodeSnapshot(
   xp: number,
   synergy: number,
   players: readonly PlayerSnapshot[],
+  boss: BossSnapshot | null = null,
 ): ArrayBuffer {
   const buf = new ArrayBuffer(SNAPSHOT_HEADER_BYTES + players.length * SNAPSHOT_PLAYER_BYTES);
   const v = new DataView(buf);
@@ -473,6 +569,11 @@ export function encodeSnapshot(
   v.setUint8(5, players.length);
   v.setUint16(6, xp, true);
   v.setUint16(8, synergy, true);
+  v.setUint32(10, boss ? boss.id : NO_BOSS_ID, true);
+  // ⚠️ **Arrondi ET borne, explicitement.** `Horde.hp` est un flottant ; sans
+  // l'arrondi, `setUint32` tronquerait vers zero, et sans la borne il
+  // replierait modulo 2^32 au palier 119 — le repli silencieux de l'etape 4.
+  v.setUint32(14, boss ? Math.min(BOSS_HP_MAX, Math.max(0, Math.round(boss.hp))) : 0, true);
   let o = SNAPSHOT_HEADER_BYTES;
   for (const p of players) {
     v.setUint8(o, p.id);
@@ -487,7 +588,15 @@ export function encodeSnapshot(
 }
 
 export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
-  const head = viewOf(buf, SNAPSHOT_HEADER_BYTES);
+  // ⚠️ **DEUX controles, et depuis la tache 4 ils ne se couvrent PLUS.**
+  // Celui-ci n'exige que les six octets qu'il faut avoir lus pour connaitre le
+  // nombre de joueurs ANNONCE ; le second exige tout le reste. Ecrit avec
+  // `SNAPSHOT_HEADER_BYTES` des deux cotes, le premier etait entierement
+  // couvert par le second au-dela de six octets — le motif « deux gardes qui
+  // se couvrent », quinze fois dans ce depot — et le reduire ne faisait rougir
+  // aucun test. Il ne garde donc plus que ce qu'il garde vraiment : un buffer
+  // trop court pour porter meme son compte de joueurs.
+  const head = viewOf(buf, SNAPSHOT_COUNT_BYTES);
   const count = head.getUint8(5);
   // Le nombre de joueurs vient du buffer : on le confronte a sa taille reelle
   // avant de boucler, sinon un en-tete menteur fait lire hors des bornes.
@@ -507,12 +616,16 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
     o += SNAPSHOT_PLAYER_BYTES;
   }
 
+  const bossId = v.getUint32(10, true);
   return {
     type: MSG.SNAPSHOT,
     tick: v.getUint32(1, true),
     xp: v.getUint16(6, true),
     synergy: v.getUint16(8, true),
     players,
+    // La sentinelle se lit ICI et nulle part ailleurs : au-dela de cette
+    // ligne, « pas de boss » est un `null`, jamais un nombre a comparer.
+    boss: bossId === NO_BOSS_ID ? null : { id: bossId, hp: v.getUint32(14, true) },
   };
 }
 

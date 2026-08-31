@@ -1,8 +1,17 @@
 import { describe, expect, it } from 'vitest';
 
-import { PLAYER_MAX_HP, SYNERGY_MAX, ZONE_LIFETIME_TICKS } from './constants';
-import { ELEMENT, ELEMENTS } from './elements';
 import {
+  MAX_PER_WAVE,
+  MAX_PLAYERS,
+  PLAYER_MAX_HP,
+  SYNERGY_MAX,
+  ZONE_LIFETIME_TICKS,
+} from './constants';
+import { ELEMENT, ELEMENTS } from './elements';
+import { entityIdOf } from './horde';
+import { bossHp } from './paliers';
+import {
+  BOSS_HP_MAX,
   DEATH_ID_BYTES,
   DEATHS_HEADER_BYTES,
   DRAFT_CARD_BYTES,
@@ -40,6 +49,7 @@ import {
   INPUT_BYTES,
   LEVEL_UP_BYTES,
   MSG,
+  NO_BOSS_ID,
   NO_TOKEN,
   packElementPair,
   REACTION_BYTES,
@@ -110,11 +120,17 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // synergie 7 — parce qu'un aller-retour ne voit pas un decalage qui echange
   // deux champs de meme valeur. C'est la seule facon d'assener que la Synergie
   // ne s'ecrit pas par-dessus l'experience.
-  it('rend les positions arrondies a l entier, les pv personnels, la visee, l experience et la synergie d equipe', () => {
-    const buf = encodeSnapshot(42, 12_000, 7, [
-      { id: 1, x: 100.4, y: 200.6, hp: 80, aimX: 90, aimY: -60 },
-      { id: 2, x: -3.2, y: 5999.9, hp: 42, aimX: 0, aimY: 0 },
-    ]);
+  it('rend les positions arrondies a l entier, les pv personnels, la visee, l experience, la synergie d equipe et le boss', () => {
+    const buf = encodeSnapshot(
+      42,
+      12_000,
+      7,
+      [
+        { id: 1, x: 100.4, y: 200.6, hp: 80, aimX: 90, aimY: -60 },
+        { id: 2, x: -3.2, y: 5999.9, hp: 42, aimX: 0, aimY: 0 },
+      ],
+      { id: 8193, hp: 6000 },
+    );
 
     expect(decodeSnapshot(buf)).toEqual({
       type: MSG.SNAPSHOT,
@@ -125,6 +141,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
         { id: 1, x: 100, y: 201, hp: 80, aimX: 90, aimY: -60 },
         { id: 2, x: -3, y: 6000, hp: 42, aimX: 0, aimY: 0 },
       ],
+      boss: { id: 8193, hp: 6000 },
     });
   });
 
@@ -139,7 +156,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // Les deux tailles sont assenees EN CHIFFRES NUS, jamais comparees a
   // elles-memes : c'est ce qui attrape un decalage d'octet. Une assertion
   // `toBe(SNAPSHOT_HEADER_BYTES)` serait vraie quoi qu'il arrive.
-  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (8 -> 10 avec la synergie)', () => {
+  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (10 -> 18 avec le boss)', () => {
     const buf = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
       { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
@@ -147,7 +164,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     ]);
 
     expect(buf.byteLength).toBe(SNAPSHOT_HEADER_BYTES + 3 * SNAPSHOT_PLAYER_BYTES);
-    expect(SNAPSHOT_HEADER_BYTES).toBe(10);
+    expect(SNAPSHOT_HEADER_BYTES).toBe(18);
     expect(SNAPSHOT_PLAYER_BYTES).toBe(9);
   });
 
@@ -194,12 +211,35 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     expect(PLAYER_MAX_HP).toBeLessThanOrEqual(255);
   });
 
-  // ⚠️ Coupe PILE avant les deux octets de synergie (en-tete de 10 : les 8
-  // premiers passent, la synergie manque). Sans lui, un en-tete qui
-  // n'exigerait que ses 8 octets d'avant rendrait une synergie fantaisiste au
-  // lieu de lever.
+  /**
+   * ⚠️ **Un buffer trop court pour porter meme son compte de joueurs.** C'est
+   * le SEUL cas que le premier controle de `decodeSnapshot` garde a lui seul :
+   * sans lui, `getUint8(5)` leverait un `RangeError` de `DataView` au lieu de
+   * dire « tronque ». Et c'est bien `/tronqu/` qui est exige — un
+   * `toThrow()` nu passerait sur le `RangeError` sans rien prouver.
+   */
+  it('leve sur un buffer trop court pour porter son compte de joueurs', () => {
+    expect(() => decodeSnapshot(new ArrayBuffer(5))).toThrow(/tronqu/i);
+  });
+
+  // ⚠️ Coupe PILE avant les deux octets de synergie (elle occupe les octets 8
+  // et 9 de l'en-tete). Sans lui, un en-tete qui n'exigerait que ses 8 octets
+  // d'avant rendrait une synergie fantaisiste au lieu de lever.
   it('leve sur un en-tete tronque juste avant la synergie d equipe', () => {
-    const truncated = encodeSnapshot(1, 12_000, 7, []).slice(0, SNAPSHOT_HEADER_BYTES - 2);
+    const truncated = encodeSnapshot(1, 12_000, 7, []).slice(0, 8);
+
+    expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
+  });
+
+  // ⚠️ **Coupe PILE avant les quatre octets de PV du boss** (identite lue,
+  // vie manquante). Et `toThrow(/tronqu/i)`, jamais `toThrow()` nu : un
+  // `RangeError` de `DataView` ferait passer un `toThrow()` nu meme si le
+  // controle de longueur avait disparu — defaut reel de l'etape 4.
+  it('leve sur un en-tete tronque juste avant les PV du boss', () => {
+    const truncated = encodeSnapshot(1, 12_000, 7, [], { id: 8193, hp: 6000 }).slice(
+      0,
+      SNAPSHOT_HEADER_BYTES - 4,
+    );
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
   });
@@ -223,6 +263,127 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     ]).slice(0, SNAPSHOT_HEADER_BYTES + 6);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
+  });
+});
+
+/**
+ * La vie du boss sur le fil (etape 6a, tache 4).
+ *
+ * ⚠️ **La premiere donnee PAR ENTITE que ce protocole transporte, et c'est le
+ * NOMBRE qui l'autorise** (§1.1 de la spec) : un seul boss vivant. Le jour ou
+ * un palier en fera dix, ce ne sera plus un boss mais de la pietaille d'elite,
+ * et sa vie redeviendra serveur seul.
+ */
+describe('le boss dans le snapshot (etape 6a, tache 4)', () => {
+  /** Une identite d'entite REELLE : vague 2, indice 1. Jamais un nombre invente. */
+  const BOSS_ID = entityIdOf(2, 1);
+
+  /**
+   * Premier palier ou un `u16` aurait deborde — **CALCULE ici**, jamais un 22
+   * recopie : le jour ou `BOSS_HP_PER_PLAYER` ou `PALIER_HP_SCALE` bougent, ce
+   * nombre bouge avec eux et le test continue de dire la meme chose.
+   */
+  const PALIER_LIMITE_U16 = ((): number => {
+    let k = 0;
+    while (bossHp(k, MAX_PLAYERS) <= 65_535) {
+      k++;
+    }
+    return k;
+  })();
+
+  it('rend l identite et les points de vie du boss, distincts de tout le reste', () => {
+    // ⚠️ Toutes les valeurs sont DISTINCTES — 42, 12 000, 7, l'identite, les
+    // PV — parce qu'un aller-retour ne voit pas un decalage d'octet qui
+    // echange deux champs de MEME valeur.
+    const decoded = decodeSnapshot(
+      encodeSnapshot(42, 12_000, 7, [{ id: 3, x: 11, y: 22, hp: 33, aimX: 44, aimY: -55 }], {
+        id: BOSS_ID,
+        hp: 6000,
+      }),
+    );
+
+    expect(decoded.boss).toEqual({ id: BOSS_ID, hp: 6000 });
+    // Et rien d'autre n'a bouge : le boss s'ajoute a l'en-tete, il ne s'ecrit
+    // par-dessus personne.
+    expect(decoded.tick).toBe(42);
+    expect(decoded.xp).toBe(12_000);
+    expect(decoded.synergy).toBe(7);
+    expect(decoded.players).toEqual([{ id: 3, x: 11, y: 22, hp: 33, aimX: 44, aimY: -55 }]);
+  });
+
+  it('rend null quand aucun boss n est en jeu', () => {
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [])).boss).toBeNull();
+  });
+
+  /**
+   * ⚠️ **La sentinelle ne peut PAS valoir une identite reelle, et ce test le
+   * DERIVE de `entityIdOf` au lieu de le supposer.** Les identites valent
+   * `waveId * MAX_PER_WAVE + index` et le premier `waveId` vaut 1 : le plus
+   * petit numero atteignable est donc `MAX_PER_WAVE`. C'est la meme regle que
+   * `NO_TOKEN = 255` a l'etape 4 — la carte 0 etant une carte reelle, zero
+   * n'aurait rien pu signifier.
+   */
+  it('choisit une sentinelle qu aucune identite d entite ne peut atteindre', () => {
+    expect(NO_BOSS_ID).toBeLessThan(entityIdOf(1, 0));
+    expect(entityIdOf(1, 0)).toBe(MAX_PER_WAVE);
+  });
+
+  /**
+   * ⚠️ **La sentinelle est sur l'IDENTITE, pas sur les PV.** Un boss a 0 PV est
+   * un boss : il meurt au tick suivant, par `DEATHS`. Le lire comme « pas de
+   * boss » ferait disparaitre sa barre juste avant sa mort.
+   */
+  it('distingue un boss a zero PV d une absence de boss', () => {
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], { id: BOSS_ID, hp: 0 })).boss).toEqual({
+      id: BOSS_ID,
+      hp: 0,
+    });
+  });
+
+  /**
+   * ⚠️ **LA LECON DE L'ETAPE 4, appliquee a la lettre.** Le `hp` du joueur
+   * etait un `u8` ; la huitieme carte de vitalite l'a pousse a 260 et il se
+   * repliait en silence a 4 PV. On confronte donc la valeur que le JEU produit
+   * a la largeur du champ, en la CALCULANT — jamais un 6 000 recopie.
+   */
+  it('tient le boss le plus lourd que le jeu sache produire, sans repli silencieux', () => {
+    // Le boss d'une equipe pleine, palier par palier, jusqu'a la ou un u16
+    // aurait deja replie.
+    const auPalierU16 = bossHp(PALIER_LIMITE_U16, MAX_PLAYERS);
+    expect(auPalierU16).toBeGreaterThan(65_535);
+    expect(auPalierU16).toBeLessThanOrEqual(BOSS_HP_MAX);
+    expect(
+      decodeSnapshot(encodeSnapshot(1, 0, 0, [], { id: BOSS_ID, hp: auPalierU16 })).boss?.hp,
+    ).toBe(Math.round(auPalierU16));
+
+    // Et la borne du u32 elle-meme, a l'unite pres.
+    expect(
+      decodeSnapshot(encodeSnapshot(1, 0, 0, [], { id: BOSS_ID, hp: BOSS_HP_MAX })).boss?.hp,
+    ).toBe(BOSS_HP_MAX);
+  });
+
+  /**
+   * ⚠️ **Au-dela du u32, on BORNE, on ne replie pas.** `setUint32` prendrait le
+   * modulo — un boss de 4,3 milliards de PV se reveillerait a quelques
+   * centaines. Le palier ou cela arrive (119, ~10 h de jeu) est hors de
+   * portee, mais le repli silencieux est exactement le defaut de l'etape 4 et
+   * il ne se rattrape pas : il se refuse.
+   */
+  it('borne au lieu de replier au-dela du u32', () => {
+    const decoded = decodeSnapshot(
+      encodeSnapshot(1, 0, 0, [], { id: BOSS_ID, hp: BOSS_HP_MAX + 1000 }),
+    );
+
+    expect(decoded.boss?.hp).toBe(BOSS_HP_MAX);
+    // Le repli, lui, aurait rendu 999 : le dire, sinon « borne » et « replie »
+    // se ressemblent trop pour qu'un test les separe.
+    expect((BOSS_HP_MAX + 1000) % 2 ** 32).toBe(999);
+  });
+
+  it('arrondit les PV a l entier, comme les positions', () => {
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], { id: BOSS_ID, hp: 1499.6 })).boss?.hp).toBe(
+      1500,
+    );
   });
 });
 

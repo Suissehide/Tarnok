@@ -908,10 +908,25 @@ export class Room {
       this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: p.hp, aimX: p.aimX, aimY: p.aimY });
     }
 
+    // ⚠️ **La vie du boss est LUE DANS LA HORDE a chaque tick, jamais tenue en
+    // double.** `#bossEntityId` est la seule source de verite de « qui est le
+    // boss » ; sa reserve, elle, vit ou vit celle de tout le monde. Un champ
+    // `#bossHp` a cote se decalerait au premier degre soigne autrement — le
+    // defaut que l'etape 3 a paye avec deux experiences pour un seul nombre.
+    //
+    // `slotOf` rend `-1` quand l'entite n'est plus la : le `?? 0` couvre le
+    // seul cas ou cela arrive, un boss retire de la horde sans passer par le
+    // lot de morts du salon (ce que les bancs font avec `Horde.kill`).
+    const bossId = this.#bossEntityId;
+    const boss =
+      bossId === null ? null : { id: bossId, hp: this.horde.hp[this.horde.slotOf(bossId)] ?? 0 };
+
     const started = performance.now();
     // `#xp` et `#synergy` cote a cote, tous deux dans l'EN-TETE : deux donnees
-    // d'equipe, deux nombres uniques, aucun bloc de joueur ne les porte.
-    const buf = encodeSnapshot(this.#tick, this.#xp, this.#synergy, this.#scratch);
+    // d'equipe, deux nombres uniques, aucun bloc de joueur ne les porte. Le
+    // boss les rejoint (tache 4) pour la meme raison, et pour une de plus : il
+    // est UN, et c'est ce nombre qui autorise sa vie a voyager (§1.1).
+    const buf = encodeSnapshot(this.#tick, this.#xp, this.#synergy, this.#scratch, boss);
     this.#metrics.encodeMicros += (performance.now() - started) * 1000;
     this.#metrics.bytesSent += buf.byteLength;
     this.#metrics.snapshots++;
