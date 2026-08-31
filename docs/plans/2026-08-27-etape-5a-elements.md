@@ -2,7 +2,7 @@
 
 > **Pour un agent exécutant :** SOUS-COMPÉTENCE REQUISE — utiliser
 > `superpowers:subagent-driven-development` (recommandé) ou `superpowers:executing-plans` pour
-> exécuter ce plan tâche par tâche. Les étapes utilisent des cases à cocher (`- [ ]`).
+> exécuter ce plan tâche par tâche. Les étapes utilisent des cases à cocher (`- [x]`).
 
 **But :** la piétaille gagne des points de vie, deux éléments marquent les ennemis et le sol, leur
 rencontre déclenche une réaction, et une réaction entre deux joueurs charge la barre de Synergie.
@@ -98,11 +98,11 @@ Chaque tâche les respecte, sans les répéter.
 **Interfaces :**
 - Produit : `Archetype.hp: number` ; `Horde.hp: Float32Array` ; `resolveProjectileDamage` soustrait au lieu de tuer.
 
-- [ ] **Étape 1 : `Archetype` gagne `hp`.** Les vingt archétypes existants prennent **5** ;
+- [x] **Étape 1 : `Archetype` gagne `hp`.** Les vingt archétypes existants prennent **5** ;
   **quatre d'entre eux passent à 20** et deviennent la piétaille lourde. Le choix des quatre est
   libre — ce sont des sprites, pas des rôles, aujourd'hui.
 
-- [ ] **Étape 2 : `Horde` gagne `hp`.**
+- [x] **Étape 2 : `Horde` gagne `hp`.**
 
   ⚠️ **Le piège connu de ce dépôt.** `Horde.#removeAt` recopie **dix** tableaux du dernier créneau
   vers celui qu'on libère. Un tableau oublié laisse l'entité déplacée avec les PV de celle qui vient
@@ -119,10 +119,10 @@ Chaque tâche les respecte, sans les répéter.
   // proprietes tableau de l'instance ne l'est pas.
   ```
 
-- [ ] **Étape 3 : `spawn` remplit `hp` depuis l'archétype.** Les deux côtés dérivent la même valeur
+- [x] **Étape 3 : `spawn` remplit `hp` depuis l'archétype.** Les deux côtés dérivent la même valeur
   de départ — l'archétype voyage déjà dans l'ordre de vague de 19 octets.
 
-- [ ] **Étape 4 : `resolveProjectileDamage` soustrait.**
+- [x] **Étape 4 : `resolveProjectileDamage` soustrait.**
 
   ```ts
   projectiles.collide(horde, (entityId, damage) => {
@@ -138,10 +138,10 @@ Chaque tâche les respecte, sans les répéter.
   protège plus contre « deux projectiles tuent le même ennemi au même tick » mais contre « le même
   identifiant listé deux fois dans `horde.kill` », que `kill` ne fait que tolérer défensivement.
 
-- [ ] **Étape 5 : le test qui compte.** Un ennemi à 20 PV touché par la dague (5 dégâts) **survit à
+- [x] **Étape 5 : le test qui compte.** Un ennemi à 20 PV touché par la dague (5 dégâts) **survit à
   trois impacts et meurt au quatrième**. Vérifier par mutation qu'un `<=` changé en `<` se voit.
 
-- [ ] **Étape 6 : les deux passifs de dégâts se réveillent.** « Puissance » et « acier » ne
+- [x] **Étape 6 : les deux passifs de dégâts se réveillent.** « Puissance » et « acier » ne
   modulaient aucune issue à l'étape 4. C'est la dette de l'étape 4 qui se solde ici.
 
   ⚠️ **Correction — une première version de ce plan écrivait « deux cartes de puissance font mourir
@@ -160,7 +160,7 @@ Chaque tâche les respecte, sans les répéter.
   **Il en faut quatre.** Le test doit le dire, et vérifier le palier là où il est — un test écrit
   sur « deux » aurait échoué et fait croire à un défaut de câblage.
 
-- [ ] **Étape 7 : la porte.** Mesurer le **rythme de mise à mort** à quatre joueurs, avec la
+- [x] **Étape 7 : la porte.** Mesurer le **rythme de mise à mort** à quatre joueurs, avec la
   proportion de lourds visée.
 
   ⚠️ **Correction — `sim.bench.ts` ne peut PAS le mesurer.** Il a sa propre classe `Horde` locale et
@@ -177,7 +177,7 @@ Chaque tâche les respecte, sans les répéter.
   `npm run bench` et cesse d'être une porte.** Les trois issues qui étaient engagées d'avance ne
   s'appliquent plus : c'est l'œil qui tranche.
 
-- [ ] **Étape 7 bis : moins d'ennemis au début — décision de l'auteur, prise d'avance.**
+- [x] **Étape 7 bis : moins d'ennemis au début — décision de l'auteur, prise d'avance.**
 
   > *« On fera moins d'ennemi au début, le temps d'obtenir des armes. »*
 
@@ -208,7 +208,7 @@ Chaque tâche les respecte, sans les répéter.
   l'étape 3 existe ; moins d'ennemis, c'est moins d'orbes, et le seuil ne bouge pas. Un début trop
   maigre repousserait la première arme au lieu de l'avancer — l'inverse exact de l'intention.
 
-- [ ] **Étape 8 : commit** — `feat(shared): la pietaille gagne une reserve de points de vie`
+- [x] **Étape 8 : commit** — `feat(shared): la pietaille gagne une reserve de points de vie`
 
 ---
 
@@ -219,7 +219,7 @@ Chaque tâche les respecte, sans les répéter.
 **Interfaces :**
 - Produit : `ELEMENT = { NEUTRE: 0, BRAISE: 1, GIVRE: 2 }` ; `Weapon.element: number`.
 
-- [ ] **Étape 1 : la table.** Même motif que `passives.ts` et `weapons.ts` — l'index **est**
+- [x] **Étape 1 : la table.** Même motif que `passives.ts` et `weapons.ts` — l'index **est**
   l'identifiant, rien à synchroniser entre serveur et clients.
 
   ```ts
@@ -239,15 +239,15 @@ Chaque tâche les respecte, sans les répéter.
   `NEUTRE` occupe l'index 0 et n'a aucun effet — **un élément neutre n'est pas un cas particulier,
   c'est une entrée de la table**, comme `BASE_WEAPON_ID` l'est pour les armes.
 
-- [ ] **Étape 2 : `Weapon` gagne `element`, à `NEUTRE` par défaut.** Deux armes passent en Braise,
+- [x] **Étape 2 : `Weapon` gagne `element`, à `NEUTRE` par défaut.** Deux armes passent en Braise,
   deux en Givre. **L'arme de base reste neutre** — le §6.3 en fait *« un socle pour les joueurs qui
   ne veulent pas jouer le système »*.
 
-- [ ] **Étape 3 : le test qui n'est pas creux.** Vérifier que **chaque élément du catalogue a au
+- [x] **Étape 3 : le test qui n'est pas creux.** Vérifier que **chaque élément du catalogue a au
   moins une arme**, et qu'aucune arme ne référence un élément inexistant. Une référence morte ne se
   verrait qu'au premier tir de cette arme, plusieurs tâches plus tard.
 
-- [ ] **Étape 4 : commit** — `feat(shared): le catalogue des elements`
+- [x] **Étape 4 : commit** — `feat(shared): le catalogue des elements`
 
 ---
 
@@ -259,7 +259,7 @@ Chaque tâche les respecte, sans les répéter.
 - Produit : `Horde.mark`, `Horde.markBy`, `Horde.markUntil` (`Uint8Array`, `Uint8Array`,
   `Float64Array`) ; `MARK_DURATION_TICKS`.
 
-- [ ] **Étape 1 : trois tableaux, et le même piège — mais à QUATRE endroits, pas trois.**
+- [x] **Étape 1 : trois tableaux, et le même piège — mais à QUATRE endroits, pas trois.**
 
   Le plan ne citait que `#removeAt`, `saveState` et `restoreState`. **Il oubliait `spawn`, qui est
   le plus dangereux des quatre** : un créneau libéré garde le contenu du mort, donc sans remise à
@@ -279,7 +279,7 @@ Chaque tâche les respecte, sans les répéter.
   garde de couverture (fermée par la même assertion). **Une liste recopiée sans garde vieillit en
   silence** — c'est le motif de la constante recopiée, appliqué aux formes.
 
-- [ ] **Étape 2 : `applyMark(slot, element, playerId, tick)`.** Écrit les trois tableaux et pose
+- [x] **Étape 2 : `applyMark(slot, element, playerId, tick)`.** Écrit les trois tableaux et pose
   `markUntil = tick + MARK_DURATION_TICKS`.
 
   ⚠️ **Correction — une première version de ce plan appelait cette méthode `mark`**, tout en
@@ -291,16 +291,16 @@ Chaque tâche les respecte, sans les répéter.
   distinguer une réaction entre deux joueurs d'une réaction en solo, et le §6.5 de l'orientation
   — *« le cœur du projet »* — n'a plus de données.
 
-- [ ] **Étape 3 : la marque expire, et l'expiration est DÉRIVÉE.** `markUntil` se compare au tick
+- [x] **Étape 3 : la marque expire, et l'expiration est DÉRIVÉE.** `markUntil` se compare au tick
   courant ; rien n'est annoncé. Même modèle que `ORB_LIFETIME_TICKS`.
 
-- [ ] **Étape 4 : le test.** Une marque posée au tick T vaut encore au tick
+- [x] **Étape 4 : le test.** Une marque posée au tick T vaut encore au tick
   `T + MARK_DURATION_TICKS - 1` et plus au tick `T + MARK_DURATION_TICKS`.
 
   ⚠️ **Tester les DEUX bornes.** Un test qui ne vérifie que « ça expire un jour » passe avec
   n'importe quelle durée.
 
-- [ ] **Étape 5 : commit** — `feat(shared): la marque elementaire et son expiration derivee`
+- [x] **Étape 5 : commit** — `feat(shared): la marque elementaire et son expiration derivee`
 
 ---
 
@@ -319,7 +319,7 @@ tâche qui intègre `ZoneField` dans `Room.step` de le respecter**, pas à `spaw
 une garde défensive ici serait le motif « deux gardes qui se couvrent », et la seconde ne serait
 testable qu'en mettant en scène un appelant fautif.
 
-- [ ] **Étape 1 : calquer `OrbField`.** `back/src/combat.ts` en contient déjà un exemplaire complet
+- [x] **Étape 1 : calquer `OrbField`.** `back/src/combat.ts` en contient déjà un exemplaire complet
   et éprouvé : capacité fixe, tableaux typés, **retrait par indice décroissant**, expiration dérivée
   du `bornTick`. Le lire avant d'écrire, et suivre sa forme.
 
@@ -327,7 +327,7 @@ testable qu'en mettant en scène un appelant fautif.
   mort exactement comme le serveur.** Une expiration calculée différemment des deux côtés ferait
   disparaître un quad plus tôt chez l'un — visible, et le début d'une divergence.
 
-- [ ] **Étape 1 bis : la règle de pose, bornée par construction.** `spawn` **ne crée pas** de zone
+- [x] **Étape 1 bis : la règle de pose, bornée par construction.** `spawn` **ne crée pas** de zone
   si une zone du même élément recouvre déjà le point : elle rafraîchit son `bornTick`. Le compte
   devient fonction de la surface, pas de la cadence — voir §5.1 bis de la spec, et les chiffres qui
   l'imposent.
@@ -339,15 +339,15 @@ testable qu'en mettant en scène un appelant fautif.
   Le test qui compte : **mille poses au même endroit ne font qu'une zone**, et mille poses étalées
   en font plusieurs. Sans les deux moitiés, une fusion qui avale tout passerait.
 
-- [ ] **Étape 2 : `overlaps(a, b)`.** Deux zones se recouvrent si la distance de leurs centres est
+- [x] **Étape 2 : `overlaps(a, b)`.** Deux zones se recouvrent si la distance de leurs centres est
   inférieure à la somme des rayons. **Comparer les carrés**, jamais `Math.hypot` : c'est la
   convention de tout le dépôt (`resolvePickups`, `resolveContact`, `collide`).
 
-- [ ] **Étape 3 : le test qui ne triche pas.** Deux zones **exactement tangentes** ne se recouvrent
+- [x] **Étape 3 : le test qui ne triche pas.** Deux zones **exactement tangentes** ne se recouvrent
   pas ; deux zones à un pixel de moins se recouvrent. Le cas limite est le seul qui distingue un
   `<` d'un `<=`.
 
-- [ ] **Étape 4 : commit** — `feat(shared): les zones au sol, expiration derivee`
+- [x] **Étape 4 : commit** — `feat(shared): les zones au sol, expiration derivee`
 
 ---
 
@@ -358,7 +358,7 @@ testable qu'en mettant en scène un appelant fautif.
 **Interfaces :**
 - Produit : `MSG.ZONE`, `MSG.REACTION` ; `encodeZone`, `encodeReaction` ; la Synergie dans le snapshot.
 
-- [ ] **Étape 1 : `ZONE`.** `type u8 · element u8 · x i16 · y i16 · bornTick u32 · by u8` = **11
+- [x] **Étape 1 : `ZONE`.** `type u8 · element u8 · x i16 · y i16 · bornTick u32 · by u8` = **11
   octets**. Un message par zone, à la création.
 
   ⚠️ **Onze, pas douze.** Une première version de ce plan écrivait 12 : la spec disait « ~12 »,
@@ -369,7 +369,7 @@ testable qu'en mettant en scène un appelant fautif.
   ⚠️ **La mort d'une zone n'est JAMAIS annoncée** : elle se dérive du `bornTick`. Un message de
   disparition doublerait le trafic pour une information que les deux côtés calculent déjà.
 
-- [ ] **Étape 2 : `REACTION`.** `type u8 · pair u8 · x i16 · y i16 · tick u32 · synergie u8` = **11
+- [x] **Étape 2 : `REACTION`.** `type u8 · pair u8 · x i16 · y i16 · tick u32 · synergie u8` = **11
   octets**. Le couple tient sur un octet, **un quartet par élément, canonicalisé** : le §6.2 est
   symétrique, donc Braise+Givre et Givre+Braise doivent porter le même octet, sinon deux clients
   dessinent deux flashs différents pour un événement identique. `synergie` vaut 1 quand deux joueurs différents sont à l'origine, 0 sinon.
@@ -377,13 +377,13 @@ testable qu'en mettant en scène un appelant fautif.
   ⚠️ **La charge voyage DANS `REACTION`**, pas dans un message à part : les deux arrivent toujours
   ensemble et un second message ne porterait rien de plus.
 
-- [ ] **Étape 3 : la Synergie dans le `SNAPSHOT`.** Un `u16` d'équipe, à côté de l'expérience.
+- [x] **Étape 3 : la Synergie dans le `SNAPSHOT`.** Un `u16` d'équipe, à côté de l'expérience.
   `SNAPSHOT_HEADER_BYTES` passe de 8 à 10.
 
   ⚠️ **Un seul nombre pour l'équipe, jamais un par joueur.** L'étape 3 a fait l'erreur inverse avec
   l'expérience — deux sources de vérité pour un seul nombre — et l'implémenteur l'avait signalée.
 
-- [ ] **Étape 4 : les tests d'aller-retour**, avec une **assertion de taille en chiffre nu**
+- [x] **Étape 4 : les tests d'aller-retour**, avec une **assertion de taille en chiffre nu**
   (`expect(SNAPSHOT_HEADER_BYTES).toBe(10)`) : c'est ce qui attrape un décalage d'octet, pas une
   comparaison à la constante elle-même.
 
@@ -391,7 +391,7 @@ testable qu'en mettant en scène un appelant fautif.
   `RangeError` de `DataView` le ferait passer même sans le contrôle de longueur. Défaut réel de
   l'étape 4.
 
-- [ ] **Étape 5 : commit** — `feat(shared): les messages ZONE et REACTION`
+- [x] **Étape 5 : commit** — `feat(shared): les messages ZONE et REACTION`
 
 ---
 
@@ -399,17 +399,17 @@ testable qu'en mettant en scène un appelant fautif.
 
 **Fichiers :** modifier `back/src/combat.ts`, `back/src/room.ts`, leurs tests
 
-- [ ] **Étape 1 : un projectile élémentaire marque ce qu'il touche.** Dans `resolveProjectileDamage`, après
+- [x] **Étape 1 : un projectile élémentaire marque ce qu'il touche.** Dans `resolveProjectileDamage`, après
   la soustraction : si l'arme porte un élément et que l'ennemi survit, poser la marque.
 
   ⚠️ **Un ennemi qui meurt du même impact n'est pas marqué** — la marque serait posée sur un
   créneau que `kill` va compacter, donc sur une **autre** entité. C'est la classe de défaut la plus
   coûteuse de ce dépôt.
 
-- [ ] **Étape 2 : un ennemi dans une zone est marqué**, et la marque se rafraîchit tant qu'il y
+- [x] **Étape 2 : un ennemi dans une zone est marqué**, et la marque se rafraîchit tant qu'il y
   reste. O(zones × entités) : c'est le coût que la tâche 10 doit mesurer.
 
-- [ ] **Étape 3 : la Braise brûle, le Givre ralentit.** Les dégâts sur la durée s'appliquent au
+- [x] **Étape 3 : la Braise brûle, le Givre ralentit.** Les dégâts sur la durée s'appliquent au
   tick ; le ralentissement multiplie la vitesse dans `Horde.step`.
 
   ⚠️ **Le ralentissement est le premier effet qui touche le DÉPLACEMENT**, donc le contrat de
@@ -442,10 +442,10 @@ testable qu'en mettant en scène un appelant fautif.
   se sent pas. **Si la dérive mesurée à l'étape 4 ci-dessous est mauvaise, c'est ce chemin-là qu'il
   faut prendre**, et le dire, plutôt que de bricoler.
 
-- [ ] **Étape 4 : les tests**, dont un qui **mesure la dérive** entre serveur et client avec du
+- [x] **Étape 4 : les tests**, dont un qui **mesure la dérive** entre serveur et client avec du
   Givre en jeu. Le scénario de `shared/horde.replication.test.ts` est le modèle.
 
-- [ ] **Étape 5 : commit** — `feat(back): marquer, bruler, ralentir`
+- [x] **Étape 5 : commit** — `feat(back): marquer, bruler, ralentir`
 
 ---
 
@@ -453,25 +453,25 @@ testable qu'en mettant en scène un appelant fautif.
 
 **Fichiers :** modifier `back/src/combat.ts`, `back/src/room.ts`, leurs tests
 
-- [ ] **Étape 1 : les quatre déclencheurs** du §6.2 de la spec, et **eux seuls** :
+- [x] **Étape 1 : les quatre déclencheurs** du §6.2 de la spec, et **eux seuls** :
   ennemi marqué + projectile d'un autre élément ; ennemi marqué + entrée dans une zone d'un autre
   élément ; deux zones d'éléments différents qui se recouvrent (**une seule fois, à la création de
   la seconde**) ; et surtout **pas** le même élément, qui rafraîchit la marque.
 
-- [ ] **Étape 2 : la borne d'une réaction par ennemi et par tick.**
+- [x] **Étape 2 : la borne d'une réaction par ennemi et par tick.**
 
   ⚠️ **Ne mets pas en scène « vingt ennemis, une zone » : ça ne prouve rien.** Vingt est aussi le
   compte avec la borne, puisqu'elle est *par ennemi*. Le décor qui distingue les deux cas est
   **plusieurs zones d'éléments alternés au même tick** — 40 réactions sans borne, 20 avec.
 
-- [ ] **Étape 3 : la réaction tue par `REACTION_RADIUS`**, et les morts passent par le `DEATHS`
+- [x] **Étape 3 : la réaction tue par `REACTION_RADIUS`**, et les morts passent par le `DEATHS`
   existant — **aucun chemin de mort parallèle**. Le rejeu de l'étape 3 en dépend.
 
-- [ ] **Étape 4 : le test de non-régression le plus important.** Rejouer
+- [x] **Étape 4 : le test de non-régression le plus important.** Rejouer
   `shared/horde.replication.test.ts` : **les trois chiffres doivent rester à 0,000 px** avec des
   réactions en jeu. C'est le §2 de la spec.
 
-- [ ] **Étape 5 : commit** — `feat(back): le choc thermique`
+- [x] **Étape 5 : commit** — `feat(back): le choc thermique`
 
 ---
 
@@ -481,10 +481,10 @@ testable qu'en mettant en scène un appelant fautif.
 (un commentaire qui promet `synergyCharge: false`), **`back/src/server.test.ts`** — une assertion y
 devient fausse, et un implémenteur qui s'en tiendrait à la liste casserait la suite
 
-- [ ] **Étape 1 : la règle, en une ligne.** À la réaction, comparer `markBy` et le joueur qui
+- [x] **Étape 1 : la règle, en une ligne.** À la réaction, comparer `markBy` et le joueur qui
   déclenche : **différents → une charge**. Même joueur → la réaction a lieu, elle ne rapporte rien.
 
-- [ ] **Étape 2 : le test qui porte le livrable du §13.**
+- [x] **Étape 2 : le test qui porte le livrable du §13.**
 
   ```
   joueur 1 marque Braise, joueur 2 applique Givre  -> la barre monte
@@ -495,7 +495,7 @@ devient fausse, et un implémenteur qui s'en tiendrait à la liste casserait la 
   qui monte à chaque réaction — et c'est exactement le défaut que la spec d'orientation appelle
   « le cœur du projet ».
 
-- [ ] **Étape 3 : la barre plafonne à `SYNERGY_MAX` et n'est jamais dépensée** à cette étape
+- [x] **Étape 3 : la barre plafonne à `SYNERGY_MAX` et n'est jamais dépensée** à cette étape
   (l'ultime est hors périmètre). Le test le dit explicitement, pour qu'on ne prenne pas le plafond
   pour un oubli.
 
@@ -506,7 +506,7 @@ devient fausse, et un implémenteur qui s'en tiendrait à la liste casserait la 
   l'état de la jauge. Un bit asservi à la jauge obligerait le client à connaître le plafond pour
   interpréter le message.
 
-- [ ] **Étape 4 : commit** — `feat(back): le compteur de Synergie`
+- [x] **Étape 4 : commit** — `feat(back): le compteur de Synergie`
 
 ---
 
@@ -514,25 +514,25 @@ devient fausse, et un implémenteur qui s'en tiendrait à la liste casserait la 
 
 **Fichiers :** modifier `front/src/net/client.ts`, `front/src/render/`, leurs tests
 
-- [ ] **Étape 1 : recevoir `ZONE` et `REACTION`**, et **dériver l'expiration des zones** avec la
+- [x] **Étape 1 : recevoir `ZONE` et `REACTION`**, et **dériver l'expiration des zones** avec la
   même constante que le serveur. Aucun message de disparition à attendre.
 
-- [ ] **Étape 2 : la teinte de sprite est COSMÉTIQUE et approximée.** Le client marque ce que ses
+- [x] **Étape 2 : la teinte de sprite est COSMÉTIQUE et approximée.** Le client marque ce que ses
   propres projectiles touchent, et ce qui est dans une zone. **Il peut se tromper, et ça ne coûte
   rien** — la réaction, elle, vient du serveur. Le dire dans le code, sinon quelqu'un « corrigera »
   cette approximation un jour en la rendant autoritaire.
 
-- [ ] **Étape 3 : le rendu**, selon la hiérarchie du §6.6 :
+- [x] **Étape 3 : le rendu**, selon la hiérarchie du §6.6 :
   quad teinté additif pour la zone · teinte de sprite pour l'ennemi marqué (**gratuite** dans le
   batch Pixi) · flash court et large pour la réaction · jauge de Synergie dans le HUD.
 
   ⚠️ **L'état persistant est discret, la réaction est spectaculaire.** Si les ennemis marqués
   brillent en permanence, plus rien ne se lit et le budget de particules part en bruit de fond.
 
-- [ ] **Étape 4 : le rendu se teste sous jsdom** là où il est observable, et l'expiration des zones
+- [x] **Étape 4 : le rendu se teste sous jsdom** là où il est observable, et l'expiration des zones
   se teste tout court. `front/src/ui/draft.test.ts` est le modèle.
 
-- [ ] **Étape 5 : commit** — `feat(front): les zones, les teintes et le flash de reaction`
+- [x] **Étape 5 : commit** — `feat(front): les zones, les teintes et le flash de reaction`
 
 ---
 
@@ -553,22 +553,22 @@ et que chacune a été découverte *après coup* :
 stage.init()` **au niveau module**, donc l'importer dans un test exécute tout le démarrage. Aucun
 test ne peut donc atteindre `renderFrame`, et **sept mutations survivent** rien qu'à la tâche 9.
 
-- [ ] **Étape 1 : séparer le câblage du démarrage.** Extraire de `main.ts` une fonction pure —
+- [x] **Étape 1 : séparer le câblage du démarrage.** Extraire de `main.ts` une fonction pure —
   `composeFrame(state, cibles)` ou équivalent — qui **décide ce qui est dessiné**, sans rien
   instancier. `main.ts` garde le démarrage et l'appelle.
 
   ⚠️ **Ne déplace pas le problème.** Le critère est vérifiable : une mutation qui retire un appel de
   dessin doit rougir. Si elle survit encore, l'extraction n'a rien extrait.
 
-- [ ] **Étape 2 : le test.** Un double de `Stage` qui enregistre ce qu'on lui demande de dessiner, et
+- [x] **Étape 2 : le test.** Un double de `Stage` qui enregistre ce qu'on lui demande de dessiner, et
   une assertion que **chaque calque reçoit son appel** — zones, horde, projectiles, flashs, joueurs,
   orbes, HUD.
 
-- [ ] **Étape 3 : la mutation qui juge.** Retirer chacun des appels, un par un, et vérifier que
+- [x] **Étape 3 : la mutation qui juge.** Retirer chacun des appels, un par un, et vérifier que
   chacun rougit. **C'est la seule mesure qui compte** — les sept survivantes de la tâche 9 doivent
   toutes mourir.
 
-- [ ] **Étape 4 : commit** — `refactor(front): rendre la boucle de rendu testable`
+- [x] **Étape 4 : commit** — `refactor(front): rendre la boucle de rendu testable`
 
 ---
 
@@ -576,22 +576,22 @@ test ne peut donc atteindre `renderFrame`, et **sept mutations survivent** rien 
 
 **Fichiers :** étendre `back/src/draft.integration.test.ts` ou en créer un voisin
 
-- [ ] **Étape 1 : quatre clients réels, sur des sockets réelles.** Le harnais existe déjà
+- [x] **Étape 1 : quatre clients réels, sur des sockets réelles.** Le harnais existe déjà
   (`app.decorate('rooms', registry)`, `buildServer({ roomSeed })`) — le réutiliser, ne pas le
   réinventer. Poser les monstres soi-même : le générateur de vagues est lent **et flaky**.
 
-- [ ] **Étape 2 : ce que le test doit assener**, et pas seulement « ça n'a pas planté » :
+- [x] **Étape 2 : ce que le test doit assener**, et pas seulement « ça n'a pas planté » :
   - une réaction **a eu lieu** — sinon le test ne prouve rien, et c'est le défaut le plus probable ;
   - une réaction **entre deux joueurs charge** la barre ;
   - la **même réaction en solo ne charge rien** ;
   - **deux zones qui se recouvrent réagissent** ;
   - les **trois chiffres de réplication restent à 0,000 px**.
 
-- [ ] **Étape 3 : mesurer le coût.** Étendre `back/bench/slots.bench.ts` ou en écrire un voisin :
+- [x] **Étape 3 : mesurer le coût.** Étendre `back/bench/slots.bench.ts` ou en écrire un voisin :
   pas p95 avec 30 zones vivantes à 1 500 et 4 000 entités. **`ZONE_RADIUS` est le levier**, et le
   tableau des constantes le dit.
 
-- [ ] **Étape 3 bis : borner le trafic des rafraîchissements — trouvé à la tâche 6.**
+- [x] **Étape 3 bis : borner le trafic des rafraîchissements — trouvé à la tâche 6.**
 
   La fusion fait repartir le `bornTick` d'une zone existante. **Ce rafraîchissement doit être
   annoncé**, sinon la zone du client meurt avant celle du serveur. Conséquence non vue à
@@ -621,7 +621,7 @@ test ne peut donc atteindre `renderFrame`, et **sept mutations survivent** rien 
   Le test : entretenir une zone en tirant dessus sans relâche pendant plusieurs vies de zone, et
   **compter les annonces**. Elles doivent croître avec le temps, pas avec la cadence.
 
-- [ ] **Étape 4 : commit** — `test(back): une reaction inter-joueurs charge la barre`
+- [x] **Étape 4 : commit** — `test(back): une reaction inter-joueurs charge la barre`
 
 ---
 
@@ -644,7 +644,7 @@ n'étaient dans aucun plan.
 
 Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une seule apparence.
 
-- [ ] **Étape 1 : la donnée, pas le code.** `Weapon` gagne un descriptif visuel — forme, diamètre,
+- [x] **Étape 1 : la donnée, pas le code.** `Weapon` gagne un descriptif visuel — forme, diamètre,
   teinte, halo, traînée, atténuation. Même motif que tout le reste de `shared/` : une table, l'index
   est l'identifiant, **ajouter une arme reste du contenu**.
 
@@ -652,16 +652,16 @@ Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une
   reconnaissable, et deux armes du même élément doivent se distinguer. L'élément se lit à la zone
   qu'elle laisse et à l'anneau sous l'ennemi (tâche 13) — pas au projectile.
 
-- [ ] **Étape 2 : la traînée.** Un projectile laisse une trace derrière lui. ⚠️ **C'est le poste de
+- [x] **Étape 2 : la traînée.** Un projectile laisse une trace derrière lui. ⚠️ **C'est le poste de
   coût de cette tâche** : `PROJECTILE_CAPACITY` vaut 1024 et une traînée de N segments multiplie les
   quads par N. Mesurer, et borner par construction plutôt que par espoir — le §4.3 de l'orientation
   dit que *« le danger est le VFX, pas les sprites »*.
 
-- [ ] **Étape 3 : la portée se voit.** Le lance-flammes (vie 10 ticks) doit s'éteindre en fondu ;
+- [x] **Étape 3 : la portée se voit.** Le lance-flammes (vie 10 ticks) doit s'éteindre en fondu ;
   l'arc-lourd (40 ticks) doit filer net. **L'atténuation se dérive de `projectileLifeTicks`**, elle
   n'est pas un réglage séparé — sinon les deux dérivent l'un de l'autre.
 
-- [ ] **Étape 4 : commit** — `feat(front): un projectile par arme`
+- [x] **Étape 4 : commit** — `feat(front): un projectile par arme`
 
 ---
 
@@ -672,11 +672,11 @@ Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une
 > *« Je ne vois pas la marque sur les ennemis, fais un anneau sous leurs pieds plutôt que changer
 > leur couleur. »*
 
-- [ ] **Étape 1 : remplacer, pas ajouter.** La teinte de sprite disparaît. `markTint` et le
+- [x] **Étape 1 : remplacer, pas ajouter.** La teinte de sprite disparaît. `markTint` et le
   `color: true` du conteneur de horde partent avec elle — **du code que rien ne lit est du code qui
   ment**.
 
-- [ ] **Étape 2 : l'anneau.** Sous les pieds, teinté par l'élément, sur le calque des zones (le plus
+- [x] **Étape 2 : l'anneau.** Sous les pieds, teinté par l'élément, sur le calque des zones (le plus
   bas) pour qu'il passe sous les créatures.
 
   ⚠️ **Écart assumé au §6.6 de l'orientation, et il coûte.** La hiérarchie y donnait la teinte de
@@ -686,7 +686,7 @@ Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une
 
   **Mesurer, et borner** : au minimum le culling hors caméra, comme `selectZones` le fait déjà.
 
-- [ ] **Étape 3 : commit** — `feat(front): la marque elementaire devient un anneau au sol`
+- [x] **Étape 3 : commit** — `feat(front): la marque elementaire devient un anneau au sol`
 
 ---
 
@@ -708,13 +708,13 @@ Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une
 
 **« La hitbox semble plus basse » n'est pas une impression : elle l'est de 16 px.**
 
-- [ ] **Étape 1 : l'ancre.** Le corps doit se centrer sur la position, puisque **tout le reste y est
+- [x] **Étape 1 : l'ancre.** Le corps doit se centrer sur la position, puisque **tout le reste y est
   centré** — contact, ramassage, séparation, tir. C'est l'ancre qui est fausse, pas les rayons.
 
   ⚠️ **Et l'anneau de la tâche 13 doit être sous les PIEDS**, donc décalé vers le bas du corps, pas
   posé sur la position. Les deux tâches se rencontrent ici.
 
-- [ ] **Étape 2 : le rapport de taille.** Deux leviers, et le plan tranche : **les projectiles
+- [x] **Étape 2 : le rapport de taille.** Deux leviers, et le plan tranche : **les projectiles
   rétrécissent** (tâche 12 leur donne des tailles propres), et la créature gagne un facteur de corps
   **modeste et documenté**.
 
@@ -723,7 +723,7 @@ Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une
   menteuse dans l'autre sens** : le garder petit, et l'écrire dans la doc de `spriteScale` au lieu
   de le glisser dans un nombre.
 
-- [ ] **Étape 3 : commit** — `fix(front): centrer le corps sur la hitbox et revoir l'echelle`
+- [x] **Étape 3 : commit** — `fix(front): centrer le corps sur la hitbox et revoir l'echelle`
 
 ---
 
@@ -747,7 +747,7 @@ tâche 13 dédoublonne les anneaux **par cellule de grille** — au plus un par 
 pour que le compte ne suive pas l'effectif. L'auteur en voit l'artefact : deux ennemis dans la même
 cellule partagent un anneau.
 
-- [ ] **Étape 1 : un anneau par ennemi marqué, la déduplication saute.** L'anneau devient une donnée
+- [x] **Étape 1 : un anneau par ennemi marqué, la déduplication saute.** L'anneau devient une donnée
   de l'ennemi, comme son sprite.
 
   **Le coût redevient donc O(marqués), et il faut le remesurer.** Repère : la horde dessine déjà un
@@ -759,15 +759,15 @@ cellule partagent un anneau.
   un plafond qui dégrade par ordre de créneau se voit comme une disparition aléatoire. C'est
   exactement ce que l'auteur vient de signaler.
 
-- [ ] **Étape 2 : une ellipse, pas un cercle.** Vue de dessus : un disque au sol se projette en
+- [x] **Étape 2 : une ellipse, pas un cercle.** Vue de dessus : un disque au sol se projette en
   ellipse. Aplatir verticalement.
 
-- [ ] **Étape 3 : plus nette et plus fine.** Le trait actuel est un dégradé large. ⚠️ Attention au
+- [x] **Étape 3 : plus nette et plus fine.** Le trait actuel est un dégradé large. ⚠️ Attention au
   piège de la tâche 13 : `MARK_RING_TEXTURE_DIAMETER` valait exactement le diamètre affiché, donc
   l'échelle valait 1 et **toute mutation de l'échelle était indistinguable**. Garder texture et
   affichage à des tailles différentes.
 
-- [ ] **Étape 4 : commit** — `fix(front): un anneau elliptique par ennemi marque`
+- [x] **Étape 4 : commit** — `fix(front): un anneau elliptique par ennemi marque`
 
 ---
 
@@ -777,14 +777,14 @@ cellule partagent un anneau.
 
 > *« Rends les zones au sol plus nettes, en anneau de différent alpha si besoin. »*
 
-- [ ] **Étape 1 : une bordure lisible.** Un disque uniformément diffus ne dit ni où il commence ni où
+- [x] **Étape 1 : une bordure lisible.** Un disque uniformément diffus ne dit ni où il commence ni où
   il finit — or **sa frontière est une règle de jeu** : c'est elle qui décide qui est marqué et où
   deux zones réagissent. Ce que l'œil doit lire, c'est un bord.
 
-- [ ] **Étape 2 : le bord dit la vérité.** Le rayon dessiné doit valoir `ZONE_RADIUS`, dérivé, jamais
+- [x] **Étape 2 : le bord dit la vérité.** Le rayon dessiné doit valoir `ZONE_RADIUS`, dérivé, jamais
   recopié. Une zone qui paraît plus grande qu'elle n'est ment sur une règle.
 
-- [ ] **Étape 3 : commit** — `feat(front): des zones au sol a bord lisible`
+- [x] **Étape 3 : commit** — `feat(front): des zones au sol a bord lisible`
 
 ---
 
@@ -792,9 +792,9 @@ cellule partagent un anneau.
 
 **Fichiers :** modifier `front/src/render/` (orbes), `back/src/combat.ts`, `shared/constants.ts`, leurs tests
 
-- [ ] **Étape 1 : l'orbe plus nette**, même traitement que les zones et les anneaux.
+- [x] **Étape 1 : l'orbe plus nette**, même traitement que les zones et les anneaux.
 
-- [ ] **Étape 2 : l'aimantation.** Une orbe à proximité glisse vers le joueur au lieu d'attendre.
+- [x] **Étape 2 : l'aimantation.** Une orbe à proximité glisse vers le joueur au lieu d'attendre.
 
   ⚠️ **C'est le point risqué de la tâche : l'orbe se met à BOUGER.** Aujourd'hui elle est immobile,
   et son ramassage est arbitré serveur (`resolvePickups`) tandis que le client la dessine à sa
@@ -809,7 +809,7 @@ cellule partagent un anneau.
 
   **Commencer par la 1**, et ne passer à la 2 que si l'écart se voit.
 
-- [ ] **Étape 3 : le débit.** *« Moins d'xp qui tombe ou plus par niveau. »* Deux leviers pour le même
+- [x] **Étape 3 : le débit.** *« Moins d'xp qui tombe ou plus par niveau. »* Deux leviers pour le même
   ressenti :
 
   | Levier | Effet |
@@ -821,7 +821,7 @@ cellule partagent un anneau.
   `XP_PER_ORB`, donc augmenter l'un sans l'autre change le nombre de niveaux, pas la sensation.
   **Ce que l'auteur décrit, c'est le nombre d'objets au sol**, pas la courbe de progression.
 
-- [ ] **Étape 4 : commit** — `feat: des orbes plus rares, plus nettes et aimantees`
+- [x] **Étape 4 : commit** — `feat: des orbes plus rares, plus nettes et aimantees`
 
 ---
 
@@ -831,13 +831,13 @@ cellule partagent un anneau.
 
 > *« Pour les passifs, il faut les afficher en colonne en haut à gauche. »*
 
-- [ ] **Étape 1 : le client connaît déjà l'inventaire.** `GameClient.loadoutOf(playerId)` existe
+- [x] **Étape 1 : le client connaît déjà l'inventaire.** `GameClient.loadoutOf(playerId)` existe
   depuis l'étape 4 et porte armes et passifs empilés. **Rien à ajouter au protocole.**
 
-- [ ] **Étape 2 : la colonne.** Nom, et **le nombre d'exemplaires** — c'est lui qui dit ce qu'on a
+- [x] **Étape 2 : la colonne.** Nom, et **le nombre d'exemplaires** — c'est lui qui dit ce qu'on a
   construit. Un passif pris quatre fois n'est pas un passif pris une fois.
 
-- [ ] **Étape 3 : commit** — `feat(front): la colonne des passifs`
+- [x] **Étape 3 : commit** — `feat(front): la colonne des passifs`
 
 ---
 
@@ -845,21 +845,73 @@ cellule partagent un anneau.
 
 **Fichiers :** modifier `shared/constants.ts`, `front/src/ui/draft.ts`, leurs tests
 
-- [ ] **Étape 1 : `WEAPON_SLOTS` passe de 5 à 4.** `Loadout.canTake` le fait déjà respecter — **ne
+- [x] **Étape 1 : `WEAPON_SLOTS` passe de 5 à 4.** `Loadout.canTake` le fait déjà respecter — **ne
   réécris pas la règle, change le nombre.**
 
   ⚠️ Des tests écrivent peut-être 5 en dur. Les dériver de la constante, ne pas les rafistoler : deux
   tests sont devenus intermittents à la tâche 1 pour avoir recopié `WAVE1_MIN_COUNT`.
 
-- [ ] **Étape 2 : l'élément sur les cartes d'arme.** `Weapon.element` existe depuis la tâche 2 ; la
+- [x] **Étape 2 : l'élément sur les cartes d'arme.** `Weapon.element` existe depuis la tâche 2 ; la
   carte ne l'affiche pas. Le nom seul ne dit pas si l'arme sert la Braise ou le Givre — donc pas si
   elle complète ce qu'un allié a pris, ce qui est **tout le sujet du §6.5**.
 
-- [ ] **Étape 3 : la valeur sur les cartes de passif.** `Passive.magnitude` est le bonus **par
+- [x] **Étape 3 : la valeur sur les cartes de passif.** `Passive.magnitude` est le bonus **par
   carte**, jamais un total — c'est la doc du catalogue, et l'afficher autrement mentirait sur
   l'empilement.
 
-- [ ] **Étape 4 : commit** — `feat(front): les cartes montrent l'element et la valeur`
+- [x] **Étape 4 : commit** — `feat(front): les cartes montrent l'element et la valeur`
+
+---
+
+## Tâche 20 : l'aimantation devient une capture
+
+**Fichiers :** modifier `front/src/render/orb-renderer.ts`, `front/src/net/client.ts`, leurs tests
+
+> *« L'aimantation est plus proche du joueur et attire l'xp jusqu'à lui, même s'il l'éloigne. »*
+
+**Ce que la tâche 17 a livré, et pourquoi ça ne suffit pas.** L'attraction y est une **fonction pure
+de la distance** : l'orbe est dessinée d'autant plus près du joueur qu'il en est proche, et revient
+à sa place s'il s'éloigne. Elle ne le *suit* pas.
+
+C'est cette forme qui donnait la propriété de sûreté : à `ORB_PICKUP_RADIUS` la fraction vaut 1,
+donc à l'instant où le serveur ramasse, l'orbe est dessinée sur le joueur — **écart nul, par
+construction**.
+
+⚠️ **Une capture qui persiste casse cette propriété.** Si l'orbe reste accrochée à un joueur qui
+fuit, elle est dessinée sur lui alors que le serveur, lui, ne l'a pas ramassée — elle est restée où
+elle est tombée. **L'orbe paraîtrait collectée sans que l'expérience arrive.**
+
+### Ce qui la remplace : la capture EST le ramassage
+
+- [x] **Étape 1 : le vol commence quand le serveur ramasse.** Le prédicat ne change pas —
+  `ORB_PICKUP_RADIUS`, arbitré serveur, inchangé. Le client applique **le même prédicat sur les
+  mêmes positions répliquées**, et lance un vol.
+
+  **L'expérience est donc déjà acquise quand le vol commence.** Le vol ne peut plus mentir : il
+  décore un fait accompli. C'est ce qui autorise l'orbe à suivre un joueur qui fuit — elle ne
+  promet rien qui puisse ne pas arriver.
+
+- [x] **Étape 2 : l'orbe suit, et elle arrive.** Le vol vise la position **courante** du joueur à
+  chaque image, pas celle de la capture. Il se termine quand l'orbe l'atteint.
+
+- [x] **Étape 3 : `ORB_MAGNET_RADIUS` disparaît.** Elle valait `2 × ORB_PICKUP_RADIUS`, soit 180 px
+  — l'auteur la veut **plus proche**. Elle n'a plus de raison d'être : le vol commence au rayon de
+  ramassage, donc à 90 px, et il n'y a plus qu'un seul rayon dans le système.
+
+  ⚠️ **Une constante de moins, pas une constante changée.** Deux rayons qui décrivent le même
+  événement finissent par se contredire — ce dépôt l'a déjà vu quatre fois.
+
+- [x] **Étape 4 : le vol vit hors d'`OrbField`.** `PICKUPS` retire l'orbe de la réserve ; une orbe
+  en vol n'y est donc plus. Elle appartient à une collection **cosmétique**, comme
+  `ReactionFlashes` ou `hitFlashes` — même durée de vie en millisecondes, même absence d'arbitrage.
+
+- [x] **Étape 5 : le test qui sépare les deux modèles.** Un joueur qui **s'éloigne** après la
+  capture : l'orbe doit finir **sur lui**, pas revenir à sa place.
+
+  ⚠️ C'est la seule assertion qui distingue une capture d'une attraction par distance. Un test qui
+  vérifie seulement « l'orbe se rapproche » passe avec les deux.
+
+- [x] **Étape 6 : commit** — `feat(front): l'orbe capturee suit le joueur jusqu'a lui`
 
 ---
 
