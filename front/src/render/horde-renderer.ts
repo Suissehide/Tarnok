@@ -444,11 +444,29 @@ export class HordeRenderer {
    * tache 17.2 : deux clips par archetype, choisis par `selectClip` selon
    * `horde.stopped`. Auparavant un seul `#frames` (course uniquement) :
    * l'atlas n'embarquait pas l'attaque.
+   *
+   * ⚠️ **Indexes par IDENTIFIANT d'archetype, donc TROUES** (etape 6a, tache 5) :
+   * l'atlas ne range pas tout le bestiaire, et le boss est l'archetype 19 alors
+   * que les cinq elites qui le precedent n'y sont pas. Une case vide se lit
+   * `undefined`, et `draw` saute l'entite — le meme comportement qu'avant cette
+   * tache pour les six elites.
    */
   #runFrames: Texture[][] = [];
   #attackFrames: Texture[][] = [];
   /** `#scale[archetype]` : voir `spriteScale`/`contentSizePx`, calculee une fois dans `load()`. */
   #scale = new Float32Array(0);
+  /**
+   * Texture posee sur les particules du reservoir a leur creation — remplacee
+   * a chaque image par celle du clip courant (`draw`). N'importe laquelle fait
+   * l'affaire, mais `Particle` en exige une : c'est la premiere que l'atlas
+   * porte, quelle que soit sa place.
+   *
+   * ⚠️ **Lue dans `adoptAtlas`, PAS dans `#ensurePool`.** Elle y valait
+   * `#runFrames[0]?.[0]` — l'archetype 0 en dur, ce qui n'est plus une
+   * hypothese tenable depuis que les indices sont troues : le premier archetype
+   * range pourrait un jour n'etre pas le zero.
+   */
+  #placeholder: Texture | null = null;
   #loaded = false;
 
   /**
@@ -516,19 +534,35 @@ export class HordeRenderer {
             frame: new Rectangle(r.x, r.y, r.w, r.h),
           }),
       );
-    this.#runFrames = manifest.archetypes.map((a) => texturesOf(a.clips.run));
-    this.#attackFrames = manifest.archetypes.map((a) => texturesOf(a.clips.attack));
-    // Un facteur d'echelle par archetype, DERIVE de `PROJECTILE_HIT_RADIUS` —
-    // voir `spriteScale`. Tache 17.1 : a partir du CONTENU non transparent
-    // (`contentSizePx`), pas de la cellule — une cellule de Tiny Swords est en
-    // grande partie vide, et la rapporter a la hitbox rendait le corps de la
-    // creature bien plus petit qu'elle. Les archetypes n'ont pas tous la meme
-    // cellule native (192 a 384 px, `shared/archetypes.ts`), la hitbox de
-    // tir, elle, ne varie pas : chacun doit donc recevoir SON propre facteur.
-    this.#scale = archetypeScales(
-      manifest.archetypes.map((a) => contentSizePx(a.bounds)),
-      PROJECTILE_HIT_RADIUS,
-    );
+    // ⚠️ **Range par `a.id`, jamais par la position dans le tableau** (etape 6a,
+    // tache 5). Tant que l'atlas contenait exactement les quatorze pietailles,
+    // les deux coincidaient ; depuis qu'il embarque le boss (archetype 19) sans
+    // les cinq elites qui le precedent, le manifeste a des TROUS. Lire la
+    // position donnerait au boss les textures du creneau 14 — c'est-a-dire
+    // aucune, et surtout la meme classe de defaut que « les monstres ont change
+    // de sprite » : silencieuse, et fausse pour tout le monde.
+    this.#runFrames = [];
+    this.#attackFrames = [];
+    this.#placeholder = null;
+    const sizesPx: number[] = [];
+    for (const a of manifest.archetypes) {
+      const run = texturesOf(a.clips.run);
+      this.#runFrames[a.id] = run;
+      this.#attackFrames[a.id] = texturesOf(a.clips.attack);
+      this.#placeholder ??= run[0] ?? null;
+      // Un facteur d'echelle par archetype, DERIVE de `PROJECTILE_HIT_RADIUS` —
+      // voir `spriteScale`. Tache 17.1 : a partir du CONTENU non transparent
+      // (`contentSizePx`), pas de la cellule — une cellule de Tiny Swords est en
+      // grande partie vide, et la rapporter a la hitbox rendait le corps de la
+      // creature bien plus petit qu'elle. Les archetypes n'ont pas tous la meme
+      // cellule native (192 a 384 px, `shared/archetypes.ts`), la hitbox de
+      // tir, elle, ne varie pas : chacun doit donc recevoir SON propre facteur.
+      sizesPx[a.id] = contentSizePx(a.bounds);
+    }
+    // Les trous de `sizesPx` valent `undefined` : `archetypeScales` y lit 0,
+    // et `spriteScale` rend alors 1 — une echelle jamais utilisee, puisque
+    // l'entite est sautee faute de textures.
+    this.#scale = archetypeScales(sizesPx, PROJECTILE_HIT_RADIUS);
     this.#loaded = true;
   }
 
@@ -678,7 +712,7 @@ export class HordeRenderer {
   }
 
   #ensurePool(needed: number): void {
-    const first = this.#runFrames[0]?.[0];
+    const first = this.#placeholder;
     if (!first) {
       return;
     }

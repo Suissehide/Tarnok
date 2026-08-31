@@ -31,6 +31,25 @@ cellule, que `front/src/render/horde-renderer.ts` doit mettre a l'echelle de
 `PROJECTILE_HIT_RADIUS` : une cellule de 192 px est en grande partie vide, la
 creature n'en occupe qu'une fraction.
 
+Tache 5 de l'etape 6a : **le BOSS entre dans l'atlas**. Il etait simule, touche,
+marque et tue depuis la tache 3, mais pas dessine — `SOURCES` ne listait que les
+quatorze pietailles, et `HordeRenderer.draw` saute silencieusement un archetype
+sans textures. Le troll (`BOSS_NAME`, `shared/archetypes.ts`) est l'archetype
+19, donc six creneaux apres la derniere pietaille : `SOURCES` porte desormais
+des TROUS explicites (`None`) pour que son index reste son identifiant.
+
+⚠️ **Les cinq autres elites restent des trous, et c'est une MESURE, pas un
+oubli.** Empaqueter les six elites du bestiaire sature l'atlas : leurs cellules
+font 256 a 384 px et leurs clips d'attaque sont longs (jusqu'a 13 images pour le
+panda), soit 9,2 Mpx a ajouter aux 7,0 Mpx de la pietaille — 16,2 Mpx de contenu
+pour 16,8 Mpx d'atlas, que le rangement par etageres ne sait pas placer sans
+perte. Verifie en simulant l'empaquetage : SATURE a six elites, 9,33 Mpx sur
+16,78 avec le seul troll. Les cinq autres n'apparaissent jamais en jeu (le
+generateur ne tire que dans la pietaille), donc les ranger serait payer un
+depassement pour un contenu que personne ne voit. Le jour ou l'etape 6b leur
+donnera un pool tournant, c'est `ATLAS_SIZE` — ou un second atlas — qu'il faudra
+rouvrir, pas cette liste.
+
     python3 tools/build_monster_atlas.py
 
 Sortie : assets/tinyswords/derived/monsters.png et monsters.json
@@ -52,8 +71,16 @@ OUT_DIR = ROOT / "assets" / "tinyswords" / "derived"
 
 ATLAS_SIZE = 4096
 
-# Doit rester d'accord avec la pietaille de shared/archetypes.ts, dans le meme
+# Doit rester d'accord avec `ARCHETYPES` de shared/archetypes.ts, dans le meme
 # ordre : l'index dans cette liste EST l'identifiant d'archetype.
+#
+# ⚠️ **Un `None` est un archetype QUI N'ENTRE PAS DANS L'ATLAS**, pas une case
+# qu'on aurait oublie de remplir. C'est ce qui permet de ranger le boss
+# (archetype 19) sans ranger les cinq elites qui le precedent — voir la note du
+# module — tout en gardant l'invariant « index == identifiant », qui est la
+# convention de tout `shared/`. Le manifeste, lui, ne publie que les archetypes
+# reellement ranges, chacun avec son `id` explicite : c'est ce champ, et pas la
+# position dans le tableau, que `HordeRenderer.adoptAtlas` lit.
 #
 # Troisieme colonne : la planche d'attaque. `_Attack.png` quand le pack en a
 # une ; sinon le clip d'action a distance du pack (`_Throw.png`/`_Shoot.png`)
@@ -89,6 +116,13 @@ SOURCES = [
         "Harpoon Shark/Harpoon Shark_Run.png",
         "Harpoon Shark/Harpoon Shark_Throw.png",
     ),
+    # --- Elites (ARCHETYPES 14 a 19) : seul le boss est range. Voir ci-dessus.
+    None,  # 14 spear-goblin
+    None,  # 15 bear
+    None,  # 16 panda
+    None,  # 17 turtle
+    None,  # 18 minotaur
+    ("troll", "Troll/Troll_Walk.png", "Troll/Troll_Attack.png"),  # 19 — BOSS_NAME
 ]
 
 
@@ -195,7 +229,14 @@ def main() -> None:
     manifest = {"image": "monsters.png", "size": ATLAS_SIZE, "archetypes": []}
     shelf = Shelf()
 
-    for archetype_id, (name, run_relative, attack_relative) in enumerate(SOURCES):
+    for archetype_id, source in enumerate(SOURCES):
+        # Un trou : cet archetype existe dans `ARCHETYPES` mais n'entre pas dans
+        # l'atlas. Rien n'est range, et le manifeste ne le mentionne pas — c'est
+        # `HordeRenderer.draw` qui saute alors silencieusement les entites de cet
+        # archetype, comme il le faisait pour les vingt elites avant cette tache.
+        if source is None:
+            continue
+        name, run_relative, attack_relative = source
         run_sheet = load_sheet(MONSTERS / run_relative)
         attack_sheet = load_sheet(MONSTERS / attack_relative)
         if run_sheet.height != attack_sheet.height:

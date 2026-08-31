@@ -313,32 +313,50 @@ describe("selectClip choisit l'attaque a l'arret, la course sinon", () => {
 const FIXTURE_CELL_PX = 64;
 const FIXTURE_BOUNDS = { x: 12, y: 8, w: 24, h: 40 } as const;
 
-function syntheticAtlas(): { manifest: AtlasManifest; atlas: Texture } {
-  const clip: AtlasClip = {
-    frames: 1,
-    rects: [{ x: 0, y: 0, w: FIXTURE_CELL_PX, h: FIXTURE_CELL_PX }],
-  };
+/**
+ * Un atlas d'UN seul archetype, range a l'identifiant demande.
+ *
+ * ⚠️ **`id` est un PARAMETRE, et c'est le point** (etape 6a, tache 5) : depuis
+ * que l'atlas embarque le boss (archetype 19) sans les cinq elites qui le
+ * precedent, le manifeste a des TROUS et la position dans son tableau n'est
+ * plus l'identifiant. Un decor qui ne sait ranger qu'a l'index 0 ne distingue
+ * pas les deux lectures.
+ */
+/**
+ * ⚠️ **Les deux clips occupent des rectangles DIFFERENTS de l'atlas**, et c'est
+ * ce qui rend le choix de `selectClip` observable sur la particule dessinee :
+ * tant que la course et l'attaque partageaient le meme rectangle, `draw`
+ * pouvait lire l'un pour l'autre sans qu'aucune assertion ne bouge.
+ */
+const FIXTURE_RUN_X = 0;
+const FIXTURE_ATTACK_X = 64;
+
+function clipAt(x: number): AtlasClip {
+  return { frames: 1, rects: [{ x, y: 0, w: FIXTURE_CELL_PX, h: FIXTURE_CELL_PX }] };
+}
+
+function syntheticAtlas(id = 0): { manifest: AtlasManifest; atlas: Texture } {
   return {
     manifest: {
       image: 'atlas.png',
-      size: 64,
+      size: 128,
       archetypes: [
         {
-          id: 0,
+          id,
           name: 'synthetique',
           cell: FIXTURE_CELL_PX,
           bounds: { ...FIXTURE_BOUNDS },
-          clips: { run: clip, attack: clip },
+          clips: { run: clipAt(FIXTURE_RUN_X), attack: clipAt(FIXTURE_ATTACK_X) },
         },
       ],
     },
-    atlas: new Texture({ source: new TextureSource({ width: 64, height: 64 }) }),
+    atlas: new Texture({ source: new TextureSource({ width: 128, height: 64 }) }),
   };
 }
 
-function drawnParticles(horde: Horde): Particle[] {
+function drawnParticles(horde: Horde, atlasId = 0): Particle[] {
   const renderer = new HordeRenderer('/assets-de-test');
-  const { manifest, atlas } = syntheticAtlas();
+  const { manifest, atlas } = syntheticAtlas(atlasId);
   renderer.adoptAtlas(manifest, atlas);
 
   const world = new Container();
@@ -351,13 +369,13 @@ function drawnParticles(horde: Horde): Particle[] {
   return [...(container.particleChildren as Particle[])];
 }
 
-function twoEnemies(): Horde {
+function twoEnemies(archetype = 0): Horde {
   const horde = new Horde(4);
   const order: WaveOrder = {
     waveId: 1,
     spawnTick: 0,
     seed: 3,
-    archetype: 0,
+    archetype,
     formation: FORMATION.SCATTER,
     anchorX: 3000,
     anchorY: 3000,
@@ -380,6 +398,95 @@ describe('HordeRenderer.draw — ce que le corps de draw pose vraiment', () => {
   it('dessine une particule par ennemi visible', () => {
     const horde = twoEnemies();
     expect(drawnParticles(horde)).toHaveLength(2);
+  });
+});
+
+/**
+ * **Le manifeste est indexe par IDENTIFIANT, jamais par position** (etape 6a,
+ * tache 5).
+ *
+ * L'atlas embarque desormais le BOSS — archetype 19 — mais pas les cinq elites
+ * qui le precedent : les ranger toutes les six sature les 16,8 Mpx d'un atlas
+ * de 4096 (mesure dans `tools/build_monster_atlas.py`). `SOURCES` porte donc
+ * des trous, et le manifeste ne liste que ce qui est reellement range.
+ *
+ * ⚠️ **La mutation que ce bloc tue est SILENCIEUSE et generale.** Lire la
+ * position du tableau au lieu de `a.id` ne leve rien : elle donne au premier
+ * archetype range les textures du creneau 0, au deuxieme celles du creneau 1,
+ * et ainsi de suite. Le symptome n'est pas une erreur, c'est *« les monstres
+ * ont change de sprite »* — le meme defaut, exactement, qu'inserer une ligne au
+ * mauvais endroit dans `SOURCES`.
+ */
+/**
+ * Tache 17.2 : `draw` doit LIRE le clip que `selectClip` choisit. La fonction
+ * elle-meme est gardee plus haut, purement ; ce qui manquait, c'est le CABLAGE
+ * — que le clip d'attaque range par `adoptAtlas` soit bien celui que `draw`
+ * pose sur la particule d'une entite arretee. Une mutation qui rangeait les
+ * clips d'attaque a la POSITION du manifeste plutot qu'a l'identifiant
+ * d'archetype survivait sans ce bloc.
+ */
+describe('HordeRenderer.draw — le clip pose suit l etat d arret', () => {
+  it('pose une image du clip de COURSE quand l entite avance', () => {
+    const horde = twoEnemies();
+    const particule = particleOf(drawnParticles(horde), horde, 0);
+    expect(particule.texture.frame.x).toBe(FIXTURE_RUN_X);
+  });
+
+  it('pose une image du clip d ATTAQUE quand l entite est arretee', () => {
+    const horde = twoEnemies();
+    horde.stopped[0] = 1;
+    horde.stopped[1] = 1;
+    const particule = particleOf(drawnParticles(horde), horde, 0);
+    expect(particule.texture.frame.x).toBe(FIXTURE_ATTACK_X);
+  });
+});
+
+describe('adoptAtlas range par identifiant d archetype, pas par position', () => {
+  it('dessine un archetype range loin dans le manifeste, seul dans sa liste', () => {
+    const horde = twoEnemies(BOSS_ARCHETYPE);
+    expect(drawnParticles(horde, BOSS_ARCHETYPE)).toHaveLength(2);
+  });
+
+  /**
+   * **La moitie basse** : sans elle, un `adoptAtlas` qui donnerait ses textures
+   * a TOUS les archetypes passerait le test ci-dessus. Un archetype absent du
+   * manifeste ne doit rien dessiner — c'est le comportement qui a laisse le
+   * boss invisible jusqu'a cette tache, et il doit rester vrai pour les cinq
+   * elites qui n'y sont pas.
+   */
+  it('ne dessine rien pour un archetype absent du manifeste', () => {
+    const horde = twoEnemies(0);
+    expect(drawnParticles(horde, BOSS_ARCHETYPE)).toHaveLength(0);
+  });
+
+  /**
+   * Le clip d'attaque est range dans un SECOND tableau : le ranger a la
+   * position ne se voit que sur une entite arretee, jamais sur une entite qui
+   * court.
+   */
+  it('donne au boss son clip d attaque, range au meme identifiant', () => {
+    const horde = twoEnemies(BOSS_ARCHETYPE);
+    horde.stopped[0] = 1;
+    horde.stopped[1] = 1;
+    const particule = particleOf(drawnParticles(horde, BOSS_ARCHETYPE), horde, 0);
+    expect(particule.texture.frame.x).toBe(FIXTURE_ATTACK_X);
+  });
+
+  /**
+   * L'echelle suit la meme indexation que les textures : la lire a la position
+   * donnerait au boss celle de l'archetype 0 — un corps trois fois trop petit,
+   * sans qu'aucune erreur ne le signale.
+   */
+  it('donne au boss l echelle calculee pour SON identifiant', () => {
+    const horde = twoEnemies(BOSS_ARCHETYPE);
+    const particule = particleOf(drawnParticles(horde, BOSS_ARCHETYPE), horde, 0);
+    const attendue = spriteScale(
+      contentSizePx(FIXTURE_BOUNDS),
+      PROJECTILE_HIT_RADIUS,
+      BOSS_BODY_SCALE,
+    );
+
+    expect(particule.scaleY).toBeCloseTo(attendue, 5);
   });
 });
 

@@ -54,13 +54,18 @@ export interface Archetype {
    * manuelle** (tache 12) : si le boss se tire comme un mur invisible, la
    * reponse est une hitbox par archetype, pas un facteur plus petit.
    *
-   * ⚠️ **Cote rendu, et il faut le dire ici** : l'atlas de `tools/` n'embarque
-   * que les quatorze pietailles (`SOURCES`). Les elites, dont le boss, n'y
-   * sont pas, et `HordeRenderer.draw` saute silencieusement un archetype sans
-   * textures. **Le boss est donc simule, touche, marque et tue, mais pas encore
-   * DESSINE** — c'est la tache 5 (la barre de vie) qui a besoin de son sprite
-   * et qui devra ajouter les elites a l'atlas puis redeposer le derive sur
-   * MinIO. Signale, pas decouvert.
+   * ⚠️ **Cote rendu — RESOLU a la tache 5, et il faut dire jusqu'ou.** L'atlas
+   * de `tools/` n'embarquait que les quatorze pietailles (`SOURCES`), et
+   * `HordeRenderer.draw` saute silencieusement un archetype sans textures : le
+   * boss etait donc simule, touche, marque et tue, mais pas DESSINE. La tache 5
+   * y a ajoute le troll — **lui seul**. Ranger les six elites sature l'atlas
+   * (16,2 Mpx de contenu pour 16,8 Mpx disponibles ; mesure dans
+   * `tools/build_monster_atlas.py`), et les cinq autres n'apparaissent jamais
+   * en jeu. `SOURCES` porte desormais des trous explicites pour que son index
+   * reste l'identifiant d'archetype, et le manifeste publie un `id` que
+   * `HordeRenderer.adoptAtlas` lit — jamais la position dans le tableau. Le
+   * jour ou l'etape 6b fera tourner un pool d'elites, c'est `ATLAS_SIZE` qu'il
+   * faudra rouvrir.
    */
   bodyScale: number;
 }

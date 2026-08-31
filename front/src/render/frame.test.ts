@@ -5,6 +5,7 @@ import { ZoneField } from '@shared/zones';
 import { describe, expect, it } from 'vitest';
 
 import {
+  type BossVitals,
   DerivedOrbs,
   HitFlashes,
   OrbFlights,
@@ -61,6 +62,9 @@ class RecordingStage implements FrameStage {
   drawReactionFlashes(...args: unknown[]): void {
     this.#record('flashs-reaction', ...args);
   }
+  drawBossBar(...args: unknown[]): void {
+    this.#record('barre-boss', ...args);
+  }
   draw(...args: unknown[]): void {
     this.#record('joueurs', ...args);
   }
@@ -98,6 +102,11 @@ class RecordingClient implements FrameClient {
    * cet ecart, passer `now` la ou le tick est attendu resterait indetectable.
    */
   readonly hordeTick = 137;
+  /**
+   * Un boss reconnaissable, et surtout DISTINCT de la horde : `drawBossBar`
+   * recoit les deux, et les intervertir ou n'en passer qu'un doit se voir.
+   */
+  readonly boss: BossVitals | null = { id: 8193, hp: 4200, maxHp: 6000 };
   readonly updates: { now: number; dt: number }[] = [];
 
   update(now: number, dt: number): RenderState {
@@ -202,6 +211,18 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(stage.argsOf('flashs-reaction')).toEqual([client.reactionFlashes, NOW]);
   });
 
+  /**
+   * ⚠️ **Les DEUX arguments** (etape 6a, tache 5) : la horde porte la POSITION
+   * du boss, le snapshot porte ses PV, et aucune des deux ne suffit — voir
+   * `BossBarRenderer.draw`. Un calque qui ne recevrait que le boss ne saurait
+   * pas ou le dessiner ; un calque qui ne recevrait que la horde n'aurait
+   * aucune fraction a remplir.
+   */
+  it('dessine la barre de vie du boss, avec la horde ET le boss du snapshot', () => {
+    const { stage, client } = compose();
+    expect(stage.argsOf('barre-boss')).toEqual([client.horde, client.boss]);
+  });
+
   it('dessine les joueurs et recentre la camera, avec l etat rendu par le client', () => {
     const { stage } = compose();
     expect(stage.argsOf('joueurs')).toEqual([STATE]);
@@ -236,6 +257,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'projectiles',
       'flashs-impact',
       'flashs-reaction',
+      'barre-boss',
       'joueurs',
     ]);
   });

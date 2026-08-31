@@ -3,6 +3,7 @@ import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
 
 import type {
+  BossVitals,
   DerivedOrbs,
   HitFlashes,
   OrbFlights,
@@ -61,6 +62,12 @@ export interface FrameClient {
    * confondre est une mutation a part entiere, et le test la tue.
    */
   readonly hordeTick: number;
+  /**
+   * Le boss vivant, ou `null` — voir `GameClient.boss`. Il n'est pas dans
+   * `RenderState` parce qu'il n'est ni predit ni interpole : c'est une donnee
+   * d'en-tete de snapshot, lue telle quelle.
+   */
+  readonly boss: BossVitals | null;
 }
 
 /**
@@ -92,6 +99,12 @@ export interface FrameStage {
   drawProjectiles(projectiles: Projectiles): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
+  /**
+   * La barre de vie du boss (etape 6a, tache 5). Elle a besoin des DEUX : la
+   * horde pour la position, le snapshot pour les PV — voir
+   * `BossBarRenderer.draw`.
+   */
+  drawBossBar(horde: Horde, boss: BossVitals | null): void;
   /** Les carres des joueurs et la camera — voir `Stage.draw`. */
   draw(state: RenderState): void;
 }
@@ -111,8 +124,9 @@ export interface FrameScreens {
  *
  * ⚠️ **L'ORDRE EST LE §6.6.** Les zones au sol en premier (le calque le plus
  * bas), puis les anneaux de marque qui s'y posent, le flash de reaction en
- * dernier des effets de monde, puis les carres des joueurs et la camera
- * (`draw`). Le meme ordre que l'attache des calques dans `Stage.composeWorld`.
+ * dernier des effets de monde, la barre de vie du boss par-dessus eux, puis les
+ * carres des joueurs et la camera (`draw`). Le meme ordre que l'attache des
+ * calques dans `Stage.composeWorld`.
  *
  * `now` est l'horloge MURALE (animations, flashs) et `client.hordeTick` le
  * tick de simulation (zones, marques) : les deux ne sont pas interchangeables.
@@ -135,6 +149,9 @@ export function composeFrame(
   stage.drawProjectiles(client.projectiles);
   stage.drawImpactFlashes(client.hitFlashes, now);
   stage.drawReactionFlashes(client.reactionFlashes, now);
+  // Au-dessus de tous les effets de monde : c'est une LECTURE, et une lecture
+  // qu'un flash ne doit pas masquer au moment ou elle compte le plus.
+  stage.drawBossBar(client.horde, client.boss);
   screens.updateHud(state);
   screens.updateDraft();
   stage.draw(state);

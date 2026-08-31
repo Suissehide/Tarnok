@@ -83,6 +83,61 @@ export interface RenderState {
   players: PlayerSnapshot[];
 }
 
+/**
+ * Ce que ce client sait du boss vivant : ce que le `SNAPSHOT` transporte
+ * (identite, PV courants — tache 4 de l'etape 6a) **plus le maximum qu'il lui a
+ * vu**, qui ne voyage pas.
+ *
+ * ⚠️ **Le maximum est OBSERVE, pas recu, et il ne peut pas etre derive.** Une
+ * barre a besoin d'une fraction, donc d'un total, et le client n'a aucun moyen
+ * de le calculer : `bossHp(k, joueurs)` demande le palier `k`, qui ne voyage
+ * NULLE PART — ni dans `SNAPSHOT`, ni dans l'ordre de vague de 19 octets. C'est
+ * une decision de la tache 2, assumee : l'echelle de palier est appliquee cote
+ * serveur seul (`Room#step`, `back/src/room.ts`), et `Horde.spawn` pose de son
+ * cote les PV bruts de l'archetype, que personne cote client ne lit.
+ *
+ * **Ce que ca coute, dit franchement** : un client qui rejoint un salon PENDANT
+ * un combat de boss prend pour maximum les PV qu'il voit en arrivant. Sa barre
+ * demarre donc pleine et se vide correctement ensuite — l'evolution est juste,
+ * le point de depart est faux, et rien a l'ecran ne ment sur autre chose. La
+ * seule alternative serait de faire voyager le total, soit quatre octets par
+ * tick pour une valeur qui ne bouge qu'a l'apparition du boss — un choix qui
+ * appartient au protocole (tache 4), pas au rendu.
+ */
+export interface BossVitals {
+  readonly id: number;
+  /** PV courants, tels que le dernier snapshot les porte. */
+  readonly hp: number;
+  /** Le plus grand nombre de PV que ce client ait vu a CE boss. Voir ci-dessus. */
+  readonly maxHp: number;
+}
+
+/**
+ * Met a jour ce qu'on sait du boss a partir de ce que le snapshot en dit.
+ * PURE, donc testable sans WebSocket — meme motif que `orbFlightFraction` et
+ * `hudInfo`.
+ *
+ * ⚠️ **Le changement d'IDENTITE remet le maximum a zero**, et c'est la seule
+ * chose qui le remette : le boss du palier 2 a plus de PV que celui du palier 1
+ * (`hpScale`), donc garder l'ancien maximum afficherait une barre pleine a 80 %
+ * des l'apparition. La sentinelle est sur l'identite, jamais sur les PV — un
+ * boss a 0 PV est un boss, il meurt au tick suivant par `DEATHS` (voir
+ * `NO_BOSS_ID` dans `shared/protocol.ts`), et le lire comme une absence ferait
+ * disparaitre sa barre juste avant sa mort.
+ */
+export function trackBoss(
+  previous: BossVitals | null,
+  seen: { id: number; hp: number } | null,
+): BossVitals | null {
+  if (seen === null) {
+    return null;
+  }
+  if (previous === null || previous.id !== seen.id) {
+    return { id: seen.id, hp: seen.hp, maxHp: seen.hp };
+  }
+  return { id: seen.id, hp: seen.hp, maxHp: Math.max(previous.maxHp, seen.hp) };
+}
+
 export type ConnectionStatus = 'connecting' | 'open' | 'closed';
 
 /**
@@ -611,6 +666,12 @@ export class GameClient {
    */
   #teamSynergy = 0;
   /**
+   * Le boss vivant, tel que le dernier snapshot le porte — `null` quand il n'y
+   * en a pas. Donnee d'equipe comme `xp` et `synergy` : elle est dans l'en-tete
+   * du snapshot, pas dans un bloc joueur. Voir `BossVitals` et `trackBoss`.
+   */
+  #boss: BossVitals | null = null;
+  /**
    * Niveau de l'equipe, tel que porte par le dernier `LEVEL_UP` (ou `RUN_OVER`
    * au bilan). Ne peut PAS se deriver de `#teamXp` seul : `xp` est remis a
    * l'excedent apres chaque niveau (`Room#gainXp`), donc la valeur cumulee
@@ -948,6 +1009,19 @@ export class GameClient {
     return this.#teamSynergy;
   }
 
+  /**
+   * Le boss vivant, ou `null` — ce que la barre de vie lit a chaque image
+   * (`BossBarRenderer.draw`, via `composeFrame`).
+   *
+   * Un getter et pas un champ de `RenderState` : `RenderState` est ce que la
+   * PREDICTION produit (positions predites et interpolees), et le boss n'est
+   * predit ni interpole. Meme place que `hordeTick`, `zones` ou `orbs`, lus eux
+   * aussi directement sur le client par la boucle de rendu.
+   */
+  get boss(): BossVitals | null {
+    return this.#boss;
+  }
+
   connect(): void {
     this.#setStatus('connecting');
     const ws = new WebSocket(this.url);
@@ -1261,6 +1335,10 @@ export class GameClient {
     // le snapshot entier et pas par un bloc joueur, donc lue a chaque snapshot
     // meme quand `mine` reste introuvable ci-dessous.
     this.#teamSynergy = msg.synergy;
+    // Meme raison, une troisieme fois : le boss est dans l'EN-TETE du snapshot,
+    // pas dans un bloc joueur (§1.1 de la spec — il est UN). On le lit donc
+    // avant le `return` ci-dessous, qui ne concerne que le bloc du joueur local.
+    this.#boss = trackBoss(this.#boss, msg.boss);
 
     const mine =
       this.#localId === null ? undefined : msg.players.find((p) => p.id === this.#localId);

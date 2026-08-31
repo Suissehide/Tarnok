@@ -54,6 +54,7 @@ import {
   ORB_FLIGHT_LIFETIME_MS,
   OrbFlights,
   REACTION_FLASH_LIFETIME_MS,
+  trackBoss,
 } from './client';
 
 /**
@@ -267,6 +268,137 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
     const state = client.update(0, 0);
 
     expect(state.xp).toBe(777);
+  });
+});
+
+/**
+ * La vie du boss, telle que le client la retient (etape 6a, tache 5).
+ *
+ * ⚠️ **Le maximum est OBSERVE, jamais recu** : le palier ne voyage nulle part,
+ * donc `bossHp(k, joueurs)` est hors de portee du client — voir `BossVitals`.
+ * `trackBoss` est pure, donc ces assertions n'ouvrent aucun WebSocket.
+ */
+describe('trackBoss — les PV du boss et le maximum que ce client lui a vu', () => {
+  it('prend le premier releve pour maximum', () => {
+    expect(trackBoss(null, { id: 8193, hp: 6000 })).toEqual({ id: 8193, hp: 6000, maxHp: 6000 });
+  });
+
+  it('garde le maximum pendant que les PV descendent', () => {
+    const debut = trackBoss(null, { id: 8193, hp: 6000 });
+    const apres = trackBoss(debut, { id: 8193, hp: 2400 });
+    expect(apres).toEqual({ id: 8193, hp: 2400, maxHp: 6000 });
+  });
+
+  /**
+   * ⚠️ **Le changement d'IDENTITE remet le maximum a zero, et rien d'autre.**
+   *
+   * ⚠️ **Le decor est un boss PLUS PETIT que le precedent, et ce n'est pas un
+   * caprice** : la premiere version de ce test faisait apparaitre un boss de
+   * 6 720 PV apres un de 6 000, ou `Math.max(ancien, nouveau)` rend deja la
+   * bonne reponse — la mutation « ne jamais reinitialiser sur un nouvel
+   * identifiant » y SURVIVAIT. C'est la « fixture qui masque », neuf fois dans
+   * ce depot.
+   *
+   * Et le cas est reel : `bossHp` suit le palier ET le nombre de joueurs
+   * (tache 3 bis). Un joueur qui se deconnecte entre deux paliers fait
+   * apparaitre un boss moins gros que le precedent — 1 680 PV pour un joueur
+   * seul au palier 1, contre 6 000 pour quatre au palier 0. Sans la remise a
+   * zero, sa barre naitrait au quart pleine.
+   */
+  it('repart d un maximum neuf quand un autre boss apparait, meme plus petit', () => {
+    const premier = trackBoss(null, { id: 8193, hp: 6000 });
+    const suivant = trackBoss(premier, { id: 12289, hp: 1680 });
+    expect(suivant).toEqual({ id: 12289, hp: 1680, maxHp: 1680 });
+  });
+
+  /**
+   * ⚠️ **La sentinelle est sur l'IDENTITE, pas sur les PV** (`NO_BOSS_ID`,
+   * `shared/protocol.ts`) : un boss a 0 PV est un boss — il meurt au tick
+   * suivant, par `DEATHS`, comme tout le monde. Le lire comme une absence
+   * ferait disparaitre sa barre juste avant sa mort.
+   */
+  it('garde un boss a zero PV, et n oublie que sur une absence', () => {
+    const vivant = trackBoss(null, { id: 8193, hp: 6000 });
+    expect(trackBoss(vivant, { id: 8193, hp: 0 })).toEqual({ id: 8193, hp: 0, maxHp: 6000 });
+    expect(trackBoss(vivant, null)).toBeNull();
+  });
+
+  it('rend null tant qu aucun boss n est en jeu', () => {
+    expect(trackBoss(null, null)).toBeNull();
+  });
+});
+
+describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
+  /**
+   * Le decor sans boss : `encodeSnapshot` met `NO_BOSS_ID` quand on ne lui en
+   * donne pas — c'est la tache 4 qui l'a pose.
+   */
+  it('n a pas de boss tant que le snapshot n en porte pas', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }]),
+    });
+
+    expect(client.boss).toBeNull();
+  });
+
+  /**
+   * ⚠️ **Lu AVANT le `return` du bloc joueur local.** Le boss est dans
+   * l'EN-TETE du snapshot, comme `xp` et `synergy` : un client qui ne se voit
+   * pas encore dans la liste des joueurs (premiers ticks apres le WELCOME, ou
+   * salon rejoint en cours) doit quand meme voir le boss. Ce decor n'envoie
+   * DELIBEREMENT aucun bloc pour le joueur 1.
+   */
+  it('lit le boss meme quand le snapshot ne porte pas le bloc du joueur local', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [{ id: 2, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }], {
+        id: 8193,
+        hp: 6000,
+      }),
+    });
+
+    expect(client.boss).toEqual({ id: 8193, hp: 6000, maxHp: 6000 });
+  });
+
+  it('suit ses PV d un snapshot a l autre en gardant le maximum vu', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    const joueurs = [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }];
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, joueurs, { id: 8193, hp: 6000 }),
+    });
+    socket.emit('message', {
+      data: encodeSnapshot(1, 0, 0, joueurs, { id: 8193, hp: 1800 }),
+    });
+
+    expect(client.boss).toEqual({ id: 8193, hp: 1800, maxHp: 6000 });
+  });
+
+  it('oublie le boss des que le snapshot n en porte plus', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    const joueurs = [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0 }];
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, joueurs, { id: 8193, hp: 6000 }),
+    });
+    socket.emit('message', { data: encodeSnapshot(1, 0, 0, joueurs) });
+
+    expect(client.boss).toBeNull();
   });
 });
 

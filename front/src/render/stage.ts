@@ -5,6 +5,7 @@ import type { ZoneField } from '@shared/zones';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type {
+  BossVitals,
   DerivedOrbs,
   HitFlashes,
   ObstacleMap,
@@ -15,6 +16,7 @@ import type {
   RunOverSummary,
 } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
+import { BossBarRenderer } from './boss-bar-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
 import { OrbRenderer } from './orb-renderer';
@@ -69,6 +71,7 @@ export class Stage {
   readonly #projectiles = new ProjectileRenderer();
   readonly #impactFlashes = new ImpactFlashRenderer();
   readonly #reactionFlashes = new ReactionFlashRenderer();
+  readonly #bossBar = new BossBarRenderer();
   /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
   #obstaclesDrawn = false;
 
@@ -87,6 +90,10 @@ export class Stage {
    * posent SOUS les pieds des creatures, donc ils doivent passer sous elles.
    * Au-dessus des zones, parce qu'ils marquent un ennemi individuel sur le sol
    * que la zone vient de teindre en grand.
+   *
+   * ⚠️ **La barre du boss EN DERNIER** (etape 6a, tache 5) : c'est une lecture,
+   * pas un effet, et aucun flash ne doit la masquer a l'instant ou l'on regarde
+   * si le boss va tomber.
    */
   readonly #layers: readonly SceneLayer[] = [
     this.#zones,
@@ -96,6 +103,7 @@ export class Stage {
     this.#projectiles,
     this.#impactFlashes,
     this.#reactionFlashes,
+    this.#bossBar,
   ];
 
   /**
@@ -111,6 +119,7 @@ export class Stage {
     this.#projectiles,
     this.#impactFlashes,
     this.#reactionFlashes,
+    this.#bossBar,
   ];
 
   async init(parent: HTMLElement): Promise<void> {
@@ -325,6 +334,15 @@ export class Stage {
   /** Meme horloge murale que `drawImpactFlashes` — voir `ReactionFlashRenderer`. */
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void {
     this.#reactionFlashes.draw(flashes, nowMs);
+  }
+
+  /**
+   * La barre de vie du boss (etape 6a, tache 5). Ni vue ni horloge : elle ne
+   * cadre rien (il n'y a qu'un boss, donc deux quads au pire) et n'anime rien —
+   * elle suit une position et une fraction de PV. Voir `BossBarRenderer.draw`.
+   */
+  drawBossBar(horde: Horde, boss: BossVitals | null): void {
+    this.#bossBar.draw(horde, boss);
   }
 
   destroy(): void {

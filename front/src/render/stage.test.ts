@@ -187,14 +187,14 @@ function stubCanvas2d(): void {
 describe('Stage.composeWorld — chaque calque attache ET charge', () => {
   beforeAll(stubCanvas2d);
 
-  it('attache les sept calques du monde', () => {
+  it('attache les huit calques du monde', () => {
     const world = new Container();
     new Stage().composeWorld(world);
 
     // Zones, ANNEAUX DE MARQUE (tache 13), orbes, horde, projectiles, flashs
-    // d'impact, flashs de reaction : sept, et un calque oublie est un calque
-    // invisible.
-    expect(world.children).toHaveLength(7);
+    // d'impact, flashs de reaction, BARRE DU BOSS (etape 6a, tache 5) : huit,
+    // et un calque oublie est un calque invisible.
+    expect(world.children).toHaveLength(8);
   });
 
   it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {
@@ -202,15 +202,24 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     stage.composeWorld(new Container());
 
     // Dans l'ordre d'affichage : zones, anneaux, orbes, HORDE, projectiles,
-    // flashs d'impact, flashs de reaction. Seule la horde reste `false` — son
-    // atlas se fetch, et `init` le charge a part avec son propre rattrapage
-    // d'echec.
-    expect(stage.layersLoaded).toEqual([true, true, true, false, true, true, true]);
+    // flashs d'impact, flashs de reaction, barre du boss. Seule la horde reste
+    // `false` — son atlas se fetch, et `init` le charge a part avec son propre
+    // rattrapage d'echec.
+    expect(stage.layersLoaded).toEqual([true, true, true, false, true, true, true, true]);
   });
 
   it('ne charge rien tant que le monde n a pas ete compose', () => {
     // La moitie basse de la mutation : sans elle, un `layersLoaded` qui
     // rendrait `true` partout passerait le test precedent sans rien garder.
-    expect(new Stage().layersLoaded).toEqual([false, false, false, false, false, false, false]);
+    expect(new Stage().layersLoaded).toEqual([
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
   });
 });
