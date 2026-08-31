@@ -146,6 +146,18 @@ img,
 }
 
 /*
+ * Une ligne de la colonne des passifs (tache 18) : « nom ×N ».
+ *
+ * Tabulaire pour les chiffres, parce que le compte est ce qu'on relit d'une
+ * image a l'autre : des « ×1 » et « ×11 » de largeurs differentes feraient
+ * danser la colonne a chaque carte prise.
+ */
+.hud-passive {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/*
  * L'ecran de draft (tache 10 — §4.1, §4.2 et §7.2 de la spec de l'etape 4).
  *
  * Deux choses seulement doivent se LIRE ici, et aucune n'est du decor :

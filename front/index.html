@@ -83,6 +83,28 @@
         </div>
 
         <!--
+          Tache 18 : la colonne des passifs, en haut a gauche.
+
+          ⚠️ **Le NOMBRE D'EXEMPLAIRES, pas seulement le nom.** Un passif pris
+          quatre fois n'est pas un passif pris une fois : tout s'empile et rien
+          ne monte de niveau (modele Risk of Rain, §3.3 de la spec de l'etape
+          4), donc c'est le compte qui dit ce qu'on a construit. Une liste de
+          noms seuls decrirait quatre builds differents de la meme facon.
+
+          Cachee tant que rien n'est drafte (`ui/hud.ts` bascule `hidden`) : un
+          cadre vide au demarrage n'apprend rien et mange le coin de l'ecran.
+          Meme registre visuel que le readout ci-dessus, et pour la meme raison
+          — les bordures 9-slices de `.ts-panel` font 32 px.
+        -->
+        <div
+          id="hud-passives"
+          class="mt-2 hidden flex-col gap-0.5 rounded border border-forge-600 bg-forge-800/90 px-3 py-2 text-sm text-ember-400"
+        >
+          <span class="text-[10px] tracking-[0.2em] text-forge-600">PASSIFS</span>
+          <div id="hud-passive-list" class="flex flex-col gap-0.5"></div>
+        </div>
+
+        <!--
           Tache 24 : indication minimale du gel de montee de niveau — l'etalage
           de cartes proprement dit arrive a l'etape 4, mais deux secondes ou
           plus rien ne bouge, sans un mot d'explication a l'ecran, se lisent

@@ -1,4 +1,6 @@
 import { SYNERGY_MAX } from '@shared/constants';
+import type { Loadout } from '@shared/loadout';
+import { PASSIVES } from '@shared/passives';
 
 import type { HudInfo } from '../render/stage';
 
@@ -51,6 +53,98 @@ export function paintSynergy(fill: HTMLElement, label: HTMLElement, synergy: num
 }
 
 /**
+ * Une ligne de la colonne des passifs : ce qu'on a pris, et **combien de
+ * fois**.
+ *
+ * ⚠️ **`stacks` n'est pas une decoration.** Rien ne monte de niveau dans ce
+ * jeu : chaque carte s'empile et ajoute une fois sa `magnitude` (§3.3 de la
+ * spec de l'etape 4). « vitalite » pris quatre fois et « vitalite » pris une
+ * fois sont deux builds differents, et une colonne qui n'afficherait que les
+ * noms les decrirait de la meme facon.
+ */
+export interface PassiveRow {
+  name: string;
+  stacks: number;
+}
+
+/**
+ * Ce que la colonne lit du client : qui je suis, et ce que je possede.
+ *
+ * Une interface structurelle plutot que `GameClient` — meme motif que
+ * `FrameClient` et `DraftSource` : `GameClient` la satisfait sans rien
+ * declarer, et le test peut en fabriquer un double sans ouvrir de WebSocket.
+ *
+ * ⚠️ **Rien a ajouter au protocole.** `GameClient.loadoutOf` tient le miroir
+ * des inventaires depuis l'etape 4, reconstitue des `DRAFT_RESULT` recus : les
+ * passifs sont deja la, cote client, et les annoncer une seconde fois serait
+ * du trafic pour une information deja connue.
+ */
+export interface HudSource {
+  readonly localId: number | null;
+  loadoutOf(playerId: number): Loadout;
+}
+
+/**
+ * Les passifs du joueur LOCAL, dans l'ordre du catalogue.
+ *
+ * ⚠️ **L'ordre du catalogue, pas l'ordre d'acquisition** : `Loadout` ne retient
+ * l'ordre de draft que pour les armes (`weaponIds`, l'ordre des slots). Un
+ * ordre stable vaut mieux qu'un ordre juste — la colonne se relit d'un coup
+ * d'oeil pendant une vague, et des lignes qui se reordonnent a chaque carte
+ * prise obligeraient a la relire en entier.
+ *
+ * `localId` nul — avant le premier snapshot qui fait apparaitre le joueur —
+ * rend une colonne vide plutot qu'un inventaire d'emprunt : `loadoutOf` cree
+ * l'entree manquante a la volee, donc l'appeler avec un identifiant invente
+ * garnirait la `Map` du client d'un joueur qui n'existe pas.
+ */
+export function passiveRows(source: HudSource): PassiveRow[] {
+  const id = source.localId;
+  if (id === null) {
+    return [];
+  }
+  const loadout = source.loadoutOf(id);
+  const rows: PassiveRow[] = [];
+  for (const passive of PASSIVES) {
+    const stacks = loadout.stacksOf(passive.id);
+    if (stacks > 0) {
+      rows.push({ name: passive.name, stacks });
+    }
+  }
+  return rows;
+}
+
+/**
+ * Peint la colonne : une ligne par passif possede, et le cadre efface tant
+ * qu'il n'y a rien a y mettre.
+ *
+ * `replaceChildren` plutot qu'un diff : au plus `PASSIVES.length` lignes, une
+ * fois par image, et la colonne ne change qu'a la montee de niveau.
+ */
+export function paintPassives(
+  box: HTMLElement,
+  list: HTMLElement,
+  rows: readonly PassiveRow[],
+): void {
+  const empty = rows.length === 0;
+  box.classList.toggle('hidden', empty);
+  box.classList.toggle('flex', !empty);
+  list.replaceChildren(
+    ...rows.map((row) => {
+      const line = document.createElement('span');
+      // ⚠️ Pas de `data-passive` en plus du texte : il a existe, aucune
+      // mutation ne pouvait le tuer (rien ne le lit, ni la CSS ni un test).
+      // Solde comme les autres survivants de ce depot, par une suppression.
+      line.className = 'hud-passive';
+      // Le compte se lit meme a un seul exemplaire : « ×1 » puis « ×2 » dit
+      // qu'on vient d'empiler, la ou un nom qui ne bouge pas ne dit rien.
+      line.textContent = `${row.name} ×${row.stacks}`;
+      return line;
+    }),
+  );
+}
+
+/**
  * Les elements du HUD, tels que `index.html` les nomme.
  *
  * Passes en argument plutot que cherches ici : `paintHud` reste alors une
@@ -66,6 +160,10 @@ export interface HudElements {
   synergyFill: HTMLElement;
   synergyLabel: HTMLElement;
   freeze: HTMLElement;
+  /** Le cadre de la colonne des passifs — efface tant que rien n'est drafte. */
+  passives: HTMLElement;
+  /** Les lignes de cette colonne. */
+  passiveList: HTMLElement;
 }
 
 /**
@@ -81,18 +179,26 @@ export interface HudElements {
  * `lateDeaths` et `synergy` ne sont pas dans `HudInfo` : le premier vient de
  * `GameClient.lateDeaths` (compteur de diagnostic, §2), le second de
  * `RenderState.synergy` (donnee d'equipe du snapshot, comme l'xp).
+ *
+ * ⚠️ **`source` est le client lui-meme, pas une liste deja calculee** (tache
+ * 18). Passer les lignes toutes faites remettrait le `passiveRows(client)` de
+ * l'appel dans `main.ts`, c'est-a-dire exactement la ou trois etapes de suite
+ * ont perdu une ligne de cablage sans qu'une seule assertion ne le voie. Ici,
+ * une mutation qui rend `[]` au lieu de la colonne rougit.
  */
 export function paintHud(
   el: HudElements,
   info: HudInfo,
   lateDeaths: number,
   synergy: number,
+  source: HudSource,
 ): void {
   el.hp.textContent = `${info.hp}`;
   el.level.textContent = `${info.level}`;
   el.timer.textContent = `Temps ${info.timer}`;
   el.lateDeaths.textContent = `${lateDeaths}`;
   paintSynergy(el.synergyFill, el.synergyLabel, synergy);
+  paintPassives(el.passives, el.passiveList, passiveRows(source));
   // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
   // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme
   // un plantage plutot que comme une pause voulue.

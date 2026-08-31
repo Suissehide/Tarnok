@@ -53,6 +53,8 @@ const hudFreeze = el('hud-freeze');
 const hudLateDeaths = el('hud-late-deaths');
 const hudSynergyFill = el('hud-synergy-fill');
 const hudSynergyLabel = el('hud-synergy-label');
+const hudPassives = el('hud-passives');
+const hudPassiveList = el('hud-passive-list');
 const summary = el('summary');
 const summaryTime = el('summary-time');
 const summaryLevel = el('summary-level');
@@ -60,7 +62,7 @@ const summaryKills = el('summary-kills');
 const errorLine = el('error');
 const codeInput = el<HTMLInputElement>('code');
 
-/** Les sept cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
+/** Les cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
 const hudElements: HudElements = {
   hp: hudHp,
   level: hudLevel,
@@ -69,6 +71,8 @@ const hudElements: HudElements = {
   synergyFill: hudSynergyFill,
   synergyLabel: hudSynergyLabel,
   freeze: hudFreeze,
+  passives: hudPassives,
+  passiveList: hudPassiveList,
 };
 
 const keyboard = new Keyboard();
@@ -170,6 +174,9 @@ function join(code: string): void {
         hudInfo(state, client.level, client.hordeTick, client.isFrozen),
         client.lateDeaths,
         state.synergy,
+        // Tache 18 : la colonne des passifs lit le miroir d'inventaires que
+        // le client tient depuis l'etape 4 — `paintHud` en derive les lignes.
+        client,
       );
     },
     updateDraft: (): void => draftScreen.update(),
