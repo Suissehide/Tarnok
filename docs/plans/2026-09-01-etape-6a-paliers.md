@@ -157,6 +157,42 @@ Chaque tâche les respecte, sans les répéter.
   ⚠️ **C'est le premier ennemi qui survivra assez longtemps pour qu'une réaction se voie sur lui.**
   Un test devrait le montrer.
 
+- [ ] **Étape 0 : le défaut que la tâche 2 a mesuré et n'a pas résolu — traite-le d'abord.**
+
+  `hpScale` est une courbe lisse, mais la **durabilité** est un escalier, et sa première marche est
+  un **doublement** :
+
+  | Palier | PV de la piétaille légère | Coups de dague |
+  | --- | --- | --- |
+  | 0 | 5,00 | **1** |
+  | 1 | 5,60 | **2** ← ×2 de durabilité pour +12 % de PV |
+  | 2 | 6,27 | 2 |
+  | 3 | 7,02 | 2 |
+
+  **Mesuré** : le test « un joueur passif atteint le niveau 2 » échoue sur **1 graine sur 40** depuis
+  les paliers, contre 0 avant. La tâche 2 a fixé sa graine pour le stabiliser et a signalé le
+  problème plutôt que de le cacher.
+
+  ⚠️ **La cause est une décision de l'étape 5a** : `LIGHT_HP = 5` vaut *exactement* les dégâts de la
+  dague, choisi pour préserver le rythme de l'étape 3 à l'identique. **C'est ce qui place le système
+  pile sur une frontière**, là où toute augmentation la franchit.
+
+  ⚠️ **C'est R9 à l'envers.** À l'étape 4, l'arrondi **avalait** l'empilement des passifs — deux
+  cartes de cadence ne changeaient rien. Ici il **amplifie** l'échelle de palier. Même cause :
+  *quand une grandeur continue se consomme en unités discrètes, se tenir pile sur une frontière rend
+  le système maximalement fragile.*
+
+  Trois candidats, **à trancher et à écrire** :
+  1. **la piétaille légère ne monte pas en PV du tout** — le §4.1 de l'orientation la définit comme
+     de la *« chair à canon »*, et faire grossir sa réserve contredit ce qu'elle est. La difficulté
+     passe alors par le **nombre** et par la **part de lourds**, deux leviers déjà en place ;
+  2. décaler `LIGHT_HP` **sous** la frontière, pour que la première marche arrive plus tard ;
+  3. accepter l'escalier et le documenter — mais alors le palier 1 est deux fois plus dur que le 0,
+     ce qui n'est ni ce que la formule promet ni ce que le §9.2 décrit.
+
+  **Le premier est le plus cohérent avec ce que le jeu dit déjà de lui-même**, mais c'est à la
+  mesure de trancher.
+
 - [ ] **Étape 3 : LA PORTE.** Mesurer, sans jouer, combien de temps quatre joueurs mettent à tuer le
   boss au palier 0.
 

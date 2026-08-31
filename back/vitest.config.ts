@@ -32,6 +32,15 @@ export default defineConfig({
      * hasard, et mieux que de les alleger jusqu'a ce qu'ils ne prouvent plus
      * rien.
      */
-    testTimeout: 30_000,
+    /**
+     * ⚠️ Releve de 30 a 60 s : le scenario Z0 de `horde.replication.test.ts`
+     * coute 16 s seul et 21 s dans son fichier, et **depassait les 30 s quand la
+     * machine est chargee** — constate a l'etape 6a, ou il a fait rougir une
+     * porte de commit sans rien dire du contrat qu'il garde.
+     *
+     * C'est la seconde fois que ce fichier frole son delai. Declarer son cout
+     * reel vaut mieux que de le voir rougir au hasard.
+     */
+    testTimeout: 60_000,
   },
 });
