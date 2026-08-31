@@ -1,13 +1,12 @@
 import {
   archetypeOf,
   BOSS_ARCHETYPE,
-  BOSS_HP_BASE,
   HEAVY_HP,
   LIGHT_HP,
   STEP2_ARCHETYPES,
 } from '@shared/archetypes';
-import { MAX_ENTITIES, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
-import { palierHp, waveCountScale } from '@shared/paliers';
+import { MAX_ENTITIES, MAX_PLAYERS, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
+import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
 import type { WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
@@ -270,7 +269,11 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
     function chargeDuPalier(k: number): number {
       const effectif = moyen * waveCountScale(k);
       const parVague = effectif * (0.8 * palierHp(LIGHT_HP, k) + 0.2 * palierHp(HEAVY_HP, k));
-      return WAVES_PER_PALIER * parVague + palierHp(BOSS_HP_BASE, k);
+      // ⚠️ **A effectif PLEIN, et il faut le dire** : depuis la tache 3 bis les
+      // PV du boss dependent aussi du nombre de joueurs. La charge d'un palier
+      // n'a donc plus de valeur unique — celle-ci est celle d'une equipe de
+      // quatre, la seule que la porte du §7 ait mesuree.
+      return WAVES_PER_PALIER * parVague + bossHp(k, MAX_PLAYERS);
     }
 
     for (let k = 0; k < 10; k++) {

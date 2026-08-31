@@ -5,13 +5,15 @@ import {
   archetypeOf,
   BOSS_ARCHETYPE,
   BOSS_BODY_SCALE,
-  BOSS_HP_BASE,
   BOSS_HP_MULTIPLE,
+  BOSS_HP_PER_PLAYER,
   FOOTSOLDIER_COUNT,
   HEAVY_HP,
   LIGHT_HP,
   STEP2_ARCHETYPES,
 } from './archetypes';
+import { MAX_PLAYERS } from './constants';
+import { bossHp } from './paliers';
 import { weaponOf } from './weapons';
 
 describe('ARCHETYPES', () => {
@@ -85,11 +87,11 @@ describe('la reserve de points de vie (etape 5a)', () => {
     expect(lourds).toHaveLength(4);
     for (const a of ARCHETYPES) {
       // ⚠️ **Le boss est la SEULE exception, et elle est nommee.** Ecrire
-      // `.filter((a) => a.hp !== BOSS_HP_BASE)` laisserait passer deux boss ;
+      // `.filter((a) => a.hp !== BOSS_HP_PER_PLAYER)` laisserait passer deux boss ;
       // comparer a l'identifiant dit qu'il n'y en a qu'un, ce que le §1.1 de la
       // spec de l'etape 6a exige pour que la vie du boss ait le droit de
       // voyager.
-      const attendues = a.id === BOSS_ARCHETYPE ? [BOSS_HP_BASE] : [LIGHT_HP, HEAVY_HP];
+      const attendues = a.id === BOSS_ARCHETYPE ? [BOSS_HP_PER_PLAYER] : [LIGHT_HP, HEAVY_HP];
       expect(attendues).toContain(a.hp);
     }
   });
@@ -140,8 +142,8 @@ describe("l'archetype de boss (etape 6a)", () => {
    * bestiaire en croyant faire du contenu.
    */
   it("n'existe qu'en UN exemplaire dans tout le bestiaire", () => {
-    expect(ARCHETYPES.filter((a) => a.hp === BOSS_HP_BASE)).toHaveLength(1);
-    expect(archetypeOf(BOSS_ARCHETYPE).hp).toBe(BOSS_HP_BASE);
+    expect(ARCHETYPES.filter((a) => a.hp === BOSS_HP_PER_PLAYER)).toHaveLength(1);
+    expect(archetypeOf(BOSS_ARCHETYPE).hp).toBe(BOSS_HP_PER_PLAYER);
   });
 
   /**
@@ -149,11 +151,21 @@ describe("l'archetype de boss (etape 6a)", () => {
    * lourde »*. Le rapport est DERIVE de `HEAVY_HP`, jamais un 6 000 recopie —
    * retoucher la pietaille lourde deplacerait sinon le boss sans que rien ne le
    * dise.
+   *
+   * ⚠️ **Le rapport se lit A EFFECTIF PLEIN depuis la tache 3 bis**, et c'est
+   * la seule lecture qui rende vraies ensemble les deux phrases du §4 —
+   * *« plusieurs centaines de fois »* ET *« croissant avec le nombre de
+   * joueurs »*. En solo le boss vaut 75 fois la pietaille lourde ; a quatre,
+   * 300. C'est l'equipe de quatre que ce jeu vise et que la porte du §7 a
+   * mesuree.
    */
-  it('encaisse plusieurs centaines de fois la pietaille lourde, comme le §4 le demande', () => {
-    expect(BOSS_HP_BASE).toBe(HEAVY_HP * BOSS_HP_MULTIPLE);
-    expect(BOSS_HP_MULTIPLE).toBeGreaterThanOrEqual(100);
-    expect(BOSS_HP_MULTIPLE).toBeLessThan(1000);
+  it('encaisse plusieurs centaines de fois la pietaille lourde a effectif plein, comme le §4 le demande', () => {
+    expect(BOSS_HP_PER_PLAYER).toBe(HEAVY_HP * BOSS_HP_MULTIPLE);
+    expect(BOSS_HP_MULTIPLE * MAX_PLAYERS).toBeGreaterThanOrEqual(100);
+    expect(BOSS_HP_MULTIPLE * MAX_PLAYERS).toBeLessThan(1000);
+    // Et le boss d'une equipe pleine EST ce multiple-la : sans cette ligne, le
+    // rapport garde ci-dessus ne serait plus celui d'aucun boss reel.
+    expect(bossHp(0, MAX_PLAYERS)).toBe(HEAVY_HP * BOSS_HP_MULTIPLE * MAX_PLAYERS);
   });
 
   /**

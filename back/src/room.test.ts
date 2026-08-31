@@ -1,4 +1,10 @@
-import { ARCHETYPES, BOSS_ARCHETYPE, BOSS_HP_BASE, HEAVY_HP, LIGHT_HP } from '@shared/archetypes';
+import {
+  ARCHETYPES,
+  BOSS_ARCHETYPE,
+  BOSS_HP_PER_PLAYER,
+  HEAVY_HP,
+  LIGHT_HP,
+} from '@shared/archetypes';
 import { CARD, type Card } from '@shared/cards';
 import {
   FIELD_INPUT_DELAY_TICKS,
@@ -6,6 +12,7 @@ import {
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   MAX_ENTITIES,
+  MAX_PLAYERS,
   ORB_DROP_ONE_IN,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
@@ -22,7 +29,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { entityIdOf } from '@shared/horde';
-import { hpScale, palierHp } from '@shared/paliers';
+import { bossHp, hpScale, palierHp } from '@shared/paliers';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -1821,7 +1828,7 @@ describe('la run est jouable (tache 14)', () => {
    * | **+ le boss reel (aujourd'hui)** | **40,8 s** | **60,0 s** | **3/40** |
    *
    * ⚠️⚠️ **LE 3/40 N'EST PAS UN RETOUR EN ARRIERE : ce n'est pas la meme
-   * cause.** Le boss porte desormais `BOSS_HP_BASE` et apparait a 30 s sur
+   * cause.** Le boss porte desormais `BOSS_HP_PER_PLAYER` et apparait a 30 s sur
    * TOUTES les graines. Un joueur seul vise la menace la plus proche — donc lui
    * — et verse toute sa production dans 6 000 PV qu'il ne percera pas ; il
    * cesse de tuer, donc de ramasser des orbes, et la horde l'emporte. Quatre
@@ -2827,7 +2834,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     // --- 4. Le boss meurt, par le chemin de mort normal du salon.
     //
     // ⚠️ **Sa reserve est RAMENEE A UN COUP, et c'est du decor, pas une
-    // triche.** Depuis la tache 3, le boss porte `BOSS_HP_BASE` : un joueur
+    // triche.** Depuis la tache 3, le boss porte `BOSS_HP_PER_PLAYER` : un joueur
     // solo a la dague ne l'entame pas en trente secondes, et ce test
     // mesurerait alors une DPS au lieu de mesurer un palier. Ce qui est teste
     // ici est le CHEMIN — les degats du salon, le lot unique de morts, le
@@ -2918,9 +2925,9 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     }
 
     expect(pvBoss1).not.toBeNull();
-    expect(pvBoss1?.archetype).toBe(BOSS_HP_BASE);
-    expect(pvBoss1?.poses).toBeCloseTo(BOSS_HP_BASE * hpScale(1), 4);
-    expect(pvBoss1?.poses).toBeGreaterThan(BOSS_HP_BASE);
+    expect(pvBoss1?.archetype).toBe(BOSS_HP_PER_PLAYER);
+    expect(pvBoss1?.poses).toBeCloseTo(BOSS_HP_PER_PLAYER * hpScale(1), 4);
+    expect(pvBoss1?.poses).toBeGreaterThan(BOSS_HP_PER_PLAYER);
   }, 30_000);
 
   it("un boss qui n'a pas pu apparaitre est redemande, et personne ne le croit vivant", () => {
@@ -3014,9 +3021,19 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
    *
    * C'est le point : tous les decors de reaction de l'etape 5a devaient rendre
    * leur cible increvable pour qu'une marque ait le temps d'etre consommee. Ce
-   * decor-ci ne triche pas, et c'est la reserve de l'archetype qui decide.
+   * decor-ci ne triche pas, et c'est la reserve du JEU qui decide.
+   *
+   * ⚠️ **`reserve` est ce que le SALON aurait pose, pas une valeur de
+   * confort.** `spawnMonsterAt` court-circuite `Room#step`, donc ni l'echelle
+   * du palier ni la multiplication par le nombre de joueurs (tache 3 bis) ne
+   * s'appliquent : l'appelant les compose par `bossHp`, exactement comme le
+   * banc `bench/boss.bench.ts` le fait pour son duel. Sans ce parametre, ce
+   * decor mesurerait le boss d'UN joueur en le presentant comme LE boss.
    */
-  function scene(archetype: number): {
+  function scene(
+    archetype: number,
+    reserve?: number,
+  ): {
     reactions: ReturnType<Room['drainReactions']>;
     morte: boolean;
     pvDepart: number;
@@ -3028,6 +3045,9 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
     room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
     const ancre = positionOf(room, 1);
     const cible = spawnMonsterAt(room, 730, ancre.x + 120, ancre.y, archetype);
+    if (reserve !== undefined) {
+      room.horde.hp[room.horde.slotOf(cible)] = reserve;
+    }
     const pvDepart = room.horde.hp[room.horde.slotOf(cible)] ?? 0;
 
     const reactions: ReturnType<Room['drainReactions']> = [];
@@ -3065,8 +3085,22 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
     expect(legere.morte).toBe(true);
     expect(legere.reactions).toEqual([]);
 
-    const boss = scene(BOSS_ARCHETYPE);
-    expect(boss.pvDepart).toBe(BOSS_HP_BASE);
+    // ⚠️ **Le boss d'une equipe PLEINE, et il faut dire pourquoi.** Depuis la
+    // tache 3 bis, un boss n'a pas une reserve mais quatre — une par effectif.
+    // Le §4 de la spec (*« le premier ennemi qui survivra assez longtemps pour
+    // qu'une reaction se voie »*) parle du jeu que ce projet vise, qui est a
+    // quatre ; et le joueur unique de ce decor porte DEUX armes elementaires,
+    // soit deja la puissance de feu d'une equipe.
+    //
+    // ⚠️ **Mesure faite en passant, a garder** : avec la reserve d'un joueur
+    // SEUL (1 500 PV), ce meme decor tue le boss en 2,5 s — 55 reactions a
+    // 25 PV. Une equipe qui tient deux elements fond un boss par les
+    // reactions, pas par ses armes. C'est un resultat de la tache 3 bis, pas
+    // un incident, et c'est a la tache 12 d'en juger en jeu.
+    const boss = scene(BOSS_ARCHETYPE, bossHp(0, MAX_PLAYERS));
+    // Sa reserve vaut des dizaines de reactions : c'est CA qui laisse a une
+    // marque le temps de se consommer sur lui.
+    expect(boss.pvDepart).toBeGreaterThan(REACTION_DAMAGE * 10);
     // Il porte les marques comme tout le monde, et il vit assez pour qu'elles
     // se consomment (§4 de la spec).
     expect(boss.reactions.length).toBeGreaterThan(0);
@@ -3123,5 +3157,129 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
     expect(ordinaires.length).toBeGreaterThanOrEqual(WAVES_PER_PALIER);
     expect(ordinaires.every((o) => o.archetype !== BOSS_ARCHETYPE)).toBe(true);
     expect(ordinaires.every((o) => o.count > 1)).toBe(true);
+  }, 30_000);
+});
+
+/**
+ * Les PV du boss suivent le nombre de joueurs (etape 6a, tache 3 bis).
+ *
+ * > *« les PV du boss doivent dependre du nombre de joueurs »* — decision de
+ * > l'auteur, apres la mesure de la tache 3 : quatre joueurs tuaient le boss en
+ * > 87 s, **un joueur seul ne le tuait jamais**, et 3 graines sur 40 y
+ * > perdaient leur run avant le niveau 2 (`bench/niveau2.bench.ts`).
+ *
+ * ⚠️ **La formule vit dans `shared/paliers.ts` et elle y est testee pour
+ * elle-meme.** Ce bloc-ci teste ce que le SALON en fait, et lui seul : le
+ * nombre de joueurs qu'il lui passe, et le MOMENT ou il le lit.
+ */
+describe('les PV du boss suivent le nombre de joueurs (etape 6a, tache 3 bis)', () => {
+  /**
+   * Avance jusqu'a l'apparition du boss du palier 0 et rend son creneau.
+   *
+   * ⚠️ **La horde est videe a chaque tick** — meme intention que `viderSauf`
+   * plus haut : ce decor mesure une RESERVE a l'apparition, pas la survie d'un
+   * joueur immobile sous quatre vagues. Sans ce nettoyage il mesurerait un
+   * `RUN_OVER`, et le boss ne tomberait jamais.
+   */
+  function jusquAuBoss(room: Room): number {
+    for (let t = 0; t < 90 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(DT);
+      room.drainWaveOrders();
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        const id = room.horde.entityIdAt(i);
+        if (id !== room.bossEntityId) {
+          ids.push(id);
+        }
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+    }
+    expect(room.bossEntityId).not.toBeNull();
+    const slot = room.horde.slotOf(room.bossEntityId ?? -1);
+    expect(slot).toBeGreaterThanOrEqual(0);
+    return slot;
+  }
+
+  /** PV du boss du palier 0 dans un salon de `joueurs` joueurs, meme graine. */
+  function pvDuBossAvec(joueurs: number): number {
+    const room = new Room(4242);
+    for (let id = 1; id <= joueurs; id++) {
+      room.join(id);
+    }
+    return room.horde.hp[jusquAuBoss(room)] ?? 0;
+  }
+
+  it('donne au boss la reserve d un joueur par joueur present a son apparition', () => {
+    const solo = pvDuBossAvec(1);
+    const equipe = pvDuBossAvec(MAX_PLAYERS);
+
+    // Au palier 0 l'echelle vaut exactement 1 : le boss d'un joueur seul, c'est
+    // la reserve par joueur, sans rien d'autre.
+    expect(solo).toBeCloseTo(BOSS_HP_PER_PLAYER, 4);
+    // ⚠️ **LA MOITIE QUI COMPTE.** Sans elle, un salon qui ignorerait le nombre
+    // de joueurs passerait l'assertion precedente sans broncher — c'est
+    // exactement l'etat d'avant cette tache.
+    expect(equipe).toBeCloseTo(solo * MAX_PLAYERS, 4);
+  });
+
+  /**
+   * ⚠️ **FIGES A L'APPARITION, et c'est une decision.** Le nombre de joueurs
+   * bouge pendant un palier ; le boss, lui, est deja la. Les faire suivre
+   * ferait REGAGNER de la vie a un boss entame parce qu'un joueur rejoint —
+   * ca se lirait comme un bug, et la barre de vie de la tache 5 le montrerait
+   * a l'ecran.
+   *
+   * ⚠️ **Ce test et le precedent ne se couvrent pas** : celui-la dit que le
+   * nombre de joueurs COMPTE, celui-ci qu'il ne compte qu'UNE FOIS. Un salon
+   * qui relirait `#players.size` a chaque tick passerait le premier.
+   */
+  it('fige les PV du boss a son apparition : trois joueurs qui rejoignent ne le regonflent pas', () => {
+    const room = new Room(4242);
+    room.join(1);
+    const pvApparition = room.horde.hp[jusquAuBoss(room)] ?? 0;
+    const bossId = room.bossEntityId;
+    expect(pvApparition).toBeCloseTo(BOSS_HP_PER_PLAYER, 4);
+
+    for (let id = 2; id <= MAX_PLAYERS; id++) {
+      room.join(id);
+    }
+
+    for (let t = 0; t < 10 * TICK_HZ; t++) {
+      // Le boss est tenu a distance : personne ne le touche, personne ne le
+      // vise (aucun `applyInput`), donc tout ecart de PV viendrait de la
+      // formule et d'elle seule.
+      const slot = room.horde.slotOf(bossId ?? -1);
+      if (slot >= 0) {
+        room.horde.x[slot] = MAP_SIZE - 100;
+        room.horde.y[slot] = MAP_SIZE - 100;
+      }
+      room.step(DT);
+      room.drainWaveOrders();
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        const id = room.horde.entityIdAt(i);
+        if (id !== bossId) {
+          ids.push(id);
+        }
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+    }
+
+    // Le decor a bien produit le cas qu'il croit produire : les trois joueurs
+    // sont REELLEMENT dans le salon. Sans ce compte, « les PV n'ont pas bouge »
+    // se lirait aussi bien comme « personne n'a rejoint ».
+    const out: ArrayBuffer[] = [];
+    room.snapshot({ push: (b: ArrayBuffer) => out.push(b) });
+    expect(decodeSnapshot(out[0] as ArrayBuffer).players).toHaveLength(MAX_PLAYERS);
+
+    const apres = room.horde.hp[room.horde.slotOf(bossId ?? -1)] ?? 0;
+    expect(apres).toBe(pvApparition);
+    // Et il n'est PAS devenu le boss de quatre joueurs — l'assertion precedente
+    // le dit deja, celle-ci nomme la valeur qu'il aurait prise.
+    expect(apres).not.toBeCloseTo(bossHp(0, MAX_PLAYERS), 4);
   }, 30_000);
 });

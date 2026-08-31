@@ -1,8 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { ARCHETYPES, HEAVY_HP, LIGHT_HP } from './archetypes';
-import { GOLD_PER_PALIER_BASE, PALIER_COUNT_SCALE, PALIER_HP_SCALE } from './constants';
-import { hpScale, palierGold, palierHp, waveCountScale } from './paliers';
+import { ARCHETYPES, BOSS_HP_PER_PLAYER, HEAVY_HP, LIGHT_HP } from './archetypes';
+import {
+  GOLD_PER_PALIER_BASE,
+  MAX_PLAYERS,
+  PALIER_COUNT_SCALE,
+  PALIER_HP_SCALE,
+} from './constants';
+import { bossHp, hpScale, palierGold, palierHp, waveCountScale } from './paliers';
 import { weaponOf } from './weapons';
 
 /**
@@ -176,6 +181,84 @@ describe('palierHp — la chair a canon ne monte pas', () => {
   it('vaut exactement la reserve de depart au palier 0, quel que soit l archetype', () => {
     for (const a of ARCHETYPES) {
       expect(palierHp(a.hp, 0)).toBe(a.hp);
+    }
+  });
+});
+
+/**
+ * `bossHp` — la formule de la tache 3 bis, et **elle a TROIS moities**, dont
+ * aucune ne couvre les deux autres :
+ *
+ * - **valeur de base exacte** a `k = 0` et un joueur — sans elle, une formule
+ *   qui s'emballe passe ;
+ * - **croissance stricte** en `k` a effectif constant — sans elle, une
+ *   constante passe ;
+ * - **proportionnalite au nombre de joueurs** — sans elle, `palierHp` toute
+ *   seule passe, et c'est exactement le defaut que cette tache corrige : un
+ *   joueur seul recevait le boss de quatre.
+ *
+ * Le dernier test les eprouve l'une contre l'autre sur le contre-exemple exact
+ * qui a motive la tache — la formule d'AVANT.
+ */
+describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
+  it('vaut exactement la reserve d un joueur au palier 0', () => {
+    expect(bossHp(0, 1)).toBe(BOSS_HP_PER_PLAYER);
+  });
+
+  it('croit strictement sur dix paliers, a effectif constant', () => {
+    for (let joueurs = 1; joueurs <= MAX_PLAYERS; joueurs++) {
+      expect(croitStrictement((k) => bossHp(k, joueurs))).toBe(true);
+    }
+  });
+
+  /**
+   * ⚠️ **LA MEME FORME QUE LE SEUIL D'EXPERIENCE** (`LEVEL_XP_BASE * niveau *
+   * joueurs`) : une PROPORTIONNALITE, pas une racine ni un palier. C'est ce
+   * rapport exact que le test assene, a tous les paliers, parce que c'est lui
+   * qui est promis au §4 de la spec.
+   */
+  it('multiplie exactement par le nombre de joueurs, a tous les paliers', () => {
+    for (let k = 0; k <= PALIERS; k++) {
+      for (let joueurs = 1; joueurs <= MAX_PLAYERS; joueurs++) {
+        expect(bossHp(k, joueurs)).toBeCloseTo(bossHp(k, 1) * joueurs, 6);
+      }
+    }
+  });
+
+  /**
+   * ⚠️ **Le plancher `max(1, ...)` est un chemin TESTE, pas une garde morte.**
+   * `WaveDirector.due` n'emet rien quand le salon est vide, donc l'appelant
+   * reel ne passe jamais zero — mais cette fonction est pure et publique, et
+   * un `bossHp(0, 0)` doit rendre un boss, pas un boss a zero PV.
+   */
+  it('rend le boss d un joueur quand on ne lui en donne aucun', () => {
+    expect(bossHp(0, 0)).toBe(bossHp(0, 1));
+    expect(bossHp(3, -5)).toBe(bossHp(3, 1));
+  });
+
+  /**
+   * ⚠️ **Le contre-exemple est la formule d'AVANT la tache 3 bis**, celle qui
+   * a coute 3 graines sur 40 en solo : elle passe les deux premieres moities
+   * et rate la troisieme. Sans ce test, affaiblir la proportionnalite ne
+   * ferait rougir personne.
+   */
+  it('ne dit pas la meme chose que palierHp seule : la formule d avant le prouve', () => {
+    const sansLesJoueurs = (k: number, _joueurs: number): number => palierHp(BOSS_HP_PER_PLAYER, k);
+
+    expect(sansLesJoueurs(0, 1)).toBe(bossHp(0, 1));
+    expect(croitStrictement((k) => sansLesJoueurs(k, MAX_PLAYERS))).toBe(true);
+    expect(sansLesJoueurs(0, MAX_PLAYERS)).not.toBe(bossHp(0, MAX_PLAYERS));
+  });
+
+  /**
+   * ⚠️ **Le boss n'est PAS exempte de la montee en PV**, lui — c'est la
+   * pietaille legere qui l'est (`palierHp`). Le dire ici, sinon un jour
+   * quelqu'un elargira l'exemption sans voir qu'elle avale le seul ennemi qui
+   * porte la difficulte d'un palier.
+   */
+  it('monte bien avec le palier, exactement comme la pietaille lourde', () => {
+    for (let k = 0; k <= PALIERS; k++) {
+      expect(bossHp(k, 1) / bossHp(0, 1)).toBeCloseTo(hpScale(k), 10);
     }
   });
 });

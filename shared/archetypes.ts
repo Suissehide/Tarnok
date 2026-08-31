@@ -103,7 +103,32 @@ export const HEAVY_HP = 20;
 const BOSS_NAME = 'troll';
 
 /**
- * PV du boss au palier 0, **avant** `hpScale` (`shared/paliers.ts`).
+ * PV du boss au palier 0 **et pour UN joueur** — avant `hpScale` et avant la
+ * multiplication par le nombre de joueurs, toutes deux faites par `bossHp`
+ * (`shared/paliers.ts`).
+ *
+ * ⚠️ **PAR JOUEUR, et le nom le dit — tache 3 bis.** Le §4 de la spec veut des
+ * PV *« croissant en 1,12^k ET avec le nombre de joueurs — meme forme que le
+ * seuil d'experience »*, et ce seuil vaut `LEVEL_XP_BASE * niveau * joueurs`.
+ * La meme forme impose que cette constante-ci soit la part d'UN joueur : c'est
+ * elle qui se multiplie. Elle a donc ete divisee par quatre en meme temps
+ * qu'elle changeait de nom (300 -> 75 fois `HEAVY_HP`), **pour que le boss que
+ * la tache 3 a mesure ne bouge pas d'un point** : 75 x 4 joueurs = 300, soit
+ * exactement les 6 000 PV du releve ci-dessous. Le verdict de la porte reste
+ * donc valide sans etre rejoue de complaisance — c'est la MEME configuration.
+ *
+ * ⚠️ **Renommee plutot que redefinie en silence.** `BOSS_HP_BASE` valait 6 000
+ * et vaudrait 1 500 : garder le nom aurait laisse chaque lecture existante dire
+ * autre chose que ce qu'elle disait — le motif « la fixture qui masque »,
+ * neuf fois dans ce depot. Le renommage force chaque appelant a se relire.
+ *
+ * ⚠️ **CE QUE CA COUTE, dit en face : en solo le boss ne vaut plus « plusieurs
+ * centaines de fois la pietaille lourde », mais 75 fois.** Le §4 de la spec
+ * ecrit les deux phrases cote a cote — *« plusieurs centaines de fois »* ET
+ * *« croissant avec le nombre de joueurs »* — et elles ne peuvent etre vraies
+ * ensemble qu'a effectif plein. C'est a effectif plein que la formulation de la
+ * spec se lit, parce que c'est l'equipe de quatre que ce jeu vise et que c'est
+ * elle que la porte a mesuree.
  *
  * ⚠️ **MESURE, tache 3, et c'est LA porte du §7 de la spec.** Le plan disait
  * de cette valeur qu'elle etait *« le seul chiffre de ce document qui soit un
@@ -135,7 +160,9 @@ const BOSS_NAME = 'troll';
  * l'autre** : sans horde il n'y a plus d'orbe, donc plus de montee de niveau,
  * donc l'arme de base seule — 6 000 / 70,1 = 85,6 degats/s, soit exactement
  * quatre dagues. C'est la validation du decor : le banc sait tuer un boss, et
- * son chiffre s'explique par un calcul independant.
+ * son chiffre s'explique par un calcul independant. Les 6 000 PV du duel sont
+ * ceux de QUATRE joueurs : depuis la tache 3 bis le banc les compose lui-meme
+ * par `bossHp`, au lieu de lire cette constante et de mesurer un quart de boss.
  *
  * ⚠️ **Deux resultats a ne pas perdre, tires de ce meme banc :**
  * - une graine sur huit (0x88888888) ne tue **jamais** le boss en 300 s : la
@@ -152,10 +179,11 @@ const BOSS_NAME = 'troll';
  * produit garde ce rapport lisible, et le fait bouger tout seul le jour ou la
  * pietaille lourde est retouchee — c'est exactement ce que `LIGHT_HP` ne fait
  * PAS vis-a-vis de la dague, et ce qui a coute la marche de durabilite que
- * l'etape 0 de cette tache vient de solder.
+ * l'etape 0 de cette tache vient de solder. Le rapport annonce par la spec se
+ * lit desormais sur `BOSS_HP_MULTIPLE * MAX_PLAYERS`, et un test le garde.
  */
-export const BOSS_HP_MULTIPLE = 300;
-export const BOSS_HP_BASE = HEAVY_HP * BOSS_HP_MULTIPLE;
+export const BOSS_HP_MULTIPLE = 75;
+export const BOSS_HP_PER_PLAYER = HEAVY_HP * BOSS_HP_MULTIPLE;
 
 /**
  * Facteur de corps du boss — voir `Archetype.bodyScale`.
@@ -190,7 +218,7 @@ const HEAVY_NAMES: readonly string[] = ['gnoll', 'snake', 'bomb-fish', 'hex-sham
 
 function hpOf(name: string): number {
   if (name === BOSS_NAME) {
-    return BOSS_HP_BASE;
+    return BOSS_HP_PER_PLAYER;
   }
   return HEAVY_NAMES.includes(name) ? HEAVY_HP : LIGHT_HP;
 }

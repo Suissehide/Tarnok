@@ -639,7 +639,7 @@ export const PALIER_COUNT_SCALE = 0.15;
  *
  * ⚠️ **Divise le rythme de mise a mort, deja a -12,8 % depuis l'etape 5a.**
  * C'est ce que la porte du §7 de la spec mesure a la tache 3 : si le boss du
- * palier 0 tient plus de trois minutes, c'est `BOSS_HP_BASE` qui baisse **et**
+ * palier 0 tient plus de trois minutes, c'est `BOSS_HP_PER_PLAYER` qui baisse **et**
  * cette valeur qui se rouvre.
  *
  * ⚠️ **Exponentielle, la seule des trois formules a l'etre.** A `k = 10` elle

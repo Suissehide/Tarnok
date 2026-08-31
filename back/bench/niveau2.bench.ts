@@ -18,15 +18,35 @@
  * | avant les paliers (etape 5a) | 40,4 s | 55,1 s | 0/40 |
  * | avec les paliers, sans exemption | 40,9 s | 64,2 s | **1/40** |
  * | avec `palierHp`, boss pas encore reel | 41,3 s | 63,5 s | **0/40** |
- * | **+ le boss reel (aujourd hui)** | **40,8 s** | **60,0 s** | **3/40** |
+ * | + le boss reel a 6 000 PV (tache 3) | 40,8 s | 60,0 s | **3/40** |
+ * | **+ les PV par joueur (tache 3 bis, 1 500 PV en solo)** | **40,8 s** | **60,0 s** | **3/40** |
  *
- * ⚠️ **Les deux dernieres lignes n'ont PAS la meme cause.** `palierHp` solde la
- * marche de durabilite (1/40 -> 0/40, a boss constant). Le 3/40 vient du boss :
- * il apparait a 30 s sur toutes les graines, un joueur SEUL le prend pour cible
- * — c'est la menace la plus proche — et verse tout dans 6 000 PV. Il ne tue
- * plus, donc ne ramasse plus d'orbe, et tombe 20 a 30 s plus tard. Les colonnes
- * « boss a » et « run perdue a » sont la pour qu'on puisse le LIRE au lieu de
- * le supposer.
+ * ⚠️ **Les deux premieres lignes de boss n'ont PAS la meme cause que les
+ * precedentes.** `palierHp` solde la marche de durabilite (1/40 -> 0/40, a boss
+ * constant). Le 3/40 vient du boss, qui apparait a 30 s sur toutes les graines
+ * et que le joueur SEUL prend pour cible — c'est la menace la plus proche.
+ *
+ * ⚠️ **ET LA TACHE 3 BIS NE LE BOUGE PAS : 3/40 -> 3/40, aux memes graines
+ * (8, 10, 31) et a la seconde pres.** Diviser le boss solo par quatre
+ * (6 000 -> 1 500 PV) ne change RIEN a ce releve, et il faut le dire plutot que
+ * de laisser croire a un correctif : a la dague seule (~21 degats/s au niveau
+ * 1), 1 500 PV demandent encore 70 s quand la run est perdue a 50-60 s.
+ *
+ * **Deux mesures de controle, faites pour ne pas supposer la cause** :
+ *
+ * | Decor | Echecs |
+ * | --- | --- |
+ * | aucun boss du tout (`WAVES_PER_PALIER` porte a 1000) | **0/40** |
+ * | boss a 100 PV — tue en quelques secondes | **2/40** |
+ * | boss a 1 500 PV (solo, aujourd'hui) ou a 6 000 (hier) | **3/40** |
+ *
+ * ⚠️ **Ce que ces trois lignes disent, et qui contredit le plan** : le plan de
+ * la tache 3 bis attribue les trois pertes aux *« 6 000 PV qu'il ne percera
+ * pas »*. La mesure dit **deux tiers presence, un tiers reserve** — deux
+ * graines sur trois tombent avec un boss qu'on tue en quelques secondes. Ce que
+ * coute un boss a un joueur seul, c'est d'abord d'EXISTER : un corps de plus
+ * qui capte le tir automatique, et un palier qui avance quand il tombe. La
+ * reserve n'ajoute qu'une graine.
  *
  *   npm run bench:niveau2 -w back
  */

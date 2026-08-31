@@ -1,4 +1,4 @@
-import { LIGHT_HP } from './archetypes';
+import { BOSS_HP_PER_PLAYER, LIGHT_HP } from './archetypes';
 import { GOLD_PER_PALIER_BASE, PALIER_COUNT_SCALE, PALIER_HP_SCALE } from './constants';
 
 /**
@@ -79,17 +79,22 @@ export function hpScale(k: number): number {
  * | --- | --- | --- | --- |
  * | avec la montee des PV sur toute la pietaille | 40,9 s | 64,2 s | **1/40** |
  * | **avec cette exemption** | **41,3 s** | **63,5 s** | **0/40** |
- * | + le boss REEL de la tache 3 (etat d'aujourd'hui) | 40,8 s | 60,0 s | 3/40 |
+ * | + le boss REEL de la tache 3 | 40,8 s | 60,0 s | 3/40 |
+ * | + les PV du boss par joueur (tache 3 bis) | 40,8 s | 60,0 s | 3/40 |
  *
  * ⚠️ **La troisieme ligne n'annule pas la deuxieme : ce n'est pas la meme
  * cause, et les confondre serait la pire lecture de ce tableau.** La marche de
  * durabilite est bien soldee — c'est ce que dit le passage de 1/40 a 0/40, a
- * boss constant. Le 3/40 vient d'ailleurs : depuis que le boss porte
- * `BOSS_HP_BASE`, il apparait a **30 s sur toutes les graines** (vague 5), un
- * joueur SEUL vise la menace la plus proche — donc lui — et verse toute sa
- * production dans 6 000 PV qu'il ne percera jamais. Il cesse de tuer, donc de
- * ramasser des orbes, et la horde l'emporte 20 a 30 s plus tard. Quatre joueurs
- * le tuent en 87 s (`bench/boss.bench.ts`) ; un joueur, jamais.
+ * boss constant. Le 3/40 vient d'ailleurs : le boss apparait a **30 s sur
+ * toutes les graines** (vague 5), un joueur SEUL vise la menace la plus proche
+ * — donc lui — et cesse de moissonner la horde, qui l'emporte 20 a 30 s plus
+ * tard. Quatre joueurs le tuent en 87 s (`bench/boss.bench.ts`) ; un joueur,
+ * jamais.
+ *
+ * ⚠️ **La tache 3 bis n'a PAS bouge ce 3/40**, et le banc le documente en
+ * detail : diviser le boss solo par quatre ne suffit pas, parce que le cout
+ * d'un boss pour un joueur seul tient d'abord a sa PRESENCE (0/40 sans boss,
+ * 2/40 avec un boss de 100 PV) et non a sa reserve.
  *
  * ⚠️ **Et une part en revient au DECOR, il faut le dire aussi** : le releve
  * vise aveuglement la menace la plus proche. Un joueur reel qui laisserait le
@@ -134,6 +139,68 @@ export function hpScale(k: number): number {
  */
 export function palierHp(baseHp: number, k: number): number {
   return baseHp <= LIGHT_HP ? baseHp : baseHp * hpScale(k);
+}
+
+/**
+ * Reserve de depart du boss du palier `k` pour `playerCount` joueurs :
+ * `BOSS_HP_PER_PLAYER x 1,12^k x max(1, joueurs)`.
+ *
+ * ⚠️ **LA MEME FORME QUE LE SEUIL D'EXPERIENCE, et c'est la seule raison pour
+ * laquelle elle est ecrite ainsi.** `Room#xpToNextLevel` fait
+ * `LEVEL_XP_BASE * niveau * Math.max(1, joueurs)` depuis l'etape 3, pour le
+ * motif que le §7.4 de l'orientation donne : *« sans ca une equipe de quatre
+ * joueurs gele quatre fois plus souvent qu'un joueur seul »*. Un boss se pose
+ * exactement le meme probleme a l'envers — une equipe de quatre le fond quatre
+ * fois plus vite — et le §4 de la spec de l'etape 6a le dit mot pour mot :
+ * *« croissant en 1,12^k et avec le nombre de joueurs, meme forme que le seuil
+ * d'experience »*. Une SECONDE convention (une racine, un plafond, un palier de
+ * joueurs) rendrait deux formules du meme jeu illisibles l'une par l'autre.
+ *
+ * ⚠️ **CE QUE CETTE FONCTION CORRIGE, ET C'EST UNE MESURE.** Au banc
+ * `bench/boss.bench.ts`, quatre joueurs tuaient le boss en 86,9 s ; au banc
+ * `bench/niveau2.bench.ts`, **un joueur seul ne le tuait jamais** — il vise la
+ * menace la plus proche, verse toute sa production dans 6 000 PV qu'il ne
+ * percera pas, cesse donc de moissonner, et la horde l'emporte. 3 graines sur
+ * 40 y perdaient leur run avant le niveau 2. La correction ne rend pas le boss
+ * plus faible a effectif plein : `BOSS_HP_PER_PLAYER` a ete divise par quatre
+ * en meme temps, donc a quatre joueurs le total est **exactement** celui que la
+ * porte du §7 a mesure.
+ *
+ * ⚠️ **ET LE RELEVE SOLO N'A PAS BOUGE : 3/40 AVANT, 3/40 APRES.** Il faut le
+ * dire, parce que le plan de cette tache presente la formule comme le correctif
+ * de ces trois pertes. La mesure dit autre chose : sans boss du tout le releve
+ * rend 0/40, avec un boss de 100 PV il rend 2/40, avec 1 500 comme avec 6 000
+ * il rend 3/40. **Les deux tiers du cout d'un boss pour un joueur seul tiennent
+ * a sa PRESENCE**, pas a sa reserve — un corps de plus qui capte le tir
+ * automatique, et un palier qui avance quand il tombe. Cette fonction reste
+ * juste (le §4 de la spec la demande, la porte du §7 est preservee au point
+ * pres), mais elle ne rend pas une run solo gagnable au palier 0, et la
+ * question *« un boss doit-il tomber dans une run solo ? »* reste OUVERTE pour
+ * la tache 12. Detail du releve : `back/bench/niveau2.bench.ts`.
+ *
+ * ⚠️ **`max(1, ...)`, comme le seuil d'experience, et ce n'est pas une garde
+ * qui en couvre une autre.** `WaveDirector.due` ne rend aucun ordre quand le
+ * salon est vide, donc `playerCount` vaut au moins 1 chez son appelant reel :
+ * ce plancher est ici parce que la fonction est PURE et publique, lisible et
+ * appelable sans salon — un `bossHp(0, 0)` doit rendre un nombre de PV, pas
+ * zero. Un test l'appelle a zero, c'est donc un chemin teste et pas un chemin
+ * mort.
+ *
+ * ⚠️ **Passe par `palierHp`, jamais par `hpScale` en direct.** Ecrire
+ * `BOSS_HP_PER_PLAYER * hpScale(k) * joueurs` recopierait la regle d'echelle a
+ * cote de celle qui la porte : le jour ou `palierHp` change d'avis (elle l'a
+ * deja fait une fois, pour exempter la chair a canon), le boss suivrait sans
+ * qu'on ait a y penser.
+ *
+ * ⚠️ **Les PV sont FIGES A L'APPARITION** — c'est `Room` qui le decide, en
+ * n'appelant cette fonction qu'une fois, au moment ou le boss nait ; elle-meme
+ * ne sait rien du temps. Voir `Room#step` : un joueur qui rejoint ou qui part
+ * pendant le combat ne change pas la reserve d'un boss deja la, parce qu'un
+ * boss qui regagnerait de la vie parce qu'un joueur arrive se lirait comme un
+ * bug.
+ */
+export function bossHp(k: number, playerCount: number): number {
+  return palierHp(BOSS_HP_PER_PLAYER, k) * Math.max(1, playerCount);
 }
 
 /**

@@ -17,7 +17,7 @@ import {
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
-import { palierHp } from '@shared/paliers';
+import { bossHp, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, OUTCOME, type PlayerSnapshot } from '@shared/protocol';
@@ -740,16 +740,35 @@ export class Room {
       if (this.horde.count - before < order.count) {
         this.#metrics.truncatedSpawns++;
       }
-      this.#scalePalierHp(before);
       if (estBoss) {
         if (this.horde.count > before) {
           this.#bossEntityId = entityIdOf(order.waveId, 0);
+          // ⚠️ **Le boss ne passe PAS par `#scalePalierHp`, et une seule ligne
+          // ecrit sa reserve.** `bossHp` contient deja `palierHp` (voir
+          // `shared/paliers.ts`) : lui laisser d'abord ecrire l'echelle du
+          // palier puis la recouvrir ici ferait deux ecritures dont la
+          // premiere serait morte — et une mutation de la boucle ne rougirait
+          // plus pour le boss. Le creneau est `before` : la vague de boss vaut
+          // `count: 1`, donc l'entite d'indice 0 est la seule, celle-la meme
+          // que `entityIdOf(order.waveId, 0)` designe juste au-dessus.
+          //
+          // ⚠️ **`#players.size` est lu ICI, une fois, et n'est plus jamais
+          // relu : les PV du boss sont FIGES A SON APPARITION.** Le nombre de
+          // joueurs bouge pendant un palier — quelqu'un se deconnecte,
+          // quelqu'un rejoint — et suivre ce nombre ferait regagner de la vie
+          // a un boss deja entame parce qu'un joueur arrive : ca se lirait
+          // comme un bug, et la barre de vie de la tache 5 le montrerait a
+          // l'ecran. Ce que ca coute, dit en face : trois joueurs qui quittent
+          // laissent au dernier un boss de quatre joueurs jusqu'a sa mort.
+          this.horde.hp[before] = bossHp(this.#director.palier, this.#players.size);
         } else {
           // La horde etait pleine : le boss n'existe pas. Sans ce chemin, le
           // verrou du directeur ne se relacherait jamais et le palier serait
           // fige pour le reste de la run.
           this.#director.bossMissing();
         }
+      } else {
+        this.#scalePalierHp(before);
       }
       this.#pendingOrders.push(order);
     }
@@ -953,6 +972,13 @@ export class Room {
    * `LIGHT_HP` vaut exactement les degats de la dague et que la premiere marche
    * de l'escalier de durabilite doublait donc son cout. La regle vit dans
    * `shared/paliers.ts`, pas ici : elle doit se lire et se tester sans salon.
+   *
+   * ⚠️ **LE BOSS NE PASSE PAS PAR ICI** (tache 3 bis). Sa reserve depend aussi
+   * du nombre de joueurs, que cette fonction ne connait pas et n'a pas a
+   * connaitre : `#step` l'ecrit d'une seule ligne, par `bossHp`, qui contient
+   * deja `palierHp`. Les deux chemins sont EXCLUSIFS — un ordre est un ordre de
+   * boss ou il ne l'est pas — donc aucune entite n'est mise a l'echelle deux
+   * fois, et aucune ne l'est zero fois.
    *
    * ⚠️ **`horde.hp[i]` EST la reserve d'archetype a cet instant precis** —
    * `Horde.spawn` vient de l'y ecrire et rien ne l'a encore entamee. C'est ce

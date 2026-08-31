@@ -7,8 +7,8 @@
  * | Issue | Ce qu'on fait |
  * | --- | --- |
  * | il meurt en **30 a 90 s** | **on garde** |
- * | moins de **15 s** | on monte `BOSS_HP_BASE`, **pas la formule** |
- * | plus de **3 min** | on baisse `BOSS_HP_BASE`, **et on rouvre `PALIER_HP_SCALE`** |
+ * | moins de **15 s** | on monte `BOSS_HP_PER_PLAYER`, **pas la formule** |
+ * | plus de **3 min** | on baisse `BOSS_HP_PER_PLAYER`, **et on rouvre `PALIER_HP_SCALE`** |
  *
  * ⚠️ **UN BANC QUI NE PEUT RIEN MESURER REND ZERO ET PARAIT VERT.** L'etape 5a
  * en a trouve un qui peuplait de pietaille legere, tuee du meme impact, donc
@@ -31,11 +31,11 @@
  *
  *   npm run bench:boss -w back
  */
-import { archetypeOf, BOSS_ARCHETYPE, BOSS_HP_BASE } from '@shared/archetypes';
+import { archetypeOf, BOSS_ARCHETYPE, BOSS_HP_PER_PLAYER } from '@shared/archetypes';
 import { CARD } from '@shared/cards';
 import { MAP_SIZE, MAX_ENTITIES, TICK_HZ } from '@shared/constants';
 import { entityIdOf } from '@shared/horde';
-import { palierHp, waveCountScale } from '@shared/paliers';
+import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
 import { PASSIVES } from '@shared/passives';
 import { decodeSnapshot } from '@shared/protocol';
 import { FORMATION } from '@shared/waves';
@@ -194,6 +194,14 @@ function duel(seed: number): Mesure {
     anchorY: Math.round(ancre.y),
     count: 1,
   });
+  // ⚠️ **`Horde.spawn` court-circuite le salon, donc l'echelle du palier ET la
+  // multiplication par le nombre de joueurs.** Sans cette ligne, le duel
+  // mesurerait un boss de `BOSS_HP_PER_PLAYER` — le quart de celui que la
+  // melee affronte — et son « plancher » ne serait plus le plancher de rien.
+  // La composer ici plutot que de lire la constante est ce qui garde les deux
+  // scenarios comparables (tache 3 bis).
+  const slotNeuf = room.horde.slotOf(bossId);
+  room.horde.hp[slotNeuf] = bossHp(0, JOUEURS.length);
   const pvApparition = pvDuBoss(room, bossId);
 
   let ticks = 0;
@@ -328,11 +336,11 @@ function verdict(mediane: number): void {
   }
   if (mediane < 15) {
     console.log(
-      `VERDICT : ${mediane.toFixed(1)} s < 15 s -> ON MONTE BOSS_HP_BASE, pas la formule.`,
+      `VERDICT : ${mediane.toFixed(1)} s < 15 s -> ON MONTE BOSS_HP_PER_PLAYER, pas la formule.`,
     );
   } else if (mediane > 180) {
     console.log(
-      `VERDICT : ${mediane.toFixed(1)} s > 3 min -> ON BAISSE BOSS_HP_BASE, et on rouvre PALIER_HP_SCALE.`,
+      `VERDICT : ${mediane.toFixed(1)} s > 3 min -> ON BAISSE BOSS_HP_PER_PLAYER, et on rouvre PALIER_HP_SCALE.`,
     );
   } else if (mediane >= 30 && mediane <= 90) {
     console.log(`VERDICT : ${mediane.toFixed(1)} s, dans la bande 30-90 s -> ON GARDE.`);
@@ -347,7 +355,9 @@ function verdict(mediane: number): void {
 function main(): void {
   console.log(
     `Banc du boss — 4 joueurs immobiles, palier 0, ${GRAINES.length} graines de carte.\n` +
-      `BOSS_HP_BASE = ${BOSS_HP_BASE} (${BOSS_HP_BASE / archetypeOf(0).hp}x la pietaille legere, ` +
+      `BOSS_HP_PER_PLAYER = ${BOSS_HP_PER_PLAYER} par joueur, soit ` +
+      `${bossHp(0, JOUEURS.length)} PV a ${JOUEURS.length} joueurs au palier 0 ` +
+      `(${bossHp(0, JOUEURS.length) / archetypeOf(0).hp}x la pietaille legere, ` +
       `archetype ${BOSS_ARCHETYPE} « ${archetypeOf(BOSS_ARCHETYPE).name} »).\n`,
   );
 
@@ -426,9 +436,9 @@ function divergence(): void {
       'effectif moyen/vague': Math.round(effectif),
       'effectif au plafond': plafond,
       'plafond / MAX_ENTITIES': `${Math.round((100 * plafond) / MAX_ENTITIES)} %`,
-      'PV du boss': Math.round(palierHp(BOSS_HP_BASE, k)),
-      'PV du palier (4 vagues + boss)': Math.round(4 * pvParVague + palierHp(BOSS_HP_BASE, k)),
-      'x palier 0': +((4 * pvParVague + palierHp(BOSS_HP_BASE, k)) / reference(bornes)).toFixed(2),
+      'PV du boss': Math.round(bossHp(k, JOUEURS.length)),
+      'PV du palier (4 vagues + boss)': Math.round(4 * pvParVague + bossHp(k, JOUEURS.length)),
+      'x palier 0': +((4 * pvParVague + bossHp(k, JOUEURS.length)) / reference(bornes)).toFixed(2),
     });
   }
   console.table(lignes);
@@ -443,7 +453,9 @@ function divergence(): void {
 /** Charge d'un palier 0, pour la colonne « x palier 0 ». */
 function reference(bornes: { min: number; max: number }): number {
   const moyen = (bornes.min + bornes.max) / 2;
-  return 4 * moyen * (0.8 * archetypeOf(0).hp + 0.2 * archetypeOf(1).hp) + BOSS_HP_BASE;
+  return (
+    4 * moyen * (0.8 * archetypeOf(0).hp + 0.2 * archetypeOf(1).hp) + bossHp(0, JOUEURS.length)
+  );
 }
 
 main();
