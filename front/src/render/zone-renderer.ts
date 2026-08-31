@@ -15,6 +15,21 @@ import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 
  * ⚠️ **C'est le calque le plus BAS des entites** (voir l'ordre d'attache dans
  * `Stage.init`) : une zone est du terrain teinte, pas un effet qui passe
  * devant les monstres qu'elle couvre.
+ *
+ * ⚠️ **Tache 16 : le quad teinte gagne un BORD** — *« rends les zones au sol
+ * plus nettes, en anneau de different alpha si besoin »*. Un aplat diffus ne
+ * dit ni ou il commence ni ou il finit, et la frontiere d'une zone est une
+ * **regle de jeu** : elle decide qui est marque, qui est ralenti, et ou deux
+ * zones reagissent. Le disque garde exactement le rayon de la regle
+ * (`zoneScale`, derive de `ZONE_RADIUS`) et le rend enfin lisible.
+ *
+ * ⚠️ **Une zone reste un CERCLE en coordonnees monde**, contrairement a
+ * l'anneau de marque que la tache 15 vient d'aplatir en ellipse. La difference
+ * n'est pas esthetique : le rayon de l'anneau ne decide de rien, celui de la
+ * zone decide de tout, et il est compare en distance EUCLIDIENNE des deux
+ * cotes du fil (`markInZones`, `reactions`). Une ellipse mentirait sur la
+ * regle. C'est la camera seule qui l'ecrase de `VERTICAL_SQUASH`, uniformement
+ * avec le reste du monde.
  */
 
 /** Marge des bornes explicites, meme raisonnement que `HordeRenderer.BOUNDS_MARGIN`. */
@@ -31,7 +46,7 @@ const BOUNDS_MARGIN = 256;
 export const ZONE_TEXTURE_DIAMETER = 128;
 
 /**
- * Opacite d'une zone. **Constante, et c'est un choix**, pas un oubli.
+ * Opacite du BORD d'une zone. **Constante, et c'est un choix**, pas un oubli.
  *
  * ⚠️ **Le §6.6 est categorique : l'etat persistant est DISCRET.** Une zone vit
  * `ZONE_LIFETIME_TICKS` (3 s) et plusieurs se recouvrent des qu'un joueur
@@ -39,13 +54,48 @@ export const ZONE_TEXTURE_DIAMETER = 128;
  * blanchir l'ecran et plus rien ne se lit — ni la horde, ni le flash de
  * reaction, qui est precisement ce que le budget VFX doit rendre visible.
  *
+ * ⚠️ **Elle monte de 0,22 a 0,34 a la tache 16, et le budget d'encre ne bouge
+ * PAS.** C'est une redistribution, pas une hausse. L'ancien profil etait un
+ * aplat plein jusqu'a 0,65 de rayon puis un fondu jusqu'au bord : son opacite
+ * moyenne, ponderee par la surface, valait **0,69** de la valeur de cette
+ * constante. Le nouveau — un lavis mince a `ZONE_FILL_RATIO` et un lisere au
+ * bord — vaut **0,44**. A 0,34, la zone pose donc autant d'encre au total
+ * qu'a 0,22 auparavant : elle blanchit l'ecran ni plus ni moins vite, mais on
+ * lit ou elle s'arrete.
+ *
  * ⚠️ **Pas de fondu de fin de vie, DELIBEREMENT.** Un fondu ferait une SECONDE
  * garde d'expiration a cote de `ZoneField.aliveAt` : les deux se couvriraient
  * l'une l'autre, et supprimer la bonne (celle qui decide vraiment) ne ferait
  * rougir aucun test. Une seule chose decide qu'une zone se dessine — `aliveAt`,
  * dans `selectZones` — et c'est ce que le test peut donc verifier.
  */
-export const ZONE_ALPHA = 0.22;
+export const ZONE_ALPHA = 0.34;
+
+/**
+ * Opacite de l'INTERIEUR de la zone, en fraction de celle du bord (tache 16) :
+ * *« rends les zones au sol plus nettes, en anneau de different alpha si
+ * besoin »*.
+ *
+ * Franchement en dessous de 1 : c'est ce qui fait qu'on lit un BORD et non un
+ * aplat. Un disque uniformement diffus ne dit ni ou il commence ni ou il finit,
+ * et sa frontiere est une **regle de jeu** — c'est elle qui decide qui est
+ * marque (`markInZones`), qui est ralenti (`Horde#computeSlow`) et ou deux
+ * zones reagissent (§5.2).
+ */
+export const ZONE_FILL_RATIO = 0.32;
+
+/**
+ * Debut de la montee vers le lisere, en fraction du rayon : en deça, la zone
+ * est un lavis uniforme a `ZONE_FILL_RATIO`.
+ */
+const ZONE_RIM_INNER = 0.88;
+
+/**
+ * Debut du plateau opaque du lisere. L'ecart avec `ZONE_RIM_INNER` est la
+ * rampe ; au-dela, l'opacite ne bouge plus jusqu'au bord, ou le disque
+ * s'arrete NET.
+ */
+const ZONE_RIM_PEAK = 0.94;
 
 /**
  * Marge de culling : un demi-diametre de zone, pour qu'un disque dont le
@@ -126,7 +176,7 @@ export function selectZones(
 }
 
 /**
- * Disque BLANC a bord doux, dessine une fois puis teinte par particule.
+ * Disque BLANC a BORD LISIBLE, dessine une fois puis teinte par particule.
  *
  * ⚠️ **Blanc, parce que `Sprite.tint` MULTIPLIE.** Une texture deja coloree
  * rendrait la teinte de l'element approximative et differente d'un element a
@@ -134,10 +184,22 @@ export function selectZones(
  * `ELEMENT.NEUTRE` (0xffffff) rend exactement la texture — aucun cas
  * particulier a tester, ici comme sur les sprites de la horde.
  *
- * Le profil (plein jusqu'a `CORE_FRACTION`, puis estompe) est celui d'un aplat
- * au sol, pas d'un halo : un degre entre `makeBoltTexture` (net) et
- * `makeGlowTexture` (flou) de `projectile-renderer.ts`, d'ou une troisieme
- * fonction plutot qu'un parametre de plus sur l'une des deux.
+ * ⚠️ **Le profil de la tache 9 mentait sur une regle de jeu.** Il etait plein
+ * jusqu'a 0,65 de rayon puis s'eteignait en fondu jusqu'au bord : on ne
+ * pouvait lire nulle part ou la zone S'ARRETE. Or sa frontiere n'est pas
+ * decorative — c'est elle qui decide qui est marque (`markInZones`), qui est
+ * ralenti (`Horde#computeSlow`) et ou deux zones reagissent (§5.2). Un disque
+ * uniformement diffus rend cette frontiere invisible, et l'oeil la place la ou
+ * le fondu devient faible, donc **plus pres du centre qu'elle n'est**.
+ *
+ * Le nouveau profil (tache 16 : *« plus nettes, en anneau de different alpha si
+ * besoin »*) est un lavis mince a `ZONE_FILL_RATIO`, une rampe courte, puis un
+ * lisere opaque **qui va jusqu'au bord de la texture et s'arrete net** — le
+ * `ctx.arc` de rayon `r` fait la coupure. Comme `zoneScale` place ce meme bord
+ * exactement a `ZONE_RADIUS`, **le bord qu'on voit est le rayon qui decide**.
+ *
+ * Tous les arrets sont ecrits en `rgba(...)`, y compris les opaques : c'est ce
+ * qui permet au test de lire le profil sans avoir a comprendre deux notations.
  */
 function makeZoneTexture(diameter: number): Texture {
   const canvas = document.createElement('canvas');
@@ -148,11 +210,11 @@ function makeZoneTexture(diameter: number): Texture {
     throw new Error('canvas 2d indisponible');
   }
   const r = diameter / 2;
-  const CORE_FRACTION = 0.65;
   const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
-  gradient.addColorStop(0, '#ffffff');
-  gradient.addColorStop(CORE_FRACTION, '#ffffff');
-  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  gradient.addColorStop(0, `rgba(255, 255, 255, ${ZONE_FILL_RATIO})`);
+  gradient.addColorStop(ZONE_RIM_INNER, `rgba(255, 255, 255, ${ZONE_FILL_RATIO})`);
+  gradient.addColorStop(ZONE_RIM_PEAK, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 1)');
   ctx.fillStyle = gradient;
   ctx.beginPath();
   ctx.arc(r, r, r, 0, Math.PI * 2);
@@ -215,7 +277,27 @@ export class ZoneRenderer {
 
   /** Texture procedurale — hors du constructeur, meme raison que les autres renderers. */
   load(): void {
-    this.#texture = makeZoneTexture(ZONE_TEXTURE_DIAMETER);
+    this.adoptTexture(makeZoneTexture(ZONE_TEXTURE_DIAMETER));
+  }
+
+  /**
+   * Rend le calque capable de dessiner a partir d'une texture deja cuite.
+   *
+   * ⚠️ **Ajoute a la tache 16 parce que TOUT le corps de `draw` etait garde par
+   * rien.** Deux mutations l'ont montre, appliquees avant d'ecrire une ligne de
+   * test : `particle.scaleX = 1` (le disque ne suit plus `zoneScale`, donc plus
+   * `ZONE_RADIUS`) et la suppression de `particle.alpha` — **toutes deux vertes
+   * a 237 tests**. `zoneScale` etait teste, mais rien ne verifiait que `draw`
+   * s'en servait : le motif exact des dix-sept assertions creuses du depot, le
+   * test met en scene la bonne intention et rate la ligne qu'il nomme.
+   *
+   * Meme point d'accroche que `MarkRingRenderer.adoptTexture`, `adoptAtlas`
+   * (tache 9 bis) et `adoptTextures` (tache 12), et pour la meme raison :
+   * `load()` cuit sa texture sur un canevas 2D que l'environnement de test ne
+   * fournit pas, donc `draw` retournerait a son premier `if (!texture)`.
+   */
+  adoptTexture(texture: Texture): void {
+    this.#texture = texture;
   }
 
   /**
