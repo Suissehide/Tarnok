@@ -221,8 +221,28 @@ Chaque tâche les respecte, sans les répéter.
 > de joueurs. »*
 
 **Ce que la tâche 3 a mesuré et qui l'impose** : quatre joueurs tuent le boss en 87 s ; **un joueur
-seul ne le tue jamais.** Il vise la menace la plus proche, verse toute sa production dans 6 000 PV
-qu'il ne percera pas, cesse donc de moissonner, et la horde l'emporte. **3 graines sur 40 perdues.**
+seul ne le tue jamais.** **3 graines sur 40 perdues.**
+
+⚠️ **CORRECTION — ce plan se trompait sur la CAUSE, et la mesure l'a montré.** Il attribuait les
+trois pertes aux *« 6 000 PV qu'il ne percera pas »*. Le correctif de cette tâche divise ces PV par
+quatre en solo, et **le chiffre ne bouge pas** : 3/40 avant, 3/40 après, **aux mêmes graines et à la
+seconde près**.
+
+Trois décors de contrôle, faits pour ne pas supposer la cause :
+
+| Décor | Échecs |
+| --- | --- |
+| **aucun boss du tout** | **0/40** |
+| boss à 100 PV, tué en quelques secondes | 2/40 |
+| boss à 1 500 PV (solo aujourd'hui) **ou** 6 000 (hier) | 3/40 |
+
+**Les deux tiers du coût d'un boss pour un joueur seul tiennent à sa PRÉSENCE, pas à sa réserve** :
+un corps de plus qui capte le tir automatique, et un palier qui n'avance que s'il tombe.
+
+**Le correctif reste juste** — les PV doivent suivre le nombre de joueurs, c'est la décision de
+l'auteur et elle est cohérente avec le seuil d'expérience — **mais il ne rend pas une run solo
+gagnable au palier 0, et rien dans la spec ne dit ce que doit valoir une run solo.** Question
+ouverte, tâche 12.
 
 - [ ] **Étape 1 : le précédent existe, suis-le.** Le seuil d'expérience fait déjà
   `LEVEL_XP_BASE × niveau × max(1, joueurs)`. **La même forme, au même endroit conceptuel** — pas une

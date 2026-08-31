@@ -232,6 +232,16 @@ tranché ici, et dans le sens qui préserve le genre.
 
 ## 10. Questions laissées ouvertes
 
+- **Que doit valoir une run solo ?** Ce document ne le dit nulle part, et la mesure de la tâche 3 bis
+  en fait une question : un joueur seul perd **3 runs sur 40** au palier 0, et **les deux tiers du
+  coût tiennent à la PRÉSENCE du boss**, pas à sa réserve — un corps de plus qui capte le tir
+  automatique, et un palier qui n'avance que s'il tombe. Réduire ses PV n'y change rien : mesuré,
+  3/40 à 6 000 PV comme à 1 500.
+- **Un boss se tue-t-il par les armes ou par les réactions ?** Mesuré en passant à la tâche 4 : un
+  joueur seul portant Braise **et** Givre fond 1 500 PV en **2,5 secondes** — 55 réactions à 25 points
+  de dégâts. Une équipe qui tient deux éléments ne tue donc pas un boss avec ses armes, elle le tue
+  avec le système élémentaire. **C'est peut-être le bon design ; ce n'est pas une décision qui a été
+  prise.**
 - **Que devient un joueur mort au moment du vote ?** Il vote — le §9.3 dit que la mort d'un seul ne
   coûte rien, donc elle ne doit pas non plus coûter la voix.
 - **Le multiplicateur croît-il linéairement ou plus vite ?** Trop plat, rester ne se justifie pas ;
