@@ -727,6 +727,142 @@ Aujourd'hui **toutes les armes tirent le même point lumineux**. Neuf armes, une
 
 ---
 
+## Tâches 15 à 19 : deuxième retour de jeu
+
+> *« Les cercles doivent être des ellipses sous les pieds, plus nettes et fines. Parfois ils
+> disparaissent lors des superpositions ou collision ? Pour les passifs, il faut les afficher en
+> colonne en haut à gauche. Sur les cartes, afficher les éléments sur les armes et les valeurs sur
+> les passifs. Limiter à 4 armes différentes maximum par joueur. Rends les zones au sol plus nettes,
+> en anneau de différent alpha si besoin. L'xp plus nette aussi, légèrement attirée par le joueur
+> s'il passe à côté. Moins d'xp qui tombe ou plus par niveau. »*
+
+---
+
+## Tâche 15 : les anneaux deviennent des ellipses, **une par ennemi**
+
+**Fichiers :** modifier `front/src/render/mark-renderer.ts`, ses tests
+
+⚠️ **« Parfois ils disparaissent lors des superpositions » n'est pas un bug, c'est ma borne.** La
+tâche 13 dédoublonne les anneaux **par cellule de grille** — au plus un par cellule — précisément
+pour que le compte ne suive pas l'effectif. L'auteur en voit l'artefact : deux ennemis dans la même
+cellule partagent un anneau.
+
+- [ ] **Étape 1 : un anneau par ennemi marqué, la déduplication saute.** L'anneau devient une donnée
+  de l'ennemi, comme son sprite.
+
+  **Le coût redevient donc O(marqués), et il faut le remesurer.** Repère : la horde dessine déjà un
+  sprite par ennemi visible, jusqu'à `MAX_ENTITIES` = 4 000. Un anneau par marqué au pire **double**
+  ce compte — c'est du même ordre, pas d'un ordre au-dessus.
+
+  ⚠️ **La borne de repli n'est PAS une grille.** Si le compte doit être plafonné, garder **les plus
+  proches du joueur** et compter ce qui est jeté — un plafond qui dégrade par distance se comprend,
+  un plafond qui dégrade par ordre de créneau se voit comme une disparition aléatoire. C'est
+  exactement ce que l'auteur vient de signaler.
+
+- [ ] **Étape 2 : une ellipse, pas un cercle.** Vue de dessus : un disque au sol se projette en
+  ellipse. Aplatir verticalement.
+
+- [ ] **Étape 3 : plus nette et plus fine.** Le trait actuel est un dégradé large. ⚠️ Attention au
+  piège de la tâche 13 : `MARK_RING_TEXTURE_DIAMETER` valait exactement le diamètre affiché, donc
+  l'échelle valait 1 et **toute mutation de l'échelle était indistinguable**. Garder texture et
+  affichage à des tailles différentes.
+
+- [ ] **Étape 4 : commit** — `fix(front): un anneau elliptique par ennemi marque`
+
+---
+
+## Tâche 16 : les zones au sol plus nettes
+
+**Fichiers :** modifier `front/src/render/zone-renderer.ts`, ses tests
+
+> *« Rends les zones au sol plus nettes, en anneau de différent alpha si besoin. »*
+
+- [ ] **Étape 1 : une bordure lisible.** Un disque uniformément diffus ne dit ni où il commence ni où
+  il finit — or **sa frontière est une règle de jeu** : c'est elle qui décide qui est marqué et où
+  deux zones réagissent. Ce que l'œil doit lire, c'est un bord.
+
+- [ ] **Étape 2 : le bord dit la vérité.** Le rayon dessiné doit valoir `ZONE_RADIUS`, dérivé, jamais
+  recopié. Une zone qui paraît plus grande qu'elle n'est ment sur une règle.
+
+- [ ] **Étape 3 : commit** — `feat(front): des zones au sol a bord lisible`
+
+---
+
+## Tâche 17 : l'expérience — netteté, aimantation, débit
+
+**Fichiers :** modifier `front/src/render/` (orbes), `back/src/combat.ts`, `shared/constants.ts`, leurs tests
+
+- [ ] **Étape 1 : l'orbe plus nette**, même traitement que les zones et les anneaux.
+
+- [ ] **Étape 2 : l'aimantation.** Une orbe à proximité glisse vers le joueur au lieu d'attendre.
+
+  ⚠️ **C'est le point risqué de la tâche : l'orbe se met à BOUGER.** Aujourd'hui elle est immobile,
+  et son ramassage est arbitré serveur (`resolvePickups`) tandis que le client la dessine à sa
+  position d'annonce. Si le client l'anime et que le serveur ne bouge pas, le ramassage se
+  déclenchera à un endroit où l'orbe n'est plus dessinée.
+
+  **Deux issues, à trancher et à écrire :**
+  1. **le mouvement est cosmétique** — l'orbe glisse à l'écran, le ramassage reste au rayon serveur.
+     Simple, et l'écart se voit si l'aimantation est plus rapide que le rayon ne l'autorise ;
+  2. **le mouvement est simulé des deux côtés** — dérivable, puisque les positions des joueurs sont
+     déjà répliquées et que l'orbe a un `bornTick`. Plus juste, plus cher.
+
+  **Commencer par la 1**, et ne passer à la 2 que si l'écart se voit.
+
+- [ ] **Étape 3 : le débit.** *« Moins d'xp qui tombe ou plus par niveau. »* Deux leviers pour le même
+  ressenti :
+
+  | Levier | Effet |
+  | --- | --- |
+  | toutes les morts ne laissent pas d'orbe | moins de ramassages, chacun compte |
+  | `XP_PER_ORB` monte | autant de ramassages, chacun vaut plus |
+
+  ⚠️ **Le premier est le bon**, et le second est un piège : `LEVEL_XP_BASE` est un multiple de
+  `XP_PER_ORB`, donc augmenter l'un sans l'autre change le nombre de niveaux, pas la sensation.
+  **Ce que l'auteur décrit, c'est le nombre d'objets au sol**, pas la courbe de progression.
+
+- [ ] **Étape 4 : commit** — `feat: des orbes plus rares, plus nettes et aimantees`
+
+---
+
+## Tâche 18 : les passifs en colonne, en haut à gauche
+
+**Fichiers :** modifier `front/index.html`, `front/src/ui/hud.ts`, `front/src/render/frame.ts`, leurs tests
+
+> *« Pour les passifs, il faut les afficher en colonne en haut à gauche. »*
+
+- [ ] **Étape 1 : le client connaît déjà l'inventaire.** `GameClient.loadoutOf(playerId)` existe
+  depuis l'étape 4 et porte armes et passifs empilés. **Rien à ajouter au protocole.**
+
+- [ ] **Étape 2 : la colonne.** Nom, et **le nombre d'exemplaires** — c'est lui qui dit ce qu'on a
+  construit. Un passif pris quatre fois n'est pas un passif pris une fois.
+
+- [ ] **Étape 3 : commit** — `feat(front): la colonne des passifs`
+
+---
+
+## Tâche 19 : les cartes parlent, et quatre armes maximum
+
+**Fichiers :** modifier `shared/constants.ts`, `front/src/ui/draft.ts`, leurs tests
+
+- [ ] **Étape 1 : `WEAPON_SLOTS` passe de 5 à 4.** `Loadout.canTake` le fait déjà respecter — **ne
+  réécris pas la règle, change le nombre.**
+
+  ⚠️ Des tests écrivent peut-être 5 en dur. Les dériver de la constante, ne pas les rafistoler : deux
+  tests sont devenus intermittents à la tâche 1 pour avoir recopié `WAVE1_MIN_COUNT`.
+
+- [ ] **Étape 2 : l'élément sur les cartes d'arme.** `Weapon.element` existe depuis la tâche 2 ; la
+  carte ne l'affiche pas. Le nom seul ne dit pas si l'arme sert la Braise ou le Givre — donc pas si
+  elle complète ce qu'un allié a pris, ce qui est **tout le sujet du §6.5**.
+
+- [ ] **Étape 3 : la valeur sur les cartes de passif.** `Passive.magnitude` est le bonus **par
+  carte**, jamais un total — c'est la doc du catalogue, et l'afficher autrement mentirait sur
+  l'empilement.
+
+- [ ] **Étape 4 : commit** — `feat(front): les cartes montrent l'element et la valeur`
+
+---
+
 ## Tâche 11 : vérification manuelle et clôture
 
 - [ ] **Jouer une run, au premier plan.** Un onglet en arrière-plan a son `requestAnimationFrame`
