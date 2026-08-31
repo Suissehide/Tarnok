@@ -213,6 +213,89 @@ Chaque tâche les respecte, sans les répéter.
 
 ---
 
+## Tâche 3 bis : les PV du boss suivent le nombre de joueurs
+
+**Fichiers :** modifier `shared/paliers.ts`, `back/src/wave-director.ts`, leurs tests
+
+> Décision de l'auteur, après la mesure de la tâche 3 : *« les PV du boss doivent dépendre du nombre
+> de joueurs. »*
+
+**Ce que la tâche 3 a mesuré et qui l'impose** : quatre joueurs tuent le boss en 87 s ; **un joueur
+seul ne le tue jamais.** Il vise la menace la plus proche, verse toute sa production dans 6 000 PV
+qu'il ne percera pas, cesse donc de moissonner, et la horde l'emporte. **3 graines sur 40 perdues.**
+
+- [ ] **Étape 1 : le précédent existe, suis-le.** Le seuil d'expérience fait déjà
+  `LEVEL_XP_BASE × niveau × max(1, joueurs)`. **La même forme, au même endroit conceptuel** — pas une
+  seconde convention.
+
+- [ ] **Étape 2 : la formule vit dans `shared/paliers.ts`**, pure, à côté de `palierHp`. Elle prend
+  le palier **et** le nombre de joueurs.
+
+  ⚠️ **Le nombre de joueurs peut changer PENDANT un palier** — quelqu'un se déconnecte, quelqu'un
+  rejoint. Le boss est déjà apparu avec ses PV. **À trancher et à écrire** : ses PV sont figés à
+  l'apparition, ou ils suivent. Le plus simple qui ne surprenne pas : **figés** — un boss qui
+  regagne de la vie parce qu'un joueur arrive se lirait comme un bug.
+
+- [ ] **Étape 3 : remesurer les 40 graines en solo.** C'est le chiffre qui dit si le correctif
+  marche : la tâche 3 relevait **3 échecs sur 40**.
+
+- [ ] **Étape 4 : commit** — `fix: les PV du boss suivent le nombre de joueurs`
+
+---
+
+## Tâche 5 bis : l'attaque téléguidée du boss
+
+**Fichiers :** modifier `shared/protocol.ts`, `back/src/combat.ts`, `back/src/room.ts`,
+`front/src/render/`, leurs tests
+
+> Décision de l'auteur : *« le boss peut faire des attaques sur des zones, un cercle légèrement
+> rouge avec un petit cercle qui grossit jusqu'à la taille finale au moment de l'attaque. »*
+
+⚠️ **Ceci révoque le §4 de la spec**, qui disait : *« son comportement reste celui de la piétaille,
+et c'est délibéré — un boss avec des phases, des attaques téléguidées et des patterns est un autre
+jeu, et surtout un autre budget »*. La spec laissait pourtant la question ouverte au §8 : *« un boss
+qui n'a que des points de vie se sent-il comme un boss ? »*. **La réponse est non**, et une attaque
+téléguidée est très loin de « des phases et des patterns » — c'est **une** attaque avec un temps de
+chargement.
+
+### Ce qui la rend simple : elle est déjà écrite quatre fois dans ce dépôt
+
+| Ce qu'il faut | Ce qui existe déjà |
+| --- | --- |
+| annoncer à la création, dériver ensuite | `ZONE` depuis l'étape 5a |
+| dater par tick, jamais à la réception | le gel de niveau depuis l'étape 3 |
+| un cercle qui grossit | `orbFlightFraction`, `reactionFlashScale` |
+| des dégâts arbitrés serveur | `resolveContact` |
+
+- [ ] **Étape 1 : le message.** Centre, rayon final, **tick d'impact**. Un message à l'annonce, plus
+  rien ensuite.
+
+  ⚠️ **Le tick d'impact voyage, la progression se dérive.** Les deux côtés calculent
+  `(tick − bornTick) / (impactTick − bornTick)` sur des ticks identiques : **zéro octet après
+  l'annonce, et le cercle grossit au même rythme partout.**
+
+- [ ] **Étape 2 : les dégâts au tick d'impact, arbitrés serveur.** Rien d'autre ne fait mal — le
+  télégraphe est **cosmétique jusqu'à l'impact**, et c'est ce qui le rend sûr.
+
+  ⚠️ **Le joueur doit pouvoir sortir du cercle.** C'est tout l'intérêt : le temps de chargement est
+  la fenêtre de réaction. S'il est trop court, l'attaque est une taxe ; trop long, elle est
+  décorative. **Réglage à l'œil, tâche 12.**
+
+- [ ] **Étape 3 : le rendu.** Un disque **légèrement rouge** à la taille finale, dès l'annonce, et un
+  **petit cercle qui grossit** jusqu'à le remplir au tick d'impact.
+
+  ⚠️ **L'opacité monte avec la progression** — c'est ce qui fait qu'on lit l'imminence sans compter.
+  Le §6.6 de l'orientation dit *« l'état persistant est discret, la réaction est spectaculaire »* :
+  ici le cercle d'annonce est l'état, l'impact est la réaction.
+
+- [ ] **Étape 4 : le coût est borné par le nombre.** Un boss, donc au plus quelques télégraphes
+  vivants. Deux quads chacun. **Rien à mesurer, mais le dire** — et si un jour un palier fait dix
+  boss, c'est cette ligne qu'il faudra rouvrir.
+
+- [ ] **Étape 5 : commit** — `feat: le boss telegraphie ses attaques`
+
+---
+
 ## Tâche 4 : la vie du boss voyage
 
 **Fichiers :** modifier `shared/protocol.ts`, `back/src/room.ts`, leurs tests

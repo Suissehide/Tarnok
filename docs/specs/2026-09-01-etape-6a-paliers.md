@@ -114,14 +114,27 @@ en fait une porte.
 
 | | |
 | --- | --- |
-| Points de vie | plusieurs centaines de fois ceux de la piétaille lourde, croissant en `1,12^k` |
+| Points de vie | plusieurs centaines de fois ceux de la piétaille lourde, croissant en `1,12^k` **et avec le nombre de joueurs** — même forme que le seuil d'expérience. Mesuré : quatre joueurs le tuent en 87 s, **un joueur seul ne le tue jamais** |
 | Taille | nettement plus grand que la piétaille — c'est ce qui le rend lisible dans la mêlée |
 | Barre de vie | **visible, et c'est la seule du jeu** |
 | Comportement | celui de la piétaille : il marche vers le joueur le plus proche |
 
-⚠️ **Son comportement reste celui de la piétaille, et c'est délibéré.** Un boss avec des phases, des
-attaques téléguidées et des patterns est un autre jeu — et surtout un autre budget. Ce qui le rend
-un boss à cette étape, c'est qu'il **encaisse** et qu'il **verrouille le palier**.
+⚠️ **Une première version de ce paragraphe disait que son comportement reste celui de la piétaille**
+— *« un boss avec des phases, des attaques téléguidées et des patterns est un autre jeu »*. L'auteur
+a tranché l'inverse, et le §8 de ce document posait déjà la question : *« un boss qui n'a que des
+points de vie se sent-il comme un boss ? »*. **La réponse est non.**
+
+**Il télégraphie ses attaques** : un disque légèrement rouge apparaît, un petit cercle grossit
+jusqu'à le remplir, et l'impact tombe quand il est plein. **Une** attaque avec un temps de
+chargement — très loin des phases et des patterns que ce paragraphe refusait.
+
+Ce qui la rend peu coûteuse : elle est déjà écrite quatre fois dans ce dépôt. Annoncée à la création
+et dérivée ensuite comme une zone, **datée par tick** comme le gel de niveau, un cercle qui grossit
+comme le vol d'une orbe, des dégâts arbitrés serveur comme le contact.
+
+⚠️ **Le télégraphe est cosmétique jusqu'à l'impact, et c'est ce qui le rend sûr** — rien ne fait mal
+avant le tick annoncé. Ce qui le rend intéressant, c'est que **le joueur peut sortir du cercle** :
+le temps de chargement est la fenêtre de réaction.
 
 ⚠️ **Il porte des marques élémentaires comme tout le monde** (étape 5a), et c'est le premier ennemi
 qui survivra assez longtemps pour qu'une réaction se voie sur lui.
