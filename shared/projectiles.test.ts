@@ -427,9 +427,9 @@ describe('Projectiles — derivation', () => {
 describe('truncatedProjectiles — la salve qui ne part pas ne disparait pas en silence', () => {
   it('compte exactement ce qui manque, et rien tant que la place suffit', () => {
     // ⚠️ Ce compteur existe parce que l'empilement a leve la borne : chaque
-    // exemplaire d'arme elargit la salve, et le plafond de cinq armes ne borne
-    // plus rien. Une salve tronquee est une CARTE que le joueur a payee et qui
-    // ne fait rien — ca ne doit jamais disparaitre sans trace.
+    // exemplaire d'arme elargit la salve, et le plafond de `WEAPON_SLOTS` armes
+    // ne borne plus rien. Une salve tronquee est une CARTE que le joueur a
+    // payee et qui ne fait rien — ca ne doit jamais disparaitre sans trace.
     const arme = weaponOf(0);
     const p = new Projectiles(10);
     expect(p.truncatedProjectiles).toBe(0);

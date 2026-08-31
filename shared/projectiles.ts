@@ -313,10 +313,10 @@ export class Projectiles {
    * ses metriques.
    *
    * ⚠️ **Ce compteur existe parce que l'empilement a leve la borne.** Jusqu'a
-   * ce que les armes s'empilent, quatre joueurs a cinq slots pleins tenaient
-   * 112 projectiles simultanes contre une capacite de 256, et la marge tenait
-   * toute seule. Un exemplaire supplementaire elargit desormais la salve sans
-   * borne : la capacite peut etre atteinte, et sans ce compteur la salve
+   * ce que les armes s'empilent, quatre joueurs aux slots pleins tenaient une
+   * centaine de projectiles simultanes contre une capacite de 256, et la marge
+   * tenait toute seule. Un exemplaire supplementaire elargit desormais la salve
+   * sans borne : la capacite peut etre atteinte, et sans ce compteur la salve
    * manquante ne se verrait nulle part.
    */
   truncatedProjectiles = 0;

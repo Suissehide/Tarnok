@@ -160,10 +160,10 @@ img,
 /*
  * L'ecran de draft (tache 10 — §4.1, §4.2 et §7.2 de la spec de l'etape 4).
  *
- * Deux choses seulement doivent se LIRE ici, et aucune n'est du decor :
- * qui vise quoi (les jetons), et ce qui arrive a MA carte (l'illumination ou
- * la consumation). Le reste attend l'etape 5, quand les cartes auront un
- * element a porter.
+ * Trois choses seulement doivent se LIRE ici, et aucune n'est du decor : qui
+ * vise quoi (les jetons), ce qui arrive a MA carte (l'illumination ou la
+ * consumation), et ce que la carte VAUT — son element ou son bonus, depuis la
+ * tache 19.
  */
 #draft {
   background: rgb(20 17 15 / 0.92);
@@ -221,6 +221,20 @@ img,
 .draft-card__name {
   font-size: 0.95rem;
   font-weight: bold;
+  overflow-wrap: anywhere;
+}
+
+/*
+ * Ce que la carte VAUT (tache 19) : l'element d'une arme, le bonus par carte
+ * d'un passif.
+ *
+ * Plus petit que le nom, et sous lui : c'est une precision, pas l'identite de
+ * la carte. La couleur des armes est posee en ligne par `ui/draft.ts`, lue
+ * dans `ELEMENTS` — la meme teinte que l'anneau de marque et la zone au sol.
+ */
+.draft-card__detail {
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
   overflow-wrap: anywhere;
 }
 

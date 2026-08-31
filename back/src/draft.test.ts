@@ -2,6 +2,7 @@ import { CARD, type Card } from '@shared/cards';
 import { DRAFT_WINDOW_TICKS, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
 import { OUTCOME } from '@shared/protocol';
+import { BASE_WEAPON_ID, WEAPONS } from '@shared/weapons';
 import { describe, expect, it } from 'vitest';
 
 import { Draft } from './draft';
@@ -27,10 +28,29 @@ function spread(): Card[] {
 
 /**
  * Les armes du catalogue que l'etalage d'epreuve ne propose PAS — de quoi
- * remplir les cinq slots d'un joueur sans qu'aucune carte n'y soit deja
- * possedee. Il en faut exactement `WEAPON_SLOTS`.
+ * remplir TOUS les slots d'un joueur sans qu'aucune carte n'y soit deja
+ * possedee.
+ *
+ * ⚠️ **Derivee de `WEAPON_SLOTS`, jamais recopiee.** Cette liste valait
+ * `[2, 5, 6, 7, 8]` en dur : passer les slots de 5 a 4 (tache 19) faisait
+ * lever `addWeapon` au module et emportait tout le fichier. Deux tests de ce
+ * depot sont deja devenus intermittents pour avoir recopie `WAVE1_MIN_COUNT`.
+ *
+ * La garde ci-dessous reste : elle dit qu'il n'y a plus assez d'armes au
+ * catalogue hors etalage pour remplir un inventaire — le jour ou `WEAPON_SLOTS`
+ * depasserait ce que `WEAPONS` peut fournir, c'est la fixture qui est fausse,
+ * pas le code teste.
  */
-const ARMES_HORS_ETALAGE = [2, 5, 6, 7, 8];
+const ARMES_DE_L_ETALAGE = new Set(
+  spread()
+    .filter((c) => c.nature === CARD.WEAPON)
+    .map((c) => c.refId),
+);
+const ARMES_HORS_ETALAGE = WEAPONS.filter(
+  (w) => w.id !== BASE_WEAPON_ID && !ARMES_DE_L_ETALAGE.has(w.id),
+)
+  .slice(0, WEAPON_SLOTS)
+  .map((w) => w.id);
 if (ARMES_HORS_ETALAGE.length !== WEAPON_SLOTS) {
   throw new Error('fixture : il faut de quoi remplir exactement les slots d armes');
 }
@@ -89,7 +109,7 @@ describe('Draft — le jeton', () => {
     // se refuse encore.
     const pleins = new Loadout();
     for (let i = 0; i < WEAPON_SLOTS; i++) {
-      // Cinq armes qui ne figurent dans AUCUNE carte de l'etalage : l'etalage
+      // Des armes qui ne figurent dans AUCUNE carte de l'etalage : l'etalage
       // n'offre que les armes 1, 3 et 4.
       pleins.addWeapon(ARMES_HORS_ETALAGE[i] ?? 0);
     }

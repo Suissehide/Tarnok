@@ -9,15 +9,23 @@
  * question posee.
  *
  * Ce qui est en jeu : `Projectiles.collide` est en O(projectiles x entites), et
- * la tache 7 a mesure que quatre joueurs a cinq slots pleins entretiennent
- * jusqu'a 112 projectiles simultanes contre 28 avec la seule arme neutre. Un
- * facteur quatre sur le nombre de projectiles pouvait donc se payer cher.
+ * la tache 7 a mesure qu'un salon de quatre joueurs aux slots d'armes pleins
+ * entretient un ordre de grandeur de plus de projectiles qu'avec la seule arme
+ * neutre. Un tel facteur pouvait se payer cher.
  *
- * On compare le meme salon a 1, 3 et 6 armes par joueur, horde constante.
+ * ⚠️ **Les chiffres cites ici etaient calcules a CINQ slots**, et la tache 19
+ * a ramene `WEAPON_SLOTS` a quatre : ils ont ete retires plutot que corriges a
+ * l'aveugle — un banc rapporte ce qu'il mesure, il n'a pas a promettre un
+ * nombre d'avance. Les colonnes ci-dessous sont derivees de `WEAPON_SLOTS`,
+ * donc le banc suit le reglage au lieu de lever « slots d'armes pleins ».
+ *
+ * On compare le meme salon a l'arme neutre seule puis a un arsenal plein,
+ * empile de plus en plus, horde constante.
  */
 import { CARD } from '@shared/cards';
-import { MAX_ENTITIES, TICK_HZ } from '@shared/constants';
+import { MAX_ENTITIES, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { FORMATION, type WaveOrder } from '@shared/waves';
+import { BASE_WEAPON_ID, WEAPONS } from '@shared/weapons';
 
 import { Room } from '../src/room';
 
@@ -50,10 +58,16 @@ function mesure(
   for (const id of [1, 2, 3, 4]) {
     room.join(id);
   }
+  // ⚠️ Les armes se prennent dans le CATALOGUE, pas par indice suppose : un
+  // `refId` recopie a la main leve des que `WEAPON_SLOTS` change, et le banc
+  // entier meurt au premier appel.
+  const arsenal = WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID)
+    .slice(0, slots)
+    .map((w) => w.id);
   for (let p = 1; p <= 4; p++) {
-    for (let w = 1; w <= slots; w++) {
+    for (const arme of arsenal) {
       for (let k = 0; k < exemplaires; k++) {
-        room.grantCard(p, { nature: CARD.WEAPON, refId: w });
+        room.grantCard(p, { nature: CARD.WEAPON, refId: arme });
       }
     }
     room.applyInput(p, 1, 0, 0, 127, 40);
@@ -81,10 +95,10 @@ const lignes: Record<string, unknown>[] = [];
 for (const entites of [1500, 4000]) {
   for (const [slots, exemplaires] of [
     [0, 1],
-    [5, 1],
-    [5, 4],
-    [5, 8],
-    [5, 16],
+    [WEAPON_SLOTS, 1],
+    [WEAPON_SLOTS, 4],
+    [WEAPON_SLOTS, 8],
+    [WEAPON_SLOTS, 16],
   ] as const) {
     const r = mesure(slots, entites, exemplaires);
     lignes.push({

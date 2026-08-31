@@ -1,6 +1,7 @@
 import { CARD, type Card } from '@shared/cards';
 import { TICK_HZ } from '@shared/constants';
-import { passiveOf } from '@shared/passives';
+import { elementOf } from '@shared/elements';
+import { type Passive, type PassiveKind, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { weaponOf } from '@shared/weapons';
 
@@ -20,8 +21,8 @@ import { weaponOf } from '@shared/weapons';
  *    remplace la rotation de priorite supprimee (§9) : il rend la perte
  *    LISIBLE plutot que subie.
  *
- * Fonctionnel et lisible : le soin visuel viendra quand les cartes auront un
- * element a porter (etape 5, §1 de la spec).
+ * Depuis la tache 19, la carte porte aussi ce qu'elle VAUT : l'element d'une
+ * arme, le bonus par carte d'un passif — voir `cardDetail`.
  */
 
 /** Ce que l'ecran lit — la surface de `GameClient` qui concerne le draft, et rien d'autre. */
@@ -96,6 +97,94 @@ export function natureLabel(nature: number): string {
  */
 export function cardName(card: Card): string {
   return card.nature === CARD.PASSIVE ? passiveOf(card.refId).name : weaponOf(card.refId).name;
+}
+
+/**
+ * L'unite dans laquelle se lit la `magnitude` d'un passif, par genre.
+ *
+ * ⚠️ **Une valeur affichee sans son unite ne veut rien dire.** Les magnitudes
+ * du catalogue sont heterogenes par construction : `maxHp` vaut 20 **points
+ * bruts**, `speed` 15 **pixels par seconde**, `fireRate` 0,08 et `damage` 0,10
+ * qui sont des **fractions**. Un ecran qui afficherait « 20 », « 15 », « 0,08 »
+ * et « 0,1 » cote a cote laisserait croire que le premier est mille fois
+ * meilleur que le troisieme.
+ *
+ * ⚠️ **`fireRate` retire une fraction de la RECHARGE**, il n'ajoute pas une
+ * fraction de cadence (voir `cooldownWithBonus`) : l'ecrire « +8 % de cadence »
+ * serait faux d'un demi-point et, surtout, dirait le contraire de ce que le
+ * nombre fait.
+ */
+const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
+  maxHp: (m) => `+${m} PV max`,
+  speed: (m) => `+${m} px/s`,
+  damage: (m) => `+${pourcent(m)} % dégâts`,
+  fireRate: (m) => `−${pourcent(m)} % recharge`,
+};
+
+/**
+ * Une fraction en points de pourcentage, a une decimale au plus.
+ *
+ * `0.08 * 100` vaut `8.000000000000002` en virgule flottante : sans cet
+ * arrondi, la carte « cadence » afficherait dix-sept chiffres.
+ */
+function pourcent(fraction: number): string {
+  return `${Math.round(fraction * 1000) / 10}`;
+}
+
+/**
+ * Le bonus qu'apporte UNE carte de ce passif, unite comprise.
+ *
+ * ⚠️ **Par carte, jamais un total.** C'est la doc de `Passive.magnitude`, et
+ * c'est ce que le joueur gagne en prenant CETTE carte-ci. Afficher le cumul de
+ * son inventaire mentirait sur l'empilement — la colonne des passifs (tache
+ * 18) dit deja combien d'exemplaires il possede, et les deux lectures se
+ * completent : « +20 PV max » sur la carte, « vitalite ×4 » dans le coin.
+ */
+export function magnitudeLabel(passive: Passive): string {
+  return UNITES[passive.kind](passive.magnitude);
+}
+
+/**
+ * Ce que la carte dit EN PLUS de son nom : l'element pour une arme, la valeur
+ * pour un passif.
+ *
+ * **L'element sur les armes** (§6.5, *« le coeur du projet »*) : le nom seul ne
+ * dit pas si l'arme sert la Braise ou le Givre, donc pas si elle COMPLETE ce
+ * qu'un allie vient de prendre — or c'est exactement la negociation que
+ * l'etalage existe pour produire.
+ *
+ * ⚠️ **Une arme neutre se lit « neutre »**, elle ne se lit pas comme une carte
+ * a qui il manque une ligne. `ELEMENT.NEUTRE` est une entree de la table comme
+ * les autres (§4 de la spec de l'etape 5a), pas un cas particulier : cinq armes
+ * du catalogue sur neuf sont neutres et le restent — *« un socle pour les
+ * joueurs qui ne veulent pas jouer le systeme »*.
+ *
+ * `color` est la teinte de l'element, lue dans `ELEMENTS` et jamais recopiee :
+ * c'est la MEME que celle de l'anneau de marque et de la zone au sol, donc la
+ * carte annonce la couleur qu'on verra au sol en tirant. Nulle pour un passif,
+ * qui n'a pas d'element a porter.
+ */
+export function cardDetail(card: Card): { text: string; color: string | null } {
+  if (card.nature === CARD.PASSIVE) {
+    return { text: magnitudeLabel(passiveOf(card.refId)), color: null };
+  }
+  const element = elementOf(weaponOf(card.refId).element);
+  return { text: element.name, color: cssColor(element.tint) };
+}
+
+/**
+ * Une teinte `0xRRGGBB` en couleur CSS.
+ *
+ * ⚠️ **Prend le nombre en parametre plutot que de lire `ELEMENTS`**, pour la
+ * meme raison que `assertWeaponElements` : les trois teintes du catalogue
+ * commencent toutes par un chiffre non nul, donc le remplissage a six chiffres
+ * ne s'y exerce jamais et sa mutation survivait a toute la suite. Avec un
+ * parametre, le test lui donne une teinte sombre — `0x00aabb` s'ecrirait
+ * « #aabb », que le navigateur ignore, et la carte perdrait sa couleur le jour
+ * ou la Poix ou le Vif-argent entreront au catalogue (§6.3 de l'orientation).
+ */
+export function cssColor(tint: number): string {
+  return `#${tint.toString(16).padStart(6, '0')}`;
 }
 
 interface CardCell {
@@ -188,10 +277,19 @@ export class DraftScreen {
       name.className = 'draft-card__name';
       name.textContent = cardName(card);
 
+      // Tache 19 : l'element sur les armes, la valeur sur les passifs.
+      const detail = document.createElement('span');
+      detail.className = 'draft-card__detail';
+      const { text, color } = cardDetail(card);
+      detail.textContent = text;
+      if (color !== null) {
+        detail.style.color = color;
+      }
+
       const tokens = document.createElement('span');
       tokens.className = 'draft-card__tokens';
 
-      root.append(nature, name, tokens);
+      root.append(nature, name, detail, tokens);
       root.addEventListener('click', () => {
         this.#onPick(index);
       });

@@ -1,14 +1,25 @@
 // @vitest-environment jsdom
 import { CARD, type Card } from '@shared/cards';
 import { TICK_HZ } from '@shared/constants';
+import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
+import { PASSIVES, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
+import { WEAPONS, weaponOf } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 // `?raw` de Vite : le HTML entre dans le bundle de test tel quel, sans que le
 // test ait a deviner un chemin sur le disque (`import.meta.url` n'est pas une
 // URL `file:` sous jsdom).
 import indexHtml from '../../index.html?raw';
-import { type DraftOutcomeView, DraftScreen, type DraftSource, remainingSeconds } from './draft';
+import {
+  cardDetail,
+  cssColor,
+  type DraftOutcomeView,
+  DraftScreen,
+  type DraftSource,
+  magnitudeLabel,
+  remainingSeconds,
+} from './draft';
 
 /**
  * L'ecran de draft se teste sous jsdom, et pas « ca n'a pas plante » : ce que
@@ -118,6 +129,180 @@ describe('le cablage vers index.html', () => {
   });
 });
 
+/** La meme teinte, telle que jsdom rend une couleur posee en ligne. */
+function rgbOf(tint: number): string {
+  return `rgb(${(tint >> 16) & 255}, ${(tint >> 8) & 255}, ${tint & 255})`;
+}
+
+/**
+ * La teinte d'un element telle que `cardDetail` doit l'ecrire.
+ *
+ * ⚠️ **Composee ici composante par composante**, et pas avec le
+ * `toString(16).padStart(6)` de la production : recopier la formule testee
+ * rendrait sa mutation invisible. Et la teinte elle-meme est LUE dans
+ * `ELEMENTS` — l'ecrire « #ff7a3c » en dur ferait diverger la carte et le sol
+ * a la premiere retouche de palette, sans que rien ne rougisse.
+ */
+function hexOf(tint: number): string {
+  return `#${[16, 8, 0].map((d) => ((tint >> d) & 255).toString(16).padStart(2, '0')).join('')}`;
+}
+
+describe('cardDetail — ce que la carte dit en plus de son nom (tache 19)', () => {
+  it("nomme l'element d'une arme elementaire, a la teinte de cet element", () => {
+    // ⚠️ **Tout le sujet du §6.5.** « eventail » ne dit pas si l'arme sert la
+    // Braise ou le Givre, donc ne dit pas si elle complete ce qu'un allie vient
+    // de prendre — et c'est cette lecture-la que l'etalage existe pour
+    // permettre.
+    const braise = WEAPONS.find((w) => w.element === ELEMENT.BRAISE);
+    if (!braise) {
+      throw new Error('fixture : aucune arme de Braise au catalogue');
+    }
+    const detail = cardDetail({ nature: CARD.WEAPON, refId: braise.id });
+
+    expect(detail.text).toBe(elementOf(ELEMENT.BRAISE).name);
+    expect(detail.color).toBe(hexOf(elementOf(ELEMENT.BRAISE).tint));
+    // Le format, en plus de la valeur : une couleur CSS, pas un nombre.
+    expect(detail.color).toMatch(/^#[0-9a-f]{6}$/);
+  });
+
+  it('distingue le Givre de la Braise, jusque dans la teinte', () => {
+    // Deux elements differents doivent rendre deux details differents : un
+    // `cardDetail` qui rendrait toujours le premier element de la table
+    // passerait le test precedent tout seul.
+    const givre = WEAPONS.find((w) => w.element === ELEMENT.GIVRE);
+    if (!givre) {
+      throw new Error('fixture : aucune arme de Givre au catalogue');
+    }
+    const detail = cardDetail({ nature: CARD.WEAPON, refId: givre.id });
+
+    expect(detail.text).toBe(elementOf(ELEMENT.GIVRE).name);
+    expect(detail.text).not.toBe(elementOf(ELEMENT.BRAISE).name);
+    expect(detail.color).toBe(hexOf(elementOf(ELEMENT.GIVRE).tint));
+  });
+
+  it('fait lire une arme NEUTRE comme neutre, pas comme une carte incomplete', () => {
+    // ⚠️ Cinq armes du catalogue sur neuf sont neutres et le restent. Un detail
+    // vide sur celles-la se lirait comme une information manquante, pas comme
+    // le socle voulu par le §6.3 de l'orientation.
+    const neutre = WEAPONS.find((w) => w.element === ELEMENT.NEUTRE);
+    if (!neutre) {
+      throw new Error('fixture : aucune arme neutre au catalogue');
+    }
+    const detail = cardDetail({ nature: CARD.WEAPON, refId: neutre.id });
+
+    expect(detail.text).toBe(elementOf(ELEMENT.NEUTRE).name);
+    expect(detail.text.length).toBeGreaterThan(0);
+  });
+
+  it('donne un element a CHAQUE arme du catalogue, teinte comprise', () => {
+    // Garde du garde : les trois tests ci-dessus ne couvrent que trois armes.
+    for (const w of WEAPONS) {
+      const detail = cardDetail({ nature: CARD.WEAPON, refId: w.id });
+      expect(detail.text).toBe(elementOf(w.element).name);
+      expect(detail.color).toBe(hexOf(elementOf(w.element).tint));
+    }
+  });
+
+  it('porte la valeur du passif, avec son unite, et sans teinte a poser', () => {
+    const vitalite = PASSIVES.find((p) => p.kind === 'maxHp');
+    if (!vitalite) {
+      throw new Error('fixture : aucun passif de points de vie au catalogue');
+    }
+
+    expect(cardDetail({ nature: CARD.PASSIVE, refId: vitalite.id })).toEqual({
+      // La magnitude est LUE, l'unite est pinglee : c'est le libelle qui est
+      // une decision d'ecran, pas le nombre.
+      text: `+${vitalite.magnitude} PV max`,
+      color: null,
+    });
+  });
+
+  it('lit la BONNE table : la nature decide, pas le refId', () => {
+    // `refId` indexe `WEAPONS` ou `PASSIVES` selon la nature, et le meme indice
+    // existe des deux cotes : un `cardDetail` qui lirait toujours les armes
+    // rendrait un element plausible sur une carte de passif.
+    const detail = cardDetail({ nature: CARD.PASSIVE, refId: 1 });
+
+    expect(detail.text).toBe(magnitudeLabel(passiveOf(1)));
+    expect(detail.text).not.toBe(elementOf(weaponOf(1).element).name);
+  });
+});
+
+describe('cssColor — une teinte sombre reste une couleur CSS', () => {
+  it('remplit a six chiffres, meme quand la composante rouge est nulle', () => {
+    // ⚠️ **Aucune teinte du catalogue n'exerce ce remplissage** — les trois
+    // commencent par un chiffre non nul — et la mutation qui le retire
+    // survivait a toute la suite. `0x00aabb` s'ecrirait « #aabb », que le
+    // navigateur ignore : la carte perdrait sa couleur, silencieusement, le
+    // jour ou un element sombre entre au catalogue.
+    expect(cssColor(0x00aabb)).toBe('#00aabb');
+    expect(cssColor(0x000000)).toBe('#000000');
+  });
+
+  it('rend les teintes du catalogue telles quelles', () => {
+    for (const e of ELEMENTS) {
+      expect(cssColor(e.tint)).toBe(hexOf(e.tint));
+    }
+  });
+});
+
+describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
+  /**
+   * ⚠️ **Les quatre genres, chacun avec SON unite.** Les magnitudes du
+   * catalogue sont heterogenes par construction : `maxHp` en points bruts (20),
+   * `speed` en pixels par seconde (15), `fireRate` et `damage` en FRACTIONS
+   * (0,08 et 0,10). Les afficher toutes de la meme facon laisserait croire que
+   * « vitalite » vaut deux cents fois « cadence ».
+   */
+  it.each([
+    ['maxHp', ' PV max'],
+    ['speed', ' px/s'],
+    ['damage', ' % dégâts'],
+    ['fireRate', ' % recharge'],
+  ] as const)('finit %s par son unite', (kind, unite) => {
+    const passive = PASSIVES.find((p) => p.kind === kind);
+    if (!passive) {
+      throw new Error(`fixture : aucun passif de genre ${kind}`);
+    }
+    expect(magnitudeLabel(passive).endsWith(unite)).toBe(true);
+  });
+
+  it('lit la magnitude du CATALOGUE : deux passifs du meme genre ne disent pas la meme chose', () => {
+    // ⚠️ **C'est ce qui tue « le nombre est ecrit en dur ».** « puissance »
+    // (0,10) et « acier » (0,06) sont tous deux du genre `damage` : leur unite
+    // est la meme, leur valeur non. Un libelle constant passerait tous les
+    // tests d'unite ci-dessus.
+    const memeGenre = PASSIVES.filter((p) => p.kind === 'damage');
+    expect(memeGenre.length).toBeGreaterThan(1);
+    expect(new Set(memeGenre.map((p) => p.magnitude)).size).toBe(memeGenre.length);
+
+    expect(new Set(memeGenre.map(magnitudeLabel)).size).toBe(memeGenre.length);
+  });
+
+  it('dit le SENS du bonus : la cadence RETIRE de la recharge, tout le reste ajoute', () => {
+    // `cooldownWithBonus` retire une fraction de la recharge — l'ecrire « +8 % »
+    // dirait le contraire de ce que le nombre fait.
+    for (const p of PASSIVES) {
+      expect(magnitudeLabel(p).startsWith(p.kind === 'fireRate' ? '−' : '+')).toBe(true);
+    }
+  });
+
+  it('arrondit les fractions au lieu d afficher dix-sept chiffres', () => {
+    // `0.08 * 100` peut valoir 8.000000000000002 en virgule flottante.
+    for (const p of PASSIVES) {
+      expect(magnitudeLabel(p)).not.toMatch(/\d{6}/);
+    }
+  });
+
+  it('donne une etiquette a CHAQUE passif du catalogue', () => {
+    // Garde du garde : ajouter un `PassiveKind` sans unite rendrait `undefined`
+    // sur la carte, et le draft afficherait un trou.
+    for (const p of PASSIVES) {
+      expect(magnitudeLabel(p)).toMatch(/^[+−]\d/);
+    }
+  });
+});
+
 describe('remainingSeconds', () => {
   it('arrondit au-dessus et ne descend jamais sous zero', () => {
     expect(remainingSeconds(100 + 5 * TICK_HZ, 100)).toBe(5);
@@ -163,6 +348,40 @@ describe("DraftScreen — l'etalage", () => {
       'Arme',
     ]);
     expect(cards(h).map((c) => c.dataset.index)).toEqual(['0', '1', '2', '3']);
+  });
+
+  /**
+   * ⚠️ **Tache 19 : c'est ici que meurt la mutation « le detail n'est pas
+   * attache ».** `cardDetail` est gardee de son cote ; le fait de l'appeler et
+   * d'accrocher son resultat a la carte ne l'est que par cette assertion —
+   * c'est la distinction qui a coute trois etapes a ce depot.
+   */
+  it("porte l'element des armes et la valeur des passifs, a l'ecran", () => {
+    h.client.draftCards = spread();
+    h.screen.update();
+
+    expect(cards(h).map((c) => c.querySelector('.draft-card__detail')?.textContent)).toEqual(
+      spread().map((card) => cardDetail(card).text),
+    );
+    // L'etalage d'epreuve contient bien les deux natures ET les deux lectures :
+    // sans ca, la ligne ci-dessus pourrait ne verifier qu'un seul chemin.
+    expect(new Set(spread().map((c) => c.nature)).size).toBe(2);
+  });
+
+  it("teinte le detail d'une arme a la couleur de son element, et laisse un passif sans teinte", () => {
+    // La teinte est ce qui fait le lien entre la carte et ce qu'on verra au sol
+    // en tirant : c'est la meme que celle de l'anneau de marque et de la zone.
+    h.client.draftCards = [
+      { nature: CARD.WEAPON, refId: 1 },
+      { nature: CARD.PASSIVE, refId: 1 },
+    ];
+    h.screen.update();
+
+    const arme = cards(h)[0]?.querySelector('.draft-card__detail') as HTMLElement | null;
+    const passif = cards(h)[1]?.querySelector('.draft-card__detail') as HTMLElement | null;
+    expect(arme?.style.color).toBe(rgbOf(elementOf(weaponOf(1).element).tint));
+    // Rien en ligne : la carte garde sa couleur d'ambre.
+    expect(passif?.style.color).toBe('');
   });
 
   it('reconstruit l etalage au draft suivant, et pas avant', () => {

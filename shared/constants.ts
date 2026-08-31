@@ -310,11 +310,18 @@ export const LEVEL_XP_BASE = 10;
 /**
  * Nombre de slots d'armes d'un joueur (§6.1).
  *
- * ⚠️ Les cinq sont TOUS draftes — aucun n'est attribue d'avance. L'arme
+ * ⚠️ Les quatre sont TOUS draftes — aucun n'est attribue d'avance. L'arme
  * neutre de base (`WEAPONS[0]`) tire toujours mais ne consomme pas de slot :
  * la modifier sans lire `Room#fireWeapons` casserait cette exception.
+ *
+ * ⚠️ **Passe de 5 a 4 a la tache 19, sur retour de jeu.** Le nombre n'est pas
+ * un invariant : c'est `Loadout.canTake` qui le fait respecter, en un seul
+ * endroit. Aucun test ni aucun banc ne doit donc ecrire « cinq » en dur — les
+ * arsenaux d'epreuve se derivent de cette constante, sans quoi ils levent
+ * « slots d'armes pleins » au prochain reglage. Le depot a deja paye l'erreur
+ * inverse avec `WAVE1_MIN_COUNT`.
  */
-export const WEAPON_SLOTS = 5;
+export const WEAPON_SLOTS = 4;
 
 /**
  * Nombre de slots de passifs d'un joueur (§6.1).
@@ -356,23 +363,31 @@ export const SPREAD_BONUS = 3;
  *
  * Un joueur entretient au plus `salvoCount(arme, exemplaires) *
  * ceil(projectileLifeTicks / cooldownTicks)` projectiles par arme. Tant qu'une
- * arme ne se prenait qu'une fois, quatre joueurs a cinq slots pleins tenaient
- * **112** projectiles simultanes et 256 laissait un facteur 2,3 de marge.
+ * arme ne se prenait qu'une fois, quatre joueurs aux slots pleins tenaient une
+ * centaine de projectiles simultanes et 256 laissait un large facteur de marge.
  *
  * Depuis que les armes s'empilent, chaque exemplaire elargit la salve d'un
- * projectile et **le plafond de cinq armes ne borne plus rien** :
+ * projectile et **le plafond de `WEAPON_SLOTS` armes ne borne plus rien** :
+ * c'est le nombre d'EXEMPLAIRES qui commande, et lui n'a pas de plafond.
+ *
+ * ⚠️ **Remesure a la tache 19**, quand `WEAPON_SLOTS` est passe de 5 a 4 : les
+ * chiffres du tableau precedent avaient ete releves a cinq slots et sont
+ * devenus faux d'un cinquieme. Quatre joueurs, arsenal plein, sans horde (donc
+ * sans collision pour vider le reservoir) :
  *
  * | Exemplaires par arme | Cartes d'armes | A quatre joueurs |
  * | --- | --- | --- |
- * | 1 | ~5 | 112 |
- * | 4 | ~20 | 196 |
- * | 6 | ~30 | 252 |
- * | 8 | ~40 | **308** |
- * | 10 | ~50 | 364 |
+ * | 1 | 4 | 68 |
+ * | 4 | 16 | 128 |
+ * | 8 | 32 | 208 |
+ * | 16 | 64 | 368 |
+ * | 32 | 128 | 688 |
+ * | 48 | 192 | **1008** |
  *
- * 1024 couvre une trentaine d'exemplaires par arme. Ce n'est qu'un plafond :
- * il coute de la memoire (huit tableaux types, ~50 ko par salon), jamais du
- * temps — c'est le nombre de projectiles VIVANTS qui coute, pas la capacite.
+ * 1024 couvre donc une cinquantaine d'exemplaires par arme (a 56, le reservoir
+ * tronque). Ce n'est qu'un plafond : il coute de la memoire (huit tableaux
+ * types, ~50 ko par salon), jamais du temps — c'est le nombre de projectiles
+ * VIVANTS qui coute, pas la capacite.
  *
  * ⚠️ Vit dans `shared/` et pas dans `back/src/room.ts` : le client dimensionne
  * son propre reservoir sur la meme valeur, et deux copies divergeraient. Quand

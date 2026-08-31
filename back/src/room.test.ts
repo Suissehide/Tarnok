@@ -11,6 +11,7 @@ import {
   REACTION_DAMAGE,
   SYNERGY_MAX,
   TICK_HZ,
+  WEAPON_SLOTS,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
@@ -38,6 +39,22 @@ import { describe, expect, it, vi } from 'vitest';
 import { type DraftOpenEvent, Room } from './room';
 
 const DT = 1 / TICK_HZ;
+
+/**
+ * Un arsenal PLEIN : `WEAPON_SLOTS` armes distinctes, toutes draftables.
+ *
+ * ⚠️ **Derive du catalogue et de la constante, jamais recopie.** Deux fixtures
+ * de ce fichier ecrivaient `[1, 2, 3, 5, 6]` en dur ; passer les slots de 5 a 4
+ * (tache 19) faisait lever `addWeapon` sur la cinquieme arme. C'est le defaut
+ * le plus recurrent du depot — le meme que deux tests de vague ont paye en
+ * recopiant `WAVE1_MIN_COUNT`.
+ *
+ * L'arme neutre est exclue : elle vit hors des slots (§6.1) et l'empiler la
+ * ferait tirer deux fois par tick.
+ */
+const ARSENAL_PLEIN = WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID)
+  .slice(0, WEAPON_SLOTS)
+  .map((w) => w.id);
 
 /** Avance le salon d'une seconde de temps simule. */
 function stepOneSecond(room: Room): void {
@@ -1004,29 +1021,33 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect(compte.get(GRENADE)).toBe(attenduGrenade);
   });
 
-  it('l arme neutre reste hors slots : cinq armes draftees font six salves au meme tick', () => {
+  it('l arme neutre reste hors slots : un arsenal PLEIN fait une salve de plus que ses slots', () => {
     const room = new Room();
     room.join(1);
     const inv = room.loadoutOf(1);
     if (!inv) {
       throw new Error('inventaire manquant');
     }
-    const DRAFTEES = [1, 2, 3, 5, 6];
+    // ⚠️ **Un arsenal PLEIN, derive de `WEAPON_SLOTS`.** La liste valait
+    // `[1, 2, 3, 5, 6]` en dur : passer les slots de 5 a 4 (tache 19) faisait
+    // lever `addWeapon` sur la cinquieme. C'est « la constante recopiee dans
+    // une fixture », et le compte attendu se derive lui aussi.
+    const DRAFTEES = ARSENAL_PLEIN;
     for (const id of DRAFTEES) {
       inv.addWeapon(id);
     }
-    expect(inv.weaponSlotsUsed).toBe(DRAFTEES.length);
+    expect(inv.weaponSlotsUsed).toBe(WEAPON_SLOTS);
 
     // Un seul tick : aucune arme n'a jamais tire, donc toutes sont dues.
     const compte = salvesParArme(room, 1);
 
-    // ⚠️ SIX, pas cinq. L'arme neutre du §6.1 vit hors des slots : elle ne
-    // figure dans aucun `Loadout` et tire quand meme. Un `#fireWeapons` qui
-    // se contenterait de parcourir `weaponIds` en oubliant l'arme de base
-    // ferait cinq salves — et le joueur qui drafte sa premiere arme perdrait
-    // celle avec laquelle il a commence.
-    expect([...compte.values()].reduce((a, b) => a + b, 0)).toBe(DRAFTEES.length + 1);
-    expect([...compte.keys()].sort((a, b) => a - b)).toEqual([0, ...DRAFTEES]);
+    // ⚠️ UNE DE PLUS que le nombre de slots. L'arme neutre du §6.1 vit hors
+    // des slots : elle ne figure dans aucun `Loadout` et tire quand meme. Un
+    // `#fireWeapons` qui se contenterait de parcourir `weaponIds` en oubliant
+    // l'arme de base ferait exactement `WEAPON_SLOTS` salves — et le joueur
+    // qui drafte sa premiere arme perdrait celle avec laquelle il a commence.
+    expect([...compte.values()].reduce((a, b) => a + b, 0)).toBe(WEAPON_SLOTS + 1);
+    expect([...compte.keys()].sort((a, b) => a - b)).toEqual([BASE_WEAPON_ID, ...DRAFTEES]);
   });
 
   it('empiler une arme ELARGIT sa salve d un projectile par exemplaire', () => {
@@ -1345,22 +1366,35 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
   it('un arsenal lourdement empile ne tronque aucune salve', () => {
     // ⚠️ **La borne que l'empilement a levee.** Tant qu'une arme ne se prenait
-    // qu'une fois, quatre joueurs a cinq slots pleins tenaient 112 projectiles
-    // simultanes contre 256 de capacite, et la marge tenait toute seule. Chaque
-    // exemplaire elargit desormais la salve d'un projectile, et **le plafond de
-    // cinq armes ne borne plus rien** — mesure : 424 projectiles vivants a seize
-    // exemplaires par arme.
+    // qu'une fois, quatre joueurs aux slots pleins tenaient une centaine de
+    // projectiles simultanes contre 256 de capacite, et la marge tenait toute
+    // seule. Chaque exemplaire elargit desormais la salve d'un projectile, et
+    // **le plafond de slots d'armes ne borne plus rien** : c'est le nombre
+    // d'EXEMPLAIRES qui commande, et il n'a pas de plafond.
     //
     // `Projectiles` tronque en SILENCE quand la capacite est atteinte : la salve
     // que le joueur a payee en cartes ne partirait pas, sans aucun signal. Ce
-    // test est ce qui rend la constante verifiable. Avec `PROJECTILE_CAPACITY`
-    // ramenee a 256, il rougit.
+    // test est ce qui rend la constante verifiable. 256 n'est pas une constante
+    // du depot mais la valeur que `PROJECTILE_CAPACITY` avait AVANT
+    // l'empilement : le pic la depasse, donc la ramener a 256 ferait rougir.
     const room = new Room(0x0ca9_ac17);
     for (const id of [1, 2, 3, 4]) {
       room.join(id);
     }
-    const ARMES = [1, 2, 3, 5, 6];
-    const EXEMPLAIRES = 8;
+    const ARMES = ARSENAL_PLEIN;
+    // ⚠️ **Douze, et plus huit depuis la tache 19.** Retirer un slot d'arme a
+    // retire un cinquieme du debit : a huit exemplaires le pic tombait a 208,
+    // sous le seuil ci-dessous, et le test serait passe au vert en cessant de
+    // mesurer quoi que ce soit. C'est le nombre d'EXEMPLAIRES qui leve la
+    // borne, pas le nombre de slots — voir la doc de `PROJECTILE_CAPACITY`.
+    //
+    // ⚠️ **Ce nombre est MESURE au reglage courant de `WEAPON_SLOTS`**, il ne
+    // s'en derive pas : le debit depend aussi de QUELLES armes remplissent
+    // l'arsenal, et deux slots d'eventail et d'arc-lourd ne portent pas le
+    // meme reservoir que quatre. Le jour ou les slots rebougent, ce test
+    // rougit — bruyamment, ce qui est exactement ce qu'on veut : la capacite
+    // se REMESURE, elle ne se recalcule pas de tete.
+    const EXEMPLAIRES = 12;
     for (const id of [1, 2, 3, 4]) {
       for (const arme of ARMES) {
         for (let k = 0; k < EXEMPLAIRES; k++) {
