@@ -18,6 +18,7 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 3 | Combat : tir au curseur, morts répliquées, orbes, niveaux, fin de run | ✅ — [résultats](docs/plans/2026-08-24-etape-3-resultats.md) |
 | 4 | Draft : étalage à la montée de niveau, jetons visibles, conflits arbitrés | ✅ — [résultats](docs/plans/2026-08-26-etape-4-resultats.md) |
 | 5a | Éléments : PV de la piétaille, zones au sol, première réaction, Synergie | ✅ — [résultats](docs/plans/2026-08-27-etape-5a-resultats.md) |
+| 6a | Paliers, boss, or non sécurisé, vote d'extraction | 📝 — [spec](docs/specs/2026-09-01-etape-6a-paliers.md) |
 
 **Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
 19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du
