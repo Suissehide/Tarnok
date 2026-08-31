@@ -345,8 +345,21 @@ reconnexion (§3.7).
 | Catégorie | Nombre | Note |
 | --- | --- | --- |
 | Arme de base neutre | 1 | commune à tous, **hors slots**, reste faible toute la partie |
-| Armes | 5 | **toutes draftées**, aucune n'est attribuée d'avance |
+| Armes | **4** | **toutes draftées**, aucune n'est attribuée d'avance |
 | Passifs | 3, extensibles à 6 | slots débloqués par événements bonus et paliers de boss |
+
+> ⚠️ **Deux révisions venues du jeu, pas du raisonnement.** Ce tableau disait **5** armes, et le
+> §6.2 les rendait **exclusives à l'équipe** — une arme prise par un allié ne pouvait plus être
+> proposée à personne. L'auteur a joué et a tranché l'inverse, deux fois :
+>
+> - *« Si quelqu'un a déjà pris Lance-flammes, je peux lui voler la carte la prochaine fois. C'est
+>   l'accumulation des cartes qui fait la puissance. »* — l'exclusivité d'équipe tombe, les armes
+>   s'empilent comme les passifs (étape 4, §9.1 de sa spec) ;
+> - *« Limiter à 4 armes différentes maximum par joueur. »* — cinq slots deviennent quatre
+>   (étape 5a, tâche 19).
+>
+> Ce qui les remplace : l'éligibilité se **dérive** de l'inventaire (`Loadout.canTake`), et rien
+> n'est jamais réservé à personne.
 
 Format repris de *Swarm*, qui l'a éprouvé, à une exception près : **il n'y a pas d'arme
 signature.** Chez *Swarm*, le champion apporte sa première arme ; ici, la classe
@@ -853,8 +866,8 @@ deux qu'en mois cinq.
 | Expérience | Globale | Supprime toute compétition sur le loot |
 | Level-up | Gel du monde et du chronomètre, 20 s plafonnées | Modèle *Swarm*, resserré pour la phase de conflit (§7.4) |
 | Draft | Étalage commun, choix simultanés, conflits arbitrés | Le moment social du jeu (§7) |
-| Armes | 5 slots, **exclusives à l'équipe** | Force la spécialisation, rend les réactions nécessaires (§6.2) |
-| Arme signature | **Aucune** | Entrerait en conflit avec l'exclusivité et viderait le draft de son enjeu (§6.1) |
+| Armes | **4 slots**, ~~exclusives à l'équipe~~ **chacun le sien** | Force la spécialisation ; l'exclusivité d'équipe a été révoquée au playtest de l'étape 4 |
+| Arme signature | **Aucune** | Viderait le draft de son enjeu (§6.1) |
 | Départ | Arme neutre commune, hors slots | Garantit de pouvoir tirer sans orienter le build (§6.1) |
 | Classes | **Un verbe + un trait, jamais un élément** | L'identité élémentaire appartient au draft (§6.7) |
 | Passifs | 3 → 6 slots, **dupliquables** | L'exclusivité y serait punitive (§6.2) |
