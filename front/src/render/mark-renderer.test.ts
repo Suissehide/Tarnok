@@ -1,33 +1,53 @@
-import { MAP_SIZE, MARK_DURATION_TICKS, PROJECTILE_HIT_RADIUS } from '@shared/constants';
+// @vitest-environment jsdom
+import {
+  MAP_SIZE,
+  MARK_DURATION_TICKS,
+  MAX_ENTITIES,
+  PROJECTILE_HIT_RADIUS,
+} from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { Container, type Particle, type ParticleContainer, Texture, TextureSource } from 'pixi.js';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 
 import { BODY_SCALE } from './horde-renderer';
 import {
   MARK_RING_ALPHA,
   MARK_RING_DIAMETER_PX,
   MARK_RING_FOOT_OFFSET_PX,
+  MARK_RING_SCALE,
+  MARK_RING_SQUASH,
   MARK_RING_TEXTURE_DIAMETER,
   MarkRingRenderer,
-  ringGrid,
-  ringGridCells,
   selectMarkedRings,
 } from './mark-renderer';
 import { type ViewBounds, ZONE_ALPHA } from './zone-renderer';
 
 /**
- * Tache 13 de l'etape 5a, venue de l'auteur en jouant : *« je ne vois pas la
- * marque sur les ennemis, fais un anneau sous leurs pieds plutot que changer
- * leur couleur »*.
+ * Taches 13 et 15 de l'etape 5a, venues de l'auteur en jouant :
  *
- * Trois choses se gardent ici, et une seule etait dans le brief :
+ * > *« Je ne vois pas la marque sur les ennemis, fais un anneau sous leurs
+ * > pieds plutot que changer leur couleur. »* (13)
+ *
+ * > *« Les cercles doivent etre des ellipses sous les pieds, plus nettes et
+ * > fines. Parfois ils disparaissent lors des superpositions ou collision ? »*
+ * > (15)
+ *
+ * Quatre choses se gardent ici :
  * 1. **qui** recoit un anneau (marque, dans le cadre) — `selectMarkedRings` ;
- * 2. **combien** d'anneaux au pire — la borne de surface, mesuree plus bas ;
- * 3. **ou** se pose l'anneau — sous les pieds, pas sur la position, ce que la
- *    tache 14 vient de rendre necessaire en recentrant le corps.
+ * 2. **combien** — un par ennemi marque depuis la tache 15, la deduplication
+ *    par grille de la tache 13 etant exactement ce que l'auteur voyait
+ *    disparaitre ;
+ * 3. **ou** se pose l'anneau — sous les pieds, pas sur la position ;
+ * 4. **a quoi il ressemble** — une ellipse, et un trait fin plutot qu'un
+ *    degrade large.
+ *
+ * ⚠️ **Ce fichier tourne sous jsdom, et depuis la tache 15 seulement.** C'est
+ * ce qui rend le PROFIL de la texture atteignable : `makeRingTexture` a besoin
+ * d'un `document.createElement('canvas')`, et son contexte 2D est bouchonne
+ * plus bas comme `stage.test.ts` le fait deja. Sans ça, « plus nette et plus
+ * fine » n'aurait ete garde par rien du tout.
  */
 
 const TICK = 100;
@@ -68,12 +88,10 @@ function hordeAt(points: readonly { x: number; y: number }[]): Horde {
   return horde;
 }
 
-/** Les creneaux retenus, dans l'ordre, avec des tampons dimensionnes comme le renderer le fait. */
+/** Les creneaux retenus, dans l'ordre, avec un tampon dimensionne comme le renderer le fait. */
 function selection(horde: Horde, view: ViewBounds, tick = TICK): number[] {
-  const grid = ringGrid(view);
-  const cells = ringGridCells(grid);
-  const out = new Int32Array(cells);
-  const count = selectMarkedRings(horde, tick, view, grid, new Uint8Array(cells), out);
+  const out = new Int32Array(horde.capacity);
+  const count = selectMarkedRings(horde, tick, view, out);
   return [...out.slice(0, count)];
 }
 
@@ -142,131 +160,125 @@ describe('selectMarkedRings — qui recoit un anneau', () => {
 
     expect(selection(horde, view)).toEqual([0]);
   });
+
+  it('ne deborde jamais du tampon fourni', () => {
+    const horde = hordeAt([
+      { x: 3000, y: 3000 },
+      { x: 3100, y: 3000 },
+      { x: 3200, y: 3000 },
+    ]);
+    for (let i = 0; i < 3; i++) {
+      horde.applyMark(i, ELEMENT.BRAISE, 1, TICK);
+    }
+
+    // Trois ennemis marques et visibles, un tampon de deux : c'est le tampon
+    // qui borne, pas la horde. Meme garde que `selectZones`.
+    expect(selectMarkedRings(horde, TICK, TOUTE_LA_CARTE, new Int32Array(2))).toBe(2);
+  });
 });
 
 /**
- * ⚠️ **La borne de coût, et c'est le point de la tache.**
+ * ⚠️ **Le coeur de la tache 15, et l'inverse exact de ce que la tache 13
+ * gardait.**
  *
- * Le §6.6 de l'orientation donnait la teinte de sprite comme gratuite et
- * reservait l'anneau au cas « deux elements avant reaction » ; un anneau par
- * ennemi marque coute un quad par ennemi marque. Mesure avec la simulation
- * reelle (decor de `bench/steering.bench.ts`, 600 ticks de convergence) :
+ * La tache 13 dedoublonnait par cellule de grille, au pas du diametre de
+ * l'anneau, pour que le compte suive la SURFACE et non l'effectif. L'auteur en
+ * a vu l'artefact en jouant : *« parfois ils disparaissent lors des
+ * superpositions ou collision ? »*. Ce n'etait pas un defaut, c'etait la borne
+ * — et c'est la borne qui saute.
  *
- * | Entites | Rayon median | Dans un cadre 1920x1080 |
- * | --- | --- | --- |
- * | 1 500 | 230 px | **1 500** |
- * | 4 000 | 368 px | **4 000** |
+ * **Le cout remesure, sans deduplication :**
  *
- * **Le culling ne borne rien** quand la horde converge sur le joueur : elle
- * tient tout entiere dans le plus petit ecran. La borne est donc la SURFACE —
- * au plus un anneau par cellule au pas de l'anneau — exactement comme la
- * tache 4 a rendu le nombre de zones fonction de la surface couverte et non de
- * la cadence de tir.
+ * | Calque | Quads au pire cas |
+ * | --- | --- |
+ * | horde | `MAX_ENTITIES` = 4 000, un sprite par ennemi visible |
+ * | anneaux | `horde.capacity` = 4 000, un anneau par ennemi marque visible |
+ *
+ * Le plafond n'a pas disparu, il est seulement devenu le MEME que celui de la
+ * horde : un ennemi porte au plus une marque, donc au plus un anneau. Le calque
+ * double au pire ce que la horde dessine deja — meme ordre de grandeur.
  */
-describe('selectMarkedRings — le cout, borne par la surface et non par la horde', () => {
-  /** Un carre plein d'ennemis TOUS marques, cale sur une frontiere de cellule. */
-  function nappe(side: number, spacing: number): { horde: Horde; cotePx: number } {
-    const origin = 40 * MARK_RING_DIAMETER_PX;
+describe('selectMarkedRings — un anneau par ennemi marque, et rien ne se partage', () => {
+  /**
+   * ⚠️ **LE test de la tache 15.** Deux ennemis qui se superposent — le decor
+   * exact de la plainte — recoivent DEUX anneaux. La grille de la tache 13
+   * n'en posait qu'un : sa cellule faisait un diametre d'anneau, et deux
+   * ennemis a 2 px l'un de l'autre y tombaient toujours ensemble.
+   */
+  it('pose deux anneaux pour deux ennemis superposes', () => {
+    const horde = hordeAt([
+      { x: 3000, y: 3000 },
+      { x: 3002, y: 3000 },
+    ]);
+    horde.applyMark(0, ELEMENT.BRAISE, 1, TICK);
+    horde.applyMark(1, ELEMENT.GIVRE, 1, TICK);
+
+    expect(selection(horde, TOUTE_LA_CARTE)).toEqual([0, 1]);
+  });
+
+  /** Le coin haut-gauche de toutes les nappes de ce bloc. */
+  const ORIGINE = 3000;
+
+  /**
+   * Une nappe pleine d'ennemis TOUS marques, et la vue qui la contient
+   * entierement : sans ça, le culling en retirerait une rangee et le compte
+   * mesurerait le cadre au lieu de la regle.
+   */
+  function nappe(cols: number, rows: number, spacing: number): { horde: Horde; vue: ViewBounds } {
     const points: { x: number; y: number }[] = [];
-    for (let row = 0; row < side; row++) {
-      for (let col = 0; col < side; col++) {
-        points.push({ x: origin + col * spacing, y: origin + row * spacing });
+    for (let row = 0; row < rows; row++) {
+      for (let col = 0; col < cols; col++) {
+        points.push({ x: ORIGINE + col * spacing, y: ORIGINE + row * spacing });
       }
     }
     const horde = hordeAt(points);
     for (let i = 0; i < points.length; i++) {
       horde.applyMark(i, ELEMENT.BRAISE, 1, TICK);
     }
-    return { horde, cotePx: (side - 1) * spacing };
+    const vue = screenAt(
+      ORIGINE + ((cols - 1) * spacing) / 2,
+      ORIGINE + ((rows - 1) * spacing) / 2,
+    );
+    return { horde, vue };
   }
 
   /**
-   * Ce qu'une nappe de `cotePx` de cote doit coûter : **un anneau par cellule
-   * qu'elle couvre**, et rien de plus. Derive de `MARK_RING_DIAMETER_PX`, qui
-   * est le pas de la grille — un test qui recopierait le pas laisserait passer
-   * exactement la mutation qui l'elargit ou le retrecit, donc qui multiplie ou
-   * divise la borne de coût sans qu'on le voie.
+   * L'inverse mot pour mot du test que la tache 13 gardait : a surface egale,
+   * quatre fois plus d'ennemis donnent desormais quatre fois plus d'anneaux.
+   * Un implementeur qui remettrait une grille — ou n'importe quel plafond par
+   * ordre de creneau — le ferait rougir.
    */
-  function anneauxAttendus(cotePx: number): number {
-    return (Math.floor(cotePx / MARK_RING_DIAMETER_PX) + 1) ** 2;
-  }
-
-  it('ne pose jamais deux anneaux dans la meme cellule, et en pose deux de part et d autre', () => {
-    const frontiere = 41 * MARK_RING_DIAMETER_PX;
-    const memeCellule = hordeAt([
-      { x: frontiere + 4, y: 3000 },
-      { x: frontiere + 6, y: 3000 },
-    ]);
-    memeCellule.applyMark(0, ELEMENT.BRAISE, 1, TICK);
-    memeCellule.applyMark(1, ELEMENT.BRAISE, 1, TICK);
-    expect(selection(memeCellule, TOUTE_LA_CARTE)).toEqual([0]);
-
-    const deuxCellules = hordeAt([
-      { x: frontiere - 4, y: 3000 },
-      { x: frontiere + 6, y: 3000 },
-    ]);
-    deuxCellules.applyMark(0, ELEMENT.BRAISE, 1, TICK);
-    deuxCellules.applyMark(1, ELEMENT.BRAISE, 1, TICK);
-    expect(selection(deuxCellules, TOUTE_LA_CARTE)).toEqual([0, 1]);
-  });
-
-  /**
-   * ⚠️ **LE test de ce fichier.** Deux hordes qui couvrent la MEME surface, la
-   * seconde quatre fois plus dense que la premiere : le nombre d'anneaux ne
-   * bouge pas. C'est ce qu'un plafond dur — un `MARK_RING_CAPACITY` avec son
-   * compteur de troncature — n'aurait pas donne : il aurait bien borne le
-   * compte, mais en jetant des anneaux au hasard de l'ordre des creneaux, donc
-   * en concentrant les survivants la ou les creneaux sont bas.
-   */
-  it('rend le meme compte pour quatre fois plus d ennemis sur la meme surface', () => {
-    const view = screenAt(40 * MARK_RING_DIAMETER_PX + 512, 40 * MARK_RING_DIAMETER_PX + 512);
-    const clairsemee = nappe(32, MARK_RING_DIAMETER_PX / 2);
-    const dense = nappe(64, MARK_RING_DIAMETER_PX / 4);
+  it('rend quatre fois plus d anneaux pour quatre fois plus d ennemis sur la meme surface', () => {
+    const clairsemee = nappe(32, 32, MARK_RING_DIAMETER_PX / 2);
+    const dense = nappe(64, 64, MARK_RING_DIAMETER_PX / 4);
     expect(dense.horde.count).toBe(4 * clairsemee.horde.count);
 
-    const anneauxClairsemee = selection(clairsemee.horde, view).length;
-    const anneauxDense = selection(dense.horde, view).length;
-
-    process.stdout.write(
-      `[tache 13] pire cas : ${dense.horde.count} ennemis tous marques -> ${anneauxDense} anneaux ` +
-        `(plafond de surface : ${ringGridCells(ringGrid(view))} cellules pour un ecran ` +
-        `${SCREEN_W}x1080)\n`,
-    );
-
-    // Exactement une cellule couverte, un anneau : c'est la borne elle-meme,
-    // pas seulement un « moins que le nombre d'ennemis ».
-    expect(anneauxClairsemee).toBe(anneauxAttendus(clairsemee.cotePx));
-    expect(anneauxDense).toBe(anneauxAttendus(dense.cotePx));
-    expect(anneauxDense).toBe(anneauxClairsemee);
-    expect(anneauxDense).toBeLessThan(dense.horde.count);
-    expect(anneauxDense).toBeLessThanOrEqual(ringGridCells(ringGrid(view)));
+    expect(selection(clairsemee.horde, clairsemee.vue).length).toBe(clairsemee.horde.count);
+    expect(selection(dense.horde, dense.vue).length).toBe(dense.horde.count);
   });
 
   /**
-   * ⚠️ **La grille est ancree sur le MONDE, pas sur le coin de la vue.** Calee
-   * sur la camera, son decoupage glisserait a chaque image des que le joueur
-   * bouge, donc l'ennemi retenu dans chaque cellule changerait : une nappe
-   * d'anneaux qui scintille sans qu'aucune marque ne change.
-   *
-   * Les deux abscisses encadrent une frontiere de cellule du MONDE (donc deux
-   * anneaux, quelle que soit la camera) mais tombent dans la meme cellule d'une
-   * grille calee sur la premiere vue — un decalage de 18 px suffit alors a les
-   * separer, et le compte changerait d'une camera a l'autre.
+   * ⚠️ **La mesure du pire cas, faite plutot que supposee.** Une horde pleine,
+   * entierement marquee et entierement dans le cadre — c'est le decor mesure a
+   * la tache 13 (la horde converge sur le joueur, donc elle tient tout entiere
+   * dans le plus petit ecran, et le culling ne borne rien).
    */
-  it('rend la MEME selection quand la camera bouge sans que rien d autre ne change', () => {
-    const frontiere = 41 * MARK_RING_DIAMETER_PX;
-    const horde = hordeAt([
-      { x: frontiere - 4, y: 3000 },
-      { x: frontiere + 6, y: 3000 },
-    ]);
-    horde.applyMark(0, ELEMENT.BRAISE, 1, TICK);
-    horde.applyMark(1, ELEMENT.BRAISE, 1, TICK);
+  it('borne le nombre d anneaux par la capacite de la horde, jamais au-dela', () => {
+    // 80 x 50 = MAX_ENTITIES pile, espaces de 16 px : 1 264 x 784 px, ça tient
+    // dans un ecran 1920x1080 une fois le y desecrase.
+    const { horde, vue } = nappe(80, 50, 16);
+    expect(horde.count).toBe(MAX_ENTITIES);
+    const anneaux = selection(horde, vue).length;
 
-    const camera = screenAt(3000, 3000);
-    const cameraDecalee = { ...camera, x: camera.x + 18 };
+    process.stdout.write(
+      `[tache 15] pire cas : ${horde.count} ennemis tous marques et visibles -> ` +
+        `${anneaux} anneaux (plafond : capacite de la horde = ${horde.capacity} = MAX_ENTITIES ; ` +
+        `la horde en dessine deja autant en sprites)\n`,
+    );
 
-    expect(selection(horde, camera)).toEqual([0, 1]);
-    expect(selection(horde, cameraDecalee)).toEqual(selection(horde, camera));
+    expect(anneaux).toBe(horde.count);
+    expect(anneaux).toBeLessThanOrEqual(horde.capacity);
+    expect(horde.capacity).toBe(MAX_ENTITIES);
   });
 });
 
@@ -274,8 +286,8 @@ describe('selectMarkedRings — le cout, borne par la surface et non par la hord
  * Le corps de `draw`, atteint par `adoptTexture` — meme point d'accroche que
  * `HordeRenderer.adoptAtlas` (tache 9 bis) et `ProjectileRenderer.adoptTextures`
  * (tache 12), et pour la meme raison : `load()` cuit sa texture sur un canevas
- * 2D que ni node ni jsdom ne fournissent, donc `draw` retournerait a son premier
- * `if (!texture)` et tout son corps pourrait etre retire en silence.
+ * 2D dont jsdom ne fournit pas le contexte, donc `draw` retournerait a son
+ * premier `if (!texture)` et tout son corps pourrait etre retire en silence.
  */
 function drawnRings(horde: Horde, view: ViewBounds = TOUTE_LA_CARTE): Particle[] {
   const renderer = new MarkRingRenderer();
@@ -297,7 +309,7 @@ function drawnRings(horde: Horde, view: ViewBounds = TOUTE_LA_CARTE): Particle[]
 }
 
 describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => {
-  /** Deux ennemis loin l'un de l'autre : jamais dans la meme cellule de grille. */
+  /** Deux ennemis, dont un seul marque. */
   function deuxEnnemis(): Horde {
     return hordeAt([
       { x: 3000, y: 3000 },
@@ -334,13 +346,11 @@ describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => 
   });
 
   /**
-   * ⚠️ **Derive de la hitbox de tir, jamais reglee a la main** — la lecon de
-   * `spriteScale` (tache 16) et de `zoneScale`. L'anneau dit deux choses d'un
-   * coup : cet ennemi est marque, et voila le cercle qu'un projectile touche.
-   * L'assertion mesure ce qui est DESSINE (echelle x texture), pas la constante
-   * intermediaire.
+   * ⚠️ **La LARGEUR est derivee de la hitbox de tir, jamais reglee a la main** —
+   * la lecon de `spriteScale` (tache 16) et de `zoneScale`. L'assertion mesure
+   * ce qui est DESSINE (echelle x texture), pas la constante intermediaire.
    */
-  it('dessine l anneau au diametre de la hitbox de tir', () => {
+  it('dessine l anneau a la LARGEUR du diametre de la hitbox de tir', () => {
     const horde = deuxEnnemis();
     horde.applyMark(0, ELEMENT.BRAISE, 1, TICK);
 
@@ -349,7 +359,30 @@ describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => 
       2 * PROJECTILE_HIT_RADIUS,
       6,
     );
-    expect(ring?.scaleY).toBe(ring?.scaleX);
+  });
+
+  /**
+   * ⚠️ **Tache 15 : une ellipse, pas un cercle.** *« Les cercles doivent etre
+   * des ellipses sous les pieds. »* Vue de dessus, un disque pose au sol se
+   * projette en ellipse : la largeur dit le diametre vrai, la hauteur est la
+   * projection.
+   *
+   * Le rapport se lit sur ce qui est DESSINE, et il doit etre franchement
+   * inferieur a 1 : la camera en applique deja un de 0,82 (`VERTICAL_SQUASH`
+   * dans `stage.ts`), et c'est justement ce que l'auteur trouvait trop rond.
+   */
+  it('aplatit l anneau verticalement, et le laisse intact horizontalement', () => {
+    const horde = deuxEnnemis();
+    horde.applyMark(0, ELEMENT.BRAISE, 1, TICK);
+
+    const ring = drawnRings(horde)[0];
+    expect(ring?.scaleX).toBeCloseTo(MARK_RING_SCALE, 6);
+    expect((ring?.scaleY ?? 0) / (ring?.scaleX ?? 1)).toBeCloseTo(MARK_RING_SQUASH, 6);
+    // La moitie qui rend la mutation « scaleY = scaleX » impossible a survivre.
+    expect(ring?.scaleY).toBeLessThan(ring?.scaleX ?? 0);
+    // Et celle qui interdit d'y recopier le 0,82 de la camera : compose avec
+    // elle, l'ellipse lirait 0,82 x 0,82 ≈ 0,67, encore trop ronde.
+    expect(MARK_RING_SQUASH).toBeLessThan(0.7);
   });
 
   it('teint l anneau de la couleur de l element, et distingue la Braise du Givre', () => {
@@ -368,9 +401,9 @@ describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => 
     horde.applyMark(0, ELEMENT.BRAISE, 1, TICK);
 
     expect(drawnRings(horde)[0]?.alpha).toBe(MARK_RING_ALPHA);
-    // La raison d'etre de la tache : *« je ne vois pas la marque »*. Une zone
-    // est un lavis qu'on empile (`ZONE_ALPHA`), un anneau est un trait qu'on
-    // doit lire du premier coup d'oeil.
+    // La raison d'etre de la tache 13 : *« je ne vois pas la marque »*. Une
+    // zone est un lavis qu'on empile (`ZONE_ALPHA`), un anneau est un trait
+    // qu'on doit lire du premier coup d'oeil.
     expect(MARK_RING_ALPHA).toBeGreaterThan(ZONE_ALPHA);
   });
 
@@ -399,6 +432,90 @@ describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => 
 
     expect((world.children[0] as ParticleContainer).particleChildren).toHaveLength(0);
     expect(renderer.loaded).toBe(false);
+  });
+});
+
+/** Un arret du degrade radial, tel que la texture le pose reellement. */
+interface Stop {
+  readonly at: number;
+  readonly alpha: number;
+}
+
+const stops: Stop[] = [];
+
+/**
+ * Bouchonne le contexte 2D et cuit la texture d'anneau POUR DE VRAI, en passant
+ * par `load()`.
+ *
+ * ⚠️ **C'est le seul moyen d'atteindre `makeRingTexture`**, et donc la seule
+ * chose qui garde *« plus nette et plus fine »*. jsdom ne fournit pas de
+ * contexte 2D (il faudrait le paquet `canvas`) ; `stage.test.ts` bouchonne le
+ * sien depuis la tache 9 bis pour la meme raison. Ici le bouchon ne fait pas
+ * rien : il ENREGISTRE les arrets du degrade, qui sont le profil du trait.
+ */
+function bakeRingTexture(): void {
+  const noop = (): void => undefined;
+  const gradient = {
+    addColorStop(at: number, color: string): void {
+      const parsed = /rgba\([^)]*,\s*([\d.]+)\s*\)/.exec(color);
+      stops.push({ at, alpha: Number(parsed?.[1]) });
+    },
+  };
+  const context = {
+    createRadialGradient: () => gradient,
+    fillStyle: '' as unknown,
+    beginPath: noop,
+    arc: noop,
+    fill: noop,
+  };
+  const proto = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
+  proto.getContext = (): unknown => context;
+
+  const renderer = new MarkRingRenderer();
+  renderer.load();
+  expect(renderer.loaded).toBe(true);
+}
+
+/**
+ * ⚠️ **Tache 15, etape 3 : *« plus nettes et plus fines »*.** La tache 13
+ * posait un degrade de 0,40 de rayon de large, dont l'opacite variait partout —
+ * c'est ce que l'auteur a lu comme un cercle mou. Ce bloc garde la FORME du
+ * trait, pas ses valeurs : des bornes de lecture (un quart de rayon, un
+ * dixieme de rampe), jamais une recopie des constantes de production.
+ */
+describe('makeRingTexture — le profil du trait, nette et fine', () => {
+  beforeAll(bakeRingTexture);
+
+  it('laisse le centre entierement transparent : c est un anneau, pas un disque', () => {
+    // Un disque plein masquerait l'ennemi qu'il est cense designer.
+    expect(stops[0]).toEqual({ at: 0, alpha: 0 });
+  });
+
+  it('atteint l opacite pleine quelque part : un trait, pas un voile', () => {
+    expect(Math.max(...stops.map((s) => s.alpha))).toBe(1);
+  });
+
+  it('trace un trait FIN : moins d un quart de rayon d encre', () => {
+    const opaques = stops.filter((s) => s.alpha === 1);
+    const interieur = stops.filter((s) => s.alpha === 0 && s.at < (opaques[0]?.at ?? 0));
+    const bordInterieur = Math.max(...interieur.map((s) => s.at));
+
+    // La tache 13 partait de 0,60 : une bande de 0,40 de rayon.
+    expect(1 - bordInterieur).toBeLessThanOrEqual(0.25);
+  });
+
+  it('monte NET : la rampe tient dans un dixieme de rayon', () => {
+    const opaques = stops.filter((s) => s.alpha === 1);
+    const premierOpaque = opaques[0]?.at ?? 0;
+    const interieur = stops.filter((s) => s.alpha === 0 && s.at < premierOpaque);
+    const bordInterieur = Math.max(...interieur.map((s) => s.at));
+
+    // La tache 13 montait sur 0,22 de rayon — un degrade, pas un bord.
+    expect(premierOpaque - bordInterieur).toBeLessThanOrEqual(0.1);
+  });
+
+  it('s eteint au bord, et ne bave pas jusqu au coin du quad', () => {
+    expect(stops.at(-1)).toEqual({ at: 1, alpha: 0 });
   });
 });
 

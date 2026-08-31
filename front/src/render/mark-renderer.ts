@@ -7,10 +7,14 @@ import { BODY_SCALE } from './horde-renderer';
 import type { ViewBounds } from './zone-renderer';
 
 /**
- * L'anneau au sol sous un ennemi MARQUE (tache 13 de l'etape 5a).
+ * L'anneau au sol sous un ennemi MARQUE (taches 13 et 15 de l'etape 5a).
  *
  * > *« Je ne vois pas la marque sur les ennemis, fais un anneau sous leurs
- * > pieds plutot que changer leur couleur. »*
+ * > pieds plutot que changer leur couleur. »* (tache 13)
+ *
+ * > *« Les cercles doivent etre des ellipses sous les pieds, plus nettes et
+ * > fines. Parfois ils disparaissent lors des superpositions ou collision ? »*
+ * > (tache 15)
  *
  * ⚠️ **Ceci REMPLACE la teinte de sprite, ça ne s'y ajoute pas.** La deuxieme
  * ligne de la hierarchie du §6.6 de l'orientation — *« un element sur un
@@ -21,36 +25,39 @@ import type { ViewBounds } from './zone-renderer';
  * du conteneur de horde et le `tick` que `HordeRenderer.draw` recevait sont
  * partis avec elle.
  *
- * ⚠️ **L'ecart au §6.6 COUTE, et il est mesure.** Le §6.6 reservait l'anneau au
- * cas « deux elements avant reaction », precisement parce qu'un anneau par
- * ennemi marque coute **un quad par ennemi marque**. Ce que la mesure a montre
- * (banc de trajectoire, meme decor que `bench/steering.bench.ts`, horde
- * convergeant sur un joueur pendant 600 ticks) :
+ * ## La disparition signalee n'etait pas un defaut, c'etait la borne
  *
- * | Entites | Rayon median de la horde | Dans un cadre 1920x1080 |
+ * La tache 13 dedoublonnait **par cellule de grille** — au plus un anneau par
+ * cellule au pas du diametre — pour que le compte suive la SURFACE VISIBLE et
+ * non l'effectif de la horde. Deux ennemis dans la meme cellule partageaient
+ * donc un anneau, et c'est exactement l'artefact que l'auteur a vu en jouant.
+ *
+ * **La tache 15 rend un anneau par ennemi marque, et la grille saute.** Le cout
+ * redevient donc O(marques), remesure ci-dessous.
+ *
+ * ## Le cout, remesure sans la deduplication
+ *
+ * | Calque | Quads au pire cas | Borne |
  * | --- | --- | --- |
- * | 1 500 | 230 px | **1 500** |
- * | 4 000 | 368 px | **4 000** |
+ * | horde (`HordeRenderer`) | **4 000** | `MAX_ENTITIES`, un sprite par ennemi visible |
+ * | anneaux (ce fichier) | **4 000** | `horde.capacity`, un anneau par ennemi marque visible |
  *
- * **Le culling hors camera ne borne RIEN dans le cas qui compte** : la horde
- * converge sur le joueur, donc elle tient tout entiere dans le plus petit
- * ecran. Il reste utile (une vague encore en marche depuis le bord de carte ne
- * coute rien), mais l'esperer suffisant aurait donne 4 000 quads.
+ * **Il n'y a pas de nouveau plafond, parce qu'il y en a deja un et c'est le
+ * meme** : `horde.capacity` (= `MAX_ENTITIES` cote client). Le calque des
+ * anneaux double au pire ce que la horde dessine deja — **du meme ordre de
+ * grandeur, pas d'un ordre au-dessus** — et il ne peut pas le depasser : un
+ * ennemi porte au plus une marque.
  *
- * **La borne est donc la SURFACE VISIBLE, pas l'effectif de la horde** : au
- * plus un anneau par cellule d'une grille au pas de l'anneau (voir `ringGrid`).
- * C'est le meme deplacement que la regle de fusion de la tache 4, qui a rendu
- * le nombre de zones fonction de la surface couverte et non de la cadence de
- * tir.
+ * ⚠️ **Et si un plafond redevenait necessaire, ce ne serait PAS une grille.**
+ * Un plafond qui degrade par ordre de creneau se voit comme une disparition
+ * aleatoire — c'est ce que l'auteur vient de signaler. Il faudrait garder les
+ * plus proches du joueur et compter ce qui est jete, comme
+ * `Projectiles.truncated` le fait.
  *
- * | Ecran | Cellules au plus | Quads au pire, 4 000 ennemis tous marques |
- * | --- | --- | --- |
- * | 1920x1080 | 34 x 24 | **816** |
- * | 2560x1440 | 44 x 31 | **1 364** |
- * | 3840x2160 | 64 x 45 | **2 880** |
- *
- * Le compte ne bouge plus quand la horde grossit : de 1 500 a 4 000 entites, il
- * est le meme.
+ * Le culling hors camera reste, et il ne borne toujours rien dans le cas qui
+ * compte (la horde converge sur le joueur, donc elle tient tout entiere dans le
+ * plus petit ecran) : il evite seulement de payer une vague encore en marche
+ * depuis le bord de carte.
  *
  * Meme discipline de conteneur que `zone-renderer.ts`, son voisin de calque :
  * un `ParticleContainer` additif, des bornes explicites, un reservoir de
@@ -61,16 +68,36 @@ import type { ViewBounds } from './zone-renderer';
 const BOUNDS_MARGIN = 256;
 
 /**
- * Diametre de l'anneau dans le monde : **le diametre de la hitbox de tir**.
+ * **Largeur** de l'anneau dans le monde : le diametre de la hitbox de tir.
  *
  * ⚠️ **Derive, jamais regle a la main** — c'est la lecon de `spriteScale`
- * (tache 16, etape 3) et de `zoneScale`. L'anneau dit deux choses d'un coup :
- * *cet ennemi porte une marque*, et *voila le cercle qu'un projectile touche*.
- * Le corps dessine, lui, fait `BODY_SCALE` fois plus large (80 px depuis la
- * tache 14) : l'anneau est donc visiblement plus etroit que la silhouette, ce
- * qui le fait lire comme une base au sol et non comme une aureole.
+ * (tache 16, etape 3) et de `zoneScale`. Le corps dessine, lui, fait
+ * `BODY_SCALE` fois plus large (80 px depuis la tache 14) : l'anneau est donc
+ * visiblement plus etroit que la silhouette, ce qui le fait lire comme une base
+ * au sol et non comme une aureole.
+ *
+ * ⚠️ **La LARGEUR seule, depuis la tache 15.** L'anneau est desormais une
+ * ellipse (`MARK_RING_SQUASH`) : sa hauteur ne dit plus le rayon de la hitbox,
+ * et n'a jamais eu a le dire. Un disque pose a plat au sol se projette en
+ * ellipse — sa largeur est le diametre vrai, sa hauteur est la projection.
  */
 export const MARK_RING_DIAMETER_PX = 2 * PROJECTILE_HIT_RADIUS;
+
+/**
+ * Aplatissement vertical de l'anneau, en coordonnees MONDE (tache 15) :
+ * *« les cercles doivent etre des ellipses sous les pieds »*.
+ *
+ * Vue de dessus, un disque pose au sol ne se projette pas en cercle. L'anneau
+ * garde sa largeur — qui dit le diametre de la hitbox — et perd de la hauteur.
+ *
+ * ⚠️ **NE PAS y recopier le `VERTICAL_SQUASH` (0,82) de `stage.ts` : la camera
+ * l'applique DEJA.** Le monde entier est dessine avec `scale.set(1, 0,82)`,
+ * donc un anneau circulaire en coordonnees monde arrivait deja a l'ecran comme
+ * une ellipse de rapport 0,82 — et c'est justement ce que l'auteur trouvait
+ * trop rond. Ce facteur-ci se COMPOSE avec celui-la : a l'ecran, l'anneau lit
+ * 0,55 x 0,82 ≈ **0,45**. Recopier 0,82 ici l'appliquerait deux fois.
+ */
+export const MARK_RING_SQUASH = 0.55;
 
 /**
  * De combien l'anneau descend sous la position de l'ennemi, pour se poser
@@ -96,16 +123,15 @@ export const MARK_RING_DIAMETER_PX = 2 * PROJECTILE_HIT_RADIUS;
 export const MARK_RING_FOOT_OFFSET_PX = PROJECTILE_HIT_RADIUS * BODY_SCALE;
 
 /**
- * Opacite de l'anneau. **Bien plus haute que `ZONE_ALPHA` (0,22), et c'est le
- * point de la tache** : *« je ne vois pas la marque »*.
+ * Opacite de l'anneau. **Bien plus haute que `ZONE_ALPHA`, et c'est le point de
+ * la tache 13** : *« je ne vois pas la marque »*.
  *
  * Les deux ne jouent pas le meme role et ne couvrent pas la meme surface. Une
  * zone est un aplat de 140 px de diametre dont plusieurs se recouvrent des
- * qu'un joueur arrose — a pleine opacite, l'ecran blanchit et le flash de
- * reaction ne se lit plus (voir `ZONE_ALPHA`). Un anneau est un trait fin de
- * 64 px de diametre, au plus un par cellule de grille : sa surface totale reste
- * une petite fraction de l'ecran meme au pire cas, et il doit se detacher du
- * sol teinte par la zone qui l'a pose.
+ * qu'un joueur arrose (voir `ZONE_ALPHA`). Un anneau est un TRAIT — et depuis
+ * la tache 15 un trait fin (`MARK_RING_STROKE_INNER`), qui ne couvre qu'une
+ * mince couronne de l'ellipse : meme un par ennemi, la surface d'encre totale
+ * reste une petite fraction de celle qu'un aplat poserait.
  */
 export const MARK_RING_ALPHA = 0.85;
 
@@ -117,16 +143,18 @@ export const MARK_RING_ALPHA = 0.85;
  * ⚠️ **DIFFERENT de `MARK_RING_DIAMETER_PX`, et il faut que ça le reste.** Les
  * deux valaient 64 dans la premiere version, ce qui rendait `MARK_RING_SCALE`
  * egal a 1 : *toute* mutation de l'echelle devenait indistinguable de l'absence
- * d'echelle. C'est la « fixture qui masque » du depot, sept fois rencontree,
- * cette fois-ci dans une constante de production. Le double dessine deux fois
- * plus fin que ce qu'on affiche, ce qui est aussi ce qu'on veut a
- * l'agrandissement — meme raison que `ZONE_TEXTURE_DIAMETER`.
+ * d'echelle. C'est la « fixture qui masque » du depot, cette fois-ci dans une
+ * constante de production. Le double dessine deux fois plus fin que ce qu'on
+ * affiche, ce qui est aussi ce qu'on veut a l'agrandissement — et la tache 15
+ * en a besoin pour de bon : un trait de 0,22 rayon sur une texture de 64 ne
+ * ferait que 7 px de large, avec une rampe de 2 px.
  */
 export const MARK_RING_TEXTURE_DIAMETER = 128;
 
 /**
- * Facteur d'echelle d'une particule d'anneau : la texture doit couvrir
- * exactement `MARK_RING_DIAMETER_PX` pixels monde.
+ * Facteur d'echelle HORIZONTAL d'une particule d'anneau : la texture doit
+ * couvrir exactement `MARK_RING_DIAMETER_PX` pixels monde en largeur. La
+ * verticale y ajoute `MARK_RING_SQUASH`.
  *
  * Une constante et non une fonction, contrairement a `zoneScale`/`spriteScale` :
  * les deux termes sont des constantes de ce module, donc il n'existe pas de
@@ -136,64 +164,41 @@ export const MARK_RING_TEXTURE_DIAMETER = 128;
 export const MARK_RING_SCALE = MARK_RING_DIAMETER_PX / MARK_RING_TEXTURE_DIAMETER;
 
 /**
- * Cote d'une cellule de la grille d'occupation : **le diametre de l'anneau**.
- *
- * ⚠️ **C'est LA borne de coût de ce fichier**, et elle n'est pas un reglage.
- * Deux anneaux dans la meme cellule se recouvrent presque entierement : le
- * second n'ajoute aucune information, seulement un quad. Au pas du diametre, la
- * grille garde exactement ce que l'oeil peut encore separer.
+ * Bord INTERIEUR du trait, en fraction du rayon : en deça, la texture est
+ * transparente. **C'est la finesse du trait** (tache 15 : *« plus nettes et
+ * fines »*) — la couronne dessinee occupe `1 - MARK_RING_STROKE_INNER` de
+ * rayon, contre 0,40 a la tache 13.
  */
-const MARK_RING_CELL_PX = MARK_RING_DIAMETER_PX;
+const MARK_RING_STROKE_INNER = 0.78;
+
+/**
+ * Debut du plateau opaque. L'ecart avec `MARK_RING_STROKE_INNER` est la
+ * **rampe** : c'est elle qui fait la nettete. La tache 13 montait sur 0,22 de
+ * rayon — un degrade, pas un trait.
+ */
+const MARK_RING_STROKE_PEAK = 0.86;
+
+/** Fin du plateau opaque ; au-dela, le trait s'eteint jusqu'au bord. */
+const MARK_RING_STROKE_FADE = 0.94;
 
 /**
  * Marge de culling : de quoi garder l'anneau d'un ennemi dont la position vient
  * de sortir du cadre mais dont l'anneau — pose PLUS BAS que lui — mord encore
- * dedans. Derivee du decalage et du rayon, jamais choisie.
+ * dedans. Derivee du decalage et de la demi-largeur, jamais choisie ; la
+ * demi-largeur majore la demi-hauteur puisque `MARK_RING_SQUASH < 1`.
  */
 const CULL_MARGIN = MARK_RING_FOOT_OFFSET_PX + MARK_RING_DIAMETER_PX / 2;
 
 /**
- * La grille d'occupation couvrant une vue : ses dimensions, et la cellule du
- * MONDE ou elle commence.
+ * Choisit les ennemis qui recoivent un anneau : MARQUES et dans le cadre.
+ * Ecrit leurs creneaux dans `out` et rend leur nombre — pure, sans allocation,
+ * testable sans Pixi ni canevas, meme motif que `selectZones` et `sortByDepth`.
  *
- * ⚠️ **Ancree sur l'origine du MONDE, pas sur le coin de la vue.** Une grille
- * calee sur la camera changerait de decoupage a chaque image des que le joueur
- * bouge, donc changerait l'ennemi retenu dans chaque cellule : la nappe
- * d'anneaux scintillerait sans qu'aucun ennemi ne change d'etat. Ancree sur le
- * monde, le decoupage est immobile et seul un ennemi qui traverse une frontiere
- * de cellule peut faire changer le tirage.
- */
-export interface RingGrid {
-  readonly cols: number;
-  readonly rows: number;
-  /** Colonne MONDE de la premiere colonne de la grille. */
-  readonly col0: number;
-  /** Ligne MONDE de la premiere ligne de la grille. */
-  readonly row0: number;
-}
-
-export function ringGrid(view: ViewBounds): RingGrid {
-  const col0 = Math.floor((view.x - CULL_MARGIN) / MARK_RING_CELL_PX);
-  const row0 = Math.floor((view.y - CULL_MARGIN) / MARK_RING_CELL_PX);
-  const col1 = Math.floor((view.x + view.width + CULL_MARGIN) / MARK_RING_CELL_PX);
-  const row1 = Math.floor((view.y + view.height + CULL_MARGIN) / MARK_RING_CELL_PX);
-  return { cols: col1 - col0 + 1, rows: row1 - row0 + 1, col0, row0 };
-}
-
-/**
- * Le nombre de quads que ce calque peut poser au pire, pour cette vue. C'est
- * la borne, et elle ne depend que de la SURFACE VISIBLE — jamais de l'effectif
- * de la horde ni du nombre d'ennemis marques.
- */
-export function ringGridCells(grid: RingGrid): number {
-  return grid.cols * grid.rows;
-}
-
-/**
- * Choisit les ennemis qui recoivent un anneau : MARQUES, dans le cadre, et au
- * plus un par cellule de `grid`. Ecrit leurs creneaux dans `out` et rend leur
- * nombre — pure, sans allocation, testable sans Pixi ni canevas, meme motif que
- * `selectZones` et `sortByDepth`.
+ * ⚠️ **Un anneau par ennemi marque, depuis la tache 15.** La tache 13
+ * dedoublonnait par cellule de grille ; l'auteur en a vu l'artefact —
+ * *« parfois ils disparaissent lors des superpositions »*. Le compte suit
+ * desormais les marques, et il est borne par `out.length`, que
+ * `MarkRingRenderer#ensureBuffers` dimensionne sur `horde.capacity`.
  *
  * ⚠️ **`markAt`, jamais `horde.mark` directement** : une marque EXPIRE, et son
  * expiration est DERIVEE du seul `markUntil` (voir `Horde.markAt`). Lire le
@@ -204,29 +209,20 @@ export function ringGridCells(grid: RingGrid): number {
  * entite pour une teinte qui ne change rien est un cout pur ; ici c'est
  * l'inverse : c'est elle qui fait qu'un ennemi non marque ne coute AUCUN quad,
  * et donc que ce calque reste proportionnel aux marques et non a la horde.
- *
- * `occupancy` et `out` doivent tous deux tenir `ringGridCells(grid)` entrees —
- * `MarkRingRenderer#ensureBuffers` est le seul endroit qui les dimensionne, et
- * il le fait depuis cette meme grille. Aucun indice calcule ici ne peut sortir
- * de `[0, cols * rows)` : `col0`/`row0` sont les cellules des bornes de culling
- * elles-memes, et `cols`/`rows` en comptent exactement l'etendue.
  */
 export function selectMarkedRings(
   horde: Horde,
   tick: number,
   view: ViewBounds,
-  grid: RingGrid,
-  occupancy: Uint8Array,
   out: Int32Array,
 ): number {
   const minX = view.x - CULL_MARGIN;
   const maxX = view.x + view.width + CULL_MARGIN;
   const minY = view.y - CULL_MARGIN;
   const maxY = view.y + view.height + CULL_MARGIN;
-  occupancy.fill(0, 0, ringGridCells(grid));
 
   let count = 0;
-  for (let i = 0; i < horde.count; i++) {
+  for (let i = 0; i < horde.count && count < out.length; i++) {
     if (horde.markAt(i, tick) === ELEMENT.NEUTRE) {
       continue;
     }
@@ -235,13 +231,6 @@ export function selectMarkedRings(
     if (x < minX || x > maxX || y < minY || y > maxY) {
       continue;
     }
-    const cell =
-      (Math.floor(y / MARK_RING_CELL_PX) - grid.row0) * grid.cols +
-      (Math.floor(x / MARK_RING_CELL_PX) - grid.col0);
-    if (occupancy[cell] === 1) {
-      continue;
-    }
-    occupancy[cell] = 1;
     out[count] = i;
     count++;
   }
@@ -249,15 +238,23 @@ export function selectMarkedRings(
 }
 
 /**
- * Anneau BLANC a bords doux, dessine une fois puis teinte par particule.
+ * Anneau BLANC, dessine une fois puis teinte par particule.
  *
  * ⚠️ **Blanc, parce que `Particle.tint` MULTIPLIE** — meme raison que
  * `makeZoneTexture` et `makeStreakTexture` : en blanc, `tint` rend exactement
  * `Element.tint`, sans qu'un element soit plus fidele qu'un autre.
  *
- * Le profil est un CREUX puis une crete : transparent au centre (sinon c'est un
- * disque, et l'ennemi disparait dessous), opaque sur le trait, estompe vers
- * l'exterieur pour ne pas lire comme un cerceau de metal.
+ * Le profil est un CREUX puis un PLATEAU : transparent au centre (sinon c'est
+ * un disque, et l'ennemi disparait dessous), puis une rampe courte jusqu'a
+ * l'opacite pleine, tenue sur une mince couronne, puis eteinte au bord.
+ *
+ * ⚠️ **La tache 13 posait un degrade, pas un trait** — creux jusqu'a 0,60,
+ * crete a 0,82, extinction sur 0,18 : une bande de 0,40 de rayon dont l'opacite
+ * variait partout. C'est ce que l'auteur a lu comme un cercle mou. La tache 15
+ * la reduit a 0,22 avec une rampe de 0,08 : *« plus nettes et fines »*.
+ *
+ * Tous les arrets sont ecrits en `rgba(...)`, y compris les opaques : c'est ce
+ * qui permet au test de lire le profil sans avoir a comprendre deux notations.
  */
 function makeRingTexture(diameter: number): Texture {
   const canvas = document.createElement('canvas');
@@ -268,14 +265,11 @@ function makeRingTexture(diameter: number): Texture {
     throw new Error('canvas 2d indisponible');
   }
   const r = diameter / 2;
-  /** Bord interieur du trait, en fraction du rayon. */
-  const INNER_FRACTION = 0.6;
-  /** Crete du trait — au-dela, il s'estompe jusqu'au bord. */
-  const PEAK_FRACTION = 0.82;
   const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
   gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-  gradient.addColorStop(INNER_FRACTION, 'rgba(255, 255, 255, 0)');
-  gradient.addColorStop(PEAK_FRACTION, '#ffffff');
+  gradient.addColorStop(MARK_RING_STROKE_INNER, 'rgba(255, 255, 255, 0)');
+  gradient.addColorStop(MARK_RING_STROKE_PEAK, 'rgba(255, 255, 255, 1)');
+  gradient.addColorStop(MARK_RING_STROKE_FADE, 'rgba(255, 255, 255, 1)');
   gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
   ctx.fillStyle = gradient;
   ctx.beginPath();
@@ -295,10 +289,8 @@ export class MarkRingRenderer {
     dynamicProperties: { position: true, color: true, rotation: false, uvs: false },
   });
   readonly #pool: Particle[] = [];
-  /** Creneaux retenus par `selectMarkedRings`. Dimensionne sur la grille — voir `#ensureBuffers`. */
+  /** Creneaux retenus par `selectMarkedRings`. Dimensionne sur `horde.capacity` — voir `#ensureBuffers`. */
   #selected = new Int32Array(0);
-  /** Une cellule prise ou libre. Meme dimensionnement que `#selected`. */
-  #occupancy = new Uint8Array(0);
   #texture: Texture | null = null;
 
   constructor() {
@@ -333,11 +325,11 @@ export class MarkRingRenderer {
   /**
    * Rend le calque capable de dessiner a partir d'une texture deja cuite.
    *
-   * ⚠️ **Separe de `load` PARCE QUE `load` a besoin d'un canevas 2D** que ni
-   * node ni jsdom ne fournissent — exactement la raison de `adoptAtlas`
-   * (tache 9 bis) et de `adoptTextures` (tache 12). Sans ce point d'accroche,
-   * `draw` retournerait a son premier `if (!texture)` dans toute la suite, et
-   * tout son corps pourrait etre retire sans qu'une assertion ne bouge.
+   * ⚠️ **Separe de `load` PARCE QUE `load` a besoin d'un canevas 2D** que node
+   * ne fournit pas — exactement la raison de `adoptAtlas` (tache 9 bis) et de
+   * `adoptTextures` (tache 12). Sans ce point d'accroche, `draw` retournerait a
+   * son premier `if (!texture)` dans toute la suite, et tout son corps pourrait
+   * etre retire sans qu'une assertion ne bouge.
    */
   adoptTexture(texture: Texture): void {
     this.#texture = texture;
@@ -357,10 +349,9 @@ export class MarkRingRenderer {
     if (!texture) {
       return;
     }
-    const grid = ringGrid(view);
-    this.#ensureBuffers(ringGridCells(grid));
+    this.#ensureBuffers(horde.capacity);
 
-    const count = selectMarkedRings(horde, tick, view, grid, this.#occupancy, this.#selected);
+    const count = selectMarkedRings(horde, tick, view, this.#selected);
     this.#ensurePool(count, texture);
 
     const children = this.#container.particleChildren;
@@ -375,7 +366,8 @@ export class MarkRingRenderer {
       // SOUS LES PIEDS, pas sur la position : voir `MARK_RING_FOOT_OFFSET_PX`.
       particle.y = (horde.y[i] ?? 0) + MARK_RING_FOOT_OFFSET_PX;
       particle.scaleX = MARK_RING_SCALE;
-      particle.scaleY = MARK_RING_SCALE;
+      // ELLIPSE, pas cercle : voir `MARK_RING_SQUASH`.
+      particle.scaleY = MARK_RING_SCALE * MARK_RING_SQUASH;
       // Second `markAt` sur le meme creneau : deux lectures de tableau et une
       // comparaison, contre un tampon d'elements de plus a dimensionner et a
       // tenir en phase avec `#selected`.
@@ -391,22 +383,22 @@ export class MarkRingRenderer {
   }
 
   /**
-   * Dimensionne les tampons sur le nombre de CELLULES de la vue, qui est la
-   * borne du nombre d'anneaux. Ne fait que grandir : la vue ne change qu'au
-   * redimensionnement de la fenetre.
+   * Dimensionne le tampon de selection sur la capacite de la horde, qui est la
+   * borne du nombre d'anneaux depuis la tache 15 : un ennemi porte au plus une
+   * marque, donc au plus un anneau. Ne fait que grandir — la capacite est fixee
+   * a la construction de la `Horde`.
    */
-  #ensureBuffers(cells: number): void {
-    if (this.#selected.length >= cells) {
+  #ensureBuffers(capacity: number): void {
+    if (this.#selected.length >= capacity) {
       return;
     }
-    this.#selected = new Int32Array(cells);
-    this.#occupancy = new Uint8Array(cells);
+    this.#selected = new Int32Array(capacity);
   }
 
   /**
    * Le reservoir grandit sur ce que l'image demande VRAIMENT, pas sur la borne :
-   * une nappe d'ennemis tous marques est le cas rare, et allouer d'emblee un
-   * quad par cellule paierait le pire cas a chaque partie. Meme discipline que
+   * une horde entiere marquee est le cas rare, et allouer d'emblee un quad par
+   * creneau paierait le pire cas a chaque partie. Meme discipline que
    * `HordeRenderer#ensurePool`.
    */
   #ensurePool(needed: number, texture: Texture): void {
