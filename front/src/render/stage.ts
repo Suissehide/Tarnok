@@ -15,9 +15,9 @@ import type {
 import { ASSETS_BASE } from '../ui/config';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
+import { type MagnetPoint, OrbRenderer } from './orb-renderer';
 import {
   ImpactFlashRenderer,
-  OrbRenderer,
   ProjectileRenderer,
   ReactionFlashRenderer,
 } from './projectile-renderer';
@@ -298,8 +298,12 @@ export class Stage {
     this.#marks.draw(horde, tick, this.viewRect());
   }
 
-  drawOrbs(orbs: DerivedOrbs, timeMs: number): void {
-    this.#orbs.draw(orbs, this.viewRect(), timeMs);
+  /**
+   * `players` sont les positions DESSINEES des joueurs (`RenderState.players`) :
+   * l'orbe est attiree vers la plus proche — voir `orbPullFraction`.
+   */
+  drawOrbs(orbs: DerivedOrbs, players: readonly MagnetPoint[], timeMs: number): void {
+    this.#orbs.draw(orbs, players, this.viewRect(), timeMs);
   }
 
   drawProjectiles(projectiles: Projectiles): void {

@@ -6,6 +6,7 @@ import {
   MARK_DURATION_TICKS,
   MAX_ENTITIES,
   MAX_PER_WAVE,
+  ORB_DROP_ONE_IN,
   SEPARATION_CELL,
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
@@ -43,6 +44,34 @@ const STEERING_DEGENERATE_EPSILON = 1e-6;
  */
 export function entityIdOf(waveId: number, index: number): number {
   return waveId * MAX_PER_WAVE + index;
+}
+
+/**
+ * Cette mort laisse-t-elle un orbe ? Etape 5a, tache 17 : *« moins d'xp qui
+ * tombe »*.
+ *
+ * ⚠️ **Vit ICI, colle a `entityIdOf`, parce que c'est la MEME idee** :
+ * l'identite est arithmetique, donc les deux cotes du fil en tirent la meme
+ * reponse sans echanger un octet. Le serveur arbitre le ramassage, mais il
+ * n'annonce jamais qu'un orbe existe — le client le DERIVE du seul message
+ * `DEATHS` (voir `DerivedOrbs` dans `front/src/net/client.ts`). Un tirage
+ * aleatoire ferait apparaitre chez l'un ce que l'autre n'a pas, et `shared/`
+ * interdit `Math.random` pour cette raison exacte.
+ *
+ * ⚠️ **Le reste modulo suit l'INDEX DANS LA VAGUE**, puisque `MAX_PER_WAVE`
+ * est un multiple de `ORB_DROP_ONE_IN` : une entite sur quatre exactement,
+ * sans variance, et non « une sur quatre en moyenne ». C'est ce qui laisse
+ * l'experience par mort strictement inchangee (voir `XP_PER_ORB`) au lieu de
+ * la laisser flotter d'une run a l'autre.
+ *
+ * ⚠️ **Le piege du decor, dit plutot que cache** : un test qui pose son
+ * monstre avec `entityIdOf(waveId, 0)` tombe TOUJOURS sur un orbe, quel que
+ * soit ce reglage. C'est la « fixture qui masque » du depot, huitieme
+ * occurrence — les tests du taux de chute balaient donc des index
+ * CONSECUTIFS, jamais un index unique.
+ */
+export function dropsOrb(entityId: number): boolean {
+  return entityId % ORB_DROP_ONE_IN === 0;
 }
 
 /**

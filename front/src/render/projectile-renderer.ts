@@ -14,7 +14,6 @@ import {
 import { Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
 import {
-  type DerivedOrbs,
   HIT_FLASH_LIFETIME_MS,
   type HitFlashes,
   REACTION_FLASH_LIFETIME_MS,
@@ -22,16 +21,21 @@ import {
 } from '../net/client';
 
 /**
- * Rendu des projectiles, des orbes et des flashs d'impact et de reaction.
+ * Rendu des projectiles et des flashs d'impact et de reaction.
  *
- * Cinq `ParticleContainer`s (les projectiles en comptent deux depuis la tache
+ * ⚠️ **Les orbes ont quitte ce module a la tache 17**, pour `orb-renderer.ts`.
+ * Elles y partageaient `makeGlowTexture` avec les flashs alors qu'elles disent
+ * l'inverse d'eux : un flash s'evanouit, un objet a ramasser a un contour. Ce
+ * partage etait exactement ce qui gardait l'orbe floue.
+ *
+ * Quatre `ParticleContainer`s (les projectiles en comptent deux depuis la tache
  * 12 : leurs trainees et leurs tetes), meme discipline que `HordeRenderer` :
  * bornes explicites (`boundsArea`, voir sa doc — un `ParticleContainer` ne les
  * calcule jamais lui-meme), un reservoir de `Particle` reutilise, aucune
  * allocation en regime etabli dans `draw()`.
  *
  * Pas de tri en profondeur par bande ici, contrairement a la horde :
- * projectiles, orbes et flashs sont de petits points, sans la hauteur de
+ * projectiles et flashs sont de petits points, sans la hauteur de
  * sprite qui rend l'ordre visible sur la vue ecrasee du §4.5 — l'ordre entre
  * particules d'un meme calque ne se voit pas a l'oeil.
  *
@@ -626,90 +630,6 @@ export class ProjectileRenderer {
     }
     while (this.#trailPool.length < needed) {
       this.#trailPool.push(new Particle({ texture: streak, anchorX: 1, anchorY: 0.5 }));
-    }
-  }
-}
-
-/** Rendu batché des orbes derivés (`DerivedOrbs`, `net/client.ts`). */
-export class OrbRenderer {
-  readonly #container = new ParticleContainer({
-    // La pulsation (voir `draw`) fait bouger l'opacite chaque image.
-    dynamicProperties: { position: true, color: true, rotation: false, uvs: false },
-  });
-  readonly #pool: Particle[] = [];
-  #texture: Texture | null = null;
-
-  constructor() {
-    this.#container.boundsArea = mapBoundsArea();
-  }
-
-  get boundsArea(): Rectangle {
-    return this.#container.boundsArea as Rectangle;
-  }
-
-  attach(parent: Container): void {
-    parent.addChild(this.#container);
-  }
-
-  /**
-   * Vrai des que `load` a pose sa texture. Expose pour le test, comme
-   * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
-   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
-   * indetectable jusqu'a la tache 9 bis.
-   */
-  get loaded(): boolean {
-    return this.#texture !== null;
-  }
-
-  load(): void {
-    this.#texture = makeGlowTexture(16, '#7fd858');
-  }
-
-  draw(orbs: DerivedOrbs, view: Rectangle, timeMs: number): void {
-    const texture = this.#texture;
-    if (!texture) {
-      return;
-    }
-    this.#ensurePool(orbs.count, texture);
-
-    const minX = view.x;
-    const maxX = view.x + view.width;
-    const minY = view.y;
-    const maxY = view.y + view.height;
-
-    const children = this.#container.particleChildren;
-    children.length = 0;
-    let used = 0;
-    for (let i = 0; i < orbs.count; i++) {
-      const x = orbs.x[i] ?? 0;
-      const y = orbs.y[i] ?? 0;
-      if (x < minX || x > maxX || y < minY || y > maxY) {
-        continue;
-      }
-      const particle = this.#pool[used];
-      if (!particle) {
-        break;
-      }
-      particle.x = x;
-      particle.y = y;
-      // Pulsation douce, dephasee par orbe (via son tick de naissance) : un
-      // signal de ramassage vivant au sol, sans jamais devenir le flash
-      // « genereux » reserve a l'impact — le §4.3 les distingue explicitement.
-      const phase = (orbs.bornTick[i] ?? 0) * 0.7;
-      particle.alpha = 0.6 + 0.4 * Math.sin(timeMs / 260 + phase);
-      children.push(particle);
-      used++;
-    }
-    this.#container.update();
-  }
-
-  destroy(): void {
-    this.#container.destroy();
-  }
-
-  #ensurePool(needed: number, texture: Texture): void {
-    while (this.#pool.length < needed) {
-      this.#pool.push(new Particle({ texture, anchorX: 0.5, anchorY: 0.5 }));
     }
   }
 }

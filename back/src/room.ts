@@ -438,6 +438,20 @@ export class Room {
   }
 
   /**
+   * Orbes encore au sol, pour les bancs et les tests d'integration.
+   *
+   * ⚠️ **C'est LE nombre que la tache 17 fait baisser**, et il n'avait aucun
+   * lecteur avant elle : *« moins d'xp qui tombe »* parle du nombre d'objets
+   * qui trainent, pas de la courbe de progression (voir `ORB_DROP_ONE_IN`).
+   * Sans ce lecteur, le taux de chute ne pouvait se verifier qu'a l'unite,
+   * dans `combat.test.ts`, jamais sur une vraie run. Meme motif que
+   * `zoneCount` juste au-dessus.
+   */
+  get orbCount(): number {
+    return this.#orbs.count;
+  }
+
+  /**
    * Zones qu'une pose n'a pas pu creer faute de place, depuis le debut de la
    * run. Voir `ZoneField.truncatedZones`.
    *

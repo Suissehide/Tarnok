@@ -4,13 +4,15 @@ import {
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
   MARK_DURATION_TICKS,
+  ORB_DROP_ONE_IN,
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
-import { Horde } from '@shared/horde';
+import { dropsOrb, entityIdOf, Horde } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -49,6 +51,39 @@ function addOne(horde: Horde, waveId: number, x: number, y: number, archetype = 
   horde.x[slot] = x;
   horde.y[slot] = y;
   return horde.entityIdAt(slot);
+}
+
+/**
+ * Une vague ENTIERE, a index CONSECUTIFS, alignee sur l'axe des x.
+ *
+ * ⚠️ **Ajoutee a la tache 17, et `addOne` ne peut pas la remplacer** : chaque
+ * appel a `addOne` pose une vague d'un seul monstre, donc toujours l'index 0 —
+ * et l'index 0 laisse toujours un orbe (`dropsOrb`). Un decor bati sur `addOne`
+ * ne verrait donc jamais le taux de chute. C'est la « fixture qui masque » du
+ * depot, prise ici a la source.
+ */
+function addWave(horde: Horde, waveId: number, count: number, step: number): number[] {
+  const order: WaveOrder = {
+    waveId,
+    spawnTick: 0,
+    seed: 1,
+    archetype: 0,
+    formation: FORMATION.SCATTER,
+    anchorX: 0,
+    anchorY: 0,
+    count,
+  };
+  horde.spawn(order);
+  const ids: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const slot = horde.count - count + i;
+    horde.x[slot] = step * (i + 1);
+    horde.y[slot] = 0;
+    ids.push(horde.entityIdAt(slot));
+  }
+  // Le decor n'a de sens que si les index se suivent vraiment.
+  expect(ids).toEqual(ids.map((_, i) => entityIdOf(waveId, i)));
+  return ids;
 }
 
 /** Arme de test : projectile unique, rapide, portee tres large. */
@@ -279,23 +314,137 @@ describe('resolveContact', () => {
   });
 });
 
+/**
+ * Etape 5a, tache 17 : *« moins d'xp qui tombe »*. Le levier est le NOMBRE
+ * d'objets au sol, et la garde vit au goulot — `spawn` — parce que trois
+ * chemins de mort y menent (projectiles, brulures, reactions) et que l'etape
+ * 5a vient d'en ajouter deux.
+ */
+describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
+  it('ne retient qu une mort sur ORB_DROP_ONE_IN, sur des index consecutifs d une meme vague', () => {
+    const MORTS = 40;
+    const orbs = new OrbField(MORTS);
+    for (let i = 0; i < MORTS; i++) {
+      orbs.spawn(entityIdOf(9, i), 100 + i, 200, 0);
+    }
+
+    expect(orbs.count).toBe(MORTS / ORB_DROP_ONE_IN);
+  });
+
+  /**
+   * ⚠️ **Le COMPTE ne suffit pas** : un filtre qui garderait les
+   * `MORTS / ORB_DROP_ONE_IN` PREMIERES morts le satisferait aussi, et le
+   * client — qui applique le meme predicat sur les memes identites — ne
+   * retiendrait pas les memes. Ce sont les identites RETENUES qui doivent
+   * coincider avec `dropsOrb`, sans quoi les deux cotes du fil divergent.
+   */
+  it('baisser le taux de chute ne change PAS le rythme de progression', () => {
+    // ⚠️ **L'invariant de la tache 17, et rien ne le gardait.** L'auteur voulait
+    // « moins d'xp qui tombe », pas « monter de niveau moins vite » — ce sont
+    // deux choses, et une seule est demandee.
+    //
+    // C'est pour ca que `XP_PER_ORB` est DERIVEE de `ORB_DROP_ONE_IN` : une
+    // mort sur quatre laisse une orbe, chaque orbe vaut quatre. L'experience
+    // par mort reste donc de 1, exactement comme avant la tache, et le test
+    // « le niveau 2 est atteignable » de l'etape 3 continue de mesurer la meme
+    // chose.
+    //
+    // Verifie par mutation : decoupler les deux constantes laissait 528 tests
+    // verts, et la progression aurait ete divisee par quatre en silence.
+    const MORTS = 4000;
+    let gagnee = 0;
+    for (let id = 0; id < MORTS; id++) {
+      if (dropsOrb(id)) {
+        gagnee += XP_PER_ORB;
+      }
+    }
+    expect(gagnee).toBe(MORTS);
+
+    // Et l'autre moitie : il tombe bien QUATRE FOIS MOINS d'objets au sol.
+    // Sans elle, ne rien changer du tout passerait aussi.
+    let orbes = 0;
+    for (let id = 0; id < MORTS; id++) {
+      if (dropsOrb(id)) {
+        orbes++;
+      }
+    }
+    expect(orbes).toBe(MORTS / ORB_DROP_ONE_IN);
+  });
+
+  it('retient exactement les identites que dropsOrb accepte, position comprise', () => {
+    const MORTS = 40;
+    const orbs = new OrbField(MORTS);
+    const attendues: number[] = [];
+    for (let i = 0; i < MORTS; i++) {
+      const id = entityIdOf(9, i);
+      orbs.spawn(id, 100 + i, 200, 0);
+      if (dropsOrb(id)) {
+        attendues.push(id);
+      }
+    }
+
+    expect([...orbs.id.slice(0, orbs.count)]).toEqual(attendues);
+    // Et la position suit bien l'identite retenue, pas le rang du creneau.
+    expect(orbs.x[1]).toBe(100 + ORB_DROP_ONE_IN);
+  });
+
+  /**
+   * L'autre moitie, vue depuis le vrai chemin de mort : le meme filtre
+   * s'applique aux orbes que `resolveProjectileDamage` fait apparaitre, et pas
+   * seulement a un appel direct de `spawn`.
+   */
+  it('s applique au chemin reel : cinq morts par projectile, un seul orbe au sol', () => {
+    const horde = new Horde(50);
+    const orbs = new OrbField(50);
+    const projectiles = new Projectiles(50);
+
+    // Cinq index CONSECUTIFS d'une meme vague — pas cinq vagues d'un monstre,
+    // qui tomberaient toutes sur l'index 0 et laisseraient donc toutes un orbe
+    // (voir « le decor qui masque », `shared/horde.test.ts`).
+    const targets = addWave(horde, 12, 5, 50);
+    for (const [i, targetId] of targets.entries()) {
+      projectiles.fireSalvo(SINGLE, 0, 50 * (i + 1), -20, targetId, horde);
+    }
+
+    let allDead: number[] = [];
+    for (let tick = 0; tick < 5; tick++) {
+      allDead = allDead.concat(resolveProjectileDamage(projectiles, DT, horde, orbs, tick));
+    }
+
+    expect(allDead.length).toBe(5);
+    expect(orbs.count).toBe(targets.filter((id) => dropsOrb(id)).length);
+    expect(orbs.count).toBe(2);
+  });
+});
+
 describe('OrbField.resolvePickups', () => {
+  /**
+   * Une identite dont la mort laisse VRAIMENT un orbe.
+   *
+   * ⚠️ **`1` et `2` n'en laissent plus depuis la tache 17** : `spawn` filtre
+   * par `dropsOrb`, et un decor qui pose des identites choisies au hasard
+   * mesurerait le taux de chute au lieu du ramassage. Derivee de la constante,
+   * jamais recopiee — un `4` en dur ici cesserait de suivre `ORB_DROP_ONE_IN`
+   * a son premier reglage.
+   */
+  const avecOrbe = (n: number): number => n * ORB_DROP_ONE_IN;
+
   it('ramasse un orbe a portee et laisse un orbe hors de portee intact', () => {
     const orbs = new OrbField(10);
-    orbs.spawn(1, 100, 100, 0);
+    orbs.spawn(avecOrbe(1), 100, 100, 0);
     // Assez loin pour etre hors d'ORB_PICKUP_RADIUS, sans etre absurde.
-    orbs.spawn(2, 5000, 5000, 0);
+    orbs.spawn(avecOrbe(2), 5000, 5000, 0);
 
     const picked = orbs.resolvePickups([{ x: 100, y: 100 }], 1);
 
-    expect(picked).toEqual([1]);
+    expect(picked).toEqual([avecOrbe(1)]);
     expect(orbs.count).toBe(1);
-    expect(orbs.id[0]).toBe(2);
+    expect(orbs.id[0]).toBe(avecOrbe(2));
   });
 
   it('expire un orbe apres ORB_LIFETIME_TICKS meme si personne n est a portee', () => {
     const orbs = new OrbField(10);
-    orbs.spawn(1, 100, 100, 0);
+    orbs.spawn(avecOrbe(1), 100, 100, 0);
 
     // Personne a proximite : la duree de vie seule doit le retirer.
     const picked = orbs.resolvePickups([{ x: -9000, y: -9000 }], 600);

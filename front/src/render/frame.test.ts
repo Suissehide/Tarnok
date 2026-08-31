@@ -163,9 +163,16 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(stage.argsOf('horde')).toEqual([client.horde, NOW]);
   });
 
-  it('dessine les orbes', () => {
+  /**
+   * ⚠️ **Les POSITIONS DE L'ETAT, pas une autre lecture** (tache 17) : c'est
+   * vers le joueur DESSINE que l'orbe est attiree, et `RenderState.players` est
+   * le seul endroit qui le porte — la position predite pour soi, interpolee
+   * pour les autres. Passer autre chose ferait glisser l'orbe vers un joueur
+   * qui n'est pas a l'ecran la ou on le croit.
+   */
+  it('dessine les orbes, avec les positions dessinees des joueurs', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('orbes')).toEqual([client.orbs, NOW]);
+    expect(stage.argsOf('orbes')).toEqual([client.orbs, STATE.players, NOW]);
   });
 
   it('dessine les projectiles', () => {

@@ -3,6 +3,7 @@ import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
 
 import type { DerivedOrbs, HitFlashes, ReactionFlashes, RenderState } from '../net/client';
+import type { MagnetPoint } from './orb-renderer';
 
 /**
  * Une image complete du jeu : ce qui est dessine, et dans quel ordre.
@@ -64,7 +65,13 @@ export interface FrameStage {
    */
   drawMarks(horde: Horde, tick: number): void;
   drawHorde(horde: Horde, timeMs: number): void;
-  drawOrbs(orbs: DerivedOrbs, timeMs: number): void;
+  /**
+   * Les orbes, et les positions DESSINEES des joueurs : une orbe a portee
+   * glisse vers le joueur le plus proche (tache 17). C'est `RenderState` qui
+   * porte ces positions, pas le client — donc `composeFrame` doit passer
+   * l'etat qu'elle vient d'obtenir, jamais une autre lecture.
+   */
+  drawOrbs(orbs: DerivedOrbs, players: readonly MagnetPoint[], timeMs: number): void;
   drawProjectiles(projectiles: Projectiles): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
@@ -107,7 +114,7 @@ export function composeFrame(
   stage.drawZones(client.zones, client.hordeTick);
   stage.drawMarks(client.horde, client.hordeTick);
   stage.drawHorde(client.horde, now);
-  stage.drawOrbs(client.orbs, now);
+  stage.drawOrbs(client.orbs, state.players, now);
   stage.drawProjectiles(client.projectiles);
   stage.drawImpactFlashes(client.hitFlashes, now);
   stage.drawReactionFlashes(client.reactionFlashes, now);

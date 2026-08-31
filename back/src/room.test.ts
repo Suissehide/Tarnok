@@ -6,17 +6,20 @@ import {
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   MAX_ENTITIES,
+  ORB_DROP_ONE_IN,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   REACTION_DAMAGE,
   SYNERGY_MAX,
   TICK_HZ,
   WEAPON_SLOTS,
+  XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
+import { entityIdOf } from '@shared/horde';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -569,6 +572,39 @@ function spawnMonsterAt(room: Room, waveId: number, x: number, y: number, archet
   room.horde.x[slot] = x;
   room.horde.y[slot] = y;
   return room.horde.entityIdAt(slot);
+}
+
+/**
+ * Une vague ENTIERE, a index CONSECUTIFS, groupee sur un point.
+ *
+ * ⚠️ **`spawnMonsterAt` ne peut pas la remplacer** : elle pose une vague d'un
+ * seul monstre, donc toujours l'index 0 — et l'index 0 laisse toujours un orbe
+ * (`dropsOrb`, tache 17). Tout decor bati sur elle est aveugle au taux de
+ * chute. C'est la « fixture qui masque » du depot, prise ici a la source.
+ */
+function spawnWaveAt(room: Room, waveId: number, count: number, x: number, y: number): number[] {
+  const order: WaveOrder = {
+    waveId,
+    spawnTick: room.tick,
+    seed: 1,
+    archetype: 0,
+    formation: FORMATION.CLUSTER,
+    anchorX: x,
+    anchorY: y,
+    count,
+  };
+  room.horde.spawn(order);
+  const ids: number[] = [];
+  for (let i = 0; i < count; i++) {
+    const slot = room.horde.count - count + i;
+    // Espaces de plus de `SEPARATION_RADIUS` : sans ça la repulsion les
+    // disperse pendant qu'ils attendent leur tour d'etre cibles.
+    room.horde.x[slot] = x;
+    room.horde.y[slot] = y + i * 40;
+    ids.push(room.horde.entityIdAt(slot));
+  }
+  expect(ids).toEqual(ids.map((_, i) => entityIdOf(waveId, i)));
+  return ids;
 }
 
 describe("l'arbitrage de combat integre au salon (tache 9)", () => {
@@ -1502,7 +1538,14 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // dessus n'en ramasse d'abord qu'une partie. Mesure : `+4`, `+4`, puis
     // `+34` d'un coup. Trente orbes ne donnaient que dix-neuf au tick decisif,
     // soit un seul niveau, et ce test ne prouvait plus rien.
-    const ORBES = 60;
+    //
+    // ⚠️ **Derive de `XP_PER_ORB` depuis la tache 17**, jamais un nombre pose a
+    // cote : chaque orbe vaut desormais `XP_PER_ORB` au lieu de 1, donc un tas
+    // de soixante en donnerait quatre fois trop et une demi-douzaine de niveaux
+    // resteraient en attente derriere les deux que ce test observe — le monde
+    // ne reprendrait jamais la main a la derniere assertion. Ce qui compte ici
+    // est l'EXPERIENCE amassee, et elle est la meme qu'avant.
+    const ORBES = 60 / XP_PER_ORB;
     let morts = 0;
     let ticks = 0;
     let waveId = 1000;
@@ -1664,6 +1707,46 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       expect(room.drainRunOver()).toBeNull();
     }
     expect(positionOf(room, 1)).toEqual(atRunOver);
+  });
+});
+
+describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
+  /**
+   * *« Moins d'xp qui tombe »* — et c'est bien le NOMBRE D'OBJETS AU SOL que
+   * l'auteur decrit, pas la courbe de progression. Ce test le mesure sur le
+   * pipeline reel : de vraies morts par projectile, dans un vrai salon.
+   *
+   * ⚠️ **Le tas meurt HORS portee de ramassage** (`ORB_PICKUP_RADIUS` = 90 px) :
+   * un orbe empoche disparaitrait du compte, et le test mesurerait le ramassage
+   * au lieu de la chute. `drainPickups` vide en dessous est ce qui le prouve,
+   * plutot que de le supposer.
+   *
+   * ⚠️ Graine FIXE, meme raison qu'ailleurs dans ce fichier : les obstacles
+   * derivent de `mapSeed` et decident du chemin des monstres.
+   */
+  it('une vague entiere abattue ne laisse qu une mort sur ORB_DROP_ONE_IN au sol', () => {
+    const room = new Room(0x0b_e5_0017);
+    room.join(1);
+    const depart = positionOf(room, 1);
+    const ids = spawnWaveAt(room, 800, 4 * ORB_DROP_ONE_IN, depart.x + 520, depart.y - 120);
+
+    let morts = 0;
+    let ticks = 0;
+    // Budget court, et volontairement sous le tick 360 : au-dela le generateur
+    // lache sa premiere vague, et ses morts a elle brouilleraient le compte.
+    while (morts < ids.length && ticks < 300) {
+      aimAtNearestMonster(room, 1, ticks + 1);
+      room.step(DT);
+      ticks++;
+      for (const lot of room.drainDeaths()) {
+        morts += lot.ids.length;
+      }
+    }
+
+    expect(morts).toBe(ids.length);
+    // Rien n'a ete empoche : ce qui reste au sol est bien ce qui est TOMBE.
+    expect(room.drainPickups()).toEqual([]);
+    expect(room.orbCount).toBe(ids.length / ORB_DROP_ONE_IN);
   });
 });
 

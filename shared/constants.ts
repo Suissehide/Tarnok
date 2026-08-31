@@ -256,8 +256,52 @@ export const ORB_LIFETIME_TICKS = 600;
 /** Rayon de ramassage d'un orbe, en pixels monde. Arbitre par le serveur (§6.1) — jamais derive cote client. */
 export const ORB_PICKUP_RADIUS = 90;
 
-/** Experience gagnee par orbe ramasse, avant multiplication par la courbe de niveau. */
-export const XP_PER_ORB = 1;
+/**
+ * Une mort sur combien laisse un orbe — etape 5a, tache 17, sur retour de jeu :
+ * *« moins d'xp qui tombe ou plus par niveau »*.
+ *
+ * ⚠️ **C'est le NOMBRE D'OBJETS AU SOL que l'auteur decrit, pas la courbe de
+ * progression.** Monter `XP_PER_ORB` seul ne change pas ce nombre : il change
+ * combien d'orbes il faut pour un niveau. Le levier du ressenti est ici, et
+ * lui seul — a 4, trois morts sur quatre ne laissent plus rien.
+ *
+ * ⚠️ **Le tirage est ARITHMETIQUE, jamais aleatoire** (`dropsOrb`, dans
+ * `shared/horde.ts`) : le serveur arbitre le ramassage mais le client DERIVE
+ * l'existence de l'orbe du seul message `DEATHS` (voir `DerivedOrbs`). Un
+ * `Math.random` d'un cote ferait apparaitre chez l'un des orbes que l'autre
+ * n'a pas — et `shared/` l'interdit pour cette raison exacte.
+ *
+ * ⚠️ **Doit diviser `MAX_PER_WAVE`** (4096), sinon le taux reel n'est plus
+ * `1/n` : les identites sont `waveId * MAX_PER_WAVE + index`, et le reste
+ * modulo `n` ne suit l'index que si `n` divise le pas de vague.
+ */
+export const ORB_DROP_ONE_IN = 4;
+
+/**
+ * Experience gagnee par orbe ramasse, avant multiplication par la courbe de
+ * niveau.
+ *
+ * ⚠️ **DERIVEE du taux de chute, et c'est tout l'interet.** L'experience par
+ * MORT vaut `XP_PER_ORB / ORB_DROP_ONE_IN`, soit 1 — exactement ce qu'elle
+ * valait avant la tache 17. Rarefier les orbes sans relever leur valeur
+ * repousserait le premier draft, l'inverse de ce que l'auteur demande ; ecrire
+ * cette derivation rend ce contresens impossible plutot que de compter sur un
+ * commentaire pour le rappeler.
+ *
+ * ⚠️ **Ce qui a change, ce n'est donc PAS le rythme des niveaux** — c'est la
+ * granularite : un orbe vaut desormais 40 % du premier seuil
+ * (`LEVEL_XP_BASE` = 10) au lieu de 10 %. C'est ce que « chacun compte » veut
+ * dire, et c'est **mesure** — un joueur passif, le meme geste que le test
+ * « un joueur passif atteint le niveau 2 », sur les memes 40 graines de carte :
+ *
+ * | | Niveau 2, mediane | Maximum | Echecs | Orbes au sol, au pic |
+ * | --- | --- | --- | --- | --- |
+ * | avant la tache 17 | 43,2 s | 56,0 s | 0/40 | **86** |
+ * | apres | 44,3 s | 55,5 s | 0/40 | **25** |
+ *
+ * Le premier draft ne bouge pas ; ce qui traine au sol est divise par 3,4.
+ */
+export const XP_PER_ORB = ORB_DROP_ONE_IN;
 
 /**
  * Duree du gel, en ticks, a chaque montee de niveau — « le monde et le

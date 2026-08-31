@@ -9,7 +9,7 @@ import {
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
-import type { Horde } from '@shared/horde';
+import { dropsOrb, type Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import { packElementPair } from '@shared/protocol';
 import type { ZoneField } from '@shared/zones';
@@ -95,8 +95,29 @@ export class OrbField {
     return this.#count;
   }
 
-  /** Fait apparaitre un orbe. Ignore silencieusement si la capacite (tres large) est atteinte. */
+  /**
+   * Une mort DEMANDE un orbe ; toutes ne l'obtiennent pas (tache 17, etape 5a).
+   *
+   * ⚠️ **La garde est ICI, au goulot, et pas aux trois chemins de mort.** Les
+   * projectiles, les brulures et les reactions appellent tous les trois cette
+   * methode, et l'etape 5a vient d'en ajouter deux : une regle recopiee a
+   * chaque appel serait fausse au prochain chemin ajoute — c'est exactement ce
+   * qui est arrive aux zones (« n'en cabler qu'une laisserait la moitie des
+   * tirs sans trace au sol »). Une seule garde, au seul endroit qui les voit
+   * toutes.
+   *
+   * ⚠️ **`DerivedOrbs.spawn` porte la MEME garde, cote client**, et c'est la
+   * seule duplication acceptable : les deux classes sont deja jumelles de part
+   * et d'autre du fil, et le predicat qu'elles partagent, lui, vit dans
+   * `shared/` (`dropsOrb`). Retirer la garde d'un seul cote ferait apparaitre
+   * chez l'un des orbes que l'autre ignore.
+   *
+   * Ignore silencieusement si la capacite (tres large) est atteinte.
+   */
   spawn(entityId: number, x: number, y: number, tick: number): void {
+    if (!dropsOrb(entityId)) {
+      return;
+    }
     if (this.#count >= this.capacity) {
       return;
     }

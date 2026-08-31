@@ -17,7 +17,6 @@ import {
   FLASH_MAX_SCALE,
   IMPACT_TEXTURE_DIAMETER,
   ImpactFlashRenderer,
-  OrbRenderer,
   PROJECTILE_CELL_PX,
   PROJECTILE_CULL_MARGIN,
   ProjectileRenderer,
@@ -41,7 +40,7 @@ import {
  * dans `horde-renderer.ts`), et sans ce test rien ne l'aurait attrape si un
  * futur refactor deplacait l'affectation.
  */
-describe('rendu des projectiles/orbes/flashs — bornes explicites du ParticleContainer', () => {
+describe('rendu des projectiles/flashs — bornes explicites du ParticleContainer', () => {
   const expected = {
     x: -256,
     y: -256,
@@ -51,11 +50,6 @@ describe('rendu des projectiles/orbes/flashs — bornes explicites du ParticleCo
 
   it('ProjectileRenderer pose des bornes couvrant la carte entiere, marge comprise', () => {
     const renderer = new ProjectileRenderer();
-    expect(renderer.boundsArea).toMatchObject(expected);
-  });
-
-  it('OrbRenderer pose des bornes couvrant la carte entiere, marge comprise', () => {
-    const renderer = new OrbRenderer();
     expect(renderer.boundsArea).toMatchObject(expected);
   });
 

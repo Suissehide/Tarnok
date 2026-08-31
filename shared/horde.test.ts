@@ -7,6 +7,8 @@ import {
   FLOWFIELD_HZ,
   MARK_DURATION_TICKS,
   MAX_ENTITIES,
+  MAX_PER_WAVE,
+  ORB_DROP_ONE_IN,
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
   TICK_HZ,
@@ -15,7 +17,7 @@ import {
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import { FlowField } from './flowfield';
-import { entityIdOf, Horde, type HordeState } from './horde';
+import { dropsOrb, entityIdOf, Horde, type HordeState } from './horde';
 import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
@@ -59,6 +61,60 @@ describe('entityIdOf', () => {
 
   it('ne recycle pas : la vague 2 ne reprend pas les identifiants de la vague 1', () => {
     expect(entityIdOf(2, 0)).toBeGreaterThan(entityIdOf(1, 4095));
+  });
+});
+
+/**
+ * Etape 5a, tache 17 : *« moins d'xp qui tombe »*. Le taux de chute est le
+ * levier du NOMBRE D'OBJETS AU SOL, et il doit se calculer identiquement des
+ * deux cotes du fil — le serveur arbitre le ramassage, mais il n'annonce jamais
+ * qu'un orbe existe : le client le derive du seul `DEATHS`.
+ */
+describe('dropsOrb — quelles morts laissent un orbe', () => {
+  /**
+   * ⚠️ **Exactement une sur `ORB_DROP_ONE_IN`, pas « une sur quatre en
+   * moyenne ».** C'est ce qui laisse l'experience par mort strictement
+   * inchangee malgre la rarefaction (voir `XP_PER_ORB`), au lieu de la laisser
+   * flotter d'une run a l'autre.
+   */
+  it('retient exactement une identite sur ORB_DROP_ONE_IN, sur des index consecutifs', () => {
+    const total = 400;
+    let retenues = 0;
+    for (let i = 0; i < total; i++) {
+      if (dropsOrb(entityIdOf(7, i))) {
+        retenues++;
+      }
+    }
+
+    expect(retenues).toBe(total / ORB_DROP_ONE_IN);
+  });
+
+  /**
+   * ⚠️ **Le meme verdict d'une vague a l'autre**, parce que `MAX_PER_WAVE` est
+   * un multiple de `ORB_DROP_ONE_IN`. Si ce n'etait pas le cas, le taux reel
+   * derivarait d'une vague a l'autre — et le decor d'un test, lui, ne le
+   * verrait jamais.
+   */
+  it('donne le meme verdict pour un meme index, quelle que soit la vague', () => {
+    expect(MAX_PER_WAVE % ORB_DROP_ONE_IN).toBe(0);
+    for (let index = 0; index < 2 * ORB_DROP_ONE_IN; index++) {
+      const attendu = dropsOrb(entityIdOf(0, index));
+      for (const wave of [1, 17, 250, 4095]) {
+        expect(dropsOrb(entityIdOf(wave, index))).toBe(attendu);
+      }
+    }
+  });
+
+  /**
+   * ⚠️ **Le piege du decor, garde ici plutot que rappele en commentaire** : un
+   * test qui pose son monstre avec `entityIdOf(waveId, 0)` tombe TOUJOURS sur
+   * un orbe. C'est la « fixture qui masque » du depot, et la raison pour
+   * laquelle les tests du taux de chute balaient des index CONSECUTIFS.
+   */
+  it('laisse toujours un orbe au premier de chaque vague — le decor qui masque', () => {
+    for (const wave of [0, 1, 600, 4095]) {
+      expect(dropsOrb(entityIdOf(wave, 0))).toBe(true);
+    }
   });
 });
 

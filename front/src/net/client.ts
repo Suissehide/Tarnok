@@ -16,7 +16,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
-import { Horde } from '@shared/horde';
+import { dropsOrb, Horde } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
@@ -149,8 +149,22 @@ export class DerivedOrbs {
     return this.#count;
   }
 
-  /** Fait apparaitre un orbe. Ignore silencieusement si la capacite (tres large) est atteinte. */
+  /**
+   * Une mort DEMANDE un orbe ; toutes ne l'obtiennent pas (tache 17, etape 5a).
+   *
+   * ⚠️ **La MEME garde que `OrbField.spawn`, cote serveur, et elle DOIT y
+   * rester des deux cotes.** Le client ne recoit jamais « un orbe existe » : il
+   * le derive du seul `DEATHS`. La garde d'un seul cote ferait donc dessiner
+   * ici des orbes que le serveur ne ramassera jamais — ou l'inverse, des
+   * ramassages sans rien a l'ecran. Le predicat lui-meme, `dropsOrb`, vit dans
+   * `shared/` : c'est lui qui n'a pas le droit d'exister en deux exemplaires.
+   *
+   * Ignore silencieusement si la capacite (tres large) est atteinte.
+   */
   spawn(entityId: number, x: number, y: number, tick: number): void {
+    if (!dropsOrb(entityId)) {
+      return;
+    }
     if (this.#count >= this.capacity) {
       return;
     }

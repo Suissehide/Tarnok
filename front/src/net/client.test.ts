@@ -5,6 +5,7 @@ import {
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   MARK_DURATION_TICKS,
+  ORB_DROP_ONE_IN,
   ORB_LIFETIME_TICKS,
   PLAYER_SPEED,
   PROJECTILE_HIT_RADIUS,
@@ -16,7 +17,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
-import { entityIdOf, Horde } from '@shared/horde';
+import { dropsOrb, entityIdOf, Horde } from '@shared/horde';
 import { passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
@@ -44,6 +45,7 @@ import { ZoneField } from '@shared/zones';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  DerivedOrbs,
   GameClient,
   HIT_FLASH_LIFETIME_MS,
   type InputAxes,
@@ -650,7 +652,75 @@ describe('GameClient — morts appliquees par rejeu (rollback + replay, tache 10
   );
 });
 
+/**
+ * Etape 5a, tache 17 : *« moins d'xp qui tombe »*.
+ *
+ * ⚠️ **La garde DOIT etre des deux cotes du fil.** Le client ne recoit jamais
+ * « un orbe existe » : il le derive du seul `DEATHS`. Le predicat, lui, n'a pas
+ * le droit d'exister en deux exemplaires — c'est `dropsOrb`, dans `shared/`.
+ */
+describe('DerivedOrbs.spawn — le client filtre les memes morts que le serveur', () => {
+  it('ne retient qu une mort sur ORB_DROP_ONE_IN, et exactement celles que dropsOrb accepte', () => {
+    const MORTS = 40;
+    const orbs = new DerivedOrbs(MORTS);
+    const attendues: number[] = [];
+    for (let i = 0; i < MORTS; i++) {
+      const id = entityIdOf(9, i);
+      orbs.spawn(id, 100 + i, 200, 0);
+      if (dropsOrb(id)) {
+        attendues.push(id);
+      }
+    }
+
+    expect(orbs.count).toBe(MORTS / ORB_DROP_ONE_IN);
+    expect([...orbs.id.slice(0, orbs.count)]).toEqual(attendues);
+  });
+});
+
 describe('GameClient — orbes derivees des morts (tache 10)', () => {
+  /**
+   * ⚠️ **Le meme filtre, atteint par le VRAI chemin** : un lot `DEATHS` d'une
+   * vague entiere, index consecutifs. Sans ce test, la garde de
+   * `DerivedOrbs.spawn` pouvait etre retiree sans qu'une assertion bouge — elle
+   * l'a ete, et 280 tests sont restes verts.
+   */
+  it('un lot de morts a index consecutifs ne laisse qu un orbe sur ORB_DROP_ONE_IN', () => {
+    const WAVE_ID = 31;
+    const ENTITIES = 40;
+
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0004) });
+    socket.emit('message', {
+      data: encodeWaveOrder({
+        waveId: WAVE_ID,
+        spawnTick: 0,
+        seed: 0x51ee_d002,
+        archetype: 0,
+        formation: FORMATION.CLUSTER,
+        anchorX: 1200,
+        anchorY: 1200,
+        count: ENTITIES,
+      }),
+    });
+
+    const killedIds = Array.from({ length: ENTITIES }, (_, i) => entityIdOf(WAVE_ID, i));
+    const DEATH_TICK = 10;
+    for (let tick = 0; tick <= DEATH_TICK + 3; tick++) {
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 }]),
+      });
+      if (tick === DEATH_TICK + 2) {
+        socket.emit('message', { data: encodeDeaths(DEATH_TICK, killedIds) });
+      }
+      client.update(tick * STEP, STEP);
+    }
+
+    expect(client.orbs.count).toBe(ENTITIES / ORB_DROP_ONE_IN);
+    expect([...client.orbs.id.slice(0, client.orbs.count)].every((id) => dropsOrb(id))).toBe(true);
+  });
+
   it('une mort fait apparaitre un orbe a la position de l entite, et PICKUPS le retire', () => {
     const WAVE_ID = 30;
     const ENTITIES = 10;
@@ -673,7 +743,12 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     };
     socket.emit('message', { data: encodeWaveOrder(order) });
 
-    const killedIds = [entityIdOf(WAVE_ID, 0), entityIdOf(WAVE_ID, 1)];
+    // ⚠️ **Des index ESPACES de `ORB_DROP_ONE_IN`, pas 0 et 1.** Depuis la
+    // tache 17, une mort sur quatre seulement laisse un orbe (`dropsOrb`) :
+    // deux index consecutifs n'en donneraient qu'un, et ce test — qui parle du
+    // chemin `DEATHS` -> orbe -> `PICKUPS`, pas du taux de chute — se mettrait
+    // a mesurer autre chose que ce qu'il annonce.
+    const killedIds = [entityIdOf(WAVE_ID, 0), entityIdOf(WAVE_ID, ORB_DROP_ONE_IN)];
     const DEATH_TICK = 10;
     const DELAY = 2;
 
