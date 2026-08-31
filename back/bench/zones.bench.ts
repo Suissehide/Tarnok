@@ -26,6 +26,7 @@
  *   npm run bench:zones -w back
  */
 
+import { ARCHETYPES, HEAVY_HP } from '@shared/archetypes';
 import { CARD } from '@shared/cards';
 import { MAX_ENTITIES, TICK_HZ, ZONE_LIFETIME_TICKS, ZONE_RADIUS } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
@@ -47,6 +48,23 @@ const BUDGET_MS = 11.11;
 /** Ancre commune a la horde et aux zones du banc de balayage. */
 const ANCRE = 3000;
 
+/**
+ * L'archetype LOURD, et il n'est pas decoratif depuis la tache 21.
+ *
+ * ⚠️ **Avec la pietaille legere, ce banc ne mesure plus RIEN.** Un ennemi tue
+ * du meme impact n'est pas marque (`resolveProjectileDamage`), donc il ne
+ * reagit jamais — et depuis que les zones naissent de la REACTION et non plus
+ * du projectile, « pas de reaction » veut dire « pas une seule zone ». Le banc
+ * tournait avec `archetype: 0` (une pietaille legere) et rendait des zeros
+ * partout : un banc qui cesse de mesurer, exactement le motif que la tache 19
+ * a trouve dans un test. C'est la pietaille LOURDE qui porte le systeme
+ * elementaire (§3.3 de la spec), et c'est elle qu'il faut peupler ici.
+ */
+const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+if (LOURD < 0) {
+  throw new Error('le catalogue doit porter au moins un archetype lourd');
+}
+
 const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
 const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
 if (ARME_BRAISE < 0 || ARME_GIVRE < 0) {
@@ -61,7 +79,7 @@ function peuple(horde: Horde, n: number, anchorX = ANCRE, anchorY = ANCRE): void
       waveId: id++,
       spawnTick: 0,
       seed: (k * 2654435761) >>> 0,
-      archetype: 0,
+      archetype: LOURD,
       formation: FORMATION.RING,
       anchorX,
       anchorY,

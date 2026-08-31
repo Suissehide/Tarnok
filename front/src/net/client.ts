@@ -1514,11 +1514,16 @@ export class GameClient {
    * §6.2 ; celui-ci pose la marque et rien d'autre. Une reaction decidee ici
    * serait une reaction que le serveur n'a pas prononcee.
    *
-   * ⚠️ **`aliveAt`, pas `slowsAt`** — meme table que cote serveur : une zone
-   * posee au tick `T` teinte immediatement ce qu'elle couvre, alors qu'elle ne
-   * ralentit qu'a partir de `T + 1` (le deplacement de `T` etait deja joue).
-   * Confondre les deux ferait clignoter la teinte d'un tick a la pose de chaque
-   * zone.
+   * ⚠️ **`aliveAt`, pas `slowsAt`** — meme predicat que cote serveur : c'est
+   * lui qui dit si la zone EXISTE, alors qu'elle ne ralentit qu'a partir de
+   * `T + 1` (le deplacement de `T` etait deja joue). Confondre les deux ferait
+   * clignoter la teinte d'un tick a la pose de chaque zone.
+   *
+   * ⚠️ **Le serveur, lui, ne marque plus des le tick de la pose depuis la
+   * tache 21** : ses champs naissent de `applyReactions`, donc APRES son propre
+   * `markInZones`. L'ecart est d'un tick, sur une teinte — c'est exactement le
+   * genre d'approximation que `#markLocally` documente et assume, et le
+   * corriger ici demanderait au client de connaitre l'ordre du tick serveur.
    *
    * Cout : O(zones x entites) par tick, le meme que celui que le §5.2 annonce
    * cote serveur. C'est la contrepartie assumee de la seule ligne du §9 qui

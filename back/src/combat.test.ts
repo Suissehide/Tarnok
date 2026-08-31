@@ -506,7 +506,6 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     targetId: number,
     tick: number,
     arme: Weapon,
-    zones?: ZoneField,
     by = 0,
   ): { morts: number[]; impactTick: number } {
     const projectiles = new Projectiles(10);
@@ -514,7 +513,7 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     const dy = horde.y[horde.slotOf(targetId)] ?? 0;
     projectiles.fireSalvoDirected(arme, tick, 0, 0, dx, dy, arme.damage, 1, by);
     for (let i = 0; i < 20; i++) {
-      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, zones);
+      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i);
       if (morts.length > 0) {
         return { morts, impactTick: tick + i };
       }
@@ -530,7 +529,7 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     const targetId = addOne(horde, 1, 100, 0, LOURD);
     const orbs = new OrbField(10);
 
-    const { morts, impactTick } = frappe(horde, orbs, targetId, 7, BRAISE, undefined, 3);
+    const { morts, impactTick } = frappe(horde, orbs, targetId, 7, BRAISE, 3);
     expect(morts).toEqual([]);
     const slot = horde.slotOf(targetId);
     expect(horde.markAt(slot, impactTick)).toBe(ELEMENT.BRAISE);
@@ -542,7 +541,7 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     const targetId = addOne(horde, 1, 100, 0, LOURD);
     const orbs = new OrbField(10);
 
-    frappe(horde, orbs, targetId, 0, SINGLE, undefined, 3);
+    frappe(horde, orbs, targetId, 0, SINGLE, 3);
     const slot = horde.slotOf(targetId);
     expect(horde.markAt(slot, 0)).toBe(ELEMENT.NEUTRE);
     // Et le tireur n'est pas retenu non plus : rien n'a ete pose.
@@ -567,7 +566,7 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     expect(horde.slotOf(victime)).toBe(0);
     expect(horde.slotOf(voisin)).toBe(1);
 
-    const { morts, impactTick } = frappe(horde, orbs, victime, 11, BRAISE, undefined, 3);
+    const { morts, impactTick } = frappe(horde, orbs, victime, 11, BRAISE, 3);
     expect(morts).toEqual([victime]);
 
     expect(horde.count).toBe(1);
@@ -577,72 +576,195 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     expect(horde.markBy[slot]).toBe(0);
   });
 
-  it('pose une zone a l impact, sur des coordonnees ARRONDIES comme sur le fil', () => {
+  it('⚠️ NE POSE AUCUNE ZONE — ni a l impact, ni a l expiration (tache 21)', () => {
+    // ⚠️ **La non-regression de la tache 21, et elle porte les DEUX fins de
+    // course.** `postZone` etait appele aux deux — l'impact dans `collide`, la
+    // vieillesse par le rappel `onExpire` de `Projectiles.step` — et n'en
+    // retirer qu'une laisserait la moitie du modele en place, invisible au
+    // type comme au lint. Le decor met donc les deux en scene dans le meme
+    // test : un projectile qui touche, un projectile qui vieillit.
+    //
+    // Le champ de zones est passe a `markInZones` a la fin : il est LE meme
+    // objet, donc s'il s'etait rempli au passage on le verrait.
     const horde = new Horde(10);
-    // Position non entiere : c'est ce qui rend l'arrondi observable. Sans ca,
-    // le test passerait avec ou sans `Math.round`.
-    const targetId = addOne(horde, 1, 100.4, 0.4, LOURD);
+    // Position non entiere : c'etait elle qui rendait l'arrondi de `postZone`
+    // observable. Gardee pour que le test echoue si la pose revenait, arrondie
+    // ou non.
+    const cible = addOne(horde, 1, 100.4, 0.4, LOURD);
     const orbs = new OrbField(10);
     const zones = new ZoneField();
 
-    const { impactTick } = frappe(horde, orbs, targetId, 5, BRAISE, zones, 2);
-
-    expect(zones.count).toBe(1);
-    expect(zones.element[0]).toBe(ELEMENT.BRAISE);
-    expect(zones.by[0]).toBe(2);
-    // Le tick de l'IMPACT, pas celui du tir — et le projectile a bien voyage.
+    // 1. l'impact.
+    const { morts, impactTick } = frappe(horde, orbs, cible, 5, BRAISE, 2);
+    expect(morts).toEqual([]);
+    // Le decor n'est pas creux : le projectile a bien touche, et il a MARQUE.
     expect(impactTick).toBeGreaterThan(5);
-    expect(zones.bornTick[0]).toBe(impactTick);
-    expect(Number.isInteger(zones.x[0])).toBe(true);
-    expect(Number.isInteger(zones.y[0])).toBe(true);
-  });
+    expect(horde.markAt(horde.slotOf(cible), impactTick)).toBe(ELEMENT.BRAISE);
 
-  it('pose une zone MEME quand le projectile n a rien touche : il finit sa course de vieillesse', () => {
-    // §5.1 : « la ou un projectile elementaire finit sa course, QU IL AIT
-    // TOUCHE OU NON ». C'est l'autre moitie du cablage, dans `step` et pas
-    // dans `collide` — n'en cabler qu'une laisse la moitie des tirs sans trace.
-    const horde = new Horde(10);
-    const orbs = new OrbField(10);
-    const zones = new ZoneField();
+    // 2. la vieillesse : plus rien a toucher, le projectile finit sa course.
     const projectiles = new Projectiles(10);
-    // Aucune entite dans la horde : rien a toucher, le projectile vieillit.
-    projectiles.fireSalvoDirected(BRAISE, 0, 500, 500, 1, 0, BRAISE.damage, 1, 1);
-
+    projectiles.fireSalvoDirected(BRAISE, 0, 5000, 5000, 1, 0, BRAISE.damage, 1, 1);
     for (let t = 0; t <= BRAISE.projectileLifeTicks; t++) {
-      resolveProjectileDamage(projectiles, DT, horde, orbs, t, zones);
+      resolveProjectileDamage(projectiles, DT, new Horde(1), orbs, t);
     }
-
     expect(projectiles.count).toBe(0);
-    expect(zones.count).toBe(1);
-    expect(zones.element[0]).toBe(ELEMENT.BRAISE);
-    expect(zones.by[0]).toBe(1);
-  });
 
-  it('un projectile neutre ne pose aucune zone, ni a l impact ni a l expiration', () => {
-    const horde = new Horde(10);
-    const targetId = addOne(horde, 1, 100, 0, LOURD);
-    const orbs = new OrbField(10);
-    const zones = new ZoneField();
-
-    frappe(horde, orbs, targetId, 0, SINGLE, zones, 1);
-    const projectiles = new Projectiles(10);
-    projectiles.fireSalvoDirected(SINGLE, 0, 3000, 3000, 1, 0, SINGLE.damage, 1, 1);
-    for (let t = 0; t <= SINGLE.projectileLifeTicks; t++) {
-      resolveProjectileDamage(projectiles, DT, new Horde(1), orbs, t, zones);
-    }
-
+    // Aucune zone, et aucune troncature non plus — une pose refusee faute de
+    // place compterait ici, et « zero zone » se lirait « reserve pleine ».
     expect(zones.count).toBe(0);
     expect(zones.truncatedZones).toBe(0);
   });
+});
 
-  it('sans champ de zones, rien ne se pose et la resolution reste celle d avant', () => {
-    // Le chemin `zones === undefined` : c'est celui que prennent tous les
-    // tests d'avant cette tache, et le client cosmetique n'en a pas d'autre.
-    const horde = new Horde(10);
-    const targetId = addOne(horde, 1, 100, 0, LOURD);
-    const orbs = new OrbField(10);
-    expect(frappe(horde, orbs, targetId, 0, BRAISE).morts).toEqual([]);
-    expect(horde.hp[horde.slotOf(targetId)]).toBe(HEAVY_HP - BRAISE.damage);
+describe('la reaction laisse un champ au sol (etape 5a, tache 21)', () => {
+  /**
+   * Un declencheur qui vient d'une MARQUE de `marque` posee par `markBy`, et
+   * d'un SECOND element `declencheur` applique par `by`.
+   *
+   * ⚠️ Les deux elements sont distincts dans le decor, et les deux joueurs
+   * aussi : c'est ce qui rend observable lequel des quatre champs le sol
+   * herite. Un declencheur ou marque et declencheur seraient le meme element
+   * ne pourrait pas separer les deux regles.
+   */
+  function trigger(
+    x: number,
+    y: number,
+    marque = ELEMENT.BRAISE,
+    declencheur = ELEMENT.GIVRE,
+    markBy = 1,
+    by = 2,
+  ): ReactionTrigger {
+    return {
+      pair: packElementPair(marque, declencheur),
+      x,
+      y,
+      markBy,
+      by,
+      element: declencheur,
+    };
+  }
+
+  it('pose UN champ au point d application, arrondi comme sur le fil', () => {
+    // Coordonnees non entieres : c'est ce qui rend l'arrondi observable. Le
+    // message `ZONE` ne transporte que des `int16`, et le serveur s'impose
+    // l'arrondi qu'il inflige au client.
+    const zones = new ZoneField();
+
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      9,
+      [trigger(300.6, -12.6)],
+      zones,
+      new Reactions(),
+    );
+
+    expect(zones.count).toBe(1);
+    expect(zones.x[0]).toBe(301);
+    expect(zones.y[0]).toBe(-13);
+    expect(zones.bornTick[0]).toBe(9);
+  });
+
+  it('⚠️ le champ porte l element qui DECLENCHE, et le joueur qui declenche', () => {
+    // ⚠️ **Le choix de la tache 21, et c'est le seul qui ne degenere pas.**
+    // Avec l'element de la MARQUE, le champ remarquerait l'ennemi de l'element
+    // que la reaction vient de consommer : le meme tireur redeclencherait a
+    // chaque volee, indefiniment, avec UNE SEULE arme. Avec l'element qui
+    // declenche, le §6.2 quatrieme ligne s'applique — meme element, simple
+    // rafraichissement — et il faut de nouveau l'autre element.
+    //
+    // Les deux elements ET les deux joueurs sont distincts : sans ca, « porte
+    // le declencheur » se lirait aussi bien « porte la marque ».
+    const zones = new ZoneField();
+
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(0, 0, ELEMENT.BRAISE, ELEMENT.GIVRE, 1, 2)],
+      zones,
+      new Reactions(),
+    );
+
+    expect(zones.element[0]).toBe(ELEMENT.GIVRE);
+    expect(zones.by[0]).toBe(2);
+  });
+
+  it('deux reactions au meme endroit ne font qu un champ : la regle de fusion tient', () => {
+    // §5.1 bis : le compte des zones est fonction de la SURFACE, jamais du
+    // nombre de reactions. A moins d'un `ZONE_RADIUS`, la seconde rafraichit.
+    const zones = new ZoneField();
+
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(1000, 1000), trigger(1000 + ZONE_RADIUS - 1, 1000)],
+      zones,
+      new Reactions(),
+    );
+
+    expect(zones.count).toBe(1);
+    // Et le decor n'est pas creux : un rayon de plus, et la seconde CREE.
+    const espacees = new ZoneField();
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(1000, 1000), trigger(1000 + ZONE_RADIUS + 1, 1000)],
+      espacees,
+      new Reactions(),
+    );
+    expect(espacees.count).toBe(2);
+  });
+
+  it('le champ pose declenche le couple avec une zone voisine d un AUTRE element', () => {
+    // ⚠️ **Le troisieme declencheur du §6.2 reste atteignable, et c'est par ce
+    // chemin-la qu'il l'est desormais** : les zones ne naissant plus que d'une
+    // reaction, deux zones ne peuvent se recouvrir que si DEUX reactions les
+    // ont posees. Sans cet appel a `onZoneCreated`, `ZoneField.overlaps`
+    // n'aurait plus aucun appelant de production.
+    const zones = new ZoneField();
+    const reactions = new Reactions();
+    zones.spawn(ELEMENT.BRAISE, 1000, 1000, 5, 0);
+
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(1000 + ZONE_RADIUS + 10, 1000, ELEMENT.BRAISE, ELEMENT.GIVRE, 1, 2)],
+      zones,
+      reactions,
+    );
+
+    expect(zones.count).toBe(2);
+    // ⚠️ **Au tick SUIVANT, jamais celui-ci** : `Room.step` a deja draine ce
+    // tick-la quand `applyReactions` tourne. Le declencheur attend le prochain
+    // `drain`, ce qui est aussi ce qui empeche une chaine de tourner pendant
+    // que la horde est balayee par creneau.
+    const [suite, ...reste] = reactions.drain();
+    expect(reste).toEqual([]);
+    expect(suite?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
+    expect(suite?.markBy).toBe(5);
+    expect(suite?.by).toBe(2);
+  });
+
+  it('un champ RAFRAICHI ne declenche rien : seule une CREATION reagit', () => {
+    // ⚠️ Sans la comparaison des comptes, deux reactions repetees au meme
+    // endroit — le cas normal d'un amas qui reagit tick apres tick —
+    // declencheraient une reaction de recouvrement a chaque fois.
+    const zones = new ZoneField();
+    const reactions = new Reactions();
+    zones.spawn(ELEMENT.BRAISE, 1000, 1000, 5, 0);
+    const declencheur = trigger(1000 + ZONE_RADIUS + 10, 1000);
+
+    applyReactions(new Horde(1), new OrbField(1), 0, [declencheur], zones, reactions);
+    expect(reactions.drain().length).toBe(1);
+
+    // Meme point, meme element : `spawn` rafraichit, ne cree pas.
+    applyReactions(new Horde(1), new OrbField(1), 1, [declencheur], zones, reactions);
+    expect(zones.count).toBe(2);
+    expect(reactions.drain()).toEqual([]);
   });
 });
 
@@ -796,7 +918,7 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     const dy = horde.y[horde.slotOf(targetId)] ?? 0;
     projectiles.fireSalvoDirected(arme, tick, 0, 0, dx, dy, arme.damage, 1, by);
     for (let i = 0; i < 20; i++) {
-      resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, undefined, reactions);
+      resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, reactions);
       if (projectiles.count === 0) {
         return tick + i;
       }
@@ -1017,50 +1139,6 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     expect(reactions.count).toBe(0);
   });
 
-  it('deux zones ne reagissent qu A LA CREATION de la seconde, jamais a son rafraichissement', () => {
-    // ⚠️ Sans cette borne, une arme elementaire qui entretient sa zone par
-    // fusion (§5.1 bis) declencherait une reaction A CHAQUE TIR, indefiniment.
-    //
-    // Deux passes : la premiere APPREND ou le projectile finit sa course (elle
-    // n'a pas de zone voisine, donc rien a declencher), la seconde y pose une
-    // zone de Givre a portee et tire deux fois au meme endroit.
-    function vieillit(zones: ZoneField, reactions: Reactions | undefined, tick: number): void {
-      const projectiles = new Projectiles(4);
-      projectiles.fireSalvoDirected(BRAISE, tick, 2000, 2000, 1, 0, BRAISE.damage, 1, 7);
-      for (let t = 0; t <= BRAISE.projectileLifeTicks; t++) {
-        resolveProjectileDamage(
-          projectiles,
-          DT,
-          new Horde(1),
-          new OrbField(1),
-          tick + t,
-          zones,
-          reactions,
-        );
-      }
-    }
-
-    const sonde = new ZoneField();
-    vieillit(sonde, undefined, 0);
-    expect(sonde.count).toBe(1);
-    const bx = sonde.x[0] ?? 0;
-    const by = sonde.y[0] ?? 0;
-
-    const zones = new ZoneField();
-    zones.spawn(ELEMENT.GIVRE, bx + ZONE_RADIUS + 10, by, 9, 0);
-    const reactions = new Reactions();
-
-    vieillit(zones, reactions, 0);
-    expect(zones.count).toBe(2);
-    expect(reactions.count).toBe(1);
-
-    // Second tir, meme trajectoire : la zone de Braise est RAFRAICHIE, pas
-    // creee — aucune zone de plus, et aucune reaction de plus.
-    vieillit(zones, reactions, 20);
-    expect(zones.count).toBe(2);
-    expect(reactions.count).toBe(1);
-  });
-
   it('la borne : vingt ennemis marques sous UNE zone de Givre font vingt reactions, une chacun', () => {
     // La mise en scene exacte du §6.2. Vingt, pas une : la borne est PAR
     // ENNEMI, pas par tick — un compteur global etoufferait dix-neuf flashs.
@@ -1128,7 +1206,26 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
 
   function declencheur(x: number, y: number): ReactionTrigger {
-    return { pair: packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE), x, y, markBy: 1, by: 2 };
+    return {
+      pair: packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.GIVRE,
+    };
+  }
+
+  /**
+   * Resout des declencheurs sans regarder le champ qu'ils laissent au sol.
+   *
+   * ⚠️ **Une reserve de zones NEUVE a chaque appel, jamais partagee.** Ce
+   * `describe` ne parle que des degats ; les champs poses ont le leur (« la
+   * reaction laisse un champ au sol »). Partager la reserve ferait dependre un
+   * test de degats de la regle de fusion d'un autre.
+   */
+  function tue(horde: Horde, orbs: OrbField, tick: number, triggers: ReactionTrigger[]): number[] {
+    return applyReactions(horde, orbs, tick, triggers, new ZoneField(), new Reactions());
   }
 
   it('tue dans le rayon, epargne juste dehors, et laisse un orbe a chaque mort', () => {
@@ -1139,7 +1236,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     const dehors = addOne(horde, 2, 1000 + REACTION_RADIUS, 1000, LOURD);
     const orbs = new OrbField(10);
 
-    const morts = applyReactions(horde, orbs, 7, [declencheur(1000, 1000)]);
+    const morts = tue(horde, orbs, 7, [declencheur(1000, 1000)]);
 
     expect(morts).toEqual([dedans]);
     expect(horde.slotOf(dedans)).toBe(-1);
@@ -1159,7 +1256,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     expect(REACTION_DAMAGE).toBeGreaterThan(HEAVY_HP);
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
-    const morts = applyReactions(horde, new OrbField(10), 0, [declencheur(1000, 1000)]);
+    const morts = tue(horde, new OrbField(10), 0, [declencheur(1000, 1000)]);
     expect(morts).toEqual([cible]);
   });
 
@@ -1174,7 +1271,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     horde.hp[horde.slotOf(cible)] = 1000;
 
-    expect(applyReactions(horde, new OrbField(10), 0, [declencheur(1000, 1000)])).toEqual([]);
+    expect(tue(horde, new OrbField(10), 0, [declencheur(1000, 1000)])).toEqual([]);
     expect(horde.hp[horde.slotOf(cible)]).toBe(1000 - REACTION_DAMAGE);
   });
 
@@ -1187,13 +1284,13 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     horde.hp[horde.slotOf(cible)] = REACTION_DAMAGE;
 
-    expect(applyReactions(horde, new OrbField(10), 0, [declencheur(1000, 1000)])).toEqual([cible]);
+    expect(tue(horde, new OrbField(10), 0, [declencheur(1000, 1000)])).toEqual([cible]);
   });
 
   it('l ennemi qui DECLENCHE est touche comme les autres : il est a distance nulle', () => {
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 500, 500, LOURD);
-    expect(applyReactions(horde, new OrbField(10), 0, [declencheur(500, 500)])).toEqual([cible]);
+    expect(tue(horde, new OrbField(10), 0, [declencheur(500, 500)])).toEqual([cible]);
   });
 
   it('deux reactions qui achevent le meme ennemi ne le listent qu une fois', () => {
@@ -1204,7 +1301,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     const survivant = addOne(horde, 2, -5000, -5000, LOURD);
 
-    const morts = applyReactions(horde, new OrbField(10), 0, [
+    const morts = tue(horde, new OrbField(10), 0, [
       declencheur(1000, 1000),
       declencheur(1000 + 1, 1000),
     ]);
@@ -1217,7 +1314,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
   it('sans declencheur, rien ne bouge', () => {
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
-    expect(applyReactions(horde, new OrbField(10), 0, [])).toEqual([]);
+    expect(tue(horde, new OrbField(10), 0, [])).toEqual([]);
     expect(horde.hp[horde.slotOf(cible)]).toBe(HEAVY_HP);
   });
 
@@ -1228,7 +1325,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     const horde = new Horde(10);
     const victime = addOne(horde, 1, 1000, 1000, LOURD);
     const loin = addOne(horde, 2, -5000, -5000, LOURD);
-    const morts = applyReactions(horde, new OrbField(10), 0, [
+    const morts = tue(horde, new OrbField(10), 0, [
       declencheur(1000, 1000),
       declencheur(1000, 1000),
     ]);

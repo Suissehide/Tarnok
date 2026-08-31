@@ -99,22 +99,6 @@ function porteeDe(weaponId: number): number {
   return (w.projectileSpeed * w.projectileLifeTicks) / TICK_HZ;
 }
 
-/**
- * L'arme de Braise la plus LONGUE du catalogue.
- *
- * ⚠️ **La portee, pas le nom.** Le test de recouvrement a besoin que les deux
- * portees puissent former un triangle avec l'ecart entre deux joueurs (240 px
- * a la naissance) : avec l'arme de Braise la plus courte (168 px) et l'arme de
- * Givre (500 px), le triangle n'existe pas et les deux zones se posent a plus
- * de six rayons l'une de l'autre. Choisie par la donnee, jamais par un
- * identifiant recopie — l'ajout d'une arme elementaire au catalogue ne doit
- * pas casser ce test en silence.
- */
-const ARME_BRAISE_LONGUE =
-  [...WEAPONS]
-    .filter((w) => w.element === ELEMENT.BRAISE)
-    .sort((x, y) => porteeDe(y.id) - porteeDe(x.id))[0]?.id ?? -1;
-
 type App = Awaited<ReturnType<typeof buildServer>>;
 
 interface Client {
@@ -444,9 +428,16 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     }
     // Le dernier lot peut etre coupe en deux par la fin de l'attente : on le
     // laisse de cote plutot que de le compter a moitie.
-    const ticks = [...parTick.keys()].sort((x, y) => x - y).slice(0, -1);
+    //
+    // ⚠️ **Et le PREMIER aussi, depuis la tache 21.** Le tick d'amorcage ne
+    // porte qu'une seule reaction : un projectile ne touche qu'une cible a la
+    // fois (`collide` departage a l'identite la plus petite), et tant qu'aucun
+    // champ n'existe c'est le seul chemin ouvert. C'est le champ laisse par
+    // cette premiere reaction qui couvre ENSUITE les deux jumelles et les fait
+    // reagir ensemble, tick apres tick.
+    const ticks = [...parTick.keys()].sort((x, y) => x - y).slice(1, -1);
     expect(ticks.length, 'le decor n a pas produit assez de ticks reactifs').toBeGreaterThanOrEqual(
-      TICKS_REACTIFS - 1,
+      TICKS_REACTIFS - 2,
     );
 
     for (const tick of ticks) {
@@ -602,20 +593,31 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
 
   /**
    * **« Deux zones qui se recouvrent reagissent »** — la seconde voie du §6.3
-   * de l'orientation, et la seule que ce fichier peut isoler.
+   * de l'orientation, et le troisieme declencheur du §6.2.
    *
-   * ⚠️ **AUCUN ennemi dans le salon**, et c'est ce qui fait la preuve : sans
-   * ennemi, le chemin « ennemi marque + second element » n'existe pas, donc
-   * toute `REACTION` recue ne peut venir que du recouvrement de deux disques.
-   * Un decor avec des monstres ne saurait pas distinguer les deux chemins —
-   * ils portent le meme couple et se posent au meme endroit.
+   * ⚠️ **Le decor « aucun ennemi » de la tache 10 n'existe plus, et il ne peut
+   * plus exister.** Il tenait sur le fait que deux projectiles posaient deux
+   * disques la ou ils finissaient leur course, sans rien toucher : c'etait
+   * l'unique moyen de faire naitre deux zones dans un salon vide, et donc
+   * d'isoler ce chemin des deux autres. Depuis la tache 21, **une zone ne nait
+   * que d'une reaction**, et une reaction ne nait que sur un ennemi ou entre
+   * deux zones — donc, a la racine, d'un ennemi. Un salon vide ne peut plus
+   * porter une seule zone.
    *
-   * ⚠️ **Les deux zones se posent la ou les projectiles FINISSENT LEUR
-   * COURSE, sans rien toucher** (§5.1). Les deux joueurs visent le point T
-   * pour lequel leurs portees respectives tombent exactement au meme endroit :
-   * c'est le sommet du triangle dont la base est le segment qui les separe.
+   * ⚠️ **Le discriminant devient le COMPTE, pas le decor.** Le §6.2 borne les
+   * reactions a **une par ennemi et par tick**. Avec UN SEUL ennemi dans le
+   * salon, un tick qui porte DEUX `REACTION` ne peut donc pas les tenir toutes
+   * les deux du chemin « ennemi marque + second element » : la seconde vient
+   * du recouvrement de deux champs. C'est une preuve par la borne, et elle est
+   * plus solide que la precedente — elle ne suppose rien de la geometrie.
+   *
+   * Le decor : un seul ennemi, un seul joueur portant LES DEUX armes
+   * elementaires. Il marque, il declenche, chaque reaction laisse un champ ; et
+   * comme l'ennemi avance, les champs successifs sont assez espaces pour etre
+   * CREES plutot que rafraichis — c'est la creation, et elle seule, qui fait
+   * reagir un couple de disques.
    */
-  it('deux zones d elements differents qui se recouvrent declenchent une reaction, sans aucun ennemi', async () => {
+  it('deux champs d elements differents qui se recouvrent declenchent une reaction de plus', async () => {
     const code = await createRoomCode();
     const room = app.rooms.get(code);
     if (!room) {
@@ -623,84 +625,89 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     }
 
     const clients = await quatreClients(code);
-    const [a, b] = clients;
-    if (!a || !b) {
+    const [a] = clients;
+    if (!a) {
       throw new Error('quatre clients attendus');
     }
-    // Le decor entier repose sur ce fait : aucune entite, donc aucun autre
-    // chemin de reaction.
     expect(room.horde.count).toBe(0);
 
     const snap = await fullSnapshot(a.ws);
     const pa = snap.players.find((p) => p.id === a.playerId);
-    const pb = snap.players.find((p) => p.id === b.playerId);
-    if (!pa || !pb) {
-      throw new Error('les deux tireurs doivent etre dans le snapshot');
+    if (!pa) {
+      throw new Error('le tireur doit etre dans le snapshot');
     }
 
-    // ⚠️ Les deux armes les plus proches en PORTEE du catalogue : le triangle
-    // n'existe que si chaque portee est inferieure a la somme des deux autres
-    // cotes. Le garde le dit plutot que de le supposer.
-    const rb = porteeDe(ARME_BRAISE_LONGUE);
-    const rg = porteeDe(ARME_GIVRE);
-    const base = Math.hypot(pb.x - pa.x, pb.y - pa.y);
-    expect(rb).toBeLessThan(rg + base);
-    expect(rg).toBeLessThan(rb + base);
+    // Les DEUX elements sur le meme joueur : il marque et il declenche seul,
+    // donc chaque reaction a lieu sur la seule cible du salon.
+    room.grantCard(a.playerId, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    room.grantCard(a.playerId, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const cible = poseCible(room, 9200, pa.x + DISTANCE_CIBLE, pa.y);
 
-    room.grantCard(a.playerId, { nature: CARD.WEAPON, refId: ARME_BRAISE_LONGUE });
-    room.grantCard(b.playerId, { nature: CARD.WEAPON, refId: ARME_GIVRE });
-
-    // Le sommet du triangle (|T-A| = rb, |T-B| = rg), dans le repere de la
-    // base : la projection sur la base, puis la hauteur.
-    const ux = (pb.x - pa.x) / base;
-    const uy = (pb.y - pa.y) / base;
-    const le = (rb * rb - rg * rg + base * base) / (2 * base);
-    const hauteur = Math.sqrt(Math.max(0, rb * rb - le * le));
-    const tx = pa.x + ux * le - uy * hauteur;
-    const ty = pa.y + uy * le + ux * hauteur;
-
-    // Le generateur de vagues fait naitre sa premiere vague au tick 180 : le
-    // decor doit avoir reagi avant. On le SURVEILLE plutot que de le supposer.
+    // ⚠️ **La cible n'est PAS figee, contrairement aux autres decors de ce
+    // fichier.** Une cible immobile verrait tous ses champs se rafraichir au
+    // meme point, et un rafraichissement ne declenche rien (§6.2) : le couple
+    // ne reagirait qu'une seule fois de toute la run. Qu'elle avance est ce qui
+    // fait naitre des champs NEUFS, donc des couples neufs.
     let hordeMax = 0;
     const pilote = setInterval(() => {
       hordeMax = Math.max(hordeMax, room.horde.count);
-      vise(a, tx - pa.x, ty - pa.y);
-      vise(b, tx - pb.x, ty - pb.y);
+      const slot = room.horde.slotOf(cible);
+      if (slot < 0) {
+        return;
+      }
+      vise(a, (room.horde.x[slot] ?? 0) - pa.x, (room.horde.y[slot] ?? 0) - pa.y);
     }, 8);
 
+    /** Le tick qui porte DEUX reactions — impossible avec un seul ennemi. */
+    const tireur = a;
+    const tickDouble = (): number | null => {
+      const parTick = new Map<number, number>();
+      for (const r of reactionsDe(tireur)) {
+        parTick.set(r.tick, (parTick.get(r.tick) ?? 0) + 1);
+      }
+      for (const [tick, n] of parTick) {
+        if (n >= 2) {
+          return tick;
+        }
+      }
+      return null;
+    };
+
+    let doubleTick: number | null = null;
     try {
-      await waitFor(
-        () => (reactionsDe(a).length >= 1 ? true : null),
-        'une REACTION nee du recouvrement de deux zones',
+      doubleTick = await waitFor(
+        () => tickDouble(),
+        'un tick portant DEUX reactions, donc un recouvrement de champs',
         30_000,
       );
     } finally {
       clearInterval(pilote);
     }
 
-    // Le decor a bien pose les DEUX elements, et leurs disques se recoupent :
-    // sans ce compte, « une reaction a eu lieu » ne dirait pas d'ou elle vient.
-    const zones = zonesDe(a);
-    const braises = zones.filter((z) => z.element === ELEMENT.BRAISE);
-    const givres = zones.filter((z) => z.element === ELEMENT.GIVRE);
-    expect(braises.length).toBeGreaterThan(0);
-    expect(givres.length).toBeGreaterThan(0);
-    const secantes = braises.some((zb) =>
-      givres.some((zg) => Math.hypot(zb.x - zg.x, zb.y - zg.y) < 2 * ZONE_RADIUS),
-    );
-    expect(secantes, 'aucune paire de zones ne se recouvre : le decor ne prouve rien').toBe(true);
+    // ⚠️ **Le decor n'isole que si l'ennemi reste SEUL.** Le generateur fait
+    // naitre sa premiere vague au tick 180 ; on le surveille plutot que de le
+    // supposer, parce que deux ennemis rendraient le compte muet.
+    expect(hordeMax, 'une vague est apparue : la borne par ennemi ne discrimine plus').toBe(1);
 
     const recues = reactionsDe(a);
     expect(recues.length).toBeGreaterThan(0);
     for (const r of recues) {
       expect(r.pair).toBe(CHOC_THERMIQUE);
-      // « A la frontiere commune » (§5.2) : le milieu des deux centres, donc a
-      // moins d'un rayon de chacun.
-      expect(Math.hypot(r.x - tx, r.y - ty)).toBeLessThan(2 * ZONE_RADIUS);
     }
-    // Et toujours sans le moindre ennemi, du premier tick au dernier : c'est
-    // la seule voie possible, et c'est ce qui fait la preuve.
-    expect(hordeMax, 'une vague est apparue : le decor n isole plus rien').toBe(0);
+    // Et les DEUX elements sont bien passes par le sol : sans ca, « deux
+    // reactions au meme tick » ne dirait pas d'ou vient la seconde.
+    const zones = zonesDe(a);
+    expect(zones.filter((z) => z.element === ELEMENT.BRAISE).length).toBeGreaterThan(0);
+    expect(zones.filter((z) => z.element === ELEMENT.GIVRE).length).toBeGreaterThan(0);
+    const braises = zones.filter((z) => z.element === ELEMENT.BRAISE);
+    const givres = zones.filter((z) => z.element === ELEMENT.GIVRE);
+    expect(
+      braises.some((zb) =>
+        givres.some((zg) => Math.hypot(zb.x - zg.x, zb.y - zg.y) < 2 * ZONE_RADIUS),
+      ),
+      'aucune paire de champs ne se recouvre : le decor ne prouve rien',
+    ).toBe(true);
+    expect(doubleTick).not.toBeNull();
   }, 60_000);
 
   /**
@@ -719,8 +726,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     }
 
     const clients = await quatreClients(code);
-    const [a] = clients;
-    if (!a) {
+    const [a, b] = clients;
+    if (!a || !b) {
       throw new Error('quatre clients attendus');
     }
 
@@ -743,6 +750,12 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
         room.horde.y[slot] = cibleY;
         room.horde.vx[slot] = 0;
         room.horde.vy[slot] = 0;
+        // ⚠️ **Depuis la tache 21, c'est la REACTION qui entretient le champ,
+        // plus la volee.** Le joueur B remet une marque de Braise en continu,
+        // le Givre du joueur A la declenche : chaque reaction rearrose le meme
+        // point, et le point est fige, donc c'est bien un RAFRAICHISSEMENT que
+        // ce test compte.
+        room.horde.applyMark(slot, ELEMENT.BRAISE, b.playerId, room.tick);
       }
       vise(a, DISTANCE_CIBLE, 0);
     }, 8);
@@ -787,8 +800,10 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     ).toBe(true);
 
     // ⚠️ **Et la borne : jamais deux annonces plus serrees que l'intervalle.**
-    // L'arme tire strictement plus souvent que lui, donc sans la parade chaque
-    // volee annoncerait, et le trafic suivrait la cadence au lieu du temps.
+    // Le decor pose bien plus souvent que lui — l'arme tire deja plus vite, et
+    // depuis la tache 21 le champ redeclenche a CHAQUE tick une fois pose —
+    // donc sans la parade le trafic suivrait la cadence des poses au lieu du
+    // temps.
     expect(weaponOf(ARME_GIVRE).cooldownTicks).toBeLessThan(ZONE_REFRESH_INTERVAL_TICKS);
     for (const e of ecarts) {
       expect(e, `deux annonces du meme point a ${e} ticks d ecart`).toBeGreaterThanOrEqual(

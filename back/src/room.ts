@@ -591,10 +591,19 @@ export class Room {
    *    tache 19), puis avance tout le monde ; l'ancienne etape separee
    *    « appliquer la separation » a fusionne dans cet appel unique
    * 7. tirer les salves dues, avancer les projectiles, resoudre les collisions
+   *    — un impact MARQUE, il ne laisse plus rien au sol (tache 21)
+   * 7 bis. marquer ce que les champs couvrent, resoudre les reactions du tick,
+   *    **puis annoncer les champs qu'elles viennent de poser**
    * 8. arbitrer le contact avec les joueurs
    * 9. resoudre les ramassages d'orbes
    * 10. mettre en file morts et ramassages pour diffusion
    * ```
+   *
+   * ⚠️ **Etape 7 bis : l'annonce vient APRES la reaction, depuis la tache 21.**
+   * `#announceZones` ne reconnait une pose qu'a `bornTick === #tick` ; tant que
+   * la zone naissait du projectile, l'annoncer avant `markInZones` marchait.
+   * Maintenant qu'elle nait de `applyReactions`, l'annoncer avant laisserait
+   * chaque champ sans message, pour toujours.
    *
    * ⚠️ **Etapes 4 et 5 : le rafraichissement precede l'engendrement, depuis
    * l'etape 2 — un ordre unique, pas un choix fait ici.** `shared/horde.replication.test.ts`
@@ -722,10 +731,8 @@ export class Room {
       this.horde,
       this.#orbs,
       this.#tick,
-      this.#zones,
       this.#reactions,
     );
-    this.#announceZones();
     markInZones(this.horde, this.#zones, this.#tick, this.#reactions);
     // ⚠️ **Les reactions se resolvent ICI, apres les DEUX chemins qui les
     // declenchent, et une seule fois.** `Reactions` ne fait que collecter :
@@ -734,7 +741,20 @@ export class Room {
     // indice de creneau. `drain` remet du meme coup la borne « une reaction
     // par ennemi et par tick » a zero.
     const triggers = this.#reactions.drain();
-    const reactedIds = applyReactions(this.horde, this.#orbs, this.#tick, triggers);
+    const reactedIds = applyReactions(
+      this.horde,
+      this.#orbs,
+      this.#tick,
+      triggers,
+      this.#zones,
+      this.#reactions,
+    );
+    // ⚠️ **APRES `applyReactions`, et c'est la tache 21 qui l'a deplace.** Les
+    // zones naissaient du projectile, donc avant `markInZones` ; elles naissent
+    // maintenant de la reaction, donc apres. `#announceZones` ne reconnait une
+    // pose qu'a `bornTick === #tick` : l'annoncer avant laisserait chaque champ
+    // sans message, pour toujours — et le client ne dessinerait plus rien.
+    this.#announceZones();
     for (const t of triggers) {
       // ⚠️ **LA REGLE DU §7, en une comparaison, et elle n'existe qu'ICI.**
       // Deux joueurs differents a l'origine de la reaction — l'un a applique

@@ -935,31 +935,90 @@ corrosive »*. **Trois des quinze réactions produisaient déjà un effet au sol
 La boucle devient lisible : **un projectile marque, un second élément déclenche, la réaction laisse
 un champ.** Le sol cesse d'être l'effet d'un tir pour devenir la trace d'une combinaison.
 
-- [ ] **Étape 1 : le projectile ne pose plus de zone.** Il continue de **marquer** ce qu'il touche —
+- [x] **Étape 1 : le projectile ne pose plus de zone.** Il continue de **marquer** ce qu'il touche —
   c'est le seul chemin qui reste vers la première réaction.
 
   ⚠️ **`postZone` est aujourd'hui appelé aux DEUX fins de course** d'un projectile (impact et
   vieillesse). Les deux disparaissent. Vérifie qu'il ne reste aucun appelant : **du code que rien
   n'appelle est du code qui ment**, et ce dépôt en a supprimé six.
 
-- [ ] **Étape 2 : la réaction pose la zone**, à son point d'application, de l'élément… — **à
-  trancher et à écrire** : le §6.4 donne un effet distinct à chaque couple, mais un seul couple
-  existe à cette étape. Le plus simple qui ne mente pas : la zone porte **l'élément de la marque**,
-  celui qui persistait avant la réaction.
+  **Fait, et trois morceaux sont partis avec** : le paramètre `zones` de `resolveProjectileDamage`,
+  le paramètre `onExpire` de `Projectiles.step` (aucun autre appelant, aucun test), et
+  `ARME_BRAISE_LONGUE` dans `elements.integration.test.ts`, qui n'existait que pour le décor
+  « deux projectiles finissent leur course au même point ». `elementAt` et `ownerAt`, eux, **restent
+  lus** — par l'impact côté serveur et par la teinte cosmétique côté client.
 
-- [ ] **Étape 3 : le budget s'améliore, mesure-le.** Les zones deviennent rares — une par réaction,
-  et les réactions sont déjà bornées à **une par ennemi et par tick** (§6.2). Tout ce que les tâches
-  4, 6 et 10 ont construit pour borner les zones — fusion, plafond, intervalle de ré-annonce —
-  **reste valable et cesse d'être sous tension**.
+- [x] **Étape 2 : la réaction pose la zone**, à son point d'application — **et c'est l'élément qui
+  DÉCLENCHE que le champ porte, pas celui de la marque.** Écart assumé au plan, et il est mesuré.
 
-  ⚠️ **Ne supprime rien de ces bornes.** Elles ne coûtent rien et le jour où une réaction en chaîne
-  arrivera (§6.4 : *« Court-circuit : la chaîne se propage sans limite »*), elles seront déjà là.
+  Le §6.4 ne donne aucune règle de position : le champ de *Surchauffe* (Braise + Foudre) brûle,
+  celui de *Verglas* (Givre + Poix) glisse, celui d'*Arc caustique* (Foudre + Chaux) ronge —
+  l'effet appartient au **couple**, et *Choc thermique* n'en a aucun d'écrit. Le choix revenait donc
+  à cette tâche, et un seul des deux ne dégénère pas :
 
-- [ ] **Étape 4 : l'xp plus petite au sol.** `ORB_DIAMETER_PX` diminue. ⚠️ La texture est plus grande
-  que l'affichage **exprès** — c'est le piège de la tâche 13, où l'échelle valait 1 et rendait toute
-  mutation indistinguable. Garder les deux tailles distinctes.
+  | Le champ porte | Ce qui arrive au tick suivant |
+  | --- | --- |
+  | l'élément de la **marque** | le champ remarque l'ennemi de l'élément que la réaction venait de consommer — le **même tireur redéclenche indéfiniment, avec une seule arme** |
+  | l'élément qui **déclenche** | le champ remarque du second élément ; le même tireur ne fait plus que rafraîchir (§6.2, quatrième ligne), et il faut de nouveau l'autre élément |
 
-- [ ] **Étape 5 : commit** — `feat: la reaction laisse un champ, le projectile ne fait que marquer`
+  **Mesure, mutation appliquée** (décor « une réaction déclenchée par un IMPACT est annoncée » :
+  quarante ticks, UNE arme de Givre, UNE marque de Braise posée une seule fois) : **37 réactions
+  avec l'élément de la marque, 1 avec celui qui déclenche.** La boucle que l'auteur décrit — *« un
+  projectile marque, un second élément déclenche »* — exige le second. `by` suit le même
+  raisonnement : le champ appartient à qui l'a déclenché, si bien qu'une réaction ultérieure sur ce
+  champ compare deux identités réellement différentes (§7) au lieu de rejouer une charge déjà
+  comptée.
+
+- [x] **Étape 3 : le budget s'améliore, mesure-le.** Banc `zones`, quatre joueurs, 1 500 piétailles
+  **lourdes**, 300 pas :
+
+  | Exemplaires par arme | Zones vivantes | Annonces/s/joueur | ko/s par client |
+  | --- | --- | --- | --- |
+  | 1, avant | 27 | 1,9 | 0,08 |
+  | 8, avant | 28 | 1,9 | 0,08 |
+  | 1, après | **5** | **0,1** | **0,01** |
+  | 8, après | **3** | **0,1** | **0,01** |
+
+  ⚠️ **Le banc mesurait déjà zéro avant qu'on le corrige.** Il peuplait sa horde d'`archetype: 0`,
+  une piétaille **légère** — et un ennemi tué du même impact n'est jamais marqué, donc ne réagit
+  jamais, donc ne laisse aucun champ. Un banc qui cesse de mesurer, exactement le motif que la
+  tâche 19 a trouvé dans un test. Corrigé en peuplant de piétaille **lourde**, qui est ce que le
+  §3.3 désigne comme porteuse du système élémentaire.
+
+  ⚠️ **Aucune borne retirée** — fusion, `ZONE_CAPACITY`, `ZONE_REFRESH_INTERVAL_TICKS` : elles ne
+  coûtent rien et le jour où une réaction en chaîne arrivera (§6.4 : *« Court-circuit : la chaîne se
+  propage sans limite »*), elles seront déjà là.
+
+- [x] **Étape 4 : l'xp plus petite au sol.** `ORB_DIAMETER_PX` : 22 → **14**, contre
+  `ORB_TEXTURE_DIAMETER = 64` qui ne bouge pas. Les deux tailles restent distinctes, et l'écart
+  s'est même creusé — la mutation « l'échelle vaut 1 » est plus visible qu'avant.
+
+- [x] **Étape 5 : commit** — `feat: la reaction laisse un champ, le projectile ne fait que marquer`
+
+### Ce que la tâche a déplacé dans l'ordre du tick serveur
+
+`#announceZones()` tournait **entre** `resolveProjectileDamage` et `markInZones` ; il tourne
+maintenant **après** `applyReactions`. Ce n'est pas un rangement : `#announceZones` ne reconnaît une
+pose qu'à `bornTick === #tick`, donc l'annoncer avant laisserait chaque champ **sans message, pour
+toujours**.
+
+Conséquence assumée : un champ posé au tick `T` ne marque plus qu'à `T + 1` — comme il ne ralentit
+qu'à `T + 1`. Les deux effets partent désormais ensemble, et le décalage d'un tick sur la teinte
+côté client est du même ordre que les approximations que `GameClient#markLocally` documente déjà.
+
+### Ce que la tâche a coûté aux tests, et ce qu'elle leur a rendu
+
+Six tests de salon et deux tests d'intégration tenaient sur « une arme élémentaire pose un disque ».
+Aucun ne pouvait rester tel quel, et le décor minimal qui produit un champ demande désormais **deux
+éléments sur la même cible** — c'est précisément ce que la tâche a rendu vrai.
+
+⚠️ **Le décor « aucun ennemi » du troisième déclencheur du §6.2 n'existe plus, et il ne peut plus
+exister.** Il tenait sur deux projectiles posant deux disques dans un salon vide. Une zone ne
+naissant plus que d'une réaction, et une réaction que d'un ennemi, **un salon vide ne peut plus
+porter une seule zone**. Le discriminant devient la **borne** plutôt que le décor : avec un seul
+ennemi, un tick qui porte **deux** `REACTION` ne peut pas les tenir toutes deux du chemin « ennemi
+marqué », puisque le §6.2 en autorise une par ennemi et par tick — la seconde vient du recouvrement.
+C'est une preuve plus solide que la précédente : elle ne suppose rien de la géométrie.
 
 ---
 

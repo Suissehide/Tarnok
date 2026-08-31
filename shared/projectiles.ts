@@ -259,10 +259,10 @@ export class Projectiles {
   /**
    * Element porte par le projectile de ce slot — voir `#element`.
    *
-   * Lu par `resolveProjectileDamage` (back) au moment ou le projectile finit
-   * sa course : c'est lui qui decide s'il y a une marque a poser et une zone a
-   * laisser. Le client, lui, ne le lit jamais : ses projectiles sont
-   * cosmetiques, et les zones sont ANNONCEES (§5.3), pas derivees.
+   * Lu par `resolveProjectileDamage` (back) a l'IMPACT, et seulement la : un
+   * projectile MARQUE ce qu'il touche, il ne laisse plus rien au sol (tache 21
+   * — c'est la reaction qui pose le champ). Le client, lui, le lit pour teindre
+   * la marque qu'il approxime ; les zones, elles, sont ANNONCEES (§5.3).
    */
   elementAt(slot: number): number {
     return this.#element[slot] ?? 0;
@@ -324,19 +324,15 @@ export class Projectiles {
   /**
    * Un pas de simulation. Appele exactement une fois par tick, `dt` fixe.
    *
-   * `onExpire`, s'il est fourni, recoit le creneau de chaque projectile qui
-   * meurt de vieillesse, JUSTE AVANT son retrait — donc pendant que sa
-   * position, son element et son tireur sont encore lisibles. C'est la
-   * moitie « n'a rien touche » du §5.1 de la spec : *« un disque teinte, pose
-   * la ou un projectile elementaire finit sa course, QU'IL AIT TOUCHE OU NON »*.
-   * L'autre moitie est le rappel `onHit` de `collide`.
-   *
-   * ⚠️ **Le client ne le fournit jamais.** Ses projectiles sont cosmetiques
-   * et les zones sont annoncees, pas derivees : un client qui poserait ses
-   * propres zones les poserait a quelques pixels de celles du serveur, et
-   * deux zones qui se recouvrent d'un pixel decident d'une reaction (§5.3).
+   * ⚠️ **Un rappel `onExpire(slot)` a vecu ici, de la tache 6 a la tache 21 de
+   * l'etape 5a.** Il servait la moitie « n'a rien touche » du modele ou un
+   * projectile elementaire posait une zone au bout de sa course. Depuis que
+   * c'est la REACTION qui laisse un champ au sol (§5.1 de la spec, tache 21),
+   * plus rien ne s'interesse a la mort de vieillesse d'un projectile : le
+   * parametre est parti avec son seul appelant, aucun test ne le tenait, et un
+   * point d'extension que personne n'utilise est un point d'extension qui ment.
    */
-  step(dt: number, onExpire?: (slot: number) => void): void {
+  step(dt: number): void {
     for (let i = 0; i < this.#count; i++) {
       // Capture la position de DEBUT de pas avant de la faire avancer : c'est
       // le point de depart du segment que `collide` testera.
@@ -352,7 +348,6 @@ export class Projectiles {
     // etre lui-meme retire par erreur ensuite.
     for (let i = this.#count - 1; i >= 0; i--) {
       if ((this.#ticksRemaining[i] ?? 0) <= 0) {
-        onExpire?.(i);
         this.#removeAt(i);
       }
     }

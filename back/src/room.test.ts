@@ -10,6 +10,7 @@ import {
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   REACTION_DAMAGE,
+  REACTION_RADIUS,
   SYNERGY_MAX,
   TICK_HZ,
   WEAPON_SLOTS,
@@ -1821,20 +1822,50 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   /**
    * Fait tirer le joueur 1 sur le monstre le plus proche pendant `ticks` pas,
    * et rend tous les lots de morts et toutes les zones vus au passage.
+   *
+   * `avantChaquePas` tourne juste avant `step`, avec le tick que ce pas va
+   * simuler DEJA connu du decor : c'est la ou les tests de la tache 21 posent
+   * la marque qu'une reaction va consommer.
    */
   function joue(
     room: Room,
     ticks: number,
+    avantChaquePas?: (room: Room) => void,
   ): { deaths: { tick: number; ids: number[] }[]; zones: ReturnType<Room['drainZones']> } {
     const deaths: { tick: number; ids: number[] }[] = [];
     const zones: ReturnType<Room['drainZones']> = [];
     for (let i = 0; i < ticks; i++) {
+      avantChaquePas?.(room);
       aimAtNearestMonster(room, 1, i + 1);
       room.step(DT);
       deaths.push(...room.drainDeaths());
       zones.push(...room.drainZones());
     }
     return { deaths, zones };
+  }
+
+  /**
+   * **Le decor MINIMAL qui produit un champ au sol depuis la tache 21.**
+   *
+   * Un projectile ne pose plus rien : *« un projectile marque, un second
+   * element declenche, la reaction laisse un champ »* (§5.1). Il faut donc
+   * DEUX elements sur la meme cible pour voir un seul disque au sol — c'est
+   * exactement ce que la tache 21 a rendu vrai, et ce qu'un decor a une seule
+   * arme ne peut plus mettre en scene.
+   *
+   * Ici : le joueur 1 tire au Givre, le joueur `markBy` remet une marque de
+   * Braise a chaque tick. Chaque impact declenche (§6.2, premiere ligne) et
+   * chaque reaction laisse un champ de Givre aux pieds de la cible. Une fois le
+   * premier champ pose, il remarque la cible et la reaction se repete meme
+   * entre deux volees — c'est ce qui fait de ce decor un champ ENTRETENU.
+   */
+  function remarqueBraise(cible: number, markBy: number): (room: Room) => void {
+    return (room) => {
+      const slot = room.horde.slotOf(cible);
+      if (slot >= 0) {
+        room.horde.applyMark(slot, ELEMENT.BRAISE, markBy, room.tick);
+      }
+    };
   }
 
   /**
@@ -1850,7 +1881,11 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     return id;
   }
 
-  it('une arme de Braise pose des zones, les annonce, et marque puis brule ce qu elle touche', () => {
+  it('une arme de Braise marque et brule ce qu elle touche — et ne pose PLUS aucune zone', () => {
+    // ⚠️ **La non-regression de la tache 21, vue du salon.** Ce test disait
+    // l'inverse jusqu'ici : une arme elementaire posait un disque a chaque fin
+    // de course. Elle MARQUE encore — c'est le seul chemin qui reste vers la
+    // premiere reaction — mais le sol ne lui appartient plus.
     expect(ARME_BRAISE).toBeGreaterThanOrEqual(0);
     const room = new Room(0xbaa1_5e00);
     room.join(1);
@@ -1860,15 +1895,45 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
 
     const { zones } = joue(room, 15);
 
-    expect(zones.length).toBeGreaterThan(0);
-    expect(zones.every((z) => z.element === ELEMENT.BRAISE)).toBe(true);
-    expect(zones.every((z) => z.by === 1)).toBe(true);
+    // Le decor n'est pas creux : l'arme a bien touche, marque, et brule.
     const slot = room.horde.slotOf(cible);
     expect(slot).toBeGreaterThanOrEqual(0);
     expect(room.horde.markAt(slot, room.tick)).toBe(ELEMENT.BRAISE);
     // La BRULURE descend les PV en plus des impacts d'armes, qui sont entiers :
     // une partie fractionnaire ne peut venir que d'elle.
     expect(Number.isInteger(room.horde.hp[slot])).toBe(false);
+
+    // Et pourtant : rien au sol, rien sur le fil.
+    expect(zones).toEqual([]);
+    expect(room.zoneCount).toBe(0);
+    // « Zero zone » ne doit pas se lire « reserve pleine ».
+    expect(room.zonesTronquees).toBe(0);
+  });
+
+  it('la REACTION, elle, laisse un champ — annonce, du bon element, du bon joueur', () => {
+    // Le pendant du test precedent : ce que le projectile ne fait plus, la
+    // reaction le fait. Le joueur 2 entretient la Braise, le joueur 1 declenche
+    // au Givre ; le champ porte l'element et l'identite du DECLENCHEUR (voir
+    // `ReactionTrigger.element`).
+    expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
+    const room = new Room(0xbaa1_5e10);
+    room.join(1);
+    room.join(2);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const cible = monstreIndestructible(room, 601, before.x + 100, before.y);
+
+    const { zones } = joue(room, 20, remarqueBraise(cible, 2));
+
+    expect(zones.length).toBeGreaterThan(0);
+    expect(zones.every((z) => z.element === ELEMENT.GIVRE)).toBe(true);
+    expect(zones.every((z) => z.by === 1)).toBe(true);
+    // Le champ est bien la ou la reaction a eu lieu : sur l'ennemi, pas sur le
+    // joueur.
+    const slot = room.horde.slotOf(cible);
+    const cx = room.horde.x[slot] ?? 0;
+    const cy = room.horde.y[slot] ?? 0;
+    expect(zones.some((z) => Math.hypot(z.x - cx, z.y - cy) < ZONE_RADIUS)).toBe(true);
   });
 
   it('une mort par BRULURE part dans le meme lot DEATHS que les morts par projectile', () => {
@@ -1925,16 +1990,23 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     expect(auTick[0]?.ids).toContain(parBrulure);
   });
 
-  it('une arme de Givre ralentit la horde : le monstre arrive moins loin qu avec une arme neutre', () => {
+  it('le champ de Givre ne d une REACTION ralentit la horde : le monstre arrive moins loin', () => {
     // ⚠️ **La preuve que le ralentissement traverse tout le salon**, du tir a
-    // la position. Deux salons de MEME graine, meme monstre, meme visee : seule
-    // l'arme change.
+    // la position — et la chaine s'est allongee d'un maillon a la tache 21 :
+    // tir → reaction → champ → ralentissement. Une arme de Givre ne ralentit
+    // plus rien A ELLE SEULE, puisqu'elle ne pose plus de disque ; il lui faut
+    // un second element sur la cible.
+    //
+    // Deux salons de MEME graine, meme monstre, meme marque de Braise remise a
+    // chaque tick, meme visee : seule l'arme du joueur 1 change. Sans le Givre,
+    // aucune reaction, donc aucun champ, donc aucun ralentissement.
     expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
     const GRAINE = 0xbaa1_5e02;
 
-    function distanceParcourue(armeId: number | null): number {
+    function distanceParcourue(armeId: number | null): { d: number; zones: number } {
       const room = new Room(GRAINE);
       room.join(1);
+      room.join(2);
       if (armeId !== null) {
         room.grantCard(1, { nature: CARD.WEAPON, refId: armeId });
       }
@@ -1942,19 +2014,25 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
       const cible = monstreIndestructible(room, 610, before.x + 200, before.y);
       const x0 = room.horde.x[room.horde.slotOf(cible)] ?? 0;
       const y0 = room.horde.y[room.horde.slotOf(cible)] ?? 0;
-      for (let i = 0; i < 60; i++) {
-        aimAtNearestMonster(room, 1, i + 1);
-        room.step(DT);
-      }
+      joue(room, 60, remarqueBraise(cible, 2));
       const slot = room.horde.slotOf(cible);
       expect(slot).toBeGreaterThanOrEqual(0);
-      return Math.hypot((room.horde.x[slot] ?? 0) - x0, (room.horde.y[slot] ?? 0) - y0);
+      return {
+        d: Math.hypot((room.horde.x[slot] ?? 0) - x0, (room.horde.y[slot] ?? 0) - y0),
+        zones: room.zoneCount,
+      };
     }
 
     const neutre = distanceParcourue(null);
     const givre = distanceParcourue(ARME_GIVRE);
-    expect(neutre).toBeGreaterThan(0);
-    expect(givre).toBeLessThan(neutre);
+    // ⚠️ Les deux moities du decor, dites plutot que supposees : le temoin ne
+    // pose AUCUN champ, la moitie elementaire en pose au moins un. Sans ces
+    // deux comptes, « il avance moins loin » se lirait aussi bien « il a ete
+    // gene par autre chose ».
+    expect(neutre.zones).toBe(0);
+    expect(givre.zones).toBeGreaterThan(0);
+    expect(neutre.d).toBeGreaterThan(0);
+    expect(givre.d).toBeLessThan(neutre.d);
   });
 
   /**
@@ -1980,6 +2058,7 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   ): { zones: ReturnType<Room['drainZones']>; cooldown: number } {
     const room = new Room(graine);
     room.join(1);
+    room.join(2);
     room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
     const cadence = PASSIVES.find((p) => p.kind === 'fireRate')?.id ?? -1;
     for (let k = 0; k < cartesDeCadence; k++) {
@@ -1992,7 +2071,10 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     const cible = spawnMonsterAt(room, 620, before.x + 100, before.y);
     room.horde.hp[room.horde.slotOf(cible)] = 1e6;
 
-    const { zones } = joue(room, ticks);
+    // Depuis la tache 21, ce n'est plus la volee qui entretient le champ mais
+    // la REACTION : le joueur 2 remet la Braise, le Givre du joueur 1 la
+    // declenche, et chaque reaction rearrose le meme point.
+    const { zones } = joue(room, ticks, remarqueBraise(cible, 2));
     const loadout = room.loadoutOf(1);
     return {
       zones,
@@ -2010,13 +2092,14 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     // que `projectilesTronques`.
     const room = new Room(0xbaa1_5e0f);
     room.join(1);
-    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    room.join(2);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
     const before = positionOf(room, 1);
     const cible = spawnMonsterAt(room, 660, before.x + 100, before.y);
     room.horde.hp[room.horde.slotOf(cible)] = 1e6;
 
     expect(room.zoneCount).toBe(0);
-    const { zones } = joue(room, 20);
+    const { zones } = joue(room, 20, remarqueBraise(cible, 2));
 
     // Le compte du salon EST celui des points annonces : deux facons
     // independantes de compter la meme chose, et elles doivent s'accorder.
@@ -2115,35 +2198,55 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     expect(rapide.zones.length / lente.zones.length).toBeLessThan(ratioCadence);
   });
 
-  it('une zone marque un ennemi que RIEN n a touche — c est le seul chemin qui le puisse', () => {
+  it('un champ marque un ennemi que RIEN n a touche — c est le seul chemin qui le puisse', () => {
     // ⚠️ **Sans ce test, retirer `markInZones` de `Room.step` ne fait rougir
     // personne** (mutation appliquee, verifiee) : tous les autres cas ont un
     // ennemi qui prend un projectile, et le projectile marque deja. Il faut
-    // donc un ennemi que la zone couvre et que RIEN ne touche.
+    // donc un ennemi que le champ couvre et que RIEN n'a touche.
     //
-    // Le Givre, pas la Braise : la Braise brulerait le second monstre des
-    // qu'il est marque, et ses PV ne prouveraient plus qu'il n'a jamais ete
-    // touche.
+    // ⚠️ **Et depuis la tache 21, le voisin ne suffit plus.** `REACTION_RADIUS`
+    // (90) est plus GRAND que `ZONE_RADIUS` (70) : tout ce qui se trouve dans
+    // un champ au moment de sa pose a forcement pris les degats de la reaction
+    // qui l'a pose. « Il n'a rien pris » ne peut donc plus se prouver par la
+    // geometrie — il faut le TEMPS. Le temoin est tenu tres loin pendant que la
+    // reaction a lieu, puis amene dans le champ une fois le tir arrete.
+    expect(REACTION_RADIUS).toBeGreaterThan(ZONE_RADIUS);
     const room = new Room(0xbaa1_5e05);
     room.join(1);
+    room.join(2);
     room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
     const before = positionOf(room, 1);
-    const devant = monstreIndestructible(room, 640, before.x + 100, before.y);
-    // Derriere le premier, a moins d'un rayon de zone : les projectiles
-    // s'arretent sur le plus proche, la zone se pose la, et son disque couvre
-    // celui-ci sans qu'il ait rien reçu.
-    const derriere = monstreIndestructible(room, 641, before.x + 100 + ZONE_RADIUS / 2, before.y);
+    const cible = monstreIndestructible(room, 640, before.x + 100, before.y);
+    // Tres loin : hors de tout projectile et de tout rayon de reaction.
+    const temoin = monstreIndestructible(room, 641, before.x + 6000, before.y + 6000);
 
-    joue(room, 20);
+    joue(room, 20, remarqueBraise(cible, 2));
 
-    const slotDerriere = room.horde.slotOf(derriere);
-    expect(slotDerriere).toBeGreaterThanOrEqual(0);
+    // Un champ existe, et le temoin n'a rien pris : sa reserve est intacte au
+    // pixel pres.
+    expect(room.zoneCount).toBeGreaterThan(0);
+    expect(room.horde.hp[room.horde.slotOf(temoin)]).toBe(1e6);
+    expect(room.horde.markAt(room.horde.slotOf(temoin), room.tick)).toBe(ELEMENT.NEUTRE);
+
+    // On l'amene DANS le champ, et on cesse de tirer : plus de volee, plus de
+    // marque a declencher, donc plus aucune reaction. Ce qui lui arrive
+    // ensuite ne peut venir que du balayage des champs.
+    const slotCible = room.horde.slotOf(cible);
+    const zx = room.horde.x[slotCible] ?? 0;
+    const zy = room.horde.y[slotCible] ?? 0;
+    const slotTemoin = room.horde.slotOf(temoin);
+    room.horde.x[slotTemoin] = zx;
+    room.horde.y[slotTemoin] = zy;
+    for (let i = 0; i < 3; i++) {
+      room.applyInput(1, 900 + i, 0, 0, 0, 0);
+      room.step(DT);
+    }
+
+    const apres = room.horde.slotOf(temoin);
+    expect(apres).toBeGreaterThanOrEqual(0);
     // La preuve qu'il n'a rien pris : ses PV n'ont pas bouge d'un pixel.
-    expect(room.horde.hp[slotDerriere]).toBe(1e6);
-    expect(room.horde.markAt(slotDerriere, room.tick)).toBe(ELEMENT.GIVRE);
-    // Et celui de devant, lui, a bien ete touche — sinon le scenario ne met
-    // rien en scene.
-    expect(room.horde.hp[room.horde.slotOf(devant)]).toBeLessThan(1e6);
+    expect(room.horde.hp[apres]).toBe(1e6);
+    expect(room.horde.markAt(apres, room.tick)).toBe(ELEMENT.GIVRE);
   });
 
   it('un tick sans pose n annonce rien', () => {
@@ -2151,13 +2254,18 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     // zones vivantes seraient re-annoncees a chaque tick.
     const room = new Room(0xbaa1_5e04);
     room.join(1);
-    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    room.join(2);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
     const before = positionOf(room, 1);
-    monstreIndestructible(room, 630, before.x + 100, before.y);
-    joue(room, 20);
+    const cible = monstreIndestructible(room, 630, before.x + 100, before.y);
+    joue(room, 20, remarqueBraise(cible, 2));
+    // Le decor a bien pose : sans ca, « plus rien ne s'annonce » se lirait
+    // « rien ne s'est jamais annonce ».
+    expect(room.zoneCount).toBeGreaterThan(0);
     expect(room.drainZones()).toEqual([]);
 
-    // Un tick de plus, sans visee : rien ne part, donc rien ne se pose.
+    // Un tick de plus, sans visee ET sans marque a declencher : aucune
+    // reaction, donc aucune pose.
     room.applyInput(1, 999, 0, 0, 0, 0);
     room.step(DT);
     expect(room.drainZones()).toEqual([]);
@@ -2330,13 +2438,23 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
     //
     // `GameClient#drainPendingDeaths` suppose « un seul lot par tick » et
     // rejouerait le second par-dessus la correction du premier.
+    //
+    // ⚠️ **Deux joueurs qui visent dans deux directions opposees, depuis la
+    // tache 21.** Le decor precedent tenait sur « les zones de Givre posees a
+    // chaque impact couvrent le voisin » — ce chemin n'existe plus. Il faut
+    // maintenant un ATELIER a reactions (une cible remarquee de Braise a chaque
+    // tick, arrosee de Givre : chaque reaction y laisse un champ, et le champ
+    // redeclenche au tick suivant) et, LOIN de lui, une cible ordinaire que les
+    // projectiles tuent. Les deux points sont a plus de `REACTION_RADIUS` l'un
+    // de l'autre, sinon les degats de reaction acheveraient aussi la premiere.
     const GRAINE = 0xbaa1_5e0b;
+    const ECART = 400;
 
     /**
-     * Premiere passe (`tickDArmement` a `null`) : apprendre a quel tick le
-     * projectile tue. Seconde : donner a la victime de la reaction exactement
-     * `REACTION_DAMAGE` points de vie juste avant ce tick-la, et la marquer,
-     * pour que les deux morts tombent ensemble.
+     * Premiere passe (`tickDArmement` a `null`) : apprendre a quel tick les
+     * projectiles tuent `parProjectile`. Seconde : donner a `parReaction`
+     * exactement `REACTION_DAMAGE` points de vie juste avant ce tick-la, pour
+     * que les deux morts tombent ensemble.
      */
     function run(tickDArmement: number | null): {
       deaths: { tick: number; ids: number[] }[];
@@ -2345,24 +2463,31 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
     } {
       const room = new Room(GRAINE);
       room.join(1);
+      room.join(2);
       room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
-      const before = positionOf(room, 1);
-      // Le plus proche : c'est lui que la visee suit, et il meurt sous les
-      // projectiles (HEAVY_HP contre plusieurs salves).
-      const parProjectile = spawnMonsterAt(room, 730, before.x + 120, before.y, LOURD);
-      // A moins d'un ZONE_RADIUS du premier : les zones de Givre posees a
-      // chaque impact le couvrent. Increvable jusqu'a l'armement, sinon une
-      // fleche perdue le tuerait avant l'heure.
-      const parReaction = spawnMonsterAt(room, 731, before.x + 120, before.y + 55, LOURD);
+      room.grantCard(2, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+      const p1 = positionOf(room, 1);
+      const p2 = positionOf(room, 2);
+      // Le joueur 1 tire vers +x, le joueur 2 vers +y : chacun sa cible, et
+      // aucun projectile ne traverse l'autre scene.
+      const parProjectile = spawnMonsterAt(room, 730, p1.x + ECART, p1.y, LOURD);
+      const parReaction = spawnMonsterAt(room, 731, p2.x, p2.y + ECART, LOURD);
       room.horde.hp[room.horde.slotOf(parReaction)] = 1e6;
+      // Le decor ne prouverait rien si les deux scenes se touchaient : une
+      // reaction porte a `REACTION_RADIUS`.
+      expect(ECART).toBeGreaterThan(2 * REACTION_RADIUS);
+
       const deaths: { tick: number; ids: number[] }[] = [];
-      for (let i = 0; i < 60; i++) {
-        if (tickDArmement !== null && room.tick === tickDArmement - 1) {
-          const s = room.horde.slotOf(parReaction);
-          room.horde.hp[s] = REACTION_DAMAGE;
-          room.horde.applyMark(s, ELEMENT.BRAISE, 2, room.tick);
+      for (let i = 0; i < 90; i++) {
+        const s = room.horde.slotOf(parReaction);
+        if (s >= 0) {
+          room.horde.applyMark(s, ELEMENT.BRAISE, 3, room.tick);
+          if (tickDArmement !== null && room.tick === tickDArmement - 1) {
+            room.horde.hp[s] = REACTION_DAMAGE;
+          }
         }
-        aimAtNearestMonster(room, 1, i + 1);
+        room.applyInput(1, i + 1, 0, 0, 127, 0);
+        room.applyInput(2, i + 1, 0, 0, 0, 127);
         room.step(DT);
         deaths.push(...room.drainDeaths());
       }
@@ -2374,7 +2499,7 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
       b.ids.includes(reperage.parProjectile),
     )?.tick;
     expect(tickProjectile).toBeDefined();
-    // La sonde ne masque rien : sans marque, l'autre monstre ne meurt pas.
+    // La sonde ne masque rien : sans l'armement, l'atelier ne tue personne.
     expect(reperage.deaths.some((b) => b.ids.includes(reperage.parReaction))).toBe(false);
 
     const { deaths, parProjectile, parReaction } = run(tickProjectile ?? 0);

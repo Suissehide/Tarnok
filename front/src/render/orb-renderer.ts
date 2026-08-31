@@ -59,13 +59,21 @@ export const ORB_TEXTURE_DIAMETER = 64;
  * ⚠️ **Un choix visuel, PAS une regle de jeu** — et c'est ce qui le distingue
  * de `ZONE_RADIUS` ou de `MARK_RING_DIAMETER_PX`, tous deux derives de ce qui
  * decide reellement. Ce que l'orbe touche, c'est `ORB_PICKUP_RADIUS` (90 px),
- * quatre fois plus grand : la dessiner a ce rayon-la remplirait l'ecran de
+ * six fois plus grand : la dessiner a ce rayon-la remplirait l'ecran de
  * disques et mentirait sur ce qu'elle est — un objet, pas une aire d'effet.
  *
- * Passe de 16 a 22 a la tache 17 : trois morts sur quatre ne laissent plus
- * rien (`ORB_DROP_ONE_IN`), donc ce qui reste doit se lire de plus loin.
+ * 16 jusqu'a la tache 17, puis 22 (trois morts sur quatre ne laissant plus
+ * rien, ce qui restait devait se lire de plus loin), puis **14 a la tache 21**
+ * — l'auteur a joue et les a trouvees trop grosses au sol. La capture de la
+ * tache 20 a rendu l'orbe mobile et donc lisible par son mouvement : elle n'a
+ * plus besoin de sa taille pour se signaler.
+ *
+ * ⚠️ **Toujours DIFFERENT de `ORB_TEXTURE_DIAMETER`, et il faut que ca le
+ * reste** — voir la doc de cette constante-la : c'est le piege de la tache 13,
+ * ou l'echelle valait 1 et rendait toute mutation de l'echelle indistinguable
+ * de son absence.
  */
-export const ORB_DIAMETER_PX = 22;
+export const ORB_DIAMETER_PX = 14;
 
 /** Echelle d'une particule d'orbe : la texture couvre exactement `ORB_DIAMETER_PX`. */
 export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;

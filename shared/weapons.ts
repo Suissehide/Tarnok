@@ -203,13 +203,19 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     //
     // ⚠️ **Elle reste NEUTRE, et c'est un choix contre son nom.** C'etait la
     // Braise evidente ; elle tire 18 projectiles par seconde (3 toutes les 5
-    // ticks). A une zone au sol par projectile qui finit sa course
-    // (§5.1 de la spec) et `ZONE_LIFETIME_TICKS` a 90, elle porterait a elle
-    // seule ~54 zones vivantes par joueur, la ou le §5.3 budgete *« quelques
-    // dizaines »* pour la partie entiere — et le recouvrement de zones est en
-    // O(zones²). La rendre elementaire demande d'abord une regle de pose autre
-    // que « un projectile = une zone » (plafond par joueur, ou une zone par
-    // salve). Signale a l'auteur, pas tranche ici.
+    // ticks). A une zone au sol par projectile qui finit sa course — le modele
+    // du §5.1 jusqu'a la tache 21 — et `ZONE_LIFETIME_TICKS` a 90, elle
+    // portait a elle seule ~54 zones vivantes par joueur, la ou le §5.3
+    // budgete *« quelques dizaines »* pour la partie entiere, et le
+    // recouvrement de zones est en O(zones²).
+    //
+    // ⚠️ **CETTE RAISON A DISPARU a la tache 21** : un projectile ne pose plus
+    // rien, c'est la REACTION qui laisse un champ, et les reactions sont
+    // bornees a une par ennemi et par tick (§6.2). Une arme rapide ne peut donc
+    // plus multiplier les zones. **Ce qui reste, c'est une question de
+    // contenu** — une Braise de plus dans un catalogue qui en porte deja — et
+    // elle appartient a l'auteur, pas a une contrainte de cout. Signale, pas
+    // tranche ici.
     name: 'lance-flammes',
     // ⚠️ **Le cas que la tache 12 nomme** : 10 ticks de vie, donc le fondu le
     // plus long du catalogue (`projectileAlpha` en tire 75 % de sa vie). La

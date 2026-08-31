@@ -6,9 +6,17 @@ import {
 } from './constants';
 
 /**
- * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, pose la
- * ou un projectile elementaire finit sa course, qui vit `ZONE_LIFETIME_TICKS`
- * puis disparait.
+ * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, **pose par
+ * une REACTION** a son point d'application, qui vit `ZONE_LIFETIME_TICKS` puis
+ * disparait.
+ *
+ * ⚠️ **« La ou un projectile elementaire finit sa course » jusqu'a la tache
+ * 21.** L'auteur a joue et a bascule du modele du §6.3 de l'orientation — *«
+ * les elements s'appliquent au sol autant qu'aux ennemis »* — vers celui du
+ * §6.4, ou trois reactions sur quinze laissent deja un effet au sol. La boucle
+ * devient : un projectile marque, un second element declenche, la reaction
+ * laisse un champ. Le seul createur de zones est desormais `postZone`
+ * (back/src/combat.ts), appele par `applyReactions`.
  *
  * ⚠️ **Vit dans `shared/` et pas dans `back/`, contrairement a `OrbField`.**
  * La zone est annoncee A LA CREATION (§5.3 : le client ne peut pas savoir ou
@@ -84,6 +92,15 @@ export class ZoneField {
    * Contre « quelques dizaines » budgetees au §6.6 de l'orientation, et un
    * recouvrement en O(zones²). Choisir des armes lentes n'etait pas une
    * parade : c'est un reglage qui tient jusqu'au premier draft.
+   *
+   * ⚠️ **La tache 21 a supprime ce levier a la racine — et la regle RESTE.**
+   * Une zone ne naissant plus que d'une reaction, et les reactions etant
+   * bornees a une par ennemi et par tick (§6.2), la cadence ne peut plus
+   * multiplier les poses : le banc `zones` compte 3 a 5 zones vivantes la ou il
+   * en comptait 27 a 28. La fusion ne coute rien, elle borne toujours le compte
+   * par la surface, et elle sera deja la le jour ou une reaction en chaine
+   * arrivera (§6.4). **Une borne qui cesse d'etre sous tension n'est pas une
+   * borne a retirer.**
    *
    * Une zone du meme element qui couvre deja le point est donc prolongee — au
    * plus une fois par `ZONE_REFRESH_INTERVAL_TICKS`, voir plus bas — et rien

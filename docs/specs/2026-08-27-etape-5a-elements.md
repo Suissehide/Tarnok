@@ -174,9 +174,30 @@ caustique* une traînée corrosive.
 La boucle devient lisible : **un projectile marque, un second élément déclenche, la réaction laisse
 un champ.** Le sol cesse d'être l'effet d'un tir pour devenir la trace d'une combinaison.
 
-Conséquence de budget : les zones deviennent **rares** — une par réaction, et les réactions sont
-bornées à une par ennemi et par tick (§6.2). Les bornes construites pour le modèle précédent —
-fusion, plafond, intervalle de ré-annonce — restent en place et cessent d'être sous tension.
+**Le champ porte l'élément qui a DÉCLENCHÉ la réaction — le second — et l'identité de qui l'a
+appliqué.** Le §6.4 ne donne aucune règle de position (le champ de *Surchauffe* brûle, celui de
+*Verglas* glisse, celui d'*Arc caustique* ronge : l'effet appartient au couple), et *Choc thermique*
+n'en a aucun d'écrit. Le choix a donc été tranché à l'exécution, et mesuré : avec l'élément de la
+**marque**, le champ remarque l'ennemi de l'élément que la réaction venait de consommer, et le même
+tireur redéclenche indéfiniment **avec une seule arme** — 37 réactions contre 1 sur un décor de
+quarante ticks. Avec l'élément qui **déclenche**, la quatrième ligne du §6.2 s'applique (même
+élément : simple rafraîchissement) et il faut de nouveau l'autre élément. La boucle ci-dessus exige
+le second.
+
+⚠️ **Une zone ne naît plus que d'une réaction, et une réaction que d'un ennemi.** Un salon sans
+ennemi ne peut donc plus porter une seule zone — ce qui interdit tout décor « deux zones sans
+ennemi », et fait de la borne du §6.2 (une réaction par ennemi et par tick) le seul discriminant
+observable du troisième déclencheur.
+
+⚠️ **Et la piétaille légère ne produit aucun champ.** Un ennemi tué du même impact n'est jamais
+marqué (§6.2), donc ne réagit jamais : c'est la piétaille **lourde** du §3.3 qui porte tout le
+système élémentaire, sol compris. Ce n'était pas visible tant que le projectile posait le disque.
+
+Conséquence de budget, mesurée au banc `zones` (quatre joueurs, 1 500 piétailles lourdes, 300 pas) :
+les zones vivantes passent de **27–28 à 3–5**, et le trafic `ZONE` de **1,9 à 0,1 annonce par
+seconde et par joueur** — soit 0,08 ko/s à 0,01, quel que soit le nombre d'exemplaires par arme. Les
+bornes construites pour le modèle précédent — fusion, plafond, intervalle de ré-annonce — restent
+toutes en place et cessent d'être sous tension.
 
 ⚠️ **« Un projectile = une zone » ne tient pas, et c'est mesuré.** La cadence d'une arme
 élémentaire deviendrait le principal levier de coût du jeu, et **l'empilement de l'étape 4 la fait
@@ -262,6 +283,12 @@ suivent ce modèle.
 - un ennemi **dans** une zone reçoit sa marque élémentaire, rafraîchie tant qu'il y reste ;
 - **deux zones d'éléments différents qui se recouvrent réagissent**, à la frontière commune ;
 - une zone qui réagit **ne se consomme PAS**.
+
+⚠️ **Une zone posée au tick `T` ne marque qu'à `T + 1`**, depuis que c'est la réaction qui la pose.
+Le balayage des zones tourne avant la résolution des réactions dans le pas serveur — le contraire
+ferait mourir une entité pendant que la horde est parcourue par créneau. Elle ne ralentissait déjà
+qu'à `T + 1` (`ZoneField.slowsAt`) : les deux effets partent désormais ensemble, ce qui est plus
+simple à tenir que l'écart d'un tick qu'il y avait avant.
 
 ⚠️ **Une première version de ce paragraphe disait le contraire, et c'était une contradiction dure
 avec le §2 et le §8.** La mort d'une zone n'est jamais annoncée : le client la dérive du seul

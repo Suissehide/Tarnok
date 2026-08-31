@@ -206,6 +206,36 @@ export interface ReactionTrigger {
   markBy: number;
   /** Joueur qui applique le SECOND element — celui qui declenche. */
   by: number;
+  /**
+   * Le SECOND element, celui qui declenche — **et c'est lui que porte le champ
+   * laisse au sol** (tache 21). `pair` ne suffit pas : il est canonicalise,
+   * donc il a perdu qui des deux est arrive en premier.
+   *
+   * ⚠️ **Le second, pas celui de la marque, et c'est mesure.** Le §6.4 de
+   * l'orientation ne donne aucune regle de position — la zone de *Surchauffe*
+   * (Braise + Foudre) brule, celle de *Verglas* (Givre + Poix) glisse, celle
+   * d'*Arc caustique* (Foudre + Chaux) ronge : l'effet appartient au COUPLE,
+   * et *Choc thermique* n'en a aucun d'ecrit. Le choix revient donc a cette
+   * etape, et un seul des deux ne degenere pas :
+   *
+   * | Le champ porte | Ce qui arrive au tick suivant |
+   * | --- | --- |
+   * | l'element de la MARQUE | le champ remarque l'ennemi de l'element que la reaction venait de consommer — le meme tireur redeclenche, **indefiniment, avec une seule arme** |
+   * | l'element qui DECLENCHE | le champ remarque du SECOND element ; le meme tireur ne fait plus que rafraichir (§6.2, quatrieme ligne), et il faut de nouveau l'autre element |
+   *
+   * Mesure, mutation appliquee et non raisonnee — decor de
+   * `room.test.ts` « une reaction declenchee par un IMPACT est annoncee » :
+   * quarante ticks, UNE arme de Givre, UNE marque de Braise posee une seule
+   * fois. **37 reactions avec l'element de la marque, 1 avec celui qui
+   * declenche.** La boucle que l'auteur decrit (« un projectile marque, un
+   * second element declenche, la reaction laisse un champ ») exige le second :
+   * avec le premier, le second element devient inutile apres le premier coup.
+   *
+   * `by` suit le meme raisonnement : le champ appartient a qui l'a declenche,
+   * si bien qu'une reaction ulterieure sur ce champ compare deux identites
+   * reellement differentes (§7) au lieu de rejouer une charge deja comptee.
+   */
+  element: number;
 }
 
 /**
@@ -304,7 +334,8 @@ export class Reactions {
       // - `i === created`, la zone qui vient de naitre : elle porte forcement
       //   `element`, donc la comparaison ci-dessous l'ecarte deja ;
       // - `other === ELEMENT.NEUTRE` : `postZone` est le SEUL createur de
-      //   zones et il refuse deja l'element neutre.
+      //   zones, et il ne pose que l'element d'un declencheur — jamais neutre
+      //   par construction, voir `ReactionTrigger.element`.
       //
       // Une garde qu'aucun test ne peut faire rougir est une garde qu'on
       // croit avoir.
@@ -324,6 +355,9 @@ export class Reactions {
         y: ((zones.y[i] ?? 0) + (zones.y[created] ?? 0)) / 2,
         markBy: zones.by[i] ?? 0,
         by,
+        // Le SECOND element, comme partout : ici c'est celui de la zone qui
+        // vient de naitre, l'autre etant deja la. Voir `ReactionTrigger`.
+        element,
       });
     }
   }
@@ -381,6 +415,7 @@ function applyElement(
       y: horde.y[slot] ?? 0,
       markBy: horde.markBy[slot] ?? 0,
       by,
+      element,
     });
     if (declenche) {
       // La marque se consomme : `NEUTRE` n'est pas un cas particulier de la
@@ -414,13 +449,37 @@ function applyElement(
  *
  * L'ennemi qui a declenche la reaction n'a pas de traitement a part : il est a
  * distance nulle du point, donc dans le rayon, donc touche comme les autres.
+ *
+ * ⚠️ **Et c'est ICI que la reaction laisse son champ au sol** (§5.1, tache
+ * 21) : *« un projectile marque, un second element declenche, la reaction
+ * laisse un champ »*. Le sol a cesse d'etre l'effet d'un tir pour devenir la
+ * trace d'une combinaison — voir `postZone`.
+ *
+ * ⚠️ **`zones` et `reactions` ne sont PAS optionnels**, contrairement au
+ * `zones` que `resolveProjectileDamage` portait avant cette tache. Il n'existe
+ * aucun appelant legitime qui resoudrait une reaction sans laisser son champ
+ * (ce serait la tache 21 desactivee en silence), ni qui poserait une zone sans
+ * arbitrer le couple qu'elle forme avec ses voisines (le §6.2, troisieme
+ * ligne). Meme choix que le `reactions` de `markInZones`.
+ *
+ * ⚠️ **Les champs se posent AVANT les degats, et tous avant le premier.** Deux
+ * reactions du meme tick a quelques pixels l'une de l'autre doivent voir la
+ * meme reserve de zones que si elles etaient seules — c'est la regle de fusion
+ * qui decide, et elle a besoin de l'etat complet. Les degats, eux, ne
+ * s'interessent pas aux zones.
  */
 export function applyReactions(
   horde: Horde,
   orbs: OrbField,
   tick: number,
   triggers: readonly ReactionTrigger[],
+  zones: ZoneField,
+  reactions: Reactions,
 ): number[] {
+  for (const t of triggers) {
+    postZone(zones, t, tick, reactions);
+  }
+
   const r2 = REACTION_RADIUS * REACTION_RADIUS;
   const dead = new Set<number>();
   for (const t of triggers) {
@@ -476,25 +535,18 @@ export function resolveProjectileDamage(
   horde: Horde,
   orbs: OrbField,
   tick: number,
-  zones?: ZoneField,
   reactions?: Reactions,
 ): number[] {
-  // ⚠️ **Une zone se pose la ou le projectile FINIT SA COURSE, qu'il ait
-  // touche ou non** (§5.1 de la spec). Les deux fins de course sont a deux
-  // endroits differents de cette classe : la vieillesse, ici dans `step`, et
-  // l'impact, plus bas dans `collide`. N'en cabler qu'une laisserait la moitie
-  // des tirs elementaires sans trace au sol — invisible au type, invisible au
-  // lint.
-  projectiles.step(
-    dt,
-    zones ? (slot) => postZone(zones, projectiles, slot, tick, reactions) : undefined,
-  );
+  // ⚠️ **Un projectile ne laisse plus RIEN au sol** (tache 21). Il posait une
+  // zone a ses DEUX fins de course — la vieillesse dans `step`, l'impact dans
+  // `collide` — et les deux sont parties ensemble, avec le parametre `zones`
+  // et le rappel `onExpire` de `Projectiles.step` qui n'existait que pour la
+  // premiere. Ce qui reste au projectile, c'est de MARQUER ce qu'il touche :
+  // le seul chemin qui mene a la premiere reaction, donc au premier champ.
+  projectiles.step(dt);
 
   const dead = new Set<number>();
   projectiles.collide(horde, (entityId, damage, projectileSlot) => {
-    if (zones) {
-      postZone(zones, projectiles, projectileSlot, tick, reactions);
-    }
     const element = projectiles.elementAt(projectileSlot);
     const by = projectiles.ownerAt(projectileSlot);
     const slot = horde.slotOf(entityId);
@@ -605,9 +657,30 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
 }
 
 /**
- * Pose la zone d'un projectile qui vient de finir sa course — creation, ou
- * rafraichissement de celle qui couvre deja le point (§5.1 bis, la regle qui
- * BORNE le nombre de zones).
+ * Pose le champ que laisse une reaction, a son point d'application — creation,
+ * ou rafraichissement de celui qui couvre deja le point (§5.1 bis, la regle
+ * qui BORNE le nombre de zones).
+ *
+ * ⚠️ **C'est le SEUL createur de zones depuis la tache 21.** Le projectile en
+ * posait une a chaque fin de course (modele du §6.3 de l'orientation, « les
+ * elements s'appliquent au sol autant qu'aux ennemis ») ; l'auteur a bascule
+ * sur celui du §6.4, ou trois reactions sur quinze laissent deja un effet au
+ * sol. Consequence de budget mesuree au banc `zones` (quatre joueurs, 1 500
+ * pietailles LOURDES, 300 pas) :
+ *
+ * | Exemplaires par arme | Zones vivantes | Annonces/s/joueur | ko/s par client |
+ * | --- | --- | --- | --- |
+ * | 1, avant | 27 | 1,9 | 0,08 |
+ * | 8, avant | 28 | 1,9 | 0,08 |
+ * | 1, apres | **5** | **0,1** | **0,01** |
+ * | 8, apres | **3** | **0,1** | **0,01** |
+ *
+ * Les zones ne naissent plus que d'une combinaison, et les reactions sont
+ * bornees a une par ennemi et par tick (§6.2). **Aucune des bornes de l'etape
+ * n'est retiree pour autant** — fusion, `ZONE_CAPACITY`,
+ * `ZONE_REFRESH_INTERVAL_TICKS` : elles ne coutent rien, et le jour ou une
+ * reaction en chaine arrivera (§6.4, *« Court-circuit : la chaine se propage
+ * sans limite de sauts »*), elles seront deja la.
  *
  * ⚠️ **Les coordonnees sont ARRONDIES**, exactement comme `Room.step` arrondit
  * les positions de joueurs avant de nourrir son flowfield (constat C1.4 de
@@ -618,41 +691,46 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
  * differents pour les entites pile sur le bord. Le serveur s'impose donc
  * l'arrondi qu'il inflige au client, comme il s'impose deja son retard.
  *
- * Un projectile neutre ne pose rien : c'est le SEUL garde, et il est ici
- * plutot que dans `ZoneField` — une zone neutre n'aurait ni teinte, ni
- * brulure, ni ralentissement, mais elle consommerait un creneau de la reserve
- * et compterait dans le O(zones x entites).
+ * ⚠️ **Le garde « element neutre » a ete RETIRE avec le projectile qui le
+ * justifiait, mutation a l'appui.** Un declencheur ne nait que d'un element
+ * non neutre — `applyElement` exige `porte !== NEUTRE` et `element !== NEUTRE`
+ * chez ses deux appelants, `onZoneCreated` ne lit que des elements de zones —
+ * et les zones ne naissent plus que d'ici. La recurrence se referme : aucune
+ * zone neutre ne peut exister, donc aucun test ne pouvait faire rougir ce
+ * garde. Une garde qu'aucun test ne peut faire rougir est une garde qu'on
+ * croit avoir.
  */
 function postZone(
   zones: ZoneField,
-  projectiles: Projectiles,
-  slot: number,
+  trigger: ReactionTrigger,
   tick: number,
-  reactions?: Reactions,
+  reactions: Reactions,
 ): void {
-  const element = projectiles.elementAt(slot);
-  if (element === ELEMENT.NEUTRE) {
-    return;
-  }
   // ⚠️ **Le compte AVANT la pose est le seul moyen de distinguer une creation
   // d'un rafraichissement.** `spawn` rend le creneau touche dans les deux cas
   // (c'est ce dont `Room.#announceZones` a besoin), et le §6.2 ne fait reagir
-  // deux zones qu'a LA CREATION DE LA SECONDE. Sans cette distinction, une
-  // arme qui entretient une zone par fusion declencherait une reaction a
-  // chaque tir, indefiniment.
+  // deux zones qu'a LA CREATION DE LA SECONDE. Sans cette distinction, deux
+  // reactions qui se repetent au meme endroit declencheraient une reaction de
+  // recouvrement a chaque fois, indefiniment.
   const avant = zones.count;
   const creneau = zones.spawn(
-    element,
-    Math.round(projectiles.x[slot] ?? 0),
-    Math.round(projectiles.y[slot] ?? 0),
-    projectiles.ownerAt(slot),
+    trigger.element,
+    Math.round(trigger.x),
+    Math.round(trigger.y),
+    trigger.by,
     tick,
   );
   // ⚠️ **Pas de `creneau >= 0` en plus : la comparaison des comptes le couvre
   // deja** (mutation appliquee, elle survivait). `spawn` ne rend `-1` que
   // reserve pleine, et alors elle n'a rien cree non plus — les deux gardes
   // repondraient toujours ensemble, et la seconde ne pourrait jamais rougir.
-  if (reactions && zones.count > avant) {
+  //
+  // ⚠️ **Les declencheurs nes ici tombent dans le lot du tick SUIVANT**, et
+  // c'est voulu : `Room.step` a deja draine celui-ci. Un champ qui reagirait
+  // avec son voisin dans le meme tick le ferait pendant que `applyReactions`
+  // balaie encore la horde par creneau — exactement ce que la collecte differee
+  // de `Reactions` existe pour eviter.
+  if (zones.count > avant) {
     reactions.onZoneCreated(zones, creneau, tick);
   }
 }
@@ -666,11 +744,17 @@ function postZone(
  * marque ne voyage pas (§2), et c'est elle qui arbitre, donc le client n'a
  * rien a en deriver.
  *
- * ⚠️ **`aliveAt`, pas `slowsAt`.** Ce balayage tourne APRES la pose des zones
- * du meme tick : une zone posee a ce tick doit marquer immediatement ce
- * qu'elle couvre. Le ralentissement, lui, ne prend qu'au tick suivant, parce
- * qu'il porte sur un deplacement DEJA joue quand la zone est posee. Voir la
- * table de `ZoneField.slowsAt`.
+ * ⚠️ **`aliveAt`, pas `slowsAt`, et le predicat reste le bon meme si l'ordre
+ * du tick a change a la tache 21.** Les zones naissaient AVANT ce balayage
+ * (une par fin de course de projectile), donc une zone posee au tick `T`
+ * marquait des `T` ; elles naissent maintenant de `applyReactions`, donc
+ * APRES, et une zone posee au tick `T` ne marque qu'a `T + 1` — comme elle ne
+ * ralentit qu'a `T + 1`. Les deux effets partent desormais ensemble.
+ *
+ * `aliveAt` reste malgre tout le predicat juste : c'est celui qui dit si la
+ * zone EXISTE, et il n'appartient pas a ce balayage de rattraper l'ordre du
+ * tick. `slowsAt` porte, lui, une regle differente — un deplacement deja joue
+ * — qui vaut quel que soit l'ordre. Voir la table de `ZoneField.slowsAt`.
  *
  * ⚠️ **Un ennemi couvert par une zone d'un AUTRE element que sa marque REAGIT**
  * (§6.2, seconde ligne), et c'est `applyElement` qui en decide — la marque
