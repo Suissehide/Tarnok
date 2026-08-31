@@ -1,5 +1,6 @@
 import { archetypeOf, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
 import { MAX_ENTITIES, TICK_HZ } from '@shared/constants';
+import { waveCountScale } from '@shared/paliers';
 import type { WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
@@ -173,4 +174,73 @@ describe('waveCountBounds', () => {
     expect(max).toBeLessThanOrEqual(MAX_ENTITIES);
     expect(min).toBeLessThanOrEqual(max);
   });
+});
+
+/**
+ * ⚠️ **Ce bloc vit dans `back/` et pas dans `shared/paliers.test.ts`, contre la
+ * liste de fichiers de la tache 1 du plan.** Il n'y a pas le choix :
+ * `waveCountBounds` vit dans `back/src/wave-director.ts` et `shared/` ne peut
+ * pas importer `back/` — la dependance ne va que dans un sens. Le mesurer
+ * ailleurs qu'ici demanderait de deplacer `waveCountBounds` dans `shared/`,
+ * ce que rien d'autre ne justifie.
+ */
+describe("la divergence du palier sur le nombre d'ennemis", () => {
+  /**
+   * Le compte le plus haut qu'une vague puisse valoir au palier `k` : la borne
+   * haute en regime etabli, mise a l'echelle du palier.
+   *
+   * ⚠️ **`waveCountBounds` plafonne AVANT la mise a l'echelle**, donc son
+   * `Math.min(..., MAX_ENTITIES)` n'est PAS ce qui protege ici. Ce qui protege,
+   * c'est la marge entre le regime etabli (320) et `MAX_ENTITIES` (4000).
+   */
+  function plafondAuPalier(k: number): number {
+    return waveCountBounds(1_000_000).max * waveCountScale(k);
+  }
+
+  /**
+   * **Le verdict de l'etape 3 de la tache 1 : le plafond TIENT sur dix
+   * paliers**, et il tient avec une marge d'un facteur douze au palier 0.
+   * C'est une mesure, pas un espoir : le test la refait a chaque execution.
+   */
+  it('reste sous MAX_ENTITIES sur les dix paliers que le §7 de la spec fait simuler', () => {
+    for (let k = 0; k <= 10; k++) {
+      expect(plafondAuPalier(k)).toBeLessThan(MAX_ENTITIES);
+    }
+  });
+
+  /**
+   * ⚠️ **La moitie qui empeche le test precedent de passer pour rien.** Une
+   * echelle nulle (`PALIER_COUNT_SCALE = 0`) le passerait aussi bien : la
+   * pression doit MONTER, et le plafond doit finir par ceder — sinon la
+   * formule est plate et la run n'a pas de fin (§3 de la spec, « les deux sens
+   * comptent »).
+   *
+   * Le palier ou elle cede est **derive, jamais ecrit** : c'est un rapport
+   * entre trois constantes qui bougeront toutes. On verifie seulement qu'il
+   * existe, et qu'il est loin devant les dix paliers mesures.
+   */
+  it('finit malgre tout par ceder, et le dit : il existe un palier ou la vague deborde', () => {
+    let premierDebordement = -1;
+    for (let k = 0; k <= 1000 && premierDebordement < 0; k++) {
+      if (plafondAuPalier(k) >= MAX_ENTITIES) {
+        premierDebordement = k;
+      }
+    }
+
+    process.stdout.write(
+      `palier ou la borne haute d'une vague atteint MAX_ENTITIES : ${premierDebordement}\n`,
+    );
+
+    expect(premierDebordement).toBeGreaterThan(10);
+    expect(premierDebordement).toBeLessThan(1000);
+  });
+
+  // ⚠️ **Ce qui se passe au-dela n'est pas un plantage, et personne ne l'ecrit
+  // pour cette etape : `Horde.spawn` tronque deja** a `capacity` et
+  // `MAX_PER_WAVE`, et `Room.step` compte la troncature dans
+  // `RoomMetrics.truncatedSpawns`. Aucune garde nouvelle n'est donc ajoutee —
+  // une seconde garde qui ne se declencherait jamais serait exactement le motif
+  // « deux gardes qui se couvrent » rencontre quinze fois dans ce depot. Et le
+  // plafond de `waveCountBounds` lui-meme est deja garde plus haut
+  // (« reste bornee par MAX_ENTITIES, meme a un numero de vague extreme »).
 });

@@ -598,3 +598,65 @@ export const REACTION_RADIUS = 90;
  * la comparent a `HEAVY_HP`.
  */
 export const REACTION_DAMAGE = 25;
+
+/**
+ * Nombre de vagues ordinaires avant que le directeur ne demande le boss du
+ * palier — §9.1 de l'orientation, « 4 vagues + 1 boss ≈ 5 min ».
+ *
+ * ⚠️ **Ce n'est PAS la duree d'un palier, et c'est volontaire.** Une vague
+ * tombe toutes les `PERIOD_TICKS` (6 s), donc quatre vagues font 24 s : le
+ * reste des cinq minutes, c'est le TEMPS DE TUER LE BOSS. Le palier se termine
+ * a sa mort, jamais a un tick (§2 de la spec de l'etape 6a) — une equipe qui
+ * peine y reste plus longtemps, une equipe qui domine avance.
+ *
+ * ⚠️ **Corollaire : le nombre de vagues d'un palier n'est PAS fixe**, il vaut
+ * `WAVES_PER_PALIER` plus toutes celles tombees pendant le combat de boss
+ * (les vagues ne s'arretent pas, §2). Le palier ne se derive donc pas du
+ * `waveId` — voir `shared/paliers.ts`.
+ */
+export const WAVES_PER_PALIER = 4;
+
+/**
+ * Pente de la montee du nombre d'ennemis par vague : `x (1 + 0,15 k)` au
+ * palier `k` (§9.2 de l'orientation, §3 de la spec de l'etape 6a).
+ *
+ * ⚠️ **Ce n'est pas un reglage de sensation, c'est la duree de vie du jeu.**
+ * Une table s'epuise en trois soirees ; une formule ne s'epuise pas mais peut
+ * diverger. **Les deux sens comptent** : trop plate, la run n'a pas de fin ;
+ * trop raide, le palier 8 est un mur.
+ *
+ * ⚠️ **Multiplie un compte deja plafonne par `waveCountBounds`**, dont le
+ * `Math.min(..., MAX_ENTITIES)` s'applique AVANT cette echelle : ce n'est donc
+ * pas lui qui protege du debordement. Ce qui protege, c'est que le regime
+ * etabli (320) reste tres loin de `MAX_ENTITIES` (4000) — la marge tient
+ * jusqu'au palier 76, et `back/src/wave-director.test.ts` le mesure au lieu de
+ * l'esperer.
+ */
+export const PALIER_COUNT_SCALE = 0.15;
+
+/**
+ * Base de la montee des points de vie : `x 1,12^k` au palier `k` (§9.2).
+ *
+ * ⚠️ **Divise le rythme de mise a mort, deja a -12,8 % depuis l'etape 5a.**
+ * C'est ce que la porte du §7 de la spec mesure a la tache 3 : si le boss du
+ * palier 0 tient plus de trois minutes, c'est `BOSS_HP_BASE` qui baisse **et**
+ * cette valeur qui se rouvre.
+ *
+ * ⚠️ **Exponentielle, la seule des trois formules a l'etre.** A `k = 10` elle
+ * vaut deja 3,1 ; a `k = 20`, 9,6. C'est voulu — la run doit finir par
+ * s'arreter — mais ca veut dire que toute retouche de cette valeur se juge
+ * loin, pas au palier 1.
+ */
+export const PALIER_HP_SCALE = 1.12;
+
+/**
+ * Or verse a l'equipe quand le boss du palier 0 tombe ; les paliers suivants
+ * en recoivent davantage (`palierGold`, `shared/paliers.ts`).
+ *
+ * ⚠️ **Valeur de depart, pas une mesure.** Le plan la donne « a regler » : il
+ * n'y a rien a quoi la comparer tant que l'etape 7 n'a pas donne un prix a
+ * l'or. 100 est choisi pour etre lisible a l'ecran et pour laisser
+ * `palierGold` strictement croissante malgre son arrondi — a base 1, deux
+ * paliers voisins rendraient le meme montant.
+ */
+export const GOLD_PER_PALIER_BASE = 100;
