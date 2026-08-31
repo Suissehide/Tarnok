@@ -915,6 +915,54 @@ elle est tombée. **L'orbe paraîtrait collectée sans que l'expérience arrive.
 
 ---
 
+## Tâche 21 : la zone naît de la réaction, pas du projectile
+
+**Fichiers :** modifier `back/src/combat.ts`, `front/src/render/orb-renderer.ts`, leurs tests
+
+> *« Il faudrait que ce soit les réactions élémentaires qui fassent les cercles au sol et non pas
+> les projectiles. Réduis la taille de l'xp au sol. »*
+
+### Ce que ça change, et pourquoi ce n'est pas un réglage
+
+Aujourd'hui **chaque projectile élémentaire pose une zone** là où il finit sa course, et la zone
+marque ce qui passe dedans. C'est le modèle du **§6.3** de l'orientation : *« les éléments
+s'appliquent au sol autant qu'aux ennemis »*.
+
+L'auteur bascule sur le modèle du **§6.4**, et il y était déjà : *Surchauffe* laisse *« une zone
+brûlante persistante au sol »*, *Verglas* *« une flaque glissante »*, *Arc caustique* *« une traînée
+corrosive »*. **Trois des quinze réactions produisaient déjà un effet au sol.**
+
+La boucle devient lisible : **un projectile marque, un second élément déclenche, la réaction laisse
+un champ.** Le sol cesse d'être l'effet d'un tir pour devenir la trace d'une combinaison.
+
+- [ ] **Étape 1 : le projectile ne pose plus de zone.** Il continue de **marquer** ce qu'il touche —
+  c'est le seul chemin qui reste vers la première réaction.
+
+  ⚠️ **`postZone` est aujourd'hui appelé aux DEUX fins de course** d'un projectile (impact et
+  vieillesse). Les deux disparaissent. Vérifie qu'il ne reste aucun appelant : **du code que rien
+  n'appelle est du code qui ment**, et ce dépôt en a supprimé six.
+
+- [ ] **Étape 2 : la réaction pose la zone**, à son point d'application, de l'élément… — **à
+  trancher et à écrire** : le §6.4 donne un effet distinct à chaque couple, mais un seul couple
+  existe à cette étape. Le plus simple qui ne mente pas : la zone porte **l'élément de la marque**,
+  celui qui persistait avant la réaction.
+
+- [ ] **Étape 3 : le budget s'améliore, mesure-le.** Les zones deviennent rares — une par réaction,
+  et les réactions sont déjà bornées à **une par ennemi et par tick** (§6.2). Tout ce que les tâches
+  4, 6 et 10 ont construit pour borner les zones — fusion, plafond, intervalle de ré-annonce —
+  **reste valable et cesse d'être sous tension**.
+
+  ⚠️ **Ne supprime rien de ces bornes.** Elles ne coûtent rien et le jour où une réaction en chaîne
+  arrivera (§6.4 : *« Court-circuit : la chaîne se propage sans limite »*), elles seront déjà là.
+
+- [ ] **Étape 4 : l'xp plus petite au sol.** `ORB_DIAMETER_PX` diminue. ⚠️ La texture est plus grande
+  que l'affichage **exprès** — c'est le piège de la tâche 13, où l'échelle valait 1 et rendait toute
+  mutation indistinguable. Garder les deux tailles distinctes.
+
+- [ ] **Étape 5 : commit** — `feat: la reaction laisse un champ, le projectile ne fait que marquer`
+
+---
+
 ## Tâche 11 : vérification manuelle et clôture
 
 - [ ] **Jouer une run, au premier plan.** Un onglet en arrière-plan a son `requestAnimationFrame`

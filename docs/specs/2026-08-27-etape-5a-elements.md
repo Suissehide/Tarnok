@@ -163,8 +163,20 @@ tick elle dure**. Le joueur est ce qui rend la Synergie du §6.5 possible.
 
 ### 5.1 Ce que c'est
 
-Un disque teinté, posé là où un projectile élémentaire finit sa course — qu'il ait touché ou non.
-Il vit un nombre de ticks fixe, puis disparaît.
+Un disque teinté, **posé par une réaction**. Il vit un nombre de ticks fixe, puis disparaît.
+
+⚠️ **Une première version disait « posé là où un projectile élémentaire finit sa course ».**
+L'auteur a joué et a basculé du modèle du §6.3 de l'orientation — *« les éléments s'appliquent au
+sol autant qu'aux ennemis »* — vers celui du §6.4, où **trois réactions sur quinze produisent déjà
+un effet au sol** : *Surchauffe* laisse une zone brûlante, *Verglas* une flaque glissante, *Arc
+caustique* une traînée corrosive.
+
+La boucle devient lisible : **un projectile marque, un second élément déclenche, la réaction laisse
+un champ.** Le sol cesse d'être l'effet d'un tir pour devenir la trace d'une combinaison.
+
+Conséquence de budget : les zones deviennent **rares** — une par réaction, et les réactions sont
+bornées à une par ennemi et par tick (§6.2). Les bornes construites pour le modèle précédent —
+fusion, plafond, intervalle de ré-annonce — restent en place et cessent d'être sous tension.
 
 ⚠️ **« Un projectile = une zone » ne tient pas, et c'est mesuré.** La cadence d'une arme
 élémentaire deviendrait le principal levier de coût du jeu, et **l'empilement de l'étape 4 la fait
