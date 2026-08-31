@@ -211,8 +211,31 @@ Chaque tâche les respecte, sans les répéter.
 - [ ] **Étape 1 : la seule barre de vie du jeu.** Ni la piétaille ni les joueurs n'en ont — c'est ce
   qui la rend lisible.
 
-- [ ] **Étape 2 : elle disparaît avec le boss.** Le client apprend sa mort par `DEATHS`, comme pour
-  tout le monde.
+  **Décision de l'auteur : une PETITE barre, AU-DESSUS du boss**, qui le suit. Pas un bandeau de
+  HUD : elle appartient à la créature, pas à l'écran.
+
+  Le pack fournit ce qu'il faut : `assets/tinyswords/UI Elements/UI Elements/Bars/SmallBar_Base.png`
+  et `SmallBar_Fill.png`.
+
+  ⚠️ **CES FICHIERS NE DOIVENT JAMAIS ENTRER DANS LE DÉPÔT.** La licence Pixel Frog interdit la
+  redistribution **même après modification**, ce dépôt est **public**, et la CI échoue sur
+  `git ls-files | grep '^assets/tinyswords'` — *« une fois committés, les retirer demande une
+  réécriture, donc on échoue ici plutôt que là »*.
+
+  Le chemin est celui des atlas de monstres : `assets/tinyswords/` est **gitignoré**, un outil de
+  `tools/` produit un dérivé, et le dérivé vit sur **MinIO**, pas dans git. Lire
+  `tools/build_monster_atlas.py` et `tools/fetch-assets.sh` avant d'écrire quoi que ce soit.
+
+  **Si le chemin MinIO n'est pas praticable dans la tâche, dessiner la barre en code** — comme
+  `makeGlowTexture`, `makeZoneTexture`, `makeRingTexture` et l'atlas de projectiles de l'étape 5a le
+  font déjà. **Ne jamais committer l'asset « en attendant ».**
+
+- [ ] **Étape 2 : elle suit le boss et disparaît avec lui.** Le client apprend sa mort par `DEATHS`,
+  comme pour tout le monde.
+
+  ⚠️ **Elle se pose AU-DESSUS du corps, donc au-dessus de la moitié haute du sprite** — et l'ancre
+  du corps a changé à l'étape 5a : `BODY_ANCHOR_Y` vaut désormais **0,5**, le corps est centré sur
+  la position. Le décalage se dérive de la taille dessinée, jamais d'un nombre écrit à la main.
 
 - [ ] **Étape 3 : le test.** ⚠️ **La boucle de rendu est testable depuis l'étape 5a**
   (`front/src/render/frame.ts`) : une mutation qui retire un appel de dessin doit rougir. **Vérifie-le
