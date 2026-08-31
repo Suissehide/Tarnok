@@ -1,5 +1,6 @@
 import { archetypeOf, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
-import { MAX_ENTITIES, TICK_HZ } from '@shared/constants';
+import { MAX_ENTITIES, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
+import { waveCountScale } from '@shared/paliers';
 import { makeRandom } from '@shared/random';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 
@@ -166,12 +167,97 @@ function pickArchetype(rng: () => number, waveNumber: number): number {
   return pool[Math.floor(rng() * pool.length)] ?? 0;
 }
 
+/**
+ * Nombre d'entites de la vague de boss. **Un, et c'est une regle de
+ * conception, pas un reglage** : le §1.1 de la spec de l'etape 6a n'autorise
+ * la vie du boss a voyager que parce qu'il est UN. *« Si un jour un palier
+ * fait apparaitre dix boss, ce n'est plus un boss, c'est de la pietaille
+ * d'elite — et sa vie redevient serveur seul. »*
+ */
+const BOSS_WAVE_COUNT = 1;
+
 export class WaveDirector {
   #nextWaveId = 1;
   readonly #rng: () => number;
 
+  /**
+   * Le palier courant, `0` pour le premier — l'argument `k` des formules de
+   * `shared/paliers.ts`.
+   *
+   * ⚠️ **Il n'avance QU'A la mort du boss** (`bossDefeated`), jamais a un
+   * tick : c'est ce qui rend le rythme elastique (§2 de la spec). Une equipe
+   * qui peine reste plus longtemps au palier 3, une equipe qui domine avance.
+   */
+  #palier = 0;
+
+  /**
+   * Vagues ordinaires emises depuis le debut du palier courant. Remis a zero
+   * a la mort du boss, pas a son apparition — les vagues continuent de tomber
+   * pendant le combat de boss et elles comptent, mais elles ne peuvent pas
+   * declencher un second boss puisque `#bossWaveId` est deja pris.
+   */
+  #wavesInPalier = 0;
+
+  /**
+   * `waveId` du boss en cours, `null` quand aucun boss n'est attendu.
+   *
+   * ⚠️ **C'est le VERROU du palier.** Tant qu'il n'est pas `null`, le
+   * directeur n'en demandera pas un second, quel que soit le nombre de vagues
+   * ordinaires tombees entre-temps.
+   */
+  #bossWaveId: number | null = null;
+
   constructor(seed: number) {
     this.#rng = makeRandom(seed);
+  }
+
+  /** Le palier courant (`0` pour le premier). Voir `shared/paliers.ts`. */
+  get palier(): number {
+    return this.#palier;
+  }
+
+  /**
+   * `waveId` du boss du palier en cours, `null` si aucun n'est attendu.
+   *
+   * Le salon s'en sert pour reconnaitre, juste apres `due`, que l'ordre qu'il
+   * vient de recevoir EST le boss — plutot que de faire rendre a `due` un
+   * couple `{ ordre, boss }` qui changerait sa signature pour tous ses
+   * appelants et tous ses tests.
+   */
+  get bossWaveId(): number | null {
+    return this.#bossWaveId;
+  }
+
+  /**
+   * Le boss du palier est mort : le palier suivant commence.
+   *
+   * ⚠️ **Appele depuis le lot de morts UNIQUE du tick** (`Room.step`), jamais
+   * depuis un second chemin de mort a lui : le rejeu de l'etape 3 en depend, et
+   * l'etape 5a a deja fusionne les morts par brulure et par reaction dans ce
+   * meme lot.
+   */
+  bossDefeated(): void {
+    if (this.#bossWaveId === null) {
+      return;
+    }
+    this.#bossWaveId = null;
+    this.#wavesInPalier = 0;
+    this.#palier++;
+  }
+
+  /**
+   * Le boss demande n'est jamais apparu — la horde etait pleine quand son
+   * ordre est tombe (`Horde.spawn` tronque a `capacity`).
+   *
+   * ⚠️ **Sans ce chemin, le palier se verrouillerait POUR TOUJOURS** : le
+   * verrou `#bossWaveId` interdit une seconde demande, et le boss qu'il
+   * designe n'existe pas, donc il ne mourra jamais. Ce n'est pas une garde
+   * redondante avec `bossDefeated` — les deux ne peuvent pas se produire pour
+   * le meme ordre, et celle-ci ne fait PAS avancer le palier : la demande est
+   * simplement rejouee a la prochaine echeance.
+   */
+  bossMissing(): void {
+    this.#bossWaveId = null;
   }
 
   /** Rend un ordre si une vague est due a ce tick, sinon null. */
@@ -189,6 +275,18 @@ export class WaveDirector {
     const waveNumber = this.#nextWaveId;
     const { min, max } = waveCountBounds(waveNumber);
 
+    // ⚠️ **Tire AVANT de savoir si c'est un boss, et toujours.** La vague de
+    // boss ignore ce tirage (elle vaut `BOSS_WAVE_COUNT`), mais s'en abstenir
+    // decalerait le flux du generateur d'un cran a chaque palier : deux
+    // directeurs de meme graine ne produiraient plus la meme suite selon la
+    // vitesse a laquelle leurs boss meurent. Le determinisme du directeur est
+    // ce que verifie le test « est deterministe pour une meme graine ».
+    const tirage = min + this.#rng() * (max - min);
+
+    // Le boss est du : `WAVES_PER_PALIER` vagues ordinaires sont tombees et
+    // aucun boss n'est encore en jeu.
+    const boss = this.#wavesInPalier >= WAVES_PER_PALIER && this.#bossWaveId === null;
+
     const order: WaveOrder = {
       waveId: this.#nextWaveId++,
       spawnTick: tick,
@@ -197,8 +295,24 @@ export class WaveDirector {
       formation: FORMATION_POOL[Math.floor(this.#rng() * FORMATION_POOL.length)] ?? 0,
       anchorX: Math.round((playerX[target] ?? 0) + Math.cos(angle) * radius),
       anchorY: Math.round((playerY[target] ?? 0) + Math.sin(angle) * radius),
-      count: Math.round(min + this.#rng() * (max - min)),
+      // ⚠️ **L'echelle du palier s'applique ICI, cote SERVEUR, avant que
+      // l'ordre ne parte** : `count` voyage dans les 19 octets, donc le client
+      // recoit un compte deja resolu et n'a rien a savoir du palier pour faire
+      // apparaitre la meme vague. C'est la voie « les valeurs voyagent deja
+      // resolues » du plan, appliquee a l'effectif.
+      count: boss ? BOSS_WAVE_COUNT : Math.round(tirage * waveCountScale(this.#palier)),
     };
+
+    if (boss) {
+      this.#bossWaveId = order.waveId;
+    } else {
+      // ⚠️ **Les vagues ordinaires continuent de compter PENDANT le combat de
+      // boss, et c'est sans effet** : le verrou `#bossWaveId` interdit deja une
+      // seconde demande. Ce compteur est remis a zero par `bossDefeated`, donc
+      // le palier suivant repart bien de zero vague.
+      this.#wavesInPalier++;
+    }
+
     return order;
   }
 }

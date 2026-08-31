@@ -1,5 +1,5 @@
 import { archetypeOf, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
-import { MAX_ENTITIES, TICK_HZ } from '@shared/constants';
+import { MAX_ENTITIES, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
 import { waveCountScale } from '@shared/paliers';
 import type { WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
@@ -243,4 +243,174 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
   // « deux gardes qui se couvrent » rencontre quinze fois dans ce depot. Et le
   // plafond de `waveCountBounds` lui-meme est deja garde plus haut
   // (« reste bornee par MAX_ENTITIES, meme a un numero de vague extreme »).
+});
+
+describe('le palier structure la run (etape 6a, tache 2)', () => {
+  /** Un ordre emis, avec le palier qui avait cours a cet instant. */
+  interface Emission {
+    order: WaveOrder;
+    palier: number;
+    boss: boolean;
+  }
+
+  /**
+   * Fait tourner un directeur pendant `ticks` ticks et rend ses emissions.
+   *
+   * `tuerLeBoss` modelise l'equipe : `false`, personne ne tue le boss et le
+   * palier ne bouge jamais ; `true`, il tombe a l'instant meme ou il apparait.
+   * Les deux cas sont necessaires — voir les deux moities plus bas.
+   */
+  function emissions(seed: number, ticks: number, tuerLeBoss: boolean): Emission[] {
+    const d = new WaveDirector(seed);
+    const out: Emission[] = [];
+    for (let tick = 0; tick < ticks; tick++) {
+      const order = d.due(tick, [3000], [3000]);
+      if (!order) {
+        continue;
+      }
+      const boss = d.bossWaveId === order.waveId;
+      out.push({ order, palier: d.palier, boss });
+      if (boss && tuerLeBoss) {
+        d.bossDefeated();
+      }
+    }
+    return out;
+  }
+
+  const MINUTE = TICK_HZ * 60;
+
+  it('demande un boss apres WAVES_PER_PALIER vagues ordinaires, et un seul', () => {
+    const emis = emissions(1234, 2 * MINUTE, false);
+
+    // ⚠️ **Le decor produit-il ce qu'il pretend mesurer ?** Toute la suite lit
+    // « une vague d'UNE entite » comme « le boss ». Ca ne veut rien dire si les
+    // vagues ordinaires pouvaient elles aussi n'avoir qu'une entite — la borne
+    // basse de `waveCountBounds` vaut 10, mais c'est un reglage, pas une loi.
+    const ordinaires = emis.filter((e) => !e.boss);
+    expect(ordinaires.length).toBeGreaterThan(5);
+    expect(ordinaires.every((e) => e.order.count > 1)).toBe(true);
+
+    const premieres = emis.slice(0, WAVES_PER_PALIER);
+    expect(premieres).toHaveLength(WAVES_PER_PALIER);
+    expect(premieres.every((e) => !e.boss)).toBe(true);
+
+    const cinquieme = emis[WAVES_PER_PALIER];
+    expect(cinquieme?.boss).toBe(true);
+    expect(cinquieme?.order.count).toBe(1);
+
+    // Un seul boss sur deux minutes, puisque personne ne l'a tue. Le §1.1 de la
+    // spec en fait une regle : la vie du boss ne voyage que parce qu'il est UN.
+    expect(emis.filter((e) => e.boss)).toHaveLength(1);
+  });
+
+  it('ne cesse PAS de lacher des vagues pendant le combat de boss', () => {
+    // ⚠️ **Ce test existe pour empecher une « correction » future.**
+    // L'intuition « le boss, seul, en duel » est tentante et fausse pour ce
+    // genre : un bullet heaven ou la horde disparait est un jeu qui s'arrete
+    // (§2 et §9 de la spec, ecart assume). Sans cette assertion, geler les
+    // vagues pendant le boss passerait tous les autres tests de ce fichier.
+    const emis = emissions(1234, 2 * MINUTE, false);
+    const indexBoss = emis.findIndex((e) => e.boss);
+
+    expect(indexBoss).toBeGreaterThanOrEqual(0);
+    const apres = emis.slice(indexBoss + 1);
+    expect(apres.length).toBeGreaterThan(5);
+    expect(apres.every((e) => !e.boss && e.order.count > 1)).toBe(true);
+  });
+
+  it('ne fait PAS avancer le palier avec le temps : sans mort de boss, il reste a zero', () => {
+    // La premiere moitie. Un palier date par tick punirait l'equipe qui peine
+    // et ennuierait celle qui domine (§2 de la spec).
+    const emis = emissions(1234, 10 * MINUTE, false);
+
+    expect(emis.length).toBeGreaterThan(50);
+    expect(emis.every((e) => e.palier === 0)).toBe(true);
+  });
+
+  it('fait avancer le palier a la MORT du boss, une fois par boss tombe', () => {
+    // La seconde moitie. Sans elle, un palier fige a zero passerait le test
+    // precedent sans rien prouver du tout.
+    const emis = emissions(1234, 10 * MINUTE, true);
+    const bosses = emis.filter((e) => e.boss);
+
+    expect(bosses.length).toBeGreaterThan(3);
+    // Le boss du palier `k` tombe alors que le palier vaut encore `k` : les
+    // paliers observes sur les boss sont donc 0, 1, 2, ... sans trou.
+    expect(bosses.map((e) => e.palier)).toEqual(bosses.map((_, i) => i));
+
+    // Et chaque palier comporte bien `WAVES_PER_PALIER` vagues ordinaires
+    // avant son boss, puisque l'equipe le tue a l'apparition.
+    const ordinairesParPalier = new Map<number, number>();
+    for (const e of emis.filter((x) => !x.boss)) {
+      ordinairesParPalier.set(e.palier, (ordinairesParPalier.get(e.palier) ?? 0) + 1);
+    }
+    for (const [palier, n] of ordinairesParPalier) {
+      if (palier < bosses.length - 1) {
+        expect(n).toBe(WAVES_PER_PALIER);
+      }
+    }
+  });
+
+  it('redemande le boss si la horde etait pleine quand son ordre est tombe', () => {
+    // ⚠️ **Sans `bossMissing`, le verrou ne se relacherait jamais.** Le
+    // directeur refuse un second boss tant que le premier n'est pas resolu ; un
+    // boss tronque a l'apparition (`Horde.spawn` plafonne a `capacity`) n'est ni
+    // vivant ni mort, et le palier resterait fige pour le reste de la run.
+    const d = new WaveDirector(1234);
+    let premierBoss: WaveOrder | null = null;
+    let secondBoss: WaveOrder | null = null;
+    for (let tick = 0; tick < 2 * MINUTE; tick++) {
+      const order = d.due(tick, [3000], [3000]);
+      if (!order || d.bossWaveId !== order.waveId) {
+        continue;
+      }
+      if (premierBoss === null) {
+        premierBoss = order;
+        d.bossMissing();
+      } else {
+        secondBoss = order;
+        break;
+      }
+    }
+
+    expect(premierBoss).not.toBeNull();
+    expect(secondBoss).not.toBeNull();
+    expect(secondBoss?.waveId).not.toBe(premierBoss?.waveId);
+    // ⚠️ Et le palier n'a PAS avance : un boss jamais apparu n'est pas un boss
+    // vaincu. C'est ce qui distingue `bossMissing` de `bossDefeated` — sans
+    // cette ligne, les deux methodes seraient interchangeables.
+    expect(d.palier).toBe(0);
+  });
+
+  it('grossit les vagues avec le palier, et pas seulement en debut de run', () => {
+    let debordements = 0;
+    let ordinaires = 0;
+
+    for (let seed = 1; seed <= 20; seed++) {
+      for (const e of emissions(seed, 10 * MINUTE, true)) {
+        if (e.boss) {
+          continue;
+        }
+        ordinaires++;
+        const { min, max } = waveCountBounds(e.order.waveId);
+        const echelle = waveCountScale(e.palier);
+        // La borne, mise a l'echelle du palier : c'est la seule que l'ordre
+        // doive respecter.
+        expect(e.order.count).toBeGreaterThanOrEqual(Math.round(min * echelle));
+        expect(e.order.count).toBeLessThanOrEqual(Math.round(max * echelle));
+
+        // ⚠️ **La moitie qui compte.** Les deux assertions ci-dessus passent
+        // telles quelles avec une echelle constamment egale a 1 : elles
+        // reduisent alors aux bornes brutes. Il faut donc voir des ordres qui
+        // DEPASSENT la borne brute de leur numero de vague, ce qu'aucune vague
+        // du palier 0 ne peut faire.
+        if (e.palier > 0 && e.order.count > max) {
+          debordements++;
+        }
+      }
+    }
+
+    expect(ordinaires).toBeGreaterThan(500);
+    expect(debordements).toBeGreaterThan(0);
+  });
 });

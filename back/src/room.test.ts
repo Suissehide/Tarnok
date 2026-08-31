@@ -13,6 +13,7 @@ import {
   REACTION_RADIUS,
   SYNERGY_MAX,
   TICK_HZ,
+  WAVES_PER_PALIER,
   WEAPON_SLOTS,
   XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
@@ -21,6 +22,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { entityIdOf } from '@shared/horde';
+import { hpScale } from '@shared/paliers';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -1787,9 +1789,28 @@ describe('la run est jouable (tache 14)', () => {
    * perdre la run avant le niveau 2 dans 3 essais sur 20 : ce test serait
    * devenu intermittent a 15 %. C'est ce qui a impose `HEAVY_FIRST_WAVE`
    * (`wave-director.ts`).
+   *
+   * ⚠️⚠️ **GRAINE FIXEE A L'ETAPE 6a, ET CE N'EST PAS UN CONFORT.** La
+   * structure en paliers coute une vague ordinaire par palier (la cinquieme
+   * devient le boss, `count: 1`) et, des le palier 1, `hpScale(1) = 1,12`
+   * fait passer la pietaille legere de 5 a 5,6 PV — **au-dessus des degats de
+   * la dague**, donc deux coups au lieu d'un. Remesure du meme releve, 40
+   * graines, budget de 100 s :
+   *
+   * | | Mediane | Maximum | Echecs |
+   * | --- | --- | --- | --- |
+   * | avant les paliers | 40,4 s | 55,1 s | **0/40** |
+   * | avec les paliers | 40,9 s | 64,2 s | **1/40** (graine 10 : run perdue au palier 1) |
+   *
+   * Avec `new Room()` (graine tiree au hasard), ce test devenait donc
+   * intermittent a 2,5 % — *« un test intermittent est pire qu'un test
+   * absent »*. La graine 5 est retenue parce qu'elle passe par le palier 1,
+   * donc par la pietaille a 5,6 PV : le cas DUR, a 53,9 s pour un budget de
+   * 100 s. **Le 1/40 n'est pas resolu, il est mesure** — c'est la porte du §7
+   * de la spec (tache 3) qui doit trancher `PALIER_HP_SCALE`.
    */
   it('un joueur passif atteint le niveau 2 via le pipeline reel (vagues, arme de base, orbes)', () => {
-    const room = new Room();
+    const room = new Room(5);
     room.join(1);
 
     let levelUps: { tick: number; level: number }[] = [];
@@ -2660,4 +2681,249 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
     // recalculer.
     expect(reactions[reactions.length - 1]?.synergyCharge).toBe(true);
   });
+});
+
+describe('le palier structure la run (etape 6a, tache 2)', () => {
+  /**
+   * Retire de la horde tout sauf les identites `garder`.
+   *
+   * ⚠️ **Le decor doit produire ce qu'il pretend mesurer.** Ces tests mesurent
+   * le PALIER, pas la capacite d'un joueur solo a survivre une minute sous
+   * quatre vagues : sans ce nettoyage, ils finiraient par mesurer un `RUN_OVER`
+   * et deviendraient intermittents au premier reglage de vague. `Horde.kill`
+   * court-circuite volontairement le salon — ces morts-la ne doivent ni
+   * compter, ni laisser d'orbe, ni faire monter de niveau.
+   */
+  function viderSauf(room: Room, garder: readonly (number | null)[]): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      const id = room.horde.entityIdAt(i);
+      if (!garder.includes(id)) {
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  /** PV poses a l'apparition sur la premiere entite d'un ordre, et ceux de son archetype. */
+  function pvALApparition(room: Room, order: WaveOrder): { poses: number; archetype: number } {
+    const slot = room.horde.slotOf(entityIdOf(order.waveId, 0));
+    expect(slot).toBeGreaterThanOrEqual(0);
+    return { poses: room.horde.hp[slot] ?? 0, archetype: ARCHETYPES[order.archetype]?.hp ?? 0 };
+  }
+
+  it('le boss verrouille le palier, les vagues continuent, et sa MORT ouvre le palier suivant', () => {
+    const room = new Room(4242);
+    room.join(1);
+
+    // --- 1. Jusqu'a l'ordre de boss, en relevant les PV du palier 0.
+    let pvPalier0: { poses: number; archetype: number } | null = null;
+    for (let t = 0; t < 90 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(DT);
+      for (const o of room.drainWaveOrders()) {
+        pvPalier0 ??= pvALApparition(room, o);
+      }
+      viderSauf(room, [room.bossEntityId]);
+    }
+
+    expect(room.bossEntityId).not.toBeNull();
+    expect(room.palier).toBe(0);
+    // Au palier 0, l'echelle vaut exactement 1 : les PV sont ceux de
+    // l'archetype, au flottant pres.
+    expect(pvPalier0?.poses).toBe(pvPalier0?.archetype);
+
+    const bossId = room.bossEntityId;
+    const ancre = positionOf(room, 1);
+
+    /**
+     * ⚠️ **Le boss doit etre TENU A DISTANCE tant qu'on ne veut pas le tuer**,
+     * sinon il marche jusqu'au joueur — c'est son comportement, celui de la
+     * pietaille (§4 de la spec) — et le tue en une vingtaine de secondes : la
+     * run se terminait et `step` revenait aussitot sans plus rien emettre.
+     * Mesure faite avant de corriger : joueur a 0 pv au tick 1579, `RUN_OVER`
+     * en file. Un decor qui ne peut pas produire ce qu'il mesure.
+     */
+    function eloignerLeBoss(): void {
+      const slot = room.horde.slotOf(bossId ?? -1);
+      if (slot >= 0) {
+        room.horde.x[slot] = Math.min(ancre.x + 2000, MAP_SIZE - 100);
+        room.horde.y[slot] = ancre.y;
+      }
+    }
+
+    // --- 2. Le boss vit : les vagues continuent, et le temps ne fait pas
+    // avancer le palier.
+    const comptesPendantLeBoss: number[] = [];
+    for (let t = 0; t < 20 * TICK_HZ; t++) {
+      eloignerLeBoss();
+      room.step(DT);
+      for (const o of room.drainWaveOrders()) {
+        comptesPendantLeBoss.push(o.count);
+      }
+      viderSauf(room, [bossId]);
+    }
+
+    // ⚠️ **L'assertion qui empeche une « correction » future.** L'intuition
+    // « le boss, seul, en duel » est fausse pour ce genre : un bullet heaven ou
+    // la horde disparait est un jeu qui s'arrete (§2 de la spec).
+    expect(comptesPendantLeBoss.length).toBeGreaterThan(0);
+    expect(comptesPendantLeBoss.every((c) => c > 1)).toBe(true);
+    // Vingt secondes de plus, et toujours le palier 0 : il se termine a une
+    // MORT, pas a un tick.
+    expect(room.palier).toBe(0);
+    expect(room.bossEntityId).toBe(bossId);
+
+    // --- 3. Une mort ORDINAIRE ne termine pas le palier.
+    //
+    // ⚠️ **Sans cette moitie, « le palier se termine a la mort du BOSS » se lit
+    // aussi bien comme « a la premiere mort venue ».** Le lot de morts du tick
+    // est unique et melange tout le monde : c'est la comparaison d'identite,
+    // et elle seule, qui distingue le boss du reste.
+    const figurant = spawnMonsterAt(room, 8000, ancre.x + 100, ancre.y);
+    let figurantMort = false;
+    for (let t = 0; t < 20 * TICK_HZ && !figurantMort; t++) {
+      eloignerLeBoss();
+      viderSauf(room, [bossId, figurant]);
+      aimAtNearestMonster(room, 1, 5000 + t);
+      room.step(DT);
+      for (const lot of room.drainDeaths()) {
+        figurantMort ||= lot.ids.includes(figurant);
+      }
+    }
+
+    expect(figurantMort).toBe(true);
+    expect(room.palier).toBe(0);
+    expect(room.bossEntityId).toBe(bossId);
+
+    // --- 4. Le boss meurt, par le chemin de mort normal du salon.
+    let lots: { tick: number; ids: number[] }[] = [];
+    for (let t = 0; t < 30 * TICK_HZ && room.palier === 0; t++) {
+      const slot = room.horde.slotOf(bossId ?? -1);
+      if (slot >= 0) {
+        room.horde.x[slot] = ancre.x + 100;
+        room.horde.y[slot] = ancre.y;
+      }
+      viderSauf(room, [bossId]);
+      aimAtNearestMonster(room, 1, 10_000 + t);
+      room.step(DT);
+      lots = lots.concat(room.drainDeaths());
+    }
+
+    expect(room.palier).toBe(1);
+    expect(room.bossEntityId).toBeNull();
+    // Le boss est bien passe par le lot UNIQUE de morts du tick, celui de
+    // l'etape 3 — pas par un second chemin invente pour lui.
+    expect(lots.some((l) => l.ids.includes(bossId ?? -1))).toBe(true);
+
+    // --- 5. Au palier 1, les PV d'apparition suivent `hpScale`.
+    //
+    // Deux vagues, pas une : la premiere donne les PV a l'apparition, la
+    // seconde sert de temoin — voir l'assertion finale.
+    let pvPalier1: { poses: number; archetype: number } | null = null;
+    let temoin = -1;
+    let vaguesSuivantes = 0;
+    for (let t = 0; t < 60 * TICK_HZ && vaguesSuivantes === 0; t++) {
+      room.step(DT);
+      for (const o of room.drainWaveOrders()) {
+        if (o.count <= 1) {
+          continue;
+        }
+        if (pvPalier1 === null) {
+          pvPalier1 = pvALApparition(room, o);
+          temoin = entityIdOf(o.waveId, 0);
+        } else {
+          vaguesSuivantes++;
+        }
+      }
+      viderSauf(room, [room.bossEntityId, temoin]);
+    }
+
+    expect(pvPalier1).not.toBeNull();
+    expect(pvPalier1?.poses).toBeCloseTo((pvPalier1?.archetype ?? 0) * hpScale(1), 4);
+    // ⚠️ **La moitie qui compte.** L'assertion ci-dessus passe telle quelle
+    // avec une echelle constamment egale a 1 — elle se reduit alors aux PV de
+    // l'archetype, exactement comme au palier 0. Il faut donc dire aussi que
+    // les PV ONT change.
+    expect(pvPalier1?.poses).toBeGreaterThan(pvPalier1?.archetype ?? 0);
+
+    // ⚠️ **L'echelle s'applique aux entites NEES a ce tick, pas a la horde
+    // entiere.** Un `#scalePalierHp(0)` la reappliquerait a tout le monde a
+    // chaque vague : un monstre deja la se renforcerait de 12 % toutes les six
+    // secondes, indefiniment. Rien d'autre dans ce fichier ne le verrait.
+    expect(vaguesSuivantes).toBe(1);
+    const slotTemoin = room.horde.slotOf(temoin);
+    expect(slotTemoin).toBeGreaterThanOrEqual(0);
+    expect(room.horde.hp[slotTemoin]).toBeCloseTo(pvPalier1?.poses ?? 0, 4);
+  }, 30_000);
+
+  it("un boss qui n'a pas pu apparaitre est redemande, et personne ne le croit vivant", () => {
+    // ⚠️ **Le seul cas ou le verrou du palier pourrait ne jamais se relacher.**
+    // `Horde.spawn` tronque a `capacity` : une horde pleine au moment ou l'ordre
+    // de boss tombe ne fait naitre personne, et le boss designe par le verrou
+    // n'existe pas — donc il ne mourra jamais, et le palier serait fige pour le
+    // reste de la run.
+    const room = new Room(4242);
+    room.join(1);
+
+    let ordinaires = 0;
+    let ordresBoss = 0;
+    let rempli = false;
+    for (let t = 0; t < 60 * TICK_HZ && ordresBoss === 0; t++) {
+      // La horde n'est remplie qu'une fois les `WAVES_PER_PALIER` vagues
+      // ordinaires passees, donc juste avant l'echeance du boss : la remplir
+      // des le debut ferait tourner soixante secondes de simulation a 4 000
+      // entites pour rien. Le declencheur est DERIVE du compte de vagues, pas
+      // d'un numero de tick recopie.
+      if (!rempli && ordinaires >= WAVES_PER_PALIER) {
+        room.horde.spawn({
+          waveId: 9000,
+          spawnTick: room.tick,
+          seed: 7,
+          archetype: 0,
+          formation: FORMATION.CLUSTER,
+          anchorX: MAP_SIZE - 200,
+          anchorY: MAP_SIZE - 200,
+          count: MAX_ENTITIES,
+        });
+        expect(room.horde.count).toBe(MAX_ENTITIES);
+        rempli = true;
+      }
+      room.step(DT);
+      for (const o of room.drainWaveOrders()) {
+        if (o.count === 1) {
+          ordresBoss++;
+        } else {
+          ordinaires++;
+        }
+      }
+      if (!rempli) {
+        // Meme raison que dans le test precedent, et mesuree de la meme
+        // facon : un joueur passif qui ne tire pas meurt sous les quatre
+        // premieres vagues avant le tick 900, `step` revient alors aussitot,
+        // et l'ordre de boss ne tombe jamais.
+        viderSauf(room, []);
+      }
+    }
+
+    expect(rempli).toBe(true);
+    expect(ordresBoss).toBe(1);
+    // Personne ne croit le boss vivant : le salon n'enregistre une identite que
+    // si l'entite est reellement nee.
+    expect(room.bossEntityId).toBeNull();
+
+    // La horde se vide : le boss doit revenir a la prochaine echeance.
+    viderSauf(room, []);
+    for (let t = 0; t < 30 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(DT);
+      room.drainWaveOrders();
+    }
+
+    expect(room.bossEntityId).not.toBeNull();
+    // ⚠️ Et le palier n'a PAS avance : un boss jamais apparu n'est pas un boss
+    // vaincu. Sans cette ligne, `bossMissing` et `bossDefeated` seraient
+    // interchangeables.
+    expect(room.palier).toBe(0);
+  }, 30_000);
 });

@@ -15,8 +15,9 @@ import {
   XP_PER_ORB,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
-import { Horde } from '@shared/horde';
+import { entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
+import { hpScale } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, OUTCOME, type PlayerSnapshot } from '@shared/protocol';
@@ -316,6 +317,16 @@ export class Room {
   /** Vrai une fois que `RUN_OVER` a ete mis en file — la simulation s'arrete alors pour de bon. */
   #runOver = false;
 
+  /**
+   * Identite du boss du palier en cours, `null` tant qu'aucun n'est en jeu.
+   *
+   * ⚠️ **Une identite, pas un creneau.** Les creneaux se compactent a chaque
+   * mort (`Horde.#removeAt`) : un indice retenu d'un tick a l'autre designerait
+   * un autre monstre des la premiere mort. `entityIdOf(waveId, 0)` est stable
+   * pour toute la vie de l'entite — c'est deja ce dont depend `DEATHS`.
+   */
+  #bossEntityId: number | null = null;
+
   constructor(mapSeed: number = (Math.random() * 0xffff_ffff) >>> 0) {
     this.mapSeed = mapSeed;
     // ⚠️ Initialise ICI, pas a la declaration : depuis que `mapSeed` est
@@ -502,6 +513,29 @@ export class Room {
 
   get playerCount(): number {
     return this.#players.size;
+  }
+
+  /**
+   * Le palier courant, `0` pour le premier — l'argument `k` des formules de
+   * `shared/paliers.ts`.
+   *
+   * ⚠️ **Le palier est une donnee du SALON, et c'est pour ca que les formules
+   * sont pures et sans etat.** Il n'avance qu'a la mort du boss, jamais a un
+   * tick (§2 de la spec).
+   */
+  get palier(): number {
+    return this.#director.palier;
+  }
+
+  /**
+   * Identite du boss vivant, `null` quand il n'y en a pas.
+   *
+   * Exposee pour les tests : c'est elle que `Room.step` compare au lot de
+   * morts du tick, et sans elle un test devrait deviner quel ordre de vague
+   * etait le boss a partir de son seul `count`.
+   */
+  get bossEntityId(): number | null {
+    return this.#bossEntityId;
   }
 
   get metrics(): Readonly<RoomMetrics> {
@@ -694,6 +728,9 @@ export class Room {
 
     const order = this.#director.due(this.#tick, xs, ys);
     if (order) {
+      // ⚠️ **Lu AVANT `spawn`, et avant tout le reste** : `bossWaveId` designe
+      // le boss que `due` vient eventuellement de demander.
+      const estBoss = this.#director.bossWaveId === order.waveId;
       const before = this.horde.count;
       // `this.#fields[0]` : les quatre champs partagent le meme masque
       // d'obstacles (`applyObstacles` au constructeur) — n'importe lequel
@@ -702,6 +739,17 @@ export class Room {
       // Rend visible une troncature silencieuse : voir `RoomMetrics.truncatedSpawns`.
       if (this.horde.count - before < order.count) {
         this.#metrics.truncatedSpawns++;
+      }
+      this.#scalePalierHp(before);
+      if (estBoss) {
+        if (this.horde.count > before) {
+          this.#bossEntityId = entityIdOf(order.waveId, 0);
+        } else {
+          // La horde etait pleine : le boss n'existe pas. Sans ce chemin, le
+          // verrou du directeur ne se relacherait jamais et le palier serait
+          // fige pour le reste de la run.
+          this.#director.bossMissing();
+        }
       }
       this.#pendingOrders.push(order);
     }
@@ -809,6 +857,19 @@ export class Room {
     if (allDead.length > 0) {
       this.#totalKills += allDead.length;
       this.#pendingDeaths.push({ tick: this.#tick, ids: allDead });
+      // ⚠️ **LE palier se termine ICI, et nulle part ailleurs.** Le salon sait
+      // deja quand une entite meurt : ce lot est le SEUL du tick, brulures et
+      // reactions comprises (voir le commentaire ci-dessus). Un second chemin
+      // de mort pour le boss casserait le rejeu de l'etape 3 exactement comme
+      // deux lots vises au meme tick le casseraient.
+      //
+      // ⚠️ **Et c'est une MORT, pas un tick.** Rien dans `step` ne date la fin
+      // d'un palier : une equipe qui peine reste plus longtemps, une equipe qui
+      // domine avance (§2 de la spec).
+      if (this.#bossEntityId !== null && allDead.includes(this.#bossEntityId)) {
+        this.#bossEntityId = null;
+        this.#director.bossDefeated();
+      }
     }
 
     resolveContact([...this.#players.values()], this.horde);
@@ -844,6 +905,54 @@ export class Room {
     const drained = this.#metrics;
     this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
     return drained;
+  }
+
+  /**
+   * Applique l'echelle de PV du palier aux entites nees a ce tick, c'est-a-dire
+   * a tous les creneaux a partir de `depuis`.
+   *
+   * ⚠️ **LA QUESTION OUVERTE DU PLAN, et voici la reponse : les PV mis a
+   * l'echelle NE VOYAGENT PAS, et n'ont pas a voyager.** Le plan (tache 2,
+   * etape 4) craint que le serveur et le client ne calculent pas les memes PV
+   * de depart, *« et le client tue des monstres que le serveur garde »*. Ce
+   * risque n'existe pas : **le client ne tue rien, et ne lit jamais
+   * `Horde.hp`** — il apprend qui meurt par `DEATHS`, depuis l'etape 3. La
+   * documentation de `Horde.hp` le dit deja mot pour mot : *« Seul le serveur
+   * la soustrait [...] Rien cote client ne la lit. »*
+   *
+   * C'est donc une **quatrieme voie**, que le plan ne listait pas : ni un
+   * champ de plus dans l'ordre de vague, ni un palier derive du `waveId`, ni
+   * des PV resolus sur le fil — mais **une grandeur qui n'a jamais eu besoin
+   * de traverser**. Les trois voies du plan ajoutaient toutes quelque chose au
+   * contrat de replication pour une valeur que personne ne lit de l'autre cote.
+   *
+   * ⚠️ **Et la deuxieme voie du plan est en plus IMPOSSIBLE.** « Le palier se
+   * derive du `waveId` » suppose un nombre fixe de vagues par palier ; le §2 de
+   * la spec l'interdit — le palier se termine a la mort du boss et les vagues
+   * ne s'arretent pas pendant le combat, donc deux runs a la meme vague 12
+   * peuvent etre a des paliers differents.
+   *
+   * ⚠️ **Ce qui voyage, en revanche, c'est le COMPTE** — et il voyage deja
+   * resolu, `waveCountScale` etant applique dans `WaveDirector.due` avant que
+   * l'ordre ne parte. Les deux grandeurs du §3 de la spec sont donc traitees
+   * differemment, et pour la meme raison : ce que le client lit voyage resolu,
+   * ce qu'il ne lit pas reste ici.
+   *
+   * **Mesure**, pas supposition : `shared/horde.replication.test.ts` porte un
+   * scenario qui donne au serveur des PV mis a l'echelle du palier 5 et au
+   * client les PV bruts de l'archetype, puis compare — 0,000 px de derive,
+   * zero mesappariement d'identite.
+   *
+   * ⚠️ **Ecrit sans condition** (pas de `if (echelle === 1)`) : au palier 0
+   * l'echelle vaut exactement 1 et la multiplication est neutre. Un raccourci
+   * ici serait une seconde garde couvrant la premiere, et ferait de la boucle
+   * un chemin non teste tant qu'aucun test n'atteint le palier 1.
+   */
+  #scalePalierHp(depuis: number): void {
+    const echelle = hpScale(this.#director.palier);
+    for (let i = depuis; i < this.horde.count; i++) {
+      this.horde.hp[i] = (this.horde.hp[i] ?? 0) * echelle;
+    }
   }
 
   /**

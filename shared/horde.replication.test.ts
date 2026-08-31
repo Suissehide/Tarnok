@@ -13,6 +13,7 @@ import { ELEMENT, elementOf } from './elements';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
 import { HordeHistory } from './horde-history';
+import { hpScale } from './paliers';
 import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
@@ -1944,5 +1945,162 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
     // La degradation est ASSUMEE, mais jamais silencieuse : elle se compte.
     expect(lateZones).toBeGreaterThan(0);
     expect(result.maxDrift).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * ⚠️ **LA QUESTION OUVERTE DE LA TACHE 2, MESUREE PLUTOT QUE SUPPOSEE.**
+ *
+ * Le plan de l'etape 6a la nomme dans son auto-relecture : les PV de depart se
+ * derivent de l'archetype, qui voyage dans l'ordre de vague de 19 octets. Si le
+ * serveur multiplie par `hpScale(k)` et que le client ne connait pas `k`, *« les
+ * deux cotes n'ont pas les memes PV — et le client tue des monstres que le
+ * serveur garde »*.
+ *
+ * **La reponse tenue ici : le client ne tue rien.** `Horde.hp` n'est lu que par
+ * le serveur (sa propre documentation le dit depuis l'etape 5a) ; le client
+ * apprend qui meurt par `DEATHS`, depuis l'etape 3. Une divergence de PV n'est
+ * donc pas une divergence de simulation — c'est une donnee que l'un des deux
+ * cotes n'utilise pas.
+ *
+ * Ce bloc le MESURE, avec le meme juge que le ralentissement du Givre a
+ * l'etape 5a : les deux moities y sont, la seconde etant celle qui empeche la
+ * premiere de passer pour rien.
+ */
+describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
+  /** Palier de mesure. 5, comme la colonne de la table du §3 de la spec. */
+  const PALIER = 5;
+  /** Un archetype de pietaille LOURDE : la legere mourrait du premier coup, quelle que soit l'echelle. */
+  const ARCHETYPE_LOURD = 1;
+  const ENTITES = 120;
+  /** Pas de simulation entre deux salves. */
+  const PAS_PAR_SALVE = 25;
+  const SALVES = 8;
+
+  /**
+   * Un scenario complet : cinq participants, le PREMIER etant le serveur.
+   *
+   * Seul le serveur met ses PV a l'echelle, seul il les soustrait, et seul il
+   * decide qui meurt — les quatre clients appliquent le lot d'identites qu'il
+   * leur envoie, exactement comme `GameClient` le fait de `DEATHS`.
+   */
+  function scenario(echelleServeur: number): {
+    stats: DriftStats;
+    premiereSalveMortelle: number;
+    morts: number;
+  } {
+    const mapSeed = 0x6a11_e42b;
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
+    const order: WaveOrder = {
+      waveId: 1,
+      spawnTick: 0,
+      seed: 0x51ee_d006,
+      archetype: ARCHETYPE_LOURD,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITES,
+    };
+    for (const p of parts) {
+      p.horde.spawn(order);
+    }
+
+    const serveur = parts[0];
+    if (!serveur) {
+      throw new Error('aucun serveur');
+    }
+    // ⚠️ Le serveur, et lui seul. Les clients gardent les PV bruts de
+    // l'archetype — c'est tout le sujet de ce bloc.
+    for (let i = 0; i < serveur.horde.count; i++) {
+      serveur.horde.hp[i] = (serveur.horde.hp[i] ?? 0) * echelleServeur;
+    }
+
+    // Degats par salve : assez pour que la pietaille lourde tombe en quelques
+    // salves a l'echelle 1, pas assez pour qu'elle tombe aussi vite a l'echelle
+    // du palier 5. C'est ce qui rend les deux scenarios distinguables.
+    const degats = archetypeOf(ARCHETYPE_LOURD).hp / 3;
+
+    const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
+    let premiereSalveMortelle = -1;
+    let morts = 0;
+
+    for (let salve = 0; salve < SALVES; salve++) {
+      advance(parts, salve * PAS_PAR_SALVE, (salve + 1) * PAS_PAR_SALVE, stats);
+
+      const ids: number[] = [];
+      for (let i = 0; i < serveur.horde.count; i++) {
+        const reste = (serveur.horde.hp[i] ?? 0) - degats;
+        serveur.horde.hp[i] = reste;
+        if (reste <= 0) {
+          ids.push(serveur.horde.entityIdAt(i));
+        }
+      }
+      if (ids.length > 0) {
+        if (premiereSalveMortelle < 0) {
+          premiereSalveMortelle = salve;
+        }
+        morts += ids.length;
+        // Le serveur applique SA decision, puis la diffuse. Les clients ne
+        // consultent jamais leurs propres PV.
+        for (const p of parts) {
+          p.horde.kill(ids);
+        }
+      }
+    }
+
+    return { stats, premiereSalveMortelle, morts };
+  }
+
+  /**
+   * Memoise : les deux tests ci-dessous lisent les MEMES deux scenarios, et les
+   * rejouer coute cinq simulations completes a chaque fois.
+   */
+  const cache = new Map<number, ReturnType<typeof scenario>>();
+  function scenarioMemo(echelle: number): ReturnType<typeof scenario> {
+    const deja = cache.get(echelle);
+    if (deja) {
+      return deja;
+    }
+    const frais = scenario(echelle);
+    cache.set(echelle, frais);
+    return frais;
+  }
+
+  it('mesure la derive quand le serveur seul applique hpScale : elle est nulle', () => {
+    const { stats, morts } = scenarioMemo(hpScale(PALIER));
+
+    process.stdout.write(
+      `etape 6a (hpScale(${PALIER}) cote serveur seul) : derive maximale ` +
+        `${stats.maxDrift.toFixed(3)} px, ${morts} morts diffusees\n`,
+    );
+
+    // ⚠️ Le decor doit produire ce qu'il mesure : sans mort, aucune compaction
+    // de creneaux, et la mesure ne dirait rien du cas qui inquiete le plan.
+    expect(morts).toBeGreaterThan(0);
+    expect(stats.identityMismatches).toBe(0);
+    // Exactement zero, pas « sous le seuil » : les cinq participants executent
+    // le meme code sur les memes entrees, et `hp` n'entre dans aucune d'elles.
+    expect(stats.maxDrift).toBe(0);
+  });
+
+  it('le serveur garde bien ses monstres plus longtemps — sans quoi la mesure ci-dessus ne prouverait rien', () => {
+    // ⚠️ **La seconde moitie.** Le test precedent passerait a l'identique avec
+    // `hpScale` rendant 1 partout : la derive serait nulle parce que RIEN
+    // n'aurait change. Il faut donc montrer que l'echelle a bel et bien modifie
+    // ce que le serveur decide — c'est exactement le desaccord que le plan
+    // craignait, mesure ici, et qui reste sans effet observable.
+    const sans = scenarioMemo(1);
+    const avec = scenarioMemo(hpScale(PALIER));
+
+    process.stdout.write(
+      `etape 6a : premiere salve mortelle sans echelle = ${sans.premiereSalveMortelle}, ` +
+        `au palier ${PALIER} = ${avec.premiereSalveMortelle}\n`,
+    );
+
+    expect(sans.premiereSalveMortelle).toBeGreaterThanOrEqual(0);
+    expect(avec.premiereSalveMortelle).toBeGreaterThan(sans.premiereSalveMortelle);
+    // Et la derive reste nulle des DEUX cotes de la comparaison.
+    expect(sans.stats.maxDrift).toBe(0);
+    expect(avec.stats.maxDrift).toBe(0);
   });
 });
