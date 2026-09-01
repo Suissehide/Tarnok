@@ -263,56 +263,89 @@ ouverte, tâche 12.
 
 ---
 
-## Tâche 5 bis : l'attaque téléguidée du boss
+## Tâche 5 bis : la charge du troll
 
-**Fichiers :** modifier `shared/protocol.ts`, `back/src/combat.ts`, `back/src/room.ts`,
-`front/src/render/`, leurs tests
+**Fichiers :** modifier `shared/protocol.ts`, `shared/paliers.ts` ou un nouveau `shared/boss.ts`,
+`back/src/combat.ts`, `back/src/room.ts`, `front/src/render/`, `tools/build_monster_atlas.py`, leurs tests
 
-> Décision de l'auteur : *« le boss peut faire des attaques sur des zones, un cercle légèrement
-> rouge avec un petit cercle qui grossit jusqu'à la taille finale au moment de l'attaque. »*
+> *« Le boss peut faire des attaques sur des zones, un cercle légèrement rouge avec un petit cercle
+> qui grossit jusqu'à la taille finale au moment de l'attaque. »*
+>
+> Puis, précisé : *« Le troll charge une attaque linéaire, donc un long rectangle, et son animation
+> le fait tourner, donc il spin rapidement à travers ce rectangle en avançant. »*
 
-⚠️ **Ceci révoque le §4 de la spec**, qui disait : *« son comportement reste celui de la piétaille,
-et c'est délibéré — un boss avec des phases, des attaques téléguidées et des patterns est un autre
-jeu, et surtout un autre budget »*. La spec laissait pourtant la question ouverte au §8 : *« un boss
-qui n'a que des points de vie se sent-il comme un boss ? »*. **La réponse est non**, et une attaque
-téléguidée est très loin de « des phases et des patterns » — c'est **une** attaque avec un temps de
-chargement.
+⚠️ **Ceci révoque le §4 de la spec**, qui disait que le comportement du boss reste celui de la
+piétaille — *« un boss avec des phases, des attaques téléguidées et des patterns est un autre jeu »*.
+Le §8 du même document posait pourtant la question : *« un boss qui n'a que des points de vie
+se sent-il comme un boss ? »*. **La réponse est non.**
 
-### Ce qui la rend simple : elle est déjà écrite quatre fois dans ce dépôt
+### Ce n'est pas un télégraphe, c'est un DÉPLACEMENT
 
-| Ce qu'il faut | Ce qui existe déjà |
-| --- | --- |
-| annoncer à la création, dériver ensuite | `ZONE` depuis l'étape 5a |
-| dater par tick, jamais à la réception | le gel de niveau depuis l'étape 3 |
-| un cercle qui grossit | `orbFlightFraction`, `reactionFlashScale` |
-| des dégâts arbitrés serveur | `resolveContact` |
+La première formulation parlait d'une zone qui se remplit sur place. La précision de l'auteur change
+la nature de la chose : **le boss traverse le rectangle en tournant sur lui-même**. Sa position est
+donc pilotée par l'attaque, pas par le champ de flux — pendant toute la charge.
 
-- [ ] **Étape 1 : le message.** Centre, rayon final, **tick d'impact**. Un message à l'annonce, plus
-  rien ensuite.
+⚠️ **C'est ce qui la rend délicate, et c'est le même risque que le ralentissement du Givre à l'étape
+5a** : un effet qui touche le **déplacement** touche le contrat de réplication à 0,000 px.
 
-  ⚠️ **Le tick d'impact voyage, la progression se dérive.** Les deux côtés calculent
-  `(tick − bornTick) / (impactTick − bornTick)` sur des ticks identiques : **zéro octet après
-  l'annonce, et le cercle grossit au même rythme partout.**
+**La parade est celle qui a déjà servi trois fois :** le serveur annonce **une fois** — origine,
+direction, longueur, tick de départ, tick d'impact — et **les deux côtés dérivent la position le
+long du couloir** à partir des ticks. Zéro octet après l'annonce, même position partout, par
+construction.
 
-- [ ] **Étape 2 : les dégâts au tick d'impact, arbitrés serveur.** Rien d'autre ne fait mal — le
-  télégraphe est **cosmétique jusqu'à l'impact**, et c'est ce qui le rend sûr.
+### Les trois temps, et le pack les a déjà
 
-  ⚠️ **Le joueur doit pouvoir sortir du cercle.** C'est tout l'intérêt : le temps de chargement est
-  la fenêtre de réaction. S'il est trop court, l'attaque est une taxe ; trop long, elle est
+`assets/tinyswords/Monsters/Troll/` contient `Troll_Windup.png`, `Troll_Attack.png` et
+`Troll_Recovery.png`. **L'art de l'animation existe déjà** — c'est le clip d'attaque du manifeste
+qui sert, plus deux nouveaux.
+
+| Temps | Ce qui se passe | Ce qui se voit |
+| --- | --- | --- |
+| **Chargement** | le boss est immobile, le couloir est annoncé | un **long rectangle** légèrement rouge, dont l'opacité monte |
+| **Charge** | le boss traverse le couloir en tournant | il **avance vite en spinnant** ; le rectangle est plein |
+| **Récupération** | il s'arrête, redevient vulnérable au sens du rythme | l'animation de récupération |
+
+- [ ] **Étape 1 : le message.** Origine, direction, longueur, largeur, **tick de départ et tick de
+  fin de charge**. Un message à l'annonce, plus rien ensuite.
+
+  ⚠️ **Les ticks voyagent, la progression se dérive.** Les deux côtés calculent la même fraction sur
+  les mêmes ticks. C'est ce que font déjà `ZONE`, le gel de niveau, le vol des orbes et la réaction.
+
+- [ ] **Étape 2 : le couloir vise, mais ne suit pas.** La direction est figée **au chargement** —
+  c'est ce qui rend l'esquive possible. Un couloir qui suivrait le joueur serait une taxe, pas une
+  attaque.
+
+- [ ] **Étape 3 : la position du boss pendant la charge se DÉRIVE.** Elle ne vient plus du champ de
+  flux. **Mesurer la dérive** avec `shared/horde.replication.test.ts` — c'est le juge, et il a déjà
+  tranché un cas identique.
+
+  ⚠️ **Et le boss est dans la horde** : `Horde.step` avance toutes les entités. Il faut donc que la
+  charge **remplace** son déplacement, pas qu'elle s'y ajoute. Un boss qui subirait les deux avancerait
+  deux fois — et la séparation le pousserait pendant qu'il charge.
+
+- [ ] **Étape 4 : les dégâts, arbitrés serveur, pendant la traversée.** Un joueur touché par le corps
+  en mouvement prend les dégâts.
+
+  ⚠️ **Le télégraphe est cosmétique jusqu'au départ de la charge**, et c'est ce qui le rend sûr :
+  rien ne fait mal pendant le chargement. **Le joueur doit pouvoir sortir du couloir** — le temps de
+  chargement *est* la fenêtre de réaction. Trop court, l'attaque est une taxe ; trop long, elle est
   décorative. **Réglage à l'œil, tâche 12.**
 
-- [ ] **Étape 3 : le rendu.** Un disque **légèrement rouge** à la taille finale, dès l'annonce, et un
-  **petit cercle qui grossit** jusqu'à le remplir au tick d'impact.
+- [ ] **Étape 5 : le rendu.** Le rectangle d'annonce, l'opacité qui monte, et **la rotation du
+  sprite pendant la charge**.
 
-  ⚠️ **L'opacité monte avec la progression** — c'est ce qui fait qu'on lit l'imminence sans compter.
-  Le §6.6 de l'orientation dit *« l'état persistant est discret, la réaction est spectaculaire »* :
-  ici le cercle d'annonce est l'état, l'impact est la réaction.
+  ⚠️ **`HordeRenderer` ne fait pas tourner ses particules aujourd'hui** — il pose une échelle et une
+  orientation en x (`facingScaleX`). Faire tourner le boss demande un angle par particule. **Vérifie
+  ce que ça coûte au batch avant de l'ajouter à tout le monde** : ce qui tourne, c'est un sprite sur
+  quatre mille.
 
-- [ ] **Étape 4 : le coût est borné par le nombre.** Un boss, donc au plus quelques télégraphes
-  vivants. Deux quads chacun. **Rien à mesurer, mais le dire** — et si un jour un palier fait dix
-  boss, c'est cette ligne qu'il faudra rouvrir.
+- [ ] **Étape 6 : l'atlas gagne les deux clips manquants.** `Troll_Windup` et `Troll_Recovery`.
 
-- [ ] **Étape 5 : commit** — `feat: le boss telegraphie ses attaques`
+  ⚠️ **L'atlas est déjà à 9,33 Mpx sur 16,78** (mesuré à la tâche 5, qui a dû renoncer à ranger les
+  six élites). **Mesure avant d'ajouter**, et si ça ne tient pas, dis-le plutôt que de passer à 8192
+  — la tâche 5 a chiffré ce passage à **268 Mo de VRAM**.
+
+- [ ] **Étape 7 : commit** — `feat: le troll charge en tournant`
 
 ---
 

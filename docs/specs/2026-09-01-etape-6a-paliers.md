@@ -124,9 +124,24 @@ en fait une porte.
 a tranché l'inverse, et le §8 de ce document posait déjà la question : *« un boss qui n'a que des
 points de vie se sent-il comme un boss ? »*. **La réponse est non.**
 
-**Il télégraphie ses attaques** : un disque légèrement rouge apparaît, un petit cercle grossit
-jusqu'à le remplir, et l'impact tombe quand il est plein. **Une** attaque avec un temps de
-chargement — très loin des phases et des patterns que ce paragraphe refusait.
+**Il charge.** Un **long rectangle** légèrement rouge s'annonce devant lui, son opacité monte, puis
+il **le traverse en tournant sur lui-même**. Une attaque avec un temps de chargement — très loin des
+phases et des patterns que ce paragraphe refusait.
+
+⚠️ **Ce n'est pas un télégraphe, c'est un déplacement.** La première formulation parlait d'une zone
+qui se remplit sur place ; l'auteur a précisé, et ça change la nature de la chose : **la position du
+boss est pilotée par l'attaque, pas par le champ de flux, pendant toute la charge**. C'est donc le
+même risque que le ralentissement du Givre à l'étape 5a — un effet qui touche le déplacement touche
+le contrat de réplication.
+
+La parade est celle qui a déjà servi trois fois : le serveur annonce **une fois** — origine,
+direction, longueur, ticks de départ et de fin — et **les deux côtés dérivent la position le long du
+couloir**. Zéro octet après l'annonce, même position partout, par construction.
+
+⚠️ **La direction est figée au chargement, elle ne suit pas.** C'est ce qui rend l'esquive possible :
+un couloir qui suivrait sa cible serait une taxe, pas une attaque.
+
+Le pack a déjà les trois temps — `Troll_Windup`, `Troll_Attack`, `Troll_Recovery`.
 
 Ce qui la rend peu coûteuse : elle est déjà écrite quatre fois dans ce dépôt. Annoncée à la création
 et dérivée ensuite comme une zone, **datée par tick** comme le gel de niveau, un cercle qui grossit
