@@ -3,7 +3,6 @@ import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
-  ORB_LIFETIME_TICKS,
   ORB_PICKUP_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
@@ -70,26 +69,72 @@ export interface PickupPoint {
  * « rien a allouer, rien a synchroniser ». Tableaux types, jamais un objet
  * par orbe, meme raisonnement que `Horde` et `Projectiles`.
  *
- * Capacite bornee a `MAX_ENTITIES` (passee par l'appelant) : au plus un orbe
- * vit par mort, et une mort ne peut jamais depasser le nombre d'entites que
- * la horde a pu contenir. Tres large en pratique — `WaveDirector` apporte
- * 120 a 320 entites toutes les 6 s, loin sous ce plafond meme cumule sur
- * `ORB_LIFETIME_TICKS` (20 s).
+ * ⚠️ **UN ORBE NE S'EVAPORE PLUS** (etape 6a, tache 15, sur retour de jeu :
+ * *« l'xp ne doit pas disparaitre »*). `ORB_LIFETIME_TICKS` et la methode
+ * `expire` qui le lisait ont ete SUPPRIMES des deux cotes du fil, ensemble —
+ * une peremption retiree d'un seul cote ferait disparaitre chez l'un un orbe
+ * que l'autre ramasse encore.
+ *
+ * ⚠️ **La CAPACITE est donc devenue la seule borne, et elle est SILENCIEUSE** :
+ * `spawn` revient sans rien faire quand la reserve est pleine. C'est pour ca
+ * que `truncatedOrbs` existe — une chose qui ne se pose pas est un effet paye
+ * qui disparaitrait sans trace, exactement le role que
+ * `Projectiles.truncatedProjectiles` et `ZoneField.truncatedZones` jouent
+ * deja.
+ *
+ * Capacite bornee a `MAX_ENTITIES` (4000, passee par l'appelant) : au plus un
+ * orbe vit par mort, et une mort sur `ORB_DROP_ONE_IN` en laisse un.
+ *
+ * **Et c'est MESURE, parce que la capacite ne servait a rien tant que
+ * l'expiration vidait la reserve toute seule.** Decor de `kills.bench.ts` —
+ * quatre joueurs immobiles, douze graines de carte — mais tenus en vie de
+ * force (400 cartes de vitalite) pour que la run dure : sans ca elle s'arrete
+ * vers 78 s et ne dit rien d'une run longue.
+ *
+ * | Duree de jeu | Orbes au sol, au pic | Moyenne en fin de run | Tronques |
+ * | --- | --- | --- | --- |
+ * | 78 s (run naturelle) | 82 | 54 | **0** |
+ * | 600 s (joueurs tenus en vie) | **597** | 344 | **0** |
+ *
+ * Personne ne bouge, donc **aucun de ces orbes n'est jamais ramasse** : c'est
+ * le pire cas, pas le cas courant. Meme ainsi, dix minutes de jeu occupent
+ * 15 % de la reserve, et la horde (3 900 sur 4 000) sature bien avant elle.
+ * La borne tient tres largement.
  */
 export class OrbField {
   /** Identite du monstre qui a laisse l'orbe. Public en lecture, comme `Horde.entityIdAt`. */
   readonly id: Uint32Array;
   readonly x: Float32Array;
   readonly y: Float32Array;
-  /** Tick de la mort qui a fait apparaitre l'orbe. Public : la tache 11 en aura besoin pour un fondu. */
-  readonly bornTick: Uint32Array;
+  /*
+   * ⚠️ **`bornTick` a disparu de cette classe AVEC l'expiration** (tache 15).
+   * Il n'existait que pour la dater : plus rien cote serveur ne lisait ce
+   * tableau une fois `expire` supprimee, et un `Uint32Array(MAX_ENTITIES)`
+   * qu'on remplit sans jamais le relire est du code qui ment.
+   *
+   * ⚠️ **`DerivedOrbs` garde le sien, et ce n'est PAS une divergence** :
+   * `OrbRenderer` en tire la phase du scintillement, donc il y a la-bas un
+   * lecteur. La regle partagee etait la PEREMPTION, et elle est partie des
+   * deux cotes ensemble.
+   */
+  /**
+   * Orbes qu'une mort a demandes et que la reserve pleine n'a pas poses,
+   * depuis le debut de la run. Cumulatif, jamais remis a zero — c'est un
+   * compteur de RUN, comme `Projectiles.truncatedProjectiles` et
+   * `ZoneField.truncatedZones`.
+   *
+   * ⚠️ **Compte les orbes REFUSES PAR LA CAPACITE, pas les morts sans orbe.**
+   * Trois morts sur quatre ne laissent rien (`dropsOrb`) et c'est la regle du
+   * jeu ; ce compteur ne doit jamais les compter, sans quoi il monterait tout
+   * le temps et ne dirait plus rien du plafond qu'il est cense surveiller.
+   */
+  truncatedOrbs = 0;
   #count = 0;
 
   constructor(readonly capacity: number) {
     this.id = new Uint32Array(capacity);
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
-    this.bornTick = new Uint32Array(capacity);
   }
 
   get count(): number {
@@ -113,37 +158,40 @@ export class OrbField {
    * `shared/` (`dropsOrb`). Retirer la garde d'un seul cote ferait apparaitre
    * chez l'un des orbes que l'autre ignore.
    *
-   * Ignore silencieusement si la capacite (tres large) est atteinte.
+   * ⚠️ **Ignore silencieusement si la capacite est atteinte — mais le COMPTE.**
+   * Depuis que l'expiration a disparu (tache 15), c'est la seule borne de la
+   * reserve : un refus qui ne laisserait aucune trace serait de l'experience
+   * gagnee qui s'evapore, c'est-a-dire exactement ce que cette tache retire.
    */
-  spawn(entityId: number, x: number, y: number, tick: number): void {
+  spawn(entityId: number, x: number, y: number): void {
     if (!dropsOrb(entityId)) {
       return;
     }
     if (this.#count >= this.capacity) {
+      this.truncatedOrbs++;
       return;
     }
     const slot = this.#count++;
     this.id[slot] = entityId;
     this.x[slot] = x;
     this.y[slot] = y;
-    this.bornTick[slot] = tick;
   }
 
   /**
-   * Etape 10 de la sequence serveur : expire d'abord les orbes perimes —
-   * expiration DERIVEE (§6.1), aucun message : les deux cotes calculent la
-   * meme date de peremption a partir du meme `bornTick`, connu depuis le
-   * message DEATHS — puis resout les ramassages. Rend les identites
-   * ramassees (= celles des monstres qui les ont laissees), pour le message
-   * PICKUPS et le calcul de l'experience gagnee, cote `Room`.
+   * Etape 10 de la sequence serveur : resout les ramassages. Rend les
+   * identites ramassees (= celles des monstres qui les ont laissees), pour le
+   * message PICKUPS et le calcul de l'experience gagnee, cote `Room`.
+   *
+   * ⚠️ **Le RAMASSAGE est desormais la seule sortie d'un orbe.** Cette methode
+   * commencait par une passe d'expiration ; la tache 15 l'a supprimee avec la
+   * constante qu'elle lisait. Un orbe attend donc indefiniment qu'on vienne le
+   * chercher, et `tick` ne sert plus qu'a dater ce qu'il devient.
    *
    * Retrait par indice decroissant, meme raisonnement que `Horde.kill` et
    * `Projectiles.#removeAt` : un orbe deplace dans un trou par une
    * compaction ne doit jamais etre lui-meme saute par erreur ensuite.
    */
-  resolvePickups(players: readonly PickupPoint[], tick: number): number[] {
-    this.expire(tick);
-
+  resolvePickups(players: readonly PickupPoint[]): number[] {
     const r2 = ORB_PICKUP_RADIUS * ORB_PICKUP_RADIUS;
     const picked: number[] = [];
     for (let i = this.#count - 1; i >= 0; i--) {
@@ -166,22 +214,12 @@ export class OrbField {
     return picked;
   }
 
-  /** Retire les orbes dont la duree de vie a expire. Voir `resolvePickups`. */
-  expire(tick: number): void {
-    for (let i = this.#count - 1; i >= 0; i--) {
-      if (tick - (this.bornTick[i] ?? 0) >= ORB_LIFETIME_TICKS) {
-        this.#removeAt(i);
-      }
-    }
-  }
-
   #removeAt(slot: number): void {
     const last = this.#count - 1;
     if (slot !== last) {
       this.id[slot] = this.id[last] ?? 0;
       this.x[slot] = this.x[last] ?? 0;
       this.y[slot] = this.y[last] ?? 0;
-      this.bornTick[slot] = this.bornTick[last] ?? 0;
     }
     this.#count = last;
   }
@@ -504,7 +542,7 @@ export function applyReactions(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
     }
   }
   horde.kill(deadIds);
@@ -607,7 +645,7 @@ export function resolveProjectileDamage(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
     }
   }
   horde.kill(deadIds);
@@ -924,7 +962,7 @@ export function resolveBurn(horde: Horde, orbs: OrbField, tick: number): number[
   for (const id of dead) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
     }
   }
   horde.kill(dead);

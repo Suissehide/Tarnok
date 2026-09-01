@@ -232,7 +232,7 @@ export class Horde {
    * rend expiree pour tout tick >= 0 sans cas particulier.
    *
    * ⚠️ **L'expiration est DERIVEE, jamais annoncee** — meme modele que
-   * `ORB_LIFETIME_TICKS` pour les orbes (§6.1 de l'etape 3) : les deux cotes
+   * `ZONE_LIFETIME_TICKS` pour les zones au sol (§5.1) : les deux cotes
    * comparent ce nombre au tick courant et obtiennent la meme reponse, sans un
    * octet sur le fil et sans qu'aucune horloge murale n'entre dans le calcul.
    *
@@ -629,7 +629,7 @@ export class Horde {
    * balayee.** Aucune passe ne parcourt la horde pour effacer les marques
    * perimees, et aucun message ne dit qu'une marque est tombee : les deux
    * cotes comparent `markUntil` au tick courant et obtiennent la meme reponse.
-   * Meme partage que `ORB_LIFETIME_TICKS` (§6.1 de l'etape 3).
+   * Meme partage que `ZONE_LIFETIME_TICKS` (§5.1 de l'etape 5a).
    *
    * La borne est STRICTE des deux cotes, et c'est ce qui rend la duree
    * exacte : une marque posee au tick `T` vaut encore au tick

@@ -7,7 +7,6 @@ import {
   MAP_SIZE,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
-  ORB_LIFETIME_TICKS,
   ORB_PICKUP_RADIUS,
   PLAYER_SPEED,
   PROJECTILE_HIT_RADIUS,
@@ -1151,12 +1150,22 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
   });
 
   it(
-    'un orbe non ramasse expire apres ORB_LIFETIME_TICKS : encore present juste avant, ' +
-      'disparu pile a l echeance (verifie aux deux bornes)',
+    'un orbe non ramasse ne disparait JAMAIS : il attend le ramassage, ' +
+      'des milliers de ticks apres la mort (etape 6a, tache 15)',
     () => {
-      // Meme raisonnement que l'expiration des projectiles (§6.1) : un seul
-      // cote de la fenetre ne prouve rien, un decalage d'un cran passerait
-      // inapercu. Ce test verifie les deux bornes dans la MEME execution.
+      // ⚠️ **Le pendant exact du test serveur.** L'existence d'un orbe ne
+      // transite jamais : ce cote-ci la DERIVE de `DEATHS`, l'autre arbitre le
+      // ramassage. Une peremption retiree d'un seul cote ferait disparaitre
+      // ici un orbe que le serveur ramasse encore.
+      //
+      // ⚠️ **Aucune constante a deriver, et c'est le fait teste.** Ce test
+      // comparait `tick - bornTick` a `ORB_LIFETIME_TICKS` a ses deux bornes ;
+      // la constante n'existe plus. La propriete gardee est desormais une
+      // ABSENCE d'echeance, donc le seul nombre qui reste est la duree qu'on
+      // accepte d'attendre — arbitrairement longue, et cinq fois l'ancienne
+      // duree de vie (600 ticks) pour qu'un rallongement passe pour une
+      // suppression ne puisse pas se cacher derriere.
+      const TRES_LONGTEMPS = 3000;
       const WAVE_ID = 60;
       const ENTITIES = 5;
 
@@ -1181,16 +1190,11 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       const killedId = entityIdOf(WAVE_ID, 0);
       const DEATH_TICK = 10;
       const DELAY = 2;
-      // `bornTick` de l'orbe = DEATH_TICK (voir `#applyDeaths` : les orbes
-      // sont dates au tick de la mort, jamais a celui de sa livraison).
-      const JUST_BEFORE = DEATH_TICK + ORB_LIFETIME_TICKS - 1;
-      const AT_LIFETIME = DEATH_TICK + ORB_LIFETIME_TICKS;
-      const END = AT_LIFETIME + 5;
+      // Le joueur reste a 3000 px de la horde : jamais a `ORB_PICKUP_RADIUS`,
+      // donc rien ne peut retirer l'orbe par le seul chemin qui subsiste.
+      let vuApresLaMort = false;
 
-      let sawJustBefore = false;
-      let sawAtLifetime = false;
-
-      for (let tick = 0; tick < END; tick++) {
+      for (let tick = 0; tick < DEATH_TICK + TRES_LONGTEMPS; tick++) {
         socket.emit('message', {
           data: encodeSnapshot(tick, 0, 0, [
             { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0 },
@@ -1201,23 +1205,16 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
         }
         client.update(tick * STEP, STEP);
 
-        // Borne basse : encore la juste avant l'echeance.
-        if (tick === JUST_BEFORE) {
+        if (tick === DEATH_TICK + DELAY) {
+          // Non-vacuite : l'orbe a bien ete pose. Sans cette borne basse, un
+          // orbe jamais ne apasserait le test final sans rougir.
           expect(client.orbs.count).toBe(1);
-          sawJustBefore = true;
-        }
-        // Borne haute : disparu pile a l'echeance, pas un tick plus tard.
-        if (tick === AT_LIFETIME) {
-          expect(client.orbs.count).toBe(0);
-          sawAtLifetime = true;
+          vuApresLaMort = true;
         }
       }
 
-      // Garde-fou sur le scenario lui-meme : si ces deux ticks n'ont jamais
-      // ete visites, les assertions ci-dessus n'ont jamais tourne et le test
-      // passerait pour la mauvaise raison.
-      expect(sawJustBefore).toBe(true);
-      expect(sawAtLifetime).toBe(true);
+      expect(vuApresLaMort).toBe(true);
+      expect(client.orbs.count).toBe(1);
     },
   );
 });

@@ -242,16 +242,17 @@ export const CONTACT_INTERVAL_TICKS = 15;
  */
 export const CONTACT_RADIUS = 34;
 
-/**
- * Duree de vie d'un orbe non ramasse, en ticks (20 s a `TICK_HZ`).
+/*
+ * ⚠️ **`ORB_LIFETIME_TICKS` a ete SUPPRIME** (etape 6a, tache 15, sur retour de
+ * jeu : *« l'xp ne doit pas disparaitre »*). Un orbe non ramasse vivait 600
+ * ticks (20 s) puis s'evaporait, des deux cotes, par derivation de `bornTick`.
  *
- * ⚠️ Doit se calculer IDENTIQUEMENT des deux cotes a partir du seul
- * `tick - bornTick` (§6.1) : aucune horloge murale ne doit jamais entrer
- * dans ce calcul, sous peine de faire disparaitre l'orbe a des instants
- * differents pour le serveur (qui arbitre le ramassage) et pour un client
- * (qui l'affiche).
+ * ⚠️ **Supprime, pas rallonge.** Une duree « tres longue » aurait fallu la
+ * choisir, la documenter, et elle aurait fini par mordre dans une run longue —
+ * c'est-a-dire mentir exactement la ou on croit ne plus la voir. Ce qui borne
+ * la reserve d'orbes est desormais sa CAPACITE, et elle se compte :
+ * `OrbField.truncatedOrbs` / `Room.orbesTronquees`.
  */
-export const ORB_LIFETIME_TICKS = 600;
 
 /** Rayon de ramassage d'un orbe, en pixels monde. Arbitre par le serveur (§6.1) — jamais derive cote client. */
 export const ORB_PICKUP_RADIUS = 90;
@@ -445,7 +446,7 @@ export const PROJECTILE_CAPACITY = 1024;
  * etape 5a, §4.3 de la spec.
  *
  * ⚠️ **L'expiration est DERIVEE, jamais annoncee**, exactement comme celle des
- * orbes (`ORB_LIFETIME_TICKS`) : `Horde.markUntil` porte le tick d'expiration,
+ * zones (`ZONE_LIFETIME_TICKS`) : `Horde.markUntil` porte le tick d'expiration,
  * et `Horde.markAt` le compare au tick courant. Aucune horloge murale, aucun
  * message de disparition — un `MARK_EXPIRED` doublerait le trafic pour une
  * information que les deux cotes calculent deja.
@@ -464,8 +465,10 @@ export const MARK_DURATION_TICKS = 60;
  * Duree de vie d'une zone au sol, en ticks (3 s a `TICK_HZ`) — etape 5a,
  * §5.1 de la spec.
  *
- * ⚠️ **Derivee des deux cotes depuis `bornTick`, jamais annoncee**, exactement
- * comme `ORB_LIFETIME_TICKS`. La zone est annoncee A LA CREATION (§5.3 : le
+ * ⚠️ **Derivee des deux cotes depuis `bornTick`, jamais annoncee** — le modele
+ * que les orbes ont porte jusqu'a l'etape 6a, ou leur peremption a disparu
+ * (tache 15) et ou celle-ci est restee la seule. La zone est annoncee A LA
+ * CREATION (§5.3 : le
  * client ne peut pas savoir ou finit un projectile serveur, les siens etant
  * cosmetiques depuis l'etape 3), mais sa MORT ne coute rien sur le fil : les
  * deux cotes comparent `tick - bornTick` a cette constante et obtiennent la

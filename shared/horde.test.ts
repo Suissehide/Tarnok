@@ -2145,7 +2145,7 @@ describe('etape 5a, tache 3 : la marque elementaire et son expiration derivee', 
   });
 
   it('rien ne balaie les marques perimees : l expiration est DERIVEE, pas effacee', () => {
-    // ⚠️ Le pendant de `ORB_LIFETIME_TICKS` : aucune passe ne parcourt la
+    // ⚠️ Le pendant de `ZONE_LIFETIME_TICKS` : aucune passe ne parcourt la
     // horde pour nettoyer, aucun message ne dit qu'une marque est tombee. Les
     // tableaux gardent donc leur contenu au-dela de l'expiration, et c'est
     // `markAt` — et lui seul — qui repond. Un test qui lirait `horde.mark`

@@ -73,6 +73,18 @@ interface Mesure {
   /** Part de pietaille lourde dans la horde encore debout a la fin. */
   partLourde: number;
   premiereMort: number;
+  /**
+   * Orbes au sol au pic de la fenetre mesuree, et orbes qu'une reserve pleine
+   * a refuses (etape 6a, tache 15).
+   *
+   * ⚠️ **C'est ce banc, et lui seul, qui dit si la CAPACITE tient.** Depuis
+   * que l'expiration a disparu, elle est la seule borne de `OrbField`, et elle
+   * est silencieuse : sans ces deux nombres ici, `Room.orbesTronquees`
+   * n'aurait aucun appelant hors de son propre test unitaire — exactement
+   * l'oubli que `zonesTronquees` a paye a l'etape 5a.
+   */
+  orbesMax: number;
+  orbesTronques: number;
 }
 
 function unEssai(seed: number): Mesure {
@@ -87,6 +99,7 @@ function unEssai(seed: number): Mesure {
   let morts = 0;
   let apparitions = 0;
   let premiereMort = -1;
+  let orbesMax = 0;
   const ticks = SECONDES * TICK_HZ;
   for (let t = 0; t < ticks; t++) {
     for (let k = 0; k < joueurs.length; k++) {
@@ -117,6 +130,9 @@ function unEssai(seed: number): Mesure {
     if (premiereMort < 0 && room.drainRunOver()) {
       premiereMort = t;
     }
+    if (room.orbCount > orbesMax) {
+      orbesMax = room.orbCount;
+    }
   }
   let lourds = 0;
   for (let i = 0; i < room.horde.count; i++) {
@@ -130,6 +146,8 @@ function unEssai(seed: number): Mesure {
     hordeFinale: room.horde.count,
     partLourde: room.horde.count > 0 ? lourds / room.horde.count : 0,
     premiereMort,
+    orbesMax,
+    orbesTronques: room.orbesTronquees,
   };
 }
 
@@ -150,10 +168,14 @@ function main(): void {
   const lignes: Record<string, unknown>[] = [];
   let totalMorts = 0;
   let totalApparitions = 0;
+  let orbesMax = 0;
+  let orbesTronques = 0;
   for (const seed of GRAINES) {
     const m = unEssai(seed);
     totalMorts += m.morts;
     totalApparitions += m.apparitions;
+    orbesMax = Math.max(orbesMax, m.orbesMax);
+    orbesTronques += m.orbesTronques;
     lignes.push({
       graine: `0x${seed.toString(16)}`,
       'morts/s': +(m.morts / SECONDES).toFixed(2),
@@ -161,6 +183,8 @@ function main(): void {
       'horde finale': m.hordeFinale,
       'dont lourds': `${Math.round(m.partLourde * 100)} %`,
       'fin de run (tick)': m.premiereMort < 0 ? '—' : m.premiereMort,
+      'orbes au sol (pic)': m.orbesMax,
+      'orbes tronques': m.orbesTronques,
     });
   }
   console.table(lignes);
@@ -172,6 +196,8 @@ function main(): void {
   console.log(
     `-> Rapport morts/apparitions : ${(mortsParSeconde / Math.max(1e-9, apparitionsParSeconde)).toFixed(2)}`,
   );
+  console.log(`-> Orbes au sol, pic toutes graines : ${orbesMax}`);
+  console.log(`-> Orbes tronques (capacite pleine) : ${orbesTronques}`);
 }
 
 main();

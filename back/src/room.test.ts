@@ -1764,6 +1764,14 @@ describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
     // Rien n'a ete empoche : ce qui reste au sol est bien ce qui est TOMBE.
     expect(room.drainPickups()).toEqual([]);
     expect(room.orbCount).toBe(ids.length / ORB_DROP_ONE_IN);
+    // ⚠️ **`orbesTronquees` n'est GARDE par rien de plus que ce zero au niveau
+    // du salon** — mutation appliquee, « rendre 0 » survit ici. Remplir
+    // `MAX_ENTITIES` (4000) creneaux d'orbes demande plus de morts qu'un test
+    // de salon n'en produit a un cout raisonnable ; c'est `combat.test.ts` qui
+    // eprouve le refus lui-meme, sur une reserve de trois places. Dit tel quel
+    // plutot que credite d'un test qui ne le tient pas — meme choix que
+    // `zonesTronquees`.
+    expect(room.orbesTronquees).toBe(0);
   });
 });
 

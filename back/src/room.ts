@@ -547,6 +547,21 @@ export class Room {
   }
 
   /**
+   * Orbes qu'une mort n'a pas pu poser faute de place, depuis le debut de la
+   * run. Voir `OrbField.truncatedOrbs`.
+   *
+   * ⚠️ **C'est le compteur que la tache 15 rendait INDISPENSABLE.** Tant que
+   * les orbes s'evaporaient au bout de 20 s, la reserve se vidait toute seule
+   * et sa capacite ne servait jamais ; l'expiration retiree, la capacite est
+   * devenue la SEULE borne — et elle est silencieuse. Sans ce lecteur,
+   * l'experience refusee au sol disparaitrait sans trace. Meme motif que
+   * `zonesTronquees` et `projectilesTronques` juste au-dessus.
+   */
+  get orbesTronquees(): number {
+    return this.#orbs.truncatedOrbs;
+  }
+
+  /**
    * Ce que ce joueur a accumule au fil des drafts. `undefined` s'il n'est pas
    * dans le salon.
    */
@@ -1002,7 +1017,7 @@ export class Room {
 
     resolveContact([...this.#players.values()], this.horde);
 
-    const pickedIds = this.#orbs.resolvePickups([...this.#players.values()], this.#tick);
+    const pickedIds = this.#orbs.resolvePickups([...this.#players.values()]);
     if (pickedIds.length > 0) {
       this.#pendingPickups.push({ tick: this.#tick, ids: pickedIds });
       this.#gainXp(pickedIds.length * XP_PER_ORB);

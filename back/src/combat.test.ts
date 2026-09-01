@@ -465,7 +465,7 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     const MORTS = 40;
     const orbs = new OrbField(MORTS);
     for (let i = 0; i < MORTS; i++) {
-      orbs.spawn(entityIdOf(9, i), 100 + i, 200, 0);
+      orbs.spawn(entityIdOf(9, i), 100 + i, 200);
     }
 
     expect(orbs.count).toBe(MORTS / ORB_DROP_ONE_IN);
@@ -517,7 +517,7 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     const attendues: number[] = [];
     for (let i = 0; i < MORTS; i++) {
       const id = entityIdOf(9, i);
-      orbs.spawn(id, 100 + i, 200, 0);
+      orbs.spawn(id, 100 + i, 200);
       if (dropsOrb(id)) {
         attendues.push(id);
       }
@@ -571,26 +571,72 @@ describe('OrbField.resolvePickups', () => {
 
   it('ramasse un orbe a portee et laisse un orbe hors de portee intact', () => {
     const orbs = new OrbField(10);
-    orbs.spawn(avecOrbe(1), 100, 100, 0);
+    orbs.spawn(avecOrbe(1), 100, 100);
     // Assez loin pour etre hors d'ORB_PICKUP_RADIUS, sans etre absurde.
-    orbs.spawn(avecOrbe(2), 5000, 5000, 0);
+    orbs.spawn(avecOrbe(2), 5000, 5000);
 
-    const picked = orbs.resolvePickups([{ x: 100, y: 100 }], 1);
+    const picked = orbs.resolvePickups([{ x: 100, y: 100 }]);
 
     expect(picked).toEqual([avecOrbe(1)]);
     expect(orbs.count).toBe(1);
     expect(orbs.id[0]).toBe(avecOrbe(2));
   });
 
-  it('expire un orbe apres ORB_LIFETIME_TICKS meme si personne n est a portee', () => {
+  it('un orbe que personne ne ramasse ATTEND : rien ne le retire, jamais (tache 15)', () => {
+    // ⚠️ **Le retour de jeu, en un test** : *« l'xp ne doit pas disparaitre »*.
+    // Ce test verifiait l'inverse — un orbe retire au bout de
+    // `ORB_LIFETIME_TICKS` — et la constante n'existe plus.
+    //
+    // ⚠️ **Aucune duree a deriver, et c'est la propriete testee** : ce qui est
+    // garde ici est une ABSENCE d'echeance. Le seul nombre qui reste est donc
+    // la duree qu'on accepte d'attendre, prise cinq fois plus longue que
+    // l'ancienne (600 ticks) pour qu'un rallongement deguise en suppression ne
+    // puisse pas s'y cacher.
+    const TRES_LONGTEMPS = 3000;
     const orbs = new OrbField(10);
-    orbs.spawn(avecOrbe(1), 100, 100, 0);
+    orbs.spawn(avecOrbe(1), 100, 100);
+    expect(orbs.count).toBe(1);
 
-    // Personne a proximite : la duree de vie seule doit le retirer.
-    const picked = orbs.resolvePickups([{ x: -9000, y: -9000 }], 600);
+    // Personne a proximite, des milliers de ticks durant : le ramassage est
+    // desormais la SEULE sortie.
+    for (let tick = 0; tick < TRES_LONGTEMPS; tick++) {
+      expect(orbs.resolvePickups([{ x: -9000, y: -9000 }])).toEqual([]);
+    }
+    expect(orbs.count).toBe(1);
 
-    expect(picked).toEqual([]);
+    // Et il est toujours ramassable au bout du compte : un orbe « garde » mais
+    // devenu inerte satisferait tout ce qui precede.
+    expect(orbs.resolvePickups([{ x: 100, y: 100 }])).toEqual([avecOrbe(1)]);
     expect(orbs.count).toBe(0);
+  });
+
+  it('la capacite pleine refuse en SILENCE, et le compte (truncatedOrbs)', () => {
+    // ⚠️ **La capacite est devenue la seule borne de la reserve** (tache 15) :
+    // sans compteur, l'experience refusee au sol disparaitrait sans trace —
+    // meme role que `Projectiles.truncatedProjectiles` et
+    // `ZoneField.truncatedZones`.
+    const PLACES = 3;
+    const orbs = new OrbField(PLACES);
+    // `dropsOrb` n'en retient qu'une sur `ORB_DROP_ONE_IN` : on ne presente
+    // donc QUE des identites qui en demandent une, sinon le refus mesure
+    // serait celui du taux de chute, pas celui du plafond.
+    const REFUSES = 5;
+    for (let i = 0; i < PLACES + REFUSES; i++) {
+      orbs.spawn(avecOrbe(i + 1), 100 + i, 200);
+    }
+
+    expect(orbs.count).toBe(PLACES);
+    expect(orbs.truncatedOrbs).toBe(REFUSES);
+
+    // ⚠️ **Et une mort SANS orbe n'est pas une troncature.** Sans cette
+    // moitie, un compteur incremente a chaque refus de `dropsOrb` passerait :
+    // il monterait tout le temps et ne dirait plus rien du plafond.
+    const large = new OrbField(100);
+    for (let i = 0; i < 40; i++) {
+      large.spawn(entityIdOf(9, i), 0, 0);
+    }
+    expect(large.count).toBe(40 / ORB_DROP_ONE_IN);
+    expect(large.truncatedOrbs).toBe(0);
   });
 
   it('preuve de non-vacuite : plusieurs morts, plusieurs orbes, plusieurs ramassages', () => {
@@ -621,7 +667,7 @@ describe('OrbField.resolvePickups', () => {
     // Orbes a x = 50,100,150,200,250 ; un joueur en (150,0), rayon 90 :
     // atteint 100, 150 et 200 (distances 50, 0, 50) mais pas 50 ni 250
     // (distances 100) — trois ramasses sur cinq, ni zero ni tous.
-    const picked = orbs.resolvePickups([{ x: 150, y: 0 }], 5);
+    const picked = orbs.resolvePickups([{ x: 150, y: 0 }]);
     expect(picked.length).toBe(3);
     expect(orbs.count).toBe(2);
   });
@@ -1387,7 +1433,6 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     expect(orbs.count).toBe(1);
     expect(orbs.id[0]).toBe(dedans);
     expect(orbs.x[0]).toBe(1000 + REACTION_RADIUS - 1);
-    expect(orbs.bornTick[0]).toBe(7);
   });
 
   it('des degats BRUTS et MASSIFS : la pietaille lourde tombe d un seul choc', () => {

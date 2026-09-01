@@ -232,8 +232,9 @@ export interface RunOverMessage {
  * decident d'une reaction.
  *
  * ⚠️ **La MORT d'une zone n'est JAMAIS annoncee.** Elle se derive de
- * `bornTick` et de `ZONE_LIFETIME_TICKS`, des deux cotes — c'est le modele de
- * `ORB_LIFETIME_TICKS` depuis l'etape 3 (§6.1) et celui de `ZoneField.expire`.
+ * `bornTick` et de `ZONE_LIFETIME_TICKS`, des deux cotes — c'est le modele que
+ * les orbes ont porte de l'etape 3 a l'etape 6a (leur peremption a disparu a la
+ * tache 15), et celui de `ZoneField.expire`.
  * Un `ZONE_GONE` doublerait le trafic des zones pour une information que les
  * deux cotes calculent deja.
  *

@@ -8,7 +8,6 @@ import {
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
-  ORB_LIFETIME_TICKS,
   ORB_PICKUP_RADIUS,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
@@ -292,18 +291,21 @@ export class DerivedOrbs {
     }
   }
 
-  /**
-   * Retire les orbes dont la duree de vie a expire — calcul DERIVE (§6.1),
-   * identique des deux cotes a partir du seul `tick - bornTick`, jamais
-   * transmis ni arbitre par un message.
+  /*
+   * ⚠️ **`expire` a disparu ICI EN MEME TEMPS QUE COTE SERVEUR** (etape 6a,
+   * tache 15) : *« l'xp ne doit pas disparaitre »*. Un orbe non ramasse vivait
+   * `ORB_LIFETIME_TICKS` puis s'evaporait, des deux cotes, par derivation de
+   * `bornTick`.
+   *
+   * ⚠️ **Les deux cessent ENSEMBLE, ou pas du tout.** L'existence d'un orbe ne
+   * transite jamais : le client la derive de `DEATHS`, le serveur arbitre le
+   * ramassage. Une peremption retiree d'un seul cote ferait disparaitre ici un
+   * orbe que le serveur ramasse encore — ou laisserait a l'ecran un orbe dont
+   * le `PICKUPS` n'arrivera jamais. Meme raison que `dropsOrb`, qui vit dans
+   * `shared/` pour n'exister qu'une fois.
+   *
+   * `bornTick` reste, lui : `OrbRenderer` en tire la phase du scintillement.
    */
-  expire(tick: number): void {
-    for (let i = this.#count - 1; i >= 0; i--) {
-      if (tick - (this.bornTick[i] ?? 0) >= ORB_LIFETIME_TICKS) {
-        this.#removeAt(i);
-      }
-    }
-  }
 
   #slotOf(entityId: number): number {
     for (let i = 0; i < this.#count; i++) {
@@ -1594,9 +1596,6 @@ export class GameClient {
     // pas, sans quoi une mort qui viserait un tick gele serait « trop vieille »
     // a tort — l'anneau la jugerait absente plutot que simplement inchangee.
     this.#hordeHistory.record(tick, this.horde);
-    // Peremption des orbes : calcul DERIVE (§6.1), jamais arbitre — voir
-    // `DerivedOrbs.expire`.
-    this.orbs.expire(tick);
     this.#drainPendingZones(tick);
     this.#drainPendingCharges(tick);
     this.#drainPendingDeaths(tick);
