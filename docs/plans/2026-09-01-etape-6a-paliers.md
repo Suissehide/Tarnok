@@ -482,6 +482,144 @@ la traversée, le boss redevient une entité ordinaire et remarche.
 
 ---
 
+## Tâches 13 à 17 : troisième retour de jeu
+
+> *« L'xp ne doit pas disparaître. Lance pas l'animation d'attaque du boss avant qu'il dash, juste la
+> frame 1 pour avoir l'impression qu'il charge son attaque. Fais des flèches qui indiquent la
+> direction au centre de la zone rouge. Plus fins les bords de la zone rouge. Les monstres ne
+> droppent pas d'or j'ai l'impression, t'as l'icône dans `UI Elements/Icons/Icon_03`. Il faut un
+> moyen de regen aussi. Les ennemis sont trop nombreux par rapport aux dégâts des armes, il faut
+> parfois des AoE sur certaines armes comme les grenades. »*
+
+---
+
+## Tâche 13 : la charge se lit mieux
+
+**Fichiers :** modifier `front/src/render/horde-renderer.ts`, `front/src/render/charge-renderer.ts`, leurs tests
+
+- [ ] **Étape 1 : l'animation ne part qu'au dash.** Pendant le chargement, **la première image
+  seule** — le troll paraît armer son coup. L'animation ne se joue que pendant la traversée.
+
+  ⚠️ **La tâche 5 bis pose `stopped = 1` pour le clip**, et `selectClip` bascule alors sur l'attaque
+  **dès le chargement**. Il faut donc distinguer les deux temps à l'affichage, pas seulement dans la
+  simulation. **Ne touche pas à `stopped`** : il sert au clip, jamais au mouvement, et un commentaire
+  du fichier le dit.
+
+- [ ] **Étape 2 : des flèches au centre du couloir**, qui disent le sens. Un couloir sans direction
+  se lit comme une zone, pas comme une charge.
+
+- [ ] **Étape 3 : des bords plus fins.** Le liséré actuel est trop épais.
+
+  ⚠️ **Même piège qu'aux tâches 13 et 15 de l'étape 5a** : garder la taille de texture différente de
+  la taille affichée, sinon l'échelle vaut 1 et **toute mutation d'échelle devient indistinguable**.
+
+- [ ] **Étape 4 : commit** — `feat(front): la charge se lit mieux`
+
+---
+
+## Tâche 14 : l'or tombe des monstres
+
+**Fichiers :** modifier `back/src/combat.ts`, `back/src/room.ts`, `shared/`, `front/src/render/`, leurs tests
+
+**L'auteur a raison, et c'est vérifié** : `#gold` n'augmente **que** par `palierGold(k)` à la mort du
+boss. Un monstre ne lâche rien.
+
+- [ ] **Étape 1 : une pièce tombe, rarement.** Le modèle est celui des orbes — `dropsOrb(entityId)`
+  décide **par l'identité**, donc **des deux côtés sans un octet de plus**. Faire pareil.
+
+  ⚠️ **Un taux distinct de celui des orbes**, et plus bas : une pièce doit être un événement. À une
+  sur quatre elle deviendrait du bruit au sol, ce que le retour précédent reprochait déjà à l'xp.
+
+- [ ] **Étape 2 : elle se ramasse comme une orbe**, aimantation comprise (tâche 20 de l'étape 5a).
+
+- [ ] **Étape 3 : l'icône.** `assets/tinyswords/UI Elements/UI Elements/Icons/Icon_03.png`.
+
+  ⚠️ **L'atlas des monstres est à 9,33 Mpx sur 16,78** et la tâche 5 a dû renoncer à y ranger cinq
+  élites. **N'y touche pas.** Une icône d'interface n'a rien à y faire : soit un petit atlas séparé,
+  soit dessinée en code comme les cinq autres textures procédurales du projet.
+
+  ⚠️ **AUCUN asset ne doit entrer dans le dépôt.** Licence Pixel Frog, dépôt public, la CI échoue sur
+  `git ls-files | grep '^assets/tinyswords'`.
+
+- [ ] **Étape 4 : commit** — `feat: les monstres laissent de l'or`
+
+---
+
+## Tâche 15 : l'xp ne disparaît plus
+
+**Fichiers :** modifier `shared/constants.ts`, `back/src/combat.ts`, `front/src/net/client.ts`, leurs tests
+
+- [ ] **Étape 1 : l'expiration disparaît.** `ORB_LIFETIME_TICKS` vaut 600 (20 s) ; une orbe non
+  ramassée s'évapore.
+
+  ⚠️ **Supprime, ne rallonge pas.** Une durée de vie « très longue » est un nombre qui ment : il
+  faudrait la choisir, la documenter, et elle finirait par mordre dans une run longue. **Du code que
+  plus rien ne lit est du code qui ment** — ce dépôt en a supprimé sept.
+
+- [ ] **Étape 2 : la capacité devient la vraie borne, et elle est SILENCIEUSE.** `OrbField.spawn`
+  revient sans rien faire quand la réserve est pleine.
+
+  ⚠️ **Il n'y a aucun compteur.** `Projectiles.truncatedProjectiles`, `ZoneField.truncatedZones` et
+  `RoomMetrics.truncatedSpawns` existent tous pour cette raison : **une chose qui ne se pose pas est
+  un effet payé qui disparaît sans trace**. Ajoute le compteur manquant, et **mesure** combien
+  d'orbes une run entretient réellement une fois l'expiration retirée.
+
+- [ ] **Étape 3 : commit** — `feat: l'experience au sol ne s'evapore plus`
+
+---
+
+## Tâche 16 : des armes de zone
+
+**Fichiers :** modifier `shared/weapons.ts`, `back/src/combat.ts`, leurs tests
+
+> *« Les ennemis sont trop nombreux par rapport aux dégâts des armes, il faut parfois des AoE sur
+> certaines armes comme les grenades. »*
+
+**C'est un constat de rythme, et il a une réponse mécanique.** Un projectile ne touche **qu'une**
+entité (`onHit(bestId, …)`) puis se consume.
+
+- [ ] **Étape 1 : `Weapon` gagne un rayon de zone**, à `0` par défaut — un tir simple n'est pas un
+  cas particulier, c'est une entrée de la table à zéro. Même motif que `ELEMENT.NEUTRE`.
+
+- [ ] **Étape 2 : la machinerie EXISTE DÉJÀ.** `applyReactions` inflige des dégâts à tout ce qui se
+  trouve dans `REACTION_RADIUS` depuis l'étape 5a. **Lis-la avant d'écrire quoi que ce soit** — un
+  second balayage par rayon, écrit à côté du premier, divergerait à la première retouche.
+
+- [ ] **Étape 3 : la grenade d'abord.** Elle a la cadence la plus lente (75 ticks) et les dégâts les
+  plus élevés (40) : c'est l'arme dont le tir doit peser.
+
+  ⚠️ **Mesure ce que ça fait au rythme de mise à mort.** `back/bench/kills.bench.ts` existe. Une arme
+  de zone change le rapport que l'auteur trouve mauvais — **c'est le chiffre qui dit si le correctif
+  répond au problème posé.**
+
+- [ ] **Étape 4 : commit** — `feat: des armes a effet de zone`
+
+---
+
+## Tâche 17 : un moyen de se soigner
+
+**Fichiers :** modifier `shared/passives.ts`, `back/src/room.ts`, leurs tests
+
+**Rien ne soigne aujourd'hui** — vérifié. La vitalité augmente le maximum et donne le delta une fois ;
+après, la vie ne remonte jamais.
+
+- [ ] **Étape 1 : un passif de régénération.** `PassiveKind` gagne un genre, et le catalogue une
+  entrée.
+
+  ⚠️ **C'est le chemin qui coûte le moins et qui donne le plus** : le draft existe, l'empilement
+  existe, `Loadout.bonus(kind)` existe. **Se soigner devient un choix de construction**, pas un
+  cadeau — et c'est ce que le modèle Risk of Rain de l'étape 4 appelle de ses vœux.
+
+- [ ] **Étape 2 : la régénération est bornée par le maximum.** `PlayerState.maxHp` existe depuis
+  l'étape 4 et suit les cartes de vitalité.
+
+- [ ] **Étape 3 : le test a deux moitiés.** La vie remonte **et** elle plafonne. Sans la seconde, une
+  régénération qui déborde passe.
+
+- [ ] **Étape 4 : commit** — `feat: un passif de regeneration`
+
+---
+
 ## Tâche 8 : la machine du vote
 
 **Fichiers :** créer `back/src/portal.ts`, `back/src/portal.test.ts`
