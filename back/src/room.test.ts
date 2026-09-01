@@ -5,6 +5,12 @@ import {
   HEAVY_HP,
   LIGHT_HP,
 } from '@shared/archetypes';
+import {
+  BOSS_CHARGE_COOLDOWN_TICKS,
+  BOSS_CHARGE_DAMAGE,
+  type BossCharge,
+  chargePointAt,
+} from '@shared/boss';
 import { CARD, type Card } from '@shared/cards';
 import {
   FIELD_INPUT_DELAY_TICKS,
@@ -3429,4 +3435,203 @@ describe('la vie du boss voyage dans le snapshot (etape 6a, tache 4)', () => {
     // est UN ; la horde reste serveur seul parce qu'elle est mille.
     expect(taille()).toBe(reference);
   }, 30_000);
+});
+
+/**
+ * Etape 6a, tache 5 bis — **la charge du troll**.
+ *
+ * > *« Le troll charge une attaque lineaire, donc un long rectangle, et son
+ * > animation le fait tourner, donc il spin rapidement a travers ce rectangle
+ * > en avancant. »*
+ *
+ * ⚠️ **Ce n'est pas un telegraphe, c'est un DEPLACEMENT** : pendant toute la
+ * charge, la position du boss vient de l'attaque et non du champ de flux. Ce
+ * decor verifie le cote SERVEUR de cette bascule — l'annonce unique, la
+ * direction figee, la position derivee, et les degats. La replication a
+ * proprement parler, elle, se mesure dans `shared/horde.replication.test.ts`
+ * (scenario 11).
+ */
+describe('le boss charge (etape 6a, tache 5 bis)', () => {
+  /** Fait tourner le salon jusqu'a ce qu'un boss existe, en balayant la horde. */
+  function jusquAuBoss(room: Room): number {
+    for (let t = 0; t < 120 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(DT);
+      room.drainWaveOrders();
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        const id = room.horde.entityIdAt(i);
+        if (id !== room.bossEntityId) {
+          ids.push(id);
+        }
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+      room.drainBossCharges();
+    }
+    const bossId = room.bossEntityId;
+    expect(bossId).not.toBeNull();
+    return bossId ?? -1;
+  }
+
+  /** Vide la horde de tout sauf le boss : on mesure une charge, pas une melee. */
+  function seulLeBoss(room: Room, bossId: number): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      const id = room.horde.entityIdAt(i);
+      if (id !== bossId) {
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  it('annonce UNE fois, tient le boss immobile pendant le chargement, puis le fait traverser le couloir sans jamais rien annoncer de plus', () => {
+    const room = new Room(0xc0de_5b15);
+    room.join(1);
+    const bossId = jusquAuBoss(room);
+    const tickApparition = room.tick;
+    const ancre = positionOf(room, 1);
+
+    // Le boss est pose a 500 px a l'ouest du joueur, donc le couloir (900 px)
+    // le traversera : c'est ce qui rend la moitie « degats » de ce test
+    // porteuse. Repose a chaque tick tant que rien n'est annonce — sinon il
+    // marche, et l'origine du couloir ne serait plus connue d'avance.
+    let charge: BossCharge | null = null;
+    let annonces = 0;
+    for (let t = 0; t < 10 * TICK_HZ && charge === null; t++) {
+      const slot = room.horde.slotOf(bossId);
+      if (slot >= 0) {
+        room.horde.x[slot] = ancre.x - 500;
+        room.horde.y[slot] = ancre.y;
+      }
+      seulLeBoss(room, bossId);
+      room.step(DT);
+      room.drainWaveOrders();
+      const lot = room.drainBossCharges();
+      annonces += lot.length;
+      charge = lot[0] ?? null;
+    }
+
+    expect(charge).not.toBeNull();
+    expect(annonces).toBe(1);
+    if (!charge) {
+      return;
+    }
+    expect(charge.entityId).toBe(bossId);
+    // ⚠️ **Il n'arrive pas en chargeant.** Le boss apparait au bord de la carte,
+    // loin de tout le monde : la premiere charge attend le meme delai que celui
+    // qui separe deux charges, sans quoi son unique fenetre de reaction serait
+    // dilapidee hors de portee.
+    expect(charge.windupTick).toBe(tickApparition + BOSS_CHARGE_COOLDOWN_TICKS);
+    // La direction est figee vers le joueur, a l'est : `dirX` proche de 1.
+    expect(charge.dirX).toBeGreaterThan(0.99);
+
+    // --- Le chargement : le boss ne bouge pas d'un pixel, et rien ne fait mal.
+    const pvAvant = positionOf(room, 1);
+    expect(pvAvant).toBeTruthy();
+    let pv = hpOf(room, 1);
+    for (let tick = charge.windupTick + 1; tick <= charge.startTick; tick++) {
+      seulLeBoss(room, bossId);
+      room.step(DT);
+      room.drainWaveOrders();
+      annonces += room.drainBossCharges().length;
+      const slot = room.horde.slotOf(bossId);
+      expect(room.horde.x[slot], `tick ${tick}`).toBe(charge.x);
+      expect(room.horde.y[slot], `tick ${tick}`).toBe(charge.y);
+    }
+    expect(hpOf(room, 1), 'rien ne fait mal pendant le chargement').toBe(pv);
+
+    // --- La traversee : la position est exactement celle que les deux cotes
+    // derivent des ticks. Le joueur, lui, s'ecarte — et le couloir ne le suit
+    // PAS, c'est ce qui rend l'esquive possible.
+    const attendu = new Float32Array(2);
+    for (let tick = charge.startTick + 1; tick <= charge.endTick; tick++) {
+      seulLeBoss(room, bossId);
+      room.step(DT);
+      room.drainWaveOrders();
+      annonces += room.drainBossCharges().length;
+      chargePointAt(charge, tick, attendu);
+      const slot = room.horde.slotOf(bossId);
+      expect(room.horde.x[slot], `tick ${tick}`).toBe(Math.fround(attendu[0] ?? 0));
+      expect(room.horde.y[slot], `tick ${tick}`).toBe(Math.fround(attendu[1] ?? 0));
+    }
+
+    // ⚠️ **ZERO OCTET APRES L'ANNONCE.** Quarante-huit ticks de charge, un
+    // seul message : tout le reste s'est derive des ticks, des deux cotes.
+    expect(annonces).toBe(1);
+
+    // --- Les degats : le corps en mouvement a traverse le joueur, une fois.
+    expect(hpOf(room, 1)).toBe(pv - BOSS_CHARGE_DAMAGE);
+    pv = hpOf(room, 1);
+
+    // --- Le cooldown : rien ne repart avant `endTick + BOSS_CHARGE_COOLDOWN_TICKS`.
+    for (let n = 0; n < BOSS_CHARGE_COOLDOWN_TICKS - 1; n++) {
+      seulLeBoss(room, bossId);
+      room.step(DT);
+      room.drainWaveOrders();
+      expect(room.drainBossCharges(), `n=${n}`).toEqual([]);
+    }
+    const suivantes: BossCharge[] = [];
+    for (let n = 0; n < 3; n++) {
+      seulLeBoss(room, bossId);
+      room.step(DT);
+      room.drainWaveOrders();
+      suivantes.push(...room.drainBossCharges());
+    }
+    expect(suivantes).toHaveLength(1);
+    // Et la seconde charge repart de la position REELLE du boss a cet
+    // instant, pas de l'origine de la premiere : c'est bien une nouvelle
+    // annonce, pas un rejeu de l'ancienne.
+    expect(suivantes[0]?.x).not.toBe(charge.x);
+  }, 60_000);
+
+  /**
+   * ⚠️ **La borne « une fois par charge » se REARME a chaque annonce.** Sans le
+   * vidage de l'ensemble des joueurs deja touches, un joueur encaisserait la
+   * PREMIERE charge du combat et plus jamais aucune autre — un boss inoffensif
+   * apres son coup d'essai, et rien dans le reste de la suite ne le dirait.
+   */
+  it('refait mal a la charge suivante, au meme joueur', () => {
+    const room = new Room(0xc0de_5b16);
+    room.join(1);
+    const bossId = jusquAuBoss(room);
+    const ancre = positionOf(room, 1);
+
+    /** Pose le boss a l'ouest du joueur jusqu'a ce qu'une charge parte, puis la joue en entier. */
+    function uneCharge(): { charge: BossCharge; degats: number } {
+      let charge: BossCharge | null = null;
+      for (let t = 0; t < 20 * TICK_HZ && charge === null; t++) {
+        const slot = room.horde.slotOf(bossId);
+        if (slot >= 0) {
+          room.horde.x[slot] = ancre.x - 500;
+          room.horde.y[slot] = ancre.y;
+        }
+        seulLeBoss(room, bossId);
+        room.step(DT);
+        room.drainWaveOrders();
+        charge = room.drainBossCharges()[0] ?? null;
+      }
+      if (!charge) {
+        throw new Error('aucune charge annoncee');
+      }
+      const avant = hpOf(room, 1);
+      for (let tick = charge.windupTick + 1; tick <= charge.endTick; tick++) {
+        seulLeBoss(room, bossId);
+        room.step(DT);
+        room.drainWaveOrders();
+        room.drainBossCharges();
+      }
+      return { charge, degats: avant - hpOf(room, 1) };
+    }
+
+    const premiere = uneCharge();
+    const seconde = uneCharge();
+
+    expect(premiere.degats).toBe(BOSS_CHARGE_DAMAGE);
+    expect(seconde.degats).toBe(BOSS_CHARGE_DAMAGE);
+    expect(seconde.charge.windupTick).toBeGreaterThan(premiere.charge.endTick);
+  }, 60_000);
 });

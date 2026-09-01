@@ -1,3 +1,4 @@
+import type { BossCharge } from '@shared/boss';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
@@ -68,6 +69,12 @@ export interface FrameClient {
    * d'en-tete de snapshot, lue telle quelle.
    */
   readonly boss: BossVitals | null;
+  /**
+   * La charge du boss en cours, ou `null` — voir `GameClient.bossCharge`.
+   * Annoncee une fois, derivee ensuite : comme `boss`, elle n'est ni predite ni
+   * interpolee, donc elle n'est pas dans `RenderState`.
+   */
+  readonly bossCharge: BossCharge | null;
 }
 
 /**
@@ -77,6 +84,12 @@ export interface FrameClient {
  */
 export interface FrameStage {
   drawZones(zones: ZoneField, tick: number): void;
+  /**
+   * Le couloir de la charge du boss (etape 6a, tache 5 bis). Comme les zones,
+   * il prend le TICK de simulation : c'est lui qui fait monter son opacite et
+   * qui le fait disparaitre, au meme instant que le deplacement qu'il annonce.
+   */
+  drawBossCharge(charge: BossCharge | null, tick: number): void;
   /**
    * Les anneaux de marque, sous les pieds des ennemis marques (tache 13). Ils
    * lisent la horde comme `drawHorde`, mais au TICK de simulation : c'est lui
@@ -143,6 +156,9 @@ export function composeFrame(
 ): RenderState {
   const state = client.update(now, dt);
   stage.drawZones(client.zones, client.hordeTick);
+  // Juste au-dessus des zones et SOUS tout le reste : c'est un aplat au sol, et
+  // le boss doit passer par-dessus le couloir qu'il traverse.
+  stage.drawBossCharge(client.bossCharge, client.hordeTick);
   stage.drawMarks(client.horde, client.hordeTick);
   stage.drawHorde(client.horde, now);
   stage.drawOrbs(client.orbs, client.orbFlights, state.players, now);

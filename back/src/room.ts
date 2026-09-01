@@ -1,3 +1,4 @@
+import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
@@ -34,6 +35,7 @@ import {
   OrbField,
   Reactions,
   resolveBurn,
+  resolveChargeHit,
   resolveContact,
   resolveProjectileDamage,
 } from './combat';
@@ -254,6 +256,27 @@ export class Room {
   readonly #reactions = new Reactions();
   #pendingZones: ZoneEvent[] = [];
   #pendingReactions: ReactionEvent[] = [];
+  /**
+   * La charge du boss en cours, ou `null` — **la seule qui existe a la fois**,
+   * puisqu'il n'y a qu'un boss vivant (§1.1 de la spec).
+   *
+   * ⚠️ **Gardee APRES sa fin, jamais remise a `null` par le temps.** Une charge
+   * finie est inerte (`chargeHoldsAt` rend faux), exactement comme une zone
+   * perimee laissee dans sa reserve : c'est le predicat qui decide, pas la
+   * presence. La garder est ce qui laisse `#nextChargeTick` se lire d'un seul
+   * champ, et ce qui evite un `null` de plus a distinguer d'un « jamais
+   * charge ».
+   */
+  #charge: BossCharge | null = null;
+  /**
+   * Identites des joueurs deja touches par la charge en cours — la borne
+   * « une seule fois par charge » de `resolveChargeHit`. Vide a chaque nouvelle
+   * annonce, jamais entre deux ticks d'une meme traversee.
+   */
+  #chargeHit = new Set<number>();
+  /** Premier tick auquel une nouvelle charge peut s'annoncer. Voir `#stepBossCharge`. */
+  #nextChargeTick = 0;
+  #pendingCharges: BossCharge[] = [];
   #pendingOrders: WaveOrder[] = [];
   #pendingDeaths: IdBatch[] = [];
   #pendingPickups: IdBatch[] = [];
@@ -361,6 +384,29 @@ export class Room {
     const out = this.#pendingZones;
     this.#pendingZones = [];
     return out;
+  }
+
+  /**
+   * Les charges de boss annoncees depuis le dernier drainage — **au plus une
+   * par charge, et rien ensuite** (§4 de la spec).
+   *
+   * La progression ne se diffuse jamais : les deux cotes la DERIVENT des ticks
+   * que ce seul message porte. C'est ce qui rend le premier effet de l'etape
+   * qui touche le DEPLACEMENT aussi peu couteux que les zones — zero octet
+   * apres l'annonce.
+   */
+  drainBossCharges(): BossCharge[] {
+    const out = this.#pendingCharges;
+    this.#pendingCharges = [];
+    return out;
+  }
+
+  /**
+   * La charge en cours, ou `null` — lecture seule, pour les tests et les bancs.
+   * Le fil, lui, ne la voit qu'une fois, par `drainBossCharges`.
+   */
+  get bossCharge(): BossCharge | null {
+    return this.#charge;
   }
 
   /**
@@ -761,6 +807,14 @@ export class Room {
           // l'ecran. Ce que ca coute, dit en face : trois joueurs qui quittent
           // laissent au dernier un boss de quatre joueurs jusqu'a sa mort.
           this.horde.hp[before] = bossHp(this.#director.palier, this.#players.size);
+          // ⚠️ **Il n'arrive pas en chargeant.** Le boss apparait au bord de la
+          // carte, loin de tout le monde : une charge annoncee au tick de son
+          // apparition traverserait un couloir vide, et son unique fenetre de
+          // reaction serait dilapidee hors de portee. Le premier delai est le
+          // meme que celui qui separe deux charges — un seul nombre a regler.
+          this.#charge = null;
+          this.#chargeHit.clear();
+          this.#nextChargeTick = this.#tick + BOSS_CHARGE_COOLDOWN_TICKS;
         } else {
           // La horde etait pleine : le boss n'existe pas. Sans ce chemin, le
           // verrou du directeur ne se relacherait jamais et le palier serait
@@ -789,7 +843,11 @@ export class Room {
     // ticks. Garde, et dit tel quel plutot que de laisser croire a un appel
     // teste (meme choix que le `slot < 0` de `resolveProjectileDamage`).
     this.#zones.expire(this.#tick);
-    this.horde.step(scaledDt, this.#fields, this.#tick, this.#zones);
+    // ⚠️ **La charge REMPLACE le deplacement du boss** (tache 5 bis) : `step`
+    // l'applique en dernier, apres l'avancement par vitesse et la separation,
+    // et c'est cet ordre qui fait que le boss n'avance pas deux fois. Voir
+    // `Horde#applyCharge`.
+    this.horde.step(scaledDt, this.#fields, this.#tick, this.#zones, this.#charge);
 
     this.#fireWeapons(this.#tick);
     const deadIds = resolveProjectileDamage(
@@ -887,9 +945,21 @@ export class Room {
       // domine avance (§2 de la spec).
       if (this.#bossEntityId !== null && allDead.includes(this.#bossEntityId)) {
         this.#bossEntityId = null;
+        // La charge d'un boss mort est deja inerte (`Horde#applyCharge` ne
+        // trouve plus son creneau, `resolveChargeHit` non plus) ; l'oublier ici
+        // evite surtout qu'elle survive jusqu'au boss du palier SUIVANT, dont
+        // l'identite pourrait, elle, exister a nouveau.
+        this.#charge = null;
         this.#director.bossDefeated();
       }
     }
+
+    // ⚠️ **APRES le deplacement de la horde, AVANT le contact ordinaire.** Le
+    // corps qui blesse est celui que `Horde.step` vient de poser sur le
+    // couloir ce tick-ci ; et toucher avant `resolveContact` est ce qui laisse
+    // l'invulnerabilite posee par la charge produire son effet des le tick
+    // suivant plutot qu'un tick plus tard.
+    this.#stepBossCharge();
 
     resolveContact([...this.#players.values()], this.horde);
 
@@ -1006,6 +1076,102 @@ export class Room {
     for (let i = depuis; i < this.horde.count; i++) {
       this.horde.hp[i] = palierHp(this.horde.hp[i] ?? 0, palier);
     }
+  }
+
+  /**
+   * La charge du boss, en un seul endroit : elle blesse si elle traverse, et
+   * elle s'annonce si l'heure est venue (etape 6a, tache 5 bis).
+   *
+   * ⚠️ **UN SEUL MESSAGE, A L'ANNONCE.** Ce qui part sur le fil, c'est
+   * l'origine, la direction, la longueur, la largeur et les trois ticks ; la
+   * POSITION du boss pendant toute la charge se derive de ces nombres, des deux
+   * cotes, sans un octet de plus. C'est la parade qui a deja servi trois fois
+   * dans ce depot — les zones, le gel de niveau, le vol des orbes — appliquee
+   * au premier effet de cette etape qui touche le DEPLACEMENT.
+   *
+   * ⚠️ **La direction se lit sur les positions COURANTES, pas sur les positions
+   * retardees du flowfield.** C'est un arbitrage, comme `resolveContact` et
+   * `resolvePickups` : le serveur tranche, et le couloir doit viser la ou le
+   * joueur est vraiment. Le client, lui, n'a rien a recalculer — il recoit la
+   * direction deja figee.
+   *
+   * ⚠️ **Une charge en cours n'en annonce pas une autre.** Le retour anticipe
+   * sur `chargeHoldsAt` est ce qui garantit qu'il n'y a jamais qu'un couloir a
+   * la fois, donc jamais qu'un `#charge` a passer a `Horde.step` — deux charges
+   * simultanees sur la meme entite se disputeraient sa position et la derniere
+   * ecrite gagnerait, en silence.
+   *
+   * ⚠️ **Le cooldown se mesure depuis la FIN de la charge**, pas depuis son
+   * annonce : sinon le rythme dependrait de la duree de la traversee, que la
+   * tache 12 va justement retoucher.
+   */
+  #stepBossCharge(): void {
+    const charge = this.#charge;
+    if (charge) {
+      for (const id of resolveChargeHit(
+        [...this.#players.values()],
+        this.horde,
+        charge,
+        this.#tick,
+        this.#chargeHit,
+      )) {
+        this.#chargeHit.add(id);
+      }
+    }
+
+    // ⚠️ **UNE SEULE garde decide qu'une nouvelle charge peut partir, et c'est
+    // `#nextChargeTick`.** Une seconde garde, `chargeHoldsAt(charge, tick)`,
+    // vivait ici — « une charge en cours n'en annonce pas une autre » — et la
+    // mutation qui la retire est restee VERTE : elle etait entierement couverte
+    // par celle-ci, puisque `#nextChargeTick` vaut `endTick +
+    // BOSS_CHARGE_COOLDOWN_TICKS`, donc strictement au-dela de la charge en
+    // cours des lors que ce delai est non nul. C'est la « deux gardes qui se
+    // couvrent » du depot, seizieme occurrence, soldee comme plusieurs des
+    // precedentes : **par une suppression**. La propriete dont depend le
+    // retrait — `BOSS_CHARGE_COOLDOWN_TICKS > 0` — est gardee par un test de
+    // `shared/boss.test.ts`, pour qu'un reglage a zero a la tache 12 fasse
+    // rougir plutot que de laisser deux couloirs se disputer un boss.
+    if (this.#bossEntityId === null || this.#tick < this.#nextChargeTick) {
+      return;
+    }
+    const slot = this.horde.slotOf(this.#bossEntityId);
+    if (slot < 0) {
+      return;
+    }
+    const bx = this.horde.x[slot] ?? 0;
+    const by = this.horde.y[slot] ?? 0;
+
+    // Le joueur VIVANT le plus proche : la meme cible que celle vers laquelle
+    // le boss marchait deja (`Horde.retarget` choisit le plus proche), donc la
+    // charge prolonge son intention au lieu de la contredire.
+    let targetX = 0;
+    let targetY = 0;
+    let bestDist = Number.POSITIVE_INFINITY;
+    for (const p of this.#players.values()) {
+      if (p.hp <= 0) {
+        continue;
+      }
+      const dx = p.x - bx;
+      const dy = p.y - by;
+      const d = dx * dx + dy * dy;
+      if (d < bestDist) {
+        bestDist = d;
+        targetX = p.x;
+        targetY = p.y;
+      }
+    }
+    if (bestDist === Number.POSITIVE_INFINITY) {
+      // Personne de vivant a viser : rien a annoncer, et surtout pas un couloir
+      // dans une direction par defaut. La run est de toute facon en train de se
+      // terminer (`#checkRunOver`).
+      return;
+    }
+
+    const next = makeBossCharge(this.#bossEntityId, bx, by, targetX, targetY, this.#tick);
+    this.#charge = next;
+    this.#chargeHit.clear();
+    this.#nextChargeTick = next.endTick + BOSS_CHARGE_COOLDOWN_TICKS;
+    this.#pendingCharges.push(next);
   }
 
   /**

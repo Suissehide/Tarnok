@@ -1,5 +1,12 @@
 import { ARCHETYPES, HEAVY_HP, LIGHT_HP } from '@shared/archetypes';
 import {
+  BOSS_CHARGE_DAMAGE,
+  BOSS_CHARGE_TICKS,
+  type BossCharge,
+  chargePointAt,
+  makeBossCharge,
+} from '@shared/boss';
+import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
@@ -22,12 +29,14 @@ import { describe, expect, it } from 'vitest';
 
 import {
   applyReactions,
+  type ChargeTarget,
   type ContactPlayer,
   markInZones,
   OrbField,
   Reactions,
   type ReactionTrigger,
   resolveBurn,
+  resolveChargeHit,
   resolveContact,
   resolveProjectileDamage,
 } from './combat';
@@ -311,6 +320,137 @@ describe('resolveContact', () => {
     resolveContact([p], horde);
 
     expect(p.hp).toBe(0);
+  });
+});
+
+describe('resolveChargeHit — la charge du boss (etape 6a, tache 5 bis)', () => {
+  const BOSS_X = 1000;
+  const BOSS_Y = 1000;
+
+  /** Un boss en (1000, 1000) et la charge vers l'est qu'il vient d'annoncer. */
+  function scene(): { horde: Horde; charge: BossCharge; id: number } {
+    const horde = new Horde(10);
+    const id = addOne(horde, 1, BOSS_X, BOSS_Y);
+    return { horde, charge: makeBossCharge(id, BOSS_X, BOSS_Y, 5000, BOSS_Y, 0), id };
+  }
+
+  /** Un joueur avec une identite, ce que la borne « une fois par charge » exige. */
+  function cible(x: number, y: number, id = 1, hp = 100): ChargeTarget {
+    return { id, x, y, hp, contactInvulnTicks: 0 };
+  }
+
+  /**
+   * ⚠️ **RIEN NE FAIT MAL PENDANT LE CHARGEMENT.** C'est ce qui rend le
+   * telegraphe sur : le joueur a tout le chargement pour sortir du couloir.
+   * Le test balaie TOUS les ticks du chargement, pas seulement le premier —
+   * une borne posee un tick trop tot ne se verrait pas autrement.
+   */
+  it('ne fait mal a aucun tick du chargement, joueur pourtant colle au boss', () => {
+    const { horde, charge } = scene();
+    const p = cible(BOSS_X, BOSS_Y);
+
+    for (let t = charge.windupTick; t <= charge.startTick; t++) {
+      expect(resolveChargeHit([p], horde, charge, t, new Set()), `tick ${t}`).toEqual([]);
+    }
+    expect(p.hp).toBe(100);
+  });
+
+  it('endommage le joueur que le corps en mouvement traverse', () => {
+    const { horde, charge } = scene();
+    // A mi-parcours : le boss est a la moitie du couloir, le joueur y est.
+    const t = charge.startTick + BOSS_CHARGE_TICKS / 2;
+    const out = new Float32Array(2);
+    chargePointAt(charge, t, out);
+    const p = cible(out[0] ?? 0, out[1] ?? 0);
+    // La horde doit porter la position du tick : c'est elle qui fait foi.
+    horde.x[0] = out[0] ?? 0;
+    horde.y[0] = out[1] ?? 0;
+
+    expect(resolveChargeHit([p], horde, charge, t, new Set())).toEqual([p.id]);
+    expect(p.hp).toBe(100 - BOSS_CHARGE_DAMAGE);
+  });
+
+  /**
+   * ⚠️ **Une fois par charge, pas une fois par tick.** Sans cette borne, un
+   * joueur immobile encaisserait dix-huit fois les degats de la charge — de quoi
+   * le tuer plusieurs fois. C'est `Room` qui tient l'ensemble ; ici on verifie
+   * que la fonction le respecte.
+   */
+  it('ne touche jamais deux fois le meme joueur pour une meme charge', () => {
+    const { horde, charge } = scene();
+    const p = cible(BOSS_X, BOSS_Y);
+    const deja = new Set<number>();
+
+    for (let t = charge.startTick + 1; t <= charge.endTick; t++) {
+      // Le corps reste sur le joueur : sans la borne, chaque tick ferait mal.
+      horde.x[0] = p.x;
+      horde.y[0] = p.y;
+      for (const id of resolveChargeHit([p], horde, charge, t, deja)) {
+        deja.add(id);
+      }
+    }
+
+    expect(p.hp).toBe(100 - BOSS_CHARGE_DAMAGE);
+    expect([...deja]).toEqual([p.id]);
+  });
+
+  it('ne touche pas un joueur hors du corps, meme dans l axe du couloir', () => {
+    const { horde, charge } = scene();
+    // Juste au-dela du demi-corps, perpendiculairement au couloir : c'est
+    // exactement l'esquive que le chargement rend possible.
+    const p = cible(BOSS_X, BOSS_Y + charge.width / 2 + 1);
+
+    expect(resolveChargeHit([p], horde, charge, charge.startTick + 1, new Set())).toEqual([]);
+    expect(p.hp).toBe(100);
+  });
+
+  it('touche a l interieur du corps, juste en deca de la meme frontiere', () => {
+    // La moitie haute du couple : sans elle, un rayon nul passerait le test
+    // precedent sans que la charge ne touche jamais personne.
+    const { horde, charge } = scene();
+    const p = cible(BOSS_X, BOSS_Y + charge.width / 2 - 1);
+
+    expect(resolveChargeHit([p], horde, charge, charge.startTick + 1, new Set())).toEqual([p.id]);
+  });
+
+  it('rearme l invulnerabilite de contact, pour que le corps ne repique pas au tick suivant', () => {
+    const { horde, charge } = scene();
+    const p = cible(BOSS_X, BOSS_Y);
+
+    resolveChargeHit([p], horde, charge, charge.startTick + 1, new Set());
+
+    expect(p.contactInvulnTicks).toBe(CONTACT_INTERVAL_TICKS);
+  });
+
+  it('ignore un joueur deja mort', () => {
+    const { horde, charge } = scene();
+    const p = cible(BOSS_X, BOSS_Y, 1, 0);
+
+    expect(resolveChargeHit([p], horde, charge, charge.startTick + 1, new Set())).toEqual([]);
+    expect(p.hp).toBe(0);
+  });
+
+  it('ne fait jamais descendre les pv sous zero', () => {
+    const { horde, charge } = scene();
+    const p = cible(BOSS_X, BOSS_Y, 1, BOSS_CHARGE_DAMAGE - 3);
+
+    resolveChargeHit([p], horde, charge, charge.startTick + 1, new Set());
+
+    expect(p.hp).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Une seule source de verite pour « le boss est-il encore la ».** S'il
+   * meurt en pleine charge, il quitte la horde — et la charge cesse de blesser
+   * au meme tick que celui ou elle cesse de le deplacer.
+   */
+  it('ne fait plus mal quand le boss a quitte la horde', () => {
+    const { horde, charge, id } = scene();
+    const p = cible(BOSS_X, BOSS_Y);
+    horde.kill([id]);
+
+    expect(resolveChargeHit([p], horde, charge, charge.startTick + 1, new Set())).toEqual([]);
+    expect(p.hp).toBe(100);
   });
 });
 

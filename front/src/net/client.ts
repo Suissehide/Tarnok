@@ -1,3 +1,4 @@
+import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
@@ -23,6 +24,7 @@ import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import {
+  type BossChargeMessage,
   decode,
   encodeDraftToken,
   encodeInput,
@@ -783,6 +785,34 @@ export class GameClient {
   /** Zones recues mais pas encore appliquees. Meme discipline que `#pendingDeaths`. */
   readonly #pendingZones: ZoneMessage[] = [];
 
+  /** Charges de boss recues mais pas encore appliquees. Meme discipline que `#pendingZones`. */
+  readonly #pendingCharges: BossChargeMessage[] = [];
+
+  /**
+   * La charge du boss en cours, ou `null` — annoncee UNE FOIS par le serveur,
+   * puis derivee ici tick par tick (§4 de la spec de l'etape 6a).
+   *
+   * ⚠️ **C'est le deuxieme effet du jeu qui touche le DEPLACEMENT**, apres le
+   * ralentissement du Givre : pendant toute la charge, la position du boss vient
+   * de cette valeur et non du champ de flux. Elle est donc DATEE PAR TICK et
+   * appliquee par rejeu, exactement comme une zone — voir `#applyBossCharge`.
+   *
+   * Gardee apres sa fin, jamais effacee par le temps : une charge finie est
+   * inerte (`chargeHoldsAt`), et la garder est ce qui permet a un rejeu qui
+   * enjambe sa fin de la retrouver — meme raisonnement que les zones que le
+   * client laisse mourir `ROLLBACK_DEPTH_TICKS` ticks en retard.
+   */
+  #bossCharge: BossCharge | null = null;
+
+  /**
+   * Nombre cumule de charges annoncees trop tard pour l'anneau
+   * (`ROLLBACK_DEPTH_TICKS`), donc installees au present. Meme degradation
+   * assumee et meme refus du silence que `#lateZones` et `#lateDeaths` : le
+   * boss saute alors sur son couloir de l'ecart exact de la latence
+   * excedentaire.
+   */
+  #lateCharges = 0;
+
   /**
    * Dernier tick du gel courant (inclus), et dernier tick de la reprise
    * progressive qui suit. `-1` hors gel — et non `0` comme cote serveur
@@ -995,6 +1025,23 @@ export class GameClient {
   /** Zones posees au present faute d'anneau assez profond. Voir `#lateZones`. */
   get lateZones(): number {
     return this.#lateZones;
+  }
+
+  /** Charges installees au present faute d'anneau assez profond. Voir `#lateCharges`. */
+  get lateCharges(): number {
+    return this.#lateCharges;
+  }
+
+  /**
+   * La charge du boss en cours, ou `null` — ce que le rectangle d'annonce
+   * dessine a chaque image (`ChargeRenderer`).
+   *
+   * Meme place que `boss`, `zones` ou `hordeTick`, et pour la meme raison : ce
+   * n'est ni predit ni interpole, c'est une valeur annoncee dont tout le reste
+   * se derive au tick.
+   */
+  get bossCharge(): BossCharge | null {
+    return this.#bossCharge;
   }
 
   /**
@@ -1220,6 +1267,14 @@ export class GameClient {
       this.#pendingZones.push(msg);
       return;
     }
+    if (msg.type === MSG.BOSS_CHARGE) {
+      // Meme discipline que les zones et les morts : empiler ici, appliquer (et
+      // rejouer) au tick local deja simule — voir `#applyBossCharge`. Une
+      // charge DEPLACE le boss : elle doit prendre effet au tick que le serveur
+      // a date, quitte a rejouer, jamais a la reception.
+      this.#pendingCharges.push(msg);
+      return;
+    }
     if (msg.type === MSG.REACTION) {
       // ⚠️ **Applique A LA RECEPTION, pas au tick date — a l'oppose exact de
       // `ZONE` juste au-dessus, et la difference est le coeur du §2 de la
@@ -1419,7 +1474,7 @@ export class GameClient {
       if (order) {
         // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
         const missed = Math.max(0, tick - order.spawnTick);
-        this.horde.spawnCatchingUp(order, missed, dt, this.#fields, this.zones);
+        this.horde.spawnCatchingUp(order, missed, dt, this.#fields, this.zones, this.#bossCharge);
       }
     }
 
@@ -1479,7 +1534,11 @@ export class GameClient {
     // par le meme predicat.
     this.zones.expire(tick - ROLLBACK_DEPTH_TICKS);
     const scale = this.#movementScale(tick);
-    this.horde.step(dt * scale, this.#fields, tick, this.zones);
+    // ⚠️ **La charge REMPLACE le deplacement du boss** : `Horde.step` l'applique
+    // en dernier, apres l'avancement et la separation — sans quoi il avancerait
+    // deux fois. Le client passe exactement la meme valeur que le serveur,
+    // recue une fois puis derivee.
+    this.horde.step(dt * scale, this.#fields, tick, this.zones, this.#bossCharge);
     // Teinte elementaire, moitie « zones » — voir `#markInZones`. Place ici,
     // apres le deplacement, comme `Room.step` place `markInZones` apres avoir
     // avance sa horde.
@@ -1539,6 +1598,7 @@ export class GameClient {
     // `DerivedOrbs.expire`.
     this.orbs.expire(tick);
     this.#drainPendingZones(tick);
+    this.#drainPendingCharges(tick);
     this.#drainPendingDeaths(tick);
   }
 
@@ -1805,6 +1865,72 @@ export class GameClient {
     }
   }
 
+  /**
+   * Applique toutes les charges recues mais pas encore installees, au tick local
+   * `currentTick`.
+   *
+   * ⚠️ **APPELE AVANT `#drainPendingDeaths`, comme les zones et pour la meme
+   * raison** : un rejeu REECRIT l'anneau depuis son tick de depart, donc une
+   * mort rejouee d'abord puis une charge plus ancienne rejouee ensuite
+   * ressusciterait l'entite tuee. Dans cet ordre-ci, la charge est deja
+   * installee quand la mort rejoue, et le rejeu de la mort la reapplique.
+   */
+  #drainPendingCharges(currentTick: number): void {
+    while (this.#pendingCharges.length > 0) {
+      const charge = this.#pendingCharges.shift();
+      if (charge) {
+        this.#applyBossCharge(charge, currentTick);
+      }
+    }
+  }
+
+  /**
+   * Installe une charge annoncee, par rejeu — meme mecanique que `#applyZone`,
+   * et pour une raison plus forte encore.
+   *
+   * ⚠️ **UNE CHARGE DEPLACE LE BOSS.** Une zone ralentit ; une charge, elle,
+   * PILOTE une position. L'installer au present ferait deriver le boss de la
+   * latence exacte du message pendant tout le reste de la traversee — et le
+   * rejeu est precisement ce qui ramene cet ecart a zero (mesure : scenario 11
+   * de `shared/horde.replication.test.ts`).
+   *
+   * `windupTick >= currentTick` : rien a rejouer, la charge est entierement
+   * devant nous — c'est meme le cas NOMINAL, puisque le chargement dure
+   * `BOSS_CHARGE_WINDUP_TICKS` (30 ticks) et qu'un message met un a trois ticks
+   * a arriver. Le rejeu n'existe ici que pour la queue de distribution.
+   *
+   * ⚠️ **La charge est installee AVANT le rejeu**, sans quoi le rejeu avancerait
+   * le boss sans elle et ne corrigerait rien.
+   */
+  #applyBossCharge(msg: BossChargeMessage, currentTick: number): void {
+    const charge: BossCharge = {
+      entityId: msg.entityId,
+      x: msg.x,
+      y: msg.y,
+      dirX: msg.dirX,
+      dirY: msg.dirY,
+      length: msg.length,
+      width: msg.width,
+      windupTick: msg.windupTick,
+      startTick: msg.startTick,
+      endTick: msg.endTick,
+    };
+    this.#bossCharge = charge;
+    if (charge.windupTick >= currentTick) {
+      return;
+    }
+    if (!this.#hordeHistory.restore(charge.windupTick, this.horde)) {
+      // Trop vieille pour l'anneau : installee au present, et SIGNALEE — meme
+      // degradation assumee que pour une mort ou une zone trop vieille.
+      this.#lateCharges++;
+      return;
+    }
+    this.#primeFieldForReplay(charge.windupTick);
+    for (let t = charge.windupTick + 1; t <= currentTick; t++) {
+      this.#replayTick(t);
+    }
+  }
+
   #drainPendingDeaths(currentTick: number): void {
     while (this.#pendingDeaths.length > 0) {
       const batch = this.#pendingDeaths.shift();
@@ -1841,10 +1967,12 @@ export class GameClient {
       this.#spawnOrbs(ids, deathTick);
       this.#lateDeaths += ids.length;
       this.horde.kill(ids);
+      this.#forgetChargeOf(ids);
       return;
     }
     this.#spawnOrbs(ids, deathTick);
     this.horde.kill(ids);
+    this.#forgetChargeOf(ids);
     // ⚠️ Le champ de flux n'est pas dans l'anneau : `HordeHistory.restore`
     // remet la HORDE au tick de la mort, mais `FlowField` est un objet mutable
     // PARTAGE que l'anneau ne sauvegarde jamais. Sans ce reamorcage, le rejeu
@@ -1855,6 +1983,22 @@ export class GameClient {
     this.#primeFieldForReplay(deathTick);
     for (let t = deathTick + 1; t <= currentTick; t++) {
       this.#replayTick(t);
+    }
+  }
+
+  /**
+   * Oublie la charge en cours si c'est SON boss qui vient de mourir.
+   *
+   * ⚠️ **C'est le RENDU que ca protege, pas la simulation.** `Horde#applyCharge`
+   * ne trouve deja plus de creneau pour une entite morte, donc rien ne bougeait
+   * de travers ; mais le rectangle d'annonce, lui, continuerait de s'afficher
+   * jusqu'a `endTick` au-dessus d'un boss qui n'existe plus. Le boss tombe
+   * pendant sa charge — c'est un cas rare, pas un cas impossible.
+   */
+  #forgetChargeOf(ids: readonly number[]): void {
+    const charge = this.#bossCharge;
+    if (charge && ids.includes(charge.entityId)) {
+      this.#bossCharge = null;
     }
   }
 
@@ -1905,7 +2049,7 @@ export class GameClient {
       }
     }
     const scale = this.#movementScale(tick);
-    this.horde.step(FIXED_DT * scale, this.#fields, tick, this.zones);
+    this.horde.step(FIXED_DT * scale, this.#fields, tick, this.zones, this.#bossCharge);
     this.#hordeHistory.record(tick, this.horde);
   }
 

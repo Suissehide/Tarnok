@@ -1,4 +1,5 @@
 import { archetypeOf } from './archetypes';
+import { type BossCharge, chargeHoldsAt, chargePointAt } from './boss';
 import {
   CONTACT_RADIUS,
   DEOVERLAP_MAX_PX,
@@ -317,6 +318,21 @@ export class Horde {
    * donc le partager entre les deux appelants ne cree aucune interference.
    */
   readonly #dirSample: Float32Array = new Float32Array(2);
+
+  /**
+   * Tampon de sortie pour `chargePointAt` (etape 6a, tache 5 bis) — deux
+   * flottants, jamais reconstruits, meme discipline que `#dirSample` : ecrit
+   * puis lu immediatement, jamais conserve d'un pas a l'autre.
+   *
+   * ⚠️ **Un tampon, PAS un etat.** La charge elle-meme n'est pas un champ de
+   * cette classe : elle arrive en parametre de `step`, comme les zones et pour
+   * la meme raison — c'est l'appelant (le salon, ou le client) qui sait ce que
+   * le serveur a annonce, et la horde n'a rien a en retenir d'un tick a
+   * l'autre. C'est aussi ce qui la garde hors de `HordeState` : rien a
+   * sauvegarder, rien a restaurer, la position se REDERIVE a chaque pas
+   * rejoue.
+   */
+  readonly #chargeSample: Float32Array = new Float32Array(2);
 
   /**
    * Facteur de vitesse par entite pour le pas courant — etape 5a, tache 6.
@@ -732,6 +748,9 @@ export class Horde {
    * des entites deja arretees (`stopped`, tache 17.2) empilees au meme point
    * jusqu'a 300 ms, exactement le symptome que la tache 22 corrige.
    *
+   * ⚠️ **`charge` REMPLACE le deplacement du boss, il ne s'y ajoute pas** —
+   * voir `#applyCharge`, qui s'execute en DERNIER pour cette raison exacte.
+   *
    * ⚠️ **`dt <= 0` est un NO-OP STRICT, y compris pour `vx`/`vy`.** Avant la
    * tache 19, un `dt` nul rendait deja `#advance` sans effet (vitesse
    * multipliee par `dt`), donc peu importait que `GameClient` appelle `step`
@@ -747,14 +766,76 @@ export class Horde {
    * l'invariant que tout le reste de ce fichier suppose deja : `dt <= 0` ne
    * fait litteralement rien.
    */
-  step(dt: number, fields: readonly FlowField[], tick: number, zones?: ZoneField): void {
+  step(
+    dt: number,
+    fields: readonly FlowField[],
+    tick: number,
+    zones?: ZoneField,
+    charge?: BossCharge | null,
+  ): void {
     if (dt > 0) {
       this.#recomputeSteering(tick, fields);
       this.#computeSlow(zones, tick);
       this.#advanceByVelocity(0, this.#count, dt);
       this.#applyDeoverlap(0, this.#count);
+      this.#applyCharge(charge, tick);
     }
     this.#recordFieldRevisions(fields);
+  }
+
+  /**
+   * Pose la position du boss qui charge — **elle REMPLACE son deplacement, elle
+   * ne s'y ajoute pas** (etape 6a, tache 5 bis).
+   *
+   * ⚠️ **EN DERNIER DU PAS, et c'est TOUTE la mecanique du remplacement.** Le
+   * boss est une entite de la horde comme les autres : `#advanceByVelocity` l'a
+   * deja avance le long de sa vitesse tenue, et `#applyDeoverlap` l'a deja
+   * pousse hors de ses voisins. Ecrire sa position ICI, apres les deux, efface
+   * leur effet sur lui — un boss qui subirait les deux avancerait DEUX FOIS, et
+   * la separation le pousserait pendant qu'il charge. Aucune des deux passes
+   * n'a besoin d'apprendre a l'eviter : c'est la derniere ecriture qui gagne, et
+   * c'est celle-ci.
+   *
+   * ⚠️ **DANS le garde `dt > 0` de `step`, jamais dehors.** Pendant le gel de
+   * niveau, le serveur ne fait pas avancer sa horde du tout (`Room.step` revient
+   * avant) et le client appelle `step` avec un `dt` nul : deriver la position de
+   * la charge hors de ce garde ferait avancer le boss chez le client pendant que
+   * le serveur le laisse sur place — exactement le genre de divergence
+   * silencieuse que le scenario 9 de `shared/horde.replication.test.ts` existe
+   * pour attraper. Les deux cotes sautent donc les memes ticks, et la charge
+   * reprend a la position du tick courant a la reprise.
+   *
+   * ⚠️ **`stopped = 1` est pose pour le CLIP, pas pour le deplacement.**
+   * L'ecriture de position ci-dessus suffit deja a annuler l'avancement ; ce
+   * booleen sert a `selectClip` (`front/src/render/horde-renderer.ts`), qui
+   * bascule sur l'animation d'attaque quand une entite est marquee arretee —
+   * **le boss qui charge est une entite qui joue son clip d'attaque**, et ce
+   * sont ses six images qui montrent la rotation. Rien ne fait tourner le sprite
+   * en code. Comme tout le reste ici, il se REDERIVE a chaque pas : `retarget`
+   * le remet a la portee de contact dix fois par seconde, et le pas suivant le
+   * repose — des deux cotes, aux memes ticks.
+   *
+   * Cout : un `slotOf` (balayage lineaire) par tick, et seulement pendant les
+   * ~48 ticks d'une charge. Meme ordre que le `slotOf` que `bossBarLayout` fait
+   * deja par IMAGE cote client.
+   */
+  #applyCharge(charge: BossCharge | null | undefined, tick: number): void {
+    if (!charge || !chargeHoldsAt(charge, tick)) {
+      return;
+    }
+    const slot = this.slotOf(charge.entityId);
+    if (slot < 0) {
+      // Le boss est mort en pleine charge : il n'y a plus rien a deplacer. Les
+      // deux cotes l'apprennent par le meme lot `DEATHS`, donc les deux
+      // s'arretent au meme tick.
+      return;
+    }
+    chargePointAt(charge, tick, this.#chargeSample);
+    // Meme bornage que `#advanceByVelocity` : le couloir peut viser hors carte,
+    // et un boss hors carte serait invisible et increvable.
+    this.x[slot] = clamp(this.#chargeSample[0] ?? 0, 0, MAP_SIZE);
+    this.y[slot] = clamp(this.#chargeSample[1] ?? 0, 0, MAP_SIZE);
+    this.stopped[slot] = 1;
   }
 
   /**
@@ -880,6 +961,7 @@ export class Horde {
     dt: number,
     fields: readonly FlowField[],
     zones?: ZoneField,
+    charge?: BossCharge | null,
   ): void {
     if (missedTicks > 0) {
       this.#assertFieldsNotRefreshed(fields);
@@ -904,6 +986,14 @@ export class Horde {
       this.#computeSlow(zones, tick);
       this.#advanceByVelocity(before, this.#count, dt);
       this.#applyDeoverlap(before, this.#count);
+      // Meme quatuor que `step`, dans le meme ordre : un pas rattrape doit
+      // reproduire EXACTEMENT ce que le serveur a fait ce tick-la, charge du
+      // boss comprise. Le cas est rare — il faudrait qu'une charge soit
+      // annoncee moins de `missedTicks` apres l'apparition de la vague qui
+      // porte le boss — mais l'omettre laisserait le client avancer le boss par
+      // sa vitesse la ou le serveur le derivait le long du couloir, et
+      // l'ecart serait definitif.
+      this.#applyCharge(charge, tick);
     }
   }
 

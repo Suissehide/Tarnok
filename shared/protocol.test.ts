@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { makeBossCharge } from './boss';
 import {
   MAX_PER_WAVE,
   MAX_PLAYERS,
@@ -11,6 +12,7 @@ import { ELEMENT, ELEMENTS } from './elements';
 import { entityIdOf } from './horde';
 import { bossHp } from './paliers';
 import {
+  BOSS_CHARGE_BYTES,
   BOSS_HP_MAX,
   DEATH_ID_BYTES,
   DEATHS_HEADER_BYTES,
@@ -22,6 +24,7 @@ import {
   DRAFT_RESULT_HEADER_BYTES,
   DRAFT_TOKEN_BYTES,
   decode,
+  decodeBossCharge,
   decodeDeaths,
   decodeInput,
   decodeLevelUp,
@@ -32,6 +35,7 @@ import {
   decodeWaveOrder,
   decodeWelcome,
   decodeZone,
+  encodeBossCharge,
   encodeDeaths,
   encodeDraftIntents,
   encodeDraftOpen,
@@ -825,6 +829,80 @@ describe('packElementPair / unpackElementPair', () => {
   // l'etape 4.
   it('garde la marge du quartet : au plus seize elements', () => {
     expect(ELEMENTS.length).toBeLessThanOrEqual(16);
+  });
+});
+
+describe('encodeBossCharge / decodeBossCharge', () => {
+  /**
+   * Les dix champs sont assenes sur des valeurs TOUTES DISTINCTES : un
+   * aller-retour qui n'en verifierait que deux passerait meme si les huit autres
+   * etaient ecrases, et deux champs de meme valeur masqueraient un decalage
+   * d'octet qui les echange.
+   */
+  it('rend exactement la charge encodee, ses dix champs', () => {
+    const charge = {
+      entityId: 8193,
+      x: -1234,
+      y: 5678,
+      dirX: 0.6,
+      dirY: -0.8,
+      length: 900,
+      width: 192,
+      windupTick: 90_001,
+      startTick: 90_031,
+      endTick: 90_049,
+    };
+
+    expect(decodeBossCharge(encodeBossCharge(charge))).toEqual({
+      type: MSG.BOSS_CHARGE,
+      ...charge,
+    });
+  });
+
+  /**
+   * ⚠️ **LE test de cette tache, cote fil.** Le serveur derive la position du
+   * boss depuis la charge qu'il a construite ; le client depuis celle qu'il
+   * decode. Si l'aller-retour changeait le moindre bit d'une composante, les
+   * deux suivraient deux couloirs voisins mais distincts, et l'ecart croitrait
+   * tout du long — le defaut exact que le centre STOCKE d'une zone evite depuis
+   * l'etape 5a. `makeBossCharge` quantifie A LA CONSTRUCTION pour cette raison,
+   * et c'est ce que ce test verifie : la valeur construite survit au fil A
+   * L'IDENTIQUE, pas « a peu pres ».
+   */
+  it('rend une charge BIT POUR BIT identique a celle que `makeBossCharge` a construite', () => {
+    // Une direction volontairement irrationnelle : ni axiale, ni a 45 degres,
+    // donc ses deux composantes ont une infinite de decimales avant
+    // quantification. Un aller-retour approximatif se verrait ici, jamais sur
+    // (1, 0).
+    const built = makeBossCharge(8193, 1234.7, 2345.2, 4000, 3111, 700);
+    const decoded = decodeBossCharge(encodeBossCharge(built));
+
+    expect({ ...decoded, type: undefined }).toEqual({ ...built, type: undefined });
+    expect(decoded.dirX).toBe(built.dirX);
+    expect(decoded.dirY).toBe(built.dirY);
+  });
+
+  it('tient exactement BOSS_CHARGE_BYTES octets, et BOSS_CHARGE_BYTES en fait 29', () => {
+    const built = makeBossCharge(1, 0, 0, 100, 0, 0);
+    expect(encodeBossCharge(built).byteLength).toBe(BOSS_CHARGE_BYTES);
+    expect(BOSS_CHARGE_BYTES).toBe(29);
+  });
+
+  it('leve un message TRONQUE explicite sur un tampon court', () => {
+    const truncated = encodeBossCharge(makeBossCharge(1, 0, 0, 100, 0, 0)).slice(
+      0,
+      BOSS_CHARGE_BYTES - 1,
+    );
+
+    expect(() => decodeBossCharge(truncated)).toThrow(/tronqu/);
+  });
+
+  it('est aiguille par `decode` sur son seul octet de type', () => {
+    const built = makeBossCharge(8193, 10, 20, 500, 20, 3);
+    const decoded = decode(encodeBossCharge(built));
+
+    expect(decoded.type).toBe(MSG.BOSS_CHARGE);
+    expect(decoded).toEqual(decodeBossCharge(encodeBossCharge(built)));
   });
 });
 

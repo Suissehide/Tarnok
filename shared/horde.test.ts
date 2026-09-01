@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { ARCHETYPES, archetypeOf, HEAVY_HP, LIGHT_HP } from './archetypes';
+import { chargeHoldsAt, chargePointAt, makeBossCharge } from './boss';
 import {
   CONTACT_RADIUS,
   DEOVERLAP_MAX_PX,
@@ -2416,5 +2417,212 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
       (givree.y[0] ?? 0) - (temoin.y[0] ?? 0),
     );
     expect(ecart).toBeGreaterThan(0);
+  });
+});
+
+describe('la charge du boss REMPLACE le deplacement (etape 6a, tache 5 bis)', () => {
+  /**
+   * Une horde d'une seule entite, en (1000, 1000), avec une vitesse tenue
+   * franche vers l'est : le champ vise (5000, 1000), donc sans charge elle
+   * avance toute seule a chaque pas. C'est ce qui rend le test porteur — une
+   * position figee prouverait le remplacement seulement si quelque chose
+   * poussait vraiment dans l'autre sens.
+   */
+  function bossSeul(): { horde: Horde; fields: FlowField[]; id: number } {
+    const fields = fieldsTowards(5000, 1000);
+    const horde = new Horde(100);
+    horde.spawn(order({ count: 1, anchorX: 1000, anchorY: 1000 }), fields[0]);
+    return { horde, fields, id: horde.entityIdAt(0) };
+  }
+
+  it('avance de lui-meme sans charge — le decor prouve qu il y a bien quelque chose a remplacer', () => {
+    const { horde, fields } = bossSeul();
+    const x0 = horde.x[0] ?? 0;
+    for (let t = 1; t <= 20; t++) {
+      horde.step(DT, fields, t);
+    }
+    expect((horde.x[0] ?? 0) - x0).toBeGreaterThan(20);
+  });
+
+  /**
+   * ⚠️ **LE test de la tache.** Le boss est DANS la horde, et `Horde.step`
+   * avance toutes les entites : si la charge s'AJOUTAIT au lieu de REMPLACER, il
+   * avancerait deux fois. La position doit valoir exactement celle que
+   * `chargePointAt` derive, au bit pres apres passage en `Float32Array` — pas
+   * « a peu pres ».
+   */
+  it('pose exactement la position derivee, a chaque tick de la charge', () => {
+    const { horde, fields, id } = bossSeul();
+    const charge = makeBossCharge(id, horde.x[0] ?? 0, horde.y[0] ?? 0, 3000, 4000, 0);
+    const attendu = new Float32Array(2);
+
+    for (let t = 1; t <= charge.endTick + 2; t++) {
+      horde.step(DT, fields, t, undefined, charge);
+      if (!chargeHoldsAt(charge, t)) {
+        continue;
+      }
+      chargePointAt(charge, t, attendu);
+      expect(horde.x[0], `tick ${t}`).toBe(Math.fround(attendu[0] ?? 0));
+      expect(horde.y[0], `tick ${t}`).toBe(Math.fround(attendu[1] ?? 0));
+    }
+  });
+
+  /**
+   * ⚠️ **La separation ne doit pas le pousser pendant qu'il charge.** C'est le
+   * second piege annonce par le plan : `#applyDeoverlap` s'applique a TOUTES les
+   * entites, arretees comprises. Ici cinquante voisines naissent sur lui —
+   * chevauchement maximal, correction maximale — et la position derivee doit
+   * quand meme etre exacte.
+   */
+  it('reste sur son couloir au pixel pres malgre cinquante voisines empilees dessus', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const horde = new Horde(200);
+    // ⚠️ **Le boss porte l'identite la PLUS GRANDE** (vague 9 contre vague 6),
+    // et ce n'est pas cosmetique : `#applyDeoverlap` ne fait accumuler une
+    // correction qu'a l'entite DERRIERE, departagee a distance egale par le
+    // plus grand identifiant (`#isBehind`). Avec une identite plus petite que
+    // celle de ses voisines, le boss n'encaisse rien du tout — et la mutation
+    // « la charge s'applique avant la separation » survivait, appliquee sur le
+    // disque, malgre cinquante voisines collees sur lui.
+    horde.spawn(order({ waveId: 9, count: 1, anchorX: 1000, anchorY: 1000 }), fields[0]);
+    const id = horde.entityIdAt(0);
+    horde.spawn(
+      order({ waveId: 6, count: 50, formation: FORMATION.CLUSTER, anchorX: 1000, anchorY: 1000 }),
+      fields[0],
+    );
+    const charge = makeBossCharge(id, horde.x[0] ?? 0, horde.y[0] ?? 0, 1000, 5000, 0);
+    const attendu = new Float32Array(2);
+
+    // ⚠️ **Les voisines sont POSEES SUR le boss a chaque tick, pas seulement
+    // nees a la meme ancre.** Deux vagues au meme point ne se chevauchent pas
+    // pour autant — `formationPositions` les disperse — et sans chevauchement
+    // reel, `#applyDeoverlap` n'exerce aucune correction : la mutation
+    // « la charge s'applique AVANT l'avancement et la separation » survivait
+    // alors, appliquee sur le disque, a la totalite de cette suite. C'est la
+    // « fixture qui masque », dixieme occurrence de ce depot. Les reposer a
+    // chaque tick est ce qui garantit une correction maximale a tous les ticks.
+    for (let t = 1; t <= charge.endTick; t++) {
+      const slotBoss = horde.slotOf(id);
+      for (let i = 0; i < horde.count; i++) {
+        if (i === slotBoss) {
+          continue;
+        }
+        // ⚠️ **Toutes du MEME cote**, jamais reparties autour de lui : des
+        // voisines symetriques produisent des poussees qui s'annulent, et une
+        // correction nulle ne distingue plus « la separation ne le touche pas »
+        // de « la separation le touche mais s'equilibre ».
+        horde.x[i] = (horde.x[slotBoss] ?? 0) + 3 + (i % 4);
+        horde.y[i] = (horde.y[slotBoss] ?? 0) + 3 + (i % 6);
+      }
+      horde.step(DT, fields, t, undefined, charge);
+      chargePointAt(charge, t, attendu);
+      const slot = horde.slotOf(id);
+      expect(horde.x[slot], `tick ${t}`).toBe(Math.fround(attendu[0] ?? 0));
+      expect(horde.y[slot], `tick ${t}`).toBe(Math.fround(attendu[1] ?? 0));
+    }
+  });
+
+  /**
+   * ⚠️ **`stopped` est pose pour le CLIP, pas pour le deplacement.**
+   * `selectClip` (front) bascule sur l'animation d'attaque quand une entite est
+   * marquee arretee, et ce sont ses six images qui montrent la rotation : rien
+   * ne fait tourner le sprite en code. Le test porte donc sur ce booleen, pas
+   * sur une position — les deux effets sont distincts et se testent
+   * separement.
+   */
+  it('marque le boss arrete pendant toute la charge, pour qu il joue son clip d attaque', () => {
+    const { horde, fields, id } = bossSeul();
+    const charge = makeBossCharge(id, horde.x[0] ?? 0, horde.y[0] ?? 0, 5000, 1000, 0);
+
+    horde.step(DT, fields, charge.windupTick + 1, undefined, charge);
+    expect(horde.stopped[0]).toBe(1);
+    horde.step(DT, fields, charge.startTick + 5, undefined, charge);
+    expect(horde.stopped[0]).toBe(1);
+    // Apres la charge, il redevient une entite ordinaire : `retarget` seul
+    // decide alors s'il est au contact.
+    horde.retarget([5000], [5000]);
+    horde.step(DT, fields, charge.endTick + 1, undefined, charge);
+    expect(horde.stopped[0]).toBe(0);
+    expect(horde.slotOf(id)).toBe(0);
+  });
+
+  it('ne touche a personne d autre que l entite qui charge', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const horde = new Horde(100);
+    horde.spawn(order({ count: 10, anchorX: 1000, anchorY: 1000 }), fields[0]);
+    const temoin = new Horde(100);
+    temoin.spawn(order({ count: 10, anchorX: 1000, anchorY: 1000 }), fields[0]);
+    const charge = makeBossCharge(horde.entityIdAt(0), 1000, 1000, 1000, 5000, 0);
+
+    for (let t = 1; t <= charge.endTick; t++) {
+      horde.step(DT, fields, t, undefined, charge);
+      temoin.step(DT, fields, t);
+    }
+
+    for (let i = 1; i < 10; i++) {
+      expect(horde.x[i], `entite ${i}`).toBe(temoin.x[i]);
+      expect(horde.y[i], `entite ${i}`).toBe(temoin.y[i]);
+    }
+    expect(horde.x[0]).not.toBe(temoin.x[0]);
+  });
+
+  /**
+   * ⚠️ **`dt <= 0` reste un NO-OP STRICT, charge comprise.** Le serveur ne fait
+   * pas avancer sa horde pendant le gel de niveau (`Room.step` revient avant) ;
+   * le client, lui, appelle `step` avec `dt * 0`. Deriver la position hors du
+   * garde ferait avancer le boss chez le client pendant que le serveur le laisse
+   * sur place — une divergence silencieuse, exactement ce que le scenario 9 de
+   * la replication existe pour attraper.
+   */
+  it('ne bouge pas le boss quand dt est nul, meme en pleine charge', () => {
+    const { horde, fields, id } = bossSeul();
+    const charge = makeBossCharge(id, 4000, 4000, 4000, 5000, 0);
+
+    horde.step(0, fields, charge.startTick + 5, undefined, charge);
+
+    expect(horde.x[0]).not.toBe(4000);
+    expect(horde.stopped[0]).toBe(0);
+  });
+
+  it('ignore une charge dont l entite n est plus dans la horde', () => {
+    const { horde, fields, id } = bossSeul();
+    const charge = makeBossCharge(id + 1000, 4000, 4000, 4000, 5000, 0);
+    const avant = horde.x[0] ?? 0;
+
+    horde.step(DT, fields, charge.startTick + 5, undefined, charge);
+
+    expect(horde.x[0]).not.toBe(4000);
+    expect(horde.x[0]).not.toBe(avant);
+  });
+
+  it('borne la position derivee a la carte, comme l avancement par vitesse', () => {
+    const { horde, fields, id } = bossSeul();
+    // Un couloir qui sort largement de la carte : le boss doit s'arreter au
+    // bord, pas disparaitre dans les coordonnees negatives.
+    const charge = makeBossCharge(id, 100, 100, 100, -5000, 0);
+
+    for (let t = 1; t <= charge.endTick; t++) {
+      horde.step(DT, fields, t, undefined, charge);
+    }
+
+    expect(horde.y[0]).toBe(0);
+  });
+
+  it('applique aussi la charge aux pas rattrapes par spawnCatchingUp', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const avecCharge = new Horde(100);
+    const sansCharge = new Horde(100);
+    const o = order({ count: 1, anchorX: 1000, anchorY: 1000, spawnTick: 1 });
+    // L'identite que `spawn` donnera a l'unique entite de cette vague.
+    const id = entityIdOf(o.waveId, 0);
+    const charge = makeBossCharge(id, 2000, 2000, 2000, 5000, 0);
+
+    avecCharge.spawnCatchingUp(o, 6, DT, fields, undefined, charge);
+    sansCharge.spawnCatchingUp(o, 6, DT, fields);
+
+    const attendu = new Float32Array(2);
+    chargePointAt(charge, o.spawnTick + 5, attendu);
+    expect(avecCharge.x[0]).toBe(Math.fround(attendu[0] ?? 0));
+    expect(sansCharge.x[0]).not.toBe(avecCharge.x[0]);
   });
 });

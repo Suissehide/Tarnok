@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { CARD } from '@shared/cards';
-import { SNAPSHOT_HZ } from '@shared/constants';
+import { SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
@@ -375,4 +375,67 @@ describe('la reaction sur le fil (etape 5a, tache 7)', () => {
       clearInterval(pilote);
     }
   }, 15_000);
+});
+
+/**
+ * Etape 6a, tache 5 bis — **la charge du boss sur le fil**.
+ *
+ * ⚠️ **La diffusion de `BOSS_CHARGE` n'etait couverte par AUCUN test** :
+ * mutation appliquee sur le disque, la boucle d'emission retiree, toute la
+ * suite restait verte — exactement comme `REACTION` avant la tache 7, et comme
+ * les deux lignes de `Session` du registre de dettes. La supprimer laisserait le
+ * boss traverser son couloir chez le serveur et nulle part ailleurs.
+ *
+ * La PREUVE ne passe que par la socket : c'est le message decode qui est
+ * interroge, jamais `room.drainBossCharges()`.
+ */
+describe('la charge du boss sur le fil (etape 6a, tache 5 bis)', () => {
+  it('diffuse la charge aux clients, une fois, avec ses trois ticks', async () => {
+    const code = await createRoomCode();
+    const { ws } = await connect(code);
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('salon introuvable');
+    }
+
+    // ⚠️ **Le salon est avance DEPUIS LE TEST**, en plus de la boucle du
+    // serveur : atteindre un boss demande quatre vagues, soit une trentaine de
+    // secondes d'horloge murale. `Room.step` est public et le tick n'est qu'un
+    // compteur — l'avancer ici fait apparaitre le boss en quelques
+    // millisecondes, et c'est bien le SERVEUR qui diffuse ce qu'il en tire.
+    const balayer = (): void => {
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        const id = room.horde.entityIdAt(i);
+        if (id !== room.bossEntityId) {
+          ids.push(id);
+        }
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+    };
+    for (let t = 0; t < 120 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(1 / TICK_HZ);
+      balayer();
+    }
+    expect(room.bossEntityId).not.toBeNull();
+    for (let t = 0; t < 4 * TICK_HZ && room.bossCharge === null; t++) {
+      balayer();
+      room.step(1 / TICK_HZ);
+    }
+    expect(room.bossCharge).not.toBeNull();
+
+    const msg = await nextMessage(ws, (m) => m.type === MSG.BOSS_CHARGE, 10_000);
+    if (msg.type !== MSG.BOSS_CHARGE) {
+      throw new Error('BOSS_CHARGE attendu');
+    }
+    expect(msg.entityId).toBe(room.bossEntityId);
+    // Les trois ticks voyagent : c'est d'eux, et d'eux seuls, que le client
+    // derive la progression du boss le long du couloir.
+    expect(msg.windupTick).toBeLessThan(msg.startTick);
+    expect(msg.startTick).toBeLessThan(msg.endTick);
+    expect(msg.length).toBeGreaterThan(0);
+    expect(msg.width).toBeGreaterThan(0);
+  }, 20_000);
 });

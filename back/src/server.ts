@@ -3,6 +3,7 @@ import cors from '@fastify/cors';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import {
   decode,
+  encodeBossCharge,
   encodeDeaths,
   encodeDraftIntents,
   encodeDraftOpen,
@@ -200,6 +201,13 @@ class Session {
     }
     for (const zone of this.room.drainZones()) {
       this.#send(encodeZone(zone.element, zone.x, zone.y, zone.bornTick, zone.by));
+    }
+    // Une seule fois par charge, et rien ensuite : la progression du boss le
+    // long de son couloir se DERIVE des ticks que ce message porte (§4 de la
+    // spec). Avant le snapshot du meme tick, comme tout evenement : un client
+    // doit connaitre la charge avant de voir la position qui en decoule.
+    for (const charge of this.room.drainBossCharges()) {
+      this.#send(encodeBossCharge(charge));
     }
     // Apres les morts : le flash annonce ce que le lot DEATHS du meme tick a
     // deja emporte. `pair` est deja canonicalise par `packElementPair` cote

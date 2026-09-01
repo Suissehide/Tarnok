@@ -1,3 +1,4 @@
+import { type BossCharge, makeBossCharge } from '@shared/boss';
 import { CARD } from '@shared/cards';
 import {
   FLOWFIELD_CELL,
@@ -23,6 +24,7 @@ import { passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
   decode,
+  encodeBossCharge,
   encodeDeaths,
   encodeDraftIntents,
   encodeDraftOpen,
@@ -170,6 +172,11 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
       // Les zones : le rattrapage doit ralentir comme le serveur l'a fait
       // pendant les pas manques (tache 6).
       client.zones,
+      // La charge du boss : meme raison (tache 5 bis de l'etape 6a). `null`
+      // ici — aucune charge n'a ete annoncee — mais le parametre DOIT etre
+      // passe, sans quoi un rattrapage tombant pendant une charge avancerait le
+      // boss par sa vitesse la ou le serveur le derivait le long du couloir.
+      null,
     );
     expect(client.horde.count).toBe(10);
   });
@@ -3199,5 +3206,177 @@ describe('GameClient — la teinte s eteint quand la ZONE meurt, pas quand le ta
 
     expect(teinteAvant).toBe(ELEMENT.GIVRE);
     expect(teinteApres).toBe(ELEMENT.NEUTRE);
+  });
+});
+
+/**
+ * Etape 6a, tache 5 bis — **la charge du boss, cote client**.
+ *
+ * ⚠️ **Une charge DEPLACE le boss** : c'est le deuxieme effet du jeu a toucher
+ * le deplacement, apres le ralentissement du Givre, et il obeit au meme modele —
+ * annoncee une fois, datee par tick, appliquee par rejeu. Ce decor est le
+ * pendant client du scenario 11 de `shared/horde.replication.test.ts` : un
+ * serveur de reference, un vrai `GameClient` derriere une socket, et la charge
+ * livree avec du retard.
+ */
+describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis)', () => {
+  const WAVE_ID = 43;
+  const ENTITIES = 200;
+  /**
+   * Hors des frontieres de rafraichissement du champ (`STEPS_PER_FIELD` = 3),
+   * pour la meme raison qu'aux taches 8 et 6 : sinon un `primeFieldForReplay`
+   * qui n'ecarterait pas `atTick` vers `lastDue` passerait inapercu.
+   */
+  const CHARGE_TICK = 100;
+  const BOSS_INDEX = 77;
+
+  function scenario(delayTicks: number): {
+    client: GameClient;
+    maxDrift: number;
+    reference: Horde;
+  } {
+    const mapSeed = 0xc1e2_6a05;
+    const ref = makeReferenceServer(mapSeed, ENTITIES);
+    const order: WaveOrder = {
+      waveId: WAVE_ID,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    ref.horde.spawn(order, ref.fields[0]);
+
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+    socket.emit('message', { data: encodeWaveOrder(order) });
+
+    const bossId = entityIdOf(WAVE_ID, BOSS_INDEX);
+    let charge: BossCharge | null = null;
+    let inFlight = false;
+    let maxDrift = 0;
+
+    for (let tick = 0; tick < 200; tick++) {
+      const xs = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.cos(tick * 0.02 + p) * 1500));
+      const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(tick * 0.02 + p) * 1500));
+
+      ref.playerHistory.record(tick, xs, ys);
+      if (tick % STEPS_PER_FIELD === 0) {
+        const seen = ref.playerHistory.delayed(tick);
+        if (seen) {
+          for (let f = 0; f < 4; f++) {
+            ref.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+          }
+          ref.horde.retarget(seen.x, seen.y);
+        }
+      }
+      ref.horde.step(STEP, ref.fields, tick, undefined, charge);
+
+      // Le serveur annonce APRES avoir fait avancer sa horde, comme `Room.step`.
+      if (tick === CHARGE_TICK) {
+        const slot = ref.horde.slotOf(bossId);
+        charge = makeBossCharge(
+          bossId,
+          ref.horde.x[slot] ?? 0,
+          ref.horde.y[slot] ?? 0,
+          xs[0] ?? 0,
+          ys[0] ?? 0,
+          tick,
+        );
+        inFlight = true;
+      }
+
+      const players = xs.map((x, i) => ({ id: i, x, y: ys[i] ?? 0, hp: 100, aimX: 0, aimY: 0 }));
+      socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
+
+      if (charge && tick === charge.windupTick + delayTicks) {
+        socket.emit('message', { data: encodeBossCharge(charge) });
+        inFlight = false;
+      }
+
+      client.update(tick * STEP, STEP);
+
+      // Comme pour les zones : on ne mesure qu'une fois l'annonce livree. Entre
+      // l'annonce serveur et sa reception, le client ne peut rien corriger.
+      if (!inFlight) {
+        const drift = measureDrift(ref.horde, client.horde, ENTITIES);
+        if (drift > maxDrift) {
+          maxDrift = drift;
+        }
+      }
+    }
+
+    return { client, maxDrift, reference: ref.horde };
+  }
+
+  /**
+   * ⚠️ **LE test de la tache cote client.** Le message arrive trois ticks apres
+   * le `windupTick` ; le client restaure sa horde a ce tick, installe la charge
+   * et rejoue. Zero, pas « petit ».
+   */
+  it('une charge livree dans la portee de l anneau converge par rejeu : derive nulle', () => {
+    const DELAY = 3;
+    const { client, maxDrift } = scenario(DELAY);
+
+    process.stdout.write(
+      `[tache 5 bis] charge dans l'anneau (delai ${DELAY}) : derive maximale ${maxDrift.toFixed(3)} px\n`,
+    );
+
+    expect(client.bossCharge).not.toBeNull();
+    expect(client.lateCharges).toBe(0);
+    expect(maxDrift).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Hors de l'anneau, on applique quand meme — et on COMPTE.** Meme
+   * degradation assumee que pour une mort ou une zone trop vieille : une
+   * degradation silencieuse est un piege (§4.6 de l'orientation).
+   */
+  it('une charge livree hors de l anneau est installee au present, et signalee', () => {
+    const DELAY = ROLLBACK_DEPTH_TICKS + 4;
+    const { client, maxDrift } = scenario(DELAY);
+
+    process.stdout.write(
+      `[tache 5 bis] charge hors anneau (delai ${DELAY} > ROLLBACK_DEPTH_TICKS=${ROLLBACK_DEPTH_TICKS}) : ` +
+        `derive residuelle ${maxDrift.toFixed(3)} px, lateCharges=${client.lateCharges}\n`,
+    );
+
+    expect(client.lateCharges).toBe(1);
+    expect(client.bossCharge).not.toBeNull();
+  });
+
+  /**
+   * ⚠️ **C'est le RENDU que ca protege.** Le boss mort n'est plus dans la horde,
+   * donc plus rien ne le deplace ; mais le rectangle d'annonce, lui,
+   * continuerait de s'afficher au-dessus d'un boss qui n'existe plus.
+   */
+  it('oublie la charge quand le boss meurt en pleine traversee', () => {
+    const { client } = scenario(3);
+    const charge = client.bossCharge;
+    expect(charge).not.toBeNull();
+
+    latestSocket().emit('message', {
+      data: encodeDeaths(client.hordeTick, [charge?.entityId ?? 0]),
+    });
+    client.update(0, STEP);
+
+    expect(client.bossCharge).toBeNull();
+  });
+
+  /** Une mort qui ne concerne pas le boss laisse sa charge intacte. */
+  it('garde la charge quand c est une autre entite qui meurt', () => {
+    const { client } = scenario(3);
+    expect(client.bossCharge).not.toBeNull();
+
+    latestSocket().emit('message', {
+      data: encodeDeaths(client.hordeTick, [entityIdOf(WAVE_ID, BOSS_INDEX + 1)]),
+    });
+    client.update(0, STEP);
+
+    expect(client.bossCharge).not.toBeNull();
   });
 });

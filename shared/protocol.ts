@@ -23,6 +23,7 @@ export const MSG = {
   DRAFT_RESULT: 12,
   ZONE: 13,
   REACTION: 14,
+  BOSS_CHARGE: 15,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -265,6 +266,51 @@ export interface ReactionMessage {
   synergyCharge: boolean;
 }
 
+/**
+ * S -> C : le boss charge (etape 6a, tache 5 bis).
+ *
+ * ⚠️ **UN SEUL MESSAGE, A L'ANNONCE, ET PLUS RIEN ENSUITE.** Ce n'est pas un
+ * telegraphe cosmetique : pendant toute la charge, **la position du boss est
+ * pilotee par cette attaque et non par le champ de flux** (§4 de la spec).
+ * C'est donc le deuxieme effet du jeu qui touche le DEPLACEMENT, apres le
+ * ralentissement du Givre — et la parade est la meme, celle qui a deja servi
+ * trois fois : les TICKS voyagent, la progression se DERIVE. Les deux cotes
+ * calculent la meme fraction sur les memes ticks, donc la meme position, pour
+ * zero octet apres l'annonce.
+ *
+ * ⚠️ **La direction est figee au chargement et n'est jamais corrigee.** Un
+ * message de suivi ferait suivre le couloir a sa cible : ce serait une taxe,
+ * pas une attaque.
+ *
+ * ⚠️ **La longueur et la largeur SONT sur le fil, contrairement au rayon d'une
+ * zone.** `ZoneMessage` documente le choix inverse (« pas de rayon sur le fil,
+ * toutes les zones portent `ZONE_RADIUS` »), et il reste bon pour les zones :
+ * elles partent par dizaines. Une charge part une fois toutes les ~3,6 s et par
+ * boss : quatre octets y achetent un couloir qui pourra differer d'un boss a
+ * l'autre (etape 6b, « le pool tournant ») sans changer le protocole. Le
+ * desaccord avec la convention des zones est assume et dit ici plutot que
+ * cache.
+ */
+export interface BossChargeMessage {
+  type: typeof MSG.BOSS_CHARGE;
+  /** Identite de l'entite qui charge — la meme que celle du boss dans le `SNAPSHOT`. */
+  entityId: number;
+  /** Origine du couloir, quantifiee a l'entier comme toute position sur le fil. */
+  x: number;
+  y: number;
+  /** Direction du couloir, quantifiee par `CHARGE_DIR_SCALE` (voir `shared/boss.ts`). */
+  dirX: number;
+  dirY: number;
+  length: number;
+  width: number;
+  /** Tick de l'annonce : le chargement commence. */
+  windupTick: number;
+  /** Tick du depart. Rien ne fait mal avant lui. */
+  startTick: number;
+  /** Tick d'arrivee au bout du couloir. */
+  endTick: number;
+}
+
 export type Message =
   | WelcomeMessage
   | SnapshotMessage
@@ -279,7 +325,8 @@ export type Message =
   | DraftIntentsMessage
   | DraftResultMessage
   | ZoneMessage
-  | ReactionMessage;
+  | ReactionMessage
+  | BossChargeMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -466,6 +513,39 @@ export const ZONE_BYTES = 11;
 
 /** `type u8 · pair u8 · x i16 · y i16 · tick u32 · synergie u8` = 11 octets. */
 export const REACTION_BYTES = 11;
+
+/**
+ * `type u8 · entityId u32 · x i16 · y i16 · dirX i16 · dirY i16 · longueur u16
+ * · largeur u16 · windupTick u32 · startTick u32 · endTick u32` = **29
+ * octets**.
+ *
+ * ⚠️ **Trois ticks, et aucun n'est derivable des deux autres sans recopier une
+ * constante.** `BOSS_CHARGE_WINDUP_TICKS` et `BOSS_CHARGE_TICKS` sont des
+ * REGLAGES que la tache 12 va bouger : les envoyer explicitement rend une
+ * charge deja en vol insensible a leur retouche, et evite qu'un client d'une
+ * autre version ne derive une fenetre differente de celle que le serveur a
+ * reellement jouee.
+ *
+ * Un seul message par charge, soit ~0,3 message/s et 8 octets/s par client
+ * pendant un combat de boss — a comparer aux 1,22 ko/s de trafic total mesures
+ * a l'etape 4.
+ */
+export const BOSS_CHARGE_BYTES = 29;
+
+/**
+ * Facteur de quantification des composantes de direction d'une charge.
+ *
+ * ⚠️ **Vit ICI, avec le reste du cadrage binaire, et pas dans `shared/boss.ts`
+ * ou la charge est construite.** C'est une propriete du FIL : c'est elle qui
+ * decide de la resolution qu'une direction conserve en traversant. La charge,
+ * elle, l'importe pour se quantifier AVANT de partir — le serveur derive sa
+ * position depuis exactement les nombres que le client decodera (voir
+ * `makeBossCharge`), la meme discipline que le centre STOCKE d'une zone.
+ *
+ * 10 000 tient dans un `int16` (max 32 767) et laisse 1e-4 de resolution, soit
+ * moins de 0,1 px d'ecart sur toute la longueur d'un couloir de 900 px.
+ */
+export const CHARGE_DIR_SCALE = 10000;
 
 /** `type u8 · tick u32 · level u8`. */
 export const LEVEL_UP_BYTES = 6;
@@ -677,6 +757,50 @@ export function encodeZone(
   v.setUint32(6, bornTick >>> 0, true);
   v.setUint8(10, by);
   return buf;
+}
+
+/**
+ * S -> C : le boss charge, 29 octets. Voir `BossChargeMessage` — un seul par
+ * charge, et **rien ensuite** : la progression se derive des ticks.
+ *
+ * ⚠️ **Prend la `BossCharge` DEJA construite, jamais des composantes brutes.**
+ * `makeBossCharge` a arrondi l'origine et quantifie la direction ; le serveur
+ * derive sa propre position depuis ces nombres-la. Encoder autre chose ici
+ * ferait suivre au client un couloir voisin mais different — le defaut exact
+ * que le centre STOCKE d'une zone evite depuis l'etape 5a.
+ */
+export function encodeBossCharge(charge: Omit<BossChargeMessage, 'type'>): ArrayBuffer {
+  const buf = new ArrayBuffer(BOSS_CHARGE_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.BOSS_CHARGE);
+  v.setUint32(1, charge.entityId >>> 0, true);
+  v.setInt16(5, Math.round(charge.x), true);
+  v.setInt16(7, Math.round(charge.y), true);
+  v.setInt16(9, Math.round(charge.dirX * CHARGE_DIR_SCALE), true);
+  v.setInt16(11, Math.round(charge.dirY * CHARGE_DIR_SCALE), true);
+  v.setUint16(13, Math.round(charge.length), true);
+  v.setUint16(15, Math.round(charge.width), true);
+  v.setUint32(17, charge.windupTick >>> 0, true);
+  v.setUint32(21, charge.startTick >>> 0, true);
+  v.setUint32(25, charge.endTick >>> 0, true);
+  return buf;
+}
+
+export function decodeBossCharge(buf: ArrayBuffer): BossChargeMessage {
+  const v = viewOf(buf, BOSS_CHARGE_BYTES);
+  return {
+    type: MSG.BOSS_CHARGE,
+    entityId: v.getUint32(1, true),
+    x: v.getInt16(5, true),
+    y: v.getInt16(7, true),
+    dirX: v.getInt16(9, true) / CHARGE_DIR_SCALE,
+    dirY: v.getInt16(11, true) / CHARGE_DIR_SCALE,
+    length: v.getUint16(13, true),
+    width: v.getUint16(15, true),
+    windupTick: v.getUint32(17, true),
+    startTick: v.getUint32(21, true),
+    endTick: v.getUint32(25, true),
+  };
 }
 
 export function decodeZone(buf: ArrayBuffer): ZoneMessage {
@@ -944,6 +1068,8 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeZone(buf);
     case MSG.REACTION:
       return decodeReaction(buf);
+    case MSG.BOSS_CHARGE:
+      return decodeBossCharge(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }

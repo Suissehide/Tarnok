@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { archetypeOf } from './archetypes';
+import { BOSS_CHARGE_LENGTH_PX, type BossCharge, makeBossCharge } from './boss';
 import {
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -2110,5 +2111,347 @@ describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
     // Et la derive reste nulle des DEUX cotes de la comparaison.
     expect(sans.stats.maxDrift).toBe(0);
     expect(avec.stats.maxDrift).toBe(0);
+  });
+});
+
+/**
+ * Etape 6a, tache 5 bis — **la charge du boss, le deuxieme effet qui touche le
+ * DEPLACEMENT**.
+ *
+ * ⚠️ **C'est le meme risque que le ralentissement du Givre a l'etape 5a**, et
+ * ce fichier a deja tranche un cas identique : un effet qui pilote une position
+ * touche le contrat de replication a 0,000 px. La parade est celle qui a deja
+ * servi trois fois — le serveur annonce UNE FOIS (origine, direction, longueur,
+ * largeur, ticks), et les deux cotes DERIVENT la position le long du couloir.
+ *
+ * Les trois memes marches que pour le Givre :
+ * 1. **la charge deplace reellement** (scenario 11a) — la garde anti-fixture,
+ *    sans laquelle « 0,000 px » ne distinguerait pas un rejeu exact d'un effet
+ *    qui ne s'applique a personne ;
+ * 2. **sans rejeu, ca derive** (scenario 11b) ;
+ * 3. **avec rejeu, ca retombe a zero** (scenario 11c).
+ */
+describe('etape 6a : la charge du boss survit a la latence, avec et sans rejeu', () => {
+  const WAVE_ID = 1;
+  /**
+   * L'entite qui charge : un index quelconque de la grappe, PAS le zero.
+   *
+   * ⚠️ **Piege de fixture evite** : l'index 0 est le premier creneau, donc
+   * celui que `#applyCharge` trouverait meme si `slotOf` etait remplace par un
+   * `0` constant. Un index au milieu de la grappe ne beneficie d'aucune
+   * coincidence de ce genre.
+   */
+  const BOSS_INDEX = 431;
+  /**
+   * Calendrier des annonces. 151 et 137 pour la meme raison que `DEATH_START`
+   * et `DEATH_INTERVAL` : ni l'un ni l'autre n'est multiple de `stepsPerField`
+   * (3), donc les ticks d'annonce successifs parcourent les trois restes
+   * possibles et un `primeFieldForReplay` faux ailleurs que sur les frontieres
+   * ne peut pas passer inapercu.
+   */
+  const CHARGE_START = 151;
+  const CHARGE_INTERVAL = 137;
+  const CHARGES = 3;
+  const CLIENT_DELAY: readonly number[] = [0, 1, 2, 3, 2];
+  const END = CHARGE_START + CHARGES * CHARGE_INTERVAL + 60;
+
+  interface ChargeParticipant {
+    horde: Horde;
+    fields: FlowField[];
+    playerHistory: PlayerHistory;
+    hordeHistory: HordeHistory;
+    charge: BossCharge | null;
+    lateCharges: number;
+  }
+
+  function makeChargeParticipant(mapSeed: number): ChargeParticipant {
+    const horde = new Horde(4000);
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(mapSeed, probe.cols, probe.rows);
+    const fields = Array.from({ length: 4 }, () => {
+      const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      applyObstacles(f, mask);
+      return f;
+    });
+    return {
+      horde,
+      fields,
+      playerHistory: new PlayerHistory(),
+      hordeHistory: new HordeHistory(horde.capacity),
+      charge: null,
+      lateCharges: 0,
+    };
+  }
+
+  function maxDriftBetween(reference: Horde, participant: Horde): number {
+    let maxDrift = 0;
+    for (let slot = 0; slot < reference.count; slot++) {
+      const other = participant.slotOf(reference.entityIdAt(slot));
+      if (other < 0) {
+        continue;
+      }
+      const drift = Math.hypot(
+        (participant.x[other] ?? 0) - (reference.x[slot] ?? 0),
+        (participant.y[other] ?? 0) - (reference.y[slot] ?? 0),
+      );
+      if (drift > maxDrift) {
+        maxDrift = drift;
+      }
+    }
+    return maxDrift;
+  }
+
+  function primeFieldForReplay(p: ChargeParticipant, atTick: number, stepsPerField: number): void {
+    const lastDue = atTick - (((atTick % stepsPerField) + stepsPerField) % stepsPerField);
+    const seen = p.playerHistory.delayed(lastDue);
+    if (seen) {
+      for (let f = 0; f < 4; f++) {
+        p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+      }
+    }
+  }
+
+  function replayTick(p: ChargeParticipant, tick: number, stepsPerField: number): void {
+    if (tick % stepsPerField === 0) {
+      const seen = p.playerHistory.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < 4; f++) {
+          p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        p.horde.retarget(seen.x, seen.y);
+      }
+    }
+    p.horde.step(DT, p.fields, tick, undefined, p.charge);
+    p.hordeHistory.record(tick, p.horde);
+  }
+
+  /**
+   * Installe une charge annoncee AVEC rejeu : restaure au `windupTick`, pose,
+   * rejoue jusqu'au present. Miroir exact de `GameClient#applyBossCharge`.
+   */
+  function applyChargeWithReplay(
+    p: ChargeParticipant,
+    charge: BossCharge,
+    currentTick: number,
+    stepsPerField: number,
+  ): void {
+    p.charge = charge;
+    if (charge.windupTick >= currentTick) {
+      return;
+    }
+    if (!p.hordeHistory.restore(charge.windupTick, p.horde)) {
+      p.lateCharges++;
+      return;
+    }
+    primeFieldForReplay(p, charge.windupTick, stepsPerField);
+    for (let t = charge.windupTick + 1; t <= currentTick; t++) {
+      replayTick(p, t, stepsPerField);
+    }
+  }
+
+  interface ChargeScenarioResult {
+    reference: Horde;
+    clients: ChargeParticipant[];
+    maxDrift: number;
+    /** Charges effectivement annoncees — le scenario ne prouve rien a zero. */
+    announced: number;
+    /** Distance totale parcourue par le boss le long de ses couloirs. */
+    charged: number;
+  }
+
+  /**
+   * Le scenario commun : cinq participants, mille entites en grappe, et un
+   * serveur qui annonce une charge tous les `CHARGE_INTERVAL` ticks depuis la
+   * position REELLE de son boss, vers le joueur le plus proche. Chaque client
+   * l'apprend `delay` ticks plus tard.
+   *
+   * `withCharge = false` donne le temoin : exactement la meme run, sans jamais
+   * annoncer — c'est lui qui permet de dire de combien la charge a REELLEMENT
+   * deplace le boss.
+   */
+  function runChargeScenario(
+    mapSeed: number,
+    withReplay: boolean,
+    withCharge = true,
+    delays: readonly number[] = CLIENT_DELAY,
+  ): ChargeScenarioResult {
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeChargeParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+    const clients = parts.slice(1);
+
+    const order: WaveOrder = {
+      waveId: WAVE_ID,
+      spawnTick: 0,
+      seed: 0x51ee_d001,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    for (const p of parts) {
+      p.horde.spawn(order);
+    }
+
+    const bossId = entityIdOf(WAVE_ID, BOSS_INDEX);
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const announced: BossCharge[] = [];
+    let maxDrift = 0;
+    let charged = 0;
+    // Meme masque que `pendingDeath`/`pendingZone` : pendant que l'annonce est
+    // en vol, le client n'a pas encore de quoi corriger, et cet ecart est du au
+    // transit reseau, pas a la qualite de la correction.
+    const pendingCharge: boolean[] = clients.map(() => false);
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = [0, 1, 2, 3].map((pl) => 3000 + Math.cos(tick * 0.02 + pl) * 1500);
+      const ys = [0, 1, 2, 3].map((pl) => 3000 + Math.sin(tick * 0.02 + pl) * 1500);
+
+      for (const p of parts) {
+        p.playerHistory.record(tick, xs, ys);
+        if (tick % stepsPerField === 0) {
+          const seen = p.playerHistory.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 4; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        p.horde.step(DT, p.fields, tick, undefined, p.charge);
+      }
+
+      // Le serveur annonce APRES avoir fait avancer sa horde — l'ordre de
+      // `Room.step`, ou `#stepBossCharge` tourne apres `horde.step`.
+      if (
+        withCharge &&
+        tick >= CHARGE_START &&
+        (tick - CHARGE_START) % CHARGE_INTERVAL === 0 &&
+        announced.length < CHARGES
+      ) {
+        const slot = reference.horde.slotOf(bossId);
+        if (slot >= 0) {
+          const charge = makeBossCharge(
+            bossId,
+            reference.horde.x[slot] ?? 0,
+            reference.horde.y[slot] ?? 0,
+            xs[0] ?? 0,
+            ys[0] ?? 0,
+            tick,
+          );
+          reference.charge = charge;
+          announced.push(charge);
+          charged += charge.length;
+          pendingCharge.fill(true);
+        }
+      }
+
+      clients.forEach((p, i) => {
+        p.hordeHistory.record(tick, p.horde);
+        const delay = delays[i + 1] ?? 0;
+        for (const charge of announced) {
+          if (charge.windupTick + delay !== tick) {
+            continue;
+          }
+          if (withReplay) {
+            applyChargeWithReplay(p, charge, tick, stepsPerField);
+          } else {
+            // Sans rejeu : la charge est installee au present, avec ses ticks
+            // d'origine. C'est le defaut que le rejeu corrige.
+            p.charge = charge;
+          }
+          pendingCharge[i] = false;
+        }
+      });
+
+      clients.forEach((p, i) => {
+        if (pendingCharge[i]) {
+          return;
+        }
+        const drift = maxDriftBetween(reference.horde, p.horde);
+        if (drift > maxDrift) {
+          maxDrift = drift;
+        }
+      });
+    }
+
+    return {
+      reference: reference.horde,
+      clients,
+      maxDrift,
+      announced: announced.length,
+      charged,
+    };
+  }
+
+  /**
+   * De combien la charge a-t-elle reellement deplace le boss ? Compare la meme
+   * run avec et sans charge — meme graine, meme calendrier, meme horde.
+   *
+   * ⚠️ **C'est la garde anti-fixture**, celle que le scenario Z0 joue pour le
+   * Givre. Sans elle, « 0,000 px » ne distinguerait pas un rejeu exact d'une
+   * charge qui ne deplacerait personne.
+   */
+  it('scenario 11a — la charge deplace reellement le boss, et lui seul', () => {
+    const seed = 0xc0de_0011;
+    const avec = runChargeScenario(seed, true, true).reference;
+    const sans = runChargeScenario(seed, true, false).reference;
+    const bossId = entityIdOf(WAVE_ID, BOSS_INDEX);
+    const a = avec.slotOf(bossId);
+    const s = sans.slotOf(bossId);
+    const ecart = Math.hypot(
+      (avec.x[a] ?? 0) - (sans.x[s] ?? 0),
+      (avec.y[a] ?? 0) - (sans.y[s] ?? 0),
+    );
+
+    process.stdout.write(
+      `scenario 11a (la charge deplace) : le boss finit a ${ecart.toFixed(3)} px du temoin sans charge\n`,
+    );
+
+    // Derive de la constante, jamais recopiee : trois charges de
+    // `BOSS_CHARGE_LENGTH_PX` deplacent le boss bien plus loin que sa marche.
+    // Un dixieme d'UNE longueur suffit a distinguer « ca deplace » de « ca ne
+    // deplace pas », et laisse toute latitude au retour du champ de flux entre
+    // deux charges.
+    expect(ecart).toBeGreaterThan(BOSS_CHARGE_LENGTH_PX / 10);
+  });
+
+  it('scenario 11b — sans rejeu, une charge installee au present laisse une derive mesurable', () => {
+    const result = runChargeScenario(0xc0de_0012, false);
+
+    process.stdout.write(
+      `scenario 11b (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+        `${result.announced} charges annoncees\n`,
+    );
+
+    expect(result.announced).toBe(CHARGES);
+    // Le boss lui-meme reconverge des l'installation (sa position est une
+    // fonction du tick) ; ce qui NE reconverge pas, ce sont ses voisins, que la
+    // separation a pousses contre un boss qui n'etait pas au bon endroit
+    // pendant le transit. C'est ce residu que le rejeu efface.
+    expect(result.maxDrift).toBeGreaterThan(0);
+  });
+
+  /**
+   * ⚠️ **LE chiffre de la tache.** Le meme que le scenario 9 pour les morts et
+   * le scenario Z2 pour les zones : zero, pas « petit ».
+   */
+  it('scenario 11c — avec rejeu, la derive retombe a zero malgre la charge', () => {
+    const result = runChargeScenario(0xc0de_0013, true);
+
+    process.stdout.write(
+      `scenario 11c (avec rejeu, charge en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+        `${result.announced} charges annoncees, boss deplace de ${result.charged} px par ses couloirs\n`,
+    );
+
+    expect(result.announced).toBe(CHARGES);
+    for (const p of result.clients) {
+      // 1 a 3 ticks de retard tiennent largement dans ROLLBACK_DEPTH_TICKS(8).
+      expect(p.lateCharges).toBe(0);
+    }
+    expect(result.maxDrift).toBe(0);
   });
 });

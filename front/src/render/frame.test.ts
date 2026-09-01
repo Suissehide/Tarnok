@@ -1,3 +1,4 @@
+import type { BossCharge } from '@shared/boss';
 import { MAX_ENTITIES, PROJECTILE_CAPACITY } from '@shared/constants';
 import { Horde } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
@@ -43,6 +44,9 @@ class RecordingStage implements FrameStage {
 
   drawZones(...args: unknown[]): void {
     this.#record('zones', ...args);
+  }
+  drawBossCharge(...args: unknown[]): void {
+    this.#record('couloir-boss', ...args);
   }
   drawMarks(...args: unknown[]): void {
     this.#record('marques', ...args);
@@ -107,6 +111,24 @@ class RecordingClient implements FrameClient {
    * recoit les deux, et les intervertir ou n'en passer qu'un doit se voir.
    */
   readonly boss: BossVitals | null = { id: 8193, hp: 4200, maxHp: 6000 };
+  /**
+   * Une charge reconnaissable (etape 6a, tache 5 bis). Ses ticks encadrent
+   * `hordeTick` : le couloir est en plein chargement a l'image dessinee, donc un
+   * `drawBossCharge` qui recevrait l'horloge murale a la place du tick ne
+   * dessinerait rien du tout.
+   */
+  readonly bossCharge: BossCharge | null = {
+    entityId: 8193,
+    x: 1000,
+    y: 2000,
+    dirX: 1,
+    dirY: 0,
+    length: 900,
+    width: 192,
+    windupTick: 120,
+    startTick: 150,
+    endTick: 168,
+  };
   readonly updates: { now: number; dt: number }[] = [];
 
   update(now: number, dt: number): RenderState {
@@ -162,6 +184,18 @@ describe('composeFrame — chaque calque recoit son appel', () => {
    * allumes ou eteints au hasard, et l'ecart entre `NOW` et `hordeTick` dans ce
    * double est ce qui le rend visible.
    */
+  /**
+   * ⚠️ **Le TICK, jamais l'horloge murale** (etape 6a, tache 5 bis) : c'est lui
+   * qui fait monter l'opacite du couloir et qui le fait disparaitre, au meme
+   * instant que le deplacement du boss qu'il annonce. `hordeTick` (137) tombe
+   * dans le chargement de la charge du double ; `NOW` (5 000,5) est tres au-dela
+   * de `endTick`, donc l'intervertir n'afficherait plus rien.
+   */
+  it('dessine le couloir de charge du boss, avec le TICK de horde', () => {
+    const { stage, client } = compose();
+    expect(stage.argsOf('couloir-boss')).toEqual([client.bossCharge, client.hordeTick]);
+  });
+
   it('dessine les anneaux de marque, avec la horde et le TICK de horde', () => {
     const { stage, client } = compose();
     expect(stage.argsOf('marques')).toEqual([client.horde, client.hordeTick]);
@@ -251,6 +285,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     const { stage } = compose();
     expect(stage.order).toEqual([
       'zones',
+      'couloir-boss',
       'marques',
       'horde',
       'orbes',

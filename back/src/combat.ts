@@ -1,3 +1,4 @@
+import { BOSS_CHARGE_DAMAGE, type BossCharge, chargeHurtsAt } from '@shared/boss';
 import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
@@ -654,6 +655,88 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
       player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
     }
   }
+}
+
+/**
+ * Un joueur tel que l'arbitrage de la charge le voit : un `ContactPlayer` plus
+ * son identite, parce que la charge ne blesse **qu'une fois par joueur et par
+ * charge** et qu'il faut donc savoir lesquels ont deja ete touches.
+ */
+export interface ChargeTarget extends ContactPlayer {
+  readonly id: number;
+}
+
+/**
+ * Applique les degats de la charge du boss au tick `tick`, et rend les
+ * identites des joueurs touches CE tick-ci (etape 6a, tache 5 bis).
+ *
+ * ⚠️ **ARBITRE PAR LE SERVEUR, comme tout ce qui fait mal.** Le client derive
+ * la POSITION du boss — c'est ce qui rend la charge replicable a 0,000 px — mais
+ * il ne prononce jamais un degat, exactement comme il ne prononce jamais une
+ * mort depuis l'etape 3.
+ *
+ * ⚠️ **RIEN NE FAIT MAL PENDANT LE CHARGEMENT** (§4 de la spec) : `chargeHurtsAt`
+ * porte cette regle, et elle est ce qui rend le telegraphe sur — le temps de
+ * chargement EST la fenetre de reaction du joueur.
+ *
+ * ⚠️ **Une seule fois par joueur et par charge**, d'ou `alreadyHit`. Sans cette
+ * borne, un joueur immobile dans le couloir encaisserait `BOSS_CHARGE_DAMAGE` a
+ * chacun des `BOSS_CHARGE_TICKS` ticks de la traversee, soit dix-huit fois de
+ * quoi le tuer : la charge cesserait d'etre une attaque pour devenir une
+ * execution. C'est le meme role que `contactInvulnTicks` joue pour le contact
+ * ordinaire, avec une borne differente parce que l'evenement est different —
+ * une charge est UN evenement, pas une cadence.
+ *
+ * ⚠️ **Le corps qui blesse est un DISQUE, pas le rectangle annonce.** Le
+ * rectangle dit ou le boss VA passer ; ce qui touche, c'est le corps a l'instant
+ * `tick`, de diametre `charge.width`. Un joueur qui traverse le couloir derriere
+ * le boss n'est pas touche, et c'est la meme regle que tout le reste du jeu —
+ * `resolveContact`, `resolvePickups`, `collide` comparent tous une distance a un
+ * rayon.
+ *
+ * ⚠️ **Lit la position dans la HORDE, jamais le point derive tout seul.** Si le
+ * boss est mort en pleine charge, il n'est plus dans la horde et la charge cesse
+ * de blesser au meme tick que celui ou `Horde#applyCharge` cesse de le deplacer
+ * — une seule source de verite pour « le boss est-il encore la ».
+ */
+export function resolveChargeHit(
+  players: readonly ChargeTarget[],
+  horde: Horde,
+  charge: BossCharge,
+  tick: number,
+  alreadyHit: ReadonlySet<number>,
+): number[] {
+  if (!chargeHurtsAt(charge, tick)) {
+    return [];
+  }
+  const slot = horde.slotOf(charge.entityId);
+  if (slot < 0) {
+    return [];
+  }
+  const bx = horde.x[slot] ?? 0;
+  const by = horde.y[slot] ?? 0;
+  const r = charge.width / 2;
+  const r2 = r * r;
+
+  const hit: number[] = [];
+  for (const player of players) {
+    if (player.hp <= 0 || alreadyHit.has(player.id)) {
+      continue;
+    }
+    const dx = bx - player.x;
+    const dy = by - player.y;
+    if (dx * dx + dy * dy > r2) {
+      continue;
+    }
+    player.hp = Math.max(0, player.hp - BOSS_CHARGE_DAMAGE);
+    // Le corps du boss reste sur lui le temps de le traverser : sans ce
+    // rearmement, `resolveContact` lui reprendrait `CONTACT_DAMAGE` au tick
+    // suivant pour le meme corps, et la borne « une fois par charge » ne
+    // bornerait plus grand-chose.
+    player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
+    hit.push(player.id);
+  }
+  return hit;
 }
 
 /**

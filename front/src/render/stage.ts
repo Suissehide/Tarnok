@@ -1,3 +1,4 @@
+import type { BossCharge } from '@shared/boss';
 import { MAP_SIZE, TICK_HZ } from '@shared/constants';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
@@ -17,6 +18,7 @@ import type {
 } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
 import { BossBarRenderer } from './boss-bar-renderer';
+import { ChargeRenderer } from './charge-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
 import { OrbRenderer } from './orb-renderer';
@@ -66,6 +68,7 @@ export class Stage {
   // compile pas sous `strictPropertyInitialization`. Initialisation directe.
   #horde = new HordeRenderer(ASSETS_BASE);
   readonly #zones = new ZoneRenderer();
+  readonly #charge = new ChargeRenderer();
   readonly #marks = new MarkRingRenderer();
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();
@@ -86,6 +89,11 @@ export class Stage {
    * horde ; les projectiles et les flashs apres, pour rester visibles par-
    * dessus les monstres qu'ils visent.
    *
+   * ⚠️ **Le couloir de charge juste apres les zones** (etape 6a, tache 5 bis) :
+   * c'est un aplat au sol comme elles, et il doit passer SOUS le boss qui va le
+   * traverser — un rectangle par-dessus la creature masquerait precisement ce
+   * qu'on regarde.
+   *
    * ⚠️ **Les anneaux de marque juste apres les zones** (tache 13) : ils se
    * posent SOUS les pieds des creatures, donc ils doivent passer sous elles.
    * Au-dessus des zones, parce qu'ils marquent un ennemi individuel sur le sol
@@ -97,6 +105,7 @@ export class Stage {
    */
   readonly #layers: readonly SceneLayer[] = [
     this.#zones,
+    this.#charge,
     this.#marks,
     this.#orbs,
     this.#horde,
@@ -114,6 +123,7 @@ export class Stage {
    */
   readonly #procedural: readonly ProceduralLayer[] = [
     this.#zones,
+    this.#charge,
     this.#marks,
     this.#orbs,
     this.#projectiles,
@@ -302,6 +312,15 @@ export class Stage {
   /** `tick` decide quelles zones sont encore vivantes — voir `ZoneRenderer.draw`. */
   drawZones(zones: ZoneField, tick: number): void {
     this.#zones.draw(zones, tick, this.viewRect());
+  }
+
+  /**
+   * Le couloir de la charge du boss (etape 6a, tache 5 bis). Ni vue ni horloge
+   * murale : un seul quad, donc rien a cadrer, et son opacite se derive du TICK
+   * — le meme que celui qui deplace le boss. Voir `ChargeRenderer.draw`.
+   */
+  drawBossCharge(charge: BossCharge | null, tick: number): void {
+    this.#charge.draw(charge, tick);
   }
 
   /** `tick` decide quelles marques sont encore vivantes — voir `MarkRingRenderer.draw`. */
