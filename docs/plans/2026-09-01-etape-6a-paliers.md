@@ -620,6 +620,64 @@ après, la vie ne remonte jamais.
 
 ---
 
+## Tâche 18 : les monstres encerclent, et il y en a moins
+
+**Fichiers :** modifier `shared/waves.ts`, `back/src/wave-director.ts`, leurs tests
+
+> *« Baisse encore les vagues, fais apparaître les monstres autour du joueur plutôt qu'en pack. »*
+
+### Ce qui se passe aujourd'hui
+
+`WaveDirector.due` choisit **un** joueur, **un** angle, et pose l'ancre à `ANCHOR_RADIUS` (1800 px)
+dans cette direction. La formation (`SCATTER`, `RING`, `COLUMN`, `CLUSTER`) arrange ensuite la vague
+**autour de ce point**. Une vague est donc un **pack qui arrive d'un côté**.
+
+⚠️ **`FORMATION.RING` ne fait pas ce qu'on croit** : c'est un **petit** anneau autour de l'ancre
+(`RING_RADIUS`), pas un encerclement du joueur.
+
+### C'était déjà l'intention de l'auteur à l'étape 3
+
+> *« Après, les monstres arriveront en cercle vers le joueur, donc il y aura moins de collision. »*
+
+Ça n'avait jamais été fait, et le rapport de l'étape 3 note que la séparation entre monstres a coûté
+**six tâches** — un pack dense est précisément ce qui la met sous tension.
+
+- [ ] **Étape 1 : une formation d'encerclement.** L'ancre devient **la position du joueur**, et les
+  entités naissent sur un cercle de rayon `ANCHOR_RADIUS` autour d'elle.
+
+  ⚠️ **Ne grossis pas l'ordre de vague.** Il fait **19 octets** et n'a pas de champ de rayon.
+  Ajouter une formation dont le rayon est une **constante partagée** ne coûte rien sur le fil : les
+  deux côtés la lisent déjà. Ajouter un champ coûterait un octet **et** romprait un nombre que trois
+  documents citent.
+
+  ⚠️ **`FORMATION_POOL` tire au hasard parmi les formations.** Si l'encerclement doit devenir la
+  règle, c'est le pool qu'on change — pas un cas particulier dans `due`.
+
+- [ ] **Étape 2 : moins de monstres.** `WAVE1_MIN/MAX_COUNT` valent 10-18, `STEADY_MIN/MAX_COUNT`
+  120-320, `RAMP_WAVES` 30.
+
+  ⚠️ **Le critère est mesuré, pas ressenti.** `back/bench/kills.bench.ts` rend le **rapport
+  morts/apparitions**, et c'est lui que l'auteur décrit sans le nommer : il vaut **0,49** aujourd'hui
+  — la horde grossit de la moitié de ce qui apparaît, indéfiniment. La tâche 16 a montré qu'une arme
+  de zone le porte à 0,53 et **qu'un rayon absurde de 400 px plafonne à 0,59** : ce n'est pas là que
+  se joue le rapport.
+
+  **Vise un rapport proche de 1 au début de run**, et rends le chiffre avant/après. Si baisser les
+  vagues seul n'y suffit pas, **dis-le** — les autres leviers sont la cadence des armes et le taux de
+  touche de la dague (~20 %), et ils n'appartiennent pas à cette tâche.
+
+  ⚠️ **Vérifie que le niveau 2 reste atteignable.** Moins de monstres, c'est moins d'orbes.
+  `back/bench/niveau2.bench.ts` relève 40 graines et donne 3 échecs aujourd'hui — **ce chiffre ne
+  doit pas monter**. C'est le même garde-fou que la tâche 1, et il a déjà servi.
+
+- [ ] **Étape 3 : mesurer ce que l'encerclement fait à la séparation.** Un cercle de 1800 px de rayon
+  répartit les entités sur ~11 000 px de circonférence ; elles convergent et se densifient en
+  approchant. **Le banc de trajectoire (`bench:sep`) dit si l'équilibre tient encore.**
+
+- [ ] **Étape 4 : commit** — `feat(back): les monstres encerclent le joueur`
+
+---
+
 ## Tâche 8 : la machine du vote
 
 **Fichiers :** créer `back/src/portal.ts`, `back/src/portal.test.ts`
