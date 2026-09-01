@@ -102,6 +102,64 @@ describe("l'element porte par une arme (etape 5a)", () => {
 });
 
 /**
+ * Les armes de zone (etape 6a, tache 16) — *« il faut parfois des AoE sur
+ * certaines armes comme les grenades »*.
+ */
+describe('le rayon de zone porte par une arme (tache 16)', () => {
+  /**
+   * Meme raison que pour `element` : l'omission vaut `0`, et `undefined`
+   * n'est ni un rayon ni une erreur — il traverserait `Projectiles` jusqu'a
+   * `damageInRadius`, ou `undefined > 0` est faux, donc une arme de zone
+   * cesserait d'exploser en silence.
+   */
+  it('donne un rayon defini et jamais negatif a chaque arme, declare ou non', () => {
+    for (const w of WEAPONS) {
+      expect(typeof w.blastRadius, `arme « ${w.name} »`).toBe('number');
+      expect(w.blastRadius, `arme « ${w.name} »`).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  /**
+   * ⚠️ **Garde par une PROPRIETE, pas par un nom ni par un chiffre.** « La
+   * grenade explose » se verifierait avec `weaponOf(4)`, et ce test survivrait
+   * a une reindexation du catalogue en mesurant autre chose. Ce que la tache
+   * demande, c'est que l'arme de zone soit *l'arme dont le tir doit peser* :
+   * la cadence la plus lente ET les degats les plus eleves. Les deux, parce
+   * qu'une seule des deux ne designe pas forcement la meme arme.
+   */
+  it("l'unique arme de zone est celle qui frappe le plus fort et le plus lentement", () => {
+    const zone = WEAPONS.filter((w) => w.blastRadius > 0);
+    expect(zone.length).toBe(1);
+
+    const cadenceMax = Math.max(...WEAPONS.map((w) => w.cooldownTicks));
+    const degatsMax = Math.max(...WEAPONS.map((w) => w.damage));
+    expect(zone[0]?.cooldownTicks).toBe(cadenceMax);
+    expect(zone[0]?.damage).toBe(degatsMax);
+
+    // Non-vacuite : ces deux extremes designent bien UNE arme, pas huit ex
+    // aequo. Sans ca, un catalogue plat rendrait le test ci-dessus toujours
+    // vrai.
+    expect(WEAPONS.filter((w) => w.cooldownTicks === cadenceMax).length).toBe(1);
+    expect(WEAPONS.filter((w) => w.damage === degatsMax).length).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Le rayon de zone n'a RIEN a voir avec la taille dessinee.** Le
+   * premier decide de ce qui meurt, le second de ce qui se voit. Les tenir
+   * distincts est ce qui empeche de regler l'equilibrage a l'oeil — meme
+   * raison que `spriteScale` et `zoneScale`, dont la taille de texture doit
+   * rester differente de la taille affichee.
+   */
+  it('ne confond pas le rayon de zone avec le diametre dessine du projectile', () => {
+    for (const w of WEAPONS) {
+      if (w.blastRadius > 0) {
+        expect(w.blastRadius, `arme « ${w.name} »`).not.toBe(w.look.diameterPx);
+      }
+    }
+  });
+});
+
+/**
  * La garde de chargement du module. Elle prend la table en parametre pour
  * qu'un test puisse lui en donner une cassee : le vrai catalogue est une
  * constante, aucun test ne peut y glisser une reference morte.

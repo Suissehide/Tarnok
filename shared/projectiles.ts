@@ -56,6 +56,18 @@ export class Projectiles {
    */
   readonly #by: Uint8Array;
   /**
+   * Rayon de l'explosion a l'impact, en pixels monde — recopie de
+   * `Weapon.blastRadius` a l'emission (etape 6a, tache 16). `0` : ce
+   * projectile ne touche que ce qu'il percute.
+   *
+   * ⚠️ **Recopie a cote, JAMAIS relu dans `WEAPONS` a l'impact** — la meme
+   * raison que `#damage`, `#element` et `#by` juste au-dessus, et la raison
+   * exacte pour laquelle `#weapon` peut rester purement cosmetique : ce qui
+   * decide d'un degat ne doit pas dependre d'une table qu'on pourrait
+   * reindexer.
+   */
+  readonly #blastRadius: Float32Array;
+  /**
    * Identifiant de l'arme qui a tire, index dans `WEAPONS` — recopie de
    * `Weapon.id` a l'emission (etape 5a, tache 12).
    *
@@ -97,6 +109,7 @@ export class Projectiles {
     this.#damage = new Float32Array(capacity);
     this.#element = new Uint8Array(capacity);
     this.#by = new Uint8Array(capacity);
+    this.#blastRadius = new Float32Array(capacity);
     this.#weapon = new Uint8Array(capacity);
     this.#ticksRemaining = new Int32Array(capacity);
     this.#prevX = new Float32Array(capacity);
@@ -235,6 +248,7 @@ export class Projectiles {
       this.#damage[slot] = damage;
       this.#element[slot] = weapon.element;
       this.#by[slot] = by;
+      this.#blastRadius[slot] = weapon.blastRadius;
       this.#weapon[slot] = weapon.id;
       this.#ticksRemaining[slot] = weapon.projectileLifeTicks;
       this.bornTick[slot] = tick;
@@ -271,6 +285,15 @@ export class Projectiles {
   /** Index du joueur qui a tire le projectile de ce slot — voir `#by`. */
   ownerAt(slot: number): number {
     return this.#by[slot] ?? 0;
+  }
+
+  /**
+   * Rayon de l'explosion a l'impact du projectile de ce slot — voir
+   * `#blastRadius`. Lu par `resolveProjectileDamage` (back) a l'IMPACT, et
+   * seulement la.
+   */
+  blastRadiusAt(slot: number): number {
+    return this.#blastRadius[slot] ?? 0;
   }
 
   /**
@@ -418,6 +441,7 @@ export class Projectiles {
       this.#damage[slot] = this.#damage[last] ?? 0;
       this.#element[slot] = this.#element[last] ?? 0;
       this.#by[slot] = this.#by[last] ?? 0;
+      this.#blastRadius[slot] = this.#blastRadius[last] ?? 0;
       this.#weapon[slot] = this.#weapon[last] ?? 0;
       this.#ticksRemaining[slot] = this.#ticksRemaining[last] ?? 0;
       this.#prevX[slot] = this.#prevX[last] ?? 0;

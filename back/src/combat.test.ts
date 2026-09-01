@@ -106,6 +106,7 @@ const SINGLE: Weapon = {
   projectileCount: 1,
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
+  blastRadius: 0,
   // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
   // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
   look: { shape: 'sphere', diameterPx: 10, tint: 0x123456, glow: 0.3, trailTicks: 1 },
@@ -273,6 +274,146 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
     // Et apres compaction, le survivant garde SES PV, pas ceux du mort.
     expect(horde.count).toBe(1);
     expect(horde.hp[0]).toBe(HEAVY_HP);
+  });
+});
+
+/**
+ * Les armes de zone (etape 6a, tache 16) — *« les ennemis sont trop nombreux
+ * par rapport aux degats des armes, il faut parfois des AoE sur certaines
+ * armes comme les grenades »*.
+ *
+ * ⚠️ **Le decor est celui qui SEPARE les deux bornes.** Un voisin juste dedans
+ * ET un voisin juste dehors, dans la MEME execution : avec le seul premier,
+ * « le rayon est infini » passerait ; avec le seul second, « le rayon est nul »
+ * passerait aussi.
+ *
+ * ⚠️ **Les voisins sont perpendiculaires a la trajectoire**, jamais sur elle :
+ * `Projectiles.collide` retient l'entite la plus proche du SEGMENT parcouru, et
+ * un voisin place entre le tireur et la cible serait percute a sa place — le
+ * test mesurerait alors le choix de cible, pas l'explosion. Le rayon de zone
+ * (70) depasse `PROJECTILE_HIT_RADIUS` (32), donc les voisins restent hors de
+ * portee du percuteur tout en etant dans celle du souffle.
+ */
+describe('les armes a effet de zone (etape 6a, tache 16)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+  /** Rayon de souffle de l'arme de test. Choisi > PROJECTILE_HIT_RADIUS, voir ci-dessus. */
+  const SOUFFLE = 70;
+  const ZONE: Weapon = { ...SINGLE, blastRadius: SOUFFLE };
+
+  /** Le percuteur, un voisin JUSTE dans le rayon, un voisin JUSTE dehors. */
+  function decor(horde: Horde): { percute: number; dedans: number; dehors: number } {
+    const percute = addOne(horde, 1, 300, 0, LOURD);
+    const dedans = addOne(horde, 2, 300, SOUFFLE - 1, LOURD);
+    const dehors = addOne(horde, 3, 300, SOUFFLE, LOURD);
+    return { percute, dedans, dehors };
+  }
+
+  /** Tire `arme` depuis l'origine sur `cible` et avance jusqu'a l'impact. */
+  function tire(horde: Horde, orbs: OrbField, cible: number, arme: Weapon): number[] {
+    const projectiles = new Projectiles(10);
+    projectiles.fireSalvo(arme, 0, 0, 0, cible, horde);
+    expect(projectiles.count).toBeGreaterThan(0);
+    for (let i = 0; i < 40; i++) {
+      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, i);
+      if (projectiles.count === 0) {
+        return morts;
+      }
+    }
+    throw new Error('le projectile ne touche jamais');
+  }
+
+  it('un seul impact tue le percute ET son voisin dans le rayon, jamais celui du bord', () => {
+    // Degats calibres sur la reserve : un coup suffit, donc la mort dit le
+    // rayon et rien d'autre.
+    const fatale: Weapon = { ...ZONE, damage: HEAVY_HP };
+    const horde = new Horde(10);
+    const { percute, dedans, dehors } = decor(horde);
+    const orbs = new OrbField(10);
+
+    const morts = tire(horde, orbs, percute, fatale);
+
+    expect([...morts].sort((a, b) => a - b)).toEqual([percute, dedans].sort((a, b) => a - b));
+    // Le bord : la borne est STRICTE, comme partout dans ce fichier.
+    expect(horde.slotOf(dehors)).toBeGreaterThanOrEqual(0);
+    expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
+  });
+
+  it('le percute ne prend pas les degats DEUX FOIS : il est dans son propre souffle', () => {
+    // ⚠️ **La moitie qui manquerait sans ce test.** Retirer `damage` au
+    // percute PUIS balayer le rayon lui infligerait le double du reste de la
+    // horde — invisible tant qu'un seul coup tue, et faux des que la reserve
+    // resiste. Degats volontairement insuffisants pour tuer.
+    const horde = new Horde(10);
+    const { percute, dedans, dehors } = decor(horde);
+    const orbs = new OrbField(10);
+
+    expect(tire(horde, orbs, percute, ZONE)).toEqual([]);
+
+    expect(horde.hp[horde.slotOf(percute)]).toBe(HEAVY_HP - ZONE.damage);
+    // Le voisin a pris EXACTEMENT autant : une seule source de degats.
+    expect(horde.hp[horde.slotOf(dedans)]).toBe(HEAVY_HP - ZONE.damage);
+    expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
+  });
+
+  it('une arme SANS rayon ne touche que ce qu elle percute — le meme decor, zero souffle', () => {
+    // ⚠️ **La non-vacuite du decor.** Sans ce cas, un `damageInRadius` cable
+    // sur toutes les armes passerait les deux tests ci-dessus : ils ne
+    // regardent que ce que fait une arme de zone.
+    const horde = new Horde(10);
+    const { percute, dedans, dehors } = decor(horde);
+    const orbs = new OrbField(10);
+
+    expect(SINGLE.blastRadius).toBe(0);
+    expect(tire(horde, orbs, percute, SINGLE)).toEqual([]);
+
+    expect(horde.hp[horde.slotOf(percute)]).toBe(HEAVY_HP - SINGLE.damage);
+    expect(horde.hp[horde.slotOf(dedans)]).toBe(HEAVY_HP);
+    expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
+  });
+
+  it('l explosion MARQUE le seul percute, jamais le rayon qu elle emporte', () => {
+    // Le choix documente par `resolveProjectileDamage` : poser l'element sur
+    // tout le rayon ferait de chaque grenade un declencheur de masse, que la
+    // borne « une reaction par ennemi et par tick » ne bornerait pas.
+    const braise: Weapon = { ...ZONE, element: ELEMENT.BRAISE };
+    const horde = new Horde(10);
+    const { percute, dedans } = decor(horde);
+    const orbs = new OrbField(10);
+    const reactions = new Reactions();
+
+    const projectiles = new Projectiles(10);
+    projectiles.fireSalvo(braise, 0, 0, 0, percute, horde);
+    let impact = -1;
+    for (let i = 0; i < 40; i++) {
+      resolveProjectileDamage(projectiles, DT, horde, orbs, i, reactions);
+      if (projectiles.count === 0) {
+        impact = i;
+        break;
+      }
+    }
+    expect(impact).toBeGreaterThanOrEqual(0);
+
+    // Le percute survit (degats insuffisants), donc il porte la marque.
+    expect(horde.markAt(horde.slotOf(percute), impact)).toBe(ELEMENT.BRAISE);
+    // Le voisin a pris le souffle, mais rien ne l a marque.
+    expect(horde.hp[horde.slotOf(dedans)]).toBe(HEAVY_HP - braise.damage);
+    expect(horde.markAt(horde.slotOf(dedans), impact)).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('les morts du souffle laissent leur orbe comme n importe quelle mort', () => {
+    // §12 de la spec de l'etape 5a : aucune facon de mourir ne prive l equipe
+    // de son experience. Les identites sont choisies pour que `dropsOrb` les
+    // accepte toutes les deux.
+    const fatale: Weapon = { ...ZONE, damage: HEAVY_HP };
+    const horde = new Horde(10);
+    const percute = addOne(horde, ORB_DROP_ONE_IN, 300, 0, LOURD);
+    const dedans = addOne(horde, 2 * ORB_DROP_ONE_IN, 300, SOUFFLE - 1, LOURD);
+    expect(dropsOrb(percute)).toBe(true);
+    expect(dropsOrb(dedans)).toBe(true);
+    const orbs = new OrbField(10);
+
+    expect(tire(horde, orbs, percute, fatale).length).toBe(2);
+    expect(orbs.count).toBe(2);
   });
 });
 

@@ -12,7 +12,7 @@
  * temps dans cette etape puis ont ete retires — voir le §9 de la spec.
  */
 
-import { TICK_HZ } from './constants';
+import { TICK_HZ, ZONE_RADIUS } from './constants';
 import { ELEMENT, elementOf } from './elements';
 
 /**
@@ -112,6 +112,29 @@ export interface Weapon {
    */
   element: number;
   /**
+   * Rayon de l'explosion a l'impact, en pixels monde. `0` : le projectile ne
+   * touche que ce qu'il percute — etape 6a, tache 16, sur retour de jeu :
+   * *« les ennemis sont trop nombreux par rapport aux degats des armes, il
+   * faut parfois des AoE sur certaines armes comme les grenades »*.
+   *
+   * ⚠️ **Zero n'est pas un cas particulier, c'est une entree de la table.**
+   * Meme motif que `ELEMENT.NEUTRE` : huit armes sur neuf valent zero et le
+   * restent, donc c'est la ligne ABSENTE qui est le cas courant. Un booleen
+   * « arme de zone » plus un rayon a cote se contrediraient des la premiere
+   * retouche.
+   *
+   * ⚠️ **Recopie sur le projectile a l'emission** (`Projectiles`), jamais relu
+   * dans le catalogue a l'impact — exactement comme `damage`, `element` et
+   * `by`. C'est ce qui fait que le tir ne depend d'aucune table une fois
+   * parti, et que `Weapon.id` peut rester le seul champ purement cosmetique
+   * du projectile.
+   *
+   * ⚠️ **Le rayon est SANS RAPPORT avec `look.diameterPx`.** Le premier decide
+   * de ce qui meurt, le second de ce qui se dessine ; les confondre ferait
+   * regler l'equilibrage a l'oeil, et le dessin par le banc.
+   */
+  blastRadius: number;
+  /**
    * L'apparence de ses projectiles — voir `ProjectileLook`.
    *
    * ⚠️ Champ OBLIGATOIRE, contrairement a `element` : une arme sans apparence
@@ -128,13 +151,18 @@ export interface Weapon {
  * La premiere entree est l'arme neutre de base du §6.1 : faible, sans
  * element, hors slots — celle avec laquelle une run commence toujours.
  *
- * `element` est le seul champ optionnel : l'omettre vaut `ELEMENT.NEUTRE`
- * (§4.2 de la spec de l'etape 5a). Cinq armes sur neuf sont neutres et le
- * restent — *« un socle pour les joueurs qui ne veulent pas jouer le
- * systeme »* (§6.3 de l'orientation) — donc c'est la ligne ABSENTE qui est le
- * cas courant, et les quatre armes elementaires se lisent d'un coup d'oeil.
+ * `element` et `blastRadius` sont les seuls champs optionnels : omettre le
+ * premier vaut `ELEMENT.NEUTRE` (§4.2 de la spec de l'etape 5a), omettre le
+ * second vaut `0`, c'est-a-dire « ce projectile ne touche que ce qu'il
+ * percute ». Cinq armes sur neuf sont neutres et le restent — *« un socle pour
+ * les joueurs qui ne veulent pas jouer le systeme »* (§6.3 de l'orientation) —
+ * et une seule explose : dans les deux cas c'est la ligne ABSENTE qui est le
+ * cas courant, et l'exception se lit d'un coup d'oeil.
  */
-const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number })[] = [
+const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
+  element?: number;
+  blastRadius?: number;
+})[] = [
   {
     // Arme neutre de base (§6.1) : faible, sans element, hors slots.
     //
@@ -237,6 +265,37 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     // ou l'explosion finit. Elle et l'eventail couvrent les deux extremes de
     // cadence du catalogue, ce qui donne a la Braise une arme de couverture et
     // une arme de placement.
+    //
+    // ⚠️ **LA SEULE ARME DE ZONE DU CATALOGUE** (tache 16), et c'est elle qu'il
+    // fallait servir en premier : cadence la plus lente (75 ticks) et degats
+    // les plus eleves (40), c'est l'arme dont le tir DOIT peser. Une AoE sur le
+    // lance-flammes (5 ticks) ne serait pas la meme demande.
+    //
+    // `blastRadius` vaut `ZONE_RADIUS` : le champ que la reaction laisse au sol
+    // couvre exactement la surface que l'explosion vient de frapper, donc le
+    // joueur voit ou son tir a porte. Un rayon plus large tuerait hors du
+    // dessin, un rayon plus etroit rendrait le champ trompeur — c'est le meme
+    // raisonnement que `REACTION_RADIUS`, cale sur le flash qu'il doit couvrir.
+    //
+    // ⚠️ **MESURE au banc `kills` (4 joueurs immobiles, 60 s, 12 graines), la
+    // grenade en main du premier tick :**
+    //
+    // | Rayon | morts/s | morts / apparitions | horde finale |
+    // | --- | --- | --- | --- |
+    // | sans grenade | 3,32 | 0,49 | 209 |
+    // | 0 (avant) | 3,36 | 0,49 | 207 |
+    // | **70** | **3,54** | **0,53** | **192** |
+    // | 105 | 3,61 | 0,53 | 192 |
+    // | 400 (temoin absurde) | 4,01 | 0,59 | 168 |
+    //
+    // ⚠️ **Le souffle multiplie par 5,5 ce que la grenade apporte** (+0,04
+    // morts/s sans lui, +0,22 avec), et c'est bien l'effet demande. **Mais il
+    // ne referme PAS l'ecart dont l'auteur se plaint** : le rapport
+    // morts/apparitions passe de 0,49 a 0,53, il reste sous 1, la horde
+    // continue de grossir. Le temoin a 400 le dit — meme un rayon absurde ne
+    // depasse pas 0,59. **Le levier n'est pas la surface d'une arme, c'est la
+    // cadence de la grenade (75 ticks) et le taux de touche de la dague.**
+    // Signale, pas tranche ici : c'est du reglage, et il appartient a l'auteur.
     name: 'grenade',
     // Sphere verte, la plus grosse du catalogue : une arme a 40 degats et 75
     // ticks de recharge doit se voir partir. Vert franc face a l'ambre de
@@ -249,6 +308,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element'> & { element?: number
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.BRAISE,
+    blastRadius: ZONE_RADIUS,
   },
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
@@ -322,6 +382,7 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   ...w,
   id,
   element: w.element ?? ELEMENT.NEUTRE,
+  blastRadius: w.blastRadius ?? 0,
 }));
 
 /**

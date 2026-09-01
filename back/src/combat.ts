@@ -468,6 +468,52 @@ function applyElement(
 }
 
 /**
+ * **LE balayage par rayon, et il n'y en a qu'un.** Retire `damage` a tout
+ * ennemi dont le centre tombe a moins de `radius` de `(cx, cy)`, et note dans
+ * `dead` l'identite de ceux qui n'y survivent pas.
+ *
+ * ⚠️ **Deux appelants, un seul balayage** : la reaction elementaire (§6.1 de
+ * l'etape 5a, `REACTION_DAMAGE` dans `REACTION_RADIUS`) et l'explosion d'une
+ * arme de zone (tache 16, `Weapon.blastRadius`). Ce sont deux REGLES
+ * differentes — l'une nait d'un couple d'elements, l'autre d'un impact — mais
+ * une seule GEOMETRIE, et un second balayage ecrit a cote du premier
+ * divergerait a la premiere retouche. C'est le motif « deux sources de
+ * verite » que ce depot a rencontre quatre fois.
+ *
+ * ⚠️ **Ne TUE PAS, et c'est ce qui rend le partage possible.** Tuer compacte la
+ * horde (`Horde.kill`), donc invaliderait les indices de la boucle qui tourne
+ * chez l'appelant — celle de `applyReactions` sur ses declencheurs, celle de
+ * `Projectiles.collide` sur ses projectiles. Le `Set` est rempli ici, la
+ * compaction reste dehors, apres tous les degats.
+ *
+ * ⚠️ **La borne est STRICTE (`< radius`)**, comme partout ailleurs dans ce
+ * fichier : une entite pile sur le cercle n'est pas touchee. C'est le meme
+ * predicat que `markInZones` et que `ZoneField.slowsAt`.
+ */
+function damageInRadius(
+  horde: Horde,
+  cx: number,
+  cy: number,
+  radius: number,
+  damage: number,
+  dead: Set<number>,
+): void {
+  const r2 = radius * radius;
+  for (let i = 0; i < horde.count; i++) {
+    const dx = (horde.x[i] ?? 0) - cx;
+    const dy = (horde.y[i] ?? 0) - cy;
+    if (dx * dx + dy * dy >= r2) {
+      continue;
+    }
+    const reste = (horde.hp[i] ?? 0) - damage;
+    horde.hp[i] = reste;
+    if (reste <= 0) {
+      dead.add(horde.entityIdAt(i));
+    }
+  }
+}
+
+/**
  * Resout les reactions collectees pendant le tick : `REACTION_DAMAGE` a tout
  * ennemi dans `REACTION_RADIUS` de chaque point, et rend les identites de ceux
  * qui en meurent.
@@ -519,21 +565,9 @@ export function applyReactions(
     postZone(zones, t, tick, reactions);
   }
 
-  const r2 = REACTION_RADIUS * REACTION_RADIUS;
   const dead = new Set<number>();
   for (const t of triggers) {
-    for (let i = 0; i < horde.count; i++) {
-      const dx = (horde.x[i] ?? 0) - t.x;
-      const dy = (horde.y[i] ?? 0) - t.y;
-      if (dx * dx + dy * dy >= r2) {
-        continue;
-      }
-      const reste = (horde.hp[i] ?? 0) - REACTION_DAMAGE;
-      horde.hp[i] = reste;
-      if (reste <= 0) {
-        dead.add(horde.entityIdAt(i));
-      }
-    }
+    damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, dead);
   }
   if (dead.size === 0) {
     return [];
@@ -567,6 +601,20 @@ export function applyReactions(
  * identites uniques) et que `Horde.kill` ne fait que tolerer defensivement
  * (voir sa doc, et le doublon y supprimerait l'entite VIVANTE deplacee dans le
  * creneau). Le `Set` rend cette garantie structurelle plutot que defensive.
+ *
+ * ⚠️ **Un projectile ne touche plus forcement UNE entite** (tache 16, sur
+ * retour de jeu : *« il faut parfois des AoE sur certaines armes comme les
+ * grenades »*). Une arme dont `blastRadius` est non nul frappe tout ce qui
+ * entoure l'ennemi percute, par `damageInRadius` — LE balayage par rayon, celui
+ * que la reaction elementaire utilise deja. Le `Set` en devient d'autant plus
+ * necessaire : une explosion et un tir suivant peuvent achever la meme entite
+ * dans le meme `collide`.
+ *
+ * ⚠️ **L'explosion ne MARQUE que l'ennemi percute**, pas le rayon. Poser
+ * l'element sur tout le rayon ferait de chaque grenade un declencheur de masse
+ * — la borne du §6.2 est par ennemi et par tick, elle ne borne donc rien contre
+ * ca — et la Braise de la grenade cesserait d'etre un choix de placement pour
+ * devenir un effet de surface. Signale, pas tranche ici : c'est du contenu.
  */
 export function resolveProjectileDamage(
   projectiles: Projectiles,
@@ -604,30 +652,60 @@ export function resolveProjectileDamage(
       // compacterait entre `collide` et ce rappel.
       return;
     }
-    const reste = (horde.hp[slot] ?? 0) - damage;
-    horde.hp[slot] = reste;
-    if (reste <= 0) {
+    const blastRadius = projectiles.blastRadiusAt(projectileSlot);
+    if (blastRadius > 0) {
+      // ⚠️ **L'arme de zone passe par LE balayage commun** (tache 16), celui
+      // que la reaction elementaire utilise depuis l'etape 5a. Le centre est
+      // l'ennemi PERCUTE, pas la position du projectile : `collide` teste le
+      // segment parcouru pendant le pas, donc le projectile peut avoir
+      // depasse sa cible d'une dizaine de pixels au moment ou il la touche.
+      // L'explosion appartient a l'impact, pas au point d'arrivee.
+      //
+      // ⚠️ **L'ennemi percute n'a PAS de traitement a part** : il est a
+      // distance nulle du centre, donc dans le rayon, donc touche comme les
+      // autres — exactement le raisonnement de `applyReactions`. Lui retirer
+      // `damage` une seconde fois ici lui infligerait le double du reste de la
+      // horde.
+      damageInRadius(horde, horde.x[slot] ?? 0, horde.y[slot] ?? 0, blastRadius, damage, dead);
+    } else {
+      // ⚠️ **Le tir simple garde son chemin DIRECT, et c'est une question de
+      // cout, pas de regle.** `damageInRadius` est en O(horde) par impact ; le
+      // lance-flammes pose 18 projectiles par seconde et par joueur, et huit
+      // armes sur neuf ne sont pas des armes de zone. Un balayage a rayon nul
+      // serait la meme regle ecrite plus cher — et il toucherait en prime tout
+      // ennemi pile aux memes coordonnees.
+      const reste = (horde.hp[slot] ?? 0) - damage;
+      horde.hp[slot] = reste;
+      if (reste <= 0) {
+        dead.add(entityId);
+      }
+    }
+    if (dead.has(entityId)) {
       // ⚠️ **UN ENNEMI QUI MEURT DU MEME IMPACT N'EST PAS MARQUE.** Un mort ne
       // porte pas d'element : c'est la reaction qui consomme une marque, et il
       // n'y a plus rien a consommer.
       //
-      // ⚠️ **Et AUCUN TEST NE GARDE ce `return` — verifie par application, pas
-      // raisonne.** Le plan de l'etape 5a annonce ici la classe de defaut la
-      // plus couteuse du depot (« la marque serait posee sur un creneau que
-      // `kill` va compacter, donc sur une AUTRE entite »). **C'est faux avec le
-      // `Horde` d'aujourd'hui, et la mutation le prouve** : `#removeAt` copie
-      // la DERNIERE entite DANS le creneau libere, donc la marque posee sur le
-      // mourant est ECRASEE par les donnees propres du survivant, jamais
-      // heritee. Et quand le mourant occupe deja le dernier creneau, la marque
-      // survit au-dela du compte — ou `Horde.spawn` la remet a `NEUTRE`
-      // (correctif R16 de l'etape 4). Les deux chemins sont couverts.
+      // ⚠️ **`dead.has`, et plus `reste <= 0` : la tache 16 a du le deplacer.**
+      // Avec une arme de zone, ce n'est plus la branche du dessus qui prononce
+      // la mort de l'ennemi percute — c'est `damageInRadius`, qui la prononce
+      // pour tout le rayon d'un coup. La question posee reste la meme (« celui
+      // que je m'apprete a marquer est-il mort ? »), mais la reponse ne vit
+      // plus dans une variable locale. Elle couvre du meme geste un cas qui
+      // existait deja : un ennemi acheve par l'explosion d'un AUTRE projectile
+      // du meme tick n'est pas marque non plus.
       //
-      // Garde quand meme, et dit tel quel plutot que de laisser croire a une
-      // garde testee (meme choix que le `slot < 0` ci-dessus) : il encode
-      // l'intention, et il redevient porteur le jour ou `#removeAt` cesserait
-      // d'ecraser — un `kill` qui se contenterait de decrementer le compte,
-      // par exemple.
-      dead.add(entityId);
+      // ⚠️ **CE COMMENTAIRE DISAIT « aucun test ne garde ce `return` », ET
+      // C'ETAIT FAUX — mesure a la tache 16, mutation appliquee.** Le neutraliser
+      // fait rougir « un ennemi qui MEURT du meme impact ne reagit pas »
+      // (`combat.test.ts`, tache 7 de l'etape 5a) : sans lui, `applyElement`
+      // tourne sur le mourant, y trouve une marque d'un autre element et
+      // DECLENCHE une reaction que le §4.3 interdit. Ce qui n'etait pas garde,
+      // c'est la consequence que le plan de l'etape 5a annoncait (« la marque
+      // serait posee sur une AUTRE entite ») — celle-la est bien impossible :
+      // `#removeAt` copie la DERNIERE entite DANS le creneau libere, donc la
+      // marque du mourant est ecrasee, jamais heritee. Un garde peut etre tenu
+      // par un test tout en ayant ete justifie par une raison inexacte, et
+      // c'est le cas ici.
       return;
     }
     if (element !== ELEMENT.NEUTRE) {
