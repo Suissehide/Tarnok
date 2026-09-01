@@ -1,7 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { FLOWFIELD_CELL, MAP_SIZE } from './constants';
-import { FORMATION, formationPositions, type ObstacleField, type WaveOrder } from './waves';
+import {
+  ENCIRCLE_RADIUS,
+  FORMATION,
+  formationPositions,
+  type ObstacleField,
+  type WaveOrder,
+} from './waves';
 
 function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
   return {
@@ -89,6 +95,111 @@ describe('formationPositions', () => {
       expect(x[i]).toBeLessThanOrEqual(MAP_SIZE);
       expect(y[i]).toBeLessThanOrEqual(MAP_SIZE);
     }
+  });
+});
+
+/**
+ * Ecarts angulaires entre entites consecutives, vues depuis l'ancre, triees —
+ * le dernier est le plus grand TROU du cercle. C'est la mesure qui distingue un
+ * encerclement d'un anneau : un anneau tire au hasard a le meme rayon, la meme
+ * moyenne, et laisse pourtant des trous.
+ */
+function angularGaps(o: WaveOrder): number[] {
+  const { x, y } = positionsOf(o);
+  const angles: number[] = [];
+  for (let i = 0; i < o.count; i++) {
+    const a = Math.atan2((y[i] ?? 0) - o.anchorY, (x[i] ?? 0) - o.anchorX);
+    angles.push(a < 0 ? a + Math.PI * 2 : a);
+  }
+  angles.sort((a, b) => a - b);
+  const gaps: number[] = [];
+  for (let i = 1; i < angles.length; i++) {
+    gaps.push((angles[i] ?? 0) - (angles[i - 1] ?? 0));
+  }
+  // Le tour se referme : l'ecart entre le dernier et le premier compte aussi.
+  gaps.push((angles[0] ?? 0) + Math.PI * 2 - (angles[angles.length - 1] ?? 0));
+  return gaps.sort((a, b) => a - b);
+}
+
+function maxGap(o: WaveOrder): number {
+  const gaps = angularGaps(o);
+  return gaps[gaps.length - 1] ?? 0;
+}
+
+describe('FORMATION.ENCIRCLE — la vague encercle le joueur (etape 6a, tache 18)', () => {
+  /** Effectifs realistes d'une premiere vague, plus deux plus gros. */
+  const EFFECTIFS = [8, 12, 20, 40];
+  const GRAINES = Array.from({ length: 40 }, (_, i) => i + 1);
+
+  it('fait naitre la vague sur un cercle de ENCIRCLE_RADIUS autour de l ancre', () => {
+    const o = order({ formation: FORMATION.ENCIRCLE, count: 200 });
+    const { x, y } = positionsOf(o);
+
+    let somme = 0;
+    let minR = Number.POSITIVE_INFINITY;
+    let maxR = Number.NEGATIVE_INFINITY;
+    for (let i = 0; i < o.count; i++) {
+      const r = Math.hypot((x[i] ?? 0) - o.anchorX, (y[i] ?? 0) - o.anchorY);
+      somme += r;
+      minR = Math.min(minR, r);
+      maxR = Math.max(maxR, r);
+      // Derive de la constante, jamais recopiee : deux tests de ce depot sont
+      // devenus intermittents pour avoir epingle `WAVE1_MIN_COUNT = 16`.
+      expect(Math.abs(r - ENCIRCLE_RADIUS)).toBeLessThan(ENCIRCLE_RADIUS * 0.1);
+    }
+    expect(Math.abs(somme / o.count - ENCIRCLE_RADIUS)).toBeLessThan(ENCIRCLE_RADIUS * 0.02);
+
+    // ⚠️ **L'anneau a une EPAISSEUR, et rien d'autre ne le disait** : la
+    // mutation `ENCIRCLE_JITTER = 0` survivait aux 674 tests du depot. Sur un
+    // cercle parfait, toute la vague part a la meme distance et arrive au
+    // contact au meme instant, en un rang d'un seul monstre — le mur qu'on
+    // vient justement de defaire. Le bruit exact est un reglage, son existence
+    // ne l'est pas — d'ou un plancher d'un pixel plutot qu'une valeur.
+    //
+    // ⚠️ **Un simple `maxR > minR` NE SUFFIT PAS, et la mutation l'a montre** :
+    // `outX`/`outY` sont des `Float32Array`, donc meme a bruit nul les rayons
+    // relus different au dernier bit (~2e-4 px a 1 800 px de l'ancre). La
+    // mutation passait cette forme-la de l'assertion.
+    expect(maxR - minR).toBeGreaterThan(1);
+  });
+
+  /**
+   * ⚠️ **C'EST L'ASSERTION DE LA TACHE, et le rayon ne suffisait pas.**
+   * `FORMATION.RING` pose lui aussi ses entites sur un cercle de rayon
+   * constant ; ce qu'il ne fait pas, c'est le REMPLIR. A douze entites — la
+   * taille d'une premiere vague — un tirage uniforme laisse regulierement un
+   * demi-tour vide, c'est-a-dire le pack d'un seul cote qu'on cherche a
+   * supprimer. Deux secteurs, c'est le trou que le bruit angulaire borne peut
+   * ouvrir au pire ; au-dela, la vague n'encercle plus.
+   */
+  it('ne laisse aucun trou plus grand que deux secteurs, sur 40 graines et quatre effectifs', () => {
+    for (const count of EFFECTIFS) {
+      const secteur = (Math.PI * 2) / count;
+      for (const seed of GRAINES) {
+        const o = order({ formation: FORMATION.ENCIRCLE, count, seed });
+        expect(maxGap(o)).toBeLessThan(2 * secteur);
+      }
+    }
+  });
+
+  /**
+   * ⚠️ **La garde contre la fixture qui masque** — dix occurrences dans ce
+   * depot. Sans elle, l'assertion precedente pourrait etre vraie de N'IMPORTE
+   * QUELLE formation posee sur un cercle, et ne prouverait donc rien de
+   * l'encerclement. Les memes graines, le meme effectif, passes a `RING` :
+   * le trou depasse bel et bien deux secteurs.
+   */
+  it('et ce seuil a des dents : un anneau tire au hasard (RING) laisse des trous plus grands', () => {
+    let depassements = 0;
+    for (const count of EFFECTIFS) {
+      const secteur = (Math.PI * 2) / count;
+      for (const seed of GRAINES) {
+        if (maxGap(order({ formation: FORMATION.RING, count, seed })) >= 2 * secteur) {
+          depassements++;
+        }
+      }
+    }
+    expect(depassements).toBeGreaterThan(0);
   });
 });
 

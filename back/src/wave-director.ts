@@ -39,9 +39,40 @@ const PERIOD_TICKS = TICK_HZ * 6;
  * l'avancer — l'inverse exact de l'intention. Le test « un joueur passif
  * atteint le niveau 2 » de `room.test.ts` est la garde ; mesure apres la
  * baisse, la montee reste bien dans son budget de 100 s.
+ *
+ * ⚠️ **Baisse a la tache 18 de l'etape 6a (10-18 -> 8-14), et LA GARDE A
+ * TRANCHE OU S'ARRETER.** *« Baisse encore les vagues »*, dit l'auteur. Le
+ * banc `bench/niveau2.bench.ts` (40 graines, solo immobile, budget 100 s) dit
+ * jusqu'ou, et il dit non bien plus tot qu'on ne l'aurait cru :
+ *
+ * | Reglage (avec l'encerclement) | Echecs / 40 |
+ * | --- | --- |
+ * | 10-18, rampe 30 — l'etat d'avant la tache | **2** (contre 9 sans l'encerclement) |
+ * | **8-14, rampe 30 (retenu)** | **4** |
+ * | 8-14, rampe 36 | 8 |
+ * | 8-14, rampe 45 | 12 |
+ * | 6-10, rampe 60 | **24** |
+ *
+ * ⚠️ **CE N'EST PAS LA FAMINE D'ORBES QUI BLOQUE, c'est le boss** — mesure de
+ * controle, faite pour ne pas supposer la cause : le meme 6-10 / rampe 60,
+ * boss desactive (`WAVES_PER_PALIER` porte a 1000), tombe a **5 echecs sur
+ * 40**. Dix-neuf des vingt-quatre pertes sont donc le boss, et le mecanisme
+ * est celui que la doc de `bench/niveau2.bench.ts` decrit deja : le joueur
+ * solo vise *la menace la plus proche*, et quand la pietaille se clairseme
+ * c'est le boss qui devient cette cible — il encaisse 1 500 PV pendant que le
+ * reste de la vague arrive au contact. **Moins de pietaille rend donc le boss
+ * PLUS dangereux au joueur seul**, ce qu'aucun plan n'avait prevu.
+ *
+ * Les cinq echecs restants du controle, eux, sont bien la famine annoncee
+ * plus haut : la mediane de montee au niveau 2 passe de 42 s a **61 s** sur un
+ * budget de 100 s.
+ *
+ * `RAMP_WAVES` reste donc a 30 : c'est LUI que la garde refuse, pas
+ * `WAVE1_*` — la rampe pese sur les vagues 5 a 10, celles qui accompagnent
+ * l'arrivee du boss a 30 s.
  */
-const WAVE1_MIN_COUNT = 10;
-const WAVE1_MAX_COUNT = 18;
+const WAVE1_MIN_COUNT = 8;
+const WAVE1_MAX_COUNT = 14;
 
 /**
  * Bornes en regime etabli — inchangees depuis l'etape 2 (120 a 320) : c'est le
@@ -65,13 +96,47 @@ const STEADY_MAX_COUNT = 320;
  *
  * `STEADY_*` n'est PAS touche : c'est ce que les bancs mesurent, et le §4.1 de
  * l'orientation y tient.
+ *
+ * ⚠️ **La tache 18 de l'etape 6a a ESSAYE de l'allonger et la mesure a dit
+ * non** — voir le tableau de `WAVE1_MIN_COUNT`. A rampe 45 le banc du niveau 2
+ * passe de 4 echecs sur 40 a 12, a rampe 60 a 24, et la cause mesuree n'est pas
+ * celle qu'on attendait : c'est le boss, que le joueur solo prend pour cible
+ * des que la pietaille se clairseme. La rampe est le levier qui pese sur les
+ * vagues 5 a 10, donc exactement sur celles qui entourent son arrivee a 30 s.
+ * **Le rallonger redeviendra possible le jour ou le joueur seul ne videra plus
+ * son chargeur dans le boss** — c'est-a-dire quand la visee cessera d'etre
+ * « la menace la plus proche » ou quand le boss cessera d'apparaitre au
+ * quatrieme tour d'horloge.
  */
 const RAMP_WAVES = 30;
 
-/** Distance a laquelle une vague apparait autour d'un joueur. */
-const ANCHOR_RADIUS = 1800;
-
-const FORMATION_POOL = [FORMATION.SCATTER, FORMATION.RING, FORMATION.COLUMN, FORMATION.CLUSTER];
+/**
+ * Les formations tirables.
+ *
+ * ⚠️ **L'ENCERCLEMENT EST LA REGLE, pas un cas particulier** (tache 18 de
+ * l'etape 6a) : *« fais apparaitre les monstres autour du joueur plutot qu'en
+ * pack »*. C'etait deja l'intention de l'auteur a l'etape 3 — *« les monstres
+ * arriveront en cercle vers le joueur, donc il y aura moins de collision »* —
+ * et ca n'avait jamais ete fait.
+ *
+ * Jusqu'ici le directeur posait l'ancre a 1800 px du joueur dans UNE direction
+ * tiree, et les quatre formations (`SCATTER`, `RING`, `COLUMN`, `CLUSTER`)
+ * arrangeaient la vague autour de ce point : une vague etait un **pack qui
+ * arrive d'un cote**. `FORMATION.RING` ne corrigeait rien — c'est un PETIT
+ * anneau autour de l'ancre (`RING_RADIUS` = 700), pas un encerclement du
+ * joueur.
+ *
+ * Le changement se fait dans le POOL, pas par un `if` dans `due` : le tirage de
+ * formation reste ce qu'il est, et remettre une variete de formations un jour
+ * ne demandera que de rallonger cette liste. Les quatre autres formations
+ * restent definies et decodables — l'ordre de vague porte un numero de
+ * formation, et rien n'oblige un pool a les utiliser toutes.
+ *
+ * ⚠️ **Le tirage reste consomme** meme sur une liste d'un seul element : le
+ * flux du generateur ne doit pas se decaler, c'est le test de determinisme du
+ * directeur qui le verrouille.
+ */
+const FORMATION_POOL = [FORMATION.ENCIRCLE];
 
 /**
  * Les archetypes tirables, separes par reserve de PV (etape 5a).
@@ -266,11 +331,23 @@ export class WaveDirector {
       return null;
     }
 
-    // Ancrage autour d'un joueur : le §8 de l'orientation veut que la densite
-    // se calcule par grappe de joueurs proches, pas globalement.
+    // Ancrage SUR un joueur : le §8 de l'orientation veut que la densite se
+    // calcule par grappe de joueurs proches, pas globalement.
+    //
+    // ⚠️ **L'ancre EST la position du joueur depuis la tache 18**, et non plus
+    // un point pose a `ANCHOR_RADIUS` dans une direction tiree. C'est ce qui
+    // fait de la vague un encerclement : `FORMATION.ENCIRCLE` repartit les
+    // entites sur un cercle de rayon `ENCIRCLE_RADIUS` (1800 px, la valeur de
+    // l'ancien `ANCHOR_RADIUS`) autour de l'ancre. La distance de naissance n'a
+    // donc pas change ; la DIRECTION, elle, n'est plus unique.
+    //
+    // Deux tirages ont disparu avec l'ancien ancrage — l'angle et le rayon.
+    // Aucun determinisme n'en souffre : le flux du generateur n'a pas a etre
+    // le meme qu'a la version precedente du directeur, seulement le meme d'une
+    // instance a l'autre a graine egale. Ce que le flux ne doit pas faire,
+    // c'est varier D'UN APPEL A L'AUTRE selon l'etat de la partie (boss ou
+    // non) — voir `tirage` et `pickArchetype` plus bas.
     const target = Math.floor(this.#rng() * playerX.length);
-    const angle = this.#rng() * Math.PI * 2;
-    const radius = ANCHOR_RADIUS * (0.6 + this.#rng() * 0.4);
 
     const waveNumber = this.#nextWaveId;
     const { min, max } = waveCountBounds(waveNumber);
@@ -310,8 +387,8 @@ export class WaveDirector {
       // est appliquee par `Room` comme a n'importe qui.
       archetype: boss ? BOSS_ARCHETYPE : tirageArchetype,
       formation: FORMATION_POOL[Math.floor(this.#rng() * FORMATION_POOL.length)] ?? 0,
-      anchorX: Math.round((playerX[target] ?? 0) + Math.cos(angle) * radius),
-      anchorY: Math.round((playerY[target] ?? 0) + Math.sin(angle) * radius),
+      anchorX: Math.round(playerX[target] ?? 0),
+      anchorY: Math.round(playerY[target] ?? 0),
       // ⚠️ **L'echelle du palier s'applique ICI, cote SERVEUR, avant que
       // l'ordre ne parte** : `count` voyage dans les 19 octets, donc le client
       // recoit un compte deja resolu et n'a rien a savoir du palier pour faire

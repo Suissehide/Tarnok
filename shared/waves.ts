@@ -18,9 +18,41 @@ export interface WaveOrder {
   count: number;
 }
 
-export const FORMATION = { SCATTER: 0, RING: 1, COLUMN: 2, CLUSTER: 3 } as const;
+export const FORMATION = { SCATTER: 0, RING: 1, COLUMN: 2, CLUSTER: 3, ENCIRCLE: 4 } as const;
 
 export type FormationId = (typeof FORMATION)[keyof typeof FORMATION];
+
+/**
+ * Rayon du cercle d'encerclement (tache 18 de l'etape 6a).
+ *
+ * ⚠️ **C'est une constante PARTAGEE, et c'est tout l'interet.** L'ordre de
+ * vague fait 19 octets (18 de charge utile + 1 de type) et n'a pas de champ de
+ * rayon ; lui en ajouter un couterait un octet ET romprait un nombre que trois
+ * documents citent — c'est le livrable de l'etape 2. Une formation dont le
+ * rayon est une constante lue des deux cotes du fil ne coute rien : le serveur
+ * et chaque client appellent deja `formationPositions`.
+ *
+ * La valeur reprend celle de l'ancien `ANCHOR_RADIUS` du directeur (1800 px),
+ * qui posait l'ancre a cette distance du joueur : la horde nait aussi loin
+ * qu'avant, mais tout autour au lieu d'un seul cote.
+ */
+export const ENCIRCLE_RADIUS = 1800;
+
+/**
+ * Bruit sur le rayon d'encerclement, en pixels (±`ENCIRCLE_JITTER / 2`) : sans
+ * lui, la vague nait sur un cercle parfait et arrive au contact toute en meme
+ * temps, en un anneau d'un seul rang.
+ */
+const ENCIRCLE_JITTER = 240;
+
+/**
+ * Part du pas angulaire dont un secteur peut bouger. Strictement en dessous de
+ * 1 : deux entites voisines ne peuvent pas echanger leur secteur, donc l'ecart
+ * angulaire maximal reste borne — c'est ce qui distingue un ENCERCLEMENT d'un
+ * anneau tire au hasard, ou rien n'interdit a toute la vague de tomber du meme
+ * cote.
+ */
+const ENCIRCLE_ANGLE_JITTER = 0.8;
 
 const SCATTER_RADIUS = 900;
 const RING_RADIUS = 700;
@@ -166,6 +198,23 @@ export function formationPositions(
     let dy = 0;
 
     switch (order.formation) {
+      case FORMATION.ENCIRCLE: {
+        // ⚠️ **L'ancre est ICI la position du joueur**, pas un point de cote :
+        // c'est le directeur qui le garantit (voir `WaveDirector.due`). La
+        // vague nait donc tout autour de lui, a `ENCIRCLE_RADIUS`.
+        //
+        // Les secteurs sont REGULIERS, pas tires : `count` entites se
+        // partagent le tour, chacune dans son secteur, avec un bruit borne a
+        // une fraction du pas. Un angle tire uniformement (ce que fait RING)
+        // laisserait, a 14 entites, une chance tres reelle que la vague entiere
+        // tombe du meme cote — c'est-a-dire le pack qu'on cherche a supprimer.
+        const step = (Math.PI * 2) / Math.max(1, count);
+        const angle = i * step + (rng() - 0.5) * step * ENCIRCLE_ANGLE_JITTER;
+        const radius = ENCIRCLE_RADIUS + (rng() - 0.5) * ENCIRCLE_JITTER;
+        dx = Math.cos(angle) * radius;
+        dy = Math.sin(angle) * radius;
+        break;
+      }
       case FORMATION.RING: {
         const angle = rng() * Math.PI * 2;
         const radius = RING_RADIUS + (rng() - 0.5) * RING_JITTER;

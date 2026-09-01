@@ -7,7 +7,7 @@ import {
 } from '@shared/archetypes';
 import { MAX_ENTITIES, MAX_PLAYERS, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
 import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
-import type { WaveOrder } from '@shared/waves';
+import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
 import { WaveDirector, waveCountBounds } from './wave-director';
@@ -46,7 +46,14 @@ describe('WaveDirector', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  it('ancre la vague pres d un joueur, pas au hasard sur la carte', () => {
+  /**
+   * ⚠️ **L'ancre EST le joueur depuis la tache 18 de l'etape 6a**, elle n'est
+   * plus « pres de lui ». C'est `FORMATION.ENCIRCLE` qui pose la distance de
+   * naissance, a `ENCIRCLE_RADIUS` tout autour — la vague n'arrive plus d'un
+   * seul cote. L'assertion precedente (« a moins de 2 500 px ») ne verrouillait
+   * pas ca : un ancrage decale de 1 800 px la passait tout aussi bien.
+   */
+  it('ancre la vague SUR un joueur, pas a cote', () => {
     const d = new WaveDirector(77);
     let order = null;
     for (let tick = 0; tick < TICK_HZ * 60 && !order; tick++) {
@@ -54,9 +61,31 @@ describe('WaveDirector', () => {
     }
 
     expect(order).not.toBeNull();
-    expect(Math.hypot((order?.anchorX ?? 0) - 1000, (order?.anchorY ?? 0) - 1000)).toBeLessThan(
-      2500,
-    );
+    expect(order?.anchorX).toBe(1000);
+    expect(order?.anchorY).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **Ce n'est pas un gout de formation, c'est une COHERENCE.** Maintenant
+   * que l'ancre est la position du joueur, toute formation qui n'encercle pas
+   * ferait naitre la vague DANS ses jambes : `SCATTER` la seme dans un disque
+   * de 900 px centre sur lui, `CLUSTER` lui pose cinq grappes sur la figure.
+   * Le pool ne peut donc pas se rallonger sans que la question de l'ancre soit
+   * reposee — c'est ce test qui la reposera.
+   */
+  it('fait encercler TOUTES ses vagues, boss compris', () => {
+    const d = new WaveDirector(9);
+    let vagues = 0;
+    for (let tick = 0; tick < TICK_HZ * 300; tick++) {
+      const o = d.due(tick, [3000, 2000], [3000, 4000]);
+      if (o) {
+        vagues++;
+        expect(o.formation).toBe(FORMATION.ENCIRCLE);
+      }
+    }
+    // La fixture produit bien ce qu'elle pretend mesurer : sans cette ligne,
+    // zero vague emise passerait le test sans rien prouver.
+    expect(vagues).toBeGreaterThan(40);
   });
 
   it('est deterministe pour une meme graine', () => {

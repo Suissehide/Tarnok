@@ -34,16 +34,51 @@ import { machineDescription, round2, stats } from './harness';
 
 const DT = 1 / TICK_HZ;
 const MEASURED_STEPS = 300;
-const WARMUP_STEPS = 300;
 
-function makeHorde(count: number): { horde: Horde; fields: FlowField[] } {
+/**
+ * Chauffe avant mesure, en ticks.
+ *
+ * ⚠️ **Monte de 300 a 900 a la tache 18 de l'etape 6a, et sans ca le banc
+ * mesurait autre chose que ce qu'il annonce.** `ENCIRCLE` fait naitre la horde
+ * a `ENCIRCLE_RADIUS` (1 800 px) de sa cible ; a la vitesse de l'archetype 0
+ * (95 px/s) il lui faut ~19 s, soit 570 ticks, pour seulement ARRIVER. Avec
+ * 300 ticks de chauffe (10 s), la fenetre mesuree tombait en plein trajet :
+ * un cout bas et une densite basse, mais ceux d'une horde qui n'est pas encore
+ * la — le « decor qui ne produit pas ce qu'il pretend mesurer ». 900 ticks
+ * (30 s) laissent la horde arriver ET s'entasser avant qu'on la chronometre.
+ * `CLUSTER` naissait deja a ~400 px et n'en avait pas besoin ; il garde la
+ * meme chauffe pour que les deux tableaux restent comparables.
+ */
+const WARMUP_STEPS = 900;
+
+/**
+ * Les deux geometries de naissance mesurees.
+ *
+ * ⚠️ **`CLUSTER` n'est plus ce que le directeur emet — `ENCIRCLE` l'est**
+ * (tache 18 de l'etape 6a). Ce banc l'ignorait completement : sa formation
+ * etait ecrite en dur, donc il aurait rendu EXACTEMENT les memes chiffres
+ * apres le changement qu'avant, sans rien mesurer de ce qu'on lui demandait.
+ * C'est le piege du « banc qui rend zero », deja paye par le banc des zones.
+ *
+ * Les deux restent mesurees : `CLUSTER` parce que c'est la reference
+ * historique de toutes les lignes de cout du depot et le pire cas de densite
+ * a la naissance, `ENCIRCLE` parce que c'est ce qui tourne desormais en jeu.
+ */
+const FORMATIONS = [
+  { id: FORMATION.CLUSTER, label: 'CLUSTER (reference historique)' },
+  { id: FORMATION.ENCIRCLE, label: 'ENCIRCLE (ce que le directeur emet)' },
+] as const;
+
+function makeHorde(count: number, formation: number): { horde: Horde; fields: FlowField[] } {
   const horde = new Horde(4000);
   const order: WaveOrder = {
     waveId: 1,
     spawnTick: 0,
     seed: 0x51ee_d001,
     archetype: 0,
-    formation: FORMATION.CLUSTER,
+    formation,
+    // L'ancre EST la position des joueurs : c'est ce que fait le directeur
+    // depuis la tache 18, et `ENCIRCLE` ne veut rien dire sans ca.
     anchorX: 3000,
     anchorY: 3000,
     count,
@@ -96,8 +131,8 @@ interface Measurement {
   maxJump: number;
 }
 
-function measure(count: number): Measurement {
-  const { horde, fields } = makeHorde(count);
+function measure(count: number, formation: number): Measurement {
+  const { horde, fields } = makeHorde(count, formation);
   const times: number[] = [];
   let neighboursEarly = 0;
   let maxJump = 0;
@@ -146,8 +181,15 @@ function main(): void {
       `rayon ${SEPARATION_RADIUS} px\n`,
   );
 
+  for (const { id, label } of FORMATIONS) {
+    console.log(`\n=== formation ${label} ===`);
+    tableau(id);
+  }
+}
+
+function tableau(formation: number): void {
   const rows = [250, 500, 1000, 1500, 2500, 4000].map((n) => {
-    const m = measure(n);
+    const m = measure(n, formation);
     const rejeu4 = m.median * 4;
     // Meme raisonnement que l'ancien banc de separation : une horde a moins de
     // 8 voisins par entite reste dans un regime bon marche, meme mal
