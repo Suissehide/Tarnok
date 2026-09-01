@@ -1031,11 +1031,23 @@ export class Room {
       bossId === null ? null : { id: bossId, hp: this.horde.hp[this.horde.slotOf(bossId)] ?? 0 };
 
     const started = performance.now();
-    // `#xp` et `#synergy` cote a cote, tous deux dans l'EN-TETE : deux donnees
-    // d'equipe, deux nombres uniques, aucun bloc de joueur ne les porte. Le
-    // boss les rejoint (tache 4) pour la meme raison, et pour une de plus : il
-    // est UN, et c'est ce nombre qui autorise sa vie a voyager (§1.1).
-    const buf = encodeSnapshot(this.#tick, this.#xp, this.#synergy, this.#scratch, boss);
+    // `#xp`, `#synergy` et `#gold` cote a cote, tous trois dans l'EN-TETE :
+    // trois donnees d'equipe, trois nombres uniques, aucun bloc de joueur ne
+    // les porte. Le boss les rejoint (tache 4) pour la meme raison, et pour
+    // une de plus : il est UN, et c'est ce nombre qui autorise sa vie a
+    // voyager (§1.1).
+    //
+    // ⚠️ **L'or part a CHAQUE tick, pas au vote.** C'est l'enjeu du portail
+    // (§6) : un vote dont on ne voit pas l'enjeu n'est pas un vote, et il
+    // bouge pendant la fenetre — le monde ne s'arrete pas.
+    const buf = encodeSnapshot(
+      this.#tick,
+      this.#xp,
+      this.#synergy,
+      this.#scratch,
+      boss,
+      this.#gold,
+    );
     this.#metrics.encodeMicros += (performance.now() - started) * 1000;
     this.#metrics.bytesSent += buf.byteLength;
     this.#metrics.snapshots++;

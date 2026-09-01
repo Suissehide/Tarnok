@@ -28,6 +28,9 @@ function snapshot(
     // ne passe pas par `SnapshotBuffer` — il n'a pas de position sur le fil,
     // seulement une vie. `null` est donc l'etat reel, pas un remplissage.
     boss: null,
+    // Meme raison pour l'or (tache 7) : rien ne s'interpole ici, c'est un
+    // total d'equipe que ce decor ne lit pas.
+    gold: 0,
   };
 }
 

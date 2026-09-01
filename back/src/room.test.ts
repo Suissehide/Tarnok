@@ -3734,6 +3734,17 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
     expect(tuerLeBoss(room)).toBe(1);
     expect(room.gold).toBe(palierGold(0) + palierGold(1));
 
+    // ⚠️ **Et il SORT du salon.** Le total part dans l'en-tete du `SNAPSHOT`,
+    // a cote de l'experience et de la Synergie (tache 7) : sans cette ligne,
+    // un salon qui compterait juste mais ne dirait rien passerait tout ce
+    // bloc. C'est la « ligne de diffusion qu'aucun test n'atteint » du depot,
+    // qui a deja laisse passer `REACTION` et `BOSS_CHARGE`.
+    const out = collector();
+    room.snapshot(out);
+    const premier = out.sent[0];
+    expect(premier).toBeDefined();
+    expect(decodeSnapshot(premier ?? new ArrayBuffer(0)).gold).toBe(room.gold);
+
     // ⚠️ **Le decor ne discrimine que si les deux montants DIFFERENT.** Une
     // recompense plate rendrait les deux assertions ci-dessus vraies quel que
     // soit le palier lu. C'est la « fixture qui masque » du depot, prise a la

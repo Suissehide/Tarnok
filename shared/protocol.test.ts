@@ -10,7 +10,7 @@ import {
 } from './constants';
 import { ELEMENT, ELEMENTS } from './elements';
 import { entityIdOf } from './horde';
-import { bossHp } from './paliers';
+import { bossHp, palierGold } from './paliers';
 import {
   BOSS_CHARGE_BYTES,
   BOSS_HP_MAX,
@@ -44,23 +44,35 @@ import {
   encodeInput,
   encodeLevelUp,
   encodePickups,
+  encodePortalOpen,
+  encodePortalResult,
   encodeReaction,
   encodeRunOver,
   encodeSnapshot,
+  encodeVote,
+  encodeVotes,
   encodeWaveOrder,
   encodeWelcome,
   encodeZone,
+  GOLD_MAX,
   INPUT_BYTES,
   LEVEL_UP_BYTES,
   MSG,
   NO_BOSS_ID,
   NO_TOKEN,
+  NO_VOTE,
+  PORTAL_OPEN_BYTES,
+  PORTAL_RESULT_BYTES,
   packElementPair,
   REACTION_BYTES,
   RUN_OVER_BYTES,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
   unpackElementPair,
+  VOTE_BYTES,
+  VOTE_CHOICE,
+  VOTE_ENTRY_BYTES,
+  VOTES_HEADER_BYTES,
   ZONE_BYTES,
 } from './protocol';
 
@@ -124,7 +136,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // synergie 7 — parce qu'un aller-retour ne voit pas un decalage qui echange
   // deux champs de meme valeur. C'est la seule facon d'assener que la Synergie
   // ne s'ecrit pas par-dessus l'experience.
-  it('rend les positions arrondies a l entier, les pv personnels, la visee, l experience, la synergie d equipe et le boss', () => {
+  it('rend les positions arrondies a l entier, les pv personnels, la visee, l experience, la synergie d equipe, le boss et l or', () => {
     const buf = encodeSnapshot(
       42,
       12_000,
@@ -134,6 +146,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
         { id: 2, x: -3.2, y: 5999.9, hp: 42, aimX: 0, aimY: 0 },
       ],
       { id: 8193, hp: 6000 },
+      31_337,
     );
 
     expect(decodeSnapshot(buf)).toEqual({
@@ -146,6 +159,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
         { id: 2, x: -3, y: 6000, hp: 42, aimX: 0, aimY: 0 },
       ],
       boss: { id: 8193, hp: 6000 },
+      gold: 31_337,
     });
   });
 
@@ -160,7 +174,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // Les deux tailles sont assenees EN CHIFFRES NUS, jamais comparees a
   // elles-memes : c'est ce qui attrape un decalage d'octet. Une assertion
   // `toBe(SNAPSHOT_HEADER_BYTES)` serait vraie quoi qu'il arrive.
-  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (10 -> 18 avec le boss)', () => {
+  it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (18 -> 22 avec l or)', () => {
     const buf = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
       { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0 },
@@ -168,7 +182,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     ]);
 
     expect(buf.byteLength).toBe(SNAPSHOT_HEADER_BYTES + 3 * SNAPSHOT_PLAYER_BYTES);
-    expect(SNAPSHOT_HEADER_BYTES).toBe(18);
+    expect(SNAPSHOT_HEADER_BYTES).toBe(22);
     expect(SNAPSHOT_PLAYER_BYTES).toBe(9);
   });
 
@@ -240,10 +254,22 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // `RangeError` de `DataView` ferait passer un `toThrow()` nu meme si le
   // controle de longueur avait disparu — defaut reel de l'etape 4.
   it('leve sur un en-tete tronque juste avant les PV du boss', () => {
-    const truncated = encodeSnapshot(1, 12_000, 7, [], { id: 8193, hp: 6000 }).slice(
-      0,
-      SNAPSHOT_HEADER_BYTES - 4,
-    );
+    // ⚠️ **14, pas `SNAPSHOT_HEADER_BYTES - 4`.** La coupe visait la fin de
+    // l'en-tete tant que les PV du boss la terminaient ; l'or de la tache 7
+    // s'est ajoute derriere, et la formule relative aurait suivi en silence —
+    // ce test aurait alors coupe avant l'OR en pretendant couper avant les PV,
+    // et le nom du test serait devenu un mensonge. L'octet vise est nomme par
+    // sa position dans la liste de champs, pas par sa distance a la fin.
+    const truncated = encodeSnapshot(1, 12_000, 7, [], { id: 8193, hp: 6000 }).slice(0, 14);
+
+    expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
+  });
+
+  // ⚠️ Coupe PILE avant les quatre octets d'or (ils occupent 18..21). Meme
+  // exigence qu'ailleurs : `/tronqu/i`, jamais un `toThrow()` nu — un
+  // `RangeError` de `DataView` le ferait passer sans controle de longueur.
+  it('leve sur un en-tete tronque juste avant l or de l equipe', () => {
+    const truncated = encodeSnapshot(1, 12_000, 7, [], { id: 8193, hp: 6000 }, 31_337).slice(0, 18);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
   });
@@ -1028,5 +1054,347 @@ describe('encodeReaction / decodeReaction', () => {
     const truncated = encodeReaction(1, 2, 3, 4, true).slice(0, REACTION_BYTES - 1);
 
     expect(() => decodeReaction(truncated)).toThrow(/tronqu/);
+  });
+});
+
+/**
+ * L'or de l'equipe dans le snapshot (etape 6a, tache 7).
+ *
+ * ⚠️ **La troisieme grandeur d'EQUIPE de l'en-tete**, apres l'experience et la
+ * Synergie, et le §5 de la spec en fait l'enjeu de tout le vote : c'est le
+ * nombre qu'on risque. Il est donc repete a chaque tick plutot qu'annonce par
+ * evenement — un client qui aurait manque un `PORTAL_RESULT` se recale au
+ * snapshot suivant.
+ */
+describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
+  /** Or cumule apres avoir vaincu les boss des paliers 0 a `k`. */
+  function cumulJusquA(k: number): number {
+    let total = 0;
+    for (let i = 0; i <= k; i++) {
+      total += palierGold(i);
+    }
+    return total;
+  }
+
+  /**
+   * Le palier auquel un `u16` aurait replie la cagnotte — **derive de
+   * `palierGold`, jamais recopie**. Le jour ou `GOLD_PER_PALIER_BASE` ou
+   * `PALIER_HP_SCALE` bougent, ce nombre suit ; un 38 ecrit a la main
+   * mentirait en silence.
+   */
+  const PALIER_LIMITE_U16 = (() => {
+    let k = 0;
+    while (cumulJusquA(k) <= 65_535) {
+      k++;
+    }
+    return k;
+  })();
+
+  /**
+   * ⚠️ **LA LARGEUR A ETE CALCULEE, PAS DEVINEE** — c'est ce test qui porte le
+   * calcul, la table complete etant dans la doc de `GOLD_MAX`. Le `u16`
+   * debordait au palier 38 sur l'or brut et au palier **22** une fois majore
+   * du multiplicateur d'extraction, soit moins de deux heures de jeu a cinq
+   * minutes par palier — et rien ne borne le palier, le §3 de la spec en fait
+   * *« la duree de vie du jeu »*. Le repli aurait ramene 67 984 pieces a
+   * 2 448, PILE au moment ou ce nombre vaut le plus cher.
+   */
+  it('tient la plus grosse cagnotte que le jeu sache produire, sans repli silencieux', () => {
+    const auPalierU16 = cumulJusquA(PALIER_LIMITE_U16);
+
+    expect(auPalierU16).toBeGreaterThan(65_535);
+    expect(auPalierU16).toBeLessThanOrEqual(GOLD_MAX);
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, auPalierU16)).gold).toBe(auPalierU16);
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, GOLD_MAX)).gold).toBe(GOLD_MAX);
+  });
+
+  /**
+   * ⚠️ **Borne, jamais repli.** Sans le `Math.min`, `setUint32` prend le
+   * modulo : une cagnotte de 4,3 milliards de pieces se reveillerait a 999, et
+   * l'equipe verrait sa fortune s'evaporer a l'affichage. Meme garde que pour
+   * les PV du boss, ecrite parce que le repli SILENCIEUX du `hp` de l'etape 4
+   * a coute une tache.
+   */
+  it('borne au lieu de replier au-dela de GOLD_MAX', () => {
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, GOLD_MAX + 1000)).gold).toBe(GOLD_MAX);
+    // Ce qu'un repli aurait rendu, pour que la ligne ci-dessus ait un sens.
+    expect((GOLD_MAX + 1000) % 2 ** 32).toBe(999);
+  });
+
+  /**
+   * L'or reste entier sur le fil. Le seul chemin par lequel il peut cesser de
+   * l'etre est le multiplicateur d'extraction (tache 9) ; sans cet arrondi,
+   * `setUint32` tronquerait vers zero et une extraction perdrait une piece.
+   */
+  it("arrondit l'or a l'entier plutot que de le tronquer", () => {
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, 1499.6)).gold).toBe(1500);
+  });
+
+  it('vaut zero quand rien n a encore ete gagne', () => {
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [])).gold).toBe(0);
+  });
+});
+
+/**
+ * Le protocole du vote d'extraction (etape 6a, tache 7).
+ *
+ * **Quatre messages, calques sur le draft** : une ouverture datee, des
+ * intentions rediffusees, une resolution annoncee (§6 de la spec). Ce qui
+ * change : deux choix au lieu de N cartes, **aucun gel**, et une majorite au
+ * lieu d'un tirage.
+ *
+ * ⚠️ **Les trois lecons du draft, chacune payee d'une tache, sont gardees
+ * ici** : le resultat porte le TICK D'EFFET (R3 de l'etape 4), la sentinelle
+ * d'abstention ne vaut aucun choix reel (`NO_TOKEN = 255`, parce que la carte
+ * 0 est une carte reelle), et ce que le serveur COMPARE ne voyage pas — seul
+ * son verdict voyage, comme `REACTION` porte un bit et non les deux joueurs.
+ */
+describe('le vote d extraction (etape 6a, tache 7)', () => {
+  describe('PORTAL_OPEN', () => {
+    it('fait un aller-retour exact', () => {
+      expect(decode(encodePortalOpen(4242))).toEqual({
+        type: MSG.PORTAL_OPEN,
+        deadlineTick: 4242,
+      });
+    });
+
+    it('tient un tick d echeance sur 32 bits', () => {
+      const msg = decode(encodePortalOpen(4_294_967_295));
+
+      expect(msg).toMatchObject({ deadlineTick: 4_294_967_295 });
+    });
+
+    // Taille assenee EN CHIFFRE NU : `toBe(PORTAL_OPEN_BYTES)` seul serait
+    // vraie quoi qu'il arrive.
+    it('tient exactement PORTAL_OPEN_BYTES octets', () => {
+      expect(encodePortalOpen(1).byteLength).toBe(PORTAL_OPEN_BYTES);
+      expect(PORTAL_OPEN_BYTES).toBe(5);
+    });
+
+    it('leve sur un buffer tronque plutot que de rendre une echeance fantaisiste', () => {
+      const tronque = encodePortalOpen(4242).slice(0, PORTAL_OPEN_BYTES - 1);
+
+      expect(() => decode(tronque)).toThrow(/tronqu/i);
+    });
+  });
+
+  describe('VOTE', () => {
+    it('porte chacun des deux choix, et le retrait', () => {
+      expect(decode(encodeVote(VOTE_CHOICE.STAY))).toEqual({
+        type: MSG.VOTE,
+        choice: VOTE_CHOICE.STAY,
+      });
+      expect(decode(encodeVote(VOTE_CHOICE.LEAVE))).toEqual({
+        type: MSG.VOTE,
+        choice: VOTE_CHOICE.LEAVE,
+      });
+      expect(decode(encodeVote(NO_VOTE))).toEqual({ type: MSG.VOTE, choice: NO_VOTE });
+    });
+
+    it('tient exactement VOTE_BYTES octets', () => {
+      expect(encodeVote(VOTE_CHOICE.STAY).byteLength).toBe(VOTE_BYTES);
+      expect(VOTE_BYTES).toBe(2);
+    });
+
+    it('leve sur un buffer tronque', () => {
+      expect(() => decode(encodeVote(VOTE_CHOICE.LEAVE).slice(0, 1))).toThrow(/tronqu/i);
+    });
+
+    /**
+     * ⚠️ **La sentinelle est gardee par sa PROPRIETE, pas par son chiffre.**
+     * `toBe(255)` serait une recopie de la constante : elle passerait meme si
+     * `VOTE_CHOICE` grandissait jusqu'a l'atteindre. Ce qui doit rester vrai,
+     * c'est qu'aucun vote REEL ne vaut la sentinelle — la lecon de
+     * `NO_TOKEN = 255`, choisi ainsi parce que la carte 0 est une carte reelle.
+     *
+     * ⚠️ **Et `0` serait le pire choix possible ici**, parce que `STAY` vaut
+     * zero : toutes les abstentions se compteraient comme des voix pour
+     * rester, alors que le §6 confie ce cas a la regle d'egalite. La
+     * difference se voit des qu'un seul joueur vote « partir ».
+     */
+    it('la sentinelle d abstention ne vaut aucun vote reel', () => {
+      const reels: number[] = Object.values(VOTE_CHOICE);
+
+      expect(reels).not.toContain(NO_VOTE);
+      expect(NO_VOTE).toBeGreaterThan(Math.max(...reels));
+    });
+
+    // Le meme octet de choix circule dans les trois messages : une seconde
+    // convention pour « rester » ou pour l'abstention les rendrait illisibles
+    // l'un par l'autre.
+    it('tient sur un octet, sentinelle comprise', () => {
+      const toutes = [...Object.values(VOTE_CHOICE), NO_VOTE];
+
+      for (const valeur of toutes) {
+        expect(valeur).toBeGreaterThanOrEqual(0);
+        expect(valeur).toBeLessThanOrEqual(255);
+      }
+    });
+  });
+
+  describe('VOTES', () => {
+    // ⚠️ **Trois joueurs, trois choix TOUS DIFFERENTS, et des identifiants qui
+    // ne valent aucun choix.** Un encodeur qui intervertirait les deux octets
+    // d'une entree, ou qui recopierait la premiere, se verrait. Une liste ou
+    // tout le monde voterait pareil ne verrait ni l'un ni l'autre — c'est la
+    // « fixture qui masque » du depot.
+    const votes = [
+      { playerId: 4, choice: VOTE_CHOICE.LEAVE },
+      { playerId: 7, choice: VOTE_CHOICE.STAY },
+      { playerId: 9, choice: NO_VOTE },
+    ];
+
+    it('fait un aller-retour exact, abstention comprise', () => {
+      expect(decode(encodeVotes(votes))).toEqual({ type: MSG.VOTES, votes });
+    });
+
+    /**
+     * ⚠️ **L'abstention CIRCULE — elle ne se compte pas, mais elle se voit.**
+     * Les autres doivent savoir qui n'a pas encore tranche : c'est la matiere
+     * de la negociation, et le §6 en fait la condition d'existence de la
+     * mecanique, *« on ne negocie pas un choix qu'on ne voit pas »*. Un
+     * encodeur qui filtrerait les abstentions ferait disparaitre les indecis
+     * de l'ecran des autres.
+     */
+    it('diffuse aussi ceux qui n ont pas vote', () => {
+      const msg = decode(encodeVotes(votes));
+      if (msg.type !== MSG.VOTES) {
+        throw new Error('type inattendu');
+      }
+
+      expect(msg.votes).toHaveLength(3);
+      expect(msg.votes.filter((v) => v.choice === NO_VOTE)).toEqual([
+        { playerId: 9, choice: NO_VOTE },
+      ]);
+    });
+
+    it('a la taille exacte annoncee par ses constantes', () => {
+      expect(encodeVotes(votes).byteLength).toBe(VOTES_HEADER_BYTES + 3 * VOTE_ENTRY_BYTES);
+      expect(VOTES_HEADER_BYTES).toBe(2);
+      expect(VOTE_ENTRY_BYTES).toBe(2);
+      expect(encodeVotes(votes).byteLength).toBe(8);
+    });
+
+    it('encode une liste vide', () => {
+      expect(decode(encodeVotes([]))).toEqual({ type: MSG.VOTES, votes: [] });
+    });
+
+    it('leve quand l en-tete annonce plus de votes que le buffer n en contient', () => {
+      const tronque = encodeVotes(votes).slice(0, VOTES_HEADER_BYTES + VOTE_ENTRY_BYTES);
+
+      expect(() => decode(tronque)).toThrow(/tronqu/i);
+    });
+  });
+
+  describe('PORTAL_RESULT', () => {
+    /**
+     * ⚠️ **Trois valeurs TOUTES DISTINCTES**, et aucune n'est l'indice d'une
+     * autre : un decalage d'octet qui echangerait deux champs de meme valeur
+     * ne se verrait pas.
+     */
+    it('rend le tick d effet, le verdict et l or, en partant', () => {
+      expect(decode(encodePortalResult(7331, VOTE_CHOICE.LEAVE, 31_337))).toEqual({
+        type: MSG.PORTAL_RESULT,
+        effectTick: 7331,
+        decision: VOTE_CHOICE.LEAVE,
+        gold: 31_337,
+      });
+    });
+
+    /**
+     * ⚠️ **UN seul champ d'or, dont le sens se lit dans `decision`** : acquis
+     * si l'equipe part, reporte si elle reste. Deux champs en laisseraient
+     * toujours un a zero.
+     */
+    it('rend le meme champ d or en restant, ou il vaut l or REPORTE', () => {
+      expect(decode(encodePortalResult(900, VOTE_CHOICE.STAY, 212))).toEqual({
+        type: MSG.PORTAL_RESULT,
+        effectTick: 900,
+        decision: VOTE_CHOICE.STAY,
+        gold: 212,
+      });
+    });
+
+    /**
+     * ⚠️ **Le TICK D'EFFET voyage, et c'est R3 de l'etape 4.** Le client ne
+     * peut rien deduire : le vote se resout des que la majorite est acquise,
+     * donc n'importe quand entre l'ouverture et l'echeance. Un tick d'effet
+     * different de l'echeance annoncee doit donc passer intact.
+     */
+    it('porte un tick d effet independant de l echeance annoncee a l ouverture', () => {
+      const ouverture = decode(encodePortalOpen(1200));
+      const resultat = decode(encodePortalResult(1017, VOTE_CHOICE.STAY, 0));
+
+      expect(ouverture).toMatchObject({ deadlineTick: 1200 });
+      expect(resultat).toMatchObject({ effectTick: 1017 });
+    });
+
+    it('tient un tick d effet sur 32 bits et une cagnotte sur 32 bits', () => {
+      const msg = decode(encodePortalResult(4_294_967_295, VOTE_CHOICE.LEAVE, GOLD_MAX));
+
+      expect(msg).toMatchObject({ effectTick: 4_294_967_295, gold: GOLD_MAX });
+    });
+
+    /**
+     * ⚠️ **Le meme nombre ne peut pas se replier d'un cote et pas de
+     * l'autre.** L'or du `SNAPSHOT` et celui du `PORTAL_RESULT` sont la meme
+     * cagnotte : deux bornes differentes feraient afficher deux fortunes
+     * differentes selon le message lu.
+     */
+    it('borne et arrondit l or exactement comme le snapshot', () => {
+      const msg = decode(encodePortalResult(1, VOTE_CHOICE.LEAVE, GOLD_MAX + 1000));
+      const parLeSnapshot = decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, GOLD_MAX + 1000));
+
+      expect(msg).toMatchObject({ gold: parLeSnapshot.gold });
+      expect(msg).toMatchObject({ gold: GOLD_MAX });
+      expect(decode(encodePortalResult(1, VOTE_CHOICE.LEAVE, 1499.6))).toMatchObject({
+        gold: 1500,
+      });
+    });
+
+    /**
+     * ⚠️ **Aucun decompte de voix sur le fil, et c'est la troisieme lecon du
+     * draft.** Ce que le serveur COMPARE — les voix « rester » et les voix
+     * « partir » — n'a pas a voyager ; seul son verdict voyage, comme
+     * `REACTION` porte un bit plutot que les deux joueurs qu'il a compares. Le
+     * detail est deja passe par `VOTES`, ou il vaut quelque chose : pendant
+     * qu'on negocie.
+     *
+     * La taille en chiffre nu est ce qui garde cette decision : deux octets de
+     * decompte de plus la feraient rougir.
+     */
+    it('tient exactement PORTAL_RESULT_BYTES octets, sans place pour un decompte', () => {
+      expect(encodePortalResult(1, VOTE_CHOICE.STAY, 1).byteLength).toBe(PORTAL_RESULT_BYTES);
+      expect(PORTAL_RESULT_BYTES).toBe(10);
+    });
+
+    it('leve sur un buffer tronque plutot que de rendre un verdict fantaisiste', () => {
+      const tronque = encodePortalResult(7331, VOTE_CHOICE.LEAVE, 31_337).slice(
+        0,
+        PORTAL_RESULT_BYTES - 1,
+      );
+
+      expect(() => decode(tronque)).toThrow(/tronqu/i);
+    });
+  });
+
+  /**
+   * ⚠️ **`VOTE` et `DRAFT_TOKEN` font tous deux DEUX octets**, comme `ZONE` et
+   * `REACTION` en faisaient onze : sans aiguillage sur le premier octet, l'un
+   * se decoderait en l'autre sans qu'aucune borne ne proteste. On assene donc
+   * le type ET un champ propre a chacun.
+   */
+  it('aiguille les quatre messages sur leur premier octet', () => {
+    expect(decode(encodePortalOpen(4242)).type).toBe(MSG.PORTAL_OPEN);
+    expect(decode(encodeVote(VOTE_CHOICE.LEAVE))).toEqual({
+      type: MSG.VOTE,
+      choice: VOTE_CHOICE.LEAVE,
+    });
+    expect(decode(encodeDraftToken(NO_TOKEN))).toEqual({
+      type: MSG.DRAFT_TOKEN,
+      cardIndex: NO_TOKEN,
+    });
+    expect(decode(encodeVotes([{ playerId: 1, choice: VOTE_CHOICE.STAY }])).type).toBe(MSG.VOTES);
+    expect(decode(encodePortalResult(1, VOTE_CHOICE.STAY, 1)).type).toBe(MSG.PORTAL_RESULT);
   });
 });

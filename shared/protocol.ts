@@ -24,6 +24,10 @@ export const MSG = {
   ZONE: 13,
   REACTION: 14,
   BOSS_CHARGE: 15,
+  PORTAL_OPEN: 16,
+  VOTE: 17,
+  VOTES: 18,
+  PORTAL_RESULT: 19,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -103,6 +107,23 @@ export interface SnapshotMessage {
    * de la horde.
    */
   boss: BossSnapshot | null;
+  /**
+   * L'or NON SECURISE de l'equipe (§5 de la spec de l'etape 6a), sur quatre
+   * octets.
+   *
+   * ⚠️ **Un seul nombre pour l'equipe, dans l'EN-TETE, a cote de `xp` et de
+   * `synergy`** — trois grandeurs d'equipe, trois nombres uniques, aucun bloc
+   * de joueur ne les porte. Le porter par joueur serait l'erreur que l'etape 3
+   * a faite avec l'experience : deux sources de verite pour un seul nombre.
+   *
+   * ⚠️ **C'est un TOTAL, pas un evenement.** Il est repete a chaque tick parce
+   * que c'est l'ENJEU du vote (§6) : un vote dont on ne voit pas l'enjeu n'est
+   * pas un vote, et un client qui aurait manque le `PORTAL_RESULT` d'un palier
+   * precedent se recale au snapshot suivant sans que rien n'ait a etre
+   * rejoue. Quatre octets par snapshot le valent : la meme information portee
+   * par evenement demanderait un accuse de reception.
+   */
+  gold: number;
 }
 
 /**
@@ -326,7 +347,11 @@ export type Message =
   | DraftResultMessage
   | ZoneMessage
   | ReactionMessage
-  | BossChargeMessage;
+  | BossChargeMessage
+  | PortalOpenMessage
+  | VoteMessage
+  | VotesMessage
+  | PortalResultMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -351,13 +376,104 @@ export interface DraftResultMessage {
   outcomes: WireOutcome[];
 }
 
+/**
+ * S -> C : le portail s'ouvre, et il se refermera a `deadlineTick`.
+ *
+ * ⚠️ **Calque sur `DRAFT_OPEN`, sauf sur un point : LE MONDE NE S'ARRETE
+ * PAS.** Le §6 de la spec en fait la difference structurante — *« le draft
+ * gele parce qu'un choix de carte n'a pas d'enjeu temporel ; le vote ne gele
+ * pas parce que le temps EST son enjeu »*. Ce message n'annonce donc pas un
+ * gel, seulement une echeance.
+ *
+ * ⚠️ **Il ne porte NI l'or en jeu NI le multiplicateur, et c'est voulu.** Les
+ * deux sont dans le `SNAPSHOT`, trente fois par seconde, parce qu'ils bougent
+ * pendant la fenetre : la horde continue d'avancer, le palier suivant approche.
+ * Les figer ici donnerait au client un chiffre perime des le tick suivant.
+ */
+export interface PortalOpenMessage {
+  type: typeof MSG.PORTAL_OPEN;
+  deadlineTick: number;
+}
+
+/**
+ * C -> S : je vote, ou je retire mon vote (`NO_VOTE`).
+ *
+ * Miroir exact de `DRAFT_TOKEN` : deux octets, un choix revocable.
+ */
+export interface VoteMessage {
+  type: typeof MSG.VOTE;
+  /** `VOTE_CHOICE.STAY`, `VOTE_CHOICE.LEAVE`, ou `NO_VOTE`. */
+  choice: number;
+}
+
+/** Un vote diffuse : qui a vote quoi. Miroir de `WireIntent`. */
+export interface WireVote {
+  playerId: number;
+  /** `VOTE_CHOICE.STAY`, `VOTE_CHOICE.LEAVE`, ou `NO_VOTE`. */
+  choice: number;
+}
+
+/**
+ * S -> C : qui a vote quoi, en continu.
+ *
+ * ⚠️ **La visibilite EST la mecanique.** Le §7.2 de l'etape 4 l'a etabli pour
+ * les jetons du draft — *« sans cette visibilite, la negociation n'existe
+ * pas »* — et le §6 de la spec de l'etape 6a le dit plus fort encore : on ne
+ * negocie pas un choix qu'on ne voit pas.
+ */
+export interface VotesMessage {
+  type: typeof MSG.VOTES;
+  votes: WireVote[];
+}
+
+/**
+ * S -> C : le portail a tranche.
+ *
+ * ⚠️ **`effectTick` est le TICK D'EFFET, et sans lui le client ne peut rien
+ * deduire.** C'est la lecon R3 de l'etape 4, payee d'une tache : le
+ * `DRAFT_RESULT` de l'epoque laissait le client recalculer la fin du gel
+ * — `msg.tick + LEVEL_FREEZE_TICKS - 1` — et ce calcul est devenu faux le jour
+ * ou la duree a cesse d'etre une constante. Ici il serait faux tout de suite :
+ * le vote se resout a la MAJORITE des qu'elle est acquise, donc n'importe
+ * quand entre l'ouverture et l'echeance. Le serveur le dit, le client le lit.
+ *
+ * ⚠️ **`decision` est un VERDICT, pas un decompte.** Le troisieme
+ * enseignement du draft : un champ qui decrit ce que le serveur *compare* n'a
+ * pas a voyager — `REACTION` ne porte pas les deux joueurs qu'il a compares,
+ * il porte un bit. Les voix « rester » et « partir » sont ce que le serveur
+ * compare ; leur comparaison est ce qui voyage. Le detail, lui, est deja
+ * passe par `VOTES`, ou il vaut quelque chose (on le voit pendant qu'on
+ * negocie) plutot qu'ici, ou il ne vaudrait plus rien.
+ *
+ * ⚠️ **`decision` ne vaut JAMAIS `NO_VOTE`.** L'absence ne bloque pas : a
+ * l'echeance on tranche avec ce qu'on a, et l'egalite continue (§6). Il n'y a
+ * donc pas d'issue « personne n'a decide ».
+ */
+export interface PortalResultMessage {
+  type: typeof MSG.PORTAL_RESULT;
+  /** Le tick ou la decision prend effet — le client ne peut pas le deduire. */
+  effectTick: number;
+  /** `VOTE_CHOICE.STAY` ou `VOTE_CHOICE.LEAVE`. Jamais `NO_VOTE`. */
+  decision: number;
+  /**
+   * L'or, **acquis** si l'equipe part, **reporte** si elle reste.
+   *
+   * ⚠️ **UN seul champ, et son sens se lit dans `decision`.** Deux champs
+   * (« acquis » et « reporte ») en laisseraient toujours un a zero : le fil
+   * porterait une case vide a chaque vote pour eviter une lecture
+   * conditionnelle d'une ligne.
+   */
+  gold: number;
+}
+
 export const WELCOME_BYTES = 10;
 /** `type u8 · seq u16 · moveX i8 · moveY i8 · aimX i8 · aimY i8` (tache 13 : 5 -> 7). */
 export const INPUT_BYTES = 7;
 /**
  * `type u8 · tick u32 · playerCount u8 · xp u16 · synergy u16 · bossId u32 ·
- * bossHp u32` — xp et synergy sont ceux de l'EQUIPE (tache 5 de l'etape 5a :
- * 8 -> 10), le boss vient de la tache 4 de l'etape 6a (10 -> 18).
+ * bossHp u32 · gold u32` — xp et synergy sont ceux de l'EQUIPE (tache 5 de
+ * l'etape 5a : 8 -> 10), le boss vient de la tache 4 de l'etape 6a (10 -> 18),
+ * l'or de la tache 7 (18 -> 22).
  *
  * Les nombres d'equipe vivent dans l'en-tete plutot que d'etre repetes — et
  * donc potentiellement divergents — dans chaque bloc joueur. Deux octets par
@@ -389,7 +505,38 @@ export const INPUT_BYTES = 7;
  * a cesse d'etre jouable bien avant ; `encodeSnapshot` y borne explicitement
  * plutot que de laisser `setUint32` replier, et un test le dit.
  */
-export const SNAPSHOT_HEADER_BYTES = 18;
+export const SNAPSHOT_HEADER_BYTES = 22;
+
+/**
+ * `gold` EST UN u32, ET LA LARGEUR A ETE CALCULEE, PAS DEVINEE — troisieme
+ * fois dans ce fichier, meme methode que pour `bossHp` deux paragraphes plus
+ * haut et pour le `hp` du joueur a l'etape 4.
+ *
+ * L'or cumule apres le palier `k` vaut la somme des `palierGold(i)`, i de 0 a
+ * k — soit `100 x 1,12^i` arrondi (`shared/paliers.ts`) — et il est MAJORE du
+ * multiplicateur d'extraction a la sortie. La colonne « majore » suppose la
+ * forme du tableau des constantes du plan (`+ 0,25` par palier reste) ; c'est
+ * la tache 9 qui la figera, elle ne change pas le verdict.
+ *
+ * | Largeur | Deborde a l'or brut | ... et majore | Soit, a ~5 min par palier |
+ * | --- | --- | --- | --- |
+ * | `u8` (255) | palier **2** | palier **1** | jamais tenable |
+ * | `u16` (65 535) | palier **38** | palier **22** | **1,8 h** |
+ * | **`u32`** (4 294 967 295) | palier **136** | palier **107** | **8,9 h** |
+ *
+ * ⚠️ **Le `u16` est refuse pour la raison qui a refuse le `u16` du boss, et
+ * au meme palier : 22 est ATTEIGNABLE.** Rien ne borne le palier — le §3 de la
+ * spec en fait *« la duree de vie du jeu »* — et une longue soiree y arrive.
+ * Un `u16` aurait replie une cagnotte de 67 984 a 2 448 en silence, PILE au
+ * moment ou elle vaut le plus cher : celui ou l'equipe decide si elle la
+ * risque. Le repli silencieux de l'etape 4, sur le nombre qui porte l'enjeu
+ * de toute l'etape.
+ *
+ * ⚠️ **Et l'or ne se compare pas au boss sur le trafic.** Les deux u32 de
+ * l'en-tete coutent ensemble `8 x SNAPSHOT_HZ` octets par seconde et par
+ * client, sur un trafic mesure a 1,22 ko/s a l'etape 4 — moins de 1 %.
+ */
+export const GOLD_MAX = 0xffff_ffff;
 
 /**
  * Octets qu'il faut avoir recus pour connaitre le nombre de joueurs annonce :
@@ -493,6 +640,63 @@ export const OUTCOME = {
  * un `owner`.
  */
 export const NO_TOKEN = 255;
+
+/** `type u8 · deadlineTick u32`. */
+export const PORTAL_OPEN_BYTES = 5;
+/** `type u8 · choice u8`. */
+export const VOTE_BYTES = 2;
+/** `type u8 · count u8`. */
+export const VOTES_HEADER_BYTES = 2;
+/** Un vote : `playerId u8 · choice u8`. */
+export const VOTE_ENTRY_BYTES = 2;
+/**
+ * `type u8 · effectTick u32 · decision u8 · gold u32`.
+ *
+ * ⚠️ **Pas de decompte des voix.** Il tiendrait en deux octets et il ne dit
+ * rien que `VOTES` n'ait deja dit : ce qui voyage ici, c'est le VERDICT. Voir
+ * `PortalResultMessage`.
+ */
+export const PORTAL_RESULT_BYTES = 10;
+
+/**
+ * Les deux faces du vote d'extraction (§6 de la spec de l'etape 6a).
+ *
+ * ⚠️ **Vit ici, pas dans `back/src/portal.ts` ou la machine du vote naitra
+ * (tache 8).** C'est une valeur de fil : le client la produit dans son `VOTE`,
+ * le serveur la rediffuse dans `VOTES` et la rend comme verdict dans
+ * `PORTAL_RESULT`. Le client ne peut pas importer `back/` — la constante vit
+ * donc au seul endroit que les deux cotes partagent, plutot qu'en deux
+ * exemplaires qui divergeraient. Meme raisonnement que `OUTCOME`, ecrit
+ * quelques lignes plus haut pour le draft.
+ *
+ * ⚠️ **`STAY` vaut ZERO, et ce n'est pas neutre : c'est la valeur par
+ * defaut du jeu.** Le §6 tranche *« majorite ; egalite = on continue »* —
+ * rester est ce qui arrive quand rien ne se decide.
+ */
+export const VOTE_CHOICE = {
+  /** Rester : le multiplicateur monte, l'or reste non securise. */
+  STAY: 0,
+  /** Partir : tout est acquis, majore du multiplicateur, et la run se termine. */
+  LEAVE: 1,
+} as const;
+
+/**
+ * « Ce joueur n'a pas vote. »
+ *
+ * ⚠️ **Ne peut valoir NI 0 NI 1 : les deux sont des votes REELS.** C'est
+ * exactement la raison qui a fait choisir `NO_TOKEN = 255` a l'etape 4 — la
+ * carte 0 est une carte reelle — et le prendre a 0 ici ferait voter « rester »
+ * a tous les silencieux, ce que le §6 confie a la regle d'egalite, pas a une
+ * sentinelle. La difference se voit des que quelqu'un vote « partir » : deux
+ * abstentions et un depart donneraient une majorite pour rester au lieu d'une
+ * majorite pour partir.
+ *
+ * ⚠️ **Une abstention n'est pas une voix.** Elle circule dans `VOTES` — les
+ * autres doivent voir qui n'a pas encore tranche, c'est la matiere de la
+ * negociation — mais elle ne se compte pas. `PORTAL_RESULT.decision` ne la
+ * porte donc jamais.
+ */
+export const NO_VOTE = 255;
 
 /** Une identite d'entite, sur le fil : u32. */
 export const DEATH_ID_BYTES = 4;
@@ -641,6 +845,7 @@ export function encodeSnapshot(
   synergy: number,
   players: readonly PlayerSnapshot[],
   boss: BossSnapshot | null = null,
+  gold = 0,
 ): ArrayBuffer {
   const buf = new ArrayBuffer(SNAPSHOT_HEADER_BYTES + players.length * SNAPSHOT_PLAYER_BYTES);
   const v = new DataView(buf);
@@ -654,6 +859,12 @@ export function encodeSnapshot(
   // l'arrondi, `setUint32` tronquerait vers zero, et sans la borne il
   // replierait modulo 2^32 au palier 119 — le repli silencieux de l'etape 4.
   v.setUint32(14, boss ? Math.min(BOSS_HP_MAX, Math.max(0, Math.round(boss.hp))) : 0, true);
+  // Borne pour la meme raison que les PV du boss juste au-dessus : au-dela de
+  // `GOLD_MAX`, `setUint32` replierait modulo 2^32 et une cagnotte de quatre
+  // milliards se reveillerait a quelques pieces. L'arrondi, lui, couvre le
+  // multiplicateur d'extraction (tache 9), seul chemin par lequel l'or peut
+  // cesser d'etre entier.
+  v.setUint32(18, Math.min(GOLD_MAX, Math.max(0, Math.round(gold))), true);
   let o = SNAPSHOT_HEADER_BYTES;
   for (const p of players) {
     v.setUint8(o, p.id);
@@ -706,6 +917,7 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
     // La sentinelle se lit ICI et nulle part ailleurs : au-dela de cette
     // ligne, « pas de boss » est un `null`, jamais un nombre a comparer.
     boss: bossId === NO_BOSS_ID ? null : { id: bossId, hp: v.getUint32(14, true) },
+    gold: v.getUint32(18, true),
   };
 }
 
@@ -1070,6 +1282,14 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeReaction(buf);
     case MSG.BOSS_CHARGE:
       return decodeBossCharge(buf);
+    case MSG.PORTAL_OPEN:
+      return decodePortalOpen(buf);
+    case MSG.VOTE:
+      return decodeVote(buf);
+    case MSG.VOTES:
+      return decodeVotes(buf);
+    case MSG.PORTAL_RESULT:
+      return decodePortalResult(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }
@@ -1176,6 +1396,110 @@ export function encodeDraftResult(
     o += DRAFT_OUTCOME_BYTES;
   }
   return buf;
+}
+
+/**
+ * S -> C : le portail s'ouvre, jusqu'a `deadlineTick`.
+ *
+ * ⚠️ **Aucun gel n'est annonce ici, et c'est tout ce qui separe ce message de
+ * `DRAFT_OPEN`** : le monde continue de tourner pendant le vote (§6 de la
+ * spec). La vague suivante approche — c'est elle qui met la pression, et un
+ * gel la supprimerait.
+ */
+export function encodePortalOpen(deadlineTick: number): ArrayBuffer {
+  const buf = new ArrayBuffer(PORTAL_OPEN_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.PORTAL_OPEN);
+  v.setUint32(1, deadlineTick >>> 0, true);
+  return buf;
+}
+
+/** C -> S : je vote, ou je retire mon vote (`NO_VOTE`). */
+export function encodeVote(choice: number): ArrayBuffer {
+  const buf = new ArrayBuffer(VOTE_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.VOTE);
+  v.setUint8(1, choice);
+  return buf;
+}
+
+/**
+ * S -> C : qui a vote quoi.
+ *
+ * Le seul message du portail a cadence soutenue, exactement comme
+ * `DRAFT_INTENTS` l'etait pour le draft — et pour la meme raison, qui est la
+ * condition d'existence de la mecanique : on ne negocie pas un choix qu'on ne
+ * voit pas.
+ */
+export function encodeVotes(votes: readonly WireVote[]): ArrayBuffer {
+  const buf = new ArrayBuffer(VOTES_HEADER_BYTES + votes.length * VOTE_ENTRY_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.VOTES);
+  v.setUint8(1, votes.length);
+  let o = VOTES_HEADER_BYTES;
+  for (const w of votes) {
+    v.setUint8(o, w.playerId);
+    v.setUint8(o + 1, w.choice);
+    o += VOTE_ENTRY_BYTES;
+  }
+  return buf;
+}
+
+/**
+ * S -> C : le portail a tranche.
+ *
+ * `effectTick` est le tick d'effet, `decision` le verdict, `gold` l'or acquis
+ * si l'equipe part et l'or reporte si elle reste. Voir `PortalResultMessage`
+ * pour les trois raisons — une par champ — qui font que c'est exactement ce
+ * qu'il faut porter, et rien de plus.
+ */
+export function encodePortalResult(
+  effectTick: number,
+  decision: number,
+  gold: number,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(PORTAL_RESULT_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.PORTAL_RESULT);
+  v.setUint32(1, effectTick >>> 0, true);
+  v.setUint8(5, decision);
+  // Meme borne et meme arrondi que dans `encodeSnapshot` : c'est le meme
+  // nombre, il ne peut pas se replier d'un cote et pas de l'autre.
+  v.setUint32(6, Math.min(GOLD_MAX, Math.max(0, Math.round(gold))), true);
+  return buf;
+}
+
+function decodePortalOpen(buf: ArrayBuffer): PortalOpenMessage {
+  const v = viewOf(buf, PORTAL_OPEN_BYTES);
+  return { type: MSG.PORTAL_OPEN, deadlineTick: v.getUint32(1, true) };
+}
+
+function decodeVote(buf: ArrayBuffer): VoteMessage {
+  const v = viewOf(buf, VOTE_BYTES);
+  return { type: MSG.VOTE, choice: v.getUint8(1) };
+}
+
+function decodeVotes(buf: ArrayBuffer): VotesMessage {
+  const v = viewOf(buf, VOTES_HEADER_BYTES);
+  const count = v.getUint8(1);
+  viewOf(buf, VOTES_HEADER_BYTES + count * VOTE_ENTRY_BYTES);
+  const votes: WireVote[] = [];
+  let o = VOTES_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    votes.push({ playerId: v.getUint8(o), choice: v.getUint8(o + 1) });
+    o += VOTE_ENTRY_BYTES;
+  }
+  return { type: MSG.VOTES, votes };
+}
+
+function decodePortalResult(buf: ArrayBuffer): PortalResultMessage {
+  const v = viewOf(buf, PORTAL_RESULT_BYTES);
+  return {
+    type: MSG.PORTAL_RESULT,
+    effectTick: v.getUint32(1, true),
+    decision: v.getUint8(5),
+    gold: v.getUint32(6, true),
+  };
 }
 
 function decodeDraftOpen(buf: ArrayBuffer): DraftOpenMessage {
