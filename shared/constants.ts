@@ -660,3 +660,38 @@ export const PALIER_HP_SCALE = 1.12;
  * paliers voisins rendraient le meme montant.
  */
 export const GOLD_PER_PALIER_BASE = 100;
+
+/**
+ * Part de l'or non securise que l'equipe CONSERVE quand elle est effacee —
+ * une **fraction de 0 a 1**, appliquee a la totalite de la cagnotte.
+ * `0` : tout est perdu.
+ *
+ * ⚠️ **LE parametre du §9.3 de l'orientation, et il est nomme plutot
+ * qu'ecrit en dur pour cette raison exacte.** Le §9.3 appelle cette ligne
+ * *« le principal risque de design de tout le document »* : perdre vingt-cinq
+ * minutes d'or sans rien est un motif d'arret de jeu. La decision de l'auteur
+ * est **100 % perdu, et on juge en jeu** (§5 de la spec de l'etape 6a) — donc
+ * la valeur peut bouger apres le premier playtest, et un `0` en dur dans une
+ * branche de `Room` transformerait un reglage en chantier.
+ *
+ * Les deux alternatives que le §9.3 demande de pouvoir essayer **sans
+ * refonte**, et ce qu'elles coutent ici :
+ *
+ * | Alternative | Ce qu'il faut changer |
+ * | --- | --- |
+ * | un plancher de 10 a 20 % | **cette valeur seule** : `0.15` |
+ * | le bonus de palier toujours paye | pas une valeur : deux bourses |
+ *
+ * ⚠️ **La seconde ne se ramene PAS a une fraction, et il faut le dire plutot
+ * que de laisser croire que cette constante couvre les deux.** « Le bonus de
+ * palier toujours paye » separe l'or en deux natures — celui des boss, acquis
+ * d'office, et le reste, non securise — donc un second compteur dans `Room`.
+ * Ce que cette constante garantit, c'est que la perte passe par **une seule
+ * ligne**, celle de `Room#checkRunOver` : c'est la, et nulle part ailleurs,
+ * qu'une seconde bourse viendrait se brancher.
+ *
+ * ⚠️ **Une fraction, pas un montant.** Un montant conserve (« on garde 200 »)
+ * rendrait la punition derisoire en fin de run et totale au palier 0 —
+ * l'inverse exact de ce que le §9.3 craint.
+ */
+export const WIPE_GOLD_KEPT = 0;

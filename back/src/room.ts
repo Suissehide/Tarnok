@@ -13,12 +13,13 @@ import {
   PROJECTILE_CAPACITY,
   SYNERGY_MAX,
   TICK_HZ,
+  WIPE_GOLD_KEPT,
   XP_PER_ORB,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
-import { bossHp, palierHp } from '@shared/paliers';
+import { bossHp, palierGold, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, OUTCOME, type PlayerSnapshot } from '@shared/protocol';
@@ -329,6 +330,29 @@ export class Room {
   #synergy = 0;
 
   /**
+   * L'or NON SECURISE de l'equipe (§5 de la spec de l'etape 6a) : il se gagne
+   * a la mort de chaque boss, et il n'est **acquis** qu'a l'extraction.
+   *
+   * ⚠️ **UN SEUL NOMBRE, pour tout le salon** — comme `#xp` et `#synergy`, et
+   * pour la meme raison, deja payee une fois : l'etape 3 avait donne a
+   * l'experience une valeur par joueur **et** une valeur d'equipe, soit deux
+   * sources de verite pour un seul nombre, et l'implementeur l'avait signale.
+   * L'or est encore moins divisible que l'experience : ce qui se decide au
+   * vote, c'est ce que l'EQUIPE risque, pas ce que chacun risque.
+   *
+   * ⚠️ **Il ne sort d'ici que par l'en-tete du `SNAPSHOT`** (tache 7), jamais
+   * par le bloc d'un joueur.
+   *
+   * ⚠️ **Ce qui le fait bouger tient en deux lignes dans tout ce fichier** :
+   * l'ajout du bonus de palier dans `step` quand le boss tombe, et la perte
+   * dans `#checkRunOver` quand l'equipe est effacee. Le MULTIPLICATEUR
+   * d'extraction n'est pas ici — il appartient au portail (tache 9) — et la
+   * mort d'un seul joueur ne le touche pas du tout, le §5 de la spec est
+   * explicite : *« Mort d'un seul joueur : rien »*.
+   */
+  #gold = 0;
+
+  /**
    * Dernier tick du gel courant (inclus) : tant que `#tick <= #freezeUntilTick`,
    * `step` ne fait qu'incrementer le tick et revient. `0` hors gel, puisque le
    * premier tick reel vaut 1.
@@ -582,6 +606,14 @@ export class Room {
    */
   get bossEntityId(): number | null {
     return this.#bossEntityId;
+  }
+
+  /**
+   * L'or non securise de l'equipe. Un seul nombre pour tout le salon — voir
+   * `#gold`.
+   */
+  get gold(): number {
+    return this.#gold;
   }
 
   get metrics(): Readonly<RoomMetrics> {
@@ -945,6 +977,13 @@ export class Room {
       // domine avance (§2 de la spec).
       if (this.#bossEntityId !== null && allDead.includes(this.#bossEntityId)) {
         this.#bossEntityId = null;
+        // ⚠️ **AVANT `bossDefeated()`, et l'ordre EST le sens.** Le bonus paye
+        // le palier qu'on vient de FINIR, pas celui qu'on commence :
+        // `#director.palier` vaut encore `k` sur cette ligne et vaudra `k + 1`
+        // trois lignes plus bas. Les deux lectures rendent des montants
+        // differents des le premier boss (`palierGold` est strictement
+        // croissante), et un test les distingue en tuant DEUX boss.
+        this.#gold += palierGold(this.#director.palier);
         // La charge d'un boss mort est deja inerte (`Horde#applyCharge` ne
         // trouve plus son creneau, `resolveChargeHit` non plus) ; l'oublier ici
         // evite surtout qu'elle survive jusqu'au boss du palier SUIVANT, dont
@@ -1434,6 +1473,21 @@ export class Room {
       }
     }
     this.#runOver = true;
+    // ⚠️ **La perte de l'or non securise vit ICI, sur cette seule ligne** (§5
+    // de la spec). Ici, c'est-a-dire dans le chemin de l'EFFACEMENT DE
+    // L'EQUIPE — la boucle ci-dessus n'arrive a cette ligne que si plus
+    // personne n'est debout. La mort d'un joueur seul ne coute donc rien, et
+    // ce n'est pas un oubli : le §9.3 de l'orientation est explicite.
+    //
+    // ⚠️ **`WIPE_GOLD_KEPT`, jamais un `0` ecrit ici.** C'est LE parametre de
+    // playtest du §9.3 — voir sa doc dans `shared/constants.ts`, qui dit aussi
+    // ce que la seconde alternative (« le bonus de palier toujours paye »)
+    // demanderait de plus. Une valeur en dur ferait de son reglage un
+    // chantier.
+    //
+    // L'arrondi garde l'or entier : c'est un compteur affiche, et c'est un
+    // `u32` sur le fil (tache 7).
+    this.#gold = Math.round(this.#gold * WIPE_GOLD_KEPT);
     this.#pendingRunOver = {
       tick: this.#tick,
       survivedTicks: this.#tick,

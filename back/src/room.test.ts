@@ -28,6 +28,7 @@ import {
   TICK_HZ,
   WAVES_PER_PALIER,
   WEAPON_SLOTS,
+  WIPE_GOLD_KEPT,
   XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
@@ -35,7 +36,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { entityIdOf } from '@shared/horde';
-import { bossHp, hpScale, palierHp } from '@shared/paliers';
+import { bossHp, hpScale, palierGold, palierHp } from '@shared/paliers';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -3633,5 +3634,189 @@ describe('le boss charge (etape 6a, tache 5 bis)', () => {
     expect(premiere.degats).toBe(BOSS_CHARGE_DAMAGE);
     expect(seconde.degats).toBe(BOSS_CHARGE_DAMAGE);
     expect(seconde.charge.windupTick).toBeGreaterThan(premiere.charge.endTick);
+  }, 60_000);
+});
+
+/**
+ * Etape 6a, tache 6 — **l'or non securise**.
+ *
+ * > *« L'or ramasse pendant la run n'est pas acquis. Il est non securise
+ * > jusqu'a l'extraction. »* (§5 de la spec)
+ *
+ * ⚠️ **Ce bloc a DEUX moities, et la seconde porte le sens.** L'or monte quand
+ * un boss tombe **et** il tombe a `WIPE_GOLD_KEPT` quand l'equipe est effacee.
+ * Sans la moitie negative, un or qui ne bougerait JAMAIS passerait la premiere
+ * — c'est la lecon de la Synergie a l'etape 5a, ou seule la comparaison des
+ * deux etats disait que « la barre ne bouge pas » ne voulait pas dire « rien ne
+ * s'est passe ».
+ *
+ * ⚠️ **Le MULTIPLICATEUR d'extraction n'est pas ici** : il appartient au
+ * portail (tache 9). Ce bloc ne connait que l'accumulation et la perte.
+ */
+describe("l'or non securise (etape 6a, tache 6)", () => {
+  /** Vide la horde de tout sauf le boss courant : on mesure un or, pas une melee. */
+  function seulLeBoss(room: Room): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      const id = room.horde.entityIdAt(i);
+      if (id !== room.bossEntityId) {
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  /**
+   * Tue le boss du palier courant **par le chemin de mort normal du salon** et
+   * rend le numero du palier qu'il fermait.
+   *
+   * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor, pas une triche** —
+   * meme raison qu'a la tache 2 : ce qui est mesure ici est l'OR, pas une DPS.
+   * Le temps de mise a mort reel est la porte du §7, mesuree au banc
+   * `bench/boss.bench.ts`.
+   *
+   * ⚠️ **La horde est videe a chaque tick.** Sans ce nettoyage, ce decor
+   * mesurerait la survie d'un joueur immobile sous quatre vagues : il finirait
+   * en `RUN_OVER` et aucun boss ne tomberait jamais.
+   */
+  function tuerLeBoss(room: Room): number {
+    const k = room.palier;
+    for (let t = 0; t < 90 * TICK_HZ && room.bossEntityId === null; t++) {
+      seulLeBoss(room);
+      room.step(DT);
+      room.drainWaveOrders();
+      room.drainDeaths();
+      room.drainBossCharges();
+    }
+    const bossId = room.bossEntityId;
+    expect(bossId).not.toBeNull();
+
+    const ancre = positionOf(room, 1);
+    const slotAffaibli = room.horde.slotOf(bossId ?? -1);
+    expect(slotAffaibli).toBeGreaterThanOrEqual(0);
+    room.horde.hp[slotAffaibli] = 1;
+
+    for (let t = 0; t < 30 * TICK_HZ && room.palier === k; t++) {
+      const slot = room.horde.slotOf(bossId ?? -1);
+      if (slot >= 0) {
+        room.horde.x[slot] = ancre.x + 100;
+        room.horde.y[slot] = ancre.y;
+      }
+      seulLeBoss(room);
+      aimAtNearestMonster(room, 1, 20_000 + room.tick);
+      room.step(DT);
+      room.drainWaveOrders();
+      room.drainDeaths();
+      room.drainBossCharges();
+    }
+
+    expect(room.palier).toBe(k + 1);
+    return k;
+  }
+
+  it('monte du bonus du palier VAINCU, a chaque boss tombe', () => {
+    const room = new Room(4242);
+    room.join(1);
+
+    // Rien n'a encore ete gagne : sans cette ligne, un or initialise a
+    // `palierGold(0)` passerait la suivante.
+    expect(room.gold).toBe(0);
+
+    expect(tuerLeBoss(room)).toBe(0);
+    expect(room.gold).toBe(palierGold(0));
+
+    // ⚠️ **DEUX boss, et c'est ce qui distingue le palier vaincu du palier
+    // ouvert.** Avec un seul, `palierGold(#palier)` lu APRES `bossDefeated()`
+    // rendrait `palierGold(1)` et rien ne le verrait — le decor doit produire
+    // le cas qu'il pretend produire.
+    expect(tuerLeBoss(room)).toBe(1);
+    expect(room.gold).toBe(palierGold(0) + palierGold(1));
+
+    // ⚠️ **Le decor ne discrimine que si les deux montants DIFFERENT.** Une
+    // recompense plate rendrait les deux assertions ci-dessus vraies quel que
+    // soit le palier lu. C'est la « fixture qui masque » du depot, prise a la
+    // source.
+    expect(palierGold(1)).toBeGreaterThan(palierGold(0));
+  }, 60_000);
+
+  it("tombe a WIPE_GOLD_KEPT quand l'equipe est effacee, et pas a la mort d'un seul", () => {
+    const room = new Room(4242);
+    room.join(1);
+    room.join(2);
+    tuerLeBoss(room);
+
+    const gagne = room.gold;
+    // La moitie negative ne prouve rien si la cagnotte est deja vide.
+    expect(gagne).toBeGreaterThan(0);
+
+    /**
+     * Tue un joueur au contact, en tenant la horde a ce seul lot : les vagues
+     * ordinaires atteindraient l'autre joueur et l'effacement arriverait trop
+     * tot pour que la moitie « une mort seule ne coute rien » veuille dire
+     * quelque chose.
+     */
+    function tuer(playerId: number): void {
+      const pos = positionOf(room, playerId);
+      const bourreaux: number[] = [];
+      for (let i = 0; i < 25; i++) {
+        bourreaux.push(spawnMonsterAt(room, 7000 + playerId * 100 + i, pos.x, pos.y));
+      }
+      for (let t = 0; t < 60 * TICK_HZ && hpOf(room, playerId) > 0; t++) {
+        const ids: number[] = [];
+        for (let i = 0; i < room.horde.count; i++) {
+          const id = room.horde.entityIdAt(i);
+          if (!bourreaux.includes(id)) {
+            ids.push(id);
+          }
+        }
+        if (ids.length > 0) {
+          room.horde.kill(ids);
+        }
+        // ⚠️ **Les bourreaux sont RENDUS INTUABLES et TENUS AU CONTACT.**
+        // Mesure faite avant de corriger : sans ces deux lignes, le tir
+        // automatique du joueur avait liquide les vingt-cinq monstres avant
+        // qu'ils ne l'aient descendu, et il se stabilisait a 28 pv pour le
+        // reste du test — un decor qui ne peut pas produire ce qu'il pretend
+        // mesurer. Meme technique que partout ailleurs dans ce fichier.
+        for (const id of bourreaux) {
+          const slot = room.horde.slotOf(id);
+          if (slot >= 0) {
+            room.horde.hp[slot] = 1e6;
+            room.horde.x[slot] = pos.x;
+            room.horde.y[slot] = pos.y;
+          }
+        }
+        room.step(DT);
+        room.drainWaveOrders();
+        room.drainDeaths();
+        room.drainBossCharges();
+      }
+      expect(hpOf(room, playerId)).toBe(0);
+    }
+
+    // --- 1. Un seul joueur tombe : le §5 de la spec dit « rien ».
+    tuer(1);
+    expect(hpOf(room, 2)).toBeGreaterThan(0);
+    expect(room.drainRunOver()).toBeNull();
+    expect(room.gold).toBe(gagne);
+
+    // --- 2. Le second tombe : l'equipe est effacee.
+    tuer(2);
+    expect(room.drainRunOver()).not.toBeNull();
+
+    // ⚠️ **La constante n'est pas recopiee en chiffre : c'est sa PROPRIETE qui
+    // est assenee.** `toBe(0)` serait juste aujourd'hui et deviendrait faux le
+    // jour ou l'auteur essaie le plancher de 10 a 20 % que le §9.3 nomme —
+    // alors que ce test doit precisement survivre a cet essai. La ligne
+    // ci-dessous garde ce qui ne doit pas changer : l'equipe conserve la
+    // FRACTION `WIPE_GOLD_KEPT` de ce qu'elle avait, et rien d'autre.
+    //
+    // Et elle n'est pas tautologique : `WIPE_GOLD_KEPT < 1` garantit que la
+    // valeur attendue DIFFERE de `gagne`, donc qu'un salon qui ne perdrait
+    // rien echoue ici.
+    expect(WIPE_GOLD_KEPT).toBeLessThan(1);
+    expect(room.gold).toBe(Math.round(gagne * WIPE_GOLD_KEPT));
   }, 60_000);
 });
