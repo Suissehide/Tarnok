@@ -37,7 +37,7 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { entityIdOf } from '@shared/horde';
 import { bossHp, hpScale, palierGold, palierHp } from '@shared/paliers';
-import { PASSIVES, passiveOf } from '@shared/passives';
+import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
   decodeSnapshot,
@@ -1772,6 +1772,196 @@ describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
     // plutot que credite d'un test qui ne le tient pas — meme choix que
     // `zonesTronquees`.
     expect(room.orbesTronquees).toBe(0);
+  });
+});
+
+/**
+ * La regeneration (etape 6a, tache 17) — *« il faut un moyen de regen aussi »*.
+ *
+ * ⚠️ **RIEN NE SOIGNAIT avant cette tache** : « vitalite » releve `maxHp` et
+ * offre le delta une seule fois, dans `grantCard`. Ce qui se garde ici a DEUX
+ * moities, et la seconde n'est pas facultative : sans elle, une regeneration
+ * qui deborde son plafond passerait.
+ */
+describe('le passif de regeneration (etape 6a, tache 17)', () => {
+  /**
+   * ⚠️ **Trouve par GENRE, jamais par indice.** `VITALITE = 0` ailleurs dans ce
+   * fichier survivrait a une reindexation du catalogue en mesurant une autre
+   * carte ; « le passif dont le genre est `regen` » ne le peut pas.
+   */
+  function parGenre(kind: PassiveKind): number {
+    const trouve = PASSIVES.find((p) => p.kind === kind);
+    if (!trouve) {
+      throw new Error(`fixture : aucun passif de genre ${kind}`);
+    }
+    return trouve.id;
+  }
+
+  const REGAIN = parGenre('regen');
+  const VITALITE = parGenre('maxHp');
+  const PAR_SECONDE = passiveOf(REGAIN).magnitude;
+  const PAR_CARTE_MAX_HP = passiveOf(VITALITE).magnitude;
+
+  function prend(room: Room, playerId: number, id: number, n: number): void {
+    const carte: Card = { nature: CARD.PASSIVE, refId: id };
+    for (let i = 0; i < n; i++) {
+      room.grantCard(playerId, carte);
+    }
+  }
+
+  /**
+   * Blesse le joueur par le VRAI chemin — un monstre au contact — puis retire
+   * le monstre. Rend les points de vie constates.
+   *
+   * ⚠️ **Aucun raccourci vers `PlayerState.hp`** : c'est le serveur qui arbitre
+   * la vie (§5.4), et un decor qui l'ecrirait a la main testerait un etat que
+   * le jeu ne peut pas produire.
+   */
+  function blesse(room: Room, playerId: number, waveId: number, ticks: number): number {
+    const avant = hpOf(room, playerId);
+    const pos = positionOf(room, playerId);
+    const monstre = spawnMonsterAt(room, waveId, pos.x, pos.y);
+    for (let t = 0; t < ticks; t++) {
+      room.step(DT);
+    }
+    room.horde.kill([monstre]);
+    const vie = hpOf(room, playerId);
+    // Non-vacuite : il a bien morfle. Compare au point de DEPART, jamais a
+    // `PLAYER_MAX_HP` — le plafond de ce joueur peut deja avoir ete releve par
+    // des cartes de vitalite, et l'assertion mesurerait alors autre chose.
+    expect(vie).toBeLessThan(avant);
+    return vie;
+  }
+
+  it('PREMIERE MOITIE : la vie remonte, et DEUX cartes remontent deux fois plus vite', () => {
+    // ⚠️ **L'empilement, pas seulement l'effet.** Un code qui regarderait
+    // « ce passif est possede » sans compter les exemplaires soignerait autant
+    // a une carte qu'a deux, et « la vie remonte » passerait quand meme.
+    // 150 ticks (5 s) : assez pour que deux cartes se distinguent nettement
+    // d'une, et assez peu pour rester sous le plafond de 100 apres blessure.
+    const REGEN_TICKS = 150;
+
+    function remonte(cartes: number): number {
+      const room = new Room(0x0e_9e_0001);
+      room.join(1);
+      const blesse1 = blesse(room, 1, 700, 40);
+      prend(room, 1, REGAIN, cartes);
+      // ⚠️ Prendre la carte ne soigne PAS de son cote : seule « vitalite »
+      // porte un soin immediat, et le confondre ici rendrait le gain mesure
+      // plus grand qu'il n'est.
+      expect(hpOf(room, 1)).toBe(blesse1);
+      for (let t = 0; t < REGEN_TICKS; t++) {
+        room.step(DT);
+      }
+      const apres = hpOf(room, 1);
+      // ⚠️ **Le decor doit rester SOUS le plafond**, sinon les deux mesures se
+      // rejoindraient pour la mauvaise raison et « deux cartes soignent deux
+      // fois plus » passerait sans rien mesurer.
+      expect(apres).toBeLessThan(PLAYER_MAX_HP);
+      return apres - blesse1;
+    }
+
+    // Sans carte, rien ne remonte : c'est l'etat d'avant la tache.
+    expect(remonte(0)).toBe(0);
+
+    // ⚠️ **A UN POINT PRES, et c'est le fil qui l'impose** : `hp` est un
+    // flottant cote serveur (le bonus vaut `magnitude / TICK_HZ` par tick) et
+    // le `SNAPSHOT` le porte en `u16`, donc `hpOf` TRONQUE. La somme de 150
+    // fois 0,0666… ne tombe pas non plus pile sur 10 en virgule flottante.
+    // Un point de tolerance couvre les deux ; il ne couvre pas l'ecart de dix
+    // points que separe une carte de deux.
+    const attendu = (PAR_SECONDE * REGEN_TICKS) / TICK_HZ;
+    expect(attendu).toBeGreaterThanOrEqual(10);
+    expect(remonte(1)).toBeGreaterThanOrEqual(attendu - 1);
+    expect(remonte(1)).toBeLessThanOrEqual(attendu);
+    expect(remonte(2)).toBeGreaterThanOrEqual(2 * attendu - 1);
+    expect(remonte(2)).toBeLessThanOrEqual(2 * attendu);
+  });
+
+  it('SECONDE MOITIE : la vie PLAFONNE au maximum PERSONNEL, sans jamais le depasser', () => {
+    // ⚠️ **`maxHp`, pas `PLAYER_MAX_HP`.** Le plafond suit les cartes de
+    // vitalite depuis l'etape 4 : le lire dans la constante ferait d'une
+    // vitalite empilee un plafond qu'aucun soin ne peut remplir.
+    //
+    // ⚠️ **Et le plafond est au-dela de 255**, pour que le `u16` du snapshot
+    // soit reellement en jeu : une regeneration qui deborderait rendrait 4 au
+    // decodage au lieu de 260, et le joueur passerait de trois barres de vie a
+    // la mort en un ramassage. C'est le meme cas que le test « les points de
+    // vie depassent 255 sans se replier », vu depuis le soin.
+    const cartesVie = Math.ceil((256 - PLAYER_MAX_HP) / PAR_CARTE_MAX_HP);
+    const maxHp = PLAYER_MAX_HP + PAR_CARTE_MAX_HP * cartesVie;
+    expect(maxHp).toBeGreaterThan(255);
+
+    const room = new Room(0x0e_9e_0002);
+    room.join(1);
+    prend(room, 1, VITALITE, cartesVie);
+    expect(hpOf(room, 1)).toBe(maxHp);
+
+    const vieBlesse = blesse(room, 1, 700, 40);
+    prend(room, 1, REGAIN, 3);
+
+    // Trois cartes rendent 3 x `PAR_SECONDE` par seconde : de quoi combler
+    // plusieurs fois le trou en 300 ticks. Sans plafond, la vie deborderait
+    // largement.
+    const rendu = (3 * PAR_SECONDE * 300) / TICK_HZ;
+    expect(vieBlesse + rendu).toBeGreaterThan(maxHp);
+
+    let plafondDepasse = false;
+    for (let t = 0; t < 300; t++) {
+      room.step(DT);
+      if (hpOf(room, 1) > maxHp) {
+        plafondDepasse = true;
+      }
+    }
+    expect(plafondDepasse).toBe(false);
+    expect(hpOf(room, 1)).toBe(maxHp);
+  });
+
+  it('un joueur MORT ne se releve pas, pendant qu un vivant blesse remonte', () => {
+    // ⚠️ **Le seul garde qui porte cette regle est `p.hp <= 0` dans
+    // `#regenerate`** — et il est MASQUE par le retour anticipe de `step` des
+    // que TOUS les joueurs sont morts (la run est finie, plus rien n'avance).
+    // Il faut donc un salon a deux joueurs : l'un tombe, l'autre tient la run
+    // ouverte, et la mutation redevient visible.
+    const room = new Room(0x0e_9e_0003);
+    room.join(1);
+    room.join(2);
+    prend(room, 1, REGAIN, 1);
+    prend(room, 2, REGAIN, 1);
+
+    const p1 = positionOf(room, 1);
+    const p2 = positionOf(room, 2);
+    // Les deux positions de naissance sont assez ecartees pour qu'un monstre
+    // ne touche qu'un seul joueur — sinon le « vivant » mourrait aussi.
+    expect(Math.hypot(p1.x - p2.x, p1.y - p2.y)).toBeGreaterThan(200);
+
+    const bourreau = spawnMonsterAt(room, 700, p1.x, p1.y);
+    const passant = spawnMonsterAt(room, 701, p2.x, p2.y);
+    for (let t = 0; t < 40; t++) {
+      room.step(DT);
+    }
+    room.horde.kill([passant]);
+    expect(hpOf(room, 2)).toBeLessThan(PLAYER_MAX_HP);
+
+    let tickMort = -1;
+    for (let t = 0; t < 400 && tickMort < 0; t++) {
+      room.step(DT);
+      if (hpOf(room, 1) === 0) {
+        tickMort = t;
+      }
+    }
+    expect(tickMort).toBeGreaterThanOrEqual(0);
+    room.horde.kill([bourreau]);
+
+    const vieAvant = hpOf(room, 2);
+    for (let t = 0; t < 90; t++) {
+      room.step(DT);
+    }
+    // Le mort reste mort : sans le garde, il remonterait a 6 points de vie en
+    // 90 ticks et `#checkRunOver` verrait la run repartir.
+    expect(hpOf(room, 1)).toBe(0);
+    // Non-vacuite : la regeneration TOURNE pendant ces memes ticks.
+    expect(hpOf(room, 2)).toBeGreaterThan(vieAvant);
   });
 });
 

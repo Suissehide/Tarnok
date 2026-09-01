@@ -721,7 +721,10 @@ export class Room {
    *    — un impact MARQUE, il ne laisse plus rien au sol (tache 21)
    * 7 bis. marquer ce que les champs couvrent, resoudre les reactions du tick,
    *    **puis annoncer les champs qu'elles viennent de poser**
-   * 8. arbitrer le contact avec les joueurs
+   * 8. arbitrer le contact avec les joueurs, **puis rendre aux survivants les
+   *    points de vie de leurs cartes « regain » (tache 17)** — dans cet ordre,
+   *    pour qu'un joueur acheve par le contact de ce tick-ci ne se releve pas
+   *    dans le meme tick
    * 9. resoudre les ramassages d'orbes
    * 10. mettre en file morts et ramassages pour diffusion
    * ```
@@ -1016,6 +1019,7 @@ export class Room {
     this.#stepBossCharge();
 
     resolveContact([...this.#players.values()], this.horde);
+    this.#regenerate();
 
     const pickedIds = this.#orbs.resolvePickups([...this.#players.values()]);
     if (pickedIds.length > 0) {
@@ -1440,6 +1444,56 @@ export class Room {
       const nouveauMax = PLAYER_MAX_HP + player.loadout.bonus('maxHp');
       player.hp += nouveauMax - player.maxHp;
       player.maxHp = nouveauMax;
+    }
+  }
+
+  /**
+   * Rend a chaque joueur vivant les points de vie de ses cartes « regain »
+   * (etape 6a, tache 17, sur retour de jeu : *« il faut un moyen de regen
+   * aussi »*).
+   *
+   * ⚠️ **RIEN NE SOIGNAIT avant cette tache.** « vitalite » releve `maxHp` et
+   * offre le delta UNE FOIS, dans `grantCard` ; passe ce cadeau, `hp` ne
+   * remontait jamais. Se soigner devient un CHOIX DE CONSTRUCTION plutot qu'un
+   * cadeau : le draft, l'empilement et `Loadout.bonus(kind)` existaient deja,
+   * cette methode ne fait que les lire.
+   *
+   * ⚠️ **Borne par `maxHp`, jamais par `PLAYER_MAX_HP`.** Le plafond est
+   * PERSONNEL et suit les cartes de vitalite depuis l'etape 4 : le lire dans la
+   * constante ferait d'une vitalite empilee un plafond qui monte sans que rien
+   * ne puisse le remplir, et rendrait les deux cartes incompatibles.
+   *
+   * ⚠️ **Un joueur MORT ne regenere pas, et c'est le seul garde qui le dit.**
+   * Rien d'autre ici ne regarde `hp` : sans lui, un joueur tombe a zero
+   * remonterait tout seul et `#checkRunOver` verrait la run repartir. C'est
+   * aussi pour ca que l'appel vient APRES `resolveContact` — un joueur acheve
+   * ce tick-ci ne se releve pas dans le meme tick.
+   *
+   * ⚠️ **`hp` devient FRACTIONNAIRE, et le fil ne s'en emeut pas.** Le bonus
+   * est en points par seconde, donc `magnitude / TICK_HZ` par tick ;
+   * `encodeSnapshot` le porte en `u16` et tronque. Aucun repli possible : la
+   * borne `maxHp` garantit que la valeur encodee ne depasse jamais le plafond
+   * du joueur, qui est deja ce que le passage `u8 -> u16` de l'etape 4 rend
+   * transportable.
+   *
+   * ⚠️ **Le TICK, pas le `dt` mis a l'echelle.** La rampe de reprise
+   * (`#movementScale`) ne module que ce qui BOUGE ; ni le tir, ni le contact,
+   * ni les ramassages ne la subissent (voir le garde de gel dans `step`), et un
+   * soin ralenti par une reprise de niveau serait une regle de plus a
+   * expliquer. `step` revient de toute facon avant d'arriver ici pendant le
+   * gel strict.
+   */
+  #regenerate(): void {
+    for (const p of this.#players.values()) {
+      if (p.hp <= 0) {
+        continue;
+      }
+      // ⚠️ **Pas de `if (bonus <= 0) return` : aucun test ne pourrait le faire
+      // rougir.** A bonus nul, `Math.min(maxHp, hp + 0)` rend `hp` — la borne
+      // ci-dessous couvre deja le cas, puisque `grantCard` maintient
+      // `hp <= maxHp` a chaque carte. Deux gardes qui se couvrent, enieme
+      // occurrence du depot ; soldee comme les autres, par une absence de code.
+      p.hp = Math.min(p.maxHp, p.hp + p.loadout.bonus('regen') / TICK_HZ);
     }
   }
 

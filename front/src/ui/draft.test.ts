@@ -248,17 +248,22 @@ describe('cssColor — une teinte sombre reste une couleur CSS', () => {
 
 describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
   /**
-   * ⚠️ **Les quatre genres, chacun avec SON unite.** Les magnitudes du
+   * ⚠️ **Les cinq genres, chacun avec SON unite.** Les magnitudes du
    * catalogue sont heterogenes par construction : `maxHp` en points bruts (20),
-   * `speed` en pixels par seconde (15), `fireRate` et `damage` en FRACTIONS
-   * (0,08 et 0,10). Les afficher toutes de la meme facon laisserait croire que
-   * « vitalite » vaut deux cents fois « cadence ».
+   * `speed` en pixels par seconde (15), `regen` en points PAR SECONDE (2),
+   * `fireRate` et `damage` en FRACTIONS (0,08 et 0,10). Les afficher toutes de
+   * la meme facon laisserait croire que « vitalite » vaut deux cents fois
+   * « cadence », et que « regain » rend deux points une fois pour toutes.
    */
   it.each([
     ['maxHp', ' PV max'],
     ['speed', ' px/s'],
     ['damage', ' % dégâts'],
     ['fireRate', ' % recharge'],
+    // ⚠️ **La seule unite de DEBIT du catalogue** (etape 6a, tache 17) :
+    // « regain » rend des points de vie par SECONDE, pas une fois pour toutes.
+    // L'ecrire « +2 PV » en ferait un doublon de « vitalite ».
+    ['regen', ' PV/s'],
   ] as const)('finit %s par son unite', (kind, unite) => {
     const passive = PASSIVES.find((p) => p.kind === kind);
     if (!passive) {

@@ -119,6 +119,11 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   speed: (m) => `+${m} px/s`,
   damage: (m) => `+${pourcent(m)} % dégâts`,
   fireRate: (m) => `−${pourcent(m)} % recharge`,
+  // ⚠️ **« /s », et c'est la seule unite de DEBIT du catalogue.** La magnitude
+  // de « regain » est en points de vie par seconde ; l'ecrire « +2 PV »
+  // laisserait croire a un gain unique, c'est-a-dire exactement ce que
+  // « vitalite » fait deja et que cette carte ne fait pas.
+  regen: (m) => `+${m} PV/s`,
 };
 
 /**
