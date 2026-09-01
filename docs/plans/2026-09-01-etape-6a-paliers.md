@@ -265,8 +265,11 @@ ouverte, tâche 12.
 
 ## Tâche 5 bis : la charge du troll
 
-**Fichiers :** modifier `shared/protocol.ts`, `shared/paliers.ts` ou un nouveau `shared/boss.ts`,
-`back/src/combat.ts`, `back/src/room.ts`, `front/src/render/`, `tools/build_monster_atlas.py`, leurs tests
+**Fichiers :** modifier `shared/protocol.ts`, créer `shared/boss.ts`, modifier `back/src/combat.ts`,
+`back/src/room.ts`, `front/src/render/`, leurs tests
+
+⚠️ **`tools/build_monster_atlas.py` était listé ici par erreur** — l'étape 6 de cette même tâche dit
+de n'y rien ranger.
 
 > *« Le boss peut faire des attaques sur des zones, un cercle légèrement rouge avec un petit cercle
 > qui grossit jusqu'à la taille finale au moment de l'attaque. »*
@@ -303,10 +306,21 @@ qui sert, plus deux nouveaux.
 | --- | --- | --- |
 | **Chargement** | le boss est immobile, le couloir est annoncé | un **long rectangle** légèrement rouge, dont l'opacité monte |
 | **Charge** | le boss traverse le couloir en tournant | il **avance vite en spinnant** ; le rectangle est plein |
-| **Récupération** | il s'arrête, redevient vulnérable au sens du rythme | l'animation de récupération |
+
+⚠️ **Correction — une première version de ce tableau avait un TROISIÈME temps**, une phase de
+récupération avec son animation. **Elle contredisait l'étape 6 du même plan**, qui dit que
+`Troll_Recovery` n'est pas nécessaire et que l'atlas ne peut rien absorber. Deux temps : à la fin de
+la traversée, le boss redevient une entité ordinaire et remarche.
 
 - [ ] **Étape 1 : le message.** Origine, direction, longueur, largeur, **tick de départ et tick de
   fin de charge**. Un message à l'annonce, plus rien ensuite.
+
+  ⚠️ **La largeur voyage, contrairement au rayon d'une zone — et ce n'est pas une incohérence.**
+  `ZoneMessage` ne porte pas son rayon parce que **toutes** les zones partagent `ZONE_RADIUS` : le
+  transmettre en ferait une seconde source de vérité pour un seul nombre (R20). Ici, **l'étape 6b
+  fera varier la largeur d'un boss à l'autre**, et une charge est annoncée une fois toutes les
+  quelques secondes contre plusieurs par seconde pour les zones. Les deux décisions diffèrent parce
+  que les deux situations diffèrent — **le dire, sinon le prochain lecteur y verra une entorse**.
 
   ⚠️ **Les ticks voyagent, la progression se dérive.** Les deux côtés calculent la même fraction sur
   les mêmes ticks. C'est ce que font déjà `ZONE`, le gel de niveau, le vol des orbes et la réaction.
