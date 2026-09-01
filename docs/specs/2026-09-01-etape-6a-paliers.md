@@ -178,6 +178,17 @@ de 10 à 20 %, ou le bonus de palier toujours payé.
 **C'est pour ça que ce doit être un paramètre.** Une valeur en dur transformerait un réglage de
 playtest en refonte.
 
+⚠️ **Correction — ce paragraphe promettait un peu trop.** Une constante-fraction couvre la première
+alternative (un plancher de 10 à 20 % : une seule valeur à changer) mais **pas la seconde** : « le
+bonus de palier toujours payé » demande **deux bourses** — ce qu'on a ramassé et ce qu'on a terminé
+— et aucune fraction ne les distingue. Ce que la constante garantit vraiment, c'est que la perte
+passe par **une seule ligne**, celle où cette seconde bourse viendrait se brancher. Signalé à
+l'exécution de la tâche 6.
+
+⚠️ **Et tant que `WIPE_GOLD_KEPT` vaut 0, aucun test ne la distingue d'un zéro écrit en dur.** La
+lisibilité qu'exige le §9.3 est tenue par la revue, pas par la suite. Le dire vaut mieux que de
+croire la constante gardée.
+
 ## 6. Le vote d'extraction
 
 Après chaque boss vaincu, un portail s'ouvre **20 secondes**.
