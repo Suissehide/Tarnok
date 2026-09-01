@@ -331,19 +331,27 @@ qui sert, plus deux nouveaux.
   chargement *est* la fenêtre de réaction. Trop court, l'attaque est une taxe ; trop long, elle est
   décorative. **Réglage à l'œil, tâche 12.**
 
-- [ ] **Étape 5 : le rendu.** Le rectangle d'annonce, l'opacité qui monte, et **la rotation du
-  sprite pendant la charge**.
+- [ ] **Étape 5 : le rendu, et il n'y a presque rien à faire.**
 
-  ⚠️ **`HordeRenderer` ne fait pas tourner ses particules aujourd'hui** — il pose une échelle et une
-  orientation en x (`facingScaleX`). Faire tourner le boss demande un angle par particule. **Vérifie
-  ce que ça coûte au batch avant de l'ajouter à tout le monde** : ce qui tourne, c'est un sprite sur
-  quatre mille.
+  ⚠️ **Ne fais PAS tourner le sprite.** Décision de l'auteur : *« pas besoin de faire tourner le
+  boss, l'animation d'attaque le fait déjà tourner »*. Vérifié : le clip `attack` du troll fait
+  **six images**, et ce sont elles qui montrent la rotation.
 
-- [ ] **Étape 6 : l'atlas gagne les deux clips manquants.** `Troll_Windup` et `Troll_Recovery`.
+  **La machinerie existe déjà en entier** : `selectClip(stopped, run, attack)` bascule sur
+  l'animation d'attaque quand une entité est marquée arrêtée — c'est ce que fait la piétaille au
+  contact depuis l'étape 3. **Le boss qui charge est une entité qui joue son clip d'attaque.**
 
-  ⚠️ **L'atlas est déjà à 9,33 Mpx sur 16,78** (mesuré à la tâche 5, qui a dû renoncer à ranger les
-  six élites). **Mesure avant d'ajouter**, et si ça ne tient pas, dis-le plutôt que de passer à 8192
-  — la tâche 5 a chiffré ce passage à **268 Mo de VRAM**.
+  Une première version de ce plan demandait un angle par particule et s'inquiétait du coût au batch.
+  **Rien de tout ça n'est nécessaire** : ce qui tourne est dessiné, pas calculé.
+
+  Reste donc à écrire : **le rectangle d'annonce**, et son opacité qui monte.
+
+- [ ] **Étape 6 : l'atlas n'a rien à gagner.** `Troll_Windup` et `Troll_Recovery` sont dans le pack,
+  mais le clip d'attaque suffit à ce que l'auteur décrit.
+
+  ⚠️ **Et l'atlas ne pourrait pas les absorber sans mesure** : il est à **9,33 Mpx sur 16,78**, et la
+  tâche 5 a dû renoncer à ranger les six élites pour cette raison. Si une tâche future les veut,
+  qu'elle mesure — passer à 8192 coûte **268 Mo de VRAM**.
 
 - [ ] **Étape 7 : commit** — `feat: le troll charge en tournant`
 

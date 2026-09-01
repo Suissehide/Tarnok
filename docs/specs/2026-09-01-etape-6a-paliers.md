@@ -141,7 +141,10 @@ couloir**. Zéro octet après l'annonce, même position partout, par constructio
 ⚠️ **La direction est figée au chargement, elle ne suit pas.** C'est ce qui rend l'esquive possible :
 un couloir qui suivrait sa cible serait une taxe, pas une attaque.
 
-Le pack a déjà les trois temps — `Troll_Windup`, `Troll_Attack`, `Troll_Recovery`.
+⚠️ **Rien ne fait tourner le sprite en code.** Le clip d'attaque du troll fait **six images**, et ce
+sont elles qui montrent la rotation. `selectClip(stopped, run, attack)` bascule dessus depuis
+l'étape 3 — **le boss qui charge est une entité qui joue son clip d'attaque**, et le rendu n'a rien
+à apprendre.
 
 Ce qui la rend peu coûteuse : elle est déjà écrite quatre fois dans ce dépôt. Annoncée à la création
 et dérivée ensuite comme une zone, **datée par tick** comme le gel de niveau, un cercle qui grossit
