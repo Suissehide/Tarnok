@@ -20,6 +20,7 @@ import {
   BAND_COUNT,
   BODY_SCALE,
   bandOf,
+  clipFrameIndex,
   contentSizePx,
   DEPTH_BAND,
   FACING_DEAD_ZONE_PX,
@@ -568,5 +569,135 @@ describe('bodyScale — le boss a son propre debordement, pas celui de tout le m
       }
       expect(echelles[a.id]).toBeCloseTo(spriteScale(192, PROJECTILE_HIT_RADIUS), 6);
     }
+  });
+});
+
+/**
+ * L'animation d'attaque ne part qu'au DASH (etape 6a, tache 13) — *« lance pas
+ * l'animation d'attaque du boss avant qu'il dash, juste la frame 1 pour avoir
+ * l'impression qu'il charge son attaque »*.
+ *
+ * ⚠️ **`stopped` n'est PAS touche**, et `selectClip` continue de basculer sur
+ * l'attaque des le chargement : ce que la tache demande est de distinguer les
+ * deux temps a l'AFFICHAGE, ou cela ne coute pas un octet sur le fil. Une
+ * mutation qui toucherait `stopped` casserait le mouvement, pas le dessin.
+ */
+describe("clipFrameIndex fige la premiere image tant que le coup n'est pas parti", () => {
+  it('rend la premiere image, et rien d autre, quand le clip est tenu', () => {
+    expect(clipFrameIndex(6, 0, 0, true)).toBe(0);
+    expect(clipFrameIndex(6, 41, 3, true)).toBe(0);
+  });
+
+  it('deroule le clip quand il ne l est pas', () => {
+    expect(clipFrameIndex(6, 0, 0, false)).toBe(0);
+    expect(clipFrameIndex(6, 1, 0, false)).toBe(1);
+    // La phase decale le cycle : sans elle, mille cranes marchent au pas.
+    expect(clipFrameIndex(6, 1, 2, false)).toBe(3);
+    // Et il boucle.
+    expect(clipFrameIndex(6, 5, 3, false)).toBe(2);
+  });
+
+  /**
+   * Non-vacuite : sur ce cas precis, « tenu » et « deroule » ne rendent pas la
+   * meme image. Sans cette moitie, un `held` ignore passerait a chaque fois que
+   * l'animation se trouve par hasard sur sa premiere image.
+   */
+  it('distingue vraiment les deux cas', () => {
+    expect(clipFrameIndex(6, 2, 1, true)).not.toBe(clipFrameIndex(6, 2, 1, false));
+  });
+});
+
+/** Trois cases de 64 px : la course, puis DEUX images d'attaque. */
+const FIXTURE_ATTACK_FRAME_1_X = 128;
+
+function atlasAnime(): { manifest: AtlasManifest; atlas: Texture } {
+  return {
+    manifest: {
+      image: 'atlas.png',
+      size: 192,
+      archetypes: [
+        {
+          id: 0,
+          name: 'synthetique',
+          cell: FIXTURE_CELL_PX,
+          bounds: { ...FIXTURE_BOUNDS },
+          clips: {
+            run: clipAt(FIXTURE_RUN_X),
+            attack: {
+              frames: 2,
+              rects: [
+                { x: FIXTURE_ATTACK_X, y: 0, w: FIXTURE_CELL_PX, h: FIXTURE_CELL_PX },
+                { x: FIXTURE_ATTACK_FRAME_1_X, y: 0, w: FIXTURE_CELL_PX, h: FIXTURE_CELL_PX },
+              ],
+            },
+          },
+        },
+      ],
+    },
+    atlas: new Texture({ source: new TextureSource({ width: 192, height: 64 }) }),
+  };
+}
+
+function particulesAnimees(horde: Horde, heldEntityId: number | null): Particle[] {
+  const renderer = new HordeRenderer('/assets-de-test');
+  const { manifest, atlas } = atlasAnime();
+  renderer.adoptAtlas(manifest, atlas);
+  const world = new Container();
+  renderer.attach(world);
+  renderer.draw(horde, new Rectangle(0, 0, MAP_SIZE, MAP_SIZE), 0, heldEntityId);
+  const container = world.children[0] as ParticleContainer;
+  return [...(container.particleChildren as Particle[])];
+}
+
+describe('HordeRenderer.draw — le boss qui arme reste sur sa premiere image', () => {
+  /**
+   * Le decor : deux entites ARRETEES, donc toutes deux sur le clip d'attaque
+   * (`selectClip`), et une phase d'animation de 1 — sans quoi la premiere image
+   * serait deja celle que le cycle donne, et « fige » se confondrait avec
+   * « anime ».
+   */
+  function deuxArretes(): Horde {
+    const horde = twoEnemies();
+    horde.stopped[0] = 1;
+    horde.stopped[1] = 1;
+    horde.animPhase[0] = 1;
+    horde.animPhase[1] = 1;
+    return horde;
+  }
+
+  it('deroule le clip d attaque quand personne n arme', () => {
+    const horde = deuxArretes();
+    const p = particleOf(particulesAnimees(horde, null), horde, 0);
+    expect(p.texture.frame.x).toBe(FIXTURE_ATTACK_FRAME_1_X);
+  });
+
+  it('fige la premiere image de l attaque pour l entite qui arme', () => {
+    const horde = deuxArretes();
+    const arme = horde.entityIdAt(0);
+    const p = particleOf(particulesAnimees(horde, arme), horde, 0);
+    expect(p.texture.frame.x).toBe(FIXTURE_ATTACK_X);
+  });
+
+  /**
+   * ⚠️ **L'autre moitie, et c'est elle qui tue la mutation « figer tout le
+   * monde ».** Une seule entite arme ; sa voisine, arretee elle aussi, continue
+   * de s'animer.
+   */
+  it('ne fige QUE celle-la, jamais ses voisines', () => {
+    const horde = deuxArretes();
+    const arme = horde.entityIdAt(0);
+    const particules = particulesAnimees(horde, arme);
+    expect(particleOf(particules, horde, 1).texture.frame.x).toBe(FIXTURE_ATTACK_FRAME_1_X);
+  });
+
+  /**
+   * ⚠️ **Une IDENTITE, pas un creneau.** Les creneaux se permutent a chaque
+   * mort ; passer l'identite d'une entite absente ne doit figer personne, et
+   * surtout pas le creneau 0 par defaut (`slotOf` rend `-1`).
+   */
+  it('ne fige personne quand l entite annoncee n est plus la', () => {
+    const horde = deuxArretes();
+    const particules = particulesAnimees(horde, 999_999);
+    expect(particleOf(particules, horde, 0).texture.frame.x).toBe(FIXTURE_ATTACK_FRAME_1_X);
   });
 });

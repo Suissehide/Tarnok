@@ -230,6 +230,32 @@ export function chargeHurtsAt(charge: BossCharge, tick: number): boolean {
 }
 
 /**
+ * La charge est-elle encore en CHARGEMENT au tick `tick` — le boss arme son
+ * coup, le couloir se remplit, rien n'a bouge ?
+ *
+ * ⚠️ **Le troisieme temps, et il n'existait pas.** `chargeHoldsAt` dit « il se
+ * passe quelque chose », `chargeHurtsAt` dit « ca fait mal » ; entre les deux,
+ * personne ne disait « ca n'est pas encore parti ». Le rendu en a besoin depuis
+ * l'etape 6a, tache 13 : *« lance pas l'animation d'attaque du boss avant qu'il
+ * dash, juste la frame 1 pour avoir l'impression qu'il charge son attaque »*.
+ *
+ * ⚠️ **COMPOSEE de `chargeHoldsAt`, jamais reecrite a cote.** Recopier
+ * `tick >= charge.windupTick` ici donnerait deux bornes basses a tenir
+ * d'accord, et ce depot a solde seize fois le motif des « deux gardes qui se
+ * couvrent ». Il ne reste donc qu'UNE comparaison propre a cette fonction, et
+ * c'est celle qui la distingue.
+ *
+ * ⚠️ **La borne haute est STRICTE, exactement comme la borne basse de
+ * `chargeHurtsAt` est stricte.** Au tick de depart, `chargeProgressAt` vaut
+ * encore 0 mais le dash EST parti : c'est l'instant ou l'animation doit
+ * s'elancer. Un `<=` la ferait partir un tick trop tard, et le boss paraitrait
+ * glisser une image avant de s'animer.
+ */
+export function chargeWindsUpAt(charge: BossCharge, tick: number): boolean {
+  return chargeHoldsAt(charge, tick) && tick < charge.startTick;
+}
+
+/**
  * Fraction du couloir parcourue au tick `tick`, dans `[0, 1]`.
  *
  * Bornee aux deux bouts : `0` pendant tout le chargement, `1` une fois arrive.

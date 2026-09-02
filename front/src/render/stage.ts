@@ -304,9 +304,15 @@ export class Stage {
     this.#world.addChildAt(mapObstacles(map.mask, map.cols, map.rows, map.cellSize), 1);
   }
 
-  /** `timeMs` est l'horloge murale de l'animation — voir `HordeRenderer.draw`. */
-  drawHorde(horde: Horde, timeMs: number): void {
-    this.#horde.draw(horde, this.viewRect(), timeMs);
+  /**
+   * `timeMs` est l'horloge murale de l'animation — voir `HordeRenderer.draw`.
+   *
+   * `heldEntityId` est l'entite dont le clip reste sur sa PREMIERE image
+   * (tache 13) : le boss qui arme sa charge. `null` le reste du temps, ce qui
+   * est le cas courant — voir `clipFrameIndex`.
+   */
+  drawHorde(horde: Horde, timeMs: number, heldEntityId: number | null): void {
+    this.#horde.draw(horde, this.viewRect(), timeMs, heldEntityId);
   }
 
   /** `tick` decide quelles zones sont encore vivantes — voir `ZoneRenderer.draw`. */

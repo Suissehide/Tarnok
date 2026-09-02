@@ -12,6 +12,7 @@ import {
   chargeHurtsAt,
   chargePointAt,
   chargeProgressAt,
+  chargeWindsUpAt,
   makeBossCharge,
 } from './boss';
 import { PROJECTILE_HIT_RADIUS } from './constants';
@@ -144,6 +145,30 @@ describe('la charge du boss : une valeur, et des fonctions du tick', () => {
     expect(chargeHurtsAt(c, c.startTick + 1)).toBe(true);
     expect(chargeHurtsAt(c, c.endTick)).toBe(true);
     expect(chargeHurtsAt(c, c.endTick + 1)).toBe(false);
+  });
+
+  /**
+   * Le TROISIEME temps (etape 6a, tache 13) : ni « il se passe quelque chose »
+   * ni « ca fait mal », mais « ca n'est pas encore parti ». Le rendu en a besoin
+   * pour ne lancer l'animation d'attaque qu'au dash.
+   *
+   * ⚠️ **La borne haute est STRICTE, en miroir exact de la borne basse de
+   * `chargeHurtsAt`.** Au tick de depart le corps n'a pas encore bouge — donc
+   * rien ne fait mal — mais le dash EST parti, donc l'animation s'elance. Les
+   * deux predicats se rencontrent a ce tick precis sans se recouvrir, et c'est
+   * la seule chose que ce test ait a garder.
+   */
+  it("n'arme que pendant le chargement, et relache exactement au tick du depart", () => {
+    const c = charge();
+    expect(chargeWindsUpAt(c, c.windupTick - 1)).toBe(false);
+    for (let t = c.windupTick; t < c.startTick; t++) {
+      expect(chargeWindsUpAt(c, t), `tick ${t}`).toBe(true);
+    }
+    expect(chargeWindsUpAt(c, c.startTick)).toBe(false);
+    expect(chargeWindsUpAt(c, c.endTick)).toBe(false);
+    expect(chargeWindsUpAt(c, c.endTick + 1)).toBe(false);
+    // Non-vacuite : la fenetre existe, elle n'est pas vide.
+    expect(c.startTick).toBeGreaterThan(c.windupTick);
   });
 
   /**

@@ -179,6 +179,13 @@ function stubCanvas2d(): void {
     arc: noop,
     fill: noop,
     fillRect: noop,
+    // Tache 13 : les fleches du couloir de charge sont un chevron TRACE, pas
+    // un aplat — le premier trait du jeu.
+    strokeStyle: '' as unknown,
+    lineWidth: 0 as unknown,
+    lineCap: '' as unknown,
+    lineJoin: '' as unknown,
+    stroke: noop,
   };
   const canvas = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
   canvas.getContext = (): unknown => context;

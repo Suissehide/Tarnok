@@ -1,4 +1,4 @@
-import type { BossCharge } from '@shared/boss';
+import { type BossCharge, chargeWindsUpAt } from '@shared/boss';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
@@ -96,7 +96,11 @@ export interface FrameStage {
    * qui fait expirer une marque.
    */
   drawMarks(horde: Horde, tick: number): void;
-  drawHorde(horde: Horde, timeMs: number): void;
+  /**
+   * `heldEntityId` : l'entite dont le clip reste fige sur sa premiere image
+   * (tache 13) — le boss pendant qu'il arme sa charge, `null` sinon.
+   */
+  drawHorde(horde: Horde, timeMs: number, heldEntityId: number | null): void;
   /**
    * Les orbes au sol, les orbes en vol, et les positions DESSINEES des joueurs :
    * une orbe capturee rejoint son ramasseur (tache 20). C'est `RenderState` qui
@@ -160,7 +164,13 @@ export function composeFrame(
   // le boss doit passer par-dessus le couloir qu'il traverse.
   stage.drawBossCharge(client.bossCharge, client.hordeTick);
   stage.drawMarks(client.horde, client.hordeTick);
-  stage.drawHorde(client.horde, now);
+  // ⚠️ **L'animation d'attaque ne part qu'au DASH** (tache 13). `stopped` vaut
+  // deja 1 pendant le chargement — il sert au clip, pas au mouvement — donc
+  // c'est ici, au moment de dessiner, que les deux temps se distinguent.
+  const charge = client.bossCharge;
+  const armant =
+    charge !== null && chargeWindsUpAt(charge, client.hordeTick) ? charge.entityId : null;
+  stage.drawHorde(client.horde, now, armant);
   stage.drawOrbs(client.orbs, client.orbFlights, state.players, now);
   stage.drawProjectiles(client.projectiles);
   stage.drawImpactFlashes(client.hitFlashes, now);

@@ -369,6 +369,37 @@ export function selectClip<T>(stopped: boolean, run: T, attack: T): T {
 }
 
 /**
+ * Image a dessiner dans le clip courant (etape 6a, tache 13) — *« lance pas
+ * l'animation d'attaque du boss avant qu'il dash, juste la frame 1 pour avoir
+ * l'impression qu'il charge son attaque »*.
+ *
+ * ⚠️ **Le clip et l'ANIMATION du clip sont deux choses, et rien ne les
+ * distinguait.** `Horde#applyCharge` pose `stopped = 1` pendant TOUTE la
+ * charge, donc `selectClip` bascule sur l'attaque des le chargement et les six
+ * images du troll defilaient pendant qu'il ne bougeait pas : le boss avait
+ * l'air d'attaquer une seconde avant de partir, et le couloir devenait la seule
+ * chose qui disait qu'il ne s'etait rien passe encore.
+ *
+ * ⚠️ **`stopped` N'EST PAS TOUCHE, et il ne doit pas l'etre** : il sert au
+ * choix du clip, jamais au mouvement (voir le commentaire de `selectClip`
+ * juste au-dessus), et il est simule des deux cotes. La distinction des deux
+ * temps se fait ICI, a l'affichage, ou elle ne coute rien au fil.
+ *
+ * `held` vrai : la PREMIERE image, figee — le troll arme son coup.
+ */
+export function clipFrameIndex(
+  frameCount: number,
+  animStep: number,
+  phase: number,
+  held: boolean,
+): number {
+  if (held) {
+    return 0;
+  }
+  return (animStep + phase) % frameCount;
+}
+
+/**
  * En dessous de ce deplacement horizontal (en px, entre deux images
  * consecutives), `dx` est trop proche de zero pour trancher un sens sans
  * bruit : un deplacement quasi vertical, ou une entite immobile entre deux
@@ -588,10 +619,16 @@ export class HordeRenderer {
    * elementaire, et un parametre que plus personne ne lit est du code qui ment.
    * C'est `MarkRingRenderer.draw` qui le recoit desormais.
    */
-  draw(horde: Horde, view: Rectangle, timeMs: number): void {
+  draw(horde: Horde, view: Rectangle, timeMs: number, heldEntityId: number | null = null): void {
     if (!this.#loaded) {
       return;
     }
+    // ⚠️ **Une identite, pas un creneau.** Les creneaux se permutent a chaque
+    // mort (`Horde.#removeAt` compacte par permutation) ; l'identite du boss,
+    // elle, ne bouge pas. Resolue UNE fois par image plutot qu'une fois par
+    // entite : le comparer dans la boucle ferait une recherche par entite
+    // dessinee, sur le plus gros batch du jeu.
+    const heldSlot = heldEntityId === null ? -1 : horde.slotOf(heldEntityId);
 
     this.#ensureSortBuffers(horde.capacity);
 
@@ -648,7 +685,9 @@ export class HordeRenderer {
       particle.y = horde.y[i] ?? 0;
       // La phase decale le cycle : sans elle, mille cranes marchent au pas, et
       // ca se voit immediatement.
-      particle.texture = frames[(animStep + (horde.animPhase[i] ?? 0)) % frames.length] as Texture;
+      particle.texture = frames[
+        clipFrameIndex(frames.length, animStep, horde.animPhase[i] ?? 0, i === heldSlot)
+      ] as Texture;
       // Taille DERIVEE de la hitbox de tir (`spriteScale`), retournee vers la
       // gauche quand l'entite s'y deplace (`facingScaleX`) : l'atlas dessine
       // ses cycles de course vers la droite (verifie sur les feuilles source),

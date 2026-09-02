@@ -210,7 +210,43 @@ describe('composeFrame — chaque calque recoit son appel', () => {
    */
   it('dessine la horde avec la seule horloge murale', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('horde')).toEqual([client.horde, NOW]);
+    expect(stage.argsOf('horde')).toEqual([client.horde, NOW, client.bossCharge?.entityId]);
+  });
+
+  /**
+   * ⚠️ **L'animation d'attaque ne part qu'au DASH** (etape 6a, tache 13) —
+   * *« lance pas l'animation d'attaque du boss avant qu'il dash, juste la frame
+   * 1 »*. `stopped` vaut 1 pendant TOUTE la charge : il sert au clip, jamais au
+   * mouvement, et il ne bouge pas. Les deux temps se distinguent donc ICI, dans
+   * la boucle de rendu, au TICK de simulation — l'horloge murale ne saurait pas
+   * dire ou en est le chargement.
+   *
+   * Les trois moities, parce que deux ne suffisent pas : pendant le chargement
+   * c'est l'identite du boss, pendant la traversee c'est `null`, et sans charge
+   * du tout c'est `null` aussi.
+   */
+  it("fige le clip du boss pendant qu'il arme, et le relache au dash", () => {
+    const pendant = compose();
+    expect(pendant.client.bossCharge?.windupTick).toBeLessThanOrEqual(pendant.client.hordeTick);
+    expect(pendant.client.hordeTick).toBeLessThan(pendant.client.bossCharge?.startTick ?? 0);
+    expect(pendant.stage.argsOf('horde')?.[2]).toBe(pendant.client.bossCharge?.entityId);
+
+    const dash = compose();
+    // Le meme decor, un tick plus tard que le depart : le boss traverse.
+    const traverse = new RecordingClient();
+    Object.defineProperty(traverse, 'hordeTick', {
+      value: (traverse.bossCharge?.startTick ?? 0) + 1,
+    });
+    const scene = new RecordingStage();
+    composeFrame(traverse, scene, new RecordingScreens(), NOW, DT);
+    expect(scene.argsOf('horde')?.[2]).toBeNull();
+    expect(dash.stage.argsOf('horde')).not.toBeNull();
+
+    const sansBoss = new RecordingClient();
+    Object.defineProperty(sansBoss, 'bossCharge', { value: null });
+    const scene2 = new RecordingStage();
+    composeFrame(sansBoss, scene2, new RecordingScreens(), NOW, DT);
+    expect(scene2.argsOf('horde')?.[2]).toBeNull();
   });
 
   /**
