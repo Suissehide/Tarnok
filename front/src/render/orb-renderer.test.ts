@@ -1,11 +1,14 @@
 // @vitest-environment jsdom
 import {
+  COIN_DROP_ONE_IN,
+  COIN_DROP_RESIDUE,
   MAP_SIZE,
   MAX_ENTITIES,
   ORB_DROP_ONE_IN,
   ORB_PICKUP_RADIUS,
   PLAYER_SPEED,
 } from '@shared/constants';
+import { dropsCoin, dropsOrb } from '@shared/horde';
 import {
   Container,
   type Particle,
@@ -18,8 +21,14 @@ import { beforeAll, describe, expect, it } from 'vitest';
 
 import { DerivedOrbs, ORB_FLIGHT_LIFETIME_MS, OrbFlights, type PickupTarget } from '../net/client';
 import {
+  COIN_SCALE,
+  COIN_TINT,
+  DROP_COIN_CELL,
+  DROP_ORB_CELL,
+  dropCellRect,
   ORB_ALPHA_MIN,
   ORB_DIAMETER_PX,
+  ORB_SCALE,
   ORB_TEXTURE_DIAMETER,
   ORB_TINT,
   OrbRenderer,
@@ -121,9 +130,13 @@ describe('orbFlightFraction — le vol decore un ramassage deja acquis', () => {
  */
 function calque(): { renderer: OrbRenderer; particules: () => Particle[] } {
   const renderer = new OrbRenderer();
+  // ⚠️ **L'atlas fait DEUX cases** depuis la tache 14 de l'etape 6a : l'orbe et
+  // la piece. Un decor d'une seule case laisserait `#kindOf` rendre la meme
+  // texture aux deux natures, et « la piece se dessine comme une piece »
+  // deviendrait invérifiable.
   renderer.adoptTexture(
     new Texture({
-      source: new TextureSource({ width: ORB_TEXTURE_DIAMETER, height: ORB_TEXTURE_DIAMETER }),
+      source: new TextureSource({ width: ORB_TEXTURE_DIAMETER * 2, height: ORB_TEXTURE_DIAMETER }),
     }),
   );
 
@@ -180,7 +193,7 @@ const NAISSANCE = 1234.5;
 /** Un vol unique, capture en (x, y) par `RAMASSEUR`, a l'instant `NAISSANCE`. */
 function unVol(x: number, y: number, targetId = RAMASSEUR): OrbFlights {
   const flights = new OrbFlights(8);
-  flights.spawn(x, y, targetId, NAISSANCE);
+  flights.spawn(x, y, targetId, avecOrbe(1), NAISSANCE);
   expect(flights.count).toBe(1);
   return flights;
 }
@@ -519,7 +532,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
     orbs.spawn(avecOrbe(1), 2000, 2000, 0);
     orbs.spawn(avecOrbe(2), 2100, 2000, 0);
     const flights = new OrbFlights(8);
-    flights.spawn(1000, 1000, RAMASSEUR, NAISSANCE);
+    flights.spawn(1000, 1000, RAMASSEUR, avecOrbe(1), NAISSANCE);
 
     const drawn = dessine(
       orbs,
@@ -539,22 +552,53 @@ interface Stop {
   readonly alpha: number;
 }
 
+/** Un trace pose sur le canevas : un disque rempli, ou un anneau trace. */
+interface Trace {
+  readonly kind: 'fill' | 'stroke';
+  /** Opacite lue dans le `rgba(...)` courant, ou `null` pour un degrade. */
+  readonly alpha: number | null;
+  readonly width: number;
+  /** Rayon de l'`arc` qui vient d'etre decrit. */
+  readonly r: number;
+}
+
 const stops: Stop[] = [];
-/** Rayon exterieur du degrade, puis rayon du disque effectivement rempli. */
+const traces: Trace[] = [];
+/** Rayon exterieur du degrade, puis rayon du disque de l'ORBE. */
 const rayons = { degrade: 0, disque: 0 };
 
+function alphaDe(style: unknown): number | null {
+  if (typeof style !== 'string') {
+    return null;
+  }
+  const parsed = /rgba\([^)]*,\s*([\d.]+)\s*\)/.exec(style);
+  return parsed ? Number(parsed[1]) : null;
+}
+
 /**
- * Bouchonne le contexte 2D et cuit la texture d'orbe POUR DE VRAI, via `load()`.
- * Meme technique que `bakeZoneTexture` dans `zone-renderer.test.ts` : jsdom ne
- * fournit pas de contexte 2D, et le bouchon ne fait pas rien — il ENREGISTRE
- * les arrets et les rayons, qui sont exactement ce que « plus nette » affirme.
+ * Bouchonne le contexte 2D et cuit l'atlas des objets au sol POUR DE VRAI, via
+ * `load()`. Meme technique que `bakeZoneTexture` dans `zone-renderer.test.ts` :
+ * jsdom ne fournit pas de contexte 2D, et le bouchon ne fait pas rien — il
+ * ENREGISTRE les arrets, les rayons et les traces, qui sont exactement ce que
+ * « plus nette » et « une piece frappee » affirment.
+ *
+ * ⚠️ **Un bouchon incomplet ne fait pas ROUGIR, il fait DISPARAITRE.** La tache
+ * 14 a ajoute un chevron trace a l'atlas ; tant que ce bouchon n'a pas connu
+ * `stroke`, `load()` levait dans le `beforeAll` et vitest a marque les quatre
+ * tests de ce bloc « skipped » — verts au total, sans plus rien mesurer. Tout
+ * ce que la texture appelle doit exister ici.
  */
-function bakeOrbTexture(): void {
+function bakeDropAtlas(): void {
+  // ⚠️ Deux blocs cuisent le meme atlas ; sans cette remise a zero, le second
+  // lit les traces des DEUX cuissons et « la piece pose deux traces » devient
+  // « elle en pose quatre ». Un decor cumulatif est un decor qui ment.
+  stops.length = 0;
+  traces.length = 0;
   const noop = (): void => undefined;
+  let dernierArc = 0;
   const gradient = {
     addColorStop(at: number, color: string): void {
-      const parsed = /rgba\([^)]*,\s*([\d.]+)\s*\)/.exec(color);
-      stops.push({ at, alpha: Number(parsed?.[1]) });
+      stops.push({ at, alpha: alphaDe(color) ?? 0 });
     },
   };
   const context = {
@@ -570,11 +614,23 @@ function bakeOrbTexture(): void {
       return gradient;
     },
     fillStyle: '' as unknown,
+    strokeStyle: '' as unknown,
+    lineWidth: 0,
     beginPath: noop,
     arc: (_x: number, _y: number, r: number): void => {
-      rayons.disque = r;
+      dernierArc = r;
     },
-    fill: noop,
+    fill(): void {
+      traces.push({ kind: 'fill', alpha: alphaDe(context.fillStyle), width: 0, r: dernierArc });
+    },
+    stroke(): void {
+      traces.push({
+        kind: 'stroke',
+        alpha: alphaDe(context.strokeStyle),
+        width: context.lineWidth,
+        r: dernierArc,
+      });
+    },
   };
   const proto = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
   proto.getContext = (): unknown => context;
@@ -582,6 +638,8 @@ function bakeOrbTexture(): void {
   const renderer = new OrbRenderer();
   renderer.load();
   expect(renderer.loaded).toBe(true);
+  // L'orbe est cuite en premier : son disque est le premier remplissage.
+  rayons.disque = traces[0]?.r ?? 0;
 }
 
 /**
@@ -593,8 +651,8 @@ function bakeOrbTexture(): void {
  * Ce bloc garde la FORME du profil, jamais ses valeurs : des relations, pas une
  * recopie des constantes de production.
  */
-describe('makeOrbTexture — un contour, pas un halo', () => {
-  beforeAll(bakeOrbTexture);
+describe('l atlas des objets au sol — l orbe : un contour, pas un halo', () => {
+  beforeAll(bakeDropAtlas);
 
   it('reste opaque AU BORD, la ou le halo s eteignait', () => {
     expect(stops.at(-1)).toEqual({ at: 1, alpha: 1 });
@@ -644,5 +702,154 @@ describe('makeOrbTexture — un contour, pas un halo', () => {
   it('remplit le disque jusqu au bord de la texture, degrade et trace confondus', () => {
     expect(rayons.degrade).toBe(ORB_TEXTURE_DIAMETER / 2);
     expect(rayons.disque).toBe(ORB_TEXTURE_DIAMETER / 2);
+  });
+});
+
+/**
+ * La PIECE (etape 6a, tache 14) — *« les monstres ne droppent pas d'or j'ai
+ * l'impression, t'as l'icone dans UI Elements/Icons/Icon_03 »*.
+ *
+ * ⚠️ **Redessinee en code, pas importee.** Aucun asset n'entre dans ce depot
+ * (licence Pixel Frog, depot public, la CI echoue sur
+ * `git ls-files | grep '^assets/tinyswords'`), et l'atlas des monstres est deja
+ * a 9,33 Mpx sur 16,78 — la tache 5 a du y renoncer a cinq elites. Ce bloc
+ * garde la FORME frappee : une face, un lisere, un cerne grave.
+ */
+describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () => {
+  beforeAll(bakeDropAtlas);
+
+  /**
+   * ⚠️ **Deux cases, jamais une.** Une seule case rendrait la meme texture aux
+   * deux natures et « la piece se dessine comme une piece » n'aurait plus de
+   * sens — le calque entier redeviendrait celui d'avant la tache.
+   */
+  it('cuit DEUX cases cote a cote, et les decoupe a la bonne place', () => {
+    expect(dropCellRect(DROP_ORB_CELL)).toEqual({
+      x: 0,
+      y: 0,
+      w: ORB_TEXTURE_DIAMETER,
+      h: ORB_TEXTURE_DIAMETER,
+    });
+    expect(dropCellRect(DROP_COIN_CELL).x).toBe(ORB_TEXTURE_DIAMETER);
+    expect(dropCellRect(DROP_COIN_CELL).x).not.toBe(dropCellRect(DROP_ORB_CELL).x);
+  });
+
+  /**
+   * Le profil de la piece, en RELATIONS et jamais en valeurs recopiees : une
+   * face pleine mais sous le bord, un lisere opaque au bord, et un cerne grave
+   * PLUS SOMBRE que la face, a l'interieur.
+   */
+  it('pose une face, un lisere opaque au bord, et un cerne plus sombre dedans', () => {
+    // Le premier remplissage est l'orbe (degrade, donc `alpha` nul) ; le second
+    // est la face de la piece.
+    const remplissages = traces.filter((t) => t.kind === 'fill');
+    const face = remplissages[1];
+    const [lisere, cerne] = traces.filter((t) => t.kind === 'stroke');
+
+    expect(remplissages).toHaveLength(2);
+    expect(face?.alpha).toBeGreaterThan(0);
+    expect(face?.alpha).toBeLessThan(1);
+
+    // Le lisere : opaque, et pose au BORD de la case.
+    expect(lisere?.alpha).toBe(1);
+    expect((lisere?.r ?? 0) + (lisere?.width ?? 0) / 2).toBeCloseTo(ORB_TEXTURE_DIAMETER / 2, 6);
+
+    // Le cerne : plus sombre que la face — sinon il ne se lit pas comme un
+    // creux — et franchement a l'interieur, pas colle au lisere.
+    expect(cerne?.alpha).toBeLessThan(face?.alpha ?? 0);
+    expect(cerne?.r ?? 0).toBeLessThan((lisere?.r ?? 0) - (lisere?.width ?? 0));
+    expect(cerne?.r ?? 0).toBeGreaterThan(0);
+  });
+
+  /**
+   * ⚠️ **En niveaux de gris, comme l'orbe et pour la meme raison** : `tint`
+   * MULTIPLIE, donc une piece cuite en or ne pourrait plus etre teintee et
+   * `COIN_TINT` ne servirait a rien. Aucun trace n'a de couleur.
+   */
+  it('cuit la piece en niveaux de gris, la teinte restant a la particule', () => {
+    expect(COIN_TINT).not.toBe(0xffffff);
+    expect(COIN_TINT).not.toBe(ORB_TINT);
+  });
+
+  /**
+   * Le profil de la piece est DIFFERENT de celui de l'orbe : les deux se
+   * croisent au sol, elles ne doivent pas se distinguer par la seule teinte.
+   * L'orbe est creuse au milieu, la piece est pleine.
+   */
+  it('ne se confond pas avec l orbe : l une est creuse, l autre pleine', () => {
+    const creuxOrbe = Math.min(...stops.map((s) => s.alpha));
+    const face = traces.filter((t) => t.kind === 'fill')[1];
+    expect(face?.alpha ?? 0).toBeGreaterThan(creuxOrbe);
+  });
+});
+
+/**
+ * La piece DESSINEE : sa case, sa taille et sa teinte se deduisent de
+ * l'identite du monstre qui l'a laissee — **sans un octet de plus sur le fil**,
+ * exactement comme l'existence de l'orbe se derive deja de `DEATHS`.
+ */
+describe('OrbRenderer.draw — une piece ne se dessine pas comme une orbe', () => {
+  /** Une identite dont la mort laisse VRAIMENT une piece. Derivee, jamais recopiee. */
+  const avecPiece = (n: number): number => n * COIN_DROP_ONE_IN + COIN_DROP_RESIDUE;
+
+  it('le decor ne ment pas : les deux natures sont disjointes', () => {
+    expect(dropsOrb(avecOrbe(3))).toBe(true);
+    expect(dropsCoin(avecOrbe(3))).toBe(false);
+    expect(dropsCoin(avecPiece(3))).toBe(true);
+    expect(dropsOrb(avecPiece(3))).toBe(false);
+  });
+
+  it('pose la piece a sa case, a sa taille et a sa teinte', () => {
+    const orbs = new DerivedOrbs(MAX_ENTITIES);
+    orbs.spawn(avecPiece(1), 2000, 2000, 0);
+    const [particule] = drawnOrbs(orbs);
+
+    expect(particule?.tint).toBe(COIN_TINT);
+    expect(particule?.scaleX).toBeCloseTo(COIN_SCALE, 6);
+    expect(particule?.scaleY).toBeCloseTo(COIN_SCALE, 6);
+    expect(particule?.texture.frame.x).toBe(dropCellRect(DROP_COIN_CELL).x);
+  });
+
+  /**
+   * **L'autre moitie**, sans laquelle « tout est une piece » passerait : une
+   * orbe reste une orbe, dans la meme image.
+   */
+  it('laisse l orbe a sa case, a sa taille et a sa teinte, dans la meme image', () => {
+    const orbs = new DerivedOrbs(MAX_ENTITIES);
+    orbs.spawn(avecOrbe(1), 2000, 2000, 0);
+    orbs.spawn(avecPiece(1), 2400, 2000, 0);
+    const dessinees = drawnOrbs(orbs);
+
+    const orbe = dessinees.find((p) => p.x === 2000);
+    const piece = dessinees.find((p) => p.x === 2400);
+    expect(orbe?.tint).toBe(ORB_TINT);
+    expect(orbe?.scaleX).toBeCloseTo(ORB_SCALE, 6);
+    expect(orbe?.texture.frame.x).toBe(dropCellRect(DROP_ORB_CELL).x);
+    expect(piece?.tint).toBe(COIN_TINT);
+    // Non-vacuite : les deux natures ne se dessinent pas pareil, ni en taille
+    // ni en case — c'est cela qui rend la mutation « toujours l'orbe » visible.
+    expect(COIN_SCALE).not.toBe(ORB_SCALE);
+    expect(dropCellRect(DROP_COIN_CELL).x).not.toBe(dropCellRect(DROP_ORB_CELL).x);
+  });
+
+  /**
+   * ⚠️ **Une piece qui vole reste une piece.** Le vol ne sait rien du sol : sans
+   * `OrbFlights.dropId`, la piece capturee redeviendrait une orbe verte a
+   * l'instant precis ou elle decolle vers le joueur.
+   */
+  it('garde son apparence une fois capturee et en vol', () => {
+    const flights = new OrbFlights(8);
+    flights.spawn(1000, 1000, RAMASSEUR, avecPiece(2), NAISSANCE);
+    const dessinees = dessine(
+      new DerivedOrbs(MAX_ENTITIES),
+      flights,
+      [{ id: RAMASSEUR, x: 1200, y: 1000 }],
+      TOUTE_LA_CARTE,
+      aLAge(0),
+    );
+
+    expect(dessinees).toHaveLength(1);
+    expect(dessinees[0]?.tint).toBe(COIN_TINT);
+    expect(dessinees[0]?.texture.frame.x).toBe(dropCellRect(DROP_COIN_CELL).x);
   });
 });

@@ -17,7 +17,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
-import { dropsOrb, Horde } from '@shared/horde';
+import { Horde, leavesDrop } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
@@ -213,13 +213,19 @@ export class DerivedOrbs {
    * rester des deux cotes.** Le client ne recoit jamais « un orbe existe » : il
    * le derive du seul `DEATHS`. La garde d'un seul cote ferait donc dessiner
    * ici des orbes que le serveur ne ramassera jamais — ou l'inverse, des
-   * ramassages sans rien a l'ecran. Le predicat lui-meme, `dropsOrb`, vit dans
-   * `shared/` : c'est lui qui n'a pas le droit d'exister en deux exemplaires.
+   * ramassages sans rien a l'ecran. Le predicat lui-meme, `leavesDrop`, vit
+   * dans `shared/` : c'est lui qui n'a pas le droit d'exister en deux
+   * exemplaires.
+   *
+   * ⚠️ **Depuis la tache 14 de l'etape 6a, la reserve tient les orbes ET les
+   * PIECES**, sans les distinguer : leur nature se relit de l'identite
+   * (`dropsOrb` / `dropsCoin`, disjoints) au moment de les dessiner. Voir
+   * `OrbField.spawn`, cote serveur, qui porte la meme remarque.
    *
    * Ignore silencieusement si la capacite (tres large) est atteinte.
    */
   spawn(entityId: number, x: number, y: number, tick: number): void {
-    if (!dropsOrb(entityId)) {
+    if (!leavesDrop(entityId)) {
       return;
     }
     if (this.#count >= this.capacity) {
@@ -273,7 +279,7 @@ export class DerivedOrbs {
         const dx = ox - p.x;
         const dy = oy - p.y;
         if (dx * dx + dy * dy <= r2) {
-          flights.spawn(ox, oy, p.id, nowMs);
+          flights.spawn(ox, oy, p.id, this.id[i] ?? 0, nowMs);
           this.#removeAt(i);
           break;
         }
@@ -393,6 +399,17 @@ export class OrbFlights {
   readonly fromY: Float32Array;
   /** Identite du joueur vise — pas sa position : c'est la position courante qui compte. */
   readonly targetId: Uint32Array;
+  /**
+   * Identite du MONSTRE qui a laisse l'objet — celle qui dit sa nature (etape
+   * 6a, tache 14).
+   *
+   * ⚠️ **Un vol doit garder l'apparence de ce qui vole.** Sans elle, une piece
+   * capturee redeviendrait une orbe verte a l'instant ou elle decolle : la
+   * nature se relit de l'identite (`dropsCoin`), donc elle doit voyager du sol
+   * jusqu'au vol. Purement local — cette identite est deja connue des deux
+   * cotes, rien de plus ne passe sur le fil.
+   */
+  readonly dropId: Uint32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `ORB_FLIGHT_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
@@ -401,6 +418,7 @@ export class OrbFlights {
     this.fromX = new Float32Array(capacity);
     this.fromY = new Float32Array(capacity);
     this.targetId = new Uint32Array(capacity);
+    this.dropId = new Uint32Array(capacity);
     this.bornMs = new Float64Array(capacity);
   }
 
@@ -409,7 +427,7 @@ export class OrbFlights {
   }
 
   /** Lance un vol. Ignore silencieusement si la capacite est atteinte. */
-  spawn(x: number, y: number, targetId: number, nowMs: number): void {
+  spawn(x: number, y: number, targetId: number, dropId: number, nowMs: number): void {
     if (this.#count >= this.capacity) {
       return;
     }
@@ -417,6 +435,7 @@ export class OrbFlights {
     this.fromX[slot] = x;
     this.fromY[slot] = y;
     this.targetId[slot] = targetId;
+    this.dropId[slot] = dropId;
     this.bornMs[slot] = nowMs;
   }
 
@@ -440,6 +459,7 @@ export class OrbFlights {
       this.fromX[slot] = this.fromX[last] ?? 0;
       this.fromY[slot] = this.fromY[last] ?? 0;
       this.targetId[slot] = this.targetId[last] ?? 0;
+      this.dropId[slot] = this.dropId[last] ?? 0;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;

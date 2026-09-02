@@ -17,7 +17,7 @@ import {
   XP_PER_ORB,
 } from '@shared/constants';
 import { FlowField } from '@shared/flowfield';
-import { entityIdOf, Horde } from '@shared/horde';
+import { dropsCoin, entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
 import { bossHp, palierGold, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
@@ -1024,7 +1024,26 @@ export class Room {
     const pickedIds = this.#orbs.resolvePickups([...this.#players.values()]);
     if (pickedIds.length > 0) {
       this.#pendingPickups.push({ tick: this.#tick, ids: pickedIds });
-      this.#gainXp(pickedIds.length * XP_PER_ORB);
+      // ⚠️ **La NATURE d'un ramassage se lit dans son IDENTITE** (etape 6a,
+      // tache 14) : `dropsCoin` et `dropsOrb` sont disjoints, donc `PICKUPS`
+      // n'a pas eu besoin d'un octet de plus pour dire ce qui a ete pris. Le
+      // meme raisonnement que celui qui fait exister ces deux predicats.
+      let pieces = 0;
+      for (const id of pickedIds) {
+        if (dropsCoin(id)) {
+          pieces++;
+        }
+      }
+      // ⚠️ **Une piece vaut UN or, et il n'y a pas de constante pour le dire.**
+      // La rarete et la valeur decriraient la meme grandeur a deux endroits ;
+      // le seul levier est `COIN_DROP_ONE_IN`, et sa doc porte le raisonnement.
+      this.#gold += pieces;
+      // Les orbes restantes, et elles seules : une piece ne vaut aucune
+      // experience, sans quoi la rarefier reviendrait a ralentir les niveaux.
+      const orbes = pickedIds.length - pieces;
+      if (orbes > 0) {
+        this.#gainXp(orbes * XP_PER_ORB);
+      }
     }
 
     this.#checkRunOver();

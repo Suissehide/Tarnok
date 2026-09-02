@@ -1,6 +1,7 @@
 import { type BossCharge, makeBossCharge } from '@shared/boss';
 import { CARD } from '@shared/cards';
 import {
+  COIN_DROP_ONE_IN,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   LEVEL_RESUME_TICKS,
@@ -18,7 +19,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
-import { dropsOrb, entityIdOf, Horde } from '@shared/horde';
+import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
 import { passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
@@ -801,20 +802,32 @@ describe('GameClient — morts appliquees par rejeu (rollback + replay, tache 10
  * le droit d'exister en deux exemplaires — c'est `dropsOrb`, dans `shared/`.
  */
 describe('DerivedOrbs.spawn — le client filtre les memes morts que le serveur', () => {
-  it('ne retient qu une mort sur ORB_DROP_ONE_IN, et exactement celles que dropsOrb accepte', () => {
-    const MORTS = 40;
+  it('ne retient que les morts que leavesDrop accepte, orbes ET pieces', () => {
+    // ⚠️ **Assez de morts pour qu'une PIECE tombe** : `COIN_DROP_ONE_IN` vaut
+    // quatre fois `ORB_DROP_ONE_IN`, donc un lot de 40 index consecutifs en
+    // contient plusieurs de chaque — un lot plus court n'aurait montre que des
+    // orbes et la tache 14 y aurait ete invisible.
+    const MORTS = 64;
     const orbs = new DerivedOrbs(MORTS);
     const attendues: number[] = [];
+    let pieces = 0;
     for (let i = 0; i < MORTS; i++) {
       const id = entityIdOf(9, i);
       orbs.spawn(id, 100 + i, 200, 0);
-      if (dropsOrb(id)) {
+      if (leavesDrop(id)) {
         attendues.push(id);
+      }
+      if (dropsCoin(id)) {
+        pieces++;
       }
     }
 
-    expect(orbs.count).toBe(MORTS / ORB_DROP_ONE_IN);
+    expect(orbs.count).toBe(MORTS / ORB_DROP_ONE_IN + MORTS / COIN_DROP_ONE_IN);
     expect([...orbs.id.slice(0, orbs.count)]).toEqual(attendues);
+    // Non-vacuite : le decor contient bien des pieces, et les deux natures sont
+    // DISJOINTES — un cadavre laisse une orbe, une piece, ou rien.
+    expect(pieces).toBe(MORTS / COIN_DROP_ONE_IN);
+    expect(attendues.filter((id) => dropsOrb(id) && dropsCoin(id))).toHaveLength(0);
   });
 });
 
@@ -938,7 +951,7 @@ describe('DerivedOrbs.capture — la capture EST le ramassage (tache 20)', () =>
    */
   it('eteint le vol pile a ORB_FLIGHT_LIFETIME_MS, pas avant', () => {
     const vols = new OrbFlights(8);
-    vols.spawn(1000, 1000, 5, 1000);
+    vols.spawn(1000, 1000, 5, 4, 1000);
 
     vols.expire(1000 + ORB_FLIGHT_LIFETIME_MS - 1);
     expect(vols.count).toBe(1);
@@ -955,7 +968,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
    * `DerivedOrbs.spawn` pouvait etre retiree sans qu'une assertion bouge — elle
    * l'a ete, et 280 tests sont restes verts.
    */
-  it('un lot de morts a index consecutifs ne laisse qu un orbe sur ORB_DROP_ONE_IN', () => {
+  it('un lot de morts a index consecutifs ne laisse que ce que leavesDrop accepte', () => {
     const WAVE_ID = 31;
     const ENTITIES = 40;
 
@@ -988,8 +1001,21 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       client.update(tick * STEP, STEP);
     }
 
-    expect(client.orbs.count).toBe(ENTITIES / ORB_DROP_ONE_IN);
-    expect([...client.orbs.id.slice(0, client.orbs.count)].every((id) => dropsOrb(id))).toBe(true);
+    // ⚠️ **Attendu DERIVE des identites reellement tuees, jamais d'une division
+    // sur `ENTITIES`.** Le premier index de la vague n'est pas force d'etre un
+    // multiple des deux taux, donc « 40 / 16 » rendrait 2,5 la ou la regle en
+    // pose 3. Un attendu calcule de tete est un decor qui ment.
+    const attendues = killedIds.filter((id) => leavesDrop(id));
+    const piecesAttendues = killedIds.filter((id) => dropsCoin(id));
+    expect(client.orbs.count).toBe(attendues.length);
+    const poses = [...client.orbs.id.slice(0, client.orbs.count)];
+    expect(poses.every((id) => leavesDrop(id))).toBe(true);
+    // La tache 14 par le VRAI chemin : le lot contient des pieces, derivees du
+    // seul `DEATHS` comme les orbes — pas un octet de plus sur le fil.
+    expect(poses.filter((id) => dropsCoin(id))).toHaveLength(piecesAttendues.length);
+    // Non-vacuite des deux cotes : il y a des pieces, et il n'y a pas QUE ca.
+    expect(piecesAttendues.length).toBeGreaterThan(0);
+    expect(attendues.length).toBeGreaterThan(piecesAttendues.length);
   });
 
   it('une mort fait apparaitre un orbe a la position de l entite, et PICKUPS le retire', () => {

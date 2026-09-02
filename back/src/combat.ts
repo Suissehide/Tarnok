@@ -9,7 +9,7 @@ import {
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
-import { dropsOrb, type Horde } from '@shared/horde';
+import { type Horde, leavesDrop } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import { packElementPair } from '@shared/protocol';
 import type { ZoneField } from '@shared/zones';
@@ -144,6 +144,14 @@ export class OrbField {
   /**
    * Une mort DEMANDE un orbe ; toutes ne l'obtiennent pas (tache 17, etape 5a).
    *
+   * ⚠️ **Depuis la tache 14 de l'etape 6a, la reserve tient DEUX natures** :
+   * les orbes d'experience et les PIECES. Elle ne le sait pas — la nature se
+   * relit de l'identite (`dropsOrb` / `dropsCoin`, disjoints) la ou elle sert,
+   * c'est-a-dire au dessin et au ramassage. Une seconde reserve aurait demande
+   * une seconde capacite, un second compteur de troncature et un second calque
+   * de rendu, pour un objet qui tombe au meme endroit et se ramasse au meme
+   * rayon.
+   *
    * ⚠️ **La garde est ICI, au goulot, et pas aux trois chemins de mort.** Les
    * projectiles, les brulures et les reactions appellent tous les trois cette
    * methode, et l'etape 5a vient d'en ajouter deux : une regle recopiee a
@@ -164,7 +172,7 @@ export class OrbField {
    * gagnee qui s'evapore, c'est-a-dire exactement ce que cette tache retire.
    */
   spawn(entityId: number, x: number, y: number): void {
-    if (!dropsOrb(entityId)) {
+    if (!leavesDrop(entityId)) {
       return;
     }
     if (this.#count >= this.capacity) {

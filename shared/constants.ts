@@ -279,6 +279,49 @@ export const ORB_PICKUP_RADIUS = 90;
 export const ORB_DROP_ONE_IN = 4;
 
 /**
+ * Une mort sur combien laisse une PIECE — etape 6a, tache 14, sur retour de
+ * jeu : *« les monstres ne droppent pas d'or j'ai l'impression »*. Et c'est
+ * vrai : `Room#gold` ne montait que par `palierGold` a la mort du boss.
+ *
+ * ⚠️ **DISTINCT de `ORB_DROP_ONE_IN`, et bien plus rare — c'est la demande.**
+ * A une sur quatre, la piece deviendrait du bruit au sol, ce que le retour
+ * precedent reprochait deja a l'xp (tache 17 de l'etape 5a) ; a une sur seize,
+ * elle reste un evenement. En ordre de grandeur : un palier tient ~200 morts,
+ * donc ~12 pieces contre les 100 d'or du boss — la piece se remarque sans
+ * jamais devenir la vraie source de revenu.
+ *
+ * ⚠️ **UN SEUL levier, pas deux.** Une piece vaut UN or, et ce n'est pas une
+ * constante : la rarete et la valeur decriraient sinon la meme grandeur a deux
+ * endroits, et finiraient par se contredire. `XP_PER_ORB` n'existe que parce
+ * que la tache 17 devait rarefier les orbes SANS toucher a l'experience par
+ * mort ; ici il n'y a rien a preserver, l'or par mort valait zero.
+ *
+ * ⚠️ **Doit diviser `MAX_PER_WAVE`** (4096), exactement comme
+ * `ORB_DROP_ONE_IN` et pour la meme raison : les identites sont
+ * `waveId * MAX_PER_WAVE + index`, et le reste modulo ne suit l'index que si le
+ * diviseur divise le pas de vague.
+ */
+export const COIN_DROP_ONE_IN = 16;
+
+/**
+ * Reste que doit valoir une identite pour laisser une piece.
+ *
+ * ⚠️ **NON NUL, et surtout PAS un multiple de `ORB_DROP_ONE_IN`.** A zero,
+ * `COIN_DROP_ONE_IN` etant un multiple de `ORB_DROP_ONE_IN`, toute piece
+ * tomberait aussi sur une orbe : les deux objets se poseraient au meme pixel,
+ * l'un sous l'autre, et une piece ne serait jamais qu'une orbe plus riche. A
+ * 2, les deux ensembles sont DISJOINTS — un cadavre laisse une orbe, une piece,
+ * ou rien.
+ *
+ * ⚠️ **Ce n'est pas un decalage cosmetique : c'est ce qui rend la nature d'un
+ * ramassage LISIBLE dans son identite.** Le serveur annonce `PICKUPS` avec des
+ * identites nues ; `dropsOrb` et `dropsCoin` etant disjoints, chaque cote sait
+ * si l'objet ramasse valait de l'experience ou de l'or **sans un octet de
+ * plus**. Deux ensembles qui se chevaucheraient rendraient ce message ambigu.
+ */
+export const COIN_DROP_RESIDUE = 2;
+
+/**
  * Experience gagnee par orbe ramasse, avant multiplication par la courbe de
  * niveau.
  *

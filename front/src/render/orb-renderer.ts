@@ -1,4 +1,5 @@
 import { MAP_SIZE } from '@shared/constants';
+import { dropsCoin } from '@shared/horde';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
 import {
@@ -89,6 +90,38 @@ export const ORB_TINT = 0x7fd858;
 export const ORB_ALPHA_MIN = 0.75;
 
 /**
+ * Diametre de la PIECE dans le monde, en pixels — etape 6a, tache 14 : *« les
+ * monstres ne droppent pas d'or »*.
+ *
+ * ⚠️ **Plus grande que l'orbe, et c'est la seule chose que sa taille dit** :
+ * une piece tombe quatre fois moins souvent (`COIN_DROP_ONE_IN` contre
+ * `ORB_DROP_ONE_IN`), donc elle a le droit d'occuper la place que la rarete lui
+ * paie. Une piece de la taille d'une orbe serait un objet de plus a trier dans
+ * un tas ; c'en est un qu'on doit repérer.
+ *
+ * ⚠️ **Toujours DIFFERENT de `ORB_TEXTURE_DIAMETER`** (64) — le piege des
+ * taches 13 et 15 de l'etape 5a : a l'egalite, l'echelle vaudrait 1 et toute
+ * mutation d'echelle deviendrait indistinguable de son absence. **Et different
+ * d'`ORB_DIAMETER_PX`**, sans quoi dessiner les deux a la meme echelle
+ * passerait le test.
+ */
+export const COIN_DIAMETER_PX = 20;
+
+/** Echelle d'une particule de piece : la texture couvre exactement `COIN_DIAMETER_PX`. */
+export const COIN_SCALE = COIN_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
+
+/**
+ * Teinte de la piece, portee par la PARTICULE comme celle de l'orbe : la
+ * texture est cuite en niveaux de gris, `tint` la dore.
+ *
+ * L'or de `UI Elements/Icons/Icon_03` du pack, **redessine en code** : aucun
+ * asset n'entre dans ce depot (licence Pixel Frog, depot public), et l'atlas
+ * des monstres est deja a 9,33 Mpx sur 16,78 — une icone d'interface n'y a rien
+ * a faire. C'est la sixieme texture procedurale du jeu.
+ */
+export const COIN_TINT = 0xf5c542;
+
+/**
  * Marge de culling : la moitie de ce que l'orbe couvre a l'ecran, meme regle
  * que `ZoneRenderer.CULL_MARGIN` et `MarkRingRenderer.CULL_MARGIN`. Une orbe
  * dont le centre vient de sortir du cadre en montre encore la moitie.
@@ -111,6 +144,17 @@ const ORB_GAP_ALPHA = 0.2;
 const ORB_RIM_INNER = 0.78;
 /** Debut du plateau opaque du lisere ; au-dela, l'orbe s'arrete NET au bord de la texture. */
 const ORB_RIM_PEAK = 0.86;
+
+/** Opacite de la face de la piece : pleine, mais sous le lisere qui la borde. */
+const COIN_FACE_ALPHA = 0.72;
+/** Epaisseur du lisere, en fraction du rayon. */
+const COIN_RIM_WIDTH = 0.14;
+/** Rayon du cerne grave, en fraction du rayon. */
+const COIN_ENGRAVING_RADIUS = 0.56;
+/** Epaisseur du cerne grave, en fraction du rayon. */
+const COIN_ENGRAVING_WIDTH = 0.1;
+/** Opacite du cerne : sous la face, sinon il ne se lirait pas comme un creux. */
+const COIN_ENGRAVING_ALPHA = 0.34;
 
 /**
  * Quelle FRACTION du chemin vers son ramasseur une orbe capturee a parcourue,
@@ -177,16 +221,8 @@ export function orbFlightFraction(elapsedMs: number): number {
  * Tous les arrets sont ecrits en `rgba(...)`, y compris les opaques : c'est ce
  * qui permet au test de lire le profil sans avoir a comprendre deux notations.
  */
-function makeOrbTexture(diameter: number): Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = diameter;
-  canvas.height = diameter;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    throw new Error('canvas 2d indisponible');
-  }
-  const r = diameter / 2;
-  const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
+function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
   gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
   gradient.addColorStop(ORB_CORE_EDGE, 'rgba(255, 255, 255, 1)');
   gradient.addColorStop(ORB_GAP_INNER, `rgba(255, 255, 255, ${ORB_GAP_ALPHA})`);
@@ -195,8 +231,87 @@ function makeOrbTexture(diameter: number): Texture {
   gradient.addColorStop(1, 'rgba(255, 255, 255, 1)');
   ctx.fillStyle = gradient;
   ctx.beginPath();
-  ctx.arc(r, r, r, 0, Math.PI * 2);
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
   ctx.fill();
+}
+
+/**
+ * L'atlas des objets au sol : l'orbe en case 0, la PIECE en case 1.
+ *
+ * ⚠️ **UNE seule source de texture, donc UN seul `ParticleContainer`.** Un
+ * conteneur de particules ne porte qu'une texture source ; deux textures
+ * independantes auraient demande deux calques, deux reservoirs et deux passes
+ * de culling pour des objets qui tombent au meme endroit et se ramassent au
+ * meme rayon. C'est exactement ce que `ProjectileRenderer` fait deja avec ses
+ * neuf armes.
+ */
+export function dropCellRect(index: number): { x: number; y: number; w: number; h: number } {
+  return {
+    x: index * ORB_TEXTURE_DIAMETER,
+    y: 0,
+    w: ORB_TEXTURE_DIAMETER,
+    h: ORB_TEXTURE_DIAMETER,
+  };
+}
+
+/** Les deux cases de l'atlas : l'orbe, puis la piece. */
+export const DROP_ORB_CELL = 0;
+export const DROP_COIN_CELL = 1;
+/** Le nombre de cases de l'atlas — ce que `loaded` compte. */
+export const DROP_CELL_COUNT = 2;
+
+/**
+ * Piece BLANCHE — un disque plein, un anneau creux grave dedans, un lisere qui
+ * s'arrete net au bord.
+ *
+ * **Redessinee en code d'apres `UI Elements/Icons/Icon_03`** du pack : aucun
+ * asset n'entre dans ce depot, et l'atlas des monstres est plein. Ce qui est
+ * repris du dessin d'origine, c'est ce qui le rend lisible a quinze pixels —
+ * une face pleine, un cerne grave, un bord franc — pas ses pixels.
+ *
+ * ⚠️ **En NIVEAUX DE GRIS, comme l'orbe et pour la meme raison** : `tint`
+ * multiplie, donc une piece cuite en or ne pourrait plus etre teintee et
+ * `COIN_TINT` ne servirait a rien. Le contraste interne, lui, est cuit — c'est
+ * ce qui distingue une piece frappee d'un simple disque.
+ *
+ * ⚠️ **Le profil est DIFFERENT de celui de l'orbe, et il doit le rester** : les
+ * deux objets se croisent au sol, ils ne doivent pas se confondre a la seule
+ * teinte. L'orbe est creuse au milieu (deux traits concentriques), la piece est
+ * pleine et gravee.
+ */
+function drawCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  // La face pleine, jusqu'au lisere.
+  ctx.fillStyle = `rgba(255, 255, 255, ${COIN_FACE_ALPHA})`;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.fill();
+  // Le lisere : un anneau opaque qui s'arrete net au bord de la case.
+  ctx.strokeStyle = 'rgba(255, 255, 255, 1)';
+  ctx.lineWidth = r * COIN_RIM_WIDTH;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * (1 - COIN_RIM_WIDTH / 2), 0, Math.PI * 2);
+  ctx.stroke();
+  // Le cerne grave : c'est lui qui fait lire une piece FRAPPEE plutot qu'un
+  // jeton. Plus sombre que la face, donc dessine en soustrayant de l'opacite.
+  ctx.strokeStyle = `rgba(255, 255, 255, ${COIN_ENGRAVING_ALPHA})`;
+  ctx.lineWidth = r * COIN_ENGRAVING_WIDTH;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * COIN_ENGRAVING_RADIUS, 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+/** Cuit les deux cases cote a cote : l'orbe a gauche, la piece a droite. */
+function makeDropAtlas(): Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = ORB_TEXTURE_DIAMETER * 2;
+  canvas.height = ORB_TEXTURE_DIAMETER;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  const r = ORB_TEXTURE_DIAMETER / 2;
+  drawOrb(ctx, r, r, r);
+  drawCoin(ctx, ORB_TEXTURE_DIAMETER + r, r, r);
   return Texture.from(canvas);
 }
 
@@ -219,7 +334,14 @@ export class OrbRenderer {
     dynamicProperties: { position: true, color: true, rotation: false, uvs: false },
   });
   readonly #pool: Particle[] = [];
-  #texture: Texture | null = null;
+  /**
+   * Les deux cases de l'atlas : l'orbe et la piece.
+   *
+   * ⚠️ **UN tableau, jamais deux champs nullables.** Deux textures separement
+   * nullables donneraient deux gardes qui se couvrent l'une l'autre — le motif
+   * que ce depot a solde seize fois. `loaded` ne lit qu'une chose.
+   */
+  #cells: Texture[] = [];
 
   constructor() {
     this.#container.boundsArea = new Rectangle(
@@ -245,11 +367,11 @@ export class OrbRenderer {
    * indetectable jusqu'a la tache 9 bis.
    */
   get loaded(): boolean {
-    return this.#texture !== null;
+    return this.#cells.length === DROP_CELL_COUNT;
   }
 
   load(): void {
-    this.adoptTexture(makeOrbTexture(ORB_TEXTURE_DIAMETER));
+    this.adoptTexture(makeDropAtlas());
   }
 
   /**
@@ -262,8 +384,28 @@ export class OrbRenderer {
    * reste hors de portee de la suite. Voir `adoptAtlas` (tache 9 bis) et
    * `adoptTextures` (tache 12).
    */
-  adoptTexture(texture: Texture): void {
-    this.#texture = texture;
+  adoptTexture(atlas: Texture): void {
+    this.#cells = [DROP_ORB_CELL, DROP_COIN_CELL].map((cell) => {
+      const rect = dropCellRect(cell);
+      return new Texture({
+        source: atlas.source,
+        frame: new Rectangle(rect.x, rect.y, rect.w, rect.h),
+      });
+    });
+  }
+
+  /**
+   * La case, l'echelle et la teinte d'un objet au sol, DEDUITES de son
+   * identite (etape 6a, tache 14).
+   *
+   * ⚠️ **Rien n'est transmis pour ca.** `dropsCoin` vit dans `shared/`, donc le
+   * dessin d'une piece ne coute pas un octet — exactement le modele de
+   * `dropsOrb`, qui fait deja exister l'orbe des deux cotes sans l'annoncer.
+   */
+  #kindOf(entityId: number): { texture: Texture | undefined; scale: number; tint: number } {
+    return dropsCoin(entityId)
+      ? { texture: this.#cells[DROP_COIN_CELL], scale: COIN_SCALE, tint: COIN_TINT }
+      : { texture: this.#cells[DROP_ORB_CELL], scale: ORB_SCALE, tint: ORB_TINT };
   }
 
   /**
@@ -280,11 +422,11 @@ export class OrbRenderer {
     view: Rectangle,
     timeMs: number,
   ): void {
-    const texture = this.#texture;
-    if (!texture) {
+    const fallback = this.#cells[DROP_ORB_CELL];
+    if (!fallback) {
       return;
     }
-    this.#ensurePool(orbs.count + flights.count, texture);
+    this.#ensurePool(orbs.count + flights.count, fallback);
 
     const minX = view.x - CULL_MARGIN;
     const maxX = view.x + view.width + CULL_MARGIN;
@@ -308,11 +450,16 @@ export class OrbRenderer {
       if (!particle) {
         break;
       }
+      const kind = this.#kindOf(orbs.id[i] ?? 0);
+      if (!kind.texture) {
+        break;
+      }
       particle.x = x;
       particle.y = y;
-      particle.scaleX = ORB_SCALE;
-      particle.scaleY = ORB_SCALE;
-      particle.tint = ORB_TINT;
+      particle.texture = kind.texture;
+      particle.scaleX = kind.scale;
+      particle.scaleY = kind.scale;
+      particle.tint = kind.tint;
       // Pulsation douce, dephasee par orbe (via son tick de naissance) : un
       // signal de ramassage vivant au sol, sans jamais devenir le flash
       // « genereux » reserve a l'impact — le §4.3 les distingue explicitement.
@@ -350,11 +497,16 @@ export class OrbRenderer {
       if (!particle) {
         break;
       }
+      const kind = this.#kindOf(flights.dropId[i] ?? 0);
+      if (!kind.texture) {
+        break;
+      }
       particle.x = x;
       particle.y = y;
-      particle.scaleX = ORB_SCALE;
-      particle.scaleY = ORB_SCALE;
-      particle.tint = ORB_TINT;
+      particle.texture = kind.texture;
+      particle.scaleX = kind.scale;
+      particle.scaleY = kind.scale;
+      particle.tint = kind.tint;
       // Pleine opacite, sans pulsation : la pulsation est un appel — « je suis
       // la, viens me prendre ». Une orbe deja ramassee n'appelle plus.
       particle.alpha = 1;

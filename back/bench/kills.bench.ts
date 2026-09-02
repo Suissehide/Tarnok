@@ -106,8 +106,12 @@ interface Mesure {
   partLourde: number;
   premiereMort: number;
   /**
-   * Orbes au sol au pic de la fenetre mesuree, et orbes qu'une reserve pleine
+   * Objets au sol au pic de la fenetre mesuree, et objets qu'une reserve pleine
    * a refuses (etape 6a, tache 15).
+   *
+   * ⚠️ **Orbes ET pieces depuis la tache 14** : `OrbField` tient les deux, leur
+   * nature se relisant de l'identite. Le pic compte donc tout ce qui traine,
+   * ce qui est bien ce que la capacite doit couvrir.
    *
    * ⚠️ **C'est ce banc, et lui seul, qui dit si la CAPACITE tient.** Depuis
    * que l'expiration a disparu, elle est la seule borne de `OrbField`, et elle

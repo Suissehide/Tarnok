@@ -7,6 +7,7 @@ import {
   makeBossCharge,
 } from '@shared/boss';
 import {
+  COIN_DROP_ONE_IN,
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
@@ -19,7 +20,7 @@ import {
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
-import { dropsOrb, entityIdOf, Horde } from '@shared/horde';
+import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -602,14 +603,26 @@ describe('resolveChargeHit — la charge du boss (etape 6a, tache 5 bis)', () =>
  * 5a vient d'en ajouter deux.
  */
 describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
-  it('ne retient qu une mort sur ORB_DROP_ONE_IN, sur des index consecutifs d une meme vague', () => {
-    const MORTS = 40;
+  it('ne retient que ce que leavesDrop accepte, sur des index consecutifs d une meme vague', () => {
+    // ⚠️ **64 morts, pas 40** : depuis la tache 14 de l'etape 6a la reserve
+    // tient aussi les PIECES, et `COIN_DROP_ONE_IN` vaut quatre fois
+    // `ORB_DROP_ONE_IN` — un lot trop court n'en contiendrait aucune et la
+    // tache serait invisible ici.
+    const MORTS = 64;
     const orbs = new OrbField(MORTS);
+    const ids: number[] = [];
     for (let i = 0; i < MORTS; i++) {
-      orbs.spawn(entityIdOf(9, i), 100 + i, 200);
+      const id = entityIdOf(9, i);
+      ids.push(id);
+      orbs.spawn(id, 100 + i, 200);
     }
 
-    expect(orbs.count).toBe(MORTS / ORB_DROP_ONE_IN);
+    expect(orbs.count).toBe(ids.filter((id) => leavesDrop(id)).length);
+    // Les deux moities : des orbes ET des pieces, et jamais les deux sur le
+    // meme cadavre.
+    expect(ids.filter((id) => dropsOrb(id))).toHaveLength(MORTS / ORB_DROP_ONE_IN);
+    expect(ids.filter((id) => dropsCoin(id))).toHaveLength(MORTS / COIN_DROP_ONE_IN);
+    expect(ids.filter((id) => dropsOrb(id) && dropsCoin(id))).toHaveLength(0);
   });
 
   /**
@@ -652,21 +665,30 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     expect(orbes).toBe(MORTS / ORB_DROP_ONE_IN);
   });
 
-  it('retient exactement les identites que dropsOrb accepte, position comprise', () => {
-    const MORTS = 40;
+  it('retient exactement les identites que leavesDrop accepte, position comprise', () => {
+    const MORTS = 64;
     const orbs = new OrbField(MORTS);
     const attendues: number[] = [];
     for (let i = 0; i < MORTS; i++) {
       const id = entityIdOf(9, i);
       orbs.spawn(id, 100 + i, 200);
-      if (dropsOrb(id)) {
+      if (leavesDrop(id)) {
         attendues.push(id);
       }
     }
 
     expect([...orbs.id.slice(0, orbs.count)]).toEqual(attendues);
-    // Et la position suit bien l'identite retenue, pas le rang du creneau.
-    expect(orbs.x[1]).toBe(100 + ORB_DROP_ONE_IN);
+    // Et la position suit bien l'identite retenue, pas le rang du creneau :
+    // chaque objet pose est a l'abscisse de l'index dont il vient.
+    //
+    // ⚠️ **DERIVEE de la liste retenue, pas ecrite.** Un `100 + ORB_DROP_ONE_IN`
+    // en dur decrivait le monde d'avant la tache 14 : le deuxieme objet du sol
+    // est desormais la PIECE de l'index `COIN_DROP_RESIDUE`, pas l'orbe de
+    // l'index 4.
+    const premier = entityIdOf(9, 0);
+    for (const [slot, id] of attendues.entries()) {
+      expect(orbs.x[slot], `creneau ${slot}`).toBe(100 + (id - premier));
+    }
   });
 
   /**
@@ -693,8 +715,11 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     }
 
     expect(allDead.length).toBe(5);
-    expect(orbs.count).toBe(targets.filter((id) => dropsOrb(id)).length);
-    expect(orbs.count).toBe(2);
+    expect(orbs.count).toBe(targets.filter((id) => leavesDrop(id)).length);
+    // Non-vacuite des deux cotes : le filtre laisse passer quelque chose, et
+    // il ne laisse pas tout passer.
+    expect(orbs.count).toBeGreaterThan(0);
+    expect(orbs.count).toBeLessThan(targets.length);
   });
 });
 
@@ -773,10 +798,13 @@ describe('OrbField.resolvePickups', () => {
     // moitie, un compteur incremente a chaque refus de `dropsOrb` passerait :
     // il monterait tout le temps et ne dirait plus rien du plafond.
     const large = new OrbField(100);
-    for (let i = 0; i < 40; i++) {
-      large.spawn(entityIdOf(9, i), 0, 0);
+    const ids: number[] = [];
+    for (let i = 0; i < 64; i++) {
+      const id = entityIdOf(9, i);
+      ids.push(id);
+      large.spawn(id, 0, 0);
     }
-    expect(large.count).toBe(40 / ORB_DROP_ONE_IN);
+    expect(large.count).toBe(ids.filter((id) => leavesDrop(id)).length);
     expect(large.truncatedOrbs).toBe(0);
   });
 

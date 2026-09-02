@@ -1,6 +1,8 @@
 import { archetypeOf } from './archetypes';
 import { type BossCharge, chargeHoldsAt, chargePointAt } from './boss';
 import {
+  COIN_DROP_ONE_IN,
+  COIN_DROP_RESIDUE,
   CONTACT_RADIUS,
   DEOVERLAP_MAX_PX,
   MAP_SIZE,
@@ -73,6 +75,43 @@ export function entityIdOf(waveId: number, index: number): number {
  */
 export function dropsOrb(entityId: number): boolean {
   return entityId % ORB_DROP_ONE_IN === 0;
+}
+
+/**
+ * Cette mort laisse-t-elle une PIECE ? Etape 6a, tache 14 : *« les monstres ne
+ * droppent pas d'or j'ai l'impression »*.
+ *
+ * ⚠️ **Meme modele que `dropsOrb`, au mot pres, et c'est le point** : la
+ * decision se lit dans l'IDENTITE, donc les deux cotes du fil en tirent la meme
+ * reponse sans echanger un octet. Le serveur arbitre le ramassage et crediter
+ * l'or, mais il n'annonce jamais qu'une piece existe — le client la derive du
+ * seul message `DEATHS`, comme il derive deja les orbes.
+ *
+ * ⚠️ **DISJOINT de `dropsOrb`** : voir `COIN_DROP_RESIDUE`. C'est ce qui permet
+ * de lire la nature d'un ramassage dans l'identite que `PICKUPS` transporte
+ * deja, au lieu d'ajouter un champ au message.
+ *
+ * ⚠️ **Le meme piege de decor que `dropsOrb`, en pire** : un test qui pose son
+ * monstre a `entityIdOf(waveId, 0)` ne tombe JAMAIS sur une piece, quel que
+ * soit ce reglage — la ou il tombait toujours sur une orbe. Les tests du taux
+ * balaient donc des index CONSECUTIFS, jamais un index unique.
+ */
+export function dropsCoin(entityId: number): boolean {
+  return entityId % COIN_DROP_ONE_IN === COIN_DROP_RESIDUE;
+}
+
+/**
+ * Cette mort laisse-t-elle QUELQUE CHOSE au sol ?
+ *
+ * ⚠️ **LA garde du goulot, et il n'y en a qu'une.** `OrbField.spawn` (serveur)
+ * et `DerivedOrbs.spawn` (client) posent l'objet sans savoir sa nature : elle
+ * se relit de l'identite au moment ou elle sert — a l'affichage pour le dessin,
+ * au ramassage pour l'experience ou l'or. Deux reserves separees auraient
+ * demande deux capacites, deux compteurs de troncature et deux calques ; une
+ * seule, plus une lecture arithmetique, n'en demande aucun.
+ */
+export function leavesDrop(entityId: number): boolean {
+  return dropsOrb(entityId) || dropsCoin(entityId);
 }
 
 /**

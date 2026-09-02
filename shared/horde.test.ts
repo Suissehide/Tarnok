@@ -3,6 +3,8 @@ import { describe, expect, it } from 'vitest';
 import { ARCHETYPES, archetypeOf, HEAVY_HP, LIGHT_HP } from './archetypes';
 import { chargeHoldsAt, chargePointAt, makeBossCharge } from './boss';
 import {
+  COIN_DROP_ONE_IN,
+  COIN_DROP_RESIDUE,
   CONTACT_RADIUS,
   DEOVERLAP_MAX_PX,
   FLOWFIELD_HZ,
@@ -18,7 +20,7 @@ import {
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import { FlowField } from './flowfield';
-import { dropsOrb, entityIdOf, Horde, type HordeState } from './horde';
+import { dropsCoin, dropsOrb, entityIdOf, Horde, type HordeState, leavesDrop } from './horde';
 import { PlayerHistory } from './player-history';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
@@ -116,6 +118,84 @@ describe('dropsOrb — quelles morts laissent un orbe', () => {
     for (const wave of [0, 1, 600, 4095]) {
       expect(dropsOrb(entityIdOf(wave, 0))).toBe(true);
     }
+  });
+});
+
+/**
+ * Etape 6a, tache 14 : *« les monstres ne droppent pas d'or j'ai
+ * l'impression »*. Meme modele que `dropsOrb`, et pour la meme raison : le
+ * serveur credite l'or, mais il n'annonce jamais qu'une piece existe — le
+ * client la derive du seul `DEATHS`, et `PICKUPS` ne transporte que des
+ * identites nues.
+ */
+describe('dropsCoin — quelles morts laissent une piece', () => {
+  it('retient exactement une identite sur COIN_DROP_ONE_IN, sur des index consecutifs', () => {
+    const total = 1600;
+    let retenues = 0;
+    for (let i = 0; i < total; i++) {
+      if (dropsCoin(entityIdOf(7, i))) {
+        retenues++;
+      }
+    }
+
+    expect(retenues).toBe(total / COIN_DROP_ONE_IN);
+    // ⚠️ **Plus RARE que l'orbe, et c'est la demande** : *« une piece doit etre
+    // un evenement, pas du bruit au sol »*. Ecrit comme une relation, jamais
+    // comme deux nombres a comparer de tete.
+    expect(COIN_DROP_ONE_IN).toBeGreaterThan(ORB_DROP_ONE_IN);
+  });
+
+  it('donne le meme verdict pour un meme index, quelle que soit la vague', () => {
+    expect(MAX_PER_WAVE % COIN_DROP_ONE_IN).toBe(0);
+    for (let index = 0; index < 2 * COIN_DROP_ONE_IN; index++) {
+      const attendu = dropsCoin(entityIdOf(0, index));
+      for (const wave of [1, 17, 250, 4095]) {
+        expect(dropsCoin(entityIdOf(wave, index))).toBe(attendu);
+      }
+    }
+  });
+
+  /**
+   * ⚠️ **LES DEUX NATURES SONT DISJOINTES, et c'est ce qui rend `PICKUPS`
+   * lisible sans un octet de plus.** Le message transporte des identites nues ;
+   * chaque cote sait si ce qui a ete ramasse valait de l'experience ou de l'or
+   * **parce qu'aucune identite ne peut valoir les deux**. Un
+   * `COIN_DROP_RESIDUE` a zero — ou a n'importe quel multiple de
+   * `ORB_DROP_ONE_IN` — rendrait toute piece egalement orbe, et le message
+   * ambigu.
+   */
+  it('ne partage AUCUNE identite avec dropsOrb', () => {
+    let orbes = 0;
+    let pieces = 0;
+    for (let i = 0; i < 1600; i++) {
+      const id = entityIdOf(7, i);
+      expect(dropsOrb(id) && dropsCoin(id), `identite ${id}`).toBe(false);
+      expect(leavesDrop(id)).toBe(dropsOrb(id) || dropsCoin(id));
+      if (dropsOrb(id)) {
+        orbes++;
+      }
+      if (dropsCoin(id)) {
+        pieces++;
+      }
+    }
+    // Non-vacuite : les deux ensembles sont non vides, sinon « disjoints » est
+    // vrai pour rien.
+    expect(orbes).toBeGreaterThan(0);
+    expect(pieces).toBeGreaterThan(0);
+  });
+
+  /**
+   * ⚠️ **Le piege du decor, en MIROIR de celui des orbes** : un test qui pose
+   * son monstre a `entityIdOf(waveId, 0)` ne tombe JAMAIS sur une piece, la ou
+   * il tombait toujours sur une orbe. Un decor bati sur l'index 0 est donc
+   * aveugle a cette tache entiere.
+   */
+  it('ne laisse JAMAIS de piece au premier de chaque vague — le decor qui masque', () => {
+    for (const wave of [0, 1, 600, 4095]) {
+      expect(dropsCoin(entityIdOf(wave, 0))).toBe(false);
+    }
+    // Et il y en a bien une, un peu plus loin dans la meme vague.
+    expect(dropsCoin(entityIdOf(600, COIN_DROP_RESIDUE))).toBe(true);
   });
 });
 

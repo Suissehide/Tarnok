@@ -13,6 +13,7 @@ import {
 } from '@shared/boss';
 import { CARD, type Card } from '@shared/cards';
 import {
+  COIN_DROP_ONE_IN,
   FIELD_INPUT_DELAY_TICKS,
   LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
@@ -36,7 +37,7 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
-import { entityIdOf } from '@shared/horde';
+import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
 import { bossHp, hpScale, palierGold, palierHp } from '@shared/paliers';
 import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
@@ -1762,11 +1763,16 @@ describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
    * ⚠️ Graine FIXE, meme raison qu'ailleurs dans ce fichier : les obstacles
    * derivent de `mapSeed` et decident du chemin des monstres.
    */
-  it('une vague entiere abattue ne laisse qu une mort sur ORB_DROP_ONE_IN au sol', () => {
+  it('une vague entiere abattue ne laisse au sol que ce que leavesDrop accepte', () => {
     const room = new Room(0x0b_e5_0017);
     room.join(1);
     const depart = positionOf(room, 1);
-    const ids = spawnWaveAt(room, 800, 4 * ORB_DROP_ONE_IN, depart.x + 520, depart.y - 120);
+    // ⚠️ **Assez large pour contenir des PIECES** (etape 6a, tache 14) :
+    // `COIN_DROP_ONE_IN` vaut quatre fois `ORB_DROP_ONE_IN`, donc une vague de
+    // 16 n'en laisserait aucune et le nouveau drop serait invisible ici. Pas
+    // plus large non plus : le budget de 300 ticks doit suffire a TOUT abattre,
+    // sinon le compte du sol mesure la duree du test.
+    const ids = spawnWaveAt(room, 800, 2 * COIN_DROP_ONE_IN, depart.x + 520, depart.y - 120);
 
     let morts = 0;
     let ticks = 0;
@@ -1784,7 +1790,10 @@ describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
     expect(morts).toBe(ids.length);
     // Rien n'a ete empoche : ce qui reste au sol est bien ce qui est TOMBE.
     expect(room.drainPickups()).toEqual([]);
-    expect(room.orbCount).toBe(ids.length / ORB_DROP_ONE_IN);
+    expect(room.orbCount).toBe(ids.filter((id) => leavesDrop(id)).length);
+    // Les deux natures sont bien la, et elles sont disjointes.
+    expect(ids.filter((id) => dropsOrb(id))).toHaveLength(ids.length / ORB_DROP_ONE_IN);
+    expect(ids.filter((id) => dropsCoin(id))).toHaveLength(ids.length / COIN_DROP_ONE_IN);
     // ⚠️ **`orbesTronquees` n'est GARDE par rien de plus que ce zero au niveau
     // du salon** — mutation appliquee, « rendre 0 » survit ici. Remplir
     // `MAX_ENTITIES` (4000) creneaux d'orbes demande plus de morts qu'un test
@@ -1793,6 +1802,167 @@ describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
     // plutot que credite d'un test qui ne le tient pas — meme choix que
     // `zonesTronquees`.
     expect(room.orbesTronquees).toBe(0);
+  });
+});
+
+/**
+ * L'or qui tombe des monstres (etape 6a, tache 14) — *« les monstres ne
+ * droppent pas d'or j'ai l'impression, t'as l'icone dans UI Elements/Icons/
+ * Icon_03 »*.
+ *
+ * **L'auteur avait raison, et c'etait verifie** : `#gold` ne montait que par
+ * `palierGold` a la mort du boss. Un monstre ne laissait rien.
+ */
+describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
+  /**
+   * Abat une vague loin du joueur, puis le fait MARCHER dessus, et rend ce que
+   * le salon a ramasse.
+   *
+   * ⚠️ **En deux temps, et c'est oblige.** Une vague posee sous les pieds tue
+   * le joueur au contact avant la premiere mort — `step` s'arrete alors sur une
+   * run perdue, et le decor mesurerait zero sans rien dire. On abat d'abord,
+   * on ramasse ensuite.
+   */
+  function ramasseUneVague(
+    waveId: number,
+    count: number,
+  ): { ids: number[]; ramasses: number[]; or: number; xp: number } {
+    const room = new Room(0x0_60_1d_00);
+    room.join(1);
+    const depart = positionOf(room, 1);
+    const ids = spawnWaveAt(room, waveId, count, depart.x + 520, depart.y);
+    const ramasses: number[] = [];
+    let seq = 1;
+    let niveau = 1;
+    const fermeLEtalage = (): void => {
+      for (const up of room.drainLevelUps()) {
+        niveau = Math.max(niveau, up.level);
+      }
+      for (const ouverture of room.drainDraftOpens()) {
+        if (ouverture.cards.length > 0) {
+          room.setDraftToken(1, 0);
+        }
+      }
+      room.drainDraftResults();
+    };
+
+    for (let tick = 0; tick < 400 && room.horde.count > 0; tick++) {
+      aimAtNearestMonster(room, 1, seq++);
+      room.step(DT);
+      room.drainDeaths();
+      room.drainPickups();
+      fermeLEtalage();
+    }
+    // ⚠️ **Un BALAYAGE, pas une ligne droite.** Le tas s'etale sur la largeur
+    // de la formation ; un joueur qui traverse tout droit n'en ramasse qu'une
+    // poignee, et le test mesurerait sa trajectoire plutot que la regle. Il
+    // fait des allers-retours en s'ecartant, jusqu'a ce que le sol soit vide.
+    for (let tick = 0; tick < 900 && room.orbCount > 0; tick++) {
+      const phase = Math.floor(tick / 60) % 4;
+      const dx = phase === 0 || phase === 1 ? 127 : -127;
+      const dy = phase === 1 || phase === 2 ? 127 : -127;
+      room.applyInput(1, seq++, dx, dy, 127, 0);
+      room.step(DT);
+      room.drainDeaths();
+      for (const lot of room.drainPickups()) {
+        ramasses.push(...lot.ids);
+      }
+      fermeLEtalage();
+    }
+    // ⚠️ **L'experience TOTALE gagnee, pas le reste affiche.** `#xp` se voit
+    // retirer le cout de chaque seuil franchi : le comparer tel quel a « une
+    // orbe vaut `XP_PER_ORB` » mesurerait la courbe de niveau. On rajoute donc
+    // ce que les niveaux ont consomme — a un joueur, `LEVEL_XP_BASE * n` pour
+    // passer du niveau `n` au suivant.
+    let consomme = 0;
+    for (let n = 1; n < niveau; n++) {
+      consomme += LEVEL_XP_BASE * n;
+    }
+    const buffers: ArrayBuffer[] = [];
+    room.snapshot({ push: (b: ArrayBuffer) => buffers.push(b) });
+    const reste = decodeSnapshot(buffers[0] ?? new ArrayBuffer(0)).xp;
+    return { ids, ramasses, or: room.gold, xp: consomme + reste };
+  }
+
+  /**
+   * **LE test de la tache.** Une piece par identite que `dropsCoin` accepte, et
+   * pas une de plus.
+   *
+   * ⚠️ **La vague est assez large pour en contenir plusieurs** : a une seule,
+   * « une piece par mort » et « une piece sur seize » rendraient le meme
+   * nombre, et le taux ne serait garde par rien.
+   */
+  it('verse de l or a chaque piece ramassee, et rien pour les autres morts', () => {
+    const { ids, ramasses, or } = ramasseUneVague(910, 4 * COIN_DROP_ONE_IN);
+    const piecesRamassees = ramasses.filter((id) => dropsCoin(id));
+
+    // ⚠️ **L'or suit ce qui a ete RAMASSE, jamais ce qui est tombe.** Le
+    // comparer au nombre de pieces de la vague ferait de ce test une mesure de
+    // la trajectoire du joueur a travers le tas.
+    expect(or).toBe(piecesRamassees.length);
+    // Non-vacuite des deux cotes : des pieces ont bien ete ramassees, et le
+    // joueur a ramasse bien plus de choses que de pieces.
+    expect(piecesRamassees.length).toBeGreaterThan(1);
+    expect(ramasses.length).toBeGreaterThan(piecesRamassees.length);
+    expect(ids.filter((id) => dropsCoin(id)).length).toBeGreaterThanOrEqual(piecesRamassees.length);
+  });
+
+  /**
+   * ⚠️ **Une piece ne vaut AUCUNE experience, et une orbe aucun or.** Les deux
+   * ensembles sont disjoints (`COIN_DROP_RESIDUE`) ; les confondre reviendrait
+   * a ralentir les niveaux en rarefiant l'or, ou a rendre l'or fonction de la
+   * courbe d'experience.
+   */
+  it('separe les deux monnaies : une piece ne vaut aucune experience', () => {
+    const { ramasses, or, xp } = ramasseUneVague(911, 4 * COIN_DROP_ONE_IN);
+    const orbes = ramasses.filter((id) => dropsOrb(id));
+    const pieces = ramasses.filter((id) => dropsCoin(id));
+
+    expect(or).toBe(pieces.length);
+    // ⚠️ **LE coeur du test, et la mutation qu'il tue** : crediter aussi les
+    // pieces en experience laissait tout le reste vert. L'experience suit les
+    // ORBES, une par une.
+    expect(xp).toBe(orbes.length * XP_PER_ORB);
+    expect(pieces.length).toBeGreaterThan(0);
+    // ⚠️ **Les deux ensembles sont DISJOINTS** (`COIN_DROP_RESIDUE`) : aucun
+    // ramassage ne compte deux fois, et l'or ne suit pas la courbe
+    // d'experience — les confondre reviendrait a ralentir les niveaux en
+    // rarefiant l'or.
+    expect(orbes.length + pieces.length).toBe(ramasses.length);
+    expect(orbes.length).toBeGreaterThan(pieces.length);
+  });
+
+  /**
+   * ⚠️ **L'or des monstres rejoint l'or NON SECURISE**, celui que le §9.3 fait
+   * perdre a la mort de l'equipe. Une seconde bourse aurait fait de la piece
+   * une monnaie a part, que le vote d'extraction ne mettrait pas en jeu — et
+   * c'est precisement le sel du palier.
+   */
+  it('n en verse aucun quand personne ne va les chercher', () => {
+    // La moitie basse : un `#gold` qui monterait a chaque MORT — ou a chaque
+    // tick — passerait tout ce qui precede.
+    const room = new Room(0x0_60_1d_01);
+    room.join(1);
+    const depart = positionOf(room, 1);
+    spawnWaveAt(room, 912, 2 * COIN_DROP_ONE_IN, depart.x + 520, depart.y);
+    for (let tick = 0; tick < 400 && room.horde.count > 0; tick++) {
+      aimAtNearestMonster(room, 1, tick + 1);
+      room.step(DT);
+      room.drainDeaths();
+      room.drainLevelUps();
+      for (const ouverture of room.drainDraftOpens()) {
+        if (ouverture.cards.length > 0) {
+          room.setDraftToken(1, 0);
+        }
+      }
+      room.drainDraftResults();
+    }
+
+    // Des objets sont bien tombes — sans quoi ce zero ne prouverait rien — et
+    // personne n'est alle les chercher.
+    expect(room.orbCount).toBeGreaterThan(0);
+    expect(room.drainPickups()).toEqual([]);
+    expect(room.gold).toBe(0);
   });
 });
 
