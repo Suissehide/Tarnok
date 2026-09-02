@@ -678,6 +678,57 @@ dans cette direction. La formation (`SCATTER`, `RING`, `COLUMN`, `CLUSTER`) arra
 
 ---
 
+## Tâche 19 : la cadence des armes
+
+**Fichiers :** modifier `shared/weapons.ts`, ses tests
+
+> *« Améliore la cadence des armes. »*
+
+**C'est le levier que la mesure a désigné**, après que deux autres ont échoué :
+
+| Tentative | Rapport morts/apparitions |
+| --- | --- |
+| état de départ | 0,49 |
+| arme de zone (tâche 16) | 0,53 — et un rayon absurde de 400 px plafonne à **0,59** |
+| baisser les vagues (tâche 18) | **0,41** — il *baisse* |
+
+⚠️ **Baisser les vagues DÉGRADE le rapport, et il faut comprendre pourquoi avant de régler quoi que
+ce soit.** Les morts suivent les apparitions **presque proportionnellement sur un facteur quatorze**
+(pente 0,449). Le système n'est pas limité par les dégâts mais par **le taux de touche** : une dague
+visée dans *une* direction tue quand un corps se trouve sur sa ligne. Moins de corps, moins de
+touches.
+
+**La cadence est donc le seul levier qui ne dépende pas de la densité** : deux fois plus de tirs,
+c'est deux fois plus d'occasions qu'un corps se trouve sur la ligne.
+
+- [ ] **Étape 1 : mesurer d'abord, régler ensuite.** `back/bench/kills.bench.ts` rend le rapport.
+  Fais varier la cadence **avant** de choisir une valeur, et rends la courbe — comme la tâche 18 a
+  rendu celle des apparitions.
+
+  ⚠️ **Attends-toi à ce que la cadence ne soit pas linéaire non plus.** Si le taux de touche est le
+  vrai facteur, doubler la cadence double les tirs mais pas forcément les touches — un second tir
+  parti au même instant vers la même direction traverse la même zone vide.
+
+- [ ] **Étape 2 : le catalogue entier, pas seulement la dague.** Neuf armes, de 5 ticks
+  (lance-flammes) à 75 (grenade). ⚠️ **La cadence est une donnée de la table**, pas un nombre global :
+  accélérer tout du même facteur détruirait ce qui distingue les armes.
+
+- [ ] **Étape 3 : les trois budgets que la cadence touche**, et il faut les regarder :
+  - **`PROJECTILE_CAPACITY`** (1024) — la tâche 7 de l'étape 4 l'a dimensionnée sur
+    `projectileCount × ceil(vie / cadence)`. **Diviser la cadence par deux double ce produit.**
+  - **`Projectiles.collide`** est en O(projectiles × entités).
+  - **`cooldownWithBonus`** a un **plancher d'un tick** et un plafond de réduction de 75 %. À
+    cadence 4, quatre cartes de « cadence » touchent déjà le plancher — **le passif cesserait de
+    servir**, ce qui est le motif R9 dans sa version la plus brutale.
+
+- [ ] **Étape 4 : le garde-fou du niveau 2.** `back/bench/niveau2.bench.ts` donne **4 échecs sur 40**
+  après la tâche 18. Une cadence plus rapide devrait l'améliorer — **si elle l'aggrave, c'est qu'on
+  a cassé autre chose.**
+
+- [ ] **Étape 5 : commit** — `feat(shared): des armes plus rapides`, avec la courbe dans le corps.
+
+---
+
 ## Tâche 8 : la machine du vote
 
 **Fichiers :** créer `back/src/portal.ts`, `back/src/portal.test.ts`
