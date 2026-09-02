@@ -410,9 +410,9 @@ function dynamicChannelsOf(container: ParticleContainer): {
  *
  * ⚠️ **Deux quads par projectile, jamais plus — c'est la borne, et elle est
  * de CONSTRUCTION.** La trainee est un seul quad etire dans l'axe du vol, pas
- * une file de segments : a `PROJECTILE_CAPACITY` (1024) projectiles, ce
- * renderer pose au pire **2 048 quads**. Une trainee a six segments en aurait
- * pose 6 144, et rien dans le code ne l'aurait rappele — le §4.3 de
+ * une file de segments : a `PROJECTILE_CAPACITY` (2048) projectiles, ce
+ * renderer pose au pire **4 096 quads**. Une trainee a six segments en aurait
+ * pose 12 288, et rien dans le code ne l'aurait rappele — le §4.3 de
  * l'orientation dit que *« le danger est le VFX, pas les sprites »*, et la
  * tache 4 de cette etape a deja montre ce que « quelques dizaines » devient
  * quand personne ne compte (368 zones mesurees). Le compte est mesure par

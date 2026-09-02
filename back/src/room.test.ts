@@ -16,6 +16,7 @@ import {
   FIELD_INPUT_DELAY_TICKS,
   LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
+  LEVEL_XP_BASE,
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
@@ -1546,23 +1547,24 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // tas serait etale. La, chacun meurt a quelques pixels de son point
     // d'apparition.
     const tas = { x: depart.x + 150, y: depart.y };
-    // Seuils solo : 10 pour le niveau 2, 20 pour le niveau 3 — trente orbes
-    // empoches d'un seul tick franchissent donc DEUX seuils d'un coup.
+    // Seuils solo : le passage du niveau `n` au suivant coute
+    // `LEVEL_XP_BASE * n`, soit 10 puis 20 puis 30 — donc 30 d'experience d'un
+    // seul tick franchissent DEUX seuils, et 60 en franchiraient trois.
     //
-    // ⚠️ On en amasse SOIXANTE, pas trente. Le tas s'etale sur une douzaine de
-    // pixels — un monstre vit entre quatre et huit ticks selon la phase du tir,
-    // et derive vers le joueur pendant ce temps — donc le joueur qui arrive
-    // dessus n'en ramasse d'abord qu'une partie. Mesure : `+4`, `+4`, puis
-    // `+34` d'un coup. Trente orbes ne donnaient que dix-neuf au tick decisif,
-    // soit un seul niveau, et ce test ne prouvait plus rien.
+    // ⚠️ **Le tas est ramasse d'UN SEUL coup depuis la tache 19** (voir la note
+    // dans la boucle ci-dessous), donc son total est exactement ce que
+    // `#gainXp` recoit : il doit tenir STRICTEMENT entre les deux bornes.
+    // Trop peu, un seul niveau tombe et le test ne prouve plus rien ; trop, un
+    // troisieme etalage s'ouvre derriere les deux observes et le monde ne rend
+    // jamais la main a la derniere assertion. Les deux moities sont gardees
+    // juste en dessous plutot que laissees a la lecture — ce decor s'est deja
+    // trompe deux fois de cote.
     //
     // ⚠️ **Derive de `XP_PER_ORB` depuis la tache 17**, jamais un nombre pose a
-    // cote : chaque orbe vaut desormais `XP_PER_ORB` au lieu de 1, donc un tas
-    // de soixante en donnerait quatre fois trop et une demi-douzaine de niveaux
-    // resteraient en attente derriere les deux que ce test observe — le monde
-    // ne reprendrait jamais la main a la derniere assertion. Ce qui compte ici
-    // est l'EXPERIENCE amassee, et elle est la meme qu'avant.
-    const ORBES = 60 / XP_PER_ORB;
+    // cote : chaque orbe vaut `XP_PER_ORB` et non 1.
+    const ORBES = 10;
+    expect(ORBES * XP_PER_ORB).toBeGreaterThanOrEqual(LEVEL_XP_BASE * (1 + 2));
+    expect(ORBES * XP_PER_ORB).toBeLessThan(LEVEL_XP_BASE * (1 + 2 + 3));
     let morts = 0;
     let ticks = 0;
     let waveId = 1000;
@@ -1580,6 +1582,25 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       aimAtNearestMonster(room, 1, ticks + 1);
       room.step(DT);
       ticks++;
+      // ⚠️ **Le monstre est REPOSE sur le tas a chaque tick, et ce n'est pas
+      // de la coquetterie de decor.** Il marche vers le joueur tant qu'il vit,
+      // donc l'etalement du tas etait une fonction de sa DUREE DE VIE, elle
+      // meme une fonction de `cooldownTicks` : le tas s'etalait sur une
+      // douzaine de pixels a 7 ticks de recharge, le joueur en ramassait
+      // trente-quatre d'un coup, et deux niveaux tombaient ensemble. La tache
+      // 19 a porte la dague a 4 ticks — le monstre meurt plus tot, le tas se
+      // pose autrement, le joueur n'en ramasse plus que cinq au tick decisif
+      // et ce test ne voyait plus qu'UN niveau. Onzieme « fixture qui masque »
+      // du depot : le decor mesurait la cadence sans le dire.
+      //
+      // Repose ici, la derive d'un cadavre est bornee a UN tick de marche quoi
+      // que vaille la cadence, donc les quinze orbes tiennent dans le rayon de
+      // ramassage et le test observe ce qu'il pretend observer.
+      const slot = room.horde.slotOf(courant);
+      if (slot >= 0) {
+        room.horde.x[slot] = tas.x;
+        room.horde.y[slot] = tas.y;
+      }
       for (const lot of room.drainDeaths()) {
         morts += lot.ids.length;
       }
@@ -1624,11 +1645,11 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       room.step(DT);
     }
     expect(positionOf(room, 1)).not.toEqual(positionGelee);
-    // ⚠️ On ne verifie PAS qu'aucun troisieme etalage ne s'ouvre ensuite, et
-    // une premiere version de ce test le faisait a tort : une douzaine d'orbes
-    // restent au sol apres les deux niveaux, le joueur les ramasse des qu'il
-    // reprend la main, et un troisieme draft s'ouvre — c'est le jeu qui marche,
-    // pas un defaut.
+    // ⚠️ On ne verifie PAS qu'aucun troisieme etalage ne s'ouvre ensuite : rien
+    // ici n'interdit au generateur de vagues de nourrir un troisieme niveau
+    // plus tard, et une premiere version de ce test l'a paye. Ce qui est
+    // garde, c'est que le monde REPREND la main — donc qu'aucun etalage ne
+    // reste ouvert derriere les deux observes.
   });
 
   it('la reprise apres le draft est progressive, pas un retour brutal a pleine vitesse', () => {

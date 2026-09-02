@@ -351,8 +351,8 @@ describe('ProjectileRenderer.draw — la portee se voit', () => {
 /**
  * ⚠️ **Le poste de cout de la tache 12**, et le §4.3 de l'orientation est
  * explicite : *« le danger est le VFX, pas les sprites »*. `PROJECTILE_CAPACITY`
- * vaut 1024, et une trainee de N segments multiplierait les quads par N — a
- * six segments, 6 144 quads. La borne est **de construction** : la trainee est
+ * vaut 2048, et une trainee de N segments multiplierait les quads par N — a
+ * six segments, 12 288 quads. La borne est **de construction** : la trainee est
  * UN quad etire, jamais une file de segments. Ces cas la mesurent au lieu de
  * l'esperer, comme la tache 4 a du compter ses zones (368 la ou « quelques
  * dizaines » etaient budgetees).

@@ -2,10 +2,13 @@ import { describe, expect, it } from 'vitest';
 
 import { TICK_HZ } from './constants';
 import { ELEMENT, elementOf } from './elements';
+import { PASSIVES } from './passives';
 import {
   assertWeaponElements,
   assertWeaponLooks,
   BASE_WEAPON_ID,
+  cooldownWithBonus,
+  MAX_FIRE_RATE_BONUS,
   PROJECTILE_FADE_REFERENCE_TICKS,
   projectileAlpha,
   projectileTrailPx,
@@ -58,6 +61,61 @@ describe('WEAPONS', () => {
 
   it('cable au moins une arme a plusieurs projectiles, pour prouver que la forme tient', () => {
     expect(WEAPONS.some((w) => w.projectileCount > 1)).toBe(true);
+  });
+
+  /**
+   * L'autre extreme de la cadence (etape 6a, tache 19).
+   *
+   * ⚠️ **L'arme la plus rapide n'est PAS l'arme de base, et c'est ce qui a
+   * borne la main a la tache 19.** Accelerer tout du meme facteur amenait la
+   * dague a 4 ticks et le lance-flammes a 3 ; les deux valeurs ont ete posees a
+   * la main precisement pour que la dague ne devienne pas l'arme la plus rapide
+   * du catalogue. Une dague plus rapide que le lance-flammes retirerait a
+   * celui-ci sa seule raison d'exister — *« cadence tres rapide, courte
+   * portee »* — et rendrait l'arme gratuite meilleure que la carte.
+   */
+  it("l'arme la plus rapide est unique, et ce n'est jamais l'arme de base", () => {
+    const cadenceMin = Math.min(...WEAPONS.map((w) => w.cooldownTicks));
+    expect(WEAPONS.filter((w) => w.cooldownTicks === cadenceMin).length).toBe(1);
+    expect(weaponOf(BASE_WEAPON_ID).cooldownTicks).toBeGreaterThan(cadenceMin);
+  });
+
+  /**
+   * ⚠️ **LE garde-fou de la tache 19, et il porte sur le PASSIF, pas sur les
+   * armes.** `cooldownWithBonus` arrondit et plafonne : plus une arme est
+   * rapide, moins il reste de marches a la carte « cadence » avant qu'elle ne
+   * change plus rien. A 4 ticks le passif garde huit cartes utiles ; a 2 ticks
+   * il n'en garde plus que quatre, et *« le passif cesserait de servir »*.
+   * C'est ce qui a arrete l'acceleration au facteur 0,60 alors que le banc
+   * continuait de rendre un peu plus de morts en dessous.
+   *
+   * Six cartes du meme passif, c'est deja six montees de niveau depensees sur
+   * une seule ligne — au-dela, plus rien ne se joue de toute facon (le plafond
+   * `MAX_FIRE_RATE_BONUS` mord vers la dixieme).
+   */
+  it('laisse au moins six cartes de cadence utiles sur chaque arme', () => {
+    const cadence = PASSIVES.find((p) => p.kind === 'fireRate');
+    expect(cadence).toBeDefined();
+    const magnitude = cadence?.magnitude ?? 0;
+    expect(magnitude).toBeGreaterThan(0);
+    // La derniere carte qui puisse encore compter : au-dela, le plafond fige
+    // la recharge quoi qu'on prenne.
+    const plancher = (base: number): number => cooldownWithBonus(base, MAX_FIRE_RATE_BONUS);
+
+    for (const w of WEAPONS) {
+      const minimum = plancher(w.cooldownTicks);
+      let utiles = 0;
+      // Le nombre de cartes qu'il faut pour atteindre le minimum : au-dela, la
+      // carte suivante ne retire plus rien.
+      for (
+        let cartes = 0;
+        cooldownWithBonus(w.cooldownTicks, magnitude * cartes) > minimum;
+        cartes++
+      ) {
+        utiles = cartes + 1;
+      }
+      expect(utiles, `arme « ${w.name} » (${w.cooldownTicks} ticks)`).toBeGreaterThanOrEqual(6);
+    }
   });
 });
 

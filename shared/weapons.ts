@@ -81,7 +81,14 @@ export interface ProjectileLook {
 export interface Weapon {
   id: number;
   name: string;
-  /** Cadence de tir, en ticks. */
+  /**
+   * Cadence de tir, en ticks.
+   *
+   * ⚠️ **C'est une donnee de la table, arme par arme — jamais un facteur
+   * global** (etape 6a, tache 19). La cadence est l'un des rares axes qui
+   * distinguent les neuf armes entre elles ; le releve qui a fixe les valeurs
+   * actuelles est en tete de `WEAPON_DEFS`.
+   */
   cooldownTicks: number;
   /** Degats par projectile. */
   damage: number;
@@ -158,6 +165,58 @@ export interface Weapon {
  * les joueurs qui ne veulent pas jouer le systeme »* (§6.3 de l'orientation) —
  * et une seule explose : dans les deux cas c'est la ligne ABSENTE qui est le
  * cas courant, et l'exception se lit d'un coup d'oeil.
+ *
+ * ---
+ *
+ * **LES CADENCES, etape 6a tache 19** — *« ameliore la cadence des armes »*.
+ *
+ * ⚠️ **MESURE AVANT DE REGLER, et la mesure a dit « ce levier sature ».** Banc
+ * `kills` (4 joueurs immobiles, 60 s, 12 graines), un facteur applique a TOUTES
+ * les cadences, deux decors : l'arme neutre seule, et quatre armes draftees en
+ * plus (`arsenal plein`).
+ *
+ * | Facteur | Dague | morts/s (dague seule) | rapport | morts/s (arsenal) | rapport | projectiles (pic) |
+ * | --- | --- | --- | --- | --- | --- | --- |
+ * | 1 (avant) | 7 | 2,58 | **0,41** | 2,82 | **0,45** | 68 |
+ * | 0,85 | 6 | 2,64 | 0,42 | 2,92 | 0,46 | 84 |
+ * | 0,70 | 5 | 2,70 | 0,43 | 2,97 | 0,47 | 88 |
+ * | **0,60 (retenu)** | **4** | **2,77** | **0,44** | **3,01** | **0,47** | **96** |
+ * | 0,50 | 4 | 2,77 | 0,44 | 3,04 | 0,48 | 100 |
+ * | 0,35 | 2 | 2,99 | 0,48 | 3,52 | 0,52 | 152 |
+ * | 0,25 | 2 | 2,99 | 0,48 | 3,61 | 0,53 | 208 |
+ * | 0,125 (temoin absurde) | 1 | 3,20 | **0,49** | 3,87 | **0,56** | 296 |
+ *
+ * ⚠️ **La cadence n'est PAS linéaire, et elle sature bien avant d'etre
+ * gratuite** : huit fois plus de tirs ne rendent que +24 % de morts. Le temoin
+ * a un tick est a la cadence ce que le rayon de 400 px etait a l'arme de zone
+ * (tache 16) — un absurde qui ne referme pas l'ecart. Ce que le releve dit,
+ * c'est que le facteur limitant n'est ni les degats ni la cadence mais **la
+ * VISEE** : les tirs partent tous dans une direction, et un second tir parti au
+ * meme instant vers le meme point traverse la zone que le premier vient de
+ * vider. Signale, pas tranche ici.
+ *
+ * **Le facteur 0,60 est le genou de la courbe** : en-dessous, le gain
+ * (0,44 -> 0,48) se paie sur `cooldownWithBonus`. A cadence 4, le passif
+ * « cadence » garde quatre valeurs distinctes et reste utile jusqu'a la 8e
+ * carte ; a cadence 2, il n'en garde que deux et meurt a la 4e. **Les deux
+ * armes les plus rapides sont donc bornees a la main** au lieu de suivre le
+ * facteur, et c'est exactement pourquoi la cadence reste une donnee par arme.
+ *
+ * | Arme | Avant | Apres | Rapport | Pourquoi cette valeur-la |
+ * | --- | --- | --- | --- | --- |
+ * | lance-flammes | 5 | **3** | ×0,60 | la plus rapide du catalogue, et elle le reste ; on ne descend pas a 2, ou le passif mourrait en quatre cartes |
+ * | dague | 7 | **4** | ×0,57 | l'arme toujours en main : c'est elle que le releve suit. 4 est le plus bas qui garde huit cartes de cadence utiles |
+ * | fleches-jumelles | 20 | **12** | ×0,60 | le Givre « rapide » ; entretient ses marques deux fois plus vite pour la reaction d'un allie |
+ * | chakram | 35 | **21** | ×0,60 | milieu de gamme, la reference des armes voisines : elle suit le facteur, sinon elle cesse d'etre une reference |
+ * | sceptre-arcanique | 40 | **24** | ×0,60 | le Givre « de placement » ; reste plus lent que les fleches-jumelles |
+ * | eventail | 45 | **27** | ×0,60 | la Braise « large » ; reste l'extreme lent face au lance-flammes |
+ * | canon-a-mitraille | 50 | **30** | ×0,60 | huit projectiles a la fois : la salve doit rester un evenement |
+ * | arc-lourd | 60 | **36** | ×0,60 | cadence lente, degats eleves ; reste le second plus lent |
+ * | grenade | 75 | **45** | ×0,60 | *« la cadence de la grenade »* que la tache 16 designait ; reste **strictement** la plus lente et la plus forte (un test le garde) |
+ *
+ * ⚠️ **L'ORDRE des neuf cadences est inchange, et les neuf valeurs restent
+ * distinctes.** C'est ce qui fait qu'aucune arme n'a change de nature : la plus
+ * rapide est toujours le lance-flammes, la plus lente toujours la grenade.
  */
 const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
   element?: number;
@@ -181,7 +240,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // jamais voler la vedette aux huit autres, d'ou le blanc bleute et le halo
     // le plus discret du catalogue.
     look: { shape: 'lame', diameterPx: 10, tint: 0xeaf2ff, glow: 0.3, trailTicks: 1 },
-    cooldownTicks: 7,
+    cooldownTicks: 4,
     damage: 5,
     projectileSpeed: 650,
     projectileLifeTicks: 28,
@@ -202,7 +261,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // elle aussi, part sur un vert franc pour qu'on ne confonde jamais les
     // deux (voir `assertWeaponLooks`).
     look: { shape: 'petale', diameterPx: 11, tint: 0xffc23d, glow: 0.45, trailTicks: 1 },
-    cooldownTicks: 45,
+    cooldownTicks: 27,
     damage: 4,
     projectileSpeed: 420,
     projectileLifeTicks: 12,
@@ -219,7 +278,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // `PROJECTILE_FADE_REFERENCE_TICKS`, donc `projectileAlpha` le laisse a
     // pleine opacite jusqu'au bout. « Il file net », par derivation.
     look: { shape: 'fleche', diameterPx: 17, tint: 0x9a5cff, glow: 0.25, trailTicks: 1.6 },
-    cooldownTicks: 60,
+    cooldownTicks: 36,
     damage: 25,
     projectileSpeed: 900,
     projectileLifeTicks: 40,
@@ -251,7 +310,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // portee — c'est ce que l'auteur voyait manquer en jouant. Halo le plus
     // fort, trainee la plus courte : tout se passe au contact.
     look: { shape: 'flamme', diameterPx: 13, tint: 0xff4d2e, glow: 0.7, trailTicks: 1 },
-    cooldownTicks: 5,
+    cooldownTicks: 3,
     damage: 3,
     projectileSpeed: 300,
     projectileLifeTicks: 10,
@@ -301,7 +360,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // ticks de recharge doit se voir partir. Vert franc face a l'ambre de
     // l'eventail — les deux armes de Braise ne se ressemblent pas.
     look: { shape: 'sphere', diameterPx: 18, tint: 0x39d97a, glow: 0.55, trailTicks: 1.5 },
-    cooldownTicks: 75,
+    cooldownTicks: 45,
     damage: 40,
     projectileSpeed: 350,
     projectileLifeTicks: 45,
@@ -316,7 +375,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Anneau magenta : la seule forme creuse du catalogue, pour une arme dont
     // le nom EST un disque perce.
     look: { shape: 'anneau', diameterPx: 14, tint: 0xff45c8, glow: 0.35, trailTicks: 1.5 },
-    cooldownTicks: 35,
+    cooldownTicks: 21,
     damage: 12,
     projectileSpeed: 500,
     projectileLifeTicks: 35,
@@ -335,7 +394,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // turquoise du sceptre — les deux armes de Givre ne se ressemblent pas, et
     // ni l'une ni l'autre ne porte le bleu de l'element (0x7ad8ff).
     look: { shape: 'aiguille', diameterPx: 9, tint: 0x2f6bff, glow: 0.3, trailTicks: 1.5 },
-    cooldownTicks: 20,
+    cooldownTicks: 12,
     damage: 7,
     projectileSpeed: 600,
     projectileLifeTicks: 25,
@@ -350,7 +409,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Grain citron, le plus petit du catalogue et la plus courte trainee (un
     // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
     look: { shape: 'grain', diameterPx: 7, tint: 0xd6f22b, glow: 0.25, trailTicks: 0.5 },
-    cooldownTicks: 50,
+    cooldownTicks: 30,
     damage: 6,
     projectileSpeed: 550,
     projectileLifeTicks: 8,
@@ -368,7 +427,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Eclat turquoise a fort halo : l'arme « de placement » du Givre se vise,
     // donc elle se suit des yeux.
     look: { shape: 'eclat', diameterPx: 12, tint: 0x28e6d0, glow: 0.6, trailTicks: 1.5 },
-    cooldownTicks: 40,
+    cooldownTicks: 24,
     damage: 10,
     projectileSpeed: 480,
     projectileLifeTicks: 30,

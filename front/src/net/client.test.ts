@@ -2219,12 +2219,20 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const TICKS = 70;
     run(client, socket, TICKS, [{ id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0 }]);
 
-    const dague = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).length;
+    const dague = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).map((c) => c[1]);
     const grenade = spy.mock.calls.filter((c) => c[0].id === GRENADE).length;
 
-    // La dague (7 ticks) tire a sa propre cadence, pas a celle de la grenade
-    // (75 ticks) : sur 70 ticks, dix salves — une seule si elle etait bridee.
-    expect(dague).toBe(Math.floor((TICKS - 1) / weaponOf(BASE_WEAPON_ID).cooldownTicks) + 1);
+    // ⚠️ **On lit les INTERVALLES, pas un compte.** Ce test comptait les
+    // salves et les comparait a `floor((TICKS - 1) / cadence) + 1`, une formule
+    // qui suppose que la premiere salve part au tick 1 — elle part au tick 2,
+    // et les deux comptes coincidaient par hasard a 7 ticks de recharge. La
+    // tache 19 a porte la dague a 4 ticks : le hasard tenait encore ici, plus
+    // au test voisin (les cartes de cadence). Un decor qui ne survit pas a un
+    // reglage de table est un decor qui mesurait autre chose.
+    expect(dague.length).toBeGreaterThan(1);
+    for (let i = 1; i < dague.length; i++) {
+      expect((dague[i] ?? 0) - (dague[i - 1] ?? 0)).toBe(weaponOf(BASE_WEAPON_ID).cooldownTicks);
+    }
     // Et la grenade tire au moins une fois : c'est l'autre moitie du piege.
     expect(grenade).toBeGreaterThanOrEqual(1);
   });
@@ -2272,7 +2280,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   it('les passifs de cadence empiles accelerent le tir AFFICHE', () => {
     // Le serveur applique `cooldownWithBonus` a chaque tir (tache 8) ; le
     // client doit lire LA MEME fonction, pas la cadence brute du catalogue.
-    // Trois cartes : `round(7 * 0.76) = 5`, un pas visible malgre l'arrondi
+    // Trois cartes : `round(4 * 0.76) = 3`, un pas visible malgre l'arrondi
     // qui avale les deux premieres (R9 du registre).
     const CARTES = 3;
     const { client, socket } = setup(1);
@@ -2290,8 +2298,13 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const base = weaponOf(BASE_WEAPON_ID);
     const attendue = cooldownWithBonus(base.cooldownTicks, passiveOf(CADENCE).magnitude * CARTES);
     expect(attendue).toBeLessThan(base.cooldownTicks);
-    const salves = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).length;
-    expect(salves).toBe(Math.floor((TICKS - 1) / attendue) + 1);
+    // ⚠️ L'INTERVALLE entre deux salves, jamais leur compte : voir la note du
+    // test « chaque arme a SA recharge » juste au-dessus.
+    const salves = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).map((c) => c[1]);
+    expect(salves.length).toBeGreaterThan(1);
+    for (let i = 1; i < salves.length; i++) {
+      expect((salves[i] ?? 0) - (salves[i - 1] ?? 0)).toBe(attendue);
+    }
   });
 
   it('les passifs de degats empiles voyagent avec le projectile affiche', () => {

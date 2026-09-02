@@ -415,31 +415,39 @@ export const SPREAD_BONUS = 3;
  * projectile et **le plafond de `WEAPON_SLOTS` armes ne borne plus rien** :
  * c'est le nombre d'EXEMPLAIRES qui commande, et lui n'a pas de plafond.
  *
- * ⚠️ **Remesure a la tache 19**, quand `WEAPON_SLOTS` est passe de 5 a 4 : les
- * chiffres du tableau precedent avaient ete releves a cinq slots et sont
- * devenus faux d'un cinquieme. Quatre joueurs, arsenal plein, sans horde (donc
+ * ⚠️ **Remesuree DEUX fois** : a la tache 19 de l'etape 4, quand `WEAPON_SLOTS`
+ * est passe de 5 a 4, puis a la tache 19 de l'etape 6a, quand les cadences du
+ * catalogue ont ete accelerees. Quatre joueurs, arsenal plein, sans horde (donc
  * sans collision pour vider le reservoir) :
  *
- * | Exemplaires par arme | Cartes d'armes | A quatre joueurs |
- * | --- | --- | --- |
- * | 1 | 4 | 68 |
- * | 4 | 16 | 128 |
- * | 8 | 32 | 208 |
- * | 16 | 64 | 368 |
- * | 32 | 128 | 688 |
- * | 48 | 192 | **1008** |
+ * | Exemplaires par arme | Cartes d'armes | Avant la tache 19 | **Apres** |
+ * | --- | --- | --- | --- |
+ * | 1 | 4 | 68 | **96** |
+ * | 4 | 16 | 128 | **180** |
+ * | 8 | 32 | 208 | **292** |
+ * | 16 | 64 | 368 | **516** |
+ * | 32 | 128 | 688 | **888** |
+ * | 48 | 192 | 1008 | **~1 412** (extrapole : la courbe est affine, +28 par
+ *   exemplaire contre +20 avant) |
  *
- * 1024 couvre donc une cinquantaine d'exemplaires par arme (a 56, le reservoir
- * tronque). Ce n'est qu'un plafond : il coute de la memoire (huit tableaux
- * types, ~50 ko par salon), jamais du temps — c'est le nombre de projectiles
- * VIVANTS qui coute, pas la capacite.
+ * ⚠️ **C'est le budget que la cadence touche en premier, et il a fallu le
+ * relever.** Le reservoir tient `salvoCount × ceil(vie / cadence)` projectiles
+ * par arme : accelerer d'un facteur 0,60 multiplie donc le produit par ~1,4, et
+ * 1024 ne couvrait plus qu'une VINGTAINE d'exemplaires par arme au lieu d'une
+ * cinquantaine — a 32 exemplaires, 436 salves partaient deja a la poubelle en
+ * silence. 2048 rend la marge d'avant (une cinquantaine d'exemplaires, soit
+ * ~200 cartes d'armes sur une run).
+ *
+ * Ce n'est qu'un plafond : il coute de la memoire (huit tableaux types,
+ * ~100 ko par salon), jamais du temps — c'est le nombre de projectiles VIVANTS
+ * qui coute, pas la capacite.
  *
  * ⚠️ Vit dans `shared/` et pas dans `back/src/room.ts` : le client dimensionne
  * son propre reservoir sur la meme valeur, et deux copies divergeraient. Quand
  * elle est atteinte, `Projectiles.truncatedProjectiles` compte ce qui n'est pas
  * parti — une salve qui disparait en silence est une carte payee pour rien.
  */
-export const PROJECTILE_CAPACITY = 1024;
+export const PROJECTILE_CAPACITY = 2048;
 
 /**
  * Duree d'une marque elementaire sur un ennemi, en ticks (2 s a `TICK_HZ`) —

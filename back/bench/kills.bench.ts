@@ -19,15 +19,47 @@
  * menace la plus proche, le vrai `WaveDirector`, la vraie arme de base, les
  * vrais orbes. On compte les morts par seconde de jeu.
  *
+ * ⚠️ **DEUX DECORS depuis la tache 19, et le second existe parce que le
+ * premier ne mesurait qu'UNE arme.** Le banc pretendait mesurer « le pipeline
+ * reel » ; il ferme consciencieusement l'etalage a chaque montee de niveau
+ * *« sinon on mesure un monde GELE »*. Mesure : **aucun etalage ne s'ouvre
+ * jamais** — quatre joueurs immobiles ne ramassent pas dix orbes en 60 s
+ * (colonne « drafts », qui vaut 0 partout et le dit desormais a voix haute).
+ * Le banc mesurait donc la dague, et rien d'autre : faire varier la cadence des
+ * huit autres armes rendait des chiffres **au bit pres identiques** a ne rien
+ * changer du tout. Cinquieme occurrence du « banc qui rend zero » dans ce
+ * depot.
+ *
+ * Le decor « dague seule » est garde tel quel : c'est lui qui porte l'historique
+ * (0,49 avant la tache 16, 0,53 avec l'arme de zone, 0,41 apres la tache 18).
+ * Le decor « arsenal plein » donne aux quatre joueurs `WEAPON_SLOTS` armes du
+ * catalogue, comme `slots.bench.ts`, et c'est le seul des deux qui reponde a la
+ * question « la cadence DU CATALOGUE ».
+ *
  *   npm run bench:kills -w back
  */
 import { archetypeOf, HEAVY_HP } from '@shared/archetypes';
-import { TICK_HZ } from '@shared/constants';
+import { CARD } from '@shared/cards';
+import { TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { decodeSnapshot } from '@shared/protocol';
+import { BASE_WEAPON_ID, WEAPONS } from '@shared/weapons';
 
 import { Room } from '../src/room';
 
 const DT = 1 / TICK_HZ;
+
+/**
+ * Les deux decors mesures. `armes` est le nombre d'armes DRAFTEES donnees a
+ * chaque joueur en plus de l'arme neutre, qui vit hors des slots.
+ *
+ * ⚠️ Les armes se prennent dans le CATALOGUE, jamais par indice recopie — meme
+ * raison qu'a `slots.bench.ts` : un `refId` en dur meurt au premier changement
+ * de `WEAPON_SLOTS`.
+ */
+const DECORS = [
+  { nom: 'dague seule', armes: 0 },
+  { nom: 'arsenal plein', armes: WEAPON_SLOTS },
+] as const;
 
 /** Duree mesuree, en secondes de jeu. */
 const SECONDES = 60;
@@ -85,13 +117,44 @@ interface Mesure {
    */
   orbesMax: number;
   orbesTronques: number;
+  /**
+   * Salves qu'une file de projectiles pleine a refusees, et pic de projectiles
+   * vivants (etape 6a, tache 19).
+   *
+   * ⚠️ **La cadence est le levier de premier ordre de ces deux nombres** :
+   * `PROJECTILE_CAPACITY` est dimensionnee sur
+   * `salvoCount × ceil(vie / cadence)`, donc diviser la cadence par deux double
+   * le produit. Sans ce releve, une acceleration du catalogue pourrait tronquer
+   * des salves en silence — une carte payee pour rien.
+   */
+  projectilesMax: number;
+  projectilesTronques: number;
+  /**
+   * Etalages ouverts pendant la fenetre mesuree.
+   *
+   * ⚠️ **Il vaut ZERO, et c'est precisement pourquoi il est ici.** Le banc
+   * ferme les etalages pour ne pas mesurer un monde gele ; ce compteur dit si
+   * ce garde-fou a jamais servi. Tant qu'il affiche 0, aucun joueur ne monte de
+   * niveau dans la fenetre, donc AUCUNE arme draftee ni AUCUN passif n'entre
+   * dans la mesure — d'ou le decor « arsenal plein ». Un zero affiche est une
+   * mesure ; un zero tu est un banc qui ment.
+   */
+  drafts: number;
 }
 
-function unEssai(seed: number): Mesure {
+function unEssai(seed: number, armes: number): Mesure {
   const room = new Room(seed);
   const joueurs = [1, 2, 3, 4];
   for (const id of joueurs) {
     room.join(id);
+  }
+  const arsenal = WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID)
+    .slice(0, armes)
+    .map((w) => w.id);
+  for (const id of joueurs) {
+    for (const arme of arsenal) {
+      room.grantCard(id, { nature: CARD.WEAPON, refId: arme });
+    }
   }
   // Positions de naissance, relevees une fois : les joueurs ne bougent pas.
   const snap = positions(room);
@@ -100,6 +163,8 @@ function unEssai(seed: number): Mesure {
   let apparitions = 0;
   let premiereMort = -1;
   let orbesMax = 0;
+  let projectilesMax = 0;
+  let drafts = 0;
   const ticks = SECONDES * TICK_HZ;
   for (let t = 0; t < ticks; t++) {
     for (let k = 0; k < joueurs.length; k++) {
@@ -121,6 +186,7 @@ function unEssai(seed: number): Mesure {
     // lignes, la moitie de la fenetre mesuree ne tue rien du tout, et le banc
     // repondrait a une autre question que celle posee.
     for (const ouverture of room.drainDraftOpens()) {
+      drafts++;
       const cartes = ouverture.cards.length;
       for (let k = 0; k < joueurs.length && cartes > 0; k++) {
         room.setDraftToken(joueurs[k] ?? 0, k % cartes);
@@ -132,6 +198,9 @@ function unEssai(seed: number): Mesure {
     }
     if (room.orbCount > orbesMax) {
       orbesMax = room.orbCount;
+    }
+    if (room.projectileCount > projectilesMax) {
+      projectilesMax = room.projectileCount;
     }
   }
   let lourds = 0;
@@ -148,6 +217,9 @@ function unEssai(seed: number): Mesure {
     premiereMort,
     orbesMax,
     orbesTronques: room.orbesTronquees,
+    projectilesMax,
+    projectilesTronques: room.projectilesTronques,
+    drafts,
   };
 }
 
@@ -159,23 +231,25 @@ function positions(room: Room): { x: number; y: number }[] {
   return buf ? decodeSnapshot(buf).players.map((p) => ({ x: p.x, y: p.y })) : [];
 }
 
-function main(): void {
-  console.log(
-    `Banc du rythme de mise a mort — 4 joueurs immobiles, ${SECONDES} s de jeu, ` +
-      `${GRAINES.length} graines de carte.\n`,
-  );
-
+function unDecor(nom: string, armes: number): void {
+  console.log(`\n=== Decor « ${nom} » — ${armes + 1} arme(s) par joueur ===`);
   const lignes: Record<string, unknown>[] = [];
   let totalMorts = 0;
   let totalApparitions = 0;
   let orbesMax = 0;
   let orbesTronques = 0;
+  let projectilesMax = 0;
+  let projectilesTronques = 0;
+  let drafts = 0;
   for (const seed of GRAINES) {
-    const m = unEssai(seed);
+    const m = unEssai(seed, armes);
     totalMorts += m.morts;
     totalApparitions += m.apparitions;
     orbesMax = Math.max(orbesMax, m.orbesMax);
     orbesTronques += m.orbesTronques;
+    projectilesMax = Math.max(projectilesMax, m.projectilesMax);
+    projectilesTronques += m.projectilesTronques;
+    drafts += m.drafts;
     lignes.push({
       graine: `0x${seed.toString(16)}`,
       'morts/s': +(m.morts / SECONDES).toFixed(2),
@@ -185,19 +259,34 @@ function main(): void {
       'fin de run (tick)': m.premiereMort < 0 ? '—' : m.premiereMort,
       'orbes au sol (pic)': m.orbesMax,
       'orbes tronques': m.orbesTronques,
+      'projectiles (pic)': m.projectilesMax,
+      drafts: m.drafts,
     });
   }
   console.table(lignes);
 
   const mortsParSeconde = totalMorts / (SECONDES * GRAINES.length);
   const apparitionsParSeconde = totalApparitions / (SECONDES * GRAINES.length);
-  console.log(`-> Rythme de mise a mort : ${mortsParSeconde.toFixed(2)} morts/s`);
-  console.log(`-> Apparitions           : ${apparitionsParSeconde.toFixed(2)} /s`);
+  console.log(`-> [${nom}] Rythme de mise a mort : ${mortsParSeconde.toFixed(2)} morts/s`);
+  console.log(`-> [${nom}] Apparitions           : ${apparitionsParSeconde.toFixed(2)} /s`);
   console.log(
-    `-> Rapport morts/apparitions : ${(mortsParSeconde / Math.max(1e-9, apparitionsParSeconde)).toFixed(2)}`,
+    `-> [${nom}] Rapport morts/apparitions : ${(mortsParSeconde / Math.max(1e-9, apparitionsParSeconde)).toFixed(2)}`,
   );
-  console.log(`-> Orbes au sol, pic toutes graines : ${orbesMax}`);
-  console.log(`-> Orbes tronques (capacite pleine) : ${orbesTronques}`);
+  console.log(`-> [${nom}] Orbes au sol, pic : ${orbesMax} — tronques : ${orbesTronques}`);
+  console.log(
+    `-> [${nom}] Projectiles vivants, pic : ${projectilesMax} — salves tronquees : ${projectilesTronques}`,
+  );
+  console.log(`-> [${nom}] Etalages ouverts : ${drafts}`);
+}
+
+function main(): void {
+  console.log(
+    `Banc du rythme de mise a mort — 4 joueurs immobiles, ${SECONDES} s de jeu, ` +
+      `${GRAINES.length} graines de carte.`,
+  );
+  for (const decor of DECORS) {
+    unDecor(decor.nom, decor.armes);
+  }
 }
 
 main();

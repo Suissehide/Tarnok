@@ -20,6 +20,36 @@
  * | avec `palierHp`, boss pas encore reel | 41,3 s | 63,5 s | **0/40** |
  * | + le boss reel a 6 000 PV (tache 3) | 40,8 s | 60,0 s | **3/40** |
  * | **+ les PV par joueur (tache 3 bis, 1 500 PV en solo)** | **40,8 s** | **60,0 s** | **3/40** |
+ * | apres la tache 18 (les vagues baissent, la horde encercle) | 42,0 s | 45,3 s | **4/40** |
+ * | **+ les cadences accelerees (tache 19)** | **42,5 s** | **45,7 s** | **19/40** |
+ *
+ * ⚠️ **LA TACHE 19 DEGRADE CE RELEVE, ET SA CAUSE EST MESUREE — ce n'est PAS
+ * la cadence.** Le plan attendait l'inverse (*« une cadence plus rapide devrait
+ * l'ameliorer — si elle l'aggrave, c'est qu'on a casse autre chose »*). L'autre
+ * chose existe, elle est ancienne, et elle n'a rien a voir avec le tir : **une
+ * arme plus forte tue PLUS LOIN, et le butin reste ou l'ennemi tombe.** Meme
+ * decor qu'ici, dix graines, 45 s, un joueur immobile :
+ *
+ * | Cadence de la dague | Morts | Distance moyenne de mort | Ramassages | Orbes restes au sol |
+ * | --- | --- | --- | --- | --- |
+ * | 7 (avant) | 692 | 298 px | **27** | 162 |
+ * | 5 | 759 | 326 px | 22 | 189 |
+ * | **4 (apres)** | **797** | **341 px** | **15** | **205** |
+ *
+ * Le joueur tue 15 % de plus et ramasse 44 % de moins : les orbes tombent
+ * au-dela d'`ORB_PICKUP_RADIUS` (90 px) et **rien ne va les chercher** — il n'y
+ * a aucune aimantation de JEU, la capture de la tache 20 de l'etape 5a est un
+ * effet de rendu. Le releve ci-dessus est donc anti-correle a la puissance des
+ * armes tant que le joueur ne bouge pas : deja 9/40 a 6 ticks de recharge, soit
+ * −14 % de cadence.
+ *
+ * ⚠️ **La mediane ne bouge pas (42,0 -> 42,5 s), le MAXIMUM non plus (45,3 ->
+ * 45,7 s).** Les quinze pertes sont des graines ou le niveau 2 arrivait deja
+ * apres 45 s et ou la run se perd a 47-51 s : la queue de la distribution passe
+ * de l'autre cote d'une falaise fixee par le calendrier des vagues, pas un
+ * ralentissement general. **Signale, pas tranche ici** : ce qui se regle est le
+ * RAYON DE RAMASSAGE (ou une aimantation de jeu), pas la cadence, et cela
+ * appartient a l'auteur.
  *
  * ⚠️ **Les deux premieres lignes de boss n'ont PAS la meme cause que les
  * precedentes.** `palierHp` solde la marche de durabilite (1/40 -> 0/40, a boss
