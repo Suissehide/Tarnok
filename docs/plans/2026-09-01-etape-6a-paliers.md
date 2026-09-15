@@ -829,11 +829,11 @@ c'est deux fois plus d'occasions qu'un corps se trouve sur la ligne.
 
 **Fichiers :** créer ou étendre un test d'intégration dans `back/`
 
-- [ ] **Étape 1 : le harnais existe** — `back/src/draft.integration.test.ts` et
+- [x] **Étape 1 : le harnais existe** — `back/src/draft.integration.test.ts` et
   `elements.integration.test.ts`. Quatre vraies sockets, `app.rooms`, `buildServer({ roomSeed })`,
   monstres posés à la main. **Réutiliser, ne pas réinventer.**
 
-- [ ] **Étape 2 : ce que le test doit assener :**
+- [x] **Étape 2 : ce que le test doit assener :**
   - un palier **se termine** — le boss meurt ;
   - le portail **s'ouvre**, et les votes se **voient** ;
   - la majorité tranche, **et l'égalité continue** ;
@@ -845,7 +845,15 @@ c'est deux fois plus d'occasions qu'un corps se trouve sur la ligne.
   partir **et** être effacé. C'est la leçon de la Synergie à l'étape 5a : la moitié négative porte le
   sens.
 
-- [ ] **Étape 3 : commit** — `test(back): un palier se termine et le vote engage l'or`
+  ⚠️ **Les trois chiffres de réplication ne sont PAS mesurés dans ce test, et le plan se trompait en
+  le supposant.** Ils vivent dans `shared/horde.replication.test.ts` — scénario 9, scénario de
+  rattrapage, scénario C1 — qui tourne dans la même commande (`vitest run --root back`) et les
+  réimprime à chaque exécution : **0,000 px** les trois. Les remesurer ici serait une seconde mesure,
+  et elle serait fausse par construction : le décor balaie la horde par `Horde.kill`, hors du lot
+  `DEATHS`, donc un client qui dériverait sa horde du fil divergerait sans que le portail y soit pour
+  quoi que ce soit.
+
+- [x] **Étape 3 : commit** — `test(back): un palier se termine et le vote engage l'or`
 
 ---
 
