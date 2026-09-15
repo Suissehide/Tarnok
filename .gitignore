@@ -26,3 +26,6 @@ assets/tinyswords-derived/
 # Les deux maquettes ci-dessous embarquent des sprites du pack en base64.
 docs/maquettes/themes.html
 docs/maquettes/rendu.html
+
+# Dossiers d IDE, personnels a chaque poste.
+.idea/
