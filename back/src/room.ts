@@ -1,6 +1,7 @@
 import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import {
+  EXTRACT_MULTIPLIER_STEP,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   LEVEL_RESUME_TICKS,
@@ -19,10 +20,10 @@ import {
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
-import { bossHp, palierGold, palierHp } from '@shared/paliers';
+import { bossHp, extractGold, palierGold, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
-import { encodeSnapshot, OUTCOME, type PlayerSnapshot } from '@shared/protocol';
+import { encodeSnapshot, OUTCOME, type PlayerSnapshot, VOTE_CHOICE } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
 import type { WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
@@ -41,6 +42,7 @@ import {
   resolveProjectileDamage,
 } from './combat';
 import { Draft } from './draft';
+import { Portal } from './portal';
 import { WaveDirector } from './wave-director';
 
 /**
@@ -180,6 +182,23 @@ export interface DraftResultEvent {
   outcomes: readonly { playerId: number; cardIndex: number; outcome: number }[];
 }
 
+/**
+ * Un verdict de portail a diffuser, tel que `PORTAL_RESULT` le transporte.
+ *
+ * ⚠️ **`effectTick`, pas `deadlineTick`.** Le vote se ferme des que tout le
+ * monde a vote, donc n'importe quand entre l'ouverture et l'echeance : le
+ * client ne peut pas le deduire, et c'est la lecon R3 de l'etape 4, payee
+ * d'une tache. Voir `PortalResultMessage`.
+ *
+ * ⚠️ **`gold` est l'or ACQUIS si l'equipe part, l'or REPORTE si elle reste** —
+ * un seul champ, dont le sens se lit dans `decision`.
+ */
+export interface PortalResultEvent {
+  effectTick: number;
+  decision: number;
+  gold: number;
+}
+
 export interface LevelUpEvent {
   tick: number;
   level: number;
@@ -294,6 +313,35 @@ export class Room {
    * reproductibilite des tests, pas la convergence.
    */
   readonly #draftRng: () => number;
+  /**
+   * Le vote d'extraction en cours. `phase === 'closed'` : aucun portail ouvert.
+   *
+   * ⚠️ **Il n'est PAS le pendant de `#draft` dans `step`, et c'est toute la
+   * tache.** Un etalage ouvert fait revenir `step` immediatement : le monde
+   * est gele. Un portail ouvert ne fait revenir personne — la horde avance,
+   * les vagues tombent, le palier suivant approche. Le §6 de la spec en fait
+   * la difference structurante : *« le draft gele parce qu'un choix de carte
+   * n'a pas d'enjeu temporel ; le vote ne gele pas parce que le temps EST son
+   * enjeu »*.
+   */
+  readonly #portal = new Portal();
+  /** Echeances des portails ouverts depuis le dernier drainage. */
+  #pendingPortalOpens: number[] = [];
+  #pendingPortalResults: PortalResultEvent[] = [];
+  /**
+   * Le multiplicateur d'extraction : ce par quoi l'or non securise sera
+   * majore le jour ou l'equipe partira (§5).
+   *
+   * ⚠️ **Il part de 1, donc la premiere extraction n'ajoute rien** — elle
+   * ACQUIERT, ce qui est deja tout ce que le vote engage. Un depart au premier
+   * portail ne doit pas etre puni : ce que « rester » achete, c'est la majoration
+   * des paliers SUIVANTS, contre le risque de tout perdre.
+   *
+   * ⚠️ **Il ne redescend jamais, et rien ne le remet a zero** — il n'y a rien
+   * apres l'extraction : la run se termine. La persistance de l'or entre les
+   * runs est l'etape 7 (§1.3).
+   */
+  #extractMultiplier = 1;
   /** Niveaux gagnes dont le draft n'a pas encore eu lieu. */
   #pendingLevels = 0;
   #pendingDraftOpens: DraftOpenEvent[] = [];
@@ -478,6 +526,64 @@ export class Room {
     const out = this.#pendingDraftResults;
     this.#pendingDraftResults = [];
     return out;
+  }
+
+  /**
+   * Les echeances des portails ouverts depuis le dernier drainage — une par
+   * boss vaincu.
+   */
+  drainPortalOpens(): number[] {
+    const out = this.#pendingPortalOpens;
+    this.#pendingPortalOpens = [];
+    return out;
+  }
+
+  /** Les verdicts rendus depuis le dernier drainage. */
+  drainPortalResults(): PortalResultEvent[] {
+    const out = this.#pendingPortalResults;
+    this.#pendingPortalResults = [];
+    return out;
+  }
+
+  /**
+   * Qui a vote quoi, silencieux compris. Vide hors vote.
+   *
+   * ⚠️ **Les silencieux en font partie, a la difference des jetons du draft.**
+   * Le §6 veut qu'on voie *qui n'a pas encore tranche* : c'est la matiere de la
+   * negociation. Voir `Portal#votes`.
+   */
+  portalVotes(): ReadonlyMap<number, number> {
+    return this.#portal.votes();
+  }
+
+  /**
+   * Enregistre le vote d'un joueur, ou le retire (`NO_VOTE`). Rend `false` si
+   * le geste est refuse.
+   *
+   * ⚠️ **Aucun garde sur les points de vie ICI, et c'est la regle, pas un
+   * oubli** : tout joueur connecte vote, **mort ou vif** (§6). Le §9.3 dit que
+   * la mort d'un seul ne coute rien — elle ne coute donc pas la voix non plus.
+   */
+  setVote(playerId: number, choice: number): boolean {
+    return this.#portal.setVote(playerId, choice);
+  }
+
+  /** L'echeance du portail en cours. Voir `drainPortalOpens` pour la diffusion. */
+  get portalDeadlineTick(): number {
+    return this.#portal.deadlineTick;
+  }
+
+  /** Vrai tant que le vote d'extraction est ouvert. Le monde tourne quand meme. */
+  get portalOpen(): boolean {
+    return this.#portal.phase === 'open';
+  }
+
+  /**
+   * Le multiplicateur d'extraction courant (1 au depart). Voir
+   * `#extractMultiplier`.
+   */
+  get extractMultiplier(): number {
+    return this.#extractMultiplier;
   }
 
   /** Les intentions en cours : qui vise quoi. Vide hors draft. */
@@ -1008,6 +1114,17 @@ export class Room {
         // l'identite pourrait, elle, exister a nouveau.
         this.#charge = null;
         this.#director.bossDefeated();
+        // ⚠️ **Le portail s'ouvre ICI, a la MORT, pas a un tick** — au meme
+        // endroit et pour la meme raison que le bonus de palier deux lignes
+        // plus haut (§2 : le palier se termine a la mort du boss).
+        //
+        // ⚠️ **Et le palier suivant est DEJA ouvert quand le vote commence.**
+        // `bossDefeated()` vient de l'avancer, et ses vagues vont tomber
+        // pendant la fenetre : c'est exactement ce que le §6 veut. « Rester »
+        // n'ouvre donc rien — le monde ne s'est jamais arrete — il majore la
+        // mise ; « partir » termine la run.
+        this.#portal.open(this.#tick, [...this.#players.keys()]);
+        this.#pendingPortalOpens.push(this.#portal.deadlineTick);
       }
     }
 
@@ -1047,6 +1164,19 @@ export class Room {
     }
 
     this.#checkRunOver();
+    // ⚠️ **APRES `#checkRunOver`, et SANS garde de fin de run.** Les deux
+    // chemins peuvent tomber sur le meme tick — l'equipe est effacee pendant
+    // que le portail tranche — et cet ordre est ce qui les rend compatibles
+    // sans une ligne de plus : l'effacement a deja ramene la cagnotte a
+    // `WIPE_GOLD_KEPT`, donc un « partir » resolu juste apres majore zero et
+    // annonce zero, ce que le snapshot du meme tick dit aussi. Un garde
+    // `if (#runOver) return` serait exact, mais il couvrirait un chemin que
+    // celui-ci rend deja inoffensif — enieme occurrence des deux gardes qui se
+    // couvrent, soldee comme les autres par une absence de code.
+    //
+    // ⚠️ **Et ce n'est PAS un retour anticipe.** Rien au-dessus de cette ligne
+    // ne consulte le portail : le monde a tourne tout entier pendant le vote.
+    this.#stepPortal();
   }
 
   snapshot(out: Outbox): void {
@@ -1437,6 +1567,48 @@ export class Room {
   }
 
   /**
+   * Fait avancer le vote d'un tick, et applique son verdict quand il tombe.
+   *
+   * ⚠️ **`decision === null` et « rester » sont tous deux faux en JS** :
+   * `VOTE_CHOICE.STAY` vaut zero parce que c'est la valeur par defaut du jeu,
+   * pas parce que c'est une absence. Comparer a `null`, jamais tester la
+   * verite du retour.
+   *
+   * ⚠️ **Partir reutilise `RUN_OVER`, il n'invente pas une seconde fin de
+   * run.** Le message existe depuis l'etape 3 et `#endRun` est le seul endroit
+   * qui le met en file : une extraction et un effacement se terminent par le
+   * meme evenement, et le client n'a pas deux fins a distinguer. Ce qui les
+   * distingue, c'est l'OR — acquis d'un cote, perdu de l'autre — et il voyage
+   * dans le `SNAPSHOT` a chaque tick.
+   */
+  #stepPortal(): void {
+    const decision = this.#portal.step(this.#tick);
+    if (decision === null) {
+      return;
+    }
+    if (decision === VOTE_CHOICE.LEAVE) {
+      // ⚠️ **La seule ligne de tout le fichier qui MAJORE l'or**, et elle
+      // passe par `extractGold` plutot que par une multiplication ecrite ici :
+      // la borne du fil (`GOLD_MAX`) et l'arrondi vivent avec la formule, pas
+      // a cote d'elle. Voir `shared/paliers.ts`.
+      this.#gold = extractGold(this.#gold, this.#extractMultiplier);
+      this.#endRun();
+    } else {
+      // Rester ne touche pas a la cagnotte : elle reste NON SECURISEE, et
+      // c'est tout le risque du §5. Ce qui monte, c'est ce qu'elle vaudra si
+      // l'equipe va au bout du palier suivant.
+      this.#extractMultiplier += EXTRACT_MULTIPLIER_STEP;
+    }
+    this.#pendingPortalResults.push({
+      effectTick: this.#tick,
+      decision,
+      // Un seul champ pour deux sens : l'or ACQUIS si on part, l'or REPORTE si
+      // on reste. Deux champs en laisseraient toujours un a zero.
+      gold: this.#gold,
+    });
+  }
+
+  /**
    * Range une carte dans l'inventaire de son preneur, et applique ce qui en
    * decoule immediatement (les points de vie de « vitalite »).
    *
@@ -1572,7 +1744,6 @@ export class Room {
         return;
       }
     }
-    this.#runOver = true;
     // ⚠️ **La perte de l'or non securise vit ICI, sur cette seule ligne** (§5
     // de la spec). Ici, c'est-a-dire dans le chemin de l'EFFACEMENT DE
     // L'EQUIPE — la boucle ci-dessus n'arrive a cette ligne que si plus
@@ -1588,6 +1759,32 @@ export class Room {
     // L'arrondi garde l'or entier : c'est un compteur affiche, et c'est un
     // `u32` sur le fil (tache 7).
     this.#gold = Math.round(this.#gold * WIPE_GOLD_KEPT);
+    this.#endRun();
+  }
+
+  /**
+   * Termine la run : met `RUN_OVER` en file et arrete la simulation.
+   *
+   * **LE seul endroit qui termine une run, et il y a maintenant DEUX chemins
+   * pour y arriver** : l'equipe effacee (`#checkRunOver`) et l'equipe qui part
+   * par le portail (`#stepPortal`). Le second REUTILISE le message du premier
+   * — la tache 9 ne devait pas inventer une seconde fin de run, et le client
+   * n'a donc rien de neuf a apprendre pour savoir qu'une run s'arrete.
+   *
+   * ⚠️ **Toujours pas de garde « une seule fois » ici, et toujours pour la
+   * meme raison** : `step()` ne rappelle jamais ses appelants une fois
+   * `#runOver` vrai, son garde de tete rend cet appel inatteignable — verifie
+   * par mutation a l'etape 3. Le seul cas ou les deux chemins tombent sur le
+   * MEME tick ecrirait deux fois le meme evenement dans un champ unique, donc
+   * une seule fois sur le fil.
+   *
+   * ⚠️ **L'or n'est pas touche ici.** Chaque chemin a deja fait son compte
+   * avant d'appeler : `WIPE_GOLD_KEPT` d'un cote, `extractGold` de l'autre.
+   * C'est ce qui garde la ligne de la perte unique, la ou le §5 veut qu'une
+   * seconde bourse vienne un jour se brancher.
+   */
+  #endRun(): void {
+    this.#runOver = true;
     this.#pendingRunOver = {
       tick: this.#tick,
       survivedTicks: this.#tick,

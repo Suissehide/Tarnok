@@ -1,5 +1,6 @@
 import { BOSS_HP_PER_PLAYER, LIGHT_HP } from './archetypes';
 import { GOLD_PER_PALIER_BASE, PALIER_COUNT_SCALE, PALIER_HP_SCALE } from './constants';
+import { GOLD_MAX } from './protocol';
 
 /**
  * Les trois formules de difficulte du §9.2 de l'orientation, reprises au §3 de
@@ -220,4 +221,25 @@ export function bossHp(k: number, playerCount: number): number {
  */
 export function palierGold(k: number): number {
   return Math.round(GOLD_PER_PALIER_BASE * hpScale(k));
+}
+
+/**
+ * L'or **acquis** quand l'equipe part : la cagnotte non securisee, majoree du
+ * multiplicateur d'extraction (§5 de la spec de l'etape 6a).
+ *
+ * ⚠️ **Bornee par `GOLD_MAX`, la borne du FIL, et c'est ce qui la fait exister
+ * en tant que fonction.** `encodeSnapshot` et `encodePortalResult` bornent
+ * deja de leur cote ; si le salon ne bornait pas le sien, une cagnotte assez
+ * grosse ferait dire au serveur un nombre et au client un autre, sans que rien
+ * ne le signale. Ici, ce que `Room#gold` garde et ce que le fil transporte
+ * sont le meme nombre par construction — le test le verifie en faisant passer
+ * le resultat par l'encodeur.
+ *
+ * ⚠️ **L'arrondi, ici aussi** : l'or est un compteur affiche et un `u32` sur
+ * le fil. Un multiplicateur fractionnaire (`EXTRACT_MULTIPLIER_STEP` vaut
+ * 0,25) rendrait sinon une cagnotte a virgule que l'encodeur arrondirait
+ * seul — deux arrondis pour un seul nombre, donc deux verites.
+ */
+export function extractGold(gold: number, multiplier: number): number {
+  return Math.min(GOLD_MAX, Math.round(gold * multiplier));
 }

@@ -1,16 +1,19 @@
 import type { AddressInfo } from 'node:net';
 import { CARD } from '@shared/cards';
-import { SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
+import { PORTAL_WINDOW_TICKS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
   encodeInput,
+  encodeVote,
   type Message,
   MSG,
+  NO_VOTE,
   packElementPair,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
   type SnapshotMessage,
+  VOTE_CHOICE,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS } from '@shared/weapons';
@@ -438,4 +441,136 @@ describe('la charge du boss sur le fil (etape 6a, tache 5 bis)', () => {
     expect(msg.length).toBeGreaterThan(0);
     expect(msg.width).toBeGreaterThan(0);
   }, 20_000);
+});
+
+/**
+ * Etape 6a, tache 9 — **le portail sur le fil**.
+ *
+ * ⚠️ **La ligne de diffusion est l'angle mort de ce depot** : `REACTION` et
+ * `BOSS_CHARGE` sont toutes deux passees sans test, et la dette « S1/S3 » du
+ * registre disait deja la meme chose du draft. Trois lignes naissent ici —
+ * l'ouverture, les votes, le verdict — et une quatrieme recoit le vote. Les
+ * quatre sont mutees sur le disque a l'ecriture de ce test, et les quatre font
+ * rougir ce fichier.
+ *
+ * La PREUVE ne passe que par la socket : ce sont les messages decodes qui sont
+ * interroges, jamais `room.drainPortalOpens()`.
+ */
+describe('le portail sur le fil (etape 6a, tache 9)', () => {
+  it('diffuse l ouverture AVANT le snapshot qui en decoule, les votes, puis le verdict', async () => {
+    const code = await createRoomCode();
+    const { ws, playerId } = await connect(code);
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('salon introuvable');
+    }
+
+    // Tout ce qui arrive, DANS L'ORDRE : c'est l'ordre lui-meme qu'on
+    // interroge a la fin.
+    const recus: Message[] = [];
+    ws.on('message', (data: ArrayBuffer) => {
+      recus.push(decode(data));
+    });
+
+    /** Ne laisse vivre que le boss : on mesure une diffusion, pas une melee. */
+    const balayer = (): void => {
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        const id = room.horde.entityIdAt(i);
+        if (id !== room.bossEntityId) {
+          ids.push(id);
+        }
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+    };
+
+    // ⚠️ **Le salon est avance DEPUIS LE TEST**, en plus de la boucle du
+    // serveur : atteindre un boss demande quatre vagues, soit une trentaine de
+    // secondes d'horloge murale. Meme technique qu'a la tache 5 bis.
+    for (let t = 0; t < 120 * TICK_HZ && room.bossEntityId === null; t++) {
+      room.step(1 / TICK_HZ);
+      balayer();
+    }
+    const bossId = room.bossEntityId;
+    expect(bossId).not.toBeNull();
+
+    // ⚠️ **Rendre la main au serveur, sinon l'ordre teste plus bas n'existe
+    // pas.** Les boucles ci-dessus bloquent la boucle d'evenements : sans
+    // cette pause, AUCUNE diffusion n'aurait lieu tant que le boss est vivant,
+    // et « l'ouverture precede le snapshot sans boss » se lirait d'une suite
+    // de messages ou aucun snapshot n'aurait jamais porte de boss.
+    await new Promise((r) => setTimeout(r, 120));
+    expect(recus.some((m) => m.type === MSG.SNAPSHOT && m.boss !== null)).toBe(true);
+
+    // Le boss tombe par le chemin de mort normal du salon : sa reserve est
+    // ramenee a un coup, il est tenu a portee, et le joueur vise.
+    const avant = room.palier;
+    const slot = room.horde.slotOf(bossId ?? -1);
+    room.horde.hp[slot] = 1;
+    const moi = await nextSnapshot(ws, (m) => m.players.length > 0);
+    const pos = moi.players.find((p) => p.id === playerId) ?? { x: 0, y: 0 };
+    for (let t = 0; t < 30 * TICK_HZ && room.palier === avant; t++) {
+      const s = room.horde.slotOf(bossId ?? -1);
+      if (s >= 0) {
+        room.horde.x[s] = pos.x + 100;
+        room.horde.y[s] = pos.y;
+      }
+      balayer();
+      room.applyInput(playerId, 20_000 + room.tick, 0, 0, 127, 0);
+      room.step(1 / TICK_HZ);
+    }
+    expect(room.palier).toBe(avant + 1);
+    const tickMort = room.tick;
+
+    // --- 1. L'ouverture arrive, datee.
+    const open = await nextMessage(ws, (m) => m.type === MSG.PORTAL_OPEN, 10_000);
+    if (open.type !== MSG.PORTAL_OPEN) {
+      throw new Error('PORTAL_OPEN attendu');
+    }
+    expect(open.deadlineTick).toBe(tickMort + PORTAL_WINDOW_TICKS);
+
+    // --- 2. Les votes partent en continu, silencieux compris.
+    const votes = await nextMessage(ws, (m) => m.type === MSG.VOTES, 10_000);
+    if (votes.type !== MSG.VOTES) {
+      throw new Error('VOTES attendu');
+    }
+    // ⚠️ **On ne negocie pas un choix qu'on ne voit pas** (§6) : le silence
+    // circule, sinon personne ne sait qui n'a pas encore tranche.
+    expect(votes.votes).toEqual([{ playerId, choice: NO_VOTE }]);
+
+    // --- 3. Le vote remonte par la socket, et le verdict redescend par elle.
+    ws.send(encodeVote(VOTE_CHOICE.LEAVE));
+    const verdict = await nextMessage(ws, (m) => m.type === MSG.PORTAL_RESULT, 10_000);
+    if (verdict.type !== MSG.PORTAL_RESULT) {
+      throw new Error('PORTAL_RESULT attendu');
+    }
+    expect(verdict.decision).toBe(VOTE_CHOICE.LEAVE);
+    expect(verdict.effectTick).toBeGreaterThanOrEqual(tickMort);
+    // L'or ACQUIS, celui-la meme que le salon garde.
+    expect(verdict.gold).toBe(room.gold);
+    expect(verdict.gold).toBeGreaterThan(0);
+
+    // --- 4. L'ORDRE : l'evenement precede l'etat qui en decoule.
+    //
+    // ⚠️ **C'est la seule assertion du depot qui garde la POSITION du bloc du
+    // portail dans `#broadcast`.** Le dernier snapshot a porter un boss, puis
+    // l'ouverture, puis le premier snapshot sans boss : deplacer le bloc apres
+    // l'envoi du snapshot inverse les deux dernieres lignes, et rien d'autre
+    // ne s'en apercevrait. Un client doit connaitre l'evenement avant de voir
+    // l'etat qui en decoule (§3.1 / §6.1 / §6.2).
+    const indexOuverture = recus.findIndex((m) => m.type === MSG.PORTAL_OPEN);
+    const dernierAvecBoss = recus.reduce(
+      (acc, m, i) => (m.type === MSG.SNAPSHOT && m.boss !== null ? i : acc),
+      -1,
+    );
+    const premierSansBoss = recus.findIndex(
+      (m, i) => i > dernierAvecBoss && m.type === MSG.SNAPSHOT && m.boss === null,
+    );
+    expect(dernierAvecBoss).toBeGreaterThanOrEqual(0);
+    expect(premierSansBoss).toBeGreaterThan(dernierAvecBoss);
+    expect(indexOuverture).toBeGreaterThan(dernierAvecBoss);
+    expect(indexOuverture).toBeLessThan(premierSansBoss);
+  }, 40_000);
 });

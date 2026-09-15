@@ -2,12 +2,14 @@ import { describe, expect, it } from 'vitest';
 
 import { ARCHETYPES, BOSS_HP_PER_PLAYER, HEAVY_HP, LIGHT_HP } from './archetypes';
 import {
+  EXTRACT_MULTIPLIER_STEP,
   GOLD_PER_PALIER_BASE,
   MAX_PLAYERS,
   PALIER_COUNT_SCALE,
   PALIER_HP_SCALE,
 } from './constants';
-import { bossHp, hpScale, palierGold, palierHp, waveCountScale } from './paliers';
+import { bossHp, extractGold, hpScale, palierGold, palierHp, waveCountScale } from './paliers';
+import { decodeSnapshot, encodeSnapshot, GOLD_MAX } from './protocol';
 import { weaponOf } from './weapons';
 
 /**
@@ -260,5 +262,49 @@ describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
     for (let k = 0; k <= PALIERS; k++) {
       expect(bossHp(k, 1) / bossHp(0, 1)).toBeCloseTo(hpScale(k), 10);
     }
+  });
+});
+
+describe("extractGold : l'or acquis en partant (etape 6a, tache 9)", () => {
+  it('ne majore rien a la premiere extraction : le multiplicateur part de 1', () => {
+    expect(extractGold(1234, 1)).toBe(1234);
+  });
+
+  it('majore de ce que « rester » a ajoute, et le pas n est pas plat', () => {
+    // ⚠️ **La fixture doit produire un ecart.** A pas nul, la ligne ci-dessus
+    // et celle-ci rendraient le meme nombre et « le multiplicateur majore »
+    // se lirait d'un multiplicateur qui ne fait rien.
+    expect(EXTRACT_MULTIPLIER_STEP).toBeGreaterThan(0);
+    expect(extractGold(1000, 1 + EXTRACT_MULTIPLIER_STEP)).toBeGreaterThan(extractGold(1000, 1));
+    expect(extractGold(1000, 1 + EXTRACT_MULTIPLIER_STEP)).toBe(
+      Math.round(1000 * (1 + EXTRACT_MULTIPLIER_STEP)),
+    );
+  });
+
+  it('rend un ENTIER : un multiplicateur fractionnaire ne laisse pas de virgule', () => {
+    // Sans l'arrondi ici, l'encodeur arrondirait seul : deux arrondis pour un
+    // seul nombre, donc `Room#gold` et le fil qui divergent d'une unite.
+    const or = extractGold(101, 1.25);
+    expect(Number.isInteger(or)).toBe(true);
+    expect(or).toBe(126);
+  });
+
+  /**
+   * ⚠️ **La borne est celle du FIL, et c'est la seule chose qui la garde.**
+   * `GOLD_MAX` est le plafond du `u32` que `SNAPSHOT` et `PORTAL_RESULT`
+   * transportent : sans le `Math.min`, le salon garderait un nombre que le fil
+   * borne, et le serveur dirait une chose pendant que tous ses clients en
+   * afficheraient une autre — sans qu'aucune erreur ne se produise nulle part.
+   */
+  it("borne l'or acquis a ce que le fil sait porter, et les deux se relisent pareil", () => {
+    const enorme = GOLD_MAX * 4;
+    expect(extractGold(enorme, 2)).toBe(GOLD_MAX);
+
+    const acquis = extractGold(enorme, 2);
+    expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, acquis)).gold).toBe(acquis);
+
+    // Et la borne n'est pas atteinte par accident : sous le plafond, elle ne
+    // touche a rien.
+    expect(extractGold(GOLD_MAX / 4, 2)).toBe(Math.round(GOLD_MAX / 2));
   });
 });

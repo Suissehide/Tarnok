@@ -10,8 +10,11 @@ import {
   encodeDraftResult,
   encodeLevelUp,
   encodePickups,
+  encodePortalOpen,
+  encodePortalResult,
   encodeReaction,
   encodeRunOver,
+  encodeVotes,
   encodeWaveOrder,
   encodeWelcome,
   encodeZone,
@@ -171,6 +174,13 @@ class Session {
       // et le client le verra a la prochaine diffusion des intentions. Aucun
       // client ne decide de quoi que ce soit ici (§7.2).
       this.room.setDraftToken(id, msg.cardIndex);
+      return;
+    }
+    if (msg.type === MSG.VOTE) {
+      // Meme discipline que le jeton : le client PROPOSE, le salon arbitre. Un
+      // vote refuse — portail ferme, choix inconnu — n'est simplement pas
+      // enregistre, et le client le verra a la prochaine diffusion des votes.
+      this.room.setVote(id, msg.choice);
     }
   }
 
@@ -246,6 +256,28 @@ class Session {
     }
     for (const res of this.room.drainDraftResults()) {
       this.#send(encodeDraftResult(res.deadlineTick, res.outcomes));
+    }
+
+    // Le portail, dans le meme ordre que le draft : l'ouverture, les votes en
+    // continu, puis le verdict — et tout cela AVANT le snapshot du meme tick.
+    //
+    // ⚠️ **Rien de tout ceci n'annonce un gel**, a la difference de
+    // `DRAFT_OPEN` : le monde continue de tourner pendant le vote (§6 de la
+    // spec de l'etape 6a). Le snapshot qui suit, ce tick-ci et les six cents
+    // suivants, montre une horde qui avance.
+    for (const deadlineTick of this.room.drainPortalOpens()) {
+      this.#send(encodePortalOpen(deadlineTick));
+    }
+    const votes = this.room.portalVotes();
+    if (votes.size > 0) {
+      // ⚠️ **La visibilite EST la mecanique** (§6, et §7.2 de l'etape 4 pour
+      // les jetons) : on ne negocie pas un choix qu'on ne voit pas. Les
+      // silencieux en font partie — `NO_VOTE` circule ici pour qu'on voie qui
+      // n'a pas encore tranche.
+      this.#send(encodeVotes([...votes].map(([playerId, choice]) => ({ playerId, choice }))));
+    }
+    for (const res of this.room.drainPortalResults()) {
+      this.#send(encodePortalResult(res.effectTick, res.decision, res.gold));
     }
 
     this.#outbox.buffers.length = 0;

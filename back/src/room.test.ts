@@ -14,6 +14,7 @@ import {
 import { CARD, type Card } from '@shared/cards';
 import {
   COIN_DROP_ONE_IN,
+  EXTRACT_MULTIPLIER_STEP,
   FIELD_INPUT_DELAY_TICKS,
   LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
@@ -24,6 +25,7 @@ import {
   ORB_DROP_ONE_IN,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
+  PORTAL_WINDOW_TICKS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SYNERGY_MAX,
@@ -38,15 +40,17 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
-import { bossHp, hpScale, palierGold, palierHp } from '@shared/paliers';
+import { bossHp, extractGold, hpScale, palierGold, palierHp } from '@shared/paliers';
 import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
   decodeSnapshot,
+  NO_VOTE,
   OUTCOME,
   packElementPair,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
+  VOTE_CHOICE,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -4219,4 +4223,305 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
     expect(WIPE_GOLD_KEPT).toBeLessThan(1);
     expect(room.gold).toBe(Math.round(gagne * WIPE_GOLD_KEPT));
   }, 60_000);
+});
+
+describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
+  /** Vide la horde de tout sauf les identites `garder`. */
+  function viderSauf(room: Room, garder: readonly (number | null)[]): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      const id = room.horde.entityIdAt(i);
+      if (!garder.includes(id)) {
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  /** Un tick, files de diffusion videes — sauf celles du portail, qu'on mesure. */
+  function pas(room: Room): void {
+    room.step(DT);
+    room.drainWaveOrders();
+    room.drainDeaths();
+    room.drainBossCharges();
+    room.drainPickups();
+    room.drainZones();
+    room.drainReactions();
+  }
+
+  /**
+   * Tue le boss du palier courant **par le chemin de mort normal du salon** et
+   * rend le tick de sa mort.
+   *
+   * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor** — meme raison
+   * qu'aux taches 2 et 6 : ce qui est mesure ici est le PORTAIL, pas une DPS.
+   *
+   * ⚠️ **La horde est videe a chaque tick**, sans quoi ce decor mesurerait la
+   * survie d'un joueur immobile sous quatre vagues : il finirait en `RUN_OVER`
+   * et aucun boss ne tomberait jamais.
+   *
+   * ⚠️ **Il assene au passage que RIEN n'ouvre le portail avant la mort.** Un
+   * portail ouvert par un tick, par un ordre de vague ou par l'apparition du
+   * boss ferait rougir cette boucle-la, pas le test qui suit.
+   *
+   * ⚠️ **`tireur` n'est pas un confort** : le boss est pose a cote de lui et
+   * c'est lui qui vise, donc il doit etre VIVANT. Le test du joueur mort tue
+   * le joueur 1 avant le boss — le laisser tirer ferait mourir le boss de
+   * vieillesse, et le decor mesurerait une fin de run au lieu d'un vote.
+   */
+  function tuerLeBoss(room: Room, tireur = 1): number {
+    const k = room.palier;
+    for (let t = 0; t < 90 * TICK_HZ && room.bossEntityId === null; t++) {
+      viderSauf(room, [room.bossEntityId]);
+      expect(room.portalOpen).toBe(false);
+      pas(room);
+    }
+    const bossId = room.bossEntityId;
+    expect(bossId).not.toBeNull();
+
+    const ancre = positionOf(room, tireur);
+    const slotAffaibli = room.horde.slotOf(bossId ?? -1);
+    expect(slotAffaibli).toBeGreaterThanOrEqual(0);
+    room.horde.hp[slotAffaibli] = 1;
+
+    for (let t = 0; t < 30 * TICK_HZ && room.palier === k; t++) {
+      const slot = room.horde.slotOf(bossId ?? -1);
+      if (slot >= 0) {
+        room.horde.x[slot] = ancre.x + 100;
+        room.horde.y[slot] = ancre.y;
+      }
+      viderSauf(room, [bossId]);
+      expect(room.portalOpen).toBe(false);
+      // ⚠️ **`20_000 + tick`, pas `40_000 + tick`** : `isNewer` compare sur
+      // seize bits, et une premiere sequence au-dela de 0x8000 est vue comme
+      // ANCIENNE face au `lastSeq` de 0 d'un joueur qui vient d'arriver. Toutes
+      // les visees etaient alors rejetees, le joueur ne tirait pas, et le boss
+      // ne mourait jamais — un decor qui ne peut pas produire ce qu'il pretend
+      // produire, pris en trente minutes.
+      aimAtNearestMonster(room, tireur, 20_000 + room.tick);
+      pas(room);
+    }
+
+    expect(room.palier).toBe(k + 1);
+    return room.tick;
+  }
+
+  it('ouvre le portail A LA MORT du boss, pour vingt secondes, et une seule fois', () => {
+    const room = new Room(4242);
+    room.join(1);
+
+    const tickMort = tuerLeBoss(room);
+
+    expect(room.portalOpen).toBe(true);
+    expect(room.drainPortalOpens()).toEqual([tickMort + PORTAL_WINDOW_TICKS]);
+    // ⚠️ Une seule annonce par portail : le second drainage est vide, sans quoi
+    // le client recevrait une ouverture a chaque tick pendant vingt secondes.
+    expect(room.drainPortalOpens()).toEqual([]);
+    expect(room.portalDeadlineTick).toBe(tickMort + PORTAL_WINDOW_TICKS);
+    // Le verdict, lui, n'est pas encore tombe : personne n'a vote.
+    expect(room.drainPortalResults()).toEqual([]);
+  }, 60_000);
+
+  it('montre les votes en continu, silencieux compris, et les oublie apres le verdict', () => {
+    const room = new Room(4242);
+    room.join(1);
+    room.join(2);
+    tuerLeBoss(room);
+
+    // ⚠️ **La visibilite EST la mecanique** (§6) : les deux joueurs figurent
+    // dans la table des l'ouverture, avant d'avoir tranche quoi que ce soit.
+    // On ne negocie pas un choix qu'on ne voit pas, et « qui n'a pas encore
+    // vote » fait partie de ce qu'il faut voir.
+    expect([...room.portalVotes()].sort()).toEqual([
+      [1, NO_VOTE],
+      [2, NO_VOTE],
+    ]);
+
+    expect(room.setVote(1, VOTE_CHOICE.LEAVE)).toBe(true);
+    expect(room.portalVotes().get(1)).toBe(VOTE_CHOICE.LEAVE);
+    expect(room.portalVotes().get(2)).toBe(NO_VOTE);
+
+    room.setVote(2, VOTE_CHOICE.LEAVE);
+    pas(room);
+    // Le portail ferme : plus rien a rediffuser, sinon le vote du palier
+    // precedent reviendrait a chaque tick jusqu'au suivant.
+    expect(room.portalVotes().size).toBe(0);
+  }, 60_000);
+
+  it('LE MONDE NE S ARRETE PAS : la horde avance et le joueur bouge pendant le vote', () => {
+    // ⚠️ **LE test de cette tache, et la mutation qu'il existe pour tuer** : la
+    // machinerie du gel est la, juste au-dessus dans `Room#step`, et elle
+    // marche. Un `if (portail ouvert) { #stepPortal(); return; }` calque sur
+    // celui du draft rendrait ce test rouge — et c'est le seul qui rougirait.
+    // Le §6 : *« le draft gele parce qu'un choix de carte n'a pas d'enjeu
+    // temporel ; le vote ne gele pas parce que le temps EST son enjeu »*.
+    const room = new Room(4242);
+    room.join(1);
+    tuerLeBoss(room);
+    expect(room.portalOpen).toBe(true);
+
+    const joueurAvant = positionOf(room, 1);
+    const suiveur = spawnMonsterAt(room, 8100, joueurAvant.x + 900, joueurAvant.y);
+    const distance = (): number => {
+      const slot = room.horde.slotOf(suiveur);
+      expect(slot).toBeGreaterThanOrEqual(0);
+      const p = positionOf(room, 1);
+      return Math.hypot((room.horde.x[slot] ?? 0) - p.x, (room.horde.y[slot] ?? 0) - p.y);
+    };
+    const depart = distance();
+    const tickAvant = room.tick;
+
+    for (let t = 0; t < 3 * TICK_HZ; t++) {
+      viderSauf(room, [suiveur]);
+      // Increvable : ce qui est mesure est un DEPLACEMENT, pas une mise a mort
+      // — et le tir automatique du joueur part tout seul.
+      room.horde.hp[room.horde.slotOf(suiveur)] = 1e6;
+      // Le joueur, lui, marche vers la droite : un gel l'arreterait aussi.
+      room.applyInput(1, 20_000 + room.tick, 127, 0);
+      pas(room);
+    }
+
+    // Le vote court toujours : personne n'a tranche, l'echeance est loin.
+    expect(room.portalOpen).toBe(true);
+    expect(room.tick).toBe(tickAvant + 3 * TICK_HZ);
+
+    // ⚠️ **Les DEUX moities du monde qui tourne.** La horde se rapproche...
+    expect(distance()).toBeLessThan(depart - 100);
+    // ...et le joueur se deplace. Un gel arreterait les deux, et une seule des
+    // deux assertions laisserait la moitie de la mutation en vie.
+    expect(positionOf(room, 1).x).toBeGreaterThan(joueurAvant.x + 100);
+  }, 60_000);
+
+  it("PARTIR termine la run avec l'or ACQUIS, par le RUN_OVER de l'etape 3", () => {
+    const room = new Room(4242);
+    room.join(1);
+    tuerLeBoss(room);
+    room.drainPortalOpens();
+
+    const cagnotte = room.gold;
+    // La moitie positive ne prouve rien si la cagnotte est vide.
+    expect(cagnotte).toBeGreaterThan(0);
+    expect(room.drainRunOver()).toBeNull();
+
+    expect(room.setVote(1, VOTE_CHOICE.LEAVE)).toBe(true);
+    pas(room);
+
+    expect(room.drainPortalResults()).toEqual([
+      { effectTick: room.tick, decision: VOTE_CHOICE.LEAVE, gold: cagnotte },
+    ]);
+    const fin = room.drainRunOver();
+    expect(fin).not.toBeNull();
+    expect(fin?.tick).toBe(room.tick);
+
+    // ⚠️ **L'AUTRE moitie, et c'est elle qui porte le sens** : l'or acquis
+    // n'est pas l'or perdu. Le chemin de l'effacement multiplie par
+    // `WIPE_GOLD_KEPT` (tache 6) ; celui-ci ne retire rien. Sans la ligne
+    // ci-dessous, une extraction qui viderait la cagnotte passerait.
+    expect(WIPE_GOLD_KEPT).toBeLessThan(1);
+    expect(room.gold).toBe(cagnotte);
+
+    // ⚠️ **Une seule fin de run**, et le monde s'arrete pour de bon : c'est le
+    // garde de tete de `step`, celui-la meme que l'etape 3 avait pose.
+    const compteAvant = room.horde.count;
+    for (let t = 0; t < TICK_HZ; t++) {
+      pas(room);
+    }
+    expect(room.drainRunOver()).toBeNull();
+    expect(room.drainPortalResults()).toEqual([]);
+    expect(room.horde.count).toBe(compteAvant);
+  }, 60_000);
+
+  it('RESTER majore la mise du palier suivant, et la run continue', () => {
+    // ⚠️ **Le decor DOIT enchainer DEUX paliers.** Au premier portail, le
+    // multiplicateur vaut 1 : une extraction immediate rendrait exactement la
+    // cagnotte, et « l'or est majore » se lirait aussi bien d'un
+    // multiplicateur qui ne fait rien. C'est la fixture qui masque, prise a la
+    // source — la meme que la tache 6 a du eviter en tuant deux boss.
+    expect(EXTRACT_MULTIPLIER_STEP).toBeGreaterThan(0);
+
+    const room = new Room(4242);
+    room.join(1);
+    tuerLeBoss(room);
+    room.drainPortalOpens();
+
+    const apresLePremier = room.gold;
+    expect(room.extractMultiplier).toBe(1);
+
+    expect(room.setVote(1, VOTE_CHOICE.STAY)).toBe(true);
+    pas(room);
+
+    expect(room.drainPortalResults()).toEqual([
+      // L'or REPORTE, pas acquis : un seul champ, dont le sens se lit dans la
+      // decision.
+      { effectTick: room.tick, decision: VOTE_CHOICE.STAY, gold: apresLePremier },
+    ]);
+    expect(room.gold).toBe(apresLePremier);
+    expect(room.extractMultiplier).toBe(1 + EXTRACT_MULTIPLIER_STEP);
+    // La run continue : aucune fin, et le portail s'est referme.
+    expect(room.drainRunOver()).toBeNull();
+    expect(room.portalOpen).toBe(false);
+
+    // --- Le palier suivant, et l'extraction qui suit.
+    tuerLeBoss(room);
+    const cagnotte = room.gold;
+    expect(cagnotte).toBeGreaterThan(apresLePremier);
+
+    room.setVote(1, VOTE_CHOICE.LEAVE);
+    pas(room);
+
+    expect(room.gold).toBe(extractGold(cagnotte, 1 + EXTRACT_MULTIPLIER_STEP));
+    // Et la majoration se VOIT : sans elle, les deux nombres seraient egaux.
+    expect(room.gold).toBeGreaterThan(cagnotte);
+    expect(room.drainRunOver()).not.toBeNull();
+  }, 120_000);
+
+  it('un joueur MORT vote, et sa voix fait BASCULER le verdict', () => {
+    // ⚠️ **Le decor doit produire le cas qu'il pretend creer.** Deux joueurs
+    // vivants qui votent l'un contre l'autre : 1-1, egalite, on continue. La
+    // voix du MORT fait 2-1 pour partir. Toute autre repartition — le mort
+    // d'accord avec la majorite, ou deux joueurs seulement — rendrait le meme
+    // verdict avec et sans sa voix, et le test ne dirait rien.
+    const room = new Room(4242);
+    room.join(1);
+    room.join(2);
+    room.join(3);
+
+    // Le joueur 1 tombe AVANT le boss : il sera mort a l'ouverture du portail,
+    // et toujours dans le salon — le §6 dit « tout joueur connecte ».
+    const pos = positionOf(room, 1);
+    const bourreaux: number[] = [];
+    for (let i = 0; i < 25; i++) {
+      bourreaux.push(spawnMonsterAt(room, 9000 + i, pos.x, pos.y));
+    }
+    for (let t = 0; t < 60 * TICK_HZ && hpOf(room, 1) > 0; t++) {
+      viderSauf(room, bourreaux);
+      for (const id of bourreaux) {
+        const slot = room.horde.slotOf(id);
+        if (slot >= 0) {
+          room.horde.hp[slot] = 1e6;
+          room.horde.x[slot] = pos.x;
+          room.horde.y[slot] = pos.y;
+        }
+      }
+      pas(room);
+    }
+    expect(hpOf(room, 1)).toBe(0);
+    expect(hpOf(room, 2)).toBeGreaterThan(0);
+    viderSauf(room, []);
+
+    tuerLeBoss(room, 2);
+    expect(hpOf(room, 1)).toBe(0);
+
+    // Le mort vote, et les deux vivants s'annulent.
+    expect(room.setVote(1, VOTE_CHOICE.LEAVE)).toBe(true);
+    room.setVote(2, VOTE_CHOICE.LEAVE);
+    room.setVote(3, VOTE_CHOICE.STAY);
+    pas(room);
+
+    const verdicts = room.drainPortalResults();
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]?.decision).toBe(VOTE_CHOICE.LEAVE);
+  }, 120_000);
 });

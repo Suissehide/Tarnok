@@ -767,3 +767,25 @@ export const WIPE_GOLD_KEPT = 0;
  * le monde continue de tourner pendant toute cette fenetre. Voir `Room#step`.
  */
 export const PORTAL_WINDOW_TICKS = 600;
+
+/**
+ * Ce que « rester » ajoute au multiplicateur d'extraction, a chaque portail
+ * refuse (§5 de la spec de l'etape 6a). Le multiplicateur part de 1 : la
+ * premiere extraction ne majore rien, elle acquiert ce qui a ete ramasse.
+ *
+ * ⚠️ **Lineaire, et le §10 de la spec en fait une question ouverte** :
+ * *« trop plat, rester ne se justifie pas ; trop raide, partir tot devient
+ * absurde »*. C'est un reglage de playtest, pose ici comme la pente la plus
+ * simple a lire : quatre paliers de plus doublent la mise.
+ *
+ * ⚠️ **Ce n'est PAS la seule raison de rester, et c'est pour ca qu'il peut
+ * etre plat.** `palierGold` croit deja en `1,12^k` : une equipe qui reste
+ * gagne un bonus de palier plus gros ET un multiplicateur plus haut. Une
+ * pente exponentielle ici multiplierait deux courbes l'une par l'autre, et le
+ * reglage deviendrait illisible — le meme raisonnement que `palierGold`
+ * expose pour ne pas s'inventer une troisieme pente.
+ *
+ * ⚠️ **Il ne borne rien a lui seul** : c'est `GOLD_MAX`, la borne du fil, qui
+ * arrete l'or acquis (`extractGold`, `shared/paliers.ts`).
+ */
+export const EXTRACT_MULTIPLIER_STEP = 0.25;
