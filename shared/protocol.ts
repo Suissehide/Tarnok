@@ -386,14 +386,41 @@ export interface DraftResultMessage {
  * pas parce que le temps EST son enjeu »*. Ce message n'annonce donc pas un
  * gel, seulement une echeance.
  *
- * ⚠️ **Il ne porte NI l'or en jeu NI le multiplicateur, et c'est voulu.** Les
- * deux sont dans le `SNAPSHOT`, trente fois par seconde, parce qu'ils bougent
- * pendant la fenetre : la horde continue d'avancer, le palier suivant approche.
- * Les figer ici donnerait au client un chiffre perime des le tick suivant.
+ * ⚠️ **Il ne porte PAS l'or en jeu**, et c'est voulu : l'or est dans le
+ * `SNAPSHOT`, trente fois par seconde, parce qu'il BOUGE pendant la fenetre —
+ * la horde continue d'avancer, les monstres continuent de laisser des pieces
+ * (tache 14). Le figer ici donnerait au client un chiffre perime des le tick
+ * suivant.
+ *
+ * ⚠️ **Il porte le MULTIPLICATEUR, et la version precedente de ce commentaire
+ * se trompait deux fois en une phrase (tache 10).** Elle disait que le
+ * multiplicateur etait « dans le `SNAPSHOT` » : il n'y a jamais ete —
+ * `SNAPSHOT_HEADER_BYTES` porte `xp`, `synergy`, le boss et l'or, rien d'autre.
+ * Et elle disait qu'il « bouge pendant la fenetre » : il ne bouge pas. La seule
+ * ligne du jeu qui le change est dans `Room#stepPortal`, et elle s'execute
+ * APRES le verdict — donc au moment ou la fenetre se ferme, jamais pendant.
+ * C'est exactement le profil de `DRAFT_OPEN` : **une valeur constante sur toute
+ * la fenetre, donc annoncee une fois plutot que repetee**.
+ *
+ * ⚠️ **Et le client ne peut PAS le deviner.** Ni en le codant en dur (c'est un
+ * reglage, `EXTRACT_MULTIPLIER_STEP`), ni en comptant les portails qu'il a vus
+ * s'ouvrir : un client qui se connecte au palier 7 en a vu zero et se
+ * tromperait de 1,75. C'est la classe de bug que « annoncer une fois » existe
+ * pour eviter, et c'est ce qui rend l'annonce obligatoire ici.
  */
 export interface PortalOpenMessage {
   type: typeof MSG.PORTAL_OPEN;
   deadlineTick: number;
+  /**
+   * Le multiplicateur qui s'applique si l'equipe part MAINTENANT (1 au premier
+   * portail). Celui du portail SUIVANT s'en derive par
+   * `+ EXTRACT_MULTIPLIER_STEP`, constante partagee — inutile de porter les
+   * deux.
+   *
+   * Reconstruit a partir des centiemes transportes, donc a 0,01 pres : voir
+   * `EXTRACT_MULTIPLIER_SCALE`.
+   */
+  multiplier: number;
 }
 
 /**
@@ -642,8 +669,57 @@ export const OUTCOME = {
  */
 export const NO_TOKEN = 255;
 
-/** `type u8 · deadlineTick u32`. */
-export const PORTAL_OPEN_BYTES = 5;
+/**
+ * `type u8 · deadlineTick u32 · multiplicateur u16` (tache 10 : 5 -> 7).
+ *
+ * Les deux octets du multiplicateur partent **une fois par palier**, soit une
+ * fois toutes les ~5 minutes et par client. Il n'y a pas d'arbitrage de trafic
+ * a faire ici : c'est le prix d'un chiffre sans lequel l'ecran du vote ne peut
+ * afficher aucun des deux montants qu'il doit montrer.
+ */
+export const PORTAL_OPEN_BYTES = 7;
+
+/**
+ * Facteur de quantification du multiplicateur d'extraction : il voyage en
+ * CENTIEMES, dans un `u16`.
+ *
+ * ⚠️ **Vit ICI, avec le reste du cadrage binaire**, comme `CHARGE_DIR_SCALE`
+ * quelques lignes plus bas et pour la meme raison : c'est une propriete du FIL,
+ * celle qui decide de la resolution qu'un nombre conserve en traversant.
+ * `EXTRACT_MULTIPLIER_STEP` (0,25), lui, est un REGLAGE de jeu et reste dans
+ * `shared/constants.ts`.
+ *
+ * ⚠️ **Des centiemes, et pas un nombre de paliers restes.** L'encodage
+ * alternatif — un `u8` « k paliers restes », que le client remultiplierait par
+ * `EXTRACT_MULTIPLIER_STEP` — obligerait les deux cotes a refaire le MEME
+ * calcul a partir de la meme constante, donc a diverger le jour ou la pente
+ * cesse d'etre lineaire (le §10 de la spec en fait une question ouverte :
+ * *« trop plat, rester ne se justifie pas ; trop raide, partir tot devient
+ * absurde »*). Ici, le serveur dit la VALEUR qu'il applique ; le client ne
+ * recalcule rien.
+ *
+ * ⚠️ **ET LA BORNE A ETE CALCULEE, PAS DEVINEE** — quatrieme fois dans ce
+ * fichier, meme methode que pour `bossHp` et pour `gold`. Le multiplicateur
+ * vaut `1 + 0,25 k` apres `k` « rester » :
+ *
+ * | Largeur | Deborde au palier | Soit, a ~5 min par palier |
+ * | --- | --- | --- |
+ * | `u8` (2,55) | **7** | 35 min — **jamais tenable** |
+ * | **`u16` (655,35)** | **2 618** | **218 h** |
+ *
+ * ⚠️ **Le `u8` est refuse pour la raison qui a refuse les `u16` du boss et de
+ * l'or : le palier 7 est ATTEIGNABLE en une demi-heure.** Le `u16`, lui,
+ * deborde plus de vingt fois APRES l'or : `extractGold` sature `GOLD_MAX` des
+ * le palier 107 (voir `GOLD_MAX`), et le jeu a cesse d'etre jouable bien avant
+ * l'un comme l'autre. `encodePortalOpen` borne quand meme explicitement plutot
+ * que de laisser `setUint16` replier — un multiplicateur de 655,36 qui se
+ * relirait 0,00 ferait dire au client que partir ne rapporte rien, au moment
+ * exact ou il rapporte le plus. Un test le dit.
+ */
+export const EXTRACT_MULTIPLIER_SCALE = 100;
+
+/** Plus grande valeur que le multiplicateur peut porter. Voir `EXTRACT_MULTIPLIER_SCALE`. */
+export const EXTRACT_MULTIPLIER_MAX = 0xffff / EXTRACT_MULTIPLIER_SCALE;
 /** `type u8 · choice u8`. */
 export const VOTE_BYTES = 2;
 /** `type u8 · count u8`. */
@@ -1407,11 +1483,17 @@ export function encodeDraftResult(
  * spec). La vague suivante approche — c'est elle qui met la pression, et un
  * gel la supprimerait.
  */
-export function encodePortalOpen(deadlineTick: number): ArrayBuffer {
+export function encodePortalOpen(deadlineTick: number, multiplier: number): ArrayBuffer {
   const buf = new ArrayBuffer(PORTAL_OPEN_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.PORTAL_OPEN);
   v.setUint32(1, deadlineTick >>> 0, true);
+  // Borne et arrondi explicites, comme les PV du boss et l'or dans
+  // `encodeSnapshot` : sans la borne, `setUint16` replierait modulo 2^16 et un
+  // multiplicateur de 655,36 se relirait 0,00 — « partir ne rapporte rien » au
+  // moment ou partir rapporte le plus. Voir `EXTRACT_MULTIPLIER_SCALE`.
+  const cents = Math.round(multiplier * EXTRACT_MULTIPLIER_SCALE);
+  v.setUint16(5, Math.min(0xffff, Math.max(0, cents)), true);
   return buf;
 }
 
@@ -1472,7 +1554,11 @@ export function encodePortalResult(
 
 function decodePortalOpen(buf: ArrayBuffer): PortalOpenMessage {
   const v = viewOf(buf, PORTAL_OPEN_BYTES);
-  return { type: MSG.PORTAL_OPEN, deadlineTick: v.getUint32(1, true) };
+  return {
+    type: MSG.PORTAL_OPEN,
+    deadlineTick: v.getUint32(1, true),
+    multiplier: v.getUint16(5, true) / EXTRACT_MULTIPLIER_SCALE,
+  };
 }
 
 function decodeVote(buf: ArrayBuffer): VoteMessage {

@@ -63,6 +63,34 @@
           <span id="hud-timer"></span>
 
           <!--
+            Étape 6a, §5 : l'or NON SÉCURISÉ de l'équipe, visible en PERMANENCE.
+
+            ⚠️ **Pas seulement au moment du vote.** Le §5 fait de cette cagnotte
+            un enjeu qui se vit pendant tout un palier — cinq minutes pendant
+            lesquelles rien n'est acquis et où l'effacement de l'équipe fait
+            tout perdre. Un chiffre qu'on ne découvrirait qu'à l'ouverture du
+            portail se lirait comme un score de fin de manche, pas comme une
+            mise en jeu.
+
+            L'icône vient du pack (Tiny Swords, `UI Elements/…/Icon_03.png`,
+            une pièce) et est servie sous `/tinyswords/` comme tout le reste :
+            en développement par le middleware Vite, en production par le proxy
+            nginx vers MinIO. Rien de dérivé du pack n'entre dans le dépôt.
+            Le chemin porte des espaces — d'où le `%20`, que le middleware
+            décode (`decodeURIComponent`) et que nginx transmet tel quel.
+          -->
+          <span class="flex items-center gap-1">
+            <img
+              src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png"
+              alt=""
+              aria-hidden="true"
+              class="h-4 w-4 [image-rendering:pixelated]"
+            />
+            <b id="hud-gold">0</b>
+            <span class="text-[10px] tracking-[0.2em] text-forge-600">NON SÉCURISÉ</span>
+          </span>
+
+          <!--
             Étape 5a, §9 : la jauge de Synergie, « visible de tous ». C'est une
             ressource d'ÉQUIPE — le même nombre chez les quatre joueurs, porté
             par le snapshot à côté de l'expérience — et elle ne se remplit que
@@ -151,6 +179,34 @@
             <div id="draft-cards" class="flex flex-wrap justify-center gap-3"></div>
           </div>
         </div>
+      </div>
+
+      <!--
+        Tâche 10 : l'écran du vote d'extraction (§5 et §6 de la spec de
+        l'étape 6a).
+
+        ⚠️ **CE N'EST PAS UN MODALE, contrairement à `#draft` juste au-dessus.**
+        Le draft **gèle** le monde, donc il peut prendre l'écran entier ; le
+        vote ne gèle rien — *« le draft gèle parce qu'un choix de carte n'a pas
+        d'enjeu temporel ; le vote ne gèle pas parce que le temps EST son
+        enjeu »* (§6). Un voile plein écran cacherait la horde qui avance
+        pendant qu'on négocie, c'est-à-dire exactement la pression que la
+        fenêtre existe pour produire. D'où un bandeau en bas, `pointer-events`
+        rendus aux seuls boutons.
+
+        Le contenu (les deux faces, les deux montants, les votants) est créé par
+        `ui/portal.ts` : le nombre de votants dépend du salon, et les montants
+        changent à chaque image.
+      -->
+      <div
+        id="portal"
+        data-settled="false"
+        class="pointer-events-none absolute bottom-6 left-1/2 z-20 hidden w-[min(44rem,94vw)] -translate-x-1/2 flex-col items-center gap-2 rounded border border-ember-400 bg-forge-900/90 px-4 py-3 text-center"
+      >
+        <p id="portal-status" class="text-sm font-bold tracking-[0.1em] text-ember-400"></p>
+        <div id="portal-stakes" class="flex flex-col gap-0.5 text-xs text-parchment"></div>
+        <div id="portal-choices" class="pointer-events-auto flex gap-3"></div>
+        <div id="portal-voters" class="flex flex-wrap justify-center gap-2"></div>
       </div>
 
       <div

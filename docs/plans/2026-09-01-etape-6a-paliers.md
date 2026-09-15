@@ -733,21 +733,21 @@ c'est deux fois plus d'occasions qu'un corps se trouve sur la ligne.
 
 **Fichiers :** créer `back/src/portal.ts`, `back/src/portal.test.ts`
 
-- [ ] **Étape 1 : calquer `back/src/draft.ts`.** Il est éprouvé : ouverture datée, intentions,
+- [x] **Étape 1 : calquer `back/src/draft.ts`.** Il est éprouvé : ouverture datée, intentions,
   résolution, absents servis d'office, et il **ne connaît ni `ws` ni `Room`**.
 
-- [ ] **Étape 2 : la règle.** Majorité ; **égalité = on continue** (§9.3). Tout joueur connecté vote,
+- [x] **Étape 2 : la règle.** Majorité ; **égalité = on continue** (§9.3). Tout joueur connecté vote,
   **mort ou vif** — la mort d'un seul ne coûte rien, donc elle ne coûte pas la voix non plus.
 
-- [ ] **Étape 3 : l'absence ne bloque jamais.** À l'échéance, on tranche avec ce qu'on a. Le §4.4 de
+- [x] **Étape 3 : l'absence ne bloque jamais.** À l'échéance, on tranche avec ce qu'on a. Le §4.4 de
   l'étape 4 a déjà établi la règle pour le draft.
 
-- [ ] **Étape 4 : les tests.** ⚠️ **Le décor doit produire le cas qu'il prétend créer.** Ce dépôt a
+- [x] **Étape 4 : les tests.** ⚠️ **Le décor doit produire le cas qu'il prétend créer.** Ce dépôt a
   trouvé neuf fixtures qui rendaient une mutation invisible : un seul perdant là où il en fallait
   deux, des joueurs qui avaient tous une carte réservée, deux zones alignées. **Compte l'égalité que
   tu crois créer.**
 
-- [ ] **Étape 5 : commit** — `feat(back): la machine du vote d'extraction`
+- [x] **Étape 5 : commit** — `feat(back): la machine du vote d'extraction`
 
 ---
 
@@ -755,9 +755,9 @@ c'est deux fois plus d'occasions qu'un corps se trouve sur la ligne.
 
 **Fichiers :** modifier `back/src/room.ts`, `back/src/server.ts`, leurs tests
 
-- [ ] **Étape 1 : le boss meurt, le portail s'ouvre.** Vingt secondes.
+- [x] **Étape 1 : le boss meurt, le portail s'ouvre.** Vingt secondes.
 
-- [ ] **Étape 2 : LE MONDE NE S'ARRÊTE PAS.**
+- [x] **Étape 2 : LE MONDE NE S'ARRÊTE PAS.**
 
   ⚠️ **C'est la différence structurante avec le draft, et le réflexe inverse est fort** : la
   machinerie du gel est là, prête, et elle marche. Le §9.3 dit *« pendant que la vague suivante
@@ -766,15 +766,20 @@ c'est deux fois plus d'occasions qu'un corps se trouve sur la ligne.
 
   Un test doit l'assener : la horde avance pendant le vote.
 
-- [ ] **Étape 3 : partir termine la run.** `RUN_OVER` existe depuis l'étape 3 — le réutiliser, avec
+- [x] **Étape 3 : partir termine la run.** `RUN_OVER` existe depuis l'étape 3 — le réutiliser, avec
   l'or acquis. **Ne pas inventer une seconde fin de run.**
 
-- [ ] **Étape 4 : rester ouvre le palier suivant**, multiplicateur augmenté.
+- [x] **Étape 4 : rester majore la mise.** ⚠️ **Correction — ma formulation (« rester ouvre le
+  palier suivant ») était fausse, et elle DOIT l'être.** `bossDefeated()` avance le palier **à la
+  mort du boss**, et ses vagues tombent pendant le vote. Si « rester » ouvrait le palier, le monde
+  serait *partiellement* gelé pendant la fenêtre — exactement ce que l'étape 2 interdit. « Rester »
+  ne touche donc qu'au multiplicateur, et la cagnotte reste **non sécurisée**. Vérifié à
+  l'exécution.
 
-- [ ] **Étape 5 : diffusion**, dans l'ordre déjà établi : les messages du portail partent **avant le
+- [x] **Étape 5 : diffusion**, dans l'ordre déjà établi : les messages du portail partent **avant le
   snapshot du même tick**, comme les ordres de vague, les morts et le draft.
 
-- [ ] **Étape 6 : commit** — `feat(back): le portail s'ouvre a la mort du boss`
+- [x] **Étape 6 : commit** — `feat(back): le portail s'ouvre a la mort du boss`
 
 ---
 
@@ -782,19 +787,41 @@ c'est deux fois plus d'occasions qu'un corps se trouve sur la ligne.
 
 **Fichiers :** modifier `front/src/net/client.ts` ; créer `front/src/ui/portal.ts` ; leurs tests
 
-- [ ] **Étape 1 : recevoir et exposer.** Le client ne **décide** rien — le serveur arbitre.
+- [x] **Étape 1 : recevoir et exposer.** Le client ne **décide** rien — le serveur arbitre.
 
-- [ ] **Étape 2 : les votes des autres sont VISIBLES, en continu.** Le §7.2 de l'étape 4 l'a établi
+- [x] **Étape 2 : les votes des autres sont VISIBLES, en continu.** Le §7.2 de l'étape 4 l'a établi
   pour les jetons : *« sans cette visibilité, la mécanique n'existe pas »*. Ici c'est plus vrai
   encore — on ne négocie pas un choix qu'on ne voit pas.
 
-- [ ] **Étape 3 : le chronomètre**, et l'or en jeu — ce qu'on gagne en partant, ce qu'on risque en
+- [x] **Étape 3 : le chronomètre**, et l'or en jeu — ce qu'on gagne en partant, ce qu'on risque en
   restant. **Un vote dont on ne voit pas l'enjeu n'est pas un vote.**
 
-- [ ] **Étape 4 : les tests sous jsdom**, `front/src/ui/draft.test.ts` est le modèle. Et la
+  ⚠️ **Correction — le multiplicateur ne voyageait nulle part, et l'or n'était lu nulle part côté
+  client.** `PORTAL_OPEN` ne portait que `deadlineTick`, et le commentaire de `PortalOpenMessage`
+  affirmait que le multiplicateur était « dans le `SNAPSHOT` » : il n'y a jamais été. `PORTAL_OPEN`
+  porte donc désormais le multiplicateur courant, en **centièmes sur un `u16`** (5 → 7 octets) —
+  constant sur toute la fenêtre, donc annoncé une fois, comme les cartes de `DRAFT_OPEN`. Le
+  suivant s'en dérive par `+ EXTRACT_MULTIPLIER_STEP`. L'or, lui, reste dans le `SNAPSHOT` : il
+  bouge pendant la fenêtre. Voir `EXTRACT_MULTIPLIER_SCALE` pour le calcul de la borne.
+
+  ⚠️ **Et l'or est passé dans le HUD, en permanence** (`#hud-gold`), pas seulement au moment du
+  vote : une cagnotte qu'on ne découvre qu'à l'ouverture du portail se lit comme un score de fin de
+  manche, pas comme cinq minutes pendant lesquelles rien n'est acquis.
+
+- [x] **Étape 4 : les tests sous jsdom**, `front/src/ui/draft.test.ts` est le modèle. Et la
   non-régression de la boucle de rendu.
 
-- [ ] **Étape 5 : commit** — `feat(front): l'ecran du vote d'extraction`
+  ⚠️ **L'écran du vote n'est PAS un modale, contrairement à celui du draft.** Le draft gèle le
+  monde, donc il peut prendre `inset-0` ; le vote ne gèle rien (§6), et un voile plein écran
+  cacherait la horde qui avance pendant qu'on négocie — la pression même que la fenêtre existe
+  pour produire. C'est un bandeau, et un test le garde.
+
+  ⚠️ **Une mutation a survécu à la première campagne** : `encodePortalOpen(deadline, 1)` dans
+  `#broadcast` laissait `server.test.ts` entièrement vert, parce que son décor n'atteint que le
+  PREMIER portail, où le multiplicateur vaut 1. Soldé par un second test de socket qui enchaîne
+  deux paliers.
+
+- [x] **Étape 5 : commit** — `feat(front): l'ecran du vote d'extraction`
 
 ---
 

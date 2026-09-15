@@ -31,15 +31,20 @@ import {
   encodeDraftResult,
   encodeLevelUp,
   encodePickups,
+  encodePortalOpen,
+  encodePortalResult,
   encodeReaction,
   encodeRunOver,
   encodeSnapshot,
+  encodeVotes,
   encodeWaveOrder,
   encodeWelcome,
   encodeZone,
   MSG,
+  NO_VOTE,
   OUTCOME,
   packElementPair,
+  VOTE_CHOICE,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, weaponOf } from '@shared/weapons';
@@ -3414,5 +3419,249 @@ describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis
     client.update(0, STEP);
 
     expect(client.bossCharge).not.toBeNull();
+  });
+});
+
+/**
+ * Le vote d'extraction, cote reception (etape 6a, tache 10).
+ *
+ * ⚠️ **Quatre messages arrivaient sur ce fil et AUCUN n'etait lu** avant cette
+ * tache : `grep PORTAL front/src/net/client.ts` ne rendait rien. Le serveur les
+ * emettait depuis deux commits, et le client les jetait en silence — le
+ * `decode` les reconnaissait, aucune branche ne les prenait.
+ *
+ * ⚠️ **Le client ne DECIDE rien ici** (§7.2 de l'etape 4) : il expose ce qu'il
+ * recoit et il envoie une intention. Le seul calcul qu'il fasse est celui du
+ * chronometre, et il le fait au TICK.
+ */
+describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
+  /**
+   * ⚠️ **Des nombres qui ne ressemblent a rien du jeu.** Ni
+   * `PORTAL_WINDOW_TICKS` (600), ni `GOLD_PER_PALIER_BASE` (100), ni un
+   * multiple de l'un ou de l'autre : une fixture egale a une constante de
+   * production rend la tache invérifiable, dix fois dans ce depot.
+   */
+  const ECHEANCE = 4_137;
+  const MULTIPLICATEUR = 1.75;
+  const CAGNOTTE = 8_413;
+
+  function setup(localId = 2): { client: GameClient; socket: FakeSocket } {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(localId, 0, 0xd8a5_0002) });
+    return { client, socket };
+  }
+
+  /**
+   * Pose le tick de horde a `tick` en poussant un snapshot vide qui le porte.
+   *
+   * ⚠️ **Chaque appel doit sauter de plus d'un tick.** `GameClient` ne se
+   * recale que si le snapshot le devance de plus de `HORDE_TICK_LAG_TOLERANCE`
+   * (1) — un snapshot a `t + 1` ne bouge PAS le compteur, et un decor qui
+   * avancerait d'un tick a la fois testerait un tick fige sans le dire.
+   */
+  function auTick(socket: FakeSocket, tick: number, gold = 0): void {
+    socket.emit('message', { data: encodeSnapshot(tick, 0, 0, [], null, gold) });
+  }
+
+  it('ignore le portail tant qu aucune ouverture n est arrivee', () => {
+    // ⚠️ **Le test qui rend zero, evite ici.** Un scenario qui fermerait un
+    // vote jamais ouvert passerait tout seul : on assene donc l'etat de depart
+    // avant tout, et chaque scenario ci-dessous part d'un portail REELLEMENT
+    // ouvert.
+    const { client, socket } = setup();
+    auTick(socket, 900);
+
+    expect(client.portalOpen).toBe(false);
+    expect(client.portalVotes.size).toBe(0);
+    expect(client.portalDecision).toBeNull();
+  });
+
+  it('ouvre le vote sur PORTAL_OPEN, avec son echeance ET le multiplicateur ANNONCE', () => {
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    // Le multiplicateur de depart vaut 1 cote salon : un client qui le coderait
+    // en dur, ou qui compterait les portails vus (zero, pour qui se connecte en
+    // cours de run), passerait un decor a 1 et echouerait ici.
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+
+    expect(client.portalOpen).toBe(true);
+    expect(client.portalDeadlineTick).toBe(ECHEANCE);
+    expect(client.portalMultiplier).toBe(MULTIPLICATEUR);
+  });
+
+  it('expose les votes des autres, ET l abstention, telle quelle', () => {
+    // ⚠️ **Le decor doit produire le cas qu'il pretend creer** : les TROIS
+    // etats a la fois. Deux votants seulement, ou deux etats sur trois,
+    // laisseraient passer un client qui confondrait « n'a pas vote » et
+    // « reste » — c'est exactement ce que `NO_VOTE = 255` existe pour eviter.
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+    socket.emit('message', {
+      data: encodeVotes([
+        { playerId: 1, choice: VOTE_CHOICE.LEAVE },
+        { playerId: 2, choice: VOTE_CHOICE.STAY },
+        { playerId: 3, choice: NO_VOTE },
+      ]),
+    });
+
+    expect(client.portalVotes.get(1)).toBe(VOTE_CHOICE.LEAVE);
+    expect(client.portalVotes.get(2)).toBe(VOTE_CHOICE.STAY);
+    // ⚠️ `toBe(NO_VOTE)`, pas `toBeUndefined()` : un client qui filtrerait les
+    // abstentions rendrait `undefined` ici, et l'ecran ne pourrait plus
+    // distinguer un silencieux d'un joueur absent du salon.
+    expect(client.portalVotes.get(3)).toBe(NO_VOTE);
+    expect(client.portalVotes.size).toBe(3);
+  });
+
+  it('remplace la table de votes a chaque VOTES, sans garder les voix perimees', () => {
+    // Le vote est REVOCABLE : une diffusion qui fusionnerait au lieu de
+    // remplacer laisserait une voix retiree affichee jusqu'a la fin.
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+    socket.emit('message', {
+      data: encodeVotes([{ playerId: 1, choice: VOTE_CHOICE.LEAVE }]),
+    });
+    socket.emit('message', {
+      data: encodeVotes([{ playerId: 1, choice: NO_VOTE }]),
+    });
+
+    expect(client.portalVotes.get(1)).toBe(NO_VOTE);
+  });
+
+  it('envoie un VOTE portant le choix, et n enregistre RIEN localement', () => {
+    // ⚠️ **Le client PROPOSE, le serveur arbitre** (§7.2). Un vote affiche des
+    // le clic mentirait a chaque refus — portail ferme, joueur etranger au
+    // vote — et le joueur croirait avoir vote.
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+
+    client.castVote(VOTE_CHOICE.LEAVE);
+
+    const votes = socket.sent.map((f) => decode(f)).filter((m) => m.type === MSG.VOTE);
+    expect(votes).toEqual([{ type: MSG.VOTE, choice: VOTE_CHOICE.LEAVE }]);
+    expect(client.portalVotes.size).toBe(0);
+  });
+
+  it('envoie NO_VOTE quand on retire sa voix — le vote est revocable', () => {
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+
+    client.castVote(NO_VOTE);
+
+    const votes = socket.sent.map((f) => decode(f)).filter((m) => m.type === MSG.VOTE);
+    expect(votes).toEqual([{ type: MSG.VOTE, choice: NO_VOTE }]);
+  });
+
+  /**
+   * ⚠️ **DATE PAR TICK, JAMAIS APPLIQUE A LA RECEPTION.** C'est la regle que
+   * trois etapes ont payee : un ecran ferme a l'arrivee du message se
+   * fermerait chez chacun a un tick different — celui de sa propre latence —
+   * au moment meme ou les quatre joueurs regardent le meme verdict.
+   *
+   * L'ecart du decor (huit ticks) n'est pas decoratif : c'est lui qui rend la
+   * mutation « fermer a la reception » visible.
+   */
+  it('garde l ecran ouvert jusqu au TICK D EFFET du verdict, pas jusqu a sa reception', () => {
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+
+    const effet = 912;
+    socket.emit('message', {
+      data: encodePortalResult(effet, VOTE_CHOICE.STAY, CAGNOTTE),
+    });
+
+    // Le message est arrive, le tick d'effet n'est pas atteint : l'ecran tient.
+    expect(client.hordeTick).toBe(900);
+    expect(client.portalOpen).toBe(true);
+    // Le verdict, lui, est deja lisible : c'est ce que l'ecran affiche pendant
+    // ces quelques ticks.
+    expect(client.portalDecision).toBe(VOTE_CHOICE.STAY);
+    expect(client.portalGold).toBe(CAGNOTTE);
+
+    // Un tick AVANT l'effet : toujours ouvert. C'est cette ligne qui tue la
+    // mutation « fermer des reception ».
+    auTick(socket, effet - 3);
+    expect(client.hordeTick).toBe(effet - 3);
+    expect(client.portalOpen).toBe(true);
+
+    // Le tick d'effet lui-meme : ferme. C'est cette ligne-ci qui tue le
+    // decalage d'un tick (`<=` au lieu de `<`).
+    auTick(socket, effet);
+    expect(client.hordeTick).toBe(effet);
+    expect(client.portalOpen).toBe(false);
+  });
+
+  it('porte le verdict PARTIR et l or acquis', () => {
+    // La moitie negative : un client qui ne lirait que « rester » afficherait
+    // le mauvais verdict la ou il compte le plus.
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+    socket.emit('message', {
+      data: encodePortalResult(909, VOTE_CHOICE.LEAVE, CAGNOTTE),
+    });
+
+    expect(client.portalDecision).toBe(VOTE_CHOICE.LEAVE);
+    expect(client.portalGold).toBe(CAGNOTTE);
+  });
+
+  it('oublie les votes ET le verdict du palier precedent a l ouverture suivante', () => {
+    // La lecon des jetons du draft, payee une fois la-bas : sans cette remise a
+    // zero, chacun verrait son vote deja pose avant d'avoir decide, et le
+    // verdict du palier precedent resterait affiche par-dessus.
+    const { client, socket } = setup();
+    auTick(socket, 900);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
+    socket.emit('message', {
+      data: encodeVotes([{ playerId: 1, choice: VOTE_CHOICE.STAY }]),
+    });
+    socket.emit('message', { data: encodePortalResult(909, VOTE_CHOICE.STAY, CAGNOTTE) });
+    auTick(socket, 909);
+    expect(client.portalOpen).toBe(false);
+
+    socket.emit('message', {
+      data: encodePortalOpen(ECHEANCE + 600, MULTIPLICATEUR + 0.25),
+    });
+
+    expect(client.portalOpen).toBe(true);
+    expect(client.portalVotes.size).toBe(0);
+    expect(client.portalDecision).toBeNull();
+    expect(client.portalMultiplier).toBe(MULTIPLICATEUR + 0.25);
+  });
+
+  /**
+   * ⚠️ **L'or est une donnee d'EQUIPE, dans l'en-tete du snapshot** (§5) : il
+   * se lit meme quand le bloc du joueur local est introuvable — un joueur mort,
+   * ou un client dont le premier snapshot ne le porte pas encore. Le lire apres
+   * le `return` du bloc joueur laisserait la cagnotte a zero tout ce temps-la,
+   * c'est-a-dire precisement pendant que l'equipe la risque.
+   */
+  it('lit l or non securise de CHAQUE snapshot, meme sans bloc du joueur local', () => {
+    const { client, socket } = setup(7);
+
+    socket.emit('message', { data: encodeSnapshot(910, 0, 0, [], null, CAGNOTTE) });
+
+    expect(client.localId).toBe(7);
+    expect(client.gold).toBe(CAGNOTTE);
+  });
+
+  it('suit l or a la hausse comme a la baisse — la cagnotte n est pas acquise', () => {
+    // ⚠️ La moitie negative porte le sens : un client qui ne ferait que
+    // cumuler afficherait une cagnotte intacte apres un effacement d'equipe,
+    // soit l'inverse exact de ce que le §5 met en jeu.
+    const { client, socket } = setup();
+
+    auTick(socket, 910, CAGNOTTE);
+    expect(client.gold).toBe(CAGNOTTE);
+
+    auTick(socket, 920, 0);
+    expect(client.gold).toBe(0);
   });
 });

@@ -27,6 +27,7 @@ import {
   decode,
   encodeDraftToken,
   encodeInput,
+  encodeVote,
   MSG,
   OUTCOME,
   type PlayerSnapshot,
@@ -690,6 +691,22 @@ export class GameClient {
    */
   #teamSynergy = 0;
   /**
+   * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte (§5 de
+   * la spec de l'etape 6a).
+   *
+   * ⚠️ **Il vit ici et PAS dans `RenderState`**, a la difference de `xp` et de
+   * `synergy` qui y sont pour des raisons historiques. `RenderState` est ce que
+   * la PREDICTION produit — des positions predites et interpolees — et l'or
+   * n'est ni predit ni interpole : c'est une valeur d'en-tete lue telle quelle,
+   * exactement comme `boss` juste en dessous, qui a ete tenu hors de
+   * `RenderState` pour ce motif precis.
+   *
+   * ⚠️ **Lu a chaque snapshot, meme quand le bloc du joueur local est
+   * introuvable** — donnee d'EQUIPE, quatrieme fois : c'est le §5 de la spec,
+   * ce qui se decide au vote est ce que l'EQUIPE risque.
+   */
+  #teamGold = 0;
+  /**
    * Le boss vivant, tel que le dernier snapshot le porte — `null` quand il n'y
    * en a pas. Donnee d'equipe comme `xp` et `synergy` : elle est dans l'en-tete
    * du snapshot, pas dans un bloc joueur. Voir `BossVitals` et `trackBoss`.
@@ -878,6 +895,67 @@ export class GameClient {
   #draftOutcomes: readonly { playerId: number; cardIndex: number; outcome: number }[] = [];
 
   /**
+   * Le tick auquel le portail courant cesse d'etre affichable, `-1` quand il
+   * n'y en a jamais eu.
+   *
+   * ⚠️ **Trois valeurs, et la du milieu est la seule subtile.** `-1` : aucun
+   * portail. `Number.MAX_SAFE_INTEGER` : un portail est ouvert et **on ne sait
+   * pas encore quand il se fermera** — le vote se resout des que tout le monde
+   * a vote, donc n'importe quand entre l'ouverture et l'echeance, et seul le
+   * serveur le sait. Un tick fini : le `PORTAL_RESULT` est arrive et a dit son
+   * tick d'effet.
+   *
+   * C'est exactement la forme de `#freezeUntilTick` a l'etape 4, et pour la
+   * meme raison, payee d'une tache la-bas (lecon R3) : **repousser la borne a
+   * l'infini plutot que la deviner**. Deviner voudrait dire fermer a
+   * `deadlineTick`, et l'ecran resterait affiche vingt secondes apres un vote
+   * unanime rendu en trois.
+   *
+   * ⚠️ **Et la fermeture est DATEE PAR TICK, jamais appliquee a la
+   * reception.** Fermer a l'arrivee du message ferait fermer l'ecran de chaque
+   * client a un tick different — celui de sa propre latence — au moment meme
+   * ou les quatre joueurs regardent le meme verdict.
+   */
+  #portalCloseTick = -1;
+  /** Echeance de la fenetre courante, pour le chronometre. Voir `portalDeadlineTick`. */
+  #portalDeadlineTick = 0;
+  /**
+   * Le multiplicateur d'extraction annonce par le dernier `PORTAL_OPEN`.
+   *
+   * ⚠️ **ANNONCE, jamais compte.** Le deriver du nombre de portails vus
+   * s'ouvrir tromperait tout client connecte en cours de run — il en a vu
+   * zero — et le coder en dur ferait mentir l'ecran au premier reglage de
+   * `EXTRACT_MULTIPLIER_STEP`. Voir `PortalOpenMessage`.
+   *
+   * Vaut 1 avant le premier portail : c'est la valeur de depart cote salon
+   * (`Room#extractMultiplier`), donc un ecran qui s'afficherait avant toute
+   * annonce ne dirait rien de faux — mais il ne s'affiche pas, `portalOpen`
+   * etant faux.
+   */
+  #portalMultiplier = 1;
+  /**
+   * `playerId -> VOTE_CHOICE.STAY | VOTE_CHOICE.LEAVE | NO_VOTE` : qui a vote
+   * quoi, remplacee entierement a chaque `VOTES`.
+   *
+   * ⚠️ **L'abstention est une ENTREE, pas une absence d'entree** — `NO_VOTE`
+   * circule sur le fil exactement pour qu'on voie qui n'a pas encore tranche
+   * (§6). Un client qui la filtrerait ici rendrait « n'a pas vote »
+   * indistinguable de « a vote RESTER » a l'ecran, et la negociation serait
+   * fausse.
+   */
+  #portalVotes: ReadonlyMap<number, number> = new Map();
+  /**
+   * Le verdict du dernier `PORTAL_RESULT`, `null` tant qu'aucun n'est tombe.
+   *
+   * Remis a `null` a chaque ouverture : un verdict de palier precedent
+   * s'afficherait sinon sur le portail suivant, comme les jetons du draft
+   * s'affichaient d'une negociation revolue.
+   */
+  #portalDecision: number | null = null;
+  /** L'or du verdict : acquis si l'equipe part, reporte si elle reste. Voir `PortalResultMessage`. */
+  #portalGold = 0;
+
+  /**
    * Ordres recus mais pas encore appliques.
    *
    * Le gestionnaire de message ne fait QUE empiler. L'application a lieu dans
@@ -993,6 +1071,75 @@ export class GameClient {
   /** C -> S : je pose mon jeton, ou je le retire avec `NO_TOKEN`. */
   placeToken(cardIndex: number): void {
     this.#ws?.send(encodeDraftToken(cardIndex));
+  }
+
+  /**
+   * Le vote d'extraction est-il affichable ?
+   *
+   * Vrai de l'ouverture jusqu'au TICK D'EFFET du verdict — pas jusqu'a sa
+   * reception. Voir `#portalCloseTick` pour les trois valeurs et pour la
+   * raison.
+   *
+   * ⚠️ **Ne regarde NI les points de vie NI le joueur local.** Un joueur mort
+   * vote : le §6 dit *« tout joueur connecte, mort ou vif »*, et le §9.3 que
+   * *« la mort d'un seul joueur ne coute rien »* — donc elle ne coute pas la
+   * voix, donc elle ne coute pas l'ecran non plus. Il n'y a rien a filtrer
+   * ici : le filtre n'existe pas plutot que d'exister a `false`, exactement
+   * comme dans `Portal#pending` cote serveur.
+   */
+  get portalOpen(): boolean {
+    return this.#lastHordeTick < this.#portalCloseTick;
+  }
+
+  /**
+   * Echeance de la fenetre de vote, pour le chronometre. C'est un PLAFOND : le
+   * vote peut se resoudre bien avant, des que tout le monde a vote.
+   */
+  get portalDeadlineTick(): number {
+    return this.#portalDeadlineTick;
+  }
+
+  /** Le multiplicateur qui s'applique si l'equipe part MAINTENANT. Voir `#portalMultiplier`. */
+  get portalMultiplier(): number {
+    return this.#portalMultiplier;
+  }
+
+  /** Qui a vote quoi, abstentions comprises — c'est cette visibilite qui fait exister le vote (§6). */
+  get portalVotes(): ReadonlyMap<number, number> {
+    return this.#portalVotes;
+  }
+
+  /** Le verdict rendu, ou `null` tant que le vote est en cours. Jamais `NO_VOTE`. */
+  get portalDecision(): number | null {
+    return this.#portalDecision;
+  }
+
+  /** L'or du verdict : acquis si l'equipe part, reporte si elle reste. */
+  get portalGold(): number {
+    return this.#portalGold;
+  }
+
+  /**
+   * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte.
+   *
+   * C'est l'ENJEU du vote (§5, §6) et la seule chose que le HUD doive montrer
+   * en permanence : une cagnotte qu'on ne verrait qu'au moment du vote ne se
+   * VIT pas comme une cagnotte non securisee pendant cinq minutes.
+   */
+  get gold(): number {
+    return this.#teamGold;
+  }
+
+  /**
+   * C -> S : je vote, ou je retire mon vote (`NO_VOTE`).
+   *
+   * ⚠️ **Le client PROPOSE, le serveur arbitre** (§7.2 de l'etape 4) : rien
+   * n'est enregistre localement ici. Un vote refuse — portail ferme, choix
+   * inconnu — n'est simplement pas pris, et la prochaine diffusion des votes le
+   * montrera. C'est le miroir exact de `placeToken`.
+   */
+  castVote(choice: number): void {
+    this.#ws?.send(encodeVote(choice));
   }
 
   /**
@@ -1383,6 +1530,45 @@ export class GameClient {
       this.#resumeEndTick = msg.deadlineTick + LEVEL_RESUME_TICKS;
       return;
     }
+    if (msg.type === MSG.PORTAL_OPEN) {
+      this.#portalDeadlineTick = msg.deadlineTick;
+      // ⚠️ **Le multiplicateur est LU, jamais recalcule.** Le client ne compte
+      // pas les portails et ne code rien en dur : il prend le chiffre que le
+      // serveur applique. Voir `#portalMultiplier`.
+      this.#portalMultiplier = msg.multiplier;
+      // ⚠️ Un portail neuf : personne n'a encore vote, et le verdict du palier
+      // precedent ne doit pas rester affiche. Meme invariant que `DRAFT_OPEN`,
+      // qui vide les jetons d'une negociation revolue.
+      this.#portalVotes = new Map();
+      this.#portalDecision = null;
+      // Fenetre de duree INCONNUE : elle commence, et ne finira que quand
+      // `PORTAL_RESULT` l'annoncera. La borne est repoussee a l'infini plutot
+      // que devinee — la deviner a `deadlineTick` laisserait l'ecran vingt
+      // secondes de plus qu'un vote unanime rendu en trois.
+      this.#portalCloseTick = Number.MAX_SAFE_INTEGER;
+      return;
+    }
+
+    if (msg.type === MSG.VOTES) {
+      // ⚠️ **Les abstentions passent telles quelles.** `NO_VOTE` circule pour
+      // qu'on voie qui n'a pas encore tranche (§6) ; le filtrer ici rendrait
+      // « n'a pas vote » indistinguable de « a vote RESTER ».
+      this.#portalVotes = new Map(msg.votes.map((v) => [v.playerId, v.choice]));
+      return;
+    }
+
+    if (msg.type === MSG.PORTAL_RESULT) {
+      this.#portalDecision = msg.decision;
+      this.#portalGold = msg.gold;
+      // ⚠️ **`msg.effectTick` est le tick d'EFFET, pas celui de la
+      // reception** — meme discipline que `LEVEL_UP` plus haut. Fermer l'ecran
+      // a l'arrivee du message le fermerait chez chacun a un tick different,
+      // celui de sa propre latence, au moment meme ou les quatre joueurs
+      // regardent le meme verdict.
+      this.#portalCloseTick = msg.effectTick;
+      return;
+    }
+
     if (msg.type === MSG.RUN_OVER) {
       // Une seule fois par salon (§7) : `Room` ne met `RUN_OVER` en file
       // qu'une fois (`#runOver`), donc rien ici n'a besoin de garde
@@ -1412,7 +1598,13 @@ export class GameClient {
     // le snapshot entier et pas par un bloc joueur, donc lue a chaque snapshot
     // meme quand `mine` reste introuvable ci-dessous.
     this.#teamSynergy = msg.synergy;
-    // Meme raison, une troisieme fois : le boss est dans l'EN-TETE du snapshot,
+    // Meme raison, une troisieme fois : l'or est celui de l'EQUIPE (§5), porte
+    // par l'en-tete du snapshot et pas par un bloc joueur, donc lu a chaque
+    // snapshot meme quand `mine` reste introuvable ci-dessous. C'est l'ENJEU
+    // du vote : le HUD le montre en permanence, l'ecran du portail le
+    // multiplie.
+    this.#teamGold = msg.gold;
+    // Meme raison, une quatrieme fois : le boss est dans l'EN-TETE du snapshot,
     // pas dans un bloc joueur (§1.1 de la spec — il est UN). On le lit donc
     // avant le `return` ci-dessous, qui ne concerne que le bloc du joueur local.
     this.#boss = trackBoss(this.#boss, msg.boss);

@@ -1,6 +1,11 @@
 import type { AddressInfo } from 'node:net';
 import { CARD } from '@shared/cards';
-import { PORTAL_WINDOW_TICKS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
+import {
+  EXTRACT_MULTIPLIER_STEP,
+  PORTAL_WINDOW_TICKS,
+  SNAPSHOT_HZ,
+  TICK_HZ,
+} from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
@@ -530,6 +535,13 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
       throw new Error('PORTAL_OPEN attendu');
     }
     expect(open.deadlineTick).toBe(tickMort + PORTAL_WINDOW_TICKS);
+    // ⚠️ **Le multiplicateur traverse la SOCKET, pas seulement l'encodeur**
+    // (tache 10) : c'est ici que se verifie que `#broadcast` lit bien
+    // l'evenement du salon et pas une valeur inventee. Premier portail de la
+    // run, donc 1 — ce que le second portail annonce est garde dans
+    // `room.test.ts`, la ou une run peut en enchainer deux.
+    expect(open.multiplier).toBe(room.extractMultiplier);
+    expect(open.multiplier).toBe(1);
 
     // --- 2. Les votes partent en continu, silencieux compris.
     const votes = await nextMessage(ws, (m) => m.type === MSG.VOTES, 10_000);
@@ -573,4 +585,92 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     expect(indexOuverture).toBeGreaterThan(dernierAvecBoss);
     expect(indexOuverture).toBeLessThan(premierSansBoss);
   }, 40_000);
+
+  /**
+   * ⚠️ **Ce test existe parce qu'une mutation a SURVECU** (tache 10). Le test
+   * ci-dessus assene `open.multiplier === 1`, et c'est exactement ce que le
+   * premier portail d'une run vaut : remplacer `encodePortalOpen(deadline,
+   * open.multiplier)` par `encodePortalOpen(deadline, 1)` dans `#broadcast` le
+   * laissait ENTIEREMENT VERT. Le decor masquait la ligne qu'il pretendait
+   * garder — le motif « decor qui masque », dix fois dans ce depot.
+   *
+   * La seule facon de le tuer est d'ouvrir un SECOND portail, donc de rester
+   * une fois, donc de tuer deux boss sur une vraie socket. C'est long, et c'est
+   * le prix de la seule ligne du serveur qui porte ce chiffre.
+   */
+  it('annonce le multiplicateur MAJORE au portail SUIVANT, sur le fil', async () => {
+    const code = await createRoomCode();
+    const { ws, playerId } = await connect(code);
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('salon introuvable');
+    }
+
+    /** Ne laisse vivre que le boss : on mesure une diffusion, pas une melee. */
+    const balayer = (): void => {
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        const id = room.horde.entityIdAt(i);
+        if (id !== room.bossEntityId) {
+          ids.push(id);
+        }
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+    };
+
+    /**
+     * Amene un boss, puis le fait tomber par le chemin de mort normal du
+     * salon. Meme technique que le test ci-dessus : le salon est avance DEPUIS
+     * LE TEST, sinon quatre vagues coutent une trentaine de secondes
+     * d'horloge murale.
+     */
+    const tuerLeBoss = async (): Promise<void> => {
+      for (let t = 0; t < 180 * TICK_HZ && room.bossEntityId === null; t++) {
+        room.step(1 / TICK_HZ);
+        balayer();
+      }
+      const bossId = room.bossEntityId;
+      expect(bossId).not.toBeNull();
+
+      // Rendre la main a la boucle du serveur, sinon rien n'est jamais diffuse.
+      await new Promise((r) => setTimeout(r, 60));
+
+      const avant = room.palier;
+      const slot = room.horde.slotOf(bossId ?? -1);
+      room.horde.hp[slot] = 1;
+      const moi = await nextSnapshot(ws, (m) => m.players.length > 0);
+      const pos = moi.players.find((p) => p.id === playerId) ?? { x: 0, y: 0 };
+      for (let t = 0; t < 30 * TICK_HZ && room.palier === avant; t++) {
+        const s = room.horde.slotOf(bossId ?? -1);
+        if (s >= 0) {
+          room.horde.x[s] = pos.x + 100;
+          room.horde.y[s] = pos.y;
+        }
+        balayer();
+        room.applyInput(playerId, 20_000 + room.tick, 0, 0, 127, 0);
+        room.step(1 / TICK_HZ);
+      }
+      expect(room.palier).toBe(avant + 1);
+    };
+
+    // --- Premier palier : le multiplicateur de depart.
+    await tuerLeBoss();
+    const premier = await nextMessage(ws, (m) => m.type === MSG.PORTAL_OPEN, 10_000);
+    expect(premier).toMatchObject({ multiplier: 1 });
+
+    // --- RESTER : la cagnotte n'est pas acquise, la mise monte.
+    ws.send(encodeVote(VOTE_CHOICE.STAY));
+    const verdict = await nextMessage(ws, (m) => m.type === MSG.PORTAL_RESULT, 10_000);
+    expect(verdict).toMatchObject({ decision: VOTE_CHOICE.STAY });
+    expect(room.extractMultiplier).toBe(1 + EXTRACT_MULTIPLIER_STEP);
+
+    // --- Second palier : c'est CE chiffre-la que rien d'autre ne garde.
+    await tuerLeBoss();
+    const second = await nextMessage(ws, (m) => m.type === MSG.PORTAL_OPEN, 10_000);
+    expect(second).toMatchObject({ multiplier: 1 + EXTRACT_MULTIPLIER_STEP });
+    // Et la majoration se VOIT : sans elle, les deux annonces seraient egales.
+    expect(second).not.toMatchObject({ multiplier: 1 });
+  }, 60_000);
 });

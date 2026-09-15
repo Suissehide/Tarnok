@@ -140,12 +140,16 @@ class RecordingClient implements FrameClient {
 class RecordingScreens implements FrameScreens {
   hud: RenderState[] = [];
   drafts = 0;
+  portals = 0;
 
   updateHud(state: RenderState): void {
     this.hud.push(state);
   }
   updateDraft(): void {
     this.drafts++;
+  }
+  updatePortal(): void {
+    this.portals++;
   }
 }
 
@@ -310,6 +314,24 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   it("met a jour l'etalage de cartes", () => {
     const { screens } = compose();
     expect(screens.drafts).toBe(1);
+  });
+
+  /**
+   * ⚠️ **La MEME dette, et c'est la quatrieme fois qu'on la paie d'avance**
+   * (etape 6a, tache 10). L'ecran du vote d'extraction aurait pu vivre dans
+   * `main.ts` a cote de son `el('portal')` : il y aurait ete invisible a toute
+   * la suite, exactement comme `draftScreen.update()` l'a ete pendant 117
+   * tests verts. Ce qui pend a ce fil-ci est le plus cher du jeu — vingt
+   * secondes pour engager tout l'or d'une run — et un appel perdu laisserait
+   * la fenetre se fermer sans que personne n'ait pu voter.
+   *
+   * ⚠️ **`toBe(1)`, pas `toBeGreaterThan(0)`** : appeler deux fois par image
+   * reconstruirait la liste des votants deux fois par image pour rien, et ne
+   * se verrait nulle part ailleurs.
+   */
+  it("met a jour l'ecran du vote d'extraction, exactement une fois", () => {
+    const { screens } = compose();
+    expect(screens.portals).toBe(1);
   });
 
   /**

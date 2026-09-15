@@ -3,6 +3,7 @@ import type { Loadout } from '@shared/loadout';
 import { PASSIVES } from '@shared/passives';
 
 import type { HudInfo } from '../render/stage';
+import { formatGold } from './portal';
 
 /**
  * La jauge de Synergie du HUD — derniere ligne de la hierarchie du §6.6 :
@@ -81,6 +82,16 @@ export interface PassiveRow {
  */
 export interface HudSource {
   readonly localId: number | null;
+  /**
+   * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte (§5 de
+   * l'etape 6a).
+   *
+   * ⚠️ **Lu sur le client, pas sur `RenderState`.** `RenderState` est ce que la
+   * PREDICTION produit ; l'or n'est ni predit ni interpole, c'est une valeur
+   * d'en-tete lue telle quelle — exactement le motif qui a tenu `boss` hors de
+   * `RenderState` a la tache 5.
+   */
+  readonly gold: number;
   loadoutOf(playerId: number): Loadout;
 }
 
@@ -159,6 +170,8 @@ export interface HudElements {
   lateDeaths: HTMLElement;
   synergyFill: HTMLElement;
   synergyLabel: HTMLElement;
+  /** La cagnotte non securisee (§5 de l'etape 6a), visible en permanence. */
+  gold: HTMLElement;
   freeze: HTMLElement;
   /** Le cadre de la colonne des passifs — efface tant que rien n'est drafte. */
   passives: HTMLElement;
@@ -198,6 +211,13 @@ export function paintHud(
   el.timer.textContent = `Temps ${info.timer}`;
   el.lateDeaths.textContent = `${lateDeaths}`;
   paintSynergy(el.synergyFill, el.synergyLabel, synergy);
+  // Tache 10 : la cagnotte NON SECURISEE, en permanence et pas seulement au
+  // moment du vote. Le §5 en fait un enjeu qui se vit pendant tout un palier —
+  // cinq minutes ou rien n'est acquis — et un chiffre qu'on ne decouvrirait
+  // qu'a l'ouverture du portail se lirait comme un score de fin de manche.
+  // `formatGold` est celui de l'ecran du portail, importe plutot que recopie :
+  // deux ecritures du meme montant se contrediraient tot ou tard.
+  el.gold.textContent = formatGold(source.gold);
   paintPassives(el.passives, el.passiveList, passiveRows(source));
   // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
   // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme

@@ -18,6 +18,7 @@ import {
   passiveRows,
   synergyRatio,
 } from './hud';
+import { THIN_SPACE } from './portal';
 
 /**
  * Étape 5a, §9 : *« la barre de Synergie : une jauge dans le HUD, visible de
@@ -58,6 +59,8 @@ describe('le cablage vers index.html', () => {
     // Tache 18 : le cadre de la colonne des passifs, et ses lignes.
     expect(document.getElementById('hud-passives')).not.toBeNull();
     expect(document.getElementById('hud-passive-list')).not.toBeNull();
+    // Tache 10 de l'etape 6a : la cagnotte non securisee (§5).
+    expect(document.getElementById('hud-gold')).not.toBeNull();
   });
 });
 
@@ -155,6 +158,7 @@ function hudElements(): HudElements {
     lateDeaths: pick('hud-late-deaths'),
     synergyFill: pick('hud-synergy-fill'),
     synergyLabel: pick('hud-synergy-label'),
+    gold: pick('hud-gold'),
     freeze: pick('hud-freeze'),
     passives: pick('hud-passives'),
     passiveList: pick('hud-passive-list'),
@@ -170,6 +174,15 @@ const INFO: HudInfo = { hp: 73, xp: 500, level: 4, timer: '2:07', frozen: false 
  */
 class FakeSource implements HudSource {
   localId: number | null = 1;
+  /**
+   * La cagnotte non securisee (tache 10).
+   *
+   * ⚠️ **Un nombre qui ne ressemble a rien du jeu** : ni `GOLD_PER_PALIER_BASE`
+   * (100), ni un multiple, ni un total de palier. Une fixture egale a une
+   * constante de production rend la tache invérifiable — dix fois dans ce
+   * depot.
+   */
+  gold = 0;
   readonly loadouts = new Map<number, Loadout>();
 
   loadoutOf(playerId: number): Loadout {
@@ -372,6 +385,32 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
 
     expect(el.passives.classList.contains('hidden')).toBe(true);
     expect(el.passiveList.querySelectorAll('.hud-passive')).toHaveLength(0);
+  });
+
+  /**
+   * ⚠️ **L'or du §5, EN PERMANENCE et pas seulement au moment du vote.** Une
+   * cagnotte qu'on ne verrait qu'a l'ouverture du portail se lirait comme un
+   * score de fin de manche, pas comme cinq minutes pendant lesquelles rien
+   * n'est acquis — c'est cette tension-la que le §5 met en jeu.
+   *
+   * Le montant est groupe : `1 234 567` se lit d'un coup d'oeil pendant une
+   * vague, `1234567` non. Le separateur est l'espace fine insecable, pose par
+   * `formatGold` et jamais par `Intl` (voir sa doc).
+   */
+  it('ecrit la cagnotte non securisee, groupee par milliers', () => {
+    source.gold = 1_234_567;
+    paintHud(el, INFO, 0, 0, source);
+
+    expect(el.gold.textContent).toBe(`1${THIN_SPACE}234${THIN_SPACE}567`);
+  });
+
+  it('ecrit une cagnotte vide comme un zero, jamais comme du vide', () => {
+    // Le HUD est visible des le premier snapshot, bien avant le premier boss :
+    // une case blanche s'y lirait comme un bug d'affichage.
+    source.gold = 0;
+    paintHud(el, INFO, 0, 0, source);
+
+    expect(el.gold.textContent).toBe('0');
   });
 
   /** Tache 24 : le gel de niveau, la dette non gardee de l'etape 3. */

@@ -35,6 +35,7 @@ import {
   decodeWaveOrder,
   decodeWelcome,
   decodeZone,
+  EXTRACT_MULTIPLIER_MAX,
   encodeBossCharge,
   encodeDeaths,
   encodeDraftIntents,
@@ -1152,27 +1153,61 @@ describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
 describe('le vote d extraction (etape 6a, tache 7)', () => {
   describe('PORTAL_OPEN', () => {
     it('fait un aller-retour exact', () => {
-      expect(decode(encodePortalOpen(4242))).toEqual({
+      expect(decode(encodePortalOpen(4242, 1.75))).toEqual({
         type: MSG.PORTAL_OPEN,
         deadlineTick: 4242,
+        multiplier: 1.75,
       });
     });
 
     it('tient un tick d echeance sur 32 bits', () => {
-      const msg = decode(encodePortalOpen(4_294_967_295));
+      const msg = decode(encodePortalOpen(4_294_967_295, 1));
 
       expect(msg).toMatchObject({ deadlineTick: 4_294_967_295 });
+    });
+
+    /**
+     * ⚠️ **Le multiplicateur passe a 0,01 pres, et les DEUX champs se lisent
+     * dans le meme message.** Un decodeur qui lirait le multiplicateur au
+     * mauvais offset rendrait un nombre plausible tire des octets du tick — le
+     * decor prend donc un tick dont les deux octets de poids fort (`0x0004`)
+     * ne ressemblent a aucun multiplicateur legitime.
+     */
+    it('porte le multiplicateur d extraction a cote du tick, sans les confondre', () => {
+      const msg = decode(encodePortalOpen(262_144, 2.25));
+
+      expect(msg).toEqual({ type: MSG.PORTAL_OPEN, deadlineTick: 262_144, multiplier: 2.25 });
+    });
+
+    /**
+     * ⚠️ **La borne du multiplicateur, et elle n'est pas decorative.**
+     * `setUint16` replie modulo 2^16 : sans le `Math.min` de l'encodeur,
+     * 655,36 (= 65 536 centiemes) se relirait **0,00**, c'est-a-dire « partir
+     * ne rapporte rien » au moment exact ou partir rapporte le plus. Le palier
+     * ou ca arrive — 2 618 « rester » d'affilee — est tres au-dela du palier
+     * 107 ou `extractGold` sature deja `GOLD_MAX`.
+     */
+    it('sature le multiplicateur au lieu de le replier a zero', () => {
+      expect(decode(encodePortalOpen(1, EXTRACT_MULTIPLIER_MAX))).toMatchObject({
+        multiplier: EXTRACT_MULTIPLIER_MAX,
+      });
+      expect(decode(encodePortalOpen(1, EXTRACT_MULTIPLIER_MAX + 0.01))).toMatchObject({
+        multiplier: EXTRACT_MULTIPLIER_MAX,
+      });
+      expect(decode(encodePortalOpen(1, 1_000_000))).toMatchObject({
+        multiplier: EXTRACT_MULTIPLIER_MAX,
+      });
     });
 
     // Taille assenee EN CHIFFRE NU : `toBe(PORTAL_OPEN_BYTES)` seul serait
     // vraie quoi qu'il arrive.
     it('tient exactement PORTAL_OPEN_BYTES octets', () => {
-      expect(encodePortalOpen(1).byteLength).toBe(PORTAL_OPEN_BYTES);
-      expect(PORTAL_OPEN_BYTES).toBe(5);
+      expect(encodePortalOpen(1, 1).byteLength).toBe(PORTAL_OPEN_BYTES);
+      expect(PORTAL_OPEN_BYTES).toBe(7);
     });
 
     it('leve sur un buffer tronque plutot que de rendre une echeance fantaisiste', () => {
-      const tronque = encodePortalOpen(4242).slice(0, PORTAL_OPEN_BYTES - 1);
+      const tronque = encodePortalOpen(4242, 1).slice(0, PORTAL_OPEN_BYTES - 1);
 
       expect(() => decode(tronque)).toThrow(/tronqu/i);
     });
@@ -1322,7 +1357,7 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
      * different de l'echeance annoncee doit donc passer intact.
      */
     it('porte un tick d effet independant de l echeance annoncee a l ouverture', () => {
-      const ouverture = decode(encodePortalOpen(1200));
+      const ouverture = decode(encodePortalOpen(1200, 1));
       const resultat = decode(encodePortalResult(1017, VOTE_CHOICE.STAY, 0));
 
       expect(ouverture).toMatchObject({ deadlineTick: 1200 });
@@ -1385,7 +1420,7 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
    * le type ET un champ propre a chacun.
    */
   it('aiguille les quatre messages sur leur premier octet', () => {
-    expect(decode(encodePortalOpen(4242)).type).toBe(MSG.PORTAL_OPEN);
+    expect(decode(encodePortalOpen(4242, 1)).type).toBe(MSG.PORTAL_OPEN);
     expect(decode(encodeVote(VOTE_CHOICE.LEAVE))).toEqual({
       type: MSG.VOTE,
       choice: VOTE_CHOICE.LEAVE,

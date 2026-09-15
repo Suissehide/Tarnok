@@ -199,6 +199,23 @@ export interface PortalResultEvent {
   gold: number;
 }
 
+/**
+ * Une ouverture de portail a diffuser, telle que `PORTAL_OPEN` la transporte.
+ *
+ * ⚠️ **Le multiplicateur voyage DANS l'evenement, pas lu au moment de la
+ * diffusion.** `#extractMultiplier` change dans `#stepPortal`, donc au meme
+ * tick qu'un verdict : le lire depuis `Room` au moment d'encoder marcherait
+ * aujourd'hui par chance d'ordonnancement, et cesserait de marcher le jour ou
+ * deux salons ou deux paliers se chevauchent. L'evenement porte la valeur qui
+ * etait vraie A L'OUVERTURE — la meme discipline que `DraftOpenEvent`, qui
+ * porte ses cartes plutot que de laisser l'encodeur relire l'etalage courant.
+ */
+export interface PortalOpenEvent {
+  deadlineTick: number;
+  /** Le multiplicateur qui s'applique si l'equipe part maintenant. Voir `#extractMultiplier`. */
+  multiplier: number;
+}
+
 export interface LevelUpEvent {
   tick: number;
   level: number;
@@ -325,8 +342,8 @@ export class Room {
    * enjeu »*.
    */
   readonly #portal = new Portal();
-  /** Echeances des portails ouverts depuis le dernier drainage. */
-  #pendingPortalOpens: number[] = [];
+  /** Ouvertures de portail depuis le dernier drainage. Voir `PortalOpenEvent`. */
+  #pendingPortalOpens: PortalOpenEvent[] = [];
   #pendingPortalResults: PortalResultEvent[] = [];
   /**
    * Le multiplicateur d'extraction : ce par quoi l'or non securise sera
@@ -529,10 +546,10 @@ export class Room {
   }
 
   /**
-   * Les echeances des portails ouverts depuis le dernier drainage — une par
-   * boss vaincu.
+   * Les portails ouverts depuis le dernier drainage — un par boss vaincu, avec
+   * l'echeance de sa fenetre et le multiplicateur qui s'y applique.
    */
-  drainPortalOpens(): number[] {
+  drainPortalOpens(): PortalOpenEvent[] {
     const out = this.#pendingPortalOpens;
     this.#pendingPortalOpens = [];
     return out;
@@ -1124,7 +1141,17 @@ export class Room {
         // n'ouvre donc rien — le monde ne s'est jamais arrete — il majore la
         // mise ; « partir » termine la run.
         this.#portal.open(this.#tick, [...this.#players.keys()]);
-        this.#pendingPortalOpens.push(this.#portal.deadlineTick);
+        // ⚠️ **Le multiplicateur part AVEC l'ouverture, une seule fois.** Il
+        // est constant sur toute la fenetre — la seule ligne qui le change est
+        // dans `#stepPortal`, et elle s'execute apres le verdict — donc il
+        // s'annonce comme les cartes du draft plutot que de se repeter dans
+        // chaque snapshot. Et le client ne peut pas le deviner : le compter
+        // depuis les portails qu'il a vus le tromperait des qu'il se connecte
+        // en cours de run. Voir `PortalOpenMessage`.
+        this.#pendingPortalOpens.push({
+          deadlineTick: this.#portal.deadlineTick,
+          multiplier: this.#extractMultiplier,
+        });
       }
     }
 

@@ -324,3 +324,87 @@ img,
     opacity: 0.4;
   }
 }
+
+/*
+ * Tache 10 : l'ecran du vote d'extraction (§5 et §6 de l'etape 6a).
+ *
+ * ⚠️ **Les deux faces ne sont PAS symetriques en couleur, et ce n'est pas de
+ * la decoration.** « Partir » acquiert et termine la run ; « rester » remet
+ * tout en jeu. Deux boutons identiques feraient d'un choix irreversible un
+ * choix de menu.
+ */
+.portal-choice {
+  padding: 0.35rem 1.4rem;
+  background: #241c14;
+  border: 3px solid #6b5540;
+  color: var(--color-ember-400);
+  font-weight: bold;
+  letter-spacing: 0.1em;
+  transition: border-color 80ms linear;
+}
+
+.portal-choice:not(:disabled):hover {
+  border-color: var(--color-ember-400);
+}
+
+.portal-choice:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* Le vote qu'on a posé : c'est le SERVEUR qui le dit, pas un état local. */
+.portal-choice[data-mine="true"] {
+  border-color: var(--color-parchment);
+  background: #6b5540;
+  color: var(--color-parchment);
+}
+
+.portal-choice[data-choice="leave"] {
+  border-color: #7a2f1b;
+}
+
+/*
+ * Un votant. La bordure prend sa couleur d'anneau (posee en ligne par
+ * `ui/portal.ts`) et le MOT dit ce qu'il a decide — voir `voterFor` : une
+ * couleur seule laisserait « n'a pas vote » et « reste » se ressembler.
+ */
+.portal-voter {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.1rem 0.4rem 0.1rem 0.1rem;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #241c14;
+  font-size: 0.7rem;
+}
+
+.portal-voter__badge {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.1rem;
+  height: 1.1rem;
+  border-radius: 50%;
+  color: #14110f;
+  font-size: 0.65rem;
+  font-style: normal;
+  font-weight: bold;
+}
+
+/* L'abstention s'estompe : elle est VISIBLE, mais elle ne pese pas. */
+.portal-voter[data-choice="none"] {
+  opacity: 0.55;
+}
+
+.portal-voter[data-choice="none"] .portal-voter__label {
+  font-style: italic;
+}
+
+.portal-voter[data-choice="leave"] .portal-voter__label {
+  color: #d98c6a;
+}
+
+.portal-voter[data-choice="stay"] .portal-voter__label {
+  color: var(--color-ember-400);
+}

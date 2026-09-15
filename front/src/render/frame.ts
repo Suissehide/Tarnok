@@ -134,6 +134,19 @@ export interface FrameStage {
 export interface FrameScreens {
   updateHud(state: RenderState): void;
   updateDraft(): void;
+  /**
+   * L'ecran du vote d'extraction (etape 6a, tache 10).
+   *
+   * ⚠️ **Il passe par ICI et pas par `main.ts`, et la raison est le tableau
+   * ci-dessus** : `draftScreen.update()` y a vecu 117 tests verts sans qu'une
+   * seule assertion ne l'appelle. Ce vote engage tout l'or d'une run ; un ecran
+   * qu'on oublierait d'appeler laisserait la fenetre se fermer sans que
+   * personne n'ait pu voter.
+   *
+   * Sans argument, comme `updateDraft` : l'ecran lit le client a chaque image,
+   * y compris le tick dont il derive son chronometre.
+   */
+  updatePortal(): void;
 }
 
 /**
@@ -180,6 +193,7 @@ export function composeFrame(
   stage.drawBossBar(client.horde, client.boss);
   screens.updateHud(state);
   screens.updateDraft();
+  screens.updatePortal();
   stage.draw(state);
   return state;
 }

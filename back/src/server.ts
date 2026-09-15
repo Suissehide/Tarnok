@@ -265,8 +265,12 @@ class Session {
     // `DRAFT_OPEN` : le monde continue de tourner pendant le vote (§6 de la
     // spec de l'etape 6a). Le snapshot qui suit, ce tick-ci et les six cents
     // suivants, montre une horde qui avance.
-    for (const deadlineTick of this.room.drainPortalOpens()) {
-      this.#send(encodePortalOpen(deadlineTick));
+    for (const open of this.room.drainPortalOpens()) {
+      // ⚠️ **Le multiplicateur part ICI, avec l'ouverture, et nulle part
+      // ailleurs** : il est constant sur toute la fenetre (voir
+      // `PortalOpenMessage`). Zero octet par tick apres l'annonce, comme les
+      // cartes de `DRAFT_OPEN` et les ticks d'une charge de boss.
+      this.#send(encodePortalOpen(open.deadlineTick, open.multiplier));
     }
     const votes = this.room.portalVotes();
     if (votes.size > 0) {

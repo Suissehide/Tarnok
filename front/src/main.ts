@@ -14,6 +14,7 @@ import './styles/main.css';
 import { API_URL, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
 import { type HudElements, paintHud } from './ui/hud';
+import { PortalScreen } from './ui/portal';
 
 /**
  * Le DEMARRAGE, et rien d'autre : recherches DOM, `await stage.init()`,
@@ -51,6 +52,7 @@ const hudLevel = el('hud-level');
 const hudTimer = el('hud-timer');
 const hudFreeze = el('hud-freeze');
 const hudLateDeaths = el('hud-late-deaths');
+const hudGold = el('hud-gold');
 const hudSynergyFill = el('hud-synergy-fill');
 const hudSynergyLabel = el('hud-synergy-label');
 const hudPassives = el('hud-passives');
@@ -70,6 +72,7 @@ const hudElements: HudElements = {
   lateDeaths: hudLateDeaths,
   synergyFill: hudSynergyFill,
   synergyLabel: hudSynergyLabel,
+  gold: hudGold,
   freeze: hudFreeze,
   passives: hudPassives,
   passiveList: hudPassiveList,
@@ -133,6 +136,17 @@ function join(code: string): void {
   // montrer les jetons des quatre joueurs.
   const draftScreen = new DraftScreen(el('draft'), el('draft-status'), el('draft-cards'), client);
 
+  // Le vote d'extraction du §6. Un BANDEAU, pas un modale : le monde ne
+  // s'arrete pas pendant qu'on vote (voir `ui/portal.ts` et `index.html`).
+  const portalScreen = new PortalScreen(
+    el('portal'),
+    el('portal-status'),
+    el('portal-stakes'),
+    el('portal-choices'),
+    el('portal-voters'),
+    client,
+  );
+
   lobby.classList.add('hidden');
   hud.classList.remove('hidden');
   hud.classList.add('flex');
@@ -163,9 +177,11 @@ function join(code: string): void {
   }
 
   /**
-   * Les deux ecrans HTML de l'image : le HUD (§4.6) et l'etalage de cartes
-   * (§7.2). Une paire d'appels, sans regle — la regle vit dans `paintHud` et
-   * dans `DraftScreen.update`, toutes deux gardees sous jsdom.
+   * Les trois ecrans HTML de l'image : le HUD (§4.6), l'etalage de cartes
+   * (§7.2) et le vote d'extraction (§6 de l'etape 6a). Trois appels, sans
+   * regle — la regle vit dans `paintHud`, dans `DraftScreen.update` et dans
+   * `PortalScreen.update`, toutes trois gardees sous jsdom, et le fait qu'on
+   * les appelle est garde par `frame.test.ts`.
    */
   const screens = {
     updateHud: (state: RenderState): void => {
@@ -180,6 +196,7 @@ function join(code: string): void {
       );
     },
     updateDraft: (): void => draftScreen.update(),
+    updatePortal: (): void => portalScreen.update(),
   };
 
   /**

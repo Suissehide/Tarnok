@@ -4315,7 +4315,13 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     const tickMort = tuerLeBoss(room);
 
     expect(room.portalOpen).toBe(true);
-    expect(room.drainPortalOpens()).toEqual([tickMort + PORTAL_WINDOW_TICKS]);
+    // ⚠️ **Le multiplicateur part AVEC l'ouverture** (tache 10) : le client ne
+    // peut ni le coder en dur — c'est un reglage — ni le compter, puisqu'un
+    // client connecte en cours de run n'a vu aucun des portails precedents.
+    // C'est le premier portail de la run, donc le multiplicateur vaut encore 1.
+    expect(room.drainPortalOpens()).toEqual([
+      { deadlineTick: tickMort + PORTAL_WINDOW_TICKS, multiplier: 1 },
+    ]);
     // ⚠️ Une seule annonce par portail : le second drainage est vide, sans quoi
     // le client recevrait une ouverture a chaque tick pendant vingt secondes.
     expect(room.drainPortalOpens()).toEqual([]);
@@ -4467,6 +4473,14 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     tuerLeBoss(room);
     const cagnotte = room.gold;
     expect(cagnotte).toBeGreaterThan(apresLePremier);
+    // ⚠️ **Le SECOND portail annonce la mise majoree**, et c'est le seul
+    // endroit du depot qui le dise : au premier, le multiplicateur vaut 1, et
+    // une ouverture qui porterait toujours 1 y passerait sans bruit. C'est ce
+    // chiffre que l'ecran du vote multiplie pour dire « ce qu'on gagne en
+    // partant » (tache 10).
+    expect(room.drainPortalOpens()).toEqual([
+      { deadlineTick: room.tick + PORTAL_WINDOW_TICKS, multiplier: 1 + EXTRACT_MULTIPLIER_STEP },
+    ]);
 
     room.setVote(1, VOTE_CHOICE.LEAVE);
     pas(room);
