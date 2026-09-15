@@ -749,3 +749,21 @@ export const GOLD_PER_PALIER_BASE = 100;
  * l'inverse exact de ce que le §9.3 craint.
  */
 export const WIPE_GOLD_KEPT = 0;
+
+/**
+ * Duree de la fenetre du vote d'extraction, en ticks (20 s a `TICK_HZ`) —
+ * §6 de la spec de l'etape 6a.
+ *
+ * ⚠️ **Le meme nombre que `DRAFT_WINDOW_TICKS`, et deux constantes quand
+ * meme.** Les deux fenetres durent vingt secondes aujourd'hui, mais elles ne
+ * mesurent pas la meme chose : celle du draft est un PLAFOND sur un choix
+ * sans enjeu temporel, que le solo court-circuite au premier clic ; celle-ci
+ * est l'enjeu lui-meme — la vague suivante approche pendant qu'on decide (§6).
+ * Les fusionner ferait bouger le vote au prochain reglage du draft, et la
+ * question ouverte du §8 (« vingt secondes, est-ce assez pour decider a
+ * quatre ? ») se reglera ici seule.
+ *
+ * ⚠️ **Elle ne gele RIEN.** C'est la difference structurante avec le draft :
+ * le monde continue de tourner pendant toute cette fenetre. Voir `Room#step`.
+ */
+export const PORTAL_WINDOW_TICKS = 600;
