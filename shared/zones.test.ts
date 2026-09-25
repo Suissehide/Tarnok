@@ -454,11 +454,11 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
     expect(zones.ampAt(-1234.5, 678.9, 42)).toBe(1);
   });
 
-  it('rend 1 dans une zone des trois elements d aujourd hui — leur `damageAmp` vaut 1', () => {
+  it('rend 1 dans une zone des trois elements neutres d aujourd hui — leur `damageAmp` vaut 1', () => {
     // ⚠️ **Le decor n'est pas creux, et c'est ce qui le rend lisible.** Le
     // point est BIEN dedans (distance nulle), donc le 1 rendu vient de la table
-    // des elements, pas d'un balayage qui n'aurait rien trouve. La Poix (tache
-    // 4) sera la premiere ligne a rendre autre chose.
+    // des elements, pas d'un balayage qui n'aurait rien trouve. La Poix, elle,
+    // rend autre chose — voir le describe suivant.
     for (const element of [ELEMENT.NEUTRE, ELEMENT.BRAISE, ELEMENT.GIVRE]) {
       const zones = new ZoneField();
       expect(zones.spawn(element, 500, 500, 0, 0)).toBe(0);
@@ -474,9 +474,10 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
     // vaut 2 : la mutation rougit ici des aujourd'hui, avant meme qu'un element
     // n'amplifie quoi que ce soit.
     //
-    // ⚠️ **Ce que ce test NE peut PAS separer, dit franchement** : `Math.max`
-    // et `Math.min` rendent le meme 1 tant que toute la table vaut 1. C'est la
-    // tache 4, avec `damageAmp > 1` sur la Poix, qui fermera cette mutation.
+    // ⚠️ **Ce que ce test ne separe PAS** : `Math.max` et `Math.min` rendent
+    // le meme 1 tant que les deux zones valent 1. Le describe suivant
+    // (« la Poix ferme le maximum contre le minimum ET le produit ») ferme
+    // cette mutation-la, avec `damageAmp > 1` sur la Poix.
     //
     // Deux elements DIFFERENTS : deux zones du meme element au meme point
     // fusionneraient (voir `spawn`), et il n'y en aurait qu'une a balayer.
@@ -538,5 +539,67 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
 
     expect(() => zones.ampAt(500, 500, 0)).not.toThrow();
     expect(zones.ampAt(500, 500, 0)).toBe(elementOf(ELEMENT.FOUDRE).damageAmp);
+  });
+});
+
+/**
+ * ⚠️ **Ce describe ferme les deux mutations laissees VERTES par la tache 1**
+ * (M9 et M19 de son rapport) — la Poix est la PREMIERE ligne de la table a
+ * porter `damageAmp > 1`, ce qui rend enfin le maximum distinguable du
+ * minimum ET de la somme ET du produit. M19 (la valeur consommee cote
+ * degats, pas seulement l'appel) se ferme, lui, dans `combat.test.ts` — voir
+ * son describe « la Poix amplifie reellement les degats retires ».
+ */
+describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le produit (tache 4)', () => {
+  it('rend le `damageAmp` de la Poix dans sa flaque, strictement plus que 1', () => {
+    // ⚠️ **Le test le plus etroit qui ferme deja M9.** `ampAt` part d'un
+    // `amp` neutre (1) et ne le releve QUE si `factor > amp`. Avec le
+    // minimum (`factor < amp`), 1,5 < 1 est faux : `amp` resterait a 1 au
+    // lieu de monter a 1,5. Une seule flaque suffit a separer les deux
+    // operateurs, sans recouvrement.
+    const zones = new ZoneField();
+    expect(zones.spawn(ELEMENT.POIX, 500, 500, 0, 0)).toBe(0);
+    expect(elementOf(ELEMENT.POIX).damageAmp).toBeGreaterThan(1);
+    expect(zones.ampAt(500, 500, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+
+  it('BRAISE (amp neutre) et POIX (amp > 1) qui se recouvrent : le plus FORT gagne, jamais le plus faible', () => {
+    // ⚠️ **Le test qui tue le minimum sur un recouvrement reel.** Deux
+    // zones d'amplifications DIFFERENTES : le minimum rendrait 1 (celui de
+    // la Braise), exactement comme si la Poix n'etait pas la — un bug
+    // invisible en jeu, une flaque de Poix qui n'amplifierait plus rien des
+    // qu'une autre zone la recouvre. Le maximum rend celui de la Poix.
+    //
+    // Deux elements DIFFERENTS, comme le test voisin plus haut : deux zones
+    // du meme element au meme point fusionneraient (voir `spawn`).
+    const zones = new ZoneField();
+    expect(zones.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(0);
+    expect(zones.spawn(ELEMENT.POIX, 100, 0, 0, 0)).toBe(1);
+    expect(zones.count).toBe(2);
+
+    expect(zones.ampAt(100, 0, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+
+  it('DEUX flaques de POIX qui se recouvrent ne cumulent pas : le maximum, jamais la somme ni le produit', () => {
+    // ⚠️ **Le test demande par le brief de la tache 4, et celui qui tue le
+    // produit.** Deux zones du MEME element et du MEME facteur : la somme
+    // (1,5 + 1,5 = 3) ET le produit (1,5 x 1,5 = 2,25) different tous les
+    // deux du maximum (1,5) — c'est le seul des trois tests de ce bloc ou
+    // ces deux mutations-la se separent l'une de l'autre en plus du
+    // maximum.
+    //
+    // ⚠️ **Deux zones qui ne FUSIONNENT pas, et c'est geometrique, pas un
+    // hasard.** `spawn` fusionne deux zones du MEME element si le nouveau
+    // centre tombe a MOINS de `ZONE_RADIUS` d'un centre existant (voir son
+    // docbloc) — ici, exactement `ZONE_RADIUS`, donc la borne stricte de la
+    // fusion n'est PAS franchie et les deux zones restent DISTINCTES. Leur
+    // point milieu, lui, tombe a `ZONE_RADIUS / 2` de CHAQUE centre — donc
+    // strictement DANS les deux disques, qui se recouvrent bien.
+    const zones = new ZoneField();
+    expect(zones.spawn(ELEMENT.POIX, 0, 0, 0, 0)).toBe(0);
+    expect(zones.spawn(ELEMENT.POIX, ZONE_RADIUS, 0, 0, 0)).toBe(1);
+    expect(zones.count).toBe(2); // pas de fusion : bien deux flaques distinctes
+
+    expect(zones.ampAt(ZONE_RADIUS / 2, 0, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
   });
 });

@@ -3,9 +3,10 @@
  *
  * Meme motif que `archetypes.ts`, `weapons.ts` et `passives.ts` : une table
  * pilotee par la donnee, l'index dans le tableau **est** l'identifiant, rien a
- * synchroniser entre serveur et clients. Les quatre elements restants du §6.3
- * de l'orientation seront des lignes de plus dans `ELEMENT_DEFS`, pas de
- * l'architecture — c'est tout l'objet du decoupage 5a / 5b.
+ * synchroniser entre serveur et clients. Les deux elements restants du §6.3
+ * de l'orientation (Chaux, Vif-argent) seront des lignes de plus dans
+ * `ELEMENT_DEFS`, pas de l'architecture — c'est tout l'objet du decoupage
+ * 5a / 5b.
  *
  * ⚠️ **`NEUTRE` est une entree de la table, pas un cas particulier.** Il
  * occupe l'index 0 et n'a aucun effet : `burnPerTick` a zero, `slowFactor` a
@@ -34,10 +35,10 @@ export interface Element {
    * jamais `Horde.markAt`. Un element marque ce qu'il touche ; celui-ci
    * amplifie ce qui PIETINE, et les deux questions n'ont pas le meme domaine.
    *
-   * ⚠️ **1 partout aujourd'hui, et c'est volontaire.** La Poix (tache 4) sera
-   * la premiere ligne a depasser 1. La valeur neutre joue ici le role que
-   * `TINT_IDENTITE` joue pour la teinte et `slowFactor: 1` pour le
-   * deplacement : elle evite une branche `if (element === POIX)` au site
+   * ⚠️ **1 pour trois elements sur quatre, et c'est volontaire.** La Poix
+   * (tache 4) est la premiere ligne a depasser 1. La valeur neutre joue ici
+   * le role que `TINT_IDENTITE` joue pour la teinte et `slowFactor: 1` pour
+   * le deplacement : elle evite une branche `if (element === POIX)` au site
    * d'application, qui est precisement ce que cette table existe pour ne pas
    * avoir a maintenir.
    */
@@ -123,6 +124,36 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     slowFactor: 1,
     damageAmp: 1,
   },
+  {
+    // Poix : amplifie les degats recus par qui pietine sa flaque, ni
+    // brulure ni ralentissement (tache 4 de l'etape 5b).
+    //
+    // ⚠️ **ECART ASSUME avec le §6.3 de l'orientation**, qui dit *« englue,
+    // ralentit, amplifie »*. `slowFactor` reste a 1 : le Givre ralentit deja,
+    // et deux elements dont l'effet PRINCIPAL est le meme ralentissement
+    // seraient du contenu mort — personne ne draftant l'un pour ce que
+    // l'autre fait deja, et l'un des deux strictement meilleur que l'autre.
+    // Le Givre garde le controle, la Poix devient le multiplicateur de
+    // degats : les deux se draftent ENSEMBLE au lieu de se remplacer — c'est
+    // exactement ce que fait Verglas (Givre + Poix, §6.3) d'un couple plutot
+    // que d'un doublon. **Si quelqu'un corrige cet ecart au §6.3, qu'il lise
+    // d'abord ce paragraphe.**
+    //
+    // 1,5 : au contact d'une dague (`damage: 5`) sur de la pietaille lourde
+    // (`HEAVY_HP` 20, `HEAVY_ARMOR` 0,15 — voir `shared/archetypes.ts`), la
+    // Poix fait tomber le compte de coups a mort de 5 a 4 : hors zone,
+    // 20 / (5 x 0,85) = 4,7 (5 coups) ; dedans, 20 / (5 x 1,5 x 0,85) = 3,1
+    // (4 coups). Un coup de moins a tuer, pas un coup qui tue seul — c'est
+    // toujours la reaction qui execute (§9), la Poix ne fait qu'accelerer.
+    //
+    // ⚠️ Valeur de depart, a regler a l'oeil comme `burnPerTick` de la
+    // Braise et `slowFactor` du Givre (tache 11).
+    name: 'poix',
+    tint: 0x3d2b1f,
+    burnPerTick: 0,
+    slowFactor: 1,
+    damageAmp: 1.5,
+  },
 ];
 
 export const ELEMENTS: readonly Element[] = ELEMENT_DEFS.map((e, id) => ({ ...e, id }));
@@ -143,6 +174,7 @@ export const ELEMENT = {
   BRAISE: 1,
   GIVRE: 2,
   FOUDRE: 3,
+  POIX: 4,
 } as const;
 
 export function elementOf(id: number): Element {

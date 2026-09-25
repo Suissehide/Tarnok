@@ -15,13 +15,19 @@ describe('ELEMENTS', () => {
     expect(ELEMENTS.length).toBeLessThanOrEqual(7);
   });
 
-  it('n amplifie AUCUN degat aujourd hui : `damageAmp` vaut 1 sur toute la table', () => {
+  it('n amplifie AUCUN degat SAUF la Poix : `damageAmp` vaut 1 partout ailleurs (tache 4)', () => {
     // ⚠️ **La valeur neutre, et elle doit etre LUE.** `ZoneField.ampAt`
     // multiplie les degats par ce champ : un element qui l'oublierait
     // (`undefined`) rendrait `NaN` et effacerait les PV de tout ce qui pietine
-    // sa zone. La Poix (tache 4) sera la premiere ligne a depasser 1 — et ce
-    // test-ci devra alors l'exclure NOMMEMENT, ce qui force a relire.
+    // sa zone. La Poix est la PREMIERE ligne a depasser 1 — exclue NOMMEMENT
+    // ici plutot que par un `!==` generique, pour forcer a relire ce test le
+    // jour ou une seconde ligne amplifiera.
+    const AMPLIFIENT = new Set<number>([ELEMENT.POIX]);
     for (const e of ELEMENTS) {
+      if (AMPLIFIENT.has(e.id)) {
+        expect(e.damageAmp, e.name).toBeGreaterThan(1);
+        continue;
+      }
       expect(e.damageAmp, e.name).toBe(1);
     }
   });
@@ -48,11 +54,12 @@ describe('ELEMENTS', () => {
     expect(new Set(ELEMENTS.map((e) => e.tint)).size).toBe(ELEMENTS.length);
   });
 
-  it('reste dans le domaine des effets : degats positifs ou nuls, facteur de vitesse dans ]0, 1]', () => {
+  it('reste dans le domaine des effets : degats positifs ou nuls, facteur de vitesse dans ]0, 1], amplification au moins neutre', () => {
     for (const e of ELEMENTS) {
       expect(e.burnPerTick).toBeGreaterThanOrEqual(0);
       expect(e.slowFactor).toBeGreaterThan(0);
       expect(e.slowFactor).toBeLessThanOrEqual(1);
+      expect(e.damageAmp).toBeGreaterThanOrEqual(1);
     }
   });
 });
@@ -71,6 +78,7 @@ describe('ELEMENT (les identifiants nommes)', () => {
     expect(elementOf(ELEMENT.BRAISE).name).toBe('braise');
     expect(elementOf(ELEMENT.GIVRE).name).toBe('givre');
     expect(elementOf(ELEMENT.FOUDRE).name).toBe('foudre');
+    expect(elementOf(ELEMENT.POIX).name).toBe('poix');
   });
 
   it('couvre toute la table : aucun element n est sans nom d identifiant', () => {
@@ -106,16 +114,25 @@ describe('le neutre est une entree de la table, pas un cas particulier', () => {
    * — une arme pourrait le porter, une zone l'afficher, et rien n'arriverait
    * jamais a l'ennemi marque.
    *
-   * ⚠️ **La Foudre est une exception NOMMEE, pas un trou dans la garde.** Son
-   * effet (`chainTargets`, `shared/chain.ts`) ne se lit pas dans
-   * `burnPerTick`/`slowFactor` : il se derive d'un point d'impact, jamais
+   * ⚠️ **La Foudre ET la Poix sont des exceptions NOMMEES, pas un trou dans la
+   * garde.** La Foudre (`chainTargets`, `shared/chain.ts`) ne se lit pas dans
+   * `burnPerTick`/`slowFactor` : elle se derive d'un point d'impact, jamais
    * d'une marque portee par l'entite, et le docbloc de `ELEMENT_DEFS` explique
-   * pourquoi lui donner un champ ici n'aurait rien generalise. `ELEMENTS_SANS_EFFET_DE_MARQUE`
-   * liste les elements dont l'absence est donc ATTENDUE ; c'est
-   * `shared/chain.test.ts` qui garde que la Foudre n'est pas, elle, morte.
+   * pourquoi lui donner un champ ici n'aurait rien generalise. La Poix
+   * (tache 4) ne brule pas non plus et ne ralentit pas non plus — son effet
+   * vit dans `damageAmp`, un troisieme champ que cette assertion-ci ne
+   * regarde pas. `ELEMENTS_SANS_EFFET_DE_MARQUE` liste les elements dont
+   * l'absence est donc ATTENDUE ; ce sont `shared/chain.test.ts` (Foudre) et
+   * `ZoneField.ampAt` / `zones.test.ts` (Poix) qui gardent que ni l'une ni
+   * l'autre n'est, elle, morte.
+   *
+   * ⚠️ **Ces deux exceptions sont une dette, pas une regle permanente : la
+   * tache 9 (armes) leur donnera chacune un effet DIRECT** — a ce moment-la,
+   * cette liste devrait redevenir vide. Voir aussi `ARMEMENT_DIFFERE`
+   * plus bas, qui porte la meme dette pour le cablage aux armes.
    */
   it('est le SEUL sans effet : tout autre element brule, ralentit, ou est une exception nommee', () => {
-    const ELEMENTS_SANS_EFFET_DE_MARQUE = new Set<number>([ELEMENT.FOUDRE]);
+    const ELEMENTS_SANS_EFFET_DE_MARQUE = new Set<number>([ELEMENT.FOUDRE, ELEMENT.POIX]);
     for (const e of ELEMENTS) {
       if (e.id === ELEMENT.NEUTRE || ELEMENTS_SANS_EFFET_DE_MARQUE.has(e.id)) {
         continue;
@@ -167,6 +184,30 @@ describe('la foudre (tache 2)', () => {
   });
 });
 
+/**
+ * ⚠️ Meme raison que le bloc precedent, portee sur la Poix : la table
+ * generique (« reste dans le domaine des effets ») ne verifie qu'un
+ * intervalle large (`]0, 1]`) — une mutation qui preterait un ralentissement
+ * a la Poix y resterait sans qu'aucune assertion nommee ne rougisse.
+ *
+ * ⚠️ **`slowFactor: 1` est un ECART ASSUME avec le §6.3 de l'orientation**
+ * (« englue, ralentit, amplifie »), pas un oubli : le docbloc de la ligne
+ * `poix` dans `ELEMENT_DEFS` (`shared/elements.ts`) porte la raison de jeu
+ * complete (le Givre ralentit deja ; deux ralentissements seraient du
+ * contenu mort). Ce test-ci GARDE la decision, il ne la justifie pas.
+ */
+describe('la poix (tache 4)', () => {
+  it('ne brule pas et ne ralentit pas : le Givre ralentit deja, la Poix amplifie', () => {
+    const poix = elementOf(ELEMENT.POIX);
+    expect(poix.burnPerTick).toBe(0);
+    expect(poix.slowFactor).toBe(1);
+  });
+
+  it('amplifie strictement les degats recus : `damageAmp` depasse 1', () => {
+    expect(elementOf(ELEMENT.POIX).damageAmp).toBeGreaterThan(1);
+  });
+});
+
 describe('elementOf', () => {
   it('rend l element portant cet identifiant', () => {
     // Un id non nul : `elementOf(0)` seul ne distinguerait pas une
@@ -195,12 +236,13 @@ describe('le catalogue des elements et celui des armes', () => {
    * ⚠️ **`ARMEMENT_DIFFERE` est une dette EXPLICITE, pas une exemption
    * permanente.** Le plan de l'etape 5b construit le catalogue avant les
    * armes qui le portent : la tache 2 ajoute la Foudre a `ELEMENT_DEFS`, la
-   * tache 9 lui cable ses armes. Sans cette liste, ce test rougirait entre
-   * les deux — pas d'une vraie regression, mais d'un ordre de taches assume.
-   * **Doit redevenir vide a la fin de la tache 9** : si Foudre y reste apres,
-   * ce test cesse de garder quoi que ce soit pour elle.
+   * tache 4 y ajoute la Poix, la tache 9 leur cable a toutes les deux leurs
+   * armes. Sans cette liste, ce test rougirait entre-temps — pas d'une vraie
+   * regression, mais d'un ordre de taches assume.
+   * **Doit redevenir vide a la fin de la tache 9** : si Foudre ou Poix y
+   * restent apres, ce test cesse de garder quoi que ce soit pour elles.
    */
-  const ARMEMENT_DIFFERE = new Set<number>([ELEMENT.FOUDRE]);
+  const ARMEMENT_DIFFERE = new Set<number>([ELEMENT.FOUDRE, ELEMENT.POIX]);
   it('cable au moins une arme a chaque element du catalogue, sauf armement differe assume', () => {
     for (const e of ELEMENTS) {
       if (ARMEMENT_DIFFERE.has(e.id)) {

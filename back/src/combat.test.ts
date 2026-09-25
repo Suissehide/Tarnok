@@ -2015,6 +2015,57 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
 });
 
 /**
+ * ⚠️ **Ferme M19 du rapport de la tache 1** : « la VALEUR rendue par
+ * `ampAt` n'est consommee par aucune assertion ». Les trois tests du bloc
+ * ci-dessus gardent l'APPEL (mouchard) — l'un d'eux debranche fait rougir.
+ * Mais tant que `damageAmp` valait 1 partout, `brut x amp x (1 - armure)` et
+ * `brut x (1 - armure)` (le facteur tombe, l'appel reste) rendaient le MEME
+ * nombre de PV : personne ne rougissait. La Poix ferme cette mutation-la.
+ */
+describe('la Poix amplifie reellement les degats retires (tache 4, ferme M19)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  it('un coup identique retire PLUS de PV dans une flaque de Poix qu au meme point sans zone', () => {
+    // ⚠️ Le sujet est la RELATION entre les deux hordes, pas un nombre
+    // recopie de la production : un `brut` qui laisserait tomber `amp`
+    // rendrait les deux PV identiques, quelle que soit la valeur choisie.
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, LOURD);
+    const flaqueDePoix = new ZoneField();
+    flaqueDePoix.spawn(ELEMENT.POIX, 500, 500, 0, 0);
+    appliquerDegats(horde, 0, 6, flaqueDePoix, 0, new Set());
+
+    const temoin = new Horde(10);
+    addOne(temoin, 1, 500, 500, LOURD);
+    appliquerDegats(temoin, 0, 6, solNu(), 0, new Set());
+
+    expect(horde.hp[0]).toBeLessThan(temoin.hp[0] ?? 0);
+  });
+
+  it('retire EXACTEMENT brut x damageAmp(Poix) x (1 - armure), pas brut x (1 - armure) seul', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, LOURD);
+    const flaqueDePoix = new ZoneField();
+    flaqueDePoix.spawn(ELEMENT.POIX, 500, 500, 0, 0);
+
+    appliquerDegats(horde, 0, 6, flaqueDePoix, 0, new Set());
+
+    // damageAmp(Poix) est une valeur de production (comme HEAVY_ARMOR l a
+    // deja ete pour l armure a la tache 1) : la reference directement plutot
+    // que de recopier son nombre garde ce test valide si la tache 11 la
+    // regle a l oeil differemment.
+    const attendu = HEAVY_HP - 6 * elementOf(ELEMENT.POIX).damageAmp * (1 - HEAVY_ARMOR);
+    expect(horde.hp[0]).toBeCloseTo(attendu, 5);
+    // Non-vacuite : si `damageAmp` valait encore 1 ici, `attendu` et
+    // `coupSurLourd(6)` soustrait de `HEAVY_HP` seraient IDENTIQUES, et
+    // cette assertion ne prouverait rien de plus que celle de la tache 1.
+    expect(HEAVY_HP - 6 * elementOf(ELEMENT.POIX).damageAmp * (1 - HEAVY_ARMOR)).not.toBe(
+      HEAVY_HP - coupSurLourd(6),
+    );
+  });
+});
+
+/**
  * La chaine de Foudre, cote serveur (etape 5b, tache 3) : `resolveProjectileDamage`
  * appelle `chainTargets` (le MEME que le client, `shared/chain.ts`) et applique
  * `appliquerDegats` — LE seul chemin de degats — a chaque cible qu'elle rend.
