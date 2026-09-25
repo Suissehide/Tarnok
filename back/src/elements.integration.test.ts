@@ -18,7 +18,10 @@ import {
   type ReactionMessage,
   type SnapshotMessage,
   type ZoneMessage,
+  zoneElement,
+  zoneReaction,
 } from '@shared/protocol';
+import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS, weaponOf } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -813,4 +816,80 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     const volees = Math.floor(ecoules / weaponOf(ARME_GIVRE).cooldownTicks);
     expect(zones.length).toBeLessThan(volees);
   }, 60_000);
+});
+
+/**
+ * ⚠️ **Ferme une mutation HERITEE de la tache 5** (etape 5b, tache 6) :
+ * `Session#broadcast` (back/src/server.ts:213) decodait `zone.kind` avant de
+ * l'encoder sur le fil — indetectable tant qu'aucune reaction ne posait de
+ * type non nul, puisque `zoneElement(kind) === kind` pour toute zone de
+ * reaction nulle (voir le rapport de la tache 5). Surchauffe (Braise + Foudre,
+ * tache 6) est la premiere reaction reelle du jeu a empaqueter un nibble non
+ * nul : ce test traverse le fil ENTIER — `Room#announceZones`,
+ * `Session#broadcast`, `encodeZone`, la socket, `decodeZone` — et doit rougir
+ * si l'un de ces sites redecode l'octet par erreur.
+ *
+ * ⚠️ **Aucune arme de Foudre n'existe encore au catalogue** (tache 9) : ce
+ * decor s'en passe, exactement comme le test-jumeau de `room.test.ts`. Le
+ * joueur A tire l'arme de Braise REELLE ; la cible est reposee marquee Foudre
+ * a la main, cote salon — c'est le seul geste de ce fichier qui touche
+ * directement `room.horde`, tout le reste passe par le jeu et par le fil.
+ */
+describe('Surchauffe empaquette son nibble de reaction sur le fil (etape 5b, tache 6)', () => {
+  it('⚠️ le client recoit une ZONE dont le nibble de reaction survit au trajet complet', async () => {
+    const code = await createRoomCode();
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('le registre de salons doit etre accessible depuis l app');
+    }
+
+    const clients = await quatreClients(code);
+    const [a] = clients;
+    if (!a) {
+      throw new Error('quatre clients attendus');
+    }
+
+    const snap = await fullSnapshot(a.ws);
+    const pa = snap.players.find((p) => p.id === a.playerId);
+    if (!pa) {
+      throw new Error('le tireur doit etre dans le snapshot');
+    }
+    const cibleX = pa.x + DISTANCE_CIBLE;
+    const cibleY = pa.y;
+
+    room.grantCard(a.playerId, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    const cible = poseCible(room, 9400, cibleX, cibleY);
+
+    const pilote = setInterval(() => {
+      const slot = room.horde.slotOf(cible);
+      if (slot >= 0) {
+        room.horde.x[slot] = cibleX;
+        room.horde.y[slot] = cibleY;
+        room.horde.vx[slot] = 0;
+        room.horde.vy[slot] = 0;
+        // Le seul geste manuel : la cible reste marquee Foudre, le tir REEL de
+        // Braise du joueur A declenche donc Surchauffe (canonique Braise+Foudre).
+        room.horde.applyMark(slot, ELEMENT.FOUDRE, a.playerId, room.tick);
+      }
+      vise(a, DISTANCE_CIBLE, 0);
+    }, 8);
+
+    try {
+      await waitFor(
+        () => (zonesDe(a).some((z) => zoneReaction(z.kind) === REACTION.SURCHAUFFE) ? true : null),
+        'une ZONE de Surchauffe sur la socket du joueur A',
+        20_000,
+      );
+    } finally {
+      clearInterval(pilote);
+    }
+
+    const surchauffe = zonesDe(a).find((z) => zoneReaction(z.kind) === REACTION.SURCHAUFFE);
+    expect(surchauffe, 'aucune zone de Surchauffe n est arrivee sur le fil').toBeDefined();
+    // ⚠️ **La ligne qui tue les deux mutations heritees.** Un decodage avant
+    // l'envoi, a l'un ou l'autre des deux sites, rendrait `kind` egal a son
+    // seul element : cette comparaison ne peut rester vraie que si l'octet
+    // COMPLET a fait tout le trajet.
+    expect(surchauffe?.kind).not.toBe(zoneElement(surchauffe?.kind ?? 0));
+  }, 30_000);
 });

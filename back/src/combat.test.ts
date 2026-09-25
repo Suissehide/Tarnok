@@ -32,7 +32,8 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
-import { packElementPair, packZoneKind } from '@shared/protocol';
+import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
+import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import type { Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
@@ -2248,5 +2249,457 @@ describe('la chaine de Foudre (etape 5b, tache 3)', () => {
     // autre mort.
     expect(orbs.count).toBe(1);
     expect(orbs.id[0]).toBe(enchaine);
+  });
+});
+
+/**
+ * `postZone` (back/src/combat.ts) empaquette desormais le vrai type de
+ * reaction de la table `shared/reactions.ts` (tache 6 de l'etape 5b) — plus
+ * seulement l'element brut. Ferme les deux mutations heritees de la tache 5 :
+ * `Room#announceZones` et `Session#broadcast` decodaient l'octet AVANT de
+ * l'envoyer, et rien ne le voyait tant qu'aucune reaction ne posait de type
+ * non nul (voir leur test dedie dans `room.test.ts` et
+ * `elements.integration.test.ts`).
+ */
+describe('postZone empaquette le type de reaction de la table (etape 5b, tache 6)', () => {
+  function trigger(pair: number, element: number): ReactionTrigger {
+    return { pair, x: 1000, y: 1000, markBy: 1, by: 2, element };
+  }
+
+  it('Surchauffe (Braise + Foudre) laisse un champ portant le nibble SURCHAUFFE', () => {
+    const zones = new ZoneField();
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE), ELEMENT.FOUDRE)],
+      zones,
+      new Reactions(),
+    );
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.SURCHAUFFE);
+  });
+
+  it('Embrasement (Braise + Poix) laisse un champ portant le nibble EMBRASEMENT', () => {
+    const zones = new ZoneField();
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX), ELEMENT.POIX)],
+      zones,
+      new Reactions(),
+    );
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.EMBRASEMENT);
+  });
+
+  it('Court-circuit (Foudre + Poix) laisse un champ portant le nibble COURT_CIRCUIT', () => {
+    const zones = new ZoneField();
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX), ELEMENT.POIX)],
+      zones,
+      new Reactions(),
+    );
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.COURT_CIRCUIT);
+  });
+
+  it('le Choc thermique generique (Braise + Givre) laisse un champ SANS type de reaction — non-regression', () => {
+    const zones = new ZoneField();
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE), ELEMENT.GIVRE)],
+      zones,
+      new Reactions(),
+    );
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.AUCUNE);
+    // Et l'octet reste EGAL a l'element seul, exactement comme avant la
+    // tache 6 : `packZoneKind(element, 0) === element`.
+    expect(zones.kind[0]).toBe(ELEMENT.GIVRE);
+  });
+});
+
+/**
+ * Surchauffe (Braise + Foudre, tache 6 de l'etape 5b) : la zone brule
+ * D'ELLE-MEME, independamment de toute marque — voir le second balayage de
+ * `resolveBurn`.
+ */
+describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? -1;
+  const BRULURE_GENERIQUE = elementOf(ELEMENT.BRAISE).burnPerTick;
+
+  it('brule un ennemi DANS la zone, sans qu il porte la moindre marque', () => {
+    const horde = new Horde(10);
+    const dedans = addOne(horde, 1, 1000, 1000, LOURD);
+    const dehors = addOne(horde, 2, 1000 + ZONE_RADIUS + 1, 1000, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 1000, 1000, 4, 0);
+
+    expect(horde.markAt(horde.slotOf(dedans), 5)).toBe(ELEMENT.NEUTRE);
+
+    resolveBurn(horde, new OrbField(10), 5, zones);
+
+    expect(horde.hp[horde.slotOf(dedans)]).toBeLessThan(HEAVY_HP);
+    expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
+  });
+
+  /**
+   * ⚠️ **LES DEUX MOITIES.** Meme decor — un LOURD, meme tick, meme position —
+   * une seule fois marque Braise (le champ generique, §4.1), une seule fois
+   * dans une zone de Surchauffe : seule la source de brulure differe. « Plus
+   * fort que le champ generique » (§5 de la spec) se lit ici a la difference
+   * des deux pertes de PV, jamais a un chiffre recopie de production.
+   */
+  it('⚠️ brule PLUS FORT que le champ generique de la marque, sur le meme decor', () => {
+    const generique = new Horde(10);
+    addOne(generique, 1, 1000, 1000, LOURD);
+    generique.applyMark(0, ELEMENT.BRAISE, 1, 0);
+    resolveBurn(generique, new OrbField(10), 0, solNu());
+
+    const surchauffe = new Horde(10);
+    addOne(surchauffe, 1, 1000, 1000, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 1000, 1000, 4, 0);
+    resolveBurn(surchauffe, new OrbField(10), 0, zones);
+
+    const perteGenerique = HEAVY_HP - (generique.hp[0] ?? 0);
+    const perteSurchauffe = HEAVY_HP - (surchauffe.hp[0] ?? 0);
+    expect(perteGenerique).toBeCloseTo(coupSurLourd(BRULURE_GENERIQUE), 5);
+    expect(perteSurchauffe).toBeGreaterThan(perteGenerique);
+  });
+
+  it('brule MEME quand la zone porte l element FOUDRE (le declencheur) : le taux vient de la reaction, pas de l element', () => {
+    // ⚠️ **La ligne qui tue la mutation « lire `elementOf(zoneElement(kind))`
+    // au lieu de `zoneBurnPerTick(kind)` ».** `elementOf(FOUDRE).burnPerTick`
+    // vaut zero : une lecture generique ne brulerait jamais ici.
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.SURCHAUFFE), 1000, 1000, 4, 0);
+    expect(elementOf(ELEMENT.FOUDRE).burnPerTick).toBe(0);
+
+    resolveBurn(horde, new OrbField(10), 5, zones);
+
+    expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(HEAVY_HP);
+  });
+
+  it('ne liste jamais deux fois le meme mort : marque ET zone touchent la meme entite deja a terre', () => {
+    // ⚠️ Ferme le risque introduit par le second balayage : sans la garde
+    // `hp <= 0`, un ennemi acheve par la marque au premier balayage
+    // reprendrait un coup de la zone au second, et `dead` (un TABLEAU)
+    // listerait son identite deux fois.
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LEGER);
+    horde.hp[0] = 0.05; // meurt du seul burnPerTick generique (0,1, arme nulle)
+    horde.applyMark(0, ELEMENT.BRAISE, 1, 0);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 1000, 1000, 4, 0);
+    const orbs = new OrbField(10);
+
+    const dead = resolveBurn(horde, orbs, 0, zones);
+
+    expect(dead).toEqual([cible]);
+    expect(orbs.count).toBe(1);
+  });
+
+  it('deux zones de Surchauffe qui se recouvrent ne brulent pas deux fois le meme ennemi', () => {
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LEGER);
+    horde.hp[0] = 0.05;
+    const zones = new ZoneField();
+    // Deux zones DISTINCTES (elements differents : la fusion ne les fond pas)
+    // qui couvrent toutes les deux la cible.
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 1000, 1000, 4, 0);
+    zones.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.SURCHAUFFE), 1010, 1010, 4, 0);
+    expect(zones.count).toBe(2);
+    const orbs = new OrbField(10);
+
+    const dead = resolveBurn(horde, orbs, 0, zones);
+
+    expect(dead).toEqual([cible]);
+    expect(orbs.count).toBe(1);
+  });
+});
+
+/**
+ * Embrasement (Braise + Poix, tache 6 de l'etape 5b) : degats instantanes a
+ * tout ennemi POISSE dans un rayon, filtre sur la marque — voir
+ * `damagePoisonedInRadius`.
+ */
+describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, tache 6)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function trigger(x: number, y: number): ReactionTrigger {
+    return {
+      pair: packElementPair(ELEMENT.BRAISE, ELEMENT.POIX),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.POIX,
+    };
+  }
+
+  it('touche un ennemi POISSE, epargne un ennemi SAIN AU MEME POINT', () => {
+    const horde = new Horde(10);
+    const poisse = addOne(horde, 1, 1000, 1000, LOURD);
+    const sain = addOne(horde, 2, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(poisse)] = 1000;
+    horde.hp[horde.slotOf(sain)] = 1000;
+    horde.applyMark(horde.slotOf(poisse), ELEMENT.POIX, 3, 0);
+
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(1000, 1000)],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    expect(horde.hp[horde.slotOf(poisse)]).toBeLessThan(1000);
+    expect(horde.hp[horde.slotOf(sain)]).toBe(1000);
+  });
+
+  it('epargne un ennemi POISSE mais HORS du rayon', () => {
+    const horde = new Horde(10);
+    const dedans = addOne(horde, 1, 1000 + REACTION_RADIUS - 1, 1000, LOURD);
+    const dehors = addOne(horde, 2, 1000 + REACTION_RADIUS, 1000, LOURD);
+    horde.applyMark(horde.slotOf(dedans), ELEMENT.POIX, 3, 0);
+    horde.applyMark(horde.slotOf(dehors), ELEMENT.POIX, 3, 0);
+    horde.hp[horde.slotOf(dedans)] = 1000;
+    horde.hp[horde.slotOf(dehors)] = 1000;
+
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(1000, 1000)],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    expect(horde.hp[horde.slotOf(dedans)]).toBeLessThan(1000);
+    expect(horde.hp[horde.slotOf(dehors)]).toBe(1000);
+  });
+
+  it('l ennemi qui DECLENCHE ressort NU (§4.3) : sa propre marque consommee l exclut de sa propre Embrasement', () => {
+    // ⚠️ Contrairement au Choc thermique generique, ou le declencheur est
+    // touche comme les autres (il est a distance nulle du point) : ici, sa
+    // marque de Poix vient d etre consommee par `applyElement` avant que
+    // `applyReactions` ne resolve, donc `markAt` y rend NEUTRE.
+    const horde = new Horde(10);
+    const declencheur = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[0] = 1000;
+    // Pas de marque posee : c est exactement l etat d un ennemi qui vient de
+    // reagir (`applyElement` la remet a NEUTRE).
+    expect(horde.markAt(0, 0)).toBe(ELEMENT.NEUTRE);
+
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(1000, 1000)],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **LES DEUX MOITIES**, le test le plus important de cette tache. Meme
+   * decor exactement — un POISSE et un SAIN, au meme point, au meme tick —
+   * pour deux couples differents : Embrasement (qui doit filtrer) et le Choc
+   * thermique generique (qui ne filtre jamais). « Le sain ne bouge pas » se
+   * lirait aussi bien « personne n a reagi » si le Choc thermique, lui,
+   * n epargnait personne — c est exactement ce que la seconde moitie prouve.
+   */
+  it('⚠️ Embrasement filtre sur la marque, le Choc thermique generique ne filtre rien — meme decor, seule la paire differe', () => {
+    function decor(): { horde: Horde; poisse: number; sain: number } {
+      const horde = new Horde(10);
+      const poisse = addOne(horde, 1, 1000, 1000, LOURD);
+      const sain = addOne(horde, 2, 1000, 1000, LOURD);
+      horde.hp[horde.slotOf(poisse)] = 1000;
+      horde.hp[horde.slotOf(sain)] = 1000;
+      horde.applyMark(horde.slotOf(poisse), ELEMENT.POIX, 3, 0);
+      return { horde, poisse, sain };
+    }
+
+    const embrasement = decor();
+    applyReactions(
+      embrasement.horde,
+      new OrbField(10),
+      0,
+      [trigger(1000, 1000)],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    const chocThermique = decor();
+    applyReactions(
+      chocThermique.horde,
+      new OrbField(10),
+      0,
+      [
+        {
+          pair: packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE),
+          x: 1000,
+          y: 1000,
+          markBy: 1,
+          by: 2,
+          element: ELEMENT.GIVRE,
+        },
+      ],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    // Moitie 1 — Embrasement : seul le poisse perd des PV.
+    expect(embrasement.horde.hp[embrasement.horde.slotOf(embrasement.poisse)]).toBeLessThan(1000);
+    expect(embrasement.horde.hp[embrasement.horde.slotOf(embrasement.sain)]).toBe(1000);
+
+    // Moitie 2 — Choc thermique generique, MEME decor : les DEUX perdent des
+    // PV, la marque de Poix du premier ne joue ici aucun role de filtre.
+    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.poisse)]).toBeLessThan(
+      1000,
+    );
+    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.sain)]).toBeLessThan(
+      1000,
+    );
+  });
+});
+
+/**
+ * Court-circuit (Foudre + Poix, tache 6 de l'etape 5b) : `chainTargets`
+ * (tache 2) reutilisee telle quelle, jumps non borne, tant que les cibles
+ * restent POISSEES — voir `chainWhilePoisoned`.
+ */
+describe('applyReactions — Court-circuit chaine tant que les cibles sont poissees (etape 5b, tache 6)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function trigger(x: number, y: number): ReactionTrigger {
+    return {
+      pair: packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.POIX,
+    };
+  }
+
+  it('⚠️ s ARRETE au premier maillon NON poisse, elle ne saute pas par-dessus', () => {
+    // Trois maillons alignes, espaces de 100 px (< CHAIN_RADIUS 150) : le
+    // premier saut depuis l origine ne peut atteindre QUE le premier —
+    // chaque saut suivant repart de la cible precedente. A: poisse, B: sain,
+    // C: poisse — C est GEOMETRIQUEMENT atteignable (100 px de B), mais la
+    // chaine doit s arreter a B.
+    expect(100).toBeLessThan(CHAIN_RADIUS);
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 100, 0, LOURD);
+    const b = addOne(horde, 2, 200, 0, LOURD);
+    const c = addOne(horde, 3, 300, 0, LOURD);
+    for (const id of [a, b, c]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    horde.applyMark(horde.slotOf(a), ELEMENT.POIX, 3, 0);
+    // b : AUCUNE marque.
+    horde.applyMark(horde.slotOf(c), ELEMENT.POIX, 3, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(0, 0)], new ZoneField(), new Reactions());
+
+    expect(horde.hp[horde.slotOf(a)]).toBeLessThan(1000);
+    expect(horde.hp[horde.slotOf(b)]).toBe(1000);
+    // ⚠️ La ligne qui distingue « s arrete » de « saute par-dessus » : C est
+    // poisse et geometriquement a portee du saut suivant, et pourtant intact.
+    expect(horde.hp[horde.slotOf(c)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **LES DEUX MOITIES.** Meme decor — un POISSE a 120 px de l origine,
+   * hors de `REACTION_RADIUS` (90) mais dans `CHAIN_RADIUS` (150) — pour deux
+   * couples differents : Court-circuit (qui doit l atteindre EN SAUTANT) et
+   * un couple qui ne declenche AUCUN effet specifique (qui doit se limiter au
+   * balayage generique, donc RATER cette cible). « La cible eloignee ne bouge
+   * pas » se lirait aussi bien « rien n a reagi » si le couple generique, lui
+   * non plus, ne l atteignait jamais pour une autre raison.
+   */
+  it('⚠️ chaine reellement au-dela de REACTION_RADIUS, la ou le generique ne porte pas', () => {
+    expect(REACTION_RADIUS).toBeLessThan(120);
+    expect(120).toBeLessThan(CHAIN_RADIUS);
+
+    function decor(): { horde: Horde; loin: number } {
+      const horde = new Horde(10);
+      const loin = addOne(horde, 1, 120, 0, LOURD);
+      horde.hp[horde.slotOf(loin)] = 1000;
+      horde.applyMark(horde.slotOf(loin), ELEMENT.POIX, 3, 0);
+      return { horde, loin };
+    }
+
+    const courtCircuit = decor();
+    applyReactions(
+      courtCircuit.horde,
+      new OrbField(10),
+      0,
+      [trigger(0, 0)],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    const generique = decor();
+    applyReactions(
+      generique.horde,
+      new OrbField(10),
+      0,
+      [
+        {
+          pair: packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE),
+          x: 0,
+          y: 0,
+          markBy: 1,
+          by: 2,
+          element: ELEMENT.GIVRE,
+        },
+      ],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    // Moitie 1 — Court-circuit atteint la cible en sautant jusqu a elle.
+    expect(courtCircuit.horde.hp[courtCircuit.horde.slotOf(courtCircuit.loin)]).toBeLessThan(1000);
+    // Moitie 2 — le generique, meme point d origine, ne porte pas jusque-la.
+    expect(generique.horde.hp[generique.horde.slotOf(generique.loin)]).toBe(1000);
+  });
+
+  it('exclut l ennemi qui declenche : il ne saute pas sur lui-meme malgre la distance nulle', () => {
+    // ⚠️ Sans `trigger.entityId` exclu, le premier saut — mesure depuis SA
+    // PROPRE position — le retrouverait a distance nulle et la chaine
+    // boucherait sur lui-meme au lieu d atteindre le VRAI premier maillon.
+    const horde = new Horde(10);
+    const declencheur = addOne(horde, 1, 500, 500, LOURD);
+    const cible = addOne(horde, 2, 500 + 50, 500, LOURD);
+    horde.hp[horde.slotOf(declencheur)] = 1000;
+    horde.hp[horde.slotOf(cible)] = 1000;
+    horde.applyMark(horde.slotOf(cible), ELEMENT.POIX, 3, 0);
+    // Le declencheur ressort NU (§4.3) : sa propre marque est deja consommee.
+    expect(horde.markAt(horde.slotOf(declencheur), 0)).toBe(ELEMENT.NEUTRE);
+
+    const t = trigger(500, 500);
+    t.entityId = horde.entityIdAt(horde.slotOf(declencheur));
+
+    applyReactions(horde, new OrbField(10), 0, [t], new ZoneField(), new Reactions());
+
+    expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(1000);
+    // Le declencheur n a pas ete rappele sur lui-meme.
+    expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
   });
 });

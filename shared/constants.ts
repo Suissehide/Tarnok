@@ -827,3 +827,44 @@ export const CHAIN_JUMPS = 3;
  * l'objet de cette tache.
  */
 export const CHAIN_RADIUS = 150;
+
+/**
+ * Degats par tick d'une zone de Surchauffe (Braise + Foudre, tache 6 de
+ * l'etape 5b) — INDEPENDANT de la marque, contrairement a `Element.burnPerTick`.
+ *
+ * ⚠️ **Ne peut PAS se lire generiquement au site d'application, comme
+ * `Element.burnPerTick`.** Le champ que laisse Surchauffe porte l'element du
+ * DECLENCHEUR (Braise OU Foudre selon l'ordre d'arrivee, voir
+ * `ReactionTrigger.element` dans `back/src/combat.ts`) : s'il porte Foudre,
+ * marquer les ennemis dessous les marquerait de Foudre, dont `burnPerTick`
+ * est nul — le §5 de la spec de l'etape 5b l'ecrit noir sur blanc : *« le
+ * burnPerTick du champ vient du type de reaction, pas de l'element »*. Cette
+ * constante vit donc a part, lue par `zoneBurnPerTick` (`shared/reactions.ts`)
+ * a partir du nibble de reaction du `kind` empaquete, jamais de l'element.
+ *
+ * 3x le taux generique de la Braise (`elementOf(ELEMENT.BRAISE).burnPerTick`,
+ * 0,1) : « plus fort que le champ generique » (§5 de la spec) doit se voir a
+ * l'oeil, la ou un facteur de deux se perdrait a cote des degats deja
+ * variables des projectiles et des reactions.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire (tache 12).
+ */
+export const SURCHAUFFE_BURN_PER_TICK = 0.3;
+
+/**
+ * Duree de vie d'une zone de Surchauffe, en ticks — DERIVEE de
+ * `ZONE_LIFETIME_TICKS`, jamais recopiee (meme discipline que
+ * `ZONE_REFRESH_INTERVAL_TICKS` juste au-dessus).
+ *
+ * 1,5x la duree generique (90 -> 135 ticks, soit 4,5 s contre 3 s) : « plus
+ * longtemps que le champ generique » (§5 de la spec de l'etape 5b).
+ * `ZoneField.aliveAt`/`expire` (`shared/zones.ts`) la lisent via
+ * `zoneLifetimeTicks` (`shared/reactions.ts`) des qu'une zone porte le nibble
+ * de reaction Surchauffe — les deux cotes du fil en derivent donc la MEME
+ * date de peremption a partir du meme octet, sans rien annoncer de plus.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire (tache 12).
+ */
+export const SURCHAUFFE_ZONE_LIFETIME_TICKS = Math.round(ZONE_LIFETIME_TICKS * 1.5);

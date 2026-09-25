@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  SURCHAUFFE_ZONE_LIFETIME_TICKS,
   ZONE_CAPACITY,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
@@ -8,6 +9,7 @@ import {
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import { packZoneKind, zoneElement } from './protocol';
+import { REACTION } from './reactions';
 import { ZoneField } from './zones';
 
 /**
@@ -320,6 +322,60 @@ describe('ZoneField — l expiration derivee', () => {
 
     expect(zones.count).toBe(1);
     expect(zones.kind[0]).toBe(kind);
+  });
+});
+
+/**
+ * ⚠️ **Surchauffe (tache 6 de l'etape 5b) fait tenir `aliveAt`/`expire` PLUS
+ * LONGTEMPS que la duree generique, DERIVEE du nibble de reaction empaquete
+ * dans `kind`.** Le decor compare toujours deux zones au MEME `bornTick`,
+ * l'une de reaction nulle et l'autre de Surchauffe, pour que la seule
+ * variable soit le nibble — jamais un chiffre recopie de
+ * `SURCHAUFFE_ZONE_LIFETIME_TICKS`, un reglage de jeu que ce fichier ne doit
+ * pas figer.
+ */
+describe('ZoneField — Surchauffe allonge la duree de vie de sa zone (tache 6)', () => {
+  it('tient encore au tick ou une zone generique du MEME bornTick est deja perimee', () => {
+    const generique = new ZoneField();
+    generique.spawn(ELEMENT.BRAISE, 0, 0, 0, 10);
+    const surchauffe = new ZoneField();
+    surchauffe.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 0, 0, 0, 10);
+
+    const tickPerimeGenerique = 10 + ZONE_LIFETIME_TICKS;
+    expect(generique.aliveAt(0, tickPerimeGenerique)).toBe(false);
+    // ⚠️ **La ligne qui separe les deux comportements.** Une lecture qui
+    // ignorerait le nibble de reaction rendrait `false` ici aussi.
+    expect(surchauffe.aliveAt(0, tickPerimeGenerique)).toBe(true);
+  });
+
+  it('finit elle aussi par expirer — et `expire()` la retire au bon tick, pas au tick generique', () => {
+    const surchauffe = new ZoneField();
+    surchauffe.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SURCHAUFFE), 0, 0, 0, 0);
+
+    // Au tick generique, elle survit encore : `expire` ne doit PAS la retirer.
+    surchauffe.expire(ZONE_LIFETIME_TICKS);
+    expect(surchauffe.count).toBe(1);
+
+    // A SA propre echeance, plus longue, elle disparait bien.
+    const tickPerimeSurchauffe = 0 + SURCHAUFFE_ZONE_LIFETIME_TICKS;
+    expect(tickPerimeSurchauffe).toBeGreaterThan(ZONE_LIFETIME_TICKS);
+    surchauffe.expire(tickPerimeSurchauffe);
+    expect(surchauffe.count).toBe(0);
+  });
+
+  it('une zone de reaction nulle garde la duree GENERIQUE — non-regression', () => {
+    // Le decor a deux zones, la Surchauffe posee en second : la tache 4 a
+    // laisse vivante une mutation d'`ampAt` parce que, dans son decor, le
+    // plus fort etait toujours pose en second. Inverser l'ordre ici tient le
+    // meme risque a distance.
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), BIEN_LOIN, 0, 0, 0);
+    zones.spawn(ELEMENT.GIVRE, 0, 0, 0, 0);
+
+    zones.expire(ZONE_LIFETIME_TICKS);
+
+    expect(zones.count).toBe(1);
+    expect(zoneElement(zones.kind[0] ?? 0)).toBe(ELEMENT.BRAISE);
   });
 });
 

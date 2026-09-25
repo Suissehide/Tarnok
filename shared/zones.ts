@@ -1,11 +1,7 @@
-import {
-  ZONE_CAPACITY,
-  ZONE_LIFETIME_TICKS,
-  ZONE_RADIUS,
-  ZONE_REFRESH_INTERVAL_TICKS,
-} from './constants';
+import { ZONE_CAPACITY, ZONE_RADIUS, ZONE_REFRESH_INTERVAL_TICKS } from './constants';
 import { elementOf } from './elements';
 import { zoneElement } from './protocol';
+import { zoneLifetimeTicks } from './reactions';
 
 /**
  * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, **pose par
@@ -41,11 +37,14 @@ export class ZoneField {
    * tache 5 de l'etape 5b.
    *
    * ⚠️ **Toujours decoder avec `zoneElement` / `zoneReaction` avant de s'en
-   * servir.** Le lire brut fonctionne PAR ACCIDENT tant que personne ne pose
-   * de type de reaction non nul (voir `postZone`) — et c'est exactement le
-   * genre de coincidence qui casse en silence le jour ou une reaction en pose
-   * un. `element` et `elementOf` different d'une lettre et pas d'un sens : ne
-   * pas confondre ce tableau avec l'element qu'il faut en extraire.
+   * servir.** Depuis la tache 6 de l'etape 5b, `postZone` (back/src/combat.ts)
+   * pose reellement un nibble de reaction non nul pour Surchauffe,
+   * Embrasement et Court-circuit : un lecteur qui traiterait `kind` comme un
+   * simple element perdrait ce nibble en silence — c'est exactement ce que
+   * `Room#announceZones` et `Session#broadcast` faisaient encore a la tache 5,
+   * et que leurs tests dediees gardent desormais. `element` et `elementOf`
+   * different d'une lettre et pas d'un sens : ne pas confondre ce tableau
+   * avec l'element qu'il faut en extraire.
    */
   readonly kind: Uint8Array;
   readonly x: Float32Array;
@@ -224,10 +223,17 @@ export class ZoneField {
    *
    * Meme borne que `expire` : une zone posee au tick `T` vaut encore au tick
    * `T + ZONE_LIFETIME_TICKS - 1` et plus au tick `T + ZONE_LIFETIME_TICKS`.
+   *
+   * ⚠️ **La duree n'est plus TOUJOURS `ZONE_LIFETIME_TICKS` depuis la tache 6
+   * de l'etape 5b.** `zoneLifetimeTicks` (`shared/reactions.ts`) la derive du
+   * `kind` empaquete : la generique pour la plupart des zones, une duree
+   * propre pour celles qu'une reaction specifique allonge (Surchauffe). Les
+   * deux cotes du fil decodent le meme octet et obtiennent la meme reponse,
+   * sans rien annoncer de plus.
    */
   aliveAt(slot: number, tick: number): boolean {
     const born = this.bornTick[slot] ?? 0;
-    return born <= tick && tick - born < ZONE_LIFETIME_TICKS;
+    return born <= tick && tick - born < zoneLifetimeTicks(this.kind[slot] ?? 0);
   }
 
   /**
@@ -317,7 +323,7 @@ export class ZoneField {
    */
   expire(tick: number): void {
     for (let i = this.#count - 1; i >= 0; i--) {
-      if (tick - (this.bornTick[i] ?? 0) >= ZONE_LIFETIME_TICKS) {
+      if (tick - (this.bornTick[i] ?? 0) >= zoneLifetimeTicks(this.kind[i] ?? 0)) {
         this.#removeAt(i);
       }
     }

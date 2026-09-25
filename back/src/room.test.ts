@@ -52,7 +52,10 @@ import {
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
   VOTE_CHOICE,
+  zoneElement,
+  zoneReaction,
 } from '@shared/protocol';
+import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
   BASE_WEAPON_ID,
@@ -2397,6 +2400,46 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     const cx = room.horde.x[slot] ?? 0;
     const cy = room.horde.y[slot] ?? 0;
     expect(zones.some((z) => Math.hypot(z.x - cx, z.y - cy) < ZONE_RADIUS)).toBe(true);
+  });
+
+  /**
+   * ⚠️ **Ferme une mutation HERITEE de la tache 5** (etape 5b) : `#announceZones`
+   * (back/src/room.ts:1442) decodait `this.#zones.kind[z]` avant de le pousser
+   * dans `#pendingZones` — indetectable tant qu'aucune reaction ne posait de
+   * type non nul, puisque `zoneElement(kind) === kind` pour toute zone de
+   * reaction nulle. Surchauffe (Braise + Foudre, tache 6) est la premiere
+   * reaction reelle du jeu a empaqueter un nibble non nul : ce test doit
+   * rougir si `#announceZones` (ou n'importe quel site en amont) redecode
+   * l'octet par erreur.
+   *
+   * ⚠️ **Aucune arme de Foudre n'existe encore au catalogue** (elle arrive a
+   * la tache 9) : ce decor s'en passe. Le joueur 1 tire l'arme de Braise
+   * REELLE ; la cible est reposee marquee Foudre a la main, exactement comme
+   * `remarqueBraise` repose une marque de Braise plus haut dans ce fichier.
+   * Le couple (Foudre, Braise) — canonique (Braise, Foudre) — est Surchauffe,
+   * quel que soit celui des deux qui vient du catalogue.
+   */
+  it('⚠️ Surchauffe empaquette un nibble de reaction non nul sur le fil (ferme une mutation heritee de la tache 5)', () => {
+    const room = new Room(0xbaa1_5e11);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_BRAISE });
+    const before = positionOf(room, 1);
+    const cible = monstreIndestructible(room, 603, before.x + 100, before.y);
+
+    const { zones } = joue(room, 20, (r) => {
+      const slot = r.horde.slotOf(cible);
+      if (slot >= 0) {
+        r.horde.applyMark(slot, ELEMENT.FOUDRE, 1, r.tick);
+      }
+    });
+
+    expect(zones.length).toBeGreaterThan(0);
+    const surchauffe = zones.find((z) => zoneReaction(z.kind) === REACTION.SURCHAUFFE);
+    expect(surchauffe, 'aucune zone de Surchauffe annoncee').toBeDefined();
+    // ⚠️ **La ligne qui tue la mutation.** Un decodage avant l'envoi rendrait
+    // `kind` egal a son seul element (`zoneElement(kind) === kind`) : cette
+    // comparaison ne peut rester vraie que si l'octet COMPLET a voyage.
+    expect(surchauffe?.kind).not.toBe(zoneElement(surchauffe?.kind ?? 0));
   });
 
   it('une mort par BRULURE part dans le meme lot DEATHS que les morts par projectile', () => {

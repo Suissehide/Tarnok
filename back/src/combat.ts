@@ -15,7 +15,8 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
-import { packElementPair, zoneElement } from '@shared/protocol';
+import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
+import { REACTION, reactionForPair, zoneBurnPerTick } from '@shared/reactions';
 import type { ZoneField } from '@shared/zones';
 
 /**
@@ -287,6 +288,19 @@ export interface ReactionTrigger {
    * reellement differentes (§7) au lieu de rejouer une charge deja comptee.
    */
   element: number;
+  /**
+   * L'identite de l'ennemi qui a declenche cette reaction — `undefined` pour
+   * un declencheur ne d'un recouvrement de zones (`onZoneCreated`), qui n'a
+   * pas d'ennemi associe (tache 6 de l'etape 5b).
+   *
+   * ⚠️ **Ne sert QU'a Court-circuit, pour s'exclure de sa propre chaine.** Sans
+   * elle, le premier saut de `chainWhilePoisoned` — mesure depuis la position
+   * de CET ennemi — le retrouverait a distance nulle et la chaine sauterait
+   * sur elle-meme, exactement le piege que `resolveProjectileDamage` evite
+   * deja pour la chaine de Foudre. Ne voyage jamais : absent de
+   * `ReactionEvent`/`ReactionMessage`.
+   */
+  entityId?: number;
 }
 
 /**
@@ -467,6 +481,7 @@ function applyElement(
       markBy: horde.markBy[slot] ?? 0,
       by,
       element,
+      entityId: horde.entityIdAt(slot),
     });
     if (declenche) {
       // La marque se consomme : `NEUTRE` n'est pas un cas particulier de la
@@ -601,9 +616,111 @@ function damageInRadius(
 }
 
 /**
- * Resout les reactions collectees pendant le tick : `REACTION_DAMAGE` a tout
- * ennemi dans `REACTION_RADIUS` de chaque point, et rend les identites de ceux
- * qui en meurent.
+ * Embrasement (Braise + Poix, tache 6 de l'etape 5b) : `damage` a tout ennemi
+ * POISSE dans `radius` du point de reaction — meme balayage que
+ * `damageInRadius`, filtre sur la marque courante.
+ *
+ * ⚠️ **Un rayon, jamais une propagation de proche en proche.** Ecart assume
+ * du §5 de la spec de l'etape 5b : *« se propage a tous les ennemis poisses
+ * proches »* se lit comme un parcours de graphe, dont le resultat depend de
+ * l'ordre de visite — la meme fragilite que la chaine (`shared/chain.ts`), en
+ * pire, puisque rien ici ne departage a distance egale. Une seule passe.
+ *
+ * ⚠️ **L'ennemi qui a declenche la reaction N'EST PAS un cas particulier ici,
+ * contrairement a `damageInRadius`.** Sa marque de Poix vient d'etre
+ * consommee par `applyElement` (§4.3, « un ennemi ressort NU d'une
+ * reaction ») : `horde.markAt` y rend `NEUTRE`, donc le filtre l'ecarte de
+ * lui-meme sans qu'il faille l'exclure explicitement — la geometrie seule
+ * n'aurait pas suffi a le faire, la marque, si.
+ */
+function damagePoisonedInRadius(
+  horde: Horde,
+  cx: number,
+  cy: number,
+  radius: number,
+  damage: number,
+  zones: ZoneField,
+  tick: number,
+  dead: Set<number>,
+): void {
+  const r2 = radius * radius;
+  for (let i = 0; i < horde.count; i++) {
+    if (horde.markAt(i, tick) !== ELEMENT.POIX) {
+      continue;
+    }
+    const dx = (horde.x[i] ?? 0) - cx;
+    const dy = (horde.y[i] ?? 0) - cy;
+    if (dx * dx + dy * dy >= r2) {
+      continue;
+    }
+    appliquerDegats(horde, i, damage, zones, tick, dead);
+  }
+}
+
+/**
+ * Court-circuit (Foudre + Poix, tache 6 de l'etape 5b) : `chainTargets`
+ * (`shared/chain.ts`, tache 2), `jumps` NON borne, tant que les cibles
+ * restent POISSEES — **reutilise la meme fonction que la chaine de Foudre,
+ * elle n'est pas reecrite.**
+ *
+ * ⚠️ **S'ARRETE au premier saut NON poisse, elle ne le saute pas.** « tant que
+ * les cibles sont poissees » (§5 de la spec) lit une CONDITION D'ARRET, pas un
+ * filtre : une cible saine rompt le court-circuit plutot que de le laisser
+ * continuer par-dessus elle. Une chaine Foudre + Poix + Foudre + Poix, dans
+ * cet ordre, ne touche donc que le premier maillon poisse.
+ *
+ * ⚠️ **`jumps` vaut `horde.count`.** `chainTargets` s'arrete deja des qu'un
+ * saut ne trouve plus personne dans `CHAIN_RADIUS` (voir sa doc) : un plafond
+ * superieur a la population ne borne donc jamais rien en pratique — c'est la
+ * forme la plus honnete de « sans limite de sauts » que la fonction existante
+ * puisse exprimer sans qu'on en ecrive une seconde.
+ *
+ * ⚠️ **Exclut `t.entityId` (l'ennemi qui declenche) et `dead`**, meme
+ * raisonnement que le chainage de la Foudre dans `resolveProjectileDamage` :
+ * sans la premiere exclusion, le premier saut — mesure depuis SA PROPRE
+ * position — le retrouverait a distance nulle et la chaine sauterait sur
+ * elle-meme ; sans la seconde, un voisin deja tue par une reaction PRECEDENTE
+ * du meme tick recevrait un coup qu'il ne peut plus propager.
+ */
+function chainWhilePoisoned(
+  horde: Horde,
+  trigger: ReactionTrigger,
+  damage: number,
+  zones: ZoneField,
+  tick: number,
+  dead: Set<number>,
+): void {
+  const exclude = new Set(dead);
+  if (trigger.entityId !== undefined) {
+    exclude.add(trigger.entityId);
+  }
+  for (const id of chainTargets(horde, trigger.x, trigger.y, CHAIN_RADIUS, horde.count, exclude)) {
+    const slot = horde.slotOf(id);
+    // ⚠️ **INATTEIGNABLE par construction, meme raisonnement que les autres
+    // `slot < 0` de ce fichier** : `chainTargets` ne rend que des identites
+    // lues DANS `horde`, et rien ne compacte entre cet appel et cette boucle.
+    if (slot < 0) {
+      continue;
+    }
+    if (horde.markAt(slot, tick) !== ELEMENT.POIX) {
+      break;
+    }
+    appliquerDegats(horde, slot, damage, zones, tick, dead);
+  }
+}
+
+/**
+ * Resout les reactions collectees pendant le tick : l'effet SPECIFIQUE de la
+ * table des reactions (`shared/reactions.ts`, tache 6 de l'etape 5b) si la
+ * paire en a un, sinon `REACTION_DAMAGE` a tout ennemi dans `REACTION_RADIUS`
+ * du point (le Choc thermique generique de l'etape 5a) — et rend les
+ * identites de ceux qui en meurent.
+ *
+ * ⚠️ **Un lookup dans la table, jamais un `switch` sur `pair`.** Meme motif
+ * que `ELEMENT_DEFS`/`WEAPONS`/`ARCHETYPES` : `reactionForPair` est le SEUL
+ * endroit qui connaisse la valeur numerique d'un couple d'elements ; cette
+ * fonction ne branche que sur le petit identifiant qu'il rend
+ * (`ReactionDef.id`), jamais sur la paire elle-meme.
  *
  * ⚠️ **Les morts passent par le `DEATHS` EXISTANT, jamais par un chemin
  * parallele** — meme contrainte que les brulures de la tache 6, et pour la
@@ -654,7 +771,14 @@ export function applyReactions(
 
   const dead = new Set<number>();
   for (const t of triggers) {
-    damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
+    const def = reactionForPair(t.pair);
+    if (def?.id === REACTION.EMBRASEMENT) {
+      damagePoisonedInRadius(horde, t.x, t.y, def.radius, def.damage, zones, tick, dead);
+    } else if (def?.id === REACTION.COURT_CIRCUIT) {
+      chainWhilePoisoned(horde, t, def.damage, zones, tick, dead);
+    } else {
+      damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
+    }
   }
   if (dead.size === 0) {
     return [];
@@ -1058,13 +1182,17 @@ function postZone(
   // deux zones qu'a LA CREATION DE LA SECONDE. Sans cette distinction, deux
   // reactions qui se repetent au meme endroit declencheraient une reaction de
   // recouvrement a chaque fois, indefiniment.
-  // ⚠️ **`trigger.element` est un `kind` valide de reaction nulle**
-  // (`ZoneField.spawn`) : aucun type de reaction nomme n'existe encore (voir
-  // `packZoneKind` dans `shared/protocol.ts`) — la tache qui les ajoutera
-  // empaquettera ici le vrai type au lieu de l'element seul.
+  // ⚠️ **Le nibble de reaction est POSE ICI, depuis la tache 6 de l'etape
+  // 5b.** `reactionForPair` cherche `trigger.pair` dans la table des
+  // reactions (`shared/reactions.ts`) ; une paire absente (le Choc thermique
+  // generique, ou une paire des taches 7/8 pas encore ecrite) rend
+  // `undefined`, et `REACTION.AUCUNE` (0) s'empaquette — `packZoneKind(element,
+  // 0) === element` pour tout element sur 3 bits, donc le comportement d'avant
+  // la tache 5 est preserve a l'identique pour ces paires-la.
+  const reactionId = reactionForPair(trigger.pair)?.id ?? REACTION.AUCUNE;
   const avant = zones.count;
   const creneau = zones.spawn(
-    trigger.element,
+    packZoneKind(trigger.element, reactionId),
     Math.round(trigger.x),
     Math.round(trigger.y),
     trigger.by,
@@ -1145,7 +1273,8 @@ export function markInZones(
 
 /**
  * La Braise brule : applique `Element.burnPerTick` a chaque ennemi dont la
- * marque tient encore, et rend les identites de ceux qui en meurent.
+ * marque tient encore, PUIS les zones de Surchauffe brulent d'elles-memes
+ * (tache 6 de l'etape 5b) — et rend les identites de ceux qui en meurent.
  *
  * ⚠️ **Les morts par brulure passent par le `DEATHS` EXISTANT, jamais par un
  * chemin parallele.** Le rejeu de l'etape 3 en depend : un client apprend qui
@@ -1162,6 +1291,18 @@ export function markInZones(
  * chaque mort un orbe, et le §12 de celle-ci confirme qu'une mort elementaire
  * n'y fait pas exception — « sinon le systeme elementaire punirait
  * l'experience de l'equipe ».
+ *
+ * ⚠️ **La brulure de zone (Surchauffe) est un SECOND balayage dans la MEME
+ * fonction, pas une fonction a part.** Elle ne peut pas se lire generiquement
+ * au site de la marque : une zone de Surchauffe porte l'element du
+ * DECLENCHEUR (Braise ou Foudre selon l'ordre d'arrivee, voir
+ * `ReactionTrigger.element`), et si c'est Foudre, marquer les ennemis dessous
+ * les marquerait de Foudre — dont `Element.burnPerTick` est nul. Le taux vient
+ * donc de `zoneBurnPerTick` (`shared/reactions.ts`), qui lit le nibble de
+ * reaction du `kind` empaquete, jamais l'element. Rester dans CETTE fonction
+ * plutot que d'en ecrire une seconde suffit a tenir la contrainte du `DEATHS`
+ * unique : un seul `dead`, une seule compaction, un seul appelant cote
+ * `Room.step`.
  */
 export function resolveBurn(
   horde: Horde,
@@ -1186,6 +1327,39 @@ export function resolveBurn(
     // mieux que de la relacher pour une raison qui tient au format de
     // stockage, pas a la regle.
     appliquerDegats(horde, i, burn, zones, tick, dead);
+  }
+  // ⚠️ **Meme predicat que `markInZones` : `aliveAt`, pas `slowsAt`.** Ce
+  // balayage inflige un degat, pas un deplacement — la borne stricte de
+  // `slowsAt` (la horde a deja avance ce tick-la) ne concerne que le
+  // ralentissement, voir `ZoneField.slowsAt`.
+  const r2 = ZONE_RADIUS * ZONE_RADIUS;
+  for (let z = 0; z < zones.count; z++) {
+    if (!zones.aliveAt(z, tick)) {
+      continue;
+    }
+    const burn = zoneBurnPerTick(zones.kind[z] ?? 0);
+    if (burn <= 0) {
+      continue;
+    }
+    const zx = zones.x[z] ?? 0;
+    const zy = zones.y[z] ?? 0;
+    for (let i = 0; i < horde.count; i++) {
+      // ⚠️ **Un ennemi DEJA note dans `dead` ne reprend pas de degats.** Le
+      // balayage de marque ci-dessus peut avoir amene sa reserve a `<= 0`
+      // sans compacter (`horde.kill` n'arrive qu'a la toute fin de cette
+      // fonction) ; deux zones de Surchauffe qui se recouvrent peuvent aussi
+      // toucher le MEME ennemi. Sans cette garde, `dead` — un TABLEAU, pas un
+      // `Set`, par convention de cette fonction — listerait deux fois la
+      // meme identite.
+      if ((horde.hp[i] ?? 0) <= 0) {
+        continue;
+      }
+      const dx = (horde.x[i] ?? 0) - zx;
+      const dy = (horde.y[i] ?? 0) - zy;
+      if (dx * dx + dy * dy < r2) {
+        appliquerDegats(horde, i, burn, zones, tick, dead);
+      }
+    }
   }
   if (dead.length === 0) {
     return dead;
