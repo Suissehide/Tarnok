@@ -52,7 +52,15 @@ describe('chainTargets', () => {
     expect(cibles).not.toContain(loin);
   });
 
-  it('rend jusqu a `jumps` cibles, triees de la plus proche a la plus lointaine', () => {
+  /**
+   * ⚠️ **Ce decor NE DEPARTAGE PAS l'etoile de la chaine** — sur quatre
+   * points colineaires et regulierement espaces, mesurer chaque saut depuis
+   * l'origine ou depuis la cible precedente donne le MEME ordre (`a` est le
+   * plus proche des deux points de vue). C'est le test dedie plus bas
+   * (« l'etoile et la chaine divergent ») qui prouve que les sauts partent
+   * bien les uns des autres.
+   */
+  it('rend jusqu a `jumps` cibles, dans l ordre des sauts', () => {
     const horde = new Horde();
     const a = spawnAt(horde, 1, 10, 0);
     const b = spawnAt(horde, 2, 30, 0);
@@ -65,6 +73,40 @@ describe('chainTargets', () => {
     expect(cibles).toEqual([a, b]);
     expect(cibles).not.toContain(c);
     expect(cibles).not.toContain(d);
+  });
+
+  /**
+   * ⚠️ **LE test qui separe les deux modeles — sans lui, la mutation
+   * « repartir du point d'impact a chaque saut » (revenir a une etoile)
+   * reste VERTE.** Verifie en appliquant reellement cette mutation (voir le
+   * rapport de correction) : tous les autres tests de ce fichier restent
+   * verts malgre elle, parce qu'ils alignent leurs cibles a des distances
+   * croissantes DEPUIS L'ORIGINE, ce qui fait coincider les deux modeles par
+   * construction — exactement le piege « decor qui masque ».
+   *
+   * Trois ennemis colineaires, PAS regulierement espaces depuis l'origine :
+   * A a 30 px, B a 55 px, C a 80 px. `radius = 60`.
+   *
+   * - **Etoile** (mesure depuis `(cx, cy)` a chaque saut) : distances
+   *   directes 30, 55, 80 — seuls A et B sont a moins de 60 px de l'ORIGINE.
+   *   C, a 80, resterait hors de portee pour toujours : l'etoile n'atteint
+   *   que DEUX cibles.
+   * - **Chaine** (mesure depuis la cible precedente) : saut 1 depuis (0,0)
+   *   -> A (30, le plus proche). Saut 2 depuis A (30,0) -> B est a 25 px de
+   *   A, dans `radius` -> B. Saut 3 depuis B (55,0) -> C est a 25 px de B,
+   *   dans `radius` -> C. La chaine atteint les TROIS cibles, y compris C,
+   *   que l'etoile ne pouvait jamais voir.
+   */
+  it('l etoile et la chaine divergent : la chaine atteint une cible que l etoile ne peut pas voir', () => {
+    const horde = new Horde();
+    const a = spawnAt(horde, 1, 30, 0);
+    const b = spawnAt(horde, 2, 55, 0);
+    const c = spawnAt(horde, 3, 80, 0);
+    expect(horde.count).toBe(3);
+
+    const cibles = chainTargets(horde, 0, 0, 60, 3, new Set());
+
+    expect(cibles).toEqual([a, b, c]);
   });
 
   it('ne depasse jamais `jumps` meme si davantage de cibles sont a portee', () => {

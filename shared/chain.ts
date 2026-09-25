@@ -17,23 +17,42 @@ import type { Horde } from './horde';
  * nombre de tirages au meme moment est une contrainte qui se brise en
  * silence.
  *
- * ⚠️ **« Les N plus proches dans un rayon R », au sens litteral (§4 de la
- * spec) — pas un parcours qui saute de voisin en voisin.** Un parcours de
- * proche en proche est un graphe dont le resultat depend de l'ordre de
- * visite, exactement la fragilite qu'Embrasement (tache 6) evite pour la
- * meme raison. `chainTargets` trie donc la horde une seule fois par la
- * distance au POINT D'IMPACT fixe `(cx, cy)`, jamais par la distance a la
- * derniere cible choisie.
+ * ⚠️ **Une CHAINE, pas une etoile.** Une premiere version de ce fichier
+ * triait la horde une seule fois par la distance au point d'impact
+ * `(cx, cy)` — « les N plus proches DU POINT D'IMPACT », au sens le plus
+ * litteral du §4 de la spec. C'etait une lecture incomplete : le §4 demande
+ * aussi une POLYLIGNE cote client (une etoile ne s'en dessine pas une), le
+ * paramentre `exclude` n'a de sens qu'ENTRE deux sauts, et Court-circuit
+ * (tache 6) « propage sans limite de sauts » — une phrase vide si chaque
+ * saut repart du meme point. La forme retenue : **a chaque saut, la cible la
+ * plus proche NON DEJA TOUCHEE, dans `radius`, mesuree depuis la position de
+ * la cible du saut PRECEDENT** — le premier saut seul est mesure depuis
+ * `(cx, cy)`. `curX`/`curY` ci-dessous portent ce curseur.
  *
- * `exclude` porte les identites deja touchees — c'est ce qui empeche la
- * chaine de revenir sur ses pas (l'entite frappee par l'impact direct,
- * typiquement), et c'est aussi le parametre par lequel la tache 3 exclut les
- * morts : un ennemi mort du meme impact ne doit pas propager.
+ * Reste totalement deterministe et independant de l'ordre du tableau : le
+ * curseur n'est jamais qu'une position de horde deja bit-identique des deux
+ * cotes, et le departage a distance egale (`entityId`, ci-dessus) s'applique
+ * a CHAQUE saut, pas seulement au premier.
  *
- * Rend au plus `jumps` identites, triees de la plus proche a la plus
- * lointaine — moins si `CHAIN_RADIUS` (ou le `radius` passe) n'offre pas
- * assez de cibles vivantes. Jamais plus : `jumps` est un plafond, pas une
- * promesse.
+ * ⚠️ **`O(jumps x horde.count)`, et volontairement pas optimise davantage.**
+ * Avec `CHAIN_JUMPS` a 3, c'est le meme ordre de grandeur qu'un tri unique en
+ * `O(horde.count log horde.count)` — la porte de performance du §7 de la
+ * spec se mesure au banc de la tache 10, pas ici : ecrire la forme lisible
+ * d'abord.
+ *
+ * `exclude` porte les identites deja touchees AVANT le premier saut — c'est
+ * ce qui empeche la chaine de revenir sur ses pas (l'entite frappee par
+ * l'impact direct, typiquement), et c'est aussi le parametre par lequel la
+ * tache 3 exclut les morts : un ennemi mort du meme impact ne doit pas
+ * propager. Les cibles choisies PENDANT la chaine s'y ajoutent au fur et a
+ * mesure (une chaine ne revient jamais sur une cible qu'elle vient de
+ * toucher), sans modifier le `Set` passe par l'appelant.
+ *
+ * Rend au plus `jumps` identites, dans l'ORDRE DES SAUTS (la premiere cible
+ * touchee, puis la seconde, etc.) — moins si un saut ne trouve plus personne
+ * dans `radius` autour du curseur courant, auquel cas la chaine S'ARRETE LA
+ * plutot que de sauter plus loin. Jamais plus : `jumps` est un plafond, pas
+ * une promesse.
  */
 export function chainTargets(
   horde: Horde,
@@ -48,31 +67,53 @@ export function chainTargets(
   }
 
   const r2 = radius * radius;
-  const candidates: { id: number; d2: number }[] = [];
+  const touched = new Set(exclude);
+  const result: number[] = [];
+  let curX = cx;
+  let curY = cy;
 
-  for (let i = 0; i < horde.count; i++) {
-    const id = horde.entityIdAt(i);
-    if (exclude.has(id)) {
-      continue;
+  for (let hop = 0; hop < jumps; hop++) {
+    let bestSlot = -1;
+    let bestId = -1;
+    let bestD2 = Number.POSITIVE_INFINITY;
+
+    for (let i = 0; i < horde.count; i++) {
+      const id = horde.entityIdAt(i);
+      if (touched.has(id)) {
+        continue;
+      }
+      const dx = (horde.x[i] ?? 0) - curX;
+      const dy = (horde.y[i] ?? 0) - curY;
+      const d2 = dx * dx + dy * dy;
+      // Meme convention que `nearestTarget` : la borne est INCLUSIVE (`>`,
+      // pas `>=`), une entite pile a `radius` compte.
+      if (d2 > r2) {
+        continue;
+      }
+      // Comparateur totalement ordonnant : `d2` d'abord, `id` en depart a
+      // egalite EXACTE — jamais l'ordre de parcours de `horde`. Meme
+      // convention que `nearestTarget` (`shared/targeting.ts`) :
+      // `bestId` demarre a `-1`, donc le premier candidat trouve est
+      // toujours retenu par la branche `d2 < bestD2` seule.
+      if (d2 < bestD2 || (d2 === bestD2 && id < bestId)) {
+        bestD2 = d2;
+        bestId = id;
+        bestSlot = i;
+      }
     }
-    const dx = (horde.x[i] ?? 0) - cx;
-    const dy = (horde.y[i] ?? 0) - cy;
-    const d2 = dx * dx + dy * dy;
-    // Meme convention que `nearestTarget` : la borne est INCLUSIVE (`>`,
-    // pas `>=`), une entite pile a `radius` compte.
-    if (d2 > r2) {
-      continue;
+
+    if (bestSlot === -1) {
+      // Plus personne a portee du curseur courant : la chaine s'arrete,
+      // elle ne saute pas plus loin pour recuperer les sauts restants.
+      break;
     }
-    candidates.push({ id, d2 });
+
+    result.push(bestId);
+    touched.add(bestId);
+    // Le PROCHAIN saut part d'ici, pas du point d'impact d'origine.
+    curX = horde.x[bestSlot] ?? 0;
+    curY = horde.y[bestSlot] ?? 0;
   }
 
-  // Comparateur totalement ordonnant : `d2` d'abord, `id` en depart a
-  // egalite EXACTE. Deux entites distinctes ne peuvent jamais avoir le meme
-  // `id`, donc ce tri ne depend a aucun moment de l'ordre dans lequel
-  // `candidates` a ete rempli — donc pas de l'ordre du tableau de `horde`
-  // (voir le docbloc du module). `Array.prototype.sort` n'a pas besoin
-  // d'etre stable ici : le comparateur seul fixe l'ordre.
-  candidates.sort((a, b) => a.d2 - b.d2 || a.id - b.id);
-
-  return candidates.slice(0, jumps).map((c) => c.id);
+  return result;
 }
