@@ -1849,22 +1849,27 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
     const horde = new Horde(10);
     addOne(horde, 1, 0, 0, LOURD);
     addOne(horde, 2, 900, 900, LEGER);
-    // ⚠️ **30 et 20 ne sont AUCUNE constante de production**, et c'est
+    // ⚠️ **30 et 24 ne sont AUCUNE constante de production**, et c'est
     // delibere : une valeur de decor egale a une valeur de production rend la
     // tache inverifiable (`GEL_TICKS` valait `LEVEL_FREEZE_TICKS`, et 80 tests
-    // passaient sur une derivation fausse).
+    // passaient sur une derivation fausse). Le decor precedent de ce test
+    // ecrivait `20` ici — qui EST `HEAVY_HP` par coincidence, meme si le
+    // commentaire pretendait le contraire. Ca n'aveuglait pas le test (voir
+    // l'assertion jumelle du leger, plus bas, qui tue la mutation a elle
+    // seule), mais le commentaire enseignait l'inverse exact de ce que ce
+    // depot traque : `24` leve la coincidence pour de bon.
     horde.hp[0] = 30;
     horde.hp[1] = 30;
 
-    appliquerDegats(horde, 0, 20, solNu(), 0, new Set());
-    appliquerDegats(horde, 1, 20, solNu(), 0, new Set());
+    appliquerDegats(horde, 0, 24, solNu(), 0, new Set());
+    appliquerDegats(horde, 1, 24, solNu(), 0, new Set());
 
-    // 20 x (1 - 0,15) = 17 : il reste 13. Le nombre est ecrit en clair, jamais
-    // derive de `HEAVY_ARMOR` — sinon l'assertion recopierait la production et
-    // passerait quoi qu'elle fasse.
-    expect(horde.hp[0]).toBeCloseTo(13, 5);
-    // Le leger, lui, prend les 20 entiers : zero est une entree de la table.
-    expect(horde.hp[1]).toBeCloseTo(10, 5);
+    // 24 x (1 - 0,15) = 20,4 : il reste 9,6. Le nombre est ecrit en clair,
+    // jamais derive de `HEAVY_ARMOR` — sinon l'assertion recopierait la
+    // production et passerait quoi qu'elle fasse.
+    expect(horde.hp[0]).toBeCloseTo(9.6, 5);
+    // Le leger, lui, prend les 24 entiers : zero est une entree de la table.
+    expect(horde.hp[1]).toBeCloseTo(6, 5);
   });
 
   it('une reduction fractionnaire n est arrondie nulle part', () => {

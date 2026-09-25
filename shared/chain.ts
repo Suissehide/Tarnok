@@ -22,7 +22,7 @@ import type { Horde } from './horde';
  * `(cx, cy)` — « les N plus proches DU POINT D'IMPACT », au sens le plus
  * litteral du §4 de la spec. C'etait une lecture incomplete : le §4 demande
  * aussi une POLYLIGNE cote client (une etoile ne s'en dessine pas une), le
- * paramentre `exclude` n'a de sens qu'ENTRE deux sauts, et Court-circuit
+ * parametre `exclude` n'a de sens qu'ENTRE deux sauts, et Court-circuit
  * (tache 6) « propage sans limite de sauts » — une phrase vide si chaque
  * saut repart du meme point. La forme retenue : **a chaque saut, la cible la
  * plus proche NON DEJA TOUCHEE, dans `radius`, mesuree depuis la position de
