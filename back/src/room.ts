@@ -1029,6 +1029,7 @@ export class Room {
       this.horde,
       this.#orbs,
       this.#tick,
+      this.#zones,
       this.#reactions,
     );
     markInZones(this.horde, this.#zones, this.#tick, this.#reactions);
@@ -1088,7 +1089,7 @@ export class Room {
         synergyCharge: charge,
       });
     }
-    const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick);
+    const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick, this.#zones);
     // ⚠️ **UN SEUL lot de morts par tick, brulures ET reactions comprises.**
     // `GameClient` documente cette hypothese et s'appuie dessus : deux lots
     // vises au meme tick, rejoues l'un apres l'autre, verraient le second

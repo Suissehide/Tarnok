@@ -25,6 +25,23 @@ export interface Element {
   burnPerTick: number;
   /** Facteur de vitesse applique a l'ennemi marque. 1 : aucun. */
   slowFactor: number;
+  /**
+   * Facteur multiplicatif applique aux degats qu'un ennemi subit **pendant
+   * qu'il se tient dans une zone de cet element**. 1 : aucune amplification.
+   *
+   * ⚠️ **Une propriete de la ZONE, jamais de la marque.** C'est
+   * `ZoneField.ampAt` qui le lit, a partir de la position de l'ennemi frappe,
+   * jamais `Horde.markAt`. Un element marque ce qu'il touche ; celui-ci
+   * amplifie ce qui PIETINE, et les deux questions n'ont pas le meme domaine.
+   *
+   * ⚠️ **1 partout aujourd'hui, et c'est volontaire.** La Poix (tache 4) sera
+   * la premiere ligne a depasser 1. La valeur neutre joue ici le role que
+   * `TINT_IDENTITE` joue pour la teinte et `slowFactor: 1` pour le
+   * deplacement : elle evite une branche `if (element === POIX)` au site
+   * d'application, qui est precisement ce que cette table existe pour ne pas
+   * avoir a maintenir.
+   */
+  damageAmp: number;
 }
 
 /**
@@ -48,6 +65,7 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     tint: TINT_IDENTITE,
     burnPerTick: 0,
     slowFactor: 1,
+    damageAmp: 1,
   },
   {
     // Braise : degats sur la duree, aucun ralentissement (§4.1).
@@ -68,6 +86,7 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     tint: 0xff7a3c,
     burnPerTick: 0.1,
     slowFactor: 1,
+    damageAmp: 1,
   },
   {
     // Givre : ralentit, aucun degat (§4.1). Le gel sur accumulation du §6.3
@@ -81,6 +100,7 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     tint: 0x7ad8ff,
     burnPerTick: 0,
     slowFactor: 0.6,
+    damageAmp: 1,
   },
 ];
 

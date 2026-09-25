@@ -4,6 +4,7 @@ import {
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
 } from './constants';
+import { elementOf } from './elements';
 
 /**
  * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, **pose par
@@ -226,6 +227,56 @@ export class ZoneField {
    */
   slowsAt(slot: number, tick: number): boolean {
     return (this.bornTick[slot] ?? 0) < tick && this.aliveAt(slot, tick);
+  }
+
+  /**
+   * Le facteur d'amplification des degats au point `(x, y)` au tick `tick` :
+   * le plus fort `Element.damageAmp` parmi les zones VIVANTES qui couvrent ce
+   * point, et `1` s'il n'y en a aucune.
+   *
+   * ⚠️ **Un MAXIMUM, jamais une somme ni un produit.** Deux flaques qui se
+   * recouvrent ne doublent pas : elles donnent la plus forte.
+   *
+   * ⚠️ **Et la raison n'est PAS celle du minimum de `Horde#computeSlow` — ne
+   * pas confondre les deux.** Le ralentissement se combine par un minimum
+   * parce qu'il VOYAGE : le client rejoue le deplacement, l'ordre d'iteration
+   * des zones n'est pas garanti identique des deux cotes (`#removeAt` compacte
+   * en echangeant avec la derniere, et le client garde ses zones mortes plus
+   * longtemps), et seule une operation exactement commutative et associative
+   * survit a ca. L'amplification, elle, ne voyage pas d'un octet : le client ne
+   * prononce aucun degat, il apprend les morts par `DEATHS`. Le maximum est ici
+   * une **decision de jeu** — une amplification qui se sommerait ferait de
+   * l'empilement de Poix la seule strategie du jeu.
+   *
+   * ⚠️ **`aliveAt`, pas `slowsAt`.** C'est la meme question que se pose
+   * `markInZones` — « cette zone existe-t-elle au tick T ? » — et pas celle du
+   * deplacement, qui exige la borne stricte parce que la horde avance AVANT que
+   * les zones du tick ne soient posees. Les degats, eux, se resolvent APRES les
+   * poses : une zone nee ce tick amplifie deja.
+   *
+   * ⚠️ **Un point, pas un creneau d'entite.** `ZoneField` ne connait pas la
+   * horde et ne doit pas l'apprendre : `overlaps` prend deja des indices de
+   * zone, `ampAt` prend des coordonnees. C'est l'appelant qui sait de quelle
+   * entite il parle.
+   */
+  ampAt(x: number, y: number, tick: number): number {
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    let amp = 1;
+    for (let z = 0; z < this.#count; z++) {
+      if (!this.aliveAt(z, tick)) {
+        continue;
+      }
+      const dx = (this.x[z] ?? 0) - x;
+      const dy = (this.y[z] ?? 0) - y;
+      if (dx * dx + dy * dy >= r2) {
+        continue;
+      }
+      const factor = elementOf(this.element[z] ?? 0).damageAmp;
+      if (factor > amp) {
+        amp = factor;
+      }
+    }
+    return amp;
   }
 
   /**

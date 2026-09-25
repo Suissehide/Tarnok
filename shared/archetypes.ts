@@ -33,6 +33,29 @@ export interface Archetype {
    */
   hp: number;
   /**
+   * Fraction des degats recus que l'armure absorbe, de 0 a
+   * `MAX_ARMOR` — un coup de `brut` retire `brut x (1 - armor)`.
+   *
+   * ⚠️ **Zero est une entree de la table, pas un cas particulier.** Toute la
+   * pietaille legere porte `0`, et elle passe par exactement le meme calcul
+   * que le boss : c'est le role que `ELEMENT.NEUTRE` joue pour les elements et
+   * `blastRadius: 0` pour les armes. Aucun site d'application n'a de branche
+   * `if (armor > 0)` a maintenir.
+   *
+   * ⚠️ **Lue au SEUL endroit ou un ennemi perd des PV** (`appliquerDegats`,
+   * back/src/combat.ts). Deux formules d'armure divergeraient, et le jour ou
+   * elles divergent c'est un test qui manque, pas un bug qui se voit.
+   *
+   * ⚠️ **Bornee a la LECTURE de la table, par `capArmor`** — voir `MAX_ARMOR`.
+   * Une borne posee au site d'application laisserait une valeur aberrante
+   * vivre dans la donnee et n'echouer que la ou personne ne regarde.
+   *
+   * ⚠️ **Ne voyage pas, et n'a pas a voyager.** Seul le serveur soustrait des
+   * degats (voir `hp` ci-dessus) : le client apprend les morts par `DEATHS`.
+   * Rien de nouveau sur le fil.
+   */
+  armor: number;
+  /**
    * De combien le CORPS dessine deborde la hitbox de tir, **pour cet
    * archetype** — `1` pour toute la pietaille, davantage pour le boss
    * (etape 6a, tache 3).
@@ -82,7 +105,8 @@ export interface Archetype {
 export const LIGHT_HP = 5;
 
 /**
- * PV de la pietaille lourde : quatre coups de dague.
+ * PV de la pietaille lourde : quatre coups de dague **avant l'armure**, cinq
+ * depuis `HEAVY_ARMOR` (20 / (5 x 0,85) = 4,7).
  *
  * Un ennemi qui meurt en un coup ne porte jamais d'element assez longtemps
  * pour reagir (§3.3) : il faut donc que la reserve VARIE par archetype, et
@@ -207,6 +231,85 @@ export const BOSS_HP_PER_PLAYER = HEAVY_HP * BOSS_HP_MULTIPLE;
 export const BOSS_BODY_SCALE = 3;
 
 /**
+ * Plafond d'armure, applique a la LECTURE de la table (`capArmor`).
+ *
+ * ⚠️ **C'est le PLANCHER de degats, ecrit a l'envers.** Une armure de 1
+ * rendrait les degats nuls, donc l'ennemi immortel — et un ennemi immortel se
+ * lit comme un bug, jamais comme un reglage. A 0,9, un coup retire toujours au
+ * moins un dixieme de son brut, quelle que soit la ligne de la table.
+ *
+ * ⚠️ **Au site de LECTURE, pas au site d'APPLICATION.** Un `Math.max` dans
+ * `appliquerDegats` donnerait le meme resultat en jeu tout en laissant la
+ * valeur aberrante vivre dans `ARCHETYPES` — visible nulle part, et fausse
+ * partout ou quelqu'un lit la table plutot que de frapper (l'interface, un
+ * banc, un futur ecran de bestiaire).
+ *
+ * ⚠️ **Aucune valeur de production ne l'atteint aujourd'hui**, et il faut le
+ * dire : la mutation « la table cesse d'appeler `capArmor` » survit donc a
+ * toute la suite. C'est `capArmor` lui-meme qui est teste, pas son usage —
+ * meme franchise que le `slot < 0` de `resolveProjectileDamage`.
+ */
+export const MAX_ARMOR = 0.9;
+
+/**
+ * Armure de la pietaille lourde.
+ *
+ * ⚠️ **CE QUE CA COUTE, dit en face : la lourde ne meurt plus en quatre coups
+ * de dague, mais en cinq.** 20 PV / (5 x 0,85) = 4,7. Le docbloc de `HEAVY_HP`
+ * le dit desormais. L'armure est une AUGMENTATION de durabilite, pas une
+ * redistribution : c'est ce qui donne quelque chose a mordre a la
+ * Supraconduction (etape 5b, tache 7), dont l'effet est precisement de retirer
+ * de l'armure. Une armure compensee par des PV en moins serait un no-op le
+ * jour de sa naissance.
+ *
+ * ⚠️ **0,15 et pas davantage, et c'est `REACTION_DAMAGE` qui le decide.** Le
+ * docbloc de cette constante (`shared/constants.ts`) engage une relation de
+ * jeu : *« 25, c'est plus que `HEAVY_HP` (20), donc la reaction tue la
+ * pietaille lourde d'un coup »*. L'armure s'applique AUSSI au Choc thermique
+ * (il passe par `appliquerDegats` comme tout le reste), donc la relation
+ * devient `REACTION_DAMAGE x (1 - HEAVY_ARMOR) > HEAVY_HP` : elle tient a 0,15
+ * (21,25), se joue a la virgule pres a 0,20 (20,0 exactement) et TOMBE a 0,25
+ * (18,75) — le Choc thermique cesserait alors de nettoyer la pietaille lourde,
+ * en silence. `combat.test.ts` garde desormais la relation complete, et plus
+ * la simple comparaison des deux constantes nues.
+ */
+export const HEAVY_ARMOR = 0.15;
+
+/**
+ * Armure du boss.
+ *
+ * ⚠️ **INVALIDE LA PORTE DU §7 DE L'ETAPE 6a, et ca ne doit pas passer en
+ * silence.** Le releve du banc `boss.bench.ts` donnait 86,9 s pour tuer le
+ * boss a quatre joueurs au palier 0, dans la bande engagee de 30-90 s. Une
+ * armure de 0,4 multiplie sa durabilite effective par 1/(1-0,4) = 1,67 : le
+ * meme combat demanderait ~145 s, hors bande. **Aucune valeur strictement
+ * positive ne garde ce chiffre dans sa bande** — la porte etait deja haute
+ * dedans (3 s de marge). Deux issues possibles, aucune tranchee ici :
+ * remesurer et rouvrir la bande a la tache 12, ou compenser exactement en
+ * ramenant `BOSS_HP_MULTIPLE` de 75 a 45 (45 / (1 - 0,4) = 75, entier), ce qui
+ * preserverait la mesure au point pres mais ferait de l'armure du boss un
+ * no-op le jour de sa naissance. Le choix appartient a la revue, pas a la
+ * tache 1.
+ *
+ * ⚠️ **0,5 a ete EVITE volontairement.** A 0,5, `brut x (1 - armor)` et
+ * `brut x armor` donnent le meme nombre : tout test d'arithmetique ecrit sur
+ * le boss passerait avec la formule inversee. C'est exactement « le decor qui
+ * masque », dix fois dans ce depot.
+ */
+export const BOSS_ARMOR = 0.4;
+
+/**
+ * Borne l'armure lue dans la table. Voir `MAX_ARMOR`.
+ *
+ * Exportee pour etre testee DIRECTEMENT : elle est le plancher de degats du
+ * jeu entier, et une borne que seule la donnee actuelle rend inoffensive doit
+ * etre gardee par un test qui, lui, lui donne une valeur aberrante.
+ */
+export function capArmor(raw: number): number {
+  return Math.min(MAX_ARMOR, raw);
+}
+
+/**
  * Les quatre archetypes de pietaille lourde, par nom.
  *
  * **Le choix est du contenu, pas un role** : ce sont les quatre pietailles les
@@ -234,10 +337,27 @@ function bodyScaleOf(name: string): number {
 }
 
 /**
+ * `0` pour la pietaille legere, `HEAVY_ARMOR` pour les quatre lourdes,
+ * `BOSS_ARMOR` pour le boss. Meme forme que `hpOf` : l'armure suit la meme
+ * partition du bestiaire que les points de vie, et la faire suivre une autre
+ * demanderait une seconde liste de noms a tenir synchronisee.
+ *
+ * ⚠️ **Les cinq elites hors boss prennent `0`**, comme elles prennent
+ * `LIGHT_HP` : le generateur ne les tire jamais (voir `ELITES`), et leur
+ * donner une armure inventee serait un chiffre que personne ne peut mesurer.
+ */
+function armorOf(name: string): number {
+  if (name === BOSS_NAME) {
+    return BOSS_ARMOR;
+  }
+  return HEAVY_NAMES.includes(name) ? HEAVY_ARMOR : 0;
+}
+
+/**
  * Les cellules font toutes 192 px en pietaille : c'est ce qui permet un
  * rangement par etageres quasi optimal dans l'atlas (§9.2 de la spec).
  */
-const FOOTSOLDIERS: readonly Omit<Archetype, 'id' | 'hp' | 'bodyScale'>[] = [
+const FOOTSOLDIERS: readonly Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale'>[] = [
   { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 95 },
   { name: 'gnoll', sheet: 'Gnoll/Gnoll_Walk.png', frames: 8, cell: 192, speed: 85 },
   { name: 'spider', sheet: 'Spider/Spider_Run.png', frames: 5, cell: 192, speed: 115 },
@@ -279,7 +399,7 @@ const FOOTSOLDIERS: readonly Omit<Archetype, 'id' | 'hp' | 'bodyScale'>[] = [
 ];
 
 /** Hors perimetre de l'etape 2 : regime de replication different (§3.3). */
-const ELITES: readonly Omit<Archetype, 'id' | 'hp' | 'bodyScale'>[] = [
+const ELITES: readonly Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale'>[] = [
   {
     name: 'spear-goblin',
     sheet: 'Spear Goblin/Spear Goblin_Run.png',
@@ -310,6 +430,7 @@ export const ARCHETYPES: readonly Archetype[] = [...FOOTSOLDIERS, ...ELITES].map
   ...a,
   id,
   hp: hpOf(a.name),
+  armor: capArmor(armorOf(a.name)),
   bodyScale: bodyScaleOf(a.name),
 }));
 

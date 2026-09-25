@@ -6,7 +6,7 @@ import {
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
 } from './constants';
-import { ELEMENT } from './elements';
+import { ELEMENT, elementOf } from './elements';
 import { ZoneField } from './zones';
 
 /**
@@ -378,5 +378,74 @@ describe('ZoneField — la pose rend le creneau touche (tache 6)', () => {
     expect(zones.count).toBe(2);
     // L'ancienne garde son `bornTick` : elle n'a pas ete rafraichie.
     expect(zones.bornTick[0]).toBe(0);
+  });
+});
+
+describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', () => {
+  it('rend 1 sur un sol nu : aucune zone, aucune amplification', () => {
+    const zones = new ZoneField();
+    expect(zones.ampAt(0, 0, 0)).toBe(1);
+    expect(zones.ampAt(-1234.5, 678.9, 42)).toBe(1);
+  });
+
+  it('rend 1 dans une zone des trois elements d aujourd hui — leur `damageAmp` vaut 1', () => {
+    // ⚠️ **Le decor n'est pas creux, et c'est ce qui le rend lisible.** Le
+    // point est BIEN dedans (distance nulle), donc le 1 rendu vient de la table
+    // des elements, pas d'un balayage qui n'aurait rien trouve. La Poix (tache
+    // 4) sera la premiere ligne a rendre autre chose.
+    for (const element of [ELEMENT.NEUTRE, ELEMENT.BRAISE, ELEMENT.GIVRE]) {
+      const zones = new ZoneField();
+      expect(zones.spawn(element, 500, 500, 0, 0)).toBe(0);
+      expect(elementOf(element).damageAmp).toBe(1);
+      expect(zones.ampAt(500, 500, 0), elementOf(element).name).toBe(1);
+    }
+  });
+
+  it('DEUX zones qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme', () => {
+    // ⚠️ **Le test qui tue la somme.** Avec `amp += facteur`, deux zones
+    // rendraient 2 et trois zones 3, et l'empilement de Poix deviendrait la
+    // seule strategie du jeu (tache 4). Le maximum de deux 1 vaut 1, la somme
+    // vaut 2 : la mutation rougit ici des aujourd'hui, avant meme qu'un element
+    // n'amplifie quoi que ce soit.
+    //
+    // ⚠️ **Ce que ce test NE peut PAS separer, dit franchement** : `Math.max`
+    // et `Math.min` rendent le meme 1 tant que toute la table vaut 1. C'est la
+    // tache 4, avec `damageAmp > 1` sur la Poix, qui fermera cette mutation.
+    //
+    // Deux elements DIFFERENTS : deux zones du meme element au meme point
+    // fusionneraient (voir `spawn`), et il n'y en aurait qu'une a balayer.
+    const zones = new ZoneField();
+    expect(zones.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(0);
+    expect(zones.spawn(ELEMENT.GIVRE, 100, 0, 0, 0)).toBe(1);
+    expect(zones.count).toBe(2);
+
+    expect(zones.ampAt(100, 0, 0)).toBe(1);
+  });
+
+  it('ne consulte QUE les zones qui couvrent le point, et au tick ou elles vivent', () => {
+    // ⚠️ **Le seul levier qui rend ce balayage observable avant la Poix, et il
+    // faut le dire.** Toute la table vaut `damageAmp: 1` : dedans comme dehors,
+    // `ampAt` rend 1, et un `return 1` en dur passerait toutes les autres
+    // assertions de ce fichier. Un element INCONNU, lui, fait lever
+    // `elementOf` — la reponse devient alors « leve » ou « rend 1 », et ces
+    // deux-la se distinguent.
+    //
+    // 99 n'est aucun element de la table, et ne le sera pas : le §6.3 de
+    // l'orientation en compte six au total.
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.BRAISE, 0, 0, 0, 0);
+    zones.element[0] = 99;
+
+    // Dedans : la zone est consultee, donc `elementOf` leve.
+    expect(() => zones.ampAt(ZONE_RADIUS - 1, 0, 0)).toThrow(/element inconnu/);
+    // Pile sur le cercle : la borne est STRICTE, comme `markInZones` et
+    // `slowsAt`. La zone est sautee, rien n'est consulte.
+    expect(zones.ampAt(ZONE_RADIUS, 0, 0)).toBe(1);
+    // Perimee : `aliveAt` la saute, meme au centre exact.
+    expect(zones.ampAt(0, 0, ZONE_LIFETIME_TICKS)).toBe(1);
+    // Et elle vit encore au dernier tick de sa duree de vie — sinon
+    // l'assertion du dessus dirait seulement « le balayage ne trouve jamais
+    // rien ».
+    expect(() => zones.ampAt(0, 0, ZONE_LIFETIME_TICKS - 1)).toThrow(/element inconnu/);
   });
 });

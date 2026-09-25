@@ -2,6 +2,7 @@ import {
   ARCHETYPES,
   BOSS_ARCHETYPE,
   BOSS_HP_PER_PLAYER,
+  HEAVY_ARMOR,
   HEAVY_HP,
   LIGHT_HP,
 } from '@shared/archetypes';
@@ -1390,25 +1391,32 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
       const degats = weaponOf(BASE_WEAPON_ID).damage;
       const magnitude = passiveOf(PUISSANCE).magnitude;
-      const impacts = (cartes: number) => Math.ceil(HEAVY_HP / (degats * (1 + magnitude * cartes)));
+      // ⚠️ **L'armure entre dans le compte depuis l'etape 5b.** Le lourd passe
+      // par `appliquerDegats` comme tout le monde, donc chaque impact ne lui
+      // retire que `degats x (1 - HEAVY_ARMOR)`. L'oublier ici ferait repondre
+      // au modele un palier que le salon ne franchit plus.
+      const impacts = (cartes: number) =>
+        Math.ceil(HEAVY_HP / (degats * (1 + magnitude * cartes) * (1 - HEAVY_ARMOR)));
 
-      // Sanity : c'est bien QUATRE impacts de dague qu'il faut sans carte —
-      // sinon la fixture ne met pas en scene le cas qu'on croit.
-      expect(impactsPourTuer(0)).toBe(4);
-      expect(impacts(0)).toBe(4);
+      // Sanity : c'est bien CINQ impacts de dague qu'il faut sans carte
+      // (20 / (5 x 0,85) = 4,7) — sinon la fixture ne met pas en scene le cas
+      // qu'on croit.
+      expect(impactsPourTuer(0)).toBe(5);
+      expect(impacts(0)).toBe(5);
 
-      // ⚠️ **DEUX cartes ne suffisent pas, contrairement a ce que le plan
-      // annonce, et c'est le motif R9 de l'etape 4 : le nombre d'impacts est
-      // un ENTIER, et le bonus une fraction.** 20 PV / (5 x 1,2) = 3,33, donc
-      // toujours quatre impacts. Il en faut QUATRE (+40 % : 20 / 7 = 2,86)
-      // pour que le palier tombe. Ecrit ici plutot que corrige en silence :
-      // quelqu'un qui lirait le plan croirait le test faux.
+      // ⚠️ **UNE carte ne suffit pas, et c'est le motif R9 de l'etape 4 : le
+      // nombre d'impacts est un ENTIER, et le bonus une fraction.**
+      // 20 PV / (5 x 1,1 x 0,85) = 4,28, donc toujours cinq impacts. Le palier
+      // n'est pas la ou la fraction le suggere, et c'est tout l'interet du
+      // test.
+      expect(impactsPourTuer(1)).toBe(5);
+      expect(impacts(1)).toBe(5);
+
+      // **L'issue change a DEUX cartes** (20 / (5 x 1,2 x 0,85) = 3,92 -> 4).
+      // C'est ce qui separe cette etape de l'etape 4.
       expect(impactsPourTuer(2)).toBe(4);
       expect(impacts(2)).toBe(4);
-
-      // **L'issue change.** C'est ce qui separe cette etape de l'etape 4.
-      expect(impactsPourTuer(4)).toBe(3);
-      expect(impactsPourTuer(4)).toBeLessThan(impactsPourTuer(0));
+      expect(impactsPourTuer(2)).toBeLessThan(impactsPourTuer(0));
     });
 
     it('les passifs d un joueur ne changent rien pour son voisin', () => {
@@ -2938,7 +2946,13 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
         if (s >= 0) {
           room.horde.applyMark(s, ELEMENT.BRAISE, 3, room.tick);
           if (tickDArmement !== null && room.tick === tickDArmement - 1) {
-            room.horde.hp[s] = REACTION_DAMAGE;
+            // ⚠️ **Une reserve que le choc emporte A COUP SUR, armure
+            // comprise.** Elle valait `REACTION_DAMAGE` pile, ce qui en
+            // faisait un decor de BORNE la ou ce test ne parle que de DATE :
+            // depuis l'etape 5b, l'armure de la lourde rabote le choc a 21,25
+            // et la cible survivrait a 3,75 PV. La borne `<= 0`, elle, a son
+            // propre test dans `combat.test.ts`.
+            room.horde.hp[s] = 1;
           }
         }
         room.applyInput(1, i + 1, 0, 0, 127, 0);

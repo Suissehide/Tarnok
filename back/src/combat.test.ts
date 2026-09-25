@@ -1,4 +1,12 @@
-import { ARCHETYPES, HEAVY_HP, LIGHT_HP } from '@shared/archetypes';
+import {
+  ARCHETYPES,
+  BOSS_ARCHETYPE,
+  BOSS_ARMOR,
+  HEAVY_ARMOR,
+  HEAVY_HP,
+  LIGHT_HP,
+  MAX_ARMOR,
+} from '@shared/archetypes';
 import {
   BOSS_CHARGE_DAMAGE,
   BOSS_CHARGE_TICKS,
@@ -26,9 +34,10 @@ import { packElementPair } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import type { Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import {
+  appliquerDegats,
   applyReactions,
   type ChargeTarget,
   type ContactPlayer,
@@ -43,6 +52,32 @@ import {
 } from './combat';
 
 const DT = 1 / 30;
+
+/**
+ * Un sol NU : aucune zone, donc `ZoneField.ampAt` rend 1 partout et
+ * `appliquerDegats` n'amplifie rien. C'est le decor par defaut de tout ce
+ * fichier sauf des tests qui parlent des zones.
+ *
+ * ⚠️ **Neuf a chaque appel, jamais partage** — meme raison que la reserve
+ * neuve du helper `tue` plus bas : un decor partage ferait dependre un test de
+ * ce qu'un autre a pose.
+ */
+function solNu(): ZoneField {
+  return new ZoneField();
+}
+
+/**
+ * Ce qu'un coup de `brut` retire VRAIMENT a la pietaille lourde : son armure
+ * en absorbe `HEAVY_ARMOR`.
+ *
+ * ⚠️ **Pour les DECORS seulement.** Les tests qui gardent la formule de
+ * l'armure n'appellent pas cette fonction — ils ecrivent leurs nombres en
+ * clair (voir `describe('l armure ...')`), sinon ils ne feraient que recopier
+ * la production et passeraient quoi qu'elle fasse.
+ */
+function coupSurLourd(brut: number): number {
+  return brut * (1 - HEAVY_ARMOR);
+}
 
 /** Fait apparaitre une seule entite a une position controlee, avec un waveId choisi pour controler son identite. */
 function addOne(horde: Horde, waveId: number, x: number, y: number, archetype = 0): number {
@@ -129,7 +164,7 @@ describe('resolveProjectileDamage', () => {
     // l'amene a x=33,3, loin de la cible a x=100. Il faut plusieurs pas.
     let deadIds: number[] = [];
     for (let i = 0; i < 5 && deadIds.length === 0; i++) {
-      deadIds = resolveProjectileDamage(projectiles, DT, horde, orbs, i);
+      deadIds = resolveProjectileDamage(projectiles, DT, horde, orbs, i, solNu());
     }
 
     expect(deadIds).toEqual([targetId]);
@@ -149,7 +184,7 @@ describe('resolveProjectileDamage', () => {
     projectiles.fireSalvo(SINGLE, 0, 500, 500, 999_999, horde);
     const orbs = new OrbField(10);
 
-    const deadIds = resolveProjectileDamage(projectiles, DT, horde, orbs, 0);
+    const deadIds = resolveProjectileDamage(projectiles, DT, horde, orbs, 0, solNu());
 
     expect(deadIds).toEqual([]);
     expect(horde.count).toBe(1);
@@ -167,7 +202,7 @@ describe('resolveProjectileDamage', () => {
     expect(projectiles.count).toBe(2);
     const orbs = new OrbField(10);
 
-    const deadIds = resolveProjectileDamage(projectiles, DT, horde, orbs, 0);
+    const deadIds = resolveProjectileDamage(projectiles, DT, horde, orbs, 0, solNu());
 
     expect(deadIds).toEqual([targetId]);
     expect(horde.count).toBe(0);
@@ -192,12 +227,13 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
     tick: number,
     arme: Weapon = SINGLE,
   ): number[] {
+    const zones = solNu();
     const projectiles = new Projectiles(10);
     projectiles.fireSalvo(arme, tick, 0, 0, targetId, horde);
     const avant = projectiles.count;
     expect(avant).toBeGreaterThan(0); // sanity : la salve est bien partie
     for (let i = 0; i < 20; i++) {
-      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i);
+      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, zones);
       if (morts.length > 0) {
         return morts;
       }
@@ -208,19 +244,26 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
     throw new Error('le projectile ne touche jamais');
   }
 
-  it('un ennemi lourd (20 PV) survit a trois impacts de 5 et meurt au quatrieme', () => {
+  it('un ennemi lourd (20 PV, 15 % d armure) survit a quatre impacts de 5 et meurt au cinquieme', () => {
     // ⚠️ **Le test qui compte.** C'est la seule chose qui separe « les degats
     // sont soustraits » de « le premier impact tue », et c'est ce qui rend les
     // deux passifs de degats capables de changer une issue.
+    //
+    // ⚠️ **Les restes sont ecrits EN CLAIR, pas derives de `HEAVY_ARMOR`.** Une
+    // suite `HEAVY_HP - SINGLE.damage * (1 - HEAVY_ARMOR) * coup` recopierait la
+    // formule de production et passerait quoi qu'elle fasse — c'est l'assertion
+    // creuse, dix-sept fois dans ce depot. 5 x 0,85 = 4,25 par coup : 15,75,
+    // 11,5, 7,25, 3 — puis -1,25, donc la mort au cinquieme.
+    const restes = [15.75, 11.5, 7.25, 3];
     const horde = new Horde(10);
     const targetId = addOne(horde, 1, 100, 0, LOURD);
     const orbs = new OrbField(10);
     expect(horde.hp[0]).toBe(HEAVY_HP);
 
-    for (let coup = 1; coup <= 3; coup++) {
-      expect(frappe(horde, orbs, targetId, coup * 40)).toEqual([]);
+    for (const [i, reste] of restes.entries()) {
+      expect(frappe(horde, orbs, targetId, (i + 1) * 40)).toEqual([]);
       expect(horde.count).toBe(1);
-      expect(horde.hp[0]).toBe(HEAVY_HP - SINGLE.damage * coup);
+      expect(horde.hp[0]).toBeCloseTo(reste, 5);
       expect(orbs.count).toBe(0);
     }
 
@@ -229,27 +272,26 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
     expect(orbs.count).toBe(1);
   });
 
-  it('un ennemi leger meurt au premier impact — le rythme de l etape 3, inchange', () => {
+  it('un ennemi leger meurt au premier impact — et il PORTE la borne <= 0, pas < 0', () => {
     // La contrepartie de la porte du §3.3 : `LIGHT_HP` vaut les degats de la
-    // dague, donc rien ne change pour la pietaille legere.
+    // dague, donc rien ne change pour la pietaille legere — son armure est
+    // NULLE, et zero est une entree de la table, pas un cas particulier.
+    //
+    // ⚠️ **C'est donc lui, et lui seul, qui met en scene le reste EXACTEMENT
+    // nul.** Le test qui portait cette borne le faisait sur un lourd frappe
+    // pour `HEAVY_HP` pile ; depuis l'armure, ce coup ne retire plus que
+    // 17 PV et ne prouve plus rien. Le refaire tomber pile demanderait
+    // `HEAVY_HP / (1 - HEAVY_ARMOR)`, dont le produit par 0,85 ne revient a 20
+    // qu'a la representation flottante pres : le test aurait eu l'air de
+    // mettre en scene la borne sans garantir de l'atteindre. Un seul garde,
+    // ici, ou il est exact.
     const horde = new Horde(10);
     const targetId = addOne(horde, 1, 100, 0, LEGER);
     const orbs = new OrbField(10);
+    expect(ARCHETYPES[LEGER]?.armor).toBe(0);
+    expect(SINGLE.damage).toBe(LIGHT_HP); // le reste est exactement zero
 
     expect(frappe(horde, orbs, targetId, 0)).toEqual([targetId]);
-    expect(horde.count).toBe(0);
-  });
-
-  it('une arme qui frappe pile la reserve tue : la borne est <= 0, pas < 0', () => {
-    // ⚠️ La mutation `reste <= 0` -> `reste < 0`. Sans ce cas, un ennemi
-    // ramene a exactement zero PV resterait vivant a 0 PV, invulnerable a rien
-    // mais bien present — et il faudrait un impact de plus pour chaque mort.
-    const horde = new Horde(10);
-    const targetId = addOne(horde, 1, 100, 0, LOURD);
-    const orbs = new OrbField(10);
-    const pile: Weapon = { ...SINGLE, damage: HEAVY_HP };
-
-    expect(frappe(horde, orbs, targetId, 0, pile)).toEqual([targetId]);
     expect(horde.count).toBe(0);
   });
 
@@ -263,10 +305,12 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
     addOne(horde, 2, -4000, -4000, LOURD);
     const orbs = new OrbField(10);
 
-    for (let coup = 1; coup <= 3; coup++) {
+    for (let coup = 1; coup <= 4; coup++) {
       frappe(horde, orbs, premier, coup * 40);
     }
-    expect(horde.hp[horde.slotOf(premier)]).toBe(HEAVY_HP - SINGLE.damage * 3);
+    // Quatre coups de 4,25 : il reste 3 PV. Ecrit en clair, voir le test du
+    // rythme de mise a mort plus haut.
+    expect(horde.hp[horde.slotOf(premier)]).toBeCloseTo(3, 5);
     // Le second n'a rien pris.
     const survivant = horde.entityIdAt(horde.slotOf(premier) === 0 ? 1 : 0);
     expect(horde.hp[horde.slotOf(survivant)]).toBe(HEAVY_HP);
@@ -311,11 +355,12 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
 
   /** Tire `arme` depuis l'origine sur `cible` et avance jusqu'a l'impact. */
   function tire(horde: Horde, orbs: OrbField, cible: number, arme: Weapon): number[] {
+    const zones = solNu();
     const projectiles = new Projectiles(10);
     projectiles.fireSalvo(arme, 0, 0, 0, cible, horde);
     expect(projectiles.count).toBeGreaterThan(0);
     for (let i = 0; i < 40; i++) {
-      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, i);
+      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, i, zones);
       if (projectiles.count === 0) {
         return morts;
       }
@@ -324,9 +369,11 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
   }
 
   it('un seul impact tue le percute ET son voisin dans le rayon, jamais celui du bord', () => {
-    // Degats calibres sur la reserve : un coup suffit, donc la mort dit le
-    // rayon et rien d'autre.
-    const fatale: Weapon = { ...ZONE, damage: HEAVY_HP };
+    // Degats largement au-dessus de la reserve, ARMURE COMPRISE : un coup
+    // suffit, donc la mort dit le rayon et rien d'autre. `HEAVY_HP` tout court
+    // ne suffirait plus (l'armure en retire 15 %), et un decor qui ne tue plus
+    // ferait echouer ce test pour une raison qui n'est pas la sienne.
+    const fatale: Weapon = { ...ZONE, damage: 2 * HEAVY_HP };
     const horde = new Horde(10);
     const { percute, dedans, dehors } = decor(horde);
     const orbs = new OrbField(10);
@@ -350,9 +397,9 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
 
     expect(tire(horde, orbs, percute, ZONE)).toEqual([]);
 
-    expect(horde.hp[horde.slotOf(percute)]).toBe(HEAVY_HP - ZONE.damage);
+    expect(horde.hp[horde.slotOf(percute)]).toBeCloseTo(HEAVY_HP - coupSurLourd(ZONE.damage), 5);
     // Le voisin a pris EXACTEMENT autant : une seule source de degats.
-    expect(horde.hp[horde.slotOf(dedans)]).toBe(HEAVY_HP - ZONE.damage);
+    expect(horde.hp[horde.slotOf(dedans)]).toBeCloseTo(HEAVY_HP - coupSurLourd(ZONE.damage), 5);
     expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
   });
 
@@ -367,7 +414,7 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
     expect(SINGLE.blastRadius).toBe(0);
     expect(tire(horde, orbs, percute, SINGLE)).toEqual([]);
 
-    expect(horde.hp[horde.slotOf(percute)]).toBe(HEAVY_HP - SINGLE.damage);
+    expect(horde.hp[horde.slotOf(percute)]).toBeCloseTo(HEAVY_HP - coupSurLourd(SINGLE.damage), 5);
     expect(horde.hp[horde.slotOf(dedans)]).toBe(HEAVY_HP);
     expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
   });
@@ -386,7 +433,7 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
     projectiles.fireSalvo(braise, 0, 0, 0, percute, horde);
     let impact = -1;
     for (let i = 0; i < 40; i++) {
-      resolveProjectileDamage(projectiles, DT, horde, orbs, i, reactions);
+      resolveProjectileDamage(projectiles, DT, horde, orbs, i, solNu(), reactions);
       if (projectiles.count === 0) {
         impact = i;
         break;
@@ -397,7 +444,7 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
     // Le percute survit (degats insuffisants), donc il porte la marque.
     expect(horde.markAt(horde.slotOf(percute), impact)).toBe(ELEMENT.BRAISE);
     // Le voisin a pris le souffle, mais rien ne l a marque.
-    expect(horde.hp[horde.slotOf(dedans)]).toBe(HEAVY_HP - braise.damage);
+    expect(horde.hp[horde.slotOf(dedans)]).toBeCloseTo(HEAVY_HP - coupSurLourd(braise.damage), 5);
     expect(horde.markAt(horde.slotOf(dedans), impact)).toBe(ELEMENT.NEUTRE);
   });
 
@@ -405,7 +452,7 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
     // §12 de la spec de l'etape 5a : aucune facon de mourir ne prive l equipe
     // de son experience. Les identites sont choisies pour que `dropsOrb` les
     // accepte toutes les deux.
-    const fatale: Weapon = { ...ZONE, damage: HEAVY_HP };
+    const fatale: Weapon = { ...ZONE, damage: 2 * HEAVY_HP };
     const horde = new Horde(10);
     const percute = addOne(horde, ORB_DROP_ONE_IN, 300, 0, LOURD);
     const dedans = addOne(horde, 2 * ORB_DROP_ONE_IN, 300, SOUFFLE - 1, LOURD);
@@ -711,7 +758,9 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
 
     let allDead: number[] = [];
     for (let tick = 0; tick < 5; tick++) {
-      allDead = allDead.concat(resolveProjectileDamage(projectiles, DT, horde, orbs, tick));
+      allDead = allDead.concat(
+        resolveProjectileDamage(projectiles, DT, horde, orbs, tick, solNu()),
+      );
     }
 
     expect(allDead.length).toBe(5);
@@ -825,7 +874,7 @@ describe('OrbField.resolvePickups', () => {
 
     let allDead: number[] = [];
     for (let tick = 0; tick < 5; tick++) {
-      const dead = resolveProjectileDamage(projectiles, DT, horde, orbs, tick);
+      const dead = resolveProjectileDamage(projectiles, DT, horde, orbs, tick, solNu());
       allDead = allDead.concat(dead);
     }
 
@@ -868,7 +917,7 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     const dy = horde.y[horde.slotOf(targetId)] ?? 0;
     projectiles.fireSalvoDirected(arme, tick, 0, 0, dx, dy, arme.damage, 1, by);
     for (let i = 0; i < 20; i++) {
-      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i);
+      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, solNu());
       if (morts.length > 0) {
         return { morts, impactTick: tick + i };
       }
@@ -960,7 +1009,7 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
     const projectiles = new Projectiles(10);
     projectiles.fireSalvoDirected(BRAISE, 0, 5000, 5000, 1, 0, BRAISE.damage, 1, 1);
     for (let t = 0; t <= BRAISE.projectileLifeTicks; t++) {
-      resolveProjectileDamage(projectiles, DT, new Horde(1), orbs, t);
+      resolveProjectileDamage(projectiles, DT, new Horde(1), orbs, t, zones);
     }
     expect(projectiles.count).toBe(0);
 
@@ -1182,6 +1231,11 @@ describe('markInZones — un ennemi DANS une zone est marque (etape 5a, tache 6)
 describe('resolveBurn — la Braise brule (etape 5a, tache 6)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
   const BRULURE = elementOf(ELEMENT.BRAISE).burnPerTick;
+  // ⚠️ **Cinq decimales et plus six, depuis l'armure.** `Horde.hp` est un
+  // `Float32Array` : 19,915 (20 - 0,1 x 0,85) s'y arrondit a 9,2e-7 pres, la ou
+  // 19,9 tombait a 3,8e-7. C'est le format de stockage qui le dit, pas le
+  // calcul — et cinq decimales separent encore largement une brulure amputee de
+  // son armure d'une brulure qui ne le serait pas (0,085 contre 0,1).
 
   it('descend les PV du marque Braise, laisse le marque Givre intact', () => {
     const horde = new Horde(10);
@@ -1191,9 +1245,9 @@ describe('resolveBurn — la Braise brule (etape 5a, tache 6)', () => {
     horde.applyMark(horde.slotOf(givre), ELEMENT.GIVRE, 1, 0);
     const orbs = new OrbField(10);
 
-    expect(resolveBurn(horde, orbs, 0)).toEqual([]);
+    expect(resolveBurn(horde, orbs, 0, solNu())).toEqual([]);
 
-    expect(horde.hp[horde.slotOf(brule)]).toBeCloseTo(HEAVY_HP - BRULURE, 6);
+    expect(horde.hp[horde.slotOf(brule)]).toBeCloseTo(HEAVY_HP - coupSurLourd(BRULURE), 5);
     expect(horde.hp[horde.slotOf(givre)]).toBe(HEAVY_HP);
     expect(orbs.count).toBe(0);
   });
@@ -1204,11 +1258,11 @@ describe('resolveBurn — la Braise brule (etape 5a, tache 6)', () => {
     horde.applyMark(horde.slotOf(cible), ELEMENT.BRAISE, 1, 0);
     const orbs = new OrbField(10);
 
-    resolveBurn(horde, orbs, MARK_DURATION_TICKS - 1);
+    resolveBurn(horde, orbs, MARK_DURATION_TICKS - 1, solNu());
     const apresDernier = horde.hp[horde.slotOf(cible)] ?? 0;
-    expect(apresDernier).toBeCloseTo(HEAVY_HP - BRULURE, 6);
+    expect(apresDernier).toBeCloseTo(HEAVY_HP - coupSurLourd(BRULURE), 5);
 
-    resolveBurn(horde, orbs, MARK_DURATION_TICKS);
+    resolveBurn(horde, orbs, MARK_DURATION_TICKS, solNu());
     expect(horde.hp[horde.slotOf(cible)]).toBe(apresDernier);
   });
 
@@ -1224,7 +1278,7 @@ describe('resolveBurn — la Braise brule (etape 5a, tache 6)', () => {
     horde.applyMark(horde.slotOf(cible), ELEMENT.BRAISE, 1, 0);
     const orbs = new OrbField(10);
 
-    expect(resolveBurn(horde, orbs, 0)).toEqual([cible]);
+    expect(resolveBurn(horde, orbs, 0, solNu())).toEqual([cible]);
     expect(horde.count).toBe(0);
     expect(orbs.count).toBe(1);
     expect(orbs.id[0]).toBe(cible);
@@ -1242,7 +1296,7 @@ describe('resolveBurn — la Braise brule (etape 5a, tache 6)', () => {
     horde.applyMark(horde.slotOf(mourante), ELEMENT.BRAISE, 1, 0);
     const orbs = new OrbField(10);
 
-    expect(resolveBurn(horde, orbs, 0)).toEqual([mourante]);
+    expect(resolveBurn(horde, orbs, 0, solNu())).toEqual([mourante]);
     expect(horde.count).toBe(1);
     expect(horde.entityIdAt(0)).toBe(voisine);
     expect(horde.hp[0]).toBe(HEAVY_HP);
@@ -1273,7 +1327,7 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     const dy = horde.y[horde.slotOf(targetId)] ?? 0;
     projectiles.fireSalvoDirected(arme, tick, 0, 0, dx, dy, arme.damage, 1, by);
     for (let i = 0; i < 20; i++) {
-      resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, reactions);
+      resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, solNu(), reactions);
       if (projectiles.count === 0) {
         return tick + i;
       }
@@ -1559,6 +1613,7 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
 
 describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tache 7)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? -1;
 
   function declencheur(x: number, y: number): ReactionTrigger {
     return {
@@ -1607,7 +1662,14 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
   it('des degats BRUTS et MASSIFS : la pietaille lourde tombe d un seul choc', () => {
     // `REACTION_DAMAGE` n'est jamais recopie : l'assertion porte sur la
     // relation que la constante doit tenir, pas sur son chiffre.
-    expect(REACTION_DAMAGE).toBeGreaterThan(HEAVY_HP);
+    //
+    // ⚠️ **La relation a change a l'etape 5b, et la comparaison des deux
+    // constantes NUES ne la dit plus.** Le Choc thermique passe par
+    // `appliquerDegats` comme tout le reste, donc l'armure de la lourde le
+    // rabote : c'est `REACTION_DAMAGE x (1 - HEAVY_ARMOR)` qu'il faut comparer
+    // a `HEAVY_HP` (21,25 contre 20). `expect(REACTION_DAMAGE > HEAVY_HP)`
+    // resterait vert avec une armure de 0,25, ou le choc ne tue plus rien.
+    expect(REACTION_DAMAGE * (1 - HEAVY_ARMOR)).toBeGreaterThan(HEAVY_HP);
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     const morts = tue(horde, new OrbField(10), 0, [declencheur(1000, 1000)]);
@@ -1626,7 +1688,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     horde.hp[horde.slotOf(cible)] = 1000;
 
     expect(tue(horde, new OrbField(10), 0, [declencheur(1000, 1000)])).toEqual([]);
-    expect(horde.hp[horde.slotOf(cible)]).toBe(1000 - REACTION_DAMAGE);
+    expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(1000 - coupSurLourd(REACTION_DAMAGE), 4);
   });
 
   it('une reserve qui tombe PILE a zero meurt : la borne est <= 0, pas < 0', () => {
@@ -1634,8 +1696,15 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     // qu'elle le peut : les degats de reaction sont ENTIERS, contrairement a
     // `burnPerTick` (0,1, non representable en `Float32`) dont la borne est
     // arithmetiquement intestable — voir `resolveBurn`.
+    //
+    // ⚠️ **Sur un LEGER, depuis l'etape 5b.** Un lourd rabote les degats de son
+    // armure, et `REACTION_DAMAGE x 0,85` ne retombe sur une reserve entiere
+    // qu'a la representation flottante pres : le reste ne serait plus
+    // exactement nul, et le test aurait l'air de mettre en scene la borne sans
+    // jamais l'atteindre. C'est l'armure NULLE du leger qui rend le zero exact.
     const horde = new Horde(10);
-    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    const cible = addOne(horde, 1, 1000, 1000, LEGER);
+    expect(ARCHETYPES[LEGER]?.armor).toBe(0);
     horde.hp[horde.slotOf(cible)] = REACTION_DAMAGE;
 
     expect(tue(horde, new OrbField(10), 0, [declencheur(1000, 1000)])).toEqual([cible]);
@@ -1687,5 +1756,183 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     // Le survivant a pris la place du mort dans le creneau 0, mais sa reserve
     // est celle qu'il avait : rien ne l'a touche.
     expect(horde.hp[horde.slotOf(loin)]).toBe(HEAVY_HP);
+  });
+});
+
+/**
+ * **Le chemin unique des degats** (etape 5b, tache 1) : `appliquerDegats` est
+ * la seule fonction qui ecrive `horde.hp`, et les trois sites qui retiraient
+ * des PV eux-memes y passent desormais.
+ */
+describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? -1;
+
+  it('reduit le coup de l armure de l ARCHETYPE, et le leger n en a pas', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0, LOURD);
+    addOne(horde, 2, 900, 900, LEGER);
+    // ⚠️ **30 et 20 ne sont AUCUNE constante de production**, et c'est
+    // delibere : une valeur de decor egale a une valeur de production rend la
+    // tache inverifiable (`GEL_TICKS` valait `LEVEL_FREEZE_TICKS`, et 80 tests
+    // passaient sur une derivation fausse).
+    horde.hp[0] = 30;
+    horde.hp[1] = 30;
+
+    appliquerDegats(horde, 0, 20, solNu(), 0, new Set());
+    appliquerDegats(horde, 1, 20, solNu(), 0, new Set());
+
+    // 20 x (1 - 0,15) = 17 : il reste 13. Le nombre est ecrit en clair, jamais
+    // derive de `HEAVY_ARMOR` — sinon l'assertion recopierait la production et
+    // passerait quoi qu'elle fasse.
+    expect(horde.hp[0]).toBeCloseTo(13, 5);
+    // Le leger, lui, prend les 20 entiers : zero est une entree de la table.
+    expect(horde.hp[1]).toBeCloseTo(10, 5);
+  });
+
+  it('une reduction fractionnaire n est arrondie nulle part', () => {
+    // ⚠️ **C'est le test de R9**, l'arrondi qui a avale l'empilement des
+    // passifs a l'etape 4 et amplifie l'echelle de palier a l'etape 6a.
+    // `Horde.hp` est un `Float32Array` et la combustion y retire deja 0,1 par
+    // tick : rien n'impose un entier. Un `Math.round` glisse n'importe ou sur
+    // le chemin fait rougir cette ligne.
+    //
+    // 7 x (1 - 0,15) = 5,95, et 30 - 5,95 = 24,05. Ni le coup ni le reste ne
+    // sont entiers, donc un arrondi de l'un OU de l'autre se voit.
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0, LOURD);
+    horde.hp[0] = 30;
+
+    appliquerDegats(horde, 0, 7, solNu(), 0, new Set());
+
+    expect(horde.hp[0]).toBeCloseTo(24.05, 4);
+    expect(Number.isInteger(horde.hp[0])).toBe(false);
+  });
+
+  it('une armure totale ne rend pas un ennemi immortel', () => {
+    // Plancher : un coup retire toujours quelque chose.
+    //
+    // ⚠️ **La borne vit dans la TABLE (`capArmor`, `MAX_ARMOR`), pas ici.** Une
+    // valeur aberrante n'arrive donc jamais jusqu'a cette fonction, et
+    // `archetypes.test.ts` garde `capArmor` en lui en donnant une. Ce qui se
+    // verifie ICI, c'est la consequence en jeu : le plus blinde du bestiaire
+    // perd des PV a chaque coup, et il en perd ce que la table annonce.
+    const plusBlinde = [...ARCHETYPES].sort((a, b) => b.armor - a.armor)[0];
+    expect(plusBlinde?.id).toBe(BOSS_ARCHETYPE);
+    expect(plusBlinde?.armor).toBe(BOSS_ARMOR);
+    expect(MAX_ARMOR).toBeLessThan(1);
+
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0, BOSS_ARCHETYPE);
+    horde.hp[0] = 100;
+
+    appliquerDegats(horde, 0, 10, solNu(), 0, new Set());
+
+    // 10 x (1 - 0,4) = 6.
+    expect(horde.hp[0]).toBeCloseTo(94, 5);
+    // Et la phrase que le point de revue n° 3 demandait, dite telle quelle.
+    expect(horde.hp[0] ?? 0).toBeLessThan(100);
+  });
+
+  it('note l identite dans un `Set` comme dans un tableau', () => {
+    // Les deux formes sont deliberees : les chemins de projectile
+    // dedoublonnent, la combustion balaie chaque creneau une fois. Un seul
+    // `if` les separe, et sans ce test la branche tableau ne serait exercee
+    // que par `resolveBurn`, dont les brulures tuent rarement.
+    const horde = new Horde(10);
+    const id = addOne(horde, 1, 0, 0, LEGER);
+    horde.hp[0] = 1;
+    const enSet = new Set<number>();
+    appliquerDegats(horde, 0, 100, solNu(), 0, enSet);
+    expect([...enSet]).toEqual([id]);
+
+    const horde2 = new Horde(10);
+    const id2 = addOne(horde2, 1, 0, 0, LEGER);
+    horde2.hp[0] = 1;
+    const enTableau: number[] = [];
+    appliquerDegats(horde2, 0, 100, solNu(), 0, enTableau);
+    expect(enTableau).toEqual([id2]);
+  });
+
+  /**
+   * **Les trois sites, un test chacun.** Chaque test remet une mutation en
+   * echec : « ce site-la retire les PV lui-meme au lieu de passer par
+   * `appliquerDegats` ». Un site debranche cesse de consulter `zones.ampAt`,
+   * et le mouchard le voit — y compris quand l'amplification vaut 1 partout,
+   * ce qu'aucune assertion sur les PV ne pourrait faire avant la Poix (tache
+   * 4).
+   *
+   * ⚠️ **Le mouchard porte aussi la position, et c'est la moitie du test** :
+   * l'amplification se lit AU PIED de l'ennemi frappe, jamais au centre du
+   * balayage — deux ennemis du meme souffle, l'un dans une flaque et l'autre a
+   * cote, ne subissent pas la meme chose.
+   */
+  describe('les TROIS sites passent par le chemin unique', () => {
+    const SOUFFLE = 70;
+
+    it('site 1 — le tir DIRECT consulte les zones au pied de l ennemi percute', () => {
+      const horde = new Horde(10);
+      const cible = addOne(horde, 1, 300, 40, LOURD);
+      const orbs = new OrbField(10);
+      const zones = solNu();
+      const mouchard = vi.spyOn(zones, 'ampAt');
+      const projectiles = new Projectiles(10);
+      projectiles.fireSalvo(SINGLE, 0, 0, 0, cible, horde);
+
+      let impact = -1;
+      for (let t = 0; t < 40 && impact < 0; t++) {
+        resolveProjectileDamage(projectiles, DT, horde, orbs, t, zones);
+        if (mouchard.mock.calls.length > 0) {
+          impact = t;
+        }
+      }
+
+      expect(impact).toBeGreaterThanOrEqual(0);
+      expect(SINGLE.blastRadius).toBe(0); // le decor est bien le tir direct
+      expect(mouchard).toHaveBeenCalledTimes(1);
+      expect(mouchard).toHaveBeenCalledWith(300, 40, impact);
+    });
+
+    it('site 2 — le balayage par RAYON consulte les zones au pied de CHAQUE touche', () => {
+      const bombe: Weapon = { ...SINGLE, blastRadius: SOUFFLE };
+      const horde = new Horde(10);
+      const percute = addOne(horde, 1, 300, 0, LOURD);
+      addOne(horde, 2, 300, SOUFFLE - 1, LOURD);
+      addOne(horde, 3, 300, SOUFFLE, LOURD); // pile au bord : dehors
+      const orbs = new OrbField(10);
+      const zones = solNu();
+      const mouchard = vi.spyOn(zones, 'ampAt');
+      const projectiles = new Projectiles(10);
+      projectiles.fireSalvo(bombe, 0, 0, 0, percute, horde);
+
+      let impact = -1;
+      for (let t = 0; t < 40 && impact < 0; t++) {
+        resolveProjectileDamage(projectiles, DT, horde, orbs, t, zones);
+        if (mouchard.mock.calls.length > 0) {
+          impact = t;
+        }
+      }
+
+      expect(impact).toBeGreaterThanOrEqual(0);
+      // Deux fois, pas une : le facteur est derive PAR ENTITE. Et pas trois :
+      // celui du bord est hors du souffle.
+      expect(mouchard).toHaveBeenCalledTimes(2);
+      expect(mouchard).toHaveBeenCalledWith(300, 0, impact);
+      expect(mouchard).toHaveBeenCalledWith(300, SOUFFLE - 1, impact);
+    });
+
+    it('site 3 — la COMBUSTION consulte les zones au pied de l ennemi qui brule', () => {
+      const horde = new Horde(10);
+      const brule = addOne(horde, 1, 120, -250, LOURD);
+      addOne(horde, 2, 900, 900, LOURD); // non marque : rien ne le consulte
+      horde.applyMark(horde.slotOf(brule), ELEMENT.BRAISE, 1, 0);
+      const zones = solNu();
+      const mouchard = vi.spyOn(zones, 'ampAt');
+
+      resolveBurn(horde, new OrbField(10), 4, zones);
+
+      expect(mouchard).toHaveBeenCalledTimes(1);
+      expect(mouchard).toHaveBeenCalledWith(120, -250, 4);
+    });
   });
 });

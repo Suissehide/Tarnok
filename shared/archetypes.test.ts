@@ -4,15 +4,19 @@ import {
   ARCHETYPES,
   archetypeOf,
   BOSS_ARCHETYPE,
+  BOSS_ARMOR,
   BOSS_BODY_SCALE,
   BOSS_HP_MULTIPLE,
   BOSS_HP_PER_PLAYER,
+  capArmor,
   FOOTSOLDIER_COUNT,
+  HEAVY_ARMOR,
   HEAVY_HP,
   LIGHT_HP,
+  MAX_ARMOR,
   STEP2_ARCHETYPES,
 } from './archetypes';
-import { MAX_PLAYERS } from './constants';
+import { MAX_PLAYERS, REACTION_DAMAGE } from './constants';
 import { bossHp } from './paliers';
 import { weaponOf } from './weapons';
 
@@ -196,5 +200,66 @@ describe("l'archetype de boss (etape 6a)", () => {
       }
       expect(a.bodyScale).toBe(1);
     }
+  });
+});
+
+describe("l'armure (etape 5b, tache 1)", () => {
+  it('donne ZERO a la pietaille legere — une entree de la table, pas un cas particulier', () => {
+    // ⚠️ **Le `0` doit etre LU, pas saute.** Si la legere n'avait pas de ligne
+    // dans la table, `appliquerDegats` aurait besoin d'une branche
+    // `if (armor !== undefined)` — exactement ce que `ELEMENT.NEUTRE` et
+    // `blastRadius: 0` existent pour eviter.
+    for (const a of ARCHETYPES) {
+      if (a.hp === LIGHT_HP) {
+        expect(a.armor, a.name).toBe(0);
+      }
+    }
+    // Non-vacuite : il y a bien de la pietaille legere dans la table.
+    expect(ARCHETYPES.filter((a) => a.hp === LIGHT_HP).length).toBeGreaterThan(0);
+  });
+
+  it('en donne aux QUATRE lourdes et au boss, et a personne d autre', () => {
+    const armures = ARCHETYPES.filter((a) => a.armor > 0);
+    // Les quatre lourdes + le troll. Le compte, pas seulement la presence :
+    // une armure qui se serait posee sur tout le bestiaire passerait sinon.
+    expect(armures.length).toBe(5);
+    for (const a of armures.filter((x) => x.id !== BOSS_ARCHETYPE)) {
+      expect(a.hp, a.name).toBe(HEAVY_HP);
+      expect(a.armor, a.name).toBe(HEAVY_ARMOR);
+    }
+    expect(archetypeOf(BOSS_ARCHETYPE).armor).toBe(BOSS_ARMOR);
+  });
+
+  it('le Choc thermique tue encore la pietaille lourde MALGRE son armure', () => {
+    // ⚠️ **La relation que `HEAVY_ARMOR` doit respecter, et qui se perdrait en
+    // silence.** Le docbloc de `REACTION_DAMAGE` engage *« 25, c'est plus que
+    // `HEAVY_HP` (20), donc la reaction tue la pietaille lourde d'un coup »* ;
+    // le choc passant par `appliquerDegats`, c'est le produit qu'il faut
+    // comparer. A 0,25 d'armure il vaudrait 18,75 et le Choc thermique
+    // cesserait de nettoyer la lourde — sans qu'aucun test ne bouge si celui-ci
+    // n'existait pas.
+    expect(REACTION_DAMAGE * (1 - HEAVY_ARMOR)).toBeGreaterThan(HEAVY_HP);
+  });
+
+  it('ne laisse AUCUN archetype depasser le plafond : un coup retire toujours quelque chose', () => {
+    // Le plancher de degats du jeu entier, lu a l'envers : `armor <= 0,9` veut
+    // dire « au moins un dixieme du brut arrive toujours aux PV ».
+    expect(MAX_ARMOR).toBeLessThan(1);
+    for (const a of ARCHETYPES) {
+      expect(a.armor, a.name).toBeLessThanOrEqual(MAX_ARMOR);
+      expect(a.armor, a.name).toBeGreaterThanOrEqual(0);
+    }
+  });
+
+  it('capArmor rabat une valeur aberrante sur le plafond et laisse le reste intact', () => {
+    // ⚠️ **0,97 et 0,12 ne sont AUCUNE constante de production**, et c'est le
+    // point : une valeur de decor egale a une valeur de production rend la
+    // borne inverifiable (`GEL_TICKS` valait `LEVEL_FREEZE_TICKS`, et 80 tests
+    // passaient sur une derivation fausse).
+    expect(capArmor(0.97)).toBe(MAX_ARMOR);
+    expect(capArmor(1)).toBe(MAX_ARMOR);
+    expect(capArmor(0.12)).toBe(0.12);
+    // La borne est LARGE : une armure pile au plafond est legale.
+    expect(capArmor(MAX_ARMOR)).toBe(MAX_ARMOR);
   });
 });

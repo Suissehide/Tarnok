@@ -1,3 +1,4 @@
+import { archetypeOf } from '@shared/archetypes';
 import { BOSS_CHARGE_DAMAGE, type BossCharge, chargeHurtsAt } from '@shared/boss';
 import {
   CONTACT_DAMAGE,
@@ -476,6 +477,78 @@ function applyElement(
 }
 
 /**
+ * **Le seul chemin par lequel un ennemi perd des PV.** Meme raison que
+ * `Room#grantCard` pour les cartes : deux formules d'armure divergeraient, et
+ * le jour ou elles divergent c'est un test qui manque, pas un bug qui se voit.
+ * Trois appelants — le balayage par rayon, le tir direct, la combustion — et
+ * aucun `horde.hp[...] -=` ailleurs dans le depot ; un `grep` le verifie.
+ *
+ * Retire `brut x amp x (1 - armure)` a l'entite du creneau `slot`, et note son
+ * identite dans `dead` si elle n'y survit pas.
+ *
+ * ⚠️ **Les deux facteurs sont DERIVES ICI, jamais passes tout calcules.** Les
+ * appelants donnent `zones` et `tick` ; l'amplification (`ZoneField.ampAt`, la
+ * Poix de la tache 4) et l'armure effective (la Supraconduction de la tache 7
+ * la rabotera) se lisent dans cette fonction. Les recevoir deja multiplies
+ * ferait TROIS lieux de derivation aux trois sites d'appel — exactement ce
+ * qu'« un seul chemin » existe pour empecher.
+ *
+ * ⚠️ **Rien de tout ca ne voyage.** Seul le serveur soustrait des PV (§2 de la
+ * spec de l'etape 5a) : le client apprend les morts par `DEATHS`. L'armure et
+ * l'amplification echappent donc a la contrainte de replication qui impose au
+ * ralentissement de se combiner par un minimum exact — voir `ZoneField.ampAt`,
+ * qui separe les deux raisons.
+ *
+ * ⚠️ **NE TUE PAS**, comme `damageInRadius` : tuer compacte la horde et
+ * invaliderait les creneaux de la boucle en cours chez l'appelant. Le `Set`
+ * (ou le tableau) se remplit ici, `Horde.kill` reste dehors, apres tous les
+ * degats.
+ *
+ * ⚠️ **`Set<number> | number[]`, et les deux sont deliberes.** Les deux
+ * chemins de projectiles dedoublonnent (deux impacts peuvent achever la meme
+ * entite au meme tick, et `DEATHS` exige des identites uniques) ; la
+ * combustion balaie chaque creneau une fois exactement, et un `Set` n'y
+ * apporterait qu'une allocation. Le contrat rendu est le meme : une identite y
+ * est notee au plus une fois.
+ *
+ * ⚠️ **La borne est `<= 0`, et AUCUN TEST NE PEUT la separer de `< 0` sur le
+ * chemin de la combustion — c'est arithmetique.** `Horde.hp` est un
+ * `Float32Array` et `burnPerTick` vaut 0,1, qui n'y est pas representable :
+ * soustraire 0,1 (module par l'armure, qui n'arrange rien) d'une reserve
+ * arrondie en simple precision ne peut jamais tomber sur exactement zero. Ce
+ * sont les degats ENTIERS des projectiles et des reactions qui tiennent cette
+ * borne — et c'est la pietaille LEGERE, dont l'armure est nulle, qui la rend
+ * exacte. Dit tel quel plutot que de laisser croire a une borne testee depuis
+ * les trois sites.
+ */
+export function appliquerDegats(
+  horde: Horde,
+  slot: number,
+  brut: number,
+  zones: ZoneField,
+  tick: number,
+  dead: Set<number> | number[],
+): void {
+  const armure = archetypeOf(horde.archetype[slot] ?? 0).armor;
+  const amp = zones.ampAt(horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
+  // ⚠️ **AUCUN arrondi, nulle part sur ce chemin.** `Horde.hp` est un
+  // `Float32Array` et la combustion y retire deja 0,1 par tick : rien n'impose
+  // un entier, et un `Math.round` glisse ici avalerait l'empilement des
+  // passifs de degats exactement comme il a avale celui de l'etape 4 et
+  // l'echelle de palier de l'etape 6a.
+  const reste = (horde.hp[slot] ?? 0) - brut * amp * (1 - armure);
+  horde.hp[slot] = reste;
+  if (reste <= 0) {
+    const id = horde.entityIdAt(slot);
+    if (Array.isArray(dead)) {
+      dead.push(id);
+    } else {
+      dead.add(id);
+    }
+  }
+}
+
+/**
  * **LE balayage par rayon, et il n'y en a qu'un.** Retire `damage` a tout
  * ennemi dont le centre tombe a moins de `radius` de `(cx, cy)`, et note dans
  * `dead` l'identite de ceux qui n'y survivent pas.
@@ -504,6 +577,8 @@ function damageInRadius(
   cy: number,
   radius: number,
   damage: number,
+  zones: ZoneField,
+  tick: number,
   dead: Set<number>,
 ): void {
   const r2 = radius * radius;
@@ -513,11 +588,12 @@ function damageInRadius(
     if (dx * dx + dy * dy >= r2) {
       continue;
     }
-    const reste = (horde.hp[i] ?? 0) - damage;
-    horde.hp[i] = reste;
-    if (reste <= 0) {
-      dead.add(horde.entityIdAt(i));
-    }
+    // ⚠️ **L'amplification est PAR ENTITE, pas par point d'impact.** Deux
+    // ennemis du meme rayon, l'un dans une flaque et l'autre a cote, ne
+    // subissent pas la meme chose — c'est `appliquerDegats` qui lit la
+    // position de CHACUN. Deriver le facteur une fois pour le centre du
+    // balayage serait plus rapide et faux.
+    appliquerDegats(horde, i, damage, zones, tick, dead);
   }
 }
 
@@ -575,7 +651,7 @@ export function applyReactions(
 
   const dead = new Set<number>();
   for (const t of triggers) {
-    damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, dead);
+    damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
   }
   if (dead.size === 0) {
     return [];
@@ -630,6 +706,7 @@ export function resolveProjectileDamage(
   horde: Horde,
   orbs: OrbField,
   tick: number,
+  zones: ZoneField,
   reactions?: Reactions,
 ): number[] {
   // ⚠️ **Un projectile ne laisse plus RIEN au sol** (tache 21). Il posait une
@@ -674,7 +751,16 @@ export function resolveProjectileDamage(
       // autres — exactement le raisonnement de `applyReactions`. Lui retirer
       // `damage` une seconde fois ici lui infligerait le double du reste de la
       // horde.
-      damageInRadius(horde, horde.x[slot] ?? 0, horde.y[slot] ?? 0, blastRadius, damage, dead);
+      damageInRadius(
+        horde,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        blastRadius,
+        damage,
+        zones,
+        tick,
+        dead,
+      );
     } else {
       // ⚠️ **Le tir simple garde son chemin DIRECT, et c'est une question de
       // cout, pas de regle.** `damageInRadius` est en O(horde) par impact ; le
@@ -682,11 +768,7 @@ export function resolveProjectileDamage(
       // armes sur neuf ne sont pas des armes de zone. Un balayage a rayon nul
       // serait la meme regle ecrite plus cher — et il toucherait en prime tout
       // ennemi pile aux memes coordonnees.
-      const reste = (horde.hp[slot] ?? 0) - damage;
-      horde.hp[slot] = reste;
-      if (reste <= 0) {
-        dead.add(entityId);
-      }
+      appliquerDegats(horde, slot, damage, zones, tick, dead);
     }
     if (dead.has(entityId)) {
       // ⚠️ **UN ENNEMI QUI MEURT DU MEME IMPACT N'EST PAS MARQUE.** Un mort ne
@@ -1020,27 +1102,29 @@ export function markInZones(
  * n'y fait pas exception — « sinon le systeme elementaire punirait
  * l'experience de l'equipe ».
  */
-export function resolveBurn(horde: Horde, orbs: OrbField, tick: number): number[] {
+export function resolveBurn(
+  horde: Horde,
+  orbs: OrbField,
+  tick: number,
+  zones: ZoneField,
+): number[] {
   const dead: number[] = [];
   for (let i = 0; i < horde.count; i++) {
     const burn = elementOf(horde.markAt(i, tick)).burnPerTick;
     if (burn <= 0) {
       continue;
     }
-    const reste = (horde.hp[i] ?? 0) - burn;
-    horde.hp[i] = reste;
-    // ⚠️ **`<= 0`, comme `resolveProjectileDamage` — mais AUCUN TEST NE PEUT
-    // separer cette borne de `< 0` ici, et c'est arithmetique.** `Horde.hp`
-    // est un `Float32Array` et `burnPerTick` vaut 0,1, qui n'y est pas
-    // representable : soustraire le double 0,1 d'une reserve arrondie en
-    // simple precision ne peut jamais tomber sur exactement zero. La mutation
-    // `reste < 0` survit donc a toute la suite — verifie par application. Dit
-    // tel quel plutot que de laisser croire a une borne testee ; la garder
-    // alignee sur celle des projectiles vaut mieux que de la relacher pour une
-    // raison qui tient au format de stockage, pas a la regle.
-    if (reste <= 0) {
-      dead.push(horde.entityIdAt(i));
-    }
+    // ⚠️ **La borne de mort est `<= 0`, et elle vit maintenant dans
+    // `appliquerDegats` — mais AUCUN TEST NE PEUT la separer de `< 0` DEPUIS
+    // ICI, et c'est arithmetique.** `Horde.hp` est un `Float32Array` et
+    // `burnPerTick` vaut 0,1, qui n'y est pas representable : soustraire le
+    // double 0,1 d'une reserve arrondie en simple precision ne peut jamais
+    // tomber sur exactement zero. Ce sont les degats ENTIERS des projectiles
+    // et des reactions qui tiennent cette borne. Dit tel quel plutot que de
+    // laisser croire a une borne testee de partout ; la garder alignee vaut
+    // mieux que de la relacher pour une raison qui tient au format de
+    // stockage, pas a la regle.
+    appliquerDegats(horde, i, burn, zones, tick, dead);
   }
   if (dead.length === 0) {
     return dead;

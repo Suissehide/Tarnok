@@ -15,6 +15,17 @@ describe('ELEMENTS', () => {
     expect(ELEMENTS.length).toBeLessThanOrEqual(7);
   });
 
+  it('n amplifie AUCUN degat aujourd hui : `damageAmp` vaut 1 sur toute la table', () => {
+    // ⚠️ **La valeur neutre, et elle doit etre LUE.** `ZoneField.ampAt`
+    // multiplie les degats par ce champ : un element qui l'oublierait
+    // (`undefined`) rendrait `NaN` et effacerait les PV de tout ce qui pietine
+    // sa zone. La Poix (tache 4) sera la premiere ligne a depasser 1 — et ce
+    // test-ci devra alors l'exclure NOMMEMENT, ce qui force a relire.
+    for (const e of ELEMENTS) {
+      expect(e.damageAmp, e.name).toBe(1);
+    }
+  });
+
   it('donne un nom non vide et distinct a chaque element', () => {
     for (const e of ELEMENTS) {
       expect(e.name.length).toBeGreaterThan(0);
