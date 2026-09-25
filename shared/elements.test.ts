@@ -151,6 +151,22 @@ describe('les deux elements de l etape 5a', () => {
   });
 });
 
+/**
+ * ⚠️ **Sans ce bloc, `burnPerTick`/`slowFactor` de la Foudre ne sont
+ * consultes par AUCUNE assertion nommee.** La table generique (« reste dans
+ * le domaine des effets ») ne verifie qu'un intervalle large (`>= 0`,
+ * `]0, 1]`), et la Foudre y reste a l'interieur meme si on lui pretait par
+ * erreur une combustion ou un ralentissement — une mutation qui resterait
+ * verte sans ces deux assertions dediees.
+ */
+describe('la foudre (tache 2)', () => {
+  it('ne brule pas et ne ralentit pas : son effet est la chaine, pas une marque', () => {
+    const foudre = elementOf(ELEMENT.FOUDRE);
+    expect(foudre.burnPerTick).toBe(0);
+    expect(foudre.slowFactor).toBe(1);
+  });
+});
+
 describe('elementOf', () => {
   it('rend l element portant cet identifiant', () => {
     // Un id non nul : `elementOf(0)` seul ne distinguerait pas une
