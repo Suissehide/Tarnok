@@ -697,10 +697,10 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     // Et les DEUX elements sont bien passes par le sol : sans ca, « deux
     // reactions au meme tick » ne dirait pas d'ou vient la seconde.
     const zones = zonesDe(a);
-    expect(zones.filter((z) => z.element === ELEMENT.BRAISE).length).toBeGreaterThan(0);
-    expect(zones.filter((z) => z.element === ELEMENT.GIVRE).length).toBeGreaterThan(0);
-    const braises = zones.filter((z) => z.element === ELEMENT.BRAISE);
-    const givres = zones.filter((z) => z.element === ELEMENT.GIVRE);
+    expect(zones.filter((z) => z.kind === ELEMENT.BRAISE).length).toBeGreaterThan(0);
+    expect(zones.filter((z) => z.kind === ELEMENT.GIVRE).length).toBeGreaterThan(0);
+    const braises = zones.filter((z) => z.kind === ELEMENT.BRAISE);
+    const givres = zones.filter((z) => z.kind === ELEMENT.GIVRE);
     expect(
       braises.some((zb) =>
         givres.some((zg) => Math.hypot(zb.x - zg.x, zb.y - zg.y) < 2 * ZONE_RADIUS),

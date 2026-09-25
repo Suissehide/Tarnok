@@ -18,6 +18,7 @@ import {
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import type { FlowField } from './flowfield';
+import { zoneElement } from './protocol';
 import { formationPositions, type WaveOrder } from './waves';
 import type { ZoneField } from './zones';
 
@@ -917,7 +918,7 @@ export class Horde {
       if (!zones.slowsAt(z, tick)) {
         continue;
       }
-      const factor = elementOf(zones.element[z] ?? 0).slowFactor;
+      const factor = elementOf(zoneElement(zones.kind[z] ?? 0)).slowFactor;
       const zx = zones.x[z] ?? 0;
       const zy = zones.y[z] ?? 0;
       for (let i = 0; i < this.#count; i++) {

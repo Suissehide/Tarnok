@@ -32,7 +32,7 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
-import { packElementPair } from '@shared/protocol';
+import { packElementPair, packZoneKind } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import type { Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
@@ -1092,7 +1092,7 @@ describe('la reaction laisse un champ au sol (etape 5a, tache 21)', () => {
       new Reactions(),
     );
 
-    expect(zones.element[0]).toBe(ELEMENT.GIVRE);
+    expect(zones.kind[0]).toBe(ELEMENT.GIVRE);
     expect(zones.by[0]).toBe(2);
   });
 
@@ -1227,6 +1227,28 @@ describe('markInZones — un ennemi DANS une zone est marque (etape 5a, tache 6)
 
     expect(horde.markAt(horde.slotOf(cible), 42)).toBe(ELEMENT.GIVRE);
     expect(zones.slowsAt(0, 42)).toBe(false);
+  });
+
+  /**
+   * ⚠️ **`markInZones` doit decoder `zones.kind`, pas le lire brut.** Une zone
+   * qui porte deja un type de reaction empaquete (§5b, tache 5) doit marquer
+   * l'ennemi avec l'ELEMENT seul — jamais l'octet complet, que `Horde.mark`
+   * accepterait sans broncher (aucune validation la), mais que `elementOf`
+   * refuserait plus tard (`resolveBurn`, la teinte). `kind !== element` ici :
+   * un empaquetage a reaction nulle n'aurait rien distingue d'une lecture
+   * brute.
+   */
+  it('marque avec l element DECODE, meme quand la zone porte un type de reaction empaquete', () => {
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000);
+    const zones = new ZoneField();
+    const kind = packZoneKind(ELEMENT.GIVRE, 6);
+    expect(kind).not.toBe(ELEMENT.GIVRE);
+    zones.spawn(kind, 1000, 1000, 4, 10);
+
+    markInZones(horde, zones, 10, new Reactions());
+
+    expect(horde.markAt(horde.slotOf(cible), 10)).toBe(ELEMENT.GIVRE);
   });
 });
 
@@ -1523,6 +1545,59 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     reactions.onZoneCreated(zones, seconde, 0);
 
     expect(reactions.count).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Le meme decor que ci-dessus, mais l octet BRUT differe alors que
+   * l element decode ne differe pas** (tache 5 de l'etape 5b). `onZoneCreated`
+   * doit comparer `zoneElement(...)` des deux cotes, jamais `zones.kind[...]`
+   * brut : sinon deux zones de Braise portant deux types de reaction
+   * empaquetes DIFFERENTS se verraient comme deux elements distincts, et
+   * reagiraient l'une avec l'autre — exactement le defaut que le test
+   * precedent existe pour interdire, ici cause par la reaction empaquetee au
+   * lieu de l'element.
+   */
+  it('deux zones du MEME element mais de types de reaction empaquetes DIFFERENTS ne reagissent pas non plus', () => {
+    const zones = new ZoneField();
+    const premier = packZoneKind(ELEMENT.BRAISE, 2);
+    const second = packZoneKind(ELEMENT.BRAISE, 9);
+    expect(premier).not.toBe(second);
+
+    zones.spawn(premier, 1000, 1000, 1, 0);
+    const seconde = zones.spawn(second, 1000 + ZONE_RADIUS + 10, 1000, 2, 0);
+    expect(zones.count).toBe(2);
+    expect(zones.overlaps(0, seconde)).toBe(true);
+    const reactions = new Reactions();
+
+    reactions.onZoneCreated(zones, seconde, 0);
+
+    expect(reactions.count).toBe(0);
+  });
+
+  /**
+   * ⚠️ **La moitie qui prouve que le decodage tourne dans les DEUX sens.** La
+   * zone deja la ET celle qui vient de naitre portent chacune un type de
+   * reaction empaquete, distinct de zero : si `onZoneCreated` lisait l'octet
+   * brut d'un seul cote, `pair` porterait un fragment d'octet de reaction au
+   * lieu d'un element, et ne vaudrait plus `packElementPair(BRAISE, GIVRE)`.
+   */
+  it('deux zones d elements DIFFERENTS, chacune avec un type de reaction empaquete, reagissent avec le bon couple', () => {
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, 4), 1000, 1000, 1, 0);
+    const seconde = zones.spawn(
+      packZoneKind(ELEMENT.GIVRE, 11),
+      1000 + ZONE_RADIUS + 10,
+      1000,
+      2,
+      0,
+    );
+    const reactions = new Reactions();
+
+    reactions.onZoneCreated(zones, seconde, 0);
+
+    const [reaction, ...reste] = reactions.drain();
+    expect(reste).toEqual([]);
+    expect(reaction?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
   });
 
   it('deux zones TANGENTES ne reagissent pas : la borne est stricte', () => {

@@ -7,6 +7,7 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
+import { packZoneKind, zoneElement } from './protocol';
 import { ZoneField } from './zones';
 
 /**
@@ -27,7 +28,7 @@ describe('ZoneField — la pose', () => {
     zones.spawn(ELEMENT.BRAISE, 12, -34, 3, 7);
 
     expect(zones.count).toBe(1);
-    expect(zones.element[0]).toBe(ELEMENT.BRAISE);
+    expect(zones.kind[0]).toBe(ELEMENT.BRAISE);
     expect(zones.x[0]).toBe(12);
     expect(zones.y[0]).toBe(-34);
     expect(zones.by[0]).toBe(3);
@@ -89,8 +90,47 @@ describe('ZoneField — la pose', () => {
     zones.spawn(ELEMENT.GIVRE, 500, 500, 1, 0);
 
     expect(zones.count).toBe(2);
-    expect(zones.element[0]).toBe(ELEMENT.BRAISE);
-    expect(zones.element[1]).toBe(ELEMENT.GIVRE);
+    expect(zones.kind[0]).toBe(ELEMENT.BRAISE);
+    expect(zones.kind[1]).toBe(ELEMENT.GIVRE);
+  });
+
+  /**
+   * ⚠️ **PAR ELEMENT reste vrai meme quand deux octets DIFFERENT** (tache 5 de
+   * l'etape 5b). Deux `kind` du meme element mais de types de reaction
+   * distincts sont deux octets differents — s'ils n'etaient PAS decodes avant
+   * d'etre compares, `spawn` les traiterait comme deux elements differents et
+   * poserait une seconde zone au lieu de fusionner. `kind !== element` ici
+   * pour chacun des deux appels : un test qui n'empaquetterait qu'avec une
+   * reaction nulle ne distinguerait rien d'une fonction identite.
+   */
+  it('fusionne deux memes elements meme si leurs types de reaction empaquetes different', () => {
+    const zones = new ZoneField();
+    const premier = packZoneKind(ELEMENT.BRAISE, 3);
+    const second = packZoneKind(ELEMENT.BRAISE, 9);
+    expect(premier).not.toBe(ELEMENT.BRAISE);
+    expect(second).not.toBe(ELEMENT.BRAISE);
+    expect(premier).not.toBe(second);
+
+    zones.spawn(premier, 500, 500, 0, 0);
+    zones.spawn(second, 500, 500, 1, 0);
+
+    expect(zones.count).toBe(1);
+  });
+
+  /**
+   * ⚠️ **La pose doit stocker l'octet COMPLET, jamais le seul element decode**
+   * — sinon le type de reaction empaquete disparaitrait des la creation, avant
+   * meme d'avoir pu voyager. `kind !== element` : un `packZoneKind(x, 0)`
+   * n'aurait rien distingue.
+   */
+  it('stocke le kind empaquete tel quel, reaction comprise', () => {
+    const zones = new ZoneField();
+    const kind = packZoneKind(ELEMENT.GIVRE, 11);
+    expect(kind).not.toBe(ELEMENT.GIVRE);
+
+    const slot = zones.spawn(kind, 500, 500, 0, 0);
+
+    expect(zones.kind[slot]).toBe(kind);
   });
 
   it('la fusion rafraichit le bornTick, et laisse le poseur d origine', () => {
@@ -249,11 +289,37 @@ describe('ZoneField — l expiration derivee', () => {
     zones.expire(ZONE_LIFETIME_TICKS);
 
     expect(zones.count).toBe(1);
-    expect(zones.element[0]).toBe(ELEMENT.GIVRE);
+    expect(zones.kind[0]).toBe(ELEMENT.GIVRE);
     expect(zones.x[0]).toBe(BIEN_LOIN);
     expect(zones.y[0]).toBe(11);
     expect(zones.by[0]).toBe(2);
     expect(zones.bornTick[0]).toBe(50);
+  });
+
+  /**
+   * ⚠️ **La compaction doit deplacer l'octet ENTIER, pas le reconstruire a
+   * partir du seul element.** Le test precedent pose des elements bruts
+   * (`kind === element`, reaction nulle) : une compaction qui ecrirait
+   * `this.kind[slot] = zoneElement(this.kind[last])` passerait quand meme,
+   * parce que decoder un octet de reaction nulle rend le meme nombre. Celui-ci
+   * empaquette une reaction non nulle sur la zone DEPLACEE pour separer les
+   * deux : `kind !== element` la designe sans ambiguite. Meme decor que
+   * « ne saute jamais... » ci-dessus — deux zones, la premiere perime, la
+   * seconde est deplacee du creneau 1 au creneau 0.
+   */
+  it('deplace le kind empaquete ENTIER par la compaction, reaction comprise', () => {
+    const zones = new ZoneField();
+    const kind = packZoneKind(ELEMENT.GIVRE, 13);
+    expect(kind).not.toBe(ELEMENT.GIVRE);
+
+    zones.spawn(ELEMENT.BRAISE, 0, 0, 0, 0);
+    zones.spawn(kind, BIEN_LOIN, 11, 2, 50);
+    expect(zones.count).toBe(2);
+
+    zones.expire(ZONE_LIFETIME_TICKS);
+
+    expect(zones.count).toBe(1);
+    expect(zones.kind[0]).toBe(kind);
   });
 });
 
@@ -430,11 +496,15 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
     // `elementOf` — la reponse devient alors « leve » ou « rend 1 », et ces
     // deux-la se distinguent.
     //
-    // 99 n'est aucun element de la table, et ne le sera pas : le §6.3 de
-    // l'orientation en compte six au total.
+    // ⚠️ **6, pas 99, depuis la tache 5 de l'etape 5b.** `zones.kind` porte
+    // desormais un octet EMPAQUETE (`packZoneKind`) : l'element n'occupe que
+    // les bits 0-2, et 99 (0b1100011) s'y decode en 3 — Foudre, un element
+    // bien REEL, qui casserait ce test. 6 reste un element inconnu meme aux
+    // 3 bits pleins : le §6.3 de l'orientation en compte six au total (0 a
+    // 5), et 6/7 n'en feront jamais partie.
     const zones = new ZoneField();
     zones.spawn(ELEMENT.BRAISE, 0, 0, 0, 0);
-    zones.element[0] = 99;
+    zones.kind[0] = 6;
 
     // Dedans : la zone est consultee, donc `elementOf` leve.
     expect(() => zones.ampAt(ZONE_RADIUS - 1, 0, 0)).toThrow(/element inconnu/);
@@ -447,5 +517,26 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
     // l'assertion du dessus dirait seulement « le balayage ne trouve jamais
     // rien ».
     expect(() => zones.ampAt(0, 0, ZONE_LIFETIME_TICKS - 1)).toThrow(/element inconnu/);
+  });
+
+  /**
+   * ⚠️ **Le test qui separe `ampAt` decodant de `ampAt` lisant l'octet
+   * brut.** `packZoneKind(FOUDRE, reaction)` avec `reaction > 0` vaut au
+   * moins 8 des que `reaction >= 1` — hors de portee d'`ELEMENTS` (4
+   * entrees aujourd'hui, six au plus au §6.3) tant que l'element occupe 3
+   * bits. Un `ampAt` qui lirait `this.kind[z]` sans le decoder recevrait
+   * cet octet directement et leverait ; le vrai code le decode et rend le
+   * `damageAmp` de la Foudre, 1 — sans lever.
+   */
+  it('decode l element AVANT de le donner a `elementOf`, meme quand une reaction est empaquetee dessus', () => {
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.FOUDRE, 5), 500, 500, 0, 0);
+    // Le decor n'est pas creux : l'octet stocke porte bien les DEUX moities,
+    // et elles different — sinon ce test passerait avec une fonction
+    // identite a la place de `packZoneKind`.
+    expect(zones.kind[0]).not.toBe(zoneElement(zones.kind[0] ?? 0));
+
+    expect(() => zones.ampAt(500, 500, 0)).not.toThrow();
+    expect(zones.ampAt(500, 500, 0)).toBe(elementOf(ELEMENT.FOUDRE).damageAmp);
   });
 });

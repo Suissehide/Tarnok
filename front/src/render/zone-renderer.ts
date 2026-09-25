@@ -1,5 +1,6 @@
 import { MAP_SIZE, ZONE_RADIUS } from '@shared/constants';
 import { elementOf } from '@shared/elements';
+import { zoneElement } from '@shared/protocol';
 import type { ZoneField } from '@shared/zones';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
@@ -329,7 +330,7 @@ export class ZoneRenderer {
       particle.scaleY = scale;
       // Teinte de l'element, sans jamais tester lequel : `ELEMENT.NEUTRE`
       // porte 0xffffff, l'identite du produit (voir `shared/elements.ts`).
-      particle.tint = elementOf(zones.element[i] ?? 0).tint;
+      particle.tint = elementOf(zoneElement(zones.kind[i] ?? 0)).tint;
       particle.alpha = ZONE_ALPHA;
       children.push(particle);
     }

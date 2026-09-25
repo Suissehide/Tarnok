@@ -5,6 +5,7 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from './constants';
 import { elementOf } from './elements';
+import { zoneElement } from './protocol';
 
 /**
  * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, **pose par
@@ -34,8 +35,19 @@ import { elementOf } from './elements';
  * derivee du `bornTick` sans un octet sur le fil.
  */
 export class ZoneField {
-  /** Element de la zone, index dans `ELEMENTS`. */
-  readonly element: Uint8Array;
+  /**
+   * Ce que la zone porte : l'octet empaquete par `packZoneKind`
+   * (`shared/protocol.ts`), pas un simple index dans `ELEMENTS` depuis la
+   * tache 5 de l'etape 5b.
+   *
+   * ⚠️ **Toujours decoder avec `zoneElement` / `zoneReaction` avant de s'en
+   * servir.** Le lire brut fonctionne PAR ACCIDENT tant que personne ne pose
+   * de type de reaction non nul (voir `postZone`) — et c'est exactement le
+   * genre de coincidence qui casse en silence le jour ou une reaction en pose
+   * un. `element` et `elementOf` different d'une lettre et pas d'un sens : ne
+   * pas confondre ce tableau avec l'element qu'il faut en extraire.
+   */
+  readonly kind: Uint8Array;
   readonly x: Float32Array;
   readonly y: Float32Array;
   /** Index du joueur qui a pose la zone — c'est lui que la Synergie du §7 consomme. */
@@ -64,7 +76,7 @@ export class ZoneField {
   truncatedZones = 0;
 
   constructor() {
-    this.element = new Uint8Array(this.capacity);
+    this.kind = new Uint8Array(this.capacity);
     this.x = new Float32Array(this.capacity);
     this.y = new Float32Array(this.capacity);
     this.by = new Uint8Array(this.capacity);
@@ -116,6 +128,14 @@ export class ZoneField {
    * declenche la reaction du §5.2, et les fusionner supprimerait la seconde
    * voie du §6.3 de l'orientation.
    *
+   * ⚠️ **PAR ELEMENT reste vrai depuis la tache 5 de l'etape 5b, malgre
+   * `kind`.** La comparaison decode les deux cotes avec `zoneElement` avant de
+   * les confronter : deux champs du meme element mais de types de reaction
+   * DIFFERENTS (Surchauffe qui se prolonge sur un Choc thermique tout neuf,
+   * par exemple) doivent fusionner comme avant, pas coexister parce que leurs
+   * octets bruts different.
+   *
+
    * ⚠️ **La fusion n'est pas `overlaps`.** Elle teste si le POINT tombe dans
    * une zone existante (distance < `ZONE_RADIUS`), pas si deux disques se
    * touchent (distance < 2 × `ZONE_RADIUS`). Fusionner sur `overlaps`
@@ -138,11 +158,17 @@ export class ZoneField {
    * `Room` annonce : le message `ZONE` porte le centre STOCKE, jamais celui
    * du projectile, pour qu'un client qui rejoue la meme pose retombe sur la
    * meme zone (distance nulle) sans avoir a deviner laquelle fusionner.
+   *
+   * ⚠️ **`kind` est l'octet COMPLET a stocker, pas le seul element.** Un
+   * appelant qui ne connait encore aucun type de reaction (la seule situation
+   * de la tache 5) passe l'element brut : `packZoneKind(element, 0) ===
+   * element` pour tout element sur 3 bits, donc un `number` simple reste un
+   * `kind` valide, de reaction nulle.
    */
-  spawn(element: number, x: number, y: number, playerId: number, tick: number): number {
+  spawn(kind: number, x: number, y: number, playerId: number, tick: number): number {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
     for (let i = 0; i < this.#count; i++) {
-      if (this.element[i] !== element) {
+      if (zoneElement(this.kind[i] ?? 0) !== zoneElement(kind)) {
         continue;
       }
       if (!this.aliveAt(i, tick)) {
@@ -176,7 +202,7 @@ export class ZoneField {
     }
 
     const slot = this.#count++;
-    this.element[slot] = element;
+    this.kind[slot] = kind;
     this.x[slot] = x;
     this.y[slot] = y;
     this.by[slot] = playerId;
@@ -271,7 +297,7 @@ export class ZoneField {
       if (dx * dx + dy * dy >= r2) {
         continue;
       }
-      const factor = elementOf(this.element[z] ?? 0).damageAmp;
+      const factor = elementOf(zoneElement(this.kind[z] ?? 0)).damageAmp;
       if (factor > amp) {
         amp = factor;
       }
@@ -324,7 +350,7 @@ export class ZoneField {
   #removeAt(slot: number): void {
     const last = this.#count - 1;
     if (slot !== last) {
-      this.element[slot] = this.element[last] ?? 0;
+      this.kind[slot] = this.kind[last] ?? 0;
       this.x[slot] = this.x[last] ?? 0;
       this.y[slot] = this.y[last] ?? 0;
       this.by[slot] = this.by[last] ?? 0;

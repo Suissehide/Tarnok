@@ -15,7 +15,7 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
-import { packElementPair } from '@shared/protocol';
+import { packElementPair, zoneElement } from '@shared/protocol';
 import type { ZoneField } from '@shared/zones';
 
 /**
@@ -376,7 +376,7 @@ export class Reactions {
    * implementee.
    */
   onZoneCreated(zones: ZoneField, created: number, tick: number): void {
-    const element = zones.element[created] ?? 0;
+    const element = zoneElement(zones.kind[created] ?? 0);
     const by = zones.by[created] ?? 0;
     for (let i = 0; i < zones.count; i++) {
       // ⚠️ **Deux gardes ont ete RETIREES ici, mutation a l'appui** — chacune
@@ -390,7 +390,7 @@ export class Reactions {
       //
       // Une garde qu'aucun test ne peut faire rougir est une garde qu'on
       // croit avoir.
-      const other = zones.element[i] ?? 0;
+      const other = zoneElement(zones.kind[i] ?? 0);
       if (other === element) {
         continue;
       }
@@ -1058,6 +1058,10 @@ function postZone(
   // deux zones qu'a LA CREATION DE LA SECONDE. Sans cette distinction, deux
   // reactions qui se repetent au meme endroit declencheraient une reaction de
   // recouvrement a chaque fois, indefiniment.
+  // ⚠️ **`trigger.element` est un `kind` valide de reaction nulle**
+  // (`ZoneField.spawn`) : aucun type de reaction nomme n'existe encore (voir
+  // `packZoneKind` dans `shared/protocol.ts`) — la tache qui les ajoutera
+  // empaquettera ici le vrai type au lieu de l'element seul.
   const avant = zones.count;
   const creneau = zones.spawn(
     trigger.element,
@@ -1125,7 +1129,7 @@ export function markInZones(
     if (!zones.aliveAt(z, tick)) {
       continue;
     }
-    const element = zones.element[z] ?? 0;
+    const element = zoneElement(zones.kind[z] ?? 0);
     const by = zones.by[z] ?? 0;
     const zx = zones.x[z] ?? 0;
     const zy = zones.y[z] ?? 0;

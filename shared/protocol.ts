@@ -245,11 +245,16 @@ export interface RunOverMessage {
  *
  * `by` est l'indice du joueur qui l'a posee : c'est lui que la Synergie du §7
  * compare a celui de la marque.
+ *
+ * ⚠️ **Depuis la tache 5 de l'etape 5b, `kind` n'est plus un simple index
+ * d'element** : c'est l'octet empaquete par `packZoneKind` (element dans les
+ * bits 0-2, type de champ de reaction dans les bits 3-6). Le decoder avec
+ * `zoneElement` / `zoneReaction`, jamais le lire brut — voir leur docbloc.
  */
 export interface ZoneMessage {
   type: typeof MSG.ZONE;
-  /** Index dans `ELEMENTS` de `shared/elements.ts`. */
-  element: number;
+  /** Empaquete par `packZoneKind`. Voir `zoneElement` / `zoneReaction`. */
+  kind: number;
   x: number;
   y: number;
   /** Tick de la pose. La peremption s'en derive, elle n'est pas annoncee. */
@@ -1027,11 +1032,55 @@ export function unpackElementPair(pair: number): [number, number] {
 }
 
 /**
+ * Ce qu'une zone porte, dans l'octet que `ZONE` avait deja (etape 5b, tache
+ * 5) : un COUPLE, pas une seule valeur.
+ *
+ * | bits | contenu | 0 signifie |
+ * | --- | --- | --- |
+ * | 0-2 | l'element dont la zone MARQUE les ennemis | ne marque rien |
+ * | 3-6 | le type de champ de REACTION | aucun effet de reaction |
+ *
+ * ⚠️ **Zero octet de plus** : `ZONE_BYTES` reste 11. Les deux cotes lisent
+ * le meme octet et en derivent les deux sens — `zoneElement` et
+ * `zoneReaction`.
+ *
+ * ⚠️ **Ne remplace PAS `ReactionTrigger.element`, ne le mange pas non plus.**
+ * Ce champ-ci reste le SECOND element du couple (voir son docbloc dans
+ * `back/src/combat.ts`) : c'est lui qui evite que le meme tireur redeclenche
+ * indefiniment avec une seule arme. Le type de reaction ajoute une donnee, il
+ * n'en retire aucune.
+ *
+ * ⚠️ **7 bits sur 8 : le bit 7 reste a zero.** Six elements tiennent sur 3
+ * bits (0-7), quinze types de reaction sur 4 (0-15). `element` et `reaction`
+ * sont masques avant l'empaquetage : un appelant qui passerait une valeur
+ * hors bornes se ferait tronquer, jamais lever — meme discipline que
+ * `packElementPair`.
+ */
+export function packZoneKind(element: number, reaction: number): number {
+  return (element & 0x07) | ((reaction & 0x0f) << 3);
+}
+
+/** L'element que la zone marque (bits 0-2 de `kind`). Voir `packZoneKind`. */
+export function zoneElement(kind: number): number {
+  return kind & 0x07;
+}
+
+/** Le type de champ de reaction que la zone porte (bits 3-6 de `kind`). Voir `packZoneKind`. */
+export function zoneReaction(kind: number): number {
+  return (kind >> 3) & 0x0f;
+}
+
+/**
  * S -> C : une zone au sol vient d'etre posee, 11 octets. Voir `ZoneMessage`
  * pour ce qui n'y est PAS — le rayon, et surtout la mort de la zone.
+ *
+ * ⚠️ **`kind` est DEJA empaquete par l'appelant** (`packZoneKind`), jamais un
+ * element brut recompose ici. Cette fonction ne fait que poser l'octet sur le
+ * fil, comme avant la tache 5 — c'est le CONTENU de l'octet qui a change, pas
+ * son transport.
  */
 export function encodeZone(
-  element: number,
+  kind: number,
   x: number,
   y: number,
   bornTick: number,
@@ -1040,7 +1089,7 @@ export function encodeZone(
   const buf = new ArrayBuffer(ZONE_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.ZONE);
-  v.setUint8(1, element);
+  v.setUint8(1, kind);
   v.setInt16(2, Math.round(x), true);
   v.setInt16(4, Math.round(y), true);
   v.setUint32(6, bornTick >>> 0, true);
@@ -1096,7 +1145,7 @@ export function decodeZone(buf: ArrayBuffer): ZoneMessage {
   const v = viewOf(buf, ZONE_BYTES);
   return {
     type: MSG.ZONE,
-    element: v.getUint8(1),
+    kind: v.getUint8(1),
     x: v.getInt16(2, true),
     y: v.getInt16(4, true),
     bornTick: v.getUint32(6, true),

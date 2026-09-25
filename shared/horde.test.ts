@@ -22,6 +22,7 @@ import { ELEMENT, elementOf } from './elements';
 import { FlowField } from './flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, type HordeState, leavesDrop } from './horde';
 import { PlayerHistory } from './player-history';
+import { packZoneKind } from './protocol';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
 import { ZoneField } from './zones';
@@ -2342,6 +2343,28 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
 
     // Derive du facteur de la table, jamais recopie. Precision 3 : `Horde.x`
     // est un `Float32Array`, dont l'ulp autour de 1 000 px vaut ~6e-5.
+    expect(dGivree).toBeCloseTo(dLibre * GIVRE_FACTEUR, 3);
+  });
+
+  /**
+   * ⚠️ **`#computeSlow` doit decoder `zones.kind`, jamais le lire brut**
+   * (tache 5 de l'etape 5b). `packZoneKind(GIVRE, reaction)` avec une
+   * reaction non nulle vaut au moins 8 — hors de portee d'`ELEMENTS` (4
+   * entrees aujourd'hui) tant que l'element tient sur 3 bits. Un
+   * `#computeSlow` qui lirait l'octet brut leverait au lieu de ralentir ; le
+   * bon code decode et retrouve exactement le meme ralentissement que
+   * l'element seul.
+   */
+  it('ralentit pareil que l element seul quand la zone porte un type de reaction empaquete', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const kind = packZoneKind(ELEMENT.GIVRE, 6);
+    expect(kind).not.toBe(ELEMENT.GIVRE);
+    const zones = new ZoneField();
+    zones.spawn(kind, 1000, 1000, 0, 0);
+
+    const dLibre = pasAu(une(1000, 1000), fields, MESURE);
+    const dGivree = pasAu(une(1000, 1000), fields, MESURE, zones);
+
     expect(dGivree).toBeCloseTo(dLibre * GIVRE_FACTEUR, 3);
   });
 

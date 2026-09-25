@@ -1624,7 +1624,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
 
   /** Ce que le message `ZONE` transporte (§8 de la spec) — rien de plus. */
   interface ZoneAnnounce {
-    element: number;
+    kind: number;
     x: number;
     y: number;
     bornTick: number;
@@ -1705,10 +1705,10 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
   ): void {
     if (!p.hordeHistory.restore(zone.bornTick, p.horde)) {
       p.lateZones++;
-      p.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+      p.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
       return;
     }
-    p.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+    p.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
     primeFieldForReplay(p, zone.bornTick, stepsPerField);
     for (let t = zone.bornTick + 1; t <= currentTick; t++) {
       replayTick(p, t, stepsPerField);
@@ -1822,7 +1822,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
               continue;
             }
             announced.push({
-              element: reference.zones.element[z] ?? 0,
+              kind: reference.zones.kind[z] ?? 0,
               x: reference.zones.x[z] ?? 0,
               y: reference.zones.y[z] ?? 0,
               bornTick: tick,
@@ -1845,7 +1845,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
           } else {
             // Sans rejeu : la zone est posee au present, avec son `bornTick`
             // d'origine. C'est le defaut que le rejeu corrige.
-            p.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+            p.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
           }
           pendingZone[i] = false;
         }

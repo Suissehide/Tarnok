@@ -2389,7 +2389,7 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     const { zones } = joue(room, 20, remarqueBraise(cible, 2));
 
     expect(zones.length).toBeGreaterThan(0);
-    expect(zones.every((z) => z.element === ELEMENT.GIVRE)).toBe(true);
+    expect(zones.every((z) => z.kind === ELEMENT.GIVRE)).toBe(true);
     expect(zones.every((z) => z.by === 1)).toBe(true);
     // Le champ est bien la ou la reaction a eu lieu : sur l'ennemi, pas sur le
     // joueur.

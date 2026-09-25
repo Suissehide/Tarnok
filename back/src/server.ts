@@ -210,7 +210,7 @@ class Session {
       this.#send(encodeDeaths(batch.tick, batch.ids));
     }
     for (const zone of this.room.drainZones()) {
-      this.#send(encodeZone(zone.element, zone.x, zone.y, zone.bornTick, zone.by));
+      this.#send(encodeZone(zone.kind, zone.x, zone.y, zone.bornTick, zone.by));
     }
     // Une seule fois par charge, et rien ensuite : la progression du boss le
     // long de son couloir se DERIVE des ticks que ce message porte (§4 de la

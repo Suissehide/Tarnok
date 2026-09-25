@@ -46,6 +46,7 @@ import {
   NO_VOTE,
   OUTCOME,
   packElementPair,
+  packZoneKind,
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -2690,7 +2691,7 @@ function runClientZoneScenario(params: {
   socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
   socket.emit('message', { data: encodeWaveOrder(order) });
 
-  const pending: { element: number; x: number; y: number; bornTick: number; by: number }[] = [];
+  const pending: { kind: number; x: number; y: number; bornTick: number; by: number }[] = [];
   /** Centres poses au premier `zoneTicks`, re-arroses aux `refreshTicks`. */
   const points: { x: number; y: number }[] = [];
   let announced = 0;
@@ -2742,7 +2743,7 @@ function runClientZoneScenario(params: {
           continue;
         }
         pending.push({
-          element: refZones.element[z] ?? 0,
+          kind: refZones.kind[z] ?? 0,
           x: refZones.x[z] ?? 0,
           y: refZones.y[z] ?? 0,
           bornTick: tick,
@@ -2760,7 +2761,7 @@ function runClientZoneScenario(params: {
       const zone = pending[i];
       if (zone && zone.bornTick + zoneDelayTicks === tick) {
         socket.emit('message', {
-          data: encodeZone(zone.element, zone.x, zone.y, zone.bornTick, zone.by),
+          data: encodeZone(zone.kind, zone.x, zone.y, zone.bornTick, zone.by),
         });
         pending.splice(i, 1);
         inFlight--;
@@ -2918,7 +2919,7 @@ describe('GameClient — zones et morts livrees ensemble (etape 5a, tache 6)', (
     socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
     socket.emit('message', { data: encodeWaveOrder(order) });
 
-    let annonce: { element: number; x: number; y: number; by: number } | null = null;
+    let annonce: { kind: number; x: number; y: number; by: number } | null = null;
     for (let tick = 0; tick < 160; tick++) {
       const xs = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.cos(tick * 0.02 + p) * 1500));
       const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(tick * 0.02 + p) * 1500));
@@ -2944,7 +2945,7 @@ describe('GameClient — zones et morts livrees ensemble (etape 5a, tache 6)', (
           1,
           tick,
         );
-        annonce = { element: ELEMENT.GIVRE, x: refZones.x[0] ?? 0, y: refZones.y[0] ?? 0, by: 1 };
+        annonce = { kind: ELEMENT.GIVRE, x: refZones.x[0] ?? 0, y: refZones.y[0] ?? 0, by: 1 };
       }
       if (tick === DEATH_TICK) {
         ref.horde.kill(killedIds);
@@ -2959,7 +2960,7 @@ describe('GameClient — zones et morts livrees ensemble (etape 5a, tache 6)', (
         // qui rend le drainage inverse dangereux.
         socket.emit('message', { data: encodeDeaths(DEATH_TICK, killedIds) });
         socket.emit('message', {
-          data: encodeZone(annonce.element, annonce.x, annonce.y, ZONE_TICK, annonce.by),
+          data: encodeZone(annonce.kind, annonce.x, annonce.y, ZONE_TICK, annonce.by),
         });
       }
 
@@ -3314,6 +3315,26 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
     socket.emit('message', { data: encodeZone(ELEMENT.GIVRE, monsterX, monsterY, 1, 2) });
     // Deux images : la premiere pose la zone (les zones se drainent en FIN de
     // tick), la seconde la balaie.
+    client.update(1000, 1 / TICK_HZ);
+    client.update(2000, 1 / TICK_HZ);
+
+    expect(client.horde.markAt(0, client.hordeTick - 1)).toBe(ELEMENT.GIVRE);
+  });
+
+  /**
+   * ⚠️ **`GameClient#markInZones` (le mirroir cosmetique) doit decoder
+   * `zones.kind`, jamais le lire brut** (tache 5 de l'etape 5b). Le serveur
+   * envoie deja l'octet EMPAQUETE sur le fil ; un client qui marquerait avec
+   * l'octet complet stockerait un `mark` different de `ELEMENT.GIVRE`, que ce
+   * test attrape directement par egalite — pas besoin de lever pour le voir.
+   * `kind !== element` : le decor empaquette une reaction non nulle.
+   */
+  it('une zone annoncee avec un type de reaction empaquete teint quand meme du bon element DECODE', () => {
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0009, 96);
+    const kind = packZoneKind(ELEMENT.GIVRE, 7);
+    expect(kind).not.toBe(ELEMENT.GIVRE);
+
+    socket.emit('message', { data: encodeZone(kind, monsterX, monsterY, 1, 2) });
     client.update(1000, 1 / TICK_HZ);
     client.update(2000, 1 / TICK_HZ);
 

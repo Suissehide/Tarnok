@@ -65,6 +65,7 @@ import {
   PORTAL_OPEN_BYTES,
   PORTAL_RESULT_BYTES,
   packElementPair,
+  packZoneKind,
   REACTION_BYTES,
   RUN_OVER_BYTES,
   SNAPSHOT_HEADER_BYTES,
@@ -75,6 +76,8 @@ import {
   VOTE_ENTRY_BYTES,
   VOTES_HEADER_BYTES,
   ZONE_BYTES,
+  zoneElement,
+  zoneReaction,
 } from './protocol';
 
 describe('encodeInput / decodeInput', () => {
@@ -638,7 +641,7 @@ describe('decode', () => {
   it('aiguille aussi sur une zone au sol et sur une reaction (etape 5a)', () => {
     expect(decode(encodeZone(ELEMENT.GIVRE, 10, 20, 30, 2))).toEqual({
       type: MSG.ZONE,
-      element: ELEMENT.GIVRE,
+      kind: ELEMENT.GIVRE,
       x: 10,
       y: 20,
       bornTick: 30,
@@ -859,6 +862,75 @@ describe('packElementPair / unpackElementPair', () => {
   });
 });
 
+/**
+ * Etape 5b, tache 5 : `ZONE` porte deja un `u8` — l'element que la zone
+ * marque. Cette tache le fait porter un COUPLE, sans en ajouter un second :
+ * l'element dans les bits 0-2, le type de champ de reaction dans les bits
+ * 3-6.
+ */
+describe('packZoneKind / zoneElement / zoneReaction', () => {
+  /**
+   * ⚠️ **6 x 16, pas seulement quelques echantillons.** Six elements tiennent
+   * sur 3 bits (0-7, six sont prevus), seize types de reaction sur 4 (0-15) :
+   * l'aller-retour couvre les deux bornes des deux champs, pas seulement leurs
+   * valeurs de production actuelles.
+   */
+  it('rend l element et la reaction exacts, sur toutes les combinaisons 6 x 16', () => {
+    for (let element = 0; element <= 5; element++) {
+      for (let reaction = 0; reaction <= 15; reaction++) {
+        const kind = packZoneKind(element, reaction);
+
+        expect(zoneElement(kind), `element=${element} reaction=${reaction}`).toBe(element);
+        expect(zoneReaction(kind), `element=${element} reaction=${reaction}`).toBe(reaction);
+      }
+    }
+  });
+
+  // ⚠️ **Le piege exact que ce depot nomme « le decor qui masque » :**
+  // `packZoneKind(element, 0)` vaut NUMERIQUEMENT `element` — un aller-retour
+  // qui n'empaquetterait qu'avec une reaction nulle passerait avec une
+  // fonction identite a la place de `packZoneKind`. Ce test-ci exige
+  // `kind !== element`.
+  it('kind differe de l element seul des qu une reaction est empaquetee', () => {
+    const kind = packZoneKind(ELEMENT.GIVRE, 5);
+
+    expect(kind).not.toBe(ELEMENT.GIVRE);
+    expect(zoneElement(kind)).toBe(ELEMENT.GIVRE);
+    expect(zoneReaction(kind)).toBe(5);
+  });
+
+  it('une reaction nulle rend bien un kind egal a l element seul — le cas degenere, assene', () => {
+    expect(packZoneKind(ELEMENT.BRAISE, 0)).toBe(ELEMENT.BRAISE);
+  });
+
+  it('tient sur SEPT bits : le bit 7 reste toujours a zero', () => {
+    // 0xff largement hors des deux plages (3 et 4 bits) : le masquage doit
+    // border les deux champs avant de les combiner, jamais laisser deborder
+    // dans le bit de poids fort.
+    expect(packZoneKind(0xff, 0xff) & 0x80).toBe(0);
+  });
+
+  it('les deux champs ne se melangent jamais : changer l un laisse l autre intact', () => {
+    const base = packZoneKind(ELEMENT.FOUDRE, 7);
+
+    for (let reaction = 0; reaction <= 15; reaction++) {
+      expect(zoneElement(packZoneKind(ELEMENT.FOUDRE, reaction))).toBe(ELEMENT.FOUDRE);
+    }
+    for (let element = 0; element <= 5; element++) {
+      expect(zoneReaction(packZoneKind(element, 7))).toBe(7);
+    }
+    expect(zoneElement(base)).toBe(ELEMENT.FOUDRE);
+    expect(zoneReaction(base)).toBe(7);
+  });
+
+  // ⚠️ **La contrainte dure de la tache : zero octet de plus.** `ZONE` reste
+  // a 11 octets — le couple tient dans l'octet qu'il avait deja, jamais dans
+  // un second.
+  it('ZONE_BYTES reste a 11 : le couple tient dans l octet existant', () => {
+    expect(ZONE_BYTES).toBe(11);
+  });
+});
+
 describe('encodeBossCharge / decodeBossCharge', () => {
   /**
    * Les dix champs sont assenes sur des valeurs TOUTES DISTINCTES : un
@@ -941,7 +1013,7 @@ describe('encodeZone / decodeZone', () => {
   it('rend exactement la zone encodee, ses six champs', () => {
     expect(decodeZone(encodeZone(ELEMENT.GIVRE, -1234, 5678, 90_001, 3))).toEqual({
       type: MSG.ZONE,
-      element: ELEMENT.GIVRE,
+      kind: ELEMENT.GIVRE,
       x: -1234,
       y: 5678,
       bornTick: 90_001,

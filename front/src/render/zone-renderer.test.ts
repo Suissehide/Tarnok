@@ -6,6 +6,7 @@ import {
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
+import { packZoneKind } from '@shared/protocol';
 import { ZoneField } from '@shared/zones';
 import { Container, type Particle, type ParticleContainer, Texture, TextureSource } from 'pixi.js';
 import { beforeAll, describe, expect, it } from 'vitest';
@@ -224,6 +225,21 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
     expect(drawnZones(uneZone(ELEMENT.GIVRE), 50)[0]?.tint).not.toBe(
       drawnZones(uneZone(ELEMENT.BRAISE), 50)[0]?.tint,
     );
+  });
+
+  /**
+   * ⚠️ **`draw` doit decoder `zones.kind`, jamais le lire brut** (tache 5 de
+   * l'etape 5b). `packZoneKind(GIVRE, reaction)` avec une reaction non nulle
+   * depasse la portee d'`ELEMENTS` (4 entrees aujourd'hui) tant que l'element
+   * tient sur 3 bits : un `draw` qui lirait l'octet brut leverait au lieu de
+   * teinter. `kind !== element` : le decor empaquette une reaction non nulle.
+   */
+  it('teint du bon element meme quand la zone porte un type de reaction empaquete', () => {
+    const kind = packZoneKind(ELEMENT.GIVRE, 9);
+    expect(kind).not.toBe(ELEMENT.GIVRE);
+
+    expect(() => drawnZones(uneZone(kind), 50)).not.toThrow();
+    expect(drawnZones(uneZone(kind), 50)[0]?.tint).toBe(elementOf(ELEMENT.GIVRE).tint);
   });
 
   it('pose l opacite du bord, et centre le disque sur la position de la zone', () => {

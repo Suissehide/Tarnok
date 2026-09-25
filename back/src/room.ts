@@ -131,15 +131,18 @@ export interface IdBatch {
 }
 
 /**
- * Une zone posee, telle que `ZONE` la transporte (§5.3 / §8) — element, x, y,
+ * Une zone posee, telle que `ZONE` la transporte (§5.3 / §8) — kind, x, y,
  * tick de naissance, joueur.
  *
  * ⚠️ **Pas de rayon, et pas de mort.** Toutes les zones portent `ZONE_RADIUS`,
  * une constante que les deux cotes lisent deja ; leur peremption se derive du
  * seul `bornTick`, comme celle des orbes. Voir `ZoneMessage`.
+ *
+ * ⚠️ **`kind` est l'octet empaquete par `packZoneKind`** (tache 5 de l'etape
+ * 5b), pas un element seul : voir `ZoneField.kind` et `ZoneMessage`.
  */
 export interface ZoneEvent {
-  element: number;
+  kind: number;
   x: number;
   y: number;
   bornTick: number;
@@ -1436,7 +1439,7 @@ export class Room {
         continue;
       }
       this.#pendingZones.push({
-        element: this.#zones.element[z] ?? 0,
+        kind: this.#zones.kind[z] ?? 0,
         x: this.#zones.x[z] ?? 0,
         y: this.#zones.y[z] ?? 0,
         bornTick: this.#tick,

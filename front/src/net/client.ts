@@ -37,6 +37,7 @@ import {
   quantizeAxis,
   type WaveOrderMessage,
   type ZoneMessage,
+  zoneElement,
 } from '@shared/protocol';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -2079,7 +2080,7 @@ export class GameClient {
       if (!this.zones.aliveAt(z, tick)) {
         continue;
       }
-      const element = this.zones.element[z] ?? 0;
+      const element = zoneElement(this.zones.kind[z] ?? 0);
       const by = this.zones.by[z] ?? 0;
       const zx = this.zones.x[z] ?? 0;
       const zy = this.zones.y[z] ?? 0;
@@ -2252,7 +2253,7 @@ export class GameClient {
    */
   #applyZone(zone: ZoneMessage, currentTick: number): void {
     if (zone.bornTick >= currentTick) {
-      this.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+      this.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
       return;
     }
     if (!this.#hordeHistory.restore(zone.bornTick, this.horde)) {
@@ -2260,10 +2261,10 @@ export class GameClient {
       // degradation assumee que pour une mort trop vieille, meme refus de la
       // faire en silence. Voir `#lateZones`.
       this.#lateZones++;
-      this.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+      this.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
       return;
     }
-    this.zones.spawn(zone.element, zone.x, zone.y, zone.by, zone.bornTick);
+    this.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
     this.#primeFieldForReplay(zone.bornTick);
     for (let t = zone.bornTick + 1; t <= currentTick; t++) {
       this.#replayTick(t);
