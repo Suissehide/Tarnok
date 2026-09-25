@@ -135,7 +135,6 @@ export class ZoneField {
    * par exemple) doivent fusionner comme avant, pas coexister parce que leurs
    * octets bruts different.
    *
-
    * ⚠️ **La fusion n'est pas `overlaps`.** Elle teste si le POINT tombe dans
    * une zone existante (distance < `ZONE_RADIUS`), pas si deux disques se
    * touchent (distance < 2 × `ZONE_RADIUS`). Fusionner sur `overlaps`
