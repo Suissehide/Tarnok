@@ -60,6 +60,9 @@ class RecordingStage implements FrameStage {
   drawProjectiles(...args: unknown[]): void {
     this.#record('projectiles', ...args);
   }
+  drawChain(...args: unknown[]): void {
+    this.#record('chaine', ...args);
+  }
   drawImpactFlashes(...args: unknown[]): void {
     this.#record('flashs-impact', ...args);
   }
@@ -275,6 +278,23 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(stage.argsOf('projectiles')).toEqual([client.projectiles]);
   });
 
+  /**
+   * ⚠️ **Etape 5b, tache 3 : le piege de forme qui a mordu trois fois** (voir
+   * le tableau en tete de ce fichier). L'appel passe par ICI, jamais par la
+   * boucle de rendu de `main.ts` — sans ce test, retirer `stage.drawChain(...)`
+   * de `composeFrame` laisserait la suite verte, exactement comme
+   * `drawZones`/`drawReactionFlashes`/`paintSynergy` l'ont fait pendant 170
+   * tests avant la tache 9 bis.
+   *
+   * ⚠️ **La horde ET le TICK de horde**, comme `drawMarks` : c'est le tick qui
+   * dit si la marque `FOUDRE` qui origine une chaine est encore vivante,
+   * jamais l'horloge murale.
+   */
+  it('dessine la chaine de Foudre, avec la horde et le TICK de horde', () => {
+    const { stage, client } = compose();
+    expect(stage.argsOf('chaine')).toEqual([client.horde, client.hordeTick]);
+  });
+
   it('dessine les flashs d impact', () => {
     const { stage, client } = compose();
     expect(stage.argsOf('flashs-impact')).toEqual([client.hitFlashes, NOW]);
@@ -348,6 +368,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'horde',
       'orbes',
       'projectiles',
+      'chaine',
       'flashs-impact',
       'flashs-reaction',
       'barre-boss',

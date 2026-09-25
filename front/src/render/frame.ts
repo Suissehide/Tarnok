@@ -114,6 +114,12 @@ export interface FrameStage {
     timeMs: number,
   ): void;
   drawProjectiles(projectiles: Projectiles): void;
+  /**
+   * La polyligne de la chaine de Foudre (etape 5b, tache 3). Prend le TICK de
+   * horde, comme `drawMarks` : c'est lui qui dit si la marque `FOUDRE` qui
+   * origine une chaine est encore vivante — voir `ChainRenderer.draw`.
+   */
+  drawChain(horde: Horde, tick: number): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
   /**
@@ -153,10 +159,12 @@ export interface FrameScreens {
  * Avance le client d'une image et dessine tout ce qui en depend.
  *
  * ⚠️ **L'ORDRE EST LE §6.6.** Les zones au sol en premier (le calque le plus
- * bas), puis les anneaux de marque qui s'y posent, le flash de reaction en
- * dernier des effets de monde, la barre de vie du boss par-dessus eux, puis les
- * carres des joueurs et la camera (`draw`). Le meme ordre que l'attache des
- * calques dans `Stage.composeWorld`.
+ * bas), puis les anneaux de marque qui s'y posent, la chaine de Foudre
+ * juste au-dessus des projectiles (etape 5b, tache 3 — elle relie des
+ * ennemis, donc elle doit rester lisible par-dessus leurs sprites, comme un
+ * tir), le flash de reaction en dernier des effets de monde, la barre de vie
+ * du boss par-dessus eux, puis les carres des joueurs et la camera (`draw`).
+ * Le meme ordre que l'attache des calques dans `Stage.composeWorld`.
  *
  * `now` est l'horloge MURALE (animations, flashs) et `client.hordeTick` le
  * tick de simulation (zones, marques) : les deux ne sont pas interchangeables.
@@ -186,6 +194,11 @@ export function composeFrame(
   stage.drawHorde(client.horde, now, armant);
   stage.drawOrbs(client.orbs, client.orbFlights, state.players, now);
   stage.drawProjectiles(client.projectiles);
+  // Juste au-dessus des projectiles, comme eux au-dessus de la horde : une
+  // chaine relie des ennemis, elle doit donc rester lisible par-dessus leurs
+  // sprites, comme un tir. `hordeTick`, pas `now` : c'est lui qui dit si la
+  // marque `FOUDRE` qui origine la chaine est encore vivante.
+  stage.drawChain(client.horde, client.hordeTick);
   stage.drawImpactFlashes(client.hitFlashes, now);
   stage.drawReactionFlashes(client.reactionFlashes, now);
   // Au-dessus de tous les effets de monde : c'est une LECTURE, et une lecture

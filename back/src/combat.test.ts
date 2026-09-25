@@ -15,6 +15,8 @@ import {
   makeBossCharge,
 } from '@shared/boss';
 import {
+  CHAIN_JUMPS,
+  CHAIN_RADIUS,
   COIN_DROP_ONE_IN,
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
@@ -1934,5 +1936,186 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
       expect(mouchard).toHaveBeenCalledTimes(1);
       expect(mouchard).toHaveBeenCalledWith(120, -250, 4);
     });
+  });
+});
+
+/**
+ * La chaine de Foudre, cote serveur (etape 5b, tache 3) : `resolveProjectileDamage`
+ * appelle `chainTargets` (le MEME que le client, `shared/chain.ts`) et applique
+ * `appliquerDegats` — LE seul chemin de degats — a chaque cible qu'elle rend.
+ *
+ * ⚠️ **Rien de neuf ne voyage.** Les morts de la chaine rejoignent le meme
+ * `dead`/`deadIds` que n importe quelle autre mort de ce fichier : aucun
+ * second tableau, aucun second message. Voir le dernier `describe` de ce
+ * bloc, qui le met en scene directement — la forme la plus etroite mais
+ * vraie de « la chaine n ajoute aucun octet au fil » qu un test SANS le
+ * harnais a quatre sockets de la tache 11 puisse tenir (voir R3 du rapport).
+ */
+describe('la chaine de Foudre (etape 5b, tache 3)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? -1;
+  const FOUDRE: Weapon = { ...SINGLE, element: ELEMENT.FOUDRE };
+
+  /**
+   * Tire `arme` sur `targetId` depuis l origine, et avance jusqu a l impact.
+   * Rend les morts ET le tick de l impact — meme helper que `frappe` plus
+   * haut dans ce fichier, redefini ici en local pour ne pas dependre d une
+   * fermeture d un autre `describe`.
+   */
+  function frappe(
+    horde: Horde,
+    orbs: OrbField,
+    targetId: number,
+    tick: number,
+    arme: Weapon,
+  ): { morts: number[]; impactTick: number } {
+    const zones = solNu();
+    const projectiles = new Projectiles(10);
+    projectiles.fireSalvo(arme, tick, 0, 0, targetId, horde);
+    const avant = projectiles.count;
+    expect(avant).toBeGreaterThan(0); // sanity : la salve est bien partie
+    for (let i = 0; i < 20; i++) {
+      const morts = resolveProjectileDamage(projectiles, DT, horde, orbs, tick + i, zones);
+      if (morts.length > 0 || projectiles.count === 0) {
+        return { morts, impactTick: tick + i };
+      }
+    }
+    throw new Error('le projectile ne touche jamais');
+  }
+
+  it('un impact de Foudre saute de proche en proche, jusqu a CHAIN_JUMPS cibles', () => {
+    // Une ligne de cinq LOURDS espaces de 100 px : CHAIN_RADIUS (150) couvre
+    // chaque saut successif, mais pas deux sauts d un coup (200 > 150) — donc
+    // la chaine ne peut que suivre la ligne, un maillon a la fois. Tous
+    // LOURDS pour qu aucun ne meure en route : un maillon mort arreterait la
+    // propagation (point de revue n°1) et ce test ne verrait plus CHAIN_JUMPS.
+    expect(100).toBeLessThan(CHAIN_RADIUS);
+    expect(200).toBeGreaterThan(CHAIN_RADIUS);
+    expect(CHAIN_JUMPS).toBe(3);
+
+    const horde = new Horde(10);
+    const percute = addOne(horde, 1, 100, 0, LOURD);
+    const saut1 = addOne(horde, 2, 100, 100, LOURD);
+    const saut2 = addOne(horde, 3, 100, 200, LOURD);
+    const saut3 = addOne(horde, 4, 100, 300, LOURD);
+    // Hors de portee de CHAIN_JUMPS (le 4e saut n a pas lieu), pas hors de
+    // portee GEOMETRIQUE (100 px du precedent) : sans ce controle, un bug qui
+    // sauterait un maillon de trop passerait inapercu.
+    const horsJumps = addOne(horde, 5, 100, 400, LOURD);
+    const orbs = new OrbField(10);
+
+    const { morts } = frappe(horde, orbs, percute, 0, FOUDRE);
+
+    expect(morts).toEqual([]); // personne ne meurt : c est le coup qui compte, pas la mort
+    const coup = coupSurLourd(FOUDRE.damage);
+    expect(horde.hp[horde.slotOf(percute)]).toBeCloseTo(HEAVY_HP - coup, 5);
+    expect(horde.hp[horde.slotOf(saut1)]).toBeCloseTo(HEAVY_HP - coup, 5);
+    expect(horde.hp[horde.slotOf(saut2)]).toBeCloseTo(HEAVY_HP - coup, 5);
+    expect(horde.hp[horde.slotOf(saut3)]).toBeCloseTo(HEAVY_HP - coup, 5);
+    // Le plafond CHAIN_JUMPS, et pas un CINQUIEME maillon rate par hasard.
+    expect(horde.hp[horde.slotOf(horsJumps)]).toBe(HEAVY_HP);
+  });
+
+  it('⚠️ un ennemi qui MEURT du meme impact ne propage pas la chaine — point de revue n°1', () => {
+    // Meme regle que « un ennemi qui MEURT du meme impact n est pas marque » :
+    // un mort ne porte plus rien, donc rien ne peut plus partir de lui. La
+    // victime est LEGERE (meurt au premier coup, `SINGLE.damage === LIGHT_HP`)
+    // ; le voisin, a portee de chaine mais increvable a l oeil (LOURD, tres
+    // loin de mourir d un seul coup de Foudre), doit rester intact.
+    const horde = new Horde(10);
+    const victime = addOne(horde, 1, 100, 0, LEGER);
+    const voisin = addOne(horde, 2, 100, 100, LOURD); // a 100 px : dans CHAIN_RADIUS
+    const orbs = new OrbField(10);
+    expect(FOUDRE.damage).toBe(LIGHT_HP);
+
+    const { morts } = frappe(horde, orbs, victime, 0, FOUDRE);
+
+    expect(morts).toEqual([victime]);
+    // Le voisin n a RIEN pris : ni degats, ni marque — la chaine ne s est
+    // jamais declenchee.
+    const slot = horde.slotOf(voisin);
+    expect(slot).toBeGreaterThanOrEqual(0);
+    expect(horde.hp[slot]).toBe(HEAVY_HP);
+    expect(horde.markAt(slot, 20)).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('la chaine EXCLUT un voisin deja tue par le souffle du MEME projectile', () => {
+    // ⚠️ **Le decor qui separe « exclut les morts » de « exclut seulement le
+    // percute ».** Une Foudre a souffle (`blastRadius`) tue un LEGER voisin
+    // (`proche`) au meme coup que le percute — AVANT que la branche de la
+    // chaine ne s execute (l ordre du code : souffle, puis element). Un
+    // second LEGER (`lointain`) est hors du souffle mais dans CHAIN_RADIUS du
+    // percute, et surtout HORS de portee de `proche` (200 > CHAIN_RADIUS) :
+    // si l exclusion des morts manquait, la chaine choisirait `proche`
+    // (le plus proche, meme mort) comme premier saut, et le second saut,
+    // mesure depuis `proche`, ne pourrait plus atteindre `lointain` du tout —
+    // `lointain` resterait donc intact, un signal net et sans ambiguite.
+    const SOUFFLE = 70;
+    const FOUDRE_SOUFFLE: Weapon = { ...FOUDRE, blastRadius: SOUFFLE };
+    const horde = new Horde(10);
+    const percute = addOne(horde, 1, 300, 0, LOURD);
+    const proche = addOne(horde, 2, 300, 60, LEGER); // 60 < SOUFFLE : meurt au souffle
+    const lointain = addOne(horde, 3, 300, -140, LEGER); // 140 < CHAIN_RADIUS depuis le percute
+    expect(60).toBeLessThan(SOUFFLE);
+    expect(140).toBeLessThan(CHAIN_RADIUS);
+    // Le controle qui rend le decor decisif : `lointain` est hors de portee
+    // de `proche`, donc un saut qui passerait (a tort) par `proche` ne
+    // pourrait pas rebondir jusqu a `lointain` ensuite.
+    expect(Math.hypot(300 - 300, 60 - -140)).toBeGreaterThan(CHAIN_RADIUS);
+    const orbs = new OrbField(10);
+
+    const { morts } = frappe(horde, orbs, percute, 0, FOUDRE_SOUFFLE);
+
+    // Les DEUX meurent — `proche` du souffle, `lointain` de la chaine — et
+    // c est la PREUVE que la chaine a bien saute par-dessus `proche` : sans
+    // l exclusion, `lointain` resterait vivant (voir le decor ci-dessus).
+    expect([...morts].sort((a, b) => a - b)).toEqual([proche, lointain].sort((a, b) => a - b));
+    expect(horde.slotOf(percute)).toBeGreaterThanOrEqual(0); // le percute survit, lui
+  });
+
+  it('une arme elementaire NON-Foudre marque mais ne chaine jamais', () => {
+    const BRAISE: Weapon = { ...SINGLE, element: ELEMENT.BRAISE };
+    const horde = new Horde(10);
+    const percute = addOne(horde, 1, 100, 0, LOURD);
+    const voisin = addOne(horde, 2, 100, 100, LEGER); // a portee de CHAIN_RADIUS
+    const orbs = new OrbField(10);
+
+    const { morts, impactTick } = frappe(horde, orbs, percute, 0, BRAISE);
+
+    expect(morts).toEqual([]);
+    expect(horde.markAt(horde.slotOf(percute), impactTick)).toBe(ELEMENT.BRAISE);
+    // Le voisin est intact : la Braise marque ce qu elle touche, elle ne
+    // chaine jamais — seule `ELEMENT.FOUDRE` le fait.
+    const slot = horde.slotOf(voisin);
+    expect(horde.hp[slot]).toBe(LIGHT_HP);
+    expect(horde.markAt(slot, impactTick)).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('les morts de la chaine partent dans le MEME deadIds que les morts par impact direct — aucun canal nouveau', () => {
+    // ⚠️ **La forme etroite mais vraie de « la chaine n ajoute aucun octet au
+    // fil » (R3).** Ce fichier ne monte pas quatre sockets reelles — ce
+    // harnais est celui de la tache 11. Ce qu il peut tenir ICI, et qui tient
+    // reellement la contrainte : `resolveProjectileDamage` ne rend riend de
+    // plus qu un `number[]` d identites mortes, EXACTEMENT comme pour tout
+    // autre chemin de mort de ce fichier (impact direct, souffle, brulure,
+    // reaction). C est ce meme tableau que `Room.step` transforme en DEATHS
+    // — aucun second canal n existe a cote pour la chaine.
+    const horde = new Horde(10);
+    const percute = addOne(horde, 1, 300, 0, LOURD); // survit au coup direct
+    const enchaine = addOne(horde, 2, 300, 100, LEGER); // meurt du SEUL saut de chaine
+    const orbs = new OrbField(10);
+    expect(FOUDRE.damage).toBe(LIGHT_HP);
+
+    const { morts } = frappe(horde, orbs, percute, 0, FOUDRE);
+
+    // Un seul tableau, une seule identite — celle que la chaine a tuee, et
+    // rien de plus : pas de second retour, pas de champ supplementaire.
+    expect(morts).toEqual([enchaine]);
+    expect(horde.slotOf(percute)).toBeGreaterThanOrEqual(0);
+    // Le reste du pipeline EXISTANT s applique sans rien de nouveau non plus
+    // (etape 8 de `Room.step`) : l orbe nait comme pour n importe quelle
+    // autre mort.
+    expect(orbs.count).toBe(1);
+    expect(orbs.id[0]).toBe(enchaine);
   });
 });

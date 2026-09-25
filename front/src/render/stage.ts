@@ -18,6 +18,7 @@ import type {
 } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
 import { BossBarRenderer } from './boss-bar-renderer';
+import { ChainRenderer } from './chain-renderer';
 import { ChargeRenderer } from './charge-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
@@ -72,6 +73,7 @@ export class Stage {
   readonly #marks = new MarkRingRenderer();
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();
+  readonly #chain = new ChainRenderer();
   readonly #impactFlashes = new ImpactFlashRenderer();
   readonly #reactionFlashes = new ReactionFlashRenderer();
   readonly #bossBar = new BossBarRenderer();
@@ -99,6 +101,11 @@ export class Stage {
    * Au-dessus des zones, parce qu'ils marquent un ennemi individuel sur le sol
    * que la zone vient de teindre en grand.
    *
+   * ⚠️ **La chaine de Foudre juste apres les projectiles** (etape 5b, tache
+   * 3) : elle relie des ennemis par un trait, donc elle doit rester lisible
+   * par-dessus leurs sprites — le meme raisonnement qui place deja les
+   * projectiles au-dessus de la horde.
+   *
    * ⚠️ **La barre du boss EN DERNIER** (etape 6a, tache 5) : c'est une lecture,
    * pas un effet, et aucun flash ne doit la masquer a l'instant ou l'on regarde
    * si le boss va tomber.
@@ -110,6 +117,7 @@ export class Stage {
     this.#orbs,
     this.#horde,
     this.#projectiles,
+    this.#chain,
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
@@ -120,6 +128,11 @@ export class Stage {
    * reseau, donc rien qui puisse echouer comme l'atlas de la horde. C'est
    * exactement `#layers` moins `#horde`, dont le chargement est asynchrone et
    * a son propre rattrapage d'echec dans `init`.
+   *
+   * ⚠️ **`#chain` n'a rien de procedural (pas de canevas 2D, une polyligne
+   * tracee au vol) et figure quand meme ici** : son `load()` ne fait que
+   * poser un booleen, pour que `Stage.layersLoaded` continue de compter tous
+   * ses calques par le meme protocole — voir `ChainRenderer`.
    */
   readonly #procedural: readonly ProceduralLayer[] = [
     this.#zones,
@@ -127,6 +140,7 @@ export class Stage {
     this.#marks,
     this.#orbs,
     this.#projectiles,
+    this.#chain,
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
@@ -349,6 +363,14 @@ export class Stage {
 
   drawProjectiles(projectiles: Projectiles): void {
     this.#projectiles.draw(projectiles, this.viewRect());
+  }
+
+  /**
+   * La polyligne de la chaine de Foudre (etape 5b, tache 3). `tick` decide
+   * quelles marques `FOUDRE` sont encore vivantes — voir `ChainRenderer.draw`.
+   */
+  drawChain(horde: Horde, tick: number): void {
+    this.#chain.draw(horde, tick);
   }
 
   /** `nowMs` doit etre la meme horloge murale que celle passee a `GameClient` (voir `ImpactFlashRenderer`). */

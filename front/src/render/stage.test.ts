@@ -194,15 +194,15 @@ function stubCanvas2d(): void {
 describe('Stage.composeWorld — chaque calque attache ET charge', () => {
   beforeAll(stubCanvas2d);
 
-  it('attache les neuf calques du monde', () => {
+  it('attache les dix calques du monde', () => {
     const world = new Container();
     new Stage().composeWorld(world);
 
     // Zones, COULOIR DE CHARGE (etape 6a, tache 5 bis), anneaux de marque
-    // (tache 13), orbes, horde, projectiles, flashs d'impact, flashs de
-    // reaction, BARRE DU BOSS (tache 5) : neuf, et un calque oublie est un
-    // calque invisible.
-    expect(world.children).toHaveLength(9);
+    // (tache 13), orbes, horde, projectiles, CHAINE DE FOUDRE (etape 5b,
+    // tache 3), flashs d'impact, flashs de reaction, BARRE DU BOSS (tache 5) :
+    // dix, et un calque oublie est un calque invisible.
+    expect(world.children).toHaveLength(10);
   });
 
   it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {
@@ -210,16 +210,28 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     stage.composeWorld(new Container());
 
     // Dans l'ordre d'affichage : zones, couloir de charge, anneaux, orbes,
-    // HORDE, projectiles, flashs d'impact, flashs de reaction, barre du boss.
-    // Seule la horde reste `false` — son atlas se fetch, et `init` le charge a
-    // part avec son propre rattrapage d'echec.
-    expect(stage.layersLoaded).toEqual([true, true, true, true, false, true, true, true, true]);
+    // HORDE, projectiles, chaine de Foudre, flashs d'impact, flashs de
+    // reaction, barre du boss. Seule la horde reste `false` — son atlas se
+    // fetch, et `init` le charge a part avec son propre rattrapage d'echec.
+    expect(stage.layersLoaded).toEqual([
+      true,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      true,
+      true,
+    ]);
   });
 
   it('ne charge rien tant que le monde n a pas ete compose', () => {
     // La moitie basse de la mutation : sans elle, un `layersLoaded` qui
     // rendrait `true` partout passerait le test precedent sans rien garder.
     expect(new Stage().layersLoaded).toEqual([
+      false,
       false,
       false,
       false,

@@ -1,6 +1,9 @@
 import { archetypeOf } from '@shared/archetypes';
 import { BOSS_CHARGE_DAMAGE, type BossCharge, chargeHurtsAt } from '@shared/boss';
+import { chainTargets } from '@shared/chain';
 import {
+  CHAIN_JUMPS,
+  CHAIN_RADIUS,
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
@@ -699,6 +702,14 @@ export function applyReactions(
  * — la borne du §6.2 est par ennemi et par tick, elle ne borne donc rien contre
  * ca — et la Braise de la grenade cesserait d'etre un choix de placement pour
  * devenir un effet de surface. Signale, pas tranche ici : c'est du contenu.
+ *
+ * ⚠️ **La Foudre (etape 5b, tache 3) chaine depuis l'ennemi PERCUTE, pas
+ * depuis le rayon d'une explosion.** Une fois l'element reconnu et la marque
+ * posee (`applyElement`), `ELEMENT.FOUDRE` declenche `chainTargets` a son
+ * tour : chaque cible qu'elle rend recoit `appliquerDegats`, donc l'armure et
+ * l'amplification de zone comme n'importe quel autre coup — aucun second
+ * chemin de degats. Rien de nouveau ne voyage : les morts de la chaine
+ * rejoignent le `dead` EXISTANT, donc le `DEATHS` de ce meme tick.
  */
 export function resolveProjectileDamage(
   projectiles: Projectiles,
@@ -803,6 +814,52 @@ export function resolveProjectileDamage(
       // reagit ; marque du MEME, il ne fait que rafraichir. `applyElement`
       // porte les deux cas, exactement comme pour les zones.
       applyElement(horde, reactions, slot, element, by, tick);
+      if (element === ELEMENT.FOUDRE) {
+        // ⚠️ **La chaine (etape 5b, tache 3) : le seul endroit qui sache
+        // qu'il tient une Foudre.** `shared/elements.ts` le dit sur
+        // `ELEMENT.FOUDRE` : contrairement a `burnPerTick`/`slowFactor`, la
+        // chaine ne se derive pas d'une marque portee par l'entite — elle se
+        // derive d'un POINT D'IMPACT, donc c'est ICI, au site qui vient de
+        // reconnaitre l'element, qu'elle doit se declencher.
+        //
+        // ⚠️ **L'exclusion porte DEUX choses.** L'entite PERCUTEE
+        // (`entityId`) : sans elle, le premier saut — mesure depuis SA
+        // PROPRE position — la retrouverait a distance nulle et la chaine
+        // sauterait sur elle-meme. Et `dead` tel quel, sans copie manuelle :
+        // la doc de `chainTargets` l'autorise explicitement (« exclude est
+        // copie par la fonction, jamais mute : tu peux lui passer ton
+        // ensemble de morts sans precaution ») — un voisin deja tue par le
+        // souffle de CE MEME projectile (la branche `damageInRadius`
+        // au-dessus) ne doit pas recevoir un second coup qu'il ne peut plus
+        // propager. Meme principe que « un ennemi qui meurt du meme impact
+        // ne propage pas », etendu a un mort plus ancien du meme tick.
+        const chainExclude = new Set(dead);
+        chainExclude.add(entityId);
+        const cx = horde.x[slot] ?? 0;
+        const cy = horde.y[slot] ?? 0;
+        for (const chainedId of chainTargets(
+          horde,
+          cx,
+          cy,
+          CHAIN_RADIUS,
+          CHAIN_JUMPS,
+          chainExclude,
+        )) {
+          const chainedSlot = horde.slotOf(chainedId);
+          // ⚠️ **INATTEIGNABLE par construction, meme raisonnement que le
+          // `slot < 0` plus haut dans cette fonction.** `chainTargets` ne
+          // rend que des identites lues DANS `horde` a l'instant de l'appel,
+          // et rien ne compacte entre cet appel et la boucle qui suit :
+          // `Horde.kill` reste le SEUL compacteur, et il n'arrive qu'a la
+          // toute fin de cette fonction. Gardee quand meme, pour la meme
+          // raison qu'ailleurs : un `horde.hp[-1] = ...` silencieux sur un
+          // tableau type serait des degats qui disparaissent sans trace le
+          // jour ou ce n'est plus vrai.
+          if (chainedSlot >= 0) {
+            appliquerDegats(horde, chainedSlot, damage, zones, tick, dead);
+          }
+        }
+      }
     }
   });
   if (dead.size === 0) {
