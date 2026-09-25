@@ -789,3 +789,41 @@ export const PORTAL_WINDOW_TICKS = 600;
  * arrete l'or acquis (`extractGold`, `shared/paliers.ts`).
  */
 export const EXTRACT_MULTIPLIER_STEP = 0.25;
+
+/**
+ * Nombre de cibles que touche une chaine de Foudre depuis un point d'impact
+ * (`shared/chain.ts`, `chainTargets`) — §4 et §10 de la spec de l'etape 5b.
+ *
+ * ⚠️ **Valeur de DEPART, a regler a l'oeil (§10 de la spec)** — exactement
+ * comme `MARK_DURATION_TICKS` : « des valeurs de depart, a regler a l'oeil
+ * ... les deux se multiplient » (avec `CHAIN_RADIUS`, ci-dessous). 3 est
+ * choisi pour que l'effet se VOIE sans degenerer en nettoyeur de vague a lui
+ * seul : assez pour depasser la seule cible touchee par l'impact, trop peu
+ * pour rivaliser avec `REACTION_RADIUS` (qui, lui, ne connait aucune limite
+ * de compte, seulement un rayon).
+ *
+ * ⚠️ **Un plafond, pas une promesse.** `chainTargets` peut rendre MOINS de
+ * `CHAIN_JUMPS` cibles si la horde n'en offre pas assez dans
+ * `CHAIN_RADIUS` — jamais plus.
+ */
+export const CHAIN_JUMPS = 3;
+
+/**
+ * Rayon de recherche d'une chaine de Foudre, en pixels monde, depuis le
+ * point d'impact — §4 et §10 de la spec de l'etape 5b.
+ *
+ * ⚠️ **Valeur de DEPART, a regler a l'oeil**, comme `CHAIN_JUMPS` ci-dessus.
+ * 150 est choisi au-dessus de `ZONE_RADIUS` (70) et de `REACTION_RADIUS`
+ * (90) : une chaine qui ne sauterait pas plus loin qu'un Choc thermique ne
+ * se distinguerait pas de la seule autre reaction a rayon deja en jeu, la
+ * ou l'effet cherche a couvrir plusieurs ennemis d'une horde qui se tient a
+ * `SEPARATION_RADIUS` (28) de distance de confort les uns des autres — donc
+ * plusieurs cibles potentielles meme dans un rayon plus modeste.
+ *
+ * ⚠️ **N'emprunte PAS la regle de fusion des zones.** Ce rayon ne pose rien
+ * au sol ; il ne fait que trier la horde par distance au point d'impact
+ * (`chainTargets`), un calcul en O(horde.count) par appel — voir le §7 de la
+ * spec pour la porte de performance qui en decoule, et qui n'est pas
+ * l'objet de cette tache.
+ */
+export const CHAIN_RADIUS = 150;

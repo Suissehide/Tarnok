@@ -70,6 +70,7 @@ describe('ELEMENT (les identifiants nommes)', () => {
     expect(elementOf(ELEMENT.NEUTRE).name).toBe('neutre');
     expect(elementOf(ELEMENT.BRAISE).name).toBe('braise');
     expect(elementOf(ELEMENT.GIVRE).name).toBe('givre');
+    expect(elementOf(ELEMENT.FOUDRE).name).toBe('foudre');
   });
 
   it('couvre toute la table : aucun element n est sans nom d identifiant', () => {
@@ -104,10 +105,19 @@ describe('le neutre est une entree de la table, pas un cas particulier', () => {
    * FUTUR : un element ajoute a l'etape 5b sans effet serait une entree morte
    * — une arme pourrait le porter, une zone l'afficher, et rien n'arriverait
    * jamais a l'ennemi marque.
+   *
+   * ⚠️ **La Foudre est une exception NOMMEE, pas un trou dans la garde.** Son
+   * effet (`chainTargets`, `shared/chain.ts`) ne se lit pas dans
+   * `burnPerTick`/`slowFactor` : il se derive d'un point d'impact, jamais
+   * d'une marque portee par l'entite, et le docbloc de `ELEMENT_DEFS` explique
+   * pourquoi lui donner un champ ici n'aurait rien generalise. `ELEMENTS_SANS_EFFET_DE_MARQUE`
+   * liste les elements dont l'absence est donc ATTENDUE ; c'est
+   * `shared/chain.test.ts` qui garde que la Foudre n'est pas, elle, morte.
    */
-  it('est le SEUL sans effet : tout autre element brule ou ralentit', () => {
+  it('est le SEUL sans effet : tout autre element brule, ralentit, ou est une exception nommee', () => {
+    const ELEMENTS_SANS_EFFET_DE_MARQUE = new Set<number>([ELEMENT.FOUDRE]);
     for (const e of ELEMENTS) {
-      if (e.id === ELEMENT.NEUTRE) {
+      if (e.id === ELEMENT.NEUTRE || ELEMENTS_SANS_EFFET_DE_MARQUE.has(e.id)) {
         continue;
       }
       expect(e.burnPerTick > 0 || e.slowFactor < 1, `element « ${e.name} »`).toBe(true);
@@ -165,9 +175,21 @@ describe('le catalogue des elements et celui des armes', () => {
    * s'en apercevrait — pas d'erreur, pas de test rouge, juste une reaction qui
    * n'arrive jamais. C'est le pendant exact de la reference morte gardee par
    * `assertWeaponElements`.
+   *
+   * ⚠️ **`ARMEMENT_DIFFERE` est une dette EXPLICITE, pas une exemption
+   * permanente.** Le plan de l'etape 5b construit le catalogue avant les
+   * armes qui le portent : la tache 2 ajoute la Foudre a `ELEMENT_DEFS`, la
+   * tache 9 lui cable ses armes. Sans cette liste, ce test rougirait entre
+   * les deux — pas d'une vraie regression, mais d'un ordre de taches assume.
+   * **Doit redevenir vide a la fin de la tache 9** : si Foudre y reste apres,
+   * ce test cesse de garder quoi que ce soit pour elle.
    */
-  it('cable au moins une arme a chaque element du catalogue', () => {
+  const ARMEMENT_DIFFERE = new Set<number>([ELEMENT.FOUDRE]);
+  it('cable au moins une arme a chaque element du catalogue, sauf armement differe assume', () => {
     for (const e of ELEMENTS) {
+      if (ARMEMENT_DIFFERE.has(e.id)) {
+        continue;
+      }
       const armes = WEAPONS.filter((w) => w.element === e.id);
       expect(armes.length, `aucune arme ne porte l element « ${e.name} »`).toBeGreaterThanOrEqual(
         1,

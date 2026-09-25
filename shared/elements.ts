@@ -102,6 +102,27 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     slowFactor: 0.6,
     damageAmp: 1,
   },
+  {
+    // Foudre : chaque impact saute vers quelques ennemis proches (§4 de la
+    // spec de l'etape 5b) — ni une brulure ni un ralentissement, donc les
+    // deux champs qui portent les effets de `braise` et `givre` restent a
+    // leur valeur neutre ici. L'effet lui-meme vit dans `shared/chain.ts`
+    // (`chainTargets`), pas dans cette table : contrairement a `burnPerTick`
+    // et `slowFactor`, qui se lisent generiquement au site d'application
+    // (`markAt`, `Horde#computeSlow`), la chaine ne se derive pas d'une
+    // marque portee par l'entite — elle se derive d'un POINT D'IMPACT, donc
+    // le code qui la declenche doit de toute facon savoir qu'il tient une
+    // Foudre (`ELEMENT.FOUDRE`) avant d'appeler `chainTargets`. Ajouter un
+    // champ ici pour ce seul element n'aurait donc rien generalise.
+    //
+    // damageAmp: 1, comme les trois autres lignes — la Foudre n'amplifie
+    // rien par elle-meme, elle multiplie les CIBLES, pas le degat de chacune.
+    name: 'foudre',
+    tint: 0xf3e94b,
+    burnPerTick: 0,
+    slowFactor: 1,
+    damageAmp: 1,
+  },
 ];
 
 export const ELEMENTS: readonly Element[] = ELEMENT_DEFS.map((e, id) => ({ ...e, id }));
@@ -121,6 +142,7 @@ export const ELEMENT = {
   NEUTRE: 0,
   BRAISE: 1,
   GIVRE: 2,
+  FOUDRE: 3,
 } as const;
 
 export function elementOf(id: number): Element {
