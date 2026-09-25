@@ -62,10 +62,13 @@ export function chainTargets(
   jumps: number,
   exclude: ReadonlySet<number>,
 ): number[] {
-  if (jumps <= 0) {
-    return [];
-  }
-
+  // ⚠️ **Pas de garde `jumps <= 0` ici, et c'est delibere.** Contrairement a
+  // la version en etoile (qui tranchait via `Array.prototype.slice`, ou un
+  // index negatif se compte depuis la fin — un piege reel, voir le rapport
+  // de correction), la boucle ci-dessous n'execute simplement aucun tour
+  // quand `jumps <= 0` (`0 < jumps` est faux) : une garde explicite ajouterait
+  // une branche qu'aucune mutation ne peut faire rougir, jamais exercee par
+  // aucun chemin.
   const r2 = radius * radius;
   const touched = new Set(exclude);
   const result: number[] = [];
