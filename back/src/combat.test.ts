@@ -25,6 +25,7 @@ import {
   ORB_DROP_ONE_IN,
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  SURCHAUFFE_ZONE_LIFETIME_TICKS,
   XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
@@ -2351,6 +2352,19 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
     expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
   });
 
+  it('epargne un ennemi PILE sur le bord : la borne est stricte (`<`), comme partout ailleurs', () => {
+    // Meme convention que `markInZones` et `damageInRadius` : un ennemi
+    // exactement a `ZONE_RADIUS` n est pas touche.
+    const horde = new Horde(10);
+    const surLeBord = addOne(horde, 1, 1000 + ZONE_RADIUS, 1000, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 1000, 1000, 4, 0);
+
+    resolveBurn(horde, new OrbField(10), 5, zones);
+
+    expect(horde.hp[horde.slotOf(surLeBord)]).toBe(HEAVY_HP);
+  });
+
   /**
    * ⚠️ **LES DEUX MOITIES.** Meme decor — un LOURD, meme tick, meme position —
    * une seule fois marque Braise (le champ generique, §4.1), une seule fois
@@ -2389,6 +2403,21 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
     resolveBurn(horde, new OrbField(10), 5, zones);
 
     expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(HEAVY_HP);
+  });
+
+  it('ne brule plus une fois SA PROPRE duree de vie ecoulee, meme si elle traine encore dans la reserve', () => {
+    // ⚠️ Meme discipline que `markInZones` / `ZoneField.aliveAt` : une zone
+    // perimee mais pas encore retiree (le serveur n'appelle `expire` qu'une
+    // fois par tick, ailleurs) ne doit plus rien infliger.
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 1000, 1000, 4, 0);
+    expect(zones.count).toBe(1); // elle est bien encore la
+
+    resolveBurn(horde, new OrbField(10), SURCHAUFFE_ZONE_LIFETIME_TICKS, zones);
+
+    expect(horde.hp[horde.slotOf(cible)]).toBe(HEAVY_HP);
   });
 
   it('ne liste jamais deux fois le meme mort : marque ET zone touchent la meme entite deja a terre', () => {
@@ -2597,6 +2626,34 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
     };
   }
 
+  /**
+   * ⚠️ **« Sans limite de sauts » n'est pas cosmetique : une chaine qui
+   * reutiliserait `CHAIN_JUMPS` (3, la Foudre ordinaire) au lieu de
+   * `horde.count` s'arreterait au TROISIEME maillon poisse et laisserait
+   * intacts les suivants — ce test en pose CINQ.
+   */
+  it('⚠️ chaine reellement au-dela de CHAIN_JUMPS quand tous les maillons restent poisses', () => {
+    expect(CHAIN_JUMPS).toBe(3);
+    const horde = new Horde(10);
+    const maillons: number[] = [];
+    // Cinq maillons alignes, espaces de 100 px (< CHAIN_RADIUS) : cinq sauts.
+    for (let i = 1; i <= 5; i++) {
+      const id = addOne(horde, i, i * 100, 0, LOURD);
+      horde.hp[horde.slotOf(id)] = 1000;
+      horde.applyMark(horde.slotOf(id), ELEMENT.POIX, 3, 0);
+      maillons.push(id);
+    }
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(0, 0)], new ZoneField(), new Reactions());
+
+    // ⚠️ **La ligne qui distingue `horde.count` de `CHAIN_JUMPS`** : le
+    // CINQUIEME maillon, au-dela du plafond de la Foudre ordinaire, a bien
+    // ete touche.
+    for (const id of maillons) {
+      expect(horde.hp[horde.slotOf(id)], `maillon ${id}`).toBeLessThan(1000);
+    }
+  });
+
   it('⚠️ s ARRETE au premier maillon NON poisse, elle ne saute pas par-dessus', () => {
     // Trois maillons alignes, espaces de 100 px (< CHAIN_RADIUS 150) : le
     // premier saut depuis l origine ne peut atteindre QUE le premier —
@@ -2700,6 +2757,94 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 
     expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(1000);
     // Le declencheur n a pas ete rappele sur lui-meme.
+    expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **Un ennemi deja mort d'une AUTRE reaction du meme tick ne doit plus
+   * propager la chaine.** `chainWhilePoisoned` exclut `dead` en plus de
+   * `trigger.entityId` — meme raisonnement que le chainage de la Foudre dans
+   * `resolveProjectileDamage`, transpose a deux DECLENCHEURS distincts au
+   * lieu d'un impact et d'un souffle. Sans cette exclusion, `chainTargets`
+   * choisirait le mort comme hop, et le hop SUIVANT — mesure depuis SA
+   * position — atteindrait une cible que le vrai chemin (sans lui) ne peut
+   * pas atteindre en un seul saut depuis l origine.
+   */
+  it('exclut un voisin deja tue par une reaction PRECEDENTE du meme tick : il ne relaie plus la chaine', () => {
+    const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? -1;
+    // X : tue par un Choc thermique GENERIQUE pose exactement sur lui, avant
+    // que Court-circuit ne parte de l origine.
+    const horde = new Horde(10);
+    const x = addOne(horde, 1, 50, 0, LEGER);
+    horde.hp[horde.slotOf(x)] = 1;
+    horde.applyMark(horde.slotOf(x), ELEMENT.POIX, 3, 0);
+    // Y : hors de CHAIN_RADIUS de l ORIGINE (190 > 150), mais a portee d un
+    // hop mesure depuis X (140 < 150) — le seul chemin par lequel Y pourrait
+    // etre touche si X relayait la chaine a tort.
+    const y = addOne(horde, 2, 190, 0, LOURD);
+    horde.hp[horde.slotOf(y)] = 1000;
+    horde.applyMark(horde.slotOf(y), ELEMENT.POIX, 3, 0);
+    expect(Math.hypot(0 - 190, 0)).toBeGreaterThan(CHAIN_RADIUS);
+    expect(Math.hypot(50 - 190, 0)).toBeLessThan(CHAIN_RADIUS);
+
+    const chocThermiqueSurX: ReactionTrigger = {
+      pair: packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE),
+      x: 50,
+      y: 0,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.GIVRE,
+    };
+    const courtCircuitDepuisOrigine = trigger(0, 0);
+
+    const morts = applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [chocThermiqueSurX, courtCircuitDepuisOrigine],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    // X est bien mort du Choc thermique, et lui SEUL.
+    expect(morts).toEqual([x]);
+    // Y, HORS de portee directe de l origine, n a pas ete atteint : Court-circuit
+    // n a pas relaye sa chaine a travers le cadavre de X.
+    expect(horde.hp[horde.slotOf(y)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **Le test precedent fabrique `entityId` a la main — celui-ci le
+   * recueille du chemin REEL** (`markInZones` -> `applyElement`), la seule
+   * facon de garder `applyElement` lui-meme sous garde : rien d'autre
+   * n'exerce la ligne `entityId: horde.entityIdAt(slot)` de sa construction
+   * du declencheur.
+   */
+  it('un declencheur NE de markInZones porte bien sa propre identite, et s exclut de sa chaine', () => {
+    const horde = new Horde(10);
+    const declencheur = addOne(horde, 1, 1000, 1000, LOURD);
+    // A 100 px : DANS CHAIN_RADIUS (150), mais HORS de ZONE_RADIUS (70) —
+    // sinon la zone qui suit reagirait aussi AVEC elle, et markInZones
+    // rendrait deux declencheurs au lieu d un.
+    const cible = addOne(horde, 2, 1000 + 100, 1000, LOURD);
+    horde.hp[horde.slotOf(declencheur)] = 1000;
+    horde.hp[horde.slotOf(cible)] = 1000;
+    horde.applyMark(horde.slotOf(declencheur), ELEMENT.POIX, 3, 0);
+    horde.applyMark(horde.slotOf(cible), ELEMENT.POIX, 3, 0);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.FOUDRE, 1000, 1000, 4, 0);
+    const reactions = new Reactions();
+
+    markInZones(horde, zones, 0, reactions);
+    const triggers = reactions.drain();
+    // Le decor n est pas creux : UN SEUL declencheur (la cible est hors de
+    // portee de la zone), et c est bien Court-circuit.
+    expect(triggers.length).toBe(1);
+    expect(triggers[0]?.pair).toBe(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
+
+    applyReactions(horde, new OrbField(10), 0, triggers, new ZoneField(), new Reactions());
+
+    expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(1000);
     expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
   });
 });

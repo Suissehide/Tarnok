@@ -76,6 +76,25 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
     const surFoudre = zoneLifetimeTicks(packZoneKind(ELEMENT.FOUDRE, REACTION.SURCHAUFFE));
     expect(surBraise).toBe(surFoudre);
   });
+
+  /**
+   * ⚠️ **Embrasement et Court-circuit portent `zoneLifetimeTicks: 0` dans la
+   * table — « pas de duree propre », pas « duree nulle ».** Une mutation qui
+   * lirait ce zero comme une duree REELLE (`>= 0` au lieu de `> 0`) ferait
+   * mourir leur zone au tick meme de sa pose : `aliveAt` y rendrait `false`
+   * IMMEDIATEMENT (`tick - born < 0` n'est jamais vrai). Sans ce test, seule
+   * une coincidence d'un test d'un autre fichier (`zones.test.ts`, tache 5)
+   * la fait rougir — un decor qui masquerait le jour ou cette coincidence
+   * disparait.
+   */
+  it('rend la duree GENERIQUE pour Embrasement et Court-circuit : `zoneLifetimeTicks: 0` n est pas une duree', () => {
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+  });
 });
 
 describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => {

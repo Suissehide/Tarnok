@@ -691,6 +691,14 @@ function chainWhilePoisoned(
   dead: Set<number>,
 ): void {
   const exclude = new Set(dead);
+  // ⚠️ **La garde `!== undefined` est INERTE a l'execution, et AUCUN TEST NE
+  // PEUT le separer — mesure par mutation, elle survit.** `Set<number>` est
+  // une garantie de TYPE, pas d'execution : ajouter `undefined` au `Set`
+  // JavaScript sous-jacent ne fait jamais correspondre `touched.has(id)`,
+  // puisque `id` vient toujours de `horde.entityIdAt`, jamais de nulle part
+  // ailleurs. Gardee pour la lisibilite du type et pour le jour ou
+  // `chainTargets` changerait de contrat, dit tel quel plutot que de laisser
+  // croire a une garde testee.
   if (trigger.entityId !== undefined) {
     exclude.add(trigger.entityId);
   }
@@ -775,6 +783,14 @@ export function applyReactions(
     if (def?.id === REACTION.EMBRASEMENT) {
       damagePoisonedInRadius(horde, t.x, t.y, def.radius, def.damage, zones, tick, dead);
     } else if (def?.id === REACTION.COURT_CIRCUIT) {
+      // ⚠️ **`def.damage` vaut ICI `REACTION_DAMAGE`, et AUCUN TEST NE PEUT
+      // separer une lecture de la table d'une constante recopiee — mesure par
+      // mutation, ca survit.** Decision assumee de `shared/reactions.ts` :
+      // Court-circuit reutilise le degat generique, par saut, faute de raison
+      // de jeu d'en choisir un autre. Le jour ou cette valeur divergera de
+      // `REACTION_DAMAGE`, cette ligne redeviendra testable par construction —
+      // introduire un ecart arbitraire ici, juste pour la rendre testable
+      // aujourd'hui, remplacerait une decision de jeu par un artefact de test.
       chainWhilePoisoned(horde, t, def.damage, zones, tick, dead);
     } else {
       damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
@@ -1338,6 +1354,14 @@ export function resolveBurn(
       continue;
     }
     const burn = zoneBurnPerTick(zones.kind[z] ?? 0);
+    // ⚠️ **Purement une economie de calcul, et AUCUN TEST NE PEUT le
+    // separer — mesure par mutation, ca survit.** `appliquerDegats(...,
+    // 0, ...)` est un no-op arithmetique exact (`brut = 0`) : aucune
+    // assertion sur les PV ne peut distinguer « la boucle interne a tourne
+    // pour rien » de « elle a ete sautee ». Sans cette garde, chaque zone
+    // (Surchauffe comprise, hors de son propre balayage) reparcourrait
+    // `horde.count` pour rien — le O(zones x entites) que le docbloc de
+    // `markInZones` annonce deja, doublé sans raison.
     if (burn <= 0) {
       continue;
     }
