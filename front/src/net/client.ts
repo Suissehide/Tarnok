@@ -1,6 +1,9 @@
 import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
+import { chainTargets } from '@shared/chain';
 import {
+  CHAIN_JUMPS,
+  CHAIN_RADIUS,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   INPUT_HZ,
@@ -663,6 +666,132 @@ export class ReactionFlashes {
 }
 
 /**
+ * Nombre maximal de points d'une polyligne de chaine : le point d'impact, puis
+ * au plus `CHAIN_JUMPS` sauts — voir `shared/chain.ts` (`chainTargets`).
+ */
+const CHAIN_FLASH_MAX_POINTS = 1 + CHAIN_JUMPS;
+
+/**
+ * Capacite du reservoir de flashs de chaine. Bien plus petite que
+ * `HIT_FLASH_CAPACITY` (128) : une chaine ne nait que d'un impact de FOUDRE,
+ * un sous-ensemble des impacts elementaires, eux-memes un sous-ensemble de
+ * tous les impacts.
+ */
+const CHAIN_FLASH_CAPACITY = 32;
+
+/**
+ * Duree de vie d'un flash de chaine, en millisecondes horloge murale — meme
+ * famille que `REACTION_FLASH_LIFETIME_MS` (evenement rare, remarquable), pas
+ * `HIT_FLASH_LIFETIME_MS` (un impact ordinaire, tres frequent). Voir le tour
+ * de correction 1 de la tache 3 (etape 5b) : la chaine etait redessinee a
+ * chaque image depuis la marque `FOUDRE` (60 ticks, 2 s) — un cout O(horde)
+ * par ennemi marque et par image, jusqu'a O(horde²) une fois compose avec
+ * `#markInZones`, qui peut marquer TOUTE la horde d'un coup. Un flash, semé
+ * une fois puis amorti, n'a plus ce risque : le calcul n'a lieu qu'a
+ * l'impact, jamais au dessin.
+ */
+export const CHAIN_FLASH_LIFETIME_MS = 260;
+
+/**
+ * Flashs de chaine de Foudre, cote client — purement cosmetiques, jamais
+ * arbitres, exactement comme `HitFlashes` (et pour la meme raison : nes de
+ * `Projectiles.collide` sur les PROPRES projectiles de ce client, voir
+ * `GameClient#seedChainFlash`).
+ *
+ * ⚠️ **Le CHEMIN est FIGE a la naissance, jamais redérivé.** Contrairement a
+ * la marque elementaire (`#markLocally`, un etat DURABLE, redessine chaque
+ * image depuis `Horde.markAt`), la chaine du serveur est un evenement
+ * PONCTUEL : elle a lieu une fois, a l'impact, et n'existe plus ensuite —
+ * voir `resolveProjectileDamage` (`back/src/combat.ts`), qui ne la recalcule
+ * jamais au tick suivant. Stocker les points ici, plutot que de rappeler
+ * `chainTargets` a chaque image depuis la horde courante, c'est donc dessiner
+ * ce que le serveur a REELLEMENT fait, pas une approximation qui continuerait
+ * de bouger avec des ennemis qui, eux, ont cesse d'etre chaines depuis
+ * longtemps.
+ *
+ * Tableaux types a largeur FIXE (`CHAIN_FLASH_MAX_POINTS` par flash), meme
+ * regle que `HitFlashes`/`ReactionFlashes`/`DerivedOrbs` (§4.4 de
+ * l'orientation) : un burst de chaines simultanees ne doit jamais allouer un
+ * objet (ni un tableau de taille variable) par flash. `CHAIN_JUMPS` (3) etant
+ * une petite constante, la largeur fixe ne gaspille qu'un negligeable nombre
+ * de flottants inutilises pour une chaine plus courte que le maximum.
+ */
+export class ChainFlashes {
+  /** Points aplatis : le point `p` du flash `slot` est a l'indice `slot * CHAIN_FLASH_MAX_POINTS + p`. */
+  readonly x: Float32Array;
+  readonly y: Float32Array;
+  /** Nombre de points REELLEMENT valides pour ce flash — entre 2 (un saut) et `CHAIN_FLASH_MAX_POINTS`. */
+  readonly pointCount: Uint8Array;
+  /** Horloge murale de naissance (`performance.now()`), voir `CHAIN_FLASH_LIFETIME_MS`. */
+  readonly bornMs: Float64Array;
+  #count = 0;
+
+  constructor(readonly capacity: number) {
+    this.x = new Float32Array(capacity * CHAIN_FLASH_MAX_POINTS);
+    this.y = new Float32Array(capacity * CHAIN_FLASH_MAX_POINTS);
+    this.pointCount = new Uint8Array(capacity);
+    this.bornMs = new Float64Array(capacity);
+  }
+
+  get count(): number {
+    return this.#count;
+  }
+
+  /** Abscisse/ordonnee du point `p` (0 = l'impact) du flash `slot`. */
+  pointX(slot: number, p: number): number {
+    return this.x[slot * CHAIN_FLASH_MAX_POINTS + p] ?? 0;
+  }
+  pointY(slot: number, p: number): number {
+    return this.y[slot * CHAIN_FLASH_MAX_POINTS + p] ?? 0;
+  }
+
+  /**
+   * Fait naitre un flash a partir d'un chemin DEJA CALCULE — jamais recalcule
+   * ici. Ignore silencieusement un chemin de moins de deux points (rien a
+   * relier : la chaine n'a touche personne) ou une reserve pleine (meme
+   * discipline que `HitFlashes`/`OrbFlights` : un burst reste petit).
+   */
+  spawn(points: readonly { x: number; y: number }[], nowMs: number): void {
+    if (points.length < 2 || this.#count >= this.capacity) {
+      return;
+    }
+    const slot = this.#count++;
+    const n = Math.min(points.length, CHAIN_FLASH_MAX_POINTS);
+    for (let p = 0; p < n; p++) {
+      const point = points[p];
+      this.x[slot * CHAIN_FLASH_MAX_POINTS + p] = point?.x ?? 0;
+      this.y[slot * CHAIN_FLASH_MAX_POINTS + p] = point?.y ?? 0;
+    }
+    this.pointCount[slot] = n;
+    this.bornMs[slot] = nowMs;
+  }
+
+  /** Retire les flashs dont la duree de vie a expire. */
+  expire(nowMs: number): void {
+    for (let i = this.#count - 1; i >= 0; i--) {
+      if (nowMs - (this.bornMs[i] ?? 0) >= CHAIN_FLASH_LIFETIME_MS) {
+        this.#removeAt(i);
+      }
+    }
+  }
+
+  #removeAt(slot: number): void {
+    const last = this.#count - 1;
+    if (slot !== last) {
+      const src = last * CHAIN_FLASH_MAX_POINTS;
+      const dst = slot * CHAIN_FLASH_MAX_POINTS;
+      for (let p = 0; p < CHAIN_FLASH_MAX_POINTS; p++) {
+        this.x[dst + p] = this.x[src + p] ?? 0;
+        this.y[dst + p] = this.y[src + p] ?? 0;
+      }
+      this.pointCount[slot] = this.pointCount[last] ?? 0;
+      this.bornMs[slot] = this.bornMs[last] ?? 0;
+    }
+    this.#count = last;
+  }
+}
+
+/**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
  * Il ne dessine rien et ne lit pas le clavier — il recoit une fonction qui lui
@@ -795,6 +924,13 @@ export class GameClient {
    * le rendu — voir `ReactionFlashes`.
    */
   readonly reactionFlashes = new ReactionFlashes(REACTION_FLASH_CAPACITY);
+  /**
+   * Flashs de chaine de Foudre, derives des collisions locales (etape 5b,
+   * tache 3, tour de correction 1) — meme famille que `hitFlashes` : semes
+   * une fois par `#seedChainFlash`, jamais redérivés. Lecture publique pour
+   * le rendu — voir `ChainFlashes`.
+   */
+  readonly chainFlashes = new ChainFlashes(CHAIN_FLASH_CAPACITY);
 
   /**
    * Nombre cumule d'identites tuees en dehors de la portee de `HordeHistory`
@@ -1798,11 +1934,18 @@ export class GameClient {
         const element = this.projectiles.elementAt(projectileSlot);
         if (element !== ELEMENT.NEUTRE) {
           this.#markLocally(slot, element, this.projectiles.ownerAt(projectileSlot), tick);
+          // Etape 5b, tache 3 (tour de correction 1) : la chaine est un
+          // EVENEMENT, pas un etat — elle se seme ici, au meme instant que la
+          // marque, jamais redérivée au dessin. Voir `#seedChainFlash`.
+          if (element === ELEMENT.FOUDRE) {
+            this.#seedChainFlash(slot, entityId, nowMs);
+          }
         }
       });
     }
     this.hitFlashes.expire(nowMs);
     this.reactionFlashes.expire(nowMs);
+    this.chainFlashes.expire(nowMs);
 
     // Instantane pour le rejeu (§3.2) : DOIT etre pris a chaque tick, gel ou
     // pas, sans quoi une mort qui viserait un tick gele serait « trop vieille »
@@ -1851,6 +1994,57 @@ export class GameClient {
    */
   #markLocally(slot: number, element: number, by: number, tick: number): void {
     this.horde.applyMark(slot, element, by, tick);
+  }
+
+  /**
+   * Seme un flash de chaine de Foudre, **au moment de l'impact predit par CE
+   * client** — jamais depuis une annonce du serveur (etape 5b, tache 3, tour
+   * de correction 1).
+   *
+   * ⚠️ **Meme contrat que `#markLocally`, et pour la meme raison.** §2 de la
+   * spec : le client ne prononce jamais un degat — il seme depuis ses PROPRES
+   * projectiles (cosmetiques, tires d'une position predite puis reconciliee),
+   * jamais depuis ceux des autres joueurs. Deux consequences assumees,
+   * identiques a celles de `#markLocally` :
+   *
+   * | Ce que le serveur fait et que ce client ne fait pas | Consequence |
+   * | --- | --- |
+   * | chainer depuis les projectiles des AUTRES joueurs | une chaine tiree par un allie n'apparait pas ici |
+   * | exclure les morts DU MEME tick (`dead`, cote serveur) | ce client ne connait aucune mort avant `DEATHS` : son chemin peut differer du serveur d'un maillon si un voisin vient tout juste de mourir d'un AUTRE impact |
+   *
+   * **NE PAS « CORRIGER » EN LA RENDANT AUTORITAIRE** — meme interdiction que
+   * sur `#markLocally` : reproduire l'exclusion des morts demanderait de
+   * suivre ici l'etat de mort de chaque entite, donc de refaire une part de
+   * l'arbitrage serveur. Le flash reste un dessin approximatif d'un evenement
+   * arbitre ailleurs, pas une seconde source de verite.
+   *
+   * ⚠️ **Le CHEMIN est calcule UNE FOIS, ICI, et FIGE dans `chainFlashes`** —
+   * voir sa doc. `chainTargets` n'est donc appele qu'a l'impact (un par
+   * projectile de Foudre qui touche), jamais a chaque image : c'est ce qui
+   * retire le cout O(horde) par ennemi marque et par image de l'ancienne
+   * version de ce calque (voir `CHAIN_FLASH_LIFETIME_MS`).
+   */
+  #seedChainFlash(slot: number, entityId: number, nowMs: number): void {
+    const cx = this.horde.x[slot] ?? 0;
+    const cy = this.horde.y[slot] ?? 0;
+    const path = chainTargets(this.horde, cx, cy, CHAIN_RADIUS, CHAIN_JUMPS, new Set([entityId]));
+    if (path.length === 0) {
+      return;
+    }
+    const points: { x: number; y: number }[] = [{ x: cx, y: cy }];
+    for (const id of path) {
+      const s = this.horde.slotOf(id);
+      // ⚠️ **INATTEIGNABLE par construction** — meme raisonnement que le
+      // `chainedSlot >= 0` de `resolveProjectileDamage` cote serveur :
+      // `chainTargets` ne rend que des identites lues DANS `horde` a
+      // l'instant meme de cet appel, et rien ne compacte entre les deux.
+      // Gardee quand meme : un point manquant silencieux briserait la
+      // polyligne sans qu'aucune trace n'existe.
+      if (s >= 0) {
+        points.push({ x: this.horde.x[s] ?? 0, y: this.horde.y[s] ?? 0 });
+      }
+    }
+    this.chainFlashes.spawn(points, nowMs);
   }
 
   /**

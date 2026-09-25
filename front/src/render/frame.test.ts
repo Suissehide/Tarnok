@@ -7,6 +7,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   type BossVitals,
+  ChainFlashes,
   DerivedOrbs,
   HitFlashes,
   OrbFlights,
@@ -104,6 +105,7 @@ class RecordingClient implements FrameClient {
   readonly projectiles = new Projectiles(PROJECTILE_CAPACITY);
   readonly hitFlashes = new HitFlashes(8);
   readonly reactionFlashes = new ReactionFlashes(8);
+  readonly chainFlashes = new ChainFlashes(8);
   /**
    * Volontairement DIFFERENT de l'horloge murale passee a `composeFrame` : sans
    * cet ecart, passer `now` la ou le tick est attendu resterait indetectable.
@@ -286,13 +288,14 @@ describe('composeFrame — chaque calque recoit son appel', () => {
    * `drawZones`/`drawReactionFlashes`/`paintSynergy` l'ont fait pendant 170
    * tests avant la tache 9 bis.
    *
-   * ⚠️ **La horde ET le TICK de horde**, comme `drawMarks` : c'est le tick qui
-   * dit si la marque `FOUDRE` qui origine une chaine est encore vivante,
-   * jamais l'horloge murale.
+   * ⚠️ **Depuis le tour de correction 1, `chainFlashes` ET l'HORLOGE MURALE**
+   * — plus la horde, plus le tick de simulation. Le chemin est deja figé au
+   * moment de l'impact (`GameClient#seedChainFlash`) : ce calque n'est plus
+   * qu'un flash de plus, amorti comme `hitFlashes`/`reactionFlashes`.
    */
-  it('dessine la chaine de Foudre, avec la horde et le TICK de horde', () => {
+  it('dessine la chaine de Foudre, avec ses flashs et l horloge murale', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('chaine')).toEqual([client.horde, client.hordeTick]);
+    expect(stage.argsOf('chaine')).toEqual([client.chainFlashes, NOW]);
   });
 
   it('dessine les flashs d impact', () => {

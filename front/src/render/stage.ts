@@ -7,6 +7,7 @@ import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type {
   BossVitals,
+  ChainFlashes,
   DerivedOrbs,
   HitFlashes,
   ObstacleMap,
@@ -366,11 +367,12 @@ export class Stage {
   }
 
   /**
-   * La polyligne de la chaine de Foudre (etape 5b, tache 3). `tick` decide
-   * quelles marques `FOUDRE` sont encore vivantes — voir `ChainRenderer.draw`.
+   * La polyligne de la chaine de Foudre (etape 5b, tache 3, tour de
+   * correction 1). `nowMs` est l'horloge murale, comme `drawImpactFlashes` :
+   * le chemin est deja figé dans `flashes` — voir `ChainRenderer.draw`.
    */
-  drawChain(horde: Horde, tick: number): void {
-    this.#chain.draw(horde, tick);
+  drawChain(flashes: ChainFlashes, nowMs: number): void {
+    this.#chain.draw(flashes, nowMs);
   }
 
   /** `nowMs` doit etre la meme horloge murale que celle passee a `GameClient` (voir `ImpactFlashRenderer`). */

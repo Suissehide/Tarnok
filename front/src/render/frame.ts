@@ -5,6 +5,7 @@ import type { ZoneField } from '@shared/zones';
 
 import type {
   BossVitals,
+  ChainFlashes,
   DerivedOrbs,
   HitFlashes,
   OrbFlights,
@@ -57,6 +58,12 @@ export interface FrameClient {
   readonly projectiles: Projectiles;
   readonly hitFlashes: HitFlashes;
   readonly reactionFlashes: ReactionFlashes;
+  /**
+   * Flashs de chaine de Foudre (etape 5b, tache 3, tour de correction 1) —
+   * semes une fois par `GameClient#seedChainFlash`, jamais redérivés : voir
+   * `ChainFlashes`.
+   */
+  readonly chainFlashes: ChainFlashes;
   /**
    * Le tick de horde — **pas** l'horloge murale. C'est lui qui fait mourir les
    * zones et expirer les marques, avec le meme predicat que le serveur ; les
@@ -115,11 +122,14 @@ export interface FrameStage {
   ): void;
   drawProjectiles(projectiles: Projectiles): void;
   /**
-   * La polyligne de la chaine de Foudre (etape 5b, tache 3). Prend le TICK de
-   * horde, comme `drawMarks` : c'est lui qui dit si la marque `FOUDRE` qui
-   * origine une chaine est encore vivante — voir `ChainRenderer.draw`.
+   * La polyligne de la chaine de Foudre (etape 5b, tache 3, tour de
+   * correction 1). Prend l'HORLOGE MURALE, comme `drawImpactFlashes` — le
+   * chemin est deja figé dans `flashes` au moment de l'impact
+   * (`GameClient#seedChainFlash`) : ce calque ne fait plus qu'amortir un
+   * flash, il ne lit plus jamais la horde ni le tick de simulation — voir
+   * `ChainRenderer.draw`.
    */
-  drawChain(horde: Horde, tick: number): void;
+  drawChain(flashes: ChainFlashes, nowMs: number): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
   /**
@@ -166,6 +176,13 @@ export interface FrameScreens {
  * du boss par-dessus eux, puis les carres des joueurs et la camera (`draw`).
  * Le meme ordre que l'attache des calques dans `Stage.composeWorld`.
  *
+ * ⚠️ **Depuis le tour de correction 1 de la tache 3, `drawChain` prend
+ * l'horloge MURALE, comme `drawImpactFlashes`/`drawReactionFlashes` — plus le
+ * tick de simulation.** La chaine est desormais un flash fige au moment de
+ * l'impact (`GameClient#seedChainFlash`), pas un etat redérivé de la horde a
+ * chaque image ; elle a donc rejoint la famille des flashs cosmetiques plutot
+ * que celle des calques dates par tick (zones, marques, couloir de charge).
+ *
  * `now` est l'horloge MURALE (animations, flashs) et `client.hordeTick` le
  * tick de simulation (zones, marques) : les deux ne sont pas interchangeables.
  * Depuis la tache 13, la horde ne recoit plus que l'horloge murale — la marque
@@ -196,9 +213,11 @@ export function composeFrame(
   stage.drawProjectiles(client.projectiles);
   // Juste au-dessus des projectiles, comme eux au-dessus de la horde : une
   // chaine relie des ennemis, elle doit donc rester lisible par-dessus leurs
-  // sprites, comme un tir. `hordeTick`, pas `now` : c'est lui qui dit si la
-  // marque `FOUDRE` qui origine la chaine est encore vivante.
-  stage.drawChain(client.horde, client.hordeTick);
+  // sprites, comme un tir. `now`, pas `hordeTick` : depuis le tour de
+  // correction 1, la chaine est un flash amorti par l'horloge murale, comme
+  // `hitFlashes`/`reactionFlashes` — le chemin est deja figé au moment de
+  // l'impact.
+  stage.drawChain(client.chainFlashes, now);
   stage.drawImpactFlashes(client.hitFlashes, now);
   stage.drawReactionFlashes(client.reactionFlashes, now);
   // Au-dessus de tous les effets de monde : c'est une LECTURE, et une lecture

@@ -1,6 +1,8 @@
 import { type BossCharge, makeBossCharge } from '@shared/boss';
 import { CARD } from '@shared/cards';
 import {
+  CHAIN_JUMPS,
+  CHAIN_RADIUS,
   COIN_DROP_ONE_IN,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -47,12 +49,13 @@ import {
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, weaponOf } from '@shared/weapons';
+import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, type Weapon, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
+  CHAIN_FLASH_LIFETIME_MS,
   DerivedOrbs,
   GameClient,
   HIT_FLASH_LIFETIME_MS,
@@ -1702,6 +1705,215 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     // Disparu pile a l'echeance, pas un tick plus tard.
     client.update(hitNowMs + HIT_FLASH_LIFETIME_MS, STEP);
     expect(client.hitFlashes.count).toBe(0);
+  });
+});
+
+/**
+ * Etape 5b, tache 3 — TOUR DE CORRECTION 1 : la chaine de Foudre est
+ * desormais un FLASH, seme UNE FOIS a l'impact predit par ce client
+ * (`GameClient#seedChainFlash`), jamais redérivé de la horde a chaque image.
+ *
+ * ⚠️ **Aucune arme du catalogue (`shared/weapons.ts`) ne porte encore
+ * `ELEMENT.FOUDRE`** — meme limite, et meme parade, que
+ * `back/src/combat.test.ts` (tache 3) : une arme SYNTHETIQUE, tiree
+ * directement sur `client.projectiles` (public, lecture ET ecriture pour le
+ * test), en court-circuitant `#fireWeapons` et le catalogue/loadout entier.
+ * `readAim` reste nul partout dans ce bloc : aucune arme reelle ne doit tirer
+ * toute seule pendant ces tests, seul le projectile de Foudre tire a la main
+ * doit voler.
+ */
+describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact (etape 5b, tache 3, tour de correction 1)', () => {
+  const MS_PER_TICK = 1000 / TICK_HZ;
+  const FOUDRE_WEAPON: Weapon = { ...weaponOf(BASE_WEAPON_ID), element: ELEMENT.FOUDRE };
+
+  /**
+   * Fait apparaitre DEUX monstres a des positions CONTROLEES, pas celles de
+   * la dispersion : le percute (futur point d'impact) et un voisin a portee
+   * de `CHAIN_RADIUS` — meme technique que `addOne` cote serveur
+   * (`back/src/combat.test.ts`), positions ecrites directement dans les
+   * tableaux publics de `Horde` apres l'apparition.
+   */
+  function setupPercuteEtVoisin(
+    mapSeed: number,
+    waveId: number,
+  ): { client: GameClient; socket: FakeSocket; percuteId: number; voisinId: number } {
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      () => ({
+        x: 0,
+        y: 0,
+      }),
+    );
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, mapSeed) });
+    socket.emit('message', {
+      data: encodeWaveOrder({
+        waveId,
+        spawnTick: 0,
+        seed: 0x51ee_d002,
+        archetype: 0,
+        formation: FORMATION.SCATTER,
+        anchorX: 3000,
+        anchorY: 3000,
+        count: 2,
+      }),
+    });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+    });
+    client.update(0, STEP);
+    if (client.horde.count !== 2) {
+      throw new Error(`amorce du test : horde.count=${client.horde.count}, attendu 2`);
+    }
+    // Le percute a 300 px du joueur : largement sous la portee de l'arme
+    // synthetique (dague : 650 px/s x 28 ticks / TICK_HZ ~= 607 px), pour que
+    // le projectile ait le temps de la toucher avant d'expirer. 100 px
+    // separent le percute du voisin : dans CHAIN_RADIUS (150).
+    expect(100).toBeLessThan(CHAIN_RADIUS);
+    client.horde.x[0] = 300;
+    client.horde.y[0] = 0;
+    client.horde.x[1] = 300;
+    client.horde.y[1] = 100;
+    return {
+      client,
+      socket,
+      percuteId: client.horde.entityIdAt(0),
+      voisinId: client.horde.entityIdAt(1),
+    };
+  }
+
+  /**
+   * Tire `arme` (synthetique) directement sur `client.projectiles`, vers
+   * `cibleId`, et avance jusqu'a l'impact (ou l'expiration du projectile).
+   * Rend l'horloge murale (`nowMs`) de ce dernier pas.
+   */
+  function frappe(
+    client: GameClient,
+    socket: FakeSocket,
+    cibleId: number,
+    arme: Weapon,
+    startTick: number,
+  ): number {
+    const s = client.horde.slotOf(cibleId);
+    const dx = client.horde.x[s] ?? 0;
+    const dy = client.horde.y[s] ?? 0;
+    client.projectiles.fireSalvoDirected(arme, startTick, 0, 0, dx, dy, arme.damage, 1, 7);
+    expect(client.projectiles.count).toBeGreaterThan(0); // sanity : le tir est bien parti
+
+    let nowMs = -1;
+    for (let tick = startTick; tick < startTick + 20 && client.projectiles.count > 0; tick++) {
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, 0, [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }]),
+      });
+      nowMs = tick * MS_PER_TICK;
+      client.update(nowMs, STEP);
+    }
+    if (nowMs < 0 || client.projectiles.count > 0) {
+      throw new Error('le projectile ne touche jamais');
+    }
+    return nowMs;
+  }
+
+  it('un impact de Foudre seme un flash de chaine, avec le point d impact PUIS le voisin', () => {
+    const { client, socket, percuteId, voisinId } = setupPercuteEtVoisin(0xc1e2_00f0, 80);
+
+    const impactNowMs = frappe(client, socket, percuteId, FOUDRE_WEAPON, 1);
+
+    expect(client.chainFlashes.count).toBe(1);
+    expect(client.chainFlashes.pointCount[0]).toBe(2);
+    expect(client.chainFlashes.bornMs[0]).toBe(impactNowMs);
+    // Le premier point est le PERCUTE (le point d'impact), pas le voisin.
+    const percuteSlot = client.horde.slotOf(percuteId);
+    const voisinSlot = client.horde.slotOf(voisinId);
+    expect(client.chainFlashes.pointX(0, 0)).toBeCloseTo(client.horde.x[percuteSlot] ?? 0, 0);
+    expect(client.chainFlashes.pointY(0, 0)).toBeCloseTo(client.horde.y[percuteSlot] ?? 0, 0);
+    expect(client.chainFlashes.pointX(0, 1)).toBeCloseTo(client.horde.x[voisinSlot] ?? 0, 0);
+    expect(client.chainFlashes.pointY(0, 1)).toBeCloseTo(client.horde.y[voisinSlot] ?? 0, 0);
+  });
+
+  /**
+   * ⚠️ **Le test que la revue a demande explicitement (exigence n°1).** Une
+   * chaine semee, puis la horde deplacee, puis une image de plus : la
+   * polyligne DEJA DESSINEE ne doit pas bouger d'un pixel. C'est la mutation
+   * « redériver a chaque image » (retour a l'ancienne version) qui doit
+   * rougir ici.
+   */
+  it('le chemin est FIGE a la naissance : deplacer la horde ensuite ne change rien au flash deja seme', () => {
+    const { client, socket, percuteId, voisinId } = setupPercuteEtVoisin(0xc1e2_00f1, 81);
+    frappe(client, socket, percuteId, FOUDRE_WEAPON, 1);
+    expect(client.chainFlashes.count).toBe(1);
+    expect(client.chainFlashes.pointCount[0]).toBe(2);
+
+    const figeX0 = client.chainFlashes.pointX(0, 0);
+    const figeY0 = client.chainFlashes.pointY(0, 0);
+    const figeX1 = client.chainFlashes.pointX(0, 1);
+    const figeY1 = client.chainFlashes.pointY(0, 1);
+
+    // La horde bouge VRAIMENT ensuite (mutation directe des tableaux publics
+    // de `Horde`, comme les decors de `back/src/combat.test.ts`) : sans ce
+    // controle, « rien n'a change » pourrait aussi bien dire « rien n'a
+    // bouge ».
+    const percuteSlot = client.horde.slotOf(percuteId);
+    const voisinSlot = client.horde.slotOf(voisinId);
+    client.horde.x[percuteSlot] = (client.horde.x[percuteSlot] ?? 0) + 500;
+    client.horde.y[percuteSlot] = (client.horde.y[percuteSlot] ?? 0) + 500;
+    client.horde.x[voisinSlot] = (client.horde.x[voisinSlot] ?? 0) + 500;
+    client.horde.y[voisinSlot] = (client.horde.y[voisinSlot] ?? 0) + 500;
+    expect(client.horde.x[percuteSlot]).not.toBe(figeX0);
+
+    expect(client.chainFlashes.pointX(0, 0)).toBe(figeX0);
+    expect(client.chainFlashes.pointY(0, 0)).toBe(figeY0);
+    expect(client.chainFlashes.pointX(0, 1)).toBe(figeX1);
+    expect(client.chainFlashes.pointY(0, 1)).toBe(figeY1);
+  });
+
+  it('un flash de chaine expire apres CHAIN_FLASH_LIFETIME_MS, jamais avant (verifie aux deux bornes)', () => {
+    const { client, socket, percuteId } = setupPercuteEtVoisin(0xc1e2_00f2, 82);
+    const impactNowMs = frappe(client, socket, percuteId, FOUDRE_WEAPON, 1);
+    expect(client.chainFlashes.count).toBe(1);
+
+    client.update(impactNowMs + CHAIN_FLASH_LIFETIME_MS - 1, STEP);
+    expect(client.chainFlashes.count).toBe(1);
+
+    client.update(impactNowMs + CHAIN_FLASH_LIFETIME_MS, STEP);
+    expect(client.chainFlashes.count).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Le filtre Foudre — une arme elementaire NON-Foudre marque mais ne
+   * seme jamais de flash de chaine.** Seule `ELEMENT.FOUDRE` declenche
+   * `#seedChainFlash` ; les autres elements suivent leur seul chemin
+   * existant (`#markLocally`), inchange par cette tache.
+   */
+  it('un impact elementaire NON-Foudre marque, mais ne seme AUCUN flash de chaine', () => {
+    const { client, socket, percuteId } = setupPercuteEtVoisin(0xc1e2_00f3, 83);
+    const BRAISE_WEAPON: Weapon = { ...weaponOf(BASE_WEAPON_ID), element: ELEMENT.BRAISE };
+
+    frappe(client, socket, percuteId, BRAISE_WEAPON, 1);
+
+    expect(client.horde.markAt(client.horde.slotOf(percuteId), client.hordeTick - 1)).toBe(
+      ELEMENT.BRAISE,
+    );
+    expect(client.chainFlashes.count).toBe(0);
+  });
+
+  /**
+   * ⚠️ **CHAIN_JUMPS n'est plus un detail invisible depuis ce fichier** :
+   * `pointCount` d'un flash ne peut jamais depasser `1 + CHAIN_JUMPS` — un
+   * controle direct sur ce que `ChainFlashes` accepte, complementaire de la
+   * borne deja gardee cote serveur et cote `shared/chain.test.ts`.
+   */
+  it('un flash de chaine ne porte jamais plus de 1 + CHAIN_JUMPS points', () => {
+    const { client, socket, percuteId } = setupPercuteEtVoisin(0xc1e2_00f4, 84);
+
+    frappe(client, socket, percuteId, FOUDRE_WEAPON, 1);
+
+    expect(client.chainFlashes.count).toBe(1);
+    expect(client.chainFlashes.pointCount[0]).toBeLessThanOrEqual(1 + CHAIN_JUMPS);
   });
 });
 

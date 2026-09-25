@@ -1,184 +1,39 @@
 // @vitest-environment jsdom
-import { CHAIN_JUMPS, CHAIN_RADIUS, MARK_DURATION_TICKS } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
-import { Horde } from '@shared/horde';
-import { FORMATION, type WaveOrder } from '@shared/waves';
 import { Container } from 'pixi.js';
 import { describe, expect, it, vi } from 'vitest';
 
-import {
-  CHAIN_LINE_ALPHA,
-  CHAIN_LINE_WIDTH_PX,
-  type ChainPolyline,
-  ChainRenderer,
-  selectChains,
-} from './chain-renderer';
+import { CHAIN_FLASH_LIFETIME_MS, ChainFlashes } from '../net/client';
+import { CHAIN_LINE_ALPHA, CHAIN_LINE_WIDTH_PX, ChainRenderer } from './chain-renderer';
 
 /**
- * Etape 5b, tache 3 : la polyligne de la chaine de Foudre, cote client.
+ * Etape 5b, tache 3, TOUR DE CORRECTION 1 : la polyligne de la chaine de
+ * Foudre est desormais un FLASH, seme une fois par
+ * `GameClient#seedChainFlash` et FIGE dans `ChainFlashes` — jamais redérivé
+ * de la horde. Ce fichier ne construit donc plus jamais de `Horde` : c'est le
+ * point meme de la correction (voir le docbloc de `chain-renderer.ts`). Le
+ * seeding lui-meme (le calcul du chemin, l'exclusion de l'origine, le filtre
+ * `ELEMENT.FOUDRE`) est teste cote `GameClient`, dans `net/client.test.ts` —
+ * c'est la ou vivent `Horde` et `chainTargets` desormais.
  *
- * Deux choses se gardent ici, comme sur `mark-renderer.test.ts` (son plus
- * proche voisin) :
- * 1. **quoi** dessiner — `selectChains`, PURE, testable sans Pixi ;
- * 2. **que le calque s'en serve reellement** — `ChainRenderer.draw`, atteint
- *    via des espions sur ses methodes `Graphics`, meme raisonnement que
- *    `zone-renderer.test.ts` sur `adoptTexture` : un corps de `draw` qui ne
- *    serait garde par AUCUNE assertion est exactement la dette que ce fichier
- *    (et `frame.test.ts`, en amont) doit fermer.
+ * Ce qui se garde ICI, comme sur `projectile-renderer.test.ts` pour
+ * `ImpactFlashRenderer`/`ReactionFlashRenderer` :
+ * 1. **quoi** dessiner — chaque flash vivant, dans l'ordre de ses points ;
+ * 2. **comment** il s'eteint — l'opacite decroit avec l'age, comme les
+ *    autres flashs ;
+ * 3. **le pire cas, mesure plutot que suppose** — la revue a note que ce
+ *    fichier ne le faisait pas ; le voici, et il n'est plus fonction de la
+ *    horde du tout, seulement de la capacite du reservoir.
  */
 
-const TICK = 200;
+const NOW = 10_000;
 
-/**
- * Une horde dont les positions sont POSEES, pas simulees — meme helper que
- * `mark-renderer.test.ts`, meme raison : ce fichier parle de geometrie a
- * quelques pixels pres, et `spawn` disperse au hasard de la formation.
- */
-function hordeAt(points: readonly { x: number; y: number }[]): Horde {
-  const horde = new Horde(Math.max(4, points.length));
-  const order: WaveOrder = {
-    waveId: 1,
-    spawnTick: 0,
-    seed: 3,
-    archetype: 0,
-    formation: FORMATION.SCATTER,
-    anchorX: 3000,
-    anchorY: 3000,
-    count: points.length,
-  };
-  horde.spawn(order);
-  points.forEach((p, i) => {
-    horde.x[i] = p.x;
-    horde.y[i] = p.y;
-  });
-  return horde;
+/** Un point de chaine, pour construire des decors lisibles. */
+function pt(x: number, y: number): { x: number; y: number } {
+  return { x, y };
 }
 
-describe('selectChains — quelles chaines se dessinent, au tick courant', () => {
-  it('un ennemi marque Foudre origine une chaine qui saute vers ses voisins, DANS L ORDRE', () => {
-    // 100 px de saut en saut : dans CHAIN_RADIUS (150), pas deux sauts d un
-    // coup (200 > 150) — la chaine ne peut que suivre la ligne.
-    expect(100).toBeLessThan(CHAIN_RADIUS);
-    const horde = hordeAt([
-      { x: 1000, y: 1000 }, // l origine, marquee Foudre
-      { x: 1000, y: 1100 }, // premier saut
-      { x: 1000, y: 1200 }, // second saut
-    ]);
-    horde.applyMark(0, ELEMENT.FOUDRE, 1, TICK);
-
-    const chains = selectChains(horde, TICK);
-
-    expect(chains).toEqual<ChainPolyline[]>([
-      {
-        points: [
-          { x: 1000, y: 1000 },
-          { x: 1000, y: 1100 },
-          { x: 1000, y: 1200 },
-        ],
-      },
-    ]);
-  });
-
-  /**
-   * ⚠️ **Le decor n est PAS creux : la horde est peuplee, l ennemi EST
-   * marque Foudre — et pourtant aucune chaine ne se dessine**, parce que rien
-   * n est a portee. Sans ce test, `selectChains` pourrait rendre `[]` pour
-   * n importe quelle raison, y compris une horde vide passee par erreur —
-   * le « test qui renvoie zero » cite par le brief de cette tache.
-   */
-  it('un ennemi marque Foudre SANS voisin a portee ne produit aucune chaine (et le decor n est pas creux)', () => {
-    const horde = hordeAt([{ x: 1000, y: 1000 }]);
-    horde.applyMark(0, ELEMENT.FOUDRE, 1, TICK);
-    expect(horde.count).toBe(1); // le decor est peuple
-
-    expect(selectChains(horde, TICK)).toEqual([]);
-  });
-
-  it('un ennemi marque d un AUTRE element, ou pas marque du tout, ne produit aucune chaine', () => {
-    // Meme geometrie que le premier test (des voisins a portee), pour que ce
-    // qui manque soit bien la marque Foudre et rien d autre.
-    const horde = hordeAt([
-      { x: 1000, y: 1000 },
-      { x: 1000, y: 1100 },
-    ]);
-    horde.applyMark(0, ELEMENT.BRAISE, 1, TICK);
-    // horde[1] reste NEUTRE : pas d appel a applyMark.
-
-    expect(selectChains(horde, TICK)).toEqual([]);
-  });
-
-  it('garde la chaine jusqu au dernier tick de la marque, et pas un de plus', () => {
-    // Meme borne, meme predicat DERIVE (`markAt`, jamais `horde.mark`) que
-    // `selectMarkedRings` — c est `markUntil` qui decide, des deux cotes du
-    // fil.
-    const horde = hordeAt([
-      { x: 1000, y: 1000 },
-      { x: 1000, y: 1100 },
-    ]);
-    horde.applyMark(0, ELEMENT.FOUDRE, 1, TICK);
-
-    expect(selectChains(horde, TICK + MARK_DURATION_TICKS - 1)).not.toEqual([]);
-    expect(selectChains(horde, TICK + MARK_DURATION_TICKS)).toEqual([]);
-  });
-
-  it('plusieurs ennemis marques Foudre, hors de portee l un de l autre, produisent DEUX chaines separees', () => {
-    const horde = hordeAt([
-      { x: 0, y: 0 },
-      { x: 0, y: 100 }, // voisin du premier
-      { x: 5000, y: 5000 }, // loin de tout : seconde origine
-      { x: 5000, y: 5100 }, // voisin du second
-    ]);
-    horde.applyMark(0, ELEMENT.FOUDRE, 1, TICK);
-    horde.applyMark(2, ELEMENT.FOUDRE, 2, TICK);
-
-    const chains = selectChains(horde, TICK);
-
-    expect(chains).toHaveLength(2);
-    expect(chains).toContainEqual({
-      points: [
-        { x: 0, y: 0 },
-        { x: 0, y: 100 },
-      ],
-    });
-    expect(chains).toContainEqual({
-      points: [
-        { x: 5000, y: 5000 },
-        { x: 5000, y: 5100 },
-      ],
-    });
-  });
-
-  it('ne saute jamais plus loin que CHAIN_JUMPS cibles', () => {
-    expect(CHAIN_JUMPS).toBe(3);
-    const horde = hordeAt([
-      { x: 0, y: 0 }, // origine
-      { x: 0, y: 100 },
-      { x: 0, y: 200 },
-      { x: 0, y: 300 },
-      { x: 0, y: 400 }, // geometriquement a portee du precedent, mais hors CHAIN_JUMPS
-    ]);
-    horde.applyMark(0, ELEMENT.FOUDRE, 1, TICK);
-
-    const [chain] = selectChains(horde, TICK);
-
-    // Le point d impact + CHAIN_JUMPS sauts, jamais un cinquieme point.
-    expect(chain?.points).toHaveLength(1 + CHAIN_JUMPS);
-    expect(chain?.points.at(-1)).toEqual({ x: 0, y: 300 });
-  });
-});
-
-describe('ChainRenderer.draw — le calque dessine ce que selectChains a decide', () => {
-  /** Un decor a une chaine, reutilise par les tests de cablage ci-dessous. */
-  function decor(): Horde {
-    const horde = hordeAt([
-      { x: 1000, y: 1000 },
-      { x: 1000, y: 1100 },
-      { x: 1000, y: 1200 },
-    ]);
-    horde.applyMark(0, ELEMENT.FOUDRE, 1, TICK);
-    return horde;
-  }
-
+describe('ChainRenderer.draw — le calque dessine ce que ChainFlashes a fige', () => {
   it('loaded vaut faux avant load(), vrai apres', () => {
     const renderer = new ChainRenderer();
     expect(renderer.loaded).toBe(false);
@@ -200,16 +55,18 @@ describe('ChainRenderer.draw — le calque dessine ce que selectChains a decide'
   /**
    * ⚠️ **Le corps de `draw` ne doit PAS tourner avant `load()`** — meme
    * garde que `ZoneRenderer`/`MarkRingRenderer` sur leur texture, adaptee ici
-   * a l absence de texture : rien de procedural a cuire, mais `Stage` doit
+   * a l'absence de texture : rien de procedural a cuire, mais `Stage` doit
    * quand meme pouvoir compter ce calque comme « pas encore charge ».
    */
   it('ne trace rien tant que load() n a pas ete appele', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(0, 0), pt(0, 100)], NOW);
     const renderer = new ChainRenderer();
     const moveTo = vi.spyOn(renderer.graphics, 'moveTo');
     const lineTo = vi.spyOn(renderer.graphics, 'lineTo');
     const stroke = vi.spyOn(renderer.graphics, 'stroke');
 
-    renderer.draw(decor(), TICK);
+    renderer.draw(flashes, NOW);
 
     expect(moveTo).not.toHaveBeenCalled();
     expect(lineTo).not.toHaveBeenCalled();
@@ -217,12 +74,14 @@ describe('ChainRenderer.draw — le calque dessine ce que selectChains a decide'
   });
 
   it('trace la polyligne DANS L ORDRE DES SAUTS : le point d impact, puis chaque saut', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(1000, 1000), pt(1000, 1100), pt(1000, 1200)], NOW);
     const renderer = new ChainRenderer();
     renderer.load();
     const moveTo = vi.spyOn(renderer.graphics, 'moveTo');
     const lineTo = vi.spyOn(renderer.graphics, 'lineTo');
 
-    renderer.draw(decor(), TICK);
+    renderer.draw(flashes, NOW);
 
     expect(moveTo).toHaveBeenCalledTimes(1);
     expect(moveTo).toHaveBeenNthCalledWith(1, 1000, 1000);
@@ -231,13 +90,17 @@ describe('ChainRenderer.draw — le calque dessine ce que selectChains a decide'
     expect(lineTo).toHaveBeenNthCalledWith(2, 1000, 1200);
   });
 
-  it('trace au trait de l element Foudre, a l epaisseur et l opacite du module', () => {
+  it('trace au trait de l element Foudre, a l epaisseur du module, a pleine opacite a la naissance', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(0, 0), pt(0, 100)], NOW);
     const renderer = new ChainRenderer();
     renderer.load();
     const stroke = vi.spyOn(renderer.graphics, 'stroke');
 
-    renderer.draw(decor(), TICK);
+    // nowMs === bornMs : age nul, opacite maximale.
+    renderer.draw(flashes, NOW);
 
+    expect(stroke).toHaveBeenCalledTimes(1);
     expect(stroke).toHaveBeenCalledWith({
       color: elementOf(ELEMENT.FOUDRE).tint,
       width: CHAIN_LINE_WIDTH_PX,
@@ -245,14 +108,108 @@ describe('ChainRenderer.draw — le calque dessine ce que selectChains a decide'
     });
   });
 
-  it('efface le trait precedent avant de redessiner, meme quand plus rien n est marque', () => {
+  /**
+   * ⚠️ **S'ETEINT avec l'age, comme `ImpactFlashRenderer`.** Un trait qui
+   * resterait a pleine opacite jusqu'a sa disparition nette lirait comme un
+   * clignotement, pas comme un evenement qui s'estompe — la mutation qui
+   * retirerait ce calcul (`alpha` fige a `CHAIN_LINE_ALPHA`) doit rougir ici.
+   */
+  it('s eteint progressivement : opacite moitie a la moitie de la duree de vie', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(0, 0), pt(0, 100)], NOW);
     const renderer = new ChainRenderer();
     renderer.load();
-    const clear = vi.spyOn(renderer.graphics, 'clear');
+    const stroke = vi.spyOn(renderer.graphics, 'stroke');
 
-    // Un tick largement au-dela de la marque : plus rien a dessiner.
-    renderer.draw(decor(), TICK + MARK_DURATION_TICKS);
+    renderer.draw(flashes, NOW + CHAIN_FLASH_LIFETIME_MS / 2);
 
-    expect(clear).toHaveBeenCalledTimes(1);
+    expect(stroke).toHaveBeenCalledWith(expect.objectContaining({ alpha: CHAIN_LINE_ALPHA / 2 }));
+  });
+
+  /**
+   * ⚠️ **Deux flashs d ages differents recoivent des opacites differentes**
+   * — c est pour ca qu il faut un `stroke` PAR flash, jamais un seul commun a
+   * la fin : un `stroke` partage appliquerait l opacite du DERNIER flash a
+   * tous les traits deja traces.
+   */
+  it('deux flashs d ages differents recoivent chacun leur PROPRE stroke, avec leur PROPRE opacite', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(0, 0), pt(0, 100)], NOW); // vient de naitre
+    flashes.spawn([pt(5000, 5000), pt(5000, 5100)], NOW - CHAIN_FLASH_LIFETIME_MS / 2); // a moitie eteint
+    expect(flashes.count).toBe(2);
+    const renderer = new ChainRenderer();
+    renderer.load();
+    const stroke = vi.spyOn(renderer.graphics, 'stroke');
+
+    renderer.draw(flashes, NOW);
+
+    expect(stroke).toHaveBeenCalledTimes(2);
+    expect(stroke).toHaveBeenNthCalledWith(1, expect.objectContaining({ alpha: CHAIN_LINE_ALPHA }));
+    expect(stroke).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ alpha: CHAIN_LINE_ALPHA / 2 }),
+    );
+  });
+
+  it('n affiche plus rien pour un flash retire par ChainFlashes.expire', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(0, 0), pt(0, 100)], NOW);
+    flashes.expire(NOW + CHAIN_FLASH_LIFETIME_MS);
+    expect(flashes.count).toBe(0);
+    const renderer = new ChainRenderer();
+    renderer.load();
+    const moveTo = vi.spyOn(renderer.graphics, 'moveTo');
+    const stroke = vi.spyOn(renderer.graphics, 'stroke');
+
+    renderer.draw(flashes, NOW + CHAIN_FLASH_LIFETIME_MS);
+
+    expect(moveTo).not.toHaveBeenCalled();
+    expect(stroke).not.toHaveBeenCalled();
+  });
+
+  /**
+   * ⚠️ **La mesure du pire cas, faite plutot que supposee** (revue, tour de
+   * correction 1) — meme discipline que `mark-renderer.test.ts` : un decor au
+   * pire cas REALISTE, le nombre reel de traits comptes et assertionnes
+   * contre une borne, la borne ecrite en commentaire.
+   *
+   * ⚠️ **Le point de la correction, rendu visible ICI** : la borne est la
+   * CAPACITE DU RESERVOIR, plus jamais la taille de la horde. Avant cette
+   * correction, remplir une horde de `MAX_ENTITIES` ennemis tous marques
+   * Foudre aurait fait grimper le cout de ce calque avec elle ; maintenant,
+   * `ChainFlashes` refuse silencieusement tout flash au-dela de sa capacite
+   * (meme discipline que `HitFlashes`/`OrbFlights`), donc `draw` ne peut
+   * jamais tracer plus que `capacity` polylignes, quelle que soit la horde —
+   * qu'il ne lit d'ailleurs plus du tout.
+   */
+  it('borne le nombre de traits par la CAPACITE du reservoir, jamais par une taille de horde', () => {
+    // Capacite choisie pour ce test : `CHAIN_FLASH_CAPACITY` est un detail
+    // interne de `net/client.ts` (non exporte, comme `HIT_FLASH_CAPACITY`) —
+    // ce qui compte ici n'est pas sa valeur exacte, mais que le cout de
+    // `draw` suive `flashes.capacity`, quel qu'il soit.
+    const CAPACITE_TEST = 200;
+    const flashes = new ChainFlashes(CAPACITE_TEST);
+    for (let i = 0; i < CAPACITE_TEST; i++) {
+      flashes.spawn([pt(i, 0), pt(i, 100), pt(i, 200), pt(i, 300)], NOW);
+    }
+    // La capacite refuse tout flash de plus, meme si on insiste : preuve que
+    // le decor est vraiment au pire cas, pas juste rempli par hasard.
+    flashes.spawn([pt(9999, 0), pt(9999, 100)], NOW);
+    expect(flashes.count).toBe(CAPACITE_TEST);
+
+    const renderer = new ChainRenderer();
+    renderer.load();
+    const stroke = vi.spyOn(renderer.graphics, 'stroke');
+
+    renderer.draw(flashes, NOW);
+
+    process.stdout.write(
+      `[tache 3, tour 1] pire cas : ${flashes.count} flashs de chaine, tous a ` +
+        `CHAIN_FLASH_MAX_POINTS points -> ${stroke.mock.calls.length} traits ` +
+        `(plafond : capacite du reservoir = ${flashes.capacity}, INDEPENDANT de la horde)\n`,
+    );
+
+    expect(stroke.mock.calls.length).toBe(CAPACITE_TEST);
+    expect(stroke.mock.calls.length).toBeLessThanOrEqual(flashes.capacity);
   });
 });
