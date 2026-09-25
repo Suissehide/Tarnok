@@ -151,6 +151,22 @@ describe('ChainRenderer.draw — le calque dessine ce que ChainFlashes a fige', 
     );
   });
 
+  /**
+   * ⚠️ **`ChainFlashes.spawn` refuse un chemin de moins de deux points.**
+   * Inatteignable depuis `GameClient#seedChainFlash` (qui garde deja
+   * `path.length === 0` avant d'appeler `spawn`), mais `ChainFlashes` est une
+   * classe exportee, appelable directement — comme ce fichier le fait — donc
+   * sa propre garde doit tenir seule, sans dependre de l'appelant.
+   */
+  it('ChainFlashes.spawn ignore un chemin de moins de deux points : rien a relier', () => {
+    const flashes = new ChainFlashes(4);
+
+    flashes.spawn([], NOW);
+    flashes.spawn([pt(0, 0)], NOW);
+
+    expect(flashes.count).toBe(0);
+  });
+
   it('n affiche plus rien pour un flash retire par ChainFlashes.expire', () => {
     const flashes = new ChainFlashes(4);
     flashes.spawn([pt(0, 0), pt(0, 100)], NOW);
