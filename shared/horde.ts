@@ -16,9 +16,9 @@ import {
   STEERING_REPULSION_WEIGHT,
   ZONE_RADIUS,
 } from './constants';
-import { ELEMENT, elementOf } from './elements';
+import { ELEMENT } from './elements';
 import type { FlowField } from './flowfield';
-import { zoneElement } from './protocol';
+import { zoneSlowFactor } from './reactions';
 import { formationPositions, type WaveOrder } from './waves';
 import type { ZoneField } from './zones';
 
@@ -907,6 +907,15 @@ export class Horde {
    * remplissage a `1` a lieu meme sans zones — c'est ce qui rend un
    * `spawnCatchingUp` sans zones exactement equivalent a l'ancien code plutot
    * que de lui laisser le facteur du pas precedent.
+   *
+   * ⚠️ **Le facteur PAR ZONE n'est plus `Element.slowFactor` seul depuis la
+   * tache 7 de l'etape 5b.** `zoneSlowFactor` (`shared/reactions.ts`) le
+   * combine deja avec ce que sa reaction impose (0, gel total, pour la
+   * Supraconduction) — necessaire parce que le nibble d'element d'une zone de
+   * reaction porte celui du DECLENCHEUR, qui varie selon l'ordre d'arrivee.
+   * Cette fonction ne fait toujours que prendre le MINIMUM entre zones, pour
+   * la raison arithmetique ci-dessus ; c'est `zoneSlowFactor` qui derive
+   * chaque facteur avant qu'elle ne les compare.
    */
   #computeSlow(zones: ZoneField | undefined, tick: number): void {
     this.#slow.fill(1, 0, this.#count);
@@ -918,7 +927,7 @@ export class Horde {
       if (!zones.slowsAt(z, tick)) {
         continue;
       }
-      const factor = elementOf(zoneElement(zones.kind[z] ?? 0)).slowFactor;
+      const factor = zoneSlowFactor(zones.kind[z] ?? 0);
       const zx = zones.x[z] ?? 0;
       const zy = zones.y[z] ?? 0;
       for (let i = 0; i < this.#count; i++) {

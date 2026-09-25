@@ -1,28 +1,39 @@
 import { describe, expect, it } from 'vitest';
 
-import { REACTION_DAMAGE, REACTION_RADIUS, ZONE_LIFETIME_TICKS } from './constants';
-import { ELEMENT } from './elements';
+import {
+  REACTION_DAMAGE,
+  REACTION_RADIUS,
+  SUPRACONDUCTION_ARMOR_REDUCTION,
+  ZONE_LIFETIME_TICKS,
+} from './constants';
+import { ELEMENT, elementOf } from './elements';
 import { packElementPair, packZoneKind } from './protocol';
 import {
   REACTION,
   reactionForPair,
   reactionOfId,
+  zoneArmorReduction,
   zoneBurnPerTick,
   zoneLifetimeTicks,
+  zoneSlowFactor,
 } from './reactions';
 
 describe('reactionForPair — une table pilotee par la donnee, pas un switch sur la paire', () => {
-  it('trouve les TROIS reactions de la tache 6, chacune a son propre couple canonique', () => {
+  it('trouve les QUATRE reactions (taches 6 et 7), chacune a son propre couple canonique', () => {
     const surchauffe = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE));
     const embrasement = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX));
     const courtCircuit = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
+    const supraconduction = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.FOUDRE));
 
     expect(surchauffe?.id).toBe(REACTION.SURCHAUFFE);
     expect(embrasement?.id).toBe(REACTION.EMBRASEMENT);
     expect(courtCircuit?.id).toBe(REACTION.COURT_CIRCUIT);
-    // Trois identifiants distincts : une table qui les confondrait
+    expect(supraconduction?.id).toBe(REACTION.SUPRACONDUCTION);
+    // Quatre identifiants distincts : une table qui en confondrait deux
     // resoudrait la mauvaise reaction pour au moins un couple.
-    expect(new Set([surchauffe?.id, embrasement?.id, courtCircuit?.id]).size).toBe(3);
+    expect(
+      new Set([surchauffe?.id, embrasement?.id, courtCircuit?.id, supraconduction?.id]).size,
+    ).toBe(4);
   });
 
   it('est INSENSIBLE a l ordre d arrivee, comme `packElementPair`', () => {
@@ -49,6 +60,7 @@ describe('reactionOfId', () => {
     expect(reactionOfId(REACTION.SURCHAUFFE)?.name).toBe('surchauffe');
     expect(reactionOfId(REACTION.EMBRASEMENT)?.name).toBe('embrasement');
     expect(reactionOfId(REACTION.COURT_CIRCUIT)?.name).toBe('court-circuit');
+    expect(reactionOfId(REACTION.SUPRACONDUCTION)?.name).toBe('supraconduction');
   });
 
   it('rend `undefined` pour `REACTION.AUCUNE` (0) : aucune ligne ne le porte', () => {
@@ -139,5 +151,74 @@ describe('Embrasement et Court-circuit reutilisent les grandeurs generiques de l
   it('Court-circuit porte REACTION_DAMAGE par saut', () => {
     const def = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
     expect(def?.damage).toBe(REACTION_DAMAGE);
+  });
+});
+
+/**
+ * `zoneSlowFactor` — la tache 7 de l'etape 5b : le facteur de vitesse DERIVE
+ * du kind empaquete, lu par `Horde#computeSlow` (`shared/horde.ts`).
+ */
+describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', () => {
+  it('rend le facteur de l element seul quand la zone ne porte aucune reaction', () => {
+    expect(zoneSlowFactor(ELEMENT.GIVRE)).toBe(elementOf(ELEMENT.GIVRE).slowFactor);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.BRAISE, REACTION.AUCUNE))).toBe(
+      elementOf(ELEMENT.BRAISE).slowFactor,
+    );
+  });
+
+  it('rend le facteur de l element seul pour les trois reactions de la tache 6 : aucune n a d effet propre', () => {
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE))).toBe(
+      elementOf(ELEMENT.BRAISE).slowFactor,
+    );
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(
+      elementOf(ELEMENT.BRAISE).slowFactor,
+    );
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(
+      elementOf(ELEMENT.FOUDRE).slowFactor,
+    );
+  });
+
+  /**
+   * ⚠️ **Le test qui separe la combinaison par minimum d'une simple lecture
+   * de l'element.** Le nibble d'element d'une zone de Supraconduction porte
+   * celui du DECLENCHEUR (Givre OU Foudre selon l'ordre d'arrivee) —
+   * `elementOf(zoneElement(kind)).slowFactor` seul rendrait 0,6 ou 1, jamais
+   * 0. Les deux ordres doivent pourtant rendre EXACTEMENT le meme gel total.
+   */
+  it('rend 0 (gel total) pour la Supraconduction, quel que soit l element porte par le nibble', () => {
+    const givreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION));
+    const foudreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.FOUDRE, REACTION.SUPRACONDUCTION));
+    // Non-vacuite : si le nibble d'element etait lu seul, les deux vaudraient
+    // 0,6 et 1 — deux nombres DIFFERENTS, et aucun des deux ne serait 0.
+    expect(elementOf(ELEMENT.GIVRE).slowFactor).not.toBe(0);
+    expect(elementOf(ELEMENT.FOUDRE).slowFactor).not.toBe(0);
+    expect(givreDeclenche).toBe(0);
+    expect(foudreDeclenche).toBe(0);
+  });
+});
+
+/**
+ * `zoneArmorReduction` — la tache 7 de l'etape 5b : l'armure SOUSTRAITE,
+ * DERIVEE du kind empaquete, lue par `ZoneField.armorReductionAt`
+ * (`shared/zones.ts`).
+ */
+describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', () => {
+  it('rend zero pour un kind de reaction nulle : les zones generiques ne rabotent aucune armure', () => {
+    expect(zoneArmorReduction(ELEMENT.GIVRE)).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.GIVRE, REACTION.AUCUNE))).toBe(0);
+  });
+
+  it('rend zero pour les trois reactions de la tache 6 : aucune n a d effet sur l armure', () => {
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE))).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(0);
+  });
+
+  it('rend SUPRACONDUCTION_ARMOR_REDUCTION pour la Supraconduction, quel que soit l element porte', () => {
+    const surGivre = zoneArmorReduction(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION));
+    const surFoudre = zoneArmorReduction(packZoneKind(ELEMENT.FOUDRE, REACTION.SUPRACONDUCTION));
+    expect(SUPRACONDUCTION_ARMOR_REDUCTION).toBeGreaterThan(0);
+    expect(surGivre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    expect(surFoudre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
   });
 });

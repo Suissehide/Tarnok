@@ -16,6 +16,8 @@ import { entityIdOf, Horde } from './horde';
 import { HordeHistory } from './horde-history';
 import { hpScale } from './paliers';
 import { PlayerHistory } from './player-history';
+import { packZoneKind } from './protocol';
+import { REACTION } from './reactions';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
 import { ZoneField } from './zones';
@@ -1725,17 +1727,24 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
 
   /**
    * Le scenario commun : cinq participants, mille entites, et un serveur qui
-   * pose des zones de Givre sur cinq de ses propres entites tous les
-   * `ZONE_INTERVAL` ticks. Chaque client l'apprend `delay` ticks plus tard.
+   * pose des zones sur cinq de ses propres entites tous les `ZONE_INTERVAL`
+   * ticks. Chaque client l'apprend `delay` ticks plus tard.
    *
    * `withReplay` bascule entre les deux strategies — la SEULE difference entre
-   * Z1 et Z2. `delayOverride` sert au scenario Z3 (hors anneau). `element`
-   * sert au temoin sans ralentissement.
+   * Z1 et Z2. `delayOverride` sert au scenario Z3 (hors anneau).
+   *
+   * ⚠️ **`kind` depuis la tache 7 de l'etape 5b, plus seulement un element
+   * brut.** `packZoneKind(element, 0) === element` pour tout element sur 3
+   * bits (voir le docbloc de `ZoneField.spawn`), donc les scenarios Z0 a Z3
+   * qui passent `ELEMENT.GIVRE`/`ELEMENT.NEUTRE` continuent de fonctionner
+   * tels quels ; les scenarios ZF passent un `kind` EMPAQUETE
+   * (`packZoneKind(element, REACTION.SUPRACONDUCTION)`) pour le gel de la
+   * Supraconduction.
    */
   function runZoneScenario(
     mapSeed: number,
     withReplay: boolean,
-    element: number,
+    kind: number,
     delays: readonly number[] = CLIENT_DELAY,
   ): ZoneScenarioResult {
     const parts = Array.from({ length: PARTICIPANTS }, () => makeZoneParticipant(mapSeed));
@@ -1806,7 +1815,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
           // `int16`, et le serveur s'impose l'arrondi qu'il inflige au client
           // (meme discipline que les positions de joueurs, constat C1.4).
           reference.zones.spawn(
-            element,
+            kind,
             Math.round(reference.horde.x[slot] ?? 0),
             Math.round(reference.horde.y[slot] ?? 0),
             0,
@@ -1946,6 +1955,84 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
     // La degradation est ASSUMEE, mais jamais silencieuse : elle se compte.
     expect(lateZones).toBeGreaterThan(0);
     expect(result.maxDrift).toBeGreaterThan(0);
+  });
+
+  /**
+   * La Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : `slowFactor:
+   * 0`, la PREMIERE reaction de l'etape a toucher le deplacement — le
+   * contrat que ce fichier protege depuis l'etape 2. Meme decor que les
+   * scenarios Z0 a Z2 ci-dessus, REUTILISE via `runZoneScenario` — un `kind`
+   * empaquete (`packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION)`) au
+   * lieu d'un element brut, rien de plus.
+   *
+   * ⚠️ **Les trois memes preuves que Z0 a Z2, dans le meme ordre, et il faut
+   * les trois** : ZF0 prouve que le gel MORD (sans quoi 0,000 px au ZF2 ne
+   * prouverait rien), ZF1 prouve que sans rejeu ca derive reellement (le
+   * zero de ZF2 mesure alors quelque chose), ZF2 est le test qui compte —
+   * avec rejeu, la derive retombe a (quasi) zero malgre le gel total.
+   */
+  describe('etape 5b tache 7 : la Supraconduction fige, et le rejeu la date au tick', () => {
+    const SUPRA_KIND = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
+
+    /**
+     * De combien la reference a-t-elle ete figee ? Compare la meme run avec
+     * de la Supraconduction et avec du Neutre — meme graine, meme
+     * calendrier, meme geometrie de zones, seul le `kind` change. Meme garde
+     * anti-fixture que `freinage` ci-dessus : sans elle, « 0,000 px » au ZF2
+     * ne distinguerait pas un rejeu exact d'un gel qui ne s'applique a
+     * personne.
+     */
+    function gelage(mapSeed: number): number {
+      const supra = runZoneScenario(mapSeed, true, SUPRA_KIND).reference;
+      const temoin = runZoneScenario(mapSeed, true, ELEMENT.NEUTRE).reference;
+      return maxDriftBetween(temoin, supra);
+    }
+
+    it('scenario ZF0 — le gel mord reellement : la horde figee decroche du temoin neutre', () => {
+      const mordu = gelage(0x5fee_0000);
+      process.stdout.write(
+        `scenario ZF0 (la Supraconduction mord) : ecart maximal entre horde figee et temoin neutre ${mordu.toFixed(3)} px\n`,
+      );
+      // ⚠️ **Gel TOTAL (`slowFactor` 0), pas un simple ralentissement comme
+      // le Givre de Z0** : une entite couverte n'avance plus DU TOUT tant
+      // que la zone vit, la ou le temoin continue tout du long. Le seuil
+      // attendu est donc le trajet ENTIER d'une entite a la vitesse la plus
+      // lente du bestiaire sur `ZONE_LIFETIME_TICKS`, pas seulement
+      // `(1 - slowFactor)` de cette avance (voir le calcul de Z0). Un
+      // dixieme de ce total suffit a distinguer « ca gele » de « ca ne gele
+      // pas », meme avec des entites qui entrent et sortent des disques.
+      const attenduMin = 0.1 * archetypeOf(0).speed * (ZONE_LIFETIME_TICKS / TICK_HZ);
+      expect(mordu).toBeGreaterThan(attenduMin);
+    });
+
+    it('scenario ZF1 — sans rejeu, une zone de Supraconduction appliquee au present laisse une derive mesurable', () => {
+      const result = runZoneScenario(0x5fee_0001, false, SUPRA_KIND);
+      process.stdout.write(
+        `scenario ZF1 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      // Borne large et volontaire, comme au scenario Z1 : ce scenario existe
+      // pour que la derive EXISTE, pas pour qu'elle reste petite — c'est le
+      // chiffre non nul a cote duquel le zero de ZF2 prend son sens (§2 des
+      // resultats de la tache 6a, la lecon des deux lignes non nulles).
+      expect(result.maxDrift).toBeGreaterThan(1);
+    });
+
+    it('scenario ZF2 — avec rejeu, la derive retombe a (quasi) zero malgre le gel total : le test qui compte', () => {
+      const result = runZoneScenario(0x5fee_0002, true, SUPRA_KIND);
+      process.stdout.write(
+        `scenario ZF2 (avec rejeu, Supraconduction en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      for (const p of result.clients) {
+        // 1 a 3 ticks de retard tiennent largement dans l'anneau.
+        expect(p.lateZones).toBe(0);
+        expect(p.horde.count).toBe(result.reference.count);
+      }
+      expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+    });
   });
 });
 

@@ -23,6 +23,7 @@ import { FlowField } from './flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, type HordeState, leavesDrop } from './horde';
 import { PlayerHistory } from './player-history';
 import { packZoneKind } from './protocol';
+import { REACTION } from './reactions';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
 import { ZoneField } from './zones';
@@ -2520,6 +2521,115 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
       (givree.y[0] ?? 0) - (temoin.y[0] ?? 0),
     );
     expect(ecart).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * La Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : `slowFactor:
+ * 0` sur le champ qu'elle laisse. Elle n'ajoute AUCUN mecanisme
+ * d'immobilisation : c'est le MEME `#computeSlow` que le bloc Givre
+ * ci-dessus, seul le facteur derive (`zoneSlowFactor`, `shared/reactions.ts`)
+ * change. Le describe est separe parce que le SUJET differe (une reaction,
+ * pas un element seul), pas parce que le mecanisme differe.
+ */
+describe('Horde.step — la Supraconduction fige le deplacement (etape 5b, tache 7)', () => {
+  /** Une entite unique, immobile a `(x, y)`, avec sa vitesse posee a la main. */
+  function une(x: number, y: number): Horde {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }));
+    horde.x[0] = x;
+    horde.y[0] = y;
+    return horde;
+  }
+
+  /**
+   * Avance `horde` des ticks `0` a `tick - 1` (le meme chauffage que `pasAu`
+   * du bloc Givre, voir sa doc), puis rend la distance parcourue au tick
+   * `tick`.
+   *
+   * ⚠️ **Sans la garde `toBeGreaterThan(0)` de `pasAu`, deliberement** : ici
+   * la distance ATTENDUE est zero. Une garde qui l'interdirait ferait
+   * rougir le test qu'elle est censee servir.
+   */
+  function pasFigeAu(horde: Horde, fields: FlowField[], tick: number, zones: ZoneField): number {
+    for (let t = 0; t < tick; t++) {
+      horde.step(DT, fields, t, zones);
+    }
+    const x0 = horde.x[0] ?? 0;
+    const y0 = horde.y[0] ?? 0;
+    horde.step(DT, fields, tick, zones);
+    return Math.hypot((horde.x[0] ?? 0) - x0, (horde.y[0] ?? 0) - y0);
+  }
+
+  const MESURE = STEERING_RECOMPUTE_TICKS + 2;
+
+  it('immobilise totalement, quel que soit l element porte par le nibble (Givre OU Foudre declenche)', () => {
+    // ⚠️ **Le point precis de `zoneSlowFactor` : le nibble d'element de la
+    // zone porte celui du DECLENCHEUR** (`ReactionTrigger.element`,
+    // `back/src/combat.ts`), Givre OU Foudre selon l'ordre d'arrivee des
+    // deux elements. `elementOf(ELEMENT.GIVRE).slowFactor` (0,6) et
+    // `elementOf(ELEMENT.FOUDRE).slowFactor` (1) sont TOUS DEUX faux pour la
+    // Supraconduction : seule la combinaison par minimum avec
+    // `ReactionDef.zoneSlowFactor` (0) rend le gel total, dans les deux cas.
+    const fields = fieldsTowards(5000, 1000);
+    const givreDeclenche = new ZoneField();
+    givreDeclenche.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+    const foudreDeclenche = new ZoneField();
+    foudreDeclenche.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, givreDeclenche)).toBe(0);
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, foudreDeclenche)).toBe(0);
+  });
+
+  it('une entite HORS de la zone n est pas figee, a un pixel du bord', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+    const depart = 1000 + ZONE_RADIUS + 1;
+
+    expect(pasFigeAu(une(depart, 1000), fields, MESURE, zones)).toBeGreaterThan(0);
+  });
+
+  it('ne fige PAS au tick de la pose, et fige au suivant — meme `slowsAt` que le Givre', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const auTick = new ZoneField();
+    auTick.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, MESURE);
+    const auPrecedent = new ZoneField();
+    auPrecedent.spawn(
+      packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION),
+      1000,
+      1000,
+      0,
+      MESURE - 1,
+    );
+
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, auTick)).toBeGreaterThan(0);
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, auPrecedent)).toBe(0);
+  });
+
+  /**
+   * Point de revue n° 4 du plan : une zone de Poix et une de Supraconduction
+   * au meme point. La Poix (`slowFactor` neutre, 1) ne doit ni annuler le
+   * gel ni s'y confondre — le minimum de `#computeSlow` doit rendre EXACTEMENT
+   * le facteur de la Supraconduction (0), quel que soit l'ordre de pose.
+   *
+   * ⚠️ **Posees dans les DEUX ordres**, comme la regle generale de cette
+   * etape l'exige des que deux elements se recouvrent dans un decor : voir le
+   * rapport de la tache 7 sur `ZoneField.ampAt`.
+   */
+  it('une zone de Poix superposee ne degele rien : le minimum reste 0, dans les deux ordres de pose', () => {
+    const fields = fieldsTowards(5000, 1000);
+
+    const poixPuisSupra = new ZoneField();
+    poixPuisSupra.spawn(ELEMENT.POIX, 1000, 1000, 0, 0);
+    poixPuisSupra.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+
+    const supraPuisPoix = new ZoneField();
+    supraPuisPoix.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+    supraPuisPoix.spawn(ELEMENT.POIX, 1000, 1000, 0, 0);
+
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, poixPuisSupra)).toBe(0);
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, supraPuisPoix)).toBe(0);
   });
 });
 

@@ -1,7 +1,7 @@
 import { ZONE_CAPACITY, ZONE_RADIUS, ZONE_REFRESH_INTERVAL_TICKS } from './constants';
 import { elementOf } from './elements';
 import { zoneElement } from './protocol';
-import { zoneLifetimeTicks } from './reactions';
+import { zoneArmorReduction, zoneLifetimeTicks } from './reactions';
 
 /**
  * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, **pose par
@@ -337,6 +337,52 @@ export class ZoneField {
       }
     }
     return amp;
+  }
+
+  /**
+   * La reduction d'armure au point `(x, y)` au tick `tick` : la plus forte
+   * `ReactionDef.zoneArmorReduction` parmi les zones VIVANTES qui couvrent ce
+   * point (la Supraconduction, tache 7 de l'etape 5b, est la seule a en
+   * porter une aujourd'hui), et `0` s'il n'y en a aucune.
+   *
+   * ⚠️ **Meme FORME qu'`ampAt` juste au-dessus — meme balayage, meme
+   * `aliveAt`, meme MAXIMUM — pour une raison DIFFERENTE.** L'armure ne
+   * voyage pas d'un octet, exactement comme l'amplification : seul
+   * `armureA` (`back/src/combat.ts`), cote serveur, la lit. Le maximum reste
+   * ici une DECISION DE JEU — deux champs de Supraconduction qui se
+   * recouvrent ne retirent pas le double d'armure — jamais la contrainte
+   * arithmetique qui impose au ralentissement de `Horde#computeSlow` de se
+   * combiner par un minimum EXACT. Voir le docbloc d'`ampAt` pour la
+   * distinction complete entre les deux raisons.
+   *
+   * ⚠️ **`aliveAt`, pas `slowsAt`, meme raison qu'`ampAt`.** Les degats se
+   * resolvent APRES les poses du tick courant : une zone nee ce tick-la
+   * reduit deja l'armure. C'est le deplacement qui exige la borne stricte,
+   * parce que la horde avance AVANT que les zones du tick ne soient posees.
+   *
+   * ⚠️ **DERIVEE de `ReactionDef.zoneArmorReduction`, jamais de l'element du
+   * nibble.** Contrairement a `damageAmp`, l'armure n'est pas une propriete
+   * d'`Element` : `zoneArmorReduction` (`shared/reactions.ts`) la lit
+   * directement du nibble de reaction, sans passer par `zoneElement`.
+   */
+  armorReductionAt(x: number, y: number, tick: number): number {
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    let reduction = 0;
+    for (let z = 0; z < this.#count; z++) {
+      if (!this.aliveAt(z, tick)) {
+        continue;
+      }
+      const dx = (this.x[z] ?? 0) - x;
+      const dy = (this.y[z] ?? 0) - y;
+      if (dx * dx + dy * dy >= r2) {
+        continue;
+      }
+      const factor = zoneArmorReduction(this.kind[z] ?? 0);
+      if (factor > reduction) {
+        reduction = factor;
+      }
+    }
+    return reduction;
   }
 
   /**

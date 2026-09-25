@@ -895,3 +895,29 @@ export const SURCHAUFFE_ZONE_LIFETIME_TICKS = Math.round(ZONE_LIFETIME_TICKS * 1
  * mesure refaite avec ce plafond en place.
  */
 export const COURT_CIRCUIT_MAX_JUMPS = 64;
+
+/**
+ * Armure retiree (SOUSTRAITE, jamais multipliee) a qui se tient dans le champ
+ * laisse par la Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) —
+ * lue par `zoneArmorReduction` (`shared/reactions.ts`), combinee par
+ * `armureA` (`back/src/combat.ts`).
+ *
+ * ⚠️ **0,15, PAS une coincidence : c'est `HEAVY_ARMOR`.** Le docbloc de
+ * `HEAVY_ARMOR` (`shared/archetypes.ts`) le dit texto en la posant : *« c'est
+ * ce qui donne quelque chose a mordre a la Supraconduction, dont l'effet est
+ * precisement de retirer de l'armure »*. Reprendre cette meme valeur ANNULE
+ * exactement l'armure de la pietaille lourde dans la zone (0,15 - 0,15 = 0) —
+ * elle y redevient aussi vulnerable que la legere, qui n'en a jamais eu. Le
+ * boss, lui, ne perd qu'un tiers de la sienne (0,4 -> 0,25) : la
+ * Supraconduction ecrete la pietaille blindee sans desarmer le boss d'un
+ * coup.
+ *
+ * ⚠️ **Bornee a ZERO au site de lecture (`armureA`), jamais ici.** Meme
+ * discipline que `MAX_ARMOR`/`capArmor` : une entite deja peu blindee ne doit
+ * jamais voir son armure passer negative et amplifier les degats au-dela de
+ * `brut x amp`.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire (tache 12).
+ */
+export const SUPRACONDUCTION_ARMOR_REDUCTION = 0.15;

@@ -496,6 +496,34 @@ function applyElement(
 }
 
 /**
+ * L'armure effective au tick `tick` : celle de l'archetype, moins ce que les
+ * champs de Supraconduction qui couvrent l'entite lui retirent (tache 7 de
+ * l'etape 5b).
+ *
+ * ⚠️ **Une fonction, pas un etat.** Un etat ecrit devrait voyager ; une
+ * derivation ne le doit pas — meme forme qu'`aliveAt` et `slowsAt`
+ * (`shared/zones.ts`).
+ *
+ * ⚠️ **`ZoneField.armorReductionAt` fait le balayage et le maximum ; cette
+ * fonction ne fait que la SOUSTRAIRE a l'armure de base, bornee a zero.**
+ * Voir le docbloc d'`armorReductionAt` pour la raison du maximum — une
+ * DECISION DE JEU, PAS celle, arithmetique, du minimum de
+ * `Horde#computeSlow` : l'armure ne voyage pas d'un octet, seul le serveur
+ * l'utilise ici, le client n'apprenant les morts que par `DEATHS`.
+ *
+ * ⚠️ **Bornee a zero, jamais negative.** `MAX_ARMOR`/`capArmor`
+ * (`shared/archetypes.ts`) bornent l'armure d'archetype PAR LE HAUT, a la
+ * LECTURE de la table ; cette fonction la borne symetriquement PAR LE BAS, a
+ * la lecture ICI : un ennemi deja peu blinde ne doit jamais voir `brut x amp
+ * x (1 - armure)` depasser `brut x amp`.
+ */
+export function armureA(horde: Horde, slot: number, zones: ZoneField, tick: number): number {
+  const base = archetypeOf(horde.archetype[slot] ?? 0).armor;
+  const reduction = zones.armorReductionAt(horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
+  return Math.max(0, base - reduction);
+}
+
+/**
  * **Le seul chemin par lequel un ennemi perd des PV.** Meme raison que
  * `Room#grantCard` pour les cartes : deux formules d'armure divergeraient, et
  * le jour ou elles divergent c'est un test qui manque, pas un bug qui se voit.
@@ -507,8 +535,8 @@ function applyElement(
  *
  * ⚠️ **Les deux facteurs sont DERIVES ICI, jamais passes tout calcules.** Les
  * appelants donnent `zones` et `tick` ; l'amplification (`ZoneField.ampAt`, la
- * Poix de la tache 4) et l'armure effective (la Supraconduction de la tache 7
- * la rabotera) se lisent dans cette fonction. Les recevoir deja multiplies
+ * Poix de la tache 4) et l'armure effective (`armureA`, la Supraconduction de
+ * la tache 7) se lisent dans cette fonction. Les recevoir deja multiplies
  * ferait TROIS lieux de derivation aux trois sites d'appel — exactement ce
  * qu'« un seul chemin » existe pour empecher.
  *
@@ -548,7 +576,7 @@ export function appliquerDegats(
   tick: number,
   dead: Set<number> | number[],
 ): void {
-  const armure = archetypeOf(horde.archetype[slot] ?? 0).armor;
+  const armure = armureA(horde, slot, zones, tick);
   const amp = zones.ampAt(horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
   // ⚠️ **AUCUN arrondi, nulle part sur ce chemin.** `Horde.hp` est un
   // `Float32Array` et la combustion y retire deja 0,1 par tick : rien n'impose

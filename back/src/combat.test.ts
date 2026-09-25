@@ -26,6 +26,7 @@ import {
   ORB_DROP_ONE_IN,
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
   XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
@@ -44,6 +45,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   appliquerDegats,
   applyReactions,
+  armureA,
   type ChargeTarget,
   type ContactPlayer,
   markInZones,
@@ -2070,6 +2072,172 @@ describe('la Poix amplifie reellement les degats retires (tache 4, ferme M19)', 
     expect(HEAVY_HP - 6 * elementOf(ELEMENT.POIX).damageAmp * (1 - HEAVY_ARMOR)).not.toBe(
       HEAVY_HP - coupSurLourd(6),
     );
+  });
+});
+
+/**
+ * `armureA` — la Supraconduction rabote l armure (etape 5b, tache 7).
+ *
+ * ⚠️ **Une derivation, jamais un etat.** `appliquerDegats` l appelle a
+ * chaque coup, exactement comme elle appelle `zones.ampAt` — voir son
+ * docbloc. Ce bloc garde `armureA` isolement, le suivant garde le CHEMIN
+ * (`appliquerDegats` la consulte reellement).
+ */
+describe('armureA — la Supraconduction rabote l armure (etape 5b, tache 7)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP)?.id ?? -1;
+
+  it('sans zone, rend l armure de l archetype telle quelle', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0, LOURD);
+    expect(armureA(horde, 0, solNu(), 0)).toBe(HEAVY_ARMOR);
+  });
+
+  it('dans une zone de Supraconduction, retire exactement SUPRACONDUCTION_ARMOR_REDUCTION', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    // ⚠️ **Choisie a la tache 7 pour exactement annuler HEAVY_ARMOR** (voir
+    // le docbloc de `SUPRACONDUCTION_ARMOR_REDUCTION`, `shared/constants.ts`)
+    // — verifie la coincidence plutot que de la supposer, sinon le `toBe(0)`
+    // ci-dessous ne prouverait rien de plus qu une soustraction quelconque.
+    expect(SUPRACONDUCTION_ARMOR_REDUCTION).toBe(HEAVY_ARMOR);
+    expect(armureA(horde, 0, zones, 0)).toBe(0);
+  });
+
+  it('ne rend jamais une armure negative : la legere, deja sans armure, reste a zero', () => {
+    // La pietaille legere n a aucune armure (voir « reduit le coup de l
+    // armure de l ARCHETYPE, et le leger n en a pas », plus haut) : la
+    // Supraconduction n a donc rien de plus a lui retirer.
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, LEGER);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    expect(armureA(horde, 0, zones, 0)).toBe(0);
+  });
+
+  it('le boss ne perd qu une partie de la sienne : BOSS_ARMOR - SUPRACONDUCTION_ARMOR_REDUCTION, jamais zero', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, BOSS_ARCHETYPE);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    expect(armureA(horde, 0, zones, 0)).toBeCloseTo(
+      BOSS_ARMOR - SUPRACONDUCTION_ARMOR_REDUCTION,
+      10,
+    );
+    // Contrairement a la lourde : le boss garde un reste d armure positif.
+    expect(armureA(horde, 0, zones, 0)).toBeGreaterThan(0);
+  });
+
+  it('hors de la zone, aucun effet', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 500 + ZONE_RADIUS, 500, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    expect(armureA(horde, 0, zones, 0)).toBe(HEAVY_ARMOR);
+  });
+
+  it('une zone portant une AUTRE reaction (Surchauffe) ne rabote rien : seule la Supraconduction a un effet d armure', () => {
+    // Meme discipline que `zoneArmorReduction` (shared/reactions.test.ts) :
+    // les trois reactions de la tache 6 n ont aucun effet sur l armure.
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, LOURD);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 500, 500, 0, 0);
+
+    expect(armureA(horde, 0, zones, 0)).toBe(HEAVY_ARMOR);
+  });
+});
+
+/**
+ * `appliquerDegats` consulte reellement `armureA`, pas l armure brute de la
+ * table — le pendant du bloc « les TROIS sites passent par le chemin
+ * unique » (tache 1) pour l amplification.
+ */
+describe('appliquerDegats passe par armureA, pas par l armure brute de l archetype (etape 5b, tache 7)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  it('la lourde encaisse le coup PLEIN dans une zone de Supraconduction : armure a zero', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, LOURD);
+    horde.hp[0] = 30;
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    appliquerDegats(horde, 0, 24, zones, 0, new Set());
+
+    // Armure a zero dans la zone (voir le describe `armureA` ci-dessus) :
+    // 24 x (1 - 0) = 24 entiers retires, contre 20,4 hors zone (tache 1,
+    // « reduit le coup de l armure de l ARCHETYPE »). 30 - 24 = 6.
+    expect(horde.hp[0]).toBeCloseTo(6, 5);
+  });
+
+  /**
+   * Point de revue n° 4 du plan : une zone de Poix et une de Supraconduction
+   * sur le meme ennemi. Les deux effets sont derives au MEME endroit
+   * (`appliquerDegats`) — l'un amplifie (`ampAt`), l'autre desarme
+   * (`armureA`) — et ne doivent ni s'annuler ni se confondre.
+   *
+   * ⚠️ **Posees dans les DEUX ordres**, meme si ici chaque zone n'alimente
+   * qu'un seul des deux facteurs (aucun recouvrement de MEME nature) — la
+   * regle generale de cette etape le demande des qu'un decor superpose deux
+   * elements (voir le rapport de la tache 7 sur la mutation d'`ampAt`).
+   */
+  it('un ennemi poisse ET gele subit les deux effets, chacun par son chemin, dans les deux ordres de pose', () => {
+    const brut = 5;
+
+    const perte = (zones: ZoneField): number => {
+      const horde = new Horde(10);
+      addOne(horde, 1, 500, 500, LOURD);
+      horde.hp[0] = 1000;
+      appliquerDegats(horde, 0, brut, zones, 0, new Set());
+      return 1000 - (horde.hp[0] ?? 0);
+    };
+
+    const sansZone = new ZoneField();
+
+    const poixSeul = new ZoneField();
+    poixSeul.spawn(ELEMENT.POIX, 500, 500, 0, 0);
+
+    const supraSeul = new ZoneField();
+    supraSeul.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    const poixPuisSupra = new ZoneField();
+    poixPuisSupra.spawn(ELEMENT.POIX, 500, 500, 0, 0);
+    poixPuisSupra.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    const supraPuisPoix = new ZoneField();
+    supraPuisPoix.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+    supraPuisPoix.spawn(ELEMENT.POIX, 500, 500, 0, 0);
+
+    const perteSansZone = perte(sansZone);
+    const pertePoixSeul = perte(poixSeul);
+    const perteSupraSeul = perte(supraSeul);
+    const perteCombinee1 = perte(poixPuisSupra);
+    const perteCombinee2 = perte(supraPuisPoix);
+
+    // Les deux ordres de pose rendent EXACTEMENT le meme resultat : chaque
+    // zone n alimente qu un seul des deux facteurs, aucune confusion entre
+    // les deux chemins.
+    expect(perteCombinee1).toBe(perteCombinee2);
+
+    // Ni annulation ni confusion : la combinaison retire STRICTEMENT plus
+    // que chaque effet seul, et chaque effet seul STRICTEMENT plus que rien.
+    expect(perteCombinee1).toBeGreaterThan(pertePoixSeul);
+    expect(perteCombinee1).toBeGreaterThan(perteSupraSeul);
+    expect(pertePoixSeul).toBeGreaterThan(perteSansZone);
+    expect(perteSupraSeul).toBeGreaterThan(perteSansZone);
+
+    // Et la valeur EXACTE : brut x damageAmp(Poix) x (1 - armureA), avec
+    // armureA = 0 dans la zone (HEAVY_ARMOR - SUPRACONDUCTION_ARMOR_REDUCTION
+    // = 0, verifie dans le describe `armureA` ci-dessus).
+    const attendu = brut * elementOf(ELEMENT.POIX).damageAmp * 1;
+    expect(perteCombinee1).toBeCloseTo(attendu, 10);
   });
 });
 

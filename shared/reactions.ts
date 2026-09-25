@@ -1,12 +1,13 @@
 import {
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_BURN_PER_TICK,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
   ZONE_LIFETIME_TICKS,
 } from './constants';
-import { ELEMENT } from './elements';
-import { packElementPair, zoneReaction } from './protocol';
+import { ELEMENT, elementOf } from './elements';
+import { packElementPair, zoneElement, zoneReaction } from './protocol';
 
 /**
  * La table des reactions a effet SPECIFIQUE (tache 6 de l'etape 5b) : meme
@@ -32,6 +33,7 @@ export const REACTION = {
   SURCHAUFFE: 1,
   EMBRASEMENT: 2,
   COURT_CIRCUIT: 3,
+  SUPRACONDUCTION: 4,
 } as const;
 
 export interface ReactionDef {
@@ -61,6 +63,28 @@ export interface ReactionDef {
   readonly radius: number;
   /** Degats d'un effet geometrique ou en chaine instantane (0 : n/a). */
   readonly damage: number;
+  /**
+   * Facteur de vitesse propre a la zone laissee par cette reaction (1 :
+   * aucun effet propre — la Supraconduction, tache 7 de l'etape 5b, est la
+   * seule a en porter un aujourd'hui).
+   *
+   * ⚠️ **Combine par MINIMUM avec `Element.slowFactor` de l'element porte par
+   * le `kind`, jamais lu seul.** Voir `zoneSlowFactor` ci-dessous : le nibble
+   * d'element d'une zone de reaction porte celui du DECLENCHEUR
+   * (`ReactionTrigger.element`), qui varie selon l'ordre d'arrivee des deux
+   * elements — lire `elementOf(zoneElement(kind)).slowFactor` seul rendrait
+   * une reponse different selon cet ordre, jamais la meme.
+   */
+  readonly zoneSlowFactor: number;
+  /**
+   * Armure SOUSTRAITE (jamais multipliee) a qui se tient dans la zone
+   * laissee par cette reaction (0 : aucun effet).
+   *
+   * ⚠️ **N'a PAS d'equivalent porte par `Element`, contrairement a
+   * `zoneSlowFactor`.** Rien a combiner avec le nibble d'element ici : voir
+   * `zoneArmorReduction` ci-dessous.
+   */
+  readonly zoneArmorReduction: number;
 }
 
 const REACTION_DEFS: readonly ReactionDef[] = [
@@ -75,6 +99,10 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneLifetimeTicks: SURCHAUFFE_ZONE_LIFETIME_TICKS,
     radius: 0,
     damage: 0,
+    // Ni ralentissement ni reduction d'armure propres : Surchauffe agit par
+    // la brulure, pas par le deplacement ou la defense.
+    zoneSlowFactor: 1,
+    zoneArmorReduction: 0,
   },
   {
     // Embrasement (Braise + Poix) : degats instantanes a tout ennemi POISSE
@@ -90,6 +118,8 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneLifetimeTicks: 0,
     radius: REACTION_RADIUS,
     damage: REACTION_DAMAGE,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: 0,
   },
   {
     // Court-circuit (Foudre + Poix) : `chainTargets` (shared/chain.ts),
@@ -103,6 +133,27 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneLifetimeTicks: 0,
     radius: 0,
     damage: REACTION_DAMAGE,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: 0,
+  },
+  {
+    // Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : vitesse
+    // NULLE et armure rabotee dans la zone laissee — ni brulure ni effet
+    // geometrique instantane, donc les quatre premiers champs restent a leur
+    // valeur neutre. Voir `Horde#computeSlow` (shared/horde.ts, le MINIMUM
+    // qui la fait voyager) et `armureA` (back/src/combat.ts, le MAXIMUM qui
+    // ne la fait pas voyager) pour les deux chemins qui la lisent.
+    id: REACTION.SUPRACONDUCTION,
+    name: 'supraconduction',
+    pair: packElementPair(ELEMENT.GIVRE, ELEMENT.FOUDRE),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: 0,
+    // 0 : gel total, quel que soit l'element porte par le nibble (Givre OU
+    // Foudre selon l'ordre d'arrivee du declencheur) — voir `zoneSlowFactor`.
+    zoneSlowFactor: 0,
+    zoneArmorReduction: SUPRACONDUCTION_ARMOR_REDUCTION,
   },
 ];
 
@@ -133,4 +184,44 @@ export function zoneLifetimeTicks(kind: number): number {
 /** Le degat par tick qu'une zone inflige d'elle-meme, derive de son `kind` empaquete (0 : elle ne brule pas). */
 export function zoneBurnPerTick(kind: number): number {
   return reactionOfId(zoneReaction(kind))?.zoneBurnPerTick ?? 0;
+}
+
+/**
+ * Le facteur de vitesse qu'une zone impose, DERIVE de son `kind` empaquete —
+ * lu par `Horde#computeSlow` (`shared/horde.ts`), qui VOYAGE des deux cotes
+ * du fil.
+ *
+ * ⚠️ **Le MINIMUM de l'element porte ET de la reaction, jamais l'un seul.**
+ * Le nibble d'element d'une zone de reaction porte celui du DECLENCHEUR
+ * (`ReactionTrigger.element`), qui varie selon l'ordre d'arrivee des deux
+ * elements. Pour la Supraconduction (Givre + Foudre), le nibble d'element
+ * porte Givre OU Foudre selon cet ordre — `elementOf(zoneElement(kind)).slowFactor`
+ * seul rendrait donc 0,6 (Givre) ou 1 (Foudre), jamais le gel total que la
+ * reaction impose. Combiner par minimum avec `ReactionDef.zoneSlowFactor`
+ * (0 pour la Supraconduction) rend le resultat INDEPENDANT de cet ordre :
+ * `min(0,6, 0)` et `min(1, 0)` valent tous deux 0.
+ *
+ * ⚠️ **Meme raison arithmetique que le minimum de `Horde#computeSlow`, pas
+ * une decision de jeu** — voir son docbloc : cette grandeur voyage, et
+ * l'ordre d'iteration des zones n'est pas garanti identique des deux cotes du
+ * fil, donc seule une combinaison exactement commutative et associative
+ * survit.
+ */
+export function zoneSlowFactor(kind: number): number {
+  const elementFactor = elementOf(zoneElement(kind)).slowFactor;
+  const reactionFactor = reactionOfId(zoneReaction(kind))?.zoneSlowFactor ?? 1;
+  return Math.min(elementFactor, reactionFactor);
+}
+
+/**
+ * L'armure qu'une zone retire, DERIVEE de son `kind` empaquete (0 : aucun
+ * effet) — lue par `ZoneField.armorReductionAt` (`shared/zones.ts`), qui ne
+ * voyage jamais (voir `armureA`, `back/src/combat.ts`).
+ *
+ * ⚠️ **Aucune combinaison avec l'element du nibble ici, contrairement a
+ * `zoneSlowFactor`.** `Element` ne porte aucun champ d'armure : seule la
+ * reaction en decide.
+ */
+export function zoneArmorReduction(kind: number): number {
+  return reactionOfId(zoneReaction(kind))?.zoneArmorReduction ?? 0;
 }

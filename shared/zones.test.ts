@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
   ZONE_CAPACITY,
   ZONE_LIFETIME_TICKS,
@@ -655,18 +656,31 @@ describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le p
     expect(zones.ampAt(500, 500, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
   });
 
-  it('BRAISE (amp neutre) et POIX (amp > 1) qui se recouvrent : le plus FORT gagne, jamais le plus faible', () => {
-    // ⚠️ **Le test qui tue le minimum sur un recouvrement reel.** Deux
-    // zones d'amplifications DIFFERENTES : le minimum rendrait 1 (celui de
-    // la Braise), exactement comme si la Poix n'etait pas la — un bug
-    // invisible en jeu, une flaque de Poix qui n'amplifierait plus rien des
-    // qu'une autre zone la recouvre. Le maximum rend celui de la Poix.
+  it('POIX (amp > 1) puis BRAISE (amp neutre) qui se recouvrent : le plus FORT gagne, jamais le plus faible', () => {
+    // ⚠️ **Le test qui tue le minimum sur un recouvrement reel — ET
+    // l'affectation inconditionnelle (revue de la tache 7).** Deux zones
+    // d'amplifications DIFFERENTES : le minimum rendrait 1 (celui de la
+    // Braise), exactement comme si la Poix n'etait pas la — un bug invisible
+    // en jeu, une flaque de Poix qui n'amplifierait plus rien des qu'une
+    // autre zone la recouvre. Le maximum rend celui de la Poix.
+    //
+    // ⚠️ **La Poix est posee EN PREMIER ici, deliberement — pas en second
+    // comme le reste du fichier.** Remplacer `if (factor > amp) { amp =
+    // factor; }` par une affectation inconditionnelle `amp = factor;` dans
+    // `ampAt` survivait a toute la suite avant cette inversion : les deux
+    // AUTRES tests a deux zones de ce fichier posent toujours la zone la
+    // plus forte en SECOND, si bien que la derniere ecriture coincidait avec
+    // le vrai maximum. Ici, la zone la plus forte (Poix) est ecrasee en
+    // dernier par la plus faible (Braise) si l'affectation est
+    // inconditionnelle : le resultat tomberait a 1 au lieu de 1,5, et cette
+    // assertion rougirait. Verifie par application de la mutation, pas
+    // raisonne (rapport de la tache 7).
     //
     // Deux elements DIFFERENTS, comme le test voisin plus haut : deux zones
     // du meme element au meme point fusionneraient (voir `spawn`).
     const zones = new ZoneField();
-    expect(zones.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(0);
-    expect(zones.spawn(ELEMENT.POIX, 100, 0, 0, 0)).toBe(1);
+    expect(zones.spawn(ELEMENT.POIX, 100, 0, 0, 0)).toBe(0);
+    expect(zones.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(1);
     expect(zones.count).toBe(2);
 
     expect(zones.ampAt(100, 0, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
@@ -693,5 +707,84 @@ describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le p
     expect(zones.count).toBe(2); // pas de fusion : bien deux flaques distinctes
 
     expect(zones.ampAt(ZONE_RADIUS / 2, 0, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+});
+
+/**
+ * `ZoneField.armorReductionAt` — la tache 7 de l'etape 5b : meme FORME
+ * qu'`ampAt` ci-dessus (meme balayage, meme `aliveAt`, meme MAXIMUM), pour
+ * une raison DIFFERENTE — voir son docbloc. La Supraconduction (Givre +
+ * Foudre) est la seule reaction a porter un `zoneArmorReduction` non nul
+ * aujourd'hui.
+ */
+describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 7)', () => {
+  it('rend 0 sur un sol nu : aucune zone, aucune reduction', () => {
+    const zones = new ZoneField();
+    expect(zones.armorReductionAt(0, 0, 0)).toBe(0);
+    expect(zones.armorReductionAt(-1234.5, 678.9, 42)).toBe(0);
+  });
+
+  it('rend 0 dans une zone de reaction nulle, ou des trois reactions de la tache 6 : aucune ne rabote l armure', () => {
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 100, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 300, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT), 500, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT), 700, 0, 0, 0);
+
+    expect(zones.armorReductionAt(100, 0, 0)).toBe(0);
+    expect(zones.armorReductionAt(300, 0, 0)).toBe(0);
+    expect(zones.armorReductionAt(500, 0, 0)).toBe(0);
+    expect(zones.armorReductionAt(700, 0, 0)).toBe(0);
+  });
+
+  it('rend SUPRACONDUCTION_ARMOR_REDUCTION dans sa zone, strictement positif', () => {
+    const zones = new ZoneField();
+    expect(zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0)).toBe(
+      0,
+    );
+    expect(SUPRACONDUCTION_ARMOR_REDUCTION).toBeGreaterThan(0);
+    expect(zones.armorReductionAt(500, 500, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+
+  it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 0, 0, 0, 0);
+
+    // Dedans : la zone porte.
+    expect(zones.armorReductionAt(ZONE_RADIUS - 1, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    // Pile sur le cercle : la borne est STRICTE, comme `ampAt` et `slowsAt`.
+    expect(zones.armorReductionAt(ZONE_RADIUS, 0, 0)).toBe(0);
+    // Perimee : `aliveAt` la saute, meme au centre exact.
+    expect(zones.armorReductionAt(0, 0, ZONE_LIFETIME_TICKS)).toBe(0);
+    // Et elle vit encore au dernier tick de sa duree de vie.
+    expect(zones.armorReductionAt(0, 0, ZONE_LIFETIME_TICKS - 1)).toBe(
+      SUPRACONDUCTION_ARMOR_REDUCTION,
+    );
+  });
+
+  /**
+   * ⚠️ **Deux zones qui se recouvrent rendent le MAXIMUM, jamais la
+   * somme — meme raisonnement qu'`ampAt`, et posees dans les DEUX ordres**
+   * (regle generale de cette etape des qu'un decor superpose deux elements,
+   * voir le rapport de la tache 7 sur la mutation d'`ampAt`) : une zone
+   * neutre (reduction 0) et une de Supraconduction (reduction
+   * `SUPRACONDUCTION_ARMOR_REDUCTION`), dans chaque ordre de pose.
+   */
+  it('DEUX zones qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme, dans les deux ordres de pose', () => {
+    const neutrePuisSupra = new ZoneField();
+    expect(neutrePuisSupra.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(0);
+    expect(
+      neutrePuisSupra.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 100, 0, 0, 0),
+    ).toBe(1);
+    expect(neutrePuisSupra.count).toBe(2);
+    expect(neutrePuisSupra.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+
+    const supraPuisNeutre = new ZoneField();
+    expect(
+      supraPuisNeutre.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 100, 0, 0, 0),
+    ).toBe(0);
+    expect(supraPuisNeutre.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(1);
+    expect(supraPuisNeutre.count).toBe(2);
+    expect(supraPuisNeutre.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
   });
 });
