@@ -868,3 +868,30 @@ export const SURCHAUFFE_BURN_PER_TICK = 0.3;
  * elementaire (tache 12).
  */
 export const SURCHAUFFE_ZONE_LIFETIME_TICKS = Math.round(ZONE_LIFETIME_TICKS * 1.5);
+
+/**
+ * Plafond DUR de sauts pour Court-circuit (Foudre + Poix, tache 6 de l'etape
+ * 5b) — une borne de COUT, PAS une regle de jeu, contrairement a `CHAIN_JUMPS`
+ * de la Foudre ordinaire (qui, lui, EST un reglage de sensation).
+ *
+ * ⚠️ **Trouvee a la revue, mesuree en execution, pas raisonnee.** Le premier
+ * jet passait `jumps = horde.count` a `chainTargets` : chaque saut construit
+ * sa liste de candidats en `O(horde.count)`, donc `jumps = horde.count` rend
+ * l'appel entier `O(horde.count²)` — mesure a **12,90 ms a N = 1 000**, contre
+ * un budget de tick de ~11 ms (`BUDGET_MS` du banc `zones`). Un seul
+ * Court-circuit suffisait a faire sauter le budget.
+ *
+ * ⚠️ **Une fois `chainWhilePoisoned` pre-remplie avec les non-poisses (voir
+ * `back/src/combat.ts`), ce plafond ne coupe presque jamais rien EN JEU** :
+ * `chainTargets` s'arrete deja d'elle-meme des qu'aucun poisse ne reste a
+ * portee de `CHAIN_RADIUS` du dernier maillon touche — la population
+ * POISSEE reelle, meme dans une horde dense, plafonne bien avant ce nombre.
+ * C'est un filet de securite sur le COUT du pire cas, pas un reglage que
+ * l'equipe est censee un jour atteindre en jouant.
+ *
+ * 64 : assez haut pour ne jamais se faire sentir contre le compte de
+ * maillons POISSES qu'une horde plausible porte, assez bas pour ramener le
+ * pire cas de `O(N²)` a `O(64 x N)` — voir le rapport de la tache 6 pour la
+ * mesure refaite avec ce plafond en place.
+ */
+export const COURT_CIRCUIT_MAX_JUMPS = 64;

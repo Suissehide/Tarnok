@@ -114,25 +114,50 @@ export class ZoneField {
    * arrivera (§6.4). **Une borne qui cesse d'etre sous tension n'est pas une
    * borne a retirer.**
    *
-   * Une zone du meme element qui couvre deja le point est donc prolongee — au
-   * plus une fois par `ZONE_REFRESH_INTERVAL_TICKS`, voir plus bas — et rien
-   * n'est cree. **Le compte devient fonction de
-   * la SURFACE couverte**, pas de la cadence ni du nombre d'exemplaires : deux
-   * zones du meme element finissent toujours a plus de `ZONE_RADIUS` l'une de
-   * l'autre. Un joueur qui arrose le meme endroit entretient une zone ; un
-   * joueur qui balaie la carte en pose plusieurs.
+   * Une zone du meme `kind` (element ET type de reaction) qui couvre deja le
+   * point est donc prolongee — au plus une fois par
+   * `ZONE_REFRESH_INTERVAL_TICKS`, voir plus bas — et rien n'est cree. **Le
+   * compte devient fonction de la SURFACE couverte**, pas de la cadence ni du
+   * nombre d'exemplaires : deux zones du meme `kind` finissent toujours a plus
+   * de `ZONE_RADIUS` l'une de l'autre. Un joueur qui arrose le meme endroit du
+   * meme couple d'elements entretient une zone ; un joueur qui balaie la carte,
+   * ou qui declenche un AUTRE couple au meme endroit, en pose plusieurs.
    *
-   * ⚠️ **La fusion est PAR ELEMENT.** Une zone de Braise et une zone de Givre
-   * au meme endroit coexistent — c'est precisement leur recouvrement qui
-   * declenche la reaction du §5.2, et les fusionner supprimerait la seconde
-   * voie du §6.3 de l'orientation.
+   * ⚠️ **La fusion compare le `kind` COMPLET, PAS le seul element — corrige a
+   * la revue de la tache 6, apres une mesure qui a pris le defaut en
+   * flagrant delit.** La version precedente ne comparait que `zoneElement` :
+   * deux zones de MEME element mais de `kind` different (une Surchauffe et un
+   * Choc thermique generique, tous deux BRAISE) se confondaient l'une dans
+   * l'autre — et LAQUELLE des deux gagnait dependait de l'ORDRE d'arrivee :
    *
-   * ⚠️ **PAR ELEMENT reste vrai depuis la tache 5 de l'etape 5b, malgre
-   * `kind`.** La comparaison decode les deux cotes avec `zoneElement` avant de
-   * les confronter : deux champs du meme element mais de types de reaction
-   * DIFFERENTS (Surchauffe qui se prolonge sur un Choc thermique tout neuf,
-   * par exemple) doivent fusionner comme avant, pas coexister parce que leurs
-   * octets bruts different.
+   * | Ordre | `count` | `kind` retenu | consequence |
+   * | --- | --- | --- | --- |
+   * | generique BRAISE, puis Surchauffe a 10 px | 1 | `1` (BRAISE, reaction nulle) | Surchauffe ne brule jamais |
+   * | Surchauffe, puis generique BRAISE a 10 px | 1 | `9` (BRAISE, Surchauffe) | un Choc thermique ordinaire brule 4,5 s pour des joueurs qui n'ont jamais fait Braise+Foudre |
+   *
+   * Deux memes objets, deux ordres, deux resultats opposes — et le cas est
+   * ATTEIGNABLE aujourd'hui : Braise + Givre avec la Braise en second produit
+   * deja un champ d'element Braise, indistinguable d'un Surchauffe pour un
+   * predicat qui ne regarde que l'element. **Deux zones de `kind` different
+   * sont deux objets differents et ne fusionnent pas** — c'est la seule regle
+   * independante de l'ordre par construction. La fusion existe pour empecher
+   * un joueur de peindre la carte avec LA MEME zone, pas pour confondre deux
+   * effets distincts qui partagent un element.
+   *
+   * ⚠️ **Une zone de Braise et une zone de Givre au meme endroit coexistent**
+   * (deux `kind` differents par construction, puisque l'element differe) —
+   * c'est precisement leur recouvrement qui declenche la reaction du §5.2, et
+   * les fusionner supprimerait la seconde voie du §6.3 de l'orientation. Ca
+   * reste vrai apres la correction : comparer le `kind` complet ne fait que
+   * SEPARER en plus les zones de meme element mais de `kind` different, jamais
+   * fusionner celles d'elements differents.
+   *
+   * ⚠️ **Consequence mesuree sur `ZONE_CAPACITY` (128) : voir le rapport de la
+   * tache 6, §« la fusion perdait le nibble ».** Plus de zones vivantes
+   * simultanement des que plusieurs couples partagent un element — la tache 10
+   * doit reprendre le banc `zones` avec un decor qui declenche reellement
+   * plusieurs `kind` d'un meme element (aujourd'hui bloque par l'absence
+   * d'armes de Foudre et de Poix, tache 9).
    *
    * ⚠️ **La fusion n'est pas `overlaps`.** Elle teste si le POINT tombe dans
    * une zone existante (distance < `ZONE_RADIUS`), pas si deux disques se
@@ -166,7 +191,11 @@ export class ZoneField {
   spawn(kind: number, x: number, y: number, playerId: number, tick: number): number {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
     for (let i = 0; i < this.#count; i++) {
-      if (zoneElement(this.kind[i] ?? 0) !== zoneElement(kind)) {
+      // ⚠️ **Le `kind` COMPLET, pas `zoneElement(kind)` seul.** Voir le
+      // docbloc ci-dessus : comparer par element confondait deux effets
+      // distincts qui partagent un element, et le resultat dependait de
+      // l'ordre d'arrivee — un bug de fusion, pas une simplification.
+      if ((this.kind[i] ?? 0) !== kind) {
         continue;
       }
       if (!this.aliveAt(i, tick)) {

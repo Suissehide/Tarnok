@@ -7,6 +7,7 @@ import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
+  COURT_CIRCUIT_MAX_JUMPS,
   ORB_PICKUP_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
@@ -659,28 +660,35 @@ function damagePoisonedInRadius(
 
 /**
  * Court-circuit (Foudre + Poix, tache 6 de l'etape 5b) : `chainTargets`
- * (`shared/chain.ts`, tache 2), `jumps` NON borne, tant que les cibles
- * restent POISSEES — **reutilise la meme fonction que la chaine de Foudre,
- * elle n'est pas reecrite.**
+ * (`shared/chain.ts`, tache 2) sur la seule population POISSEE — **reutilise
+ * la meme fonction que la chaine de Foudre, elle n'est pas reecrite.**
  *
- * ⚠️ **S'ARRETE au premier saut NON poisse, elle ne le saute pas.** « tant que
- * les cibles sont poissees » (§5 de la spec) lit une CONDITION D'ARRET, pas un
- * filtre : une cible saine rompt le court-circuit plutot que de le laisser
- * continuer par-dessus elle. Une chaine Foudre + Poix + Foudre + Poix, dans
- * cet ordre, ne touche donc que le premier maillon poisse.
+ * ⚠️ **Corrige a la revue de la tache 6, apres deux defauts MESURES en
+ * execution sur le premier jet (un `break` sur le premier maillon non
+ * poisse, `jumps = horde.count`) :**
  *
- * ⚠️ **`jumps` vaut `horde.count`.** `chainTargets` s'arrete deja des qu'un
- * saut ne trouve plus personne dans `CHAIN_RADIUS` (voir sa doc) : un plafond
- * superieur a la population ne borne donc jamais rien en pratique — c'est la
- * forme la plus honnete de « sans limite de sauts » que la fonction existante
- * puisse exprimer sans qu'on en ecrive une seconde.
+ * | Defaut mesure | Consequence | Parade |
+ * | --- | --- | --- |
+ * | `chainTargets` choisit le plus proche NON TOUCHE, poisse ou non | en horde dense, le voisin le plus proche d'un saut est presque toujours SAIN : la chaine s'arretait donc au premier maillon, et « sans limite de sauts » devenait lettre morte | pre-remplir `exclude` avec tous les non-poisses : chaque candidat qu'elle rend est alors poisse PAR CONSTRUCTION, jamais par un filtre a posteriori |
+ * | `jumps = horde.count` fait construire la liste ENTIERE avant que quoi que ce soit ne s'arrete | 12,90 ms mesures a N = 1 000, contre un budget de tick de ~11 ms — un seul Court-circuit fait sauter le budget | `COURT_CIRCUIT_MAX_JUMPS`, un plafond DUR de COUT, pas une regle de jeu (voir sa doc, `shared/constants.ts`) |
  *
- * ⚠️ **Exclut `t.entityId` (l'ennemi qui declenche) et `dead`**, meme
- * raisonnement que le chainage de la Foudre dans `resolveProjectileDamage` :
- * sans la premiere exclusion, le premier saut — mesure depuis SA PROPRE
- * position — le retrouverait a distance nulle et la chaine sauterait sur
- * elle-meme ; sans la seconde, un voisin deja tue par une reaction PRECEDENTE
- * du meme tick recevrait un coup qu'il ne peut plus propager.
+ * Les deux parades resolvent aussi la lecture de « tant que les cibles sont
+ * poissees » (§5 de la spec) : la chaine ne s'arrete plus SUR un maillon
+ * sain, elle ne le voit tout simplement jamais — elle saute PAR-DESSUS,
+ * directement au poisse suivant, exactement comme un court-circuit reel
+ * ignore ce qui ne conduit pas.
+ *
+ * ⚠️ **Exclut aussi `t.entityId` (l'ennemi qui declenche) et `dead`**, meme
+ * raisonnement que le chainage de la Foudre dans `resolveProjectileDamage` —
+ * et PAS redondant avec le filtre « non poisse » ci-dessus, malgre les
+ * apparences. Un ennemi qui vient de reagir ressort NU (§4.3, `applyElement`
+ * remet sa marque a NEUTRE), donc le filtre l'exclurait deja... SAUF s'il est
+ * ensuite RE-marque Poix par `markInZones` plus tard dans le MEME tick — un
+ * ennemi touche par un PROJECTILE de Foudre reagit dans
+ * `resolveProjectileDamage`, qui tourne AVANT `markInZones` (voir l'en-tete de
+ * `Room.step`) : s'il se tient aussi dans une flaque de Poix, il ressort
+ * marque Poix a nouveau avant que ce declencheur-ci ne soit resolu. Sans
+ * l'exclusion explicite, il relancerait sa propre chaine sur lui-meme.
  */
 function chainWhilePoisoned(
   horde: Horde,
@@ -702,7 +710,24 @@ function chainWhilePoisoned(
   if (trigger.entityId !== undefined) {
     exclude.add(trigger.entityId);
   }
-  for (const id of chainTargets(horde, trigger.x, trigger.y, CHAIN_RADIUS, horde.count, exclude)) {
+  // ⚠️ **Le pre-remplissage qui rend chaque saut poisse PAR CONSTRUCTION.**
+  // `chainTargets` ne choisit jamais parmi les identites de `exclude` : en y
+  // mettant tous les non-poisses AVANT de l'appeler, la fonction ne peut plus
+  // rendre qu'une identite poissee, dans l'ordre du plus proche — jamais un
+  // badaud qui romprait la chaine par sa seule proximite.
+  for (let i = 0; i < horde.count; i++) {
+    if (horde.markAt(i, tick) !== ELEMENT.POIX) {
+      exclude.add(horde.entityIdAt(i));
+    }
+  }
+  // ⚠️ **`COURT_CIRCUIT_MAX_JUMPS`, jamais `horde.count`.** Une borne de COUT
+  // — voir sa doc dans `shared/constants.ts` — pas une regle de jeu : la
+  // chaine s'arrete de toute facon des qu'aucun poisse ne reste a portee (voir
+  // `chainTargets`), ce plafond ne coupe qu'un cas devenu improbable une fois
+  // la population filtree, mais borne le pire cas plutot que de le laisser
+  // ouvert.
+  const jumps = Math.min(horde.count, COURT_CIRCUIT_MAX_JUMPS);
+  for (const id of chainTargets(horde, trigger.x, trigger.y, CHAIN_RADIUS, jumps, exclude)) {
     const slot = horde.slotOf(id);
     // ⚠️ **INATTEIGNABLE par construction, meme raisonnement que les autres
     // `slot < 0` de ce fichier** : `chainTargets` ne rend que des identites
@@ -710,9 +735,11 @@ function chainWhilePoisoned(
     if (slot < 0) {
       continue;
     }
-    if (horde.markAt(slot, tick) !== ELEMENT.POIX) {
-      break;
-    }
+    // ⚠️ **Pas de controle `markAt` ici, et c'est delibere.** Le
+    // pre-remplissage ci-dessus garantit deja que `id` est poisse — le
+    // relire ici testerait une invariante que la boucle du dessus vient
+    // d'etablir, jamais une condition qui peut varier PENDANT cette boucle
+    // (les marques ne changent pas au fil d'un seul appel synchrone).
     appliquerDegats(horde, slot, damage, zones, tick, dead);
   }
 }
@@ -783,14 +810,13 @@ export function applyReactions(
     if (def?.id === REACTION.EMBRASEMENT) {
       damagePoisonedInRadius(horde, t.x, t.y, def.radius, def.damage, zones, tick, dead);
     } else if (def?.id === REACTION.COURT_CIRCUIT) {
-      // ⚠️ **`def.damage` vaut ICI `REACTION_DAMAGE`, et AUCUN TEST NE PEUT
-      // separer une lecture de la table d'une constante recopiee — mesure par
-      // mutation, ca survit.** Decision assumee de `shared/reactions.ts` :
-      // Court-circuit reutilise le degat generique, par saut, faute de raison
-      // de jeu d'en choisir un autre. Le jour ou cette valeur divergera de
-      // `REACTION_DAMAGE`, cette ligne redeviendra testable par construction —
-      // introduire un ecart arbitraire ici, juste pour la rendre testable
-      // aujourd'hui, remplacerait une decision de jeu par un artefact de test.
+      // ⚠️ **`def.damage` vaut ICI `REACTION_DAMAGE`, decision assumee de
+      // `shared/reactions.ts` : Court-circuit reutilise le degat generique,
+      // par saut, faute de raison de jeu d'en choisir un autre.** Ca ne
+      // dispense pas de garder la LECTURE : `combat.test.ts` asserte la
+      // perte de PV exacte (`def.damage * 3` au site d'appel y a ete mesure
+      // et tue, revue de la tache 6) — une egalite de VALEUR n'exempte jamais
+      // de garder le CHEMIN qui la lit.
       chainWhilePoisoned(horde, t, def.damage, zones, tick, dead);
     } else {
       damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
@@ -1361,7 +1387,7 @@ export function resolveBurn(
     // pour rien » de « elle a ete sautee ». Sans cette garde, chaque zone
     // (Surchauffe comprise, hors de son propre balayage) reparcourrait
     // `horde.count` pour rien — le O(zones x entites) que le docbloc de
-    // `markInZones` annonce deja, doublé sans raison.
+    // `markInZones` annonce deja, double sans raison.
     if (burn <= 0) {
       continue;
     }

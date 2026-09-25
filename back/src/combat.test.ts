@@ -21,6 +21,7 @@ import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
+  COURT_CIRCUIT_MAX_JUMPS,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
   REACTION_DAMAGE,
@@ -2494,7 +2495,16 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
       new Reactions(),
     );
 
-    expect(horde.hp[horde.slotOf(poisse)]).toBeLessThan(1000);
+    // ⚠️ **La perte EXACTE, pas seulement « moins » : `def.damage * 3` au
+    // site d'appel passait cette suite entiere avant que ce chiffre ne soit
+    // asserte (revue de la tache 6).**
+    //
+    // ⚠️ **Et ce n'est PAS le simple `25 x (1 - 0,15)` : `postZone` pose une
+    // zone de Poix AVANT le balayage de degats (« les champs se posent
+    // avant les degats », voir `applyReactions`), et `poisse` se tient PILE
+    // au centre de CETTE zone — sa propre reaction l'amplifie.**
+    // `damageAmp(Poix) = 1,5` : 25 x 1,5 x (1 - 0,15) = 31,875.
+    expect(horde.hp[horde.slotOf(poisse)]).toBeCloseTo(1000 - 25 * 1.5 * (1 - HEAVY_ARMOR), 5);
     expect(horde.hp[horde.slotOf(sain)]).toBe(1000);
   });
 
@@ -2516,7 +2526,7 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
       new Reactions(),
     );
 
-    expect(horde.hp[horde.slotOf(dedans)]).toBeLessThan(1000);
+    expect(horde.hp[horde.slotOf(dedans)]).toBeCloseTo(1000 - coupSurLourd(REACTION_DAMAGE), 5);
     expect(horde.hp[horde.slotOf(dehors)]).toBe(1000);
   });
 
@@ -2592,17 +2602,31 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
       new Reactions(),
     );
 
-    // Moitie 1 — Embrasement : seul le poisse perd des PV.
-    expect(embrasement.horde.hp[embrasement.horde.slotOf(embrasement.poisse)]).toBeLessThan(1000);
+    // Moitie 1 — Embrasement : seul le poisse perd des PV, et la perte
+    // EXACTE. ⚠️ **Pas `25 x (1 - 0,15)` : `postZone` pose une zone de Poix
+    // AVANT le balayage de degats, et `poisse` se tient PILE en son centre —
+    // sa propre reaction l'amplifie** (`damageAmp(Poix) = 1,5`) :
+    // 25 x 1,5 x (1 - 0,15) = 31,875.
+    const perteAmplifiee = 25 * 1.5 * (1 - HEAVY_ARMOR);
+    expect(embrasement.horde.hp[embrasement.horde.slotOf(embrasement.poisse)]).toBeCloseTo(
+      1000 - perteAmplifiee,
+      5,
+    );
     expect(embrasement.horde.hp[embrasement.horde.slotOf(embrasement.sain)]).toBe(1000);
 
-    // Moitie 2 — Choc thermique generique, MEME decor : les DEUX perdent des
-    // PV, la marque de Poix du premier ne joue ici aucun role de filtre.
-    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.poisse)]).toBeLessThan(
-      1000,
+    // Moitie 2 — Choc thermique generique, MEME decor : les DEUX perdent
+    // EXACTEMENT le meme coup, la marque de Poix du premier ne joue ici aucun
+    // role de filtre. ⚠️ **Et SANS amplification cette fois** : le champ que
+    // laisse CE couple porte l'element Givre (`ELEMENT.GIVRE`), dont
+    // `damageAmp` vaut 1 — seule la Poix amplifie.
+    const perteNormale = coupSurLourd(REACTION_DAMAGE);
+    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.poisse)]).toBeCloseTo(
+      1000 - perteNormale,
+      5,
     );
-    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.sain)]).toBeLessThan(
-      1000,
+    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.sain)]).toBeCloseTo(
+      1000 - perteNormale,
+      5,
     );
   });
 });
@@ -2646,39 +2670,97 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 
     applyReactions(horde, new OrbField(10), 0, [trigger(0, 0)], new ZoneField(), new Reactions());
 
-    // ⚠️ **La ligne qui distingue `horde.count` de `CHAIN_JUMPS`** : le
-    // CINQUIEME maillon, au-dela du plafond de la Foudre ordinaire, a bien
-    // ete touche.
+    // ⚠️ **La ligne qui distingue `horde.count` de `CHAIN_JUMPS`, et la perte
+    // EXACTE d'un coup (25 x (1 - 0,15) = 21,25) : le CINQUIEME maillon, au-dela
+    // du plafond de la Foudre ordinaire, a bien ete touche UNE fois.**
+    const perte = coupSurLourd(REACTION_DAMAGE);
     for (const id of maillons) {
-      expect(horde.hp[horde.slotOf(id)], `maillon ${id}`).toBeLessThan(1000);
+      expect(horde.hp[horde.slotOf(id)], `maillon ${id}`).toBeCloseTo(1000 - perte, 5);
     }
   });
 
-  it('⚠️ s ARRETE au premier maillon NON poisse, elle ne saute pas par-dessus', () => {
-    // Trois maillons alignes, espaces de 100 px (< CHAIN_RADIUS 150) : le
-    // premier saut depuis l origine ne peut atteindre QUE le premier —
-    // chaque saut suivant repart de la cible precedente. A: poisse, B: sain,
-    // C: poisse — C est GEOMETRIQUEMENT atteignable (100 px de B), mais la
-    // chaine doit s arreter a B.
+  /**
+   * ⚠️ **`COURT_CIRCUIT_MAX_JUMPS` EST un plafond dur, pas un chiffre
+   * decoratif.** Un couloir de `COURT_CIRCUIT_MAX_JUMPS + 2` maillons, tous
+   * poisses, tous a portee du precedent : les `COURT_CIRCUIT_MAX_JUMPS`
+   * premiers sont touches, les deux derniers — pourtant geometriquement a
+   * portee — ne le sont pas. Sans ce test, un plafond retire en silence
+   * resterait vert tant que personne ne pose un couloir de cette longueur.
+   */
+  it('⚠️ COURT_CIRCUIT_MAX_JUMPS borne reellement le nombre de sauts', () => {
+    const horde = new Horde(COURT_CIRCUIT_MAX_JUMPS + 10);
+    const maillons: number[] = [];
+    const total = COURT_CIRCUIT_MAX_JUMPS + 2;
+    for (let i = 1; i <= total; i++) {
+      const id = addOne(horde, i, i * 100, 0, LOURD);
+      horde.hp[horde.slotOf(id)] = 1000;
+      horde.applyMark(horde.slotOf(id), ELEMENT.POIX, 3, 0);
+      maillons.push(id);
+    }
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(0, 0)], new ZoneField(), new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    for (let i = 0; i < COURT_CIRCUIT_MAX_JUMPS; i++) {
+      const id = maillons[i];
+      if (id === undefined) {
+        throw new Error('decor incomplet');
+      }
+      expect(horde.hp[horde.slotOf(id)], `maillon ${i + 1}`).toBeCloseTo(1000 - perte, 5);
+    }
+    for (let i = COURT_CIRCUIT_MAX_JUMPS; i < total; i++) {
+      const id = maillons[i];
+      if (id === undefined) {
+        throw new Error('decor incomplet');
+      }
+      expect(horde.hp[horde.slotOf(id)], `maillon ${i + 1}`).toBe(1000);
+    }
+  });
+
+  /**
+   * ⚠️ **SAUTE PAR-DESSUS un maillon SAIN, elle ne s'y arrete pas — corrige a
+   * la revue de la tache 6.** Le premier jet lisait « tant que les cibles
+   * sont poissees » comme une condition d'ARRET (un `break` sur la premiere
+   * cible saine). Mesure en execution : dans une horde dense, le voisin le
+   * plus proche d'un saut est presque toujours SAIN, donc la chaine
+   * s'arretait quasi systematiquement au premier maillon — « sans limite de
+   * sauts entre poisses » devenait lettre morte.
+   *
+   * La forme retenue (§ voir `chainWhilePoisoned`) : les non-poisses sont
+   * EXCLUS de la recherche elle-meme, donc invisibles pour `chainTargets` —
+   * la chaine les traverse comme s'ils n'existaient pas, et continue vers le
+   * prochain poisse tant qu'il reste a portee du DERNIER poisse touche.
+   *
+   * Trois maillons alignes : A (poisse, 100 px de l origine), B (SAIN,
+   * 150 px), C (poisse, 200 px). `distance(origine, A) = 100 < CHAIN_RADIUS`,
+   * `distance(A, C) = 100 < CHAIN_RADIUS` — C n'est PAS a portee de
+   * l'origine ni de B (300 px), il n'est a portee QUE du dernier poisse
+   * touche, A. C'est le decor qui distingue « ignore B et saute a C » de
+   * « la geometrie seule aurait suffi ».
+   */
+  it('⚠️ SAUTE PAR-DESSUS un maillon SAIN pour atteindre le poisse suivant', () => {
     expect(100).toBeLessThan(CHAIN_RADIUS);
+    expect(200).toBeGreaterThan(CHAIN_RADIUS); // B ne peut pas relayer C depuis l origine
     const horde = new Horde(10);
     const a = addOne(horde, 1, 100, 0, LOURD);
-    const b = addOne(horde, 2, 200, 0, LOURD);
-    const c = addOne(horde, 3, 300, 0, LOURD);
+    const b = addOne(horde, 2, 150, 0, LOURD);
+    const c = addOne(horde, 3, 200, 0, LOURD);
     for (const id of [a, b, c]) {
       horde.hp[horde.slotOf(id)] = 1000;
     }
     horde.applyMark(horde.slotOf(a), ELEMENT.POIX, 3, 0);
-    // b : AUCUNE marque.
+    // b : AUCUNE marque — le badaud que la chaine doit ignorer.
     horde.applyMark(horde.slotOf(c), ELEMENT.POIX, 3, 0);
 
     applyReactions(horde, new OrbField(10), 0, [trigger(0, 0)], new ZoneField(), new Reactions());
 
-    expect(horde.hp[horde.slotOf(a)]).toBeLessThan(1000);
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    // ⚠️ La ligne qui prouve le saut : C est HORS de portee de l origine ET de
+    // B, seulement A peut l atteindre — et il a ete atteint.
+    expect(horde.hp[horde.slotOf(c)]).toBeCloseTo(1000 - perte, 5);
+    // B, lui, n a jamais ete une cible : ni touche par la chaine, ni relais.
     expect(horde.hp[horde.slotOf(b)]).toBe(1000);
-    // ⚠️ La ligne qui distingue « s arrete » de « saute par-dessus » : C est
-    // poisse et geometriquement a portee du saut suivant, et pourtant intact.
-    expect(horde.hp[horde.slotOf(c)]).toBe(1000);
   });
 
   /**
@@ -2731,8 +2813,12 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
       new Reactions(),
     );
 
-    // Moitie 1 — Court-circuit atteint la cible en sautant jusqu a elle.
-    expect(courtCircuit.horde.hp[courtCircuit.horde.slotOf(courtCircuit.loin)]).toBeLessThan(1000);
+    // Moitie 1 — Court-circuit atteint la cible en sautant jusqu a elle, pour
+    // la perte EXACTE d'un coup (25 x (1 - 0,15) = 21,25).
+    expect(courtCircuit.horde.hp[courtCircuit.horde.slotOf(courtCircuit.loin)]).toBeCloseTo(
+      1000 - coupSurLourd(REACTION_DAMAGE),
+      5,
+    );
     // Moitie 2 — le generique, meme point d origine, ne porte pas jusque-la.
     expect(generique.horde.hp[generique.horde.slotOf(generique.loin)]).toBe(1000);
   });
@@ -2755,7 +2841,10 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 
     applyReactions(horde, new OrbField(10), 0, [t], new ZoneField(), new Reactions());
 
-    expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(1000);
+    // ⚠️ **Pas `25 x (1 - 0,15)` : `cible` (a 50 px, dans `ZONE_RADIUS` = 70)
+    // se tient dans la zone de Poix que `postZone` vient de poser au point du
+    // declencheur — sa propre reaction l'amplifie** (`damageAmp(Poix) = 1,5`).
+    expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(1000 - 25 * 1.5 * (1 - HEAVY_ARMOR), 5);
     // Le declencheur n a pas ete rappele sur lui-meme.
     expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
   });
@@ -2844,7 +2933,7 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 
     applyReactions(horde, new OrbField(10), 0, triggers, new ZoneField(), new Reactions());
 
-    expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(1000);
+    expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(1000 - coupSurLourd(REACTION_DAMAGE), 5);
     expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
   });
 });

@@ -97,26 +97,62 @@ describe('ZoneField — la pose', () => {
   });
 
   /**
-   * ⚠️ **PAR ELEMENT reste vrai meme quand deux octets DIFFERENT** (tache 5 de
-   * l'etape 5b). Deux `kind` du meme element mais de types de reaction
-   * distincts sont deux octets differents — s'ils n'etaient PAS decodes avant
-   * d'etre compares, `spawn` les traiterait comme deux elements differents et
-   * poserait une seconde zone au lieu de fusionner. `kind !== element` ici
-   * pour chacun des deux appels : un test qui n'empaquetterait qu'avec une
-   * reaction nulle ne distinguerait rien d'une fonction identite.
+   * ⚠️ **NE fusionne PAS deux `kind` de MEME element mais de types de
+   * reaction DIFFERENTS — corrige a la revue de la tache 6.** La version
+   * precedente de ce test affirmait l'inverse (« fusionne... meme si ...
+   * different »), et le code le faisait : le predicat de fusion ne comparait
+   * que `zoneElement`, donc une Surchauffe et un Choc thermique generique,
+   * tous deux BRAISE, se confondaient en un seul objet — et LEQUEL des deux
+   * octets survivait dependait de l'ORDRE d'arrivee (voir le docbloc de
+   * `spawn`, `shared/zones.ts`, pour la mesure : soit Surchauffe ne brule
+   * jamais, soit un Choc thermique ordinaire brule 4,5 s pour des joueurs qui
+   * n'ont jamais fait Braise+Foudre).
+   *
+   * ⚠️ **Les DEUX ordres sont testes.** Un test a un seul ordre passerait
+   * avec un predicat qui retiendrait toujours le PREMIER ou toujours le
+   * SECOND `kind` — un decor qui masquerait exactement le defaut que la
+   * revue a mesure en execution. Ici, les deux octets sont geometriquement
+   * DISTINCTS (des zones qui ne fusionnent jamais), donc le decor ne peut pas
+   * se contenter d'un seul ordre pour le prouver.
    */
-  it('fusionne deux memes elements meme si leurs types de reaction empaquetes different', () => {
+  it('ne fusionne pas deux `kind` du meme element mais de reactions differentes — dans les DEUX ordres', () => {
+    const genericPuisSurchauffe = new ZoneField();
+    const generique = packZoneKind(ELEMENT.BRAISE, 0);
+    const surchauffe = packZoneKind(ELEMENT.BRAISE, 3);
+    expect(generique).not.toBe(surchauffe);
+    genericPuisSurchauffe.spawn(generique, 500, 500, 0, 0);
+    genericPuisSurchauffe.spawn(surchauffe, 500 + 10, 500, 1, 0);
+    expect(genericPuisSurchauffe.count).toBe(2);
+    expect([...genericPuisSurchauffe.kind.slice(0, 2)].sort()).toEqual(
+      [generique, surchauffe].sort(),
+    );
+
+    const surchauffePuisGenerique = new ZoneField();
+    surchauffePuisGenerique.spawn(surchauffe, 500, 500, 1, 0);
+    surchauffePuisGenerique.spawn(generique, 500 + 10, 500, 0, 0);
+    expect(surchauffePuisGenerique.count).toBe(2);
+    expect([...surchauffePuisGenerique.kind.slice(0, 2)].sort()).toEqual(
+      [generique, surchauffe].sort(),
+    );
+  });
+
+  /**
+   * ⚠️ **Deux `kind` de reaction NON nulle mais DIFFERENTE ne fusionnent pas
+   * non plus** — meme element (BRAISE), deux nibbles de reaction distincts,
+   * ni l'un ni l'autre nul. Le cas precedent pourrait laisser croire que
+   * seule « generique contre non-generique » compte ; celui-ci ferme
+   * l'hypothese.
+   */
+  it('ne fusionne pas deux `kind` de MEME element et de DEUX reactions non nulles', () => {
     const zones = new ZoneField();
-    const premier = packZoneKind(ELEMENT.BRAISE, 3);
-    const second = packZoneKind(ELEMENT.BRAISE, 9);
-    expect(premier).not.toBe(ELEMENT.BRAISE);
-    expect(second).not.toBe(ELEMENT.BRAISE);
-    expect(premier).not.toBe(second);
+    const surchauffe = packZoneKind(ELEMENT.BRAISE, 3);
+    const embrasement = packZoneKind(ELEMENT.BRAISE, 9);
+    expect(surchauffe).not.toBe(embrasement);
 
-    zones.spawn(premier, 500, 500, 0, 0);
-    zones.spawn(second, 500, 500, 1, 0);
+    zones.spawn(surchauffe, 500, 500, 0, 0);
+    zones.spawn(embrasement, 500 + 10, 500, 1, 0);
 
-    expect(zones.count).toBe(1);
+    expect(zones.count).toBe(2);
   });
 
   /**
