@@ -134,9 +134,16 @@ describe('chainTargets', () => {
   });
 
   it('rend [] pour `jumps` nul ou negatif, sur une horde pourtant peuplee et a portee', () => {
+    // ⚠️ DEUX candidats a portee, pas un seul : `[].slice(0, -1)` sur un
+    // tableau d'UN SEUL element rend deja [] par accident (index -1 ==
+    // longueur - 1 == 0), donc un decor a un seul candidat ne distingue pas
+    // la garde `jumps <= 0` d'un simple defaut de `Array.prototype.slice`.
+    // Avec deux candidats, `slice(0, -1)` sans la garde rendrait UNE cible —
+    // c'est ce qui rend ce test capable de la voir disparaitre.
     const horde = new Horde();
     spawnAt(horde, 1, 10, 0);
-    expect(horde.count).toBe(1);
+    spawnAt(horde, 2, 20, 0);
+    expect(horde.count).toBe(2);
 
     expect(chainTargets(horde, 0, 0, 100, 0, new Set())).toEqual([]);
     expect(chainTargets(horde, 0, 0, 100, -1, new Set())).toEqual([]);
