@@ -44,8 +44,16 @@ par la Supraconduction et par Verglas, et il n'est pas revisité.
 **Le contrat des PROJECTILES — et c'est la découverte du cadrage.** `shared/projectiles.ts` porte un
 second contrat de réplication, parallèle à celui de la horde : *« simulés localement, jamais
 répliqués… la salve reste calculée identiquement des deux côtés à partir de la même direction
-quantifiée »*, verrouillé par un test de dérivation (deux instances indépendantes, mêmes entrées,
-mêmes projectiles).
+quantifiée »*, que le module dit verrouillé par un test de dérivation (deux instances indépendantes,
+mêmes entrées, mêmes projectiles).
+
+⚠️ **Correction, trouvée en écrivant le plan : ce test verrouille le MAUVAIS CHEMIN.**
+`describe('Projectiles — derivation')` appelle `fireSalvo` — la visée **par cible**, qui prend la horde
+en paramètre — et **jamais `fireSalvoDirected`**, le seul chemin que la production utilise depuis la
+tâche 13 de l'étape 6a (`room.ts:1526`, `client.ts:2190`). Le contrat est donc réel, mais **gardé sur
+une fonction que le jeu n'appelle plus**. C'est l'assertion creuse à l'échelle d'un contrat : le test
+met en scène la bonne intention — deux instances, mêmes entrées, mêmes projectiles — et exerce autre
+chose que ce qu'il protège. **La tâche 3 du plan le solde.**
 
 Une trajectoire ne dépend aujourd'hui que de **quatre** choses : l'arme, le tick, la position du
 tireur, la direction quantifiée. **Aucune ne concerne la horde, et le §4 garantit que ça ne change
