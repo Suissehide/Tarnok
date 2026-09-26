@@ -2726,6 +2726,25 @@ describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () 
     expect(Math.hypot(horde.vx[0] ?? 0, horde.vy[0] ?? 0)).toBeCloseTo(speed, 3);
   });
 
+  it('PILE sur le cercle (distance exacte ZONE_RADIUS) : la borne est STRICTE, recalcul normal', () => {
+    // ⚠️ Meme borne stricte que `ZoneField.slowsAt`/`ampAt`/`armorReductionAt`
+    // (`dx² + dy² < r²`, jamais `<=`) — testee ICI a la distance EXACTE,
+    // contrairement au test precedent qui ne prouve que « un pixel dehors »
+    // et ne peut pas separer `<` de `<=`.
+    const fields = fieldsTowards(5000, 1000);
+    const horde = une(1000 + ZONE_RADIUS, 1000);
+    const tick = prochainRecalcul(horde, 0);
+    horde.vx[0] = 0;
+    horde.vy[0] = -80;
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 1000, 1000, 0, 0);
+
+    horde.step(DT, fields, tick, zones);
+
+    const speed = archetypeOf(horde.archetype[0] ?? 0).speed;
+    expect(Math.hypot(horde.vx[0] ?? 0, horde.vy[0] ?? 0)).toBeCloseTo(speed, 3);
+  });
+
   it('ne s applique PAS au tick de la pose, s applique au suivant — meme `slowsAt` que le Givre et la Supraconduction', () => {
     const fields = fieldsTowards(5000, 1000);
 
@@ -2815,6 +2834,43 @@ describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () 
       (derapee.y[0] ?? 0) - (temoin.y[0] ?? 0),
     );
     expect(ecart).toBeGreaterThan(0);
+  });
+
+  /**
+   * ⚠️ **Le test precedent ne separe PAS l'inertie du `zoneSlowFactor`** —
+   * une derive de position peut venir du seul ralentissement (qui, lui,
+   * continue de passer par `#computeSlow(zones, tick)`, jamais touche par le
+   * parametre `zones` de `#recomputeSteering`). Celui-ci isole l'inertie en
+   * verifiant la NORME de la vitesse TENUE elle-meme : sans zone, un
+   * recalcul normal (aucun voisin) rend une norme EXACTEMENT egale a la
+   * vitesse de l'archetype ; avec Verglas, au moins un recalcul manque tombe
+   * dans la flaque et l'amortit — la norme decroche strictement.
+   */
+  it('spawnCatchingUp amortit la vitesse TENUE elle-meme, pas seulement la position qui en decoule', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const missedTicks = STEERING_RECOMPUTE_TICKS + 2;
+    const o = order({ count: 1, anchorX: 1000, anchorY: 1000, spawnTick: 1 });
+
+    const reperage = new Horde(10);
+    reperage.spawn(o, fields[0]);
+    const zones = new ZoneField();
+    zones.spawn(
+      packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS),
+      reperage.x[0] ?? 0,
+      reperage.y[0] ?? 0,
+      0,
+      0,
+    );
+
+    const derapee = new Horde(10);
+    const temoin = new Horde(10);
+    derapee.spawnCatchingUp(o, missedTicks, DT, fields, zones);
+    temoin.spawnCatchingUp(o, missedTicks, DT, fields);
+
+    expect(temoin.count).toBe(1);
+    const speed = archetypeOf(0).speed;
+    expect(Math.hypot(temoin.vx[0] ?? 0, temoin.vy[0] ?? 0)).toBeCloseTo(speed, 3);
+    expect(Math.hypot(derapee.vx[0] ?? 0, derapee.vy[0] ?? 0)).toBeLessThan(speed - 0.01);
   });
 });
 
