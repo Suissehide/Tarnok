@@ -374,6 +374,33 @@ for (const entites of [1500, 4000]) {
   }
 }
 console.table(chaineRows);
+
+/**
+ * ⚠️ **8 exemplaires n'est PAS un plafond du jeu, et le tableau ci-dessus ne
+ * le disait pas.** `Loadout#addWeapon` (`shared/loadout.ts`) ne borne que le
+ * nombre d'armes DISTINCTES (`WEAPON_SLOTS`, 4) ; les exemplaires d'une meme
+ * arme s'accumulent dans un `Uint16Array` SANS PLAFOND FORMEL —
+ * `#weaponStacks[weaponId] = stacks + 1`, jamais borne. C'est le modele du
+ * jeu depuis l'etape 4 (« aucun niveau d'arme, c'est l'empilement qui fait
+ * la puissance ») : le meme angle mort qui avait deja fait deriver le cout a
+ * cette etape-la, ici rejoue sur la chaine de Foudre. Ce banc doit donc
+ * porter l'axe lui-meme, pas seulement le dire en commentaire.
+ */
+const pileRows: Record<string, unknown>[] = [];
+for (const exemplaires of [16, 32, 64]) {
+  const p95 = porteChaine(exemplaires, 4000, TICKS_CHAINE);
+  pireChaine = Math.max(pireChaine, p95);
+  pileRows.push({
+    entites: 4000,
+    'exemplaires/joueur': exemplaires,
+    'pas p95 (ms)': +p95.toFixed(3),
+    'part du budget': `${((p95 / BUDGET_MS) * 100).toFixed(1)} %`,
+    verdict: p95 < BUDGET_MS ? 'OK' : 'HORS BUDGET',
+  });
+}
+console.log("\n2 bis. Meme porte, l'empilement pousse au-dela de 8 (aucun plafond de jeu)");
+console.table(pileRows);
+
 console.log(
   pireChaine < BUDGET_MS
     ? `VERDICT §7 (chaine) : pire p95 ${pireChaine.toFixed(3)} ms < ${BUDGET_MS.toFixed(3)} ms -> ON GARDE (balayage O(horde) direct)`

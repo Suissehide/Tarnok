@@ -1485,9 +1485,29 @@ export function resolveBurn(
  * derapage qui les y a laisses.
  *
  * Cout : O(zones x entites) pour reperer les glissants (meme ordre que
- * `Horde#computeSlow`/`markInZones`), puis O(k²) sur les k glissants trouves
- * — en pratique borne par la geometrie, `SEPARATION_RADIUS` etant trop
- * petit pour qu'une horde entiere s'y tienne a la fois.
+ * `Horde#computeSlow`/`markInZones`), puis O(k²) sur les k glissants trouves.
+ *
+ * ⚠️ **k n'est PAS borne par « la geometrie » seule — c'est incomplet dans
+ * les DEUX sens, mesure a la tache 10 de l'etape 5b (`back/bench/elements.bench.ts`,
+ * scenario Verglas).** Deux mecanismes DISTINCTS le retiennent, et ils
+ * mordent dans cet ORDRE :
+ *
+ * 1. **La mort par collision, au reglage actuel.** `VERGLAS_COLLISION_DAMAGE_PER_TICK`
+ *    (0,2) tue les glissants entasses en quelques dizaines de ticks, ce qui
+ *    vide la zone avant qu'elle ne deborde — k plafonne a **33** (vague
+ *    ENCIRCLE de 200 a 3500 LOURDS convergeant sur une zone entretenue en
+ *    continu, le pire cas mesure).
+ * 2. **Le tassement a `SEPARATION_RADIUS`, GEOMETRIQUE celui-la.** En
+ *    reduisant le degat de collision (un dixieme, 0,02 : k monte a 54, quasi
+ *    aucune mort ; un vingtieme, 0,01 : k monte a **58** et n'y depasse plus,
+ *    avec ZERO mort observee) — c'est SEULEMENT a ce second palier que la
+ *    geometrie devient la borne active. Au reglage de jeu actuel, c'est le
+ *    premier mecanisme qui joue, pas le second.
+ *
+ * Aucun des deux ne menace le budget : k devrait approcher 380 pour que
+ * l'O(k²) rivalise avec le budget de tick mesure au banc — un facteur x6,5
+ * au-dela du pire k observe meme au reglage degrade. Documente ici pour que
+ * la prochaine lecture de ce docbloc n'affirme plus a moitie une verite.
  */
 export function resolveVerglasCollisions(
   horde: Horde,
