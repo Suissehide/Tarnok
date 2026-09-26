@@ -18,7 +18,7 @@ import {
 } from './constants';
 import { ELEMENT } from './elements';
 import type { FlowField } from './flowfield';
-import { zoneSlowFactor } from './reactions';
+import { zoneInertiaDamping, zoneSlowFactor } from './reactions';
 import { formationPositions, type WaveOrder } from './waves';
 import type { ZoneField } from './zones';
 
@@ -814,7 +814,7 @@ export class Horde {
     charge?: BossCharge | null,
   ): void {
     if (dt > 0) {
-      this.#recomputeSteering(tick, fields);
+      this.#recomputeSteering(tick, fields, 0, this.#count, zones);
       this.#computeSlow(zones, tick);
       this.#advanceByVelocity(0, this.#count, dt);
       this.#applyDeoverlap(0, this.#count);
@@ -941,6 +941,51 @@ export class Horde {
   }
 
   /**
+   * Le facteur de conservation de vitesse au point `(x, y)` au tick `tick` :
+   * le plus PETIT `zoneInertiaDamping` parmi les zones qui RALENTISSENT ce
+   * point (voir `ZoneField.slowsAt`), et `1` s'il n'y en a aucune — Verglas,
+   * tache 8 de l'etape 5b.
+   *
+   * ⚠️ **Appele PAR ENTITE, depuis `#recomputeSteering`, pas une fois par
+   * tick pour toute la horde comme `#computeSlow`.** Seules les entites dont
+   * c'est le tour de recalcul ce tick-ci ont besoin de la reponse ; balayer
+   * les zones pour les `#count - (#count / K)` autres serait du travail
+   * perdu, puisque leur vitesse ne change de toute facon pas ce tick-la.
+   *
+   * ⚠️ **`slowsAt`, pas `aliveAt` — meme raison que `#computeSlow`.** Cette
+   * grandeur pilote `vx`/`vy`, donc le DEPLACEMENT : une zone posee au tick
+   * `T` ne doit l'affecter qu'a partir de `T + 1`, le serveur faisant avancer
+   * la horde avant de poser ses zones.
+   *
+   * ⚠️ **Le MINIMUM entre zones, jamais un produit — meme raison
+   * arithmetique que `#computeSlow`.** Cette grandeur voyage (elle determine
+   * `vx`/`vy`, qui determinent `x`/`y` au pas suivant), et l'ordre
+   * d'iteration des zones n'est pas garanti identique des deux cotes.
+   */
+  #inertiaDampingAt(zones: ZoneField | undefined, tick: number, x: number, y: number): number {
+    if (!zones) {
+      return 1;
+    }
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    let damping = 1;
+    for (let z = 0; z < zones.count; z++) {
+      if (!zones.slowsAt(z, tick)) {
+        continue;
+      }
+      const factor = zoneInertiaDamping(zones.kind[z] ?? 0);
+      if (factor >= damping) {
+        continue;
+      }
+      const dx = (zones.x[z] ?? 0) - x;
+      const dy = (zones.y[z] ?? 0) - y;
+      if (dx * dx + dy * dy < r2) {
+        damping = factor;
+      }
+    }
+    return damping;
+  }
+
+  /**
    * Fait apparaitre une vague en rattrapant les pas manques.
    *
    * Un client ne peut pas appliquer un ordre au meme tick que le serveur :
@@ -1026,7 +1071,12 @@ export class Horde {
     this.spawn(order, fields[0]);
     for (let step = 0; step < missedTicks; step++) {
       const tick = order.spawnTick + step;
-      this.#recomputeSteering(tick, fields, before, this.#count);
+      // ⚠️ **`zones` passe ICI aussi (tache 8 de l'etape 5b), pas seulement
+      // a `#computeSlow` en dessous.** Le derapage du Verglas est pose par
+      // `#recomputeSteering` lui-meme desormais — l'omettre ferait rattraper
+      // une entite nee dans une flaque de Verglas comme si le sol tenait,
+      // exactement le defaut que ce trio existe pour eviter.
+      this.#recomputeSteering(tick, fields, before, this.#count, zones);
       // Meme trio que `step`, dans le meme ordre : rattraper un pas manque
       // doit reproduire EXACTEMENT ce que le serveur a fait ce tick-la, et
       // depuis la tache 6 ca inclut le ralentissement. Sans cet appel,
@@ -1278,12 +1328,30 @@ export class Horde {
    * `spawnCatchingUp` (tache 20) restreint a `[before, #count)` : seules les
    * entites qu'IL vient de faire naitre peuvent recalculer, jamais celles
    * deja presentes, deja avancees par leurs propres appels a `step`.
+   *
+   * ⚠️ **Verglas (tache 8 de l'etape 5b) intercepte AVANT tout le reste,
+   * pour l'entite dont c'est le tour.** Au lieu de melanger champ et
+   * repulsion, une entite dans une zone de Verglas GARDE sa vitesse
+   * precedente, amortie d'un facteur (`#inertiaDampingAt`,
+   * `zoneInertiaDamping` de `shared/reactions.ts`) — « friction reduite » du
+   * §5 de la spec de l'etape 5b : elle ne CORRIGE plus sa trajectoire a
+   * l'occasion ou elle le ferait normalement, elle continue sur sa lancee.
+   *
+   * ⚠️ **Dérivable des deux cotes, zero octet.** L'appartenance a la zone se
+   * derive du meme predicat que le ralentissement (`ZoneField.slowsAt`), et
+   * la vitesse amortie se derive de `vx`/`vy` que les DEUX cotes possedent
+   * deja — ils simulent tous deux depuis la naissance de l'entite. Rien de
+   * plus n'est annonce, et cette grandeur VOYAGE (elle determine `x`/`y` au
+   * pas suivant) : c'est pour ca que la combinaison entre plusieurs zones
+   * qui se recouvrent doit rester un MINIMUM, jamais un produit — meme
+   * raison arithmetique que le minimum de `#computeSlow`.
    */
   #recomputeSteering(
     tick: number,
     fields: readonly FlowField[],
     from = 0,
     to: number = this.#count,
+    zones?: ZoneField,
   ): void {
     const n = this.#count;
     if (n === 0) {
@@ -1307,6 +1375,20 @@ export class Horde {
 
       const xi = this.x[i] ?? 0;
       const yi = this.y[i] ?? 0;
+
+      // ⚠️ **Verglas (tache 8 de l'etape 5b) : « les ennemis dérapent ».**
+      // A l'occasion meme ou cette entite recalculerait sa trajectoire, le
+      // Verglas la lui retire : au lieu de la direction fraiche du champ,
+      // elle GARDE sa vitesse precedente, amortie de `damping`. Voir le
+      // docbloc de la methode pour la raison de replication ; voir
+      // `#inertiaDampingAt` pour la combinaison entre zones.
+      const damping = this.#inertiaDampingAt(zones, tick, xi, yi);
+      if (damping < 1) {
+        this.vx[i] = (this.vx[i] ?? 0) * damping;
+        this.vy[i] = (this.vy[i] ?? 0) * damping;
+        continue;
+      }
+
       const distI = this.#priorityDist[i] ?? 0;
 
       let pushX = 0;

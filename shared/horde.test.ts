@@ -15,6 +15,7 @@ import {
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
   TICK_HZ,
+  VERGLAS_INERTIA_DAMPING,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
 } from './constants';
@@ -2630,6 +2631,190 @@ describe('Horde.step — la Supraconduction fige le deplacement (etape 5b, tache
 
     expect(pasFigeAu(une(1000, 1000), fields, MESURE, poixPuisSupra)).toBe(0);
     expect(pasFigeAu(une(1000, 1000), fields, MESURE, supraPuisPoix)).toBe(0);
+  });
+});
+
+/**
+ * Verglas (Givre + Poix, tache 8 de l'etape 5b) : « les ennemis derapent ».
+ * `ReactionDef.zoneInertiaDamping` NON neutre intercepte
+ * `Horde#recomputeSteering` : au tick ou l'entite recalculerait sa
+ * trajectoire, elle GARDE sa vitesse precedente a la place, amortie d'un
+ * facteur — voir le docbloc de la methode. `zoneSlowFactor` reste par
+ * ailleurs epingle a celui du Givre (`shared/reactions.test.ts` le prouve a
+ * l'unite) : deux mecanismes distincts pour les deux moities de la meme
+ * reaction — « derapent » ici (VOYAGE), « et se percutent » cote serveur
+ * seul (`back/src/combat.test.ts`, ne voyage PAS).
+ */
+describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () => {
+  /** Une entite unique, immobile a `(x, y)`. */
+  function une(x: number, y: number): Horde {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }));
+    horde.x[0] = x;
+    horde.y[0] = y;
+    return horde;
+  }
+
+  const K = STEERING_RECOMPUTE_TICKS;
+
+  /**
+   * Le premier tick de recalcul de l'entite 0 strictement APRES `apres` —
+   * assez tard pour poser une zone dont `bornTick < tick` (la regle
+   * `slowsAt`, voir `ZoneField.slowsAt`).
+   */
+  function prochainRecalcul(horde: Horde, apres: number): number {
+    const phase = horde.entityIdAt(0) % K;
+    let tick = phase;
+    while (tick <= apres) {
+      tick += K;
+    }
+    return tick;
+  }
+
+  it('au tick de recalcul, garde sa vitesse precedente amortie de VERGLAS_INERTIA_DAMPING, pas la direction fraiche du champ', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const horde = une(1000, 1000);
+    const tick = prochainRecalcul(horde, 0);
+    // Vitesse posee a la main, DELIBEREMENT hors de la direction du champ —
+    // c'est ce qui separe « garder » de « recalculer ».
+    horde.vx[0] = 0;
+    horde.vy[0] = -80;
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 1000, 1000, 0, 0);
+
+    horde.step(DT, fields, tick, zones);
+
+    expect(VERGLAS_INERTIA_DAMPING).toBeLessThan(1);
+    // Arithmetique EXACTE (a l'arrondi Float32 pres) : la vitesse tenue,
+    // multipliee par le facteur, rien de plus.
+    expect(horde.vx[0]).toBeCloseTo(0, 5);
+    expect(horde.vy[0]).toBeCloseTo(-80 * VERGLAS_INERTIA_DAMPING, 4);
+  });
+
+  it('temoin SANS zone : le meme tick de recalcul EFFACE la vitesse posee a la main', () => {
+    // ⚠️ **La garde anti-fixture de ce bloc.** Sans elle, le test precedent
+    // ne prouverait rien : peut-etre que `#recomputeSteering` ignore
+    // TOUJOURS la vitesse tenue, zone ou pas. Ici, aucun voisin ne repousse
+    // l'entite : la vitesse recalculee doit retomber a la norme exacte de
+    // l'archetype (`Math.hypot(vx, vy) === speed`), jamais a la vitesse
+    // amortie posee a la main.
+    const fields = fieldsTowards(5000, 1000);
+    const horde = une(1000, 1000);
+    const tick = prochainRecalcul(horde, 0);
+    horde.vx[0] = 0;
+    horde.vy[0] = -80;
+
+    horde.step(DT, fields, tick);
+
+    const speed = archetypeOf(horde.archetype[0] ?? 0).speed;
+    expect(Math.hypot(horde.vx[0] ?? 0, horde.vy[0] ?? 0)).toBeCloseTo(speed, 3);
+    expect(horde.vy[0]).not.toBeCloseTo(-80 * VERGLAS_INERTIA_DAMPING, 4);
+  });
+
+  it('une entite HORS de la zone n est pas affectee, a un pixel du bord : recalcul normal', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const horde = une(1000 + ZONE_RADIUS + 1, 1000);
+    const tick = prochainRecalcul(horde, 0);
+    horde.vx[0] = 0;
+    horde.vy[0] = -80;
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 1000, 1000, 0, 0);
+
+    horde.step(DT, fields, tick, zones);
+
+    const speed = archetypeOf(horde.archetype[0] ?? 0).speed;
+    expect(Math.hypot(horde.vx[0] ?? 0, horde.vy[0] ?? 0)).toBeCloseTo(speed, 3);
+  });
+
+  it('ne s applique PAS au tick de la pose, s applique au suivant — meme `slowsAt` que le Givre et la Supraconduction', () => {
+    const fields = fieldsTowards(5000, 1000);
+
+    const auTick = une(1000, 1000);
+    const tickAuTick = prochainRecalcul(auTick, 0);
+    auTick.vx[0] = 0;
+    auTick.vy[0] = -80;
+    const zonesAuTick = new ZoneField();
+    zonesAuTick.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 1000, 1000, 0, tickAuTick);
+    auTick.step(DT, fields, tickAuTick, zonesAuTick);
+    const speed = archetypeOf(auTick.archetype[0] ?? 0).speed;
+    // La zone existe mais ne RALENTIT/DERAPE pas encore : recalcul normal.
+    expect(Math.hypot(auTick.vx[0] ?? 0, auTick.vy[0] ?? 0)).toBeCloseTo(speed, 3);
+
+    const auPrecedent = une(1000, 1000);
+    const tickAuPrecedent = prochainRecalcul(auPrecedent, 0);
+    auPrecedent.vx[0] = 0;
+    auPrecedent.vy[0] = -80;
+    const zonesAuPrecedent = new ZoneField();
+    zonesAuPrecedent.spawn(
+      packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS),
+      1000,
+      1000,
+      0,
+      tickAuPrecedent - 1,
+    );
+    auPrecedent.step(DT, fields, tickAuPrecedent, zonesAuPrecedent);
+    expect(auPrecedent.vy[0]).toBeCloseTo(-80 * VERGLAS_INERTIA_DAMPING, 4);
+  });
+
+  /**
+   * Le piege de la tache 8 (R13), au point d'usage cette fois, pas
+   * seulement en unite sur `zoneSlowFactor`/`zoneInertiaDamping`
+   * (`shared/reactions.test.ts`) : le nibble d'element de la zone porte
+   * celui du DECLENCHEUR (Givre OU Poix selon l'ordre d'arrivee).
+   */
+  it('le meme amortissement, quel que soit l element porte par le nibble (Givre OU Poix declenche)', () => {
+    const fields = fieldsTowards(5000, 1000);
+
+    const givreDeclenche = une(1000, 1000);
+    const tick1 = prochainRecalcul(givreDeclenche, 0);
+    givreDeclenche.vx[0] = 0;
+    givreDeclenche.vy[0] = -80;
+    const zonesGivre = new ZoneField();
+    zonesGivre.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 1000, 1000, 0, 0);
+    givreDeclenche.step(DT, fields, tick1, zonesGivre);
+
+    const poixDeclenche = une(1000, 1000);
+    const tick2 = prochainRecalcul(poixDeclenche, 0);
+    poixDeclenche.vx[0] = 0;
+    poixDeclenche.vy[0] = -80;
+    const zonesPoix = new ZoneField();
+    zonesPoix.spawn(packZoneKind(ELEMENT.POIX, REACTION.VERGLAS), 1000, 1000, 0, 0);
+    poixDeclenche.step(DT, fields, tick2, zonesPoix);
+
+    expect(givreDeclenche.vy[0]).toBeCloseTo(-80 * VERGLAS_INERTIA_DAMPING, 4);
+    expect(poixDeclenche.vy[0]).toBeCloseTo(-80 * VERGLAS_INERTIA_DAMPING, 4);
+  });
+
+  it('spawnCatchingUp fait aussi deraper les pas rattrapes', () => {
+    // ⚠️ Meme raisonnement que le rattrapage du Givre (tache 6) : sans le
+    // parametre `zones` passe a `#recomputeSteering` depuis la boucle de
+    // rattrapage, celle-ci recalculerait la trajectoire depuis le champ pour
+    // chaque pas manque, meme dans une flaque de Verglas.
+    const fields = fieldsTowards(5000, 1000);
+    const o = order({ count: 20, anchorX: 1000, anchorY: 1000, spawnTick: 1 });
+
+    const reperage = new Horde(100);
+    reperage.spawn(o, fields[0]);
+    const zones = new ZoneField();
+    zones.spawn(
+      packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS),
+      reperage.x[0] ?? 0,
+      reperage.y[0] ?? 0,
+      0,
+      0,
+    );
+
+    const derapee = new Horde(100);
+    const temoin = new Horde(100);
+    derapee.spawnCatchingUp(o, 5, DT, fields, zones);
+    temoin.spawnCatchingUp(o, 5, DT, fields);
+
+    expect(temoin.count).toBe(20);
+    const ecart = Math.hypot(
+      (derapee.x[0] ?? 0) - (temoin.x[0] ?? 0),
+      (derapee.y[0] ?? 0) - (temoin.y[0] ?? 0),
+    );
+    expect(ecart).toBeGreaterThan(0);
   });
 });
 

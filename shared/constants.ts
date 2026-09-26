@@ -921,3 +921,52 @@ export const COURT_CIRCUIT_MAX_JUMPS = 64;
  * elementaire (tache 12).
  */
 export const SUPRACONDUCTION_ARMOR_REDUCTION = 0.15;
+
+/**
+ * Facteur de conservation de la vitesse tenue dans une zone de Verglas
+ * (Givre + Poix, tache 8 de l'etape 5b) — `1` : aucun effet (le cas de
+ * toutes les autres reactions), `< 1` : au lieu de recalculer sa trajectoire
+ * depuis le champ, l'ennemi GARDE sa vitesse precedente, amortie de ce
+ * facteur. Lu par `Horde#recomputeSteering` (`shared/horde.ts`), qui VOYAGE
+ * des deux cotes du fil.
+ *
+ * ⚠️ **C'est ce qui rend le derapage repliquable pour zero octet.**
+ * L'appartenance a la zone se DERIVE (meme predicat que le ralentissement,
+ * `ZoneField.slowsAt`) et la vitesse amortie se derive de la vitesse tenue
+ * que les DEUX cotes possedent deja, puisque les deux simulent. Rien de
+ * nouveau ne voyage.
+ *
+ * 0,9 : une entite qui reste dans le Verglas perd 10% de sa vitesse a chaque
+ * occasion de recalcul (`STEERING_RECOMPUTE_TICKS`, tous les 0,3 s) au lieu
+ * de la retrouver a pleine puissance dans la direction du champ — de quoi
+ * SE VOIR glisser sur `ZONE_LIFETIME_TICKS` (3 s, une dizaine d'occasions,
+ * 0,9^10 ≈ 0,35) sans figer l'ennemi comme la Supraconduction.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire (tache 12).
+ */
+export const VERGLAS_INERTIA_DAMPING = 0.9;
+
+/**
+ * Degats par tick entre deux ennemis qui se tiennent tous deux dans une
+ * zone de Verglas et sont plus proches l'un de l'autre que
+ * `SEPARATION_RADIUS` — « ils se percutent » (§5 de la spec de l'etape 5b).
+ * `0` : aucun effet (le cas de toutes les autres reactions). Lu par
+ * `zoneCollisionDamage` (`shared/reactions.ts`), applique par
+ * `resolveVerglasCollisions` (`back/src/combat.ts`).
+ *
+ * ⚠️ **Un DEGAT, donc serveur seul — aucune contrainte de replication.** Le
+ * client ne prononce jamais de degat (§2) ; seules les morts qui en
+ * resultent voyagent, et elles voyagent deja par `DEATHS`. Contrairement a
+ * `VERGLAS_INERTIA_DAMPING`, cette constante n'a donc pas besoin d'etre
+ * bit-identique des deux cotes — seul le SERVEUR la lit.
+ *
+ * 0,2 : a ce taux, deux ennemis qui restent au contact pendant 25 ticks
+ * (0,83 s) perdent chacun `LIGHT_HP` (5) — une pietaille legere prise dans
+ * un carambolage de Verglas peut mourir de la collision seule, sans qu'un
+ * joueur n'ait tire un coup.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire (tache 12).
+ */
+export const VERGLAS_COLLISION_DAMAGE_PER_TICK = 0.2;

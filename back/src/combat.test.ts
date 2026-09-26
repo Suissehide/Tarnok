@@ -26,8 +26,10 @@ import {
   ORB_DROP_ONE_IN,
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  SEPARATION_RADIUS,
   SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
+  VERGLAS_COLLISION_DAMAGE_PER_TICK,
   XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
@@ -56,6 +58,7 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveProjectileDamage,
+  resolveVerglasCollisions,
 } from './combat';
 
 const DT = 1 / 30;
@@ -3103,5 +3106,172 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 
     expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(1000 - coupSurLourd(REACTION_DAMAGE), 5);
     expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
+  });
+});
+
+/**
+ * `resolveVerglasCollisions` — la seconde moitie de Verglas (Givre + Poix,
+ * tache 8 de l'etape 5b) : « les ennemis derapent ET se percutent ». Le
+ * derapage (qui VOYAGE) vit dans `Horde#recomputeSteering`
+ * (`shared/horde.test.ts` le couvre) ; ce bloc-ci couvre la collision, un
+ * DEGAT, serveur seul, aucune contrainte de replication.
+ */
+describe('resolveVerglasCollisions — Verglas fait se percuter les glissants (etape 5b, tache 8)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function zoneVerglas(x: number, y: number, tick = 0): ZoneField {
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), x, y, 0, tick);
+    return zones;
+  }
+
+  it('deux ennemis TOUS DEUX dans la zone et proches se percutent : chacun perd exactement VERGLAS_COLLISION_DAMAGE_PER_TICK', () => {
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 500, 500, LOURD);
+    const b = addOne(horde, 2, 500 + SEPARATION_RADIUS - 1, 500, LOURD);
+    const orbs = new OrbField(10);
+    const zones = zoneVerglas(500, 500);
+
+    const dead = resolveVerglasCollisions(horde, orbs, 0, zones);
+
+    expect(VERGLAS_COLLISION_DAMAGE_PER_TICK).toBeGreaterThan(0);
+    expect(dead).toEqual([]);
+    // La lourde a de l'armure (`HEAVY_ARMOR`) : `appliquerDegats` la lui
+    // applique comme a n'importe quel autre coup, voir `coupSurLourd`.
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(
+      HEAVY_HP - coupSurLourd(VERGLAS_COLLISION_DAMAGE_PER_TICK),
+      5,
+    );
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(
+      HEAVY_HP - coupSurLourd(VERGLAS_COLLISION_DAMAGE_PER_TICK),
+      5,
+    );
+  });
+
+  it('a SEPARATION_RADIUS pile (la borne est STRICTE) : aucun degat', () => {
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 500, 500, LOURD);
+    const b = addOne(horde, 2, 500 + SEPARATION_RADIUS, 500, LOURD);
+    const orbs = new OrbField(10);
+    const zones = zoneVerglas(500, 500);
+
+    resolveVerglasCollisions(horde, orbs, 0, zones);
+
+    expect(horde.hp[horde.slotOf(a)]).toBe(HEAVY_HP);
+    expect(horde.hp[horde.slotOf(b)]).toBe(HEAVY_HP);
+  });
+
+  it('proches, mais AUCUN dans une zone de Verglas : aucun degat', () => {
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 500, 500, LOURD);
+    const b = addOne(horde, 2, 500 + SEPARATION_RADIUS - 1, 500, LOURD);
+    const orbs = new OrbField(10);
+
+    resolveVerglasCollisions(horde, orbs, 0, solNu());
+
+    expect(horde.hp[horde.slotOf(a)]).toBe(HEAVY_HP);
+    expect(horde.hp[horde.slotOf(b)]).toBe(HEAVY_HP);
+  });
+
+  /**
+   * ⚠️ **Geometrie choisie pour que la zone couvre `a` et pas `b`, malgre
+   * les 28 px qui les separent** — `ZONE_RADIUS` (70) est plus large que
+   * `SEPARATION_RADIUS` (28), donc une zone centree sur l'un des deux
+   * couvrirait presque toujours l'autre aussi. `a` est pose juste dedans,
+   * `b` juste dehors, distants de moins de `SEPARATION_RADIUS`.
+   */
+  it('proches, mais UN SEUL dans la zone : aucun degat — il faut que les DEUX glissent', () => {
+    const horde = new Horde(10);
+    const ax = ZONE_RADIUS - 1;
+    const bx = ax + (SEPARATION_RADIUS - 5);
+    expect(bx).toBeGreaterThan(ZONE_RADIUS);
+    expect(bx - ax).toBeLessThan(SEPARATION_RADIUS);
+    const a = addOne(horde, 1, ax, 0, LOURD);
+    const b = addOne(horde, 2, bx, 0, LOURD);
+    const orbs = new OrbField(10);
+    const zones = zoneVerglas(0, 0);
+
+    resolveVerglasCollisions(horde, orbs, 0, zones);
+
+    expect(horde.hp[horde.slotOf(a)]).toBe(HEAVY_HP);
+    expect(horde.hp[horde.slotOf(b)]).toBe(HEAVY_HP);
+  });
+
+  it('une zone d une AUTRE reaction (Supraconduction) au meme endroit ne fait percuter personne', () => {
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 500, 500, LOURD);
+    const b = addOne(horde, 2, 500 + SEPARATION_RADIUS - 1, 500, LOURD);
+    const orbs = new OrbField(10);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+
+    resolveVerglasCollisions(horde, orbs, 0, zones);
+
+    expect(horde.hp[horde.slotOf(a)]).toBe(HEAVY_HP);
+    expect(horde.hp[horde.slotOf(b)]).toBe(HEAVY_HP);
+  });
+
+  it('trois ennemis mutuellement proches : chacun percute les DEUX autres, perd 2x VERGLAS_COLLISION_DAMAGE_PER_TICK', () => {
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 500, 500, LOURD);
+    const b = addOne(horde, 2, 505, 500, LOURD);
+    const c = addOne(horde, 3, 500, 505, LOURD);
+    const orbs = new OrbField(10);
+    const zones = zoneVerglas(500, 500);
+
+    resolveVerglasCollisions(horde, orbs, 0, zones);
+
+    const perte = coupSurLourd(2 * VERGLAS_COLLISION_DAMAGE_PER_TICK);
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(HEAVY_HP - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(HEAVY_HP - perte, 5);
+    expect(horde.hp[horde.slotOf(c)]).toBeCloseTo(HEAVY_HP - perte, 5);
+  });
+
+  it('tue quand la reserve tombe a zero, laisse un orbe, et rend l identite pour le DEATHS existant', () => {
+    const horde = new Horde(10);
+    const mourant = addOne(horde, 1, 700, 800, LOURD);
+    const voisin = addOne(horde, 2, 700 + SEPARATION_RADIUS - 1, 800, LOURD);
+    horde.hp[horde.slotOf(mourant)] = VERGLAS_COLLISION_DAMAGE_PER_TICK / 2;
+    const orbs = new OrbField(10);
+    const zones = zoneVerglas(700, 800);
+
+    const dead = resolveVerglasCollisions(horde, orbs, 0, zones);
+
+    expect(dead).toEqual([mourant]);
+    expect(horde.count).toBe(1);
+    expect(horde.entityIdAt(0)).toBe(voisin);
+    expect(orbs.count).toBe(1);
+    expect(orbs.id[0]).toBe(mourant);
+    expect(orbs.x[0]).toBeCloseTo(700, 3);
+    expect(orbs.y[0]).toBeCloseTo(800, 3);
+  });
+
+  /**
+   * ⚠️ **Le garde-fou contre le doublon dans `dead`.** Quatre ennemis
+   * mutuellement proches : `a` a assez peu de PV pour mourir de son DEUXIEME
+   * coup (un seul voisin ne suffit pas), mais elle en croise TROIS. Sans la
+   * garde `hp <= 0` verifiee a CHAQUE paire (pas une fois par ennemi), `a`
+   * apparaitrait deux fois dans `dead` — le defaut que `resolveBurn` garde
+   * deja, ici sur un balayage par PAIRE plutot que par ENTITE.
+   */
+  it('un ennemi qui meurt en cours de balayage n apparait qu UNE FOIS dans `dead`, meme croise par plusieurs voisins', () => {
+    const horde = new Horde(10);
+    const mourant = addOne(horde, 1, 500, 500, LOURD);
+    const b = addOne(horde, 2, 505, 500, LOURD);
+    const c = addOne(horde, 3, 500, 505, LOURD);
+    const d = addOne(horde, 4, 505, 505, LOURD);
+    // Un seul coup ne tue pas, deux le font — et `mourant` croise trois
+    // voisins dans ce decor.
+    horde.hp[horde.slotOf(mourant)] = 1.5 * VERGLAS_COLLISION_DAMAGE_PER_TICK;
+    const orbs = new OrbField(10);
+    const zones = zoneVerglas(500, 500);
+
+    const dead = resolveVerglasCollisions(horde, orbs, 0, zones);
+
+    expect(dead).toEqual([mourant]);
+    expect(horde.count).toBe(3);
+    expect(horde.slotOf(b)).toBeGreaterThanOrEqual(0);
+    expect(horde.slotOf(c)).toBeGreaterThanOrEqual(0);
+    expect(horde.slotOf(d)).toBeGreaterThanOrEqual(0);
   });
 });

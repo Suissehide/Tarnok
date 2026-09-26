@@ -4,6 +4,8 @@ import {
   SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_BURN_PER_TICK,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
+  VERGLAS_COLLISION_DAMAGE_PER_TICK,
+  VERGLAS_INERTIA_DAMPING,
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
@@ -17,9 +19,8 @@ import { packElementPair, zoneElement, zoneReaction } from './protocol';
  * ⚠️ **Une paire ABSENTE de cette table n'est pas une erreur.** Elle rend
  * simplement le comportement GENERIQUE de `applyReactions` (le Choc thermique
  * de l'etape 5a : `REACTION_DAMAGE` dans `REACTION_RADIUS`, sans filtre ni
- * champ special) — c'est le cas de Braise+Givre aujourd'hui, et de
- * Givre+Foudre / Givre+Poix tant que les taches 7 et 8 ne les auront pas
- * remplies.
+ * champ special) — c'est le cas de Braise+Givre aujourd'hui, la seule paire
+ * des cinq de l'etape 5b (§5 de la spec) a rester sans effet specifique.
  *
  * ⚠️ **`id` empaquete le nibble de reaction de `ZoneField.kind`** (bits 3-6,
  * voir `packZoneKind`/`zoneReaction` dans `shared/protocol.ts`) — c'est la
@@ -34,6 +35,7 @@ export const REACTION = {
   EMBRASEMENT: 2,
   COURT_CIRCUIT: 3,
   SUPRACONDUCTION: 4,
+  VERGLAS: 5,
 } as const;
 
 export interface ReactionDef {
@@ -85,6 +87,33 @@ export interface ReactionDef {
    * `zoneArmorReduction` ci-dessous.
    */
   readonly zoneArmorReduction: number;
+  /**
+   * Facteur de conservation de la vitesse tenue dans la zone laissee par
+   * cette reaction (1 : aucun effet propre — Verglas, tache 8 de l'etape 5b,
+   * est la seule a en porter un aujourd'hui). Lu par
+   * `Horde#recomputeSteering` (`shared/horde.ts`), qui VOYAGE des deux cotes
+   * du fil.
+   *
+   * ⚠️ **AUCUN equivalent porte par `Element`, contrairement a
+   * `zoneSlowFactor` — rien a combiner avec le nibble d'element ici.**
+   * L'inertie est une propriete de la REACTION seule : deriver du
+   * declencheur (Givre OU Poix selon l'ordre d'arrivee) n'aurait aucun sens,
+   * `Element` ne portant aucune notion de friction. Voir
+   * `zoneInertiaDamping` ci-dessous.
+   */
+  readonly zoneInertiaDamping: number;
+  /**
+   * Degats par tick entre DEUX ennemis qui se tiennent tous deux dans la
+   * zone laissee par cette reaction et sont trop proches l'un de l'autre (0 :
+   * aucun effet — Verglas, tache 8 de l'etape 5b, est la seule a en porter
+   * un aujourd'hui, « ils se percutent »).
+   *
+   * ⚠️ **Un DEGAT, donc lu SEULEMENT cote serveur** (`resolveVerglasCollisions`,
+   * `back/src/combat.ts`), aucune contrainte de replication — le client ne
+   * prononce jamais de degat (§2), seules les morts qui en resultent
+   * voyagent, et elles voyagent deja par `DEATHS`.
+   */
+  readonly zoneCollisionDamage: number;
 }
 
 const REACTION_DEFS: readonly ReactionDef[] = [
@@ -103,6 +132,8 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // la brulure, pas par le deplacement ou la defense.
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
   },
   {
     // Embrasement (Braise + Poix) : degats instantanes a tout ennemi POISSE
@@ -120,6 +151,8 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
   },
   {
     // Court-circuit (Foudre + Poix) : `chainTargets` (shared/chain.ts),
@@ -135,6 +168,8 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
   },
   {
     // Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : vitesse
@@ -154,6 +189,40 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // Foudre selon l'ordre d'arrivee du declencheur) — voir `zoneSlowFactor`.
     zoneSlowFactor: 0,
     zoneArmorReduction: SUPRACONDUCTION_ARMOR_REDUCTION,
+    // Ni inertie ni collision propres : la Supraconduction agit par le gel,
+    // pas par la perte de controle.
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+  },
+  {
+    // Verglas (Givre + Poix, tache 8 de l'etape 5b) : friction REDUITE dans
+    // la zone laissee — les ennemis gardent leur trajectoire au lieu de la
+    // corriger (`zoneInertiaDamping`, `Horde#recomputeSteering`, ce qui
+    // VOYAGE) et se percutent en glissant (`zoneCollisionDamage`,
+    // `resolveVerglasCollisions` dans `back/src/combat.ts`, ce qui ne
+    // voyage PAS — un degat, serveur seul). Ni brulure ni effet geometrique
+    // instantane propres.
+    id: REACTION.VERGLAS,
+    name: 'verglas',
+    pair: packElementPair(ELEMENT.GIVRE, ELEMENT.POIX),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: 0,
+    // ⚠️ **EXPLICITE, jamais neutre (1) — voir le docbloc de `zoneSlowFactor`
+    // plus bas.** Un facteur neutre laisserait l'element du DECLENCHEUR
+    // (Givre OU Poix selon l'ordre d'arrivee) fuiter au travers du minimum :
+    // min(0,6, 1) = 0,6 si Givre declenche, min(1, 1) = 1 si Poix declenche —
+    // la meme Verglas glisserait ou pas selon quel projectile a touche en
+    // second. Fixe a la valeur de Givre (jamais recopiee — voir
+    // `elementOf`) : le minimum rend alors 0,6 dans les DEUX cas
+    // (min(0,6, 0,6) = 0,6, min(1, 0,6) = 0,6), ni plus ni moins que le
+    // Givre seul — Verglas n'AJOUTE aucun ralentissement, elle en garantit
+    // un, quel que soit l'ordre.
+    zoneSlowFactor: elementOf(ELEMENT.GIVRE).slowFactor,
+    zoneArmorReduction: 0,
+    zoneInertiaDamping: VERGLAS_INERTIA_DAMPING,
+    zoneCollisionDamage: VERGLAS_COLLISION_DAMAGE_PER_TICK,
   },
 ];
 
@@ -206,6 +275,18 @@ export function zoneBurnPerTick(kind: number): number {
  * l'ordre d'iteration des zones n'est pas garanti identique des deux cotes du
  * fil, donc seule une combinaison exactement commutative et associative
  * survit.
+ *
+ * ⚠️ **Le piege que la revue de la tache 7 a vu venir pour Verglas (tache 8),
+ * et qui NE se serait PAS resolu de lui-meme.** Pour la Supraconduction,
+ * `reactionFactor = 0` est un PLANCHER ABSOLU : `min(x, 0) = 0` quel que
+ * soit `x`. Verglas n'a pas ce luxe — si sa ligne avait laisse
+ * `zoneSlowFactor: 1` (neutre, comme les trois reactions de la tache 6),
+ * `min(elementFactor, 1) = elementFactor` aurait rendu 0,6 (Givre declenche)
+ * OU 1 (Poix declenche), et la meme Verglas aurait glisse ou pas selon quel
+ * projectile a touche en second. Sa ligne porte donc un facteur EXPLICITE
+ * (`elementOf(ELEMENT.GIVRE).slowFactor`, pas une reference neutre), choisi
+ * pour etre un plancher aussi — voir le commentaire de son entree dans
+ * `REACTION_DEFS`.
  */
 export function zoneSlowFactor(kind: number): number {
   const elementFactor = elementOf(zoneElement(kind)).slowFactor;
@@ -224,4 +305,28 @@ export function zoneSlowFactor(kind: number): number {
  */
 export function zoneArmorReduction(kind: number): number {
   return reactionOfId(zoneReaction(kind))?.zoneArmorReduction ?? 0;
+}
+
+/**
+ * Le facteur de conservation de vitesse qu'une zone impose, DERIVE de son
+ * `kind` empaquete (1 : aucun effet) — lu par `Horde#recomputeSteering`
+ * (`shared/horde.ts`), qui VOYAGE des deux cotes du fil.
+ *
+ * ⚠️ **Aucune combinaison avec l'element du nibble ici, contrairement a
+ * `zoneSlowFactor`.** `Element` ne porte aucune notion de friction ou
+ * d'inertie : seule la reaction en decide, et Verglas (tache 8 de l'etape
+ * 5b) est aujourd'hui la seule a en porter une.
+ */
+export function zoneInertiaDamping(kind: number): number {
+  return reactionOfId(zoneReaction(kind))?.zoneInertiaDamping ?? 1;
+}
+
+/**
+ * Le degat par tick entre deux ennemis qui se percutent dans une zone,
+ * DERIVE de son `kind` empaquete (0 : aucun effet) — lu par
+ * `resolveVerglasCollisions` (`back/src/combat.ts`), qui ne voyage JAMAIS
+ * (un degat, comme `zoneArmorReduction` : seul le serveur le lit).
+ */
+export function zoneCollisionDamage(kind: number): number {
+  return reactionOfId(zoneReaction(kind))?.zoneCollisionDamage ?? 0;
 }

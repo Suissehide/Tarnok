@@ -2034,6 +2034,94 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
       expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
     });
   });
+
+  /**
+   * Verglas (Givre + Poix, tache 8 de l'etape 5b) : « les ennemis
+   * derapent ». Meme decor que Z0 a Z2 et ZF0 a ZF2 ci-dessus, REUTILISE via
+   * `runZoneScenario` — un `kind` empaquete
+   * (`packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS)`), rien de plus.
+   *
+   * ⚠️ **C'est le test que le brief de la tache 8 exige AVANT toute
+   * implementation** : « Verglas en jeu, avec rejeu, 0,000 px — et sans
+   * rejeu, un chiffre non nul ». `runZoneScenario` porte deja les DEUX
+   * moities de la mesure ; VF0 et VF1 sont les chiffres non nuls a cote
+   * desquels le zero de VF2 prend son sens (§2 des resultats de la tache
+   * 6a, la lecon des deux lignes non nulles — et la regle rappelee par le
+   * brief de cette tache : « une mesure qui ne sait produire que 0,000 px
+   * ne mesure pas »).
+   *
+   * ⚠️ **Ce scenario mesure les DEUX moities de `Horde#recomputeSteering`
+   * a la fois : la vitesse tenue amortie ET le `zoneSlowFactor` epingle au
+   * Givre.** Il ne cherche pas a les separer — c'est `horde.test.ts` qui
+   * isole chaque mecanisme a l'unite (voir « Horde.step — Verglas fait
+   * deraper la horde »). Ici, l'enjeu est uniquement la REPLICATION du
+   * resultat compose, avec et sans rejeu.
+   */
+  describe('etape 5b tache 8 : Verglas fait deraper la horde, et le rejeu la date au tick', () => {
+    const VERGLAS_KIND = packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS);
+
+    /**
+     * De combien la reference a-t-elle derape ? Compare la meme run avec du
+     * Verglas et avec du Neutre — meme graine, meme calendrier, meme
+     * geometrie de zones, seul le `kind` change. Meme garde anti-fixture que
+     * `freinage`/`gelage` : sans elle, « 0,000 px » au VF2 ne distinguerait
+     * pas un rejeu exact d'un derapage qui ne s'applique a personne.
+     */
+    function derapage(mapSeed: number): number {
+      const verglas = runZoneScenario(mapSeed, true, VERGLAS_KIND).reference;
+      const temoin = runZoneScenario(mapSeed, true, ELEMENT.NEUTRE).reference;
+      return maxDriftBetween(temoin, verglas);
+    }
+
+    it('scenario VF0 — Verglas mord reellement : la horde derapee decroche du temoin neutre', () => {
+      const mordu = derapage(0x7e6a_0000);
+      process.stdout.write(
+        `scenario VF0 (Verglas mord) : ecart maximal entre horde derapee et temoin neutre ${mordu.toFixed(3)} px\n`,
+      );
+      // ⚠️ **Une BORNE BASSE, pas la mesure complete.** `zoneSlowFactor` de
+      // Verglas est EXPLICITEMENT epingle au facteur du Givre (voir
+      // `shared/reactions.ts`, R13) : quel que soit l'ordre d'arrivee, une
+      // horde derapee est AU MOINS aussi freinee qu'une horde givree — et le
+      // derapage lui-meme (la perte de correction de trajectoire, en plus
+      // du ralentissement) ne peut qu'AJOUTER de l'ecart au temoin neutre,
+      // jamais en retirer. Le seuil de Z0 reste donc une borne basse valide
+      // ici, meme s'il ne mesure que la moitie de l'effet compose.
+      const attenduMin =
+        0.1 *
+        (1 - elementOf(ELEMENT.GIVRE).slowFactor) *
+        archetypeOf(0).speed *
+        (ZONE_LIFETIME_TICKS / TICK_HZ);
+      expect(mordu).toBeGreaterThan(attenduMin);
+    });
+
+    it('scenario VF1 — sans rejeu, une zone de Verglas appliquee au present laisse une derive mesurable', () => {
+      const result = runZoneScenario(0x7e6a_0001, false, VERGLAS_KIND);
+      process.stdout.write(
+        `scenario VF1 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      // Le scenario ne prouve rien si rien n'a ete annonce.
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      // Borne large et volontaire, comme aux scenarios Z1/ZF1 : ce scenario
+      // existe pour que la derive EXISTE, pas pour qu'elle reste petite.
+      expect(result.maxDrift).toBeGreaterThan(1);
+    });
+
+    it('scenario VF2 — avec rejeu, la derive retombe a (quasi) zero malgre le derapage : le test qui compte', () => {
+      const result = runZoneScenario(0x7e6a_0002, true, VERGLAS_KIND);
+      process.stdout.write(
+        `scenario VF2 (avec rejeu, Verglas en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      for (const p of result.clients) {
+        // 1 a 3 ticks de retard tiennent largement dans l'anneau.
+        expect(p.lateZones).toBe(0);
+        expect(p.horde.count).toBe(result.reference.count);
+      }
+      expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+    });
+  });
 });
 
 /**

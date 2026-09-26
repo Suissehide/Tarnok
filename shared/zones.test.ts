@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
+  VERGLAS_COLLISION_DAMAGE_PER_TICK,
   ZONE_CAPACITY,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
@@ -786,5 +787,79 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
     expect(supraPuisNeutre.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(1);
     expect(supraPuisNeutre.count).toBe(2);
     expect(supraPuisNeutre.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+});
+
+/**
+ * `ZoneField.collisionDamageAt` — la tache 8 de l'etape 5b : meme FORME
+ * qu'`ampAt`/`armorReductionAt` ci-dessus (meme balayage, meme `aliveAt`,
+ * meme MAXIMUM). Verglas (Givre + Poix) est la seule reaction a porter un
+ * `zoneCollisionDamage` non nul aujourd'hui.
+ */
+describe('ZoneField.collisionDamageAt — le degat de collision (etape 5b, tache 8)', () => {
+  it('rend 0 sur un sol nu : aucune zone, aucun degat', () => {
+    const zones = new ZoneField();
+    expect(zones.collisionDamageAt(0, 0, 0)).toBe(0);
+    expect(zones.collisionDamageAt(-1234.5, 678.9, 42)).toBe(0);
+  });
+
+  it('rend 0 dans une zone de reaction nulle, ou des quatre reactions des taches 6 et 7 : aucune n a d effet de collision', () => {
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 100, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 300, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT), 500, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT), 700, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 900, 0, 0, 0);
+
+    expect(zones.collisionDamageAt(100, 0, 0)).toBe(0);
+    expect(zones.collisionDamageAt(300, 0, 0)).toBe(0);
+    expect(zones.collisionDamageAt(500, 0, 0)).toBe(0);
+    expect(zones.collisionDamageAt(700, 0, 0)).toBe(0);
+    expect(zones.collisionDamageAt(900, 0, 0)).toBe(0);
+  });
+
+  it('rend VERGLAS_COLLISION_DAMAGE_PER_TICK dans sa zone, strictement positif', () => {
+    const zones = new ZoneField();
+    expect(zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 500, 500, 0, 0)).toBe(0);
+    expect(VERGLAS_COLLISION_DAMAGE_PER_TICK).toBeGreaterThan(0);
+    expect(zones.collisionDamageAt(500, 500, 0)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
+  });
+
+  it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 0, 0, 0, 0);
+
+    expect(zones.collisionDamageAt(ZONE_RADIUS - 1, 0, 0)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
+    // Pile sur le cercle : la borne est STRICTE, comme `ampAt` et `slowsAt`.
+    expect(zones.collisionDamageAt(ZONE_RADIUS, 0, 0)).toBe(0);
+    // Perimee : `aliveAt` la saute, meme au centre exact.
+    expect(zones.collisionDamageAt(0, 0, ZONE_LIFETIME_TICKS)).toBe(0);
+    // Et elle vit encore au dernier tick de sa duree de vie.
+    expect(zones.collisionDamageAt(0, 0, ZONE_LIFETIME_TICKS - 1)).toBe(
+      VERGLAS_COLLISION_DAMAGE_PER_TICK,
+    );
+  });
+
+  /**
+   * ⚠️ **Deux zones qui se recouvrent rendent le MAXIMUM, jamais la
+   * somme — posees dans les DEUX ordres**, meme regle que le reste de cette
+   * etape des qu'un decor superpose deux elements.
+   */
+  it('DEUX zones qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme, dans les deux ordres de pose', () => {
+    const neutrePuisVerglas = new ZoneField();
+    expect(neutrePuisVerglas.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(0);
+    expect(
+      neutrePuisVerglas.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 100, 0, 0, 0),
+    ).toBe(1);
+    expect(neutrePuisVerglas.count).toBe(2);
+    expect(neutrePuisVerglas.collisionDamageAt(100, 0, 0)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
+
+    const verglasPuisNeutre = new ZoneField();
+    expect(
+      verglasPuisNeutre.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 100, 0, 0, 0),
+    ).toBe(0);
+    expect(verglasPuisNeutre.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(1);
+    expect(verglasPuisNeutre.count).toBe(2);
+    expect(verglasPuisNeutre.collisionDamageAt(100, 0, 0)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
   });
 });

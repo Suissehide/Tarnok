@@ -40,6 +40,7 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveProjectileDamage,
+  resolveVerglasCollisions,
 } from './combat';
 import { Draft } from './draft';
 import { Portal } from './portal';
@@ -1093,20 +1094,26 @@ export class Room {
       });
     }
     const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick, this.#zones);
-    // ⚠️ **UN SEUL lot de morts par tick, brulures ET reactions comprises.**
-    // `GameClient` documente cette hypothese et s'appuie dessus : deux lots
-    // vises au meme tick, rejoues l'un apres l'autre, verraient le second
-    // effacer la correction du premier (`#drainPendingDeaths`). Ni les
-    // brulures ni les reactions n'ont donc de chemin de mort a elles — elles
+    // ⚠️ **Verglas (tache 8 de l'etape 5b) : « les ennemis derapent ET se
+    // percutent ».** Le derapage lui-meme vit dans `Horde.step`, deja joue
+    // plus haut ; la collision est un degat, resolue ICI comme la brulure,
+    // au meme titre et pour la meme raison — voir `resolveVerglasCollisions`.
+    const collidedIds = resolveVerglasCollisions(this.horde, this.#orbs, this.#tick, this.#zones);
+    // ⚠️ **UN SEUL lot de morts par tick, brulures, reactions ET collisions
+    // comprises.** `GameClient` documente cette hypothese et s'appuie
+    // dessus : deux lots vises au meme tick, rejoues l'un apres l'autre,
+    // verraient le second effacer la correction du premier
+    // (`#drainPendingDeaths`). Ni les brulures, ni les reactions, ni les
+    // collisions de Verglas n'ont donc de chemin de mort a elles — elles
     // rejoignent celui de l'etape 3.
     //
     // Aucun doublon possible, et l'ORDRE est ce qui le garantit : chacune des
-    // trois passes tourne APRES la compaction de la precedente, donc les
+    // quatre passes tourne APRES la compaction de la precedente, donc les
     // identites deja listees n'existent plus dans la horde quand la suivante
     // la balaie.
     const allDead =
-      reactedIds.length > 0 || burntIds.length > 0
-        ? [...deadIds, ...reactedIds, ...burntIds]
+      reactedIds.length > 0 || burntIds.length > 0 || collidedIds.length > 0
+        ? [...deadIds, ...reactedIds, ...burntIds, ...collidedIds]
         : deadIds;
     if (allDead.length > 0) {
       this.#totalKills += allDead.length;

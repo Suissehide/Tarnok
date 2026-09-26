@@ -4,6 +4,8 @@ import {
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SUPRACONDUCTION_ARMOR_REDUCTION,
+  VERGLAS_COLLISION_DAMAGE_PER_TICK,
+  VERGLAS_INERTIA_DAMPING,
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
@@ -14,26 +16,31 @@ import {
   reactionOfId,
   zoneArmorReduction,
   zoneBurnPerTick,
+  zoneCollisionDamage,
+  zoneInertiaDamping,
   zoneLifetimeTicks,
   zoneSlowFactor,
 } from './reactions';
 
 describe('reactionForPair — une table pilotee par la donnee, pas un switch sur la paire', () => {
-  it('trouve les QUATRE reactions (taches 6 et 7), chacune a son propre couple canonique', () => {
+  it('trouve les CINQ reactions (taches 6, 7 et 8), chacune a son propre couple canonique', () => {
     const surchauffe = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE));
     const embrasement = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX));
     const courtCircuit = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
     const supraconduction = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.FOUDRE));
+    const verglas = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.POIX));
 
     expect(surchauffe?.id).toBe(REACTION.SURCHAUFFE);
     expect(embrasement?.id).toBe(REACTION.EMBRASEMENT);
     expect(courtCircuit?.id).toBe(REACTION.COURT_CIRCUIT);
     expect(supraconduction?.id).toBe(REACTION.SUPRACONDUCTION);
-    // Quatre identifiants distincts : une table qui en confondrait deux
+    expect(verglas?.id).toBe(REACTION.VERGLAS);
+    // Cinq identifiants distincts : une table qui en confondrait deux
     // resoudrait la mauvaise reaction pour au moins un couple.
     expect(
-      new Set([surchauffe?.id, embrasement?.id, courtCircuit?.id, supraconduction?.id]).size,
-    ).toBe(4);
+      new Set([surchauffe?.id, embrasement?.id, courtCircuit?.id, supraconduction?.id, verglas?.id])
+        .size,
+    ).toBe(5);
   });
 
   it('est INSENSIBLE a l ordre d arrivee, comme `packElementPair`', () => {
@@ -44,6 +51,13 @@ describe('reactionForPair — une table pilotee par la donnee, pas un switch sur
     const b = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.BRAISE));
     expect(a?.id).toBe(REACTION.SURCHAUFFE);
     expect(b?.id).toBe(REACTION.SURCHAUFFE);
+
+    // Meme garde pour Verglas (Givre + Poix) : c est precisement l ordre
+    // dont depend le piege de `zoneSlowFactor` plus bas.
+    const c = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.POIX));
+    const d = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.GIVRE));
+    expect(c?.id).toBe(REACTION.VERGLAS);
+    expect(d?.id).toBe(REACTION.VERGLAS);
   });
 
   it('rend `undefined` pour un couple SANS effet specifique — Braise+Givre, le Choc thermique generique', () => {
@@ -61,6 +75,7 @@ describe('reactionOfId', () => {
     expect(reactionOfId(REACTION.EMBRASEMENT)?.name).toBe('embrasement');
     expect(reactionOfId(REACTION.COURT_CIRCUIT)?.name).toBe('court-circuit');
     expect(reactionOfId(REACTION.SUPRACONDUCTION)?.name).toBe('supraconduction');
+    expect(reactionOfId(REACTION.VERGLAS)?.name).toBe('verglas');
   });
 
   it('rend `undefined` pour `REACTION.AUCUNE` (0) : aucune ligne ne le porte', () => {
@@ -195,6 +210,31 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
     expect(givreDeclenche).toBe(0);
     expect(foudreDeclenche).toBe(0);
   });
+
+  /**
+   * ⚠️ **LE piege de la tache 8, signale par la revue de la tache 7 (R13)
+   * avant meme que le code n'existe.** Pour la Supraconduction,
+   * `reactionFactor = 0` est un PLANCHER ABSOLU : `min(x, 0) = 0` quel que
+   * soit `x`. Verglas n'a pas ce luxe : si sa ligne portait `zoneSlowFactor:
+   * 1` (neutre, comme les trois reactions de la tache 6), ce test rendrait
+   * `0,6` quand Givre declenche et `1` quand Poix declenche — deux nombres
+   * DIFFERENTS, et la meme Verglas glisserait ou pas selon quel projectile a
+   * touche en second. La ligne de Verglas doit donc porter un facteur
+   * EXPLICITE qui reste un plancher dans les deux cas.
+   */
+  it('rend le MEME facteur pour Verglas, quel que soit l element porte par le nibble (Givre OU Poix declenche)', () => {
+    const givreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
+    const poixDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.POIX, REACTION.VERGLAS));
+    // Non-vacuite : Givre et Poix n'ont PAS le meme `slowFactor` — sans
+    // combinaison EXPLICITE au niveau de la reaction, les deux lignes
+    // ci-dessous rendraient des valeurs differentes.
+    expect(elementOf(ELEMENT.GIVRE).slowFactor).not.toBe(elementOf(ELEMENT.POIX).slowFactor);
+    expect(givreDeclenche).toBe(poixDeclenche);
+    // Et ce facteur COMMUN est bien celui du Givre : Verglas ne fait que
+    // GARANTIR ce ralentissement quel que soit l'ordre, elle n'en ajoute pas
+    // un second.
+    expect(givreDeclenche).toBe(elementOf(ELEMENT.GIVRE).slowFactor);
+  });
 });
 
 /**
@@ -220,5 +260,66 @@ describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', (
     expect(SUPRACONDUCTION_ARMOR_REDUCTION).toBeGreaterThan(0);
     expect(surGivre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
     expect(surFoudre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+
+  it('rend zero pour Verglas : elle agit par la vitesse et la collision, pas par l armure', () => {
+    const surGivre = zoneArmorReduction(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
+    const surPoix = zoneArmorReduction(packZoneKind(ELEMENT.POIX, REACTION.VERGLAS));
+    expect(surGivre).toBe(0);
+    expect(surPoix).toBe(0);
+  });
+});
+
+/**
+ * `zoneInertiaDamping` — la tache 8 de l'etape 5b : le facteur de
+ * conservation de vitesse DERIVE du kind empaquete, lu par
+ * `Horde#recomputeSteering` (`shared/horde.ts`), qui VOYAGE.
+ */
+describe('zoneInertiaDamping — le facteur d inertie DERIVE du kind empaquete', () => {
+  it('rend 1 (aucun effet) pour un kind de reaction nulle', () => {
+    expect(zoneInertiaDamping(ELEMENT.GIVRE)).toBe(1);
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.GIVRE, REACTION.AUCUNE))).toBe(1);
+  });
+
+  it('rend 1 pour les quatre reactions des taches 6 et 7 : aucune n a d effet d inertie', () => {
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE))).toBe(1);
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(1);
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(1);
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION))).toBe(1);
+  });
+
+  it('rend VERGLAS_INERTIA_DAMPING (< 1) pour Verglas, quel que soit l element porte par le nibble', () => {
+    const givreDeclenche = zoneInertiaDamping(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
+    const poixDeclenche = zoneInertiaDamping(packZoneKind(ELEMENT.POIX, REACTION.VERGLAS));
+    expect(VERGLAS_INERTIA_DAMPING).toBeLessThan(1);
+    expect(givreDeclenche).toBe(VERGLAS_INERTIA_DAMPING);
+    expect(poixDeclenche).toBe(VERGLAS_INERTIA_DAMPING);
+  });
+});
+
+/**
+ * `zoneCollisionDamage` — la tache 8 de l'etape 5b : le degat de collision
+ * DERIVE du kind empaquete, lu par `resolveVerglasCollisions`
+ * (`back/src/combat.ts`), qui ne voyage JAMAIS (un degat, serveur seul).
+ */
+describe('zoneCollisionDamage — le degat de collision DERIVE du kind empaquete', () => {
+  it('rend zero pour un kind de reaction nulle', () => {
+    expect(zoneCollisionDamage(ELEMENT.GIVRE)).toBe(0);
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.GIVRE, REACTION.AUCUNE))).toBe(0);
+  });
+
+  it('rend zero pour les quatre reactions des taches 6 et 7 : aucune n a d effet de collision', () => {
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE))).toBe(0);
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(0);
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(0);
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION))).toBe(0);
+  });
+
+  it('rend VERGLAS_COLLISION_DAMAGE_PER_TICK (> 0) pour Verglas, quel que soit l element porte', () => {
+    const givreDeclenche = zoneCollisionDamage(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
+    const poixDeclenche = zoneCollisionDamage(packZoneKind(ELEMENT.POIX, REACTION.VERGLAS));
+    expect(VERGLAS_COLLISION_DAMAGE_PER_TICK).toBeGreaterThan(0);
+    expect(givreDeclenche).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
+    expect(poixDeclenche).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
   });
 });

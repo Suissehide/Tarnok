@@ -11,6 +11,7 @@ import {
   ORB_PICKUP_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  SEPARATION_RADIUS,
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
@@ -1439,6 +1440,100 @@ export function resolveBurn(
       }
     }
   }
+  if (dead.length === 0) {
+    return dead;
+  }
+  for (const id of dead) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+    }
+  }
+  horde.kill(dead);
+  return dead;
+}
+
+/**
+ * Verglas (Givre + Poix, tache 8 de l'etape 5b) : la seconde moitie de la
+ * reaction — *« les ennemis dérapent ET se percutent »*. Le derapage
+ * (le premier mot) VOYAGE et vit dans `Horde#recomputeSteering`
+ * (`shared/horde.ts`) ; la collision (le second) est un DEGAT, donc arbitree
+ * ici, cote serveur seul.
+ *
+ * ⚠️ **Aucune contrainte de replication, contrairement au derapage.** Le
+ * client ne prononce jamais de degat (§2) ; seules les morts qui en
+ * resultent voyagent, par `DEATHS` comme toujours — exactement le meme
+ * partage que `armureA`/`ampAt` (qui ne voyagent pas) face a
+ * `Horde#computeSlow` (qui voyage).
+ *
+ * ⚠️ **Aucun etat nouveau sur `Horde`.** La liste des ennemis « glissants »
+ * de ce tick est un tableau LOCAL a cette fonction, jamais un quinzieme
+ * tableau type sur `Horde` — voir la contrainte dure de la tache 8. Elle se
+ * REDERIVE chaque tick, exactement comme `#slow` dans `Horde`.
+ *
+ * ⚠️ **Une SEULE liste pour toutes les zones qui se recouvrent, jamais une
+ * passe par zone.** Un ennemi couvert par deux zones de Verglas qui se
+ * chevauchent ne doit pas se percuter deux fois avec le meme voisin —
+ * `ZoneField.collisionDamageAt` a deja pris le MAXIMUM entre zones (comme
+ * `ampAt`/`armorReductionAt`) avant que cette fonction n'apparie qui que ce
+ * soit.
+ *
+ * ⚠️ **La distance de collision est `SEPARATION_RADIUS` (28 px) — la meme
+ * distance de confort que `Horde#recomputeSteering` maintient normalement
+ * entre voisins.** Deux ennemis qui se retrouvent plus proches que ca
+ * n'ont, par construction, pas pu se repousser correctement : c'est le
+ * derapage qui les y a laisses.
+ *
+ * Cout : O(zones x entites) pour reperer les glissants (meme ordre que
+ * `Horde#computeSlow`/`markInZones`), puis O(k²) sur les k glissants trouves
+ * — en pratique borne par la geometrie, `SEPARATION_RADIUS` etant trop
+ * petit pour qu'une horde entiere s'y tienne a la fois.
+ */
+export function resolveVerglasCollisions(
+  horde: Horde,
+  orbs: OrbField,
+  tick: number,
+  zones: ZoneField,
+): number[] {
+  const dead: number[] = [];
+  const sliding: number[] = [];
+  const slidingDamage: number[] = [];
+  for (let i = 0; i < horde.count; i++) {
+    if ((horde.hp[i] ?? 0) <= 0) {
+      continue;
+    }
+    const damage = zones.collisionDamageAt(horde.x[i] ?? 0, horde.y[i] ?? 0, tick);
+    if (damage <= 0) {
+      continue;
+    }
+    sliding.push(i);
+    slidingDamage.push(damage);
+  }
+
+  const r2 = SEPARATION_RADIUS * SEPARATION_RADIUS;
+  for (let a = 0; a < sliding.length; a++) {
+    const i = sliding[a] ?? 0;
+    for (let b = a + 1; b < sliding.length; b++) {
+      const j = sliding[b] ?? 0;
+      // ⚠️ **Verifie a CHAQUE paire, pas une fois a l'entree de la boucle
+      // externe.** `i` peut mourir d'une paire precedente dans cette meme
+      // boucle interne (deux voisins glissants simultanement) ; sans cette
+      // garde fraiche, `appliquerDegats` reprendrait une reserve deja a
+      // `<= 0` et listerait `i` deux fois dans `dead` — meme raisonnement
+      // que `resolveBurn`.
+      if ((horde.hp[i] ?? 0) <= 0 || (horde.hp[j] ?? 0) <= 0) {
+        continue;
+      }
+      const dx = (horde.x[i] ?? 0) - (horde.x[j] ?? 0);
+      const dy = (horde.y[i] ?? 0) - (horde.y[j] ?? 0);
+      if (dx * dx + dy * dy >= r2) {
+        continue;
+      }
+      appliquerDegats(horde, i, slidingDamage[a] ?? 0, zones, tick, dead);
+      appliquerDegats(horde, j, slidingDamage[b] ?? 0, zones, tick, dead);
+    }
+  }
+
   if (dead.length === 0) {
     return dead;
   }

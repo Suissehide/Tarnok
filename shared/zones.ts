@@ -1,7 +1,7 @@
 import { ZONE_CAPACITY, ZONE_RADIUS, ZONE_REFRESH_INTERVAL_TICKS } from './constants';
 import { elementOf } from './elements';
 import { zoneElement } from './protocol';
-import { zoneArmorReduction, zoneLifetimeTicks } from './reactions';
+import { zoneArmorReduction, zoneCollisionDamage, zoneLifetimeTicks } from './reactions';
 
 /**
  * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, **pose par
@@ -383,6 +383,48 @@ export class ZoneField {
       }
     }
     return reduction;
+  }
+
+  /**
+   * Le degat de collision au point `(x, y)` au tick `tick` : le plus fort
+   * `ReactionDef.zoneCollisionDamage` parmi les zones VIVANTES qui couvrent
+   * ce point (Verglas, tache 8 de l'etape 5b, est la seule a en porter un
+   * aujourd'hui — « les ennemis ... se percutent »), et `0` s'il n'y en a
+   * aucune.
+   *
+   * ⚠️ **Meme FORME qu'`ampAt`/`armorReductionAt` juste au-dessus — meme
+   * balayage, meme `aliveAt`, meme MAXIMUM, pour la MEME raison qu'elles :
+   * ce degat ne voyage pas d'un octet.** Seul `resolveVerglasCollisions`
+   * (`back/src/combat.ts`), cote serveur, le lit — le client ne prononce
+   * jamais de degat (§2), et deux zones de Verglas qui se recouvrent ne
+   * doublent pas la casse, elles donnent le plus fort effet.
+   *
+   * ⚠️ **`aliveAt`, pas `slowsAt`, meme raison qu'`ampAt`/`armorReductionAt`.**
+   * Les degats se resolvent APRES les poses du tick courant.
+   *
+   * ⚠️ **Un point, pas une paire.** Cette methode ne sait rien de « qui
+   * percute qui » — c'est `resolveVerglasCollisions` qui apparie deux
+   * points de la horde et lit cette valeur pour chacun. `ZoneField` ne
+   * connait pas la horde, meme raisonnement qu'`ampAt`.
+   */
+  collisionDamageAt(x: number, y: number, tick: number): number {
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    let damage = 0;
+    for (let z = 0; z < this.#count; z++) {
+      if (!this.aliveAt(z, tick)) {
+        continue;
+      }
+      const dx = (this.x[z] ?? 0) - x;
+      const dy = (this.y[z] ?? 0) - y;
+      if (dx * dx + dy * dy >= r2) {
+        continue;
+      }
+      const factor = zoneCollisionDamage(this.kind[z] ?? 0);
+      if (factor > damage) {
+        damage = factor;
+      }
+    }
+    return damage;
   }
 
   /**
