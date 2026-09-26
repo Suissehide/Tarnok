@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { CARD } from '@shared/cards';
-import { TICK_HZ, ZONE_RADIUS } from '@shared/constants';
+import { SYNERGY_MAX, TICK_HZ, ZONE_RADIUS } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
@@ -106,6 +106,15 @@ interface Client {
    * d'integration n'en a besoin.
    */
   rawByType: Map<number, number[]>;
+  /**
+   * Un releve par `SNAPSHOT` : la barre qu'il porte, et le nombre de
+   * `REACTION` chargees (`synergyCharge === true`) deja arrivees sur CETTE
+   * socket. Meme mecanisme que `elements.integration.test.ts` (tache 10) —
+   * c'est ce qui rend la comparaison « barre = charges » insensible a
+   * l'horloge : `Session#broadcast` envoie les `REACTION` d'un tick AVANT le
+   * `SNAPSHOT` du meme tick, et la socket preserve l'ordre.
+   */
+  jalons: { synergy: number; chargees: number }[];
   seq: number;
 }
 
@@ -142,9 +151,11 @@ async function connect(code: string): Promise<Client> {
     received: [],
     lastSnapshot: null,
     rawByType: new Map(),
+    jalons: [],
     seq: 0,
   };
 
+  let chargees = 0;
   ws.on('message', (data: ArrayBuffer) => {
     const msg = decode(data);
     const parType = client.rawByType.get(msg.type) ?? [];
@@ -157,7 +168,11 @@ async function connect(code: string): Promise<Client> {
     }
     if (msg.type === MSG.SNAPSHOT) {
       client.lastSnapshot = msg;
+      client.jalons.push({ synergy: msg.synergy, chargees });
       return;
+    }
+    if (msg.type === MSG.REACTION && msg.synergyCharge) {
+      chargees++;
     }
     client.received.push(msg);
   });
@@ -258,6 +273,24 @@ function equipe(room: Room, playerId: number, weaponId: number): void {
   room.grantCard(playerId, { nature: CARD.WEAPON, refId: weaponId });
 }
 
+/**
+ * **La barre vaut, a CHAQUE instant, le nombre de reactions chargees deja
+ * annoncees — plafonnee, et rien d'autre.**
+ *
+ * Meme mecanisme que `elements.integration.test.ts` (tache 10, §7) : une
+ * barre qui monterait a chaque reaction sans comparer les identites ferait
+ * rougir chaque releve ou une reaction non chargee est arrivee ; une barre
+ * qui ne montrait JAMAIS (la mutation `charge = false` de `Room.step`,
+ * corrigee a cette tache) ferait rougir des que `chargees > 0`.
+ */
+function barreSuitLesCharges(client: Client): void {
+  const jalons = client.jalons.filter((j) => j.chargees > 0);
+  expect(jalons.length, 'aucun SNAPSHOT n a suivi une charge').toBeGreaterThan(0);
+  for (const j of jalons) {
+    expect(j.synergy).toBe(Math.min(SYNERGY_MAX, j.chargees));
+  }
+}
+
 describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plus', () => {
   /**
    * **Le livrable central : quatre joueurs, quatre elements, les six paires
@@ -280,6 +313,14 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
    * `back/src/combat.ts`) : la lecture « les six paires se declenchent »
    * survivrait a un salon qui declenche n'importe quoi a cote — exactement le
    * piege du §8 de la spec.
+   *
+   * ⚠️ **Chaque cible est aussi INTER-JOUEURS** : `markBy` designe un joueur,
+   * `firer` en est TOUJOURS un autre, sur les six lignes. C'est le scenario
+   * exact ou la Synergie du §7 doit charger — et ce fichier est le seul du
+   * depot a le verifier a quatre elements sur une vraie socket. Une revue a
+   * mute `Room.step` (`const charge = t.markBy !== t.by` -> `const charge =
+   * false`) et ce test restait vert tant que la barre n'etait pas lue : voir
+   * la note dans la premiere assertion ci-dessous.
    */
   it('quatre joueurs portant quatre elements differents declenchent les six reactions, une par une', async () => {
     const code = await createRoomCode();
@@ -523,6 +564,16 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
 
     // ---- 1. Chaque cible a produit AU MOINS deux reactions, et EXACTEMENT
     //         celles de sa propre paire — jamais une autre. --------------------
+    //
+    // ⚠️ **Et CHACUNE charge la barre.** Les six cibles ci-dessus sont TOUTES
+    // inter-joueurs par construction (`markBy` designe un joueur, `firer` en
+    // est un AUTRE, sur les six lignes) : c'est precisement le scenario ou
+    // `markBy !== by`, et donc le SEUL endroit ou la regle centrale du
+    // couplage cooperatif (§7) s'observe sur quatre vraies sockets. Une
+    // mutation qui ferait tomber la barre a JAMAIS (`charge = false` dans
+    // `Room.step`) laisserait les cinq autres assertions de ce test
+    // parfaitement vertes — sans celle-ci, ce fichier ne verifierait jamais
+    // la regle que le code lui-meme appelle « le coeur du projet ».
     const buckets = cibles.map((cible) => recues.filter(bucketDe(cible)));
     for (let i = 0; i < cibles.length; i++) {
       const cible = cibles[i];
@@ -535,8 +586,15 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
       );
       for (const r of bucket) {
         expect(r.pair, `${cible.nom} porte la mauvaise paire`).toBe(cible.pair);
+        expect(r.synergyCharge, `${cible.nom} : reaction inter-joueurs non chargee`).toBe(true);
       }
     }
+
+    // La barre elle-meme, lue dans le SNAPSHOT et nulle part ailleurs : elle
+    // doit suivre EXACTEMENT le compte des charges, jamais rester a zero ni
+    // monter sans rapport avec lui.
+    barreSuitLesCharges(a);
+    expect(a.lastSnapshot?.synergy).toBeGreaterThan(0);
 
     // ---- 2. Champ a champ : AUCUNE reaction n'echappe aux six lots. --------
     //
@@ -577,20 +635,35 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
   }, 60_000);
 
   /**
-   * **Un joueur seul, deux elements : jamais qu'une seule paire.**
+   * **Un joueur seul, deux elements : jamais qu'une seule paire — et
+   * l'assertion « la barre ne charge pas » rendue capable de DISTINGUER.**
    *
    * Le joueur porte a la fois Givre et Poix, REELLEMENT (deux armes
-   * distinctes, aucune marque posee a la main) : quelle que soit laquelle des
-   * deux touche en premier, la seule paire que DEUX elements peuvent former
-   * est C(2, 2) = 1 — Verglas. Aucun decor ne peut faire surgir une sixieme
+   * distinctes) : quelle que soit laquelle des deux touche en premier sur sa
+   * PROPRE cible, la seule paire que DEUX elements peuvent former est
+   * C(2, 2) = 1 — Verglas. Aucun decor ne peut faire surgir une sixieme
    * paire fantome ici : c'est une propriete du MODELE (une seule paire
    * possible avec deux elements), pas une convention du harnais.
    *
-   * ⚠️ **Et la barre ne charge JAMAIS**, pour la meme raison que le §7 :
-   * `markBy` et `by` sont toujours la MEME identite (le seul joueur present),
-   * donc la comparaison qui charge la Synergie ne peut jamais differer.
+   * ⚠️ **Une revue a mute `Room.step` (`charge = t.markBy !== t.by` ->
+   * `charge = false`) et la version precedente de ce test restait VERTE.**
+   * « La barre ne charge jamais pour un joueur seul » est vrai quel que soit
+   * le code — un seul joueur ne peut ecrire que sa propre identite des DEUX
+   * cotes de la comparaison — donc une assertion qui ne verifie QUE ce cas
+   * est vraie A VIDE : elle ne distingue pas « la regle fonctionne et rend
+   * toujours faux ici » de « la regle est cassee et rend toujours faux
+   * partout ». La parade, tenue par ce dépot depuis la tache 8 de l'etape 5a
+   * (le decor « inter-joueurs contre solo » de `elements.integration.test.ts`) :
+   * une SECONDE cible, ou un coequipier (`b`, deja connecte, jamais arme)
+   * entretient une marque de Givre a la main — le seul geste manuel de ce
+   * test — pendant que la POIX reelle du meme joueur `a` la declenche. La
+   * paire reste Verglas (toujours C(2,2) = 1 dans le SALON entier : `b` ne
+   * porte aucune arme, il ne fait qu'entretenir un element deja en jeu), mais
+   * `markBy` (b) differe cette fois de `by` (a) : la barre DOIT charger. Les
+   * deux cibles, cote a cote dans le meme releve, sont ce qui rend
+   * l'assertion negative enfin capable de distinguer.
    */
-  it('un joueur seul portant Givre et Poix ne declenche jamais que Verglas, et jamais la barre', async () => {
+  it('un joueur seul portant Givre et Poix ne declenche jamais que Verglas ; seule une marque inter-joueurs charge la barre', async () => {
     const code = await createRoomCode();
     const room = app.rooms.get(code);
     if (!room) {
@@ -598,8 +671,8 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     }
 
     const clients = await quatreClients(code);
-    const [a] = clients;
-    if (!a) {
+    const [a, b] = clients;
+    if (!a || !b) {
       throw new Error('quatre clients attendus');
     }
 
@@ -613,34 +686,81 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     }
 
     const PAIR_VERGLAS = packElementPair(ELEMENT.GIVRE, ELEMENT.POIX);
-    const OFFSET_X = 150;
-    const OFFSET_Y = 0;
-    const cibleX = pa.x + OFFSET_X;
-    const cibleY = pa.y;
 
-    // Garde : la cible reste a portee des DEUX armes (la plus courte des
-    // deux, la seringue, decide).
-    expect(Math.hypot(OFFSET_X, OFFSET_Y)).toBeLessThan(porteeDe(SERINGUE_A_POIX));
-    expect(Math.hypot(OFFSET_X, OFFSET_Y)).toBeLessThan(porteeDe(FLECHES_JUMELLES));
+    // Cible SOLO : ni marque ni identite d'un autre joueur n'y touche jamais.
+    const SOLO_OFFSET_X = 150;
+    const SOLO_OFFSET_Y = 0;
+    const soloX = pa.x + SOLO_OFFSET_X;
+    const soloY = pa.y;
 
-    const cible = poseCible(room, 9600, cibleX, cibleY);
+    // Cible COOPERATIVE : `b` y entretient Givre a la main, la Poix reelle de
+    // `a` la declenche. Assez loin de la cible solo pour qu'aucune zone ne
+    // recouvre l'autre (meme garde qu'au test a quatre cibles).
+    const DUO_OFFSET_X = 0;
+    const DUO_OFFSET_Y = -260;
+    const duoX = pa.x + DUO_OFFSET_X;
+    const duoY = pa.y + DUO_OFFSET_Y;
+
+    // Garde 1 : les deux cibles restent a portee des DEUX armes (la plus
+    // courte, la seringue, decide).
+    expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(SERINGUE_A_POIX));
+    expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(FLECHES_JUMELLES));
+    expect(Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y)).toBeLessThan(porteeDe(SERINGUE_A_POIX));
+    expect(Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y)).toBeLessThan(porteeDe(FLECHES_JUMELLES));
+    // Garde 2 : etanches l'une de l'autre, comme les six cibles du test
+    // precedent.
+    const ecartCibles = Math.hypot(soloX - duoX, soloY - duoY);
+    expect(ecartCibles, 'les deux cibles doivent etre etanches').toBeGreaterThan(4 * ZONE_RADIUS);
+
+    const solo = poseCible(room, 9600, soloX, soloY);
+    const duo = poseCible(room, 9601, duoX, duoY);
+
+    /** Alterne l'angle de tir de `a` entre sa cible solo et la cible cooperative. */
+    const PHASE_TICKS = 45;
 
     const pilote = setInterval(() => {
-      const slot = room.horde.slotOf(cible);
-      if (slot >= 0) {
-        room.horde.x[slot] = cibleX;
-        room.horde.y[slot] = cibleY;
-        room.horde.vx[slot] = 0;
-        room.horde.vy[slot] = 0;
+      for (const [id, x, y] of [
+        [solo, soloX, soloY],
+        [duo, duoX, duoY],
+      ] as const) {
+        const slot = room.horde.slotOf(id);
+        if (slot >= 0) {
+          room.horde.x[slot] = x;
+          room.horde.y[slot] = y;
+          room.horde.vx[slot] = 0;
+          room.horde.vy[slot] = 0;
+        }
       }
-      vise(a, OFFSET_X, OFFSET_Y);
+      // Le seul geste manuel de ce decor : `b` entretient Givre sur la cible
+      // cooperative, jamais sur la cible solo.
+      const slotDuo = room.horde.slotOf(duo);
+      if (slotDuo >= 0) {
+        room.horde.applyMark(slotDuo, ELEMENT.GIVRE, b.playerId, room.tick);
+      }
+
+      const phase = Math.floor(room.tick / PHASE_TICKS) % 2;
+      if (phase === 0) {
+        vise(a, SOLO_OFFSET_X, SOLO_OFFSET_Y);
+      } else {
+        vise(a, DUO_OFFSET_X, DUO_OFFSET_Y);
+      }
     }, 8);
 
-    const MIN_REACTIONS = 6;
+    const bucketSolo = (r: ReactionMessage) =>
+      Math.hypot(r.x - soloX, r.y - soloY) < 2 * ZONE_RADIUS;
+    const bucketDuo = (r: ReactionMessage) => Math.hypot(r.x - duoX, r.y - duoY) < 2 * ZONE_RADIUS;
+
+    const MIN_PAR_CIBLE = 3;
     try {
       await waitFor(
-        () => (reactionsDe(a).length >= MIN_REACTIONS ? true : null),
-        `${MIN_REACTIONS} reactions du joueur seul`,
+        () => {
+          const r = reactionsDe(a);
+          return r.filter(bucketSolo).length >= MIN_PAR_CIBLE &&
+            r.filter(bucketDuo).length >= MIN_PAR_CIBLE
+            ? true
+            : null;
+        },
+        `au moins ${MIN_PAR_CIBLE} reactions sur chacune des deux cibles`,
         30_000,
       );
     } finally {
@@ -648,31 +768,52 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     }
 
     const recues = reactionsDe(a);
-    expect(recues.length, 'aucune reaction n est arrivee').toBeGreaterThanOrEqual(MIN_REACTIONS);
+    const lotSolo = recues.filter(bucketSolo);
+    const lotDuo = recues.filter(bucketDuo);
 
-    // ---- 1. Jamais qu'une seule paire, et c'est la bonne. ------------------
+    // Le decor a bien produit les DEUX cas : on les compte, on ne les
+    // suppose pas — et toute reaction recue appartient a l'une des deux
+    // cibles (champ a champ, comme au test precedent).
+    expect(lotSolo.length).toBeGreaterThanOrEqual(MIN_PAR_CIBLE);
+    expect(lotDuo.length).toBeGreaterThanOrEqual(MIN_PAR_CIBLE);
+    expect(lotSolo.length + lotDuo.length).toBe(recues.length);
+
+    // ---- 1. Jamais qu'une seule paire, et c'est la bonne — sur les DEUX
+    //         cibles : `b` n'arme jamais rien, il ne fait qu'entretenir un
+    //         element deja en jeu, donc le salon entier ne connait toujours
+    //         que Givre et Poix. ------------------------------------------
     for (const r of recues) {
       expect(r.pair).toBe(PAIR_VERGLAS);
       expect(unpackElementPair(r.pair)).toEqual([ELEMENT.GIVRE, ELEMENT.POIX]);
     }
 
-    // ---- 2. La barre ne charge jamais : markBy et by sont toujours le meme
-    //         joueur, le seul present. ---------------------------------------
-    for (const r of recues) {
-      expect(r.synergyCharge).toBe(false);
-    }
-    expect(a.lastSnapshot?.synergy).toBe(0);
+    // ---- 2. La moitie negative, et la moitie positive, l'une A COTE DE
+    //         L'AUTRE. ---------------------------------------------------
+    //
+    // ⚠️ **La ligne que la revue a demandee.** Sans le lot cooperatif juste
+    // en dessous, « toujours faux » ne distinguerait pas la regle qui
+    // fonctionne (un seul joueur ne peut jamais differer de lui-meme) de la
+    // regle cassee (`charge = false`, mutation appliquee au §6 du rapport).
+    expect(lotSolo.every((r) => r.synergyCharge === false)).toBe(true);
+    expect(lotDuo.every((r) => r.synergyCharge === true)).toBe(true);
 
-    // ---- 3. Les deux elements alternent reellement comme declencheur : la
-    //         zone laissee porte tantot Givre, tantot Poix — sinon une seule
-    //         des deux armes aurait fait tout le travail, et « deux elements »
-    //         se lirait « un seul, en double ». ------------------------------
-    const zones = zonesDe(a);
-    for (const z of zones) {
+    // La barre suit exactement les charges cooperatives (jamais les solo).
+    barreSuitLesCharges(a);
+    expect(a.lastSnapshot?.synergy).toBeGreaterThan(0);
+
+    // ---- 3. Les deux elements alternent reellement comme declencheur sur
+    //         la cible SOLO : la zone laissee porte tantot Givre, tantot
+    //         Poix — sinon une seule des deux armes aurait fait tout le
+    //         travail, et « deux elements » se lirait « un seul, en
+    //         double ». ------------------------------------------------
+    const zonesSolo = zonesDe(a).filter(
+      (z) => Math.hypot(z.x - soloX, z.y - soloY) < 2 * ZONE_RADIUS,
+    );
+    for (const z of zonesDe(a)) {
       expect(zoneReaction(z.kind)).toBe(REACTION.VERGLAS);
     }
-    expect(zones.some((z) => zoneElement(z.kind) === ELEMENT.GIVRE)).toBe(true);
-    expect(zones.some((z) => zoneElement(z.kind) === ELEMENT.POIX)).toBe(true);
+    expect(zonesSolo.some((z) => zoneElement(z.kind) === ELEMENT.GIVRE)).toBe(true);
+    expect(zonesSolo.some((z) => zoneElement(z.kind) === ELEMENT.POIX)).toBe(true);
 
     // ---- 4. Les quatre sockets voient le meme flot. ------------------------
     for (const other of clients) {
