@@ -24,9 +24,15 @@ describe('WEAPONS', () => {
     });
   });
 
-  it('compte entre huit et dix armes', () => {
-    expect(WEAPONS.length).toBeGreaterThanOrEqual(8);
-    expect(WEAPONS.length).toBeLessThanOrEqual(10);
+  /**
+   * ⚠️ **Treize depuis la tache 9 de l'etape 5b** : neuf a l'etape 5a (deux
+   * Braise, deux Givre, cinq neutres), plus deux Foudre et deux Poix. La
+   * borne haute reste loin du pool de quarante du §6.2 — cette tache ne visait
+   * que le cablage minimal, pas le pool complet.
+   */
+  it('compte entre douze et quatorze armes', () => {
+    expect(WEAPONS.length).toBeGreaterThanOrEqual(12);
+    expect(WEAPONS.length).toBeLessThanOrEqual(14);
   });
 
   it('donne des valeurs strictement positives a chaque arme', () => {
@@ -122,17 +128,20 @@ describe('WEAPONS', () => {
 describe("l'element porte par une arme (etape 5a)", () => {
   /**
    * §4.2 : *« deux passent en Braise, deux en Givre, les cinq autres restent
-   * neutres »*. Compter, plutot que de faire confiance a la lecture de la
-   * table : c'est le seul endroit ou une arme elementaire oubliee ou ajoutee
-   * en trop se voit — plus loin dans l'etape, elle se contenterait de ne pas
-   * poser de zone.
+   * neutres »*, etendu par la tache 9 de l'etape 5b : deux de plus en Foudre,
+   * deux de plus en Poix — le compte de neutres ne bouge pas. Compter, plutot
+   * que de faire confiance a la lecture de la table : c'est le seul endroit ou
+   * une arme elementaire oubliee ou ajoutee en trop se voit — plus loin dans
+   * l'etape, elle se contenterait de ne pas poser de zone.
    */
   it('cable exactement deux armes par element, et laisse les autres neutres', () => {
     const compte = (element: number) => WEAPONS.filter((w) => w.element === element).length;
 
     expect(compte(ELEMENT.BRAISE)).toBe(2);
     expect(compte(ELEMENT.GIVRE)).toBe(2);
-    expect(compte(ELEMENT.NEUTRE)).toBe(WEAPONS.length - 4);
+    expect(compte(ELEMENT.FOUDRE)).toBe(2);
+    expect(compte(ELEMENT.POIX)).toBe(2);
+    expect(compte(ELEMENT.NEUTRE)).toBe(WEAPONS.length - 8);
   });
 
   /**
@@ -356,13 +365,13 @@ describe('weaponOf', () => {
  * L'apparence des projectiles (etape 5a, tache 12), venue de l'auteur en
  * jouant : *« fais des projectiles differents pour chaque arme »*.
  *
- * ⚠️ **« Neuf armes ont une apparence » et « neuf armes ont la MEME
+ * ⚠️ **« Chaque arme a une apparence » et « toutes les armes ont la MEME
  * apparence » se ressemblent beaucoup dans un test faible.** D'ou la garde de
  * chargement `assertWeaponLooks`, et d'ou le fait que ces cas lui donnent des
  * tables VOLONTAIREMENT cassees : le vrai catalogue est une constante, aucun
  * test ne peut y glisser un doublon.
  */
-describe('assertWeaponLooks — neuf armes, neuf apparences', () => {
+describe('assertWeaponLooks — chaque arme, son apparence', () => {
   const base = weaponOf(BASE_WEAPON_ID);
   const avecTeinte = (name: string, tint: number, element: number = ELEMENT.NEUTRE) => ({
     ...base,
@@ -413,16 +422,16 @@ describe('assertWeaponLooks — neuf armes, neuf apparences', () => {
   });
 
   /**
-   * La moitie « et les neuf du catalogue, alors ? » : la garde ci-dessus
-   * protege l'AVENIR, ce cas mesure le PRESENT. Les deux armes de Braise et
-   * les deux de Givre sont explicitement confrontees — c'est la paire que
-   * l'auteur a nommee.
+   * La moitie « et le catalogue reel, alors ? » : la garde ci-dessus protege
+   * l'AVENIR, ce cas mesure le PRESENT. Les deux armes de chaque element sont
+   * explicitement confrontees — Foudre et Poix rejoignent Braise et Givre
+   * depuis la tache 9 de l'etape 5b.
    */
-  it('donne aux neuf armes du catalogue neuf teintes deux a deux distinctes', () => {
+  it('donne a chaque arme du catalogue une teinte deux a deux distincte des autres', () => {
     expect(new Set(WEAPONS.map((w) => w.look.tint)).size).toBe(WEAPONS.length);
 
     const parElement = (element: number) => WEAPONS.filter((w) => w.element === element);
-    for (const element of [ELEMENT.BRAISE, ELEMENT.GIVRE]) {
+    for (const element of [ELEMENT.BRAISE, ELEMENT.GIVRE, ELEMENT.FOUDRE, ELEMENT.POIX]) {
       const [a, b] = parElement(element);
       expect(a?.look.tint).not.toBe(b?.look.tint);
       expect(a?.look.tint).not.toBe(elementOf(element).tint);

@@ -47,7 +47,7 @@ export type ProjectileShape =
  * refuse.** Une arme neutre doit rester reconnaissable, et deux armes du meme
  * element doivent se distinguer l'une de l'autre : l'element se lit a la zone
  * qu'elle laisse au sol (`ZoneRenderer`) et a la marque sur l'ennemi, pas au
- * point lumineux qui vole. Neuf armes, neuf teintes.
+ * point lumineux qui vole. Chaque arme, sa teinte de projectile propre.
  *
  * ⚠️ **Aucune atténuation ici.** Le fondu de fin de vie se DERIVE de
  * `projectileLifeTicks` (voir `projectileAlpha`) : un second champ le
@@ -86,7 +86,7 @@ export interface Weapon {
    *
    * ⚠️ **C'est une donnee de la table, arme par arme — jamais un facteur
    * global** (etape 6a, tache 19). La cadence est l'un des rares axes qui
-   * distinguent les neuf armes entre elles ; le releve qui a fixe les valeurs
+   * distinguent les armes entre elles ; le releve qui a fixe les valeurs
    * actuelles est en tete de `WEAPON_DEFS`.
    */
   cooldownTicks: number;
@@ -125,8 +125,8 @@ export interface Weapon {
    * faut parfois des AoE sur certaines armes comme les grenades »*.
    *
    * ⚠️ **Zero n'est pas un cas particulier, c'est une entree de la table.**
-   * Meme motif que `ELEMENT.NEUTRE` : huit armes sur neuf valent zero et le
-   * restent, donc c'est la ligne ABSENTE qui est le cas courant. Un booleen
+   * Meme motif que `ELEMENT.NEUTRE` : douze armes sur treize valent zero et
+   * le restent, donc c'est la ligne ABSENTE qui est le cas courant. Un booleen
    * « arme de zone » plus un rayon a cote se contrediraient des la premiere
    * retouche.
    *
@@ -145,8 +145,8 @@ export interface Weapon {
    * L'apparence de ses projectiles — voir `ProjectileLook`.
    *
    * ⚠️ Champ OBLIGATOIRE, contrairement a `element` : une arme sans apparence
-   * retomberait sur celle d'une autre, et « neuf armes, neuf apparences »
-   * redeviendrait « neuf armes, un point lumineux » sans que rien ne le dise.
+   * retomberait sur celle d'une autre, et « chaque arme, son apparence »
+   * redeviendrait « treize armes, un point lumineux » sans que rien ne le dise.
    */
   look: ProjectileLook;
 }
@@ -161,7 +161,7 @@ export interface Weapon {
  * `element` et `blastRadius` sont les seuls champs optionnels : omettre le
  * premier vaut `ELEMENT.NEUTRE` (§4.2 de la spec de l'etape 5a), omettre le
  * second vaut `0`, c'est-a-dire « ce projectile ne touche que ce qu'il
- * percute ». Cinq armes sur neuf sont neutres et le restent — *« un socle pour
+ * percute ». Cinq armes sur treize sont neutres et le restent — *« un socle pour
  * les joueurs qui ne veulent pas jouer le systeme »* (§6.3 de l'orientation) —
  * et une seule explose : dans les deux cas c'est la ligne ABSENTE qui est le
  * cas courant, et l'exception se lit d'un coup d'oeil.
@@ -435,6 +435,79 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     spreadRadians: 0.05,
     element: ELEMENT.GIVRE,
   },
+  {
+    // Tache 9 de l'etape 5b : la Foudre a enfin ses armes.
+    //
+    // La foudre « rapide », en face de fleches-jumelles et de l'eventail :
+    // deux projectiles par salve, cadence courte. Chaque impact chaine
+    // (`ELEMENT.FOUDRE` declenche `chainTargets` dans `resolveProjectileDamage`,
+    // back/src/combat.ts) — une arme qui touche souvent seme donc des chaines
+    // souvent, la ou une arme lente laisserait l'effet signature de l'element
+    // se voir a peine.
+    name: 'bobine-tesla',
+    // Eclat lavande a fort halo, trainee courte : un arc qui crepite plutot
+    // qu'un trait qui file. Distincte de la teinte de l'element (0xf3e94b,
+    // jaune) comme l'exige `assertWeaponLooks`.
+    look: { shape: 'eclat', diameterPx: 6, tint: 0xb388ff, glow: 0.75, trailTicks: 0.8 },
+    cooldownTicks: 15,
+    damage: 6,
+    projectileSpeed: 700,
+    projectileLifeTicks: 20,
+    projectileCount: 2,
+    spreadRadians: 0.2,
+    element: ELEMENT.FOUDRE,
+  },
+  {
+    // La foudre « lourde », en face du sceptre-arcanique et de l'arc-lourd :
+    // projectile unique, cadence lente, degats eleves. Le premier maillon
+    // d'une chaine doit peser pour que la reaction Court-circuit (Foudre +
+    // Poix, `shared/reactions.ts`) parte d'un coup qui compte, pas d'une
+    // piqure.
+    name: 'canon-a-arc',
+    // Fleche cyan electrique, la plus longue trainee des deux armes de
+    // Foudre : elle se vise, donc elle se suit des yeux comme le sceptre.
+    look: { shape: 'fleche', diameterPx: 15, tint: 0x00e5ff, glow: 0.5, trailTicks: 1.4 },
+    cooldownTicks: 33,
+    damage: 16,
+    projectileSpeed: 750,
+    projectileLifeTicks: 30,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    element: ELEMENT.FOUDRE,
+  },
+  {
+    // La poix « rapide » : plusieurs projectiles a courte portee, pour
+    // etaler la marque sur un front — c'est `ZoneField.ampAt` (`shared/zones.ts`)
+    // qui lit `damageAmp`, donc plus de zones posees par la reaction est plus
+    // d'occasions pour un allie de frapper dans une flaque amplifiee.
+    name: 'seringue-a-poix',
+    // Grain ambre-brun, halo faible : la poix ne brille pas, elle englue.
+    // Distincte de la teinte de l'element (0x3d2b1f, brun fonce).
+    look: { shape: 'grain', diameterPx: 8, tint: 0x8a6d3f, glow: 0.2, trailTicks: 0.8 },
+    cooldownTicks: 18,
+    damage: 5,
+    projectileSpeed: 480,
+    projectileLifeTicks: 18,
+    projectileCount: 3,
+    spreadRadians: 0.4,
+    element: ELEMENT.POIX,
+  },
+  {
+    // La poix « lourde » : projectile unique, cadence lente, degats eleves —
+    // en face de la grenade et du canon-a-arc. Elle vise a poisser une cible
+    // choisie plutot qu'a arroser, le pendant exact de la seringue.
+    name: 'chaudron-a-poix',
+    // Sphere brun fonce, la plus terne du catalogue : sans halo marque,
+    // conforme a une arme qui n'illumine rien.
+    look: { shape: 'sphere', diameterPx: 16, tint: 0x5c3a21, glow: 0.15, trailTicks: 1.3 },
+    cooldownTicks: 40,
+    damage: 14,
+    projectileSpeed: 380,
+    projectileLifeTicks: 32,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    element: ELEMENT.POIX,
+  },
 ];
 
 export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
@@ -466,8 +539,8 @@ export function assertWeaponElements(weapons: readonly Weapon[]): void {
 }
 
 /**
- * Verifie que les neuf apparences se distinguent, et qu'aucune ne se fait
- * passer pour son element.
+ * Verifie que chaque apparence se distingue de toutes les autres, et
+ * qu'aucune ne se fait passer pour son element.
  *
  * Deux regles, et deux seulement :
  *
@@ -478,13 +551,16 @@ export function assertWeaponElements(weapons: readonly Weapon[]): void {
  *    voudrait dire « blanc », et blanc est deja le flash de reaction.
  * 2. **Deux armes ne partagent jamais une teinte.** C'est le canal qu'on lit a
  *    un point de dix pixels en mouvement ; la forme, non. Sans cette regle,
- *    « neuf armes ont une apparence » et « neuf armes ont la MEME apparence »
- *    se ressemblent beaucoup.
+ *    « chaque arme a une apparence » et « toutes les armes ont la MEME
+ *    apparence » se ressemblent beaucoup.
  *
- * ⚠️ **Rien sur la FORME.** Exiger neuf formes distinctes interdirait a une
- * dixieme arme d'en reutiliser une, donc ferait de « ajouter une arme » de
- * l'architecture. Le catalogue en donne neuf differentes parce que c'est plus
- * joli, pas parce qu'une garde l'impose.
+ * ⚠️ **Rien sur la FORME.** Exiger des formes deux a deux distinctes
+ * interdirait a une arme suivante d'en reutiliser une, donc ferait de
+ * « ajouter une arme » de l'architecture. Le catalogue compte neuf formes
+ * (`ProjectileShape`) pour treize armes depuis la tache 9 de l'etape 5b
+ * (Foudre et Poix reutilisent des formes deja prises par la Braise et le
+ * Givre) — c'est la TEINTE qui distingue, jamais la forme, exactement ce que
+ * cette garde verifie et pas davantage.
  *
  * Prend la table en parametre pour la meme raison que `assertWeaponElements` :
  * le vrai catalogue est une constante, aucun test ne peut y glisser un doublon.

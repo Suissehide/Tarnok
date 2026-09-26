@@ -110,34 +110,48 @@ describe('le neutre est une entree de la table, pas un cas particulier', () => {
 
   /**
    * L'autre moitie de l'affirmation, et la seule qui garde le catalogue
-   * FUTUR : un element ajoute a l'etape 5b sans effet serait une entree morte
-   * — une arme pourrait le porter, une zone l'afficher, et rien n'arriverait
-   * jamais a l'ennemi marque.
+   * FUTUR : un element ajoute sans AUCUN effet serait une entree morte — une
+   * arme pourrait le porter, une zone l'afficher, et rien n'arriverait jamais
+   * a l'ennemi marque ni a qui pietine sa zone.
    *
-   * ⚠️ **La Foudre ET la Poix sont des exceptions NOMMEES, pas un trou dans la
-   * garde.** La Foudre (`chainTargets`, `shared/chain.ts`) ne se lit pas dans
-   * `burnPerTick`/`slowFactor` : elle se derive d'un point d'impact, jamais
-   * d'une marque portee par l'entite, et le docbloc de `ELEMENT_DEFS` explique
-   * pourquoi lui donner un champ ici n'aurait rien generalise. La Poix
-   * (tache 4) ne brule pas non plus et ne ralentit pas non plus — son effet
-   * vit dans `damageAmp`, un troisieme champ que cette assertion-ci ne
-   * regarde pas. `ELEMENTS_SANS_EFFET_DE_MARQUE` liste les elements dont
-   * l'absence est donc ATTENDUE ; ce sont `shared/chain.test.ts` (Foudre) et
-   * `ZoneField.ampAt` / `zones.test.ts` (Poix) qui gardent que ni l'une ni
-   * l'autre n'est, elle, morte.
+   * ⚠️ **CORRIGEE a la tache 9 de l'etape 5b.** Avant cette tache, ce test
+   * exigeait `burnPerTick > 0 || slowFactor < 1` — vrai pour un catalogue de
+   * trois elements (Neutre, Braise, Givre), et deja faux pour la Poix (tache
+   * 4) des son introduction : elle n'agit ni par brulure ni par
+   * ralentissement, elle amplifie (`damageAmp`, `ZoneField.ampAt`). La garde
+   * traitait donc la Poix — et la Foudre, meme raison — comme des exceptions
+   * NOMMEES a une regle qui affirmait implicitement *« tout element a un
+   * effet de MARQUE »*, alors que l'invariant reel du catalogue a toujours
+   * ete plus large : *« tout element a AU MOINS UN effet »*, la marque
+   * (`burnPerTick`/`slowFactor`) n'en etant qu'une famille parmi celles que
+   * `ELEMENT_DEFS` porte — la zone (`damageAmp`) en est une autre. Une garde
+   * qu'il faut reouvrir a chaque element ajoute n'est pas une garde, c'est une
+   * liste qui attend le prochain oubli.
    *
-   * ⚠️ **Ces deux exceptions sont une dette, pas une regle permanente : la
-   * tache 9 (armes) leur donnera chacune un effet DIRECT** — a ce moment-la,
-   * cette liste devrait redevenir vide. Voir aussi `ARMEMENT_DIFFERE`
-   * plus bas, qui porte la meme dette pour le cablage aux armes.
+   * La regle ci-dessous compte donc `damageAmp > 1` parmi les effets valables
+   * — ce qui retire la Poix de toute exception, sa ligne le satisfaisant
+   * directement (tache 4). **Seule la Foudre reste une exception NOMMEE, et
+   * pour une raison structurelle qu'aucun elargissement de predicat ne peut
+   * lever** : `chainTargets` (`shared/chain.ts`) ne se derive pas d'un CHAMP
+   * de `Element` mais d'un point d'impact reconnu par identifiant
+   * (`ELEMENT.FOUDRE`, voir `resolveProjectileDamage`, `back/src/combat.ts`)
+   * — le docbloc de `ELEMENT_DEFS` explique pourquoi lui donner un champ ici
+   * n'aurait rien generalise. C'est `shared/chain.test.ts` qui garde que
+   * cet effet-la n'est pas mort.
    */
-  it('est le SEUL sans effet : tout autre element brule, ralentit, ou est une exception nommee', () => {
-    const ELEMENTS_SANS_EFFET_DE_MARQUE = new Set<number>([ELEMENT.FOUDRE, ELEMENT.POIX]);
+  it('est le SEUL sans effet : tout autre element porte au moins un effet (marque, zone, ou une exception nommee)', () => {
+    // La Foudre : seul cas ou l'effet vit hors de cette table (voir
+    // le docbloc ci-dessus). Pas une dette bornee a une tache — une
+    // consequence structurelle de la forme de `chainTargets`, permanente.
+    const EFFET_HORS_TABLE = new Set<number>([ELEMENT.FOUDRE]);
     for (const e of ELEMENTS) {
-      if (e.id === ELEMENT.NEUTRE || ELEMENTS_SANS_EFFET_DE_MARQUE.has(e.id)) {
+      if (e.id === ELEMENT.NEUTRE || EFFET_HORS_TABLE.has(e.id)) {
         continue;
       }
-      expect(e.burnPerTick > 0 || e.slowFactor < 1, `element « ${e.name} »`).toBe(true);
+      expect(
+        e.burnPerTick > 0 || e.slowFactor < 1 || e.damageAmp > 1,
+        `element « ${e.name} »`,
+      ).toBe(true);
     }
   });
 });
@@ -233,21 +247,18 @@ describe('le catalogue des elements et celui des armes', () => {
    * n'arrive jamais. C'est le pendant exact de la reference morte gardee par
    * `assertWeaponElements`.
    *
-   * ⚠️ **`ARMEMENT_DIFFERE` est une dette EXPLICITE, pas une exemption
-   * permanente.** Le plan de l'etape 5b construit le catalogue avant les
-   * armes qui le portent : la tache 2 ajoute la Foudre a `ELEMENT_DEFS`, la
-   * tache 4 y ajoute la Poix, la tache 9 leur cable a toutes les deux leurs
-   * armes. Sans cette liste, ce test rougirait entre-temps — pas d'une vraie
-   * regression, mais d'un ordre de taches assume.
-   * **Doit redevenir vide a la fin de la tache 9** : si Foudre ou Poix y
-   * restent apres, ce test cesse de garder quoi que ce soit pour elles.
+   * ⚠️ **`ARMEMENT_DIFFERE` a existe ici, et a ete supprime a la tache 9 de
+   * l'etape 5b.** Le plan de l'etape 5b construisait le catalogue avant les
+   * armes qui le portent (Foudre a la tache 2, Poix a la tache 4) : la dette
+   * etait explicite et bornee, une exemption NOMMEE le temps que la tache 9
+   * cable au moins deux armes a chacune (`shared/weapons.ts`,
+   * `bobine-tesla`/`canon-a-arc` pour la Foudre, `seringue-a-poix`/
+   * `chaudron-a-poix` pour la Poix). La garde ci-dessous porte a nouveau sur
+   * la table ENTIERE, sans exception : un element sans arme, present ou
+   * futur, la fait a nouveau rougir.
    */
-  const ARMEMENT_DIFFERE = new Set<number>([ELEMENT.FOUDRE, ELEMENT.POIX]);
-  it('cable au moins une arme a chaque element du catalogue, sauf armement differe assume', () => {
+  it('cable au moins une arme a chaque element du catalogue', () => {
     for (const e of ELEMENTS) {
-      if (ARMEMENT_DIFFERE.has(e.id)) {
-        continue;
-      }
       const armes = WEAPONS.filter((w) => w.element === e.id);
       expect(armes.length, `aucune arme ne porte l element « ${e.name} »`).toBeGreaterThanOrEqual(
         1,
