@@ -1,7 +1,12 @@
 import { ZONE_CAPACITY, ZONE_RADIUS, ZONE_REFRESH_INTERVAL_TICKS } from './constants';
 import { elementOf } from './elements';
 import { zoneElement } from './protocol';
-import { zoneArmorReduction, zoneCollisionDamage, zoneLifetimeTicks } from './reactions';
+import {
+  zoneArmorReduction,
+  zoneBurnPerTick,
+  zoneCollisionDamage,
+  zoneLifetimeTicks,
+} from './reactions';
 
 /**
  * Les zones au sol (§5 de la spec de l'etape 5a) : un disque teinte, **pose par
@@ -425,6 +430,66 @@ export class ZoneField {
       }
     }
     return damage;
+  }
+
+  /**
+   * Le degat de brulure de zone au point `(x, y)` au tick `tick` : le plus
+   * fort `ReactionDef.zoneBurnPerTick` parmi les zones VIVANTES qui couvrent
+   * ce point (Surchauffe, tache 6 de l'etape 5b, est la seule a en porter un
+   * aujourd'hui — « la zone brule d'elle-meme »), et `0` s'il n'y en a
+   * aucune.
+   *
+   * ⚠️ **Ajoutee a la revue finale de l'etape 5b — la brulure de zone etait
+   * la SEULE des quatre grandeurs de `ZoneField` a se cumuler au lieu de
+   * prendre le maximum.** `resolveBurn` (`back/src/combat.ts`) appelait
+   * `appliquerDegats` une fois PAR ZONE qui couvrait l'ennemi, au lieu d'une
+   * fois par ennemi : deux zones de Surchauffe superposees a declencheurs
+   * opposes (Braise et Foudre) doublaient la perte par tick, quatre la
+   * quadruplaient — 72 PV/s au pire cas mesure, `HEAVY_HP` (20) en 0,28 s.
+   * `resolveBurn` appelle desormais CETTE methode une seule fois par entite,
+   * exactement comme il appelle `ampAt`/`armorReductionAt` une seule fois
+   * par entite pour les degats d'un projectile ou d'une reaction.
+   *
+   * ⚠️ **Meme FORME qu'`ampAt`/`armorReductionAt`/`collisionDamageAt`
+   * ci-dessus — meme balayage, meme `aliveAt`, meme MAXIMUM, pour la MEME
+   * raison qu'elles : deux flaques de Surchauffe qui se recouvrent ne
+   * doivent pas bruler deux fois plus fort — sans quoi l'empilement de
+   * Surchauffe deviendrait la strategie dominante du jeu, exactement la
+   * degenerescence que le maximum d'`ampAt` existe deja pour eviter.** La
+   * DECISION est un choix de jeu, pas une contrainte arithmetique — voir le
+   * §7 du rapport de la revue finale de l'etape 5b : la spec du §5 disait
+   * « se cumule », la coherence avec ses trois sœurs (et la meme raison
+   * anti-degenerescence) l'a emporte.
+   *
+   * ⚠️ **`aliveAt`, pas `slowsAt`, meme raison qu'`ampAt`.** Les degats se
+   * resolvent APRES les poses du tick courant : une zone nee ce tick-la
+   * brule deja.
+   *
+   * ⚠️ **DERIVEE de `ReactionDef.zoneBurnPerTick`, jamais de
+   * `elementOf(zoneElement(kind)).burnPerTick`.** Une zone de Surchauffe
+   * porte l'element du DECLENCHEUR (Braise ou Foudre selon l'ordre
+   * d'arrivee) — si c'est Foudre, `elementOf(FOUDRE).burnPerTick` vaut zero,
+   * et une lecture generique ne brulerait jamais. Voir le docbloc de
+   * `resolveBurn`.
+   */
+  burnAt(x: number, y: number, tick: number): number {
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    let burn = 0;
+    for (let z = 0; z < this.#count; z++) {
+      if (!this.aliveAt(z, tick)) {
+        continue;
+      }
+      const dx = (this.x[z] ?? 0) - x;
+      const dy = (this.y[z] ?? 0) - y;
+      if (dx * dx + dy * dy >= r2) {
+        continue;
+      }
+      const factor = zoneBurnPerTick(this.kind[z] ?? 0);
+      if (factor > burn) {
+        burn = factor;
+      }
+    }
+    return burn;
   }
 
   /**

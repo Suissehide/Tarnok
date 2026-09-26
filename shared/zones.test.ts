@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   SUPRACONDUCTION_ARMOR_REDUCTION,
+  SURCHAUFFE_BURN_PER_TICK,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
   VERGLAS_COLLISION_DAMAGE_PER_TICK,
   ZONE_CAPACITY,
@@ -861,5 +862,131 @@ describe('ZoneField.collisionDamageAt — le degat de collision (etape 5b, tache
     expect(verglasPuisNeutre.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(1);
     expect(verglasPuisNeutre.count).toBe(2);
     expect(verglasPuisNeutre.collisionDamageAt(100, 0, 0)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
+  });
+});
+
+/**
+ * `ZoneField.burnAt` — ajoutee a la revue finale de l'etape 5b (B2) : meme
+ * FORME qu'`ampAt`/`armorReductionAt`/`collisionDamageAt` ci-dessus (meme
+ * balayage, meme `aliveAt`, meme MAXIMUM). Surchauffe (Braise + Foudre) est
+ * la seule reaction a porter un `zoneBurnPerTick` non nul aujourd'hui.
+ *
+ * ⚠️ **La brulure de zone etait, avant cette revue, la SEULE des quatre
+ * grandeurs de `ZoneField` a se CUMULER au lieu de prendre le maximum** —
+ * `resolveBurn` (`back/src/combat.ts`) appelait `appliquerDegats` une fois
+ * PAR ZONE couvrant l'ennemi, au lieu d'une fois par ennemi. Mesure : 0,300
+ * PV/tick pour une zone, 0,600 pour deux superposees a declencheurs opposes,
+ * 1,200 pour quatre — soit 72 PV/s, `HEAVY_HP` (20) en 0,28 s. Ce fichier
+ * porte deja trois tests « ne CUMULENT pas : le maximum, jamais la somme »
+ * pour les trois grandeurs voisines ; celui-ci est le QUATRIEME de la
+ * famille.
+ */
+describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l etape 5b, B2)', () => {
+  it('rend 0 sur un sol nu : aucune zone, aucune brulure', () => {
+    const zones = new ZoneField();
+    expect(zones.burnAt(0, 0, 0)).toBe(0);
+    expect(zones.burnAt(-1234.5, 678.9, 42)).toBe(0);
+  });
+
+  it('rend 0 dans une zone de reaction nulle, ou des quatre autres reactions de cette etape : aucune n a de brulure de zone', () => {
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.GIVRE, 100, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT), 300, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT), 500, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 700, 0, 0, 0);
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 900, 0, 0, 0);
+
+    expect(zones.burnAt(100, 0, 0)).toBe(0);
+    expect(zones.burnAt(300, 0, 0)).toBe(0);
+    expect(zones.burnAt(500, 0, 0)).toBe(0);
+    expect(zones.burnAt(700, 0, 0)).toBe(0);
+    expect(zones.burnAt(900, 0, 0)).toBe(0);
+  });
+
+  it('rend SURCHAUFFE_BURN_PER_TICK dans sa zone, strictement positif', () => {
+    const zones = new ZoneField();
+    expect(zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 500, 500, 0, 0)).toBe(0);
+    expect(SURCHAUFFE_BURN_PER_TICK).toBeGreaterThan(0);
+    expect(zones.burnAt(500, 500, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
+  });
+
+  it('brule MEME quand la zone porte l element FOUDRE (le declencheur) : le taux vient de la reaction, pas de l element', () => {
+    // ⚠️ Meme test que `resolveBurn` (`back/src/combat.test.ts`), mais au
+    // niveau de `ZoneField` seul : `elementOf(FOUDRE).burnPerTick` vaut zero,
+    // une lecture generique ne brulerait jamais ici.
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.SURCHAUFFE), 500, 500, 0, 0);
+    expect(elementOf(ELEMENT.FOUDRE).burnPerTick).toBe(0);
+    expect(zones.burnAt(500, 500, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
+  });
+
+  it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 0, 0, 0, 0);
+
+    // Dedans : la zone porte.
+    expect(zones.burnAt(ZONE_RADIUS - 1, 0, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
+    // Pile sur le cercle : la borne est STRICTE, comme `ampAt` et `slowsAt`.
+    expect(zones.burnAt(ZONE_RADIUS, 0, 0)).toBe(0);
+    // Perimee : `aliveAt` la saute, meme au centre exact — Surchauffe
+    // ALLONGE sa PROPRE duree de vie (voir le describe dedie plus haut),
+    // donc la borne est `SURCHAUFFE_ZONE_LIFETIME_TICKS`, pas
+    // `ZONE_LIFETIME_TICKS`.
+    expect(zones.burnAt(0, 0, SURCHAUFFE_ZONE_LIFETIME_TICKS)).toBe(0);
+    // Et elle vit encore au dernier tick de sa duree de vie.
+    expect(zones.burnAt(0, 0, SURCHAUFFE_ZONE_LIFETIME_TICKS - 1)).toBe(SURCHAUFFE_BURN_PER_TICK);
+  });
+
+  /**
+   * ⚠️ **Le test demande par la revue finale de l'etape 5b (B2), portant les
+   * DEUX decors MESURES avant la correction de `resolveBurn`.**
+   *
+   * Cas 1 : deux zones de MEME reaction (Surchauffe) a DECLENCHEURS OPPOSES
+   * — Braise (`kind` 9) et Foudre (`kind` 11), les deux valeurs que
+   * `ReactionTrigger.element` peut porter pour cette reaction — aux MEMES
+   * coordonnees. Mesure en execution avant cette revue : 0,600 PV/tick au
+   * lieu de 0,300.
+   *
+   * Cas 2 : deux zones du MEME `kind`, centres ecartes de `1,2 x ZONE_RADIUS`
+   * — au-dela de la borne de fusion de `spawn` (`< ZONE_RADIUS`), donc deux
+   * zones bien DISTINCTES, mais en-deca de `2 x ZONE_RADIUS`, donc deux
+   * disques qui se RECOUVRENT sans fusionner.
+   *
+   * Dans les deux cas, `burnAt` doit rendre `SURCHAUFFE_BURN_PER_TICK`,
+   * jamais son double.
+   */
+  it('DEUX zones de Surchauffe qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme', () => {
+    // Cas 1 : memes coordonnees, declencheurs OPPOSES.
+    const declencheursOpposes = new ZoneField();
+    expect(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE)).toBe(9);
+    expect(packZoneKind(ELEMENT.FOUDRE, REACTION.SURCHAUFFE)).toBe(11);
+    expect(
+      declencheursOpposes.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 100, 0, 0, 0),
+    ).toBe(0);
+    expect(
+      declencheursOpposes.spawn(packZoneKind(ELEMENT.FOUDRE, REACTION.SURCHAUFFE), 100, 0, 0, 0),
+    ).toBe(1);
+    expect(declencheursOpposes.count).toBe(2);
+    // ⚠️ **Le test qui tue la somme.** Avec `burn += facteur`, ce point
+    // rendrait `2 x SURCHAUFFE_BURN_PER_TICK` (0,600) au lieu de
+    // `SURCHAUFFE_BURN_PER_TICK` (0,300) — la mutation mesuree en execution.
+    expect(declencheursOpposes.burnAt(100, 0, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
+
+    // Cas 2 : MEME kind, centres ecartes de 1,2 x ZONE_RADIUS.
+    const ECART = 1.2 * ZONE_RADIUS;
+    expect(ECART).toBeGreaterThan(ZONE_RADIUS); // au-dela de la fusion
+    expect(ECART).toBeLessThan(2 * ZONE_RADIUS); // les deux disques se recouvrent
+    const disquesRecouverts = new ZoneField();
+    expect(
+      disquesRecouverts.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 0, 0, 0, 0),
+    ).toBe(0);
+    expect(
+      disquesRecouverts.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), ECART, 0, 0, 0),
+    ).toBe(1);
+    expect(disquesRecouverts.count).toBe(2); // pas de fusion : bien deux zones distinctes
+
+    // Le point milieu tombe strictement DANS les deux disques (ECART / 2
+    // < ZONE_RADIUS).
+    expect(disquesRecouverts.burnAt(ECART / 2, 0, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
   });
 });
