@@ -220,6 +220,59 @@ Et deux AUTRES bancs sont aveugles de la même façon, tous deux dans l'agrégat
 même titre que `kills` et `niveau2`. Autrement dit : **`npm run bench` est devenu le banc de l'ancien
 jeu.** Voir §10.
 
+## 8 bis. Ce que onze revues de tâche n'ont pas pu voir
+
+**La revue finale de branche a trouvé quatre choses bloquantes, et aucune n'était visible depuis le
+périmètre d'une tâche.** Trois sont la même erreur sous trois formes : une convention posée tôt,
+contredite tard, et un texte resté en place.
+
+**A. La brûlure de zone était la seule grandeur de zone qui se CUMULAIT.** La boucle appelait
+`appliquerDegats` une fois par zone :
+
+| Décor | Perte / tick |
+| --- | --- |
+| 1 Surchauffe | 0,300 |
+| 2 Surchauffe, même point, **déclencheurs opposés** | 0,600 |
+| 4 superposées | **1,200** — soit 72 PV/s : `HEAVY_HP` tombe en **0,28 s** |
+
+Atteignable dès **deux joueurs**. Or la tâche 8 avait écrit **en gras** la règle inverse : *« une
+seule liste pour toutes les zones qui se recouvrent, jamais une passe par zone… le MAXIMUM, comme
+`ampAt` / `armorReductionAt` »*. Trois grandeurs voisines prennent le maximum et ont chacune leur
+test « ne cumulent pas » — **la seule sans ce test était la seule qui sommait.** `burnAt` est
+désormais la quatrième de la famille.
+
+⚠️ **Chaque revue de tâche avait raison dans son périmètre.** La tâche 6 a écrit un cumul, la
+tâche 8 a écrit l'interdiction ; ni l'une ni l'autre ne voyait le diff de sa voisine.
+
+**B. Le test qui nommait A affirmait une propriété fausse.** Intitulé *« deux zones de Surchauffe
+qui se recouvrent ne brûlent pas deux fois »*, son décor posait la cible à **0,05 PV** : elle
+mourait à la première application, la garde `hp <= 0` sautait la seconde, et les assertions ne
+portaient que sur la déduplication des morts. **C'est pire qu'un test creux — c'est un test qui
+enseigne l'inverse.**
+
+**C. Un docbloc interdisait en gras ce que le fichier faisait dix lignes plus bas.**
+`damageInRadius` déclarait qu'*« un second balayage divergerait à la première retouche »* ; la
+tâche 6 avait écrit ce second balayage, même signature à huit paramètres, même corps, une ligne de
+filtre en plus. Les deux sont fondus, filtre optionnel — et le docbloc **raconte** désormais la
+duplication au lieu de l'interdire. Une interdiction se contourne sans qu'on s'en aperçoive ; un
+récit se lit.
+
+**D. Une assertion instable, introduite par le dernier commit, et c'est une décision de
+coordination qui l'a laissée passer.** L'assertion de Synergie du livrable échouait **2 fois sur 13**
+exécutions de la suite complète — jamais quand le fichier tournait seul. Un joueur portait les deux
+éléments et tirait seul sur la cible : quand ses deux projectiles atterrissaient dans le même pas
+serveur, la réaction cessait d'être inter-joueurs.
+
+⚠️ **J'avais refusé la re-revue de ce correctif en écrivant « surface de régression de production
+nulle ».** C'était vrai de la production et faux de la **suite** — et « 885 tests verts » n'était
+alors vrai que sur une exécution qui gagne la course. Corrigé en faisant viser la cible par un
+**troisième client**, de sorte que le porteur des deux éléments ne puisse plus y atteindre
+géométriquement : le décor ne rend plus la propriété probable, il la rend nécessaire.
+
+**La leçon de méthode :** une revue par tâche ne peut pas voir une convention contredite d'une tâche
+à l'autre, et un contrôleur ne peut pas juger « surface de régression nulle » sur une base de tests
+concurrente. Les deux défauts sont structurels, pas des inattentions.
+
 ## 9. Écarts assumés
 
 **§6.3 — la Poix ne ralentit pas.** Le Givre garde le contrôle, la Poix est le multiplicateur. Deux
