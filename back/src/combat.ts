@@ -18,7 +18,7 @@ import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
-import { REACTION, reactionForPair, zoneBurnPerTick } from '@shared/reactions';
+import { REACTION, reactionForPair } from '@shared/reactions';
 import type { ZoneField } from '@shared/zones';
 
 /**
@@ -598,16 +598,43 @@ export function appliquerDegats(
 
 /**
  * **LE balayage par rayon, et il n'y en a qu'un.** Retire `damage` a tout
- * ennemi dont le centre tombe a moins de `radius` de `(cx, cy)`, et note dans
- * `dead` l'identite de ceux qui n'y survivent pas.
+ * ennemi dont le centre tombe a moins de `radius` de `(cx, cy)` — et, quand
+ * `markFilter` est fourni, dont la marque COURANTE vaut exactement cette
+ * valeur — puis note dans `dead` l'identite de ceux qui n'y survivent pas.
  *
- * ⚠️ **Deux appelants, un seul balayage** : la reaction elementaire (§6.1 de
- * l'etape 5a, `REACTION_DAMAGE` dans `REACTION_RADIUS`) et l'explosion d'une
- * arme de zone (tache 16, `Weapon.blastRadius`). Ce sont deux REGLES
- * differentes — l'une nait d'un couple d'elements, l'autre d'un impact — mais
- * une seule GEOMETRIE, et un second balayage ecrit a cote du premier
- * divergerait a la premiere retouche. C'est le motif « deux sources de
- * verite » que ce depot a rencontre quatre fois.
+ * ⚠️ **TROIS appelants, un seul balayage** : la reaction elementaire
+ * generique (§6.1 de l'etape 5a, `REACTION_DAMAGE` dans `REACTION_RADIUS`),
+ * l'explosion d'une arme de zone (tache 16, `Weapon.blastRadius`), et
+ * l'Embrasement (Braise + Poix, tache 6 de l'etape 5b, `markFilter =
+ * ELEMENT.POIX`). Trois REGLES differentes — deux naissent d'un couple
+ * d'elements, une d'un impact — mais une seule GEOMETRIE, et un second
+ * balayage ecrit a cote du premier divergerait a la premiere retouche.
+ * C'est le motif « deux sources de verite » que ce depot a rencontre quatre
+ * fois.
+ *
+ * ⚠️ **Fusionnee a la revue finale de l'etape 5b (B4).** La tache 6 avait
+ * quand meme ECRIT ce second balayage (`damagePoisonedInRadius`) — exactement
+ * ce que ce docbloc denonce dix lignes plus haut : meme signature a huit
+ * parametres, meme corps, une seule ligne de filtre en plus. Le filtre
+ * devient ici un NEUVIEME parametre OPTIONNEL plutot qu'une fonction a part :
+ * fusionner les deux, pas retirer la phrase qui l'interdisait — c'est le
+ * raisonnement du docbloc lui-meme qui le demande.
+ *
+ * ⚠️ **Le filtre exclut l'ennemi qui a declenche Embrasement, SANS cas
+ * particulier.** Sa marque de Poix vient d'etre consommee par `applyElement`
+ * (§4.3, « un ennemi ressort NU d'une reaction ») : `horde.markAt` y rend
+ * `NEUTRE`, donc le filtre l'ecarte de lui-meme sans qu'il faille l'exclure
+ * explicitement — la geometrie seule n'aurait pas suffi a le faire, la
+ * marque, si. Les deux AUTRES appelants ne passent jamais `markFilter` :
+ * l'ennemi percute par une explosion, ou l'origine d'une reaction generique,
+ * n'ont pas de cas particulier a exclure.
+ *
+ * ⚠️ **Un rayon, jamais une propagation de proche en proche**, pour
+ * Embrasement precisement — ecart assume du §5 de la spec de l'etape 5b :
+ * *« se propage a tous les ennemis poisses proches »* se lit comme un
+ * parcours de graphe, dont le resultat depend de l'ordre de visite — la
+ * meme fragilite que la chaine (`shared/chain.ts`), en pire, puisque rien
+ * ici ne departage a distance egale. Une seule passe.
  *
  * ⚠️ **Ne TUE PAS, et c'est ce qui rend le partage possible.** Tuer compacte la
  * horde (`Horde.kill`), donc invaliderait les indices de la boucle qui tourne
@@ -628,9 +655,13 @@ function damageInRadius(
   zones: ZoneField,
   tick: number,
   dead: Set<number>,
+  markFilter?: number,
 ): void {
   const r2 = radius * radius;
   for (let i = 0; i < horde.count; i++) {
+    if (markFilter !== undefined && horde.markAt(i, tick) !== markFilter) {
+      continue;
+    }
     const dx = (horde.x[i] ?? 0) - cx;
     const dy = (horde.y[i] ?? 0) - cy;
     if (dx * dx + dy * dy >= r2) {
@@ -641,48 +672,6 @@ function damageInRadius(
     // subissent pas la meme chose — c'est `appliquerDegats` qui lit la
     // position de CHACUN. Deriver le facteur une fois pour le centre du
     // balayage serait plus rapide et faux.
-    appliquerDegats(horde, i, damage, zones, tick, dead);
-  }
-}
-
-/**
- * Embrasement (Braise + Poix, tache 6 de l'etape 5b) : `damage` a tout ennemi
- * POISSE dans `radius` du point de reaction — meme balayage que
- * `damageInRadius`, filtre sur la marque courante.
- *
- * ⚠️ **Un rayon, jamais une propagation de proche en proche.** Ecart assume
- * du §5 de la spec de l'etape 5b : *« se propage a tous les ennemis poisses
- * proches »* se lit comme un parcours de graphe, dont le resultat depend de
- * l'ordre de visite — la meme fragilite que la chaine (`shared/chain.ts`), en
- * pire, puisque rien ici ne departage a distance egale. Une seule passe.
- *
- * ⚠️ **L'ennemi qui a declenche la reaction N'EST PAS un cas particulier ici,
- * contrairement a `damageInRadius`.** Sa marque de Poix vient d'etre
- * consommee par `applyElement` (§4.3, « un ennemi ressort NU d'une
- * reaction ») : `horde.markAt` y rend `NEUTRE`, donc le filtre l'ecarte de
- * lui-meme sans qu'il faille l'exclure explicitement — la geometrie seule
- * n'aurait pas suffi a le faire, la marque, si.
- */
-function damagePoisonedInRadius(
-  horde: Horde,
-  cx: number,
-  cy: number,
-  radius: number,
-  damage: number,
-  zones: ZoneField,
-  tick: number,
-  dead: Set<number>,
-): void {
-  const r2 = radius * radius;
-  for (let i = 0; i < horde.count; i++) {
-    if (horde.markAt(i, tick) !== ELEMENT.POIX) {
-      continue;
-    }
-    const dx = (horde.x[i] ?? 0) - cx;
-    const dy = (horde.y[i] ?? 0) - cy;
-    if (dx * dx + dy * dy >= r2) {
-      continue;
-    }
     appliquerDegats(horde, i, damage, zones, tick, dead);
   }
 }
@@ -837,7 +826,11 @@ export function applyReactions(
   for (const t of triggers) {
     const def = reactionForPair(t.pair);
     if (def?.id === REACTION.EMBRASEMENT) {
-      damagePoisonedInRadius(horde, t.x, t.y, def.radius, def.damage, zones, tick, dead);
+      // ⚠️ **Fusionnee avec `damageInRadius` a la revue finale de l'etape 5b
+      // (B4) : `damagePoisonedInRadius` n'existe plus, voir le docbloc de
+      // `damageInRadius`.** `markFilter = ELEMENT.POIX` reproduit exactement
+      // son comportement.
+      damageInRadius(horde, t.x, t.y, def.radius, def.damage, zones, tick, dead, ELEMENT.POIX);
     } else if (def?.id === REACTION.COURT_CIRCUIT) {
       // ⚠️ **`def.damage` vaut ICI `REACTION_DAMAGE`, decision assumee de
       // `shared/reactions.ts` : Court-circuit reutilise le degat generique,
@@ -1369,11 +1362,13 @@ export function markInZones(
  * DECLENCHEUR (Braise ou Foudre selon l'ordre d'arrivee, voir
  * `ReactionTrigger.element`), et si c'est Foudre, marquer les ennemis dessous
  * les marquerait de Foudre — dont `Element.burnPerTick` est nul. Le taux vient
- * donc de `zoneBurnPerTick` (`shared/reactions.ts`), qui lit le nibble de
- * reaction du `kind` empaquete, jamais l'element. Rester dans CETTE fonction
- * plutot que d'en ecrire une seconde suffit a tenir la contrainte du `DEATHS`
- * unique : un seul `dead`, une seule compaction, un seul appelant cote
- * `Room.step`.
+ * donc de `ZoneField.burnAt` (`shared/zones.ts`), qui lit le nibble de
+ * reaction du `kind` empaquete via `zoneBurnPerTick`, jamais l'element — et
+ * qui prend deja le MAXIMUM entre zones qui se recouvrent (voir son docbloc
+ * et B2 du rapport de la revue finale de l'etape 5b). Rester dans CETTE
+ * fonction plutot que d'en ecrire une seconde suffit a tenir la contrainte du
+ * `DEATHS` unique : un seul `dead`, une seule compaction, un seul appelant
+ * cote `Room.step`.
  */
 export function resolveBurn(
   horde: Horde,
@@ -1403,42 +1398,32 @@ export function resolveBurn(
   // balayage inflige un degat, pas un deplacement — la borne stricte de
   // `slowsAt` (la horde a deja avance ce tick-la) ne concerne que le
   // ralentissement, voir `ZoneField.slowsAt`.
-  const r2 = ZONE_RADIUS * ZONE_RADIUS;
-  for (let z = 0; z < zones.count; z++) {
-    if (!zones.aliveAt(z, tick)) {
+  //
+  // ⚠️ **UNE SEULE liste pour toutes les zones qui se recouvrent, jamais une
+  // passe par zone — corrige a la revue finale de l'etape 5b (B2).** Le
+  // premier jet bouclait ZONE puis entite et appelait `appliquerDegats` une
+  // fois PAR ZONE couvrant l'ennemi : deux zones de Surchauffe superposees a
+  // declencheurs opposes (Braise et Foudre) doublaient la perte par tick,
+  // quatre la quadruplaient — mesure : 0,300 / 0,600 / 1,200 PV/tick, soit
+  // 72 PV/s au pire cas, `HEAVY_HP` (20) en 0,28 s. C'est exactement le
+  // « deux sources de verite » que le docbloc de `damageInRadius` denonce
+  // pour un AUTRE balayage, et que celui-ci commettait en silence.
+  // `ZoneField.burnAt` prend deja le MAXIMUM entre zones qui se recouvrent
+  // (meme regle que `ampAt`/`armorReductionAt`/`collisionDamageAt` — voir
+  // son docbloc) : boucler par ENTITE et lui appliquer ce maximum UNE SEULE
+  // fois suffit.
+  for (let i = 0; i < horde.count; i++) {
+    // ⚠️ **Un ennemi DEJA note dans `dead` ne reprend pas de degats.** Le
+    // balayage de marque ci-dessus peut avoir amene sa reserve a `<= 0` sans
+    // compacter (`horde.kill` n'arrive qu'a la toute fin de cette fonction).
+    if ((horde.hp[i] ?? 0) <= 0) {
       continue;
     }
-    const burn = zoneBurnPerTick(zones.kind[z] ?? 0);
-    // ⚠️ **Purement une economie de calcul, et AUCUN TEST NE PEUT le
-    // separer — mesure par mutation, ca survit.** `appliquerDegats(...,
-    // 0, ...)` est un no-op arithmetique exact (`brut = 0`) : aucune
-    // assertion sur les PV ne peut distinguer « la boucle interne a tourne
-    // pour rien » de « elle a ete sautee ». Sans cette garde, chaque zone
-    // (Surchauffe comprise, hors de son propre balayage) reparcourrait
-    // `horde.count` pour rien — le O(zones x entites) que le docbloc de
-    // `markInZones` annonce deja, double sans raison.
+    const burn = zones.burnAt(horde.x[i] ?? 0, horde.y[i] ?? 0, tick);
     if (burn <= 0) {
       continue;
     }
-    const zx = zones.x[z] ?? 0;
-    const zy = zones.y[z] ?? 0;
-    for (let i = 0; i < horde.count; i++) {
-      // ⚠️ **Un ennemi DEJA note dans `dead` ne reprend pas de degats.** Le
-      // balayage de marque ci-dessus peut avoir amene sa reserve a `<= 0`
-      // sans compacter (`horde.kill` n'arrive qu'a la toute fin de cette
-      // fonction) ; deux zones de Surchauffe qui se recouvrent peuvent aussi
-      // toucher le MEME ennemi. Sans cette garde, `dead` — un TABLEAU, pas un
-      // `Set`, par convention de cette fonction — listerait deux fois la
-      // meme identite.
-      if ((horde.hp[i] ?? 0) <= 0) {
-        continue;
-      }
-      const dx = (horde.x[i] ?? 0) - zx;
-      const dy = (horde.y[i] ?? 0) - zy;
-      if (dx * dx + dy * dy < r2) {
-        appliquerDegats(horde, i, burn, zones, tick, dead);
-      }
-    }
+    appliquerDegats(horde, i, burn, zones, tick, dead);
   }
   if (dead.length === 0) {
     return dead;

@@ -137,11 +137,11 @@ const REACTION_DEFS: readonly ReactionDef[] = [
   },
   {
     // Embrasement (Braise + Poix) : degats instantanes a tout ennemi POISSE
-    // dans un rayon — une seule passe geometrique, voir
-    // `damagePoisonedInRadius` (back/src/combat.ts). Reutilise le rayon et le
-    // degat generiques de la reaction (comme le Choc thermique) : l'ecart
-    // avec le generique est la SELECTIVITE (poisses seulement), pas
-    // l'intensite — aucune donnee de jeu ne motive un second chiffre.
+    // dans un rayon — une seule passe geometrique, voir `damageInRadius`
+    // (`markFilter`, back/src/combat.ts). Reutilise le rayon et le degat
+    // generiques de la reaction (comme le Choc thermique) : l'ecart avec le
+    // generique est la SELECTIVITE (poisses seulement), pas l'intensite —
+    // aucune donnee de jeu ne motive un second chiffre.
     id: REACTION.EMBRASEMENT,
     name: 'embrasement',
     pair: packElementPair(ELEMENT.BRAISE, ELEMENT.POIX),

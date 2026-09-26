@@ -38,7 +38,7 @@ import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
-import { REACTION } from '@shared/reactions';
+import { REACTION, zoneBurnPerTick } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import type { Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
@@ -2611,10 +2611,22 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
     expect(orbs.count).toBe(1);
   });
 
+  /**
+   * ⚠️ **Corrige a la revue finale de l'etape 5b (B3) — le decor precedent
+   * posait `hp = 0,05` : la cible mourait a la PREMIERE application, la
+   * garde `hp <= 0` sautait la seconde, et les seules assertions (`dead`,
+   * `orbs.count`) prouvaient la deduplication des MORTS — exactement ce que
+   * le test juste au-dessus prouve deja. Le titre affirmait « ne brulent pas
+   * deux fois », mais rien ici ne pouvait observer un double degat : avec la
+   * mutation qui somme au lieu de prendre le maximum (B2), ce test restait
+   * VERT.** Des PV ELEVES, pour que les DEUX applications eventuelles
+   * restent observables, et une assertion sur la PERTE EXACTE — celle d'une
+   * seule application du taux de Surchauffe, jamais son double.
+   */
   it('deux zones de Surchauffe qui se recouvrent ne brulent pas deux fois le meme ennemi', () => {
     const horde = new Horde(10);
-    const cible = addOne(horde, 1, 1000, 1000, LEGER);
-    horde.hp[0] = 0.05;
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(cible)] = 1000;
     const zones = new ZoneField();
     // Deux zones DISTINCTES (elements differents : la fusion ne les fond pas)
     // qui couvrent toutes les deux la cible.
@@ -2625,15 +2637,22 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
 
     const dead = resolveBurn(horde, orbs, 0, zones);
 
-    expect(dead).toEqual([cible]);
-    expect(orbs.count).toBe(1);
+    const perte = 1000 - (horde.hp[horde.slotOf(cible)] ?? 0);
+    // ⚠️ **La ligne qui tue la somme.** Une application vaut
+    // `coupSurLourd(zoneBurnPerTick(...))` ; deux applications en vaudraient
+    // le double — cette assertion les distingue, la precedente ne le
+    // pouvait pas.
+    expect(perte).toBeCloseTo(coupSurLourd(zoneBurnPerTick(zones.kind[0] ?? 0)), 5);
+    expect(dead).toEqual([]);
+    expect(orbs.count).toBe(0);
   });
 });
 
 /**
  * Embrasement (Braise + Poix, tache 6 de l'etape 5b) : degats instantanes a
  * tout ennemi POISSE dans un rayon, filtre sur la marque — voir
- * `damagePoisonedInRadius`.
+ * `damageInRadius` (`markFilter`, fusionnee avec `damagePoisonedInRadius` a
+ * la revue finale de l'etape 5b, B4).
  */
 describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, tache 6)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -2904,10 +2923,17 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
    *
    * Trois maillons alignes : A (poisse, 100 px de l origine), B (SAIN,
    * 150 px), C (poisse, 200 px). `distance(origine, A) = 100 < CHAIN_RADIUS`,
-   * `distance(A, C) = 100 < CHAIN_RADIUS` — C n'est PAS a portee de
-   * l'origine ni de B (300 px), il n'est a portee QUE du dernier poisse
-   * touche, A. C'est le decor qui distingue « ignore B et saute a C » de
-   * « la geometrie seule aurait suffi ».
+   * `distance(A, C) = 100 < CHAIN_RADIUS`, mais `distance(origine, C) = 200
+   * > CHAIN_RADIUS` : C n'est PAS a portee de l'origine — il n'est a portee
+   * QUE du dernier poisse touche, A.
+   *
+   * ⚠️ **Corrige a la revue finale de l'etape 5b : ce commentaire affirmait
+   * a tort que C n'etait a portee « ni de l'origine ni de B (300 px) ».**
+   * `distance(B, C) = 50 < CHAIN_RADIUS` : C EST geometriquement a portee de
+   * B. Le test reste valide — B, SAIN, est exclu de la recherche elle-meme
+   * (voir plus haut), donc invisible pour `chainTargets` quelle que soit la
+   * distance — mais l'affirmation etait fausse : c'est l'EXCLUSION de B, pas
+   * la geometrie, qui l'empeche de relayer C.
    */
   it('⚠️ SAUTE PAR-DESSUS un maillon SAIN pour atteindre le poisse suivant', () => {
     expect(100).toBeLessThan(CHAIN_RADIUS);
