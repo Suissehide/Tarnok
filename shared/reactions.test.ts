@@ -9,7 +9,7 @@ import {
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
-import { packElementPair, packZoneKind } from './protocol';
+import { packElementPair, packZoneKind, unpackElementPair } from './protocol';
 import {
   REACTION,
   reactionForPair,
@@ -234,6 +234,35 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
     // GARANTIR ce ralentissement quel que soit l'ordre, elle n'en ajoute pas
     // un second.
     expect(givreDeclenche).toBe(elementOf(ELEMENT.GIVRE).slowFactor);
+  });
+
+  /**
+   * ⚠️ **L'invariant dont R13 depend, ASSENE — pas seulement observe.**
+   * `zoneSlowFactor` combine par MINIMUM (`Math.min(elementFactor,
+   * reactionFactor)`) : l'independance a l'ordre du declencheur que le test
+   * ci-dessus MESURE ne tient QUE SI `reactionFactor` reste un PLANCHER —
+   * inferieur ou egal au `slowFactor` de CHAQUE element qui peut apparaitre
+   * dans le nibble. Le test precedent verifie que Givre et Poix rendent le
+   * MEME nombre aujourd'hui ; il ne dit PAS pourquoi, et ne rougirait pas si
+   * la tache 12 donnait un jour a la Poix un `slowFactor` propre INFERIEUR
+   * a celui du Givre — le minimum redeviendrait alors dependant de l'ordre,
+   * exactement le bug que R13 visait a eliminer, et rien ne le verrait.
+   *
+   * ⚠️ **Ni Givre ni Poix ne sont ecrits en dur ici.** La paire se DECODE de
+   * la table elle-meme (`unpackElementPair(def.pair)`), pas devinee — la
+   * propriete reste donc vraie si la tache 12 retouche `ELEMENT_DEFS`, ou si
+   * Verglas se declenchait un jour d'un troisieme couple. C'est la meme
+   * discipline que la garde de `CARD_WEAPON` dans `shared/loadout.ts` :
+   * une constante recopiee SANS garde derive en silence ; ici la garde
+   * protege une INEGALITE, pas une simple egalite de nom.
+   */
+  it('le facteur de Verglas reste un PLANCHER pour les deux elements de sa propre paire', () => {
+    const def = reactionOfId(REACTION.VERGLAS);
+    expect(def).toBeDefined();
+    const [a, b] = unpackElementPair(def?.pair ?? 0);
+    for (const element of [a, b]) {
+      expect(def?.zoneSlowFactor).toBeLessThanOrEqual(elementOf(element).slowFactor);
+    }
   });
 });
 

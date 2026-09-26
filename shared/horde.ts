@@ -1337,7 +1337,7 @@ export class Horde {
    * §5 de la spec de l'etape 5b : elle ne CORRIGE plus sa trajectoire a
    * l'occasion ou elle le ferait normalement, elle continue sur sa lancee.
    *
-   * ⚠️ **Dérivable des deux cotes, zero octet.** L'appartenance a la zone se
+   * ⚠️ **Derivable des deux cotes, zero octet.** L'appartenance a la zone se
    * derive du meme predicat que le ralentissement (`ZoneField.slowsAt`), et
    * la vitesse amortie se derive de `vx`/`vy` que les DEUX cotes possedent
    * deja — ils simulent tous deux depuis la naissance de l'entite. Rien de
@@ -1376,7 +1376,7 @@ export class Horde {
       const xi = this.x[i] ?? 0;
       const yi = this.y[i] ?? 0;
 
-      // ⚠️ **Verglas (tache 8 de l'etape 5b) : « les ennemis dérapent ».**
+      // ⚠️ **Verglas (tache 8 de l'etape 5b) : « les ennemis derapent ».**
       // A l'occasion meme ou cette entite recalculerait sa trajectoire, le
       // Verglas la lui retire : au lieu de la direction fraiche du champ,
       // elle GARDE sa vitesse precedente, amortie de `damping`. Voir le

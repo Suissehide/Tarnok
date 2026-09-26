@@ -1455,7 +1455,7 @@ export function resolveBurn(
 
 /**
  * Verglas (Givre + Poix, tache 8 de l'etape 5b) : la seconde moitie de la
- * reaction — *« les ennemis dérapent ET se percutent »*. Le derapage
+ * reaction — *« les ennemis derapent ET se percutent »*. Le derapage
  * (le premier mot) VOYAGE et vit dans `Horde#recomputeSteering`
  * (`shared/horde.ts`) ; la collision (le second) est un DEGAT, donc arbitree
  * ici, cote serveur seul.
