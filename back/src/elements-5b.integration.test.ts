@@ -638,9 +638,9 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
    * **Un joueur seul, deux elements : jamais qu'une seule paire — et
    * l'assertion « la barre ne charge pas » rendue capable de DISTINGUER.**
    *
-   * Le joueur porte a la fois Givre et Poix, REELLEMENT (deux armes
+   * Le joueur `a` porte a la fois Givre et Poix, REELLEMENT (deux armes
    * distinctes) : quelle que soit laquelle des deux touche en premier sur sa
-   * PROPRE cible, la seule paire que DEUX elements peuvent former est
+   * PROPRE cible (solo), la seule paire que DEUX elements peuvent former est
    * C(2, 2) = 1 — Verglas. Aucun decor ne peut faire surgir une sixieme
    * paire fantome ici : c'est une propriete du MODELE (une seule paire
    * possible avec deux elements), pas une convention du harnais.
@@ -652,16 +652,33 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
    * cotes de la comparaison — donc une assertion qui ne verifie QUE ce cas
    * est vraie A VIDE : elle ne distingue pas « la regle fonctionne et rend
    * toujours faux ici » de « la regle est cassee et rend toujours faux
-   * partout ». La parade, tenue par ce dépot depuis la tache 8 de l'etape 5a
+   * partout ». La parade, tenue par ce depot depuis la tache 8 de l'etape 5a
    * (le decor « inter-joueurs contre solo » de `elements.integration.test.ts`) :
-   * une SECONDE cible, ou un coequipier (`b`, deja connecte, jamais arme)
-   * entretient une marque de Givre a la main — le seul geste manuel de ce
-   * test — pendant que la POIX reelle du meme joueur `a` la declenche. La
-   * paire reste Verglas (toujours C(2,2) = 1 dans le SALON entier : `b` ne
-   * porte aucune arme, il ne fait qu'entretenir un element deja en jeu), mais
-   * `markBy` (b) differe cette fois de `by` (a) : la barre DOIT charger. Les
-   * deux cibles, cote a cote dans le meme releve, sont ce qui rend
-   * l'assertion negative enfin capable de distinguer.
+   * une SECONDE cible cooperative, ou `b` (deja connecte, jamais arme)
+   * entretient une marque de Givre a la main.
+   *
+   * ⚠️ **La cible cooperative est declenchee par `c`, jamais par `a` —
+   * corrige a la revue finale de l'etape 5b, apres un echec MESURE a 2
+   * executions sur 11 (~18%) de la suite `back` complete.** Le premier jet
+   * faisait tirer `a` sur les DEUX cibles, en alternant sa visee par phase :
+   * sa PROPRE fleche de Givre (`FLECHES_JUMELLES`, la meme arme que celle
+   * qui sert deja a la cible solo) atterrissait alors, de temps en temps,
+   * sur la cible cooperative — et quand elle tombait dans le MEME pas que sa
+   * Poix, `markBy` valait `a` au lieu de `b` : `charge` tombait a faux. Le
+   * decor ASSENAIT la propriete, il ne la GARANTISSAIT pas. `a` ne vise plus
+   * JAMAIS la cible cooperative desormais : ses deux armes ne peuvent donc
+   * plus physiquement l'atteindre, quel que soit le tick. `c` (deja
+   * connecte, jamais arme d'autre chose) porte la SEULE `SERINGUE_A_POIX` et
+   * vise en continu la cible cooperative — sa Poix declenche, `b` entretient
+   * le Givre : `b` est desormais la SEULE source de Givre de cette cible, et
+   * `markBy` (b) differe necessairement de `by` (c) — la barre DOIT charger,
+   * sans dependre d'aucun ordre d'arrivee entre deux projectiles.
+   *
+   * La paire reste Verglas dans les DEUX cas (toujours C(2,2) = 1 dans le
+   * SALON entier : ni `b` ni `c` n'ajoutent un element que le salon ne
+   * connaisse deja — Givre et Poix, rien d'autre). Les deux cibles, cote a
+   * cote dans le meme releve, sont ce qui rend l'assertion negative enfin
+   * capable de distinguer.
    */
   it('un joueur seul portant Givre et Poix ne declenche jamais que Verglas ; seule une marque inter-joueurs charge la barre', async () => {
     const code = await createRoomCode();
@@ -671,42 +688,51 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     }
 
     const clients = await quatreClients(code);
-    const [a, b] = clients;
-    if (!a || !b) {
+    const [a, b, c] = clients;
+    if (!a || !b || !c) {
       throw new Error('quatre clients attendus');
     }
 
     equipe(room, a.playerId, FLECHES_JUMELLES.id);
     equipe(room, a.playerId, SERINGUE_A_POIX.id);
+    // `c` ne porte QUE la Poix : la seule arme reelle qui touche jamais la
+    // cible cooperative — voir le docbloc ci-dessus.
+    equipe(room, c.playerId, SERINGUE_A_POIX.id);
 
     const snap = await fullSnapshot(a.ws);
     const pa = snap.players.find((p) => p.id === a.playerId);
-    if (!pa) {
-      throw new Error('le tireur doit etre dans le snapshot');
+    const pc = snap.players.find((p) => p.id === c.playerId);
+    if (!pa || !pc) {
+      throw new Error('les tireurs doivent etre dans le snapshot');
     }
 
     const PAIR_VERGLAS = packElementPair(ELEMENT.GIVRE, ELEMENT.POIX);
 
-    // Cible SOLO : ni marque ni identite d'un autre joueur n'y touche jamais.
+    // Cible SOLO : ni marque ni identite d'un autre joueur n'y touche
+    // jamais — `a` seul la vise, avec ses deux armes.
     const SOLO_OFFSET_X = 150;
     const SOLO_OFFSET_Y = 0;
     const soloX = pa.x + SOLO_OFFSET_X;
     const soloY = pa.y;
 
     // Cible COOPERATIVE : `b` y entretient Givre a la main, la Poix reelle de
-    // `a` la declenche. Assez loin de la cible solo pour qu'aucune zone ne
-    // recouvre l'autre (meme garde qu'au test a quatre cibles).
+    // `c` la declenche — `a` ne la vise jamais. Ancree sur `c`, qui la vise
+    // reellement (et non sur `a`, qui ne la vise plus jamais) : assez loin de
+    // la cible solo pour qu'aucune zone ne recouvre l'autre (meme garde qu'au
+    // test a quatre cibles) — les quatre joueurs spawnent aux quatre coins
+    // d'un carre (`SPAWN_OFFSETS`, back/src/room.ts), donc `a` et `c` ne
+    // partagent pas la meme position.
     const DUO_OFFSET_X = 0;
-    const DUO_OFFSET_Y = -260;
-    const duoX = pa.x + DUO_OFFSET_X;
-    const duoY = pa.y + DUO_OFFSET_Y;
+    const DUO_OFFSET_Y = 150;
+    const duoX = pc.x + DUO_OFFSET_X;
+    const duoY = pc.y + DUO_OFFSET_Y;
 
-    // Garde 1 : les deux cibles restent a portee des DEUX armes (la plus
-    // courte, la seringue, decide).
+    // Garde 1 : chaque cible reste a portee de l'arme qui la declenche
+    // REELLEMENT — la cible solo, des DEUX armes de `a` (la plus courte, la
+    // seringue, decide) ; la cible cooperative, de la seule arme de `c`.
     expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(SERINGUE_A_POIX));
     expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(FLECHES_JUMELLES));
     expect(Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y)).toBeLessThan(porteeDe(SERINGUE_A_POIX));
-    expect(Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y)).toBeLessThan(porteeDe(FLECHES_JUMELLES));
     // Garde 2 : etanches l'une de l'autre, comme les six cibles du test
     // precedent.
     const ecartCibles = Math.hypot(soloX - duoX, soloY - duoY);
@@ -714,9 +740,6 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
 
     const solo = poseCible(room, 9600, soloX, soloY);
     const duo = poseCible(room, 9601, duoX, duoY);
-
-    /** Alterne l'angle de tir de `a` entre sa cible solo et la cible cooperative. */
-    const PHASE_TICKS = 45;
 
     const pilote = setInterval(() => {
       for (const [id, x, y] of [
@@ -732,18 +755,18 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
         }
       }
       // Le seul geste manuel de ce decor : `b` entretient Givre sur la cible
-      // cooperative, jamais sur la cible solo.
+      // cooperative, jamais sur la cible solo — et jamais `a`, qui ne la
+      // vise plus.
       const slotDuo = room.horde.slotOf(duo);
       if (slotDuo >= 0) {
         room.horde.applyMark(slotDuo, ELEMENT.GIVRE, b.playerId, room.tick);
       }
 
-      const phase = Math.floor(room.tick / PHASE_TICKS) % 2;
-      if (phase === 0) {
-        vise(a, SOLO_OFFSET_X, SOLO_OFFSET_Y);
-      } else {
-        vise(a, DUO_OFFSET_X, DUO_OFFSET_Y);
-      }
+      // `a` vise EN CONTINU la cible solo, `c` EN CONTINU la cooperative :
+      // plus de phases, plus d'alternance, chaque tireur ne voit jamais que
+      // SA cible — deterministe par construction, pas par probabilite.
+      vise(a, soloX - pa.x, soloY - pa.y);
+      vise(c, duoX - pc.x, duoY - pc.y);
     }, 8);
 
     const bucketSolo = (r: ReactionMessage) =>
