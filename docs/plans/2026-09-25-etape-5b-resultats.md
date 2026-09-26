@@ -154,18 +154,39 @@ parce qu'ils étaient **au registre, avec leur porteur**.
 | `truncatedZones`, **régime soutenu 60 s** | **0**, occupation max **25,0 %** | ON GARDE |
 | Verglas, `k` max de 200 à 3 500 lourds | **33**, coût 0,043 ms (0,38 %) | le coût tient |
 | Rapport morts / apparitions | 0,47 | **ne mesure pas cette étape** — voir §8 |
-| Solo, échecs au niveau 2 | 19/40 | légitimement inchangé (piétaille légère, armure 0) |
+| Solo, échecs au niveau 2 | 19/40 | légitimement inchangé — mais pour une raison plus large que celle écrite d'abord, voir plus bas |
 
-⚠️ **Le chiffre à 64× n'a pas de décimale fiable.** Observé de **60,4 % à 85,4 %** sur sept
-exécutions, à chaud comme à froid — le relevé froid (77,3 %) est **plus haut** que le relevé sous
-charge (66,3 %), donc la variance est intrinsèque et non un artefact d'exécution concurrente. Le
-verdict ne bascule à aucune exécution. **Et l'empilement n'a aucun plafond de jeu** :
-`Loadout.addWeapon` ne borne que le nombre de **types** distincts.
+⚠️ **Corrigé à la revue finale de l'étape 5b : mon avertissement sur la variance était trop
+pessimiste, et son explication était fausse.** J'avais écrit *« la variance est intrinsèque et non un
+artefact d'exécution concurrente »*, déduit d'**un** relevé froid (77,3 %) plus haut qu'**un** relevé
+sous charge (66,3 %) — un seul point de chaque côté ne permettait aucune conclusion sur la cause. La
+revue a relancé **six fois à froid, rien d'autre sur la machine** :
+
+| Empilement | Six relevés (% du budget) |
+| --- | --- |
+| 16× | 49,1 / 48,1 / 48,3 / 48,9 / 46,1 / 50,8 |
+| 32× | 55,6 / 56,1 / 56,4 / 59,3 / 51,7 / 58,3 |
+| **64×** | **74,9 / 75,5 / 75,6 / 76,7 / 66,8 / 77,9** — p95 de 7,425 à 8,652 ms |
+
+L'étendue passe de **25 points** (les sept exécutions mêlant charge et calme) à **11**, et **5
+relevés sur 6 tiennent dans 3 points**. **C'était bien un artefact de mes propres agents
+concurrents** : 66,8 % se révèle être le point **bas** du bruit une fois la machine calme, pas une
+référence distincte à opposer au relevé chaud. Le chiffre se lit à l'unité : **~75-78 % à 64×**, pire
+cas 8,652 ms contre 11,111, **22 % de marge**, verdict jamais basculé sur **douze** exécutions (les
+sept d'origine plus ces six). **Et l'empilement n'a aucun plafond de jeu** : `Loadout.addWeapon` ne
+borne que le nombre de **types** distincts.
 
 ⚠️ **L'occupation réelle de la réserve de zones est de 25 %, pas de 13 à 19 %** comme mon plan le
 portait depuis l'extrapolation synthétique de la tâche 6. Le verdict ne change pas — 75 % de marge —
 mais l'estimation était trop optimiste, et la marge est **observée**, pas garantie par une borne du
 code.
+
+⚠️ **Corrigé à la revue finale de l'étape 5b : ma justification du 19/40 était fausse en raison, la
+conclusion reste juste.** J'avais écrit « légitimement inchangé (piétaille légère, armure 0) ». La
+vraie raison est plus large : **`niveau2.bench` n'équipe aucune arme** — son décor fait `room.join(1)`
+et zéro `grantCard`. Il ne peut voir ni élément, ni zone, ni réaction, ni ceux de l'étape 5b ni ceux
+de l'étape 5a — l'armure à 0 et la piétaille légère n'y sont pour rien, le joueur simulé n'a tout
+simplement **aucune arme en main**.
 
 ## 8. `kills.bench` ne mesure rien de cette étape
 
@@ -179,6 +200,25 @@ aucune des cinq réactions nouvelles n'entre dans cette mesure.
 ⚠️ **C'est « le banc qui renvoie zéro » sous une forme neuve** — cinquième occurrence du motif dans
 ce projet, et la plus retorse : le banc ne renvoie pas zéro, il renvoie **le chiffre de l'ancien
 jeu**, qui ressemble à un résultat. J'ai failli l'écrire ici comme une mesure de l'étape.
+
+⚠️ **Corrigé à la revue finale de l'étape 5b : `kills.bench` est pire que je ne l'écrivais ci-dessus,
+et il n'est pas seul.** `armes = WEAPON_SLOTS = 4` donne exactement `dague, éventail (Braise),
+arc-lourd, lance-flammes, grenade (Braise)` — **aucun Givre, aucune Foudre, aucune Poix**. Ce banc ne
+mesure donc pas seulement « le jeu sans les quatre armes de cette étape » : il mesure **le jeu
+d'avant l'étape 5a**.
+
+Et deux AUTRES bancs sont aveugles de la même façon, tous deux dans l'agrégat par défaut :
+
+- **`slots.bench.ts:64`** — même idiome : `WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID).slice(0,
+  slots)` prend les armes **dans l'ordre du catalogue**, où Foudre et Poix arrivent en dernier.
+- **`zones.bench.ts:68-69`** — l'arme est choisie par `WEAPONS.find((w) => w.element ===
+  ELEMENT.BRAISE)` / `ELEMENT.GIVRE` : seul le Choc thermique (générique, étape 5a) peut s'y
+  déclencher, jamais une des cinq réactions de cette étape.
+
+**Les deux sont DANS l'agrégat `npm run bench`** (`sim`, `net`, `sep`, `slots`, `zones`) — dont
+`bench:elements` (le seul à réellement couvrir Foudre, Poix et les cinq réactions) est **exclu**, au
+même titre que `kills` et `niveau2`. Autrement dit : **`npm run bench` est devenu le banc de l'ancien
+jeu.** Voir §10.
 
 ## 9. Écarts assumés
 
@@ -206,7 +246,7 @@ une raison **structurelle** et non une dette de tâche : sa chaîne se déclench
 | --- | --- |
 | **Une réaction impliquant la Poix amplifie ses PROPRES dégâts** (×1,5) — `postZone` pose la zone avant le balayage | **Mesuré**, pas supposé. Le §10 de la spec redoutait exactement ça : *« Poix + n'importe quoi devient le meilleur couple du jeu par construction »*. **Arbitrage de jeu, pas un bug** |
 | Le pitch du README reste faux | avec 4 éléments et 4 slots, un joueur seul les couvre **tous**. *« Un joueur seul ne peut pas couvrir assez d'éléments »* ne devient vrai qu'au **cinquième** — donc en 5c |
-| `kills.bench` est aveugle au contenu neuf (§8) | son `.slice(0, 5)` est à revoir, ou la mesure à refaire autrement |
+| `kills.bench`, `slots.bench` et `zones.bench` sont aveugles au contenu neuf — `npm run bench` mesure l'ancien jeu (§8) | à revoir (catalogue interrogé par élément/position plutôt que par nom, ou décor dédié) — **pas cette vague** : c'est une étape de contenu à part entière, pas une correction |
 | Le coût à fort empilement n'a pas de décimale fiable (§7) | et l'empilement n'a aucun plafond de jeu |
 | Pas de test d'intégration `room.test.ts` pour `resolveVerglasCollisions` | trou **pré-existant**, partagé par `resolveBurn` et la Supraconduction |
 | Une entité qui dérape saute son calcul de répulsion | donc perd sa correction anti-agglomération pendant qu'elle glisse. Mesuré sans conséquence (`k` ≤ 33), non borné par construction |
