@@ -784,7 +784,15 @@ export const NO_VOTE = 255;
 export const DEATH_ID_BYTES = 4;
 
 /**
- * `type u8 · element u8 · x i16 · y i16 · bornTick u32 · by u8` = **11 octets**.
+ * `type u8 · kind u8 · x i16 · y i16 · bornTick u32 · by u8` = **11 octets**.
+ *
+ * ⚠️ **`kind`, pas un simple `element` — perime des la tache 5 de l'etape
+ * 5b, corrige a la revue finale.** L'octet empaquete par `packZoneKind`
+ * porte l'element (bits 0-2) ET le type de champ de reaction (bits 3-6),
+ * voir `ZoneMessage` et `zoneElement`/`zoneReaction` : ce champ documente ici
+ * exactement le critere « zero octet de plus » de l'etape, au seul endroit
+ * ou son cout sur le fil est compte — la liste ne peut pas se permettre de
+ * decrire un octet perime.
  *
  * ⚠️ **Le plan annonce 12 octets pour cette liste de champs ; elle en fait
  * 11.** La spec (§2 et §5.3) ecrit « ~12 octets », un ordre de grandeur, et le
