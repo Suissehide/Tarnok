@@ -72,13 +72,14 @@ export class Projectiles {
    * `Weapon.id` a l'emission (etape 5a, tache 12).
    *
    * ⚠️ **Purement COSMETIQUE, et c'est le seul champ qui le soit.** Il existe
-   * pour que le rendu sache quel projectile dessiner : neuf armes, neuf
-   * apparences (`Weapon.look`). La simulation ne le lit jamais — ce qui decide
-   * d'un degat, d'une marque ou d'une zone est deja recopie a cote
+   * pour que le rendu sache quel projectile dessiner : chaque arme, son
+   * apparence propre (`Weapon.look`). La simulation ne le lit jamais — ce qui
+   * decide d'un degat, d'une marque ou d'une zone est deja recopie a cote
    * (`#damage`, `#element`, `#by`), justement pour que le tir ne depende pas
    * d'une table.
    *
-   * `Uint8Array` : le catalogue en compte neuf, le §6.2 en projette quarante.
+   * `Uint8Array` : le catalogue en compte treize (tache 9 de l'etape 5b), le
+   * §6.2 en projette quarante.
    */
   readonly #weapon: Uint8Array;
   /** Pas restants avant expiration. Decremente a chaque `step`. */

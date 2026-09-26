@@ -95,7 +95,7 @@ function makeGlowTexture(diameter: number, color: string): Texture {
  */
 export const PROJECTILE_CELL_PX = 32;
 
-/** Cases par ligne dans l'atlas. 4 x 4 = 16 cases pour neuf armes aujourd'hui. */
+/** Cases par ligne dans l'atlas. 4 x 4 = 16 cases pour treize armes aujourd'hui. */
 const PROJECTILE_ATLAS_COLS = 4;
 
 /** Cote de l'atlas, en pixels : une puissance de deux qui contient la grille. */
