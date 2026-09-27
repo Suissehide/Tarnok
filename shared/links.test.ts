@@ -4,6 +4,8 @@ import { LINK_RADIUS, ZONE_LIFETIME_TICKS, ZONE_RADIUS } from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
 import { linkedNeighbours } from './links';
+import { packZoneKind } from './protocol';
+import { REACTION } from './reactions';
 import { FORMATION, type WaveOrder } from './waves';
 import { ZoneField } from './zones';
 
@@ -224,5 +226,51 @@ describe('linkedNeighbours', () => {
     zones.spawn(ELEMENT.VIF_ARGENT, 0, 0, 0, 0);
 
     expect(linkedNeighbours(horde, 0, zones, 0)).toEqual([]);
+  });
+
+  /**
+   * ⚠️ **Correctif de revue sur la tache 3 (etape 5c) — decouvert en
+   * recoupant le §5 de la spec, pas le §3.** *Gel profond* (Givre +
+   * Vif-argent) et *Aveuglement* (Chaux + Vif-argent) y sont ranges parmi
+   * les reactions PORTEES PAR UNE ZONE (taches 5 et 8, hors perimetre ici) :
+   * leur champ porte l'element du DECLENCHEUR, Vif-argent OU son partenaire
+   * selon l'ordre d'arrivee des deux projectiles. Sans le filtre
+   * `zoneReaction(kind) === 0`, une zone de Gel profond dont le Vif-argent
+   * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
+   * et lierait a tort — une fois sur deux, ATTEIGNABLE des la tache 6.
+   *
+   * ⚠️ **Les DEUX declencheurs possibles**, meme discipline que les tests
+   * « ne cumulent pas » de `ZoneField` : le second `kind` (Givre declenche)
+   * etait deja exclu par le filtre PRECEDENT (element), donc lui seul ne
+   * testerait rien de neuf — mais l'assener quand meme documente que le
+   * nouveau filtre n'a RIEN change pour ce cas, et suit la regle « pose les
+   * deux ordres, assene l'egalite » a la lettre.
+   */
+  it('ne lie pas a travers une zone de REACTION appariant le Vif-argent, quel que soit le declencheur', () => {
+    // Fictif : aucune reaction ne pair le Vif-argent aujourd'hui (§5 arrive
+    // aux taches 5-8) — seul le MECANISME (element du declencheur variable)
+    // est teste ici, pas une reaction reelle.
+    const kindVifArgentDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
+    const kindAutreDeclenche = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
+
+    const hordeA = new Horde();
+    const zonesA = new ZoneField();
+    const a1 = spawnAt(hordeA, 1, 10, 0);
+    const a2 = spawnAt(hordeA, 2, 30, 0);
+    expect(hordeA.count).toBe(2);
+    zonesA.spawn(kindVifArgentDeclenche, 0, 0, 0, 0);
+
+    expect(linkedNeighbours(hordeA, 0, zonesA, 0)).not.toContain(a2);
+    expect(linkedNeighbours(hordeA, 1, zonesA, 0)).not.toContain(a1);
+
+    const hordeB = new Horde();
+    const zonesB = new ZoneField();
+    const b1 = spawnAt(hordeB, 1, 10, 0);
+    const b2 = spawnAt(hordeB, 2, 30, 0);
+    expect(hordeB.count).toBe(2);
+    zonesB.spawn(kindAutreDeclenche, 0, 0, 0, 0);
+
+    expect(linkedNeighbours(hordeB, 0, zonesB, 0)).not.toContain(b2);
+    expect(linkedNeighbours(hordeB, 1, zonesB, 0)).not.toContain(b1);
   });
 });

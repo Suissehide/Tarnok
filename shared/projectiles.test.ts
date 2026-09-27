@@ -534,74 +534,34 @@ describe('Projectiles — derivation (fireSalvoDirected, le chemin de PRODUCTION
   });
 
   /**
-   * ⚠️ **Le vrai test — celui que l'ancien `describe('Projectiles —
-   * derivation')` ne pouvait pas rendre**, parce que ses deux cotes
-   * construisaient la MEME horde : il prouvait le determinisme A HORDE
-   * EGALE, jamais l'INDEPENDANCE. Ici, les deux cotes portent des hordes
-   * DIFFERENTES (2 entites contre 5, positions differentes) ET des zones
-   * DIFFERENTES (une zone de Vif-argent d'un cote, aucune de l'autre) — et
-   * les trajectoires doivent rester IDENTIQUES malgre ca, puisque
-   * `fireSalvoDirected` (voir son parametre : `weapon, tick, x, y, dirX,
-   * dirY, damage, count` — jamais `horde` ni `zones`) et `step` n'en lisent
-   * aucune.
+   * ⚠️ **AUCUN TEST NE PEUT prouver l'independance a la horde et aux zones
+   * DEPUIS ICI — et c'est STRUCTUREL, pas une lacune.** `fireSalvoDirected`
+   * et `#emit` (juste au-dessus dans `shared/projectiles.ts`) ne recoivent
+   * ni `horde` ni `zones` DANS LEUR SIGNATURE, et le constructeur de
+   * `Projectiles` ne garde de reference vers aucun des deux : rien dans
+   * cette classe ne peut seulement les NOMMER, encore moins les lire.
+   * L'independance est donc garantie AVANT tout test, par la forme du code
+   * lui-meme — exactement le meme raisonnement que la borne `<= 0` de
+   * `appliquerDegats` (`back/src/combat.ts`), dont le commentaire dit
+   * *« aucun test ne peut la separer de `< 0` »* et explique pourquoi plutot
+   * que de laisser croire a une borne testee.
    *
-   * ⚠️ **Garde de non-vacuite, meme reflexe que le test ci-dessus** : les
-   * deux cotes portent reellement des projectiles vivants a la fin, ET les
-   * hordes/zones sont reellement differentes — sans quoi une implementation
-   * qui ignorerait purement et simplement ses deux arguments passerait ce
-   * test aussi bien qu'une implementation correcte.
+   * Une premiere version de ce test construisait deux `Horde` et deux
+   * `ZoneField` deliberement DIFFERENTS des deux cotes (avec de vraies
+   * assertions `not.toBe`), mais ne les passait JAMAIS a `fireSalvoDirected`
+   * — impossible, sa signature ne les accepte pas. Le test etait donc
+   * rigoureusement EQUIVALENT au test de determinisme ci-dessus : verifie
+   * par mutation en revue (un `zones?` ajoute a `fireSalvoDirected`, qui
+   * devie reellement l'angle emis, laissait les 24 tests de ce fichier
+   * verts, celui-la y compris). Un test qui ne peut pas distinguer une
+   * implementation correcte d'une implementation qui devie reellement ne
+   * garde rien — il a ete retire plutot que remplace par une forme plus
+   * elaboree mais tout aussi creuse.
+   *
+   * Ce qui protege reellement le contrat : ce docbloc, la signature de
+   * `fireSalvoDirected`/`#emit`, et la revue de code a chaque changement de
+   * signature — pas un test.
    */
-  it('une trajectoire ne depend NI de la horde NI des zones', () => {
-    function buildDivergentSide(entityCount: number, poserUneZoneVifArgent: boolean) {
-      const horde = new Horde(20);
-      for (let i = 0; i < entityCount; i++) {
-        addOne(horde, i + 1, 100 + i * 10, 0);
-      }
-      const zones = new ZoneField();
-      if (poserUneZoneVifArgent) {
-        zones.spawn(ELEMENT.VIF_ARGENT, 100, 0, 0, 0);
-      }
-      return { horde, zones, projectiles: new Projectiles(200) };
-    }
-
-    // Cote A : 2 entites, une zone de Vif-argent. Cote B : 5 entites,
-    // AUCUNE zone. Deux hordes et deux jeux de zones deliberement
-    // differents.
-    const a = buildDivergentSide(2, true);
-    const b = buildDivergentSide(5, false);
-    expect(a.horde.count).not.toBe(b.horde.count);
-    expect(a.zones.count).not.toBe(b.zones.count);
-
-    const dt = 1 / 30;
-    const TICKS = 33;
-
-    for (let tick = 0; tick < TICKS; tick++) {
-      const shooterX = tick * 5;
-      const shooterY = Math.sin(tick * 0.3) * 20;
-      const angle = tick * 0.2;
-      const dirX = Math.cos(angle);
-      const dirY = Math.sin(angle);
-
-      if (tick % SINGLE.cooldownTicks === 0) {
-        a.projectiles.fireSalvoDirected(SINGLE, tick, shooterX, shooterY, dirX, dirY);
-        b.projectiles.fireSalvoDirected(SINGLE, tick, shooterX, shooterY, dirX, dirY);
-      }
-      if (tick % SPREAD.cooldownTicks === 0) {
-        a.projectiles.fireSalvoDirected(SPREAD, tick, shooterX, shooterY, dirX, dirY);
-        b.projectiles.fireSalvoDirected(SPREAD, tick, shooterX, shooterY, dirX, dirY);
-      }
-
-      a.projectiles.step(dt);
-      b.projectiles.step(dt);
-    }
-
-    expect(a.projectiles.count).toBeGreaterThan(0);
-    expect(b.projectiles.count).toBe(a.projectiles.count);
-    for (let i = 0; i < a.projectiles.count; i++) {
-      expect(b.projectiles.x[i]).toBeCloseTo(a.projectiles.x[i] ?? 0, 6);
-      expect(b.projectiles.y[i]).toBeCloseTo(a.projectiles.y[i] ?? 0, 6);
-    }
-  });
 });
 
 describe('truncatedProjectiles — la salve qui ne part pas ne disparait pas en silence', () => {

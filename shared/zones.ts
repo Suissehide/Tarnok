@@ -5,7 +5,7 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
-import { zoneElement } from './protocol';
+import { zoneElement, zoneReaction } from './protocol';
 import {
   zoneArmorReductionTotal,
   zoneBurnPerTick,
@@ -532,6 +532,17 @@ export class ZoneField {
    * `shared/projectiles.ts`), au site ou la collision se resout — jamais dans
    * `#emit`/`fireSalvoDirected`, qui continuent d'ignorer la horde et les
    * zones. Voir le docbloc du module `shared/projectiles.ts`.
+   *
+   * ⚠️ **`zoneReaction(kind) === 0` : SEULES les zones purement elementaires
+   * elargissent — correctif de revue sur la tache 3, meme filtre et meme
+   * raison que `linkedNeighbours` (`shared/links.ts`).** Le §5 de la spec
+   * range *Gel profond* (Givre + Vif-argent) et *Aveuglement* (Chaux +
+   * Vif-argent) parmi les reactions PORTEES PAR UNE ZONE : leur champ porte
+   * l'element du DECLENCHEUR, Vif-argent OU son partenaire selon l'ordre
+   * d'arrivee. Sans ce filtre, une zone de Gel profond dont le Vif-argent
+   * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
+   * et elargirait a tort — une fois sur deux, selon l'ordre des deux
+   * projectiles, ATTEIGNABLE des la tache 6.
    */
   hitRadiusBonusAt(x: number, y: number, tick: number): number {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
@@ -546,6 +557,11 @@ export class ZoneField {
         continue;
       }
       if (zoneElement(this.kind[z] ?? 0) !== ELEMENT.VIF_ARGENT) {
+        continue;
+      }
+      if (zoneReaction(this.kind[z] ?? 0) !== 0) {
+        // Zone laissee par une REACTION (Gel profond, Aveuglement...) : voir
+        // le docbloc ci-dessus.
         continue;
       }
       if (VIF_ARGENT_HIT_RADIUS_BONUS > bonus) {

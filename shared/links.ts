@@ -1,7 +1,7 @@
 import { LINK_RADIUS, ZONE_RADIUS } from './constants';
 import { ELEMENT } from './elements';
 import type { Horde } from './horde';
-import { zoneElement } from './protocol';
+import { zoneElement, zoneReaction } from './protocol';
 import type { ZoneField } from './zones';
 
 /**
@@ -34,6 +34,19 @@ import type { ZoneField } from './zones';
  * ⚠️ **`O(zones x horde.count)`, meme famille que `ZoneField.ampAt` et
  * consorts.** Pas optimise davantage ici : la porte de performance du §8 de
  * la spec se mesure au banc dedie (tache 10), pas dans cette fonction.
+ *
+ * ⚠️ **`zoneReaction(kind) === 0` : SEULES les zones purement elementaires
+ * lient — correctif de revue sur la tache 3.** Le §5 de la spec range *Gel
+ * profond* (Givre + Vif-argent) et *Aveuglement* (Chaux + Vif-argent) parmi
+ * les reactions PORTEES PAR UNE ZONE (taches 5 et 8, hors perimetre ici) :
+ * elles laissent donc un champ dont le nibble d'ELEMENT porte le
+ * DECLENCHEUR — le second projectile arrive, Vif-argent OU son partenaire
+ * selon l'ordre. Sans ce filtre, une zone de Gel profond dont le Vif-argent
+ * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
+ * et lierait a tort — une fois sur deux, selon l'ordre des deux
+ * projectiles, ATTEIGNABLE des la tache 6. Voir `shared/links.test.ts` :
+ * une zone de reaction qui pair le Vif-argent ne lie JAMAIS, quel que soit
+ * le declencheur qui porte le nibble.
  */
 export function linkedNeighbours(
   horde: Horde,
@@ -50,6 +63,12 @@ export function linkedNeighbours(
 
   for (let z = 0; z < zones.count; z++) {
     if (zoneElement(zones.kind[z] ?? 0) !== ELEMENT.VIF_ARGENT) {
+      continue;
+    }
+    if (zoneReaction(zones.kind[z] ?? 0) !== 0) {
+      // Zone laissee par une REACTION (Gel profond, Aveuglement...) : son
+      // element est celui du declencheur, pas une garantie de Vif-argent
+      // pur — voir le docbloc ci-dessus.
       continue;
     }
     if (!zones.aliveAt(z, tick)) {

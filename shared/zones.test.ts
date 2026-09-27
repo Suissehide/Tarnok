@@ -1125,14 +1125,50 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
   });
 
   /**
+   * ⚠️ **Correctif de revue sur la tache 3 (etape 5c) — decouvert en
+   * recoupant le §5 de la spec, pas le §3.** *Gel profond* (Givre +
+   * Vif-argent) et *Aveuglement* (Chaux + Vif-argent) y sont ranges parmi
+   * les reactions PORTEES PAR UNE ZONE (taches 5 et 8, hors perimetre ici) :
+   * leur champ porte l'element du DECLENCHEUR, Vif-argent OU son partenaire
+   * selon l'ordre d'arrivee des deux projectiles. Sans le filtre
+   * `zoneReaction(kind) === 0`, une zone de Gel profond dont le Vif-argent
+   * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
+   * et elargirait a tort — une fois sur deux, ATTEIGNABLE des la tache 6.
+   *
+   * ⚠️ **Les DEUX declencheurs possibles**, meme discipline que les tests
+   * « ne cumulent pas » ci-dessous : le second `kind` (Givre declenche)
+   * etait deja exclu par le filtre PRECEDENT (element), donc lui seul ne
+   * testerait rien de neuf — mais l'assener quand meme documente que le
+   * nouveau filtre n'a RIEN change pour ce cas.
+   */
+  it('ne majore rien a travers une zone de REACTION appariant le Vif-argent, quel que soit le declencheur', () => {
+    // Fictif : aucune reaction ne pair le Vif-argent aujourd'hui (§5 arrive
+    // aux taches 5-8) — seul le MECANISME (element du declencheur variable)
+    // est teste ici, pas une reaction reelle.
+    const kindVifArgentDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
+    const kindAutreDeclenche = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
+
+    const zonesA = new ZoneField();
+    expect(zonesA.spawn(kindVifArgentDeclenche, 500, 500, 0, 0)).toBe(0);
+    expect(zonesA.hitRadiusBonusAt(500, 500, 0)).toBe(0);
+
+    const zonesB = new ZoneField();
+    expect(zonesB.spawn(kindAutreDeclenche, 500, 500, 0, 0)).toBe(0);
+    expect(zonesB.hitRadiusBonusAt(500, 500, 0)).toBe(0);
+  });
+
+  /**
    * ⚠️ **Les DEUX decors de `burnAt`, adaptes — et dans les DEUX ordres,
    * l asymetrie relevee a la re-revue finale de l etape 5b sur `burnAt` (un
    * seul ordre teste) n est PAS reproduite ici.**
    *
-   * Cas 1 : deux `kind` DIFFERENTS (nibble de reaction different, fictif —
-   * aucune reaction ne pair le Vif-argent aujourd'hui) qui portent tous deux
-   * l'element Vif-argent, aux MEMES coordonnees — jamais fusionnes puisque
-   * `spawn` compare le `kind` COMPLET.
+   * Cas 1 : une zone de Vif-argent PUR (`kind` eligible) et une zone de
+   * REACTION appariant le Vif-argent (`kind` FILTRE par
+   * `zoneReaction(kind) === 0`, voir le test precedent), aux MEMES
+   * coordonnees — jamais fusionnees puisque `spawn` compare le `kind`
+   * COMPLET. Verifie que le filtre et le maximum cooperent : la contribution
+   * FILTREE ne compte jamais, seule celle qui reste rend
+   * `VIF_ARGENT_HIT_RADIUS_BONUS` — jamais son double, jamais zero.
    *
    * Cas 2 : deux zones du MEME `kind`, centres ecartes de `1,2 x ZONE_RADIUS`
    * — au-dela de la fusion, en-deca du recouvrement.
@@ -1141,25 +1177,25 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
    * `VIF_ARGENT_HIT_RADIUS_BONUS`, jamais son double.
    */
   it('DEUX zones de Vif-argent qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme, dans les deux ordres', () => {
-    const kindA = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SURCHAUFFE);
-    const kindB = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.VERGLAS);
-    expect(kindA).not.toBe(kindB);
-    expect(zoneElement(kindA)).toBe(ELEMENT.VIF_ARGENT);
-    expect(zoneElement(kindB)).toBe(ELEMENT.VIF_ARGENT);
+    const kindPur = ELEMENT.VIF_ARGENT;
+    const kindFiltre = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
+    expect(kindPur).not.toBe(kindFiltre);
+    expect(zoneElement(kindPur)).toBe(ELEMENT.VIF_ARGENT);
+    expect(zoneElement(kindFiltre)).toBe(ELEMENT.VIF_ARGENT);
 
-    // Cas 1, ordre A puis B.
-    const aPuisB = new ZoneField();
-    expect(aPuisB.spawn(kindA, 100, 0, 0, 0)).toBe(0);
-    expect(aPuisB.spawn(kindB, 100, 0, 0, 0)).toBe(1);
-    expect(aPuisB.count).toBe(2);
-    expect(aPuisB.hitRadiusBonusAt(100, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+    // Cas 1, ordre pur puis filtre.
+    const purPuisFiltre = new ZoneField();
+    expect(purPuisFiltre.spawn(kindPur, 100, 0, 0, 0)).toBe(0);
+    expect(purPuisFiltre.spawn(kindFiltre, 100, 0, 0, 0)).toBe(1);
+    expect(purPuisFiltre.count).toBe(2);
+    expect(purPuisFiltre.hitRadiusBonusAt(100, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
 
-    // Cas 1, ordre B puis A — l asymetrie que `burnAt` n a jamais testee.
-    const bPuisA = new ZoneField();
-    expect(bPuisA.spawn(kindB, 100, 0, 0, 0)).toBe(0);
-    expect(bPuisA.spawn(kindA, 100, 0, 0, 0)).toBe(1);
-    expect(bPuisA.count).toBe(2);
-    expect(bPuisA.hitRadiusBonusAt(100, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+    // Cas 1, ordre filtre puis pur — l asymetrie que `burnAt` n a jamais testee.
+    const filtrePuisPur = new ZoneField();
+    expect(filtrePuisPur.spawn(kindFiltre, 100, 0, 0, 0)).toBe(0);
+    expect(filtrePuisPur.spawn(kindPur, 100, 0, 0, 0)).toBe(1);
+    expect(filtrePuisPur.count).toBe(2);
+    expect(filtrePuisPur.hitRadiusBonusAt(100, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
 
     // Cas 2, MEME kind, centres ecartes de 1,2 x ZONE_RADIUS, dans les deux ordres.
     const ECART = 1.2 * ZONE_RADIUS;
