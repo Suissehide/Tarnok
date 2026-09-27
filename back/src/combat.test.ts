@@ -3757,6 +3757,35 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
   });
 
   /**
+   * ⚠️ **L'ennemi LIE occupe le creneau 0 — mesure par mutation, pas
+   * suppose.** Dans tous les AUTRES decors de ce bloc, le declencheur est
+   * ajoute EN PREMIER a la horde (`addOne` l'y place au creneau 0) et le lie
+   * toujours APRES (creneau >= 1) : `linkedSlot < 0` n'y est donc jamais
+   * exerce avec `linkedSlot === 0`, et une mutation qui le relacherait en
+   * `<= 0` y restait invisible (mesuree). Ici, Y (le lie) est ajoute EN
+   * PREMIER (creneau 0) et X (le declencheur) EN SECOND (creneau 1) : si la
+   * garde devenait `linkedSlot <= 0`, Y serait ecarte a tort et personne ne
+   * prendrait de degat.
+   */
+  it('touche l ennemi LIE meme quand il occupe le creneau 0 de la horde', () => {
+    const horde = new Horde(10);
+    const y = addOne(horde, 1, 0, 0, LOURD);
+    const x = addOne(horde, 2, 50, 0, LOURD);
+    horde.hp[horde.slotOf(x)] = 1000;
+    horde.hp[horde.slotOf(y)] = 1000;
+    expect(horde.slotOf(y)).toBe(0);
+    expect(horde.slotOf(x)).toBe(1);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 25, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(x, 50, 0)], zones, new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    expect(horde.hp[horde.slotOf(y)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(x)]).toBeCloseTo(1000 - perte, 5);
+  });
+
+  /**
    * ⚠️ **Le pare-feu de la tache 3, exerce directement.** Sans aucune zone
    * de Vif-argent ELEMENTAIRE posee ailleurs, la SEULE zone de Vif-argent
    * qui existe est celle que Vaporisation vient de laisser au sol pour CE
