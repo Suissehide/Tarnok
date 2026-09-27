@@ -1,4 +1,7 @@
+import { MAX_ARMOR } from './archetypes';
 import {
+  ECLAT_DE_GEL_DAMAGE,
+  FOURNEE_BURN_PER_TICK,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SUPRACONDUCTION_ARMOR_REDUCTION,
@@ -36,6 +39,8 @@ export const REACTION = {
   COURT_CIRCUIT: 3,
   SUPRACONDUCTION: 4,
   VERGLAS: 5,
+  FOURNEE: 6,
+  ECLAT_DE_GEL: 7,
 } as const;
 
 export interface ReactionDef {
@@ -243,6 +248,76 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: VERGLAS_INERTIA_DAMPING,
     zoneCollisionDamage: VERGLAS_COLLISION_DAMAGE_PER_TICK,
     zoneFieldSign: 1,
+  },
+  {
+    // Fournee (Braise + Chaux, tache 4 de l'etape 5c) : la combustion double
+    // (`FOURNEE_BURN_PER_TICK`, deux fois `SURCHAUFFE_BURN_PER_TICK`) ET
+    // l'armure tombe a zero dans la zone (`zoneArmorReduction: MAX_ARMOR`,
+    // voir `armureA` dans `back/src/combat.ts` : borne par le bas a zero, donc
+    // MAX_ARMOR suffit a annuler n'importe quelle armure d'archetype, jamais
+    // superieure a MAX_ARMOR elle-meme).
+    //
+    // ⚠️ **`zoneArmorReduction` ET `zoneFieldSign` sont EXPLICITES, jamais
+    // heritees de l'element — le piege des DEUX planchers.** Cette paire
+    // apparie la Chaux, qui porte DEUX proprietes non neutres
+    // (`armorReduction` et `fieldSign: -1`, voir `shared/elements.ts`) : le
+    // nibble d'element de la zone porte le DECLENCHEUR (Braise OU Chaux selon
+    // l'ordre d'arrivee), donc lire l'une ou l'autre grandeur SEULE au
+    // travers de l'element rendrait Fournee corrosive une fois sur deux
+    // (`zoneArmorReductionTotal` combine par MAXIMUM) et fuyante une fois sur
+    // deux (`zoneFieldSign` combine par MINIMUM). `MAX_ARMOR` domine
+    // n'importe quelle contribution de l'element (`CHAUX_ARMOR_REDUCTION`
+    // dessous), et `elementOf(ELEMENT.CHAUX).fieldSign` (-1) domine le
+    // neutre (+1) de la Braise par le minimum : les deux plafonds/planchers
+    // rendent le resultat le MEME quel que soit l'ordre. Voir le test
+    // « Fournee ne depend pas de l'ordre d'arrivee (armure ET fuite) »,
+    // `shared/reactions.test.ts`.
+    id: REACTION.FOURNEE,
+    name: 'fournee',
+    pair: packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX),
+    zoneBurnPerTick: FOURNEE_BURN_PER_TICK,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: 0,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: MAX_ARMOR,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
+  },
+  {
+    // Eclat de gel (Givre + Chaux, tache 4 de l'etape 5c) : degats bruts
+    // massifs sur la SEULE cible qui declenche la reaction (`ECLAT_DE_GEL_DAMAGE`),
+    // pas un effet de zone — voir la branche dediee d'`applyReactions`
+    // (`back/src/combat.ts`), qui lit `damage` directement au lieu du
+    // balayage generique. `radius: 0` documente ce choix : AUCUN effet
+    // geometrique, contrairement a Embrasement.
+    //
+    // ⚠️ **`zoneArmorReduction` ET `zoneFieldSign` restent EXPLICITES, MEME
+    // pour une reaction dont l'effet reel n'est PAS porte par la zone.** Le
+    // meme piege que Fournee ci-dessus s'applique : `postZone`
+    // (`back/src/combat.ts`) pose une zone pour CHAQUE declencheur, sans
+    // exception pour les reactions « degat seul » — la zone laissee par Eclat
+    // de gel existe donc bel et bien, et son element porte le DECLENCHEUR
+    // (Givre OU Chaux selon l'ordre). Sans plancher explicite, la corrosion et
+    // la fuite de la Chaux qu'elle porte fuiteraient une fois sur deux,
+    // exactement comme pour Fournee. La reduction choisie ici est
+    // `elementOf(ELEMENT.CHAUX).armorReduction` — pas `MAX_ARMOR` — parce
+    // qu'Eclat de gel ne PRETEND a aucun effet d'armure propre (a la
+    // difference de Fournee) : le plancher garantit seulement ce qu'une Chaux
+    // SEULE laisserait deja, ni plus ni moins, quel que soit l'ordre.
+    id: REACTION.ECLAT_DE_GEL,
+    name: 'eclat-de-gel',
+    pair: packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: ECLAT_DE_GEL_DAMAGE,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: elementOf(ELEMENT.CHAUX).armorReduction,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
   },
 ];
 

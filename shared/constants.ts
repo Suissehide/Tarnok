@@ -1047,3 +1047,44 @@ export const LINK_RADIUS = 80;
  * comme le reste du catalogue elementaire.
  */
 export const VIF_ARGENT_HIT_RADIUS_BONUS = 16;
+
+/**
+ * Degats par tick d'une zone de Fournee (Braise + Chaux, tache 4 de l'etape
+ * 5c) — INDEPENDANT de la marque, meme raison que `SURCHAUFFE_BURN_PER_TICK`
+ * (lue par `zoneBurnPerTick` a partir du nibble de reaction, jamais de
+ * l'element porte, qui varie selon l'ordre d'arrivee de la Braise et de la
+ * Chaux).
+ *
+ * §6.4 de l'orientation : *« la calcination double le degat sur la duree »*.
+ * Deux fois `SURCHAUFFE_BURN_PER_TICK` (0,3), la seule AUTRE zone de
+ * combustion issue d'une reaction — Fournee devient ainsi la zone la plus
+ * chaude du catalogue, coherente avec le reste de sa fiche (elle annule aussi
+ * l'armure, voir `armorReduction` de `REACTION_DEFS`).
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire.
+ */
+export const FOURNEE_BURN_PER_TICK = SURCHAUFFE_BURN_PER_TICK * 2;
+
+/**
+ * Degats bruts instantanes d'Eclat de gel (Givre + Chaux, tache 4 de l'etape
+ * 5c) sur la SEULE cible qui declenche la reaction — §6.4 de l'orientation :
+ * *« degats bruts massifs sur une cible »*, lu par la branche dediee de
+ * `applyReactions` (`back/src/combat.ts`), jamais par `damageInRadius`.
+ *
+ * ⚠️ **Un rayon de zero n'aurait touche personne.** `ReactionDef.radius: 0`
+ * (Eclat de gel n'a pas d'effet geometrique, voir son docbloc) exclurait
+ * STRICTEMENT tout le monde d'un balayage par rayon (`damageInRadius` teste
+ * `dx x dx + dy x dy < radius x radius`, jamais vrai pour `radius = 0`, pas
+ * meme au centre) : c'est pour ca que la cible unique se resout par
+ * `Horde.slotOf(t.entityId)`, jamais par le balayage generique.
+ *
+ * Deux fois `REACTION_DAMAGE` (25) : concentre sur UNE cible plutot que
+ * diffuse sur `REACTION_RADIUS`, l'effet doit mordre plus fort par coup que
+ * le Choc thermique generique, sans quoi choisir un seul ennemi serait
+ * strictement pire qu'en toucher plusieurs pour le meme total.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire.
+ */
+export const ECLAT_DE_GEL_DAMAGE = REACTION_DAMAGE * 2;

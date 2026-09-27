@@ -840,6 +840,26 @@ export function applyReactions(
       // et tue, revue de la tache 6) — une egalite de VALEUR n'exempte jamais
       // de garder le CHEMIN qui la lit.
       chainWhilePoisoned(horde, t, def.damage, zones, tick, dead);
+    } else if (def?.id === REACTION.ECLAT_DE_GEL) {
+      // ⚠️ **Une SEULE cible, jamais un balayage** — `def.radius` vaut 0
+      // (voir son docbloc dans `shared/reactions.ts`) : `damageInRadius`
+      // avec un rayon nul ne toucherait personne, meme pas le centre (borne
+      // STRICTE `< radius`). La cible est l'ennemi qui declenche
+      // (`t.entityId`), retrouve par `Horde.slotOf` comme partout ailleurs
+      // dans ce fichier — jamais `damageInRadius`, donc un second chemin
+      // n'existe pas : `appliquerDegats` reste l'UNIQUE porte de sortie des
+      // PV.
+      //
+      // ⚠️ **`t.entityId` peut etre absent** — un declencheur ne d'un
+      // recouvrement de zones (`onZoneCreated`) n'a pas d'ennemi associe
+      // (voir le docbloc de `ReactionTrigger.entityId`). Sans cible, Eclat de
+      // gel ne fait rien : il n'y a personne « sur qui » masser des degats
+      // bruts, contrairement a Embrasement/Court-circuit dont l'effet reste
+      // geometrique ou en chaine meme sans identite de declencheur.
+      const slot = t.entityId !== undefined ? horde.slotOf(t.entityId) : -1;
+      if (slot >= 0) {
+        appliquerDegats(horde, slot, def.damage, zones, tick, dead);
+      }
     } else {
       damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
     }

@@ -1,7 +1,10 @@
 import { describe, expect, it } from 'vitest';
 
+import { MAX_ARMOR } from './archetypes';
 import {
   CHAUX_ARMOR_REDUCTION,
+  ECLAT_DE_GEL_DAMAGE,
+  FOURNEE_BURN_PER_TICK,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SUPRACONDUCTION_ARMOR_REDUCTION,
@@ -86,6 +89,56 @@ describe('reactionOfId', () => {
   });
 });
 
+describe('Fournee et Eclat de gel (tache 4 de l etape 5c) — deux lignes de plus, meme table', () => {
+  it('trouve Fournee (Braise + Chaux) et Eclat de gel (Givre + Chaux), chacune a son couple canonique', () => {
+    const fournee = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX));
+    const eclatDeGel = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
+    expect(fournee?.id).toBe(REACTION.FOURNEE);
+    expect(eclatDeGel?.id).toBe(REACTION.ECLAT_DE_GEL);
+    // Sept identifiants distincts au total, exactement comme le test des cinq
+    // reactions precedentes : une collision confondrait le mauvais couple.
+    const surchauffe = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE));
+    const embrasement = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX));
+    const courtCircuit = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
+    const supraconduction = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.FOUDRE));
+    const verglas = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.POIX));
+    expect(
+      new Set([
+        surchauffe?.id,
+        embrasement?.id,
+        courtCircuit?.id,
+        supraconduction?.id,
+        verglas?.id,
+        fournee?.id,
+        eclatDeGel?.id,
+      ]).size,
+    ).toBe(7);
+  });
+
+  it('est INSENSIBLE a l ordre d arrivee, comme les cinq reactions precedentes', () => {
+    const a = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX));
+    const b = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.BRAISE));
+    expect(a?.id).toBe(REACTION.FOURNEE);
+    expect(b?.id).toBe(REACTION.FOURNEE);
+
+    const c = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
+    const d = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.GIVRE));
+    expect(c?.id).toBe(REACTION.ECLAT_DE_GEL);
+    expect(d?.id).toBe(REACTION.ECLAT_DE_GEL);
+  });
+
+  it('retrouve les deux par `reactionOfId`, le nibble empaquete dans `ZoneField.kind`', () => {
+    expect(reactionOfId(REACTION.FOURNEE)?.name).toBe('fournee');
+    expect(reactionOfId(REACTION.ECLAT_DE_GEL)?.name).toBe('eclat-de-gel');
+  });
+
+  it('Eclat de gel porte ECLAT_DE_GEL_DAMAGE et un rayon nul : pas de balayage geometrique', () => {
+    const def = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
+    expect(def?.damage).toBe(ECLAT_DE_GEL_DAMAGE);
+    expect(def?.radius).toBe(0);
+  });
+});
+
 describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   it('rend la duree GENERIQUE pour un kind de reaction nulle', () => {
     expect(zoneLifetimeTicks(ELEMENT.BRAISE)).toBe(ZONE_LIFETIME_TICKS);
@@ -149,6 +202,20 @@ describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => 
   it('Embrasement et Court-circuit ne laissent AUCUN degat de zone : leur effet est instantane, pas persistant', () => {
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(0);
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(0);
+  });
+
+  it('rend FOURNEE_BURN_PER_TICK pour Fournee, quel que soit l element porte (Braise OU Chaux declenche)', () => {
+    const braiseDeclenche = zoneBurnPerTick(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE));
+    const chauxDeclenche = zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.FOURNEE));
+    expect(braiseDeclenche).toBeGreaterThan(0);
+    expect(chauxDeclenche).toBeGreaterThan(0);
+    expect(braiseDeclenche).toBe(chauxDeclenche);
+    expect(braiseDeclenche).toBe(FOURNEE_BURN_PER_TICK);
+  });
+
+  it('Eclat de gel ne laisse AUCUN degat de zone : son effet est un degat direct sur la cible, pas une zone qui brule', () => {
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.ECLAT_DE_GEL))).toBe(0);
   });
 });
 
@@ -369,6 +436,44 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
     // serait vraie et ne prouverait rien.
     expect(a).toBeGreaterThan(0);
   });
+
+  /**
+   * ⚠️ **LE test reel de l'etape 3 du brief, cette fois avec Fournee
+   * elle-meme** — plus une substitution, la reaction existe. Fournee pousse
+   * `zoneArmorReduction` a `MAX_ARMOR`, qui domine n'importe quelle
+   * contribution de l'element (`CHAUX_ARMOR_REDUCTION`, tres en dessous) :
+   * les deux ordres de declencheur (Braise, qui n'a pas d'effet d'armure
+   * propre, puis Chaux, qui en a un) doivent donc rendre la MEME reduction.
+   */
+  it('Fournee ne depend pas de l ordre d arrivee : l armure retiree vaut MAX_ARMOR dans les deux ordres', () => {
+    expect(CHAUX_ARMOR_REDUCTION).toBeLessThan(MAX_ARMOR);
+
+    const braiseDeclenche = zoneArmorReductionTotal(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE));
+    const chauxDeclenche = zoneArmorReductionTotal(packZoneKind(ELEMENT.CHAUX, REACTION.FOURNEE));
+    expect(braiseDeclenche).toBe(chauxDeclenche);
+    expect(braiseDeclenche).toBe(MAX_ARMOR);
+  });
+
+  /**
+   * ⚠️ **Eclat de gel n'a pourtant AUCUN effet d'armure « a elle », et porte
+   * quand meme un plancher explicite** — voir le commentaire de son entree
+   * dans `REACTION_DEFS` (`shared/reactions.ts`) : la zone qu'elle laisse
+   * (posee par `postZone` pour CHAQUE declencheur, sans exception) porterait
+   * sinon la fuite de la Chaux une fois sur deux. Le plancher choisi
+   * (`elementOf(ELEMENT.CHAUX).armorReduction`) ne fait que garantir ce
+   * qu'une Chaux SEULE laisserait deja.
+   */
+  it('Eclat de gel ne depend pas de l ordre d arrivee : l armure retiree vaut CHAUX_ARMOR_REDUCTION dans les deux ordres', () => {
+    const givreDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL),
+    );
+    const chauxDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.CHAUX, REACTION.ECLAT_DE_GEL),
+    );
+    expect(givreDeclenche).toBe(chauxDeclenche);
+    expect(givreDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
+    expect(givreDeclenche).toBeGreaterThan(0);
+  });
 });
 
 /**
@@ -466,5 +571,27 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
     const givreDeclenche = zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION));
     expect(chauxDeclenche).toBe(-1);
     expect(givreDeclenche).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Fournee et Eclat de gel FERMENT le piege transitoire ci-dessus,
+   * pour leurs deux couples.** Toutes deux portent `zoneFieldSign: -1`
+   * EXPLICITE dans `REACTION_DEFS` (`shared/reactions.ts`) — jamais heritee
+   * de l'element — donc les deux ordres de declencheur rendent desormais la
+   * MEME reponse, -1, exactement le remede que Verglas a deja applique pour
+   * `zoneSlowFactor`.
+   */
+  it('Fournee ne depend plus de l ordre d arrivee : -1 que Braise ou Chaux declenche', () => {
+    const braiseDeclenche = zoneFieldSign(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE));
+    const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.FOURNEE));
+    expect(braiseDeclenche).toBe(-1);
+    expect(chauxDeclenche).toBe(-1);
+  });
+
+  it('Eclat de gel ne depend pas non plus de l ordre d arrivee : -1 que Givre ou Chaux declenche', () => {
+    const givreDeclenche = zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL));
+    const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.ECLAT_DE_GEL));
+    expect(givreDeclenche).toBe(-1);
+    expect(chauxDeclenche).toBe(-1);
   });
 });

@@ -17,11 +17,14 @@ import {
 import {
   CHAIN_JUMPS,
   CHAIN_RADIUS,
+  CHAUX_ARMOR_REDUCTION,
   COIN_DROP_ONE_IN,
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
+  ECLAT_DE_GEL_DAMAGE,
+  FOURNEE_BURN_PER_TICK,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
   PROJECTILE_HIT_RADIUS,
@@ -2541,6 +2544,34 @@ describe('postZone empaquette le type de reaction de la table (etape 5b, tache 6
     expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.COURT_CIRCUIT);
   });
 
+  it('Fournee (Braise + Chaux) laisse un champ portant le nibble FOURNEE', () => {
+    const zones = new ZoneField();
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX), ELEMENT.CHAUX)],
+      zones,
+      new Reactions(),
+    );
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.FOURNEE);
+  });
+
+  it('Eclat de gel (Givre + Chaux) laisse un champ portant le nibble ECLAT_DE_GEL', () => {
+    const zones = new ZoneField();
+    applyReactions(
+      new Horde(1),
+      new OrbField(1),
+      0,
+      [trigger(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX), ELEMENT.CHAUX)],
+      zones,
+      new Reactions(),
+    );
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.ECLAT_DE_GEL);
+  });
+
   it('le Choc thermique generique (Braise + Givre) laisse un champ SANS type de reaction — non-regression', () => {
     const zones = new ZoneField();
     applyReactions(
@@ -2635,6 +2666,40 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
     resolveBurn(horde, new OrbField(10), 5, zones);
 
     expect(horde.hp[horde.slotOf(cible)]).toBeLessThan(HEAVY_HP);
+  });
+
+  /**
+   * Fournee (Braise + Chaux, tache 4 de l'etape 5c) : `FOURNEE_BURN_PER_TICK`
+   * wire jusqu'a `resolveBurn` par le MEME balayage, et la perte est EXACTE
+   * dans les DEUX ordres de declencheur — le meme motif que le test « brule
+   * MEME quand la zone porte l element FOUDRE » ci-dessus, pour le second
+   * couple de la Chaux.
+   */
+  it('Fournee brule PLUS FORT que Surchauffe, dans les DEUX ordres de declencheur', () => {
+    const perte = (kind: number): number => {
+      const horde = new Horde(10);
+      const cible = addOne(horde, 1, 1000, 1000, LOURD);
+      const zones = new ZoneField();
+      zones.spawn(kind, 1000, 1000, 4, 0);
+      resolveBurn(horde, new OrbField(10), 0, zones);
+      return HEAVY_HP - (horde.hp[horde.slotOf(cible)] ?? 0);
+    };
+
+    const perteSurchauffe = perte(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE));
+    const perteBraiseDeclenche = perte(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE));
+    const perteChauxDeclenche = perte(packZoneKind(ELEMENT.CHAUX, REACTION.FOURNEE));
+
+    // ⚠️ **Perte EXACTE, pas `toBeGreaterThan` seul** — mais SANS
+    // `coupSurLourd` : la MEME zone qui brule annule aussi l'armure
+    // (`zoneArmorReduction: MAX_ARMOR`, voir `REACTION_DEFS`), et
+    // `appliquerDegats` lit `armureA` sur CES memes zones. La lourde encaisse
+    // donc `FOURNEE_BURN_PER_TICK` BRUT (armure a zero DANS la zone), pas
+    // `FOURNEE_BURN_PER_TICK x (1 - HEAVY_ARMOR)` : `coupSurLourd` supposerait
+    // une armure qui n'existe plus ici.
+    expect(perteBraiseDeclenche).toBeCloseTo(FOURNEE_BURN_PER_TICK, 5);
+    expect(perteChauxDeclenche).toBeCloseTo(FOURNEE_BURN_PER_TICK, 5);
+    expect(perteBraiseDeclenche).toBeCloseTo(perteChauxDeclenche, 10);
+    expect(perteBraiseDeclenche).toBeGreaterThan(perteSurchauffe);
   });
 
   it('ne brule plus une fois SA PROPRE duree de vie ecoulee, meme si elle traine encore dans la reserve', () => {
@@ -3359,5 +3424,238 @@ describe('resolveVerglasCollisions — Verglas fait se percuter les glissants (e
     expect(horde.slotOf(b)).toBeGreaterThanOrEqual(0);
     expect(horde.slotOf(c)).toBeGreaterThanOrEqual(0);
     expect(horde.slotOf(d)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+/**
+ * Eclat de gel (Givre + Chaux, tache 4 de l'etape 5c) : degats bruts massifs
+ * SUR LA SEULE CIBLE qui declenche — `damageInRadius` n'y participe pas
+ * (`def.radius` vaut 0, voir son docbloc dans `shared/reactions.ts`) : la
+ * branche dediee d'`applyReactions` retrouve directement le creneau du
+ * declencheur par `Horde.slotOf(t.entityId)` et passe par `appliquerDegats`,
+ * le SEUL chemin de PV.
+ */
+describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (tache 4 de l etape 5c)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function trigger(entityId: number, x: number, y: number): ReactionTrigger {
+    return {
+      pair: packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.CHAUX,
+      entityId,
+    };
+  }
+
+  /**
+   * ⚠️ **PAS `coupSurLourd(ECLAT_DE_GEL_DAMAGE)`.** `postZone` pose la zone
+   * d'Eclat de gel AVANT le degat (« les champs se posent avant les degats »,
+   * voir `applyReactions`), et la cible se tient PILE en son centre : cette
+   * MEME zone porte `zoneArmorReductionTotal = CHAUX_ARMOR_REDUCTION`
+   * (l'element du nibble est CHAUX ici, voir `trigger`), donc l'armure au
+   * moment du coup vaut `HEAVY_ARMOR - CHAUX_ARMOR_REDUCTION`, pas
+   * `HEAVY_ARMOR` seule — exactement la meme lecon que le test « LES DEUX
+   * MOITIES » d'Embrasement (sa propre zone de Poix l'amplifie).
+   */
+  it('retire EXACTEMENT ECLAT_DE_GEL_DAMAGE x (1 - armure DANS SA PROPRE zone) a la cible — decor a PV eleves, pas un coup qui tue', () => {
+    // ⚠️ **PV eleves, expres.** Une cible qui meurt au premier coup rendrait
+    // l'assertion de perte vraie a vide (le defaut « hp = 0,05 » de la
+    // re-revue finale de l'etape 5b) : 1000 survit largement a
+    // `ECLAT_DE_GEL_DAMAGE` (2 x `REACTION_DAMAGE`, tres en dessous).
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(cible)] = 1000;
+
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(cible, 1000, 1000)],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    // ⚠️ **La perte EXACTE, pas `toBeLessThan`** — voir le §5b cite dans le
+    // brief : `def.damage * 3` sur 214 tests verts avec une assertion molle.
+    const armureDansLaZone = Math.max(0, HEAVY_ARMOR - CHAUX_ARMOR_REDUCTION);
+    expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(
+      1000 - ECLAT_DE_GEL_DAMAGE * (1 - armureDansLaZone),
+      5,
+    );
+  });
+
+  it('EPARGNE un voisin au MEME point : radius: 0 n est pas un balayage, contrairement au Choc thermique generique', () => {
+    // ⚠️ **LES DEUX MOITIES**, meme decor que le test d'Embrasement du meme
+    // nom : un ennemi qui declenche et un second AU MEME POINT, pour Eclat de
+    // gel (qui doit epargner le second) puis pour le Choc thermique generique
+    // (qui, lui, touche les deux, etant a distance nulle des deux).
+    function decor(): { horde: Horde; cible: number; voisin: number } {
+      const horde = new Horde(10);
+      const cible = addOne(horde, 1, 1000, 1000, LOURD);
+      const voisin = addOne(horde, 2, 1000, 1000, LOURD);
+      horde.hp[horde.slotOf(cible)] = 1000;
+      horde.hp[horde.slotOf(voisin)] = 1000;
+      return { horde, cible, voisin };
+    }
+
+    const eclatDeGel = decor();
+    applyReactions(
+      eclatDeGel.horde,
+      new OrbField(10),
+      0,
+      [trigger(eclatDeGel.cible, 1000, 1000)],
+      new ZoneField(),
+      new Reactions(),
+    );
+    const armureDansLaZone = Math.max(0, HEAVY_ARMOR - CHAUX_ARMOR_REDUCTION);
+    expect(eclatDeGel.horde.hp[eclatDeGel.horde.slotOf(eclatDeGel.cible)]).toBeCloseTo(
+      1000 - ECLAT_DE_GEL_DAMAGE * (1 - armureDansLaZone),
+      5,
+    );
+    // Le voisin, lui, n'a rien pris : `damageInRadius` n'est jamais appele.
+    expect(eclatDeGel.horde.hp[eclatDeGel.horde.slotOf(eclatDeGel.voisin)]).toBe(1000);
+
+    const chocThermique = decor();
+    applyReactions(
+      chocThermique.horde,
+      new OrbField(10),
+      0,
+      [
+        {
+          pair: packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE),
+          x: 1000,
+          y: 1000,
+          markBy: 1,
+          by: 2,
+          element: ELEMENT.GIVRE,
+          entityId: chocThermique.cible,
+        },
+      ],
+      new ZoneField(),
+      new Reactions(),
+    );
+    const perteGenerique = coupSurLourd(REACTION_DAMAGE);
+    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.cible)]).toBeCloseTo(
+      1000 - perteGenerique,
+      5,
+    );
+    // ⚠️ Le Choc thermique generique, lui, N'EPARGNE PAS le voisin : les
+    // deux sont a distance nulle du point declencheur, donc dans
+    // `REACTION_RADIUS`.
+    expect(chocThermique.horde.hp[chocThermique.horde.slotOf(chocThermique.voisin)]).toBeCloseTo(
+      1000 - perteGenerique,
+      5,
+    );
+  });
+
+  it('sans entityId (declencheur ne d un recouvrement de zones), ne touche personne : pas de cible, pas de degat', () => {
+    // ⚠️ Le cas `onZoneCreated` (`back/src/combat.ts`) : un declencheur ne
+    // d'un recouvrement de zones n'a pas d'ennemi associe
+    // (`ReactionTrigger.entityId` est alors `undefined`). Sans cible, Eclat
+    // de gel se degrade en silence plutot que de deviner une geometrie qu'il
+    // n'a pas.
+    const horde = new Horde(10);
+    const present = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(present)] = 1000;
+
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [
+        {
+          pair: packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX),
+          x: 1000,
+          y: 1000,
+          markBy: 1,
+          by: 2,
+          element: ELEMENT.CHAUX,
+          // entityId omis, expres.
+        },
+      ],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    expect(horde.hp[horde.slotOf(present)]).toBe(1000);
+  });
+
+  it('laisse quand meme un champ de Chaux au sol : le degat direct ne dispense pas `postZone`', () => {
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(cible)] = 1000;
+    const zones = new ZoneField();
+
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(cible, 1000, 1000)],
+      zones,
+      new Reactions(),
+    );
+
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.ECLAT_DE_GEL);
+  });
+});
+
+/**
+ * Point de revue n°1 de la tache 4 de l'etape 5c : une zone de Chaux ET une
+ * zone de Fournee sur le MEME ennemi ne doivent jamais pousser l'armure sous
+ * zero — un negatif MAJORERAIT les degats (`1 - armure > 1`) au lieu de les
+ * laisser bruts. `armureA` borne deja par le bas (`Math.max(0, ...)`) ; ce
+ * test verifie que le plancher tient meme quand DEUX zones contribuent a la
+ * reduction en meme temps — une Chaux SEULE (`CHAUX_ARMOR_REDUCTION`) et une
+ * Fournee (`MAX_ARMOR`), au meme point.
+ */
+describe('armureA — une zone de Chaux ET une de Fournee ne poussent jamais l armure sous zero (tache 4, point de revue n°1)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  it('l armure effective vaut EXACTEMENT zero, jamais un negatif — decor a PV eleves', () => {
+    // ⚠️ **PV eleves, expres** — meme raison que le test d'Eclat de gel
+    // ci-dessus : une cible qui meurt au premier coup rendrait la perte
+    // « exacte » vraie a vide, sans jamais prouver que l'armure ne descend
+    // pas sous zero (le defaut `hp = 0,05` de la re-revue finale de l'etape
+    // 5b, cite par le brief).
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(cible)] = 1000;
+    const zones = new ZoneField();
+    // Une zone de Chaux SEULE (aucune reaction nommee : reduction portee par
+    // l'element seul, `CHAUX_ARMOR_REDUCTION`)...
+    zones.spawn(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE), 1000, 1000, 3, 0);
+    // ...ET une zone de Fournee (reduction portee par la reaction,
+    // `MAX_ARMOR`) — deux zones DISTINCTES (kinds differents, voir
+    // `ZoneField.spawn`), au MEME point, qui ne fusionnent donc pas.
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE), 1000, 1000, 4, 0);
+    expect(zones.count).toBe(2);
+
+    expect(armureA(horde, horde.slotOf(cible), zones, 0)).toBe(0);
+
+    // ⚠️ Et la garde qui rend l'assertion ci-dessus non-vacueuse : sans les
+    // deux zones, l'armure de la lourde n'est PAS deja nulle par elle-meme.
+    expect(HEAVY_ARMOR).toBeGreaterThan(0);
+
+    const brut = 50;
+    appliquerDegats(horde, horde.slotOf(cible), brut, zones, 0, new Set());
+    // ⚠️ **La perte EXACTE : `brut x (1 - 0) = brut`, jamais plus** — un
+    // negatif aurait ici multiplie `brut` par un facteur superieur a 1 et
+    // retire plus que `brut` a la reserve.
+    expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(1000 - brut, 5);
+  });
+
+  it('la MEME borne tient si Fournee est posee EN PREMIER : l ordre des deux zones ne change rien', () => {
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(cible)] = 1000;
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE), 1000, 1000, 4, 0);
+    zones.spawn(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE), 1000, 1000, 3, 0);
+
+    expect(armureA(horde, horde.slotOf(cible), zones, 0)).toBe(0);
   });
 });
