@@ -124,6 +124,24 @@ describe('linkedNeighbours', () => {
     expect(linkedNeighbours(horde, 0, zones, 0)).toEqual([]);
   });
 
+  /**
+   * ⚠️ **« Moins de `LINK_RADIUS` », donc la borne est STRICTE — meme
+   * convention que `ZoneField.spawn` (fusion) et `nearestTarget`. Sans ce
+   * test, une mutation qui relacherait `>= linkR2` en `> linkR2` resterait
+   * verte : tous les autres tests de ce fichier mesurent des distances
+   * franchement en-deca ou au-dela, jamais EXACTEMENT `LINK_RADIUS`.
+   */
+  it('ne lie pas a distance EXACTE de LINK_RADIUS : la borne est stricte', () => {
+    const horde = new Horde();
+    const zones = new ZoneField();
+    spawnAt(horde, 1, -LINK_RADIUS / 2, 0);
+    spawnAt(horde, 2, LINK_RADIUS / 2, 0);
+    expect(horde.count).toBe(2);
+    zones.spawn(ELEMENT.VIF_ARGENT, 0, 0, 0, 0);
+
+    expect(linkedNeighbours(horde, 0, zones, 0)).toEqual([]);
+  });
+
   it('ne lie pas au-dela de LINK_RADIUS, meme dans la meme zone', () => {
     const horde = new Horde();
     const zones = new ZoneField();
