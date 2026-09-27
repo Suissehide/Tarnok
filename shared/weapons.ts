@@ -125,7 +125,7 @@ export interface Weapon {
    * faut parfois des AoE sur certaines armes comme les grenades »*.
    *
    * ⚠️ **Zero n'est pas un cas particulier, c'est une entree de la table.**
-   * Meme motif que `ELEMENT.NEUTRE` : douze armes sur treize valent zero et
+   * Meme motif que `ELEMENT.NEUTRE` : seize armes sur dix-sept valent zero et
    * le restent, donc c'est la ligne ABSENTE qui est le cas courant. Un booleen
    * « arme de zone » plus un rayon a cote se contrediraient des la premiere
    * retouche.
@@ -146,7 +146,7 @@ export interface Weapon {
    *
    * ⚠️ Champ OBLIGATOIRE, contrairement a `element` : une arme sans apparence
    * retomberait sur celle d'une autre, et « chaque arme, son apparence »
-   * redeviendrait « treize armes, un point lumineux » sans que rien ne le dise.
+   * redeviendrait « dix-sept armes, un point lumineux » sans que rien ne le dise.
    */
   look: ProjectileLook;
 }
@@ -161,7 +161,7 @@ export interface Weapon {
  * `element` et `blastRadius` sont les seuls champs optionnels : omettre le
  * premier vaut `ELEMENT.NEUTRE` (§4.2 de la spec de l'etape 5a), omettre le
  * second vaut `0`, c'est-a-dire « ce projectile ne touche que ce qu'il
- * percute ». Cinq armes sur treize sont neutres et le restent — *« un socle pour
+ * percute ». Cinq armes sur dix-sept sont neutres et le restent — *« un socle pour
  * les joueurs qui ne veulent pas jouer le systeme »* (§6.3 de l'orientation) —
  * et une seule explose : dans les deux cas c'est la ligne ABSENTE qui est le
  * cas courant, et l'exception se lit d'un coup d'oeil.
@@ -508,6 +508,82 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     spreadRadians: 0.05,
     element: ELEMENT.POIX,
   },
+  {
+    // Tache 8 de l'etape 5c : la Chaux a enfin ses armes.
+    //
+    // La chaux « rapide », en face de la seringue-a-poix et des
+    // fleches-jumelles : trois projectiles a courte portee, pour etaler la
+    // marque sur un front. `armorReduction` et `fieldSign` (`shared/elements.ts`)
+    // se lisent a la ZONE que la reaction laisse au sol, jamais au projectile
+    // — donc une arme qui touche souvent seme donc plus souvent l'occasion
+    // qu'une zone de Chaux se pose.
+    name: 'poire-a-chaux',
+    // Grain vert vif, distinct du vert-jaune de l'element (0xb4d94a) : la zone
+    // au sol dit l'element, pas le projectile (`assertWeaponLooks`).
+    look: { shape: 'grain', diameterPx: 19, tint: 0x8fe34c, glow: 0.35, trailTicks: 0.9 },
+    cooldownTicks: 17,
+    damage: 4,
+    projectileSpeed: 440,
+    projectileLifeTicks: 16,
+    projectileCount: 3,
+    spreadRadians: 0.4,
+    element: ELEMENT.CHAUX,
+  },
+  {
+    // La chaux « lourde », en face du chaudron-a-poix et du canon-a-arc :
+    // projectile unique, cadence lente, degats eleves. Le premier ennemi
+    // touche doit deja fuir avant qu'un allie n'ait besoin de suivre.
+    name: 'canon-a-chaux',
+    // Sphere olive fonce, la plus terne des deux armes de Chaux : distincte de
+    // la teinte de l'element et de celle de la poire-a-chaux.
+    look: { shape: 'sphere', diameterPx: 21, tint: 0x4f7a1a, glow: 0.2, trailTicks: 1.2 },
+    cooldownTicks: 38,
+    damage: 15,
+    projectileSpeed: 400,
+    projectileLifeTicks: 34,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    element: ELEMENT.CHAUX,
+  },
+  {
+    // Tache 8 de l'etape 5c : le Vif-argent a enfin ses armes.
+    //
+    // Le vif-argent « rapide », en face des fleches-jumelles et de la
+    // poire-a-chaux : deux aiguilles a cadence courte. `linkedNeighbours`
+    // (`shared/links.ts`) se derive d'une PAIRE de positions et d'une zone
+    // annoncee, jamais d'un champ porte par le projectile — une arme qui
+    // touche souvent pose donc plus souvent l'occasion qu'une liaison
+    // s'etablisse entre deux ennemis proches.
+    name: 'fronde-a-mercure',
+    // Aiguille gris-mauve, la plus fine du catalogue : distincte de
+    // l'outremer des fleches-jumelles et de la teinte de l'element
+    // (0xc9c9e8).
+    look: { shape: 'aiguille', diameterPx: 5, tint: 0x7a7aa8, glow: 0.3, trailTicks: 1.1 },
+    cooldownTicks: 14,
+    damage: 6,
+    projectileSpeed: 620,
+    projectileLifeTicks: 22,
+    projectileCount: 2,
+    spreadRadians: 0.18,
+    element: ELEMENT.VIF_ARGENT,
+  },
+  {
+    // Le vif-argent « lourd », en face du canon-a-chaux et du chaudron-a-poix :
+    // projectile unique, cadence lente, degats eleves. Le premier maillon
+    // d'une liaison doit peser pour que l'allie qui la retrouve trouve deux
+    // ennemis deja groupes.
+    name: 'glaive-de-mercure',
+    // Eclat gris fonce, fort halo : le mercure se voit partir, contrairement a
+    // la poix qui n'illumine rien.
+    look: { shape: 'eclat', diameterPx: 20, tint: 0x45456e, glow: 0.5, trailTicks: 1.3 },
+    cooldownTicks: 32,
+    damage: 14,
+    projectileSpeed: 460,
+    projectileLifeTicks: 30,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    element: ELEMENT.VIF_ARGENT,
+  },
 ];
 
 export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
@@ -557,9 +633,10 @@ export function assertWeaponElements(weapons: readonly Weapon[]): void {
  * ⚠️ **Rien sur la FORME.** Exiger des formes deux a deux distinctes
  * interdirait a une arme suivante d'en reutiliser une, donc ferait de
  * « ajouter une arme » de l'architecture. Le catalogue compte neuf formes
- * (`ProjectileShape`) pour treize armes depuis la tache 9 de l'etape 5b
- * (Foudre et Poix reutilisent des formes deja prises par la Braise et le
- * Givre) — c'est la TEINTE qui distingue, jamais la forme, exactement ce que
+ * (`ProjectileShape`) pour dix-sept armes depuis la tache 8 de l'etape 5c
+ * (Chaux et Vif-argent reutilisent des formes deja prises par les elements
+ * precedents, comme Foudre et Poix l'avaient fait a la tache 9 de l'etape
+ * 5b) — c'est la TEINTE qui distingue, jamais la forme, exactement ce que
  * cette garde verifie et pas davantage.
  *
  * Prend la table en parametre pour la meme raison que `assertWeaponElements` :

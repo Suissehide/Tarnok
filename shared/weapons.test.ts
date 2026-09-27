@@ -25,14 +25,15 @@ describe('WEAPONS', () => {
   });
 
   /**
-   * ⚠️ **Treize depuis la tache 9 de l'etape 5b** : neuf a l'etape 5a (deux
-   * Braise, deux Givre, cinq neutres), plus deux Foudre et deux Poix. La
-   * borne haute reste loin du pool de quarante du §6.2 — cette tache ne visait
-   * que le cablage minimal, pas le pool complet.
+   * ⚠️ **Dix-sept depuis la tache 8 de l'etape 5c** : neuf a l'etape 5a (deux
+   * Braise, deux Givre, cinq neutres), plus deux Foudre et deux Poix a la
+   * tache 9 de l'etape 5b, plus deux Chaux et deux Vif-argent ici. La borne
+   * haute reste loin du pool de quarante du §6.2 — cette tache ne visait que
+   * le cablage minimal (deux armes par nouvel element), pas le pool complet.
    */
-  it('compte entre douze et quatorze armes', () => {
-    expect(WEAPONS.length).toBeGreaterThanOrEqual(12);
-    expect(WEAPONS.length).toBeLessThanOrEqual(14);
+  it('compte entre seize et dix-huit armes', () => {
+    expect(WEAPONS.length).toBeGreaterThanOrEqual(16);
+    expect(WEAPONS.length).toBeLessThanOrEqual(18);
   });
 
   it('donne des valeurs strictement positives a chaque arme', () => {
@@ -128,11 +129,13 @@ describe('WEAPONS', () => {
 describe("l'element porte par une arme (etape 5a)", () => {
   /**
    * §4.2 : *« deux passent en Braise, deux en Givre, les cinq autres restent
-   * neutres »*, etendu par la tache 9 de l'etape 5b : deux de plus en Foudre,
-   * deux de plus en Poix — le compte de neutres ne bouge pas. Compter, plutot
-   * que de faire confiance a la lecture de la table : c'est le seul endroit ou
-   * une arme elementaire oubliee ou ajoutee en trop se voit — plus loin dans
-   * l'etape, elle se contenterait de ne pas poser de zone.
+   * neutres »*, etendu par la tache 9 de l'etape 5b (deux de plus en Foudre,
+   * deux de plus en Poix) puis par la tache 8 de l'etape 5c (deux de plus en
+   * Chaux, deux de plus en Vif-argent) — le compte de neutres ne bouge pas a
+   * chaque fois. Compter, plutot que de faire confiance a la lecture de la
+   * table : c'est le seul endroit ou une arme elementaire oubliee ou ajoutee
+   * en trop se voit — plus loin dans l'etape, elle se contenterait de ne pas
+   * poser de zone.
    */
   it('cable exactement deux armes par element, et laisse les autres neutres', () => {
     const compte = (element: number) => WEAPONS.filter((w) => w.element === element).length;
@@ -141,7 +144,9 @@ describe("l'element porte par une arme (etape 5a)", () => {
     expect(compte(ELEMENT.GIVRE)).toBe(2);
     expect(compte(ELEMENT.FOUDRE)).toBe(2);
     expect(compte(ELEMENT.POIX)).toBe(2);
-    expect(compte(ELEMENT.NEUTRE)).toBe(WEAPONS.length - 8);
+    expect(compte(ELEMENT.CHAUX)).toBe(2);
+    expect(compte(ELEMENT.VIF_ARGENT)).toBe(2);
+    expect(compte(ELEMENT.NEUTRE)).toBe(WEAPONS.length - 12);
   });
 
   /**
@@ -424,14 +429,21 @@ describe('assertWeaponLooks — chaque arme, son apparence', () => {
   /**
    * La moitie « et le catalogue reel, alors ? » : la garde ci-dessus protege
    * l'AVENIR, ce cas mesure le PRESENT. Les deux armes de chaque element sont
-   * explicitement confrontees — Foudre et Poix rejoignent Braise et Givre
-   * depuis la tache 9 de l'etape 5b.
+   * explicitement confrontees — Foudre et Poix ont rejoint Braise et Givre a
+   * la tache 9 de l'etape 5b, Chaux et Vif-argent les rejoignent ici.
    */
   it('donne a chaque arme du catalogue une teinte deux a deux distincte des autres', () => {
     expect(new Set(WEAPONS.map((w) => w.look.tint)).size).toBe(WEAPONS.length);
 
     const parElement = (element: number) => WEAPONS.filter((w) => w.element === element);
-    for (const element of [ELEMENT.BRAISE, ELEMENT.GIVRE, ELEMENT.FOUDRE, ELEMENT.POIX]) {
+    for (const element of [
+      ELEMENT.BRAISE,
+      ELEMENT.GIVRE,
+      ELEMENT.FOUDRE,
+      ELEMENT.POIX,
+      ELEMENT.CHAUX,
+      ELEMENT.VIF_ARGENT,
+    ]) {
       const [a, b] = parElement(element);
       expect(a?.look.tint).not.toBe(b?.look.tint);
       expect(a?.look.tint).not.toBe(elementOf(element).tint);

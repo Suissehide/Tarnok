@@ -95,8 +95,16 @@ function makeGlowTexture(diameter: number, color: string): Texture {
  */
 export const PROJECTILE_CELL_PX = 32;
 
-/** Cases par ligne dans l'atlas. 4 x 4 = 16 cases pour treize armes aujourd'hui. */
-const PROJECTILE_ATLAS_COLS = 4;
+/**
+ * Cases par ligne dans l'atlas.
+ *
+ * ⚠️ **Relevee a la tache 8 de l'etape 5c** : 4 x 4 (16 cases) suffisait aux
+ * treize armes d'avant cette tache, mais la Chaux et le Vif-argent portent le
+ * catalogue a dix-sept — au-dela de la capacite. 8 x 8 = 64 cases, de quoi
+ * couvrir le pool complet de quarante armes vise par le §6.2 sans revenir sur
+ * ce nombre a chaque tache de contenu.
+ */
+const PROJECTILE_ATLAS_COLS = 8;
 
 /** Cote de l'atlas, en pixels : une puissance de deux qui contient la grille. */
 export const PROJECTILE_ATLAS_PX = PROJECTILE_CELL_PX * PROJECTILE_ATLAS_COLS;

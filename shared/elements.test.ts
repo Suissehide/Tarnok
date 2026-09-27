@@ -342,28 +342,24 @@ describe('le catalogue des elements et celui des armes', () => {
    *
    * ⚠️ **`ARMEMENT_DIFFERE` a deja existe ici, une premiere fois, et a ete
    * supprime a la tache 9 de l'etape 5b** (Foudre tache 2, Poix tache 4,
-   * armes cablees toutes les deux a la tache 9). Meme motif, une seconde
-   * fois, pour la meme raison : le plan de l'etape 5c construit le
-   * catalogue avant les armes qui le portent — la Chaux nait a cette
-   * tache-ci (la 1), `shared/weapons.ts` ne lui cable au moins deux armes
-   * qu'a la tache 8.
+   * armes cablees toutes les deux a la tache 9). `ARME_DIFFEREE` en a ete le
+   * second exemplaire, pour la meme raison : le plan de l'etape 5c
+   * construisait le catalogue avant les armes qui le portent — la Chaux et
+   * le Vif-argent sont nes aux taches 1 et 2, `shared/weapons.ts` ne leur a
+   * cable au moins deux armes chacun qu'a la tache 8.
    *
-   * ⚠️ **Une dette EXPLICITE et BORNEE, pas une exemption permanente.**
-   * Sans `ARME_DIFFEREE`, ce test rougirait entre la tache 1 et la tache 8
-   * — pas d'une vraie regression, d'un ORDRE de taches assume. **Doit
-   * redevenir vide a la fin de la tache 8** : si la Chaux OU le Vif-argent y
-   * restent apres, ce test cesse de garder quoi que ce soit pour eux. La
-   * garde reste intacte pour les cinq autres elements — l'exception
-   * BORNE, elle ne desarme pas.
-   *
-   * ⚠️ **Le Vif-argent (tache 2) rejoint la Chaux ici, meme raison, meme
-   * echeance.** `shared/weapons.ts` ne cable au moins deux armes a chacun
-   * des deux nouveaux elements qu'a la tache 8 — la ligne de table nait
-   * avant l'arme qui la porte, comme pour la Foudre et la Poix a l'etape 5b.
+   * ⚠️ **La dette est SOLDEE.** `ARME_DIFFEREE` est desormais VIDE : la
+   * tache 8 a cable la Chaux (`poire-a-chaux`, `canon-a-chaux`) et le
+   * Vif-argent (`fronde-a-mercure`, `glaive-de-mercure`), donc la garde
+   * ci-dessous couvre a nouveau les SEPT elements du catalogue sans
+   * exception, exactement comme `ARMEMENT_DIFFERE` avant elle. Le nom reste
+   * — vide, il redevient un simple point d'extension si un futur element du
+   * §6.3 naissait avant ses armes, comme `ARME_DIFFEREE` l'a ete pour la
+   * Chaux et le Vif-argent.
    */
-  const ARME_DIFFEREE = new Set<number>([ELEMENT.CHAUX, ELEMENT.VIF_ARGENT]);
+  const ARME_DIFFEREE = new Set<number>([]);
 
-  it('cable au moins une arme a chaque element du catalogue, sauf armement differe assume (Chaux, Vif-argent, tache 8)', () => {
+  it('cable au moins une arme a chaque element du catalogue', () => {
     for (const e of ELEMENTS) {
       if (ARME_DIFFEREE.has(e.id)) {
         continue;

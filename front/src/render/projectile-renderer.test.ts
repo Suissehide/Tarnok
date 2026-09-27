@@ -17,6 +17,7 @@ import {
   FLASH_MAX_SCALE,
   IMPACT_TEXTURE_DIAMETER,
   ImpactFlashRenderer,
+  PROJECTILE_ATLAS_PX,
   PROJECTILE_CELL_PX,
   PROJECTILE_CULL_MARGIN,
   ProjectileRenderer,
@@ -29,6 +30,14 @@ import {
   STREAK_THICKNESS_PX,
   TRAIL_ALPHA,
 } from './projectile-renderer';
+
+/**
+ * Cases par cote de l'atlas, DERIVEE des deux constantes exportees plutot que
+ * recopiee : un nombre en dur aurait suivi le meme sort que `16` a la tache 8
+ * de l'etape 5c, ou l'atlas est passe de 4 x 4 a 8 x 8 pour tenir les dix-sept
+ * armes du catalogue sans que ce test n'ait rien vu venir.
+ */
+const PROJECTILE_ATLAS_COLS_MESURE = PROJECTILE_ATLAS_PX / PROJECTILE_CELL_PX;
 
 /**
  * Verifie que les trois renderers posent des bornes explicites des la
@@ -412,13 +421,24 @@ describe('ProjectileRenderer — le cadre, la grille et les bornes', () => {
   it('donne une case distincte a chaque arme, en grille', () => {
     const cases = WEAPONS.map((w) => projectileCellRect(w.id));
     expect(new Set(cases.map((c) => `${c.x},${c.y}`)).size).toBe(WEAPONS.length);
-    // La grille se remplit par LIGNES : la cinquieme case retombe en colonne 0.
+    // La grille se remplit par LIGNES : la case juste apres la derniere
+    // colonne retombe en colonne 0 de la ligne suivante.
     expect(projectileCellRect(0)).toEqual({ x: 0, y: 0, w: 32, h: 32 });
-    expect(projectileCellRect(4)).toEqual({ x: 0, y: 32, w: 32, h: 32 });
+    expect(projectileCellRect(PROJECTILE_ATLAS_COLS_MESURE)).toEqual({
+      x: 0,
+      y: 32,
+      w: 32,
+      h: 32,
+    });
   });
 
   it('leve plutot que de faire retomber une arme sur la case d une autre', () => {
-    expect(() => projectileCellRect(16)).toThrow(/hors atlas/i);
+    const capacite = PROJECTILE_ATLAS_COLS_MESURE * PROJECTILE_ATLAS_COLS_MESURE;
+    // La capacite doit rester devant le catalogue reel, sinon ce cas ne
+    // prouverait rien : il faut qu'une arme de plus que la capacite existe
+    // encore hors de la grille pour que « hors atlas » ait un sens.
+    expect(capacite).toBeGreaterThan(WEAPONS.length);
+    expect(() => projectileCellRect(capacite)).toThrow(/hors atlas/i);
     expect(() => projectileCellRect(-1)).toThrow(/hors atlas/i);
   });
 
