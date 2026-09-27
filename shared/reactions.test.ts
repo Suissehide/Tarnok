@@ -263,6 +263,40 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
     );
   });
 
+  it('rend 1 (aucun ralentissement) pour Fournee, dans les DEUX ordres : ni Braise ni Chaux ne ralentissent', () => {
+    // ⚠️ Ni Braise ni Chaux ne portent de `slowFactor` non neutre (voir
+    // `shared/elements.ts`) : contrairement a Eclat de gel juste en dessous,
+    // Fournee n'a donc AUCUN piege d'ordre a fermer ici — les deux
+    // contributions restent neutres quel que soit le declencheur.
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.CHAUX, REACTION.FOURNEE))).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Un residu HORS PERIMETRE de la tache 4, trouve en l'ecrivant — a
+   * signaler, pas a corriger ici.** Eclat de gel (Givre + Chaux) laisse
+   * `zoneSlowFactor` a sa valeur NEUTRE dans `REACTION_DEFS` (elle ne
+   * PRETEND a aucun ralentissement propre, voir son docbloc — « Porte par :
+   * degat », pas « zone », dans la spec de l'etape 5c). Mais le Givre, lui,
+   * porte un `slowFactor` non neutre (0,6) : la zone que laisse
+   * INEVITABLEMENT `postZone` (pour CHAQUE declencheur, sans exception)
+   * ralentit donc si Givre a declenche, mais PAS si Chaux a declenche —
+   * exactement le meme piege d'ordre que Fournee et Eclat de gel referment
+   * pour `zoneArmorReductionTotal` et `zoneFieldSign`, MAIS que le brief de
+   * la tache 4 ne demandait de fermer que pour ces deux-la (« Tes deux
+   * reactions apparient la Chaux » — pas « et l'une d'elles apparie aussi le
+   * Givre »). Documente ici plutot que laisse en silence : voir le rapport
+   * de la tache pour la recommandation.
+   */
+  it('⚠️ Eclat de gel RESTE ordre-dependant sur zoneSlowFactor : le Givre fuit au travers, la Chaux non', () => {
+    const givreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL));
+    const chauxDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.CHAUX, REACTION.ECLAT_DE_GEL));
+    expect(elementOf(ELEMENT.GIVRE).slowFactor).toBeLessThan(1);
+    expect(givreDeclenche).toBe(elementOf(ELEMENT.GIVRE).slowFactor);
+    expect(chauxDeclenche).toBe(1);
+    expect(givreDeclenche).not.toBe(chauxDeclenche);
+  });
+
   /**
    * ⚠️ **Le test qui separe la combinaison par minimum d'une simple lecture
    * de l'element.** Le nibble d'element d'une zone de Supraconduction porte
@@ -494,6 +528,11 @@ describe('zoneInertiaDamping — le facteur d inertie DERIVE du kind empaquete',
     expect(zoneInertiaDamping(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION))).toBe(1);
   });
 
+  it('rend 1 pour Fournee et Eclat de gel (tache 4 de l etape 5c) : ni l une ni l autre n a d effet d inertie', () => {
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(1);
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(1);
+  });
+
   it('rend VERGLAS_INERTIA_DAMPING (< 1) pour Verglas, quel que soit l element porte par le nibble', () => {
     const givreDeclenche = zoneInertiaDamping(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
     const poixDeclenche = zoneInertiaDamping(packZoneKind(ELEMENT.POIX, REACTION.VERGLAS));
@@ -519,6 +558,11 @@ describe('zoneCollisionDamage — le degat de collision DERIVE du kind empaquete
     expect(zoneCollisionDamage(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(0);
     expect(zoneCollisionDamage(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(0);
     expect(zoneCollisionDamage(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION))).toBe(0);
+  });
+
+  it('rend zero pour Fournee et Eclat de gel (tache 4 de l etape 5c) : ni l une ni l autre n a d effet de collision', () => {
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(0);
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(0);
   });
 
   it('rend VERGLAS_COLLISION_DAMAGE_PER_TICK (> 0) pour Verglas, quel que soit l element porte', () => {

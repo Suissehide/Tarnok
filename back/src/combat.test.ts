@@ -3551,7 +3551,7 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
     );
   });
 
-  it('sans entityId (declencheur ne d un recouvrement de zones), ne touche personne : pas de cible, pas de degat', () => {
+  it('sans entityId (declencheur ne d un recouvrement de zones), ne touche personne : pas de cible, pas de degat, pas de mort fantome', () => {
     // ⚠️ Le cas `onZoneCreated` (`back/src/combat.ts`) : un declencheur ne
     // d'un recouvrement de zones n'a pas d'ennemi associe
     // (`ReactionTrigger.entityId` est alors `undefined`). Sans cible, Eclat
@@ -3560,10 +3560,21 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
     const horde = new Horde(10);
     const present = addOne(horde, 1, 1000, 1000, LOURD);
     horde.hp[horde.slotOf(present)] = 1000;
+    const orbs = new OrbField(10);
 
-    applyReactions(
+    // ⚠️ **La garde `slot >= 0` survit a une mutation qui la retire, SANS ce
+    // troisieme controle.** Sans elle, `horde.slotOf(t.entityId)` rend `-1`
+    // (aucune cible), et `appliquerDegats(horde, -1, ...)` ecrit sur un index
+    // hors-bornes du `Float32Array` (silencieux en JS) puis lit
+    // `horde.entityIdAt(-1)` — qui, `waveId[-1]` et `indexInWave[-1]` valant
+    // tous deux `undefined ?? 0`, rend l'identite FABRIQUEE `entityIdOf(0, 0)`
+    // (soit 0) et la classe MORTE : une mort FANTOME dans le lot rendu par
+    // `applyReactions`, jamais provoquee par aucun ennemi reel. Verifier
+    // seulement la reserve de `present` (un AUTRE creneau) laisserait cette
+    // mutation invisible.
+    const morts = applyReactions(
       horde,
-      new OrbField(10),
+      orbs,
       0,
       [
         {
@@ -3581,6 +3592,8 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
     );
 
     expect(horde.hp[horde.slotOf(present)]).toBe(1000);
+    expect(morts).toEqual([]);
+    expect(orbs.count).toBe(0);
   });
 
   it('laisse quand meme un champ de Chaux au sol : le degat direct ne dispense pas `postZone`', () => {
