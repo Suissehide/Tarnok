@@ -917,139 +917,150 @@ export function resolveProjectileDamage(
   projectiles.step(dt);
 
   const dead = new Set<number>();
-  projectiles.collide(horde, (entityId, damage, projectileSlot) => {
-    const element = projectiles.elementAt(projectileSlot);
-    const by = projectiles.ownerAt(projectileSlot);
-    const slot = horde.slotOf(entityId);
-    if (slot < 0) {
-      // ⚠️ **INATTEIGNABLE par construction, et AUCUN TEST NE LA GARDE.**
-      // `collide` ne rend que des identites lues dans la horde elle-meme, et
-      // rien ne compacte entre les deux : la seule compaction est le
-      // `horde.kill` final, plus bas. La mutation « remplacer cette condition
-      // par `false` » survit donc a toute la suite — verifie par application,
-      // pas raisonne.
-      //
-      // Gardee quand meme, et dit tel quel plutot que de laisser croire a une
-      // garde testee (meme choix qu'a R10 de l'etape 4) : sans elle,
-      // `horde.hp[-1] = ...` est un no-op SILENCIEUX sur un tableau type —
-      // des degats qui disparaissent sans trace le jour ou un appelant futur
-      // compacterait entre `collide` et ce rappel.
-      return;
-    }
-    const blastRadius = projectiles.blastRadiusAt(projectileSlot);
-    if (blastRadius > 0) {
-      // ⚠️ **L'arme de zone passe par LE balayage commun** (tache 16), celui
-      // que la reaction elementaire utilise depuis l'etape 5a. Le centre est
-      // l'ennemi PERCUTE, pas la position du projectile : `collide` teste le
-      // segment parcouru pendant le pas, donc le projectile peut avoir
-      // depasse sa cible d'une dizaine de pixels au moment ou il la touche.
-      // L'explosion appartient a l'impact, pas au point d'arrivee.
-      //
-      // ⚠️ **L'ennemi percute n'a PAS de traitement a part** : il est a
-      // distance nulle du centre, donc dans le rayon, donc touche comme les
-      // autres — exactement le raisonnement de `applyReactions`. Lui retirer
-      // `damage` une seconde fois ici lui infligerait le double du reste de la
-      // horde.
-      damageInRadius(
-        horde,
-        horde.x[slot] ?? 0,
-        horde.y[slot] ?? 0,
-        blastRadius,
-        damage,
-        zones,
-        tick,
-        dead,
-      );
-    } else {
-      // ⚠️ **Le tir simple garde son chemin DIRECT, et c'est une question de
-      // cout, pas de regle.** `damageInRadius` est en O(horde) par impact ; le
-      // lance-flammes pose 18 projectiles par seconde et par joueur, et huit
-      // armes sur neuf ne sont pas des armes de zone. Un balayage a rayon nul
-      // serait la meme regle ecrite plus cher — et il toucherait en prime tout
-      // ennemi pile aux memes coordonnees.
-      appliquerDegats(horde, slot, damage, zones, tick, dead);
-    }
-    if (dead.has(entityId)) {
-      // ⚠️ **UN ENNEMI QUI MEURT DU MEME IMPACT N'EST PAS MARQUE.** Un mort ne
-      // porte pas d'element : c'est la reaction qui consomme une marque, et il
-      // n'y a plus rien a consommer.
-      //
-      // ⚠️ **`dead.has`, et plus `reste <= 0` : la tache 16 a du le deplacer.**
-      // Avec une arme de zone, ce n'est plus la branche du dessus qui prononce
-      // la mort de l'ennemi percute — c'est `damageInRadius`, qui la prononce
-      // pour tout le rayon d'un coup. La question posee reste la meme (« celui
-      // que je m'apprete a marquer est-il mort ? »), mais la reponse ne vit
-      // plus dans une variable locale. Elle couvre du meme geste un cas qui
-      // existait deja : un ennemi acheve par l'explosion d'un AUTRE projectile
-      // du meme tick n'est pas marque non plus.
-      //
-      // ⚠️ **CE COMMENTAIRE DISAIT « aucun test ne garde ce `return` », ET
-      // C'ETAIT FAUX — mesure a la tache 16, mutation appliquee.** Le neutraliser
-      // fait rougir « un ennemi qui MEURT du meme impact ne reagit pas »
-      // (`combat.test.ts`, tache 7 de l'etape 5a) : sans lui, `applyElement`
-      // tourne sur le mourant, y trouve une marque d'un autre element et
-      // DECLENCHE une reaction que le §4.3 interdit. Ce qui n'etait pas garde,
-      // c'est la consequence que le plan de l'etape 5a annoncait (« la marque
-      // serait posee sur une AUTRE entite ») — celle-la est bien impossible :
-      // `#removeAt` copie la DERNIERE entite DANS le creneau libere, donc la
-      // marque du mourant est ecrasee, jamais heritee. Un garde peut etre tenu
-      // par un test tout en ayant ete justifie par une raison inexacte, et
-      // c'est le cas ici.
-      return;
-    }
-    if (element !== ELEMENT.NEUTRE) {
-      // Le §6.2, premiere ligne : un ennemi deja marque d'un AUTRE element
-      // reagit ; marque du MEME, il ne fait que rafraichir. `applyElement`
-      // porte les deux cas, exactement comme pour les zones.
-      applyElement(horde, reactions, slot, element, by, tick);
-      if (element === ELEMENT.FOUDRE) {
-        // ⚠️ **La chaine (etape 5b, tache 3) : le seul endroit qui sache
-        // qu'il tient une Foudre.** `shared/elements.ts` le dit sur
-        // `ELEMENT.FOUDRE` : contrairement a `burnPerTick`/`slowFactor`, la
-        // chaine ne se derive pas d'une marque portee par l'entite — elle se
-        // derive d'un POINT D'IMPACT, donc c'est ICI, au site qui vient de
-        // reconnaitre l'element, qu'elle doit se declencher.
+  // ⚠️ **`zones, tick` en dernier : le rayon de touche elargi du Vif-argent
+  // (etape 5c, tache 3), COTE SERVEUR SEUL.** Voir `ZoneField.hitRadiusBonusAt`
+  // (`shared/zones.ts`) et le docbloc de `Projectiles.collide`
+  // (`shared/projectiles.ts`) — le client (`front/src/net/client.ts`) appelle
+  // `collide` sans ces deux arguments pour ses projectiles cosmetiques, et
+  // garde donc le rayon de base.
+  projectiles.collide(
+    horde,
+    (entityId, damage, projectileSlot) => {
+      const element = projectiles.elementAt(projectileSlot);
+      const by = projectiles.ownerAt(projectileSlot);
+      const slot = horde.slotOf(entityId);
+      if (slot < 0) {
+        // ⚠️ **INATTEIGNABLE par construction, et AUCUN TEST NE LA GARDE.**
+        // `collide` ne rend que des identites lues dans la horde elle-meme, et
+        // rien ne compacte entre les deux : la seule compaction est le
+        // `horde.kill` final, plus bas. La mutation « remplacer cette condition
+        // par `false` » survit donc a toute la suite — verifie par application,
+        // pas raisonne.
         //
-        // ⚠️ **L'exclusion porte DEUX choses.** L'entite PERCUTEE
-        // (`entityId`) : sans elle, le premier saut — mesure depuis SA
-        // PROPRE position — la retrouverait a distance nulle et la chaine
-        // sauterait sur elle-meme. Et `dead` tel quel, sans copie manuelle :
-        // la doc de `chainTargets` l'autorise explicitement (« exclude est
-        // copie par la fonction, jamais mute : tu peux lui passer ton
-        // ensemble de morts sans precaution ») — un voisin deja tue par le
-        // souffle de CE MEME projectile (la branche `damageInRadius`
-        // au-dessus) ne doit pas recevoir un second coup qu'il ne peut plus
-        // propager. Meme principe que « un ennemi qui meurt du meme impact
-        // ne propage pas », etendu a un mort plus ancien du meme tick.
-        const chainExclude = new Set(dead);
-        chainExclude.add(entityId);
-        const cx = horde.x[slot] ?? 0;
-        const cy = horde.y[slot] ?? 0;
-        for (const chainedId of chainTargets(
+        // Gardee quand meme, et dit tel quel plutot que de laisser croire a une
+        // garde testee (meme choix qu'a R10 de l'etape 4) : sans elle,
+        // `horde.hp[-1] = ...` est un no-op SILENCIEUX sur un tableau type —
+        // des degats qui disparaissent sans trace le jour ou un appelant futur
+        // compacterait entre `collide` et ce rappel.
+        return;
+      }
+      const blastRadius = projectiles.blastRadiusAt(projectileSlot);
+      if (blastRadius > 0) {
+        // ⚠️ **L'arme de zone passe par LE balayage commun** (tache 16), celui
+        // que la reaction elementaire utilise depuis l'etape 5a. Le centre est
+        // l'ennemi PERCUTE, pas la position du projectile : `collide` teste le
+        // segment parcouru pendant le pas, donc le projectile peut avoir
+        // depasse sa cible d'une dizaine de pixels au moment ou il la touche.
+        // L'explosion appartient a l'impact, pas au point d'arrivee.
+        //
+        // ⚠️ **L'ennemi percute n'a PAS de traitement a part** : il est a
+        // distance nulle du centre, donc dans le rayon, donc touche comme les
+        // autres — exactement le raisonnement de `applyReactions`. Lui retirer
+        // `damage` une seconde fois ici lui infligerait le double du reste de la
+        // horde.
+        damageInRadius(
           horde,
-          cx,
-          cy,
-          CHAIN_RADIUS,
-          CHAIN_JUMPS,
-          chainExclude,
-        )) {
-          const chainedSlot = horde.slotOf(chainedId);
-          // ⚠️ **INATTEIGNABLE par construction, meme raisonnement que le
-          // `slot < 0` plus haut dans cette fonction.** `chainTargets` ne
-          // rend que des identites lues DANS `horde` a l'instant de l'appel,
-          // et rien ne compacte entre cet appel et la boucle qui suit :
-          // `Horde.kill` reste le SEUL compacteur, et il n'arrive qu'a la
-          // toute fin de cette fonction. Gardee quand meme, pour la meme
-          // raison qu'ailleurs : un `horde.hp[-1] = ...` silencieux sur un
-          // tableau type serait des degats qui disparaissent sans trace le
-          // jour ou ce n'est plus vrai.
-          if (chainedSlot >= 0) {
-            appliquerDegats(horde, chainedSlot, damage, zones, tick, dead);
+          horde.x[slot] ?? 0,
+          horde.y[slot] ?? 0,
+          blastRadius,
+          damage,
+          zones,
+          tick,
+          dead,
+        );
+      } else {
+        // ⚠️ **Le tir simple garde son chemin DIRECT, et c'est une question de
+        // cout, pas de regle.** `damageInRadius` est en O(horde) par impact ; le
+        // lance-flammes pose 18 projectiles par seconde et par joueur, et huit
+        // armes sur neuf ne sont pas des armes de zone. Un balayage a rayon nul
+        // serait la meme regle ecrite plus cher — et il toucherait en prime tout
+        // ennemi pile aux memes coordonnees.
+        appliquerDegats(horde, slot, damage, zones, tick, dead);
+      }
+      if (dead.has(entityId)) {
+        // ⚠️ **UN ENNEMI QUI MEURT DU MEME IMPACT N'EST PAS MARQUE.** Un mort ne
+        // porte pas d'element : c'est la reaction qui consomme une marque, et il
+        // n'y a plus rien a consommer.
+        //
+        // ⚠️ **`dead.has`, et plus `reste <= 0` : la tache 16 a du le deplacer.**
+        // Avec une arme de zone, ce n'est plus la branche du dessus qui prononce
+        // la mort de l'ennemi percute — c'est `damageInRadius`, qui la prononce
+        // pour tout le rayon d'un coup. La question posee reste la meme (« celui
+        // que je m'apprete a marquer est-il mort ? »), mais la reponse ne vit
+        // plus dans une variable locale. Elle couvre du meme geste un cas qui
+        // existait deja : un ennemi acheve par l'explosion d'un AUTRE projectile
+        // du meme tick n'est pas marque non plus.
+        //
+        // ⚠️ **CE COMMENTAIRE DISAIT « aucun test ne garde ce `return` », ET
+        // C'ETAIT FAUX — mesure a la tache 16, mutation appliquee.** Le neutraliser
+        // fait rougir « un ennemi qui MEURT du meme impact ne reagit pas »
+        // (`combat.test.ts`, tache 7 de l'etape 5a) : sans lui, `applyElement`
+        // tourne sur le mourant, y trouve une marque d'un autre element et
+        // DECLENCHE une reaction que le §4.3 interdit. Ce qui n'etait pas garde,
+        // c'est la consequence que le plan de l'etape 5a annoncait (« la marque
+        // serait posee sur une AUTRE entite ») — celle-la est bien impossible :
+        // `#removeAt` copie la DERNIERE entite DANS le creneau libere, donc la
+        // marque du mourant est ecrasee, jamais heritee. Un garde peut etre tenu
+        // par un test tout en ayant ete justifie par une raison inexacte, et
+        // c'est le cas ici.
+        return;
+      }
+      if (element !== ELEMENT.NEUTRE) {
+        // Le §6.2, premiere ligne : un ennemi deja marque d'un AUTRE element
+        // reagit ; marque du MEME, il ne fait que rafraichir. `applyElement`
+        // porte les deux cas, exactement comme pour les zones.
+        applyElement(horde, reactions, slot, element, by, tick);
+        if (element === ELEMENT.FOUDRE) {
+          // ⚠️ **La chaine (etape 5b, tache 3) : le seul endroit qui sache
+          // qu'il tient une Foudre.** `shared/elements.ts` le dit sur
+          // `ELEMENT.FOUDRE` : contrairement a `burnPerTick`/`slowFactor`, la
+          // chaine ne se derive pas d'une marque portee par l'entite — elle se
+          // derive d'un POINT D'IMPACT, donc c'est ICI, au site qui vient de
+          // reconnaitre l'element, qu'elle doit se declencher.
+          //
+          // ⚠️ **L'exclusion porte DEUX choses.** L'entite PERCUTEE
+          // (`entityId`) : sans elle, le premier saut — mesure depuis SA
+          // PROPRE position — la retrouverait a distance nulle et la chaine
+          // sauterait sur elle-meme. Et `dead` tel quel, sans copie manuelle :
+          // la doc de `chainTargets` l'autorise explicitement (« exclude est
+          // copie par la fonction, jamais mute : tu peux lui passer ton
+          // ensemble de morts sans precaution ») — un voisin deja tue par le
+          // souffle de CE MEME projectile (la branche `damageInRadius`
+          // au-dessus) ne doit pas recevoir un second coup qu'il ne peut plus
+          // propager. Meme principe que « un ennemi qui meurt du meme impact
+          // ne propage pas », etendu a un mort plus ancien du meme tick.
+          const chainExclude = new Set(dead);
+          chainExclude.add(entityId);
+          const cx = horde.x[slot] ?? 0;
+          const cy = horde.y[slot] ?? 0;
+          for (const chainedId of chainTargets(
+            horde,
+            cx,
+            cy,
+            CHAIN_RADIUS,
+            CHAIN_JUMPS,
+            chainExclude,
+          )) {
+            const chainedSlot = horde.slotOf(chainedId);
+            // ⚠️ **INATTEIGNABLE par construction, meme raisonnement que le
+            // `slot < 0` plus haut dans cette fonction.** `chainTargets` ne
+            // rend que des identites lues DANS `horde` a l'instant de l'appel,
+            // et rien ne compacte entre cet appel et la boucle qui suit :
+            // `Horde.kill` reste le SEUL compacteur, et il n'arrive qu'a la
+            // toute fin de cette fonction. Gardee quand meme, pour la meme
+            // raison qu'ailleurs : un `horde.hp[-1] = ...` silencieux sur un
+            // tableau type serait des degats qui disparaissent sans trace le
+            // jour ou ce n'est plus vrai.
+            if (chainedSlot >= 0) {
+              appliquerDegats(horde, chainedSlot, damage, zones, tick, dead);
+            }
           }
         }
       }
-    }
-  });
+    },
+    zones,
+    tick,
+  );
   if (dead.size === 0) {
     return [];
   }

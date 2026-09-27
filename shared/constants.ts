@@ -1023,3 +1023,27 @@ export const CHAUX_ARMOR_REDUCTION = 0.1;
  * comme le reste du catalogue elementaire.
  */
 export const LINK_RADIUS = 80;
+
+/**
+ * Majoration de `PROJECTILE_HIT_RADIUS` pour un ennemi qui se tient dans une
+ * zone de Vif-argent (§4 de la spec de l'etape 5c) — la seconde moitie de
+ * l'element, *« attire les projectiles »* du §6.3 rendue comme un rayon de
+ * touche elargi, cote SERVEUR seul.
+ *
+ * ⚠️ **Un effet de DEGAT, jamais de trajectoire.** Lue par
+ * `ZoneField.hitRadiusBonusAt` (`shared/zones.ts`) puis par
+ * `Projectiles.collide` (`shared/projectiles.ts`), au moment ou la collision
+ * se resout — jamais par `#emit`/`fireSalvoDirected`, qui ignorent toujours
+ * la horde et les zones. Voir le docbloc du module `shared/projectiles.ts`
+ * pour le contrat que ca protege.
+ *
+ * ⚠️ **Le joueur LIT ca comme de l'attraction** — ses tirs accrochent plus
+ * large — **sans qu'aucun projectile ne devie.** Ecart assume au §6.3.
+ *
+ * 16 : la moitie de `PROJECTILE_HIT_RADIUS` (32), assez pour se sentir sans
+ * doubler la largeur de contact.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil (§11 de la spec de l'etape 5c) —
+ * comme le reste du catalogue elementaire.
+ */
+export const VIF_ARGENT_HIT_RADIUS_BONUS = 16;

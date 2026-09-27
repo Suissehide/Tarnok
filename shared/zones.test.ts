@@ -6,6 +6,7 @@ import {
   SURCHAUFFE_BURN_PER_TICK,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
   VERGLAS_COLLISION_DAMAGE_PER_TICK,
+  VIF_ARGENT_HIT_RADIUS_BONUS,
   ZONE_CAPACITY,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
@@ -1060,5 +1061,121 @@ describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l et
     // Le point milieu tombe strictement DANS les deux disques (ECART / 2
     // < ZONE_RADIUS).
     expect(disquesRecouverts.burnAt(ECART / 2, 0, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
+  });
+});
+
+/**
+ * `ZoneField.hitRadiusBonusAt` — la tache 3 de l'etape 5c : cinquieme FORME
+ * de la meme famille qu'`ampAt`/`armorReductionAt`/`collisionDamageAt`/`burnAt`
+ * ci-dessus (meme balayage, meme `aliveAt`, meme MAXIMUM) — pour une raison de
+ * JEU cette fois (deux zones de Vif-argent qui se recouvrent ne doublent pas
+ * le rayon de touche), pas la raison arithmetique du minimum de
+ * `Horde#computeSlow`.
+ *
+ * ⚠️ **Structurelle, comme `linkedNeighbours` (`shared/links.ts`) : lit
+ * `zoneElement(kind) === ELEMENT.VIF_ARGENT` directement, jamais un champ de
+ * `Element` ni de `ReactionDef`.** Le Vif-argent est, comme la Foudre, un
+ * element dont l'effet reel ne vit pas dans ces tables (voir le docbloc de
+ * `hitRadiusBonusAt` dans `shared/zones.ts`) — les decors ci-dessous
+ * construisent donc des `kind` avec `packZoneKind(ELEMENT.VIF_ARGENT, ...)`
+ * plutot que de piocher dans `REACTION_DEFS`.
+ */
+describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, tache 3)', () => {
+  it('rend 0 sur un sol nu : aucune zone, aucun bonus', () => {
+    const zones = new ZoneField();
+    expect(zones.hitRadiusBonusAt(0, 0, 0)).toBe(0);
+    expect(zones.hitRadiusBonusAt(-1234.5, 678.9, 42)).toBe(0);
+  });
+
+  it('rend 0 dans une zone de n importe quel AUTRE element : seul le Vif-argent porte un bonus', () => {
+    const zones = new ZoneField();
+    const autres = [
+      ELEMENT.NEUTRE,
+      ELEMENT.BRAISE,
+      ELEMENT.GIVRE,
+      ELEMENT.FOUDRE,
+      ELEMENT.POIX,
+      ELEMENT.CHAUX,
+    ];
+    autres.forEach((element, i) => {
+      expect(zones.spawn(element, i * BIEN_LOIN, 0, 0, 0)).toBe(i);
+    });
+    autres.forEach((element, i) => {
+      expect(zones.hitRadiusBonusAt(i * BIEN_LOIN, 0, 0), elementOf(element).name).toBe(0);
+    });
+  });
+
+  it('rend VIF_ARGENT_HIT_RADIUS_BONUS dans sa zone, strictement positif', () => {
+    const zones = new ZoneField();
+    expect(zones.spawn(ELEMENT.VIF_ARGENT, 500, 500, 0, 0)).toBe(0);
+    expect(VIF_ARGENT_HIT_RADIUS_BONUS).toBeGreaterThan(0);
+    expect(zones.hitRadiusBonusAt(500, 500, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+  });
+
+  it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 0, 0, 0, 0);
+
+    expect(zones.hitRadiusBonusAt(ZONE_RADIUS - 1, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+    // Pile sur le cercle : la borne est STRICTE, comme `ampAt` et `slowsAt`.
+    expect(zones.hitRadiusBonusAt(ZONE_RADIUS, 0, 0)).toBe(0);
+
+    expect(zones.hitRadiusBonusAt(0, 0, ZONE_LIFETIME_TICKS)).toBe(0);
+    expect(zones.hitRadiusBonusAt(0, 0, ZONE_LIFETIME_TICKS - 1)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+  });
+
+  /**
+   * ⚠️ **Les DEUX decors de `burnAt`, adaptes — et dans les DEUX ordres,
+   * l asymetrie relevee a la re-revue finale de l etape 5b sur `burnAt` (un
+   * seul ordre teste) n est PAS reproduite ici.**
+   *
+   * Cas 1 : deux `kind` DIFFERENTS (nibble de reaction different, fictif —
+   * aucune reaction ne pair le Vif-argent aujourd'hui) qui portent tous deux
+   * l'element Vif-argent, aux MEMES coordonnees — jamais fusionnes puisque
+   * `spawn` compare le `kind` COMPLET.
+   *
+   * Cas 2 : deux zones du MEME `kind`, centres ecartes de `1,2 x ZONE_RADIUS`
+   * — au-dela de la fusion, en-deca du recouvrement.
+   *
+   * Dans les deux cas et les deux ordres, `hitRadiusBonusAt` doit rendre
+   * `VIF_ARGENT_HIT_RADIUS_BONUS`, jamais son double.
+   */
+  it('DEUX zones de Vif-argent qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme, dans les deux ordres', () => {
+    const kindA = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SURCHAUFFE);
+    const kindB = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.VERGLAS);
+    expect(kindA).not.toBe(kindB);
+    expect(zoneElement(kindA)).toBe(ELEMENT.VIF_ARGENT);
+    expect(zoneElement(kindB)).toBe(ELEMENT.VIF_ARGENT);
+
+    // Cas 1, ordre A puis B.
+    const aPuisB = new ZoneField();
+    expect(aPuisB.spawn(kindA, 100, 0, 0, 0)).toBe(0);
+    expect(aPuisB.spawn(kindB, 100, 0, 0, 0)).toBe(1);
+    expect(aPuisB.count).toBe(2);
+    expect(aPuisB.hitRadiusBonusAt(100, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+
+    // Cas 1, ordre B puis A — l asymetrie que `burnAt` n a jamais testee.
+    const bPuisA = new ZoneField();
+    expect(bPuisA.spawn(kindB, 100, 0, 0, 0)).toBe(0);
+    expect(bPuisA.spawn(kindA, 100, 0, 0, 0)).toBe(1);
+    expect(bPuisA.count).toBe(2);
+    expect(bPuisA.hitRadiusBonusAt(100, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+
+    // Cas 2, MEME kind, centres ecartes de 1,2 x ZONE_RADIUS, dans les deux ordres.
+    const ECART = 1.2 * ZONE_RADIUS;
+    expect(ECART).toBeGreaterThan(ZONE_RADIUS);
+    expect(ECART).toBeLessThan(2 * ZONE_RADIUS);
+
+    const gauchePuisDroite = new ZoneField();
+    expect(gauchePuisDroite.spawn(ELEMENT.VIF_ARGENT, 0, 0, 0, 0)).toBe(0);
+    expect(gauchePuisDroite.spawn(ELEMENT.VIF_ARGENT, ECART, 0, 0, 0)).toBe(1);
+    expect(gauchePuisDroite.count).toBe(2);
+    expect(gauchePuisDroite.hitRadiusBonusAt(ECART / 2, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
+
+    const droitePuisGauche = new ZoneField();
+    expect(droitePuisGauche.spawn(ELEMENT.VIF_ARGENT, ECART, 0, 0, 0)).toBe(0);
+    expect(droitePuisGauche.spawn(ELEMENT.VIF_ARGENT, 0, 0, 0, 0)).toBe(1);
+    expect(droitePuisGauche.count).toBe(2);
+    expect(droitePuisGauche.hitRadiusBonusAt(ECART / 2, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
   });
 });

@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { PROJECTILE_HIT_RADIUS, TICK_HZ } from './constants';
+import { PROJECTILE_HIT_RADIUS, TICK_HZ, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
 import { Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
 import type { Weapon } from './weapons';
 import { weaponOf } from './weapons';
+import { ZoneField } from './zones';
 
 /**
  * Fait apparaitre une seule entite, avec un `waveId` choisi explicitement
@@ -275,6 +276,45 @@ describe('Projectiles.collide', () => {
     expect(hits).toEqual([{ entityId: victimId, damage: FAST.damage }]);
     expect(projectiles.count).toBe(0);
   });
+
+  /**
+   * ⚠️ **Le rayon de touche elargi du Vif-argent (etape 5c, tache 3), COTE
+   * SERVEUR SEUL.** `zones`/`tick` sont optionnels : le CLIENT
+   * (`front/src/net/client.ts`) appelle `collide` sans eux pour ses
+   * projectiles cosmetiques et garde donc le rayon de base — c'est
+   * exactement ce que le premier `collide` de ce test verifie, sur le MEME
+   * projectile, avant de le refaire avec `zones` pour montrer que le rayon
+   * elargi, lui, touche.
+   */
+  it('elargit le rayon de touche pour un ennemi en zone de Vif-argent, seulement quand `zones` est fourni', () => {
+    const horde = new Horde(10);
+    const targetId = addOne(horde, 1, 1000, 0); // loin sur l'axe : angle de tir nul
+    const projectiles = new Projectiles(50);
+    projectiles.fireSalvo(SINGLE, 0, 0, 0, targetId, horde);
+    projectiles.step(1); // segment (0,0)->(100,0)
+
+    // Au-dela du rayon de BASE (32), mais dans le rayon ELARGI (32 + 16 = 48).
+    const ecart = PROJECTILE_HIT_RADIUS + 10;
+    expect(ecart).toBeGreaterThan(PROJECTILE_HIT_RADIUS);
+    expect(ecart).toBeLessThan(PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS);
+    const victimId = addOne(horde, 2, 100, ecart);
+
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 100, ecart, 0, 0);
+
+    // Sans `zones` : le rayon de BASE seul ne touche pas, le projectile reste
+    // en vol — meme appel que le client.
+    const misses: { entityId: number }[] = [];
+    projectiles.collide(horde, (entityId) => misses.push({ entityId }));
+    expect(misses).toEqual([]);
+    expect(projectiles.count).toBe(1);
+
+    // Avec `zones`/`tick` : le rayon ELARGI touche — meme appel que le serveur.
+    const hits: { entityId: number; damage: number }[] = [];
+    projectiles.collide(horde, (entityId, damage) => hits.push({ entityId, damage }), zones, 0);
+    expect(hits).toEqual([{ entityId: victimId, damage: SINGLE.damage }]);
+    expect(projectiles.count).toBe(0);
+  });
 });
 
 describe('Projectiles.fireSalvo — capacite', () => {
@@ -375,8 +415,21 @@ describe('Projectiles — bornTick et compaction', () => {
   });
 });
 
-describe('Projectiles — derivation', () => {
-  it('tire aux memes ticks des deux cotes, sans qu aucun evenement ne transite', () => {
+/**
+ * ⚠️ **Ce `describe` gardait `fireSalvo` (visee par cible) sous le titre
+ * generique « derivation », et se faisait passer pour le contrat de
+ * PRODUCTION — trouve en ecrivant le plan de la tache 3 (etape 5c) :
+ * `fireSalvo` n'a plus un seul appelant en production depuis la tache 13 de
+ * l'etape 6a (`room.ts:1526`, `client.ts:2190` appellent tous deux
+ * `fireSalvoDirected`). Le contrat qu'il verifie reste reel — deux instances
+ * independantes, memes entrees, memes projectiles — mais garde une fonction
+ * QUE LE JEU N'APPELLE PLUS : `fireSalvo` reste dans `shared/projectiles.ts`
+ * pour d'eventuelles armes a tete chercheuse (voir son docbloc), et ce test
+ * continue de couvrir SA propre derivation. Le contrat de PRODUCTION est
+ * desormais garde par le `describe` suivant.
+ */
+describe('Projectiles — derivation (fireSalvo, visee par cible, reservee aux armes futures)', () => {
+  it('fireSalvo derive identiquement des deux cotes', () => {
     // Deux instances INDEPENDANTES (aucun tableau partage), memes armes, meme
     // tick de depart, memes positions : elles doivent produire exactement les
     // memes salves. C'est ce qui permet de ne rien envoyer sur le fil (§5.2).
@@ -418,6 +471,130 @@ describe('Projectiles — derivation', () => {
 
     // Le scenario n'a de valeur que si les deux cotes portent vraiment des
     // projectiles a comparer — sinon la boucle ci-dessous ne verifie rien.
+    expect(a.projectiles.count).toBeGreaterThan(0);
+    expect(b.projectiles.count).toBe(a.projectiles.count);
+    for (let i = 0; i < a.projectiles.count; i++) {
+      expect(b.projectiles.x[i]).toBeCloseTo(a.projectiles.x[i] ?? 0, 6);
+      expect(b.projectiles.y[i]).toBeCloseTo(a.projectiles.y[i] ?? 0, 6);
+    }
+  });
+});
+
+/**
+ * Le contrat de PRODUCTION : `room.ts:1526` et `client.ts:2190` appellent
+ * tous deux `fireSalvoDirected`, jamais `fireSalvo` — c'est ce chemin, et lui
+ * seul, que « la salve reste calculee identiquement des deux cotes » doit
+ * garder (docbloc du module).
+ */
+describe('Projectiles — derivation (fireSalvoDirected, le chemin de PRODUCTION)', () => {
+  it('fireSalvoDirected derive identiquement des deux cotes', () => {
+    // Meme scenario que le test de derivation de `fireSalvo` ci-dessus, sur
+    // le chemin de PRODUCTION : une direction quantifiee fixe par tick,
+    // jamais une cible.
+    const a = new Projectiles(200);
+    const b = new Projectiles(200);
+    const dt = 1 / 30;
+    // 33 : ni multiple de SINGLE.cooldownTicks (5) ni de SPREAD.cooldownTicks
+    // (10) — les deux dernieres salves sont donc encore vivantes a la fin de
+    // la boucle, et la comparaison finale porte reellement sur des
+    // projectiles actifs plutot que sur deux tableaux vides.
+    const TICKS = 33;
+
+    for (let tick = 0; tick < TICKS; tick++) {
+      // Un tireur qui se deplace ET une direction qui tourne, pour exercer
+      // une position ET une direction variables — deterministes par
+      // construction, donc identiques des deux cotes.
+      const shooterX = tick * 5;
+      const shooterY = Math.sin(tick * 0.3) * 20;
+      const angle = tick * 0.2;
+      const dirX = Math.cos(angle);
+      const dirY = Math.sin(angle);
+
+      if (tick % SINGLE.cooldownTicks === 0) {
+        a.fireSalvoDirected(SINGLE, tick, shooterX, shooterY, dirX, dirY);
+        b.fireSalvoDirected(SINGLE, tick, shooterX, shooterY, dirX, dirY);
+      }
+      if (tick % SPREAD.cooldownTicks === 0) {
+        a.fireSalvoDirected(SPREAD, tick, shooterX, shooterY, dirX, dirY);
+        b.fireSalvoDirected(SPREAD, tick, shooterX, shooterY, dirX, dirY);
+      }
+
+      a.step(dt);
+      b.step(dt);
+    }
+
+    // Le scenario n'a de valeur que si les deux cotes portent vraiment des
+    // projectiles a comparer — sinon la boucle ci-dessous ne verifie rien.
+    expect(a.count).toBeGreaterThan(0);
+    expect(b.count).toBe(a.count);
+    for (let i = 0; i < a.count; i++) {
+      expect(b.x[i]).toBeCloseTo(a.x[i] ?? 0, 6);
+      expect(b.y[i]).toBeCloseTo(a.y[i] ?? 0, 6);
+    }
+  });
+
+  /**
+   * ⚠️ **Le vrai test — celui que l'ancien `describe('Projectiles —
+   * derivation')` ne pouvait pas rendre**, parce que ses deux cotes
+   * construisaient la MEME horde : il prouvait le determinisme A HORDE
+   * EGALE, jamais l'INDEPENDANCE. Ici, les deux cotes portent des hordes
+   * DIFFERENTES (2 entites contre 5, positions differentes) ET des zones
+   * DIFFERENTES (une zone de Vif-argent d'un cote, aucune de l'autre) — et
+   * les trajectoires doivent rester IDENTIQUES malgre ca, puisque
+   * `fireSalvoDirected` (voir son parametre : `weapon, tick, x, y, dirX,
+   * dirY, damage, count` — jamais `horde` ni `zones`) et `step` n'en lisent
+   * aucune.
+   *
+   * ⚠️ **Garde de non-vacuite, meme reflexe que le test ci-dessus** : les
+   * deux cotes portent reellement des projectiles vivants a la fin, ET les
+   * hordes/zones sont reellement differentes — sans quoi une implementation
+   * qui ignorerait purement et simplement ses deux arguments passerait ce
+   * test aussi bien qu'une implementation correcte.
+   */
+  it('une trajectoire ne depend NI de la horde NI des zones', () => {
+    function buildDivergentSide(entityCount: number, poserUneZoneVifArgent: boolean) {
+      const horde = new Horde(20);
+      for (let i = 0; i < entityCount; i++) {
+        addOne(horde, i + 1, 100 + i * 10, 0);
+      }
+      const zones = new ZoneField();
+      if (poserUneZoneVifArgent) {
+        zones.spawn(ELEMENT.VIF_ARGENT, 100, 0, 0, 0);
+      }
+      return { horde, zones, projectiles: new Projectiles(200) };
+    }
+
+    // Cote A : 2 entites, une zone de Vif-argent. Cote B : 5 entites,
+    // AUCUNE zone. Deux hordes et deux jeux de zones deliberement
+    // differents.
+    const a = buildDivergentSide(2, true);
+    const b = buildDivergentSide(5, false);
+    expect(a.horde.count).not.toBe(b.horde.count);
+    expect(a.zones.count).not.toBe(b.zones.count);
+
+    const dt = 1 / 30;
+    const TICKS = 33;
+
+    for (let tick = 0; tick < TICKS; tick++) {
+      const shooterX = tick * 5;
+      const shooterY = Math.sin(tick * 0.3) * 20;
+      const angle = tick * 0.2;
+      const dirX = Math.cos(angle);
+      const dirY = Math.sin(angle);
+
+      if (tick % SINGLE.cooldownTicks === 0) {
+        a.projectiles.fireSalvoDirected(SINGLE, tick, shooterX, shooterY, dirX, dirY);
+        b.projectiles.fireSalvoDirected(SINGLE, tick, shooterX, shooterY, dirX, dirY);
+      }
+      if (tick % SPREAD.cooldownTicks === 0) {
+        a.projectiles.fireSalvoDirected(SPREAD, tick, shooterX, shooterY, dirX, dirY);
+        b.projectiles.fireSalvoDirected(SPREAD, tick, shooterX, shooterY, dirX, dirY);
+      }
+
+      a.projectiles.step(dt);
+      b.projectiles.step(dt);
+    }
+
     expect(a.projectiles.count).toBeGreaterThan(0);
     expect(b.projectiles.count).toBe(a.projectiles.count);
     for (let i = 0; i < a.projectiles.count; i++) {

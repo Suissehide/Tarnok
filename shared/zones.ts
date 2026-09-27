@@ -1,5 +1,10 @@
-import { ZONE_CAPACITY, ZONE_RADIUS, ZONE_REFRESH_INTERVAL_TICKS } from './constants';
-import { elementOf } from './elements';
+import {
+  VIF_ARGENT_HIT_RADIUS_BONUS,
+  ZONE_CAPACITY,
+  ZONE_RADIUS,
+  ZONE_REFRESH_INTERVAL_TICKS,
+} from './constants';
+import { ELEMENT, elementOf } from './elements';
 import { zoneElement } from './protocol';
 import {
   zoneArmorReductionTotal,
@@ -492,6 +497,62 @@ export class ZoneField {
       }
     }
     return burn;
+  }
+
+  /**
+   * La majoration du rayon de touche au point `(x, y)` au tick `tick` :
+   * `VIF_ARGENT_HIT_RADIUS_BONUS` si une zone VIVANTE de Vif-argent couvre ce
+   * point (§4 de la spec de l'etape 5c — *« attire les projectiles »* rendu
+   * comme un rayon elargi), et `0` s'il n'y en a aucune.
+   *
+   * ⚠️ **Structurelle, comme `linkedNeighbours` (`shared/links.ts`) — PAS
+   * derivee de `ReactionDef` ni d'un champ port par `Element`.** Le Vif-argent
+   * est, exactement comme la Foudre, un element dont l'effet REEL ne vit pas
+   * dans la table de `shared/elements.ts` (voir son docbloc, et
+   * `EFFET_HORS_TABLE` dans `shared/elements.test.ts`) : un appelant doit deja
+   * savoir qu'il tient du Vif-argent avant de lire cette methode, exactement
+   * comme `linkedNeighbours` teste `zoneElement(kind) === ELEMENT.VIF_ARGENT`
+   * plutot que de lire un champ generique. Ajouter un neuvieme FORMAT de
+   * combinaison (element x reaction) dans `shared/reactions.ts` pour cette
+   * seule grandeur n'aurait donc rien generalise — voir le rapport de la
+   * tache 3 pour la decision ecrite.
+   *
+   * ⚠️ **Meme FORME qu'`ampAt`/`armorReductionAt`/`collisionDamageAt`/`burnAt`
+   * ci-dessus — meme balayage, meme `aliveAt`, meme MAXIMUM, et la raison est
+   * de JEU, PAS arithmetique : deux zones de Vif-argent qui se recouvrent ne
+   * doublent pas le rayon de touche. Ne pas confondre avec la raison
+   * arithmetique du minimum de `Horde#computeSlow` (voir le docbloc
+   * d'`ampAt` pour la distinction complete).**
+   *
+   * ⚠️ **`aliveAt`, pas `slowsAt`, meme raison qu'`ampAt`.** C'est un effet de
+   * DEGAT (une collision qui reussit ou pas), resolu APRES les poses du tick
+   * courant — pas un effet de deplacement.
+   *
+   * ⚠️ **Branchee cote SERVEUR SEUL** (`Projectiles.collide`,
+   * `shared/projectiles.ts`), au site ou la collision se resout — jamais dans
+   * `#emit`/`fireSalvoDirected`, qui continuent d'ignorer la horde et les
+   * zones. Voir le docbloc du module `shared/projectiles.ts`.
+   */
+  hitRadiusBonusAt(x: number, y: number, tick: number): number {
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    let bonus = 0;
+    for (let z = 0; z < this.#count; z++) {
+      if (!this.aliveAt(z, tick)) {
+        continue;
+      }
+      const dx = (this.x[z] ?? 0) - x;
+      const dy = (this.y[z] ?? 0) - y;
+      if (dx * dx + dy * dy >= r2) {
+        continue;
+      }
+      if (zoneElement(this.kind[z] ?? 0) !== ELEMENT.VIF_ARGENT) {
+        continue;
+      }
+      if (VIF_ARGENT_HIT_RADIUS_BONUS > bonus) {
+        bonus = VIF_ARGENT_HIT_RADIUS_BONUS;
+      }
+    }
+    return bonus;
   }
 
   /**

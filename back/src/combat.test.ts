@@ -24,12 +24,14 @@ import {
   COURT_CIRCUIT_MAX_JUMPS,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
+  PROJECTILE_HIT_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
   SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
   VERGLAS_COLLISION_DAMAGE_PER_TICK,
+  VIF_ARGENT_HIT_RADIUS_BONUS,
   XP_PER_ORB,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
@@ -217,6 +219,64 @@ describe('resolveProjectileDamage', () => {
     expect(deadIds).toEqual([targetId]);
     expect(horde.count).toBe(0);
     expect(orbs.count).toBe(1); // un seul orbe, pas deux
+  });
+});
+
+/**
+ * Le rayon de touche elargi du Vif-argent (§4 de la spec de l'etape 5c,
+ * tache 3) : `ZoneField.hitRadiusBonusAt` majore `PROJECTILE_HIT_RADIUS`,
+ * mais SEULEMENT au site ou `resolveProjectileDamage` resout la collision —
+ * c'est le branchement `zones, tick` de `projectiles.collide` (ce fichier)
+ * qui est verifie ici, PAS la mecanique elle-meme (deja couverte, cote
+ * `Projectiles`, par `shared/projectiles.test.ts`, et cote `ZoneField`, par
+ * `shared/zones.test.ts`). Une regression qui oublierait de passer `zones`
+ * ou `tick` a `projectiles.collide` ferait rougir CE test tout en laissant
+ * les deux autres verts.
+ */
+describe('resolveProjectileDamage — le rayon de touche elargi du Vif-argent (etape 5c, tache 3)', () => {
+  const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP && a.armor === 0)?.id ?? -1;
+
+  it('touche un ennemi hors du rayon de base, en zone de Vif-argent — jamais sur un sol nu', () => {
+    // Hors du rayon de BASE (32), dans le rayon ELARGI (32 + 16 = 48) : voir
+    // le decor identique de `shared/projectiles.test.ts`.
+    const ecart = PROJECTILE_HIT_RADIUS + 10;
+    expect(ecart).toBeGreaterThan(PROJECTILE_HIT_RADIUS);
+    expect(ecart).toBeLessThan(PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS);
+
+    // Sol nu : jamais touche, meme apres expiration du projectile.
+    const hordeNu = new Horde(10);
+    // Cible d'aim lointaine sur l'axe (jamais atteinte, sert seulement a
+    // fixer un tir tout droit) et victime hors-axe, a `ecart` du segment.
+    const aimId = addOne(hordeNu, 1, 2000, 0);
+    const victimIdNu = addOne(hordeNu, 2, 100, ecart, LEGER);
+    const projectilesNu = new Projectiles(10);
+    projectilesNu.fireSalvo(SINGLE, 0, 0, 0, aimId, hordeNu);
+    const orbsNu = new OrbField(10);
+
+    let deadNu: number[] = [];
+    for (let i = 0; i < 20 && projectilesNu.count > 0; i++) {
+      deadNu = resolveProjectileDamage(projectilesNu, DT, hordeNu, orbsNu, i, solNu());
+    }
+    expect(deadNu).toEqual([]);
+    expect(hordeNu.count).toBe(2); // la victime a survecu, jamais touchee
+    expect(hordeNu.slotOf(victimIdNu)).toBeGreaterThanOrEqual(0);
+
+    // Meme decor, MAIS la victime se tient dans une zone de Vif-argent.
+    const hordeZone = new Horde(10);
+    const aimId2 = addOne(hordeZone, 1, 2000, 0);
+    const victimIdZone = addOne(hordeZone, 2, 100, ecart, LEGER);
+    const projectilesZone = new Projectiles(10);
+    projectilesZone.fireSalvo(SINGLE, 0, 0, 0, aimId2, hordeZone);
+    const orbsZone = new OrbField(10);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 100, ecart, 0, 0);
+
+    let deadZone: number[] = [];
+    for (let i = 0; i < 20 && deadZone.length === 0; i++) {
+      deadZone = resolveProjectileDamage(projectilesZone, DT, hordeZone, orbsZone, i, zones);
+    }
+    expect(deadZone).toEqual([victimIdZone]);
+    expect(hordeZone.count).toBe(1); // la victime est morte, l aim-target reste
   });
 });
 

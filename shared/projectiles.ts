@@ -1,6 +1,7 @@
 import { PROJECTILE_HIT_RADIUS } from './constants';
 import type { Horde } from './horde';
 import type { Weapon } from './weapons';
+import type { ZoneField } from './zones';
 
 /**
  * Les projectiles : simules localement, jamais repliques (§5.2 de la spec).
@@ -15,6 +16,13 @@ import type { Weapon } from './weapons';
  * `quantizeAxis` dans `shared/protocol.ts`. Le test de derivation de ce
  * fichier verrouille cette propriete : deux instances independantes, memes
  * entrees, memes projectiles.
+ *
+ * ⚠️ **`Projectiles.collide` accepte `zones`/`tick` en optionnels depuis
+ * l'etape 5c (tache 3), et ca ne rouvre PAS ce contrat.** Ils elargissent le
+ * rayon de touche d'un ennemi en zone de Vif-argent — un effet de DEGAT, qui
+ * decide QUI un projectile touche, jamais OU il va. La trajectoire
+ * (`#emit`/`fireSalvoDirected`) reste aveugle a la horde et aux zones ; seule
+ * `collide`, qui resout une collision DEJA CALCULEE, les consulte.
  *
  * Tableaux typés, jamais un objet par projectile (§4.4 de l'orientation) — a
  * plusieurs centaines de projectiles vivants, le meme raisonnement que pour
@@ -395,9 +403,23 @@ export class Projectiles {
    * A egalite, le plus petit identifiant gagne — meme departage que
    * `nearestTarget`, pour la meme raison : le resultat ne doit pas dependre
    * de l'ordre des entites dans le tableau.
+   *
+   * ⚠️ **`zones`/`tick` sont optionnels, et c'est ce qui branche le rayon de
+   * touche elargi du Vif-argent (§4 de la spec de l'etape 5c) COTE SERVEUR
+   * SEUL.** `back/src/combat.ts` les passe ; le client (`front/src/net/client.ts`,
+   * ses projectiles cosmetiques) appelle `collide` sans eux, et retombe donc
+   * exactement sur le rayon de base — aucun changement de comportement pour
+   * lui. Ceci ne touche AUCUNE trajectoire : `zones` n'entre jamais dans
+   * `#emit`/`fireSalvoDirected`, qui restent aveugles a la horde et aux
+   * zones — voir le docbloc du module.
    */
-  collide(horde: Horde, onHit: (entityId: number, damage: number, slot: number) => void): void {
-    const r2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
+  collide(
+    horde: Horde,
+    onHit: (entityId: number, damage: number, slot: number) => void,
+    zones?: ZoneField,
+    tick?: number,
+  ): void {
+    const baseR2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
 
     for (let i = this.#count - 1; i >= 0; i--) {
       const ax = this.#prevX[i] ?? 0;
@@ -408,9 +430,26 @@ export class Projectiles {
       let bestId = -1;
       let bestDist2 = Number.POSITIVE_INFINITY;
       for (let e = 0; e < horde.count; e++) {
-        const d2 = distanceToSegmentSquared(horde.x[e] ?? 0, horde.y[e] ?? 0, ax, ay, bx, by);
-        if (d2 > r2) {
-          continue;
+        const ex = horde.x[e] ?? 0;
+        const ey = horde.y[e] ?? 0;
+        const d2 = distanceToSegmentSquared(ex, ey, ax, ay, bx, by);
+        if (d2 > baseR2) {
+          // ⚠️ **Le rayon de base ne touche pas — le rayon ELARGI est-il
+          // pose, et seulement s'il y a un `zones` a consulter ?** Cout
+          // supplementaire nul pour le client (`zones` est `undefined`, donc
+          // `continue` immediat) et pour le cas courant serveur (aucune zone
+          // de Vif-argent sur ce point).
+          if (!zones) {
+            continue;
+          }
+          const bonus = zones.hitRadiusBonusAt(ex, ey, tick ?? 0);
+          if (bonus <= 0) {
+            continue;
+          }
+          const wideR = PROJECTILE_HIT_RADIUS + bonus;
+          if (d2 > wideR * wideR) {
+            continue;
+          }
         }
         const id = horde.entityIdAt(e);
         if (d2 < bestDist2 || (d2 === bestDist2 && id < bestId)) {
