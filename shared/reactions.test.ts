@@ -178,6 +178,15 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
       ZONE_LIFETIME_TICKS,
     );
   });
+
+  it('rend la duree GENERIQUE pour Fournee et Eclat de gel (tache 4 de l etape 5c) : aucune des deux n allonge sa zone', () => {
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+  });
 });
 
 describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => {
