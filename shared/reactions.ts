@@ -47,6 +47,20 @@ export const REACTION = {
   GEL_PROFOND: 11,
   MORTIER_VIF: 12,
   AVEUGLEMENT: 13,
+  /**
+   * Amalgame (Poix + Vif-argent, tache 7 de l'etape 5c) : la QUATORZIEME
+   * reaction nommee, et la QUINZIEME valeur du nibble en comptant `AUCUNE`
+   * (0) — le nibble de reaction fait 4 bits (`zoneReaction`/`packZoneKind`,
+   * `shared/protocol.ts`), donc SEIZE valeurs au total. **Il en reste UNE**
+   * (15) : une seizieme reaction nommee deborderait le nibble EN SILENCE
+   * (`(reaction & 0x0f) << 3` tronque, il ne leve jamais) et demanderait un
+   * octet de plus sur `ZoneField.kind` — hors de portee de cette etape (§0 :
+   * « zero octet de plus sur le fil »). Voir le describe « invariant de
+   * REACTION_DEFS » dans `reactions.test.ts`, qui derive cette borne de
+   * `zoneReaction` elle-meme plutot que de l'ecrire en dur ici une seconde
+   * fois.
+   */
+  AMALGAME: 14,
 } as const;
 
 export interface ReactionDef {
@@ -169,7 +183,17 @@ export interface ReactionDef {
   readonly zoneFieldSign: number;
 }
 
-const REACTION_DEFS: readonly ReactionDef[] = [
+/**
+ * ⚠️ **Exportee depuis la tache 7 de l'etape 5c, pour l'invariant de table**
+ * (`reactions.test.ts`) — jusque la, seuls `reactionForPair`/`reactionOfId`
+ * en sortaient une ligne a la fois. Verifier « tous les `id` uniques et
+ * `<= 15` » ou « tous les `pair` uniques » a la main, ligne par ligne, est
+ * exactement l'enumeration manuelle que la tache 7 remplace — voir son
+ * rapport. Ca ne change rien au motif « un lookup, jamais un switch sur
+ * `pair` » : cette table reste la SEULE a connaitre la valeur numerique d'un
+ * couple, l'export ne fait qu'exposer ses lignes a un test qui les compte.
+ */
+export const REACTION_DEFS: readonly ReactionDef[] = [
   {
     // Surchauffe (Braise + Foudre) : une zone qui brule d'elle-meme, plus
     // fort et plus longtemps que le champ generique — voir
@@ -690,6 +714,67 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
+  },
+  {
+    // Amalgame (Poix + Vif-argent, tache 7 de l'etape 5c) : « les degats
+    // subis par un ennemi lie frappent aussi ses voisins » (§5 de la spec) —
+    // la SEULE reaction structurellement neuve de l'etape, « portee par :
+    // serveur seul » (ni zone, ni geometrie, ni `chainTargets`, contrairement
+    // aux huit autres). Voir `shareAmalgameDamage` (`back/src/combat.ts`) :
+    // `def.damage` frappe l'ennemi qui declenche PUIS, une seule fois chacun
+    // et sans recursion, chacun de ses voisins LIES (`linkedNeighbours`,
+    // tache 3) — jamais un balayage par rayon (`damageInRadius`) ni une
+    // chaine (`chainTargets`), les deux formes deja prises par Vaporisation
+    // et Paratonnerre pour ce meme couple d'idees (« liaison + degat »).
+    //
+    // ⚠️ **`radius: 0`, `damage: REACTION_DAMAGE` — reutilise, pas invente.**
+    // Aucune donnee de jeu ne motive un second chiffre : meme decision que
+    // Vaporisation, Court-circuit, Arc caustique et Paratonnerre avant elle.
+    // `radius` reste a 0 (n/a) : Amalgame ne balaie AUCUN rayon geometrique,
+    // au contraire de Vaporisation — `linkedNeighbours` EST toute sa
+    // geometrie, elle ne balaie jamais un second cercle par-dessus.
+    //
+    // ⚠️ **`zoneDamageAmp` : le SEUL plancher que ce couple reclame — verifie
+    // par lecture d'`ELEMENT_DEFS`, pas suppose.** Vif-argent est NEUTRE sur
+    // les cinq grandeurs combinantes de cette table (voir son entree dans
+    // `shared/elements.ts`) ; la Poix ne porte qu'UNE grandeur non neutre,
+    // `damageAmp` (1,5) — ni brulure, ni ralentissement, ni reduction
+    // d'armure, ni fuite. Sans ce plancher, une zone d'Amalgame amplifierait
+    // les degats de qui s'y tient seulement si la Poix est arrivee EN SECOND
+    // (le nibble d'element porte alors Poix, 1,5) et pas si le Vif-argent est
+    // arrive en second (le nibble porte alors Vif-argent, neutre, 1) — le
+    // meme piege d'ordre que `zoneArmorReductionTotal`/`zoneFieldSign`
+    // documentent deja pour la Chaux, ici pour la Poix. `elementOf(ELEMENT.POIX
+    // ).damageAmp` REUTILISE (jamais recopie), meme discipline que Verglas et
+    // Mortier vif : le plancher garantit exactement ce qu'une flaque de Poix
+    // SEULE laisserait deja, ni plus ni moins, quel que soit l'ordre.
+    // `zoneDamageAmpTotal` la combine par MAXIMUM avec l'element porte, jamais
+    // une somme : max(1, 1,5) = 1,5 si Vif-argent declenche, max(1,5, 1,5) =
+    // 1,5 si Poix declenche — la MEME amplification dans les deux cas. Voir
+    // le test « le plancher de zoneDamageAmp d'Amalgame reste un PLAFOND … »,
+    // `shared/reactions.test.ts`.
+    //
+    // ⚠️ **Aucun autre plancher requis.** `zoneArmorReduction` et
+    // `zoneFieldSign` restent neutres : ni la Poix ni le Vif-argent ne
+    // portent d'armure ni de fuite (contrairement a tout couple qui apparie
+    // la Chaux). `zoneSlowFactor` reste neutre (1) pour la meme raison :
+    // aucun des deux elements de ce couple ne ralentit. `zoneBurnPerTick`
+    // reste a zero, et n'aurait de toute facon rien a fuiter meme si la
+    // Braise avait ete de la partie (ce champ ne combine JAMAIS avec
+    // l'element, voir son docbloc plus haut).
+    id: REACTION.AMALGAME,
+    name: 'amalgame',
+    pair: packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: REACTION_DAMAGE,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: 0,
+    zoneDamageAmp: elementOf(ELEMENT.POIX).damageAmp,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
   },
 ];
 

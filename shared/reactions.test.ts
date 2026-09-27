@@ -14,9 +14,10 @@ import {
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
-import { packElementPair, packZoneKind, unpackElementPair } from './protocol';
+import { packElementPair, packZoneKind, unpackElementPair, zoneReaction } from './protocol';
 import {
   REACTION,
+  REACTION_DEFS,
   reactionForPair,
   reactionOfId,
   zoneArmorReduction,
@@ -297,6 +298,121 @@ describe('Gel profond, Mortier vif et Aveuglement (tache 6 de l etape 5c) — tr
   });
 });
 
+describe('Amalgame (tache 7 de l etape 5c) — la quatorzieme ligne, meme table', () => {
+  it('trouve Amalgame (Poix + Vif-argent) par son couple canonique, quatorze identifiants distincts au total', () => {
+    const amalgame = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT));
+    expect(amalgame?.id).toBe(REACTION.AMALGAME);
+
+    const surchauffe = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE));
+    const embrasement = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX));
+    const courtCircuit = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
+    const supraconduction = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.FOUDRE));
+    const verglas = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.POIX));
+    const fournee = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX));
+    const eclatDeGel = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
+    const vaporisation = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT));
+    const arcCaustique = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX));
+    const paratonnerre = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT));
+    const gelProfond = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT));
+    const mortierVif = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.CHAUX));
+    const aveuglement = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT));
+    // Quatorze identifiants distincts : une collision confondrait le mauvais
+    // couple, exactement comme les trois tests precedents de ce fichier.
+    // ⚠️ **Le dernier de la serie — voir le describe « invariant de
+    // REACTION_DEFS » plus bas, qui remplace cette enumeration manuelle par
+    // une derivation depuis la table elle-meme.**
+    expect(
+      new Set([
+        surchauffe?.id,
+        embrasement?.id,
+        courtCircuit?.id,
+        supraconduction?.id,
+        verglas?.id,
+        fournee?.id,
+        eclatDeGel?.id,
+        vaporisation?.id,
+        arcCaustique?.id,
+        paratonnerre?.id,
+        gelProfond?.id,
+        mortierVif?.id,
+        aveuglement?.id,
+        amalgame?.id,
+      ]).size,
+    ).toBe(14);
+  });
+
+  it('est INSENSIBLE a l ordre d arrivee, comme les treize reactions precedentes', () => {
+    const a = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT));
+    const b = reactionForPair(packElementPair(ELEMENT.VIF_ARGENT, ELEMENT.POIX));
+    expect(a?.id).toBe(REACTION.AMALGAME);
+    expect(b?.id).toBe(REACTION.AMALGAME);
+  });
+
+  it('retrouve Amalgame par `reactionOfId`, le nibble empaquete dans `ZoneField.kind`', () => {
+    expect(reactionOfId(REACTION.AMALGAME)?.name).toBe('amalgame');
+  });
+
+  it('Amalgame ne pose aucun effet geometrique ou en chaine propre a la table : radius nul, damage reutilise REACTION_DAMAGE', () => {
+    // ⚠️ **Verifie, pas suppose — voir `shareAmalgameDamage`
+    // (`back/src/combat.ts`), la branche DEDIEE qui lit `def.damage`
+    // directement (contrairement a Gel profond/Mortier vif/Aveuglement, qui
+    // retombent sur le Choc thermique generique faute de branche).**
+    const amalgame = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT));
+    expect(amalgame?.radius).toBe(0);
+    expect(amalgame?.damage).toBe(REACTION_DAMAGE);
+  });
+});
+
+/**
+ * ⚠️ **L'invariant que la table n'avait jamais eu — ajoute a la tache 7,
+ * « a une ligne du plafond ».** `REACTION_DEFS` empaquete son `id` dans un
+ * nibble de 4 bits (`packZoneKind`/`zoneReaction`, `shared/protocol.ts`) :
+ * QUINZE valeurs sont maintenant occupees (`AUCUNE` + quatorze reactions
+ * nommees) sur SEIZE possibles. La table n'avait jusqu'ici AUCUNE garde
+ * structurelle — ni « tous les `id` <= 15 », ni l'unicite des `id`, ni celle
+ * des `pair` — seule une enumeration manuelle, allongee a la main par chaque
+ * tache (voir les describe ci-dessus), en tenait lieu. A une ligne du
+ * plafond, une SEIZIEME reaction deborderait le nibble EN SILENCE
+ * (`(reaction & 0x0f) << 3` tronque, ne leve jamais) : c'est le bon moment
+ * pour un test qui la refuserait au lieu de la laisser passer.
+ */
+describe('invariant de table sur REACTION_DEFS (tache 7 de l etape 5c)', () => {
+  // ⚠️ **La borne se DERIVE de la vraie largeur du nibble, jamais ecrite en
+  // dur.** `zoneReaction` masque a `0x0f` : un `kind` dont tous les bits
+  // valent 1 rend la valeur MAXIMALE que le nibble peut representer
+  // aujourd'hui — si quelqu'un elargit un jour ce champ dans
+  // `shared/protocol.ts`, cette borne suit le changement au lieu de rester un
+  // 15 fige ici.
+  const maxReactionId = zoneReaction(0xffffffff);
+
+  it('la borne se derive bien a 15 aujourd hui : un nibble de 4 bits, seize valeurs', () => {
+    expect(maxReactionId).toBe(15);
+  });
+
+  it('tous les `id` de REACTION_DEFS sont dans [0, maxReactionId] et STRICTEMENT uniques', () => {
+    const ids = REACTION_DEFS.map((r) => r.id);
+    expect(ids.length).toBeGreaterThan(0);
+    for (const id of ids) {
+      expect(id).toBeGreaterThanOrEqual(0);
+      expect(id).toBeLessThanOrEqual(maxReactionId);
+    }
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it('tous les `pair` de REACTION_DEFS sont STRICTEMENT uniques — deux reactions sur la meme paire seraient indetectables autrement', () => {
+    const pairs = REACTION_DEFS.map((r) => r.pair);
+    expect(new Set(pairs).size).toBe(pairs.length);
+  });
+
+  it('Amalgame occupe l avant-derniere valeur representable : quinze reactions sur seize, une de reste', () => {
+    // AUCUNE (0) + les quatorze reactions nommees (1 a 14, dont Amalgame,
+    // 14) = quinze valeurs occupees sur seize ; 15 reste libre.
+    expect(REACTION.AMALGAME).toBe(maxReactionId - 1);
+    const idsAvecAucune = new Set([REACTION.AUCUNE, ...REACTION_DEFS.map((r) => r.id)]);
+    expect(idsAvecAucune.size).toBe(maxReactionId); // 15 valeurs occupees.
+  });
+});
+
 describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   it('rend la duree GENERIQUE pour un kind de reaction nulle', () => {
     expect(zoneLifetimeTicks(ELEMENT.BRAISE)).toBe(ZONE_LIFETIME_TICKS);
@@ -412,6 +528,15 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
       aveuglement,
     );
   });
+
+  it('rend la duree GENERIQUE pour Amalgame : aucune duree propre, rien au §5 de la spec ne motive un allongement', () => {
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AMALGAME))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+  });
 });
 
 describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => {
@@ -478,6 +603,11 @@ describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => 
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF))).toBe(0);
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT))).toBe(0);
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT))).toBe(0);
+  });
+
+  it('Amalgame ne laisse AUCUN degat de zone, dans les DEUX ordres : son effet est le partage, pas la brulure', () => {
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AMALGAME))).toBe(0);
   });
 });
 
@@ -680,6 +810,11 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
     expect(zoneSlowFactor(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT))).toBe(1);
     expect(zoneSlowFactor(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT))).toBe(1);
   });
+
+  it('rend 1 (aucun ralentissement) pour Amalgame, dans les DEUX ordres : ni la Poix ni le Vif-argent ne ralentissent', () => {
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AMALGAME))).toBe(1);
+  });
 });
 
 /**
@@ -763,6 +898,11 @@ describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', (
     );
     expect(chauxDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
     expect(vifArgentDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
+  });
+
+  it('rend zero pour Amalgame, dans les DEUX ordres : ni la Poix ni le Vif-argent n ont d effet sur l armure', () => {
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME))).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AMALGAME))).toBe(0);
   });
 });
 
@@ -943,6 +1083,11 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
     expect(chauxDeclenche).toBe(vifArgentDeclenche);
     expect(chauxDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
     expect(chauxDeclenche).toBeGreaterThan(0);
+  });
+
+  it('rend zero pour Amalgame, dans les DEUX ordres : ni la Poix ni le Vif-argent n ont d effet d armure', () => {
+    expect(zoneArmorReductionTotal(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME))).toBe(0);
+    expect(zoneArmorReductionTotal(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AMALGAME))).toBe(0);
   });
 });
 
@@ -1160,6 +1305,11 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
     expect(chauxDeclenche).toBe(-1);
     expect(vifArgentDeclenche).toBe(-1);
   });
+
+  it('rend +1 pour Amalgame, dans les DEUX ordres : ni la Poix ni le Vif-argent ne fuient', () => {
+    expect(zoneFieldSign(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AMALGAME))).toBe(1);
+  });
 });
 
 /**
@@ -1231,6 +1381,40 @@ describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION
    */
   it('le plancher de Mortier vif reste un PLAFOND pour les deux elements de sa propre paire', () => {
     const def = reactionOfId(REACTION.MORTIER_VIF);
+    expect(def).toBeDefined();
+    const [a, b] = unpackElementPair(def?.pair ?? 0);
+    for (const element of [a, b]) {
+      expect(def?.zoneDamageAmp).toBeGreaterThanOrEqual(elementOf(element).damageAmp);
+    }
+  });
+
+  /**
+   * ⚠️ **Amalgame (Poix + Vif-argent, tache 7) reclame le MEME plancher que
+   * Mortier vif, pour la MEME raison : la Poix est l'unique moitie non
+   * neutre du couple, Vif-argent etant neutre sur les cinq grandeurs de
+   * cette table (voir `ELEMENT_DEFS`, `shared/elements.ts`).** Sans plancher
+   * explicite, `elementOf(zoneElement(kind)).damageAmp` seul rendrait 1,5
+   * (Poix declenche) OU 1 (Vif-argent declenche) — deux nombres DIFFERENTS.
+   */
+  it('rend le damageAmp de la Poix pour Amalgame, dans les DEUX ordres (Poix OU Vif-argent declenche)', () => {
+    const poixDeclenche = zoneDamageAmpTotal(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME));
+    const vifArgentDeclenche = zoneDamageAmpTotal(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AMALGAME),
+    );
+    // Non-vacuite : Poix (1,5) et Vif-argent (1, neutre) n'ont PAS le meme
+    // damageAmp — sans plancher EXPLICITE, les deux lignes ci-dessous
+    // rendraient des valeurs differentes.
+    expect(elementOf(ELEMENT.POIX).damageAmp).not.toBe(elementOf(ELEMENT.VIF_ARGENT).damageAmp);
+    expect(poixDeclenche).toBe(vifArgentDeclenche);
+    expect(poixDeclenche).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+
+  /**
+   * ⚠️ **L'invariant dont le test precedent depend, ASSENE — meme
+   * discipline que le test equivalent de Mortier vif juste au-dessus.**
+   */
+  it('le plancher d Amalgame reste un PLAFOND pour les deux elements de sa propre paire', () => {
+    const def = reactionOfId(REACTION.AMALGAME);
     expect(def).toBeDefined();
     const [a, b] = unpackElementPair(def?.pair ?? 0);
     for (const element of [a, b]) {

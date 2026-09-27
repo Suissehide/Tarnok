@@ -4155,3 +4155,274 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
     expect(horde.hp[horde.slotOf(present)]).toBe(1000);
   });
 });
+
+/**
+ * Amalgame (Poix + Vif-argent, tache 7 de l'etape 5c) : « les degats subis
+ * par un ennemi lie frappent aussi ses voisins » — voir `shareAmalgameDamage`
+ * (`back/src/combat.ts`). La SEULE reaction structurellement neuve de
+ * l'etape : ni balayage par rayon (Vaporisation), ni chaine (Paratonnerre) —
+ * un appel DIRECT a `appliquerDegats` par voisin `linkedNeighbours` trouve,
+ * UN SEUL niveau, jamais une cascade.
+ */
+describe('applyReactions — Amalgame partage les degats entre lies, sans cascade (tache 7 de l etape 5c)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function trigger(entityId: number | undefined, x: number, y: number): ReactionTrigger {
+    return {
+      pair: packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.VIF_ARGENT,
+      entityId,
+    };
+  }
+
+  /**
+   * ⚠️ **La geometrie du decor.** A (declencheur) en (0,0), B (lie) en
+   * (50,0) — les deux couverts par UNE zone de Vif-argent centree en (25,0)
+   * (rayon `ZONE_RADIUS`, 70 : distance a A et a B, 25, sous le rayon) et a
+   * moins de `LINK_RADIUS` (80) l'un de l'autre (50 px). W en (500,0) :
+   * jamais dans aucune zone, jamais lie a personne — le temoin « personne ne
+   * bouge sans raison ».
+   *
+   * ⚠️ **`perte` inclut `zoneDamageAmp` — MESURE, pas suppose.** `postZone`
+   * pose la zone d'Amalgame EXACTEMENT a la position d'A (le declencheur) —
+   * A se tient donc TOUJOURS dans sa propre zone (distance nulle), qui porte
+   * le plancher `elementOf(ELEMENT.POIX).damageAmp` (voir `REACTION_DEFS`
+   * dans `shared/reactions.ts`). B, a 50 px, tombe aussi DANS cette meme
+   * zone (rayon `ZONE_RADIUS`, 70) : les deux subissent donc le MEME degat
+   * amplifie, pas seulement le degat brut de la reaction — un premier jet de
+   * ce test l'ignorait et rougissait (voir le rapport de la tache 7).
+   */
+  it('frappe le declencheur ET son voisin LIE, le MEME degat chacun — epargne le non lie', () => {
+    expect(50).toBeLessThan(LINK_RADIUS);
+    expect(25).toBeLessThan(ZONE_RADIUS);
+    expect(50).toBeLessThan(ZONE_RADIUS); // B tombe aussi dans la zone qu'Amalgame pose sur A
+
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 0, 0, LOURD);
+    const b = addOne(horde, 2, 50, 0, LOURD);
+    const w = addOne(horde, 3, 500, 0, LOURD);
+    for (const id of [a, b, w]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 25, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(a, 0, 0)], zones, new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE) * elementOf(ELEMENT.POIX).damageAmp;
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(w)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **Le voisin LIE occupe le creneau 0 — mesure par mutation, pas
+   * suppose.** Dans le test precedent, le declencheur est ajoute EN PREMIER
+   * (creneau 0) et le lie toujours APRES : `linkedSlot < 0` n'y est donc
+   * jamais exerce avec `linkedSlot === 0`, et une mutation qui le
+   * relacherait en `<= 0` y restait invisible (mesuree). Ici, B (le lie) est
+   * ajoute EN PREMIER (creneau 0) et A (le declencheur) EN SECOND : si la
+   * garde devenait `linkedSlot <= 0`, B serait ecarte a tort et ne prendrait
+   * aucun degat partage.
+   */
+  it('touche le voisin LIE meme quand il occupe le creneau 0 de la horde', () => {
+    const horde = new Horde(10);
+    const b = addOne(horde, 1, 50, 0, LOURD);
+    const a = addOne(horde, 2, 0, 0, LOURD);
+    horde.hp[horde.slotOf(a)] = 1000;
+    horde.hp[horde.slotOf(b)] = 1000;
+    expect(horde.slotOf(b)).toBe(0);
+    expect(horde.slotOf(a)).toBe(1);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 25, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(a, 0, 0)], zones, new Reactions());
+
+    // Meme amplification que le test precedent, meme raison (B tombe dans la
+    // zone qu'Amalgame pose sur A).
+    const perte = coupSurLourd(REACTION_DAMAGE) * elementOf(ELEMENT.POIX).damageAmp;
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(1000 - perte, 5);
+  });
+
+  /**
+   * ⚠️ **Deux raisons dans un seul decor, toutes deux exercees par la MEME
+   * absence de zone prealable.** Sans zone de Vif-argent ELEMENTAIRE posee
+   * ailleurs : (1) personne n'est lie AVANT que la reaction ne s'execute, et
+   * (2) le champ qu'Amalgame laisse elle-meme au sol (`postZone`, avant
+   * `shareAmalgameDamage`) ne lie PERSONNE non plus, meme s'il porte
+   * l'element Vif-argent au nibble (le pare-feu de la tache 3,
+   * `zoneReaction(kind) !== 0` dans `linkedNeighbours`) — B est a 30 px
+   * d'A, sous `LINK_RADIUS` ET sous `ZONE_RADIUS` de la zone que la
+   * reaction vient de poser : sans le pare-feu, B serait lie a tort par
+   * CETTE zone-la et prendrait des degats.
+   */
+  it('sans zone de Vif-argent ELEMENTAIRE posee ailleurs, personne n est lie — pas meme par le champ qu Amalgame laisse elle-meme', () => {
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 0, 0, LOURD);
+    const b = addOne(horde, 2, 30, 0, LOURD);
+    horde.hp[horde.slotOf(a)] = 1000;
+    horde.hp[horde.slotOf(b)] = 1000;
+    expect(30).toBeLessThan(LINK_RADIUS);
+    expect(30).toBeLessThan(ZONE_RADIUS);
+    const zones = new ZoneField();
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(a, 0, 0)], zones, new Reactions());
+
+    // A se tient TOUJOURS dans la zone qu'Amalgame vient de lui poser
+    // dessus (distance nulle) : meme amplification que les deux tests
+    // precedents. B, lui, ne prend RIEN — ni degat ni amplification —
+    // puisqu'il n'est jamais lie.
+    const perte = coupSurLourd(REACTION_DAMAGE) * elementOf(ELEMENT.POIX).damageAmp;
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBe(1000);
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.AMALGAME);
+  });
+
+  it('sans entityId (declencheur ne d un recouvrement de zones), ne touche personne', () => {
+    const horde = new Horde(10);
+    const present = addOne(horde, 1, 0, 0, LOURD);
+    const lie = addOne(horde, 2, 30, 0, LOURD);
+    horde.hp[horde.slotOf(present)] = 1000;
+    horde.hp[horde.slotOf(lie)] = 1000;
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 15, 0, 9, 0);
+
+    const morts = applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [
+        {
+          pair: packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT),
+          x: 0,
+          y: 0,
+          markBy: 1,
+          by: 2,
+          element: ELEMENT.VIF_ARGENT,
+          // entityId omis, expres.
+        },
+      ],
+      zones,
+      new Reactions(),
+    );
+
+    expect(horde.hp[horde.slotOf(present)]).toBe(1000);
+    expect(horde.hp[horde.slotOf(lie)]).toBe(1000);
+    expect(morts).toEqual([]);
+  });
+
+  /**
+   * ⚠️ **Le test qui garde l'absence de recursion — brief tache 7, etape
+   * 3.** A lie a B (zone1, centree en (30,0)), B lie a C (zone2, centree en
+   * (90,0)) — mais A n'est PAS lie a C : ni la meme zone (A a 90 px du
+   * centre de zone2, C a 90 px du centre de zone1, toutes deux HORS de
+   * `ZONE_RADIUS`, 70) ni la meme distance (A-C, 120 px, au-dela de
+   * `LINK_RADIUS`, 80). Un coup sur A (le declencheur) fait chercher les
+   * voisins de A UNE fois (rend B, via zone1), jamais les voisins de B —
+   * `shareAmalgameDamage` n'appelle jamais ELLE-MEME sur un voisin trouve,
+   * voir son docbloc. Sans cette garde, C recevrait aussi le degat (les
+   * deux lies se renverraient les degats jusqu'a la pile).
+   */
+  it('Amalgame ne se propage pas en cascade : A frappe B, B ne repropage pas vers C', () => {
+    expect(60).toBeLessThan(LINK_RADIUS); // A-B et B-C, chacun lie
+    expect(120).toBeGreaterThan(LINK_RADIUS); // A-C, jamais lie par la distance seule
+    expect(90).toBeGreaterThan(ZONE_RADIUS); // A hors de zone2, C hors de zone1
+
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 0, 0, LOURD);
+    const b = addOne(horde, 2, 60, 0, LOURD);
+    const c = addOne(horde, 3, 120, 0, LOURD);
+    for (const id of [a, b, c]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 30, 0, 9, 0);
+    zones.spawn(ELEMENT.VIF_ARGENT, 90, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(a, 0, 0)], zones, new Reactions());
+
+    // A (distance nulle) ET B (60 px, sous ZONE_RADIUS) tombent tous deux
+    // dans la zone qu'Amalgame pose sur A — meme amplification que les
+    // premiers tests de ce bloc (voir leur docbloc).
+    const perte = coupSurLourd(REACTION_DAMAGE) * elementOf(ELEMENT.POIX).damageAmp;
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(1000 - perte, 5);
+    // C : jamais touche — la garde contre la cascade.
+    expect(horde.hp[horde.slotOf(c)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **Meme decor que ci-dessus, ordre d'INSERTION dans la horde
+   * DIFFERENT — la troisieme forme de « decor qui masque » que le brief de
+   * la tache 7 signale specifiquement pour cette reaction.** Le test
+   * precedent ajoute toujours A (le declencheur) EN PREMIER (creneau 0) ;
+   * ici C est ajoute EN PREMIER, B en second, A (le declencheur) EN
+   * DERNIER (creneau 2) — une garde de creneau qui supposerait le
+   * declencheur toujours au creneau 0, ou les lies toujours a des creneaux
+   * superieurs au sien, resterait inatteignable dans le test precedent seul.
+   */
+  it('Amalgame ne se propage pas en cascade, meme quand le declencheur occupe le DERNIER creneau de la horde', () => {
+    const horde = new Horde(10);
+    const c = addOne(horde, 1, 120, 0, LOURD);
+    const b = addOne(horde, 2, 60, 0, LOURD);
+    const a = addOne(horde, 3, 0, 0, LOURD);
+    for (const id of [a, b, c]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    expect(horde.slotOf(c)).toBe(0);
+    expect(horde.slotOf(b)).toBe(1);
+    expect(horde.slotOf(a)).toBe(2);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 30, 0, 9, 0);
+    zones.spawn(ELEMENT.VIF_ARGENT, 90, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(a, 0, 0)], zones, new Reactions());
+
+    // Meme amplification que le test precedent, meme raison.
+    const perte = coupSurLourd(REACTION_DAMAGE) * elementOf(ELEMENT.POIX).damageAmp;
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(c)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **Les morts passent par le `DEATHS` existant, et `dead` est un
+   * `Set` : assene-le plutot que de l'esperer.** A (le declencheur) et B
+   * (son lie) meurent tous deux du MEME Amalgame — l'un par le coup direct,
+   * l'autre par le partage — et ne doivent figurer QU'UNE FOIS chacun dans
+   * les morts rendues, jamais deux.
+   */
+  it('deux ennemis lies qui meurent du meme Amalgame ne comptent qu une fois chacun', () => {
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 0, 0, LOURD);
+    const b = addOne(horde, 2, 50, 0, LOURD);
+    // Sous la perte d'un seul coup : les deux meurent de LEUR degat partage.
+    horde.hp[horde.slotOf(a)] = perte - 1;
+    horde.hp[horde.slotOf(b)] = perte - 1;
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 25, 0, 9, 0);
+
+    const morts = applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(a, 0, 0)],
+      zones,
+      new Reactions(),
+    );
+
+    expect(morts.length).toBe(2);
+    expect(new Set(morts).size).toBe(2);
+    expect([...morts].sort()).toEqual([a, b].sort());
+    // Compaction UNE fois, apres tous les degats : la horde ne porte plus
+    // personne.
+    expect(horde.count).toBe(0);
+  });
+});

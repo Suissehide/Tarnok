@@ -831,6 +831,86 @@ function chainPreferringLinked(
 }
 
 /**
+ * Amalgame (Poix + Vif-argent, tache 7 de l'etape 5c) : « les degats subis
+ * par un ennemi lie frappent aussi ses voisins » (§5 de la spec) — frappe
+ * l'ennemi qui declenche, PUIS chacun de ses voisins LIES
+ * (`linkedNeighbours`, tache 3), avec le MEME degat, une fois chacun.
+ *
+ * ⚠️ **La SEULE reaction structurellement neuve de l'etape — ni zone, ni
+ * geometrie, ni `chainTargets`.** Vaporisation (Braise + Vif-argent) balaie
+ * un RAYON autour de chaque lie (`damageInRadius`) ; Paratonnerre (Foudre +
+ * Vif-argent) fait sauter une CHAINE en preferant les lies
+ * (`chainTargets`). Amalgame ne fait ni l'un ni l'autre : `linkedNeighbours`
+ * EST toute sa geometrie, elle ne balaie jamais un second cercle ni ne
+ * construit de chaine par-dessus — un appel direct a `appliquerDegats` par
+ * voisin trouve, rien de plus.
+ *
+ * ⚠️ **UN SEUL niveau, JAMAIS une cascade — la garde tient par CONSTRUCTION,
+ * pas par un compteur ou un `Set` de « deja touches ».** Cette fonction
+ * n'appelle jamais ELLE-MEME sur un voisin : chaque voisin recoit
+ * `appliquerDegats` directement, qui ne consulte aucune liaison. Si A est lie
+ * a B et B est lie a C (mais pas A a C), un coup sur A (le declencheur)
+ * fait chercher les voisins de A UNE fois (rend B), jamais les voisins de B —
+ * C ne recoit donc rien. Voir le test « Amalgame ne se propage pas en
+ * cascade », `combat.test.ts`.
+ *
+ * ⚠️ **`appliquerDegats` elle-meme reste INCHANGEE — voir son docbloc, « le
+ * SEUL chemin par lequel un ennemi perd des PV ».** Une variante qui aurait
+ * fait cascader `appliquerDegats` elle-meme (pour que N'IMPORTE QUEL degat a
+ * un lie se partage, pas seulement celui d'Amalgame) romprait des tests DEJA
+ * verts : la Vaporisation ci-dessus balaie deja un rayon centre sur CHAQUE
+ * lie, donc le declencheur et son lie retombent chacun dans le rayon de
+ * l'autre — un `appliquerDegats` qui cascaderait lui-meme les compterait
+ * DEUX FOIS chacun (le coup direct du balayage, PLUS le partage automatique),
+ * cassant l'egalite exacte que son test mesure deja. La portee reste donc
+ * celle d'UNE reaction precise (Amalgame), jamais une propriete globale du
+ * chemin de degats.
+ *
+ * ⚠️ **La liaison vient d'une zone de Vif-argent ELEMENTAIRE posee
+ * SEPAREMENT — meme pare-feu que Vaporisation et Paratonnerre.**
+ * `linkedNeighbours` filtre les zones de REACTION (`zoneReaction(kind) !== 0`,
+ * correctif de la tache 3), donc la zone qu'Amalgame vient de laisser au sol
+ * (`postZone`, avant cette fonction) ne peut jamais lier personne — voir le
+ * test dedie dans `combat.test.ts`.
+ *
+ * ⚠️ **Sans identite de declencheur, aucun degat** — meme degradation
+ * gracieuse que Vaporisation (un declencheur ne d'un recouvrement de zones,
+ * `onZoneCreated`, n'a pas d'ennemi associe).
+ *
+ * ⚠️ **`dead` est le MEME `Set` que celui d'`applyReactions`, jamais un
+ * second lot** : deux lies qui meurent tous les deux du meme Amalgame n'y
+ * figurent chacun qu'UNE fois — `Set.add` dedoublonne, `appliquerDegats` ne
+ * fait jamais qu'y ajouter une identite. Voir le test « deux ennemis lies qui
+ * meurent du meme Amalgame ne comptent qu'une fois chacun ».
+ */
+function shareAmalgameDamage(
+  horde: Horde,
+  trigger: ReactionTrigger,
+  damage: number,
+  zones: ZoneField,
+  tick: number,
+  dead: Set<number>,
+): void {
+  const slot = trigger.entityId !== undefined ? horde.slotOf(trigger.entityId) : -1;
+  if (slot < 0) {
+    return;
+  }
+  appliquerDegats(horde, slot, damage, zones, tick, dead);
+  for (const linkedId of linkedNeighbours(horde, slot, zones, tick)) {
+    const linkedSlot = horde.slotOf(linkedId);
+    // ⚠️ INATTEIGNABLE par construction, meme raisonnement que les autres
+    // `slot < 0` de ce fichier : `linkedNeighbours` ne rend que des identites
+    // lues DANS `horde`, et rien ne compacte entre cet appel et cette boucle.
+    if (linkedSlot < 0) {
+      continue;
+    }
+    // Un seul appel direct — JAMAIS `shareAmalgameDamage` a nouveau : voir le
+    // docbloc ci-dessus, « UN SEUL niveau ».
+    appliquerDegats(horde, linkedSlot, damage, zones, tick, dead);
+  }
+}
+
+/**
  * Resout les reactions collectees pendant le tick : l'effet SPECIFIQUE de la
  * table des reactions (`shared/reactions.ts`, tache 6 de l'etape 5b) si la
  * paire en a un, sinon `REACTION_DAMAGE` a tout ennemi dans `REACTION_RADIUS`
@@ -994,6 +1074,10 @@ export function applyReactions(
       // Paratonnerre (Foudre + Vif-argent) : voir `chainPreferringLinked`
       // ci-dessus pour la forme complete (`exclude` pre-rempli des non-lies).
       chainPreferringLinked(horde, t, def.damage, zones, tick, dead);
+    } else if (def?.id === REACTION.AMALGAME) {
+      // Amalgame (Poix + Vif-argent) : voir `shareAmalgameDamage` ci-dessus
+      // pour la forme complete (un seul niveau, aucune cascade).
+      shareAmalgameDamage(horde, t, def.damage, zones, tick, dead);
     } else {
       damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
     }
