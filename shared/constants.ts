@@ -989,3 +989,37 @@ export const VERGLAS_COLLISION_DAMAGE_PER_TICK = 0.2;
  * elementaire.
  */
 export const CHAUX_ARMOR_REDUCTION = 0.1;
+
+/**
+ * Rayon de liaison du Vif-argent, en pixels monde — deux ennemis DANS LA
+ * MEME zone de Vif-argent et a moins de cette distance l'un de l'autre sont
+ * LIES (§3 de la spec de l'etape 5c). Lu par `linkedNeighbours`
+ * (`shared/links.ts`), jamais par la horde elle-meme.
+ *
+ * ⚠️ **Repere face aux trois autres rayons du catalogue** :
+ *
+ * | Constante | Valeur | Role |
+ * | --- | --- | --- |
+ * | `ZONE_RADIUS` | 70 | rayon d'une zone au sol |
+ * | `REACTION_RADIUS` | 90 | rayon d'un Choc thermique, depuis une cible |
+ * | `CHAIN_RADIUS` | 150 | rayon de saut d'une chaine de Foudre |
+ * | `LINK_RADIUS` | 80 | rayon de LIAISON entre deux ennemis |
+ *
+ * ⚠️ **Sous le DIAMETRE d'une zone (`2 x ZONE_RADIUS`, 140), et c'est ce qui
+ * rend le predicat non trivial.** Deux points chacun a l'interieur du meme
+ * disque de rayon `ZONE_RADIUS` sont au plus a `2 x ZONE_RADIUS` l'un de
+ * l'autre (inegalite triangulaire) : un `LINK_RADIUS` superieur ou egal a
+ * cette borne lierait TOUTE paire qui partage une zone, sans jamais
+ * departager — la seconde moitie du predicat du §3 (« et a moins de
+ * `LINK_RADIUS` l'un de l'autre ») deviendrait toujours vraie et donc morte.
+ *
+ * ⚠️ **Au-dessus de `SEPARATION_RADIUS` (28), meme raison que `ZONE_RADIUS`
+ * pour la meme borne basse** : la horde se tient a cette distance de confort
+ * les uns des autres, et un rayon plus court que ce confort ne lierait
+ * jamais deux ennemis DISTINCTS qui se tiennent cote a cote dans la meme
+ * zone.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil (§11 de la spec de l'etape 5c) —
+ * comme le reste du catalogue elementaire.
+ */
+export const LINK_RADIUS = 80;

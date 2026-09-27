@@ -593,15 +593,22 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
     // `elementOf` — la reponse devient alors « leve » ou « rend 1 », et ces
     // deux-la se distinguent.
     //
-    // ⚠️ **6, pas 99, depuis la tache 5 de l'etape 5b.** `zones.kind` porte
-    // desormais un octet EMPAQUETE (`packZoneKind`) : l'element n'occupe que
-    // les bits 0-2, et 99 (0b1100011) s'y decode en 3 — Foudre, un element
-    // bien REEL, qui casserait ce test. 6 reste un element inconnu meme aux
-    // 3 bits pleins : le §6.3 de l'orientation en compte six au total (0 a
-    // 5), et 6/7 n'en feront jamais partie.
+    // ⚠️ **7, pas 6, depuis la tache 2 de l'etape 5c — et pas 99, depuis la
+    // tache 5 de l'etape 5b.** `zones.kind` porte un octet EMPAQUETE
+    // (`packZoneKind`) : l'element n'occupe que les bits 0-2, et 99
+    // (0b1100011) s'y decode en 3 — Foudre, un element bien REEL, qui
+    // casserait ce test. **6 a ete CORRIGE ICI** : ce fichier le tenait pour
+    // inconnu « pour toujours » (le §6.3 de l'orientation en comptait six au
+    // total, ids 0 a 5), mais le Vif-argent (tache 2 de l'etape 5c) occupe
+    // precisement cet id — un catalogue complet a SEPT entrees (neutre + six
+    // elements), ids 0 a 6. **7 reste le seul id hors table aux 3 bits
+    // pleins** : le domaine d'un nibble de 3 bits va jusqu'a 7, et la table
+    // n'ira jamais au-dela de sept entrees (le §6.3 de l'orientation les
+    // compte toutes). Ce test a ete corrige par la tache 2, pas contourne —
+    // voir son rapport.
     const zones = new ZoneField();
     zones.spawn(ELEMENT.BRAISE, 0, 0, 0, 0);
-    zones.kind[0] = 6;
+    zones.kind[0] = 7;
 
     // Dedans : la zone est consultee, donc `elementOf` leve.
     expect(() => zones.ampAt(ZONE_RADIUS - 1, 0, 0)).toThrow(/element inconnu/);

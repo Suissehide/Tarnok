@@ -90,6 +90,7 @@ describe('ELEMENT (les identifiants nommes)', () => {
     expect(elementOf(ELEMENT.FOUDRE).name).toBe('foudre');
     expect(elementOf(ELEMENT.POIX).name).toBe('poix');
     expect(elementOf(ELEMENT.CHAUX).name).toBe('chaux');
+    expect(elementOf(ELEMENT.VIF_ARGENT).name).toBe('vif-argent');
   });
 
   it('couvre toute la table : aucun element n est sans nom d identifiant', () => {
@@ -156,12 +157,30 @@ describe('le neutre est une entree de la table, pas un cas particulier', () => {
    * elargissement, elle serait a tort une seconde exception NOMMEE, alors
    * que ses deux effets vivent bel et bien dans cette table (voir son
    * docbloc dans `ELEMENT_DEFS`).
+   *
+   * ⚠️ **Le Vif-argent (tache 2 de l'etape 5c) REJOINT `EFFET_HORS_TABLE`,
+   * il n'elargit PAS le predicat.** La question a ete posee explicitement :
+   * a la tache 9 de l'etape 5b, elargir a valu mieux qu'exempter — pour la
+   * Poix, dont l'effet REEL (`damageAmp`) etait deja un champ de cette
+   * table, simplement absent de ce predicat-la. Le Vif-argent n'est pas dans
+   * ce cas : sa liaison se derive d'une PAIRE de positions et d'une zone
+   * annoncee (`linkedNeighbours`, `shared/links.ts`), jamais d'un champ que
+   * `Element` porterait pour lui seul — structurellement identique a la
+   * Foudre (`chainTargets` se derive d'un point d'impact, pas d'un champ).
+   * Un appelant doit de toute facon savoir qu'il tient du Vif-argent
+   * (`ELEMENT.VIF_ARGENT`) avant d'appeler `linkedNeighbours`, exactement
+   * comme il doit savoir qu'il tient de la Foudre avant d'appeler
+   * `chainTargets` — ajouter un champ ici n'aurait rien generalise.
+   * Elargir le predicat aurait donc invente un champ SANS AUTRE LECTEUR que
+   * ce test, ce qui n'est pas generaliser, c'est deplacer la meme exception
+   * d'un endroit a un autre.
    */
   it('est le SEUL sans effet : tout autre element porte au moins un effet (marque, zone, ou une exception nommee)', () => {
-    // La Foudre : seul cas ou l'effet vit hors de cette table (voir
-    // le docbloc ci-dessus). Pas une dette bornee a une tache — une
-    // consequence structurelle de la forme de `chainTargets`, permanente.
-    const EFFET_HORS_TABLE = new Set<number>([ELEMENT.FOUDRE]);
+    // La Foudre et le Vif-argent : les deux cas ou l'effet vit hors de
+    // cette table (voir le docbloc ci-dessus). Pas une dette bornee a une
+    // tache — une consequence structurelle de la forme de `chainTargets` et
+    // de `linkedNeighbours`, permanente pour les deux.
+    const EFFET_HORS_TABLE = new Set<number>([ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT]);
     for (const e of ELEMENTS) {
       if (e.id === ELEMENT.NEUTRE || EFFET_HORS_TABLE.has(e.id)) {
         continue;
@@ -275,6 +294,27 @@ describe('la chaux (tache 1 de l etape 5c)', () => {
   });
 });
 
+/**
+ * ⚠️ Meme raison que les blocs Foudre/Poix/Chaux precedents : la table
+ * generique ne verifie que des intervalles larges — une mutation qui
+ * preterait une brulure, un ralentissement, une amplification, une
+ * reduction d'armure ou une inversion de champ au Vif-argent y resterait
+ * sans qu'aucune assertion nommee ne rougisse. Son VRAI effet — la liaison
+ * — est garde par `shared/links.test.ts`, pas ici : ce fichier ne garde que
+ * ce que la table elle-meme porte, et la table du Vif-argent est
+ * entierement neutre (voir `EFFET_HORS_TABLE` plus haut).
+ */
+describe('le vif-argent (tache 2 de l etape 5c)', () => {
+  it('ne brule pas, ne ralentit pas, n amplifie pas, ne reduit pas l armure, ne fait pas fuir : ses effets de table sont tous neutres', () => {
+    const vifArgent = elementOf(ELEMENT.VIF_ARGENT);
+    expect(vifArgent.burnPerTick).toBe(0);
+    expect(vifArgent.slowFactor).toBe(1);
+    expect(vifArgent.damageAmp).toBe(1);
+    expect(vifArgent.armorReduction).toBe(0);
+    expect(vifArgent.fieldSign).toBe(1);
+  });
+});
+
 describe('elementOf', () => {
   it('rend l element portant cet identifiant', () => {
     // Un id non nul : `elementOf(0)` seul ne distinguerait pas une
@@ -311,14 +351,19 @@ describe('le catalogue des elements et celui des armes', () => {
    * ⚠️ **Une dette EXPLICITE et BORNEE, pas une exemption permanente.**
    * Sans `ARME_DIFFEREE`, ce test rougirait entre la tache 1 et la tache 8
    * — pas d'une vraie regression, d'un ORDRE de taches assume. **Doit
-   * redevenir vide a la fin de la tache 8** : si la Chaux y reste apres,
-   * ce test cesse de garder quoi que ce soit pour elle. La garde reste
-   * intacte pour les cinq autres elements — l'exception BORNE, elle ne
-   * desarme pas.
+   * redevenir vide a la fin de la tache 8** : si la Chaux OU le Vif-argent y
+   * restent apres, ce test cesse de garder quoi que ce soit pour eux. La
+   * garde reste intacte pour les cinq autres elements — l'exception
+   * BORNE, elle ne desarme pas.
+   *
+   * ⚠️ **Le Vif-argent (tache 2) rejoint la Chaux ici, meme raison, meme
+   * echeance.** `shared/weapons.ts` ne cable au moins deux armes a chacun
+   * des deux nouveaux elements qu'a la tache 8 — la ligne de table nait
+   * avant l'arme qui la porte, comme pour la Foudre et la Poix a l'etape 5b.
    */
-  const ARME_DIFFEREE = new Set<number>([ELEMENT.CHAUX]);
+  const ARME_DIFFEREE = new Set<number>([ELEMENT.CHAUX, ELEMENT.VIF_ARGENT]);
 
-  it('cable au moins une arme a chaque element du catalogue, sauf armement differe assume (Chaux, tache 8)', () => {
+  it('cable au moins une arme a chaque element du catalogue, sauf armement differe assume (Chaux, Vif-argent, tache 8)', () => {
     for (const e of ELEMENTS) {
       if (ARME_DIFFEREE.has(e.id)) {
         continue;

@@ -227,6 +227,33 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     armorReduction: CHAUX_ARMOR_REDUCTION,
     fieldSign: -1,
   },
+  {
+    // Vif-argent (tache 2 de l'etape 5c) : ni brulure, ni ralentissement, ni
+    // amplification, ni reduction d'armure, ni inversion de champ — tous les
+    // effets de CETTE table a leur neutre.
+    //
+    // ⚠️ **Son effet REEL — la liaison — ne vit PAS dans cette table.**
+    // Meme cas STRUCTUREL que la Foudre (voir son docbloc plus haut) : la
+    // liaison se derive d'une PAIRE de positions et d'une zone annoncee
+    // (`linkedNeighbours`, `shared/links.ts`), jamais d'un champ QUE PORTE
+    // L'ELEMENT lui-meme. Un appelant doit de toute facon savoir qu'il tient
+    // du Vif-argent (`ELEMENT.VIF_ARGENT`) avant d'appeler `linkedNeighbours`
+    // — ajouter un champ ici pour ce seul element n'aurait donc rien
+    // generalise, exactement le raisonnement de la Foudre. Voir
+    // `shared/elements.test.ts` (`EFFET_HORS_TABLE`) pour la garde et le
+    // rapport de la tache 2 pour la decision ecrite (exempter, pas
+    // elargir).
+    //
+    // ⚠️ Valeurs de depart, a regler a l'oeil comme le reste du catalogue
+    // elementaire.
+    name: 'vif-argent',
+    tint: 0xc9c9e8,
+    burnPerTick: 0,
+    slowFactor: 1,
+    damageAmp: 1,
+    armorReduction: 0,
+    fieldSign: 1,
+  },
 ];
 
 export const ELEMENTS: readonly Element[] = ELEMENT_DEFS.map((e, id) => ({ ...e, id }));
@@ -249,6 +276,7 @@ export const ELEMENT = {
   FOUDRE: 3,
   POIX: 4,
   CHAUX: 5,
+  VIF_ARGENT: 6,
 } as const;
 
 export function elementOf(id: number): Element {
