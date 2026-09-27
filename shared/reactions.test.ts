@@ -1049,16 +1049,29 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
   });
 
   /**
-   * ⚠️ **Le piege transitoire que le docbloc de `zoneFieldSign` documente.**
-   * Aucune des cinq reactions existantes ne pair la Chaux, donc AUCUNE ne
-   * porte encore de `zoneFieldSign: -1` explicite qui garantirait la fuite
-   * quel que soit l'element du nibble. Ce test rend ce fait EXPLICITE plutot
-   * que de le laisser en silence : packe la Chaux avec une reaction
-   * existante (un cas qui n'arrive jamais en jeu tel quel, mais qui exerce
-   * le meme mecanisme qu'un futur couple de la Chaux) et constate que seul
-   * l'ordre ou la Chaux est LE DECLENCHEUR fuit.
+   * ⚠️ **CORRIGE a la tache 6, tour de correction 1 — ce test gardait un
+   * etat de PRODUCTION qui n'existe plus, une revue l'a signale perime.**
+   * Ecrit avant la tache 4, quand AUCUN couple reel de la Chaux ne portait
+   * de plancher : ce n'est plus vrai — les cinq couples reels
+   * (Fournee, Eclat de gel, Arc caustique, Mortier vif, Aveuglement)
+   * portent tous desormais `zoneFieldSign: -1` explicite (voir leurs
+   * entrees dans `REACTION_DEFS`, `shared/reactions.ts`), et chacun a son
+   * propre test « ne depend pas de l'ordre d'arrivee » plus bas.
+   *
+   * **Ce que ce test garde REELLEMENT maintenant : le MECANISME
+   * SOUS-JACENT** (`zoneFieldSign(kind) = Math.min(elementSign,
+   * reactionSign)`, `reactionSign` valant `1` par defaut pour toute paire
+   * ABSENTE de `REACTION_DEFS`) resterait ORDRE-DEPENDANT si une future
+   * paire de la Chaux etait ajoutee SANS porter ce plancher — pas qu'une
+   * telle paire existe aujourd'hui. `REACTION.SUPRACONDUCTION` (Givre +
+   * Foudre, fixee par `packElementPair`) ne peut JAMAIS reellement pairer
+   * la Chaux : c'est un `kind` FICTIF, construit a la seule fin d'exercer
+   * la combinaison sans plancher, pas un cas atteignable en jeu. Une
+   * regression sur une SIXIEME reaction de la Chaux ne serait donc PAS
+   * attrapee ICI — seule la ligne de `REACTION_DEFS` de cette future
+   * reaction, et son propre test, protegeraient.
    */
-  it('reste ORDRE-DEPENDANT tant qu aucune reaction ne porte un plancher explicite pour la Chaux', () => {
+  it('le mecanisme reste ORDRE-DEPENDANT sans plancher explicite — plus aucun couple REEL de la Chaux n est dans cet etat', () => {
     const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.SUPRACONDUCTION));
     const givreDeclenche = zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION));
     expect(chauxDeclenche).toBe(-1);

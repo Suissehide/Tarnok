@@ -539,7 +539,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // LIER et GELER au meme endroit doit poser une zone de Vif-argent PUR
     // separement — les deux `kind` coexistent, `ZoneField.spawn` ne
     // fusionnant jamais que sur le `kind` COMPLET (voir son docbloc). Aucun
-    // dériveur `zoneLinked`/`zoneHitRadiusBonus` combinant element et
+    // deriveur `zoneLinked`/`zoneHitRadiusBonus` combinant element et
     // reaction n'est donc necessaire : contrairement a `zoneDamageAmp`
     // ci-dessous (une VRAIE piece manquante que cette tache ajoute), la
     // liaison et le rayon de touche elargi n'ont jamais ete des grandeurs de
@@ -599,15 +599,29 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // Chaux SEULE laisserait deja — meme raisonnement qu'Eclat de gel pour
     // son armure.
     //
-    // ⚠️ **La fuite plancheee par `zoneFieldSign` est SANS OBJET a
-    // l'interieur de cette zone — meme point de revue n°4 que
-    // Chaux+Supraconduction.** `#computeSlow` fige la vitesse a zero AVANT
-    // que le signe n'ait quoi que ce soit a inverser : une entite scellee ne
-    // fuit jamais. Le plancher reste neanmoins requis pour la meme raison
-    // que partout ailleurs dans cette table : sans lui, l'octet stocke
-    // resterait dependant de l'ordre d'arrivee, meme si son EFFET pratique
-    // est aujourd'hui masque par le gel. Voir le test dedie dans
-    // `shared/horde.test.ts`.
+    // ⚠️ **CORRIGE a la tache 6, tour de correction 1 — une revue a MESURE
+    // que la fuite plancheee par `zoneFieldSign` N'EST PAS sans effet,
+    // contrairement a ce que ce paragraphe affirmait (« une entite scellee
+    // ne fuit jamais »).** C'est vrai PENDANT la vie de la zone, faux
+    // APRES. `#advanceByVelocity` (`Horde`, `shared/horde.ts`) module le
+    // PAS par `#slow`, jamais la vitesse TENUE (`vx`/`vy`) — celle-ci reste
+    // la trajectoire que `#recomputeSteering` calcule, et qui ne tourne
+    // qu'une fois tous les `STEERING_RECOMPUTE_TICKS` (9 ticks). Tant que
+    // la zone vit, `#slow` a 0 fige bien la POSITION quel que soit le signe
+    // de `vx`/`vy` — mais `vx`/`vy`, EUX, continuent d'etre recalcules a
+    // chaque recompute avec la direction INVERSEE (`fieldSign: -1`).
+    // Quand la zone expire, `#slow` repasse a 1 AVANT que le prochain
+    // recompute ne corrige `vx`/`vy` : l'entite avance donc PLEIN POT dans
+    // la direction FUYANTE pendant jusqu'a `STEERING_RECOMPUTE_TICKS - 1`
+    // ticks (environ 25 px, mesure a la revue) avant de se reorienter vers
+    // le joueur. **La horde scellee gicle en arriere quand le sceau meurt.**
+    // Le §5 de la spec dit « scelles et fragiles », pas « ejectes » — c'est
+    // un ARTEFACT DE JEU NON TRANCHE, documente ici plutot que corrige : le
+    // plancher reste neanmoins REQUIS, sans lui ce recul dependrait EN PLUS
+    // de l'ordre d'arrivee des deux projectiles, pire qu'un recul
+    // systematique. Voir le test « gicle en arriere a l'expiration … » dans
+    // `shared/horde.test.ts`, et la reserve correspondante dans le rapport
+    // de la tache 6 (question portee a l'auteur, pas tranchee ici).
     id: REACTION.MORTIER_VIF,
     name: 'mortier-vif',
     pair: packElementPair(ELEMENT.POIX, ELEMENT.CHAUX),
@@ -856,18 +870,22 @@ export function zoneCollisionDamage(kind: number): number {
  * l'impose, exactement comme `reactionFactor = 0` emporte tout sur
  * `zoneSlowFactor`.
  *
- * ⚠️ **Aujourd'hui, seul `Element.fieldSign` (la Chaux) porte un `-1` — aucune
- * ligne de `REACTION_DEFS` ne surcharge encore `zoneFieldSign`.** Une zone de
- * Chaux SANS reaction nommee (le Choc thermique generique, le seul cas
- * possible tant que les taches 4 a 7 de l'etape 5c n'ont pas cable Fournee,
- * Eclat de gel, Arc caustique et Mortier vif) fuit donc uniquement quand
- * CHAUX est l'element porte par le nibble — c'est-a-dire uniquement quand la
- * Chaux est arrivee EN SECOND. C'est le meme etat transitoire, ORDRE-DEPENDANT,
- * que `zoneArmorReductionTotal` traverse avant que Fournee ne lui donne un
- * plancher explicite (voir son test « ne depend pas de l'ordre d'arrivee »,
- * `shared/reactions.test.ts`) : une future tache qui cable un couple de la
- * Chaux devra decider si sa reaction doit ELLE AUSSI garantir la fuite —
- * en portant `zoneFieldSign: -1` — quel que soit l'element du nibble.
+ * ⚠️ **CORRIGE a la tache 6 de l'etape 5c — ce docbloc affirmait encore
+ * qu'aucune ligne ne surchargeait `zoneFieldSign`, une revue l'a signale
+ * perime.** `Element.fieldSign` (la Chaux) reste la SEULE source non
+ * neutre, mais CINQ lignes de `REACTION_DEFS` portent desormais un
+ * `zoneFieldSign: -1` EXPLICITE — les cinq couples reels de la Chaux :
+ * Fournee et Eclat de gel (tache 4), Arc caustique (tache 5), Mortier vif
+ * et Aveuglement (tache 6, qui clot la liste que cette phrase enumerait).
+ * Une zone de Chaux SANS reaction nommee (le Choc thermique generique —
+ * toujours possible, la table `REACTION_DEFS` ne couvre pas tous les
+ * couples) reste le seul cas ou `zoneFieldSign` derive de l'element SEUL ;
+ * pour les cinq couples ci-dessus, le plancher rend le resultat
+ * INDEPENDANT de l'ordre d'arrivee, comme `zoneArmorReductionTotal` l'est
+ * deja pour eux. Voir `shared/reactions.test.ts` : le test qui exerce
+ * encore l'etat ORDRE-DEPENDANT le fait desormais sur un couple FICTIF
+ * (aucun couple reel n'y est plus exposable) — il garde le MECANISME, pas
+ * un etat de production.
  */
 export function zoneFieldSign(kind: number): number {
   const elementSign = elementOf(zoneElement(kind)).fieldSign;

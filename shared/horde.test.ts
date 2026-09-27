@@ -2742,6 +2742,80 @@ describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache
     expect(pasFigeAu(une(1000, 1000), fields, MESURE, auTick)).toBeGreaterThan(0);
     expect(pasFigeAu(une(1000, 1000), fields, MESURE, auPrecedent)).toBe(0);
   });
+
+  /**
+   * ⚠️ **Tour de correction 1 — le test que le rapport de la tache 6
+   * annoncait « impossible » et que la revue a mesure en dix lignes.**
+   * `#advanceByVelocity` module le PAS par `#slow`, jamais la vitesse TENUE
+   * (`vx`/`vy`) — celle-ci reste la trajectoire que `#recomputeSteering`
+   * calcule, et qui ne tourne qu'une fois tous les `STEERING_RECOMPUTE_TICKS`
+   * ticks, PAR ENTITE (voir son docbloc). Pendant que Mortier vif vit,
+   * `#slow` a 0 fige la POSITION — mais si un recalcul survient PENDANT ce
+   * temps, `vx`/`vy` prennent quand meme la direction FUYANTE
+   * (`zoneFieldSign: -1`). A l'expiration de la zone, `#slow` repasse a 1
+   * AVANT le prochain recalcul : l'entite avance donc PLEIN POT dans la
+   * direction fuyante jusqu'a ce recalcul.
+   *
+   * ⚠️ **Decor au PIRE CAS, pas un hasard d'entityId** : `waveId: 8` donne
+   * `entityIdOf(8, 0) % STEERING_RECOMPUTE_TICKS === STEERING_RECOMPUTE_TICKS - 1`
+   * (asserte ci-dessous plutot que suppose), la phase qui maximise la
+   * fenetre de recul — le dernier recalcul possible avant l'expiration de
+   * `ZONE_LIFETIME_TICKS` (generique, Mortier vif ne l'allonge pas) tombe
+   * au tick juste avant, et le prochain juste apres la fenetre entiere de
+   * `STEERING_RECOMPUTE_TICKS` ticks.
+   *
+   * ⚠️ **Artefact de jeu NON TRANCHE, garde ici, pas corrige** (voir le
+   * docbloc de l'entree `MORTIER_VIF` dans `shared/reactions.ts` et la
+   * reserve du rapport de cette tache) : le §5 de la spec dit « scelles et
+   * fragiles », pas « ejectes » — ce test ASSENE que le recul existe et sa
+   * DIRECTION, il ne juge pas s'il doit rester.
+   */
+  it('Mortier vif : la horde scellee gicle en arriere a l expiration, vx/vy tenant encore la direction fuyante', () => {
+    const fields = fieldsTowards(5000, 1000);
+
+    function unePhaseMax(x: number, y: number): Horde {
+      const horde = new Horde(10);
+      horde.spawn(
+        order({ waveId: 8, count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }),
+      );
+      horde.x[0] = x;
+      horde.y[0] = y;
+      return horde;
+    }
+
+    const scellee = unePhaseMax(1000, 1000);
+    const temoin = unePhaseMax(1000, 1000);
+    // Decor non creux : le pire cas, pas un phase quelconque.
+    expect(scellee.entityIdAt(0) % STEERING_RECOMPUTE_TICKS).toBe(STEERING_RECOMPUTE_TICKS - 1);
+
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF), 1000, 1000, 0, 0);
+
+    for (let t = 0; t < ZONE_LIFETIME_TICKS; t++) {
+      scellee.step(DT, fields, t, zones);
+      temoin.step(DT, fields, t);
+    }
+    // Le sceau a fige la POSITION tout du long : aucune avance, la ou le
+    // temoin (jamais scelle) a deja parcouru une belle distance vers le
+    // champ — le decor n'est pas creux, il y a bien quelque chose a geler.
+    expect(scellee.x[0]).toBe(1000);
+    expect((temoin.x[0] ?? 0) - 1000).toBeGreaterThan(0);
+
+    const avant = scellee.x[0] ?? 0;
+    // Le tick meme ou la zone meurt (`ZONE_LIFETIME_TICKS`) : `#slow`
+    // repasse a 1, mais ce n'est PAS un tick de recalcul pour cette entite
+    // (phase au pire cas) — `vx`/`vy` tiennent encore la fuite du dernier
+    // recalcul, a l'interieur de la zone.
+    scellee.step(DT, fields, ZONE_LIFETIME_TICKS, zones);
+    const apres = scellee.x[0] ?? 0;
+
+    // La direction FUYANTE (vers les x decroissants, l'oppose du champ vers
+    // 5000,1000) l'emporte PLEIN POT : ni zero (le gel n'a plus cours, le
+    // sceau est mort) ni positif (la direction corrigee n'arrivera qu'au
+    // prochain recalcul).
+    expect(scellee.vx[0]).toBeLessThan(0);
+    expect(apres).toBeLessThan(avant);
+  });
 });
 
 /**
