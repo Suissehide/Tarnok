@@ -4029,6 +4029,32 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
   });
 
   /**
+   * ⚠️ **La cible chainee occupe le creneau 0 — mesure par mutation, pas
+   * suppose.** Meme piege que celui ferme pour Vaporisation : dans le test
+   * precedent, le declencheur est ajoute EN PREMIER (creneau 0), donc la
+   * cible chainee n'y occupe jamais ce creneau, et une mutation qui
+   * relacherait `slot < 0` en `slot <= 0` y restait invisible (mesuree).
+   * Ici, L (la cible liee) est ajoute EN PREMIER et D (le declencheur) EN
+   * SECOND : si la garde devenait `slot <= 0`, L serait ecarte a tort et
+   * personne ne prendrait de degat.
+   */
+  it('touche la cible chainee meme quand elle occupe le creneau 0 de la horde', () => {
+    const horde = new Horde(10);
+    const l = addOne(horde, 1, 60, 0, LOURD);
+    const d = addOne(horde, 2, 0, 0, LOURD);
+    horde.hp[horde.slotOf(d)] = 1000;
+    horde.hp[horde.slotOf(l)] = 1000;
+    expect(horde.slotOf(l)).toBe(0);
+    expect(horde.slotOf(d)).toBe(1);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 60, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(d, 0, 0)], zones, new Reactions());
+
+    expect(horde.hp[horde.slotOf(l)]).toBeCloseTo(1000 - coupSurLourd(REACTION_DAMAGE), 5);
+  });
+
+  /**
    * ⚠️ **`CHAIN_JUMPS` (3), jamais un plafond de cout dedie.** Cinq ennemis
    * tous LIES au declencheur (tous dans la meme zone de Vif-argent, tous a
    * moins de `LINK_RADIUS`) : seuls les trois plus proches, dans l'ordre du
