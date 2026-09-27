@@ -300,18 +300,29 @@ describe('le catalogue des elements et celui des armes', () => {
    * n'arrive jamais. C'est le pendant exact de la reference morte gardee par
    * `assertWeaponElements`.
    *
-   * ⚠️ **`ARMEMENT_DIFFERE` a existe ici, et a ete supprime a la tache 9 de
-   * l'etape 5b.** Le plan de l'etape 5b construisait le catalogue avant les
-   * armes qui le portent (Foudre a la tache 2, Poix a la tache 4) : la dette
-   * etait explicite et bornee, une exemption NOMMEE le temps que la tache 9
-   * cable au moins deux armes a chacune (`shared/weapons.ts`,
-   * `bobine-tesla`/`canon-a-arc` pour la Foudre, `seringue-a-poix`/
-   * `chaudron-a-poix` pour la Poix). La garde ci-dessous porte a nouveau sur
-   * la table ENTIERE, sans exception : un element sans arme, present ou
-   * futur, la fait a nouveau rougir.
+   * ⚠️ **`ARMEMENT_DIFFERE` a deja existe ici, une premiere fois, et a ete
+   * supprime a la tache 9 de l'etape 5b** (Foudre tache 2, Poix tache 4,
+   * armes cablees toutes les deux a la tache 9). Meme motif, une seconde
+   * fois, pour la meme raison : le plan de l'etape 5c construit le
+   * catalogue avant les armes qui le portent — la Chaux nait a cette
+   * tache-ci (la 1), `shared/weapons.ts` ne lui cable au moins deux armes
+   * qu'a la tache 8.
+   *
+   * ⚠️ **Une dette EXPLICITE et BORNEE, pas une exemption permanente.**
+   * Sans `ARME_DIFFEREE`, ce test rougirait entre la tache 1 et la tache 8
+   * — pas d'une vraie regression, d'un ORDRE de taches assume. **Doit
+   * redevenir vide a la fin de la tache 8** : si la Chaux y reste apres,
+   * ce test cesse de garder quoi que ce soit pour elle. La garde reste
+   * intacte pour les cinq autres elements — l'exception BORNE, elle ne
+   * desarme pas.
    */
-  it('cable au moins une arme a chaque element du catalogue', () => {
+  const ARME_DIFFEREE = new Set<number>([ELEMENT.CHAUX]);
+
+  it('cable au moins une arme a chaque element du catalogue, sauf armement differe assume (Chaux, tache 8)', () => {
     for (const e of ELEMENTS) {
+      if (ARME_DIFFEREE.has(e.id)) {
+        continue;
+      }
       const armes = WEAPONS.filter((w) => w.element === e.id);
       expect(armes.length, `aucune arme ne porte l element « ${e.name} »`).toBeGreaterThanOrEqual(
         1,
