@@ -139,6 +139,79 @@ describe('Fournee et Eclat de gel (tache 4 de l etape 5c) — deux lignes de plu
   });
 });
 
+describe('Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c) — trois lignes de plus, meme table', () => {
+  it('trouve les trois par leur couple canonique, dix identifiants distincts au total', () => {
+    const vaporisation = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT));
+    const arcCaustique = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX));
+    const paratonnerre = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT));
+    expect(vaporisation?.id).toBe(REACTION.VAPORISATION);
+    expect(arcCaustique?.id).toBe(REACTION.ARC_CAUSTIQUE);
+    expect(paratonnerre?.id).toBe(REACTION.PARATONNERRE);
+
+    const surchauffe = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE));
+    const embrasement = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX));
+    const courtCircuit = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
+    const supraconduction = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.FOUDRE));
+    const verglas = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.POIX));
+    const fournee = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX));
+    const eclatDeGel = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
+    // Dix identifiants distincts : une collision confondrait le mauvais
+    // couple, exactement comme les deux tests precedents de ce fichier.
+    expect(
+      new Set([
+        surchauffe?.id,
+        embrasement?.id,
+        courtCircuit?.id,
+        supraconduction?.id,
+        verglas?.id,
+        fournee?.id,
+        eclatDeGel?.id,
+        vaporisation?.id,
+        arcCaustique?.id,
+        paratonnerre?.id,
+      ]).size,
+    ).toBe(10);
+  });
+
+  it('est INSENSIBLE a l ordre d arrivee, comme les sept reactions precedentes', () => {
+    const a = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT));
+    const b = reactionForPair(packElementPair(ELEMENT.VIF_ARGENT, ELEMENT.BRAISE));
+    expect(a?.id).toBe(REACTION.VAPORISATION);
+    expect(b?.id).toBe(REACTION.VAPORISATION);
+
+    const c = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX));
+    const d = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.FOUDRE));
+    expect(c?.id).toBe(REACTION.ARC_CAUSTIQUE);
+    expect(d?.id).toBe(REACTION.ARC_CAUSTIQUE);
+
+    const e = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT));
+    const f = reactionForPair(packElementPair(ELEMENT.VIF_ARGENT, ELEMENT.FOUDRE));
+    expect(e?.id).toBe(REACTION.PARATONNERRE);
+    expect(f?.id).toBe(REACTION.PARATONNERRE);
+  });
+
+  it('retrouve les trois par `reactionOfId`, le nibble empaquete dans `ZoneField.kind`', () => {
+    expect(reactionOfId(REACTION.VAPORISATION)?.name).toBe('vaporisation');
+    expect(reactionOfId(REACTION.ARC_CAUSTIQUE)?.name).toBe('arc-caustique');
+    expect(reactionOfId(REACTION.PARATONNERRE)?.name).toBe('paratonnerre');
+  });
+
+  it('Vaporisation reutilise REACTION_RADIUS et REACTION_DAMAGE, meme decision qu Embrasement et Court-circuit', () => {
+    const def = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT));
+    expect(def?.radius).toBe(REACTION_RADIUS);
+    expect(def?.damage).toBe(REACTION_DAMAGE);
+  });
+
+  it('Arc caustique et Paratonnerre portent REACTION_DAMAGE par saut, un rayon nul (chaine, pas balayage)', () => {
+    const arcCaustique = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX));
+    const paratonnerre = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT));
+    expect(arcCaustique?.damage).toBe(REACTION_DAMAGE);
+    expect(arcCaustique?.radius).toBe(0);
+    expect(paratonnerre?.damage).toBe(REACTION_DAMAGE);
+    expect(paratonnerre?.radius).toBe(0);
+  });
+});
+
 describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   it('rend la duree GENERIQUE pour un kind de reaction nulle', () => {
     expect(zoneLifetimeTicks(ELEMENT.BRAISE)).toBe(ZONE_LIFETIME_TICKS);
@@ -187,6 +260,18 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
       ZONE_LIFETIME_TICKS,
     );
   });
+
+  it('rend la duree GENERIQUE pour Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c) : aucune n allonge sa zone', () => {
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+  });
 });
 
 describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => {
@@ -225,6 +310,25 @@ describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => 
   it('Eclat de gel ne laisse AUCUN degat de zone : son effet est un degat direct sur la cible, pas une zone qui brule', () => {
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(0);
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.ECLAT_DE_GEL))).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Vaporisation apparie la Braise (`burnPerTick` non neutre), mais ne
+   * porte AUCUN plancher ici — verifie, pas suppose.** `zoneBurnPerTick` ne
+   * lit jamais `elementOf(...).burnPerTick` (voir son docbloc) : cette
+   * grandeur ne combine structurellement JAMAIS avec l'element, quel que
+   * soit le declencheur. Les deux ordres doivent donc rendre zero.
+   */
+  it('Vaporisation ne laisse AUCUN degat de zone, dans les DEUX ordres : son effet est geometrique, pas persistant', () => {
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.VAPORISATION))).toBe(0);
+  });
+
+  it('Arc caustique et Paratonnerre ne laissent AUCUN degat de zone : leur effet est la chaine, pas une brulure', () => {
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.ARC_CAUSTIQUE))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.PARATONNERRE))).toBe(0);
   });
 });
 
@@ -371,6 +475,24 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
       expect(def?.zoneSlowFactor).toBeLessThanOrEqual(elementOf(element).slowFactor);
     }
   });
+
+  /**
+   * ⚠️ **Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c)
+   * n ont AUCUN plancher a fermer ici — verifie, pas suppose.** Aucun des
+   * six elements en jeu (Braise, Vif-argent, Foudre, Chaux) ne porte de
+   * `slowFactor` non neutre (seul le Givre en porte un, voir
+   * `ELEMENT_DEFS`) : les deux ordres de chaque paire doivent donc rendre 1
+   * (aucun ralentissement), sans qu aucune ligne de `REACTION_DEFS` n ait
+   * besoin d un `zoneSlowFactor` explicite.
+   */
+  it('rend 1 (aucun ralentissement) pour Vaporisation, Arc caustique et Paratonnerre, dans les DEUX ordres', () => {
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.VAPORISATION))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.CHAUX, REACTION.ARC_CAUSTIQUE))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.PARATONNERRE))).toBe(1);
+  });
 });
 
 /**
@@ -403,6 +525,28 @@ describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', (
     const surPoix = zoneArmorReduction(packZoneKind(ELEMENT.POIX, REACTION.VERGLAS));
     expect(surGivre).toBe(0);
     expect(surPoix).toBe(0);
+  });
+
+  it('rend zero pour Vaporisation et Paratonnerre : ni l une ni l autre n a d effet sur l armure', () => {
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.VAPORISATION))).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.PARATONNERRE))).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Arc caustique REUTILISE `SUPRACONDUCTION_ARMOR_REDUCTION`, jamais
+   * recopiee.** Voir son entree dans `REACTION_DEFS` (`shared/reactions.ts`) :
+   * deux reactions a deux elements dont l armure est l effet propre
+   * principal partagent le meme reglage plutot que d en inventer un
+   * troisieme non motive.
+   */
+  it('rend SUPRACONDUCTION_ARMOR_REDUCTION pour Arc caustique, quel que soit l element porte', () => {
+    const surFoudre = zoneArmorReduction(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE));
+    const surChaux = zoneArmorReduction(packZoneKind(ELEMENT.CHAUX, REACTION.ARC_CAUSTIQUE));
+    expect(SUPRACONDUCTION_ARMOR_REDUCTION).toBeGreaterThan(0);
+    expect(surFoudre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    expect(surChaux).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
   });
 });
 
@@ -511,6 +655,46 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
     expect(givreDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
     expect(givreDeclenche).toBeGreaterThan(0);
   });
+
+  it('rend zero pour Vaporisation et Paratonnerre, dans les DEUX ordres : ni la Braise ni le Vif-argent n ont d effet d armure', () => {
+    const braiseDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION),
+    );
+    const vifArgentDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.VAPORISATION),
+    );
+    expect(braiseDeclenche).toBe(0);
+    expect(vifArgentDeclenche).toBe(0);
+
+    const foudreDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE),
+    );
+    const vifArgentDeclenche2 = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.PARATONNERRE),
+    );
+    expect(foudreDeclenche).toBe(0);
+    expect(vifArgentDeclenche2).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Arc caustique apparie la Chaux : le plancher explicite
+   * (`SUPRACONDUCTION_ARMOR_REDUCTION`) doit dominer `CHAUX_ARMOR_REDUCTION`
+   * pour rendre les deux ordres identiques — meme garde de plancher que
+   * Fournee et Supraconduction ci-dessus.**
+   */
+  it('Arc caustique ne depend pas de l ordre d arrivee : l armure retiree vaut SUPRACONDUCTION_ARMOR_REDUCTION dans les deux ordres', () => {
+    expect(CHAUX_ARMOR_REDUCTION).toBeLessThanOrEqual(SUPRACONDUCTION_ARMOR_REDUCTION);
+
+    const foudreDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE),
+    );
+    const chauxDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.CHAUX, REACTION.ARC_CAUSTIQUE),
+    );
+    expect(foudreDeclenche).toBe(chauxDeclenche);
+    expect(foudreDeclenche).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    expect(foudreDeclenche).toBeGreaterThan(0);
+  });
 });
 
 /**
@@ -534,6 +718,12 @@ describe('zoneInertiaDamping — le facteur d inertie DERIVE du kind empaquete',
   it('rend 1 pour Fournee et Eclat de gel (tache 4 de l etape 5c) : ni l une ni l autre n a d effet d inertie', () => {
     expect(zoneInertiaDamping(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(1);
     expect(zoneInertiaDamping(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(1);
+  });
+
+  it('rend 1 pour Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c) : aucune n a d effet d inertie', () => {
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(1);
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE))).toBe(1);
+    expect(zoneInertiaDamping(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(1);
   });
 
   it('rend VERGLAS_INERTIA_DAMPING (< 1) pour Verglas, quel que soit l element porte par le nibble', () => {
@@ -566,6 +756,12 @@ describe('zoneCollisionDamage — le degat de collision DERIVE du kind empaquete
   it('rend zero pour Fournee et Eclat de gel (tache 4 de l etape 5c) : ni l une ni l autre n a d effet de collision', () => {
     expect(zoneCollisionDamage(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(0);
     expect(zoneCollisionDamage(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(0);
+  });
+
+  it('rend zero pour Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c) : aucune n a d effet de collision', () => {
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(0);
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE))).toBe(0);
+    expect(zoneCollisionDamage(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(0);
   });
 
   it('rend VERGLAS_COLLISION_DAMAGE_PER_TICK (> 0) pour Verglas, quel que soit l element porte', () => {
@@ -639,6 +835,27 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
     const givreDeclenche = zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL));
     const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.ECLAT_DE_GEL));
     expect(givreDeclenche).toBe(-1);
+    expect(chauxDeclenche).toBe(-1);
+  });
+
+  it('rend +1 pour Vaporisation et Paratonnerre, dans les DEUX ordres : ni l un ni l autre ne pair la Chaux', () => {
+    expect(zoneFieldSign(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.VAPORISATION))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.PARATONNERRE))).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Arc caustique FERME le meme piege transitoire, pour son propre
+   * couple.** Porte `zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign`
+   * EXPLICITE dans `REACTION_DEFS` — jamais heritee de l'element — donc les
+   * deux ordres de declencheur (Foudre, qui n'a pas d'effet propre, puis
+   * Chaux, qui en a un) rendent desormais la MEME reponse, -1.
+   */
+  it('Arc caustique ne depend pas de l ordre d arrivee : -1 que Foudre ou Chaux declenche', () => {
+    const foudreDeclenche = zoneFieldSign(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE));
+    const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.ARC_CAUSTIQUE));
+    expect(foudreDeclenche).toBe(-1);
     expect(chauxDeclenche).toBe(-1);
   });
 });

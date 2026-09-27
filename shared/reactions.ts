@@ -41,6 +41,9 @@ export const REACTION = {
   VERGLAS: 5,
   FOURNEE: 6,
   ECLAT_DE_GEL: 7,
+  VAPORISATION: 8,
+  ARC_CAUSTIQUE: 9,
+  PARATONNERRE: 10,
 } as const;
 
 export interface ReactionDef {
@@ -343,6 +346,119 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
+  },
+  {
+    // Vaporisation (Braise + Vif-argent, tache 5 de l'etape 5c) : degats
+    // dans un rayon autour de chaque ennemi LIE au declencheur (§5 de la
+    // spec : « degats dans un rayon autour des ennemis lies », porte par la
+    // GEOMETRIE — voir la branche dediee d'`applyReactions`,
+    // `back/src/combat.ts`, qui reutilise `damageInRadius` ET
+    // `linkedNeighbours` sans en reecrire un second de chacune). Meme choix
+    // qu'Embrasement/Court-circuit : `radius`/`damage` reutilisent les
+    // grandeurs GENERIQUES de la reaction, l'ecart avec le Choc thermique
+    // etant le CHOIX DES CENTRES (un par ennemi lie), jamais l'intensite —
+    // aucune donnee de jeu ne motive un second chiffre.
+    //
+    // ⚠️ **AUCUN plancher requis — verifie, pas suppose.** Braise n'est non
+    // neutre QUE sur `burnPerTick` (0,1 par tick), qui ne combine JAMAIS
+    // avec l'element (voir le docbloc de `zoneBurnPerTick` : elle ne lit
+    // que `ReactionDef.zoneBurnPerTick`, jamais `elementOf(...).burnPerTick`)
+    // — rien a fuiter ici structurellement, meme raisonnement que la ligne
+    // de Fournee pour ce meme champ. Vif-argent, lui, est NEUTRE sur les
+    // CINQ grandeurs de cette table (voir son entree dans `ELEMENT_DEFS`,
+    // `shared/elements.ts` : « tous les effets de CETTE table a leur
+    // neutre »). Aucun des deux elements de ce couple ne porte donc de
+    // grandeur COMBINANTE non neutre — contrairement a Arc caustique
+    // (Foudre + Chaux) juste en dessous, dont la Chaux en porte DEUX.
+    id: REACTION.VAPORISATION,
+    name: 'vaporisation',
+    pair: packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: REACTION_RADIUS,
+    damage: REACTION_DAMAGE,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: 0,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
+  },
+  {
+    // Arc caustique (Foudre + Chaux, tache 5 de l'etape 5c) : `chainTargets`
+    // (tache 2) INCHANGEE, meme forme que la chaine de Foudre ordinaire
+    // (`CHAIN_RADIUS`/`CHAIN_JUMPS`) — degat generique par saut, PLUS une
+    // pose de zone corrosive a CHAQUE cible touchee (§5 : « la chaine
+    // laisse un champ corrosif a chaque saut »). Voir la branche dediee
+    // d'`applyReactions` (`back/src/combat.ts`), qui reappelle `postZone`
+    // (le SEUL createur de zones) a la position de chaque maillon.
+    //
+    // ⚠️ **`zoneArmorReduction` ET `zoneFieldSign` sont EXPLICITES, jamais
+    // heritees de l'element — le piege des DEUX planchers, comme Fournee et
+    // Eclat de gel avant elle.** Cette paire apparie la Chaux, qui porte
+    // DEUX proprietes non neutres (`armorReduction` et `fieldSign: -1`,
+    // voir `shared/elements.ts`) : le nibble d'element de la zone (posee a
+    // CHAQUE maillon, y compris le premier) porte le DECLENCHEUR (Foudre OU
+    // Chaux selon l'ordre d'arrivee), donc lire l'une ou l'autre grandeur
+    // SEULE au travers de l'element rendrait Arc caustique corrosive une
+    // fois sur deux et fuyante une fois sur deux. Foudre, l'autre moitie du
+    // couple, est NEUTRE sur les cinq grandeurs de cette table (voir son
+    // entree dans `ELEMENT_DEFS`) : aucun troisieme plancher n'est donc
+    // necessaire ici, a la difference d'Eclat de gel (Givre + Chaux), dont
+    // le Givre porte lui aussi un `slowFactor` non neutre.
+    //
+    // ⚠️ **`SUPRACONDUCTION_ARMOR_REDUCTION`, REUTILISEE et non recopiee —
+    // pas un troisieme chiffre arbitraire.** Arc caustique est, comme la
+    // Supraconduction, une reaction a DEUX elements dont l'armure est
+    // l'effet propre principal (contrairement a Fournee, qui va jusqu'a
+    // `MAX_ARMOR`, et a Eclat de gel, dont l'armure n'est qu'un plancher
+    // pour un effet qui n'est pas le sien) : reprendre la meme constante
+    // evite d'inventer un reglage de jeu non motive, exactement le
+    // raisonnement que Verglas applique deja a `zoneSlowFactor`
+    // (`elementOf(ELEMENT.GIVRE).slowFactor`, jamais recopie).
+    id: REACTION.ARC_CAUSTIQUE,
+    name: 'arc-caustique',
+    pair: packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: REACTION_DAMAGE,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: SUPRACONDUCTION_ARMOR_REDUCTION,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
+  },
+  {
+    // Paratonnerre (Foudre + Vif-argent, tache 5 de l'etape 5c) :
+    // `chainTargets` (tache 2) INCHANGEE, `exclude` pre-rempli des ennemis
+    // NON LIES au declencheur — exactement la forme que Court-circuit a
+    // prise pour les non-poisses (tache 6 de l'etape 5b, `chainWhilePoisoned`).
+    // Voir `chainPreferringLinked` dans `back/src/combat.ts`.
+    //
+    // ⚠️ **`CHAIN_JUMPS`/`CHAIN_RADIUS`, PAS un plafond de cout dedie comme
+    // `COURT_CIRCUIT_MAX_JUMPS`.** Paratonnerre reste la chaine de Foudre
+    // ORDINAIRE (3 sauts) qui PREFERE les lies — le §5 de la spec ne
+    // demande ni une propagation sans limite ni un rayon elargi, seulement
+    // une PREFERENCE de cible. `jumps` est deja petit, un second plafond
+    // n'a donc rien a borner ici.
+    //
+    // ⚠️ **AUCUN plancher requis — verifie, pas suppose.** Foudre ET
+    // Vif-argent sont tous deux NEUTRES sur les cinq grandeurs de cette
+    // table (voir leurs entrees dans `ELEMENT_DEFS`) : ce couple ne porte
+    // structurellement rien a fuiter, contrairement a Arc caustique
+    // au-dessus.
+    id: REACTION.PARATONNERRE,
+    name: 'paratonnerre',
+    pair: packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: REACTION_DAMAGE,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: 0,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
   },
 ];
 

@@ -25,6 +25,7 @@ import {
   COURT_CIRCUIT_MAX_JUMPS,
   ECLAT_DE_GEL_DAMAGE,
   FOURNEE_BURN_PER_TICK,
+  LINK_RADIUS,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
   PROJECTILE_HIT_RADIUS,
@@ -3670,5 +3671,432 @@ describe('armureA — une zone de Chaux ET une de Fournee ne poussent jamais l a
     zones.spawn(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE), 1000, 1000, 3, 0);
 
     expect(armureA(horde, horde.slotOf(cible), zones, 0)).toBe(0);
+  });
+});
+
+/**
+ * Vaporisation (Braise + Vif-argent, tache 5 de l'etape 5c) : degats en
+ * RAYON autour de CHAQUE ennemi LIE au declencheur — `damageInRadius` (LE
+ * balayage par rayon) centre sur `linkedNeighbours` (tache 2), jamais sur le
+ * point d'impact d'origine.
+ *
+ * ⚠️ **La liaison ne peut venir QUE d'une zone de Vif-argent ELEMENTAIRE
+ * posee separement** (le pare-feu de la tache 3, `zoneReaction(kind) === 0`
+ * dans `linkedNeighbours`) : la zone que Vaporisation laisse elle-meme au
+ * sol (`postZone`, pour CE declencheur) ne lie jamais personne, quel que
+ * soit l'element qu'elle porte. Tout decor de ce bloc qui veut un degat pose
+ * donc sa propre zone de Vif-argent EN PLUS de declencher Vaporisation.
+ */
+describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIES (tache 5 de l etape 5c)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function trigger(entityId: number, x: number, y: number): ReactionTrigger {
+    return {
+      pair: packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.VIF_ARGENT,
+      entityId,
+    };
+  }
+
+  /**
+   * ⚠️ **La geometrie du decor.** X (declencheur) en (0,0), Y (lie) en
+   * (50,0) — les deux couverts par UNE zone de Vif-argent centree en (25,0)
+   * (rayon `ZONE_RADIUS`, 70 : distance a X et a Y, 25, sous le rayon) et a
+   * moins de `LINK_RADIUS` (80) l'un de l'autre (50 px). Z en (139,0) : a
+   * 89 px de Y (`< REACTION_RADIUS`, 90 — DANS le rayon centre sur Y), mais
+   * a 139 px de X (`> REACTION_RADIUS` — HORS d'un rayon qui serait centre
+   * sur X). W en (189,0), a 139 px de Y (`> REACTION_RADIUS`) : jamais dans
+   * aucun rayon, le temoin « personne ne bouge sans raison ».
+   */
+  it('centre le degat sur l ennemi LIE, pas sur le declencheur : atteint Z (pres de Y), epargne W (loin de tous)', () => {
+    expect(50).toBeLessThan(LINK_RADIUS);
+    expect(89).toBeLessThan(REACTION_RADIUS);
+    expect(139).toBeGreaterThan(REACTION_RADIUS);
+
+    const horde = new Horde(10);
+    const x = addOne(horde, 1, 0, 0, LOURD);
+    const y = addOne(horde, 2, 50, 0, LOURD);
+    const z = addOne(horde, 3, 139, 0, LOURD);
+    const w = addOne(horde, 4, 189, 0, LOURD);
+    for (const id of [x, y, z, w]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 25, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(x, 0, 0)], zones, new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    // X et Y sont tous deux dans le rayon centre sur Y (X a 50 px, Y a 0).
+    expect(horde.hp[horde.slotOf(x)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(y)]).toBeCloseTo(1000 - perte, 5);
+    // Z : la ligne qui prouve le centrage sur Y, pas sur X.
+    expect(horde.hp[horde.slotOf(z)]).toBeCloseTo(1000 - perte, 5);
+    // W : jamais dans aucun rayon.
+    expect(horde.hp[horde.slotOf(w)]).toBe(1000);
+  });
+
+  it('sans zone de Vif-argent ELEMENTAIRE posee ailleurs, personne n est lie : aucun degat, mais le champ se pose quand meme', () => {
+    const horde = new Horde(10);
+    const x = addOne(horde, 1, 0, 0, LOURD);
+    const y = addOne(horde, 2, 30, 0, LOURD);
+    horde.hp[horde.slotOf(x)] = 1000;
+    horde.hp[horde.slotOf(y)] = 1000;
+    const zones = new ZoneField();
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(x, 0, 0)], zones, new Reactions());
+
+    expect(horde.hp[horde.slotOf(x)]).toBe(1000);
+    expect(horde.hp[horde.slotOf(y)]).toBe(1000);
+    expect(zones.count).toBe(1);
+    expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.VAPORISATION);
+  });
+
+  /**
+   * ⚠️ **Le pare-feu de la tache 3, exerce directement.** Sans aucune zone
+   * de Vif-argent ELEMENTAIRE posee ailleurs, la SEULE zone de Vif-argent
+   * qui existe est celle que Vaporisation vient de laisser au sol pour CE
+   * declencheur — et elle porte `ELEMENT.VIF_ARGENT` dans son nibble
+   * d'element (le declencheur ici EST le Vif-argent, voir `trigger`). Sans
+   * le filtre `zoneReaction(kind) === 0` de `linkedNeighbours`, Y serait lie
+   * a X a travers CETTE zone et prendrait des degats — le test prouve que ce
+   * n'est PAS le cas.
+   */
+  it('le champ que Vaporisation laisse elle-meme ne lie personne, meme s il porte l element Vif-argent', () => {
+    const horde = new Horde(10);
+    const x = addOne(horde, 1, 0, 0, LOURD);
+    const y = addOne(horde, 2, 30, 0, LOURD);
+    horde.hp[horde.slotOf(x)] = 1000;
+    horde.hp[horde.slotOf(y)] = 1000;
+    expect(30).toBeLessThan(LINK_RADIUS);
+    expect(30).toBeLessThan(ZONE_RADIUS);
+
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(x, 0, 0)],
+      new ZoneField(),
+      new Reactions(),
+    );
+
+    expect(horde.hp[horde.slotOf(y)]).toBe(1000);
+  });
+
+  it('sans entityId (declencheur ne d un recouvrement de zones), ne touche personne', () => {
+    const horde = new Horde(10);
+    const present = addOne(horde, 1, 0, 0, LOURD);
+    const lie = addOne(horde, 2, 30, 0, LOURD);
+    horde.hp[horde.slotOf(present)] = 1000;
+    horde.hp[horde.slotOf(lie)] = 1000;
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 15, 0, 9, 0);
+
+    const morts = applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [
+        {
+          pair: packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT),
+          x: 0,
+          y: 0,
+          markBy: 1,
+          by: 2,
+          element: ELEMENT.VIF_ARGENT,
+          // entityId omis, expres.
+        },
+      ],
+      zones,
+      new Reactions(),
+    );
+
+    expect(horde.hp[horde.slotOf(present)]).toBe(1000);
+    expect(horde.hp[horde.slotOf(lie)]).toBe(1000);
+    expect(morts).toEqual([]);
+  });
+});
+
+/**
+ * Arc caustique (Foudre + Chaux, tache 5 de l'etape 5c) : `chainTargets`
+ * (tache 2) INCHANGEE — meme forme que la chaine de Foudre ordinaire — PLUS
+ * une pose de zone corrosive a CHAQUE cible touchee.
+ */
+describe('applyReactions — Arc caustique laisse un champ corrosif a chaque saut (tache 5 de l etape 5c)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function trigger(x: number, y: number, entityId?: number): ReactionTrigger {
+    return {
+      pair: packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.CHAUX,
+      entityId,
+    };
+  }
+
+  /**
+   * ⚠️ **Trois maillons espaces de 100 px** (`< CHAIN_RADIUS`, 150) — et
+   * chacun a plus de `ZONE_RADIUS` (70) du precedent ET de l'origine, pour
+   * qu'AUCUNE zone corrosive posee par un hop anterieur n'ampute l'armure du
+   * hop suivant : chaque perte reste EXACTEMENT `coupSurLourd(REACTION_DAMAGE)`,
+   * jamais amplifiee par sa propre trace (le piege qu'Embrasement et Eclat
+   * de gel ont deja rencontre pour d'AUTRES grandeurs).
+   */
+  it('chaine sur trois maillons, degat EXACT par saut, et un champ corrosif au sol a CHAQUE position touchee', () => {
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 100, 0, LOURD);
+    const b = addOne(horde, 2, 200, 0, LOURD);
+    const c = addOne(horde, 3, 300, 0, LOURD);
+    for (const id of [a, b, c]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    const zones = new ZoneField();
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(0, 0)], zones, new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(c)]).toBeCloseTo(1000 - perte, 5);
+
+    // ⚠️ Le champ d'origine (au point declencheur) PLUS un par maillon
+    // touche : quatre zones au total, chacune portant le nibble
+    // ARC_CAUSTIQUE.
+    expect(zones.count).toBe(4);
+    for (let i = 0; i < zones.count; i++) {
+      expect(zoneReaction(zones.kind[i] ?? 0)).toBe(REACTION.ARC_CAUSTIQUE);
+    }
+
+    // ⚠️ **L'effet FONCTIONNEL du champ corrosif, pas seulement son
+    // existence** : a la position de CHAQUE maillon, l'armure retiree vaut
+    // desormais SUPRACONDUCTION_ARMOR_REDUCTION — un coup ULTERIEUR a cet
+    // endroit mordrait plus fort que `HEAVY_ARMOR` seule ne le laisserait.
+    expect(zones.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    expect(zones.armorReductionAt(200, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    expect(zones.armorReductionAt(300, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+
+  /**
+   * ⚠️ **`CHAIN_JUMPS` (3), jamais `COURT_CIRCUIT_MAX_JUMPS` — Arc caustique
+   * reste la chaine de Foudre ORDINAIRE.** Cinq maillons a portee du
+   * precedent (espaces de 100 px, `< CHAIN_RADIUS`) : seuls les trois
+   * premiers sont touches, les deux derniers — pourtant geometriquement a
+   * portee — ne le sont pas.
+   */
+  it('⚠️ s arrete a CHAIN_JUMPS, contrairement a Court-circuit', () => {
+    expect(CHAIN_JUMPS).toBe(3);
+    const horde = new Horde(10);
+    const maillons: number[] = [];
+    for (let i = 1; i <= 5; i++) {
+      const id = addOne(horde, i, i * 100, 0, LOURD);
+      horde.hp[horde.slotOf(id)] = 1000;
+      maillons.push(id);
+    }
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(0, 0)], new ZoneField(), new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    for (let i = 0; i < CHAIN_JUMPS; i++) {
+      const id = maillons[i];
+      if (id === undefined) {
+        throw new Error('decor incomplet');
+      }
+      expect(horde.hp[horde.slotOf(id)], `maillon ${i + 1}`).toBeCloseTo(1000 - perte, 5);
+    }
+    for (let i = CHAIN_JUMPS; i < 5; i++) {
+      const id = maillons[i];
+      if (id === undefined) {
+        throw new Error('decor incomplet');
+      }
+      expect(horde.hp[horde.slotOf(id)], `maillon ${i + 1}`).toBe(1000);
+    }
+  });
+
+  it('exclut l ennemi qui declenche : il ne saute pas sur lui-meme malgre la distance nulle', () => {
+    // ⚠️ **`cible` a 100 px, pas moins** : au-dela de `ZONE_RADIUS` (70) du
+    // point d'origine, pour que le champ corrosif que `postZone` y pose
+    // (le declencheur lui-meme) n'ampute pas l'armure de `cible` avant que
+    // son propre coup ne soit compte — meme piege que celui documente pour
+    // Embrasement/Eclat de gel, ferme ici par la geometrie plutot que par le
+    // calcul.
+    const horde = new Horde(10);
+    const declencheur = addOne(horde, 1, 500, 500, LOURD);
+    const cible = addOne(horde, 2, 600, 500, LOURD);
+    horde.hp[horde.slotOf(declencheur)] = 1000;
+    horde.hp[horde.slotOf(cible)] = 1000;
+    expect(100).toBeGreaterThan(ZONE_RADIUS);
+    expect(100).toBeLessThan(CHAIN_RADIUS);
+
+    const t = trigger(500, 500, declencheur);
+    applyReactions(horde, new OrbField(10), 0, [t], new ZoneField(), new Reactions());
+
+    expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(1000 - coupSurLourd(REACTION_DAMAGE), 5);
+    expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
+  });
+});
+
+/**
+ * Paratonnerre (Foudre + Vif-argent, tache 5 de l'etape 5c) : `chainTargets`
+ * (tache 2) INCHANGEE, `exclude` pre-rempli des ennemis NON LIES au
+ * declencheur — exactement la forme que Court-circuit a prise pour les
+ * non-poisses (`chainPreferringLinked`, `back/src/combat.ts`).
+ */
+describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (tache 5 de l etape 5c)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  function trigger(entityId: number | undefined, x: number, y: number): ReactionTrigger {
+    return {
+      pair: packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT),
+      x,
+      y,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.VIF_ARGENT,
+      entityId,
+    };
+  }
+
+  /**
+   * ⚠️ **SAUTE PAR-DESSUS un voisin NON LIE, plus proche, pour atteindre un
+   * lie plus loin — le coeur de la preference.** D (declencheur, 0,0) et L
+   * (lie, 60,0) sont tous deux couverts par une zone de Vif-argent posee
+   * SUR L (centre 60,0, rayon `ZONE_RADIUS`, 70 : D a 60 px du centre, L a
+   * 0) et a 60 px l'un de l'autre — sous `LINK_RADIUS` (80). N (-55,0) est
+   * GEOMETRIQUEMENT plus proche de D (55 px) que L ne l'est (60 px) — une
+   * chaine ordinaire choisirait N en premier — mais N est a 115 px du centre
+   * de la zone, AU-DELA de `ZONE_RADIUS` : aucune zone ne le couvre en
+   * meme temps que D, donc `linkedNeighbours` ne le lie jamais, quelle que
+   * soit la distance qui le separe de D. `exclude` pre-rempli des non-lies
+   * rend N invisible pour `chainTargets` : L doit etre atteint, N jamais.
+   */
+  it('atteint le lie plus LOIN, ignore le non-lie plus PROCHE', () => {
+    const horde = new Horde(10);
+    const d = addOne(horde, 1, 0, 0, LOURD);
+    const l = addOne(horde, 2, 60, 0, LOURD);
+    const n = addOne(horde, 3, -55, 0, LOURD);
+    for (const id of [d, l, n]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 60, 0, 9, 0);
+    expect(60).toBeLessThan(ZONE_RADIUS); // D, dans la zone (centree sur L)
+    expect(60).toBeLessThan(LINK_RADIUS); // D et L, a portee de liaison
+    expect(115).toBeGreaterThan(ZONE_RADIUS); // N, HORS de la zone
+    expect(55).toBeLessThan(60); // N geometriquement plus proche de D que L
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(d, 0, 0)], zones, new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    expect(horde.hp[horde.slotOf(l)]).toBeCloseTo(1000 - perte, 5);
+    // N n'a jamais ete une cible : ni touche, ni relais.
+    expect(horde.hp[horde.slotOf(n)]).toBe(1000);
+  });
+
+  /**
+   * ⚠️ **`CHAIN_JUMPS` (3), jamais un plafond de cout dedie.** Cinq ennemis
+   * tous LIES au declencheur (tous dans la meme zone de Vif-argent, tous a
+   * moins de `LINK_RADIUS`) : seuls les trois plus proches, dans l'ordre du
+   * saut, sont touches.
+   */
+  it('⚠️ s arrete a CHAIN_JUMPS meme quand PLUS de lies sont disponibles', () => {
+    expect(CHAIN_JUMPS).toBe(3);
+    const horde = new Horde(10);
+    const d = addOne(horde, 1, 0, 0, LOURD);
+    horde.hp[horde.slotOf(d)] = 1000;
+    const lies: number[] = [];
+    // Cinq lies alignes, 10 px les uns des autres : tous a moins de
+    // LINK_RADIUS (80) de d, tous dans la zone de Vif-argent ci-dessous.
+    for (let i = 1; i <= 5; i++) {
+      const id = addOne(horde, i + 1, i * 10, 0, LOURD);
+      horde.hp[horde.slotOf(id)] = 1000;
+      lies.push(id);
+    }
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 25, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(d, 0, 0)], zones, new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    for (let i = 0; i < CHAIN_JUMPS; i++) {
+      const id = lies[i];
+      if (id === undefined) {
+        throw new Error('decor incomplet');
+      }
+      expect(horde.hp[horde.slotOf(id)], `lie ${i + 1}`).toBeCloseTo(1000 - perte, 5);
+    }
+    for (let i = CHAIN_JUMPS; i < 5; i++) {
+      const id = lies[i];
+      if (id === undefined) {
+        throw new Error('decor incomplet');
+      }
+      expect(horde.hp[horde.slotOf(id)], `lie ${i + 1}`).toBe(1000);
+    }
+  });
+
+  /**
+   * ⚠️ **Le point de revue n°3 du brief.** Aucun ennemi lie : `exclude`
+   * contient alors TOUTE la horde, et `chainTargets` doit rendre une liste
+   * VIDE — sans boucler ni lever. La horde est REELLEMENT peuplee (garde de
+   * non-vacuite ci-dessous) : sans elle, « personne ne prend de degat »
+   * passerait aussi bien parce qu'il n'y a personne a toucher — le « test
+   * qui renvoie zero » que le brief nomme explicitement.
+   */
+  it('aucun ennemi lie : ne touche personne, ne boucle pas, ne leve pas — horde REELLEMENT peuplee', () => {
+    const horde = new Horde(10);
+    const d = addOne(horde, 1, 0, 0, LOURD);
+    horde.hp[horde.slotOf(d)] = 1000;
+    const voisins: number[] = [];
+    // Cinq voisins GEOMETRIQUEMENT a portee de chaine (< CHAIN_RADIUS), mais
+    // AUCUNE zone de Vif-argent nulle part : personne n'est lie a d.
+    for (let i = 1; i <= 5; i++) {
+      const id = addOne(horde, i + 1, i * 20, 0, LOURD);
+      horde.hp[horde.slotOf(id)] = 1000;
+      voisins.push(id);
+    }
+    expect(horde.count).toBe(6); // non-vacuite : une horde REELLEMENT peuplee
+
+    expect(() => {
+      applyReactions(
+        horde,
+        new OrbField(10),
+        0,
+        [trigger(d, 0, 0)],
+        new ZoneField(),
+        new Reactions(),
+      );
+    }).not.toThrow();
+
+    for (const id of voisins) {
+      expect(horde.hp[horde.slotOf(id)]).toBe(1000);
+    }
+    expect(horde.hp[horde.slotOf(d)]).toBe(1000);
+  });
+
+  it('sans entityId (declencheur ne d un recouvrement de zones), se degrade comme « aucun lie » : personne ne bouge', () => {
+    const horde = new Horde(10);
+    const present = addOne(horde, 1, 0, 0, LOURD);
+    horde.hp[horde.slotOf(present)] = 1000;
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 0, 0, 9, 0);
+
+    expect(() => {
+      applyReactions(
+        horde,
+        new OrbField(10),
+        0,
+        [trigger(undefined, 0, 0)],
+        zones,
+        new Reactions(),
+      );
+    }).not.toThrow();
+
+    expect(horde.hp[horde.slotOf(present)]).toBe(1000);
   });
 });

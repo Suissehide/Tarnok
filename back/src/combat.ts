@@ -16,6 +16,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
+import { linkedNeighbours } from '@shared/links';
 import type { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
 import { REACTION, reactionForPair } from '@shared/reactions';
@@ -763,6 +764,73 @@ function chainWhilePoisoned(
 }
 
 /**
+ * Paratonnerre (Foudre + Vif-argent, tache 5 de l'etape 5c) : `chainTargets`
+ * (`shared/chain.ts`, tache 2) — **inchangee, reutilisee telle quelle** — sur
+ * la population LIEE au declencheur, exactement la meme forme que
+ * `chainWhilePoisoned` ci-dessus pour Court-circuit : `exclude` pre-rempli de
+ * tout ce qui n'est PAS lie, si bien que chaque cible que `chainTargets` peut
+ * encore rendre est liee PAR CONSTRUCTION, jamais par un filtre a posteriori.
+ *
+ * ⚠️ **`CHAIN_JUMPS`/`CHAIN_RADIUS`, jamais `COURT_CIRCUIT_MAX_JUMPS`.**
+ * Paratonnerre reste la chaine de Foudre ORDINAIRE (3 sauts) qui PREFERE les
+ * ennemis lies — le §5 de la spec de l'etape 5c ne demande ni une
+ * propagation sans limite ni un rayon elargi, seulement une PREFERENCE de
+ * cible. `jumps` est deja petit : un plafond de cout dedie n'a rien a borner
+ * ici, contrairement a Court-circuit ou `jumps = horde.count` risquait de
+ * construire la liste entiere avant que quoi que ce soit ne s'arrete.
+ *
+ * ⚠️ **Le point de revue n°3 du brief : AUCUN ennemi lie.** Sans identite de
+ * declencheur, ou si `linkedNeighbours` rend un tableau vide, `linked` reste
+ * vide et la boucle ci-dessous ajoute TOUTE la horde a `exclude` — y compris
+ * un declencheur qui s'y trouvait deja par construction. `chainTargets` ne
+ * trouve alors jamais de candidat (`bestSlot` reste `-1` des le premier tour)
+ * et rend une liste VIDE, sans boucler ni lever : degradation gracieuse,
+ * meme forme que `chainWhilePoisoned` quand aucun poisse n'est a portee.
+ *
+ * ⚠️ **La liaison se relit ICI, pas depuis `t` : `ReactionTrigger` ne porte
+ * aucun champ « lies ».** Comme pour Vaporisation, la liaison ne vient QUE
+ * d'une zone de Vif-argent ELEMENTAIRE posee separement — `linkedNeighbours`
+ * filtre deja les zones de REACTION (`zoneReaction(kind) !== 0`, correctif
+ * de la tache 3), donc la zone que ce meme declencheur vient de laisser au
+ * sol (`postZone`, avant cette fonction) ne peut jamais lier personne.
+ */
+function chainPreferringLinked(
+  horde: Horde,
+  trigger: ReactionTrigger,
+  damage: number,
+  zones: ZoneField,
+  tick: number,
+  dead: Set<number>,
+): void {
+  const exclude = new Set(dead);
+  if (trigger.entityId !== undefined) {
+    exclude.add(trigger.entityId);
+  }
+  const triggerSlot = trigger.entityId !== undefined ? horde.slotOf(trigger.entityId) : -1;
+  const linked = new Set(triggerSlot >= 0 ? linkedNeighbours(horde, triggerSlot, zones, tick) : []);
+  // ⚠️ **Le pre-remplissage qui rend chaque saut LIE PAR CONSTRUCTION.**
+  // `chainTargets` ne choisit jamais parmi les identites de `exclude` : en y
+  // mettant tous les non-lies AVANT de l'appeler, la fonction ne peut plus
+  // rendre qu'une identite liee, dans l'ordre du plus proche.
+  for (let i = 0; i < horde.count; i++) {
+    const id = horde.entityIdAt(i);
+    if (!linked.has(id)) {
+      exclude.add(id);
+    }
+  }
+  for (const id of chainTargets(horde, trigger.x, trigger.y, CHAIN_RADIUS, CHAIN_JUMPS, exclude)) {
+    const slot = horde.slotOf(id);
+    // ⚠️ INATTEIGNABLE par construction, meme raisonnement que les autres
+    // `slot < 0` de ce fichier : `chainTargets` ne rend que des identites
+    // lues DANS `horde`, et rien ne compacte entre cet appel et cette boucle.
+    if (slot < 0) {
+      continue;
+    }
+    appliquerDegats(horde, slot, damage, zones, tick, dead);
+  }
+}
+
+/**
  * Resout les reactions collectees pendant le tick : l'effet SPECIFIQUE de la
  * table des reactions (`shared/reactions.ts`, tache 6 de l'etape 5b) si la
  * paire en a un, sinon `REACTION_DAMAGE` a tout ennemi dans `REACTION_RADIUS`
@@ -860,6 +928,72 @@ export function applyReactions(
       if (slot >= 0) {
         appliquerDegats(horde, slot, def.damage, zones, tick, dead);
       }
+    } else if (def?.id === REACTION.VAPORISATION) {
+      // ⚠️ **Vaporisation (Braise + Vif-argent) : degats en RAYON autour de
+      // CHAQUE ennemi LIE au declencheur — §5 de la spec, « porte par la
+      // geometrie », pas par une zone.** Reutilise `damageInRadius` (le SEUL
+      // balayage par rayon) et `linkedNeighbours` (tache 2) sans en reecrire
+      // une seconde forme de chacune.
+      //
+      // ⚠️ **Aucun `markFilter` passe ici, deliberement.** Chaque centre est
+      // deja un ennemi SELECTIONNE par la geometrie de la liaison ; filtrer
+      // en plus par la marque exclurait a tort le declencheur lui-meme
+      // (§4.3, il ressort NU) des rayons de ses propres lies qui le
+      // recouvrent.
+      //
+      // ⚠️ **Sans identite de declencheur, ou sans aucun lie, aucun degat —
+      // Vaporisation ne retombe PAS sur le point d'origine.** Une zone de
+      // Vif-argent ELEMENTAIRE doit avoir ete posee ailleurs pour que
+      // quiconque soit lie (le pare-feu de la tache 3 exclut les zones de
+      // REACTION de `linkedNeighbours`, donc la zone que CE declencheur
+      // vient de laisser au sol ne compte jamais).
+      const slot = t.entityId !== undefined ? horde.slotOf(t.entityId) : -1;
+      if (slot >= 0) {
+        for (const linkedId of linkedNeighbours(horde, slot, zones, tick)) {
+          const linkedSlot = horde.slotOf(linkedId);
+          // ⚠️ INATTEIGNABLE par construction, meme raisonnement que les
+          // autres `slot < 0` de ce fichier.
+          if (linkedSlot < 0) {
+            continue;
+          }
+          damageInRadius(
+            horde,
+            horde.x[linkedSlot] ?? 0,
+            horde.y[linkedSlot] ?? 0,
+            def.radius,
+            def.damage,
+            zones,
+            tick,
+            dead,
+          );
+        }
+      }
+    } else if (def?.id === REACTION.ARC_CAUSTIQUE) {
+      // ⚠️ **Arc caustique (Foudre + Chaux) : `chainTargets` INCHANGEE,
+      // meme forme que la chaine de Foudre ordinaire, PLUS une pose de zone
+      // corrosive a CHAQUE cible touchee** (§5 : « la chaine laisse un champ
+      // corrosif a chaque saut »). `postZone` reste le SEUL createur de
+      // zones : rappelee ici a la position de chaque maillon, jamais un
+      // second chemin de creation.
+      const exclude = new Set(dead);
+      if (t.entityId !== undefined) {
+        exclude.add(t.entityId);
+      }
+      for (const id of chainTargets(horde, t.x, t.y, CHAIN_RADIUS, CHAIN_JUMPS, exclude)) {
+        const slot = horde.slotOf(id);
+        if (slot < 0) {
+          continue;
+        }
+        appliquerDegats(horde, slot, def.damage, zones, tick, dead);
+        // Le champ corrosif SUIT la cible, pas le point d'impact d'origine —
+        // le declencheur `t` porte deja le bon couple/element, seule la
+        // position change.
+        postZone(zones, { ...t, x: horde.x[slot] ?? 0, y: horde.y[slot] ?? 0 }, tick, reactions);
+      }
+    } else if (def?.id === REACTION.PARATONNERRE) {
+      // Paratonnerre (Foudre + Vif-argent) : voir `chainPreferringLinked`
+      // ci-dessus pour la forme complete (`exclude` pre-rempli des non-lies).
+      chainPreferringLinked(horde, t, def.damage, zones, tick, dead);
     } else {
       damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
     }

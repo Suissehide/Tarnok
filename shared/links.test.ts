@@ -78,7 +78,7 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Le cœur de la tache.** A-B a moins de `LINK_RADIUS`, B-C a moins de
+   * ⚠️ **Le coeur de la tache.** A-B a moins de `LINK_RADIUS`, B-C a moins de
    * `LINK_RADIUS`, A-C au-dela : A et C ne sont PAS lies. Une fermeture
    * transitive (un amas) les aurait fusionnes par B, et le resultat aurait
    * alors dependu de l'ORDRE DE VISITE — donc du compactage de la horde, non
