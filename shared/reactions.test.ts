@@ -282,28 +282,22 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
   });
 
   /**
-   * ⚠️ **Un residu HORS PERIMETRE de la tache 4, trouve en l'ecrivant — a
-   * signaler, pas a corriger ici.** Eclat de gel (Givre + Chaux) laisse
-   * `zoneSlowFactor` a sa valeur NEUTRE dans `REACTION_DEFS` (elle ne
-   * PRETEND a aucun ralentissement propre, voir son docbloc — « Porte par :
-   * degat », pas « zone », dans la spec de l'etape 5c). Mais le Givre, lui,
-   * porte un `slowFactor` non neutre (0,6) : la zone que laisse
-   * INEVITABLEMENT `postZone` (pour CHAQUE declencheur, sans exception)
-   * ralentit donc si Givre a declenche, mais PAS si Chaux a declenche —
-   * exactement le meme piege d'ordre que Fournee et Eclat de gel referment
-   * pour `zoneArmorReductionTotal` et `zoneFieldSign`, MAIS que le brief de
-   * la tache 4 ne demandait de fermer que pour ces deux-la (« Tes deux
-   * reactions apparient la Chaux » — pas « et l'une d'elles apparie aussi le
-   * Givre »). Documente ici plutot que laisse en silence : voir le rapport
-   * de la tache pour la recommandation.
+   * ⚠️ **La TROISIEME grandeur piegee, trouvee par la revue apres coup —
+   * ma propre regle de « deux planchers » etait incomplete.** Eclat de gel
+   * (Givre + Chaux) laissait `zoneSlowFactor` a sa valeur NEUTRE : le Givre,
+   * lui, porte un `slowFactor` non neutre (0,6), donc la zone ralentissait si
+   * Givre avait declenche, mais pas si Chaux avait declenche — exactement le
+   * meme piege d'ordre que `zoneArmorReductionTotal`/`zoneFieldSign`
+   * referment pour la Chaux. Corrige en reprenant le plancher de Verglas
+   * (`elementOf(ELEMENT.GIVRE).slowFactor`) : Eclat de gel garde la morsure
+   * du froid quel que soit l'ordre, comme les deux autres grandeurs.
    */
-  it('⚠️ Eclat de gel RESTE ordre-dependant sur zoneSlowFactor : le Givre fuit au travers, la Chaux non', () => {
+  it('Eclat de gel ne depend plus de l ordre d arrivee : le ralentissement vaut celui du Givre dans les deux ordres', () => {
     const givreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL));
     const chauxDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.CHAUX, REACTION.ECLAT_DE_GEL));
     expect(elementOf(ELEMENT.GIVRE).slowFactor).toBeLessThan(1);
+    expect(givreDeclenche).toBe(chauxDeclenche);
     expect(givreDeclenche).toBe(elementOf(ELEMENT.GIVRE).slowFactor);
-    expect(chauxDeclenche).toBe(1);
-    expect(givreDeclenche).not.toBe(chauxDeclenche);
   });
 
   /**

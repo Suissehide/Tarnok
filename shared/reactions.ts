@@ -293,19 +293,44 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // balayage generique. `radius: 0` documente ce choix : AUCUN effet
     // geometrique, contrairement a Embrasement.
     //
-    // ⚠️ **`zoneArmorReduction` ET `zoneFieldSign` restent EXPLICITES, MEME
-    // pour une reaction dont l'effet reel n'est PAS porte par la zone.** Le
-    // meme piege que Fournee ci-dessus s'applique : `postZone`
+    // ⚠️ **TROIS planchers EXPLICITES, pas deux — correction de la revue.**
+    // `zoneArmorReduction` ET `zoneFieldSign` restent explicites MEME pour
+    // une reaction dont l'effet reel n'est PAS porte par la zone : `postZone`
     // (`back/src/combat.ts`) pose une zone pour CHAQUE declencheur, sans
     // exception pour les reactions « degat seul » — la zone laissee par Eclat
     // de gel existe donc bel et bien, et son element porte le DECLENCHEUR
-    // (Givre OU Chaux selon l'ordre). Sans plancher explicite, la corrosion et
-    // la fuite de la Chaux qu'elle porte fuiteraient une fois sur deux,
-    // exactement comme pour Fournee. La reduction choisie ici est
+    // (Givre OU Chaux selon l'ordre). La reduction choisie est
     // `elementOf(ELEMENT.CHAUX).armorReduction` — pas `MAX_ARMOR` — parce
     // qu'Eclat de gel ne PRETEND a aucun effet d'armure propre (a la
     // difference de Fournee) : le plancher garantit seulement ce qu'une Chaux
     // SEULE laisserait deja, ni plus ni moins, quel que soit l'ordre.
+    //
+    // ⚠️ **La revue a trouve la TROISIEME : le Givre, l'AUTRE moitie du
+    // couple, porte lui aussi une propriete non neutre (`slowFactor` = 0,6),
+    // et `zoneSlowFactor` la laissait a 1 (neutre) — donc HERITEE de
+    // l'element, pas plancheee.** `zoneSlowFactor(kind) = min(elementFactor,
+    // reactionFactor)` : avec `reactionFactor` neutre, le Givre glace la zone
+    // (0,6) s'il est arrive en SECOND, et la Chaux ne glace RIEN (1) si elle
+    // est arrivee en second — la meme Eclat de gel ralentirait ou pas selon
+    // l'ordre des deux projectiles, exactement le piege que ce module existe
+    // pour fermer. Corrige en reprenant le plancher de Verglas
+    // (`elementOf(ELEMENT.GIVRE).slowFactor`, jamais recopie) : « la cible
+    // explose en eclats » (§6.4) garde la morsure du froid quel que soit
+    // l'ordre, plutot que de la perdre a l'arbitraire d'un ordre de tir. Voir
+    // le test « Eclat de gel ne depend plus de l'ordre d'arrivee (armure,
+    // fuite ET ralentissement) », `shared/reactions.test.ts`.
+    //
+    // ⚠️ **Regle generale (que la revue a elargie deux fois) : une reaction
+    // doit plancher EXPLICITEMENT toute grandeur de zone dans laquelle L'UN
+    // OU L'AUTRE de ses deux elements est non neutre** — pas seulement celles
+    // que porte la Chaux. Fournee (Braise + Chaux) n'a besoin d'AUCUN
+    // troisieme plancher pour `zoneBurnPerTick` : cette grandeur ne combine
+    // JAMAIS avec l'element (voir son docbloc plus haut, `zoneBurnPerTick`
+    // ne lit que `ReactionDef.zoneBurnPerTick`, jamais
+    // `elementOf(...).burnPerTick`) — la Braise n'a donc structurellement
+    // rien a fuiter ici, et la ligne de Fournee est deja explicite (elle ne
+    // pouvait pas faire autrement : il n'y a pas de valeur « neutre heritee »
+    // possible pour ce champ, `?? 0` est le seul secours).
     id: REACTION.ECLAT_DE_GEL,
     name: 'eclat-de-gel',
     pair: packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX),
@@ -313,7 +338,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneLifetimeTicks: 0,
     radius: 0,
     damage: ECLAT_DE_GEL_DAMAGE,
-    zoneSlowFactor: 1,
+    zoneSlowFactor: elementOf(ELEMENT.GIVRE).slowFactor,
     zoneArmorReduction: elementOf(ELEMENT.CHAUX).armorReduction,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
