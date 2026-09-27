@@ -4220,6 +4220,44 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
   });
 
   /**
+   * ⚠️ **LE test qui separe le partage par LIAISON d'un balayage GENERIQUE
+   * par `REACTION_RADIUS` — mesure par mutation, pas suppose (voir le
+   * rapport de la tache 7).** `LINK_RADIUS` (80) est STRICTEMENT sous
+   * `REACTION_RADIUS` (90) : tout ennemi lie a A tombe donc, par
+   * construction, TOUJOURS a l'interieur d'un rayon de 90 centre sur A —
+   * aucun des tests precedents de ce bloc ne peut donc distinguer « degat
+   * partage aux lies » de « le Choc thermique generique retombe par
+   * coincidence sur le meme ennemi ». G, a 85 px d'A, EST dans
+   * `REACTION_RADIUS` (90 : un balayage generique le toucherait) mais PAS
+   * dans `LINK_RADIUS` (80 : `linkedNeighbours` ne le rend jamais, quelle
+   * que soit la zone qui le couvre) — un `shareAmalgameDamage` remplace a
+   * tort par le Choc thermique generique toucherait G a tort ; celui-ci
+   * l'epargne.
+   */
+  it('epargne un voisin GEOMETRIQUEMENT proche mais NON LIE, meme dans REACTION_RADIUS', () => {
+    expect(85).toBeLessThan(REACTION_RADIUS);
+    expect(85).toBeGreaterThan(LINK_RADIUS);
+
+    const horde = new Horde(10);
+    const a = addOne(horde, 1, 0, 0, LOURD);
+    const b = addOne(horde, 2, 50, 0, LOURD);
+    const g = addOne(horde, 3, 85, 0, LOURD);
+    for (const id of [a, b, g]) {
+      horde.hp[horde.slotOf(id)] = 1000;
+    }
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 25, 0, 9, 0);
+
+    applyReactions(horde, new OrbField(10), 0, [trigger(a, 0, 0)], zones, new Reactions());
+
+    const perte = coupSurLourd(REACTION_DAMAGE) * elementOf(ELEMENT.POIX).damageAmp;
+    expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(1000 - perte, 5);
+    // G : jamais lie, jamais touche — meme s'il tombe dans REACTION_RADIUS.
+    expect(horde.hp[horde.slotOf(g)]).toBe(1000);
+  });
+
+  /**
    * ⚠️ **Le voisin LIE occupe le creneau 0 — mesure par mutation, pas
    * suppose.** Dans le test precedent, le declencheur est ajoute EN PREMIER
    * (creneau 0) et le lie toujours APRES : `linkedSlot < 0` n'y est donc
