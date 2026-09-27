@@ -2122,6 +2122,90 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
       expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
     });
   });
+
+  /**
+   * La Chaux (tache 1 de l'etape 5c) : « il fuit » — la direction du champ
+   * s'inverse pour un ennemi en zone, une SUBSTITUTION au moment ou
+   * `Horde#recomputeSteering` lit `fx`/`fy`, jamais une ecriture dans
+   * `targetField` (voir le docbloc de `Horde#computeFieldSign`). Meme decor
+   * que Z0 a Z2 et ZF0 a ZF2 ci-dessus, REUTILISE via `runZoneScenario` —
+   * `packZoneKind(element, 0) === element`, donc `ELEMENT.CHAUX` seul est
+   * deja un `kind` valide (voir le docbloc de `ZoneField.spawn`) : aucune
+   * reaction nommee ne pair encore la Chaux (taches 4 a 7 de l'etape 5c,
+   * hors perimetre), c'est l'element SEUL qui porte la fuite ici.
+   *
+   * ⚠️ **Les trois memes preuves que Z0 a Z2 et ZF0 a ZF2, dans le meme
+   * ordre, et il faut les trois** : CF0 prouve que la fuite MORD (sans quoi
+   * 0,000 px au CF2 ne prouverait rien), CF1 prouve que sans rejeu ca derive
+   * reellement (le zero de CF2 mesure alors quelque chose), CF2 est le test
+   * qui compte — avec rejeu, la derive retombe a (quasi) zero malgre
+   * l'inversion de direction.
+   */
+  describe('etape 5c tache 1 : la Chaux fait fuir, et le rejeu la date au tick', () => {
+    const CHAUX_KIND = ELEMENT.CHAUX;
+
+    /**
+     * De combien la reference a-t-elle fui ? Compare la meme run avec de la
+     * Chaux et avec du Neutre — meme graine, meme calendrier, meme
+     * geometrie de zones, seul le `kind` change. Meme garde anti-fixture que
+     * `freinage`/`gelage`/`derapage` : sans elle, « 0,000 px » au CF2 ne
+     * distinguerait pas un rejeu exact d'une fuite qui ne s'applique a
+     * personne.
+     */
+    function fuite(mapSeed: number): number {
+      const chaux = runZoneScenario(mapSeed, true, CHAUX_KIND).reference;
+      const temoin = runZoneScenario(mapSeed, true, ELEMENT.NEUTRE).reference;
+      return maxDriftBetween(temoin, chaux);
+    }
+
+    it('scenario CF0 — la fuite mord reellement : la horde chaulee decroche du temoin neutre', () => {
+      const mordu = fuite(0xc4a0_0000);
+      process.stdout.write(
+        `scenario CF0 (la Chaux mord) : ecart maximal entre horde chaulee et temoin neutre ${mordu.toFixed(3)} px\n`,
+      );
+      // ⚠️ **Une INVERSION de direction, pas un ralentissement comme le
+      // Givre de Z0 ni un gel comme la Supraconduction de ZF0** : une entite
+      // fuyante s'eloigne du joueur a PLEINE vitesse la ou le temoin
+      // s'en approche a la meme vitesse — les deux trajectoires divergent
+      // donc au moins aussi vite que le gel total fait decrocher le temoin
+      // de ZF0 (qui, lui, reste immobile pendant que le temoin avance). Le
+      // meme seuil, un dixieme du trajet ENTIER d'une entite a la vitesse la
+      // plus lente du bestiaire sur `ZONE_LIFETIME_TICKS`, reste donc une
+      // borne basse valide ici, meme avec des entites qui entrent et
+      // sortent des disques et un recalcul de trajectoire qui n'a lieu
+      // qu'une fois sur `STEERING_RECOMPUTE_TICKS`.
+      const attenduMin = 0.1 * archetypeOf(0).speed * (ZONE_LIFETIME_TICKS / TICK_HZ);
+      expect(mordu).toBeGreaterThan(attenduMin);
+    });
+
+    it('scenario CF1 — sans rejeu, une zone de Chaux appliquee au present laisse une derive mesurable', () => {
+      const result = runZoneScenario(0xc4a0_0001, false, CHAUX_KIND);
+      process.stdout.write(
+        `scenario CF1 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      // Borne large et volontaire, comme aux scenarios Z1/ZF1/VF1 : ce
+      // scenario existe pour que la derive EXISTE, pas pour qu'elle reste
+      // petite.
+      expect(result.maxDrift).toBeGreaterThan(1);
+    });
+
+    it('scenario CF2 — avec rejeu, la derive retombe a (quasi) zero malgre la fuite : le test qui compte', () => {
+      const result = runZoneScenario(0xc4a0_0002, true, CHAUX_KIND);
+      process.stdout.write(
+        `scenario CF2 (avec rejeu, Chaux en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      for (const p of result.clients) {
+        // 1 a 3 ticks de retard tiennent largement dans l'anneau.
+        expect(p.lateZones).toBe(0);
+        expect(p.horde.count).toBe(result.reference.count);
+      }
+      expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+    });
+  });
 });
 
 /**

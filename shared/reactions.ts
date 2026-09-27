@@ -114,6 +114,21 @@ export interface ReactionDef {
    * voyagent, et elles voyagent deja par `DEATHS`.
    */
   readonly zoneCollisionDamage: number;
+  /**
+   * Signe propre a la zone laissee par cette reaction (etape 5c, tache 1) :
+   * `+1` aucun effet propre, `-1` inverse la direction du champ. Aucune
+   * ligne ne porte `-1` aujourd'hui — la fuite de la Chaux vient de
+   * `Element.fieldSign`, lu ici via `zoneFieldSign` ci-dessous.
+   *
+   * ⚠️ **Meme forme que `zoneSlowFactor` : un PLANCHER que la reaction peut
+   * poser pour garantir l'effet quel que soit l'ordre d'arrivee, pas une
+   * duplication de l'element.** Aucune des cinq reactions actuelles ne pair
+   * la Chaux — celles qui le feront (Fournee, Eclat de gel, Arc caustique,
+   * Mortier vif, hors du perimetre de cette tache) devront reprendre ce
+   * champ si leur zone doit fuir QUEL QUE SOIT l'element porte par le
+   * nibble, exactement comme Verglas l'a fait pour `zoneSlowFactor`.
+   */
+  readonly zoneFieldSign: number;
 }
 
 const REACTION_DEFS: readonly ReactionDef[] = [
@@ -134,6 +149,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneArmorReduction: 0,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
   },
   {
     // Embrasement (Braise + Poix) : degats instantanes a tout ennemi POISSE
@@ -153,6 +169,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneArmorReduction: 0,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
   },
   {
     // Court-circuit (Foudre + Poix) : `chainTargets` (shared/chain.ts),
@@ -170,6 +187,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneArmorReduction: 0,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
   },
   {
     // Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : vitesse
@@ -193,6 +211,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // pas par la perte de controle.
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
   },
   {
     // Verglas (Givre + Poix, tache 8 de l'etape 5b) : friction REDUITE dans
@@ -223,6 +242,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     zoneArmorReduction: 0,
     zoneInertiaDamping: VERGLAS_INERTIA_DAMPING,
     zoneCollisionDamage: VERGLAS_COLLISION_DAMAGE_PER_TICK,
+    zoneFieldSign: 1,
   },
 ];
 
@@ -295,16 +315,47 @@ export function zoneSlowFactor(kind: number): number {
 }
 
 /**
- * L'armure qu'une zone retire, DERIVEE de son `kind` empaquete (0 : aucun
- * effet) — lue par `ZoneField.armorReductionAt` (`shared/zones.ts`), qui ne
- * voyage jamais (voir `armureA`, `back/src/combat.ts`).
+ * La MOITIE reaction de la reduction d'armure d'une zone, DERIVEE de son
+ * `kind` empaquete (0 : aucun effet) — la Supraconduction (tache 7 de
+ * l'etape 5b) est la seule reaction a en porter une aujourd'hui.
  *
- * ⚠️ **Aucune combinaison avec l'element du nibble ici, contrairement a
- * `zoneSlowFactor`.** `Element` ne porte aucun champ d'armure : seule la
- * reaction en decide.
+ * ⚠️ **N'est plus la grandeur COMPLETE depuis la tache 1 de l'etape 5c.**
+ * `Element` porte desormais aussi un `armorReduction` (la Chaux) : c'est
+ * `zoneArmorReductionTotal`, juste en dessous, qui combine les deux, exactement
+ * comme `zoneSlowFactor` combine `Element.slowFactor` et
+ * `ReactionDef.zoneSlowFactor`. Cette fonction-ci reste la lecture NUE de la
+ * table des reactions, inchangee depuis la tache 7 — `ZoneField.armorReductionAt`
+ * lit desormais `zoneArmorReductionTotal`, jamais celle-ci directement.
  */
 export function zoneArmorReduction(kind: number): number {
   return reactionOfId(zoneReaction(kind))?.zoneArmorReduction ?? 0;
+}
+
+/**
+ * La reduction d'armure qu'une zone impose, ELEMENT et REACTION confondus —
+ * lue par `ZoneField.armorReductionAt` (`shared/zones.ts`), qui ne voyage
+ * jamais (voir `armureA`, `back/src/combat.ts`).
+ *
+ * ⚠️ **Meme raison d'etre que `zoneSlowFactor`** : le nibble d'element d'une
+ * zone de reaction porte celui du DECLENCHEUR, qui varie selon l'ordre
+ * d'arrivee. Deriver de l'element seul rendrait l'effet dependant de cet
+ * ordre — le bug que l'etape 5b a paye deux fois (voir le docbloc du
+ * module).
+ *
+ * ⚠️ **Un MAXIMUM entre les deux contributions, jamais une somme — decision
+ * de jeu, pas contrainte arithmetique.** Deux sources de corrosion ne
+ * s'additionnent pas, comme deux flaques de Poix n'additionnent pas leur
+ * amplification (`ZoneField.ampAt`) : c'est la MEME raison que le maximum
+ * d'`ampAt`/`armorReductionAt`/`collisionDamageAt`/`burnAt`, PAS celle,
+ * arithmetique, du minimum de `Horde#computeSlow` (ou de `zoneSlowFactor`
+ * ci-dessus, qui partage sa raison). Ne pas confondre les deux dans un futur
+ * commentaire : voir le docbloc de `ZoneField.ampAt` pour la distinction
+ * complete.
+ */
+export function zoneArmorReductionTotal(kind: number): number {
+  const elementReduction = elementOf(zoneElement(kind)).armorReduction;
+  const reactionReduction = zoneArmorReduction(kind);
+  return Math.max(elementReduction, reactionReduction);
 }
 
 /**
@@ -329,4 +380,39 @@ export function zoneInertiaDamping(kind: number): number {
  */
 export function zoneCollisionDamage(kind: number): number {
   return reactionOfId(zoneReaction(kind))?.zoneCollisionDamage ?? 0;
+}
+
+/**
+ * Le signe qu'une zone impose a la direction du champ de deplacement,
+ * ELEMENT et REACTION confondus : `-1` la zone inverse la direction (fuite),
+ * `+1` elle ne la touche pas. Lu par `Horde` (etape 5c, tache 1), qui VOYAGE
+ * des deux cotes du fil — meme raisonnement que `zoneSlowFactor`, dont cette
+ * fonction reprend exactement la forme.
+ *
+ * ⚠️ **Meme piege d'ordre que `zoneArmorReductionTotal` et `zoneSlowFactor`,
+ * et le MEME remede : le MINIMUM entre les deux contributions.** Le nibble
+ * d'element d'une zone de reaction porte celui du DECLENCHEUR, qui varie
+ * selon l'ordre d'arrivee — deriver de l'element seul rendrait la fuite
+ * dependante de cet ordre. Le minimum sur le domaine `{+1, -1}` implemente
+ * une regle "OR" : `-1` (fuite) l'emporte des qu'UNE des deux contributions
+ * l'impose, exactement comme `reactionFactor = 0` emporte tout sur
+ * `zoneSlowFactor`.
+ *
+ * ⚠️ **Aujourd'hui, seul `Element.fieldSign` (la Chaux) porte un `-1` — aucune
+ * ligne de `REACTION_DEFS` ne surcharge encore `zoneFieldSign`.** Une zone de
+ * Chaux SANS reaction nommee (le Choc thermique generique, le seul cas
+ * possible tant que les taches 4 a 7 de l'etape 5c n'ont pas cable Fournee,
+ * Eclat de gel, Arc caustique et Mortier vif) fuit donc uniquement quand
+ * CHAUX est l'element porte par le nibble — c'est-a-dire uniquement quand la
+ * Chaux est arrivee EN SECOND. C'est le meme etat transitoire, ORDRE-DEPENDANT,
+ * que `zoneArmorReductionTotal` traverse avant que Fournee ne lui donne un
+ * plancher explicite (voir son test « ne depend pas de l'ordre d'arrivee »,
+ * `shared/reactions.test.ts`) : une future tache qui cable un couple de la
+ * Chaux devra decider si sa reaction doit ELLE AUSSI garantir la fuite —
+ * en portant `zoneFieldSign: -1` — quel que soit l'element du nibble.
+ */
+export function zoneFieldSign(kind: number): number {
+  const elementSign = elementOf(zoneElement(kind)).fieldSign;
+  const reactionSign = reactionOfId(zoneReaction(kind))?.zoneFieldSign ?? 1;
+  return Math.min(elementSign, reactionSign);
 }

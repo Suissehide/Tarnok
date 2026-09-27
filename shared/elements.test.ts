@@ -10,6 +10,16 @@ describe('ELEMENTS', () => {
     });
   });
 
+  it('reste dans le domaine des effets : reduction d armure positive ou nulle, signe de champ +1 ou -1', () => {
+    // ⚠️ Meme discipline que le test « reste dans le domaine des effets »
+    // plus bas pour `burnPerTick`/`slowFactor`/`damageAmp` : un intervalle
+    // large, complementaire aux tests NOMMES de la Chaux ci-dessous.
+    for (const e of ELEMENTS) {
+      expect(e.armorReduction, e.name).toBeGreaterThanOrEqual(0);
+      expect(e.fieldSign === 1 || e.fieldSign === -1, e.name).toBe(true);
+    }
+  });
+
   it('compte le neutre et les deux elements de l etape 5a, et pas plus que les six du §6.3', () => {
     expect(ELEMENTS.length).toBeGreaterThanOrEqual(3);
     expect(ELEMENTS.length).toBeLessThanOrEqual(7);
@@ -79,6 +89,7 @@ describe('ELEMENT (les identifiants nommes)', () => {
     expect(elementOf(ELEMENT.GIVRE).name).toBe('givre');
     expect(elementOf(ELEMENT.FOUDRE).name).toBe('foudre');
     expect(elementOf(ELEMENT.POIX).name).toBe('poix');
+    expect(elementOf(ELEMENT.CHAUX).name).toBe('chaux');
   });
 
   it('couvre toute la table : aucun element n est sans nom d identifiant', () => {
@@ -138,6 +149,13 @@ describe('le neutre est une entree de la table, pas un cas particulier', () => {
    * — le docbloc de `ELEMENT_DEFS` explique pourquoi lui donner un champ ici
    * n'aurait rien generalise. C'est `shared/chain.test.ts` qui garde que
    * cet effet-la n'est pas mort.
+   *
+   * ⚠️ **ETENDUE a la tache 1 de l'etape 5c : `armorReduction > 0` et
+   * `fieldSign < 0` rejoignent la liste des effets valables.** La Chaux
+   * n'agit ni par la marque ni par l'amplification de zone — sans cet
+   * elargissement, elle serait a tort une seconde exception NOMMEE, alors
+   * que ses deux effets vivent bel et bien dans cette table (voir son
+   * docbloc dans `ELEMENT_DEFS`).
    */
   it('est le SEUL sans effet : tout autre element porte au moins un effet (marque, zone, ou une exception nommee)', () => {
     // La Foudre : seul cas ou l'effet vit hors de cette table (voir
@@ -149,7 +167,11 @@ describe('le neutre est une entree de la table, pas un cas particulier', () => {
         continue;
       }
       expect(
-        e.burnPerTick > 0 || e.slowFactor < 1 || e.damageAmp > 1,
+        e.burnPerTick > 0 ||
+          e.slowFactor < 1 ||
+          e.damageAmp > 1 ||
+          e.armorReduction > 0 ||
+          e.fieldSign < 0,
         `element « ${e.name} »`,
       ).toBe(true);
     }
@@ -219,6 +241,37 @@ describe('la poix (tache 4)', () => {
 
   it('amplifie strictement les degats recus : `damageAmp` depasse 1', () => {
     expect(elementOf(ELEMENT.POIX).damageAmp).toBeGreaterThan(1);
+  });
+});
+
+/**
+ * ⚠️ Meme raison que les deux blocs precedents (Foudre, Poix) : la table
+ * generique ne verifie que des intervalles larges — une mutation qui
+ * preterait une brulure, un ralentissement ou une amplification a la Chaux
+ * y resterait sans qu'aucune assertion nommee ne rougisse. Ses deux VRAIS
+ * effets (`armorReduction`, `fieldSign`) sont eux aussi assenes ici, pas
+ * seulement bornes par le test « domaine des effets ».
+ */
+describe('la chaux (tache 1 de l etape 5c)', () => {
+  it('ne brule pas, ne ralentit pas, n amplifie pas : ses effets sont ailleurs', () => {
+    const chaux = elementOf(ELEMENT.CHAUX);
+    expect(chaux.burnPerTick).toBe(0);
+    expect(chaux.slowFactor).toBe(1);
+    expect(chaux.damageAmp).toBe(1);
+  });
+
+  it('reduit strictement l armure : premiere ligne a le faire PAR ELLE-MEME, sans reaction', () => {
+    expect(elementOf(ELEMENT.CHAUX).armorReduction).toBeGreaterThan(0);
+  });
+
+  it('inverse le signe du champ : c est elle, et elle seule, qui fait fuir', () => {
+    for (const e of ELEMENTS) {
+      if (e.id === ELEMENT.CHAUX) {
+        expect(e.fieldSign, e.name).toBe(-1);
+        continue;
+      }
+      expect(e.fieldSign, e.name).toBe(1);
+    }
   });
 });
 

@@ -17,6 +17,8 @@
  * `BASE_WEAPON_ID` joue deja pour les armes.
  */
 
+import { CHAUX_ARMOR_REDUCTION } from './constants';
+
 export interface Element {
   id: number;
   name: string;
@@ -43,6 +45,39 @@ export interface Element {
    * avoir a maintenir.
    */
   damageAmp: number;
+  /**
+   * Armure SOUSTRAITE (jamais multipliee) a qui se tient dans une zone
+   * portant cet element, INDEPENDAMMENT de toute reaction specifique (0 :
+   * aucun effet). La Chaux (tache 1 de l'etape 5c) est la premiere ligne a
+   * en porter — jusque-la, seule `ReactionDef.zoneArmorReduction`
+   * (Supraconduction) rabotait l'armure.
+   *
+   * ⚠️ **Lu par `zoneArmorReductionTotal` (`shared/reactions.ts`), jamais
+   * seul.** Le nibble d'element d'une zone de reaction porte celui du
+   * DECLENCHEUR (`ReactionTrigger.element`), qui varie selon l'ordre
+   * d'arrivee des deux elements d'un couple — lire ce champ seul au site
+   * d'application rendrait l'effet dependant de cet ordre, exactement le
+   * piege que ce champ partage avec `slowFactor` (voir `zoneSlowFactor`).
+   */
+  armorReduction: number;
+  /**
+   * Signe applique a la direction du champ de deplacement pour qui se tient
+   * dans une zone portant cet element : `+1` aucun effet, `-1` la zone
+   * inverse la direction (fuite plutot que poursuite). La Chaux (tache 1 de
+   * l'etape 5c) est la seule ligne a ne pas valoir `+1`.
+   *
+   * ⚠️ **Meme piege que `armorReduction` juste au-dessus, meme remede.** Lu
+   * par `zoneFieldSign` (`shared/reactions.ts`), jamais seul : le nibble
+   * d'element d'une zone de reaction porte celui du DECLENCHEUR, qui varie
+   * selon l'ordre d'arrivee.
+   *
+   * ⚠️ **N'ecrit jamais `Horde#targetField`.** `Horde#retarget` le
+   * recalcule a chaque tick depuis les positions des joueurs : toute
+   * ecriture y serait ecrasee au tick suivant. La fuite est une
+   * SUBSTITUTION du vecteur de direction au moment ou `Horde` le lit, pas
+   * une decision de ciblage.
+   */
+  fieldSign: number;
 }
 
 /**
@@ -67,6 +102,8 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     burnPerTick: 0,
     slowFactor: 1,
     damageAmp: 1,
+    armorReduction: 0,
+    fieldSign: 1,
   },
   {
     // Braise : degats sur la duree, aucun ralentissement (§4.1).
@@ -88,6 +125,8 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     burnPerTick: 0.1,
     slowFactor: 1,
     damageAmp: 1,
+    armorReduction: 0,
+    fieldSign: 1,
   },
   {
     // Givre : ralentit, aucun degat (§4.1). Le gel sur accumulation du §6.3
@@ -102,6 +141,8 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     burnPerTick: 0,
     slowFactor: 0.6,
     damageAmp: 1,
+    armorReduction: 0,
+    fieldSign: 1,
   },
   {
     // Foudre : chaque impact saute vers quelques ennemis proches (§4 de la
@@ -123,6 +164,8 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     burnPerTick: 0,
     slowFactor: 1,
     damageAmp: 1,
+    armorReduction: 0,
+    fieldSign: 1,
   },
   {
     // Poix : amplifie les degats recus par qui pietine sa flaque, ni
@@ -153,6 +196,36 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     burnPerTick: 0,
     slowFactor: 1,
     damageAmp: 1.5,
+    armorReduction: 0,
+    fieldSign: 1,
+  },
+  {
+    // Chaux (tache 1 de l'etape 5c) : deux moities, ni brulure ni
+    // ralentissement ni amplification — §2 de la spec de l'etape 5c.
+    //
+    // ⚠️ **Premiere ligne a porter `armorReduction` PAR ELLE-MEME** : jusque
+    // la, seule `ReactionDef.zoneArmorReduction` (Supraconduction) rabotait
+    // l'armure — une propriete de la REACTION, jamais de l'element seul.
+    // `CHAUX_ARMOR_REDUCTION` (`shared/constants.ts`) reste sous
+    // `SUPRACONDUCTION_ARMOR_REDUCTION` : un element seul mord moins fort
+    // qu'une reaction a deux elements.
+    //
+    // ⚠️ **Et la seule ligne a porter `fieldSign: -1` — « il fuit »,
+    // decision de jeu assumee au §2 de la spec de l'etape 5c contre deux
+    // autres formes derivables (errer, se tromper de joueur). La direction
+    // du champ est SUBSTITUEE, jamais ecrite dans `Horde#targetField` (qui
+    // se recalcule a chaque tick depuis les positions des joueurs) — voir
+    // `Horde#recomputeSteering`.
+    //
+    // ⚠️ Valeurs de depart, a regler a l'oeil comme le reste du catalogue
+    // elementaire.
+    name: 'chaux',
+    tint: 0xb4d94a,
+    burnPerTick: 0,
+    slowFactor: 1,
+    damageAmp: 1,
+    armorReduction: CHAUX_ARMOR_REDUCTION,
+    fieldSign: -1,
   },
 ];
 
@@ -175,6 +248,7 @@ export const ELEMENT = {
   GIVRE: 2,
   FOUDRE: 3,
   POIX: 4,
+  CHAUX: 5,
 } as const;
 
 export function elementOf(id: number): Element {

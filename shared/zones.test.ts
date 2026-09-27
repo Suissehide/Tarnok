@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CHAUX_ARMOR_REDUCTION,
   SUPRACONDUCTION_ARMOR_REDUCTION,
   SURCHAUFFE_BURN_PER_TICK,
   SURCHAUFFE_ZONE_LIFETIME_TICKS,
@@ -788,6 +789,70 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
     expect(supraPuisNeutre.spawn(ELEMENT.BRAISE, 100, 0, 0, 0)).toBe(1);
     expect(supraPuisNeutre.count).toBe(2);
     expect(supraPuisNeutre.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+
+  /**
+   * ⚠️ **Tache 1 de l'etape 5c : la Chaux rabote l'armure PAR ELLE-MEME**
+   * (`Element.armorReduction`), sans aucune reaction specifique — une zone
+   * generique (`packZoneKind(element, 0) === element`) qui porte l'element
+   * Chaux suffit desormais, la ou seule une reaction (Supraconduction) le
+   * pouvait avant cette tache.
+   */
+  it('rend CHAUX_ARMOR_REDUCTION dans une zone de Chaux SANS reaction, strictement positif', () => {
+    const zones = new ZoneField();
+    expect(zones.spawn(ELEMENT.CHAUX, 500, 500, 0, 0)).toBe(0);
+    expect(CHAUX_ARMOR_REDUCTION).toBeGreaterThan(0);
+    expect(zones.armorReductionAt(500, 500, 0)).toBe(CHAUX_ARMOR_REDUCTION);
+  });
+
+  /**
+   * ⚠️ **Meme regle « poser dans les DEUX ordres » que le test
+   * Supraconduction/Braise ci-dessus, avec la Chaux cette fois** : une zone
+   * de Chaux (reduction `CHAUX_ARMOR_REDUCTION`) et une de Supraconduction
+   * (reduction `SUPRACONDUCTION_ARMOR_REDUCTION`, strictement plus forte)
+   * qui se recouvrent ne doivent JAMAIS additionner leurs reductions.
+   */
+  it('une zone de Chaux et une de Supraconduction qui se recouvrent ne CUMULENT pas, dans les deux ordres de pose', () => {
+    expect(CHAUX_ARMOR_REDUCTION).toBeLessThan(SUPRACONDUCTION_ARMOR_REDUCTION);
+
+    const chauxPuisSupra = new ZoneField();
+    expect(chauxPuisSupra.spawn(ELEMENT.CHAUX, 100, 0, 0, 0)).toBe(0);
+    expect(
+      chauxPuisSupra.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 100, 0, 0, 0),
+    ).toBe(1);
+    expect(chauxPuisSupra.armorReductionAt(100, 0, 0)).not.toBe(
+      CHAUX_ARMOR_REDUCTION + SUPRACONDUCTION_ARMOR_REDUCTION,
+    );
+    expect(chauxPuisSupra.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+
+    const supraPuisChaux = new ZoneField();
+    expect(
+      supraPuisChaux.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 100, 0, 0, 0),
+    ).toBe(0);
+    expect(supraPuisChaux.spawn(ELEMENT.CHAUX, 100, 0, 0, 0)).toBe(1);
+    expect(supraPuisChaux.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+
+  /**
+   * L'AUTRE sens de la domination : une reaction SANS effet d'armure propre
+   * (Surchauffe) superposee a une zone de Chaux doit laisser passer la
+   * contribution de l'ELEMENT — sans quoi `armorReductionAt` ne lirait que
+   * la reaction et perdrait la moitie de la tache 1.
+   */
+  it('la contribution de la Chaux survit face a une reaction sans effet d armure propre, dans les deux ordres', () => {
+    const chauxPuisSurchauffe = new ZoneField();
+    expect(chauxPuisSurchauffe.spawn(ELEMENT.CHAUX, 100, 0, 0, 0)).toBe(0);
+    expect(
+      chauxPuisSurchauffe.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 100, 0, 0, 0),
+    ).toBe(1);
+    expect(chauxPuisSurchauffe.armorReductionAt(100, 0, 0)).toBe(CHAUX_ARMOR_REDUCTION);
+
+    const surchauffePuisChaux = new ZoneField();
+    expect(
+      surchauffePuisChaux.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 100, 0, 0, 0),
+    ).toBe(0);
+    expect(surchauffePuisChaux.spawn(ELEMENT.CHAUX, 100, 0, 0, 0)).toBe(1);
+    expect(surchauffePuisChaux.armorReductionAt(100, 0, 0)).toBe(CHAUX_ARMOR_REDUCTION);
   });
 });
 

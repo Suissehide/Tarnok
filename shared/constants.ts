@@ -970,3 +970,22 @@ export const VERGLAS_INERTIA_DAMPING = 0.9;
  * elementaire (tache 12).
  */
 export const VERGLAS_COLLISION_DAMAGE_PER_TICK = 0.2;
+
+/**
+ * Armure retiree (SOUSTRAITE, jamais multipliee) a qui se tient dans une
+ * zone portant l'element Chaux LUI-MEME (etape 5c, tache 1) — pas une
+ * reaction specifique, l'element seul. Lue par `Element.armorReduction`
+ * (`shared/elements.ts`), combinee par `zoneArmorReductionTotal`
+ * (`shared/reactions.ts`) avec ce qu'une reaction retire par ailleurs.
+ *
+ * ⚠️ **Sous `SUPRACONDUCTION_ARMOR_REDUCTION` (0,15), et c'est voulu.** La
+ * Chaux seule est un element, pas une reaction a deux elements : elle mord
+ * moins fort qu'une Supraconduction, qui demande Givre ET Foudre pour se
+ * declencher. `shared/reactions.test.ts` s'appuie sur cet ecart pour montrer
+ * que `zoneArmorReductionTotal` ne depend pas de l'ordre d'arrivee — le
+ * garder au-dessus romprait ce test, pas seulement l'equilibrage.
+ *
+ * ⚠️ Valeur de DEPART, a regler a l'oeil comme le reste du catalogue
+ * elementaire.
+ */
+export const CHAUX_ARMOR_REDUCTION = 0.1;

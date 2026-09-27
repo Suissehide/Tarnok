@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  CHAUX_ARMOR_REDUCTION,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SUPRACONDUCTION_ARMOR_REDUCTION,
@@ -15,8 +16,10 @@ import {
   reactionForPair,
   reactionOfId,
   zoneArmorReduction,
+  zoneArmorReductionTotal,
   zoneBurnPerTick,
   zoneCollisionDamage,
+  zoneFieldSign,
   zoneInertiaDamping,
   zoneLifetimeTicks,
   zoneSlowFactor,
@@ -300,6 +303,75 @@ describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', (
 });
 
 /**
+ * `zoneArmorReductionTotal` — la tache 1 de l'etape 5c : combine
+ * `zoneArmorReduction` (la reaction) et `Element.armorReduction` (la Chaux)
+ * par un MAXIMUM, lue par `ZoneField.armorReductionAt` (`shared/zones.ts`).
+ */
+describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION confondus', () => {
+  it('rend zero pour un kind de reaction nulle sur un element sans effet propre', () => {
+    expect(zoneArmorReductionTotal(ELEMENT.GIVRE)).toBe(0);
+    expect(zoneArmorReductionTotal(packZoneKind(ELEMENT.BRAISE, REACTION.AUCUNE))).toBe(0);
+  });
+
+  it('rend CHAUX_ARMOR_REDUCTION pour un kind de reaction nulle porte par la Chaux : l element SEUL suffit', () => {
+    // ⚠️ C'est le chemin que traverse une zone de Chaux tant qu'aucune
+    // reaction nommee ne pair encore cet element (taches 4 a 7 de l'etape
+    // 5c, hors perimetre) — la reaction generique (Choc thermique) laisse
+    // `zoneArmorReduction` a zero, et c'est l'element seul qui porte l'effet.
+    expect(CHAUX_ARMOR_REDUCTION).toBeGreaterThan(0);
+    expect(zoneArmorReductionTotal(ELEMENT.CHAUX)).toBe(CHAUX_ARMOR_REDUCTION);
+    expect(zoneArmorReductionTotal(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE))).toBe(
+      CHAUX_ARMOR_REDUCTION,
+    );
+  });
+
+  it('rend toujours SUPRACONDUCTION_ARMOR_REDUCTION pour la Supraconduction : la reaction seule y suffit deja', () => {
+    // Non-regression : la Supraconduction ne pair ni Braise ni Chaux, donc
+    // la contribution ELEMENT reste nulle des deux cotes — seule celle de
+    // la reaction doit compter, exactement comme avant cette tache.
+    const surGivre = zoneArmorReductionTotal(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION));
+    const surFoudre = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.FOUDRE, REACTION.SUPRACONDUCTION),
+    );
+    expect(surGivre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    expect(surFoudre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+
+  /**
+   * ⚠️ **LE test de l'etape 3 du brief — et une substitution assumee.** Le
+   * brief cite `REACTION.FOURNEE` (Braise + Chaux) pour ce test : cette
+   * reaction n'existe pas encore, elle nait a la tache 4 de l'etape 5c, HORS
+   * du perimetre de cette tache-ci. `REACTION.SUPRACONDUCTION` la remplace
+   * ici — n'importe quelle reaction dont `zoneArmorReduction` DOMINE la
+   * contribution de la Chaux demontre exactement la meme invariant
+   * (l'assertion de plancher juste en dessous rend cette substitution
+   * verifiable, pas suppose). Voir le rapport de cette tache pour la
+   * discussion complete.
+   *
+   * Meme motif que « la reduction d armure d une zone ne depend pas de
+   * l ordre d arrivee » exige par le brief : la MEME reaction, les deux
+   * ordres de declencheur (Braise, qui n a pas d effet propre, puis Chaux,
+   * qui en a un) doivent rendre la MEME reduction — sans quoi une zone de
+   * cette forme corroderait ou pas selon quel projectile a touche en second.
+   */
+  it('la reduction d armure d une zone ne depend pas de l ordre d arrivee', () => {
+    // ⚠️ Garde de plancher : c'est cette inegalite, et NON une coincidence
+    // de couple, qui rend le test suivant valide. Une tache 12 qui
+    // changerait l'une des deux constantes sans preserver ce plancher ferait
+    // rougir ICI, avec un message qui pointe la cause, plutot que de laisser
+    // l'egalite d'apres echouer pour une raison illisible.
+    expect(CHAUX_ARMOR_REDUCTION).toBeLessThanOrEqual(SUPRACONDUCTION_ARMOR_REDUCTION);
+
+    const a = zoneArmorReductionTotal(packZoneKind(ELEMENT.BRAISE, REACTION.SUPRACONDUCTION));
+    const b = zoneArmorReductionTotal(packZoneKind(ELEMENT.CHAUX, REACTION.SUPRACONDUCTION));
+    expect(a).toBe(b);
+    // ⚠️ Et une garde de non-vacuite : si les deux valaient 0, l'egalite
+    // serait vraie et ne prouverait rien.
+    expect(a).toBeGreaterThan(0);
+  });
+});
+
+/**
  * `zoneInertiaDamping` — la tache 8 de l'etape 5b : le facteur de
  * conservation de vitesse DERIVE du kind empaquete, lu par
  * `Horde#recomputeSteering` (`shared/horde.ts`), qui VOYAGE.
@@ -350,5 +422,49 @@ describe('zoneCollisionDamage — le degat de collision DERIVE du kind empaquete
     expect(VERGLAS_COLLISION_DAMAGE_PER_TICK).toBeGreaterThan(0);
     expect(givreDeclenche).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
     expect(poixDeclenche).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
+  });
+});
+
+/**
+ * `zoneFieldSign` — la tache 1 de l'etape 5c : le signe de direction DERIVE
+ * du kind empaquete, lu par `Horde` (`shared/horde.ts`), qui VOYAGE.
+ */
+describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus', () => {
+  it('rend +1 (aucun effet) pour un kind de reaction nulle sur un element sans effet propre', () => {
+    expect(zoneFieldSign(ELEMENT.GIVRE)).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.BRAISE, REACTION.AUCUNE))).toBe(1);
+  });
+
+  it('rend -1 pour un kind de reaction nulle porte par la Chaux : l element SEUL suffit', () => {
+    // Meme chemin transitoire que `zoneArmorReductionTotal` avant Fournee :
+    // tant qu'aucune reaction nommee ne pair la Chaux (taches 4 a 7, hors
+    // perimetre), c'est l'element seul qui porte la fuite.
+    expect(zoneFieldSign(ELEMENT.CHAUX)).toBe(-1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE))).toBe(-1);
+  });
+
+  it('rend +1 pour les cinq reactions existantes quand aucun element du nibble ne fuit', () => {
+    expect(zoneFieldSign(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS))).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Le piege transitoire que le docbloc de `zoneFieldSign` documente.**
+   * Aucune des cinq reactions existantes ne pair la Chaux, donc AUCUNE ne
+   * porte encore de `zoneFieldSign: -1` explicite qui garantirait la fuite
+   * quel que soit l'element du nibble. Ce test rend ce fait EXPLICITE plutot
+   * que de le laisser en silence : packe la Chaux avec une reaction
+   * existante (un cas qui n'arrive jamais en jeu tel quel, mais qui exerce
+   * le meme mecanisme qu'un futur couple de la Chaux) et constate que seul
+   * l'ordre ou la Chaux est LE DECLENCHEUR fuit.
+   */
+  it('reste ORDRE-DEPENDANT tant qu aucune reaction ne porte un plancher explicite pour la Chaux', () => {
+    const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.SUPRACONDUCTION));
+    const givreDeclenche = zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION));
+    expect(chauxDeclenche).toBe(-1);
+    expect(givreDeclenche).toBe(1);
   });
 });

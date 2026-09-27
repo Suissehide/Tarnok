@@ -2874,6 +2874,149 @@ describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () 
   });
 });
 
+/**
+ * La Chaux (tache 1 de l'etape 5c) : « il fuit » — substitution du VECTEUR
+ * DE CHAMP au moment ou `Horde#recomputeSteering` le lit, jamais une
+ * ecriture dans `targetField` (qui se recalcule a chaque tick depuis les
+ * positions des joueurs — voir le docbloc de la methode). Contrairement au
+ * Verglas juste au-dessus (qui INTERCEPTE avant de lire le champ), la Chaux
+ * laisse la repulsion entre voisins intacte : seule la POURSUITE du joueur
+ * s'inverse.
+ */
+describe('Horde.step — la Chaux fait fuir (etape 5c, tache 1)', () => {
+  /** Une entite unique, immobile a `(x, y)`. */
+  function une(x: number, y: number): Horde {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }));
+    horde.x[0] = x;
+    horde.y[0] = y;
+    return horde;
+  }
+
+  const K = STEERING_RECOMPUTE_TICKS;
+
+  /** Le premier tick de recalcul de l'entite 0 strictement APRES `apres`. */
+  function prochainRecalcul(horde: Horde, apres: number): number {
+    const phase = horde.entityIdAt(0) % K;
+    let tick = phase;
+    while (tick <= apres) {
+      tick += K;
+    }
+    return tick;
+  }
+
+  it('inverse exactement la vitesse calculee : l oppose de celle d un temoin sans zone', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const fuyante = une(1000, 1000);
+    const temoin = une(1000, 1000);
+    const tick = prochainRecalcul(fuyante, 0);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.CHAUX, 1000, 1000, 0, 0);
+
+    fuyante.step(DT, fields, tick, zones);
+    temoin.step(DT, fields, tick);
+
+    expect(temoin.vx[0]).not.toBe(0);
+    // Arithmetique EXACTE : une seule entite, aucun voisin, la repulsion est
+    // nulle des deux cotes — seul le signe du champ differe.
+    expect(fuyante.vx[0]).toBe(-(temoin.vx[0] ?? 0));
+    expect(fuyante.vy[0]).toBe(-(temoin.vy[0] ?? 0));
+  });
+
+  it('une entite HORS de la zone n est pas affectee, a un pixel du bord', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const horde = une(1000 + ZONE_RADIUS + 1, 1000);
+    const temoin = une(1000 + ZONE_RADIUS + 1, 1000);
+    const tick = prochainRecalcul(horde, 0);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.CHAUX, 1000, 1000, 0, 0);
+
+    horde.step(DT, fields, tick, zones);
+    temoin.step(DT, fields, tick);
+
+    expect(horde.vx[0]).toBe(temoin.vx[0]);
+    expect(horde.vy[0]).toBe(temoin.vy[0]);
+  });
+
+  it('PILE sur le cercle (distance exacte ZONE_RADIUS) : la borne est STRICTE, pas de fuite', () => {
+    // ⚠️ Meme borne stricte que `ZoneField.slowsAt`/`ampAt`/`armorReductionAt`
+    // (`dx² + dy² < r²`, jamais `<=`), testee ICI a la distance EXACTE.
+    const fields = fieldsTowards(5000, 1000);
+    const horde = une(1000 + ZONE_RADIUS, 1000);
+    const temoin = une(1000 + ZONE_RADIUS, 1000);
+    const tick = prochainRecalcul(horde, 0);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.CHAUX, 1000, 1000, 0, 0);
+
+    horde.step(DT, fields, tick, zones);
+    temoin.step(DT, fields, tick);
+
+    expect(horde.vx[0]).toBe(temoin.vx[0]);
+    expect(horde.vy[0]).toBe(temoin.vy[0]);
+  });
+
+  it('ne s applique PAS au tick de la pose, s applique au suivant — meme `slowsAt` que le Givre/la Supraconduction/Verglas', () => {
+    const fields = fieldsTowards(5000, 1000);
+
+    const auTick = une(1000, 1000);
+    const tickAuTick = prochainRecalcul(auTick, 0);
+    const zonesAuTick = new ZoneField();
+    zonesAuTick.spawn(ELEMENT.CHAUX, 1000, 1000, 0, tickAuTick);
+    auTick.step(DT, fields, tickAuTick, zonesAuTick);
+    const temoinAuTick = une(1000, 1000);
+    temoinAuTick.step(DT, fields, tickAuTick);
+    // La zone existe mais ne fuit pas encore : recalcul normal, IDENTIQUE au
+    // temoin.
+    expect(auTick.vx[0]).toBe(temoinAuTick.vx[0]);
+    expect(auTick.vy[0]).toBe(temoinAuTick.vy[0]);
+
+    const auPrecedent = une(1000, 1000);
+    const tickAuPrecedent = prochainRecalcul(auPrecedent, 0);
+    const zonesAuPrecedent = new ZoneField();
+    zonesAuPrecedent.spawn(ELEMENT.CHAUX, 1000, 1000, 0, tickAuPrecedent - 1);
+    auPrecedent.step(DT, fields, tickAuPrecedent, zonesAuPrecedent);
+    const temoinAuPrecedent = une(1000, 1000);
+    temoinAuPrecedent.step(DT, fields, tickAuPrecedent);
+    expect(auPrecedent.vx[0]).toBe(-(temoinAuPrecedent.vx[0] ?? 0));
+    expect(auPrecedent.vy[0]).toBe(-(temoinAuPrecedent.vy[0] ?? 0));
+  });
+
+  /**
+   * Point de revue n°4 du plan de l'etape 5c, ASSENE : le gel de la
+   * Supraconduction gagne SUR la fuite de la Chaux PAR CONSTRUCTION — pas
+   * par une regle de priorite ecrite quelque part, mais parce que
+   * `#advanceByVelocity` multiplie `vx`/`vy` par `#slow` (0, gel total)
+   * APRES que `#recomputeSteering` a deja fige leur DIRECTION : une vitesse
+   * inversee dont la norme finale est nulle produit un deplacement nul,
+   * dans les DEUX ordres de pose des zones.
+   */
+  it('le gel de la Supraconduction gagne sur la fuite de la Chaux : deplacement NUL, dans les deux ordres', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const MESURE = K + 2;
+
+    function pasAu(horde: Horde, tick: number, zones: ZoneField): number {
+      for (let t = 0; t < tick; t++) {
+        horde.step(DT, fields, t, zones);
+      }
+      const x0 = horde.x[0] ?? 0;
+      const y0 = horde.y[0] ?? 0;
+      horde.step(DT, fields, tick, zones);
+      return Math.hypot((horde.x[0] ?? 0) - x0, (horde.y[0] ?? 0) - y0);
+    }
+
+    const chauxPuisSupra = new ZoneField();
+    chauxPuisSupra.spawn(ELEMENT.CHAUX, 1000, 1000, 0, 0);
+    chauxPuisSupra.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+
+    const supraPuisChaux = new ZoneField();
+    supraPuisChaux.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+    supraPuisChaux.spawn(ELEMENT.CHAUX, 1000, 1000, 0, 0);
+
+    expect(pasAu(une(1000, 1000), MESURE, chauxPuisSupra)).toBe(0);
+    expect(pasAu(une(1000, 1000), MESURE, supraPuisChaux)).toBe(0);
+  });
+});
+
 describe('la charge du boss REMPLACE le deplacement (etape 6a, tache 5 bis)', () => {
   /**
    * Une horde d'une seule entite, en (1000, 1000), avec une vitesse tenue

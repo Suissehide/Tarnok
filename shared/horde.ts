@@ -18,7 +18,7 @@ import {
 } from './constants';
 import { ELEMENT } from './elements';
 import type { FlowField } from './flowfield';
-import { zoneInertiaDamping, zoneSlowFactor } from './reactions';
+import { zoneFieldSign, zoneInertiaDamping, zoneSlowFactor } from './reactions';
 import { formationPositions, type WaveOrder } from './waves';
 import type { ZoneField } from './zones';
 
@@ -395,6 +395,24 @@ export class Horde {
    */
   readonly #slow: Float64Array;
 
+  /**
+   * Signe du champ par entite pour le pas courant — etape 5c, tache 1. `+1`
+   * partout quand aucune zone n'inverse personne, ce qui est le cas de la
+   * quasi-totalite des ticks — meme motif que `#slow` juste au-dessus.
+   *
+   * ⚠️ **Recalcule a CHAQUE avancement, jamais conserve** (voir
+   * `#computeFieldSign`) : un intermediaire du pas, pas un etat de l'entite.
+   * NI dans `HordeState`, NI dans `#removeAt`, meme raisonnement que `#slow`
+   * — rien ne survit au pas qui l'a produit, donc rien a compacter ni a
+   * rejouer depuis une valeur sauvegardee.
+   *
+   * ⚠️ **Toujours `+1` ou `-1`, jamais une valeur intermediaire.**
+   * Contrairement a `#slow` (un facteur continu lu dans `Element.slowFactor`),
+   * cette grandeur est un DRAPEAU de direction — `Int8Array` suffit, aucun
+   * arrondi a eviter.
+   */
+  readonly #fieldSign: Int8Array;
+
   constructor(readonly capacity: number = MAX_ENTITIES) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
@@ -411,6 +429,7 @@ export class Horde {
     this.markBy = new Uint8Array(capacity);
     this.markUntil = new Float64Array(capacity);
     this.#slow = new Float64Array(capacity);
+    this.#fieldSign = new Int8Array(capacity);
 
     this.#gridCols = Math.ceil(MAP_SIZE / SEPARATION_CELL);
     const cells = this.#gridCols * this.#gridCols;
@@ -814,6 +833,9 @@ export class Horde {
     charge?: BossCharge | null,
   ): void {
     if (dt > 0) {
+      // #computeFieldSign AVANT #recomputeSteering : voir son docbloc, la
+      // fuite doit etre connue au moment ou fx/fy se calculent.
+      this.#computeFieldSign(zones, tick);
       this.#recomputeSteering(tick, fields, 0, this.#count, zones);
       this.#computeSlow(zones, tick);
       this.#advanceByVelocity(0, this.#count, dt);
@@ -935,6 +957,72 @@ export class Horde {
         const dy = (this.y[i] ?? 0) - zy;
         if (dx * dx + dy * dy < r2 && factor < (this.#slow[i] ?? 1)) {
           this.#slow[i] = factor;
+        }
+      }
+    }
+  }
+
+  /**
+   * Remplit `#fieldSign` : pour chaque entite, `-1` si une zone de fuite (la
+   * Chaux, etape 5c tache 1) la couvre au tick `tick`, `+1` sinon.
+   *
+   * ⚠️ **Meme MINIMUM, meme raison arithmetique que `#computeSlow` juste
+   * au-dessus, et pour la meme cause : cette grandeur VOYAGE** (elle inverse
+   * `fx`/`fy` dans `#recomputeSteering`, qui determinent `vx`/`vy` puis
+   * `x`/`y`), et l'ordre d'iteration des zones n'est pas garanti identique
+   * des deux cotes du fil (`#removeAt` compacte en echangeant avec la
+   * derniere, et le client garde ses zones mortes plus longtemps). Le
+   * minimum sur `{+1, -1}` est commutatif et associatif exactement : `-1`
+   * gagne des qu'UNE zone l'impose, quel que soit l'ordre de balayage.
+   *
+   * ⚠️ **Ne PAS confondre avec le gel de `#computeSlow` — et ne pas y
+   * meler leurs raisons dans un commentaire futur.** Les deux se lisent
+   * INDEPENDAMMENT : une entite gelee (`#slow` a 0) ET fuyante (`#fieldSign`
+   * a -1) reste immobile, parce que `#advanceByVelocity` multiplie `vx`/`vy`
+   * par `#slow` APRES que `#recomputeSteering` a deja fige leur DIRECTION —
+   * inverser une direction dont la norme finale sera nulle ne change rien.
+   * Le gel gagne donc SUR la fuite PAR CONSTRUCTION (point de revue n°4 du
+   * plan de l'etape 5c), jamais par une regle de priorite ecrite ici.
+   *
+   * ⚠️ **PRIVE, recalcule chaque tick, jamais dans `HordeState` ni
+   * `#removeAt`** — meme raisonnement que `#slow` : rien ne survit au pas
+   * qui l'a produit, donc rien a synchroniser aux quatre sites qui tiennent
+   * les quatorze tableaux par entite.
+   *
+   * ⚠️ **Appelee AVANT `#recomputeSteering`, contrairement a `#computeSlow`
+   * (qui la suit) — voir l'ordre dans `step`/`spawnCatchingUp`.**
+   * `#recomputeSteering` lit `fx`/`fy` et doit deja connaitre le signe au
+   * moment ou elle les calcule ; `#computeSlow`, lui, n'est consulte que par
+   * `#advanceByVelocity`, plus tard dans le meme pas.
+   *
+   * ⚠️ **`slowsAt`, pas `aliveAt` — meme raison que `#computeSlow` : le
+   * deplacement du tick courant est pilote par les zones deja posees, le
+   * serveur faisant avancer la horde AVANT de poser celles du tick.
+   */
+  #computeFieldSign(zones: ZoneField | undefined, tick: number): void {
+    this.#fieldSign.fill(1, 0, this.#count);
+    if (!zones) {
+      return;
+    }
+    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    for (let z = 0; z < zones.count; z++) {
+      if (!zones.slowsAt(z, tick)) {
+        continue;
+      }
+      const sign = zoneFieldSign(zones.kind[z] ?? 0);
+      if (sign >= 1) {
+        // Optimisation, meme motif que `#inertiaDampingAt` : une zone sans
+        // effet propre ne peut jamais faire baisser un `#fieldSign` deja au
+        // plancher (-1), inutile de balayer la horde pour elle.
+        continue;
+      }
+      const zx = zones.x[z] ?? 0;
+      const zy = zones.y[z] ?? 0;
+      for (let i = 0; i < this.#count; i++) {
+        const dx = (this.x[i] ?? 0) - zx;
+        const dy = (this.y[i] ?? 0) - zy;
+        if (dx * dx + dy * dy < r2 && sign < (this.#fieldSign[i] ?? 1)) {
+          this.#fieldSign[i] = sign;
         }
       }
     }
@@ -1076,6 +1164,12 @@ export class Horde {
       // `#recomputeSteering` lui-meme desormais — l'omettre ferait rattraper
       // une entite nee dans une flaque de Verglas comme si le sol tenait,
       // exactement le defaut que ce trio existe pour eviter.
+      //
+      // #computeFieldSign AVANT #recomputeSteering, meme ordre que `step`
+      // (tache 1 de l'etape 5c) : sans cet appel, une entite rattrapee dans
+      // une flaque de Chaux ne fuirait pas, exactement le meme defaut que le
+      // paragraphe ci-dessus decrit pour le Verglas.
+      this.#computeFieldSign(zones, tick);
       this.#recomputeSteering(tick, fields, before, this.#count, zones);
       // Meme trio que `step`, dans le meme ordre : rattraper un pas manque
       // doit reproduire EXACTEMENT ce que le serveur a fait ce tick-la, et
@@ -1345,6 +1439,14 @@ export class Horde {
    * pas suivant) : c'est pour ca que la combinaison entre plusieurs zones
    * qui se recouvrent doit rester un MINIMUM, jamais un produit — meme
    * raison arithmetique que le minimum de `#computeSlow`.
+   *
+   * ⚠️ **La Chaux (tache 1 de l'etape 5c) intercepte APRES la lecture du
+   * champ, PAS avant comme Verglas.** Une entite en zone de Chaux melange
+   * toujours repulsion et champ normalement — seul le VECTEUR DE CHAMP lu ce
+   * tick-la est inverse (`#fieldSign`, rempli par `#computeFieldSign` avant
+   * cet appel), pas la vitesse tenue. La separation entre voisins continue
+   * de jouer sans modification : la Chaux brouille la poursuite du joueur,
+   * jamais la cohesion locale de la horde.
    */
   #recomputeSteering(
     tick: number,
@@ -1447,6 +1549,16 @@ export class Horde {
         fx = this.#dirSample[0] ?? 0;
         fy = this.#dirSample[1] ?? 0;
       }
+
+      // Chaux (etape 5c, tache 1) : une SUBSTITUTION de direction, jamais
+      // une ecriture dans `targetField` (voir le docbloc de
+      // `#computeFieldSign`) — inverse le vecteur de champ, et LUI SEUL,
+      // avant qu'il ne se melange a la repulsion : une entite en zone de
+      // fuite continue de se separer normalement de ses voisines, seule sa
+      // poursuite du joueur s'inverse.
+      const sign = this.#fieldSign[i] ?? 1;
+      fx *= sign;
+      fy *= sign;
 
       const speed = archetypeOf(this.archetype[i] ?? 0).speed;
       const blendX = fx + pushX * STEERING_REPULSION_WEIGHT;
