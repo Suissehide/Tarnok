@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LINK_RADIUS, ZONE_LIFETIME_TICKS } from './constants';
+import { LINK_RADIUS, ZONE_LIFETIME_TICKS, ZONE_RADIUS } from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
 import { linkedNeighbours } from './links';
@@ -101,6 +101,27 @@ describe('linkedNeighbours', () => {
     expect(liesDeC).toEqual([b]);
     expect(liesDeA).not.toContain(c);
     expect(liesDeC).not.toContain(a);
+  });
+
+  /**
+   * ⚠️ **La borne stricte sur l'appartenance de `slot` LUI-MEME a la zone,
+   * pas seulement sur celle des candidats.** Les deux moities du predicat
+   * partagent la meme forme (`>= zoneR2` exclut le bord) ; sans ce test, une
+   * mutation qui relacherait UNIQUEMENT la moitie « slot » (`>` au lieu de
+   * `>=`) resterait verte, alors que la moitie « candidat » resterait
+   * gardee par le test « chacun dans SA PROPRE zone » plus bas.
+   */
+  it('ne lie personne quand `slot` est pile sur le bord de la zone (borne stricte)', () => {
+    const horde = new Horde();
+    const zones = new ZoneField();
+    // Pile a ZONE_RADIUS du centre : sur le bord, donc DEHORS.
+    spawnAt(horde, 1, ZONE_RADIUS, 0);
+    // Bien a l'interieur, et a portee de liaison si `slot` comptait.
+    spawnAt(horde, 2, ZONE_RADIUS - 10, 0);
+    expect(horde.count).toBe(2);
+    zones.spawn(ELEMENT.VIF_ARGENT, 0, 0, 0, 0);
+
+    expect(linkedNeighbours(horde, 0, zones, 0)).toEqual([]);
   });
 
   it('ne lie pas au-dela de LINK_RADIUS, meme dans la meme zone', () => {
