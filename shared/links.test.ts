@@ -273,4 +273,40 @@ describe('linkedNeighbours', () => {
     expect(linkedNeighbours(hordeB, 0, zonesB, 0)).not.toContain(b2);
     expect(linkedNeighbours(hordeB, 1, zonesB, 0)).not.toContain(b1);
   });
+
+  /**
+   * ⚠️ **La MEME garde que le test fictif ci-dessus, mais avec les DEUX
+   * reactions REELLES du §5 de la spec qui apparient le Vif-argent et
+   * touchent le deplacement (tache 6 de l'etape 5c) — le cas n'est plus
+   * hypothetique.** Gel profond (Givre + Vif-argent) et Aveuglement (Chaux +
+   * Vif-argent) restent EXCLUES de la liaison par construction : leur §5
+   * decrit un effet de ZONE seul (vitesse nulle / fuite), jamais la
+   * liaison — voir le docbloc de leur entree dans `REACTION_DEFS`
+   * (`shared/reactions.ts`) pour la decision tranchee et sa justification
+   * complete. La liaison reste une propriete du Vif-argent ELEMENTAIRE
+   * SEUL (§3 de la spec), jamais d'une reaction qui l'apparie.
+   */
+  it('Gel profond et Aveuglement (reactions REELLES) ne lient jamais, quel que soit le declencheur', () => {
+    const gelProfondVifDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND);
+    const gelProfondGivreDeclenche = packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND);
+    const aveuglementVifDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT);
+    const aveuglementChauxDeclenche = packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT);
+
+    for (const kind of [
+      gelProfondVifDeclenche,
+      gelProfondGivreDeclenche,
+      aveuglementVifDeclenche,
+      aveuglementChauxDeclenche,
+    ]) {
+      const horde = new Horde();
+      const zones = new ZoneField();
+      const p1 = spawnAt(horde, 1, 10, 0);
+      const p2 = spawnAt(horde, 2, 30, 0);
+      expect(horde.count).toBe(2);
+      zones.spawn(kind, 0, 0, 0, 0);
+
+      expect(linkedNeighbours(horde, 0, zones, 0)).not.toContain(p2);
+      expect(linkedNeighbours(horde, 1, zones, 0)).not.toContain(p1);
+    }
+  });
 });

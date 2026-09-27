@@ -8,6 +8,7 @@ import {
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SUPRACONDUCTION_ARMOR_REDUCTION,
+  SURCHAUFFE_ZONE_LIFETIME_TICKS,
   VERGLAS_COLLISION_DAMAGE_PER_TICK,
   VERGLAS_INERTIA_DAMPING,
   ZONE_LIFETIME_TICKS,
@@ -22,6 +23,7 @@ import {
   zoneArmorReductionTotal,
   zoneBurnPerTick,
   zoneCollisionDamage,
+  zoneDamageAmpTotal,
   zoneFieldSign,
   zoneInertiaDamping,
   zoneLifetimeTicks,
@@ -212,6 +214,89 @@ describe('Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c) �
   });
 });
 
+describe('Gel profond, Mortier vif et Aveuglement (tache 6 de l etape 5c) — trois lignes de plus, meme table', () => {
+  it('trouve les trois par leur couple canonique, treize identifiants distincts au total', () => {
+    const gelProfond = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT));
+    const mortierVif = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.CHAUX));
+    const aveuglement = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT));
+    expect(gelProfond?.id).toBe(REACTION.GEL_PROFOND);
+    expect(mortierVif?.id).toBe(REACTION.MORTIER_VIF);
+    expect(aveuglement?.id).toBe(REACTION.AVEUGLEMENT);
+
+    const surchauffe = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE));
+    const embrasement = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX));
+    const courtCircuit = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
+    const supraconduction = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.FOUDRE));
+    const verglas = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.POIX));
+    const fournee = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX));
+    const eclatDeGel = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
+    const vaporisation = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT));
+    const arcCaustique = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX));
+    const paratonnerre = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT));
+    // Treize identifiants distincts : une collision confondrait le mauvais
+    // couple, exactement comme les deux tests precedents de ce fichier.
+    expect(
+      new Set([
+        surchauffe?.id,
+        embrasement?.id,
+        courtCircuit?.id,
+        supraconduction?.id,
+        verglas?.id,
+        fournee?.id,
+        eclatDeGel?.id,
+        vaporisation?.id,
+        arcCaustique?.id,
+        paratonnerre?.id,
+        gelProfond?.id,
+        mortierVif?.id,
+        aveuglement?.id,
+      ]).size,
+    ).toBe(13);
+  });
+
+  it('est INSENSIBLE a l ordre d arrivee, comme les dix reactions precedentes', () => {
+    const a = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT));
+    const b = reactionForPair(packElementPair(ELEMENT.VIF_ARGENT, ELEMENT.GIVRE));
+    expect(a?.id).toBe(REACTION.GEL_PROFOND);
+    expect(b?.id).toBe(REACTION.GEL_PROFOND);
+
+    const c = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.CHAUX));
+    const d = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.POIX));
+    expect(c?.id).toBe(REACTION.MORTIER_VIF);
+    expect(d?.id).toBe(REACTION.MORTIER_VIF);
+
+    const e = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT));
+    const f = reactionForPair(packElementPair(ELEMENT.VIF_ARGENT, ELEMENT.CHAUX));
+    expect(e?.id).toBe(REACTION.AVEUGLEMENT);
+    expect(f?.id).toBe(REACTION.AVEUGLEMENT);
+  });
+
+  it('retrouve les trois par `reactionOfId`, le nibble empaquete dans `ZoneField.kind`', () => {
+    expect(reactionOfId(REACTION.GEL_PROFOND)?.name).toBe('gel-profond');
+    expect(reactionOfId(REACTION.MORTIER_VIF)?.name).toBe('mortier-vif');
+    expect(reactionOfId(REACTION.AVEUGLEMENT)?.name).toBe('aveuglement');
+  });
+
+  it('aucune des trois ne pose d effet geometrique ou en chaine : radius et damage restent nuls', () => {
+    // ⚠️ **Verifie, pas suppose.** Les trois sont rangees « zone » au §5 de
+    // la spec, contrairement a Embrasement/Vaporisation (geometrique) ou
+    // Court-circuit/Arc caustique/Paratonnerre (chaine) : sans branche
+    // dediee dans `applyReactions` (`back/src/combat.ts`), elles retombent
+    // sur le degat GENERIQUE du Choc thermique (`REACTION_RADIUS`,
+    // `REACTION_DAMAGE`), exactement comme Supraconduction, Verglas et
+    // Fournee avant elles — voir le commentaire de leur branche par defaut.
+    const gelProfond = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT));
+    const mortierVif = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.CHAUX));
+    const aveuglement = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT));
+    expect(gelProfond?.radius).toBe(0);
+    expect(gelProfond?.damage).toBe(0);
+    expect(mortierVif?.radius).toBe(0);
+    expect(mortierVif?.damage).toBe(0);
+    expect(aveuglement?.radius).toBe(0);
+    expect(aveuglement?.damage).toBe(0);
+  });
+});
+
 describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   it('rend la duree GENERIQUE pour un kind de reaction nulle', () => {
     expect(zoneLifetimeTicks(ELEMENT.BRAISE)).toBe(ZONE_LIFETIME_TICKS);
@@ -272,6 +357,61 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
       ZONE_LIFETIME_TICKS,
     );
   });
+
+  /**
+   * ⚠️ **LE chiffre qui distingue Gel profond de la Supraconduction —
+   * §5 de la spec : « plus forte ou plus longue ».** `slowFactor: 0` est
+   * DEJA un plancher absolu pour les deux reactions (voir leur entree dans
+   * `REACTION_DEFS`) : rien ne peut etre « plus fort » que zero, donc la
+   * duree est le SEUL levier restant. La Supraconduction n'allonge pas sa
+   * zone (`zoneLifetimeTicks: 0` dans sa ligne, duree GENERIQUE) ; Gel
+   * profond REUTILISE `SURCHAUFFE_ZONE_LIFETIME_TICKS` (1,5x la duree
+   * generique). Ce test assene la valeur EXACTE, pas seulement une
+   * inegalite — une assertion « > ZONE_LIFETIME_TICKS » seule laisserait
+   * passer n'importe quel reglage futur sans le remarquer.
+   */
+  it('Gel profond dure SURCHAUFFE_ZONE_LIFETIME_TICKS, strictement plus longtemps que la Supraconduction', () => {
+    const gelProfond = zoneLifetimeTicks(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND));
+    const supraconduction = zoneLifetimeTicks(
+      packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION),
+    );
+    expect(gelProfond).toBe(SURCHAUFFE_ZONE_LIFETIME_TICKS);
+    expect(supraconduction).toBe(ZONE_LIFETIME_TICKS);
+    expect(gelProfond).toBeGreaterThan(supraconduction);
+    // Ignore l'element porte, meme garde que Surchauffe plus haut.
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND))).toBe(
+      gelProfond,
+    );
+  });
+
+  it('rend la duree GENERIQUE pour Mortier vif : aucune duree propre, contrairement a Gel profond et Aveuglement', () => {
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF))).toBe(
+      ZONE_LIFETIME_TICKS,
+    );
+  });
+
+  /**
+   * ⚠️ **LE chiffre qui distingue Aveuglement de la Chaux SEULE —
+   * §5 de la spec : « plus forte ou plus longue que la Chaux seule ».**
+   * `fieldSign` n'a que deux valeurs (+1/-1) : rien n'est « plus fort » que
+   * -1, donc la duree est le SEUL levier ici aussi. Une Chaux seule (sans
+   * reaction nommee, `packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE)`) vit la
+   * duree GENERIQUE ; Aveuglement REUTILISE le meme
+   * `SURCHAUFFE_ZONE_LIFETIME_TICKS` que Gel profond.
+   */
+  it('Aveuglement dure SURCHAUFFE_ZONE_LIFETIME_TICKS, strictement plus longtemps que la Chaux seule', () => {
+    const aveuglement = zoneLifetimeTicks(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT));
+    const chauxSeule = zoneLifetimeTicks(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE));
+    expect(aveuglement).toBe(SURCHAUFFE_ZONE_LIFETIME_TICKS);
+    expect(chauxSeule).toBe(ZONE_LIFETIME_TICKS);
+    expect(aveuglement).toBeGreaterThan(chauxSeule);
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT))).toBe(
+      aveuglement,
+    );
+  });
 });
 
 describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => {
@@ -329,6 +469,15 @@ describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => 
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.ARC_CAUSTIQUE))).toBe(0);
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(0);
     expect(zoneBurnPerTick(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.PARATONNERRE))).toBe(0);
+  });
+
+  it('Gel profond, Mortier vif et Aveuglement ne laissent AUCUN degat de zone : aucune des trois ne brule', () => {
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT))).toBe(0);
+    expect(zoneBurnPerTick(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT))).toBe(0);
   });
 });
 
@@ -493,6 +642,44 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
     expect(zoneSlowFactor(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(1);
     expect(zoneSlowFactor(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.PARATONNERRE))).toBe(1);
   });
+
+  /**
+   * ⚠️ **Gel profond (Givre + Vif-argent) : gel TOTAL, meme mecanisme que la
+   * Supraconduction — `reactionFactor = 0` est un plancher ABSOLU
+   * (`min(x, 0) = 0` quel que soit `x`), donc les deux ordres (Givre 0,6,
+   * Vif-argent 1) rendent le MEME zero.**
+   */
+  it('rend 0 (gel total) pour Gel profond, quel que soit l element porte par le nibble (Givre OU Vif-argent declenche)', () => {
+    const givreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND));
+    const vifArgentDeclenche = zoneSlowFactor(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND),
+    );
+    // Non-vacuite : si le nibble d'element etait lu seul, les deux
+    // vaudraient 0,6 et 1 — deux nombres DIFFERENTS, aucun des deux 0.
+    expect(elementOf(ELEMENT.GIVRE).slowFactor).not.toBe(0);
+    expect(elementOf(ELEMENT.VIF_ARGENT).slowFactor).not.toBe(0);
+    expect(givreDeclenche).toBe(0);
+    expect(vifArgentDeclenche).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Mortier vif (Poix + Chaux) : gel TOTAL, propre a la reaction — NI
+   * la Poix NI la Chaux ne portent de `slowFactor` non neutre (voir
+   * `ELEMENT_DEFS`), donc `zoneSlowFactor: 0` de sa ligne n'est PAS un
+   * plancher qui protege d'un ordre d'arrivee, c'est l'effet lui-meme
+   * (« scelles »). Les deux ordres rendent quand meme le MEME zero.**
+   */
+  it('rend 0 (gel total) pour Mortier vif, dans les DEUX ordres (Poix OU Chaux declenche)', () => {
+    const poixDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
+    const chauxDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF));
+    expect(poixDeclenche).toBe(0);
+    expect(chauxDeclenche).toBe(0);
+  });
+
+  it('rend 1 (aucun ralentissement) pour Aveuglement, dans les DEUX ordres : ni la Chaux ni le Vif-argent ne ralentissent', () => {
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT))).toBe(1);
+    expect(zoneSlowFactor(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT))).toBe(1);
+  });
 });
 
 /**
@@ -547,6 +734,35 @@ describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', (
     expect(SUPRACONDUCTION_ARMOR_REDUCTION).toBeGreaterThan(0);
     expect(surFoudre).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
     expect(surChaux).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+  });
+
+  it('rend zero pour Gel profond, dans les DEUX ordres : elle agit par la vitesse, pas par l armure', () => {
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND))).toBe(0);
+    expect(zoneArmorReduction(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND))).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Mortier vif et Aveuglement REUTILISENT `elementOf(ELEMENT.CHAUX).armorReduction`
+   * (donc `CHAUX_ARMOR_REDUCTION`), pas `MAX_ARMOR` comme Fournee — meme
+   * choix qu Eclat de gel : ni l une ni l autre ne PRETEND a un effet
+   * d armure propre au §5 de la spec, le plancher garantit seulement ce
+   * qu une Chaux SEULE laisserait deja.**
+   */
+  it('rend CHAUX_ARMOR_REDUCTION pour Mortier vif, dans les DEUX ordres (Poix OU Chaux declenche)', () => {
+    const poixDeclenche = zoneArmorReduction(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
+    const chauxDeclenche = zoneArmorReduction(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF));
+    expect(CHAUX_ARMOR_REDUCTION).toBeGreaterThan(0);
+    expect(poixDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
+    expect(chauxDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
+  });
+
+  it('rend CHAUX_ARMOR_REDUCTION pour Aveuglement, dans les DEUX ordres (Chaux OU Vif-argent declenche)', () => {
+    const chauxDeclenche = zoneArmorReduction(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT));
+    const vifArgentDeclenche = zoneArmorReduction(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+    );
+    expect(chauxDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
+    expect(vifArgentDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
   });
 });
 
@@ -694,6 +910,39 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
     expect(foudreDeclenche).toBe(chauxDeclenche);
     expect(foudreDeclenche).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
     expect(foudreDeclenche).toBeGreaterThan(0);
+  });
+
+  it('rend zero pour Gel profond, dans les DEUX ordres : ni le Givre ni le Vif-argent n ont d effet d armure', () => {
+    expect(zoneArmorReductionTotal(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND))).toBe(0);
+    expect(zoneArmorReductionTotal(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND))).toBe(0);
+  });
+
+  /**
+   * ⚠️ **Mortier vif et Aveuglement ne dependent pas de l ordre d arrivee :
+   * l armure retiree vaut CHAUX_ARMOR_REDUCTION dans les deux ordres —
+   * meme raisonnement qu Eclat de gel (le plancher garantit ce qu une Chaux
+   * SEULE laisserait deja, il ne l AUGMENTE pas).**
+   */
+  it('Mortier vif ne depend pas de l ordre d arrivee : l armure retiree vaut CHAUX_ARMOR_REDUCTION dans les deux ordres', () => {
+    const poixDeclenche = zoneArmorReductionTotal(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
+    const chauxDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF),
+    );
+    expect(poixDeclenche).toBe(chauxDeclenche);
+    expect(poixDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
+    expect(poixDeclenche).toBeGreaterThan(0);
+  });
+
+  it('Aveuglement ne depend pas de l ordre d arrivee : l armure retiree vaut CHAUX_ARMOR_REDUCTION dans les deux ordres', () => {
+    const chauxDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT),
+    );
+    const vifArgentDeclenche = zoneArmorReductionTotal(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+    );
+    expect(chauxDeclenche).toBe(vifArgentDeclenche);
+    expect(chauxDeclenche).toBe(CHAUX_ARMOR_REDUCTION);
+    expect(chauxDeclenche).toBeGreaterThan(0);
   });
 });
 
@@ -857,5 +1106,122 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
     const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.ARC_CAUSTIQUE));
     expect(foudreDeclenche).toBe(-1);
     expect(chauxDeclenche).toBe(-1);
+  });
+
+  it('rend +1 pour Gel profond, dans les DEUX ordres : ni le Givre ni le Vif-argent ne fuient', () => {
+    expect(zoneFieldSign(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND))).toBe(1);
+    expect(zoneFieldSign(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND))).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Mortier vif FERME le meme piege transitoire que Fournee/Eclat de
+   * gel/Arc caustique, pour son propre couple.** Porte
+   * `zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign` EXPLICITE dans
+   * `REACTION_DEFS` — jamais heritee de l'element — donc les deux ordres de
+   * declencheur (Poix, qui n'a pas d'effet propre, puis Chaux, qui en a un)
+   * rendent desormais la MEME reponse, -1. L'effet PRATIQUE est masque par
+   * le gel total de `zoneSlowFactor` (voir le point de revue n°4,
+   * `shared/horde.test.ts`), mais l'OCTET, lui, ne doit pas dependre de
+   * l'ordre.
+   */
+  it('Mortier vif ne depend pas de l ordre d arrivee : -1 que Poix ou Chaux declenche', () => {
+    const poixDeclenche = zoneFieldSign(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
+    const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF));
+    expect(poixDeclenche).toBe(-1);
+    expect(chauxDeclenche).toBe(-1);
+  });
+
+  /**
+   * ⚠️ **Aveuglement FERME le meme piege transitoire pour son propre
+   * couple — LA raison d'etre de la reaction.** Vif-argent est neutre sur
+   * `fieldSign` : sans le plancher explicite, une zone d'Aveuglement
+   * fuirait uniquement quand la Chaux est arrivee EN SECOND, exactement le
+   * meme etat transitoire documente par le docbloc de `zoneFieldSign` avant
+   * Fournee.
+   */
+  it('Aveuglement ne depend pas de l ordre d arrivee : -1 que Chaux ou Vif-argent declenche', () => {
+    const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT));
+    const vifArgentDeclenche = zoneFieldSign(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+    );
+    expect(chauxDeclenche).toBe(-1);
+    expect(vifArgentDeclenche).toBe(-1);
+  });
+});
+
+/**
+ * `zoneDamageAmpTotal` — la tache 6 de l'etape 5c : l'amplification des
+ * degats, ELEMENT et REACTION confondus, lue par `ZoneField.ampAt`
+ * (`shared/zones.ts`). La piece qui manquait (voir le docbloc du champ
+ * `zoneDamageAmp` dans `shared/reactions.ts`) — Mortier vif (Poix + Chaux)
+ * est la premiere ligne de `REACTION_DEFS` a le porter.
+ */
+describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION confondus', () => {
+  it('rend 1 pour un kind de reaction nulle sur un element sans effet propre', () => {
+    expect(zoneDamageAmpTotal(ELEMENT.GIVRE)).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.BRAISE, REACTION.AUCUNE))).toBe(1);
+  });
+
+  it('rend le damageAmp de la Poix pour un kind de reaction nulle porte par la Poix : l element SEUL suffit', () => {
+    expect(elementOf(ELEMENT.POIX).damageAmp).toBeGreaterThan(1);
+    expect(zoneDamageAmpTotal(ELEMENT.POIX)).toBe(elementOf(ELEMENT.POIX).damageAmp);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.POIX, REACTION.AUCUNE))).toBe(
+      elementOf(ELEMENT.POIX).damageAmp,
+    );
+  });
+
+  it('rend 1 pour les dix reactions precedentes, sur un element neutre : aucune ne porte de zoneDamageAmp', () => {
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(1);
+  });
+
+  it('rend 1 pour Gel profond et Aveuglement, dans les DEUX ordres chacune : ni l une ni l autre n apparie la Poix', () => {
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT))).toBe(1);
+    expect(zoneDamageAmpTotal(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT))).toBe(1);
+  });
+
+  /**
+   * ⚠️ **LE test qui separe la combinaison par maximum d une simple lecture
+   * de l element — meme forme que le test equivalent de `zoneSlowFactor`
+   * pour la Supraconduction.** Le nibble d'element d'une zone de Mortier vif
+   * porte celui du DECLENCHEUR (Poix OU Chaux selon l'ordre d'arrivee) :
+   * `elementOf(zoneElement(kind)).damageAmp` seul rendrait 1,5 (Poix) ou 1
+   * (Chaux), deux nombres DIFFERENTS. Le plancher explicite
+   * (`ReactionDef.zoneDamageAmp: elementOf(ELEMENT.POIX).damageAmp`) rend
+   * les deux ordres identiques.
+   */
+  it('rend le damageAmp de la Poix pour Mortier vif, dans les DEUX ordres (Poix OU Chaux declenche)', () => {
+    const poixDeclenche = zoneDamageAmpTotal(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
+    const chauxDeclenche = zoneDamageAmpTotal(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF));
+    // Non-vacuite : Poix et Chaux n'ont PAS le meme damageAmp — sans
+    // plancher EXPLICITE, les deux lignes ci-dessous rendraient des valeurs
+    // differentes.
+    expect(elementOf(ELEMENT.POIX).damageAmp).not.toBe(elementOf(ELEMENT.CHAUX).damageAmp);
+    expect(poixDeclenche).toBe(chauxDeclenche);
+    expect(poixDeclenche).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+
+  /**
+   * ⚠️ **L'invariant dont le test precedent depend, ASSENE — pas seulement
+   * observe, meme discipline que le test equivalent de Verglas pour
+   * `zoneSlowFactor`.** `zoneDamageAmpTotal` combine par MAXIMUM
+   * (`Math.max(elementFactor, reactionFactor)`) : l'independance a l'ordre
+   * ne tient QUE SI `reactionFactor` reste un PLAFOND — superieur ou egal au
+   * `damageAmp` de CHAQUE element qui peut apparaitre dans le nibble.
+   */
+  it('le plancher de Mortier vif reste un PLAFOND pour les deux elements de sa propre paire', () => {
+    const def = reactionOfId(REACTION.MORTIER_VIF);
+    expect(def).toBeDefined();
+    const [a, b] = unpackElementPair(def?.pair ?? 0);
+    for (const element of [a, b]) {
+      expect(def?.zoneDamageAmp).toBeGreaterThanOrEqual(elementOf(element).damageAmp);
+    }
   });
 });

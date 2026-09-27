@@ -4,12 +4,13 @@ import {
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
 } from './constants';
-import { ELEMENT, elementOf } from './elements';
+import { ELEMENT } from './elements';
 import { zoneElement, zoneReaction } from './protocol';
 import {
   zoneArmorReductionTotal,
   zoneBurnPerTick,
   zoneCollisionDamage,
+  zoneDamageAmpTotal,
   zoneLifetimeTicks,
 } from './reactions';
 
@@ -328,6 +329,16 @@ export class ZoneField {
    * horde et ne doit pas l'apprendre : `overlaps` prend deja des indices de
    * zone, `ampAt` prend des coordonnees. C'est l'appelant qui sait de quelle
    * entite il parle.
+   *
+   * ⚠️ **DERIVEE de `zoneDamageAmpTotal`, plus de `elementOf(zoneElement(kind)).damageAmp`
+   * seul depuis la tache 6 de l'etape 5c.** Mortier vif (Poix + Chaux) est la
+   * premiere REACTION a porter une amplification propre
+   * (`ReactionDef.zoneDamageAmp`) : `zoneDamageAmpTotal` (`shared/reactions.ts`)
+   * combine cette contribution avec celle de l'element, exactement comme
+   * `zoneArmorReductionTotal` le fait pour la reduction d'armure depuis la
+   * tache 1. Une lecture directe de l'element aurait rendu Mortier vif
+   * fragile une fois sur deux seulement (l'element porte du nibble est celui
+   * du DECLENCHEUR, Poix OU Chaux selon l'ordre d'arrivee).
    */
   ampAt(x: number, y: number, tick: number): number {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
@@ -341,7 +352,7 @@ export class ZoneField {
       if (dx * dx + dy * dy >= r2) {
         continue;
       }
-      const factor = elementOf(zoneElement(this.kind[z] ?? 0)).damageAmp;
+      const factor = zoneDamageAmpTotal(this.kind[z] ?? 0);
       if (factor > amp) {
         amp = factor;
       }

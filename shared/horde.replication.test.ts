@@ -17,7 +17,7 @@ import { HordeHistory } from './horde-history';
 import { hpScale } from './paliers';
 import { PlayerHistory } from './player-history';
 import { packZoneKind } from './protocol';
-import { REACTION } from './reactions';
+import { REACTION, zoneLifetimeTicks } from './reactions';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
 import { ZoneField } from './zones';
@@ -2200,6 +2200,176 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
       expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
       for (const p of result.clients) {
         // 1 a 3 ticks de retard tiennent largement dans l'anneau.
+        expect(p.lateZones).toBe(0);
+        expect(p.horde.count).toBe(result.reference.count);
+      }
+      expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+    });
+  });
+
+  /**
+   * Gel profond (Givre + Vif-argent, tache 6 de l'etape 5c) : `slowFactor:
+   * 0`, EXACTEMENT comme la Supraconduction (ZF0 a ZF2 ci-dessus) — seule sa
+   * duree change (`SURCHAUFFE_ZONE_LIFETIME_TICKS`, reutilisee, voir
+   * `REACTION_DEFS`). Meme decor, REUTILISE via `runZoneScenario` : un
+   * `kind` empaquete different, rien de plus.
+   *
+   * ⚠️ **Les trois memes preuves que Z0 a Z2 et ZF0 a ZF2, dans le meme
+   * ordre, et il faut les trois** : GF0 prouve que le gel MORD, GF1 prouve
+   * que sans rejeu ca derive reellement, GF2 est le test qui compte —
+   * avec rejeu, la derive retombe a (quasi) zero malgre le gel total.
+   *
+   * ⚠️ **Le seuil de GF0 derive de `zoneLifetimeTicks(kind)`, PAS de
+   * `ZONE_LIFETIME_TICKS`** — contrairement a ZF0, dont la Supraconduction
+   * vit la duree GENERIQUE. Gel profond vit plus longtemps
+   * (`SURCHAUFFE_ZONE_LIFETIME_TICKS`) : reprendre la constante generique
+   * ici sous-estimerait le seuil sans le faire rougir, un decor qui masque.
+   */
+  describe('etape 5c tache 6 : Gel profond fige, plus longtemps que la Supraconduction, et le rejeu le date au tick', () => {
+    const GEL_PROFOND_KIND = packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND);
+
+    function gelage(mapSeed: number): number {
+      const gel = runZoneScenario(mapSeed, true, GEL_PROFOND_KIND).reference;
+      const temoin = runZoneScenario(mapSeed, true, ELEMENT.NEUTRE).reference;
+      return maxDriftBetween(temoin, gel);
+    }
+
+    it('scenario GF0 — le gel mord reellement : la horde figee decroche du temoin neutre', () => {
+      const mordu = gelage(0x6f0_0000);
+      process.stdout.write(
+        `scenario GF0 (Gel profond mord) : ecart maximal entre horde figee et temoin neutre ${mordu.toFixed(3)} px\n`,
+      );
+      const attenduMin =
+        0.1 * archetypeOf(0).speed * (zoneLifetimeTicks(GEL_PROFOND_KIND) / TICK_HZ);
+      expect(mordu).toBeGreaterThan(attenduMin);
+    });
+
+    it('scenario GF1 — sans rejeu, une zone de Gel profond appliquee au present laisse une derive mesurable', () => {
+      const result = runZoneScenario(0x6f0_0001, false, GEL_PROFOND_KIND);
+      process.stdout.write(
+        `scenario GF1 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      expect(result.maxDrift).toBeGreaterThan(1);
+    });
+
+    it('scenario GF2 — avec rejeu, la derive retombe a (quasi) zero malgre le gel total : le test qui compte', () => {
+      const result = runZoneScenario(0x6f0_0002, true, GEL_PROFOND_KIND);
+      process.stdout.write(
+        `scenario GF2 (avec rejeu, Gel profond en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      for (const p of result.clients) {
+        expect(p.lateZones).toBe(0);
+        expect(p.horde.count).toBe(result.reference.count);
+      }
+      expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+    });
+  });
+
+  /**
+   * Mortier vif (Poix + Chaux, tache 6 de l'etape 5c) : `slowFactor: 0`,
+   * duree GENERIQUE (contrairement a Gel profond et Aveuglement). Meme
+   * decor, REUTILISE via `runZoneScenario`.
+   *
+   * ⚠️ **Les trois memes preuves, dans le meme ordre** : MV0 prouve que le
+   * gel MORD, MV1 prouve que sans rejeu ca derive reellement, MV2 est le
+   * test qui compte.
+   */
+  describe('etape 5c tache 6 : Mortier vif fige, et le rejeu le date au tick', () => {
+    const MORTIER_VIF_KIND = packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF);
+
+    function scellage(mapSeed: number): number {
+      const scelle = runZoneScenario(mapSeed, true, MORTIER_VIF_KIND).reference;
+      const temoin = runZoneScenario(mapSeed, true, ELEMENT.NEUTRE).reference;
+      return maxDriftBetween(temoin, scelle);
+    }
+
+    it('scenario MV0 — le scellement mord reellement : la horde figee decroche du temoin neutre', () => {
+      const mordu = scellage(0x4710_0000);
+      process.stdout.write(
+        `scenario MV0 (Mortier vif mord) : ecart maximal entre horde figee et temoin neutre ${mordu.toFixed(3)} px\n`,
+      );
+      const attenduMin =
+        0.1 * archetypeOf(0).speed * (zoneLifetimeTicks(MORTIER_VIF_KIND) / TICK_HZ);
+      expect(mordu).toBeGreaterThan(attenduMin);
+    });
+
+    it('scenario MV1 — sans rejeu, une zone de Mortier vif appliquee au present laisse une derive mesurable', () => {
+      const result = runZoneScenario(0x4710_0001, false, MORTIER_VIF_KIND);
+      process.stdout.write(
+        `scenario MV1 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      expect(result.maxDrift).toBeGreaterThan(1);
+    });
+
+    it('scenario MV2 — avec rejeu, la derive retombe a (quasi) zero malgre le scellement : le test qui compte', () => {
+      const result = runZoneScenario(0x4710_0002, true, MORTIER_VIF_KIND);
+      process.stdout.write(
+        `scenario MV2 (avec rejeu, Mortier vif en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      for (const p of result.clients) {
+        expect(p.lateZones).toBe(0);
+        expect(p.horde.count).toBe(result.reference.count);
+      }
+      expect(result.maxDrift).toBeLessThan(DRIFT_LIMIT_PX);
+    });
+  });
+
+  /**
+   * Aveuglement (Chaux + Vif-argent, tache 6 de l'etape 5c) : « la fuite,
+   * plus longue que la Chaux seule » — meme mecanisme que le bloc Chaux
+   * (CF0 a CF2 ci-dessus), seule la duree change
+   * (`SURCHAUFFE_ZONE_LIFETIME_TICKS`, reutilisee). Meme decor, REUTILISE
+   * via `runZoneScenario`.
+   *
+   * ⚠️ **Le seuil d'AV0 derive de `zoneLifetimeTicks(kind)`, PAS de
+   * `ZONE_LIFETIME_TICKS`** — meme garde que GF0 : Aveuglement vit plus
+   * longtemps qu'une Chaux seule.
+   */
+  describe('etape 5c tache 6 : Aveuglement fait fuir, plus longtemps que la Chaux seule, et le rejeu le date au tick', () => {
+    const AVEUGLEMENT_KIND = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT);
+
+    function fuite(mapSeed: number): number {
+      const aveugle = runZoneScenario(mapSeed, true, AVEUGLEMENT_KIND).reference;
+      const temoin = runZoneScenario(mapSeed, true, ELEMENT.NEUTRE).reference;
+      return maxDriftBetween(temoin, aveugle);
+    }
+
+    it('scenario AV0 — la fuite mord reellement : la horde aveuglee decroche du temoin neutre', () => {
+      const mordu = fuite(0xa7e_0000);
+      process.stdout.write(
+        `scenario AV0 (Aveuglement mord) : ecart maximal entre horde aveuglee et temoin neutre ${mordu.toFixed(3)} px\n`,
+      );
+      const attenduMin =
+        0.1 * archetypeOf(0).speed * (zoneLifetimeTicks(AVEUGLEMENT_KIND) / TICK_HZ);
+      expect(mordu).toBeGreaterThan(attenduMin);
+    });
+
+    it('scenario AV1 — sans rejeu, une zone d Aveuglement appliquee au present laisse une derive mesurable', () => {
+      const result = runZoneScenario(0xa7e_0001, false, AVEUGLEMENT_KIND);
+      process.stdout.write(
+        `scenario AV1 (sans rejeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      expect(result.maxDrift).toBeGreaterThan(1);
+    });
+
+    it('scenario AV2 — avec rejeu, la derive retombe a (quasi) zero malgre la fuite : le test qui compte', () => {
+      const result = runZoneScenario(0xa7e_0002, true, AVEUGLEMENT_KIND);
+      process.stdout.write(
+        `scenario AV2 (avec rejeu, Aveuglement en jeu) : derive maximale ${result.maxDrift.toFixed(3)} px, ` +
+          `${result.announced} zones annoncees\n`,
+      );
+      expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
+      for (const p of result.clients) {
         expect(p.lateZones).toBe(0);
         expect(p.horde.count).toBe(result.reference.count);
       }

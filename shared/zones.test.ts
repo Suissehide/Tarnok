@@ -722,6 +722,50 @@ describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le p
 });
 
 /**
+ * `ZoneField.ampAt` consomme `zoneDamageAmpTotal` depuis la tache 6 de
+ * l'etape 5c — Mortier vif (Poix + Chaux) est la PREMIERE reaction a porter
+ * une amplification propre (`ReactionDef.zoneDamageAmp`), et non plus
+ * seulement un `Element.damageAmp` lu directement sur le nibble.
+ */
+describe('ZoneField.ampAt — Mortier vif ferme le maximum ELEMENT x REACTION (tache 6)', () => {
+  /**
+   * ⚠️ **Le point precis de `zoneDamageAmpTotal` : le nibble d'element de la
+   * zone porte celui du DECLENCHEUR** (`ReactionTrigger.element`), Poix OU
+   * Chaux selon l'ordre d'arrivee. `elementOf(ELEMENT.POIX).damageAmp` (1,5)
+   * et `elementOf(ELEMENT.CHAUX).damageAmp` (1, neutre) sont donc DIFFERENTS
+   * selon le declencheur — sans le plancher explicite de la reaction, une
+   * zone de Mortier vif amplifierait une fois sur deux seulement.
+   */
+  it('amplifie MEME quand la Chaux est le declencheur — l element SEUL ne suffirait pas', () => {
+    const zones = new ZoneField();
+    expect(zones.spawn(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF), 500, 500, 0, 0)).toBe(0);
+    // Non-vacuite : la Chaux SEULE (l'element du nibble ici) n'amplifie rien.
+    expect(elementOf(ELEMENT.CHAUX).damageAmp).toBe(1);
+    expect(zones.ampAt(500, 500, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+
+  it('amplifie aussi quand la Poix est le declencheur, a la MEME valeur', () => {
+    const zones = new ZoneField();
+    expect(zones.spawn(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF), 500, 500, 0, 0)).toBe(0);
+    expect(zones.ampAt(500, 500, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+
+  it('une zone de Mortier vif et une flaque de Poix qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme', () => {
+    // ⚠️ **Meme facteur (`elementOf(ELEMENT.POIX).damageAmp`) des deux
+    // cotes** : la somme (3) et le produit (2,25) different tous deux du
+    // maximum (1,5) — meme decor que le test equivalent du describe Poix
+    // plus haut, applique cette fois a une REACTION plutot qu'a un second
+    // element pur.
+    const zones = new ZoneField();
+    expect(zones.spawn(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF), 0, 0, 0, 0)).toBe(0);
+    expect(zones.spawn(ELEMENT.POIX, ZONE_RADIUS, 0, 0, 0)).toBe(1);
+    expect(zones.count).toBe(2);
+
+    expect(zones.ampAt(ZONE_RADIUS / 2, 0, 0)).toBe(elementOf(ELEMENT.POIX).damageAmp);
+  });
+});
+
+/**
  * `ZoneField.armorReductionAt` — la tache 7 de l'etape 5b : meme FORME
  * qu'`ampAt` ci-dessus (meme balayage, meme `aliveAt`, meme MAXIMUM), pour
  * une raison DIFFERENTE — voir son docbloc. La Supraconduction (Givre +
@@ -1155,6 +1199,28 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
     const zonesB = new ZoneField();
     expect(zonesB.spawn(kindAutreDeclenche, 500, 500, 0, 0)).toBe(0);
     expect(zonesB.hitRadiusBonusAt(500, 500, 0)).toBe(0);
+  });
+
+  /**
+   * ⚠️ **La MEME garde, cette fois avec les DEUX reactions REELLES qui
+   * apparient le Vif-argent et touchent le deplacement (tache 6 de l etape
+   * 5c) — le cas n est plus hypothetique.** Voir le docbloc de leur entree
+   * dans `REACTION_DEFS` (`shared/reactions.ts`) pour la decision tranchee :
+   * le rayon de touche elargi reste une propriete du Vif-argent ELEMENTAIRE
+   * SEUL (§4 de la spec), jamais d une reaction qui l apparie.
+   */
+  it('Gel profond et Aveuglement (reactions REELLES) n elargissent jamais, quel que soit le declencheur', () => {
+    const kinds = [
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND),
+      packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND),
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+      packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT),
+    ];
+    for (const kind of kinds) {
+      const zones = new ZoneField();
+      expect(zones.spawn(kind, 500, 500, 0, 0)).toBe(0);
+      expect(zones.hitRadiusBonusAt(500, 500, 0)).toBe(0);
+    }
   });
 
   /**

@@ -44,6 +44,9 @@ export const REACTION = {
   VAPORISATION: 8,
   ARC_CAUSTIQUE: 9,
   PARATONNERRE: 10,
+  GEL_PROFOND: 11,
+  MORTIER_VIF: 12,
+  AVEUGLEMENT: 13,
 } as const;
 
 export interface ReactionDef {
@@ -95,6 +98,33 @@ export interface ReactionDef {
    * `zoneArmorReduction` ci-dessous.
    */
   readonly zoneArmorReduction: number;
+  /**
+   * Facteur d'amplification des degats propre a la reaction, applique a qui
+   * se tient dans la zone laissee (1 : aucun effet propre — Mortier vif,
+   * tache 6 de l'etape 5c, est la seule a en porter un aujourd'hui).
+   *
+   * ⚠️ **La piece manquante que cette tache ajoute — verifiee, pas supposee
+   * absente : `grep -c zoneDamageAmp shared/reactions.ts` rendait 0 avant
+   * cette tache, alors que `zoneSlowFactor`, `zoneArmorReduction` et
+   * `zoneFieldSign` existaient deja tous.** Sans ce champ, une reaction dont
+   * l'un des deux elements porte un `Element.damageAmp` non neutre (la Poix,
+   * 1,5) heriterait l'amplification de l'element du DECLENCHEUR — non
+   * neutre une fois sur deux seulement, selon l'ordre d'arrivee. Voir
+   * `zoneDamageAmpTotal` ci-dessous, qui la combine avec `Element.damageAmp`
+   * EXACTEMENT comme `zoneArmorReductionTotal` combine `zoneArmorReduction`
+   * avec `Element.armorReduction` — meme forme, cree en une seule fois ici
+   * plutot qu'en deux temps (`zoneArmorReduction` puis
+   * `zoneArmorReductionTotal` sont nees a des taches differentes, 5b puis
+   * 5c) : aucune lecture NUE de ce champ seul n'est exposee, rien n'en a
+   * besoin.
+   *
+   * ⚠️ **Combine par MAXIMUM, jamais une somme ni un produit — decision de
+   * JEU, pas contrainte arithmetique, exactement la meme raison que
+   * `zoneArmorReductionTotal` et le maximum de `ZoneField.ampAt` lui-meme
+   * (deja en place depuis la tache 4 de l'etape 5b pour deux zones qui se
+   * recouvrent).** Deux sources d'amplification ne s'additionnent pas.
+   */
+  readonly zoneDamageAmp: number;
   /**
    * Facteur de conservation de la vitesse tenue dans la zone laissee par
    * cette reaction (1 : aucun effet propre — Verglas, tache 8 de l'etape 5b,
@@ -155,6 +185,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // la brulure, pas par le deplacement ou la defense.
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
@@ -175,6 +206,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
@@ -193,6 +225,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
@@ -215,6 +248,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // Foudre selon l'ordre d'arrivee du declencheur) — voir `zoneSlowFactor`.
     zoneSlowFactor: 0,
     zoneArmorReduction: SUPRACONDUCTION_ARMOR_REDUCTION,
+    zoneDamageAmp: 1,
     // Ni inertie ni collision propres : la Supraconduction agit par le gel,
     // pas par la perte de controle.
     zoneInertiaDamping: 1,
@@ -248,6 +282,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     // un, quel que soit l'ordre.
     zoneSlowFactor: elementOf(ELEMENT.GIVRE).slowFactor,
     zoneArmorReduction: 0,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: VERGLAS_INERTIA_DAMPING,
     zoneCollisionDamage: VERGLAS_COLLISION_DAMAGE_PER_TICK,
     zoneFieldSign: 1,
@@ -284,6 +319,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: 0,
     zoneSlowFactor: 1,
     zoneArmorReduction: MAX_ARMOR,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
@@ -343,6 +379,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: ECLAT_DE_GEL_DAMAGE,
     zoneSlowFactor: elementOf(ELEMENT.GIVRE).slowFactor,
     zoneArmorReduction: elementOf(ELEMENT.CHAUX).armorReduction,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
@@ -379,6 +416,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
@@ -424,6 +462,7 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
     zoneArmorReduction: SUPRACONDUCTION_ARMOR_REDUCTION,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
@@ -456,9 +495,187 @@ const REACTION_DEFS: readonly ReactionDef[] = [
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
     zoneArmorReduction: 0,
+    zoneDamageAmp: 1,
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
+  },
+  {
+    // Gel profond (Givre + Vif-argent, tache 6 de l'etape 5c) : vitesse
+    // NULLE dans la zone laissee, EXACTEMENT comme la Supraconduction — la
+    // DUREE la distingue, pas l'intensite (§5 de la spec : « plus forte ou
+    // plus longue que Supraconduction » ; `slowFactor` 0 est deja un
+    // plancher ABSOLU, rien n'est « plus fort » que zero, donc la duree est
+    // le SEUL levier qui reste).
+    //
+    // ⚠️ **`zoneLifetimeTicks` REUTILISE `SURCHAUFFE_ZONE_LIFETIME_TICKS`
+    // (135 ticks, 4,5 s a `TICK_HZ`), pas un troisieme chiffre arbitraire.**
+    // La Supraconduction ne porte aucune duree propre (`zoneLifetimeTicks: 0`
+    // dans son entree ci-dessus) : sa zone vit la duree GENERIQUE
+    // (`ZONE_LIFETIME_TICKS`, 90 ticks, 3 s). N'importe quelle duree
+    // strictement superieure a 90 suffirait a satisfaire « plus longue » ;
+    // reprendre le multiplicateur deja etabli par Surchauffe (x1,5) evite
+    // d'inventer un second reglage non motive.
+    //
+    // ⚠️ **Vif-argent est NEUTRE sur les CINQ grandeurs combinantes de cette
+    // table (voir son entree dans `ELEMENT_DEFS`) : seul le Givre porte une
+    // grandeur non neutre ici (`slowFactor`, 0,6).** `zoneSlowFactor: 0` est
+    // deja un plancher ABSOLU (`min(x, 0) = 0` quel que soit `x`) qui domine
+    // le Givre comme le Vif-argent : `zoneArmorReduction` et `zoneFieldSign`
+    // restent donc neutres, VERIFIE par la table plutot que suppose — cette
+    // paire n'a besoin d'aucun autre plancher.
+    //
+    // ⚠️ **Le pare-feu de la tache 3 (`zoneReaction(kind) === 0` dans
+    // `linkedNeighbours`/`hitRadiusBonusAt`, `shared/links.ts` et
+    // `shared/zones.ts`) RESTE EN PLACE — decision TRANCHEE pour cette
+    // tache, pas heritee en silence.** Le §5 de la spec decrit l'effet de
+    // Gel profond comme « vitesse nulle dans la zone » SEUL : ni la liaison
+    // ni le rayon de touche elargi n'y figurent. Les deux restent des
+    // proprietes du Vif-argent ELEMENTAIRE (§3/§4 de la spec) : une zone de
+    // Gel profond n'est pas une zone de Vif-argent, c'est le residu d'une
+    // combinaison — exactement le raisonnement retenu par la tache 5 pour
+    // Vaporisation et Paratonnerre (voir son rapport, §« Le filtre de la
+    // tache 3 applique a mes reactions — mon avis »). Un joueur qui veut
+    // LIER et GELER au meme endroit doit poser une zone de Vif-argent PUR
+    // separement — les deux `kind` coexistent, `ZoneField.spawn` ne
+    // fusionnant jamais que sur le `kind` COMPLET (voir son docbloc). Aucun
+    // dériveur `zoneLinked`/`zoneHitRadiusBonus` combinant element et
+    // reaction n'est donc necessaire : contrairement a `zoneDamageAmp`
+    // ci-dessous (une VRAIE piece manquante que cette tache ajoute), la
+    // liaison et le rayon de touche elargi n'ont jamais ete des grandeurs de
+    // `ReactionDef` — ce sont des effets STRUCTURELS du Vif-argent seul (voir
+    // les docblocs de `linkedNeighbours` et `ZoneField.hitRadiusBonusAt`), et
+    // aucune des neuf reactions precedentes n'en a jamais reclame une.
+    id: REACTION.GEL_PROFOND,
+    name: 'gel-profond',
+    pair: packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: SURCHAUFFE_ZONE_LIFETIME_TICKS,
+    radius: 0,
+    damage: 0,
+    zoneSlowFactor: 0,
+    zoneArmorReduction: 0,
+    zoneDamageAmp: 1,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: 1,
+  },
+  {
+    // Mortier vif (Poix + Chaux, tache 6 de l'etape 5c) : « scelles et
+    // fragiles » (§5 de la spec) — vitesse NULLE (l'immobilisation, comme la
+    // Supraconduction et Gel profond) ET amplification des degats (la
+    // fragilite, comme la Poix). DEUX grandeurs PROPRES a la reaction, plus
+    // DEUX planchers pour la moitie Chaux du couple.
+    //
+    // ⚠️ **`zoneSlowFactor: 0` est un effet PROPRE, pas un plancher — ni la
+    // Poix ni la Chaux ne portent de `slowFactor` non neutre (voir
+    // `ELEMENT_DEFS`), donc rien ne « fuiterait » a travers le minimum si ce
+    // champ restait neutre.** Exactement comme Supraconduction et Gel
+    // profond, l'immobilisation nait ICI, de la reaction seule.
+    //
+    // ⚠️ **`zoneDamageAmp` : la PIECE QUI MANQUAIT (verifiee — `grep -c
+    // zoneDamageAmp` rendait 0 avant cette tache), et le plancher qui va
+    // avec.** Sans ce champ, Mortier vif aurait herite l'amplification de
+    // l'element du DECLENCHEUR (Poix, 1,5, OU Chaux, 1, selon l'ordre
+    // d'arrivee) — fragile une fois sur deux seulement.
+    // `elementOf(ELEMENT.POIX).damageAmp` REUTILISE (jamais recopie), meme
+    // discipline que Verglas pour `zoneSlowFactor` : le plancher garantit
+    // exactement ce qu'une flaque de Poix SEULE laisserait deja, ni plus ni
+    // moins, quel que soit l'ordre. Combine par MAXIMUM avec l'element porte
+    // (`zoneDamageAmpTotal`, plus bas) : max(1, 1,5) = 1,5 si Chaux
+    // declenche, max(1,5, 1,5) = 1,5 si Poix declenche — la MEME
+    // amplification dans les deux cas.
+    //
+    // ⚠️ **`zoneArmorReduction` ET `zoneFieldSign` sont EXPLICITES, jamais
+    // heritees de l'element — le meme piege des DEUX planchers que Fournee,
+    // Eclat de gel et Arc caustique avant elle.** Cette paire apparie la
+    // Chaux, qui porte DEUX proprietes non neutres (`armorReduction` et
+    // `fieldSign: -1`) : sans plancher explicite, la zone corroderait une
+    // fois sur deux et fuirait une fois sur deux selon l'ordre d'arrivee.
+    // Mortier vif ne PRETEND a aucun des deux effets au §5 de la spec
+    // (contrairement a Fournee, qui va jusqu'a `MAX_ARMOR`) : les planchers
+    // choisis (`elementOf(ELEMENT.CHAUX).armorReduction`,
+    // `elementOf(ELEMENT.CHAUX).fieldSign`) garantissent seulement ce qu'une
+    // Chaux SEULE laisserait deja — meme raisonnement qu'Eclat de gel pour
+    // son armure.
+    //
+    // ⚠️ **La fuite plancheee par `zoneFieldSign` est SANS OBJET a
+    // l'interieur de cette zone — meme point de revue n°4 que
+    // Chaux+Supraconduction.** `#computeSlow` fige la vitesse a zero AVANT
+    // que le signe n'ait quoi que ce soit a inverser : une entite scellee ne
+    // fuit jamais. Le plancher reste neanmoins requis pour la meme raison
+    // que partout ailleurs dans cette table : sans lui, l'octet stocke
+    // resterait dependant de l'ordre d'arrivee, meme si son EFFET pratique
+    // est aujourd'hui masque par le gel. Voir le test dedie dans
+    // `shared/horde.test.ts`.
+    id: REACTION.MORTIER_VIF,
+    name: 'mortier-vif',
+    pair: packElementPair(ELEMENT.POIX, ELEMENT.CHAUX),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: 0,
+    radius: 0,
+    damage: 0,
+    zoneSlowFactor: 0,
+    zoneArmorReduction: elementOf(ELEMENT.CHAUX).armorReduction,
+    zoneDamageAmp: elementOf(ELEMENT.POIX).damageAmp,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
+  },
+  {
+    // Aveuglement (Chaux + Vif-argent, tache 6 de l'etape 5c) : la fuite,
+    // PLUS LONGUE que la Chaux seule (§5 de la spec) — meme raisonnement que
+    // Gel profond face a la Supraconduction : `fieldSign` n'a que deux
+    // valeurs possibles (+1/-1), rien n'est « plus fort » que -1, donc la
+    // DUREE est le seul levier qui separe Aveuglement d'une Chaux seule.
+    //
+    // ⚠️ **Ecart au §6.4 ASSUME ICI, explicitement — §6.4 dit que ces
+    // ennemis « perdent leur cible et errent ».** Le §2 de la spec de
+    // l'etape 5c a deja tranche la fuite plutot que l'errance pour la Chaux
+    // seule ; Aveuglement REPREND cette decision plutot que d'en inventer
+    // une troisieme : une horde qui erre perd sa pression, et la pression
+    // est la tension du genre (bullet heaven). Ce n'est pas une seconde
+    // decision de jeu — c'est la MEME, heritee du couple qui porte deja la
+    // fuite (la Chaux).
+    //
+    // ⚠️ **`zoneLifetimeTicks` REUTILISE `SURCHAUFFE_ZONE_LIFETIME_TICKS`
+    // (135 ticks, 4,5 s), meme reglage que Gel profond ci-dessus et pour la
+    // meme raison.** Une Chaux SEULE (sans reaction nommee) vit la duree
+    // GENERIQUE (90 ticks, 3 s) — n'importe quelle duree strictement
+    // superieure suffirait a satisfaire « plus longue » ; reprendre le
+    // multiplicateur deja etabli evite un second chiffre arbitraire.
+    //
+    // ⚠️ **`zoneArmorReduction` ET `zoneFieldSign` sont EXPLICITES, jamais
+    // heritees de l'element — le meme piege des DEUX planchers que Fournee,
+    // Eclat de gel, Arc caustique et Mortier vif avant elle.** Vif-argent est
+    // NEUTRE sur les cinq grandeurs de cette table (voir son entree dans
+    // `ELEMENT_DEFS`) : seule la Chaux porte des grandeurs non neutres ici,
+    // et les deux doivent etre plancheees pour ne pas dependre de l'ordre
+    // d'arrivee (Chaux OU Vif-argent selon quel projectile touche en
+    // second). Les planchers choisis
+    // (`elementOf(ELEMENT.CHAUX).armorReduction`,
+    // `elementOf(ELEMENT.CHAUX).fieldSign`) garantissent exactement ce
+    // qu'une Chaux SEULE laisserait deja — Aveuglement n'AJOUTE aucune
+    // reduction d'armure, elle garantit la fuite plus longtemps.
+    //
+    // ⚠️ **Le pare-feu de la tache 3 reste EN PLACE, meme decision et meme
+    // raisonnement que Gel profond ci-dessus.** Une zone d'Aveuglement ne
+    // lie personne et n'elargit aucun rayon de touche : ces deux effets
+    // restent des proprietes du Vif-argent ELEMENTAIRE seul (§3/§4 de la
+    // spec), jamais d'une reaction qui l'apparie.
+    id: REACTION.AVEUGLEMENT,
+    name: 'aveuglement',
+    pair: packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT),
+    zoneBurnPerTick: 0,
+    zoneLifetimeTicks: SURCHAUFFE_ZONE_LIFETIME_TICKS,
+    radius: 0,
+    damage: 0,
+    zoneSlowFactor: 1,
+    zoneArmorReduction: elementOf(ELEMENT.CHAUX).armorReduction,
+    zoneDamageAmp: 1,
+    zoneInertiaDamping: 1,
+    zoneCollisionDamage: 0,
+    zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
   },
 ];
 
@@ -572,6 +789,31 @@ export function zoneArmorReductionTotal(kind: number): number {
   const elementReduction = elementOf(zoneElement(kind)).armorReduction;
   const reactionReduction = zoneArmorReduction(kind);
   return Math.max(elementReduction, reactionReduction);
+}
+
+/**
+ * L'amplification des degats qu'une zone impose, ELEMENT et REACTION
+ * confondus — lue par `ZoneField.ampAt` (`shared/zones.ts`), qui ne voyage
+ * jamais (le client ne prononce aucun degat, §2 de la spec de l'etape 5c).
+ *
+ * ⚠️ **Meme raison d'etre que `zoneArmorReductionTotal` juste au-dessus** :
+ * le nibble d'element d'une zone de reaction porte celui du DECLENCHEUR, qui
+ * varie selon l'ordre d'arrivee. Deriver de l'element seul (Mortier vif,
+ * Poix + Chaux) rendrait l'amplification dependante de cet ordre — fragile
+ * une fois sur deux, solide l'autre.
+ *
+ * ⚠️ **Un MAXIMUM entre les deux contributions, jamais une somme ni un
+ * produit — decision de JEU, pas contrainte arithmetique, EXACTEMENT la
+ * meme forme que `zoneArmorReductionTotal` et le maximum que `ZoneField.ampAt`
+ * applique deja entre deux zones qui se recouvrent (tache 4 de l'etape 5b).**
+ * Deux sources d'amplification ne s'additionnent pas : une flaque de Poix et
+ * une zone de Mortier vif qui se recouvrent donnent la plus forte des deux,
+ * jamais leur somme (3) ni leur produit (2,25).
+ */
+export function zoneDamageAmpTotal(kind: number): number {
+  const elementFactor = elementOf(zoneElement(kind)).damageAmp;
+  const reactionFactor = reactionOfId(zoneReaction(kind))?.zoneDamageAmp ?? 1;
+  return Math.max(elementFactor, reactionFactor);
 }
 
 /**

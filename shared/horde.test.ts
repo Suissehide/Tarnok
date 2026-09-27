@@ -14,6 +14,7 @@ import {
   ORB_DROP_ONE_IN,
   SEPARATION_RADIUS,
   STEERING_RECOMPUTE_TICKS,
+  SURCHAUFFE_ZONE_LIFETIME_TICKS,
   TICK_HZ,
   VERGLAS_INERTIA_DAMPING,
   ZONE_LIFETIME_TICKS,
@@ -2635,6 +2636,115 @@ describe('Horde.step — la Supraconduction fige le deplacement (etape 5b, tache
 });
 
 /**
+ * Gel profond (Givre + Vif-argent) et Mortier vif (Poix + Chaux), tache 6 de
+ * l'etape 5c : `slowFactor: 0` sur le champ qu'elles laissent — le MEME
+ * `#computeSlow` que le bloc Supraconduction ci-dessus, seul le facteur
+ * derive (`zoneSlowFactor`, `shared/reactions.ts`) change. Le describe est
+ * separe pour la meme raison que Supraconduction l'etait du Givre : le SUJET
+ * differe (deux reactions de plus), pas le mecanisme.
+ */
+describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache 6 de l etape 5c)', () => {
+  /** Une entite unique, immobile a `(x, y)`, avec sa vitesse posee a la main. */
+  function une(x: number, y: number): Horde {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }));
+    horde.x[0] = x;
+    horde.y[0] = y;
+    return horde;
+  }
+
+  /** Meme forme que `pasFigeAu` du bloc Supraconduction ci-dessus. */
+  function pasFigeAu(horde: Horde, fields: FlowField[], tick: number, zones: ZoneField): number {
+    for (let t = 0; t < tick; t++) {
+      horde.step(DT, fields, t, zones);
+    }
+    const x0 = horde.x[0] ?? 0;
+    const y0 = horde.y[0] ?? 0;
+    horde.step(DT, fields, tick, zones);
+    return Math.hypot((horde.x[0] ?? 0) - x0, (horde.y[0] ?? 0) - y0);
+  }
+
+  const MESURE = STEERING_RECOMPUTE_TICKS + 2;
+
+  it('Gel profond immobilise totalement, quel que soit l element porte par le nibble (Givre OU Vif-argent declenche)', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const givreDeclenche = new ZoneField();
+    givreDeclenche.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND), 1000, 1000, 0, 0);
+    const vifArgentDeclenche = new ZoneField();
+    vifArgentDeclenche.spawn(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND),
+      1000,
+      1000,
+      0,
+      0,
+    );
+
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, givreDeclenche)).toBe(0);
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, vifArgentDeclenche)).toBe(0);
+  });
+
+  it('Mortier vif immobilise totalement, dans les DEUX ordres (Poix OU Chaux declenche)', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const poixDeclenche = new ZoneField();
+    poixDeclenche.spawn(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF), 1000, 1000, 0, 0);
+    const chauxDeclenche = new ZoneField();
+    chauxDeclenche.spawn(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF), 1000, 1000, 0, 0);
+
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, poixDeclenche)).toBe(0);
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, chauxDeclenche)).toBe(0);
+  });
+
+  it('une entite HORS de la zone de Gel profond n est pas figee, a un pixel du bord', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND), 1000, 1000, 0, 0);
+    const depart = 1000 + ZONE_RADIUS + 1;
+
+    expect(pasFigeAu(une(depart, 1000), fields, MESURE, zones)).toBeGreaterThan(0);
+  });
+
+  /**
+   * ⚠️ **LE test qui assene LA DUREE, pas seulement l effet — §5 de la
+   * spec : « plus forte ou plus longue que Supraconduction ».**
+   * `zoneSlowFactor: 0` est un plancher ABSOLU des DEUX cotes : rien ne peut
+   * geler « plus fort » que zero, donc si les deux reactions ne se
+   * separaient que par cette assertion, Gel profond serait du CONTENU MORT
+   * a cote de la Supraconduction (§5 de la spec de l'etape 5c le dit en
+   * toutes lettres). La separation reelle est `zoneLifetimeTicks` : la
+   * Supraconduction degele a la duree GENERIQUE (`ZONE_LIFETIME_TICKS`, 90
+   * ticks), Gel profond continue jusqu'a `SURCHAUFFE_ZONE_LIFETIME_TICKS`
+   * (135 ticks, reutilisee — voir `REACTION_DEFS`). `MESURE` tombe entre les
+   * deux : la Supraconduction a deja degele, Gel profond gele encore.
+   */
+  it('Gel profond reste gele au-dela de la duree de la Supraconduction : la DUREE les separe, pas l intensite', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const MESURE_DUREE = ZONE_LIFETIME_TICKS + 2;
+    expect(MESURE_DUREE).toBeLessThan(SURCHAUFFE_ZONE_LIFETIME_TICKS);
+
+    const supraconduction = new ZoneField();
+    supraconduction.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
+    const gelProfond = new ZoneField();
+    gelProfond.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND), 1000, 1000, 0, 0);
+
+    // La Supraconduction a degele : ce pas-la avance normalement.
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE_DUREE, supraconduction)).toBeGreaterThan(0);
+    // Gel profond gele encore, MEME instant, MEME geometrie.
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE_DUREE, gelProfond)).toBe(0);
+  });
+
+  it('ne fige PAS au tick de la pose, et fige au suivant — meme `slowsAt` que la Supraconduction', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const auTick = new ZoneField();
+    auTick.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND), 1000, 1000, 0, MESURE);
+    const auPrecedent = new ZoneField();
+    auPrecedent.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND), 1000, 1000, 0, MESURE - 1);
+
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, auTick)).toBeGreaterThan(0);
+    expect(pasFigeAu(une(1000, 1000), fields, MESURE, auPrecedent)).toBe(0);
+  });
+});
+
+/**
  * Verglas (Givre + Poix, tache 8 de l'etape 5b) : « les ennemis derapent ».
  * `ReactionDef.zoneInertiaDamping` NON neutre intercepte
  * `Horde#recomputeSteering` : au tick ou l'entite recalculerait sa
@@ -3014,6 +3124,215 @@ describe('Horde.step — la Chaux fait fuir (etape 5c, tache 1)', () => {
 
     expect(pasAu(une(1000, 1000), MESURE, chauxPuisSupra)).toBe(0);
     expect(pasAu(une(1000, 1000), MESURE, supraPuisChaux)).toBe(0);
+  });
+});
+
+/**
+ * Aveuglement (Chaux + Vif-argent, tache 6 de l'etape 5c) : « la fuite,
+ * plus forte ou plus longue que la Chaux seule » (§5 de la spec). Le MEME
+ * mecanisme que le bloc Chaux ci-dessus (`zoneFieldSign`, substitution du
+ * VECTEUR DE CHAMP) — seule la duree la distingue (`zoneFieldSign` n'a que
+ * deux valeurs, +1/-1, rien n'est « plus fort » que -1). Le describe est
+ * separe pour la meme raison que Gel profond l'etait de la Supraconduction :
+ * le SUJET differe (une reaction a DEUX elements, dont un seul — la Chaux —
+ * fuit), pas le mecanisme.
+ */
+describe('Horde.step — Aveuglement fait fuir plus longtemps que la Chaux seule (tache 6 de l etape 5c)', () => {
+  /** Une entite unique, immobile a `(x, y)`. */
+  function une(x: number, y: number): Horde {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }));
+    horde.x[0] = x;
+    horde.y[0] = y;
+    return horde;
+  }
+
+  const K = STEERING_RECOMPUTE_TICKS;
+
+  /** Le premier tick de recalcul de l'entite 0 strictement APRES `apres`. */
+  function prochainRecalcul(horde: Horde, apres: number): number {
+    const phase = horde.entityIdAt(0) % K;
+    let tick = phase;
+    while (tick <= apres) {
+      tick += K;
+    }
+    return tick;
+  }
+
+  it('inverse exactement la vitesse calculee, dans les DEUX ordres (Chaux OU Vif-argent declenche)', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const temoinPhase = une(1000, 1000);
+    const tick = prochainRecalcul(temoinPhase, 0);
+
+    for (const kind of [
+      packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT),
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+    ]) {
+      const fuyante = une(1000, 1000);
+      const temoin = une(1000, 1000);
+      const zones = new ZoneField();
+      zones.spawn(kind, 1000, 1000, 0, 0);
+
+      fuyante.step(DT, fields, tick, zones);
+      temoin.step(DT, fields, tick);
+
+      expect(temoin.vx[0]).not.toBe(0);
+      expect(fuyante.vx[0]).toBe(-(temoin.vx[0] ?? 0));
+      expect(fuyante.vy[0]).toBe(-(temoin.vy[0] ?? 0));
+    }
+  });
+
+  it('une entite HORS de la zone n est pas affectee, a un pixel du bord', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const horde = une(1000 + ZONE_RADIUS + 1, 1000);
+    const temoin = une(1000 + ZONE_RADIUS + 1, 1000);
+    const tick = prochainRecalcul(horde, 0);
+    const zones = new ZoneField();
+    zones.spawn(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT), 1000, 1000, 0, 0);
+
+    horde.step(DT, fields, tick, zones);
+    temoin.step(DT, fields, tick);
+
+    expect(horde.vx[0]).toBe(temoin.vx[0]);
+    expect(horde.vy[0]).toBe(temoin.vy[0]);
+  });
+
+  it('ne s applique PAS au tick de la pose, s applique au suivant — meme `slowsAt` que la Chaux seule', () => {
+    const fields = fieldsTowards(5000, 1000);
+
+    const auTick = une(1000, 1000);
+    const tickAuTick = prochainRecalcul(auTick, 0);
+    const zonesAuTick = new ZoneField();
+    zonesAuTick.spawn(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+      1000,
+      1000,
+      0,
+      tickAuTick,
+    );
+    auTick.step(DT, fields, tickAuTick, zonesAuTick);
+    const temoinAuTick = une(1000, 1000);
+    temoinAuTick.step(DT, fields, tickAuTick);
+    expect(auTick.vx[0]).toBe(temoinAuTick.vx[0]);
+    expect(auTick.vy[0]).toBe(temoinAuTick.vy[0]);
+
+    const auPrecedent = une(1000, 1000);
+    const tickAuPrecedent = prochainRecalcul(auPrecedent, 0);
+    const zonesAuPrecedent = new ZoneField();
+    zonesAuPrecedent.spawn(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+      1000,
+      1000,
+      0,
+      tickAuPrecedent - 1,
+    );
+    auPrecedent.step(DT, fields, tickAuPrecedent, zonesAuPrecedent);
+    const temoinAuPrecedent = une(1000, 1000);
+    temoinAuPrecedent.step(DT, fields, tickAuPrecedent);
+    expect(auPrecedent.vx[0]).toBe(-(temoinAuPrecedent.vx[0] ?? 0));
+    expect(auPrecedent.vy[0]).toBe(-(temoinAuPrecedent.vy[0] ?? 0));
+  });
+
+  /**
+   * ⚠️ **LE test qui assene LA DUREE, pas seulement l effet — §5 de la
+   * spec : « plus forte ou plus longue que la Chaux seule ».**
+   * `zoneFieldSign` n'a que deux valeurs (+1/-1) : rien n'est « plus fort »
+   * que -1, donc si les deux ne se separaient que par « ca fuit », Aveuglement
+   * serait du CONTENU MORT a cote de la Chaux seule. La separation reelle est
+   * `zoneLifetimeTicks` : une Chaux seule (sans reaction nommee) fuit
+   * pendant la duree GENERIQUE (90 ticks), Aveuglement continue jusqu'a
+   * `SURCHAUFFE_ZONE_LIFETIME_TICKS` (135 ticks, reutilisee). Le tick de
+   * mesure tombe entre les deux : la Chaux seule a deja lache prise,
+   * Aveuglement fuit encore.
+   */
+  it('continue de fuir au dela de la duree d une Chaux seule : la DUREE les separe, pas l intensite', () => {
+    const fields = fieldsTowards(5000, 1000);
+    const temoinPhase = une(1000, 1000);
+    const tick = prochainRecalcul(temoinPhase, ZONE_LIFETIME_TICKS);
+    expect(tick).toBeLessThan(SURCHAUFFE_ZONE_LIFETIME_TICKS);
+
+    const chauxSeule = new ZoneField();
+    chauxSeule.spawn(ELEMENT.CHAUX, 1000, 1000, 0, 0);
+    const aveuglement = new ZoneField();
+    aveuglement.spawn(packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT), 1000, 1000, 0, 0);
+
+    const avecChauxSeule = une(1000, 1000);
+    const avecAveuglement = une(1000, 1000);
+    const temoin = une(1000, 1000);
+
+    avecChauxSeule.step(DT, fields, tick, chauxSeule);
+    avecAveuglement.step(DT, fields, tick, aveuglement);
+    temoin.step(DT, fields, tick);
+
+    expect(temoin.vx[0]).not.toBe(0);
+    // La Chaux seule a expire a ce tick : la vitesse rejoint celle du
+    // temoin, plus aucune fuite.
+    expect(avecChauxSeule.vx[0]).toBe(temoin.vx[0]);
+    expect(avecChauxSeule.vy[0]).toBe(temoin.vy[0]);
+    // Aveuglement fuit encore, au MEME instant, a la MEME geometrie.
+    expect(avecAveuglement.vx[0]).toBe(-(temoin.vx[0] ?? 0));
+    expect(avecAveuglement.vy[0]).toBe(-(temoin.vy[0] ?? 0));
+  });
+});
+
+/**
+ * Point de revue n°4 du plan de l'etape 5c, applique aux DEUX reactions de
+ * cette tache qui combinent gel et fuite au meme point : Aveuglement (la
+ * fuite) et Gel profond (le gel). `#computeSlow` prend le MINIMUM : `0`
+ * (Gel profond) gagne sur `1` (aucun ralentissement propre d'Aveuglement),
+ * donc l'entite est GELEE — la fuite qu'impose `#fieldSign` devient sans
+ * objet, `#advanceByVelocity` multipliant `vx`/`vy` par `#slow` (0) APRES
+ * que `#recomputeSteering` a deja fige leur DIRECTION. Meme raisonnement,
+ * exactement, que Chaux+Supraconduction plus haut — ici avec les DEUX
+ * reactions livrees par cette tache plutot qu'un element et une reaction
+ * d'une tache anterieure.
+ */
+describe('Horde.step — un ennemi sous Aveuglement ET Gel profond est GELE, pas en fuite (point de revue n°4)', () => {
+  function une(x: number, y: number): Horde {
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: x, anchorY: y, formation: FORMATION.SCATTER }));
+    horde.x[0] = x;
+    horde.y[0] = y;
+    return horde;
+  }
+
+  function pasAu(horde: Horde, fields: FlowField[], tick: number, zones: ZoneField): number {
+    for (let t = 0; t < tick; t++) {
+      horde.step(DT, fields, t, zones);
+    }
+    const x0 = horde.x[0] ?? 0;
+    const y0 = horde.y[0] ?? 0;
+    horde.step(DT, fields, tick, zones);
+    return Math.hypot((horde.x[0] ?? 0) - x0, (horde.y[0] ?? 0) - y0);
+  }
+
+  const MESURE = STEERING_RECOMPUTE_TICKS + 2;
+
+  it('le gel de Gel profond gagne sur la fuite d Aveuglement : deplacement NUL, dans les deux ordres de POSE', () => {
+    const fields = fieldsTowards(5000, 1000);
+
+    const aveuglementPuisGel = new ZoneField();
+    aveuglementPuisGel.spawn(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+      1000,
+      1000,
+      0,
+      0,
+    );
+    aveuglementPuisGel.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND), 1000, 1000, 0, 0);
+
+    const gelPuisAveuglement = new ZoneField();
+    gelPuisAveuglement.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND), 1000, 1000, 0, 0);
+    gelPuisAveuglement.spawn(
+      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
+      1000,
+      1000,
+      0,
+      0,
+    );
+
+    expect(pasAu(une(1000, 1000), fields, MESURE, aveuglementPuisGel)).toBe(0);
+    expect(pasAu(une(1000, 1000), fields, MESURE, gelPuisAveuglement)).toBe(0);
   });
 });
 
