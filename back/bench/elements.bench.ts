@@ -57,7 +57,7 @@ import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
 import { packElementPair, packZoneKind } from '@shared/protocol';
-import { REACTION, zoneInvolvesVifArgent } from '@shared/reactions';
+import { REACTION, zoneLinks } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
@@ -448,12 +448,17 @@ interface CoutAmalgame {
   /** Le plus grand nombre d'Amalgame REELLEMENT declenches en un seul tick. */
   declenchementsMax: number;
   /**
-   * Le nombre de zones annoncees ce run qui IMPLIQUENT le Vif-argent
-   * (`zoneInvolvesVifArgent`, `shared/reactions.ts`) — celles que
-   * `linkedNeighbours` suit desormais (revue post-tache 9, qui renverse le
-   * filtre mort de la tache 3). Toute zone qu'Amalgame pose pour
-   * elle-meme compte ICI : voir le rapport, ce compte n'est PLUS a zero en
-   * jeu reel.
+   * Le nombre de zones annoncees ce run dont `ReactionDef.zoneLinks` est
+   * vrai (`zoneLinks`, `shared/reactions.ts`) — celles que
+   * `linkedNeighbours` suit reellement. Amalgame porte `zoneLinks: true`,
+   * donc toute zone qu'elle pose pour elle-meme compte ICI : voir le
+   * rapport, ce compte n'est PLUS a zero en jeu reel.
+   *
+   * ⚠️ **Mesure le predicat FINAL (champ epingle), pas le predicat
+   * intermediaire (paire canonicalisee) d'une revue precedente.** Pour ce
+   * decor precis (seul Amalgame se declenche), les deux predicats auraient
+   * rendu le meme compte — mais seul `zoneLinks` reste correct si Gel
+   * profond ou Aveuglement entraient un jour dans ce banc.
    */
   zonesLiantesVues: number;
 }
@@ -477,7 +482,7 @@ function porteAmalgame(exemplaires: number, entites: number, ticks: number): Cou
     const zonesAnnoncees = room.drainZones();
     let declenchementsTick = 0;
     for (const ev of zonesAnnoncees) {
-      if (zoneInvolvesVifArgent(ev.kind)) {
+      if (zoneLinks(ev.kind)) {
         zonesLiantesVues++;
       }
     }
@@ -499,12 +504,13 @@ function porteAmalgame(exemplaires: number, entites: number, ticks: number): Cou
  * `shareAmalgameDamage`) — jamais `linkedNeighbours` directement.
  *
  * ⚠️ **Decor SYNTHETIQUE — mais `zonesLiantesVues` n'est PLUS a zero en jeu
- * reel (revue post-tache 9, qui renverse le filtre mort de la tache 3).**
- * `zoneInvolvesVifArgent` (`shared/reactions.ts`) lit desormais la PAIRE de
- * la zone, pas son nibble d'element : les CINQ paires du Vif-argent LIENT
- * toutes, y compris via la zone que `postZone` pose POUR le declencheur
- * lui-meme — la mesure 5/5bis ci-dessous le confirme (`zonesLiantesVues`
- * compte desormais des dizaines de zones par run). Ce plafond reste utile
+ * reel.** `ReactionDef.zoneLinks` (`shared/reactions.ts`) est VRAI sur
+ * Vaporisation, Paratonnerre et Amalgame — y compris via la zone que
+ * `postZone` pose POUR le declencheur lui-meme — la mesure 5/5bis
+ * ci-dessous le confirme (`zonesLiantesVues` compte desormais des dizaines
+ * de zones par run). Gel profond et Aveuglement, eux, portent
+ * `zoneLinks: false` et ne comptent jamais ici, meme si leur paire contient
+ * le Vif-argent. Ce plafond reste utile
  * malgre tout : il isole le cout a un NOMBRE DE ZONES LIANTES CHOISI
  * (`zonesLiantes`), au lieu du nombre que le jeu produit organiquement, pour
  * mesurer comment `applyReactions` degrade quand les declencheurs/tick
@@ -807,11 +813,10 @@ for (const declencheurs of [10, 25, 50, 100, 250, 500]) {
 }
 console.table(plafondRows);
 
-// ⚠️ **Revue post-tache 9 : `zonesLiantesVuesTotal` N'EST PLUS a zero — la
-// boucle couteuse de `linkedNeighbours` TOURNE desormais pour de vrai
-// pendant 5/5bis.** `zoneInvolvesVifArgent` (`shared/reactions.ts`) lit la
-// PAIRE de la zone, pas son nibble d'element : les CINQ reactions qui
-// apparient le Vif-argent lient toutes, y compris via la zone que
+// ⚠️ **`zonesLiantesVuesTotal` N'EST PLUS a zero — la boucle couteuse de
+// `linkedNeighbours` TOURNE desormais pour de vrai pendant 5/5bis.**
+// `ReactionDef.zoneLinks` (`shared/reactions.ts`) est VRAI sur Amalgame (la
+// seule reaction declenchee dans ce decor), y compris via la zone que
 // `postZone` pose POUR le declencheur lui-meme. Le pas p95 de 5/5bis reste
 // neanmoins dans le budget a toutes les configurations SAUF 4000/64
 // exemplaires (12,459 ms) — et la section 7 (attribution) impute ce

@@ -3680,16 +3680,21 @@ describe('armureA — une zone de Chaux ET une de Fournee ne poussent jamais l a
  * balayage par rayon) centre sur `linkedNeighbours` (tache 2), jamais sur le
  * point d'impact d'origine.
  *
- * ⚠️ **Revue post-tache 9 : la zone que Vaporisation pose POUR ELLE-MEME
- * LIE desormais aussi — le filtre mort est corrige (`zoneInvolvesVifArgent`,
- * `shared/reactions.ts`).** L'ancien pare-feu (`zoneReaction(kind) === 0`
- * dans `linkedNeighbours`) excluait la zone que `postZone` pose a CHAQUE
+ * ⚠️ **La zone que Vaporisation pose POUR ELLE-MEME LIE aussi — elle porte
+ * `zoneLinks: true` (`ReactionDef`, `shared/reactions.ts`).** L'ancien
+ * pare-feu de la tache 3 (`zoneReaction(kind) === 0` dans
+ * `linkedNeighbours`) excluait la zone que `postZone` pose a CHAQUE
  * declenchement (CE declencheur, a son propre point d'impact) : mort en
  * production, puisque cette zone porte TOUJOURS la reaction Vaporisation,
- * jamais une reaction nulle. Tout voisin a moins de `ZONE_RADIUS` du
- * declencheur ET moins de `LINK_RADIUS` de lui est donc lie par CETTE seule
- * zone, meme sans aucune autre zone de Vif-argent posee ailleurs — voir le
- * test dedie plus bas, qui le mesure explicitement.
+ * jamais une reaction nulle. Une premiere correction derivait la liaison de
+ * la PAIRE (ordre-independante par `packElementPair`, mais faisant lier les
+ * CINQ paires du Vif-argent) ; la revue suivante l'a RENVERSEE au profit
+ * d'un champ epingle, `zoneLinks`, vrai seulement sur les trois reactions
+ * qui en ont besoin (Vaporisation, Paratonnerre, Amalgame). Tout voisin a
+ * moins de `ZONE_RADIUS` du declencheur ET moins de `LINK_RADIUS` de lui
+ * est donc lie par CETTE seule zone, meme sans aucune autre zone de
+ * Vif-argent posee ailleurs — voir le test dedie plus bas, qui le mesure
+ * explicitement.
  */
 describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIES (tache 5 de l etape 5c)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -3800,15 +3805,15 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
   });
 
   /**
-   * ⚠️ **Le deriveur de la revue post-tache 9, exerce directement — RENVERSE
-   * le pare-feu de la tache 3.** Sans aucune zone de Vif-argent ELEMENTAIRE
-   * posee ailleurs, la SEULE zone de Vif-argent qui existe est celle que
-   * Vaporisation vient de laisser au sol pour CE declencheur — et sa
-   * reaction (Vaporisation) apparie le Vif-argent dans `REACTION_DEFS`,
-   * quel que soit l'element que porte son nibble (le declencheur ici EST le
-   * Vif-argent, voir `trigger`). `zoneInvolvesVifArgent` (`shared/
-   * reactions.ts`) lit la PAIRE, pas le nibble : Y est donc LIE a X a
-   * travers CETTE zone et prend des degats — le test le mesure.
+   * ⚠️ **Le champ `zoneLinks`, exerce directement — RENVERSE le pare-feu de
+   * la tache 3.** Sans aucune zone de Vif-argent ELEMENTAIRE posee ailleurs,
+   * la SEULE zone de Vif-argent qui existe est celle que Vaporisation vient
+   * de laisser au sol pour CE declencheur — et sa reaction (Vaporisation)
+   * porte `zoneLinks: true` dans `REACTION_DEFS`, quel que soit l'element
+   * que porte le nibble de la zone (le declencheur ici EST le Vif-argent,
+   * voir `trigger`). `linkedNeighbours` lit `ReactionDef.zoneLinks` par
+   * `id` (`zoneReaction(kind)`), jamais le nibble d'element : Y est donc LIE
+   * a X a travers CETTE zone et prend des degats — le test le mesure.
    */
   it('le champ que Vaporisation laisse elle-meme lie desormais, meme sans aucune autre zone', () => {
     const horde = new Horde(10);
@@ -4324,13 +4329,13 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
   });
 
   /**
-   * ⚠️ **Revue post-tache 9 : le champ qu'Amalgame laisse elle-meme LIE
-   * desormais, sans AUCUNE autre zone — le filtre mort est corrige
-   * (`zoneInvolvesVifArgent`, `shared/reactions.ts`).** L'ancien pare-feu de
-   * la tache 3 (`zoneReaction(kind) !== 0` dans `linkedNeighbours`)
-   * excluait la zone que `postZone` pose a CHAQUE declenchement, au point
-   * d'impact d'A : mort en production, puisque cette zone porte TOUJOURS la
-   * reaction Amalgame, jamais une reaction nulle. B, a 30 px d'A, est sous
+   * ⚠️ **Le champ qu'Amalgame laisse elle-meme LIE, sans AUCUNE autre
+   * zone — Amalgame porte `zoneLinks: true` (`ReactionDef`, `shared/
+   * reactions.ts`).** L'ancien pare-feu de la tache 3
+   * (`zoneReaction(kind) !== 0` dans `linkedNeighbours`) excluait la zone
+   * que `postZone` pose a CHAQUE declenchement, au point d'impact d'A :
+   * mort en production, puisque cette zone porte TOUJOURS la reaction
+   * Amalgame, jamais une reaction nulle. B, a 30 px d'A, est sous
    * `LINK_RADIUS` ET sous `ZONE_RADIUS` de cette zone-la : il est donc LIE
    * par elle seule, et partage le MEME degat amplifie qu'A.
    */

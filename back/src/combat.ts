@@ -789,12 +789,12 @@ function chainWhilePoisoned(
  *
  * ⚠️ **La liaison se relit ICI, pas depuis `t` : `ReactionTrigger` ne porte
  * aucun champ « lies ».** Comme pour Vaporisation, `linkedNeighbours` LIT
- * TOUTES les zones qui impliquent le Vif-argent (`zoneInvolvesVifArgent`,
- * `shared/reactions.ts` — revue post-tache 9, qui renverse le correctif de
- * la tache 3) — y compris la zone que CE MEME declencheur vient de laisser
- * au sol (`postZone`, avant cette fonction) : elle porte TOUJOURS Paratonnerre
- * (sa reaction apparie le Vif-argent), elle LIE donc elle-meme tout voisin a
- * moins de `ZONE_RADIUS` du point d'impact.
+ * `ReactionDef.zoneLinks` (`shared/reactions.ts` — deuxieme revue, qui
+ * EPINGLE la liaison reaction par reaction plutot que de la deriver de la
+ * paire) — y compris sur la zone que CE MEME declencheur vient de laisser
+ * au sol (`postZone`, avant cette fonction) : Paratonnerre porte
+ * `zoneLinks: true`, donc cette zone LIE elle-meme tout voisin a moins de
+ * `ZONE_RADIUS` du point d'impact.
  */
 function chainPreferringLinked(
   horde: Horde,
@@ -868,15 +868,14 @@ function chainPreferringLinked(
  * celle d'UNE reaction precise (Amalgame), jamais une propriete globale du
  * chemin de degats.
  *
- * ⚠️ **La liaison peut venir de n'importe quelle zone qui IMPLIQUE le
- * Vif-argent — y compris celle que CETTE reaction vient de laisser au sol,
- * meme raison que Vaporisation et Paratonnerre.** `linkedNeighbours` lit
- * `zoneInvolvesVifArgent` (`shared/reactions.ts` — revue post-tache 9, qui
- * renverse le correctif de la tache 3) : la zone qu'Amalgame pose
- * (`postZone`, avant cette fonction) porte TOUJOURS la reaction Amalgame,
- * dont la paire apparie le Vif-argent, donc elle LIE elle-meme tout voisin a
- * moins de `ZONE_RADIUS` du point d'impact — voir le test dedie dans
- * `combat.test.ts`.
+ * ⚠️ **La liaison peut venir de n'importe quelle zone dont la reaction
+ * porte `zoneLinks: true` — y compris celle que CETTE reaction vient de
+ * laisser au sol, meme raison que Vaporisation et Paratonnerre.**
+ * `linkedNeighbours` lit `ReactionDef.zoneLinks` (`shared/reactions.ts` —
+ * epingle reaction par reaction, pas derive de la paire) : Amalgame porte
+ * `zoneLinks: true`, donc la zone qu'elle pose (`postZone`, avant cette
+ * fonction) LIE elle-meme tout voisin a moins de `ZONE_RADIUS` du point
+ * d'impact — voir le test dedie dans `combat.test.ts`.
  *
  * ⚠️ **Sans identite de declencheur, aucun degat** — meme degradation
  * gracieuse que Vaporisation (un declencheur ne d'un recouvrement de zones,
@@ -1030,11 +1029,11 @@ export function applyReactions(
       // retombe PAS sur le point d'origine.** Mais avec une identite, la
       // zone que `postZone` vient de poser POUR CE declencheur (juste
       // au-dessus, premiere boucle d'`applyReactions`) suffit a elle seule
-      // a lier : `linkedNeighbours` lit `zoneInvolvesVifArgent` (`shared/
-      // reactions.ts` — revue post-tache 9, qui renverse le correctif de la
-      // tache 3), et la paire de Vaporisation apparie le Vif-argent. Aucune
-      // autre zone n'est donc requise pour qu'un voisin a moins de
-      // `ZONE_RADIUS` du point d'impact soit lie.
+      // a lier : `linkedNeighbours` lit `ReactionDef.zoneLinks` (`shared/
+      // reactions.ts` — epingle reaction par reaction, pas derive de la
+      // paire), et Vaporisation porte `zoneLinks: true`. Aucune autre zone
+      // n'est donc requise pour qu'un voisin a moins de `ZONE_RADIUS` du
+      // point d'impact soit lie.
       const slot = t.entityId !== undefined ? horde.slotOf(t.entityId) : -1;
       if (slot >= 0) {
         for (const linkedId of linkedNeighbours(horde, slot, zones, tick)) {
