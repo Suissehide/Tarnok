@@ -1199,15 +1199,24 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
    * d'element — ORDRE-INDEPENDANT par construction, teste ici dans les
    * DEUX ordres de declencheur pour chacune des cinq.
    */
-  it('les cinq reactions REELLES qui apparient le Vif-argent elargissent desormais, dans les deux ordres de declencheur', () => {
-    const REACTIONS_VIF_ARGENT: ReadonlyArray<{ reaction: number; partner: number }> = [
+  it('les TROIS reactions qui comptent comme du Vif-argent elargissent, dans les deux ordres', () => {
+    // ⚠️ **TROIS, pas cinq.** Le critere est `ReactionDef.zoneVifArgent`, un
+    // champ EPINGLE dans la table — pas un predicat sur la paire. Vaporisation,
+    // Paratonnerre et Amalgame le portent parce que leur effet utilise la
+    // liaison ; Gel profond et Aveuglement ne la portent PAS, parce que le §5
+    // de la spec les decrit comme une vitesse nulle et une fuite, jamais comme
+    // liants (decision de la tache 6, documentee dans `REACTION_DEFS`).
+    //
+    // ⚠️ **Et c'est le champ de table qui rend l'effet independant de l'ordre
+    // d'arrivee**, pas la canonicite de la paire : une grandeur lue dans la
+    // table ne depend d'aucun declencheur. C'est la discipline que cette etape
+    // a etablie — epingler plutot que deriver d'un element.
+    const COMPTENT: ReadonlyArray<{ reaction: number; partner: number }> = [
       { reaction: REACTION.VAPORISATION, partner: ELEMENT.BRAISE },
       { reaction: REACTION.PARATONNERRE, partner: ELEMENT.FOUDRE },
-      { reaction: REACTION.GEL_PROFOND, partner: ELEMENT.GIVRE },
-      { reaction: REACTION.AVEUGLEMENT, partner: ELEMENT.CHAUX },
       { reaction: REACTION.AMALGAME, partner: ELEMENT.POIX },
     ];
-    for (const { reaction, partner } of REACTIONS_VIF_ARGENT) {
+    for (const { reaction, partner } of COMPTENT) {
       for (const declencheur of [ELEMENT.VIF_ARGENT, partner]) {
         const kind = packZoneKind(declencheur, reaction);
         const zones = new ZoneField();
@@ -1215,6 +1224,23 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
         expect(zones.hitRadiusBonusAt(500, 500, 0), `reaction ${reaction}`).toBe(
           VIF_ARGENT_HIT_RADIUS_BONUS,
         );
+      }
+    }
+  });
+
+  it('Gel profond et Aveuglement n elargissent PAS, dans les deux ordres', () => {
+    // La moitie negative, et elle porte le sens : sans elle, poser
+    // `zoneVifArgent: true` sur ces deux reactions passerait inapercu.
+    const NE_COMPTENT_PAS: ReadonlyArray<{ reaction: number; partner: number }> = [
+      { reaction: REACTION.GEL_PROFOND, partner: ELEMENT.GIVRE },
+      { reaction: REACTION.AVEUGLEMENT, partner: ELEMENT.CHAUX },
+    ];
+    for (const { reaction, partner } of NE_COMPTENT_PAS) {
+      for (const declencheur of [ELEMENT.VIF_ARGENT, partner]) {
+        const kind = packZoneKind(declencheur, reaction);
+        const zones = new ZoneField();
+        expect(zones.spawn(kind, 500, 500, 0, 0)).toBe(0);
+        expect(zones.hitRadiusBonusAt(500, 500, 0), `reaction ${reaction}`).toBe(0);
       }
     }
   });

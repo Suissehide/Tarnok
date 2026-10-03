@@ -789,11 +789,11 @@ function chainWhilePoisoned(
  *
  * ⚠️ **La liaison se relit ICI, pas depuis `t` : `ReactionTrigger` ne porte
  * aucun champ « lies ».** Comme pour Vaporisation, `linkedNeighbours` LIT
- * `ReactionDef.zoneLinks` (`shared/reactions.ts` — deuxieme revue, qui
- * EPINGLE la liaison reaction par reaction plutot que de la deriver de la
- * paire) — y compris sur la zone que CE MEME declencheur vient de laisser
+ * `ReactionDef.zoneVifArgent` (`shared/reactions.ts` — EPINGLE reaction par
+ * reaction plutot que derive de la paire, et PARTAGE avec `hitRadiusBonusAt`)
+ * — y compris sur la zone que CE MEME declencheur vient de laisser
  * au sol (`postZone`, avant cette fonction) : Paratonnerre porte
- * `zoneLinks: true`, donc cette zone LIE elle-meme tout voisin a moins de
+ * `zoneVifArgent: true`, donc cette zone LIE elle-meme tout voisin a moins de
  * `ZONE_RADIUS` du point d'impact.
  */
 function chainPreferringLinked(
@@ -869,11 +869,11 @@ function chainPreferringLinked(
  * chemin de degats.
  *
  * ⚠️ **La liaison peut venir de n'importe quelle zone dont la reaction
- * porte `zoneLinks: true` — y compris celle que CETTE reaction vient de
+ * porte `zoneVifArgent: true` — y compris celle que CETTE reaction vient de
  * laisser au sol, meme raison que Vaporisation et Paratonnerre.**
- * `linkedNeighbours` lit `ReactionDef.zoneLinks` (`shared/reactions.ts` —
+ * `linkedNeighbours` lit `ReactionDef.zoneVifArgent` (`shared/reactions.ts` —
  * epingle reaction par reaction, pas derive de la paire) : Amalgame porte
- * `zoneLinks: true`, donc la zone qu'elle pose (`postZone`, avant cette
+ * `zoneVifArgent: true`, donc la zone qu'elle pose (`postZone`, avant cette
  * fonction) LIE elle-meme tout voisin a moins de `ZONE_RADIUS` du point
  * d'impact — voir le test dedie dans `combat.test.ts`.
  *
@@ -1029,9 +1029,9 @@ export function applyReactions(
       // retombe PAS sur le point d'origine.** Mais avec une identite, la
       // zone que `postZone` vient de poser POUR CE declencheur (juste
       // au-dessus, premiere boucle d'`applyReactions`) suffit a elle seule
-      // a lier : `linkedNeighbours` lit `ReactionDef.zoneLinks` (`shared/
+      // a lier : `linkedNeighbours` lit `ReactionDef.zoneVifArgent` (`shared/
       // reactions.ts` — epingle reaction par reaction, pas derive de la
-      // paire), et Vaporisation porte `zoneLinks: true`. Aucune autre zone
+      // paire), et Vaporisation porte `zoneVifArgent: true`. Aucune autre zone
       // n'est donc requise pour qu'un voisin a moins de `ZONE_RADIUS` du
       // point d'impact soit lie.
       const slot = t.entityId !== undefined ? horde.slotOf(t.entityId) : -1;

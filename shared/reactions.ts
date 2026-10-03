@@ -12,7 +12,7 @@ import {
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
-import { packElementPair, unpackElementPair, zoneElement, zoneReaction } from './protocol';
+import { packElementPair, zoneElement, zoneReaction } from './protocol';
 
 /**
  * La table des reactions a effet SPECIFIQUE (tache 6 de l'etape 5b) : meme
@@ -182,35 +182,54 @@ export interface ReactionDef {
    */
   readonly zoneFieldSign: number;
   /**
-   * Vrai si la zone laissee par cette reaction LIE les ennemis qu'elle
-   * couvre (`linkedNeighbours`, `shared/links.ts`) — revue post-tache 9,
-   * EPINGLE EXPLICITEMENT plutot que derive de la paire.
+   * Vrai si la zone laissee par cette reaction COMPTE COMME DU VIF-ARGENT
+   * pour ses DEUX effets secondaires structurels — la liaison
+   * (`linkedNeighbours`, `shared/links.ts`, §3 de la spec : « la meme zone
+   * de Vif-argent ») et le rayon de touche elargi (`ZoneField.
+   * hitRadiusBonusAt`, `shared/zones.ts`, §4 : « un ennemi dans une zone de
+   * Vif-argent »). UN SEUL critere, DEUX consommateurs — ce champ a change
+   * de nom deux fois pour le dire :
    *
-   * ⚠️ **Correctif en deux temps.** Une premiere version derivait ce
-   * comportement de la paire (`pair` contient `ELEMENT.VIF_ARGENT` ?) : elle
-   * reparait le bug mesure (`zonesLiantesVues = 0` partout), mais faisait
-   * lier LES CINQ paires du Vif-argent, y compris Gel profond et Aveuglement
-   * — qui avaient une entree ECRITE dans cette table (a la tache 6) decidant
-   * l'inverse, en citant le §5 de la spec : Gel profond est « vitesse nulle
-   * dans la zone », Aveuglement est « la fuite », ni l'un ni l'autre ne
-   * mentionne la liaison. Deriver de la paire renversait cette decision EN
-   * SILENCE.
+   * ⚠️ **Correctif en TROIS temps.**
    *
-   * ⚠️ **Seules les TROIS reactions qui ont BESOIN de la liaison la
+   * 1. Un premier correctif derivait les deux effets de la paire (`pair`
+   *    contient `ELEMENT.VIF_ARGENT` ?, `zoneInvolvesVifArgent`, retiree).
+   *    Il reparait le bug mesure (`zonesLiantesVues = 0` partout), mais
+   *    faisait les deux pour LES CINQ paires du Vif-argent — y compris Gel
+   *    profond et Aveuglement, qui avaient une entree ECRITE dans cette
+   *    table (tache 6) decidant l'inverse pour la liaison, en citant le §5
+   *    de la spec : Gel profond est « vitesse nulle dans la zone »,
+   *    Aveuglement est « la fuite », ni l'un ni l'autre ne mentionne la
+   *    liaison NI le rayon de touche. Deriver de la paire renversait cette
+   *    decision EN SILENCE, pour les deux effets.
+   * 2. Un second correctif a cree `zoneLinks`, un champ EPINGLE mais
+   *    SEULEMENT consulte par la liaison : `hitRadiusBonusAt` est reste sur
+   *    `zoneInvolvesVifArgent` (la paire), donc sur LES CINQ — Gel profond
+   *    elargissait le rayon de touche mais ne liait plus. Personne n'a
+   *    choisi cette divergence ; elle vient d'avoir corrige un seul des
+   *    deux consommateurs.
+   * 3. Celui-ci RENOMME `zoneLinks` en `zoneVifArgent` SANS changer ses
+   *    valeurs, et fait lire ce MEME champ par `hitRadiusBonusAt` aussi.
+   *    `zoneInvolvesVifArgent` est retiree : il n'y a plus deux predicats a
+   *    tenir synchrones, un seul champ tranche pour les deux usages.
+   *
+   * ⚠️ **Seules les TROIS reactions qui ont BESOIN du Vif-argent le
    * fournissent elles-memes** : Vaporisation (degats en rayon autour de
    * chaque lie), Paratonnerre (chaine qui prefere les lies), Amalgame
    * (partage les degats entre lies). Gel profond et Aveuglement restent a
-   * `false` — leur effet (vitesse nulle / fuite) ne depend d'aucun voisin.
+   * `false` pour les DEUX effets — leur effet propre (vitesse nulle / fuite)
+   * ne depend d'aucun voisin, et rien dans leur entree de `REACTION_DEFS`
+   * (voir plus haut) ne leur attribue le rayon de touche elargi non plus.
    *
    * ⚠️ **Un CHAMP de la table, pas un dérivé de l'element — donc ORDRE-
    * INDEPENDANT PAR CONSTRUCTION, sans canonicalisation a invoquer.** Le
    * nibble d'element d'une zone de reaction porte le declencheur (Vif-argent
    * OU son partenaire selon l'ordre d'arrivee des deux projectiles) — mais
-   * `zoneLinks` est une propriete de la LIGNE de `REACTION_DEFS`, lue par
+   * `zoneVifArgent` est une propriete de la LIGNE de `REACTION_DEFS`, lue par
    * `id` (`zoneReaction(kind)`), jamais par l'element : le probleme d'ordre
    * que l'ancien filtre visait a resoudre ne se pose plus du tout ici.
    */
-  readonly zoneLinks: boolean;
+  readonly zoneVifArgent: boolean;
 }
 
 /**
@@ -243,7 +262,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Embrasement (Braise + Poix) : degats instantanes a tout ennemi POISSE
@@ -265,7 +284,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Court-circuit (Foudre + Poix) : `chainTargets` (shared/chain.ts),
@@ -285,7 +304,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : vitesse
@@ -311,7 +330,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Verglas (Givre + Poix, tache 8 de l'etape 5b) : friction REDUITE dans
@@ -344,7 +363,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: VERGLAS_INERTIA_DAMPING,
     zoneCollisionDamage: VERGLAS_COLLISION_DAMAGE_PER_TICK,
     zoneFieldSign: 1,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Fournee (Braise + Chaux, tache 4 de l'etape 5c) : la combustion double
@@ -382,7 +401,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Eclat de gel (Givre + Chaux, tache 4 de l'etape 5c) : degats bruts
@@ -443,7 +462,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Vaporisation (Braise + Vif-argent, tache 5 de l'etape 5c) : degats
@@ -481,7 +500,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: true,
+    zoneVifArgent: true,
   },
   {
     // Arc caustique (Foudre + Chaux, tache 5 de l'etape 5c) : `chainTargets`
@@ -528,7 +547,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Paratonnerre (Foudre + Vif-argent, tache 5 de l'etape 5c) :
@@ -562,7 +581,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: true,
+    zoneVifArgent: true,
   },
   {
     // Gel profond (Givre + Vif-argent, tache 6 de l'etape 5c) : vitesse
@@ -624,7 +643,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Mortier vif (Poix + Chaux, tache 6 de l'etape 5c) : « scelles et
@@ -701,7 +720,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Aveuglement (Chaux + Vif-argent, tache 6 de l'etape 5c) : la fuite,
@@ -757,7 +776,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
-    zoneLinks: false,
+    zoneVifArgent: false,
   },
   {
     // Amalgame (Poix + Vif-argent, tache 7 de l'etape 5c) : « les degats
@@ -819,7 +838,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneInertiaDamping: 1,
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
-    zoneLinks: true,
+    zoneVifArgent: true,
   },
 ];
 
@@ -834,97 +853,50 @@ export function reactionOfId(id: number): ReactionDef | undefined {
 }
 
 /**
- * Vrai si le Vif-argent est un element pertinent de la zone — utilisee
- * UNIQUEMENT par `ZoneField.hitRadiusBonusAt` (`shared/zones.ts`, le rayon
- * de touche elargi, §4 de la spec de l'etape 5c). **Ne sert plus a
- * `linkedNeighbours`** (`shared/links.ts`) depuis la revue qui a suivi —
- * voir `zoneLinks` ci-dessous pour la liaison.
+ * Vrai si la zone laissee par cette reaction COMPTE COMME DU VIF-ARGENT —
+ * lit `ReactionDef.zoneVifArgent` (voir son docbloc pour l'historique
+ * complet en trois temps). UN SEUL critere pour DEUX consommateurs :
+ * `linkedNeighbours` (`shared/links.ts`, §3 de la spec, la liaison) ET
+ * `ZoneField.hitRadiusBonusAt` (`shared/zones.ts`, §4, le rayon de touche
+ * elargi) lisent cette MEME fonction — il n'existe plus deux predicats a
+ * tenir synchrones.
  *
- * ⚠️ **L'ancien filtre (`zoneReaction(kind) === 0`) excluait TOUTE zone de
- * reaction au motif que le nibble d'ELEMENT d'une zone porte le DECLENCHEUR
- * (le second projectile arrive, Vif-argent OU son partenaire selon l'ordre) —
- * exact, mais mort en production : `postZone` (`back/src/combat.ts`) est le
- * SEUL createur de zones, et les CINQ paires du Vif-argent (Vaporisation,
- * Paratonnerre, Gel profond, Aveuglement, Amalgame) sont TOUTES nommees dans
- * `REACTION_DEFS` — une zone portant le Vif-argent a donc TOUJOURS une
- * reaction non nulle en production, et l'ancien filtre l'excluait
- * systematiquement. Mesure au banc : `zonesLiantesVues = 0` sur 2700 ticks.
+ * ⚠️ **Troisieme forme de ce correctif, et DERNIERE connue.** Un dériveur
+ * sur la paire (retire) faisait les deux effets pour les CINQ paires du
+ * Vif-argent, y compris Gel profond et Aveuglement — dont l'entree de cette
+ * table (tache 6) decide l'inverse en citant le §5 de la spec (« vitesse
+ * nulle » / « la fuite », jamais la liaison ni le rayon). Un champ epingle
+ * mais consulte par UN SEUL des deux consommateurs (`zoneLinks`, renomme)
+ * laissait l'AUTRE consommateur sur l'ancien dériveur — Gel profond
+ * elargissait le rayon de touche sans plus lier, une divergence que
+ * personne n'avait choisie. Un seul champ, lu par les deux, ferme le cas :
+ * `true` sur Vaporisation, Paratonnerre et Amalgame SEULEMENT — les trois
+ * qui ont BESOIN du Vif-argent pour leur propre effet — `false` partout
+ * ailleurs, y compris sur Gel profond et Aveuglement, pour LES DEUX usages.
  *
- * ⚠️ **Lit la PAIRE de la reaction, jamais le nibble d'element — ORDRE-
- * INDEPENDANT par construction.** `packElementPair` canonicalise (plus petit,
- * plus grand), donc `reactionOfId(zoneReaction(kind))?.pair` rend la MEME
- * valeur quel que soit celui des deux projectiles arrive en second. Le nibble
- * d'element, lui, reste order-dependant — c'est pour ca qu'on ne le lit plus
- * ici pour une zone de reaction.
- *
- * ⚠️ **Le rayon elargi reste derive de la paire, PAS d'un champ dedie —
- * decision DIFFERENTE de celle de `zoneLinks`, et c'est assume.** Le §4 de
- * la spec decrit le rayon elargi comme une propriete STRUCTURELLE du
- * Vif-argent elementaire (« attire les projectiles »), jamais une propriete
- * qu'une reaction choisirait d'avoir ou non — contrairement a la liaison,
- * dont trois reactions seulement ont besoin (voir `zoneLinks`). Rien dans
- * la revue qui a cree `zoneLinks` n'a remis en cause ce point pour le rayon
- * elargi ; une revue DEDIEE serait necessaire pour en decider autrement.
+ * ⚠️ **ORDRE-INDEPENDANT PAR CONSTRUCTION — un CHAMP de la ligne de
+ * `REACTION_DEFS`, lue par `id` (`zoneReaction(kind)`), jamais par
+ * l'element.** Cette valeur ne depend d'AUCUN element, donc d'aucun ordre
+ * d'arrivee des deux projectiles — le probleme d'ordre que l'ancien filtre
+ * visait a resoudre (le nibble d'element porte le DECLENCHEUR, Vif-argent
+ * OU son partenaire selon l'ordre) ne se pose plus du tout ici.
  *
  * ⚠️ **Le cas `zoneReaction(kind) === 0` reste gere a part** : une zone SANS
- * reaction n'a pas de paire a lire (`reactionOfId(0)` ne trouve rien, `0`
- * n'etant l'identifiant d'aucune entree de `REACTION_DEFS`) — il n'y a alors
- * qu'un seul element, pas un couple, donc aucune ambiguite d'ordre a
- * resoudre : `zoneElement(kind) === ELEMENT.VIF_ARGENT` reste le bon
- * predicat pour ce cas (fictif en production, mais que l'API de `ZoneField`
- * n'interdit pas et que les tests utilisent comme raccourci).
- */
-export function zoneInvolvesVifArgent(kind: number): boolean {
-  const reactionId = zoneReaction(kind);
-  if (reactionId === 0) {
-    return zoneElement(kind) === ELEMENT.VIF_ARGENT;
-  }
-  const pair = reactionOfId(reactionId)?.pair;
-  return pair !== undefined && unpackElementPair(pair).includes(ELEMENT.VIF_ARGENT);
-}
-
-/**
- * Vrai si la zone laissee par cette reaction LIE les ennemis qu'elle
- * couvre (`linkedNeighbours`, `shared/links.ts`) — lit `ReactionDef.zoneLinks`
- * (voir son docbloc), jamais derive de la paire.
- *
- * ⚠️ **Deuxieme correctif sur ce meme bug, celui-ci RENVERSE le premier.**
- * Une version anterieure derivait ce booleen de la paire
- * (`unpackElementPair(reactionOfId(...).pair).includes(ELEMENT.VIF_ARGENT)`,
- * voir `zoneInvolvesVifArgent` ci-dessus) : elle reparait bien le bug mesure
- * (zero zone liante en production), mais faisait lier les CINQ paires du
- * Vif-argent — y compris Gel profond et Aveuglement, dont l'entree de cette
- * table (tache 6) decide explicitement l'inverse, en citant le §5 de la
- * spec (« vitesse nulle dans la zone » / « la fuite », ni l'une ni l'autre
- * ne mentionne la liaison). Deriver de la paire renversait cette decision
- * EN SILENCE — exactement le defaut que cette etape entiere traque. Un
- * CHAMP EXPLICITE, epingle reaction par reaction comme le reste de cette
- * table (`zoneBurnPerTick`, `zoneArmorReduction`, etc.), ne peut pas se
- * tromper par generalisation : `true` sur Vaporisation, Paratonnerre et
- * Amalgame SEULEMENT — les trois qui ont BESOIN de la liaison pour leur
- * propre effet — `false` partout ailleurs, y compris sur Gel profond et
- * Aveuglement.
- *
- * ⚠️ **ORDRE-INDEPENDANT, mais plus pour la raison de `zoneInvolvesVifArgent`
- * (la canonicalisation de `packElementPair`) — DIS-LE dans tout test qui
- * pose les deux ordres de declencheur.** `zoneLinks` est un CHAMP de la
- * ligne de `REACTION_DEFS`, lue par `id` (`zoneReaction(kind)`) : cette
- * valeur ne depend d'AUCUN element, donc d'aucun ordre d'arrivee — le
- * probleme d'ordre que l'ancien filtre visait a resoudre ne se pose plus du
- * tout, peu importe comment la paire est canonicalisee.
- *
- * ⚠️ **Le cas `zoneReaction(kind) === 0` reste gere a part**, meme raison
- * que `zoneInvolvesVifArgent` : une zone SANS reaction n'a pas de ligne a
- * lire dans `REACTION_DEFS` (`reactionOfId(0)` ne trouve rien), donc
+ * reaction n'a pas de ligne a lire dans `REACTION_DEFS`
+ * (`reactionOfId(0)` ne trouve rien, `0` n'etant l'identifiant d'aucune
+ * entree) — il n'y a alors qu'un seul element, pas un couple, donc
  * `zoneElement(kind) === ELEMENT.VIF_ARGENT` reste le bon repli pour ce cas
- * (fictif en production, raccourci de test).
+ * (fictif en production — `postZone`, `back/src/combat.ts`, le SEUL
+ * createur de zones, ne pose jamais de zone a reaction nulle qui porte le
+ * Vif-argent — mais que l'API de `ZoneField` n'interdit pas et que les
+ * tests utilisent comme raccourci).
  */
-export function zoneLinks(kind: number): boolean {
+export function zoneVifArgent(kind: number): boolean {
   const reactionId = zoneReaction(kind);
   if (reactionId === 0) {
     return zoneElement(kind) === ELEMENT.VIF_ARGENT;
   }
-  return reactionOfId(reactionId)?.zoneLinks ?? false;
+  return reactionOfId(reactionId)?.zoneVifArgent ?? false;
 }
 
 /**

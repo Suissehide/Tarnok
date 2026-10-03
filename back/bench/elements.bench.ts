@@ -57,7 +57,7 @@ import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
 import { packElementPair, packZoneKind } from '@shared/protocol';
-import { REACTION, zoneLinks } from '@shared/reactions';
+import { REACTION, zoneVifArgent } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
@@ -448,16 +448,16 @@ interface CoutAmalgame {
   /** Le plus grand nombre d'Amalgame REELLEMENT declenches en un seul tick. */
   declenchementsMax: number;
   /**
-   * Le nombre de zones annoncees ce run dont `ReactionDef.zoneLinks` est
-   * vrai (`zoneLinks`, `shared/reactions.ts`) — celles que
-   * `linkedNeighbours` suit reellement. Amalgame porte `zoneLinks: true`,
+   * Le nombre de zones annoncees ce run dont `ReactionDef.zoneVifArgent` est
+   * vrai (`zoneVifArgent`, `shared/reactions.ts`) — celles que
+   * `linkedNeighbours` suit reellement. Amalgame porte `zoneVifArgent: true`,
    * donc toute zone qu'elle pose pour elle-meme compte ICI : voir le
    * rapport, ce compte n'est PLUS a zero en jeu reel.
    *
    * ⚠️ **Mesure le predicat FINAL (champ epingle), pas le predicat
    * intermediaire (paire canonicalisee) d'une revue precedente.** Pour ce
    * decor precis (seul Amalgame se declenche), les deux predicats auraient
-   * rendu le meme compte — mais seul `zoneLinks` reste correct si Gel
+   * rendu le meme compte — mais seul `zoneVifArgent` reste correct si Gel
    * profond ou Aveuglement entraient un jour dans ce banc.
    */
   zonesLiantesVues: number;
@@ -482,7 +482,7 @@ function porteAmalgame(exemplaires: number, entites: number, ticks: number): Cou
     const zonesAnnoncees = room.drainZones();
     let declenchementsTick = 0;
     for (const ev of zonesAnnoncees) {
-      if (zoneLinks(ev.kind)) {
+      if (zoneVifArgent(ev.kind)) {
         zonesLiantesVues++;
       }
     }
@@ -504,12 +504,12 @@ function porteAmalgame(exemplaires: number, entites: number, ticks: number): Cou
  * `shareAmalgameDamage`) — jamais `linkedNeighbours` directement.
  *
  * ⚠️ **Decor SYNTHETIQUE — mais `zonesLiantesVues` n'est PLUS a zero en jeu
- * reel.** `ReactionDef.zoneLinks` (`shared/reactions.ts`) est VRAI sur
+ * reel.** `ReactionDef.zoneVifArgent` (`shared/reactions.ts`) est VRAI sur
  * Vaporisation, Paratonnerre et Amalgame — y compris via la zone que
  * `postZone` pose POUR le declencheur lui-meme — la mesure 5/5bis
  * ci-dessous le confirme (`zonesLiantesVues` compte desormais des dizaines
  * de zones par run). Gel profond et Aveuglement, eux, portent
- * `zoneLinks: false` et ne comptent jamais ici, meme si leur paire contient
+ * `zoneVifArgent: false` et ne comptent jamais ici, meme si leur paire contient
  * le Vif-argent. Ce plafond reste utile
  * malgre tout : il isole le cout a un NOMBRE DE ZONES LIANTES CHOISI
  * (`zonesLiantes`), au lieu du nombre que le jeu produit organiquement, pour
@@ -785,7 +785,7 @@ if (declenchementsMaxGlobal === 0) {
 }
 console.log(
   `\nAmalgame s'est reellement declenche en jeu (max observe : ${declenchementsMaxGlobal}/tick). ` +
-    `Zones dont zoneLinks est vrai, vues sur toute la campagne (celles que linkedNeighbours suit reellement) : ${zonesLiantesVuesTotal}.`,
+    `Zones dont zoneVifArgent est vrai, vues sur toute la campagne (celles que linkedNeighbours suit reellement) : ${zonesLiantesVuesTotal}.`,
 );
 
 console.log(
@@ -815,7 +815,7 @@ console.table(plafondRows);
 
 // ⚠️ **`zonesLiantesVuesTotal` N'EST PLUS a zero — la boucle couteuse de
 // `linkedNeighbours` TOURNE desormais pour de vrai pendant 5/5bis.**
-// `ReactionDef.zoneLinks` (`shared/reactions.ts`) est VRAI sur Amalgame (la
+// `ReactionDef.zoneVifArgent` (`shared/reactions.ts`) est VRAI sur Amalgame (la
 // seule reaction declenchee dans ce decor), y compris via la zone que
 // `postZone` pose POUR le declencheur lui-meme. Le pas p95 de 5/5bis reste
 // neanmoins dans le budget a toutes les configurations SAUF 4000/64

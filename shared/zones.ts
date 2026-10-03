@@ -9,8 +9,8 @@ import {
   zoneBurnPerTick,
   zoneCollisionDamage,
   zoneDamageAmpTotal,
-  zoneInvolvesVifArgent,
   zoneLifetimeTicks,
+  zoneVifArgent,
 } from './reactions';
 
 /**
@@ -515,14 +515,15 @@ export class ZoneField {
    * point (§4 de la spec de l'etape 5c — *« attire les projectiles »* rendu
    * comme un rayon elargi), et `0` s'il n'y en a aucune.
    *
-   * ⚠️ **Structurelle, comme `linkedNeighbours` (`shared/links.ts`) — PAS
-   * derivee de `ReactionDef` ni d'un champ port par `Element`.** Le Vif-argent
-   * est, exactement comme la Foudre, un element dont l'effet REEL ne vit pas
+   * ⚠️ **PAS d'un champ port par `Element`.** Le Vif-argent est,
+   * exactement comme la Foudre, un element dont l'effet REEL ne vit pas
    * dans la table de `shared/elements.ts` (voir son docbloc, et
    * `EFFET_HORS_TABLE` dans `shared/elements.test.ts`) : un appelant doit deja
    * savoir qu'il tient du Vif-argent avant de lire cette methode, exactement
-   * comme `linkedNeighbours` delegue a `zoneInvolvesVifArgent`
-   * (`shared/reactions.ts`) plutot que de lire un champ generique.
+   * comme `linkedNeighbours`. Mais DEPUIS la troisieme revue, elle delegue a
+   * `zoneVifArgent` (`shared/reactions.ts`) — un CHAMP de `ReactionDef`, LE
+   * MEME que `linkedNeighbours` consulte, pas un dériveur distinct : voir le
+   * docbloc ci-dessous.
    *
    * ⚠️ **Meme FORME qu'`ampAt`/`armorReductionAt`/`collisionDamageAt`/`burnAt`
    * ci-dessus — meme balayage, meme `aliveAt`, meme MAXIMUM, et la raison est
@@ -540,16 +541,22 @@ export class ZoneField {
    * `#emit`/`fireSalvoDirected`, qui continuent d'ignorer la horde et les
    * zones. Voir le docbloc du module `shared/projectiles.ts`.
    *
-   * ⚠️ **`zoneInvolvesVifArgent` (`shared/reactions.ts`), PAS le nibble
-   * d'ELEMENT — revue post-tache 9, qui RENVERSE le correctif de la tache 3,
-   * meme deriveur et meme raison que `linkedNeighbours`
-   * (`shared/links.ts`).** L'ancien filtre (`zoneReaction(kind) === 0`)
+   * ⚠️ **`zoneVifArgent` (`shared/reactions.ts`), un CHAMP de
+   * `ReactionDef` PARTAGE avec `linkedNeighbours` — troisieme revue sur ce
+   * meme bug.** L'ancien filtre de la tache 3 (`zoneReaction(kind) === 0`)
    * excluait TOUTE zone de reaction au motif que son nibble d'ELEMENT porte
-   * le DECLENCHEUR — exact, mais `postZone` est le SEUL createur de zones et
-   * les CINQ paires du Vif-argent sont TOUTES nommees dans `REACTION_DEFS` :
-   * une zone de Vif-argent a donc TOUJOURS une reaction non nulle en
-   * production, et l'ancien filtre l'excluait a chaque fois. Voir le docbloc
-   * de `zoneInvolvesVifArgent` pour le detail complet.
+   * le DECLENCHEUR — exact, mais `postZone` est le SEUL createur de zones
+   * et les CINQ paires du Vif-argent sont TOUTES nommees dans
+   * `REACTION_DEFS` : une zone de Vif-argent a donc TOUJOURS une reaction
+   * non nulle en production, et l'ancien filtre l'excluait a chaque fois.
+   * Une revue intermediaire a cree un champ epingle (`zoneLinks`) mais ne
+   * l'a fait lire QUE par `linkedNeighbours` — cette methode-ci est restee
+   * sur un dériveur base sur la paire, faisant elargir le rayon de touche
+   * pour LES CINQ reactions (y compris Gel profond/Aveuglement, qui ne
+   * lient plus mais elargissaient encore). `zoneVifArgent` (renomme depuis
+   * `zoneLinks`, meme champ) ferme cette divergence : UN SEUL critere pour
+   * les deux effets structurels du Vif-argent (§3 et §4 de la spec). Voir
+   * son docbloc dans `shared/reactions.ts` pour le detail complet.
    */
   hitRadiusBonusAt(x: number, y: number, tick: number): number {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
@@ -563,7 +570,7 @@ export class ZoneField {
       if (dx * dx + dy * dy >= r2) {
         continue;
       }
-      if (!zoneInvolvesVifArgent(this.kind[z] ?? 0)) {
+      if (!zoneVifArgent(this.kind[z] ?? 0)) {
         continue;
       }
       if (VIF_ARGENT_HIT_RADIUS_BONUS > bonus) {

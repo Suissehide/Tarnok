@@ -229,15 +229,15 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Une reaction dont `zoneLinks` est `false` (par defaut, faute
+   * ⚠️ **Une reaction dont `zoneVifArgent` est `false` (par defaut, faute
    * d'avoir ete epinglee a `true`) ne doit JAMAIS lier.** Supraconduction
-   * (Givre + Foudre) n'a aucun besoin de la liaison — `zoneLinks: false`
+   * (Givre + Foudre) n'a aucun besoin de la liaison — `zoneVifArgent: false`
    * dans son entree de `REACTION_DEFS`. Teste dans les DEUX ordres de
-   * declencheur : `zoneLinks` est lu par `id` (`zoneReaction(kind)`),
+   * declencheur : `zoneVifArgent` est lu par `id` (`zoneReaction(kind)`),
    * jamais par l'element, donc les deux ordres doivent se comporter
    * IDENTIQUEMENT — pas seulement l'un d'eux.
    */
-  it('ne lie pas a travers une zone de REACTION dont zoneLinks est faux, quel que soit le declencheur', () => {
+  it('ne lie pas a travers une zone de REACTION dont zoneVifArgent est faux, quel que soit le declencheur', () => {
     const kindVifArgentDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
     const kindAutreDeclenche = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
 
@@ -269,7 +269,7 @@ describe('linkedNeighbours', () => {
    * lier LES CINQ paires du Vif-argent — y compris Gel profond et
    * Aveuglement, dont l'entree de `REACTION_DEFS` (tache 6) decide
    * explicitement l'inverse (§5 de la spec : « vitesse nulle » / « la
-   * fuite », jamais la liaison). `zoneLinks` (`shared/reactions.ts`) est un
+   * fuite », jamais la liaison). `zoneVifArgent` (`shared/reactions.ts`) est un
    * CHAMP EPINGLE explicitement sur chaque reaction : `true` seulement sur
    * les TROIS qui ont BESOIN de la liaison pour leur propre effet
    * (Vaporisation balaie un rayon autour de chaque lie, Paratonnerre
@@ -279,8 +279,8 @@ describe('linkedNeighbours', () => {
    *
    * ⚠️ **Les DEUX ordres de declencheur restent testes — mais la raison
    * CHANGE, dis-le.** Ce n'est plus la canonicalisation de `packElementPair`
-   * qui protege ce test (elle n'est plus lue du tout par `zoneLinks`) :
-   * c'est le fait que `zoneLinks` est un champ de la ligne de
+   * qui protege ce test (elle n'est plus lue du tout par `zoneVifArgent`) :
+   * c'est le fait que `zoneVifArgent` est un champ de la ligne de
    * `REACTION_DEFS`, retrouvee par `id` (`zoneReaction(kind)`) — une valeur
    * qui ne depend d'aucun element, donc d'aucun ordre d'arrivee des deux
    * projectiles. Les deux ordres doivent donc se comporter IDENTIQUEMENT,
@@ -295,7 +295,7 @@ describe('linkedNeighbours', () => {
    * `REACTION_RADIUS` (le Choc thermique generique, plus large) resterait
    * indetectable par ce test.
    */
-  it('seules les TROIS reactions dont zoneLinks est vrai lient, dans les deux ordres de declencheur', () => {
+  it('seules les TROIS reactions dont zoneVifArgent est vrai lient, dans les deux ordres de declencheur', () => {
     const REACTIONS_QUI_LIENT: ReadonlyArray<{ reaction: number; partner: number }> = [
       { reaction: REACTION.VAPORISATION, partner: ELEMENT.BRAISE },
       { reaction: REACTION.PARATONNERRE, partner: ELEMENT.FOUDRE },
@@ -327,12 +327,12 @@ describe('linkedNeighbours', () => {
   /**
    * ⚠️ **Le cas inverse, demande explicitement : Gel profond et Aveuglement
    * ne lient PAS, malgre une paire qui contient le Vif-argent.** Sans ce
-   * test, une regression qui remettrait `zoneLinks: true` sur l'une des
+   * test, une regression qui remettrait `zoneVifArgent: true` sur l'une des
    * deux (ou qui en revenait a deriver de la paire) passerait inapercue.
    * Testees dans les deux ordres de declencheur, meme discipline que le
    * test positif ci-dessus.
    */
-  it('Gel profond et Aveuglement (zoneLinks: false) ne lient jamais, dans les deux ordres de declencheur', () => {
+  it('Gel profond et Aveuglement (zoneVifArgent: false) ne lient jamais, dans les deux ordres de declencheur', () => {
     const REACTIONS_QUI_NE_LIENT_PAS: ReadonlyArray<{ reaction: number; partner: number }> = [
       { reaction: REACTION.GEL_PROFOND, partner: ELEMENT.GIVRE },
       { reaction: REACTION.AVEUGLEMENT, partner: ELEMENT.CHAUX },

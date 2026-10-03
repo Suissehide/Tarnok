@@ -1,6 +1,6 @@
 import { LINK_RADIUS, ZONE_RADIUS } from './constants';
 import type { Horde } from './horde';
-import { zoneLinks } from './reactions';
+import { zoneVifArgent } from './reactions';
 import type { ZoneField } from './zones';
 
 /**
@@ -34,9 +34,9 @@ import type { ZoneField } from './zones';
  * consorts.** Pas optimise davantage ici : la porte de performance du §8 de
  * la spec se mesure au banc dedie (tache 10), pas dans cette fonction.
  *
- * ⚠️ **`zoneLinks` (`shared/reactions.ts`), un CHAMP EXPLICITE de
- * `REACTION_DEFS` — deuxieme revue, qui RENVERSE la PREMIERE correction de
- * ce meme bug, pas seulement le correctif original de la tache 3.**
+ * ⚠️ **`zoneVifArgent` (`shared/reactions.ts`), UN CHAMP de `REACTION_DEFS`
+ * PARTAGE avec `ZoneField.hitRadiusBonusAt` — troisieme revue sur ce meme
+ * bug.**
  *
  * Correctif n°1 (tache 3) : `zoneReaction(kind) === 0`, « seules les zones
  * purement elementaires lient ». Observation exacte (le nibble d'ELEMENT
@@ -48,20 +48,27 @@ import type { ZoneField } from './zones';
  * portant le Vif-argent a donc TOUJOURS une reaction non nulle en
  * production. Mesure au banc : `zonesLiantesVues = 0` sur 2700 ticks.
  *
- * Correctif n°2 (celui-ci) : la REVUE qui a suivi avait d'abord derive la
- * liaison de la PAIRE (`reactionOfId(zoneReaction(kind))?.pair`,
- * canonicalisee par `packElementPair`) — ORDRE-INDEPENDANTE, mais faisant
- * lier les CINQ paires du Vif-argent, y compris Gel profond et Aveuglement,
- * dont l'entree de cette meme table (tache 6) decide l'INVERSE en citant le
- * §5 de la spec (« vitesse nulle » / « la fuite », jamais la liaison).
- * Deriver de la paire renversait cette decision EN SILENCE. `zoneLinks` est
- * un CHAMP EPINGLE explicitement, reaction par reaction (voir son docbloc
- * dans `shared/reactions.ts`) : `true` sur les TROIS reactions qui ont
- * BESOIN de la liaison pour leur propre effet (Vaporisation, Paratonnerre,
- * Amalgame), `false` partout ailleurs, y compris Gel profond et Aveuglement.
+ * Correctif n°2 : derive la liaison de la PAIRE
+ * (`reactionOfId(zoneReaction(kind))?.pair`, canonicalisee par
+ * `packElementPair`) — ORDRE-INDEPENDANTE, mais faisant lier les CINQ
+ * paires du Vif-argent, y compris Gel profond et Aveuglement, dont l'entree
+ * de cette meme table (tache 6) decide l'INVERSE en citant le §5 de la spec
+ * (« vitesse nulle » / « la fuite », jamais la liaison). Deriver de la
+ * paire renversait cette decision EN SILENCE. Remplace par un champ EPINGLE
+ * (`zoneLinks`, renomme depuis) — mais consulte SEULEMENT ici, pas par
+ * `hitRadiusBonusAt` : Gel profond elargissait alors le rayon de touche
+ * sans plus lier, une divergence que personne n'avait choisie.
+ *
+ * Correctif n°3 (celui-ci) : `zoneVifArgent` est le MEME champ, desormais lu
+ * aussi par `hitRadiusBonusAt` (`shared/zones.ts`) — un seul critere, deux
+ * consommateurs (§3 « la meme zone de Vif-argent », §4 « un ennemi dans une
+ * zone de Vif-argent »). `true` sur les TROIS reactions qui ont BESOIN du
+ * Vif-argent pour leur propre effet (Vaporisation, Paratonnerre, Amalgame),
+ * `false` partout ailleurs, y compris Gel profond et Aveuglement, pour les
+ * DEUX effets desormais.
  *
  * ⚠️ **Toujours ORDRE-INDEPENDANTE — mais plus pour la canonicalisation de
- * `packElementPair`.** `zoneLinks` est lu par `id` (`zoneReaction(kind)`),
+ * `packElementPair`.** `zoneVifArgent` est lu par `id` (`zoneReaction(kind)`),
  * jamais par un element : cette valeur ne depend d'AUCUN element, donc
  * d'aucun ordre d'arrivee des deux projectiles. Voir `shared/links.test.ts`
  * : les tests posent toujours les deux ordres de declencheur, mais c'est
@@ -82,7 +89,7 @@ export function linkedNeighbours(
   const linked = new Set<number>();
 
   for (let z = 0; z < zones.count; z++) {
-    if (!zoneLinks(zones.kind[z] ?? 0)) {
+    if (!zoneVifArgent(zones.kind[z] ?? 0)) {
       continue;
     }
     if (!zones.aliveAt(z, tick)) {
