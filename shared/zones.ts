@@ -4,13 +4,12 @@ import {
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
 } from './constants';
-import { ELEMENT } from './elements';
-import { zoneElement, zoneReaction } from './protocol';
 import {
   zoneArmorReductionTotal,
   zoneBurnPerTick,
   zoneCollisionDamage,
   zoneDamageAmpTotal,
+  zoneInvolvesVifArgent,
   zoneLifetimeTicks,
 } from './reactions';
 
@@ -522,11 +521,8 @@ export class ZoneField {
    * dans la table de `shared/elements.ts` (voir son docbloc, et
    * `EFFET_HORS_TABLE` dans `shared/elements.test.ts`) : un appelant doit deja
    * savoir qu'il tient du Vif-argent avant de lire cette methode, exactement
-   * comme `linkedNeighbours` teste `zoneElement(kind) === ELEMENT.VIF_ARGENT`
-   * plutot que de lire un champ generique. Ajouter un neuvieme FORMAT de
-   * combinaison (element x reaction) dans `shared/reactions.ts` pour cette
-   * seule grandeur n'aurait donc rien generalise — voir le rapport de la
-   * tache 3 pour la decision ecrite.
+   * comme `linkedNeighbours` delegue a `zoneInvolvesVifArgent`
+   * (`shared/reactions.ts`) plutot que de lire un champ generique.
    *
    * ⚠️ **Meme FORME qu'`ampAt`/`armorReductionAt`/`collisionDamageAt`/`burnAt`
    * ci-dessus — meme balayage, meme `aliveAt`, meme MAXIMUM, et la raison est
@@ -544,16 +540,16 @@ export class ZoneField {
    * `#emit`/`fireSalvoDirected`, qui continuent d'ignorer la horde et les
    * zones. Voir le docbloc du module `shared/projectiles.ts`.
    *
-   * ⚠️ **`zoneReaction(kind) === 0` : SEULES les zones purement elementaires
-   * elargissent — correctif de revue sur la tache 3, meme filtre et meme
-   * raison que `linkedNeighbours` (`shared/links.ts`).** Le §5 de la spec
-   * range *Gel profond* (Givre + Vif-argent) et *Aveuglement* (Chaux +
-   * Vif-argent) parmi les reactions PORTEES PAR UNE ZONE : leur champ porte
-   * l'element du DECLENCHEUR, Vif-argent OU son partenaire selon l'ordre
-   * d'arrivee. Sans ce filtre, une zone de Gel profond dont le Vif-argent
-   * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
-   * et elargirait a tort — une fois sur deux, selon l'ordre des deux
-   * projectiles, ATTEIGNABLE des la tache 6.
+   * ⚠️ **`zoneInvolvesVifArgent` (`shared/reactions.ts`), PAS le nibble
+   * d'ELEMENT — revue post-tache 9, qui RENVERSE le correctif de la tache 3,
+   * meme deriveur et meme raison que `linkedNeighbours`
+   * (`shared/links.ts`).** L'ancien filtre (`zoneReaction(kind) === 0`)
+   * excluait TOUTE zone de reaction au motif que son nibble d'ELEMENT porte
+   * le DECLENCHEUR — exact, mais `postZone` est le SEUL createur de zones et
+   * les CINQ paires du Vif-argent sont TOUTES nommees dans `REACTION_DEFS` :
+   * une zone de Vif-argent a donc TOUJOURS une reaction non nulle en
+   * production, et l'ancien filtre l'excluait a chaque fois. Voir le docbloc
+   * de `zoneInvolvesVifArgent` pour le detail complet.
    */
   hitRadiusBonusAt(x: number, y: number, tick: number): number {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
@@ -567,12 +563,7 @@ export class ZoneField {
       if (dx * dx + dy * dy >= r2) {
         continue;
       }
-      if (zoneElement(this.kind[z] ?? 0) !== ELEMENT.VIF_ARGENT) {
-        continue;
-      }
-      if (zoneReaction(this.kind[z] ?? 0) !== 0) {
-        // Zone laissee par une REACTION (Gel profond, Aveuglement...) : voir
-        // le docbloc ci-dessus.
+      if (!zoneInvolvesVifArgent(this.kind[z] ?? 0)) {
         continue;
       }
       if (VIF_ARGENT_HIT_RADIUS_BONUS > bonus) {

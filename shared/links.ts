@@ -1,7 +1,6 @@
 import { LINK_RADIUS, ZONE_RADIUS } from './constants';
-import { ELEMENT } from './elements';
 import type { Horde } from './horde';
-import { zoneElement, zoneReaction } from './protocol';
+import { zoneInvolvesVifArgent } from './reactions';
 import type { ZoneField } from './zones';
 
 /**
@@ -35,18 +34,29 @@ import type { ZoneField } from './zones';
  * consorts.** Pas optimise davantage ici : la porte de performance du §8 de
  * la spec se mesure au banc dedie (tache 10), pas dans cette fonction.
  *
- * ⚠️ **`zoneReaction(kind) === 0` : SEULES les zones purement elementaires
- * lient — correctif de revue sur la tache 3.** Le §5 de la spec range *Gel
- * profond* (Givre + Vif-argent) et *Aveuglement* (Chaux + Vif-argent) parmi
- * les reactions PORTEES PAR UNE ZONE (taches 5 et 8, hors perimetre ici) :
- * elles laissent donc un champ dont le nibble d'ELEMENT porte le
- * DECLENCHEUR — le second projectile arrive, Vif-argent OU son partenaire
- * selon l'ordre. Sans ce filtre, une zone de Gel profond dont le Vif-argent
- * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
- * et lierait a tort — une fois sur deux, selon l'ordre des deux
- * projectiles, ATTEIGNABLE des la tache 6. Voir `shared/links.test.ts` :
- * une zone de reaction qui pair le Vif-argent ne lie JAMAIS, quel que soit
- * le declencheur qui porte le nibble.
+ * ⚠️ **`zoneInvolvesVifArgent` (`shared/reactions.ts`), PAS le nibble
+ * d'ELEMENT — revue post-tache 9, qui RENVERSE le correctif de la tache 3.**
+ * L'ancien filtre (`zoneReaction(kind) === 0`, « seules les zones purement
+ * elementaires lient ») partait d'une observation exacte — le nibble
+ * d'ELEMENT d'une zone de reaction porte le DECLENCHEUR, le second
+ * projectile arrive, Vif-argent OU son partenaire selon l'ordre — mais en
+ * tirait la mauvaise conclusion : il excluait TOUTE zone de reaction, alors
+ * que `postZone` (`back/src/combat.ts`) est le SEUL createur de zones et que
+ * les CINQ paires du Vif-argent (Vaporisation, Paratonnerre, Gel profond,
+ * Aveuglement, Amalgame) sont TOUTES nommees dans `REACTION_DEFS` — une zone
+ * portant le Vif-argent a donc TOUJOURS une reaction non nulle en
+ * production. Le filtre excluait donc TOUT, en silence : mesure au banc,
+ * `zonesLiantesVues = 0` sur 2700 ticks de combat reel, les quatre
+ * mecanismes qui en dependent (Amalgame, Vaporisation, Paratonnerre, le
+ * rayon de touche elargi) totalement inertes.
+ *
+ * Le bon deriveur lit la PAIRE de la reaction (`reactionOfId(zoneReaction(
+ * kind))?.pair`), jamais le nibble d'element : `packElementPair` la
+ * canonicalise (plus petit, plus grand), donc elle est ORDRE-INDEPENDANTE
+ * par construction, contrairement au nibble d'element. Voir
+ * `shared/links.test.ts` : une zone de reaction qui pair le Vif-argent LIE
+ * desormais, dans les DEUX ordres de declencheur ; une zone dont la paire ne
+ * contient pas le Vif-argent ne lie jamais.
  */
 export function linkedNeighbours(
   horde: Horde,
@@ -62,13 +72,7 @@ export function linkedNeighbours(
   const linked = new Set<number>();
 
   for (let z = 0; z < zones.count; z++) {
-    if (zoneElement(zones.kind[z] ?? 0) !== ELEMENT.VIF_ARGENT) {
-      continue;
-    }
-    if (zoneReaction(zones.kind[z] ?? 0) !== 0) {
-      // Zone laissee par une REACTION (Gel profond, Aveuglement...) : son
-      // element est celui du declencheur, pas une garantie de Vif-argent
-      // pur — voir le docbloc ci-dessus.
+    if (!zoneInvolvesVifArgent(zones.kind[z] ?? 0)) {
       continue;
     }
     if (!zones.aliveAt(z, tick)) {

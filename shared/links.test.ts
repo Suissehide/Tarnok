@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { LINK_RADIUS, ZONE_LIFETIME_TICKS, ZONE_RADIUS } from './constants';
+import { LINK_RADIUS, REACTION_RADIUS, ZONE_LIFETIME_TICKS, ZONE_RADIUS } from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
 import { linkedNeighbours } from './links';
@@ -229,27 +229,15 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Correctif de revue sur la tache 3 (etape 5c) — decouvert en
-   * recoupant le §5 de la spec, pas le §3.** *Gel profond* (Givre +
-   * Vif-argent) et *Aveuglement* (Chaux + Vif-argent) y sont ranges parmi
-   * les reactions PORTEES PAR UNE ZONE (taches 5 et 8, hors perimetre ici) :
-   * leur champ porte l'element du DECLENCHEUR, Vif-argent OU son partenaire
-   * selon l'ordre d'arrivee des deux projectiles. Sans le filtre
-   * `zoneReaction(kind) === 0`, une zone de Gel profond dont le Vif-argent
-   * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
-   * et lierait a tort — une fois sur deux, ATTEIGNABLE des la tache 6.
-   *
-   * ⚠️ **Les DEUX declencheurs possibles**, meme discipline que les tests
-   * « ne cumulent pas » de `ZoneField` : le second `kind` (Givre declenche)
-   * etait deja exclu par le filtre PRECEDENT (element), donc lui seul ne
-   * testerait rien de neuf — mais l'assener quand meme documente que le
-   * nouveau filtre n'a RIEN change pour ce cas, et suit la regle « pose les
-   * deux ordres, assene l'egalite » a la lettre.
+   * ⚠️ **Le cas inverse de la revue post-tache 9 : une zone dont la PAIRE
+   * ne contient pas le Vif-argent ne doit JAMAIS lier.** Supraconduction
+   * (Givre + Foudre) ne pair pas le Vif-argent — sans ca, tout lierait.
+   * Teste dans les DEUX ordres de declencheur, bien que le nibble
+   * d'ELEMENT ne soit plus lu du tout par `zoneInvolvesVifArgent` : la
+   * garde reste sur la PAIRE, jamais sur l'element, donc les deux ordres
+   * doivent se comporter IDENTIQUEMENT — pas seulement l'un d'eux.
    */
-  it('ne lie pas a travers une zone de REACTION appariant le Vif-argent, quel que soit le declencheur', () => {
-    // Fictif : aucune reaction ne pair le Vif-argent aujourd'hui (§5 arrive
-    // aux taches 5-8) — seul le MECANISME (element du declencheur variable)
-    // est teste ici, pas une reaction reelle.
+  it('ne lie pas a travers une zone de REACTION dont la paire ne contient PAS le Vif-argent, quel que soit le declencheur', () => {
     const kindVifArgentDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
     const kindAutreDeclenche = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
 
@@ -275,38 +263,53 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **La MEME garde que le test fictif ci-dessus, mais avec les DEUX
-   * reactions REELLES du §5 de la spec qui apparient le Vif-argent et
-   * touchent le deplacement (tache 6 de l'etape 5c) — le cas n'est plus
-   * hypothetique.** Gel profond (Givre + Vif-argent) et Aveuglement (Chaux +
-   * Vif-argent) restent EXCLUES de la liaison par construction : leur §5
-   * decrit un effet de ZONE seul (vitesse nulle / fuite), jamais la
-   * liaison — voir le docbloc de leur entree dans `REACTION_DEFS`
-   * (`shared/reactions.ts`) pour la decision tranchee et sa justification
-   * complete. La liaison reste une propriete du Vif-argent ELEMENTAIRE
-   * SEUL (§3 de la spec), jamais d'une reaction qui l'apparie.
+   * ⚠️ **Revue post-tache 9 : RENVERSE le test precedent de cette suite
+   * (« Gel profond et Aveuglement ne lient jamais »).** Le filtre
+   * `zoneReaction(kind) === 0` etait MORT en production (voir le docbloc du
+   * module) : les CINQ reactions qui apparient le Vif-argent (Vaporisation,
+   * Paratonnerre, Gel profond, Aveuglement, Amalgame) LIENT desormais,
+   * `zoneInvolvesVifArgent` lisant leur PAIRE plutot que le nibble
+   * d'element — ORDRE-INDEPENDANT par construction (`packElementPair`
+   * canonicalise), teste ici dans les DEUX ordres de declencheur pour
+   * chacune des cinq.
+   *
+   * ⚠️ **`w`, le temoin entre `LINK_RADIUS` (80) et `REACTION_RADIUS` (90)
+   * — distingue la liaison du balayage GENERIQUE.** `w` partage la MEME
+   * zone que `p1`/`p2` (tous a moins de `ZONE_RADIUS`, 70, du centre) mais
+   * est a 85 px de `p1` : AU-DELA de `LINK_RADIUS`. Sans ce temoin, un
+   * `linkedNeighbours` qui confondrait par erreur `LINK_RADIUS` avec
+   * `REACTION_RADIUS` (le Choc thermique generique, plus large) resterait
+   * indetectable par ce test — voir le brief, « LINK_RADIUS = 80 <
+   * REACTION_RADIUS = 90 ».
    */
-  it('Gel profond et Aveuglement (reactions REELLES) ne lient jamais, quel que soit le declencheur', () => {
-    const gelProfondVifDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND);
-    const gelProfondGivreDeclenche = packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND);
-    const aveuglementVifDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT);
-    const aveuglementChauxDeclenche = packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT);
+  it('les cinq reactions REELLES qui apparient le Vif-argent lient desormais, dans les deux ordres de declencheur', () => {
+    const REACTIONS_VIF_ARGENT: ReadonlyArray<{ reaction: number; partner: number }> = [
+      { reaction: REACTION.VAPORISATION, partner: ELEMENT.BRAISE },
+      { reaction: REACTION.PARATONNERRE, partner: ELEMENT.FOUDRE },
+      { reaction: REACTION.GEL_PROFOND, partner: ELEMENT.GIVRE },
+      { reaction: REACTION.AVEUGLEMENT, partner: ELEMENT.CHAUX },
+      { reaction: REACTION.AMALGAME, partner: ELEMENT.POIX },
+    ];
 
-    for (const kind of [
-      gelProfondVifDeclenche,
-      gelProfondGivreDeclenche,
-      aveuglementVifDeclenche,
-      aveuglementChauxDeclenche,
-    ]) {
-      const horde = new Horde();
-      const zones = new ZoneField();
-      const p1 = spawnAt(horde, 1, 10, 0);
-      const p2 = spawnAt(horde, 2, 30, 0);
-      expect(horde.count).toBe(2);
-      zones.spawn(kind, 0, 0, 0, 0);
+    for (const { reaction, partner } of REACTIONS_VIF_ARGENT) {
+      for (const declencheur of [ELEMENT.VIF_ARGENT, partner]) {
+        const kind = packZoneKind(declencheur, reaction);
+        const horde = new Horde();
+        const zones = new ZoneField();
+        const p1 = spawnAt(horde, 1, -40, 0);
+        const p2 = spawnAt(horde, 2, -10, 0);
+        const w = spawnAt(horde, 3, 45, 0);
+        expect(horde.count).toBe(3);
+        zones.spawn(kind, 0, 0, 0, 0);
 
-      expect(linkedNeighbours(horde, 0, zones, 0)).not.toContain(p2);
-      expect(linkedNeighbours(horde, 1, zones, 0)).not.toContain(p1);
+        expect(30).toBeLessThan(LINK_RADIUS); // p1-p2 : lies
+        expect(85).toBeGreaterThan(LINK_RADIUS); // p1-w : hors de LINK_RADIUS
+        expect(85).toBeLessThan(REACTION_RADIUS); // ... mais DANS REACTION_RADIUS
+
+        expect(linkedNeighbours(horde, 0, zones, 0), `reaction ${reaction}`).toContain(p2);
+        expect(linkedNeighbours(horde, 1, zones, 0), `reaction ${reaction}`).toContain(p1);
+        expect(linkedNeighbours(horde, 0, zones, 0), `reaction ${reaction}`).not.toContain(w);
+      }
     }
   });
 });

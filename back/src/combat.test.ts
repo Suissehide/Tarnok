@@ -3680,12 +3680,16 @@ describe('armureA — une zone de Chaux ET une de Fournee ne poussent jamais l a
  * balayage par rayon) centre sur `linkedNeighbours` (tache 2), jamais sur le
  * point d'impact d'origine.
  *
- * ⚠️ **La liaison ne peut venir QUE d'une zone de Vif-argent ELEMENTAIRE
- * posee separement** (le pare-feu de la tache 3, `zoneReaction(kind) === 0`
- * dans `linkedNeighbours`) : la zone que Vaporisation laisse elle-meme au
- * sol (`postZone`, pour CE declencheur) ne lie jamais personne, quel que
- * soit l'element qu'elle porte. Tout decor de ce bloc qui veut un degat pose
- * donc sa propre zone de Vif-argent EN PLUS de declencher Vaporisation.
+ * ⚠️ **Revue post-tache 9 : la zone que Vaporisation pose POUR ELLE-MEME
+ * LIE desormais aussi — le filtre mort est corrige (`zoneInvolvesVifArgent`,
+ * `shared/reactions.ts`).** L'ancien pare-feu (`zoneReaction(kind) === 0`
+ * dans `linkedNeighbours`) excluait la zone que `postZone` pose a CHAQUE
+ * declenchement (CE declencheur, a son propre point d'impact) : mort en
+ * production, puisque cette zone porte TOUJOURS la reaction Vaporisation,
+ * jamais une reaction nulle. Tout voisin a moins de `ZONE_RADIUS` du
+ * declencheur ET moins de `LINK_RADIUS` de lui est donc lie par CETTE seule
+ * zone, meme sans aucune autre zone de Vif-argent posee ailleurs — voir le
+ * test dedie plus bas, qui le mesure explicitement.
  */
 describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIES (tache 5 de l etape 5c)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -3740,7 +3744,16 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
     expect(horde.hp[horde.slotOf(w)]).toBe(1000);
   });
 
-  it('sans zone de Vif-argent ELEMENTAIRE posee ailleurs, personne n est lie : aucun degat, mais le champ se pose quand meme', () => {
+  /**
+   * ⚠️ **Revue post-tache 9 : sans AUCUNE zone posee ailleurs, Y est quand
+   * meme lie — par la zone que `postZone` vient de poser POUR Vaporisation
+   * elle-meme, au point d'impact de X.** Y (30 px) est a la fois sous
+   * `ZONE_RADIUS` (70, dans cette zone) et sous `LINK_RADIUS` (80, lie a X).
+   * Le degat, centre sur Y (le seul lie), rayonne sur `REACTION_RADIUS` (90)
+   * et atteint donc aussi X (30 px de Y) : les deux prennent EXACTEMENT
+   * `coupSurLourd(REACTION_DAMAGE)`.
+   */
+  it('sans zone de Vif-argent ELEMENTAIRE posee ailleurs, Y est quand meme lie par le champ que Vaporisation pose elle-meme', () => {
     const horde = new Horde(10);
     const x = addOne(horde, 1, 0, 0, LOURD);
     const y = addOne(horde, 2, 30, 0, LOURD);
@@ -3750,8 +3763,9 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
 
     applyReactions(horde, new OrbField(10), 0, [trigger(x, 0, 0)], zones, new Reactions());
 
-    expect(horde.hp[horde.slotOf(x)]).toBe(1000);
-    expect(horde.hp[horde.slotOf(y)]).toBe(1000);
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    expect(horde.hp[horde.slotOf(x)]).toBeCloseTo(1000 - perte, 5);
+    expect(horde.hp[horde.slotOf(y)]).toBeCloseTo(1000 - perte, 5);
     expect(zones.count).toBe(1);
     expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.VAPORISATION);
   });
@@ -3786,16 +3800,17 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
   });
 
   /**
-   * ⚠️ **Le pare-feu de la tache 3, exerce directement.** Sans aucune zone
-   * de Vif-argent ELEMENTAIRE posee ailleurs, la SEULE zone de Vif-argent
-   * qui existe est celle que Vaporisation vient de laisser au sol pour CE
-   * declencheur — et elle porte `ELEMENT.VIF_ARGENT` dans son nibble
-   * d'element (le declencheur ici EST le Vif-argent, voir `trigger`). Sans
-   * le filtre `zoneReaction(kind) === 0` de `linkedNeighbours`, Y serait lie
-   * a X a travers CETTE zone et prendrait des degats — le test prouve que ce
-   * n'est PAS le cas.
+   * ⚠️ **Le deriveur de la revue post-tache 9, exerce directement — RENVERSE
+   * le pare-feu de la tache 3.** Sans aucune zone de Vif-argent ELEMENTAIRE
+   * posee ailleurs, la SEULE zone de Vif-argent qui existe est celle que
+   * Vaporisation vient de laisser au sol pour CE declencheur — et sa
+   * reaction (Vaporisation) apparie le Vif-argent dans `REACTION_DEFS`,
+   * quel que soit l'element que porte son nibble (le declencheur ici EST le
+   * Vif-argent, voir `trigger`). `zoneInvolvesVifArgent` (`shared/
+   * reactions.ts`) lit la PAIRE, pas le nibble : Y est donc LIE a X a
+   * travers CETTE zone et prend des degats — le test le mesure.
    */
-  it('le champ que Vaporisation laisse elle-meme ne lie personne, meme s il porte l element Vif-argent', () => {
+  it('le champ que Vaporisation laisse elle-meme lie desormais, meme sans aucune autre zone', () => {
     const horde = new Horde(10);
     const x = addOne(horde, 1, 0, 0, LOURD);
     const y = addOne(horde, 2, 30, 0, LOURD);
@@ -3813,7 +3828,8 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
       new Reactions(),
     );
 
-    expect(horde.hp[horde.slotOf(y)]).toBe(1000);
+    const perte = coupSurLourd(REACTION_DAMAGE);
+    expect(horde.hp[horde.slotOf(y)]).toBeCloseTo(1000 - perte, 5);
   });
 
   it('sans entityId (declencheur ne d un recouvrement de zones), ne touche personne', () => {
@@ -3994,31 +4010,41 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
 
   /**
    * ⚠️ **SAUTE PAR-DESSUS un voisin NON LIE, plus proche, pour atteindre un
-   * lie plus loin — le coeur de la preference.** D (declencheur, 0,0) et L
-   * (lie, 60,0) sont tous deux couverts par une zone de Vif-argent posee
-   * SUR L (centre 60,0, rayon `ZONE_RADIUS`, 70 : D a 60 px du centre, L a
-   * 0) et a 60 px l'un de l'autre — sous `LINK_RADIUS` (80). N (-55,0) est
-   * GEOMETRIQUEMENT plus proche de D (55 px) que L ne l'est (60 px) — une
-   * chaine ordinaire choisirait N en premier — mais N est a 115 px du centre
-   * de la zone, AU-DELA de `ZONE_RADIUS` : aucune zone ne le couvre en
-   * meme temps que D, donc `linkedNeighbours` ne le lie jamais, quelle que
-   * soit la distance qui le separe de D. `exclude` pre-rempli des non-lies
+   * lie plus loin — le coeur de la preference. Geometrie recalibree a la
+   * revue post-tache 9** : `postZone` pose desormais TOUJOURS, pour CE
+   * declencheur, une zone a son propre point d'impact (D, ici (0,0)) qui
+   * LIE elle-meme (voir le docbloc du describe de Vaporisation) — tout point
+   * a moins de `ZONE_RADIUS` (70) de D serait donc lie par cette seule zone,
+   * quelle que soit la zone explicite du decor. N doit donc rester AU-DELA
+   * de `ZONE_RADIUS` de D pour echapper a cette zone-la EN PLUS de celle du
+   * decor.
+   *
+   * D (declencheur, 0,0), L (lie, 78,0, sous `LINK_RADIUS`, 80) couverts par
+   * une zone de Vif-argent explicite centree en (39,0) (D a 39 px du centre,
+   * L a 39 px aussi, tous deux sous `ZONE_RADIUS`, 70). N (-72,0) est
+   * GEOMETRIQUEMENT plus proche de D (72 px) que L ne l'est (78 px) — une
+   * chaine ordinaire choisirait N en premier — mais N est a 72 px de D
+   * (AU-DELA de `ZONE_RADIUS`, 70 : hors de la zone du declencheur ET hors
+   * de la zone explicite, centree en (39,0), qui ne s'etend que jusqu'a
+   * -31) : aucune zone ne le couvre en meme temps que D, donc
+   * `linkedNeighbours` ne le lie jamais. `exclude` pre-rempli des non-lies
    * rend N invisible pour `chainTargets` : L doit etre atteint, N jamais.
    */
   it('atteint le lie plus LOIN, ignore le non-lie plus PROCHE', () => {
     const horde = new Horde(10);
     const d = addOne(horde, 1, 0, 0, LOURD);
-    const l = addOne(horde, 2, 60, 0, LOURD);
-    const n = addOne(horde, 3, -55, 0, LOURD);
+    const l = addOne(horde, 2, 78, 0, LOURD);
+    const n = addOne(horde, 3, -72, 0, LOURD);
     for (const id of [d, l, n]) {
       horde.hp[horde.slotOf(id)] = 1000;
     }
     const zones = new ZoneField();
-    zones.spawn(ELEMENT.VIF_ARGENT, 60, 0, 9, 0);
-    expect(60).toBeLessThan(ZONE_RADIUS); // D, dans la zone (centree sur L)
-    expect(60).toBeLessThan(LINK_RADIUS); // D et L, a portee de liaison
-    expect(115).toBeGreaterThan(ZONE_RADIUS); // N, HORS de la zone
-    expect(55).toBeLessThan(60); // N geometriquement plus proche de D que L
+    zones.spawn(ELEMENT.VIF_ARGENT, 39, 0, 9, 0);
+    expect(78).toBeLessThan(LINK_RADIUS); // D et L, a portee de liaison
+    expect(39).toBeLessThan(ZONE_RADIUS); // D et L, chacun dans la zone explicite (centree a mi-chemin)
+    expect(72).toBeGreaterThan(ZONE_RADIUS); // N, HORS de la zone explicite ET de celle du declencheur
+    expect(72).toBeLessThan(78); // N geometriquement plus proche de D que L
+    expect(72).toBeLessThan(CHAIN_RADIUS); // N reste geometriquement a portee de chaine
 
     applyReactions(horde, new OrbField(10), 0, [trigger(d, 0, 0)], zones, new Reactions());
 
@@ -4096,26 +4122,36 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
   });
 
   /**
-   * ⚠️ **Le point de revue n°3 du brief.** Aucun ennemi lie : `exclude`
-   * contient alors TOUTE la horde, et `chainTargets` doit rendre une liste
-   * VIDE — sans boucler ni lever. La horde est REELLEMENT peuplee (garde de
-   * non-vacuite ci-dessous) : sans elle, « personne ne prend de degat »
-   * passerait aussi bien parce qu'il n'y a personne a toucher — le « test
-   * qui renvoie zero » que le brief nomme explicitement.
+   * ⚠️ **Le point de revue n°3 du brief — geometrie recalibree a la revue
+   * post-tache 9.** `postZone` pose desormais, pour CE declencheur, une
+   * zone a son propre point d'impact (d, ici (0,0)) qui LIE elle-meme :
+   * tout voisin a moins de `ZONE_RADIUS` (70) de d serait donc lie par
+   * cette seule zone, meme sans AUCUNE zone posee ailleurs. Pour qu'aucun
+   * ennemi ne soit lie, les cinq voisins doivent donc rester au-dela de
+   * `ZONE_RADIUS` de d (en plus d'etre geometriquement a portee de chaine,
+   * `< CHAIN_RADIUS`) : `exclude` contient alors TOUTE la horde, et
+   * `chainTargets` doit rendre une liste VIDE — sans boucler ni lever. La
+   * horde est REELLEMENT peuplee (garde de non-vacuite ci-dessous) : sans
+   * elle, « personne ne prend de degat » passerait aussi bien parce qu'il
+   * n'y a personne a toucher — le « test qui renvoie zero » que le brief
+   * nomme explicitement.
    */
   it('aucun ennemi lie : ne touche personne, ne boucle pas, ne leve pas — horde REELLEMENT peuplee', () => {
     const horde = new Horde(10);
     const d = addOne(horde, 1, 0, 0, LOURD);
     horde.hp[horde.slotOf(d)] = 1000;
     const voisins: number[] = [];
-    // Cinq voisins GEOMETRIQUEMENT a portee de chaine (< CHAIN_RADIUS), mais
-    // AUCUNE zone de Vif-argent nulle part : personne n'est lie a d.
+    // Cinq voisins GEOMETRIQUEMENT a portee de chaine (< CHAIN_RADIUS) mais
+    // AU-DELA de ZONE_RADIUS de d (donc hors de la zone que Paratonnerre
+    // pose sur lui-meme) : personne n'est lie a d.
     for (let i = 1; i <= 5; i++) {
-      const id = addOne(horde, i + 1, i * 20, 0, LOURD);
+      const id = addOne(horde, i + 1, 65 + i * 15, 0, LOURD);
       horde.hp[horde.slotOf(id)] = 1000;
       voisins.push(id);
     }
     expect(horde.count).toBe(6); // non-vacuite : une horde REELLEMENT peuplee
+    expect(80).toBeGreaterThan(ZONE_RADIUS); // le plus proche des voisins (65+15), hors de la zone de d
+    expect(140).toBeLessThan(CHAIN_RADIUS); // le plus lointain, encore a portee de chaine
 
     expect(() => {
       applyReactions(
@@ -4288,18 +4324,17 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
   });
 
   /**
-   * ⚠️ **Deux raisons dans un seul decor, toutes deux exercees par la MEME
-   * absence de zone prealable.** Sans zone de Vif-argent ELEMENTAIRE posee
-   * ailleurs : (1) personne n'est lie AVANT que la reaction ne s'execute, et
-   * (2) le champ qu'Amalgame laisse elle-meme au sol (`postZone`, avant
-   * `shareAmalgameDamage`) ne lie PERSONNE non plus, meme s'il porte
-   * l'element Vif-argent au nibble (le pare-feu de la tache 3,
-   * `zoneReaction(kind) !== 0` dans `linkedNeighbours`) — B est a 30 px
-   * d'A, sous `LINK_RADIUS` ET sous `ZONE_RADIUS` de la zone que la
-   * reaction vient de poser : sans le pare-feu, B serait lie a tort par
-   * CETTE zone-la et prendrait des degats.
+   * ⚠️ **Revue post-tache 9 : le champ qu'Amalgame laisse elle-meme LIE
+   * desormais, sans AUCUNE autre zone — le filtre mort est corrige
+   * (`zoneInvolvesVifArgent`, `shared/reactions.ts`).** L'ancien pare-feu de
+   * la tache 3 (`zoneReaction(kind) !== 0` dans `linkedNeighbours`)
+   * excluait la zone que `postZone` pose a CHAQUE declenchement, au point
+   * d'impact d'A : mort en production, puisque cette zone porte TOUJOURS la
+   * reaction Amalgame, jamais une reaction nulle. B, a 30 px d'A, est sous
+   * `LINK_RADIUS` ET sous `ZONE_RADIUS` de cette zone-la : il est donc LIE
+   * par elle seule, et partage le MEME degat amplifie qu'A.
    */
-  it('sans zone de Vif-argent ELEMENTAIRE posee ailleurs, personne n est lie — pas meme par le champ qu Amalgame laisse elle-meme', () => {
+  it('sans zone de Vif-argent ELEMENTAIRE posee ailleurs, B est quand meme lie par le champ qu Amalgame pose elle-meme', () => {
     const horde = new Horde(10);
     const a = addOne(horde, 1, 0, 0, LOURD);
     const b = addOne(horde, 2, 30, 0, LOURD);
@@ -4311,13 +4346,12 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
 
     applyReactions(horde, new OrbField(10), 0, [trigger(a, 0, 0)], zones, new Reactions());
 
-    // A se tient TOUJOURS dans la zone qu'Amalgame vient de lui poser
-    // dessus (distance nulle) : meme amplification que les deux tests
-    // precedents. B, lui, ne prend RIEN — ni degat ni amplification —
-    // puisqu'il n'est jamais lie.
+    // A (distance nulle) ET B (30 px, lie par la zone qu'Amalgame vient de
+    // poser sur A) tombent tous deux dans cette meme zone : meme degat
+    // amplifie chacun.
     const perte = coupSurLourd(REACTION_DAMAGE) * elementOf(ELEMENT.POIX).damageAmp;
     expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
-    expect(horde.hp[horde.slotOf(b)]).toBe(1000);
+    expect(horde.hp[horde.slotOf(b)]).toBeCloseTo(1000 - perte, 5);
     expect(zones.count).toBe(1);
     expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.AMALGAME);
   });

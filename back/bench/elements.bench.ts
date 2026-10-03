@@ -56,8 +56,8 @@ import {
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
-import { packElementPair, packZoneKind, zoneElement, zoneReaction } from '@shared/protocol';
-import { REACTION } from '@shared/reactions';
+import { packElementPair, packZoneKind } from '@shared/protocol';
+import { REACTION, zoneInvolvesVifArgent } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
@@ -448,10 +448,12 @@ interface CoutAmalgame {
   /** Le plus grand nombre d'Amalgame REELLEMENT declenches en un seul tick. */
   declenchementsMax: number;
   /**
-   * Le plus grand nombre de zones PURES de Vif-argent (zoneReaction === 0)
-   * VUES PENDANT CE RUN — celles, et SEULEMENT celles, que `linkedNeighbours`
-   * suit (tache 3). Voir le rapport : ce compte reste a zero en jeu reel,
-   * pour une raison structurelle mesuree, pas supposee.
+   * Le nombre de zones annoncees ce run qui IMPLIQUENT le Vif-argent
+   * (`zoneInvolvesVifArgent`, `shared/reactions.ts`) — celles que
+   * `linkedNeighbours` suit desormais (revue post-tache 9, qui renverse le
+   * filtre mort de la tache 3). Toute zone qu'Amalgame pose pour
+   * elle-meme compte ICI : voir le rapport, ce compte n'est PLUS a zero en
+   * jeu reel.
    */
   zonesLiantesVues: number;
 }
@@ -475,7 +477,7 @@ function porteAmalgame(exemplaires: number, entites: number, ticks: number): Cou
     const zonesAnnoncees = room.drainZones();
     let declenchementsTick = 0;
     for (const ev of zonesAnnoncees) {
-      if (zoneElement(ev.kind) === ELEMENT.VIF_ARGENT && zoneReaction(ev.kind) === 0) {
+      if (zoneInvolvesVifArgent(ev.kind)) {
         zonesLiantesVues++;
       }
     }
@@ -496,20 +498,21 @@ function porteAmalgame(exemplaires: number, entites: number, ticks: number): Cou
  * (`applyReactions`, l'unique point d'entree public qui appelle
  * `shareAmalgameDamage`) — jamais `linkedNeighbours` directement.
  *
- * ⚠️ **Decor SYNTHETIQUE, et c'est assume.** La mesure 5/5bis ci-dessous
- * (jeu reel) montre que `zonesLiantesVues` reste a ZERO : les cinq paires du
- * Vif-argent (`shared/reactions.ts`) ont CHACUNE un effet specifique nomme
- * (Vaporisation, Gel profond, Paratonnerre, Aveuglement, Amalgame elle-meme),
- * donc `postZone` (`back/src/combat.ts`, le SEUL createur de zones) ne pose
- * jamais une zone de Vif-argent PURE (`zoneReaction === 0`) en jeu reel —
- * cette zone n'existe que pour la paire Braise+Givre, qui n'implique jamais
- * le Vif-argent. `linkedNeighbours` ne trouve donc RIEN a lier aujourd'hui,
- * et son boucle couteuse (`O(horde.count)` par zone qui passe le double
- * filtre) ne s'execute jamais en combat reel. Ce plafond repond donc a une
- * question DIFFERENTE, et necessaire : si une zone pure de Vif-argent devenait
- * un jour atteignable (nouvelle arme, reaction retiree de la table), quel
- * serait le cout ? La zone est donc posee ICI directement (comme le fait
- * `combat.test.ts` pour le meme motif), toujours via `applyReactions`.
+ * ⚠️ **Decor SYNTHETIQUE — mais `zonesLiantesVues` n'est PLUS a zero en jeu
+ * reel (revue post-tache 9, qui renverse le filtre mort de la tache 3).**
+ * `zoneInvolvesVifArgent` (`shared/reactions.ts`) lit desormais la PAIRE de
+ * la zone, pas son nibble d'element : les CINQ paires du Vif-argent LIENT
+ * toutes, y compris via la zone que `postZone` pose POUR le declencheur
+ * lui-meme — la mesure 5/5bis ci-dessous le confirme (`zonesLiantesVues`
+ * compte desormais des dizaines de zones par run). Ce plafond reste utile
+ * malgre tout : il isole le cout a un NOMBRE DE ZONES LIANTES CHOISI
+ * (`zonesLiantes`), au lieu du nombre que le jeu produit organiquement, pour
+ * mesurer comment `applyReactions` degrade quand les declencheurs/tick
+ * augmentent — ⚠️ y COMPRIS l'effet du fait que `zones` est PARTAGE entre
+ * toutes les iterations (postZone y ajoute reellement des zones a chaque
+ * declencheur, jusqu'a `ZONE_CAPACITY`), donc ce plafond mesure un regime
+ * OU LE NOMBRE DE ZONES CROIT avec les declencheurs/tick, pas un nombre de
+ * zones liantes fixe — a lire comme un pire cas, pas un budget typique.
  */
 function coutLiaisonSousAmalgame(
   entites: number,
@@ -776,7 +779,7 @@ if (declenchementsMaxGlobal === 0) {
 }
 console.log(
   `\nAmalgame s'est reellement declenche en jeu (max observe : ${declenchementsMaxGlobal}/tick). ` +
-    `Zones PURES de Vif-argent vues sur toute la campagne (celles que linkedNeighbours suit) : ${zonesLiantesVuesTotal}.`,
+    `Zones impliquant le Vif-argent vues sur toute la campagne (celles que linkedNeighbours suit desormais, revue post-tache 9) : ${zonesLiantesVuesTotal}.`,
 );
 
 console.log(
@@ -804,30 +807,29 @@ for (const declencheurs of [10, 25, 50, 100, 250, 500]) {
 }
 console.table(plafondRows);
 
-// ⚠️ **Ne PAS attribuer le pas COMPLET (5/5bis) a `linkedNeighbours`.**
-// `zonesLiantesVuesTotal === 0` (imprime ci-dessus) PROUVE que la boucle
-// couteuse de `linkedNeighbours` (le balayage `O(horde.count)` par zone qui
-// passe le double filtre element+reaction) n'a JAMAIS tourne pendant 5/5bis —
-// chaque zone rencontree y est rejetee par un controle O(1) avant d'atteindre
-// cette boucle (voir le docbloc de `coutLiaisonSousAmalgame`). Le depassement
-// de budget de 5/5bis est donc celui du PAS ENTIER (horde, projectiles,
-// zones, toutes reactions) a 4000 LOURDS avec deux armes empilees — deja visible
-// sans Amalgame a la section 3 (65 ms a 4000/8) — jamais celui de la liaison.
-// Le verdict qui ENGAGE sur `linkedNeighbours` elle-meme est celui de 5 ter,
-// la seule mesure qui l'exerce reellement (zone liante presente).
+// ⚠️ **Revue post-tache 9 : `zonesLiantesVuesTotal` N'EST PLUS a zero — la
+// boucle couteuse de `linkedNeighbours` TOURNE desormais pour de vrai
+// pendant 5/5bis.** `zoneInvolvesVifArgent` (`shared/reactions.ts`) lit la
+// PAIRE de la zone, pas son nibble d'element : les CINQ reactions qui
+// apparient le Vif-argent lient toutes, y compris via la zone que
+// `postZone` pose POUR le declencheur lui-meme. Le pas p95 de 5/5bis reste
+// neanmoins dans le budget a toutes les configurations SAUF 4000/64
+// exemplaires (12,459 ms) — et la section 7 (attribution) impute ce
+// depassement a `appliquerDegats` (zones.ampAt/armorReductionAt), pas a
+// `linkedNeighbours` : voir son VERDICT, hors de cette tache.
 console.log(
   `\nInformatif (5/5bis) : pas COMPLET pire p95 ${pireAmalgameReel.toFixed(3)} ms, zonesLiantesVuesTotal = ${zonesLiantesVuesTotal} ` +
-    '-> le depassement vient du pas entier a 4000 LOURDS, PAS de linkedNeighbours (sa boucle couteuse ne tourne jamais ici).',
+    '-> la liaison tourne reellement desormais ; le depassement a 4000/64 reste impute a appliquerDegats (section 7), pas a linkedNeighbours.',
 );
 console.log(
   pirePlafond < BUDGET_MS
     ? `VERDICT liaison (linkedNeighbours sous shareAmalgameDamage, zone liante presente) : pire p95 ${pirePlafond.toFixed(3)} ms < ${BUDGET_MS.toFixed(3)} ms a ${MAX_ENTITIES} entites et jusqu'a 500 declencheurs/tick -> ON GARDE (pas de grille de voisinage requise)`
-    : `VERDICT liaison (linkedNeighbours sous shareAmalgameDamage, zone liante presente) : pire p95 ${pirePlafond.toFixed(3)} ms >= ${BUDGET_MS.toFixed(3)} ms -> HORS BUDGET, router 'linkedNeighbours' par la grille de voisinage`,
+    : `VERDICT liaison (linkedNeighbours sous shareAmalgameDamage, zone liante presente) : pire p95 ${pirePlafond.toFixed(3)} ms >= ${BUDGET_MS.toFixed(3)} ms a ${MAX_ENTITIES} entites et 500 declencheurs/tick -> HORS BUDGET dans ce regime SYNTHETIQUE (voir le docbloc de coutLiaisonSousAmalgame : le nombre de zones y croit avec les declencheurs, jusqu'a ZONE_CAPACITY) ; le jeu reel (5/5bis) ne produit pas cette densite de declencheurs simultanes`,
 );
 console.log(
   `VERDICT plafond isole (synthetique, zones liantes = ${ZONES_LIANTES_REALISTE}) : tient jusqu'a ` +
     `${plafondLimite || '< 10'} declencheurs/tick, pire p95 observe ${pirePlafond.toFixed(3)} ms -> ` +
-    'synthetique ASSUME : zonesLiantesVues reste a 0 en jeu reel (voir ci-dessus), donc ce cout ne se paie pas aujourd hui',
+    'ce plafond synthetique depasse le budget bien avant 500 declencheurs/tick ; la mesure 5/5bis (jeu reel) est le verdict qui engage, celle-ci reste un pire cas a surveiller si le nombre de declencheurs/tick simultanes venait a augmenter',
 );
 
 console.log('\n6. Point de revue n°5, REPRISE — QUINZE kind reels, six elements (tache 9)');

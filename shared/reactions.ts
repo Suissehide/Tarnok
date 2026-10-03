@@ -12,7 +12,7 @@ import {
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
-import { packElementPair, zoneElement, zoneReaction } from './protocol';
+import { packElementPair, unpackElementPair, zoneElement, zoneReaction } from './protocol';
 
 /**
  * La table des reactions a effet SPECIFIQUE (tache 6 de l'etape 5b) : meme
@@ -549,27 +549,28 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     // restent donc neutres, VERIFIE par la table plutot que suppose — cette
     // paire n'a besoin d'aucun autre plancher.
     //
-    // ⚠️ **Le pare-feu de la tache 3 (`zoneReaction(kind) === 0` dans
-    // `linkedNeighbours`/`hitRadiusBonusAt`, `shared/links.ts` et
-    // `shared/zones.ts`) RESTE EN PLACE — decision TRANCHEE pour cette
-    // tache, pas heritee en silence.** Le §5 de la spec decrit l'effet de
-    // Gel profond comme « vitesse nulle dans la zone » SEUL : ni la liaison
-    // ni le rayon de touche elargi n'y figurent. Les deux restent des
-    // proprietes du Vif-argent ELEMENTAIRE (§3/§4 de la spec) : une zone de
-    // Gel profond n'est pas une zone de Vif-argent, c'est le residu d'une
-    // combinaison — exactement le raisonnement retenu par la tache 5 pour
-    // Vaporisation et Paratonnerre (voir son rapport, §« Le filtre de la
-    // tache 3 applique a mes reactions — mon avis »). Un joueur qui veut
-    // LIER et GELER au meme endroit doit poser une zone de Vif-argent PUR
-    // separement — les deux `kind` coexistent, `ZoneField.spawn` ne
-    // fusionnant jamais que sur le `kind` COMPLET (voir son docbloc). Aucun
-    // deriveur `zoneLinked`/`zoneHitRadiusBonus` combinant element et
-    // reaction n'est donc necessaire : contrairement a `zoneDamageAmp`
-    // ci-dessous (une VRAIE piece manquante que cette tache ajoute), la
-    // liaison et le rayon de touche elargi n'ont jamais ete des grandeurs de
-    // `ReactionDef` — ce sont des effets STRUCTURELS du Vif-argent seul (voir
-    // les docblocs de `linkedNeighbours` et `ZoneField.hitRadiusBonusAt`), et
-    // aucune des neuf reactions precedentes n'en a jamais reclame une.
+    // ⚠️ **Le pare-feu de la tache 3 est SUPPRIME (revue post-tache 9) — la
+    // decision TRANCHEE ci-dessous est RENVERSEE, pas heritee en silence.**
+    // Cette entree decidait que Gel profond ne devait NI lier NI elargir le
+    // rayon de touche, au motif que le §5 de la spec decrit son effet comme
+    // « vitesse nulle dans la zone » SEUL — en s'appuyant sur le filtre de
+    // la tache 3 (`zoneReaction(kind) === 0`) comme mecanisme d'exclusion.
+    // Ce filtre s'est revele MORT en production pour toute reaction qui
+    // apparie le Vif-argent : `postZone` (`back/src/combat.ts`) est le SEUL
+    // createur de zones, et les CINQ paires du Vif-argent sont TOUTES
+    // nommees dans cette table — une zone « pure » (reaction nulle) ne
+    // peut donc jamais exister en jeu, et le filtre excluait TOUT, en
+    // silence (mesure a `zonesLiantesVues = 0` sur 2700 ticks de banc). La
+    // decision de cette entree reposait donc sur un mecanisme qui n'avait
+    // JAMAIS fonctionne pour aucune des cinq paires — ni pour celle-ci, ni
+    // pour Vaporisation/Paratonnerre dont elle reprenait le raisonnement.
+    // `zoneInvolvesVifArgent` (voir son docbloc) lit desormais la PAIRE,
+    // pas le nibble d'element : une zone de Gel profond LIE et ELARGIT
+    // desormais, comme les quatre autres paires du Vif-argent — AUCUNE
+    // exception de jeu n'a ete retrouvee dans la spec qui justifie d'en
+    // garder une pour celle-ci specifiquement, mais ce point MERITE une
+    // revue de jeu dediee (voir le rapport de la revue post-tache 9) avant
+    // de considerer la question definitivement close.
     id: REACTION.GEL_PROFOND,
     name: 'gel-profond',
     pair: packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT),
@@ -696,11 +697,11 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     // qu'une Chaux SEULE laisserait deja — Aveuglement n'AJOUTE aucune
     // reduction d'armure, elle garantit la fuite plus longtemps.
     //
-    // ⚠️ **Le pare-feu de la tache 3 reste EN PLACE, meme decision et meme
-    // raisonnement que Gel profond ci-dessus.** Une zone d'Aveuglement ne
-    // lie personne et n'elargit aucun rayon de touche : ces deux effets
-    // restent des proprietes du Vif-argent ELEMENTAIRE seul (§3/§4 de la
-    // spec), jamais d'une reaction qui l'apparie.
+    // ⚠️ **Le pare-feu de la tache 3 est SUPPRIME (revue post-tache 9),
+    // meme renversement et meme raisonnement que Gel profond ci-dessus.**
+    // Une zone d'Aveuglement LIE et ELARGIT desormais le rayon de touche,
+    // comme les quatre autres paires du Vif-argent — voir le docbloc de
+    // Gel profond pour le detail complet de ce qui a change et pourquoi.
     id: REACTION.AVEUGLEMENT,
     name: 'aveuglement',
     pair: packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT),
@@ -786,6 +787,45 @@ export function reactionForPair(pair: number): ReactionDef | undefined {
 /** La reaction portant l'identifiant `id` (le nibble de reaction d'un `ZoneField.kind`), ou `undefined`. */
 export function reactionOfId(id: number): ReactionDef | undefined {
   return REACTION_DEFS.find((r) => r.id === id);
+}
+
+/**
+ * Vrai si le Vif-argent est un element pertinent de la zone — le deriveur qui
+ * remplace le filtre mort de `linkedNeighbours` (`shared/links.ts`) et de
+ * `ZoneField.hitRadiusBonusAt` (`shared/zones.ts`).
+ *
+ * ⚠️ **L'ancien filtre (`zoneReaction(kind) === 0`) excluait TOUTE zone de
+ * reaction au motif que le nibble d'ELEMENT d'une zone porte le DECLENCHEUR
+ * (le second projectile arrive, Vif-argent OU son partenaire selon l'ordre) —
+ * exact, mais mort en production : `postZone` (`back/src/combat.ts`) est le
+ * SEUL createur de zones, et les CINQ paires du Vif-argent (Vaporisation,
+ * Paratonnerre, Gel profond, Aveuglement, Amalgame) sont TOUTES nommees dans
+ * `REACTION_DEFS` — une zone portant le Vif-argent a donc TOUJOURS une
+ * reaction non nulle en production, et l'ancien filtre l'excluait
+ * systematiquement. Mesure au banc : `zonesLiantesVues = 0` sur 2700 ticks.
+ *
+ * ⚠️ **Lit la PAIRE de la reaction, jamais le nibble d'element — ORDRE-
+ * INDEPENDANT par construction.** `packElementPair` canonicalise (plus petit,
+ * plus grand), donc `reactionOfId(zoneReaction(kind))?.pair` rend la MEME
+ * valeur quel que soit celui des deux projectiles arrive en second. Le nibble
+ * d'element, lui, reste order-dependant — c'est pour ca qu'on ne le lit plus
+ * ici pour une zone de reaction.
+ *
+ * ⚠️ **Le cas `zoneReaction(kind) === 0` reste gere a part** : une zone SANS
+ * reaction n'a pas de paire a lire (`reactionOfId(0)` ne trouve rien, `0`
+ * n'etant l'identifiant d'aucune entree de `REACTION_DEFS`) — il n'y a alors
+ * qu'un seul element, pas un couple, donc aucune ambiguite d'ordre a
+ * resoudre : `zoneElement(kind) === ELEMENT.VIF_ARGENT` reste le bon
+ * predicat pour ce cas (fictif en production, mais que l'API de `ZoneField`
+ * n'interdit pas et que les tests utilisent comme raccourci).
+ */
+export function zoneInvolvesVifArgent(kind: number): boolean {
+  const reactionId = zoneReaction(kind);
+  if (reactionId === 0) {
+    return zoneElement(kind) === ELEMENT.VIF_ARGENT;
+  }
+  const pair = reactionOfId(reactionId)?.pair;
+  return pair !== undefined && unpackElementPair(pair).includes(ELEMENT.VIF_ARGENT);
 }
 
 /**

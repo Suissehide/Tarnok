@@ -1169,26 +1169,14 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
   });
 
   /**
-   * ⚠️ **Correctif de revue sur la tache 3 (etape 5c) — decouvert en
-   * recoupant le §5 de la spec, pas le §3.** *Gel profond* (Givre +
-   * Vif-argent) et *Aveuglement* (Chaux + Vif-argent) y sont ranges parmi
-   * les reactions PORTEES PAR UNE ZONE (taches 5 et 8, hors perimetre ici) :
-   * leur champ porte l'element du DECLENCHEUR, Vif-argent OU son partenaire
-   * selon l'ordre d'arrivee des deux projectiles. Sans le filtre
-   * `zoneReaction(kind) === 0`, une zone de Gel profond dont le Vif-argent
-   * serait arrive EN SECOND aurait `zoneElement(kind) === ELEMENT.VIF_ARGENT`
-   * et elargirait a tort — une fois sur deux, ATTEIGNABLE des la tache 6.
-   *
-   * ⚠️ **Les DEUX declencheurs possibles**, meme discipline que les tests
-   * « ne cumulent pas » ci-dessous : le second `kind` (Givre declenche)
-   * etait deja exclu par le filtre PRECEDENT (element), donc lui seul ne
-   * testerait rien de neuf — mais l'assener quand meme documente que le
-   * nouveau filtre n'a RIEN change pour ce cas.
+   * ⚠️ **Le cas inverse de la revue post-tache 9 : une zone dont la PAIRE
+   * ne contient pas le Vif-argent ne doit JAMAIS elargir.** Supraconduction
+   * (Givre + Foudre) ne pair pas le Vif-argent — sans ca, tout elargirait.
+   * Teste dans les DEUX ordres de declencheur : la garde est desormais sur
+   * la PAIRE (`zoneInvolvesVifArgent`), jamais sur le nibble d'element, et
+   * les deux ordres doivent donc se comporter IDENTIQUEMENT.
    */
-  it('ne majore rien a travers une zone de REACTION appariant le Vif-argent, quel que soit le declencheur', () => {
-    // Fictif : aucune reaction ne pair le Vif-argent aujourd'hui (§5 arrive
-    // aux taches 5-8) — seul le MECANISME (element du declencheur variable)
-    // est teste ici, pas une reaction reelle.
+  it('ne majore rien a travers une zone de REACTION dont la paire ne contient PAS le Vif-argent, quel que soit le declencheur', () => {
     const kindVifArgentDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
     const kindAutreDeclenche = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
 
@@ -1202,24 +1190,32 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
   });
 
   /**
-   * ⚠️ **La MEME garde, cette fois avec les DEUX reactions REELLES qui
-   * apparient le Vif-argent et touchent le deplacement (tache 6 de l etape
-   * 5c) — le cas n est plus hypothetique.** Voir le docbloc de leur entree
-   * dans `REACTION_DEFS` (`shared/reactions.ts`) pour la decision tranchee :
-   * le rayon de touche elargi reste une propriete du Vif-argent ELEMENTAIRE
-   * SEUL (§4 de la spec), jamais d une reaction qui l apparie.
+   * ⚠️ **Revue post-tache 9 : RENVERSE le test precedent de cette suite
+   * (« Gel profond et Aveuglement n elargissent jamais »).** Le filtre
+   * `zoneReaction(kind) === 0` etait MORT en production : les CINQ
+   * reactions qui apparient le Vif-argent (Vaporisation, Paratonnerre, Gel
+   * profond, Aveuglement, Amalgame) ELARGISSENT desormais le rayon de
+   * touche, `zoneInvolvesVifArgent` lisant leur PAIRE plutot que le nibble
+   * d'element — ORDRE-INDEPENDANT par construction, teste ici dans les
+   * DEUX ordres de declencheur pour chacune des cinq.
    */
-  it('Gel profond et Aveuglement (reactions REELLES) n elargissent jamais, quel que soit le declencheur', () => {
-    const kinds = [
-      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.GEL_PROFOND),
-      packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND),
-      packZoneKind(ELEMENT.VIF_ARGENT, REACTION.AVEUGLEMENT),
-      packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT),
+  it('les cinq reactions REELLES qui apparient le Vif-argent elargissent desormais, dans les deux ordres de declencheur', () => {
+    const REACTIONS_VIF_ARGENT: ReadonlyArray<{ reaction: number; partner: number }> = [
+      { reaction: REACTION.VAPORISATION, partner: ELEMENT.BRAISE },
+      { reaction: REACTION.PARATONNERRE, partner: ELEMENT.FOUDRE },
+      { reaction: REACTION.GEL_PROFOND, partner: ELEMENT.GIVRE },
+      { reaction: REACTION.AVEUGLEMENT, partner: ELEMENT.CHAUX },
+      { reaction: REACTION.AMALGAME, partner: ELEMENT.POIX },
     ];
-    for (const kind of kinds) {
-      const zones = new ZoneField();
-      expect(zones.spawn(kind, 500, 500, 0, 0)).toBe(0);
-      expect(zones.hitRadiusBonusAt(500, 500, 0)).toBe(0);
+    for (const { reaction, partner } of REACTIONS_VIF_ARGENT) {
+      for (const declencheur of [ELEMENT.VIF_ARGENT, partner]) {
+        const kind = packZoneKind(declencheur, reaction);
+        const zones = new ZoneField();
+        expect(zones.spawn(kind, 500, 500, 0, 0)).toBe(0);
+        expect(zones.hitRadiusBonusAt(500, 500, 0), `reaction ${reaction}`).toBe(
+          VIF_ARGENT_HIT_RADIUS_BONUS,
+        );
+      }
     }
   });
 
