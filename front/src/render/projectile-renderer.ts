@@ -98,15 +98,19 @@ export const PROJECTILE_CELL_PX = 32;
 /**
  * Cases par ligne dans l'atlas.
  *
- * ⚠️ **Relevee a la tache 8 de l'etape 5c** : 4 x 4 (16 cases) suffisait aux
- * treize armes d'avant cette tache, mais la Chaux et le Vif-argent portent le
- * catalogue a dix-sept — au-dela de la capacite. 8 x 8 = 64 cases, de quoi
- * couvrir le pool complet de quarante armes vise par le §6.2 sans revenir sur
- * ce nombre a chaque tache de contenu.
+ * ⚠️ **DERIVEE de `WEAPONS.length`, jamais un plafond fixe** (tache 8 de
+ * l'etape 5c) : un `4` code en dur suffisait a treize armes et a plante au
+ * chargement reel (`Stage.composeWorld`) a dix-sept — la Chaux et le
+ * Vif-argent l'ont depasse. Un `8` fixe n'aurait fait que reculer la meme
+ * classe de defaut a soixante-cinq armes. Meme discipline que
+ * `PROJECTILE_CULL_MARGIN` juste en dessous : le catalogue est une constante
+ * au chargement, le canevas ne se cuit qu'une fois, et racine carree de
+ * dix-sept armes fait toujours une grille minuscule (5 x 5 = 25 cases, 160 px
+ * de cote).
  */
-const PROJECTILE_ATLAS_COLS = 8;
+const PROJECTILE_ATLAS_COLS = Math.ceil(Math.sqrt(WEAPONS.length));
 
-/** Cote de l'atlas, en pixels : une puissance de deux qui contient la grille. */
+/** Cote de l'atlas, en pixels : juste assez grand pour contenir la grille. */
 export const PROJECTILE_ATLAS_PX = PROJECTILE_CELL_PX * PROJECTILE_ATLAS_COLS;
 
 /**
