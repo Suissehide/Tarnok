@@ -5,6 +5,11 @@ pas un habillage : chaque arme applique un élément, et c'est la rencontre de *
 éléments sur un même ennemi qui produit l'effet intéressant. Un joueur seul ne peut pas
 couvrir assez d'éléments pour tout déclencher lui-même.
 
+Cette dernière phrase est **mesurée** depuis l'étape 5c : six éléments font quinze paires,
+quatre slots d'armes n'en atteignent que **six**, et les neuf autres demandent un deuxième
+joueur. C'est asséné sur quatre vraies sockets
+([le livrable](back/src/elements-5c.integration.test.ts)).
+
 Des chevaliers, une forge, des hordes. Le détail est dans
 [`docs/specs/2026-08-19-coop-survivors-orientation.md`](docs/specs/2026-08-19-coop-survivors-orientation.md).
 
@@ -20,6 +25,7 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 5a | Éléments : PV de la piétaille, zones au sol, première réaction, Synergie | ✅ — [résultats](docs/plans/2026-08-27-etape-5a-resultats.md) |
 | 6a | Paliers, boss, or non sécurisé, vote d'extraction | 📝 — [spec](docs/specs/2026-09-01-etape-6a-paliers.md) · [plan](docs/plans/2026-09-01-etape-6a-paliers.md) |
 | 5b | Foudre, Poix, armure, cinq réactions — **zéro octet de plus** | 📝 — [spec](docs/specs/2026-09-25-etape-5b-foudre-poix.md) · [plan](docs/plans/2026-09-25-etape-5b-foudre-poix.md) |
+| 5c | Chaux, Vif-argent — **les six éléments, les quinze réactions**, tableau clos | 📝 — [spec](docs/specs/2026-09-26-etape-5c-chaux-vif-argent.md) · [plan](docs/plans/2026-09-26-etape-5c-chaux-vif-argent.md) · [résultats](docs/plans/2026-09-26-etape-5c-resultats.md) |
 
 **Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
 19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du
