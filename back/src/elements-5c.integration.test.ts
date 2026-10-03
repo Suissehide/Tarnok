@@ -723,22 +723,16 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         'des reactions n appartiennent a aucune cible de ce salon',
       ).toBe(recues.length);
 
-      // ---- 3. **La moitie negative.** Les paires que ce salon NE joue PAS
-      //         n'apparaissent jamais — y compris celles que ses quatre
-      //         elements rendraient pourtant possibles (le salon B porte
-      //         Braise et Givre sans jamais les faire reagir ensemble). ----
-      const jouees = new Set(phases.map((p) => p.pair));
-      for (const pair of QUINZE_PAIRES) {
-        if (jouees.has(pair)) {
-          continue;
-        }
-        expect(
-          recues.some((r) => r.pair === pair),
-          `une paire non jouee est apparue : ${reactionForPair(pair)?.name ?? 'choc-thermique'}`,
-        ).toBe(false);
-      }
+      // ⚠️ **La moitie negative par salon est DEJA dite.** Les cibles sont
+      // ecartees de plus de `2 * BUCKET` (Garde 2), donc une reaction tombe
+      // dans AU PLUS un lot ; la somme ci-dessus dit qu'elle tombe dans au
+      // moins un ; et chaque lot ne porte que la paire de sa phase. Toute
+      // paire recue est donc une paire jouee — y compris pour celles que les
+      // quatre elements du salon rendraient possibles (le salon B porte
+      // Braise et Givre sans jamais les faire reagir ensemble). Une boucle de
+      // plus sur les paires non jouees ne distinguerait aucune mutation.
 
-      // ---- 4. Le champ laisse au sol porte le bon nibble de reaction, un
+      // ---- 3. Le champ laisse au sol porte le bon nibble de reaction, un
       //         element DU couple, et la bonne liaison — sur les DEUX canaux,
       //         ZONE et REACTION, pas seulement l'un des deux. -------------
       const zones = zonesDe(temoin);
@@ -761,10 +755,14 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         }
       }
 
-      // ---- 5. La barre suit les charges, et les quatre sockets voient le
+      // ---- 4. La barre suit les charges, et les quatre sockets voient le
       //         meme flot. ---------------------------------------------------
+      //
+      // `barreSuitLesCharges` exige au moins un releve a `chargees > 0` et
+      // `synergy === min(SYNERGY_MAX, chargees)` sur chacun : `chargees` ne
+      // decroit jamais, donc le DERNIER releve — celui de `lastSnapshot` —
+      // porte forcement une barre non nulle. Rien a assener de plus.
       barreSuitLesCharges(temoin);
-      expect(temoin.lastSnapshot?.synergy).toBeGreaterThan(0);
       for (const other of clients) {
         expect(reactionsDe(other).slice(0, recues.length)).toEqual(recues);
       }
@@ -809,15 +807,52 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       throw new Error('quatre clients attendus');
     }
 
-    // Quatre elements, un par slot : le maximum qu'un joueur puisse porter.
-    const SIENS: readonly number[] = ELEMENTS_REELS.slice(0, WEAPON_SLOTS);
+    // ---- Quatre elements, un par slot : le maximum qu'un joueur puisse
+    //      porter — et c'est la QUEUE de `ELEMENTS_REELS`, pas sa tete. ----
+    //
+    // ⚠️ **La tete serait un decor qui masque.** `ELEMENTS_REELS` est dans
+    // l'ordre de `ELEMENT`, donc ses quatre PREMIERS sont exactement les
+    // quatre elements d'AVANT 5c (Braise, Givre, Foudre, Poix) : un joueur
+    // seul qui ne porterait qu'eux ne mettrait aucun des deux elements de
+    // cette etape sur le chemin solo, et ses neuf paires « interdites »
+    // seraient toutes et seulement celles qui EXIGENT la Chaux ou le
+    // Vif-argent — une moitie negative vraie par construction, qu'aucune arme
+    // du salon ne pourrait de toute facon former. La queue renverse les deux :
+    // les elements NEUFS passent par le chemin solo et ses neuf zones de
+    // reaction neuves, et ce sont les paires ANCIENNES qui peuplent la moitie
+    // negative. L'arithmetique est identique au chiffre pres (six accessibles,
+    // neuf interdites) : seule la charge de preuve change de camp.
+    const SIENS: readonly number[] = ELEMENTS_REELS.slice(ELEMENTS_REELS.length - WEAPON_SLOTS);
     expect(SIENS.length, 'quatre slots, donc quatre elements au plus').toBe(4);
     expect(WEAPON_SLOTS).toBe(4);
+    expect(SIENS, 'le chemin solo doit porter la Chaux').toContain(ELEMENT.CHAUX);
+    expect(SIENS, 'le chemin solo doit porter le Vif-argent').toContain(ELEMENT.VIF_ARGENT);
 
     const armes = SIENS.map((e) => armeRapideDe(e));
     for (const arme of armes) {
       equipe(room, a.playerId, arme.id);
     }
+
+    // ---- **Et c'est la PRODUCTION qui refuse le cinquieme element, pas
+    //      l'arithmetique de ce test.** ------------------------------------
+    //
+    // Sans ces trois lignes, « quatre slots donc six paires » reposerait sur
+    // le fait que le test n'equipe que quatre armes. `Loadout.canTake` filtre
+    // l'etalage et `Loadout.addWeapon` leve : les deux chemins sont assenes,
+    // parce qu'ils sont independants (`grantCard` ne passe pas par `canTake`),
+    // et l'effet observable — le loadout reste a quatre — avec eux.
+    const cinquieme = ELEMENTS_REELS.find((e) => !SIENS.includes(e));
+    if (cinquieme === undefined) {
+      throw new Error('un cinquieme element doit exister hors des quatre slots');
+    }
+    const armeDeTrop = armeRapideDe(cinquieme);
+    const loadout = room.loadoutOf(a.playerId);
+    expect(
+      loadout?.canTake(CARD.WEAPON, armeDeTrop.id),
+      'l etalage doit refuser un cinquieme element',
+    ).toBe(false);
+    expect(() => equipe(room, a.playerId, armeDeTrop.id)).toThrow();
+    expect(loadout?.weaponSlotsUsed, 'le loadout doit rester a quatre armes').toBe(WEAPON_SLOTS);
 
     // Les six paires qu'il PEUT former, et les neuf qu'il ne peut pas.
     const ACCESSIBLES = new Set(
@@ -880,25 +915,17 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     }
 
     // ---- 2. **Le compte exact : six paires distinctes, jamais une
-    //         septieme.** -----------------------------------------------------
+    //         septieme — ET la moitie negative du meme coup.** -------------
+    //
+    // `ACCESSIBLES` et `INTERDITES` partitionnent les quinze : l'egalite
+    // d'ensembles ci-dessous dit donc DEJA qu'aucune des neuf interdites n'est
+    // apparue, et que six est strictement moins que quinze. Une boucle sur
+    // `INTERDITES` ne distinguerait aucune mutation de plus.
     const vues = new Set(recues.map((r) => r.pair));
     expect(vues.size, 'un joueur seul atteint exactement six paires').toBe(6);
     expect(vues).toEqual(ACCESSIBLES);
 
-    // ---- 3. **La moitie negative : les NEUF autres n'apparaissent jamais.**
-    //         Et c'est ca, le pitch : les quinze exigent les six elements,
-    //         donc une equipe. -----------------------------------------------
-    for (const pair of INTERDITES) {
-      expect(
-        vues.has(pair),
-        `une paire hors de ses slots est apparue : ${
-          reactionForPair(pair)?.name ?? 'choc-thermique'
-        }`,
-      ).toBe(false);
-    }
-    expect(vues.size).toBeLessThan(QUINZE_PAIRES.length);
-
-    // ---- 4. Et rien n'a charge la Synergie : un joueur seul ne peut poser
+    // ---- 3. Et rien n'a charge la Synergie : un joueur seul ne peut poser
     //         que sa propre identite des deux cotes de la comparaison du §7.
     //         (Assertion vraie A VIDE prise seule — c'est le livrable
     //         ci-dessus, inter-joueurs, qui lui donne son pouvoir de
@@ -929,9 +956,36 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
    * moitie negative, et sans elle « la Poix a touche » se lirait aussi bien
    * « la Poix touche toujours ».
    *
+   * ⚠️ **Le salon libre porte une SECONDE cible, pile sur l'axe du frolement**
+   * (ecart lateral zero, donc touchee au rayon de BASE quoi qu'il arrive), et
+   * un quatrieme tireur pour lui donner son second element. C'est elle qui
+   * prouve que la Poix est armee ET qu'elle tire DANS CE SALON-CI : sans elle,
+   * la moitie negative serait satisfaite a vide par une regression qui perdrait
+   * l'equipement ou la visee du troisieme tireur du second banc seulement.
+   *
    * ⚠️ **Le tireur de frolement porte une arme a projectile UNIQUE** : a n = 1,
    * `Projectiles.#emit` ignore `spreadRadians` et le tir part exactement dans la
    * direction quantifiee — une salve dispersee rendrait `ECART` indefini.
+   *
+   * ⚠️ **La cible est re-epinglee depuis le PAS DE SIMULATION, pas depuis
+   * l'horloge murale, et c'est ce qui separe un vert d'un faux vert.** La cible
+   * est vivante et mobile (`archetype: 0`, `speed` non nul) et sa traction vers
+   * le joueur le plus proche a une composante LATERALE, c'est-a-dire vers le
+   * rayon du frolement. Un pilote sur `setInterval` la re-epinglait en temps
+   * MURAL, alors que la simulation avance en TICKS : `MAX_CATCH_UP_STEPS`
+   * (`back/src/server.ts`) vaut cinq, donc un blocage de boucle enchaine
+   * jusqu'a cinq `room.step` sans un seul re-epinglage — cinq pas de derive
+   * laterale suffisaient a faire tomber l'ecart SOUS le rayon de base, et le
+   * frolement accrochait alors sans aucun bonus. Le test passait au vert avec
+   * le mecanisme du §4 retire. En enveloppant `Room#step`, la derive est bornee
+   * par UN tick, et bornee de facon deterministe plutot que statistique.
+   *
+   * ⚠️ **Et le TEMOIN la mesure, tick par tick.** `min >= PROJECTILE_HIT_RADIUS`
+   * dit que la cible n'a JAMAIS ete a portee du rayon de base — donc que toute
+   * touche vient forcement du rayon elargi ; `max < PROJECTILE_HIT_RADIUS +
+   * VIF_ARGENT_HIT_RADIUS_BONUS` dit qu'elle est restee dans la fenetre du
+   * bonus. Sans ce couple, « le frolement n'accroche que grace au bonus »
+   * resterait une esperance geometrique au lieu d'une mesure.
    */
   it('le rayon de touche elargi : un frolement n accroche que dans une zone de Vif-argent', async () => {
     /** Entre le rayon de base et le rayon elargi — derive des deux constantes. */
@@ -939,24 +993,42 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     expect(ECART).toBeGreaterThan(PROJECTILE_HIT_RADIUS);
     expect(ECART).toBeLessThan(PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS);
 
+    // ⚠️ Rien ne compare ici `PAIRES_LIANTES` a ces deux litteraux : ce serait
+    // comparer le test a lui-meme, zero couverture de production. La liaison
+    // REELLE de chaque salon est assenee plus bas, sur le `kind` des zones que
+    // la production a diffusees.
     const PAIRE_LIEE = packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT);
     const PAIRE_LIBRE = packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX);
-    expect(PAIRES_LIANTES.has(PAIRE_LIEE), 'Paratonnerre doit etre liante').toBe(true);
-    expect(PAIRES_LIANTES.has(PAIRE_LIBRE), 'Arc caustique ne doit pas l etre').toBe(false);
 
     const FOUDRE = armeDe(ELEMENT.FOUDRE);
     const POIX = armeDe(ELEMENT.POIX);
     const LIANT = armeDe(ELEMENT.VIF_ARGENT);
     const INERTE = armeDe(ELEMENT.CHAUX);
+    /** Le second element de la cible d'AXE du salon libre — voir plus bas. */
+    const AXE = armeDe(ELEMENT.GIVRE);
+    /** La paire que la cible d'axe doit produire : elle PORTE la Poix. */
+    const PAIRE_AXE = packElementPair(ELEMENT.GIVRE, ELEMENT.POIX);
     expect(POIX.projectileCount, 'le frolement doit partir droit').toBe(1);
 
     interface Banc {
       nom: string;
       room: Room;
       clients: Client[];
+      /** La cible du FROLEMENT : tout est filtre autour d'elle. */
       x: number;
       y: number;
+      /**
+       * La cible pile sur l'axe du frolement (ecart lateral zero), posee dans
+       * le salon libre seulement — `null` ailleurs.
+       */
+      axe: Position | null;
       tickDebut: number;
+      /**
+       * Un releve PAR TICK : la distance perpendiculaire de la cible du
+       * frolement au rayon de la Poix, mesuree juste apres le pas qui vient de
+       * resoudre les collisions.
+       */
+      ecarts: number[];
       arret: () => void;
     }
 
@@ -971,13 +1043,20 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         throw new Error('le registre de salons doit etre accessible depuis l app');
       }
       const clients = await quatreClients(code);
-      const [poseurClient, foudreClient, poixClient] = clients;
-      if (!poseurClient || !foudreClient || !poixClient) {
-        throw new Error('trois tireurs attendus');
+      const [poseurClient, foudreClient, poixClient, axeClient] = clients;
+      if (!poseurClient || !foudreClient || !poixClient || !axeClient) {
+        throw new Error('quatre tireurs attendus');
       }
       equipe(room, poseurClient.playerId, poseur.id);
       equipe(room, foudreClient.playerId, FOUDRE.id);
       equipe(room, poixClient.playerId, POIX.id);
+      // ⚠️ **Le quatrieme tireur n'existe QUE dans le salon libre**, et c'est
+      // la moitie negative qui l'exige (voir sa cible, plus bas). Dans le
+      // salon lie il reste desarme et sans visee : il ne tire donc jamais.
+      const avecAxe = nom === 'libre';
+      if (avecAxe) {
+        equipe(room, axeClient.playerId, AXE.id);
+      }
 
       const snap = await fullSnapshot(poseurClient.ws);
       const pos = clients.map((c) => {
@@ -990,40 +1069,109 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       const pPoseur = pos[0];
       const pFoudre = pos[1];
       const pPoix = pos[2];
-      if (!pPoseur || !pFoudre || !pPoix) {
-        throw new Error('trois positions attendues');
+      const pAxe = pos[3];
+      if (!pPoseur || !pFoudre || !pPoix || !pAxe) {
+        throw new Error('quatre positions attendues');
       }
 
       // La cible : droit devant le tireur de Poix (visee +X exacte), decalee
       // lateralement de `ECART`. Sa visee passe donc a `ECART` d'elle, et a
       // `ECART` seulement — jamais sur elle.
-      const AVANCE = 300;
+      //
+      // ⚠️ **`AVANCE` est court, et c'est la cible d'AXE qui l'impose.** Un
+      // projectile MEURT a sa premiere touche (`Projectiles.collide` ->
+      // `#removeAt`) : la cible d'axe doit donc etre DERRIERE celle du
+      // frolement sur le meme rayon, sinon elle avalerait chaque projectile de
+      // Poix et la moitie negative redeviendrait vide par construction. Les
+      // deux doivent de plus tenir dans `porteeDe(POIX)` (405 px, la plus
+      // courte du decor) en restant ecartees de plus de `4 * ZONE_RADIUS` —
+      // d'ou 80 et 380 plutot que 300 seul.
+      const AVANCE = 80;
+      const AVANCE_AXE = 380;
       const x = pPoix.x + AVANCE;
       const y = pPoix.y + ECART;
+      const xAxe = pPoix.x + AVANCE_AXE;
+      const yAxe = pPoix.y;
 
-      // Gardes : la cible a portee des trois armes, et le frolement
-      // RIGOUREUSEMENT lateral.
+      // Gardes : les cibles a portee des armes qui doivent les declencher, le
+      // frolement RIGOUREUSEMENT lateral, et les deux cibles etanches.
       expect(Math.hypot(x - pPoseur.x, y - pPoseur.y)).toBeLessThan(porteeDe(poseur));
       expect(Math.hypot(x - pFoudre.x, y - pFoudre.y)).toBeLessThan(porteeDe(FOUDRE));
       expect(Math.hypot(x - pPoix.x, y - pPoix.y)).toBeLessThan(porteeDe(POIX));
       expect(y - pPoix.y, 'le frolement doit valoir exactement ECART').toBe(ECART);
       expect(x).toBeGreaterThan(pPoix.x);
+      expect(AVANCE_AXE, 'la cible d axe doit etre DERRIERE celle du frolement').toBeGreaterThan(
+        AVANCE,
+      );
+      expect(AVANCE_AXE, 'la cible d axe doit rester a portee de la Poix').toBeLessThan(
+        porteeDe(POIX),
+      );
+      expect(yAxe - pPoix.y, 'la cible d axe doit etre PILE sur l axe').toBe(0);
+      expect(Math.hypot(xAxe - pAxe.x, yAxe - pAxe.y)).toBeLessThan(porteeDe(AXE));
+      expect(
+        Math.hypot(xAxe - x, yAxe - y),
+        'les deux cibles declencheraient une zone fantome',
+      ).toBeGreaterThan(4 * ZONE_RADIUS);
 
       const cible = poseCible(room, 9900, x, y);
-      const pilote = setInterval(() => {
-        viderSauf(room, [cible]);
-        const slot = room.horde.slotOf(cible);
-        if (slot >= 0) {
-          room.horde.x[slot] = x;
-          room.horde.y[slot] = y;
+      const gardees = [cible];
+      let axe: Position | null = null;
+      if (avecAxe) {
+        // ⚠️ **La cible d'AXE : ecart lateral ZERO, donc touchee au rayon de
+        // BASE quoi qu'il arrive.** C'est elle qui prouve que la Poix est
+        // armee ET qu'elle tire DANS CE SALON-CI. Sans elle, « aucune paire
+        // portant la Poix dans le salon libre » serait satisfaite par une
+        // regression qui perdrait l'equipement ou la visee du troisieme
+        // tireur du second banc seulement — et « le frolement n'accroche QUE
+        // sous Vif-argent » resterait non prouve pendant que le test verdit.
+        gardees.push(poseCible(room, 9901, xAxe, yAxe));
+        axe = { x: xAxe, y: yAxe };
+      }
+
+      /** Le corps que le pilote mural executait : il repart de la position exacte. */
+      const epingle = (): void => {
+        viderSauf(room, gardees);
+        for (const id of gardees) {
+          const slot = room.horde.slotOf(id);
+          if (slot < 0) {
+            continue;
+          }
+          const cx = id === cible ? x : xAxe;
+          const cy = id === cible ? y : yAxe;
+          room.horde.x[slot] = cx;
+          room.horde.y[slot] = cy;
           room.horde.vx[slot] = 0;
           room.horde.vy[slot] = 0;
           room.horde.hp[slot] = 1e6;
         }
+      };
+      const ecarts: number[] = [];
+      /** La distance que la collision a VUE, a un tick pres. */
+      const releve = (): void => {
+        const slot = room.horde.slotOf(cible);
+        if (slot >= 0) {
+          ecarts.push(Math.abs((room.horde.y[slot] ?? 0) - pPoix.y));
+        }
+      };
+
+      // ⚠️ **Le re-epinglage vit dans le PAS, pas dans l'horloge murale** —
+      // voir le docbloc. La visee reste sur l'horloge : elle traverse la
+      // socket, c'est sa place ; seule la POSITION doit etre epinglee au tick.
+      const pasOriginal = room.step.bind(room);
+      room.step = (dt: number): void => {
+        epingle();
+        pasOriginal(dt);
+        releve();
+      };
+
+      const pilote = setInterval(() => {
         vise(poseurClient, x - pPoseur.x, y - pPoseur.y);
         vise(foudreClient, x - pFoudre.x, y - pFoudre.y);
         // Le frolement : plein axe +X, jamais vers la cible.
         vise(poixClient, 1, 0);
+        if (avecAxe) {
+          vise(axeClient, xAxe - pAxe.x, yAxe - pAxe.y);
+        }
       }, 8);
 
       bancs.push({
@@ -1032,8 +1180,13 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         clients,
         x,
         y,
+        axe,
         tickDebut: room.tick,
-        arret: () => clearInterval(pilote),
+        ecarts,
+        arret: () => {
+          clearInterval(pilote);
+          room.step = pasOriginal;
+        },
       });
     }
 
@@ -1048,9 +1201,21 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       throw new Error('deux temoins attendus');
     }
 
+    const axeLibre = libre.axe;
+    if (!axeLibre) {
+      throw new Error('le salon libre doit porter une cible d axe');
+    }
+
     /** Vrai si la paire porte la Poix — donc si le frolement a accroche. */
     const parLaPoix = (r: ReactionMessage): boolean =>
       unpackElementPair(r.pair).includes(ELEMENT.POIX);
+
+    /**
+     * Les reactions d'un point donne. **Le salon libre porte DEUX cibles**,
+     * donc « la Poix a accroche » n'a plus de sens sans dire OU.
+     */
+    const autour = (client: Client, p: Position): ReactionMessage[] =>
+      reactionsDe(client).filter((r) => Math.hypot(r.x - p.x, r.y - p.y) < BUCKET);
 
     /** Dix secondes de tir dans le salon libre : la Poix a tire une dizaine de fois. */
     const TICKS_DE_PREUVE = TICK_HZ * 10;
@@ -1058,12 +1223,14 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     try {
       await waitFor(
         () =>
-          reactionsDe(temoinLie).filter(parLaPoix).length >= MIN_PAR_CIBLE &&
-          reactionsDe(temoinLibre).some((r) => r.pair === PAIRE_LIBRE) &&
+          autour(temoinLie, lie).filter(parLaPoix).length >= MIN_PAR_CIBLE &&
+          autour(temoinLie, lie).some((r) => r.pair === PAIRE_LIEE) &&
+          autour(temoinLibre, libre).some((r) => r.pair === PAIRE_LIBRE) &&
+          autour(temoinLibre, axeLibre).some((r) => r.pair === PAIRE_AXE) &&
           libre.room.tick - libre.tickDebut >= TICKS_DE_PREUVE
             ? true
             : null,
-        'le frolement accroche dans la zone liante, et le salon libre a tire autant',
+        'le frolement accroche dans la zone liante, et la Poix tire dans le salon libre',
         90_000,
       );
     } finally {
@@ -1088,21 +1255,43 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       }
     }
 
+    // ---- **Le TEMOIN : ce que la collision a VU, tick par tick.** Sans ce
+    //      couple, « le frolement n'accroche que grace au bonus » resterait
+    //      une esperance geometrique. ------------------------------------------
+    for (const banc of [lie, libre]) {
+      expect(banc.ecarts.length, `${banc.nom} : aucun releve de frolement`).toBeGreaterThan(0);
+      expect(
+        Math.min(...banc.ecarts),
+        `${banc.nom} : la cible est passee a portee du rayon de BASE`,
+      ).toBeGreaterThanOrEqual(PROJECTILE_HIT_RADIUS);
+      expect(
+        Math.max(...banc.ecarts),
+        `${banc.nom} : la cible est sortie de la fenetre du bonus`,
+      ).toBeLessThan(PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS);
+    }
+
     // ---- **Les deux sens.** Dans la zone liante, le frolement accroche ;
-    //      sans elle, JAMAIS — et les deux salons ont tire aussi longtemps.
+    //      sans elle, JAMAIS — et le salon libre a tire au moins aussi
+    //      longtemps. -------------------------------------------------------
     expect(
-      reactionsDe(temoinLie).filter(parLaPoix).length,
+      autour(temoinLie, lie).filter(parLaPoix).length,
       'le frolement n a jamais accroche dans la zone liante',
     ).toBeGreaterThanOrEqual(MIN_PAR_CIBLE);
     expect(
-      reactionsDe(temoinLibre).filter(parLaPoix),
+      autour(temoinLibre, libre).filter(parLaPoix),
       'le frolement a accroche SANS zone de Vif-argent',
     ).toEqual([]);
     expect(libre.room.tick - libre.tickDebut).toBeGreaterThanOrEqual(TICKS_DE_PREUVE);
+
+    // ---- **Et la Poix du salon libre a bien TIRE.** La cible d'axe est a
+    //      ecart lateral ZERO : elle est touchee au rayon de BASE quoi qu'il
+    //      arrive. Cette seule assertion dit « la Poix est armee et tire dans
+    //      CE salon » — donc que son absence sur la cible du frolement vient
+    //      bien des 40 px, et de rien d'autre. ----------------------------
     expect(
-      reactionsDe(temoinLibre).length,
-      'le salon libre n a rien produit du tout',
-    ).toBeGreaterThan(0);
+      autour(temoinLibre, axeLibre).filter(parLaPoix).length,
+      'la Poix du salon libre n a jamais tire',
+    ).toBeGreaterThanOrEqual(MIN_PAR_CIBLE);
   }, 120_000);
 
   /**
@@ -1210,13 +1399,23 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     }
 
     const MIN_REACTIONS = 6;
+    /** Les huit sockets des deux bancs : la mesure « par joueur » les exige TOUTES. */
+    const toutesLesSockets = [...vieux.clients, ...neuf.clients];
     try {
       await waitFor(
         () =>
-          reactionsDe(aVieux).length >= MIN_REACTIONS && reactionsDe(aNeuf).length >= MIN_REACTIONS
+          reactionsDe(aVieux).length >= MIN_REACTIONS &&
+          reactionsDe(aNeuf).length >= MIN_REACTIONS &&
+          // La diffusion atteint les NON-tireurs aussi : on l'attend, pour que
+          // la mesure par joueur plus bas ne puisse pas etre vide.
+          toutesLesSockets.every(
+            (c) =>
+              (c.rawByType.get(MSG.ZONE)?.length ?? 0) > 0 &&
+              (c.rawByType.get(MSG.REACTION)?.length ?? 0) > 0,
+          )
             ? true
             : null,
-        `${MIN_REACTIONS} reactions dans chaque salon`,
+        `${MIN_REACTIONS} reactions dans chaque salon, diffusees aux quatre joueurs`,
         60_000,
       );
     } finally {
@@ -1231,10 +1430,12 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     const pairesNeuf = new Set(reactionsDe(aNeuf).map((r) => r.pair));
     expect(pairesVieux).toEqual(new Set([PAIR_VIEUX]));
     expect(pairesNeuf).toEqual(new Set([PAIR_NEUF]));
-    expect(
-      [...pairesNeuf].some((p) => pairesVieux.has(p)),
-      'les deux salons se recouvrent',
-    ).toBe(false);
+    // ⚠️ **La seule chose que la disjonction disait de plus : les deux
+    // litteraux sont distincts.** Les deux egalites ci-dessus la donnent
+    // sinon mot pour mot — mais un `packElementPair` qui confondrait deux
+    // couples les satisferait toutes les deux en comparant des ensembles
+    // EGAUX, et les deux salons se recouvriraient en silence.
+    expect(PAIR_VIEUX, 'les deux salons se recouvrent').not.toBe(PAIR_NEUF);
     expect(
       zonesDe(aVieux).every(
         (z) => zoneElement(z.kind) !== ELEMENT.CHAUX && zoneElement(z.kind) !== ELEMENT.VIF_ARGENT,
@@ -1251,6 +1452,17 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       return (client.rawByType.get(type) ?? []).slice(depuis);
     }
 
+    // ⚠️ **Les deux constantes du `SNAPSHOT`, en chiffres NUS.**
+    // `snapshotAttendu` est la formule de production elle-meme : la comparer a
+    // une taille que ces deux memes constantes produisent serait vraie quoi
+    // qu'il arrive — porter l'en-tete de 22 a 24 ferait attendre 60 et recevoir
+    // 60. C'est le piege que `shared/protocol.test.ts` nomme mot pour mot (« une
+    // assertion `toBe(SNAPSHOT_HEADER_BYTES)` serait vraie quoi qu'il
+    // arrive »), et ce sont ces deux lignes-ci qui portent « zero octet de
+    // plus » pour le `SNAPSHOT`, exactement comme `ZONE_BYTES` /
+    // `REACTION_BYTES` plus bas le portent pour les deux autres lots.
+    expect(SNAPSHOT_HEADER_BYTES).toBe(22);
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(9);
     const snapshotAttendu = SNAPSHOT_HEADER_BYTES + PLAYER_COUNT * SNAPSHOT_PLAYER_BYTES;
 
     for (const banc of [vieux, neuf]) {
@@ -1284,15 +1496,18 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     );
 
     // ---- Et c'est vrai PAR JOUEUR, pas seulement pour le tireur. ---------
-    for (const client of [...vieux.clients, ...neuf.clients]) {
+    //
+    // ⚠️ **Aucun `if` ici.** Garder la comparaison derriere « s'il y en a »
+    // laissait une boucle VIDE et verte sous un commentaire qui affirmait le
+    // contraire : si la diffusion aux non-tireurs tombait a zero, rien n'aurait
+    // rougi. Les huit sockets doivent avoir recu les deux lots.
+    for (const client of toutesLesSockets) {
       const zoneSizes = tailles(client, MSG.ZONE, 0);
       const reactionSizes = tailles(client, MSG.REACTION, 0);
-      if (zoneSizes.length > 0) {
-        expect(new Set(zoneSizes)).toEqual(new Set([ZONE_BYTES]));
-      }
-      if (reactionSizes.length > 0) {
-        expect(new Set(reactionSizes)).toEqual(new Set([REACTION_BYTES]));
-      }
+      expect(zoneSizes.length, 'une socket n a recu aucune ZONE').toBeGreaterThan(0);
+      expect(reactionSizes.length, 'une socket n a recu aucune REACTION').toBeGreaterThan(0);
+      expect(new Set(zoneSizes)).toEqual(new Set([ZONE_BYTES]));
+      expect(new Set(reactionSizes)).toEqual(new Set([REACTION_BYTES]));
     }
   }, 120_000);
 });
