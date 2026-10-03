@@ -1,4 +1,4 @@
-import { PROJECTILE_HIT_RADIUS } from './constants';
+import { PROJECTILE_HIT_RADIUS, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
 import type { Horde } from './horde';
 import type { Weapon } from './weapons';
 import type { ZoneField } from './zones';
@@ -420,6 +420,10 @@ export class Projectiles {
     tick?: number,
   ): void {
     const baseR2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
+    // Borne superieure du rayon elargi, DERIVEE des deux constantes — voir le
+    // pre-filtre plus bas.
+    const wideMaxR = PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS;
+    const wideMaxR2 = wideMaxR * wideMaxR;
 
     for (let i = this.#count - 1; i >= 0; i--) {
       const ax = this.#prevX[i] ?? 0;
@@ -440,6 +444,25 @@ export class Projectiles {
           // `continue` immediat) et pour le cas courant serveur (aucune zone
           // de Vif-argent sur ce point).
           if (!zones) {
+            continue;
+          }
+          // ⚠️ **Pre-filtre AVANT le balayage, et c'est une borne SUPERIEURE
+          // EXACTE, pas une approximation.** `hitRadiusBonusAt` est en
+          // O(zones) : l'appeler ici le mettait dans la boucle
+          // projectile x ennemi, donc un cout en projectiles x ennemis x
+          // zones — **49 millions de tests de distance par tick** mesures a
+          // 4 000 ennemis, 96 projectiles et 128 zones (banc des six
+          // elements, etape 5c). Aucun bonus ne depasse
+          // `VIF_ARGENT_HIT_RADIUS_BONUS`, donc un ennemi au-dela de
+          // `PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS` ne peut
+          // etre touche par AUCUNE zone : le balayage ne sert plus qu'a
+          // l'anneau, une poignee d'entites.
+          //
+          // ⚠️ **AUCUN test ne peut separer ce pre-filtre de son absence** —
+          // c'est une optimisation a comportement identique. Ce qui le garde
+          // est le BANC, pas la suite ; meme honnetete que la borne `<= 0` de
+          // `resolveBurn`, qui assume qu'aucun test ne la distingue de `< 0`.
+          if (d2 > wideMaxR2) {
             continue;
           }
           const bonus = zones.hitRadiusBonusAt(ex, ey, tick ?? 0);
