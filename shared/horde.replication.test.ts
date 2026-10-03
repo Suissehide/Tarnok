@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { archetypeOf } from './archetypes';
 import { BOSS_CHARGE_LENGTH_PX, type BossCharge, makeBossCharge } from './boss';
@@ -26,6 +26,41 @@ const DT = 1 / TICK_HZ;
 const STEPS = 600;
 const PARTICIPANTS = 5; // le serveur, plus quatre clients
 const ENTITIES = 1000;
+
+/**
+ * ⚠️ **300 s POUR CE FICHIER SEUL, contre les 60 s de `back/vitest.config.ts`.**
+ *
+ * C'est le TROISIEME relevement de ce delai pour ce meme fichier (30 s a
+ * l'etape 4, 60 s a l'etape 6a), et le premier a etre mesure scenario par
+ * scenario. Releve avec `--reporter=verbose`, ce fichier tournant SEUL :
+ *
+ * | scenario | cout |
+ * | --- | --- |
+ * | 11a — la charge deplace le boss | **104,3 s** |
+ * | GF0 — Gel profond mord | **96,2 s** |
+ * | MV0 — Mortier vif mord | **72,5 s** |
+ * | 11b — charge sans rejeu | **65,5 s** |
+ * | VF0 — Verglas mord | **63,4 s** |
+ *
+ * Cinq scenarios au-dessus des 60 s declares, dont deux au-dessus de 90 s. Ce
+ * ne sont pas des tests fragiles : chacun fait converger plusieurs simulations
+ * de mille entites sur des centaines de pas, et c'est exactement ce qui leur
+ * donne leur valeur. Le meme releve dans la suite COMPLETE donne 62,2 s et
+ * 71,7 s pour les deux pires — **moins** que seuls : le cout de ce fichier
+ * varie d'un facteur 1,5 selon l'etat de la machine, donc un delai juste au
+ * ras de la mesure rougirait au hasard.
+ *
+ * 300 s laisse ~3x la pire mesure. Et le reglage est **local a ce fichier** :
+ * les 1 026 autres tests du depot gardent 60 s, parce qu'un vrai blocage doit
+ * se voir vite. Relever le reglage global aurait emousse tout le portique pour
+ * les besoins d'un seul fichier.
+ *
+ * ⚠️ **A ne pas resoudre en allegeant les scenarios.** Un scenario de
+ * replication qui ne fait plus converger assez de pas ne prouve plus rien ; le
+ * cout est la contrepartie de la preuve. Si ce fichier devient trop lourd pour
+ * le portique, la sortie est de le sortir du portique, pas de l'affaiblir.
+ */
+vi.setConfig({ testTimeout: 300_000 });
 
 /** Seuil de derive tolere, en pixels. Valeur de depart, a confirmer par la mesure. */
 const DRIFT_LIMIT_PX = 2;
