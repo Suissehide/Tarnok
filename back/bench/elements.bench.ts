@@ -56,13 +56,19 @@ import {
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { Horde } from '@shared/horde';
-import { packZoneKind } from '@shared/protocol';
+import { packElementPair, packZoneKind, zoneElement, zoneReaction } from '@shared/protocol';
 import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
 
-import { OrbField, resolveVerglasCollisions } from '../src/combat';
+import {
+  applyReactions,
+  OrbField,
+  Reactions,
+  type ReactionTrigger,
+  resolveVerglasCollisions,
+} from '../src/combat';
 import { Room } from '../src/room';
 import { machineDescription, stats } from './harness';
 
@@ -92,8 +98,23 @@ const ARME_FOUDRE = WEAPONS.find((w) => w.name === 'bobine-tesla')?.id ?? -1;
 // seringue-a-poix : la Poix la plus rapide (cooldownTicks: 18, trois
 // projectiles) — meme raisonnement, pour maximiser les poses de zone.
 const ARME_POIX = WEAPONS.find((w) => w.name === 'seringue-a-poix')?.id ?? -1;
-if (ARME_BRAISE < 0 || ARME_GIVRE < 0 || ARME_FOUDRE < 0 || ARME_POIX < 0) {
-  throw new Error('le catalogue doit porter les quatre armes elementaires attendues');
+// poire-a-chaux : la Chaux la plus rapide (cooldownTicks: 17, trois
+// projectiles, tache 8 de l'etape 5c) — meme raisonnement que les autres
+// armes "rapides" ci-dessus.
+const ARME_CHAUX = WEAPONS.find((w) => w.name === 'poire-a-chaux')?.id ?? -1;
+// fronde-a-mercure : le Vif-argent le plus rapide (cooldownTicks: 14, deux
+// aiguilles, tache 8 de l'etape 5c) — le pire cas de frequence de pose de
+// liaison, donc le pire cas d'appels a `linkedNeighbours` (tache 9).
+const ARME_MERCURE = WEAPONS.find((w) => w.name === 'fronde-a-mercure')?.id ?? -1;
+if (
+  ARME_BRAISE < 0 ||
+  ARME_GIVRE < 0 ||
+  ARME_FOUDRE < 0 ||
+  ARME_POIX < 0 ||
+  ARME_CHAUX < 0 ||
+  ARME_MERCURE < 0
+) {
+  throw new Error('le catalogue doit porter les six armes elementaires attendues');
 }
 
 /**
@@ -104,6 +125,7 @@ if (ARME_BRAISE < 0 || ARME_GIVRE < 0 || ARME_FOUDRE < 0 || ARME_POIX < 0) {
 function peuple(horde: Horde, n: number, anchorX = CENTRE, anchorY = CENTRE): void {
   let id = 90_000;
   const parVague = 200;
+  const avant = horde.count;
   for (let k = 0; k < n; k += parVague) {
     const order: WaveOrder = {
       waveId: id++,
@@ -116,6 +138,17 @@ function peuple(horde: Horde, n: number, anchorX = CENTRE, anchorY = CENTRE): vo
       count: Math.min(parVague, n - k),
     };
     horde.spawn(order);
+  }
+  // ⚠️ **Le decor DOIT etre LOURD — assertionne, pas suppose.** Le banc
+  // `zones` a menti une fois en etant peuple de pietaille legere, morte au
+  // premier impact : zero marque, zero zone, un banc vert qui ne mesurait
+  // rien (voir le brief de la tache 9). Cette garde fait rougir LE BANC
+  // ENTIER, bruyamment, plutot que de laisser un decor fausse produire un
+  // zero silencieux.
+  if (n > 0 && (horde.hp[avant] ?? 0) !== HEAVY_HP) {
+    throw new Error(
+      `peuple() devait poser des LOURDS (HEAVY_HP=${HEAVY_HP}), a trouve ${horde.hp[avant]} au premier creneau pose`,
+    );
   }
 }
 
@@ -203,14 +236,58 @@ function salonQuatreElements(exemplaires: number, entites: number): Room {
   return room;
 }
 
+/**
+ * Tache 9 de l'etape 5c : les QUINZE reactions du §6.4 sont desormais toutes
+ * atteignables par du vrai combat (les armes de Chaux et de Vif-argent datent
+ * de la tache 8). `WEAPON_SLOTS` (4) interdit de donner les SIX elements a un
+ * seul joueur ; ils sont donc repartis sur les quatre, chacun en portant
+ * assez pour qu'aucun element ne manque a la table que la horde partagee
+ * subit — les paires se forment entre projectiles de joueurs DIFFERENTS
+ * aussi bien qu'entre deux tirs du meme, `applyElement` ne distingue pas.
+ */
+function salonSixElements(exemplaires: number, entites: number): Room {
+  const room = new Room(0x20_0e_5c_90);
+  const loadouts: readonly (readonly number[])[] = [
+    [ARME_BRAISE, ARME_GIVRE, ARME_FOUDRE, ARME_POIX],
+    [ARME_CHAUX, ARME_MERCURE, ARME_BRAISE, ARME_GIVRE],
+    [ARME_FOUDRE, ARME_POIX, ARME_CHAUX, ARME_MERCURE],
+    [ARME_BRAISE, ARME_CHAUX, ARME_FOUDRE, ARME_MERCURE],
+  ];
+  const couverts = new Set(loadouts.flat());
+  if (
+    ![ARME_BRAISE, ARME_GIVRE, ARME_FOUDRE, ARME_POIX, ARME_CHAUX, ARME_MERCURE].every((a) =>
+      couverts.has(a),
+    )
+  ) {
+    throw new Error('salonSixElements doit couvrir les six elements, un en manque');
+  }
+  for (const [i, id] of [1, 2, 3, 4].entries()) {
+    room.join(id);
+    const armes = loadouts[i] ?? [];
+    for (let k = 0; k < exemplaires; k++) {
+      for (const refId of armes) {
+        room.grantCard(id, { nature: CARD.WEAPON, refId });
+      }
+    }
+    room.applyInput(id, 1, 0, 0, 127, 40);
+  }
+  peuple(room.horde, entites);
+  return room;
+}
+
 interface Occupation {
   zonesMax: number;
   tronquees: number;
   p95: number;
 }
 
-function occupationZones(exemplaires: number, entites: number, ticks: number): Occupation {
-  const room = salonQuatreElements(exemplaires, entites);
+function occupationZones(
+  construitSalon: (exemplaires: number, entites: number) => Room,
+  exemplaires: number,
+  entites: number,
+  ticks: number,
+): Occupation {
+  const room = construitSalon(exemplaires, entites);
   let zonesMax = 0;
   const pas: number[] = [];
   for (let i = 0; i < ticks; i++) {
@@ -235,8 +312,13 @@ function occupationZones(exemplaires: number, entites: number, ticks: number): O
  * `truncatedZones` doit rester a zero ICI aussi : une fusion qui tient 20 s
  * mais pas 60 s ne tiendrait pas une vraie run.
  */
-function occupationSoutenue(exemplaires: number, ticks: number, plafond = 3500): Occupation {
-  const room = salonQuatreElements(exemplaires, 4000);
+function occupationSoutenue(
+  construitSalon: (exemplaires: number, entites: number) => Room,
+  exemplaires: number,
+  ticks: number,
+  plafond = 3500,
+): Occupation {
+  const room = construitSalon(exemplaires, 4000);
   let idSuivant = 900_000;
   let zonesMax = 0;
   const pas: number[] = [];
@@ -335,6 +417,150 @@ function densiteVerglas(
 }
 
 // ---------------------------------------------------------------------------
+// 4. Le cout de la liaison — linkedNeighbours sous Amalgame (tache 9)
+// ---------------------------------------------------------------------------
+
+/** Le couple (Poix, Vif-argent) qui declenche Amalgame, canonicalise une fois. */
+const AMALGAME_PAIR = packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT);
+
+/**
+ * Un salon a quatre joueurs, chacun portant `exemplaires` exemplaires de
+ * seringue-a-poix ET de fronde-a-mercure — la paire la plus rapide des deux
+ * elements d'Amalgame, pour maximiser la cadence de declenchement reelle.
+ */
+function salonMercure(exemplaires: number, entites: number): Room {
+  const room = new Room(0x20_0e_5c_a0);
+  for (const id of [1, 2, 3, 4]) {
+    room.join(id);
+    for (let k = 0; k < exemplaires; k++) {
+      room.grantCard(id, { nature: CARD.WEAPON, refId: ARME_POIX });
+      room.grantCard(id, { nature: CARD.WEAPON, refId: ARME_MERCURE });
+    }
+    room.applyInput(id, 1, 0, 0, 127, 40);
+  }
+  peuple(room.horde, entites);
+  return room;
+}
+
+interface CoutAmalgame {
+  p95: number;
+  /** Le plus grand nombre d'Amalgame REELLEMENT declenches en un seul tick. */
+  declenchementsMax: number;
+  /**
+   * Le plus grand nombre de zones PURES de Vif-argent (zoneReaction === 0)
+   * VUES PENDANT CE RUN — celles, et SEULEMENT celles, que `linkedNeighbours`
+   * suit (tache 3). Voir le rapport : ce compte reste a zero en jeu reel,
+   * pour une raison structurelle mesuree, pas supposee.
+   */
+  zonesLiantesVues: number;
+}
+
+/**
+ * `shareAmalgameDamage` (tache 7 de l'etape 5c, `back/src/combat.ts`) est le
+ * consommateur le PLUS LOURD de `linkedNeighbours` — elle l'appelle une fois
+ * PAR DECLENCHEUR, pas une fois par tick. Ce decor la met sous tension via le
+ * chemin reel (armes -> `Room.step` -> `applyReactions` -> ici), jamais en
+ * appelant `linkedNeighbours` a vide.
+ */
+function porteAmalgame(exemplaires: number, entites: number, ticks: number): CoutAmalgame {
+  const room = salonMercure(exemplaires, entites);
+  const pas: number[] = [];
+  let declenchementsMax = 0;
+  let zonesLiantesVues = 0;
+  for (let i = 0; i < ticks; i++) {
+    const t0 = performance.now();
+    room.step(DT);
+    pas.push(performance.now() - t0);
+    const zonesAnnoncees = room.drainZones();
+    let declenchementsTick = 0;
+    for (const ev of zonesAnnoncees) {
+      if (zoneElement(ev.kind) === ELEMENT.VIF_ARGENT && zoneReaction(ev.kind) === 0) {
+        zonesLiantesVues++;
+      }
+    }
+    for (const ev of room.drainReactions()) {
+      if (ev.pair === AMALGAME_PAIR) {
+        declenchementsTick++;
+      }
+    }
+    declenchementsMax = Math.max(declenchementsMax, declenchementsTick);
+    room.drainDeaths();
+    room.drainPickups();
+  }
+  return { p95: stats(pas).p95, declenchementsMax, zonesLiantesVues };
+}
+
+/**
+ * Le plafond ISOLE de `linkedNeighbours` sous son vrai consommateur
+ * (`applyReactions`, l'unique point d'entree public qui appelle
+ * `shareAmalgameDamage`) — jamais `linkedNeighbours` directement.
+ *
+ * ⚠️ **Decor SYNTHETIQUE, et c'est assume.** La mesure 5/5bis ci-dessous
+ * (jeu reel) montre que `zonesLiantesVues` reste a ZERO : les cinq paires du
+ * Vif-argent (`shared/reactions.ts`) ont CHACUNE un effet specifique nomme
+ * (Vaporisation, Gel profond, Paratonnerre, Aveuglement, Amalgame elle-meme),
+ * donc `postZone` (`back/src/combat.ts`, le SEUL createur de zones) ne pose
+ * jamais une zone de Vif-argent PURE (`zoneReaction === 0`) en jeu reel —
+ * cette zone n'existe que pour la paire Braise+Givre, qui n'implique jamais
+ * le Vif-argent. `linkedNeighbours` ne trouve donc RIEN a lier aujourd'hui,
+ * et son boucle couteuse (`O(horde.count)` par zone qui passe le double
+ * filtre) ne s'execute jamais en combat reel. Ce plafond repond donc a une
+ * question DIFFERENTE, et necessaire : si une zone pure de Vif-argent devenait
+ * un jour atteignable (nouvelle arme, reaction retiree de la table), quel
+ * serait le cout ? La zone est donc posee ICI directement (comme le fait
+ * `combat.test.ts` pour le meme motif), toujours via `applyReactions`.
+ */
+function coutLiaisonSousAmalgame(
+  entites: number,
+  declencheurs: number,
+  zonesLiantes: number,
+  iterations: number,
+): number {
+  const horde = new Horde(MAX_ENTITIES);
+  peuple(horde, entites);
+  // PV enormes : cette mesure isole le cout arithmetique de la liaison, pas
+  // la survie — une mort en cours de boucle compacterait la horde et
+  // fausserait le compte d'une iteration a l'autre (meme piege que partout
+  // ailleurs dans ce fichier).
+  for (let i = 0; i < horde.count; i++) {
+    horde.hp[i] = 1e9;
+  }
+
+  const zones = new ZoneField();
+  for (let i = 0; i < zonesLiantes; i++) {
+    // `zonesLiantes` foyers de Vif-argent PUR distincts — le seul type de
+    // zone que `linkedNeighbours` suit (tache 3) — repartis sur la carte
+    // pour ne pas se fusionner en un seul kind-foyer (deux zones de MEME
+    // kind fusionnent, §5.1 bis).
+    zones.spawn(ELEMENT.VIF_ARGENT, (i * 137) % MAP_SIZE, (i * 211) % MAP_SIZE, i + 1, 1);
+  }
+
+  const orbs = new OrbField(MAX_ENTITIES);
+  const reactions = new Reactions();
+  const triggers: ReactionTrigger[] = [];
+  for (let i = 0; i < declencheurs; i++) {
+    const slot = i % horde.count;
+    triggers.push({
+      pair: AMALGAME_PAIR,
+      x: horde.x[slot] ?? 0,
+      y: horde.y[slot] ?? 0,
+      markBy: 1,
+      by: 2,
+      element: ELEMENT.VIF_ARGENT,
+      entityId: horde.entityIdAt(slot),
+    });
+  }
+
+  const pas: number[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const t0 = performance.now();
+    applyReactions(horde, orbs, 1, triggers, zones, reactions);
+    pas.push(performance.now() - t0);
+  }
+  return stats(pas).p95;
+}
+
+// ---------------------------------------------------------------------------
 // Rapport
 // ---------------------------------------------------------------------------
 
@@ -414,7 +640,7 @@ let tronqueesTotal = 0;
 let occupationMax = 0;
 for (const entites of [1500, 4000]) {
   for (const exemplaires of [1, 4, 8]) {
-    const r = occupationZones(exemplaires, entites, TICKS_ZONES);
+    const r = occupationZones(salonQuatreElements, exemplaires, entites, TICKS_ZONES);
     tronqueesTotal += r.tronquees;
     occupationMax = Math.max(occupationMax, r.zonesMax);
     zonesRows.push({
@@ -440,7 +666,7 @@ const soutenuRows: Record<string, unknown>[] = [];
 let tronqueesSoutenu = 0;
 let occupationSoutenueMax = 0;
 for (const exemplaires of [1, 4, 8]) {
-  const r = occupationSoutenue(exemplaires, TICKS_SOUTENU);
+  const r = occupationSoutenue(salonQuatreElements, exemplaires, TICKS_SOUTENU);
   tronqueesSoutenu += r.tronquees;
   occupationSoutenueMax = Math.max(occupationSoutenueMax, r.zonesMax);
   soutenuRows.push({
@@ -488,4 +714,171 @@ console.log(
   '\nRappel : `resolveVerglasCollisions` suppose « la geometrie borne naturellement k ».\n' +
     'Le tableau ci-dessus est la premiere verification de cette hypothese — voir le\n' +
     'rapport de la tache pour la lecture complete.',
+);
+
+console.log('\n5. Le cout de la liaison — linkedNeighbours SOUS Amalgame (tache 9), pas COMPLET');
+const TICKS_AMALGAME = 300;
+const amalgameRows: Record<string, unknown>[] = [];
+let pireAmalgameReel = 0;
+let declenchementsMaxGlobal = 0;
+let zonesLiantesVuesTotal = 0;
+for (const entites of [1500, 4000]) {
+  for (const exemplaires of [1, 4, 8]) {
+    const r = porteAmalgame(exemplaires, entites, TICKS_AMALGAME);
+    pireAmalgameReel = Math.max(pireAmalgameReel, r.p95);
+    declenchementsMaxGlobal = Math.max(declenchementsMaxGlobal, r.declenchementsMax);
+    zonesLiantesVuesTotal += r.zonesLiantesVues;
+    amalgameRows.push({
+      entites,
+      'exemplaires/joueur': exemplaires,
+      'Amalgame declenches (max/tick)': r.declenchementsMax,
+      'zones liantes vues': r.zonesLiantesVues,
+      'pas p95 (ms)': +r.p95.toFixed(3),
+      'part du budget': `${((r.p95 / BUDGET_MS) * 100).toFixed(1)} %`,
+      verdict: r.p95 < BUDGET_MS ? 'OK' : 'HORS BUDGET',
+    });
+  }
+}
+console.table(amalgameRows);
+
+console.log(
+  "\n5 bis. Meme porte, l'empilement pousse au-dela de 8 (meme angle mort que la chaine, §2 bis)",
+);
+const pileAmalgameRows: Record<string, unknown>[] = [];
+for (const exemplaires of [16, 32, 64]) {
+  const r = porteAmalgame(exemplaires, 4000, TICKS_AMALGAME);
+  pireAmalgameReel = Math.max(pireAmalgameReel, r.p95);
+  declenchementsMaxGlobal = Math.max(declenchementsMaxGlobal, r.declenchementsMax);
+  zonesLiantesVuesTotal += r.zonesLiantesVues;
+  pileAmalgameRows.push({
+    entites: 4000,
+    'exemplaires/joueur': exemplaires,
+    'Amalgame declenches (max/tick)': r.declenchementsMax,
+    'zones liantes vues': r.zonesLiantesVues,
+    'pas p95 (ms)': +r.p95.toFixed(3),
+    'part du budget': `${((r.p95 / BUDGET_MS) * 100).toFixed(1)} %`,
+    verdict: r.p95 < BUDGET_MS ? 'OK' : 'HORS BUDGET',
+  });
+}
+console.table(pileAmalgameRows);
+
+// ⚠️ **Le compteur qui ne compte pas est le defaut le plus frequent de ce
+// depot (brief de la tache 9) — gardee bruyamment.** Amalgame doit s'etre
+// DECLENCHE au moins une fois sur 2 100 ticks cumules (300 x 6 + 300 x 3) de
+// combat reel a quatre joueurs ; s'il ne s'est JAMAIS declenche, le decor
+// (armes, portee, marquage) est casse et le reste de cette section ne mesure
+// rien — exactement le piege « banc qui rend zero ».
+if (declenchementsMaxGlobal === 0) {
+  throw new Error(
+    "le banc n'a declenche AUCUN Amalgame reel sur toute la campagne : decor fausse (armes/portee/marquage)",
+  );
+}
+console.log(
+  `\nAmalgame s'est reellement declenche en jeu (max observe : ${declenchementsMaxGlobal}/tick). ` +
+    `Zones PURES de Vif-argent vues sur toute la campagne (celles que linkedNeighbours suit) : ${zonesLiantesVuesTotal}.`,
+);
+
+console.log(
+  '\n5 ter. Le plafond ISOLE — applyReactions (donc shareAmalgameDamage) repete, ' +
+    'zone liante SYNTHETIQUE a 4000 entites (voir le docbloc de coutLiaisonSousAmalgame)',
+);
+const ZONES_LIANTES_REALISTE = 4;
+const plafondRows: Record<string, unknown>[] = [];
+let pirePlafond = 0;
+let plafondLimite = 0;
+for (const declencheurs of [10, 25, 50, 100, 250, 500]) {
+  const p95 = coutLiaisonSousAmalgame(MAX_ENTITIES, declencheurs, ZONES_LIANTES_REALISTE, 30);
+  pirePlafond = Math.max(pirePlafond, p95);
+  if (p95 < BUDGET_MS) {
+    plafondLimite = declencheurs;
+  }
+  plafondRows.push({
+    entites: MAX_ENTITIES,
+    'zones Vif-argent liantes': ZONES_LIANTES_REALISTE,
+    'declencheurs/tick': declencheurs,
+    'applyReactions p95 (ms)': +p95.toFixed(4),
+    'part du budget': `${((p95 / BUDGET_MS) * 100).toFixed(1)} %`,
+    verdict: p95 < BUDGET_MS ? 'OK' : 'HORS BUDGET',
+  });
+}
+console.table(plafondRows);
+
+// ⚠️ **Ne PAS attribuer le pas COMPLET (5/5bis) a `linkedNeighbours`.**
+// `zonesLiantesVuesTotal === 0` (imprime ci-dessus) PROUVE que la boucle
+// couteuse de `linkedNeighbours` (le balayage `O(horde.count)` par zone qui
+// passe le double filtre element+reaction) n'a JAMAIS tourne pendant 5/5bis —
+// chaque zone rencontree y est rejetee par un controle O(1) avant d'atteindre
+// cette boucle (voir le docbloc de `coutLiaisonSousAmalgame`). Le depassement
+// de budget de 5/5bis est donc celui du PAS ENTIER (horde, projectiles,
+// zones, toutes reactions) a 4000 LOURDS avec deux armes empilees — deja visible
+// sans Amalgame a la section 3 (65 ms a 4000/8) — jamais celui de la liaison.
+// Le verdict qui ENGAGE sur `linkedNeighbours` elle-meme est celui de 5 ter,
+// la seule mesure qui l'exerce reellement (zone liante presente).
+console.log(
+  `\nInformatif (5/5bis) : pas COMPLET pire p95 ${pireAmalgameReel.toFixed(3)} ms, zonesLiantesVuesTotal = ${zonesLiantesVuesTotal} ` +
+    '-> le depassement vient du pas entier a 4000 LOURDS, PAS de linkedNeighbours (sa boucle couteuse ne tourne jamais ici).',
+);
+console.log(
+  pirePlafond < BUDGET_MS
+    ? `VERDICT liaison (linkedNeighbours sous shareAmalgameDamage, zone liante presente) : pire p95 ${pirePlafond.toFixed(3)} ms < ${BUDGET_MS.toFixed(3)} ms a ${MAX_ENTITIES} entites et jusqu'a 500 declencheurs/tick -> ON GARDE (pas de grille de voisinage requise)`
+    : `VERDICT liaison (linkedNeighbours sous shareAmalgameDamage, zone liante presente) : pire p95 ${pirePlafond.toFixed(3)} ms >= ${BUDGET_MS.toFixed(3)} ms -> HORS BUDGET, router 'linkedNeighbours' par la grille de voisinage`,
+);
+console.log(
+  `VERDICT plafond isole (synthetique, zones liantes = ${ZONES_LIANTES_REALISTE}) : tient jusqu'a ` +
+    `${plafondLimite || '< 10'} declencheurs/tick, pire p95 observe ${pirePlafond.toFixed(3)} ms -> ` +
+    'synthetique ASSUME : zonesLiantesVues reste a 0 en jeu reel (voir ci-dessus), donc ce cout ne se paie pas aujourd hui',
+);
+
+console.log('\n6. Point de revue n°5, REPRISE — QUINZE kind reels, six elements (tache 9)');
+const TICKS_ZONES_SIX = 600;
+const zonesSixRows: Record<string, unknown>[] = [];
+let tronqueesSixTotal = 0;
+let occupationSixMax = 0;
+for (const entites of [1500, 4000]) {
+  for (const exemplaires of [1, 4, 8]) {
+    const r = occupationZones(salonSixElements, exemplaires, entites, TICKS_ZONES_SIX);
+    tronqueesSixTotal += r.tronquees;
+    occupationSixMax = Math.max(occupationSixMax, r.zonesMax);
+    zonesSixRows.push({
+      entites,
+      'exemplaires/joueur': exemplaires,
+      'zones vivantes (max)': r.zonesMax,
+      'occupation ZONE_CAPACITY': `${((r.zonesMax / ZONE_CAPACITY) * 100).toFixed(1)} %`,
+      'zones tronquees (cumul)': r.tronquees,
+      'pas p95 (ms)': +r.p95.toFixed(3),
+    });
+  }
+}
+console.table(zonesSixRows);
+console.log(
+  tronqueesSixTotal === 0
+    ? `VERDICT revue n°5 (rafale 20 s, SIX elements) : truncatedZones = 0 (occupation max ${occupationSixMax}/${ZONE_CAPACITY} = ${((occupationSixMax / ZONE_CAPACITY) * 100).toFixed(1)} %) -> ON GARDE`
+    : `VERDICT revue n°5 (rafale 20 s, SIX elements) : truncatedZones = ${tronqueesSixTotal} (> 0) -> LA FUSION NE SUFFIT PLUS, a rouvrir`,
+);
+
+console.log(
+  '\n6 bis. Meme point de revue, SIX elements, en REGIME SOUTENU (60 s, horde reapprovisionnee)',
+);
+const TICKS_SOUTENU_SIX = 1800;
+const soutenuSixRows: Record<string, unknown>[] = [];
+let tronqueesSoutenuSix = 0;
+let occupationSoutenueSixMax = 0;
+for (const exemplaires of [1, 4, 8]) {
+  const r = occupationSoutenue(salonSixElements, exemplaires, TICKS_SOUTENU_SIX);
+  tronqueesSoutenuSix += r.tronquees;
+  occupationSoutenueSixMax = Math.max(occupationSoutenueSixMax, r.zonesMax);
+  soutenuSixRows.push({
+    'exemplaires/joueur': exemplaires,
+    'duree simulee': '60 s',
+    'zones vivantes (max)': r.zonesMax,
+    'occupation ZONE_CAPACITY': `${((r.zonesMax / ZONE_CAPACITY) * 100).toFixed(1)} %`,
+    'zones tronquees (cumul)': r.tronquees,
+    'pas p95 (ms)': +r.p95.toFixed(3),
+  });
+}
+console.table(soutenuSixRows);
+console.log(
+  tronqueesSoutenuSix === 0
+    ? `VERDICT revue n°5 (soutenu 60 s, SIX elements) : truncatedZones = 0 (occupation max ${occupationSoutenueSixMax}/${ZONE_CAPACITY} = ${((occupationSoutenueSixMax / ZONE_CAPACITY) * 100).toFixed(1)} %) -> ON GARDE`
+    : `VERDICT revue n°5 (soutenu 60 s, SIX elements) : truncatedZones = ${tronqueesSoutenuSix} (> 0) -> LA FUSION NE SUFFIT PLUS, a rouvrir`,
 );
