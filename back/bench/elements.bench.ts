@@ -785,7 +785,7 @@ if (declenchementsMaxGlobal === 0) {
 }
 console.log(
   `\nAmalgame s'est reellement declenche en jeu (max observe : ${declenchementsMaxGlobal}/tick). ` +
-    `Zones impliquant le Vif-argent vues sur toute la campagne (celles que linkedNeighbours suit desormais, revue post-tache 9) : ${zonesLiantesVuesTotal}.`,
+    `Zones dont zoneLinks est vrai, vues sur toute la campagne (celles que linkedNeighbours suit reellement) : ${zonesLiantesVuesTotal}.`,
 );
 
 console.log(
