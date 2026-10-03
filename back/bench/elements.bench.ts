@@ -63,6 +63,7 @@ import { WEAPONS } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
 
 import {
+  appliquerDegats,
   applyReactions,
   OrbField,
   Reactions,
@@ -863,10 +864,15 @@ const TICKS_SOUTENU_SIX = 1800;
 const soutenuSixRows: Record<string, unknown>[] = [];
 let tronqueesSoutenuSix = 0;
 let occupationSoutenueSixMax = 0;
+/** Le pas p95 de la ligne a 4 exemplaires — le decor DEBORDE que le coordinateur designe. */
+let pasReferenceDebordant = 0;
 for (const exemplaires of [1, 4, 8]) {
   const r = occupationSoutenue(salonSixElements, exemplaires, TICKS_SOUTENU_SIX);
   tronqueesSoutenuSix += r.tronquees;
   occupationSoutenueSixMax = Math.max(occupationSoutenueSixMax, r.zonesMax);
+  if (exemplaires === 4) {
+    pasReferenceDebordant = r.p95;
+  }
   soutenuSixRows.push({
     'exemplaires/joueur': exemplaires,
     'duree simulee': '60 s',
@@ -881,4 +887,183 @@ console.log(
   tronqueesSoutenuSix === 0
     ? `VERDICT revue n°5 (soutenu 60 s, SIX elements) : truncatedZones = 0 (occupation max ${occupationSoutenueSixMax}/${ZONE_CAPACITY} = ${((occupationSoutenueSixMax / ZONE_CAPACITY) * 100).toFixed(1)} %) -> ON GARDE`
     : `VERDICT revue n°5 (soutenu 60 s, SIX elements) : truncatedZones = ${tronqueesSoutenuSix} (> 0) -> LA FUSION NE SUFFIT PLUS, a rouvrir`,
+);
+
+// ---------------------------------------------------------------------------
+// 7. Attribution — quel balayage domine au decor qui deborde (demande du coordinateur)
+// ---------------------------------------------------------------------------
+
+/**
+ * `#computeSlow`/`#computeFieldSign` (`shared/horde.ts`) sont PRIVEES :
+ * aucun acces direct depuis ce banc. Leur cout se lit donc en DELTA sur
+ * l'API PUBLIQUE qui les appelle (`Horde.step`) — `step` AVEC zones moins
+ * `step` SANS (`zones` undefined court-circuite les deux par un retour
+ * anticipe, voir leur docbloc) — plutot qu'en rejouant une copie de leur
+ * algorithme, qui mesurerait une replique, pas le code reel.
+ *
+ * ⚠️ **Le delta couvre aussi toute consultation de zones dans
+ * `#recomputeSteering`** (le derapage du Verglas, `densiteVerglas`
+ * ci-dessus) : `step` lui passe `zones` aussi. Impossible de l'en separer
+ * sans acces prive — le delta est donc etiquete pour les TROIS, jamais pour
+ * les deux seules nommees par le coordinateur.
+ */
+function coutStepZones(
+  horde: Horde,
+  zones: ZoneField | undefined,
+  tick: number,
+  iterations: number,
+): number {
+  const pas: number[] = [];
+  for (let i = 0; i < iterations; i++) {
+    const t0 = performance.now();
+    horde.step(DT, [], tick, zones);
+    pas.push(performance.now() - t0);
+  }
+  return stats(pas).p95;
+}
+
+/** Balayage horde complet pour un point de mesure PUBLIC de `ZoneField` (`burnAt`, `collisionDamageAt`, `hitRadiusBonusAt`). */
+function coutBalayageZone(
+  horde: Horde,
+  tick: number,
+  lire: (x: number, y: number, t: number) => number,
+  iterations: number,
+): number {
+  const pas: number[] = [];
+  for (let iter = 0; iter < iterations; iter++) {
+    const t0 = performance.now();
+    for (let i = 0; i < horde.count; i++) {
+      lire(horde.x[i] ?? 0, horde.y[i] ?? 0, tick);
+    }
+    pas.push(performance.now() - t0);
+  }
+  return stats(pas).p95;
+}
+
+/** `appliquerDegats` (donc `ampAt` + `armorReductionAt`, les DEUX appeles depuis l'interieur), balayage complet. */
+function coutAppliquerDegatsBalayage(
+  horde: Horde,
+  zones: ZoneField,
+  tick: number,
+  iterations: number,
+): number {
+  const pas: number[] = [];
+  const dead = new Set<number>();
+  for (let iter = 0; iter < iterations; iter++) {
+    const t0 = performance.now();
+    for (let i = 0; i < horde.count; i++) {
+      // Degat negligeable : horde.hp est a 1e9, aucune mort possible, donc
+      // aucune compaction qui fausserait l'iteration suivante.
+      appliquerDegats(horde, i, 0.0001, zones, tick, dead);
+    }
+    pas.push(performance.now() - t0);
+  }
+  return stats(pas).p95;
+}
+
+console.log(
+  '\n7. Attribution du cout — quel balayage domine au decor qui deborde ' +
+    '(4000 LOURDS, 128 zones, demande du coordinateur)',
+);
+// ⚠️ **Ce que cette section NE PEUT PAS attribuer.** `hitRadiusBonusAt` a un
+// SECOND site d'appel, `Projectiles.collide` (`shared/projectiles.ts`), dans
+// la boucle PROJECTILE x ENNEMI — un cout en projectiles x ennemis x zones,
+// PAS entites x zones comme les balayages ci-dessous. C'est ce site, pas
+// celui mesure ici, qu'un commit concurrent a ce banc (`fix(shared): pre-filtre
+// le rayon elargi de vif-argent avant de balayer les zones`) vient de corriger
+// par un pre-filtre, en citant CE MEME banc (49 millions de tests de distance
+// par tick a 4000 ennemis/96 projectiles/128 zones). La ligne
+// « hitRadiusBonusAt » ci-dessous reste une BORNE HAUTE du cout PAR ENTITE
+// (un balayage complet de la horde), jamais une mesure du site reel —
+// voir le rapport de la tache pour la lecture complete.
+const hordeAttribution = new Horde(MAX_ENTITIES);
+peuple(hordeAttribution, MAX_ENTITIES);
+for (let i = 0; i < hordeAttribution.count; i++) {
+  hordeAttribution.hp[i] = 1e9;
+}
+const hordeAttributionSansZones = new Horde(MAX_ENTITIES);
+peuple(hordeAttributionSansZones, MAX_ENTITIES);
+
+// 128 zones (ZONE_CAPACITY, l'occupation mesuree a la section 6 bis) a des
+// positions DISTINCTES (aucune fusion) et des `kind` varies — element x
+// reaction cycles sur les six elements et les quinze reactions, pour couvrir
+// la meme diversite que le decor REEL (Surchauffe/Gel profond/Aveuglement a
+// duree longue INCLUS).
+const zonesAttribution = new ZoneField();
+for (let i = 0; i < ZONE_CAPACITY; i++) {
+  const element = (i % 6) + 1;
+  const reactionId = i % 15;
+  zonesAttribution.spawn(
+    packZoneKind(element, reactionId),
+    (i * 173) % MAP_SIZE,
+    (i * 257) % MAP_SIZE,
+    1,
+    1,
+  );
+}
+if (zonesAttribution.count !== ZONE_CAPACITY) {
+  throw new Error(
+    `decor d'attribution : ${zonesAttribution.count} zones posees, ${ZONE_CAPACITY} attendues (une a fusionne ou a ete tronquee)`,
+  );
+}
+
+const ITER_ATTRIBUTION = 30;
+const attributionRows: {
+  nom: string;
+  p95: number;
+}[] = [
+  {
+    nom: 'Horde.step, delta zones (#computeFieldSign + #computeSlow + zones dans #recomputeSteering)',
+    p95:
+      coutStepZones(hordeAttribution, zonesAttribution, 1, ITER_ATTRIBUTION) -
+      coutStepZones(hordeAttributionSansZones, undefined, 1, ITER_ATTRIBUTION),
+  },
+  {
+    nom: 'resolveBurn — zones.burnAt, balayage horde complet',
+    p95: coutBalayageZone(
+      hordeAttribution,
+      1,
+      (x, y, t) => zonesAttribution.burnAt(x, y, t),
+      ITER_ATTRIBUTION,
+    ),
+  },
+  {
+    nom: 'resolveVerglasCollisions — zones.collisionDamageAt, balayage horde complet',
+    p95: coutBalayageZone(
+      hordeAttribution,
+      1,
+      (x, y, t) => zonesAttribution.collisionDamageAt(x, y, t),
+      ITER_ATTRIBUTION,
+    ),
+  },
+  {
+    nom: 'appliquerDegats — zones.ampAt + zones.armorReductionAt, balayage horde complet',
+    p95: coutAppliquerDegatsBalayage(hordeAttribution, zonesAttribution, 1, ITER_ATTRIBUTION),
+  },
+  {
+    nom: 'Projectiles.collide — zones.hitRadiusBonusAt, balayage horde complet (borne haute, PAS le site reel)',
+    p95: coutBalayageZone(
+      hordeAttribution,
+      1,
+      (x, y, t) => zonesAttribution.hitRadiusBonusAt(x, y, t),
+      ITER_ATTRIBUTION,
+    ),
+  },
+];
+const sommeAttribution = attributionRows.reduce((acc, r) => acc + r.p95, 0);
+console.table(
+  attributionRows.map((r) => ({
+    balayage: r.nom,
+    'p95 (ms)': +r.p95.toFixed(3),
+    'part de la somme attribuee': `${((r.p95 / sommeAttribution) * 100).toFixed(1)} %`,
+    'part du pas de reference (4000/4, soutenu)': `${((r.p95 / pasReferenceDebordant) * 100).toFixed(1)} %`,
+  })),
+);
+const dominant = attributionRows.reduce((a, b) => (b.p95 > a.p95 ? b : a));
+console.log(
+  `\nPas de reference (6 bis, 4000 entites, 4 exemplaires, soutenu) : ${pasReferenceDebordant.toFixed(3)} ms. ` +
+    `Somme des cinq balayages isoles : ${sommeAttribution.toFixed(3)} ms (${((sommeAttribution / pasReferenceDebordant) * 100).toFixed(1)} % du pas de reference).`,
+);
+console.log(
+  `VERDICT attribution (parmi les cinq mesures ici) : ${dominant.nom} domine, ${((dominant.p95 / sommeAttribution) * 100).toFixed(1)} % de la somme attribuee -> c'est LUI qu'il faut borner en premier PARMI CES CINQ`,
 );
