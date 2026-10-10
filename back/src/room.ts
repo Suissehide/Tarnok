@@ -765,8 +765,21 @@ export class Room {
    * facon de GAGNER de l'or est couverte par l'etape 6a ; ce qui se teste ici
    * est le transfert vers le compte, et faire jouer vingt minutes pour poser
    * une cagnotte rendrait le test inutilisable.
+   *
+   * ⚠️ **Leve sur un non-entier, plutot que de le tronquer.** Chaque chemin de
+   * PRODUCTION qui ecrit `#gold` rend deja un entier (`palierGold`,
+   * `extractGold` et le wipe arrondissent tous). Cette methode est la SEULE
+   * ecriture qui pourrait y introduire un flottant, et `Session#creditAccounts`
+   * fait `BigInt(this.room.gold)` AVANT son `try` -- un flottant y leverait un
+   * `RangeError` qui, derriere le `void` de l'appel fire-and-forget,
+   * deviendrait une exception non rattrapee et tuerait le process. Tronquer en
+   * silence masquerait un bug de test au lieu de le signaler a l'endroit qui
+   * l'a introduit.
    */
   debugSetGold(gold: number): void {
+    if (!Number.isInteger(gold)) {
+      throw new Error(`debugSetGold : ${gold} n'est pas un entier`);
+    }
     this.#gold = gold;
   }
 

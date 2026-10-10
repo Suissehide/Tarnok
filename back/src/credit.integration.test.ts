@@ -16,7 +16,7 @@ import {
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, weaponOf } from '@shared/weapons';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { createAccount, creditAccounts, findAccountIdByToken, goldOf, prisma } from './accounts';
@@ -49,6 +49,15 @@ if (DISTANCE_BOSS >= PORTEE_DAGUE) {
 
 const TICKS_PAR_RESPIRATION = 60;
 const RESPIRATION_MS = 20;
+
+/**
+ * Juste sous le plafond d'un `bigint` Postgres (2^63 - 1 =
+ * 9 223 372 036 854 775 807). Pre-crediter un compte a cette valeur puis lui
+ * verser encore 1000 d'or fait DEBORDER la colonne pour de vrai : Postgres
+ * leve, sans mock et sans toucher a aucun conteneur -- voir le test « base
+ * injoignable ».
+ */
+const PRES_DU_PLAFOND_BIGINT = 9_223_372_036_854_775_000n;
 
 type App = Awaited<ReturnType<typeof buildServer>>;
 
@@ -551,10 +560,22 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
   }, 120_000);
 
   /**
-   * §4.3 : extraction ET wipe passent par le MEME chemin. L'assertion est
-   * DERIVEE de `WIPE_GOLD_KEPT`, jamais un `0` ecrit en dur — doctrine du
-   * docbloc de `REACTION_DAMAGE`. Le jour ou la constante passe a 0.15, ce
-   * test suit sans etre touche.
+   * **RONDE 1 : titre et docbloc corriges.** §4.3 : la FRACTION que `Room`
+   * applique a un wipe (`gold * WIPE_GOLD_KEPT`) arrive bien jusqu'au compte.
+   * L'assertion est DERIVEE de `WIPE_GOLD_KEPT`, jamais un `0` ecrit en dur —
+   * doctrine du docbloc de `REACTION_DAMAGE`. Le jour ou la constante passe a
+   * 0.15, ce test suit sans etre touche.
+   *
+   * ⚠️ **Ce test ne garde PAS « extraction et wipe passent par le MEME chemin
+   * jusqu'a Prisma »** -- c'est faux aujourd'hui, et l'ancien titre le
+   * pretendait. `WIPE_GOLD_KEPT` vaut 0 : `Session#creditAccounts` calcule
+   * `montant = 0n` et rend la main a son garde `if (montant === 0n) return`,
+   * SANS jamais appeler `creditAccounts` (la fonction Prisma). Ce que ce test
+   * garde reellement, c'est que `Room` calcule la bonne fraction ET que
+   * `Session#creditAccounts` ne la recalcule pas, ne la court-circuite pas et
+   * n'ecrit rien de plus que cette fraction -- le wipe et l'extraction
+   * APPELLENT la meme methode `Session#creditAccounts`, ce qui est vrai, mais
+   * elle n'y EXECUTE pas le meme code au-dela du premier garde.
    *
    * ⚠️ **MODIFICATION DU COORDINATEUR (ruling P8) : les comptes partent avec
    * un solde NON NUL.** `WIPE_GOLD_KEPT` vaut 0 aujourd'hui : assener que le
@@ -564,7 +585,7 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
    * cagnotte » : un bug qui verserait la cagnotte entiere au lieu de sa
    * fraction se verrait (1 500 au lieu de 500).
    */
-  it('un wipe credite gold x WIPE_GOLD_KEPT, par le meme chemin', async () => {
+  it('un wipe applique gold x WIPE_GOLD_KEPT avant de crediter', async () => {
     const code = await createRoomCode();
     const room = app.rooms.get(code);
     if (!room) {
@@ -610,60 +631,123 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
   }, 120_000);
 
   /**
-   * Review Focus n°5 : deux salons qui finissent sur le MEME compte. Un
-   * lire-modifier-ecrire perdrait l'un des deux credits, et le symptome serait
-   * de l'or qui disparait sans trace. L'increment atomique rend la somme.
+   * **RONDE 1 : reecrit apres relecture.** Review Focus n°5 : deux salons qui
+   * finissent sur le MEME compte, et dont les deux credits sont EN VOL EN
+   * MEME TEMPS -- c'est ce qui discrimine un `increment` atomique d'un
+   * lire-modifier-ecrire (`findUnique` puis `update`), qui en perdrait un des
+   * deux avec une forte probabilite.
+   *
+   * ⚠️ **La version precedente de ce test ne discriminait rien.** Elle
+   * attendait chaque `voteExtraction` avant de lancer le second salon : les
+   * deux credits etaient donc toujours SEQUENTIELS, jamais en concurrence
+   * reelle. Un lire-modifier-ecrire aussi aurait rendu `800n` dans cette
+   * version -- le test passait pour la meme raison qu'un `increment`, pas
+   * pour une raison qui lui est propre. Les deux salons et les deux sockets
+   * sont donc montes D'ABORD, et les deux `voteExtraction` partent ENSEMBLE
+   * sous un seul `Promise.all`.
    */
-  it('deux salons qui finissent sur le meme compte donnent la SOMME', async () => {
+  it('deux salons qui finissent sur le meme compte EN PARALLELE donnent la SOMME', async () => {
     const { id, token } = await createAccount();
 
-    for (const montant of [300, 500]) {
-      const code = await createRoomCode();
-      const room = app.rooms.get(code);
-      if (!room) {
-        throw new Error('salon introuvable');
-      }
-      const c = await connectAvecJeton(code, token);
-      room.debugSetGold(montant);
-      await voteExtraction([c], room);
+    const code1 = await createRoomCode();
+    const room1 = app.rooms.get(code1);
+    if (!room1) {
+      throw new Error('salon introuvable');
     }
+    const c1 = await connectAvecJeton(code1, token);
+
+    const code2 = await createRoomCode();
+    const room2 = app.rooms.get(code2);
+    if (!room2) {
+      throw new Error('salon introuvable');
+    }
+    const c2 = await connectAvecJeton(code2, token);
+
+    room1.debugSetGold(300);
+    room2.debugSetGold(500);
+
+    // Les deux ecritures Prisma sont reellement en vol ensemble : un
+    // lire-modifier-ecrire en perdrait une avec une forte probabilite,
+    // l'increment atomique rend la somme quel que soit l'ordre d'arrivee.
+    await Promise.all([voteExtraction([c1], room1), voteExtraction([c2], room2)]);
 
     expect(await goldOf(id)).toBe(800n);
   }, 120_000);
 
   /**
-   * §4.4 : **un echec de credit ne doit pas emporter le salon.** Le plafond
-   * assume est « trois tentatives puis un journal » ; ce qui ne serait PAS
-   * assumable, c'est qu'une base injoignable fasse tomber la boucle de jeu et
-   * prive les joueurs de leur fin de run. La base est rendue injoignable pour
-   * de vrai — aucun mock — en deconnectant le client Prisma.
+   * **RONDE 1 : reecrit apres relecture — la panne n'avait jamais lieu, et
+   * les deux assertions etaient tautologiques.**
+   *
+   * ⚠️ **`prisma.$disconnect()` ne rend pas la base injoignable.** Prisma
+   * reconnecte paresseusement au premier appel suivant ; mesure a l'appui,
+   * aucun `[credit] ECHEC definitif` ne partait sur stderr -- les trois
+   * tentatives ne tournaient jamais. Et meme en admettant une panne,
+   * `expect(c.received.some(m => m.type === MSG.RUN_OVER)).toBe(true)` ne
+   * pouvait structurellement pas rougir : `voteExtraction` leve DEJA si
+   * `RUN_OVER` n'arrive pas (son `attendre(..., 15_000)` interne) -- cette
+   * assertion ne faisait que reasserter ce que l'appel precedent avait deja
+   * garanti.
+   *
+   * **Le correctif provoque une vraie erreur Postgres, sans mock et sans
+   * toucher a aucun conteneur : il fait DEBORDER la colonne `bigint`.** Un
+   * compte pre-credite a `PRES_DU_PLAFOND_BIGINT` puis verse encore 500
+   * d'or sort du domaine d'un `bigint` Postgres (2^63 - 1) -- l'`increment`
+   * leve pour de vrai, a chacune des trois tentatives, et la troisieme
+   * journalise. C'est ce que ce test assene desormais, avec un espion sur
+   * `console.error` : ni l'absence de `RUN_OVER` (deja garanti ailleurs) ni
+   * sa presence, mais le journal ET la survie des sockets.
    */
-  it('une base injoignable au credit ne tue ni la run ni le salon', async () => {
+  it('une base qui refuse le credit (debordement bigint) ne tue ni la run ni le salon', async () => {
     const code = await createRoomCode();
     const room = app.rooms.get(code);
     if (!room) {
       throw new Error('salon introuvable');
     }
     const clients = await quatreClients(code);
-    room.debugSetGold(500);
+    for (const c of clients) {
+      await creditAccounts([c.accountId], PRES_DU_PLAFOND_BIGINT);
+    }
+    room.debugSetGold(1000);
 
-    await prisma.$disconnect();
+    const erreur = vi.spyOn(console, 'error').mockImplementation(() => {
+      // Avale la sortie : ce test ASSENE le journal via `erreur`, il n'a
+      // pas besoin de le voir aussi sur stderr.
+    });
     try {
       await voteExtraction(clients, room);
-      for (const c of clients) {
-        expect(c.received.some((m) => m.type === MSG.RUN_OVER)).toBe(true);
-      }
+
+      // Les trois tentatives ont toutes echoue sur le debordement, et la
+      // troisieme a journalie -- UNE fois, pas trois : `#creditAccounts`
+      // rend la main des le premier `console.error`.
+      expect(erreur).toHaveBeenCalledTimes(1);
+      expect(erreur.mock.calls[0]?.[0]).toMatch(/^\[credit\] ECHEC definitif/);
+
+      // Et rien n'est tombe : l'echec du credit n'a pas emporte le salon.
       for (const c of clients) {
         expect(c.ws.readyState).toBe(WebSocket.OPEN);
       }
+
+      // Le debordement n'a rien ecrit : le solde pre-credite est inchange.
+      for (const c of clients) {
+        expect(await goldOf(c.accountId)).toBe(PRES_DU_PLAFOND_BIGINT);
+      }
     } finally {
-      await prisma.$connect();
+      erreur.mockRestore();
     }
   }, 120_000);
 
   /**
-   * Le protocole gagne UN type de message, envoye UNE fois par connexion, et
-   * zero octet par tick. Mesure au niveau socket, comme aux etapes 5b et 5c.
+   * **RONDE 1 : docbloc corrige.** Ce test mesure UNE chose, au niveau
+   * socket comme aux etapes 5b et 5c : zero octet de plus par tick sur
+   * `SNAPSHOT` (et les tailles figees de `ZONE`/`REACTION` en sanity-check).
+   *
+   * ⚠️ **Il ne mesure PAS « envoye une fois par connexion ».** `HELLO` part
+   * du CLIENT vers le serveur ; rien ici ne le recoit ni ne le compte, et
+   * l'ancien docbloc le pretendait sans que le code ne le verifie. La
+   * propriete « un seul HELLO accepte par socket » est deja le Review Focus
+   * n°2 du plan, et elle est deja gardee par `handshake.integration.test.ts`
+   * (deux HELLO sur la meme socket). La repeter ici, sans la mesurer
+   * vraiment, serait l'assertion creuse que ce depot cherche a eliminer.
    */
   it('aucun octet de plus par tick : SNAPSHOT, ZONE et REACTION ne bougent pas', async () => {
     const code = await createRoomCode();

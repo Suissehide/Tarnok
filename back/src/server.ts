@@ -137,11 +137,6 @@ class Session {
     return this.#clients.size;
   }
 
-  /** Le compte lie a un slot, pour le credit de fin de run. */
-  accountIdOf(playerId: number): string | undefined {
-    return this.#accounts.get(playerId);
-  }
-
   /**
    * Accepte une socket. N'attribue PAS de slot tout de suite : le slot
    * n'existe qu'une fois le HELLO presente et le compte reconnu. Une socket
