@@ -3954,8 +3954,16 @@ describe('GameClient — le HELLO envoye a l ouverture de la socket (tache 7)', 
     const socket = latestSocket();
     socket.emit('open', { data: new ArrayBuffer(0) });
 
-    // Une seule trame envoyee a l'ouverture, et c'est le HELLO — pas
-    // seulement « un HELLO existe quelque part dans `sent`».
+    // ⚠️ **C'est CETTE assertion, juste ici, qui rougit sur la mutation qui
+    // compte** (HELLO envoye depuis le callback periodique, apres le premier
+    // INPUT) — pas une assertion plus bas apres une avance de temps.
+    // `#sendInput` ne peut JAMAIS s'executer de facon synchrone dans ce code :
+    // il ne part que par le timer enregistre a la fin du gestionnaire
+    // 'open'. La seule facon de faire passer un INPUT avant le HELLO est donc
+    // de retarder le HELLO hors du tour synchrone de 'open' — ce qui laisse
+    // `sent` vide ici, avant que le moindre timer n'ait pu tourner. C'est
+    // pour ca que ces deux assertions precoces (pas une avance de temps)
+    // suffisent a garder l'ordre.
     expect(socket.sent.length).toBe(1);
     const msg = decode(socket.sent[0] as ArrayBuffer);
     expect(msg.type).toBe(MSG.HELLO);
@@ -3964,13 +3972,13 @@ describe('GameClient — le HELLO envoye a l ouverture de la socket (tache 7)', 
     }
     expect([...msg.token]).toEqual([...JETON]);
 
-    // Avance d'un tick d'INPUT : le HELLO reste le PREMIER envoi, jamais
-    // depasse par un INPUT qui serait parti avant lui. C'est cette assertion,
-    // et elle seule, qui rougirait si l'envoi du HELLO etait deplace apres le
-    // `setInterval` dans `connect()`.
+    // Pas pour l'ordre (deja garde plus haut, un tableau ne se reordonne pas
+    // a posteriori) : verifie que l'envoi du HELLO n'a pas casse la SUITE du
+    // gestionnaire 'open'. Si `ws.send(encodeHello(...))` avait leve, ou
+    // empeche `setInterval` de s'enregistrer, aucun INPUT ne partirait
+    // jamais et cette assertion resterait fausse pour toujours.
     vi.advanceTimersByTime(1000 / INPUT_HZ);
     expect(socket.sent.length).toBeGreaterThan(1);
-    expect(decode(socket.sent[0] as ArrayBuffer).type).toBe(MSG.HELLO);
   });
 
   /**
