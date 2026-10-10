@@ -26,6 +26,7 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 6a | Paliers, boss, or non sécurisé, vote d'extraction | 📝 — [spec](docs/specs/2026-09-01-etape-6a-paliers.md) · [plan](docs/plans/2026-09-01-etape-6a-paliers.md) |
 | 5b | Foudre, Poix, armure, cinq réactions — **zéro octet de plus** | 📝 — [spec](docs/specs/2026-09-25-etape-5b-foudre-poix.md) · [plan](docs/plans/2026-09-25-etape-5b-foudre-poix.md) |
 | 5c | Chaux, Vif-argent — **les six éléments, les quinze réactions**, tableau clos | 📝 — [spec](docs/specs/2026-09-26-etape-5c-chaux-vif-argent.md) · [plan](docs/plans/2026-09-26-etape-5c-chaux-vif-argent.md) · [résultats](docs/plans/2026-09-26-etape-5c-resultats.md) |
+| 7a | Comptes anonymes, or persistant — **l'or survit à la fermeture du navigateur** | 📝 — [spec](docs/specs/2026-10-10-etape-7a-or-persistant.md) · [plan](docs/plans/2026-10-10-etape-7a-or-persistant.md) · [résultats](docs/plans/2026-10-10-etape-7a-resultats.md) |
 
 **Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
 19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du
