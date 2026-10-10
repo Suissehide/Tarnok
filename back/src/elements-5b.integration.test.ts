@@ -4,6 +4,7 @@ import { SYNERGY_MAX, TICK_HZ, ZONE_RADIUS } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
+  encodeHello,
   encodeInput,
   type Message,
   MSG,
@@ -25,6 +26,7 @@ import { WEAPONS, type Weapon } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
+import { createAccount, prisma } from './accounts';
 import type { Room } from './room';
 import { buildServer } from './server';
 
@@ -123,6 +125,7 @@ let port: number;
 const openSockets: WebSocket[] = [];
 
 beforeEach(async () => {
+  await prisma.account.deleteMany();
   app = await buildServer({ roomSeed: ROOM_SEED });
   await app.listen({ port: 0, host: '127.0.0.1' });
   port = (app.server.address() as AddressInfo).port;
@@ -144,6 +147,15 @@ async function connect(code: string): Promise<Client> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${code}`);
   ws.binaryType = 'arraybuffer';
   openSockets.push(ws);
+
+  // ⚠️ L'ecoute de 'open' est posee ICI, avant tout `await` : sur
+  // localhost la socket peut s'ouvrir plus vite qu'une volee Prisma, et un
+  // `once('open', ...)` pose apres `createAccount()` manquerait l'evenement
+  // deja passe, bloquant `connect` jusqu'au timeout du test.
+  const ouverte = new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
 
   const client: Client = {
     ws,
@@ -176,6 +188,12 @@ async function connect(code: string): Promise<Client> {
     }
     client.received.push(msg);
   });
+
+  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
+  // un slot : chaque client de ce harnais a donc son propre compte.
+  const { token } = await createAccount();
+  await ouverte;
+  ws.send(encodeHello(token));
 
   await waitFor(() => (client.playerId !== 0 ? client.playerId : null), 'WELCOME', 3000);
   return client;

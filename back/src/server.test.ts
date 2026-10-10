@@ -9,6 +9,7 @@ import {
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
+  encodeHello,
   encodeInput,
   encodeVote,
   type Message,
@@ -25,6 +26,7 @@ import { WEAPONS } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
+import { createAccount, prisma } from './accounts';
 import type { Room } from './room';
 import { buildServer } from './server';
 
@@ -35,6 +37,7 @@ let port: number;
 const openSockets: WebSocket[] = [];
 
 beforeEach(async () => {
+  await prisma.account.deleteMany();
   app = await buildServer();
   await app.listen({ port: 0, host: '127.0.0.1' });
   port = (app.server.address() as AddressInfo).port;
@@ -58,7 +61,26 @@ async function connect(code: string): Promise<{ ws: WebSocket; playerId: number 
   ws.binaryType = 'arraybuffer';
   openSockets.push(ws);
 
-  const welcome = await nextMessage(ws, (m) => m.type === MSG.WELCOME);
+  // `nextMessage` installe son listener de facon synchrone : la promesse est
+  // donc deja a l'ecoute avant que le HELLO ne parte.
+  const welcomePromise = nextMessage(ws, (m) => m.type === MSG.WELCOME);
+
+  // ⚠️ L'ecoute de 'open' est posee ICI, avant tout `await` : sur
+  // localhost la socket peut s'ouvrir plus vite qu'une volee Prisma, et un
+  // `once('open', ...)` pose apres `createAccount()` manquerait l'evenement
+  // deja passe, bloquant `connect` jusqu'au timeout du test.
+  const ouverte = new Promise<void>((resolve, reject) => {
+    ws.once('open', () => resolve());
+    ws.once('error', reject);
+  });
+
+  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
+  // un slot : chaque client de ce harnais a donc son propre compte.
+  const { token } = await createAccount();
+  await ouverte;
+  ws.send(encodeHello(token));
+
+  const welcome = await welcomePromise;
   if (welcome.type !== MSG.WELCOME) {
     throw new Error('WELCOME attendu');
   }

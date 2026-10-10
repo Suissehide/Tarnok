@@ -44,6 +44,10 @@ const METRICS_PERIOD_MS = 5000;
 const CLOSE_UNKNOWN_ROOM = 4004;
 const CLOSE_ROOM_FULL = 4003;
 const CLOSE_BAD_FRAME = 4002;
+/** Premier message absent ou pas un HELLO (etape 7a, §2.2 de la spec). */
+export const CLOSE_NO_HELLO = 4003;
+/** HELLO bien forme, jeton inconnu. */
+export const CLOSE_UNKNOWN_TOKEN = 4004;
 
 /**
  * Un salon en cours d'execution : la simulation, ses sockets, et sa boucle.
@@ -54,6 +58,7 @@ const CLOSE_BAD_FRAME = 4002;
  */
 class Session {
   readonly #clients = new Map<number, WebSocket>();
+  readonly #accounts = new Map<number, string>();
   readonly #outbox: Outbox & { buffers: ArrayBuffer[] };
   readonly #timer: NodeJS.Timeout;
   /** Octets reellement pousses sur le fil : l'encodage est mutualise, pas l'envoi. */
@@ -89,31 +94,83 @@ class Session {
     return this.#clients.size;
   }
 
-  /** Rend l'identifiant attribue, ou null si le salon est plein. */
-  add(ws: WebSocket): number | null {
-    const id = this.#freeId();
-    if (id === null || !this.room.join(id)) {
-      return null;
-    }
-    this.#clients.set(id, ws);
+  /** Le compte lie a un slot, pour le credit de fin de run. */
+  accountIdOf(playerId: number): string | undefined {
+    return this.#accounts.get(playerId);
+  }
 
+  /**
+   * Accepte une socket. N'attribue PAS de slot tout de suite : le slot
+   * n'existe qu'une fois le HELLO presente et le compte reconnu.
+   *
+   * ⚠️ C'est un changement de forme, pas seulement de contenu : `add` ne rend
+   * plus d'identifiant. Le salon plein ne peut plus se detecter a
+   * l'ouverture, puisqu'une socket non authentifiee n'occupe aucune place --
+   * il se detecte apres le HELLO, et ferme alors la socket.
+   */
+  add(ws: WebSocket): void {
     ws.binaryType = 'arraybuffer';
-    ws.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
-    ws.on('message', (data: ArrayBuffer) => {
-      this.#onFrame(id, ws, data);
-    });
-    ws.on('close', () => {
-      this.remove(id);
-    });
-    ws.on('error', () => {
-      this.remove(id);
-    });
 
-    return id;
+    const onFirst = async (data: ArrayBuffer): Promise<void> => {
+      let token: Uint8Array;
+      try {
+        const msg = decode(data);
+        if (msg.type !== MSG.HELLO) {
+          ws.close(CLOSE_NO_HELLO, 'HELLO attendu');
+          return;
+        }
+        token = msg.token;
+      } catch {
+        // Trame illisible ou tronquee : CETTE socket se ferme, jamais le
+        // salon. Meme discipline que `#onFrame`.
+        ws.close(CLOSE_BAD_FRAME, 'trame illisible');
+        return;
+      }
+
+      const accountId = await findAccountIdByToken(token);
+      if (accountId === null) {
+        ws.close(CLOSE_UNKNOWN_TOKEN, 'jeton inconnu');
+        return;
+      }
+
+      const id = this.#freeId();
+      if (id === null || !this.room.join(id)) {
+        ws.close(CLOSE_ROOM_FULL, 'salon plein');
+        return;
+      }
+
+      // ⚠️ Le listener du premier message est retire AVANT d'installer le
+      // suivant : sans ca, un second HELLO attribuerait un second slot au meme
+      // client (Review Focus n2).
+      ws.off('message', onFirstSync);
+
+      this.#clients.set(id, ws);
+      this.#accounts.set(id, accountId);
+      ws.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
+      ws.on('message', (frame: ArrayBuffer) => {
+        this.#onFrame(id, ws, frame);
+      });
+      ws.on('close', () => {
+        this.remove(id);
+      });
+      ws.on('error', () => {
+        this.remove(id);
+      });
+    };
+
+    const onFirstSync = (data: ArrayBuffer): void => {
+      void onFirst(data);
+    };
+
+    ws.on('message', onFirstSync);
+    ws.on('close', () => {
+      // Une socket qui part avant son HELLO n'a aucun slot a liberer.
+    });
   }
 
   remove(id: number): void {
     this.#clients.delete(id);
+    this.#accounts.delete(id);
     this.room.leave(id);
     if (this.#clients.size === 0) {
       this.onEmpty(this.code);
@@ -418,9 +475,9 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         ws.close(CLOSE_UNKNOWN_ROOM, 'salon inconnu');
         return;
       }
-      if (session.add(ws) === null) {
-        ws.close(CLOSE_ROOM_FULL, 'salon plein');
-      }
+      // Le salon plein se detecte apres le HELLO, pas ici : une socket non
+      // authentifiee n'occupe aucune place.
+      session.add(ws);
     });
   });
 
