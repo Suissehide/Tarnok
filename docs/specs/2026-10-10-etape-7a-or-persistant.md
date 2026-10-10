@@ -176,9 +176,15 @@ progression qui dépend du nombre de joueurs.
   compte.
 
 ⚠️ **« Fin de run », pas « extraction » — et la nuance compte.** Le §4.3 fait passer le wipe par le
-**même** chemin que l'extraction. La règle est donc celle du tick où `#endRun` s'exécute, quelle que
-soit la porte empruntée. Écrire « au tick d'extraction » aurait laissé le wipe sans règle le jour où
+**même** chemin que l'extraction. La règle est donc celle de la fin de run, quelle que soit la porte
+empruntée. Écrire « au tick d'extraction » aurait laissé le wipe sans règle le jour où
 `WIPE_GOLD_KEPT` cesse de valoir `0`.
+
+**Précision mesurée :** « connecté » se lit **au drain de `RUN_OVER`**, pas au tick exact de
+`#endRun`. Le drain a lieu dans la diffusion suivante, donc au plus **33 ms** après
+(`BROADCAST_MS = 1000 / SNAPSHOT_HZ`, et `SNAPSHOT_HZ = 30`). Un joueur qui se déconnecterait dans
+cette fenêtre de 33 ms ne serait pas crédité. C'est la seule définition implémentable — `Room` ne
+connaît aucun compte — et l'écart est d'un tick.
 
 ⚠️ **Propriété connue, écrite ici plutôt que découverte plus tard :** quelqu'un qui rejoint un salon au
 palier 9 juste avant l'extraction touche la totalité sans avoir joué. Les salons se rejoignent **par
@@ -191,13 +197,22 @@ exploitable, et c'est donc à l'étape 9 que ça se traite.
 lire-modifier-écrire : le même jeton peut être ouvert dans deux onglets, donc dans deux salons. Un
 incrément est juste sous concurrence ; une relecture suivie d'une écriture ne l'est pas.
 
-**Le crédit vit dans `#endRun`**, et c'est le seul endroit. `Room#endRun` est déjà documenté comme
-« LE seul endroit qui termine une run », avec **deux** chemins pour y arriver — l'équipe effacée et
-l'équipe qui part par le portail — et ses docblocks établissent qu'un second appel est
-**inatteignable**, le garde de tête de `step()` le rendant impossible.
+**Le crédit vit là où `Session` draine `RUN_OVER`** (`back/src/server.ts`), et c'est le seul endroit.
 
-**L'idempotence du crédit est donc héritée d'un invariant déjà prouvé**, et ne demande ni table de
-journal ni clé d'idempotence.
+⚠️ **Pas à l'intérieur de `Room#endRun`, et c'est une correction de la première rédaction de cette
+spec.** `Room` est de la logique de jeu **sans aucune I/O** — elle n'ouvre pas de socket, elle ne lit
+pas l'horloge système, elle ne connaît pas la base. Y glisser un appel Prisma mélangerait la
+simulation et la persistance, et rendrait `Room` intestable sans base. Le joint correct est le drain.
+
+**L'idempotence est héritée de DEUX invariants en série, tous deux déjà dans le code :**
+
+1. `Room#endRun` est documenté comme « LE seul endroit qui termine une run », avec **deux** chemins
+   pour y arriver — l'équipe effacée et l'équipe qui part par le portail — et ses docblocks
+   établissent qu'un second appel est **inatteignable**, le garde de tête de `step()` le rendant
+   impossible.
+2. `Room#drainRunOver()` **annule l'événement en le rendant** : il ne peut pas être observé deux fois.
+
+Le crédit ne demande donc ni table de journal ni clé d'idempotence.
 
 Conséquence voulue : l'extraction **et** le wipe passent par le même chemin. Le wipe crédite
 `gold × WIPE_GOLD_KEPT`, qui vaut `0` aujourd'hui. Faire passer cette constante à `0.15` — ce que son
