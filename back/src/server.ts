@@ -40,31 +40,36 @@ const MAX_CATCH_UP_STEPS = 5;
 /** Periode du HUD de debug serveur (§4.6 : un HUD, pas des logs). */
 const METRICS_PERIOD_MS = 5000;
 
-/** Codes de fermeture applicatifs, dans la plage privee 4000-4999. */
-const CLOSE_UNKNOWN_ROOM = 4004;
-const CLOSE_ROOM_FULL = 4003;
-const CLOSE_BAD_FRAME = 4002;
-/** Premier message absent ou pas un HELLO (etape 7a, §2.2 de la spec). */
-const CLOSE_NO_HELLO = 4005;
-/** HELLO bien forme, jeton inconnu -- le client doit frapper un nouveau compte. */
-const CLOSE_UNKNOWN_TOKEN = 4006;
-
 /**
- * Les cinq codes de fermeture applicatifs, groupes pour que leur distinction
- * mutuelle soit verifiable sans recopier une liste a la main.
+ * Codes de fermeture applicatifs, dans la plage privee 4000-4999.
  *
- * ⚠️ **N'existe que pour ce controle.** L'etape 7a a introduit une collision
- * (deux paires de codes partageaient 4003 et 4004) qu'une relecture n'a pas
- * vue : ce groupe rend la prochaine collision visible a l'oeil, a cote des
- * cinq valeurs, et verifiable par `handshake.integration.test.ts` sans
- * recopier les nombres a la main.
+ * ⚠️ **Toutes les valeurs vivent ICI, et nulle part en dehors de cet objet.**
+ * L'etape 7a a introduit une collision (deux paires de codes partageaient
+ * 4003 et 4004) qu'une relecture n'a pas vue : un `const CLOSE_*` isole,
+ * hors de cet objet, pourrait reproduire la meme erreur sans qu'aucun
+ * controle ne la voie. En declarant chaque valeur comme propriete de
+ * `CLOSE_CODES`, `handshake.integration.test.ts` peut assener qu'elles sont
+ * deux a deux distinctes (`Object.values(CLOSE_CODES)`) sans recopier une
+ * liste a la main, et un sixieme code oublie ici serait un sixieme code
+ * absent du controle.
  */
 export const CLOSE_CODES = Object.freeze({
-  UNKNOWN_ROOM: CLOSE_UNKNOWN_ROOM,
-  ROOM_FULL: CLOSE_ROOM_FULL,
-  BAD_FRAME: CLOSE_BAD_FRAME,
-  NO_HELLO: CLOSE_NO_HELLO,
-  UNKNOWN_TOKEN: CLOSE_UNKNOWN_TOKEN,
+  /** Code de salon absent du registre. */
+  UNKNOWN_ROOM: 4004,
+  /** Salon a `MAX_PLAYERS` places, toutes deja occupees. */
+  ROOM_FULL: 4003,
+  /** Trame WS illisible ou de longueur inattendue, HELLO compris. */
+  BAD_FRAME: 4002,
+  /** Premier message recu, mais ce n'est pas un HELLO. */
+  NO_HELLO: 4005,
+  /** HELLO bien forme, jeton inconnu -- le client doit frapper un nouveau compte. */
+  UNKNOWN_TOKEN: 4006,
+  /**
+   * Echec interne pendant la poignee de main (ex: base indisponible) : ce
+   * n'est pas le client qui est en faute, il peut reessayer sans frapper un
+   * nouveau compte.
+   */
+  INTERNAL_ERROR: 4007,
 });
 
 /**
@@ -119,7 +124,10 @@ class Session {
 
   /**
    * Accepte une socket. N'attribue PAS de slot tout de suite : le slot
-   * n'existe qu'une fois le HELLO presente et le compte reconnu.
+   * n'existe qu'une fois le HELLO presente et le compte reconnu. Une socket
+   * qui ne presente jamais de HELLO reste simplement ouverte et sans slot --
+   * il n'existe aucune echeance de poignee de main (dette nommee, voir le
+   * rapport de la tache 5).
    *
    * ⚠️ C'est un changement de forme, pas seulement de contenu : `add` ne rend
    * plus d'identifiant. Le salon plein ne peut plus se detecter a
@@ -129,61 +137,95 @@ class Session {
   add(ws: WebSocket): void {
     ws.binaryType = 'arraybuffer';
 
+    // Le slot attribue a cette socket, une fois le HELLO reconnu -- `null`
+    // tant qu'aucun compte n'est authentifie.
+    let id: number | null = null;
+
+    // ⚠️ Pose DES L'ENTREE de `add`, jamais apres le HELLO. Le receiver de
+    // `ws` appelle `websocket.emit('error', err)` sur une trame WS malformee
+    // (bit RSV pose, opcode inconnu, trame non masquee...), et un
+    // `EventEmitter` SANS listener `'error'` leve -- sans
+    // `process.on('uncaughtException')` dans `back/src`, ca tuerait le
+    // process entier, tous les salons de tous les joueurs avec lui. Un seul
+    // listener pour toute la vie de la socket : rien d'autre ne libere `id`,
+    // donc aucun risque de le liberer deux fois.
+    ws.on('error', () => {
+      if (id !== null) {
+        this.remove(id);
+      }
+    });
+    ws.on('close', () => {
+      if (id !== null) {
+        this.remove(id);
+      }
+    });
+
     const onFirst = async (data: ArrayBuffer): Promise<void> => {
       let token: Uint8Array;
       try {
         const msg = decode(data);
         if (msg.type !== MSG.HELLO) {
-          ws.close(CLOSE_NO_HELLO, 'HELLO attendu');
+          ws.close(CLOSE_CODES.NO_HELLO, 'HELLO attendu');
           return;
         }
         token = msg.token;
       } catch {
         // Trame illisible ou tronquee : CETTE socket se ferme, jamais le
         // salon. Meme discipline que `#onFrame`.
-        ws.close(CLOSE_BAD_FRAME, 'trame illisible');
+        ws.close(CLOSE_CODES.BAD_FRAME, 'trame illisible');
         return;
       }
 
       const accountId = await findAccountIdByToken(token);
       if (accountId === null) {
-        ws.close(CLOSE_UNKNOWN_TOKEN, 'jeton inconnu');
+        ws.close(CLOSE_CODES.UNKNOWN_TOKEN, 'jeton inconnu');
         return;
       }
 
-      const id = this.#freeId();
-      if (id === null || !this.room.join(id)) {
-        ws.close(CLOSE_ROOM_FULL, 'salon plein');
+      // ⚠️ La socket a pu se fermer PENDANT l'attente Prisma ci-dessus
+      // (rafraichissement, double-clic, coupure). Lui attribuer un slot
+      // fuirait pour toujours : son evenement `'close'` est deja parti, et
+      // ne se represente jamais -- `#clients.size` ne retomberait jamais a
+      // zero, `onEmpty` ne partirait jamais, le timer de cette `Session` ne
+      // s'arreterait jamais.
+      if (ws.readyState !== ws.OPEN) {
         return;
       }
 
-      // ⚠️ Le listener du premier message est retire AVANT d'installer le
-      // suivant : sans ca, un second HELLO attribuerait un second slot au meme
-      // client (Review Focus n2).
-      ws.off('message', onFirstSync);
+      const freeId = this.#freeId();
+      if (freeId === null || !this.room.join(freeId)) {
+        ws.close(CLOSE_CODES.ROOM_FULL, 'salon plein');
+        return;
+      }
+      id = freeId;
 
-      this.#clients.set(id, ws);
-      this.#accounts.set(id, accountId);
-      ws.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
+      this.#clients.set(freeId, ws);
+      this.#accounts.set(freeId, accountId);
+      ws.send(encodeWelcome(freeId, this.room.tick, this.room.mapSeed));
       ws.on('message', (frame: ArrayBuffer) => {
-        this.#onFrame(id, ws, frame);
-      });
-      ws.on('close', () => {
-        this.remove(id);
-      });
-      ws.on('error', () => {
-        this.remove(id);
+        this.#onFrame(freeId, ws, frame);
       });
     };
 
     const onFirstSync = (data: ArrayBuffer): void => {
-      void onFirst(data);
+      // ⚠️ Retire EN PREMIER, avant tout `await` : deux `HELLO` arrivant
+      // dans le meme segment TCP sont livres SYNCHRONIQUEMENT par le
+      // receiver de `ws`, dans le meme appel de `socketOnData`. Si le
+      // retrait attendait la resolution de `onFirst` (apres l'`await`
+      // Prisma), le second `HELLO` trouverait ce listener encore attache et
+      // attribuerait un second slot au meme client (Review Focus n2).
+      ws.off('message', onFirstSync);
+      onFirst(data).catch(() => {
+        // Echec imprevu (ex: Prisma indisponible) pendant la poignee de
+        // main : CETTE socket se ferme, jamais le salon. Code dedie, pas
+        // CLOSE_CODES.BAD_FRAME : la trame etait lisible, c'est le serveur
+        // qui a failli, pas le client -- il peut reessayer sans frapper un
+        // nouveau compte.
+        ws.close(CLOSE_CODES.INTERNAL_ERROR, 'erreur interne');
+      });
     };
 
     ws.on('message', onFirstSync);
-    ws.on('close', () => {
-      // Une socket qui part avant son HELLO n'a aucun slot a liberer.
-    });
   }
 
   remove(id: number): void {
@@ -238,7 +280,7 @@ class Session {
     } catch {
       // Une trame illisible ferme cette socket-la, jamais le salon : un client
       // buggue ne doit pas pouvoir couper la partie des autres.
-      ws.close(CLOSE_BAD_FRAME, 'trame illisible');
+      ws.close(CLOSE_CODES.BAD_FRAME, 'trame illisible');
       return;
     }
     if (msg.type === MSG.INPUT) {
@@ -490,7 +532,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     wss.handleUpgrade(req, socket, head, (ws) => {
       const session = sessions.get(code);
       if (!session) {
-        ws.close(CLOSE_UNKNOWN_ROOM, 'salon inconnu');
+        ws.close(CLOSE_CODES.UNKNOWN_ROOM, 'salon inconnu');
         return;
       }
       // Le salon plein se detecte apres le HELLO, pas ici : une socket non
