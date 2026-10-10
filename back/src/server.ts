@@ -70,6 +70,12 @@ export const CLOSE_CODES = Object.freeze({
    * nouveau compte.
    */
   INTERNAL_ERROR: 4007,
+  /**
+   * Compte reconnu, mais la Session s'est refermee (dernier joueur parti)
+   * PENDANT l'attente -- le salon n'existe plus dans `app.rooms`, accueillir
+   * ce client y serait l'accueillir dans une partie gelee et dereferencee.
+   */
+  ROOM_CLOSED: 4008,
 });
 
 /**
@@ -86,6 +92,13 @@ class Session {
   readonly #timer: NodeJS.Timeout;
   /** Octets reellement pousses sur le fil : l'encodage est mutualise, pas l'envoi. */
   #wireBytes = 0;
+  /**
+   * Vrai une fois `stop()` appelee. Un salon peut se refermer (dernier
+   * joueur parti) PENDANT qu'une autre socket attend encore la resolution
+   * de son compte dans `add` -- ce drapeau est ce que cette attente relit a
+   * sa reprise, pour ne pas accueillir un client dans un salon dereference.
+   */
+  #stopped = false;
 
   constructor(
     readonly code: string,
@@ -146,19 +159,25 @@ class Session {
     // (bit RSV pose, opcode inconnu, trame non masquee...), et un
     // `EventEmitter` SANS listener `'error'` leve -- sans
     // `process.on('uncaughtException')` dans `back/src`, ca tuerait le
-    // process entier, tous les salons de tous les joueurs avec lui. Un seul
-    // listener pour toute la vie de la socket : rien d'autre ne libere `id`,
-    // donc aucun risque de le liberer deux fois.
-    ws.on('error', () => {
+    // process entier, tous les salons de tous les joueurs avec lui.
+    //
+    // ⚠️ **`'error'` ET `'close'` peuvent tous deux declencher cette
+    // liberation pour le MEME evenement reseau** : `receiverOnError` clot la
+    // socket, qui emet ensuite son propre `'close'` (observe a ~1 ms
+    // d'intervalle). `libere` est donc idempotente par construction : le
+    // drapeau `id = null` est pose AVANT l'appel a `remove`, ce qui ferme la
+    // fenetre meme si `remove` rendait la main de facon reentrante -- sans
+    // ca, le second appel pourrait evincer en silence un slot deja repris
+    // par un autre client entre les deux evenements.
+    const libere = (): void => {
       if (id !== null) {
-        this.remove(id);
+        const victime = id;
+        id = null;
+        this.remove(victime);
       }
-    });
-    ws.on('close', () => {
-      if (id !== null) {
-        this.remove(id);
-      }
-    });
+    };
+    ws.on('error', libere);
+    ws.on('close', libere);
 
     const onFirst = async (data: ArrayBuffer): Promise<void> => {
       let token: Uint8Array;
@@ -189,6 +208,17 @@ class Session {
       // zero, `onEmpty` ne partirait jamais, le timer de cette `Session` ne
       // s'arreterait jamais.
       if (ws.readyState !== ws.OPEN) {
+        return;
+      }
+
+      // ⚠️ La Session elle-meme a pu se refermer PENDANT l'attente Prisma
+      // ci-dessus (dernier joueur parti, `onEmpty` puis `closeSession`) :
+      // la socket, elle, est toujours ouverte -- sans cette garde, le
+      // client serait accueilli (WELCOME compris) dans un salon gele et
+      // dereference de `app.rooms`, sans qu'aucune diffusion ne vienne
+      // jamais.
+      if (this.#stopped) {
+        ws.close(CLOSE_CODES.ROOM_CLOSED, 'salon ferme');
         return;
       }
 
@@ -238,6 +268,7 @@ class Session {
   }
 
   stop(): void {
+    this.#stopped = true;
     clearInterval(this.#timer);
     for (const ws of this.#clients.values()) {
       ws.close();

@@ -253,6 +253,12 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
    * controle, pour forcer une fenetre large et deterministe entre le HELLO
    * et sa resolution -- sans ce controle, la vraie requete Prisma est trop
    * rapide pour que la fermeture du client la devance de facon fiable.
+   *
+   * ⚠️ **Autoportant (ronde de correction 3/5) :** sans l'assertion sur
+   * `espion`, `playerCount === 0` serait aussi vrai si l'espionnage ne
+   * mordait pas du tout (jeton inconnu -> `UNKNOWN_TOKEN` -> zero slot) --
+   * seul `toHaveBeenCalledTimes(1)` prouve que ce test exerce bien le
+   * chemin simule, pas un autre qui arrive au meme resultat par hasard.
    */
   it('une socket fermee pendant la resolution du compte ne garde pas son slot', async () => {
     const code = await salon();
@@ -270,6 +276,7 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
       // simulee de la resolution du compte, puis ferme le client AVANT
       // qu'elle ne se resolve.
       await new Promise((r) => setTimeout(r, 50));
+      expect(espion).toHaveBeenCalledTimes(1);
       ws.close();
       await new Promise((r) => setTimeout(r, 50));
 
@@ -285,6 +292,56 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
         throw new Error('salon introuvable');
       }
       expect(room.playerCount).toBe(0);
+    } finally {
+      espion.mockRestore();
+    }
+  });
+
+  /**
+   * Meme classe que C2, cote `Session` plutot que cote socket (ronde de
+   * correction 3/5) : la `Session` elle-meme peut se refermer PENDANT
+   * l'attente de la resolution du compte -- le dernier joueur slote part,
+   * `remove` declenche `onEmpty`, qui referme la `Session` (`stop()`,
+   * `clearInterval`, et le salon retire de `app.rooms`). Avant le
+   * correctif, la garde de `add` ne regardait que `ws.readyState`, pas la
+   * vivacite du salon : un second joueur accueilli APRES cette fermeture
+   * recevrait un WELCOME dans une partie gelee et dereferencee, sans
+   * qu'aucune diffusion ne vienne jamais.
+   */
+  it('une session refermee pendant la resolution du compte n accueille personne', async () => {
+    const code = await salon();
+
+    // Premier et SEUL joueur du salon : son depart va refermer la Session,
+    // puisque personne d'autre n'y est encore slote.
+    const { token: tokenUn } = await accounts.createAccount();
+    const premier = ouvre(code);
+    await attendOuvert(premier);
+    premier.send(encodeHello(tokenUn));
+    expect(await premiere(premier)).toEqual({ type: MSG.WELCOME });
+
+    let resoudre: ((id: string | null) => void) | undefined;
+    const espion = vi
+      .spyOn(accounts, 'findAccountIdByToken')
+      .mockImplementation(() => new Promise((resolve) => (resoudre = resolve)));
+
+    try {
+      const second = ouvre(code);
+      await attendOuvert(second);
+      second.send(encodeHello(accounts.newToken()));
+
+      // Laisse le HELLO du second entrer dans l'attente simulee, PUIS le
+      // premier (et seul autre) joueur part : la Session se referme
+      // pendant que le second est encore en l'air.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(espion).toHaveBeenCalledTimes(1);
+      premier.close();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(app.rooms.get(code)).toBeUndefined();
+
+      // Le compte du second se resout APRES la fermeture de la Session.
+      resoudre?.('un-autre-compte-quelconque');
+      const vu = await premiere(second);
+      expect(vu.closed).toBe(4008);
     } finally {
       espion.mockRestore();
     }
