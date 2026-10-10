@@ -30,6 +30,12 @@ function bienForme(text: string | null): text is string {
  * reseau, pour que les sites qui ne passent pas cet argument (y compris les
  * tests qui testaient cette fonction avant que ce parametre n'existe)
  * gardent exactement le meme comportement.
+ *
+ * ⚠️ **Le rendu de `mint` est valide avant d'etre stocke.** Une reponse
+ * serveur mal formee (`{}`, par exemple) ecrirait sinon la chaine litterale
+ * "undefined" dans le `localStorage` du joueur, ce qui `bienForme` detecte
+ * mais ne corrigerait plus jamais tant que le navigateur garderait cette
+ * valeur. On leve plutot que de stocker.
  */
 export async function tokenText(
   storage: Pick<Storage, 'getItem' | 'setItem'>,
@@ -41,6 +47,9 @@ export async function tokenText(
     return existant;
   }
   const neuf = await mint();
+  if (!bienForme(neuf)) {
+    throw new Error('mint a rendu un jeton mal forme');
+  }
   storage.setItem(STORAGE_KEY, neuf);
   return neuf;
 }

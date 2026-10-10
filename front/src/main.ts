@@ -92,8 +92,15 @@ const mouse = new Mouse(stage.canvas);
  * Frappe le compte si besoin, puis affiche son solde.
  *
  * ⚠️ **Un echec reseau ne doit pas empecher de jouer.** Le solde est un
- * affichage ; si la base est injoignable, on joue sans le voir plutot que de
- * bloquer l'ecran d'accueil.
+ * affichage ; si la base est injoignable pour le LIRE (`GET /accounts/me`
+ * echoue), on joue sans le voir plutot que de bloquer l'ecran d'accueil.
+ *
+ * ⚠️ **Mais frapper un compte neuf (`mint`, via `tokenText`) peut echouer
+ * pour de vrai, et c'est fatal pour cet appel-ci.** Sans jeton il n'y a rien
+ * a faire tourner ; l'appelant (plus bas, au niveau module) encadre cet
+ * appel d'un `try`/`catch` pour que ce rejet n'arrete pas l'execution du
+ * module et laisse l'ecran d'accueil mort et muet — il ecrit plutot un
+ * message dans `#error` et continue, boutons vivants, jeton `null`.
  *
  * ⚠️ **Ruling P9 du coordinateur : un `401` de `GET /accounts/me` reecrit le
  * jeton.** Un jeton bien forme mais inconnu du serveur — base reinitialisee
@@ -136,7 +143,15 @@ async function chargeSolde(): Promise<string> {
   return texte;
 }
 
-const accountToken = tokenBytes(await chargeSolde());
+let accountToken: Uint8Array | null = null;
+try {
+  accountToken = tokenBytes(await chargeSolde());
+} catch (cause) {
+  // Base injoignable au tout premier chargement (mint echoue) : pas de
+  // jeton, mais l'ecran reste vivant plutot que de s'arreter en silence.
+  // Le serveur refusera la socket (pas de HELLO, §2.2) : voulu.
+  errorLine.textContent = `Connexion impossible : ${(cause as Error).message}`;
+}
 
 el<HTMLButtonElement>('create').addEventListener('click', () => {
   void createRoom();

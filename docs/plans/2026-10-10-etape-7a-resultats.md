@@ -1,6 +1,6 @@
 # Étape 7a — l'or survit : résultats
 
-**24 commits, 1 585 tests** (1 103 back, 482 front) — **+49** depuis avant l'étape (1 536 :
+**26 commits, 1 585 tests** (1 103 back, 482 front) — **+49** depuis avant l'étape (1 536 :
 1 064 back, 472 front). Le livrable tient : une extraction crédite le compte, et une seconde
 connexion avec le même jeton, sur une **vraie** socket et une **vraie** Postgres, voit le
 nouveau solde.
@@ -77,7 +77,7 @@ condition exacte qui échouait avant le dernier correctif (§8) :
 
 Avant l'étape : **1 536** tests (472 front + 1 064 back). Soit **+49**.
 Durée du back : **299 s**. La ligne de repli de `DATABASE_URL` s'imprime **une seule fois**.
-**24 commits** sur l'étape.
+**26 commits** sur l'étape.
 
 ## 4. Neuf défauts du plan, trouvés à l'exécution (rulings P1 à P9)
 

@@ -14,7 +14,7 @@
  * ⚠️ **Ce fichier tourne UNE FOIS PAR FICHIER DE TEST, pas une fois par
  * worker.** `isolate: true` (le defaut de Vitest, pas change ici) donne a
  * chaque fichier un environnement neuf, qui rejoue `setupFiles` — mesure a la
- * ronde precedente : 38 fichiers de test dans ce depot, donc 38 passages ici
+ * ronde precedente : 42 fichiers de test dans ce depot, donc 42 passages ici
  * par run complet, y compris pour les tests purs de `shared/` qui ne touchent
  * jamais la base. C'est PRECISEMENT pourquoi la migration ci-dessous est
  * conditionnelle : seul le premier fichier d'un schema paie le CLI, les

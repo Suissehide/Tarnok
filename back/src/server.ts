@@ -361,7 +361,14 @@ class Session {
     // `#accounts` ne porte que les slots encore connectes a cet instant --
     // un depart (`remove`) l'en retire au meme moment que `#clients`, donc
     // ses valeurs SONT les comptes a crediter, sans passer par `#clients`.
-    const comptes = [...this.#accounts.values()];
+    //
+    // Le `Set` est delibere, pas un hasard du `updateMany` : deux onglets sur
+    // le MEME salon tiennent deux slots avec le MEME jeton, et crediter deux
+    // fois le meme compte doublerait la cagnotte (2400 au lieu de 1200). Sans
+    // ce `Set`, remplacer l'`updateMany` par une boucle d'`update` (le reflexe
+    // pour tracer un echec compte par compte) crediterait en double sans
+    // qu'aucun test ne rougisse.
+    const comptes = [...new Set(this.#accounts.values())];
     if (comptes.length === 0) {
       return;
     }
@@ -377,6 +384,11 @@ class Session {
           );
           return;
         }
+        // Un delai entre deux essais, pas apres le dernier : sans lui, les
+        // trois tentatives tapent le MEME pool mort en moins de 10 ms (ex.
+        // Postgres qui redemarre, ~2s) et valent une seule tentative. 200 a
+        // 500 ms laisse une chance reelle a la base de revenir.
+        await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300));
       }
     }
   }

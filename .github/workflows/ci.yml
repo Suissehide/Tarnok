@@ -41,10 +41,15 @@ jobs:
       # `biome check` verifie format ET lint en une passe, et echoue si un
       # fichier n'est pas formate : pas de debat de style en revue.
       - run: npm run lint
-      - run: npm run typecheck
+      # AVANT le typecheck : sans ca, `@prisma/client` n'a que les types de
+      # secours ecrits par son `postinstall` (`PrismaClient` en `any`), et le
+      # typecheck de la CI ne verifie alors AUCUN usage de Prisma -- un nom de
+      # champ faux (`gold` ecrit `golds`) passerait le typecheck et ne
+      # rougirait qu'aux tests.
       - run: npm run db:generate -w back
         env:
           DATABASE_URL: postgresql://tarnok:tarnok@127.0.0.1:5432/tarnok
+      - run: npm run typecheck
       - run: npm test
         env:
           DATABASE_URL: postgresql://tarnok:tarnok@127.0.0.1:5432/tarnok

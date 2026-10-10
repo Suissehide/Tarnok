@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import net, { type AddressInfo } from 'node:net';
-import { encodeHello, MSG, TOKEN_BYTES } from '@shared/protocol';
+import { encodeHello, encodeInput, MSG, TOKEN_BYTES } from '@shared/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -150,6 +150,9 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
     bon.send(encodeHello(token));
     expect(await premiere(bon)).toEqual({ type: MSG.WELCOME });
 
+    // Chaque trame est remplie de zeros : son premier octet vaut 0, qui
+    // n'est PAS un MSG valide (ils commencent a 1). `decode` leve donc a
+    // chaque fois, et c'est BAD_FRAME (4002) qui ferme -- jamais NO_HELLO.
     for (const mauvais of [
       new ArrayBuffer(0),
       new ArrayBuffer(10),
@@ -159,11 +162,30 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
       await attendOuvert(ws);
       ws.send(mauvais);
       const vu = await premiere(ws);
-      expect(vu.closed).toBeGreaterThanOrEqual(4000);
+      expect(vu.closed).toBe(CLOSE_CODES.BAD_FRAME);
     }
 
     // Et le joueur legitime est toujours la : son salon n'est pas tombe.
     expect(bon.readyState).toBe(WebSocket.OPEN);
+  });
+
+  /**
+   * La branche manquante de la liste ci-dessus : une trame VALIDE et
+   * DECODABLE, mais qui n'est pas un HELLO -- exactement un client d'avant
+   * l'etape 7a, qui enverrait un INPUT en premier. Les trois cas au-dessus
+   * sont tous illisibles (BAD_FRAME, 4002) ; aucun n'exerce jamais le code
+   * NO_HELLO (4005), qui suppose un `decode` reussi.
+   */
+  it('un INPUT envoye en premier, avant tout HELLO, ferme en NO_HELLO', async () => {
+    const code = await salon();
+    const ws = ouvre(code);
+    await attendOuvert(ws);
+    ws.send(encodeInput(0, 0, 0, 0, 0));
+    const vu = await premiere(ws);
+    // Chiffre nu, pas `CLOSE_CODES.NO_HELLO` : ce test doit rougir aussi si
+    // `CLOSE_CODES` lui-meme se trompait de valeur (deja arrive une fois,
+    // voir son docblock), pas seulement si le serveur arretait de s'y lire.
+    expect(vu.closed).toBe(4005);
   });
 
   /**

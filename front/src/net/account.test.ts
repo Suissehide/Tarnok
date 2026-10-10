@@ -56,6 +56,29 @@ describe('etape 7a tache 7 : le jeton du client', () => {
   });
 
   /**
+   * ⚠️ **Un `mint` qui echoue (base injoignable) ne doit RIEN stocker.**
+   * `main.ts` compte sur ce rejet pour afficher un message plutot que de
+   * bloquer l'ecran d'accueil (voir son docblock) ; si `tokenText` avalait
+   * l'erreur ou stockait quand meme, l'ecran se peindrait avec un jeton
+   * inutilisable sans que personne ne le sache.
+   */
+  it('un mint qui leve ne stocke rien et laisse le stockage intact', async () => {
+    const s = fausseStorage();
+    const mint = vi.fn(async () => {
+      throw new Error('POST /accounts : 500');
+    });
+    await expect(tokenText(s, mint)).rejects.toThrow('POST /accounts : 500');
+    expect(s.lu[STORAGE_KEY]).toBeUndefined();
+  });
+
+  it('un mint qui rend un jeton mal forme leve et ne stocke rien', async () => {
+    const s = fausseStorage();
+    const mint = vi.fn(async () => undefined as unknown as string);
+    await expect(tokenText(s, mint)).rejects.toThrow();
+    expect(s.lu[STORAGE_KEY]).toBeUndefined();
+  });
+
+  /**
    * ⚠️ **Un jeton bien forme mais INCONNU du serveur doit etre remplace, pas
    * conserve.** Ruling P9 du coordinateur.
    *
