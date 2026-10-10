@@ -45,9 +45,27 @@ const CLOSE_UNKNOWN_ROOM = 4004;
 const CLOSE_ROOM_FULL = 4003;
 const CLOSE_BAD_FRAME = 4002;
 /** Premier message absent ou pas un HELLO (etape 7a, §2.2 de la spec). */
-export const CLOSE_NO_HELLO = 4003;
-/** HELLO bien forme, jeton inconnu. */
-export const CLOSE_UNKNOWN_TOKEN = 4004;
+const CLOSE_NO_HELLO = 4005;
+/** HELLO bien forme, jeton inconnu -- le client doit frapper un nouveau compte. */
+const CLOSE_UNKNOWN_TOKEN = 4006;
+
+/**
+ * Les cinq codes de fermeture applicatifs, groupes pour que leur distinction
+ * mutuelle soit verifiable sans recopier une liste a la main.
+ *
+ * ⚠️ **N'existe que pour ce controle.** L'etape 7a a introduit une collision
+ * (deux paires de codes partageaient 4003 et 4004) qu'une relecture n'a pas
+ * vue : ce groupe rend la prochaine collision visible a l'oeil, a cote des
+ * cinq valeurs, et verifiable par `handshake.integration.test.ts` sans
+ * recopier les nombres a la main.
+ */
+export const CLOSE_CODES = Object.freeze({
+  UNKNOWN_ROOM: CLOSE_UNKNOWN_ROOM,
+  ROOM_FULL: CLOSE_ROOM_FULL,
+  BAD_FRAME: CLOSE_BAD_FRAME,
+  NO_HELLO: CLOSE_NO_HELLO,
+  UNKNOWN_TOKEN: CLOSE_UNKNOWN_TOKEN,
+});
 
 /**
  * Un salon en cours d'execution : la simulation, ses sockets, et sa boucle.

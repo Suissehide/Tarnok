@@ -4,7 +4,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
 import { createAccount, newToken, prisma } from './accounts';
-import { buildServer } from './server';
+import { buildServer, CLOSE_CODES } from './server';
 
 type App = Awaited<ReturnType<typeof buildServer>>;
 
@@ -89,7 +89,7 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
     await attendOuvert(ws);
     ws.send(encodeHello(newToken()));
     const vu = await premiere(ws);
-    expect(vu.closed).toBe(4004);
+    expect(vu.closed).toBe(4006);
   });
 
   /**
@@ -164,5 +164,23 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
     ws.send(encodeHello(token));
     await new Promise((r) => setTimeout(r, 200));
     expect(room.playerCount).toBe(avant);
+  });
+
+  /**
+   * ⚠️ **Les cinq codes de fermeture doivent etre deux a deux DISTINCTS.**
+   *
+   * L'etape 7a a ajoute deux codes en reutilisant par erreur 4003 et 4004,
+   * deja pris par `CLOSE_ROOM_FULL` et `CLOSE_UNKNOWN_ROOM` -- et les deux
+   * paires sont atteignables sur le MEME chemin de socket. Un client ne
+   * pouvait donc plus distinguer « salon inconnu » (afficher une erreur de
+   * code) de « jeton inconnu » (frapper un nouveau compte).
+   *
+   * Cet invariant remplace la vigilance par une assertion : le prochain code
+   * ajoute en doublon fera rougir ce test au lieu d'etre decouvert par un
+   * comportement client inexplicable.
+   */
+  it('les cinq codes de fermeture sont deux a deux distincts', () => {
+    const codes = Object.values(CLOSE_CODES);
+    expect(new Set(codes).size).toBe(codes.length);
   });
 });
