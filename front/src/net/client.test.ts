@@ -6,6 +6,7 @@ import {
   COIN_DROP_ONE_IN,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
+  INPUT_HZ,
   LEVEL_RESUME_TICKS,
   MAP_SIZE,
   MARK_DURATION_TICKS,
@@ -47,6 +48,7 @@ import {
   OUTCOME,
   packElementPair,
   packZoneKind,
+  TOKEN_BYTES,
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -76,6 +78,14 @@ import {
  */
 class FakeSocket {
   static instances: FakeSocket[] = [];
+  /**
+   * Meme valeur que le vrai `WebSocket.OPEN` : `#sendInput` (client.ts) ne
+   * parle que si `readyState === WebSocket.OPEN`, et `WebSocket` est ici le
+   * symbole global stubbe sur CETTE classe (voir `vi.stubGlobal` plus bas) —
+   * sans cette constante, `WebSocket.OPEN` vaudrait `undefined` et aucun
+   * INPUT ne partirait jamais, meme apres un vrai `emit('open', ...)`.
+   */
+  static readonly OPEN = 1;
   readonly #listeners = new Map<string, ((event: { data: ArrayBuffer }) => void)[]>();
   binaryType = '';
   readyState = 0;
@@ -102,6 +112,13 @@ class FakeSocket {
   }
 
   emit(type: string, event: { data: ArrayBuffer }): void {
+    // Un vrai WebSocket passe a OPEN AVANT de declencher son evenement
+    // 'open' : sans cette ligne, un test qui emet 'open' puis avance le
+    // temps ne verrait jamais `#sendInput` parler, faute de `readyState`
+    // credible.
+    if (type === 'open') {
+      this.readyState = FakeSocket.OPEN;
+    }
     for (const cb of this.#listeners.get(type) ?? []) {
       cb(event);
     }
@@ -3896,5 +3913,84 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
 
     auTick(socket, 920, 0);
     expect(client.gold).toBe(0);
+  });
+});
+
+/**
+ * ⚠️ **Premier `describe` de ce fichier a declencher reellement `'open'`.**
+ * Trouvaille de la ronde de correction 1/5 sur la tache 7 : jusqu'ici, toute
+ * la suite construisait `GameClient` puis `connect()`, mais n'emettait jamais
+ * l'evenement `'open'` lui-meme — elle passait directement a `emit('message',
+ * ...)`. Ni l'envoi du `HELLO` (tache 7), ni le `setInterval` d'`INPUT` qui
+ * preexistait, n'etaient donc exerces par cette suite. Ce n'est pas une
+ * regression de la tache 7 — c'est un trou anterieur qu'elle a rendu visible,
+ * en portant desormais la ligne la plus importante du livrable (le jeton
+ * part bien). Le prochain qui touche le gestionnaire `'open'` de `connect()`
+ * sait maintenant qu'un test le regarde.
+ */
+describe('GameClient — le HELLO envoye a l ouverture de la socket (tache 7)', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  /** Octets reconnaissables, jamais des zeros — memes repere qu'en tache 1. */
+  const JETON = new Uint8Array(TOKEN_BYTES);
+  for (let i = 0; i < TOKEN_BYTES; i++) {
+    JETON[i] = (i * 7 + 3) & 0xff;
+  }
+
+  it('est la PREMIERE trame envoyee, porte le jeton exact, et precede tout INPUT', () => {
+    vi.useFakeTimers();
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      JETON,
+    );
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('open', { data: new ArrayBuffer(0) });
+
+    // Une seule trame envoyee a l'ouverture, et c'est le HELLO — pas
+    // seulement « un HELLO existe quelque part dans `sent`».
+    expect(socket.sent.length).toBe(1);
+    const msg = decode(socket.sent[0] as ArrayBuffer);
+    expect(msg.type).toBe(MSG.HELLO);
+    if (msg.type !== MSG.HELLO) {
+      throw new Error('inaccessible : verifie juste au-dessus');
+    }
+    expect([...msg.token]).toEqual([...JETON]);
+
+    // Avance d'un tick d'INPUT : le HELLO reste le PREMIER envoi, jamais
+    // depasse par un INPUT qui serait parti avant lui. C'est cette assertion,
+    // et elle seule, qui rougirait si l'envoi du HELLO etait deplace apres le
+    // `setInterval` dans `connect()`.
+    vi.advanceTimersByTime(1000 / INPUT_HZ);
+    expect(socket.sent.length).toBeGreaterThan(1);
+    expect(decode(socket.sent[0] as ArrayBuffer).type).toBe(MSG.HELLO);
+  });
+
+  /**
+   * ⚠️ Sans ce test negatif, un code qui enverrait un HELLO vide ou bidon a
+   * CHAQUE connexion passerait le test precedent (qui ne construit qu'avec un
+   * jeton). Les 40 constructions existantes de ce fichier ne passent aucun
+   * jeton (septieme parametre par defaut a `null`) — elles ne doivent
+   * declencher AUCUN envoi a l'ouverture.
+   */
+  it('n envoie AUCUN HELLO quand aucun jeton n est fourni', () => {
+    vi.useFakeTimers();
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('open', { data: new ArrayBuffer(0) });
+
+    expect(socket.sent.length).toBe(0);
+
+    vi.advanceTimersByTime(1000 / INPUT_HZ);
+    expect(socket.sent.length).toBeGreaterThan(0);
+    expect(decode(socket.sent[0] as ArrayBuffer).type).not.toBe(MSG.HELLO);
   });
 });
