@@ -1,5 +1,6 @@
 import { Keyboard } from './input/keyboard';
 import { Mouse } from './input/mouse';
+import { tokenBytes, tokenText } from './net/account';
 import {
   type ConnectionStatus,
   GameClient,
@@ -63,6 +64,7 @@ const summaryLevel = el('summary-level');
 const summaryKills = el('summary-kills');
 const errorLine = el('error');
 const codeInput = el<HTMLInputElement>('code');
+const goldLine = el('account-gold');
 
 /** Les cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
 const hudElements: HudElements = {
@@ -85,6 +87,56 @@ await stage.init(el('stage'));
 // au-dessus : c'est lui qui sert de reference pour les coordonnees ecran
 // (tache 13), et `Stage.screenToWorld` partage la meme camera.
 const mouse = new Mouse(stage.canvas);
+
+/**
+ * Frappe le compte si besoin, puis affiche son solde.
+ *
+ * ⚠️ **Un echec reseau ne doit pas empecher de jouer.** Le solde est un
+ * affichage ; si la base est injoignable, on joue sans le voir plutot que de
+ * bloquer l'ecran d'accueil.
+ *
+ * ⚠️ **Ruling P9 du coordinateur : un `401` de `GET /accounts/me` reecrit le
+ * jeton.** Un jeton bien forme mais inconnu du serveur — base reinitialisee
+ * en developpement, par exemple — resterait sinon stocke pour toujours : la
+ * poignee de main WebSocket le refuserait a chaque tentative, et le joueur ne
+ * pourrait plus jamais jouer, sans rien a l'ecran qui le lui dise. `verifie`
+ * ci-dessous est ce que `tokenText` appelle pour decider s'il faut re-frapper
+ * (voir son docblock dans `net/account.ts`) ; elle ne traite QUE le 401 comme
+ * un jeton mort — un 500 ou une panne reseau ne doivent pas faire perdre un
+ * compte par ailleurs valide.
+ */
+async function chargeSolde(): Promise<string> {
+  async function mint(): Promise<string> {
+    const res = await fetch(`${API_URL}/accounts`, { method: 'POST' });
+    if (!res.ok) {
+      throw new Error(`POST /accounts : ${res.status}`);
+    }
+    return (await res.json()).token as string;
+  }
+  async function verifie(texte: string): Promise<boolean> {
+    try {
+      const res = await fetch(`${API_URL}/accounts/me`, {
+        headers: { Authorization: `Bearer ${texte}` },
+      });
+      return res.status !== 401;
+    } catch {
+      return true;
+    }
+  }
+
+  const texte = await tokenText(window.localStorage, mint, verifie);
+  try {
+    const res = await fetch(`${API_URL}/accounts/me`, {
+      headers: { Authorization: `Bearer ${texte}` },
+    });
+    goldLine.textContent = res.ok ? (await res.json()).gold : '—';
+  } catch {
+    goldLine.textContent = '—';
+  }
+  return texte;
+}
+
+const accountToken = tokenBytes(await chargeSolde());
 
 el<HTMLButtonElement>('create').addEventListener('click', () => {
   void createRoom();
@@ -127,6 +179,7 @@ function join(code: string): void {
     // Tache 28 : la carte n'existe qu'a partir du WELCOME (graine recue),
     // donc on ne peut dessiner les obstacles qu'a ce moment-la — jamais avant.
     (map) => stage.drawObstacles(map),
+    accountToken,
   );
   client.connect();
 

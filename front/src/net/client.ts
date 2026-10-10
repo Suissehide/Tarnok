@@ -29,6 +29,7 @@ import {
   type BossChargeMessage,
   decode,
   encodeDraftToken,
+  encodeHello,
   encodeInput,
   encodeVote,
   MSG,
@@ -1134,6 +1135,18 @@ export class GameClient {
      * que de regenerer un masque a cote qui pourrait diverger.
      */
     private readonly onMapReady: (map: ObstacleMap) => void = () => undefined,
+    /**
+     * Le jeton de compte, en octets. Envoye comme PREMIER message de la socket
+     * (`MSG.HELLO`) : le serveur n'attribue aucun slot avant de l'avoir
+     * reconnu (§2.2 de la spec de l'etape 7a).
+     *
+     * ⚠️ **Optionnel ici, obligatoire cote SERVEUR.** Ce client n'a aucune
+     * autorite : une socket sans `HELLO` valide est fermee par le serveur.
+     * L'optionalite n'ouvre donc aucun chemin de jeu, elle evite seulement
+     * d'imposer une valeur inutile aux quarante constructions de
+     * `client.test.ts`.
+     */
+    private readonly accountToken: Uint8Array | null = null,
   ) {}
 
   get status(): ConnectionStatus {
@@ -1382,6 +1395,11 @@ export class GameClient {
     this.#ws = ws;
 
     ws.addEventListener('open', () => {
+      // Le PREMIER octet que ce client envoie, toujours — avant le moindre
+      // INPUT, parce que le serveur n'attribue pas de slot avant.
+      if (this.accountToken) {
+        ws.send(encodeHello(this.accountToken));
+      }
       this.#setStatus('open');
       // Cadence d'envoi, pas cadence de simulation : un peu de gigue ici n'a
       // aucune consequence, le serveur horodate par son propre tick.
