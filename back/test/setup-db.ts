@@ -45,9 +45,9 @@ const worker = process.env.VITEST_WORKER_ID ?? '1';
 const schema = `test_${worker}`;
 // ⚠️ `schema` vient de VITEST_WORKER_ID, donc d'un environnement et pas d'un
 // utilisateur — mais une interpolation non gardee dans du SQL est une
-// habitude qu'on ne prend pas. Cette garde couvre les DEUX interpolations
-// ci-dessous (le nom de schema dans la recherche de table, et dans la
-// requete sur `_prisma_migrations`).
+// habitude qu'on ne prend pas. Cette garde garantit que `schema` ne peut
+// valoir qu'une forme connue avant d'entrer dans une requete, quel que soit
+// le nombre de requetes qui l'interpolent plus bas.
 if (!/^test_\d+$/.test(schema)) {
   throw new Error(`nom de schema inattendu : ${schema}`);
 }
