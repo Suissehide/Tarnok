@@ -419,10 +419,11 @@ async function attendreCreditOuAbandon(
  *
  * ⚠️ **La cagnotte posee par l'appelant est REIMPOSEE juste avant le vote.**
  * Tuer le boss pour ouvrir le portail est un EFFET DE BORD de ce harnais, pas
- * la mecanique testee -- et `#endRun` verse le bonus de palier au meme tick
- * (voir `Room#step`). Sans cette remise a niveau, le credit mesure plus loin
- * serait celui de `debugSetGold(...)` MAJORE d'un bonus de boss que le test
- * n'a jamais demande.
+ * la mecanique testee -- et c'est `Room#step` qui verse le bonus de palier,
+ * au tick de la mort du boss, PAS `#endRun` : `#endRun` dit lui-meme
+ * explicitement « l'or n'est pas touche ici ». Sans cette remise a niveau,
+ * le credit mesure plus loin serait celui de `debugSetGold(...)` MAJORE d'un
+ * bonus de boss que le test n'a jamais demande.
  */
 async function voteExtraction(clients: readonly Client[], room: Room): Promise<void> {
   const tireur = clients[0];

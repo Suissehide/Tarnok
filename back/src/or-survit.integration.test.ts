@@ -324,11 +324,13 @@ async function attendreCreditOuAbandon(
  * `voteExtraction` dans `credit.integration.test.ts`.
  *
  * ⚠️ **La cagnotte posee par l'appelant est REIMPOSEE juste avant le vote.**
- * Tuer le boss pour ouvrir le portail paie AUSSI le bonus d'or du palier
- * (`Room#endRun`, au meme tick) -- un piege de decor trouve a la tache 6.
- * Sans cette remise a niveau, le credit mesure plus loin serait celui de
- * `debugSetGold(...)` MAJORE d'un bonus que ce fichier n'a jamais demande,
- * et les montants attendus (1200, 700) ne tomberaient pas juste.
+ * Tuer le boss pour ouvrir le portail paie AUSSI le bonus d'or du palier --
+ * c'est `Room#step` qui l'ajoute, au tick de la mort du boss
+ * (`this.#gold += palierGold(...)`), PAS `#endRun` : `#endRun` dit lui-meme
+ * explicitement « l'or n'est pas touche ici ». Un piege de decor trouve a la
+ * tache 6. Sans cette remise a niveau, le credit mesure plus loin serait
+ * celui de `debugSetGold(...)` MAJORE d'un bonus que ce fichier n'a jamais
+ * demande, et les montants attendus (1200, 700) ne tomberaient pas juste.
  */
 async function voteExtraction(clients: readonly Client[], room: Room): Promise<void> {
   const tireur = clients[0];
