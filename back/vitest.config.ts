@@ -42,8 +42,12 @@ export default defineConfig({
      * reel vaut mieux que de le voir rougir au hasard.
      */
     testTimeout: 60_000,
-    // ⚠️ `setupFiles`, pas `globalSetup` : il faut que ca tourne UNE FOIS PAR
-    // WORKER (chacun a son schema), pas une fois pour toute la suite.
+    // ⚠️ `setupFiles`, pas `globalSetup` : il faut que ca tourne a CHAQUE
+    // FICHIER de test (chacun peut tomber sur un schema neuf), pas une fois
+    // pour toute la suite. C'est reellement une fois PAR FICHIER, pas par
+    // worker (voir le docblock de setup-db.ts) — la migration y est donc
+    // conditionnelle, pour que seul le premier fichier d'un schema paie le
+    // CLI Prisma.
     setupFiles: ['./test/setup-db.ts'],
   },
 });
