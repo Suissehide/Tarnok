@@ -23,6 +23,7 @@ import {
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
+import { createAccount, findAccountIdByToken, goldOf, textToToken, tokenToText } from './accounts';
 import { FixedStepAccumulator } from './loop';
 import type { Outbox, Room } from './room';
 import { RoomRegistry } from './rooms';
@@ -335,6 +336,28 @@ export interface ServerOptions {
   roomSeed?: number;
 }
 
+/**
+ * Lit le compte designe par un en-tete `Authorization: Bearer <jeton>`.
+ *
+ * ⚠️ **Rend `null` pour TOUTE forme d'echec**, et le fait sans distinguer
+ * « en-tete absent », « en-tete mal forme » et « jeton inconnu » : les trois
+ * doivent produire le meme 401. Distinguer renseignerait un attaquant sur
+ * l'existence d'un compte.
+ */
+export async function accountIdFromHeader(header: string | undefined): Promise<string | null> {
+  if (!header) {
+    return null;
+  }
+  const texte = header.startsWith('Bearer ') ? header.slice('Bearer '.length) : header;
+  let token: Uint8Array;
+  try {
+    token = textToToken(texte.trim());
+  } catch {
+    return null;
+  }
+  return findAccountIdByToken(token);
+}
+
 export async function buildServer(options: ServerOptions = {}): Promise<FastifyInstance> {
   const app = Fastify({ logger: false });
   await app.register(cors, { origin: process.env.CORS_ORIGIN ?? true });
@@ -355,6 +378,28 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     const { code, room } = registry.create(options.roomSeed);
     sessions.set(code, new Session(code, room, closeSession));
     return reply.code(201).send({ code });
+  });
+
+  // Le compte anonyme du §11 : aucun formulaire, aucun clic. Le client appelle
+  // cette route au premier chargement ou son localStorage ne porte pas deja un
+  // jeton, et jamais autrement.
+  //
+  // ⚠️ Pas de plafond par IP : la table est donc remplissable par une boucle.
+  // Ecart assume au §7 de la spec, a traiter quand le jeu est expose.
+  app.post('/accounts', async (_req, reply) => {
+    const { token } = await createAccount();
+    return reply.code(201).send({ token: tokenToText(token) });
+  });
+
+  app.get('/accounts/me', async (req, reply) => {
+    const accountId = await accountIdFromHeader(req.headers.authorization);
+    if (accountId === null) {
+      return reply.code(401).send({ error: 'jeton absent ou inconnu' });
+    }
+    // ⚠️ **En TEXTE, pas en nombre.** `bigint` n'est pas serialisable en JSON,
+    // et un nombre JSON perdrait la precision au-dela de 2^53 — alors que la
+    // colonne, elle, tient jusqu'a 2^63.
+    return reply.send({ gold: (await goldOf(accountId)).toString() });
   });
 
   const wss = new WebSocketServer({ noServer: true });
