@@ -8,6 +8,23 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # La PREMIERE base du projet entre dans le portique. L'image est la MEME
+    # que celle de deploy/compose.yaml : aucune derive entre ce qui est teste
+    # et ce qui est deploye n'est donc possible — c'est la premiere forme du
+    # « decor qui masque » recensee a l'etape 5c, et on la ferme d'avance.
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: tarnok
+          POSTGRES_PASSWORD: tarnok
+          POSTGRES_DB: tarnok
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U tarnok -d tarnok"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -25,7 +42,12 @@ jobs:
       # fichier n'est pas formate : pas de debat de style en revue.
       - run: npm run lint
       - run: npm run typecheck
+      - run: npm run db:generate -w back
+        env:
+          DATABASE_URL: postgresql://tarnok:tarnok@127.0.0.1:5432/tarnok
       - run: npm test
+        env:
+          DATABASE_URL: postgresql://tarnok:tarnok@127.0.0.1:5432/tarnok
       - run: npm run build -w front
 
       # Les assets Tiny Swords ne doivent jamais entrer dans l'historique : la

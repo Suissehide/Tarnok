@@ -1,0 +1,28 @@
+// La PREMIERE base du projet. Le §12 de la spec d'orientation a tranche la
+// pile (Prisma + PostgreSQL) des l'etape 0, et deploy/compose.yaml declare
+// deja une postgres:16-alpine avec son volume : il ne manquait que
+// l'applicatif.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/// Un compte anonyme. Cree sans friction a la premiere partie (§11 de
+/// l'orientation), identifie par un jeton dont seul le sha256 est stocke.
+model Account {
+  id        String   @id @default(uuid())
+  /// sha256 du jeton, en hexadecimal. Le jeton EN CLAIR n'est jamais stocke :
+  /// un dump de cette table ne donne donc aucun compte.
+  tokenHash String   @unique
+  /// ⚠️ BigInt, et c'est un CALCUL, pas une precaution. GOLD_MAX vaut
+  /// 0xffffffff = 4 294 967 295 (le plein u32, borne du fil posee a l'etape
+  /// 6a), alors qu'un Int PostgreSQL plafonne a 2 147 483 647. Un Int
+  /// deborderait des la PREMIERE run au plafond, pas « a terme ».
+  gold      BigInt   @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

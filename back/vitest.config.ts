@@ -42,5 +42,8 @@ export default defineConfig({
      * reel vaut mieux que de le voir rougir au hasard.
      */
     testTimeout: 60_000,
+    // ⚠️ `setupFiles`, pas `globalSetup` : il faut que ca tourne UNE FOIS PAR
+    // WORKER (chacun a son schema), pas une fois pour toute la suite.
+    setupFiles: ['./test/setup-db.ts'],
   },
 });

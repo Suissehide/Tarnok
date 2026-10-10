@@ -63,6 +63,22 @@ Ouvrir deux onglets, créer un salon dans l'un, rejoindre avec le code dans l'au
 > Si un autre projet occupe déjà le port 3000, changer `PORT` dans `back/.env` **et** les
 > deux URL dans `front/.env` : elles doivent rester d'accord.
 
+### La base
+
+Le back a besoin d'une PostgreSQL depuis l'étape 7a. Pour n'en lancer qu'elle :
+
+```bash
+docker run --rm -d --name tarnok-db -p 127.0.0.1:5442:5432 \
+  -e POSTGRES_USER=tarnok -e POSTGRES_PASSWORD=tarnok -e POSTGRES_DB=tarnok \
+  postgres:16-alpine
+export DATABASE_URL='postgresql://tarnok:tarnok@127.0.0.1:5442/tarnok'
+npm run db:migrate -w back
+```
+
+La même image que `deploy/compose.yaml`, pour qu'aucune dérive ne soit possible. Le port est
+5442, pas le 5432 par défaut de Postgres : ce dernier est fréquemment déjà pris par un autre
+projet sur la machine d'un développeur.
+
 ## Commandes
 
 ```bash
