@@ -632,20 +632,37 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
   }, 120_000);
 
   /**
-   * **RONDE 1 : reecrit apres relecture.** Review Focus n°5 : deux salons qui
-   * finissent sur le MEME compte, et dont les deux credits sont EN VOL EN
-   * MEME TEMPS -- c'est ce qui discrimine un `increment` atomique d'un
-   * lire-modifier-ecrire (`findUnique` puis `update`), qui en perdrait un des
-   * deux avec une forte probabilite.
+   * **RONDE 3 : la lecture finale SONDE, elle ne lit plus une seule fois.**
+   * Review Focus n°5 : deux salons qui finissent sur le MEME compte, et dont
+   * les deux credits sont EN VOL EN MEME TEMPS -- c'est ce qui discrimine un
+   * `increment` atomique d'un lire-modifier-ecrire (`findUnique` puis
+   * `update`), qui en perdrait un des deux avec une forte probabilite.
    *
-   * ⚠️ **La version precedente de ce test ne discriminait rien.** Elle
-   * attendait chaque `voteExtraction` avant de lancer le second salon : les
-   * deux credits etaient donc toujours SEQUENTIELS, jamais en concurrence
-   * reelle. Un lire-modifier-ecrire aussi aurait rendu `800n` dans cette
-   * version -- le test passait pour la meme raison qu'un `increment`, pas
-   * pour une raison qui lui est propre. Les deux salons et les deux sockets
-   * sont donc montes D'ABORD, et les deux `voteExtraction` partent ENSEMBLE
-   * sous un seul `Promise.all`.
+   * ⚠️ **RONDE 1 : la version d'avant ne discriminait rien.** Elle attendait
+   * chaque `voteExtraction` avant de lancer le second salon : les deux
+   * credits etaient donc toujours SEQUENTIELS, jamais en concurrence reelle.
+   * Un lire-modifier-ecrire aussi aurait rendu `800n` dans cette version.
+   * Corrige en montant les deux salons et les deux sockets D'ABORD, puis en
+   * lancant les deux `voteExtraction` ENSEMBLE sous un seul `Promise.all`.
+   *
+   * ⚠️ **RONDE 3 : ce correctif a rendu le MOMENT DE LA LECTURE incertain, et
+   * une lecture unique juste apres le `Promise.all` rougissait par flake
+   * (mesure : 5/6 puis 6/6 sur deux lancements consecutifs, avec zero ligne
+   * de code touchee entre les deux).** L'ecriture Prisma de chaque salon part
+   * du timer de tick de sa `Session`, en temps reel ; elle peut donc suivre
+   * de quelques millisecondes le retour du `Promise.all`, qui n'attend que
+   * l'arrivee de `RUN_OVER`, pas celle du credit. `updateMany` + `increment`
+   * est pourtant atomique en SQL -- aucun des deux credits ne peut se perdre
+   * pour de vrai. Le defaut n'etait donc PAS une perte d'ecriture, mais une
+   * lecture trop tot. Le correctif SONDE `goldOf` jusqu'a `800n`, avec une
+   * echeance genereuse, plutot que de lire une seule fois :
+   *
+   * - un `increment` atomique finit toujours par atteindre `800n` -- la
+   *   sonde reussit, tot ou tard, jamais par chance ;
+   * - un lire-modifier-ecrire plafonne a `300n` ou `500n` et n'atteint
+   *   JAMAIS `800n` -- la sonde EXPIRE, et le test rougit pour la bonne
+   *   raison (une echeance epuisee), jamais pour une mauvaise (une valeur
+   *   lue trop tot). Verifie par mutation : voir le rapport de la ronde 3.
    */
   it('deux salons qui finissent sur le meme compte EN PARALLELE donnent la SOMME', async () => {
     const { id, token } = await createAccount();
@@ -672,7 +689,18 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
     // l'increment atomique rend la somme quel que soit l'ordre d'arrivee.
     await Promise.all([voteExtraction([c1], room1), voteExtraction([c2], room2)]);
 
-    expect(await goldOf(id)).toBe(800n);
+    // Sonde jusqu'a la somme plutot que de lire une seule fois : voir le
+    // docbloc ci-dessus (ronde 3) pour pourquoi une lecture immediate pouvait
+    // rougir pour la mauvaise raison.
+    const somme = await attendre(
+      async () => {
+        const v = await goldOf(id);
+        return v === 800n ? v : null;
+      },
+      'la somme des deux credits (800n)',
+      8000,
+    );
+    expect(somme).toBe(800n);
   }, 120_000);
 
   /**
