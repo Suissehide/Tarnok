@@ -689,13 +689,15 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
    * garanti.
    *
    * **Le correctif provoque une vraie erreur Postgres, sans mock et sans
-   * toucher a aucun conteneur : il fait DEBORDER la colonne `bigint`.** Un
-   * compte pre-credite a `PRES_DU_PLAFOND_BIGINT` puis verse encore 500
-   * d'or sort du domaine d'un `bigint` Postgres (2^63 - 1) -- l'`increment`
-   * leve pour de vrai, a chacune des trois tentatives, et la troisieme
-   * journalise. C'est ce que ce test assene desormais, avec un espion sur
-   * `console.error` : ni l'absence de `RUN_OVER` (deja garanti ailleurs) ni
-   * sa presence, mais le journal ET la survie des sockets.
+   * toucher a aucun conteneur : il fait DEBORDER la colonne `bigint`.** La
+   * marge entre `PRES_DU_PLAFOND_BIGINT` et le plafond (2^63 - 1) est de
+   * SEULEMENT 807 -- `room.debugSetGold(1000)`, ci-dessous, doit donc rester
+   * au-dessus de 807 pour que l'`increment` sorte reellement du domaine d'un
+   * `bigint` Postgres. Il leve alors pour de vrai, a chacune des trois
+   * tentatives, et la troisieme journalise. C'est ce que ce test assene
+   * desormais, avec un espion sur `console.error` : ni l'absence de
+   * `RUN_OVER` (deja garanti ailleurs) ni sa presence, mais le journal ET la
+   * survie des sockets.
    */
   it('une base qui refuse le credit (debordement bigint) ne tue ni la run ni le salon', async () => {
     const code = await createRoomCode();
