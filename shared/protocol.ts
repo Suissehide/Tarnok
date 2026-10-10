@@ -28,6 +28,7 @@ export const MSG = {
   VOTE: 17,
   VOTES: 18,
   PORTAL_RESULT: 19,
+  HELLO: 20,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -355,6 +356,7 @@ export type Message =
   | ReactionMessage
   | BossChargeMessage
   | PortalOpenMessage
+  | HelloMessage
   | VoteMessage
   | VotesMessage
   | PortalResultMessage;
@@ -426,6 +428,22 @@ export interface PortalOpenMessage {
    * `EXTRACT_MULTIPLIER_SCALE`.
    */
   multiplier: number;
+}
+
+/**
+ * C -> S : le PREMIER message de toute socket de jeu, avant l'attribution du
+ * slot.
+ *
+ * ⚠️ **C'est le seul endroit par lequel le jeton atteint le serveur sur le
+ * canal de jeu, et c'est voulu : il ne passe JAMAIS par une URL.** Une URL
+ * atterrit dans les journaux du reverse proxy, dans `Referer` et dans
+ * l'historique du navigateur — et ce jeton EST le compte (§2.3 de la spec). Le
+ * navigateur interdisant les en-tetes personnalises sur un WebSocket, un
+ * premier message est la seule voie qui n'expose rien.
+ */
+export interface HelloMessage {
+  type: typeof MSG.HELLO;
+  token: Uint8Array;
 }
 
 /**
@@ -725,6 +743,20 @@ export const EXTRACT_MULTIPLIER_SCALE = 100;
 
 /** Plus grande valeur que le multiplicateur peut porter. Voir `EXTRACT_MULTIPLIER_SCALE`. */
 export const EXTRACT_MULTIPLIER_MAX = 0xffff / EXTRACT_MULTIPLIER_SCALE;
+
+/**
+ * Longueur du jeton de compte, en octets — 32 octets de hasard
+ * cryptographique, soit 43 caracteres en base64url.
+ *
+ * ⚠️ **Largeur FIXE, pas un prefixe de longueur.** Tout le protocole de ce
+ * depot est a largeur fixe ou a compte explicite ; un jeton de longueur
+ * variable ajouterait le seul champ du fil dont la taille depend de son
+ * contenu, pour rien — un jeton n'a aucune raison de varier.
+ */
+export const TOKEN_BYTES = 32;
+
+/** `type u8 · token[32]`. */
+export const HELLO_BYTES = 1 + TOKEN_BYTES;
 /** `type u8 · choice u8`. */
 export const VOTE_BYTES = 2;
 /** `type u8 · count u8`. */
@@ -1418,6 +1450,8 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeBossCharge(buf);
     case MSG.PORTAL_OPEN:
       return decodePortalOpen(buf);
+    case MSG.HELLO:
+      return decodeHello(buf);
     case MSG.VOTE:
       return decodeVote(buf);
     case MSG.VOTES:
@@ -1552,6 +1586,30 @@ export function encodePortalOpen(deadlineTick: number, multiplier: number): Arra
   const cents = Math.round(multiplier * EXTRACT_MULTIPLIER_SCALE);
   v.setUint16(5, Math.min(0xffff, Math.max(0, cents)), true);
   return buf;
+}
+
+/**
+ * C -> S : presente le jeton de compte.
+ *
+ * ⚠️ **Leve si le jeton ne fait pas exactement `TOKEN_BYTES`.** Sans cette
+ * garde, un jeton trop court produirait un message de la BONNE taille complete
+ * par des zeros : un jeton valide sur le fil, et faux. L'erreur serait alors un
+ * refus d'authentification inexplicable, loin de sa cause.
+ */
+export function encodeHello(token: Uint8Array): ArrayBuffer {
+  if (token.length !== TOKEN_BYTES) {
+    throw new Error(`jeton de ${token.length} octets, ${TOKEN_BYTES} attendus`);
+  }
+  const buf = new ArrayBuffer(HELLO_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.HELLO);
+  new Uint8Array(buf, 1, TOKEN_BYTES).set(token);
+  return buf;
+}
+
+function decodeHello(buf: ArrayBuffer): HelloMessage {
+  viewOf(buf, HELLO_BYTES);
+  return { type: MSG.HELLO, token: new Uint8Array(buf.slice(1, HELLO_BYTES)) };
 }
 
 /** C -> S : je vote, ou je retire mon vote (`NO_VOTE`). */

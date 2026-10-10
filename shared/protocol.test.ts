@@ -42,6 +42,7 @@ import {
   encodeDraftOpen,
   encodeDraftResult,
   encodeDraftToken,
+  encodeHello,
   encodeInput,
   encodeLevelUp,
   encodePickups,
@@ -56,6 +57,7 @@ import {
   encodeWelcome,
   encodeZone,
   GOLD_MAX,
+  HELLO_BYTES,
   INPUT_BYTES,
   LEVEL_UP_BYTES,
   MSG,
@@ -70,6 +72,7 @@ import {
   RUN_OVER_BYTES,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
+  TOKEN_BYTES,
   unpackElementPair,
   VOTE_BYTES,
   VOTE_CHOICE,
@@ -1503,5 +1506,60 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
     });
     expect(decode(encodeVotes([{ playerId: 1, choice: VOTE_CHOICE.STAY }])).type).toBe(MSG.VOTES);
     expect(decode(encodePortalResult(1, VOTE_CHOICE.STAY, 1)).type).toBe(MSG.PORTAL_RESULT);
+  });
+});
+
+describe('etape 7a tache 1 : HELLO porte le jeton, en largeur FIXE', () => {
+  /**
+   * ⚠️ **Les deux largeurs sont epinglees en chiffres NUS.** Une assertion
+   * `toBe(HELLO_BYTES)` serait vraie quoi qu'il arrive — c'est la meme raison
+   * qui fait epingler 22 et 9 pour le snapshot plus haut dans ce fichier.
+   */
+  it('HELLO_BYTES vaut 33, et TOKEN_BYTES vaut 32', () => {
+    expect(TOKEN_BYTES).toBe(32);
+    expect(HELLO_BYTES).toBe(33);
+    expect(HELLO_BYTES).toBe(1 + TOKEN_BYTES);
+  });
+
+  it('un jeton de 32 octets fait l aller-retour a l identique', () => {
+    const token = new Uint8Array(TOKEN_BYTES);
+    for (let i = 0; i < TOKEN_BYTES; i++) {
+      token[i] = (i * 7 + 3) & 0xff;
+    }
+    const buf = encodeHello(token);
+    expect(buf.byteLength).toBe(33);
+
+    const msg = decode(buf);
+    expect(msg.type).toBe(MSG.HELLO);
+    if (msg.type !== MSG.HELLO) {
+      throw new Error('type inattendu');
+    }
+    expect([...msg.token]).toEqual([...token]);
+  });
+
+  it('HELLO ne marche PAS sur le meme identifiant qu un message existant', () => {
+    const existants = Object.entries(MSG)
+      .filter(([nom]) => nom !== 'HELLO')
+      .map(([, id]) => id);
+    expect(existants).not.toContain(MSG.HELLO);
+  });
+
+  /**
+   * Review Focus n°1 : un HELLO tronque doit LEVER a l'encodage comme au
+   * decodage, jamais rendre un jeton a moitie lu. C'est `viewOf` qui garde le
+   * decodage ; l'encodage se garde lui-meme, parce qu'un jeton trop court
+   * produirait un message de la bonne taille avec des zeros a la fin — donc un
+   * jeton VALIDE mais faux.
+   */
+  it('refuse un jeton qui ne fait pas exactement TOKEN_BYTES', () => {
+    expect(() => encodeHello(new Uint8Array(0))).toThrow();
+    expect(() => encodeHello(new Uint8Array(TOKEN_BYTES - 1))).toThrow();
+    expect(() => encodeHello(new Uint8Array(TOKEN_BYTES + 1))).toThrow();
+  });
+
+  it('refuse un buffer HELLO tronque', () => {
+    const court = new ArrayBuffer(10);
+    new DataView(court).setUint8(0, MSG.HELLO);
+    expect(() => decode(court)).toThrow(/tronque/);
   });
 });
