@@ -79,6 +79,15 @@ describe('etape 7a tache 4 : les deux routes du compte', () => {
     for (const res of [sans, vide, malForme, inconnu]) {
       expect(res.body).not.toContain('"gold"');
     }
+
+    // ⚠️ **Les quatre corps doivent etre IDENTIQUES, pas seulement « sans
+    // gold ».** Un message different par forme d'echec — « jeton malforme »
+    // d'un cote, « jeton inconnu » de l'autre — renseignerait un attaquant sur
+    // l'existence d'un compte, et c'est precisement ce que le 401 uniforme
+    // interdit. Sans cette assertion, une telle regression resterait verte.
+    for (const res of [vide, malForme, inconnu]) {
+      expect(res.body).toBe(sans.body);
+    }
   });
 
   /**
@@ -90,7 +99,10 @@ describe('etape 7a tache 4 : les deux routes du compte', () => {
     const { token } = (await app.inject({ method: 'POST', url: '/accounts' })).json<{
       token: string;
     }>();
-    const enorme = 9_000_000_000n;
+    // 2^53 + 1 : la plus petite valeur entiere qu'un nombre JSON ne peut pas
+    // representer exactement. Avec .toString(), elle voyage exact. Avec un
+    // nombre, elle reviendrait arrondie a 9007199254740992.
+    const enorme = 9_007_199_254_740_993n;
     await prisma.account.updateMany({ data: { gold: enorme } });
 
     const res = await app.inject({
@@ -100,6 +112,6 @@ describe('etape 7a tache 4 : les deux routes du compte', () => {
     });
     expect(res.statusCode).toBe(200);
     // En TEXTE : un nombre JSON perdrait la precision au-dela de 2^53.
-    expect(res.json<{ gold: string }>().gold).toBe('9000000000');
+    expect(res.json<{ gold: string }>().gold).toBe('9007199254740993');
   });
 });
