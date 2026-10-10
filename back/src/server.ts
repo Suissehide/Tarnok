@@ -23,7 +23,14 @@ import {
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
-import { createAccount, findAccountIdByToken, goldOf, textToToken, tokenToText } from './accounts';
+import {
+  createAccount,
+  creditAccounts,
+  findAccountIdByToken,
+  goldOf,
+  textToToken,
+  tokenToText,
+} from './accounts';
 import { FixedStepAccumulator } from './loop';
 import type { Outbox, Room } from './room';
 import { RoomRegistry } from './rooms';
@@ -334,6 +341,52 @@ class Session {
   }
 
   /**
+   * Verse la cagnotte sur le compte de CHAQUE joueur encore connecte -- la
+   * TOTALITE a chacun, pas une part (§4.1 de la spec).
+   *
+   * Diviser par le nombre de joueurs ferait toucher a chacun MOINS qu'en solo
+   * sur la part de palier, qui ne passe pas a l'echelle : le §8.1 de
+   * l'orientation interdit de punir le regroupement.
+   *
+   * ⚠️ **Trois tentatives, puis un journal, et c'est un plafond assume.** La
+   * sortie propre est une table d'« outbox » ecrite dans la meme transaction
+   * que la fin de run et rejouee jusqu'a succes. Elle n'est pas de cette
+   * etape (§4.4 de la spec) ; si une perte reelle est constatee, c'est la
+   * sortie.
+   */
+  async #creditAccounts(): Promise<void> {
+    const montant = BigInt(this.room.gold);
+    // Cagnotte nulle (un wipe, `WIPE_GOLD_KEPT` valant 0 aujourd'hui) :
+    // `creditAccounts` est elle-meme un no-op sur un montant nul, ce retour
+    // n'evite donc qu'un aller-retour Prisma inutile. Le jour ou
+    // `WIPE_GOLD_KEPT` passe a 0.15, ce chemin ne s'emprunte simplement plus.
+    if (montant === 0n) {
+      return;
+    }
+    // `#accounts` ne porte que les slots encore connectes a cet instant --
+    // un depart (`remove`) l'en retire au meme moment que `#clients`, donc
+    // ses valeurs SONT les comptes a crediter, sans passer par `#clients`.
+    const comptes = [...this.#accounts.values()];
+    if (comptes.length === 0) {
+      return;
+    }
+    for (let essai = 1; essai <= 3; essai++) {
+      try {
+        await creditAccounts(comptes, montant);
+        return;
+      } catch (err) {
+        if (essai === 3) {
+          console.error(
+            `[credit] ECHEC definitif salon=${this.code} montant=${montant} comptes=${comptes.join(',')}`,
+            err,
+          );
+          return;
+        }
+      }
+    }
+  }
+
+  /**
    * Diffuse `buf` a chaque client ouvert, et compte les octets reellement
    * pousses sur le fil — `#wireBytes` ne doit compter que ce qui part
    * vraiment, jamais ce qui est simplement encode.
@@ -392,6 +445,15 @@ class Session {
     const runOver = this.room.drainRunOver();
     if (runOver) {
       this.#send(encodeRunOver(runOver.tick, runOver.survivedTicks, runOver.level, runOver.kills));
+      // ⚠️ **LE seul endroit qui verse l'or sur les comptes**, et il est
+      // atteint exactement une fois par run -- par DEUX invariants en serie :
+      // le garde de tete de `Room#step` rend un second `#endRun`
+      // inatteignable, et `drainRunOver` ANNULE l'evenement en le rendant.
+      // L'idempotence ne demande donc ni journal ni cle.
+      //
+      // ⚠️ **Pas dans `Room`.** `Room` est de la logique de jeu sans aucune
+      // I/O : y glisser un appel Prisma la rendrait intestable sans base.
+      void this.#creditAccounts();
     }
 
     for (const open of this.room.drainDraftOpens()) {

@@ -758,6 +758,18 @@ export class Room {
     return this.#gold;
   }
 
+  /**
+   * Pose la cagnotte, pour les tests du credit UNIQUEMENT.
+   *
+   * ⚠️ **Nomme `debug` pour que personne ne s'en serve en production.** La
+   * facon de GAGNER de l'or est couverte par l'etape 6a ; ce qui se teste ici
+   * est le transfert vers le compte, et faire jouer vingt minutes pour poser
+   * une cagnotte rendrait le test inutilisable.
+   */
+  debugSetGold(gold: number): void {
+    this.#gold = gold;
+  }
+
   get metrics(): Readonly<RoomMetrics> {
     return this.#metrics;
   }
