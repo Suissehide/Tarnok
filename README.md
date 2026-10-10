@@ -79,6 +79,12 @@ La même image que `deploy/compose.yaml`, pour qu'aucune dérive ne soit possibl
 5442, pas le 5432 par défaut de Postgres : ce dernier est fréquemment déjà pris par un autre
 projet sur la machine d'un développeur.
 
+`npm run db:migrate -w back` (comme toute commande Prisma) a besoin de `DATABASE_URL` : gardez
+l'`export`. En revanche, `npm test` s'en passe si vous avez lancé le conteneur **exactement**
+comme ci-dessus — à défaut de variable, les tests retombent sur cette même URL locale et le
+disent une fois dans la sortie. Si votre Postgres écoute ailleurs (autre port, autre mot de
+passe), l'`export` reste la seule voie correcte.
+
 ## Commandes
 
 ```bash

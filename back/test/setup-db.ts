@@ -29,16 +29,57 @@
  * une erreur Postgres (« column does not exist ») qui ne dirait rien du vrai
  * probleme. C'est le meme symptome que celui deja paye trois fois a l'etape
  * 5c, sous une autre forme.
+ *
+ * ⚠️ **`DATABASE_URL` absente retombe sur l'URL locale documentee, elle ne
+ * leve plus.** `npm test` depuis la racine, dans un shell neuf, sans export
+ * prealable, lancait ce fichier a chaque run de CHAQUE fichier de test (voir
+ * plus haut) : un `throw` ici produisait donc un mur d'echecs identiques, y
+ * compris sur les fichiers purs de `shared/` qui n'ont jamais eu besoin d'une
+ * base. Le defaut est sans danger a deux titres :
+ * - **la CI pose `DATABASE_URL` explicitement** (voir `.github/workflows/ci.yml`),
+ *   donc ce defaut ne s'y applique jamais ;
+ * - **en local, la commande `docker run` du README cree EXACTEMENT ce
+ *   conteneur et cette URL** (`tarnok-db`, `127.0.0.1:5442`), donc le defaut
+ *   est juste par construction, pas une devinette.
+ * La ligne journalisee plus bas est ce qui rend ce defaut acceptable plutot
+ * que sournois : sans elle, quelqu'un dont la Postgres locale ecoute
+ * ailleurs croirait tester contre sa propre base alors qu'il tape dans le
+ * vide (ou dans celle d'un autre).
  */
 import { execSync } from 'node:child_process';
-import { readdirSync } from 'node:fs';
+import { readdirSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { PrismaClient } from '@prisma/client';
 
-const base = process.env.DATABASE_URL;
+const URL_LOCALE_PAR_DEFAUT = 'postgresql://tarnok:tarnok@127.0.0.1:5442/tarnok';
+
+let base = process.env.DATABASE_URL;
 if (!base) {
-  throw new Error(
-    'DATABASE_URL manquante. Lance une Postgres (voir le README) et exporte la variable.',
-  );
+  base = URL_LOCALE_PAR_DEFAUT;
+  process.env.DATABASE_URL = base;
+  /**
+   * ⚠️ **Une seule ligne pour tout le run, pas une par fichier de test.**
+   * `setupFiles` rejoue ce module a chaque fichier (voir plus haut), et avec
+   * le pool `forks` de Vitest chaque fichier peut en plus tomber sur un
+   * processus different — un simple drapeau en memoire de module ne
+   * survivrait ni a l'un ni a l'autre. `process.ppid` est stable : c'est le
+   * pid du processus Vitest qui a lance tous les workers de CE run, et lui
+   * seul change entre deux `npm test`. Une creation exclusive de fichier
+   * (`wx`) dans le repertoire temporaire sert donc de verrou atomique
+   * inter-processus : le premier fichier (de n'importe quel worker) a
+   * l'ecrire gagne et journalise, tous les suivants echouent sur le fichier
+   * deja present et se taisent. `process.stderr.write` (et pas
+   * `console.error`) parce que Vitest capture `console.*` et ne le reaffiche
+   * pas pour un run entierement vert avec le reporter par defaut — le
+   * message serait ecrit mais jamais vu.
+   */
+  try {
+    writeFileSync(join(tmpdir(), `tarnok-db-fallback-${process.ppid}.lock`), '', { flag: 'wx' });
+    process.stderr.write(`DATABASE_URL absente, repli sur ${URL_LOCALE_PAR_DEFAUT}\n`);
+  } catch {
+    // Verrou deja pris par un autre fichier de ce meme run : deja journalise.
+  }
 }
 
 const worker = process.env.VITEST_WORKER_ID ?? '1';
