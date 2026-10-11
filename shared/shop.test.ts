@@ -75,6 +75,12 @@ describe('etape 7b tache 1 : le catalogue', () => {
    */
   it('le rayon de ramassage maximal tient dans un octet non signe', () => {
     expect(ORB_PICKUP_RADIUS + maxBonus('pickupRadius')).toBeLessThanOrEqual(255);
+    // ⚠️ **Le `toBeLessThanOrEqual` seul ne protege rien** : un `maxBonus` qui
+    // rendrait toujours 0 passerait cette inegalite aussi bien qu'une vraie
+    // implementation. L'aimant existe dans le catalogue (voir plus haut,
+    // « chaque article de bonus designe une cle connue ») : son plafond doit
+    // donc etre strictement positif.
+    expect(maxBonus('pickupRadius')).toBeGreaterThan(0);
   });
 
   it('maxBonus rend zero pour une cle que le catalogue ne vend pas', () => {
