@@ -782,11 +782,6 @@ export function weaponOf(id: number): Weapon {
   return found;
 }
 
-/** Les identifiants des armes verrouillees, dans l'ordre de la table. */
-export function lockedWeaponIds(): readonly number[] {
-  return WEAPONS.filter((w) => w.locked).map((w) => w.id);
-}
-
 /**
  * Reduction maximale de cadence, toutes cartes « cadence » confondues.
  *
