@@ -986,6 +986,44 @@ describe('etape 7b tache 7 : le rayon de ramassage est personnel', () => {
     // Le meme point, au rayon elargi, l'atteint.
     expect(champ.resolvePickups([{ x: 0, y: 0, pickupRadius: loin + 1 }])).toEqual([orbeId]);
   });
+
+  /**
+   * ⚠️ **Ronde de correction 2 : l'INDEXATION, pas seulement le parametre.**
+   * Le test precedent prouve que `pickupRadius` est HONORE — deux appels
+   * successifs, un seul joueur chaque fois — mais pas que CHAQUE joueur d'un
+   * MEME appel compare a SON rayon et pas a celui d'un autre. Mesure :
+   * remplacer `r2[j]` par `r2[0]` dans `resolvePickups` laissait les 257
+   * tests de ce fichier verts, parce qu'aucun n'appelait `resolvePickups`
+   * avec deux joueurs de rayons DIFFERENTS dans le MEME tableau.
+   *
+   * B n'est PAS au premier indice (A est devant lui) : si la methode
+   * comparait tout le monde au rayon du PREMIER joueur, l'orbe « dans la
+   * bande » ne serait jamais prise, puisque A est loin de tout.
+   *
+   * ⚠️ **Et la seconde moitie, sans quoi le piege de la ronde 1 revient** :
+   * une orbe au-dela du rayon ELARGI de B doit rester au sol — sans elle, un
+   * rayon infini passerait aussi bien qu'un rayon correct.
+   */
+  it('chaque joueur d un meme appel compare a SON rayon, pas a celui du premier', () => {
+    const BONUS = 50;
+    const elargi = ORB_PICKUP_RADIUS + BONUS;
+    const champ = new OrbField(8);
+    const dansLaBande = ORB_DROP_ONE_IN;
+    const horsPortee = 2 * ORB_DROP_ONE_IN;
+    // B est en (0, 0). dansLaBande est entre le rayon de base et le rayon
+    // elargi de B ; horsPortee est juste au-dela du rayon elargi de B.
+    champ.spawn(dansLaBande, ORB_PICKUP_RADIUS + 20, 0);
+    champ.spawn(horsPortee, 0, elargi + 1);
+
+    const picked = champ.resolvePickups([
+      // A : premier indice, loin de tout, au rayon de BASE.
+      { x: 10_000, y: 10_000, pickupRadius: ORB_PICKUP_RADIUS },
+      // B : second indice, au rayon ELARGI.
+      { x: 0, y: 0, pickupRadius: elargi },
+    ]);
+
+    expect(picked).toEqual([dansLaBande]);
+  });
 });
 
 describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {

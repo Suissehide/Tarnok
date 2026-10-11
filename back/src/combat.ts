@@ -52,9 +52,14 @@ import type { ZoneField } from '@shared/zones';
  * points de vie et compte a rebours d'invulnerabilite mutables.
  *
  * Interface structurelle plutot que classe : `Room.PlayerState` la satisfait
- * directement, sans adaptateur — `resolveContact` et `resolvePickups`
- * modifient les objets qu'on leur passe EN PLACE, comme `Horde.step`
- * modifie une `Horde` en place.
+ * directement, sans adaptateur — `resolveContact` modifie les objets qu'on
+ * lui passe EN PLACE, comme `Horde.step` modifie une `Horde` en place.
+ *
+ * ⚠️ **`resolvePickups`, lui, n'est plus dans ce cas depuis la tache 7 de
+ * l'etape 7b** : il prend des `PickupPoint`, pas des `ContactPlayer` —
+ * `Room.PlayerState` ne porte pas `pickupRadius` directement, et `room.ts`
+ * construit desormais un adaptateur (`.map((p) => ({ x, y, pickupRadius }))`)
+ * avant d'appeler `resolvePickups`.
  */
 export interface ContactPlayer {
   readonly x: number;
@@ -64,7 +69,14 @@ export interface ContactPlayer {
   contactInvulnTicks: number;
 }
 
-/** Un point que `resolvePickups` compare aux orbes vivants. Sous-ensemble structurel de `ContactPlayer`. */
+/**
+ * Un point que `resolvePickups` compare aux orbes vivants.
+ *
+ * ⚠️ **N'est PLUS un sous-ensemble structurel de `ContactPlayer`** depuis la
+ * tache 7 de l'etape 7b : `pickupRadius` est personnel (base plus achats
+ * d'aimant), et `ContactPlayer` ne le porte pas — un `ContactPlayer` ne
+ * satisfait donc plus `PickupPoint` sans qu'on le lui ajoute.
+ */
 export interface PickupPoint {
   readonly x: number;
   readonly y: number;

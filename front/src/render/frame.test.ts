@@ -1,5 +1,5 @@
 import type { BossCharge } from '@shared/boss';
-import { MAX_ENTITIES, PROJECTILE_CAPACITY } from '@shared/constants';
+import { MAX_ENTITIES, ORB_PICKUP_RADIUS, PROJECTILE_CAPACITY } from '@shared/constants';
 import { Horde } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { ZoneField } from '@shared/zones';
@@ -94,7 +94,7 @@ const STATE: RenderState = {
   localId: 1,
   xp: 42,
   synergy: 7,
-  players: [{ id: 1, x: 10, y: 20, hp: 90, aimX: 1, aimY: 0, pickupRadius: 90 }],
+  players: [{ id: 1, x: 10, y: 20, hp: 90, aimX: 1, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS }],
 };
 
 class RecordingClient implements FrameClient {

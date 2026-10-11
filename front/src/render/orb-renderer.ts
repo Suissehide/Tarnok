@@ -21,9 +21,11 @@ import {
  *
  * ⚠️ **La tache 20 a REMPLACE l'aimantation, elle ne l'a pas reglee.** Il n'y
  * a plus de rayon d'aimant ni d'attraction fonction de la distance : une orbe
- * qu'un joueur touche est RAMASSEE — meme predicat que le serveur, meme rayon
- * `ORB_PICKUP_RADIUS` — et ce qu'on voit ensuite est un vol, qui decore un
- * ramassage deja acquis. Voir `orbFlightFraction`.
+ * qu'un joueur touche est RAMASSEE — meme predicat que le serveur. Depuis la
+ * tache 7 de l'etape 7b, ce n'est plus `ORB_PICKUP_RADIUS` pour tout le
+ * monde : chaque joueur a SON rayon (base plus ses achats d'aimant), transporte
+ * par le `SNAPSHOT` (voir `PickupTarget.pickupRadius`). Ce qu'on voit ensuite
+ * est un vol, qui decore un ramassage deja acquis. Voir `orbFlightFraction`.
  *
  * ⚠️ **Un module a part depuis cette tache**, comme `zone-renderer.ts` et
  * `mark-renderer.ts` avant lui. L'orbe vivait dans `projectile-renderer.ts` et

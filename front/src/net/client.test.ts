@@ -280,7 +280,7 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
       socket.emit('message', { data: encodeWelcome(1, 0, 0) });
       socket.emit('message', {
         data: encodeSnapshot(0, 777, 0, [
-          { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
 
@@ -298,7 +298,7 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 777, 0, [
-        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
 
@@ -378,7 +378,7 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
 
@@ -403,7 +403,7 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
         0,
         0,
         0,
-        [{ id: 2, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: 90 }],
+        [{ id: 2, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS }],
         {
           id: 8193,
           hp: 6000,
@@ -420,7 +420,9 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
     const socket = latestSocket();
 
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
-    const joueurs = [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: 90 }];
+    const joueurs = [
+      { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ];
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, joueurs, { id: 8193, hp: 6000 }),
     });
@@ -437,7 +439,9 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
     const socket = latestSocket();
 
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
-    const joueurs = [{ id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: 90 }];
+    const joueurs = [
+      { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ];
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, joueurs, { id: 8193, hp: 6000 }),
     });
@@ -650,7 +654,7 @@ function runClientDeathScenario(params: {
       hp: 100,
       aimX: 0,
       aimY: 0,
-      pickupRadius: 90,
+      pickupRadius: ORB_PICKUP_RADIUS,
     }));
     socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -1004,6 +1008,54 @@ describe('DerivedOrbs.capture — la capture EST le ramassage (tache 20)', () =>
   });
 
   /**
+   * ⚠️ **Ronde de correction 2 : l'INDEXATION, pas seulement le cablage.** La
+   * ronde 1 a prouve que le rayon personnel ajoute bien le bon bonus ; rien
+   * ne prouvait que CHAQUE joueur compare a SON rayon et pas a celui d'un
+   * autre. Mesure : remplacer `r2[j]` par `r2[0]` dans `capture` laissait les
+   * 485 tests de ce fichier verts, parce qu'aucun n'appelait `capture` avec
+   * deux joueurs de rayons DIFFERENTS.
+   *
+   * Ici, B n'est PAS au premier indice (A est devant lui dans le tableau) :
+   * si la capture comparait tout le monde au rayon du PREMIER joueur,
+   * l'orbe « dans la bande » ne serait jamais prise, puisque A est loin de
+   * tout.
+   *
+   * ⚠️ **Et la seconde moitie, sans quoi le piege signale en ronde 1
+   * revient** : une orbe au-dela du rayon ELARGI de B doit rester au sol —
+   * sans elle, un rayon infini passerait aussi bien qu'un rayon correct.
+   */
+  it('cible le joueur au rayon elargi meme hors du premier indice, et ne ment pas au-dela', () => {
+    const BONUS = 50;
+    const elargi = ORB_PICKUP_RADIUS + BONUS;
+    const orbs = new DerivedOrbs(8);
+    const dansLaBande = entityIdOf(9, 0);
+    const horsPortee = entityIdOf(9, ORB_DROP_ONE_IN);
+    // B est en (0, 0). dansLaBande est entre le rayon de base et le rayon
+    // elargi de B ; horsPortee est juste au-dela du rayon elargi de B.
+    orbs.spawn(dansLaBande, ORB_PICKUP_RADIUS + 20, 0, 3);
+    orbs.spawn(horsPortee, 0, elargi + 1, 3);
+    expect(orbs.count).toBe(2);
+
+    const vols = new OrbFlights(8);
+    orbs.capture(
+      [
+        // A : premier indice, loin de tout, au rayon de BASE.
+        { id: 1, x: 10_000, y: 10_000, pickupRadius: ORB_PICKUP_RADIUS },
+        // B : second indice, au rayon ELARGI.
+        { id: 2, x: 0, y: 0, pickupRadius: elargi },
+      ],
+      vols,
+      0,
+    );
+
+    // dansLaBande est prise, par B (le seul qui l'atteint) ; horsPortee reste.
+    expect(orbs.count).toBe(1);
+    expect(orbs.id[0]).toBe(horsPortee);
+    expect(vols.count).toBe(1);
+    expect(vols.targetId[0]).toBe(2);
+  });
+
+  /**
    * ⚠️ **Une seule echeance decrit l'arrivee ET la fin de vie** : la fraction
    * de `orbFlightFraction` vaut 1 a `ORB_FLIGHT_LIFETIME_MS`, et c'est la que
    * le vol s'eteint. Les deux bornes dans la meme execution, comme partout
@@ -1054,7 +1106,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     for (let tick = 0; tick <= DEATH_TICK + 3; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       if (tick === DEATH_TICK + 2) {
@@ -1114,7 +1166,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     for (let tick = 0; tick < DEATH_TICK + DELAY + 5; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       if (tick === DEATH_TICK + DELAY) {
@@ -1175,7 +1227,15 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
 
     const killedId = entityIdOf(WAVE_ID, 0);
     const DEATH_TICK = 10;
-    const MOI = { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 };
+    const MOI = {
+      id: 1,
+      x: 3000,
+      y: 3000,
+      hp: 100,
+      aimX: 0,
+      aimY: 0,
+      pickupRadius: ORB_PICKUP_RADIUS,
+    };
     let tick = 0;
 
     /** Une image : un snapshot, l'horloge murale qui va avec, et le tick qui avance. */
@@ -1183,7 +1243,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
           MOI,
-          { ...allie, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { ...allie, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       if (tick === DEATH_TICK + 2) {
@@ -1290,7 +1350,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       for (let tick = 0; tick < DEATH_TICK + TRES_LONGTEMPS; tick++) {
         socket.emit('message', {
           data: encodeSnapshot(tick, 0, 0, [
-            { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+            { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
           ]),
         });
         if (tick === DEATH_TICK + DELAY) {
@@ -1357,7 +1417,7 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
     for (let tick = 0; tick < END; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       // Envoye bien avant que le gel ne prenne effet : si le client gelait a
@@ -1430,7 +1490,7 @@ describe('GameClient — la prediction locale honore le gel de niveau (tache 24)
       // gel ou pas (voir `PredictedPlayer.reconcile`).
       socket.emit('message', {
         data: encodeSnapshot(0, 0, 0, [
-          { id: 1, x: 500, y: 500, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, x: 500, y: 500, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
 
@@ -1567,7 +1627,7 @@ describe('GameClient — bilan de run (RUN_OVER, tache 11)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
     client.update(0, 0);
@@ -1630,7 +1690,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     // joueur pertinente — aucune assertion sur le tir ne porte sur ce tick.
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
     client.update(0, STEP);
@@ -1669,7 +1729,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
       for (let tick = 1; tick <= 40; tick++) {
         socket.emit('message', {
           data: encodeSnapshot(tick, 0, 0, [
-            { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+            { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
           ]),
         });
         client.update(tick * MS_PER_TICK, STEP);
@@ -1701,7 +1761,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= 20; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -1718,7 +1778,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= 20; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 0, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, ...PLAYER, hp: 0, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -1739,7 +1799,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= TICKS; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -1762,7 +1822,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= 20 && hitNowMs < 0; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       const nowMs = tick * MS_PER_TICK;
@@ -1841,7 +1901,7 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
     });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
     client.update(0, STEP);
@@ -1887,7 +1947,7 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
     for (let tick = startTick; tick < startTick + 20 && client.projectiles.count > 0; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       nowMs = tick * MS_PER_TICK;
@@ -2036,7 +2096,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
     client.update(0, STEP);
@@ -2053,7 +2113,15 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     for (let tick = 1; tick <= 30 && spy.mock.calls.length === 0; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: SNAPSHOT_X, y: monsterY, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          {
+            id: 1,
+            x: SNAPSHOT_X,
+            y: monsterY,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+          },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -2091,7 +2159,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0023) });
       socket.emit('message', {
         data: encodeSnapshot(0, 0, 0, [
-          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       // Le spy est pose AVANT le tout premier `update()` : c'est celui-la qui
@@ -2102,7 +2170,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       for (let tick = 1; tick <= 5 && spy.mock.calls.length === 0; tick++) {
         socket.emit('message', {
           data: encodeSnapshot(tick, 0, 0, [
-            { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+            { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
           ]),
         });
         client.update(tick * MS_PER_TICK, STEP);
@@ -2148,7 +2216,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
     client.update(0, STEP);
@@ -2165,7 +2233,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
         // s'y fiait pour le joueur local, aucun tir ne toucherait jamais le
         // monstre, a droite.
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: -127, aimY: 0, pickupRadius: 90 },
+          { id: 1, ...PLAYER, hp: 100, aimX: -127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -2204,7 +2272,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
     client.update(0, STEP);
@@ -2215,7 +2283,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     const PLAYER = { x: monsterX - 50, y: monsterY };
     const snapshot = (tick: number): ArrayBuffer =>
       encodeSnapshot(tick, 0, 0, [
-        { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]);
 
     // Le gel prend effet au tick 2 : le message part avant, comme le fait le
@@ -2534,8 +2602,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 5, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: 90 },
-      { id: 2, x: 2200, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      { id: 2, x: 2200, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
     ]);
 
     const tirees = new Set(spy.mock.calls.map((c) => c[0].id));
@@ -2557,7 +2625,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     const TICKS = 70;
     run(client, socket, TICKS, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
     ]);
 
     const dague = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).map((c) => c[1]);
@@ -2603,7 +2671,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
       const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
       run(client, socket, 3, [
-        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]);
       const salve = spy.mock.calls.find((c) => c[0].id === EVENTAIL);
       const neutre = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
@@ -2637,7 +2705,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     const TICKS = 70;
     run(client, socket, TICKS, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
     ]);
 
     const base = weaponOf(BASE_WEAPON_ID);
@@ -2667,7 +2735,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 3, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
     ]);
 
     const base = weaponOf(BASE_WEAPON_ID);
@@ -2690,7 +2758,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
     for (let i = 0; i < CARTES; i++) {
@@ -2866,7 +2934,7 @@ function runClientZoneScenario(params: {
       hp: 100,
       aimX: 0,
       aimY: 0,
-      pickupRadius: 90,
+      pickupRadius: ORB_PICKUP_RADIUS,
     }));
     socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -3071,7 +3139,7 @@ describe('GameClient — zones et morts livrees ensemble (etape 5a, tache 6)', (
         hp: 100,
         aimX: 0,
         aimY: 0,
-        pickupRadius: 90,
+        pickupRadius: ORB_PICKUP_RADIUS,
       }));
       socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -3220,7 +3288,7 @@ describe('GameClient — une zone qui meurt PENDANT un rejeu (etape 5a, tache 6)
         hp: 100,
         aimX: 0,
         aimY: 0,
-        pickupRadius: 90,
+        pickupRadius: ORB_PICKUP_RADIUS,
       }));
       socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -3287,7 +3355,7 @@ function setupOneMonster(
   });
   socket.emit('message', {
     data: encodeSnapshot(0, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
     ]),
   });
   client.update(0, 1 / TICK_HZ);
@@ -3386,7 +3454,7 @@ describe('GameClient — la barre de Synergie (tache 9)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 777, 13, [
-        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
 
@@ -3419,7 +3487,7 @@ describe('GameClient — la barre de Synergie (tache 9)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 4, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
       ]),
     });
 
@@ -3521,7 +3589,7 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
     for (let tick = 1; tick <= 40 && marque === ELEMENT.NEUTRE; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
@@ -3551,7 +3619,7 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
     for (let tick = 1; tick <= 20 && !touche; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
         ]),
       });
       client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
@@ -3598,7 +3666,15 @@ describe('GameClient — la teinte s eteint quand la ZONE meurt, pas quand le ta
       // le disque.
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: monsterX, y: monsterY, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+          {
+            id: 1,
+            x: monsterX,
+            y: monsterY,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+          },
         ]),
       });
       client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
@@ -3710,7 +3786,7 @@ describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis
         hp: 100,
         aimX: 0,
         aimY: 0,
-        pickupRadius: 90,
+        pickupRadius: ORB_PICKUP_RADIUS,
       }));
       socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
