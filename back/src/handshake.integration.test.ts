@@ -436,3 +436,106 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
     }
   });
 });
+
+/**
+ * Etape 7b, tache 6, ronde de correction 1 : le SECOND `await` de la
+ * poignee de main (`purchasesOf`, apres le compte resolu) peut rouvrir
+ * exactement la meme classe de defauts que C2 et son pendant cote Session,
+ * si les gardes qui le suivent n'etaient pas rejouees. Meme forme que les
+ * deux tests ci-dessus, espion deplace sur `purchasesOf`.
+ */
+describe('etape 7b tache 6, ronde 1 : le second await (achats) rejoue bien ses gardes', () => {
+  /**
+   * Meme classe que C2 : la socket peut se fermer PENDANT la lecture des
+   * achats, pas seulement pendant la resolution du compte. Lui attribuer un
+   * slot fuirait pour toujours, exactement comme documente au C2.
+   *
+   * ⚠️ **Sans `expect(espion).toHaveBeenCalledTimes(1)`, `playerCount === 0`
+   * serait aussi vrai si l'espionnage ne mordait pas du tout** (jeton
+   * inconnu, slot jamais attribue) -- meme piege que celui que le docbloc du
+   * C2 nomme, sur le DEUXIEME `await` cette fois.
+   */
+  it('une socket fermee pendant la lecture des achats ne garde pas son slot', async () => {
+    const code = await salon();
+    const { token } = await accounts.createAccount();
+    let resoudre: ((achats: Map<string, number>) => void) | undefined;
+    const espion = vi
+      .spyOn(accounts, 'purchasesOf')
+      .mockImplementation(() => new Promise((resolve) => (resoudre = resolve)));
+
+    try {
+      const ws = ouvre(code);
+      await attendOuvert(ws);
+      ws.send(encodeHello(token));
+
+      // Laisse le HELLO atteindre le serveur, resoudre le compte (reel,
+      // instantane), et entrer dans l'attente simulee de la lecture des
+      // achats, puis ferme le client AVANT qu'elle ne se resolve.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(espion).toHaveBeenCalledTimes(1);
+      ws.close();
+      await new Promise((r) => setTimeout(r, 50));
+
+      // Les achats se resolvent APRES la fermeture : c'est la fenetre que
+      // la garde `readyState`, relue apres ce second `await`, doit refuser.
+      resoudre?.(new Map());
+      await new Promise((r) => setTimeout(r, 50));
+
+      const room = app.rooms.get(code);
+      if (!room) {
+        throw new Error('salon introuvable');
+      }
+      expect(room.playerCount).toBe(0);
+    } finally {
+      espion.mockRestore();
+    }
+  });
+
+  /**
+   * Meme classe que le pendant cote Session de C2 : elle peut se refermer
+   * PENDANT la lecture des achats du second joueur, pas seulement pendant la
+   * resolution de son compte.
+   */
+  it('une session refermee pendant la lecture des achats n accueille personne', async () => {
+    const code = await salon();
+
+    // Premier et SEUL joueur du salon : son depart va refermer la Session,
+    // puisque personne d'autre n'y est encore slote (le second est coince
+    // dans l'attente simulee, avant `freeId`/`join`).
+    const { token: tokenUn } = await accounts.createAccount();
+    const premier = ouvre(code);
+    await attendOuvert(premier);
+    premier.send(encodeHello(tokenUn));
+    expect(await premiere(premier)).toEqual({ type: MSG.WELCOME });
+
+    const { token: tokenDeux } = await accounts.createAccount();
+    let resoudre: ((achats: Map<string, number>) => void) | undefined;
+    const espion = vi
+      .spyOn(accounts, 'purchasesOf')
+      .mockImplementation(() => new Promise((resolve) => (resoudre = resolve)));
+
+    try {
+      const second = ouvre(code);
+      await attendOuvert(second);
+      second.send(encodeHello(tokenDeux));
+
+      // Laisse le HELLO du second entrer dans l'attente simulee de la
+      // lecture des achats, PUIS le premier (et seul autre) joueur part : la
+      // Session se referme pendant que le second est encore en l'air.
+      await new Promise((r) => setTimeout(r, 50));
+      expect(espion).toHaveBeenCalledTimes(1);
+      premier.close();
+      await new Promise((r) => setTimeout(r, 50));
+      expect(app.rooms.get(code)).toBeUndefined();
+
+      // Les achats du second se resolvent APRES la fermeture de la Session :
+      // c'est la fenetre que la garde `#stopped`, relue apres ce second
+      // `await`, doit refuser.
+      resoudre?.(new Map());
+      const vu = await premiere(second);
+      expect(vu.closed).toBe(CLOSE_CODES.ROOM_CLOSED);
+    } finally {
+      espion.mockRestore();
+    }
+  });
+});

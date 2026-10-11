@@ -2228,6 +2228,150 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
 
     expect(positionOf(room, 1).x - before.x).toBeCloseTo(PLAYER_SPEED + 50, 0);
   });
+
+  /**
+   * Troisieme site (ronde de correction 1) : un bonus de compte sur la
+   * cadence doit raccourcir la recharge, comme le ferait une carte
+   * « cadence » — meme mesure (intervalle entre deux salves), meme arme
+   * lente (la grenade) pour eviter que l'arrondi n'ecrase le bonus, voir le
+   * test de cadence par cartes plus haut dans ce fichier.
+   */
+  it('un bonus de compte sur la cadence raccourcit la recharge d une arme', () => {
+    const cadence = PASSIVES.find((p) => p.kind === 'fireRate');
+    if (!cadence) {
+      throw new Error('fixture : aucun passif de genre fireRate');
+    }
+    const GRENADE = 4;
+    const base = weaponOf(GRENADE).cooldownTicks;
+
+    function intervalle(bonus: number): number {
+      const grants: AccountGrants = {
+        bonuses: { fireRate: bonus, damage: 0, maxHp: 0, speed: 0, regen: 0, pickupRadius: 0 },
+        unlockedWeapons: new Set<number>(),
+      };
+      const room = new Room(0x07_6b_0009);
+      room.join(1, grants);
+      room.grantCard(1, { nature: CARD.WEAPON, refId: GRENADE });
+
+      const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+      room.applyInput(1, 1, 0, 0, 127, 0);
+      const tirs: number[] = [];
+      // 300 ticks, comme le test de cadence par cartes : assez pour au moins
+      // trois salves de grenade, et sous la periode du generateur de vagues.
+      for (let t = 0; t < 300; t++) {
+        room.step(DT);
+      }
+      for (const [arme, tick] of spy.mock.calls) {
+        if (arme.id === GRENADE) {
+          tirs.push(tick);
+        }
+      }
+      spy.mockRestore();
+
+      expect(tirs.length).toBeGreaterThanOrEqual(3);
+      const ecarts = tirs.slice(1).map((t, i) => t - (tirs[i] ?? 0));
+      expect(new Set(ecarts).size).toBe(1);
+      return ecarts[0] ?? 0;
+    }
+
+    const attendu = (bonus: number): number => Math.max(1, Math.round(base * (1 - bonus)));
+
+    expect(intervalle(0)).toBe(attendu(0));
+    expect(intervalle(cadence.magnitude)).toBe(attendu(cadence.magnitude));
+    expect(intervalle(cadence.magnitude)).toBeLessThan(intervalle(0));
+  });
+
+  /**
+   * Quatrieme site : un bonus de compte sur la puissance doit augmenter le
+   * degat porte par le projectile, meme mesure que le test « deux cartes de
+   * puissance doublent le bonus de degats... » plus haut dans ce fichier.
+   */
+  it('un bonus de compte sur la puissance augmente le degat porte par le projectile', () => {
+    const puissance = PASSIVES.find((p) => p.kind === 'damage');
+    if (!puissance) {
+      throw new Error('fixture : aucun passif de genre damage');
+    }
+    const base = weaponOf(BASE_WEAPON_ID).damage;
+
+    function degatsDuPremierTir(bonus: number): number {
+      const grants: AccountGrants = {
+        bonuses: { fireRate: 0, damage: bonus, maxHp: 0, speed: 0, regen: 0, pickupRadius: 0 },
+        unlockedWeapons: new Set<number>(),
+      };
+      const room = new Room(0x07_6b_000a);
+      room.join(1, grants);
+      const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+      room.applyInput(1, 1, 0, 0, 127, 0);
+      room.step(DT);
+      const appel = spy.mock.calls[0];
+      spy.mockRestore();
+      if (!appel) {
+        throw new Error('aucune salve');
+      }
+      return appel[6] ?? base;
+    }
+
+    expect(degatsDuPremierTir(0)).toBeCloseTo(base, 5);
+    expect(degatsDuPremierTir(puissance.magnitude)).toBeCloseTo(
+      base * (1 + puissance.magnitude),
+      5,
+    );
+  });
+
+  /**
+   * Cinquieme et dernier site : un bonus de compte sur la regeneration doit
+   * rendre la vie plus vite apres une blessure.
+   *
+   * ⚠️ **Le joueur part a sa vie maximale** (amendement, point 2 du rapport
+   * de ronde 1) : sans le blesser d'abord, la regeneration ne pourrait rien
+   * rendre et ce test mesurerait zero AVEC ou SANS le bonus — vingt-quatrieme
+   * assertion creuse du depot. On le blesse par le vrai chemin (un monstre au
+   * contact), comme le fait `blesse` dans le describe de regeneration plus
+   * haut.
+   */
+  it('un bonus de compte sur la regeneration rend la vie plus vite apres une blessure', () => {
+    const regain = PASSIVES.find((p) => p.kind === 'regen');
+    if (!regain) {
+      throw new Error('fixture : aucun passif de genre regen');
+    }
+
+    function remonte(bonus: number): number {
+      const grants: AccountGrants = {
+        bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 0, regen: bonus, pickupRadius: 0 },
+        unlockedWeapons: new Set<number>(),
+      };
+      const room = new Room(0x07_6b_000b);
+      room.join(1, grants);
+
+      const pos = positionOf(room, 1);
+      const monstre = spawnMonsterAt(room, 700, pos.x, pos.y);
+      for (let t = 0; t < 40; t++) {
+        room.step(DT);
+      }
+      room.horde.kill([monstre]);
+      const blesse1 = hpOf(room, 1);
+      // Non-vacuite : il a bien morfle, sinon la remontee mesuree plus bas
+      // serait un plafond jamais quitte, pas un soin.
+      expect(blesse1).toBeLessThan(PLAYER_MAX_HP);
+
+      const REGEN_TICKS = 150;
+      for (let t = 0; t < REGEN_TICKS; t++) {
+        room.step(DT);
+      }
+      const apres = hpOf(room, 1);
+      // Reste sous le plafond pour que la mesure ne soit pas ecrasee par la
+      // borne de `#regenerate`.
+      expect(apres).toBeLessThan(PLAYER_MAX_HP);
+      return apres - blesse1;
+    }
+
+    expect(remonte(0)).toBe(0);
+
+    const attendu = (regain.magnitude * 150) / TICK_HZ;
+    expect(attendu).toBeGreaterThanOrEqual(10);
+    expect(remonte(regain.magnitude)).toBeGreaterThanOrEqual(attendu - 1);
+    expect(remonte(regain.magnitude)).toBeLessThanOrEqual(attendu);
+  });
 });
 
 describe('la run est jouable (tache 14)', () => {
