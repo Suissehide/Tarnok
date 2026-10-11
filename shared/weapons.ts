@@ -119,6 +119,24 @@ export interface Weapon {
    */
   element: number;
   /**
+   * Cette arme doit-elle etre DEBLOQUEE a l'or avant d'entrer dans le pool du
+   * draft ? Six armes la portent : le frappeur de chaque element.
+   *
+   * ⚠️ **Un champ EXPLICITE, pas une regle derivee — et c'est delibere.**
+   * `projectileCount === 1` designe exactement ces six armes aujourd'hui, mais
+   * deriver le verrou de la serait la premiere forme du « decor qui masque » :
+   * une valeur egale a une constante de production, donc une egalite qui ne
+   * prouve rien et qui cesse d'etre vraie a la premiere arme ajoutee. C'est la
+   * lecon de l'etape 5c, ou la liaison du Vif-argent a ete derivee du nibble,
+   * ou le correctif a depasse la cible, et ou il a fallu revenir a un champ
+   * explicite sur trois reactions.
+   *
+   * ⚠️ **Le verrou ferme le POOL DU DRAFT, pas le `Loadout`.** `Room#grantCard`
+   * n'est pas concerne : les tests qui equipent une arme directement — dont le
+   * livrable de 5c, onze fois — restent verts sans etre touches.
+   */
+  locked: boolean;
+  /**
    * Rayon de l'explosion a l'impact, en pixels monde. `0` : le projectile ne
    * touche que ce qu'il percute — etape 6a, tache 16, sur retour de jeu :
    * *« les ennemis sont trop nombreux par rapport aux degats des armes, il
@@ -218,9 +236,10 @@ export interface Weapon {
  * distinctes.** C'est ce qui fait qu'aucune arme n'a change de nature : la plus
  * rapide est toujours le lance-flammes, la plus lente toujours la grenade.
  */
-const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
+const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'locked'> & {
   element?: number;
   blastRadius?: number;
+  locked?: boolean;
 })[] = [
   {
     // Arme neutre de base (§6.1) : faible, sans element, hors slots.
@@ -368,6 +387,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     spreadRadians: 0.05,
     element: ELEMENT.BRAISE,
     blastRadius: ZONE_RADIUS,
+    locked: true,
   },
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
@@ -434,6 +454,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.GIVRE,
+    locked: true,
   },
   {
     // Tache 9 de l'etape 5b : la Foudre a enfin ses armes.
@@ -474,6 +495,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.FOUDRE,
+    locked: true,
   },
   {
     // La poix « rapide » : plusieurs projectiles a courte portee, pour
@@ -507,6 +529,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.POIX,
+    locked: true,
   },
   {
     // Tache 8 de l'etape 5c : la Chaux a enfin ses armes.
@@ -544,6 +567,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.CHAUX,
+    locked: true,
   },
   {
     // Tache 8 de l'etape 5c : le Vif-argent a enfin ses armes.
@@ -583,6 +607,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.VIF_ARGENT,
+    locked: true,
   },
 ];
 
@@ -591,6 +616,7 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   id,
   element: w.element ?? ELEMENT.NEUTRE,
   blastRadius: w.blastRadius ?? 0,
+  locked: w.locked ?? false,
 }));
 
 /**
@@ -754,6 +780,11 @@ export function weaponOf(id: number): Weapon {
     throw new Error(`arme inconnue : ${id}`);
   }
   return found;
+}
+
+/** Les identifiants des armes verrouillees, dans l'ordre de la table. */
+export function lockedWeaponIds(): readonly number[] {
+  return WEAPONS.filter((w) => w.locked).map((w) => w.id);
 }
 
 /**

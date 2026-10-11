@@ -159,6 +159,7 @@ const SINGLE: Weapon = {
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
+  locked: false,
   // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
   // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
   look: { shape: 'sphere', diameterPx: 10, tint: 0x123456, glow: 0.3, trailTicks: 1 },
