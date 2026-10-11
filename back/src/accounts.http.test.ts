@@ -1,6 +1,7 @@
+import { priceOf, SHOP_ITEMS } from '@shared/shop';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
-import { prisma, tokenToText } from './accounts';
+import { creditAccounts, findAccountIdByToken, prisma, textToToken, tokenToText } from './accounts';
 import { buildServer } from './server';
 
 type App = Awaited<ReturnType<typeof buildServer>>;
@@ -113,5 +114,100 @@ describe('etape 7a tache 4 : les deux routes du compte', () => {
     expect(res.statusCode).toBe(200);
     // En TEXTE : un nombre JSON perdrait la precision au-dela de 2^53.
     expect(res.json<{ gold: string }>().gold).toBe('9007199254740993');
+  });
+});
+
+describe('etape 7b tache 5 : la boutique en http', () => {
+  async function compte(): Promise<string> {
+    const res = await app.inject({ method: 'POST', url: '/accounts' });
+    return res.json<{ token: string }>().token;
+  }
+
+  it('GET /accounts/me rend desormais les achats, vides au depart', async () => {
+    const token = await compte();
+    const res = await app.inject({
+      method: 'GET',
+      url: '/accounts/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(res.statusCode).toBe(200);
+    const corps = res.json<{ gold: string; purchases: Record<string, number> }>();
+    expect(corps.gold).toBe('0');
+    expect(corps.purchases).toEqual({});
+  });
+
+  it('un achat reussi rend le nouveau solde ET les achats a jour', async () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const token = await compte();
+    const id = await findAccountIdByToken(textToToken(token));
+    if (!id) {
+      throw new Error('compte introuvable');
+    }
+    await creditAccounts([id], BigInt(priceOf(article, 1)));
+
+    const res = await app.inject({
+      method: 'POST',
+      url: '/accounts/me/purchases',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemId: article.id },
+    });
+    expect(res.statusCode).toBe(200);
+    const corps = res.json<{ gold: string; purchases: Record<string, number> }>();
+    expect(corps.gold).toBe('0');
+    expect(corps.purchases[article.id]).toBe(1);
+  });
+
+  it('un solde insuffisant rend 402, et ne debite rien', async () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const token = await compte();
+    const res = await app.inject({
+      method: 'POST',
+      url: '/accounts/me/purchases',
+      headers: { authorization: `Bearer ${token}` },
+      payload: { itemId: article.id },
+    });
+    expect(res.statusCode).toBe(402);
+    expect(res.body).not.toContain('"purchases"');
+  });
+
+  /** Review Focus n°3 : un `itemId` inconnu, ou absent du corps. */
+  it('un article inconnu ou un corps sans itemId rendent 400', async () => {
+    const token = await compte();
+    for (const payload of [{ itemId: 'rien-du-tout' }, {}, { itemId: 42 }]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/accounts/me/purchases',
+        headers: { authorization: `Bearer ${token}` },
+        payload,
+      });
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+    }
+  });
+
+  it('acheter sans jeton valide rend 401, et les trois formes d echec sont indistinguables', async () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const faits = [];
+    for (const headers of [{}, { authorization: '' }, { authorization: 'Bearer pas-un-jeton' }]) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/accounts/me/purchases',
+        headers,
+        payload: { itemId: article.id },
+      });
+      expect(res.statusCode).toBe(401);
+      faits.push(res.body);
+    }
+    for (const corps of faits.slice(1)) {
+      expect(corps).toBe(faits[0]);
+    }
   });
 });

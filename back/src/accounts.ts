@@ -131,25 +131,32 @@ export async function purchasesOf(accountId: string): Promise<Map<string, number
  *   de facon fiable par le test de ce fichier avant le correctif, jamais
  *   apres.
  *
- * ⚠️ **Mesure sur le `catch`, documentee.** La cause reelle d'un echec ici est
- * un CONFLIT (de cle ou de verrou optimiste), jamais un solde insuffisant —
- * rendre `'solde-insuffisant'` confond deux causes distinctes, et un appelant
- * qui afficherait ce message a un joueur qui a bien assez d'or serait
- * trompeur. Le choix est garde malgre ca, mesure a l'appui : les deux tests de
- * concurrence (Review Focus n°1, branches `create` et `update`) montrent que
- * le verdict de la perdante n'est jamais `'ok'` et que le solde final est
- * exactement celui d'UN achat, et qu'aucun appelant actuel (poignee de main,
- * future route HTTP) ne distingue encore un conflit d'un solde insuffisant
- * pour agir differemment — dans les deux cas l'action correcte est
- * « rafraichir l'etat et retenter ». Un quatrieme verdict `'conflit'` serait
- * plus honnete semantiquement ; il n'a pas ete ajoute faute de consommateur
- * qui en ferait quelque chose de different aujourd'hui. A revisiter si une UI
- * veut un message distinct.
+ * ⚠️ **Le `catch` rend `'conflit'`, jamais `'solde-insuffisant'`.** La cause
+ * reelle d'un echec ici est un CONFLIT (de cle ou de verrou optimiste), pour
+ * la branche qui ATTEINT ce `catch` precisement — jamais un solde insuffisant,
+ * qui est deja rendu plus haut par la branche qui compare le solde au prix. Un
+ * `catch` nu attrape aussi une panne de base, pour laquelle « rafraichir et
+ * retenter » est de toute facon le bon conseil. La route HTTP (etape 7b tache
+ * 5) distingue les deux : un `'conflit'` rend 409, pas 402, parce que l'action
+ * correcte du client n'est pas la meme — « gagne plus d'or » contre
+ * « rafraichis et retente ».
+ *
+ * **La perdante d'une course n'atteint pas TOUJOURS ce `catch`.** Mesure :
+ * quand la transaction gagnante commite avant que la perdante ne relise
+ * `deja`/le solde, la perdante voit l'etat deja a jour et rend un verdict
+ * tout aussi legitime par la voie normale — `'palier-max'` (branche `create`,
+ * ~1 fois sur 6 mesure localement) ou `'solde-insuffisant'` (branche
+ * `update`, observe de facon systematique dans ce depot). Seule la fenetre de
+ * VRAI recouvrement (les deux lectures avant que l'une n'ait commite) produit
+ * `'conflit'`. C'est pourquoi les deux tests de concurrence (Review Focus
+ * n°1, branches `create` et `update`) n'assenent que « le verdict de la
+ * perdante n'est pas `'ok'` » — assener qu'il est exactement `'conflit'`
+ * serait faux, mesure a l'appui : reproduit a volonte en relancant ce fichier.
  */
 export async function buyItem(
   accountId: string,
   itemId: string,
-): Promise<'ok' | 'solde-insuffisant' | 'article-inconnu' | 'palier-max'> {
+): Promise<'ok' | 'solde-insuffisant' | 'article-inconnu' | 'palier-max' | 'conflit'> {
   const item = shopItemOf(itemId);
   if (!item) {
     return 'article-inconnu';
@@ -197,7 +204,7 @@ export async function buyItem(
     // lecture et notre ecriture. Dans les deux cas la transaction entiere est
     // annulee, rien n'a ete debite. Voir le docbloc de buyItem pour la mesure
     // qui justifie ce verdict precis.
-    return 'solde-insuffisant';
+    return 'conflit';
   }
 }
 

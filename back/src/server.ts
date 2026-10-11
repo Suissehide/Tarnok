@@ -24,10 +24,12 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
 import {
+  buyItem,
   createAccount,
   creditAccounts,
   findAccountIdByToken,
   goldOf,
+  purchasesOf,
   textToToken,
   tokenToText,
 } from './accounts';
@@ -613,10 +615,46 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     if (accountId === null) {
       return reply.code(401).send({ error: 'jeton absent ou inconnu' });
     }
-    // ⚠️ **En TEXTE, pas en nombre.** `bigint` n'est pas serialisable en JSON,
-    // et un nombre JSON perdrait la precision au-dela de 2^53 — alors que la
-    // colonne, elle, tient jusqu'a 2^63.
-    return reply.send({ gold: (await goldOf(accountId)).toString() });
+    return reply.send({
+      // ⚠️ **En TEXTE, pas en nombre.** `bigint` n'est pas serialisable en
+      // JSON, et un nombre JSON perdrait la precision au-dela de 2^53 alors que
+      // la colonne tient jusqu'a 2^63.
+      gold: (await goldOf(accountId)).toString(),
+      purchases: Object.fromEntries(await purchasesOf(accountId)),
+    });
+  });
+
+  app.post('/accounts/me/purchases', async (req, reply) => {
+    const accountId = await accountIdFromHeader(req.headers.authorization);
+    if (accountId === null) {
+      return reply.code(401).send({ error: 'jeton absent ou inconnu' });
+    }
+    const itemId = (req.body as { itemId?: unknown } | null)?.itemId;
+    if (typeof itemId !== 'string') {
+      return reply.code(400).send({ error: 'itemId manquant' });
+    }
+
+    const verdict = await buyItem(accountId, itemId);
+    if (verdict === 'article-inconnu') {
+      return reply.code(400).send({ error: 'article inconnu' });
+    }
+    if (verdict === 'solde-insuffisant' || verdict === 'palier-max') {
+      // 402 Payment Required : le client a demande quelque chose qu'il ne peut
+      // pas encore se payer. `palier-max` partage ce code parce que la cause
+      // est de meme nature — la demande est refusee, rien n'a change.
+      return reply.code(402).send({ error: verdict });
+    }
+    if (verdict === 'conflit') {
+      // 409 : un achat concurrent (ou une panne de base) a annule la
+      // transaction. Rien n'a ete debite. L'action correcte du client est de
+      // rafraichir et de retenter, PAS de gagner plus d'or — c'est pourquoi ce
+      // n'est pas un 402.
+      return reply.code(409).send({ error: verdict });
+    }
+    return reply.send({
+      gold: (await goldOf(accountId)).toString(),
+      purchases: Object.fromEntries(await purchasesOf(accountId)),
+    });
   });
 
   const wss = new WebSocketServer({ noServer: true });
