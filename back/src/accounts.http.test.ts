@@ -166,6 +166,16 @@ describe('etape 7b tache 5 : la boutique en http', () => {
       throw new Error('catalogue vide');
     }
     const token = await compte();
+    const id = await findAccountIdByToken(textToToken(token));
+    if (!id) {
+      throw new Error('compte introuvable');
+    }
+    // Fonds PARTIELS, une piece sous le prix : un compte a zero prouverait
+    // seulement l'absence de debit (trivial, puisqu'il n'y a rien a debiter).
+    // Ici, un debit existerait s'il avait lieu.
+    const fondsPartiels = BigInt(priceOf(article, 1)) - 1n;
+    await creditAccounts([id], fondsPartiels);
+
     const res = await app.inject({
       method: 'POST',
       url: '/accounts/me/purchases',
@@ -174,6 +184,13 @@ describe('etape 7b tache 5 : la boutique en http', () => {
     });
     expect(res.statusCode).toBe(402);
     expect(res.body).not.toContain('"purchases"');
+
+    const apres = await app.inject({
+      method: 'GET',
+      url: '/accounts/me',
+      headers: { authorization: `Bearer ${token}` },
+    });
+    expect(apres.json<{ gold: string }>().gold).toBe(fondsPartiels.toString());
   });
 
   /**
