@@ -11,7 +11,6 @@ import {
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
-  ORB_PICKUP_RADIUS,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
   ROLLBACK_DEPTH_TICKS,
@@ -251,12 +250,17 @@ export class DerivedOrbs {
    *
    * ## La capture EST le ramassage
    *
-   * ⚠️ **Le predicat est celui du serveur, au pixel pres : `ORB_PICKUP_RADIUS`,
-   * inchange.** C'est `OrbField.resolvePickups` (`back/src/combat.ts`) qui
-   * arbitre, et rien ici ne decide de l'experience — mais les deux comparent
-   * les MEMES positions repliquees au MEME rayon, donc le vol part a l'instant
-   * ou le serveur ramasse. **L'experience est deja acquise quand le vol
-   * commence**, il ne fait que decorer un fait accompli.
+   * ⚠️ **Le predicat est celui du serveur, au pixel pres — mais plus au MEME
+   * rayon depuis la tache 7 de l'etape 7b.** C'est `OrbField.resolvePickups`
+   * (`back/src/combat.ts`) qui arbitre, et rien ici ne decide de
+   * l'experience ; les deux comparent les MEMES positions repliquees, chacune
+   * au rayon DE SON PROPRE joueur, transporte par le `SNAPSHOT` (voir
+   * `PickupTarget.pickupRadius`) — le rayon de ramassage est devenu
+   * personnel (boutique), donc un rayon unique ne suffit plus a dire qui
+   * atteint quoi. C'est precisement cela qui empeche la capture de mentir :
+   * le vol part a l'instant ou le serveur ramasse, au rayon que CE joueur a
+   * reellement. **L'experience est deja acquise quand le vol commence**, il
+   * ne fait que decorer un fait accompli.
    *
    * C'est cela, et rien d'autre, qui autorise l'orbe a suivre un joueur qui
    * fuit. L'attraction de la tache 17 ne pouvait pas se le permettre : elle
@@ -274,17 +278,24 @@ export class DerivedOrbs {
    * retirer : `remove` ignore silencieusement une identite absente.
    */
   capture(players: readonly PickupTarget[], flights: OrbFlights, nowMs: number): void {
-    const r2 = ORB_PICKUP_RADIUS * ORB_PICKUP_RADIUS;
+    // ⚠️ **Precalcule hors des deux boucles**, meme raisonnement que
+    // `OrbField.resolvePickups` : un rayon par joueur recalcule dans la
+    // boucle interne le serait pour chaque orbe ET chaque joueur.
+    const r2 = players.map((p) => p.pickupRadius * p.pickupRadius);
     // Par indice DECROISSANT, meme raisonnement que `expire` et que
     // `OrbField.resolvePickups` : un orbe deplace dans un trou par la
     // compaction ne doit jamais etre saute ensuite.
     for (let i = this.#count - 1; i >= 0; i--) {
       const ox = this.x[i] ?? 0;
       const oy = this.y[i] ?? 0;
-      for (const p of players) {
+      for (let j = 0; j < players.length; j++) {
+        const p = players[j];
+        if (!p) {
+          continue;
+        }
         const dx = ox - p.x;
         const dy = oy - p.y;
-        if (dx * dx + dy * dy <= r2) {
+        if (dx * dx + dy * dy <= (r2[j] ?? 0)) {
           flights.spawn(ox, oy, p.id, this.id[i] ?? 0, nowMs);
           this.#removeAt(i);
           break;
@@ -356,6 +367,8 @@ export interface PickupTarget {
   readonly id: number;
   readonly x: number;
   readonly y: number;
+  /** Rayon de ramassage de CE joueur, transporte par le `SNAPSHOT` (tache 7 de l'etape 7b). */
+  readonly pickupRadius: number;
 }
 
 /**
@@ -811,6 +824,12 @@ export class GameClient {
    * dernier snapshot : la prediction ne simule que la position, pas les pv.
    */
   #localHp = 0;
+  /**
+   * Rayon de ramassage (personnel) du joueur local, tel que porte par le
+   * dernier snapshot (tache 7 de l'etape 7b) — meme regle que `#localHp` :
+   * non predit, c'est la derniere valeur serveur connue.
+   */
+  #localPickupRadius = 0;
   /** Experience de l'equipe, telle que portee par le dernier snapshot. */
   #teamXp = 0;
   /**
@@ -1495,6 +1514,7 @@ export class GameClient {
         hp: this.#localHp,
         aimX: this.#localAim.x,
         aimY: this.#localAim.y,
+        pickupRadius: this.#localPickupRadius,
       };
       if (index >= 0) {
         players[index] = predicted;
@@ -1772,6 +1792,7 @@ export class GameClient {
     // Pas predit, contrairement a la position : on prend simplement la
     // derniere valeur connue du serveur.
     this.#localHp = mine.hp;
+    this.#localPickupRadius = mine.pickupRadius;
     if (this.#local === null) {
       // Premier snapshot ou l'on se voit : on se pose la, sans adoucissement.
       this.#local = new PredictedPlayer(mine.x, mine.y);

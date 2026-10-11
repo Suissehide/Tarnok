@@ -14,7 +14,7 @@
  */
 
 import type { AddressInfo } from 'node:net';
-import { INPUT_HZ, PLAYER_MAX_HP, SNAPSHOT_HZ } from '@shared/constants';
+import { INPUT_HZ, ORB_PICKUP_RADIUS, PLAYER_MAX_HP, SNAPSHOT_HZ } from '@shared/constants';
 import { encodeInput, encodeSnapshot, type PlayerSnapshot } from '@shared/protocol';
 import { WebSocket } from 'ws';
 
@@ -36,6 +36,7 @@ function fakeEntities(count: number): PlayerSnapshot[] {
     hp: PLAYER_MAX_HP,
     aimX: 90,
     aimY: -60,
+    pickupRadius: ORB_PICKUP_RADIUS,
   }));
 }
 

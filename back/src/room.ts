@@ -9,6 +9,7 @@ import {
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
+  ORB_PICKUP_RADIUS,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
@@ -1255,7 +1256,13 @@ export class Room {
     resolveContact([...this.#players.values()], this.horde);
     this.#regenerate();
 
-    const pickedIds = this.#orbs.resolvePickups([...this.#players.values()]);
+    const pickedIds = this.#orbs.resolvePickups(
+      [...this.#players.values()].map((p) => ({
+        x: p.x,
+        y: p.y,
+        pickupRadius: this.#pickupRadiusOf(p),
+      })),
+    );
     if (pickedIds.length > 0) {
       this.#pendingPickups.push({ tick: this.#tick, ids: pickedIds });
       // ⚠️ **La NATURE d'un ramassage se lit dans son IDENTITE** (etape 6a,
@@ -1299,7 +1306,15 @@ export class Room {
   snapshot(out: Outbox): void {
     this.#scratch.length = 0;
     for (const p of this.#players.values()) {
-      this.#scratch.push({ id: p.id, x: p.x, y: p.y, hp: p.hp, aimX: p.aimX, aimY: p.aimY });
+      this.#scratch.push({
+        id: p.id,
+        x: p.x,
+        y: p.y,
+        hp: p.hp,
+        aimX: p.aimX,
+        aimY: p.aimY,
+        pickupRadius: this.#pickupRadiusOf(p),
+      });
     }
 
     // ⚠️ **La vie du boss est LUE DANS LA HORDE a chaque tick, jamais tenue en
@@ -1822,6 +1837,15 @@ export class Room {
         p.hp + (p.loadout.bonus('regen') + p.accountBonuses.regen) / TICK_HZ,
       );
     }
+  }
+
+  /**
+   * Rayon de ramassage de CE joueur (tache 7 de l'etape 7b) : `ORB_PICKUP_RADIUS`
+   * plus ses achats d'aimant. Personnel, donc lu ici et nulle part en dur —
+   * c'est ce qui rend le rayon achetable plutot que fixe pour tout le monde.
+   */
+  #pickupRadiusOf(p: PlayerState): number {
+    return ORB_PICKUP_RADIUS + p.accountBonuses.pickupRadius;
   }
 
   #movementScale(): number {

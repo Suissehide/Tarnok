@@ -61,6 +61,12 @@ export interface PlayerSnapshot {
   aimX: number;
   /** Composante Y de la visee, quantifiee (-127..127). Voir la doc de l'interface. */
   aimY: number;
+  /**
+   * Rayon de ramassage de CE joueur (tache 7 de l'etape 7b) : `ORB_PICKUP_RADIUS`
+   * plus ses achats d'aimant. Personnel depuis que la boutique le rend
+   * achetable — voir `SNAPSHOT_PLAYER_BYTES`.
+   */
+  pickupRadius: number;
 }
 
 export interface WelcomeMessage {
@@ -624,9 +630,9 @@ export const NO_BOSS_ID = 0;
 /** Plus grande valeur que `bossHp` peut porter : voir `SNAPSHOT_HEADER_BYTES`. */
 export const BOSS_HP_MAX = 0xffff_ffff;
 /**
- * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8` — pas de xp ici, voir
- * `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de l'etape 4 :
- * 8 -> 9.
+ * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8 · pickupRadius u8` — pas
+ * de xp ici, voir `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8
+ * de l'etape 4 : 8 -> 9 ; tache 7 de l'etape 7b : 9 -> 10.
  *
  * ⚠️ **`hp` est passe de `u8` a `u16` a la tache 8 de l'etape 4**, et ce
  * n'etait pas prevu au plan. Le passif « vitalite » ajoute 20 points de vie
@@ -635,8 +641,30 @@ export const BOSS_HP_MAX = 0xffff_ffff;
  * aurait rendu la carte inerte sans le dire. L'octet supplementaire par joueur
  * et par snapshot coute moins de 1 % du trafic mesure a l'etape 3
  * (1,09 ko/s par joueur).
+ *
+ * ⚠️ **9 est devenu 10 a l'etape 7b, et c'est le cout AFFICHE de cette
+ * etape.** Sept etapes consecutives sans un octet ajoute par tick s'arretent
+ * ici, par decision explicite : le rayon de ramassage devient achetable, donc
+ * personnel, et `DerivedOrbs#capture` (`front/src/net/client.ts`) ne peut pas
+ * predire le ramassage d'un coequipier sans connaitre SON rayon — son propre
+ * docbloc dit qu'une capture declenchee sans ramassage reel « mentirait ».
+ *
+ * La proportion : +4 octets par snapshot a quatre joueurs, soit +0,47 ko/s
+ * pour le salon a 30 Hz. L'architecture du §3.3 a economise ~150 ko/s en ne
+ * repliquant pas les positions de la horde ; ce surcout en represente 0,3 %.
+ *
+ * ⚠️ **`u8`, et c'est CALCULE** : la base (`ORB_PICKUP_RADIUS`) vaut 90, le
+ * maximum achetable (`maxBonus('pickupRadius')`) vaut 80, donc le maximum
+ * atteignable vaut 170 ; le plafond d'un octet non signe est 255, soit **85
+ * px de marge** — et non 165 : une marge calculee en oubliant de retrancher
+ * le bonus lui-meme serait fausse. `shared/shop.test.ts` assene
+ * `ORB_PICKUP_RADIUS + maxBonus('pickupRadius') <= 255` en DERIVANT le
+ * maximum du catalogue : c'est ce test qui rougira le jour ou quelqu'un
+ * ajoute un palier d'aimant, pas une assertion sur le `Math.min(255, ...)` de
+ * l'encodeur — avec un maximum atteignable de 170, cette borne ne peut pas se
+ * declencher aujourd'hui.
  */
-export const SNAPSHOT_PLAYER_BYTES = 9;
+export const SNAPSHOT_PLAYER_BYTES = 10;
 export const WAVE_ORDER_BYTES = 19;
 
 /** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
@@ -995,6 +1023,7 @@ export function encodeSnapshot(
     v.setUint16(o + 5, p.hp, true);
     v.setInt8(o + 7, quantizeAxis(p.aimX));
     v.setInt8(o + 8, quantizeAxis(p.aimY));
+    v.setUint8(o + 9, Math.min(255, Math.max(0, Math.round(p.pickupRadius))));
     o += SNAPSHOT_PLAYER_BYTES;
   }
   return buf;
@@ -1025,6 +1054,7 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
       hp: v.getUint16(o + 5, true),
       aimX: v.getInt8(o + 7),
       aimY: v.getInt8(o + 8),
+      pickupRadius: v.getUint8(o + 9),
     });
     o += SNAPSHOT_PLAYER_BYTES;
   }

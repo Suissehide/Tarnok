@@ -220,12 +220,14 @@ describe('OrbRenderer.draw — les orbes au sol', () => {
    * exactement le mensonge que la tache evite.
    */
   it('ne deplace plus une orbe au sol, meme avec un joueur colle dessus', () => {
-    const colle = drawnOrbs(unOrbe(1000, 1000), [{ id: 1, x: 1000, y: 1000 }]);
+    const colle = drawnOrbs(unOrbe(1000, 1000), [
+      { id: 1, x: 1000, y: 1000, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
     expect(colle[0]?.x).toBe(1000);
     expect(colle[0]?.y).toBe(1000);
 
     const aPortee = drawnOrbs(unOrbe(1000, 1000), [
-      { id: 1, x: 1000 + ORB_PICKUP_RADIUS - 1, y: 1000 + 1 },
+      { id: 1, x: 1000 + ORB_PICKUP_RADIUS - 1, y: 1000 + 1, pickupRadius: ORB_PICKUP_RADIUS },
     ]);
     expect(aPortee[0]?.x).toBe(1000);
     expect(aPortee[0]?.y).toBe(1000);
@@ -343,7 +345,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
     const drawn = dessine(
       new DerivedOrbs(MAX_ENTITIES),
       unVol(1000, 1000),
-      [{ id: RAMASSEUR, x: 1000 + ORB_PICKUP_RADIUS, y: 1000 }],
+      [{ id: RAMASSEUR, x: 1000 + ORB_PICKUP_RADIUS, y: 1000, pickupRadius: ORB_PICKUP_RADIUS }],
       TOUTE_LA_CARTE,
       aLAge(0),
     );
@@ -365,7 +367,12 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
    * avec les deux modeles, et ne prouverait rien.
    */
   it('finit SUR un joueur qui s eloigne, pas a sa place au sol', () => {
-    const fuyard = { id: RAMASSEUR, x: 1000 + 3 * ORB_PICKUP_RADIUS, y: 1000 };
+    const fuyard = {
+      id: RAMASSEUR,
+      x: 1000 + 3 * ORB_PICKUP_RADIUS,
+      y: 1000,
+      pickupRadius: ORB_PICKUP_RADIUS,
+    };
     const drawn = dessine(
       new DerivedOrbs(MAX_ENTITIES),
       unVol(1000, 1000),
@@ -391,6 +398,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
       id: RAMASSEUR,
       x: 1000 + 2 * ORB_PICKUP_RADIUS,
       y: 1000 - 2 * ORB_PICKUP_RADIUS,
+      pickupRadius: ORB_PICKUP_RADIUS,
     };
     const drawn = dessine(
       new DerivedOrbs(MAX_ENTITIES),
@@ -410,7 +418,12 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
    * est deja sur le joueur — a moins d'un demi-diametre, donc invisible a l'oeil.
    */
   it('est deja arrivee a la derniere image dessinee, un rafraichissement avant l echeance', () => {
-    const fuyard = { id: RAMASSEUR, x: 1000 + 3 * ORB_PICKUP_RADIUS, y: 1000 };
+    const fuyard = {
+      id: RAMASSEUR,
+      x: 1000 + 3 * ORB_PICKUP_RADIUS,
+      y: 1000,
+      pickupRadius: ORB_PICKUP_RADIUS,
+    };
     const drawn = dessine(
       new DerivedOrbs(MAX_ENTITIES),
       unVol(1000, 1000),
@@ -431,8 +444,18 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
    * en plein vol quand deux joueurs se croisent.
    */
   it('vise le joueur qui l a capturee, meme si un autre est plus pres', () => {
-    const ramasseur = { id: RAMASSEUR, x: 1000 + 4 * ORB_PICKUP_RADIUS, y: 1000 };
-    const voisin = { id: RAMASSEUR + 1, x: 1000 + ORB_PICKUP_RADIUS, y: 1000 };
+    const ramasseur = {
+      id: RAMASSEUR,
+      x: 1000 + 4 * ORB_PICKUP_RADIUS,
+      y: 1000,
+      pickupRadius: ORB_PICKUP_RADIUS,
+    };
+    const voisin = {
+      id: RAMASSEUR + 1,
+      x: 1000 + ORB_PICKUP_RADIUS,
+      y: 1000,
+      pickupRadius: ORB_PICKUP_RADIUS,
+    };
     const drawn = dessine(
       new DerivedOrbs(MAX_ENTITIES),
       unVol(1000, 1000),
@@ -446,7 +469,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
 
   it('ne dessine rien quand le joueur vise n est plus a l ecran', () => {
     const drawn = dessine(new DerivedOrbs(MAX_ENTITIES), unVol(1000, 1000), [
-      { id: RAMASSEUR + 1, x: 1000, y: 1000 },
+      { id: RAMASSEUR + 1, x: 1000, y: 1000, pickupRadius: ORB_PICKUP_RADIUS },
     ]);
 
     expect(drawn).toHaveLength(0);
@@ -466,7 +489,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
   it('ne pulse plus une fois capturee, meme sur une particule qui pulsait a l image d avant', () => {
     const { renderer, particules } = calque();
     const auSol = unOrbe(1000, 1000);
-    const cible = { id: RAMASSEUR, x: 1100, y: 1000 };
+    const cible = { id: RAMASSEUR, x: 1100, y: 1000, pickupRadius: ORB_PICKUP_RADIUS };
 
     // L'orbe au sol prend la particule du reservoir et y laisse un creux.
     let creuxMs = -1;
@@ -500,7 +523,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
   it('apparait quand le vol entre dans le cadre, meme parti de tres loin', () => {
     const vue = new Rectangle(0, 0, 800, 800);
     const depart: [number, number] = [800 + 4 * ORB_PICKUP_RADIUS, 400];
-    const cible = { id: RAMASSEUR, x: 400, y: 400 };
+    const cible = { id: RAMASSEUR, x: 400, y: 400, pickupRadius: ORB_PICKUP_RADIUS };
 
     const auDepart = dessine(
       new DerivedOrbs(MAX_ENTITIES),
@@ -537,7 +560,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
     const drawn = dessine(
       orbs,
       flights,
-      [{ id: RAMASSEUR, x: 1200, y: 1000 }],
+      [{ id: RAMASSEUR, x: 1200, y: 1000, pickupRadius: ORB_PICKUP_RADIUS }],
       TOUTE_LA_CARTE,
       aLAge(0),
     );
@@ -843,7 +866,7 @@ describe('OrbRenderer.draw — une piece ne se dessine pas comme une orbe', () =
     const dessinees = dessine(
       new DerivedOrbs(MAX_ENTITIES),
       flights,
-      [{ id: RAMASSEUR, x: 1200, y: 1000 }],
+      [{ id: RAMASSEUR, x: 1200, y: 1000, pickupRadius: ORB_PICKUP_RADIUS }],
       TOUTE_LA_CARTE,
       aLAge(0),
     );

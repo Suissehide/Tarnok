@@ -94,7 +94,7 @@ const STATE: RenderState = {
   localId: 1,
   xp: 42,
   synergy: 7,
-  players: [{ id: 1, x: 10, y: 20, hp: 90, aimX: 1, aimY: 0 }],
+  players: [{ id: 1, x: 10, y: 20, hp: 90, aimX: 1, aimY: 0, pickupRadius: 90 }],
 };
 
 class RecordingClient implements FrameClient {

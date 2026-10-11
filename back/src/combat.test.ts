@@ -28,6 +28,7 @@ import {
   LINK_RADIUS,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
+  ORB_PICKUP_RADIUS,
   PROJECTILE_HIT_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
@@ -865,7 +866,7 @@ describe('OrbField.resolvePickups', () => {
     // Assez loin pour etre hors d'ORB_PICKUP_RADIUS, sans etre absurde.
     orbs.spawn(avecOrbe(2), 5000, 5000);
 
-    const picked = orbs.resolvePickups([{ x: 100, y: 100 }]);
+    const picked = orbs.resolvePickups([{ x: 100, y: 100, pickupRadius: ORB_PICKUP_RADIUS }]);
 
     expect(picked).toEqual([avecOrbe(1)]);
     expect(orbs.count).toBe(1);
@@ -890,13 +891,17 @@ describe('OrbField.resolvePickups', () => {
     // Personne a proximite, des milliers de ticks durant : le ramassage est
     // desormais la SEULE sortie.
     for (let tick = 0; tick < TRES_LONGTEMPS; tick++) {
-      expect(orbs.resolvePickups([{ x: -9000, y: -9000 }])).toEqual([]);
+      expect(
+        orbs.resolvePickups([{ x: -9000, y: -9000, pickupRadius: ORB_PICKUP_RADIUS }]),
+      ).toEqual([]);
     }
     expect(orbs.count).toBe(1);
 
     // Et il est toujours ramassable au bout du compte : un orbe « garde » mais
     // devenu inerte satisferait tout ce qui precede.
-    expect(orbs.resolvePickups([{ x: 100, y: 100 }])).toEqual([avecOrbe(1)]);
+    expect(orbs.resolvePickups([{ x: 100, y: 100, pickupRadius: ORB_PICKUP_RADIUS }])).toEqual([
+      avecOrbe(1),
+    ]);
     expect(orbs.count).toBe(0);
   });
 
@@ -960,9 +965,26 @@ describe('OrbField.resolvePickups', () => {
     // Orbes a x = 50,100,150,200,250 ; un joueur en (150,0), rayon 90 :
     // atteint 100, 150 et 200 (distances 50, 0, 50) mais pas 50 ni 250
     // (distances 100) — trois ramasses sur cinq, ni zero ni tous.
-    const picked = orbs.resolvePickups([{ x: 150, y: 0 }]);
+    const picked = orbs.resolvePickups([{ x: 150, y: 0, pickupRadius: ORB_PICKUP_RADIUS }]);
     expect(picked.length).toBe(3);
     expect(orbs.count).toBe(2);
+  });
+});
+
+describe('etape 7b tache 7 : le rayon de ramassage est personnel', () => {
+  it('un joueur au rayon elargi ramasse une orbe qu un joueur de base ne ramasse pas', () => {
+    const champ = new OrbField(8);
+    const loin = ORB_PICKUP_RADIUS + 30;
+    // Identite qui laisse VRAIMENT un orbe (`dropsOrb`) : `1` n'en laisse
+    // plus depuis la tache 17, meme convention que `avecOrbe` plus haut dans
+    // ce fichier.
+    const orbeId = ORB_DROP_ONE_IN;
+    champ.spawn(orbeId, loin, 0);
+
+    // Un joueur au rayon de base ne l'atteint pas.
+    expect(champ.resolvePickups([{ x: 0, y: 0, pickupRadius: ORB_PICKUP_RADIUS }])).toEqual([]);
+    // Le meme point, au rayon elargi, l'atteint.
+    expect(champ.resolvePickups([{ x: 0, y: 0, pickupRadius: loin + 1 }])).toEqual([orbeId]);
   });
 });
 

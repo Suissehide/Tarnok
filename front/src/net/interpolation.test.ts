@@ -1,4 +1,4 @@
-import { INTERP_DELAY_MS, PLAYER_MAX_HP } from '@shared/constants';
+import { INTERP_DELAY_MS, ORB_PICKUP_RADIUS, PLAYER_MAX_HP } from '@shared/constants';
 import { MSG, type SnapshotMessage } from '@shared/protocol';
 import { describe, expect, it } from 'vitest';
 
@@ -10,11 +10,21 @@ import { SnapshotBuffer } from './interpolation';
  * n'existe plus par joueur (c'est un champ d'equipe, sur `SnapshotMessage`) :
  * on le fixe a 0 par defaut, sauf pour les tests qui le portent explicitement.
  * Meme regle pour aimX/aimY (tache 13) : `(0, 0)`, « pas de tir », sauf pour
- * le test qui porte specifiquement sur la visee.
+ * le test qui porte specifiquement sur la visee. Et pour pickupRadius (tache
+ * 7 de l'etape 7b) : le rayon de base, sauf pour le test qui porte
+ * specifiquement sur le rayon personnel.
  */
 function snapshot(
   tick: number,
-  players: { id: number; x: number; y: number; hp?: number; aimX?: number; aimY?: number }[],
+  players: {
+    id: number;
+    x: number;
+    y: number;
+    hp?: number;
+    aimX?: number;
+    aimY?: number;
+    pickupRadius?: number;
+  }[],
   xp = 0,
   synergy = 0,
 ): SnapshotMessage {
@@ -23,7 +33,13 @@ function snapshot(
     tick,
     xp,
     synergy,
-    players: players.map((p) => ({ hp: PLAYER_MAX_HP, aimX: 0, aimY: 0, ...p })),
+    players: players.map((p) => ({
+      hp: PLAYER_MAX_HP,
+      aimX: 0,
+      aimY: 0,
+      pickupRadius: ORB_PICKUP_RADIUS,
+      ...p,
+    })),
     // Ce decor n'interpole que des JOUEURS : le boss de la tache 4 (etape 6a)
     // ne passe pas par `SnapshotBuffer` — il n'a pas de position sur le fil,
     // seulement une vie. `null` est donc l'etat reel, pas un remplissage.
@@ -44,7 +60,17 @@ describe('SnapshotBuffer.sample', () => {
     // rendu vaut 25 ms, soit pile entre les deux snapshots.
     const sampled = buffer.sample(INTERP_DELAY_MS + 25);
 
-    expect(sampled).toEqual([{ id: 1, x: 50, y: 150, hp: PLAYER_MAX_HP, aimX: 0, aimY: 0 }]);
+    expect(sampled).toEqual([
+      {
+        id: 1,
+        x: 50,
+        y: 150,
+        hp: PLAYER_MAX_HP,
+        aimX: 0,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+      },
+    ]);
   });
 
   it('porte la visee du snapshot d arrivee, sans l interpoler (tache 13)', () => {
@@ -60,6 +86,23 @@ describe('SnapshotBuffer.sample', () => {
     const sampled = buffer.sample(INTERP_DELAY_MS + 25);
 
     expect(sampled[0]).toMatchObject({ aimX: -90, aimY: 60 });
+  });
+
+  /**
+   * Etape 7b, tache 7 : `pickupRadius` est devenu personnel, et la
+   * reconstruction explicite de `sample` (`id, x, y, hp, aimX, aimY, …`) est
+   * exactement l'endroit ou un champ ajoute cote fil peut disparaitre en
+   * silence si personne ne l'y recopie. Deux valeurs qui DIFFERENT entre les
+   * deux snapshots, meme raisonnement que le test de la visee juste au-dessus.
+   */
+  it('porte le rayon de ramassage du snapshot d arrivee, sans l interpoler', () => {
+    const buffer = new SnapshotBuffer();
+    buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0, pickupRadius: 90 }]), 0);
+    buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0, pickupRadius: 170 }]), 50);
+
+    const sampled = buffer.sample(INTERP_DELAY_MS + 25);
+
+    expect(sampled[0]).toMatchObject({ pickupRadius: 170 });
   });
 
   it('porte les pv du snapshot d arrivee, sans les interpoler', () => {
@@ -90,7 +133,7 @@ describe('SnapshotBuffer.sample', () => {
 
     // Temps de rendu negatif : on n'a pas encore de quoi interpoler.
     expect(buffer.sample(0)).toEqual([
-      { id: 1, x: 10, y: 20, hp: PLAYER_MAX_HP, aimX: 0, aimY: 0 },
+      { id: 1, x: 10, y: 20, hp: PLAYER_MAX_HP, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
     ]);
   });
 
@@ -128,6 +171,7 @@ describe('SnapshotBuffer.sample', () => {
       hp: PLAYER_MAX_HP,
       aimX: 0,
       aimY: 0,
+      pickupRadius: ORB_PICKUP_RADIUS,
     });
   });
 

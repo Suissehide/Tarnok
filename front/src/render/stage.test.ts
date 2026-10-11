@@ -23,8 +23,8 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
       xp: 0,
       synergy: 0,
       players: [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 },
-        { id: 2, x: 0, y: 0, hp: 37, aimX: 0, aimY: 0 },
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 },
+        { id: 2, x: 0, y: 0, hp: 37, aimX: 0, aimY: 0, pickupRadius: 90 },
       ],
     };
 
@@ -36,7 +36,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
       localId: 1,
       xp: 654,
       synergy: 0,
-      players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }],
+      players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 }],
     };
 
     expect(hudInfo(state, 1, 0).xp).toBe(654);
@@ -47,7 +47,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
       localId: 1,
       xp: 0,
       synergy: 0,
-      players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }],
+      players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 }],
     };
 
     expect(hudInfo(state, 5, 0).level).toBe(5);
@@ -67,7 +67,7 @@ describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
         localId: 1,
         xp: 0,
         synergy: 0,
-        players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0 }],
+        players: [{ id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: 90 }],
       };
 
       expect(hudInfo(state, 1, 0, true).frozen).toBe(true);

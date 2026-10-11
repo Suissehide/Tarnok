@@ -117,6 +117,10 @@ export class SnapshotBuffer {
     // hp : une direction quantifiee sur un octet n'a rien a gagner a etre
     // interpolee entre deux valeurs deja discretes, et `#fireWeapons` doit de
     // toute facon utiliser la visee du snapshot d'arrivee, pas un melange.
+    // pickupRadius (tache 7 de l'etape 7b) suit la meme regle : un rayon
+    // achete ne « transitionne » pas visuellement entre deux valeurs, et le
+    // ramassage (`DerivedOrbs#capture`) doit comparer celui que le serveur
+    // vient d'annoncer, pas un melange qui ferait rater ou mentir une capture.
     return to.players.map((target) => {
       const previous = from.players.find((p) => p.id === target.id);
       if (!previous) {
@@ -129,6 +133,7 @@ export class SnapshotBuffer {
         hp: target.hp,
         aimX: target.aimX,
         aimY: target.aimY,
+        pickupRadius: target.pickupRadius,
       };
     });
   }

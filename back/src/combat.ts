@@ -8,7 +8,6 @@ import {
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
-  ORB_PICKUP_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
@@ -69,6 +68,8 @@ export interface ContactPlayer {
 export interface PickupPoint {
   readonly x: number;
   readonly y: number;
+  /** Rayon de ramassage de CE joueur : `ORB_PICKUP_RADIUS` plus ses achats. */
+  readonly pickupRadius: number;
 }
 
 /**
@@ -208,16 +209,24 @@ export class OrbField {
    * compaction ne doit jamais etre lui-meme saute par erreur ensuite.
    */
   resolvePickups(players: readonly PickupPoint[]): number[] {
-    const r2 = ORB_PICKUP_RADIUS * ORB_PICKUP_RADIUS;
+    // ⚠️ **Precalcule hors des deux boucles.** Le `r2` etait hoiste parce qu'il
+    // etait unique ; maintenant qu'il y en a un par joueur, le recalculer dans
+    // la boucle interne le ferait pour chaque orbe ET chaque joueur. Un tableau
+    // parallele garde exactement le meme cout qu'avant.
+    const r2 = players.map((p) => p.pickupRadius * p.pickupRadius);
     const picked: number[] = [];
     for (let i = this.#count - 1; i >= 0; i--) {
       const ox = this.x[i] ?? 0;
       const oy = this.y[i] ?? 0;
       let caught = false;
-      for (const p of players) {
+      for (let j = 0; j < players.length; j++) {
+        const p = players[j];
+        if (!p) {
+          continue;
+        }
         const dx = ox - p.x;
         const dy = oy - p.y;
-        if (dx * dx + dy * dy <= r2) {
+        if (dx * dx + dy * dy <= (r2[j] ?? 0)) {
           caught = true;
           break;
         }
