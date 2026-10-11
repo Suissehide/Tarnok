@@ -651,6 +651,14 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       // n'est pas un 402.
       return reply.code(409).send({ error: verdict });
     }
+    if (verdict !== 'ok') {
+      // Exhaustivite : tout verdict ajoute a `buyItem` sans etre mappe
+      // ci-dessus doit faire rougir le typecheck. Sans ce garde-fou il
+      // tombait dans le `send` final et rendait 200 — un refus rapporte
+      // comme un succes.
+      const jamais: never = verdict;
+      throw new Error(`verdict non traite : ${jamais}`);
+    }
     return reply.send({
       gold: (await goldOf(accountId)).toString(),
       purchases: Object.fromEntries(await purchasesOf(accountId)),

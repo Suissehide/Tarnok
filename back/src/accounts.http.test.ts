@@ -176,10 +176,22 @@ describe('etape 7b tache 5 : la boutique en http', () => {
     expect(res.body).not.toContain('"purchases"');
   });
 
-  /** Review Focus n°3 : un `itemId` inconnu, ou absent du corps. */
-  it('un article inconnu ou un corps sans itemId rendent 400', async () => {
+  /**
+   * Review Focus n°3 : un `itemId` inconnu, ou absent du corps — deux causes
+   * distinctes, qui doivent rendre deux CORPS distincts. Un 400 identique
+   * pour les deux ne prouverait rien : la garde de type pourrait disparaitre
+   * sans faire rougir ce test, puisque `shopItemOf` rend aussi `undefined`
+   * pour un `itemId` absent ou mal type, et tomberait alors dans la branche
+   * `article-inconnu` — un 400 par une AUTRE voie que la garde.
+   */
+  it('un article inconnu ou un corps sans itemId rendent 400, avec des corps distincts', async () => {
     const token = await compte();
-    for (const payload of [{ itemId: 'rien-du-tout' }, {}, { itemId: 42 }]) {
+    const cas: [Record<string, unknown>, string][] = [
+      [{ itemId: 'rien-du-tout' }, 'article inconnu'],
+      [{}, 'itemId manquant'],
+      [{ itemId: 42 }, 'itemId manquant'],
+    ];
+    for (const [payload, erreurAttendue] of cas) {
       const res = await app.inject({
         method: 'POST',
         url: '/accounts/me/purchases',
@@ -187,6 +199,7 @@ describe('etape 7b tache 5 : la boutique en http', () => {
         payload,
       });
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(res.json<{ error: string }>().error, JSON.stringify(payload)).toBe(erreurAttendue);
     }
   });
 
