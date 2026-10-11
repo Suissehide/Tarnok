@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { TOKEN_BYTES } from '@shared/protocol';
+import { type BonusKind, priceOf, shopItemOf } from '@shared/shop';
 
 /**
  * ⚠️ **Un seul client pour tout le processus.** Chaque `new PrismaClient()`
@@ -86,4 +87,123 @@ export async function creditAccounts(accountIds: readonly string[], amount: bigi
     where: { id: { in: [...accountIds] } },
     data: { gold: { increment: amount } },
   });
+}
+
+/** Les achats d'un compte : itemId -> palier atteint. */
+export async function purchasesOf(accountId: string): Promise<Map<string, number>> {
+  const lignes = await prisma.purchase.findMany({
+    where: { accountId },
+    select: { itemId: true, level: true },
+  });
+  return new Map(lignes.map((l) => [l.itemId, l.level]));
+}
+
+/**
+ * Achete le palier suivant d'un article du catalogue.
+ *
+ * ⚠️ **Le prix est relu DANS LE CATALOGUE, jamais recu de l'appelant.** C'est
+ * l'autorite serveur du §11 : un client ne peut pas plus fabriquer un achat
+ * qu'il ne pouvait fabriquer de l'or.
+ *
+ * ⚠️ **Tout se passe dans UNE transaction**, et c'est ce qui garantit qu'un
+ * refus ne laisse jamais de debit partiel : la lecture du solde, le debit et
+ * l'ecriture de la ligne sont atomiques, donc un `solde-insuffisant` ou un
+ * `palier-max` renvoie la transaction entiere sans rien ecrire.
+ *
+ * ⚠️ **Mesure sur le `catch`, documentee.** Sous deux achats concurrents du
+ * meme article, les DEUX transactions peuvent lire `deja === null` et passer
+ * la verification de solde avant qu'aucune n'ait commite — la cle composite
+ * `[accountId, itemId]` n'intervient qu'a l'ECRITURE. La perdante decremente
+ * donc bien son propre solde local puis echoue sur l'insertion en double ; sa
+ * transaction entiere est alors annulee, decrement inclus, et le `catch`
+ * attrape cette erreur-la. La cause reelle est un CONFLIT DE CLE, pas un
+ * solde insuffisant — rendre `'solde-insuffisant'` ici confond deux causes
+ * distinctes, et un appelant qui afficherait ce message a un joueur qui a
+ * bien assez d'or serait trompeur. Le choix est garde malgre ca, mesure a
+ * l'appui : le test de concurrence (Review Focus n°1) montre que le verdict
+ * de la perdante n'est jamais `'ok'`, que le solde final est exactement celui
+ * d'UN achat, et qu'aucun appelant actuel (poignee de main, future route HTTP)
+ * ne distingue encore un conflit d'un solde insuffisant pour agir differemment
+ * — dans les deux cas l'action correcte est « rafraichir l'etat et retenter ».
+ * Un quatrieme verdict `'conflit'` serait plus honnete semantiquement ; il
+ * n'a pas ete ajoute faute de consommateur qui en ferait quelque chose de
+ * different aujourd'hui. A revisiter si une UI veut un message distinct.
+ */
+export async function buyItem(
+  accountId: string,
+  itemId: string,
+): Promise<'ok' | 'solde-insuffisant' | 'article-inconnu' | 'palier-max'> {
+  const item = shopItemOf(itemId);
+  if (!item) {
+    return 'article-inconnu';
+  }
+
+  try {
+    return await prisma.$transaction(async (tx) => {
+      const deja = await tx.purchase.findUnique({
+        where: { accountId_itemId: { accountId, itemId } },
+        select: { level: true },
+      });
+      const palier = (deja?.level ?? 0) + 1;
+      if (palier > item.levels) {
+        return 'palier-max' as const;
+      }
+
+      const prix = BigInt(priceOf(item, palier));
+      const compte = await tx.account.findUnique({
+        where: { id: accountId },
+        select: { gold: true },
+      });
+      if ((compte?.gold ?? 0n) < prix) {
+        return 'solde-insuffisant' as const;
+      }
+
+      await tx.account.update({ where: { id: accountId }, data: { gold: { decrement: prix } } });
+      if (deja) {
+        await tx.purchase.update({
+          where: { accountId_itemId: { accountId, itemId } },
+          data: { level: palier },
+        });
+      } else {
+        await tx.purchase.create({ data: { accountId, itemId, level: palier } });
+      }
+      return 'ok' as const;
+    });
+  } catch {
+    // La cle composite a refuse un doublon cree par un achat concurrent :
+    // cette transaction-ci a tout annule, rien n'a ete debite. Voir le
+    // docbloc ci-dessus pour la mesure qui justifie ce verdict precis.
+    return 'solde-insuffisant';
+  }
+}
+
+/** Les bonus permanents d'un compte, par cle, sommes sur ses paliers. */
+export function bonusesOf(purchases: ReadonlyMap<string, number>): Record<BonusKind, number> {
+  const out: Record<BonusKind, number> = {
+    fireRate: 0,
+    damage: 0,
+    maxHp: 0,
+    speed: 0,
+    regen: 0,
+    pickupRadius: 0,
+  };
+  for (const [itemId, level] of purchases) {
+    const item = shopItemOf(itemId);
+    if (item?.kind === 'bonus' && item.bonusKind) {
+      out[item.bonusKind] += (item.perLevel ?? 0) * level;
+    }
+  }
+  return out;
+}
+
+/** Les identifiants d'armes que ces achats debloquent. */
+export function unlockedWeaponsOf(purchases: ReadonlyMap<string, number>): Set<number> {
+  const out = new Set<number>();
+  for (const itemId of purchases.keys()) {
+    const item = shopItemOf(itemId);
+    if (item?.kind === 'weapon' && item.weaponId !== undefined) {
+      out.add(item.weaponId);
+    }
+  }
+  return out;
 }

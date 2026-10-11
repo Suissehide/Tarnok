@@ -25,4 +25,21 @@ model Account {
   gold      BigInt   @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+  purchases Purchase[]
+}
+
+/// Un article achete par un compte. `level` ne vaut autre chose que 1 que pour
+/// les ameliorations a paliers ; un deblocage d'arme est binaire.
+model Purchase {
+  accountId String
+  itemId    String
+  level     Int      @default(1)
+  createdAt DateTime @default(now())
+
+  account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
+
+  /// ⚠️ La cle composite interdit STRUCTURELLEMENT le doublon : deux onglets
+  /// qui achetent le meme article au meme instant ne peuvent pas creer deux
+  /// lignes, et c'est la base qui le garantit, pas le code applicatif.
+  @@id([accountId, itemId])
 }

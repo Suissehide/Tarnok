@@ -1,8 +1,11 @@
 import { randomBytes } from 'node:crypto';
 import { GOLD_MAX, TOKEN_BYTES } from '@shared/protocol';
+import { priceOf, SHOP_ITEMS } from '@shared/shop';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
+  bonusesOf,
+  buyItem,
   createAccount,
   creditAccounts,
   findAccountIdByToken,
@@ -10,8 +13,10 @@ import {
   hashToken,
   newToken,
   prisma,
+  purchasesOf,
   textToToken,
   tokenToText,
+  unlockedWeaponsOf,
 } from './accounts';
 
 beforeEach(async () => {
@@ -111,5 +116,123 @@ describe('etape 7a tache 2 : le compte, et son jeton jamais stocke en clair', ()
    */
   it('le jeton frappe fait exactement TOKEN_BYTES du protocole', () => {
     expect(newToken().length).toBe(TOKEN_BYTES);
+  });
+});
+
+describe('etape 7b tache 4 : acheter', () => {
+  it('un compte neuf n a aucun achat', async () => {
+    const { id } = await createAccount();
+    expect((await purchasesOf(id)).size).toBe(0);
+  });
+
+  it('un achat insere la ligne et debite EXACTEMENT le prix du catalogue', async () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const { id } = await createAccount();
+    await creditAccounts([id], BigInt(priceOf(article, 1)));
+
+    expect(await buyItem(id, article.id)).toBe('ok');
+    expect(await goldOf(id)).toBe(0n);
+    expect((await purchasesOf(id)).get(article.id)).toBe(1);
+  });
+
+  /**
+   * Review Focus n°2 : un refus doit ne RIEN debiter et n'inserer RIEN. Un
+   * debit partiel serait pire qu'un crash, parce qu'invisible — le joueur
+   * verrait son or baisser sans rien recevoir.
+   */
+  it('un achat a solde insuffisant ne debite rien et n insere rien', async () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const { id } = await createAccount();
+    const presque = BigInt(priceOf(article, 1)) - 1n;
+    await creditAccounts([id], presque);
+
+    expect(await buyItem(id, article.id)).toBe('solde-insuffisant');
+    expect(await goldOf(id)).toBe(presque);
+    expect((await purchasesOf(id)).size).toBe(0);
+  });
+
+  it('un article inconnu est refuse sans rien debiter', async () => {
+    const { id } = await createAccount();
+    await creditAccounts([id], 100_000n);
+    expect(await buyItem(id, 'article-qui-n-existe-pas')).toBe('article-inconnu');
+    expect(await goldOf(id)).toBe(100_000n);
+    expect((await purchasesOf(id)).size).toBe(0);
+  });
+
+  it('acheter un palier de plus monte le niveau et debite le prix du palier', async () => {
+    const paliers = SHOP_ITEMS.find((i) => i.levels > 1);
+    if (!paliers) {
+      throw new Error('aucun article a paliers');
+    }
+    const { id } = await createAccount();
+    await creditAccounts([id], BigInt(priceOf(paliers, 1) + priceOf(paliers, 2)));
+
+    expect(await buyItem(id, paliers.id)).toBe('ok');
+    expect(await buyItem(id, paliers.id)).toBe('ok');
+    expect((await purchasesOf(id)).get(paliers.id)).toBe(2);
+    expect(await goldOf(id)).toBe(0n);
+  });
+
+  /**
+   * Review Focus n°3 : au-dela du dernier palier, le catalogue est la limite.
+   */
+  it('acheter au-dela du dernier palier est refuse', async () => {
+    const article = SHOP_ITEMS.find((i) => i.levels === 1);
+    if (!article) {
+      throw new Error('aucun article a un seul palier');
+    }
+    const { id } = await createAccount();
+    await creditAccounts([id], BigInt(priceOf(article, 1)) * 4n);
+
+    expect(await buyItem(id, article.id)).toBe('ok');
+    const apres = await goldOf(id);
+    expect(await buyItem(id, article.id)).toBe('palier-max');
+    expect(await goldOf(id)).toBe(apres);
+  });
+
+  /**
+   * Review Focus n°1 : deux onglets, le meme article, au meme instant. La cle
+   * composite et la transaction doivent n'en laisser passer qu'UN, et ne
+   * debiter qu'une fois.
+   */
+  it('deux achats CONCURRENTS du meme article n en passent qu un', async () => {
+    const article = SHOP_ITEMS.find((i) => i.levels === 1);
+    if (!article) {
+      throw new Error('aucun article a un seul palier');
+    }
+    const { id } = await createAccount();
+    await creditAccounts([id], BigInt(priceOf(article, 1)) * 2n);
+
+    const [a, b] = await Promise.all([buyItem(id, article.id), buyItem(id, article.id)]);
+    const resultats = [a, b].sort();
+    expect(resultats).toContain('ok');
+    expect(resultats.filter((r) => r === 'ok')).toHaveLength(1);
+    expect((await purchasesOf(id)).get(article.id)).toBe(1);
+    expect(await goldOf(id)).toBe(BigInt(priceOf(article, 1)));
+  });
+
+  it('bonusesOf somme les paliers, et rend zero sur une cle non achetee', () => {
+    const v = SHOP_ITEMS.find((i) => i.bonusKind === 'maxHp');
+    if (!v) {
+      throw new Error('aucun article de vitalite');
+    }
+    const b = bonusesOf(new Map([[v.id, 3]]));
+    expect(b.maxHp).toBe((v.perLevel ?? 0) * 3);
+    expect(b.regen).toBe(0);
+  });
+
+  it('unlockedWeaponsOf rend les armes des articles achetes, et rien d autre', () => {
+    const arme = SHOP_ITEMS.find((i) => i.kind === 'weapon');
+    if (!arme) {
+      throw new Error('aucun article d arme');
+    }
+    expect([...unlockedWeaponsOf(new Map([[arme.id, 1]]))]).toEqual([arme.weaponId]);
+    expect(unlockedWeaponsOf(new Map()).size).toBe(0);
   });
 });
