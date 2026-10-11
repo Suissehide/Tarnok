@@ -20,11 +20,11 @@ import {
   encodeZone,
   MSG,
 } from '@shared/protocol';
+import { bonusesOf } from '@shared/shop';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
 import {
-  bonusesOf,
   buyItem,
   createAccount,
   creditAccounts,

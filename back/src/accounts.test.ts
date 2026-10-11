@@ -4,7 +4,6 @@ import { priceOf, SHOP_ITEMS, type ShopItem } from '@shared/shop';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
-  bonusesOf,
   buyItem,
   createAccount,
   creditAccounts,
@@ -358,16 +357,6 @@ describe('etape 7b tache 4 : acheter', () => {
     // solde valait `-1500`.
     expect(await goldOf(id)).toBe(0n);
     expect((await purchasesOf(id)).size).toBe(1);
-  });
-
-  it('bonusesOf somme les paliers, et rend zero sur une cle non achetee', () => {
-    const v = SHOP_ITEMS.find((i) => i.bonusKind === 'maxHp');
-    if (!v) {
-      throw new Error('aucun article de vitalite');
-    }
-    const b = bonusesOf(new Map([[v.id, 3]]));
-    expect(b.maxHp).toBe((v.perLevel ?? 0) * 3);
-    expect(b.regen).toBe(0);
   });
 
   it('unlockedWeaponsOf rend les armes des articles achetes, et rien d autre', () => {

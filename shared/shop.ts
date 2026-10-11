@@ -120,6 +120,50 @@ export const SHOP_ITEMS: readonly ShopItem[] = Object.freeze([
   },
 ]);
 
+/**
+ * Bonus permanents d'un compte sans aucun achat.
+ *
+ * ⚠️ **Partage, pas duplique.** `Room.join` s'en sert comme valeur par defaut
+ * d'un joueur sans compte resolu ; `GameClient` comme valeur par defaut de son
+ * miroir de prediction. Deux copies divergeraient a la premiere cle ajoutee a
+ * `BonusKind`, et la divergence serait exactement celle que ce module existe
+ * pour empecher.
+ */
+export const BONUS_ZERO: Readonly<Record<BonusKind, number>> = Object.freeze({
+  fireRate: 0,
+  damage: 0,
+  maxHp: 0,
+  speed: 0,
+  regen: 0,
+  pickupRadius: 0,
+});
+
+/**
+ * Les bonus permanents d'un compte, par cle, sommes sur ses paliers.
+ *
+ * ⚠️ **Vit dans `shared/`, et c'est la revue finale de l'etape 7b qui l'y a
+ * descendue.** Elle vivait dans `back/src/accounts.ts`, donc hors de portee du
+ * front : le miroir de prediction du client derivait sa cadence, sa vitesse et
+ * ses degats du seul inventaire de draft, sans les bonus de compte que `Room`
+ * ajoute a cinq endroits. Mesure du defaut : avec Cadence au maximum, l'arme
+ * neutre affichait 225 salves sur 30 s la ou le serveur en tirait 300 — 25% de
+ * perte, parce que l'arrondi de `cooldownWithBonus` amplifie le bonus sur une
+ * recharge de 4 ticks. Les deux cotes la lisent desormais de la MEME source.
+ *
+ * Elle n'a besoin que du catalogue (`shopItemOf`) : aucune dependance a Prisma
+ * ni au serveur n'est descendue avec elle.
+ */
+export function bonusesOf(purchases: ReadonlyMap<string, number>): Record<BonusKind, number> {
+  const out: Record<BonusKind, number> = { ...BONUS_ZERO };
+  for (const [itemId, level] of purchases) {
+    const item = shopItemOf(itemId);
+    if (item?.kind === 'bonus' && item.bonusKind) {
+      out[item.bonusKind] += (item.perLevel ?? 0) * level;
+    }
+  }
+  return out;
+}
+
 export function shopItemOf(id: string): ShopItem | undefined {
   return SHOP_ITEMS.find((i) => i.id === id);
 }

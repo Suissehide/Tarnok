@@ -1,3 +1,5 @@
+import { bonusesOf } from '@shared/shop';
+
 import { Keyboard } from './input/keyboard';
 import { Mouse } from './input/mouse';
 import { acheter, fetchCompte, tokenBytes, tokenText } from './net/account';
@@ -259,6 +261,18 @@ function join(code: string): void {
     // donc on ne peut dessiner les obstacles qu'a ce moment-la — jamais avant.
     (map) => stage.drawObstacles(map),
     accountToken,
+    // Les bonus permanents du compte, pour le MIROIR DE PREDICTION (revue
+    // finale de l'etape 7b). Derives ici des memes `accountPurchases` que le
+    // grisage de l'etalage juste en dessous, avec la fonction que `Room`
+    // applique (`bonusesOf`, descendue dans `shared/shop.ts`) : zero octet de
+    // plus sur le fil, et aucune seconde formule.
+    //
+    // ⚠️ **Calcules a la construction, une seule fois.** Le serveur pose ces
+    // bonus au `join` et ils sont constants sur toute la run ; la boutique
+    // disparait de l'ecran des que `join()` est appelee, donc `accountPurchases`
+    // ne peut plus changer sous les pieds du client. Meme propriete que celle
+    // que `DraftScreen` tient deja.
+    bonusesOf(new Map(Object.entries(accountPurchases))),
   );
   client.connect();
 

@@ -39,6 +39,7 @@ import {
   type ZoneMessage,
   zoneElement,
 } from '@shared/protocol';
+import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
@@ -1166,6 +1167,26 @@ export class GameClient {
      * `client.test.ts`.
      */
     private readonly accountToken: Uint8Array | null = null,
+    /**
+     * Les bonus PERMANENTS du compte (boutique, etape 7b), tels que
+     * `bonusesOf` les derive de ses achats.
+     *
+     * ⚠️ **ZERO octet sur le fil, et c'est une contrainte, pas une economie.**
+     * Comme le grisage de l'etalage (§3.5 de la spec), le client lit SES
+     * PROPRES achats en HTTP au chargement (`GET /accounts/me`) et derive ces
+     * bonus avec la fonction partagee. Aucun message, aucune route, aucun champ
+     * de snapshot n'a ete ajoute pour eux.
+     *
+     * ⚠️ **Fige a la construction, jamais relu.** Le serveur pose ces bonus une
+     * seule fois au `join` et ils sont constants sur toute la run (voir
+     * `Room.join`) : un miroir qui les relirait en continu reintroduirait
+     * exactement la divergence que ce parametre existe pour retirer.
+     *
+     * ⚠️ **Le serveur reste l'autorite.** Ces valeurs n'alimentent QUE la
+     * prediction d'affichage ; si un ecart subsiste, c'est le snapshot qui a
+     * raison.
+     */
+    private readonly accountBonuses: Readonly<Record<BonusKind, number>> = BONUS_ZERO,
   ) {}
 
   get status(): ConnectionStatus {
@@ -1463,13 +1484,15 @@ export class GameClient {
     // recale en continu : `#freezeUntilTick` et `#resumeEndTick` sont dates
     // dans ce repere par le message `LEVEL_UP`, jamais dans un tick local.
     //
-    // ⚠️ **La vitesse vient de l'inventaire, pas de `PLAYER_SPEED`** (tache 9
-    // de l'etape 4). `Room.step` avance le joueur a
-    // `PLAYER_SPEED + loadout.bonus('speed')` ; des la premiere carte
-    // « fougue » (+15 px/s), une prediction cablee sur la constante avance
-    // moins vite que l'autorite a CHAQUE tick, et chaque snapshot recale le
-    // personnage en arriere — le joueur voit une reconciliation permanente,
-    // exactement le defaut que la prediction existe pour eviter.
+    // ⚠️ **La vitesse vient de l'inventaire ET du compte, pas de
+    // `PLAYER_SPEED`** (tache 9 de l'etape 4, puis la revue finale de l'etape
+    // 7b). `Room.step` avance le joueur a
+    // `PLAYER_SPEED + loadout.bonus('speed') + accountBonuses.speed` ; des la
+    // premiere carte « fougue » (+15 px/s) ou du premier palier de « Celerite »
+    // achete (+6 px/s), une prediction qui omet un terme avance moins vite que
+    // l'autorite a CHAQUE tick, et chaque snapshot recale le personnage en
+    // arriere — le joueur voit une reconciliation permanente, exactement le
+    // defaut que la prediction existe pour eviter. Voir `#localSpeed`.
     this.#local?.predict(
       axes.x,
       axes.y,
@@ -1537,17 +1560,26 @@ export class GameClient {
 
   /**
    * Vitesse de deplacement du joueur local — meme formule que `Room.step`
-   * (`PLAYER_SPEED + loadout.bonus('speed')`), pas une approximation.
+   * (`PLAYER_SPEED + loadout.bonus('speed') + accountBonuses.speed`), pas une
+   * approximation.
    *
-   * `PLAYER_SPEED` tant que le WELCOME n'est pas arrive : sans identifiant, il
-   * n'y a pas d'inventaire a consulter, et un inventaire vide vaut de toute
-   * facon exactement `PLAYER_SPEED`.
+   * ⚠️ **Les TROIS termes, pas deux.** Ce miroir n'additionnait que les deux
+   * premiers : le bonus de compte « Celerite » (jusqu'a +30 px/s au palier
+   * maximum) manquait a chaque tick. Mesure de l'ecart en regime etabli : 1,57
+   * px de retard — invisible a l'oeil, mais c'est exactement le mecanisme que
+   * la tache 9 de l'etape 4 a paye une tache entiere pour fermer (voir le
+   * docbloc de `PredictedPlayer.predict`), rouvert d'un cran par l'etape 7b.
+   *
+   * Sans WELCOME, il n'y a pas d'inventaire a consulter — mais les bonus de
+   * compte, eux, sont connus des la construction : la vitesse de base les
+   * porte donc deja.
    */
   #localSpeed(): number {
+    const base = PLAYER_SPEED + this.accountBonuses.speed;
     if (this.#localId === null) {
-      return PLAYER_SPEED;
+      return base;
     }
-    return PLAYER_SPEED + this.loadoutOf(this.#localId).bonus('speed');
+    return base + this.loadoutOf(this.#localId).bonus('speed');
   }
 
   #sendInput(): void {
@@ -2200,6 +2232,25 @@ export class GameClient {
    * multiplicateur de degats l'accompagne pour la meme raison — un projectile
    * affiche doit porter le meme nombre que celui que le serveur arbitre, meme
    * si rien ici n'en decide l'issue (§5.4).
+   *
+   * ⚠️ **Les bonus de COMPTE s'ajoutent aux passifs du draft, sur les deux
+   * calculs** (revue finale de l'etape 7b). `Room#fireOne` somme
+   * `loadout.bonus('fireRate') + accountBonuses.fireRate` et
+   * `1 + loadout.bonus('damage') + accountBonuses.damage` ; ce miroir n'en
+   * lisait que le premier terme. Mesure du defaut : avec Cadence au palier
+   * maximum (+0,15), sur 30 s a 30 Hz, l'arme neutre — celle que tout le monde
+   * porte en permanence — affichait **225 salves pour 300 cote serveur, 25% de
+   * perte**, parce que l'arrondi de `cooldownWithBonus` amplifie le bonus sur
+   * une recharge de 4 ticks. Et la phase derivait sans borne : les deux suites
+   * de ticks de tir n'ont aucun point de resynchronisation.
+   *
+   * ⚠️ **Ce que ca coutait depasse « des tirs manquants ».** `#markLocally`
+   * n'est appele que depuis `projectiles.collide` : la teinte elementaire etait
+   * donc posee 25% moins souvent que le serveur ne marque. Le joueur lisait un
+   * monstre non teinte, planifiait en consequence, et une reaction partait sans
+   * qu'il l'ait vue venir — le pendant exact du « une capture declenchee sans
+   * ramassage reel MENTIRAIT » que le §5 de la spec invoque pour justifier
+   * l'octet du rayon de ramassage.
    */
   #fireOne(
     playerId: number,
@@ -2212,7 +2263,10 @@ export class GameClient {
     aimY: number,
   ): void {
     const weapon = weaponOf(weaponId);
-    const cooldown = cooldownWithBonus(weapon.cooldownTicks, loadout.bonus('fireRate'));
+    const cooldown = cooldownWithBonus(
+      weapon.cooldownTicks,
+      loadout.bonus('fireRate') + this.accountBonuses.fireRate,
+    );
     let last = this.#lastFireTick.get(playerId);
     if (!last) {
       last = new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY);
@@ -2221,7 +2275,7 @@ export class GameClient {
     if (tick - (last[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    const damage = weapon.damage * (1 + loadout.bonus('damage'));
+    const damage = weapon.damage * (1 + loadout.bonus('damage') + this.accountBonuses.damage);
     // Meme calcul que `Room#fireOne`, meme fonction : chaque exemplaire empile
     // elargit la salve d'un projectile. Deux formules divergeraient, et le
     // joueur verrait une salve que le serveur n'arbitre pas.

@@ -1,7 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PrismaClient } from '@prisma/client';
 import { TOKEN_BYTES } from '@shared/protocol';
-import { type BonusKind, priceOf, shopItemOf } from '@shared/shop';
+import { priceOf, shopItemOf } from '@shared/shop';
 
 /**
  * ⚠️ **Un seul client pour tout le processus.** Chaque `new PrismaClient()`
@@ -231,25 +231,6 @@ export async function buyItem(
     // qui justifie ce verdict precis.
     return 'conflit';
   }
-}
-
-/** Les bonus permanents d'un compte, par cle, sommes sur ses paliers. */
-export function bonusesOf(purchases: ReadonlyMap<string, number>): Record<BonusKind, number> {
-  const out: Record<BonusKind, number> = {
-    fireRate: 0,
-    damage: 0,
-    maxHp: 0,
-    speed: 0,
-    regen: 0,
-    pickupRadius: 0,
-  };
-  for (const [itemId, level] of purchases) {
-    const item = shopItemOf(itemId);
-    if (item?.kind === 'bonus' && item.bonusKind) {
-      out[item.bonusKind] += (item.perLevel ?? 0) * level;
-    }
-  }
-  return out;
 }
 
 /** Les identifiants d'armes que ces achats debloquent. */

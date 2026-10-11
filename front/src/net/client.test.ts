@@ -51,6 +51,7 @@ import {
   TOKEN_BYTES,
   VOTE_CHOICE,
 } from '@shared/protocol';
+import { bonusesOf, maxBonus, SHOP_ITEMS } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, type Weapon, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -2344,8 +2345,19 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     localId = 1,
     readInput: () => InputAxes = () => ({ x: 0, y: 0 }),
     readAim: () => InputAxes = () => AIM_RIGHT,
+    /** Les bonus PERMANENTS du compte (boutique, etape 7b) — voir `GameClient`. */
+    accountBonuses = bonusesOf(new Map()),
   ): { client: GameClient; socket: FakeSocket } {
-    const client = new GameClient('ws://test', readInput, vi.fn(), undefined, readAim);
+    const client = new GameClient(
+      'ws://test',
+      readInput,
+      vi.fn(),
+      undefined,
+      readAim,
+      undefined,
+      null,
+      accountBonuses,
+    );
     client.connect();
     const socket = latestSocket();
     socket.emit('message', { data: encodeWelcome(localId, 0, 0xd8a5_0001) });
@@ -2743,6 +2755,158 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     expect(attendu).toBeGreaterThan(base.damage);
     const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
     expect(tir?.[6]).toBeCloseTo(attendu, 6);
+  });
+
+  /**
+   * Le troisieme site de la correction 2 de la revue finale. L'effet de jeu est
+   * NUL — la valeur est ignoree en aval, le serveur arbitre seul (§5.4) — donc
+   * le defaut etait entierement dans le docbloc de `#fireOne`, qui affirme
+   * qu'« un projectile affiche doit porter le MEME nombre que celui que le
+   * serveur arbitre ». Un docbloc faux est un bug dans ce depot ; ce test est
+   * ce qui le rend vrai, et il est le seul des trois a avoir rougi a la
+   * mutation SANS exister (`accountBonuses.damage` retire laissait les 101
+   * autres tests verts).
+   *
+   * ⚠️ L'attendu vient du catalogue (`maxBonus('damage')`), jamais du miroir.
+   */
+  it('le bonus de PUISSANCE achete voyage aussi avec le projectile affiche', () => {
+    const puissance = SHOP_ITEMS.find((i) => i.bonusKind === 'damage');
+    if (!puissance) {
+      throw new Error('aucun article de puissance');
+    }
+    const achats = new Map([[puissance.id, puissance.levels]]);
+    const { client, socket } = setup(
+      1,
+      () => ({ x: 0, y: 0 }),
+      () => AIM_RIGHT,
+      bonusesOf(achats),
+    );
+
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
+
+    const base = weaponOf(BASE_WEAPON_ID);
+    const attendu = base.damage * (1 + maxBonus('damage'));
+    expect(maxBonus('damage')).toBeGreaterThan(0);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    expect(tir?.[6]).toBeCloseTo(attendu, 6);
+    expect(tir?.[6]).not.toBeCloseTo(base.damage, 3);
+  });
+
+  /**
+   * Revue finale de l'etape 7b, correction 2 : le serveur somme les bonus de
+   * COMPTE aux passifs du draft (`Room#fireOne` :
+   * `loadout.bonus('fireRate') + accountBonuses.fireRate`). Ce miroir n'en
+   * lisait que le premier terme, et les bonus de compte n'arrivaient meme pas
+   * au front.
+   *
+   * **Mesure du defaut** : avec Cadence au palier maximum (+0,15), la recharge
+   * de l'arme neutre tombe de 4 a 3 ticks — un tiers de salves en plus. Sur
+   * 30 s a 30 Hz, 300 salves cote serveur contre 225 affichees : 25% de perte
+   * sur l'arme que tout le monde porte en permanence, et une phase qui derive
+   * sans borne faute de point de resynchronisation.
+   *
+   * ⚠️ **L'attendu ne vient PAS du miroir.** Il est derive du CATALOGUE
+   * (`maxBonus('fireRate')`) passe a la fonction partagee que `Room#fireOne`
+   * applique — jamais de `client.accountBonuses` ni d'une repetition de
+   * l'expression testee. Un attendu calcule avec la meme expression que le
+   * code teste ne verifierait rien.
+   *
+   * ⚠️ **Et l'assertion de non-egalite est load-bearing** : sans elle, un
+   * miroir qui ignore `accountBonuses.fireRate` tirerait a 4 ticks, et il
+   * faudrait que la cadence attendue soit par chance egale a la cadence de
+   * base pour que ce test passe. La ligne `not.toBe` rend ce hasard
+   * impossible a ignorer si un reglage de table venait a l'introduire.
+   */
+  it('la cadence AFFICHEE somme le bonus de CADENCE achete, pas seulement les passifs', () => {
+    const cadence = SHOP_ITEMS.find((i) => i.bonusKind === 'fireRate');
+    if (!cadence) {
+      throw new Error('aucun article de cadence');
+    }
+    // Tous les paliers achetes : la recharge de l'arme neutre doit descendre.
+    const achats = new Map([[cadence.id, cadence.levels]]);
+    const { client, socket } = setup(
+      1,
+      () => ({ x: 0, y: 0 }),
+      () => AIM_RIGHT,
+      bonusesOf(achats),
+    );
+
+    const base = weaponOf(BASE_WEAPON_ID);
+    const attendue = cooldownWithBonus(base.cooldownTicks, maxBonus('fireRate'));
+    // Si le catalogue cessait de faire descendre la recharge, ce test ne
+    // mesurerait plus rien — et il le dirait ici, pas en silence.
+    expect(attendue).toBeLessThan(base.cooldownTicks);
+
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 70, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
+
+    // ⚠️ L'INTERVALLE entre deux salves, jamais leur compte : meme raison que
+    // le test « chaque arme a SA recharge ».
+    const salves = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).map((c) => c[1]);
+    expect(salves.length).toBeGreaterThan(1);
+    for (let i = 1; i < salves.length; i++) {
+      expect((salves[i] ?? 0) - (salves[i - 1] ?? 0)).toBe(attendue);
+      expect((salves[i] ?? 0) - (salves[i - 1] ?? 0)).not.toBe(base.cooldownTicks);
+    }
+  });
+
+  /**
+   * Le pendant pour `speed`. L'ecart mesure en regime etabli est de 1,57 px :
+   * un joueur reel ne le verra pas. Mais c'est le MECANISME que la tache 9 de
+   * l'etape 4 a paye une tache entiere pour fermer — « le joueur voit une
+   * reconciliation permanente, exactement le defaut que la prediction existe
+   * pour eviter » (docbloc de `PredictedPlayer.predict`) — et l'etape 7b le
+   * rouvrait d'un cran.
+   *
+   * ⚠️ **Sans carte de draft, exprès** : seul le bonus de COMPTE est en jeu,
+   * donc un miroir qui sommerait le draft mais pas le compte ne peut pas
+   * passer par compensation. L'attendu vient du catalogue
+   * (`maxBonus('speed')`), jamais de `#localSpeed`.
+   */
+  it('la prediction locale somme le bonus de CELERITE achete, pas seulement les cartes', () => {
+    const celerite = SHOP_ITEMS.find((i) => i.bonusKind === 'speed');
+    if (!celerite) {
+      throw new Error('aucun article de celerite');
+    }
+    const achats = new Map([[celerite.id, celerite.levels]]);
+    let entree: InputAxes = { x: 0, y: 0 };
+    const { client, socket } = setup(
+      1,
+      () => entree,
+      () => AIM_RIGHT,
+      bonusesOf(achats),
+    );
+
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [
+        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      ]),
+    });
+
+    // Chauffe sans entree : le client n'a recu aucun LEVEL_UP, donc aucune
+    // rampe de reprise n'est en cours — mais la position predite doit exister
+    // avant qu'on mesure un deplacement.
+    client.update(0, STEP);
+    const avant = client.localPosition;
+    entree = { x: 1, y: 0 };
+    const IMAGES = 20;
+    for (let i = 1; i <= IMAGES; i++) {
+      client.update(i * MS_PER_TICK, STEP);
+    }
+    const apres = client.localPosition;
+
+    const parcouru = (apres?.x ?? 0) - (avant?.x ?? 0);
+    const vitesse = PLAYER_SPEED + maxBonus('speed');
+    expect(maxBonus('speed')).toBeGreaterThan(0);
+    expect(parcouru).toBeCloseTo(vitesse * STEP * IMAGES, 6);
+    // Et surtout : PAS la vitesse sans compte. C'est cette ligne qui rougit si
+    // `#localSpeed` oublie `accountBonuses.speed`.
+    expect(parcouru).not.toBeCloseTo(PLAYER_SPEED * STEP * IMAGES, 2);
   });
 
   it('la prediction locale avance a la vitesse de l inventaire, pas a PLAYER_SPEED', () => {

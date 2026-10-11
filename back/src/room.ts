@@ -26,7 +26,7 @@ import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, OUTCOME, type PlayerSnapshot, VOTE_CHOICE } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
-import type { BonusKind } from '@shared/shop';
+import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import type { WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -275,16 +275,6 @@ const SPAWN_OFFSETS: readonly (readonly [number, number])[] = [
 
 /** Un axe d'entree tient sur un octet signe : on le ramene dans [-1, 1]. */
 const AXIS_SCALE = 1 / 127;
-
-/** Bonus de compte par defaut : un joueur sans aucun achat. */
-const BONUS_ZERO: Readonly<Record<BonusKind, number>> = Object.freeze({
-  fireRate: 0,
-  damage: 0,
-  maxHp: 0,
-  speed: 0,
-  regen: 0,
-  pickupRadius: 0,
-});
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;

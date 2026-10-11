@@ -56,12 +56,14 @@ export class PredictedPlayer {
    *
    * ⚠️ **`speed` est un parametre depuis la tache 9 de l'etape 4, et ce n'est
    * pas une commodite.** Le serveur avance le joueur a
-   * `PLAYER_SPEED + loadout.bonus('speed')` (voir `Room.step`) : des la
-   * premiere carte « fougue » (+15 px/s), une prediction cablee sur
-   * `PLAYER_SPEED` avance moins vite que l'autorite a chaque tick, et le
-   * joueur voit une reconciliation permanente — sa position rattrapee en
-   * arriere par chaque snapshot. La valeur par defaut reste `PLAYER_SPEED` :
-   * c'est exactement ce que vaut un inventaire vide.
+   * `PLAYER_SPEED + loadout.bonus('speed') + accountBonuses.speed` (voir
+   * `Room.step`) : des la premiere carte « fougue » (+15 px/s) ou du premier
+   * palier de « Celerite » achete (+6 px/s), une prediction qui omet un terme
+   * avance moins vite que l'autorite a chaque tick, et le joueur voit une
+   * reconciliation permanente — sa position rattrapee en arriere par chaque
+   * snapshot. C'est `GameClient#localSpeed` qui somme les trois termes ; la
+   * valeur par defaut reste `PLAYER_SPEED`, c'est exactement ce que vaut un
+   * inventaire vide sur un compte sans achat.
    */
   predict(moveX: number, moveY: number, dt: number, scale = 1, speed = PLAYER_SPEED): void {
     let nx = moveX;

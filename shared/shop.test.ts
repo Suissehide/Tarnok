@@ -3,7 +3,7 @@ import { PASSIVE_KINDS } from '@shared/passives';
 import { WEAPONS } from '@shared/weapons';
 import { describe, expect, it } from 'vitest';
 
-import { maxBonus, priceOf, SHOP_ITEMS, shopItemOf } from './shop';
+import { BONUS_ZERO, bonusesOf, maxBonus, priceOf, SHOP_ITEMS, shopItemOf } from './shop';
 
 describe('etape 7b tache 1 : le catalogue', () => {
   it('chaque identifiant est unique', () => {
@@ -143,5 +143,53 @@ describe('etape 7b tache 1 : le catalogue', () => {
   it('WEAPON_SLOTS et PASSIVE_SLOTS ne bougent pas', () => {
     expect(WEAPON_SLOTS).toBe(4);
     expect(PASSIVE_SLOTS).toBe(3);
+  });
+});
+
+/**
+ * `bonusesOf` est descendue ici depuis `back/src/accounts.ts` a la revue
+ * finale de l'etape 7b : le miroir de prediction du client en a besoin, et une
+ * seconde copie cote front aurait divergé de celle que `Room` applique. Ses
+ * tests la suivent.
+ */
+describe('les bonus d un compte, derives de ses achats', () => {
+  it('bonusesOf somme les paliers, et rend zero sur une cle non achetee', () => {
+    const v = SHOP_ITEMS.find((i) => i.bonusKind === 'maxHp');
+    if (!v) {
+      throw new Error('aucun article de vitalite');
+    }
+    const b = bonusesOf(new Map([[v.id, 3]]));
+    expect(b.maxHp).toBe((v.perLevel ?? 0) * 3);
+    expect(b.regen).toBe(0);
+  });
+
+  /**
+   * ⚠️ **`bonusesOf` rend un objet NEUF a chaque appel, jamais `BONUS_ZERO`.**
+   * `BONUS_ZERO` est gele et partage entre `Room.join` et `GameClient` : s'il
+   * etait etendu par mutation plutot que par copie, le premier achat du
+   * premier joueur ecrirait dans la valeur par defaut de tous les autres — ou
+   * leverait, le `freeze` etant en place.
+   */
+  it('bonusesOf ne touche jamais BONUS_ZERO', () => {
+    const v = SHOP_ITEMS.find((i) => i.bonusKind === 'maxHp');
+    if (!v) {
+      throw new Error('aucun article de vitalite');
+    }
+    const b = bonusesOf(new Map([[v.id, 1]]));
+    expect(b).not.toBe(BONUS_ZERO);
+    expect(BONUS_ZERO.maxHp).toBe(0);
+    expect(bonusesOf(new Map())).toEqual(BONUS_ZERO);
+  });
+
+  /**
+   * Un compte vide ne doit porter AUCUNE cle manquante : `Room` et le miroir
+   * du client lisent les six par nom (`p.accountBonuses.fireRate`, etc.), et
+   * un `undefined` y produirait un `NaN` silencieux dans un calcul de jeu.
+   */
+  it('BONUS_ZERO porte les six cles a zero', () => {
+    expect(Object.values(BONUS_ZERO)).toHaveLength(6);
+    for (const v of Object.values(BONUS_ZERO)) {
+      expect(v).toBe(0);
+    }
   });
 });
