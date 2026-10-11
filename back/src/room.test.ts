@@ -66,7 +66,7 @@ import {
 } from '@shared/weapons';
 import { describe, expect, it, vi } from 'vitest';
 
-import { type DraftOpenEvent, Room } from './room';
+import { type AccountGrants, type DraftOpenEvent, Room } from './room';
 
 const DT = 1 / TICK_HZ;
 
@@ -2168,6 +2168,65 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     expect(hpOf(room, 1)).toBe(0);
     // Non-vacuite : la regeneration TOURNE pendant ces memes ticks.
     expect(hpOf(room, 2)).toBeGreaterThan(vieAvant);
+  });
+});
+
+/**
+ * Amendement du controleur (etape 7b, tache 6, point 2) : `join` applique
+ * deja `accountBonuses.maxHp` au depart ET le recalcul de `grantCard` doit le
+ * garder. Les deux sites sont COUPLES — corriger l'un sans l'autre fait
+ * REDESCENDRE la vie maximum a la premiere carte de vitalite piochee, et ce
+ * n'est pas un cas marginal : un acheteur de vitalite qui pioche une carte du
+ * meme genre est un chemin tres ordinaire de la run.
+ */
+describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)', () => {
+  it('un bonus de compte sur la vitalite ne redescend jamais quand une carte de vitalite est piochee', () => {
+    const vitalite = PASSIVES.find((p) => p.kind === 'maxHp');
+    if (!vitalite) {
+      throw new Error('fixture : aucun passif de genre maxHp');
+    }
+    const grants: AccountGrants = {
+      bonuses: { fireRate: 0, damage: 0, maxHp: 40, speed: 0, regen: 0, pickupRadius: 0 },
+      unlockedWeapons: new Set<number>(),
+    };
+    const room = new Room(0x07_6b_0006);
+    room.join(1, grants);
+
+    const maxAvant = room.maxHpOf(1);
+    expect(maxAvant).toBe(PLAYER_MAX_HP + 40);
+
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: vitalite.id });
+
+    // La mutation « ignorer accountBonuses.maxHp au recalcul de grantCard »
+    // fait DESCENDRE ce maximum au lieu de le monter : voir le rapport pour
+    // la mesure.
+    expect(room.maxHpOf(1)).toBeGreaterThan(maxAvant);
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP + 40 + vitalite.magnitude);
+  });
+
+  it('un bonus de compte nul laisse le maximum de vie a PLAYER_MAX_HP', () => {
+    const room = new Room(0x07_6b_0007);
+    room.join(1);
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP);
+  });
+
+  /**
+   * Couvre le deuxieme site de la tache (sur les cinq) : un bonus de compte
+   * sur la vitesse doit se voir en jeu, pas seulement dans un champ jamais lu.
+   */
+  it('un bonus de compte sur la vitesse s ajoute a PLAYER_SPEED en jeu', () => {
+    const grants: AccountGrants = {
+      bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 50, regen: 0, pickupRadius: 0 },
+      unlockedWeapons: new Set<number>(),
+    };
+    const room = new Room(0x07_6b_0008);
+    room.join(1, grants);
+    const before = positionOf(room, 1);
+
+    room.applyInput(1, 1, 127, 0);
+    stepOneSecond(room);
+
+    expect(positionOf(room, 1).x - before.x).toBeCloseTo(PLAYER_SPEED + 50, 0);
   });
 });
 

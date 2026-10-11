@@ -25,6 +25,7 @@ import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import { encodeSnapshot, OUTCOME, type PlayerSnapshot, VOTE_CHOICE } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
+import type { BonusKind } from '@shared/shop';
 import type { WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -57,6 +58,19 @@ import { WaveDirector } from './wave-director';
  */
 export interface Outbox {
   push(msg: ArrayBuffer): void;
+}
+
+/**
+ * Ce qu'un compte apporte a la run de son joueur : bonus permanents achetes
+ * et armes verrouillees debloquees. Construit par `server.ts` depuis les
+ * achats lus en base, consomme par `Room#join`.
+ *
+ * ⚠️ Vit ici et pas dans `shared/` : ce sont des donnees de compte, que le
+ * client n'importe jamais.
+ */
+export interface AccountGrants {
+  bonuses: Readonly<Record<BonusKind, number>>;
+  unlockedWeapons: ReadonlySet<number>;
 }
 
 export interface PlayerState extends ContactPlayer {
@@ -107,12 +121,17 @@ export interface PlayerState extends ContactPlayer {
    */
   loadout: Loadout;
   /**
+   * Bonus permanents achetes par le COMPTE de ce joueur, par cle. Distincts des
+   * bonus de cartes : ils ne consomment aucun slot de passif et survivent a la
+   * run.
+   */
+  readonly accountBonuses: Readonly<Record<BonusKind, number>>;
+  /**
    * Les armes verrouillees que ce joueur a debloquees a la boutique.
    *
-   * ⚠️ **Reference en avance.** Cette tache (7b/3) la lit et l'initialise a
-   * vide dans `join` ; c'est la tache 6 qui la remplit depuis le compte, a la
-   * poignee de main. `#openDraft` en fait l'UNION sur toute la salle avant de
-   * construire l'etalage — jamais l'intersection, voir `buildPool`.
+   * `join` la remplit depuis le compte, a la poignee de main. `#openDraft` en
+   * fait l'UNION sur toute la salle avant de construire l'etalage — jamais
+   * l'intersection, voir `buildPool`.
    */
   readonly unlockedWeapons: ReadonlySet<number>;
 }
@@ -255,6 +274,16 @@ const SPAWN_OFFSETS: readonly (readonly [number, number])[] = [
 
 /** Un axe d'entree tient sur un octet signe : on le ramene dans [-1, 1]. */
 const AXIS_SCALE = 1 / 127;
+
+/** Bonus de compte par defaut : un joueur sans aucun achat. */
+const BONUS_ZERO: Readonly<Record<BonusKind, number>> = Object.freeze({
+  fireRate: 0,
+  damage: 0,
+  maxHp: 0,
+  speed: 0,
+  regen: 0,
+  pickupRadius: 0,
+});
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -736,6 +765,11 @@ export class Room {
     return this.#players.size;
   }
 
+  /** Le maximum de points de vie de ce joueur, bonus de cartes et de compte compris. */
+  maxHpOf(playerId: number): number {
+    return this.#players.get(playerId)?.maxHp ?? 0;
+  }
+
   /**
    * Le palier courant, `0` pour le premier — l'argument `k` des formules de
    * `shared/paliers.ts`.
@@ -796,8 +830,17 @@ export class Room {
     return this.#metrics;
   }
 
-  /** Rend false si le salon est plein. */
-  join(id: number): boolean {
+  /**
+   * Rend false si le salon est plein.
+   *
+   * ⚠️ `compte` est optionnel, et ce n'est PAS le piege « un chemin qui
+   * n'existe que pour les tests ». Un joueur sans aucun achat a legitimement
+   * des bonus tous nuls et un ensemble de deblocages vide : le defaut EST un
+   * etat de production valide, pas un contournement. Il evite seulement
+   * d'editer les dizaines d'appels existants de `join` qui ne s'interessent
+   * pas aux comptes.
+   */
+  join(id: number, compte?: AccountGrants): boolean {
     if (this.#players.has(id)) {
       return true;
     }
@@ -814,12 +857,13 @@ export class Room {
       aimX: 0,
       aimY: 0,
       lastSeq: 0,
-      hp: PLAYER_MAX_HP,
-      maxHp: PLAYER_MAX_HP,
+      accountBonuses: compte?.bonuses ?? BONUS_ZERO,
+      unlockedWeapons: compte?.unlockedWeapons ?? new Set<number>(),
+      hp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
+      maxHp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout: new Loadout(),
-      unlockedWeapons: new Set(),
     });
     return true;
   }
@@ -950,7 +994,7 @@ export class Room {
     for (const p of this.#players.values()) {
       // Vitesse propre a ce joueur : les cartes « fougue » empilees s'ajoutent
       // a `PLAYER_SPEED`, en pixels monde par seconde.
-      const speed = PLAYER_SPEED + p.loadout.bonus('speed');
+      const speed = PLAYER_SPEED + p.loadout.bonus('speed') + p.accountBonuses.speed;
       p.x = clamp(p.x + p.moveX * speed * scaledDt, 0, MAP_SIZE);
       p.y = clamp(p.y + p.moveY * speed * scaledDt, 0, MAP_SIZE);
     }
@@ -1548,11 +1592,14 @@ export class Room {
    */
   #fireOne(p: PlayerState, weaponId: number, tick: number): void {
     const weapon = weaponOf(weaponId);
-    const cooldown = cooldownWithBonus(weapon.cooldownTicks, p.loadout.bonus('fireRate'));
+    const cooldown = cooldownWithBonus(
+      weapon.cooldownTicks,
+      p.loadout.bonus('fireRate') + p.accountBonuses.fireRate,
+    );
     if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    const damage = weapon.damage * (1 + p.loadout.bonus('damage'));
+    const damage = weapon.damage * (1 + p.loadout.bonus('damage') + p.accountBonuses.damage);
     // ⚠️ Chaque exemplaire empile de cette arme elargit la salve d'un
     // projectile : « c'est l'accumulation des cartes qui fait la puissance ».
     // L'arme neutre n'est jamais empilee, `salvoCount` lui rend son compte de
@@ -1717,7 +1764,8 @@ export class Room {
       // ne se verrait qu'apres avoir encaisse des degats. Hors inventaire,
       // donc hors `applyCardToLoadout` : `hp`/`maxHp` sont des champs de
       // `PlayerState`, que le client n'arbitre jamais (§5.4).
-      const nouveauMax = PLAYER_MAX_HP + player.loadout.bonus('maxHp');
+      const nouveauMax =
+        PLAYER_MAX_HP + player.loadout.bonus('maxHp') + player.accountBonuses.maxHp;
       player.hp += nouveauMax - player.maxHp;
       player.maxHp = nouveauMax;
     }
@@ -1769,7 +1817,10 @@ export class Room {
       // ci-dessous couvre deja le cas, puisque `grantCard` maintient
       // `hp <= maxHp` a chaque carte. Deux gardes qui se couvrent, enieme
       // occurrence du depot ; soldee comme les autres, par une absence de code.
-      p.hp = Math.min(p.maxHp, p.hp + p.loadout.bonus('regen') / TICK_HZ);
+      p.hp = Math.min(
+        p.maxHp,
+        p.hp + (p.loadout.bonus('regen') + p.accountBonuses.regen) / TICK_HZ,
+      );
     }
   }
 

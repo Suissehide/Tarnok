@@ -24,6 +24,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
 import {
+  bonusesOf,
   buyItem,
   createAccount,
   creditAccounts,
@@ -32,9 +33,10 @@ import {
   purchasesOf,
   textToToken,
   tokenToText,
+  unlockedWeaponsOf,
 } from './accounts';
 import { FixedStepAccumulator } from './loop';
-import type { Outbox, Room } from './room';
+import type { AccountGrants, Outbox, Room } from './room';
 import { RoomRegistry } from './rooms';
 
 const STEP_MS = 1000 / TICK_HZ;
@@ -226,8 +228,35 @@ class Session {
         return;
       }
 
+      // ⚠️ **UN SECOND `await` sur ce chemin, et c'est exactement la frontiere
+      // asynchrone dont les QUATRE defauts Critiques de l'etape 7a sont nes,
+      // dont deux tuaient le process entier.**
+      //
+      // Il est place APRES le garde `readyState` et le garde `#stopped`
+      // ci-dessus, et son echec est attrape ici meme : une panne de lecture ne
+      // doit pas refuser la partie. Le joueur entre sans ses ameliorations,
+      // son or reste en base, et la run suivante les retrouvera. Refuser la
+      // connexion pour un incident serveur punirait le joueur de notre panne.
+      let grants: AccountGrants | undefined;
+      try {
+        const achats = await purchasesOf(accountId);
+        grants = { bonuses: bonusesOf(achats), unlockedWeapons: unlockedWeaponsOf(achats) };
+      } catch (err) {
+        console.error(`[achats] lecture echouee compte=${accountId}`, err);
+      }
+
+      // ⚠️ Les deux gardes sont RELUS apres ce second `await` : la socket peut
+      // etre morte et la session arretee pendant la lecture.
+      if (ws.readyState !== ws.OPEN) {
+        return;
+      }
+      if (this.#stopped) {
+        ws.close(CLOSE_CODES.ROOM_CLOSED, 'salon ferme');
+        return;
+      }
+
       const freeId = this.#freeId();
-      if (freeId === null || !this.room.join(freeId)) {
+      if (freeId === null || !this.room.join(freeId, grants)) {
         ws.close(CLOSE_CODES.ROOM_FULL, 'salon plein');
         return;
       }
