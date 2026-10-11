@@ -408,3 +408,31 @@ img,
 .portal-voter[data-choice="stay"] .portal-voter__label {
   color: var(--color-ember-400);
 }
+
+/*
+ * Tache 8 de l'etape 7b : la boutique du lobby.
+ *
+ * Union + grisage — l'etalage montre TOUT : un article hors de portee reste
+ * une ligne normale, seul son bouton se grise (meme motif que
+ * `.portal-choice:disabled`).
+ */
+.shop-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+}
+
+.shop-item__buy {
+  padding: 0.25rem 0.75rem;
+  background: #241c14;
+  border: 2px solid #6b5540;
+  color: var(--color-ember-400);
+  font-weight: bold;
+}
+
+.shop-item__buy:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}

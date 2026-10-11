@@ -1,7 +1,7 @@
 import { TOKEN_BYTES } from '@shared/protocol';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { STORAGE_KEY, tokenBytes, tokenText } from './account';
+import { acheter, fetchCompte, STORAGE_KEY, tokenBytes, tokenText } from './account';
 
 function fausseStorage(initial?: string): Pick<Storage, 'getItem' | 'setItem'> & {
   lu: Record<string, string>;
@@ -113,5 +113,88 @@ describe('etape 7a tache 7 : le jeton du client', () => {
     const verify = vi.fn(async () => true);
     expect(await tokenText(s, mint, verify)).toBe(JETON);
     expect(mint).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Amendement, point 1 : la lecture HTTP (`GET /accounts/me`) et l'achat
+ * (`POST /accounts/me/purchases`) vivent dans la couche RESEAU, pas dans
+ * `main.ts` qui dit de lui-meme « le DEMARRAGE, et rien d'autre ».
+ */
+describe('etape 7b tache 8 : la lecture et l achat, cote reseau', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  it('fetchCompte rend le solde et les achats sur une reponse OK', async () => {
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ gold: '1234', purchases: { vitalite: 2 } }), {
+          status: 200,
+        }),
+    );
+    vi.stubGlobal('fetch', fetchMock);
+
+    const compte = await fetchCompte('http://api.test', JETON);
+
+    expect(compte).toEqual({ gold: '1234', purchases: { vitalite: 2 } });
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://api.test/accounts/me',
+      expect.objectContaining({ headers: { Authorization: `Bearer ${JETON}` } }),
+    );
+  });
+
+  it('fetchCompte rend null sur une reponse qui n est pas OK', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ error: 'jeton absent ou inconnu' }), { status: 401 }),
+      ),
+    );
+
+    expect(await fetchCompte('http://api.test', JETON)).toBeNull();
+  });
+
+  it('acheter rend le nouvel etat du compte sur un achat reussi', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(JSON.stringify({ gold: '900', purchases: { vitalite: 1 } }), {
+            status: 200,
+          }),
+      ),
+    );
+
+    const reponse = await acheter('http://api.test', JETON, 'vitalite');
+
+    expect(reponse).toEqual({ ok: true, gold: '900', purchases: { vitalite: 1 } });
+  });
+
+  /**
+   * ⚠️ **Le code HTTP survit jusqu'a l'appelant, en nombre nu.** C'est
+   * `ui/shop.ts#messageAchat` qui le traduit en message (402 contre 409) ;
+   * importer ici une constante qu'on viendrait verifier ne verifierait rien
+   * (doctrine du depot pour les contrats de fil).
+   */
+  it('acheter rend le code HTTP du refus, sans le traduire', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () => new Response(JSON.stringify({ error: 'solde-insuffisant' }), { status: 402 }),
+      ),
+    );
+
+    expect(await acheter('http://api.test', JETON, 'vitalite')).toEqual({ ok: false, status: 402 });
+  });
+
+  it('acheter distingue un conflit (409) d un refus de solde (402)', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ error: 'conflit' }), { status: 409 })),
+    );
+
+    expect(await acheter('http://api.test', JETON, 'vitalite')).toEqual({ ok: false, status: 409 });
   });
 });

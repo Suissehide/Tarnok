@@ -1,6 +1,6 @@
 import { Keyboard } from './input/keyboard';
 import { Mouse } from './input/mouse';
-import { tokenBytes, tokenText } from './net/account';
+import { acheter, fetchCompte, tokenBytes, tokenText } from './net/account';
 import {
   type ConnectionStatus,
   GameClient,
@@ -16,19 +16,27 @@ import { API_URL, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
 import { type HudElements, paintHud } from './ui/hud';
 import { PortalScreen } from './ui/portal';
+import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
 
 /**
  * Le DEMARRAGE, et rien d'autre : recherches DOM, `await stage.init()`,
  * gestionnaires de clic, et le cablage des trois objets vivants (client,
  * scene, ecrans) vers `composeFrame`.
  *
- * ⚠️ **Ce module n'est pas importable en test, et c'est assume.** Il fait son
- * `await stage.init()` au niveau module ; l'importer executerait tout le
- * demarrage et construirait une `Application` Pixi qu'aucun environnement de
- * test ne sait instancier. La consequence a coute trois etapes : le gel de
- * niveau (etape 3), `draftScreen.update()` (etape 4), puis `drawZones`,
- * `drawReactionFlashes` et `paintSynergy` (etape 5a) ont tous vecu ici sans
- * qu'une seule assertion ne les garde.
+ * ⚠️ **Ce module n'est pas importable EN CONDITIONS REELLES, et c'est
+ * assume.** Il fait son `await stage.init()` au niveau module ; l'importer
+ * executerait tout le demarrage et construirait une `Application` Pixi
+ * qu'aucun environnement de test ne sait instancier. La consequence a coute
+ * trois etapes : le gel de niveau (etape 3), `draftScreen.update()` (etape
+ * 4), puis `drawZones`, `drawReactionFlashes` et `paintSynergy` (etape 5a)
+ * ont tous vecu ici sans qu'une seule assertion ne les garde.
+ *
+ * ⚠️ **Exception etroite (tache 8, etape 7b) : `main.test.ts` importe quand
+ * meme ce module, mais avec `./render/stage` entierement remplace par un
+ * double.** La vraie `Stage`, donc Pixi, n'y est jamais chargee — seul le
+ * garde-fou autour de `await stage.init()` (son `catch` qui ecrit dans
+ * `#error` avant de relancer) est exerce. Le reste du fichier (chargement du
+ * compte, boutique, `join()`) reste sans assertion, pour la raison ci-dessus.
  *
  * La regle qui en sort, et qui tient tant que ce fichier reste maigre : **tout
  * ce qui DECIDE vit ailleurs** — `composeFrame` (`render/frame.ts`) pour ce
@@ -65,6 +73,7 @@ const summaryKills = el('summary-kills');
 const errorLine = el('error');
 const codeInput = el<HTMLInputElement>('code');
 const goldLine = el('account-gold');
+const shopRoot = el('shop');
 
 /** Les cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
 const hudElements: HudElements = {
@@ -82,7 +91,17 @@ const hudElements: HudElements = {
 
 const keyboard = new Keyboard();
 const stage = new Stage();
-await stage.init(el('stage'));
+try {
+  await stage.init(el('stage'));
+} catch (cause) {
+  // ⚠️ Un `await` de niveau module qui rejette ARRETE le module : tout ce qui
+  // suit — le compte, les ecouteurs, la boutique — ne s'enregistre jamais.
+  // Meme classe que le defaut I1 de l'etape 7a, dans ce meme fichier. Le
+  // module s'arrete quand meme (sans canevas il n'y a pas de jeu), mais le
+  // joueur VOIT pourquoi, au lieu d'une page blanche muette.
+  errorLine.textContent = `Affichage impossible : ${(cause as Error).message}`;
+  throw cause;
+}
 // La souris s'ecoute sur le canevas du jeu, cree par `stage.init` juste
 // au-dessus : c'est lui qui sert de reference pour les coordonnees ecran
 // (tache 13), et `Stage.screenToWorld` partage la meme camera.
@@ -133,14 +152,52 @@ async function chargeSolde(): Promise<string> {
 
   const texte = await tokenText(window.localStorage, mint, verifie);
   try {
-    const res = await fetch(`${API_URL}/accounts/me`, {
-      headers: { Authorization: `Bearer ${texte}` },
-    });
-    goldLine.textContent = res.ok ? (await res.json()).gold : '—';
+    const compte = await fetchCompte(API_URL, texte);
+    if (compte) {
+      goldLine.textContent = compte.gold;
+      renderShop(shopRoot, etatBoutique(compte), (itemId) => {
+        void onBuy(texte, itemId);
+      });
+    } else {
+      goldLine.textContent = '—';
+    }
   } catch {
     goldLine.textContent = '—';
   }
   return texte;
+}
+
+/** `CompteEtat` (gold en texte, cote fil) -> `EtatBoutique` (gold en `bigint`, cote boutique). */
+function etatBoutique(compte: { gold: string; purchases: Record<string, number> }): EtatBoutique {
+  return { gold: BigInt(compte.gold), purchases: compte.purchases };
+}
+
+/**
+ * Le clic d'achat de la boutique : POST, puis reaffiche depuis la REPONSE
+ * (qui porte `{ gold, purchases }`) plutot que de relire — un second aller-
+ * retour serait un octet de latence gratuit pour une donnee qu'on a deja.
+ *
+ * ⚠️ **Un echec d'achat ne doit pas casser l'ecran.** Meme discipline que
+ * `chargeSolde` : le message va dans `#error`, jamais une exception qui
+ * remonterait jusqu'au niveau module.
+ */
+async function onBuy(texte: string, itemId: string): Promise<void> {
+  errorLine.textContent = '';
+  try {
+    const reponse = await acheter(API_URL, texte, itemId);
+    if (reponse.ok) {
+      goldLine.textContent = reponse.gold;
+      renderShop(shopRoot, etatBoutique(reponse), (id) => {
+        void onBuy(texte, id);
+      });
+    } else {
+      // Amendement, point 3 : 402 (gagner plus d'or) et 409 (rafraichir et
+      // retenter) ne disent PAS la meme chose — voir `messageAchat`.
+      errorLine.textContent = messageAchat(reponse.status);
+    }
+  } catch (cause) {
+    errorLine.textContent = `Achat impossible : ${(cause as Error).message}`;
+  }
 }
 
 let accountToken: Uint8Array | null = null;
