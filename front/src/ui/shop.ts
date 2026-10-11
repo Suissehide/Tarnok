@@ -45,9 +45,10 @@ export function achetable(item: ShopItem, etat: EtatBoutique): boolean {
  * transporte aucune eligibilite. Le serveur, lui, refuse le jeton — le grisage
  * est une politesse, le refus est la regle.
  *
- * ⚠️ **Pure, et pas encore cablee a l'ecran de draft.** Cette tache (8) livre
- * la boutique ; cabler ce predicat dans `ui/draft.ts` n'est pas dans son
- * perimetre (ni dans la liste de fichiers du plan).
+ * ⚠️ **Pure, et cablee dans `ui/draft.ts#DraftScreen` (ronde de correction
+ * 1/5, tache 8) : une carte d'arme verrouillee non debloquee par CE joueur y
+ * est grisee et non cliquable** — `DraftScreen` recoit les achats en
+ * parametre de construction, jamais via le protocole.
  */
 export function carteGrisee(weaponId: number, purchases: Record<string, number>): boolean {
   const arme = WEAPONS.find((w) => w.id === weaponId);

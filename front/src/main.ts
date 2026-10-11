@@ -155,6 +155,7 @@ async function chargeSolde(): Promise<string> {
     const compte = await fetchCompte(API_URL, texte);
     if (compte) {
       goldLine.textContent = compte.gold;
+      accountPurchases = compte.purchases;
       renderShop(shopRoot, etatBoutique(compte), (itemId) => {
         void onBuy(texte, itemId);
       });
@@ -187,6 +188,7 @@ async function onBuy(texte: string, itemId: string): Promise<void> {
     const reponse = await acheter(API_URL, texte, itemId);
     if (reponse.ok) {
       goldLine.textContent = reponse.gold;
+      accountPurchases = reponse.purchases;
       renderShop(shopRoot, etatBoutique(reponse), (id) => {
         void onBuy(texte, id);
       });
@@ -201,6 +203,15 @@ async function onBuy(texte: string, itemId: string): Promise<void> {
 }
 
 let accountToken: Uint8Array | null = null;
+/**
+ * Les achats de ce compte, tels que lus (ou rafraichis par un achat) au fil
+ * de la session — la meme donnee que la boutique, au meme instant. Fixes
+ * pour la duree d'un salon : la boutique disparait de l'ecran une fois
+ * `join()` appelee, donc `DraftScreen` ne peut pas la voir changer sous ses
+ * pieds (§3.5 de la spec : « le grisage ne coute AUCUN octet », rien de neuf
+ * ne transite par `DRAFT_OPEN`).
+ */
+let accountPurchases: Record<string, number> = {};
 try {
   accountToken = tokenBytes(await chargeSolde());
 } catch (cause) {
@@ -259,7 +270,18 @@ function join(code: string): void {
   // Un ecran a part entiere plutot qu'un bout de HUD, parce que c'est le
   // moment le plus social de la partie (§7.1 de l'orientation) et qu'il doit
   // montrer les jetons des quatre joueurs.
-  const draftScreen = new DraftScreen(el('draft'), el('draft-status'), el('draft-cards'), client);
+  //
+  // `accountPurchases` grise les armes verrouillees non debloquees par CE
+  // joueur (tache 8, ronde 1) : l'etalage tire sur l'union des pools de la
+  // salle, donc une arme debloquee par un coequipier peut y apparaitre sans
+  // que ce joueur-ci l'ait.
+  const draftScreen = new DraftScreen(
+    el('draft'),
+    el('draft-status'),
+    el('draft-cards'),
+    client,
+    accountPurchases,
+  );
 
   // Le vote d'extraction du §6. Un BANDEAU, pas un modale : le monde ne
   // s'arrete pas pendant qu'on vote (voir `ui/portal.ts` et `index.html`).

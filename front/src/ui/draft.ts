@@ -5,6 +5,8 @@ import { type Passive, type PassiveKind, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { weaponOf } from '@shared/weapons';
 
+import { carteGrisee } from './shop';
+
 /**
  * L'ecran de draft (§4.1, §4.2 et §7.2 de la spec de l'etape 4).
  *
@@ -224,11 +226,27 @@ export class DraftScreen {
   #outcomes: DraftOutcomeView[] = [];
   #lastOutcomesSeen: readonly DraftOutcomeView[] = [];
 
-  constructor(root: HTMLElement, status: HTMLElement, list: HTMLElement, source: DraftSource) {
+  /**
+   * Les achats de CE joueur, lus en HTTP au chargement (`main.ts`, boutique
+   * de la tache 8) — jamais recus du serveur via `DRAFT_OPEN` (§3.5 de la
+   * spec : « le grisage ne coute AUCUN octet »). Fixes pour la duree d'un
+   * salon : la boutique est fermee une fois la partie rejointe, donc cette
+   * carte ne bouge plus sous nos pieds.
+   */
+  readonly #purchases: Record<string, number>;
+
+  constructor(
+    root: HTMLElement,
+    status: HTMLElement,
+    list: HTMLElement,
+    source: DraftSource,
+    purchases: Record<string, number> = {},
+  ) {
     this.#root = root;
     this.#status = status;
     this.#list = list;
     this.#source = source;
+    this.#purchases = purchases;
   }
 
   /** A appeler a chaque image : l'ecran n'a pas d'horloge propre, il lit le client. */
@@ -352,11 +370,19 @@ export class DraftScreen {
       }
       const state = this.#stateOf(card, index, mine);
       cell.root.dataset.state = state;
-      // Cliquable tant que la negociation est ouverte. Il n'y a plus rien
-      // d'autre a verifier : toutes les cartes sont offertes a tout le monde,
-      // et la resolution est un seul moment — apres elle, plus personne ne
-      // clique.
-      cell.root.disabled = settled;
+      // ⚠️ Union + grisage (tache 8 de l'etape 7b, §3.5 de la spec) : l'etalage
+      // tire sur l'union des pools de la salle, donc une arme debloquee par un
+      // COEQUIPIER peut y apparaitre sans que CE joueur l'ait. Le serveur la
+      // refuse silencieusement (`Draft#placeToken`, `#eligible`) ; sans ce
+      // grisage, cliquer ne ferait simplement rien — une punition qui se lit
+      // comme un bug (§8.1). Seules les armes VERROUILLEES et non debloquees
+      // sont visees : les passives et les armes libres ne sont jamais grisees.
+      const grisee = card.nature === CARD.WEAPON && carteGrisee(card.refId, this.#purchases);
+      cell.root.dataset.grisee = grisee ? 'true' : 'false';
+      // Cliquable tant que la negociation est ouverte ET que la carte n'est
+      // pas grisee. Resolution fermee ou carte grisee desactivent le bouton
+      // nativement : aucun clic n'atteint `#onPick`, voir `draft.test.ts`.
+      cell.root.disabled = settled || grisee;
       cell.root.dataset.mine =
         mine !== null && source.draftIntents.get(mine) === index ? 'true' : 'false';
 

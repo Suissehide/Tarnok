@@ -211,6 +211,15 @@ img,
   cursor: not-allowed;
 }
 
+/*
+ * Ronde de correction 1/5, tache 8 : une arme verrouillee non debloquee par
+ * CE joueur (§3.5 de la spec, « Union + grisage »). `disabled` seul reste
+ * invisible sur ce fond sombre — meme motif que `.shop-item__buy:disabled`.
+ */
+.draft-card[data-grisee="true"] {
+  opacity: 0.4;
+}
+
 .draft-card__nature {
   font-size: 0.7rem;
   letter-spacing: 0.2em;
