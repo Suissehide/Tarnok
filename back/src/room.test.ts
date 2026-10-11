@@ -24,6 +24,7 @@ import {
   MAX_ENTITIES,
   MAX_PLAYERS,
   ORB_DROP_ONE_IN,
+  ORB_PICKUP_RADIUS,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
   PORTAL_WINDOW_TICKS,
@@ -125,6 +126,25 @@ function hpOf(room: Room, id: number): number {
     throw new Error(`joueur ${id} absent du snapshot`);
   }
   return found.hp;
+}
+
+/**
+ * Rayon de ramassage de CE joueur, lu a travers le SNAPSHOT decode — tache 7
+ * de l'etape 7b, ronde de correction 1. Meme discipline que `hpOf` : eprouve
+ * le TRANSPORT (l'octet qui voyage), pas l'etat interne du salon.
+ */
+function pickupRadiusOf(room: Room, id: number): number {
+  const out = collector();
+  room.snapshot(out);
+  const first = out.sent[0];
+  if (!first) {
+    throw new Error('aucun snapshot emis');
+  }
+  const found = decodeSnapshot(first).players.find((p) => p.id === id);
+  if (!found) {
+    throw new Error(`joueur ${id} absent du snapshot`);
+  }
+  return found.pickupRadius;
 }
 
 /**
@@ -2371,6 +2391,94 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
     expect(attendu).toBeGreaterThanOrEqual(10);
     expect(remonte(regain.magnitude)).toBeGreaterThanOrEqual(attendu - 1);
     expect(remonte(regain.magnitude)).toBeLessThanOrEqual(attendu);
+  });
+
+  /**
+   * Sixieme site (ronde de correction 1, tache 7) : le SNAPSHOT doit porter
+   * le rayon ELARGI, lu de sa source (`ORB_PICKUP_RADIUS` + le bonus), jamais
+   * un nombre pose a cote. Lu a travers le decodeur (`pickupRadiusOf`, meme
+   * discipline que `hpOf`) : c'est le TRANSPORT qui est eprouve, pas l'etat
+   * interne du salon.
+   */
+  it('un bonus de compte sur le rayon de ramassage se lit elargi dans le SNAPSHOT decode', () => {
+    const bonus = 50;
+    const grants: AccountGrants = {
+      bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 0, regen: 0, pickupRadius: bonus },
+      unlockedWeapons: new Set<number>(),
+    };
+    const room = new Room(0x07_6b_000c);
+    room.join(1, grants);
+
+    expect(pickupRadiusOf(room, 1)).toBe(ORB_PICKUP_RADIUS + bonus);
+  });
+
+  /**
+   * Sixieme site, seconde moitie (ronde de correction 1) : la PAIRE
+   * discriminante — une orbe prise entre les deux bornes ET une orbe laissee
+   * au-dela, dans le MEME salon et au MEME tick. Sans la seconde moitie, un
+   * rayon INFINI passerait ce test aussi bien qu'un rayon correctement
+   * elargi — vingt-quatrieme assertion creuse du depot.
+   *
+   * ⚠️ **Les deux monstres sont repositionnes a chaque tick** (meme
+   * technique que « deux niveaux gagnes au meme tick... » plus haut) : seule
+   * la derive du DERNIER tick avant la mort reste, bornee a un pas de
+   * marche — raison de la marge de securite au-dela du rayon elargi. Les deux
+   * cibles ne sont pas colineaires (l'une en +x, l'autre en +y) pour qu'un
+   * tir vise sur l'une ne puisse pas accidentellement toucher l'autre.
+   */
+  it('le rayon elargi ramasse une orbe entre les deux bornes, et laisse celle au-dela intacte', () => {
+    const bonus = 50;
+    const grants: AccountGrants = {
+      bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 0, regen: 0, pickupRadius: bonus },
+      unlockedWeapons: new Set<number>(),
+    };
+    const room = new Room(0x07_6b_000d);
+    room.join(1, grants);
+    const depart = positionOf(room, 1);
+
+    const elargi = ORB_PICKUP_RADIUS + bonus;
+    const MARGE_DERIVE = 30;
+    const dansLaBande = { x: depart.x + ORB_PICKUP_RADIUS + 10, y: depart.y };
+    const horsPortee = { x: depart.x, y: depart.y + elargi + MARGE_DERIVE };
+
+    const idDansLaBande = spawnMonsterAt(room, 2000, dansLaBande.x, dansLaBande.y);
+    const idHorsPortee = spawnMonsterAt(room, 2001, horsPortee.x, horsPortee.y);
+    let aliveA = true;
+    let aliveB = true;
+
+    const ramasses: number[] = [];
+    let ticks = 0;
+    while ((aliveA || aliveB) && ticks < 300) {
+      aimAtNearestMonster(room, 1, ticks + 1);
+      room.step(DT);
+      ticks++;
+
+      for (const lot of room.drainPickups()) {
+        ramasses.push(...lot.ids);
+      }
+
+      const slotA = room.horde.slotOf(idDansLaBande);
+      if (slotA >= 0) {
+        room.horde.x[slotA] = dansLaBande.x;
+        room.horde.y[slotA] = dansLaBande.y;
+      } else {
+        aliveA = false;
+      }
+
+      const slotB = room.horde.slotOf(idHorsPortee);
+      if (slotB >= 0) {
+        room.horde.x[slotB] = horsPortee.x;
+        room.horde.y[slotB] = horsPortee.y;
+      } else {
+        aliveB = false;
+      }
+    }
+
+    // Non-vacuite : les deux sont bien mortes avant le plafond, sinon la
+    // paire suivante ne prouverait rien.
+    expect(ticks).toBeLessThan(300);
+    expect(ramasses).toContain(idDansLaBande);
+    expect(ramasses).not.toContain(idHorsPortee);
   });
 });
 

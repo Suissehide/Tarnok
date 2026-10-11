@@ -881,12 +881,18 @@ describe('DerivedOrbs.spawn — le client filtre les memes morts que le serveur'
  * Etape 5a, tache 20, sur retour de jeu : *« l'aimantation est plus proche du
  * joueur et attire l'xp jusqu'a lui, meme s'il l'eloigne »*.
  *
- * ⚠️ **Le predicat est celui du serveur, inchange.** `OrbField.resolvePickups`
- * (`back/src/combat.ts`) arbitre a `ORB_PICKUP_RADIUS` ; la capture cliente
- * compare les MEMES positions repliquees au MEME rayon, et ne fait rien d'autre
- * que retirer l'orbe de la reserve pour la mettre en vol. **L'experience est
- * deja acquise quand le vol commence** — c'est ce qui autorise l'orbe a suivre
- * un joueur qui fuit sans jamais promettre ce qui n'arrivera pas.
+ * ⚠️ **Le predicat est celui du serveur, inchange — mais plus au MEME rayon
+ * depuis la tache 7 de l'etape 7b.** `OrbField.resolvePickups`
+ * (`back/src/combat.ts`) arbitre au rayon PERSONNEL de chaque joueur
+ * (`ORB_PICKUP_RADIUS` plus ses achats) ; la capture cliente compare les
+ * MEMES positions repliquees, chacune au rayon DE SON PROPRE joueur
+ * (`PickupTarget.pickupRadius`, transporte par le `SNAPSHOT`), et ne fait
+ * rien d'autre que retirer l'orbe de la reserve pour la mettre en vol. Les
+ * tests de ce describe utilisent tous le rayon de base — aucun joueur n'y
+ * achete l'aimant — donc ils restent corrects, mais c'est la seule raison
+ * pour laquelle « au MEME rayon » y paraissait encore vrai. **L'experience
+ * est deja acquise quand le vol commence** — c'est ce qui autorise l'orbe a
+ * suivre un joueur qui fuit sans jamais promettre ce qui n'arrivera pas.
  *
  * Ce que la tache 17 avait mis a sa place — `ORB_MAGNET_RADIUS`, une attraction
  * fonction de la distance — a disparu : un second rayon decrivant le meme
