@@ -1,6 +1,7 @@
 import { CARD, type Card } from '@shared/cards';
 import { DRAFT_WINDOW_TICKS, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
+import { PASSIVES } from '@shared/passives';
 import { OUTCOME } from '@shared/protocol';
 import { BASE_WEAPON_ID, WEAPONS } from '@shared/weapons';
 import { describe, expect, it } from 'vitest';
@@ -399,5 +400,53 @@ describe('Draft — le solo', () => {
     const d = ouvert([1]);
     expect(d.step(150, fixe(0))).toBeNull();
     expect(d.phase).toBe('open');
+  });
+});
+
+describe('etape 7b tache 3 : un jeton sur une carte non debloquee est refuse', () => {
+  it('refuse le jeton, et le refus ne depend pas du Loadout', () => {
+    const verrouillee = WEAPONS.find((w) => w.locked);
+    if (!verrouillee) {
+      throw new Error('aucune arme verrouillee');
+    }
+    const draft = new Draft();
+    const loadouts = new Map([[1, new Loadout()]]);
+    const spread = [{ nature: CARD.WEAPON, refId: verrouillee.id }];
+    // Le joueur 1 n'a RIEN debloque.
+    draft.open(0, spread, [1], loadouts, new Map([[1, new Set<number>()]]));
+
+    // Son Loadout pourrait parfaitement accueillir cette arme :
+    expect(loadouts.get(1)?.canTake(CARD.WEAPON, verrouillee.id)).toBe(true);
+    // ...et le jeton est refuse quand meme.
+    expect(draft.setToken(1, 0)).toBe(false);
+  });
+
+  it('accepte le meme jeton des que l arme est debloquee', () => {
+    const verrouillee = WEAPONS.find((w) => w.locked);
+    if (!verrouillee) {
+      throw new Error('aucune arme verrouillee');
+    }
+    const draft = new Draft();
+    const loadouts = new Map([[1, new Loadout()]]);
+    const spread = [{ nature: CARD.WEAPON, refId: verrouillee.id }];
+    draft.open(0, spread, [1], loadouts, new Map([[1, new Set([verrouillee.id])]]));
+    expect(draft.setToken(1, 0)).toBe(true);
+  });
+
+  it('un passif n est jamais concerne par les deblocages', () => {
+    const p = PASSIVES[0];
+    if (!p) {
+      throw new Error('aucun passif');
+    }
+    const draft = new Draft();
+    const loadouts = new Map([[1, new Loadout()]]);
+    draft.open(
+      0,
+      [{ nature: CARD.PASSIVE, refId: p.id }],
+      [1],
+      loadouts,
+      new Map([[1, new Set<number>()]]),
+    );
+    expect(draft.setToken(1, 0)).toBe(true);
   });
 });

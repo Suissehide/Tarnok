@@ -106,6 +106,15 @@ export interface PlayerState extends ContactPlayer {
    * d'exemplaires — tout s'empile (§3.3 de la spec). Naît ici (tache 6), consomme par les taches 7 et 8.
    */
   loadout: Loadout;
+  /**
+   * Les armes verrouillees que ce joueur a debloquees a la boutique.
+   *
+   * ⚠️ **Reference en avance.** Cette tache (7b/3) la lit et l'initialise a
+   * vide dans `join` ; c'est la tache 6 qui la remplit depuis le compte, a la
+   * poignee de main. `#openDraft` en fait l'UNION sur toute la salle avant de
+   * construire l'etalage — jamais l'intersection, voir `buildPool`.
+   */
+  readonly unlockedWeapons: ReadonlySet<number>;
 }
 
 export interface RoomMetrics {
@@ -810,6 +819,7 @@ export class Room {
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout: new Loadout(),
+      unlockedWeapons: new Set(),
     });
     return true;
   }
@@ -1587,8 +1597,20 @@ export class Room {
     for (const [id, p] of this.#players) {
       loadouts.set(id, p.loadout);
     }
-    const spread = drawSpread(loadouts, this.#draftRng);
-    this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts);
+    // ⚠️ **L'UNION, jamais l'intersection** (§7.1/§8.1) : l'etalage est unique
+    // et partage, et ne montrer que ce que TOUS ont debloque ferait qu'un
+    // debutant degrade le pool de toute l'equipe. Voir le docblock de
+    // `buildPool`.
+    const unlocked = new Set<number>();
+    const unlockedByPlayer = new Map<number, ReadonlySet<number>>();
+    for (const [id, p] of this.#players) {
+      for (const weaponId of p.unlockedWeapons) {
+        unlocked.add(weaponId);
+      }
+      unlockedByPlayer.set(id, p.unlockedWeapons);
+    }
+    const spread = drawSpread(loadouts, this.#draftRng, unlocked);
+    this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts, unlockedByPlayer);
     this.#pendingLevelUps.push({ tick: this.#tick, level: this.#level });
     this.#pendingDraftOpens.push({ deadlineTick: this.#draft.deadlineTick, cards: spread });
   }

@@ -1,7 +1,8 @@
-import type { Card } from '@shared/cards';
+import { CARD, type Card } from '@shared/cards';
 import { DRAFT_WINDOW_TICKS } from '@shared/constants';
 import type { Loadout } from '@shared/loadout';
 import { OUTCOME } from '@shared/protocol';
+import { weaponOf } from '@shared/weapons';
 
 /**
  * ⚠️ **Il y avait un troisieme etat, `'repick'`.** La repioche a disparu : la
@@ -41,6 +42,15 @@ export class Draft {
    * c'est l'inventaire qui le dit (`Loadout.canTake`).
    */
   #loadouts: ReadonlyMap<number, Loadout> = new Map();
+  /**
+   * Ce que chacun a debloque, pour fermer le pool a CE joueur.
+   *
+   * ⚠️ **N'influence QUE le draft, pas le `Loadout`.** `Room#grantCard` ne
+   * consulte jamais cette table : une arme deja equipee directement (hors
+   * draft, comme le fait le livrable de l'etape 5c) reste jouable que le
+   * verrou soit leve ou non. Le verrou ferme la PORTE, pas l'inventaire.
+   */
+  #unlockedByPlayer: ReadonlyMap<number, ReadonlySet<number>> = new Map();
   /** Cartes deja attribuees, par indice — une carte prise ne se repropose pas. */
   #taken = new Set<number>();
   /** `playerId -> cardIndex`, les jetons poses. */
@@ -77,11 +87,13 @@ export class Draft {
     spread: Card[],
     playerIds: readonly number[],
     loadouts: ReadonlyMap<number, Loadout> = new Map(),
+    unlockedByPlayer: ReadonlyMap<number, ReadonlySet<number>> = new Map(),
   ): void {
     this.#phase = 'open';
     this.#spread = spread;
     this.#pending = [...playerIds];
     this.#loadouts = loadouts;
+    this.#unlockedByPlayer = unlockedByPlayer;
     this.#taken.clear();
     this.#tokens.clear();
     this.#deadlineTick = tick + DRAFT_WINDOW_TICKS;
@@ -111,8 +123,24 @@ export class Draft {
     return true;
   }
 
-  /** Ce joueur peut-il accueillir cette carte ? Voir `Loadout.canTake`. */
+  /**
+   * Ce joueur peut-il accueillir cette carte ? Voir `Loadout.canTake` ET le
+   * verrou de deblocage, consultes dans cet ordre.
+   *
+   * ⚠️ **Le deblocage se verifie AVANT le `Loadout`, et c'est un refus d'une
+   * autre nature.** Le `Loadout` dit « tu n'as plus de place », le deblocage
+   * dit « cette arme n'est pas a toi ». Les confondre ferait croire a un slot
+   * plein la ou il manque un achat — c'est pour ca que le test de la tache 3
+   * assene les deux cotes separement : `canTake` vrai ET `setToken` refuse.
+   */
   #eligible(playerId: number, card: Card): boolean {
+    if (card.nature === CARD.WEAPON) {
+      const arme = weaponOf(card.refId);
+      const debloquees = this.#unlockedByPlayer.get(playerId);
+      if (arme.locked && !debloquees?.has(card.refId)) {
+        return false;
+      }
+    }
     const loadout = this.#loadouts.get(playerId);
     return loadout ? loadout.canTake(card.nature, card.refId) : true;
   }

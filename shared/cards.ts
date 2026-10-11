@@ -60,32 +60,40 @@ export function applyCardToLoadout(loadout: Loadout, card: Card): void {
 }
 
 /**
- * Construit la reserve de cartes possibles, avant tirage.
+ * Construit la reserve de cartes possibles, avant tirage, filtree par les
+ * armes DEBLOQUEES.
  *
- * ⚠️ **Le pool ne depend de personne.** Sans `owner`, il n'y a plus rien a
- * reserver ni a exclure : toutes les armes (sauf la neutre) et tous les passifs
- * y sont, toujours. L'eligibilite d'un JOUEUR devant une carte se derive de son
- * inventaire au moment ou il pose son jeton — voir `Loadout.canTake`.
+ * ⚠️ **`unlocked` est l'UNION des deblocages de la salle, pas ceux d'un
+ * joueur.** L'etalage est unique et partage (§7.1 de l'orientation : « un seul
+ * etalage pour toute l'equipe », le pari de design du projet). L'intersection
+ * aurait fait qu'un debutant degrade le pool de toute l'equipe, ce que le §8.1
+ * interdit en propres termes : « une punition se lit comme un bug ».
  *
- * ⚠️ **Aucune exclusivite d'equipe.** Si un allie porte deja le lance-flammes,
- * la carte reste offerte : *« si quelqu'un a deja pris lance-flammes, je peux
- * lui voler la carte la prochaine fois »*. Ce n'est pas un vol au sens propre —
- * chacun garde le sien — mais la carte de CET etalage-ci se dispute.
+ * C'est `Draft#setToken` qui refuse ensuite a CE joueur une carte qu'il n'a pas
+ * debloquee ; le client, lui, la grise avec son propre ensemble.
  *
- * ⚠️ **Rien ne s'exclut d'etre deja possede.** Armes et passifs s'empilent
- * pareil : ce qu'on a deja reste desirable, donc toute carte est convoitee par
- * tous en permanence. C'est ce qui fait du conflit le regime NORMAL du draft.
+ * ⚠️ **Aucune exclusivite d'equipe, par ailleurs.** Si un allie porte deja le
+ * lance-flammes, la carte reste offerte : *« si quelqu'un a deja pris
+ * lance-flammes, je peux lui voler la carte la prochaine fois »*. Ce n'est pas
+ * un vol au sens propre — chacun garde le sien — mais la carte de CET
+ * etalage-ci se dispute. Armes et passifs s'empilent pareil : rien ne s'exclut
+ * d'etre deja possede, c'est ce qui fait du conflit le regime NORMAL du draft.
  *
- * L'arme neutre est le seul retrait : elle vit hors des slots (§6.1), tout le
- * monde l'a des le depart, et la proposer l'empilerait sur elle-meme.
+ * L'arme neutre est le seul retrait inconditionnel : elle vit hors des slots
+ * (§6.1), tout le monde l'a des le depart, et la proposer l'empilerait sur
+ * elle-meme.
  */
-function buildPool(): Card[] {
+export function buildPool(unlocked: ReadonlySet<number>): Card[] {
   const pool: Card[] = [];
 
   for (const w of WEAPONS) {
-    if (w.id !== BASE_WEAPON_ID) {
-      pool.push({ nature: CARD.WEAPON, refId: w.id });
+    if (w.id === BASE_WEAPON_ID) {
+      continue;
     }
+    if (w.locked && !unlocked.has(w.id)) {
+      continue;
+    }
+    pool.push({ nature: CARD.WEAPON, refId: w.id });
   }
 
   for (const p of PASSIVES) {
@@ -115,9 +123,13 @@ function buildPool(): Card[] {
  * suite. **Deux gardes qui se couvrent l'une l'autre ne sont gardees par aucun
  * test** — c'est la cinquieme occurrence de ce motif dans cette etape.
  */
-export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => number): Card[] {
+export function drawSpread(
+  loadouts: ReadonlyMap<number, Loadout>,
+  rng: () => number,
+  unlocked: ReadonlySet<number>,
+): Card[] {
   const wanted = loadouts.size + SPREAD_BONUS;
-  const pool = buildPool();
+  const pool = buildPool(unlocked);
   const spread: Card[] = [];
 
   while (spread.length < wanted && pool.length > 0) {
