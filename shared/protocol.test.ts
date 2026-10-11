@@ -761,6 +761,14 @@ describe('DRAFT_OPEN', () => {
     // une carte de trois octets si la constante mentait aussi. Le chiffre nu
     // est ce qui garde la disparition de l'octet `owner`.
     expect(DRAFT_CARD_BYTES).toBe(2);
+    // ⚠️ **Meme trou, meme remede, cote en-tete.** Les deux assertions
+    // precedentes calculent la taille AVEC `DRAFT_OPEN_HEADER_BYTES` : un
+    // en-tete qui aurait grossi d'un masque d'eligibilite (§3.5 de la spec)
+    // resterait invisible, l'encodeur et le decodeur partageant la meme
+    // constante mutee. Le chiffre nu ci-dessous est ce qui l'attrape —
+    // mesure (Ronde 2, tache 9 de l'etape 7b) : muter
+    // `DRAFT_OPEN_HEADER_BYTES` a 7 laissait tout le reste de ce fichier vert.
+    expect(DRAFT_OPEN_HEADER_BYTES).toBe(6);
     expect(encodeDraftOpen(1, cartes).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES + 6);
   });
 

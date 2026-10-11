@@ -326,7 +326,15 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
     }
     const c2 = await connectAvecJeton(code2, token);
     await attendre(() => (room2.playerCount === 1 ? true : null), 'run 2', 3000);
-    expect(room2.maxHpOf(c2.playerId)).toBe(PLAYER_MAX_HP + (v.perLevel ?? 0));
+    // ⚠️ **Pas de `?? 0` ici.** Si `perLevel` disparaissait de l'article
+    // `vitalite`, l'attendu redeviendrait `PLAYER_MAX_HP` — exactement la
+    // valeur de la run 1 — et la paire discriminante s'effondrerait en
+    // silence (ronde de correction 2). On leve explicitement plutot que de
+    // laisser un `undefined` se replier sur 0.
+    if (v.perLevel === undefined) {
+      throw new Error(`l article ${v.id} n a pas de perLevel`);
+    }
+    expect(room2.maxHpOf(c2.playerId)).toBe(PLAYER_MAX_HP + v.perLevel);
   });
 
   /**
@@ -385,10 +393,17 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
       let vu = 0;
       let cible: { index: number } | null = null;
       for (let essai = 0; essai < 25 && !cible; essai++) {
+        // ⚠️ **Jamais 20_000 ici.** `DRAFT_WINDOW_TICKS` (600 ticks a
+        // `TICK_HZ` = 30) vaut EXACTEMENT 20 s : si la fermeture rapide
+        // ci-dessous echoue a poser un jeton pour l'un des deux joueurs, le
+        // draft ne se referme qu'a l'echeance — au moment meme ou une
+        // attente de 20 000 ms expirerait. Une egalite stricte entre une
+        // horloge de jeu et un timeout de test est un pile ou face, pas une
+        // marge (ronde de correction 2).
         const open = await attendre(
           () => a.received.filter((m) => m.type === MSG.DRAFT_OPEN)[vu] ?? null,
           `DRAFT_OPEN #${essai}`,
-          20_000,
+          30_000,
         );
         if (open.type !== MSG.DRAFT_OPEN) {
           throw new Error('type inattendu');
@@ -433,7 +448,7 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
     }
   }, 120_000);
 
-  it('un compte neuf atteint les six elements : chaque element a une arme LIBRE', () => {
+  it('le catalogue WEAPONS donne a chaque element non neutre une arme LIBRE, sans aucun compte ni reseau', () => {
     for (const e of ELEMENTS.filter((e) => e.id !== ELEMENT.NEUTRE)) {
       expect(
         WEAPONS.some((w) => w.element === e.id && !w.locked),
@@ -480,6 +495,22 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
 
     const taillesDraft = [...tailleParType(a, MSG.DRAFT_OPEN), ...tailleParType(b, MSG.DRAFT_OPEN)];
     expect(taillesDraft.length).toBeGreaterThan(0);
-    expect(new Set(taillesDraft).size).toBe(1);
+    // ⚠️ **Un `Set(...).size === 1` ne verifie que la COHERENCE interne de la
+    // mesure, jamais sa VALEUR** (ronde de correction 2) : un `DRAFT_OPEN`
+    // qui aurait grossi d'un masque d'eligibilite serait uniforme lui aussi,
+    // donc passerait cette assertion tout en ayant grossi. C'est pour ca que
+    // le nombre ci-dessous est NU, jamais recalcule a partir des memes
+    // constantes que l'encodeur — calculer la taille attendue AVEC
+    // `DRAFT_OPEN_HEADER_BYTES`/`DRAFT_CARD_BYTES` passerait tout aussi bien
+    // si ces constantes mentaient ensemble.
+    //
+    // D'ou vient ce 16 : ce decor connecte exactement DEUX joueurs, donc
+    // l'etalage compte `2 + SPREAD_BONUS` cartes (`SPREAD_BONUS = 3`, voir
+    // `shared/constants.ts`) soit 5 cartes. `DRAFT_OPEN` pese
+    // `DRAFT_OPEN_HEADER_BYTES + cartes * DRAFT_CARD_BYTES` (6 + 5 * 2 = 16,
+    // voir `shared/protocol.ts`). **A quatre joueurs ce serait 6 + 7 * 2 =
+    // 20** : si tu changes le nombre de joueurs de ce decor, RECALCULE ce
+    // nombre a la main plutot que de « reparer » la valeur a l'aveugle.
+    expect(taillesDraft.every((t) => t === 16)).toBe(true);
   }, 30_000);
 });

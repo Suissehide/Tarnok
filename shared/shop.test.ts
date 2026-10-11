@@ -103,7 +103,15 @@ describe('etape 7b tache 1 : le catalogue', () => {
     if (!aimant) {
       throw new Error('article aimant introuvable');
     }
-    expect(maxBonus('pickupRadius')).toBe(aimant.levels * (aimant.perLevel ?? 0));
+    // ⚠️ **Pas de `?? 0` ici.** Si `perLevel` disparaissait de l'article
+    // `aimant`, l'attendu redeviendrait `0 * aimant.levels === 0` et cette
+    // egalite s'effondrerait en « zero contre zero » si `maxBonus` etait LUI
+    // AUSSI mute a rendre 0 — exactement la mutation que ce test existe pour
+    // attraper (ronde de correction 2). On leve explicitement.
+    if (aimant.perLevel === undefined) {
+      throw new Error('l article aimant n a pas de perLevel');
+    }
+    expect(maxBonus('pickupRadius')).toBe(aimant.levels * aimant.perLevel);
   });
 
   it('maxBonus rend zero pour une cle que le catalogue ne vend pas', () => {
