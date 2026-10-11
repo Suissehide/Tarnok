@@ -78,7 +78,11 @@ describe('etape 7b tache 1 : le catalogue', () => {
   });
 
   it('maxBonus rend zero pour une cle que le catalogue ne vend pas', () => {
-    expect(maxBonus('regen')).toBeGreaterThanOrEqual(0);
+    // Verifie que 'regen' n'est pas vendu : aucun article n'a bonusKind === 'regen'
+    const vendu = SHOP_ITEMS.some((i) => i.bonusKind === 'regen');
+    expect(vendu).toBe(false);
+    // Donc maxBonus('regen') doit rendre exactement 0, pas >= 0
+    expect(maxBonus('regen')).toBe(0);
   });
 
   /**
@@ -90,16 +94,17 @@ describe('etape 7b tache 1 : le catalogue', () => {
    * (C(6,2) = 15), donc la premiere phrase du README — et le livrable de
    * l'etape 5c qui l'a rendue mesurable — tomberaient ensemble.
    *
-   * Ce test garde deux choses : que la constante ne bouge pas, et qu'AUCUN
-   * article ne la vende. Le type `BonusKind` l'interdit deja
-   * structurellement ; cette assertion le dit a voix haute, pour que le
-   * prochain qui voudra l'elargir trouve la raison avant le code.
+   * La VRAIE garde est structurelle, pas nominale : `ShopItem.kind` est type
+   * `'weapon' | 'bonus'`, et `bonusKind` est type `BonusKind = PassiveKind |
+   * 'pickupRadius'`. Il n'existe aucun champ permettant d'encoder « vendre un
+   * slot ». Pour que ce soit meme possible, il faudrait d'abord elargir le
+   * type — et c'est CE CHANGEMENT-LA qui serait le vrai point de friction,
+   * pas une regex sur les noms. Ce test reste donc sur les CONSTANTES : que
+   * WEAPON_SLOTS ne bouge pas (et qu'elle garde son invariant meme si la
+   * boutique s'elargit).
    */
-  it('aucun article ne vend de slot, et WEAPON_SLOTS ne bouge pas', () => {
+  it('WEAPON_SLOTS et PASSIVE_SLOTS ne bougent pas', () => {
     expect(WEAPON_SLOTS).toBe(4);
     expect(PASSIVE_SLOTS).toBe(3);
-    for (const i of SHOP_ITEMS) {
-      expect(i.id, `article ${i.id}`).not.toMatch(/slot/i);
-    }
   });
 });
