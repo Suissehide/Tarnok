@@ -75,12 +75,35 @@ describe('etape 7b tache 1 : le catalogue', () => {
    */
   it('le rayon de ramassage maximal tient dans un octet non signe', () => {
     expect(ORB_PICKUP_RADIUS + maxBonus('pickupRadius')).toBeLessThanOrEqual(255);
-    // ⚠️ **Le `toBeLessThanOrEqual` seul ne protege rien** : un `maxBonus` qui
-    // rendrait toujours 0 passerait cette inegalite aussi bien qu'une vraie
-    // implementation. L'aimant existe dans le catalogue (voir plus haut,
-    // « chaque article de bonus designe une cle connue ») : son plafond doit
-    // donc etre strictement positif.
-    expect(maxBonus('pickupRadius')).toBeGreaterThan(0);
+
+    // ⚠️ **Le `toBeLessThanOrEqual` seul ne protege rien, et un simple
+    // `toBeGreaterThan(0)` non plus.** Un `maxBonus` qui sous-estime rend
+    // l'inegalite ci-dessus PLUS vraie, jamais fausse — mesure (Ronde 1) :
+    // `maxBonus` rendant `0` ou `1` au lieu de `80` passe les deux aussi bien
+    // qu'une vraie implementation. C'est exactement la classe de defaut que
+    // ce depot a deja payee une fois (`back/src/room.test.ts:1275` : un `u8`
+    // replie huit cartes de vitalite en 4 points de vie au decodage).
+    //
+    // On epingle donc `maxBonus('pickupRadius')` a ce que l'article du
+    // catalogue dit LUI-MEME — ses propres `levels` et `perLevel`, lus ici,
+    // jamais recalcules en rebouclant sur `SHOP_ITEMS` (une seconde somme se
+    // tromperait avec la premiere). Un seul article nomme : si `maxBonus`
+    // rend toujours `0`, ou `1`, ou oublie de multiplier par `levels`, cette
+    // egalite rougit.
+    //
+    // ⚠️ **Piege assume, pas un oubli : le jour ou un SECOND article de rayon
+    // rejoint le catalogue, ce test rougira**, parce que `maxBonus` sommera
+    // les deux articles alors que cette assertion n'en nomme qu'un. C'est
+    // voulu : ajouter un article de rayon est exactement le changement qui
+    // remet la marge du `u8` en danger, et son auteur doit etre force de
+    // revenir ici recalculer la marge plutot que de laisser le fil decider.
+    // Ne pas generaliser cette assertion pour la faire taire sans relire ce
+    // commentaire.
+    const aimant = SHOP_ITEMS.find((i) => i.id === 'aimant');
+    if (!aimant) {
+      throw new Error('article aimant introuvable');
+    }
+    expect(maxBonus('pickupRadius')).toBe(aimant.levels * (aimant.perLevel ?? 0));
   });
 
   it('maxBonus rend zero pour une cle que le catalogue ne vend pas', () => {
