@@ -237,6 +237,20 @@ describe('etape 7b tache 4 : acheter', () => {
    * rougisse de facon fiable des que le defaut existe, sans pour autant tester
    * autre chose que la scene exacte du Review Focus n°1 : deux achats
    * VRAIMENT concurrents du meme palier.
+   *
+   * ⚠️ **Le `40` ci-dessous n'est PAS une garantie, c'est un calage empirique.**
+   * Mesure locale : ~7% de recouvrement reel par PAIRE sur cette machine, donc
+   * ~4,3% de chance qu'une execution de ce test passe au vert alors que le
+   * defaut existe (`1 - 0.93^40`). Ce taux depend du minutage reseau local —
+   * sur une machine plus rapide (recouvrement mesure a 0,5% dans la revue),
+   * cette MEME boucle aurait ~82% de chance de rater le defaut. **Ce canari
+   * est donc probabiliste par construction : ne monte PAS ce nombre pour
+   * "gagner du temps", et ne le crois PAS suffisant seul.** La propriete
+   * reelle — que le `where` filtre rejette un `level` perime — est fermee
+   * SANS alea par le test deterministe juste en dessous, qui appelle
+   * `prisma.purchase.update` directement et n'a besoin d'aucune course pour
+   * rougir. Ce test-ci reste necessaire a cote : seul lui passe par `buyItem`
+   * de bout en bout et verifie que le `catch` annule bien le debit.
    */
   it('deux achats CONCURRENTS du palier suivant n en passent qu un', async () => {
     const paliers = SHOP_ITEMS.find((i) => i.levels >= 2);
@@ -256,6 +270,35 @@ describe('etape 7b tache 4 : acheter', () => {
       expect((await purchasesOf(id)).get(paliers.id)).toBe(2);
       expect(await goldOf(id)).toBe(0n);
     }
+  });
+
+  /**
+   * Ronde de correction 2/5 : le canari ci-dessus est probabiliste (~4,3% de
+   * faux vert mesure sur cette machine, voir son docbloc). Ce test-ci ferme
+   * la MEME propriete sans aucun alea : il appelle `prisma.purchase.update`
+   * directement, hors de `buyItem`, avec un `level` dans le `where` qui ne
+   * correspond PLUS a la ligne (elle est a 1, on filtre sur 2). Prisma 6.19.3
+   * accepte `level` en PLUS de la cle unique dans `PurchaseWhereUniqueInput`
+   * (`Prisma.AtLeast<{ accountId_itemId, ..., level, ... }, "accountId_itemId">`,
+   * verifie dans le type genere) : zero ligne correspond, donc l'update leve
+   * TOUJOURS, deterministe. C'est exactement le mecanisme que le verrou
+   * optimiste de `buyItem` exploite pour refuser un achat concurrent qui a
+   * deja fait avancer le palier.
+   */
+  it('un update filtre sur un level perime leve P2025, sans aucune course', async () => {
+    const article = SHOP_ITEMS.find((i) => i.levels >= 2);
+    if (!article) {
+      throw new Error('aucun article a au moins deux paliers');
+    }
+    const { id } = await createAccount();
+    await prisma.purchase.create({ data: { accountId: id, itemId: article.id, level: 1 } });
+
+    await expect(
+      prisma.purchase.update({
+        where: { accountId_itemId: { accountId: id, itemId: article.id }, level: 2 },
+        data: { level: 2 },
+      }),
+    ).rejects.toMatchObject({ code: 'P2025' });
   });
 
   it('bonusesOf somme les paliers, et rend zero sur une cle non achetee', () => {
