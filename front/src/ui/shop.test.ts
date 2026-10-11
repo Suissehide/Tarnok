@@ -11,7 +11,7 @@ import indexHtml from '../../index.html?raw';
 import { achetable, carteGrisee, type EtatBoutique, messageAchat, renderShop } from './shop';
 
 /** Les tests qui n'observent pas les clics n'ont rien a faire dans onBuy. */
-const IGNORER_ACHAT = (): void => undefined;
+const IGNORER_ACHAT = async (): Promise<void> => undefined;
 
 describe('etape 7b tache 8 : la boutique', () => {
   it('un article deja au palier maximum n est plus achetable', () => {
@@ -161,11 +161,74 @@ describe('renderShop — le cablage vers index.html, et le grisage a l ecran', (
     }
     const appeles: string[] = [];
     const etat: EtatBoutique = { gold: BigInt(priceOf(article, 1)), purchases: {} };
-    renderShop(root, etat, (itemId) => appeles.push(itemId));
+    renderShop(root, etat, async (itemId) => {
+      appeles.push(itemId);
+    });
 
     const bouton = root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`);
     bouton?.click();
 
     expect(appeles).toEqual([article.id]);
+  });
+
+  /**
+   * Ronde de correction 2/5 : la garde anti-double-clic. Un double-clic
+   * rapide envoyait deux `POST` — l'un gagne et rend 200, l'autre rend 409 —
+   * et selon l'ordre d'arrivee le joueur pouvait voir « conflit, retente »
+   * alors que son achat avait reussi. Le correctif est natif : `disabled`
+   * pendant que la requete est EN VOL, reactive dans un `finally` (donc quel
+   * que soit l'issue — succes, 402, 409, ou meme une promesse rejetee).
+   */
+  it('un double clic avant resolution n envoie qu un seul achat', async () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const appeles: string[] = [];
+    let debloquer: () => void = () => {
+      throw new Error('onBuy jamais appele');
+    };
+    const onBuy = (itemId: string): Promise<void> => {
+      appeles.push(itemId);
+      return new Promise<void>((resolve) => {
+        debloquer = resolve;
+      });
+    };
+    renderShop(root, { gold: BigInt(priceOf(article, 1)), purchases: {} }, onBuy);
+
+    const bouton = root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`);
+    bouton?.click();
+    // Avant que la premiere requete ne se resolve : le bouton doit deja etre
+    // desactive NATIVEMENT, donc ce second clic ne doit pas atteindre onBuy.
+    bouton?.click();
+
+    expect(appeles).toEqual([article.id]);
+
+    debloquer();
+    await Promise.resolve();
+    expect(bouton?.disabled).toBe(false);
+  });
+
+  /**
+   * ⚠️ **Le `finally` compte, pas un `then` de succes seul** : un achat
+   * refuse (ou une promesse rejetee) doit tout de meme reactiver le bouton,
+   * sinon un joueur qui gagne de l'or entre-temps ne pourrait plus jamais
+   * reessayer cet article.
+   */
+  it('un achat refuse (promesse rejetee) reactive tout de meme le bouton', async () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const onBuy = (): Promise<void> => Promise.reject(new Error('refus simule'));
+    renderShop(root, { gold: BigInt(priceOf(article, 1)), purchases: {} }, onBuy);
+
+    const bouton = root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`);
+    bouton?.click();
+    expect(bouton?.disabled).toBe(true);
+
+    // Laisse les microtaches de la promesse rejetee (et son `.finally`) se jouer.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(bouton?.disabled).toBe(false);
   });
 });

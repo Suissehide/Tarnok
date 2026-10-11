@@ -86,11 +86,20 @@ export function messageAchat(status: number): string {
  *
  * `replaceChildren` plutot qu'un diff : au plus `SHOP_ITEMS.length` lignes, et
  * la boutique ne se repeint qu'a l'ouverture du lobby ou apres un achat.
+ *
+ * ⚠️ **`onBuy` rend une promesse, et c'est la garde anti-double-clic (ronde
+ * de correction 2/5, tache 8).** Un double-clic rapide envoyait deux `POST` —
+ * l'un gagnant (200), l'autre en conflit (409) — et selon l'ordre d'arrivee
+ * le joueur pouvait lire « conflit, retente » pour un achat qui avait
+ * pourtant reussi. Le correctif est natif : le bouton se desactive AVANT
+ * l'appel, et se reactive dans un `finally` — donc quelle que soit l'issue
+ * (succes, 402, 409, ou meme une promesse rejetee). Un `then` de succes seul
+ * laisserait un achat refuse avec un bouton mort pour toujours.
  */
 export function renderShop(
   root: HTMLElement,
   etat: EtatBoutique,
-  onBuy: (itemId: string) => void,
+  onBuy: (itemId: string) => Promise<void>,
 ): void {
   root.replaceChildren(
     ...SHOP_ITEMS.map((item) => {
@@ -117,7 +126,19 @@ export function renderShop(
       button.disabled = !peut;
       button.textContent = auMax ? 'Au maximum' : `${priceOf(item, palierPossede + 1)} or`;
       button.addEventListener('click', () => {
-        onBuy(item.id);
+        button.disabled = true;
+        onBuy(item.id)
+          .finally(() => {
+            button.disabled = false;
+          })
+          .catch(() => {
+            // Deja gere par le `finally` ci-dessus (reactivation) ; ce
+            // `catch` existe seulement pour qu'une promesse rejetee ne
+            // remonte pas comme un rejet NON gere (le contrat de `onBuy`
+            // n'exige pas qu'elle rejette jamais — `main.ts` ne le fait
+            // pas — mais `renderShop` ne doit pas casser si un futur
+            // appelant le fait).
+          });
       });
 
       row.append(label, palier, button);

@@ -156,9 +156,7 @@ async function chargeSolde(): Promise<string> {
     if (compte) {
       goldLine.textContent = compte.gold;
       accountPurchases = compte.purchases;
-      renderShop(shopRoot, etatBoutique(compte), (itemId) => {
-        void onBuy(texte, itemId);
-      });
+      renderShop(shopRoot, etatBoutique(compte), (itemId) => onBuy(texte, itemId));
     } else {
       goldLine.textContent = '—';
     }
@@ -189,9 +187,7 @@ async function onBuy(texte: string, itemId: string): Promise<void> {
     if (reponse.ok) {
       goldLine.textContent = reponse.gold;
       accountPurchases = reponse.purchases;
-      renderShop(shopRoot, etatBoutique(reponse), (id) => {
-        void onBuy(texte, id);
-      });
+      renderShop(shopRoot, etatBoutique(reponse), (id) => onBuy(texte, id));
     } else {
       // Amendement, point 3 : 402 (gagner plus d'or) et 409 (rafraichir et
       // retenter) ne disent PAS la meme chose — voir `messageAchat`.
