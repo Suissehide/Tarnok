@@ -217,6 +217,47 @@ describe('etape 7b tache 4 : acheter', () => {
     expect(await goldOf(id)).toBe(BigInt(priceOf(article, 1)));
   });
 
+  /**
+   * Ronde de correction 1/5 : la cle composite ne protege que la branche
+   * `create`. Un compte qui possede DEJA un palier bascule sur `update`, que
+   * la cle composite ne peut pas refuser en double puisque la ligne existe
+   * deja des les deux cotes : deux transactions concurrentes peuvent lire le
+   * MEME `level` avant qu'aucune n'ait commite, et les deux `UPDATE` reussissent
+   * alors chacun isolement, sans violer aucune contrainte. Ce test force cette
+   * branche (palier 1 deja possede, deux achats concurrents du palier 2) pour
+   * que la garantie de concurrence couvre aussi les cinq articles a paliers du
+   * catalogue, pas seulement les six armes a `levels: 1`.
+   *
+   * ⚠️ **La fenetre de recouvrement est etroite et depend du minutage reel des
+   * allers-retours reseau** (mesure : la mettre en evidence a demande une
+   * quarantaine d'essais sur cette machine, contre une poignee pour la branche
+   * `create`). Une seule paire concurrente serait donc un test intermittent au
+   * sens ou la MAJORITE de ses essais passeraient sans rien prouver. Boucler
+   * sur des comptes frais multiplie les tirages pour que le test entier
+   * rougisse de facon fiable des que le defaut existe, sans pour autant tester
+   * autre chose que la scene exacte du Review Focus n°1 : deux achats
+   * VRAIMENT concurrents du meme palier.
+   */
+  it('deux achats CONCURRENTS du palier suivant n en passent qu un', async () => {
+    const paliers = SHOP_ITEMS.find((i) => i.levels >= 2);
+    if (!paliers) {
+      throw new Error('aucun article a au moins deux paliers');
+    }
+    const prixPalier2 = BigInt(priceOf(paliers, 2));
+
+    for (let essai = 0; essai < 40; essai++) {
+      const { id } = await createAccount();
+      await creditAccounts([id], BigInt(priceOf(paliers, 1)) + prixPalier2);
+      expect(await buyItem(id, paliers.id)).toBe('ok');
+
+      const [a, b] = await Promise.all([buyItem(id, paliers.id), buyItem(id, paliers.id)]);
+      const resultats = [a, b].sort();
+      expect(resultats.filter((r) => r === 'ok')).toHaveLength(1);
+      expect((await purchasesOf(id)).get(paliers.id)).toBe(2);
+      expect(await goldOf(id)).toBe(0n);
+    }
+  });
+
   it('bonusesOf somme les paliers, et rend zero sur une cle non achetee', () => {
     const v = SHOP_ITEMS.find((i) => i.bonusKind === 'maxHp');
     if (!v) {

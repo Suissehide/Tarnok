@@ -106,28 +106,45 @@ export async function purchasesOf(accountId: string): Promise<Map<string, number
  * qu'il ne pouvait fabriquer de l'or.
  *
  * ⚠️ **Tout se passe dans UNE transaction**, et c'est ce qui garantit qu'un
- * refus ne laisse jamais de debit partiel : la lecture du solde, le debit et
+ * REFUS ne laisse jamais de debit partiel : la lecture du solde, le debit et
  * l'ecriture de la ligne sont atomiques, donc un `solde-insuffisant` ou un
- * `palier-max` renvoie la transaction entiere sans rien ecrire.
+ * `palier-max` renvoie la transaction entiere sans rien ecrire. Mais la
+ * transaction seule ne protege pas contre un DOUBLE achat concurrent — ca,
+ * c'est le travail de deux mecanismes distincts, un par branche d'ecriture :
  *
- * ⚠️ **Mesure sur le `catch`, documentee.** Sous deux achats concurrents du
- * meme article, les DEUX transactions peuvent lire `deja === null` et passer
- * la verification de solde avant qu'aucune n'ait commite — la cle composite
- * `[accountId, itemId]` n'intervient qu'a l'ECRITURE. La perdante decremente
- * donc bien son propre solde local puis echoue sur l'insertion en double ; sa
- * transaction entiere est alors annulee, decrement inclus, et le `catch`
- * attrape cette erreur-la. La cause reelle est un CONFLIT DE CLE, pas un
- * solde insuffisant — rendre `'solde-insuffisant'` ici confond deux causes
- * distinctes, et un appelant qui afficherait ce message a un joueur qui a
- * bien assez d'or serait trompeur. Le choix est garde malgre ca, mesure a
- * l'appui : le test de concurrence (Review Focus n°1) montre que le verdict
- * de la perdante n'est jamais `'ok'`, que le solde final est exactement celui
- * d'UN achat, et qu'aucun appelant actuel (poignee de main, future route HTTP)
- * ne distingue encore un conflit d'un solde insuffisant pour agir differemment
- * — dans les deux cas l'action correcte est « rafraichir l'etat et retenter ».
- * Un quatrieme verdict `'conflit'` serait plus honnete semantiquement ; il
- * n'a pas ete ajoute faute de consommateur qui en ferait quelque chose de
- * different aujourd'hui. A revisiter si une UI veut un message distinct.
+ * - **Premier achat d'un article (branche `create`)** : la cle composite
+ *   `[accountId, itemId]` du modele `Purchase` l'interdit STRUCTURELLEMENT.
+ *   Deux transactions qui lisent toutes deux `deja === null` avant qu'aucune
+ *   n'ait commite peuvent toutes les deux tenter l'`INSERT` ; Postgres n'en
+ *   laisse passer qu'une, la seconde leve une violation de cle.
+ * - **Palier suivant d'un article deja possede (branche `update`)** : la cle
+ *   composite ne protege RIEN ici, puisque la ligne existe deja des les deux
+ *   cotes et qu'un `UPDATE` ne viole aucune contrainte d'unicite. C'est donc
+ *   un VERROU OPTIMISTE qui protege cette branche : le `where` du `update`
+ *   filtre aussi sur le `level` LU plus haut (`deja.level`). Si un achat
+ *   concurrent a deja fait avancer ce palier entre notre lecture et notre
+ *   ecriture, aucune ligne ne correspond plus a ce `where` et Prisma leve
+ *   (`P2025`, « no record found for an update ») au lieu d'ecrire en silence
+ *   un `level` perime. **Mesure (Ronde de correction 1/5) : sans ce verrou,
+ *   deux achats concurrents du palier suivant passaient TOUS LES DEUX,
+ *   debitant deux fois le prix pour ne gagner qu'un seul niveau** — reproduit
+ *   de facon fiable par le test de ce fichier avant le correctif, jamais
+ *   apres.
+ *
+ * ⚠️ **Mesure sur le `catch`, documentee.** La cause reelle d'un echec ici est
+ * un CONFLIT (de cle ou de verrou optimiste), jamais un solde insuffisant —
+ * rendre `'solde-insuffisant'` confond deux causes distinctes, et un appelant
+ * qui afficherait ce message a un joueur qui a bien assez d'or serait
+ * trompeur. Le choix est garde malgre ca, mesure a l'appui : les deux tests de
+ * concurrence (Review Focus n°1, branches `create` et `update`) montrent que
+ * le verdict de la perdante n'est jamais `'ok'` et que le solde final est
+ * exactement celui d'UN achat, et qu'aucun appelant actuel (poignee de main,
+ * future route HTTP) ne distingue encore un conflit d'un solde insuffisant
+ * pour agir differemment — dans les deux cas l'action correcte est
+ * « rafraichir l'etat et retenter ». Un quatrieme verdict `'conflit'` serait
+ * plus honnete semantiquement ; il n'a pas ete ajoute faute de consommateur
+ * qui en ferait quelque chose de different aujourd'hui. A revisiter si une UI
+ * veut un message distinct.
  */
 export async function buyItem(
   accountId: string,
@@ -160,8 +177,12 @@ export async function buyItem(
 
       await tx.account.update({ where: { id: accountId }, data: { gold: { decrement: prix } } });
       if (deja) {
+        // Verrou optimiste : le `where` filtre aussi sur le `level` LU plus
+        // haut. Si un achat concurrent a deja fait avancer ce palier entre
+        // notre lecture et notre ecriture, aucune ligne ne correspond plus et
+        // Prisma leve ; voir la mesure dans le docbloc de buyItem.
         await tx.purchase.update({
-          where: { accountId_itemId: { accountId, itemId } },
+          where: { accountId_itemId: { accountId, itemId }, level: deja.level },
           data: { level: palier },
         });
       } else {
@@ -170,9 +191,12 @@ export async function buyItem(
       return 'ok' as const;
     });
   } catch {
-    // La cle composite a refuse un doublon cree par un achat concurrent :
-    // cette transaction-ci a tout annule, rien n'a ete debite. Voir le
-    // docbloc ci-dessus pour la mesure qui justifie ce verdict precis.
+    // Conflit mesure : soit la cle composite a refuse un doublon cree par un
+    // `create` concurrent, soit le verrou optimiste ci-dessus (Prisma P2025,
+    // "no record found for an update") a vu le `level` bouger entre notre
+    // lecture et notre ecriture. Dans les deux cas la transaction entiere est
+    // annulee, rien n'a ete debite. Voir le docbloc de buyItem pour la mesure
+    // qui justifie ce verdict precis.
     return 'solde-insuffisant';
   }
 }
