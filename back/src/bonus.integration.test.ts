@@ -153,8 +153,24 @@ describe('etape 7b tache 6 : les achats changent la run', () => {
    * Review Focus n°4 : une panne de lecture ne doit pas refuser la partie. Le
    * joueur entre SANS ses ameliorations plutot que de ne pas entrer — son or
    * est en base, la run suivante les retrouvera.
+   *
+   * ⚠️ **Ronde de correction de la revue finale : « entre SANS ses
+   * ameliorations » veut dire des bonus NULS, jamais PARTIELS, et c'est ce que
+   * l'espion sur `join` assene.** Le §6.2 de la spec promet seulement que la
+   * partie n'est pas refusee ; le code tient davantage — l'assignation de
+   * `grants` est atomique dans le meme `try`, donc une panne ne laisse JAMAIS
+   * un demi-jeu de bonus. Cette propriete-la n'etait gardee par rien : la seule
+   * assertion de bonus ci-dessous est `maxHpOf`, donc un `grants` partiel qui
+   * remplirait `speed`, `fireRate` ou `regen` sans toucher `maxHp` passait au
+   * vert. L'espion verifie que `join` recoit `undefined` — pas un objet
+   * incomplet — ce qui ferme les six cles d'un coup sans ajouter aucune couture
+   * dans le code de production.
+   *
+   * ⚠️ L'espion ne remplace PAS `join` : `vi.spyOn` garde l'implementation
+   * reelle, donc le joueur entre pour de vrai et les assertions de bout en bout
+   * ci-dessous restent exercees.
    */
-  it('une base injoignable au chargement des achats laisse entrer le joueur', async () => {
+  it('une base injoignable au chargement des achats laisse entrer le joueur sans AUCUN bonus', async () => {
     const { token } = await compteNeuf();
     const code = await createRoomCode();
     const room = app.rooms.get(code);
@@ -165,6 +181,7 @@ describe('etape 7b tache 6 : les achats changent la run', () => {
     const espion = vi
       .spyOn(comptes, 'purchasesOf')
       .mockRejectedValue(new Error('base injoignable'));
+    const espionJoin = vi.spyOn(room, 'join');
     try {
       const client = await connectAvecJeton(code, token);
       await attendre(
@@ -175,7 +192,11 @@ describe('etape 7b tache 6 : les achats changent la run', () => {
       expect(espion).toHaveBeenCalledTimes(1);
       expect(room.maxHpOf(client.playerId)).toBe(PLAYER_MAX_HP);
       expect(client.ws.readyState).toBe(WebSocket.OPEN);
+      // Aucun `AccountGrants`, pas un `AccountGrants` a moitie rempli.
+      expect(espionJoin).toHaveBeenCalledTimes(1);
+      expect(espionJoin).toHaveBeenCalledWith(client.playerId, undefined);
     } finally {
+      espionJoin.mockRestore();
       espion.mockRestore();
     }
   });

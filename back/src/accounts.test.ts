@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto';
 import { GOLD_MAX, TOKEN_BYTES } from '@shared/protocol';
-import { priceOf, SHOP_ITEMS } from '@shared/shop';
+import { priceOf, SHOP_ITEMS, type ShopItem } from '@shared/shop';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 import {
@@ -299,6 +299,65 @@ describe('etape 7b tache 4 : acheter', () => {
         data: { level: 2 },
       }),
     ).rejects.toMatchObject({ code: 'P2025' });
+  });
+
+  /**
+   * Ronde de correction de la revue finale : les DEUX mecanismes de
+   * concurrence ci-dessus sont par ARTICLE — la cle composite sur
+   * `[accountId, itemId]`, le verrou optimiste sur le `level` de CETTE ligne.
+   * Deux transactions qui visent deux `itemId` DIFFERENTS ne se croisaient donc
+   * nulle part : elles lisaient le meme solde, passaient toutes deux la
+   * comparaison `gold < prix`, et les deux `decrement` s'appliquaient. Le
+   * `where` du debit ne filtrait que sur l'identite du compte.
+   *
+   * ⚠️ **Le chemin joueur est reel.** Le grisage et la garde anti-double-clic
+   * de la boutique sont par BOUTON, et l'etalage ne se repeint qu'au retour de
+   * la reponse : deux clics rapides sur deux LIGNES differentes partent en
+   * parallele. Le cas du meme article (teste plus haut) est justement celui que
+   * l'interface ferme deja — ce qui faisait de ce cas-ci le seul encore
+   * atteignable depuis la vraie interface.
+   *
+   * ⚠️ **La salve porte sur les SIX armes, pas sur une paire, et c'est ce qui
+   * rend ce test deterministe.** Mesure sur cette machine, avant correctif :
+   * une PAIRE d'articles differents passait `ok`/`ok` 19 fois sur 20 (une fois
+   * sur vingt, les deux transactions se serialisent d'elles-memes et la seconde
+   * rend `'solde-insuffisant'` par la voie normale) — donc ~5% de faux vert
+   * comme canari de mutation. La salve des six armes, elle, a rendu **au moins
+   * deux `ok` 20 fois sur 20, dont 19 fois les SIX, pour un solde de `-1500`**
+   * (le joueur encaissait 1800 d'or de marchandise pour 300). Le compte est
+   * credite du prix d'UNE seule arme et les six ont le MEME prix — une
+   * assertion du test le garde — donc apres correctif un seul `ok` est
+   * possible, quel que soit l'ordre dans lequel Postgres serialise les six
+   * transactions.
+   *
+   * Le verdict des perdantes n'est pas assene a `'conflit'` exactement, et pour
+   * la meme raison que les deux tests ci-dessus : une perdante qui relit le
+   * solde APRES le commit de la gagnante rend `'solde-insuffisant'` par la voie
+   * normale, un verdict tout aussi legitime. Ce qui est assene, et qui est le
+   * defaut mesure : UN seul `ok`, UN seul achat, et surtout **un solde final
+   * jamais a decouvert**.
+   */
+  it('une salve d achats CONCURRENTS de six articles DIFFERENTS n en passe qu un', async () => {
+    const armes = SHOP_ITEMS.filter((i) => i.levels === 1);
+    if (armes.length < 2) {
+      throw new Error('au moins deux articles a un seul palier attendus');
+    }
+    const prix = BigInt(priceOf(armes[0] as ShopItem, 1));
+    // Le MEME prix pour toutes : sinon deux achats successifs du budget
+    // seraient legitimes et « exactement un ok » cesserait d'etre la propriete.
+    for (const a of armes) {
+      expect(BigInt(priceOf(a, 1))).toBe(prix);
+    }
+
+    const { id } = await createAccount();
+    await creditAccounts([id], prix);
+
+    const verdicts = await Promise.all(armes.map((a) => buyItem(id, a.id)));
+    expect(verdicts.filter((r) => r === 'ok')).toHaveLength(1);
+    // Le coeur du defaut : sans la garde du solde dans le `where` du debit, ce
+    // solde valait `-1500`.
+    expect(await goldOf(id)).toBe(0n);
+    expect((await purchasesOf(id)).size).toBe(1);
   });
 
   it('bonusesOf somme les paliers, et rend zero sur une cle non achetee', () => {

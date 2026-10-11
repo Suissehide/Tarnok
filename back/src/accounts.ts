@@ -110,7 +110,26 @@ export async function purchasesOf(accountId: string): Promise<Map<string, number
  * l'ecriture de la ligne sont atomiques, donc un `solde-insuffisant` ou un
  * `palier-max` renvoie la transaction entiere sans rien ecrire. Mais la
  * transaction seule ne protege pas contre un DOUBLE achat concurrent — ca,
- * c'est le travail de deux mecanismes distincts, un par branche d'ecriture :
+ * c'est le travail de TROIS mecanismes distincts : un par branche d'ecriture
+ * de la ligne d'achat, plus un sur le solde lui-meme.
+ *
+ * - **Le SOLDE, quels que soient les articles (toutes les branches)** : le
+ *   `where` du debit filtre aussi sur `gold: { gte: prix }`. La comparaison
+ *   `gold < prix` lue quelques lignes plus haut ne garde RIEN a elle seule :
+ *   deux transactions qui visent deux `itemId` DIFFERENTS ne se croisent ni sur
+ *   la cle composite ni sur le verrou de palier ci-dessous — tous deux par
+ *   article — donc elles lisaient le meme solde, passaient toutes deux la
+ *   comparaison, et les deux `decrement` s'appliquaient. **Mesure (revue
+ *   finale) : un compte credite de 300 (le prix d'une arme) encaissait les SIX
+ *   armes d'une salve concurrente, solde final `-1500`, 19 fois sur 20 ; au
+ *   moins deux armes passaient 20 fois sur 20.** Avec la garde dans le `where`,
+ *   le second `UPDATE` bloque sur la ligne de compte, reevalue son filtre apres
+ *   le commit du premier, ne trouve plus aucune ligne et leve (`P2025`) — donc
+ *   `catch`, donc `'conflit'`, donc 409 « rafraichis et retente », qui est le
+ *   bon conseil dans ce cas. Le test deterministe de ce fichier (la salve des
+ *   six armes) rougit des que ce `gte` disparait, sans aucun alea.
+ *
+ * Les deux autres gardent la LIGNE D'ACHAT, un par branche d'ecriture :
  *
  * - **Premier achat d'un article (branche `create`)** : la cle composite
  *   `[accountId, itemId]` du modele `Purchase` l'interdit STRUCTURELLEMENT.
@@ -182,7 +201,13 @@ export async function buyItem(
         return 'solde-insuffisant' as const;
       }
 
-      await tx.account.update({ where: { id: accountId }, data: { gold: { decrement: prix } } });
+      // Verrou du SOLDE, meme discipline que le verrou optimiste du palier
+      // juste en dessous : la garde est DANS le `where`, pas seulement dans la
+      // comparaison lue plus haut. Voir la mesure dans le docbloc de buyItem.
+      await tx.account.update({
+        where: { id: accountId, gold: { gte: prix } },
+        data: { gold: { decrement: prix } },
+      });
       if (deja) {
         // Verrou optimiste : le `where` filtre aussi sur le `level` LU plus
         // haut. Si un achat concurrent a deja fait avancer ce palier entre
