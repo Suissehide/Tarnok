@@ -30,7 +30,8 @@
  * serveur seul (§5.4), et une regeneration appliquee des deux cotes ferait
  * diverger deux barres de vie.
  */
-export type PassiveKind = 'fireRate' | 'damage' | 'maxHp' | 'speed' | 'regen';
+export const PASSIVE_KINDS = ['fireRate', 'damage', 'maxHp', 'speed', 'regen'] as const;
+export type PassiveKind = (typeof PASSIVE_KINDS)[number];
 
 export interface Passive {
   id: number;
