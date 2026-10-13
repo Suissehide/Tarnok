@@ -32,8 +32,14 @@ describe('etape 8 tache 1 : le catalogue des classes', () => {
     expect(classOf(255)).toBeUndefined();
   });
 
-  it('la classe par defaut existe dans le catalogue', () => {
-    expect(classOf(DEFAULT_CLASS_ID)).toBeDefined();
+  it('le tableau est gele : on ne peut ni ajouter ni remplacer une entree', () => {
+    expect(() => {
+      (CLASSES as GameClass[]).push({ id: 9, label: 'x', verb: 'amorce', trait: 'residuPartout' });
+    }).toThrow();
+    expect(() => {
+      (CLASSES as GameClass[])[0] = { id: 9, label: 'x', verb: 'amorce', trait: 'residuPartout' };
+    }).toThrow();
+    expect(CLASSES.length).toBe(4);
   });
 
   it('le catalogue est gele : une ecriture ne passe pas', () => {
