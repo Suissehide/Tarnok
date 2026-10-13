@@ -1,3 +1,4 @@
+import { ABILITY_COOLDOWN_TICKS, VERB_IDS } from '@shared/abilities';
 import {
   ARCHETYPES,
   BOSS_ARCHETYPE,
@@ -4969,4 +4970,77 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     expect(verdicts).toHaveLength(1);
     expect(verdicts[0]?.decision).toBe(VOTE_CHOICE.LEAVE);
   }, 120_000);
+});
+
+/**
+ * Tue un joueur par contact, pour les tests qui n'ont besoin que de l'etat
+ * MORT et pas d'un combat realiste.
+ *
+ * ⚠️ **Aucun utilitaire de mort reutilisable n'existait dans ce fichier.**
+ * Chaque test de mort inscrit sa propre boucle de combat (`tuerLeBoss`, le
+ * `tuer` local au test de credit d'or, la boucle en ligne du test de
+ * `RUN_OVER`) ; aucun n'est un `tue(room, id)` a deux arguments, module-scope,
+ * reutilisable depuis un nouveau describe. Celle-ci reprend le motif le plus
+ * simple des trois — vingt-cinq monstres au contact, meme sans arme tiree
+ * assez vite pour les tenir tous a distance, il en reste toujours un pour
+ * continuer a faire mal — plutot que d'en inventer un quatrieme variant.
+ */
+function tue(room: Room, playerId: number): void {
+  const pos = positionOf(room, playerId);
+  for (let i = 0; i < 25; i++) {
+    spawnMonsterAt(room, 9000 + playerId * 100 + i, pos.x, pos.y);
+  }
+  for (let t = 0; t < 3000 && hpOf(room, playerId) > 0; t++) {
+    room.step(DT);
+  }
+}
+
+describe('etape 8 tache 3 : le socle du verbe', () => {
+  it('un verbe demande est accepte UNE fois, puis refuse jusqu a la recharge', () => {
+    const room = new Room();
+    room.join(1, undefined, undefined, 0); // Amorce
+    const recharge = ABILITY_COOLDOWN_TICKS.amorce;
+
+    expect(room.useAbility(1, 1, 0)).not.toBeNull();
+    expect(room.useAbility(1, 1, 0)).toBeNull();
+
+    for (let t = 0; t < recharge - 1; t++) {
+      room.step(DT);
+    }
+    expect(room.useAbility(1, 1, 0)).toBeNull();
+    room.step(DT);
+    expect(room.useAbility(1, 1, 0)).not.toBeNull();
+  });
+
+  /** Review Focus n°3 : un spam a 30 Hz ne doit laisser passer qu'un usage. */
+  it('un spam de cent demandes dans le meme tick n en laisse passer qu une', () => {
+    const room = new Room();
+    room.join(1, undefined, undefined, 0);
+    let acceptes = 0;
+    for (let i = 0; i < 100; i++) {
+      if (room.useAbility(1, 1, 0)) {
+        acceptes++;
+      }
+    }
+    expect(acceptes).toBe(1);
+  });
+
+  /** Review Focus n°2 : un joueur mort n a pas de verbe. */
+  it('un joueur mort est refuse en silence', () => {
+    const room = new Room();
+    room.join(1, undefined, undefined, 0);
+    tue(room, 1);
+    expect(room.useAbility(1, 1, 0)).toBeNull();
+  });
+
+  it('un joueur inconnu est refuse en silence', () => {
+    const room = new Room();
+    expect(room.useAbility(42, 1, 0)).toBeNull();
+  });
+
+  it('l annonce porte le verbe de la CLASSE du joueur, pas un verbe choisi par lui', () => {
+    const room = new Room();
+    room.join(1, undefined, undefined, 2); // Appat
+    expect(room.useAbility(1, 1, 0)?.verb).toBe(VERB_IDS.appat);
+  });
 });

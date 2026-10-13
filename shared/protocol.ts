@@ -32,6 +32,8 @@ export const MSG = {
   LOBBY: 21,
   PICK: 22,
   START: 23,
+  ABILITY: 24,
+  ABILITY_USED: 25,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -371,7 +373,9 @@ export type Message =
   | PortalResultMessage
   | LobbyMessage
   | PickMessage
-  | StartMessage;
+  | StartMessage
+  | AbilityMessage
+  | AbilityUsedMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -1502,6 +1506,10 @@ export function decode(buf: ArrayBuffer): Message {
     }
     case MSG.START:
       return { type: MSG.START };
+    case MSG.ABILITY:
+      return decodeAbility(buf);
+    case MSG.ABILITY_USED:
+      return decodeAbilityUsed(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }
@@ -1846,6 +1854,39 @@ export interface StartMessage {
   type: typeof MSG.START;
 }
 
+/**
+ * C -> S : le joueur demande son verbe (etape 8, tache 3), 9 octets.
+ *
+ * ⚠️ **Le joueur ne dit PAS quel verbe** : il n'en a qu'un, celui de sa classe,
+ * et c'est le salon qui le lit. Laisser le client nommer son verbe l'autoriserait
+ * a demander celui d'une autre classe.
+ */
+export interface AbilityMessage {
+  type: typeof MSG.ABILITY;
+  tick: number;
+  aimX: number;
+  aimY: number;
+}
+
+/**
+ * S -> C : le salon ANNONCE un verbe accepte (etape 8, tache 3), 12 octets.
+ *
+ * ⚠️ **L'annonce, jamais l'effet.** Les deux cotes derivent l'effet de ces
+ * parametres et de ce tick — le patron de `BOSS_CHARGE`, dont la charge deplace
+ * le boss de 2700 px en gardant une derive de 0,000 px (scenario 11c de
+ * `shared/horde.replication.test.ts`).
+ */
+export interface AbilityUsedMessage {
+  type: typeof MSG.ABILITY_USED;
+  tick: number;
+  playerId: number;
+  verb: number;
+  x: number;
+  y: number;
+  /** La cible d'un Relais ; `0` pour les verbes qui n'en ont pas. */
+  targetId: number;
+}
+
 /** `type u8 · you u8 · count u8`. */
 export const LOBBY_HEADER_BYTES = 3;
 /** Une entree : `playerId u8 · weaponId u8 · classId u8`. */
@@ -1899,4 +1940,85 @@ export function encodeStart(): ArrayBuffer {
   const buf = new ArrayBuffer(1);
   new DataView(buf).setUint8(0, MSG.START);
   return buf;
+}
+
+/**
+ * C -> S : le joueur demande son verbe, 9 octets.
+ *
+ * `type u8 · tick u32 · aimX i16 · aimY i16`
+ *
+ * ⚠️ **Le joueur ne dit PAS quel verbe** : il n'en a qu'un, celui de sa classe,
+ * et c'est le salon qui le lit. Laisser le client nommer son verbe l'autoriserait
+ * a demander celui d'une autre classe.
+ */
+export const ABILITY_BYTES = 9;
+
+export function encodeAbility(tick: number, aimX: number, aimY: number): ArrayBuffer {
+  const buf = new ArrayBuffer(ABILITY_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.ABILITY);
+  v.setUint32(1, tick, true);
+  v.setInt16(5, Math.round(aimX), true);
+  v.setInt16(7, Math.round(aimY), true);
+  return buf;
+}
+
+export function decodeAbility(buf: ArrayBuffer): AbilityMessage {
+  const v = viewOf(buf, ABILITY_BYTES);
+  return {
+    type: MSG.ABILITY,
+    tick: v.getUint32(1, true),
+    aimX: v.getInt16(5, true),
+    aimY: v.getInt16(7, true),
+  };
+}
+
+/**
+ * S -> C : le salon ANNONCE un verbe accepte, 12 octets.
+ *
+ * `type u8 · tick u32 · playerId u8 · verb u8 · x i16 · y i16 · targetId u8`
+ *
+ * ⚠️ **L'annonce, jamais l'effet.** Les deux cotes derivent l'effet de ces
+ * parametres et de ce tick — le patron de `BOSS_CHARGE`, dont la charge deplace
+ * le boss de 2700 px en gardant une derive de 0,000 px (scenario 11c de
+ * `shared/horde.replication.test.ts`).
+ *
+ * ⚠️ **12 octets, pas 13.** L'addition `1 + 4 + 1 + 1 + 2 + 2 + 1` donne 12 :
+ * aucun octet de reserve n'a ete garde, par choix (amendement du controleur,
+ * tache 3 de l'etape 8) — les deux largeurs etaient acceptables, et celle-ci
+ * n'engage aucun bit muet qu'il faudrait documenter puis un jour justifier.
+ */
+export const ABILITY_USED_BYTES = 12;
+
+export function encodeAbilityUsed(
+  tick: number,
+  playerId: number,
+  verb: number,
+  x: number,
+  y: number,
+  targetId: number,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(ABILITY_USED_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.ABILITY_USED);
+  v.setUint32(1, tick, true);
+  v.setUint8(5, playerId);
+  v.setUint8(6, verb);
+  v.setInt16(7, Math.round(x), true);
+  v.setInt16(9, Math.round(y), true);
+  v.setUint8(11, targetId);
+  return buf;
+}
+
+export function decodeAbilityUsed(buf: ArrayBuffer): AbilityUsedMessage {
+  const v = viewOf(buf, ABILITY_USED_BYTES);
+  return {
+    type: MSG.ABILITY_USED,
+    tick: v.getUint32(1, true),
+    playerId: v.getUint8(5),
+    verb: v.getUint8(6),
+    x: v.getInt16(7, true),
+    y: v.getInt16(9, true),
+    targetId: v.getUint8(11),
+  };
 }

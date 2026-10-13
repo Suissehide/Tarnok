@@ -1,5 +1,7 @@
+import { ABILITY_COOLDOWN_TICKS, type AbilityUsed, VERB_IDS } from '@shared/abilities';
 import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
+import { classOf, DEFAULT_CLASS_ID, type VerbKind } from '@shared/classes';
 import {
   EXTRACT_MULTIPLIER_STEP,
   FLOWFIELD_CELL,
@@ -126,6 +128,10 @@ export interface PlayerState extends ContactPlayer {
    * run.
    */
   readonly accountBonuses: Readonly<Record<BonusKind, number>>;
+  /** La classe choisie au salon. Posee une fois a `join`, jamais mutee ensuite. */
+  readonly classId: number;
+  /** Tick du dernier verbe ACCEPTE. `-Infinity` : jamais utilise. */
+  lastAbilityTick: number;
 }
 
 export interface RoomMetrics {
@@ -827,7 +833,12 @@ export class Room {
    * d'editer les dizaines d'appels existants de `join` qui ne s'interessent
    * pas aux comptes.
    */
-  join(id: number, compte?: AccountGrants, startWeapon?: number): boolean {
+  join(
+    id: number,
+    compte?: AccountGrants,
+    startWeapon?: number,
+    classId: number = DEFAULT_CLASS_ID,
+  ): boolean {
     if (this.#players.has(id)) {
       return true;
     }
@@ -857,6 +868,8 @@ export class Room {
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout,
+      classId,
+      lastAbilityTick: Number.NEGATIVE_INFINITY,
     });
     return true;
   }
@@ -898,6 +911,49 @@ export class Room {
 
     p.aimX = clamp(aimX, -127, 127);
     p.aimY = clamp(aimY, -127, 127);
+  }
+
+  /**
+   * Arbitre une demande de verbe. Rend l'annonce a diffuser, ou `null`.
+   *
+   * ⚠️ **Le refus est SILENCIEUX** — meme discipline que `setDraftToken` et
+   * `setVote` : un geste refuse n'est simplement pas enregistre, et le client le
+   * verra a la prochaine diffusion. Aucun client ne decide de quoi que ce soit.
+   *
+   * ⚠️ **La recharge se pose APRES `#applyAbility`, jamais avant** (amendement
+   * du controleur, tache 3 de l'etape 8). La tache 7 (Relais) exige qu'un refus
+   * ne consomme PAS la recharge : un Relais demande sans allie valide a portee
+   * doit rester gratuit. Avec l'ordre inverse, le joueur serait puni d'un verbe
+   * qu'il n'a jamais eu — dix secondes d'attente pour rien, et ca se lirait
+   * comme un bug.
+   *
+   * ⚠️ **La contrepartie est load-bearing.** Chaque branche de `#applyAbility`
+   * DOIT rendre explicitement `null` quand elle refuse : une branche qui
+   * echouerait en silence tout en rendant une annonce donnerait un verbe
+   * gratuit — exactement le defaut inverse de celui que cet ordre corrige. A
+   * cette tache, aucune branche ne refuse encore (voir le rapport de la tache
+   * pour la mesure de cette mutation) ; les taches 4 a 7 y branchent chacune un
+   * effet, et donc un chemin de refus, sous ce meme contrat.
+   */
+  useAbility(playerId: number, aimX: number, aimY: number): AbilityUsed | null {
+    const p = this.#players.get(playerId);
+    if (!p || p.hp <= 0) {
+      return null;
+    }
+    const classe = classOf(p.classId);
+    if (!classe) {
+      return null;
+    }
+    const recharge = ABILITY_COOLDOWN_TICKS[classe.verb];
+    if (this.#tick - p.lastAbilityTick < recharge) {
+      return null;
+    }
+    const annonce = this.#applyAbility(p, classe.verb, aimX, aimY);
+    if (!annonce) {
+      return null;
+    }
+    p.lastAbilityTick = this.#tick;
+    return annonce;
   }
 
   /**
@@ -1352,6 +1408,27 @@ export class Room {
     const drained = this.#metrics;
     this.#metrics = { bytesSent: 0, encodeMicros: 0, snapshots: 0, truncatedSpawns: 0 };
     return drained;
+  }
+
+  /**
+   * Construit l'annonce d'un verbe ACCEPTE — jamais son effet (tache 3 de
+   * l'etape 8). Les taches 4 a 7 branchent chacune un effet ici, par verbe ;
+   * cette tache ne livre que le socle, donc aucune branche ne refuse encore.
+   *
+   * ⚠️ **Toute branche future DOIT rendre `null` explicitement sur un refus**
+   * (amendement du controleur) : `useAbility` ne pose la recharge qu'apres cet
+   * appel, et seulement s'il rend une annonce. Un refus silencieux qui
+   * laisserait passer une annonce quand meme donnerait un verbe gratuit.
+   */
+  #applyAbility(p: PlayerState, verb: VerbKind, aimX: number, aimY: number): AbilityUsed | null {
+    return {
+      tick: this.#tick,
+      playerId: p.id,
+      verb: VERB_IDS[verb],
+      x: aimX,
+      y: aimY,
+      targetId: 0,
+    };
   }
 
   /**

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { ABILITY_COOLDOWN_TICKS, VERB_IDS } from './abilities';
 import { makeBossCharge } from './boss';
 import {
   MAX_PER_WAVE,
@@ -12,6 +13,8 @@ import { ELEMENT, ELEMENTS } from './elements';
 import { entityIdOf } from './horde';
 import { bossHp, palierGold } from './paliers';
 import {
+  ABILITY_BYTES,
+  ABILITY_USED_BYTES,
   BOSS_CHARGE_BYTES,
   BOSS_HP_MAX,
   DEATH_ID_BYTES,
@@ -24,6 +27,8 @@ import {
   DRAFT_RESULT_HEADER_BYTES,
   DRAFT_TOKEN_BYTES,
   decode,
+  decodeAbility,
+  decodeAbilityUsed,
   decodeBossCharge,
   decodeDeaths,
   decodeInput,
@@ -36,6 +41,8 @@ import {
   decodeWelcome,
   decodeZone,
   EXTRACT_MULTIPLIER_MAX,
+  encodeAbility,
+  encodeAbilityUsed,
   encodeBossCharge,
   encodeDeaths,
   encodeDraftIntents,
@@ -1622,5 +1629,80 @@ describe('etape 7a tache 1 : HELLO porte le jeton, en largeur FIXE', () => {
     const court = new ArrayBuffer(10);
     new DataView(court).setUint8(0, MSG.HELLO);
     expect(() => decode(court)).toThrow(/tronque/);
+  });
+});
+
+describe('etape 8 tache 3 : ABILITY / ABILITY_USED, le socle du verbe', () => {
+  describe('ABILITY', () => {
+    it('rend l aller-retour a l identique', () => {
+      expect(decodeAbility(encodeAbility(1234, -100, 60))).toEqual({
+        type: MSG.ABILITY,
+        tick: 1234,
+        aimX: -100,
+        aimY: 60,
+      });
+    });
+
+    /**
+     * ⚠️ **Largeur epinglee en chiffre NU** : une assertion `toBe(ABILITY_BYTES)`
+     * serait vraie quoi qu'il arrive, meme discipline que `VOTE_BYTES` et
+     * `HELLO_BYTES` plus haut dans ce fichier.
+     */
+    it('tient exactement 9 octets : type u8 + tick u32 + aimX i16 + aimY i16', () => {
+      expect(encodeAbility(1, 0, 0).byteLength).toBe(9);
+      expect(ABILITY_BYTES).toBe(9);
+    });
+
+    it('refuse un buffer ABILITY tronque', () => {
+      const tronque = encodeAbility(1, 0, 0).slice(0, ABILITY_BYTES - 1);
+      expect(() => decode(tronque)).toThrow(/tronque/);
+    });
+  });
+
+  describe('ABILITY_USED', () => {
+    it('rend l aller-retour a l identique, cible comprise', () => {
+      expect(decodeAbilityUsed(encodeAbilityUsed(500, 3, VERB_IDS.relais, -42, 17, 2))).toEqual({
+        type: MSG.ABILITY_USED,
+        tick: 500,
+        playerId: 3,
+        verb: VERB_IDS.relais,
+        x: -42,
+        y: 17,
+        targetId: 2,
+      });
+    });
+
+    /**
+     * ⚠️ **12 octets, pas 13** — choix du controleur (amendement, tache 3 de
+     * l'etape 8) : `1 + 4 + 1 + 1 + 2 + 2 + 1` fait 12, sans octet de reserve.
+     * Epinglee en chiffre NU, comme `ABILITY_BYTES` ci-dessus.
+     */
+    it('tient exactement 12 octets : type u8 + tick u32 + playerId u8 + verb u8 + x i16 + y i16 + targetId u8', () => {
+      expect(encodeAbilityUsed(1, 1, 0, 0, 0, 0).byteLength).toBe(12);
+      expect(ABILITY_USED_BYTES).toBe(12);
+    });
+
+    it('refuse un buffer ABILITY_USED tronque', () => {
+      const tronque = encodeAbilityUsed(1, 1, 0, 0, 0, 0).slice(0, ABILITY_USED_BYTES - 1);
+      expect(() => decode(tronque)).toThrow(/tronque/);
+    });
+  });
+
+  it('ABILITY et ABILITY_USED ne marchent pas sur un identifiant de message existant', () => {
+    const autres = Object.entries(MSG)
+      .filter(([nom]) => nom !== 'ABILITY' && nom !== 'ABILITY_USED')
+      .map(([, id]) => id);
+    expect(autres).not.toContain(MSG.ABILITY);
+    expect(autres).not.toContain(MSG.ABILITY_USED);
+  });
+
+  it('chaque verbe du catalogue a une recharge superieure a zero tick', () => {
+    // Discipline de la tache : les reglages se lisent de `shared/abilities.ts`,
+    // jamais en dur ici — voir `shared/abilities.test.ts` pour la garde
+    // complete sur `VERB_IDS` / `ABILITY_COOLDOWN_TICKS`.
+    for (const verb of Object.values(VERB_IDS)) {
+      expect(verb).toBeTypeOf('number');
+    }
+    expect(Object.values(ABILITY_COOLDOWN_TICKS).every((t) => t > 0)).toBe(true);
   });
 });

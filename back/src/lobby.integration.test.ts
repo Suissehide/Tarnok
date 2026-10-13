@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net';
-import { CLASSES, DEFAULT_CLASS_ID } from '@shared/classes';
+import { VERB_IDS } from '@shared/abilities';
+import { CLASSES, classOf, DEFAULT_CLASS_ID } from '@shared/classes';
 import {
   decode,
   encodeHello,
@@ -151,6 +152,36 @@ describe('salle d attente', () => {
     // Rediffuse a TOUT le salon, pas seulement a l'auteur du choix.
     expect(dernierLobby(hote.recus)?.players[1]?.classId).toBe(voulue);
     expect(dernierLobby(invite.recus)?.players[1]?.classId).toBe(voulue);
+  });
+
+  /**
+   * Amendement du controleur (tache 3 de l'etape 8, point 2) : `#start` doit
+   * lire le `classId` de l'entree de salon — que ce fichier verifie deja
+   * cote TRANSPORT (les tests ci-dessus) — et le passer a `Room#join`. Un
+   * cablage parfait cote salon qui n'atteindrait pas la partie serait vert
+   * et mort, exactement le trou que l'etape 7b a du faire reprendre.
+   */
+  it('la classe choisie au salon donne le verbe de CETTE classe une fois la partie lancee', async () => {
+    const res = await app.inject({ method: 'POST', url: '/rooms' });
+    const salon = res.json<{ code: string }>().code;
+    const hote = await entre(salon);
+    await jusqua(() => dernierLobby(hote.recus));
+
+    const voulue = CLASSES[2]?.id ?? 2; // Appat
+    hote.ws.send(encodePick(NO_WEAPON, voulue));
+    await jusqua(() =>
+      dernierLobby(hote.recus)?.players[0]?.classId === voulue ? true : undefined,
+    );
+
+    hote.ws.send(encodeStart());
+    await jusqua(() => hote.recus.find((m) => m.type === MSG.WELCOME));
+
+    const room = app.rooms.get(salon);
+    const classe = classOf(voulue);
+    if (!classe) {
+      throw new Error('classe inconnue');
+    }
+    expect(room?.useAbility(1, 1, 0)?.verb).toBe(VERB_IDS[classe.verb]);
   });
 });
 

@@ -4,6 +4,7 @@ import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import {
   decode,
+  encodeAbilityUsed,
   encodeBossCharge,
   encodeDeaths,
   encodeDraftIntents,
@@ -350,11 +351,11 @@ class Session {
     }
   }
 
-  /** L'hote (le plus petit slot) lance : chacun entre dans `Room` avec son arme. */
+  /** L'hote (le plus petit slot) lance : chacun entre dans `Room` avec son arme et sa classe. */
   #start(): void {
     this.#started = true;
     for (const [id, e] of [...this.#lobby].sort(([a], [b]) => a - b)) {
-      this.room.join(id, e.grants, e.weaponId === NO_WEAPON ? undefined : e.weaponId);
+      this.room.join(id, e.grants, e.weaponId === NO_WEAPON ? undefined : e.weaponId, e.classId);
       this.#clients.get(id)?.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
     }
     this.#lobby.clear();
@@ -435,6 +436,32 @@ class Session {
     }
     if (msg.type === MSG.INPUT) {
       this.room.applyInput(id, msg.seq, msg.moveX, msg.moveY, msg.aimX, msg.aimY);
+      return;
+    }
+    if (msg.type === MSG.ABILITY) {
+      // Meme discipline que partout ailleurs dans ce fichier : le client
+      // PROPOSE, le salon arbitre. Rien n'est diffuse sur un refus — pas de
+      // message d'erreur, pas d'accuse : le client sait que sa demande n'a
+      // pas abouti parce qu'aucune annonce n'arrive.
+      //
+      // ⚠️ **`#send`, pas `#broadcast`.** `#broadcast()` est le drain PAR
+      // TICK des evenements accumules par `Room` (zones, morts, reactions...) ;
+      // `useAbility` ne queue rien, il rend l'annonce directement, et c'est
+      // elle qu'il faut poser sur le fil tout de suite, comme `#send` le fait
+      // deja pour chaque evenement draine plus bas.
+      const annonce = this.room.useAbility(id, msg.aimX, msg.aimY);
+      if (annonce) {
+        this.#send(
+          encodeAbilityUsed(
+            annonce.tick,
+            annonce.playerId,
+            annonce.verb,
+            annonce.x,
+            annonce.y,
+            annonce.targetId,
+          ),
+        );
+      }
       return;
     }
     if (msg.type === MSG.DRAFT_TOKEN) {
