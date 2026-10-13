@@ -1,6 +1,7 @@
 import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
 import { chainTargets } from '@shared/chain';
+import { DEFAULT_CLASS_ID } from '@shared/classes';
 import {
   CHAIN_JUMPS,
   CHAIN_RADIUS,
@@ -1455,9 +1456,14 @@ export class GameClient {
   /** Appele a chaque `LOBBY` recu, jusqu'au lancement. */
   onLobby: (lobby: LobbyMessage) => void = () => undefined;
 
-  /** Salle d'attente : choisit l'arme de depart (`NO_WEAPON` pour aucune). */
+  /**
+   * Salle d'attente : choisit l'arme de depart (`NO_WEAPON` pour aucune).
+   *
+   * Pas encore d'ecran de choix de classe cote client (tache a venir) : on
+   * envoie `DEFAULT_CLASS_ID`, que le serveur traite comme « pas de choix ».
+   */
   pickWeapon(weaponId: number): void {
-    this.#ws?.send(encodePick(weaponId));
+    this.#ws?.send(encodePick(weaponId, DEFAULT_CLASS_ID));
   }
 
   /** Salle d'attente : lance la run (le serveur ignore si on n'est pas l'hote). */

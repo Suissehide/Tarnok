@@ -1,4 +1,5 @@
 import type { AddressInfo } from 'node:net';
+import { CLASSES, DEFAULT_CLASS_ID } from '@shared/classes';
 import {
   decode,
   encodeHello,
@@ -74,8 +75,8 @@ describe('salle d attente', () => {
     expect(dernierLobby(invite.recus).you).toBe(2);
 
     const arme = startingWeapons()[0] as number;
-    invite.ws.send(encodePick(BASE_WEAPON_ID)); // refusee : deja tenue par tous
-    invite.ws.send(encodePick(arme));
+    invite.ws.send(encodePick(BASE_WEAPON_ID, DEFAULT_CLASS_ID)); // refusee : deja tenue par tous
+    invite.ws.send(encodePick(arme, DEFAULT_CLASS_ID));
     await jusqua(() => (dernierLobby(hote.recus).players[1]?.weaponId === arme ? true : undefined));
     expect(dernierLobby(hote.recus).players[0]?.weaponId).toBe(NO_WEAPON);
 
@@ -89,6 +90,67 @@ describe('salle d attente', () => {
     const room = app.rooms.get(salon);
     expect(room?.loadoutOf(2)?.weaponIds).toEqual([arme]);
     expect(room?.loadoutOf(1)?.weaponIds).toEqual([]);
+  });
+
+  // Review Focus n1 : un classId inconnu, hors catalogue, ou invalide — le
+  // client peut envoyer n'importe quoi, le choix n'est simplement pas
+  // enregistre, exactement comme une arme hors liste.
+  it('un classId hors catalogue n est PAS enregistre, et le joueur garde la classe par defaut', async () => {
+    const res = await app.inject({ method: 'POST', url: '/rooms' });
+    const salon = res.json<{ code: string }>().code;
+    const { ws, recus } = await entre(salon);
+    await jusqua(() => dernierLobby(recus));
+
+    // Trois formes d'invalide : au-dela du catalogue, la sentinelle des
+    // armes employee par erreur, et un nombre quelconque hors catalogue.
+    for (const mauvais of [CLASSES.length, 255, 200]) {
+      ws.send(encodePick(NO_WEAPON, mauvais));
+    }
+    // Sentinelle : une arme valide, envoyee avec une classe TOUJOURS hors
+    // catalogue, pour attendre que le salon ait bien traite les messages
+    // precedents sans deviner un delai arbitraire.
+    const arme = startingWeapons()[0] as number;
+    ws.send(encodePick(arme, 200));
+    await jusqua(() => (dernierLobby(recus)?.players[0]?.weaponId === arme ? true : undefined));
+
+    expect(dernierLobby(recus)?.players[0]?.classId).toBe(DEFAULT_CLASS_ID);
+  });
+
+  // Les deux choix d'un meme PICK s'enregistrent INDEPENDAMMENT : une arme
+  // refusee ne doit pas faire perdre une classe valide envoyee dans le meme
+  // message (ni l'inverse). BASE_WEAPON_ID est exclue de startingWeapons(),
+  // donc toujours refusee, quel que soit l'etat du salon.
+  it('une arme refusee n empeche pas l enregistrement d une classe valide dans le meme message', async () => {
+    const res = await app.inject({ method: 'POST', url: '/rooms' });
+    const salon = res.json<{ code: string }>().code;
+    const { ws, recus } = await entre(salon);
+    await jusqua(() => dernierLobby(recus));
+
+    const voulue = CLASSES[1]?.id ?? 1;
+    ws.send(encodePick(BASE_WEAPON_ID, voulue));
+    await jusqua(() => (dernierLobby(recus)?.players[0]?.classId === voulue ? true : undefined));
+
+    expect(dernierLobby(recus)?.players[0]?.weaponId).toBe(NO_WEAPON);
+    expect(dernierLobby(recus)?.players[0]?.classId).toBe(voulue);
+  });
+
+  it('un classId valide est enregistre et rediffuse a tout le salon', async () => {
+    const res = await app.inject({ method: 'POST', url: '/rooms' });
+    const salon = res.json<{ code: string }>().code;
+    const hote = await entre(salon);
+    await jusqua(() => dernierLobby(hote.recus));
+    const invite = await entre(salon);
+    await jusqua(() => (dernierLobby(hote.recus)?.players.length === 2 ? true : undefined));
+
+    const voulue = CLASSES[2]?.id ?? 2;
+    invite.ws.send(encodePick(NO_WEAPON, voulue));
+    await jusqua(() =>
+      dernierLobby(hote.recus)?.players[1]?.classId === voulue ? true : undefined,
+    );
+
+    // Rediffuse a TOUT le salon, pas seulement a l'auteur du choix.
+    expect(dernierLobby(hote.recus)?.players[1]?.classId).toBe(voulue);
+    expect(dernierLobby(invite.recus)?.players[1]?.classId).toBe(voulue);
   });
 });
 

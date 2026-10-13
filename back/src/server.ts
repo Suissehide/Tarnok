@@ -1,5 +1,6 @@
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
+import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import {
   decode,
@@ -119,7 +120,10 @@ class Session {
    * dans `#lobby`.
    */
   #started: boolean;
-  readonly #lobby = new Map<number, { grants: AccountGrants | undefined; weaponId: number }>();
+  readonly #lobby = new Map<
+    number,
+    { grants: AccountGrants | undefined; weaponId: number; classId: number }
+  >();
 
   constructor(
     readonly code: string,
@@ -279,7 +283,7 @@ class Session {
         id = freeId;
         this.#clients.set(freeId, ws);
         this.#accounts.set(freeId, accountId);
-        this.#lobby.set(freeId, { grants, weaponId: NO_WEAPON });
+        this.#lobby.set(freeId, { grants, weaponId: NO_WEAPON, classId: DEFAULT_CLASS_ID });
         ws.on('message', (frame: ArrayBuffer) => {
           this.#onFrame(freeId, ws, frame);
         });
@@ -338,7 +342,7 @@ class Session {
   #sendLobby(): void {
     const players = [...this.#lobby]
       .sort(([a], [b]) => a - b)
-      .map(([playerId, e]) => ({ playerId, weaponId: e.weaponId }));
+      .map(([playerId, e]) => ({ playerId, weaponId: e.weaponId, classId: e.classId }));
     for (const [id, ws] of this.#clients) {
       if (ws.readyState === ws.OPEN) {
         ws.send(encodeLobby(id, players));
@@ -411,11 +415,19 @@ class Session {
       if (msg.type === MSG.PICK) {
         // Meme regle que l'ecran de selection : un choix hors liste (arme
         // neutre, verrouillee non debloquee, inconnue) n'est pas enregistre.
+        // L'arme et la classe sont arbitrees INDEPENDAMMENT : une arme
+        // invalide ne doit pas faire perdre une classe valide envoyee dans
+        // le meme message, et reciproquement. Le refus est silencieux —
+        // meme discipline que DRAFT_TOKEN et VOTE — et une seule diffusion
+        // suit, qu'un seul, les deux, ou aucun des deux choix ait ete retenu.
         const libres = startingWeapons();
         if (msg.weaponId === NO_WEAPON || libres.includes(msg.weaponId)) {
           entry.weaponId = msg.weaponId;
-          this.#sendLobby();
         }
+        if (classOf(msg.classId)) {
+          entry.classId = msg.classId;
+        }
+        this.#sendLobby();
       } else if (msg.type === MSG.START && id === Math.min(...this.#lobby.keys())) {
         this.#start();
       }

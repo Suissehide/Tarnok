@@ -20,8 +20,8 @@ describe('salle d attente', () => {
     type: MSG.LOBBY,
     you: 2,
     players: [
-      { playerId: 1, weaponId: NO_WEAPON },
-      { playerId: 2, weaponId: arme },
+      { playerId: 1, weaponId: NO_WEAPON, classId: 0 },
+      { playerId: 2, weaponId: arme, classId: 0 },
     ],
   } as const;
 

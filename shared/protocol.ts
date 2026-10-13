@@ -1496,8 +1496,10 @@ export function decode(buf: ArrayBuffer): Message {
       return decodePortalResult(buf);
     case MSG.LOBBY:
       return decodeLobby(buf);
-    case MSG.PICK:
-      return { type: MSG.PICK, weaponId: viewOf(buf, PICK_BYTES).getUint8(1) };
+    case MSG.PICK: {
+      const pv = viewOf(buf, PICK_BYTES);
+      return { type: MSG.PICK, weaponId: pv.getUint8(1), classId: pv.getUint8(2) };
+    }
     case MSG.START:
       return { type: MSG.START };
     default:
@@ -1812,6 +1814,8 @@ export interface LobbyEntry {
   playerId: number;
   /** Arme de depart choisie, ou `NO_WEAPON`. */
   weaponId: number;
+  /** Classe choisie (voir `shared/classes.ts`), `DEFAULT_CLASS_ID` si rien choisi. */
+  classId: number;
 }
 
 /**
@@ -1827,10 +1831,14 @@ export interface LobbyMessage {
   players: LobbyEntry[];
 }
 
-/** C -> S : je choisis cette arme de depart (`NO_WEAPON` pour aucune). */
+/**
+ * C -> S : je choisis cette arme de depart (`NO_WEAPON` pour aucune) et cette
+ * classe. Les deux choix sont arbitres independamment cote serveur.
+ */
 export interface PickMessage {
   type: typeof MSG.PICK;
   weaponId: number;
+  classId: number;
 }
 
 /** C -> S : l'hote lance la run. */
@@ -1840,10 +1848,10 @@ export interface StartMessage {
 
 /** `type u8 · you u8 · count u8`. */
 export const LOBBY_HEADER_BYTES = 3;
-/** Une entree : `playerId u8 · weaponId u8`. */
-export const LOBBY_ENTRY_BYTES = 2;
-/** `type u8 · weaponId u8`. */
-export const PICK_BYTES = 2;
+/** Une entree : `playerId u8 · weaponId u8 · classId u8`. */
+export const LOBBY_ENTRY_BYTES = 3;
+/** `type u8 · weaponId u8 · classId u8`. */
+export const PICK_BYTES = 3;
 
 export function encodeLobby(you: number, players: readonly LobbyEntry[]): ArrayBuffer {
   const buf = new ArrayBuffer(LOBBY_HEADER_BYTES + players.length * LOBBY_ENTRY_BYTES);
@@ -1855,6 +1863,7 @@ export function encodeLobby(you: number, players: readonly LobbyEntry[]): ArrayB
   for (const p of players) {
     v.setUint8(o, p.playerId);
     v.setUint8(o + 1, p.weaponId);
+    v.setUint8(o + 2, p.classId);
     o += LOBBY_ENTRY_BYTES;
   }
   return buf;
@@ -1867,17 +1876,22 @@ function decodeLobby(buf: ArrayBuffer): LobbyMessage {
   const players: LobbyEntry[] = [];
   let o = LOBBY_HEADER_BYTES;
   for (let i = 0; i < count; i++) {
-    players.push({ playerId: v.getUint8(o), weaponId: v.getUint8(o + 1) });
+    players.push({
+      playerId: v.getUint8(o),
+      weaponId: v.getUint8(o + 1),
+      classId: v.getUint8(o + 2),
+    });
     o += LOBBY_ENTRY_BYTES;
   }
   return { type: MSG.LOBBY, you: v.getUint8(1), players };
 }
 
-export function encodePick(weaponId: number): ArrayBuffer {
+export function encodePick(weaponId: number, classId: number): ArrayBuffer {
   const buf = new ArrayBuffer(PICK_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.PICK);
   v.setUint8(1, weaponId);
+  v.setUint8(2, classId);
   return buf;
 }
 
