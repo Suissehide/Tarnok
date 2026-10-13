@@ -444,24 +444,13 @@ class Session {
       // message d'erreur, pas d'accuse : le client sait que sa demande n'a
       // pas abouti parce qu'aucune annonce n'arrive.
       //
-      // ⚠️ **`#send`, pas `#broadcast`.** `#broadcast()` est le drain PAR
-      // TICK des evenements accumules par `Room` (zones, morts, reactions...) ;
-      // `useAbility` ne queue rien, il rend l'annonce directement, et c'est
-      // elle qu'il faut poser sur le fil tout de suite, comme `#send` le fait
-      // deja pour chaque evenement draine plus bas.
-      const annonce = this.room.useAbility(id, msg.aimX, msg.aimY);
-      if (annonce) {
-        this.#send(
-          encodeAbilityUsed(
-            annonce.tick,
-            annonce.playerId,
-            annonce.verb,
-            annonce.x,
-            annonce.y,
-            annonce.targetId,
-          ),
-        );
-      }
+      // ⚠️ **Rien n'est envoye ICI, meme sur acceptation** (ronde de
+      // correction 1). `useAbility` met deja l'annonce en file (voir
+      // `Room#drainAbilities`), et c'est `#broadcast` — plus bas, au meme
+      // tick que `drainDeaths` — qui la diffusera. Envoyer aussi depuis ce
+      // gestionnaire doublerait l'annonce : une premiere fois ici, une
+      // seconde au drain.
+      this.room.useAbility(id, msg.aimX, msg.aimY);
       return;
     }
     if (msg.type === MSG.DRAFT_TOKEN) {
@@ -561,6 +550,20 @@ class Session {
     }
     for (const batch of this.room.drainDeaths()) {
       this.#send(encodeDeaths(batch.tick, batch.ids));
+    }
+    // ⚠️ **APRES `DEATHS`, et dans le MEME drain** (ronde de correction 1,
+    // tache 3 de l'etape 8). Un Relais (tache 7) peut viser un allie qui
+    // meurt au MEME tick que celui ou le verbe est accepte : le serveur a
+    // deja tranche lequel des deux etats etait vrai a ce tick-la, et le
+    // client doit recevoir les deux messages dans un ordre FIXE pour deriver
+    // la meme chose. Un envoi immediat depuis `#onFrame` (ecarte a la ronde
+    // precedente) laissait cet ordre au hasard du reseau ; les deux partent
+    // maintenant dans le meme passage de `#broadcast`, donc dans le meme
+    // ordre a chaque tick.
+    for (const used of this.room.drainAbilities()) {
+      this.#send(
+        encodeAbilityUsed(used.tick, used.playerId, used.verb, used.x, used.y, used.targetId),
+      );
     }
     for (const zone of this.room.drainZones()) {
       this.#send(encodeZone(zone.kind, zone.x, zone.y, zone.bornTick, zone.by));

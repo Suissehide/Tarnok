@@ -324,6 +324,16 @@ export class Room {
   #pendingZones: ZoneEvent[] = [];
   #pendingReactions: ReactionEvent[] = [];
   /**
+   * Les verbes acceptes depuis le dernier drainage (tache 3 de l'etape 8) —
+   * meme patron que `#pendingZones` juste au-dessus : `useAbility` y pousse
+   * l'annonce EN PLUS de la rendre a l'appelant (ses tests directs en ont
+   * besoin), et c'est ce tableau, pas le retour de `useAbility`, que
+   * `#broadcast` diffuse. Ronde de correction 1 : l'envoi immediat depuis le
+   * gestionnaire de `MSG.ABILITY` cassait l'ordre garanti face a `DEATHS` —
+   * voir le docbloc de `useAbility`.
+   */
+  #pendingAbilities: AbilityUsed[] = [];
+  /**
    * La charge du boss en cours, ou `null` — **la seule qui existe a la fois**,
    * puisqu'il n'y a qu'un boss vivant (§1.1 de la spec).
    *
@@ -502,6 +512,28 @@ export class Room {
   drainZones(): ZoneEvent[] {
     const out = this.#pendingZones;
     this.#pendingZones = [];
+    return out;
+  }
+
+  /**
+   * Les verbes acceptes a diffuser (tache 3 de l'etape 8), un par `ABILITY_USED`
+   * — meme forme que `drainZones` juste au-dessus.
+   *
+   * ⚠️ **Au meme tick que `DEATHS`, et dans le MEME drain** (ronde de
+   * correction 1). Un envoi immediat depuis le gestionnaire de `MSG.ABILITY`
+   * laisserait `ABILITY_USED` quitter le serveur hors du cycle ou `DEATHS`,
+   * `ZONE` et les autres evenements du tick partent ensemble, dans un ordre
+   * garanti : la tache 7 (Relais) derive sa cible du meme tick que celui ou
+   * l'allie peut mourir, et un client qui recevrait l'annonce avant ou apres
+   * `DEATHS` selon le hasard du reseau deriverait vers un allie vivant ou
+   * mort selon l'ordre de reception — exactement la divergence que ce depot
+   * refuse depuis l'etape 2. Vider cette file depuis `#broadcast`, avec le
+   * reste, est ce qui la rend impossible : les deux evenements partent dans
+   * le MEME paquet logique de diffusion, au meme tick.
+   */
+  drainAbilities(): AbilityUsed[] {
+    const out = this.#pendingAbilities;
+    this.#pendingAbilities = [];
     return out;
   }
 
@@ -920,6 +952,14 @@ export class Room {
    * `setVote` : un geste refuse n'est simplement pas enregistre, et le client le
    * verra a la prochaine diffusion. Aucun client ne decide de quoi que ce soit.
    *
+   * ⚠️ **L'annonce est a la fois RENDUE et MISE EN FILE** (ronde de correction
+   * 1) : rendue, parce que les tests directs de cette methode et le refus en
+   * ont besoin ; mise en file dans `#pendingAbilities`, parce que c'est cette
+   * file — drainee par `#broadcast`, voir `drainAbilities` — qui part
+   * reellement sur le fil, au MEME tick et dans le MEME paquet que `DEATHS`.
+   * Un appelant qui enverrait aussi le retour de cette methode doublerait
+   * l'annonce.
+   *
    * ⚠️ **La recharge se pose APRES `#applyAbility`, jamais avant** (amendement
    * du controleur, tache 3 de l'etape 8). La tache 7 (Relais) exige qu'un refus
    * ne consomme PAS la recharge : un Relais demande sans allie valide a portee
@@ -953,6 +993,7 @@ export class Room {
       return null;
     }
     p.lastAbilityTick = this.#tick;
+    this.#pendingAbilities.push(annonce);
     return annonce;
   }
 

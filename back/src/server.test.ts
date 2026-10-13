@@ -9,6 +9,7 @@ import {
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
+  encodeAbility,
   encodeHello,
   encodeInput,
   encodeVote,
@@ -695,4 +696,102 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     // Et la majoration se VOIT : sans elle, les deux annonces seraient egales.
     expect(second).not.toMatchObject({ multiplier: 1 });
   }, 60_000);
+});
+
+describe('etape 8 tache 3, ronde de correction 1 : ABILITY_USED part une seule fois', () => {
+  /**
+   * ⚠️ **La garde de la ronde 1.** `useAbility` met l'annonce en file
+   * (`Room#drainAbilities`) ET la rend a l'appelant ; si le gestionnaire de
+   * `MSG.ABILITY` envoyait AUSSI ce retour, chaque verbe accepte partirait
+   * deux fois — une immediate, une au prochain `#broadcast`. Ce test compte
+   * les `ABILITY_USED` reellement recus sur le fil, pas le retour de
+   * `useAbility` : voir la ronde 1 du rapport pour la mesure de ce doublon,
+   * applique puis annule.
+   */
+  it('un verbe accepte ne produit qu UNE seule annonce ABILITY_USED sur le fil', async () => {
+    const code = await createRoomCode();
+    const { ws } = await connect(code);
+
+    const recus: Message[] = [];
+    ws.on('message', (data: ArrayBuffer) => recus.push(decode(data)));
+
+    ws.send(encodeAbility(0, 1, 0));
+
+    // Largement plus qu'un cycle de diffusion (33 ms a 30 Hz) : un envoi en
+    // double, l'un immediat et l'autre draine au tick suivant, aurait tout le
+    // temps d'arriver dans cette fenetre.
+    await new Promise((r) => setTimeout(r, 300));
+
+    const used = recus.filter((m) => m.type === MSG.ABILITY_USED);
+    expect(used).toHaveLength(1);
+  });
+
+  /**
+   * ⚠️ **Le risque nomme par la ronde 1.** Un Relais (tache 7) derive sa
+   * cible du MEME tick que celui ou le serveur a tranche si l'allie etait
+   * encore vivant : si `ABILITY_USED` et `DEATHS` partaient dans un ordre non
+   * garanti, un client qui les appliquerait dans l'ordre inverse de l'autre
+   * deriverait un allie vivant la ou l'autre deriverait un mort.
+   *
+   * Ce test n'a PAS besoin de l'effet du Relais (il n'existe pas encore a
+   * cette tache, `targetId` vaut toujours 0) : il mesure directement, sur le
+   * fil, que lorsque une mort REELLE (par le pipeline de combat de `step`,
+   * pas un `horde.kill` de decor) et une acceptation de verbe sont prets au
+   * MEME tick, `DEATHS` part toujours avant `ABILITY_USED`. La mort et
+   * l'acceptation sont produites dans le MEME bloc synchrone, sans aucun
+   * `await` entre les deux : le minuteur reel du salon ne peut donc pas
+   * s'intercaler et driner l'un sans l'autre entretemps, ce qui rend la
+   * mesure reproductible plutot que suspendue a une course avec l'horloge
+   * murale.
+   */
+  it('DEATHS part avant ABILITY_USED quand les deux sont prets au meme tick', async () => {
+    const code = await createRoomCode();
+    const { ws, playerId } = await connect(code);
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('salon introuvable');
+    }
+
+    const premier = await nextSnapshot(ws, () => true);
+    const moi = premier.players.find((p) => p.id === playerId);
+    if (!moi) {
+      throw new Error('joueur absent du snapshot');
+    }
+
+    const recus: Message[] = [];
+    ws.on('message', (data: ArrayBuffer) => recus.push(decode(data)));
+
+    // A portee de l'arme de base mais hors de CONTACT_RADIUS, exactement
+    // comme room.test.ts isole le chemin « degats de projectile » du chemin
+    // « contact ». L'arme ne tire JAMAIS sans visee (`Room.join` laisse
+    // `aimX`/`aimY` a 0) : chaque tick vise le monstre, comme
+    // `aimAtNearestMonster` le fait dans room.test.ts.
+    const monstre = spawnMonsterAt(room, 888_000, moi.x + 100, moi.y);
+    let seq = 1;
+    for (let t = 0; t < 30 * TICK_HZ && room.horde.slotOf(monstre) >= 0; t++) {
+      const slot = room.horde.slotOf(monstre);
+      if (slot >= 0) {
+        const dx = (room.horde.x[slot] ?? 0) - moi.x;
+        const dy = (room.horde.y[slot] ?? 0) - moi.y;
+        const len = Math.hypot(dx, dy) || 1;
+        room.applyInput(playerId, seq++, 0, 0, (dx / len) * 127, (dy / len) * 127);
+      }
+      room.step(1 / TICK_HZ);
+    }
+    // La mort est REELLE (pipeline de combat), pas un decor : c'est elle qui
+    // doit avoir mis une annonce DEATHS en file avant la ligne suivante.
+    expect(room.horde.slotOf(monstre)).toBe(-1);
+    // Meme tick, meme bloc synchrone : aucun `await` ne separe la mort
+    // ci-dessus de l'acceptation ci-dessous.
+    const annonce = room.useAbility(playerId, 1, 0);
+    expect(annonce).not.toBeNull();
+    expect(annonce?.tick).toBe(room.tick);
+
+    await nextMessage(ws, (m) => m.type === MSG.ABILITY_USED, 5000);
+    const iDeaths = recus.findIndex((m) => m.type === MSG.DEATHS);
+    const iUsed = recus.findIndex((m) => m.type === MSG.ABILITY_USED);
+    expect(iDeaths).toBeGreaterThanOrEqual(0);
+    expect(iUsed).toBeGreaterThanOrEqual(0);
+    expect(iDeaths).toBeLessThan(iUsed);
+  }, 15_000);
 });
