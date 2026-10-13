@@ -238,7 +238,8 @@ export class PortalScreen {
     ].map(({ choice, label }) => {
       const root = document.createElement('button');
       root.type = 'button';
-      root.className = 'portal-choice';
+      // Partir quitte la run : le bouton rouge des sorties (ecran 06).
+      root.className = `btn ol portal-choice${choice === VOTE_CHOICE.LEAVE ? ' btn--red' : ''}`;
       root.dataset.choice = voteState(choice);
       root.textContent = label;
       root.addEventListener('click', () => {

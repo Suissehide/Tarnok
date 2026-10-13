@@ -15,7 +15,6 @@ import {
   purchasesOf,
   textToToken,
   tokenToText,
-  unlockedWeaponsOf,
 } from './accounts';
 
 beforeEach(async () => {
@@ -182,14 +181,20 @@ describe('etape 7b tache 4 : acheter', () => {
    * Review Focus n°3 : au-dela du dernier palier, le catalogue est la limite.
    */
   it('acheter au-dela du dernier palier est refuse', async () => {
-    const article = SHOP_ITEMS.find((i) => i.levels === 1);
+    const article = SHOP_ITEMS[0];
     if (!article) {
-      throw new Error('aucun article a un seul palier');
+      throw new Error('catalogue vide');
     }
     const { id } = await createAccount();
-    await creditAccounts([id], BigInt(priceOf(article, 1)) * 4n);
+    // Assez pour tous les paliers, et un de plus : seul le palier-max refuse.
+    await creditAccounts(
+      [id],
+      BigInt(priceOf(article, article.levels + 1)) * BigInt(article.levels + 1),
+    );
 
-    expect(await buyItem(id, article.id)).toBe('ok');
+    for (let palier = 1; palier <= article.levels; palier++) {
+      expect(await buyItem(id, article.id)).toBe('ok');
+    }
     const apres = await goldOf(id);
     expect(await buyItem(id, article.id)).toBe('palier-max');
     expect(await goldOf(id)).toBe(apres);
@@ -201,9 +206,9 @@ describe('etape 7b tache 4 : acheter', () => {
    * debiter qu'une fois.
    */
   it('deux achats CONCURRENTS du meme article n en passent qu un', async () => {
-    const article = SHOP_ITEMS.find((i) => i.levels === 1);
+    const article = SHOP_ITEMS[0];
     if (!article) {
-      throw new Error('aucun article a un seul palier');
+      throw new Error('catalogue vide');
     }
     const { id } = await createAccount();
     await creditAccounts([id], BigInt(priceOf(article, 1)) * 2n);
@@ -225,7 +230,7 @@ describe('etape 7b tache 4 : acheter', () => {
    * alors chacun isolement, sans violer aucune contrainte. Ce test force cette
    * branche (palier 1 deja possede, deux achats concurrents du palier 2) pour
    * que la garantie de concurrence couvre aussi les cinq articles a paliers du
-   * catalogue, pas seulement les six armes a `levels: 1`.
+   * catalogue.
    *
    * ⚠️ **La fenetre de recouvrement est etroite et depend du minutage reel des
    * allers-retours reseau** (mesure : la mettre en evidence a demande une
@@ -316,7 +321,8 @@ describe('etape 7b tache 4 : acheter', () => {
    * l'interface ferme deja — ce qui faisait de ce cas-ci le seul encore
    * atteignable depuis la vraie interface.
    *
-   * ⚠️ **La salve porte sur les SIX armes, pas sur une paire, et c'est ce qui
+   * ⚠️ **La salve porte sur cinq articles (six armes a l'origine, retirees du
+   * catalogue depuis), pas sur une paire, et c'est ce qui
    * rend ce test deterministe.** Mesure sur cette machine, avant correctif :
    * une PAIRE d'articles differents passait `ok`/`ok` 19 fois sur 20 (une fois
    * sur vingt, les deux transactions se serialisent d'elles-memes et la seconde
@@ -337,9 +343,15 @@ describe('etape 7b tache 4 : acheter', () => {
    * jamais a decouvert**.
    */
   it('une salve d achats CONCURRENTS de six articles DIFFERENTS n en passe qu un', async () => {
-    const armes = SHOP_ITEMS.filter((i) => i.levels === 1);
-    if (armes.length < 2) {
-      throw new Error('au moins deux articles a un seul palier attendus');
+    // Les articles au prix de premier palier le plus partage du catalogue :
+    // il en faut plusieurs au MEME prix (voir ci-dessous).
+    const parPrix = new Map<number, ShopItem[]>();
+    for (const i of SHOP_ITEMS) {
+      parPrix.set(priceOf(i, 1), [...(parPrix.get(priceOf(i, 1)) ?? []), i]);
+    }
+    const armes = [...parPrix.values()].reduce((a, b) => (b.length > a.length ? b : a));
+    if (armes.length < 5) {
+      throw new Error('au moins cinq articles au meme prix attendus');
     }
     const prix = BigInt(priceOf(armes[0] as ShopItem, 1));
     // Le MEME prix pour toutes : sinon deux achats successifs du budget
@@ -357,14 +369,5 @@ describe('etape 7b tache 4 : acheter', () => {
     // solde valait `-1500`.
     expect(await goldOf(id)).toBe(0n);
     expect((await purchasesOf(id)).size).toBe(1);
-  });
-
-  it('unlockedWeaponsOf rend les armes des articles achetes, et rien d autre', () => {
-    const arme = SHOP_ITEMS.find((i) => i.kind === 'weapon');
-    if (!arme) {
-      throw new Error('aucun article d arme');
-    }
-    expect([...unlockedWeaponsOf(new Map([[arme.id, 1]]))]).toEqual([arme.weaponId]);
-    expect(unlockedWeaponsOf(new Map()).size).toBe(0);
   });
 });

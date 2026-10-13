@@ -232,15 +232,3 @@ export async function buyItem(
     return 'conflit';
   }
 }
-
-/** Les identifiants d'armes que ces achats debloquent. */
-export function unlockedWeaponsOf(purchases: ReadonlyMap<string, number>): Set<number> {
-  const out = new Set<number>();
-  for (const itemId of purchases.keys()) {
-    const item = shopItemOf(itemId);
-    if (item?.kind === 'weapon' && item.weaponId !== undefined) {
-      out.add(item.weaponId);
-    }
-  }
-  return out;
-}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { TICK_HZ } from './constants';
-import { ELEMENT, ELEMENTS, elementOf } from './elements';
+import { ELEMENT, elementOf } from './elements';
 import { PASSIVES } from './passives';
 import {
   assertWeaponElements,
@@ -63,7 +63,7 @@ describe('WEAPONS', () => {
   });
 
   it('place l arme neutre de base en premiere position', () => {
-    expect(WEAPONS[0]?.name).toBe('dague');
+    expect(WEAPONS[0]?.name).toBe('Dague');
   });
 
   it('cable au moins une arme a plusieurs projectiles, pour prouver que la forme tient', () => {
@@ -548,47 +548,5 @@ describe('projectileTrailPx', () => {
     const lent = weaponOf(3); // lance-flammes, 300 px/s
     const rapide = weaponOf(2); // arc-lourd, 900 px/s
     expect(projectileTrailPx(lent)).toBeLessThan(projectileTrailPx(rapide));
-  });
-});
-
-describe('etape 7b tache 2 : six armes verrouillees, une par element', () => {
-  it('exactement six armes sont verrouillees', () => {
-    expect(WEAPONS.filter((w) => w.locked)).toHaveLength(6);
-  });
-
-  /**
-   * ⚠️ **C'est l'invariant qui protege l'etape 5c tout entiere.**
-   *
-   * Si les DEUX armes d'un element etaient verrouillees, un compte neuf ne
-   * pourrait plus atteindre cet element — donc plus les paires qui l'utilisent,
-   * donc plus les quinze reactions. Le pitch du README et le livrable de 5c
-   * tomberaient ensemble, et rien d'autre ne le dirait.
-   */
-  it('chaque element garde au moins une arme LIBRE', () => {
-    for (const e of ELEMENTS.filter((e) => e.id !== ELEMENT.NEUTRE)) {
-      const libres = WEAPONS.filter((w) => w.element === e.id && !w.locked);
-      expect(libres.length, `element ${e.id} : aucune arme libre`).toBeGreaterThan(0);
-    }
-  });
-
-  it('l arme de depart n est jamais verrouillee', () => {
-    expect(weaponOf(BASE_WEAPON_ID).locked).toBe(false);
-  });
-
-  /**
-   * Le frappeur est verrouille, l'arroseur reste libre : un gros coup unique
-   * se vit comme une recompense, et les arroseurs appliquent les elements plus
-   * souvent, ce qui convient a un compte qui decouvre les reactions.
-   */
-  it('c est le frappeur de chaque element qui est verrouille', () => {
-    for (const w of WEAPONS.filter((w) => w.locked)) {
-      expect(w.projectileCount, `${w.name}`).toBe(1);
-    }
-  });
-
-  it('aucune arme neutre n est verrouillee', () => {
-    for (const w of WEAPONS.filter((w) => w.element === ELEMENT.NEUTRE)) {
-      expect(w.locked, `${w.name}`).toBe(false);
-    }
   });
 });

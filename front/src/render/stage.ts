@@ -1,5 +1,5 @@
 import type { BossCharge } from '@shared/boss';
-import { MAP_SIZE, TICK_HZ } from '@shared/constants';
+import { LEVEL_XP_BASE, MAP_SIZE, TICK_HZ } from '@shared/constants';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
@@ -501,6 +501,11 @@ function mapObstacles(mask: Uint8Array, cols: number, rows: number, cellSize: nu
 export interface HudInfo {
   hp: number;
   xp: number;
+  /**
+   * Part du niveau en cours, dans `[0, 1]` : `xp` sur le seuil que `Room`
+   * applique (`LEVEL_XP_BASE x niveau x joueurs`, `#xpToNextLevel`).
+   */
+  xpRatio: number;
   level: number;
   timer: string;
   /** Vrai pendant le gel de montee de niveau (tache 24) — voir `GameClient.isFrozen`. */
@@ -525,6 +530,10 @@ export function hudInfo(
   return {
     hp: me?.hp ?? 0,
     xp: state.xp,
+    xpRatio: Math.min(
+      1,
+      Math.max(0, state.xp / (LEVEL_XP_BASE * level * Math.max(1, state.players.length))),
+    ),
     level,
     timer: formatTimer(hordeTick),
     frozen,

@@ -9,6 +9,7 @@ import {
   encodeDraftOpen,
   encodeDraftResult,
   encodeLevelUp,
+  encodeLobby,
   encodePickups,
   encodePortalOpen,
   encodePortalResult,
@@ -19,8 +20,10 @@ import {
   encodeWelcome,
   encodeZone,
   MSG,
+  NO_WEAPON,
 } from '@shared/protocol';
 import { bonusesOf } from '@shared/shop';
+import { startingWeapons } from '@shared/weapons';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
@@ -33,7 +36,6 @@ import {
   purchasesOf,
   textToToken,
   tokenToText,
-  unlockedWeaponsOf,
 } from './accounts';
 import { FixedStepAccumulator } from './loop';
 import type { AccountGrants, Outbox, Room } from './room';
@@ -110,12 +112,22 @@ class Session {
    * sa reprise, pour ne pas accueillir un client dans un salon dereference.
    */
   #stopped = false;
+  /**
+   * Faux tant que l'hote n'a pas lance : la salle d'attente. Pendant ce temps
+   * `Room` ne tourne pas (son tick reste a 0, les vagues partent donc du
+   * lancement) et aucun `WELCOME` n'est envoye — les joueurs n'existent que
+   * dans `#lobby`.
+   */
+  #started: boolean;
+  readonly #lobby = new Map<number, { grants: AccountGrants | undefined; weaponId: number }>();
 
   constructor(
     readonly code: string,
     readonly room: Room,
     private readonly onEmpty: (code: string) => void,
+    waitingRoom = false,
   ) {
+    this.#started = !waitingRoom;
     const buffers: ArrayBuffer[] = [];
     this.#outbox = { buffers, push: (msg) => buffers.push(msg) };
 
@@ -128,10 +140,16 @@ class Session {
     this.#timer = setInterval(() => {
       const now = performance.now();
       const steps = sim.advance(now);
+      const diffuse = broadcast.advance(now) > 0;
+      // Les accumulateurs avancent quand meme en salle d'attente : sans ca, le
+      // lancement rattraperait d'un coup tout le temps passe a attendre.
+      if (!this.#started) {
+        return;
+      }
       for (let i = 0; i < steps; i++) {
         this.room.step(STEP_MS / 1000);
       }
-      if (broadcast.advance(now) > 0) {
+      if (diffuse) {
         this.#broadcast();
       }
     }, STEP_MS / 2);
@@ -240,7 +258,7 @@ class Session {
       let grants: AccountGrants | undefined;
       try {
         const achats = await purchasesOf(accountId);
-        grants = { bonuses: bonusesOf(achats), unlockedWeapons: unlockedWeaponsOf(achats) };
+        grants = { bonuses: bonusesOf(achats) };
       } catch (err) {
         console.error(`[achats] lecture echouee compte=${accountId}`, err);
       }
@@ -256,6 +274,18 @@ class Session {
       }
 
       const freeId = this.#freeId();
+      if (freeId !== null && !this.#started) {
+        // Salle d'attente : un slot, mais pas encore de place dans `Room`.
+        id = freeId;
+        this.#clients.set(freeId, ws);
+        this.#accounts.set(freeId, accountId);
+        this.#lobby.set(freeId, { grants, weaponId: NO_WEAPON });
+        ws.on('message', (frame: ArrayBuffer) => {
+          this.#onFrame(freeId, ws, frame);
+        });
+        this.#sendLobby();
+        return;
+      }
       if (freeId === null || !this.room.join(freeId, grants)) {
         ws.close(CLOSE_CODES.ROOM_FULL, 'salon plein');
         return;
@@ -297,7 +327,33 @@ class Session {
     this.room.leave(id);
     if (this.#clients.size === 0) {
       this.onEmpty(this.code);
+      return;
     }
+    if (this.#lobby.delete(id)) {
+      this.#sendLobby();
+    }
+  }
+
+  /** Chaque client recoit la liste, avec SON slot dans `you`. */
+  #sendLobby(): void {
+    const players = [...this.#lobby]
+      .sort(([a], [b]) => a - b)
+      .map(([playerId, e]) => ({ playerId, weaponId: e.weaponId }));
+    for (const [id, ws] of this.#clients) {
+      if (ws.readyState === ws.OPEN) {
+        ws.send(encodeLobby(id, players));
+      }
+    }
+  }
+
+  /** L'hote (le plus petit slot) lance : chacun entre dans `Room` avec son arme. */
+  #start(): void {
+    this.#started = true;
+    for (const [id, e] of [...this.#lobby].sort(([a], [b]) => a - b)) {
+      this.room.join(id, e.grants, e.weaponId === NO_WEAPON ? undefined : e.weaponId);
+      this.#clients.get(id)?.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
+    }
+    this.#lobby.clear();
   }
 
   stop(): void {
@@ -347,6 +403,24 @@ class Session {
       ws.close(CLOSE_CODES.BAD_FRAME, 'trame illisible');
       return;
     }
+    if (!this.#started) {
+      const entry = this.#lobby.get(id);
+      if (!entry) {
+        return;
+      }
+      if (msg.type === MSG.PICK) {
+        // Meme regle que l'ecran de selection : un choix hors liste (arme
+        // neutre, verrouillee non debloquee, inconnue) n'est pas enregistre.
+        const libres = startingWeapons();
+        if (msg.weaponId === NO_WEAPON || libres.includes(msg.weaponId)) {
+          entry.weaponId = msg.weaponId;
+          this.#sendLobby();
+        }
+      } else if (msg.type === MSG.START && id === Math.min(...this.#lobby.keys())) {
+        this.#start();
+      }
+      return;
+    }
     if (msg.type === MSG.INPUT) {
       this.room.applyInput(id, msg.seq, msg.moveX, msg.moveY, msg.aimX, msg.aimY);
       return;
@@ -392,17 +466,18 @@ class Session {
     // `#accounts` ne porte que les slots encore connectes a cet instant --
     // un depart (`remove`) l'en retire au meme moment que `#clients`, donc
     // ses valeurs SONT les comptes a crediter, sans passer par `#clients`.
-    //
-    // Le `Set` est delibere, pas un hasard du `updateMany` : deux onglets sur
-    // le MEME salon tiennent deux slots avec le MEME jeton, et crediter deux
-    // fois le meme compte doublerait la cagnotte (2400 au lieu de 1200). Sans
-    // ce `Set`, remplacer l'`updateMany` par une boucle d'`update` (le reflexe
-    // pour tracer un echec compte par compte) crediterait en double sans
-    // qu'aucun test ne rougisse.
-    const comptes = [...new Set(this.#accounts.values())];
-    if (comptes.length === 0) {
-      return;
+    const groupes = partsFortune(
+      montant,
+      [...this.#accounts].map(([id, accountId]) => [accountId, this.room.goldBonusOf(id)] as const),
+    );
+    // ⚠️ Les essais sont PAR GROUPE : rejouer le tout apres un echec partiel
+    // crediterait deux fois les groupes deja passes.
+    for (const [du, comptes] of groupes) {
+      await this.#creditGroup(comptes, du);
     }
+  }
+
+  async #creditGroup(comptes: string[], montant: bigint): Promise<void> {
     for (let essai = 1; essai <= 3; essai++) {
       try {
         await creditAccounts(comptes, montant);
@@ -417,8 +492,7 @@ class Session {
         }
         // Un delai entre deux essais, pas apres le dernier : sans lui, les
         // trois tentatives tapent le MEME pool mort en moins de 10 ms (ex.
-        // Postgres qui redemarre, ~2s) et valent une seule tentative. 200 a
-        // 500 ms laisse une chance reelle a la base de revenir.
+        // Postgres qui redemarre, ~2s) et valent une seule tentative.
         await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300));
       }
     }
@@ -551,6 +625,28 @@ class Session {
   }
 }
 
+/**
+ * « Fortune » : ce que chaque compte touche de la cagnotte, majoree de SON
+ * bonus, regroupe par montant pour qu'un `updateMany` serve tout un groupe.
+ *
+ * ⚠️ **Cle = COMPTE.** Deux onglets du meme compte (deux slots, un jeton) ne
+ * sont credites qu'une fois — sinon la cagnotte doublerait.
+ */
+export function partsFortune(
+  montant: bigint,
+  joueurs: Iterable<readonly [accountId: string, goldBonus: number]>,
+): Map<bigint, string[]> {
+  const parCompte = new Map<string, bigint>();
+  for (const [accountId, bonus] of joueurs) {
+    parCompte.set(accountId, (montant * (100n + BigInt(Math.round(bonus * 100)))) / 100n);
+  }
+  const parMontant = new Map<bigint, string[]>();
+  for (const [accountId, du] of parCompte) {
+    parMontant.set(du, [...(parMontant.get(du) ?? []), accountId]);
+  }
+  return parMontant;
+}
+
 function round2(v: number): number {
   return Math.round(v * 100) / 100;
 }
@@ -582,6 +678,12 @@ export interface ServerOptions {
    * production : `Room` en tire une au hasard. Voir `RoomRegistry.create`.
    */
   roomSeed?: number;
+  /**
+   * Vrai : chaque salon commence en salle d'attente (`LOBBY`/`PICK`/`START`).
+   * `start()` l'allume ; faux par defaut pour que les tests d'integration, qui
+   * attendent un `WELCOME` des le `HELLO`, restent ce qu'ils sont.
+   */
+  waitingRoom?: boolean;
 }
 
 /**
@@ -624,7 +726,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   app.post('/rooms', async (_req, reply) => {
     const { code, room } = registry.create(options.roomSeed);
-    sessions.set(code, new Session(code, room, closeSession));
+    sessions.set(code, new Session(code, room, closeSession, options.waitingRoom));
     return reply.code(201).send({ code });
   });
 
@@ -750,7 +852,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 }
 
 async function start(): Promise<void> {
-  const app = await buildServer();
+  const app = await buildServer({ waitingRoom: true });
   const port = Number(process.env.PORT ?? 3000);
   const host = process.env.HOST ?? '0.0.0.0';
   await app.listen({ port, host });

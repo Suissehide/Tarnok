@@ -160,7 +160,6 @@ const SINGLE: Weapon = {
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
-  locked: false,
   // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
   // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
   look: { shape: 'sphere', diameterPx: 10, tint: 0x123456, glow: 0.3, trailTicks: 1 },
@@ -564,6 +563,15 @@ describe('resolveContact', () => {
     // La fenetre est ecoulee : le contact fait a nouveau mal.
     resolveContact([p], horde);
     expect(p.hp).toBe(100 - 2 * CONTACT_DAMAGE);
+  });
+
+  it('l armure du compte retire sa fraction de chaque contact', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500);
+    const p = { ...player(500, 500), armor: 0.2 };
+
+    resolveContact([p], horde);
+    expect(p.hp).toBeCloseTo(100 - CONTACT_DAMAGE * 0.8);
   });
 
   it('ne touche pas un joueur hors de CONTACT_RADIUS', () => {

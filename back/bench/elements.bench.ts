@@ -95,18 +95,18 @@ const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
 // bobine-tesla : la Foudre la plus rapide du catalogue (cooldownTicks: 15,
 // deux projectiles par salve) — le pire cas de frequence d'impact, donc le
 // pire cas d'appels a `chainTargets`.
-const ARME_FOUDRE = WEAPONS.find((w) => w.name === 'bobine-tesla')?.id ?? -1;
+const ARME_FOUDRE = WEAPONS.find((w) => w.name === 'Bobine Tesla')?.id ?? -1;
 // seringue-a-poix : la Poix la plus rapide (cooldownTicks: 18, trois
 // projectiles) — meme raisonnement, pour maximiser les poses de zone.
-const ARME_POIX = WEAPONS.find((w) => w.name === 'seringue-a-poix')?.id ?? -1;
+const ARME_POIX = WEAPONS.find((w) => w.name === 'Seringue à poix')?.id ?? -1;
 // poire-a-chaux : la Chaux la plus rapide (cooldownTicks: 17, trois
 // projectiles, tache 8 de l'etape 5c) — meme raisonnement que les autres
 // armes "rapides" ci-dessus.
-const ARME_CHAUX = WEAPONS.find((w) => w.name === 'poire-a-chaux')?.id ?? -1;
+const ARME_CHAUX = WEAPONS.find((w) => w.name === 'Poire à chaux')?.id ?? -1;
 // fronde-a-mercure : le Vif-argent le plus rapide (cooldownTicks: 14, deux
 // aiguilles, tache 8 de l'etape 5c) — le pire cas de frequence de pose de
 // liaison, donc le pire cas d'appels a `linkedNeighbours` (tache 9).
-const ARME_MERCURE = WEAPONS.find((w) => w.name === 'fronde-a-mercure')?.id ?? -1;
+const ARME_MERCURE = WEAPONS.find((w) => w.name === 'Fronde à mercure')?.id ?? -1;
 if (
   ARME_BRAISE < 0 ||
   ARME_GIVRE < 0 ||

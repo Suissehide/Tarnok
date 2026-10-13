@@ -1,7 +1,5 @@
 import type { AddressInfo } from 'node:net';
-import { CARD } from '@shared/cards';
 import { PLAYER_MAX_HP } from '@shared/constants';
-import { ELEMENT, ELEMENTS } from '@shared/elements';
 import {
   decode,
   encodeHello,
@@ -15,7 +13,6 @@ import {
 } from '@shared/protocol';
 import { priceOf, SHOP_ITEMS } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { WEAPONS } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -335,126 +332,6 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
       throw new Error(`l article ${v.id} n a pas de perLevel`);
     }
     expect(room2.maxHpOf(c2.playerId)).toBe(PLAYER_MAX_HP + v.perLevel);
-  });
-
-  /**
-   * ⚠️ **Version corrigee du test du brief.** La version d'origine supposait
-   * l'arme verrouillee a l'indice 0 de l'etalage d'un compte neuf SEUL — faux
-   * pour deux raisons verifiees dans le code :
-   *
-   * 1. `buildPool` exclut toute arme verrouillee du pool tant que l'UNION de
-   *    la salle ne l'a pas debloquee (`shared/cards.ts`) ; un compte neuf
-   *    seul a une union vide, donc l'arme n'est PAS DANS L'ETALAGE, a aucun
-   *    indice.
-   * 2. Sans draft ouvert, `Draft#setToken` rend `false` pour une tout autre
-   *    raison (`#phase === 'closed'`) — le test passerait au vert sans
-   *    jamais toucher au verrou : le decor masquerait le bug.
-   *
-   * La version correcte construit un decor a DEUX joueurs du MEME salon : le
-   * premier a achete l'arme (elle entre donc dans l'UNION et apparait dans
-   * l'etalage), le second ne l'a pas achetee. Les DEUX moities sont
-   * verifiees sur la MEME carte, dans le MEME draft : le second est refuse,
-   * le premier est accepte. Sans la seconde moitie, un `setToken` qui
-   * refuserait tout le monde passerait l'assertion du refus sans que le
-   * verrou ne vise la bonne personne.
-   */
-  it('une arme verrouillee non achetee est refusee par le SERVEUR, et seul l acheteur l obtient', async () => {
-    const arme = SHOP_ITEMS.find((i) => i.kind === 'weapon');
-    if (!arme?.weaponId) {
-      throw new Error('aucun article d arme');
-    }
-
-    // Le decor : deux comptes, un seul achete l'arme AVANT de rejoindre.
-    const acheteur = await compteNeuf();
-    await comptes.creditAccounts([acheteur.accountId], BigInt(priceOf(arme, 1)));
-    expect(await comptes.buyItem(acheteur.accountId, arme.id)).toBe('ok');
-    const sansAchat = await compteNeuf();
-
-    const code = await createRoomCode();
-    const room = app.rooms.get(code);
-    if (!room) {
-      throw new Error('salon introuvable');
-    }
-
-    const a = await connectAvecJeton(code, acheteur.token);
-    const b = await connectAvecJeton(code, sansAchat.token);
-    await attendre(() => (room.playerCount === 2 ? true : null), 'deux connexions', 3000);
-
-    const positions = await fullSnapshot(a.ws, 2);
-    const stopDriver = startCombatDriver(room, positions, [a, b]);
-    try {
-      // ⚠️ **L'etalage est tire au hasard dans un pool bien plus grand que les
-      // 5 cartes proposees** : rien ne garantit que l'arme visee apparaisse
-      // au PREMIER tirage. On parcourt donc les ouvertures de draft, une par
-      // une, et on referme celles qui ne la portent pas (en posant n'importe
-      // quel jeton valide pour les deux joueurs) pour laisser le niveau
-      // suivant s'ouvrir — jusqu'a 25 essais, plafond large mais fini : un
-      // depassement doit faire echouer le test, pas tourner sans fin.
-      let vu = 0;
-      let cible: { index: number } | null = null;
-      for (let essai = 0; essai < 25 && !cible; essai++) {
-        // ⚠️ **Jamais 20_000 ici.** `DRAFT_WINDOW_TICKS` (600 ticks a
-        // `TICK_HZ` = 30) vaut EXACTEMENT 20 s : si la fermeture rapide
-        // ci-dessous echoue a poser un jeton pour l'un des deux joueurs, le
-        // draft ne se referme qu'a l'echeance — au moment meme ou une
-        // attente de 20 000 ms expirerait. Une egalite stricte entre une
-        // horloge de jeu et un timeout de test est un pile ou face, pas une
-        // marge (ronde de correction 2).
-        const open = await attendre(
-          () => a.received.filter((m) => m.type === MSG.DRAFT_OPEN)[vu] ?? null,
-          `DRAFT_OPEN #${essai}`,
-          30_000,
-        );
-        if (open.type !== MSG.DRAFT_OPEN) {
-          throw new Error('type inattendu');
-        }
-        vu++;
-
-        // Aucun indice suppose : on cherche la carte dont `refId` est l'arme
-        // visee, et on echoue EXPLICITEMENT si elle n'y est pas au bout du
-        // plafond d'essais — un repli silencieux sur l'indice 0 reproduirait
-        // exactement le defaut qu'on corrige.
-        const index = open.cards.findIndex(
-          (c) => c.nature === CARD.WEAPON && c.refId === arme.weaponId,
-        );
-        if (index >= 0) {
-          cible = { index };
-          break;
-        }
-
-        // Cette ouverture-ci ne porte pas la carte visee : on la referme en
-        // posant n'importe quel jeton valide pour les deux joueurs, afin que
-        // le niveau suivant s'ouvre sans attendre les 20 s de la fenetre.
-        for (const client of [a, b]) {
-          for (let i = 0; i < open.cards.length; i++) {
-            if (room.setDraftToken(client.playerId, i)) {
-              break;
-            }
-          }
-        }
-      }
-      expect(
-        cible,
-        `l arme ${arme.weaponId} (${arme.id}) n est apparue dans aucune des ${vu} ouvertures`,
-      ).not.toBeNull();
-      const index = cible?.index ?? -1;
-
-      // Moitie negative : le non-acheteur est refuse sur CETTE carte.
-      expect(room.setDraftToken(b.playerId, index)).toBe(false);
-      // Moitie positive, MEME carte, MEME draft : l'acheteur est accepte.
-      expect(room.setDraftToken(a.playerId, index)).toBe(true);
-    } finally {
-      stopDriver();
-    }
-  }, 120_000);
-
-  it('le catalogue WEAPONS donne a chaque element non neutre une arme LIBRE, sans aucun compte ni reseau', () => {
-    for (const e of ELEMENTS.filter((e) => e.id !== ELEMENT.NEUTRE)) {
-      expect(
-        WEAPONS.some((w) => w.element === e.id && !w.locked),
-        `element ${e.id}`,
-      ).toBe(true);
-    }
   });
 
   it('le SNAPSHOT fait 62 octets a quatre joueurs, et ZONE/REACTION/DRAFT_OPEN ne bougent pas', async () => {

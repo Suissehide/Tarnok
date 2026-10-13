@@ -1,8 +1,10 @@
-import { SYNERGY_MAX } from '@shared/constants';
+import { PASSIVE_SLOTS, SYNERGY_MAX, WEAPON_SLOTS } from '@shared/constants';
 import type { Loadout } from '@shared/loadout';
-import { PASSIVES } from '@shared/passives';
+import { PASSIVES, type PassiveKind } from '@shared/passives';
+import { BASE_WEAPON_ID, weaponOf } from '@shared/weapons';
 
 import type { HudInfo } from '../render/stage';
+import { avatar, bonusIcon, ICON_WEAPON, slot } from './icons';
 import { formatGold } from './portal';
 
 /**
@@ -49,7 +51,8 @@ export function synergyRatio(synergy: number): number {
  * barre qui glisse de trois pixels, non.
  */
 export function paintSynergy(fill: HTMLElement, label: HTMLElement, synergy: number): void {
-  fill.style.width = `${synergyRatio(synergy) * 100}%`;
+  // `--v` : la jauge du kit (`.bar__fill`) en tire sa largeur, retraits compris.
+  fill.style.setProperty('--v', `${synergyRatio(synergy)}`);
   label.textContent = `${synergy} / ${SYNERGY_MAX}`;
 }
 
@@ -65,6 +68,8 @@ export function paintSynergy(fill: HTMLElement, label: HTMLElement, synergy: num
  */
 export interface PassiveRow {
   name: string;
+  /** La cle de bonus du passif : c'est elle qui choisit l'icone (`ui/icons.ts`). */
+  kind: PassiveKind;
   stacks: number;
 }
 
@@ -92,6 +97,10 @@ export interface HudSource {
    * `RenderState` a la tache 5.
    */
   readonly gold: number;
+  /** PV max du joueur local : base, cartes de vitalite et achats du compte. */
+  readonly localMaxHp: number;
+  /** Ennemis abattus depuis le debut de la run, tels que `DEATHS` les a annonces. */
+  readonly kills: number;
   loadoutOf(playerId: number): Loadout;
 }
 
@@ -119,40 +128,55 @@ export function passiveRows(source: HudSource): PassiveRow[] {
   for (const passive of PASSIVES) {
     const stacks = loadout.stacksOf(passive.id);
     if (stacks > 0) {
-      rows.push({ name: passive.name, stacks });
+      rows.push({ name: passive.name, kind: passive.kind, stacks });
     }
   }
   return rows;
 }
 
 /**
- * Peint la colonne : une ligne par passif possede, et le cadre efface tant
- * qu'il n'y a rien a y mettre.
+ * Peint les emplacements de passifs : les `PASSIVE_SLOTS` cadres sont toujours
+ * la (ecran 04 de la maquette), les possedes d'abord, chacun avec son icone et
+ * son compte d'empilements.
  *
- * `replaceChildren` plutot qu'un diff : au plus `PASSIVES.length` lignes, une
- * fois par image, et la colonne ne change qu'a la montee de niveau.
+ * ⚠️ **Le compte se lit meme a un seul exemplaire** : « 1 » puis « 2 » dit
+ * qu'on vient d'empiler, la ou une icone qui ne bouge pas ne dit rien. Le nom
+ * et le compte complets sont dans le `title` de l'emplacement (`.hud-passive`).
+ *
+ * `replaceChildren` plutot qu'un diff : trois cadres, une fois par image.
  */
-export function paintPassives(
-  box: HTMLElement,
-  list: HTMLElement,
-  rows: readonly PassiveRow[],
-): void {
-  const empty = rows.length === 0;
-  box.classList.toggle('hidden', empty);
-  box.classList.toggle('flex', !empty);
-  list.replaceChildren(
-    ...rows.map((row) => {
-      const line = document.createElement('span');
-      // ⚠️ Pas de `data-passive` en plus du texte : il a existe, aucune
-      // mutation ne pouvait le tuer (rien ne le lit, ni la CSS ni un test).
-      // Solde comme les autres survivants de ce depot, par une suppression.
-      line.className = 'hud-passive';
-      // Le compte se lit meme a un seul exemplaire : « ×1 » puis « ×2 » dit
-      // qu'on vient d'empiler, la ou un nom qui ne bouge pas ne dit rien.
-      line.textContent = `${row.name} ×${row.stacks}`;
-      return line;
+export function paintPassives(list: HTMLElement, rows: readonly PassiveRow[]): void {
+  const cells = rows.map((row) =>
+    slot('carved', 'hud-pslot hud-passive', {
+      src: bonusIcon(row.kind),
+      count: row.stacks,
+      title: `${row.name} ×${row.stacks}`,
     }),
   );
+  while (cells.length < PASSIVE_SLOTS) {
+    cells.push(slot('carved', 'hud-pslot', null));
+  }
+  list.replaceChildren(...cells);
+}
+
+/**
+ * Peint les emplacements d'armes : l'arme neutre d'abord (elle vit hors des
+ * slots, §6.1, mais on la tient bel et bien), puis les `WEAPON_SLOTS` du
+ * `Loadout` dans l'ordre du draft — l'ordre des slots.
+ */
+export function paintWeapons(list: HTMLElement, loadout: Loadout | null): void {
+  const ids = loadout ? [BASE_WEAPON_ID, ...loadout.weaponIds] : [];
+  const cells = ids.map((id) =>
+    slot('paperx', 'hud-slot', {
+      src: ICON_WEAPON,
+      count: id === BASE_WEAPON_ID ? 1 : (loadout?.stacksOfWeapon(id) ?? 0),
+      title: weaponOf(id).name,
+    }),
+  );
+  while (cells.length < WEAPON_SLOTS + 1) {
+    cells.push(slot('paperx', 'hud-slot', null));
+  }
+  list.replaceChildren(...cells);
 }
 
 /**
@@ -165,6 +189,13 @@ export function paintPassives(
  */
 export interface HudElements {
   hp: HTMLElement;
+  /** Le remplissage de la barre de PV (`.bar__fill`). */
+  hpFill: HTMLElement;
+  /** Le remplissage de la barre d'experience, en haut de l'ecran. */
+  xpFill: HTMLElement;
+  portrait: HTMLImageElement;
+  kills: HTMLElement;
+  weapons: HTMLElement;
   level: HTMLElement;
   timer: HTMLElement;
   lateDeaths: HTMLElement;
@@ -173,9 +204,7 @@ export interface HudElements {
   /** La cagnotte non securisee (§5 de l'etape 6a), visible en permanence. */
   gold: HTMLElement;
   freeze: HTMLElement;
-  /** Le cadre de la colonne des passifs — efface tant que rien n'est drafte. */
-  passives: HTMLElement;
-  /** Les lignes de cette colonne. */
+  /** Les emplacements de passifs. */
   passiveList: HTMLElement;
 }
 
@@ -206,9 +235,18 @@ export function paintHud(
   synergy: number,
   source: HudSource,
 ): void {
-  el.hp.textContent = `${info.hp}`;
+  const maxHp = Math.max(1, source.localMaxHp);
+  el.hp.textContent = `${Math.ceil(info.hp)} / ${maxHp}`;
+  el.hpFill.style.setProperty('--v', `${Math.min(1, Math.max(0, info.hp / maxHp))}`);
+  el.xpFill.style.setProperty('--v', `${info.xpRatio}`);
   el.level.textContent = `${info.level}`;
-  el.timer.textContent = `Temps ${info.timer}`;
+  el.timer.textContent = info.timer;
+  el.kills.textContent = formatGold(source.kills);
+  const id = source.localId;
+  const portrait = id === null ? '' : avatar(id);
+  if (el.portrait.getAttribute('src') !== portrait) {
+    el.portrait.src = portrait;
+  }
   el.lateDeaths.textContent = `${lateDeaths}`;
   paintSynergy(el.synergyFill, el.synergyLabel, synergy);
   // Tache 10 : la cagnotte NON SECURISEE, en permanence et pas seulement au
@@ -218,7 +256,8 @@ export function paintHud(
   // `formatGold` est celui de l'ecran du portail, importe plutot que recopie :
   // deux ecritures du meme montant se contrediraient tot ou tard.
   el.gold.textContent = formatGold(source.gold);
-  paintPassives(el.passives, el.passiveList, passiveRows(source));
+  paintPassives(el.passiveList, passiveRows(source));
+  paintWeapons(el.weapons, id === null ? null : source.loadoutOf(id));
   // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
   // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme
   // un plantage plutot que comme une pause voulue.

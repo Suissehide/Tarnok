@@ -1,11 +1,12 @@
 import { CARD, type Card } from '@shared/cards';
 import { TICK_HZ } from '@shared/constants';
 import { elementOf } from '@shared/elements';
+import type { Loadout } from '@shared/loadout';
 import { type Passive, type PassiveKind, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { weaponOf } from '@shared/weapons';
 
-import { carteGrisee } from './shop';
+import { bonusIcon, ICON_WEAPON } from './icons';
 
 /**
  * L'ecran de draft (§4.1, §4.2 et §7.2 de la spec de l'etape 4).
@@ -37,6 +38,10 @@ export interface DraftSource {
   readonly draftOutcomes: readonly DraftOutcomeView[];
   readonly draftSettled: boolean;
   readonly isFrozen: boolean;
+  /** Le niveau atteint, pour le ruban de titre. Optionnel : les doubles de test s'en passent. */
+  readonly level?: number;
+  /** Le miroir d'inventaire, pour l'indicateur d'empilement de chaque carte. */
+  loadoutOf?(playerId: number): Loadout;
   placeToken(cardIndex: number): void;
 }
 
@@ -71,6 +76,25 @@ const PLAYER_COLORS = ['#e0a45e', '#6fa8dc', '#93c47d', '#c27ba0'];
 
 export function playerColor(playerId: number): string {
   return PLAYER_COLORS[(playerId - 1) % PLAYER_COLORS.length] ?? '#ffffff';
+}
+
+/**
+ * L'indicateur d'empilement : combien d'exemplaires de CETTE carte le joueur
+ * local possede deja. Vide sans miroir d'inventaire ou avant le WELCOME.
+ */
+export function stacksLabel(
+  card: Card,
+  source: Pick<DraftSource, 'localId' | 'loadoutOf'>,
+): string {
+  if (source.localId === null || !source.loadoutOf) {
+    return '';
+  }
+  const loadout = source.loadoutOf(source.localId);
+  const owned =
+    card.nature === CARD.PASSIVE
+      ? loadout.stacksOf(card.refId)
+      : loadout.stacksOfWeapon(card.refId);
+  return owned === 0 ? 'Nouveau' : `Possédé ×${owned}`;
 }
 
 /** Secondes restantes avant l'echeance, jamais negatives. */
@@ -202,6 +226,8 @@ interface CardCell {
 export class DraftScreen {
   readonly #root: HTMLElement;
   readonly #status: HTMLElement;
+  /** Le ruban « Niveau N », s'il existe dans la racine (`#draft-title`). */
+  readonly #title: HTMLElement | null;
   readonly #list: HTMLElement;
   readonly #source: DraftSource;
 
@@ -226,27 +252,12 @@ export class DraftScreen {
   #outcomes: DraftOutcomeView[] = [];
   #lastOutcomesSeen: readonly DraftOutcomeView[] = [];
 
-  /**
-   * Les achats de CE joueur, lus en HTTP au chargement (`main.ts`, boutique
-   * de la tache 8) — jamais recus du serveur via `DRAFT_OPEN` (§3.5 de la
-   * spec : « le grisage ne coute AUCUN octet »). Fixes pour la duree d'un
-   * salon : la boutique est fermee une fois la partie rejointe, donc cette
-   * carte ne bouge plus sous nos pieds.
-   */
-  readonly #purchases: Record<string, number>;
-
-  constructor(
-    root: HTMLElement,
-    status: HTMLElement,
-    list: HTMLElement,
-    source: DraftSource,
-    purchases: Record<string, number> = {},
-  ) {
+  constructor(root: HTMLElement, status: HTMLElement, list: HTMLElement, source: DraftSource) {
     this.#root = root;
+    this.#title = root.querySelector('#draft-title');
     this.#status = status;
     this.#list = list;
     this.#source = source;
-    this.#purchases = purchases;
   }
 
   /** A appeler a chaque image : l'ecran n'a pas d'horloge propre, il lit le client. */
@@ -289,15 +300,25 @@ export class DraftScreen {
     this.#cells = spread.map((card, index) => {
       const root = document.createElement('button');
       root.type = 'button';
-      root.className = 'draft-card';
+      root.className = 'k k-banner draft-card';
       root.dataset.index = `${index}`;
+
+      // Le cadre d'icone de la maquette (ecran 05) : la cle du passif, ou
+      // l'epee pour toute arme — l'element se lit dans le detail, en couleur.
+      const frame = document.createElement('span');
+      frame.className = 'k k-paperx slot h-[150px] w-[150px]';
+      const img = document.createElement('img');
+      img.src = card.nature === CARD.PASSIVE ? bonusIcon(passiveOf(card.refId).kind) : ICON_WEAPON;
+      img.alt = '';
+      img.className = 'h-[96px] w-[96px]';
+      frame.append(img);
 
       const nature = document.createElement('span');
       nature.className = 'draft-card__nature';
       nature.textContent = natureLabel(card.nature);
 
       const name = document.createElement('span');
-      name.className = 'draft-card__name';
+      name.className = 'draft-card__name ol';
       name.textContent = cardName(card);
 
       // Tache 19 : l'element sur les armes, la valeur sur les passifs.
@@ -306,13 +327,20 @@ export class DraftScreen {
       const { text, color } = cardDetail(card);
       detail.textContent = text;
       if (color !== null) {
+        // Une teinte d'element sur parchemin ne se lit qu'avec le contour.
+        detail.classList.add('ol');
         detail.style.color = color;
       }
+
+      // Rien ne monte de niveau : ce qu'on possede deja se compte en exemplaires.
+      const stacks = document.createElement('span');
+      stacks.className = 'draft-card__stacks';
+      stacks.textContent = stacksLabel(card, this.#source);
 
       const tokens = document.createElement('span');
       tokens.className = 'draft-card__tokens';
 
-      root.append(nature, name, detail, tokens);
+      root.append(tokens, frame, nature, name, stacks, detail);
       root.addEventListener('click', () => {
         this.#onPick(index);
       });
@@ -370,19 +398,9 @@ export class DraftScreen {
       }
       const state = this.#stateOf(card, index, mine);
       cell.root.dataset.state = state;
-      // ⚠️ Union + grisage (tache 8 de l'etape 7b, §3.5 de la spec) : l'etalage
-      // tire sur l'union des pools de la salle, donc une arme debloquee par un
-      // COEQUIPIER peut y apparaitre sans que CE joueur l'ait. Le serveur la
-      // refuse silencieusement (`Draft#placeToken`, `#eligible`) ; sans ce
-      // grisage, cliquer ne ferait simplement rien — une punition qui se lit
-      // comme un bug (§8.1). Seules les armes VERROUILLEES et non debloquees
-      // sont visees : les passives et les armes libres ne sont jamais grisees.
-      const grisee = card.nature === CARD.WEAPON && carteGrisee(card.refId, this.#purchases);
-      cell.root.dataset.grisee = grisee ? 'true' : 'false';
-      // Cliquable tant que la negociation est ouverte ET que la carte n'est
-      // pas grisee. Resolution fermee ou carte grisee desactivent le bouton
-      // nativement : aucun clic n'atteint `#onPick`, voir `draft.test.ts`.
-      cell.root.disabled = settled || grisee;
+      // Cliquable tant que la negociation est ouverte : une resolution
+      // fermee desactive le bouton nativement, aucun clic n'atteint `#onPick`.
+      cell.root.disabled = settled;
       cell.root.dataset.mine =
         mine !== null && source.draftIntents.get(mine) === index ? 'true' : 'false';
 
@@ -394,6 +412,9 @@ export class DraftScreen {
     });
 
     this.#status.textContent = this.#statusLine(spread, mine, settled);
+    if (this.#title && source.level !== undefined) {
+      this.#title.textContent = `Niveau ${source.level}`;
+    }
   }
 
   #stateOf(card: Card, index: number, mine: number | null): DraftCardState {

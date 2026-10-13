@@ -1,5 +1,6 @@
 import { priceOf, SHOP_ITEMS, type ShopItem } from '@shared/shop';
-import { WEAPONS } from '@shared/weapons';
+
+import { bonusIcon } from './icons';
 
 /**
  * La boutique du lobby (etape 7b, tache 8).
@@ -38,29 +39,6 @@ export function achetable(item: ShopItem, etat: EtatBoutique): boolean {
 }
 
 /**
- * Cette carte d'arme doit-elle etre grisee dans l'etalage du draft ?
- *
- * ⚠️ **Calcule depuis les achats du joueur LOCAL, jamais recu du serveur.**
- * C'est ce qui permet au grisage de ne couter aucun octet : le `DRAFT_OPEN` ne
- * transporte aucune eligibilite. Le serveur, lui, refuse le jeton — le grisage
- * est une politesse, le refus est la regle.
- *
- * ⚠️ **Pure, et cablee dans `ui/draft.ts#DraftScreen` (ronde de correction
- * 1/5, tache 8) : une carte d'arme verrouillee non debloquee par CE joueur y
- * est grisee et non cliquable** — `DraftScreen` recoit les achats en
- * parametre de construction, jamais via le protocole.
- */
-export function carteGrisee(weaponId: number, purchases: Record<string, number>): boolean {
-  const arme = WEAPONS.find((w) => w.id === weaponId);
-  if (!arme?.locked) {
-    return false;
-  }
-  return !SHOP_ITEMS.some(
-    (i) => i.kind === 'weapon' && i.weaponId === weaponId && (purchases[i.id] ?? 0) > 0,
-  );
-}
-
-/**
  * Le message d'un achat refuse, par code HTTP.
  *
  * ⚠️ **402 et 409 ne disent PAS la meme chose** (etape 7b, tache 5) : un 402
@@ -81,11 +59,44 @@ export function messageAchat(status: number): string {
 }
 
 /**
- * Peint l'etalage : une ligne par article du catalogue, prix du palier
- * suivant, et un bouton desactive quand `achetable` est faux.
+ * L'effet d'un palier, dans l'unite que `Room` applique : les fractions en
+ * pourcentage, les PV, px et PV/s en clair.
+ */
+export function effetLabel(item: ShopItem): string {
+  const v = item.perLevel;
+  switch (item.bonusKind) {
+    case 'damage':
+      return `+${Math.round(v * 100)} % dégâts`;
+    case 'armor':
+      return `−${Math.round(v * 100)} % dégâts subis`;
+    case 'maxHp':
+      return `+${v} PV max`;
+    case 'regen':
+      return `+${v} PV/s`;
+    case 'speed':
+      return `+${v} px/s`;
+    case 'pickupRadius':
+      return `+${v} px de ramassage`;
+    case 'fireRate':
+      return `−${Math.round(v * 100)} % recharge`;
+    case 'xp':
+      return `+${Math.round(v * 100)} % expérience`;
+    case 'gold':
+      return `+${Math.round(v * 100)} % d’or extrait`;
+  }
+}
+
+/**
+ * Peint l'etalage (ecran 10 de la maquette) : une carte par article, son
+ * effet par palier, le palier atteint, et un bouton de prix desactive quand
+ * `achetable` est faux.
  *
- * `replaceChildren` plutot qu'un diff : au plus `SHOP_ITEMS.length` lignes, et
- * la boutique ne se repeint qu'a l'ouverture du lobby ou apres un achat.
+ * `replaceChildren` plutot qu'un diff : au plus `SHOP_ITEMS.length` cartes, et
+ * la boutique ne se repeint qu'a l'ouverture ou apres un achat.
+ *
+ * ⚠️ **Un achat est definitif : il se confirme.** Le premier clic arme le
+ * bouton (« Confirmer ? », en rouge), le second achete. Un clic ailleurs ou un
+ * repeint desarme.
  *
  * ⚠️ **`onBuy` rend une promesse, et c'est la garde anti-double-clic (ronde
  * de correction 2/5, tache 8).** Un double-clic rapide envoyait deux `POST` —
@@ -106,43 +117,76 @@ export function renderShop(
       const palierPossede = etat.purchases[item.id] ?? 0;
       const auMax = palierPossede >= item.levels;
       const peut = achetable(item, etat);
+      const prix = auMax ? 'Au maximum' : `${priceOf(item, palierPossede + 1)} or`;
 
-      const row = document.createElement('div');
-      row.className = 'shop-item';
-      row.dataset.itemId = item.id;
-      row.dataset.achetable = peut ? 'true' : 'false';
+      const card = document.createElement('div');
+      card.className = 'k k-banner shop-card shop-item';
+      card.dataset.itemId = item.id;
+      card.dataset.achetable = peut ? 'true' : 'false';
+
+      const frame = document.createElement('span');
+      frame.className = 'k k-paperx slot h-[72px] w-[72px] shrink-0';
+      const img = document.createElement('img');
+      img.src = bonusIcon(item.bonusKind);
+      img.alt = '';
+      img.className = 'h-[46px] w-[46px]';
+      frame.append(img);
 
       const label = document.createElement('span');
-      label.className = 'shop-item__label';
+      label.className = 'shop-card__name ol';
       label.textContent = item.label;
 
+      const effet = document.createElement('span');
+      effet.className = 'shop-card__effect';
+      effet.textContent = `${effetLabel(item)} par palier`;
+
       const palier = document.createElement('span');
-      palier.className = 'shop-item__palier';
+      palier.className = 'shop-card__level';
       palier.textContent = `${palierPossede} / ${item.levels}`;
 
       const button = document.createElement('button');
       button.type = 'button';
-      button.className = 'shop-item__buy';
+      button.className = 'btn btn--tab shop-card__buy ol';
       button.disabled = !peut;
-      button.textContent = auMax ? 'Au maximum' : `${priceOf(item, palierPossede + 1)} or`;
+      button.textContent = prix;
+      const desarme = (): void => {
+        delete button.dataset.confirm;
+        button.classList.remove('btn--red');
+        button.textContent = prix;
+      };
+      button.addEventListener('blur', desarme);
       button.addEventListener('click', () => {
+        if (button.dataset.confirm !== 'true') {
+          button.dataset.confirm = 'true';
+          button.classList.add('btn--red');
+          button.textContent = 'Confirmer ?';
+          return;
+        }
+        desarme();
         button.disabled = true;
         onBuy(item.id)
           .finally(() => {
             button.disabled = false;
           })
           .catch(() => {
-            // Deja gere par le `finally` ci-dessus (reactivation) ; ce
-            // `catch` existe seulement pour qu'une promesse rejetee ne
-            // remonte pas comme un rejet NON gere (le contrat de `onBuy`
-            // n'exige pas qu'elle rejette jamais — `main.ts` ne le fait
-            // pas — mais `renderShop` ne doit pas casser si un futur
-            // appelant le fait).
+            // L'appelant (`main.ts`, `onBuy`) affiche deja l'echec ; ce
+            // `catch` n'existe que pour que la promesse rejetee ne remonte pas
+            // en erreur non geree une fois le bouton reactive.
           });
       });
 
-      row.append(label, palier, button);
-      return row;
+      const titre = document.createElement('div');
+      titre.className = 'flex flex-col items-start text-left';
+      titre.append(label, effet);
+      const haut = document.createElement('div');
+      haut.className = 'flex items-center gap-[16px] self-stretch';
+      haut.append(frame, titre);
+      const bas = document.createElement('div');
+      bas.className = 'flex items-center justify-between self-stretch';
+      bas.append(palier, button);
+
+      card.append(haut, bas);
+      return card;
     }),
   );
 }

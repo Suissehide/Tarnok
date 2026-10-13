@@ -2206,8 +2206,17 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
       throw new Error('fixture : aucun passif de genre maxHp');
     }
     const grants: AccountGrants = {
-      bonuses: { fireRate: 0, damage: 0, maxHp: 40, speed: 0, regen: 0, pickupRadius: 0 },
-      unlockedWeapons: new Set<number>(),
+      bonuses: {
+        fireRate: 0,
+        damage: 0,
+        maxHp: 40,
+        speed: 0,
+        regen: 0,
+        pickupRadius: 0,
+        armor: 0,
+        xp: 0,
+        gold: 0,
+      },
     };
     const room = new Room(0x07_6b_0006);
     room.join(1, grants);
@@ -2236,8 +2245,17 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
    */
   it('un bonus de compte sur la vitesse s ajoute a PLAYER_SPEED en jeu', () => {
     const grants: AccountGrants = {
-      bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 50, regen: 0, pickupRadius: 0 },
-      unlockedWeapons: new Set<number>(),
+      bonuses: {
+        fireRate: 0,
+        damage: 0,
+        maxHp: 0,
+        speed: 50,
+        regen: 0,
+        pickupRadius: 0,
+        armor: 0,
+        xp: 0,
+        gold: 0,
+      },
     };
     const room = new Room(0x07_6b_0008);
     room.join(1, grants);
@@ -2266,8 +2284,17 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
 
     function intervalle(bonus: number): number {
       const grants: AccountGrants = {
-        bonuses: { fireRate: bonus, damage: 0, maxHp: 0, speed: 0, regen: 0, pickupRadius: 0 },
-        unlockedWeapons: new Set<number>(),
+        bonuses: {
+          fireRate: bonus,
+          damage: 0,
+          maxHp: 0,
+          speed: 0,
+          regen: 0,
+          pickupRadius: 0,
+          armor: 0,
+          xp: 0,
+          gold: 0,
+        },
       };
       const room = new Room(0x07_6b_0009);
       room.join(1, grants);
@@ -2315,8 +2342,17 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
 
     function degatsDuPremierTir(bonus: number): number {
       const grants: AccountGrants = {
-        bonuses: { fireRate: 0, damage: bonus, maxHp: 0, speed: 0, regen: 0, pickupRadius: 0 },
-        unlockedWeapons: new Set<number>(),
+        bonuses: {
+          fireRate: 0,
+          damage: bonus,
+          maxHp: 0,
+          speed: 0,
+          regen: 0,
+          pickupRadius: 0,
+          armor: 0,
+          xp: 0,
+          gold: 0,
+        },
       };
       const room = new Room(0x07_6b_000a);
       room.join(1, grants);
@@ -2357,8 +2393,17 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
 
     function remonte(bonus: number): number {
       const grants: AccountGrants = {
-        bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 0, regen: bonus, pickupRadius: 0 },
-        unlockedWeapons: new Set<number>(),
+        bonuses: {
+          fireRate: 0,
+          damage: 0,
+          maxHp: 0,
+          speed: 0,
+          regen: bonus,
+          pickupRadius: 0,
+          armor: 0,
+          xp: 0,
+          gold: 0,
+        },
       };
       const room = new Room(0x07_6b_000b);
       room.join(1, grants);
@@ -2403,8 +2448,17 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   it('un bonus de compte sur le rayon de ramassage se lit elargi dans le SNAPSHOT decode', () => {
     const bonus = 50;
     const grants: AccountGrants = {
-      bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 0, regen: 0, pickupRadius: bonus },
-      unlockedWeapons: new Set<number>(),
+      bonuses: {
+        fireRate: 0,
+        damage: 0,
+        maxHp: 0,
+        speed: 0,
+        regen: 0,
+        pickupRadius: bonus,
+        armor: 0,
+        xp: 0,
+        gold: 0,
+      },
     };
     const room = new Room(0x07_6b_000c);
     room.join(1, grants);
@@ -2429,8 +2483,17 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   it('le rayon elargi ramasse une orbe entre les deux bornes, et laisse celle au-dela intacte', () => {
     const bonus = 50;
     const grants: AccountGrants = {
-      bonuses: { fireRate: 0, damage: 0, maxHp: 0, speed: 0, regen: 0, pickupRadius: bonus },
-      unlockedWeapons: new Set<number>(),
+      bonuses: {
+        fireRate: 0,
+        damage: 0,
+        maxHp: 0,
+        speed: 0,
+        regen: 0,
+        pickupRadius: bonus,
+        armor: 0,
+        xp: 0,
+        gold: 0,
+      },
     };
     const room = new Room(0x07_6b_000d);
     room.join(1, grants);

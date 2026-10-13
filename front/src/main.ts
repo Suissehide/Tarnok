@@ -3,22 +3,24 @@ import { bonusesOf } from '@shared/shop';
 import { Keyboard } from './input/keyboard';
 import { Mouse } from './input/mouse';
 import { acheter, fetchCompte, tokenBytes, tokenText } from './net/account';
-import {
-  type ConnectionStatus,
-  GameClient,
-  type InputAxes,
-  type RenderState,
-  type RunOverSummary,
-} from './net/client';
+import { type ConnectionStatus, GameClient, type InputAxes, type RenderState } from './net/client';
 import { composeFrame } from './render/frame';
-import { formatSummary, hudInfo, Stage } from './render/stage';
+import { formatTimer, hudInfo, Stage } from './render/stage';
+import '@fontsource/metamorphous';
+import '@fontsource/jersey-15';
+import '@fontsource/alegreya-sans/400.css';
+import '@fontsource/alegreya-sans/700.css';
+import '@fontsource/space-mono';
 import './styles/main.css';
 
 import { API_URL, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
-import { type HudElements, paintHud } from './ui/hud';
-import { PortalScreen } from './ui/portal';
+import { type HudElements, paintHud, paintWeapons } from './ui/hud';
+import { formatGold, PortalScreen } from './ui/portal';
+import { renderRoom } from './ui/room';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
+import { applySkin } from './ui/skin';
+import { paintSummary, type SummaryElements, summaryTone } from './ui/summary';
 
 /**
  * Le DEMARRAGE, et rien d'autre : recherches DOM, `await stage.init()`,
@@ -54,7 +56,22 @@ const el = <T extends HTMLElement>(id: string): T => {
   return node as T;
 };
 
+// Sans attendre : les menus s'affichent d'abord en cadres unis, puis
+// s'habillent d'un bloc (voir `ui/skin.ts`).
+void applySkin();
+
+// Le canevas des ecrans fait 1920 x 1080 (maquette) : on le met a l'echelle
+// uniformement plutot que de reflower, comme le demande le README de la maquette.
+const fitCanvas = (): void => {
+  const scale = Math.min(window.innerWidth / 1920, window.innerHeight / 1080);
+  document.documentElement.style.setProperty('--ui-scale', `${scale}`);
+};
+fitCanvas();
+window.addEventListener('resize', fitCanvas);
+
 const lobby = el('lobby');
+const room = el('room');
+const pause = el('pause');
 const hud = el('hud');
 const hudCode = el('hud-code');
 const hudStatus = el('hud-status');
@@ -66,20 +83,41 @@ const hudLateDeaths = el('hud-late-deaths');
 const hudGold = el('hud-gold');
 const hudSynergyFill = el('hud-synergy-fill');
 const hudSynergyLabel = el('hud-synergy-label');
-const hudPassives = el('hud-passives');
 const hudPassiveList = el('hud-passive-list');
 const summary = el('summary');
-const summaryTime = el('summary-time');
-const summaryLevel = el('summary-level');
-const summaryKills = el('summary-kills');
 const errorLine = el('error');
 const codeInput = el<HTMLInputElement>('code');
 const goldLine = el('account-gold');
+const shopGold = el('shop-gold');
+const shopError = el('shop-error');
 const shopRoot = el('shop');
+const shopScreen = el('shop-screen');
+
+/** Le solde du compte, partout ou il s'affiche (menu et boutique). */
+const paintAccountGold = (texte: string): void => {
+  const lisible = /^\d+$/.test(texte) ? formatGold(Number(texte)) : texte;
+  goldLine.textContent = lisible;
+  shopGold.textContent = lisible;
+};
+
+el<HTMLButtonElement>('open-shop').addEventListener('click', () => {
+  shopError.textContent = '';
+  lobby.classList.add('hidden');
+  shopScreen.classList.remove('hidden');
+});
+el<HTMLButtonElement>('close-shop').addEventListener('click', () => {
+  shopScreen.classList.add('hidden');
+  lobby.classList.remove('hidden');
+});
 
 /** Les cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
 const hudElements: HudElements = {
   hp: hudHp,
+  hpFill: el('hud-hp-fill'),
+  xpFill: el('hud-xp-fill'),
+  portrait: el<HTMLImageElement>('hud-portrait'),
+  kills: el('hud-kills'),
+  weapons: el('hud-weapons'),
   level: hudLevel,
   timer: hudTimer,
   lateDeaths: hudLateDeaths,
@@ -87,8 +125,18 @@ const hudElements: HudElements = {
   synergyLabel: hudSynergyLabel,
   gold: hudGold,
   freeze: hudFreeze,
-  passives: hudPassives,
   passiveList: hudPassiveList,
+};
+
+const summaryElements: SummaryElements = {
+  root: summary,
+  title: el('summary-title'),
+  portrait: el<HTMLImageElement>('summary-portrait'),
+  name: el('summary-name'),
+  time: el('summary-time'),
+  level: el('summary-level'),
+  kills: el('summary-kills'),
+  gold: el('summary-gold'),
 };
 
 const keyboard = new Keyboard();
@@ -156,14 +204,14 @@ async function chargeSolde(): Promise<string> {
   try {
     const compte = await fetchCompte(API_URL, texte);
     if (compte) {
-      goldLine.textContent = compte.gold;
+      paintAccountGold(compte.gold);
       accountPurchases = compte.purchases;
       renderShop(shopRoot, etatBoutique(compte), (itemId) => onBuy(texte, itemId));
     } else {
-      goldLine.textContent = '—';
+      paintAccountGold('—');
     }
   } catch {
-    goldLine.textContent = '—';
+    paintAccountGold('—');
   }
   return texte;
 }
@@ -183,20 +231,20 @@ function etatBoutique(compte: { gold: string; purchases: Record<string, number> 
  * remonterait jusqu'au niveau module.
  */
 async function onBuy(texte: string, itemId: string): Promise<void> {
-  errorLine.textContent = '';
+  shopError.textContent = '';
   try {
     const reponse = await acheter(API_URL, texte, itemId);
     if (reponse.ok) {
-      goldLine.textContent = reponse.gold;
+      paintAccountGold(reponse.gold);
       accountPurchases = reponse.purchases;
       renderShop(shopRoot, etatBoutique(reponse), (id) => onBuy(texte, id));
     } else {
       // Amendement, point 3 : 402 (gagner plus d'or) et 409 (rafraichir et
       // retenter) ne disent PAS la meme chose — voir `messageAchat`.
-      errorLine.textContent = messageAchat(reponse.status);
+      shopError.textContent = messageAchat(reponse.status);
     }
   } catch (cause) {
-    errorLine.textContent = `Achat impossible : ${(cause as Error).message}`;
+    shopError.textContent = `Achat impossible : ${(cause as Error).message}`;
   }
 }
 
@@ -205,9 +253,7 @@ let accountToken: Uint8Array | null = null;
  * Les achats de ce compte, tels que lus (ou rafraichis par un achat) au fil
  * de la session — la meme donnee que la boutique, au meme instant. Fixes
  * pour la duree d'un salon : la boutique disparait de l'ecran une fois
- * `join()` appelee, donc `DraftScreen` ne peut pas la voir changer sous ses
- * pieds (§3.5 de la spec : « le grisage ne coute AUCUN octet », rien de neuf
- * ne transite par `DRAFT_OPEN`).
+ * `join()` appelee, donc les bonus du miroir client ne bougent plus.
  */
 let accountPurchases: Record<string, number> = {};
 try {
@@ -251,15 +297,41 @@ function join(code: string): void {
     return;
   }
 
+  /** Menu Echap ouvert : les entrees de CE joueur sont coupees (le monde, lui, tourne). */
+  let paused = false;
+  const setPaused = (value: boolean): void => {
+    paused = value;
+    pause.classList.toggle('hidden', !value);
+  };
+  const leave = (): void => {
+    client.disconnect();
+    // Meme reinitialisation que le bilan : `Stage`/`Keyboard` ne se
+    // demontent pas proprement, et le lobby se recharge de toute facon.
+    window.location.reload();
+  };
+
   const client = new GameClient(
     gameSocketUrl(code),
-    () => keyboard.axes(),
+    () => (paused ? { x: 0, y: 0 } : keyboard.axes()),
     onStatus,
-    showSummary,
-    readAim,
+    (result) => {
+      setPaused(false);
+      paintSummary(
+        summaryElements,
+        result,
+        summaryTone(client.portalDecision, client.portalGold, client.gold),
+        client.localId,
+      );
+    },
+    () => (paused ? { x: 0, y: 0 } : readAim()),
     // Tache 28 : la carte n'existe qu'a partir du WELCOME (graine recue),
     // donc on ne peut dessiner les obstacles qu'a ce moment-la — jamais avant.
-    (map) => stage.drawObstacles(map),
+    // C'est aussi l'instant ou la salle d'attente cede la place au jeu.
+    (map) => {
+      stage.drawObstacles(map);
+      room.classList.add('hidden');
+      hud.classList.remove('hidden');
+    },
     accountToken,
     // Les bonus permanents du compte, pour le MIROIR DE PREDICTION (revue
     // finale de l'etape 7b). Derives ici des memes `accountPurchases` que le
@@ -274,24 +346,36 @@ function join(code: string): void {
     // que `DraftScreen` tient deja.
     bonusesOf(new Map(Object.entries(accountPurchases))),
   );
+  const roomElements = {
+    players: el('room-players'),
+    weapons: el('room-weapons'),
+    start: el<HTMLButtonElement>('room-start'),
+    hint: el('room-hint'),
+  };
+  client.onLobby = (state) =>
+    renderRoom(roomElements, state, (weaponId) => client.pickWeapon(weaponId));
+  roomElements.start.addEventListener('click', () => client.startRun());
+  el<HTMLButtonElement>('room-leave').addEventListener('click', leave);
+  el<HTMLButtonElement>('pause-resume').addEventListener('click', () => setPaused(false));
+  el<HTMLButtonElement>('pause-quit').addEventListener('click', leave);
+  window.addEventListener('keydown', (e) => {
+    // En jeu seulement : ni en salle d'attente, ni sur le bilan.
+    if (
+      e.key === 'Escape' &&
+      !hud.classList.contains('hidden') &&
+      summary.classList.contains('hidden')
+    ) {
+      setPaused(!paused);
+    }
+  });
+
   client.connect();
 
   // L'etalage du §7.2 : il se met a jour a chaque image, dans `renderFrame`.
   // Un ecran a part entiere plutot qu'un bout de HUD, parce que c'est le
   // moment le plus social de la partie (§7.1 de l'orientation) et qu'il doit
   // montrer les jetons des quatre joueurs.
-  //
-  // `accountPurchases` grise les armes verrouillees non debloquees par CE
-  // joueur (tache 8, ronde 1) : l'etalage tire sur l'union des pools de la
-  // salle, donc une arme debloquee par un coequipier peut y apparaitre sans
-  // que ce joueur-ci l'ait.
-  const draftScreen = new DraftScreen(
-    el('draft'),
-    el('draft-status'),
-    el('draft-cards'),
-    client,
-    accountPurchases,
-  );
+  const draftScreen = new DraftScreen(el('draft'), el('draft-status'), el('draft-cards'), client);
 
   // Le vote d'extraction du §6. Un BANDEAU, pas un modale : le monde ne
   // s'arrete pas pendant qu'on vote (voir `ui/portal.ts` et `index.html`).
@@ -305,8 +389,9 @@ function join(code: string): void {
   );
 
   lobby.classList.add('hidden');
-  hud.classList.remove('hidden');
-  hud.classList.add('flex');
+  room.classList.remove('hidden');
+  el('room-code').textContent = code;
+  roomElements.hint.textContent = 'Connexion au salon…';
   hudCode.textContent = code;
 
   /**
@@ -351,6 +436,16 @@ function join(code: string): void {
         // le client tient depuis l'etape 4 — `paintHud` en derive les lignes.
         client,
       );
+      // Le menu Echap montre la partie en cours (ecran 06) : il se lit par-dessus
+      // un monde qui continue, donc il se repeint a chaque image.
+      if (paused) {
+        el('pause-time').textContent = formatTimer(client.hordeTick);
+        el('pause-kills').textContent = formatGold(client.kills);
+        el('pause-gold').textContent = formatGold(client.gold);
+        el('pause-level').textContent = `${client.level}`;
+        const id = client.localId;
+        paintWeapons(el('pause-weapons'), id === null ? null : client.loadoutOf(id));
+      }
     },
     updateDraft: (): void => draftScreen.update(),
     updatePortal: (): void => portalScreen.update(),
@@ -370,13 +465,7 @@ function join(code: string): void {
 
   stage.run(renderFrame);
 
-  el<HTMLButtonElement>('summary-restart').addEventListener('click', () => {
-    client.disconnect();
-    // Reinitialisation la plus sure : `Stage`/`Keyboard` ne sont pas concus
-    // pour etre demontes puis reutilises, et un salon termine n'a de toute
-    // facon plus rien a offrir que revenir au lobby.
-    window.location.reload();
-  });
+  el<HTMLButtonElement>('summary-restart').addEventListener('click', leave);
 
   // Poignee de debogage, en developpement seulement.
   //
@@ -422,14 +511,10 @@ function onStatus(status: ConnectionStatus): void {
     closed: 'serveur injoignable — les carrés se figent',
   };
   hudStatus.textContent = label[status];
-}
-
-/** Affiche l'ecran de bilan (§7) — appele une seule fois, a la reception de `RUN_OVER`. */
-function showSummary(result: RunOverSummary): void {
-  const info = formatSummary(result);
-  summaryTime.textContent = info.time;
-  summaryLevel.textContent = `${info.level}`;
-  summaryKills.textContent = `${info.kills}`;
-  summary.classList.remove('hidden');
-  summary.classList.add('flex');
+  // Salle d'attente encore affichee et socket fermee : salon inconnu, plein ou
+  // serveur coupe. Le dire plutot que laisser une liste vide.
+  if (status === 'closed' && !room.classList.contains('hidden')) {
+    el('room-hint').textContent = 'Connexion perdue — salon introuvable, plein ou serveur coupé.';
+    el<HTMLButtonElement>('room-start').disabled = true;
+  }
 }

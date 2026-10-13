@@ -6,231 +6,420 @@
     <title>Tarnok</title>
   </head>
   <body>
+    <!--
+      Chaque ecran suit la maquette `design_handoff_tarnok_ui` : un canevas fixe
+      de 1920 x 1080 (`.ui-canvas`), mis a l'echelle par `main.ts`. Les cadres
+      sont des `border-image` sur les planches recollees par `ui/skin.ts`.
+      Les icones et portraits sont servis tels quels sous `/tinyswords/`.
+    -->
     <div id="app" class="relative h-full w-full overflow-hidden">
       <div id="stage" class="absolute inset-0"></div>
 
-      <div id="lobby" class="absolute inset-0 z-10 flex items-center justify-center bg-forge-900/95">
-        <div class="flex w-[min(38rem,92vw)] flex-col items-center">
-          <div class="ts-ribbon z-10 w-full -mb-6 text-2xl tracking-[0.4em]">TARNOK</div>
+      <!-- 01 · Menu principal -->
+      <section id="lobby" class="ui-screen bg-menu z-10">
+        <div class="ui-canvas">
+          <h1
+            class="rib f-meta ol3 absolute left-1/2 top-[96px] m-0 w-[600px] -translate-x-1/2 text-[104px] tracking-[8px]"
+            style="--s: 1.05; height: 186px"
+          >
+            TARNOK
+          </h1>
+          <p
+            class="ol absolute left-1/2 top-[268px] m-0 -translate-x-1/2 text-[22px] uppercase tracking-[6px]"
+          >
+            Survivre à la horde
+          </p>
 
-          <div class="ts-panel flex w-full flex-col items-stretch gap-5 pt-4">
-            <p class="text-center text-sm leading-relaxed">
-              Étape&nbsp;0 — deux onglets, un code de salon, et c'est le serveur qui décide des
-              positions. Déplacement aux flèches ou&nbsp;WASD.
-            </p>
-
-            <p class="text-center text-sm">
-              Or : <span id="account-gold" class="font-bold">…</span>
-            </p>
-
-            <div id="shop" class="flex w-full flex-col gap-2"></div>
-
-            <button id="create" type="button" class="ts-button text-lg">Créer un salon</button>
-
-            <div class="flex items-stretch gap-3">
-              <input
-                id="code"
-                maxlength="4"
-                placeholder="code"
-                autocomplete="off"
-                spellcheck="false"
-                class="ts-input min-w-0 flex-1 text-lg"
-              />
-              <button id="join" type="button" class="ts-button ts-button--red shrink-0">
+          <div
+            class="absolute left-1/2 top-[330px] flex w-[480px] -translate-x-1/2 flex-col items-stretch gap-[10px]"
+          >
+            <button id="create" type="button" class="btn ol h-[141px] text-[40px]">
+              Créer un salon
+            </button>
+            <div class="flex h-[129px] items-stretch gap-[10px]">
+              <div class="k k-carved min-w-0 flex-1" style="--s: 0.6">
+                <input
+                  id="code"
+                  maxlength="4"
+                  placeholder="CODE"
+                  autocomplete="off"
+                  spellcheck="false"
+                  aria-label="Code du salon"
+                  class="ui-input"
+                />
+              </div>
+              <button id="join" type="button" class="btn ol w-[220px] text-[30px]">
                 Rejoindre
               </button>
             </div>
-
-            <p id="error" class="min-h-5 text-center text-sm text-red-800"></p>
+            <button id="open-shop" type="button" class="btn ol h-[129px] text-[30px]">
+              Boutique
+            </button>
+            <p id="error" class="ol m-0 min-h-[32px] text-center text-[22px]"></p>
           </div>
-        </div>
-      </div>
 
-      <div
-        id="hud"
-        class="pointer-events-none absolute left-4 top-4 z-10 hidden flex-col items-start gap-1"
-      >
-        <div class="ts-ribbon text-sm tracking-[0.25em]">
-          SALON&nbsp;<b id="hud-code"></b>
-        </div>
-        <span id="hud-status" class="pl-2 text-xs text-forge-600"></span>
+          <div class="f-mono ol absolute bottom-[48px] left-[56px] flex flex-col gap-[6px] text-[20px]">
+            <span>Tarnok — prototype</span>
+            <span>Compte local · l’or survit aux parties</span>
+          </div>
 
-        <!--
-          §4.6 : un HUD plutot que des logs — pv, niveau, chronometre.
-          Pas de `.ts-panel` ici : ses bordures 9-slices font 32px, beaucoup
-          trop lourdes pour un petit readout de coin d'ecran — meme raison
-          que `.ts-input` (voir styles/main.css) n'emprunte rien au pack.
-        -->
-        <div
-          class="mt-2 flex flex-col gap-1 rounded border border-forge-600 bg-forge-800/90 px-3 py-2 text-sm text-ember-400"
-        >
-          <span>PV&nbsp;<b id="hud-hp"></b></span>
-          <span>Niveau&nbsp;<b id="hud-level"></b></span>
-          <span id="hud-timer"></span>
-
-          <!--
-            Étape 6a, §5 : l'or NON SÉCURISÉ de l'équipe, visible en PERMANENCE.
-
-            ⚠️ **Pas seulement au moment du vote.** Le §5 fait de cette cagnotte
-            un enjeu qui se vit pendant tout un palier — cinq minutes pendant
-            lesquelles rien n'est acquis et où l'effacement de l'équipe fait
-            tout perdre. Un chiffre qu'on ne découvrirait qu'à l'ouverture du
-            portail se lirait comme un score de fin de manche, pas comme une
-            mise en jeu.
-
-            L'icône vient du pack (Tiny Swords, `UI Elements/…/Icon_03.png`,
-            une pièce) et est servie sous `/tinyswords/` comme tout le reste :
-            en développement par le middleware Vite, en production par le proxy
-            nginx vers MinIO. Rien de dérivé du pack n'entre dans le dépôt.
-            Le chemin porte des espaces — d'où le `%20`, que le middleware
-            décode (`decodeURIComponent`) et que nginx transmet tel quel.
-          -->
-          <span class="flex items-center gap-1">
+          <div class="absolute bottom-[48px] right-[56px] flex items-center gap-[14px]">
             <img
               src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png"
               alt=""
-              aria-hidden="true"
-              class="h-4 w-4 [image-rendering:pixelated]"
+              class="h-[52px] w-[52px]"
             />
-            <b id="hud-gold">0</b>
-            <span class="text-[10px] tracking-[0.2em] text-forge-600">NON SÉCURISÉ</span>
-          </span>
+            <span id="account-gold" class="f-jer ol text-[52px]">…</span>
+          </div>
+        </div>
+      </section>
 
-          <!--
-            Étape 5a, §9 : la jauge de Synergie, « visible de tous ». C'est une
-            ressource d'ÉQUIPE — le même nombre chez les quatre joueurs, porté
-            par le snapshot à côté de l'expérience — et elle ne se remplit que
-            lorsque deux joueurs différents déclenchent une réaction ensemble
-            (§7). En solo elle ne bouge jamais, par construction.
+      <!-- 10 · Boutique -->
+      <section id="shop-screen" class="ui-screen bg-menu z-10 hidden">
+        <div class="ui-canvas">
+          <div
+            class="k k-banner absolute left-[40px] top-[26px] flex w-[300px] flex-col items-center gap-[14px] text-center"
+            style="--s: 0.5"
+          >
+            <div class="k k-paperx slot h-[130px] w-[130px]" style="--s: 0.42">
+              <img
+                src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_10.png"
+                alt=""
+                class="h-[84px] w-[84px]"
+              />
+            </div>
+            <h2 class="f-meta ol m-0 text-[36px]">Boutique</h2>
+            <p class="m-0 text-[21px] leading-[1.4]">
+              Chaque palier acheté s’applique à toutes vos parties suivantes. Un achat est
+              définitif.
+            </p>
+          </div>
 
-            Le remplissage est un simple `div` dont `ui/hud.ts` règle la
-            largeur : rien à charger, rien à dessiner par le moteur.
-          -->
-          <div class="mt-1 flex flex-col gap-0.5">
-            <span class="text-[10px] tracking-[0.2em] text-forge-600">
-              SYNERGIE&nbsp;<span id="hud-synergy-label">0 / 20</span>
+          <button
+            id="close-shop"
+            type="button"
+            class="btn btn--main btn--red ol absolute bottom-[34px] left-[40px] w-[300px] text-[30px]"
+          >
+            Retour
+          </button>
+
+          <div
+            class="k k-carved absolute right-[40px] top-[26px] flex h-[96px] items-center gap-[12px] px-[10px]"
+            style="--s: 0.6"
+          >
+            <img
+              src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png"
+              alt=""
+              class="h-[44px] w-[44px]"
+            />
+            <span id="shop-gold" class="f-jer ol text-[46px]">…</span>
+          </div>
+
+          <p
+            id="shop-error"
+            class="ol absolute right-[440px] top-[52px] m-0 text-[22px]"
+            aria-live="polite"
+          ></p>
+
+          <div
+            id="shop"
+            class="absolute bottom-[26px] left-[370px] right-[40px] top-[140px] grid grid-cols-3 grid-rows-3 gap-[16px]"
+          ></div>
+        </div>
+      </section>
+
+      <!--
+        14 · Salon : apres « Créer » ou « Rejoindre », avant la run. Rien ne
+        tourne cote serveur tant que l'hote n'a pas lance (`Session`,
+        `LOBBY`/`PICK`/`START`). Peint par `ui/room.ts`.
+      -->
+      <section id="room" class="ui-screen bg-menu z-10 hidden">
+        <div class="ui-canvas">
+          <div
+            class="k k-carved absolute left-[40px] top-[26px] flex h-[96px] w-[380px] items-center justify-center gap-[16px]"
+            style="--s: 0.6"
+          >
+            <span class="f-meta ol text-[28px]">Salon</span>
+            <b id="room-code" class="f-jer ol text-[52px] font-normal tracking-[6px]"></b>
+          </div>
+
+          <ul
+            id="room-players"
+            class="absolute left-[40px] top-[140px] m-0 grid w-[1060px] list-none grid-cols-2 gap-[16px] p-0"
+          ></ul>
+
+          <div
+            class="k k-paperx absolute bottom-[34px] left-[40px] flex w-[1060px] items-center justify-between gap-[24px]"
+            style="--s: 0.6"
+          >
+            <p id="room-hint" class="m-0 text-[24px] leading-[1.4]"></p>
+            <button
+              id="room-leave"
+              type="button"
+              class="btn btn--red ol shrink-0 px-[10px] text-[26px]"
+            >
+              Quitter
+            </button>
+          </div>
+
+          <div
+            class="k k-banner absolute left-[1130px] right-[40px] top-[26px] flex flex-col gap-[14px]"
+            style="--s: 0.5"
+          >
+            <h2 class="f-meta m-0 text-[32px] text-[var(--color-ink-label)]">Arme de départ</h2>
+            <p class="m-0 text-[20px]">La dague est toujours tenue ; choisissez ce qui l’accompagne.</p>
+            <div id="room-weapons" class="grid grid-cols-3 gap-x-[8px] gap-y-[2px]"></div>
+          </div>
+
+          <button
+            id="room-start"
+            type="button"
+            class="bbtn ol absolute bottom-[34px] left-[1130px] right-[40px] text-[40px]"
+            disabled
+          >
+            Lancer la partie
+          </button>
+        </div>
+      </section>
+
+      <!-- 04 · HUD -->
+      <section id="hud" class="ui-screen ui-screen--overlay z-10 hidden">
+        <div class="ui-canvas">
+          <div class="bar bar--sml absolute left-0 right-0 top-0" style="--s: 1.1">
+            <i id="hud-xp-fill" class="bar__fill"></i>
+          </div>
+
+          <div class="absolute left-[40px] top-[46px] flex items-center gap-[18px]">
+            <div class="k k-paperx slot h-[132px] w-[132px]" style="--s: 0.42">
+              <img id="hud-portrait" src="" alt="" class="h-[100px] w-[100px]" />
+              <span
+                class="btn absolute bottom-[-34px] right-[-34px] h-[72px] w-[72px]"
+                style="--s: 0.24"
+              >
+                <b id="hud-level" class="f-jer ol text-[38px] font-normal"></b>
+              </span>
+            </div>
+            <div class="flex flex-col gap-[10px]">
+              <div class="relative w-[430px]">
+                <div class="bar"><i id="hud-hp-fill" class="bar__fill"></i></div>
+                <span
+                  id="hud-hp"
+                  class="f-jer ol absolute left-0 right-0 top-[5px] text-center text-[26px]"
+                ></span>
+              </div>
+              <div class="flex items-center gap-[12px]">
+                <img
+                  src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_07.png"
+                  alt="Synergie"
+                  class="h-[34px] w-[34px]"
+                />
+                <div class="bar bar--sml w-[300px]">
+                  <i id="hud-synergy-fill" class="bar__fill"></i>
+                </div>
+                <span id="hud-synergy-label" class="f-jer ol text-[26px]"></span>
+              </div>
+            </div>
+          </div>
+
+          <div
+            class="absolute left-1/2 top-[46px] flex -translate-x-1/2 flex-col items-center gap-[6px]"
+          >
+            <span id="hud-timer" class="f-jer ol text-[88px] leading-[0.9]"></span>
+            <div class="rib rib--red f-meta ol min-w-[320px] text-[24px]" style="--s: 0.42; height: 56px">
+              Salon&nbsp;<b id="hud-code" class="font-normal"></b>
+            </div>
+            <span id="hud-status" class="f-mono ol text-[16px]"></span>
+            <div
+              id="hud-freeze"
+              class="k k-carved f-meta ol mt-[10px] hidden px-[10px] text-[24px]"
+              style="--s: 0.42"
+            >
+              Niveau supérieur — pause…
+            </div>
+          </div>
+
+          <div class="absolute right-[40px] top-[46px] flex flex-col items-end gap-[12px]">
+            <div class="flex items-center gap-[12px]">
+              <img
+                src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_09.png"
+                alt="Ennemis abattus"
+                class="h-[44px] w-[44px]"
+              />
+              <span id="hud-kills" class="f-jer ol text-[46px]">0</span>
+            </div>
+            <!--
+              Étape 6a, §5 : l'or NON SÉCURISÉ de l'équipe, visible en PERMANENCE —
+              une mise en jeu qui se vit pendant tout le palier, pas un score de fin.
+            -->
+            <div class="flex items-center gap-[12px]">
+              <img
+                src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png"
+                alt="Or non sécurisé"
+                class="h-[44px] w-[44px]"
+              />
+              <span id="hud-gold" class="f-jer ol text-[46px]">0</span>
+            </div>
+            <span class="f-mono ol text-[16px]">OR NON SÉCURISÉ</span>
+            <!-- Panneau de debogage (§4.6) : une mort arrivee trop tard pour etre rejouee. -->
+            <span class="f-mono ol text-[14px]">
+              morts tardives&nbsp;<span id="hud-late-deaths">0</span>
             </span>
-            <div class="h-1.5 w-32 overflow-hidden rounded-sm border border-forge-600 bg-forge-900">
-              <div id="hud-synergy-fill" class="h-full w-0 bg-ember-400"></div>
+          </div>
+
+          <div class="absolute bottom-[40px] left-[40px] flex flex-col gap-[18px]">
+            <div id="hud-weapons" class="flex gap-[12px]"></div>
+            <div id="hud-passives" class="flex gap-[12px]">
+              <div id="hud-passive-list" class="flex gap-[12px]"></div>
+            </div>
+          </div>
+
+          <div
+            class="k k-carved f-mono ol absolute bottom-[44px] right-[40px] flex h-[56px] items-center gap-[10px] px-[6px] text-[18px]"
+            style="--s: 0.42"
+          >
+            <img
+              src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_10.png"
+              alt=""
+              class="h-[28px] w-[28px]"
+            />
+            ÉCHAP — Menu
+          </div>
+        </div>
+      </section>
+
+      <!--
+        05 · Montee de niveau : l'etalage du §7.2. Les cartes sont creees par
+        `ui/draft.ts` a chaque `DRAFT_OPEN` — leur nombre depend du salon.
+      -->
+      <section id="draft" data-settled="false" class="ui-screen veil inset-0 z-20 hidden">
+        <div class="ui-canvas">
+          <h2
+            id="draft-title"
+            class="rib rib--yellow f-meta ol absolute left-1/2 top-[26px] m-0 w-[820px] -translate-x-1/2 text-[52px]"
+            style="--s: 0.78; height: 130px"
+          >
+            Niveau supérieur
+          </h2>
+          <p
+            id="draft-status"
+            class="ol absolute left-1/2 top-[166px] m-0 -translate-x-1/2 whitespace-nowrap text-[26px] uppercase tracking-[4px]"
+          ></p>
+          <div
+            id="draft-cards"
+            class="absolute left-[40px] right-[40px] top-[290px] flex flex-wrap justify-center gap-[30px]"
+          ></div>
+        </div>
+      </section>
+
+      <!--
+        Vote d'extraction (§5 et §6 de l'étape 6a). ⚠️ **Ce n'est pas un modale** :
+        le vote ne gèle rien, le temps EST son enjeu. Un bandeau en bas, la
+        souris rendue au jeu partout ailleurs.
+      -->
+      <section id="portal-layer" class="ui-screen ui-screen--overlay z-20">
+        <div class="ui-canvas">
+          <div
+            id="portal"
+            data-settled="false"
+            class="k k-paperx pointer-events-none absolute bottom-[40px] left-1/2 hidden w-[1100px] -translate-x-1/2 flex-col items-center gap-[10px] text-center"
+            style="--s: 0.6"
+          >
+            <p id="portal-status" class="f-meta m-0 text-[30px] text-[var(--color-slate-title)]"></p>
+            <div id="portal-stakes" class="flex flex-col gap-[2px] text-[22px]"></div>
+            <div id="portal-choices" class="pointer-events-auto flex gap-[24px]"></div>
+            <div id="portal-voters" class="flex flex-wrap justify-center gap-[18px]"></div>
+          </div>
+        </div>
+      </section>
+
+      <!--
+        06 · Menu Echap. ⚠️ **Il ne met PAS le jeu en pause** : la simulation est
+        au serveur et les allies jouent encore. Il coupe seulement les entrees
+        de CE joueur tant qu'il est ouvert (voir `main.ts`).
+      -->
+      <section id="pause" class="ui-screen veil z-30 hidden">
+        <div class="ui-canvas">
+          <h2
+            class="rib f-meta ol absolute left-1/2 top-[48px] z-10 m-0 w-[440px] -translate-x-1/2 text-[44px]"
+            style="--s: 0.9; height: 104px"
+          >
+            Menu
+          </h2>
+          <div
+            class="k k-scroll absolute left-1/2 top-[136px] flex w-[1240px] -translate-x-1/2 gap-[44px] p-[22px]"
+            style="min-height: 560px"
+          >
+            <div class="flex w-[470px] flex-col gap-[14px]">
+              <button id="pause-resume" type="button" class="btn ol h-[141px] text-[36px]">
+                Reprendre
+              </button>
+              <button id="pause-quit" type="button" class="btn btn--red ol h-[129px] text-[30px]">
+                Quitter au lobby
+              </button>
+              <p class="m-0 text-[22px] leading-[1.4]">
+                Le monde ne s’arrête pas : vos alliés jouent encore.
+              </p>
+            </div>
+            <div class="flex flex-1 flex-col gap-[6px]">
+              <h3 class="f-meta m-0 text-[30px] font-normal text-[var(--color-ink-label)]">
+                Partie en cours
+              </h3>
+              <div class="stat-row">Temps survécu <b id="pause-time"></b></div>
+              <div class="stat-row">Ennemis abattus <b id="pause-kills"></b></div>
+              <div class="stat-row">Or non sécurisé <b id="pause-gold"></b></div>
+              <div class="stat-row">Niveau <b id="pause-level"></b></div>
+              <div id="pause-weapons" class="mt-[12px] flex gap-[12px]"></div>
             </div>
           </div>
         </div>
+      </section>
 
-        <!--
-          Tache 18 : la colonne des passifs, en haut a gauche.
-
-          ⚠️ **Le NOMBRE D'EXEMPLAIRES, pas seulement le nom.** Un passif pris
-          quatre fois n'est pas un passif pris une fois : tout s'empile et rien
-          ne monte de niveau (modele Risk of Rain, §3.3 de la spec de l'etape
-          4), donc c'est le compte qui dit ce qu'on a construit. Une liste de
-          noms seuls decrirait quatre builds differents de la meme facon.
-
-          Cachee tant que rien n'est drafte (`ui/hud.ts` bascule `hidden`) : un
-          cadre vide au demarrage n'apprend rien et mange le coin de l'ecran.
-          Meme registre visuel que le readout ci-dessus, et pour la meme raison
-          — les bordures 9-slices de `.ts-panel` font 32 px.
-        -->
-        <div
-          id="hud-passives"
-          class="mt-2 hidden flex-col gap-0.5 rounded border border-forge-600 bg-forge-800/90 px-3 py-2 text-sm text-ember-400"
-        >
-          <span class="text-[10px] tracking-[0.2em] text-forge-600">PASSIFS</span>
-          <div id="hud-passive-list" class="flex flex-col gap-0.5"></div>
-        </div>
-
-        <!--
-          Tache 24 : indication minimale du gel de montee de niveau — l'etalage
-          de cartes proprement dit arrive a l'etape 4, mais deux secondes ou
-          plus rien ne bouge, sans un mot d'explication a l'ecran, se lisent
-          comme un plantage. Meme registre visuel que le reste du petit
-          readout ci-dessus (pas de `.ts-ribbon`/`.ts-panel` : leurs bordures
-          9-slices sont bien trop lourdes pour ce coin d'ecran — voir le
-          commentaire plus haut). Cache par defaut, `main.ts` ne l'affiche que
-          pendant `GameClient.isFrozen`.
-        -->
-        <div
-          id="hud-freeze"
-          class="hidden rounded border border-ember-400 bg-forge-800/90 px-3 py-1 text-sm font-bold tracking-[0.1em] text-ember-400"
-        >
-          Niveau supérieur — pause…
-        </div>
-
-        <!-- Panneau de debogage : c'est ici, et seulement ici, qu'on apprend
-             qu'une mort est arrivee trop tard pour etre rejouee (§4.6). -->
-        <div class="pl-2 text-[10px] text-forge-600">
-          morts tardives&nbsp;<span id="hud-late-deaths">0</span>
-        </div>
-      </div>
-
-      <!--
-        Tache 10 : l'etalage de cartes (§4.1, §4.2 et §7.2 de la spec de
-        l'etape 4). Les cartes elles-memes sont creees par `ui/draft.ts` a
-        chaque `DRAFT_OPEN` — leur nombre depend du nombre de joueurs
-        (`joueurs + SPREAD_BONUS`), donc rien ici ne peut les prevoir.
-
-        Pas de `.ts-panel` sur le conteneur exterieur : c'est `#draft-sheet`
-        qui le porte, pour que le fond sombre puisse s'effacer a la revelation
-        (voir `[data-settled='true']` dans styles/main.css) sans emporter le
-        parchemin avec lui.
-      -->
-      <div
-        id="draft"
-        data-settled="false"
-        class="absolute inset-0 z-20 hidden items-center justify-center"
-      >
-        <div class="flex w-[min(60rem,94vw)] flex-col items-center">
-          <div class="ts-ribbon z-10 w-full -mb-6 text-xl tracking-[0.3em]">NIVEAU SUPÉRIEUR</div>
-          <div id="draft-sheet" class="ts-panel flex w-full flex-col items-center gap-4 pt-4">
-            <p id="draft-status" class="text-center text-sm font-bold tracking-[0.1em]"></p>
-            <div id="draft-cards" class="flex flex-wrap justify-center gap-3"></div>
+      <!-- 16 · Defaite / 17 · Extraction : meme ecran, deux tons (`ui/summary.ts`). -->
+      <section id="summary" class="ui-screen veil veil--defeat z-30 hidden">
+        <div class="ui-canvas">
+          <h2
+            id="summary-title"
+            class="rib rib--red f-meta ol absolute left-1/2 top-[56px] m-0 w-[900px] -translate-x-1/2 text-[62px]"
+            style="--s: 1; height: 150px"
+          >
+            Run terminée
+          </h2>
+          <div
+            class="k k-scroll absolute left-1/2 top-[230px] flex w-[1180px] -translate-x-1/2 items-center gap-[56px] p-[22px]"
+            style="min-height: 460px"
+          >
+            <div class="flex w-[260px] flex-col items-center gap-[12px] text-center">
+              <div class="k k-paperx slot h-[150px] w-[150px]" style="--s: 0.42">
+                <img id="summary-portrait" src="" alt="" class="h-[112px] w-[112px]" />
+              </div>
+              <span id="summary-name" class="f-meta ol text-[30px]"></span>
+            </div>
+            <div class="flex flex-1 flex-col">
+              <div class="stat-row">Temps survécu <b id="summary-time"></b></div>
+              <div class="stat-row">Niveau atteint <b id="summary-level"></b></div>
+              <div class="stat-row">Ennemis abattus <b id="summary-kills"></b></div>
+              <div class="stat-row">
+                Or sécurisé
+                <span class="flex items-center gap-[10px]">
+                  <img
+                    src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png"
+                    alt=""
+                    class="h-[40px] w-[40px]"
+                  />
+                  <b id="summary-gold" class="text-[50px]"></b>
+                </span>
+              </div>
+            </div>
           </div>
+          <button
+            id="summary-restart"
+            type="button"
+            class="bbtn ol absolute left-1/2 top-[760px] w-[400px] -translate-x-1/2 text-[34px]"
+          >
+            Menu principal
+          </button>
         </div>
-      </div>
-
-      <!--
-        Tâche 10 : l'écran du vote d'extraction (§5 et §6 de la spec de
-        l'étape 6a).
-
-        ⚠️ **CE N'EST PAS UN MODALE, contrairement à `#draft` juste au-dessus.**
-        Le draft **gèle** le monde, donc il peut prendre l'écran entier ; le
-        vote ne gèle rien — *« le draft gèle parce qu'un choix de carte n'a pas
-        d'enjeu temporel ; le vote ne gèle pas parce que le temps EST son
-        enjeu »* (§6). Un voile plein écran cacherait la horde qui avance
-        pendant qu'on négocie, c'est-à-dire exactement la pression que la
-        fenêtre existe pour produire. D'où un bandeau en bas, `pointer-events`
-        rendus aux seuls boutons.
-
-        Le contenu (les deux faces, les deux montants, les votants) est créé par
-        `ui/portal.ts` : le nombre de votants dépend du salon, et les montants
-        changent à chaque image.
-      -->
-      <div
-        id="portal"
-        data-settled="false"
-        class="pointer-events-none absolute bottom-6 left-1/2 z-20 hidden w-[min(44rem,94vw)] -translate-x-1/2 flex-col items-center gap-2 rounded border border-ember-400 bg-forge-900/90 px-4 py-3 text-center"
-      >
-        <p id="portal-status" class="text-sm font-bold tracking-[0.1em] text-ember-400"></p>
-        <div id="portal-stakes" class="flex flex-col gap-0.5 text-xs text-parchment"></div>
-        <div id="portal-choices" class="pointer-events-auto flex gap-3"></div>
-        <div id="portal-voters" class="flex flex-wrap justify-center gap-2"></div>
-      </div>
-
-      <div
-        id="summary"
-        class="absolute inset-0 z-20 hidden items-center justify-center bg-forge-900/95"
-      >
-        <div class="flex w-[min(28rem,90vw)] flex-col items-center">
-          <div class="ts-ribbon z-10 w-full -mb-6 text-xl tracking-[0.3em]">RUN TERMINEE</div>
-          <div class="ts-panel flex w-full flex-col items-center gap-3 pt-6 text-center">
-            <p>Temps survécu&nbsp;: <b id="summary-time"></b></p>
-            <p>Niveau atteint&nbsp;: <b id="summary-level"></b></p>
-            <p>Ennemis tués&nbsp;: <b id="summary-kills"></b></p>
-            <button id="summary-restart" type="button" class="ts-button mt-2">
-              Retour au lobby
-            </button>
-          </div>
-        </div>
-      </div>
+      </section>
     </div>
 
     <script type="module" src="/src/main.ts"></script>

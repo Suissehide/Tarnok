@@ -29,6 +29,9 @@ export const MSG = {
   VOTES: 18,
   PORTAL_RESULT: 19,
   HELLO: 20,
+  LOBBY: 21,
+  PICK: 22,
+  START: 23,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -365,7 +368,10 @@ export type Message =
   | HelloMessage
   | VoteMessage
   | VotesMessage
-  | PortalResultMessage;
+  | PortalResultMessage
+  | LobbyMessage
+  | PickMessage
+  | StartMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -1488,6 +1494,12 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeVotes(buf);
     case MSG.PORTAL_RESULT:
       return decodePortalResult(buf);
+    case MSG.LOBBY:
+      return decodeLobby(buf);
+    case MSG.PICK:
+      return { type: MSG.PICK, weaponId: viewOf(buf, PICK_BYTES).getUint8(1) };
+    case MSG.START:
+      return { type: MSG.START };
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }
@@ -1784,4 +1796,93 @@ function decodeDraftResult(buf: ArrayBuffer): DraftResultMessage {
     deadlineTick: v.getUint32(1, true),
     outcomes,
   };
+}
+
+/**
+ * Salle d'attente : avant `START`, le salon n'existe que comme liste de joueurs
+ * et de leur arme de depart choisie. Aucun tick ne tourne, aucun `WELCOME`
+ * n'est envoye — c'est `START` qui ouvre la run.
+ */
+
+/** Pas d'arme de depart choisie : la run commence avec la seule arme neutre. */
+export const NO_WEAPON = 255;
+
+/** Un joueur de la salle d'attente. */
+export interface LobbyEntry {
+  playerId: number;
+  /** Arme de depart choisie, ou `NO_WEAPON`. */
+  weaponId: number;
+}
+
+/**
+ * S -> C : l'etat de la salle d'attente, rediffuse a chaque changement.
+ *
+ * L'hote est le PREMIER de `players` (le plus petit identifiant) : seul lui
+ * peut lancer. Pas d'octet pour le dire, l'ordre suffit.
+ */
+export interface LobbyMessage {
+  type: typeof MSG.LOBBY;
+  /** Le slot de CE destinataire. */
+  you: number;
+  players: LobbyEntry[];
+}
+
+/** C -> S : je choisis cette arme de depart (`NO_WEAPON` pour aucune). */
+export interface PickMessage {
+  type: typeof MSG.PICK;
+  weaponId: number;
+}
+
+/** C -> S : l'hote lance la run. */
+export interface StartMessage {
+  type: typeof MSG.START;
+}
+
+/** `type u8 · you u8 · count u8`. */
+export const LOBBY_HEADER_BYTES = 3;
+/** Une entree : `playerId u8 · weaponId u8`. */
+export const LOBBY_ENTRY_BYTES = 2;
+/** `type u8 · weaponId u8`. */
+export const PICK_BYTES = 2;
+
+export function encodeLobby(you: number, players: readonly LobbyEntry[]): ArrayBuffer {
+  const buf = new ArrayBuffer(LOBBY_HEADER_BYTES + players.length * LOBBY_ENTRY_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.LOBBY);
+  v.setUint8(1, you);
+  v.setUint8(2, players.length);
+  let o = LOBBY_HEADER_BYTES;
+  for (const p of players) {
+    v.setUint8(o, p.playerId);
+    v.setUint8(o + 1, p.weaponId);
+    o += LOBBY_ENTRY_BYTES;
+  }
+  return buf;
+}
+
+function decodeLobby(buf: ArrayBuffer): LobbyMessage {
+  const v = viewOf(buf, LOBBY_HEADER_BYTES);
+  const count = v.getUint8(2);
+  viewOf(buf, LOBBY_HEADER_BYTES + count * LOBBY_ENTRY_BYTES);
+  const players: LobbyEntry[] = [];
+  let o = LOBBY_HEADER_BYTES;
+  for (let i = 0; i < count; i++) {
+    players.push({ playerId: v.getUint8(o), weaponId: v.getUint8(o + 1) });
+    o += LOBBY_ENTRY_BYTES;
+  }
+  return { type: MSG.LOBBY, you: v.getUint8(1), players };
+}
+
+export function encodePick(weaponId: number): ArrayBuffer {
+  const buf = new ArrayBuffer(PICK_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.PICK);
+  v.setUint8(1, weaponId);
+  return buf;
+}
+
+export function encodeStart(): ArrayBuffer {
+  const buf = new ArrayBuffer(1);
+  new DataView(buf).setUint8(0, MSG.START);
+  return buf;
 }

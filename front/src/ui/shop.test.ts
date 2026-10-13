@@ -1,6 +1,5 @@
 // @vitest-environment jsdom
 import { priceOf, SHOP_ITEMS } from '@shared/shop';
-import { BASE_WEAPON_ID, WEAPONS } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 // `?raw` de Vite : le vrai `index.html` entre dans le bundle de test tel
@@ -8,18 +7,20 @@ import { beforeEach, describe, expect, it } from 'vitest';
 // verifie le CABLAGE (l'`id` que `renderShop` ecrit existe reellement dans le
 // HTML) et pas seulement la logique d'affichage.
 import indexHtml from '../../index.html?raw';
-import { achetable, carteGrisee, type EtatBoutique, messageAchat, renderShop } from './shop';
+import { achetable, type EtatBoutique, messageAchat, renderShop } from './shop';
 
 /** Les tests qui n'observent pas les clics n'ont rien a faire dans onBuy. */
 const IGNORER_ACHAT = async (): Promise<void> => undefined;
 
 describe('etape 7b tache 8 : la boutique', () => {
   it('un article deja au palier maximum n est plus achetable', () => {
-    const article = SHOP_ITEMS.find((i) => i.levels === 1);
+    const article = SHOP_ITEMS[0];
     if (!article) {
-      throw new Error('aucun article a un seul palier');
+      throw new Error('catalogue vide');
     }
-    expect(achetable(article, { gold: 10_000n, purchases: { [article.id]: 1 } })).toBe(false);
+    expect(achetable(article, { gold: 10_000n, purchases: { [article.id]: article.levels } })).toBe(
+      false,
+    );
   });
 
   it('un article trop cher n est pas achetable, mais reste visible', () => {
@@ -36,27 +37,6 @@ describe('etape 7b tache 8 : la boutique', () => {
       throw new Error('catalogue vide');
     }
     expect(achetable(article, { gold: BigInt(priceOf(article, 1)), purchases: {} })).toBe(true);
-  });
-
-  /**
-   * ⚠️ **Le grisage du draft ne coute AUCUN octet** : le client connait son
-   * propre ensemble, lu en HTTP au chargement. Ce test garde ce predicat.
-   */
-  it('une arme verrouillee non achetee est grisee, achetee elle ne l est plus', () => {
-    const arme = SHOP_ITEMS.find((i) => i.kind === 'weapon');
-    if (!arme?.weaponId) {
-      throw new Error('aucun article d arme');
-    }
-    expect(carteGrisee(arme.weaponId, {})).toBe(true);
-    expect(carteGrisee(arme.weaponId, { [arme.id]: 1 })).toBe(false);
-  });
-
-  it('une arme libre n est jamais grisee', () => {
-    const libre = WEAPONS.find((w) => !w.locked && w.id !== BASE_WEAPON_ID);
-    if (!libre) {
-      throw new Error('aucune arme libre');
-    }
-    expect(carteGrisee(libre.id, {})).toBe(false);
   });
 });
 
@@ -142,11 +122,11 @@ describe('renderShop — le cablage vers index.html, et le grisage a l ecran', (
   });
 
   it('un article deja au palier maximum reste VISIBLE, mais son bouton est desactive', () => {
-    const article = SHOP_ITEMS.find((i) => i.levels === 1);
+    const article = SHOP_ITEMS[0];
     if (!article) {
-      throw new Error('aucun article a un seul palier');
+      throw new Error('catalogue vide');
     }
-    renderShop(root, { gold: 10_000n, purchases: { [article.id]: 1 } }, IGNORER_ACHAT);
+    renderShop(root, { gold: 10_000n, purchases: { [article.id]: article.levels } }, IGNORER_ACHAT);
 
     const ligne = root.querySelector(`[data-item-id="${article.id}"]`);
     const bouton = root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`);
@@ -166,6 +146,10 @@ describe('renderShop — le cablage vers index.html, et le grisage a l ecran', (
     });
 
     const bouton = root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`);
+    // Un achat est definitif : le premier clic arme, le second achete.
+    bouton?.click();
+    expect(appeles).toEqual([]);
+    expect(bouton?.textContent).toBe('Confirmer ?');
     bouton?.click();
 
     expect(appeles).toEqual([article.id]);
@@ -197,9 +181,11 @@ describe('renderShop — le cablage vers index.html, et le grisage a l ecran', (
     renderShop(root, { gold: BigInt(priceOf(article, 1)), purchases: {} }, onBuy);
 
     const bouton = root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`);
+    bouton?.click(); // arme la confirmation
     bouton?.click();
     // Avant que la premiere requete ne se resolve : le bouton doit deja etre
-    // desactive NATIVEMENT, donc ce second clic ne doit pas atteindre onBuy.
+    // desactive NATIVEMENT, donc ces clics ne doivent pas atteindre onBuy.
+    bouton?.click();
     bouton?.click();
 
     expect(appeles).toEqual([article.id]);
@@ -224,6 +210,7 @@ describe('renderShop — le cablage vers index.html, et le grisage a l ecran', (
     renderShop(root, { gold: BigInt(priceOf(article, 1)), purchases: {} }, onBuy);
 
     const bouton = root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`);
+    bouton?.click(); // arme la confirmation
     bouton?.click();
     expect(bouton?.disabled).toBe(true);
 

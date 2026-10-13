@@ -4,7 +4,6 @@ import { TICK_HZ } from '@shared/constants';
 import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
-import { SHOP_ITEMS } from '@shared/shop';
 import { WEAPONS, weaponOf } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -74,7 +73,7 @@ interface Harness {
   screen: DraftScreen;
 }
 
-function harness(purchases: Record<string, number> = {}): Harness {
+function harness(): Harness {
   document.body.replaceChildren();
   const root = document.createElement('div');
   root.id = 'draft';
@@ -89,7 +88,7 @@ function harness(purchases: Record<string, number> = {}): Harness {
     status,
     list,
     client,
-    screen: new DraftScreen(root, status, list, client, purchases),
+    screen: new DraftScreen(root, status, list, client),
   };
 }
 
@@ -346,10 +345,10 @@ describe("DraftScreen — l'etalage", () => {
     expect(h.root.classList.contains('hidden')).toBe(false);
     expect(cards(h)).toHaveLength(4);
     expect(cards(h).map((c) => c.querySelector('.draft-card__name')?.textContent)).toEqual([
-      'eventail',
+      'Éventail',
       'cadence',
-      'lance-flammes',
-      'arc-lourd',
+      'Lance-flammes',
+      'Arc lourd',
     ]);
     // La nature n'est pas decorative : elle dit si `refId` indexe les armes ou
     // les passifs, et lire la mauvaise table donne un nom plausible et faux.
@@ -622,7 +621,7 @@ describe('DraftScreen — la revelation (§4.2)', () => {
 
     expect(statesOf(h)[0]).toBe('lost');
     expect(statesOf(h)[2]).toBe('won');
-    expect(h.status.textContent).toBe('Vous obtenez : lance-flammes');
+    expect(h.status.textContent).toBe('Vous obtenez : Lance-flammes');
   });
 
   it('dit qu il n y a rien quand la resolution ne m attribue aucune carte', () => {
@@ -725,153 +724,5 @@ describe('le jeton du tour precedent ne survit pas a l etalage suivant', () => {
     cards(h)[1]?.click();
     expect(h.client.sent).toEqual([1]);
     expect(h.client.sent).not.toContain(NO_TOKEN);
-  });
-});
-
-/**
- * Ronde de correction 1/5, tache 8 : le grisage (§3.5 de la spec, « Union +
- * grisage ») cable jusqu'a l'etalage du draft, pas seulement teste en
- * isolation dans `shop.test.ts`.
- *
- * ⚠️ **L'etalage tire sur l'union des pools de la salle** : une arme
- * debloquee par un COEQUIPIER peut apparaitre dans l'etalage de ce joueur
- * sans qu'il l'ait lui-meme. Sans grisage, un clic sur cette carte n'envoie
- * rien d'utile — le serveur la refuse en silence (`Draft#eligible`) — et une
- * action qui ne fait rien se lit comme un bug (§8.1).
- *
- * Les identifiants sont DERIVES du catalogue (`WEAPONS`, `SHOP_ITEMS`),
- * jamais codes en dur — doctrine du depot.
- */
-describe('ronde 1 : le grisage des armes verrouillees, cable jusqu a l etalage', () => {
-  const armeVerrouillee = WEAPONS.find((w) => w.locked);
-  if (!armeVerrouillee) {
-    throw new Error('aucune arme verrouillee dans le catalogue');
-  }
-  // Ids extraits en `const` juste apres la garde : TS ne propage pas le
-  // retrecissement `if (!x) throw` dans les fonctions imbriquees plus bas
-  // (`spreadAvecArmeVerrouillee`, les `it(...)`), seulement dans le scope
-  // direct.
-  const armeVerrouilleeId = armeVerrouillee.id;
-
-  const articleDeCetteArme = SHOP_ITEMS.find(
-    (i) => i.kind === 'weapon' && i.weaponId === armeVerrouilleeId,
-  );
-  if (!articleDeCetteArme) {
-    throw new Error('aucun article de boutique ne debloque cette arme');
-  }
-  const articleDeCetteArmeId = articleDeCetteArme.id;
-
-  const armeLibre = WEAPONS.find((w) => !w.locked && w.id !== armeVerrouilleeId);
-  if (!armeLibre) {
-    throw new Error('aucune arme libre dans le catalogue');
-  }
-  const armeLibreId = armeLibre.id;
-
-  /** Etalage a 2 cartes : l'arme verrouillee en 0, une passive en 1. */
-  function spreadAvecArmeVerrouillee(): Card[] {
-    return [
-      { nature: CARD.WEAPON, refId: armeVerrouilleeId },
-      { nature: CARD.PASSIVE, refId: 0 },
-    ];
-  }
-
-  it('une arme verrouillee NON debloquee par ce joueur est grisee et non cliquable', () => {
-    const h = harness({});
-    h.client.draftCards = spreadAvecArmeVerrouillee();
-    h.screen.update();
-
-    const carte = cards(h)[0];
-    expect(carte?.dataset.grisee).toBe('true');
-    expect(carte?.disabled).toBe(true);
-
-    carte?.click();
-    expect(h.client.sent).toEqual([]);
-  });
-
-  it('la meme arme, DEBLOQUEE par ce joueur (achat local), n est plus grisee', () => {
-    const h = harness({ [articleDeCetteArmeId]: 1 });
-    h.client.draftCards = spreadAvecArmeVerrouillee();
-    h.screen.update();
-
-    const carte = cards(h)[0];
-    expect(carte?.dataset.grisee).toBe('false');
-    expect(carte?.disabled).toBe(false);
-
-    carte?.click();
-    expect(h.client.sent).toEqual([0]);
-  });
-
-  it('une carte PASSIVE n est jamais grisee, meme sans aucun achat', () => {
-    const h = harness({});
-    h.client.draftCards = spreadAvecArmeVerrouillee();
-    h.screen.update();
-
-    const passive = cards(h)[1];
-    expect(passive?.dataset.grisee).toBe('false');
-    expect(passive?.disabled).toBe(false);
-  });
-
-  it('une arme NON verrouillee n est jamais grisee, meme sans aucun achat', () => {
-    const h = harness({});
-    h.client.draftCards = [{ nature: CARD.WEAPON, refId: armeLibreId }];
-    h.screen.update();
-
-    const carte = cards(h)[0];
-    expect(carte?.dataset.grisee).toBe('false');
-    expect(carte?.disabled).toBe(false);
-  });
-
-  /**
-   * Le cablage, pas seulement la logique : le vrai `index.html` monte sous
-   * jsdom (meme motif que `hud.test.ts`), et les achats du joueur traversent
-   * bien le constructeur jusqu'a l'attribut DOM reellement rendu — pas une
-   * logique parfaite branchee sur des elements imaginaires.
-   */
-  /**
-   * ⚠️ **Les DEUX cas sur le meme montage**, pas seulement celui qui grise.
-   * Mesure (ronde 1) : une premiere version de ce test ne passait QUE des
-   * achats vides, et une mutation qui ignore entierement le parametre
-   * `purchases` du constructeur (`this.#purchases = {}` en dur) la laissait
-   * VERTE — elle ne prouvait que le cablage DOM, pas que les achats
-   * l'atteignent. Le second montage, avec l'achat qui debloque l'arme,
-   * ferme ce trou.
-   */
-  it('cable sur le vrai index.html : les achats atteignent l etalage reellement rendu', () => {
-    document.body.innerHTML = indexHtml;
-    const root1 = document.getElementById('draft');
-    const status1 = document.getElementById('draft-status');
-    const list1 = document.getElementById('draft-cards');
-    if (!root1 || !status1 || !list1) {
-      throw new Error('#draft, #draft-status ou #draft-cards absent de index.html');
-    }
-    const clientNonAchete = new FakeClient();
-    const screenNonAchete = new DraftScreen(root1, status1, list1, clientNonAchete, {});
-    clientNonAchete.draftCards = spreadAvecArmeVerrouillee();
-    screenNonAchete.update();
-
-    const carteGrisee_ = list1.querySelector<HTMLButtonElement>('button[data-index="0"]');
-    expect(carteGrisee_?.dataset.grisee).toBe('true');
-    expect(carteGrisee_?.disabled).toBe(true);
-
-    // Meme HTML, remonte a neuf : un second `DraftScreen` dont les achats
-    // debloquent l'arme. Si le constructeur ignorait son parametre
-    // `purchases`, cette carte resterait grisee comme la precedente.
-    document.body.innerHTML = indexHtml;
-    const root2 = document.getElementById('draft');
-    const status2 = document.getElementById('draft-status');
-    const list2 = document.getElementById('draft-cards');
-    if (!root2 || !status2 || !list2) {
-      throw new Error('#draft, #draft-status ou #draft-cards absent de index.html');
-    }
-    const clientAchete = new FakeClient();
-    const screenAchete = new DraftScreen(root2, status2, list2, clientAchete, {
-      [articleDeCetteArmeId]: 1,
-    });
-    clientAchete.draftCards = spreadAvecArmeVerrouillee();
-    screenAchete.update();
-
-    const carteDebloquee = list2.querySelector<HTMLButtonElement>('button[data-index="0"]');
-    expect(carteDebloquee?.dataset.grisee).toBe('false');
-    expect(carteDebloquee?.disabled).toBe(false);
   });
 });

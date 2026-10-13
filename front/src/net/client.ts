@@ -11,6 +11,7 @@ import {
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
+  PLAYER_MAX_HP,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
   ROLLBACK_DEPTH_TICKS,
@@ -30,8 +31,12 @@ import {
   encodeDraftToken,
   encodeHello,
   encodeInput,
+  encodePick,
+  encodeStart,
   encodeVote,
+  type LobbyMessage,
   MSG,
+  NO_WEAPON,
   OUTCOME,
   type PlayerSnapshot,
   quantizeAxis,
@@ -961,6 +966,8 @@ export class GameClient {
    * debug (§4.6 de l'orientation demande un HUD, pas des logs) et pour les tests.
    */
   #lateDeaths = 0;
+  /** Ennemis abattus depuis le WELCOME, cumules depuis les lots `DEATHS`. */
+  #kills = 0;
 
   /**
    * Nombre cumule de zones annoncees trop tard pour l'anneau
@@ -1377,6 +1384,21 @@ export class GameClient {
    * profond pour les rejouer (`ROLLBACK_DEPTH_TICKS`). Lecture seule : voir
    * `#lateDeaths`.
    */
+  /** Ennemis abattus depuis le debut de la run (ou du WELCOME pour un retardataire). */
+  get kills(): number {
+    return this.#kills;
+  }
+
+  /**
+   * PV max du joueur local : meme somme que `Room` (base, cartes de vitalite,
+   * achats du compte), lue sur le miroir d'inventaire.
+   */
+  get localMaxHp(): number {
+    const id = this.#localId;
+    const cartes = id === null ? 0 : this.loadoutOf(id).bonus('maxHp');
+    return PLAYER_MAX_HP + cartes + this.accountBonuses.maxHp;
+  }
+
   get lateDeaths(): number {
     return this.#lateDeaths;
   }
@@ -1426,6 +1448,21 @@ export class GameClient {
    */
   get boss(): BossVitals | null {
     return this.#boss;
+  }
+
+  /** Dernier etat de la salle d'attente, `null` avant le premier `LOBBY`. */
+  #lobby: LobbyMessage | null = null;
+  /** Appele a chaque `LOBBY` recu, jusqu'au lancement. */
+  onLobby: (lobby: LobbyMessage) => void = () => undefined;
+
+  /** Salle d'attente : choisit l'arme de depart (`NO_WEAPON` pour aucune). */
+  pickWeapon(weaponId: number): void {
+    this.#ws?.send(encodePick(weaponId));
+  }
+
+  /** Salle d'attente : lance la run (le serveur ignore si on n'est pas l'hote). */
+  startRun(): void {
+    this.#ws?.send(encodeStart());
   }
 
   connect(): void {
@@ -1623,7 +1660,19 @@ export class GameClient {
       // Meme `mask`, memes `probe.cols`/`probe.rows`/`probe.cellSize` que ceux
       // qui viennent d'alimenter `#fields` ci-dessus : c'est la condition du
       // §5.1 appliquee au rendu, pas seulement a la simulation (tache 28).
+      // Les armes de depart choisies en salle d'attente : `Room.join` les a
+      // posees dans chaque `Loadout` au meme instant que ce WELCOME.
+      for (const p of this.#lobby?.players ?? []) {
+        if (p.weaponId !== NO_WEAPON) {
+          this.loadoutOf(p.playerId).addWeapon(p.weaponId);
+        }
+      }
       this.onMapReady({ mask, cols: probe.cols, rows: probe.rows, cellSize: probe.cellSize });
+      return;
+    }
+    if (msg.type === MSG.LOBBY) {
+      this.#lobby = msg;
+      this.onLobby(msg);
       return;
     }
     if (msg.type === MSG.WAVE_ORDER) {
@@ -2458,6 +2507,7 @@ export class GameClient {
    * precisement la ou le rejeu cherche a converger.
    */
   #applyDeaths(deathTick: number, ids: readonly number[], currentTick: number): void {
+    this.#kills += ids.length;
     if (!this.#hordeHistory.restore(deathTick, this.horde)) {
       // Trop vieux pour l'anneau (`ROLLBACK_DEPTH_TICKS`) : applique au
       // present, et SIGNALE — une degradation silencieuse est un piege (§4.6

@@ -1,447 +1,838 @@
 @import "tailwindcss";
 
 /*
- * §6.6 : l'environnement de jeu doit rester sombre et desature. C'est une
- * contrainte technique — elle rendra six couleurs elementaires saturees
- * distinguables sur des sprites minuscules a l'etape 5 — et elle porte sur le
- * terrain de jeu, pas sur les menus. Le lobby peut donc etre chaud et lisible,
- * a condition que la scene, elle, reste noire (voir render/stage.ts).
+ * Le kit d'interface de la maquette (`design_handoff_tarnok_ui`, ecran 18).
  *
- * L'habillage vient du kit UI de Tiny Swords, servi sous `/tinyswords/` : en
- * dev par un middleware Vite, en production par un proxy nginx vers MinIO. Rien
- * ici ne connait l'URL du stockage.
+ * Trois regles le portent, toutes du README de la maquette :
+ * - **un canevas fixe de 1920 x 1080**, mis a l'echelle uniformement
+ *   (`.ui-canvas`, `--ui-scale` pose par `main.ts`) plutot que reflowe ;
+ * - **tout le relief vient des sprites** : aucun `border-radius`, aucune
+ *   `box-shadow`. Les cadres sont des `border-image` sur les planches
+ *   recollees par `ui/skin.ts` (`--k-<cle>`) ;
+ * - **encre blanche + contour sombre** sur sprite, bruns sans contour sur
+ *   parchemin, jamais de texte semi-transparent.
+ *
+ * §6.6 de l'orientation : seul le terrain de jeu doit rester sombre et
+ * desature ; les menus peuvent etre chauds et lisibles.
  */
+
 @theme {
-  --color-forge-900: #14110f;
-  --color-forge-800: #1d1916;
-  --color-forge-700: #2a2420;
-  --color-forge-600: #4a3f36;
-  --color-ember-400: #e0a45e;
-  --color-parchment: #f2e4cd;
-  /* Le brun d'encre du pack : c'est lui qui se lit sur le parchemin. */
-  --color-ink: #4a3520;
+  --color-ink: #4a3728;
+  --color-ink-label: #5b4632;
+  --color-ink-soft: #6b543c;
+  --color-rule: #c3b190;
+  --color-slate-text: #cfc7b4;
+  --color-slate-title: #d8c98a;
+  --color-slate-soft: #9aa1ab;
+  --color-outline: #221111;
+  --color-off-text: #e8dcc0;
+  --font-meta: "Metamorphous", serif;
+  --font-jer: "Jersey 15", sans-serif;
+  --font-ale: "Alegreya Sans", sans-serif;
+  --font-mono: "Space Mono", monospace;
 }
 
-html,
-body {
-  height: 100%;
-  margin: 0;
-  background: var(--color-forge-900);
-  color: var(--color-parchment);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  cursor:
-    url("/tinyswords/UI/Pointers/01.png") 4 2,
-    auto;
-}
-
-/* Le pack est du pixel art : tout lissage le transforme en bouillie. */
-img,
-.ts-panel,
-.ts-button,
-.ts-ribbon {
-  image-rendering: pixelated;
-}
-
-/*
- * Les planches 9-slices font 192x192, soit une grille de trois tuiles de 64.
- * `border-image-slice: 64` decoupe donc pile sur les tuiles ; la largeur de
- * bordure decide a quelle taille les coins sont rendus. On reste sur des
- * fractions simples de 64 pour ne pas broyer les pixels des coins.
- */
-.ts-panel {
-  border-style: solid;
-  border-width: 32px;
-  border-image-source: url("/tinyswords/UI/Banners/Carved_9Slides.png");
-  border-image-slice: 64 fill;
-  border-image-repeat: repeat;
-  /* Le parchemin est clair : le texte qui s'y pose doit etre sombre. */
-  color: var(--color-ink);
-}
-
-.ts-button {
-  border-style: solid;
-  border-width: 28px;
-  border-image-source: url("/tinyswords/UI/Buttons/Button_Blue_9Slides.png");
-  border-image-slice: 64 fill;
-  border-image-repeat: repeat;
-  min-height: 72px;
-  color: var(--color-parchment);
-  text-shadow: 0 2px 0 rgb(0 0 0 / 0.45);
-  letter-spacing: 0.08em;
-  transition: transform 60ms steps(2);
-}
-
-.ts-button:hover {
-  border-image-source: url("/tinyswords/UI/Buttons/Button_Hover_9Slides.png");
-}
-
-.ts-button:active {
-  border-image-source: url("/tinyswords/UI/Buttons/Button_Blue_9Slides_Pressed.png");
-  transform: translateY(2px);
-}
-
-.ts-button:disabled {
-  border-image-source: url("/tinyswords/UI/Buttons/Button_Disable_9Slides.png");
-  color: var(--color-forge-600);
-  text-shadow: none;
-  cursor: not-allowed;
-}
-
-.ts-button--red {
-  border-image-source: url("/tinyswords/UI/Buttons/Button_Red_9Slides.png");
-}
-
-.ts-button--red:hover {
-  border-image-source: url("/tinyswords/UI/Buttons/Button_Hover_9Slides.png");
-}
-
-.ts-button--red:active {
-  border-image-source: url("/tinyswords/UI/Buttons/Button_Red_9Slides_Pressed.png");
-}
-
-/*
- * Ruban 3-slices : 192x64. Les deux pans bruns font 64 px de large chacun ;
- * les rendre a une autre largeur que la hauteur du ruban les deforme. On garde
- * donc `border-width` horizontal egal a la hauteur.
- */
-.ts-ribbon {
-  --ribbon-height: 72px;
-  border-style: solid;
-  border-width: 0 var(--ribbon-height);
-  border-image-source: url("/tinyswords/UI/Ribbons/Ribbon_Yellow_3Slides.png");
-  border-image-slice: 0 64 fill;
-  border-image-repeat: repeat;
-  height: var(--ribbon-height);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-ink);
-  text-shadow: none;
-}
-
-/*
- * Le champ de saisie n'emprunte rien au pack : aucune planche n'a l'air d'un
- * champ, et en detourner une donnait un bloc de parchemin ou l'on ne voyait
- * plus ce qu'on tapait. Un creux sombre se lit, et le code saisi ressort.
- */
-.ts-input {
-  background: #241c14;
-  border: 3px solid #6b5540;
-  box-shadow: inset 0 3px 0 rgb(0 0 0 / 0.45);
-  color: var(--color-ember-400);
-  text-align: center;
-  letter-spacing: 0.4em;
-  text-transform: uppercase;
-  outline: none;
-  padding: 0 0.5rem;
-}
-
-.ts-input:focus {
-  border-color: var(--color-ember-400);
-}
-
-.ts-input::placeholder {
-  color: #6b5540;
-  letter-spacing: 0.3em;
-}
-
-/*
- * Une ligne de la colonne des passifs (tache 18) : « nom ×N ».
- *
- * Tabulaire pour les chiffres, parce que le compte est ce qu'on relit d'une
- * image a l'autre : des « ×1 » et « ×11 » de largeurs differentes feraient
- * danser la colonne a chaque carte prise.
- */
-.hud-passive {
-  font-variant-numeric: tabular-nums;
-  white-space: nowrap;
-}
-
-/*
- * L'ecran de draft (tache 10 — §4.1, §4.2 et §7.2 de la spec de l'etape 4).
- *
- * Trois choses seulement doivent se LIRE ici, et aucune n'est du decor : qui
- * vise quoi (les jetons), ce qui arrive a MA carte (l'illumination ou la
- * consumation), et ce que la carte VAUT — son element ou son bonus, depuis la
- * tache 19.
- */
-#draft {
-  background: rgb(20 17 15 / 0.92);
-  transition: background 250ms linear;
-}
-
-/*
- * A la revelation, le fond s'efface : le gel se termine au tick de fermeture
- * et le monde repart aussitot sur la rampe `LEVEL_RESUME_TICKS`. Garder un
- * voile opaque par-dessus un monde qui redemarre cacherait au joueur
- * exactement ce vers quoi il doit revenir.
- */
-#draft[data-settled="true"] {
-  background: rgb(20 17 15 / 0);
-}
-
-#draft[data-settled="true"] #draft-sheet {
-  opacity: 0.92;
-}
-
-.draft-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.25rem;
-  width: 9rem;
-  min-height: 7rem;
-  padding: 0.75rem 0.5rem 2rem;
-  background: #241c14;
-  border: 3px solid #6b5540;
-  color: var(--color-ember-400);
-  text-align: center;
-  transition:
-    border-color 80ms linear,
-    transform 80ms linear;
-}
-
-.draft-card:not(:disabled):hover {
-  border-color: var(--color-ember-400);
-  transform: translateY(-2px);
-}
-
-.draft-card:disabled {
-  cursor: not-allowed;
-}
-
-/*
- * Ronde de correction 1/5, tache 8 : une arme verrouillee non debloquee par
- * CE joueur (§3.5 de la spec, « Union + grisage »). `disabled` seul reste
- * invisible sur ce fond sombre — meme motif que `.shop-item__buy:disabled`.
- */
-.draft-card[data-grisee="true"] {
-  opacity: 0.4;
-}
-
-.draft-card__nature {
-  font-size: 0.7rem;
-  letter-spacing: 0.2em;
-  color: #8a7355;
-  text-transform: uppercase;
-}
-
-.draft-card__name {
-  font-size: 0.95rem;
-  font-weight: bold;
-  overflow-wrap: anywhere;
-}
-
-/*
- * Ce que la carte VAUT (tache 19) : l'element d'une arme, le bonus par carte
- * d'un passif.
- *
- * Plus petit que le nom, et sous lui : c'est une precision, pas l'identite de
- * la carte. La couleur des armes est posee en ligne par `ui/draft.ts`, lue
- * dans `ELEMENTS` — la meme teinte que l'anneau de marque et la zone au sol.
- */
-.draft-card__detail {
-  font-size: 0.75rem;
-  letter-spacing: 0.05em;
-  overflow-wrap: anywhere;
-}
-
-/* Les jetons se posent en bas de la carte : c'est la que le regard les cherche. */
-.draft-card__tokens {
-  position: absolute;
-  bottom: 0.4rem;
-  left: 0;
-  right: 0;
-  display: flex;
-  justify-content: center;
-  gap: 0.25rem;
-  min-height: 1.1rem;
-}
-
-.draft-token {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.1rem;
-  height: 1.1rem;
-  border-radius: 50%;
-  border: 2px solid #241c14;
-  color: #14110f;
-  font-size: 0.65rem;
-  font-style: normal;
-  font-weight: bold;
-}
-
-/* Mon propre jeton se distingue de ceux des autres, sinon on cherche le sien. */
-.draft-token[data-local="true"] {
-  border-color: var(--color-parchment);
-}
-
-/* Une carte qu'un autre a prise sans que je la vise : eteinte, pas brulee. */
-.draft-card[data-state="taken"] {
-  opacity: 0.35;
-}
-
-/* §4.2 : « les restantes fade simplement ». Une fois la resolution passee, ce
-   qui n'a ete ni gagne ni perdu s'estompe — sans bruler, pour que seuls le
-   gain et la perte attirent l'oeil. */
-#draft[data-settled="true"] .draft-card[data-state="idle"] {
-  opacity: 0.3;
-  transition: opacity 400ms ease-out;
-}
-
-/* §4.2 : la carte obtenue s'ILLUMINE. */
-.draft-card[data-state="won"] {
-  animation: draft-illumine 500ms ease-out 2;
-  border-color: var(--color-ember-400);
-}
-
-/* §4.2 : la meme carte se CONSUME chez les perdants, au meme instant. */
-.draft-card[data-state="lost"] {
-  animation: draft-consume 700ms ease-in forwards;
-  border-color: #7a2f1b;
-}
-
-@keyframes draft-illumine {
-  from {
-    background: #241c14;
-    box-shadow: none;
+/* Hors couche, ces regles ecraseraient les utilitaires Tailwind (`text-[40px]`...). */
+@layer base {
+  html,
+  body {
+    height: 100%;
+    margin: 0;
+    overflow: hidden;
+    background: #241d20;
+    color: #fff;
+    font-family: var(--font-ale);
+    cursor:
+      url("/tinyswords/UI%20Elements/UI%20Elements/Cursors/Cursor_01.png") 22 17,
+      auto;
   }
-  50% {
-    background: #6b5540;
-    box-shadow: 0 0 1.5rem var(--color-ember-400);
+
+  /* La main du pack sur ce qui se clique, l'interdit sur ce qui est eteint. */
+  button,
+  [role="button"],
+  a[href],
+  label[for] {
+    cursor:
+      url("/tinyswords/UI%20Elements/UI%20Elements/Cursors/Cursor_02.png") 23 17,
+      pointer;
   }
-  to {
-    background: #241c14;
-    box-shadow: 0 0 0.5rem var(--color-ember-400);
+
+  button:disabled {
+    cursor:
+      url("/tinyswords/UI%20Elements/UI%20Elements/Cursors/Cursor_03.png") 31 31,
+      not-allowed;
+  }
+
+  button {
+    font: inherit;
+    color: inherit;
+    background: none;
+    padding: 0;
+  }
+
+  /* Focus clavier distinct du survol (README, « Interactions »). */
+  button:focus-visible,
+  input:focus-visible {
+    outline: 3px solid #f6e27a;
+    outline-offset: 4px;
   }
 }
 
-@keyframes draft-consume {
-  from {
-    background: #241c14;
-    color: var(--color-ember-400);
+@layer components {
+  img,
+  .k,
+  .btn,
+  .bbtn,
+  .rib,
+  .srib,
+  .bar {
+    image-rendering: pixelated;
   }
-  40% {
-    background: #7a2f1b;
-    color: var(--color-parchment);
+
+  /* --- Canevas ------------------------------------------------------------ */
+
+  /* Un ecran couvre la fenetre ; son contenu vit dans un canevas 1920 x 1080. */
+  .ui-screen {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
   }
-  to {
-    background: #180d09;
-    color: #4a2a1a;
-    opacity: 0.4;
+
+  .ui-canvas {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 1920px;
+    height: 1080px;
+    transform: translate(-50%, -50%) scale(var(--ui-scale, 1));
   }
-}
 
-/*
- * Tache 10 : l'ecran du vote d'extraction (§5 et §6 de l'etape 6a).
- *
- * ⚠️ **Les deux faces ne sont PAS symetriques en couleur, et ce n'est pas de
- * la decoration.** « Partir » acquiert et termine la run ; « rester » remet
- * tout en jeu. Deux boutons identiques feraient d'un choix irreversible un
- * choix de menu.
- */
-.portal-choice {
-  padding: 0.35rem 1.4rem;
-  background: #241c14;
-  border: 3px solid #6b5540;
-  color: var(--color-ember-400);
-  font-weight: bold;
-  letter-spacing: 0.1em;
-  transition: border-color 80ms linear;
-}
+  /* Les ecrans poses sur le jeu laissent passer la souris ; seuls les blocs
+     marques `pointer-events-auto` la reprennent. */
+  .ui-screen--overlay,
+  .ui-screen--overlay .ui-canvas {
+    pointer-events: none;
+  }
 
-.portal-choice:not(:disabled):hover {
-  border-color: var(--color-ember-400);
-}
+  .bg-menu {
+    background:
+      radial-gradient(120% 90% at 50% 30%, rgb(0 0 0 / 0) 40%, rgb(20 30 32 / 0.55) 100%),
+      repeating-linear-gradient(135deg, #3d7f80 0 26px, #3a7a7b 26px 52px);
+  }
 
-.portal-choice:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
-}
+  .veil {
+    background: rgb(18 14 16 / 0.72);
+    animation: fade-in 250ms linear both;
+  }
 
-/* Le vote qu'on a posé : c'est le SERVEUR qui le dit, pas un état local. */
-.portal-choice[data-mine="true"] {
-  border-color: var(--color-parchment);
-  background: #6b5540;
-  color: var(--color-parchment);
-}
+  .veil--defeat {
+    background: rgb(28 12 12 / 0.82);
+  }
 
-.portal-choice[data-choice="leave"] {
-  border-color: #7a2f1b;
-}
+  .veil--victory {
+    background: rgb(18 16 10 / 0.78);
+  }
 
-/*
- * Un votant. La bordure prend sa couleur d'anneau (posee en ligne par
- * `ui/portal.ts`) et le MOT dit ce qu'il a decide — voir `voterFor` : une
- * couleur seule laisserait « n'a pas vote » et « reste » se ressembler.
- */
-.portal-voter {
-  display: flex;
-  align-items: center;
-  gap: 0.3rem;
-  padding: 0.1rem 0.4rem 0.1rem 0.1rem;
-  border: 2px solid transparent;
-  border-radius: 999px;
-  background: #241c14;
-  font-size: 0.7rem;
-}
+  .veil > .ui-canvas {
+    animation: rise-in 200ms ease-out 120ms both;
+  }
 
-.portal-voter__badge {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 1.1rem;
-  height: 1.1rem;
-  border-radius: 50%;
-  color: #14110f;
-  font-size: 0.65rem;
-  font-style: normal;
-  font-weight: bold;
-}
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+  }
 
-/* L'abstention s'estompe : elle est VISIBLE, mais elle ne pese pas. */
-.portal-voter[data-choice="none"] {
-  opacity: 0.55;
-}
+  @keyframes rise-in {
+    from {
+      opacity: 0;
+      translate: 0 12px;
+    }
+  }
 
-.portal-voter[data-choice="none"] .portal-voter__label {
-  font-style: italic;
-}
+  /* --- Typographie -------------------------------------------------------- */
 
-.portal-voter[data-choice="leave"] .portal-voter__label {
-  color: #d98c6a;
-}
+  .f-meta {
+    font-family: var(--font-meta);
+    line-height: 1.3;
+  }
 
-.portal-voter[data-choice="stay"] .portal-voter__label {
-  color: var(--color-ember-400);
-}
+  .f-jer {
+    font-family: var(--font-jer);
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
 
-/*
- * Tache 8 de l'etape 7b : la boutique du lobby.
- *
- * Union + grisage — l'etalage montre TOUT : un article hors de portee reste
- * une ligne normale, seul son bouton se grise (meme motif que
- * `.portal-choice:disabled`).
- */
-.shop-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  font-size: 0.85rem;
-}
+  .f-mono {
+    font-family: var(--font-mono);
+  }
 
-.shop-item__buy {
-  padding: 0.25rem 0.75rem;
-  background: #241c14;
-  border: 2px solid #6b5540;
-  color: var(--color-ember-400);
-  font-weight: bold;
-}
+  .ol {
+    color: #fff;
+    text-shadow:
+      2px 2px 0 var(--color-outline),
+      -2px 2px 0 var(--color-outline),
+      2px -2px 0 var(--color-outline),
+      -2px -2px 0 var(--color-outline);
+  }
 
-.shop-item__buy:disabled {
-  cursor: not-allowed;
-  opacity: 0.5;
+  .ol3 {
+    color: #fff;
+    text-shadow:
+      3px 3px 0 var(--color-outline),
+      -3px 3px 0 var(--color-outline),
+      3px -3px 0 var(--color-outline),
+      -3px -3px 0 var(--color-outline);
+  }
+
+  /* --- Cadres 9-slice ----------------------------------------------------- */
+
+  /*
+   * Une bordure rendue fait `marge source x --s`. Le pavage suit la regle
+   * mesuree du README : bandes dupliquees en largeur au pas natif, etirees en
+   * hauteur (`repeat stretch`) — sauf `scroll`, qui se raccorde dans les deux
+   * sens. Sans `data-skin`, chaque cadre garde un aplat lisible.
+   */
+  .k {
+    position: relative;
+    box-sizing: border-box;
+    border-style: solid;
+    border-color: transparent;
+  }
+
+  .k-paperx {
+    --s: 0.92;
+    border-width: calc(44px * var(--s)) calc(55px * var(--s)) calc(43px * var(--s))
+      calc(55px * var(--s));
+    background: #4e5664;
+    color: var(--color-slate-text);
+  }
+
+  .k-banner {
+    --s: 0.5;
+    border-width: calc(68px * var(--s)) calc(84px * var(--s)) calc(111px * var(--s))
+      calc(100px * var(--s));
+    background: #e6dcae;
+    color: var(--color-ink-label);
+  }
+
+  .k-scroll {
+    --s: 1;
+    border-width: calc(64px * var(--s));
+    background: #e6dcae;
+    color: var(--color-ink-label);
+  }
+
+  .k-carved {
+    --s: 0.42;
+    border-width: calc(64px * var(--s));
+    background: #c9a985;
+  }
+
+  html[data-skin] .k-paperx {
+    background: none;
+    border-image: var(--k-paperx) 44 55 43 55 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .k-banner {
+    background: none;
+    border-image: var(--k-banner) 68 84 111 100 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .k-scroll {
+    background: none;
+    border-image: var(--k-scroll) 64 fill / 1 / 0 repeat;
+  }
+
+  html[data-skin] .k-carved {
+    background: none;
+    border-image: var(--k-carved) 64 fill / 1 / 0 repeat stretch;
+  }
+
+  /* --- Boutons ------------------------------------------------------------ */
+
+  /*
+   * Paliers de bordure (README) : l'epaisseur depend du ROLE, jamais de la
+   * largeur — action principale 64, empile 41 (defaut), onglet 30.
+   */
+  .btn {
+    --s: 0.64;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    box-sizing: border-box;
+    border-style: solid;
+    border-color: transparent;
+    border-width: calc(64px * var(--s));
+    background: #6fb3bd;
+    font-family: var(--font-meta);
+    line-height: 1.3;
+    white-space: nowrap;
+    transition: transform 60ms steps(2);
+  }
+
+  .btn--main {
+    --s: 1;
+  }
+
+  .btn--tab {
+    --s: 0.47;
+  }
+
+  .btn--red {
+    background: #c9645c;
+  }
+
+  .btn:disabled {
+    background: #b29c80;
+    color: var(--color-off-text);
+  }
+
+  html[data-skin] .btn {
+    background: none;
+    border-image: var(--k-pbblue) 64 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .btn:not(:disabled):hover,
+  html[data-skin] .btn[aria-pressed="true"] {
+    border-image-source: var(--k-pbhov);
+  }
+
+  html[data-skin] .btn:not(:disabled):active {
+    border-image-source: var(--k-pbblueP);
+  }
+
+  html[data-skin] .btn--red {
+    border-image-source: var(--k-pbred);
+  }
+
+  html[data-skin] .btn--red:not(:disabled):active {
+    border-image-source: var(--k-pbredP);
+  }
+
+  html[data-skin] .btn:disabled {
+    border-image-source: var(--k-pboff);
+  }
+
+  .btn:not(:disabled):active,
+  .bbtn:not(:disabled):active {
+    transform: translateY(2px);
+  }
+
+  /* Les grands boutons du pack : actions majeures des pieds d'ecran. */
+  .bbtn {
+    --s: 1.15;
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-style: solid;
+    border-color: transparent;
+    border-width: calc(47px * var(--s)) calc(45px * var(--s));
+    background: #3e8fa0;
+    font-family: var(--font-meta);
+    line-height: 1.3;
+    white-space: nowrap;
+    transition: transform 60ms steps(2);
+  }
+
+  .bbtn--red {
+    background: #e05252;
+  }
+
+  .bbtn:disabled {
+    filter: grayscale(1) brightness(0.8);
+  }
+
+  html[data-skin] .bbtn {
+    background: none;
+    border-image: var(--k-bbblue) 47 45 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .bbtn:not(:disabled):active {
+    border-image: var(--k-bbblueP) 36 50 49 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .bbtn--red {
+    border-image-source: var(--k-bbred);
+  }
+
+  html[data-skin] .bbtn--red:not(:disabled):active {
+    border-image: var(--k-bbredP) 36 50 49 fill / 1 / 0 repeat stretch;
+  }
+
+  .btn:not(:disabled):hover,
+  .bbtn:not(:disabled):hover {
+    filter: brightness(1.06);
+  }
+
+  /* --- Rubans ------------------------------------------------------------- */
+
+  .rib,
+  .srib {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-sizing: border-box;
+    border-style: solid;
+    border-color: transparent;
+    white-space: nowrap;
+  }
+
+  .rib {
+    --s: 0.68;
+    height: calc(103px * var(--s));
+    border-width: 0 calc(97px * var(--s)) 0 calc(98px * var(--s));
+    /* La face peinte du ruban est un peu au-dessus du centre de sa tranche. */
+    padding-bottom: calc(8px * var(--s));
+    background: #3a8fa8;
+  }
+
+  .srib {
+    --s: 0.74;
+    height: calc(54px * var(--s));
+    border-width: 0 calc(62px * var(--s));
+    background: #3a8fa8;
+  }
+
+  .rib--red,
+  .srib--red {
+    background: #c4554d;
+  }
+
+  .rib--yellow,
+  .srib--yellow {
+    background: #c9b54a;
+  }
+
+  .rib--slate,
+  .srib--slate {
+    background: #5c6c80;
+  }
+
+  html[data-skin] .rib {
+    background: none;
+    border-image: var(--k-rib0) 0 97 0 98 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .rib--red {
+    border-image-source: var(--k-rib1);
+  }
+
+  html[data-skin] .rib--yellow {
+    border-image-source: var(--k-rib2);
+  }
+
+  html[data-skin] .rib--slate {
+    border-image-source: var(--k-rib4);
+  }
+
+  html[data-skin] .srib {
+    background: none;
+    border-image: var(--k-srib0) 0 62 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .srib--red {
+    border-image-source: var(--k-srib1);
+  }
+
+  html[data-skin] .srib--yellow {
+    border-image-source: var(--k-srib2);
+  }
+
+  html[data-skin] .srib--slate {
+    border-image-source: var(--k-srib4);
+  }
+
+  /* --- Jauges ------------------------------------------------------------- */
+
+  /*
+   * Cuvette en 3-slice, remplissage pose dedans (geometrie mesuree du README,
+   * en px source x --s). `--v` est la valeur, deja bornee dans [0, 1] par le
+   * module qui la pose.
+   */
+  .bar {
+    --s: 0.75;
+    --v: 0;
+    position: relative;
+    box-sizing: border-box;
+    height: calc(51px * var(--s));
+    border-style: solid;
+    border-color: transparent;
+    border-width: 0 calc(24px * var(--s));
+    background: #3b2e2a;
+  }
+
+  /* Retrait de 11 px source depuis le bord exterieur, donc 13 dans la bordure. */
+  .bar__fill {
+    position: absolute;
+    left: calc(-13px * var(--s));
+    top: calc(11px * var(--s));
+    height: calc(24px * var(--s));
+    width: calc((100% + 26px * var(--s)) * var(--v));
+    background: #d23c3c;
+  }
+
+  .bar--sml {
+    --s: 1;
+    height: calc(19px * var(--s));
+    border-width: 0 calc(15px * var(--s));
+  }
+
+  .bar--sml .bar__fill {
+    left: calc(-5px * var(--s));
+    top: calc(7px * var(--s));
+    height: calc(5px * var(--s));
+    width: calc((100% + 10px * var(--s)) * var(--v));
+  }
+
+  html[data-skin] .bar {
+    background: none;
+    border-image: var(--k-barbig) 0 24 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .bar--sml {
+    border-image: var(--k-barsml) 0 15 fill / 1 / 0 repeat stretch;
+  }
+
+  html[data-skin] .bar__fill {
+    background: var(--k-fillbig) 0 0 / auto 100% repeat-x;
+  }
+
+  html[data-skin] .bar--sml .bar__fill {
+    background: var(--k-fillsml) 0 0 / auto 100% repeat-x;
+  }
+
+  /* --- Elements communs --------------------------------------------------- */
+
+  /* Un emplacement d'objet : papier ardoise, icone au centre, compte en coin. */
+  .slot {
+    --s: 0.42;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .slot__count {
+    position: absolute;
+    right: -12px;
+    bottom: -18px;
+    font-size: 26px;
+  }
+
+  /* Ligne libelle / valeur d'un bilan, filet pointille entre deux lignes. */
+  .stat-row {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 24px;
+    padding: 8px 0;
+    border-bottom: 2px dotted var(--color-rule);
+    font-size: 22px;
+    color: var(--color-ink-label);
+  }
+
+  .stat-row:last-child {
+    border-bottom: none;
+  }
+
+  .stat-row b {
+    font-family: var(--font-jer);
+    font-size: 38px;
+    font-weight: normal;
+    color: var(--color-ink);
+  }
+
+  .ui-input {
+    box-sizing: border-box;
+    width: 100%;
+    height: 100%;
+    background: none;
+    border: none;
+    outline: none;
+    font-family: var(--font-jer);
+    font-size: 46px;
+    letter-spacing: 0.3em;
+    text-align: center;
+    text-transform: uppercase;
+    color: #fff;
+    text-shadow:
+      2px 2px 0 var(--color-outline),
+      -2px 2px 0 var(--color-outline),
+      2px -2px 0 var(--color-outline),
+      -2px -2px 0 var(--color-outline);
+  }
+
+  .ui-input::placeholder {
+    color: var(--color-off-text);
+    letter-spacing: 0.2em;
+  }
+
+  /* --- Boutique (ecran 10) ------------------------------------------------ */
+
+  .shop-card {
+    --s: 0.4;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 6px;
+    padding: 10px 14px 4px;
+  }
+
+  .shop-card__name {
+    font-family: var(--font-meta);
+    font-size: 28px;
+    line-height: 1.3;
+  }
+
+  .shop-card__effect {
+    font-size: 20px;
+    color: var(--color-ink-label);
+  }
+
+  .shop-card__level {
+    font-family: var(--font-jer);
+    font-size: 34px;
+    color: var(--color-ink);
+  }
+
+  .shop-card__buy {
+    min-width: 190px;
+    font-family: var(--font-jer);
+    font-size: 30px;
+  }
+
+  /* --- Salon (ecran 14) --------------------------------------------------- */
+
+  .room-player {
+    --s: 0.6;
+    display: flex;
+    align-items: center;
+    gap: 24px;
+    min-height: 290px;
+    padding: 8px 14px;
+  }
+
+  .room-player__portrait {
+    --s: 0.42;
+    width: 120px;
+    height: 120px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .room-player__name {
+    font-family: var(--font-meta);
+    font-size: 30px;
+    white-space: nowrap;
+    line-height: 1.3;
+  }
+
+  .room-player__weapon {
+    font-size: 22px;
+    color: var(--color-ink-label);
+  }
+
+  .room-player__tag {
+    margin-top: 6px;
+    width: 190px;
+    font-weight: 700;
+    font-size: 18px;
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  .room-player[data-empty="true"] {
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+    color: var(--color-ink-soft);
+    font-size: 24px;
+  }
+
+  .room-weapon {
+    width: 100%;
+    font-size: 19px;
+  }
+
+  /* --- HUD (ecran 04) ----------------------------------------------------- */
+
+  .hud-slot {
+    width: 88px;
+    height: 88px;
+  }
+
+  .hud-pslot {
+    width: 70px;
+    height: 70px;
+  }
+
+  /* --- Montee de niveau (ecran 05) ---------------------------------------- */
+
+  .draft-card {
+    --s: 0.44;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    width: 420px;
+    min-height: 520px;
+    padding: 26px 12px 40px;
+    text-align: center;
+    transition:
+      transform 80ms linear,
+      opacity 300ms ease-out;
+  }
+
+  .draft-card:not(:disabled):hover {
+    transform: translateY(-6px);
+  }
+
+  .draft-card__nature {
+    font-size: 20px;
+    letter-spacing: 4px;
+    text-transform: uppercase;
+    color: var(--color-ink-soft);
+  }
+
+  .draft-card__name {
+    font-family: var(--font-meta);
+    font-size: 34px;
+    line-height: 1.3;
+  }
+
+  /* Les noms de passifs du catalogue sont en minuscules. */
+  .draft-card__name::first-letter {
+    text-transform: uppercase;
+  }
+
+  .draft-card__stacks {
+    font-family: var(--font-jer);
+    font-size: 28px;
+    color: var(--color-ink);
+  }
+
+  .draft-card__detail {
+    font-size: 24px;
+    line-height: 1.4;
+    color: var(--color-ink-label);
+  }
+
+  /* Les jetons visibles des autres joueurs, au-dessus de la carte (§7.2). */
+  .draft-card__tokens {
+    position: absolute;
+    top: -70px;
+    left: 0;
+    right: 0;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    min-height: 34px;
+  }
+
+  .draft-token {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 34px;
+    border: 3px solid var(--color-outline);
+    font-family: var(--font-jer);
+    font-size: 24px;
+    font-style: normal;
+    color: var(--color-outline);
+  }
+
+  .draft-token[data-local="true"] {
+    border-color: #fff;
+  }
+
+  .draft-card[data-state="taken"] {
+    opacity: 0.35;
+  }
+
+  #draft[data-settled="true"] .draft-card[data-state="idle"] {
+    opacity: 0.3;
+  }
+
+  .draft-card[data-state="won"] {
+    animation: draft-illumine 500ms ease-out 2;
+  }
+
+  .draft-card[data-state="lost"] {
+    animation: draft-consume 700ms ease-in forwards;
+  }
+
+  @keyframes draft-illumine {
+    50% {
+      filter: brightness(1.35) saturate(1.2);
+      transform: translateY(-10px);
+    }
+  }
+
+  @keyframes draft-consume {
+    40% {
+      filter: sepia(1) hue-rotate(-30deg) saturate(3);
+    }
+    to {
+      filter: grayscale(1) brightness(0.5);
+      opacity: 0.45;
+    }
+  }
+
+  /* Le voile du draft s'efface a la revelation, pour laisser voir le monde. */
+  #draft[data-settled="true"] {
+    background: rgb(18 14 16 / 0.15);
+    transition: background 250ms linear;
+  }
+
+  /* --- Vote d'extraction (bandeau, ne gele rien) -------------------------- */
+
+  .portal-choice {
+    min-width: 260px;
+    font-size: 26px;
+  }
+
+  .portal-choice[data-mine="true"] {
+    filter: brightness(1.15);
+  }
+
+  .portal-voter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 20px;
+  }
+
+  .portal-voter__badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border: 2px solid var(--color-outline);
+    font-family: var(--font-jer);
+    font-size: 20px;
+    font-style: normal;
+    color: var(--color-outline);
+  }
+
+  .portal-voter[data-choice="none"] .portal-voter__label {
+    font-style: italic;
+    color: var(--color-slate-soft);
+  }
+
+  .portal-voter[data-choice="leave"] .portal-voter__label {
+    color: #f0a184;
+  }
+
+  .portal-voter[data-choice="stay"] .portal-voter__label {
+    color: var(--color-slate-title);
+  }
 }

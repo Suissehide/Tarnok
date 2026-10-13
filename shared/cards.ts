@@ -60,37 +60,23 @@ export function applyCardToLoadout(loadout: Loadout, card: Card): void {
 }
 
 /**
- * Construit la reserve de cartes possibles, avant tirage, filtree par les
- * armes DEBLOQUEES.
+ * Construit la reserve de cartes possibles, avant tirage.
  *
- * ⚠️ **`unlocked` est l'UNION des deblocages de la salle, pas ceux d'un
- * joueur.** L'etalage est unique et partage (§7.1 de l'orientation : « un seul
- * etalage pour toute l'equipe », le pari de design du projet). L'intersection
- * aurait fait qu'un debutant degrade le pool de toute l'equipe, ce que le §8.1
- * interdit en propres termes : « une punition se lit comme un bug ».
- *
- * C'est `Draft#setToken` qui refuse ensuite a CE joueur une carte qu'il n'a pas
- * debloquee ; le client, lui, la grise avec son propre ensemble.
- *
- * ⚠️ **Aucune exclusivite d'equipe, par ailleurs.** Si un allie porte deja le
+ * ⚠️ **Aucune exclusivite d'equipe.** Si un allie porte deja le
  * lance-flammes, la carte reste offerte : *« si quelqu'un a deja pris
  * lance-flammes, je peux lui voler la carte la prochaine fois »*. Ce n'est pas
  * un vol au sens propre — chacun garde le sien — mais la carte de CET
  * etalage-ci se dispute. Armes et passifs s'empilent pareil : rien ne s'exclut
  * d'etre deja possede, c'est ce qui fait du conflit le regime NORMAL du draft.
  *
- * L'arme neutre est le seul retrait inconditionnel : elle vit hors des slots
- * (§6.1), tout le monde l'a des le depart, et la proposer l'empilerait sur
- * elle-meme.
+ * L'arme neutre est le seul retrait : elle vit hors des slots (§6.1), tout le
+ * monde l'a des le depart, et la proposer l'empilerait sur elle-meme.
  */
-export function buildPool(unlocked: ReadonlySet<number>): Card[] {
+export function buildPool(): Card[] {
   const pool: Card[] = [];
 
   for (const w of WEAPONS) {
     if (w.id === BASE_WEAPON_ID) {
-      continue;
-    }
-    if (w.locked && !unlocked.has(w.id)) {
       continue;
     }
     pool.push({ nature: CARD.WEAPON, refId: w.id });
@@ -123,13 +109,9 @@ export function buildPool(unlocked: ReadonlySet<number>): Card[] {
  * suite. **Deux gardes qui se couvrent l'une l'autre ne sont gardees par aucun
  * test** — c'est la cinquieme occurrence de ce motif dans cette etape.
  */
-export function drawSpread(
-  loadouts: ReadonlyMap<number, Loadout>,
-  rng: () => number,
-  unlocked: ReadonlySet<number>,
-): Card[] {
+export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => number): Card[] {
   const wanted = loadouts.size + SPREAD_BONUS;
-  const pool = buildPool(unlocked);
+  const pool = buildPool();
   const spread: Card[] = [];
 
   while (spread.length < wanted && pool.length > 0) {

@@ -119,24 +119,6 @@ export interface Weapon {
    */
   element: number;
   /**
-   * Cette arme doit-elle etre DEBLOQUEE a l'or avant d'entrer dans le pool du
-   * draft ? Six armes la portent : le frappeur de chaque element.
-   *
-   * ⚠️ **Un champ EXPLICITE, pas une regle derivee — et c'est delibere.**
-   * `projectileCount === 1` designe exactement ces six armes aujourd'hui, mais
-   * deriver le verrou de la serait la premiere forme du « decor qui masque » :
-   * une valeur egale a une constante de production, donc une egalite qui ne
-   * prouve rien et qui cesse d'etre vraie a la premiere arme ajoutee. C'est la
-   * lecon de l'etape 5c, ou la liaison du Vif-argent a ete derivee du nibble,
-   * ou le correctif a depasse la cible, et ou il a fallu revenir a un champ
-   * explicite sur trois reactions.
-   *
-   * ⚠️ **Le verrou ferme le POOL DU DRAFT, pas le `Loadout`.** `Room#grantCard`
-   * n'est pas concerne : les tests qui equipent une arme directement — dont le
-   * livrable de 5c, onze fois — restent verts sans etre touches.
-   */
-  locked: boolean;
-  /**
    * Rayon de l'explosion a l'impact, en pixels monde. `0` : le projectile ne
    * touche que ce qu'il percute — etape 6a, tache 16, sur retour de jeu :
    * *« les ennemis sont trop nombreux par rapport aux degats des armes, il
@@ -236,10 +218,9 @@ export interface Weapon {
  * distinctes.** C'est ce qui fait qu'aucune arme n'a change de nature : la plus
  * rapide est toujours le lance-flammes, la plus lente toujours la grenade.
  */
-const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'locked'> & {
+const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
   element?: number;
   blastRadius?: number;
-  locked?: boolean;
 })[] = [
   {
     // Arme neutre de base (§6.1) : faible, sans element, hors slots.
@@ -254,7 +235,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // ramenee par `WaveDirector` (voir `waveCountBounds`).
     //
     // Hors slots (§6.1) : jamais proposee par le draft, donc jamais empilee.
-    name: 'dague',
+    name: 'Dague',
     // Lame d'acier, etroite et sobre : l'arme que tout le monde porte ne doit
     // jamais voler la vedette aux huit autres, d'ou le blanc bleute et le halo
     // le plus discret du catalogue.
@@ -274,7 +255,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // marques sur toute une vague. Chaque element a besoin d'une arme qui
     // arrose et d'une qui frappe fort — un element qu'on n'applique presque
     // jamais est un systeme qu'on ne sent pas.
-    name: 'eventail',
+    name: 'Éventail',
     // Petale ambre. ⚠️ **Ambre, pas orange de Braise** (0xff7a3c) : c'est la
     // zone au sol qui dit l'element, pas le projectile — et la grenade, Braise
     // elle aussi, part sur un vert franc pour qu'on ne confonde jamais les
@@ -291,7 +272,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
   {
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
     // aussi l'extreme oppose du DPS instantane.
-    name: 'arc-lourd',
+    name: 'Arc lourd',
     // Le trait le plus gros, le plus rapide et le plus long du catalogue — et
     // le seul qui ne s'eteint JAMAIS en vol : sa vie (40 ticks) atteint
     // `PROJECTILE_FADE_REFERENCE_TICKS`, donc `projectileAlpha` le laisse a
@@ -322,7 +303,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // contenu** — une Braise de plus dans un catalogue qui en porte deja — et
     // elle appartient a l'auteur, pas a une contrainte de cout. Signale, pas
     // tranche ici.
-    name: 'lance-flammes',
+    name: 'Lance-flammes',
     // ⚠️ **Le cas que la tache 12 nomme** : 10 ticks de vie, donc le fondu le
     // plus long du catalogue (`projectileAlpha` en tire 75 % de sa vie). La
     // langue de feu s'eteint en vol au lieu de disparaitre d'un coup a bout de
@@ -374,7 +355,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // depasse pas 0,59. **Le levier n'est pas la surface d'une arme, c'est la
     // cadence de la grenade (75 ticks) et le taux de touche de la dague.**
     // Signale, pas tranche ici : c'est du reglage, et il appartient a l'auteur.
-    name: 'grenade',
+    name: 'Grenade',
     // Sphere verte, la plus grosse du catalogue : une arme a 40 degats et 75
     // ticks de recharge doit se voir partir. Vert franc face a l'ambre de
     // l'eventail — les deux armes de Braise ne se ressemblent pas.
@@ -387,11 +368,10 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     spreadRadians: 0.05,
     element: ELEMENT.BRAISE,
     blastRadius: ZONE_RADIUS,
-    locked: true,
   },
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
-    name: 'chakram',
+    name: 'Chakram',
     // Anneau magenta : la seule forme creuse du catalogue, pour une arme dont
     // le nom EST un disque perce.
     look: { shape: 'anneau', diameterPx: 14, tint: 0xff45c8, glow: 0.35, trailTicks: 1.5 },
@@ -408,7 +388,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // Le givre « rapide », en face de l'eventail : trois projectiles par
     // seconde, de quoi entretenir des marques de Givre sur un front que la
     // Braise d'un allie viendra faire reagir (§6.2).
-    name: 'fleches-jumelles',
+    name: 'Flèches jumelles',
     // Aiguille outremer, la plus fine du catalogue : deux traits paralleles
     // doivent se lire comme deux traits, pas comme une tache. Outremer face au
     // turquoise du sceptre — les deux armes de Givre ne se ressemblent pas, et
@@ -425,7 +405,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
   {
     // Salve tres large a courte portee : l'autre extreme de la dispersion,
     // face a `eventail`.
-    name: 'canon-a-mitraille',
+    name: 'Canon à mitraille',
     // Grain citron, le plus petit du catalogue et la plus courte trainee (un
     // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
     look: { shape: 'grain', diameterPx: 7, tint: 0xd6f22b, glow: 0.25, trailTicks: 0.5 },
@@ -443,7 +423,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     //
     // Le givre « de placement » : projectile unique, longue portee, cadence
     // moyenne — une zone posee ou on la vise, en face des fleches-jumelles.
-    name: 'sceptre-arcanique',
+    name: 'Sceptre arcanique',
     // Eclat turquoise a fort halo : l'arme « de placement » du Givre se vise,
     // donc elle se suit des yeux.
     look: { shape: 'eclat', diameterPx: 12, tint: 0x28e6d0, glow: 0.6, trailTicks: 1.5 },
@@ -454,7 +434,6 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.GIVRE,
-    locked: true,
   },
   {
     // Tache 9 de l'etape 5b : la Foudre a enfin ses armes.
@@ -465,7 +444,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // back/src/combat.ts) — une arme qui touche souvent seme donc des chaines
     // souvent, la ou une arme lente laisserait l'effet signature de l'element
     // se voir a peine.
-    name: 'bobine-tesla',
+    name: 'Bobine Tesla',
     // Eclat lavande a fort halo, trainee courte : un arc qui crepite plutot
     // qu'un trait qui file. Distincte de la teinte de l'element (0xf3e94b,
     // jaune) comme l'exige `assertWeaponLooks`.
@@ -484,7 +463,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // d'une chaine doit peser pour que la reaction Court-circuit (Foudre +
     // Poix, `shared/reactions.ts`) parte d'un coup qui compte, pas d'une
     // piqure.
-    name: 'canon-a-arc',
+    name: 'Canon à arc',
     // Fleche cyan electrique, la plus longue trainee des deux armes de
     // Foudre : elle se vise, donc elle se suit des yeux comme le sceptre.
     look: { shape: 'fleche', diameterPx: 15, tint: 0x00e5ff, glow: 0.5, trailTicks: 1.4 },
@@ -495,14 +474,13 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.FOUDRE,
-    locked: true,
   },
   {
     // La poix « rapide » : plusieurs projectiles a courte portee, pour
     // etaler la marque sur un front — c'est `ZoneField.ampAt` (`shared/zones.ts`)
     // qui lit `damageAmp`, donc plus de zones posees par la reaction est plus
     // d'occasions pour un allie de frapper dans une flaque amplifiee.
-    name: 'seringue-a-poix',
+    name: 'Seringue à poix',
     // Grain ambre-brun, halo faible : la poix ne brille pas, elle englue.
     // Distincte de la teinte de l'element (0x3d2b1f, brun fonce).
     look: { shape: 'grain', diameterPx: 8, tint: 0x8a6d3f, glow: 0.2, trailTicks: 0.8 },
@@ -518,7 +496,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // La poix « lourde » : projectile unique, cadence lente, degats eleves —
     // en face de la grenade et du canon-a-arc. Elle vise a poisser une cible
     // choisie plutot qu'a arroser, le pendant exact de la seringue.
-    name: 'chaudron-a-poix',
+    name: 'Chaudron à poix',
     // Sphere brun fonce, la plus terne du catalogue : sans halo marque,
     // conforme a une arme qui n'illumine rien.
     look: { shape: 'sphere', diameterPx: 16, tint: 0x5c3a21, glow: 0.15, trailTicks: 1.3 },
@@ -529,7 +507,6 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.POIX,
-    locked: true,
   },
   {
     // Tache 8 de l'etape 5c : la Chaux a enfin ses armes.
@@ -540,7 +517,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // se lisent a la ZONE que la reaction laisse au sol, jamais au projectile
     // — donc une arme qui touche souvent seme donc plus souvent l'occasion
     // qu'une zone de Chaux se pose.
-    name: 'poire-a-chaux',
+    name: 'Poire à chaux',
     // Grain vert vif, distinct du vert-jaune de l'element (0xb4d94a) : la zone
     // au sol dit l'element, pas le projectile (`assertWeaponLooks`).
     look: { shape: 'grain', diameterPx: 19, tint: 0x8fe34c, glow: 0.35, trailTicks: 0.9 },
@@ -556,7 +533,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // La chaux « lourde », en face du chaudron-a-poix et du canon-a-arc :
     // projectile unique, cadence lente, degats eleves. Le premier ennemi
     // touche doit deja fuir avant qu'un allie n'ait besoin de suivre.
-    name: 'canon-a-chaux',
+    name: 'Canon à chaux',
     // Sphere olive fonce, la plus terne des deux armes de Chaux : distincte de
     // la teinte de l'element et de celle de la poire-a-chaux.
     look: { shape: 'sphere', diameterPx: 21, tint: 0x4f7a1a, glow: 0.2, trailTicks: 1.2 },
@@ -567,7 +544,6 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.CHAUX,
-    locked: true,
   },
   {
     // Tache 8 de l'etape 5c : le Vif-argent a enfin ses armes.
@@ -578,7 +554,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // annoncee, jamais d'un champ porte par le projectile — une arme qui
     // touche souvent pose donc plus souvent l'occasion qu'une liaison
     // s'etablisse entre deux ennemis proches.
-    name: 'fronde-a-mercure',
+    name: 'Fronde à mercure',
     // Aiguille gris-mauve, la plus fine du catalogue : distincte de
     // l'outremer des fleches-jumelles et de la teinte de l'element
     // (0xc9c9e8).
@@ -596,7 +572,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     // projectile unique, cadence lente, degats eleves. Le premier maillon
     // d'une liaison doit peser pour que l'allie qui la retrouve trouve deux
     // ennemis deja groupes.
-    name: 'glaive-de-mercure',
+    name: 'Glaive de mercure',
     // Eclat gris fonce, fort halo : le mercure se voit partir, contrairement a
     // la poix qui n'illumine rien.
     look: { shape: 'eclat', diameterPx: 20, tint: 0x45456e, glow: 0.5, trailTicks: 1.3 },
@@ -607,7 +583,6 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'lo
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.VIF_ARGENT,
-    locked: true,
   },
 ];
 
@@ -616,7 +591,6 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   id,
   element: w.element ?? ELEMENT.NEUTRE,
   blastRadius: w.blastRadius ?? 0,
-  locked: w.locked ?? false,
 }));
 
 /**
@@ -773,6 +747,11 @@ export function projectileTrailPx(weapon: Weapon): number {
  * prendre l'empilerait sur elle-meme et la ferait tirer deux fois par tick.
  */
 export const BASE_WEAPON_ID = 0;
+
+/** Les armes proposables comme arme de depart : toutes sauf l'arme neutre, deja tenue. */
+export function startingWeapons(): number[] {
+  return WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID).map((w) => w.id);
+}
 
 export function weaponOf(id: number): Weapon {
   const found = WEAPONS[id];

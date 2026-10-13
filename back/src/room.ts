@@ -62,16 +62,15 @@ export interface Outbox {
 }
 
 /**
- * Ce qu'un compte apporte a la run de son joueur : bonus permanents achetes
- * et armes verrouillees debloquees. Construit par `server.ts` depuis les
- * achats lus en base, consomme par `Room#join`.
+ * Ce qu'un compte apporte a la run de son joueur : ses bonus permanents
+ * achetes. Construit par `server.ts` depuis les achats lus en base, consomme
+ * par `Room#join`.
  *
  * ⚠️ Vit ici et pas dans `shared/` : ce sont des donnees de compte, que le
  * client n'importe jamais.
  */
 export interface AccountGrants {
   bonuses: Readonly<Record<BonusKind, number>>;
-  unlockedWeapons: ReadonlySet<number>;
 }
 
 export interface PlayerState extends ContactPlayer {
@@ -127,14 +126,6 @@ export interface PlayerState extends ContactPlayer {
    * run.
    */
   readonly accountBonuses: Readonly<Record<BonusKind, number>>;
-  /**
-   * Les armes verrouillees que ce joueur a debloquees a la boutique.
-   *
-   * `join` la remplit depuis le compte, a la poignee de main. `#openDraft` en
-   * fait l'UNION sur toute la salle avant de construire l'etalage — jamais
-   * l'intersection, voir `buildPool`.
-   */
-  readonly unlockedWeapons: ReadonlySet<number>;
 }
 
 export interface RoomMetrics {
@@ -757,6 +748,11 @@ export class Room {
   }
 
   /** Le maximum de points de vie de ce joueur, bonus de cartes et de compte compris. */
+  /** Bonus « Fortune » du compte de ce joueur, 0 s'il est absent. */
+  goldBonusOf(playerId: number): number {
+    return this.#players.get(playerId)?.accountBonuses.gold ?? 0;
+  }
+
   maxHpOf(playerId: number): number {
     return this.#players.get(playerId)?.maxHp ?? 0;
   }
@@ -831,12 +827,18 @@ export class Room {
    * d'editer les dizaines d'appels existants de `join` qui ne s'interessent
    * pas aux comptes.
    */
-  join(id: number, compte?: AccountGrants): boolean {
+  join(id: number, compte?: AccountGrants, startWeapon?: number): boolean {
     if (this.#players.has(id)) {
       return true;
     }
     if (this.#players.size >= MAX_PLAYERS) {
       return false;
+    }
+    // L'arme de depart de la salle d'attente, deja validee par `Session`
+    // (`startingWeapons`). Elle entre dans le `Loadout` comme une carte draftee.
+    const loadout = new Loadout();
+    if (startWeapon !== undefined) {
+      loadout.addWeapon(startWeapon);
     }
     const offset = SPAWN_OFFSETS[this.#players.size] ?? [0, 0];
     this.#players.set(id, {
@@ -849,12 +851,12 @@ export class Room {
       aimY: 0,
       lastSeq: 0,
       accountBonuses: compte?.bonuses ?? BONUS_ZERO,
-      unlockedWeapons: compte?.unlockedWeapons ?? new Set<number>(),
+      armor: compte?.bonuses.armor ?? 0,
       hp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
       maxHp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
-      loadout: new Loadout(),
+      loadout,
     });
     return true;
   }
@@ -1649,20 +1651,8 @@ export class Room {
     for (const [id, p] of this.#players) {
       loadouts.set(id, p.loadout);
     }
-    // ⚠️ **L'UNION, jamais l'intersection** (§7.1/§8.1) : l'etalage est unique
-    // et partage, et ne montrer que ce que TOUS ont debloque ferait qu'un
-    // debutant degrade le pool de toute l'equipe. Voir le docblock de
-    // `buildPool`.
-    const unlocked = new Set<number>();
-    const unlockedByPlayer = new Map<number, ReadonlySet<number>>();
-    for (const [id, p] of this.#players) {
-      for (const weaponId of p.unlockedWeapons) {
-        unlocked.add(weaponId);
-      }
-      unlockedByPlayer.set(id, p.unlockedWeapons);
-    }
-    const spread = drawSpread(loadouts, this.#draftRng, unlocked);
-    this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts, unlockedByPlayer);
+    const spread = drawSpread(loadouts, this.#draftRng);
+    this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts);
     this.#pendingLevelUps.push({ tick: this.#tick, level: this.#level });
     this.#pendingDraftOpens.push({ deadlineTick: this.#draft.deadlineTick, cards: spread });
   }
@@ -1856,7 +1846,14 @@ export class Room {
    * chevaucher.
    */
   #gainXp(amount: number): void {
-    this.#xp += amount;
+    // L'experience est d'EQUIPE : l'amelioration « Savoir » s'applique en
+    // MOYENNE sur les joueurs presents, pour qu'un compte riche n'accelere pas
+    // seul la partie des autres.
+    let savoir = 0;
+    for (const p of this.#players.values()) {
+      savoir += p.accountBonuses.xp;
+    }
+    this.#xp += amount * (1 + savoir / Math.max(1, this.#players.size));
     while (this.#xp >= this.#xpToNextLevel()) {
       this.#xp -= this.#xpToNextLevel();
       this.#level++;

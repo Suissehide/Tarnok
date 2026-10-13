@@ -43,7 +43,6 @@ const SINGLE: Weapon = {
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
-  locked: false,
   // Trois apparences DIFFERENTES entre les trois armes de test : c'est ce qui
   // permet aux cas de `weaponAt` ci-dessous de distinguer laquelle a tire.
   look: { shape: 'lame', diameterPx: 10, tint: 0x111111, glow: 0.2, trailTicks: 1 },
@@ -61,7 +60,6 @@ const SPREAD: Weapon = {
   spreadRadians: Math.PI / 2,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
-  locked: false,
   look: { shape: 'petale', diameterPx: 12, tint: 0x222222, glow: 0.4, trailTicks: 1 },
 };
 
@@ -77,7 +75,6 @@ const FAST: Weapon = {
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
-  locked: false,
   look: { shape: 'fleche', diameterPx: 14, tint: 0x333333, glow: 0.6, trailTicks: 2 },
 };
 

@@ -83,15 +83,15 @@ function porteeDe(weapon: Weapon): number {
 }
 
 // Braise rapide et courte portee (ancienne, etape 5a).
-const EVENTAIL = armeParNom('eventail');
+const EVENTAIL = armeParNom('Éventail');
 // Givre rapide (ancienne, etape 5a).
-const FLECHES_JUMELLES = armeParNom('fleches-jumelles');
+const FLECHES_JUMELLES = armeParNom('Flèches jumelles');
 // Les deux armes de Foudre de la tache 9 de l'etape 5b.
-const BOBINE_TESLA = armeParNom('bobine-tesla');
-const CANON_A_ARC = armeParNom('canon-a-arc');
+const BOBINE_TESLA = armeParNom('Bobine Tesla');
+const CANON_A_ARC = armeParNom('Canon à arc');
 // Les deux armes de Poix de la tache 9 de l'etape 5b.
-const SERINGUE_A_POIX = armeParNom('seringue-a-poix');
-const CHAUDRON_A_POIX = armeParNom('chaudron-a-poix');
+const SERINGUE_A_POIX = armeParNom('Seringue à poix');
+const CHAUDRON_A_POIX = armeParNom('Chaudron à poix');
 
 type App = Awaited<ReturnType<typeof buildServer>>;
 

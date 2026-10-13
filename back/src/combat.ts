@@ -67,6 +67,11 @@ export interface ContactPlayer {
   hp: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
   contactInvulnTicks: number;
+  /**
+   * Fraction des degats recus absorbee (amelioration « Armure » du compte).
+   * Optionnelle : absente, elle vaut 0 — les tests de contact n'ont rien a poser.
+   */
+  readonly armor?: number;
 }
 
 /**
@@ -1379,7 +1384,7 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
     }
 
     if (touched) {
-      player.hp = Math.max(0, player.hp - CONTACT_DAMAGE);
+      player.hp = Math.max(0, player.hp - CONTACT_DAMAGE * (1 - (player.armor ?? 0)));
       player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
     }
   }
@@ -1456,7 +1461,7 @@ export function resolveChargeHit(
     if (dx * dx + dy * dy > r2) {
       continue;
     }
-    player.hp = Math.max(0, player.hp - BOSS_CHARGE_DAMAGE);
+    player.hp = Math.max(0, player.hp - BOSS_CHARGE_DAMAGE * (1 - (player.armor ?? 0)));
     // Le corps du boss reste sur lui le temps de le traverser : sans ce
     // rearmement, `resolveContact` lui reprendrait `CONTACT_DAMAGE` au tick
     // suivant pour le meme corps, et la borne « une fois par charge » ne

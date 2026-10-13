@@ -1,6 +1,4 @@
 import { ORB_PICKUP_RADIUS, PASSIVE_SLOTS, WEAPON_SLOTS } from '@shared/constants';
-import { PASSIVE_KINDS } from '@shared/passives';
-import { WEAPONS } from '@shared/weapons';
 import { describe, expect, it } from 'vitest';
 
 import { BONUS_ZERO, bonusesOf, maxBonus, priceOf, SHOP_ITEMS, shopItemOf } from './shop';
@@ -11,31 +9,10 @@ describe('etape 7b tache 1 : le catalogue', () => {
     expect(new Set(ids).size).toBe(ids.length);
   });
 
-  /**
-   * ⚠️ **Une reference morte ne se verrait qu'au premier achat**, plusieurs
-   * taches plus tard. Meme discipline qu'`assertWeaponElements`, qui verifie
-   * les references d'elements au CHARGEMENT du module.
-   */
-  it('chaque article d arme designe une arme qui existe, et elle est verrouillee', () => {
-    const armes = SHOP_ITEMS.filter((i) => i.kind === 'weapon');
-    expect(armes.length).toBeGreaterThan(0);
-    for (const i of armes) {
-      const w = WEAPONS.find((w) => w.id === i.weaponId);
-      expect(w, `article ${i.id} : arme ${i.weaponId} introuvable`).toBeDefined();
-      expect(w?.locked, `article ${i.id} : l arme n est pas verrouillee`).toBe(true);
-    }
-  });
-
   it('chaque article de bonus designe une cle connue', () => {
-    const connues = new Set<string>([...PASSIVE_KINDS, 'pickupRadius']);
-    for (const i of SHOP_ITEMS.filter((i) => i.kind === 'bonus')) {
-      expect(connues.has(i.bonusKind ?? ''), `article ${i.id}`).toBe(true);
-    }
-  });
-
-  it('un deblocage d arme n a qu un seul palier', () => {
-    for (const i of SHOP_ITEMS.filter((i) => i.kind === 'weapon')) {
-      expect(i.levels, `article ${i.id}`).toBe(1);
+    const connues = new Set<string>(Object.keys(BONUS_ZERO));
+    for (const i of SHOP_ITEMS) {
+      expect(connues.has(i.bonusKind), `article ${i.id}`).toBe(true);
     }
   });
 
@@ -114,14 +91,6 @@ describe('etape 7b tache 1 : le catalogue', () => {
     expect(maxBonus('pickupRadius')).toBe(aimant.levels * aimant.perLevel);
   });
 
-  it('maxBonus rend zero pour une cle que le catalogue ne vend pas', () => {
-    // Verifie que 'regen' n'est pas vendu : aucun article n'a bonusKind === 'regen'
-    const vendu = SHOP_ITEMS.some((i) => i.bonusKind === 'regen');
-    expect(vendu).toBe(false);
-    // Donc maxBonus('regen') doit rendre exactement 0, pas >= 0
-    expect(maxBonus('regen')).toBe(0);
-  });
-
   /**
    * ⚠️ **La clef de voute du pitch, epinglee ici parce que c'est la boutique
    * qui pourrait la briser.**
@@ -183,11 +152,11 @@ describe('les bonus d un compte, derives de ses achats', () => {
 
   /**
    * Un compte vide ne doit porter AUCUNE cle manquante : `Room` et le miroir
-   * du client lisent les six par nom (`p.accountBonuses.fireRate`, etc.), et
+   * du client lisent les cles par nom (`p.accountBonuses.fireRate`, etc.), et
    * un `undefined` y produirait un `NaN` silencieux dans un calcul de jeu.
    */
-  it('BONUS_ZERO porte les six cles a zero', () => {
-    expect(Object.values(BONUS_ZERO)).toHaveLength(6);
+  it('BONUS_ZERO porte chaque cle a zero', () => {
+    expect(Object.values(BONUS_ZERO)).toHaveLength(9);
     for (const v of Object.values(BONUS_ZERO)) {
       expect(v).toBe(0);
     }

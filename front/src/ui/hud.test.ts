@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
-import { SYNERGY_MAX } from '@shared/constants';
+import { PASSIVE_SLOTS, SYNERGY_MAX, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
+import { BASE_WEAPON_ID, weaponOf } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 // `?raw` de Vite : le HTML entre dans le bundle de test tel quel, meme motif
@@ -56,8 +57,7 @@ describe('le cablage vers index.html', () => {
     // sans qu'aucune suite ne rougisse.
     expect(document.getElementById('hud-synergy-fill')).not.toBeNull();
     expect(document.getElementById('hud-synergy-label')).not.toBeNull();
-    // Tache 18 : le cadre de la colonne des passifs, et ses lignes.
-    expect(document.getElementById('hud-passives')).not.toBeNull();
+    // Tache 18 : les emplacements de passifs.
     expect(document.getElementById('hud-passive-list')).not.toBeNull();
     // Tache 10 de l'etape 6a : la cagnotte non securisee (§5).
     expect(document.getElementById('hud-gold')).not.toBeNull();
@@ -99,21 +99,21 @@ describe('paintSynergy — ce que le joueur voit', () => {
   it('ne remplit rien quand la barre est vide', () => {
     paintSynergy(dom.fill, dom.label, 0);
 
-    expect(dom.fill.style.width).toBe('0%');
+    expect(dom.fill.style.getPropertyValue('--v')).toBe('0');
     expect(dom.label.textContent).toBe(`0 / ${SYNERGY_MAX}`);
   });
 
   it('remplit tout quand la barre est pleine', () => {
     paintSynergy(dom.fill, dom.label, SYNERGY_MAX);
 
-    expect(dom.fill.style.width).toBe('100%');
+    expect(dom.fill.style.getPropertyValue('--v')).toBe('1');
     expect(dom.label.textContent).toBe(`${SYNERGY_MAX} / ${SYNERGY_MAX}`);
   });
 
   it('remplit a moitie a mi-course — la barre BOUGE, elle ne saute pas de vide a pleine', () => {
     paintSynergy(dom.fill, dom.label, SYNERGY_MAX / 2);
 
-    expect(dom.fill.style.width).toBe('50%');
+    expect(dom.fill.style.getPropertyValue('--v')).toBe('0.5');
   });
 
   it('affiche le compte en clair, pas seulement la barre', () => {
@@ -129,7 +129,7 @@ describe('paintSynergy — ce que le joueur voit', () => {
     paintSynergy(dom.fill, dom.label, SYNERGY_MAX);
     paintSynergy(dom.fill, dom.label, 0);
 
-    expect(dom.fill.style.width).toBe('0%');
+    expect(dom.fill.style.getPropertyValue('--v')).toBe('0');
     expect(dom.label.textContent).toBe(`0 / ${SYNERGY_MAX}`);
   });
 });
@@ -160,12 +160,16 @@ function hudElements(): HudElements {
     synergyLabel: pick('hud-synergy-label'),
     gold: pick('hud-gold'),
     freeze: pick('hud-freeze'),
-    passives: pick('hud-passives'),
     passiveList: pick('hud-passive-list'),
+    hpFill: pick('hud-hp-fill'),
+    xpFill: pick('hud-xp-fill'),
+    portrait: pick('hud-portrait') as HTMLImageElement,
+    kills: pick('hud-kills'),
+    weapons: pick('hud-weapons'),
   };
 }
 
-const INFO: HudInfo = { hp: 73, xp: 500, level: 4, timer: '2:07', frozen: false };
+const INFO: HudInfo = { hp: 73, xp: 500, xpRatio: 0.25, level: 4, timer: '2:07', frozen: false };
 
 /**
  * Le client d'epreuve de la tache 18 : un identifiant local, et un inventaire
@@ -183,6 +187,9 @@ class FakeSource implements HudSource {
    * depot.
    */
   gold = 0;
+  /** PV max : 146, sans rapport avec `PLAYER_MAX_HP` (meme doctrine que `gold`). */
+  localMaxHp = 146;
+  kills = 0;
   readonly loadouts = new Map<number, Loadout>();
 
   loadoutOf(playerId: number): Loadout {
@@ -222,8 +229,8 @@ describe('passiveRows — ce que la colonne a a dire', () => {
     const source = new FakeSource().prend(VITALITE, 4).prend(CADENCE, 1);
 
     expect(passiveRows(source)).toEqual([
-      { name: passiveOf(VITALITE).name, stacks: 4 },
-      { name: passiveOf(CADENCE).name, stacks: 1 },
+      { name: passiveOf(VITALITE).name, kind: passiveOf(VITALITE).kind, stacks: 4 },
+      { name: passiveOf(CADENCE).name, kind: passiveOf(CADENCE).kind, stacks: 1 },
     ]);
   });
 
@@ -265,64 +272,47 @@ describe('passiveRows — ce que la colonne a a dire', () => {
   });
 });
 
-describe('paintPassives — la colonne a l ecran', () => {
+describe('paintPassives — les emplacements a l ecran', () => {
   let el: HudElements;
   beforeEach(() => {
     el = hudElements();
   });
 
-  /** Le texte de chaque ligne de la colonne, dans l'ordre affiche. */
+  /** Le nom et le compte de chaque emplacement rempli, dans l'ordre affiche. */
   const lignes = (): string[] =>
-    [...el.passiveList.querySelectorAll('.hud-passive')].map((n) => n.textContent ?? '');
+    [...el.passiveList.querySelectorAll<HTMLElement>('.hud-passive')].map((n) => n.title);
 
-  it('efface le cadre tant qu il n y a rien a y mettre', () => {
-    paintPassives(el.passives, el.passiveList, []);
+  it('montre toujours PASSIVE_SLOTS emplacements, vides tant que rien n est pris', () => {
+    paintPassives(el.passiveList, []);
 
-    expect(el.passives.classList.contains('hidden')).toBe(true);
-    expect(el.passives.classList.contains('flex')).toBe(false);
+    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
     expect(lignes()).toEqual([]);
   });
 
-  it('montre le cadre des qu une carte est prise', () => {
-    paintPassives(el.passives, el.passiveList, [{ name: 'vitalite', stacks: 1 }]);
-
-    expect(el.passives.classList.contains('hidden')).toBe(false);
-    expect(el.passives.classList.contains('flex')).toBe(true);
-  });
-
-  it('ecrit le nom ET le nombre d exemplaires', () => {
+  it('ecrit le nom ET le nombre d exemplaires, le compte visible en coin', () => {
     // ⚠️ **Le nombre est la moitie du message.** Un passif pris quatre fois
-    // n'est pas un passif pris une fois : c'est tout le modele Risk of Rain de
-    // cette etape, et une colonne de noms seuls decrirait les deux builds de la
-    // meme facon. Le « ×1 » se lit aussi : c'est lui qui devient « ×2 ».
-    paintPassives(el.passives, el.passiveList, [
-      { name: 'vitalite', stacks: 4 },
-      { name: 'cadence', stacks: 1 },
+    // n'est pas un passif pris une fois : c'est tout le modele Risk of Rain.
+    paintPassives(el.passiveList, [
+      { name: 'vitalite', kind: 'maxHp', stacks: 4 },
+      { name: 'cadence', kind: 'fireRate', stacks: 1 },
     ]);
 
     expect(lignes()).toEqual(['vitalite ×4', 'cadence ×1']);
+    expect(el.passiveList.querySelector('.hud-passive .slot__count')?.textContent).toBe('4');
+    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
   });
 
-  it('repeint a chaque appel, sans cumuler les lignes precedentes', () => {
-    paintPassives(el.passives, el.passiveList, [{ name: 'vitalite', stacks: 1 }]);
-    paintPassives(el.passives, el.passiveList, [{ name: 'vitalite', stacks: 2 }]);
+  it('repeint a chaque appel, sans cumuler les emplacements precedents', () => {
+    paintPassives(el.passiveList, [{ name: 'vitalite', kind: 'maxHp', stacks: 1 }]);
+    paintPassives(el.passiveList, [{ name: 'vitalite', kind: 'maxHp', stacks: 2 }]);
 
     expect(lignes()).toEqual(['vitalite ×2']);
+    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
   });
 
-  it('efface a nouveau le cadre si la colonne redevient vide', () => {
-    paintPassives(el.passives, el.passiveList, [{ name: 'vitalite', stacks: 1 }]);
-    paintPassives(el.passives, el.passiveList, []);
-
-    expect(el.passives.classList.contains('hidden')).toBe(true);
-    expect(el.passives.classList.contains('flex')).toBe(false);
-  });
-
-  it('n affiche jamais plus de lignes que le catalogue n a de passifs', () => {
-    // Garde du garde : un `paintPassives` qui dupliquerait ses lignes ferait
-    // une colonne plausible et fausse.
+  it('suit passiveRows, sans dupliquer', () => {
     const source = new FakeSource().prend(VITALITE, 2).prend(CADENCE, 5);
-    paintPassives(el.passives, el.passiveList, passiveRows(source));
+    paintPassives(el.passiveList, passiveRows(source));
 
     expect(lignes().length).toBeLessThanOrEqual(PASSIVES.length);
     expect(lignes()).toEqual([`${passiveOf(VITALITE).name} ×2`, `${passiveOf(CADENCE).name} ×5`]);
@@ -338,9 +328,23 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     source = new FakeSource();
   });
 
-  it('ecrit les points de vie du joueur local', () => {
+  it('ecrit les points de vie du joueur local sur son maximum, et remplit la barre', () => {
     paintHud(el, INFO, 0, 0, source);
-    expect(el.hp.textContent).toBe('73');
+    expect(el.hp.textContent).toBe('73 / 146');
+    expect(el.hpFill.style.getPropertyValue('--v')).toBe('0.5');
+  });
+
+  it('remplit la barre d experience et compte les abattus', () => {
+    source.kills = 1284;
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.xpFill.style.getPropertyValue('--v')).toBe('0.25');
+    expect(el.kills.textContent).toBe(`1${THIN_SPACE}284`);
+  });
+
+  it('montre la dague, puis les emplacements d armes vides', () => {
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.weapons.children).toHaveLength(WEAPON_SLOTS + 1);
+    expect((el.weapons.firstElementChild as HTMLElement).title).toBe(weaponOf(BASE_WEAPON_ID).name);
   });
 
   it('ecrit le niveau', () => {
@@ -348,9 +352,9 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     expect(el.level.textContent).toBe('4');
   });
 
-  it('ecrit le chronometre, prefixe', () => {
+  it('ecrit le chronometre', () => {
     paintHud(el, INFO, 0, 0, source);
-    expect(el.timer.textContent).toBe('Temps 2:07');
+    expect(el.timer.textContent).toBe('2:07');
   });
 
   it('ecrit le compteur de morts tardives — le chiffre de diagnostic du §2', () => {
@@ -360,7 +364,7 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
 
   it('peint la jauge de Synergie', () => {
     paintHud(el, INFO, 0, SYNERGY_MAX / 2, source);
-    expect(el.synergyFill.style.width).toBe('50%');
+    expect(el.synergyFill.style.getPropertyValue('--v')).toBe('0.5');
     expect(el.synergyLabel.textContent).toBe(`${SYNERGY_MAX / 2} / ${SYNERGY_MAX}`);
   });
 
@@ -374,16 +378,14 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     source.prend(VITALITE, 4);
     paintHud(el, INFO, 0, 0, source);
 
-    expect(el.passives.classList.contains('hidden')).toBe(false);
-    expect([...el.passiveList.querySelectorAll('.hud-passive')].map((n) => n.textContent)).toEqual([
-      `${passiveOf(VITALITE).name} ×4`,
-    ]);
+    expect(
+      [...el.passiveList.querySelectorAll<HTMLElement>('.hud-passive')].map((n) => n.title),
+    ).toEqual([`${passiveOf(VITALITE).name} ×4`]);
   });
 
-  it('laisse la colonne effacee quand le joueur n a pris aucun passif', () => {
+  it('laisse les emplacements vides quand le joueur n a pris aucun passif', () => {
     paintHud(el, INFO, 0, 0, source);
 
-    expect(el.passives.classList.contains('hidden')).toBe(true);
     expect(el.passiveList.querySelectorAll('.hud-passive')).toHaveLength(0);
   });
 
