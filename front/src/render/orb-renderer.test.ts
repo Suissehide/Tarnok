@@ -25,6 +25,7 @@ import {
   COIN_TINT,
   DROP_COIN_CELL,
   DROP_ORB_CELL,
+  DROP_OUTLINE,
   dropCellRect,
   ORB_ALPHA_MIN,
   ORB_DIAMETER_PX,
@@ -662,7 +663,7 @@ function bakeDropAtlas(): void {
   renderer.load();
   expect(renderer.loaded).toBe(true);
   // L'orbe est cuite en premier : son disque est le premier remplissage.
-  rayons.disque = traces[0]?.r ?? 0;
+  rayons.disque = traces.find((t) => t.kind === 'fill')?.r ?? 0;
 }
 
 /**
@@ -722,9 +723,22 @@ describe('l atlas des objets au sol — l orbe : un contour, pas un halo', () =>
    * L'orbe s'arrete NET au bord de la texture, comme le disque de zone : c'est
    * le `ctx.arc` qui fait la coupure, et les deux rayons doivent coincider.
    */
-  it('remplit le disque jusqu au bord de la texture, degrade et trace confondus', () => {
-    expect(rayons.degrade).toBe(ORB_TEXTURE_DIAMETER / 2);
-    expect(rayons.disque).toBe(ORB_TEXTURE_DIAMETER / 2);
+  it('remplit le disque jusqu au contour, degrade et trace confondus', () => {
+    const interieur = (ORB_TEXTURE_DIAMETER / 2) * (1 - DROP_OUTLINE);
+    expect(rayons.degrade).toBeCloseTo(interieur, 6);
+    expect(rayons.disque).toBeCloseTo(interieur, 6);
+  });
+
+  /**
+   * Le contour sombre (retour de playtest : *« on voit toujours pas l'xp »*) :
+   * un anneau OPAQUE qui va jusqu'au bord de la case. Noir, donc insensible a
+   * la teinte de la particule.
+   */
+  it('cerne l orbe d un anneau opaque jusqu au bord de la case', () => {
+    const contour = traces.find((t) => t.kind === 'stroke');
+    expect(DROP_OUTLINE).toBeGreaterThan(0);
+    expect(contour?.alpha).toBe(1);
+    expect((contour?.r ?? 0) + (contour?.width ?? 0) / 2).toBeCloseTo(ORB_TEXTURE_DIAMETER / 2, 6);
   });
 });
 
@@ -767,15 +781,22 @@ describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () 
     // est la face de la piece.
     const remplissages = traces.filter((t) => t.kind === 'fill');
     const face = remplissages[1];
-    const [lisere, cerne] = traces.filter((t) => t.kind === 'stroke');
+    // Le premier trace est le contour de l'orbe ; le dernier, celui de la piece.
+    const [, lisere, cerne, contour] = traces.filter((t) => t.kind === 'stroke');
 
     expect(remplissages).toHaveLength(2);
     expect(face?.alpha).toBeGreaterThan(0);
     expect(face?.alpha).toBeLessThan(1);
 
-    // Le lisere : opaque, et pose au BORD de la case.
+    // Le lisere : opaque, et pose au bord de la piece, DANS le contour.
     expect(lisere?.alpha).toBe(1);
-    expect((lisere?.r ?? 0) + (lisere?.width ?? 0) / 2).toBeCloseTo(ORB_TEXTURE_DIAMETER / 2, 6);
+    expect((lisere?.r ?? 0) + (lisere?.width ?? 0) / 2).toBeCloseTo(
+      (ORB_TEXTURE_DIAMETER / 2) * (1 - DROP_OUTLINE),
+      6,
+    );
+    // Et le contour sombre, opaque, jusqu'au bord de la case.
+    expect(contour?.alpha).toBe(1);
+    expect((contour?.r ?? 0) + (contour?.width ?? 0) / 2).toBeCloseTo(ORB_TEXTURE_DIAMETER / 2, 6);
 
     // Le cerne : plus sombre que la face — sinon il ne se lit pas comme un
     // creux — et franchement a l'interieur, pas colle au lisere.

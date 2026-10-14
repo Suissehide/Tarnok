@@ -76,7 +76,7 @@ export const ORB_TEXTURE_DIAMETER = 64;
  * ou l'echelle valait 1 et rendait toute mutation de l'echelle indistinguable
  * de son absence.
  */
-export const ORB_DIAMETER_PX = 14;
+export const ORB_DIAMETER_PX = 18;
 
 /** Echelle d'une particule d'orbe : la texture couvre exactement `ORB_DIAMETER_PX`. */
 export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
@@ -226,7 +226,28 @@ export function orbFlightFraction(elapsedMs: number): number {
  * Tous les arrets sont ecrits en `rgba(...)`, y compris les opaques : c'est ce
  * qui permet au test de lire le profil sans avoir a comprendre deux notations.
  */
-function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+/**
+ * Le contour sombre des objets au sol, en part du rayon de la case : sur
+ * l'herbe de la carte en tuiles, un orbe ou une piece sans contour se perdait
+ * dans le sol (retour de playtest). NOIR, donc insensible a `tint` — une
+ * multiplication garde le noir noir.
+ */
+export const DROP_OUTLINE = 0.16;
+const OUTLINE_RGBA = 'rgba(20, 16, 18, 1)';
+
+/** Le cerne : un anneau noir plein sur le bord de la case. */
+function drawOutline(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
+  ctx.strokeStyle = OUTLINE_RGBA;
+  ctx.lineWidth = r * DROP_OUTLINE;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r * (1 - DROP_OUTLINE / 2), 0, Math.PI * 2);
+  ctx.stroke();
+}
+
+function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, outer: number): void {
+  // Le dessin tient DANS le contour.
+  const r = outer * (1 - DROP_OUTLINE);
+  drawOutline(ctx, cx, cy, outer);
   const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
   gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
   gradient.addColorStop(ORB_CORE_EDGE, 'rgba(255, 255, 255, 1)');
@@ -319,7 +340,8 @@ function makeDropAtlas(): { atlas: Texture; canvas: HTMLCanvasElement } {
   }
   const r = ORB_TEXTURE_DIAMETER / 2;
   drawOrb(ctx, r, r, r);
-  drawCoin(ctx, ORB_TEXTURE_DIAMETER + r, r, r);
+  drawCoin(ctx, ORB_TEXTURE_DIAMETER + r, r, r * (1 - DROP_OUTLINE));
+  drawOutline(ctx, ORB_TEXTURE_DIAMETER + r, r, r);
   return { atlas: Texture.from(canvas), canvas };
 }
 
@@ -395,7 +417,9 @@ export class OrbRenderer {
       const cell = dropCellRect(DROP_COIN_CELL);
       ctx.clearRect(cell.x, cell.y, cell.w, cell.h);
       ctx.imageSmoothingEnabled = false;
-      ctx.drawImage(icon, cell.x, cell.y, cell.w, cell.h);
+      const inset = (cell.w * DROP_OUTLINE) / 2;
+      ctx.drawImage(icon, cell.x + inset, cell.y + inset, cell.w - 2 * inset, cell.h - 2 * inset);
+      drawOutline(ctx, cell.x + cell.w / 2, cell.y + cell.h / 2, cell.w / 2);
       atlas.source.update();
       this.#coinTint = 0xffffff;
     });
