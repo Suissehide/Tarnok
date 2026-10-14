@@ -179,6 +179,42 @@
         </div>
       </section>
 
+      <!--
+        03 · Chargement : couvre l'attente entre « Lancer la partie » et la
+        premiere image ou le joueur se voit (`ui/loading.ts`). Pas d'artwork
+        dans le pack : le fond rayé des menus sous un degrade sombre.
+      -->
+      <section id="loading" class="ui-screen bg-menu z-30 hidden">
+        <div class="loading-shade absolute inset-0"></div>
+        <div class="ui-canvas">
+          <div
+            id="loading-title"
+            class="rib rib--slate f-meta ol absolute left-1/2 top-[96px] -translate-x-1/2 px-[24px] text-[40px] whitespace-nowrap"
+          >
+            L’île de Tarnok
+          </div>
+          <div class="k k-paperx absolute bottom-[210px] left-[120px] w-[1180px]">
+            <div class="flex flex-col gap-[10px] px-[34px] py-[30px]">
+              <span class="f-meta text-[26px] text-[color:var(--color-slate-title)]">
+                Conseil du forgeron
+              </span>
+              <p id="loading-tip" class="m-0 text-[24px] leading-[1.4]"></p>
+            </div>
+          </div>
+          <div class="bar absolute bottom-[110px] left-[120px] w-[1680px]">
+            <i id="loading-fill" class="bar__fill"></i>
+          </div>
+          <span
+            id="loading-label"
+            class="f-mono ol absolute bottom-[62px] left-[120px] text-[22px]"
+          ></span>
+          <span
+            id="loading-percent"
+            class="f-jer ol absolute right-[120px] bottom-[58px] text-[46px]"
+          ></span>
+        </div>
+      </section>
+
       <!-- 04 · HUD -->
       <section id="hud" class="ui-screen ui-screen--overlay z-10 hidden">
         <div class="ui-canvas">

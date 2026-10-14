@@ -290,6 +290,43 @@ const PATHS = {
   details: Array.from({ length: 18 }, (_, i) => `Deco/${String(i + 1).padStart(2, '0')}.png`),
 };
 
+/** Toutes les planches du terrain, chemins relatifs a `ASSETS_BASE`. */
+export function terrainSheets(): string[] {
+  return [
+    ...PATHS.tilesets,
+    PATHS.foam,
+    ...PATHS.trees,
+    ...PATHS.rocks,
+    ...PATHS.bushes,
+    ...PATHS.details,
+  ];
+}
+
+/**
+ * Precharge des planches dans le cache d'`Assets` — appele en salle d'attente,
+ * pour que `buildTerrain` (et les unites) les trouvent deja la au depart.
+ * `onProgress` recoit le nombre charge sur le total, a chaque planche ; une
+ * planche absente compte quand meme, l'echec se dira au moment de dessiner.
+ */
+export function preloadSheets(
+  assetsBase: string,
+  sheets: readonly string[],
+  onProgress: (loaded: number, total: number) => void = () => undefined,
+): Promise<void> {
+  let loaded = 0;
+  onProgress(0, sheets.length);
+  return Promise.all(
+    sheets.map((p) =>
+      Assets.load(`${assetsBase}/${p}`)
+        .catch(() => undefined)
+        .then(() => {
+          loaded++;
+          onProgress(loaded, sheets.length);
+        }),
+    ),
+  ).then(() => undefined);
+}
+
 /** Coupe une bande horizontale d'animation en images de `w x h`. */
 function frames(sheet: Texture, w: number, h: number): Texture[] {
   const n = Math.floor(sheet.width / w);

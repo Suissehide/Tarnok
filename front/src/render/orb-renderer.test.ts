@@ -27,8 +27,10 @@ import {
   DROP_ORB_CELL,
   DROP_OUTLINE,
   dropCellRect,
-  ORB_ALPHA_MIN,
+  GEM_FACETS,
   ORB_DIAMETER_PX,
+  ORB_PULSE,
+  ORB_PULSE_MS,
   ORB_SCALE,
   ORB_TEXTURE_DIAMETER,
   ORB_TINT,
@@ -259,18 +261,13 @@ describe('OrbRenderer.draw — les orbes au sol', () => {
   });
 
   /**
-   * ⚠️ **`ORB_ALPHA_MIN` est une regle, pas un reglage libre.** Une orbe qui
-   * s'efface de plus de moitie n'est plus « nette » : elle redevient le halo
-   * clignotant d'avant la tache 17. L'assertion porte donc sur la VALEUR
-   * autorisee, et pas seulement sur le fait que la pulsation la respecte —
-   * cette seconde moitie, seule, est une tautologie : abaisser la constante
-   * abaisse aussi la borne, et 301 tests restaient verts.
+   * La pulsation est EN TAILLE (retour de playtest : *« plus de contraste et
+   * pulsation »*) : l'orbe reste opaque, son echelle respire autour de
+   * `ORB_SCALE` et touche ses deux bornes. La piece, elle, ne bouge pas.
    */
-  it('ne laisse jamais l orbe s effacer de plus de moitie', () => {
-    expect(ORB_ALPHA_MIN).toBeGreaterThan(0.5);
-  });
-
-  it('pulse entre ce creux et l opacite pleine, et touche les deux bornes', () => {
+  it('pulse en taille autour de ORB_SCALE, opaque, et touche les deux bornes', () => {
+    expect(ORB_PULSE).toBeGreaterThan(0.05);
+    expect(ORB_PULSE).toBeLessThan(0.5);
     const orbs = new DerivedOrbs(MAX_ENTITIES);
     for (let k = 1; k <= 8; k++) {
       orbs.spawn(avecOrbe(k), 1000 + k, 1000, k * 7);
@@ -278,19 +275,19 @@ describe('OrbRenderer.draw — les orbes au sol', () => {
     const { renderer, particules } = calque();
 
     let vu = { min: Number.POSITIVE_INFINITY, max: Number.NEGATIVE_INFINITY };
-    for (let ms = 0; ms < 2000; ms += 1) {
+    for (let ms = 0; ms < 2 * ORB_PULSE_MS; ms += 1) {
       renderer.draw(orbs, new OrbFlights(8), [], TOUTE_LA_CARTE, ms);
       for (const p of particules()) {
-        expect(p.alpha).toBeGreaterThanOrEqual(ORB_ALPHA_MIN);
-        expect(p.alpha).toBeLessThanOrEqual(1);
-        vu = { min: Math.min(vu.min, p.alpha), max: Math.max(vu.max, p.alpha) };
+        expect(p.alpha).toBe(1);
+        expect(p.scaleX).toBe(p.scaleY);
+        const r = p.scaleX / ORB_SCALE;
+        vu = { min: Math.min(vu.min, r), max: Math.max(vu.max, r) };
       }
     }
-
-    // Les bornes sont ATTEINTES : sans ça, une pulsation qui ne bougerait plus
-    // du tout satisferait aussi les deux inegalites ci-dessus.
-    expect(vu.min).toBeCloseTo(ORB_ALPHA_MIN, 3);
-    expect(vu.max).toBeCloseTo(1, 3);
+    // Les bornes sont ATTEINTES : une pulsation figee satisferait aussi des
+    // inegalites.
+    expect(vu.min).toBeCloseTo(1 - ORB_PULSE, 3);
+    expect(vu.max).toBeCloseTo(1 + ORB_PULSE, 3);
   });
 
   /**
@@ -479,7 +476,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
   /**
    * La pulsation est un APPEL — « je suis la, viens me prendre ». Une orbe deja
    * ramassee n'appelle plus : elle est pleine, et c'est ce qui la distingue a
-   * l'oeil de celles qui restent au sol.
+   * l'oeil de celles qui restent au sol : ni pulsation de taille, ni d'opacite.
    *
    * ⚠️ **Sur une particule qui pulsait a l'image d'avant**, et pas sur un
    * calque neuf : le reservoir est REUTILISE d'une image a l'autre, donc une
@@ -492,11 +489,12 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
     const auSol = unOrbe(1000, 1000);
     const cible = { id: RAMASSEUR, x: 1100, y: 1000, pickupRadius: ORB_PICKUP_RADIUS };
 
-    // L'orbe au sol prend la particule du reservoir et y laisse un creux.
+    // L'orbe au sol prend la particule du reservoir et la laisse gonflee ou
+    // contractee par sa pulsation.
     let creuxMs = -1;
     for (let ms = 0; ms < 2000 && creuxMs < 0; ms += 1) {
       renderer.draw(auSol, new OrbFlights(8), [], TOUTE_LA_CARTE, ms);
-      if ((particules()[0]?.alpha ?? 1) < 1) {
+      if (Math.abs((particules()[0]?.scaleX ?? ORB_SCALE) - ORB_SCALE) > ORB_SCALE * 0.05) {
         creuxMs = ms;
       }
     }
@@ -513,6 +511,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
         aLAge(age),
       );
       expect(particules()[0]?.alpha, `a ${age} ms de vol`).toBe(1);
+      expect(particules()[0]?.scaleX, `a ${age} ms de vol`).toBe(ORB_SCALE);
     }
   });
 
@@ -570,89 +569,95 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
   });
 });
 
-/** Un arret du degrade radial, tel que la texture le pose reellement. */
-interface Stop {
-  readonly at: number;
-  readonly alpha: number;
-}
-
-/** Un trace pose sur le canevas : un disque rempli, ou un anneau trace. */
+/** Un trace pose sur le canevas : une forme remplie, ou un contour trace. */
 interface Trace {
   readonly kind: 'fill' | 'stroke';
-  /** Opacite lue dans le `rgba(...)` courant, ou `null` pour un degrade. */
+  /** Opacite lue dans le `rgba(...)` courant. */
   readonly alpha: number | null;
+  /** Le niveau de gris (canal rouge) du `rgba(...)` courant, sur 255. */
+  readonly gray: number | null;
   readonly width: number;
-  /** Rayon de l'`arc` qui vient d'etre decrit. */
+  /** Rayon du dernier `arc` decrit (0 pour un polygone). */
   readonly r: number;
+  /** Abscisse du dernier point decrit : la case de l'atlas (orbe < 64 <= piece). */
+  readonly x: number;
+  /** La forme : un arc, une ellipse ou un polygone. */
+  readonly shape: 'arc' | 'ellipse' | 'poly';
 }
 
-const stops: Stop[] = [];
 const traces: Trace[] = [];
-/** Rayon exterieur du degrade, puis rayon du disque de l'ORBE. */
-const rayons = { degrade: 0, disque: 0 };
+const dansLOrbe = (t: Trace): boolean => t.x < ORB_TEXTURE_DIAMETER;
+const dansLaPiece = (t: Trace): boolean => t.x >= ORB_TEXTURE_DIAMETER;
 
-function alphaDe(style: unknown): number | null {
+function canalDe(style: unknown, k: number): number | null {
   if (typeof style !== 'string') {
     return null;
   }
-  const parsed = /rgba\([^)]*,\s*([\d.]+)\s*\)/.exec(style);
-  return parsed ? Number(parsed[1]) : null;
+  const parsed = /rgba\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*\)/.exec(style);
+  return parsed ? Number(parsed[k + 1]) : null;
 }
+const alphaDe = (style: unknown): number | null => canalDe(style, 3);
 
 /**
  * Bouchonne le contexte 2D et cuit l'atlas des objets au sol POUR DE VRAI, via
- * `load()`. Meme technique que `bakeZoneTexture` dans `zone-renderer.test.ts` :
- * jsdom ne fournit pas de contexte 2D, et le bouchon ne fait pas rien — il
- * ENREGISTRE les arrets, les rayons et les traces, qui sont exactement ce que
- * « plus nette » et « une piece frappee » affirment.
+ * `load()`. jsdom ne fournit pas de contexte 2D, et le bouchon ne fait pas
+ * rien — il ENREGISTRE chaque forme posee, sa couleur et sa place.
  *
- * ⚠️ **Un bouchon incomplet ne fait pas ROUGIR, il fait DISPARAITRE.** La tache
- * 14 a ajoute un chevron trace a l'atlas ; tant que ce bouchon n'a pas connu
- * `stroke`, `load()` levait dans le `beforeAll` et vitest a marque les quatre
- * tests de ce bloc « skipped » — verts au total, sans plus rien mesurer. Tout
- * ce que la texture appelle doit exister ici.
+ * ⚠️ **Un bouchon incomplet ne fait pas ROUGIR, il fait DISPARAITRE.** Tout ce
+ * que la texture appelle doit exister ici, sinon `load()` leve dans le
+ * `beforeAll` et le bloc entier passe « skipped », vert sans rien mesurer.
  */
 function bakeDropAtlas(): void {
-  // ⚠️ Deux blocs cuisent le meme atlas ; sans cette remise a zero, le second
-  // lit les traces des DEUX cuissons et « la piece pose deux traces » devient
-  // « elle en pose quatre ». Un decor cumulatif est un decor qui ment.
-  stops.length = 0;
   traces.length = 0;
   const noop = (): void => undefined;
   let dernierArc = 0;
-  const gradient = {
-    addColorStop(at: number, color: string): void {
-      stops.push({ at, alpha: alphaDe(color) ?? 0 });
-    },
-  };
+  let dernierX = 0;
+  let forme: Trace['shape'] = 'poly';
   const context = {
-    createRadialGradient: (
-      _x0: number,
-      _y0: number,
-      _r0: number,
-      _x1: number,
-      _y1: number,
-      r1: number,
-    ) => {
-      rayons.degrade = r1;
-      return gradient;
-    },
     fillStyle: '' as unknown,
     strokeStyle: '' as unknown,
     lineWidth: 0,
+    lineJoin: '',
     beginPath: noop,
-    arc: (_x: number, _y: number, r: number): void => {
+    closePath: noop,
+    moveTo: (x: number): void => {
+      dernierX = x;
+      dernierArc = 0;
+      forme = 'poly';
+    },
+    lineTo: (x: number): void => {
+      dernierX = x;
+    },
+    arc: (x: number, _y: number, r: number): void => {
+      dernierX = x;
       dernierArc = r;
+      forme = 'arc';
+    },
+    ellipse: (x: number): void => {
+      dernierX = x;
+      dernierArc = 0;
+      forme = 'ellipse';
     },
     fill(): void {
-      traces.push({ kind: 'fill', alpha: alphaDe(context.fillStyle), width: 0, r: dernierArc });
+      traces.push({
+        kind: 'fill',
+        alpha: alphaDe(context.fillStyle),
+        gray: canalDe(context.fillStyle, 0),
+        width: 0,
+        r: dernierArc,
+        x: dernierX,
+        shape: forme,
+      });
     },
     stroke(): void {
       traces.push({
         kind: 'stroke',
         alpha: alphaDe(context.strokeStyle),
+        gray: canalDe(context.strokeStyle, 0),
         width: context.lineWidth,
         r: dernierArc,
+        x: dernierX,
+        shape: forme,
       });
     },
   };
@@ -662,83 +667,39 @@ function bakeDropAtlas(): void {
   const renderer = new OrbRenderer();
   renderer.load();
   expect(renderer.loaded).toBe(true);
-  // L'orbe est cuite en premier : son disque est le premier remplissage.
-  rayons.disque = traces.find((t) => t.kind === 'fill')?.r ?? 0;
 }
 
 /**
- * ⚠️ **Tache 17, etape 1 : l'orbe plus nette.** Le profil precedent etait celui
- * d'un FLASH — blanc au centre, colore a 0,35, transparent au bord — partage
- * avec les flashs d'impact et de reaction alors qu'il dit l'inverse d'eux. Un
- * halo n'a pas de bord ; un objet a ramasser en a un.
- *
- * Ce bloc garde la FORME du profil, jamais ses valeurs : des relations, pas une
- * recopie des constantes de production.
+ * L'orbe d'experience, retravaillee au playtest : *« plus de contraste »*. Une
+ * GEMME a facettes plutot qu'un disque — ce bloc garde sa FORME par des
+ * relations, jamais une recopie des valeurs de production.
  */
-describe('l atlas des objets au sol — l orbe : un contour, pas un halo', () => {
+describe('l atlas des objets au sol — l orbe est une gemme contrastee', () => {
   beforeAll(bakeDropAtlas);
 
-  it('reste opaque AU BORD, la ou le halo s eteignait', () => {
-    expect(stops.at(-1)).toEqual({ at: 1, alpha: 1 });
-  });
-
-  /**
-   * Le creux entre le coeur et le lisere est ce qui fait lire DEUX traits
-   * concentriques plutot qu'une tache : sans lui, le profil redevient un disque
-   * uniforme dont on ne sait pas dire ou il finit.
-   */
-  it('creuse entre le coeur plein et le lisere, franchement', () => {
-    const creux = Math.min(...stops.map((s) => s.alpha));
-    const coeur = stops[0]?.alpha ?? 0;
-
-    expect(coeur).toBe(1);
-    expect(creux).toBeLessThanOrEqual(coeur / 2);
-    // Le creux est au MILIEU du rayon, entre le coeur et le lisere — pas au
-    // centre (ce serait un anneau) ni au bord (ce serait un halo).
-    const auCreux = stops.filter((s) => s.alpha === creux).map((s) => s.at);
-    expect(Math.min(...auCreux)).toBeGreaterThan(0);
-    expect(Math.max(...auCreux)).toBeLessThan(1);
-    // ⚠️ **Un PALIER, pas un simple passage.** Un unique arret au creux ne
-    // dessine qu'une ligne sombre au ras du lisere : le disque redevient un
-    // aplat, et « deux traits concentriques » est faux. Mutation appliquee
-    // (creux porte a 1 sur son premier arret), 303 tests verts sans cette
-    // ligne.
-    expect(auCreux.length).toBeGreaterThanOrEqual(2);
-    // Et le coeur est un palier lui aussi, avant le creux.
-    const coeurPlein = stops.filter((s) => s.alpha === 1 && s.at < Math.min(...auCreux));
-    expect(coeurPlein.length).toBeGreaterThanOrEqual(2);
-  });
-
-  it('remonte NET vers le lisere : la rampe tient dans un dixieme de rayon', () => {
-    const creux = Math.min(...stops.map((s) => s.alpha));
-    const dernierCreux = Math.max(...stops.filter((s) => s.alpha === creux).map((s) => s.at));
-    const premierOpaque = Math.min(
-      ...stops.filter((s) => s.alpha === 1 && s.at > dernierCreux).map((s) => s.at),
+  it('pose au moins trois facettes opaques de gris DIFFERENTS : du relief, pas un aplat', () => {
+    const facettes = traces.filter(
+      (t) => dansLOrbe(t) && t.kind === 'fill' && t.shape === 'poly' && t.alpha === 1,
     );
-
-    expect(premierOpaque - dernierCreux).toBeLessThanOrEqual(0.1);
+    expect(new Set(facettes.map((t) => t.gray)).size).toBeGreaterThanOrEqual(3);
+    expect(GEM_FACETS.length).toBeGreaterThanOrEqual(3);
+    // Du plus clair au plus sombre, sur une vraie amplitude.
+    expect(Math.max(...GEM_FACETS) - Math.min(...GEM_FACETS)).toBeGreaterThan(0.3);
   });
 
-  /**
-   * L'orbe s'arrete NET au bord de la texture, comme le disque de zone : c'est
-   * le `ctx.arc` qui fait la coupure, et les deux rayons doivent coincider.
-   */
-  it('remplit le disque jusqu au contour, degrade et trace confondus', () => {
-    const interieur = (ORB_TEXTURE_DIAMETER / 2) * (1 - DROP_OUTLINE);
-    expect(rayons.degrade).toBeCloseTo(interieur, 6);
-    expect(rayons.disque).toBeCloseTo(interieur, 6);
-  });
-
-  /**
-   * Le contour sombre (retour de playtest : *« on voit toujours pas l'xp »*) :
-   * un anneau OPAQUE qui va jusqu'au bord de la case. Noir, donc insensible a
-   * la teinte de la particule.
-   */
-  it('cerne l orbe d un anneau opaque jusqu au bord de la case', () => {
-    const contour = traces.find((t) => t.kind === 'stroke');
-    expect(DROP_OUTLINE).toBeGreaterThan(0);
+  it('cerne la gemme d un contour NOIR, opaque et epais', () => {
+    const contour = traces.find((t) => dansLOrbe(t) && t.kind === 'stroke');
     expect(contour?.alpha).toBe(1);
-    expect((contour?.r ?? 0) + (contour?.width ?? 0) / 2).toBeCloseTo(ORB_TEXTURE_DIAMETER / 2, 6);
+    expect(contour?.gray ?? 255).toBeLessThan(40);
+    expect(contour?.width ?? 0).toBeGreaterThanOrEqual((ORB_TEXTURE_DIAMETER / 2) * 0.1);
+    expect(DROP_OUTLINE).toBeGreaterThan(0);
+  });
+
+  it('pose une ombre douce dessous, noire et translucide', () => {
+    const ombre = traces.find((t) => dansLOrbe(t) && t.shape === 'ellipse');
+    expect(ombre?.gray).toBe(0);
+    expect(ombre?.alpha ?? 1).toBeLessThan(1);
+    expect(ombre?.alpha ?? 0).toBeGreaterThan(0);
   });
 });
 
@@ -779,12 +740,12 @@ describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () 
   it('pose une face, un lisere opaque au bord, et un cerne plus sombre dedans', () => {
     // Le premier remplissage est l'orbe (degrade, donc `alpha` nul) ; le second
     // est la face de la piece.
-    const remplissages = traces.filter((t) => t.kind === 'fill');
-    const face = remplissages[1];
-    // Le premier trace est le contour de l'orbe ; le dernier, celui de la piece.
-    const [, lisere, cerne, contour] = traces.filter((t) => t.kind === 'stroke');
+    const remplissages = traces.filter((t) => dansLaPiece(t) && t.kind === 'fill');
+    const face = remplissages[0];
+    // Le lisere, le cerne, puis le contour sombre de la piece.
+    const [lisere, cerne, contour] = traces.filter((t) => dansLaPiece(t) && t.kind === 'stroke');
 
-    expect(remplissages).toHaveLength(2);
+    expect(remplissages).toHaveLength(1);
     expect(face?.alpha).toBeGreaterThan(0);
     expect(face?.alpha).toBeLessThan(1);
 
@@ -820,10 +781,9 @@ describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () 
    * croisent au sol, elles ne doivent pas se distinguer par la seule teinte.
    * L'orbe est creuse au milieu, la piece est pleine.
    */
-  it('ne se confond pas avec l orbe : l une est creuse, l autre pleine', () => {
-    const creuxOrbe = Math.min(...stops.map((s) => s.alpha));
-    const face = traces.filter((t) => t.kind === 'fill')[1];
-    expect(face?.alpha ?? 0).toBeGreaterThan(creuxOrbe);
+  it('ne se confond pas avec l orbe : l une est un losange a facettes, l autre un disque', () => {
+    expect(traces.some((t) => dansLOrbe(t) && t.shape === 'poly')).toBe(true);
+    expect(traces.filter((t) => dansLaPiece(t)).every((t) => t.shape === 'arc')).toBe(true);
   });
 });
 

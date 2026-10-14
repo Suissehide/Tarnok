@@ -76,7 +76,7 @@ export const ORB_TEXTURE_DIAMETER = 64;
  * ou l'echelle valait 1 et rendait toute mutation de l'echelle indistinguable
  * de son absence.
  */
-export const ORB_DIAMETER_PX = 18;
+export const ORB_DIAMETER_PX = 24;
 
 /** Echelle d'une particule d'orbe : la texture couvre exactement `ORB_DIAMETER_PX`. */
 export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
@@ -87,12 +87,20 @@ export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
  * en blanc, `tint` rend exactement la couleur demandee.
  */
 //
-// ⚠️ **Bleu, plus vert** : sur l'herbe de la carte en tuiles, un orbe vert
-// disparaissait dans le sol (retour de playtest).
-export const ORB_TINT = 0x5ab8ff;
+// ⚠️ **Cyan vif, plus vert** : sur l'herbe de la carte en tuiles, un orbe vert
+// disparaissait dans le sol (retour de playtest). Le contraste vient des
+// facettes cuites en gris (`GEM_FACETS`), que la teinte decline en quatre bleus.
+export const ORB_TINT = 0x3ad8ff;
 
-/** Creux de la pulsation ; la crete vaut 1. Voir `draw`. */
-export const ORB_ALPHA_MIN = 0.75;
+/**
+ * La pulsation de l'orbe, EN TAILLE : son echelle respire entre
+ * `1 - ORB_PULSE` et `1 + ORB_PULSE` fois `ORB_SCALE`. Elle reste OPAQUE — une
+ * pulsation d'opacite eteignait l'orbe dans l'herbe, une pulsation de taille
+ * l'allume (retour de playtest : *« plus de contraste et pulsation »*).
+ */
+export const ORB_PULSE = 0.18;
+/** Periode de la pulsation, en ms. */
+export const ORB_PULSE_MS = 900;
 
 /**
  * Diametre de la PIECE dans le monde, en pixels — etape 6a, tache 14 : *« les
@@ -137,18 +145,7 @@ export const COIN_TINT = 0xf5c542;
  * une orbe en vol est cullee sur sa position DESSINEE, pas sur son point de
  * depart.
  */
-const CULL_MARGIN = ORB_DIAMETER_PX / 2;
-
-/** Fin du coeur plein, en fraction du rayon de la texture. */
-const ORB_CORE_EDGE = 0.42;
-/** Debut du creux : l'ecart avec `ORB_CORE_EDGE` est la rampe qui rend le coeur net. */
-const ORB_GAP_INNER = 0.5;
-/** Opacite du creux entre le coeur et le lisere — c'est lui qui fait lire DEUX traits, pas un halo. */
-const ORB_GAP_ALPHA = 0.2;
-/** Debut de la montee vers le lisere exterieur. */
-const ORB_RIM_INNER = 0.78;
-/** Debut du plateau opaque du lisere ; au-dela, l'orbe s'arrete NET au bord de la texture. */
-const ORB_RIM_PEAK = 0.86;
+const CULL_MARGIN = (ORB_DIAMETER_PX * (1 + ORB_PULSE)) / 2;
 
 /** Opacite de la face de la piece : pleine, mais sous le lisere qui la borde. */
 const COIN_FACE_ALPHA = 0.72;
@@ -208,25 +205,6 @@ export function orbFlightFraction(elapsedMs: number): number {
 }
 
 /**
- * Orbe BLANCHE a bord net, dessinee une fois puis teintee par particule —
- * tache 17, etape 1 : *« l'xp plus nette »*, meme traitement que les zones
- * (tache 16) et les anneaux de marque (tache 15).
- *
- * ⚠️ **Le profil precedent etait un halo, et un halo n'a pas de bord.** Blanc
- * au centre, vert a 0,35 de rayon, transparent au bord : aucune frontiere a
- * lire, l'orbe se fondait dans le sol et dans les flashs — qui utilisaient la
- * MEME fonction (`makeGlowTexture`) alors qu'ils disent l'inverse d'elle. Un
- * flash doit s'evanouir ; un objet a ramasser doit avoir un contour.
- *
- * Le nouveau profil est un coeur plein, un creux, puis un lisere opaque **qui
- * va jusqu'au bord de la texture et s'arrete net** — le `ctx.arc` de rayon `r`
- * fait la coupure, comme pour la zone. Deux traits concentriques se lisent a
- * 22 px la ou un degre unique se lit comme une tache.
- *
- * Tous les arrets sont ecrits en `rgba(...)`, y compris les opaques : c'est ce
- * qui permet au test de lire le profil sans avoir a comprendre deux notations.
- */
-/**
  * Le contour sombre des objets au sol, en part du rayon de la case : sur
  * l'herbe de la carte en tuiles, un orbe ou une piece sans contour se perdait
  * dans le sol (retour de playtest). NOIR, donc insensible a `tint` — une
@@ -244,21 +222,69 @@ function drawOutline(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: n
   ctx.stroke();
 }
 
+/**
+ * Les quatre facettes de la gemme, en GRIS (la teinte les colore) : haut
+ * gauche la plus claire, bas droite la plus sombre — une lumiere venue d'en
+ * haut a gauche, comme tout le pack.
+ */
+export const GEM_FACETS = [1, 0.8, 0.62, 0.45] as const;
+
+/**
+ * L'orbe d'experience : une GEMME a facettes, plus un disque. Retour de
+ * playtest : *« retravaille completement le design de l'xp avec plus de
+ * contraste »*. Un losange se detache de l'herbe la ou un rond s'y fondait, et
+ * ses quatre facettes donnent du relief sans une couleur de plus.
+ *
+ * Dans l'ordre : une ombre douce sous la pointe (noire, donc insensible a la
+ * teinte), les facettes, un reflet blanc, et un contour noir epais qui
+ * s'arrete au bord de la case.
+ */
 function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, outer: number): void {
-  // Le dessin tient DANS le contour.
-  const r = outer * (1 - DROP_OUTLINE);
-  drawOutline(ctx, cx, cy, outer);
-  const gradient = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-  gradient.addColorStop(0, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(ORB_CORE_EDGE, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(ORB_GAP_INNER, `rgba(255, 255, 255, ${ORB_GAP_ALPHA})`);
-  gradient.addColorStop(ORB_RIM_INNER, `rgba(255, 255, 255, ${ORB_GAP_ALPHA})`);
-  gradient.addColorStop(ORB_RIM_PEAK, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(1, 'rgba(255, 255, 255, 1)');
-  ctx.fillStyle = gradient;
+  const w = outer * 0.62;
+  const h = outer * 0.84;
+  const top = cy - h;
+  const bottom = cy + h * 0.92;
+  // L'ombre portee, sous la pointe basse.
+  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
   ctx.beginPath();
-  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy + outer * 0.86, w * 0.8, outer * 0.12, 0, 0, Math.PI * 2);
   ctx.fill();
+  // Les quatre facettes, autour du centre.
+  const facettes: [number, number, number, number][] = [
+    [cx, top, cx - w, cy],
+    [cx, top, cx + w, cy],
+    [cx - w, cy, cx, bottom],
+    [cx + w, cy, cx, bottom],
+  ];
+  facettes.forEach(([ax, ay, bx, by], k) => {
+    const v = Math.round(255 * (GEM_FACETS[k] ?? 1));
+    ctx.fillStyle = `rgba(${v}, ${v}, ${v}, 1)`;
+    ctx.beginPath();
+    ctx.moveTo(ax, ay);
+    ctx.lineTo(bx, by);
+    ctx.lineTo(cx, cy);
+    ctx.closePath();
+    ctx.fill();
+  });
+  // Le reflet, sur la facette claire.
+  ctx.fillStyle = 'rgba(255, 255, 255, 1)';
+  ctx.beginPath();
+  ctx.moveTo(cx - w * 0.15, top + h * 0.3);
+  ctx.lineTo(cx - w * 0.55, cy - h * 0.1);
+  ctx.lineTo(cx - w * 0.35, cy - h * 0.1);
+  ctx.closePath();
+  ctx.fill();
+  // Le contour noir, epais.
+  ctx.strokeStyle = OUTLINE_RGBA;
+  ctx.lineWidth = outer * DROP_OUTLINE;
+  ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(cx, top);
+  ctx.lineTo(cx + w, cy);
+  ctx.lineTo(cx, bottom);
+  ctx.lineTo(cx - w, cy);
+  ctx.closePath();
+  ctx.stroke();
 }
 
 /**
@@ -361,7 +387,8 @@ export class OrbRenderer {
     // `position` : une orbe en vol change de place a chaque image (tache 20).
     // `color` : la pulsation fait bouger l'opacite, et le reservoir est
     // reutilise d'une image a l'autre.
-    dynamicProperties: { position: true, color: true, rotation: false, uvs: false },
+    // `vertex` : la pulsation de l'orbe est une ECHELLE qui bouge a chaque image.
+    dynamicProperties: { position: true, color: true, rotation: false, uvs: false, vertex: true },
   });
   readonly #pool: Particle[] = [];
   /**
@@ -509,17 +536,18 @@ export class OrbRenderer {
       particle.x = x;
       particle.y = y;
       particle.texture = kind.texture;
-      particle.scaleX = kind.scale;
-      particle.scaleY = kind.scale;
       particle.tint = kind.tint;
-      // Pulsation douce, dephasee par orbe (via son tick de naissance) : un
-      // signal de ramassage vivant au sol, sans jamais devenir le flash
-      // « genereux » reserve a l'impact — le §4.3 les distingue explicitement.
-      // Resserree a la tache 17 : une orbe qui s'efface a moitie n'est plus
-      // « nette ».
-      const phase = (orbs.bornTick[i] ?? 0) * 0.7;
-      const creux = (1 - ORB_ALPHA_MIN) / 2;
-      particle.alpha = 1 - creux + creux * Math.sin(timeMs / 260 + phase);
+      particle.alpha = 1;
+      // La pulsation, EN TAILLE et seulement pour l'orbe, dephasee par orbe
+      // (son tick de naissance) : un signal de ramassage vivant au sol. La
+      // piece reste immobile — elle est rare, elle n'a pas besoin d'appeler.
+      const souffle = dropsCoin(orbs.id[i] ?? 0)
+        ? 1
+        : 1 +
+          ORB_PULSE *
+            Math.sin((timeMs / ORB_PULSE_MS) * Math.PI * 2 + (orbs.bornTick[i] ?? 0) * 0.7);
+      particle.scaleX = kind.scale * souffle;
+      particle.scaleY = kind.scale * souffle;
       children.push(particle);
       used++;
     }

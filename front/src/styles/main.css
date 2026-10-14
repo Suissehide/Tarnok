@@ -472,6 +472,25 @@
     border-image-source: var(--k-rib2);
   }
 
+  /* Le ruban ardoise (ligne 4 de `BigRibbons`), ecran de chargement. */
+  .rib--slate {
+    background: #5d6670;
+  }
+
+  html[data-skin] .rib--slate {
+    border-image-source: var(--k-rib4);
+  }
+
+  /* Le degrade de la maquette 03 : sombre en haut, tres sombre en bas. */
+  .loading-shade {
+    background: linear-gradient(
+      180deg,
+      rgb(20 28 30 / 0.5) 0%,
+      rgb(20 28 30 / 0) 30%,
+      rgb(20 28 30 / 0.85) 100%
+    );
+  }
+
   html[data-skin] .srib {
     background: none;
     border-image: var(--k-srib0) 0 62 fill / 1 / 0 repeat;

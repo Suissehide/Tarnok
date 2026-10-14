@@ -179,6 +179,8 @@ function stubCanvas2d(): void {
     lineTo: noop,
     quadraticCurveTo: noop,
     arc: noop,
+    // L'orbe en gemme pose une ombre en ellipse sous sa pointe.
+    ellipse: noop,
     fill: noop,
     fillRect: noop,
     // Tache 13 : les fleches du couloir de charge sont un chevron TRACE, pas

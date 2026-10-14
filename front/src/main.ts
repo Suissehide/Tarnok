@@ -7,7 +7,9 @@ import { Mouse } from './input/mouse';
 import { acheter, fetchCompte, tokenBytes, tokenText } from './net/account';
 import { type ConnectionStatus, GameClient, type InputAxes, type RenderState } from './net/client';
 import { composeFrame } from './render/frame';
+import { unitSheets } from './render/player-renderer';
 import { formatTimer, hudInfo, Stage } from './render/stage';
+import { preloadSheets, terrainSheets } from './render/terrain-renderer';
 import '@fontsource/metamorphous';
 import '@fontsource/jersey-15';
 import '@fontsource/alegreya-sans/400.css';
@@ -16,7 +18,7 @@ import '@fontsource/space-mono';
 import './styles/main.css';
 
 import { renderCombos } from './ui/combos';
-import { API_URL, gameSocketUrl } from './ui/config';
+import { API_URL, ASSETS_BASE, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
 import {
   type AbilityElements,
@@ -25,6 +27,7 @@ import {
   paintHud,
   paintWeapons,
 } from './ui/hud';
+import { type LoadingState, loadingProgress, paintLoading, tipFor } from './ui/loading';
 import { Minimap } from './ui/minimap';
 import { formatGold, PortalScreen } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
@@ -324,6 +327,68 @@ function join(code: string): void {
   let lastMinimap = 0;
   let lastKnownKey: string | null = null;
 
+  // L'ecran de chargement (maquette 03) : il couvre le depart, de « Lancer la
+  // partie » a la premiere image ou le joueur se voit. Les planches du
+  // terrain se prechargent DES la salle d'attente, pour que le depart soit court.
+  const loadingEl = {
+    root: el('loading'),
+    label: el('loading-label'),
+    percent: el('loading-percent'),
+    fill: el('loading-fill'),
+  };
+  el('loading-tip').textContent = tipFor(code);
+  const loading: LoadingState = {
+    launched: false,
+    mapReady: false,
+    assetsLoaded: 0,
+    assetsTotal: 0,
+    terrainReady: false,
+    firstSnapshot: false,
+  };
+  let terrainLoaded = 0;
+  let unitsLoaded = 0;
+  let unitsTotal = 0;
+  const terrainTotal = terrainSheets().length;
+  const syncAssets = (): void => {
+    loading.assetsLoaded = terrainLoaded + unitsLoaded;
+    loading.assetsTotal = terrainTotal + unitsTotal;
+  };
+  void preloadSheets(ASSETS_BASE, terrainSheets(), (n) => {
+    terrainLoaded = n;
+    syncAssets();
+  });
+  let loadingTimer: number | null = null;
+  const showLoading = (): void => {
+    if (loadingTimer !== null) {
+      return;
+    }
+    loadingEl.root.classList.remove('hidden');
+    const depuis = performance.now();
+    const tick = (): void => {
+      // Le salon n'a jamais demarre (depart refuse, socket coupee) : on rend
+      // la salle d'attente plutot que de charger indefiniment.
+      if (!loading.mapReady && performance.now() - depuis > 15_000 && loadingTimer !== null) {
+        window.clearInterval(loadingTimer);
+        loadingTimer = null;
+        loading.launched = false;
+        loadingEl.root.classList.add('hidden');
+        roomElements.hint.textContent = 'Le salon n’a pas démarré — réessayez.';
+        return;
+      }
+      loading.firstSnapshot = client.localPosition !== null;
+      const view = loadingProgress(loading);
+      paintLoading(loadingEl, view);
+      if (view.done && loadingTimer !== null) {
+        window.clearInterval(loadingTimer);
+        loadingEl.root.classList.add('hidden');
+        room.classList.add('hidden');
+        hud.classList.remove('hidden');
+      }
+    };
+    tick();
+    loadingTimer = window.setInterval(tick, 100);
+  };
+
   /** Menu Echap ouvert : les entrees de CE joueur sont coupees (le monde, lui, tourne). */
   let paused = false;
   const setPaused = (value: boolean): void => {
@@ -355,10 +420,24 @@ function join(code: string): void {
     // donc on ne peut dessiner les obstacles qu'a ce moment-la — jamais avant.
     // C'est aussi l'instant ou la salle d'attente cede la place au jeu.
     (map) => {
-      stage.drawObstacles(map);
+      loading.launched = true;
+      loading.mapReady = true;
+      showLoading();
+      // Les unites de CETTE partie : une par joueur, sa classe et sa couleur.
+      const unites = (lastLobby?.players ?? []).flatMap((p) => {
+        const u = unitSheets(p.playerId, p.classId);
+        return [u.idle, u.run];
+      });
+      unitsTotal = unites.length;
+      syncAssets();
+      void preloadSheets(ASSETS_BASE, unites, (n) => {
+        unitsLoaded = n;
+        syncAssets();
+      });
+      void stage.drawObstacles(map).then(() => {
+        loading.terrainReady = true;
+      });
       minimap.setObstacles(map);
-      room.classList.add('hidden');
-      hud.classList.remove('hidden');
     },
     accountToken,
     // Les bonus permanents du compte, pour le MIROIR DE PREDICTION (revue
@@ -405,7 +484,11 @@ function join(code: string): void {
     lastLobby = state;
     paintRoom();
   };
-  roomElements.start.addEventListener('click', () => client.startRun());
+  roomElements.start.addEventListener('click', () => {
+    loading.launched = true;
+    showLoading();
+    client.startRun();
+  });
   el<HTMLButtonElement>('room-leave').addEventListener('click', leave);
   el<HTMLButtonElement>('pause-resume').addEventListener('click', () => setPaused(false));
   el<HTMLButtonElement>('pause-quit').addEventListener('click', leave);

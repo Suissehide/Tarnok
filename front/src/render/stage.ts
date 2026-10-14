@@ -318,9 +318,9 @@ export class Stage {
    * dessines a des cellules differentes de celles ou les monstres butent
    * reellement.
    */
-  drawObstacles(map: ObstacleMap): void {
+  drawObstacles(map: ObstacleMap): Promise<void> {
     if (this.#obstaclesDrawn) {
-      return;
+      return Promise.resolve();
     }
     this.#obstaclesDrawn = true;
     // La carte en tuiles (`terrain-renderer.ts`) sous TOUS les calques, index
@@ -328,7 +328,8 @@ export class Stage {
     // au-dessus de la grille, en dessous des orbes/horde/projectiles/flashs et
     // des carres de joueurs — les obstacles sont du terrain, pas un calque qui
     // doit passer devant les entites.
-    buildTerrain(map.world, ASSETS_BASE)
+    // Rendue : l'ecran de chargement attend que le terrain soit pose.
+    return buildTerrain(map.world, ASSETS_BASE)
       .then(({ ground, tall }) => {
         this.#world.addChildAt(ground, 0);
         // Les arbres et grands details, tries avec les joueurs par leurs pieds.
