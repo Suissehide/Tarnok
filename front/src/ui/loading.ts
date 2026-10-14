@@ -94,7 +94,7 @@ export const FUNNY_LINES: readonly string[] = [
   'Affûtage des dagues…',
   'Recensement des gobelins, un par un…',
   'Négociation avec le syndicat des squelettes…',
-  'Réveil du boss (il râle)…',
+  'Réveil du boss…',
   'Polissage des cristaux d’expérience…',
   'Vérification que l’eau mouille…',
   'Graissage des catapultes…',

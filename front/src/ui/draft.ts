@@ -383,20 +383,14 @@ export class DraftScreen {
 
       root.append(tokens, frame, nature, name, stacks, detail);
 
-      // Une carte que mon inventaire refuse : le bandeau dit pourquoi, au lieu
-      // d'un clic qui ne fait rien. Les jetons des autres restent affiches,
-      // elle reste disputable par eux.
+      // Une carte que mon inventaire refuse : simplement GRISEE et inerte
+      // (retour de playtest : un bandeau en plus chargeait la carte). La raison
+      // reste au survol. Les jetons des autres restent affiches : elle reste
+      // disputable par eux.
       const reason = this.#blockedReason(card);
       root.dataset.blocked = reason === null ? 'false' : 'true';
       if (reason !== null) {
-        const banner = document.createElement('span');
-        banner.className = 'draft-card__blocked';
-        const why = document.createElement('strong');
-        why.textContent = reason;
-        const owned = document.createElement('small');
-        owned.textContent = this.#ownedReminder(card);
-        banner.append(why, owned);
-        root.append(banner);
+        root.title = `${reason} — ${this.#ownedReminder(card)}`;
       }
 
       root.addEventListener('click', () => {

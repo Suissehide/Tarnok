@@ -316,9 +316,19 @@
       <!-- 04 · HUD -->
       <section id="hud" class="ui-screen ui-screen--overlay z-10 hidden">
         <div class="ui-canvas">
+          <!--
+            La Synergie de l'equipe sur le liseret du haut ; l'XP, elle, a sa vraie
+            jauge sous les PV (retour de playtest : on prenait la Synergie pour l'XP).
+          -->
           <div class="bar bar--sml absolute left-[24px] right-[24px] top-[14px]">
-            <i id="hud-xp-fill" class="bar__fill"></i>
+            <i id="hud-synergy-fill" class="bar__fill"></i>
           </div>
+          <span
+            class="f-mono ol absolute right-[40px] top-[22px] text-[14px] leading-none"
+            title="Monte quand deux joueurs differents declenchent une reaction ensemble"
+          >
+            Synergie <span id="hud-synergy-label"></span>
+          </span>
 
           <div class="absolute left-[40px] top-[46px] flex items-center gap-[18px]">
             <div class="k k-paperx slot h-[132px] w-[132px]">
@@ -335,16 +345,12 @@
                   class="f-jer ol absolute left-0 right-0 top-[5px] text-center text-[26px]"
                 ></span>
               </div>
-              <div class="flex items-center gap-[12px]">
-                <img
-                  src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_07.png"
-                  alt="Synergie"
-                  class="h-[34px] w-[34px]"
-                />
-                <div class="bar bar--sml w-[300px]">
-                  <i id="hud-synergy-fill" class="bar__fill"></i>
-                </div>
-                <span id="hud-synergy-label" class="f-jer ol text-[26px]"></span>
+              <div class="relative w-[430px]">
+                <div class="bar"><i id="hud-xp-fill" class="bar__fill bar__fill--xp"></i></div>
+                <span
+                  id="hud-xp-label"
+                  class="f-jer ol absolute left-0 right-0 top-[5px] text-center text-[26px]"
+                ></span>
               </div>
             </div>
             <!--

@@ -165,13 +165,22 @@ function hudElements(): HudElements {
     passiveList: pick('hud-passive-list'),
     hpFill: pick('hud-hp-fill'),
     xpFill: pick('hud-xp-fill'),
+    xpLabel: pick('hud-xp-label'),
     portrait: pick('hud-portrait') as HTMLImageElement,
     kills: pick('hud-kills'),
     weapons: pick('hud-weapons'),
   };
 }
 
-const INFO: HudInfo = { hp: 73, xp: 500, xpRatio: 0.25, level: 4, timer: '2:07', frozen: false };
+const INFO: HudInfo = {
+  hp: 73,
+  xp: 500,
+  xpRatio: 0.25,
+  xpNeeded: 2000,
+  level: 4,
+  timer: '2:07',
+  frozen: false,
+};
 
 /**
  * Le client d'epreuve de la tache 18 : un identifiant local, et un inventaire
@@ -340,6 +349,9 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     source.kills = 1284;
     paintHud(el, INFO, 0, 0, source);
     expect(el.xpFill.style.getPropertyValue('--v')).toBe('0.25');
+    // L'XP lisible sur sa jauge, et la jauge est BIEN celle du sous-PV, en bleu.
+    expect(el.xpLabel?.textContent).toBe('XP 500 / 2000');
+    expect(el.xpFill.classList.contains('bar__fill--xp')).toBe(true);
     expect(el.kills.textContent).toBe(`1${THIN_SPACE}284`);
   });
 

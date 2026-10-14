@@ -186,6 +186,7 @@ const hudElements: HudElements = {
   hp: hudHp,
   hpFill: el('hud-hp-fill'),
   xpFill: el('hud-xp-fill'),
+  xpLabel: el('hud-xp-label'),
   portrait: el<HTMLImageElement>('hud-portrait'),
   kills: el('hud-kills'),
   weapons: el('hud-weapons'),

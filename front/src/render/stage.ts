@@ -521,6 +521,8 @@ export interface HudInfo {
    * applique (`LEVEL_XP_BASE x niveau x joueurs`, `#xpToNextLevel`).
    */
   xpRatio: number;
+  /** Le seuil du niveau en cours : l'XP a atteindre (meme formule que `Room`). */
+  xpNeeded: number;
   level: number;
   timer: string;
   /** Vrai pendant le gel de montee de niveau (tache 24) — voir `GameClient.isFrozen`. */
@@ -549,6 +551,7 @@ export function hudInfo(
       1,
       Math.max(0, state.xp / (LEVEL_XP_BASE * level * Math.max(1, state.players.length))),
     ),
+    xpNeeded: LEVEL_XP_BASE * level * Math.max(1, state.players.length),
     level,
     timer: formatTimer(hordeTick),
     frozen,

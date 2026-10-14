@@ -749,16 +749,15 @@ describe('une carte que mon inventaire refuse', () => {
     return h;
   }
 
-  it('bloque une arme NOUVELLE quand les slots sont pleins : desactivee, raison affichee, clic sans effet', () => {
+  it('bloque une arme NOUVELLE quand les slots sont pleins : grisee, sans bandeau, raison au survol, clic sans effet', () => {
     const h = blockedHarness(fullWeapons());
     const lance = cards(h)[2];
     expect(lance?.dataset.blocked).toBe('true');
     expect(lance?.disabled).toBe(true);
-    const banner = lance?.querySelector('.draft-card__blocked');
-    expect(banner?.textContent).toContain(
-      `Arsenal complet — ${WEAPON_SLOTS}/${WEAPON_SLOTS} armes`,
-    );
-    expect(banner?.textContent).toContain(weaponOf(0).name);
+    // Retour de playtest : plus de bandeau, juste la carte grisee.
+    expect(lance?.querySelector('.draft-card__blocked')).toBeNull();
+    expect(lance?.title).toContain(`Arsenal complet — ${WEAPON_SLOTS}/${WEAPON_SLOTS} armes`);
+    expect(lance?.title).toContain(weaponOf(0).name);
     lance?.click();
     expect(h.client.sent).toEqual([]);
   });
@@ -789,9 +788,8 @@ describe('une carte que mon inventaire refuse', () => {
     const h = blockedHarness(loadout);
     const cadence = cards(h)[1];
     expect(cadence?.disabled).toBe(true);
-    const banner = cadence?.querySelector('.draft-card__blocked');
-    expect(banner?.textContent).toContain(`Passifs complets — ${PASSIVE_SLOTS}/${PASSIVE_SLOTS}`);
-    expect(banner?.textContent).toContain(passiveOf(0).name);
+    expect(cadence?.title).toContain(`Passifs complets — ${PASSIVE_SLOTS}/${PASSIVE_SLOTS}`);
+    expect(cadence?.title).toContain(passiveOf(0).name);
     cadence?.click();
     expect(h.client.sent).toEqual([]);
     // Les armes, elles, rentrent encore.

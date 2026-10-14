@@ -74,6 +74,13 @@ export interface FrameClient {
    */
   readonly hordeTick: number;
   /**
+   * La vitesse du monde, dans `[0, 1]` : `0` pendant le gel du choix, une rampe
+   * a la reprise, `1` sinon (`GameClient#movementScale`). L'ANIMATION de la
+   * horde la suit — sans quoi le boss et les monstres continuaient de marcher
+   * sur place pendant le choix (retour de playtest). Absente : `1`.
+   */
+  readonly motionScale?: number;
+  /**
    * Le boss vivant, ou `null` — voir `GameClient.boss`. Il n'est pas dans
    * `RenderState` parce qu'il n'est ni predit ni interpole : c'est une donnee
    * d'en-tete de snapshot, lue telle quelle.
@@ -170,6 +177,24 @@ export interface FrameScreens {
   updatePortal(): void;
 }
 
+/** L'horloge d'animation de la horde, par client : elle avance a `motionScale`. */
+const clocks = new WeakMap<object, { t: number; last: number }>();
+
+/**
+ * Le temps d'animation de la horde : l'horloge murale, ralentie par la vitesse
+ * du monde. Gele pendant le choix, il reprend avec la rampe — jamais un saut.
+ */
+export function hordeClock(client: Pick<FrameClient, 'motionScale'>, now: number): number {
+  let c = clocks.get(client);
+  if (!c) {
+    c = { t: now, last: now };
+    clocks.set(client, c);
+  }
+  c.t += Math.max(0, now - c.last) * (client.motionScale ?? 1);
+  c.last = now;
+  return c.t;
+}
+
 /**
  * Avance le client d'une image et dessine tout ce qui en depend.
  *
@@ -214,7 +239,7 @@ export function composeFrame(
   const charge = client.bossCharge;
   const armant =
     charge !== null && chargeWindsUpAt(charge, client.hordeTick) ? charge.entityId : null;
-  stage.drawHorde(client.horde, now, armant);
+  stage.drawHorde(client.horde, hordeClock(client, now), armant);
   stage.drawOrbs(client.orbs, client.orbFlights, state.players, now);
   stage.drawProjectiles(client.projectiles);
   // Juste au-dessus des projectiles, comme eux au-dessus de la horde : une

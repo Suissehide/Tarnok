@@ -205,6 +205,8 @@ export interface HudElements {
   hpFill: HTMLElement;
   /** Le remplissage de la barre d'experience, en haut de l'ecran. */
   xpFill: HTMLElement;
+  /** `xp / seuil` sur la jauge d'XP. Optionnel : les anciens HUD de test n'en ont pas. */
+  xpLabel?: HTMLElement;
   portrait: HTMLImageElement;
   kills: HTMLElement;
   weapons: HTMLElement;
@@ -251,6 +253,9 @@ export function paintHud(
   el.hp.textContent = `${Math.ceil(info.hp)} / ${maxHp}`;
   el.hpFill.style.setProperty('--v', `${Math.min(1, Math.max(0, info.hp / maxHp))}`);
   el.xpFill.style.setProperty('--v', `${info.xpRatio}`);
+  if (el.xpLabel) {
+    el.xpLabel.textContent = `XP ${Math.floor(info.xp)} / ${info.xpNeeded}`;
+  }
   el.level.textContent = `${info.level}`;
   el.timer.textContent = info.timer;
   el.kills.textContent = formatGold(source.kills);

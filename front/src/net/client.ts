@@ -1439,6 +1439,11 @@ export class GameClient {
    * accesseur qui s'eteindrait a la fin du gel laisserait une seconde de
    * ralenti inexpliquee.
    */
+  /** La vitesse du monde au tick courant : `0` gele, une rampe a la reprise, `1` sinon. */
+  get motionScale(): number {
+    return this.#movementScale(this.#lastHordeTick);
+  }
+
   get isFrozen(): boolean {
     if (this.#freezeStartTick < 0) {
       return false;
