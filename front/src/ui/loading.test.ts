@@ -111,10 +111,12 @@ describe('funnyLine — les phrases de l attente', () => {
     expect(FUNNY_LINES).toContain(funnyLine(123_456, 7));
   });
 
-  it('chaque phrase commence par un verbe a l infinitif', () => {
+  it('chaque phrase est un groupe nominal (pas un infinitif), majuscule et points de suspension', () => {
     for (const ligne of FUNNY_LINES) {
-      const verbe = ligne.split(' ')[0] ?? '';
-      expect(verbe, ligne).toMatch(/(er|ir|re)$/);
+      const premier = ligne.split(' ')[0] ?? '';
+      expect(premier, ligne).not.toMatch(/(er|ir)$/);
+      expect(ligne[0], ligne).toBe(ligne[0]?.toUpperCase());
+      expect(ligne.endsWith('…'), ligne).toBe(true);
     }
   });
 });

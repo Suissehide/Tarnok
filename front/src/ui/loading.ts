@@ -85,27 +85,27 @@ export function paintLoading(el: LoadingElements, view: LoadingView): void {
 }
 
 /**
- * Les phrases de l'attente, A L'INFINITIF comme les ecrans de chargement des
- * classiques (le « Réticuler les splines » des Sims) : elles defilent sous la
- * jauge pendant que le chargement avance (`FUNNY_LINE_MS` chacune).
+ * Les phrases de l'attente, en GROUPE NOMINAL comme les ecrans de chargement
+ * des classiques (la « Réticulation des splines » des Sims) : elles defilent
+ * sous la jauge pendant que le chargement avance (`FUNNY_LINE_MS` chacune).
  */
 export const FUNNY_LINES: readonly string[] = [
-  'Réticuler les splines…',
-  'Affûter les dagues…',
-  'Compter les gobelins, un par un…',
-  'Convaincre les moutons de coopérer…',
-  'Réveiller le boss (il râle)…',
-  'Polir les gemmes d’expérience…',
-  'Vérifier que l’eau mouille…',
-  'Graisser les catapultes…',
-  'Négocier avec le syndicat des squelettes…',
-  'Équilibrer les dégâts au doigt mouillé…',
-  'Planter des buissons stratégiques…',
-  'Chercher le marteau du forgeron…',
-  'Générer des citrouilles décoratives…',
-  'Recoudre les drapeaux de la dernière fois…',
-  'Apprendre au Rempart à rester immobile…',
-  'Lancer les dés pour la météo…',
+  'Réticulation des splines…',
+  'Affûtage des dagues…',
+  'Recensement des gobelins, un par un…',
+  'Négociation avec le syndicat des squelettes…',
+  'Réveil du boss (il râle)…',
+  'Polissage des cristaux d’expérience…',
+  'Vérification que l’eau mouille…',
+  'Graissage des catapultes…',
+  'Persuasion des moutons…',
+  'Équilibrage des dégâts au doigt mouillé…',
+  'Plantation de buissons stratégiques…',
+  'Recherche du marteau du forgeron…',
+  'Génération de citrouilles décoratives…',
+  'Raccommodage des drapeaux…',
+  'Entraînement du Rempart à l’immobilité…',
+  'Tirage au sort de la météo…',
 ];
 
 /** Duree d'affichage d'une phrase, en ms. */

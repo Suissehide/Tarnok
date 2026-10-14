@@ -224,38 +224,64 @@ function drawOutline(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: n
 }
 
 /**
- * Les trois tons de la bille, en GRIS (la teinte les colore) : le corps, le
- * reflet du haut gauche, le reflet blanc — une lumiere venue d'en haut a
- * gauche, comme tout le pack.
- */
-export const ORB_SHADES = [0.62, 0.92, 1] as const;
-
-/**
- * L'orbe d'experience : une BILLE contrastee. Retours de playtest : *« plus
- * de contraste »*, puis *« garde le cote rond »*. Le relief vient de trois
- * tons poses en disques decales, sans une couleur de plus.
+ * L'orbe d'experience en PIXEL ART, dessinee pixel par pixel comme les icones
+ * du pack. Retours de playtest : *« plus de contraste »*, puis *« garde le cote
+ * rond »*, puis *« trop rond, trop cartoon »* — une forme vectorielle lisse
+ * jurait avec les sprites. Un cristal de 9 x 10 pixels, contour d'un pixel,
+ * facettes claires en haut a gauche et sombres en bas a droite.
  *
- * Dans l'ordre : une ombre douce dessous (noire, donc insensible a la
- * teinte), le corps, le reflet, l'eclat blanc, et un contour noir epais qui
- * s'arrete au bord de la case.
+ * Legende : `.` vide, `o` contour, `w` eclat blanc, `a` clair, `b` moyen,
+ * `c` sombre, `s` ombre au sol. Les tons sont en GRIS (`ORB_SHADES`) : la
+ * teinte de la particule les colore, le contour et l'ombre restent noirs.
  */
-function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, outer: number): void {
-  const r = outer * (1 - DROP_OUTLINE);
-  ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
-  ctx.beginPath();
-  ctx.ellipse(cx, cy + r * 0.92, r * 0.7, r * 0.14, 0, 0, Math.PI * 2);
-  ctx.fill();
-  const disque = (x: number, y: number, rr: number, shade: number): void => {
-    const v = Math.round(255 * shade);
-    ctx.fillStyle = `rgba(${v}, ${v}, ${v}, 1)`;
-    ctx.beginPath();
-    ctx.arc(x, y, rr, 0, Math.PI * 2);
-    ctx.fill();
-  };
-  disque(cx, cy, r, ORB_SHADES[0]);
-  disque(cx - r * 0.18, cy - r * 0.18, r * 0.62, ORB_SHADES[1]);
-  disque(cx - r * 0.38, cy - r * 0.38, r * 0.2, ORB_SHADES[2]);
-  drawOutline(ctx, cx, cy, outer);
+export const ORB_PIXELS: readonly string[] = [
+  '....o....',
+  '...oao...',
+  '..oawbo..',
+  '.oaaabbo.',
+  'oaaaabbbo',
+  'obbbbccco',
+  '.obbbcco.',
+  '..obcco..',
+  '...oco...',
+  '....o....',
+  '..sssss..',
+];
+
+/** Les tons, en gris, des pixels `a`, `b`, `c` et `w`. */
+export const ORB_SHADES: Readonly<Record<'a' | 'b' | 'c' | 'w', number>> = {
+  a: 0.95,
+  b: 0.72,
+  c: 0.5,
+  w: 1,
+};
+
+/** Taille d'un pixel de l'art dans la case de 64 : entiere, pour rester net. */
+const ORB_PIXEL = Math.floor(ORB_TEXTURE_DIAMETER / ORB_PIXELS.length);
+
+function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, _outer: number): void {
+  const rows = ORB_PIXELS.length;
+  const cols = ORB_PIXELS[0]?.length ?? 0;
+  // Centre sur la case, a des coordonnees ENTIERES.
+  const x0 = Math.round(cx - (cols * ORB_PIXEL) / 2);
+  const y0 = Math.round(cy - (rows * ORB_PIXEL) / 2);
+  ORB_PIXELS.forEach((line, y) => {
+    [...line].forEach((ch, x) => {
+      let style: string | null = null;
+      if (ch === 'o') {
+        style = OUTLINE_RGBA;
+      } else if (ch === 's') {
+        style = 'rgba(0, 0, 0, 0.3)';
+      } else if (ch in ORB_SHADES) {
+        const v = Math.round(255 * ORB_SHADES[ch as keyof typeof ORB_SHADES]);
+        style = `rgba(${v}, ${v}, ${v}, 1)`;
+      }
+      if (style) {
+        ctx.fillStyle = style;
+        ctx.fillRect(x0 + x * ORB_PIXEL, y0 + y * ORB_PIXEL, ORB_PIXEL, ORB_PIXEL);
+      }
+    });
+  });
 }
 
 /**
@@ -339,7 +365,10 @@ function makeDropAtlas(): { atlas: Texture; canvas: HTMLCanvasElement } {
   drawOrb(ctx, r, r, r);
   drawCoin(ctx, ORB_TEXTURE_DIAMETER + r, r, r * (1 - DROP_OUTLINE));
   drawOutline(ctx, ORB_TEXTURE_DIAMETER + r, r, r);
-  return { atlas: Texture.from(canvas), canvas };
+  const atlas = Texture.from(canvas);
+  // Du pixel art : agrandi sans lissage, comme les sprites du pack.
+  atlas.source.scaleMode = 'nearest';
+  return { atlas, canvas };
 }
 
 /**

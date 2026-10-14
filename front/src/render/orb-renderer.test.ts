@@ -28,6 +28,7 @@ import {
   DROP_OUTLINE,
   dropCellRect,
   ORB_DIAMETER_PX,
+  ORB_PIXELS,
   ORB_PULSE,
   ORB_PULSE_MS,
   ORB_SCALE,
@@ -583,7 +584,7 @@ interface Trace {
   /** Abscisse du dernier point decrit : la case de l'atlas (orbe < 64 <= piece). */
   readonly x: number;
   /** La forme : un arc, une ellipse ou un polygone. */
-  readonly shape: 'arc' | 'ellipse' | 'poly';
+  readonly shape: 'arc' | 'ellipse' | 'poly' | 'rect';
 }
 
 const traces: Trace[] = [];
@@ -639,6 +640,17 @@ function bakeDropAtlas(): void {
       dernierArc = 0;
       forme = 'ellipse';
     },
+    fillRect(x: number): void {
+      traces.push({
+        kind: 'fill',
+        alpha: alphaDe(context.fillStyle),
+        gray: canalDe(context.fillStyle, 0),
+        width: 0,
+        r: 0,
+        x,
+        shape: 'rect',
+      });
+    },
     fill(): void {
       traces.push({
         kind: 'fill',
@@ -675,36 +687,38 @@ function bakeDropAtlas(): void {
  * GEMME a facettes plutot qu'un disque — ce bloc garde sa FORME par des
  * relations, jamais une recopie des valeurs de production.
  */
-describe('l atlas des objets au sol — l orbe est une bille contrastee', () => {
+describe('l atlas des objets au sol — l orbe est un cristal en pixel art', () => {
   beforeAll(bakeDropAtlas);
 
-  it('reste RONDE : ni polygone, ni losange', () => {
-    const orbe = traces.filter((t) => dansLOrbe(t) && t.shape !== 'ellipse');
-    expect(orbe.length).toBeGreaterThan(0);
-    expect(orbe.every((t) => t.shape === 'arc')).toBe(true);
+  const pixels = (): typeof traces => traces.filter((t) => dansLOrbe(t) && t.shape === 'rect');
+
+  it('se dessine pixel par pixel, sans une seule courbe : comme les sprites du pack', () => {
+    expect(pixels().length).toBeGreaterThan(20);
+    expect(traces.filter((t) => dansLOrbe(t) && t.shape !== 'rect')).toEqual([]);
   });
 
-  it('pose au moins trois tons opaques DIFFERENTS : du relief, pas un aplat', () => {
-    const tons = traces.filter(
-      (t) => dansLOrbe(t) && t.kind === 'fill' && t.shape === 'arc' && t.alpha === 1,
-    );
+  it('pose au moins trois tons opaques DIFFERENTS en plus du contour : du relief', () => {
+    const tons = pixels().filter((t) => t.alpha === 1 && (t.gray ?? 0) > 60);
     expect(new Set(tons.map((t) => t.gray)).size).toBeGreaterThanOrEqual(3);
-    expect(Math.max(...ORB_SHADES) - Math.min(...ORB_SHADES)).toBeGreaterThan(0.3);
+    const valeurs = Object.values(ORB_SHADES);
+    expect(Math.max(...valeurs) - Math.min(...valeurs)).toBeGreaterThan(0.3);
   });
 
-  it('cerne la bille d un contour NOIR, opaque et epais, jusqu au bord de la case', () => {
-    const contour = traces.find((t) => dansLOrbe(t) && t.kind === 'stroke');
-    expect(contour?.alpha).toBe(1);
-    expect(contour?.gray ?? 255).toBeLessThan(40);
-    expect(contour?.width ?? 0).toBeGreaterThanOrEqual((ORB_TEXTURE_DIAMETER / 2) * 0.1);
-    expect((contour?.r ?? 0) + (contour?.width ?? 0) / 2).toBeCloseTo(ORB_TEXTURE_DIAMETER / 2, 6);
+  it('cerne le cristal d un contour NOIR et opaque, sur tout son bord', () => {
+    const contour = pixels().filter((t) => t.alpha === 1 && (t.gray ?? 255) < 40);
+    expect(contour.length).toBeGreaterThanOrEqual(ORB_PIXELS.length * 2 - 4);
+    // Chaque rangee de l art commence et finit par un pixel de contour (ou d'ombre).
+    for (const ligne of ORB_PIXELS) {
+      const plein = ligne.replace(/\./g, '');
+      expect(['o', 's'], ligne).toContain(plein[0]);
+      expect(['o', 's'], ligne).toContain(plein.at(-1));
+    }
   });
 
   it('pose une ombre douce dessous, noire et translucide', () => {
-    const ombre = traces.find((t) => dansLOrbe(t) && t.shape === 'ellipse');
-    expect(ombre?.gray).toBe(0);
-    expect(ombre?.alpha ?? 1).toBeLessThan(1);
-    expect(ombre?.alpha ?? 0).toBeGreaterThan(0);
+    const ombre = pixels().filter((t) => t.gray === 0 && (t.alpha ?? 1) < 1);
+    expect(ombre.length).toBeGreaterThan(0);
+    expect(ombre.every((t) => (t.alpha ?? 0) > 0)).toBe(true);
   });
 });
 
@@ -787,7 +801,9 @@ describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () 
    * L'orbe est creuse au milieu, la piece est pleine.
    */
   it('ne se confond pas avec l orbe : l une est en relief opaque, l autre a une face translucide', () => {
-    const tonsOrbe = traces.filter((t) => dansLOrbe(t) && t.kind === 'fill' && t.alpha === 1);
+    const tonsOrbe = traces.filter(
+      (t) => dansLOrbe(t) && t.kind === 'fill' && t.alpha === 1 && (t.gray ?? 0) > 60,
+    );
     const facePiece = traces.find((t) => dansLaPiece(t) && t.kind === 'fill');
     expect(tonsOrbe.length).toBeGreaterThanOrEqual(3);
     expect(facePiece?.alpha ?? 1).toBeLessThan(1);
