@@ -1967,7 +1967,11 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
     // le decor ne laissent plus toujours une seconde piece en chemin.
     expect(piecesRamassees.length).toBeGreaterThanOrEqual(1);
     expect(ramasses.length).toBeGreaterThan(piecesRamassees.length);
-    expect(ids.filter((id) => dropsCoin(id)).length).toBeGreaterThanOrEqual(piecesRamassees.length);
+    // Les pieces de la vague du TEST seulement : celles des vagues du
+    // directeur ramassees en chemin n'en font pas partie.
+    expect(ids.filter((id) => dropsCoin(id)).length).toBeGreaterThanOrEqual(
+      piecesRamassees.filter((id) => ids.includes(id)).length,
+    );
   });
 
   /**
@@ -2106,6 +2110,10 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
       // plus grand qu'il n'est.
       expect(hpOf(room, 1)).toBe(blesse1);
       for (let t = 0; t < REGEN_TICKS; t++) {
+        // La fenetre est longue : la premiere nuee atteindrait le joueur.
+        room.horde.kill(
+          Array.from({ length: room.horde.count }, (_, i) => room.horde.entityIdAt(i)),
+        );
         room.step(DT);
       }
       const apres = hpOf(room, 1);
@@ -3754,10 +3762,10 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     let vaguesSuivantes = 0;
     for (let t = 0; t < 60 * TICK_HZ && vaguesSuivantes === 0; t++) {
       room.step(DT);
-      for (const o of room.drainWaveOrders()) {
-        if (o.count <= 1) {
-          continue;
-        }
+      // Une vague est un GROUPE d'ordres au meme tick : on n'en prend que le
+      // principal, et on compte les vagues, pas les ordres.
+      const o = room.drainWaveOrders().find((x) => x.count > 1);
+      if (o) {
         if (pvPalier1 === null) {
           pvPalier1 = pvALApparition(room, o);
           temoin = entityIdOf(o.waveId, 0);
@@ -4842,7 +4850,8 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     for (let t = 0; t < 10 * 60 * TICK_HZ && !room.portalOpen; t++) {
       viderSauf(room, []);
       room.step(DT);
-      vagues += room.drainWaveOrders().length;
+      // Une vague = un groupe d'ordres au meme tick.
+      vagues += room.drainWaveOrders().length > 0 ? 1 : 0;
       room.drainDeaths();
       room.drainBossCharges();
       room.drainPickups();

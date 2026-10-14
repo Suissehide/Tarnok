@@ -1,7 +1,6 @@
 import {
   archetypeOf,
   BOSS_ARCHETYPE,
-  ROLE_ORDER,
   ROLES,
   type Role,
   STEP2_ARCHETYPES,
@@ -272,29 +271,65 @@ export function waveCountBounds(
   return { min: Math.min(min, MAX_ENTITIES), max: Math.min(max, MAX_ENTITIES) };
 }
 
+/** Les roles deja ouverts a la vague `waveNumber` (`ROLES.firstWave`). */
+function ouvert(r: Role, waveNumber: number): boolean {
+  return waveNumber >= ROLES[r].firstWave && POOLS[r].length > 0;
+}
+
 /**
- * Tire l'archetype d'une vague : d'abord son ROLE, au poids de `ROLES`, parmi
- * ceux qu'elle a deja le droit de tirer (`firstWave`) ; puis l'archetype dans
- * ce role.
- *
- * Deux tirages, toujours dans le meme ordre : le directeur reste une fonction
- * pure de sa graine, ce que le test de determinisme verifie.
+ * Tire un role parmi `roles`, au poids de `ROLES`, parmi ceux deja ouverts ;
+ * `troupe` si aucun ne l'est.
  */
-function pickArchetype(rng: () => number, waveNumber: number): number {
-  const ouverts = ROLE_ORDER.filter((r) => waveNumber >= ROLES[r].firstWave && POOLS[r].length > 0);
+function pickRole(rng: () => number, roles: readonly Role[], waveNumber: number): Role {
+  const ouverts = roles.filter((r) => ouvert(r, waveNumber));
   const total = ouverts.reduce((n, r) => n + ROLES[r].weight, 0);
   let roll = rng() * total;
-  let role: Role = ouverts[ouverts.length - 1] ?? 'troupe';
   for (const r of ouverts) {
     roll -= ROLES[r].weight;
     if (roll < 0) {
-      role = r;
-      break;
+      return r;
     }
   }
+  return ouverts[ouverts.length - 1] ?? 'troupe';
+}
+
+/** Un archetype du role, au hasard. */
+function pickInRole(rng: () => number, role: Role): number {
   const pool = POOLS[role];
   return pool[Math.floor(rng() * pool.length)] ?? 0;
 }
+
+/**
+ * Le CYCLE des vagues ordinaires d'un palier (retour de playtest : *« des
+ * vagues aleatoires ou un peu de regularite ? »*). Un squelette fixe, un
+ * contenu tire : la pression monte, culmine, puis retombe — et le boss vient
+ * apres. Chaque vague melange un role PRINCIPAL et une ESCORTE.
+ *
+ * - `main` : les roles ou tirer le principal (au poids de `ROLES`) ;
+ * - `escort` : le premier role OUVERT de la liste, different du principal ;
+ * - `share` : la part de l'effectif qui va a l'escorte ;
+ * - `size` : multiplie l'effectif de la vague entiere.
+ */
+interface Slot {
+  name: string;
+  main: readonly Role[];
+  escort: readonly Role[];
+  share: number;
+  size: number;
+}
+
+export const WAVE_CYCLE: readonly Slot[] = [
+  { name: 'nuee', main: ['nuee'], escort: ['troupe'], share: 0.2, size: 1 },
+  { name: 'troupe', main: ['troupe'], escort: ['brute', 'nuee'], share: 0.25, size: 1 },
+  {
+    name: 'pic',
+    main: ['troupe', 'brute', 'nuee'],
+    escort: ['colosse', 'brute', 'troupe'],
+    share: 0.2,
+    size: 1.3,
+  },
+  { name: 'repit', main: ['troupe'], escort: [], share: 0, size: 0.5 },
+];
 
 /**
  * Nombre d'entites de la vague de boss. **Un, et c'est une regle de
@@ -321,6 +356,8 @@ export class WaveDirector {
 
   /** Vagues ordinaires emises depuis le dernier boss demande. */
   #wavesInPalier = 0;
+  /** Vagues (groupes) emises depuis le debut : le numero qui fait la rampe. */
+  #waveNumber = 0;
 
   /**
    * `waveId` du DERNIER boss demande, `null` avant le premier. Ce n'est plus un
@@ -381,10 +418,15 @@ export class WaveDirector {
     this.#wavesInPalier = WAVES_PER_PALIER;
   }
 
+  /** Le numero de la derniere vague (groupe) emise, `0` avant la premiere. */
+  get waveNumber(): number {
+    return this.#waveNumber;
+  }
+
   /**
-   * Rend un ordre si une vague est due a ce tick, sinon null. `level` : le
-   * niveau de l'equipe, qui fait monter la rampe (`waveCountBounds`) ; le
-   * nombre de joueurs en fixe la part (`playerShare`).
+   * Rend l'ordre PRINCIPAL de la vague due a ce tick, ou null. Les tests et les
+   * bancs qui ne veulent qu'un ordre par vague l'utilisent ; le salon, lui,
+   * prend le groupe entier (`dueWave`).
    */
   due(
     tick: number,
@@ -392,101 +434,97 @@ export class WaveDirector {
     playerY: readonly number[],
     level = 1,
   ): WaveOrder | null {
+    return this.dueWave(tick, playerX, playerY, level)[0] ?? null;
+  }
+
+  /**
+   * Rend la vague due a ce tick — un GROUPE d'ordres, principal puis escorte,
+   * tous au meme tick et a la meme ancre — ou `[]`. `level` : le niveau de
+   * l'equipe, qui fait monter la rampe (`waveCountBounds`) ; le nombre de
+   * joueurs en fixe la part (`playerShare`).
+   *
+   * ⚠️ **Chaque ordre garde son `waveId` et voyage seul** : un groupe, ce sont
+   * deux `WAVE_ORDER` emis au meme tick. Le fil ne change pas ; les clients
+   * font naitre les deux dans l'ordre d'arrivee, comme le serveur.
+   */
+  dueWave(
+    tick: number,
+    playerX: readonly number[],
+    playerY: readonly number[],
+    level = 1,
+  ): WaveOrder[] {
     if (tick === 0 || tick % PERIOD_TICKS !== 0 || playerX.length === 0) {
-      return null;
+      return [];
     }
 
     // Ancrage SUR un joueur : le §8 de l'orientation veut que la densite se
     // calcule par grappe de joueurs proches, pas globalement.
-    //
-    // ⚠️ **L'ancre EST la position du joueur depuis la tache 18**, et non plus
-    // un point pose a `ANCHOR_RADIUS` dans une direction tiree. C'est ce qui
-    // fait de la vague un encerclement : `FORMATION.ENCIRCLE` repartit les
-    // entites sur un cercle de rayon `ENCIRCLE_RADIUS` (1800 px, la valeur de
-    // l'ancien `ANCHOR_RADIUS`) autour de l'ancre. La distance de naissance n'a
-    // donc pas change ; la DIRECTION, elle, n'est plus unique.
-    //
-    // Deux tirages ont disparu avec l'ancien ancrage — l'angle et le rayon.
-    // Aucun determinisme n'en souffre : le flux du generateur n'a pas a etre
-    // le meme qu'a la version precedente du directeur, seulement le meme d'une
-    // instance a l'autre a graine egale. Ce que le flux ne doit pas faire,
-    // c'est varier D'UN APPEL A L'AUTRE selon l'etat de la partie (boss ou
-    // non) — voir `tirage` et `pickArchetype` plus bas.
     const target = Math.floor(this.#rng() * playerX.length);
+    const anchorX = Math.round(playerX[target] ?? 0);
+    const anchorY = Math.round(playerY[target] ?? 0);
 
-    const waveNumber = this.#nextWaveId;
-    // ⚠️ **La part ne s'applique qu'a partir du niveau 2.** Le niveau 1 est la
-    // zone reglee au banc pour le joueur SEUL (`WAVE1_*`, `RAMP_WAVES`) : y
-    // reduire la horde l'affame — moins de morts, moins d'orbes, et un joueur
-    // passif n'atteint plus le niveau 2 en 100 s (`room.test.ts`, mesure).
+    this.#waveNumber++;
+    const waveNumber = this.#waveNumber;
+    // ⚠️ **La part ne s'applique qu'a partir du niveau 2** (voir `playerShare`).
     const share = level >= 2 ? playerShare(playerX.length) : 1;
     const { min, max } = waveCountBounds(level, share, waveNumber);
-
-    // ⚠️ **Tire AVANT de savoir si c'est un boss, et toujours.** La vague de
-    // boss ignore ce tirage (elle vaut `BOSS_WAVE_COUNT`), mais s'en abstenir
-    // decalerait le flux du generateur d'un cran a chaque palier : deux
-    // directeurs de meme graine ne produiraient plus la meme suite selon la
-    // vitesse a laquelle leurs boss meurent. Le determinisme du directeur est
-    // ce que verifie le test « est deterministe pour une meme graine ».
+    // ⚠️ **Tire AVANT de savoir si c'est un boss, et toujours** : le flux du
+    // generateur ne doit pas dependre de la vitesse a laquelle les boss meurent.
     const tirage = min + this.#rng() * (max - min);
+    const formation = (): number =>
+      FORMATION_POOL[Math.floor(this.#rng() * FORMATION_POOL.length)] ?? 0;
 
-    // Le boss est du : `WAVES_PER_PALIER` vagues ordinaires sont tombees et
-    // aucun boss n'est encore en jeu.
-    const boss = this.#wavesInPalier >= WAVES_PER_PALIER;
-
-    // ⚠️ **Ces deux lignes sont sorties du litteral, et l'ORDRE dans lequel
-    // elles consomment le generateur est le meme qu'avant** : la graine, puis
-    // les deux tirages de `pickArchetype`, puis la formation. Les sortir du
-    // litteral etait necessaire pour que la vague de boss puisse IGNORER le
-    // tirage d'archetype sans s'en abstenir — s'en abstenir decalerait le flux
-    // d'un cran a chaque palier, et deux directeurs de meme graine ne
-    // produiraient plus la meme suite selon la vitesse a laquelle leurs boss
-    // meurent. Meme raison que `tirage` ci-dessus.
-    const seed = (this.#rng() * 0xffff_ffff) >>> 0;
-    const tirageArchetype = pickArchetype(this.#rng, waveNumber);
-
-    const order: WaveOrder = {
-      waveId: this.#nextWaveId++,
-      spawnTick: tick,
-      seed,
-      // ⚠️ **Le boss est un ARCHETYPE, pas un type d'entite.** `Horde` ne gagne
-      // aucun tableau, `count` vaut 1, et tout le reste — identite
-      // arithmetique, champ de flux, separation, collision, orbes, marques
-      // elementaires — marche parce que rien n'a ete ecrit pour lui. Ses PV et
-      // sa taille sortent de `shared/archetypes.ts`, et l'echelle du palier lui
-      // est appliquee par `Room` comme a n'importe qui.
-      archetype: boss ? BOSS_ARCHETYPE : tirageArchetype,
-      formation: FORMATION_POOL[Math.floor(this.#rng() * FORMATION_POOL.length)] ?? 0,
-      anchorX: Math.round(playerX[target] ?? 0),
-      anchorY: Math.round(playerY[target] ?? 0),
-      // ⚠️ **L'echelle du palier s'applique ICI, cote SERVEUR, avant que
-      // l'ordre ne parte** : `count` voyage dans les 19 octets, donc le client
-      // recoit un compte deja resolu et n'a rien a savoir du palier pour faire
-      // apparaitre la meme vague. C'est la voie « les valeurs voyagent deja
-      // resolues » du plan, appliquee a l'effectif.
-      // Le role fait la taille : une nuee deborde, un colosse vient presque seul.
-      count: boss
-        ? BOSS_WAVE_COUNT
-        : Math.max(
-            1,
-            Math.min(
-              MAX_ENTITIES,
-              Math.round(
-                tirage * waveCountScale(this.#palier) * archetypeOf(tirageArchetype).countFactor,
-              ),
-            ),
-          ),
-    };
-
-    if (boss) {
-      this.#bossWaveId = order.waveId;
-      // Le compte repart A L'APPARITION, plus a la mort : le prochain boss
-      // vient `WAVES_PER_PALIER` vagues plus tard, que celui-ci vive ou non.
+    if (this.#wavesInPalier >= WAVES_PER_PALIER) {
+      // Le boss : un ordre, seul.
+      const seed = (this.#rng() * 0xffff_ffff) >>> 0;
+      const boss: WaveOrder = {
+        waveId: this.#nextWaveId++,
+        spawnTick: tick,
+        seed,
+        archetype: BOSS_ARCHETYPE,
+        formation: formation(),
+        anchorX,
+        anchorY,
+        count: BOSS_WAVE_COUNT,
+      };
+      this.#bossWaveId = boss.waveId;
       this.#wavesInPalier = 0;
-    } else {
-      this.#wavesInPalier++;
+      return [boss];
     }
 
-    return order;
+    const slot = WAVE_CYCLE[this.#wavesInPalier % WAVE_CYCLE.length] ?? WAVE_CYCLE[0];
+    this.#wavesInPalier++;
+    if (!slot) {
+      return [];
+    }
+    // L'effectif de la vague entiere, a l'echelle du palier et du creneau.
+    const total = tirage * waveCountScale(this.#palier) * slot.size;
+    const borne = (n: number): number => Math.max(1, Math.min(MAX_ENTITIES, Math.round(n)));
+
+    const mainRole = pickRole(this.#rng, slot.main, waveNumber);
+    const escortRole = slot.escort.find((r) => r !== mainRole && ouvert(r, waveNumber));
+    const partEscorte = escortRole ? slot.share : 0;
+
+    const ordre = (role: Role, part: number): WaveOrder => {
+      const seed = (this.#rng() * 0xffff_ffff) >>> 0;
+      const archetype = pickInRole(this.#rng, role);
+      return {
+        waveId: this.#nextWaveId++,
+        spawnTick: tick,
+        seed,
+        archetype,
+        formation: formation(),
+        anchorX,
+        anchorY,
+        // Le role fait la taille : une nuee deborde, un colosse vient presque seul.
+        count: borne(total * part * archetypeOf(archetype).countFactor),
+      };
+    };
+
+    const out = [ordre(mainRole, 1 - partEscorte)];
+    if (escortRole) {
+      out.push(ordre(escortRole, partEscorte));
+    }
+    return out;
   }
 }

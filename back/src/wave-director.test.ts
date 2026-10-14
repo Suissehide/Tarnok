@@ -10,7 +10,13 @@ import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
-import { playerShare, RAMP_LEVELS, WaveDirector, waveCountBounds } from './wave-director';
+import {
+  playerShare,
+  RAMP_LEVELS,
+  WAVE_CYCLE,
+  WaveDirector,
+  waveCountBounds,
+} from './wave-director';
 
 describe('WaveDirector', () => {
   it('ne sort rien avant la premiere echeance', () => {
@@ -512,36 +518,77 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     let ordinaires = 0;
 
     for (let seed = 1; seed <= 20; seed++) {
-      for (const e of emissions(seed, 10 * MINUTE, true)) {
-        if (e.boss) {
+      const d = new WaveDirector(seed);
+      let creneau = 0;
+      let niveau = 1;
+      for (let tick = 0; tick < 10 * MINUTE; tick++) {
+        const groupe = d.dueWave(tick, QUATRE, QUATRE, niveau);
+        if (groupe.length === 0) {
+          continue;
+        }
+        if (d.bossWaveId === groupe[0]?.waveId) {
+          creneau = 0;
+          d.bossDefeated();
           continue;
         }
         ordinaires++;
-        const { min, max } = waveCountBounds(e.level, 1, e.order.waveId);
-        // Le role de l'archetype tire fait aussi la taille (nuee nombreuse,
-        // colosse presque seul) : il entre dans l'echelle, comme le palier.
-        const role = archetypeOf(e.order.archetype).countFactor;
-        const echelle = waveCountScale(e.palier) * role;
-        // La borne, mise a l'echelle du palier et du role : c'est la seule que
-        // l'ordre doive respecter.
-        expect(e.order.count).toBeGreaterThanOrEqual(Math.max(1, Math.round(min * echelle)));
-        expect(e.order.count).toBeLessThanOrEqual(
-          Math.min(MAX_ENTITIES, Math.round(max * echelle)),
+        const slot = WAVE_CYCLE[creneau % WAVE_CYCLE.length];
+        creneau++;
+        const { min, max } = waveCountBounds(niveau, 1, d.waveNumber);
+        const echelle = waveCountScale(d.palier) * (slot?.size ?? 1);
+        // L'effectif de la vague ENTIERE, chaque ordre ramene a son role
+        // (la nuee deborde, le colosse vient presque seul).
+        const poids = groupe.reduce(
+          (n, o) => n + o.count / archetypeOf(o.archetype).countFactor,
+          0,
         );
-
-        // ⚠️ **La moitie qui compte.** Les deux assertions ci-dessus passent
-        // telles quelles avec une echelle constamment egale a 1 : elles
-        // reduisent alors aux bornes brutes. Il faut donc voir des ordres qui
-        // DEPASSENT la borne brute de leur numero de vague, ce qu'aucune vague
-        // du palier 0 ne peut faire.
-        if (e.palier > 0 && e.order.count > Math.round(max * role)) {
+        // Tolerance d'arrondi : un compte d'au moins 1, arrondi, par ordre.
+        const marge = groupe.length * 8;
+        expect(poids).toBeGreaterThanOrEqual(min * echelle - marge);
+        expect(poids).toBeLessThanOrEqual(max * echelle + marge);
+        // ⚠️ **La moitie qui compte** : des vagues qui DEPASSENT la borne brute
+        // (hors creneau), ce qu'aucune vague du palier 0 ne peut faire.
+        if (d.palier > 0 && poids > max * (slot?.size ?? 1) + marge) {
           debordements++;
         }
+        niveau = 1 + Math.floor(ordinaires / 3);
       }
     }
 
     expect(ordinaires).toBeGreaterThan(500);
     expect(debordements).toBeGreaterThan(0);
+  });
+
+  it('suit un cycle : nuee, troupe, pic, repit, puis le boss — et melange les roles', () => {
+    const d = new WaveDirector(9);
+    const groupes: WaveOrder[][] = [];
+    for (let tick = 0; tick < 4 * MINUTE; tick++) {
+      const g = d.dueWave(tick, QUATRE, QUATRE, 8);
+      if (g.length > 0) {
+        groupes.push(g);
+      }
+    }
+    const role = (o: WaveOrder | undefined): string => archetypeOf(o?.archetype ?? 0).role;
+    // Les quatre creneaux, dans l'ordre, puis le boss seul.
+    expect(role(groupes[0]?.[0])).toBe('nuee');
+    expect(role(groupes[1]?.[0])).toBe('troupe');
+    expect(role(groupes[3]?.[0])).toBe('troupe');
+    expect(groupes[4]).toHaveLength(1);
+    expect(groupes[4]?.[0]?.archetype).toBe(BOSS_ARCHETYPE);
+    // Le repit est plus petit que la vague qui le precede.
+    const taille = (g: WaveOrder[] | undefined): number =>
+      (g ?? []).reduce((n, o) => n + o.count / archetypeOf(o.archetype).countFactor, 0);
+    expect(taille(groupes[3])).toBeLessThan(taille(groupes[2]));
+    // Les vagues ordinaires MELANGENT : une escorte d'un autre role.
+    const melangees = groupes.filter((g) => g.length === 2 && role(g[0]) !== role(g[1]));
+    expect(melangees.length).toBeGreaterThan(3);
+    // Tous les ordres d'une vague naissent au meme tick et a la meme ancre.
+    for (const g of groupes) {
+      for (const o of g) {
+        expect(o.spawnTick).toBe(g[0]?.spawnTick);
+        expect(o.anchorX).toBe(g[0]?.anchorX);
+      }
+    }
   });
 });
 

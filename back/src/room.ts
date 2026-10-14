@@ -1338,8 +1338,10 @@ export class Room {
       }
     }
 
-    const order = this.#director.due(this.#tick, xs, ys, this.#level);
-    if (order) {
+    // Une vague est un GROUPE d'ordres (principal, escorte) : chacun nait comme
+    // avant, dans l'ordre, et la vague ne compte qu'UNE fois pour le portail.
+    const vague = this.#director.dueWave(this.#tick, xs, ys, this.#level);
+    for (const order of vague) {
       // ⚠️ **Lu AVANT `spawn`, et avant tout le reste** : `bossWaveId` designe
       // le boss que `due` vient eventuellement de demander.
       const estBoss = this.#director.bossWaveId === order.waveId;
@@ -1395,9 +1397,11 @@ export class Room {
         this.#scalePalierHp(before);
       }
       this.#pendingOrders.push(order);
-      // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, plus
-      // a la mort de chaque boss (retour de playtest : *« ne fait pas de fin a
-      // chaque boss »*).
+    }
+    // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, plus
+    // a la mort de chaque boss (retour de playtest : *« ne fait pas de fin a
+    // chaque boss »*). Une vague = un groupe, quel que soit son nombre d'ordres.
+    if (vague.length > 0) {
       this.#wavesSincePortal++;
       if (this.#wavesSincePortal >= PORTAL_EVERY_WAVES && !this.portalOpen) {
         this.#wavesSincePortal = 0;
