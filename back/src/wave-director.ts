@@ -111,6 +111,37 @@ const STEADY_MAX_COUNT = 320;
 const RAMP_WAVES = 30;
 
 /**
+ * ⚠️ **Depuis la retouche de difficulte d'apres l'etape 8, la rampe suit le
+ * NIVEAU de l'equipe, plus le numero de vague** — demande de l'auteur : *« en
+ * solo, la difficulte est tres elevee »*. `RAMP_WAVES` reste un PLANCHER :
+ * sans lui, la rampe ne demarre jamais — un joueur seul passif n'atteint plus
+ * le niveau 2 en 100 s, faute d'assez de morts au niveau 1 (mesure,
+ * `room.test.ts`, « la run est jouable »). La rampe prend donc le PLUS AVANCE
+ * des deux : le temps, ou le niveau.
+ *
+ * Une equipe qui monte vite affronte vite le regime etabli, une equipe qui
+ * peine reste sur de petites vagues : la difficulte devient elastique, comme
+ * le palier l'est deja a la mort du boss. Le niveau ne redescend jamais, donc
+ * la monotonie de `waveCountBounds` tient toujours.
+ *
+ * Reglage de depart, a confronter au playtest : 10 niveaux de rampe.
+ */
+export const RAMP_LEVELS = 10;
+
+/**
+ * La part de la MONTEE des vagues que voit une equipe de `players` joueurs :
+ * 40 % seul, +20 % par joueur, 100 % a quatre (voir `waveCountBounds`). La horde se partage, les joueurs non : un
+ * joueur seul tient un secteur, pas quatre.
+ *
+ * Le besoin d'XP d'un niveau est deja proportionnel au nombre de joueurs
+ * (`Room#xpForNextLevel`) : seul, il faut un quart de l'XP de quatre pour 40 %
+ * des ennemis — le solo monte donc un peu plus vite, et c'est voulu.
+ */
+export function playerShare(players: number): number {
+  return Math.min(1, (Math.max(1, players) + 1) / 5);
+}
+
+/**
  * Les formations tirables.
  *
  * ⚠️ **L'ENCERCLEMENT EST LA REGLE, pas un cas particulier** (tache 18 de
@@ -201,18 +232,28 @@ const HEAVY_WAVE_SHARE = 0.2;
 const HEAVY_FIRST_WAVE = 6;
 
 /**
- * Bornes `[min, max]` du nombre d'entites d'une vague, en fonction de son
- * NUMERO (1-based) — pure, sans tirage, pour rester testable independamment
+ * Bornes `[min, max]` du nombre d'entites d'une vague, en fonction du NIVEAU
+ * de l'equipe (1-based, voir `RAMP_LEVELS`) — pure, sans tirage, pour rester testable independamment
  * du hasard : `WaveDirector.due` s'en sert ensuite pour tirer `count` dedans.
  *
- * ⚠️ **Monotone et bornee, pas une formule figee.** `waveNumber` croissant ne
+ * ⚠️ **Monotone et bornee, pas une formule figee.** `level` croissant ne
  * peut jamais faire BAISSER les bornes, et elles ne depassent jamais
  * `MAX_ENTITIES` (le plafond dur du salon, §3 de la spec) — c'est cette forme
  * que le test verrouille, pas les valeurs de `WAVE1_*` / `STEADY_*` /
  * `RAMP_WAVES`, qui resteront a retoucher au fil des sessions de jeu.
  */
-export function waveCountBounds(waveNumber: number): { min: number; max: number } {
-  const t = RAMP_WAVES > 1 ? Math.min(1, Math.max(0, (waveNumber - 1) / (RAMP_WAVES - 1))) : 1;
+export function waveCountBounds(
+  level: number,
+  share = 1,
+  waveNumber = 1,
+): { min: number; max: number } {
+  // ⚠️ **La part des joueurs ne pese que sur la MONTEE, jamais sur la premiere
+  // vague** : `WAVE1_*` a ete regle au banc pour le joueur SEUL. La reduire
+  // aussi affame le solo — mesure : un joueur passif n'atteint plus le
+  // niveau 2 en 100 s (`room.test.ts`, « la run est jouable »).
+  const parNiveau = Math.min(1, Math.max(0, (level - 1) / (RAMP_LEVELS - 1)));
+  const parVague = Math.min(1, Math.max(0, (waveNumber - 1) / (RAMP_WAVES - 1)));
+  const t = share * Math.max(parNiveau, parVague);
   const min = Math.round(WAVE1_MIN_COUNT + t * (STEADY_MIN_COUNT - WAVE1_MIN_COUNT));
   const max = Math.round(WAVE1_MAX_COUNT + t * (STEADY_MAX_COUNT - WAVE1_MAX_COUNT));
   return { min: Math.min(min, MAX_ENTITIES), max: Math.min(max, MAX_ENTITIES) };
@@ -325,8 +366,17 @@ export class WaveDirector {
     this.#bossWaveId = null;
   }
 
-  /** Rend un ordre si une vague est due a ce tick, sinon null. */
-  due(tick: number, playerX: readonly number[], playerY: readonly number[]): WaveOrder | null {
+  /**
+   * Rend un ordre si une vague est due a ce tick, sinon null. `level` : le
+   * niveau de l'equipe, qui fait monter la rampe (`waveCountBounds`) ; le
+   * nombre de joueurs en fixe la part (`playerShare`).
+   */
+  due(
+    tick: number,
+    playerX: readonly number[],
+    playerY: readonly number[],
+    level = 1,
+  ): WaveOrder | null {
     if (tick === 0 || tick % PERIOD_TICKS !== 0 || playerX.length === 0) {
       return null;
     }
@@ -350,7 +400,12 @@ export class WaveDirector {
     const target = Math.floor(this.#rng() * playerX.length);
 
     const waveNumber = this.#nextWaveId;
-    const { min, max } = waveCountBounds(waveNumber);
+    // ⚠️ **La part ne s'applique qu'a partir du niveau 2.** Le niveau 1 est la
+    // zone reglee au banc pour le joueur SEUL (`WAVE1_*`, `RAMP_WAVES`) : y
+    // reduire la horde l'affame — moins de morts, moins d'orbes, et un joueur
+    // passif n'atteint plus le niveau 2 en 100 s (`room.test.ts`, mesure).
+    const share = level >= 2 ? playerShare(playerX.length) : 1;
+    const { min, max } = waveCountBounds(level, share, waveNumber);
 
     // ⚠️ **Tire AVANT de savoir si c'est un boss, et toujours.** La vague de
     // boss ignore ce tirage (elle vaut `BOSS_WAVE_COUNT`), mais s'en abstenir

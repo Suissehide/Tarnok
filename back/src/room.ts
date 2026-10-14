@@ -1030,6 +1030,11 @@ export class Room {
     this.#gold = gold;
   }
 
+  /** Ecriture de test, meme statut que `debugSetGold` : le niveau de l'equipe. */
+  debugSetLevel(level: number): void {
+    this.#level = level;
+  }
+
   get metrics(): Readonly<RoomMetrics> {
     return this.#metrics;
   }
@@ -1306,7 +1311,7 @@ export class Room {
       }
     }
 
-    const order = this.#director.due(this.#tick, xs, ys);
+    const order = this.#director.due(this.#tick, xs, ys, this.#level);
     if (order) {
       // ⚠️ **Lu AVANT `spawn`, et avant tout le reste** : `bossWaveId` designe
       // le boss que `due` vient eventuellement de demander.

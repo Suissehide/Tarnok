@@ -10,7 +10,7 @@ import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
-import { WaveDirector, waveCountBounds } from './wave-director';
+import { playerShare, RAMP_LEVELS, WaveDirector, waveCountBounds } from './wave-director';
 
 describe('WaveDirector', () => {
   it('ne sort rien avant la premiere echeance', () => {
@@ -343,6 +343,8 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     order: WaveOrder;
     palier: number;
     boss: boolean;
+    /** Le niveau d'equipe passe a `due` pour cet ordre. */
+    level: number;
   }
 
   /**
@@ -352,16 +354,21 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
    * palier ne bouge jamais ; `true`, il tombe a l'instant meme ou il apparait.
    * Les deux cas sont necessaires — voir les deux moities plus bas.
    */
+  const QUATRE = [3000, 3100, 3200, 3300];
+
   function emissions(seed: number, ticks: number, tuerLeBoss: boolean): Emission[] {
     const d = new WaveDirector(seed);
     const out: Emission[] = [];
     for (let tick = 0; tick < ticks; tick++) {
-      const order = d.due(tick, [3000], [3000]);
+      // Quatre joueurs (part pleine) et un niveau qui monte d'un cran toutes
+      // les trois vagues : le decor traverse toute la rampe.
+      const level = 1 + Math.floor(out.length / 3);
+      const order = d.due(tick, QUATRE, QUATRE, level);
       if (!order) {
         continue;
       }
       const boss = d.bossWaveId === order.waveId;
-      out.push({ order, palier: d.palier, boss });
+      out.push({ order, palier: d.palier, boss, level });
       if (boss && tuerLeBoss) {
         d.bossDefeated();
       }
@@ -505,7 +512,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
           continue;
         }
         ordinaires++;
-        const { min, max } = waveCountBounds(e.order.waveId);
+        const { min, max } = waveCountBounds(e.level, 1, e.order.waveId);
         const echelle = waveCountScale(e.palier);
         // La borne, mise a l'echelle du palier : c'est la seule que l'ordre
         // doive respecter.
@@ -525,5 +532,39 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 
     expect(ordinaires).toBeGreaterThan(500);
     expect(debordements).toBeGreaterThan(0);
+  });
+});
+
+describe('la difficulte suit le niveau et le nombre de joueurs', () => {
+  /** La taille du premier ordre ordinaire d'un directeur neuf, a `players` joueurs et `level`. */
+  function premiereVague(players: number, level: number): number {
+    const d = new WaveDirector(42);
+    const xs = Array.from({ length: players }, (_, i) => 3000 + 100 * i);
+    for (let tick = 1; tick < 10_000; tick++) {
+      const order = d.due(tick, xs, xs, level);
+      if (order) {
+        return order.count;
+      }
+    }
+    throw new Error('aucune vague');
+  }
+
+  it('la part monte de 40 % seul a 100 % a quatre, jamais au-dela', () => {
+    expect([1, 2, 3, 4].map(playerShare)).toEqual([0.4, 0.6, 0.8, 1]);
+    expect(playerShare(0)).toBe(0.4);
+  });
+
+  it('en haut de la rampe, la meme graine fait une vague plus petite seul qu a quatre', () => {
+    expect(premiereVague(1, RAMP_LEVELS)).toBeLessThan(premiereVague(4, RAMP_LEVELS));
+  });
+
+  it('la premiere vague, reglee au banc pour le joueur seul, ne depend pas du nombre de joueurs', () => {
+    expect(premiereVague(1, 1)).toBe(premiereVague(4, 1));
+    expect(waveCountBounds(1, playerShare(1))).toEqual(waveCountBounds(1));
+  });
+
+  it('a la meme vague, un niveau plus haut fait une vague plus grande', () => {
+    expect(premiereVague(4, RAMP_LEVELS)).toBeGreaterThan(premiereVague(4, 1));
+    expect(waveCountBounds(RAMP_LEVELS)).toEqual(waveCountBounds(RAMP_LEVELS + 50));
   });
 });
