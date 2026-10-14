@@ -92,6 +92,18 @@ export interface ProjectileLook {
    * occupe une fraction fixe (voir `PROJECTILE_SHAPE_FRACTION` cote client) :
    * deux armes de meme `diameterPx` occupent donc la meme place a l'ecran quel
    * que soit leur `glow`.
+   *
+   * ⚠️ **Les dix-sept calibres ont ete multiplies par 1,4 a l'etape 8**, en
+   * gardant leur ORDRE et leur distinction deux a deux (de 7 a 29 px, contre 5
+   * a 21). La raison est mesuree, pas esthetique : une case d'atlas dessine la
+   * silhouette sur 32 px, et a 5 ou 10 px a l'ecran il ne restait rien a lire
+   * de ce que la forme disait — constate sur une planche des dix-sept
+   * silhouettes rendue a 128 px, ou les defauts de `masse` et `bouffee` se
+   * voyaient alors qu'en jeu ils passaient inapercus.
+   *
+   * ⚠️ **Purement COSMETIQUE, et surtout pas `blastRadius`.** Ce qui meurt ne
+   * bouge pas d'un pixel ; `weapons.test.ts` garde que les deux ne se
+   * confondent jamais.
    */
   diameterPx: number;
   /** Teinte du projectile, 0xRRGGBB. Voir l'avertissement ci-dessus. */
@@ -293,7 +305,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // le plus discret du catalogue.
     look: {
       shape: 'lame',
-      diameterPx: 10,
+      diameterPx: 14,
       tint: 0xeaf2ff,
       glow: 0.3,
       trailTicks: 1,
@@ -322,7 +334,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // deux (voir `assertWeaponLooks`).
     look: {
       shape: 'petale',
-      diameterPx: 11,
+      diameterPx: 15,
       tint: 0xffc23d,
       glow: 0.45,
       trailTicks: 1,
@@ -347,7 +359,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // pleine opacite jusqu'au bout. « Il file net », par derivation.
     look: {
       shape: 'fleche',
-      diameterPx: 17,
+      diameterPx: 24,
       tint: 0x9a5cff,
       glow: 0.25,
       trailTicks: 1.6,
@@ -387,7 +399,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // fort, trainee la plus courte : tout se passe au contact.
     look: {
       shape: 'flamme',
-      diameterPx: 13,
+      diameterPx: 18,
       tint: 0xff4d2e,
       glow: 0.7,
       trailTicks: 1,
@@ -445,7 +457,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // l'eventail — les deux armes de Braise ne se ressemblent pas.
     look: {
       shape: 'sphere',
-      diameterPx: 18,
+      diameterPx: 25,
       tint: 0x39d97a,
       glow: 0.55,
       trailTicks: 1.5,
@@ -468,7 +480,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // le nom EST un disque perce.
     look: {
       shape: 'anneau',
-      diameterPx: 14,
+      diameterPx: 20,
       tint: 0xff45c8,
       glow: 0.35,
       trailTicks: 1.5,
@@ -495,7 +507,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // ni l'une ni l'autre ne porte le bleu de l'element (0x7ad8ff).
     look: {
       shape: 'aiguille',
-      diameterPx: 9,
+      diameterPx: 13,
       tint: 0x2f6bff,
       glow: 0.3,
       trailTicks: 1.5,
@@ -518,7 +530,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
     look: {
       shape: 'grain',
-      diameterPx: 7,
+      diameterPx: 10,
       tint: 0xd6f22b,
       glow: 0.25,
       trailTicks: 0.5,
@@ -544,7 +556,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // donc elle se suit des yeux.
     look: {
       shape: 'eclat',
-      diameterPx: 12,
+      diameterPx: 17,
       tint: 0x28e6d0,
       glow: 0.6,
       trailTicks: 1.5,
@@ -576,7 +588,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // teinte de l'element (0xf3e94b, jaune) comme l'exige `assertWeaponLooks`.
     look: {
       shape: 'arc',
-      diameterPx: 6,
+      diameterPx: 8,
       tint: 0xb388ff,
       glow: 0.75,
       trailTicks: 0.8,
@@ -604,7 +616,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // plus.
     look: {
       shape: 'javelot',
-      diameterPx: 15,
+      diameterPx: 21,
       tint: 0x00e5ff,
       glow: 0.5,
       trailTicks: 1.4,
@@ -630,7 +642,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Distincte de la teinte de l'element (0x3d2b1f, brun fonce).
     look: {
       shape: 'goutte',
-      diameterPx: 8,
+      diameterPx: 11,
       tint: 0x8a6d3f,
       glow: 0.2,
       trailTicks: 0.8,
@@ -655,7 +667,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // qui n'illumine rien.
     look: {
       shape: 'masse',
-      diameterPx: 16,
+      diameterPx: 22,
       tint: 0x5c3a21,
       glow: 0.15,
       trailTicks: 1.3,
@@ -685,7 +697,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // le projectile (`assertWeaponLooks`).
     look: {
       shape: 'bouffee',
-      diameterPx: 19,
+      diameterPx: 27,
       tint: 0x8fe34c,
       glow: 0.35,
       trailTicks: 0.9,
@@ -710,7 +722,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // la poire-a-chaux.
     look: {
       shape: 'obus',
-      diameterPx: 21,
+      diameterPx: 29,
       tint: 0x4f7a1a,
       glow: 0.2,
       trailTicks: 1.2,
@@ -739,7 +751,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // fleches-jumelles et de la teinte de l'element (0xc9c9e8).
     look: {
       shape: 'dard',
-      diameterPx: 5,
+      diameterPx: 7,
       tint: 0x7a7aa8,
       glow: 0.3,
       trailTicks: 1.1,
@@ -764,7 +776,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // se voit partir, contrairement a la poix qui n'illumine rien.
     look: {
       shape: 'glaive',
-      diameterPx: 20,
+      diameterPx: 28,
       tint: 0x45456e,
       glow: 0.5,
       trailTicks: 1.3,

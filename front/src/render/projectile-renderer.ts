@@ -666,8 +666,14 @@ function makeStreakAtlas(): Texture {
 /**
  * Epaisseur de la trainee, en fraction du calibre du projectile. Plus fine que
  * le corps : une trainee aussi large que la tete masquerait la tete.
+ *
+ * ⚠️ **0,85 depuis l'etape 8, contre 0,6.** La trainee porte desormais une
+ * MATIERE (`STREAK_PAINTERS` : des bouffees, des tirets, des etincelles), et a
+ * 0,6 d'un calibre de dix pixels elle faisait six pixels d'epaisseur — ou
+ * aucune de ces matieres ne se distingue d'un trait uni. Elle reste strictement
+ * plus fine que la tete, ce que le test garde arme par arme.
  */
-const TRAIL_THICKNESS_FRACTION = 0.6;
+const TRAIL_THICKNESS_FRACTION = 0.85;
 
 /**
  * Duree du « pop » de naissance, en ticks de vol, et sur-echelle a t = 0.
@@ -678,13 +684,19 @@ const TRAIL_THICKNESS_FRACTION = 0.6;
  * projectile. Un pop en millisecondes aurait demande une horloge murale au
  * calque, donc un second temps a cote de celui de la simulation.
  *
- * Deux ticks (66 ms) : assez pour que le depart du tir CLAQUE, trop court pour
- * qu'on lise un projectile plus gros qu'il n'est. Le reste de sa course, il
- * fait exactement son `diameterPx` — c'est ce qui garde la comparaison entre
- * deux armes honnete (voir `PROJECTILE_SHAPE_FRACTION`).
+ * Trois ticks (100 ms) a x1,6 : assez pour que le depart du tir CLAQUE, trop
+ * court pour qu'on lise un projectile plus gros qu'il n'est. Le reste de sa
+ * course, il fait exactement son `diameterPx` — c'est ce qui garde la
+ * comparaison entre deux armes honnete (voir `PROJECTILE_SHAPE_FRACTION`).
+ *
+ * ⚠️ **x1,4 sur 2 ticks d'abord, releve apres coup.** 66 ms sur un projectile
+ * de dix pixels ne se voyait pas — le pop existait dans le test et nulle part
+ * sur l'ecran. C'est le meme constat qui a fait monter les calibres du
+ * catalogue d'un cran : a cette taille, une courbe timide est une courbe
+ * absente.
  */
-export const POP_TICKS = 2;
-export const POP_SCALE = 1.4;
+export const POP_TICKS = 3;
+export const POP_SCALE = 1.6;
 
 /**
  * Sur-echelle de la tete a `ageTicks` ticks de vol : `POP_SCALE` au depart,
