@@ -88,19 +88,20 @@ export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
  */
 //
 // ⚠️ **Cyan vif, plus vert** : sur l'herbe de la carte en tuiles, un orbe vert
-// disparaissait dans le sol (retour de playtest). Le contraste vient des
-// facettes cuites en gris (`GEM_FACETS`), que la teinte decline en quatre bleus.
+// disparaissait dans le sol (retour de playtest). Le contraste vient des tons
+// cuits en gris (`ORB_SHADES`), que la teinte decline en bleus.
 export const ORB_TINT = 0x3ad8ff;
 
 /**
  * La pulsation de l'orbe, EN TAILLE : son echelle respire entre
  * `1 - ORB_PULSE` et `1 + ORB_PULSE` fois `ORB_SCALE`. Elle reste OPAQUE — une
  * pulsation d'opacite eteignait l'orbe dans l'herbe, une pulsation de taille
- * l'allume (retour de playtest : *« plus de contraste et pulsation »*).
+ * l'allume (retour de playtest : *« plus de contraste et pulsation »*), et
+ * reste DOUCE — ample et rapide, elle fatiguait l'oeil (retour suivant).
  */
-export const ORB_PULSE = 0.18;
+export const ORB_PULSE = 0.07;
 /** Periode de la pulsation, en ms. */
-export const ORB_PULSE_MS = 900;
+export const ORB_PULSE_MS = 1600;
 
 /**
  * Diametre de la PIECE dans le monde, en pixels — etape 6a, tache 14 : *« les
@@ -223,68 +224,38 @@ function drawOutline(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: n
 }
 
 /**
- * Les quatre facettes de la gemme, en GRIS (la teinte les colore) : haut
- * gauche la plus claire, bas droite la plus sombre — une lumiere venue d'en
- * haut a gauche, comme tout le pack.
+ * Les trois tons de la bille, en GRIS (la teinte les colore) : le corps, le
+ * reflet du haut gauche, le reflet blanc — une lumiere venue d'en haut a
+ * gauche, comme tout le pack.
  */
-export const GEM_FACETS = [1, 0.8, 0.62, 0.45] as const;
+export const ORB_SHADES = [0.62, 0.92, 1] as const;
 
 /**
- * L'orbe d'experience : une GEMME a facettes, plus un disque. Retour de
- * playtest : *« retravaille completement le design de l'xp avec plus de
- * contraste »*. Un losange se detache de l'herbe la ou un rond s'y fondait, et
- * ses quatre facettes donnent du relief sans une couleur de plus.
+ * L'orbe d'experience : une BILLE contrastee. Retours de playtest : *« plus
+ * de contraste »*, puis *« garde le cote rond »*. Le relief vient de trois
+ * tons poses en disques decales, sans une couleur de plus.
  *
- * Dans l'ordre : une ombre douce sous la pointe (noire, donc insensible a la
- * teinte), les facettes, un reflet blanc, et un contour noir epais qui
+ * Dans l'ordre : une ombre douce dessous (noire, donc insensible a la
+ * teinte), le corps, le reflet, l'eclat blanc, et un contour noir epais qui
  * s'arrete au bord de la case.
  */
 function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, outer: number): void {
-  const w = outer * 0.62;
-  const h = outer * 0.84;
-  const top = cy - h;
-  const bottom = cy + h * 0.92;
-  // L'ombre portee, sous la pointe basse.
+  const r = outer * (1 - DROP_OUTLINE);
   ctx.fillStyle = 'rgba(0, 0, 0, 0.35)';
   ctx.beginPath();
-  ctx.ellipse(cx, cy + outer * 0.86, w * 0.8, outer * 0.12, 0, 0, Math.PI * 2);
+  ctx.ellipse(cx, cy + r * 0.92, r * 0.7, r * 0.14, 0, 0, Math.PI * 2);
   ctx.fill();
-  // Les quatre facettes, autour du centre.
-  const facettes: [number, number, number, number][] = [
-    [cx, top, cx - w, cy],
-    [cx, top, cx + w, cy],
-    [cx - w, cy, cx, bottom],
-    [cx + w, cy, cx, bottom],
-  ];
-  facettes.forEach(([ax, ay, bx, by], k) => {
-    const v = Math.round(255 * (GEM_FACETS[k] ?? 1));
+  const disque = (x: number, y: number, rr: number, shade: number): void => {
+    const v = Math.round(255 * shade);
     ctx.fillStyle = `rgba(${v}, ${v}, ${v}, 1)`;
     ctx.beginPath();
-    ctx.moveTo(ax, ay);
-    ctx.lineTo(bx, by);
-    ctx.lineTo(cx, cy);
-    ctx.closePath();
+    ctx.arc(x, y, rr, 0, Math.PI * 2);
     ctx.fill();
-  });
-  // Le reflet, sur la facette claire.
-  ctx.fillStyle = 'rgba(255, 255, 255, 1)';
-  ctx.beginPath();
-  ctx.moveTo(cx - w * 0.15, top + h * 0.3);
-  ctx.lineTo(cx - w * 0.55, cy - h * 0.1);
-  ctx.lineTo(cx - w * 0.35, cy - h * 0.1);
-  ctx.closePath();
-  ctx.fill();
-  // Le contour noir, epais.
-  ctx.strokeStyle = OUTLINE_RGBA;
-  ctx.lineWidth = outer * DROP_OUTLINE;
-  ctx.lineJoin = 'round';
-  ctx.beginPath();
-  ctx.moveTo(cx, top);
-  ctx.lineTo(cx + w, cy);
-  ctx.lineTo(cx, bottom);
-  ctx.lineTo(cx - w, cy);
-  ctx.closePath();
-  ctx.stroke();
+  };
+  disque(cx, cy, r, ORB_SHADES[0]);
+  disque(cx - r * 0.18, cy - r * 0.18, r * 0.62, ORB_SHADES[1]);
+  disque(cx - r * 0.38, cy - r * 0.38, r * 0.2, ORB_SHADES[2]);
+  drawOutline(ctx, cx, cy, outer);
 }
 
 /**

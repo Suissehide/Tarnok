@@ -110,4 +110,11 @@ describe('funnyLine — les phrases de l attente', () => {
     expect(funnyLine(FUNNY_LINE_MS, 0)).toBe(FUNNY_LINES[1]);
     expect(FUNNY_LINES).toContain(funnyLine(123_456, 7));
   });
+
+  it('chaque phrase commence par un verbe a l infinitif', () => {
+    for (const ligne of FUNNY_LINES) {
+      const verbe = ligne.split(' ')[0] ?? '';
+      expect(verbe, ligne).toMatch(/(er|ir|re)$/);
+    }
+  });
 });

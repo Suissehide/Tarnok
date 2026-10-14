@@ -85,22 +85,27 @@ export function paintLoading(el: LoadingElements, view: LoadingView): void {
 }
 
 /**
- * Les phrases de l'attente, dans le ton du jeu : elles defilent sous la
+ * Les phrases de l'attente, A L'INFINITIF comme les ecrans de chargement des
+ * classiques (le « Réticuler les splines » des Sims) : elles defilent sous la
  * jauge pendant que le chargement avance (`FUNNY_LINE_MS` chacune).
  */
 export const FUNNY_LINES: readonly string[] = [
-  'Affûtage des dagues…',
-  'Recensement des gobelins…',
-  'Arrosage des buissons…',
-  'Négociation avec les moutons…',
-  'Le forgeron cherche son marteau…',
-  'Mise en place des citrouilles décoratives…',
-  'On réveille le boss (il râle)…',
-  'Polissage des gemmes d’expérience…',
-  'Vérification que l’eau mouille…',
-  'Les squelettes comptent leurs os…',
-  'Le Rempart gonfle ses muscles…',
-  'L’Appât répète son plus beau cri…',
+  'Réticuler les splines…',
+  'Affûter les dagues…',
+  'Compter les gobelins, un par un…',
+  'Convaincre les moutons de coopérer…',
+  'Réveiller le boss (il râle)…',
+  'Polir les gemmes d’expérience…',
+  'Vérifier que l’eau mouille…',
+  'Graisser les catapultes…',
+  'Négocier avec le syndicat des squelettes…',
+  'Équilibrer les dégâts au doigt mouillé…',
+  'Planter des buissons stratégiques…',
+  'Chercher le marteau du forgeron…',
+  'Générer des citrouilles décoratives…',
+  'Recoudre les drapeaux de la dernière fois…',
+  'Apprendre au Rempart à rester immobile…',
+  'Lancer les dés pour la météo…',
 ];
 
 /** Duree d'affichage d'une phrase, en ms. */
