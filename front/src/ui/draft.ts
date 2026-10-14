@@ -73,7 +73,8 @@ export interface DraftOutcomeView {
 export type DraftCardState = 'idle' | 'taken' | 'won' | 'lost';
 
 /** Les memes teintes que les anneaux de joueur du rendu (`stage.ts`) : un joueur, une couleur. */
-const PLAYER_COLORS = ['#e0a45e', '#6fa8dc', '#93c47d', '#c27ba0'];
+/** Jaune, bleu, rouge, violet : la couleur des unites du pack (`render/player-renderer.ts`). */
+const PLAYER_COLORS = ['#e0b84e', '#6fa8dc', '#e06666', '#c27ba0'];
 
 export function playerColor(playerId: number): string {
   return PLAYER_COLORS[(playerId - 1) % PLAYER_COLORS.length] ?? '#ffffff';

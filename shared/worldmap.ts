@@ -55,7 +55,7 @@ const PLATEAU_MAX = 6;
 const TREE_CLUSTERS = 14;
 const TREES_PER_CLUSTER = 10;
 const ROCKS = 36;
-const BUSHES = 90;
+const BUSHES = 160;
 
 export function generateWorld(mapSeed: number, cols: number, rows: number): WorldMap {
   const rng = makeRandom(mapSeed);

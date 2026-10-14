@@ -38,7 +38,39 @@ export interface TileRef {
   flipY: boolean;
   /** Luminosite, dans `[SHADE_MIN, 1]` : des plaques, pas un damier. */
   shade: number;
+  /** La planche de couleur (`Tilemap_color<n>.png`), 1 pour le fond. */
+  color: number;
+  /** Opacite : 1 pour le fond, moins pour une plaque d'une autre couleur posee dessus. */
+  alpha: number;
 }
+
+/**
+ * Les plaques de couleur : chaque teinte du pack (2 vert, 3 vert franc, 4
+ * herbe seche) recouvre la teinte 1 la ou son bruit depasse un seuil, avec une
+ * opacite qui monte en douceur sur `[from, to]` — une transition, jamais un
+ * bord net. La 5 (bleu-vert) jure trop avec le reste, elle n'est pas utilisee.
+ */
+export const PATCHES: readonly { color: number; from: number; to: number }[] = [
+  { color: 2, from: 0.5, to: 0.72 },
+  { color: 3, from: 0.58, to: 0.8 },
+  { color: 4, from: 0.66, to: 0.86 },
+];
+/** Taille des plaques de couleur, en cellules. */
+const PATCH_LATTICE = 9;
+
+/** Le poids d'une plaque sur une cellule, dans `[0, 1]`. */
+export function patchWeight(
+  p: { color: number; from: number; to: number },
+  cx: number,
+  cy: number,
+): number {
+  return smoothstep(p.from, p.to, valueNoise(cx, cy, PATCH_LATTICE, 100 + p.color));
+}
+
+const smoothstep = (a: number, b: number, v: number): number => {
+  const t = Math.min(1, Math.max(0, (v - a) / (b - a)));
+  return t * t * (3 - 2 * t);
+};
 
 /** La tuile de milieu d'un bloc d'autotuile 4 x 4 : la seule qu'on peut retourner. */
 const MIDDLE = 64;
@@ -54,15 +86,15 @@ function hash(cx: number, cy: number, salt: number): number {
   return (h ^ (h >>> 16)) >>> 0;
 }
 
-/** Bruit de valeur lisse dans `[0, 1]`, a l'echelle de `SHADE_LATTICE`. */
-function shadeNoise(cx: number, cy: number): number {
-  const fx = cx / SHADE_LATTICE;
-  const fy = cy / SHADE_LATTICE;
+/** Bruit de valeur lisse dans `[0, 1]`, a l'echelle de `lattice` cellules. */
+function valueNoise(cx: number, cy: number, lattice = SHADE_LATTICE, salt = 7): number {
+  const fx = cx / lattice;
+  const fy = cy / lattice;
   const x0 = Math.floor(fx);
   const y0 = Math.floor(fy);
   const tx = fx - x0;
   const ty = fy - y0;
-  const v = (x: number, y: number): number => hash(x, y, 7) / 0xffff_ffff;
+  const v = (x: number, y: number): number => hash(x, y, salt) / 0xffff_ffff;
   const top = v(x0, y0) * (1 - tx) + v(x0 + 1, y0) * tx;
   const bottom = v(x0, y0 + 1) * (1 - tx) + v(x0 + 1, y0 + 1) * tx;
   return top * (1 - ty) + bottom * ty;
@@ -79,14 +111,16 @@ function vary(
   sy: number,
   cx: number,
   cy: number,
-): Pick<TileRef, 'flipX' | 'flipY' | 'shade'> {
+): Pick<TileRef, 'flipX' | 'flipY' | 'shade' | 'color' | 'alpha'> {
   // Le milieu de l'herbe (colonne 1) ou du dessus des plateaux (colonne 5 + 1).
   const middle = (sx === MIDDLE || sx === 5 * TILE + MIDDLE) && sy === MIDDLE;
   const h = hash(cx, cy, 1);
   return {
     flipX: middle && (h & 1) === 1,
     flipY: middle && ((h >>> 1) & 1) === 1,
-    shade: SHADE_MIN + (1 - SHADE_MIN) * shadeNoise(cx, cy),
+    shade: SHADE_MIN + (1 - SHADE_MIN) * valueNoise(cx, cy),
+    color: 1,
+    alpha: 1,
   };
 }
 
@@ -147,11 +181,69 @@ export function groundTiles(world: WorldMap): TileRef[] {
           flipX: false,
           flipY: false,
           shade: 1,
+          color: 1,
+          alpha: 1,
         });
       }
     }
   }
-  return [...grass, ...raised];
+  // Les plaques de couleur, posees sur le fond de la meme case, herbe puis
+  // dessus des plateaux — jamais sur une falaise.
+  const patches = (base: TileRef[]): TileRef[] =>
+    base.flatMap((tile) => {
+      if (tile.sy === 5 * TILE) {
+        return [];
+      }
+      const cx = tile.x / TILE;
+      const cy = tile.y / TILE;
+      return PATCHES.flatMap((p) => {
+        const alpha = patchWeight(p, cx, cy);
+        return alpha > 0 ? [{ ...tile, color: p.color, alpha }] : [];
+      });
+    });
+  return [...grass, ...patches(grass), ...raised, ...patches(raised)];
+}
+
+/**
+ * Les petits details du pack (`Deco/01` a `Deco/15` : champignons, cailloux,
+ * touffes, citrouilles, os), et de rares grands (`16`, `17` les panneaux,
+ * `18` l'epouvantail) — semes par hachage sur l'herbe LIBRE, sans effet sur le
+ * jeu : rien ne bloque, rien ne voyage, chaque client en seme les memes.
+ */
+export interface Detail {
+  x: number;
+  y: number;
+  /** Le numero de `Deco/<nn>.png`, de 1 a 18. */
+  kind: number;
+}
+
+/** Part des cellules libres qui recoivent un petit detail. */
+export const DETAIL_DENSITY = 0.11;
+/** Les grands details (panneaux, epouvantail) : quelques-uns par ile. */
+const TALL_DENSITY = 0.0025;
+
+export function detailCells(world: WorldMap): Detail[] {
+  const out: Detail[] = [];
+  for (let cy = 0; cy < world.rows; cy++) {
+    for (let cx = 0; cx < world.cols; cx++) {
+      const i = cy * world.cols + cx;
+      if (world.terrain[i] !== TERRAIN.GRASS || world.deco[i] !== DECO.NONE || world.blocked[i]) {
+        continue;
+      }
+      const roll = hash(cx, cy, 11) / 0xffff_ffff;
+      const pick = hash(cx, cy, 12);
+      const ox = ((pick >>> 8) % 33) - 16;
+      const oy = ((pick >>> 16) % 33) - 16;
+      const x = cx * TILE + TILE / 2 + ox;
+      const y = cy * TILE + TILE / 2 + oy;
+      if (roll < TALL_DENSITY) {
+        out.push({ x, y, kind: 16 + (pick % 3) });
+      } else if (roll < TALL_DENSITY + DETAIL_DENSITY) {
+        out.push({ x, y, kind: 1 + (pick % 15) });
+      }
+    }
+  }
+  return out;
 }
 
 /** Les cellules de terre qui touchent l'eau : l'ecume y deborde du rivage. */
@@ -174,11 +266,12 @@ export function coastCells(world: WorldMap): { x: number; y: number }[] {
 }
 
 const PATHS = {
-  tileset: 'Terrain/Tileset/Tilemap_color1.png',
+  tilesets: [1, 2, 3, 4].map((i) => `Terrain/Tileset/Tilemap_color${i}.png`),
   foam: 'Terrain/Tileset/Water%20Foam.png',
   trees: [1, 2, 3, 4].map((i) => `Terrain/Resources/Wood/Trees/Tree${i}.png`),
   rocks: [1, 2, 3, 4].map((i) => `Terrain/Decorations/Rocks/Rock${i}.png`),
   bushes: [1, 2, 3, 4].map((i) => `Terrain/Decorations/Bushes/Bushe${i}.png`),
+  details: Array.from({ length: 18 }, (_, i) => `Deco/${String(i + 1).padStart(2, '0')}.png`),
 };
 
 /** Coupe une bande horizontale d'animation en images de `w x h`. */
@@ -194,24 +287,31 @@ function frames(sheet: Texture, w: number, h: number): Texture[] {
 const variant = (i: number, n: number): number => ((i * 2654435761) >>> 0) % n;
 
 /**
- * Construit le terrain dans un `Container` a poser sous tous les calques du
- * monde. Rejette si une planche manque : l'appelant garde alors l'ancien
- * dessin des obstacles (`Stage.drawObstacles`).
+ * Le terrain en deux parts : `ground`, a poser sous tous les calques du monde
+ * (eau, ecume, sol, buissons, rochers, petits details), et `tall`, les objets
+ * hauts (arbres, panneaux, epouvantail) a trier avec les joueurs par la
+ * hauteur de leurs pieds (`zIndex`). Rejette si une planche manque :
+ * l'appelant garde alors l'ancien dessin des obstacles.
  */
-export async function buildTerrain(world: WorldMap, assetsBase: string): Promise<Container> {
+export async function buildTerrain(
+  world: WorldMap,
+  assetsBase: string,
+): Promise<{ ground: Container; tall: Container[] }> {
   const load = (p: string): Promise<Texture> => Assets.load<Texture>(`${assetsBase}/${p}`);
-  const [tileset, foam, trees, rocks, bushes] = await Promise.all([
-    load(PATHS.tileset),
+  const [tilesets, foam, trees, rocks, bushes, details] = await Promise.all([
+    Promise.all(PATHS.tilesets.map(load)),
     load(PATHS.foam),
     Promise.all(PATHS.trees.map(load)),
     Promise.all(PATHS.rocks.map(load)),
     Promise.all(PATHS.bushes.map(load)),
+    Promise.all(PATHS.details.map(load)),
   ]);
-  for (const tex of [tileset, foam, ...trees, ...rocks, ...bushes]) {
+  for (const tex of [...tilesets, foam, ...trees, ...rocks, ...bushes, ...details]) {
     tex.source.scaleMode = 'nearest';
   }
 
   const root = new Container();
+  const tall: Container[] = [];
   const size = Math.max(world.cols, world.rows) * TILE;
   // L'eau deborde largement : la camera peut montrer au-dela du bord.
   root.addChild(new Graphics().rect(-size, -size, 3 * size, 3 * size).fill(WATER_COLOR));
@@ -226,13 +326,63 @@ export async function buildTerrain(world: WorldMap, assetsBase: string): Promise
     root.addChild(s);
   }
 
+  // Les plaques de couleur : chaque teinte dans son conteneur, a pleine
+  // opacite, sous un MASQUE lisse — une image d'un pixel par cellule (le poids
+  // `patchWeight`) etiree en filtrage lineaire. La transition se fait DANS les
+  // tuiles, en degrade, la ou une opacite par tuile faisait des marches.
+  const overlays = new Map<number, Container>();
+  const masks: Sprite[] = [];
+  for (const p of PATCHES) {
+    const layer = new Container();
+    const canvas = document.createElement('canvas');
+    canvas.width = world.cols;
+    canvas.height = world.rows;
+    const g = canvas.getContext('2d');
+    if (g) {
+      const img = g.createImageData(world.cols, world.rows);
+      for (let cy = 0; cy < world.rows; cy++) {
+        for (let cx = 0; cx < world.cols; cx++) {
+          const o = (cy * world.cols + cx) * 4;
+          img.data[o] = 255;
+          img.data[o + 1] = 255;
+          img.data[o + 2] = 255;
+          img.data[o + 3] = Math.round(255 * patchWeight(p, cx, cy));
+        }
+      }
+      g.putImageData(img, 0, 0);
+    }
+    const tex = Texture.from(canvas);
+    tex.source.scaleMode = 'linear';
+    const mask = new Sprite(tex);
+    // Un pixel par cellule, son centre au centre de la cellule.
+    mask.scale.set(TILE);
+    layer.mask = mask;
+    masks.push(mask);
+    overlays.set(p.color, layer);
+  }
+
   const cut = new Map<string, Texture>();
+  let raisedStart = false;
   for (const tile of groundTiles(world)) {
-    const key = `${tile.sx},${tile.sy}`;
+    // Les plateaux passent par-dessus toutes les plaques de l'herbe.
+    if (!raisedStart && tile.sx >= 5 * TILE) {
+      raisedStart = true;
+      for (const layer of overlays.values()) {
+        root.addChild(layer);
+      }
+      for (const m of masks) {
+        root.addChild(m);
+      }
+    }
+    const key = `${tile.color},${tile.sx},${tile.sy}`;
     let tex = cut.get(key);
     if (!tex) {
+      const sheet = tilesets[tile.color - 1] ?? tilesets[0];
+      if (!sheet) {
+        continue;
+      }
       tex = new Texture({
-        source: tileset.source,
+        source: sheet.source,
         frame: new Rectangle(tile.sx, tile.sy, TILE, TILE),
       });
       cut.set(key, tex);
@@ -244,10 +394,40 @@ export async function buildTerrain(world: WorldMap, assetsBase: string): Promise
     s.scale.set(tile.flipX ? -1 : 1, tile.flipY ? -1 : 1);
     const v = Math.round(255 * tile.shade);
     s.tint = (v << 16) | (v << 8) | v;
-    root.addChild(s);
+    const layer = tile.color === 1 ? undefined : overlays.get(tile.color);
+    if (layer && tile.sx < 5 * TILE) {
+      layer.addChild(s);
+    } else if (tile.color === 1) {
+      root.addChild(s);
+    }
+  }
+  if (!raisedStart) {
+    for (const layer of overlays.values()) {
+      root.addChild(layer);
+    }
+    for (const m of masks) {
+      root.addChild(m);
+    }
   }
 
-  // Le decor, du haut vers le bas de la carte : un arbre plus bas passe devant.
+  // Les details : les petits au sol, les grands tries avec les joueurs.
+  for (const d of detailCells(world)) {
+    const tex = details[d.kind - 1];
+    if (!tex) {
+      continue;
+    }
+    const s = new Sprite(tex);
+    // Le pied du detail sur son point.
+    s.anchor.set(0.5, d.kind >= 16 ? 0.85 : 0.6);
+    s.position.set(d.x, d.y);
+    if (d.kind >= 16) {
+      s.zIndex = d.y;
+      tall.push(s);
+    } else {
+      root.addChild(s);
+    }
+  }
+
   const treeFrames = trees.map((t) => frames(t, 192, t.height));
   const bushFrames = bushes.map((t) => frames(t, 128, 128));
   for (let i = 0; i < world.deco.length; i++) {
@@ -262,12 +442,13 @@ export async function buildTerrain(world: WorldMap, assetsBase: string): Promise
     if (d === DECO.TREE) {
       const set = treeFrames[variant(i, treeFrames.length)] ?? [];
       const s = new AnimatedSprite(set);
-      // Le pied du tronc au bas de la cellule.
+      // Le pied du tronc au bas de la cellule ; trie avec les joueurs.
       s.anchor.set(0.5, 0.85);
       s.position.set(x, y + TILE / 2);
+      s.zIndex = y + TILE / 2;
       s.animationSpeed = 0.1;
       s.gotoAndPlay(variant(i + 1, set.length));
-      root.addChild(s);
+      tall.push(s);
     } else if (d === DECO.ROCK) {
       const s = new Sprite(rocks[variant(i, rocks.length)]);
       s.anchor.set(0.5);
@@ -283,5 +464,5 @@ export async function buildTerrain(world: WorldMap, assetsBase: string): Promise
       root.addChild(s);
     }
   }
-  return root;
+  return { ground: root, tall };
 }

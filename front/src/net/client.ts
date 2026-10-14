@@ -114,6 +114,8 @@ export interface RenderState {
   synergy: number;
   /** Positions a dessiner : les autres interpolees, la sienne predite. */
   players: PlayerSnapshot[];
+  /** La classe de chaque joueur, lue au salon (`LOBBY`) : son unite a l'ecran. */
+  classes?: ReadonlyMap<number, number>;
 }
 
 /**
@@ -1726,7 +1728,14 @@ export class GameClient {
     this.orbFlights.expire(now);
     this.orbs.capture(players, this.orbFlights, now);
 
-    return { localId: this.#localId, xp: this.#teamXp, synergy: this.#teamSynergy, players };
+    const classes = new Map((this.#lobby?.players ?? []).map((p) => [p.playerId, p.classId]));
+    return {
+      localId: this.#localId,
+      xp: this.#teamXp,
+      synergy: this.#teamSynergy,
+      players,
+      classes,
+    };
   }
 
   /**

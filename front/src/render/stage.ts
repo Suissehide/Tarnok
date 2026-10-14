@@ -26,6 +26,7 @@ import { ChargeRenderer } from './charge-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
 import { OrbRenderer } from './orb-renderer';
+import { PlayerRenderer } from './player-renderer';
 import {
   ImpactFlashRenderer,
   ProjectileRenderer,
@@ -47,9 +48,8 @@ import { ZoneRenderer } from './zone-renderer';
  */
 
 /** Un anneau colore par joueur : avec quatre cameras, il faut savoir qui est qui (§6.6). */
-const PLAYER_COLORS = [0xe0a45e, 0x6fa8dc, 0x93c47d, 0xc27ba0];
-
-const PLAYER_RADIUS = 18;
+/** Une couleur par joueur, celle de son unite du pack (`UNIT_COLORS`) : jaune, bleu, rouge, violet. */
+const PLAYER_COLORS = [0xe0b84e, 0x6fa8dc, 0xe06666, 0xc27ba0];
 
 /** §4.5 : vue de dessus, tres legerement ecrasee. Pas d'isometrique. */
 const VERTICAL_SQUASH = 0.82;
@@ -68,7 +68,16 @@ interface ProceduralLayer extends SceneLayer {
 export class Stage {
   readonly #app = new Application();
   readonly #world = new Container();
-  readonly #sprites = new Map<number, Graphics>();
+  /** Joueurs et objets hauts, tries par la hauteur de leurs pieds (`zIndex`). */
+  readonly #depth = new Container({ sortableChildren: true });
+  /** Les fantomes des joueurs, au-dessus de tout le decor (`PlayerRenderer`). */
+  readonly #ghosts = new Container();
+  readonly #players = new PlayerRenderer(
+    ASSETS_BASE,
+    this.#depth,
+    this.#ghosts,
+    (id) => PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length] ?? 0xffffff,
+  );
   // Corrigé par rapport au brief : `readonly` assigné dans `init()` ne
   // compile pas sous `strictPropertyInitialization`. Initialisation directe.
   #horde = new HordeRenderer(ASSETS_BASE);
@@ -178,6 +187,8 @@ export class Stage {
     // sous la horde. Voir `composeWorld` — c'est la seule partie de `init` que
     // la suite sait executer.
     this.composeWorld(this.#world);
+    // Les joueurs et les arbres par-dessus tous les calques, puis leurs fantomes.
+    this.#world.addChild(this.#depth, this.#ghosts);
 
     // Constat I4 : sans ce try/catch, un atlas absent (404 sur le manifeste,
     // deploiement ou l'atlas n'a pas ete depose sur MinIO) fait echouer cette
@@ -247,22 +258,12 @@ export class Stage {
   }
 
   draw(state: RenderState): void {
-    const seen = new Set<number>();
-
-    for (const player of state.players) {
-      seen.add(player.id);
-      const sprite = this.#spriteFor(player.id);
-      sprite.x = player.x;
-      sprite.y = player.y;
-      sprite.alpha = player.id === state.localId ? 1 : 0.85;
-    }
-
-    for (const [id, sprite] of this.#sprites) {
-      if (!seen.has(id)) {
-        sprite.destroy();
-        this.#sprites.delete(id);
-      }
-    }
+    this.#players.draw(
+      state.players,
+      (id) => state.classes?.get(id) ?? 0,
+      state.localId,
+      performance.now(),
+    );
 
     this.#centerOn(state);
   }
@@ -328,8 +329,12 @@ export class Stage {
     // des carres de joueurs — les obstacles sont du terrain, pas un calque qui
     // doit passer devant les entites.
     buildTerrain(map.world, ASSETS_BASE)
-      .then((terrain) => {
-        this.#world.addChildAt(terrain, 0);
+      .then(({ ground, tall }) => {
+        this.#world.addChildAt(ground, 0);
+        // Les arbres et grands details, tries avec les joueurs par leurs pieds.
+        for (const t of tall) {
+          this.#depth.addChild(t);
+        }
         this.#grid.visible = false;
       })
       .catch((cause: unknown) => {
@@ -423,24 +428,6 @@ export class Stage {
 
   destroy(): void {
     this.#app.destroy(true, { children: true });
-  }
-
-  #spriteFor(id: number): Graphics {
-    const existing = this.#sprites.get(id);
-    if (existing) {
-      return existing;
-    }
-
-    const color = PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length] ?? 0xffffff;
-    const g = new Graphics()
-      .rect(-PLAYER_RADIUS, -PLAYER_RADIUS, PLAYER_RADIUS * 2, PLAYER_RADIUS * 2)
-      .fill(color)
-      .circle(0, PLAYER_RADIUS + 6, PLAYER_RADIUS)
-      .stroke({ color, width: 2, alpha: 0.6 });
-
-    this.#world.addChild(g);
-    this.#sprites.set(id, g);
-    return g;
   }
 
   /** Une camera par joueur (§14) : chacun est centre sur son propre carre. */

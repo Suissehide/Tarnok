@@ -1,7 +1,15 @@
 import { TERRAIN, type WorldMap } from '@shared/worldmap';
 import { describe, expect, it } from 'vitest';
 
-import { coastCells, groundTiles, SHADE_MIN } from './terrain-renderer';
+import {
+  coastCells,
+  DETAIL_DENSITY,
+  detailCells,
+  groundTiles,
+  PATCHES,
+  patchWeight,
+  SHADE_MIN,
+} from './terrain-renderer';
 
 /** Une carte a partir de lignes : `~` eau, `.` herbe, `P` plateau, `C` falaise. */
 function carte(lignes: string[]): WorldMap {
@@ -28,8 +36,9 @@ function carte(lignes: string[]): WorldMap {
   };
 }
 
+/** Les tuiles de FOND (teinte 1) d'une case : les plaques de couleur sont testees a part. */
 const at = (tiles: ReturnType<typeof groundTiles>, x: number, y: number) =>
-  tiles.filter((t) => t.x === x * 64 && t.y === y * 64);
+  tiles.filter((t) => t.x === x * 64 && t.y === y * 64 && t.color === 1);
 
 describe('groundTiles — l autotuile du pack', () => {
   it('choisit coin, bord et milieu de l herbe selon ses voisins', () => {
@@ -103,5 +112,46 @@ describe('groundTiles — la variation de l herbe', () => {
     ).filter((t) => t.sx === 6 * 64 && t.sy === 64);
     expect(plateau.length).toBeGreaterThan(0);
     expect(plateau.some((t) => t.flipX || t.flipY)).toBe(true);
+  });
+});
+
+describe('les plaques de couleur', () => {
+  it('chaque teinte couvre une partie de l ile, jamais toute, avec des poids intermediaires', () => {
+    for (const p of PATCHES) {
+      const w = Array.from({ length: 60 * 60 }, (_, i) =>
+        patchWeight(p, i % 60, Math.floor(i / 60)),
+      );
+      expect(w.some((v) => v === 0)).toBe(true);
+      expect(w.some((v) => v > 0.9)).toBe(true);
+      // Le degrade : des cellules a mi-chemin, pas un bord net.
+      expect(w.some((v) => v > 0.2 && v < 0.8)).toBe(true);
+    }
+  });
+
+  it('une plaque ne recouvre jamais une falaise', () => {
+    const tiles = groundTiles(carte(['.......', '.PPPPP.', '.PPPPP.', '.CCCCC.', '.......']));
+    expect(tiles.filter((t) => t.sy === 5 * 64 && t.color !== 1)).toEqual([]);
+  });
+});
+
+describe('detailCells — les petits details du pack', () => {
+  const ile = carte(
+    Array.from({ length: 40 }, (_, y) =>
+      y === 0 || y === 39 ? '~'.repeat(40) : `~${'.'.repeat(38)}~`,
+    ),
+  );
+
+  it('seme environ DETAIL_DENSITY de l herbe libre, toujours au meme endroit', () => {
+    const d = detailCells(ile);
+    const libres = 38 * 38;
+    expect(d.length).toBeGreaterThan(libres * DETAIL_DENSITY * 0.5);
+    expect(d.length).toBeLessThan(libres * DETAIL_DENSITY * 2);
+    expect(detailCells(ile)).toEqual(d);
+    expect(d.every((x) => x.kind >= 1 && x.kind <= 18)).toBe(true);
+  });
+
+  it('jamais sur l eau ni sur une cellule bloquee', () => {
+    const bloquee = { ...ile, blocked: new Uint8Array(ile.blocked.length).fill(1) };
+    expect(detailCells(bloquee)).toEqual([]);
   });
 });
