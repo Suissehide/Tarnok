@@ -53,7 +53,14 @@ import {
 } from '@shared/protocol';
 import { bonusesOf, maxBonus, SHOP_ITEMS } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { BASE_WEAPON_ID, cooldownWithBonus, WEAPONS, type Weapon, weaponOf } from '@shared/weapons';
+import {
+  BASE_WEAPON_ID,
+  cooldownWithBonus,
+  stackGain,
+  WEAPONS,
+  type Weapon,
+  weaponOf,
+} from '@shared/weapons';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -2696,9 +2703,15 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
       return salve[7] ?? 0;
     }
 
+    // ⚠️ **`stackGain` et pas `+ 1` depuis l'etape 8** : le gain suit la
+    // largeur de la salve de base. Ce que ce cas garde, c'est que le MIROIR
+    // lit la meme fonction que le serveur — la regle elle-meme est gardee par
+    // `shared/weapons.test.ts`.
+    const gain = stackGain(eventail);
+    expect(gain).toBeGreaterThan(1);
     expect(projectilesDeLaSalve(1)).toBe(eventail.projectileCount);
-    expect(projectilesDeLaSalve(2)).toBe(eventail.projectileCount + 1);
-    expect(projectilesDeLaSalve(3)).toBe(eventail.projectileCount + 2);
+    expect(projectilesDeLaSalve(2)).toBe(eventail.projectileCount + gain);
+    expect(projectilesDeLaSalve(3)).toBe(eventail.projectileCount + 2 * gain);
   });
 
   it('les passifs de cadence empiles accelerent le tir AFFICHE', () => {

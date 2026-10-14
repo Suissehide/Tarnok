@@ -292,6 +292,33 @@ export interface Weapon {
  * distinctes.** C'est ce qui fait qu'aucune arme n'a change de nature : la plus
  * rapide est toujours le lance-flammes, la plus lente toujours la grenade.
  */
+/**
+ * Rayon du souffle des armes LOURDES — la moitie de celui de la grenade.
+ *
+ * ⚠️ **Derive de `ZONE_RADIUS`, comme celui de la grenade, et moitie moins.**
+ * La grenade reste l'arme de zone : son souffle couvre exactement le champ
+ * qu'une reaction laisse au sol, et c'est ce qui fait d'elle *« l'arme dont le
+ * tir DOIT peser »*. Les quatre lourdes a projectile unique (Canon a arc,
+ * Chaudron a poix, Canon a chaux, Glaive de mercure) recoivent un souffle de
+ * contact, pas une zone : il touche le voisin immediat, il ne nettoie pas un
+ * groupe.
+ *
+ * ⚠️ **Pourquoi elles, etape 8.** Releve du catalogue : a un exemplaire, ces
+ * quatre-la occupaient les quatre dernieres places en degats par seconde
+ * (10,5 a 14,5 contre 22 de mediane), et leur seule contrepartie — la marque
+ * elementaire — ne rend que si un ALLIE vient la faire reagir. Le banc `kills`
+ * de la tache 16 a deja mesure ce levier sur la grenade : le souffle y
+ * multipliait par 5,5 son apport (+0,04 morts/s sans lui, +0,22 avec), sans
+ * pour autant refermer l'ecart morts/apparitions. C'est donc un releve du
+ * plancher, pas une promesse d'equilibre — et il reste a confirmer au banc.
+ *
+ * ⚠️ **Le souffle appartient aux armes LENTES a projectile unique**, et
+ * `weapons.test.ts` le garde par une propriete : une arme rapide a souffle
+ * poserait des explosions en continu, ce que le §6.6 refuse exactement comme il
+ * refuse un halo permanent.
+ */
+export const HEAVY_BLAST_RADIUS = ZONE_RADIUS / 2;
+
 const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
   element?: number;
   blastRadius?: number;
@@ -431,7 +458,10 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // cadence du catalogue, ce qui donne a la Braise une arme de couverture et
     // une arme de placement.
     //
-    // ⚠️ **LA SEULE ARME DE ZONE DU CATALOGUE** (tache 16), et c'est elle qu'il
+    // ⚠️ **L'ARME DE ZONE DU CATALOGUE** — la seule jusqu'a l'etape 8, qui a
+    // donne un souffle de CONTACT (moitie moins large, `HEAVY_BLAST_RADIUS`)
+    // aux quatre lourdes a projectile unique. La grenade garde le plus grand
+    // souffle du catalogue, et c'est elle qu'il
     // fallait servir en premier : cadence la plus lente (75 ticks) et degats
     // les plus eleves (40), c'est l'arme dont le tir DOIT peser. Une AoE sur le
     // lance-flammes (5 ticks) ne serait pas la meme demande.
@@ -640,6 +670,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.FOUDRE,
+    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
+    blastRadius: HEAVY_BLAST_RADIUS,
   },
   {
     // La poix « rapide » : plusieurs projectiles a courte portee, pour
@@ -691,6 +723,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.POIX,
+    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
+    blastRadius: HEAVY_BLAST_RADIUS,
   },
   {
     // Tache 8 de l'etape 5c : la Chaux a enfin ses armes.
@@ -746,6 +780,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.CHAUX,
+    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
+    blastRadius: HEAVY_BLAST_RADIUS,
   },
   {
     // Tache 8 de l'etape 5c : le Vif-argent a enfin ses armes.
@@ -800,6 +836,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.VIF_ARGENT,
+    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
+    blastRadius: HEAVY_BLAST_RADIUS,
   },
 ];
 
@@ -1005,8 +1043,9 @@ export const MAX_FIRE_RATE_BONUS = 0.75;
  * Nombre de projectiles d'une salve, exemplaires empiles compris.
  *
  * ⚠️ **C'est ici que « l'accumulation des cartes fait la puissance » devient un
- * nombre.** Chaque exemplaire au-dela du premier ajoute UN projectile a la
- * salve, reparti sur le meme `spreadRadians`. C'est le levier le plus lisible
+ * nombre.** Chaque exemplaire au-dela du premier elargit la salve de
+ * `stackGain(arme)` projectiles — un par tranche de trois dans la salve de
+ * base, voir sa doc —, repartis sur le meme `spreadRadians`. C'est le levier le plus lisible
  * a l'ecran dans un bullet heaven — on VOIT sa salve s'elargir — la ou une
  * reduction de recharge se devine et ou les degats ne modulent aujourd'hui
  * aucune issue (la pietaille n'a pas de reserve de points de vie).
@@ -1015,7 +1054,42 @@ export const MAX_FIRE_RATE_BONUS = 0.75;
  * empilee, passe par le meme chemin sans cas particulier.
  */
 export function salvoCount(weapon: Weapon, stacks: number): number {
-  return weapon.projectileCount + Math.max(0, stacks - 1);
+  return weapon.projectileCount + Math.max(0, stacks - 1) * stackGain(weapon);
+}
+
+/**
+ * Projectiles qu'UN exemplaire supplementaire ajoute a la salve — un par
+ * tranche de trois dans la salve de base, jamais moins d'un.
+ *
+ * ⚠️ **Mesure, etape 8.** Jusqu'ici chaque carte ajoutait UN projectile, quelle
+ * que soit la salve de base, et c'est une regle qui PUNIT les armes larges : a
+ * quatre exemplaires, une arme a projectile unique quadruplait ses degats
+ * (×4,0) quand l'eventail gagnait 60 % (×1,6) et le canon-a-mitraille 37 %
+ * (×1,4). L'eventail finissait DERNIER du catalogue a quatre cartes alors
+ * qu'il en est neuvieme a une seule — le classement se retournait sur un
+ * detail de formule, pas sur un choix de jeu.
+ *
+ * | Arme | salve de base | gain par carte | a 4 cartes, avant | apres |
+ * | --- | --- | --- | --- | --- |
+ * | arc-lourd, grenade, chakram… | 1 | 1 | ×4,0 | ×4,0 (inchange) |
+ * | fleches-jumelles, Tesla, fronde | 2 | 1 | ×2,5 | ×2,5 (inchange) |
+ * | lance-flammes, seringue, poire | 3 | 1 | ×2,0 | ×2,0 (inchange) |
+ * | **eventail** | 5 | **2** | ×1,6 | **×2,2** |
+ * | **canon-a-mitraille** | 8 | **3** | ×1,4 | **×2,1** |
+ *
+ * ⚠️ **Deux armes seulement changent**, et ce sont exactement les deux que la
+ * formule penalisait. Treize des dix-sept ont une salve de base de 1 a 3 et
+ * gardent leur gain d'un projectile : ce n'est pas une inflation du catalogue,
+ * c'est la correction d'un biais.
+ *
+ * ⚠️ **Le budget de `PROJECTILE_CAPACITY` a ete mesure avec l'ancienne
+ * regle** : une arme large y tient desormais moins d'exemplaires qu'avant (le
+ * canon-a-mitraille entretient trois fois plus de projectiles par carte). La
+ * capacite n'est qu'un plafond memoire et `truncatedProjectiles` compte ce qui
+ * deborde — mais le banc qui a fixe 2048 reste a relancer pour le confirmer.
+ */
+export function stackGain(weapon: Weapon): number {
+  return Math.max(1, Math.ceil(weapon.projectileCount / 3));
 }
 
 /**

@@ -8,11 +8,13 @@ import {
   assertWeaponLooks,
   BASE_WEAPON_ID,
   cooldownWithBonus,
+  HEAVY_BLAST_RADIUS,
   MAX_FIRE_RATE_BONUS,
   PROJECTILE_FADE_REFERENCE_TICKS,
   projectileAlpha,
   projectileTrailPx,
   salvoCount,
+  stackGain,
   WEAPONS,
   weaponOf,
 } from './weapons';
@@ -199,14 +201,24 @@ describe('le rayon de zone porte par une arme (tache 16)', () => {
    * la cadence la plus lente ET les degats les plus eleves. Les deux, parce
    * qu'une seule des deux ne designe pas forcement la meme arme.
    */
-  it("l'unique arme de zone est celle qui frappe le plus fort et le plus lentement", () => {
-    const zone = WEAPONS.filter((w) => w.blastRadius > 0);
-    expect(zone.length).toBe(1);
+  it('la PLUS GRANDE zone est celle qui frappe le plus fort et le plus lentement', () => {
+    const zone = [...WEAPONS].filter((w) => w.blastRadius > 0);
+    // ⚠️ **Le souffle n'est plus l'apanage d'une seule arme depuis l'etape 8**
+    // (les quatre lourdes a projectile unique en ont un de contact), mais il
+    // reste une EXCEPTION : la regle du catalogue est « ce coup ne touche que
+    // ce qu'il percute », et c'est la ligne absente qui doit rester le cas
+    // courant.
+    expect(zone.length).toBeGreaterThan(0);
+    expect(zone.length).toBeLessThan(WEAPONS.length / 2);
 
+    const plusLarge = zone.reduce((a, b) => (a.blastRadius >= b.blastRadius ? a : b));
     const cadenceMax = Math.max(...WEAPONS.map((w) => w.cooldownTicks));
     const degatsMax = Math.max(...WEAPONS.map((w) => w.damage));
-    expect(zone[0]?.cooldownTicks).toBe(cadenceMax);
-    expect(zone[0]?.damage).toBe(degatsMax);
+    expect(plusLarge.cooldownTicks).toBe(cadenceMax);
+    expect(plusLarge.damage).toBe(degatsMax);
+    // Et son souffle est STRICTEMENT le plus large : sans ca, cinq armes ex
+    // aequo rendraient le cas ci-dessus vrai par accident.
+    expect(zone.filter((w) => w.blastRadius === plusLarge.blastRadius).length).toBe(1);
 
     // Non-vacuite : ces deux extremes designent bien UNE arme, pas huit ex
     // aequo. Sans ca, un catalogue plat rendrait le test ci-dessus toujours
@@ -290,7 +302,7 @@ describe('salvoCount', () => {
     }
   });
 
-  it('ajoute UN projectile par exemplaire au-dela du premier', () => {
+  it('elargit la salve de `stackGain` par exemplaire au-dela du premier', () => {
     const eventail = weaponOf(EVENTAIL);
     const arc = weaponOf(ARC_LOURD);
     // ⚠️ Deux armes aux comptes de base differents (5 et 1), et on verifie la
@@ -298,18 +310,82 @@ describe('salvoCount', () => {
     // remplacerait `projectileCount` au lieu de s'y ajouter ferait croitre la
     // salve tout autant, en oubliant l'arme.
     expect(eventail.projectileCount).toBe(5);
-    expect(salvoCount(eventail, 2)).toBe(6);
-    expect(salvoCount(eventail, 3)).toBe(7);
+    expect(stackGain(eventail)).toBe(2);
+    expect(salvoCount(eventail, 2)).toBe(7);
+    expect(salvoCount(eventail, 3)).toBe(9);
 
     expect(arc.projectileCount).toBe(1);
+    expect(stackGain(arc)).toBe(1);
     expect(salvoCount(arc, 2)).toBe(2);
     expect(salvoCount(arc, 3)).toBe(3);
   });
 
-  it('croit strictement de un a chaque exemplaire supplementaire, sur tout le catalogue', () => {
+  it('croit du MEME pas a chaque exemplaire supplementaire, sur tout le catalogue', () => {
     for (const w of WEAPONS) {
       for (let stacks = 1; stacks <= 12; stacks++) {
-        expect(salvoCount(w, stacks + 1) - salvoCount(w, stacks)).toBe(1);
+        expect(salvoCount(w, stacks + 1) - salvoCount(w, stacks), w.name).toBe(stackGain(w));
+      }
+    }
+  });
+
+  /**
+   * Étape 8 — **l'empilement ne punit plus les armes larges.** A +1 projectile
+   * par carte quelle que soit la salve de base, une arme a projectile unique
+   * quadruplait ses degats a quatre cartes quand le canon-a-mitraille gagnait
+   * 37 % : le classement du catalogue se retournait sur un detail de formule.
+   */
+  describe('stackGain — le gain suit la largeur de la salve', () => {
+    it('donne au moins un projectile par carte, a toutes les armes', () => {
+      for (const w of WEAPONS) {
+        expect(stackGain(w), w.name).toBeGreaterThanOrEqual(1);
+      }
+    });
+
+    it('rapproche les gains relatifs des armes larges de ceux des armes etroites', () => {
+      const gain4 = (w: (typeof WEAPONS)[number]): number => salvoCount(w, 4) / salvoCount(w, 1);
+      const large = WEAPONS.reduce((a, b) => (a.projectileCount >= b.projectileCount ? a : b));
+      const etroite = WEAPONS.reduce((a, b) => (a.projectileCount <= b.projectileCount ? a : b));
+      expect(large.projectileCount).toBeGreaterThan(etroite.projectileCount);
+      // Avant : 1,375 contre 4. Le but n'est pas l'egalite — une arme large
+      // part de plus haut — mais que l'ecart cesse d'etre un gouffre.
+      expect(gain4(large)).toBeGreaterThan(2);
+      expect(gain4(large)).toBeLessThan(gain4(etroite));
+    });
+
+    it('ne touche PAS les armes a salve etroite : treize des dix-sept sont inchangees', () => {
+      const inchangees = WEAPONS.filter((w) => stackGain(w) === 1);
+      expect(inchangees.length).toBe(WEAPONS.length - 2);
+      for (const w of inchangees) {
+        expect(w.projectileCount, w.name).toBeLessThanOrEqual(3);
+      }
+    });
+  });
+});
+
+/**
+ * Le souffle de contact des armes lourdes (etape 8), et la regle qui le borne.
+ */
+describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
+  it('n appartient qu a des armes LENTES a projectile unique', () => {
+    // Une arme rapide a souffle poserait des explosions en continu — ce que le
+    // §6.6 refuse exactement comme il refuse un halo permanent.
+    const mediane = [...WEAPONS].sort((a, b) => a.cooldownTicks - b.cooldownTicks)[
+      Math.floor(WEAPONS.length / 2)
+    ];
+    for (const w of WEAPONS) {
+      if (w.blastRadius > 0) {
+        expect(w.projectileCount, w.name).toBe(1);
+        expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(mediane?.cooldownTicks ?? 0);
+      }
+    }
+  });
+
+  it('reste strictement sous celui de la grenade', () => {
+    const grenade = WEAPONS.reduce((a, b) => (a.blastRadius >= b.blastRadius ? a : b));
+    for (const w of WEAPONS) {
+      if (w.blastRadius > 0 && w !== grenade) {
+        expect(w.blastRadius, w.name).toBe(HEAVY_BLAST_RADIUS);
+        expect(w.blastRadius, w.name).toBeLessThan(grenade.blastRadius);
       }
     }
   });

@@ -66,6 +66,7 @@ import {
   BASE_WEAPON_ID,
   cooldownWithBonus,
   MAX_FIRE_RATE_BONUS,
+  stackGain,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -1150,7 +1151,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect([...compte.keys()].sort((a, b) => a - b)).toEqual([BASE_WEAPON_ID, ...DRAFTEES]);
   });
 
-  it('empiler une arme ELARGIT sa salve d un projectile par exemplaire', () => {
+  it('empiler une arme ELARGIT sa salve de stackGain par exemplaire', () => {
     // ⚠️ **C'est ici que « l'accumulation des cartes fait la puissance »
     // devient observable dans le salon.** Une arme ne monte pas de niveau :
     // chaque carte prise ajoute UN projectile a sa salve. C'est le levier le
@@ -1189,11 +1190,19 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       return salve[7] ?? 0;
     }
 
-    // Une seule carte n'elargit RIEN : c'est la deuxieme qui ajoute le premier
-    // projectile.
+    // Une seule carte n'elargit RIEN : c'est la deuxieme qui ajoute les
+    // premiers projectiles.
+    //
+    // ⚠️ **`stackGain` et pas `+ 1` depuis l'etape 8** : le gain suit la
+    // largeur de la salve de base (l'eventail en tire cinq, donc deux par
+    // carte). Ce que ce cas garde, c'est que le salon lit bien `salvoCount` —
+    // la REGLE, elle, est gardee par `shared/weapons.test.ts`, et la recopier
+    // ici en ferait une seconde definition a tenir.
+    const gain = stackGain(eventail);
+    expect(gain).toBeGreaterThan(1);
     expect(projectilesDeLaSalve(1)).toBe(eventail.projectileCount);
-    expect(projectilesDeLaSalve(2)).toBe(eventail.projectileCount + 1);
-    expect(projectilesDeLaSalve(3)).toBe(eventail.projectileCount + 2);
+    expect(projectilesDeLaSalve(2)).toBe(eventail.projectileCount + gain);
+    expect(projectilesDeLaSalve(3)).toBe(eventail.projectileCount + 2 * gain);
   });
 
   describe('les passifs empiles changent un nombre mesurable (tache 8)', () => {
