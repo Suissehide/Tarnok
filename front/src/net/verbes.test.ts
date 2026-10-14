@@ -1,5 +1,10 @@
 import { ABILITY_COOLDOWN_TICKS, VERB_IDS } from '@shared/abilities';
-import { FIELD_INPUT_DELAY_TICKS, TICK_HZ } from '@shared/constants';
+import {
+  FIELD_INPUT_DELAY_TICKS,
+  FLOWFIELD_HZ,
+  ROLLBACK_DEPTH_TICKS,
+  TICK_HZ,
+} from '@shared/constants';
 import {
   decode,
   encodeAbilityUsed,
@@ -140,6 +145,42 @@ describe('etape 8 tache 6 : le miroir plante le leurre', () => {
       client.update(t * STEP, STEP);
     }
     const vus = spy.mock.calls.map((c) => [...(c[0] as number[])]);
+    expect(vus.some((xs) => xs[0] === 2500)).toBe(true);
+  });
+
+  /**
+   * Le leurre annonce EN RETARD : des champs ont deja ete nourris sans lui, le
+   * miroir restaure l'anneau et REJOUE. Le rejeu doit substituer le leurre lui
+   * aussi — sinon la horde rejouee suit le lanceur, et le serveur le leurre.
+   * Le tick de l'annonce n'est PAS un tick de champ : seuls les reciblages du
+   * rejeu sont observes.
+   */
+  it('un leurre annonce en retard est substitue PENDANT le rejeu', () => {
+    const steps = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    let present = FIELD_INPUT_DELAY_TICKS + 3 * steps;
+    while (present % steps === 0) {
+      present++;
+    }
+    const ne = present - ROLLBACK_DEPTH_TICKS + 2;
+    // Garde du decor : au moins un champ du rejeu lit des positions vivantes du leurre.
+    const champsRejoues = Array.from({ length: present - ne }, (_, i) => ne + 1 + i).filter(
+      (t) => t % steps === 0 && t - FIELD_INPUT_DELAY_TICKS >= ne,
+    );
+    expect(champsRejoues.length).toBeGreaterThan(0);
+
+    const { client, socket } = connecte(APPAT);
+    for (let t = 1; t < present; t++) {
+      socket.emit(encodeSnapshot(t, 0, 0, [joueur(1, 100, 100), joueur(2, 3000, 3000)]));
+      client.update(t * STEP, STEP);
+    }
+    socket.emit(encodeAbilityUsed(ne, 1, VERB_IDS.appat, 2500, 900, 0));
+    const spy = vi.spyOn(client.horde, 'retarget');
+    socket.emit(encodeSnapshot(present, 0, 0, [joueur(1, 100, 100), joueur(2, 3000, 3000)]));
+    client.update(present * STEP, STEP);
+
+    expect(client.lateDecoys).toBe(0);
+    const vus = spy.mock.calls.map((c) => [...(c[0] as number[])]);
+    expect(vus.length).toBeGreaterThan(0);
     expect(vus.some((xs) => xs[0] === 2500)).toBe(true);
   });
 
