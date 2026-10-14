@@ -79,7 +79,17 @@ describe('aide des combinaisons', () => {
     renderCombos(root, new Set());
     const lignes = root.querySelectorAll('.combo-neutre');
     expect(lignes).toHaveLength(1);
-    expect(lignes[0]?.textContent).toContain(NEUTRE_HELP);
+    expect((lignes[0] as HTMLElement | undefined)?.title).toContain(NEUTRE_HELP);
     expect(NEUTRE_HELP).toContain(`${Math.round((NEUTRE_MARQUE_AMP - 1) * 100)} %`);
+  });
+
+  it('chaque ligne garde son effet au survol, meme si la liste n affiche que le nom', () => {
+    const root = document.createElement('div');
+    renderCombos(root, new Set());
+    for (const row of root.querySelectorAll<HTMLElement>('.combo')) {
+      const { title, effect } = reactionHelp(Number(row.dataset.reaction));
+      expect(row.title).toBe(`${title} : ${effect}`);
+      expect(row.textContent).not.toContain(effect);
+    }
   });
 });

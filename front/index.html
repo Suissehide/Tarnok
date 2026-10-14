@@ -279,23 +279,22 @@
           </div>
 
           <!--
-            L'aide des combinaisons (haut gauche) : les quinze reactions entre deux
-            elements, celles que l'equipe peut declencher mises en avant
-            (`ui/combos.ts`). H la replie.
+            L'aide des combinaisons (haut gauche) : un onglet, replie par defaut,
+            qui deplie la liste compacte des quinze reactions — icones et nom,
+            l'effet au survol (`ui/combos.ts`). H ou un clic la deplie.
           -->
-          <div
-            id="hud-combos-panel"
-            class="k k-paperx absolute left-[40px] top-[220px] flex w-[800px] flex-col gap-[4px]"
-          >
+          <div class="absolute left-[40px] top-[200px] flex flex-col items-start gap-[8px]">
             <button
               id="hud-combos-toggle"
               type="button"
-              class="pointer-events-auto flex w-full cursor-pointer items-center justify-between gap-[24px]"
+              aria-expanded="false"
+              class="btn btn--tab ol pointer-events-auto"
             >
-              <span class="f-meta ol text-[24px]">Combinaisons</span>
-              <span id="hud-combos-hint" class="f-mono ol text-[16px]">H — replier</span>
+              Combinaisons · H
             </button>
-            <div id="hud-combos" class="flex flex-col gap-[2px]"></div>
+            <div id="hud-combos-panel" class="k k-paperx pointer-events-auto hidden">
+              <div id="hud-combos" class="flex flex-col gap-[2px]"></div>
+            </div>
           </div>
 
           <!--

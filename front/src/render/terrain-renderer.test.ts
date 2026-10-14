@@ -1,7 +1,7 @@
 import { TERRAIN, type WorldMap } from '@shared/worldmap';
 import { describe, expect, it } from 'vitest';
 
-import { coastCells, groundTiles } from './terrain-renderer';
+import { coastCells, groundTiles, SHADE_MIN } from './terrain-renderer';
 
 /** Une carte a partir de lignes : `~` eau, `.` herbe, `P` plateau, `C` falaise. */
 function carte(lignes: string[]): WorldMap {
@@ -64,5 +64,44 @@ describe('coastCells — l ecume', () => {
     const cells = coastCells(carte(['~~~~~', '~...~', '~...~', '~...~', '~~~~~']));
     expect(cells).toHaveLength(8);
     expect(cells).not.toContainEqual({ x: 2 * 64 + 32, y: 2 * 64 + 32 });
+  });
+});
+
+describe('groundTiles — la variation de l herbe', () => {
+  const grande = carte(
+    Array.from({ length: 12 }, (_, y) =>
+      y === 0 || y === 11 ? '~'.repeat(12) : `~${'.'.repeat(10)}~`,
+    ),
+  );
+  const tiles = groundTiles(grande);
+  const milieux = tiles.filter((t) => t.sx === 64 && t.sy === 64);
+
+  it('tourne et retourne les tuiles de milieu, de toutes les facons', () => {
+    expect(new Set(milieux.map((t) => t.turn))).toEqual(new Set([0, 1, 2, 3]));
+    expect(milieux.some((t) => t.flip)).toBe(true);
+    expect(milieux.some((t) => !t.flip)).toBe(true);
+  });
+
+  it('ne tourne jamais une tuile de bord : son liseret doit rester du bon cote', () => {
+    for (const t of tiles.filter((t) => !(t.sx === 64 && t.sy === 64))) {
+      expect(t.turn).toBe(0);
+      expect(t.flip).toBe(false);
+    }
+  });
+
+  it('varie la luminosite dans [SHADE_MIN, 1], identiquement a chaque appel', () => {
+    const shades = tiles.map((t) => t.shade);
+    expect(Math.min(...shades)).toBeGreaterThanOrEqual(SHADE_MIN);
+    expect(Math.max(...shades)).toBeLessThanOrEqual(1);
+    expect(new Set(shades).size).toBeGreaterThan(1);
+    expect(groundTiles(grande)).toEqual(tiles);
+  });
+
+  it('tourne aussi le milieu du dessus d un plateau', () => {
+    const plateau = groundTiles(
+      carte(['.......', '.PPPPP.', '.PPPPP.', '.PPPPP.', '.CCCCC.', '.......']),
+    ).filter((t) => t.sx === 6 * 64 && t.sy === 64);
+    expect(plateau.length).toBeGreaterThan(0);
+    expect(plateau.some((t) => t.turn !== 0 || t.flip)).toBe(true);
   });
 });

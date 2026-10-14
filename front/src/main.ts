@@ -66,15 +66,11 @@ const el = <T extends HTMLElement>(id: string): T => {
   return node as T;
 };
 
-/** Replie ou deplie l'aide des combinaisons, et dit ce que fera le prochain appui. */
+/** Replie ou deplie l'aide des combinaisons (un onglet, replie par defaut). */
 function toggleCombos(): void {
   const panel = el('hud-combos-panel');
-  const collapsed = panel.dataset.collapsed !== 'true';
-  panel.dataset.collapsed = String(collapsed);
-  // En style direct : une regle de `@layer components` perdrait contre le
-  // `flex` utilitaire de la liste, quelle que soit sa specificite.
-  el('hud-combos').style.display = collapsed ? 'none' : '';
-  el('hud-combos-hint').textContent = collapsed ? 'H — déplier' : 'H — replier';
+  const open = panel.classList.toggle('hidden') === false;
+  el('hud-combos-toggle').setAttribute('aria-expanded', String(open));
 }
 
 // Sans attendre : les menus s'affichent d'abord en cadres unis, puis

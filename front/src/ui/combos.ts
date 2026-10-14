@@ -145,7 +145,7 @@ export function renderCombos(root: HTMLElement, known: ReadonlySet<number>): voi
       // Elle reste lisible ; seules celles ou l'equipe n'a rien s'attenuent.
       const partial = !active && (known.has(a) || known.has(b));
       const row = document.createElement('div');
-      row.className = 'combo flex items-center gap-[6px] text-[19px] leading-[1.3]';
+      row.className = 'combo flex items-center gap-[4px] text-[16px] leading-[1.25]';
       row.dataset.reaction = String(id);
       row.dataset.active = String(active);
       row.dataset.partial = String(partial);
@@ -157,14 +157,14 @@ export function renderCombos(root: HTMLElement, known: ReadonlySet<number>): voi
       arrow.className = 'f-jer ol';
       arrow.textContent = '→';
 
+      // Compact : le nom seul, l'effet au survol — l'aide ne doit pas
+      // manger l'ecran.
+      row.title = `${title} : ${effect}`;
       const text = document.createElement('span');
-      text.className = 'min-w-0';
-      const name = document.createElement('span');
-      name.className = 'f-meta ol';
-      name.textContent = title;
-      text.append(name, ` : ${effect}`);
+      text.className = 'f-meta ol';
+      text.textContent = title;
 
-      row.append(elementBadge(a, 24), plus, elementBadge(b, 24), arrow, text);
+      row.append(elementBadge(a, 20), plus, elementBadge(b, 20), arrow, text);
       return row;
     }),
     neutreRow(),
@@ -177,13 +177,11 @@ export const NEUTRE_HELP = `+${Math.round((NEUTRE_MARQUE_AMP - 1) * 100)} % de d
 /** La derniere ligne : le neutre ne combine rien, il amplifie ce que l'equipe marque. */
 function neutreRow(): HTMLElement {
   const row = document.createElement('div');
-  row.className = 'combo-neutre flex items-center gap-[6px] text-[19px] leading-[1.3]';
+  row.className = 'combo-neutre flex items-center gap-[4px] text-[16px] leading-[1.25]';
+  row.title = `Neutre : ${NEUTRE_HELP}`;
   const name = document.createElement('span');
   name.className = 'f-meta ol';
-  name.textContent = 'Neutre';
-  const text = document.createElement('span');
-  text.className = 'min-w-0';
-  text.append(name, ` : ${NEUTRE_HELP}`);
-  row.append(elementBadge(ELEMENT.NEUTRE, 24), text);
+  name.textContent = 'Neutre → amplifie les marques';
+  row.append(elementBadge(ELEMENT.NEUTRE, 20), name);
   return row;
 }

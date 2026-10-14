@@ -28,6 +28,62 @@ export interface TileRef {
   /** Coin haut-gauche dans le monde. */
   x: number;
   y: number;
+  /** Quarts de tour (0-3), seulement sur une tuile de milieu, sans bord a respecter. */
+  turn: number;
+  /** Miroir horizontal, meme condition. */
+  flip: boolean;
+  /** Luminosite, dans `[SHADE_MIN, 1]` : des plaques, pas un damier. */
+  shade: number;
+}
+
+/** La tuile de milieu d'un bloc d'autotuile 4 x 4 : la seule qu'on peut tourner. */
+const MIDDLE = 64;
+/** La plaque la plus sombre : assez pour casser la repetition, pas pour se voir. */
+export const SHADE_MIN = 0.9;
+/** Taille des plaques de luminosite, en cellules. */
+const SHADE_LATTICE = 6;
+
+/** Un entier pseudo-aleatoire stable par cellule (hachage, pas de tirage). */
+function hash(cx: number, cy: number, salt: number): number {
+  let h = (cx * 374761393 + cy * 668265263 + salt * 2246822519) >>> 0;
+  h = Math.imul(h ^ (h >>> 13), 1274126177) >>> 0;
+  return (h ^ (h >>> 16)) >>> 0;
+}
+
+/** Bruit de valeur lisse dans `[0, 1]`, a l'echelle de `SHADE_LATTICE`. */
+function shadeNoise(cx: number, cy: number): number {
+  const fx = cx / SHADE_LATTICE;
+  const fy = cy / SHADE_LATTICE;
+  const x0 = Math.floor(fx);
+  const y0 = Math.floor(fy);
+  const tx = fx - x0;
+  const ty = fy - y0;
+  const v = (x: number, y: number): number => hash(x, y, 7) / 0xffff_ffff;
+  const top = v(x0, y0) * (1 - tx) + v(x0 + 1, y0) * tx;
+  const bottom = v(x0, y0 + 1) * (1 - tx) + v(x0 + 1, y0 + 1) * tx;
+  return top * (1 - ty) + bottom * ty;
+}
+
+/**
+ * La variation d'une tuile, sans rien ajouter au pack : un quart de tour et un
+ * miroir au hasard sur les tuiles de MILIEU (l'herbe n'a pas de sens, les
+ * bords si), et une luminosite qui varie en larges plaques. Stable par
+ * cellule : la meme ile se dessine pareil a chaque image et chez chacun.
+ */
+function vary(
+  sx: number,
+  sy: number,
+  cx: number,
+  cy: number,
+): Pick<TileRef, 'turn' | 'flip' | 'shade'> {
+  // Le milieu de l'herbe (colonne 1) ou du dessus des plateaux (colonne 5 + 1).
+  const middle = (sx === MIDDLE || sx === 5 * TILE + MIDDLE) && sy === MIDDLE;
+  const h = hash(cx, cy, 1);
+  return {
+    turn: middle ? h % 4 : 0,
+    flip: middle && ((h >>> 2) & 1) === 1,
+    shade: SHADE_MIN + (1 - SHADE_MIN) * shadeNoise(cx, cy),
+  };
 }
 
 /**
@@ -70,21 +126,13 @@ export function groundTiles(world: WorldMap): TileRef[] {
       }
       const x = cx * TILE;
       const y = cy * TILE;
-      grass.push({
-        sheet: 'tileset',
-        sx: edge(land(cx - 1, cy), land(cx + 1, cy)) * TILE,
-        sy: edge(land(cx, cy - 1), land(cx, cy + 1)) * TILE,
-        x,
-        y,
-      });
+      const gx = edge(land(cx - 1, cy), land(cx + 1, cy)) * TILE;
+      const gy = edge(land(cx, cy - 1), land(cx, cy + 1)) * TILE;
+      grass.push({ sheet: 'tileset', sx: gx, sy: gy, x, y, ...vary(gx, gy, cx, cy) });
       if (top(cx, cy)) {
-        raised.push({
-          sheet: 'tileset',
-          sx: (5 + edge(top(cx - 1, cy), top(cx + 1, cy))) * TILE,
-          sy: edge(top(cx, cy - 1), top(cx, cy + 1)) * TILE,
-          x,
-          y,
-        });
+        const px = (5 + edge(top(cx - 1, cy), top(cx + 1, cy))) * TILE;
+        const py = edge(top(cx, cy - 1), top(cx, cy + 1)) * TILE;
+        raised.push({ sheet: 'tileset', sx: px, sy: py, x, y, ...vary(px, py, cx, cy) });
       } else if (cliff(cx, cy)) {
         raised.push({
           sheet: 'tileset',
@@ -92,6 +140,9 @@ export function groundTiles(world: WorldMap): TileRef[] {
           sy: 5 * TILE,
           x,
           y,
+          turn: 0,
+          flip: false,
+          shade: 1,
         });
       }
     }
@@ -183,7 +234,13 @@ export async function buildTerrain(world: WorldMap, assetsBase: string): Promise
       cut.set(key, tex);
     }
     const s = new Sprite(tex);
-    s.position.set(tile.x, tile.y);
+    // Centre de la tuile comme pivot : un quart de tour reste dans sa case.
+    s.anchor.set(0.5);
+    s.position.set(tile.x + TILE / 2, tile.y + TILE / 2);
+    s.rotation = (tile.turn * Math.PI) / 2;
+    s.scale.x = tile.flip ? -1 : 1;
+    const v = Math.round(255 * tile.shade);
+    s.tint = (v << 16) | (v << 8) | v;
     root.addChild(s);
   }
 
