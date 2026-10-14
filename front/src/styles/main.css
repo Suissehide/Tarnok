@@ -481,6 +481,32 @@
     border-image-source: var(--k-rib4);
   }
 
+  /* --- Options (ecran 07) ------------------------------------------------- */
+
+  .options-panel:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+
+  .options-row {
+    display: flex;
+    align-items: center;
+    gap: 28px;
+  }
+
+  .options-label {
+    width: 330px;
+    font-size: 26px;
+    font-weight: 700;
+    color: var(--color-ink-label);
+  }
+
+  .options-toggle {
+    display: flex;
+    gap: 12px;
+  }
+
   /* Le degrade de la maquette 03 : sombre en haut, tres sombre en bas. */
   .loading-shade {
     background: linear-gradient(

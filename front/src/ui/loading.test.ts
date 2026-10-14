@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { type LoadingState, loadingProgress, TIPS, tipFor } from './loading';
+import {
+  CREEP_MAX,
+  easeBar,
+  FUNNY_LINE_MS,
+  FUNNY_LINES,
+  funnyLine,
+  type LoadingState,
+  loadingProgress,
+  TIPS,
+  tipFor,
+} from './loading';
 
 const depart: LoadingState = {
   launched: false,
@@ -56,5 +66,48 @@ describe('tipFor — un conseil par salon', () => {
     expect(tipFor('ABCD')).toBe(tipFor('ABCD'));
     const vus = new Set(['ABCD', 'WXYZ', 'QRST', 'MNOP', 'EFGH', 'IJKL'].map(tipFor));
     expect(vus.size).toBeGreaterThan(1);
+  });
+});
+
+describe('easeBar — la jauge affichee avance sans sauter', () => {
+  it('rattrape la valeur reelle en douceur, sans la depasser d un coup', () => {
+    const apres = easeBar(0, 0.5, 50);
+    expect(apres).toBeGreaterThan(0);
+    expect(apres).toBeLessThan(0.5);
+    let v = 0;
+    for (let t = 0; t < 2000; t += 50) {
+      v = easeBar(v, 0.5, 50);
+    }
+    expect(v).toBeGreaterThanOrEqual(0.49);
+  });
+
+  it('grignote pendant qu une etape attend, sans depasser target + CREEP_MAX', () => {
+    let v = 0.3;
+    const debut = v;
+    for (let t = 0; t < 60_000; t += 50) {
+      v = easeBar(v, 0.3, 50);
+    }
+    expect(v).toBeGreaterThan(debut);
+    expect(v).toBeLessThanOrEqual(0.3 + CREEP_MAX + 1e-9);
+  });
+
+  it('ne recule jamais, meme si la cible baisse, et ne passe jamais 1', () => {
+    expect(easeBar(0.6, 0.2, 50)).toBeGreaterThanOrEqual(0.6);
+    let v = 0.9;
+    for (let t = 0; t < 5000; t += 50) {
+      v = easeBar(v, 1, 50);
+    }
+    expect(v).toBeLessThanOrEqual(1);
+    expect(v).toBeGreaterThan(0.995);
+  });
+});
+
+describe('funnyLine — les phrases de l attente', () => {
+  it('change de phrase toutes les FUNNY_LINE_MS, dans la liste', () => {
+    expect(FUNNY_LINES.length).toBeGreaterThan(5);
+    expect(funnyLine(0, 0)).toBe(FUNNY_LINES[0]);
+    expect(funnyLine(FUNNY_LINE_MS - 1, 0)).toBe(FUNNY_LINES[0]);
+    expect(funnyLine(FUNNY_LINE_MS, 0)).toBe(FUNNY_LINES[1]);
+    expect(FUNNY_LINES).toContain(funnyLine(123_456, 7));
   });
 });

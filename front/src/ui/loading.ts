@@ -83,3 +83,53 @@ export function paintLoading(el: LoadingElements, view: LoadingView): void {
   el.percent.textContent = `${Math.round(view.ratio * 100)} %`;
   el.fill.style.setProperty('--v', `${view.ratio}`);
 }
+
+/**
+ * Les phrases de l'attente, dans le ton du jeu : elles defilent sous la
+ * jauge pendant que le chargement avance (`FUNNY_LINE_MS` chacune).
+ */
+export const FUNNY_LINES: readonly string[] = [
+  'Affûtage des dagues…',
+  'Recensement des gobelins…',
+  'Arrosage des buissons…',
+  'Négociation avec les moutons…',
+  'Le forgeron cherche son marteau…',
+  'Mise en place des citrouilles décoratives…',
+  'On réveille le boss (il râle)…',
+  'Polissage des gemmes d’expérience…',
+  'Vérification que l’eau mouille…',
+  'Les squelettes comptent leurs os…',
+  'Le Rempart gonfle ses muscles…',
+  'L’Appât répète son plus beau cri…',
+];
+
+/** Duree d'affichage d'une phrase, en ms. */
+export const FUNNY_LINE_MS = 1400;
+
+/** La phrase affichee `elapsedMs` apres l'ouverture, en partant de `start` (le salon). */
+export function funnyLine(elapsedMs: number, start: number): string {
+  const i = (start + Math.floor(Math.max(0, elapsedMs) / FUNNY_LINE_MS)) % FUNNY_LINES.length;
+  return FUNNY_LINES[i] ?? FUNNY_LINES[0] ?? '';
+}
+
+/** L'ecran reste au moins ce temps : sinon un chargement local est un clignotement. */
+export const LOADING_MIN_MS = 2000;
+
+/**
+ * La jauge AFFICHEE, qui court vers la valeur reelle sans jamais sauter :
+ * elle rattrape `target` en douceur et, tant qu'une etape attend, grignote
+ * encore un peu vers la suivante (jamais au-dela de `target + CREEP_MAX`) —
+ * une barre figee se lit comme un jeu plante.
+ */
+export const CREEP_MAX = 0.06;
+export function easeBar(shown: number, target: number, dtMs: number): number {
+  // Constante de temps de 500 ms : meme un chargement deja fini se voit
+  // remplir, en un peu moins de deux secondes.
+  const catchUp = 1 - Math.exp(-dtMs / 500);
+  let next = shown + (target - shown) * catchUp;
+  if (next >= target - 0.002 && target < 1) {
+    // L'etape attend : on avance doucement, sans depasser le plafond.
+    next = Math.min(target + CREEP_MAX, Math.max(next, shown) + dtMs * 0.00002);
+  }
+  return Math.min(1, Math.max(shown, next));
+}

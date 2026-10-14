@@ -27,10 +27,20 @@ import {
   paintHud,
   paintWeapons,
 } from './ui/hud';
-import { type LoadingState, loadingProgress, paintLoading, tipFor } from './ui/loading';
+import {
+  easeBar,
+  funnyLine,
+  LOADING_MIN_MS,
+  type LoadingState,
+  loadingProgress,
+  paintLoading,
+  tipFor,
+} from './ui/loading';
 import { Minimap } from './ui/minimap';
+import { wireOptions } from './ui/options';
 import { formatGold, PortalScreen } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
+import { loadSettings, saveSettings } from './ui/settings';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
 import { applySkin } from './ui/skin';
 import { paintSummary, type SummaryElements, summaryTone } from './ui/summary';
@@ -124,6 +134,30 @@ el<HTMLButtonElement>('open-shop').addEventListener('click', () => {
   shopError.textContent = '';
   lobby.classList.add('hidden');
   shopScreen.classList.remove('hidden');
+});
+// Les options (maquette 07) : gardees dans ce navigateur, appliquees au
+// depart de chaque partie.
+let settings = loadSettings();
+const optionsScreen = el('options-screen');
+const options = wireOptions(
+  optionsScreen,
+  () => settings,
+  (draft) => {
+    settings = draft;
+    el('options-status').textContent = saveSettings(draft)
+      ? 'Options enregistrées.'
+      : 'Options appliquées pour cette session (stockage indisponible).';
+  },
+  () => {
+    optionsScreen.classList.add('hidden');
+    lobby.classList.remove('hidden');
+  },
+);
+el<HTMLButtonElement>('open-options').addEventListener('click', () => {
+  el('options-status').textContent = '';
+  options.open();
+  lobby.classList.add('hidden');
+  optionsScreen.classList.remove('hidden');
 });
 el<HTMLButtonElement>('close-shop').addEventListener('click', () => {
   shopScreen.classList.add('hidden');
@@ -377,16 +411,32 @@ function join(code: string): void {
       }
       loading.firstSnapshot = client.localPosition !== null;
       const view = loadingProgress(loading);
-      paintLoading(loadingEl, view);
-      if (view.done && loadingTimer !== null) {
+      const now = performance.now();
+      // La jauge AFFICHEE court vers la vraie, sans sauter ni se figer, et une
+      // phrase du theme defile dessous.
+      shown = easeBar(shown, view.ratio, now - lastTick);
+      lastTick = now;
+      paintLoading(loadingEl, {
+        label: funnyLine(now - depuis, code.charCodeAt(0)),
+        ratio: shown,
+        done: view.done,
+      });
+      if (view.done && shown >= 0.995 && now - depuis >= LOADING_MIN_MS && loadingTimer !== null) {
         window.clearInterval(loadingTimer);
         loadingEl.root.classList.add('hidden');
         room.classList.add('hidden');
         hud.classList.remove('hidden');
+        // Les options du joueur, au depart de la partie.
+        el('hud-minimap').parentElement?.classList.toggle('hidden', !settings.minimap);
+        if (settings.combosOpen) {
+          toggleCombos();
+        }
       }
     };
+    let shown = 0;
+    let lastTick = depuis;
     tick();
-    loadingTimer = window.setInterval(tick, 100);
+    loadingTimer = window.setInterval(tick, 50);
   };
 
   /** Menu Echap ouvert : les entrees de CE joueur sont coupees (le monde, lui, tourne). */
@@ -543,6 +593,23 @@ function join(code: string): void {
   lobby.classList.add('hidden');
   room.classList.remove('hidden');
   el('room-code').textContent = code;
+  const copy = el<HTMLButtonElement>('room-copy');
+  copy.onclick = () => {
+    void navigator.clipboard
+      .writeText(code)
+      .then(() => {
+        copy.textContent = 'Copié !';
+      })
+      .catch(() => {
+        // Presse-papiers refuse (page non securisee) : on montre le code a la place.
+        copy.textContent = code;
+      })
+      .finally(() => {
+        window.setTimeout(() => {
+          copy.textContent = 'Copier le code';
+        }, 1500);
+      });
+  };
   roomElements.hint.textContent = 'Connexion au salon…';
   hudCode.textContent = code;
 

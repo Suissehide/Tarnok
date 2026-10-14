@@ -51,9 +51,10 @@
                 Rejoindre
               </button>
             </div>
-            <button id="open-shop" type="button" class="btn ol h-[129px]">
-              Boutique
-            </button>
+            <div class="flex h-[129px] items-stretch gap-[10px]">
+              <button id="open-shop" type="button" class="btn ol flex-1">Boutique</button>
+              <button id="open-options" type="button" class="btn ol flex-1">Options</button>
+            </div>
             <p id="error" class="ol m-0 min-h-[32px] text-center text-[22px]"></p>
           </div>
 
@@ -131,11 +132,15 @@
       -->
       <section id="room" class="ui-screen bg-menu z-10 hidden">
         <div class="ui-canvas">
-          <div
-            class="k k-carved3 absolute left-[40px] top-[42px] flex w-[380px] items-center justify-center gap-[16px]"
-          >
-            <span class="f-meta ol text-[28px]">Salon</span>
-            <b id="room-code" class="f-jer ol text-[46px] font-normal tracking-[6px]"></b>
+          <div class="absolute left-[40px] top-[42px] flex items-center gap-[12px]">
+            <div class="k k-carved3 flex w-[380px] items-center justify-center gap-[16px]">
+              <span class="f-meta ol text-[28px]">Salon</span>
+              <b id="room-code" class="f-jer ol text-[46px] font-normal tracking-[6px]"></b>
+            </div>
+            <!-- Copier le code : c'est lui qu'on partage pour faire venir les autres. -->
+            <button id="room-copy" type="button" class="btn btn--tab ol w-[200px]">
+              Copier le code
+            </button>
           </div>
 
           <ul
@@ -212,6 +217,86 @@
             id="loading-percent"
             class="f-jer ol absolute right-[120px] bottom-[58px] text-[46px]"
           ></span>
+        </div>
+      </section>
+
+      <!--
+        07 · Options : seulement ce qui marche (`ui/settings.ts`). Les volumes,
+        la secousse et la langue de la maquette attendent ce qu'ils reglent.
+      -->
+      <section id="options-screen" class="ui-screen bg-menu z-10 hidden">
+        <div class="ui-canvas">
+          <h2
+            class="rib f-meta ol absolute left-1/2 top-[44px] m-0 -translate-x-1/2 px-[24px] text-[44px] font-normal"
+          >
+            Options
+          </h2>
+          <div class="absolute left-1/2 top-[172px] flex -translate-x-1/2 gap-[16px]">
+            <button type="button" data-tab="jeu" class="btn btn--tab ol w-[281px]">Jeu</button>
+            <button type="button" data-tab="audio" class="btn btn--tab ol w-[281px]" disabled>
+              Audio — bientôt
+            </button>
+            <button type="button" data-tab="video" class="btn btn--tab ol w-[281px]">Vidéo</button>
+            <button type="button" data-tab="commandes" class="btn btn--tab ol w-[293px]">
+              Commandes
+            </button>
+          </div>
+          <div
+            class="k k-banner absolute left-1/2 top-[280px] flex min-h-[400px] w-[1320px] -translate-x-1/2 flex-col"
+          >
+            <div data-panel="jeu" class="options-panel">
+              <div class="options-row">
+                <span class="options-label">Aide des combinaisons</span>
+                <div class="options-toggle" data-setting="combosOpen">
+                  <button type="button" data-value="true" class="btn btn--tab ol w-[243px]">
+                    Dépliée
+                  </button>
+                  <button type="button" data-value="false" class="btn btn--tab ol w-[243px]">
+                    Repliée
+                  </button>
+                </div>
+              </div>
+              <div class="options-row">
+                <span class="options-label">Mini-carte</span>
+                <div class="options-toggle" data-setting="minimap">
+                  <button type="button" data-value="true" class="btn btn--tab ol w-[243px]">
+                    Affichée
+                  </button>
+                  <button type="button" data-value="false" class="btn btn--tab ol w-[243px]">
+                    Masquée
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div data-panel="video" class="options-panel hidden">
+              <div class="options-row">
+                <span class="options-label">Plein écran</span>
+                <div class="options-toggle">
+                  <button id="options-fullscreen" type="button" class="btn btn--tab ol w-[243px]">
+                    Basculer
+                  </button>
+                </div>
+              </div>
+            </div>
+            <div data-panel="commandes" class="options-panel hidden">
+              <ul id="options-controls" class="m-0 flex list-none flex-col gap-[14px] p-0"></ul>
+            </div>
+          </div>
+          <p id="options-status" class="ol absolute bottom-[90px] left-1/2 m-0 -translate-x-1/2 text-[22px]"></p>
+          <button
+            id="options-back"
+            type="button"
+            class="btn btn--red ol absolute bottom-[34px] left-[40px] w-[300px]"
+          >
+            Retour
+          </button>
+          <button
+            id="options-apply"
+            type="button"
+            class="btn ol absolute right-[40px] bottom-[34px] w-[300px]"
+          >
+            Appliquer
+          </button>
         </div>
       </section>
 
