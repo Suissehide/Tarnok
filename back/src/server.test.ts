@@ -596,6 +596,18 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     expect(verdict.gold).toBe(room.gold);
     expect(verdict.gold).toBeGreaterThan(0);
 
+    // ⚠️ **Partir termine la run, et la fin arrive APRES le verdict** : sinon
+    // l'ecran de fin s'ouvrait sans la decision et disait « L'equipe est
+    // tombee » a une equipe qui venait de partir (retour de playtest).
+    // Deja recu, dans le MEME envoi que le verdict : on le lit dans `recus`.
+    for (let i = 0; i < 100 && !recus.some((m) => m.type === MSG.RUN_OVER); i++) {
+      await new Promise((r) => setTimeout(r, 20));
+    }
+    const indexVerdict = recus.findIndex((m) => m.type === MSG.PORTAL_RESULT);
+    const indexFin = recus.findIndex((m) => m.type === MSG.RUN_OVER);
+    expect(indexVerdict).toBeGreaterThanOrEqual(0);
+    expect(indexFin).toBeGreaterThan(indexVerdict);
+
     // --- 4. L'ORDRE : l'evenement precede l'etat qui en decoule.
     //
     // ⚠️ **La seule assertion du depot qui garde la POSITION du bloc du portail

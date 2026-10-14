@@ -596,20 +596,6 @@ class Session {
     for (const levelUp of this.room.drainLevelUps()) {
       this.#send(encodeLevelUp(levelUp.tick, levelUp.level));
     }
-    const runOver = this.room.drainRunOver();
-    if (runOver) {
-      this.#send(encodeRunOver(runOver.tick, runOver.survivedTicks, runOver.level, runOver.kills));
-      // ⚠️ **LE seul endroit qui verse l'or sur les comptes**, et il est
-      // atteint exactement une fois par run -- par DEUX invariants en serie :
-      // le garde de tete de `Room#step` rend un second `#endRun`
-      // inatteignable, et `drainRunOver` ANNULE l'evenement en le rendant.
-      // L'idempotence ne demande donc ni journal ni cle.
-      //
-      // ⚠️ **Pas dans `Room`.** `Room` est de la logique de jeu sans aucune
-      // I/O : y glisser un appel Prisma la rendrait intestable sans base.
-      void this.#creditAccounts();
-    }
-
     for (const open of this.room.drainDraftOpens()) {
       this.#send(encodeDraftOpen(open.deadlineTick, open.cards));
     }
@@ -647,6 +633,24 @@ class Session {
     }
     for (const res of this.room.drainPortalResults()) {
       this.#send(encodePortalResult(res.effectTick, res.decision, res.gold));
+    }
+
+    // ⚠️ **`RUN_OVER` APRES le verdict du portail.** Une extraction termine la
+    // run au tick meme du verdict : envoyee avant, la fin arrivait chez le
+    // client sans la decision, et l'ecran de fin affichait « L'equipe est
+    // tombee » a une equipe qui venait de PARTIR (retour de playtest).
+    const runOver = this.room.drainRunOver();
+    if (runOver) {
+      this.#send(encodeRunOver(runOver.tick, runOver.survivedTicks, runOver.level, runOver.kills));
+      // ⚠️ **LE seul endroit qui verse l'or sur les comptes**, et il est
+      // atteint exactement une fois par run -- par DEUX invariants en serie :
+      // le garde de tete de `Room#step` rend un second `#endRun`
+      // inatteignable, et `drainRunOver` ANNULE l'evenement en le rendant.
+      // L'idempotence ne demande donc ni journal ni cle.
+      //
+      // ⚠️ **Pas dans `Room`.** `Room` est de la logique de jeu sans aucune
+      // I/O : y glisser un appel Prisma la rendrait intestable sans base.
+      void this.#creditAccounts();
     }
 
     this.#outbox.buffers.length = 0;
