@@ -49,7 +49,7 @@ import { makeRandom } from '@shared/random';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import type { WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
-import { applyObstacles, generateObstacles } from '@shared/worldmap';
+import { applyObstacles, generateObstacles, moveOnMap } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 
 import {
@@ -1270,8 +1270,27 @@ export class Room {
       // Vitesse propre a ce joueur : les cartes « fougue » empilees s'ajoutent
       // a `PLAYER_SPEED`, en pixels monde par seconde.
       const speed = PLAYER_SPEED + p.loadout.bonus('speed') + p.accountBonuses.speed;
-      p.x = clamp(p.x + p.moveX * speed * scaledDt, 0, MAP_SIZE);
-      p.y = clamp(p.y + p.moveY * speed * scaledDt, 0, MAP_SIZE);
+      // Le decor bloque les joueurs comme la horde : meme masque que le champ
+      // de flux (`#fields[0]`), meme regle que la prediction (`moveOnMap`).
+      const sol = this.#fields[0];
+      const pos = sol
+        ? moveOnMap(
+            p.x,
+            p.y,
+            p.moveX * speed * scaledDt,
+            p.moveY * speed * scaledDt,
+            sol.blocked,
+            sol.cols,
+            sol.rows,
+            sol.cellSize,
+            MAP_SIZE,
+          )
+        : {
+            x: clamp(p.x + p.moveX * speed * scaledDt, 0, MAP_SIZE),
+            y: clamp(p.y + p.moveY * speed * scaledDt, 0, MAP_SIZE),
+          };
+      p.x = pos.x;
+      p.y = pos.y;
     }
 
     // Arrondies, comme sur le fil (constat C1.4) : le client ne connaitra

@@ -31,6 +31,7 @@ import {
   ProjectileRenderer,
   ReactionFlashRenderer,
 } from './projectile-renderer';
+import { buildTerrain } from './terrain-renderer';
 import { ZoneRenderer } from './zone-renderer';
 
 /**
@@ -83,6 +84,8 @@ export class Stage {
   readonly #bossBar = new BossBarRenderer();
   /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
   #obstaclesDrawn = false;
+  /** La grille de fond : masquee des que la carte en tuiles la recouvre. */
+  readonly #grid = mapBorder();
 
   /**
    * Les calques du monde, **du sol vers le ciel** : l'ordre de ce tableau EST
@@ -168,7 +171,7 @@ export class Stage {
 
     this.#world.scale.set(1, VERTICAL_SQUASH);
     this.#app.stage.addChild(this.#world);
-    this.#world.addChild(mapBorder());
+    this.#world.addChild(this.#grid);
 
     // Les calques du monde : apres la grille, avant les carres des joueurs
     // (ajoutes plus tard via `#spriteFor`), sinon les joueurs disparaissent
@@ -319,11 +322,20 @@ export class Stage {
       return;
     }
     this.#obstaclesDrawn = true;
-    // Index 1 : juste au-dessus de la grille (`mapBorder`, ajoutee en premier
-    // dans `init`), en dessous des orbes/horde/projectiles/flashs et des
-    // carres de joueurs, tous ajoutes ensuite — les rochers sont du terrain,
-    // pas un calque qui doit passer devant les entites.
-    this.#world.addChildAt(mapObstacles(map.mask, map.cols, map.rows, map.cellSize), 1);
+    // La carte en tuiles (`terrain-renderer.ts`) sous TOUS les calques, index
+    // 0. Si une planche manque, l'ancien dessin reprend : index 1, juste
+    // au-dessus de la grille, en dessous des orbes/horde/projectiles/flashs et
+    // des carres de joueurs — les obstacles sont du terrain, pas un calque qui
+    // doit passer devant les entites.
+    buildTerrain(map.world, ASSETS_BASE)
+      .then((terrain) => {
+        this.#world.addChildAt(terrain, 0);
+        this.#grid.visible = false;
+      })
+      .catch((cause: unknown) => {
+        console.error('planches du terrain indisponibles, obstacles en aplat', cause);
+        this.#world.addChildAt(mapObstacles(map.mask, map.cols, map.rows, map.cellSize), 1);
+      });
   }
 
   /**

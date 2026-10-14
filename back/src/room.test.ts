@@ -18,6 +18,7 @@ import {
   COIN_DROP_ONE_IN,
   EXTRACT_MULTIPLIER_STEP,
   FIELD_INPUT_DELAY_TICKS,
+  FLOWFIELD_CELL,
   LEVEL_FREEZE_TICKS,
   LEVEL_RESUME_TICKS,
   LEVEL_XP_BASE,
@@ -42,6 +43,7 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
+import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
 import { bossHp, extractGold, hpScale, palierGold, palierHp } from '@shared/paliers';
 import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
@@ -66,6 +68,7 @@ import {
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
+import { generateObstacles } from '@shared/worldmap';
 import { describe, expect, it, vi } from 'vitest';
 
 import { type AccountGrants, type DraftOpenEvent, Room } from './room';
@@ -260,8 +263,10 @@ describe('Room.step', () => {
   });
 
   it('est deterministe : deux salons, memes entrees, memes positions', () => {
-    const a = new Room();
-    const b = new Room();
+    // ⚠️ MEME graine : depuis la carte en tuiles, le decor arrete les joueurs,
+    // et deux graines feraient deux iles.
+    const a = new Room(3);
+    const b = new Room(3);
     for (const room of [a, b]) {
       room.join(1);
       room.applyInput(1, 1, 90, -40);
@@ -273,15 +278,25 @@ describe('Room.step', () => {
     expect(positionOf(a, 1)).toEqual(positionOf(b, 1));
   });
 
-  it('borne les joueurs a la carte', () => {
-    const room = new Room();
+  it('borne les joueurs a la carte : le rivage les arrete avant le bord', () => {
+    const room = new Room(3);
     room.join(1);
     room.applyInput(1, 1, -127, -127);
     for (let i = 0; i < TICK_HZ * 120; i++) {
       room.step(DT);
     }
 
-    expect(positionOf(room, 1)).toEqual({ x: 0, y: 0 });
+    // Le coin (0, 0) est de l'eau : le joueur s'arrete sur une cellule libre,
+    // dans la carte, et il a bien couru vers le coin.
+    const pos = positionOf(room, 1);
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(room.mapSeed, probe.cols, probe.rows);
+    const cx = Math.floor(pos.x / FLOWFIELD_CELL);
+    const cy = Math.floor(pos.y / FLOWFIELD_CELL);
+    expect(mask[cy * probe.cols + cx]).toBe(0);
+    expect(pos.x).toBeGreaterThanOrEqual(0);
+    expect(pos.y).toBeGreaterThanOrEqual(0);
+    expect(pos.x + pos.y).toBeLessThan(MAP_SIZE);
   });
 
   it('incremente le tick a chaque pas', () => {

@@ -1392,9 +1392,10 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
       formation: FORMATION.CLUSTER,
       // Loin de l'endroit ou les joueurs stationnent : assez de distance a
       // parcourir pour que le mouvement reste mesurable sur toute la duree du
-      // test, gel et reprise compris.
-      anchorX: 500,
-      anchorY: 500,
+      // test, gel et reprise compris. ⚠️ SUR l'ile : (500, 500) est de l'eau
+      // depuis la carte en tuiles, et la vague y naissait collee au rivage.
+      anchorX: 1500,
+      anchorY: 1500,
       count: ENTITIES,
     };
     socket.emit('message', { data: encodeWaveOrder(order) });

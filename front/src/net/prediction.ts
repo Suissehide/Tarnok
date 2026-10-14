@@ -1,4 +1,13 @@
 import { MAP_SIZE, PLAYER_SPEED, RECONCILE_TAU_MS } from '@shared/constants';
+import { moveOnMap } from '@shared/worldmap';
+
+/** Le masque que le serveur applique au deplacement (`Room.step`), meme geometrie. */
+export interface MoveMap {
+  mask: Uint8Array;
+  cols: number;
+  rows: number;
+  cellSize: number;
+}
 
 /**
  * Prediction locale du joueur, et reconciliation avec l'autorite serveur.
@@ -23,7 +32,15 @@ export class PredictedPlayer {
   #errorX = 0;
   #errorY = 0;
 
-  constructor(x: number, y: number) {
+  /**
+   * `map` : le decor qui bloque le joueur, le MEME que celui du serveur. Sans
+   * lui (tests, avant le WELCOME), seuls les bords de la carte bloquent.
+   */
+  constructor(
+    x: number,
+    y: number,
+    private readonly map: MoveMap | null = null,
+  ) {
     this.#x = x;
     this.#y = y;
   }
@@ -74,8 +91,17 @@ export class PredictedPlayer {
       ny /= len;
     }
 
-    this.#x = clamp(this.#x + nx * speed * dt * scale, 0, MAP_SIZE);
-    this.#y = clamp(this.#y + ny * speed * dt * scale, 0, MAP_SIZE);
+    const dx = nx * speed * dt * scale;
+    const dy = ny * speed * dt * scale;
+    if (this.map) {
+      const m = this.map;
+      const pos = moveOnMap(this.#x, this.#y, dx, dy, m.mask, m.cols, m.rows, m.cellSize, MAP_SIZE);
+      this.#x = pos.x;
+      this.#y = pos.y;
+    } else {
+      this.#x = clamp(this.#x + dx, 0, MAP_SIZE);
+      this.#y = clamp(this.#y + dy, 0, MAP_SIZE);
+    }
 
     // Extinction exponentielle : monotone par construction, donc jamais
     // d'oscillation autour de la position serveur, et independante de la

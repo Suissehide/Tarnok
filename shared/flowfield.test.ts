@@ -329,27 +329,41 @@ describe('FlowField.sampleDirection (tache 25)', () => {
     // avec un seul argument rend un masque vide en silence, ce qui a deja
     // couté deux diagnostics faux dans cette meme zone (voir le brief de la
     // tache 25).
-    const MAP_SIZE = 1600;
+    const MAP_SIZE = 6000;
     const CELL = 64;
     const cols = Math.ceil(MAP_SIZE / CELL);
     const rows = cols;
     const mask = generateObstacles(1, cols, rows);
     const field = new FlowField(MAP_SIZE, CELL);
     applyObstacles(field, mask);
-    field.update(1500, 1500);
+    field.update(MAP_SIZE / 2, MAP_SIZE / 2);
 
-    // Cellule libre (19, 6) avec un mur immediatement au NORD (19, 5), pour
-    // cette graine — verifie une fois par le script d'exploration du
-    // rapport, pas une coincidence recherchee a la volee dans ce test.
-    const wallCell = 5 * cols + 19;
-    const freeCell = 6 * cols + 19;
-    expect(mask[wallCell]).toBe(1);
-    expect(mask[freeCell]).toBe(0);
+    // Une cellule libre avec un mur immediatement au NORD, CHERCHEE dans le
+    // masque plutot que recopiee : depuis la carte en tuiles (une ile), les
+    // coordonnees trouvees jadis par le script d'exploration ne tiennent plus.
+    let freeCell = -1;
+    // ⚠️ Et SOUS le centre : la cible est alors au nord, de l'autre cote du
+    // mur — le seul cas ou « pointer vers le mur » serait la pente naturelle.
+    for (let i = Math.ceil(rows / 2 + 1) * cols; i < mask.length && freeCell < 0; i++) {
+      // Un PAN de mur (nord-ouest, nord, nord-est) : sous un arbre isole, le
+      // chemin le contourne en diagonale, et la pointe vers le nord est juste.
+      if (
+        mask[i] === 0 &&
+        mask[i - cols] === 1 &&
+        mask[i - cols - 1] === 1 &&
+        mask[i - cols + 1] === 1
+      ) {
+        freeCell = i;
+      }
+    }
+    expect(freeCell).toBeGreaterThanOrEqual(0);
+    const cx = freeCell % cols;
+    const cy = (freeCell - cx) / cols;
 
-    // Un pixel avant la frontiere avec le mur (bord haut de la cellule
+    // Un pixel apres la frontiere avec le mur (bord haut de la cellule
     // libre, en y).
     const out = new Float32Array(2);
-    field.sampleDirection(1248, 385, out);
+    field.sampleDirection(cx * CELL + CELL / 2, cy * CELL + 1, out);
 
     // "Vers le mur" ici, c'est une composante y NEGATIVE (le mur est au
     // nord, y plus petit). Une direction qui longe le mur ou s'en eloigne a

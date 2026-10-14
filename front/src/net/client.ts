@@ -57,7 +57,7 @@ import {
 } from '@shared/protocol';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
-import { applyObstacles, generateObstacles } from '@shared/worldmap';
+import { applyObstacles, generateWorld, type WorldMap } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 
 import { SnapshotBuffer } from './interpolation';
@@ -69,7 +69,7 @@ import { SnapshotBuffer } from './interpolation';
  */
 const ABILITY_EVENT_MEMORY_TICKS = 10 * TICK_HZ;
 
-import { PredictedPlayer } from './prediction';
+import { type MoveMap, PredictedPlayer } from './prediction';
 
 /**
  * Une paire d'axes dans [-1, 1] — reutilisee telle quelle pour le deplacement
@@ -92,6 +92,8 @@ export interface ObstacleMap {
   cols: number;
   rows: number;
   cellSize: number;
+  /** Le sol et le decor, pour le rendu en tuiles et la mini-carte. */
+  world: WorldMap;
 }
 
 export interface RenderState {
@@ -1011,6 +1013,8 @@ export class GameClient {
   /** Charges de boss recues mais pas encore appliquees. Meme discipline que `#pendingZones`. */
   readonly #pendingCharges: BossChargeMessage[] = [];
   /** Leurres annonces, en attente d'etre plantes au tick deja simule (`#applyDecoy`). */
+  /** Le decor qui bloque le joueur local, pose au WELCOME (`PredictedPlayer`). */
+  #moveMap: MoveMap | null = null;
   readonly #pendingDecoys: Decoy[] = [];
   /** Leurres plantes, que l'entree du champ substitue (`#feedFields`). */
   #decoys: Decoy[] = [];
@@ -1781,7 +1785,8 @@ export class GameClient {
       // Le client **regenere** la carte depuis la graine, il ne la recoit pas :
       // envoyer 8 836 cellules couterait plus cher que tout le protocole.
       const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
-      const mask = generateObstacles(msg.mapSeed, probe.cols, probe.rows);
+      const world = generateWorld(msg.mapSeed, probe.cols, probe.rows);
+      const mask = world.blocked;
       this.#fields = Array.from({ length: MAX_PLAYERS }, () => {
         const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
         applyObstacles(f, mask);
@@ -1802,7 +1807,8 @@ export class GameClient {
           this.#localClassId = p.classId;
         }
       }
-      this.onMapReady({ mask, cols: probe.cols, rows: probe.rows, cellSize: probe.cellSize });
+      this.#moveMap = { mask, cols: probe.cols, rows: probe.rows, cellSize: probe.cellSize };
+      this.onMapReady({ ...this.#moveMap, world });
       return;
     }
     if (msg.type === MSG.LOBBY) {
@@ -2015,7 +2021,7 @@ export class GameClient {
     this.#localPickupRadius = mine.pickupRadius;
     if (this.#local === null) {
       // Premier snapshot ou l'on se voit : on se pose la, sans adoucissement.
-      this.#local = new PredictedPlayer(mine.x, mine.y);
+      this.#local = new PredictedPlayer(mine.x, mine.y, this.#moveMap);
     } else {
       this.#local.reconcile(mine.x, mine.y);
     }

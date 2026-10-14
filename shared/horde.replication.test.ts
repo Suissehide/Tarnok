@@ -1444,8 +1444,10 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
     // `applyObstacles` (comme le fait deja le reste de ce fichier) : c'est
     // fidele a la realite, ou deux cotes qui regenerent independamment la
     // meme graine obtiennent par construction le meme masque (§5.1).
-    const anchorCol = 10;
-    const anchorRow = 10;
+    // ⚠️ SUR l'ile : depuis la carte en tuiles, la cellule (10, 10) est
+    // entouree d'eau, et la sortie de mur n'y trouvait plus d'herbe a temps.
+    const anchorCol = 30;
+    const anchorRow = 30;
     mask[anchorRow * probe.cols + anchorCol] = 1;
     const anchorX = (anchorCol + 0.5) * FLOWFIELD_CELL;
     const anchorY = (anchorRow + 0.5) * FLOWFIELD_CELL;

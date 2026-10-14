@@ -1,4 +1,5 @@
 import { MAP_SIZE } from '@shared/constants';
+import { DECO, TERRAIN } from '@shared/worldmap';
 
 import type { ObstacleMap } from '../net/client';
 import { playerColor } from './draft';
@@ -18,6 +19,12 @@ import { playerColor } from './draft';
 
 const BG = '#2f3a2a';
 const OBSTACLE_RGB = [0x55, 0x64, 0x4b] as const;
+/** Les couleurs du sol par `TERRAIN` ; l'herbe (absente) garde le fond. */
+const TERRAIN_RGB: Partial<Record<number, readonly [number, number, number]>> = {
+  [TERRAIN.WATER]: [0x47, 0xab, 0xa9],
+  [TERRAIN.PLATEAU]: [0x6f, 0x86, 0x4a],
+  [TERRAIN.CLIFF]: [0x5d, 0x73, 0x7e],
+};
 const ENEMY = '#e04040';
 const BOSS = '#ff2020';
 const OUTLINE = '#ffffff';
@@ -65,13 +72,19 @@ export class Minimap {
     }
     const img = octx.createImageData(map.cols, map.rows);
     for (let i = 0; i < map.mask.length; i++) {
-      if (map.mask[i] === 0) {
+      // Le sol d'abord (eau, herbe, plateau, falaise), puis ce qui bloque
+      // dessus. Une cellule libre d'herbe garde le fond (`BG`).
+      const rgb =
+        TERRAIN_RGB[map.world.terrain[i] ?? 0] ?? (map.mask[i] === 1 ? OBSTACLE_RGB : null);
+      const deco = map.world.deco[i] === DECO.TREE || map.world.deco[i] === DECO.ROCK;
+      const color = deco ? OBSTACLE_RGB : rgb;
+      if (!color) {
         continue;
       }
       const o = i * 4;
-      img.data[o] = OBSTACLE_RGB[0];
-      img.data[o + 1] = OBSTACLE_RGB[1];
-      img.data[o + 2] = OBSTACLE_RGB[2];
+      img.data[o] = color[0];
+      img.data[o + 1] = color[1];
+      img.data[o + 2] = color[2];
       img.data[o + 3] = 255;
     }
     octx.putImageData(img, 0, 0);

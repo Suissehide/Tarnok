@@ -2109,39 +2109,50 @@ describe('tache 25 : la horde lit le champ par interpolation, pas par cellule', 
     // melange bilineaire coincide alors avec la lecture par cellule par
     // pure coincidence geometrique, ce qui aurait rendu ce test aveugle a la
     // regression qu'il vise.
-    const MAP_SIZE = 2000;
+    //
+    // ⚠️ **L'ancre est CHERCHEE depuis la carte en tuiles** : la cible
+    // (1900, 1900) choisie jadis est desormais de l'eau. On balaie les ancres
+    // jusqu'a la premiere dont la naissance tombe pres d'un virage du champ —
+    // la condition de contraste, verifiee plus bas, est celle qui compte.
+    const MAP_SIZE = 6000;
     const CELL = 64;
     const cols = Math.ceil(MAP_SIZE / CELL);
     const rows = cols;
     const mask = generateObstacles(4, cols, rows);
     const field = new FlowField(MAP_SIZE, CELL);
     applyObstacles(field, mask);
-    field.update(1900, 1900);
+    field.update(MAP_SIZE / 2, MAP_SIZE / 2);
 
-    const horde = new Horde(4);
-    horde.spawn(
-      order({ count: 1, formation: FORMATION.SCATTER, anchorX: 1000, anchorY: 1000 }),
-      field,
-    );
-
-    const ex = horde.x[0] ?? 0;
-    const ey = horde.y[0] ?? 0;
-
-    // Valeur de reference : le MEME appel que celui que `spawn` doit faire,
-    // a la MEME position — un test de branchement, pas une redite de la
-    // formule (deja verifiee et mutee dans `shared/flowfield.test.ts`).
     const expected = new Float32Array(2);
-    field.sampleDirection(ex, ey, expected);
     const speed = archetypeOf(0).speed;
-
-    // Sanity : la lecture par cellule seule donnerait ici une direction
-    // MESURABLEMENT differente du melange bilineaire attendu — sinon ce
-    // test ne prouverait rien sur le branchement (voir le commentaire
-    // ci-dessus).
-    const perCellIdx = field.indexAt(ex, ey);
-    const perCellX = field.dirX[perCellIdx] ?? 0;
-    const perCellY = field.dirY[perCellIdx] ?? 0;
-    const contrast = Math.hypot((expected[0] ?? 0) - perCellX, (expected[1] ?? 0) - perCellY);
+    let horde = new Horde(4);
+    let contrast = 0;
+    for (let a = 0; a < 400 && contrast <= 0.1; a++) {
+      horde = new Horde(4);
+      horde.spawn(
+        order({
+          count: 1,
+          formation: FORMATION.SCATTER,
+          anchorX: 600 + (a % 20) * 240,
+          anchorY: 600 + Math.floor(a / 20) * 240,
+        }),
+        field,
+      );
+      const ex = horde.x[0] ?? 0;
+      const ey = horde.y[0] ?? 0;
+      // Valeur de reference : le MEME appel que celui que `spawn` doit faire,
+      // a la MEME position — un test de branchement, pas une redite de la
+      // formule (deja verifiee et mutee dans `shared/flowfield.test.ts`).
+      field.sampleDirection(ex, ey, expected);
+      // Sanity : la lecture par cellule seule donnerait ici une direction
+      // MESURABLEMENT differente du melange bilineaire attendu — sinon ce
+      // test ne prouverait rien sur le branchement.
+      const perCellIdx = field.indexAt(ex, ey);
+      contrast = Math.hypot(
+        (expected[0] ?? 0) - (field.dirX[perCellIdx] ?? 0),
+        (expected[1] ?? 0) - (field.dirY[perCellIdx] ?? 0),
+      );
+    }
     expect(contrast).toBeGreaterThan(0.1);
 
     expect(horde.vx[0] ?? 0).toBeCloseTo((expected[0] ?? 0) * speed, 3);
