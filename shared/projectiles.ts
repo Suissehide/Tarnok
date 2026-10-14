@@ -1,3 +1,4 @@
+import { ARCHETYPES } from './archetypes';
 import { PROJECTILE_HIT_RADIUS, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
 import type { Horde } from './horde';
 import type { Weapon } from './weapons';
@@ -35,6 +36,36 @@ import type { ZoneField } from './zones';
  * celle de l'appelant — la seule hypothese est que `step` est appele
  * exactement une fois par tick, comme `Horde.step`.
  */
+/**
+ * Le rayon de touche AU CARRE de chaque archetype, et sa borne elargie — deux
+ * tables cuites au chargement, indexees par `Horde.archetype`.
+ *
+ * ⚠️ **Le rayon de touche suit le CORPS, et c'est le defaut que l'etape 8
+ * corrige.** `collide` testait un rayon unique de 32 px pour tout le monde,
+ * alors que le boss est dessine a `BODY_SCALE x bodyScale` de ce rayon — soit
+ * 240 px de diametre pour une cible de 64. Il fallait viser le centre d'un
+ * corps douze fois plus large que la zone qui encaissait : en jeu, « la hitbox
+ * du boss est trop petite ». `bodyScale` existait deja et disait exactement
+ * ca — `BOSS_CHARGE_WIDTH_PX` et `spriteScale` le lisent tous les deux depuis
+ * l'etape 6a ; seule la collision l'ignorait.
+ *
+ * ⚠️ **Des TABLES, pas un calcul dans la boucle.** La boucle interne de
+ * `collide` est en projectiles x ennemis — 49 millions de tests de distance par
+ * tick ont deja ete mesures ici (voir le pre-filtre du Vif-argent). Une lecture
+ * de tableau type remplace exactement l'ancienne constante ; un
+ * `archetypeOf(...).bodyScale` y aurait mis une recherche d'objet.
+ */
+const HIT_R2_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => {
+  const r = PROJECTILE_HIT_RADIUS * a.bodyScale;
+  return r * r;
+});
+
+/** La meme table, majoree du bonus de Vif-argent : la borne du pre-filtre. */
+const WIDE_R2_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => {
+  const r = PROJECTILE_HIT_RADIUS * a.bodyScale + VIF_ARGENT_HIT_RADIUS_BONUS;
+  return r * r;
+});
+
 export class Projectiles {
   /** Position courante, publique en lecture pour le rendu — comme `Horde.x` / `Horde.y`. */
   readonly x: Float32Array;
@@ -404,6 +435,11 @@ export class Projectiles {
    * `nearestTarget`, pour la meme raison : le resultat ne doit pas dependre
    * de l'ordre des entites dans le tableau.
    *
+   * ⚠️ **Le rayon teste suit le CORPS de la cible depuis l'etape 8** : un boss
+   * (`Archetype.bodyScale` = 3) encaisse sur 96 px de rayon, la pietaille sur
+   * 32. Voir `HIT_R2_BY_ARCHETYPE` — jusque-la, il fallait viser le centre
+   * exact d'un corps dessine a 240 px de diametre.
+   *
    * ⚠️ **`zones`/`tick` sont optionnels, et c'est ce qui branche le rayon de
    * touche elargi du Vif-argent (§4 de la spec de l'etape 5c) COTE SERVEUR
    * SEUL.** `back/src/combat.ts` les passe ; le client (`front/src/net/client.ts`,
@@ -419,11 +455,7 @@ export class Projectiles {
     zones?: ZoneField,
     tick?: number,
   ): void {
-    const baseR2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
-    // Borne superieure du rayon elargi, DERIVEE des deux constantes — voir le
-    // pre-filtre plus bas.
-    const wideMaxR = PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS;
-    const wideMaxR2 = wideMaxR * wideMaxR;
+    const defaultR2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
 
     for (let i = this.#count - 1; i >= 0; i--) {
       const ax = this.#prevX[i] ?? 0;
@@ -437,6 +469,11 @@ export class Projectiles {
         const ex = horde.x[e] ?? 0;
         const ey = horde.y[e] ?? 0;
         const d2 = distanceToSegmentSquared(ex, ey, ax, ay, bx, by);
+        // Le rayon de CE corps : `PROJECTILE_HIT_RADIUS` pour les vingt
+        // archetypes de pietaille, trois fois plus pour le boss. Voir
+        // `HIT_R2_BY_ARCHETYPE`.
+        const kind = horde.archetype[e] ?? 0;
+        const baseR2 = HIT_R2_BY_ARCHETYPE[kind] ?? defaultR2;
         if (d2 > baseR2) {
           // ⚠️ **Le rayon de base ne touche pas — le rayon ELARGI est-il
           // pose, et seulement s'il y a un `zones` a consulter ?** Cout
@@ -462,14 +499,16 @@ export class Projectiles {
           // c'est une optimisation a comportement identique. Ce qui le garde
           // est le BANC, pas la suite ; meme honnetete que la borne `<= 0` de
           // `resolveBurn`, qui assume qu'aucun test ne la distingue de `< 0`.
-          if (d2 > wideMaxR2) {
+          if (d2 > (WIDE_R2_BY_ARCHETYPE[kind] ?? defaultR2)) {
             continue;
           }
           const bonus = zones.hitRadiusBonusAt(ex, ey, tick ?? 0);
           if (bonus <= 0) {
             continue;
           }
-          const wideR = PROJECTILE_HIT_RADIUS + bonus;
+          // Le bonus de zone s'AJOUTE au rayon du corps, il ne le remplace
+          // pas : un boss dans une flaque de Vif-argent reste un boss.
+          const wideR = Math.sqrt(baseR2) + bonus;
           if (d2 > wideR * wideR) {
             continue;
           }

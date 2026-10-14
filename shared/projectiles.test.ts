@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { archetypeOf, BOSS_ARCHETYPE } from './archetypes';
 import { PROJECTILE_HIT_RADIUS, TICK_HZ, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
@@ -13,12 +14,12 @@ import { ZoneField } from './zones';
  * Fait apparaitre une seule entite, avec un `waveId` choisi explicitement
  * pour controler son identifiant — meme technique que `targeting.test.ts`.
  */
-function addOne(horde: Horde, waveId: number, x: number, y: number): number {
+function addOne(horde: Horde, waveId: number, x: number, y: number, archetype = 0): number {
   const order: WaveOrder = {
     waveId,
     spawnTick: 0,
     seed: 1,
-    archetype: 0,
+    archetype,
     formation: FORMATION.SCATTER,
     anchorX: x,
     anchorY: y,
@@ -676,5 +677,91 @@ describe('ce que le rendu lit sur un projectile', () => {
 
     expect(p.headingAt(0)).toBeCloseTo(0, 6);
     expect(p.headingAt(1)).toBeCloseTo(Math.PI / 2, 6);
+  });
+});
+
+/**
+ * Étape 8 — **le rayon de touche suit le CORPS**, signale par l'auteur en
+ * jouant : *« la hitbox des boss n'est pas correcte, trop petite »*.
+ *
+ * Il avait raison, et le chiffre le dit : le boss est DESSINE a
+ * `2 x PROJECTILE_HIT_RADIUS x BODY_SCALE x bodyScale` = 240 px de diametre,
+ * et `collide` lui opposait les memes 64 px de diametre qu'a un gobelin. Il
+ * fallait viser le centre exact d'un corps qui remplit un quart d'ecran.
+ *
+ * ⚠️ `bodyScale` EXISTAIT DEJA et disait exactement cela : `BOSS_CHARGE_WIDTH_PX`
+ * et `spriteScale` le lisent depuis l'etape 6a. Seule la collision l'ignorait —
+ * c'est pourquoi la correction est une lecture de plus, pas une constante de
+ * plus.
+ */
+describe('Projectiles.collide — le rayon de touche suit le corps de la cible', () => {
+  const BOSS_R = PROJECTILE_HIT_RADIUS * archetypeOf(BOSS_ARCHETYPE).bodyScale;
+
+  /** Tire un projectile IMMOBILE a `distance` du corps vise, et dit s'il touche. */
+  function touche(archetype: number, distance: number): boolean {
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0, archetype);
+    const p = new Projectiles(8);
+    const arme = weaponOf(0);
+    // Vitesse nulle : le segment balaye est un point, donc la distance testee
+    // est exactement `distance` — aucun balayage ne vient la masquer.
+    p.fireSalvoDirected({ ...arme, projectileSpeed: 0 }, 0, 0, distance, 1, 0, arme.damage, 1);
+    let touches = 0;
+    p.collide(horde, () => {
+      touches++;
+    });
+    return touches > 0;
+  }
+
+  it('oppose au boss un rayon TROIS fois celui de la pietaille', () => {
+    expect(archetypeOf(BOSS_ARCHETYPE).bodyScale).toBeGreaterThan(1);
+    expect(BOSS_R).toBeCloseTo(96, 6);
+  });
+
+  it('touche le boss bien au-dela du rayon de la pietaille', () => {
+    // 80 px : hors des 32 px de la pietaille, largement dans le corps du boss.
+    expect(touche(BOSS_ARCHETYPE, 80)).toBe(true);
+    expect(touche(0, 80)).toBe(false);
+  });
+
+  it('garde la pietaille EXACTEMENT sur son rayon — rien n a grossi pour elle', () => {
+    expect(touche(0, PROJECTILE_HIT_RADIUS - 1)).toBe(true);
+    expect(touche(0, PROJECTILE_HIT_RADIUS + 1)).toBe(false);
+  });
+
+  it('s arrete au bord du corps du boss, sans le deborder', () => {
+    expect(touche(BOSS_ARCHETYPE, BOSS_R - 1)).toBe(true);
+    expect(touche(BOSS_ARCHETYPE, BOSS_R + 1)).toBe(false);
+  });
+
+  it('ajoute le bonus de Vif-argent AU rayon du boss, sans le remplacer', () => {
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0, BOSS_ARCHETYPE);
+    const zones = new ZoneField();
+    zones.spawn(ELEMENT.VIF_ARGENT, 0, 0, 0, 0);
+    const arme = weaponOf(0);
+    const dehors = BOSS_R + VIF_ARGENT_HIT_RADIUS_BONUS - 1;
+
+    const sansZone = new Projectiles(8);
+    sansZone.fireSalvoDirected({ ...arme, projectileSpeed: 0 }, 0, 0, dehors, 1, 0, arme.damage, 1);
+    let sans = 0;
+    sansZone.collide(horde, () => {
+      sans++;
+    });
+
+    const avecZone = new Projectiles(8);
+    avecZone.fireSalvoDirected({ ...arme, projectileSpeed: 0 }, 0, 0, dehors, 1, 0, arme.damage, 1);
+    let avec = 0;
+    avecZone.collide(
+      horde,
+      () => {
+        avec++;
+      },
+      zones,
+      0,
+    );
+
+    expect(sans).toBe(0);
+    expect(avec).toBe(1);
   });
 });
