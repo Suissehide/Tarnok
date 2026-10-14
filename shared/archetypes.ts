@@ -344,7 +344,7 @@ export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
  * - `chaman` : les monstres dans son aura encaissent moitie moins ;
  * - `aucun` : marche droit vers sa cible.
  */
-export type Behavior = 'aucun' | 'bond' | 'kamikaze' | 'chaman';
+export type Behavior = 'aucun' | 'bond' | 'kamikaze' | 'chaman' | 'tir';
 
 /** La periode d'un bond, en ticks : une ruee puis une pause. */
 export const LEAP_PERIOD_TICKS = 27;
@@ -360,6 +360,17 @@ export const LEAP_PAUSE_SPEED = 0.1;
  * le derivent a l'identique, et le rejeu le retrouve. Dephase par entite, pour
  * que la nuee ne bondisse pas d'un seul bloc.
  */
+/**
+ * Le tireur s'arrete a `SHOOTER_RANGE` du joueur (au lieu du contact) et tire
+ * tous les `SHOOTER_PERIOD_TICKS`, phase par identite — voir `EnemyShots`.
+ */
+export const SHOOTER_RANGE = 300;
+export const SHOOTER_PERIOD_TICKS = 54;
+export const SHOT_SPEED = 260;
+export const SHOT_LIFETIME_S = 1.6;
+export const SHOT_RADIUS = 7;
+export const SHOT_DAMAGE = 7;
+
 /** Le rayon de l'explosion d'un kamikaze, en px monde : c'est aussi le cercle d'alerte dessine. */
 export const KAMIKAZE_RADIUS = 110;
 /** Ce que l'explosion retire a un JOUEUR dans le rayon (avant son armure). */
@@ -476,6 +487,7 @@ const FOOTSOLDIERS: readonly (Omit<
     cell: 192,
     speed: 95,
     role: 'troupe',
+    behavior: 'tir',
   },
   { name: 'thief', sheet: 'Thief/Thief_Run.png', frames: 6, cell: 192, speed: 150, role: 'nuee' },
   {
@@ -520,6 +532,7 @@ const FOOTSOLDIERS: readonly (Omit<
     cell: 192,
     speed: 80,
     role: 'brute',
+    behavior: 'tir',
   },
 ];
 

@@ -1,6 +1,7 @@
 import type { AbilityUsed } from '@shared/abilities';
 import type { BossCharge } from '@shared/boss';
 import { LEVEL_XP_BASE, MAP_SIZE, TICK_HZ } from '@shared/constants';
+import type { EnemyShot } from '@shared/enemy-shots';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
@@ -381,8 +382,13 @@ export class Stage {
 
   /** Les verbes annonces (etape 8) : le tick decide de leur vie, `timeMs` les anime. */
   /** Les cercles des comportements et les explosions — voir `BehaviorRenderer`. */
-  drawBehaviors(horde: Horde, blasts: readonly BlastFlash[], timeMs: number): void {
-    this.#behaviors.draw(horde, blasts, this.viewRect(), timeMs);
+  drawBehaviors(
+    horde: Horde,
+    blasts: readonly BlastFlash[],
+    shots: readonly EnemyShot[],
+    timeMs: number,
+  ): void {
+    this.#behaviors.draw(horde, blasts, shots, this.viewRect(), timeMs);
   }
 
   drawAbilities(events: readonly AbilityUsed[], tick: number, timeMs: number): void {

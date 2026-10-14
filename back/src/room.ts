@@ -10,11 +10,13 @@ import {
   REMPART_LIFETIME_TICKS,
   VERB_IDS,
 } from '@shared/abilities';
-import { archetypeOf, SHAMAN_AURA_RADIUS } from '@shared/archetypes';
+import { archetypeOf, SHAMAN_AURA_RADIUS, SHOT_DAMAGE } from '@shared/archetypes';
 import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import { classOf, DEFAULT_CLASS_ID, type VerbKind } from '@shared/classes';
 import {
+  CONTACT_INTERVAL_TICKS,
+  CONTACT_RADIUS,
   EXTRACT_MULTIPLIER_STEP,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -34,6 +36,7 @@ import {
   XP_PER_ORB,
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
+import { EnemyShots } from '@shared/enemy-shots';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
@@ -344,6 +347,8 @@ export class Room {
   readonly #director: WaveDirector;
   readonly #projectiles = new Projectiles(PROJECTILE_CAPACITY);
   readonly #orbs = new OrbField(MAX_ENTITIES);
+  /** Les tirs des tireurs — derives de la horde, identiques au client (`EnemyShots`). */
+  readonly shots = new EnemyShots();
   /**
    * Les zones au sol (§5). Vivent ici et nulle part ailleurs cote serveur :
    * `Room.step` est le seul a respecter le contrat d'ordre « expirer avant de
@@ -1435,6 +1440,7 @@ export class Room {
     // et c'est cet ordre qui fait que le boss n'avance pas deux fois. Voir
     // `Horde#applyCharge`.
     this.horde.step(scaledDt, this.#fields, this.#tick, this.#zones, this.#charge);
+    this.shots.step(this.horde, this.#tick, scaledDt);
 
     // Les comportements du tick (retour de playtest : « des monstres uniques »).
     // L'aura des chamans protege leurs voisins de TOUTES les passes de degats
@@ -1587,6 +1593,17 @@ export class Room {
     this.#refreshArmor();
     this.#stepBossCharge();
 
+    // Les tirs : meme armure effective, et meme fenetre d'invulnerabilite que
+    // le contact — dix tireurs ne blessent pas plus vite qu'une meute au corps
+    // a corps (`CONTACT_INTERVAL_TICKS`). Le tir est consomme dans tous les cas.
+    const vivants = [...this.#players.values()].filter((p) => p.hp > 0);
+    this.shots.hits(vivants, CONTACT_RADIUS / 2).forEach((n, k) => {
+      const p = vivants[k];
+      if (p && n > 0 && p.contactInvulnTicks === 0) {
+        p.hp = Math.max(0, p.hp - SHOT_DAMAGE * (1 - (p.armor ?? 0)));
+        p.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
+      }
+    });
     resolveContact([...this.#players.values()], this.horde);
     this.#regenerate();
 

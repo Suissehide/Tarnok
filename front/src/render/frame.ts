@@ -1,5 +1,6 @@
 import type { AbilityUsed } from '@shared/abilities';
 import { type BossCharge, chargeWindsUpAt } from '@shared/boss';
+import type { EnemyShot } from '@shared/enemy-shots';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
@@ -52,6 +53,7 @@ export interface FrameClient {
   /** Les verbes annonces (etape 8), pour leur calque — voir `AbilityRenderer`. */
   readonly abilityEvents: readonly AbilityUsed[];
   readonly blastFlashes: readonly BlastFlash[];
+  readonly shots: { readonly shots: readonly EnemyShot[] };
   readonly horde: Horde;
   readonly orbs: DerivedOrbs;
   /**
@@ -112,7 +114,12 @@ export interface FrameStage {
   drawBossCharge(charge: BossCharge | null, tick: number): void;
   drawAbilities(events: readonly AbilityUsed[], tick: number, timeMs: number): void;
   /** Les cercles des kamikazes et des chamans, et les explosions (horloge murale). */
-  drawBehaviors(horde: Horde, blasts: readonly BlastFlash[], timeMs: number): void;
+  drawBehaviors(
+    horde: Horde,
+    blasts: readonly BlastFlash[],
+    shots: readonly EnemyShot[],
+    timeMs: number,
+  ): void;
   /**
    * Les anneaux de marque, sous les pieds des ennemis marques (tache 13). Ils
    * lisent la horde comme `drawHorde`, mais au TICK de simulation : c'est lui
@@ -242,7 +249,7 @@ export function composeFrame(
   // le boss doit passer par-dessus le couloir qu'il traverse.
   stage.drawBossCharge(client.bossCharge, client.hordeTick);
   stage.drawAbilities(client.abilityEvents, client.hordeTick, now);
-  stage.drawBehaviors(client.horde, client.blastFlashes, now);
+  stage.drawBehaviors(client.horde, client.blastFlashes, client.shots.shots, now);
   stage.drawMarks(client.horde, client.hordeTick, now);
   // ⚠️ **L'animation d'attaque ne part qu'au DASH** (tache 13). `stopped` vaut
   // deja 1 pendant le chargement — il sert au clip, pas au mouvement — donc

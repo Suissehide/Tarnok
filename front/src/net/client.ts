@@ -12,6 +12,7 @@ import { classOf } from '@shared/classes';
 import {
   CHAIN_JUMPS,
   CHAIN_RADIUS,
+  CONTACT_RADIUS,
   FIELD_INPUT_DELAY_TICKS,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -29,6 +30,7 @@ import {
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
+import { EnemyShots } from '@shared/enemy-shots';
 import { FlowField } from '@shared/flowfield';
 import { Horde, leavesDrop } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
@@ -1046,6 +1048,8 @@ export class GameClient {
   readonly reactionFlashes = new ReactionFlashes(REACTION_FLASH_CAPACITY);
   /** Les explosions de kamikazes en cours d'affichage — voir `BehaviorRenderer`. */
   blastFlashes: BlastFlash[] = [];
+  /** Les tirs des tireurs, derives de la horde — voir `EnemyShots`. */
+  readonly shots = new EnemyShots();
   /**
    * Flashs de chaine de Foudre, derives des collisions locales (etape 5b,
    * tache 3, tour de correction 1) — meme famille que `hitFlashes` : semes
@@ -2239,6 +2243,11 @@ export class GameClient {
     // deux fois. Le client passe exactement la meme valeur que le serveur,
     // recue une fois puis derivee.
     this.horde.step(dt * scale, this.#fields, tick, this.zones, this.#bossCharge);
+    // Les tirs des tireurs : meme derivation que le serveur, au tick PRESENT
+    // seulement (voir `EnemyShots`). Un tir qui atteint un joueur du dernier
+    // snapshot s'efface — les degats, eux, viennent du serveur.
+    this.shots.step(this.horde, tick, dt * scale);
+    this.shots.hits(this.#buffer.latest()?.players ?? [], CONTACT_RADIUS / 2);
     // Teinte elementaire, moitie « zones » — voir `#markInZones`. Place ici,
     // apres le deplacement, comme `Room.step` place `markInZones` apres avoir
     // avance sa horde.

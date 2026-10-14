@@ -1,4 +1,4 @@
-import { archetypeOf, leapFactor } from './archetypes';
+import { archetypeOf, leapFactor, SHOOTER_RANGE } from './archetypes';
 import { type BossCharge, chargeHoldsAt, chargePointAt } from './boss';
 import {
   COIN_DROP_ONE_IN,
@@ -220,6 +220,12 @@ export class Horde {
    * des instants differents pour une raison qui n'aurait plus rien de
    * cosmetique.
    */
+  /**
+   * Les positions de joueurs du dernier `retarget` — RETARDEES, donc les memes
+   * des deux cotes. Le tireur vise `aimX[targetField[i]]` (`EnemyShots`).
+   */
+  aimX: number[] = [];
+  aimY: number[] = [];
   readonly stopped: Uint8Array;
   /**
    * Les identites dans l'aura d'un chaman ce tick-ci (`Room`, cote SERVEUR
@@ -768,7 +774,10 @@ export class Horde {
    * « s'arrete » et « touche » est sans consequence, le serveur tranche.
    */
   retarget(playerX: readonly number[], playerY: readonly number[]): void {
+    this.aimX = [...playerX];
+    this.aimY = [...playerY];
     const contactR2 = CONTACT_RADIUS * CONTACT_RADIUS;
+    const shooterR2 = SHOOTER_RANGE * SHOOTER_RANGE;
     for (let i = 0; i < this.#count; i++) {
       const ex = this.x[i] ?? 0;
       const ey = this.y[i] ?? 0;
@@ -784,7 +793,10 @@ export class Horde {
         }
       }
       this.targetField[i] = best;
-      this.stopped[i] = bestDist <= contactR2 ? 1 : 0;
+      // Le tireur s'arrete a portee de tir, pas au contact : meme donnee, meme
+      // cadence, donc le meme arret des deux cotes.
+      const stopR2 = archetypeOf(this.archetype[i] ?? 0).behavior === 'tir' ? shooterR2 : contactR2;
+      this.stopped[i] = bestDist <= stopR2 ? 1 : 0;
     }
   }
 

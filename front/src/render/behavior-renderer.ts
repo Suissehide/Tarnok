@@ -1,4 +1,5 @@
-import { archetypeOf, KAMIKAZE_RADIUS, SHAMAN_AURA_RADIUS } from '@shared/archetypes';
+import { archetypeOf, KAMIKAZE_RADIUS, SHAMAN_AURA_RADIUS, SHOT_RADIUS } from '@shared/archetypes';
+import type { EnemyShot } from '@shared/enemy-shots';
 import type { Horde } from '@shared/horde';
 import { type Container, Graphics, type Rectangle } from 'pixi.js';
 
@@ -85,9 +86,19 @@ export class BehaviorRenderer {
     this.#ready = true;
   }
 
-  draw(horde: Horde, blasts: readonly BlastFlash[], view: Rectangle, nowMs: number): void {
+  draw(
+    horde: Horde,
+    blasts: readonly BlastFlash[],
+    shots: readonly EnemyShot[],
+    view: Rectangle,
+    nowMs: number,
+  ): void {
     const g = this.#graphics;
     g.clear();
+    // Les tirs ennemis : une bille rouge cerclee de noir, lisible sur l'herbe.
+    for (const t of shots) {
+      g.circle(t.x, t.y, SHOT_RADIUS).fill(0xff4a3d).stroke({ color: 0x1a0f0a, width: 2 });
+    }
     const pulse = 0.5 + 0.5 * Math.sin(nowMs / 140);
     for (const s of behaviorShapes(horde, blasts, view, nowMs)) {
       if (s.kind === 'kamikaze') {

@@ -2687,6 +2687,11 @@ describe('la run est jouable (tache 14)', () => {
     const budget = TICK_HZ * 100;
     for (let i = 0; i < budget && levelUps.length === 0; i++) {
       aimAtNearestMonster(room, 1, i + 1);
+      // Ce test garde le PIPELINE d'experience, pas la survie : un joueur
+      // immobile finissait deja la minute a ~30 PV, et les tireurs (qui
+      // blessent de 300 px, gardes par `comportements.test.ts`) le tuent avant
+      // qu'un orbe ne roule jusqu'a lui.
+      room.shots.shots = [];
       room.step(DT);
       totalDeaths += room.drainDeaths().reduce((n, d) => n + d.ids.length, 0);
       totalPickups += room.drainPickups().reduce((n, p) => n + p.ids.length, 0);

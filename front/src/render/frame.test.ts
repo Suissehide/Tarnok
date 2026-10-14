@@ -110,6 +110,7 @@ class RecordingClient implements FrameClient {
   readonly zones = new ZoneField();
   readonly abilityEvents = [];
   readonly blastFlashes = [];
+  readonly shots = { shots: [] };
   readonly horde = new Horde(MAX_ENTITIES);
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
   readonly orbFlights = new OrbFlights(8);

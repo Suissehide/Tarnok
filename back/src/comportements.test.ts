@@ -9,8 +9,13 @@ import {
   leapFactor,
   SHAMAN_AURA_RADIUS,
   SHAMAN_AURA_REDUCTION,
+  SHOOTER_PERIOD_TICKS,
+  SHOOTER_RANGE,
+  SHOT_LIFETIME_S,
+  SHOT_SPEED,
 } from '@shared/archetypes';
 import { TICK_HZ } from '@shared/constants';
+import { EnemyShots, shotPhase } from '@shared/enemy-shots';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { ZoneField } from '@shared/zones';
@@ -212,5 +217,65 @@ describe('l aura du chaman', () => {
     appliquerDegats(room.horde, slotV, 4, new ZoneField(), room.tick, []);
     appliquerDegats(room.horde, slotI, 4, new ZoneField(), room.tick, []);
     expect(avantV - (room.horde.hp[slotV] ?? 0)).toBeLessThan(avantI - (room.horde.hp[slotI] ?? 0));
+  });
+});
+
+describe('le tireur', () => {
+  const TIREUR = de('tir');
+
+  it('tire a son temps, dans sa direction, et le tir s eteint au bout de sa portee', () => {
+    const horde = new Horde(4);
+    const id = poser(horde, 1, 1000, 1000, TIREUR);
+    horde.retarget([1000], [1500]);
+    expect(horde.stopped[0]).toBe(0);
+    horde.stopped[0] = 1;
+    const shots = new EnemyShots();
+    const tir = (SHOOTER_PERIOD_TICKS - shotPhase(id)) % SHOOTER_PERIOD_TICKS;
+    shots.step(horde, tir - 1 + SHOOTER_PERIOD_TICKS, DT);
+    expect(shots.shots).toHaveLength(0);
+    shots.step(horde, tir + SHOOTER_PERIOD_TICKS, DT);
+    expect(shots.shots).toHaveLength(1);
+    expect(shots.shots[0]?.x).toBeCloseTo(1000);
+    expect(shots.shots[0]?.y).toBeCloseTo(1000 + SHOT_SPEED * DT);
+    // Un tireur en marche (pas arrete) ne tire pas.
+    horde.stopped[0] = 0;
+    shots.step(horde, tir + 2 * SHOOTER_PERIOD_TICKS, DT);
+    expect(shots.shots).toHaveLength(1);
+    shots.step(horde, 0, SHOT_LIFETIME_S);
+    expect(shots.shots).toHaveLength(0);
+  });
+
+  it('un tir qui touche un joueur disparait et compte pour lui seul', () => {
+    const shots = new EnemyShots();
+    shots.shots.push({ x: 100, y: 100, ux: 1, uy: 0, life: 1 });
+    shots.shots.push({ x: 500, y: 500, ux: 1, uy: 0, life: 1 });
+    expect(
+      shots.hits(
+        [
+          { x: 105, y: 100 },
+          { x: 0, y: 0 },
+        ],
+        17,
+      ),
+    ).toEqual([1, 0]);
+    expect(shots.shots).toHaveLength(1);
+  });
+
+  it('dans le salon, il s arrete a distance et blesse le joueur de loin', () => {
+    const room = new Room(5);
+    room.join(1);
+    room.step(DT);
+    const pos = room.positionOf(1) ?? { x: 0, y: 0 };
+    const pvAvant = room.hpOf(1);
+    const t = poser(room.horde, 990_001, pos.x + 260, pos.y, TIREUR);
+    room.horde.hp[room.horde.slotOf(t)] = 1e9;
+    for (let k = 0; k < 4 * TICK_HZ; k++) {
+      room.step(DT);
+    }
+    const slot = room.horde.slotOf(t);
+    expect(slot).toBeGreaterThanOrEqual(0);
+    const d = Math.hypot((room.horde.x[slot] ?? 0) - pos.x, (room.horde.y[slot] ?? 0) - pos.y);
+    expect(d).toBeGreaterThan(SHOOTER_RANGE / 2);
+    expect(room.hpOf(1)).toBeLessThan(pvAvant);
   });
 });
