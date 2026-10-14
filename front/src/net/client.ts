@@ -574,6 +574,19 @@ export class HitFlashes {
    * discret, reaction spectaculaire »* s'effondrerait dans le bruit.
    */
   readonly tint: Uint32Array;
+  /**
+   * Rayon du souffle, en pixels monde : `Weapon.blastRadius` recopie du
+   * projectile qui vient de toucher (etape 8). `0` — seize armes sur
+   * dix-sept — : ce coup ne touche que ce qu'il percute, et son flash garde sa
+   * taille de coup.
+   *
+   * ⚠️ **C'est le rayon qui DECIDE DE CE QUI MEURT**, lu sur le projectile
+   * (`Projectiles.blastRadiusAt`) et pas sur une table. Le flash s'y asservit
+   * exactement, comme `reactionFlashScale` s'asservit a `REACTION_RADIUS` : un
+   * souffle dessine plus large que le vrai promettrait des morts qui n'auront
+   * pas lieu, plus etroit il tuerait hors du dessin.
+   */
+  readonly radius: Float32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `HIT_FLASH_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
@@ -582,6 +595,7 @@ export class HitFlashes {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
     this.tint = new Uint32Array(capacity);
+    this.radius = new Float32Array(capacity);
     this.bornMs = new Float64Array(capacity);
   }
 
@@ -590,7 +604,7 @@ export class HitFlashes {
   }
 
   /** Fait naitre un flash. Ignore silencieusement si la capacite (un burst reste petit) est atteinte. */
-  spawn(x: number, y: number, tint: number, nowMs: number): void {
+  spawn(x: number, y: number, tint: number, radius: number, nowMs: number): void {
     if (this.#count >= this.capacity) {
       return;
     }
@@ -598,6 +612,7 @@ export class HitFlashes {
     this.x[slot] = x;
     this.y[slot] = y;
     this.tint[slot] = tint;
+    this.radius[slot] = radius;
     this.bornMs[slot] = nowMs;
   }
 
@@ -616,6 +631,7 @@ export class HitFlashes {
       this.x[slot] = this.x[last] ?? 0;
       this.y[slot] = this.y[last] ?? 0;
       this.tint[slot] = this.tint[last] ?? 0;
+      this.radius[slot] = this.radius[last] ?? 0;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -2241,6 +2257,9 @@ export class GameClient {
           this.horde.x[slot] ?? 0,
           this.horde.y[slot] ?? 0,
           weaponOf(this.projectiles.weaponAt(projectileSlot)).look.tint,
+          // Le souffle, lu sur le PROJECTILE : c'est le rayon qui vient de
+          // decider des morts, pas celui que la table porterait aujourd'hui.
+          this.projectiles.blastRadiusAt(projectileSlot),
           nowMs,
         );
         this.#hitCount++;

@@ -145,6 +145,12 @@ export interface FrameStage {
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
   /**
+   * La secousse de camera (etape 8), DERIVEE des memes flashs que les deux
+   * calques ci-dessus — voir `Stage.shakeCamera`. Elle ne dessine rien : elle
+   * deplace ce qui vient d'etre dessine.
+   */
+  shakeCamera(hits: HitFlashes, reactions: ReactionFlashes, nowMs: number): void;
+  /**
    * La barre de vie du boss (etape 6a, tache 5). Elle a besoin des DEUX : la
    * horde pour la position, le snapshot pour les PV — voir
    * `BossBarRenderer.draw`.
@@ -258,5 +264,8 @@ export function composeFrame(
   screens.updateDraft();
   screens.updatePortal();
   stage.draw(state);
+  // ⚠️ **APRES `draw`, qui recentre la camera sur le joueur** : la secousse est
+  // un decalage par-dessus le cadrage, pas un cadrage concurrent.
+  stage.shakeCamera(client.hitFlashes, client.reactionFlashes, now);
   return state;
 }

@@ -1,10 +1,20 @@
 // @vitest-environment jsdom
-import { ORB_PICKUP_RADIUS, TICK_HZ } from '@shared/constants';
+import { ORB_PICKUP_RADIUS, TICK_HZ, ZONE_RADIUS } from '@shared/constants';
 import { Container } from 'pixi.js';
 import { beforeAll, describe, expect, it } from 'vitest';
 
-import type { RenderState } from '../net/client';
-import { formatSummary, formatTimer, hudInfo, obstacleCells, Stage } from './stage';
+import { HitFlashes, ReactionFlashes, type RenderState } from '../net/client';
+import {
+  cameraShake,
+  formatSummary,
+  formatTimer,
+  hudInfo,
+  obstacleCells,
+  SHAKE_BLAST_PX,
+  SHAKE_MS,
+  SHAKE_REACTION_PX,
+  Stage,
+} from './stage';
 
 /**
  * `hudInfo`/`formatSummary`/`formatTimer` sont des fonctions PURES, sans Pixi
@@ -198,6 +208,69 @@ function stubCanvas2d(): void {
   const canvas = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
   canvas.getContext = (): unknown => context;
 }
+
+/**
+ * La secousse de camera (etape 8) : une fonction PURE des flashs vivants, donc
+ * testable sans `Application` Pixi — c'est tout l'interet de l'avoir sortie de
+ * `Stage`. Ce qu'elle garde : la hierarchie du §6.6, l'extinction, et le fait
+ * qu'un coup ORDINAIRE ne secoue rien.
+ */
+describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
+  function avecImpact(radius: number, ageMs: number): { x: number; y: number } {
+    const hits = new HitFlashes(8);
+    hits.spawn(0, 0, 0xffffff, radius, 0);
+    return cameraShake(hits, new ReactionFlashes(8), ageMs);
+  }
+
+  function avecReaction(ageMs: number): { x: number; y: number } {
+    const reactions = new ReactionFlashes(8);
+    reactions.spawn(0, 0, 0, false, 0);
+    return cameraShake(new HitFlashes(8), reactions, ageMs);
+  }
+
+  const norme = (v: { x: number; y: number }): number => Math.hypot(v.x, v.y);
+
+  it('ne secoue RIEN sur un coup sans souffle', () => {
+    // Seize armes sur dix-sept : sans ce test, l'ecran tremblerait a chaque
+    // projectile qui touche, des dizaines de fois par seconde.
+    expect(avecImpact(0, 0)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('secoue sur une explosion, et s eteint avec elle', () => {
+    expect(norme(avecImpact(ZONE_RADIUS, 0))).toBeGreaterThan(0);
+    expect(norme(avecImpact(ZONE_RADIUS, SHAKE_MS / 2))).toBeLessThan(
+      norme(avecImpact(ZONE_RADIUS, 0)),
+    );
+    expect(avecImpact(ZONE_RADIUS, SHAKE_MS)).toEqual({ x: 0, y: 0 });
+    expect(avecImpact(ZONE_RADIUS, SHAKE_MS * 3)).toEqual({ x: 0, y: 0 });
+  });
+
+  it('secoue PLUS FORT pour une reaction que pour une explosion — le §6.6', () => {
+    expect(SHAKE_REACTION_PX).toBeGreaterThan(SHAKE_BLAST_PX);
+    expect(norme(avecReaction(0))).toBeGreaterThan(norme(avecImpact(ZONE_RADIUS, 0)));
+  });
+
+  it('ne depasse jamais l amplitude annoncee', () => {
+    for (let age = 0; age < SHAKE_MS; age += 7) {
+      expect(Math.abs(avecReaction(age).x)).toBeLessThanOrEqual(SHAKE_REACTION_PX);
+      expect(Math.abs(avecReaction(age).y)).toBeLessThanOrEqual(SHAKE_REACTION_PX);
+    }
+  });
+
+  it('ne suit pas une diagonale : les deux axes ne battent pas ensemble', () => {
+    // A frequence egale, le decalage glisserait au lieu de cogner.
+    const ratios = new Set<number>();
+    for (let age = 10; age < SHAKE_MS; age += 20) {
+      const v = avecReaction(age);
+      ratios.add(Math.round((v.x / (v.y || 1)) * 100));
+    }
+    expect(ratios.size).toBeGreaterThan(3);
+  });
+
+  it('rend zero quand aucun flash ne vit', () => {
+    expect(cameraShake(new HitFlashes(8), new ReactionFlashes(8), 1000)).toEqual({ x: 0, y: 0 });
+  });
+});
 
 describe('Stage.composeWorld — chaque calque attache ET charge', () => {
   beforeAll(stubCanvas2d);

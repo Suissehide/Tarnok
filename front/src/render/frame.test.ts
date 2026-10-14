@@ -79,6 +79,9 @@ class RecordingStage implements FrameStage {
   draw(...args: unknown[]): void {
     this.#record('joueurs', ...args);
   }
+  shakeCamera(...args: unknown[]): void {
+    this.#record('secousse', ...args);
+  }
 
   /** Les arguments du seul appel a `layer`, ou `null` si le calque n'a rien recu. */
   argsOf(layer: string): unknown[] | null {
@@ -387,6 +390,14 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'flashs-reaction',
       'barre-boss',
       'joueurs',
+      // La secousse ferme la marche : elle deplace ce que `joueurs` vient de
+      // cadrer, donc elle ne peut pas le preceder (voir `Stage.shakeCamera`).
+      'secousse',
     ]);
+  });
+
+  it('secoue la camera avec les MEMES flashs que les calques, et l horloge murale', () => {
+    const { stage, client } = compose();
+    expect(stage.argsOf('secousse')).toEqual([client.hitFlashes, client.reactionFlashes, NOW]);
   });
 });

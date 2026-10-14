@@ -130,6 +130,32 @@ export const PROJECTILE_ATLAS_PX = PROJECTILE_CELL_PX * PROJECTILE_ATLAS_COLS;
 export const PROJECTILE_SHAPE_FRACTION = 0.62;
 
 /**
+ * Le noir du cerne — la MEME valeur que celle des orbes et des pieces
+ * (`orb-renderer.ts`), pas un noir pur : un projectile cerne de `#000` lirait
+ * comme un trou dans le decor.
+ */
+const OUTLINE_RGBA = 'rgba(20, 16, 18, 1)';
+
+/**
+ * De combien la silhouette noire du dessous deborde la silhouette coloree.
+ *
+ * ⚠️ **C'est l'epaisseur du cerne, et elle est MULTIPLICATIVE** : un cerne en
+ * pixels absolus aurait avale la Fronde a mercure (7 px) tout en disparaissant
+ * sur le Canon a chaux (29 px). En fraction, les dix-sept portent le meme
+ * cerne a l'oeil.
+ */
+export const SHAPE_OUTLINE_DILATION = 1.2;
+
+/**
+ * Jusqu'ou porte le halo, en fraction du rayon de la case.
+ *
+ * ⚠️ **Court, et c'est ce qui le garde dans sa case** : le halo est dessine
+ * AVANT la silhouette et deborderait dans la case voisine comme n'importe quel
+ * trace. A 0,86, il reste sous le bord meme a `glow` plein.
+ */
+const HALO_REACH = 0.86;
+
+/**
  * Marge de culling des projectiles, DERIVEE du catalogue : la plus grande
  * empreinte qu'une arme puisse laisser a l'ecran (sa trainee plus son corps).
  *
@@ -449,22 +475,47 @@ function paintProjectileCell(
   ctx.translate(cx, cy);
 
   if (look.glow > 0) {
-    const halo = ctx.createRadialGradient(0, 0, body * 0.35, 0, 0, r);
+    // ⚠️ **Un halo COURT et a marches, pas un degrade continu jusqu'au bord de
+    // la case** (etape 8). Le degre d'origine partait a 0,35 du corps et
+    // mourait au bord : sur l'herbe claire, dix-sept armes rendaient dix-sept
+    // nuages mous, et la silhouette cernee qu'on venait de dessiner se noyait
+    // dedans. Deux paliers francs et une portee courte donnent une lueur qui
+    // RESSEMBLE au reste du jeu — la meme logique que le cerne.
+    const halo = ctx.createRadialGradient(0, 0, body * 0.9, 0, 0, r * HALO_REACH);
     halo.addColorStop(0, cssTintAlpha(look.tint, look.glow));
+    halo.addColorStop(0.55, cssTintAlpha(look.tint, look.glow * 0.5));
+    halo.addColorStop(0.56, cssTintAlpha(look.tint, look.glow * 0.22));
     halo.addColorStop(1, cssTintAlpha(look.tint, 0));
     ctx.fillStyle = halo;
     ctx.beginPath();
-    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.arc(0, 0, r * HALO_REACH, 0, Math.PI * 2);
     ctx.fill();
   }
 
   const paint = SHAPE_PAINTERS[look.shape];
+  // Le cerne noir, exactement comme les orbes et les pieces (etape 8 : *« des
+  // projectiles dans le theme du jeu »*) — c'est lui qui pose un projectile
+  // SUR le decor au lieu de le laisser flotter dedans, et c'est la meme
+  // signature graphique que le reste du jeu.
+  //
+  // ⚠️ **La meme forme DILATEE, et pas un `stroke`.** Les peintres remplissent
+  // eux-memes (`arc` TRACE meme sa ligne brisee) : leur demander un contour
+  // aurait voulu dire leur retirer leur `fill`, donc un mode a declarer forme
+  // par forme. Redessiner la silhouette un cran plus grosse en noir juste
+  // en-dessous donne le meme cerne pour les dix-sept, tracees comprises.
+  ctx.fillStyle = OUTLINE_RGBA;
+  ctx.strokeStyle = OUTLINE_RGBA;
+  paint(ctx, body * SHAPE_OUTLINE_DILATION);
   ctx.fillStyle = cssTint(look.tint);
   paint(ctx, body);
   // Coeur blanc, la meme forme reduite : c'est lui qui donne au projectile son
   // point chaud et le rend suivable a dix pixels de cote.
+  //
+  // ⚠️ **0,32 et plus 0,42 (etape 8)** : sur les formes rondes — grenade,
+  // chakram, bouffee — un coeur a 0,42 faisait une pupille, et les trois
+  // lisaient comme des cibles plutot que comme des projectiles.
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
-  paint(ctx, body * 0.42);
+  paint(ctx, body * 0.32);
 
   ctx.restore();
 }
@@ -1080,6 +1131,109 @@ function makeBurstTexture(diameter: number): Texture {
 }
 
 /**
+ * Nombre d'eclats projetes par impact.
+ *
+ * ⚠️ **C'est LA borne de cet effet, et elle est multiplicative.**
+ * `HIT_FLASH_CAPACITY` vaut 128 : a six eclats, ce calque pose au pire
+ * **768 quads** — contre 4 096 pour les projectiles eux-memes. Le §4.3 dit que
+ * *« le danger est le VFX, pas les sprites »*, et la tache 4 a deja montre ce
+ * que « quelques dizaines » devient quand personne ne compte : le compte est
+ * donc mesure par `projectile-renderer.test.ts`, pas espere.
+ *
+ * Six, et pas douze : un impact accompagne CHAQUE projectile qui touche, des
+ * dizaines par seconde. Ce qui doit rester spectaculaire, c'est la reaction
+ * (§6.6).
+ */
+export const SPARKS_PER_FLASH = 6;
+
+/** Cote de la texture d'un eclat, en pixels. */
+export const SPARK_TEXTURE_PX = 16;
+
+/**
+ * Distance qu'un eclat parcourt depuis le point d'impact, en pixels monde,
+ * pour un coup SANS souffle. Un coup a souffle projette ses eclats jusqu'au
+ * bord de ce qu'il tue — voir `sparkTravel`.
+ */
+export const SPARK_TRAVEL_PX = 26;
+
+/**
+ * Jusqu'ou volent les eclats d'un impact de rayon `radiusPx`.
+ *
+ * ⚠️ **Asservi au souffle REEL quand il y en a un**, comme la taille du flash
+ * lui-meme : les eclats d'une grenade dessinent le bord de ce qui vient de
+ * mourir. Un coup sans souffle garde la gerbe courte de `SPARK_TRAVEL_PX` —
+ * c'est elle qui dit « ca a touche », pas « ca a explose ».
+ */
+export function sparkTravel(radiusPx: number): number {
+  return radiusPx > 0 ? radiusPx : SPARK_TRAVEL_PX;
+}
+
+/**
+ * La direction du k-ieme eclat d'un flash ne a `bornMs`, en radians.
+ *
+ * ⚠️ **Deterministe, et SANS etat.** Pas de `Math.random` : un eclat tire au
+ * hasard a chaque image sauterait d'une position a l'autre d'une image sur
+ * l'autre, puisque ce calque ne garde AUCUN etat entre deux `draw` — il
+ * rederive tout de `HitFlashes`, qui ne porte que x, y, teinte, rayon et
+ * naissance. L'angle d'or ecarte les six eclats au maximum, et la naissance du
+ * flash fait tourner la gerbe pour que deux impacts voisins ne se ressemblent
+ * pas.
+ */
+export function sparkAngle(bornMs: number, k: number): number {
+  const GOLDEN = 2.399963229728653;
+  return k * GOLDEN + (bornMs % 1000) * 0.0063;
+}
+
+/**
+ * Un eclat : un losange blanc cerne de noir, oriente vers +x comme les
+ * projectiles — c'est `draw` qui le tourne dans le sens de son vol.
+ *
+ * Blanc pour la meme raison que la trainee : `Particle.tint` multiplie, donc
+ * il prend exactement la teinte de l'arme qui a touche.
+ */
+function makeSparkTexture(): Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = SPARK_TEXTURE_PX;
+  canvas.height = SPARK_TEXTURE_PX;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  const r = SPARK_TEXTURE_PX / 2;
+  ctx.translate(r, r);
+  // Le meme cerne que les projectiles, les orbes et les pieces : un eclat sans
+  // contour se dissout dans l'herbe claire.
+  ctx.fillStyle = OUTLINE_RGBA;
+  SHAPE_PAINTERS.lame(ctx, r * 0.9);
+  ctx.fillStyle = '#ffffff';
+  SHAPE_PAINTERS.lame(ctx, r * 0.62);
+  return Texture.from(canvas);
+}
+
+/**
+ * Echelle du flash d'impact a l'age relatif `t`, pour un coup de rayon
+ * `radiusPx` et une texture de `textureDiameterPx` de cote.
+ *
+ * ⚠️ **Deux regimes, et un seul d'entre eux est libre.** Un coup SANS souffle
+ * (seize armes sur dix-sept) garde la courbe d'origine, choisie a l'oeil :
+ * rien de reel ne lui dicte sa taille, il ne tue que ce qu'il percute. Un coup
+ * AVEC souffle, lui, est asservi : a `t = 1` le disque fait exactement
+ * `2 x radiusPx` pixels monde, donc le joueur voit la surface qui vient
+ * reellement d'etre frappee. C'est mot pour mot la discipline de
+ * `reactionFlashScale`, et pour la meme raison.
+ */
+export function impactFlashScale(t: number, radiusPx: number, textureDiameterPx: number): number {
+  if (textureDiameterPx <= 0) {
+    return 1;
+  }
+  if (radiusPx <= 0) {
+    return FLASH_MIN_SCALE + (FLASH_MAX_SCALE - FLASH_MIN_SCALE) * t;
+  }
+  const full = (2 * radiusPx) / textureDiameterPx;
+  return full * (0.45 + 0.55 * t);
+}
+
+/**
  * Rendu batché des flashs d'impact (`HitFlashes`, `net/client.ts`).
  *
  * §4.3 : « le budget VFX passe dans un flash court, large et genereux, pas
@@ -1092,19 +1246,52 @@ export class ImpactFlashRenderer {
   readonly #container = new ParticleContainer({
     dynamicProperties: { position: true, vertex: true, color: true, rotation: false, uvs: false },
   });
+  /**
+   * Les eclats, au-DESSUS du flash et dans leur propre conteneur : ils n'ont
+   * ni la meme texture ni la meme rotation, et un `ParticleContainer` ne porte
+   * qu'une texture source. Additif, comme les zones et la reaction (§6.6) :
+   * deux gerbes qui se croisent s'additionnent au lieu de se masquer.
+   */
+  readonly #sparks = new ParticleContainer({
+    blendMode: 'add',
+    dynamicProperties: { position: true, vertex: true, color: true, rotation: true, uvs: false },
+  });
+  /** Le calque, vu du monde : flash puis eclats. Voir `attach`. */
+  readonly #group = new Container();
   readonly #pool: Particle[] = [];
+  readonly #sparkPool: Particle[] = [];
   #texture: Texture | null = null;
+  #sparkTexture: Texture | null = null;
 
   constructor() {
     this.#container.boundsArea = mapBoundsArea();
+    this.#sparks.boundsArea = mapBoundsArea();
   }
 
   get boundsArea(): Rectangle {
     return this.#container.boundsArea as Rectangle;
   }
 
+  /** Idem pour le calque des eclats, qui est un conteneur a part entiere. */
+  get sparkBoundsArea(): Rectangle {
+    return this.#sparks.boundsArea as Rectangle;
+  }
+
+  /** Expose pour le test : « additif » est une exigence du §6.6, pas un detail. */
+  get sparkBlendMode(): string {
+    return this.#sparks.blendMode;
+  }
+
+  /**
+   * ⚠️ **Un groupe, pas deux enfants poses cote a cote dans le monde** — meme
+   * raison que `ProjectileRenderer.attach` : `stage.test.ts` compte les
+   * enfants du monde, et « un renderer, un calque » ne doit pas devenir une
+   * regle a exceptions.
+   */
   attach(parent: Container): void {
-    parent.addChild(this.#container);
+    this.#group.addChild(this.#container);
+    this.#group.addChild(this.#sparks);
+    parent.addChild(this.#group);
   }
 
   /**
@@ -1118,7 +1305,7 @@ export class ImpactFlashRenderer {
   }
 
   load(): void {
-    this.adoptTexture(makeBurstTexture(IMPACT_TEXTURE_DIAMETER));
+    this.adoptTexture(makeBurstTexture(IMPACT_TEXTURE_DIAMETER), makeSparkTexture());
   }
 
   /**
@@ -1130,35 +1317,70 @@ export class ImpactFlashRenderer {
    * sans qu'une assertion ne bouge** — ce qui etait encore vrai de la teinte
    * du flash a l'etape 8, la ligne meme que cette etape ajoute.
    */
-  adoptTexture(texture: Texture): void {
+  adoptTexture(texture: Texture, spark: Texture): void {
     this.#texture = texture;
+    this.#sparkTexture = spark;
   }
 
   /** `nowMs` doit etre la MEME horloge murale que celle passee a `HitFlashes.spawn`. */
   draw(flashes: HitFlashes, nowMs: number): void {
     const texture = this.#texture;
-    if (!texture) {
+    const sparkTexture = this.#sparkTexture;
+    if (!texture || !sparkTexture) {
       return;
     }
-    this.#ensurePool(flashes.count, texture);
+    this.#ensurePool(flashes.count, texture, sparkTexture);
 
     const children = this.#container.particleChildren;
+    const sparks = this.#sparks.particleChildren;
     children.length = 0;
+    sparks.length = 0;
     for (let i = 0; i < flashes.count; i++) {
       const particle = this.#pool[i];
       if (!particle) {
         break;
       }
-      const age = nowMs - (flashes.bornMs[i] ?? 0);
+      const x = flashes.x[i] ?? 0;
+      const y = flashes.y[i] ?? 0;
+      const tint = flashes.tint[i] || 0xffffff;
+      const born = flashes.bornMs[i] ?? 0;
+      const radius = flashes.radius[i] ?? 0;
+      const age = nowMs - born;
       const t = Math.min(1, Math.max(0, age / HIT_FLASH_LIFETIME_MS));
-      const scale = FLASH_MIN_SCALE + (FLASH_MAX_SCALE - FLASH_MIN_SCALE) * t;
+      const scale = impactFlashScale(t, radius, IMPACT_TEXTURE_DIAMETER);
 
-      particle.x = flashes.x[i] ?? 0;
-      particle.y = flashes.y[i] ?? 0;
+      // La gerbe : six eclats qui partent du point d'impact, ralentissent et
+      // s'eteignent. Tout est REDERIVE de (naissance, age) — ce calque ne garde
+      // aucun etat entre deux images, donc rien a faire expirer ici.
+      const travel = sparkTravel(radius);
+      // Depart franc, arrivee amortie : `1 - (1 - t)²` est la meme detente que
+      // partout ailleurs dans ce fichier, et elle evite a six eclats de glisser
+      // a vitesse constante comme des curseurs.
+      const course = 1 - (1 - t) * (1 - t);
+      for (let k = 0; k < SPARKS_PER_FLASH; k++) {
+        const spark = this.#sparkPool[i * SPARKS_PER_FLASH + k];
+        if (!spark) {
+          break;
+        }
+        const angle = sparkAngle(born, k);
+        spark.x = x + Math.cos(angle) * travel * course;
+        spark.y = y + Math.sin(angle) * travel * course;
+        spark.rotation = angle;
+        // Il retrecit en volant : un eclat de taille constante lirait comme un
+        // projectile de plus, pas comme un debris.
+        spark.scaleX = (1 - 0.6 * t) * (radius > 0 ? 1.6 : 1);
+        spark.scaleY = spark.scaleX;
+        spark.tint = tint;
+        spark.alpha = (1 - t) * (1 - t);
+        sparks.push(spark);
+      }
+
+      particle.x = x;
+      particle.y = y;
       particle.scaleX = scale;
       particle.scaleY = scale;
       // La teinte de l'arme qui a touche, recopiee a la naissance du flash —
-      // voir `HitFlashes.tint`.
+      // voir `HitFlashes.tint`. (Relue ici depuis `tint`, pose plus haut.)
       //
       // ⚠️ **`||` et pas `??`, et c'est la seule faute que ce calque puisse
       // commettre en silence.** `tint` multiplie : un creneau laisse a zero
@@ -1167,20 +1389,27 @@ export class ImpactFlashRenderer {
       // l'ecran ne dirait qu'il a eu lieu. Le blanc est l'identite du produit,
       // donc la texture telle quelle : le flash reste visible, seule sa
       // couleur est perdue.
-      particle.tint = flashes.tint[i] || 0xffffff;
+      particle.tint = tint;
       particle.alpha = 1 - t;
       children.push(particle);
     }
     this.#container.update();
+    this.#sparks.update();
   }
 
+  /** Les trois noeuds, et pas seulement le groupe : `attach` peut n'avoir jamais eu lieu. */
   destroy(): void {
     this.#container.destroy();
+    this.#sparks.destroy();
+    this.#group.destroy();
   }
 
-  #ensurePool(needed: number, texture: Texture): void {
+  #ensurePool(needed: number, texture: Texture, spark: Texture): void {
     while (this.#pool.length < needed) {
       this.#pool.push(new Particle({ texture, anchorX: 0.5, anchorY: 0.5 }));
+    }
+    while (this.#sparkPool.length < needed * SPARKS_PER_FLASH) {
+      this.#sparkPool.push(new Particle({ texture: spark, anchorX: 0.5, anchorY: 0.5 }));
     }
   }
 }

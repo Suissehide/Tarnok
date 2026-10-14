@@ -1,4 +1,4 @@
-import { MAP_SIZE, PROJECTILE_CAPACITY, REACTION_RADIUS } from '@shared/constants';
+import { MAP_SIZE, PROJECTILE_CAPACITY, REACTION_RADIUS, ZONE_RADIUS } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair } from '@shared/protocol';
@@ -20,10 +20,18 @@ import {
 import { describe, expect, it } from 'vitest';
 
 import { HitFlashes } from '../net/client';
+
+/**
+ * La capacite du reservoir de flashs d'impact, recopiee ici : `net/client.ts`
+ * ne l'exporte pas, et c'est elle qui donne le pire cas du cout des eclats.
+ */
+const HIT_FLASH_CAPACITY_TEST = 128;
+
 import {
   FLASH_MAX_SCALE,
   IMPACT_TEXTURE_DIAMETER,
   ImpactFlashRenderer,
+  impactFlashScale,
   POP_SCALE,
   POP_TICKS,
   PROJECTILE_ATLAS_PX,
@@ -38,7 +46,10 @@ import {
   ReactionFlashRenderer,
   reactionFlashScale,
   reactionTint,
+  SHAPE_OUTLINE_DILATION,
   SHAPE_PAINTERS,
+  SPARK_TRAVEL_PX,
+  SPARKS_PER_FLASH,
   STREAK_LENGTH_PX,
   STREAK_THICKNESS_PX,
   streakCellRect,
@@ -397,7 +408,10 @@ describe('ProjectileRenderer.draw — la portee se voit', () => {
  */
 describe('SHAPE_PAINTERS — aucune forme ne bave dans la case voisine', () => {
   /** Le rayon du corps plein dans une case, tel que `paintProjectileCell` le calcule. */
-  const BODY = (PROJECTILE_CELL_PX / 2) * PROJECTILE_SHAPE_FRACTION;
+  // Le rayon reellement demande au peintre par `paintProjectileCell` : le corps
+  // plein DILATE, puisque c'est la silhouette du CERNE qui est la plus grosse
+  // des deux (etape 8).
+  const BODY = (PROJECTILE_CELL_PX / 2) * PROJECTILE_SHAPE_FRACTION * SHAPE_OUTLINE_DILATION;
   const DEMI_CASE = PROJECTILE_CELL_PX / 2;
 
   function empreinte(shape: ProjectileShape): number {
@@ -582,18 +596,34 @@ describe('ProjectileRenderer.draw — la matiere de la trainee', () => {
  * la ligne de teinte pourrait etre retiree sans qu'une assertion ne bouge.
  */
 describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => {
-  function flashesDessines(teintes: readonly number[]): Particle[] {
-    const flashes = new HitFlashes(16);
-    for (const tint of teintes) {
-      flashes.spawn(100, 200, tint, 0);
+  /** Les deux calques du groupe : le flash, puis la gerbe d'eclats. */
+  function calquesDessines(
+    coups: readonly { tint: number; radius: number }[],
+    ageMs = 0,
+  ): { flashs: Particle[]; eclats: Particle[] } {
+    const flashes = new HitFlashes(HIT_FLASH_CAPACITY_TEST);
+    for (const coup of coups) {
+      flashes.spawn(100, 200, coup.tint, coup.radius, 0);
     }
     const renderer = new ImpactFlashRenderer();
-    renderer.adoptTexture(new Texture({ source: new TextureSource({ width: 48, height: 48 }) }));
+    renderer.adoptTexture(
+      new Texture({ source: new TextureSource({ width: 48, height: 48 }) }),
+      new Texture({ source: new TextureSource({ width: 16, height: 16 }) }),
+    );
     const world = new Container();
     renderer.attach(world);
-    renderer.draw(flashes, 0);
-    const container = world.children[0] as ParticleContainer;
-    return [...(container.particleChildren as Particle[])];
+    renderer.draw(flashes, ageMs);
+    const group = world.children[0] as Container;
+    const flashs = group.children[0] as ParticleContainer;
+    const eclats = group.children[1] as ParticleContainer;
+    return {
+      flashs: [...(flashs.particleChildren as Particle[])],
+      eclats: [...(eclats.particleChildren as Particle[])],
+    };
+  }
+
+  function flashesDessines(teintes: readonly number[]): Particle[] {
+    return calquesDessines(teintes.map((tint) => ({ tint, radius: 0 }))).flashs;
   }
 
   it('reporte la teinte portee par le flash, arme par arme', () => {
@@ -603,6 +633,80 @@ describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => 
 
   it('retombe sur le blanc — l identite de tint — quand rien n est teinte', () => {
     expect(flashesDessines([0]).map((f) => f.tint)).toEqual([0xffffff]);
+  });
+
+  it('projette six eclats par impact, teintes comme lui', () => {
+    const { eclats } = calquesDessines([{ tint: 0x39d97a, radius: 0 }]);
+    expect(eclats).toHaveLength(SPARKS_PER_FLASH);
+    expect(new Set(eclats.map((e) => e.tint))).toEqual(new Set([0x39d97a]));
+    // Six directions DIFFERENTES : une gerbe dont tous les eclats partent du
+    // meme cote n'est pas une gerbe.
+    expect(new Set(eclats.map((e) => e.rotation)).size).toBe(SPARKS_PER_FLASH);
+  });
+
+  it('fait partir les eclats du point d impact, puis les eloigne', () => {
+    const naissance = calquesDessines([{ tint: 0xffffff, radius: 0 }], 0).eclats;
+    const plusTard = calquesDessines([{ tint: 0xffffff, radius: 0 }], 110).eclats;
+    for (let k = 0; k < SPARKS_PER_FLASH; k++) {
+      const a = naissance[k];
+      const b = plusTard[k];
+      if (!a || !b) {
+        throw new Error('eclat manquant');
+      }
+      expect(Math.hypot(a.x - 100, a.y - 200)).toBeCloseTo(0, 6);
+      expect(Math.hypot(b.x - 100, b.y - 200)).toBeGreaterThan(0);
+      // Et il s'eteint en chemin, sinon la gerbe reste allumee au sol.
+      expect(b.alpha).toBeLessThan(a.alpha);
+    }
+  });
+
+  it('souffle plus loin et plus large quand le coup a un rayon', () => {
+    const [sansSouffle] = calquesDessines([{ tint: 0xffffff, radius: 0 }], 220).eclats;
+    const [avecSouffle] = calquesDessines([{ tint: 0xffffff, radius: ZONE_RADIUS }], 220).eclats;
+    if (!sansSouffle || !avecSouffle) {
+      throw new Error('eclat manquant');
+    }
+    expect(Math.hypot(avecSouffle.x - 100, avecSouffle.y - 200)).toBeCloseTo(ZONE_RADIUS, 0);
+    expect(Math.hypot(sansSouffle.x - 100, sansSouffle.y - 200)).toBeCloseTo(SPARK_TRAVEL_PX, 0);
+  });
+
+  it('asservit le flash d une arme de souffle a ce qui meurt vraiment', () => {
+    // Mot pour mot la discipline de `reactionFlashScale` : a la fin de sa vie,
+    // le disque couvre EXACTEMENT 2 x le rayon qui a tue.
+    const scale = impactFlashScale(1, ZONE_RADIUS, IMPACT_TEXTURE_DIAMETER);
+    expect(scale * IMPACT_TEXTURE_DIAMETER).toBeCloseTo(2 * ZONE_RADIUS, 6);
+    // Et il grandit en s'eteignant, comme les deux autres flashs.
+    expect(impactFlashScale(0, ZONE_RADIUS, IMPACT_TEXTURE_DIAMETER)).toBeLessThan(scale);
+    // Un coup sans souffle garde sa courbe d'origine, inchangee.
+    expect(impactFlashScale(1, 0, IMPACT_TEXTURE_DIAMETER)).toBe(FLASH_MAX_SCALE);
+  });
+
+  it('ne divise pas par zero sur une texture degeneree', () => {
+    expect(impactFlashScale(0.5, ZONE_RADIUS, 0)).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Le poste de cout de cet effet.** Six eclats par flash et 128 flashs
+   * font 768 quads : mesure, comme la trainee l'a ete a la tache 12.
+   */
+  it('ne pose JAMAIS plus de six eclats par flash, a capacite pleine', () => {
+    const coups = Array.from({ length: HIT_FLASH_CAPACITY_TEST }, () => ({
+      tint: 0xffffff,
+      radius: 0,
+    }));
+    const { flashs, eclats } = calquesDessines(coups);
+    process.stdout.write(
+      `[etape 8] pire cas : ${flashs.length} impacts -> ${eclats.length} eclats ` +
+        `(${eclats.length / flashs.length} par impact)\n`,
+    );
+    expect(flashs).toHaveLength(HIT_FLASH_CAPACITY_TEST);
+    expect(eclats).toHaveLength(HIT_FLASH_CAPACITY_TEST * SPARKS_PER_FLASH);
+  });
+
+  it('fusionne les eclats en ADDITIF, et borne leur calque comme les autres', () => {
+    const renderer = new ImpactFlashRenderer();
+    expect(renderer.sparkBlendMode).toBe('add');
+    expect(renderer.sparkBoundsArea).toMatchObject({ x: -256, y: -256 });
   });
 });
 

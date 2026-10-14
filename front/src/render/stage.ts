@@ -419,6 +419,26 @@ export class Stage {
   }
 
   /**
+   * La secousse de camera (etape 8) : une explosion et une reaction se SENTENT.
+   *
+   * ⚠️ **Posee sur `app.stage`, JAMAIS sur `#world`.** `screenToWorld` et
+   * `viewRect` derivent tous les deux de `#world.x/y` : secouer le monde aurait
+   * fait trembler la VISEE avec l'image, c'est-a-dire que le tir serait parti a
+   * cote pendant la secousse. Le parent, lui, deplace ce qui est dessine sans
+   * rien dire a la camera — la conversion curseur -> monde reste exactement
+   * celle du §13, inchangee.
+   *
+   * ⚠️ **`prefers-reduced-motion` coupe l'effet, pas le jeu.** Une secousse est
+   * du confort ; la refuser ne retire aucune information (le flash et la gerbe
+   * disent deja l'explosion).
+   */
+  shakeCamera(hits: HitFlashes, reactions: ReactionFlashes, nowMs: number): void {
+    const { x, y } = prefersReducedMotion() ? { x: 0, y: 0 } : cameraShake(hits, reactions, nowMs);
+    this.#app.stage.x = x;
+    this.#app.stage.y = y;
+  }
+
+  /**
    * La barre de vie du boss (etape 6a, tache 5). Ni vue ni horloge : elle ne
    * cadre rien (il n'y a qu'un boss, donc deux quads au pire) et n'anime rien —
    * elle suit une position et une fraction de PV. Voir `BossBarRenderer.draw`.
@@ -440,6 +460,84 @@ export class Stage {
     this.#world.x = this.#app.screen.width / 2 - me.x;
     this.#world.y = this.#app.screen.height / 2 - me.y * VERTICAL_SQUASH;
   }
+}
+
+/**
+ * Duree d'une secousse, en millisecondes d'horloge murale.
+ *
+ * Plus COURTE que la vie du flash qui la declenche (220 ms pour un impact,
+ * 440 pour une reaction) : la secousse doit etre finie quand l'oeil revient a
+ * la lecture du terrain, sinon elle devient un tremblement de fond — c'est le
+ * meme raisonnement que le §4.3 sur le flash, *« court, large et genereux… pas
+ * un halo permanent »*.
+ */
+export const SHAKE_MS = 180;
+
+/**
+ * Amplitude d'une secousse, en pixels ECRAN.
+ *
+ * ⚠️ **La reaction secoue plus fort que l'explosion, et c'est le §6.6.** Une
+ * reaction est rare, arbitree serveur et mortelle ; une grenade part toutes
+ * les une virgule cinq secondes. Si les deux secouaient pareil, la hierarchie
+ * *« etat persistant discret, reaction spectaculaire »* se perdrait dans un
+ * tremblement continu.
+ */
+export const SHAKE_BLAST_PX = 6;
+export const SHAKE_REACTION_PX = 9;
+
+/**
+ * Le decalage de camera a appliquer a cet instant, derive des flashs vivants.
+ *
+ * ⚠️ **Aucun etat, et c'est ce qui rend la secousse sure.** Pas de « trauma »
+ * accumule a decrementer image par image : la plus forte secousse encore
+ * vivante gagne, et elle s'eteint toute seule quand son flash s'eteint. Un
+ * accumulateur aurait demande un `dt` fiable (il n'y en a pas dans `draw`) et
+ * aurait pu rester bloque en haut si une image sautait — un ecran qui tremble
+ * pour toujours.
+ *
+ * Deux frequences volontairement incommensurables (0,08 et 0,11 rad/ms, soit
+ * ~12,7 et ~17,5 Hz) : a frequence egale sur les deux axes, le decalage
+ * suivrait une diagonale et lirait comme un GLISSEMENT, pas comme un choc.
+ */
+export function cameraShake(
+  hits: HitFlashes,
+  reactions: ReactionFlashes,
+  nowMs: number,
+): { x: number; y: number } {
+  let amplitude = 0;
+  let age = 0;
+  const retenir = (ageMs: number, max: number): void => {
+    if (ageMs < 0 || ageMs >= SHAKE_MS) {
+      return;
+    }
+    const a = max * (1 - ageMs / SHAKE_MS);
+    if (a > amplitude) {
+      amplitude = a;
+      age = ageMs;
+    }
+  };
+  for (let i = 0; i < hits.count; i++) {
+    // Seuls les coups a SOUFFLE secouent : sans ce test, dix-sept armes
+    // feraient trembler l'ecran a chaque projectile qui touche.
+    if ((hits.radius[i] ?? 0) > 0) {
+      retenir(nowMs - (hits.bornMs[i] ?? 0), SHAKE_BLAST_PX);
+    }
+  }
+  for (let i = 0; i < reactions.count; i++) {
+    retenir(nowMs - (reactions.bornMs[i] ?? 0), SHAKE_REACTION_PX);
+  }
+  if (amplitude <= 0) {
+    return { x: 0, y: 0 };
+  }
+  return { x: Math.sin(age * 0.08) * amplitude, y: Math.cos(age * 0.11) * amplitude };
+}
+
+/** Vrai si le systeme demande qu'on evite les animations non essentielles. */
+function prefersReducedMotion(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    window.matchMedia?.('(prefers-reduced-motion: reduce)').matches === true
+  );
 }
 
 function mapBorder(): Graphics {
