@@ -557,6 +557,23 @@ export interface RunOverSummary {
 export class HitFlashes {
   readonly x: Float32Array;
   readonly y: Float32Array;
+  /**
+   * Teinte du flash, 0xRRGGBB : celle de l'ARME qui vient de toucher
+   * (`Weapon.look.tint`), recopiee a la naissance (etape 8).
+   *
+   * ⚠️ **Recopiee, jamais relue dans `WEAPONS` au dessin.** Le projectile qui
+   * a produit ce flash est consomme par `collide` a l'instant meme : son
+   * creneau est deja reutilise par un autre tir quand le calque dessine. Meme
+   * discipline que `Projectiles.#damage` et `#element`, qui sont recopies a
+   * l'emission pour que la suite ne depende plus d'une table.
+   *
+   * ⚠️ **La teinte dit l'ARME, pas l'element** — c'est la regle du §6.6 que
+   * `assertWeaponLooks` garde : l'element se lit a la zone au sol et a la
+   * marque sur l'ennemi. Un flash d'impact teinte par l'element ferait de
+   * chaque coup une mini-reaction, et la hierarchie *« etat persistant
+   * discret, reaction spectaculaire »* s'effondrerait dans le bruit.
+   */
+  readonly tint: Uint32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `HIT_FLASH_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
@@ -564,6 +581,7 @@ export class HitFlashes {
   constructor(readonly capacity: number) {
     this.x = new Float32Array(capacity);
     this.y = new Float32Array(capacity);
+    this.tint = new Uint32Array(capacity);
     this.bornMs = new Float64Array(capacity);
   }
 
@@ -572,13 +590,14 @@ export class HitFlashes {
   }
 
   /** Fait naitre un flash. Ignore silencieusement si la capacite (un burst reste petit) est atteinte. */
-  spawn(x: number, y: number, nowMs: number): void {
+  spawn(x: number, y: number, tint: number, nowMs: number): void {
     if (this.#count >= this.capacity) {
       return;
     }
     const slot = this.#count++;
     this.x[slot] = x;
     this.y[slot] = y;
+    this.tint[slot] = tint;
     this.bornMs[slot] = nowMs;
   }
 
@@ -596,6 +615,7 @@ export class HitFlashes {
     if (slot !== last) {
       this.x[slot] = this.x[last] ?? 0;
       this.y[slot] = this.y[last] ?? 0;
+      this.tint[slot] = this.tint[last] ?? 0;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -2208,7 +2228,16 @@ export class GameClient {
         if (slot < 0) {
           return;
         }
-        this.hitFlashes.spawn(this.horde.x[slot] ?? 0, this.horde.y[slot] ?? 0, nowMs);
+        // La teinte de l'arme qui touche (etape 8) : dix-sept armes, dix-sept
+        // couleurs d'impact, la ou toutes partageaient le meme flash dore.
+        // `weaponAt` est le champ purement cosmetique de `Projectiles`, et
+        // c'est exactement son emploi.
+        this.hitFlashes.spawn(
+          this.horde.x[slot] ?? 0,
+          this.horde.y[slot] ?? 0,
+          weaponOf(this.projectiles.weaponAt(projectileSlot)).look.tint,
+          nowMs,
+        );
         this.#hitCount++;
         // Teinte elementaire, moitie « mes propres projectiles » — voir
         // `#markLocally`. Le test `element !== NEUTRE` recopie celui de

@@ -38,7 +38,39 @@ export type ProjectileShape =
   | 'anneau'
   | 'aiguille'
   | 'grain'
-  | 'eclat';
+  | 'eclat'
+  | 'arc'
+  | 'javelot'
+  | 'goutte'
+  | 'masse'
+  | 'bouffee'
+  | 'obus'
+  | 'dard'
+  | 'glaive';
+
+/**
+ * Les profils de trainee (etape 8).
+ *
+ * ⚠️ **Un profil, pas une longueur.** La LONGUEUR reste derivee de
+ * `look.trailTicks` et de la vitesse (`projectileTrailPx`) ; ce champ ne dit
+ * que la MATIERE de la trace, c'est-a-dire le degrade cuit dans la case
+ * d'atlas que le quad porte. Les deux sont independants : une trainee courte
+ * peut fumer, une longue peut crepiter.
+ *
+ * ⚠️ **Quatre profils, et le quad reste UN.** La trainee est toujours un seul
+ * quad etire dans l'axe du vol (voir `ProjectileRenderer`) : l'atlas change
+ * ce qu'on voit dedans, jamais combien il en faut. C'est ce qui permet de
+ * donner une matiere par arme sans toucher la borne de deux quads par
+ * projectile, mesuree par `projectile-renderer.test.ts`.
+ *
+ * | Profil | Ce qu'on voit | Pour |
+ * | --- | --- | --- |
+ * | `lisse` | un trait qui s'effile, bords adoucis | ce qui file : lames, fleches, aiguilles |
+ * | `fumee` | des bouffees qui grossissent vers l'arriere | ce qui brule ou englue |
+ * | `tirets` | une file de segments detaches | ce qui est jete par poignees |
+ * | `etincelles` | un trait crible de points chauds | ce qui crepite |
+ */
+export type ProjectileTrail = 'lisse' | 'fumee' | 'tirets' | 'etincelles';
 
 /**
  * L'apparence du projectile d'une arme.
@@ -66,6 +98,26 @@ export interface ProjectileLook {
   tint: number;
   /** Intensite du halo, de 0 (aucun) a 1 (aussi opaque que le corps). */
   glow: number;
+  /**
+   * Tours par seconde que la tete fait sur elle-meme en vol, signe (etape 8).
+   * `0` : elle pointe droit dans l'axe du vol et ne tourne jamais.
+   *
+   * ⚠️ **En tours par SECONDE, et jamais en radians par image.** Le rendu la
+   * convertit avec l'AGE EN TICKS du projectile (`ticksRemaining`, que la
+   * simulation tient deja) : la rotation est donc la meme a 30 et a 144 images
+   * par seconde, et elle ne demande aucune horloge de plus a
+   * `ProjectileRenderer.draw`. Meme discipline que `trailTicks`, qui se compte
+   * en ticks de vol et pas en pixels.
+   *
+   * ⚠️ **Zero n'est pas l'absence de reglage, c'est un reglage.** Une fleche,
+   * une aiguille et une lame DOIVENT rester dans l'axe : les faire tourner
+   * effacerait justement ce que leur silhouette dit (elles percent). Ce qui
+   * tourne, c'est ce qui est lance : un chakram, un glaive, une grenade, de la
+   * mitraille.
+   */
+  spinTurns: number;
+  /** La matiere de la trainee — voir `ProjectileTrail`. */
+  trail: ProjectileTrail;
   /**
    * Longueur de la trainee, exprimee en **ticks de vol**.
    *
@@ -239,7 +291,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Lame d'acier, etroite et sobre : l'arme que tout le monde porte ne doit
     // jamais voler la vedette aux huit autres, d'ou le blanc bleute et le halo
     // le plus discret du catalogue.
-    look: { shape: 'lame', diameterPx: 10, tint: 0xeaf2ff, glow: 0.3, trailTicks: 1 },
+    look: {
+      shape: 'lame',
+      diameterPx: 10,
+      tint: 0xeaf2ff,
+      glow: 0.3,
+      trailTicks: 1,
+      spinTurns: 0,
+      trail: 'lisse',
+    },
     cooldownTicks: 4,
     damage: 5,
     projectileSpeed: 650,
@@ -260,7 +320,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // zone au sol qui dit l'element, pas le projectile — et la grenade, Braise
     // elle aussi, part sur un vert franc pour qu'on ne confonde jamais les
     // deux (voir `assertWeaponLooks`).
-    look: { shape: 'petale', diameterPx: 11, tint: 0xffc23d, glow: 0.45, trailTicks: 1 },
+    look: {
+      shape: 'petale',
+      diameterPx: 11,
+      tint: 0xffc23d,
+      glow: 0.45,
+      trailTicks: 1,
+      spinTurns: 0.5,
+      trail: 'fumee',
+    },
     cooldownTicks: 27,
     damage: 4,
     projectileSpeed: 420,
@@ -277,7 +345,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // le seul qui ne s'eteint JAMAIS en vol : sa vie (40 ticks) atteint
     // `PROJECTILE_FADE_REFERENCE_TICKS`, donc `projectileAlpha` le laisse a
     // pleine opacite jusqu'au bout. « Il file net », par derivation.
-    look: { shape: 'fleche', diameterPx: 17, tint: 0x9a5cff, glow: 0.25, trailTicks: 1.6 },
+    look: {
+      shape: 'fleche',
+      diameterPx: 17,
+      tint: 0x9a5cff,
+      glow: 0.25,
+      trailTicks: 1.6,
+      spinTurns: 0,
+      trail: 'lisse',
+    },
     cooldownTicks: 36,
     damage: 25,
     projectileSpeed: 900,
@@ -309,7 +385,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // langue de feu s'eteint en vol au lieu de disparaitre d'un coup a bout de
     // portee — c'est ce que l'auteur voyait manquer en jouant. Halo le plus
     // fort, trainee la plus courte : tout se passe au contact.
-    look: { shape: 'flamme', diameterPx: 13, tint: 0xff4d2e, glow: 0.7, trailTicks: 1 },
+    look: {
+      shape: 'flamme',
+      diameterPx: 13,
+      tint: 0xff4d2e,
+      glow: 0.7,
+      trailTicks: 1,
+      spinTurns: 0,
+      trail: 'fumee',
+    },
     cooldownTicks: 3,
     damage: 3,
     projectileSpeed: 300,
@@ -359,7 +443,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Sphere verte, la plus grosse du catalogue : une arme a 40 degats et 75
     // ticks de recharge doit se voir partir. Vert franc face a l'ambre de
     // l'eventail — les deux armes de Braise ne se ressemblent pas.
-    look: { shape: 'sphere', diameterPx: 18, tint: 0x39d97a, glow: 0.55, trailTicks: 1.5 },
+    look: {
+      shape: 'sphere',
+      diameterPx: 18,
+      tint: 0x39d97a,
+      glow: 0.55,
+      trailTicks: 1.5,
+      spinTurns: 1.2,
+      trail: 'fumee',
+    },
     cooldownTicks: 45,
     damage: 40,
     projectileSpeed: 350,
@@ -374,7 +466,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     name: 'Chakram',
     // Anneau magenta : la seule forme creuse du catalogue, pour une arme dont
     // le nom EST un disque perce.
-    look: { shape: 'anneau', diameterPx: 14, tint: 0xff45c8, glow: 0.35, trailTicks: 1.5 },
+    look: {
+      shape: 'anneau',
+      diameterPx: 14,
+      tint: 0xff45c8,
+      glow: 0.35,
+      trailTicks: 1.5,
+      spinTurns: 3.5,
+      trail: 'lisse',
+    },
     cooldownTicks: 21,
     damage: 12,
     projectileSpeed: 500,
@@ -393,7 +493,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // doivent se lire comme deux traits, pas comme une tache. Outremer face au
     // turquoise du sceptre — les deux armes de Givre ne se ressemblent pas, et
     // ni l'une ni l'autre ne porte le bleu de l'element (0x7ad8ff).
-    look: { shape: 'aiguille', diameterPx: 9, tint: 0x2f6bff, glow: 0.3, trailTicks: 1.5 },
+    look: {
+      shape: 'aiguille',
+      diameterPx: 9,
+      tint: 0x2f6bff,
+      glow: 0.3,
+      trailTicks: 1.5,
+      spinTurns: 0,
+      trail: 'lisse',
+    },
     cooldownTicks: 12,
     damage: 7,
     projectileSpeed: 600,
@@ -408,7 +516,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     name: 'Canon à mitraille',
     // Grain citron, le plus petit du catalogue et la plus courte trainee (un
     // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
-    look: { shape: 'grain', diameterPx: 7, tint: 0xd6f22b, glow: 0.25, trailTicks: 0.5 },
+    look: {
+      shape: 'grain',
+      diameterPx: 7,
+      tint: 0xd6f22b,
+      glow: 0.25,
+      trailTicks: 0.5,
+      spinTurns: 2.2,
+      trail: 'tirets',
+    },
     cooldownTicks: 30,
     damage: 6,
     projectileSpeed: 550,
@@ -426,7 +542,15 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     name: 'Sceptre arcanique',
     // Eclat turquoise a fort halo : l'arme « de placement » du Givre se vise,
     // donc elle se suit des yeux.
-    look: { shape: 'eclat', diameterPx: 12, tint: 0x28e6d0, glow: 0.6, trailTicks: 1.5 },
+    look: {
+      shape: 'eclat',
+      diameterPx: 12,
+      tint: 0x28e6d0,
+      glow: 0.6,
+      trailTicks: 1.5,
+      spinTurns: 1.6,
+      trail: 'etincelles',
+    },
     cooldownTicks: 24,
     damage: 10,
     projectileSpeed: 480,
@@ -445,10 +569,20 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // souvent, la ou une arme lente laisserait l'effet signature de l'element
     // se voir a peine.
     name: 'Bobine Tesla',
-    // Eclat lavande a fort halo, trainee courte : un arc qui crepite plutot
-    // qu'un trait qui file. Distincte de la teinte de l'element (0xf3e94b,
-    // jaune) comme l'exige `assertWeaponLooks`.
-    look: { shape: 'eclat', diameterPx: 6, tint: 0xb388ff, glow: 0.75, trailTicks: 0.8 },
+    // Zigzag lavande a fort halo, trainee courte criblee d'etincelles, et il
+    // scintille a contresens des autres (rotation NEGATIVE) : un arc qui
+    // crepite plutot qu'un trait qui file — le mot etait deja dans ce
+    // commentaire avant que la forme ne le dise (etape 8). Distincte de la
+    // teinte de l'element (0xf3e94b, jaune) comme l'exige `assertWeaponLooks`.
+    look: {
+      shape: 'arc',
+      diameterPx: 6,
+      tint: 0xb388ff,
+      glow: 0.75,
+      trailTicks: 0.8,
+      spinTurns: -4,
+      trail: 'etincelles',
+    },
     cooldownTicks: 15,
     damage: 6,
     projectileSpeed: 700,
@@ -464,9 +598,19 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Poix, `shared/reactions.ts`) parte d'un coup qui compte, pas d'une
     // piqure.
     name: 'Canon à arc',
-    // Fleche cyan electrique, la plus longue trainee des deux armes de
-    // Foudre : elle se vise, donc elle se suit des yeux comme le sceptre.
-    look: { shape: 'fleche', diameterPx: 15, tint: 0x00e5ff, glow: 0.5, trailTicks: 1.4 },
+    // Javelot cyan electrique, la plus longue trainee des deux armes de
+    // Foudre, criblee d'etincelles : elle se vise, donc elle se suit des yeux
+    // comme le sceptre. Elle ne tourne pas — une hampe qui tourne ne perce
+    // plus.
+    look: {
+      shape: 'javelot',
+      diameterPx: 15,
+      tint: 0x00e5ff,
+      glow: 0.5,
+      trailTicks: 1.4,
+      spinTurns: 0,
+      trail: 'etincelles',
+    },
     cooldownTicks: 33,
     damage: 16,
     projectileSpeed: 750,
@@ -481,9 +625,18 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // qui lit `damageAmp`, donc plus de zones posees par la reaction est plus
     // d'occasions pour un allie de frapper dans une flaque amplifiee.
     name: 'Seringue à poix',
-    // Grain ambre-brun, halo faible : la poix ne brille pas, elle englue.
+    // Goutte ambre-brun, halo faible, trainee en tirets : la poix ne brille
+    // pas, elle englue — et elle part par paquets, jamais en trait continu.
     // Distincte de la teinte de l'element (0x3d2b1f, brun fonce).
-    look: { shape: 'grain', diameterPx: 8, tint: 0x8a6d3f, glow: 0.2, trailTicks: 0.8 },
+    look: {
+      shape: 'goutte',
+      diameterPx: 8,
+      tint: 0x8a6d3f,
+      glow: 0.2,
+      trailTicks: 0.8,
+      spinTurns: 0.8,
+      trail: 'tirets',
+    },
     cooldownTicks: 18,
     damage: 5,
     projectileSpeed: 480,
@@ -497,9 +650,18 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // en face de la grenade et du canon-a-arc. Elle vise a poisser une cible
     // choisie plutot qu'a arroser, le pendant exact de la seringue.
     name: 'Chaudron à poix',
-    // Sphere brun fonce, la plus terne du catalogue : sans halo marque,
-    // conforme a une arme qui n'illumine rien.
-    look: { shape: 'sphere', diameterPx: 16, tint: 0x5c3a21, glow: 0.15, trailTicks: 1.3 },
+    // Masse brun fonce, la plus terne du catalogue : une motte informe qui
+    // roule sur elle-meme en fumant, sans halo marque, conforme a une arme
+    // qui n'illumine rien.
+    look: {
+      shape: 'masse',
+      diameterPx: 16,
+      tint: 0x5c3a21,
+      glow: 0.15,
+      trailTicks: 1.3,
+      spinTurns: -1,
+      trail: 'fumee',
+    },
     cooldownTicks: 40,
     damage: 14,
     projectileSpeed: 380,
@@ -518,9 +680,18 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // — donc une arme qui touche souvent seme donc plus souvent l'occasion
     // qu'une zone de Chaux se pose.
     name: 'Poire à chaux',
-    // Grain vert vif, distinct du vert-jaune de l'element (0xb4d94a) : la zone
-    // au sol dit l'element, pas le projectile (`assertWeaponLooks`).
-    look: { shape: 'grain', diameterPx: 19, tint: 0x8fe34c, glow: 0.35, trailTicks: 0.9 },
+    // Bouffee vert vif — trois lobes de poudre, pas un grain —, distincte du
+    // vert-jaune de l'element (0xb4d94a) : la zone au sol dit l'element, pas
+    // le projectile (`assertWeaponLooks`).
+    look: {
+      shape: 'bouffee',
+      diameterPx: 19,
+      tint: 0x8fe34c,
+      glow: 0.35,
+      trailTicks: 0.9,
+      spinTurns: 0.6,
+      trail: 'fumee',
+    },
     cooldownTicks: 17,
     damage: 4,
     projectileSpeed: 440,
@@ -534,9 +705,18 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // projectile unique, cadence lente, degats eleves. Le premier ennemi
     // touche doit deja fuir avant qu'un allie n'ait besoin de suivre.
     name: 'Canon à chaux',
-    // Sphere olive fonce, la plus terne des deux armes de Chaux : distincte de
-    // la teinte de l'element et de celle de la poire-a-chaux.
-    look: { shape: 'sphere', diameterPx: 21, tint: 0x4f7a1a, glow: 0.2, trailTicks: 1.2 },
+    // Obus olive fonce, la plus terne des deux armes de Chaux : une capsule
+    // qui ne tourne pas, distincte de la teinte de l'element et de celle de
+    // la poire-a-chaux.
+    look: {
+      shape: 'obus',
+      diameterPx: 21,
+      tint: 0x4f7a1a,
+      glow: 0.2,
+      trailTicks: 1.2,
+      spinTurns: 0,
+      trail: 'fumee',
+    },
     cooldownTicks: 38,
     damage: 15,
     projectileSpeed: 400,
@@ -555,10 +735,17 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // touche souvent pose donc plus souvent l'occasion qu'une liaison
     // s'etablisse entre deux ennemis proches.
     name: 'Fronde à mercure',
-    // Aiguille gris-mauve, la plus fine du catalogue : distincte de
-    // l'outremer des fleches-jumelles et de la teinte de l'element
-    // (0xc9c9e8).
-    look: { shape: 'aiguille', diameterPx: 5, tint: 0x7a7aa8, glow: 0.3, trailTicks: 1.1 },
+    // Dard gris-mauve, le plus fin du catalogue : distinct de l'outremer des
+    // fleches-jumelles et de la teinte de l'element (0xc9c9e8).
+    look: {
+      shape: 'dard',
+      diameterPx: 5,
+      tint: 0x7a7aa8,
+      glow: 0.3,
+      trailTicks: 1.1,
+      spinTurns: 0,
+      trail: 'lisse',
+    },
     cooldownTicks: 14,
     damage: 6,
     projectileSpeed: 620,
@@ -573,9 +760,17 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // d'une liaison doit peser pour que l'allie qui la retrouve trouve deux
     // ennemis deja groupes.
     name: 'Glaive de mercure',
-    // Eclat gris fonce, fort halo : le mercure se voit partir, contrairement a
-    // la poix qui n'illumine rien.
-    look: { shape: 'eclat', diameterPx: 20, tint: 0x45456e, glow: 0.5, trailTicks: 1.3 },
+    // Lame a garde gris fonce qui tourne sur elle-meme, fort halo : le mercure
+    // se voit partir, contrairement a la poix qui n'illumine rien.
+    look: {
+      shape: 'glaive',
+      diameterPx: 20,
+      tint: 0x45456e,
+      glow: 0.5,
+      trailTicks: 1.3,
+      spinTurns: 2.6,
+      trail: 'lisse',
+    },
     cooldownTicks: 32,
     damage: 14,
     projectileSpeed: 460,

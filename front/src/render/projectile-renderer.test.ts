@@ -2,7 +2,13 @@ import { MAP_SIZE, PROJECTILE_CAPACITY, REACTION_RADIUS } from '@shared/constant
 import { ELEMENT, elementOf } from '@shared/elements';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair } from '@shared/protocol';
-import { projectileAlpha, projectileTrailPx, WEAPONS, weaponOf } from '@shared/weapons';
+import {
+  type ProjectileShape,
+  projectileAlpha,
+  projectileTrailPx,
+  WEAPONS,
+  weaponOf,
+} from '@shared/weapons';
 import {
   Container,
   type Particle,
@@ -13,22 +19,31 @@ import {
 } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
+import { HitFlashes } from '../net/client';
 import {
   FLASH_MAX_SCALE,
   IMPACT_TEXTURE_DIAMETER,
   ImpactFlashRenderer,
+  POP_SCALE,
+  POP_TICKS,
   PROJECTILE_ATLAS_PX,
   PROJECTILE_CELL_PX,
   PROJECTILE_CULL_MARGIN,
+  PROJECTILE_SHAPE_FRACTION,
   ProjectileRenderer,
   projectileCellRect,
+  projectilePop,
+  projectileSpin,
   REACTION_TEXTURE_DIAMETER,
   ReactionFlashRenderer,
   reactionFlashScale,
   reactionTint,
+  SHAPE_PAINTERS,
   STREAK_LENGTH_PX,
   STREAK_THICKNESS_PX,
+  streakCellRect,
   TRAIL_ALPHA,
+  TRAIL_PROFILES,
 } from './projectile-renderer';
 
 /**
@@ -185,7 +200,14 @@ function drawnLayers(
   const renderer = new ProjectileRenderer();
   renderer.adoptTextures(
     new Texture({ source: new TextureSource({ width: 128, height: 128 }) }),
-    new Texture({ source: new TextureSource({ width: 64, height: 16 }) }),
+    // Une bande par profil (etape 8) : un atlas trop court ferait decouper des
+    // cases hors source, exactement ce que `streakCellRect` numerote.
+    new Texture({
+      source: new TextureSource({
+        width: STREAK_LENGTH_PX,
+        height: STREAK_THICKNESS_PX * TRAIL_PROFILES.length,
+      }),
+    }),
   );
 
   const world = new Container();
@@ -239,8 +261,10 @@ describe('ProjectileRenderer.draw — neuf armes, neuf apparences distinctes', (
 
   it('pose un calibre different par arme, derive de son diametre', () => {
     const { heads } = drawnLayers(oneOfEachWeapon());
+    // ⚠️ `projectilePop(0)` : ces projectiles viennent de PARTIR, donc ils
+    // claquent (etape 8). Le calibre nu se mesure en regime etabli, plus bas.
     expect(heads.map((h) => h.scaleX)).toEqual(
-      WEAPONS.map((w) => w.look.diameterPx / PROJECTILE_CELL_PX),
+      WEAPONS.map((w) => (w.look.diameterPx * projectilePop(0)) / PROJECTILE_CELL_PX),
     );
     expect(new Set(heads.map((h) => h.scaleX)).size).toBe(WEAPONS.length);
     // Isotrope : la case d'atlas est carree, et l'etirement dans un seul axe
@@ -354,6 +378,231 @@ describe('ProjectileRenderer.draw — la portee se voit', () => {
     }
     expect(trail.alpha).toBeLessThan(head.alpha);
     expect(trail.alpha / head.alpha).toBeCloseTo(TRAIL_ALPHA, 6);
+  });
+});
+
+/**
+ * Les dix-sept silhouettes (etape 8 : neuf jusque-la), mesurees sur un
+ * contexte 2D MOUCHARD.
+ *
+ * ⚠️ **Les cases de l'atlas sont jointives**, donc une forme qui depasse son
+ * rayon bave dans la case de l'arme voisine et deux armes finissent dessinees
+ * avec un bout l'une de l'autre — a l'ecran, pas en test. Rien dans le
+ * compilateur ne voit ca : le `Record<ProjectileShape, …>` garantit qu'un
+ * dessin existe, jamais qu'il tient dans sa case.
+ *
+ * Le mouchard note toutes les coordonnees que le peintre lui passe, et le
+ * demi-trait des formes TRACEES (`arc` est la seule aujourd'hui) : c'est
+ * l'empreinte reelle de l'encre, pas celle du chemin.
+ */
+describe('SHAPE_PAINTERS — aucune forme ne bave dans la case voisine', () => {
+  /** Le rayon du corps plein dans une case, tel que `paintProjectileCell` le calcule. */
+  const BODY = (PROJECTILE_CELL_PX / 2) * PROJECTILE_SHAPE_FRACTION;
+  const DEMI_CASE = PROJECTILE_CELL_PX / 2;
+
+  function empreinte(shape: ProjectileShape): number {
+    let max = 0;
+    let lineWidth = 0;
+    const note = (x: number, y: number, pad = 0): void => {
+      max = Math.max(max, Math.abs(x) + pad, Math.abs(y) + pad);
+    };
+    const ctx = {
+      fillStyle: '' as unknown,
+      strokeStyle: '' as unknown,
+      lineJoin: '' as unknown,
+      lineCap: '' as unknown,
+      get lineWidth(): number {
+        return lineWidth;
+      },
+      set lineWidth(v: number) {
+        lineWidth = v;
+      },
+      beginPath: () => undefined,
+      closePath: () => undefined,
+      fill: () => undefined,
+      // Une forme tracee occupe son chemin PLUS la moitie de son trait.
+      stroke: () => {
+        max += lineWidth / 2;
+      },
+      moveTo: note,
+      lineTo: note,
+      quadraticCurveTo: (cx: number, cy: number, x: number, y: number) => {
+        // Le point de controle borne la courbe : elle ne le depasse jamais.
+        note(cx, cy);
+        note(x, y);
+      },
+      arc: (x: number, y: number, r: number) => note(x, y, r),
+      fillRect: (x: number, y: number, w: number, h: number) => note(x + w, y + h),
+    };
+    SHAPE_PAINTERS[shape](ctx as unknown as CanvasRenderingContext2D, BODY);
+    return max;
+  }
+
+  it('garde les dix-sept formes dans leur demi-case', () => {
+    for (const shape of Object.keys(SHAPE_PAINTERS) as ProjectileShape[]) {
+      expect(empreinte(shape), shape).toBeLessThanOrEqual(DEMI_CASE);
+    }
+  });
+
+  it('mesure bien une empreinte, et pas zero : le mouchard voit passer l encre', () => {
+    // Sans ce cas, un mouchard qui n'enregistrerait rien rendrait le precedent
+    // vert pour dix-sept formes vides.
+    for (const shape of Object.keys(SHAPE_PAINTERS) as ProjectileShape[]) {
+      expect(empreinte(shape), shape).toBeGreaterThan(BODY / 2);
+    }
+  });
+
+  it('couvre toutes les formes que le catalogue utilise', () => {
+    for (const w of WEAPONS) {
+      expect(SHAPE_PAINTERS[w.look.shape], w.name).toBeTypeOf('function');
+    }
+  });
+});
+
+/**
+ * Étape 8 — **le jus**, venu de l'auteur en jouant : *« ameliore et diversifie
+ * les projectiles, animation, particule, forme »*.
+ *
+ * Trois courbes, et toutes les trois tirent leur temps du MEME compteur que le
+ * fondu : `Projectiles.ticksRemainingAt`. C'est ce qui permet a `draw` de
+ * n'avoir toujours aucune horloge en parametre — voir `POP_TICKS`.
+ */
+describe('ProjectileRenderer.draw — le depart claque, et ce qui est lance tourne', () => {
+  const CHAKRAM = 5;
+  const DAGUE = 0;
+  const TESLA = 9;
+
+  function teteApres(weaponId: number, pas: number): Particle {
+    const arme = weaponOf(weaponId);
+    const p = new Projectiles(4);
+    p.fireSalvoDirected(arme, 0, 1000, 1000, 1, 0, arme.damage, 1);
+    for (let i = 0; i < pas; i++) {
+      p.step(0);
+    }
+    const head = drawnLayers(p).heads[0];
+    if (!head) {
+      throw new Error('aucune tete dessinee');
+    }
+    return head;
+  }
+
+  it('fait claquer la tete au depart, puis la ramene a son calibre nu', () => {
+    const arme = weaponOf(CHAKRAM);
+    const nu = arme.look.diameterPx / PROJECTILE_CELL_PX;
+
+    expect(teteApres(CHAKRAM, 0).scaleX).toBeCloseTo(nu * POP_SCALE, 6);
+    // ⚠️ Les DEUX moities : sans le second cas, un pop qui ne retomberait
+    // jamais (une arme dessinee 40 % trop grosse toute sa course) passerait.
+    expect(teteApres(CHAKRAM, POP_TICKS).scaleX).toBeCloseTo(nu, 6);
+    expect(teteApres(CHAKRAM, POP_TICKS + 5).scaleX).toBeCloseTo(nu, 6);
+  });
+
+  it('garde la tete isotrope pendant le pop : il grossit, il n etire pas', () => {
+    const jeune = teteApres(CHAKRAM, 0);
+    expect(jeune.scaleY).toBe(jeune.scaleX);
+  });
+
+  it('fait tourner le chakram sur lui-meme en plus de son cap', () => {
+    const arme = weaponOf(CHAKRAM);
+    expect(arme.look.spinTurns).toBeGreaterThan(0);
+    // Le cap est +x (tir vers la droite), donc zero : ce qui reste est la
+    // rotation propre.
+    expect(teteApres(CHAKRAM, 0).rotation).toBeCloseTo(0, 6);
+    expect(teteApres(CHAKRAM, 4).rotation).toBeCloseTo(projectileSpin(arme.look.spinTurns, 4), 6);
+    expect(teteApres(CHAKRAM, 4).rotation).toBeGreaterThan(teteApres(CHAKRAM, 2).rotation);
+  });
+
+  it('laisse la dague droite dans son axe, quel que soit son age', () => {
+    expect(weaponOf(DAGUE).look.spinTurns).toBe(0);
+    expect(teteApres(DAGUE, 0).rotation).toBeCloseTo(0, 6);
+    expect(teteApres(DAGUE, 10).rotation).toBeCloseTo(0, 6);
+  });
+
+  it('tourne a contresens quand l arme le demande', () => {
+    expect(weaponOf(TESLA).look.spinTurns).toBeLessThan(0);
+    expect(teteApres(TESLA, 3).rotation).toBeLessThan(0);
+  });
+
+  it('ne fait JAMAIS tourner la trainee : elle dessine un chemin, pas un objet', () => {
+    const arme = weaponOf(CHAKRAM);
+    const p = new Projectiles(4);
+    // Vers le bas : un cap laisse a zero passerait une trainee qui ignore tout.
+    p.fireSalvoDirected(arme, 0, 1000, 1000, 0, 1, arme.damage, 1);
+    for (let i = 0; i < 6; i++) {
+      p.step(0);
+    }
+    const { heads, trails } = drawnLayers(p);
+    expect(trails[0]?.rotation).toBeCloseTo(Math.PI / 2, 6);
+    expect(heads[0]?.rotation).not.toBeCloseTo(Math.PI / 2, 6);
+  });
+});
+
+/**
+ * Les profils de trainee (etape 8) : quatre matieres cuites dans UN atlas,
+ * donc toujours un seul quad etire par projectile — ce que le bloc de cout
+ * juste en dessous mesure, inchange.
+ */
+describe('ProjectileRenderer.draw — la matiere de la trainee', () => {
+  it('donne a chaque arme la bande de SON profil', () => {
+    const { trails } = drawnLayers(oneOfEachWeapon());
+    expect(trails.map((t) => ({ x: t.texture.frame.x, y: t.texture.frame.y }))).toEqual(
+      WEAPONS.map((w) => {
+        const cell = streakCellRect(w.look.trail);
+        return { x: cell.x, y: cell.y };
+      }),
+    );
+  });
+
+  it('utilise les quatre profils du catalogue, et pas un seul', () => {
+    const { trails } = drawnLayers(oneOfEachWeapon());
+    expect(new Set(trails.map((t) => t.texture.frame.y)).size).toBe(TRAIL_PROFILES.length);
+  });
+
+  it('fait PARTAGER la meme bande a deux armes de meme profil', () => {
+    // Le pendant du cas precedent : quatre bandes pour dix-sept armes, donc le
+    // partage est la regle, pas un accident.
+    const { trails } = drawnLayers(oneOfEachWeapon());
+    const lisses = WEAPONS.map((w, i) => (w.look.trail === 'lisse' ? trails[i] : null)).filter(
+      (t) => t !== null,
+    );
+    expect(lisses.length).toBeGreaterThan(1);
+    expect(new Set(lisses.map((t) => t?.texture)).size).toBe(1);
+  });
+
+  it('leve plutot que de numeroter un profil inconnu', () => {
+    expect(() => streakCellRect('torsade' as never)).toThrow(/profil de trainee inconnu/);
+  });
+});
+
+/**
+ * Le flash d'impact prend la teinte de l'ARME qui vient de toucher (etape 8).
+ *
+ * ⚠️ Ce bloc n'existe que parce que `adoptTexture` existe : sans ce point
+ * d'entree, `draw` retourne au premier `if (!texture)` faute de canevas 2D, et
+ * la ligne de teinte pourrait etre retiree sans qu'une assertion ne bouge.
+ */
+describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => {
+  function flashesDessines(teintes: readonly number[]): Particle[] {
+    const flashes = new HitFlashes(16);
+    for (const tint of teintes) {
+      flashes.spawn(100, 200, tint, 0);
+    }
+    const renderer = new ImpactFlashRenderer();
+    renderer.adoptTexture(new Texture({ source: new TextureSource({ width: 48, height: 48 }) }));
+    const world = new Container();
+    renderer.attach(world);
+    renderer.draw(flashes, 0);
+    const container = world.children[0] as ParticleContainer;
+    return [...(container.particleChildren as Particle[])];
+  }
+
+  it('reporte la teinte portee par le flash, arme par arme', () => {
+    const teintes = WEAPONS.slice(0, 4).map((w) => w.look.tint);
+    expect(flashesDessines(teintes).map((f) => f.tint)).toEqual(teintes);
+  });
+
+  it('retombe sur le blanc — l identite de tint — quand rien n est teinte', () => {
+    expect(flashesDessines([0]).map((f) => f.tint)).toEqual([0xffffff]);
   });
 });
 

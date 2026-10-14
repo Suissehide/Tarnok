@@ -162,7 +162,15 @@ const SINGLE: Weapon = {
   blastRadius: 0,
   // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
   // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
-  look: { shape: 'sphere', diameterPx: 10, tint: 0x123456, glow: 0.3, trailTicks: 1 },
+  look: {
+    shape: 'sphere',
+    diameterPx: 10,
+    tint: 0x123456,
+    glow: 0.3,
+    trailTicks: 1,
+    spinTurns: 0,
+    trail: 'lisse',
+  },
 };
 
 function player(x: number, y: number, hp = 100): ContactPlayer {

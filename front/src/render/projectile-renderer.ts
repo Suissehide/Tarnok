@@ -1,10 +1,11 @@
-import { MAP_SIZE, REACTION_RADIUS } from '@shared/constants';
+import { MAP_SIZE, REACTION_RADIUS, TICK_HZ } from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Projectiles } from '@shared/projectiles';
 import { unpackElementPair } from '@shared/protocol';
 import {
   type ProjectileLook,
   type ProjectileShape,
+  type ProjectileTrail,
   projectileAlpha,
   projectileTrailPx,
   WEAPONS,
@@ -122,8 +123,11 @@ export const PROJECTILE_ATLAS_PX = PROJECTILE_CELL_PX * PROJECTILE_ATLAS_COLS;
  * leur halo : sans cette fraction commune, `glow` deviendrait un second
  * reglage de taille cache derriere un reglage de lumiere, et le joueur ne
  * pourrait plus comparer deux projectiles.
+ *
+ * Exportee depuis l'etape 8 : c'est avec elle que le test mesure qu'aucune
+ * forme ne DEBORDE de sa case (voir `SHAPE_PAINTERS`).
  */
-const PROJECTILE_SHAPE_FRACTION = 0.62;
+export const PROJECTILE_SHAPE_FRACTION = 0.62;
 
 /**
  * Marge de culling des projectiles, DERIVEE du catalogue : la plus grande
@@ -189,88 +193,221 @@ function cssTintAlpha(tint: number, alpha: number): string {
  * compilateur refuse une forme du catalogue sans dessin : aucun test n'a besoin
  * de le verifier, et un test qui le ferait serait une seconde garde derriere
  * celle-ci.
+ *
+ * ⚠️ **Ce que le compilateur ne voit PAS, c'est l'encre qui sort de la case**
+ * (etape 8, ou le catalogue est passe de neuf a dix-sept dessins). Les cases
+ * sont JOINTIVES dans l'atlas : un trace qui depasse son rayon ne bave pas
+ * dans le vide, il bave dans la case de l'arme voisine, et deux armes
+ * finissent dessinees avec un bout l'une de l'autre. C'est pourquoi la table
+ * est exportee — `projectile-renderer.test.ts` rejoue chaque peintre sur un
+ * contexte mouchard et mesure son empreinte reelle, bord de trait compris.
  */
-const SHAPE_PAINTERS: Record<ProjectileShape, (ctx: CanvasRenderingContext2D, r: number) => void> =
-  {
-    /** Losange allonge : un fer de lame. */
-    lame: (ctx, r) => {
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(-0.2 * r, -0.42 * r);
-      ctx.lineTo(-r, 0);
-      ctx.lineTo(-0.2 * r, 0.42 * r);
-      ctx.closePath();
-      ctx.fill();
-    },
-    /** Chevron : une pointe de fleche a ailerons. */
-    fleche: (ctx, r) => {
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(-r, -0.62 * r);
-      ctx.lineTo(-0.4 * r, 0);
-      ctx.lineTo(-r, 0.62 * r);
-      ctx.closePath();
-      ctx.fill();
-    },
-    /** Goutte pointue vers l'avant, dos arrondi. */
-    petale: (ctx, r) => {
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.quadraticCurveTo(-0.1 * r, -0.75 * r, -r, 0);
-      ctx.quadraticCurveTo(-0.1 * r, 0.75 * r, r, 0);
-      ctx.closePath();
-      ctx.fill();
-    },
-    /** Langue de feu : large a l'avant, effilee vers l'ARRIERE. */
-    flamme: (ctx, r) => {
-      ctx.beginPath();
-      ctx.moveTo(-r, 0);
-      ctx.quadraticCurveTo(0.1 * r, -0.85 * r, r, 0);
-      ctx.quadraticCurveTo(0.1 * r, 0.85 * r, -r, 0);
-      ctx.closePath();
-      ctx.fill();
-    },
-    /** Disque plein. */
-    sphere: (ctx, r) => {
-      ctx.beginPath();
-      ctx.arc(0, 0, r, 0, Math.PI * 2);
-      ctx.fill();
-    },
-    /** Couronne : la seule forme creuse du catalogue. */
-    anneau: (ctx, r) => {
-      ctx.beginPath();
-      ctx.arc(0, 0, r * 0.82, 0, Math.PI * 2);
-      ctx.arc(0, 0, r * 0.44, 0, Math.PI * 2, true);
-      ctx.fill('evenodd');
-    },
-    /** Trait tres fin, deux fois plus long que large. */
-    aiguille: (ctx, r) => {
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(-r, -0.16 * r);
-      ctx.lineTo(-r, 0.16 * r);
-      ctx.closePath();
-      ctx.fill();
-    },
-    /** Petit carre : de la mitraille, pas un trait. */
-    grain: (ctx, r) => {
-      ctx.fillRect(-0.62 * r, -0.62 * r, 1.24 * r, 1.24 * r);
-    },
-    /** Etoile a quatre branches, allongee dans l'axe du vol. */
-    eclat: (ctx, r) => {
-      ctx.beginPath();
-      ctx.moveTo(r, 0);
-      ctx.lineTo(0.22 * r, -0.28 * r);
-      ctx.lineTo(0, -0.72 * r);
-      ctx.lineTo(-0.22 * r, -0.28 * r);
-      ctx.lineTo(-r, 0);
-      ctx.lineTo(-0.22 * r, 0.28 * r);
-      ctx.lineTo(0, 0.72 * r);
-      ctx.lineTo(0.22 * r, 0.28 * r);
-      ctx.closePath();
-      ctx.fill();
-    },
-  };
+export const SHAPE_PAINTERS: Record<
+  ProjectileShape,
+  (ctx: CanvasRenderingContext2D, r: number) => void
+> = {
+  /** Losange allonge : un fer de lame. */
+  lame: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(-0.2 * r, -0.42 * r);
+    ctx.lineTo(-r, 0);
+    ctx.lineTo(-0.2 * r, 0.42 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Chevron : une pointe de fleche a ailerons. */
+  fleche: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(-r, -0.62 * r);
+    ctx.lineTo(-0.4 * r, 0);
+    ctx.lineTo(-r, 0.62 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Goutte pointue vers l'avant, dos arrondi. */
+  petale: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.quadraticCurveTo(-0.1 * r, -0.75 * r, -r, 0);
+    ctx.quadraticCurveTo(-0.1 * r, 0.75 * r, r, 0);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Langue de feu : large a l'avant, effilee vers l'ARRIERE. */
+  flamme: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(-r, 0);
+    ctx.quadraticCurveTo(0.1 * r, -0.85 * r, r, 0);
+    ctx.quadraticCurveTo(0.1 * r, 0.85 * r, -r, 0);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Disque plein. */
+  sphere: (ctx, r) => {
+    ctx.beginPath();
+    ctx.arc(0, 0, r, 0, Math.PI * 2);
+    ctx.fill();
+  },
+  /** Couronne : la seule forme creuse du catalogue. */
+  anneau: (ctx, r) => {
+    ctx.beginPath();
+    ctx.arc(0, 0, r * 0.82, 0, Math.PI * 2);
+    ctx.arc(0, 0, r * 0.44, 0, Math.PI * 2, true);
+    ctx.fill('evenodd');
+  },
+  /** Trait tres fin, deux fois plus long que large. */
+  aiguille: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(-r, -0.16 * r);
+    ctx.lineTo(-r, 0.16 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Petit carre : de la mitraille, pas un trait. */
+  grain: (ctx, r) => {
+    ctx.fillRect(-0.62 * r, -0.62 * r, 1.24 * r, 1.24 * r);
+  },
+  /**
+   * Zigzag : un arc electrique, le seul dessin TRACE du catalogue.
+   *
+   * ⚠️ **Il prend `fillStyle` pour en faire son `strokeStyle`**, et c'est la
+   * seule facon de garder l'API d'un peintre (le caller choisit la couleur,
+   * ici comme pour les huit autres) tout en dessinant une ligne brisee : un
+   * zigzag rempli demanderait deux cotes decales a la main, donc douze
+   * sommets pour ce que trois segments disent.
+   */
+  arc: (ctx, r) => {
+    ctx.strokeStyle = ctx.fillStyle;
+    ctx.lineWidth = r * 0.34;
+    ctx.lineJoin = 'round';
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(0.3 * r, 0.42 * r);
+    ctx.lineTo(-0.15 * r, -0.3 * r);
+    ctx.lineTo(-r, 0.22 * r);
+    ctx.stroke();
+  },
+  /** Hampe a garde : une pointe, un fut mince, deux ailettes au tiers arriere. */
+  javelot: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(0.35 * r, -0.26 * r);
+    ctx.lineTo(-0.25 * r, -0.1 * r);
+    ctx.lineTo(-0.25 * r, -0.4 * r);
+    ctx.lineTo(-0.45 * r, -0.4 * r);
+    ctx.lineTo(-0.45 * r, -0.1 * r);
+    ctx.lineTo(-r, -0.07 * r);
+    ctx.lineTo(-r, 0.07 * r);
+    ctx.lineTo(-0.45 * r, 0.1 * r);
+    ctx.lineTo(-0.45 * r, 0.4 * r);
+    ctx.lineTo(-0.25 * r, 0.4 * r);
+    ctx.lineTo(-0.25 * r, 0.1 * r);
+    ctx.lineTo(0.35 * r, 0.26 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Tetard : tete ronde a l'AVANT, queue effilee derriere. L'inverse de `petale`. */
+  goutte: (ctx, r) => {
+    ctx.beginPath();
+    ctx.arc(0.3 * r, 0, 0.6 * r, -Math.PI / 2, Math.PI / 2);
+    ctx.quadraticCurveTo(-0.4 * r, 0.3 * r, -r, 0);
+    ctx.quadraticCurveTo(-0.4 * r, -0.3 * r, 0.3 * r, -0.6 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /**
+   * Motte informe : huit rayons inegaux, ECRITS et jamais tires au hasard.
+   * Une forme aleatoire changerait a chaque cuisson d'atlas, donc d'une
+   * partie a l'autre — et la case est cuite une fois pour toutes.
+   */
+  masse: (ctx, r) => {
+    const rayons = [1, 0.78, 0.92, 0.7, 0.95, 0.74, 0.88, 0.8];
+    ctx.beginPath();
+    for (let i = 0; i < rayons.length; i++) {
+      const a = (i / rayons.length) * Math.PI * 2;
+      const f = rayons[i] ?? 1;
+      const x = Math.cos(a) * r * f;
+      const y = Math.sin(a) * r * f;
+      if (i === 0) {
+        ctx.moveTo(x, y);
+      } else {
+        ctx.lineTo(x, y);
+      }
+    }
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Trois lobes qui se recouvrent : de la poudre en vol, pas un corps solide. */
+  bouffee: (ctx, r) => {
+    ctx.beginPath();
+    ctx.arc(0.34 * r, 0, 0.6 * r, 0, Math.PI * 2);
+    ctx.arc(-0.3 * r, -0.34 * r, 0.5 * r, 0, Math.PI * 2);
+    ctx.arc(-0.3 * r, 0.34 * r, 0.5 * r, 0, Math.PI * 2);
+    ctx.fill();
+  },
+  /** Capsule : nez arrondi, flancs droits, culot plat. */
+  obus: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(-0.9 * r, -0.5 * r);
+    ctx.lineTo(0.2 * r, -0.5 * r);
+    ctx.quadraticCurveTo(r, -0.36 * r, r, 0);
+    ctx.quadraticCurveTo(r, 0.36 * r, 0.2 * r, 0.5 * r);
+    ctx.lineTo(-0.9 * r, 0.5 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Aiguille a ardillons : plus fine qu'`aiguille`, mais barbelee a l'arriere. */
+  dard: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(-0.3 * r, -0.14 * r);
+    ctx.lineTo(-0.55 * r, -0.45 * r);
+    ctx.lineTo(-0.72 * r, -0.12 * r);
+    ctx.lineTo(-r, -0.09 * r);
+    ctx.lineTo(-r, 0.09 * r);
+    ctx.lineTo(-0.72 * r, 0.12 * r);
+    ctx.lineTo(-0.55 * r, 0.45 * r);
+    ctx.lineTo(-0.3 * r, 0.14 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Lame a garde : un fer en feuille, une croisiere, un pommeau. */
+  glaive: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.quadraticCurveTo(0.1 * r, -0.34 * r, -0.4 * r, -0.22 * r);
+    ctx.lineTo(-0.4 * r, -0.52 * r);
+    ctx.lineTo(-0.56 * r, -0.52 * r);
+    ctx.lineTo(-0.56 * r, -0.2 * r);
+    ctx.lineTo(-r, -0.1 * r);
+    ctx.lineTo(-r, 0.1 * r);
+    ctx.lineTo(-0.56 * r, 0.2 * r);
+    ctx.lineTo(-0.56 * r, 0.52 * r);
+    ctx.lineTo(-0.4 * r, 0.52 * r);
+    ctx.lineTo(-0.4 * r, 0.22 * r);
+    ctx.quadraticCurveTo(0.1 * r, 0.34 * r, r, 0);
+    ctx.closePath();
+    ctx.fill();
+  },
+  /** Etoile a quatre branches, allongee dans l'axe du vol. */
+  eclat: (ctx, r) => {
+    ctx.beginPath();
+    ctx.moveTo(r, 0);
+    ctx.lineTo(0.22 * r, -0.28 * r);
+    ctx.lineTo(0, -0.72 * r);
+    ctx.lineTo(-0.22 * r, -0.28 * r);
+    ctx.lineTo(-r, 0);
+    ctx.lineTo(-0.22 * r, 0.28 * r);
+    ctx.lineTo(0, 0.72 * r);
+    ctx.lineTo(0.22 * r, 0.28 * r);
+    ctx.closePath();
+    ctx.fill();
+  },
+};
 
 /**
  * Peint une case de l'atlas : halo, corps teinte, coeur blanc.
@@ -348,37 +485,168 @@ export const STREAK_LENGTH_PX = 64;
 export const STREAK_THICKNESS_PX = 16;
 
 /**
- * La trainee : un degrade BLANC, opaque a droite (la tete) et transparent a
- * gauche (la queue), adouci sur les bords.
+ * Le dessin d'un profil de trainee, dans une case de `STREAK_LENGTH_PX` par
+ * `STREAK_THICKNESS_PX` : la TETE est a droite (x = longueur), la queue a
+ * gauche. Toujours en BLANC, pour la meme raison que `makeZoneAtlas` :
+ * `Particle.tint` multiplie, donc une texture blanche rend exactement
+ * `look.tint`.
  *
- * Blanche pour la meme raison que `makeZoneAtlas` : `Particle.tint`
- * multiplie, donc une texture blanche rend exactement `look.tint`.
+ * ⚠️ **La table est un `Record<ProjectileTrail, …>`, et c'est la garde** —
+ * meme discipline que `SHAPE_PAINTERS` : le compilateur refuse un profil du
+ * catalogue sans dessin.
  */
-function makeStreakTexture(): Texture {
-  const canvas = document.createElement('canvas');
-  canvas.width = STREAK_LENGTH_PX;
-  canvas.height = STREAK_THICKNESS_PX;
-  const ctx = canvas.getContext('2d');
-  if (!ctx) {
-    throw new Error('canvas 2d indisponible');
-  }
+const STREAK_PAINTERS: Record<ProjectileTrail, (ctx: CanvasRenderingContext2D) => void> = {
+  /** Un trait qui s'effile : le profil d'origine, celui de ce qui file droit. */
+  lisse: (ctx) => {
+    const along = ctx.createLinearGradient(0, 0, STREAK_LENGTH_PX, 0);
+    along.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    along.addColorStop(1, 'rgba(255, 255, 255, 1)');
+    ctx.fillStyle = along;
+    ctx.fillRect(0, 0, STREAK_LENGTH_PX, STREAK_THICKNESS_PX);
+    softenAcross(ctx);
+  },
+  /**
+   * Des bouffees qui GROSSISSENT vers la queue en s'eteignant : ce qui brule
+   * ou englue laisse derriere lui quelque chose qui s'etale, pas un trait.
+   *
+   * Pas de `softenAcross` : des disques degrades sont deja ronds, et le masque
+   * transversal les couperait en lentilles.
+   */
+  fumee: (ctx) => {
+    const half = STREAK_THICKNESS_PX / 2;
+    for (let i = 0; i < 7; i++) {
+      const t = i / 6;
+      const x = STREAK_LENGTH_PX * t;
+      // Gros et pale a la queue (t = 0), serre et franc a la tete (t = 1).
+      const r = half * (1 - 0.55 * t);
+      const a = 0.15 + 0.85 * t;
+      const puff = ctx.createRadialGradient(x, half, 0, x, half, r);
+      puff.addColorStop(0, `rgba(255, 255, 255, ${a})`);
+      puff.addColorStop(1, 'rgba(255, 255, 255, 0)');
+      ctx.fillStyle = puff;
+      ctx.beginPath();
+      ctx.arc(x, half, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+  /** Une file de segments detaches : ce qui est jete par poignees. */
+  tirets: (ctx) => {
+    const dash = STREAK_LENGTH_PX / 9;
+    const along = ctx.createLinearGradient(0, 0, STREAK_LENGTH_PX, 0);
+    along.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    along.addColorStop(1, 'rgba(255, 255, 255, 1)');
+    ctx.fillStyle = along;
+    for (let i = 0; i < 5; i++) {
+      ctx.fillRect(i * 2 * dash, 0, dash, STREAK_THICKNESS_PX);
+    }
+    softenAcross(ctx);
+  },
+  /**
+   * Un trait pale crible de points chauds : ce qui crepite.
+   *
+   * ⚠️ **Les points sont ECRITS, jamais tires au hasard** — meme raison que
+   * les rayons de la forme `masse` : la case est cuite une fois pour toutes,
+   * un tirage la ferait changer d'une partie a l'autre pour rien.
+   */
+  etincelles: (ctx) => {
+    const along = ctx.createLinearGradient(0, 0, STREAK_LENGTH_PX, 0);
+    along.addColorStop(0, 'rgba(255, 255, 255, 0)');
+    along.addColorStop(1, 'rgba(255, 255, 255, 0.55)');
+    ctx.fillStyle = along;
+    ctx.fillRect(0, 0, STREAK_LENGTH_PX, STREAK_THICKNESS_PX);
+    softenAcross(ctx);
 
-  const along = ctx.createLinearGradient(0, 0, STREAK_LENGTH_PX, 0);
-  along.addColorStop(0, 'rgba(255, 255, 255, 0)');
-  along.addColorStop(1, 'rgba(255, 255, 255, 1)');
-  ctx.fillStyle = along;
-  ctx.fillRect(0, 0, STREAK_LENGTH_PX, STREAK_THICKNESS_PX);
+    const half = STREAK_THICKNESS_PX / 2;
+    const dots: readonly [number, number][] = [
+      [0.22, -0.55],
+      [0.38, 0.6],
+      [0.52, -0.25],
+      [0.66, 0.4],
+      [0.78, -0.6],
+      [0.88, 0.2],
+      [0.96, -0.15],
+    ];
+    for (const [t, offset] of dots) {
+      ctx.fillStyle = `rgba(255, 255, 255, ${0.35 + 0.65 * t})`;
+      ctx.beginPath();
+      ctx.arc(STREAK_LENGTH_PX * t, half + half * offset, half * 0.3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  },
+};
 
-  // Adoucissement transversal : sans lui la trainee est un ruban a bords nets,
-  // qui lit comme une barre et non comme une trace.
+/**
+ * Adoucissement transversal : sans lui une trainee pleine est un ruban a
+ * bords nets, qui lit comme une barre et non comme une trace.
+ *
+ * Travaille en `destination-in` sur TOUTE la case — c'est pourquoi chaque
+ * profil est peint sur son propre canevas avant d'etre recopie dans l'atlas
+ * (voir `makeStreakAtlas`) : applique a l'atlas entier, il effacerait les
+ * bandes voisines.
+ */
+function softenAcross(ctx: CanvasRenderingContext2D): void {
   const across = ctx.createLinearGradient(0, 0, 0, STREAK_THICKNESS_PX);
   across.addColorStop(0, 'rgba(255, 255, 255, 0)');
   across.addColorStop(0.5, 'rgba(255, 255, 255, 1)');
   across.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  const before = ctx.globalCompositeOperation;
   ctx.globalCompositeOperation = 'destination-in';
   ctx.fillStyle = across;
   ctx.fillRect(0, 0, STREAK_LENGTH_PX, STREAK_THICKNESS_PX);
+  ctx.globalCompositeOperation = before;
+}
 
+/**
+ * L'ordre des bandes de l'atlas des trainees : celui des cles de
+ * `STREAK_PAINTERS`, donc rien a synchroniser a la main. Ajouter un profil
+ * ajoute une bande.
+ */
+export const TRAIL_PROFILES = Object.keys(STREAK_PAINTERS) as ProjectileTrail[];
+
+/** Rectangle de la bande d'un profil dans l'atlas des trainees. */
+export function streakCellRect(profile: ProjectileTrail): {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+} {
+  const row = TRAIL_PROFILES.indexOf(profile);
+  if (row < 0) {
+    throw new Error(`profil de trainee inconnu : ${profile}`);
+  }
+  return { x: 0, y: row * STREAK_THICKNESS_PX, w: STREAK_LENGTH_PX, h: STREAK_THICKNESS_PX };
+}
+
+/**
+ * Cuit l'atlas des trainees : une bande par profil (etape 8).
+ *
+ * ⚠️ **UN atlas, pas quatre textures.** Un `ParticleContainer` ne lie que la
+ * source de son PREMIER enfant et dessine tout le lot avec (voir
+ * `GlParticleContainerAdaptor`) : quatre textures distinctes auraient voulu
+ * dire quatre conteneurs, donc quatre lots pour ce qui tient en un. Meme
+ * raisonnement, et meme forme, que `makeProjectileAtlas` au-dessus.
+ */
+function makeStreakAtlas(): Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = STREAK_LENGTH_PX;
+  canvas.height = STREAK_THICKNESS_PX * TRAIL_PROFILES.length;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  for (const profile of TRAIL_PROFILES) {
+    // Chaque profil sur SON canevas, puis recopie : `softenAcross` travaille
+    // en `destination-in`, qui ne connait pas les bandes.
+    const band = document.createElement('canvas');
+    band.width = STREAK_LENGTH_PX;
+    band.height = STREAK_THICKNESS_PX;
+    const bandCtx = band.getContext('2d');
+    if (!bandCtx) {
+      throw new Error('canvas 2d indisponible');
+    }
+    STREAK_PAINTERS[profile](bandCtx);
+    ctx.drawImage(band, 0, streakCellRect(profile).y);
+  }
   return Texture.from(canvas);
 }
 
@@ -387,6 +655,51 @@ function makeStreakTexture(): Texture {
  * le corps : une trainee aussi large que la tete masquerait la tete.
  */
 const TRAIL_THICKNESS_FRACTION = 0.6;
+
+/**
+ * Duree du « pop » de naissance, en ticks de vol, et sur-echelle a t = 0.
+ *
+ * ⚠️ **Le pop se compte en TICKS, comme le fondu et la trainee** (etape 8) :
+ * `ProjectileRenderer.draw` ne recoit aucune horloge, et il n'en a pas besoin
+ * — `Projectiles.ticksRemainingAt` est deja un compte a rebours par
+ * projectile. Un pop en millisecondes aurait demande une horloge murale au
+ * calque, donc un second temps a cote de celui de la simulation.
+ *
+ * Deux ticks (66 ms) : assez pour que le depart du tir CLAQUE, trop court pour
+ * qu'on lise un projectile plus gros qu'il n'est. Le reste de sa course, il
+ * fait exactement son `diameterPx` — c'est ce qui garde la comparaison entre
+ * deux armes honnete (voir `PROJECTILE_SHAPE_FRACTION`).
+ */
+export const POP_TICKS = 2;
+export const POP_SCALE = 1.4;
+
+/**
+ * Sur-echelle de la tete a `ageTicks` ticks de vol : `POP_SCALE` au depart,
+ * `1` des `POP_TICKS` ecoules, lineaire entre les deux.
+ *
+ * Exportee pour que le test confronte le depart au regime etabli : « la tete
+ * fait son calibre » et « la tete claque au depart » ne sont la meme chose
+ * qu'a `POP_SCALE = 1`.
+ */
+export function projectilePop(ageTicks: number): number {
+  if (ageTicks >= POP_TICKS || ageTicks < 0) {
+    return 1;
+  }
+  return POP_SCALE + (1 - POP_SCALE) * (ageTicks / POP_TICKS);
+}
+
+/**
+ * Rotation propre de la tete a `ageTicks` ticks de vol, en radians, pour une
+ * arme qui tourne de `spinTurns` tours par seconde.
+ *
+ * ⚠️ **S'AJOUTE au cap, elle ne le remplace pas.** Un chakram tourne sur
+ * lui-meme TOUT EN allant vers sa cible ; poser la rotation seule ferait d'une
+ * arme qui tourne une arme qui ne vise plus. La trainee, elle, ne tourne
+ * jamais : elle dessine le chemin parcouru, qui n'a aucune raison de pivoter.
+ */
+export function projectileSpin(spinTurns: number, ageTicks: number): number {
+  return (spinTurns * 2 * Math.PI * ageTicks) / TICK_HZ;
+}
 
 /**
  * Opacite de la trainee, relative a celle du projectile.
@@ -443,8 +756,17 @@ export class ProjectileRenderer {
     blendMode: 'add',
     // `rotation` : la trainee est orientee dans l'axe du vol. `vertex` : elle
     // est etiree a la longueur de l'arme. `color` : teinte de l'arme et fondu
-    // de fin de vie. `uvs` : une seule texture, rien a rafraichir.
-    dynamicProperties: { position: true, rotation: true, vertex: true, color: true, uvs: false },
+    // de fin de vie.
+    //
+    // ⚠️ **`uvs` est passe a `true` a l'etape 8**, quand la trainee a cesse
+    // d'etre une texture unique pour devenir une bande d'atlas par profil
+    // (`STREAK_PAINTERS`) : c'est exactement la raison deja ecrite sur les
+    // tetes juste en dessous — le reservoir est REUTILISE, et le creneau qui
+    // porte un lance-flammes (profil `fumee`) a cette image peut porter une
+    // dague (profil `lisse`) a la suivante. A `false`, la bande televersee une
+    // fois ne changerait plus jamais et toutes les armes finiraient avec la
+    // premiere rencontree.
+    dynamicProperties: { position: true, rotation: true, vertex: true, color: true, uvs: true },
   });
   readonly #heads = new ParticleContainer({
     // `uvs` : le reservoir est REUTILISE, et le creneau 3 peut porter une
@@ -460,7 +782,15 @@ export class ProjectileRenderer {
   readonly #trailPool: Particle[] = [];
   /** Une case d'atlas par arme, indexee par `Weapon.id`. Vide tant que rien n'est adopte. */
   #cells: Texture[] = [];
-  #streak: Texture | null = null;
+  /**
+   * La bande de trainee de chaque arme, indexee par `Weapon.id` elle aussi.
+   *
+   * ⚠️ **Resolue UNE FOIS a l'adoption, pas a chaque image.** Le profil d'une
+   * arme (`look.trail`) est une constante du catalogue : le chercher dans
+   * `draw` mettrait une recherche de chaine dans la boucle des 2 048
+   * projectiles pour un resultat qui ne change jamais.
+   */
+  #streaks: Texture[] = [];
 
   constructor() {
     // Bornes explicites couvrant la carte entiere : voir la doc de fichier.
@@ -531,7 +861,7 @@ export class ProjectileRenderer {
    * indetectable jusqu'a la tache 9 bis.
    */
   get loaded(): boolean {
-    return this.#streak !== null;
+    return this.#streaks.length > 0;
   }
 
   /**
@@ -542,7 +872,7 @@ export class ProjectileRenderer {
    * fichier.
    */
   load(): void {
-    this.adoptTextures(makeProjectileAtlas(), makeStreakTexture());
+    this.adoptTextures(makeProjectileAtlas(), makeStreakAtlas());
   }
 
   /**
@@ -562,11 +892,30 @@ export class ProjectileRenderer {
         frame: new Rectangle(cell.x, cell.y, cell.w, cell.h),
       });
     });
-    this.#streak = streak;
+    // Une bande par PROFIL, decoupee une seule fois, puis indexee par arme :
+    // deux armes du meme profil partagent la meme `Texture` (voir `#streaks`).
+    const bands = new Map<ProjectileTrail, Texture>();
+    for (const profile of TRAIL_PROFILES) {
+      const cell = streakCellRect(profile);
+      bands.set(
+        profile,
+        new Texture({
+          source: streak.source,
+          frame: new Rectangle(cell.x, cell.y, cell.w, cell.h),
+        }),
+      );
+    }
+    this.#streaks = WEAPONS.map((w) => {
+      const band = bands.get(w.look.trail);
+      if (!band) {
+        throw new Error(`arme « ${w.name} » : profil de trainee inconnu (${w.look.trail})`);
+      }
+      return band;
+    });
   }
 
   draw(projectiles: Projectiles, view: Rectangle): void {
-    const streak = this.#streak;
+    const streak = this.#streaks[0];
     const fallback = this.#cells[0];
     if (!streak || !fallback) {
       return;
@@ -600,19 +949,25 @@ export class ProjectileRenderer {
       // Le fondu, DERIVE de `projectileLifeTicks` : le lance-flammes (10
       // ticks) s'eteint sur les trois quarts de sa course, l'arc-lourd (40)
       // file net. Voir `projectileAlpha`.
-      const alpha = projectileAlpha(weapon.projectileLifeTicks, projectiles.ticksRemainingAt(i));
+      const remaining = projectiles.ticksRemainingAt(i);
+      const alpha = projectileAlpha(weapon.projectileLifeTicks, remaining);
       const heading = projectiles.headingAt(i);
+      // L'age du projectile, en ticks de vol : la vie de l'arme moins ce qui
+      // en reste. C'est le seul temps dont ce calque dispose, et il suffit aux
+      // trois courbes (fondu, pop, rotation) — voir `POP_TICKS`.
+      const age = weapon.projectileLifeTicks - remaining;
 
       head.texture = this.#cells[weapon.id] ?? fallback;
       head.x = x;
       head.y = y;
-      head.rotation = heading;
-      head.scaleX = look.diameterPx / PROJECTILE_CELL_PX;
+      head.rotation = heading + projectileSpin(look.spinTurns, age);
+      head.scaleX = (look.diameterPx * projectilePop(age)) / PROJECTILE_CELL_PX;
       head.scaleY = head.scaleX;
       head.alpha = alpha;
 
       // Ancree a droite (`anchorX: 1`) : le quad s'etend donc vers -x local,
       // c'est-a-dire DERRIERE le projectile une fois tourne de `heading`.
+      trail.texture = this.#streaks[weapon.id] ?? streak;
       trail.x = x;
       trail.y = y;
       trail.rotation = heading;
@@ -660,6 +1015,46 @@ export const FLASH_MAX_SCALE = 2.4;
 export const IMPACT_TEXTURE_DIAMETER = 48;
 
 /**
+ * Le flash d'impact : un coeur blanc, un BORD CHAUD, puis rien (etape 8).
+ *
+ * ⚠️ **Blanc, et plus dore comme jusqu'a l'etape 6a.** `Particle.tint`
+ * multiplie composante par composante : une texture deja doree aurait rendu
+ * fausse la teinte de l'arme que `HitFlashes.tint` porte desormais — c'est la
+ * meme raison qui fait la trainee blanche (`STREAK_PAINTERS`) et l'atlas des
+ * zones blanc.
+ *
+ * ⚠️ **Le bord est ce qui fait lire « eclat » et pas « halo ».** Un simple
+ * degre du centre vers le vide (`makeGlowTexture`) grossit en s'eteignant
+ * comme une tache floue ; une crete d'opacite aux trois quarts du rayon donne
+ * au meme quad une onde qui part — le §4.3 demande *« un flash court, large et
+ * genereux »*, et c'est le bord qui en dit la largeur. Un second quad
+ * (anneau separe) aurait dit la meme chose en doublant le cout d'un effet qui
+ * accompagne CHAQUE coup, des dizaines par seconde.
+ */
+function makeBurstTexture(diameter: number): Texture {
+  const canvas = document.createElement('canvas');
+  canvas.width = diameter;
+  canvas.height = diameter;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  const r = diameter / 2;
+  const burst = ctx.createRadialGradient(r, r, 0, r, r, r);
+  burst.addColorStop(0, 'rgba(255, 255, 255, 1)');
+  burst.addColorStop(0.42, 'rgba(255, 255, 255, 0.42)');
+  // La crete : le bord chaud de l'onde.
+  burst.addColorStop(0.68, 'rgba(255, 255, 255, 0.78)');
+  burst.addColorStop(0.82, 'rgba(255, 255, 255, 0.22)');
+  burst.addColorStop(1, 'rgba(255, 255, 255, 0)');
+  ctx.fillStyle = burst;
+  ctx.beginPath();
+  ctx.arc(r, r, r, 0, Math.PI * 2);
+  ctx.fill();
+  return Texture.from(canvas);
+}
+
+/**
  * Rendu batché des flashs d'impact (`HitFlashes`, `net/client.ts`).
  *
  * §4.3 : « le budget VFX passe dans un flash court, large et genereux, pas
@@ -698,7 +1093,20 @@ export class ImpactFlashRenderer {
   }
 
   load(): void {
-    this.#texture = makeGlowTexture(IMPACT_TEXTURE_DIAMETER, '#ffe9b0');
+    this.adoptTexture(makeBurstTexture(IMPACT_TEXTURE_DIAMETER));
+  }
+
+  /**
+   * Rend le renderer capable de dessiner sans canevas 2D.
+   *
+   * ⚠️ **Separe de `load` pour la meme raison que `ProjectileRenderer.adoptTextures`
+   * (tache 9 bis)** : tant que les deux ne faisaient qu'un, `draw` retournait
+   * au premier `if (!texture)` en test et **tout son corps pouvait etre retire
+   * sans qu'une assertion ne bouge** — ce qui etait encore vrai de la teinte
+   * du flash a l'etape 8, la ligne meme que cette etape ajoute.
+   */
+  adoptTexture(texture: Texture): void {
+    this.#texture = texture;
   }
 
   /** `nowMs` doit etre la MEME horloge murale que celle passee a `HitFlashes.spawn`. */
@@ -724,6 +1132,17 @@ export class ImpactFlashRenderer {
       particle.y = flashes.y[i] ?? 0;
       particle.scaleX = scale;
       particle.scaleY = scale;
+      // La teinte de l'arme qui a touche, recopiee a la naissance du flash —
+      // voir `HitFlashes.tint`.
+      //
+      // ⚠️ **`||` et pas `??`, et c'est la seule faute que ce calque puisse
+      // commettre en silence.** `tint` multiplie : un creneau laisse a zero
+      // (un `Uint32Array` neuf, ou un flash ne par un chemin qui oublierait la
+      // teinte) rendrait un flash NOIR, c'est-a-dire invisible, et rien a
+      // l'ecran ne dirait qu'il a eu lieu. Le blanc est l'identite du produit,
+      // donc la texture telle quelle : le flash reste visible, seule sa
+      // couleur est perdue.
+      particle.tint = flashes.tint[i] || 0xffffff;
       particle.alpha = 1 - t;
       children.push(particle);
     }

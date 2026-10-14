@@ -190,6 +190,10 @@ function stubCanvas2d(): void {
     lineCap: '' as unknown,
     lineJoin: '' as unknown,
     stroke: noop,
+    // Étape 8 : l'atlas des trainees peint chaque profil sur son propre
+    // canevas avant de le recopier dans sa bande — `softenAcross` travaille en
+    // `destination-in`, qui ne connait pas les bandes (voir `makeStreakAtlas`).
+    drawImage: noop,
   };
   const canvas = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
   canvas.getContext = (): unknown => context;
