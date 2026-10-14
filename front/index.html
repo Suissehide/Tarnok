@@ -51,10 +51,8 @@
                 Rejoindre
               </button>
             </div>
-            <div class="flex h-[129px] items-stretch gap-[10px]">
-              <button id="open-shop" type="button" class="btn ol flex-1">Boutique</button>
-              <button id="open-options" type="button" class="btn ol flex-1">Options</button>
-            </div>
+            <button id="open-options" type="button" class="btn ol h-[129px]">Options</button>
+            <button id="open-shop" type="button" class="btn ol h-[129px]">Boutique</button>
             <p id="error" class="ol m-0 min-h-[32px] text-center text-[22px]"></p>
           </div>
 
@@ -233,9 +231,7 @@
           </h2>
           <div class="absolute left-1/2 top-[172px] flex -translate-x-1/2 gap-[16px]">
             <button type="button" data-tab="jeu" class="btn btn--tab ol w-[281px]">Jeu</button>
-            <button type="button" data-tab="audio" class="btn btn--tab ol w-[281px]" disabled>
-              Audio — bientôt
-            </button>
+            <button type="button" data-tab="audio" class="btn btn--tab ol w-[281px]">Audio</button>
             <button type="button" data-tab="video" class="btn btn--tab ol w-[281px]">Vidéo</button>
             <button type="button" data-tab="commandes" class="btn btn--tab ol w-[293px]">
               Commandes
@@ -267,6 +263,23 @@
                   </button>
                 </div>
               </div>
+            </div>
+            <div data-panel="audio" class="options-panel hidden">
+              <label class="options-row">
+                <span class="options-label">Volume général</span>
+                <input data-volume="master" type="range" min="0" max="100" class="options-range" />
+                <span data-volume-value="master" class="options-value f-jer"></span>
+              </label>
+              <label class="options-row">
+                <span class="options-label">Musique</span>
+                <input data-volume="music" type="range" min="0" max="100" class="options-range" />
+                <span data-volume-value="music" class="options-value f-jer"></span>
+              </label>
+              <label class="options-row">
+                <span class="options-label">Effets sonores</span>
+                <input data-volume="sfx" type="range" min="0" max="100" class="options-range" />
+                <span data-volume-value="sfx" class="options-value f-jer"></span>
+              </label>
             </div>
             <div data-panel="video" class="options-panel hidden">
               <div class="options-row">

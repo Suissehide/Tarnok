@@ -20,8 +20,9 @@ describe('les options gardees dans le navigateur', () => {
 
   it('relit ce qui a ete garde', () => {
     const s = memoire();
-    expect(saveSettings({ combosOpen: true, minimap: false }, s)).toBe(true);
-    expect(loadSettings(s)).toEqual({ combosOpen: true, minimap: false });
+    const gardees = { combosOpen: true, minimap: false, master: 30, music: 0, sfx: 100 };
+    expect(saveSettings(gardees, s)).toBe(true);
+    expect(loadSettings(s)).toEqual(gardees);
   });
 
   it('ignore un contenu abime ou d un mauvais type, valeur par valeur', () => {
@@ -30,6 +31,12 @@ describe('les options gardees dans le navigateur', () => {
     expect(loadSettings(s)).toEqual(DEFAULT_SETTINGS);
     s.setItem('tarnok.settings', JSON.stringify({ combosOpen: 'oui', minimap: false }));
     expect(loadSettings(s)).toEqual({ ...DEFAULT_SETTINGS, minimap: false });
+  });
+
+  it('borne un volume a [0, 100] et ignore une valeur qui n en est pas une', () => {
+    const s = memoire();
+    s.setItem('tarnok.settings', JSON.stringify({ master: 250, music: -4, sfx: 'fort' }));
+    expect(loadSettings(s)).toMatchObject({ master: 100, music: 0, sfx: DEFAULT_SETTINGS.sfx });
   });
 
   it('survit a un stockage qui leve ou qui manque', () => {

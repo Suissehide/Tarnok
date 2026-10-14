@@ -968,6 +968,15 @@ export class GameClient {
    */
   readonly #loadouts = new Map<number, Loadout>();
   /** Flashs d'impact derives des collisions locales (§4.3). Lecture publique pour le rendu. */
+  /** Impacts et reactions vus depuis le debut : des compteurs QUI MONTENT, pour le son. */
+  #hitCount = 0;
+  #reactionCount = 0;
+  get hitCount(): number {
+    return this.#hitCount;
+  }
+  get reactionCount(): number {
+    return this.#reactionCount;
+  }
   readonly hitFlashes = new HitFlashes(HIT_FLASH_CAPACITY);
   /**
    * Flashs de reaction, ANNONCES par `REACTION` (§6.1). Lecture publique pour
@@ -1869,6 +1878,7 @@ export class GameClient {
       // reaction arrivent par le `DEATHS` existant (§7 du plan : « aucun chemin
       // de mort parallele »), et c'est le rejeu de l'etape 3 qui les place.
       this.reactionFlashes.spawn(msg.x, msg.y, msg.pair, msg.synergyCharge, performance.now());
+      this.#reactionCount++;
       return;
     }
     if (msg.type === MSG.PICKUPS) {
@@ -2199,6 +2209,7 @@ export class GameClient {
           return;
         }
         this.hitFlashes.spawn(this.horde.x[slot] ?? 0, this.horde.y[slot] ?? 0, nowMs);
+        this.#hitCount++;
         // Teinte elementaire, moitie « mes propres projectiles » — voir
         // `#markLocally`. Le test `element !== NEUTRE` recopie celui de
         // `resolveProjectileDamage` (back/src/combat.ts) : une arme neutre ne

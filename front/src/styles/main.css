@@ -502,6 +502,59 @@
     color: var(--color-ink-label);
   }
 
+  /*
+   * Le curseur de volume de la maquette : une cuvette sombre (la tranche
+   * `barsml` ne s'etire pas, jamais) et la poignee `TinyRoundBlueButton` du
+   * pack a l'echelle 1.
+   */
+  .options-range {
+    flex: 1;
+    height: 52px;
+    margin: 0;
+    background: transparent;
+    appearance: none;
+    cursor: pointer;
+  }
+
+  .options-range::-webkit-slider-runnable-track {
+    height: 19px;
+    background: #3b2e2a;
+    border: 3px solid var(--color-outline);
+    box-sizing: border-box;
+  }
+
+  .options-range::-webkit-slider-thumb {
+    appearance: none;
+    width: 52px;
+    height: 52px;
+    margin-top: -17px;
+    border: none;
+    background:
+      url("/tinyswords/UI%20Elements/UI%20Elements/Buttons/TinyRoundBlueButton.png") center / 52px
+      52px no-repeat;
+  }
+
+  .options-range::-moz-range-track {
+    height: 19px;
+    background: #3b2e2a;
+  }
+
+  .options-range::-moz-range-thumb {
+    width: 52px;
+    height: 52px;
+    border: none;
+    background:
+      url("/tinyswords/UI%20Elements/UI%20Elements/Buttons/TinyRoundBlueButton.png") center / 52px
+      52px no-repeat;
+  }
+
+  .options-value {
+    width: 90px;
+    text-align: right;
+    font-size: 38px;
+    color: var(--color-ink);
+  }
+
   .options-toggle {
     display: flex;
     gap: 12px;

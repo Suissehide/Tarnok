@@ -1,10 +1,10 @@
 /**
  * Les options du joueur (maquette 07), gardees dans CE navigateur.
  *
- * ⚠️ **Seulement ce qui marche.** La maquette montre des volumes, une
- * secousse de camera, des degats affiches et une langue : le jeu n'a ni son,
- * ni secousse, ni chiffres de degats, ni traduction. Une option qui ne fait
- * rien ment ; ces lignes viendront avec ce qu'elles reglent.
+ * ⚠️ **Seulement ce qui marche.** La maquette montre aussi une secousse de
+ * camera, des degats affiches et une langue : le jeu n'a ni secousse, ni
+ * chiffres de degats, ni traduction. Une option qui ne fait rien ment ; ces
+ * lignes viendront avec ce qu'elles reglent.
  *
  * `localStorage` peut manquer ou lever (navigation privee, stockage bloque) :
  * chaque acces est garde, et les valeurs par defaut s'appliquent alors.
@@ -14,9 +14,19 @@ export interface Settings {
   combosOpen: boolean;
   /** La mini-carte est affichee. */
   minimap: boolean;
+  /** Volumes, de 0 a 100 (`audio/audio.ts`). */
+  master: number;
+  music: number;
+  sfx: number;
 }
 
-export const DEFAULT_SETTINGS: Settings = { combosOpen: false, minimap: true };
+export const DEFAULT_SETTINGS: Settings = {
+  combosOpen: false,
+  minimap: true,
+  master: 80,
+  music: 50,
+  sfx: 80,
+};
 
 const KEY = 'tarnok.settings';
 
@@ -32,6 +42,9 @@ export function loadSettings(storage: Pick<Storage, 'getItem'> | null = safeStor
       combosOpen:
         typeof parsed.combosOpen === 'boolean' ? parsed.combosOpen : DEFAULT_SETTINGS.combosOpen,
       minimap: typeof parsed.minimap === 'boolean' ? parsed.minimap : DEFAULT_SETTINGS.minimap,
+      master: volume(parsed.master, DEFAULT_SETTINGS.master),
+      music: volume(parsed.music, DEFAULT_SETTINGS.music),
+      sfx: volume(parsed.sfx, DEFAULT_SETTINGS.sfx),
     };
   } catch {
     return { ...DEFAULT_SETTINGS };
@@ -49,6 +62,13 @@ export function saveSettings(
   } catch {
     return false;
   }
+}
+
+/** Un volume garde, borne a [0, 100] ; sinon la valeur par defaut. */
+function volume(v: unknown, fallback: number): number {
+  return typeof v === 'number' && Number.isFinite(v)
+    ? Math.min(100, Math.max(0, Math.round(v)))
+    : fallback;
 }
 
 function safeStorage(): Storage | null {

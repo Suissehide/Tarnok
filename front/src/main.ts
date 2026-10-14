@@ -17,6 +17,7 @@ import '@fontsource/alegreya-sans/700.css';
 import '@fontsource/space-mono';
 import './styles/main.css';
 
+import { AudioEngine, type CueSnapshot, cuesBetween } from './audio/audio';
 import { renderCombos } from './ui/combos';
 import { API_URL, ASSETS_BASE, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
@@ -138,12 +139,26 @@ el<HTMLButtonElement>('open-shop').addEventListener('click', () => {
 // Les options (maquette 07) : gardees dans ce navigateur, appliquees au
 // depart de chaque partie.
 let settings = loadSettings();
+// Le son : synthetise (`audio/audio.ts`), reveille au premier geste du joueur
+// — les navigateurs refusent de jouer avant. La musique du menu d'abord.
+const audio = new AudioEngine(settings);
+audio.playMusic('menu');
+const unlockAudio = (): void => audio.unlock();
+window.addEventListener('pointerdown', unlockAudio);
+window.addEventListener('keydown', unlockAudio);
+// Un petit clic sur chaque bouton de l'interface.
+document.addEventListener('click', (e) => {
+  if ((e.target as HTMLElement | null)?.closest('button')) {
+    audio.play('click');
+  }
+});
 const optionsScreen = el('options-screen');
 const options = wireOptions(
   optionsScreen,
   () => settings,
   (draft) => {
     settings = draft;
+    audio.setVolumes(draft);
     el('options-status').textContent = saveSettings(draft)
       ? 'Options enregistrées.'
       : 'Options appliquées pour cette session (stockage indisponible).';
@@ -152,6 +167,8 @@ const options = wireOptions(
     optionsScreen.classList.add('hidden');
     lobby.classList.remove('hidden');
   },
+  // Les volumes s'entendent pendant qu'on les regle.
+  (draft) => audio.setVolumes(draft),
 );
 el<HTMLButtonElement>('open-options').addEventListener('click', () => {
   el('options-status').textContent = '';
@@ -426,6 +443,7 @@ function join(code: string): void {
         loadingEl.root.classList.add('hidden');
         room.classList.add('hidden');
         hud.classList.remove('hidden');
+        audio.playMusic('game');
         // Les options du joueur, au depart de la partie.
         el('hud-minimap').parentElement?.classList.toggle('hidden', !settings.minimap);
         if (settings.combosOpen) {
@@ -707,8 +725,28 @@ function join(code: string): void {
    * Factorise entre le ticker Pixi (`stage.run`) et la poignee de debogage
    * `step()` ci-dessous, qui n'emprunte pas le ticker.
    */
+  let lastCues: CueSnapshot | null = null;
   function renderFrame(now: number, dt: number): RenderState {
-    return composeFrame(client, stage, screens, now, dt);
+    const state = composeFrame(client, stage, screens, now, dt);
+    // Le son de la partie, deduit de ce qui a change depuis l'image d'avant.
+    if (!hud.classList.contains('hidden')) {
+      const cur: CueSnapshot = {
+        kills: client.kills,
+        hits: client.hitCount,
+        reactions: client.reactionCount,
+        xp: state.xp,
+        level: client.level,
+        gold: client.gold,
+        hp: state.players.find((p) => p.id === state.localId)?.hp ?? 0,
+        bossCharging: client.bossCharge !== null,
+        abilityCooldown: client.abilityCooldownTicks,
+      };
+      for (const cue of cuesBetween(lastCues, cur)) {
+        audio.play(cue);
+      }
+      lastCues = cur;
+    }
+    return state;
   }
 
   stage.run(renderFrame);

@@ -14,6 +14,10 @@ function ecran(): HTMLElement {
         <button data-value="true"></button><button data-value="false"></button>
       </div>
     </div>
+    <div data-panel="audio">
+      <input data-volume="music" type="range" min="0" max="100" />
+      <span data-volume-value="music"></span>
+    </div>
     <div data-panel="commandes"><ul id="options-controls"></ul></div>
     <button id="options-apply"></button><button id="options-back"></button>`;
   return root;
@@ -56,5 +60,22 @@ describe('l ecran d options', () => {
       false,
     );
     expect(root.querySelectorAll('#options-controls li').length).toBeGreaterThan(3);
+  });
+
+  it('un curseur de volume s entend tout de suite, et Retour rend l ancien volume', () => {
+    const root = ecran();
+    const onPreview = vi.fn();
+    const o = wireOptions(root, () => DEFAULT_SETTINGS, vi.fn(), vi.fn(), onPreview);
+    o.open();
+    const curseur = root.querySelector<HTMLInputElement>('[data-volume="music"]');
+    expect(curseur?.value).toBe(String(DEFAULT_SETTINGS.music));
+    if (curseur) {
+      curseur.value = '12';
+      curseur.dispatchEvent(new Event('input'));
+    }
+    expect(onPreview).toHaveBeenLastCalledWith({ ...DEFAULT_SETTINGS, music: 12 });
+    expect(root.querySelector('[data-volume-value="music"]')?.textContent).toBe('12');
+    root.querySelector<HTMLButtonElement>('#options-back')?.click();
+    expect(onPreview).toHaveBeenLastCalledWith(DEFAULT_SETTINGS);
   });
 });
