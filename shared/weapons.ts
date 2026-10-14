@@ -12,7 +12,7 @@
  * temps dans cette etape puis ont ete retires — voir le §9 de la spec.
  */
 
-import { TICK_HZ, ZONE_RADIUS } from './constants';
+import { PLAYER_SPEED, TICK_HZ, ZONE_RADIUS } from './constants';
 import { ELEMENT, elementOf } from './elements';
 
 /**
@@ -402,8 +402,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     },
     cooldownTicks: 27,
     damage: 4,
-    projectileSpeed: 420,
-    projectileLifeTicks: 12,
+    projectileSpeed: 460,
+    projectileLifeTicks: 11,
     projectileCount: 5,
     spreadRadians: Math.PI / 3,
     element: ELEMENT.BRAISE,
@@ -482,8 +482,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     },
     cooldownTicks: 3,
     damage: 7,
-    projectileSpeed: 420,
-    projectileLifeTicks: 12,
+    projectileSpeed: 460,
+    projectileLifeTicks: 11,
     projectileCount: 1,
     spreadRadians: 0.6,
     element: ELEMENT.BRAISE,
@@ -544,8 +544,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     },
     cooldownTicks: 45,
     damage: 40,
-    projectileSpeed: 350,
-    projectileLifeTicks: 45,
+    projectileSpeed: 460,
+    projectileLifeTicks: 34,
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.BRAISE,
@@ -756,8 +756,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     },
     cooldownTicks: 40,
     damage: 14,
-    projectileSpeed: 380,
-    projectileLifeTicks: 32,
+    projectileSpeed: 460,
+    projectileLifeTicks: 26,
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.POIX,
@@ -774,13 +774,18 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // — donc une arme qui touche souvent seme donc plus souvent l'occasion
     // qu'une zone de Chaux se pose.
     name: 'Poire à chaux',
-    // Bouffee vert vif — trois lobes de poudre, pas un grain —, distincte du
-    // vert-jaune de l'element (0xb4d94a) : la zone au sol dit l'element, pas
-    // le projectile (`assertWeaponLooks`).
+    // Bouffee paille claire — trois lobes de poudre, pas un grain —, distincte
+    // du blanc crayeux de l'element (0xe8dcc0) : la zone au sol dit l'element,
+    // pas le projectile (`assertWeaponLooks`).
+    //
+    // ⚠️ **Eclaircie a l'etape 8** : 0x8fe34c etait un vert pose sur de
+    // l'herbe verte, donc invisible des que le projectile quittait le joueur.
+    // Ce qui se lit sur ce fond est un ecart de VALEUR — toutes les armes de
+    // Chaux et de Vif-argent sont passees en teintes PALES pour cette raison.
     look: {
       shape: 'bouffee',
       diameterPx: 7,
-      tint: 0x8fe34c,
+      tint: 0xf3ecb8,
       glow: 0.35,
       trailTicks: 0.9,
       spinTurns: 0.6,
@@ -788,8 +793,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     },
     cooldownTicks: 17,
     damage: 4,
-    projectileSpeed: 440,
-    projectileLifeTicks: 16,
+    projectileSpeed: 460,
+    projectileLifeTicks: 15,
     projectileCount: 3,
     spreadRadians: 0.4,
     element: ELEMENT.CHAUX,
@@ -799,13 +804,14 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // projectile unique, cadence lente, degats eleves. Le premier ennemi
     // touche doit deja fuir avant qu'un allie n'ait besoin de suivre.
     name: 'Canon à chaux',
-    // Obus olive fonce, la plus terne des deux armes de Chaux : une capsule
-    // qui ne tourne pas, distincte de la teinte de l'element et de celle de
-    // la poire-a-chaux.
+    // Obus os-et-ocre, la plus sourde des deux armes de Chaux sans etre sombre
+    // (etape 8 : 0x4f7a1a, un olive fonce, se perdait dans l'herbe) : une
+    // capsule qui ne tourne pas, distincte de la teinte de l'element et de
+    // celle de la poire-a-chaux.
     look: {
       shape: 'obus',
       diameterPx: 25,
-      tint: 0x4f7a1a,
+      tint: 0xcbbf9a,
       glow: 0.2,
       trailTicks: 1.2,
       spinTurns: 0,
@@ -813,8 +819,8 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     },
     cooldownTicks: 38,
     damage: 15,
-    projectileSpeed: 400,
-    projectileLifeTicks: 34,
+    projectileSpeed: 460,
+    projectileLifeTicks: 30,
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.CHAUX,
@@ -831,12 +837,14 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // touche souvent pose donc plus souvent l'occasion qu'une liaison
     // s'etablisse entre deux ennemis proches.
     name: 'Fronde à mercure',
-    // Dard gris-mauve, le plus fin du catalogue : distinct de l'outremer des
-    // fleches-jumelles et de la teinte de l'element (0xc9c9e8).
+    // Dard lilas pale, le plus fin du catalogue : distinct de l'outremer des
+    // fleches-jumelles et de la teinte de l'element (0xb9b4ff). Eclairci a
+    // l'etape 8 pour la meme raison que les armes de Chaux — un gris-mauve
+    // sombre ne se voit pas sur de l'herbe.
     look: {
       shape: 'dard',
       diameterPx: 13,
-      tint: 0x7a7aa8,
+      tint: 0xd7dcf5,
       glow: 0.3,
       trailTicks: 1.1,
       spinTurns: 0,
@@ -856,12 +864,14 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // d'une liaison doit peser pour que l'allie qui la retrouve trouve deux
     // ennemis deja groupes.
     name: 'Glaive de mercure',
-    // Lame a garde gris fonce qui tourne sur elle-meme, fort halo : le mercure
-    // se voit partir, contrairement a la poix qui n'illumine rien.
+    // Lame a garde lilas argente qui tourne sur elle-meme, fort halo : le
+    // mercure se voit partir, contrairement a la poix qui n'illumine rien.
+    // Eclaircie a l'etape 8 (0x45456e, une ardoise sombre, etait invisible sur
+    // l'herbe) tout en restant plus sourde que le dard de la fronde.
     look: {
       shape: 'glaive',
       diameterPx: 22,
-      tint: 0x45456e,
+      tint: 0xa89bdb,
       glow: 0.5,
       trailTicks: 1.3,
       spinTurns: 2.6,
@@ -969,6 +979,37 @@ assertWeaponLooks(WEAPONS);
  * exactement zero.
  */
 export const PROJECTILE_FADE_REFERENCE_TICKS = 40;
+
+/**
+ * Vitesse MINIMALE d'un projectile, derivee de celle du joueur.
+ *
+ * ⚠️ **Un projectile doit prendre de l'avance sur le joueur qui le suit,
+ * sinon il lui reste colle** — signale deux fois en jouant : *« quand on
+ * avance dans la meme direction, les tirs sont sur moi »*, puis *« les
+ * projectiles se tassent encore »*. `PLAYER_SPEED` vaut 260 : a 350 (l'ancienne
+ * grenade) la vitesse RELATIVE n'etait que de 90 px/s, soit trois dixiemes de
+ * seconde pour sortir d'un corps de 32 px de rayon. Six armes sur dix-sept
+ * etaient dans ce cas.
+ *
+ * 200 px/s d'avance, c'est un corps de joueur franchi en un sixieme de
+ * seconde. `weapons.test.ts` garde le plancher pour toutes les armes, donc une
+ * arme lente ajoutee au catalogue se fera refuser plutot que de se tasser.
+ *
+ * ⚠️ **La PORTEE de chaque arme touchee a ete preservee** (`projectileSpeed x
+ * projectileLifeTicks / TICK_HZ`), a quelques pixels d'arrondi pres : ce tour
+ * corrige une sensation, il ne rallonge aucune arme.
+ *
+ * ⚠️ **L'autre remede — faire HERITER au projectile la vitesse du tireur — a
+ * ete ecarte, et ce n'est pas par paresse.** Le §5.2 tient a ce qu'un tir soit
+ * entierement determine par l'arme, le tick, la position du tireur et la
+ * direction visee : quatre choses que serveur et clients possedent deja. La
+ * vitesse REELLE du joueur, elle, sort d'un pas de simulation avec collisions
+ * et obstacles ; la recopier dans la trajectoire ferait dependre chaque tir
+ * d'un accord au pixel pres entre les deux cotes, et un desaccord se verrait
+ * en coups annonces puis non confirmes. Un plancher de vitesse regle le
+ * symptome sans ouvrir ce contrat.
+ */
+export const MIN_MUZZLE_SPEED = PLAYER_SPEED + 200;
 
 /**
  * Part de sa vie qu'un projectile passe a s'eteindre, de 0 (jamais) a 1 (des

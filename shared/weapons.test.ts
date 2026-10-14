@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { TICK_HZ } from './constants';
+import { PLAYER_SPEED, PROJECTILE_HIT_RADIUS, TICK_HZ } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import { PASSIVES } from './passives';
 import {
@@ -10,6 +10,7 @@ import {
   cooldownWithBonus,
   HEAVY_BLAST_RADIUS,
   MAX_FIRE_RATE_BONUS,
+  MIN_MUZZLE_SPEED,
   PROJECTILE_FADE_REFERENCE_TICKS,
   projectileAlpha,
   projectileTrailPx,
@@ -691,5 +692,37 @@ describe('les calibres de projectile disent les degats', () => {
 
   it('garde les dix-sept calibres distincts deux a deux', () => {
     expect(new Set(WEAPONS.map((w) => w.look.diameterPx)).size).toBe(WEAPONS.length);
+  });
+});
+
+/**
+ * Étape 8 — **le plancher de vitesse**, signale deux fois en jouant : *« quand
+ * on avance dans la meme direction, les tirs sont sur moi »*, puis *« les
+ * projectiles se tassent encore »*.
+ */
+describe('MIN_MUZZLE_SPEED — un projectile prend de l avance sur son tireur', () => {
+  it('fait partir CHAQUE arme plus vite que le joueur, avec de la marge', () => {
+    for (const w of WEAPONS) {
+      expect(w.projectileSpeed, w.name).toBeGreaterThanOrEqual(MIN_MUZZLE_SPEED);
+    }
+  });
+
+  it('derive ce plancher de la vitesse du joueur, jamais d un nombre choisi', () => {
+    // Si `PLAYER_SPEED` monte un jour, le plancher monte avec lui et le test
+    // ci-dessus designera tout seul les armes a reprendre.
+    expect(MIN_MUZZLE_SPEED).toBeGreaterThan(PLAYER_SPEED);
+    expect(MIN_MUZZLE_SPEED - PLAYER_SPEED).toBeGreaterThanOrEqual(200);
+  });
+
+  it('laisse a la plus lente du catalogue de quoi sortir d un corps en un tiers de seconde', () => {
+    const laPlusLente = WEAPONS.reduce((a, b) => (a.projectileSpeed <= b.projectileSpeed ? a : b));
+    const relative = laPlusLente.projectileSpeed - PLAYER_SPEED;
+    // ⚠️ **Le temps qu'il faut au projectile le plus lent pour sortir du corps
+    // de son tireur qui le suit** — un corps fait `2 x PROJECTILE_HIT_RADIUS`
+    // de large. C'est CA que le joueur appelait « les tirs sont sur moi », et
+    // c'est donc ca qu'on mesure, plutot que la vitesse brute.
+    expect((2 * PROJECTILE_HIT_RADIUS) / relative, laPlusLente.name).toBeLessThanOrEqual(1 / 3);
+    // Avant l'etape 8, la grenade (350 px/s) mettait plus du double.
+    expect((2 * PROJECTILE_HIT_RADIUS) / (350 - PLAYER_SPEED)).toBeGreaterThan(2 / 3);
   });
 });

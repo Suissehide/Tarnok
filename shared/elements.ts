@@ -220,7 +220,14 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     // ⚠️ Valeurs de depart, a regler a l'oeil comme le reste du catalogue
     // elementaire.
     name: 'chaux',
-    tint: 0xb4d94a,
+    // ⚠️ **Craie, et plus vert-jaune (etape 8), signale en jouant : *« on voit
+    // pas les chaux et vif-argent »*.** 0xb4d94a etait un vert-jaune pose sur
+    // une carte d'HERBE VERTE, et une zone se dessine a `ZONE_ALPHA` (0,34) :
+    // la teinte arrivait a l'ecran a un tiers de sa force, sur un fond de meme
+    // famille — elle disparaissait. Ce qui se lit sur du vert, c'est un ecart
+    // de VALEUR, pas un ecart de nuance : le blanc crayeux en a un, et il dit
+    // la chaux vive mieux que le vert-jaune.
+    tint: 0xe8dcc0,
     burnPerTick: 0,
     slowFactor: 1,
     damageAmp: 1,
@@ -247,7 +254,12 @@ const ELEMENT_DEFS: readonly Omit<Element, 'id'>[] = [
     // ⚠️ Valeurs de depart, a regler a l'oeil comme le reste du catalogue
     // elementaire.
     name: 'vif-argent',
-    tint: 0xc9c9e8,
+    // ⚠️ **Lilas metallique, et plus gris clair (etape 8), meme raison que la
+    // chaux juste au-dessus** : 0xc9c9e8 etait un gris a peine bleute, donc a
+    // `ZONE_ALPHA` il devenait un voile que l'herbe avalait. Le lilas garde le
+    // metal (il reste desature a cote des deux violets du catalogue d'armes)
+    // mais porte assez de couleur pour exister a un tiers d'opacite.
+    tint: 0xb9b4ff,
     burnPerTick: 0,
     slowFactor: 1,
     damageAmp: 1,
