@@ -28,11 +28,18 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 5c | Chaux, Vif-argent — **les six éléments, les quinze réactions**, tableau clos | 📝 — [spec](docs/specs/2026-09-26-etape-5c-chaux-vif-argent.md) · [plan](docs/plans/2026-09-26-etape-5c-chaux-vif-argent.md) · [résultats](docs/plans/2026-09-26-etape-5c-resultats.md) |
 | 7a | Comptes anonymes, or persistant — **l'or survit à la fermeture du navigateur** | 📝 — [spec](docs/specs/2026-10-10-etape-7a-or-persistant.md) · [plan](docs/plans/2026-10-10-etape-7a-or-persistant.md) · [résultats](docs/plans/2026-10-10-etape-7a-resultats.md) |
 | 7b | La boutique : six armes débloquables, améliorations permanentes | 📝 — [spec](docs/specs/2026-10-11-etape-7b-boutique.md) · [plan](docs/plans/2026-10-11-etape-7b-boutique.md) · [résultats](docs/plans/2026-10-11-etape-7b-resultats.md) |
+| 8 | Classes : un verbe et un trait, choisis au salon — **zéro octet de plus par tick** | 📝 — [spec](docs/specs/2026-10-13-etape-8-classes.md) · [plan](docs/plans/2026-10-13-etape-8-classes.md) · [résultats](docs/plans/2026-10-13-etape-8-resultats.md) |
 
 L'or gagné en run, qui survit depuis l'étape 7a, se dépense depuis l'étape 7b : une boutique à
-l'écran d'accueil vend des améliorations permanentes de statistiques de départ et débloque six
-armes, une par élément. Un achat est définitif — pas de remboursement, pas de remise à zéro — et
-change la run suivante, pas la run en cours.
+l'écran d'accueil vend des améliorations permanentes de statistiques de départ, sur le modèle de
+*Swarm*. Toutes les armes sont disponibles d'emblée. Un achat est définitif — pas de
+remboursement, pas de remise à zéro — et change la run suivante, pas la run en cours.
+
+Depuis l'étape 8, chaque joueur choisit au salon une **classe**, puis son arme de départ. Quatre
+classes — Amorce, Rempart, Appât, Relais — apportent chacune **un verbe**, une capacité active à
+recharge, et **un trait**, qui change une règle plutôt qu'un nombre. Le verbe se déclenche à la
+touche Espace, visé au curseur ; le salon l'arbitre, l'annonce une fois, et chaque côté en dérive
+l'effet — y compris le leurre de l'Appât, qui détourne la horde sans qu'elle dérive d'un pixel.
 
 **Mille ennemis convergent identiquement sur cinq simulations, à partir d'un message de
 19 octets** — contre ~150 ko/s si l'on répliquait leurs positions. C'est la mise en œuvre du
