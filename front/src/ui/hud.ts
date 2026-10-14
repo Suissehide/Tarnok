@@ -1,10 +1,12 @@
-import { PASSIVE_SLOTS, SYNERGY_MAX, WEAPON_SLOTS } from '@shared/constants';
+import { classOf, type VerbKind } from '@shared/classes';
+import { PASSIVE_SLOTS, SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type PassiveKind } from '@shared/passives';
 import { BASE_WEAPON_ID, weaponOf } from '@shared/weapons';
 
 import type { HudInfo } from '../render/stage';
-import { avatar, bonusIcon, ICON_WEAPON, slot } from './icons';
+import { elementBadge, elementLabel } from './element-icons';
+import { avatar, bonusIcon, ICON_WEAPON, icon, slot } from './icons';
 import { formatGold } from './portal';
 
 /**
@@ -102,6 +104,8 @@ export interface HudSource {
   /** Ennemis abattus depuis le debut de la run, tels que `DEATHS` les a annonces. */
   readonly kills: number;
   loadoutOf(playerId: number): Loadout;
+  /** Ce joueur tire-t-il la dague ? Absent : oui (un joueur sans arme de depart). */
+  firesBase?(playerId: number): boolean;
 }
 
 /**
@@ -147,34 +151,42 @@ export function passiveRows(source: HudSource): PassiveRow[] {
  */
 export function paintPassives(list: HTMLElement, rows: readonly PassiveRow[]): void {
   const cells = rows.map((row) =>
-    slot('carved', 'hud-pslot hud-passive', {
+    slot('hud-passive', {
       src: bonusIcon(row.kind),
       count: row.stacks,
       title: `${row.name} ×${row.stacks}`,
     }),
   );
   while (cells.length < PASSIVE_SLOTS) {
-    cells.push(slot('carved', 'hud-pslot', null));
+    cells.push(slot('', null));
   }
   list.replaceChildren(...cells);
 }
 
 /**
- * Peint les emplacements d'armes : l'arme neutre d'abord (elle vit hors des
- * slots, §6.1, mais on la tient bel et bien), puis les `WEAPON_SLOTS` du
- * `Loadout` dans l'ordre du draft — l'ordre des slots.
+ * Peint les emplacements d'armes sur la case ardoise (ecran 04 de la
+ * maquette) : la dague d'abord **si ce joueur la tire** — une arme choisie au
+ * salon la remplace (`firesBase`) —, puis les `WEAPON_SLOTS` du `Loadout`
+ * dans l'ordre du draft, chacune avec l'icone de son element.
  */
-export function paintWeapons(list: HTMLElement, loadout: Loadout | null): void {
-  const ids = loadout ? [BASE_WEAPON_ID, ...loadout.weaponIds] : [];
+export function paintWeapons(list: HTMLElement, loadout: Loadout | null, firesBase = true): void {
+  const ids = loadout ? [...(firesBase ? [BASE_WEAPON_ID] : []), ...loadout.weaponIds] : [];
   const cells = ids.map((id) =>
-    slot('paperx', 'hud-slot', {
-      src: ICON_WEAPON,
-      count: id === BASE_WEAPON_ID ? 1 : (loadout?.stacksOfWeapon(id) ?? 0),
-      title: weaponOf(id).name,
-    }),
+    slot(
+      '',
+      {
+        src: ICON_WEAPON,
+        count: id === BASE_WEAPON_ID ? 1 : (loadout?.stacksOfWeapon(id) ?? 0),
+        title: `${weaponOf(id).name} — ${elementLabel(weaponOf(id).element)}`,
+      },
+      'paperx',
+    ),
   );
-  while (cells.length < WEAPON_SLOTS + 1) {
-    cells.push(slot('paperx', 'hud-slot', null));
+  for (const [i, id] of ids.entries()) {
+    cells[i]?.append(elementBadge(weaponOf(id).element, 22));
+  }
+  while (cells.length < WEAPON_SLOTS + (firesBase ? 1 : 0)) {
+    cells.push(slot('', null, 'paperx'));
   }
   list.replaceChildren(...cells);
 }
@@ -257,9 +269,59 @@ export function paintHud(
   // deux ecritures du meme montant se contrediraient tot ou tard.
   el.gold.textContent = formatGold(source.gold);
   paintPassives(el.passiveList, passiveRows(source));
-  paintWeapons(el.weapons, id === null ? null : source.loadoutOf(id));
+  paintWeapons(
+    el.weapons,
+    id === null ? null : source.loadoutOf(id),
+    id === null ? true : (source.firesBase?.(id) ?? true),
+  );
   // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
   // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme
   // un plantage plutot que comme une pause voulue.
   el.freeze.classList.toggle('hidden', !info.frozen);
+}
+
+/** L'icone du verbe de chaque classe : un choix d'affichage, comme `BONUS_ICONS`. */
+const VERB_ICONS: Readonly<Record<VerbKind, number>> = {
+  amorce: 7,
+  rempart: 6,
+  appat: 4,
+  relais: 8,
+};
+
+/** La case du verbe, cherchee une fois par `main.ts`. */
+export interface AbilityElements {
+  box: HTMLElement;
+  icon: HTMLImageElement;
+  cooldown: HTMLElement;
+  name: HTMLElement;
+}
+
+/**
+ * Peint la case du verbe : l'icone de la classe, son nom, et la recharge en
+ * secondes tant qu'elle court (`data-ready="false"`, icone assombrie par la
+ * CSS). Cachee sans classe — un joueur arrive en cours de partie n'a pas de
+ * verbe.
+ *
+ * ⚠️ **La recharge affichee est celle du MIROIR** (`GameClient`, derivee de
+ * la derniere annonce) : le client ne decide de rien, il montre quand le salon
+ * acceptera de nouveau.
+ */
+export function paintAbility(
+  el: AbilityElements,
+  classId: number | null,
+  cooldownTicks: number,
+): void {
+  const classe = classId === null ? undefined : classOf(classId);
+  el.box.classList.toggle('hidden', !classe);
+  if (!classe) {
+    return;
+  }
+  const src = icon(VERB_ICONS[classe.verb]);
+  if (el.icon.getAttribute('src') !== src) {
+    el.icon.src = src;
+  }
+  el.name.textContent = classe.label;
+  const pret = cooldownTicks <= 0;
+  el.box.dataset.ready = pret ? 'true' : 'false';
+  el.cooldown.textContent = pret ? '' : `${Math.ceil(cooldownTicks / TICK_HZ)}`;
 }

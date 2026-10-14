@@ -1,4 +1,6 @@
+import type { LobbyMessage } from '@shared/protocol';
 import { bonusesOf } from '@shared/shop';
+import { weaponOf } from '@shared/weapons';
 
 import { Keyboard } from './input/keyboard';
 import { Mouse } from './input/mouse';
@@ -13,11 +15,19 @@ import '@fontsource/alegreya-sans/700.css';
 import '@fontsource/space-mono';
 import './styles/main.css';
 
+import { renderCombos } from './ui/combos';
 import { API_URL, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
-import { type HudElements, paintHud, paintWeapons } from './ui/hud';
+import {
+  type AbilityElements,
+  type HudElements,
+  paintAbility,
+  paintHud,
+  paintWeapons,
+} from './ui/hud';
+import { Minimap } from './ui/minimap';
 import { formatGold, PortalScreen } from './ui/portal';
-import { renderRoom } from './ui/room';
+import { type RoomStep, renderRoom } from './ui/room';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
 import { applySkin } from './ui/skin';
 import { paintSummary, type SummaryElements, summaryTone } from './ui/summary';
@@ -297,6 +307,16 @@ function join(code: string): void {
     return;
   }
 
+  const minimap = new Minimap(el<HTMLCanvasElement>('hud-minimap'));
+  const abilityElements: AbilityElements = {
+    box: el('hud-ability'),
+    icon: el<HTMLImageElement>('hud-ability-icon'),
+    cooldown: el('hud-ability-cooldown'),
+    name: el('hud-ability-name'),
+  };
+  let lastMinimap = 0;
+  let lastKnownKey: string | null = null;
+
   /** Menu Echap ouvert : les entrees de CE joueur sont coupees (le monde, lui, tourne). */
   let paused = false;
   const setPaused = (value: boolean): void => {
@@ -329,6 +349,7 @@ function join(code: string): void {
     // C'est aussi l'instant ou la salle d'attente cede la place au jeu.
     (map) => {
       stage.drawObstacles(map);
+      minimap.setObstacles(map);
       room.classList.add('hidden');
       hud.classList.remove('hidden');
     },
@@ -348,12 +369,35 @@ function join(code: string): void {
   );
   const roomElements = {
     players: el('room-players'),
+    stepClass: el<HTMLButtonElement>('room-step-class'),
+    stepWeapon: el<HTMLButtonElement>('room-step-weapon'),
+    classes: el('room-classes'),
     weapons: el('room-weapons'),
     start: el<HTMLButtonElement>('room-start'),
     hint: el('room-hint'),
   };
-  client.onLobby = (state) =>
-    renderRoom(roomElements, state, (weaponId) => client.pickWeapon(weaponId));
+  // La classe d'abord, l'arme ensuite (`ui/room.ts`) : l'etape courante vit
+  // ici, et l'ecran se repeint a chaque `LOBBY` comme a chaque changement d'etape.
+  let roomStep: RoomStep = 'classe';
+  let lastLobby: LobbyMessage | null = null;
+  const paintRoom = (): void => {
+    if (lastLobby) {
+      renderRoom(
+        roomElements,
+        lastLobby,
+        roomStep,
+        (weaponId, classId) => client.pick(weaponId, classId),
+        (step) => {
+          roomStep = step;
+          paintRoom();
+        },
+      );
+    }
+  };
+  client.onLobby = (state) => {
+    lastLobby = state;
+    paintRoom();
+  };
   roomElements.start.addEventListener('click', () => client.startRun());
   el<HTMLButtonElement>('room-leave').addEventListener('click', leave);
   el<HTMLButtonElement>('pause-resume').addEventListener('click', () => setPaused(false));
@@ -366,6 +410,23 @@ function join(code: string): void {
       summary.classList.contains('hidden')
     ) {
       setPaused(!paused);
+    }
+    // Espace : le verbe de la classe, vise au curseur (a defaut, sur soi). Le
+    // client PROPOSE ; c'est l'annonce du salon qui dira s'il a eu lieu.
+    if (e.code === 'Space' && !hud.classList.contains('hidden') && !paused) {
+      e.preventDefault();
+      if (!e.repeat) {
+        const screen = mouse.screenPosition();
+        const vise = screen ? stage.screenToWorld(screen.x, screen.y) : client.localPosition;
+        if (vise) {
+          client.useAbility(vise.x, vise.y);
+        }
+      }
+    }
+    // H replie ou deplie l'aide des combinaisons, en jeu seulement.
+    if (e.key.toLowerCase() === 'h' && !hud.classList.contains('hidden') && !paused) {
+      const panel = el('hud-combos-panel');
+      panel.dataset.collapsed = panel.dataset.collapsed === 'true' ? 'false' : 'true';
     }
   });
 
@@ -436,6 +497,31 @@ function join(code: string): void {
         // le client tient depuis l'etape 4 — `paintHud` en derive les lignes.
         client,
       );
+      paintAbility(abilityElements, client.localClassId, client.abilityCooldownTicks);
+      // La mini-carte a 10 Hz : des milliers de points, inutile a chaque image.
+      const now = performance.now();
+      if (now - lastMinimap > 100) {
+        lastMinimap = now;
+        minimap.draw({
+          localId: client.localId,
+          players: state.players,
+          enemies: client.horde,
+          boss: null,
+        });
+      }
+      // L'aide des combinaisons met en avant ce que l'equipe peut declencher :
+      // les elements de toutes les armes tenues. Repeinte seulement s'ils changent.
+      const known = new Set<number>();
+      for (const p of state.players) {
+        for (const w of client.loadoutOf(p.id).weaponIds) {
+          known.add(weaponOf(w).element);
+        }
+      }
+      const knownKey = [...known].sort().join(',');
+      if (knownKey !== lastKnownKey) {
+        lastKnownKey = knownKey;
+        renderCombos(el('hud-combos'), known);
+      }
       // Le menu Echap montre la partie en cours (ecran 06) : il se lit par-dessus
       // un monde qui continue, donc il se repeint a chaque image.
       if (paused) {
@@ -444,7 +530,11 @@ function join(code: string): void {
         el('pause-gold').textContent = formatGold(client.gold);
         el('pause-level').textContent = `${client.level}`;
         const id = client.localId;
-        paintWeapons(el('pause-weapons'), id === null ? null : client.loadoutOf(id));
+        paintWeapons(
+          el('pause-weapons'),
+          id === null ? null : client.loadoutOf(id),
+          id === null ? true : client.firesBase(id),
+        );
       }
     },
     updateDraft: (): void => draftScreen.update(),

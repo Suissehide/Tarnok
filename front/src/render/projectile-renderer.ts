@@ -351,7 +351,7 @@ export const STREAK_THICKNESS_PX = 16;
  * La trainee : un degrade BLANC, opaque a droite (la tete) et transparent a
  * gauche (la queue), adouci sur les bords.
  *
- * Blanche pour la meme raison que `makeZoneTexture` : `Particle.tint`
+ * Blanche pour la meme raison que `makeZoneAtlas` : `Particle.tint`
  * multiplie, donc une texture blanche rend exactement `look.tint`.
  */
 function makeStreakTexture(): Texture {
@@ -864,7 +864,7 @@ export class ReactionFlashRenderer {
    * Texture BLANCHE, pas doree comme celle du flash d'impact : c'est
    * `reactionTint` qui la colore, et `tint` multiplie — une texture deja
    * coloree rendrait la teinte du couple d'elements fausse (meme raison que
-   * `makeZoneTexture`).
+   * `makeZoneAtlas`).
    */
   /**
    * Vrai des que `load` a pose sa texture. Expose pour le test, comme

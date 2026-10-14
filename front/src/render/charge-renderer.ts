@@ -283,7 +283,7 @@ export function chargeArrows(charge: BossCharge | null, tick: number): ChargeArr
  * aux deux bords.
  *
  * Blanche, parce que `Particle.tint` MULTIPLIE — meme raison que
- * `makeZoneTexture` et `makeBarTexture`. Le degrade porte sur `y` (la largeur du
+ * `makeZoneAtlas` et `makeBarTexture`. Le degrade porte sur `y` (la largeur du
  * couloir) et jamais sur `x` : la longueur, elle, est uniforme — le couloir ne
  * s'estompe pas vers son extremite, puisque le boss ira jusqu'au bout.
  */

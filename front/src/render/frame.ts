@@ -1,3 +1,4 @@
+import type { AbilityUsed } from '@shared/abilities';
 import { type BossCharge, chargeWindsUpAt } from '@shared/boss';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
@@ -47,6 +48,8 @@ import type {
 export interface FrameClient {
   update(now: number, dt: number): RenderState;
   readonly zones: ZoneField;
+  /** Les verbes annonces (etape 8), pour leur calque — voir `AbilityRenderer`. */
+  readonly abilityEvents: readonly AbilityUsed[];
   readonly horde: Horde;
   readonly orbs: DerivedOrbs;
   /**
@@ -90,19 +93,21 @@ export interface FrameClient {
  * rougir la suite au lieu de deplacer le probleme dans un cablage a part.
  */
 export interface FrameStage {
-  drawZones(zones: ZoneField, tick: number): void;
+  /** `tick` decide qui vit ; `timeMs`, l'horloge murale, n'anime que la silhouette. */
+  drawZones(zones: ZoneField, tick: number, timeMs: number): void;
   /**
    * Le couloir de la charge du boss (etape 6a, tache 5 bis). Comme les zones,
    * il prend le TICK de simulation : c'est lui qui fait monter son opacite et
    * qui le fait disparaitre, au meme instant que le deplacement qu'il annonce.
    */
   drawBossCharge(charge: BossCharge | null, tick: number): void;
+  drawAbilities(events: readonly AbilityUsed[], tick: number, timeMs: number): void;
   /**
    * Les anneaux de marque, sous les pieds des ennemis marques (tache 13). Ils
    * lisent la horde comme `drawHorde`, mais au TICK de simulation : c'est lui
    * qui fait expirer une marque.
    */
-  drawMarks(horde: Horde, tick: number): void;
+  drawMarks(horde: Horde, tick: number, timeMs: number): void;
   /**
    * `heldEntityId` : l'entite dont le clip reste fige sur sa premiere image
    * (tache 13) — le boss pendant qu'il arme sa charge, `null` sinon.
@@ -197,11 +202,12 @@ export function composeFrame(
   dt: number,
 ): RenderState {
   const state = client.update(now, dt);
-  stage.drawZones(client.zones, client.hordeTick);
+  stage.drawZones(client.zones, client.hordeTick, now);
   // Juste au-dessus des zones et SOUS tout le reste : c'est un aplat au sol, et
   // le boss doit passer par-dessus le couloir qu'il traverse.
   stage.drawBossCharge(client.bossCharge, client.hordeTick);
-  stage.drawMarks(client.horde, client.hordeTick);
+  stage.drawAbilities(client.abilityEvents, client.hordeTick, now);
+  stage.drawMarks(client.horde, client.hordeTick, now);
   // ⚠️ **L'animation d'attaque ne part qu'au DASH** (tache 13). `stopped` vaut
   // deja 1 pendant le chargement — il sert au clip, pas au mouvement — donc
   // c'est ici, au moment de dessiner, que les deux temps se distinguent.

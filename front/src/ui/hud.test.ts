@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { PASSIVE_SLOTS, SYNERGY_MAX, WEAPON_SLOTS } from '@shared/constants';
+import { PASSIVE_SLOTS, SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { BASE_WEAPON_ID, weaponOf } from '@shared/weapons';
@@ -11,8 +11,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import indexHtml from '../../index.html?raw';
 import type { HudInfo } from '../render/stage';
 import {
+  type AbilityElements,
   type HudElements,
   type HudSource,
+  paintAbility,
   paintHud,
   paintPassives,
   paintSynergy,
@@ -344,7 +346,16 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
   it('montre la dague, puis les emplacements d armes vides', () => {
     paintHud(el, INFO, 0, 0, source);
     expect(el.weapons.children).toHaveLength(WEAPON_SLOTS + 1);
-    expect((el.weapons.firstElementChild as HTMLElement).title).toBe(weaponOf(BASE_WEAPON_ID).name);
+    expect((el.weapons.firstElementChild as HTMLElement).title).toContain(
+      weaponOf(BASE_WEAPON_ID).name,
+    );
+  });
+
+  it('une arme choisie au salon remplace la dague : ni dague, ni sixieme case', () => {
+    const avecArme = Object.assign(source, { firesBase: () => false });
+    paintHud(el, INFO, 0, 0, avecArme);
+    expect(el.weapons.children).toHaveLength(WEAPON_SLOTS);
+    expect(el.weapons.querySelector('[title]')).toBeNull();
   });
 
   it('ecrit le niveau', () => {
@@ -422,5 +433,46 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
 
     paintHud(el, { ...INFO, frozen: false }, 0, 0, source);
     expect(el.freeze.classList.contains('hidden')).toBe(true);
+  });
+});
+
+describe('paintAbility — la case du verbe', () => {
+  const cases = (): AbilityElements => ({
+    box: document.createElement('div'),
+    icon: document.createElement('img'),
+    cooldown: document.createElement('span'),
+    name: document.createElement('span'),
+  });
+
+  it('cachee sans classe : un joueur arrive en cours de partie n a pas de verbe', () => {
+    const el = cases();
+    paintAbility(el, null, 0);
+    expect(el.box.classList.contains('hidden')).toBe(true);
+  });
+
+  it('prete : le nom de la classe, et aucune recharge affichee', () => {
+    const el = cases();
+    paintAbility(el, 3, 0);
+    expect(el.box.classList.contains('hidden')).toBe(false);
+    expect(el.name.textContent).toBe('Relais');
+    expect(el.box.dataset.ready).toBe('true');
+    expect(el.cooldown.textContent).toBe('');
+  });
+
+  it('en recharge : les secondes restantes, arrondies au-dessus', () => {
+    const el = cases();
+    paintAbility(el, 1, TICK_HZ * 2 + 1);
+    expect(el.box.dataset.ready).toBe('false');
+    expect(el.cooldown.textContent).toBe('3');
+  });
+
+  it('une icone par verbe, distinctes', () => {
+    const vues = new Set<string>();
+    for (const id of [0, 1, 2, 3]) {
+      const el = cases();
+      paintAbility(el, id, 0);
+      vues.add(el.icon.getAttribute('src') ?? '');
+    }
+    expect(vues.size).toBe(4);
   });
 });

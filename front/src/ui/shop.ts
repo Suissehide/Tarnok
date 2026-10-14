@@ -1,6 +1,6 @@
 import { priceOf, SHOP_ITEMS, type ShopItem } from '@shared/shop';
 
-import { bonusIcon } from './icons';
+import { bonusIcon, slot } from './icons';
 
 /**
  * La boutique du lobby (etape 7b, tache 8).
@@ -120,17 +120,12 @@ export function renderShop(
       const prix = auMax ? 'Au maximum' : `${priceOf(item, palierPossede + 1)} or`;
 
       const card = document.createElement('div');
-      card.className = 'k k-banner shop-card shop-item';
+      // Le parchemin de la boutique du pack, pave a l'echelle 1.
+      card.className = 'k k-scroll shop-card shop-item';
       card.dataset.itemId = item.id;
       card.dataset.achetable = peut ? 'true' : 'false';
 
-      const frame = document.createElement('span');
-      frame.className = 'k k-paperx slot h-[72px] w-[72px] shrink-0';
-      const img = document.createElement('img');
-      img.src = bonusIcon(item.bonusKind);
-      img.alt = '';
-      img.className = 'h-[46px] w-[46px]';
-      frame.append(img);
+      const frame = slot('', { src: bonusIcon(item.bonusKind), count: null, title: item.label });
 
       const label = document.createElement('span');
       label.className = 'shop-card__name ol';

@@ -1,6 +1,7 @@
 import { MAP_SIZE, ZONE_RADIUS } from '@shared/constants';
-import { elementOf } from '@shared/elements';
-import { zoneElement } from '@shared/protocol';
+import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
+import { zoneElement, zoneReaction } from '@shared/protocol';
+import { zoneLifetimeTicks } from '@shared/reactions';
 import type { ZoneField } from '@shared/zones';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
@@ -31,6 +32,16 @@ import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 
  * cotes du fil (`markInZones`, `reactions`). Une ellipse mentirait sur la
  * regle. C'est la camera seule qui l'ecrase de `VERTICAL_SQUASH`, uniformement
  * avec le reste du monde.
+ *
+ * ⚠️ **Une SILHOUETTE par element, pas seulement une teinte** — *« varier les
+ * effets et zones en fonction des etats (animation, forme, taille) »*. Deux
+ * teintes voisines (Givre et Vif-argent, Braise et Foudre) se confondaient des
+ * qu'on regardait la horde plutot que le sol. Chaque element a desormais son
+ * bord (`lookOf`), son animation (rotation, pulsation, scintillement) et la
+ * zone suit sa vie (`zoneSpawnScale`, `zoneFade`) ; une zone de REACTION a sa
+ * propre case, a double contour et lavis plus dense. Tout reste dans le MEME
+ * `ParticleContainer` : l'atlas est un seul canevas, une case par couple
+ * (element, reaction ou non), et la particule change de case par `uvs`.
  */
 
 /** Marge des bornes explicites, meme raisonnement que `HordeRenderer.BOUNDS_MARGIN`. */
@@ -45,6 +56,12 @@ const BOUNDS_MARGIN = 256;
  * pixelise a l'agrandissement.
  */
 export const ZONE_TEXTURE_DIAMETER = 128;
+
+/**
+ * Epaisseur du lisere, en fraction du cote de la case : ~0,09 du rayon, comme
+ * le plateau opaque du profil radial de la tache 16 (0,88 -> 1).
+ */
+const ZONE_RIM_WIDTH = 0.045;
 
 /**
  * Opacite du BORD d'une zone. **Constante, et c'est un choix**, pas un oubli.
@@ -64,13 +81,299 @@ export const ZONE_TEXTURE_DIAMETER = 128;
  * qu'a 0,22 auparavant : elle blanchit l'ecran ni plus ni moins vite, mais on
  * lit ou elle s'arrete.
  *
- * ⚠️ **Pas de fondu de fin de vie, DELIBEREMENT.** Un fondu ferait une SECONDE
- * garde d'expiration a cote de `ZoneField.aliveAt` : les deux se couvriraient
- * l'une l'autre, et supprimer la bonne (celle qui decide vraiment) ne ferait
- * rougir aucun test. Une seule chose decide qu'une zone se dessine — `aliveAt`,
- * dans `selectZones` — et c'est ce que le test peut donc verifier.
+ * ⚠️ **Le fondu de fin de vie (`zoneFade`) a un PLANCHER, et c'est ce qui le
+ * rend admissible.** Un fondu jusqu'a zero ferait une SECONDE garde
+ * d'expiration a cote de `ZoneField.aliveAt` : les deux se couvriraient l'une
+ * l'autre, et supprimer la bonne ne ferait rougir aucun test. Arrete a
+ * `ZONE_FADE_FLOOR`, il annonce la fin sans jamais la decider : une seule
+ * chose decide qu'une zone se dessine — `aliveAt`, dans `selectZones`.
  */
 export const ZONE_ALPHA = 0.34;
+
+/**
+ * Lavis d'une zone de REACTION, en fraction de l'opacite du bord : plus dense
+ * que `ZONE_FILL_RATIO`, c'est l'« intensite » qui la distingue d'un champ
+ * d'element simple, avec le double contour. Le budget d'encre tient : le banc
+ * `zones` compte 3 a 5 zones vivantes depuis la tache 21, pas des dizaines.
+ */
+export const ZONE_REACTION_FILL_RATIO = 0.48;
+
+/** Duree de l'apparition, en ticks : la zone se pose de `ZONE_SPAWN_OVERSHOOT` plus large et se resserre. */
+export const ZONE_SPAWN_TICKS = 6;
+
+/**
+ * Surplus d'echelle a la pose. **Vers l'exterieur, jamais vers l'interieur** :
+ * une zone qui naitrait petite mentirait 0,2 s sur la regle dans le sens
+ * dangereux (le joueur croirait un ennemi hors de portee). Plus large, elle
+ * dit « ici, maintenant » et retombe sur le vrai rayon.
+ */
+export const ZONE_SPAWN_OVERSHOOT = 0.2;
+
+/** Fraction finale de la vie pendant laquelle la zone s'estompe. */
+export const ZONE_FADE_SPAN = 0.25;
+
+/** Opacite residuelle au dernier tick vivant, en fraction de `ZONE_ALPHA`. Voir la note sur `ZONE_ALPHA`. */
+export const ZONE_FADE_FLOOR = 0.35;
+
+/**
+ * Bord interieur le plus creux qu'une silhouette ait le droit de dessiner, en
+ * fraction du rayon. Les flammes, les dents et les cotes de l'hexagone ondulent
+ * ENTRE ce creux et le rayon de la regle : l'oeil lit toujours un bord a moins
+ * de 15 % du vrai, et l'enveloppe exterieure tombe dessus exactement.
+ */
+export const RIM_MIN = 0.85;
+
+/** Comment le bord d'une silhouette est trace. */
+export type RimStroke = 'plein' | 'pointille' | 'anneaux';
+
+/**
+ * L'identite visuelle d'un element : sa silhouette ET son animation. Partagee
+ * par les zones et les anneaux de marque (`mark-renderer.ts`) — un element doit
+ * se reconnaitre de la meme facon au sol et sous les pieds.
+ */
+export interface ElementLook {
+  /** Rayon du bord a l'angle `theta`, en fraction du rayon, dans [`RIM_MIN`, 1]. */
+  readonly rim: (theta: number) => number;
+  readonly stroke: RimStroke;
+  /** Rotation, en radians par seconde (zones seulement — voir `mark-renderer.ts`). */
+  readonly spin: number;
+  /** Respiration de l'echelle : frequence (Hz) et amplitude (fraction). */
+  readonly pulseHz: number;
+  readonly pulseAmp: number;
+  /** Scintillement de l'opacite : amplitude (fraction retiree au pire) et frequence (Hz). */
+  readonly flicker: number;
+  readonly flickerHz: number;
+}
+
+/** Amplitude de pulsation la plus forte de la table : borne ce que le bord deborde du rayon de la regle. */
+export const MAX_PULSE_AMP = 0.04;
+
+const TAU = Math.PI * 2;
+const SIXTH = Math.PI / 3;
+
+const NEUTRE_LOOK: ElementLook = {
+  rim: () => 1,
+  stroke: 'plein',
+  spin: 0,
+  pulseHz: 0,
+  pulseAmp: 0,
+  flicker: 0,
+  flickerHz: 0,
+};
+
+/**
+ * La table des silhouettes, une ligne par element.
+ *
+ * - **Braise** : neuf langues de flamme (`|sin|^3` : pointes etroites, creux
+ *   larges), qui tournent et vacillent.
+ * - **Givre** : un hexagone de cristal, sommets sur le rayon, qui tourne
+ *   lentement et ne tremble pas — le froid est immobile.
+ * - **Foudre** : une couronne crenelee en dents de scie qui crepite vite et
+ *   tourne a rebours.
+ * - **Poix** : une flaque irreguliere, lente, qui respire profondement.
+ * - **Chaux** : un nuage pointille de bouffees, qui derive.
+ * - **Vif-argent** : des anneaux concentriques ouverts, qui tournent vite et
+ *   pulsent — la seule silhouette dont la rotation se voit sur un cercle,
+ *   grace aux breches.
+ */
+const LOOKS: Record<number, ElementLook> = {
+  [ELEMENT.NEUTRE]: NEUTRE_LOOK,
+  [ELEMENT.BRAISE]: {
+    rim: (t) => RIM_MIN + (1 - RIM_MIN) * Math.abs(Math.sin(4.5 * t)) ** 3,
+    stroke: 'plein',
+    spin: 0.6,
+    pulseHz: 2.2,
+    pulseAmp: 0.03,
+    flicker: 0.25,
+    flickerHz: 7,
+  },
+  [ELEMENT.GIVRE]: {
+    rim: (t) => Math.cos(Math.PI / 6) / Math.cos((((t % SIXTH) + SIXTH) % SIXTH) - Math.PI / 6),
+    stroke: 'plein',
+    spin: 0.25,
+    pulseHz: 0,
+    pulseAmp: 0,
+    flicker: 0.08,
+    flickerHz: 0.5,
+  },
+  [ELEMENT.FOUDRE]: {
+    rim: (t) => {
+      const x = (t / TAU) * 14;
+      return RIM_MIN + (1 - RIM_MIN) * (1 - Math.abs(2 * (x - Math.floor(x)) - 1));
+    },
+    stroke: 'plein',
+    spin: -1.2,
+    pulseHz: 5,
+    pulseAmp: 0.015,
+    flicker: 0.5,
+    flickerHz: 11,
+  },
+  [ELEMENT.POIX]: {
+    rim: (t) => 0.925 + 0.045 * Math.sin(3 * t + 1.3) + 0.03 * Math.sin(5 * t + 0.4),
+    stroke: 'plein',
+    spin: 0.08,
+    pulseHz: 0.4,
+    pulseAmp: MAX_PULSE_AMP,
+    flicker: 0,
+    flickerHz: 0,
+  },
+  [ELEMENT.CHAUX]: {
+    rim: () => 1,
+    stroke: 'pointille',
+    spin: 0.35,
+    pulseHz: 0.8,
+    pulseAmp: 0.02,
+    flicker: 0.12,
+    flickerHz: 1.2,
+  },
+  [ELEMENT.VIF_ARGENT]: {
+    rim: () => 1,
+    stroke: 'anneaux',
+    spin: 1.8,
+    pulseHz: 1.6,
+    pulseAmp: 0.035,
+    flicker: 0,
+    flickerHz: 0,
+  },
+};
+
+/**
+ * La silhouette d'un element. Un element sans ligne retombe sur celle du
+ * Neutre — et le test « deux elements, deux silhouettes » rougit alors, ce qui
+ * est exactement le rappel voulu quand une ligne s'ajoute a `ELEMENT_DEFS`.
+ */
+export function lookOf(element: number): ElementLook {
+  return LOOKS[element] ?? NEUTRE_LOOK;
+}
+
+/**
+ * Facteur d'echelle de la respiration, `1` au repos. `seed` decale la phase
+ * par creneau pour que cent anneaux ne battent pas a l'unisson.
+ */
+export function lookPulse(look: ElementLook, seconds: number, seed: number): number {
+  return 1 + look.pulseAmp * Math.sin(TAU * look.pulseHz * seconds + seed);
+}
+
+/**
+ * Facteur d'opacite du scintillement, dans [1 - `flicker`, 1]. Deux sinus de
+ * frequences incommensurables : un crepitement irregulier, pas un clignotant.
+ * Au carre pour rester a 1 quand les deux s'annulent (t = 0, seed = 0).
+ */
+export function lookFlicker(look: ElementLook, seconds: number, seed: number): number {
+  const w = TAU * look.flickerHz * seconds;
+  const c = 0.5 * (Math.sin(w + seed) + Math.sin(1.73 * w + 2 * seed));
+  return 1 - look.flicker * c * c;
+}
+
+/** Decalage de phase d'un creneau : l'angle d'or, qui ne se repete jamais. */
+export function slotSeed(slot: number): number {
+  return slot * 2.399963;
+}
+
+/** Echelle relative a l'apparition (voir `ZONE_SPAWN_OVERSHOOT`), `1` une fois posee. */
+export function zoneSpawnScale(age: number): number {
+  if (age >= ZONE_SPAWN_TICKS) {
+    return 1;
+  }
+  return 1 + ZONE_SPAWN_OVERSHOOT * (1 - Math.max(0, age) / ZONE_SPAWN_TICKS);
+}
+
+/** Opacite relative en fin de vie : `1`, puis une rampe jusqu'a `ZONE_FADE_FLOOR` au dernier tick. */
+export function zoneFade(age: number, lifetime: number): number {
+  const span = lifetime * ZONE_FADE_SPAN;
+  const start = lifetime - span;
+  if (age <= start || span <= 0) {
+    return 1;
+  }
+  const f = Math.min(1, (age - start) / span);
+  return 1 - (1 - ZONE_FADE_FLOOR) * f;
+}
+
+/** Points du trace d'une silhouette. Assez pour que les 14 dents de la Foudre restent nettes. */
+const RIM_SEGMENTS = 112;
+
+/**
+ * Trace le bord d'une silhouette, centre en (`cx`, `cy`), le rayon `1` de
+ * `look.rim` valant `radius` pixels. Partage avec `mark-renderer.ts`.
+ *
+ * N'emploie que `beginPath`/`moveTo`/`lineTo`/`closePath`/`arc`/`fill`/`stroke`
+ * — ce que le bouchon de `stage.test.ts` fournit.
+ */
+export function strokeLook(
+  ctx: CanvasRenderingContext2D,
+  look: ElementLook,
+  cx: number,
+  cy: number,
+  radius: number,
+  lineWidth: number,
+  alpha: number,
+): void {
+  const color = `rgba(255, 255, 255, ${alpha})`;
+  ctx.strokeStyle = color;
+  ctx.fillStyle = color;
+  ctx.lineWidth = lineWidth;
+  ctx.lineJoin = 'round';
+  if (look.stroke === 'pointille') {
+    const puffs = 14;
+    for (let k = 0; k < puffs; k++) {
+      const t = (TAU * k) / puffs;
+      ctx.beginPath();
+      ctx.arc(cx + radius * Math.cos(t), cy + radius * Math.sin(t), lineWidth * 0.85, 0, TAU);
+      ctx.fill();
+    }
+    return;
+  }
+  if (look.stroke === 'anneaux') {
+    // Trois arcs ouverts dehors, deux dedans decales : les breches sont ce qui
+    // fait voir la rotation.
+    for (const [ring, arcs, width, offset] of [
+      [1, 3, 1, 0],
+      [0.62, 2, 0.6, 0.9],
+    ] as const) {
+      const span = TAU / arcs;
+      for (let k = 0; k < arcs; k++) {
+        const a0 = offset + k * span;
+        ctx.lineWidth = lineWidth * width;
+        ctx.beginPath();
+        ctx.arc(cx, cy, radius * ring, a0, a0 + span * 0.78);
+        ctx.stroke();
+      }
+    }
+    return;
+  }
+  tracePath(ctx, look, cx, cy, radius);
+  ctx.stroke();
+}
+
+function tracePath(
+  ctx: CanvasRenderingContext2D,
+  look: ElementLook,
+  cx: number,
+  cy: number,
+  radius: number,
+): void {
+  ctx.beginPath();
+  for (let k = 0; k <= RIM_SEGMENTS; k++) {
+    const t = (TAU * k) / RIM_SEGMENTS;
+    const r = radius * look.rim(t);
+    const x = cx + r * Math.cos(t);
+    const y = cy + r * Math.sin(t);
+    if (k === 0) {
+      ctx.moveTo(x, y);
+    } else {
+      ctx.lineTo(x, y);
+    }
+  }
+  ctx.closePath();
+}
+
+/** Nombre de cases de l'atlas : une rangee d'elements simples, une de reactions. */
+export const ZONE_CELL_COUNT = ELEMENTS.length * 2;
+
+/** La case d'une zone : l'element en colonne, la rangee du bas si elle porte une reaction. */
+export function zoneCell(kind: number): number {
+  return zoneElement(kind) + (zoneReaction(kind) !== 0 ? ELEMENTS.length : 0);
+}
 
 /**
  * Opacite de l'INTERIEUR de la zone, en fraction de celle du bord (tache 16) :
@@ -84,19 +387,6 @@ export const ZONE_ALPHA = 0.34;
  * zones reagissent (§5.2).
  */
 export const ZONE_FILL_RATIO = 0.32;
-
-/**
- * Debut de la montee vers le lisere, en fraction du rayon : en deça, la zone
- * est un lavis uniforme a `ZONE_FILL_RATIO`.
- */
-const ZONE_RIM_INNER = 0.88;
-
-/**
- * Debut du plateau opaque du lisere. L'ecart avec `ZONE_RIM_INNER` est la
- * rampe ; au-dela, l'opacite ne bouge plus jusqu'au bord, ou le disque
- * s'arrete NET.
- */
-const ZONE_RIM_PEAK = 0.94;
 
 /**
  * Marge de culling : un demi-diametre de zone, pour qu'un disque dont le
@@ -177,49 +467,49 @@ export function selectZones(
 }
 
 /**
- * Disque BLANC a BORD LISIBLE, dessine une fois puis teinte par particule.
+ * Atlas BLANC des silhouettes de zone, cuit une fois puis teinte par particule :
+ * une colonne par element, la rangee du haut pour les zones d'element simple,
+ * celle du bas pour les zones de REACTION.
  *
- * ⚠️ **Blanc, parce que `Sprite.tint` MULTIPLIE.** Une texture deja coloree
- * rendrait la teinte de l'element approximative et differente d'un element a
- * l'autre ; en blanc, `tint` rend exactement `Element.tint`, et
- * `ELEMENT.NEUTRE` (0xffffff) rend exactement la texture — aucun cas
- * particulier a tester, ici comme sur les sprites de la horde.
+ * ⚠️ **Blanc, parce que `Particle.tint` MULTIPLIE** : en blanc, `tint` rend
+ * exactement `Element.tint`, sans qu'un element soit plus fidele qu'un autre.
  *
- * ⚠️ **Le profil de la tache 9 mentait sur une regle de jeu.** Il etait plein
- * jusqu'a 0,65 de rayon puis s'eteignait en fondu jusqu'au bord : on ne
- * pouvait lire nulle part ou la zone S'ARRETE. Or sa frontiere n'est pas
- * decorative — c'est elle qui decide qui est marque (`markInZones`), qui est
- * ralenti (`Horde#computeSlow`) et ou deux zones reagissent (§5.2). Un disque
- * uniformement diffus rend cette frontiere invisible, et l'oeil la place la ou
- * le fondu devient faible, donc **plus pres du centre qu'elle n'est**.
+ * ⚠️ **Le bord dit toujours la verite (tache 16).** Dans chaque case, le trace
+ * est place pour que le bord EXTERIEUR de l'encre — rayon de la silhouette plus
+ * demi-epaisseur du trait — tombe sur le bord de la case, que `zoneScale` ramene
+ * a `ZONE_RADIUS`. Les silhouettes ondulent vers l'interieur (`RIM_MIN`), jamais
+ * au-dela : la ou l'encre s'arrete, la regle s'arrete.
  *
- * Le nouveau profil (tache 16 : *« plus nettes, en anneau de different alpha si
- * besoin »*) est un lavis mince a `ZONE_FILL_RATIO`, une rampe courte, puis un
- * lisere opaque **qui va jusqu'au bord de la texture et s'arrete net** — le
- * `ctx.arc` de rayon `r` fait la coupure. Comme `zoneScale` place ce meme bord
- * exactement a `ZONE_RADIUS`, **le bord qu'on voit est le rayon qui decide**.
- *
- * Tous les arrets sont ecrits en `rgba(...)`, y compris les opaques : c'est ce
- * qui permet au test de lire le profil sans avoir a comprendre deux notations.
+ * Une case de reaction ajoute un second contour a 0,8 du premier et un lavis
+ * plus dense (`ZONE_REACTION_FILL_RATIO`) : on lit « champ de reaction » avant
+ * meme de reconnaitre l'element.
  */
-function makeZoneTexture(diameter: number): Texture {
+function makeZoneAtlas(cell: number): Texture {
   const canvas = document.createElement('canvas');
-  canvas.width = diameter;
-  canvas.height = diameter;
+  canvas.width = cell * ELEMENTS.length;
+  canvas.height = cell * 2;
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     throw new Error('canvas 2d indisponible');
   }
-  const r = diameter / 2;
-  const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
-  gradient.addColorStop(0, `rgba(255, 255, 255, ${ZONE_FILL_RATIO})`);
-  gradient.addColorStop(ZONE_RIM_INNER, `rgba(255, 255, 255, ${ZONE_FILL_RATIO})`);
-  gradient.addColorStop(ZONE_RIM_PEAK, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(1, 'rgba(255, 255, 255, 1)');
-  ctx.fillStyle = gradient;
-  ctx.beginPath();
-  ctx.arc(r, r, r, 0, Math.PI * 2);
-  ctx.fill();
+  const half = cell / 2;
+  const lineWidth = cell * ZONE_RIM_WIDTH;
+  const radius = half - lineWidth / 2;
+  for (let row = 0; row < 2; row++) {
+    const reaction = row === 1;
+    for (const element of ELEMENTS) {
+      const look = lookOf(element.id);
+      const cx = element.id * cell + half;
+      const cy = row * cell + half;
+      ctx.fillStyle = `rgba(255, 255, 255, ${reaction ? ZONE_REACTION_FILL_RATIO : ZONE_FILL_RATIO})`;
+      tracePath(ctx, look, cx, cy, radius);
+      ctx.fill();
+      strokeLook(ctx, look, cx, cy, radius, lineWidth, 1);
+      if (reaction) {
+        strokeLook(ctx, look, cx, cy, radius * 0.8, lineWidth * 0.55, 0.8);
+      }
+    }
+  }
   return Texture.from(canvas);
 }
 
@@ -231,17 +521,21 @@ export class ZoneRenderer {
     // premiere et la frontiere commune, la seule chose qu'il faille voir,
     // serait invisible.
     blendMode: 'add',
-    // La teinte change par zone (l'element) mais jamais d'une image a l'autre
-    // pour une meme zone ; `position` suffirait donc en theorie. `color` reste
-    // dynamique parce que le reservoir de particules est REUTILISE : le
-    // creneau 3 peut porter une zone de Braise a cette image et une de Givre a
-    // la suivante.
-    dynamicProperties: { position: true, color: true, rotation: false, uvs: false },
+    // Tout bouge a chaque image depuis que les zones s'animent : `vertex`
+    // (l'echelle respire), `rotation`, `color` (scintillement et fondu), et
+    // `uvs` parce que le reservoir est REUTILISE — le creneau 3 peut porter la
+    // case de Braise a cette image et celle de Givre a la suivante. Quelques
+    // dizaines de quads : le cout de l'envoi est sans objet.
+    dynamicProperties: { position: true, color: true, rotation: true, uvs: true, vertex: true },
   });
   readonly #pool: Particle[] = [];
   /** Tampon des creneaux retenus par `selectZones`, dimensionne une fois. Voir `#ensureBuffers`. */
   #selected = new Int32Array(0);
-  #texture: Texture | null = null;
+  /**
+   * Les cases de l'atlas, indexees par `zoneCell`. **UN tableau, jamais une
+   * texture nullable de plus** — meme raison que `OrbRenderer#cells`.
+   */
+  #cells: Texture[] = [];
 
   constructor() {
     this.#container.boundsArea = new Rectangle(
@@ -273,12 +567,12 @@ export class ZoneRenderer {
    * indetectable jusqu'a la tache 9 bis.
    */
   get loaded(): boolean {
-    return this.#texture !== null;
+    return this.#cells.length === ZONE_CELL_COUNT;
   }
 
   /** Texture procedurale — hors du constructeur, meme raison que les autres renderers. */
   load(): void {
-    this.adoptTexture(makeZoneTexture(ZONE_TEXTURE_DIAMETER));
+    this.adoptTexture(makeZoneAtlas(ZONE_TEXTURE_DIAMETER));
   }
 
   /**
@@ -297,24 +591,42 @@ export class ZoneRenderer {
    * `load()` cuit sa texture sur un canevas 2D que l'environnement de test ne
    * fournit pas, donc `draw` retournerait a son premier `if (!texture)`.
    */
-  adoptTexture(texture: Texture): void {
-    this.#texture = texture;
+  adoptTexture(atlas: Texture): void {
+    const cell = ZONE_TEXTURE_DIAMETER;
+    this.#cells = Array.from(
+      { length: ZONE_CELL_COUNT },
+      (_, n) =>
+        new Texture({
+          source: atlas.source,
+          frame: new Rectangle(
+            (n % ELEMENTS.length) * cell,
+            Math.floor(n / ELEMENTS.length) * cell,
+            cell,
+            cell,
+          ),
+        }),
+    );
   }
 
   /**
    * `tick` est le tick de horde du client (`GameClient.hordeTick`) : c'est lui
    * qui decide quelles zones sont encore vivantes, avec exactement le meme
-   * predicat que le serveur (§5.3 — l'expiration est DERIVEE, jamais annoncee).
+   * predicat que le serveur (§5.3 — l'expiration est DERIVEE, jamais annoncee),
+   * et quel age elles ont (apparition, fondu).
+   *
+   * `timeMs` est l'horloge MURALE, et ne sert qu'a l'animation (rotation,
+   * respiration, scintillement) : au tick, a 30 Hz, une rotation saccaderait.
+   * Elle ne decide de rien — meme partage que `HordeRenderer.draw`.
    */
-  draw(zones: ZoneField, tick: number, view: ViewBounds): void {
-    const texture = this.#texture;
-    if (!texture) {
+  draw(zones: ZoneField, tick: number, view: ViewBounds, timeMs: number): void {
+    if (!this.loaded) {
       return;
     }
-    this.#ensureBuffers(zones.capacity, texture);
+    this.#ensureBuffers(zones.capacity);
 
     const count = selectZones(zones, tick, view, this.#selected);
     const scale = zoneScale(ZONE_TEXTURE_DIAMETER);
+    const seconds = timeMs / 1000;
 
     const children = this.#container.particleChildren;
     children.length = 0;
@@ -324,14 +636,28 @@ export class ZoneRenderer {
       if (!particle) {
         break;
       }
+      const kind = zones.kind[i] ?? 0;
+      const element = zoneElement(kind);
+      const look = lookOf(element);
+      // Une zone de reaction tourne plus vite : elle est l'evenement, le champ
+      // simple n'est que le terrain.
+      const spin = zoneReaction(kind) !== 0 ? look.spin * 1.6 : look.spin;
+      const age = tick - (zones.bornTick[i] ?? 0);
+      const seed = slotSeed(i);
+
+      particle.texture = this.#cells[zoneCell(kind)] ?? particle.texture;
       particle.x = zones.x[i] ?? 0;
       particle.y = zones.y[i] ?? 0;
-      particle.scaleX = scale;
-      particle.scaleY = scale;
+      // Un seul facteur pour les deux axes : la zone reste un CERCLE en monde.
+      const s = scale * zoneSpawnScale(age) * lookPulse(look, seconds, seed);
+      particle.scaleX = s;
+      particle.scaleY = s;
+      particle.rotation = seed + spin * seconds;
       // Teinte de l'element, sans jamais tester lequel : `ELEMENT.NEUTRE`
       // porte 0xffffff, l'identite du produit (voir `shared/elements.ts`).
-      particle.tint = elementOf(zoneElement(zones.kind[i] ?? 0)).tint;
-      particle.alpha = ZONE_ALPHA;
+      particle.tint = elementOf(element).tint;
+      particle.alpha =
+        ZONE_ALPHA * zoneFade(age, zoneLifetimeTicks(kind)) * lookFlicker(look, seconds, seed);
       children.push(particle);
     }
     this.#container.update();
@@ -347,10 +673,11 @@ export class ZoneRenderer {
    * vivantes et visibles a la fois. Ne grandit jamais deux fois — la capacite
    * est une constante partagee.
    */
-  #ensureBuffers(capacity: number, texture: Texture): void {
+  #ensureBuffers(capacity: number): void {
     if (this.#selected.length < capacity) {
       this.#selected = new Int32Array(capacity);
     }
+    const texture = this.#cells[0] as Texture;
     while (this.#pool.length < capacity) {
       this.#pool.push(new Particle({ texture, anchorX: 0.5, anchorY: 0.5 }));
     }

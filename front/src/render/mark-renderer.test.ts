@@ -5,11 +5,11 @@ import {
   MAX_ENTITIES,
   PROJECTILE_HIT_RADIUS,
 } from '@shared/constants';
-import { ELEMENT, elementOf } from '@shared/elements';
+import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { Container, type Particle, type ParticleContainer, Texture, TextureSource } from 'pixi.js';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import { BODY_SCALE } from './horde-renderer';
 import {
@@ -22,7 +22,7 @@ import {
   MarkRingRenderer,
   selectMarkedRings,
 } from './mark-renderer';
-import { type ViewBounds, ZONE_ALPHA } from './zone-renderer';
+import { lookOf, MAX_PULSE_AMP, type ViewBounds, ZONE_ALPHA } from './zone-renderer';
 
 /**
  * Taches 13 et 15 de l'etape 5a, venues de l'auteur en jouant :
@@ -44,7 +44,7 @@ import { type ViewBounds, ZONE_ALPHA } from './zone-renderer';
  *    degrade large.
  *
  * ⚠️ **Ce fichier tourne sous jsdom, et depuis la tache 15 seulement.** C'est
- * ce qui rend le PROFIL de la texture atteignable : `makeRingTexture` a besoin
+ * ce qui rend le PROFIL de la texture atteignable : `makeRingAtlas` a besoin
  * d'un `document.createElement('canvas')`, et son contexte 2D est bouchonne
  * plus bas comme `stage.test.ts` le fait deja. Sans ça, « plus nette et plus
  * fine » n'aurait ete garde par rien du tout.
@@ -289,12 +289,13 @@ describe('selectMarkedRings — un anneau par ennemi marque, et rien ne se parta
  * 2D dont jsdom ne fournit pas le contexte, donc `draw` retournerait a son
  * premier `if (!texture)` et tout son corps pourrait etre retire en silence.
  */
-function drawnRings(horde: Horde, view: ViewBounds = TOUTE_LA_CARTE): Particle[] {
+function drawnRings(horde: Horde, view: ViewBounds = TOUTE_LA_CARTE, timeMs = 0): Particle[] {
   const renderer = new MarkRingRenderer();
+  // L'atlas : une case par element, cote a cote.
   renderer.adoptTexture(
     new Texture({
       source: new TextureSource({
-        width: MARK_RING_TEXTURE_DIAMETER,
+        width: MARK_RING_TEXTURE_DIAMETER * ELEMENTS.length,
         height: MARK_RING_TEXTURE_DIAMETER,
       }),
     }),
@@ -302,7 +303,7 @@ function drawnRings(horde: Horde, view: ViewBounds = TOUTE_LA_CARTE): Particle[]
 
   const world = new Container();
   renderer.attach(world);
-  renderer.draw(horde, TICK, view);
+  renderer.draw(horde, TICK, view, timeMs);
 
   const container = world.children[0] as ParticleContainer;
   return [...(container.particleChildren as Particle[])];
@@ -428,94 +429,79 @@ describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => 
     const renderer = new MarkRingRenderer();
     const world = new Container();
     renderer.attach(world);
-    renderer.draw(horde, TICK, TOUTE_LA_CARTE);
+    renderer.draw(horde, TICK, TOUTE_LA_CARTE, 0);
 
     expect((world.children[0] as ParticleContainer).particleChildren).toHaveLength(0);
     expect(renderer.loaded).toBe(false);
   });
 });
 
-/** Un arret du degrade radial, tel que la texture le pose reellement. */
-interface Stop {
-  readonly at: number;
-  readonly alpha: number;
-}
-
-const stops: Stop[] = [];
-
 /**
- * Bouchonne le contexte 2D et cuit la texture d'anneau POUR DE VRAI, en passant
- * par `load()`.
- *
- * ⚠️ **C'est le seul moyen d'atteindre `makeRingTexture`**, et donc la seule
- * chose qui garde *« plus nette et plus fine »*. jsdom ne fournit pas de
- * contexte 2D (il faudrait le paquet `canvas`) ; `stage.test.ts` bouchonne le
- * sien depuis la tache 9 bis pour la meme raison. Ici le bouchon ne fait pas
- * rien : il ENREGISTRE les arrets du degrade, qui sont le profil du trait.
+ * *« Varier les effets en fonction des etats »* : la marque se reconnait a sa
+ * silhouette et a son animation, plus seulement a sa teinte.
  */
-function bakeRingTexture(): void {
-  const noop = (): void => undefined;
-  const gradient = {
-    addColorStop(at: number, color: string): void {
-      const parsed = /rgba\([^)]*,\s*([\d.]+)\s*\)/.exec(color);
-      stops.push({ at, alpha: Number(parsed?.[1]) });
-    },
-  };
-  const context = {
-    createRadialGradient: () => gradient,
-    fillStyle: '' as unknown,
-    beginPath: noop,
-    arc: noop,
-    fill: noop,
-  };
-  const proto = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
-  proto.getContext = (): unknown => context;
+describe('MarkRingRenderer.draw — une silhouette et une animation par element', () => {
+  function unEnnemiMarque(element: number): Horde {
+    const horde = hordeAt([{ x: 3000, y: 3000 }]);
+    horde.applyMark(0, element, 1, TICK);
+    return horde;
+  }
 
-  const renderer = new MarkRingRenderer();
-  renderer.load();
-  expect(renderer.loaded).toBe(true);
-}
+  it('prend la case de son element dans l atlas : deux elements, deux formes', () => {
+    const cases = ELEMENTS.filter((e) => e.id !== ELEMENT.NEUTRE).map(
+      (e) => drawnRings(unEnnemiMarque(e.id))[0]?.texture.frame.x,
+    );
 
-/**
- * ⚠️ **Tache 15, etape 3 : *« plus nettes et plus fines »*.** La tache 13
- * posait un degrade de 0,40 de rayon de large, dont l'opacite variait partout —
- * c'est ce que l'auteur a lu comme un cercle mou. Ce bloc garde la FORME du
- * trait, pas ses valeurs : des bornes de lecture (un quart de rayon, un
- * dixieme de rampe), jamais une recopie des constantes de production.
- */
-describe('makeRingTexture — le profil du trait, nette et fine', () => {
-  beforeAll(bakeRingTexture);
-
-  it('laisse le centre entierement transparent : c est un anneau, pas un disque', () => {
-    // Un disque plein masquerait l'ennemi qu'il est cense designer.
-    expect(stops[0]).toEqual({ at: 0, alpha: 0 });
+    expect(new Set(cases).size).toBe(cases.length);
   });
 
-  it('atteint l opacite pleine quelque part : un trait, pas un voile', () => {
-    expect(Math.max(...stops.map((s) => s.alpha))).toBe(1);
+  /**
+   * La respiration multiplie les DEUX axes : l'ellipse reste une ellipse posee
+   * au sol (`MARK_RING_SQUASH`), elle ne fait que battre, dans la marge.
+   */
+  it('respire avec l horloge murale sans perdre son aplatissement', () => {
+    const horde = unEnnemiMarque(ELEMENT.VIF_ARGENT);
+    const t0 = drawnRings(horde, TOUTE_LA_CARTE, 0)[0];
+    const t1 = drawnRings(horde, TOUTE_LA_CARTE, 370)[0];
+
+    expect(t1?.scaleX).not.toBe(t0?.scaleX);
+    expect((t1?.scaleY ?? 0) / (t1?.scaleX ?? 1)).toBeCloseTo(MARK_RING_SQUASH, 6);
+    expect(t1?.scaleX ?? 0).toBeLessThanOrEqual(MARK_RING_SCALE * (1 + MAX_PULSE_AMP));
+    // Pas de rotation : la particule est aplatie, et Pixi tourne apres l'echelle.
+    expect(t1?.rotation).toBe(0);
   });
 
-  it('trace un trait FIN : moins d un quart de rayon d encre', () => {
-    const opaques = stops.filter((s) => s.alpha === 1);
-    const interieur = stops.filter((s) => s.alpha === 0 && s.at < (opaques[0]?.at ?? 0));
-    const bordInterieur = Math.max(...interieur.map((s) => s.at));
+  it('fait crepiter la Foudre, sans jamais depasser l opacite de l anneau', () => {
+    const horde = unEnnemiMarque(ELEMENT.FOUDRE);
+    const alphas = [0, 40, 90, 130, 170].map(
+      (ms) => drawnRings(horde, TOUTE_LA_CARTE, ms)[0]?.alpha ?? 0,
+    );
 
-    // La tache 13 partait de 0,60 : une bande de 0,40 de rayon.
-    expect(1 - bordInterieur).toBeLessThanOrEqual(0.25);
+    expect(Math.min(...alphas)).toBeLessThan(MARK_RING_ALPHA);
+    expect(Math.max(...alphas)).toBeLessThanOrEqual(MARK_RING_ALPHA);
+    expect(Math.min(...alphas)).toBeGreaterThanOrEqual(
+      MARK_RING_ALPHA * (1 - lookOf(ELEMENT.FOUDRE).flicker),
+    );
   });
+});
 
-  it('monte NET : la rampe tient dans un dixieme de rayon', () => {
-    const opaques = stops.filter((s) => s.alpha === 1);
-    const premierOpaque = opaques[0]?.at ?? 0;
-    const interieur = stops.filter((s) => s.alpha === 0 && s.at < premierOpaque);
-    const bordInterieur = Math.max(...interieur.map((s) => s.at));
+describe('MarkRingRenderer.load — l atlas se cuit', () => {
+  it('cuit une case par element sur un contexte 2D', () => {
+    const noop = (): void => undefined;
+    const proto = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
+    proto.getContext = (): unknown => ({
+      beginPath: noop,
+      closePath: noop,
+      moveTo: noop,
+      lineTo: noop,
+      arc: noop,
+      fill: noop,
+      stroke: noop,
+    });
 
-    // La tache 13 montait sur 0,22 de rayon — un degrade, pas un bord.
-    expect(premierOpaque - bordInterieur).toBeLessThanOrEqual(0.1);
-  });
-
-  it('s eteint au bord, et ne bave pas jusqu au coin du quad', () => {
-    expect(stops.at(-1)).toEqual({ at: 1, alpha: 0 });
+    const renderer = new MarkRingRenderer();
+    renderer.load();
+    expect(renderer.loaded).toBe(true);
   });
 });
 

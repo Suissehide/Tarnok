@@ -83,7 +83,7 @@ export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
 
 /**
  * Teinte de l'orbe. Portee par la PARTICULE et non cuite dans la texture
- * depuis la tache 17 — meme raison que `makeZoneTexture` et `makeRingTexture` :
+ * depuis la tache 17 — meme raison que `makeZoneAtlas` et `makeRingAtlas` :
  * en blanc, `tint` rend exactement la couleur demandee.
  */
 export const ORB_TINT = 0x7fd858;

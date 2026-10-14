@@ -188,10 +188,13 @@
   /* --- Cadres 9-slice ----------------------------------------------------- */
 
   /*
-   * Une bordure rendue fait `marge source x --s`. Le pavage suit la regle
-   * mesuree du README : bandes dupliquees en largeur au pas natif, etirees en
-   * hauteur (`repeat stretch`) — sauf `scroll`, qui se raccorde dans les deux
-   * sens. Sans `data-skin`, chaque cadre garde un aplat lisible.
+   * ⚠️ **Echelle 1, toujours, et pavage — jamais d'etirement.** Les planches
+   * sont deja a la bonne taille : une bordure rendue fait exactement la marge
+   * source, et bords comme centre sont DUPLIQUES comme des tuiles
+   * (`border-image-repeat: repeat`). Un element trop petit pour une bordure
+   * native prend un sprite fait pour sa taille (3-slices de 64 px de haut,
+   * cases de 64 x 64), jamais un 9-slice reduit.
+   * Sans `data-skin`, chaque cadre garde un aplat lisible.
    */
   .k {
     position: relative;
@@ -201,42 +204,43 @@
   }
 
   .k-paperx {
-    --s: 0.92;
-    border-width: calc(44px * var(--s)) calc(55px * var(--s)) calc(43px * var(--s))
-      calc(55px * var(--s));
+    border-width: 44px 55px 43px 55px;
     background: #4e5664;
     color: var(--color-slate-text);
   }
 
   .k-banner {
-    --s: 0.5;
-    border-width: calc(68px * var(--s)) calc(84px * var(--s)) calc(111px * var(--s))
-      calc(100px * var(--s));
+    border-width: 68px 84px 111px 100px;
     background: #e6dcae;
     color: var(--color-ink-label);
   }
 
   .k-scroll {
-    --s: 1;
-    border-width: calc(64px * var(--s));
+    border-width: 64px;
     background: #e6dcae;
     color: var(--color-ink-label);
   }
 
   .k-carved {
-    --s: 0.42;
-    border-width: calc(64px * var(--s));
+    border-width: 64px;
+    background: #c9a985;
+  }
+
+  /* Le meme bois sculpte en 3-slice : une bande de 64 px de haut. */
+  .k-carved3 {
+    height: 64px;
+    border-width: 0 64px;
     background: #c9a985;
   }
 
   html[data-skin] .k-paperx {
     background: none;
-    border-image: var(--k-paperx) 44 55 43 55 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-paperx) 44 55 43 55 fill / 1 / 0 repeat;
   }
 
   html[data-skin] .k-banner {
     background: none;
-    border-image: var(--k-banner) 68 84 111 100 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-banner) 68 84 111 100 fill / 1 / 0 repeat;
   }
 
   html[data-skin] .k-scroll {
@@ -246,17 +250,29 @@
 
   html[data-skin] .k-carved {
     background: none;
-    border-image: var(--k-carved) 64 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-carved) 64 fill / 1 / 0 repeat;
+  }
+
+  /* Le bois de la mini-carte : marges natives 85 / 84 / 103 / 84. */
+  .k-wood {
+    border-width: 85px 84px 103px 84px;
+    background: #7a4f3a;
+  }
+
+  html[data-skin] .k-wood {
+    background: none;
+    border-image: var(--k-wood) 85 84 103 84 fill / 1 / 0 repeat;
+  }
+
+  html[data-skin] .k-carved3 {
+    background: none;
+    border-image: url("/tinyswords/UI/Banners/Carved_3Slides.png") 0 64 fill / 1 / 0 repeat;
   }
 
   /* --- Boutons ------------------------------------------------------------ */
 
-  /*
-   * Paliers de bordure (README) : l'epaisseur depend du ROLE, jamais de la
-   * largeur — action principale 64, empile 41 (defaut), onglet 30.
-   */
+  /* Le bouton 9-slice : coins de 64, donc au moins 128 x 128. */
   .btn {
-    --s: 0.64;
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -265,20 +281,21 @@
     box-sizing: border-box;
     border-style: solid;
     border-color: transparent;
-    border-width: calc(64px * var(--s));
+    border-width: 64px;
     background: #6fb3bd;
     font-family: var(--font-meta);
+    /* Une seule taille de texte par famille de bouton, partout. */
+    font-size: 30px;
     line-height: 1.3;
     white-space: nowrap;
     transition: transform 60ms steps(2);
   }
 
-  .btn--main {
-    --s: 1;
-  }
-
+  /* Le petit bouton : le 3-slice du pack, 64 px de haut, centre pave. */
   .btn--tab {
-    --s: 0.47;
+    height: 64px;
+    border-width: 0 64px;
+    font-size: 18px;
   }
 
   .btn--red {
@@ -292,7 +309,11 @@
 
   html[data-skin] .btn {
     background: none;
-    border-image: var(--k-pbblue) 64 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-pbblue) 64 fill / 1 / 0 repeat;
+  }
+
+  html[data-skin] .btn--red {
+    border-image-source: var(--k-pbred);
   }
 
   html[data-skin] .btn:not(:disabled):hover,
@@ -304,16 +325,37 @@
     border-image-source: var(--k-pbblueP);
   }
 
-  html[data-skin] .btn--red {
-    border-image-source: var(--k-pbred);
-  }
-
   html[data-skin] .btn--red:not(:disabled):active {
     border-image-source: var(--k-pbredP);
   }
 
   html[data-skin] .btn:disabled {
     border-image-source: var(--k-pboff);
+  }
+
+  html[data-skin] .btn.btn--tab {
+    border-image: url("/tinyswords/UI/Buttons/Button_Blue_3Slides.png") 0 64 fill / 1 / 0 repeat;
+  }
+
+  html[data-skin] .btn.btn--tab.btn--red {
+    border-image-source: url("/tinyswords/UI/Buttons/Button_Red_3Slides.png");
+  }
+
+  html[data-skin] .btn.btn--tab:not(:disabled):hover,
+  html[data-skin] .btn.btn--tab[aria-pressed="true"] {
+    border-image-source: url("/tinyswords/UI/Buttons/Button_Hover_3Slides.png");
+  }
+
+  html[data-skin] .btn.btn--tab:not(:disabled):active {
+    border-image-source: url("/tinyswords/UI/Buttons/Button_Blue_3Slides_Pressed.png");
+  }
+
+  html[data-skin] .btn.btn--tab.btn--red:not(:disabled):active {
+    border-image-source: url("/tinyswords/UI/Buttons/Button_Red_3Slides_Pressed.png");
+  }
+
+  html[data-skin] .btn.btn--tab:disabled {
+    border-image-source: url("/tinyswords/UI/Buttons/Button_Disable_3Slides.png");
   }
 
   .btn:not(:disabled):active,
@@ -323,7 +365,6 @@
 
   /* Les grands boutons du pack : actions majeures des pieds d'ecran. */
   .bbtn {
-    --s: 1.15;
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -331,9 +372,10 @@
     box-sizing: border-box;
     border-style: solid;
     border-color: transparent;
-    border-width: calc(47px * var(--s)) calc(45px * var(--s));
+    border-width: 47px 45px;
     background: #3e8fa0;
     font-family: var(--font-meta);
+    font-size: 30px;
     line-height: 1.3;
     white-space: nowrap;
     transition: transform 60ms steps(2);
@@ -349,19 +391,21 @@
 
   html[data-skin] .bbtn {
     background: none;
-    border-image: var(--k-bbblue) 47 45 fill / 1 / 0 repeat stretch;
-  }
-
-  html[data-skin] .bbtn:not(:disabled):active {
-    border-image: var(--k-bbblueP) 36 50 49 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-bbblue) 47 45 fill / 1 / 0 repeat;
   }
 
   html[data-skin] .bbtn--red {
     border-image-source: var(--k-bbred);
   }
 
+  /* Le sprite presse a ses propres marges : la bordure les suit, a l'echelle 1. */
+  html[data-skin] .bbtn:not(:disabled):active {
+    border-width: 36px 50px 49px;
+    border-image: var(--k-bbblueP) 36 50 49 fill / 1 / 0 repeat;
+  }
+
   html[data-skin] .bbtn--red:not(:disabled):active {
-    border-image: var(--k-bbredP) 36 50 49 fill / 1 / 0 repeat stretch;
+    border-image-source: var(--k-bbredP);
   }
 
   .btn:not(:disabled):hover,
@@ -383,19 +427,18 @@
     white-space: nowrap;
   }
 
+  /* Hauteur native de la tranche : le ruban ne s'etire jamais, il s'allonge. */
   .rib {
-    --s: 0.68;
-    height: calc(103px * var(--s));
-    border-width: 0 calc(97px * var(--s)) 0 calc(98px * var(--s));
+    height: 103px;
+    border-width: 0 97px 0 98px;
     /* La face peinte du ruban est un peu au-dessus du centre de sa tranche. */
-    padding-bottom: calc(8px * var(--s));
+    padding-bottom: 8px;
     background: #3a8fa8;
   }
 
   .srib {
-    --s: 0.74;
-    height: calc(54px * var(--s));
-    border-width: 0 calc(62px * var(--s));
+    height: 54px;
+    border-width: 0 62px;
     background: #3a8fa8;
   }
 
@@ -409,14 +452,9 @@
     background: #c9b54a;
   }
 
-  .rib--slate,
-  .srib--slate {
-    background: #5c6c80;
-  }
-
   html[data-skin] .rib {
     background: none;
-    border-image: var(--k-rib0) 0 97 0 98 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-rib0) 0 97 0 98 fill / 1 / 0 repeat;
   }
 
   html[data-skin] .rib--red {
@@ -427,13 +465,9 @@
     border-image-source: var(--k-rib2);
   }
 
-  html[data-skin] .rib--slate {
-    border-image-source: var(--k-rib4);
-  }
-
   html[data-skin] .srib {
     background: none;
-    border-image: var(--k-srib0) 0 62 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-srib0) 0 62 fill / 1 / 0 repeat;
   }
 
   html[data-skin] .srib--red {
@@ -444,83 +478,162 @@
     border-image-source: var(--k-srib2);
   }
 
-  html[data-skin] .srib--slate {
-    border-image-source: var(--k-srib4);
-  }
-
   /* --- Jauges ------------------------------------------------------------- */
 
   /*
-   * Cuvette en 3-slice, remplissage pose dedans (geometrie mesuree du README,
-   * en px source x --s). `--v` est la valeur, deja bornee dans [0, 1] par le
-   * module qui la pose.
+   * Cuvette en 3-slice a sa hauteur native, remplissage pose dedans et pave
+   * au pas de 64 (geometrie mesuree du README). `--v` est la valeur, deja
+   * bornee dans [0, 1] par le module qui la pose.
    */
   .bar {
-    --s: 0.75;
     --v: 0;
     position: relative;
     box-sizing: border-box;
-    height: calc(51px * var(--s));
+    height: 51px;
     border-style: solid;
     border-color: transparent;
-    border-width: 0 calc(24px * var(--s));
+    border-width: 0 24px;
     background: #3b2e2a;
   }
 
-  /* Retrait de 11 px source depuis le bord exterieur, donc 13 dans la bordure. */
+  /* Retrait de 11 px depuis le bord exterieur, donc 13 dans la bordure. */
   .bar__fill {
     position: absolute;
-    left: calc(-13px * var(--s));
-    top: calc(11px * var(--s));
-    height: calc(24px * var(--s));
-    width: calc((100% + 26px * var(--s)) * var(--v));
+    left: -13px;
+    top: 11px;
+    height: 24px;
+    width: calc((100% + 26px) * var(--v));
     background: #d23c3c;
   }
 
   .bar--sml {
-    --s: 1;
-    height: calc(19px * var(--s));
-    border-width: 0 calc(15px * var(--s));
+    height: 19px;
+    border-width: 0 15px;
   }
 
   .bar--sml .bar__fill {
-    left: calc(-5px * var(--s));
-    top: calc(7px * var(--s));
-    height: calc(5px * var(--s));
-    width: calc((100% + 10px * var(--s)) * var(--v));
+    left: -5px;
+    top: 7px;
+    height: 5px;
+    width: calc((100% + 10px) * var(--v));
   }
 
   html[data-skin] .bar {
     background: none;
-    border-image: var(--k-barbig) 0 24 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-barbig) 0 24 fill / 1 / 0 repeat;
   }
 
   html[data-skin] .bar--sml {
-    border-image: var(--k-barsml) 0 15 fill / 1 / 0 repeat stretch;
+    border-image: var(--k-barsml) 0 15 fill / 1 / 0 repeat;
   }
 
   html[data-skin] .bar__fill {
-    background: var(--k-fillbig) 0 0 / auto 100% repeat-x;
+    background: var(--k-fillbig) 0 0 repeat-x;
   }
 
   html[data-skin] .bar--sml .bar__fill {
-    background: var(--k-fillsml) 0 0 / auto 100% repeat-x;
+    background: var(--k-fillsml) 0 0 repeat-x;
   }
 
   /* --- Elements communs --------------------------------------------------- */
 
-  /* Un emplacement d'objet : papier ardoise, icone au centre, compte en coin. */
+  /* Centre une icone dans un cadre. */
   .slot {
-    --s: 0.42;
     display: flex;
     align-items: center;
     justify-content: center;
   }
 
+  /* A l'echelle 1, l'interieur d'un petit cadre est plus etroit que son
+     icone : l'icone garde sa taille et deborde sur la bordure peinte. */
+  .slot > img,
+  .slot-tile > img,
+  .room-player__portrait > img {
+    flex: none;
+    max-width: none;
+  }
+
+  .element-badge svg {
+    display: block;
+  }
+
+  /* La case du pack, a sa taille native : 64 x 64, un seul sprite. */
+  .slot-tile {
+    position: relative;
+    width: 64px;
+    height: 64px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: url("/tinyswords/UI/Banners/Carved_Regular.png") 0 0 / 64px 64px no-repeat;
+  }
+
+  /* La case d'arme : les quatre coins du papier ardoise, 88 x 87, a l'echelle 1. */
+  .slot-x {
+    position: relative;
+    width: 88px;
+    height: 87px;
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: #4e5664;
+  }
+
+  html[data-skin] .slot-x {
+    background: var(--k-paperxs) 0 0 / 88px 87px no-repeat;
+  }
+
+  .slot-x > img {
+    flex: none;
+    max-width: none;
+  }
+
+  /* L'element de l'arme, en coin haut gauche de sa case. */
+  .slot-x > .element-badge {
+    position: absolute;
+    left: -6px;
+    top: -6px;
+  }
+
+  /* La case du verbe : icone assombrie et secondes restantes pendant la recharge. */
+  #hud-ability:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+  }
+
+  #hud-ability[data-ready="false"] .ability-slot > img {
+    filter: grayscale(1) brightness(0.55);
+  }
+
+  .ability-cooldown {
+    position: absolute;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 44px;
+  }
+
+  /* Le badge de niveau : le petit bouton carre du pack, 64 x 64. */
+  .badge-tile {
+    width: 64px;
+    height: 64px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background:
+      url("/tinyswords/UI%20Elements/UI%20Elements/Buttons/TinySquareBlueButton.png") 0 0 / 64px
+      64px no-repeat;
+  }
+
   .slot__count {
     position: absolute;
-    right: -12px;
-    bottom: -18px;
+    right: -8px;
+    bottom: -12px;
     font-size: 26px;
   }
 
@@ -549,8 +662,6 @@
 
   .ui-input {
     box-sizing: border-box;
-    width: 100%;
-    height: 100%;
     background: none;
     border: none;
     outline: none;
@@ -575,7 +686,6 @@
   /* --- Boutique (ecran 10) ------------------------------------------------ */
 
   .shop-card {
-    --s: 0.4;
     display: flex;
     flex-direction: column;
     justify-content: space-between;
@@ -602,23 +712,19 @@
 
   .shop-card__buy {
     min-width: 190px;
-    font-family: var(--font-jer);
-    font-size: 30px;
   }
 
   /* --- Salon (ecran 14) --------------------------------------------------- */
 
   .room-player {
-    --s: 0.6;
     display: flex;
     align-items: center;
     gap: 24px;
-    min-height: 290px;
-    padding: 8px 14px;
+    min-height: 350px;
+    padding: 0 8px;
   }
 
   .room-player__portrait {
-    --s: 0.42;
     width: 120px;
     height: 120px;
     flex: none;
@@ -656,27 +762,107 @@
     font-size: 24px;
   }
 
+  .room-player__class {
+    font-size: 24px;
+    color: var(--color-ink);
+  }
+
+  /* Etape 1 du salon : les classes, une carte ardoise chacune. */
+  .class-grid:not(.hidden) {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+  }
+
+  .class-card {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    min-height: 210px;
+    text-align: left;
+    transition: transform 80ms linear;
+  }
+
+  .class-card:hover {
+    transform: translateY(-3px);
+  }
+
+  .class-card__name {
+    font-size: 30px;
+  }
+
+  .class-card[data-choisie="true"] .class-card__name {
+    color: var(--color-slate-title);
+  }
+
+  .class-card[data-choisie="false"] {
+    filter: brightness(0.85);
+  }
+
+  .class-card__verb {
+    font-size: 21px;
+    line-height: 1.35;
+    color: #fff;
+  }
+
+  .class-card__trait {
+    font-size: 18px;
+    line-height: 1.35;
+    color: var(--color-slate-soft);
+  }
+
+  .class-card__taken {
+    font-size: 16px;
+    color: var(--color-slate-title);
+  }
+
+  /* Etape 2 du salon : les armes, une rangee par element. */
+  .weapon-families:not(.hidden) {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  /* Une famille par ligne : son nom a gauche, ses armes sur deux colonnes. */
+  .weapon-family {
+    display: grid;
+    grid-template-columns: 160px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+  }
+
+  .weapon-family__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 22px;
+    white-space: nowrap;
+  }
+
+  .weapon-family__head .f-meta {
+    color: var(--tint);
+  }
+
+  .weapon-family__list {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 4px 8px;
+  }
+
+  /* La colonne fixe la largeur, pas le nom : un nom long mord sur les bouts
+     arrondis du bouton plutot que d'elargir la grille hors du parchemin. */
+  .weapon-family__list .room-weapon {
+    width: 100%;
+    min-width: 0;
+  }
+
   .room-weapon {
     width: 100%;
-    font-size: 19px;
-  }
-
-  /* --- HUD (ecran 04) ----------------------------------------------------- */
-
-  .hud-slot {
-    width: 88px;
-    height: 88px;
-  }
-
-  .hud-pslot {
-    width: 70px;
-    height: 70px;
   }
 
   /* --- Montee de niveau (ecran 05) ---------------------------------------- */
 
   .draft-card {
-    --s: 0.44;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -692,6 +878,12 @@
 
   .draft-card:not(:disabled):hover {
     transform: translateY(-6px);
+  }
+
+  .draft-card__element {
+    position: absolute;
+    right: -14px;
+    top: -14px;
   }
 
   .draft-card__nature {
@@ -792,11 +984,61 @@
     transition: background 250ms linear;
   }
 
+  /* Une carte que MON inventaire refuse (`blockedReason`, ui/draft.ts). Les
+     jetons des autres restent nets : la carte reste disputable par eux. */
+  .draft-card[data-blocked="true"] > :not(.draft-card__tokens):not(.draft-card__blocked) {
+    filter: grayscale(0.8);
+    opacity: 0.45;
+  }
+
+  .draft-card__blocked {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: auto;
+    padding: 10px 14px;
+    background: #3a2a24;
+    color: #fff;
+  }
+
+  .draft-card__blocked strong {
+    font-family: var(--font-meta);
+    font-size: 22px;
+    font-weight: normal;
+    color: #f0a184;
+  }
+
+  .draft-card__blocked small {
+    font-size: 18px;
+    color: var(--color-off-text);
+  }
+
+  /* --- Aide des combinaisons (HUD, haut gauche) ---------------------------- */
+
+  #hud-combos-panel[data-collapsed="true"] #hud-combos {
+    display: none;
+  }
+
+  /* Trois etats : tenue par l'equipe (nom dore), a completer par un allie
+     (lisible), hors de portee (attenuee). */
+  #hud-combos .combo[data-active="false"][data-partial="false"] {
+    opacity: 0.45;
+  }
+
+  /* Une reaction par ligne : le panneau reste au-dessus des cases d'armes. */
+  #hud-combos .combo {
+    white-space: nowrap;
+  }
+
+  #hud-combos .combo[data-active="true"] .f-meta {
+    color: var(--color-slate-title);
+  }
+
   /* --- Vote d'extraction (bandeau, ne gele rien) -------------------------- */
 
   .portal-choice {
     min-width: 260px;
-    font-size: 26px;
   }
 
   .portal-choice[data-mine="true"] {

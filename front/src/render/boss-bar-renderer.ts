@@ -30,7 +30,7 @@ import { BODY_SCALE } from './horde-renderer';
  * `try/catch` de `Stage.init`) pour deux rectangles. Le plan de la tache 5
  * tranche explicitement : *« si le chemin MinIO n'est pas praticable dans la
  * tache, dessiner la barre en code »*, comme `makeGlowTexture`,
- * `makeZoneTexture`, `makeRingTexture` et l'atlas de projectiles le font deja.
+ * `makeZoneAtlas`, `makeRingAtlas` et l'atlas de projectiles le font deja.
  *
  * ## Deux quads, et c'est tout
  *
@@ -190,7 +190,7 @@ export function bossBarLayout(horde: Horde, boss: BossVitals | null): BossBarLay
  * Carre BLANC opaque, teinte ensuite par particule.
  *
  * Blanc, parce que `Particle.tint` MULTIPLIE — meme raison, mot pour mot, que
- * `makeRingTexture` et `makeZoneTexture` : en blanc, `tint` rend exactement la
+ * `makeRingAtlas` et `makeZoneAtlas` : en blanc, `tint` rend exactement la
  * couleur demandee.
  */
 function makeBarTexture(size: number): Texture {

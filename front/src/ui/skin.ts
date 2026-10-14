@@ -21,7 +21,7 @@ const UIE = 'UI%20Elements/UI%20Elements/';
 /** Un rectangle source : `[x, y, largeur, hauteur]`. */
 type Rect = readonly [number, number, number, number];
 
-/** Neuf cellules, lues de gauche a droite puis de haut en bas. */
+/** Neuf cellules (ou quatre, en 2 x 2), lues de gauche a droite puis de haut en bas. */
 interface Nine {
   file: string;
   cells: readonly Rect[];
@@ -103,6 +103,25 @@ const NINES: Record<string, Nine> = {
       [0, 256, 64, 64],
       [256, 256, 64, 64],
       [640, 256, 64, 64],
+    ],
+  },
+  // Le bois de la mini-carte (ecran 04). Sa bande basse a une marche de 5,2
+  // entre ses bords (README de la maquette) : recousue par rampe.
+  wood: {
+    file: `${UIE}Wood%20Table/WoodTable.png`,
+    cells: grid(cols448(84, 84), cols448(85, 103)),
+    ramp: [7],
+  },
+  // La case d'objet du HUD : les quatre coins EXTERIEURS du papier ardoise,
+  // recadres (44 px de large au lieu de 55), jamais reduits — une case de
+  // 88 x 87 a l'echelle 1, ornements compris.
+  paperxs: {
+    file: `${UIE}Papers/SpecialPaper.png`,
+    cells: [
+      [9, 20, 44, 44],
+      [267, 20, 44, 44],
+      [9, 256, 44, 43],
+      [267, 256, 44, 43],
     ],
   },
   bbblue: bigButton('Buttons/BigBlueButton_Regular.png', 47, 45, 47, 45),
@@ -215,7 +234,11 @@ async function paste(
 function makeAll(): [string, Promise<string>][] {
   return [
     ...Object.entries(NINES).map(
-      ([k, n]) => [k, paste(n.file, n.cells, 3, n.ramp)] as [string, Promise<string>],
+      ([k, n]) =>
+        [k, paste(n.file, n.cells, Math.round(Math.sqrt(n.cells.length)), n.ramp)] as [
+          string,
+          Promise<string>,
+        ],
     ),
     ...Object.entries(THREES).map(
       ([k, t]) =>

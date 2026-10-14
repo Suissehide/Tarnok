@@ -1,7 +1,8 @@
 // @vitest-environment jsdom
 import { CARD, type Card } from '@shared/cards';
-import { TICK_HZ } from '@shared/constants';
+import { PASSIVE_SLOTS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
+import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { WEAPONS, weaponOf } from '@shared/weapons';
@@ -12,6 +13,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 // URL `file:` sous jsdom).
 import indexHtml from '../../index.html?raw';
 import {
+  blockedReason,
   cardDetail,
   cssColor,
   type DraftOutcomeView,
@@ -38,6 +40,8 @@ class FakeClient implements DraftSource {
   draftOutcomes: readonly DraftOutcomeView[] = [];
   draftSettled = false;
   isFrozen = false;
+  /** Absent par defaut, comme chez les doubles qui n'ont pas de miroir d'inventaire. */
+  loadoutOf?(playerId: number): Loadout;
   /** Ce qui est parti sur le fil — c'est la seule chose que l'ecran envoie. */
   readonly sent: number[] = [];
 
@@ -724,5 +728,105 @@ describe('le jeton du tour precedent ne survit pas a l etalage suivant', () => {
     cards(h)[1]?.click();
     expect(h.client.sent).toEqual([1]);
     expect(h.client.sent).not.toContain(NO_TOKEN);
+  });
+});
+
+/** Un inventaire aux slots d'armes pleins : Dague, Eventail, Grenade, Chakram. */
+function fullWeapons(): Loadout {
+  const loadout = new Loadout();
+  for (const id of [0, 1, 4, 5].slice(0, WEAPON_SLOTS)) {
+    loadout.addWeapon(id);
+  }
+  return loadout;
+}
+
+describe('une carte que mon inventaire refuse', () => {
+  function blockedHarness(loadout: Loadout): Harness {
+    const h = harness();
+    h.client.loadoutOf = () => loadout;
+    h.client.draftCards = spread();
+    h.screen.update();
+    return h;
+  }
+
+  it('bloque une arme NOUVELLE quand les slots sont pleins : desactivee, raison affichee, clic sans effet', () => {
+    const h = blockedHarness(fullWeapons());
+    const lance = cards(h)[2];
+    expect(lance?.dataset.blocked).toBe('true');
+    expect(lance?.disabled).toBe(true);
+    const banner = lance?.querySelector('.draft-card__blocked');
+    expect(banner?.textContent).toContain(
+      `Arsenal complet — ${WEAPON_SLOTS}/${WEAPON_SLOTS} armes`,
+    );
+    expect(banner?.textContent).toContain(weaponOf(0).name);
+    lance?.click();
+    expect(h.client.sent).toEqual([]);
+  });
+
+  it('garde visibles les jetons des autres sur une carte bloquee pour moi', () => {
+    const h = blockedHarness(fullWeapons());
+    h.client.intents([[2, 2]]);
+    h.screen.update();
+    expect(tokensOn(h, 2)).toEqual(['2']);
+  });
+
+  it("ne bloque jamais une arme deja possedee : elle s'empile", () => {
+    const h = blockedHarness(fullWeapons());
+    const eventail = cards(h)[0];
+    expect(eventail?.dataset.blocked).toBe('false');
+    expect(eventail?.disabled).toBe(false);
+    expect(eventail?.querySelector('.draft-card__blocked')).toBeNull();
+    eventail?.click();
+    expect(h.client.sent).toEqual([0]);
+  });
+
+  it('bloque un passif NOUVEAU quand les slots de passifs sont pleins', () => {
+    const loadout = new Loadout();
+    // Tous sauf `cadence` (refId 1, celui de l'etalage).
+    for (const id of [0, 2, 3, 4].slice(0, PASSIVE_SLOTS)) {
+      loadout.addPassive(id);
+    }
+    const h = blockedHarness(loadout);
+    const cadence = cards(h)[1];
+    expect(cadence?.disabled).toBe(true);
+    const banner = cadence?.querySelector('.draft-card__blocked');
+    expect(banner?.textContent).toContain(`Passifs complets — ${PASSIVE_SLOTS}/${PASSIVE_SLOTS}`);
+    expect(banner?.textContent).toContain(passiveOf(0).name);
+    cadence?.click();
+    expect(h.client.sent).toEqual([]);
+    // Les armes, elles, rentrent encore.
+    expect(cards(h)[2]?.disabled).toBe(false);
+  });
+
+  it("ne bloque rien sans miroir d'inventaire", () => {
+    const h = harness();
+    h.client.draftCards = spread();
+    h.screen.update();
+    for (const card of cards(h)) {
+      expect(card.dataset.blocked).toBe('false');
+      expect(card.disabled).toBe(false);
+    }
+  });
+
+  it('dit, en tete, que rien ne rentrera quand TOUTES les cartes sont bloquees', () => {
+    const loadout = fullWeapons();
+    for (const id of [0, 2, 3, 4].slice(0, PASSIVE_SLOTS)) {
+      loadout.addPassive(id);
+    }
+    const h = harness();
+    h.client.loadoutOf = () => loadout;
+    // Que des cartes refusees : deux armes nouvelles et un passif nouveau.
+    h.client.draftCards = [spread()[1], spread()[2], spread()[3]] as Card[];
+    h.screen.update();
+    expect(h.status.textContent).toContain('Rien ne rentre dans votre inventaire');
+  });
+
+  it("garde l'invite habituelle tant qu'une carte au moins rentre", () => {
+    const h = blockedHarness(fullWeapons());
+    expect(h.status.textContent).toContain('Posez votre jeton');
+  });
+
+  it('blockedReason rend null pour une carte prenable', () => {
+    expect(blockedReason({ nature: CARD.WEAPON, refId: 3 }, new Loadout())).toBeNull();
   });
 });

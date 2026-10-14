@@ -49,6 +49,9 @@ class RecordingStage implements FrameStage {
   drawBossCharge(...args: unknown[]): void {
     this.#record('couloir-boss', ...args);
   }
+  drawAbilities(...args: unknown[]): void {
+    this.#record('verbes', ...args);
+  }
   drawMarks(...args: unknown[]): void {
     this.#record('marques', ...args);
   }
@@ -99,6 +102,7 @@ const STATE: RenderState = {
 
 class RecordingClient implements FrameClient {
   readonly zones = new ZoneField();
+  readonly abilityEvents = [];
   readonly horde = new Horde(MAX_ENTITIES);
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
   readonly orbFlights = new OrbFlights(8);
@@ -183,7 +187,8 @@ describe('composeFrame — chaque calque recoit son appel', () => {
 
   it('dessine les zones au sol, avec le TICK de horde', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('zones')).toEqual([client.zones, client.hordeTick]);
+    // Le tick decide qui vit ; `NOW` n'anime que la silhouette.
+    expect(stage.argsOf('zones')).toEqual([client.zones, client.hordeTick, NOW]);
   });
 
   /**
@@ -207,7 +212,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
 
   it('dessine les anneaux de marque, avec la horde et le TICK de horde', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('marques')).toEqual([client.horde, client.hordeTick]);
+    expect(stage.argsOf('marques')).toEqual([client.horde, client.hordeTick, NOW]);
   });
 
   /**
@@ -362,11 +367,17 @@ describe('composeFrame — chaque calque recoit son appel', () => {
    * calque le plus bas, le flash de reaction passe devant tous les effets de
    * monde, et les carres des joueurs (avec la camera) viennent en dernier.
    */
+  it('dessine les verbes annonces, avec le TICK de horde', () => {
+    const { stage, client } = compose();
+    expect(stage.argsOf('verbes')?.slice(0, 2)).toEqual([client.abilityEvents, client.hordeTick]);
+  });
+
   it('respecte la hierarchie de calques du §6.6', () => {
     const { stage } = compose();
     expect(stage.order).toEqual([
       'zones',
       'couloir-boss',
+      'verbes',
       'marques',
       'horde',
       'orbes',

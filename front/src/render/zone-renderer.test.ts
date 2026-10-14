@@ -5,19 +5,27 @@ import {
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
 } from '@shared/constants';
-import { ELEMENT, elementOf } from '@shared/elements';
+import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { packZoneKind } from '@shared/protocol';
+import { REACTION } from '@shared/reactions';
 import { ZoneField } from '@shared/zones';
 import { Container, type Particle, type ParticleContainer, Texture, TextureSource } from 'pixi.js';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { describe, expect, it } from 'vitest';
 
 import {
+  lookOf,
+  MAX_PULSE_AMP,
+  RIM_MIN,
   selectZones,
   ZONE_ALPHA,
-  ZONE_FILL_RATIO,
+  ZONE_FADE_FLOOR,
+  ZONE_SPAWN_OVERSHOOT,
+  ZONE_SPAWN_TICKS,
   ZONE_TEXTURE_DIAMETER,
   ZoneRenderer,
+  zoneFade,
   zoneScale,
+  zoneSpawnScale,
 } from './zone-renderer';
 
 /** Une vue qui couvre toute la carte : le culling ne doit alors rien retirer. */
@@ -158,21 +166,31 @@ describe('zoneScale — le disque dessine couvre exactement le rayon de la zone'
  * `zoneScale` disait la bonne chose, personne ne verifiait que le disque
  * dessine s'en servait.
  */
-function drawnZones(zones: ZoneField, tick: number): Particle[] {
+function drawnZones(zones: ZoneField, tick: number, timeMs = 0): Particle[] {
   const renderer = new ZoneRenderer();
+  // L'atlas : une colonne par element, une rangee simple et une de reaction.
   renderer.adoptTexture(
     new Texture({
-      source: new TextureSource({ width: ZONE_TEXTURE_DIAMETER, height: ZONE_TEXTURE_DIAMETER }),
+      source: new TextureSource({
+        width: ZONE_TEXTURE_DIAMETER * ELEMENTS.length,
+        height: ZONE_TEXTURE_DIAMETER * 2,
+      }),
     }),
   );
 
   const world = new Container();
   renderer.attach(world);
-  renderer.draw(zones, tick, TOUTE_LA_CARTE);
+  renderer.draw(zones, tick, TOUTE_LA_CARTE, timeMs);
 
   const container = world.children[0] as ParticleContainer;
   return [...(container.particleChildren as Particle[])];
 }
+
+/**
+ * Un tick ou la zone nee a 50 est POSEE (apparition finie) et loin de son
+ * fondu : l'echelle et l'opacite y valent leur valeur de repos.
+ */
+const POSEE = 50 + ZONE_SPAWN_TICKS + 4;
 
 /** Une zone de Braise nee au tick 50, seule sur la carte. */
 function uneZone(element: number = ELEMENT.BRAISE): ZoneField {
@@ -200,7 +218,7 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
    * qui decide qui est marque et ou deux zones reagissent.
    */
   it('dessine le disque au diametre exact de ZONE_RADIUS', () => {
-    const drawn = drawnZones(uneZone(), 50)[0];
+    const drawn = drawnZones(uneZone(), POSEE)[0];
 
     expect((drawn?.scaleX ?? 0) * ZONE_TEXTURE_DIAMETER).toBeCloseTo(2 * ZONE_RADIUS, 6);
   });
@@ -243,7 +261,7 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
   });
 
   it('pose l opacite du bord, et centre le disque sur la position de la zone', () => {
-    const drawn = drawnZones(uneZone(), 50)[0];
+    const drawn = drawnZones(uneZone(), POSEE)[0];
 
     expect(drawn?.alpha).toBe(ZONE_ALPHA);
     expect(drawn?.anchorX).toBe(0.5);
@@ -262,121 +280,150 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
     const renderer = new ZoneRenderer();
     const world = new Container();
     renderer.attach(world);
-    renderer.draw(uneZone(), 50, TOUTE_LA_CARTE);
+    renderer.draw(uneZone(), 50, TOUTE_LA_CARTE, 0);
 
     expect((world.children[0] as ParticleContainer).particleChildren).toHaveLength(0);
     expect(renderer.loaded).toBe(false);
   });
 });
 
-/** Un arret du degrade radial, tel que la texture le pose reellement. */
-interface Stop {
-  readonly at: number;
-  readonly alpha: number;
-}
-
-const stops: Stop[] = [];
-/** Rayon exterieur du degrade, puis rayon du disque effectivement rempli. */
-const rayons = { degrade: 0, disque: 0 };
-
 /**
- * Bouchonne le contexte 2D et cuit la texture de zone POUR DE VRAI, via
- * `load()`.
- *
- * ⚠️ **C'est le seul moyen d'atteindre `makeZoneTexture`.** jsdom ne fournit
- * pas de contexte 2D (il faudrait le paquet `canvas`) ; `stage.test.ts`
- * bouchonne le sien depuis la tache 9 bis. Ici le bouchon ne fait pas rien : il
- * ENREGISTRE les arrets du degrade et les rayons, qui sont exactement ce que
- * *« une bordure lisible »* et *« le bord dit la verite »* affirment.
+ * *« Varier les effets et zones en fonction des etats (animation, forme,
+ * taille) »* : chaque element a sa silhouette et son animation, et une zone de
+ * reaction se distingue d'une zone d'element simple.
  */
-function bakeZoneTexture(): void {
-  const noop = (): void => undefined;
-  const gradient = {
-    addColorStop(at: number, color: string): void {
-      const parsed = /rgba\([^)]*,\s*([\d.]+)\s*\)/.exec(color);
-      stops.push({ at, alpha: Number(parsed?.[1]) });
-    },
-  };
-  const context = {
-    createRadialGradient: (
-      _x0: number,
-      _y0: number,
-      _r0: number,
-      _x1: number,
-      _y1: number,
-      r1: number,
-    ) => {
-      rayons.degrade = r1;
-      return gradient;
-    },
-    fillStyle: '' as unknown,
-    beginPath: noop,
-    arc: (_x: number, _y: number, r: number): void => {
-      rayons.disque = r;
-    },
-    fill: noop,
-  };
-  const proto = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
-  proto.getContext = (): unknown => context;
-
-  const renderer = new ZoneRenderer();
-  renderer.load();
-  expect(renderer.loaded).toBe(true);
-}
-
-/**
- * ⚠️ **Tache 16, etape 1 : une bordure lisible.** Le profil de la tache 9 etait
- * plein jusqu'a 0,65 de rayon puis s'eteignait en fondu : on ne pouvait lire
- * nulle part ou la zone s'arrete, et l'oeil placait la frontiere la ou le fondu
- * devient faible — donc plus PRES du centre qu'elle n'est. Or cette frontiere
- * decide qui est marque et ou deux zones reagissent.
- *
- * Ce bloc garde la FORME du profil, jamais ses valeurs : des relations (« le
- * bord est le plus opaque », « l'interieur est franchement plus pale »), pas
- * une recopie des constantes de production.
- */
-describe('makeZoneTexture — un bord, et il tombe sur le rayon de la regle', () => {
-  beforeAll(bakeZoneTexture);
+describe('lookOf — une silhouette par element, et le bord reste sur la regle', () => {
+  const ANGLES = Array.from({ length: 360 }, (_, k) => (k * Math.PI) / 180);
 
   /**
-   * ⚠️ **L'assertion centrale de la tache.** Le point le plus opaque est a
-   * l'offset 1 du degrade, c'est-a-dire au bord de la texture — et `zoneScale`
-   * place ce bord exactement a `ZONE_RADIUS` (bloc `zoneScale` plus haut, et
-   * « dessine le disque au diametre exact de ZONE_RADIUS » sur `draw`). **Le
-   * bord qu'on voit est donc le rayon qui decide.**
+   * ⚠️ **LE test de la tache.** La signature d'un element est sa silhouette
+   * echantillonnee, son trace et son animation : deux elements qui la
+   * partageraient ne se distingueraient plus que par la teinte — exactement
+   * ce que l'auteur reprochait. Un element ajoute a `ELEMENT_DEFS` sans ligne
+   * dans la table retombe sur le Neutre et fait rougir ce test.
    */
-  it('met son maximum d opacite AU BORD, pas avant', () => {
-    const max = Math.max(...stops.map((s) => s.alpha));
-    expect(stops.at(-1)).toEqual({ at: 1, alpha: max });
-    expect(max).toBe(1);
+  it('donne a chaque element une forme ET une animation qu aucun autre ne partage', () => {
+    const formes = ELEMENTS.map((e) => {
+      const look = lookOf(e.id);
+      return `${look.stroke}:${ANGLES.map((t) => look.rim(t).toFixed(3)).join(',')}`;
+    });
+    const animations = ELEMENTS.map((e) => {
+      const l = lookOf(e.id);
+      return [l.spin, l.pulseHz, l.pulseAmp, l.flicker, l.flickerHz].join(',');
+    });
+
+    expect(new Set(formes).size).toBe(ELEMENTS.length);
+    expect(new Set(animations).size).toBe(ELEMENTS.length);
   });
 
-  it('laisse l interieur franchement plus pale que le bord : on lit un anneau, pas un aplat', () => {
-    const bord = stops.at(-1)?.alpha ?? 0;
-    expect(stops[0]?.alpha).toBe(ZONE_FILL_RATIO);
-    // Moitie moins au plus : en deça, le disque redevient l'aplat uniforme
-    // dont on ne sait pas dire ou il finit.
-    expect(stops[0]?.alpha).toBeLessThanOrEqual(bord / 2);
+  /**
+   * ⚠️ **Le bord dit toujours la verite (tache 16).** Les silhouettes
+   * ondulent vers l'INTERIEUR, jamais au-dela du rayon de la case — que
+   * `zoneScale` place a `ZONE_RADIUS` — et chacune touche ce rayon quelque
+   * part : l'enveloppe exterieure est la regle.
+   */
+  it('garde chaque silhouette entre RIM_MIN et le rayon, et la fait toucher le rayon', () => {
+    for (const e of ELEMENTS) {
+      const rayons = ANGLES.map((t) => lookOf(e.id).rim(t));
+      expect(Math.min(...rayons)).toBeGreaterThanOrEqual(RIM_MIN - 1e-3);
+      expect(Math.max(...rayons)).toBeLessThanOrEqual(1 + 1e-9);
+      expect(Math.max(...rayons)).toBeGreaterThan(0.97);
+    }
   });
 
-  it('monte NET vers le bord : la rampe tient dans un dixieme de rayon', () => {
-    const dernierPale = Math.max(
-      ...stops.filter((s) => s.alpha === stops[0]?.alpha).map((s) => s.at),
+  it('ne laisse aucune respiration deborder de plus de MAX_PULSE_AMP', () => {
+    for (const e of ELEMENTS) {
+      expect(lookOf(e.id).pulseAmp).toBeLessThanOrEqual(MAX_PULSE_AMP);
+    }
+  });
+});
+
+describe('zoneSpawnScale / zoneFade — la zone suit sa vie', () => {
+  it('se pose plus large que la regle, puis retombe exactement dessus', () => {
+    expect(zoneSpawnScale(0)).toBeCloseTo(1 + ZONE_SPAWN_OVERSHOOT, 9);
+    expect(zoneSpawnScale(ZONE_SPAWN_TICKS / 2)).toBeGreaterThan(1);
+    expect(zoneSpawnScale(ZONE_SPAWN_TICKS)).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Le plancher est ce qui empeche le fondu de devenir une seconde garde
+   * d'expiration** (voir `ZONE_ALPHA`) : au dernier tick vivant, la zone se
+   * voit encore ; c'est `aliveAt` seul qui la retire.
+   */
+  it('s estompe en fin de vie sans jamais s eteindre', () => {
+    const vie = ZONE_LIFETIME_TICKS;
+    expect(zoneFade(vie / 2, vie)).toBe(1);
+    expect(zoneFade(vie - 10, vie)).toBeLessThan(1);
+    expect(zoneFade(vie - 1, vie)).toBeGreaterThanOrEqual(ZONE_FADE_FLOOR);
+    expect(zoneFade(vie, vie)).toBeCloseTo(ZONE_FADE_FLOOR, 9);
+  });
+
+  it('est vue PLUS GRANDE a sa pose, et plus pale a sa fin, que posee', () => {
+    const posee = drawnZones(uneZone(ELEMENT.NEUTRE), POSEE)[0];
+    const pose = drawnZones(uneZone(ELEMENT.NEUTRE), 50)[0];
+    const fin = drawnZones(uneZone(ELEMENT.NEUTRE), 50 + ZONE_LIFETIME_TICKS - 1)[0];
+
+    expect(pose?.scaleX ?? 0).toBeGreaterThan(posee?.scaleX ?? 0);
+    expect(fin?.alpha ?? 1).toBeLessThan(posee?.alpha ?? 0);
+    expect(fin?.alpha ?? 0).toBeGreaterThan(0);
+  });
+});
+
+describe('ZoneRenderer.draw — la silhouette suit l element, la reaction, et le temps', () => {
+  it('prend la case de son element dans l atlas : Braise et Givre ne partagent pas de forme', () => {
+    const braise = drawnZones(uneZone(ELEMENT.BRAISE), POSEE)[0];
+    const givre = drawnZones(uneZone(ELEMENT.GIVRE), POSEE)[0];
+
+    expect(braise?.texture.frame.x).not.toBe(givre?.texture.frame.x);
+  });
+
+  it('distingue une zone de REACTION d une zone d element simple du meme element', () => {
+    const simple = drawnZones(uneZone(ELEMENT.BRAISE), POSEE)[0];
+    const reaction = drawnZones(
+      uneZone(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE)),
+      POSEE,
+    )[0];
+
+    expect(reaction?.texture.frame.x).toBe(simple?.texture.frame.x);
+    expect(reaction?.texture.frame.y).not.toBe(simple?.texture.frame.y);
+    expect(reaction?.tint).toBe(simple?.tint);
+  });
+
+  /**
+   * L'animation est APPLIQUEE, pas seulement decrite par la table : la meme
+   * zone, au meme tick, a deux instants de l'horloge murale, n'est pas
+   * dessinee pareil — et sa respiration reste dans la marge de lecture.
+   */
+  it('anime la zone avec l horloge murale, sans sortir de la marge du rayon', () => {
+    const t0 = drawnZones(uneZone(ELEMENT.VIF_ARGENT), POSEE, 0)[0];
+    const t1 = drawnZones(uneZone(ELEMENT.VIF_ARGENT), POSEE, 370)[0];
+
+    expect(t1?.rotation).not.toBe(t0?.rotation);
+    expect(t1?.scaleX).not.toBe(t0?.scaleX);
+    expect((t1?.scaleX ?? 0) * ZONE_TEXTURE_DIAMETER).toBeLessThanOrEqual(
+      2 * ZONE_RADIUS * (1 + MAX_PULSE_AMP),
     );
-    const premierOpaque = Math.min(...stops.filter((s) => s.alpha === 1).map((s) => s.at));
-
-    expect(premierOpaque - dernierPale).toBeLessThanOrEqual(0.1);
+    expect(t1?.scaleY).toBe(t1?.scaleX);
   });
+});
 
-  /**
-   * ⚠️ **La seconde moitie de « le bord dit la verite ».** Le degre le plus
-   * opaque au bord du DEGRADE ne sert a rien si le disque rempli s'arrete
-   * avant : la zone paraitrait plus petite que `ZONE_RADIUS`. Les deux rayons
-   * valent le demi-cote de la texture, que `zoneScale` ramene a `ZONE_RADIUS`.
-   */
-  it('remplit le disque jusqu au bord de la texture, degrade et trace confondus', () => {
-    expect(rayons.degrade).toBe(ZONE_TEXTURE_DIAMETER / 2);
-    expect(rayons.disque).toBe(ZONE_TEXTURE_DIAMETER / 2);
+describe('ZoneRenderer.load — l atlas se cuit', () => {
+  it('cuit toutes ses cases sur un contexte 2D', () => {
+    const noop = (): void => undefined;
+    const proto = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
+    proto.getContext = (): unknown => ({
+      beginPath: noop,
+      closePath: noop,
+      moveTo: noop,
+      lineTo: noop,
+      arc: noop,
+      fill: noop,
+      stroke: noop,
+    });
+
+    const renderer = new ZoneRenderer();
+    renderer.load();
+    expect(renderer.loaded).toBe(true);
   });
 });
 

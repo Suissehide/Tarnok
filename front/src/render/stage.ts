@@ -1,3 +1,4 @@
+import type { AbilityUsed } from '@shared/abilities';
 import type { BossCharge } from '@shared/boss';
 import { LEVEL_XP_BASE, MAP_SIZE, TICK_HZ } from '@shared/constants';
 import type { Horde } from '@shared/horde';
@@ -18,6 +19,7 @@ import type {
   RunOverSummary,
 } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
+import { AbilityRenderer } from './ability-renderer';
 import { BossBarRenderer } from './boss-bar-renderer';
 import { ChainRenderer } from './chain-renderer';
 import { ChargeRenderer } from './charge-renderer';
@@ -71,6 +73,7 @@ export class Stage {
   #horde = new HordeRenderer(ASSETS_BASE);
   readonly #zones = new ZoneRenderer();
   readonly #charge = new ChargeRenderer();
+  readonly #abilities = new AbilityRenderer();
   readonly #marks = new MarkRingRenderer();
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();
@@ -114,6 +117,9 @@ export class Stage {
   readonly #layers: readonly SceneLayer[] = [
     this.#zones,
     this.#charge,
+    // Les verbes (etape 8) : la zone d'un Rempart et le leurre d'un Appat sont
+    // poses au sol comme le couloir de charge, donc sous les creatures.
+    this.#abilities,
     this.#marks,
     this.#orbs,
     this.#horde,
@@ -138,6 +144,7 @@ export class Stage {
   readonly #procedural: readonly ProceduralLayer[] = [
     this.#zones,
     this.#charge,
+    this.#abilities,
     this.#marks,
     this.#orbs,
     this.#projectiles,
@@ -330,9 +337,12 @@ export class Stage {
     this.#horde.draw(horde, this.viewRect(), timeMs, heldEntityId);
   }
 
-  /** `tick` decide quelles zones sont encore vivantes — voir `ZoneRenderer.draw`. */
-  drawZones(zones: ZoneField, tick: number): void {
-    this.#zones.draw(zones, tick, this.viewRect());
+  /**
+   * `tick` decide quelles zones sont encore vivantes, `timeMs` (horloge murale)
+   * ne fait que les animer — voir `ZoneRenderer.draw`.
+   */
+  drawZones(zones: ZoneField, tick: number, timeMs: number): void {
+    this.#zones.draw(zones, tick, this.viewRect(), timeMs);
   }
 
   /**
@@ -344,9 +354,14 @@ export class Stage {
     this.#charge.draw(charge, tick);
   }
 
-  /** `tick` decide quelles marques sont encore vivantes — voir `MarkRingRenderer.draw`. */
-  drawMarks(horde: Horde, tick: number): void {
-    this.#marks.draw(horde, tick, this.viewRect());
+  /** Les verbes annonces (etape 8) : le tick decide de leur vie, `timeMs` les anime. */
+  drawAbilities(events: readonly AbilityUsed[], tick: number, timeMs: number): void {
+    this.#abilities.draw(events, tick, timeMs);
+  }
+
+  /** `tick` decide quelles marques sont encore vivantes, `timeMs` les anime — voir `MarkRingRenderer.draw`. */
+  drawMarks(horde: Horde, tick: number, timeMs: number): void {
+    this.#marks.draw(horde, tick, this.viewRect(), timeMs);
   }
 
   /**

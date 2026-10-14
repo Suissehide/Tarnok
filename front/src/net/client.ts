@@ -1,10 +1,17 @@
+import {
+  ABILITY_COOLDOWN_TICKS,
+  type AbilityUsed,
+  DECOY_LIFETIME_TICKS,
+  VERB_IDS,
+} from '@shared/abilities';
 import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
 import { chainTargets } from '@shared/chain';
-import { DEFAULT_CLASS_ID } from '@shared/classes';
+import { classOf } from '@shared/classes';
 import {
   CHAIN_JUMPS,
   CHAIN_RADIUS,
+  FIELD_INPUT_DELAY_TICKS,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
   INPUT_HZ,
@@ -19,6 +26,7 @@ import {
   TICK_HZ,
   ZONE_RADIUS,
 } from '@shared/constants';
+import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { Horde, leavesDrop } from '@shared/horde';
@@ -27,8 +35,10 @@ import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
 import {
+  type AbilityUsedMessage,
   type BossChargeMessage,
   decode,
+  encodeAbility,
   encodeDraftToken,
   encodeHello,
   encodeInput,
@@ -51,6 +61,14 @@ import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 
 import { SnapshotBuffer } from './interpolation';
+
+/**
+ * Combien de temps une annonce de verbe reste dans `abilityEvents`, pour le
+ * rendu : plus que la plus longue vie d'un effet visible (zone de Rempart,
+ * leurre), sans grossir sans fin.
+ */
+const ABILITY_EVENT_MEMORY_TICKS = 10 * TICK_HZ;
+
 import { PredictedPlayer } from './prediction';
 
 /**
@@ -992,6 +1010,21 @@ export class GameClient {
 
   /** Charges de boss recues mais pas encore appliquees. Meme discipline que `#pendingZones`. */
   readonly #pendingCharges: BossChargeMessage[] = [];
+  /** Leurres annonces, en attente d'etre plantes au tick deja simule (`#applyDecoy`). */
+  readonly #pendingDecoys: Decoy[] = [];
+  /** Leurres plantes, que l'entree du champ substitue (`#feedFields`). */
+  #decoys: Decoy[] = [];
+  /** La classe du joueur local, lue du dernier `LOBBY` au WELCOME ; `null` sans salle d'attente. */
+  #localClassId: number | null = null;
+  /** Leurres annonces trop tard pour l'anneau, plantes au present. */
+  #lateDecoys = 0;
+  /** Tick du dernier verbe ACCEPTE du joueur local ; `-Infinity` : jamais. */
+  #lastAbilityTick = Number.NEGATIVE_INFINITY;
+  /**
+   * Les verbes annonces recemment, pour le rendu (zones de Rempart, leurres,
+   * eclairs de Relais). Purges au-dela de quelques secondes.
+   */
+  readonly abilityEvents: AbilityUsed[] = [];
 
   /**
    * La charge du boss en cours, ou `null` — annoncee UNE FOIS par le serveur,
@@ -1451,24 +1484,115 @@ export class GameClient {
     return this.#boss;
   }
 
+  /**
+   * Les joueurs qui ont choisi une arme de depart au salon : chez eux, elle
+   * remplace la dague. Rempli au WELCOME depuis le dernier `LOBBY` ; un client
+   * arrive en cours de partie ne connait pas les choix des autres, meme limite
+   * que le miroir d'inventaire.
+   */
+  readonly #withoutBase = new Set<number>();
+
+  /** Ce joueur tire-t-il l'arme neutre ? Meme regle que `Room` (`keepsBase`). */
+  firesBase(playerId: number): boolean {
+    return !this.#withoutBase.has(playerId);
+  }
+
   /** Dernier etat de la salle d'attente, `null` avant le premier `LOBBY`. */
   #lobby: LobbyMessage | null = null;
   /** Appele a chaque `LOBBY` recu, jusqu'au lancement. */
   onLobby: (lobby: LobbyMessage) => void = () => undefined;
 
   /**
-   * Salle d'attente : choisit l'arme de depart (`NO_WEAPON` pour aucune).
-   *
-   * Pas encore d'ecran de choix de classe cote client (tache a venir) : on
-   * envoie `DEFAULT_CLASS_ID`, que le serveur traite comme « pas de choix ».
+   * Salle d'attente : choisit l'arme de depart (`NO_WEAPON` : la dague) et la
+   * classe. **Les deux ensemble**, puisque `PICK` porte les deux : l'ecran
+   * renvoie toujours le couple complet, jamais une moitie.
    */
-  pickWeapon(weaponId: number): void {
-    this.#ws?.send(encodePick(weaponId, DEFAULT_CLASS_ID));
+  pick(weaponId: number, classId: number): void {
+    this.#ws?.send(encodePick(weaponId, classId));
   }
 
   /** Salle d'attente : lance la run (le serveur ignore si on n'est pas l'hote). */
   startRun(): void {
     this.#ws?.send(encodeStart());
+  }
+
+  /**
+   * Demande le verbe de sa classe, vise au point MONDE `(x, y)`.
+   *
+   * ⚠️ **Le client PROPOSE, le salon arbitre** : rien n'est applique ici, ni
+   * la recharge ni l'effet. Un refus est silencieux — aucune annonce
+   * n'arrive. Le joueur ne dit pas quel verbe : c'est le salon qui lit sa
+   * classe (`encodeAbility`).
+   */
+  useAbility(x: number, y: number): void {
+    this.#ws?.send(encodeAbility(this.hordeTick, x, y));
+  }
+
+  /** La classe du joueur local, ou `null` (arrive en cours de partie, sans salle d'attente). */
+  get localClassId(): number | null {
+    return this.#localClassId;
+  }
+
+  /**
+   * Ticks avant que le verbe local soit de nouveau pret, `0` s'il l'est. Derive
+   * de la DERNIERE annonce recue et de la recharge partagee : zero octet par
+   * tick (§5 de la spec de l'etape 8).
+   */
+  get abilityCooldownTicks(): number {
+    const classe = this.#localClassId === null ? undefined : classOf(this.#localClassId);
+    if (!classe) {
+      return 0;
+    }
+    const pret = this.#lastAbilityTick + ABILITY_COOLDOWN_TICKS[classe.verb];
+    return Math.max(0, pret - this.hordeTick);
+  }
+
+  /** Leurres annonces trop tard pour l'anneau, plantes au present (diagnostic, §4.6). */
+  get lateDecoys(): number {
+    return this.#lateDecoys;
+  }
+
+  /**
+   * Un verbe ANNONCE par le salon. Le client derive ensuite son effet de
+   * l'annonce et de son tick, jamais d'un etat envoye :
+   * - **Appat** : un leurre a planter, par rejeu (`#applyDecoy`) ;
+   * - **Relais** : si c'est le joueur local, la prediction se RECALE sur la
+   *   destination, sans lissage — sinon chaque snapshot rattraperait une
+   *   position d'un bout a l'autre de la carte (`PredictedPlayer.teleport`) ;
+   * - **Amorce** : rien ici, sa zone arrive deja par `ZONE` ;
+   * - tous : gardes pour le rendu (`abilityEvents`) et, pour le joueur local,
+   *   la recharge.
+   */
+  #onAbilityUsed(msg: AbilityUsedMessage): void {
+    const used: AbilityUsed = {
+      tick: msg.tick,
+      playerId: msg.playerId,
+      verb: msg.verb,
+      x: msg.x,
+      y: msg.y,
+      targetId: msg.targetId,
+    };
+    this.abilityEvents.push(used);
+    while (
+      this.abilityEvents.length > 0 &&
+      msg.tick - (this.abilityEvents[0]?.tick ?? msg.tick) > ABILITY_EVENT_MEMORY_TICKS
+    ) {
+      this.abilityEvents.shift();
+    }
+    if (msg.playerId === this.#localId) {
+      this.#lastAbilityTick = msg.tick;
+    }
+    if (msg.verb === VERB_IDS.appat) {
+      this.#pendingDecoys.push({
+        playerId: msg.playerId,
+        x: msg.x,
+        y: msg.y,
+        bornTick: msg.tick,
+      });
+    }
+    if (msg.verb === VERB_IDS.relais && msg.playerId === this.#localId) {
+      this.#local?.teleport(msg.x, msg.y);
+    }
   }
 
   connect(): void {
@@ -1671,6 +1795,11 @@ export class GameClient {
       for (const p of this.#lobby?.players ?? []) {
         if (p.weaponId !== NO_WEAPON) {
           this.loadoutOf(p.playerId).addWeapon(p.weaponId);
+          // L'arme choisie REMPLACE la dague (`Room`, `keepsBase`).
+          this.#withoutBase.add(p.playerId);
+        }
+        if (p.playerId === msg.playerId) {
+          this.#localClassId = p.classId;
         }
       }
       this.onMapReady({ mask, cols: probe.cols, rows: probe.rows, cellSize: probe.cellSize });
@@ -1696,6 +1825,10 @@ export class GameClient {
       // Meme discipline que les morts : empiler ici, appliquer (et rejouer) au
       // tick local deja simule — voir `#applyZone`.
       this.#pendingZones.push(msg);
+      return;
+    }
+    if (msg.type === MSG.ABILITY_USED) {
+      this.#onAbilityUsed(msg);
       return;
     }
     if (msg.type === MSG.BOSS_CHARGE) {
@@ -1973,6 +2106,9 @@ export class GameClient {
         snapshot.tick,
         snapshot.players.map((p) => p.x),
         snapshot.players.map((p) => p.y),
+        // Le meme ordre que le serveur, et les identifiants avec : un leurre
+        // retrouve son lanceur par son id (`shared/decoys.ts`).
+        snapshot.players.map((p) => p.id),
       );
     }
 
@@ -1983,13 +2119,7 @@ export class GameClient {
     // fait, ce qui desynchronise `targetField` independamment de toute
     // difference de position.
     if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
-      const seen = this.#history.delayed(tick);
-      if (seen) {
-        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
-          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
-        }
-        this.horde.retarget(seen.x, seen.y);
-      }
+      this.#feedFields(tick, true);
     }
 
     // Le mouvement de la horde est module par `#movementScale` : `0` pendant
@@ -2080,6 +2210,13 @@ export class GameClient {
     this.#hordeHistory.record(tick, this.horde);
     this.#drainPendingZones(tick);
     this.#drainPendingCharges(tick);
+    // Les leurres reecrivent l'anneau comme une charge : AVANT les morts.
+    while (this.#pendingDecoys.length > 0) {
+      const decoy = this.#pendingDecoys.shift();
+      if (decoy) {
+        this.#applyDecoy(decoy, tick);
+      }
+    }
     this.#drainPendingDeaths(tick);
   }
 
@@ -2271,7 +2408,9 @@ export class GameClient {
         continue;
       }
       const loadout = this.loadoutOf(p.id);
-      this.#fireOne(p.id, BASE_WEAPON_ID, loadout, tick, x, y, aimX, aimY);
+      if (this.firesBase(p.id)) {
+        this.#fireOne(p.id, BASE_WEAPON_ID, loadout, tick, x, y, aimX, aimY);
+      }
       for (const weaponId of loadout.weaponIds) {
         this.#fireOne(p.id, weaponId, loadout, tick, x, y, aimX, aimY);
       }
@@ -2574,11 +2713,61 @@ export class GameClient {
    */
   #primeFieldForReplay(atTick: number): void {
     const lastDue = atTick - (((atTick % STEPS_PER_FIELD) + STEPS_PER_FIELD) % STEPS_PER_FIELD);
-    const seen = this.#history.delayed(lastDue);
-    if (seen) {
-      for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
-        this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
-      }
+    this.#feedFields(lastDue, false);
+  }
+
+  /**
+   * L'entree du champ au tick `tick` : les positions RETARDEES, leurres
+   * substitues au tick des positions (`seen.tick`) — la meme fonction et le
+   * meme tick que `Room#step`. Les trois sites du miroir (pas courant, rejeu,
+   * amorce du rejeu) passent ici : trois copies de la regle divergeraient, et
+   * un cran de decalage sur l'entree reassigne toute la horde.
+   */
+  #feedFields(tick: number, retarget: boolean): void {
+    const seen = this.#history.delayed(tick);
+    if (!seen) {
+      return;
+    }
+    const cible = substituteDecoys(seen.ids, seen.x, seen.y, this.#decoys, seen.tick);
+    for (let f = 0; f < cible.x.length && f < this.#fields.length; f++) {
+      this.#fields[f]?.update(cible.x[f] ?? 0, cible.y[f] ?? 0);
+    }
+    if (retarget) {
+      this.horde.retarget(cible.x, cible.y);
+    }
+  }
+
+  /**
+   * Plante un leurre annonce, par rejeu — le patron de `#applyBossCharge`,
+   * eprouve a 0,000 px par le scenario AP2 de `shared/horde.replication.test.ts`.
+   *
+   * Un leurre n'agit que sur des positions de `bornTick` ou plus recentes, et
+   * l'entree du champ est lue `FIELD_INPUT_DELAY_TICKS` en retard : tant que
+   * l'annonce arrive dans ce delai, aucun pas deja simule ne l'a manque. Au-dela,
+   * on restaure l'anneau a la naissance du leurre et on rejoue.
+   */
+  #applyDecoy(decoy: Decoy, currentTick: number): void {
+    // Garde un leurre au-dela de sa vie le temps qu'un rejeu puisse encore
+    // revisiter ses ticks (`ROLLBACK_DEPTH_TICKS`) : `substituteDecoys` ignore
+    // de toute facon un leurre expire au tick des positions.
+    this.#decoys = this.#decoys.filter(
+      (d) =>
+        currentTick - d.bornTick <
+        DECOY_LIFETIME_TICKS + FIELD_INPUT_DELAY_TICKS + ROLLBACK_DEPTH_TICKS,
+    );
+    this.#decoys.push(decoy);
+    if (decoy.bornTick >= currentTick) {
+      return;
+    }
+    if (!this.#hordeHistory.restore(decoy.bornTick, this.horde)) {
+      // Trop vieux pour l'anneau : plante au present, et SIGNALE — meme
+      // degradation assumee que pour une charge ou une zone trop vieille.
+      this.#lateDecoys++;
+      return;
+    }
+    this.#primeFieldForReplay(decoy.bornTick);
+    for (let t = decoy.bornTick + 1; t <= currentTick; t++) {
+      this.#replayTick(t);
     }
   }
 
@@ -2595,13 +2784,7 @@ export class GameClient {
    */
   #replayTick(tick: number): void {
     if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
-      const seen = this.#history.delayed(tick);
-      if (seen) {
-        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
-          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
-        }
-        this.horde.retarget(seen.x, seen.y);
-      }
+      this.#feedFields(tick, true);
     }
     const scale = this.#movementScale(tick);
     this.horde.step(FIXED_DT * scale, this.#fields, tick, this.zones, this.#bossCharge);

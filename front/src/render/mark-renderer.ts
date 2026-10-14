@@ -1,10 +1,17 @@
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
-import { ELEMENT, elementOf } from '@shared/elements';
+import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import type { Horde } from '@shared/horde';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
 import { BODY_SCALE } from './horde-renderer';
-import type { ViewBounds } from './zone-renderer';
+import {
+  lookFlicker,
+  lookOf,
+  lookPulse,
+  slotSeed,
+  strokeLook,
+  type ViewBounds,
+} from './zone-renderer';
 
 /**
  * L'anneau au sol sous un ennemi MARQUE (taches 13 et 15 de l'etape 5a).
@@ -62,6 +69,15 @@ import type { ViewBounds } from './zone-renderer';
  * Meme discipline de conteneur que `zone-renderer.ts`, son voisin de calque :
  * un `ParticleContainer` additif, des bornes explicites, un reservoir de
  * `Particle` reutilise, aucune allocation en regime etabli.
+ *
+ * ⚠️ **Une silhouette par element, la meme qu'au sol** (`lookOf`) : flammes,
+ * hexagone, dents, flaque, pointilles, anneaux ouverts. L'atlas est un seul
+ * canevas, une case par element, et la particule change de case par `uvs` —
+ * toujours UN conteneur, toujours un quad par ennemi marque. L'animation se
+ * limite a la respiration et au scintillement : **pas de rotation ici**, parce
+ * que la particule est aplatie (`MARK_RING_SQUASH`) et que Pixi tourne APRES
+ * l'echelle — l'ellipse elle-meme pivoterait, et l'anneau ne serait plus pose
+ * au sol. Les deux restent des produits par quad, sans branche par element.
  */
 
 /** Marge des bornes explicites, meme raisonnement que `ZoneRenderer`. */
@@ -129,7 +145,7 @@ export const MARK_RING_FOOT_OFFSET_PX = PROJECTILE_HIT_RADIUS * BODY_SCALE;
  * Les deux ne jouent pas le meme role et ne couvrent pas la meme surface. Une
  * zone est un aplat de 140 px de diametre dont plusieurs se recouvrent des
  * qu'un joueur arrose (voir `ZONE_ALPHA`). Un anneau est un TRAIT — et depuis
- * la tache 15 un trait fin (`MARK_RING_STROKE_INNER`), qui ne couvre qu'une
+ * la tache 15 un trait fin (`MARK_RING_STROKE`), qui ne couvre qu'une
  * mince couronne de l'ellipse : meme un par ennemi, la surface d'encre totale
  * reste une petite fraction de celle qu'un aplat poserait.
  */
@@ -164,22 +180,14 @@ export const MARK_RING_TEXTURE_DIAMETER = 128;
 export const MARK_RING_SCALE = MARK_RING_DIAMETER_PX / MARK_RING_TEXTURE_DIAMETER;
 
 /**
- * Bord INTERIEUR du trait, en fraction du rayon : en deça, la texture est
- * transparente. **C'est la finesse du trait** (tache 15 : *« plus nettes et
- * fines »*) — la couronne dessinee occupe `1 - MARK_RING_STROKE_INNER` de
- * rayon, contre 0,40 a la tache 13.
+ * Epaisseur du trait, en fraction du rayon de la case : la couronne de 0,16
+ * de la tache 15 (0,78 -> 0,94), sans sa rampe — un trait de canevas est net
+ * par construction.
  */
-const MARK_RING_STROKE_INNER = 0.78;
+const MARK_RING_STROKE = 0.16;
 
-/**
- * Debut du plateau opaque. L'ecart avec `MARK_RING_STROKE_INNER` est la
- * **rampe** : c'est elle qui fait la nettete. La tache 13 montait sur 0,22 de
- * rayon — un degrade, pas un trait.
- */
-const MARK_RING_STROKE_PEAK = 0.86;
-
-/** Fin du plateau opaque ; au-dela, le trait s'eteint jusqu'au bord. */
-const MARK_RING_STROKE_FADE = 0.94;
+/** Bord exterieur de l'encre, en fraction du rayon : le trait s'arrete avant le bord du quad. */
+const MARK_RING_OUTER = 0.94;
 
 /**
  * Marge de culling : de quoi garder l'anneau d'un ennemi dont la position vient
@@ -238,43 +246,32 @@ export function selectMarkedRings(
 }
 
 /**
- * Anneau BLANC, dessine une fois puis teinte par particule.
+ * Atlas BLANC des anneaux, une case par element, cuit une fois puis teinte par
+ * particule.
  *
  * ⚠️ **Blanc, parce que `Particle.tint` MULTIPLIE** — meme raison que
- * `makeZoneTexture` et `makeStreakTexture` : en blanc, `tint` rend exactement
+ * `makeZoneAtlas` et `makeStreakTexture` : en blanc, `tint` rend exactement
  * `Element.tint`, sans qu'un element soit plus fidele qu'un autre.
  *
- * Le profil est un CREUX puis un PLATEAU : transparent au centre (sinon c'est
- * un disque, et l'ennemi disparait dessous), puis une rampe courte jusqu'a
- * l'opacite pleine, tenue sur une mince couronne, puis eteinte au bord.
- *
- * ⚠️ **La tache 13 posait un degrade, pas un trait** — creux jusqu'a 0,60,
- * crete a 0,82, extinction sur 0,18 : une bande de 0,40 de rayon dont l'opacite
- * variait partout. C'est ce que l'auteur a lu comme un cercle mou. La tache 15
- * la reduit a 0,22 avec une rampe de 0,08 : *« plus nettes et fines »*.
- *
- * Tous les arrets sont ecrits en `rgba(...)`, y compris les opaques : c'est ce
- * qui permet au test de lire le profil sans avoir a comprendre deux notations.
+ * Chaque case est un TRAIT seul, sans lavis : un disque plein masquerait
+ * l'ennemi qu'il designe. Le trait garde la finesse de la tache 15 (*« plus
+ * nettes et fines »*) : `MARK_RING_STROKE` du rayon, son bord exterieur a
+ * `MARK_RING_OUTER` pour ne pas baver jusqu'au coin du quad.
  */
-function makeRingTexture(diameter: number): Texture {
+function makeRingAtlas(cell: number): Texture {
   const canvas = document.createElement('canvas');
-  canvas.width = diameter;
-  canvas.height = diameter;
+  canvas.width = cell * ELEMENTS.length;
+  canvas.height = cell;
   const ctx = canvas.getContext('2d');
   if (!ctx) {
     throw new Error('canvas 2d indisponible');
   }
-  const r = diameter / 2;
-  const gradient = ctx.createRadialGradient(r, r, 0, r, r, r);
-  gradient.addColorStop(0, 'rgba(255, 255, 255, 0)');
-  gradient.addColorStop(MARK_RING_STROKE_INNER, 'rgba(255, 255, 255, 0)');
-  gradient.addColorStop(MARK_RING_STROKE_PEAK, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(MARK_RING_STROKE_FADE, 'rgba(255, 255, 255, 1)');
-  gradient.addColorStop(1, 'rgba(255, 255, 255, 0)');
-  ctx.fillStyle = gradient;
-  ctx.beginPath();
-  ctx.arc(r, r, r, 0, Math.PI * 2);
-  ctx.fill();
+  const half = cell / 2;
+  const lineWidth = half * MARK_RING_STROKE;
+  const radius = half * MARK_RING_OUTER - lineWidth / 2;
+  for (const element of ELEMENTS) {
+    strokeLook(ctx, lookOf(element.id), element.id * cell + half, half, radius, lineWidth, 1);
+  }
   return Texture.from(canvas);
 }
 
@@ -283,15 +280,18 @@ export class MarkRingRenderer {
     // Additif, comme les zones : l'anneau se pose SUR le sol deja teinte par la
     // zone qui l'a marque, et doit s'y ajouter au lieu de la masquer.
     blendMode: 'add',
-    // `color` : la teinte change par anneau (l'element) et le reservoir est
-    // REUTILISE — le creneau 3 peut porter une Braise a cette image et un Givre
-    // a la suivante. Meme raison, mot pour mot, que sur le conteneur des zones.
-    dynamicProperties: { position: true, color: true, rotation: false, uvs: false },
+    // `color` (teinte et scintillement), `uvs` (la case de l'element) et
+    // `vertex` (la respiration) : le reservoir est REUTILISE — le creneau 3
+    // peut porter une Braise a cette image et un Givre a la suivante. Meme
+    // jeu que le conteneur de la horde, qui envoie deja `uvs` et `vertex`
+    // pour autant de quads.
+    dynamicProperties: { position: true, color: true, rotation: false, uvs: true, vertex: true },
   });
   readonly #pool: Particle[] = [];
   /** Creneaux retenus par `selectMarkedRings`. Dimensionne sur `horde.capacity` — voir `#ensureBuffers`. */
   #selected = new Int32Array(0);
-  #texture: Texture | null = null;
+  /** Une case par element, indexee par l'element. Voir `ZoneRenderer#cells`. */
+  #cells: Texture[] = [];
 
   constructor() {
     this.#container.boundsArea = new Rectangle(
@@ -314,12 +314,12 @@ export class MarkRingRenderer {
 
   /** Vrai des que `load` a pose sa texture — c'est ce que `Stage.layersLoaded` lit. */
   get loaded(): boolean {
-    return this.#texture !== null;
+    return this.#cells.length === ELEMENTS.length;
   }
 
   /** Texture procedurale — hors du constructeur, meme raison que les autres renderers. */
   load(): void {
-    this.adoptTexture(makeRingTexture(MARK_RING_TEXTURE_DIAMETER));
+    this.adoptTexture(makeRingAtlas(MARK_RING_TEXTURE_DIAMETER));
   }
 
   /**
@@ -331,8 +331,12 @@ export class MarkRingRenderer {
    * son premier `if (!texture)` dans toute la suite, et tout son corps pourrait
    * etre retire sans qu'une assertion ne bouge.
    */
-  adoptTexture(texture: Texture): void {
-    this.#texture = texture;
+  adoptTexture(atlas: Texture): void {
+    const cell = MARK_RING_TEXTURE_DIAMETER;
+    this.#cells = ELEMENTS.map(
+      (e) =>
+        new Texture({ source: atlas.source, frame: new Rectangle(e.id * cell, 0, cell, cell) }),
+    );
   }
 
   attach(parent: Container): void {
@@ -343,16 +347,19 @@ export class MarkRingRenderer {
    * `tick` est le tick de horde du client (`GameClient.hordeTick`), **jamais
    * l'horloge murale** : c'est lui qui decide qu'une marque a expire, avec le
    * meme predicat que le serveur (§5.3 — l'expiration est DERIVEE).
+   *
+   * `timeMs` est l'horloge murale, pour l'animation seule (respiration,
+   * scintillement) — elle ne decide de rien.
    */
-  draw(horde: Horde, tick: number, view: ViewBounds): void {
-    const texture = this.#texture;
-    if (!texture) {
+  draw(horde: Horde, tick: number, view: ViewBounds, timeMs: number): void {
+    if (!this.loaded) {
       return;
     }
     this.#ensureBuffers(horde.capacity);
 
     const count = selectMarkedRings(horde, tick, view, this.#selected);
-    this.#ensurePool(count, texture);
+    this.#ensurePool(count);
+    const seconds = timeMs / 1000;
 
     const children = this.#container.particleChildren;
     children.length = 0;
@@ -362,17 +369,24 @@ export class MarkRingRenderer {
       if (!particle) {
         break;
       }
-      particle.x = horde.x[i] ?? 0;
-      // SOUS LES PIEDS, pas sur la position : voir `MARK_RING_FOOT_OFFSET_PX`.
-      particle.y = (horde.y[i] ?? 0) + MARK_RING_FOOT_OFFSET_PX;
-      particle.scaleX = MARK_RING_SCALE;
-      // ELLIPSE, pas cercle : voir `MARK_RING_SQUASH`.
-      particle.scaleY = MARK_RING_SCALE * MARK_RING_SQUASH;
       // Second `markAt` sur le meme creneau : deux lectures de tableau et une
       // comparaison, contre un tampon d'elements de plus a dimensionner et a
       // tenir en phase avec `#selected`.
-      particle.tint = elementOf(horde.markAt(i, tick)).tint;
-      particle.alpha = MARK_RING_ALPHA;
+      const element = horde.markAt(i, tick);
+      const look = lookOf(element);
+      const seed = slotSeed(i);
+      particle.texture = this.#cells[element] ?? particle.texture;
+      particle.x = horde.x[i] ?? 0;
+      // SOUS LES PIEDS, pas sur la position : voir `MARK_RING_FOOT_OFFSET_PX`.
+      particle.y = (horde.y[i] ?? 0) + MARK_RING_FOOT_OFFSET_PX;
+      // La respiration multiplie les DEUX axes : le rapport `MARK_RING_SQUASH`
+      // ne bouge pas, l'ellipse reste posee au sol.
+      const s = MARK_RING_SCALE * lookPulse(look, seconds, seed);
+      particle.scaleX = s;
+      // ELLIPSE, pas cercle : voir `MARK_RING_SQUASH`.
+      particle.scaleY = s * MARK_RING_SQUASH;
+      particle.tint = elementOf(element).tint;
+      particle.alpha = MARK_RING_ALPHA * lookFlicker(look, seconds, seed);
       children.push(particle);
     }
     this.#container.update();
@@ -401,7 +415,8 @@ export class MarkRingRenderer {
    * creneau paierait le pire cas a chaque partie. Meme discipline que
    * `HordeRenderer#ensurePool`.
    */
-  #ensurePool(needed: number, texture: Texture): void {
+  #ensurePool(needed: number): void {
+    const texture = this.#cells[0] as Texture;
     while (this.#pool.length < needed) {
       this.#pool.push(new Particle({ texture, anchorX: 0.5, anchorY: 0.5 }));
     }

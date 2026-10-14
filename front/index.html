@@ -19,13 +19,12 @@
       <section id="lobby" class="ui-screen bg-menu z-10">
         <div class="ui-canvas">
           <h1
-            class="rib f-meta ol3 absolute left-1/2 top-[96px] m-0 w-[600px] -translate-x-1/2 text-[104px] tracking-[8px]"
-            style="--s: 1.05; height: 186px"
+            class="rib f-meta ol3 absolute left-1/2 top-[110px] m-0 -translate-x-1/2 px-[24px] text-[72px] tracking-[6px]"
           >
             TARNOK
           </h1>
           <p
-            class="ol absolute left-1/2 top-[268px] m-0 -translate-x-1/2 text-[22px] uppercase tracking-[6px]"
+            class="ol absolute left-1/2 top-[222px] m-0 -translate-x-1/2 text-[22px] uppercase tracking-[6px]"
           >
             Survivre à la horde
           </p>
@@ -33,11 +32,11 @@
           <div
             class="absolute left-1/2 top-[330px] flex w-[480px] -translate-x-1/2 flex-col items-stretch gap-[10px]"
           >
-            <button id="create" type="button" class="btn ol h-[141px] text-[40px]">
+            <button id="create" type="button" class="btn ol h-[141px]">
               Créer un salon
             </button>
             <div class="flex h-[129px] items-stretch gap-[10px]">
-              <div class="k k-carved min-w-0 flex-1" style="--s: 0.6">
+              <div class="k k-carved min-w-0 flex-1">
                 <input
                   id="code"
                   maxlength="4"
@@ -45,14 +44,14 @@
                   autocomplete="off"
                   spellcheck="false"
                   aria-label="Code du salon"
-                  class="ui-input"
+                  class="ui-input absolute inset-[-64px]"
                 />
               </div>
-              <button id="join" type="button" class="btn ol w-[220px] text-[30px]">
+              <button id="join" type="button" class="btn ol w-[220px]">
                 Rejoindre
               </button>
             </div>
-            <button id="open-shop" type="button" class="btn ol h-[129px] text-[30px]">
+            <button id="open-shop" type="button" class="btn ol h-[129px]">
               Boutique
             </button>
             <p id="error" class="ol m-0 min-h-[32px] text-center text-[22px]"></p>
@@ -60,7 +59,6 @@
 
           <div class="f-mono ol absolute bottom-[48px] left-[56px] flex flex-col gap-[6px] text-[20px]">
             <span>Tarnok — prototype</span>
-            <span>Compte local · l’or survit aux parties</span>
           </div>
 
           <div class="absolute bottom-[48px] right-[56px] flex items-center gap-[14px]">
@@ -78,10 +76,9 @@
       <section id="shop-screen" class="ui-screen bg-menu z-10 hidden">
         <div class="ui-canvas">
           <div
-            class="k k-banner absolute left-[40px] top-[26px] flex w-[300px] flex-col items-center gap-[14px] text-center"
-            style="--s: 0.5"
+            class="k k-scroll absolute left-[40px] top-[26px] flex w-[300px] flex-col items-center gap-[14px] text-center"
           >
-            <div class="k k-paperx slot h-[130px] w-[130px]" style="--s: 0.42">
+            <div class="k k-paperx slot h-[130px] w-[130px]">
               <img
                 src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_10.png"
                 alt=""
@@ -98,14 +95,13 @@
           <button
             id="close-shop"
             type="button"
-            class="btn btn--main btn--red ol absolute bottom-[34px] left-[40px] w-[300px] text-[30px]"
+            class="btn btn--red ol absolute bottom-[34px] left-[40px] w-[300px]"
           >
             Retour
           </button>
 
           <div
-            class="k k-carved absolute right-[40px] top-[26px] flex h-[96px] items-center gap-[12px] px-[10px]"
-            style="--s: 0.6"
+            class="k k-carved3 absolute right-[40px] top-[26px] flex items-center gap-[12px]"
           >
             <img
               src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png"
@@ -123,7 +119,7 @@
 
           <div
             id="shop"
-            class="absolute bottom-[26px] left-[370px] right-[40px] top-[140px] grid grid-cols-3 grid-rows-3 gap-[16px]"
+            class="absolute bottom-[26px] left-[370px] right-[40px] top-[110px] grid grid-cols-3 grid-rows-3 gap-[12px]"
           ></div>
         </div>
       </section>
@@ -136,11 +132,10 @@
       <section id="room" class="ui-screen bg-menu z-10 hidden">
         <div class="ui-canvas">
           <div
-            class="k k-carved absolute left-[40px] top-[26px] flex h-[96px] w-[380px] items-center justify-center gap-[16px]"
-            style="--s: 0.6"
+            class="k k-carved3 absolute left-[40px] top-[42px] flex w-[380px] items-center justify-center gap-[16px]"
           >
             <span class="f-meta ol text-[28px]">Salon</span>
-            <b id="room-code" class="f-jer ol text-[52px] font-normal tracking-[6px]"></b>
+            <b id="room-code" class="f-jer ol text-[46px] font-normal tracking-[6px]"></b>
           </div>
 
           <ul
@@ -150,31 +145,33 @@
 
           <div
             class="k k-paperx absolute bottom-[34px] left-[40px] flex w-[1060px] items-center justify-between gap-[24px]"
-            style="--s: 0.6"
           >
             <p id="room-hint" class="m-0 text-[24px] leading-[1.4]"></p>
             <button
               id="room-leave"
               type="button"
-              class="btn btn--red ol shrink-0 px-[10px] text-[26px]"
+              class="btn btn--tab btn--red ol shrink-0 px-[10px]"
             >
               Quitter
             </button>
           </div>
 
           <div
-            class="k k-banner absolute left-[1130px] right-[40px] top-[26px] flex flex-col gap-[14px]"
-            style="--s: 0.5"
+            class="k k-scroll absolute left-[1130px] right-[40px] top-[26px] flex flex-col gap-[10px]"
           >
-            <h2 class="f-meta m-0 text-[32px] text-[var(--color-ink-label)]">Arme de départ</h2>
-            <p class="m-0 text-[20px]">La dague est toujours tenue ; choisissez ce qui l’accompagne.</p>
-            <div id="room-weapons" class="grid grid-cols-3 gap-x-[8px] gap-y-[2px]"></div>
+            <!-- La classe d'abord, l'arme ensuite : deux etapes, jamais d'un coup (ui/room.ts). -->
+            <div class="flex gap-[8px]">
+              <button id="room-step-class" type="button" class="btn btn--tab ol flex-1"></button>
+              <button id="room-step-weapon" type="button" class="btn btn--tab ol flex-1"></button>
+            </div>
+            <div id="room-classes" class="class-grid"></div>
+            <div id="room-weapons" class="weapon-families hidden"></div>
           </div>
 
           <button
             id="room-start"
             type="button"
-            class="bbtn ol absolute bottom-[34px] left-[1130px] right-[40px] text-[40px]"
+            class="bbtn ol absolute bottom-[34px] left-[1130px] right-[40px]"
             disabled
           >
             Lancer la partie
@@ -185,17 +182,14 @@
       <!-- 04 · HUD -->
       <section id="hud" class="ui-screen ui-screen--overlay z-10 hidden">
         <div class="ui-canvas">
-          <div class="bar bar--sml absolute left-0 right-0 top-0" style="--s: 1.1">
+          <div class="bar bar--sml absolute left-0 right-0 top-0">
             <i id="hud-xp-fill" class="bar__fill"></i>
           </div>
 
           <div class="absolute left-[40px] top-[46px] flex items-center gap-[18px]">
-            <div class="k k-paperx slot h-[132px] w-[132px]" style="--s: 0.42">
+            <div class="k k-paperx slot h-[132px] w-[132px]">
               <img id="hud-portrait" src="" alt="" class="h-[100px] w-[100px]" />
-              <span
-                class="btn absolute bottom-[-34px] right-[-34px] h-[72px] w-[72px]"
-                style="--s: 0.24"
-              >
+              <span class="badge-tile absolute bottom-[-40px] right-[-40px]">
                 <b id="hud-level" class="f-jer ol text-[38px] font-normal"></b>
               </span>
             </div>
@@ -219,20 +213,31 @@
                 <span id="hud-synergy-label" class="f-jer ol text-[26px]"></span>
               </div>
             </div>
+            <!--
+              Le verbe de la classe (etape 8) : son icone, la recharge en secondes
+              tant qu'elle court, la touche. Cache sans classe (`paintAbility`).
+            -->
+            <div id="hud-ability" class="hidden">
+              <div class="slot-x ability-slot">
+                <img id="hud-ability-icon" src="" alt="" class="h-[52px] w-[52px]" />
+                <span id="hud-ability-cooldown" class="ability-cooldown f-jer ol"></span>
+              </div>
+              <span id="hud-ability-name" class="f-meta ol text-[20px]"></span>
+              <span class="f-mono ol text-[14px]">ESPACE</span>
+            </div>
           </div>
 
           <div
             class="absolute left-1/2 top-[46px] flex -translate-x-1/2 flex-col items-center gap-[6px]"
           >
             <span id="hud-timer" class="f-jer ol text-[88px] leading-[0.9]"></span>
-            <div class="rib rib--red f-meta ol min-w-[320px] text-[24px]" style="--s: 0.42; height: 56px">
+            <div class="srib srib--red f-meta ol min-w-[320px] text-[24px]">
               Salon&nbsp;<b id="hud-code" class="font-normal"></b>
             </div>
             <span id="hud-status" class="f-mono ol text-[16px]"></span>
             <div
               id="hud-freeze"
-              class="k k-carved f-meta ol mt-[10px] hidden px-[10px] text-[24px]"
-              style="--s: 0.42"
+              class="k k-carved3 f-meta ol mt-[10px] hidden text-[24px]"
             >
               Niveau supérieur — pause…
             </div>
@@ -273,9 +278,29 @@
             </div>
           </div>
 
+          <!--
+            L'aide des combinaisons (haut gauche) : les quinze reactions entre deux
+            elements, celles que l'equipe peut declencher mises en avant
+            (`ui/combos.ts`). H la replie.
+          -->
           <div
-            class="k k-carved f-mono ol absolute bottom-[44px] right-[40px] flex h-[56px] items-center gap-[10px] px-[6px] text-[18px]"
-            style="--s: 0.42"
+            id="hud-combos-panel"
+            class="k k-paperx absolute left-[40px] top-[220px] flex w-[800px] flex-col gap-[4px]"
+          >
+            <div class="flex items-center justify-between">
+              <span class="f-meta ol text-[24px]">Combinaisons</span>
+              <span class="f-mono ol text-[16px]">H — replier</span>
+            </div>
+            <div id="hud-combos" class="flex flex-col gap-[2px]"></div>
+          </div>
+
+          <!-- Mini-carte (ecran 04) : le bois du pack a l'echelle 1, la carte dans sa cuvette. -->
+          <div class="k k-wood absolute bottom-[40px] right-[40px]">
+            <canvas id="hud-minimap" width="192" height="192" class="block"></canvas>
+          </div>
+
+          <div
+            class="k k-carved3 f-mono ol absolute bottom-[44px] right-[420px] flex items-center gap-[10px] text-[18px]"
           >
             <img
               src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_10.png"
@@ -295,8 +320,7 @@
         <div class="ui-canvas">
           <h2
             id="draft-title"
-            class="rib rib--yellow f-meta ol absolute left-1/2 top-[26px] m-0 w-[820px] -translate-x-1/2 text-[52px]"
-            style="--s: 0.78; height: 130px"
+            class="rib rib--yellow f-meta ol absolute left-1/2 top-[34px] m-0 w-[820px] -translate-x-1/2 text-[52px]"
           >
             Niveau supérieur
           </h2>
@@ -322,7 +346,6 @@
             id="portal"
             data-settled="false"
             class="k k-paperx pointer-events-none absolute bottom-[40px] left-1/2 hidden w-[1100px] -translate-x-1/2 flex-col items-center gap-[10px] text-center"
-            style="--s: 0.6"
           >
             <p id="portal-status" class="f-meta m-0 text-[30px] text-[var(--color-slate-title)]"></p>
             <div id="portal-stakes" class="flex flex-col gap-[2px] text-[22px]"></div>
@@ -341,7 +364,6 @@
         <div class="ui-canvas">
           <h2
             class="rib f-meta ol absolute left-1/2 top-[48px] z-10 m-0 w-[440px] -translate-x-1/2 text-[44px]"
-            style="--s: 0.9; height: 104px"
           >
             Menu
           </h2>
@@ -350,10 +372,10 @@
             style="min-height: 560px"
           >
             <div class="flex w-[470px] flex-col gap-[14px]">
-              <button id="pause-resume" type="button" class="btn ol h-[141px] text-[36px]">
+              <button id="pause-resume" type="button" class="btn ol h-[141px]">
                 Reprendre
               </button>
-              <button id="pause-quit" type="button" class="btn btn--red ol h-[129px] text-[30px]">
+              <button id="pause-quit" type="button" class="btn btn--red ol h-[129px]">
                 Quitter au lobby
               </button>
               <p class="m-0 text-[22px] leading-[1.4]">
@@ -379,8 +401,7 @@
         <div class="ui-canvas">
           <h2
             id="summary-title"
-            class="rib rib--red f-meta ol absolute left-1/2 top-[56px] m-0 w-[900px] -translate-x-1/2 text-[62px]"
-            style="--s: 1; height: 150px"
+            class="rib rib--red f-meta ol absolute left-1/2 top-[80px] m-0 w-[900px] -translate-x-1/2 text-[56px]"
           >
             Run terminée
           </h2>
@@ -389,7 +410,7 @@
             style="min-height: 460px"
           >
             <div class="flex w-[260px] flex-col items-center gap-[12px] text-center">
-              <div class="k k-paperx slot h-[150px] w-[150px]" style="--s: 0.42">
+              <div class="k k-paperx slot h-[150px] w-[150px]">
                 <img id="summary-portrait" src="" alt="" class="h-[112px] w-[112px]" />
               </div>
               <span id="summary-name" class="f-meta ol text-[30px]"></span>
@@ -414,7 +435,7 @@
           <button
             id="summary-restart"
             type="button"
-            class="bbtn ol absolute left-1/2 top-[760px] w-[400px] -translate-x-1/2 text-[34px]"
+            class="bbtn ol absolute left-1/2 top-[760px] w-[400px] -translate-x-1/2"
           >
             Menu principal
           </button>

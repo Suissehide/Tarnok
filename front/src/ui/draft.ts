@@ -1,11 +1,12 @@
 import { CARD, type Card } from '@shared/cards';
-import { TICK_HZ } from '@shared/constants';
+import { PASSIVE_SLOTS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Loadout } from '@shared/loadout';
-import { type Passive, type PassiveKind, passiveOf } from '@shared/passives';
+import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { weaponOf } from '@shared/weapons';
 
+import { elementBadge } from './element-icons';
 import { bonusIcon, ICON_WEAPON } from './icons';
 
 /**
@@ -95,6 +96,37 @@ export function stacksLabel(
       ? loadout.stacksOf(card.refId)
       : loadout.stacksOfWeapon(card.refId);
   return owned === 0 ? 'Nouveau' : `Possédé ×${owned}`;
+}
+
+/**
+ * Pourquoi le joueur ne peut PAS prendre cette carte, ou `null` s'il le peut.
+ *
+ * ⚠️ **Le serveur refuse le jeton en silence** (`Draft#eligible`) : sans ce
+ * message, le clic sur une nouvelle arme aux slots pleins ne fait rien, et se
+ * lit comme un bug. On dit donc la raison AVANT le clic, avec le compte des
+ * slots. La regle elle-meme reste `canTake` — jamais recopiee ici, sinon
+ * l'ecran et le serveur divergeraient a la premiere retouche.
+ */
+export function blockedReason(card: Card, loadout: Loadout): string | null {
+  if (loadout.canTake(card.nature, card.refId)) {
+    return null;
+  }
+  return card.nature === CARD.PASSIVE
+    ? `Passifs complets — ${loadout.passiveSlotsUsed}/${PASSIVE_SLOTS}`
+    : `Arsenal complet — ${loadout.weaponSlotsUsed}/${WEAPON_SLOTS} armes`;
+}
+
+/**
+ * Le rappel de ce qui occupe deja les slots de cette nature : le joueur bloque
+ * voit tout de suite quelles cartes de l'etalage, elles, s'empileraient.
+ */
+export function ownedNames(nature: number, loadout: Loadout): string {
+  if (nature === CARD.PASSIVE) {
+    return PASSIVES.filter((p) => loadout.stacksOf(p.id) > 0)
+      .map((p) => p.name)
+      .join(', ');
+  }
+  return loadout.weaponIds.map((id) => weaponOf(id).name).join(', ');
 }
 
 /** Secondes restantes avant l'echeance, jamais negatives. */
@@ -221,6 +253,8 @@ export function cssColor(tint: number): string {
 interface CardCell {
   root: HTMLButtonElement;
   tokens: HTMLElement;
+  /** Le joueur local ne peut pas accueillir cette carte — fige a la construction, l'inventaire ne bouge pas pendant un draft. */
+  blocked: boolean;
 }
 
 export class DraftScreen {
@@ -312,6 +346,12 @@ export class DraftScreen {
       img.alt = '';
       img.className = 'h-[96px] w-[96px]';
       frame.append(img);
+      // La famille de l'arme, en coin du cadre : l'element se lit avant le nom.
+      if (card.nature === CARD.WEAPON) {
+        const badge = elementBadge(weaponOf(card.refId).element, 40);
+        badge.classList.add('draft-card__element');
+        frame.append(badge);
+      }
 
       const nature = document.createElement('span');
       nature.className = 'draft-card__nature';
@@ -341,11 +381,28 @@ export class DraftScreen {
       tokens.className = 'draft-card__tokens';
 
       root.append(tokens, frame, nature, name, stacks, detail);
+
+      // Une carte que mon inventaire refuse : le bandeau dit pourquoi, au lieu
+      // d'un clic qui ne fait rien. Les jetons des autres restent affiches,
+      // elle reste disputable par eux.
+      const reason = this.#blockedReason(card);
+      root.dataset.blocked = reason === null ? 'false' : 'true';
+      if (reason !== null) {
+        const banner = document.createElement('span');
+        banner.className = 'draft-card__blocked';
+        const why = document.createElement('strong');
+        why.textContent = reason;
+        const owned = document.createElement('small');
+        owned.textContent = this.#ownedReminder(card);
+        banner.append(why, owned);
+        root.append(banner);
+      }
+
       root.addEventListener('click', () => {
         this.#onPick(index);
       });
       this.#list.append(root);
-      return { root, tokens };
+      return { root, tokens, blocked: reason !== null };
     });
   }
 
@@ -367,6 +424,23 @@ export class DraftScreen {
    * humains — c'est ce qui repond a la question laissee ouverte par la tache 9
    * sur l'etranglement de `DRAFT_TOKEN`.
    */
+  #blockedReason(card: Card): string | null {
+    const { localId } = this.#source;
+    if (localId === null || !this.#source.loadoutOf) {
+      return null;
+    }
+    return blockedReason(card, this.#source.loadoutOf(localId));
+  }
+
+  #ownedReminder(card: Card): string {
+    const { localId } = this.#source;
+    if (localId === null || !this.#source.loadoutOf) {
+      return '';
+    }
+    const names = ownedNames(card.nature, this.#source.loadoutOf(localId));
+    return card.nature === CARD.PASSIVE ? `Vos passifs : ${names}` : `Vos armes : ${names}`;
+  }
+
   #onPick(index: number): void {
     const source = this.#source;
     const mine = source.localId;
@@ -400,7 +474,9 @@ export class DraftScreen {
       cell.root.dataset.state = state;
       // Cliquable tant que la negociation est ouverte : une resolution
       // fermee desactive le bouton nativement, aucun clic n'atteint `#onPick`.
-      cell.root.disabled = settled;
+      // Une carte bloquee l'est aussi nativement : aucun jeton refuse en
+      // silence par le serveur ne part sur le fil.
+      cell.root.disabled = settled || cell.blocked;
       cell.root.dataset.mine =
         mine !== null && source.draftIntents.get(mine) === index ? 'true' : 'false';
 
@@ -480,6 +556,12 @@ export class DraftScreen {
       return card ? `Vous obtenez : ${cardName(card)}` : 'Rien cette fois.';
     }
     const seconds = remainingSeconds(this.#source.draftDeadlineTick, this.#source.hordeTick);
+    // ⚠️ **« Rien », pas « attribution d'office ».** `Draft#autoPick` ne sert
+    // qu'une carte que l'inventaire peut accueillir : si aucune ne rentre, le
+    // joueur repart les mains vides. Promettre une attribution serait faux.
+    if (this.#cells.length > 0 && this.#cells.every((c) => c.blocked)) {
+      return `Rien ne rentre dans votre inventaire — vous ne recevrez rien cette fois (${seconds} s)`;
+    }
     return `Posez votre jeton — ${seconds} s`;
   }
 }

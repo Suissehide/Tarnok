@@ -35,27 +35,32 @@ const BONUS_ICONS: Record<BonusKind, number> = {
 export const bonusIcon = (kind: BonusKind): string => icon(BONUS_ICONS[kind]);
 
 /**
- * Un emplacement : cadre `paperx` (objets) ou `carved` (passifs), icone au
- * centre, compte d'empilements en coin. `null` : emplacement vide.
+ * Un emplacement a l'echelle 1, icone au centre, compte d'empilements en coin
+ * (`count: null` : aucun) ; `null` : emplacement vide.
+ *
+ * - `'carved'` : la case de bois du pack, 64 x 64 (`.slot-tile`) — passifs ;
+ * - `'paperx'` : la case ardoise, 88 x 87 (`.slot-x`) — armes, comme la maquette.
  */
 export function slot(
-  frame: 'paperx' | 'carved',
-  sizeClass: string,
-  content: { src: string; count: number; title: string } | null,
+  className: string,
+  content: { src: string; count: number | null; title: string } | null,
+  frame: 'carved' | 'paperx' = 'carved',
 ): HTMLElement {
   const box = document.createElement('div');
-  box.className = `k k-${frame} slot ${sizeClass}`;
+  box.className = `${frame === 'paperx' ? 'slot-x' : 'slot-tile'} ${className}`.trim();
   if (content) {
     box.title = content.title;
     const img = document.createElement('img');
     img.src = content.src;
     img.alt = content.title;
-    img.style.width = '60%';
-    img.style.height = '60%';
-    const count = document.createElement('span');
-    count.className = 'slot__count f-jer ol';
-    count.textContent = `${content.count}`;
-    box.append(img, count);
+    img.className = frame === 'paperx' ? 'h-[52px] w-[52px]' : 'h-[44px] w-[44px]';
+    box.append(img);
+    if (content.count !== null) {
+      const count = document.createElement('span');
+      count.className = 'slot__count f-jer ol';
+      count.textContent = `${content.count}`;
+      box.append(count);
+    }
   }
   return box;
 }
