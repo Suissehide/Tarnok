@@ -97,6 +97,29 @@ function makeGlowTexture(diameter: number, color: string): Texture {
 export const PROJECTILE_CELL_PX = 32;
 
 /**
+ * Stades d'usure d'un projectile : intact, fissure, en miettes.
+ *
+ * ⚠️ **C'est ce qui remplace le FONDU** (etape 8, demande de l'auteur :
+ * *« evite le fade, fais plutot se desagreger »*). Un projectile qui perd son
+ * opacite devient un fantome puis rien ; un projectile qui s'effrite perd des
+ * morceaux et reste un OBJET jusqu'a sa derniere image — c'est la difference
+ * entre « le dessin s'eteint » et « la chose se casse ».
+ *
+ * ⚠️ **Trois, et pas huit.** Chaque stade est une case d'atlas de plus pour
+ * CHAQUE arme : dix-sept armes x trois stades font 51 cases, soit une grille
+ * de 8 x 8 et un canevas de 256 px — toujours cuit une seule fois au
+ * chargement. A huit stades il aurait fallu 136 cases pour une difference
+ * qu'on ne verrait pas : a dix pixels a l'ecran, « entier / fissure / en
+ * miettes » est deja une lecture fine.
+ *
+ * ⚠️ **Le RYTHME n'est pas ici**, il reste derive de `projectileLifeTicks` par
+ * `projectileAlpha` — voir `projectileWear`. Une arme a courte portee s'effrite
+ * tot, l'arc-lourd ne s'effrite jamais : c'est la meme regle qu'avant, lue
+ * autrement.
+ */
+export const PROJECTILE_WEAR_STAGES = 3;
+
+/**
  * Cases par ligne dans l'atlas.
  *
  * ⚠️ **DERIVEE de `WEAPONS.length`, jamais un plafond fixe** (tache 8 de
@@ -109,7 +132,7 @@ export const PROJECTILE_CELL_PX = 32;
  * dix-sept armes fait toujours une grille minuscule (5 x 5 = 25 cases, 160 px
  * de cote).
  */
-const PROJECTILE_ATLAS_COLS = Math.ceil(Math.sqrt(WEAPONS.length));
+const PROJECTILE_ATLAS_COLS = Math.ceil(Math.sqrt(WEAPONS.length * PROJECTILE_WEAR_STAGES));
 
 /** Cote de l'atlas, en pixels : juste assez grand pour contenir la grille. */
 export const PROJECTILE_ATLAS_PX = PROJECTILE_CELL_PX * PROJECTILE_ATLAS_COLS;
@@ -179,6 +202,15 @@ export const PROJECTILE_CULL_MARGIN = WEAPONS.reduce(
  * silencieusement dessiner toutes les armes suivantes avec la texture d'une
  * autre — exactement le defaut que la tache 12 vient corriger.
  */
+/**
+ * La case de l'arme `weaponId` a son stade d'usure `wear` — l'ORDRE est « une
+ * arme, ses trois stades a la suite », pour qu'une arme ajoutee au catalogue
+ * ne deplace jamais les stades des precedentes.
+ */
+export function projectileCellIndex(weaponId: number, wear: number): number {
+  return weaponId * PROJECTILE_WEAR_STAGES + wear;
+}
+
 export function projectileCellRect(index: number): {
   x: number;
   y: number;
@@ -467,6 +499,7 @@ function paintProjectileCell(
   look: ProjectileLook,
   cx: number,
   cy: number,
+  wear = 0,
 ): void {
   const r = PROJECTILE_CELL_PX / 2;
   const body = r * PROJECTILE_SHAPE_FRACTION;
@@ -492,6 +525,33 @@ function paintProjectileCell(
     ctx.fill();
   }
 
+  // ⚠️ **Le corps sur son propre calque, et c'est l'usure qui l'exige.**
+  // `erodeCell` travaille en `destination-out` : peint directement ici, il
+  // aurait mordu le HALO avec le corps — constate sur la planche, ou les
+  // morsures decoupaient des encoches franches dans la lueur et lisaient
+  // comme un defaut d'affichage, pas comme une casse. Ce qui se brise, c'est
+  // l'objet ; sa lumiere, elle, ne s'ecaille pas.
+  const layer = document.createElement('canvas');
+  layer.width = PROJECTILE_CELL_PX;
+  layer.height = PROJECTILE_CELL_PX;
+  const bodyCtx = layer.getContext('2d');
+  if (!bodyCtx) {
+    throw new Error('canvas 2d indisponible');
+  }
+  bodyCtx.translate(r, r);
+  paintProjectileBody(bodyCtx, look, body);
+  erodeCell(bodyCtx, wear);
+  ctx.drawImage(layer, -r, -r);
+
+  ctx.restore();
+}
+
+/** Le corps seul — cerne, teinte, coeur — centre sur l'origine du contexte. */
+function paintProjectileBody(
+  ctx: CanvasRenderingContext2D,
+  look: ProjectileLook,
+  body: number,
+): void {
   const paint = SHAPE_PAINTERS[look.shape];
   // Le cerne noir, exactement comme les orbes et les pieces (etape 8 : *« des
   // projectiles dans le theme du jeu »*) — c'est lui qui pose un projectile
@@ -516,7 +576,50 @@ function paintProjectileCell(
   // lisaient comme des cibles plutot que comme des projectiles.
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
   paint(ctx, body * 0.32);
+}
 
+/**
+ * Ronge la case : `wear` morsures rondes prises dans le dessin, en
+ * `destination-out`.
+ *
+ * ⚠️ **Les morsures sont ECRITES, jamais tirees au hasard** — meme raison que
+ * les rayons de `masse` et les points de `etincelles` : la case est cuite une
+ * fois pour toutes, un tirage la ferait changer d'une partie a l'autre pour
+ * rien. Elles mordent depuis l'ARRIERE et les flancs (x negatifs surtout) :
+ * c'est la pointe qui perce, donc c'est elle qui doit survivre le plus
+ * longtemps.
+ *
+ * ⚠️ **Sur le calque du CORPS, jamais sur la case entiere ni sur l'atlas.**
+ * `destination-out` ne connait ni les cases ni les couches : applique a la
+ * case, il mordait le halo avec le corps (encoches franches dans la lueur, vu
+ * sur la planche) ; applique a l'atlas, il mordrait les cases voisines. Meme
+ * precaution que `softenAcross` pour les trainees. Le calque est centre sur
+ * l'origine, comme les peintres de forme.
+ */
+function erodeCell(ctx: CanvasRenderingContext2D, stage: number): void {
+  const bites: readonly (readonly [number, number, number])[] = [
+    [-0.34, -0.3, 0.26],
+    [-0.12, 0.34, 0.2],
+    [-0.46, 0.08, 0.22],
+    [0.1, -0.36, 0.22],
+    [0.3, 0.22, 0.2],
+    [-0.02, 0.02, 0.18],
+  ];
+  const r = PROJECTILE_CELL_PX / 2;
+  const count = stage * 3;
+  ctx.save();
+  ctx.globalCompositeOperation = 'destination-out';
+  ctx.fillStyle = '#000000';
+  for (let i = 0; i < count && i < bites.length; i++) {
+    const bite = bites[i];
+    if (!bite) {
+      break;
+    }
+    const [bx, by, br] = bite;
+    ctx.beginPath();
+    ctx.arc(bx * PROJECTILE_CELL_PX, by * PROJECTILE_CELL_PX, br * r, 0, Math.PI * 2);
+    ctx.fill();
+  }
   ctx.restore();
 }
 
@@ -537,8 +640,10 @@ function makeProjectileAtlas(): Texture {
     throw new Error('canvas 2d indisponible');
   }
   for (const weapon of WEAPONS) {
-    const cell = projectileCellRect(weapon.id);
-    paintProjectileCell(ctx, weapon.look, cell.x + cell.w / 2, cell.y + cell.h / 2);
+    for (let wear = 0; wear < PROJECTILE_WEAR_STAGES; wear++) {
+      const cell = projectileCellRect(projectileCellIndex(weapon.id, wear));
+      paintProjectileCell(ctx, weapon.look, cell.x + cell.w / 2, cell.y + cell.h / 2, wear);
+    }
   }
   return Texture.from(canvas);
 }
@@ -765,6 +870,28 @@ export function projectilePop(ageTicks: number): number {
 }
 
 /**
+ * Le stade d'usure d'un projectile, de `0` (intact) a
+ * `PROJECTILE_WEAR_STAGES - 1` (en miettes).
+ *
+ * ⚠️ **DERIVE de `projectileAlpha`, et c'est tout l'interet.** L'ancien fondu
+ * portait deja la regle *« plus la portee est courte, plus tot il commence a
+ * disparaitre »*, calee arme par arme sur `projectileLifeTicks` — le
+ * lance-flammes sur les trois quarts de sa course, l'arc-lourd jamais. En
+ * lisant cette meme courbe comme une EROSION au lieu d'une opacite, le rythme
+ * ne bouge pas d'un tick et il n'y a toujours qu'une seule regle a maintenir :
+ * une seconde courbe a cote aurait fini par la contredire, comme ce depot l'a
+ * deja vu trois fois.
+ *
+ * L'arc-lourd reste donc intact de bout en bout (`projectileAlpha` vaut 1 sur
+ * toute sa vie), et c'est voulu : *« il file net »*.
+ */
+export function projectileWear(lifeTicks: number, ticksRemaining: number): number {
+  const reste = projectileAlpha(lifeTicks, ticksRemaining);
+  const stade = Math.floor((1 - reste) * PROJECTILE_WEAR_STAGES);
+  return Math.min(PROJECTILE_WEAR_STAGES - 1, Math.max(0, stade));
+}
+
+/**
  * Rotation propre de la tete a `ageTicks` ticks de vol, en radians, pour une
  * arme qui tourne de `spinTurns` tours par seconde.
  *
@@ -961,13 +1088,17 @@ export class ProjectileRenderer {
    * corps pouvait etre retire sans qu'une assertion ne bouge.**
    */
   adoptTextures(atlas: Texture, streak: Texture): void {
-    this.#cells = WEAPONS.map((w) => {
-      const cell = projectileCellRect(w.id);
-      return new Texture({
-        source: atlas.source,
-        frame: new Rectangle(cell.x, cell.y, cell.w, cell.h),
-      });
-    });
+    // Une case par arme ET PAR STADE d'usure (etape 8) : `#cells` est indexe
+    // par `projectileCellIndex`, jamais par `Weapon.id` seul.
+    this.#cells = WEAPONS.flatMap((w) =>
+      Array.from({ length: PROJECTILE_WEAR_STAGES }, (_, wear) => {
+        const cell = projectileCellRect(projectileCellIndex(w.id, wear));
+        return new Texture({
+          source: atlas.source,
+          frame: new Rectangle(cell.x, cell.y, cell.w, cell.h),
+        });
+      }),
+    );
     // Une bande par PROFIL, decoupee une seule fois, puis indexee par arme :
     // deux armes du meme profil partagent la meme `Texture` (voir `#streaks`).
     const bands = new Map<ProjectileTrail, Texture>();
@@ -1028,18 +1159,26 @@ export class ProjectileRenderer {
       const remaining = projectiles.ticksRemainingAt(i);
       const alpha = projectileAlpha(weapon.projectileLifeTicks, remaining);
       const heading = projectiles.headingAt(i);
+      // Le stade d'usure, lu sur la MEME courbe que l'ancien fondu — voir
+      // `projectileWear`.
+      const wear = projectileWear(weapon.projectileLifeTicks, remaining);
       // L'age du projectile, en ticks de vol : la vie de l'arme moins ce qui
       // en reste. C'est le seul temps dont ce calque dispose, et il suffit aux
       // trois courbes (fondu, pop, rotation) — voir `POP_TICKS`.
       const age = weapon.projectileLifeTicks - remaining;
 
-      head.texture = this.#cells[weapon.id] ?? fallback;
+      head.texture = this.#cells[projectileCellIndex(weapon.id, wear)] ?? fallback;
       head.x = x;
       head.y = y;
       head.rotation = heading + projectileSpin(look.spinTurns, age);
       head.scaleX = (look.diameterPx * projectilePop(age)) / PROJECTILE_CELL_PX;
       head.scaleY = head.scaleX;
-      head.alpha = alpha;
+      // ⚠️ **PLEINE opacite jusqu'a la derniere image.** Ce qui dit la fin de
+      // course, c'est la case rongee (`wear`), pas un fondu : un projectile qui
+      // s'eteint devient un fantome, un projectile qui s'effrite reste un
+      // objet. La trainee, elle, garde son fondu juste en dessous — c'est une
+      // TRACE, et une trace s'efface.
+      head.alpha = 1;
 
       // Ancree a droite (`anchorX: 1`) : le quad s'etend donc vers -x local,
       // c'est-a-dire DERRIERE le projectile une fois tourne de `heading`.
@@ -1047,7 +1186,7 @@ export class ProjectileRenderer {
       trail.x = x;
       trail.y = y;
       trail.rotation = heading;
-      trail.scaleX = projectileTrailPx(weapon) / STREAK_LENGTH_PX;
+      trail.scaleX = (projectileTrailPx(weapon) * alpha) / STREAK_LENGTH_PX;
       trail.scaleY = (look.diameterPx * TRAIL_THICKNESS_FRACTION) / STREAK_THICKNESS_PX;
       trail.tint = look.tint;
       trail.alpha = alpha * TRAIL_ALPHA;
@@ -1131,6 +1270,29 @@ function makeBurstTexture(diameter: number): Texture {
 }
 
 /**
+ * Degats au-dela desquels un impact ne grossit plus : il a deja toute sa
+ * gerbe et tout son flash.
+ *
+ * ⚠️ **PLAFOND, pas echelle.** La Grenade (40 degats) frappe huit fois plus
+ * fort que le Lance-flammes (3) ; un flash huit fois plus large aurait blanchi
+ * l'ecran et pietine la hierarchie du §6.6, ou le spectaculaire appartient a
+ * la REACTION. 20 degats suffisent a separer les trois familles du catalogue
+ * (les arroseuses a 3-7, le milieu a 10-16, les lourdes au-dela).
+ */
+export const IMPACT_POWER_FULL = 20;
+
+/**
+ * De 0 (un coup d'epingle) a 1 (un coup qui pese) — la place d'un coup de
+ * `power` degats dans l'echelle du catalogue.
+ */
+export function impactPower(power: number): number {
+  if (power <= 0) {
+    return 0;
+  }
+  return Math.min(1, power / IMPACT_POWER_FULL);
+}
+
+/**
  * Nombre d'eclats projetes par impact.
  *
  * ⚠️ **C'est LA borne de cet effet, et elle est multiplicative.**
@@ -1145,6 +1307,23 @@ function makeBurstTexture(diameter: number): Texture {
  * (§6.6).
  */
 export const SPARKS_PER_FLASH = 6;
+
+/** Le plancher : meme le plus petit coup projette deux eclats, sinon il ne dit rien. */
+export const SPARKS_MIN = 2;
+
+/**
+ * Combien d'eclats un coup de `power` degats projette, de `SPARKS_MIN` a
+ * `SPARKS_PER_FLASH`.
+ *
+ * ⚠️ **C'est l'un des deux canaux qui font qu'un coup de dague et un coup de
+ * grenade ne se ressemblent pas** (etape 8 : *« varie les tailles et impact
+ * des projectiles, on dirait qu'ils font tous pareil »*). L'autre est la taille
+ * du flash. La BORNE, elle, ne bouge pas : le reservoir reste dimensionne a
+ * `SPARKS_PER_FLASH`, donc le pire cas mesure par le test est inchange.
+ */
+export function sparkCount(power: number): number {
+  return SPARKS_MIN + Math.round((SPARKS_PER_FLASH - SPARKS_MIN) * impactPower(power));
+}
 
 /** Cote de la texture d'un eclat, en pixels. */
 export const SPARK_TEXTURE_PX = 16;
@@ -1222,12 +1401,20 @@ function makeSparkTexture(): Texture {
  * reellement d'etre frappee. C'est mot pour mot la discipline de
  * `reactionFlashScale`, et pour la meme raison.
  */
-export function impactFlashScale(t: number, radiusPx: number, textureDiameterPx: number): number {
+export function impactFlashScale(
+  t: number,
+  radiusPx: number,
+  textureDiameterPx: number,
+  power = IMPACT_POWER_FULL,
+): number {
   if (textureDiameterPx <= 0) {
     return 1;
   }
   if (radiusPx <= 0) {
-    return FLASH_MIN_SCALE + (FLASH_MAX_SCALE - FLASH_MIN_SCALE) * t;
+    // Un coup faible ne monte pas jusqu'au plafond : c'est la que « dix-sept
+    // armes, dix-sept impacts » se joue pour les seize armes sans souffle.
+    const max = FLASH_MIN_SCALE + (FLASH_MAX_SCALE - FLASH_MIN_SCALE) * impactPower(power);
+    return FLASH_MIN_SCALE + (max - FLASH_MIN_SCALE) * t;
   }
   const full = (2 * radiusPx) / textureDiameterPx;
   return full * (0.45 + 0.55 * t);
@@ -1345,9 +1532,10 @@ export class ImpactFlashRenderer {
       const tint = flashes.tint[i] || 0xffffff;
       const born = flashes.bornMs[i] ?? 0;
       const radius = flashes.radius[i] ?? 0;
+      const power = flashes.power[i] ?? 0;
       const age = nowMs - born;
       const t = Math.min(1, Math.max(0, age / HIT_FLASH_LIFETIME_MS));
-      const scale = impactFlashScale(t, radius, IMPACT_TEXTURE_DIAMETER);
+      const scale = impactFlashScale(t, radius, IMPACT_TEXTURE_DIAMETER, power);
 
       // La gerbe : six eclats qui partent du point d'impact, ralentissent et
       // s'eteignent. Tout est REDERIVE de (naissance, age) — ce calque ne garde
@@ -1357,7 +1545,8 @@ export class ImpactFlashRenderer {
       // partout ailleurs dans ce fichier, et elle evite a six eclats de glisser
       // a vitesse constante comme des curseurs.
       const course = 1 - (1 - t) * (1 - t);
-      for (let k = 0; k < SPARKS_PER_FLASH; k++) {
+      const eclats = sparkCount(power);
+      for (let k = 0; k < eclats; k++) {
         const spark = this.#sparkPool[i * SPARKS_PER_FLASH + k];
         if (!spark) {
           break;
@@ -1368,7 +1557,9 @@ export class ImpactFlashRenderer {
         spark.rotation = angle;
         // Il retrecit en volant : un eclat de taille constante lirait comme un
         // projectile de plus, pas comme un debris.
-        spark.scaleX = (1 - 0.6 * t) * (radius > 0 ? 1.6 : 1);
+        // Il retrecit en volant, et il part d'autant plus gros que le coup
+        // pesait : le troisieme canal de « dix-sept armes, dix-sept impacts ».
+        spark.scaleX = (1 - 0.6 * t) * (0.7 + 0.5 * impactPower(power)) * (radius > 0 ? 1.6 : 1);
         spark.scaleY = spark.scaleX;
         spark.tint = tint;
         spark.alpha = (1 - t) * (1 - t);

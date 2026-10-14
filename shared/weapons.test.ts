@@ -550,3 +550,44 @@ describe('projectileTrailPx', () => {
     expect(projectileTrailPx(lent)).toBeLessThan(projectileTrailPx(rapide));
   });
 });
+
+/**
+ * Étape 8 — **la taille dit ce que le coup pese**, venu de l'auteur en jouant :
+ * *« varie les tailles et impact des projectiles, on dirait qu'ils font tous
+ * pareil »*.
+ *
+ * Avant ce tour, les calibres etaient varies mais ARBITRAIRES : le Canon a
+ * chaux (15 degats) etait le plus gros du catalogue, la Grenade (40) le
+ * cinquieme. Varier n'est pas informer — un joueur ne pouvait rien deduire de
+ * ce qu'il voyait partir.
+ */
+describe('les calibres de projectile disent les degats', () => {
+  it('ne rend jamais un coup plus faible plus GROS qu un coup plus fort', () => {
+    for (const a of WEAPONS) {
+      for (const b of WEAPONS) {
+        if (a.damage < b.damage) {
+          expect(
+            a.look.diameterPx,
+            `« ${a.name} » (${a.damage} degats) vs « ${b.name} » (${b.damage})`,
+          ).toBeLessThan(b.look.diameterPx);
+        }
+      }
+    }
+  });
+
+  it('departage deux armes de memes degats par la CADENCE : ce qui tire vite est plus petit', () => {
+    for (const a of WEAPONS) {
+      for (const b of WEAPONS) {
+        if (a.damage === b.damage && a.cooldownTicks < b.cooldownTicks) {
+          expect(a.look.diameterPx, `« ${a.name} » vs « ${b.name} »`).toBeLessThan(
+            b.look.diameterPx,
+          );
+        }
+      }
+    }
+  });
+
+  it('garde les dix-sept calibres distincts deux a deux', () => {
+    expect(new Set(WEAPONS.map((w) => w.look.diameterPx)).size).toBe(WEAPONS.length);
+  });
+});

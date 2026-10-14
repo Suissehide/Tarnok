@@ -29,19 +29,23 @@ const HIT_FLASH_CAPACITY_TEST = 128;
 
 import {
   FLASH_MAX_SCALE,
+  IMPACT_POWER_FULL,
   IMPACT_TEXTURE_DIAMETER,
   ImpactFlashRenderer,
   impactFlashScale,
+  impactPower,
   POP_SCALE,
   POP_TICKS,
   PROJECTILE_ATLAS_PX,
   PROJECTILE_CELL_PX,
   PROJECTILE_CULL_MARGIN,
   PROJECTILE_SHAPE_FRACTION,
+  PROJECTILE_WEAR_STAGES,
   ProjectileRenderer,
   projectileCellRect,
   projectilePop,
   projectileSpin,
+  projectileWear,
   REACTION_TEXTURE_DIAMETER,
   ReactionFlashRenderer,
   reactionFlashScale,
@@ -49,9 +53,11 @@ import {
   SHAPE_OUTLINE_DILATION,
   SHAPE_PAINTERS,
   SPARK_TRAVEL_PX,
+  SPARKS_MIN,
   SPARKS_PER_FLASH,
   STREAK_LENGTH_PX,
   STREAK_THICKNESS_PX,
+  sparkCount,
   streakCellRect,
   TRAIL_ALPHA,
   TRAIL_PROFILES,
@@ -360,21 +366,46 @@ describe('ProjectileRenderer.draw — la portee se voit', () => {
     return head;
   }
 
-  it('eteint le lance-flammes en vol', () => {
+  /** La case d'atlas d'une tete, en index de grille — donc son stade d'usure. */
+  function caseDe(head: Particle): { x: number; y: number } {
+    return { x: head.texture.frame.x, y: head.texture.frame.y };
+  }
+
+  it('RONGE le lance-flammes en vol, au lieu de l eteindre', () => {
     const flammes = weaponOf(LANCE_FLAMMES);
     const vieux = apresPas(LANCE_FLAMMES, flammes.projectileLifeTicks - 1);
-    expect(vieux.alpha).toBeLessThan(1);
-    expect(vieux.alpha).toBe(projectileAlpha(flammes.projectileLifeTicks, 1));
+    // ⚠️ Les deux moities. L'opacite PLEINE est la moitie qu'on oublierait :
+    // c'est elle qui fait la difference entre « il se casse » et « il
+    // s'efface », et sans elle un retour au fondu passerait inapercu.
+    expect(vieux.alpha).toBe(1);
+    expect(caseDe(vieux)).not.toEqual(caseDe(apresPas(LANCE_FLAMMES, 0)));
+    expect(projectileWear(flammes.projectileLifeTicks, 1)).toBe(PROJECTILE_WEAR_STAGES - 1);
   });
 
-  it('laisse l arc-lourd a pleine opacite au meme instant de sa course', () => {
+  it('laisse l arc-lourd INTACT au meme instant de sa course', () => {
     const arc = weaponOf(ARC_LOURD);
-    expect(apresPas(ARC_LOURD, arc.projectileLifeTicks - 1).alpha).toBe(1);
+    const vieux = apresPas(ARC_LOURD, arc.projectileLifeTicks - 1);
+    expect(vieux.alpha).toBe(1);
+    expect(caseDe(vieux)).toEqual(caseDe(apresPas(ARC_LOURD, 0)));
+    expect(projectileWear(arc.projectileLifeTicks, 1)).toBe(0);
   });
 
-  it('estompe la trainee sous sa tete, sans jamais l eteindre a part', () => {
-    // La trainee suit le fondu de sa tete (produit), elle n'a pas sa propre
-    // courbe : deux atténuations cote a cote finiraient par se contredire.
+  it('passe par les stades dans l ordre, sans jamais rajeunir', () => {
+    const flammes = weaponOf(LANCE_FLAMMES);
+    const stades = Array.from({ length: flammes.projectileLifeTicks + 1 }, (_, i) =>
+      projectileWear(flammes.projectileLifeTicks, flammes.projectileLifeTicks - i),
+    );
+    expect(stades[0]).toBe(0);
+    expect(stades.at(-1)).toBe(PROJECTILE_WEAR_STAGES - 1);
+    for (let i = 1; i < stades.length; i++) {
+      expect(stades[i] ?? 0).toBeGreaterThanOrEqual(stades[i - 1] ?? 0);
+    }
+  });
+
+  it('estompe et RACCOURCIT la trainee, qui est une trace et pas un objet', () => {
+    // Elle garde la courbe d'origine (`projectileAlpha`) : une trace s'efface,
+    // c'est la TETE qui se casse. Et elle raccourcit en meme temps, sinon un
+    // trait pleine longueur survivrait a un projectile en miettes.
     const p = new Projectiles(4);
     const arme = weaponOf(LANCE_FLAMMES);
     p.fireSalvoDirected(arme, 0, 1000, 1000, 1, 0, arme.damage, 1);
@@ -384,13 +415,25 @@ describe('ProjectileRenderer.draw — la portee se voit', () => {
     const { heads, trails } = drawnLayers(p);
     const head = heads[0];
     const trail = trails[0];
-    if (!head || !trail) {
+    const neuf = drawnLayers(unSeulTir(LANCE_FLAMMES)).trails[0];
+    if (!head || !trail || !neuf) {
       throw new Error('rien dessine');
     }
+    const reste = projectileAlpha(arme.projectileLifeTicks, 1);
     expect(trail.alpha).toBeLessThan(head.alpha);
-    expect(trail.alpha / head.alpha).toBeCloseTo(TRAIL_ALPHA, 6);
+    expect(trail.alpha).toBeCloseTo(reste * TRAIL_ALPHA, 6);
+    expect(trail.scaleX).toBeLessThan(neuf.scaleX);
+    expect(trail.scaleX).toBeCloseTo(neuf.scaleX * reste, 6);
   });
 });
+
+/** Un seul projectile de `weaponId`, tout juste parti. */
+function unSeulTir(weaponId: number): Projectiles {
+  const arme = weaponOf(weaponId);
+  const p = new Projectiles(4);
+  p.fireSalvoDirected(arme, 0, 1000, 1000, 1, 0, arme.damage, 1);
+  return p;
+}
 
 /**
  * Les dix-sept silhouettes (etape 8 : neuf jusque-la), mesurees sur un
@@ -598,12 +641,14 @@ describe('ProjectileRenderer.draw — la matiere de la trainee', () => {
 describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => {
   /** Les deux calques du groupe : le flash, puis la gerbe d'eclats. */
   function calquesDessines(
-    coups: readonly { tint: number; radius: number }[],
+    coups: readonly { tint: number; radius: number; power?: number }[],
     ageMs = 0,
   ): { flashs: Particle[]; eclats: Particle[] } {
     const flashes = new HitFlashes(HIT_FLASH_CAPACITY_TEST);
     for (const coup of coups) {
-      flashes.spawn(100, 200, coup.tint, coup.radius, 0);
+      // Par defaut, un coup qui pese : les cas qui mesurent la gerbe pleine
+      // n'ont pas a repeter la puissance.
+      flashes.spawn(100, 200, coup.tint, coup.radius, coup.power ?? IMPACT_POWER_FULL, 0);
     }
     const renderer = new ImpactFlashRenderer();
     renderer.adoptTexture(
@@ -701,6 +746,36 @@ describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => 
     );
     expect(flashs).toHaveLength(HIT_FLASH_CAPACITY_TEST);
     expect(eclats).toHaveLength(HIT_FLASH_CAPACITY_TEST * SPARKS_PER_FLASH);
+  });
+
+  it('fait un impact PLUS PETIT et plus maigre pour un coup faible', () => {
+    const faible = weaponOf(3); // Lance-flammes, 3 degats
+    const lourd = weaponOf(2); // Arc lourd, 25
+    expect(faible.damage).toBeLessThan(lourd.damage);
+
+    const a = calquesDessines([{ tint: 0xffffff, radius: 0, power: faible.damage }], 110);
+    const b = calquesDessines([{ tint: 0xffffff, radius: 0, power: lourd.damage }], 110);
+
+    // Moins d'eclats, plus petits, et un flash plus etroit : les trois canaux.
+    expect(a.eclats.length).toBeLessThan(b.eclats.length);
+    expect(a.eclats[0]?.scaleX ?? 0).toBeLessThan(b.eclats[0]?.scaleX ?? 0);
+    expect(a.flashs[0]?.scaleX ?? 0).toBeLessThan(b.flashs[0]?.scaleX ?? 0);
+  });
+
+  it('garde un plancher d eclats : meme le plus petit coup dit qu il a touche', () => {
+    expect(sparkCount(0)).toBe(SPARKS_MIN);
+    expect(sparkCount(1)).toBeGreaterThanOrEqual(SPARKS_MIN);
+    const { eclats } = calquesDessines([{ tint: 0xffffff, radius: 0, power: 1 }]);
+    expect(eclats.length).toBeGreaterThanOrEqual(SPARKS_MIN);
+  });
+
+  it('plafonne : au-dela de IMPACT_POWER_FULL, un coup ne grossit plus', () => {
+    expect(impactPower(IMPACT_POWER_FULL)).toBe(1);
+    expect(impactPower(IMPACT_POWER_FULL * 10)).toBe(1);
+    expect(sparkCount(IMPACT_POWER_FULL)).toBe(SPARKS_PER_FLASH);
+    expect(sparkCount(IMPACT_POWER_FULL * 10)).toBe(SPARKS_PER_FLASH);
+    // Et il ne depasse jamais le plafond que le §6.6 oppose a la reaction.
+    expect(impactFlashScale(1, 0, IMPACT_TEXTURE_DIAMETER, 1e6)).toBe(FLASH_MAX_SCALE);
   });
 
   it('fusionne les eclats en ADDITIF, et borne leur calque comme les autres', () => {

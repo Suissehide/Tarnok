@@ -587,6 +587,17 @@ export class HitFlashes {
    * pas lieu, plus etroit il tuerait hors du dessin.
    */
   readonly radius: Float32Array;
+  /**
+   * Degats du coup, recopies du projectile (etape 8). C'est la PUISSANCE de
+   * l'impact : elle decide de la taille du flash et du nombre d'eclats.
+   *
+   * ⚠️ **Les degats BRUTS de l'arme, pas ce que l'ennemi a reellement
+   * encaisse.** Les PV ne sont pas sur le fil (§5.4) et l'armure est arbitree
+   * serveur : le client ne connait que ce qu'il a tire. Un flash qui
+   * pretendrait dire le degat reel mentirait sur les ennemis blindes —
+   * celui-ci dit « ce coup-la pese lourd », ce qui est vrai de l'arme.
+   */
+  readonly power: Float32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `HIT_FLASH_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
@@ -596,6 +607,7 @@ export class HitFlashes {
     this.y = new Float32Array(capacity);
     this.tint = new Uint32Array(capacity);
     this.radius = new Float32Array(capacity);
+    this.power = new Float32Array(capacity);
     this.bornMs = new Float64Array(capacity);
   }
 
@@ -604,7 +616,7 @@ export class HitFlashes {
   }
 
   /** Fait naitre un flash. Ignore silencieusement si la capacite (un burst reste petit) est atteinte. */
-  spawn(x: number, y: number, tint: number, radius: number, nowMs: number): void {
+  spawn(x: number, y: number, tint: number, radius: number, power: number, nowMs: number): void {
     if (this.#count >= this.capacity) {
       return;
     }
@@ -613,6 +625,7 @@ export class HitFlashes {
     this.y[slot] = y;
     this.tint[slot] = tint;
     this.radius[slot] = radius;
+    this.power[slot] = power;
     this.bornMs[slot] = nowMs;
   }
 
@@ -632,6 +645,7 @@ export class HitFlashes {
       this.y[slot] = this.y[last] ?? 0;
       this.tint[slot] = this.tint[last] ?? 0;
       this.radius[slot] = this.radius[last] ?? 0;
+      this.power[slot] = this.power[last] ?? 0;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -2260,6 +2274,9 @@ export class GameClient {
           // Le souffle, lu sur le PROJECTILE : c'est le rayon qui vient de
           // decider des morts, pas celui que la table porterait aujourd'hui.
           this.projectiles.blastRadiusAt(projectileSlot),
+          // La puissance, lue sur le PROJECTILE comme le souffle et l'element
+          // — jamais relue dans `WEAPONS`.
+          this.projectiles.damageAt(projectileSlot),
           nowMs,
         );
         this.#hitCount++;

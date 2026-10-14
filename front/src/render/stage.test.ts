@@ -218,7 +218,7 @@ function stubCanvas2d(): void {
 describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
   function avecImpact(radius: number, ageMs: number): { x: number; y: number } {
     const hits = new HitFlashes(8);
-    hits.spawn(0, 0, 0xffffff, radius, 0);
+    hits.spawn(0, 0, 0xffffff, radius, 10, 0);
     return cameraShake(hits, new ReactionFlashes(8), ageMs);
   }
 
