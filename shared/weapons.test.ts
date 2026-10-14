@@ -305,8 +305,8 @@ describe('assertWeaponElements', () => {
  * jamais une copie.
  */
 describe('salvoCount', () => {
-  /** `eventail` : cinq projectiles de base. Un compte de base different de 1 est ce qui prouve qu'il est LU. */
-  const EVENTAIL = 1;
+  /** `roue-de-lames` : dix projectiles de base. Un compte different de 1 est ce qui prouve qu'il est LU. */
+  const LARGE = 1;
   /** `arc-lourd` : un seul projectile de base. */
   const ARC_LOURD = 2;
 
@@ -330,16 +330,16 @@ describe('salvoCount', () => {
   });
 
   it('elargit la salve de `stackGain` par exemplaire au-dela du premier', () => {
-    const eventail = weaponOf(EVENTAIL);
+    const large = weaponOf(LARGE);
     const arc = weaponOf(ARC_LOURD);
-    // ⚠️ Deux armes aux comptes de base differents (5 et 1), et on verifie la
+    // ⚠️ Deux armes aux comptes de base differents (10 et 1), et on verifie la
     // valeur ABSOLUE, pas seulement la croissance : un `stacks` qui
     // remplacerait `projectileCount` au lieu de s'y ajouter ferait croitre la
     // salve tout autant, en oubliant l'arme.
-    expect(eventail.projectileCount).toBe(5);
-    expect(stackGain(eventail)).toBe(2);
-    expect(salvoCount(eventail, 2)).toBe(7);
-    expect(salvoCount(eventail, 3)).toBe(9);
+    expect(large.projectileCount).toBe(10);
+    expect(stackGain(large)).toBe(4);
+    expect(salvoCount(large, 2)).toBe(14);
+    expect(salvoCount(large, 3)).toBe(18);
 
     expect(arc.projectileCount).toBe(1);
     expect(stackGain(arc)).toBe(1);

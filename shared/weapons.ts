@@ -379,34 +379,47 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     spreadRadians: 0.05,
   },
   {
-    // Plusieurs projectiles en eventail : prouve que la dispersion tient,
-    // pas seulement le tir a projectile unique.
+    // ⚠️ **LE TIR CIRCULAIRE** (etape 8) — *« il faut varier les types, pas que
+    // des projectiles… des tirs circulaires »*.
     //
-    // La braise « large » : cinq projectiles etales sur 60°, donc un front de
-    // marques sur toute une vague. Chaque element a besoin d'une arme qui
-    // arrose et d'une qui frappe fort — un element qu'on n'applique presque
-    // jamais est un systeme qu'on ne sent pas.
-    name: 'Éventail',
-    // Petale ambre. ⚠️ **Ambre, pas orange de Braise** (0xff7a3c) : c'est la
-    // zone au sol qui dit l'element, pas le projectile — et la grenade, Braise
-    // elle aussi, part sur un vert franc pour qu'on ne confonde jamais les
-    // deux (voir `assertWeaponLooks`).
+    // ⚠️ **Il n'a demande AUCUN type d'arme de plus** : une salve dont
+    // `spreadRadians` fait un tour complet EST un tir circulaire, et `#emit`
+    // ferme l'anneau tout seul (voir sa doc). Une famille de plus pour une
+    // valeur de plus dans un champ qui existait deja — meme pari que
+    // `ELEMENT.NEUTRE` ou `blastRadius: 0`, ou le cas particulier est une
+    // entree de la table et pas une branche.
+    //
+    // ⚠️ **Elle REMPLACE l'Éventail, elle ne s'ajoute pas** (*« on peut
+    // supprimer certaines armes pour eviter d'avoir un pool trop eleve »*).
+    // L'Éventail etait la Braise « large » — cinq petales sur 60° a courte
+    // portee ; depuis que le lance-flammes est passe en Braise au contact, les
+    // deux occupaient la meme case et l'Éventail y etait trois fois plus
+    // faible. La Braise retombe a deux armes, et le catalogue reste a dix-sept.
+    //
+    // Neutre, et c'est son interet : dix lames tout autour arrosent sans
+    // viser, donc elle repond a l'ENCERCLEMENT quand toutes les autres
+    // demandent de choisir un cote. C'est un socle, au sens du §6.3.
+    name: 'Roue de lames',
+    // Lame cramoisie, et la deuxieme plus tournante du catalogue apres le
+    // chakram : ce qui part dans toutes les directions doit se lire comme un
+    // tourbillon.
     look: {
-      shape: 'petale',
-      diameterPx: 8,
-      tint: 0xffc23d,
-      glow: 0.45,
+      shape: 'lame',
+      diameterPx: 16,
+      tint: 0xff2f6b,
+      glow: 0.4,
       trailTicks: 1,
-      spinTurns: 0.5,
-      trail: 'fumee',
+      spinTurns: 2,
+      trail: 'lisse',
     },
-    cooldownTicks: 27,
-    damage: 4,
-    projectileSpeed: 460,
-    projectileLifeTicks: 11,
-    projectileCount: 5,
-    spreadRadians: Math.PI / 3,
-    element: ELEMENT.BRAISE,
+    cooldownTicks: 40,
+    damage: 6,
+    projectileSpeed: 520,
+    projectileLifeTicks: 20,
+    projectileCount: 10,
+    // ⚠️ **Le tour complet, et c'est LUI qui fait l'arme** : `#emit` le
+    // reconnait et repartit les dix lames en anneau ferme.
+    spreadRadians: Math.PI * 2,
   },
   {
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
@@ -448,23 +461,45 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     pierce: 3,
   },
   {
-    // Cadence tres rapide, courte portee : un cone continu au contact.
+    // Cadence tres rapide, courte portee : un jet continu au contact.
     //
-    // ⚠️ **Elle reste NEUTRE, et c'est un choix contre son nom.** C'etait la
-    // Braise evidente ; elle tire 18 projectiles par seconde (3 toutes les 5
-    // ticks). A une zone au sol par projectile qui finit sa course — le modele
-    // du §5.1 jusqu'a la tache 21 — et `ZONE_LIFETIME_TICKS` a 90, elle
-    // portait a elle seule ~54 zones vivantes par joueur, la ou le §5.3
-    // budgete *« quelques dizaines »* pour la partie entiere, et le
-    // recouvrement de zones est en O(zones²).
+    // ⚠️ **ENFIN BRAISE (etape 8), et c'est l'auteur qui a tranche** : *« c'est
+    // etrange que lance-flamme soit neutre non ? »*. Elle l'etait pour une
+    // raison de COUT, pas de contenu : elle tirait 18 projectiles par seconde,
+    // et tant qu'un projectile posait une zone au sol en finissant sa course
+    // (le modele du §5.1 jusqu'a la tache 21), elle portait a elle seule ~54
+    // zones vivantes par joueur la ou le §5.3 en budgete *« quelques
+    // dizaines »* pour la partie entiere — avec un recouvrement en O(zones²).
     //
-    // ⚠️ **CETTE RAISON A DISPARU a la tache 21** : un projectile ne pose plus
+    // ⚠️ **Cette raison est morte a la tache 21** : un projectile ne pose plus
     // rien, c'est la REACTION qui laisse un champ, et les reactions sont
-    // bornees a une par ennemi et par tick (§6.2). Une arme rapide ne peut donc
-    // plus multiplier les zones. **Ce qui reste, c'est une question de
-    // contenu** — une Braise de plus dans un catalogue qui en porte deja — et
-    // elle appartient a l'auteur, pas a une contrainte de cout. Signale, pas
-    // tranche ici.
+    // bornees a une par ennemi et par tick (§6.2). Le commentaire disait deja
+    // que ce qui restait etait *« une question de contenu, qui appartient a
+    // l'auteur »* — la voici tranchee. La Braise garde DEUX armes : la grenade
+    // frappe, le lance-flammes entretient la marque au contact, et l'Éventail
+    // qui tenait la place de l'arroseuse a cede la sienne a la Roue de lames
+    // (voir plus haut) — il faisait desormais doublon avec ce jet.
+    //
+    // ⚠️ **Et elle ressemble enfin a un lance-flammes (etape 8).** Trois
+    // defauts, tous signales en jouant : *« la portee est toute petite, quand
+    // on avance dans la meme direction les tirs sont sur moi, tres rapide et
+    // petit, ca fait pas lance-flamme »*.
+    //
+    // | | Avant | Apres | Pourquoi |
+    // | --- | --- | --- | --- |
+    // | `projectileSpeed` | 300 | **460** | `PLAYER_SPEED` vaut **260** : a 300, une flamme ne prenait que 40 px/s d'avance sur le joueur qui la suit, donc elle lui restait COLLEE. Voir `MIN_MUZZLE_SPEED` |
+    // | `projectileCount` | 3 | **1** | trois grains minuscules ne font pas une langue de feu ; une bouffee grosse toutes les trois ticks, oui |
+    // | `damage` | 3 | **7** | le calibre dessine SUIT les degats (voir `ProjectileLook.diameterPx`) : a 3 degats la flamme etait le plus petit projectile du catalogue, a 7 elle en fait 17 px |
+    //
+    // Sa portee (169 px) reste de tres loin la plus courte du catalogue, et
+    // ses degats par seconde passent de 90 a 70 : la plus forte, pour la plus
+    // courte portee.
+    //
+    // ⚠️ **La cadence ne bouge PAS (3 ticks).** C'est elle qui fait le jet
+    // continu, et c'est aussi une contrainte dure : la ralentir ferait de la
+    // dague (4 ticks) l'arme la plus rapide du catalogue, ce qu'un test
+    // interdit — *« une dague plus rapide que le lance-flammes rendrait l'arme
+    // gratuite meilleure que la carte »*.
     name: 'Lance-flammes',
     // ⚠️ **Le cas que la tache 12 nomme** : 12 ticks de vie, donc l'usure la
     // plus precoce du catalogue (`projectileWear` en tire 70 % de sa vie). La

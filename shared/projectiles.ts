@@ -294,11 +294,23 @@ export class Projectiles {
     // pour les vagues.
     this.truncatedProjectiles += n - toFire;
 
+    // ⚠️ **Une salve dont l'ouverture fait un TOUR COMPLET est un tir
+    // circulaire** (etape 8) — et c'est tout ce qu'il a fallu pour en avoir
+    // un : pas un type d'arme de plus, une valeur de plus dans un champ qui
+    // existait deja. Ce qui change est la REPARTITION : sur un arc ouvert, les
+    // deux extremes tombent sur les bords (`i / (n - 1)`) ; sur un cercle, ces
+    // deux bords sont le MEME angle, et le dernier projectile se poserait sur
+    // le premier. L'anneau se ferme donc en `i / n`.
+    const anneau = weapon.spreadRadians >= Math.PI * 2;
     for (let i = 0; i < toFire; i++) {
       // Repartition symetrique autour de `baseAngle` : a n = 1, le spread
       // n'a pas de sens et est ignore — un seul projectile part droit sur la
       // cible, quelle que soit la valeur de `spreadRadians`.
-      const angle = n > 1 ? baseAngle + weapon.spreadRadians * (i / (n - 1) - 0.5) : baseAngle;
+      const angle = anneau
+        ? baseAngle + (Math.PI * 2 * i) / n
+        : n > 1
+          ? baseAngle + weapon.spreadRadians * (i / (n - 1) - 0.5)
+          : baseAngle;
 
       const slot = this.#count + i;
       this.x[slot] = x;

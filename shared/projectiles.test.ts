@@ -864,3 +864,68 @@ describe('Projectiles.collide — transpercer', () => {
     }
   });
 });
+
+/**
+ * Étape 8 — **le tir circulaire**, demande par l'auteur : *« il faut varier les
+ * types, pas que des projectiles… des tirs circulaires »*.
+ *
+ * ⚠️ **Aucun type d'arme de plus n'a ete ajoute** : une salve dont l'ouverture
+ * fait un tour complet EST un anneau. Ce que ces cas gardent, c'est la seule
+ * chose qui ait vraiment change — la REPARTITION, qui doit se fermer au lieu
+ * de poser deux projectiles au meme endroit.
+ */
+describe('Projectiles — la salve en anneau', () => {
+  /** Les caps des projectiles vivants, tries, ramenes a [0, 2π). */
+  function caps(p: Projectiles): number[] {
+    const tau = Math.PI * 2;
+    return Array.from({ length: p.count }, (_, i) => ((p.headingAt(i) % tau) + tau) % tau).sort(
+      (a, b) => a - b,
+    );
+  }
+
+  const ROUE = { ...SINGLE, projectileCount: 8, spreadRadians: Math.PI * 2 };
+
+  it('repartit les projectiles sur TOUT le tour, a pas egal', () => {
+    const p = new Projectiles(32);
+    p.fireSalvoDirected(ROUE, 0, 0, 0, 1, 0, ROUE.damage, ROUE.projectileCount);
+    const angles = caps(p);
+    expect(angles).toHaveLength(8);
+    for (let i = 1; i < angles.length; i++) {
+      expect((angles[i] ?? 0) - (angles[i - 1] ?? 0)).toBeCloseTo(Math.PI / 4, 6);
+    }
+  });
+
+  it('FERME l anneau : aucun projectile n en double un autre', () => {
+    // ⚠️ Le defaut que la repartition d'un arc ouvert (`i / (n - 1)`) aurait
+    // produit : ses deux extremes tombent sur les bords, et sur un cercle les
+    // deux bords sont le MEME angle — le dernier projectile se serait pose sur
+    // le premier, et l'arme aurait tire sept lames en annoncant huit.
+    const p = new Projectiles(32);
+    p.fireSalvoDirected(ROUE, 0, 0, 0, 1, 0, ROUE.damage, ROUE.projectileCount);
+    const arrondis = new Set(caps(p).map((a) => Math.round(a * 1000)));
+    expect(arrondis.size).toBe(8);
+  });
+
+  it('ne touche PAS la repartition des salves en arc', () => {
+    // Le temoin : une arme a dispersion etroite garde exactement la
+    // repartition d'avant, bords compris.
+    const arc = { ...SINGLE, projectileCount: 3, spreadRadians: Math.PI / 3 };
+    const p = new Projectiles(32);
+    p.fireSalvoDirected(arc, 0, 0, 0, 1, 0, arc.damage, arc.projectileCount);
+    const angles = caps(p).map((a) => (a > Math.PI ? a - Math.PI * 2 : a));
+    expect(angles.sort((x, y) => x - y)).toEqual([
+      expect.closeTo(-Math.PI / 6, 6),
+      expect.closeTo(0, 6),
+      expect.closeTo(Math.PI / 6, 6),
+    ]);
+  });
+
+  it('rend au catalogue une arme qui tire en anneau', () => {
+    const anneaux = WEAPONS.filter((w) => w.spreadRadians >= Math.PI * 2);
+    expect(anneaux.length).toBeGreaterThan(0);
+    for (const w of anneaux) {
+      // Un anneau n'a de sens qu'a plusieurs projectiles.
+      expect(w.projectileCount, w.name).toBeGreaterThan(2);
+    }
+  });
+});
