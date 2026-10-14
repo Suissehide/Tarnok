@@ -76,16 +76,16 @@ describe('groundTiles — la variation de l herbe', () => {
   const tiles = groundTiles(grande);
   const milieux = tiles.filter((t) => t.sx === 64 && t.sy === 64);
 
-  it('tourne et retourne les tuiles de milieu, de toutes les facons', () => {
-    expect(new Set(milieux.map((t) => t.turn))).toEqual(new Set([0, 1, 2, 3]));
-    expect(milieux.some((t) => t.flip)).toBe(true);
-    expect(milieux.some((t) => !t.flip)).toBe(true);
+  it('retourne les tuiles de milieu des quatre facons, sans jamais les tourner', () => {
+    const facons = new Set(milieux.map((t) => `${t.flipX}${t.flipY}`));
+    expect(facons).toEqual(new Set(['falsefalse', 'truefalse', 'falsetrue', 'truetrue']));
+    expect(milieux[0]).not.toHaveProperty('turn');
   });
 
-  it('ne tourne jamais une tuile de bord : son liseret doit rester du bon cote', () => {
+  it('ne retourne jamais une tuile de bord : son liseret doit rester du bon cote', () => {
     for (const t of tiles.filter((t) => !(t.sx === 64 && t.sy === 64))) {
-      expect(t.turn).toBe(0);
-      expect(t.flip).toBe(false);
+      expect(t.flipX).toBe(false);
+      expect(t.flipY).toBe(false);
     }
   });
 
@@ -97,11 +97,11 @@ describe('groundTiles — la variation de l herbe', () => {
     expect(groundTiles(grande)).toEqual(tiles);
   });
 
-  it('tourne aussi le milieu du dessus d un plateau', () => {
+  it('retourne aussi le milieu du dessus d un plateau', () => {
     const plateau = groundTiles(
       carte(['.......', '.PPPPP.', '.PPPPP.', '.PPPPP.', '.CCCCC.', '.......']),
     ).filter((t) => t.sx === 6 * 64 && t.sy === 64);
     expect(plateau.length).toBeGreaterThan(0);
-    expect(plateau.some((t) => t.turn !== 0 || t.flip)).toBe(true);
+    expect(plateau.some((t) => t.flipX || t.flipY)).toBe(true);
   });
 });
