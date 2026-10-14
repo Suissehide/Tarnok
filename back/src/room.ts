@@ -10,6 +10,7 @@ import {
   REMPART_LIFETIME_TICKS,
   VERB_IDS,
 } from '@shared/abilities';
+import { archetypeOf, SHAMAN_AURA_RADIUS } from '@shared/archetypes';
 import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import { classOf, DEFAULT_CLASS_ID, type VerbKind } from '@shared/classes';
@@ -55,10 +56,12 @@ import { ZoneField } from '@shared/zones';
 
 import {
   applyReactions,
+  type Blast,
   type ContactPlayer,
   markInZones,
   OrbField,
   Reactions,
+  resolveBlasts,
   resolveBurn,
   resolveChargeHit,
   resolveContact,
@@ -519,6 +522,8 @@ export class Room {
    * (`SNAPSHOT`) et la charge.
    */
   #bosses: number[] = [];
+  /** Explosions de kamikazes tues au tick precedent, a resoudre au suivant. */
+  #pendingBlasts: Blast[] = [];
   /** Vagues tombees depuis la derniere ouverture du portail. */
   #wavesSincePortal = 0;
 
@@ -1431,6 +1436,12 @@ export class Room {
     // `Horde#applyCharge`.
     this.horde.step(scaledDt, this.#fields, this.#tick, this.#zones, this.#charge);
 
+    // Les comportements du tick (retour de playtest : « des monstres uniques »).
+    // L'aura des chamans protege leurs voisins de TOUTES les passes de degats
+    // qui suivent ; les kamikazes sont releves AVANT les degats, pour savoir ou
+    // exploser s'ils meurent en chemin.
+    const kamikazes = this.#behaviorsBeforeDamage();
+
     this.#fireWeapons(this.#tick);
     const deadIds = resolveProjectileDamage(
       this.#projectiles,
@@ -1504,6 +1515,16 @@ export class Room {
     // plus haut ; la collision est un degat, resolue ICI comme la brulure,
     // au meme titre et pour la meme raison — voir `resolveVerglasCollisions`.
     const collidedIds = resolveVerglasCollisions(this.horde, this.#orbs, this.#tick, this.#zones);
+    // Les kamikazes : ceux qui touchent leur cible se font sauter maintenant,
+    // ceux que les passes precedentes ont tues exploseront au tick suivant
+    // (leur position a ete relevee avant les degats), comme ceux que les
+    // explosions de ce tick emportent — d'ou les reactions en chaine.
+    const blastIds = this.#resolveKamikazes(kamikazes, [
+      ...deadIds,
+      ...reactedIds,
+      ...burntIds,
+      ...collidedIds,
+    ]);
     // ⚠️ **UN SEUL lot de morts par tick, brulures, reactions ET collisions
     // comprises.** `GameClient` documente cette hypothese et s'appuie
     // dessus : deux lots vises au meme tick, rejoues l'un apres l'autre,
@@ -1517,8 +1538,8 @@ export class Room {
     // identites deja listees n'existent plus dans la horde quand la suivante
     // la balaie.
     const allDead =
-      reactedIds.length > 0 || burntIds.length > 0 || collidedIds.length > 0
-        ? [...deadIds, ...reactedIds, ...burntIds, ...collidedIds]
+      reactedIds.length > 0 || burntIds.length > 0 || collidedIds.length > 0 || blastIds.length > 0
+        ? [...deadIds, ...reactedIds, ...burntIds, ...collidedIds, ...blastIds]
         : deadIds;
     if (allDead.length > 0) {
       this.#totalKills += allDead.length;
@@ -2126,6 +2147,78 @@ export class Room {
       deadlineTick: this.#portal.deadlineTick,
       multiplier: this.#extractMultiplier,
     });
+  }
+
+  /**
+   * Avant les degats : remplit l'aura des chamans (`Horde.aura`) et rend la
+   * position de chaque kamikaze vivant, par identite.
+   */
+  #behaviorsBeforeDamage(): Map<number, Blast> {
+    const kamikazes = new Map<number, Blast>();
+    const chamans: Blast[] = [];
+    this.horde.aura.clear();
+    for (let i = 0; i < this.horde.count; i++) {
+      const behavior = archetypeOf(this.horde.archetype[i] ?? 0).behavior;
+      const pos = { x: this.horde.x[i] ?? 0, y: this.horde.y[i] ?? 0 };
+      if (behavior === 'kamikaze') {
+        kamikazes.set(this.horde.entityIdAt(i), pos);
+      } else if (behavior === 'chaman') {
+        chamans.push(pos);
+      }
+    }
+    if (chamans.length > 0) {
+      for (let i = 0; i < this.horde.count; i++) {
+        const x = this.horde.x[i] ?? 0;
+        const y = this.horde.y[i] ?? 0;
+        if (chamans.some((c) => Math.hypot(c.x - x, c.y - y) < SHAMAN_AURA_RADIUS)) {
+          this.horde.aura.add(this.horde.entityIdAt(i));
+        }
+      }
+    }
+    return kamikazes;
+  }
+
+  /** Explosions du tick ; rend les identites qu'elles tuent (kamikazes compris). */
+  #resolveKamikazes(
+    kamikazes: ReadonlyMap<number, Blast>,
+    deadThisTick: readonly number[],
+  ): number[] {
+    // Au contact : `stopped` dit « a portee de sa cible », derive a l'identique
+    // des deux cotes — la mort qui suit passe par le lot de morts habituel.
+    const selfIds = [...kamikazes.keys()].filter((id) => {
+      const slot = this.horde.slotOf(id);
+      return slot >= 0 && this.horde.stopped[slot] === 1;
+    });
+    const blasts = [
+      ...this.#pendingBlasts,
+      ...selfIds.map((id) => kamikazes.get(id)).filter((b): b is Blast => b !== undefined),
+    ];
+    this.#pendingBlasts = [];
+    for (const id of deadThisTick) {
+      const b = kamikazes.get(id);
+      if (b) {
+        this.#pendingBlasts.push(b);
+      }
+    }
+    if (blasts.length === 0) {
+      return [];
+    }
+    const ids = resolveBlasts(
+      this.horde,
+      this.#orbs,
+      blasts,
+      selfIds,
+      [...this.#players.values()],
+      this.#tick,
+      this.#zones,
+    );
+    for (const id of ids) {
+      const b = kamikazes.get(id);
+      if (b && !selfIds.includes(id)) {
+        this.#pendingBlasts.push(b);
+      }
+    }
+    return ids;
   }
 
   #stepPortal(): void {

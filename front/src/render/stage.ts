@@ -7,6 +7,7 @@ import type { ZoneField } from '@shared/zones';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type {
+  BlastFlash,
   BossVitals,
   ChainFlashes,
   DerivedOrbs,
@@ -20,6 +21,7 @@ import type {
 } from '../net/client';
 import { ASSETS_BASE } from '../ui/config';
 import { AbilityRenderer } from './ability-renderer';
+import { BehaviorRenderer } from './behavior-renderer';
 import { BossBarRenderer } from './boss-bar-renderer';
 import { ChainRenderer } from './chain-renderer';
 import { ChargeRenderer } from './charge-renderer';
@@ -84,6 +86,7 @@ export class Stage {
   readonly #zones = new ZoneRenderer();
   readonly #charge = new ChargeRenderer();
   readonly #abilities = new AbilityRenderer();
+  readonly #behaviors = new BehaviorRenderer();
   readonly #marks = new MarkRingRenderer();
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();
@@ -132,6 +135,9 @@ export class Stage {
     // Les verbes (etape 8) : la zone d'un Rempart et le leurre d'un Appat sont
     // poses au sol comme le couloir de charge, donc sous les creatures.
     this.#abilities,
+    // Les comportements (cercle du kamikaze, aura du chaman) : au sol, sous
+    // les creatures, comme les verbes.
+    this.#behaviors,
     this.#marks,
     this.#orbs,
     this.#horde,
@@ -157,6 +163,7 @@ export class Stage {
     this.#zones,
     this.#charge,
     this.#abilities,
+    this.#behaviors,
     this.#marks,
     this.#orbs,
     this.#projectiles,
@@ -373,6 +380,11 @@ export class Stage {
   }
 
   /** Les verbes annonces (etape 8) : le tick decide de leur vie, `timeMs` les anime. */
+  /** Les cercles des comportements et les explosions — voir `BehaviorRenderer`. */
+  drawBehaviors(horde: Horde, blasts: readonly BlastFlash[], timeMs: number): void {
+    this.#behaviors.draw(horde, blasts, this.viewRect(), timeMs);
+  }
+
   drawAbilities(events: readonly AbilityUsed[], tick: number, timeMs: number): void {
     this.#abilities.draw(events, tick, timeMs);
   }

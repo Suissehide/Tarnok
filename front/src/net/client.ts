@@ -4,6 +4,7 @@ import {
   DECOY_LIFETIME_TICKS,
   VERB_IDS,
 } from '@shared/abilities';
+import { archetypeOf } from '@shared/archetypes';
 import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
 import { chainTargets } from '@shared/chain';
@@ -205,6 +206,16 @@ interface PendingDeathBatch {
   tick: number;
   ids: number[];
 }
+
+/** Une explosion vue par le client : son centre et l'instant de la mort. */
+export interface BlastFlash {
+  x: number;
+  y: number;
+  bornMs: number;
+}
+
+/** Duree de l'explosion a l'ecran, en ms. */
+export const BLAST_FLASH_MS = 450;
 
 /**
  * Orbes vivants, cote client — **derives des morts, jamais transmis** (§6.1 de
@@ -1033,6 +1044,8 @@ export class GameClient {
    * le rendu — voir `ReactionFlashes`.
    */
   readonly reactionFlashes = new ReactionFlashes(REACTION_FLASH_CAPACITY);
+  /** Les explosions de kamikazes en cours d'affichage — voir `BehaviorRenderer`. */
+  blastFlashes: BlastFlash[] = [];
   /**
    * Flashs de chaine de Foudre, derives des collisions locales (etape 5b,
    * tache 3, tour de correction 1) — meme famille que `hitFlashes` : semes
@@ -2298,6 +2311,7 @@ export class GameClient {
     }
     this.hitFlashes.expire(nowMs);
     this.reactionFlashes.expire(nowMs);
+    this.blastFlashes = this.blastFlashes.filter((b) => nowMs - b.bornMs < BLAST_FLASH_MS);
     this.chainFlashes.expire(nowMs);
 
     // Instantane pour le rejeu (§3.2) : DOIT etre pris a chaque tick, gel ou
@@ -2798,6 +2812,15 @@ export class GameClient {
       const slot = this.horde.slotOf(id);
       if (slot >= 0) {
         this.orbs.spawn(id, this.horde.x[slot] ?? 0, this.horde.y[slot] ?? 0, tick);
+        // Un kamikaze qui meurt explose : le serveur l'a deja resolu, le client
+        // n'en montre que l'eclair, a la position d'AVANT `kill`.
+        if (archetypeOf(this.horde.archetype[slot] ?? 0).behavior === 'kamikaze') {
+          this.blastFlashes.push({
+            x: this.horde.x[slot] ?? 0,
+            y: this.horde.y[slot] ?? 0,
+            bornMs: performance.now(),
+          });
+        }
       }
     }
   }

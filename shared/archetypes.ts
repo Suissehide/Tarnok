@@ -95,6 +95,8 @@ export interface Archetype {
   role: Role;
   /** Multiplie l'effectif d'une vague de cet archetype (`ROLES`). */
   countFactor: number;
+  /** Son COMPORTEMENT propre, en plus de son role (`Behavior`). */
+  behavior: Behavior;
 }
 
 /**
@@ -331,6 +333,49 @@ export function capArmor(raw: number): number {
  */
 export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
 
+/**
+ * Les comportements (retour de playtest : *« des ennemis qui avancent par
+ * bond », « des kamikazes », « un chaman »*). Chacun se DERIVE de ce que le
+ * serveur et les clients calculent deja a l'identique — le tick, l'identite,
+ * les morts annoncees — donc aucun ne coute un octet sur le fil.
+ *
+ * - `bond` : avance par bonds, une ruee puis une pause (`leapFactor`) ;
+ * - `kamikaze` : explose a sa mort, et se fait exploser au contact ;
+ * - `chaman` : les monstres dans son aura encaissent moitie moins ;
+ * - `aucun` : marche droit vers sa cible.
+ */
+export type Behavior = 'aucun' | 'bond' | 'kamikaze' | 'chaman';
+
+/** La periode d'un bond, en ticks : une ruee puis une pause. */
+export const LEAP_PERIOD_TICKS = 27;
+/** La duree de la ruee, en ticks. */
+export const LEAP_DASH_TICKS = 9;
+/** La vitesse pendant la ruee, et pendant la pause, en part de la vitesse de l'archetype. */
+export const LEAP_DASH_SPEED = 2.3;
+export const LEAP_PAUSE_SPEED = 0.1;
+
+/**
+ * Le facteur de vitesse d'un bondisseur au tick `tick`. **Pur et deterministe**
+ * : le tick absolu et l'identite, rien d'autre — le serveur et chaque client
+ * le derivent a l'identique, et le rejeu le retrouve. Dephase par entite, pour
+ * que la nuee ne bondisse pas d'un seul bloc.
+ */
+/** Le rayon de l'explosion d'un kamikaze, en px monde : c'est aussi le cercle d'alerte dessine. */
+export const KAMIKAZE_RADIUS = 110;
+/** Ce que l'explosion retire a un JOUEUR dans le rayon (avant son armure). */
+export const KAMIKAZE_PLAYER_DAMAGE = 22;
+/** Ce que l'explosion retire a un MONSTRE dans le rayon : elle ne distingue pas les camps. */
+export const KAMIKAZE_MONSTER_DAMAGE = 30;
+/** Le rayon de l'aura d'un chaman, en px monde. */
+export const SHAMAN_AURA_RADIUS = 200;
+/** La part des degats que l'aura retire, combinee a l'armure (1 - (1 - a)(1 - r)). */
+export const SHAMAN_AURA_REDUCTION = 0.5;
+
+export function leapFactor(entityId: number, tick: number): number {
+  const phase = (entityId * 7) % LEAP_PERIOD_TICKS;
+  return (tick + phase) % LEAP_PERIOD_TICKS < LEAP_DASH_TICKS ? LEAP_DASH_SPEED : LEAP_PAUSE_SPEED;
+}
+
 export interface RoleDef {
   hp: number;
   armor: number;
@@ -391,10 +436,10 @@ function armorOf(name: string, role: Role): number {
  * Les cellules font toutes 192 px en pietaille : c'est ce qui permet un
  * rangement par etageres quasi optimal dans l'atlas (§9.2 de la spec).
  */
-const FOOTSOLDIERS: readonly Omit<
+const FOOTSOLDIERS: readonly (Omit<
   Archetype,
-  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor'
->[] = [
+  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor' | 'behavior'
+> & { behavior?: Behavior })[] = [
   { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 100, role: 'troupe' },
   { name: 'gnoll', sheet: 'Gnoll/Gnoll_Walk.png', frames: 8, cell: 192, speed: 78, role: 'brute' },
   {
@@ -404,6 +449,7 @@ const FOOTSOLDIERS: readonly Omit<
     cell: 192,
     speed: 145,
     role: 'nuee',
+    behavior: 'bond',
   },
   {
     name: 'torch-goblin',
@@ -439,6 +485,7 @@ const FOOTSOLDIERS: readonly Omit<
     cell: 192,
     speed: 160,
     role: 'nuee',
+    behavior: 'bond',
   },
   {
     name: 'bomb-fish',
@@ -447,6 +494,7 @@ const FOOTSOLDIERS: readonly Omit<
     cell: 192,
     speed: 70,
     role: 'brute',
+    behavior: 'kamikaze',
   },
   {
     name: 'hex-shaman',
@@ -455,6 +503,7 @@ const FOOTSOLDIERS: readonly Omit<
     cell: 192,
     speed: 50,
     role: 'colosse',
+    behavior: 'chaman',
   },
   {
     name: 'paddle-shark',
@@ -477,7 +526,7 @@ const FOOTSOLDIERS: readonly Omit<
 /** Hors perimetre de l'etape 2 : regime de replication different (§3.3). */
 const ELITES: readonly Omit<
   Archetype,
-  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor' | 'role'
+  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor' | 'role' | 'behavior'
 >[] = [
   {
     name: 'spear-goblin',
@@ -516,6 +565,7 @@ export const ARCHETYPES: readonly Archetype[] = [
   armor: capArmor(armorOf(a.name, a.role)),
   bodyScale: bodyScaleOf(a.name, a.role),
   countFactor: ROLES[a.role].countFactor,
+  behavior: ('behavior' in a ? (a.behavior as Behavior | undefined) : undefined) ?? 'aucun',
 }));
 
 /**

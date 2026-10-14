@@ -1,4 +1,10 @@
-import { archetypeOf } from '@shared/archetypes';
+import {
+  archetypeOf,
+  KAMIKAZE_MONSTER_DAMAGE,
+  KAMIKAZE_PLAYER_DAMAGE,
+  KAMIKAZE_RADIUS,
+  SHAMAN_AURA_REDUCTION,
+} from '@shared/archetypes';
 import { BOSS_CHARGE_DAMAGE, type BossCharge, chargeHurtsAt } from '@shared/boss';
 import { chainTargets } from '@shared/chain';
 import {
@@ -549,7 +555,63 @@ function applyElement(
 export function armureA(horde: Horde, slot: number, zones: ZoneField, tick: number): number {
   const base = archetypeOf(horde.archetype[slot] ?? 0).armor;
   const reduction = zones.armorReductionAt(horde.x[slot] ?? 0, horde.y[slot] ?? 0, tick);
-  return Math.max(0, base - reduction);
+  const armure = Math.max(0, base - reduction);
+  // L'aura du chaman se COMBINE a l'armure (elle ne s'additionne pas) : sous
+  // l'aura, chaque coup perd encore `SHAMAN_AURA_REDUCTION` de ce qui reste.
+  return horde.aura.has(horde.entityIdAt(slot))
+    ? 1 - (1 - armure) * (1 - SHAMAN_AURA_REDUCTION)
+    : armure;
+}
+
+/** Une explosion de kamikaze a resoudre : son centre. */
+export interface Blast {
+  x: number;
+  y: number;
+}
+
+/**
+ * Les explosions de kamikaze du tick : chacune blesse les MONSTRES dans
+ * `KAMIKAZE_RADIUS` (elle ne distingue pas les camps) et les JOUEURS, armure
+ * comprise. Rend les identites mortes — `selfIds`, les kamikazes qui se font
+ * sauter au contact, en font partie — compactees comme les autres passes, pour
+ * rejoindre le lot UNIQUE de morts du tick.
+ */
+export function resolveBlasts(
+  horde: Horde,
+  orbs: OrbField,
+  blasts: readonly Blast[],
+  selfIds: readonly number[],
+  players: readonly ContactPlayer[],
+  tick: number,
+  zones: ZoneField,
+): number[] {
+  const dead = new Set<number>(selfIds);
+  for (const id of selfIds) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      horde.hp[slot] = 0;
+    }
+  }
+  for (const b of blasts) {
+    damageInRadius(horde, b.x, b.y, KAMIKAZE_RADIUS, KAMIKAZE_MONSTER_DAMAGE, zones, tick, dead);
+    for (const p of players) {
+      if (p.hp > 0 && Math.hypot(p.x - b.x, p.y - b.y) < KAMIKAZE_RADIUS) {
+        p.hp = Math.max(0, p.hp - KAMIKAZE_PLAYER_DAMAGE * (1 - (p.armor ?? 0)));
+      }
+    }
+  }
+  if (dead.size === 0) {
+    return [];
+  }
+  const deadIds = [...dead];
+  for (const id of deadIds) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+    }
+  }
+  horde.kill(deadIds);
+  return deadIds;
 }
 
 /**

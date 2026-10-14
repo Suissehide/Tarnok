@@ -52,6 +52,9 @@ class RecordingStage implements FrameStage {
   drawAbilities(...args: unknown[]): void {
     this.#record('verbes', ...args);
   }
+  drawBehaviors(...args: unknown[]): void {
+    this.#record('comportements', ...args);
+  }
   drawMarks(...args: unknown[]): void {
     this.#record('marques', ...args);
   }
@@ -106,6 +109,7 @@ const STATE: RenderState = {
 class RecordingClient implements FrameClient {
   readonly zones = new ZoneField();
   readonly abilityEvents = [];
+  readonly blastFlashes = [];
   readonly horde = new Horde(MAX_ENTITIES);
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
   readonly orbFlights = new OrbFlights(8);
@@ -381,6 +385,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'zones',
       'couloir-boss',
       'verbes',
+      'comportements',
       'marques',
       'horde',
       'orbes',

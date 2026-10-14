@@ -1,4 +1,4 @@
-import { archetypeOf } from './archetypes';
+import { archetypeOf, leapFactor } from './archetypes';
 import { type BossCharge, chargeHoldsAt, chargePointAt } from './boss';
 import {
   COIN_DROP_ONE_IN,
@@ -221,6 +221,13 @@ export class Horde {
    * cosmetique.
    */
   readonly stopped: Uint8Array;
+  /**
+   * Les identites dans l'aura d'un chaman ce tick-ci (`Room`, cote SERVEUR
+   * seul) : `armureA` les protege. Des IDENTITES, pas des creneaux — la
+   * compaction de chaque passe de degats deplace les creneaux, pas les noms.
+   * Le client ne la remplit jamais : les PV ennemis ne voyagent pas.
+   */
+  readonly aura = new Set<number>();
   /**
    * Reserve de points de vie restante, posee par `spawn` depuis
    * `archetypeOf(...).hp` — etape 5a, §3.2 de la spec.
@@ -841,7 +848,7 @@ export class Horde {
       this.#computeFieldSign(zones, tick);
       this.#recomputeSteering(tick, fields, 0, this.#count, zones);
       this.#computeSlow(zones, tick);
-      this.#advanceByVelocity(0, this.#count, dt);
+      this.#advanceByVelocity(0, this.#count, dt, tick);
       this.#applyDeoverlap(0, this.#count);
       this.#applyCharge(charge, tick);
     }
@@ -1208,7 +1215,7 @@ export class Horde {
       // `#slow` porterait encore les valeurs du DERNIER `step` — un etat
       // rémanent appliqué a des entites qui viennent de naitre.
       this.#computeSlow(zones, tick);
-      this.#advanceByVelocity(before, this.#count, dt);
+      this.#advanceByVelocity(before, this.#count, dt, tick);
       this.#applyDeoverlap(before, this.#count);
       // Meme quatuor que `step`, dans le meme ordre : un pas rattrape doit
       // reproduire EXACTEMENT ce que le serveur a fait ce tick-la, charge du
@@ -1267,7 +1274,7 @@ export class Horde {
     }
   }
 
-  #advanceByVelocity(from: number, to: number, dt: number): void {
+  #advanceByVelocity(from: number, to: number, dt: number, tick: number): void {
     for (let i = from; i < to; i++) {
       // Tache 17.2 : une entite a portee de contact s'arrete plutot que de
       // traverser le joueur, quelle que soit la vitesse qu'elle tient par
@@ -1283,7 +1290,13 @@ export class Horde {
       // zone ou en sortir doit se voir au tick meme. A facteur `1` (le cas
       // general, et le seul avant cette tache) la multiplication est exacte :
       // le chemin sans zones reste bit-identique a celui d'avant.
-      const slow = this.#slow[i] ?? 1;
+      // Le bondisseur avance par bonds (`leapFactor`) : un facteur du PAS, comme
+      // le Givre, derive du tick et de l'identite — identique partout.
+      const bond =
+        archetypeOf(this.archetype[i] ?? 0).behavior === 'bond'
+          ? leapFactor(this.entityIdAt(i), tick)
+          : 1;
+      const slow = (this.#slow[i] ?? 1) * bond;
       this.#moveOnLand(i, ex + (this.vx[i] ?? 0) * dt * slow, ey + (this.vy[i] ?? 0) * dt * slow);
     }
   }
