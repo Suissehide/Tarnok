@@ -394,6 +394,8 @@ export class Horde {
    * donne, et supprime la question.
    */
   readonly #slow: Float64Array;
+  /** Le masque du decor au pas courant (`fields[0]`), pour `#moveOnLand`. */
+  #ground: FlowField | null = null;
 
   /**
    * Signe du champ par entite pour le pas courant — etape 5c, tache 1. `+1`
@@ -832,6 +834,7 @@ export class Horde {
     zones?: ZoneField,
     charge?: BossCharge | null,
   ): void {
+    this.#ground = fields[0] ?? null;
     if (dt > 0) {
       // #computeFieldSign AVANT #recomputeSteering : voir son docbloc, la
       // fuite doit etre connue au moment ou fx/fy se calculent.
@@ -895,8 +898,35 @@ export class Horde {
     chargePointAt(charge, tick, this.#chargeSample);
     // Meme bornage que `#advanceByVelocity` : le couloir peut viser hors carte,
     // et un boss hors carte serait invisible et increvable.
-    this.x[slot] = clamp(this.#chargeSample[0] ?? 0, 0, MAP_SIZE);
-    this.y[slot] = clamp(this.#chargeSample[1] ?? 0, 0, MAP_SIZE);
+    //
+    // ⚠️ **Et il s'arrete au rivage** : le couloir est une droite, et la
+    // suivre le jetait a l'eau — un boss au large, hors de l'ile, que personne
+    // ne peut aller chercher. Il garde sa place des que le point suivant est
+    // bloque (`#onLand`), et le couloir continue de blesser sans lui.
+    //
+    // ⚠️ **Le segment, pas seulement son bout** : une charge avance de plus
+    // d'une cellule par tick, et sauterait un mur d'une cellule. On le
+    // parcourt par demi-cellules et on s'arrete au dernier point libre.
+    const cx = clamp(this.#chargeSample[0] ?? 0, 0, MAP_SIZE);
+    const cy = clamp(this.#chargeSample[1] ?? 0, 0, MAP_SIZE);
+    const ox = this.x[slot] ?? 0;
+    const oy = this.y[slot] ?? 0;
+    if (!this.#onLand(ox, oy) || !this.#ground) {
+      this.x[slot] = cx;
+      this.y[slot] = cy;
+    } else {
+      const pas = this.#ground.cellSize / 2;
+      const n = Math.max(1, Math.ceil(Math.hypot(cx - ox, cy - oy) / pas));
+      for (let k = 1; k <= n; k++) {
+        const px = ox + ((cx - ox) * k) / n;
+        const py = oy + ((cy - oy) * k) / n;
+        if (!this.#onLand(px, py)) {
+          break;
+        }
+        this.x[slot] = px;
+        this.y[slot] = py;
+      }
+    }
     this.stopped[slot] = 1;
   }
 
@@ -1150,6 +1180,7 @@ export class Horde {
     }
 
     const before = this.#count;
+    this.#ground = fields[0] ?? null;
     // `fields[0]` : n'importe lequel des quatre porte le meme masque
     // d'obstacles (voir la doc de `spawn`) ; le rattrapage cliente doit eviter
     // les murs exactement comme le fait `Room.step` cote serveur. C'est aussi
@@ -1196,6 +1227,46 @@ export class Horde {
    * champs : toute la direction est deja capturee dans la vitesse par
    * `#recomputeSteering`.
    */
+  /** Vrai si `(x, y)` tombe sur une cellule libre du masque (ou sans masque). */
+  #onLand(x: number, y: number): boolean {
+    const g = this.#ground;
+    if (!g) {
+      return true;
+    }
+    const cx = Math.floor(x / g.cellSize);
+    const cy = Math.floor(y / g.cellSize);
+    if (cx < 0 || cy < 0 || cx >= g.cols || cy >= g.rows) {
+      return false;
+    }
+    return g.blocked[cy * g.cols + cx] !== 1;
+  }
+
+  /**
+   * Deplace l'entite `i` vers `(nx, ny)`, bornee a la carte ET au decor : un
+   * pas qui entrerait dans une cellule bloquee (eau, falaise, arbre) glisse sur
+   * l'axe encore libre, ou s'annule. Une entite DEJA dans le decor (une
+   * naissance tronquee, une charge) en sort librement — c'est le role de
+   * `#carveExitsFromWalls`, qui ne doit pas etre contrarie ici.
+   *
+   * ⚠️ **Avant, seule la carte bornait la horde** : la separation poussait des
+   * monstres a l'eau, et le boss y partait en charge. Meme regle que
+   * `moveOnMap` pour les joueurs, appelee des deux cotes avec le meme masque.
+   */
+  #moveOnLand(i: number, nx: number, ny: number): void {
+    const ox = this.x[i] ?? 0;
+    const oy = this.y[i] ?? 0;
+    const tx = clamp(nx, 0, MAP_SIZE);
+    const ty = clamp(ny, 0, MAP_SIZE);
+    if (!this.#onLand(ox, oy) || this.#onLand(tx, ty)) {
+      this.x[i] = tx;
+      this.y[i] = ty;
+    } else if (this.#onLand(tx, oy)) {
+      this.x[i] = tx;
+    } else if (this.#onLand(ox, ty)) {
+      this.y[i] = ty;
+    }
+  }
+
   #advanceByVelocity(from: number, to: number, dt: number): void {
     for (let i = from; i < to; i++) {
       // Tache 17.2 : une entite a portee de contact s'arrete plutot que de
@@ -1213,8 +1284,7 @@ export class Horde {
       // general, et le seul avant cette tache) la multiplication est exacte :
       // le chemin sans zones reste bit-identique a celui d'avant.
       const slow = this.#slow[i] ?? 1;
-      this.x[i] = clamp(ex + (this.vx[i] ?? 0) * dt * slow, 0, MAP_SIZE);
-      this.y[i] = clamp(ey + (this.vy[i] ?? 0) * dt * slow, 0, MAP_SIZE);
+      this.#moveOnLand(i, ex + (this.vx[i] ?? 0) * dt * slow, ey + (this.vy[i] ?? 0) * dt * slow);
     }
   }
 
@@ -1357,8 +1427,7 @@ export class Horde {
         cx *= scale;
         cy *= scale;
       }
-      this.x[i] = clamp((this.x[i] ?? 0) + cx, 0, MAP_SIZE);
-      this.y[i] = clamp((this.y[i] ?? 0) + cy, 0, MAP_SIZE);
+      this.#moveOnLand(i, (this.x[i] ?? 0) + cx, (this.y[i] ?? 0) + cy);
     }
   }
 

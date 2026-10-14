@@ -225,7 +225,7 @@ function aimAtNearestMonster(room: Room, playerId: number, seq: number): void {
 
 describe('Room.step', () => {
   it('avance un joueur a PLAYER_SPEED pixels par seconde a fond a droite', () => {
-    const room = new Room();
+    const room = new Room(3);
     room.join(1);
     const before = positionOf(room, 1);
 
@@ -237,11 +237,11 @@ describe('Room.step', () => {
   });
 
   it('ne va pas plus vite en diagonale qu en ligne droite', () => {
-    const straight = new Room();
+    const straight = new Room(3);
     straight.join(1);
     straight.applyInput(1, 1, 127, 0);
 
-    const diagonal = new Room();
+    const diagonal = new Room(3);
     diagonal.join(1);
     diagonal.applyInput(1, 1, 127, 127);
 
@@ -1330,7 +1330,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       const magnitude = passiveOf(FOUGUE).magnitude;
 
       function parcours(cartes: number): number {
-        const room = new Room();
+        const room = new Room(3);
         room.join(1);
         prend(room, FOUGUE, cartes);
         const depart = positionOf(room, 1);
@@ -1369,7 +1369,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       const base = weaponOf(BASE_WEAPON_ID).damage;
 
       function degatsDuPremierTir(cartes: number): number {
-        const room = new Room();
+        const room = new Room(3);
         room.join(1);
         prend(room, PUISSANCE, cartes);
         const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
@@ -1461,7 +1461,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     it('les passifs d un joueur ne changent rien pour son voisin', () => {
       // Un `Loadout` par joueur, et pas un pour le salon : sans ca, la
       // premiere carte prise en cooperatif profiterait a toute l'equipe.
-      const room = new Room();
+      const room = new Room(3);
       room.join(1);
       room.join(2);
       prend(room, FOUGUE, 3);
@@ -1705,7 +1705,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   });
 
   it('la reprise apres le draft est progressive, pas un retour brutal a pleine vitesse', () => {
-    const room = new Room();
+    const room = new Room(3);
     room.join(1);
     ouvreLEtalage(room, 10);
 
@@ -4440,15 +4440,32 @@ describe('le boss charge (etape 6a, tache 5 bis)', () => {
     room.join(1);
     const bossId = jusquAuBoss(room);
     const ancre = positionOf(room, 1);
+    // ⚠️ Un cote DEGAGE : depuis la carte en tuiles, le boss qui charge bute
+    // sur un arbre ou un rocher, et un obstacle entre lui et le joueur le
+    // protegerait — c'est voulu, mais ce n'est pas ce que ce test mesure.
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(room.mapSeed, probe.cols, probe.rows);
+    const libre = (x: number, y: number): boolean =>
+      mask[Math.floor(y / FLOWFIELD_CELL) * probe.cols + Math.floor(x / FLOWFIELD_CELL)] === 0;
+    const cote = [
+      [-500, 0],
+      [500, 0],
+      [0, -500],
+      [0, 500],
+    ].find(([dx, dy]) =>
+      Array.from({ length: 21 }, (_, k) => k / 20).every((f) =>
+        libre(ancre.x + (dx ?? 0) * f * 1.2, ancre.y + (dy ?? 0) * f * 1.2),
+      ),
+    ) ?? [-500, 0];
 
-    /** Pose le boss a l'ouest du joueur jusqu'a ce qu'une charge parte, puis la joue en entier. */
+    /** Pose le boss d'un cote degage du joueur jusqu'a ce qu'une charge parte, puis la joue en entier. */
     function uneCharge(): { charge: BossCharge; degats: number } {
       let charge: BossCharge | null = null;
       for (let t = 0; t < 20 * TICK_HZ && charge === null; t++) {
         const slot = room.horde.slotOf(bossId);
         if (slot >= 0) {
-          room.horde.x[slot] = ancre.x - 500;
-          room.horde.y[slot] = ancre.y;
+          room.horde.x[slot] = ancre.x + (cote[0] ?? 0);
+          room.horde.y[slot] = ancre.y + (cote[1] ?? 0);
         }
         seulLeBoss(room, bossId);
         room.step(DT);

@@ -3627,3 +3627,49 @@ describe('la charge du boss REMPLACE le deplacement (etape 6a, tache 5 bis)', ()
     expect(sansCharge.x[0]).not.toBe(avecCharge.x[0]);
   });
 });
+
+describe('la horde bute sur le decor, comme les joueurs', () => {
+  /** Quatre champs vers `(tx, ty)`, avec un mur vertical en colonne `col`, rangees `from` a `to`. */
+  function avecMur(tx: number, ty: number, col: number, from: number, to: number): FlowField[] {
+    return Array.from({ length: 4 }, () => {
+      const f = new FlowField(6000, 64);
+      const mask = new Uint8Array(f.cols * f.rows);
+      for (let r = from; r <= to; r++) {
+        mask[r * f.cols + col] = 1;
+      }
+      applyObstacles(f, mask);
+      f.update(tx, ty);
+      return f;
+    });
+  }
+
+  it('une vague qui marche vers un mur ne met jamais le pied dans une cellule bloquee', () => {
+    const fields = avecMur(5000, 1000, 25, 5, 25);
+    const f = fields[0] as FlowField;
+    const horde = new Horde(200);
+    horde.spawn(order({ count: 60, anchorX: 1200, anchorY: 1000 }), f);
+    let pas = 0;
+    for (let t = 1; t <= 300; t++) {
+      horde.step(DT, fields, t);
+      for (let i = 0; i < horde.count; i++) {
+        expect(f.blocked[f.indexAt(horde.x[i] ?? 0, horde.y[i] ?? 0)]).toBe(0);
+        pas++;
+      }
+    }
+    expect(pas).toBeGreaterThan(0);
+  });
+
+  it('le boss qui charge vers l eau s arrete au rivage, et ne traverse pas', () => {
+    const fields = avecMur(1000, 1000, 25, 0, 93);
+    const horde = new Horde(10);
+    horde.spawn(order({ count: 1, anchorX: 1000, anchorY: 1000 }), fields[0]);
+    const id = horde.entityIdAt(0);
+    const charge = makeBossCharge(id, horde.x[0] ?? 0, horde.y[0] ?? 0, 3000, horde.y[0] ?? 0, 0);
+    for (let t = 1; t <= charge.endTick + 2; t++) {
+      horde.step(DT, fields, t, undefined, charge);
+    }
+    expect(horde.x[0] ?? 0).toBeLessThan(25 * 64);
+    // La charge l'a bien emmene jusque-la : sans elle, il serait reste vers 1000.
+    expect(horde.x[0] ?? 0).toBeGreaterThan(1300);
+  });
+});
