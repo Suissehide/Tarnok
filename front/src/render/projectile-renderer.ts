@@ -325,7 +325,11 @@ export const SHAPE_PAINTERS: Record<
    * partie a l'autre — et la case est cuite une fois pour toutes.
    */
   masse: (ctx, r) => {
-    const rayons = [1, 0.78, 0.92, 0.7, 0.95, 0.74, 0.88, 0.8];
+    // ⚠️ **Onze rayons, et pas huit.** A huit sommets regulierement espaces,
+    // des rayons tous entre 0,7 et 1 rendaient un LOSANGE net (constate sur la
+    // planche) : l'oeil recompose l'octogone avant de voir l'irregularite.
+    // Onze sommets, et un creux franc entre chaque bosse, font enfin une motte.
+    const rayons = [1, 0.72, 0.95, 0.62, 0.88, 0.66, 0.9, 0.6, 0.98, 0.7, 0.82];
     ctx.beginPath();
     for (let i = 0; i < rayons.length; i++) {
       const a = (i / rayons.length) * Math.PI * 2;
@@ -343,10 +347,19 @@ export const SHAPE_PAINTERS: Record<
   },
   /** Trois lobes qui se recouvrent : de la poudre en vol, pas un corps solide. */
   bouffee: (ctx, r) => {
+    // ⚠️ **Un `moveTo` AVANT chaque disque**, sinon le canevas relie la fin
+    // d'un arc au debut du suivant par un segment, et ce segment taille deux
+    // coins sombres dans la bouffee — exactement ce que la planche montrait.
+    const lobes: readonly [number, number, number][] = [
+      [0.34 * r, 0, 0.6 * r],
+      [-0.3 * r, -0.34 * r, 0.5 * r],
+      [-0.3 * r, 0.34 * r, 0.5 * r],
+    ];
     ctx.beginPath();
-    ctx.arc(0.34 * r, 0, 0.6 * r, 0, Math.PI * 2);
-    ctx.arc(-0.3 * r, -0.34 * r, 0.5 * r, 0, Math.PI * 2);
-    ctx.arc(-0.3 * r, 0.34 * r, 0.5 * r, 0, Math.PI * 2);
+    for (const [cx, cy, lobe] of lobes) {
+      ctx.moveTo(cx + lobe, cy);
+      ctx.arc(cx, cy, lobe, 0, Math.PI * 2);
+    }
     ctx.fill();
   },
   /** Capsule : nez arrondi, flancs droits, culot plat. */
