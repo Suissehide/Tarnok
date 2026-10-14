@@ -13,6 +13,7 @@ import {
   SHAKE_BLAST_PX,
   SHAKE_MS,
   SHAKE_REACTION_PX,
+  SHAKE_WINDOW_MS,
   Stage,
 } from './stage';
 
@@ -228,6 +229,15 @@ describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
     return cameraShake(new HitFlashes(8), reactions, ageMs);
   }
 
+  /** Un tir de souffle toutes les `pasMs` millisecondes, comme sur un boss. */
+  function martelage(pasMs: number, jusquaMs: number): HitFlashes {
+    const hits = new HitFlashes(128);
+    for (let t = 0; t <= jusquaMs; t += pasMs) {
+      hits.spawn(0, 0, 0xffffff, ZONE_RADIUS, 10, t);
+    }
+    return hits;
+  }
+
   const norme = (v: { x: number; y: number }): number => Math.hypot(v.x, v.y);
 
   it('ne secoue RIEN sur un coup sans souffle', () => {
@@ -265,6 +275,52 @@ describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
       ratios.add(Math.round((v.x / (v.y || 1)) * 100));
     }
     expect(ratios.size).toBeGreaterThan(3);
+  });
+
+  /**
+   * Étape 8, sur retour de jeu : *« trop de vibration de l'ecran si je tape un
+   * boss, ca enclenche les effets en boucle »*.
+   */
+  it('ne tremble JAMAIS en continu, meme sous un martelage d arme de souffle', () => {
+    // Dix coups par seconde pendant deux secondes, comme sur un boss.
+    const hits = martelage(100, 2000);
+    const reactions = new ReactionFlashes(8);
+
+    const PAS = 10;
+    let immobiles = 0;
+    let total = 0;
+    let calmeCourant = 0;
+    let calmeMax = 0;
+    for (let t = 0; t <= 2000; t += PAS) {
+      const v = cameraShake(hits, reactions, t);
+      total++;
+      if (Math.hypot(v.x, v.y) === 0) {
+        immobiles++;
+        calmeCourant += PAS;
+        calmeMax = Math.max(calmeMax, calmeCourant);
+      } else {
+        calmeCourant = 0;
+      }
+    }
+    // L'ecran passe la MAJORITE du temps immobile…
+    expect(immobiles / total).toBeGreaterThan(0.5);
+    // …et surtout il RETOMBE : chaque fenetre contient un silence d'au moins
+    // `SHAKE_WINDOW_MS - SHAKE_MS`. C'est la moitie qui compte — une secousse
+    // qui ne s'arrete jamais plus de 20 ms serait « immobile la moitie du
+    // temps » elle aussi, et ce serait exactement le defaut signale.
+    expect(calmeMax).toBeGreaterThanOrEqual(SHAKE_WINDOW_MS - SHAKE_MS - PAS);
+  });
+
+  it('ne RELANCE pas une secousse en cours quand un second coup tombe dedans', () => {
+    // Deux coups dans la meme fenetre : le second ne doit rien rallumer.
+    const hits = new HitFlashes(8);
+    hits.spawn(0, 0, 0xffffff, ZONE_RADIUS, 10, 0);
+    hits.spawn(0, 0, 0xffffff, ZONE_RADIUS, 10, SHAKE_MS - 10);
+    const seul = avecImpact(ZONE_RADIUS, SHAKE_MS - 5);
+    const deux = cameraShake(hits, new ReactionFlashes(8), SHAKE_MS - 5);
+    expect(deux).toEqual(seul);
+    // Et a la fin de la fenetre, tout est retombe malgre le second coup.
+    expect(cameraShake(hits, new ReactionFlashes(8), SHAKE_MS + 1)).toEqual({ x: 0, y: 0 });
   });
 
   it('rend zero quand aucun flash ne vit', () => {

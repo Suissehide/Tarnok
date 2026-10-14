@@ -223,6 +223,25 @@ export interface Weapon {
    * redeviendrait « dix-sept armes, un point lumineux » sans que rien ne le dise.
    */
   look: ProjectileLook;
+  /**
+   * Nombre d'ennemis SUPPLEMENTAIRES qu'un projectile traverse avant d'etre
+   * consomme. `0` — seize armes sur dix-sept — : il meurt sur le premier qu'il
+   * touche.
+   *
+   * ⚠️ **Zero n'est pas un cas particulier, c'est une entree de la table**,
+   * exactement comme `blastRadius` : la ligne ABSENTE est le cas courant, et
+   * l'exception se lit d'un coup d'oeil.
+   *
+   * ⚠️ **Ce n'est pas un rabais sur les degats.** Un projectile transpercant
+   * inflige ses degats PLEINS a chacun — c'est ce qui donne a une arme lente
+   * une raison d'etre lente. Le prix est ailleurs : il faut aligner les
+   * cibles.
+   *
+   * ⚠️ **Recopie sur le projectile a l'emission**, jamais relu dans le
+   * catalogue a l'impact — meme discipline que `damage`, `element` et
+   * `blastRadius`.
+   */
+  pierce: number;
 }
 
 /**
@@ -235,10 +254,12 @@ export interface Weapon {
  * `element` et `blastRadius` sont les seuls champs optionnels : omettre le
  * premier vaut `ELEMENT.NEUTRE` (§4.2 de la spec de l'etape 5a), omettre le
  * second vaut `0`, c'est-a-dire « ce projectile ne touche que ce qu'il
- * percute ». Cinq armes sur dix-sept sont neutres et le restent — *« un socle pour
- * les joueurs qui ne veulent pas jouer le systeme »* (§6.3 de l'orientation) —
- * et une seule explose : dans les deux cas c'est la ligne ABSENTE qui est le
- * cas courant, et l'exception se lit d'un coup d'oeil.
+ * percute ». QUATRE armes sur dix-sept sont neutres — *« un socle pour les
+ * joueurs qui ne veulent pas jouer le systeme »* (§6.3 de l'orientation) ;
+ * c'etaient cinq avant que le lance-flammes ne passe en Braise a l'etape 8.
+ * Cinq explosent depuis l'etape 8 (la grenade et les quatre lourdes) : dans
+ * les deux cas c'est la ligne ABSENTE qui reste le cas courant, et l'exception
+ * se lit d'un coup d'oeil.
  *
  * ---
  *
@@ -278,7 +299,7 @@ export interface Weapon {
  *
  * | Arme | Avant | Apres | Rapport | Pourquoi cette valeur-la |
  * | --- | --- | --- | --- | --- |
- * | lance-flammes | 5 | **3** | ×0,60 | la plus rapide du catalogue, et elle le reste ; on ne descend pas a 2, ou le passif mourrait en quatre cartes |
+ * | lance-flammes | 5 | **3** | ×0,60 | la plus rapide du catalogue, et elle le reste ; on ne descend pas a 2, ou le passif mourrait en quatre cartes. ⚠️ **Et on ne la REMONTE pas non plus** (etape 8) : a 4 ticks elle serait ex aequo avec la dague, a 5 la dague deviendrait la plus rapide du catalogue — ce qu'un test interdit |
  * | dague | 7 | **4** | ×0,57 | l'arme toujours en main : c'est elle que le releve suit. 4 est le plus bas qui garde huit cartes de cadence utiles |
  * | fleches-jumelles | 20 | **12** | ×0,60 | le Givre « rapide » ; entretient ses marques deux fois plus vite pour la reaction d'un allie |
  * | chakram | 35 | **21** | ×0,60 | milieu de gamme, la reference des armes voisines : elle suit le facteur, sinon elle cesse d'etre une reference |
@@ -319,9 +340,10 @@ export interface Weapon {
  */
 export const HEAVY_BLAST_RADIUS = ZONE_RADIUS / 2;
 
-const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
+const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pierce'> & {
   element?: number;
   blastRadius?: number;
+  pierce?: number;
 })[] = [
   {
     // Arme neutre de base (§6.1) : faible, sans element, hors slots.
@@ -342,7 +364,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // le plus discret du catalogue.
     look: {
       shape: 'lame',
-      diameterPx: 11,
+      diameterPx: 10,
       tint: 0xeaf2ff,
       glow: 0.3,
       trailTicks: 1,
@@ -371,7 +393,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // deux (voir `assertWeaponLooks`).
     look: {
       shape: 'petale',
-      diameterPx: 10,
+      diameterPx: 8,
       tint: 0xffc23d,
       glow: 0.45,
       trailTicks: 1,
@@ -389,6 +411,20 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
   {
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
     // aussi l'extreme oppose du DPS instantane.
+    //
+    // ⚠️ **ELLE TRANSPERCE (etape 8)**, sur retour de jeu : *« l'arc lourd est
+    // nul, il faudra peut-etre qu'il transperce les ennemis vu sa cadence de
+    // tir ? »*. Le releve lui donnait raison — 20,8 degats par seconde, sous
+    // la mediane du catalogue (22) pour la cadence la DEUXIEME plus lente.
+    //
+    // ⚠️ **Et c'est sa portee qui le justifie, pas seulement sa cadence.** Elle
+    // tire a 1 200 px, deux fois la dague : c'est la seule arme du catalogue
+    // dont le projectile traverse assez de terrain pour rencontrer une file
+    // d'ennemis. Trois traversees portent sa valeur a ~83 degats par seconde
+    // sur une file alignee, et la laissent a 20,8 sur une cible isolee — le
+    // prix du transpercage est de VISER une file, pas d'etre plus faible.
+    //
+    // Les degats restent PLEINS a chaque traversee : voir `Weapon.pierce`.
     name: 'Arc lourd',
     // Le trait le plus gros, le plus rapide et le plus long du catalogue — et
     // le seul qui ne s'eteint JAMAIS en vol : sa vie (40 ticks) atteint
@@ -409,6 +445,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     projectileLifeTicks: 40,
     projectileCount: 1,
     spreadRadians: 0.05,
+    pierce: 3,
   },
   {
     // Cadence tres rapide, courte portee : un cone continu au contact.
@@ -429,14 +466,14 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // elle appartient a l'auteur, pas a une contrainte de cout. Signale, pas
     // tranche ici.
     name: 'Lance-flammes',
-    // ⚠️ **Le cas que la tache 12 nomme** : 10 ticks de vie, donc le fondu le
-    // plus long du catalogue (`projectileAlpha` en tire 75 % de sa vie). La
-    // langue de feu s'eteint en vol au lieu de disparaitre d'un coup a bout de
-    // portee — c'est ce que l'auteur voyait manquer en jouant. Halo le plus
+    // ⚠️ **Le cas que la tache 12 nomme** : 12 ticks de vie, donc l'usure la
+    // plus precoce du catalogue (`projectileWear` en tire 70 % de sa vie). La
+    // langue de feu se consume en vol au lieu de disparaitre d'un coup a bout
+    // de portee — c'est ce que l'auteur voyait manquer en jouant. Halo le plus
     // fort, trainee la plus courte : tout se passe au contact.
     look: {
       shape: 'flamme',
-      diameterPx: 7,
+      diameterPx: 17,
       tint: 0xff4d2e,
       glow: 0.7,
       trailTicks: 1,
@@ -444,11 +481,12 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
       trail: 'fumee',
     },
     cooldownTicks: 3,
-    damage: 3,
-    projectileSpeed: 300,
-    projectileLifeTicks: 10,
-    projectileCount: 3,
+    damage: 7,
+    projectileSpeed: 420,
+    projectileLifeTicks: 12,
+    projectileCount: 1,
     spreadRadians: 0.6,
+    element: ELEMENT.BRAISE,
   },
   {
     // Cadence tres lente, degats massifs : l'extreme oppose du lance-flammes.
@@ -570,7 +608,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
     look: {
       shape: 'grain',
-      diameterPx: 17,
+      diameterPx: 15,
       tint: 0xd6f22b,
       glow: 0.25,
       trailTicks: 0.5,
@@ -628,7 +666,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // teinte de l'element (0xf3e94b, jaune) comme l'exige `assertWeaponLooks`.
     look: {
       shape: 'arc',
-      diameterPx: 15,
+      diameterPx: 14,
       tint: 0xb388ff,
       glow: 0.75,
       trailTicks: 0.8,
@@ -684,7 +722,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // Distincte de la teinte de l'element (0x3d2b1f, brun fonce).
     look: {
       shape: 'goutte',
-      diameterPx: 13,
+      diameterPx: 11,
       tint: 0x8a6d3f,
       glow: 0.2,
       trailTicks: 0.8,
@@ -741,7 +779,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // le projectile (`assertWeaponLooks`).
     look: {
       shape: 'bouffee',
-      diameterPx: 8,
+      diameterPx: 7,
       tint: 0x8fe34c,
       glow: 0.35,
       trailTicks: 0.9,
@@ -797,7 +835,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius'> & {
     // fleches-jumelles et de la teinte de l'element (0xc9c9e8).
     look: {
       shape: 'dard',
-      diameterPx: 14,
+      diameterPx: 13,
       tint: 0x7a7aa8,
       glow: 0.3,
       trailTicks: 1.1,
@@ -846,6 +884,7 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   id,
   element: w.element ?? ELEMENT.NEUTRE,
   blastRadius: w.blastRadius ?? 0,
+  pierce: w.pierce ?? 0,
 }));
 
 /**
@@ -954,7 +993,7 @@ function fadeFraction(lifeTicks: number): number {
  * | Arme | `projectileLifeTicks` | part de vie en fondu |
  * | --- | --- | --- |
  * | canon-a-mitraille | 8 | 80 % |
- * | **lance-flammes** | **10** | **75 %** |
+ * | **lance-flammes** | **12** | **70 %** (10 ticks / 75 % avant l'etape 8) |
  * | eventail | 12 | 70 % |
  * | dague | 28 | 30 % |
  * | chakram | 35 | 12,5 % |

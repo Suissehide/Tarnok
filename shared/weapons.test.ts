@@ -139,16 +139,42 @@ describe("l'element porte par une arme (etape 5a)", () => {
    * en trop se voit — plus loin dans l'etape, elle se contenterait de ne pas
    * poser de zone.
    */
-  it('cable exactement deux armes par element, et laisse les autres neutres', () => {
+  it('cable AU MOINS deux armes par element, et garde un socle de neutres', () => {
     const compte = (element: number) => WEAPONS.filter((w) => w.element === element).length;
 
-    expect(compte(ELEMENT.BRAISE)).toBe(2);
-    expect(compte(ELEMENT.GIVRE)).toBe(2);
-    expect(compte(ELEMENT.FOUDRE)).toBe(2);
-    expect(compte(ELEMENT.POIX)).toBe(2);
-    expect(compte(ELEMENT.CHAUX)).toBe(2);
-    expect(compte(ELEMENT.VIF_ARGENT)).toBe(2);
-    expect(compte(ELEMENT.NEUTRE)).toBe(WEAPONS.length - 12);
+    // ⚠️ **« Au moins deux », et plus « exactement deux », depuis l'etape 8.**
+    // Chaque element a besoin d'une arme qui ARROSE et d'une qui FRAPPE —
+    // c'est ce que ce cas garde, et il le gardera a quarante armes (§6.2). Ce
+    // qu'il ne garde plus, c'est une symetrie parfaite : le lance-flammes est
+    // passe en Braise, qui en compte donc trois (l'eventail arrose, la grenade
+    // frappe, le lance-flammes entretient la marque au contact). Exiger
+    // l'egalite aurait voulu dire refuser toute arme elementaire de plus sans
+    // en ajouter cinq autres le meme jour.
+    for (const element of [
+      ELEMENT.BRAISE,
+      ELEMENT.GIVRE,
+      ELEMENT.FOUDRE,
+      ELEMENT.POIX,
+      ELEMENT.CHAUX,
+      ELEMENT.VIF_ARGENT,
+    ]) {
+      expect(compte(element), `element ${element}`).toBeGreaterThanOrEqual(2);
+    }
+
+    // Le socle neutre du §6.3 ne doit pas fondre arme par arme : quatre
+    // aujourd'hui, et jamais moins de trois sans que ce cas ne le dise.
+    expect(compte(ELEMENT.NEUTRE)).toBeGreaterThanOrEqual(3);
+    // Non-vacuite : la somme retombe bien sur le catalogue entier.
+    const total = [
+      ELEMENT.NEUTRE,
+      ELEMENT.BRAISE,
+      ELEMENT.GIVRE,
+      ELEMENT.FOUDRE,
+      ELEMENT.POIX,
+      ELEMENT.CHAUX,
+      ELEMENT.VIF_ARGENT,
+    ].reduce<number>((n, e) => n + compte(e), 0);
+    expect(total).toBe(WEAPONS.length);
   });
 
   /**

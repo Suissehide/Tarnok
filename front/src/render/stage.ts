@@ -482,18 +482,45 @@ export const SHAKE_MS = 180;
  * *« etat persistant discret, reaction spectaculaire »* se perdrait dans un
  * tremblement continu.
  */
-export const SHAKE_BLAST_PX = 6;
-export const SHAKE_REACTION_PX = 9;
+export const SHAKE_BLAST_PX = 5;
+export const SHAKE_REACTION_PX = 7;
+
+/**
+ * Fenetre de regroupement des secousses, en millisecondes.
+ *
+ * ⚠️ **C'est le remede au tremblement CONTINU**, signale en jouant : *« trop
+ * de vibration de l'ecran si je tape un boss, ca enclenche les effets en
+ * boucle »*. Et c'etait inevitable : une secousse par evenement, sur un boss
+ * qu'on touche dix fois par seconde avec une arme a souffle, redemarre
+ * l'enveloppe avant qu'elle ne soit retombee — donc l'ecran ne se stabilise
+ * JAMAIS. Le §6.6 interdit exactement ca pour les flashs (*« court, large et
+ * genereux, pas un halo permanent »*) ; la camera n'y echappe pas.
+ *
+ * Tous les declencheurs nes dans la meme fenetre partagent donc une SEULE
+ * enveloppe, calee sur le debut de la fenetre : la secousse dure au plus
+ * `SHAKE_MS` puis l'ecran est immobile jusqu'a la fenetre suivante. Le rapport
+ * des deux borne le temps passe a trembler — ici 180/420, soit **43 % au pire,
+ * et c'est un maximum de construction**, pas une moyenne esperee.
+ *
+ * ⚠️ **Toujours AUCUN etat.** La fenetre se derive de la naissance du flash
+ * (`floor(born / SHAKE_WINDOW_MS)`), pas d'un compteur que `draw` entretiendrait
+ * — un accumulateur aurait pu rester bloque en haut si une image sautait,
+ * c'est-a-dire un ecran qui tremble pour toujours.
+ */
+export const SHAKE_WINDOW_MS = 420;
 
 /**
  * Le decalage de camera a appliquer a cet instant, derive des flashs vivants.
  *
  * ⚠️ **Aucun etat, et c'est ce qui rend la secousse sure.** Pas de « trauma »
  * accumule a decrementer image par image : la plus forte secousse encore
- * vivante gagne, et elle s'eteint toute seule quand son flash s'eteint. Un
- * accumulateur aurait demande un `dt` fiable (il n'y en a pas dans `draw`) et
- * aurait pu rester bloque en haut si une image sautait — un ecran qui tremble
- * pour toujours.
+ * vivante gagne, et elle s'eteint toute seule. Un accumulateur aurait demande
+ * un `dt` fiable (il n'y en a pas dans `draw`) et aurait pu rester bloque en
+ * haut si une image sautait — un ecran qui tremble pour toujours.
+ *
+ * ⚠️ **Les declencheurs sont REGROUPES PAR FENETRE** (etape 8, sur retour de
+ * jeu) : sans ca, taper un boss a l'arme de souffle relancait l'enveloppe a
+ * chaque coup et l'ecran ne se stabilisait jamais. Voir `SHAKE_WINDOW_MS`.
  *
  * Deux frequences volontairement incommensurables (0,08 et 0,11 rad/ms, soit
  * ~12,7 et ~17,5 Hz) : a frequence egale sur les deux axes, le decalage
@@ -506,7 +533,12 @@ export function cameraShake(
 ): { x: number; y: number } {
   let amplitude = 0;
   let age = 0;
-  const retenir = (ageMs: number, max: number): void => {
+  const retenir = (bornMs: number, max: number): void => {
+    // L'enveloppe est calee sur le DEBUT DE LA FENETRE, jamais sur la
+    // naissance du flash : c'est ce qui empeche un second coup de relancer une
+    // secousse deja en cours. Voir `SHAKE_WINDOW_MS`.
+    const fenetre = Math.floor(bornMs / SHAKE_WINDOW_MS) * SHAKE_WINDOW_MS;
+    const ageMs = nowMs - fenetre;
     if (ageMs < 0 || ageMs >= SHAKE_MS) {
       return;
     }
@@ -520,11 +552,11 @@ export function cameraShake(
     // Seuls les coups a SOUFFLE secouent : sans ce test, dix-sept armes
     // feraient trembler l'ecran a chaque projectile qui touche.
     if ((hits.radius[i] ?? 0) > 0) {
-      retenir(nowMs - (hits.bornMs[i] ?? 0), SHAKE_BLAST_PX);
+      retenir(hits.bornMs[i] ?? 0, SHAKE_BLAST_PX);
     }
   }
   for (let i = 0; i < reactions.count; i++) {
-    retenir(nowMs - (reactions.bornMs[i] ?? 0), SHAKE_REACTION_PX);
+    retenir(reactions.bornMs[i] ?? 0, SHAKE_REACTION_PX);
   }
   if (amplitude <= 0) {
     return { x: 0, y: 0 };

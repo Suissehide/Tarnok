@@ -7,7 +7,7 @@ import { Horde } from './horde';
 import { Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
 import type { Weapon } from './weapons';
-import { weaponOf } from './weapons';
+import { WEAPONS, weaponOf } from './weapons';
 import { ZoneField } from './zones';
 
 /**
@@ -44,6 +44,7 @@ const SINGLE: Weapon = {
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
+  pierce: 0,
   // Trois apparences DIFFERENTES entre les trois armes de test : c'est ce qui
   // permet aux cas de `weaponAt` ci-dessous de distinguer laquelle a tire.
   look: {
@@ -69,6 +70,7 @@ const SPREAD: Weapon = {
   spreadRadians: Math.PI / 2,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
+  pierce: 0,
   look: {
     shape: 'petale',
     diameterPx: 12,
@@ -92,6 +94,7 @@ const FAST: Weapon = {
   spreadRadians: 0,
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
+  pierce: 0,
   look: {
     shape: 'fleche',
     diameterPx: 14,
@@ -763,5 +766,101 @@ describe('Projectiles.collide — le rayon de touche suit le corps de la cible',
 
     expect(sans).toBe(0);
     expect(avec).toBe(1);
+  });
+});
+
+/**
+ * Étape 8 — **le transpercage**, sur retour de jeu : *« l'arc lourd est nul, il
+ * faudra peut-etre qu'il transperce les ennemis vu sa cadence de tir ? »*.
+ *
+ * Le releve lui donnait raison : 20,8 degats par seconde pour la cadence la
+ * deuxieme plus lente du catalogue, sous la mediane. Et c'est son autre
+ * extreme — 1 200 px de portee, le double de la dague — qui rend le
+ * transpercage juste : c'est la seule arme dont le projectile traverse assez
+ * de terrain pour rencontrer une FILE.
+ */
+describe('Projectiles.collide — transpercer', () => {
+  /** Trois ennemis en file sur l'axe +x, espaces de `ecart`. */
+  function fileDeTrois(ecart: number): Horde {
+    const horde = new Horde(10);
+    addOne(horde, 1, 200, 0);
+    addOne(horde, 2, 200 + ecart, 0);
+    addOne(horde, 3, 200 + 2 * ecart, 0);
+    return horde;
+  }
+
+  /** Une arme a projectile unique, lente, qui traverse `pierce` ennemis de plus. */
+  function perceur(pierce: number): Weapon {
+    // ⚠️ Portee 533 px (400 px/s x 40 ticks) : elle doit couvrir la file
+    // ENTIERE, sinon un projectile qui expire avant le dernier corps ferait
+    // echouer le transpercage pour une raison qui n'est pas le transpercage.
+    return { ...SINGLE, projectileSpeed: 400, projectileLifeTicks: 40, pierce };
+  }
+
+  /** Tire depuis l'origine vers +x et avance `pas` ticks, en notant chaque corps touche. */
+  function traverse(arme: Weapon, horde: Horde, pas: number): number[] {
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(arme, 0, 0, 0, 1, 0, arme.damage, 1);
+    const touches: number[] = [];
+    for (let i = 0; i < pas; i++) {
+      p.step(1 / TICK_HZ);
+      p.collide(horde, (entityId) => touches.push(entityId));
+    }
+    return touches;
+  }
+
+  it('traverse trois corps quand l arme en autorise deux de plus', () => {
+    const touches = traverse(perceur(2), fileDeTrois(90), 60);
+    expect(touches).toHaveLength(3);
+    expect(new Set(touches).size).toBe(3);
+  });
+
+  it('s arrete au PREMIER corps quand l arme ne transperce pas', () => {
+    // Le cas temoin : sans lui, un `collide` qui ne consommerait plus jamais
+    // ses projectiles passerait le cas precedent.
+    expect(traverse(perceur(0), fileDeTrois(90), 60)).toHaveLength(1);
+  });
+
+  it('ne frappe JAMAIS deux fois le meme corps', () => {
+    // Une seule cible, une fleche a trois traversees : sans `#lastHit`, elle
+    // lui infligerait quatre fois ses degats en restant collee dessus.
+    const horde = new Horde(10);
+    const seul = addOne(horde, 1, 200, 0);
+    const touches = traverse(perceur(3), horde, 60);
+    expect(touches).toEqual([seul]);
+  });
+
+  it('consomme UNE traversee par corps, pas une par tick', () => {
+    // Quatre corps pour trois traversees : le quatrieme survit.
+    const horde = new Horde(10);
+    for (let i = 0; i < 4; i++) {
+      addOne(horde, i + 1, 200 + i * 90, 0);
+    }
+    const touches = traverse(perceur(2), horde, 80);
+    expect(touches).toHaveLength(3);
+  });
+
+  it('inflige ses degats PLEINS a chaque corps traverse', () => {
+    const arme = perceur(2);
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(arme, 0, 0, 0, 1, 0, arme.damage, 1);
+    const horde = fileDeTrois(90);
+    const degats: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      p.step(1 / TICK_HZ);
+      p.collide(horde, (_id, degat) => degats.push(degat));
+    }
+    expect(degats).toEqual([arme.damage, arme.damage, arme.damage]);
+  });
+
+  it('rend au catalogue une arme qui transperce, et une seule', () => {
+    const perceuses = WEAPONS.filter((w) => w.pierce > 0);
+    expect(perceuses.length).toBeGreaterThan(0);
+    for (const w of perceuses) {
+      // Le transpercage appartient aux armes LENTES a projectile unique : une
+      // arme rapide qui traverse frapperait toute une file a chaque tick.
+      expect(w.projectileCount, w.name).toBe(1);
+      expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(30);
+    }
   });
 });

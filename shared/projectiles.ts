@@ -121,6 +121,29 @@ export class Projectiles {
    * §6.2 en projette quarante.
    */
   readonly #weapon: Uint8Array;
+  /**
+   * Traversees RESTANTES : combien d'ennemis supplementaires ce projectile
+   * peut encore transpercer avant d'etre consomme (etape 8). Recopie de
+   * `Weapon.pierce` a l'emission, decremente a chaque traversee.
+   */
+  readonly #pierce: Uint8Array;
+  /**
+   * Le dernier ennemi touche par ce projectile, ou `-1`.
+   *
+   * ⚠️ **Sans lui, « transpercer » devient « frapper le meme ennemi a chaque
+   * tick ».** Un projectile qui survit a son impact continue sa course, mais
+   * la cible qu'il vient de traverser est encore a portee au tick suivant —
+   * il la retoucherait, et une fleche a trois traversees infligerait quatre
+   * fois ses degats au PREMIER ennemi rencontre au lieu d'en traverser
+   * quatre.
+   *
+   * ponytail: un seul souvenir, donc A -> B -> A reste possible si le
+   * projectile recroise sa premiere cible apres une autre. Un ensemble par
+   * projectile couterait un tableau de plus par traversee pour un cas que la
+   * geometrie rend rare (les projectiles vont droit) ; a revoir si une arme a
+   * trajectoire courbe apparait.
+   */
+  readonly #lastHit: Int32Array;
   /** Pas restants avant expiration. Decremente a chaque `step`. */
   readonly #ticksRemaining: Int32Array;
   /**
@@ -151,6 +174,8 @@ export class Projectiles {
     this.#by = new Uint8Array(capacity);
     this.#blastRadius = new Float32Array(capacity);
     this.#weapon = new Uint8Array(capacity);
+    this.#pierce = new Uint8Array(capacity);
+    this.#lastHit = new Int32Array(capacity).fill(-1);
     this.#ticksRemaining = new Int32Array(capacity);
     this.#prevX = new Float32Array(capacity);
     this.#prevY = new Float32Array(capacity);
@@ -290,6 +315,8 @@ export class Projectiles {
       this.#by[slot] = by;
       this.#blastRadius[slot] = weapon.blastRadius;
       this.#weapon[slot] = weapon.id;
+      this.#pierce[slot] = weapon.pierce;
+      this.#lastHit[slot] = -1;
       this.#ticksRemaining[slot] = weapon.projectileLifeTicks;
       this.bornTick[slot] = tick;
     }
@@ -435,6 +462,13 @@ export class Projectiles {
    * `nearestTarget`, pour la meme raison : le resultat ne doit pas dependre
    * de l'ordre des entites dans le tableau.
    *
+   * ⚠️ **Un projectile TRANSPERCANT n'est pas consomme** (etape 8) : tant
+   * qu'il lui reste des traversees (`Weapon.pierce`, recopie a l'emission), il
+   * poursuit sa course apres avoir appele `onHit`, et il inflige ses degats
+   * PLEINS a chaque corps. Il ne peut jamais toucher deux fois de suite le
+   * meme — voir `#lastHit`, sans quoi « transpercer » voudrait dire « frapper
+   * le premier ennemi quatre fois ».
+   *
    * ⚠️ **Le rayon teste suit le CORPS de la cible depuis l'etape 8** : un boss
    * (`Archetype.bodyScale` = 3) encaisse sur 96 px de rayon, la pietaille sur
    * 32. Voir `HIT_R2_BY_ARCHETYPE` — jusque-la, il fallait viser le centre
@@ -514,6 +548,10 @@ export class Projectiles {
           }
         }
         const id = horde.entityIdAt(e);
+        // Jamais deux fois de suite le meme corps — voir `#lastHit`.
+        if (id === this.#lastHit[i]) {
+          continue;
+        }
         if (d2 < bestDist2 || (d2 === bestDist2 && id < bestId)) {
           bestDist2 = d2;
           bestId = id;
@@ -527,7 +565,17 @@ export class Projectiles {
         // `#removeAt` juste apres deplace le dernier projectile dans ce
         // creneau.
         onHit(bestId, this.#damage[i] ?? 0, i);
-        this.#removeAt(i);
+        // ⚠️ **Le degat est PLEIN a chaque traversee** (voir `Weapon.pierce`) :
+        // `onHit` vient d'etre appele avant ce test, et il l'est de la meme
+        // facon au premier ennemi qu'au dernier. Ce qui se consomme, c'est le
+        // droit de continuer.
+        const restantes = this.#pierce[i] ?? 0;
+        if (restantes > 0) {
+          this.#pierce[i] = restantes - 1;
+          this.#lastHit[i] = bestId;
+        } else {
+          this.#removeAt(i);
+        }
       }
     }
   }
@@ -545,6 +593,8 @@ export class Projectiles {
       this.#by[slot] = this.#by[last] ?? 0;
       this.#blastRadius[slot] = this.#blastRadius[last] ?? 0;
       this.#weapon[slot] = this.#weapon[last] ?? 0;
+      this.#pierce[slot] = this.#pierce[last] ?? 0;
+      this.#lastHit[slot] = this.#lastHit[last] ?? -1;
       this.#ticksRemaining[slot] = this.#ticksRemaining[last] ?? 0;
       this.#prevX[slot] = this.#prevX[last] ?? 0;
       this.#prevY[slot] = this.#prevY[last] ?? 0;
