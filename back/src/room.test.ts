@@ -2081,7 +2081,8 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     // a une carte qu'a deux, et « la vie remonte » passerait quand meme.
     // 150 ticks (5 s) : assez pour que deux cartes se distinguent nettement
     // d'une, et assez peu pour rester sous le plafond de 100 apres blessure.
-    const REGEN_TICKS = 150;
+    // Assez long pour que UNE carte rende au moins 10 PV (regen baissee au playtest).
+    const REGEN_TICKS = Math.ceil((10 * TICK_HZ) / PAR_SECONDE) + 30;
 
     function remonte(cartes: number): number {
       const room = new Room(0x0e_9e_0001);
@@ -2145,11 +2146,15 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     // Trois cartes rendent 3 x `PAR_SECONDE` par seconde : de quoi combler
     // plusieurs fois le trou en 300 ticks. Sans plafond, la vie deborderait
     // largement.
-    const rendu = (3 * PAR_SECONDE * 300) / TICK_HZ;
+    // Assez long pour combler plusieurs fois le trou, quelle que soit la regen.
+    const PLAFOND_TICKS = Math.ceil((200 * TICK_HZ) / (3 * PAR_SECONDE));
+    const rendu = (3 * PAR_SECONDE * PLAFOND_TICKS) / TICK_HZ;
     expect(vieBlesse + rendu).toBeGreaterThan(maxHp);
 
     let plafondDepasse = false;
-    for (let t = 0; t < 300; t++) {
+    for (let t = 0; t < PLAFOND_TICKS; t++) {
+      // La fenetre est longue : les vagues tueraient le joueur avant la fin.
+      room.horde.kill(Array.from({ length: room.horde.count }, (_, i) => room.horde.entityIdAt(i)));
       room.step(DT);
       if (hpOf(room, 1) > maxHp) {
         plafondDepasse = true;
@@ -2406,6 +2411,8 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
     if (!regain) {
       throw new Error('fixture : aucun passif de genre regen');
     }
+    // Assez long pour que le bonus rende au moins 10 PV (regen baissee au playtest).
+    const FENETRE = Math.ceil((10 * TICK_HZ) / regain.magnitude) + 30;
 
     function remonte(bonus: number): number {
       const grants: AccountGrants = {
@@ -2435,7 +2442,7 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
       // serait un plafond jamais quitte, pas un soin.
       expect(blesse1).toBeLessThan(PLAYER_MAX_HP);
 
-      const REGEN_TICKS = 150;
+      const REGEN_TICKS = FENETRE;
       for (let t = 0; t < REGEN_TICKS; t++) {
         room.step(DT);
       }
@@ -2448,10 +2455,12 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
 
     expect(remonte(0)).toBe(0);
 
-    const attendu = (regain.magnitude * 150) / TICK_HZ;
+    const attendu = (regain.magnitude * FENETRE) / TICK_HZ;
     expect(attendu).toBeGreaterThanOrEqual(10);
     expect(remonte(regain.magnitude)).toBeGreaterThanOrEqual(attendu - 1);
-    expect(remonte(regain.magnitude)).toBeLessThanOrEqual(attendu);
+    // Un point de tolerance au-dessus aussi : le debut ET la fin sont tronques
+    // par le `u16` du snapshot, et l'attendu n'est plus un entier.
+    expect(remonte(regain.magnitude)).toBeLessThanOrEqual(attendu + 1);
   });
 
   /**

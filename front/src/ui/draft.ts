@@ -182,7 +182,7 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   // de « regain » est en points de vie par seconde ; l'ecrire « +2 PV »
   // laisserait croire a un gain unique, c'est-a-dire exactement ce que
   // « vitalite » fait deja et que cette carte ne fait pas.
-  regen: (m) => `+${m} PV/s`,
+  regen: (m) => `+${m.toLocaleString('fr-FR')} PV/s`,
 };
 
 /**

@@ -254,7 +254,7 @@ export function paintHud(
   el.hpFill.style.setProperty('--v', `${Math.min(1, Math.max(0, info.hp / maxHp))}`);
   el.xpFill.style.setProperty('--v', `${info.xpRatio}`);
   if (el.xpLabel) {
-    el.xpLabel.textContent = `XP ${Math.floor(info.xp)} / ${info.xpNeeded}`;
+    el.xpLabel.textContent = `${Math.floor(info.xp)} / ${info.xpNeeded}`;
   }
   el.level.textContent = `${info.level}`;
   el.timer.textContent = info.timer;

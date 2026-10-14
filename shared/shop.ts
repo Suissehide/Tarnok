@@ -51,7 +51,8 @@ export const SHOP_ITEMS: readonly ShopItem[] = Object.freeze([
   bonus('puissance', 'Puissance', 'damage', 0.1, 8, 150),
   bonus('armure', 'Armure', 'armor', 0.04, 5, 150),
   bonus('vitalite', 'Vitalité', 'maxHp', 10, 5, 150),
-  bonus('regain', 'Régénération', 'regen', 0.5, 5, 150),
+  // Regen baissee au playtest (0,5 -> 0,2 PV/s par palier), comme la carte.
+  bonus('regain', 'Régénération', 'regen', 0.2, 5, 150),
   bonus('celerite', 'Célérité', 'speed', 13, 4, 150),
   bonus('aimant', 'Aimant', 'pickupRadius', 22, 3, 200),
   bonus('cadence', 'Hâte', 'fireRate', 0.05, 5, 200),

@@ -103,9 +103,11 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // rester dans la horde : elle recompense le DESENGAGEMENT, elle ne rend
     // jamais un joueur immortel dedans. Empilee huit fois elle annulerait le
     // contact — et il faudrait huit cartes, donc une construction entiere.
+    // ⚠️ **Baisse de 2 a 0,6 au playtest** (*« le bonus de regen est trop
+    // fort »*) : a 2 PV/s, deux cartes rendaient une vie entiere en 25 s.
     name: 'regain',
     kind: 'regen',
-    magnitude: 2,
+    magnitude: 0.6,
   },
 ];
 

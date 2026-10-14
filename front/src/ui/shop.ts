@@ -72,7 +72,7 @@ export function effetLabel(item: ShopItem): string {
     case 'maxHp':
       return `+${v} PV max`;
     case 'regen':
-      return `+${v} PV/s`;
+      return `+${v.toLocaleString('fr-FR')} PV/s`;
     case 'speed':
       return `+${v} px/s`;
     case 'pickupRadius':

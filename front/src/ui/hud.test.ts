@@ -350,7 +350,7 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     paintHud(el, INFO, 0, 0, source);
     expect(el.xpFill.style.getPropertyValue('--v')).toBe('0.25');
     // L'XP lisible sur sa jauge, et la jauge est BIEN celle du sous-PV, en bleu.
-    expect(el.xpLabel?.textContent).toBe('XP 500 / 2000');
+    expect(el.xpLabel?.textContent).toBe('500 / 2000');
     expect(el.xpFill.classList.contains('bar__fill--xp')).toBe(true);
     expect(el.kills.textContent).toBe(`1${THIN_SPACE}284`);
   });

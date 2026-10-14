@@ -113,10 +113,25 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
   const wanted = loadouts.size + SPREAD_BONUS;
   const pool = buildPool();
   const spread: Card[] = [];
+  // ⚠️ **Ce qu'un joueur possede deja revient plus souvent** (retour de
+  // playtest : *« je dois pouvoir reprendre la meme arme pour l'ameliorer »*).
+  // Tirage uniforme sur ~20 cartes, une arme possedee ne revenait presque
+  // jamais ; c'est le poids `OWNED_WEIGHT` des survivor-likes.
+  const weights = pool.map((card) => (ownedByAnyone(card, loadouts) ? OWNED_WEIGHT : 1));
 
   while (spread.length < wanted && pool.length > 0) {
-    const index = Math.min(pool.length - 1, Math.floor(rng() * pool.length));
+    const total = weights.reduce((a, b) => a + b, 0);
+    let roll = rng() * total;
+    let index = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) {
+      roll -= weights[i] ?? 0;
+      if (roll < 0) {
+        index = i;
+        break;
+      }
+    }
     const [card] = pool.splice(index, 1);
+    weights.splice(index, 1);
     if (!card) {
       break;
     }
@@ -124,4 +139,18 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
   }
 
   return spread;
+}
+
+/** Le poids d'une carte deja possedee par un joueur du salon, contre 1 pour les autres. */
+export const OWNED_WEIGHT = 4;
+
+function ownedByAnyone(card: Card, loadouts: ReadonlyMap<number, Loadout>): boolean {
+  for (const l of loadouts.values()) {
+    const owned =
+      card.nature === CARD.PASSIVE ? l.stacksOf(card.refId) : l.stacksOfWeapon(card.refId);
+    if (owned > 0) {
+      return true;
+    }
+  }
+  return false;
 }

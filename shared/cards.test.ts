@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CARD, drawSpread } from './cards';
+import { CARD, drawSpread, OWNED_WEIGHT } from './cards';
 import { SPREAD_BONUS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
@@ -121,23 +121,26 @@ describe('drawSpread', () => {
     );
   });
 
-  it("ne depend PAS des inventaires : le pool est le meme pour n'importe quelle equipe", () => {
-    // ⚠️ `buildPool` ne prend QUE l'union des deblocages de la salle, jamais
-    // les inventaires : ce qui varie d'un joueur a l'autre, c'est son
-    // ELIGIBILITE devant une carte (`Loadout.canTake`), jamais le contenu de
-    // l'etalage. A union, graine et nombre de joueurs egaux, deux equipes aux
-    // inventaires opposes voient exactement le meme etalage.
-    const garnis = [new Loadout(), new Loadout()];
-    garnis[0]?.addWeapon(2);
-    garnis[0]?.addWeapon(2);
-    garnis[0]?.addPassive(3);
-    garnis[1]?.addWeapon(7);
-    garnis[1]?.addPassive(0);
-    for (let seed = 1; seed <= 40; seed++) {
-      expect(drawSpread(equipe(...garnis), makeRandom(seed))).toEqual(
-        drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed)),
-      );
+  it('fait revenir PLUS SOUVENT ce qu une equipe possede deja : de quoi l ameliorer', () => {
+    // Retour de playtest : *« je dois pouvoir reprendre la meme arme pour
+    // l'ameliorer »*. Avant, l'etalage ne dependait pas des inventaires et une
+    // arme possedee revenait une fois sur cinq etalages a peine.
+    const arme = (spread: { nature: number; refId: number }[]): boolean =>
+      spread.some((c) => c.nature === CARD.WEAPON && c.refId === 2);
+    let avec = 0;
+    let sans = 0;
+    for (let seed = 1; seed <= 400; seed++) {
+      const garni = new Loadout();
+      garni.addWeapon(2);
+      if (arme(drawSpread(equipe(garni, new Loadout()), makeRandom(seed)))) {
+        avec++;
+      }
+      if (arme(drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed)))) {
+        sans++;
+      }
     }
+    expect(OWNED_WEIGHT).toBeGreaterThan(1);
+    expect(avec).toBeGreaterThan(sans * 2);
   });
 
   it('ne rend jamais deux fois la meme carte dans un etalage', () => {
