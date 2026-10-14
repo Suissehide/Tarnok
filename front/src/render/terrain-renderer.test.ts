@@ -3,7 +3,6 @@ import { describe, expect, it } from 'vitest';
 
 import {
   coastCells,
-  DETAIL_DENSITY,
   detailCells,
   groundTiles,
   PATCHES,
@@ -134,23 +133,35 @@ describe('les plaques de couleur', () => {
   });
 });
 
-describe('detailCells — les petits details du pack', () => {
+describe('detailCells — les petits details du pack, en taches', () => {
   const ile = carte(
-    Array.from({ length: 40 }, (_, y) =>
-      y === 0 || y === 39 ? '~'.repeat(40) : `~${'.'.repeat(38)}~`,
+    Array.from({ length: 60 }, (_, y) =>
+      y === 0 || y === 59 ? '~'.repeat(60) : `~${'.'.repeat(58)}~`,
     ),
   );
+  const d = detailCells(ile);
+  const libres = 58 * 58;
 
-  it('seme environ DETAIL_DENSITY de l herbe libre, toujours au meme endroit', () => {
-    const d = detailCells(ile);
-    const libres = 38 * 38;
-    expect(d.length).toBeGreaterThan(libres * DETAIL_DENSITY * 0.5);
-    expect(d.length).toBeLessThan(libres * DETAIL_DENSITY * 2);
+  it('seme peu, et en taches : une minorite de l herbe, toujours au meme endroit', () => {
+    expect(d.length).toBeGreaterThan(0);
+    expect(d.length).toBeLessThan(libres * 0.12);
     expect(detailCells(ile)).toEqual(d);
+  });
+
+  it('les details se tiennent en grappes : la plupart ont un voisin a moins de deux cellules', () => {
+    const voisins = d.filter((a) =>
+      d.some((b) => b !== a && Math.hypot(a.x - b.x, a.y - b.y) < 2 * 64),
+    ).length;
+    expect(voisins / d.length).toBeGreaterThan(0.7);
+  });
+
+  it('surtout des touffes et des cailloux, le reste rare', () => {
+    const courants = d.filter((x) => x.kind >= 4 && x.kind <= 11).length;
+    expect(courants / d.length).toBeGreaterThan(0.7);
     expect(d.every((x) => x.kind >= 1 && x.kind <= 18)).toBe(true);
   });
 
-  it('jamais sur l eau ni sur une cellule bloquee', () => {
+  it('jamais sur une cellule bloquee', () => {
     const bloquee = { ...ile, blocked: new Uint8Array(ile.blocked.length).fill(1) };
     expect(detailCells(bloquee)).toEqual([]);
   });

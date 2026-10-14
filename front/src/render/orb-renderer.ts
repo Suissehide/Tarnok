@@ -86,7 +86,10 @@ export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
  * depuis la tache 17 — meme raison que `makeZoneAtlas` et `makeRingAtlas` :
  * en blanc, `tint` rend exactement la couleur demandee.
  */
-export const ORB_TINT = 0x7fd858;
+//
+// ⚠️ **Bleu, plus vert** : sur l'herbe de la carte en tuiles, un orbe vert
+// disparaissait dans le sol (retour de playtest).
+export const ORB_TINT = 0x5ab8ff;
 
 /** Creux de la pulsation ; la crete vaut 1. Voir `draw`. */
 export const ORB_ALPHA_MIN = 0.75;

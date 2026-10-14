@@ -205,9 +205,11 @@ export function groundTiles(world: WorldMap): TileRef[] {
 }
 
 /**
- * Les petits details du pack (`Deco/01` a `Deco/15` : champignons, cailloux,
- * touffes, citrouilles, os), et de rares grands (`16`, `17` les panneaux,
- * `18` l'epouvantail) — semes par hachage sur l'herbe LIBRE, sans effet sur le
+ * Les petits details du pack (`Deco/`), semes en PETITES PLAQUES plutot que
+ * partout : un bruit a grain fin choisit quelques taches d'herbe, et seules
+ * elles recoivent des details, serres. Surtout des touffes et des cailloux
+ * (`04` a `11`) ; plus rarement champignons, citrouilles et os ; tres
+ * rarement un panneau (`16`, `17`) ou un epouvantail (`18`). Sans effet sur le
  * jeu : rien ne bloque, rien ne voyage, chaque client en seme les memes.
  */
 export interface Detail {
@@ -217,10 +219,20 @@ export interface Detail {
   kind: number;
 }
 
-/** Part des cellules libres qui recoivent un petit detail. */
-export const DETAIL_DENSITY = 0.11;
-/** Les grands details (panneaux, epouvantail) : quelques-uns par ile. */
-const TALL_DENSITY = 0.0025;
+/** Taille des taches, en cellules : petit, pour des bouquets et pas des champs. */
+const DETAIL_LATTICE = 3;
+/** Seuil du bruit au-dela duquel une cellule fait partie d'une tache. */
+const DETAIL_PATCH = 0.78;
+/** Dans une tache, part des cellules qui recoivent un detail. */
+export const DETAIL_DENSITY = 0.6;
+/** Les details courants : touffes, buissons et cailloux. */
+const COMMON = [4, 5, 6, 7, 8, 9, 10, 11];
+/** Les rares : champignons, citrouilles, os. */
+const RARE = [1, 2, 3, 12, 13, 14, 15];
+/** Part des rares parmi les details d'une tache. */
+const RARE_SHARE = 0.12;
+/** Les grands (panneaux, epouvantail) : quelques-uns par ile, hors des taches. */
+const TALL_DENSITY = 0.0012;
 
 export function detailCells(world: WorldMap): Detail[] {
   const out: Detail[] = [];
@@ -238,9 +250,13 @@ export function detailCells(world: WorldMap): Detail[] {
       const y = cy * TILE + TILE / 2 + oy;
       if (roll < TALL_DENSITY) {
         out.push({ x, y, kind: 16 + (pick % 3) });
-      } else if (roll < TALL_DENSITY + DETAIL_DENSITY) {
-        out.push({ x, y, kind: 1 + (pick % 15) });
+        continue;
       }
+      if (valueNoise(cx, cy, DETAIL_LATTICE, 13) < DETAIL_PATCH || roll > DETAIL_DENSITY) {
+        continue;
+      }
+      const set = (pick >>> 24) / 255 < RARE_SHARE ? RARE : COMMON;
+      out.push({ x, y, kind: set[pick % set.length] ?? 4 });
     }
   }
   return out;
