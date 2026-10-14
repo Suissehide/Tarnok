@@ -868,6 +868,12 @@
       -2px -2px 0 var(--color-cream, #f3e6c4);
   }
 
+  .weapon-family__note {
+    grid-column: 1 / -1;
+    font-size: 18px;
+    color: var(--color-ink-soft);
+  }
+
   .weapon-family__list {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));

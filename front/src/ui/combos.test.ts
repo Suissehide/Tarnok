@@ -2,9 +2,10 @@
 import { ELEMENT, ELEMENTS } from '@shared/elements';
 import { packElementPair } from '@shared/protocol';
 import { REACTION, REACTION_DEFS, reactionForPair } from '@shared/reactions';
+import { NEUTRE_MARQUE_AMP } from '@shared/weapons';
 import { describe, expect, it } from 'vitest';
 
-import { COMBO_IDS, reactionHelp, renderCombos } from './combos';
+import { COMBO_IDS, NEUTRE_HELP, reactionHelp, renderCombos } from './combos';
 
 describe('aide des combinaisons', () => {
   it('chaque reaction de la table a une aide dont le couple est le sien', () => {
@@ -71,5 +72,14 @@ describe('aide des combinaisons', () => {
     renderCombos(root, new Set());
     renderCombos(root, new Set());
     expect(root.querySelectorAll('.combo')).toHaveLength(COMBO_IDS.length);
+  });
+
+  it('une ligne dit ce que fait le neutre, au pourcentage de NEUTRE_MARQUE_AMP', () => {
+    const root = document.createElement('div');
+    renderCombos(root, new Set());
+    const lignes = root.querySelectorAll('.combo-neutre');
+    expect(lignes).toHaveLength(1);
+    expect(lignes[0]?.textContent).toContain(NEUTRE_HELP);
+    expect(NEUTRE_HELP).toContain(`${Math.round((NEUTRE_MARQUE_AMP - 1) * 100)} %`);
   });
 });

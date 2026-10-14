@@ -19,6 +19,7 @@ import { linkedNeighbours } from '@shared/links';
 import type { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
 import { REACTION, reactionForPair } from '@shared/reactions';
+import { NEUTRE_MARQUE_AMP } from '@shared/weapons';
 import type { ZoneField } from '@shared/zones';
 
 /**
@@ -1215,6 +1216,12 @@ export function resolveProjectileDamage(
         // compacterait entre `collide` et ce rappel.
         return;
       }
+      // Le neutre amplifie ce que l'equipe a marque (`NEUTRE_MARQUE_AMP`). Lu
+      // AVANT les degats : la marque est celle que le tir trouve en arrivant.
+      const coup =
+        element === ELEMENT.NEUTRE && horde.markAt(slot, tick) !== ELEMENT.NEUTRE
+          ? damage * NEUTRE_MARQUE_AMP
+          : damage;
       const blastRadius = projectiles.blastRadiusAt(projectileSlot);
       if (blastRadius > 0) {
         // ⚠️ **L'arme de zone passe par LE balayage commun** (tache 16), celui
@@ -1234,7 +1241,7 @@ export function resolveProjectileDamage(
           horde.x[slot] ?? 0,
           horde.y[slot] ?? 0,
           blastRadius,
-          damage,
+          coup,
           zones,
           tick,
           dead,
@@ -1246,7 +1253,7 @@ export function resolveProjectileDamage(
         // armes sur neuf ne sont pas des armes de zone. Un balayage a rayon nul
         // serait la meme regle ecrite plus cher — et il toucherait en prime tout
         // ennemi pile aux memes coordonnees.
-        appliquerDegats(horde, slot, damage, zones, tick, dead);
+        appliquerDegats(horde, slot, coup, zones, tick, dead);
       }
       if (dead.has(entityId)) {
         // ⚠️ **UN ENNEMI QUI MEURT DU MEME IMPACT N'EST PAS MARQUE.** Un mort ne

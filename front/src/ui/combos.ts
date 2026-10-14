@@ -16,6 +16,7 @@
 
 import { ELEMENT } from '@shared/elements';
 import { REACTION, REACTION_DEFS } from '@shared/reactions';
+import { NEUTRE_MARQUE_AMP } from '@shared/weapons';
 
 import { elementBadge } from './element-icons';
 
@@ -166,5 +167,23 @@ export function renderCombos(root: HTMLElement, known: ReadonlySet<number>): voi
       row.append(elementBadge(a, 24), plus, elementBadge(b, 24), arrow, text);
       return row;
     }),
+    neutreRow(),
   );
+}
+
+/** Ce que fait une arme neutre, dit au salon comme en jeu. */
+export const NEUTRE_HELP = `+${Math.round((NEUTRE_MARQUE_AMP - 1) * 100)} % de dégâts sur un ennemi marqué`;
+
+/** La derniere ligne : le neutre ne combine rien, il amplifie ce que l'equipe marque. */
+function neutreRow(): HTMLElement {
+  const row = document.createElement('div');
+  row.className = 'combo-neutre flex items-center gap-[6px] text-[19px] leading-[1.3]';
+  const name = document.createElement('span');
+  name.className = 'f-meta ol';
+  name.textContent = 'Neutre';
+  const text = document.createElement('span');
+  text.className = 'min-w-0';
+  text.append(name, ` : ${NEUTRE_HELP}`);
+  row.append(elementBadge(ELEMENT.NEUTRE, 24), text);
+  return row;
 }

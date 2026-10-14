@@ -47,7 +47,7 @@ import { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
 import { REACTION, zoneBurnPerTick } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import type { Weapon } from '@shared/weapons';
+import { NEUTRE_MARQUE_AMP, type Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -4570,5 +4570,47 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
     // Compaction UNE fois, apres tous les degats : la horde ne porte plus
     // personne.
     expect(horde.count).toBe(0);
+  });
+});
+
+describe('le neutre amplifie ce que l equipe a marque (NEUTRE_MARQUE_AMP)', () => {
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  /** Un lourd seul, marque de `marque` par le joueur 2 (ou nu), frappe une fois par `arme`. */
+  function pvApresUnCoup(marque: number | null, arme: Weapon): { hp: number; mark: number } {
+    const horde = new Horde(10);
+    addOne(horde, 1, 500, 500, LOURD);
+    if (marque !== null) {
+      horde.applyMark(0, marque, 2, 0);
+    }
+    const projectiles = new Projectiles(10);
+    projectiles.fireSalvo(arme, 0, 400, 500, entityIdOf(1, 0), horde);
+    const zones = solNu();
+    const orbs = new OrbField(10);
+    for (let i = 0; i < 20 && projectiles.count > 0; i++) {
+      resolveProjectileDamage(projectiles, DT, horde, orbs, i, zones);
+    }
+    return { hp: horde.hp[0] ?? 0, mark: horde.markAt(0, 1) };
+  }
+
+  it('un tir neutre sur un ennemi MARQUE retire brut x NEUTRE_MARQUE_AMP x (1 - armure)', () => {
+    expect(NEUTRE_MARQUE_AMP).toBeGreaterThan(1);
+    const { hp } = pvApresUnCoup(ELEMENT.BRAISE, SINGLE);
+    expect(hp).toBeCloseTo(HEAVY_HP - SINGLE.damage * NEUTRE_MARQUE_AMP * (1 - HEAVY_ARMOR), 5);
+  });
+
+  it('la paire : sur un ennemi NU, le meme tir retire brut x (1 - armure)', () => {
+    const { hp } = pvApresUnCoup(null, SINGLE);
+    expect(hp).toBeCloseTo(HEAVY_HP - coupSurLourd(SINGLE.damage), 5);
+  });
+
+  it('la marque SURVIT au tir neutre : l allie peut encore declencher sa reaction', () => {
+    expect(pvApresUnCoup(ELEMENT.BRAISE, SINGLE).mark).toBe(ELEMENT.BRAISE);
+  });
+
+  it('un tir ELEMENTAIRE sur une marque du meme element n est pas amplifie', () => {
+    const braise: Weapon = { ...SINGLE, element: ELEMENT.BRAISE };
+    const { hp } = pvApresUnCoup(ELEMENT.BRAISE, braise);
+    expect(hp).toBeCloseTo(HEAVY_HP - coupSurLourd(SINGLE.damage), 5);
   });
 });

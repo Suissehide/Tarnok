@@ -1,9 +1,10 @@
 import { CLASSES, classOf, DEFAULT_CLASS_ID, type TraitKind, type VerbKind } from '@shared/classes';
 import { MAX_PLAYERS } from '@shared/constants';
-import { ELEMENTS } from '@shared/elements';
+import { ELEMENT, ELEMENTS } from '@shared/elements';
 import { type LobbyMessage, NO_WEAPON } from '@shared/protocol';
 import { BASE_WEAPON_ID, startingWeapons, weaponOf } from '@shared/weapons';
 
+import { NEUTRE_HELP } from './combos';
 import { playerColor } from './draft';
 import { elementBadge, elementLabel } from './element-icons';
 import { avatar } from './icons';
@@ -143,6 +144,12 @@ export function renderWeapons(
         list.append(button);
       }
       row.append(head, list);
+      if (element.id === ELEMENT.NEUTRE) {
+        const note = document.createElement('span');
+        note.className = 'weapon-family__note';
+        note.textContent = `Ne combine rien : ${NEUTRE_HELP}.`;
+        row.append(note);
+      }
       return row;
     }),
   );

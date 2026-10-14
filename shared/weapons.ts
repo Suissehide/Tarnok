@@ -748,6 +748,18 @@ export function projectileTrailPx(weapon: Weapon): number {
  */
 export const BASE_WEAPON_ID = 0;
 
+/**
+ * Le role des armes NEUTRES : elles ne declenchent aucune reaction, elles
+ * **amplifient** celles que les allies preparent. Un tir neutre sur un ennemi
+ * qui porte une marque d'element inflige ses degats multiplies par ce facteur.
+ *
+ * ⚠️ **Rien n'est consomme.** La marque reste, l'allie peut encore declencher
+ * sa reaction : le neutre recompense de viser ce que l'equipe a marque, il ne
+ * lui vole rien. Serveur seul (les PV ennemis ne sont pas sur le fil) : zero
+ * octet.
+ */
+export const NEUTRE_MARQUE_AMP = 1.5;
+
 /** Les armes proposables comme arme de depart : toutes sauf l'arme neutre, deja tenue. */
 export function startingWeapons(): number[] {
   return WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID).map((w) => w.id);
