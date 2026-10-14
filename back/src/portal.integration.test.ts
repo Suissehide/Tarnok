@@ -541,6 +541,18 @@ async function tuerLeBoss(room: Room, tireur: Client): Promise<number> {
     },
   );
   expect(room.palier).toBe(k + 1);
+  // ⚠️ **Le portail ne suit plus la mort du boss** (retour de playtest) : il
+  // s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues. On avance, horde videe,
+  // jusqu'a lui.
+  await avancerJusqua(
+    room,
+    () => room.portalOpen,
+    "l'ouverture du portail",
+    300 * TICK_HZ,
+    () => {
+      viderSauf(room, []);
+    },
+  );
   return bossId;
 }
 
@@ -640,15 +652,14 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const depart = await fullSnapshot(a.ws);
     expect(depart.gold).toBe(0);
 
-    // ---- 1. Un palier SE TERMINE, et le portail s'ouvre A LA MORT ----------
+    // ---- 1. Un palier SE TERMINE ; le portail s'ouvre ensuite, a son rythme --
     const boss1 = await tuerLeBoss(room, a);
     const mort1 = await mortDuBoss(a, boss1);
     const open1 = await ouvertureVueParTous(clients, 1);
 
-    // ⚠️ **La fenetre est datee de la MORT, pas d'un tick quelconque** (§2 : le
-    // palier se termine a la mort du boss). Le tick de la mort vient du fil,
-    // pas du salon : c'est `DEATHS` qui le porte.
-    expect(open1.deadlineTick).toBe(mort1.tick + PORTAL_WINDOW_TICKS);
+    // Le portail ne s'ouvre plus A la mort du boss mais toutes les
+    // `PORTAL_EVERY_WAVES` vagues (retour de playtest) : il vient APRES elle.
+    expect(open1.deadlineTick - PORTAL_WINDOW_TICKS).toBeGreaterThanOrEqual(mort1.tick);
     // Premier portail de la run : la mise n'est pas encore majoree.
     expect(open1.multiplier).toBe(1);
 
@@ -831,7 +842,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const mort2 = await mortDuBoss(a, boss2);
     const open2 = await ouvertureVueParTous(clients, 2);
 
-    expect(open2.deadlineTick).toBe(mort2.tick + PORTAL_WINDOW_TICKS);
+    expect(open2.deadlineTick - PORTAL_WINDOW_TICKS).toBeGreaterThanOrEqual(mort2.tick);
     // ⚠️ **LA ligne que le premier portail ne peut pas garder** : rester a
     // majore la mise, et c'est ce chiffre-la que l'ecran du vote multiplie.
     expect(open2.multiplier).toBe(1 + EXTRACT_MULTIPLIER_STEP);
@@ -954,7 +965,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const boss = await tuerLeBoss(room, a);
     const mort = await mortDuBoss(a, boss);
     const open = await ouvertureVueParTous(clients, 1);
-    expect(open.deadlineTick).toBe(mort.tick + PORTAL_WINDOW_TICKS);
+    expect(open.deadlineTick - PORTAL_WINDOW_TICKS).toBeGreaterThanOrEqual(mort.tick);
 
     // ⚠️ **La cagnotte est NON VIDE avant l'effacement.** Sans cette ligne,
     // « l'or tombe a zero » se lirait aussi bien d'un or qui n'a jamais rien

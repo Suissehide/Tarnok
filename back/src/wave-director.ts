@@ -296,20 +296,12 @@ export class WaveDirector {
    */
   #palier = 0;
 
-  /**
-   * Vagues ordinaires emises depuis le debut du palier courant. Remis a zero
-   * a la mort du boss, pas a son apparition — les vagues continuent de tomber
-   * pendant le combat de boss et elles comptent, mais elles ne peuvent pas
-   * declencher un second boss puisque `#bossWaveId` est deja pris.
-   */
+  /** Vagues ordinaires emises depuis le dernier boss demande. */
   #wavesInPalier = 0;
 
   /**
-   * `waveId` du boss en cours, `null` quand aucun boss n'est attendu.
-   *
-   * ⚠️ **C'est le VERROU du palier.** Tant qu'il n'est pas `null`, le
-   * directeur n'en demandera pas un second, quel que soit le nombre de vagues
-   * ordinaires tombees entre-temps.
+   * `waveId` du DERNIER boss demande, `null` avant le premier. Ce n'est plus un
+   * verrou : plusieurs boss peuvent vivre a la fois.
    */
   #bossWaveId: number | null = null;
 
@@ -343,11 +335,10 @@ export class WaveDirector {
    * meme lot.
    */
   bossDefeated(): void {
-    if (this.#bossWaveId === null) {
-      return;
-    }
-    this.#bossWaveId = null;
-    this.#wavesInPalier = 0;
+    // ⚠️ **Plus de verrou** (retour de playtest : *« on peut avoir plusieurs
+    // boss en meme temps »*) : un boss vient tous les `WAVES_PER_PALIER`
+    // vagues, qu'un autre soit encore en vie ou non, et CHAQUE boss abattu
+    // fait monter le palier.
     this.#palier++;
   }
 
@@ -363,7 +354,8 @@ export class WaveDirector {
    * simplement rejouee a la prochaine echeance.
    */
   bossMissing(): void {
-    this.#bossWaveId = null;
+    // La demande est rejouee a la prochaine echeance.
+    this.#wavesInPalier = WAVES_PER_PALIER;
   }
 
   /**
@@ -417,7 +409,7 @@ export class WaveDirector {
 
     // Le boss est du : `WAVES_PER_PALIER` vagues ordinaires sont tombees et
     // aucun boss n'est encore en jeu.
-    const boss = this.#wavesInPalier >= WAVES_PER_PALIER && this.#bossWaveId === null;
+    const boss = this.#wavesInPalier >= WAVES_PER_PALIER;
 
     // ⚠️ **Ces deux lignes sont sorties du litteral, et l'ORDRE dans lequel
     // elles consomment le generateur est le meme qu'avant** : la graine, puis
@@ -454,11 +446,10 @@ export class WaveDirector {
 
     if (boss) {
       this.#bossWaveId = order.waveId;
+      // Le compte repart A L'APPARITION, plus a la mort : le prochain boss
+      // vient `WAVES_PER_PALIER` vagues plus tard, que celui-ci vive ou non.
+      this.#wavesInPalier = 0;
     } else {
-      // ⚠️ **Les vagues ordinaires continuent de compter PENDANT le combat de
-      // boss, et c'est sans effet** : le verrou `#bossWaveId` interdit deja une
-      // seconde demande. Ce compteur est remis a zero par `bossDefeated`, donc
-      // le palier suivant repart bien de zero vague.
       this.#wavesInPalier++;
     }
 

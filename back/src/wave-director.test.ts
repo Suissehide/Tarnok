@@ -378,7 +378,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 
   const MINUTE = TICK_HZ * 60;
 
-  it('demande un boss apres WAVES_PER_PALIER vagues ordinaires, et un seul', () => {
+  it('demande un boss apres WAVES_PER_PALIER vagues ordinaires, puis encore, meme si le premier vit', () => {
     const emis = emissions(1234, 2 * MINUTE, false);
 
     // ⚠️ **Le decor produit-il ce qu'il pretend mesurer ?** Toute la suite lit
@@ -397,9 +397,13 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     expect(cinquieme?.boss).toBe(true);
     expect(cinquieme?.order.count).toBe(1);
 
-    // Un seul boss sur deux minutes, puisque personne ne l'a tue. Le §1.1 de la
-    // spec en fait une regle : la vie du boss ne voyage que parce qu'il est UN.
-    expect(emis.filter((e) => e.boss)).toHaveLength(1);
+    // ⚠️ **Plus de verrou** (retour de playtest) : personne ne l'a tue, et un
+    // boss revient quand meme toutes les `WAVES_PER_PALIER` vagues ordinaires.
+    const indices = emis.flatMap((e, i) => (e.boss ? [i] : []));
+    expect(indices.length).toBeGreaterThan(1);
+    for (let k = 1; k < indices.length; k++) {
+      expect((indices[k] ?? 0) - (indices[k - 1] ?? 0)).toBe(WAVES_PER_PALIER + 1);
+    }
   });
 
   /**
@@ -433,8 +437,9 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     const indexBoss = emis.findIndex((e) => e.boss);
 
     expect(indexBoss).toBeGreaterThanOrEqual(0);
-    const apres = emis.slice(indexBoss + 1);
-    expect(apres.length).toBeGreaterThan(5);
+    // Juste apres le boss, des vagues ordinaires pleines, avant le suivant.
+    const apres = emis.slice(indexBoss + 1, indexBoss + 1 + WAVES_PER_PALIER);
+    expect(apres).toHaveLength(WAVES_PER_PALIER);
     expect(apres.every((e) => !e.boss && e.order.count > 1)).toBe(true);
   });
 

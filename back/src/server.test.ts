@@ -552,12 +552,21 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     expect(room.palier).toBe(avant + 1);
     const tickMort = room.tick;
 
+    // ⚠️ **Le portail ne suit plus la mort du boss** (retour de playtest) : il
+    // s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues. On avance jusqu'a lui,
+    // horde entierement videe.
+    for (let t = 0; t < 300 * TICK_HZ && !room.portalOpen; t++) {
+      room.step(1 / TICK_HZ);
+      room.horde.kill(Array.from({ length: room.horde.count }, (_, i) => room.horde.entityIdAt(i)));
+    }
+    expect(room.portalOpen).toBe(true);
+
     // --- 1. L'ouverture arrive, datee.
     const open = await nextMessage(ws, (m) => m.type === MSG.PORTAL_OPEN, 10_000);
     if (open.type !== MSG.PORTAL_OPEN) {
       throw new Error('PORTAL_OPEN attendu');
     }
-    expect(open.deadlineTick).toBe(tickMort + PORTAL_WINDOW_TICKS);
+    expect(open.deadlineTick).toBeGreaterThanOrEqual(tickMort + PORTAL_WINDOW_TICKS);
     // ⚠️ **Le multiplicateur traverse la SOCKET, pas seulement l'encodeur**
     // (tache 10) : c'est ici que se verifie que `#broadcast` lit bien
     // l'evenement du salon et pas une valeur inventee. Premier portail de la
@@ -589,24 +598,15 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
 
     // --- 4. L'ORDRE : l'evenement precede l'etat qui en decoule.
     //
-    // ⚠️ **C'est la seule assertion du depot qui garde la POSITION du bloc du
-    // portail dans `#broadcast`.** Le dernier snapshot a porter un boss, puis
-    // l'ouverture, puis le premier snapshot sans boss : deplacer le bloc apres
-    // l'envoi du snapshot inverse les deux dernieres lignes, et rien d'autre
-    // ne s'en apercevrait. Un client doit connaitre l'evenement avant de voir
-    // l'etat qui en decoule (§3.1 / §6.1 / §6.2).
+    // ⚠️ **La seule assertion du depot qui garde la POSITION du bloc du portail
+    // dans `#broadcast`** : l'ouverture part AVANT le premier snapshot date de
+    // son tick ou d'apres. Deplacer le bloc apres l'envoi du snapshot inverse
+    // les deux, et rien d'autre ne s'en apercevrait.
+    const tickOuverture = open.deadlineTick - PORTAL_WINDOW_TICKS;
     const indexOuverture = recus.findIndex((m) => m.type === MSG.PORTAL_OPEN);
-    const dernierAvecBoss = recus.reduce(
-      (acc, m, i) => (m.type === MSG.SNAPSHOT && m.boss !== null ? i : acc),
-      -1,
-    );
-    const premierSansBoss = recus.findIndex(
-      (m, i) => i > dernierAvecBoss && m.type === MSG.SNAPSHOT && m.boss === null,
-    );
-    expect(dernierAvecBoss).toBeGreaterThanOrEqual(0);
-    expect(premierSansBoss).toBeGreaterThan(dernierAvecBoss);
-    expect(indexOuverture).toBeGreaterThan(dernierAvecBoss);
-    expect(indexOuverture).toBeLessThan(premierSansBoss);
+    const premierApres = recus.findIndex((m) => m.type === MSG.SNAPSHOT && m.tick >= tickOuverture);
+    expect(indexOuverture).toBeGreaterThanOrEqual(0);
+    expect(premierApres).toBeGreaterThan(indexOuverture);
   }, 40_000);
 
   /**
@@ -676,6 +676,14 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
         room.step(1 / TICK_HZ);
       }
       expect(room.palier).toBe(avant + 1);
+      // Puis jusqu'au portail, qui a son propre rythme (`PORTAL_EVERY_WAVES`).
+      for (let t = 0; t < 300 * TICK_HZ && !room.portalOpen; t++) {
+        room.step(1 / TICK_HZ);
+        room.horde.kill(
+          Array.from({ length: room.horde.count }, (_, i) => room.horde.entityIdAt(i)),
+        );
+      }
+      expect(room.portalOpen).toBe(true);
     };
 
     // --- Premier palier : le multiplicateur de depart.

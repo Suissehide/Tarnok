@@ -294,6 +294,18 @@ async function tuerLeBoss(room: Room, tireur: Client): Promise<void> {
     },
   );
   expect(room.palier).toBe(k + 1);
+  // ⚠️ **Le portail ne suit plus la mort du boss** (retour de playtest) : il
+  // s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues. On avance, horde videe,
+  // jusqu'a lui — l'or du boss, lui, est deja dans la cagnotte.
+  await avancerJusqua(
+    room,
+    () => room.portalOpen,
+    "l'ouverture du portail",
+    300 * TICK_HZ,
+    () => {
+      viderSauf(room, []);
+    },
+  );
   expect(room.portalOpen).toBe(true);
 }
 

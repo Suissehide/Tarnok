@@ -25,6 +25,7 @@ import {
   ORB_PICKUP_RADIUS,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
+  PORTAL_EVERY_WAVES,
   PROJECTILE_CAPACITY,
   SYNERGY_MAX,
   TICK_HZ,
@@ -512,7 +513,14 @@ export class Room {
    * un autre monstre des la premiere mort. `entityIdOf(waveId, 0)` est stable
    * pour toute la vie de l'entite — c'est deja ce dont depend `DEATHS`.
    */
-  #bossEntityId: number | null = null;
+  /**
+   * Les boss VIVANTS, du plus ancien au plus recent. Plusieurs a la fois
+   * depuis le retour de playtest. Le plus ancien porte la barre de vie
+   * (`SNAPSHOT`) et la charge.
+   */
+  #bosses: number[] = [];
+  /** Vagues tombees depuis la derniere ouverture du portail. */
+  #wavesSincePortal = 0;
 
   constructor(mapSeed: number = (Math.random() * 0xffff_ffff) >>> 0) {
     this.mapSeed = mapSeed;
@@ -994,7 +1002,7 @@ export class Room {
    * etait le boss a partir de son seul `count`.
    */
   get bossEntityId(): number | null {
-    return this.#bossEntityId;
+    return this.#bosses[0] ?? null;
   }
 
   /**
@@ -1346,7 +1354,8 @@ export class Room {
       }
       if (estBoss) {
         if (this.horde.count > before) {
-          this.#bossEntityId = entityIdOf(order.waveId, 0);
+          const premier = this.#bosses.length === 0;
+          this.#bosses.push(entityIdOf(order.waveId, 0));
           // ⚠️ **Le boss ne passe PAS par `#scalePalierHp`, et une seule ligne
           // ecrit sa reserve.** `bossHp` contient deja `palierHp` (voir
           // `shared/paliers.ts`) : lui laisser d'abord ecrire l'echelle du
@@ -1370,9 +1379,12 @@ export class Room {
           // apparition traverserait un couloir vide, et son unique fenetre de
           // reaction serait dilapidee hors de portee. Le premier delai est le
           // meme que celui qui separe deux charges — un seul nombre a regler.
-          this.#charge = null;
-          this.#chargeHit.clear();
-          this.#nextChargeTick = this.#tick + BOSS_CHARGE_COOLDOWN_TICKS;
+          // Un boss de plus ne remet pas a zero la charge d'un boss deja la.
+          if (premier) {
+            this.#charge = null;
+            this.#chargeHit.clear();
+            this.#nextChargeTick = this.#tick + BOSS_CHARGE_COOLDOWN_TICKS;
+          }
         } else {
           // La horde etait pleine : le boss n'existe pas. Sans ce chemin, le
           // verrou du directeur ne se relacherait jamais et le palier serait
@@ -1383,6 +1395,14 @@ export class Room {
         this.#scalePalierHp(before);
       }
       this.#pendingOrders.push(order);
+      // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, plus
+      // a la mort de chaque boss (retour de playtest : *« ne fait pas de fin a
+      // chaque boss »*).
+      this.#wavesSincePortal++;
+      if (this.#wavesSincePortal >= PORTAL_EVERY_WAVES && !this.portalOpen) {
+        this.#wavesSincePortal = 0;
+        this.#openPortal();
+      }
     }
 
     // ⚠️ **Expirer AVANT de poser, une fois par tick** — le contrat d'ordre
@@ -1508,43 +1528,27 @@ export class Room {
       // ⚠️ **Et c'est une MORT, pas un tick.** Rien dans `step` ne date la fin
       // d'un palier : une equipe qui peine reste plus longtemps, une equipe qui
       // domine avance (§2 de la spec).
-      if (this.#bossEntityId !== null && allDead.includes(this.#bossEntityId)) {
-        this.#bossEntityId = null;
+      // ⚠️ **Chaque boss abattu paie son palier et fait monter la difficulte**
+      // — mais ne termine plus rien : le portail a son propre rythme
+      // (`PORTAL_EVERY_WAVES`). Plusieurs boss peuvent mourir au meme tick.
+      for (const bossId of this.#bosses.filter((id) => allDead.includes(id))) {
+        this.#bosses = this.#bosses.filter((id) => id !== bossId);
         // ⚠️ **AVANT `bossDefeated()`, et l'ordre EST le sens.** Le bonus paye
-        // le palier qu'on vient de FINIR, pas celui qu'on commence :
-        // `#director.palier` vaut encore `k` sur cette ligne et vaudra `k + 1`
-        // trois lignes plus bas. Les deux lectures rendent des montants
-        // differents des le premier boss (`palierGold` est strictement
-        // croissante), et un test les distingue en tuant DEUX boss.
+        // le palier qu'on vient de FINIR, pas celui qu'on commence.
         this.#gold += palierGold(this.#director.palier);
-        // La charge d'un boss mort est deja inerte (`Horde#applyCharge` ne
-        // trouve plus son creneau, `resolveChargeHit` non plus) ; l'oublier ici
-        // evite surtout qu'elle survive jusqu'au boss du palier SUIVANT, dont
-        // l'identite pourrait, elle, exister a nouveau.
-        this.#charge = null;
+        // La charge d'un boss mort est inerte ; l'oublier evite qu'elle
+        // survive jusqu'a un boss dont l'identite pourrait exister a nouveau.
+        if (this.#charge?.entityId === bossId) {
+          this.#charge = null;
+        }
         this.#director.bossDefeated();
-        // ⚠️ **Le portail s'ouvre ICI, a la MORT, pas a un tick** — au meme
-        // endroit et pour la meme raison que le bonus de palier deux lignes
-        // plus haut (§2 : le palier se termine a la mort du boss).
-        //
-        // ⚠️ **Et le palier suivant est DEJA ouvert quand le vote commence.**
-        // `bossDefeated()` vient de l'avancer, et ses vagues vont tomber
-        // pendant la fenetre : c'est exactement ce que le §6 veut. « Rester »
-        // n'ouvre donc rien — le monde ne s'est jamais arrete — il majore la
-        // mise ; « partir » termine la run.
-        this.#portal.open(this.#tick, [...this.#players.keys()]);
-        // ⚠️ **Le multiplicateur part AVEC l'ouverture, une seule fois.** Il
-        // est constant sur toute la fenetre — la seule ligne qui le change est
-        // dans `#stepPortal`, et elle s'execute apres le verdict — donc il
-        // s'annonce comme les cartes du draft plutot que de se repeter dans
-        // chaque snapshot. Et le client ne peut pas le deviner : le compter
-        // depuis les portails qu'il a vus le tromperait des qu'il se connecte
-        // en cours de run. Voir `PortalOpenMessage`.
-        this.#pendingPortalOpens.push({
-          deadlineTick: this.#portal.deadlineTick,
-          multiplier: this.#extractMultiplier,
-        });
       }
+    }
+
+    // Un boss retire de la horde hors du lot de morts (bancs, tests) ne doit pas
+    // rester « vivant » ici : la barre et la charge suivraient un fantome.
+    if (this.#bosses.some((id) => this.horde.slotOf(id) < 0)) {
+      this.#bosses = this.#bosses.filter((id) => this.horde.slotOf(id) >= 0);
     }
 
     // ⚠️ **APRES le deplacement de la horde, AVANT le contact ordinaire.** Le
@@ -1623,7 +1627,7 @@ export class Room {
     }
 
     // ⚠️ **La vie du boss est LUE DANS LA HORDE a chaque tick, jamais tenue en
-    // double.** `#bossEntityId` est la seule source de verite de « qui est le
+    // double.** `#bosses` est la seule source de verite de « qui est le
     // boss » ; sa reserve, elle, vit ou vit celle de tout le monde. Un champ
     // `#bossHp` a cote se decalerait au premier degre soigne autrement — le
     // defaut que l'etape 3 a paye avec deux experiences pour un seul nombre.
@@ -1631,7 +1635,7 @@ export class Room {
     // `slotOf` rend `-1` quand l'entite n'est plus la : le `?? 0` couvre le
     // seul cas ou cela arrive, un boss retire de la horde sans passer par le
     // lot de morts du salon (ce que les bancs font avec `Horde.kill`).
-    const bossId = this.#bossEntityId;
+    const bossId = this.#bosses[0] ?? null;
     const boss =
       bossId === null ? null : { id: bossId, hp: this.horde.hp[this.horde.slotOf(bossId)] ?? 0 };
 
@@ -1867,10 +1871,12 @@ export class Room {
     // retrait — `BOSS_CHARGE_COOLDOWN_TICKS > 0` — est gardee par un test de
     // `shared/boss.test.ts`, pour qu'un reglage a zero a la tache 12 fasse
     // rougir plutot que de laisser deux couloirs se disputer un boss.
-    if (this.#bossEntityId === null || this.#tick < this.#nextChargeTick) {
+    // La charge est celle du PLUS ANCIEN boss vivant.
+    const chargeur = this.#bosses[0] ?? null;
+    if (chargeur === null || this.#tick < this.#nextChargeTick) {
       return;
     }
-    const slot = this.horde.slotOf(this.#bossEntityId);
+    const slot = this.horde.slotOf(chargeur);
     if (slot < 0) {
       return;
     }
@@ -1903,7 +1909,7 @@ export class Room {
       return;
     }
 
-    const next = makeBossCharge(this.#bossEntityId, bx, by, targetX, targetY, this.#tick);
+    const next = makeBossCharge(chargeur, bx, by, targetX, targetY, this.#tick);
     this.#charge = next;
     this.#chargeHit.clear();
     this.#nextChargeTick = next.endTick + BOSS_CHARGE_COOLDOWN_TICKS;
@@ -2104,6 +2110,20 @@ export class Room {
    * distingue, c'est l'OR — acquis d'un cote, perdu de l'autre — et il voyage
    * dans le `SNAPSHOT` a chaque tick.
    */
+  /**
+   * Ouvre le vote d'extraction. ⚠️ **Le multiplicateur part AVEC l'ouverture,
+   * une seule fois** : constant sur toute la fenetre, il s'annonce comme les
+   * cartes du draft plutot que de se repeter dans chaque snapshot. Voir
+   * `PortalOpenMessage`.
+   */
+  #openPortal(): void {
+    this.#portal.open(this.#tick, [...this.#players.keys()]);
+    this.#pendingPortalOpens.push({
+      deadlineTick: this.#portal.deadlineTick,
+      multiplier: this.#extractMultiplier,
+    });
+  }
+
   #stepPortal(): void {
     const decision = this.#portal.step(this.#tick);
     if (decision === null) {

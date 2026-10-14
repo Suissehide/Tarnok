@@ -671,6 +671,14 @@ export const REACTION_DAMAGE = 25;
 export const WAVES_PER_PALIER = 4;
 
 /**
+ * Le vote d'extraction (le portail) s'ouvre toutes les `PORTAL_EVERY_WAVES`
+ * vagues, boss compris — plus a la mort de chaque boss (retour de playtest :
+ * *« ne fait pas de fin a chaque boss »*). A une vague toutes les 6 s, vingt
+ * vagues font deux minutes. Reglage de depart.
+ */
+export const PORTAL_EVERY_WAVES = 20;
+
+/**
  * Pente de la montee du nombre d'ennemis par vague : `x (1 + 0,15 k)` au
  * palier `k` (§9.2 de l'orientation, §3 de la spec de l'etape 6a).
  *

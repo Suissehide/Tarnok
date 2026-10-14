@@ -29,6 +29,7 @@ import {
   ORB_PICKUP_RADIUS,
   PLAYER_MAX_HP,
   PLAYER_SPEED,
+  PORTAL_EVERY_WAVES,
   PORTAL_WINDOW_TICKS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
@@ -3604,7 +3605,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     return { poses: room.horde.hp[slot] ?? 0, archetype: ARCHETYPES[order.archetype]?.hp ?? 0 };
   }
 
-  it('le boss verrouille le palier, les vagues continuent, et sa MORT ouvre le palier suivant', () => {
+  it('les vagues continuent pendant le boss, et sa MORT ouvre le palier suivant', () => {
     const room = new Room(4242);
     room.join(1);
 
@@ -3730,6 +3731,9 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     //
     // Deux vagues, pas une : la premiere donne les PV a l'apparition, la
     // seconde sert de temoin — voir l'assertion finale.
+    // Le joueur cesse de viser : la visee de la section 4 tirerait sur le
+    // temoin (et, depuis plusieurs boss a la fois, sur le boss suivant).
+    room.applyInput(1, 20_000, 0, 0, 0, 0);
     let pvPalier1: { poses: number; archetype: number } | null = null;
     let temoin = -1;
     let vaguesSuivantes = 0;
@@ -3777,7 +3781,10 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
           pvBoss1 = pvALApparition(room, o);
         }
       }
-      viderSauf(room, [room.bossEntityId]);
+      // Tout le monde dehors, boss compris : on n'attend que l'ORDRE du
+      // prochain boss. Un boss garde en vie tuerait le joueur avant (depuis
+      // qu'un boss vient sans attendre la mort du precedent).
+      viderSauf(room, []);
     }
 
     expect(pvBoss1).not.toBeNull();
@@ -3785,6 +3792,32 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     expect(pvBoss1?.poses).toBeCloseTo(BOSS_HP_PER_PLAYER * hpScale(1), 4);
     expect(pvBoss1?.poses).toBeGreaterThan(BOSS_HP_PER_PLAYER);
   }, 30_000);
+
+  it('plusieurs boss peuvent vivre a la fois : le suivant n attend pas la mort du premier', () => {
+    // Retour de playtest : *« on peut avoir plusieurs boss en meme temps »*.
+    const room = new Room(4242);
+    room.join(1);
+    const ancre = positionOf(room, 1);
+    const boss = (): number[] =>
+      Array.from({ length: room.horde.count }, (_, i) => i)
+        .filter((i) => room.horde.archetype[i] === BOSS_ARCHETYPE)
+        .map((i) => room.horde.entityIdAt(i));
+    for (let t = 0; t < 3 * 60 * TICK_HZ && boss().length < 2; t++) {
+      // Les boss gardes, loin du joueur ; tout le reste dehors.
+      const vivants = boss();
+      viderSauf(room, vivants);
+      for (const id of vivants) {
+        const slot = room.horde.slotOf(id);
+        room.horde.x[slot] = Math.min(ancre.x + 2000, MAP_SIZE - 100);
+        room.horde.y[slot] = ancre.y;
+      }
+      room.step(DT);
+      room.drainWaveOrders();
+    }
+    expect(boss().length).toBeGreaterThanOrEqual(2);
+    // La barre suit le PLUS ANCIEN.
+    expect(room.bossEntityId).toBe(boss()[0]);
+  }, 60_000);
 
   it("un boss qui n'a pas pu apparaitre est redemande, et personne ne le croit vivant", () => {
     // ⚠️ **Le seul cas ou le verrou du palier pourrait ne jamais se relacher.**
@@ -4698,7 +4731,7 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
   }, 60_000);
 });
 
-describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
+describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tache 9, revu au playtest)", () => {
   /** Vide la horde de tout sauf les identites `garder`. */
   function viderSauf(room: Room, garder: readonly (number | null)[]): void {
     const ids: number[] = [];
@@ -4781,11 +4814,51 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     return room.tick;
   }
 
-  it('ouvre le portail A LA MORT du boss, pour vingt secondes, et une seule fois', () => {
+  /**
+   * Avance, horde videe a chaque tick, jusqu'a l'ouverture du portail ; rend
+   * son tick. Retour de playtest : *« ne fait pas de fin a chaque boss »* — le
+   * portail a son propre rythme, `PORTAL_EVERY_WAVES` vagues.
+   *
+   * ⚠️ **Il assene qu'il ne s'ouvre PAS avant** la vingtieme vague, et qu'il
+   * s'ouvre AU TICK de celle-ci.
+   */
+  function ouvrirLePortail(room: Room, exact = false): number {
+    let vagues = 0;
+    for (let t = 0; t < 10 * 60 * TICK_HZ && !room.portalOpen; t++) {
+      viderSauf(room, []);
+      room.step(DT);
+      vagues += room.drainWaveOrders().length;
+      room.drainDeaths();
+      room.drainBossCharges();
+      room.drainPickups();
+      room.drainZones();
+      room.drainReactions();
+      if (!room.portalOpen) {
+        expect(vagues).toBeLessThan(PORTAL_EVERY_WAVES);
+      }
+    }
+    expect(room.portalOpen).toBe(true);
+    // Sur un salon neuf, le compte est exact ; sinon des vagues ont deja pu
+    // tomber avant l'appel.
+    if (exact) {
+      expect(vagues).toBe(PORTAL_EVERY_WAVES);
+    }
+    return room.tick;
+  }
+
+  it('la mort d un boss ne termine plus rien : le portail reste ferme', () => {
+    const room = new Room(4242);
+    room.join(1);
+    tuerLeBoss(room);
+    expect(room.portalOpen).toBe(false);
+    expect(room.drainPortalOpens()).toEqual([]);
+  }, 60_000);
+
+  it('ouvre le portail toutes les PORTAL_EVERY_WAVES vagues, pour vingt secondes, et une seule fois', () => {
     const room = new Room(4242);
     room.join(1);
 
-    const tickMort = tuerLeBoss(room);
+    const tickMort = ouvrirLePortail(room, true);
 
     expect(room.portalOpen).toBe(true);
     // ⚠️ **Le multiplicateur part AVEC l'ouverture** (tache 10) : le client ne
@@ -4807,7 +4880,7 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     const room = new Room(4242);
     room.join(1);
     room.join(2);
-    tuerLeBoss(room);
+    ouvrirLePortail(room);
 
     // ⚠️ **La visibilite EST la mecanique** (§6) : les deux joueurs figurent
     // dans la table des l'ouverture, avant d'avoir tranche quoi que ce soit.
@@ -4838,7 +4911,7 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     // temporel ; le vote ne gele pas parce que le temps EST son enjeu »*.
     const room = new Room(4242);
     room.join(1);
-    tuerLeBoss(room);
+    ouvrirLePortail(room);
     expect(room.portalOpen).toBe(true);
 
     const joueurAvant = positionOf(room, 1);
@@ -4876,7 +4949,10 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
   it("PARTIR termine la run avec l'or ACQUIS, par le RUN_OVER de l'etape 3", () => {
     const room = new Room(4242);
     room.join(1);
-    tuerLeBoss(room);
+    // Depuis que le portail ne suit plus la mort d'un boss, rien n'a verse
+    // d'or en route : la cagnotte est posee, c'est du decor.
+    room.debugSetGold(240);
+    ouvrirLePortail(room);
     room.drainPortalOpens();
 
     const cagnotte = room.gold;
@@ -4922,7 +4998,8 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
 
     const room = new Room(4242);
     room.join(1);
-    tuerLeBoss(room);
+    room.debugSetGold(240);
+    ouvrirLePortail(room);
     room.drainPortalOpens();
 
     const apresLePremier = room.gold;
@@ -4942,8 +5019,10 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     expect(room.drainRunOver()).toBeNull();
     expect(room.portalOpen).toBe(false);
 
-    // --- Le palier suivant, et l'extraction qui suit.
-    tuerLeBoss(room);
+    // --- Le palier suivant, et l'extraction qui suit. L'or gagne entre les
+    // deux portails est pose (decor), comme au premier.
+    room.debugSetGold(apresLePremier + 160);
+    ouvrirLePortail(room);
     const cagnotte = room.gold;
     expect(cagnotte).toBeGreaterThan(apresLePremier);
     // ⚠️ **Le SECOND portail annonce la mise majoree**, et c'est le seul
@@ -4998,7 +5077,7 @@ describe("le portail s'ouvre a la mort du boss (etape 6a, tache 9)", () => {
     expect(hpOf(room, 2)).toBeGreaterThan(0);
     viderSauf(room, []);
 
-    tuerLeBoss(room, 2);
+    ouvrirLePortail(room);
     expect(hpOf(room, 1)).toBe(0);
 
     // Le mort vote, et les deux vivants s'annulent.
