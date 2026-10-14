@@ -518,18 +518,23 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
         }
         ordinaires++;
         const { min, max } = waveCountBounds(e.level, 1, e.order.waveId);
-        const echelle = waveCountScale(e.palier);
-        // La borne, mise a l'echelle du palier : c'est la seule que l'ordre
-        // doive respecter.
-        expect(e.order.count).toBeGreaterThanOrEqual(Math.round(min * echelle));
-        expect(e.order.count).toBeLessThanOrEqual(Math.round(max * echelle));
+        // Le role de l'archetype tire fait aussi la taille (nuee nombreuse,
+        // colosse presque seul) : il entre dans l'echelle, comme le palier.
+        const role = archetypeOf(e.order.archetype).countFactor;
+        const echelle = waveCountScale(e.palier) * role;
+        // La borne, mise a l'echelle du palier et du role : c'est la seule que
+        // l'ordre doive respecter.
+        expect(e.order.count).toBeGreaterThanOrEqual(Math.max(1, Math.round(min * echelle)));
+        expect(e.order.count).toBeLessThanOrEqual(
+          Math.min(MAX_ENTITIES, Math.round(max * echelle)),
+        );
 
         // ⚠️ **La moitie qui compte.** Les deux assertions ci-dessus passent
         // telles quelles avec une echelle constamment egale a 1 : elles
         // reduisent alors aux bornes brutes. Il faut donc voir des ordres qui
         // DEPASSENT la borne brute de leur numero de vague, ce qu'aucune vague
         // du palier 0 ne peut faire.
-        if (e.palier > 0 && e.order.count > max) {
+        if (e.palier > 0 && e.order.count > Math.round(max * role)) {
           debordements++;
         }
       }

@@ -1,4 +1,11 @@
-import { archetypeOf, BOSS_ARCHETYPE, HEAVY_HP, STEP2_ARCHETYPES } from '@shared/archetypes';
+import {
+  archetypeOf,
+  BOSS_ARCHETYPE,
+  ROLE_ORDER,
+  ROLES,
+  type Role,
+  STEP2_ARCHETYPES,
+} from '@shared/archetypes';
 import { MAX_ENTITIES, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
 import { waveCountScale } from '@shared/paliers';
 import { makeRandom } from '@shared/random';
@@ -177,8 +184,13 @@ const FORMATION_POOL = [FORMATION.ENCIRCLE];
  * plus de 20 %, *« on reequilibre la proportion de lourds dans les vagues,
  * pas les PV, parce que c'est le generateur qui porte la difficulte »*.
  */
-const HEAVY_POOL = STEP2_ARCHETYPES.filter((id) => archetypeOf(id).hp === HEAVY_HP);
-const LIGHT_POOL = STEP2_ARCHETYPES.filter((id) => archetypeOf(id).hp !== HEAVY_HP);
+/** Les archetypes tirables, ranges par role (`ROLES`). */
+const POOLS: Readonly<Record<Role, readonly number[]>> = {
+  nuee: STEP2_ARCHETYPES.filter((id) => archetypeOf(id).role === 'nuee'),
+  troupe: STEP2_ARCHETYPES.filter((id) => archetypeOf(id).role === 'troupe'),
+  brute: STEP2_ARCHETYPES.filter((id) => archetypeOf(id).role === 'brute'),
+  colosse: STEP2_ARCHETYPES.filter((id) => archetypeOf(id).role === 'colosse'),
+};
 
 /**
  * Part des vagues faites de pietaille lourde.
@@ -207,7 +219,8 @@ const LIGHT_POOL = STEP2_ARCHETYPES.filter((id) => archetypeOf(id).hp !== HEAVY_
  * est donc une part de VAGUES, pas d'entites — a nombre d'entites egal en
  * moyenne, les deux coincident.
  */
-const HEAVY_WAVE_SHARE = 0.2;
+// ⚠️ Remplace par le poids du role `brute` (`ROLES`) : 0,2 sur les trois
+// premiers roles, la part mesuree ci-dessus.
 
 /**
  * Premiere vague qui PEUT etre lourde. Avant elle, la part de lourds vaut zero.
@@ -229,7 +242,7 @@ const HEAVY_WAVE_SHARE = 0.2;
  * d'arme, pas un probleme de nombre — la dague seule met treize secondes a
  * nettoyer une vague lourde.
  */
-const HEAVY_FIRST_WAVE = 6;
+// ⚠️ Remplace par `ROLES.brute.firstWave` (6).
 
 /**
  * Bornes `[min, max]` du nombre d'entites d'une vague, en fonction du NIVEAU
@@ -260,16 +273,26 @@ export function waveCountBounds(
 }
 
 /**
- * Tire l'archetype d'une vague : lourde avec la probabilite
- * `HEAVY_WAVE_SHARE`, legere sinon.
+ * Tire l'archetype d'une vague : d'abord son ROLE, au poids de `ROLES`, parmi
+ * ceux qu'elle a deja le droit de tirer (`firstWave`) ; puis l'archetype dans
+ * ce role.
  *
- * Deux tirages plutot qu'un, toujours dans le meme ordre : le directeur reste
- * une fonction pure de sa graine, ce que le test de determinisme verifie.
+ * Deux tirages, toujours dans le meme ordre : le directeur reste une fonction
+ * pure de sa graine, ce que le test de determinisme verifie.
  */
 function pickArchetype(rng: () => number, waveNumber: number): number {
-  const lourde =
-    rng() < HEAVY_WAVE_SHARE && HEAVY_POOL.length > 0 && waveNumber >= HEAVY_FIRST_WAVE;
-  const pool = lourde ? HEAVY_POOL : LIGHT_POOL;
+  const ouverts = ROLE_ORDER.filter((r) => waveNumber >= ROLES[r].firstWave && POOLS[r].length > 0);
+  const total = ouverts.reduce((n, r) => n + ROLES[r].weight, 0);
+  let roll = rng() * total;
+  let role: Role = ouverts[ouverts.length - 1] ?? 'troupe';
+  for (const r of ouverts) {
+    roll -= ROLES[r].weight;
+    if (roll < 0) {
+      role = r;
+      break;
+    }
+  }
+  const pool = POOLS[role];
   return pool[Math.floor(rng() * pool.length)] ?? 0;
 }
 
@@ -441,7 +464,18 @@ export class WaveDirector {
       // recoit un compte deja resolu et n'a rien a savoir du palier pour faire
       // apparaitre la meme vague. C'est la voie « les valeurs voyagent deja
       // resolues » du plan, appliquee a l'effectif.
-      count: boss ? BOSS_WAVE_COUNT : Math.round(tirage * waveCountScale(this.#palier)),
+      // Le role fait la taille : une nuee deborde, un colosse vient presque seul.
+      count: boss
+        ? BOSS_WAVE_COUNT
+        : Math.max(
+            1,
+            Math.min(
+              MAX_ENTITIES,
+              Math.round(
+                tirage * waveCountScale(this.#palier) * archetypeOf(tirageArchetype).countFactor,
+              ),
+            ),
+          ),
     };
 
     if (boss) {

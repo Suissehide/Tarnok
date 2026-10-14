@@ -14,6 +14,9 @@ import {
   HEAVY_HP,
   LIGHT_HP,
   MAX_ARMOR,
+  ROLE_ORDER,
+  ROLES,
+  type Role,
   STEP2_ARCHETYPES,
 } from './archetypes';
 import { MAX_PLAYERS, REACTION_DAMAGE } from './constants';
@@ -86,17 +89,38 @@ describe('la reserve de points de vie (etape 5a)', () => {
    * (`'gnol'` pour `'gnoll'`) ne leve rien, elle rend simplement l'archetype
    * leger — et toute la pietaille lourde disparaitrait en silence.
    */
-  it('compte exactement quatre pietailles lourdes, et rien d autre entre les deux valeurs', () => {
-    const lourds = ARCHETYPES.filter((a) => a.hp === HEAVY_HP);
-    expect(lourds).toHaveLength(4);
+  it('donne a chaque pietaille les PV de son role, le boss seul faisant exception', () => {
+    // Quatre brutes a `HEAVY_HP`, comme les quatre lourdes d'avant.
+    expect(ARCHETYPES.filter((a) => a.hp === HEAVY_HP)).toHaveLength(4);
     for (const a of ARCHETYPES) {
-      // ⚠️ **Le boss est la SEULE exception, et elle est nommee.** Ecrire
-      // `.filter((a) => a.hp !== BOSS_HP_PER_PLAYER)` laisserait passer deux boss ;
-      // comparer a l'identifiant dit qu'il n'y en a qu'un, ce que le §1.1 de la
-      // spec de l'etape 6a exige pour que la vie du boss ait le droit de
-      // voyager.
-      const attendues = a.id === BOSS_ARCHETYPE ? [BOSS_HP_PER_PLAYER] : [LIGHT_HP, HEAVY_HP];
-      expect(attendues).toContain(a.hp);
+      // ⚠️ **Le boss est la SEULE exception, et elle est nommee** : comparer a
+      // l'identifiant dit qu'il n'y en a qu'un.
+      const attendu = a.id === BOSS_ARCHETYPE ? BOSS_HP_PER_PLAYER : ROLES[a.role].hp;
+      expect(a.hp, a.name).toBe(attendu);
+    }
+  });
+
+  /**
+   * Retour de playtest : *« il faudrait que les types de monstres soient
+   * uniques »*. Le contrat des roles, ordonne : la nuee est la plus rapide et
+   * la plus nombreuse, le colosse le plus lent, le plus resistant et le plus
+   * rare — et chaque role compte au moins un archetype tirable.
+   */
+  it('ordonne les roles : nuee, troupe, brute, colosse, du plus vif au plus lourd', () => {
+    const tirables = STEP2_ARCHETYPES.map(archetypeOf);
+    const de = (r: Role) => tirables.filter((a) => a.role === r);
+    for (const r of ROLE_ORDER) {
+      expect(de(r).length, r).toBeGreaterThan(0);
+    }
+    for (let k = 1; k < ROLE_ORDER.length; k++) {
+      const vif = ROLE_ORDER[k - 1] as Role;
+      const lourd = ROLE_ORDER[k] as Role;
+      // Chaque archetype du role plus vif court plus vite que TOUS ceux du suivant.
+      expect(Math.min(...de(vif).map((a) => a.speed))).toBeGreaterThanOrEqual(
+        Math.max(...de(lourd).map((a) => a.speed)),
+      );
+      expect(ROLES[vif].hp).toBeLessThan(ROLES[lourd].hp);
+      expect(ROLES[vif].countFactor).toBeGreaterThan(ROLES[lourd].countFactor);
     }
   });
 
@@ -191,14 +215,16 @@ describe("l'archetype de boss (etape 6a)", () => {
    * refuse justement. « La pietaille reste a 1 » passe tout seul avec un
    * `bodyScale` constant.
    */
-  it('a son PROPRE facteur de corps, et il ne deborde sur personne', () => {
+  it('a son PROPRE facteur de corps, plus gros que tout le bestiaire', () => {
     expect(archetypeOf(BOSS_ARCHETYPE).bodyScale).toBe(BOSS_BODY_SCALE);
     expect(BOSS_BODY_SCALE).toBeGreaterThan(1);
     for (const a of ARCHETYPES) {
       if (a.id === BOSS_ARCHETYPE) {
         continue;
       }
-      expect(a.bodyScale).toBe(1);
+      // Le corps du role — le colosse est plus gros — et toujours sous le boss.
+      expect(a.bodyScale, a.name).toBe(ROLES[a.role].bodyScale);
+      expect(a.bodyScale).toBeLessThan(BOSS_BODY_SCALE);
     }
   });
 });
@@ -218,15 +244,17 @@ describe("l'armure (etape 5b, tache 1)", () => {
     expect(ARCHETYPES.filter((a) => a.hp === LIGHT_HP).length).toBeGreaterThan(0);
   });
 
-  it('en donne aux QUATRE lourdes et au boss, et a personne d autre', () => {
+  it('donne a chacun l armure de son role : brutes et colosses blindes, le boss a part', () => {
     const armures = ARCHETYPES.filter((a) => a.armor > 0);
-    // Les quatre lourdes + le troll. Le compte, pas seulement la presence :
-    // une armure qui se serait posee sur tout le bestiaire passerait sinon.
-    expect(armures.length).toBe(5);
-    for (const a of armures.filter((x) => x.id !== BOSS_ARCHETYPE)) {
-      expect(a.hp, a.name).toBe(HEAVY_HP);
-      expect(a.armor, a.name).toBe(HEAVY_ARMOR);
+    // Le compte, pas seulement la presence : une armure posee sur tout le
+    // bestiaire passerait sinon.
+    expect(armures.length).toBe(
+      ARCHETYPES.filter((a) => a.id !== BOSS_ARCHETYPE && ROLES[a.role].armor > 0).length + 1,
+    );
+    for (const a of ARCHETYPES.filter((x) => x.id !== BOSS_ARCHETYPE)) {
+      expect(a.armor, a.name).toBe(ROLES[a.role].armor);
     }
+    expect(ROLES.brute.armor).toBe(HEAVY_ARMOR);
     expect(archetypeOf(BOSS_ARCHETYPE).armor).toBe(BOSS_ARMOR);
   });
 

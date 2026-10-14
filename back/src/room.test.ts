@@ -1963,7 +1963,9 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
     expect(or).toBe(piecesRamassees.length);
     // Non-vacuite des deux cotes : des pieces ont bien ete ramassees, et le
     // joueur a ramasse bien plus de choses que de pieces.
-    expect(piecesRamassees.length).toBeGreaterThan(1);
+    // Au moins une : depuis les roles, les vagues du directeur qui traversent
+    // le decor ne laissent plus toujours une seconde piece en chemin.
+    expect(piecesRamassees.length).toBeGreaterThanOrEqual(1);
     expect(ramasses.length).toBeGreaterThan(piecesRamassees.length);
     expect(ids.filter((id) => dropsCoin(id)).length).toBeGreaterThanOrEqual(piecesRamassees.length);
   });
@@ -2454,6 +2456,10 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
 
       const REGEN_TICKS = FENETRE;
       for (let t = 0; t < REGEN_TICKS; t++) {
+        // La fenetre est longue : une nuee rapide atteindrait le joueur.
+        room.horde.kill(
+          Array.from({ length: room.horde.count }, (_, i) => room.horde.entityIdAt(i)),
+        );
         room.step(DT);
       }
       const apres = hpOf(room, 1);

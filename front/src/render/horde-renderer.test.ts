@@ -553,7 +553,7 @@ describe('bodyScale — le boss a son propre debordement, pas celui de tout le m
    * etait ignore et `BODY_SCALE` releve — mais alors la pietaille grandirait
    * aussi. La seconde assertion est celle qui l'interdit.
    */
-  it('donne son facteur au boss et laisse la pietaille exactement ou elle etait', () => {
+  it('donne son facteur au boss, et a chacun le sien', () => {
     const tailles = ARCHETYPES.map(() => 192);
     const echelles = archetypeScales(tailles, PROJECTILE_HIT_RADIUS);
 
@@ -567,7 +567,13 @@ describe('bodyScale — le boss a son propre debordement, pas celui de tout le m
       if (a.id === BOSS_ARCHETYPE) {
         continue;
       }
-      expect(echelles[a.id]).toBeCloseTo(spriteScale(192, PROJECTILE_HIT_RADIUS), 6);
+      // Chacun a SON facteur de corps : 1 pour la pietaille, plus pour le
+      // colosse (role du playtest), jamais celui du boss.
+      expect(echelles[a.id], a.name).toBeCloseTo(
+        spriteScale(192, PROJECTILE_HIT_RADIUS) * a.bodyScale,
+        6,
+      );
+      expect(a.bodyScale).toBeLessThan(BOSS_BODY_SCALE);
     }
   });
 });

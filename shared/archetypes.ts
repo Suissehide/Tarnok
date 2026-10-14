@@ -91,6 +91,10 @@ export interface Archetype {
    * faudra rouvrir.
    */
   bodyScale: number;
+  /** Son ROLE dans la horde (`ROLES`) : ce qui le rend unique a l'ecran. */
+  role: Role;
+  /** Multiplie l'effectif d'une vague de cet archetype (`ROLES`). */
+  countFactor: number;
 }
 
 /**
@@ -310,96 +314,171 @@ export function capArmor(raw: number): number {
 }
 
 /**
- * Les quatre archetypes de pietaille lourde, par nom.
+ * Les ROLES de la horde (retour de playtest : *« il faudrait que les types de
+ * monstres soient uniques — certains plus lents et plus tanky, moins
+ * nombreux, des hordes de petits plus rapides »*). Un role fixe les PV,
+ * l'armure, la taille de vague et le moment ou il apparait ; la VITESSE reste
+ * propre a chaque archetype (`FOOTSOLDIERS`), dans la fourchette du role.
  *
- * **Le choix est du contenu, pas un role** : ce sont les quatre pietailles les
- * plus LENTES du pack (80 a 90 px/s), parce que « lourd et lent » se lit sans
- * explication a l'ecran — la vitesse est le seul autre attribut visible.
+ * - **nuee** : fragile et tres rapide, en grandes hordes ;
+ * - **troupe** : la pietaille de reference (`LIGHT_HP`) ;
+ * - **brute** : lente et blindee (`HEAVY_HP`, `HEAVY_ARMOR`), peu nombreuse ;
+ * - **colosse** : tres lent, tres resistant, plus gros, quelques-uns par vague.
  *
- * ⚠️ **`gnoll` est dans `STEP2_ARCHETYPES`, et ce n'est pas un hasard.** Le
- * generateur de vagues ne tire que dans ces quatre-la : une pietaille lourde
- * qui n'y figurerait pas n'apparaitrait JAMAIS, la porte du §3.3 mesurerait un
- * rythme de mise a mort inchange, et la mesure ne prouverait rien. Un test
- * garde cette intersection.
+ * ⚠️ **Troupe et brute gardent les valeurs d'avant** (5 et 20 PV) : le rythme
+ * du debut de partie, mesure aux bancs, ne bouge presque pas ; ce sont la
+ * nuee et le colosse qui elargissent l'eventail. Reglages de depart.
  */
-const HEAVY_NAMES: readonly string[] = ['gnoll', 'snake', 'bomb-fish', 'hex-shaman'];
+export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
 
-function hpOf(name: string): number {
-  if (name === BOSS_NAME) {
-    return BOSS_HP_PER_PLAYER;
-  }
-  return HEAVY_NAMES.includes(name) ? HEAVY_HP : LIGHT_HP;
+export interface RoleDef {
+  hp: number;
+  armor: number;
+  /** Multiplie l'effectif tire pour la vague. */
+  countFactor: number;
+  /** Le corps (et la hitbox) par rapport a la pietaille. Voir `Archetype.bodyScale`. */
+  bodyScale: number;
+  /** Premiere vague (1-based) ou le role peut etre tire. */
+  firstWave: number;
+  /** Poids du role au tirage, une fois ouvert. */
+  weight: number;
 }
 
-/** `1` pour tout le monde : seul le boss deborde sa hitbox. Voir `Archetype.bodyScale`. */
-function bodyScaleOf(name: string): number {
-  return name === BOSS_NAME ? BOSS_BODY_SCALE : 1;
+/** Les PV de la nuee : un coup de dague, comme la troupe, mais plus nombreuse et plus vive. */
+export const SWARM_HP = 3;
+/** Les PV du colosse : trois brutes. */
+export const COLOSSUS_HP = 60;
+
+export const ROLES: Readonly<Record<Role, RoleDef>> = {
+  nuee: { hp: SWARM_HP, armor: 0, countFactor: 1.8, bodyScale: 1, firstWave: 1, weight: 0.35 },
+  troupe: { hp: LIGHT_HP, armor: 0, countFactor: 1, bodyScale: 1, firstWave: 1, weight: 0.45 },
+  brute: {
+    hp: HEAVY_HP,
+    armor: HEAVY_ARMOR,
+    countFactor: 0.45,
+    bodyScale: 1,
+    firstWave: 6,
+    weight: 0.2,
+  },
+  colosse: {
+    hp: COLOSSUS_HP,
+    armor: 0.3,
+    countFactor: 0.15,
+    bodyScale: 1.35,
+    firstWave: 10,
+    weight: 0.12,
+  },
+};
+
+/** L'ordre fixe des roles, pour un tirage deterministe. */
+export const ROLE_ORDER: readonly Role[] = ['nuee', 'troupe', 'brute', 'colosse'];
+
+function hpOf(name: string, role: Role): number {
+  return name === BOSS_NAME ? BOSS_HP_PER_PLAYER : ROLES[role].hp;
 }
 
-/**
- * `0` pour la pietaille legere, `HEAVY_ARMOR` pour les quatre lourdes,
- * `BOSS_ARMOR` pour le boss. Meme forme que `hpOf` : l'armure suit la meme
- * partition du bestiaire que les points de vie, et la faire suivre une autre
- * demanderait une seconde liste de noms a tenir synchronisee.
- *
- * ⚠️ **Les cinq elites hors boss prennent `0`**, comme elles prennent
- * `LIGHT_HP` : le generateur ne les tire jamais (voir `ELITES`), et leur
- * donner une armure inventee serait un chiffre que personne ne peut mesurer.
- */
-function armorOf(name: string): number {
-  if (name === BOSS_NAME) {
-    return BOSS_ARMOR;
-  }
-  return HEAVY_NAMES.includes(name) ? HEAVY_ARMOR : 0;
+/** Le facteur de corps du role ; le boss deborde davantage. Voir `Archetype.bodyScale`. */
+function bodyScaleOf(name: string, role: Role): number {
+  return name === BOSS_NAME ? BOSS_BODY_SCALE : ROLES[role].bodyScale;
+}
+
+/** L'armure du role ; celle du boss a part. Meme forme que `hpOf`. */
+function armorOf(name: string, role: Role): number {
+  return name === BOSS_NAME ? BOSS_ARMOR : ROLES[role].armor;
 }
 
 /**
  * Les cellules font toutes 192 px en pietaille : c'est ce qui permet un
  * rangement par etageres quasi optimal dans l'atlas (§9.2 de la spec).
  */
-const FOOTSOLDIERS: readonly Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale'>[] = [
-  { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 95 },
-  { name: 'gnoll', sheet: 'Gnoll/Gnoll_Walk.png', frames: 8, cell: 192, speed: 85 },
-  { name: 'spider', sheet: 'Spider/Spider_Run.png', frames: 5, cell: 192, speed: 115 },
+const FOOTSOLDIERS: readonly Omit<
+  Archetype,
+  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor'
+>[] = [
+  { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 100, role: 'troupe' },
+  { name: 'gnoll', sheet: 'Gnoll/Gnoll_Walk.png', frames: 8, cell: 192, speed: 78, role: 'brute' },
+  {
+    name: 'spider',
+    sheet: 'Spider/Spider_Run.png',
+    frames: 5,
+    cell: 192,
+    speed: 145,
+    role: 'nuee',
+  },
   {
     name: 'torch-goblin',
     sheet: 'Torch Goblin/Torch Goblin_Run.png',
     frames: 6,
     cell: 192,
-    speed: 100,
+    speed: 105,
+    role: 'troupe',
   },
-  { name: 'lizard', sheet: 'Lizard/Lizard_Run.png', frames: 6, cell: 192, speed: 105 },
-  { name: 'snake', sheet: 'Snake/Snake_Run.png', frames: 8, cell: 192, speed: 90 },
-  { name: 'gnome', sheet: 'Gnome/Gnome_Run.png', frames: 6, cell: 192, speed: 95 },
+  {
+    name: 'lizard',
+    sheet: 'Lizard/Lizard_Run.png',
+    frames: 6,
+    cell: 192,
+    speed: 55,
+    role: 'colosse',
+  },
+  { name: 'snake', sheet: 'Snake/Snake_Run.png', frames: 8, cell: 192, speed: 72, role: 'brute' },
+  { name: 'gnome', sheet: 'Gnome/Gnome_Run.png', frames: 6, cell: 192, speed: 135, role: 'nuee' },
   {
     name: 'slingshot-gnome',
     sheet: 'Slingshot Gnome/Slingshot Gnome_Run.png',
     frames: 6,
     cell: 192,
-    speed: 90,
+    speed: 95,
+    role: 'troupe',
   },
-  { name: 'thief', sheet: 'Thief/Thief_Run.png', frames: 6, cell: 192, speed: 120 },
-  { name: 'giant-bat', sheet: 'Giant Bat/Giant Bat_Move.png', frames: 4, cell: 192, speed: 130 },
-  { name: 'bomb-fish', sheet: 'Bomb Fish/Bomb Fish_Run.png', frames: 6, cell: 192, speed: 80 },
-  { name: 'hex-shaman', sheet: 'Hex Shaman/Hex Shaman_Run.png', frames: 4, cell: 192, speed: 85 },
+  { name: 'thief', sheet: 'Thief/Thief_Run.png', frames: 6, cell: 192, speed: 150, role: 'nuee' },
+  {
+    name: 'giant-bat',
+    sheet: 'Giant Bat/Giant Bat_Move.png',
+    frames: 4,
+    cell: 192,
+    speed: 160,
+    role: 'nuee',
+  },
+  {
+    name: 'bomb-fish',
+    sheet: 'Bomb Fish/Bomb Fish_Run.png',
+    frames: 6,
+    cell: 192,
+    speed: 70,
+    role: 'brute',
+  },
+  {
+    name: 'hex-shaman',
+    sheet: 'Hex Shaman/Hex Shaman_Run.png',
+    frames: 4,
+    cell: 192,
+    speed: 50,
+    role: 'colosse',
+  },
   {
     name: 'paddle-shark',
     sheet: 'Paddle Shark/Paddle Shark_Run.png',
     frames: 6,
     cell: 192,
     speed: 100,
+    role: 'troupe',
   },
   {
     name: 'harpoon-shark',
     sheet: 'Harpoon Shark/Harpoon Shark_Run.png',
     frames: 6,
     cell: 192,
-    speed: 95,
+    speed: 80,
+    role: 'brute',
   },
 ];
 
 /** Hors perimetre de l'etape 2 : regime de replication different (§3.3). */
-const ELITES: readonly Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale'>[] = [
+const ELITES: readonly Omit<
+  Archetype,
+  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor' | 'role'
+>[] = [
   {
     name: 'spear-goblin',
     sheet: 'Spear Goblin/Spear Goblin_Run.png',
@@ -426,16 +505,28 @@ export const FOOTSOLDIER_COUNT = FOOTSOLDIERS.length;
  * elles. Les cinq autres gardent leur placeholder de 5 PV, assume, jusqu'a
  * l'etape 6b et son pool tournant.
  */
-export const ARCHETYPES: readonly Archetype[] = [...FOOTSOLDIERS, ...ELITES].map((a, id) => ({
+export const ARCHETYPES: readonly Archetype[] = [
+  ...FOOTSOLDIERS,
+  // Les elites ne sont jamais tirees (le boss mis a part) : role neutre.
+  ...ELITES.map((e) => ({ ...e, role: 'troupe' as Role })),
+].map((a, id) => ({
   ...a,
   id,
-  hp: hpOf(a.name),
-  armor: capArmor(armorOf(a.name)),
-  bodyScale: bodyScaleOf(a.name),
+  hp: hpOf(a.name, a.role),
+  armor: capArmor(armorOf(a.name, a.role)),
+  bodyScale: bodyScaleOf(a.name, a.role),
+  countFactor: ROLES[a.role].countFactor,
 }));
 
-/** Les quatre cables a l'etape 2, choisis pour leurs silhouettes distinctes. */
-export const STEP2_ARCHETYPES = [0, 1, 2, 3] as const;
+/**
+ * Les archetypes que le generateur tire : TOUTE la pietaille, chacun dans son
+ * role (`ROLES`). Ce n'etait que quatre a l'etape 2 ; le playtest a demande
+ * des monstres « uniques ».
+ */
+export const STEP2_ARCHETYPES: readonly number[] = Array.from(
+  { length: FOOTSOLDIERS.length },
+  (_, i) => i,
+);
 
 /**
  * Identifiant de l'archetype de boss, **derive du nom, jamais ecrit en
