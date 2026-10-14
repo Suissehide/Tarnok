@@ -105,6 +105,10 @@
     width: 1920px;
     height: 1080px;
     transform: translate(-50%, -50%) scale(var(--ui-scale, 1));
+    /* ⚠️ Rasterise le canevas en une couche, PUIS la met a l'echelle : sans
+       quoi chaque tranche de `border-image` est reechantillonnee seule, et ses
+       bords anticreneles laissent une ligne de jonction a chaque raccord. */
+    will-change: transform;
   }
 
   /* Les ecrans poses sur le jeu laissent passer la souris ; seuls les blocs
@@ -295,6 +299,9 @@
   .btn--tab {
     height: 64px;
     border-width: 0 64px;
+    /* La face du sprite s'arrete 8 px au-dessus de son ombre : le texte se
+       centre sur la face, pas sur la tuile. */
+    padding-bottom: 8px;
     font-size: 18px;
   }
 
@@ -724,6 +731,16 @@
     padding: 0 8px;
   }
 
+  /* La bordure gauche du ruban (100 px) porte surtout du papier : le contenu
+     s'y aligne a gauche, l'image garde sa tranche native de 100 px. */
+  .room-player {
+    border-left-width: 40px;
+  }
+
+  html[data-skin] .k-banner.room-player {
+    border-image-width: 68px 84px 111px 100px;
+  }
+
   .room-player__portrait {
     width: 120px;
     height: 120px;
@@ -841,6 +858,14 @@
 
   .weapon-family__head .f-meta {
     color: var(--tint);
+  }
+
+  .weapon-family[data-dark="true"] .weapon-family__head .f-meta {
+    text-shadow:
+      2px 2px 0 var(--color-cream, #f3e6c4),
+      -2px 2px 0 var(--color-cream, #f3e6c4),
+      2px -2px 0 var(--color-cream, #f3e6c4),
+      -2px -2px 0 var(--color-cream, #f3e6c4);
   }
 
   .weapon-family__list {
@@ -1015,10 +1040,6 @@
   }
 
   /* --- Aide des combinaisons (HUD, haut gauche) ---------------------------- */
-
-  #hud-combos-panel[data-collapsed="true"] #hud-combos {
-    display: none;
-  }
 
   /* Trois etats : tenue par l'equipe (nom dore), a completer par un allie
      (lisible), hors de portee (attenuee). */

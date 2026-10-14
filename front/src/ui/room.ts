@@ -114,6 +114,12 @@ export function renderWeapons(
       row.className = 'weapon-family';
       row.dataset.element = `${element.id}`;
       row.style.setProperty('--tint', `#${element.tint.toString(16).padStart(6, '0')}`);
+      // Une teinte sombre (la Poix) se confond avec le contour sombre : elle
+      // prend un contour clair.
+      const r = (element.tint >> 16) & 0xff;
+      const g = (element.tint >> 8) & 0xff;
+      const b = element.tint & 0xff;
+      row.dataset.dark = 0.299 * r + 0.587 * g + 0.114 * b < 96 ? 'true' : 'false';
 
       const head = document.createElement('span');
       head.className = 'weapon-family__head';
@@ -209,8 +215,8 @@ export function renderRoom(
   // Les deux etapes : un onglet chacune, l'etape courante seule visible.
   els.stepClass.setAttribute('aria-pressed', step === 'classe' ? 'true' : 'false');
   els.stepWeapon.setAttribute('aria-pressed', step === 'arme' ? 'true' : 'false');
-  els.stepClass.textContent = `1 · ${classOf(maClasse)?.label ?? 'Classe'}`;
-  els.stepWeapon.textContent = `2 · ${weaponLabel(monArme)}`;
+  els.stepClass.textContent = 'Classes';
+  els.stepWeapon.textContent = 'Armes';
   els.stepClass.onclick = () => onStep('classe');
   els.stepWeapon.onclick = () => onStep('arme');
   els.classes.classList.toggle('hidden', step !== 'classe');

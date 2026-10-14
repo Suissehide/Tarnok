@@ -302,8 +302,11 @@ function drawCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: numb
   ctx.stroke();
 }
 
+/** L'icone d'or du HUD : la piece au sol est LA MEME, recollee au chargement. */
+const COIN_ICON = '/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png';
+
 /** Cuit les deux cases cote a cote : l'orbe a gauche, la piece a droite. */
-function makeDropAtlas(): Texture {
+function makeDropAtlas(): { atlas: Texture; canvas: HTMLCanvasElement } {
   const canvas = document.createElement('canvas');
   canvas.width = ORB_TEXTURE_DIAMETER * 2;
   canvas.height = ORB_TEXTURE_DIAMETER;
@@ -314,7 +317,7 @@ function makeDropAtlas(): Texture {
   const r = ORB_TEXTURE_DIAMETER / 2;
   drawOrb(ctx, r, r, r);
   drawCoin(ctx, ORB_TEXTURE_DIAMETER + r, r, r);
-  return Texture.from(canvas);
+  return { atlas: Texture.from(canvas), canvas };
 }
 
 /**
@@ -344,6 +347,8 @@ export class OrbRenderer {
    * que ce depot a solde seize fois. `loaded` ne lit qu'une chose.
    */
   #cells: Texture[] = [];
+  /** `COIN_TINT` sur la piece procedurale ; blanc une fois l'icone du HUD recollee. */
+  #coinTint = COIN_TINT;
 
   constructor() {
     this.#container.boundsArea = new Rectangle(
@@ -373,7 +378,25 @@ export class OrbRenderer {
   }
 
   load(): void {
-    this.adoptTexture(makeDropAtlas());
+    const { atlas, canvas } = makeDropAtlas();
+    this.adoptTexture(atlas);
+    // La piece du HUD remplace la procedurale des qu'elle est la. Lue a
+    // l'execution depuis le pack, comme les cadres (`ui/skin.ts`) : rien
+    // n'entre dans le depot. Sans elle, la piece grise doree reste.
+    const icon = new Image();
+    icon.addEventListener('load', () => {
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        return;
+      }
+      const cell = dropCellRect(DROP_COIN_CELL);
+      ctx.clearRect(cell.x, cell.y, cell.w, cell.h);
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(icon, cell.x, cell.y, cell.w, cell.h);
+      atlas.source.update();
+      this.#coinTint = 0xffffff;
+    });
+    icon.src = COIN_ICON;
   }
 
   /**
@@ -406,7 +429,7 @@ export class OrbRenderer {
    */
   #kindOf(entityId: number): { texture: Texture | undefined; scale: number; tint: number } {
     return dropsCoin(entityId)
-      ? { texture: this.#cells[DROP_COIN_CELL], scale: COIN_SCALE, tint: COIN_TINT }
+      ? { texture: this.#cells[DROP_COIN_CELL], scale: COIN_SCALE, tint: this.#coinTint }
       : { texture: this.#cells[DROP_ORB_CELL], scale: ORB_SCALE, tint: ORB_TINT };
   }
 

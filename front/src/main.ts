@@ -66,6 +66,17 @@ const el = <T extends HTMLElement>(id: string): T => {
   return node as T;
 };
 
+/** Replie ou deplie l'aide des combinaisons, et dit ce que fera le prochain appui. */
+function toggleCombos(): void {
+  const panel = el('hud-combos-panel');
+  const collapsed = panel.dataset.collapsed !== 'true';
+  panel.dataset.collapsed = String(collapsed);
+  // En style direct : une regle de `@layer components` perdrait contre le
+  // `flex` utilitaire de la liste, quelle que soit sa specificite.
+  el('hud-combos').style.display = collapsed ? 'none' : '';
+  el('hud-combos-hint').textContent = collapsed ? 'H — déplier' : 'H — replier';
+}
+
 // Sans attendre : les menus s'affichent d'abord en cadres unis, puis
 // s'habillent d'un bloc (voir `ui/skin.ts`).
 void applySkin();
@@ -425,10 +436,11 @@ function join(code: string): void {
     }
     // H replie ou deplie l'aide des combinaisons, en jeu seulement.
     if (e.key.toLowerCase() === 'h' && !hud.classList.contains('hidden') && !paused) {
-      const panel = el('hud-combos-panel');
-      panel.dataset.collapsed = panel.dataset.collapsed === 'true' ? 'false' : 'true';
+      toggleCombos();
     }
   });
+  // Et au clic sur son titre : la touche seule ne se decouvre pas.
+  el('hud-combos-toggle').addEventListener('click', toggleCombos);
 
   client.connect();
 

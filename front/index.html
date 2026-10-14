@@ -182,14 +182,14 @@
       <!-- 04 · HUD -->
       <section id="hud" class="ui-screen ui-screen--overlay z-10 hidden">
         <div class="ui-canvas">
-          <div class="bar bar--sml absolute left-0 right-0 top-0">
+          <div class="bar bar--sml absolute left-[24px] right-[24px] top-[14px]">
             <i id="hud-xp-fill" class="bar__fill"></i>
           </div>
 
           <div class="absolute left-[40px] top-[46px] flex items-center gap-[18px]">
             <div class="k k-paperx slot h-[132px] w-[132px]">
               <img id="hud-portrait" src="" alt="" class="h-[100px] w-[100px]" />
-              <span class="badge-tile absolute bottom-[-40px] right-[-40px]">
+              <span class="badge-tile absolute bottom-[-52px] right-[-52px]">
                 <b id="hud-level" class="f-jer ol text-[38px] font-normal"></b>
               </span>
             </div>
@@ -287,16 +287,30 @@
             id="hud-combos-panel"
             class="k k-paperx absolute left-[40px] top-[220px] flex w-[800px] flex-col gap-[4px]"
           >
-            <div class="flex items-center justify-between">
+            <button
+              id="hud-combos-toggle"
+              type="button"
+              class="pointer-events-auto flex w-full cursor-pointer items-center justify-between gap-[24px]"
+            >
               <span class="f-meta ol text-[24px]">Combinaisons</span>
-              <span class="f-mono ol text-[16px]">H — replier</span>
-            </div>
+              <span id="hud-combos-hint" class="f-mono ol text-[16px]">H — replier</span>
+            </button>
             <div id="hud-combos" class="flex flex-col gap-[2px]"></div>
           </div>
 
-          <!-- Mini-carte (ecran 04) : le bois du pack a l'echelle 1, la carte dans sa cuvette. -->
-          <div class="k k-wood absolute bottom-[40px] right-[40px]">
-            <canvas id="hud-minimap" width="192" height="192" class="block"></canvas>
+          <!--
+            Mini-carte (ecran 04) : le bois du pack a l'echelle 1, la carte
+            par-dessus jusqu'a son liseret. Le bois mesure 20 px de liseret sur
+            les cotes, 39 en bas (socle compris) et 18 en haut : la carte deborde
+            de 64 px dans la bordure de chaque cote, et seul le cadre reste.
+          -->
+          <div class="k k-wood absolute bottom-[40px] right-[40px] h-[316px] w-[296px]">
+            <canvas
+              id="hud-minimap"
+              width="256"
+              height="256"
+              class="absolute left-[-64px] top-[-64px] block h-[256px] w-[256px] max-w-none"
+            ></canvas>
           </div>
 
           <div
