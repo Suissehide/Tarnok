@@ -1,4 +1,15 @@
-import { ABILITY_COOLDOWN_TICKS, type AbilityUsed, VERB_IDS } from '@shared/abilities';
+import {
+  ABILITY_COOLDOWN_TICKS,
+  ABILITY_ZONE_RADIUS,
+  type AbilityUsed,
+  ADJACENT_RANGE,
+  DECOY_LIFETIME_TICKS,
+  RELAIS_INTANGIBLE_TICKS,
+  RELAIS_RANGE,
+  REMPART_ARMOR,
+  REMPART_LIFETIME_TICKS,
+  VERB_IDS,
+} from '@shared/abilities';
 import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import { classOf, DEFAULT_CLASS_ID, type VerbKind } from '@shared/classes';
@@ -20,6 +31,7 @@ import {
   WIPE_GOLD_KEPT,
   XP_PER_ORB,
 } from '@shared/constants';
+import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
@@ -29,8 +41,8 @@ import { Projectiles } from '@shared/projectiles';
 import {
   encodeSnapshot,
   OUTCOME,
-  packZoneKind,
   type PlayerSnapshot,
+  packZoneKind,
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
@@ -138,6 +150,19 @@ export interface PlayerState extends ContactPlayer {
   readonly classId: number;
   /** Tick du dernier verbe ACCEPTE. `-Infinity` : jamais utilise. */
   lastAbilityTick: number;
+  /**
+   * Vrai si ce joueur tire l'arme neutre. **Une seule arme au depart** :
+   * l'arme choisie en salle d'attente REMPLACE la dague, elle ne s'y ajoute
+   * pas ; seul un joueur sans arme de depart (ou arrive en cours de partie)
+   * garde la dague. Pose a `join`, jamais modifie ensuite.
+   */
+  readonly keepsBase: boolean;
+  /**
+   * L'armure EFFECTIVE de ce tick, celle que `resolveContact` lit : le maximum
+   * de l'armure du compte et de toute protection de Rempart qui couvre le
+   * joueur. Recalculee par `Room#step` juste avant les degats — voir `armorOf`.
+   */
+  armor: number;
 }
 
 export interface RoomMetrics {
@@ -339,6 +364,10 @@ export class Room {
    * voir le docbloc de `useAbility`.
    */
   #pendingAbilities: AbilityUsed[] = [];
+  /** Les leurres plantes, purges a chaque nouvelle pose ; `substituteDecoys` ignore les expires. */
+  #decoys: Decoy[] = [];
+  /** Les zones de Rempart posees, purgees a chaque nouvelle pose ; `armorOf` ignore les expirees. */
+  #remparts: { x: number; y: number; bornTick: number; by: number }[] = [];
   /**
    * La charge du boss en cours, ou `null` — **la seule qui existe a la fois**,
    * puisqu'il n'y a qu'un boss vivant (§1.1 de la spec).
@@ -801,6 +830,150 @@ export class Room {
     return this.#players.get(playerId)?.maxHp ?? 0;
   }
 
+  /** PV courants d'un joueur, `0` s'il est absent. Lecture etroite, comme `maxHpOf`. */
+  hpOf(playerId: number): number {
+    return this.#players.get(playerId)?.hp ?? 0;
+  }
+
+  /**
+   * L'armure effective d'un joueur : le MAXIMUM de celle de son compte et de
+   * toute protection de Rempart qui le couvre.
+   *
+   * ⚠️ **Un MAXIMUM, jamais une somme ni un produit** — la meme regle que
+   * `ZoneField` applique deja entre deux zones, et pour la raison que son
+   * docbloc donne : deux flaques qui se recouvrent « ne doublent pas : elles
+   * donnent la plus forte ». Une somme ferait de « cinq paliers d'Armure
+   * achetes, plus un Rempart » une quasi-immunite (§6.2 de la spec).
+   */
+  armorOf(playerId: number): number {
+    const p = this.#players.get(playerId);
+    if (!p) {
+      return 0;
+    }
+    return Math.max(p.accountBonuses.armor, this.#rempartCouvre(p) ? REMPART_ARMOR : 0);
+  }
+
+  /**
+   * Un joueur est couvert s'il se tient dans une zone de Rempart vivante, OU
+   * (trait `remparteAllie`) s'il est adjacent a un joueur de classe Rempart
+   * dont une zone est vivante — la protection suit alors le Rempart lui-meme.
+   */
+  #rempartCouvre(p: PlayerState): boolean {
+    for (const z of this.#remparts) {
+      if (this.#tick - z.bornTick >= REMPART_LIFETIME_TICKS) {
+        continue;
+      }
+      if (Math.hypot(p.x - z.x, p.y - z.y) <= ABILITY_ZONE_RADIUS) {
+        return true;
+      }
+      const poseur = this.#players.get(z.by);
+      if (
+        poseur &&
+        poseur.id !== p.id &&
+        classOf(poseur.classId)?.trait === 'remparteAllie' &&
+        Math.hypot(p.x - poseur.x, p.y - poseur.y) <= ADJACENT_RANGE
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * ⚠️ **Ecritures de TEST, aucun chemin de production ne les appelle** — meme
+   * statut que `debugSetGold`. Un test de verbe a besoin de poser un joueur a
+   * une distance controlee d'une zone ou d'un allie ; le faire marcher au
+   * clavier pendant des secondes de simulation rendrait chaque test lent et
+   * fragile, sans rien eprouver de plus.
+   */
+  /**
+   * Le Relais : le lanceur se teleporte sur l'allie VIVANT le plus proche du
+   * point vise, a `RELAIS_RANGE` du lanceur au plus.
+   *
+   * ⚠️ **Rend `null` sur tout refus** — pas d'allie, allie mort ou hors de
+   * portee, soi-meme — et c'est ce qui laisse la recharge intacte : `useAbility`
+   * ne la pose qu'apres une annonce. Un joueur ne doit pas etre puni d'un verbe
+   * qu'il n'a pas eu (tache 7 du plan).
+   *
+   * ⚠️ **L'intangibilite du trait `relaisIntangible` est `contactInvulnTicks`**,
+   * le compteur que le contact et la charge du boss lisent deja : un second
+   * compteur d'invulnerabilite divergerait du premier, et le jour ou ils
+   * divergent c'est un test qui manque.
+   */
+  #relais(p: PlayerState, aimX: number, aimY: number): AbilityUsed | null {
+    let cible: PlayerState | null = null;
+    let meilleure = Number.POSITIVE_INFINITY;
+    for (const autre of this.#players.values()) {
+      if (autre.id === p.id || autre.hp <= 0) {
+        continue;
+      }
+      if (Math.hypot(autre.x - p.x, autre.y - p.y) > RELAIS_RANGE) {
+        continue;
+      }
+      const d = Math.hypot(autre.x - aimX, autre.y - aimY);
+      if (d < meilleure) {
+        meilleure = d;
+        cible = autre;
+      }
+    }
+    if (!cible) {
+      return null;
+    }
+    p.x = cible.x;
+    p.y = cible.y;
+    if (classOf(p.classId)?.trait === 'relaisIntangible') {
+      cible.contactInvulnTicks = Math.max(cible.contactInvulnTicks, RELAIS_INTANGIBLE_TICKS);
+    }
+    // L'annonce porte la DESTINATION : le client recale sa prediction dessus.
+    return {
+      tick: this.#tick,
+      playerId: p.id,
+      verb: VERB_IDS.relais,
+      x: Math.round(cible.x),
+      y: Math.round(cible.y),
+      targetId: cible.id,
+    };
+  }
+
+  /** Position courante d'un joueur ; `null` s'il est absent. Lecture etroite. */
+  positionOf(playerId: number): { x: number; y: number } | null {
+    const p = this.#players.get(playerId);
+    return p ? { x: p.x, y: p.y } : null;
+  }
+
+  /** Ticks d'intangibilite restants d'un joueur (contact et charge), `0` s'il est absent. */
+  intangibleTicksOf(playerId: number): number {
+    return this.#players.get(playerId)?.contactInvulnTicks ?? 0;
+  }
+
+  #refreshArmor(): void {
+    for (const p of this.#players.values()) {
+      p.armor = this.armorOf(p.id);
+    }
+  }
+
+  debugPlace(playerId: number, x: number, y: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      p.x = x;
+      p.y = y;
+    }
+  }
+
+  debugKill(playerId: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      p.hp = 0;
+    }
+  }
+
+  debugRevive(playerId: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      p.hp = p.maxHp;
+    }
+  }
+
   /**
    * Le palier courant, `0` pour le premier — l'argument `k` des formules de
    * `shared/paliers.ts`.
@@ -908,6 +1081,7 @@ export class Room {
       loadout,
       classId,
       lastAbilityTick: Number.NEGATIVE_INFINITY,
+      keepsBase: startWeapon === undefined,
     });
     return true;
   }
@@ -1101,13 +1275,17 @@ export class Room {
     // positions flottantes, les deux cotes enracineraient leur BFS dans des
     // cellules differentes une fois par cellule et par axe — le serveur doit
     // s'imposer l'arrondi comme il s'impose deja le retard.
+    const ids: number[] = [];
     const xs: number[] = [];
     const ys: number[] = [];
     for (const p of this.#players.values()) {
+      ids.push(p.id);
       xs.push(Math.round(p.x));
       ys.push(Math.round(p.y));
     }
-    this.#history.record(this.#tick, xs, ys);
+    // Les identifiants voyagent avec les positions : un leurre retrouve son
+    // lanceur par son id, jamais par un rang qui bouge (`shared/decoys.ts`).
+    this.#history.record(this.#tick, xs, ys, ids);
 
     const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
     if (this.#tick % stepsPerField === 0) {
@@ -1117,10 +1295,14 @@ export class Room {
       const seen = this.#history.delayed(this.#tick);
       if (seen) {
         this.#fieldInputTick = seen.tick;
-        for (let f = 0; f < seen.x.length && f < this.#fields.length; f++) {
-          this.#fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        // ⚠️ Les leurres remplacent leur lanceur, au tick des POSITIONS
+        // (`seen.tick`), jamais au tick courant : c'est lui que le client
+        // partage. Meme fonction que les sites du miroir client.
+        const cible = substituteDecoys(seen.ids, seen.x, seen.y, this.#decoys, seen.tick);
+        for (let f = 0; f < cible.x.length && f < this.#fields.length; f++) {
+          this.#fields[f]?.update(cible.x[f] ?? 0, cible.y[f] ?? 0);
         }
-        this.horde.retarget(seen.x, seen.y);
+        this.horde.retarget(cible.x, cible.y);
       }
     }
 
@@ -1346,6 +1528,10 @@ export class Room {
     // couloir ce tick-ci ; et toucher avant `resolveContact` est ce qui laisse
     // l'invulnerabilite posee par la charge produire son effet des le tick
     // suivant plutot qu'un tick plus tard.
+    // L'armure effective du tick (compte + Rempart), juste avant les DEUX
+    // sources de degats : la charge du boss et le contact la lisent toutes deux
+    // sur `player.armor`.
+    this.#refreshArmor();
     this.#stepBossCharge();
 
     resolveContact([...this.#players.values()], this.horde);
@@ -1470,6 +1656,30 @@ export class Room {
   #applyAbility(p: PlayerState, verb: VerbKind, aimX: number, aimY: number): AbilityUsed | null {
     if (verb === 'amorce') {
       this.#poseZoneAmorce(p, aimX, aimY);
+    }
+    if (verb === 'relais') {
+      return this.#relais(p, aimX, aimY);
+    }
+    if (verb === 'appat') {
+      // Arrondi comme les positions de joueurs (le serveur s'impose l'arrondi
+      // du fil) : un leurre est une entree du MEME tableau.
+      const x = Math.round(aimX);
+      const y = Math.round(aimY);
+      this.#decoys = this.#decoys.filter((d) => this.#tick - d.bornTick < DECOY_LIFETIME_TICKS);
+      this.#decoys.push({ playerId: p.id, x, y, bornTick: this.#tick });
+      // Trait `leurreElementaire` : le leurre porte l'element de l'arme, il
+      // pose donc a sa naissance la meme zone qu'une Amorce.
+      if (classOf(p.classId)?.trait === 'leurreElementaire') {
+        this.#poseZoneAmorce(p, x, y);
+      }
+    }
+    if (verb === 'rempart') {
+      // Un champ PROPRE, jamais un `ZoneField` elementaire : une zone de
+      // Rempart ne marque aucun element et ne participe a aucune reaction.
+      this.#remparts = this.#remparts.filter(
+        (z) => this.#tick - z.bornTick < REMPART_LIFETIME_TICKS,
+      );
+      this.#remparts.push({ x: aimX, y: aimY, bornTick: this.#tick, by: p.id });
     }
     return {
       tick: this.#tick,
@@ -1740,9 +1950,12 @@ export class Room {
       if (p.aimX === 0 && p.aimY === 0) {
         continue;
       }
-      // ⚠️ L'arme neutre d'abord, et TOUJOURS : elle vit hors des slots (§6.1),
-      // ne figure dans aucun `Loadout`, et ne disparait jamais de l'arsenal.
-      this.#fireOne(p, BASE_WEAPON_ID, tick);
+      // L'arme neutre d'abord : elle vit hors des slots (§6.1) et ne figure
+      // dans aucun `Loadout`. Elle ne tire que chez qui n'a pas choisi d'arme
+      // de depart — l'arme choisie la remplace (`keepsBase`).
+      if (p.keepsBase) {
+        this.#fireOne(p, BASE_WEAPON_ID, tick);
+      }
       for (const id of p.loadout.weaponIds) {
         this.#fireOne(p, id, tick);
       }
