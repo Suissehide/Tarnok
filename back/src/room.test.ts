@@ -5044,3 +5044,73 @@ describe('etape 8 tache 3 : le socle du verbe', () => {
     expect(room.useAbility(1, 1, 0)?.verb).toBe(VERB_IDS.appat);
   });
 });
+
+describe('etape 8 tache 4a : Amorce', () => {
+  /** Une arme dont l'element DIFFERE de celui de l'arme neutre, derivee du catalogue. */
+  const ARME_ELEMENTAIRE = WEAPONS.find(
+    (w) => w.id !== BASE_WEAPON_ID && w.element !== weaponOf(BASE_WEAPON_ID).element,
+  );
+
+  it('ANNONCE une zone de l element de l arme du joueur, a reaction nulle', () => {
+    if (!ARME_ELEMENTAIRE) {
+      throw new Error('aucune arme au catalogue ne differe de la neutre par son element');
+    }
+    const room = new Room();
+    room.join(1, undefined, ARME_ELEMENTAIRE.id, 0); // Amorce
+    room.drainZones(); // vide ce qui precede
+
+    const annonce = room.useAbility(1, 300, 400);
+    expect(annonce).not.toBeNull();
+
+    // ⚠️ On lit l'ANNONCE, pas l'etat interne : `#zones` est prive, et c'est
+    // l'annonce que le client recoit. Eprouver l'etat interne laisserait passer
+    // une zone posee mais jamais diffusee — le serveur l'aurait, le client non.
+    const annoncees = room.drainZones();
+    expect(annoncees.length).toBe(1);
+    const z = annoncees[0];
+    if (!z) {
+      throw new Error('aucune zone annoncee');
+    }
+    expect(z.by).toBe(1);
+    // L'element est LU du catalogue, jamais code en dur.
+    expect(zoneElement(z.kind)).toBe(ARME_ELEMENTAIRE.element);
+    // Reaction NULLE : elle marque, elle ne brule pas.
+    expect(zoneReaction(z.kind)).toBe(0);
+  });
+
+  it('annonce la zone au point VISE, pas a la position du joueur', () => {
+    const room = new Room();
+    room.join(1, undefined, undefined, 0);
+    room.drainZones();
+    const depart = positionOf(room, 1);
+    room.useAbility(1, 300, 400);
+    const z = room.drainZones()[0];
+    expect([z?.x, z?.y]).toEqual([300, 400]);
+    // Et la visee n'est pas la position de depart, sans quoi le test ne
+    // distinguerait rien.
+    expect([depart.x, depart.y]).not.toEqual([300, 400]);
+  });
+
+  /** La paire discriminante : il agit ici, et il n'agit pas la. */
+  it('une classe qui n est PAS Amorce n annonce aucune zone', () => {
+    const room = new Room();
+    room.join(1, undefined, ARME_ELEMENTAIRE?.id, 1); // Rempart
+    room.drainZones();
+    expect(room.useAbility(1, 300, 400)).not.toBeNull();
+    expect(room.drainZones().length).toBe(0);
+  });
+
+  /**
+   * Le repli de `#armeAmorce` : le salon autorise explicitement `NO_WEAPON`,
+   * donc un Amorce sans arme existe reellement. Il doit poser la zone de l'arme
+   * neutre plutot que de refuser son verbe.
+   */
+  it('un Amorce sans arme pose l element de l arme neutre, et ne refuse pas', () => {
+    const room = new Room();
+    room.join(1, undefined, undefined, 0);
+    room.drainZones();
+    expect(room.useAbility(1, 300, 400)).not.toBeNull();
+    const z = room.drainZones()[0];
+    expect(zoneElement(z?.kind ?? 255)).toBe(weaponOf(BASE_WEAPON_ID).element);
+  });
+});

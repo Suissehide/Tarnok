@@ -26,7 +26,13 @@ import { Loadout } from '@shared/loadout';
 import { bossHp, extractGold, palierGold, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { Projectiles } from '@shared/projectiles';
-import { encodeSnapshot, OUTCOME, type PlayerSnapshot, VOTE_CHOICE } from '@shared/protocol';
+import {
+  encodeSnapshot,
+  OUTCOME,
+  packZoneKind,
+  type PlayerSnapshot,
+  VOTE_CHOICE,
+} from '@shared/protocol';
 import { makeRandom } from '@shared/random';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import type { WaveOrder } from '@shared/waves';
@@ -1462,6 +1468,9 @@ export class Room {
    * laisserait passer une annonce quand meme donnerait un verbe gratuit.
    */
   #applyAbility(p: PlayerState, verb: VerbKind, aimX: number, aimY: number): AbilityUsed | null {
+    if (verb === 'amorce') {
+      this.#poseZoneAmorce(p, aimX, aimY);
+    }
     return {
       tick: this.#tick,
       playerId: p.id,
@@ -1470,6 +1479,38 @@ export class Room {
       y: aimY,
       targetId: 0,
     };
+  }
+
+  /**
+   * L'arme dont Amorce emprunte son element : la PREMIERE du loadout, celle que
+   * le joueur a choisie au salon. A defaut, l'arme neutre.
+   *
+   * ⚠️ **Une classe ne porte jamais d'element** (§3 de la spec de l'etape 8) :
+   * Amorce emprunte celui de l'ARME, et c'est ce qui la laisse compatible avec
+   * l'exclusivite des armes. Le repli sur l'arme neutre garde le verbe utilisable
+   * plutot que de le faire refuser sur un loadout vide — le salon autorise
+   * explicitement `NO_WEAPON`, donc ce cas existe.
+   */
+  #armeAmorce(p: PlayerState): number {
+    return p.loadout.weaponIds[0] ?? BASE_WEAPON_ID;
+  }
+
+  /**
+   * Pose la zone d'Amorce : l'element de l'arme du joueur, a REACTION NULLE,
+   * donc sans degats — elle marque, elle ne brule pas.
+   *
+   * ⚠️ **L'annonce est poussee ICI, et pas laissee a `#announceZones()`.**
+   * Celle-la ne pousse que les zones dont `bornTick === this.#tick`, et elle
+   * tourne DANS `step()`, apres `tick++`. Or `useAbility` est appelee ENTRE deux
+   * pas, depuis le gestionnaire de message : une zone posee ici porterait un
+   * `bornTick` deja perime au pas suivant, et ne serait donc **JAMAIS**
+   * annoncee. Le serveur l'aurait, le client non — et aucun test du serveur seul
+   * ne verrait cette divergence.
+   */
+  #poseZoneAmorce(p: PlayerState, x: number, y: number): void {
+    const kind = packZoneKind(weaponOf(this.#armeAmorce(p)).element, 0);
+    this.#zones.spawn(kind, x, y, p.id, this.#tick);
+    this.#pendingZones.push({ kind, x, y, bornTick: this.#tick, by: p.id });
   }
 
   /**
