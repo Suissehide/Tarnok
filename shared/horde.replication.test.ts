@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 
+import { DECOY_LIFETIME_TICKS } from './abilities';
 import { archetypeOf } from './archetypes';
 import { BOSS_CHARGE_LENGTH_PX, type BossCharge, makeBossCharge } from './boss';
 import {
@@ -10,6 +11,7 @@ import {
   TICK_HZ,
   ZONE_LIFETIME_TICKS,
 } from './constants';
+import { type Decoy, substituteDecoys } from './decoys';
 import { ELEMENT, elementOf } from './elements';
 import { FlowField } from './flowfield';
 import { entityIdOf, Horde } from './horde';
@@ -2917,5 +2919,212 @@ describe('etape 6a : la charge du boss survit a la latence, avec et sans rejeu',
       expect(p.lateCharges).toBe(0);
     }
     expect(result.maxDrift).toBe(0);
+  });
+});
+
+/**
+ * Etape 8, tache 6 : l'Appat. Un leurre REMPLACE son lanceur dans l'entree du
+ * champ (`substituteDecoys`), au tick des POSITIONS. Le serveur le connait des
+ * sa pose ; chaque client l'apprend `delay` ticks plus tard et, s'il a deja
+ * simule des ticks concernes, restaure son anneau a la naissance du leurre et
+ * rejoue — le patron de la charge du boss (scenario 11c). Miroir exact de
+ * `GameClient#applyDecoy`.
+ *
+ * Les retards vont jusqu'a 7 ticks : au-dela de `FIELD_INPUT_DELAY_TICKS` (3),
+ * un client a FORCEMENT deja rafraichi son champ sans le leurre, et seul le
+ * rejeu peut le rattraper — sous `ROLLBACK_DEPTH_TICKS` (8).
+ */
+describe('etape 8 tache 6 : l Appat survit a la latence, avec et sans rejeu', () => {
+  const IDS = [1, 2, 3, 4];
+  /** Poses a des ticks qui parcourent les trois restes de `stepsPerField`. */
+  const DECOY_TICKS = [40, 95, 151];
+  const LAUNCHERS = [2, 4, 1];
+  const DECOY_DELAY: readonly number[] = [0, 1, 3, 5, 7];
+  const END = (DECOY_TICKS.at(-1) ?? 0) + DECOY_LIFETIME_TICKS + 60;
+
+  interface DecoyParticipant {
+    horde: Horde;
+    fields: FlowField[];
+    playerHistory: PlayerHistory;
+    hordeHistory: HordeHistory;
+    decoys: Decoy[];
+    lateDecoys: number;
+  }
+
+  function makeDecoyParticipant(mapSeed: number): DecoyParticipant {
+    const horde = new Horde(4000);
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(mapSeed, probe.cols, probe.rows);
+    const fields = Array.from({ length: 4 }, () => {
+      const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      applyObstacles(f, mask);
+      return f;
+    });
+    return {
+      horde,
+      fields,
+      playerHistory: new PlayerHistory(),
+      hordeHistory: new HordeHistory(horde.capacity),
+      decoys: [],
+      lateDecoys: 0,
+    };
+  }
+
+  /** L'entree du champ d'un participant : SES leurres connus, au tick des positions. */
+  function feed(p: DecoyParticipant, tick: number, retarget: boolean): void {
+    const seen = p.playerHistory.delayed(tick);
+    if (!seen) {
+      return;
+    }
+    const cible = substituteDecoys(seen.ids, seen.x, seen.y, p.decoys, seen.tick);
+    for (let f = 0; f < 4; f++) {
+      p.fields[f]?.update(cible.x[f] ?? 0, cible.y[f] ?? 0);
+    }
+    if (retarget) {
+      p.horde.retarget(cible.x, cible.y);
+    }
+  }
+
+  function maxDrift(reference: Horde, participant: Horde): number {
+    let worst = 0;
+    for (let slot = 0; slot < reference.count; slot++) {
+      const other = participant.slotOf(reference.entityIdAt(slot));
+      if (other < 0) {
+        continue;
+      }
+      worst = Math.max(
+        worst,
+        Math.hypot(
+          (participant.x[other] ?? 0) - (reference.x[slot] ?? 0),
+          (participant.y[other] ?? 0) - (reference.y[slot] ?? 0),
+        ),
+      );
+    }
+    return worst;
+  }
+
+  function runDecoyScenario(
+    mapSeed: number,
+    withReplay: boolean,
+    withDecoys = true,
+  ): { reference: Horde; clients: DecoyParticipant[]; maxDrift: number; announced: number } {
+    const parts = Array.from({ length: PARTICIPANTS }, () => makeDecoyParticipant(mapSeed));
+    const reference = parts[0];
+    if (!reference) {
+      throw new Error('aucun participant');
+    }
+    const clients = parts.slice(1);
+    const order: WaveOrder = {
+      waveId: 1,
+      spawnTick: 0,
+      seed: 0x0a99_a700,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200,
+      anchorY: 1200,
+      count: ENTITIES,
+    };
+    for (const p of parts) {
+      p.horde.spawn(order);
+    }
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    const announced: Decoy[] = [];
+    let worst = 0;
+
+    for (let tick = 0; tick < END; tick++) {
+      const xs = IDS.map((_, pl) => 3000 + Math.cos(tick * 0.02 + pl) * 1500);
+      const ys = IDS.map((_, pl) => 3000 + Math.sin(tick * 0.02 + pl) * 1500);
+      for (const p of parts) {
+        p.playerHistory.record(tick, xs, ys, IDS);
+        if (tick % stepsPerField === 0) {
+          feed(p, tick, true);
+        }
+        p.horde.step(DT, p.fields, tick, undefined, null);
+      }
+
+      // Le serveur plante le leurre APRES son pas, entre deux ticks — l'ordre
+      // de `Room#useAbility`, appelee depuis le gestionnaire de message.
+      const k = DECOY_TICKS.indexOf(tick);
+      if (withDecoys && k >= 0) {
+        const decoy: Decoy = {
+          playerId: LAUNCHERS[k] ?? 1,
+          x: 600 + k * 400,
+          y: 5200 - k * 300,
+          bornTick: tick,
+        };
+        reference.decoys.push(decoy);
+        announced.push(decoy);
+      }
+
+      clients.forEach((p, i) => {
+        p.hordeHistory.record(tick, p.horde);
+        const delay = DECOY_DELAY[i + 1] ?? 0;
+        for (const decoy of announced) {
+          if (decoy.bornTick + delay !== tick) {
+            continue;
+          }
+          p.decoys.push(decoy);
+          if (!withReplay || decoy.bornTick >= tick) {
+            continue;
+          }
+          if (!p.hordeHistory.restore(decoy.bornTick, p.horde)) {
+            p.lateDecoys++;
+            continue;
+          }
+          // Le champ tel qu'il etait a la naissance, puis le rejeu.
+          const lastDue =
+            decoy.bornTick - (((decoy.bornTick % stepsPerField) + stepsPerField) % stepsPerField);
+          feed(p, lastDue, false);
+          for (let t = decoy.bornTick + 1; t <= tick; t++) {
+            if (t % stepsPerField === 0) {
+              feed(p, t, true);
+            }
+            p.horde.step(DT, p.fields, t, undefined, null);
+            p.hordeHistory.record(t, p.horde);
+          }
+        }
+      });
+
+      clients.forEach((p, i) => {
+        // Pendant que l'annonce est en vol, l'ecart est du au transit, pas a la
+        // correction : meme masque que les scenarios 9, Z2 et 11c.
+        const delay = DECOY_DELAY[i + 1] ?? 0;
+        if (announced.some((d) => tick < d.bornTick + delay)) {
+          return;
+        }
+        worst = Math.max(worst, maxDrift(reference.horde, p.horde));
+      });
+    }
+    return { reference: reference.horde, clients, maxDrift: worst, announced: announced.length };
+  }
+
+  it('scenario AP0 — les leurres deplacent reellement la horde', () => {
+    const avec = runDecoyScenario(0xa990_0000, true, true).reference;
+    const sans = runDecoyScenario(0xa990_0000, true, false).reference;
+    const ecart = maxDrift(sans, avec);
+    process.stdout.write(`scenario AP0 (le leurre attire) : ${ecart.toFixed(3)} px du temoin\n`);
+    expect(ecart).toBeGreaterThan(FLOWFIELD_CELL);
+  });
+
+  it('scenario AP1 — sans rejeu, un leurre appris en retard laisse une derive', () => {
+    const r = runDecoyScenario(0xa990_0001, false);
+    process.stdout.write(
+      `scenario AP1 (sans rejeu) : derive maximale ${r.maxDrift.toFixed(3)} px\n`,
+    );
+    expect(r.announced).toBe(DECOY_TICKS.length);
+    expect(r.maxDrift).toBeGreaterThan(0);
+  });
+
+  /** ⚠️ **`toBe(0)`, pas une tolerance** : le contrat du projet est 0,000 px. */
+  it('scenario AP2 — avec rejeu, la horde converge identiquement malgre trois leurres', () => {
+    const r = runDecoyScenario(0xa990_0002, true);
+    process.stdout.write(
+      `scenario AP2 (avec rejeu) : derive maximale ${r.maxDrift.toFixed(3)} px\n`,
+    );
+    expect(r.announced).toBe(DECOY_TICKS.length);
+    for (const p of r.clients) {
+      expect(p.lateDecoys).toBe(0);
+    }
+    expect(r.maxDrift).toBe(0);
   });
 });

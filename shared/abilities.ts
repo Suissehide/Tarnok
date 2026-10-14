@@ -32,6 +32,12 @@ export const ABILITY_COOLDOWN_TICKS: Readonly<Record<VerbKind, number>> = Object
 /** Rayon de la zone d'Amorce et de Rempart, en pixels monde. */
 export const ABILITY_ZONE_RADIUS = 160;
 
+/**
+ * Duree de vie d'une zone de Rempart, en ticks. Reglage d'equilibrage, comme
+ * les recharges : a confronter au playtest.
+ */
+export const REMPART_LIFETIME_TICKS = 5 * TICK_HZ;
+
 /** Duree de vie d'un leurre, en ticks. */
 export const DECOY_LIFETIME_TICKS = 5 * TICK_HZ;
 

@@ -22,6 +22,13 @@ export interface PlayerPositions {
   tick: number;
   x: number[];
   y: number[];
+  /**
+   * L'identifiant du joueur de chaque rang (etape 8, tache 6). Un leurre
+   * remplace son lanceur dans l'entree du champ, et il le retrouve par cet
+   * identifiant — jamais par un indice, qui bouge quand un joueur part
+   * (`shared/decoys.ts`).
+   */
+  ids: number[];
 }
 
 export class PlayerHistory {
@@ -29,8 +36,19 @@ export class PlayerHistory {
   readonly #x = new Float32Array(DEPTH * MAX_PLAYERS);
   readonly #y = new Float32Array(DEPTH * MAX_PLAYERS);
   readonly #counts = new Uint8Array(DEPTH);
+  readonly #ids = new Uint8Array(DEPTH * MAX_PLAYERS);
 
-  record(tick: number, xs: readonly number[], ys: readonly number[]): void {
+  /**
+   * `ids` est optionnel pour les appelants qui n'ont aucun leurre a resoudre
+   * (les tests de horde) : absent, chaque rang porte l'identifiant `0`, qu'aucun
+   * joueur n'a — un leurre n'y trouve donc personne, sans rien corrompre.
+   */
+  record(
+    tick: number,
+    xs: readonly number[],
+    ys: readonly number[],
+    ids: readonly number[] = [],
+  ): void {
     const slot = ((tick % DEPTH) + DEPTH) % DEPTH;
     const count = Math.min(xs.length, MAX_PLAYERS);
     this.#ticks[slot] = tick;
@@ -38,6 +56,7 @@ export class PlayerHistory {
     for (let p = 0; p < count; p++) {
       this.#x[slot * MAX_PLAYERS + p] = xs[p] ?? 0;
       this.#y[slot * MAX_PLAYERS + p] = ys[p] ?? 0;
+      this.#ids[slot * MAX_PLAYERS + p] = ids[p] ?? 0;
     }
   }
 
@@ -84,10 +103,12 @@ export class PlayerHistory {
     const count = this.#counts[slot] ?? 0;
     const x: number[] = [];
     const y: number[] = [];
+    const ids: number[] = [];
     for (let p = 0; p < count; p++) {
       x.push(this.#x[slot * MAX_PLAYERS + p] ?? 0);
       y.push(this.#y[slot * MAX_PLAYERS + p] ?? 0);
+      ids.push(this.#ids[slot * MAX_PLAYERS + p] ?? 0);
     }
-    return { tick, x, y };
+    return { tick, x, y, ids };
   }
 }

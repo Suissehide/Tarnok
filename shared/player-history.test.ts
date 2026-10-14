@@ -55,3 +55,19 @@ describe('PlayerHistory', () => {
     expect(h.delayed(20)?.tick).toBe(10);
   });
 });
+
+describe('etape 8 tache 6 : l historique retient les identifiants', () => {
+  it('rend les identifiants enregistres, au meme rang que les positions', () => {
+    const h = new PlayerHistory();
+    h.record(10, [1, 2, 3], [4, 5, 6], [3, 1, 4]);
+    const seen = h.delayed(10 + FIELD_INPUT_DELAY_TICKS);
+    expect(seen?.ids).toEqual([3, 1, 4]);
+    expect(seen?.x).toEqual([1, 2, 3]);
+  });
+
+  it('sans identifiants, chaque rang porte 0, qu aucun joueur n a', () => {
+    const h = new PlayerHistory();
+    h.record(10, [1, 2], [3, 4]);
+    expect(h.delayed(10 + FIELD_INPUT_DELAY_TICKS)?.ids).toEqual([0, 0]);
+  });
+});
