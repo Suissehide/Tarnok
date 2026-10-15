@@ -159,3 +159,23 @@ typecheck tombe.
 5. **Portique et bancs** (moi, seul).
 
 3 et 4 se font en parallèle une fois 1 et 2 posés.
+
+## 10. Résultats (16 octobre 2026)
+
+- Portique : lint propre (les 3 avertissements existaient déjà sur `main`), typecheck propre, front
+  748/748, back 1 480/1 480.
+- **Bug trouvé en route : la visée n'est pas unitaire** (octets ±127). Le faisceau de l'étape 8 traçait
+  un trait d'environ 127 fois sa portée, côté serveur comme côté client. Corrigé par `aimPoint`
+  (`shared/firing.ts`), utilisé par le faisceau et la frappe des deux côtés, et gardé par un test de
+  salon. Ça change l'équilibre du Rayon arcanique, à juger en jeu.
+- Chaudron à poix : un mortier ne touche personne en vol, donc il ne marquait plus. Le souffle de fin de
+  course marque désormais le plus proche, comme le halo. Effet de bord : une Grenade qui expire sans
+  impact marque aussi.
+- Bancs, lancés seuls, comparés au même banc sur `c22200e` :
+  - `slots` était cassé sur `main` (l'arme de classe de l'étape 8 occupait un slot de plus). Le banc est
+    réparé. Arme par arme (4 joueurs, 16 exemplaires, 1 500 ennemis), aucune régression. Sur le pire
+    décor (4 armes × 16 exemplaires, 4 000 ennemis), le pas p95 passe d'environ 20,5 ms à 26 ms, avec 9 %
+    de projectiles en plus. Ça tient dans les 33 ms du tick, mais la marge rétrécit. La boucle de
+    `collide` n'a pas changé ; le surcoût restant n'est pas attribué finement.
+  - `elements` et `kills` sont cassés sur `main` aussi (noms d'armes disparus, arme de classe en trop).
+    Non réparés ici. Le décor « dague seule » de `kills` est identique avant et après (3,58 morts/s).
