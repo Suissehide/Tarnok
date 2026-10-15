@@ -5525,8 +5525,10 @@ describe('etape 10 : la rarete multiplie la carte, soin de vitalite compris', ()
 
   it.each([
     [RARITY.RARE, 2],
-    [RARITY.LEGENDAIRE, 3],
-  ] as const)('une vitalite de rarete %i releve le plafond de %i cartes, et soigne d autant', (rarity, fois) => {
+    // Legendaire change une regle, elle ne se multiplie pas (`RARITY_MULTIPLIERS`
+    // vaut 1 a cet index) : un palier haut triple serait du decor.
+    [RARITY.LEGENDAIRE, 1],
+  ] as const)('une vitalite de rarete %i releve le plafond de %i carte(s), et soigne d autant', (rarity, fois) => {
     const room = new Room(0x10_0a_0101);
     room.join(1);
     room.grantCard(1, { nature: CARD.PASSIVE, refId: VITALITE, rarity });
