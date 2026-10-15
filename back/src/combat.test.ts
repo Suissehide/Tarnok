@@ -25,6 +25,7 @@ import {
   COURT_CIRCUIT_MAX_JUMPS,
   ECLAT_DE_GEL_DAMAGE,
   FOURNEE_BURN_PER_TICK,
+  HARVEST_RADIUS,
   LINK_RADIUS,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
@@ -43,6 +44,8 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
+import { Loadout } from '@shared/loadout';
+import { PASSIVES } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
 import { REACTION, REACTION_DEFS, zoneBurnPerTick, zoneRadius } from '@shared/reactions';
@@ -57,6 +60,7 @@ import {
   armureA,
   type ChargeTarget,
   type ContactPlayer,
+  type HarvestPlayer,
   markInZones,
   OrbField,
   Reactions,
@@ -66,6 +70,7 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveHalos,
+  resolveHarvest,
   resolveProjectileDamage,
   resolveVerglasCollisions,
   VENOM_MIN_RESERVE,
@@ -5018,5 +5023,68 @@ describe('Venins — le poison des cartes « venin »', () => {
     expect(horde.slotOf(id)).toBe(-1);
     expect(orbs.count).toBe(1);
     expect(venins.size).toBe(0);
+  });
+});
+
+describe('etape 10 : Moisson (resolveHarvest)', () => {
+  const MOISSON = PASSIVES.find((p) => p.kind === 'harvest')?.id ?? -1;
+
+  function porteur(hp: number, cartes = 1): HarvestPlayer {
+    const loadout = new Loadout();
+    for (let i = 0; i < cartes; i++) {
+      loadout.addPassive(MOISSON);
+    }
+    return { x: 1000, y: 1000, hp, maxHp: 100, loadout };
+  }
+
+  it('une mort a 299 px soigne d 1 PV, a 301 px non', () => {
+    expect(HARVEST_RADIUS).toBe(300);
+    const pres = porteur(50);
+    resolveHarvest([pres], [1299, 1000]);
+    expect(pres.hp).toBe(51);
+    const loin = porteur(50);
+    resolveHarvest([loin], [1301, 1000]);
+    expect(loin.hp).toBe(50);
+  });
+
+  it('les morts d un tick s additionnent, et chaque carte compte', () => {
+    const p = porteur(50, 2);
+    resolveHarvest([p], [1000, 1000, 1100, 1000, 1000, 1200]);
+    expect(p.hp).toBe(56);
+  });
+
+  it('jamais au-dela du PV max', () => {
+    const p = porteur(99.5);
+    resolveHarvest([p], [1000, 1000, 1010, 1000, 1020, 1000]);
+    expect(p.hp).toBe(100);
+  });
+
+  it('un joueur a terre ne se releve pas', () => {
+    const p = porteur(0);
+    resolveHarvest([p], [1000, 1000]);
+    expect(p.hp).toBe(0);
+  });
+
+  it('sans Moisson, rien', () => {
+    const p = porteur(50, 0);
+    resolveHarvest([p], [1000, 1000]);
+    expect(p.hp).toBe(50);
+  });
+});
+
+describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
+  it('drainFallen rend toutes les positions, puis se vide', () => {
+    const orbs = new OrbField(10);
+    const sansButin = Array.from({ length: 50 }, (_, i) => entityIdOf(1, i)).find(
+      (id) => !leavesDrop(id),
+    );
+    if (sansButin === undefined) {
+      throw new Error('fixture : aucune identite sans butin');
+    }
+    orbs.spawn(entityIdOf(1, 0), 10, 20);
+    orbs.spawn(sansButin, 30, 40);
+    // Moisson compte les morts, pas les orbes : celle qui ne laisse rien compte.
+    expect(orbs.drainFallen()).toEqual([10, 20, 30, 40]);
+    expect(orbs.drainFallen()).toEqual([]);
   });
 });

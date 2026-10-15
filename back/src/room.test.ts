@@ -5496,3 +5496,42 @@ describe('etape 10 : Echo dans le salon', () => {
     expect(marqueur.perte).toBe(sans.perte);
   });
 });
+
+describe('etape 10 : Moisson dans le salon', () => {
+  const MOISSON = PASSIVES.find((p) => p.kind === 'harvest')?.id ?? -1;
+
+  /**
+   * Blesse le joueur au contact, puis fait tuer par sa dague une proie a 100
+   * px. Rend ses PV. Deux salons identiques a la carte pres : l'ecart EST ce
+   * que Moisson a rendu.
+   */
+  function pvApresUneMort(avecMoisson: boolean): number {
+    const room = new Room(0x10_0a_0801);
+    room.join(1);
+    const depart = positionOf(room, 1);
+    const contact = spawnMonsterAt(room, 700, depart.x, depart.y);
+    for (let t = 0; t < 20; t++) {
+      room.step(DT);
+    }
+    // Retire HORS du chemin des morts : ce monstre-ci ne doit rien rendre.
+    room.horde.kill([contact]);
+    if (avecMoisson) {
+      room.grantCard(1, { nature: CARD.PASSIVE, refId: MOISSON });
+    }
+    const pos = positionOf(room, 1);
+    const proie = spawnMonsterAt(room, 701, pos.x + 100, pos.y);
+    room.horde.hp[room.horde.slotOf(proie)] = 0.01;
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    for (let t = 0; t < 30 && room.horde.slotOf(proie) >= 0; t++) {
+      room.step(DT);
+    }
+    expect(room.horde.slotOf(proie)).toBe(-1);
+    return hpOf(room, 1);
+  }
+
+  it('une mort a 100 px rend exactement 1 PV a qui porte Moisson', () => {
+    const sans = pvApresUneMort(false);
+    expect(sans).toBeLessThan(PLAYER_MAX_HP - 1);
+    expect(pvApresUneMort(true) - sans).toBe(1);
+  });
+});

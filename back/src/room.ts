@@ -96,6 +96,7 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveHalos,
+  resolveHarvest,
   resolveProjectileDamage,
   resolveVerglasCollisions,
   Venins,
@@ -1713,6 +1714,10 @@ export class Room {
     });
     resolveContact([...this.#players.values()], this.horde);
     this.#regenerate();
+
+    // Moisson (etape 10) : les morts de CE tick, ou qu'elles viennent. Vide a
+    // chaque tick, porteur ou pas : la file ne doit jamais s'accumuler.
+    resolveHarvest(this.#players.values(), this.#orbs.drainFallen());
 
     const pickedIds = this.#orbs.resolvePickups(
       [...this.#players.values()].map((p) => ({

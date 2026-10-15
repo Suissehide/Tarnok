@@ -15,6 +15,7 @@ import {
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
+  HARVEST_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
@@ -23,6 +24,7 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import { linkedNeighbours } from '@shared/links';
+import type { Loadout } from '@shared/loadout';
 import { distanceToSegmentSquared, type Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
 import { REACTION, reactionForPair } from '@shared/reactions';
@@ -165,6 +167,24 @@ export class OrbField {
   truncatedOrbs = 0;
   #count = 0;
 
+  /**
+   * La position (x, y, a plat) de CHAQUE mort depuis le dernier
+   * `drainFallen`, qu'elle laisse un orbe ou non — pour Moisson (etape 10).
+   *
+   * ⚠️ **Ici parce que c'est le seul goulot qui voit chaque mort AVEC sa
+   * position** : les huit chemins de mort de ce fichier appellent `spawn`
+   * juste avant `horde.kill`, et une fois `kill` passe la horde est compactee
+   * — `Room.step` ne connait plus que des identites. `Room.step` vide la file
+   * a chaque tick.
+   */
+  #fallen: number[] = [];
+
+  drainFallen(): number[] {
+    const out = this.#fallen;
+    this.#fallen = [];
+    return out;
+  }
+
   constructor(readonly capacity: number) {
     this.id = new Uint32Array(capacity);
     this.x = new Float32Array(capacity);
@@ -206,6 +226,8 @@ export class OrbField {
    * gagnee qui s'evapore, c'est-a-dire exactement ce que cette tache retire.
    */
   spawn(entityId: number, x: number, y: number): void {
+    // AVANT la garde du butin : Moisson compte les morts, pas les orbes.
+    this.#fallen.push(x, y);
     if (!leavesDrop(entityId)) {
       return;
     }
@@ -1715,6 +1737,45 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
       player.hp = Math.max(0, player.hp - CONTACT_DAMAGE * (1 - (player.armor ?? 0)));
       player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
     }
+  }
+}
+
+/** Ce que Moisson lit d'un joueur — `PlayerState` le satisfait tel quel. */
+export interface HarvestPlayer {
+  readonly x: number;
+  readonly y: number;
+  hp: number;
+  readonly maxHp: number;
+  readonly loadout: Pick<Loadout, 'bonus'>;
+}
+
+/**
+ * Moisson (etape 10, §4) : chaque ennemi mort a MOINS de `HARVEST_RADIUS` du
+ * porteur lui rend `bonus('harvest')` PV, borne par son PV max.
+ *
+ * ⚠️ **Cooperative par construction** : le serveur n'attribue pas les morts a
+ * un tueur, la proximite evite d'avoir a le faire — un allie qui tue pres de
+ * toi te soigne aussi.
+ *
+ * ⚠️ **Un joueur a terre ne se releve pas**, meme garde que `#regenerate` :
+ * sans elle, `#checkRunOver` verrait la run repartir.
+ */
+export function resolveHarvest(players: Iterable<HarvestPlayer>, fallen: readonly number[]): void {
+  const r2 = HARVEST_RADIUS * HARVEST_RADIUS;
+  for (const p of players) {
+    if (p.hp <= 0) {
+      continue;
+    }
+    const parMort = p.loadout.bonus('harvest');
+    let gain = 0;
+    for (let i = 0; i + 1 < fallen.length; i += 2) {
+      const dx = (fallen[i] ?? 0) - p.x;
+      const dy = (fallen[i + 1] ?? 0) - p.y;
+      if (dx * dx + dy * dy < r2) {
+        gain += parMort;
+      }
+    }
+    p.hp = Math.min(p.maxHp, p.hp + gain);
   }
 }
 
