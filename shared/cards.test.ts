@@ -21,8 +21,11 @@ function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
   return new Map(loadouts.map((l, i) => [i + 1, l]));
 }
 
-/** Toutes les cartes que `buildPool` peut produire : toutes les armes (dague comprise), plus passifs. */
-const TAILLE_DU_POOL = WEAPONS.length + PASSIVES.length;
+/**
+ * Toutes les cartes que `buildPool` peut produire, hors passifs exclusivement
+ * legendaires, qui n'ont que 3 % des emplacements.
+ */
+const TAILLE_DU_POOL = WEAPONS.length + PASSIVES.filter((p) => !p.legendary).length;
 
 describe('drawSpread', () => {
   it('tire joueurs + SPREAD_BONUS cartes', () => {
@@ -172,7 +175,9 @@ describe('drawSpread', () => {
     for (let seed = 1; seed <= 400; seed++) {
       const spread = drawSpread(equipe(new Loadout()), makeRandom(seed));
       for (const carte of spread) {
-        vues.add(`${carte.nature}:${carte.refId}`);
+        if (!isLegendaryOnly(carte)) {
+          vues.add(`${carte.nature}:${carte.refId}`);
+        }
       }
     }
     expect(vues.has(`${CARD.WEAPON}:${BASE_WEAPON_ID}`)).toBe(true);
@@ -341,5 +346,48 @@ describe('etape 10 : un passif exclusivement legendaire s applique x1', () => {
 
   it('une arme n est jamais exclusivement legendaire', () => {
     expect(isLegendaryOnly({ nature: CARD.WEAPON, refId: 10 })).toBe(false);
+  });
+});
+
+describe('drawSpread — la rarete (etape 10)', () => {
+  it('chaque carte porte une rarete, et les trois finissent par sortir', () => {
+    const vues = new Set<number>();
+    for (let seed = 1; seed <= 400; seed++) {
+      for (const c of drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed))) {
+        expect(c.rarity).toBeDefined();
+        vues.add(c.rarity ?? -1);
+      }
+    }
+    expect(vues).toEqual(new Set([RARITY.COMMUNE, RARITY.RARE, RARITY.LEGENDAIRE]));
+  });
+
+  it('les proportions suivent RARITY_WEIGHTS, a la louche', () => {
+    let communes = 0;
+    let total = 0;
+    for (let seed = 1; seed <= 2000; seed++) {
+      for (const c of drawSpread(equipe(new Loadout()), makeRandom(seed))) {
+        total++;
+        if (c.rarity === RARITY.COMMUNE) {
+          communes++;
+        }
+      }
+    }
+    expect(communes / total).toBeGreaterThan(0.76);
+    expect(communes / total).toBeLessThan(0.88);
+  });
+
+  it('un passif exclusivement legendaire ne sort QUE sur un emplacement legendaire', () => {
+    let vus = 0;
+    for (let seed = 1; seed <= 3000; seed++) {
+      for (const c of drawSpread(equipe(new Loadout()), makeRandom(seed))) {
+        if (isLegendaryOnly(c)) {
+          vus++;
+          expect(c.rarity).toBe(RARITY.LEGENDAIRE);
+        }
+      }
+    }
+    // Non-vacuite : sans cette ligne, un tirage qui ne les offrirait JAMAIS
+    // passerait l'assertion ci-dessus a vide.
+    expect(vus).toBeGreaterThan(0);
   });
 });

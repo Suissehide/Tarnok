@@ -1,7 +1,7 @@
 import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
 import { PASSIVES, passiveOf } from './passives';
-import { multiplierOf } from './rarity';
+import { multiplierOf, RARITY, rollRarity } from './rarity';
 import { upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
@@ -141,6 +141,12 @@ export function buildPool(): Card[] {
  * seule a sa mutation, seule leur suppression conjointe faisait rougir la
  * suite. **Deux gardes qui se couvrent l'une l'autre ne sont gardees par aucun
  * test** — c'est la cinquieme occurrence de ce motif dans cette etape.
+ *
+ * ⚠️ **La rarete de l'EMPLACEMENT d'abord, la carte ensuite** (etape 10,
+ * §2.3) : un passif exclusivement legendaire n'entre dans le pool QUE pour un
+ * emplacement qui vient de tirer legendaire. Tirer la carte d'abord obligerait
+ * a retirer, ou a forcer la rarete — deux facons de fausser les 3 %. Rarete,
+ * carte, aspect : tout vient du meme `rng`, dans cet ordre.
  */
 export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => number): Card[] {
   const wanted = loadouts.size + SPREAD_BONUS;
@@ -157,15 +163,32 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
   const weights = pool.map((card) => (ownedByAnyone(card, loadouts) ? OWNED_WEIGHT : 1));
 
   while (spread.length < wanted && pool.length > 0) {
-    const total = weights.reduce((a, b) => a + b, 0);
-    let roll = rng() * total;
-    let index = pool.length - 1;
+    const rarity = rollRarity(rng);
+    const permis = pool.map((card, i) =>
+      rarity === RARITY.LEGENDAIRE || !isLegendaryOnly(card) ? (weights[i] ?? 0) : 0,
+    );
+    let roll = rng() * permis.reduce<number>((a, b) => a + b, 0);
+    // ⚠️ `index` suit la derniere carte PERMISE vue : si l'arrondi laisse
+    // `roll` a peine positif en fin de boucle, c'est elle qui sort — jamais une
+    // carte de poids nul, donc jamais un legendaire sur un emplacement commun.
+    let index = -1;
     for (let i = 0; i < pool.length; i++) {
-      roll -= weights[i] ?? 0;
+      const w = permis[i] ?? 0;
+      if (w <= 0) {
+        continue;
+      }
+      index = i;
+      roll -= w;
       if (roll < 0) {
-        index = i;
         break;
       }
+    }
+    // ⚠️ INATTEIGNABLE aujourd'hui, et aucun test ne la garde : il faudrait
+    // un pool fait de seuls legendaires, or une arme deja possedee y reste
+    // toujours (`canTake`). Gardee parce que sans elle un pool sans carte
+    // permise ferait sortir `pool[-1]`.
+    if (index < 0) {
+      break;
     }
     const [card] = pool.splice(index, 1);
     weights.splice(index, 1);
@@ -176,6 +199,7 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
       const options = upgradesFor(weaponOf(card.refId));
       card.upgrade = options[Math.min(options.length - 1, Math.floor(rng() * options.length))];
     }
+    card.rarity = rarity;
     spread.push(card);
   }
 

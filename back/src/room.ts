@@ -264,7 +264,7 @@ export interface ReactionEvent {
 /** Un etalage a diffuser, tel que `DRAFT_OPEN` le transporte. */
 export interface DraftOpenEvent {
   deadlineTick: number;
-  cards: readonly { nature: number; refId: number }[];
+  cards: readonly Card[];
 }
 
 /** Une resolution a diffuser, telle que `DRAFT_RESULT` la transporte. */

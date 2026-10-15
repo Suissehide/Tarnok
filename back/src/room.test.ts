@@ -13,7 +13,7 @@ import {
   type BossCharge,
   chargePointAt,
 } from '@shared/boss';
-import { CARD, type Card } from '@shared/cards';
+import { applicationsOf, CARD, type Card } from '@shared/cards';
 import {
   COIN_DROP_ONE_IN,
   EXTRACT_MULTIPLIER_STEP,
@@ -1583,10 +1583,14 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!carte || !inv) {
       throw new Error('carte ou inventaire manquant');
     }
+    // L'arme du depart (la dague) est deja possedee par LES DEUX joueurs : une
+    // carte de dague s'empile dessus. (Le salon est a graine aleatoire : sans
+    // ce terme, le test rougissait chaque fois que la carte 0 etait la dague.)
+    const deja = carte.nature === CARD.WEAPON && carte.refId === BASE_WEAPON_ID ? 1 : 0;
     if (carte.nature === CARD.PASSIVE) {
       expect(inv.stacksOf(carte.refId)).toBe(0);
     } else {
-      expect(inv.stacksOfWeapon(carte.refId)).toBe(0);
+      expect(inv.stacksOfWeapon(carte.refId)).toBe(deja);
     }
     // Et le gagnant, lui, l'a bien eue : sans cette moitie, un code qui ne
     // donnerait la carte a PERSONNE passerait aussi.
@@ -1594,10 +1598,11 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!invGagnant) {
       throw new Error('inventaire du gagnant manquant');
     }
+    // La carte compte autant de fois que sa rarete (etape 10).
     if (carte.nature === CARD.PASSIVE) {
-      expect(invGagnant.stacksOf(carte.refId)).toBe(1);
+      expect(invGagnant.stacksOf(carte.refId)).toBe(applicationsOf(carte));
     } else {
-      expect(invGagnant.stacksOfWeapon(carte.refId)).toBe(1);
+      expect(invGagnant.stacksOfWeapon(carte.refId)).toBe(deja + applicationsOf(carte));
     }
   });
 
