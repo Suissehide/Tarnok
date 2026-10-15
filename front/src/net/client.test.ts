@@ -25,6 +25,7 @@ import { ELEMENT } from '@shared/elements';
 import { critOf } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
+import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
@@ -58,7 +59,10 @@ import { bonusesOf, maxBonus, SHOP_ITEMS } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
   BASE_WEAPON_ID,
+  beamRange,
   cooldownWithBonus,
+  ORBIT_BREATH,
+  ORBIT_RADIUS,
   stackGain,
   WEAPONS,
   type Weapon,
@@ -2677,10 +2681,11 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // salve que le serveur n'arbitre pas — le cas le plus difficile a
     // diagnostiquer, parce que l'ecran a l'air juste.
     //
-    // ⚠️ L'eventail tire DEJA cinq projectiles : sur une arme a projectile
-    // unique, un miroir qui rendrait `stacks` au lieu de la vraie formule
-    // donnerait les memes nombres.
-    const EVENTAIL = 1;
+    // ⚠️ Le canon a mitraille tire DEJA huit projectiles : sur une arme a
+    // projectile unique, un miroir qui rendrait `stacks` au lieu de la vraie
+    // formule donnerait les memes nombres. (L'Eventail, id 1, tenait ce role
+    // jusqu'a l'etape 12 : devenu Roue de lames a deux bras, son gain vaut 1.)
+    const EVENTAIL = 7;
     const eventail = weaponOf(EVENTAIL);
     expect(eventail.projectileCount).toBeGreaterThan(1);
 
@@ -4497,5 +4502,158 @@ describe('le sort du necromancien', () => {
     expect(client.blastFlashes).toEqual([
       expect.objectContaining({ x: 1200, y: 1300, kind: 'releve' }),
     ]);
+  });
+});
+
+/**
+ * Etape 12 (§3.4, §5) : l'onde et la frappe ne posent aucun projectile. Le
+ * client en rejoue un miroir cosmetique depuis `#fireOne`, comme le faisceau
+ * et le halo : les listes qu'il seme (`ondes`, `frappes`) nourrissent le
+ * calque, et les ennemis franchis REAGISSENT (flash, chiffre, marque) — sans
+ * quoi l'arme aurait l'air de ne rien faire.
+ *
+ * Le tireur est le joueur 2, un ALLIE : sa position et sa visee viennent du
+ * snapshot, ce qui les fixe exactement (le joueur local, lui, est predit).
+ */
+describe('GameClient — le miroir de l onde et de la frappe (etape 12)', () => {
+  const MS_PER_TICK = 1000 / TICK_HZ;
+  const CANON_A_CHAUX = 14;
+  const CANON_A_ARC = 10;
+
+  function armerAllie(weaponId: number, offsetX: number) {
+    const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0012, 92);
+    socket.emit('message', {
+      // L'aspect explicite : `0` n'est pas un bonus propre de toutes les armes.
+      data: encodeDraftOpen(600, [
+        { nature: CARD.WEAPON, refId: weaponId, upgrade: weaponOf(weaponId).perks[0] },
+      ]),
+    });
+    socket.emit('message', {
+      data: encodeDraftResult(0, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]),
+    });
+    expect(client.loadoutOf(2).stacksOfWeapon(weaponId)).toBe(1);
+    const tireur = { x: monsterX - offsetX, y: monsterY };
+    let tick = 0;
+    /** Une image d'un tick ; rend les flashs nes A CETTE image, de la teinte de l'arme. */
+    const avancer = (): { x: number; y: number; shakes: number }[] => {
+      tick++;
+      socket.emit('message', {
+        data: encodeSnapshot(tick, 0, 0, [
+          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          { id: 2, ...tireur, hp: 100, aimX: 1, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        ]),
+      });
+      const now = tick * MS_PER_TICK;
+      client.update(now, STEP);
+      const tint = weaponOf(weaponId).look.tint;
+      const nes = [];
+      for (let i = 0; i < client.hitFlashes.count; i++) {
+        if (client.hitFlashes.tint[i] === tint && client.hitFlashes.bornMs[i] === now) {
+          nes.push({
+            x: client.hitFlashes.x[i] ?? 0,
+            y: client.hitFlashes.y[i] ?? 0,
+            shakes: client.hitFlashes.shakes[i] ?? 0,
+          });
+        }
+      }
+      return nes;
+    };
+    return { client, tireur, avancer };
+  }
+
+  it('seme une onde au point de tir, et l ennemi franchi reagit UNE fois, sans secousse', () => {
+    const arme = weaponOf(CANON_A_CHAUX);
+    expect(arme.kind).toBe('onde');
+    const { client, tireur, avancer } = armerAllie(CANON_A_CHAUX, 100);
+
+    const flashs: { x: number; y: number; shakes: number }[] = [];
+    let semee = false;
+    let marquee = false;
+    for (let i = 0; i < 20; i++) {
+      flashs.push(...avancer());
+      const onde = client.ondes[0];
+      if (onde) {
+        semee = true;
+        // Au point de tir, a la quantification du snapshot pres.
+        expect(Math.abs(onde.x - tireur.x)).toBeLessThan(1);
+        expect(Math.abs(onde.y - tireur.y)).toBeLessThan(1);
+        expect(onde.maxRadius).toBe(arme.blastRadius);
+        expect(onde.tint).toBe(arme.look.tint);
+        expect(onde.by).toBe(2);
+      }
+      marquee ||= client.horde.markAt(0, client.hordeTick - 1) === arme.element;
+    }
+    expect(semee).toBe(true);
+    // Une onde de 220 px balaie l'ennemi a ~100 px : un flash, pas un par tick.
+    expect(flashs).toHaveLength(1);
+    expect(flashs[0]?.shakes).toBe(0);
+    if (arme.element !== ELEMENT.NEUTRE) {
+      expect(marquee).toBe(true);
+    }
+    // Eteinte en fin de course : la liste se purge.
+    expect(client.ondes).toHaveLength(0);
+  });
+
+  it('seme les impacts d une frappe a portee, et ne frappe qu a l echeance, AVEC secousse', () => {
+    const arme = weaponOf(CANON_A_ARC);
+    expect(arme.kind).toBe('frappe');
+    // L'ennemi pile au point vise : `position + visee x portee`.
+    const { client, avancer } = armerAllie(CANON_A_ARC, beamRange(arme));
+
+    let tir = -1;
+    let frappe: { x: number; y: number; shakes: number }[] = [];
+    let frappeAuTick = -1;
+    for (let i = 0; i < 20 && frappeAuTick < 0; i++) {
+      const nes = avancer();
+      if (tir < 0 && client.frappes.length > 0) {
+        tir = client.hordeTick;
+        // L'ennemi, plus UN impact sur le point vise lui-meme (il en manque).
+        expect(client.frappes).toHaveLength(2);
+        for (const f of client.frappes) {
+          expect(f.struckMs).toBe(-1);
+          expect(f.radius).toBe(arme.blastRadius);
+          expect(f.tint).toBe(arme.look.tint);
+        }
+      }
+      if (nes.length > 0) {
+        frappe = nes;
+        frappeAuTick = client.hordeTick;
+      }
+    }
+    expect(tir).toBeGreaterThanOrEqual(0);
+    expect(frappeAuTick - tir).toBe(FRAPPE_DELAY_TICKS);
+    expect(frappe).toHaveLength(2);
+    expect(frappe.every((f) => f.shakes === 1)).toBe(true);
+    // Frappes, les impacts restent le temps de l'eclair.
+    expect(client.frappes.every((f) => f.struckMs >= 0)).toBe(true);
+  });
+
+  /**
+   * §3.2 : l'ancre du client. L'orbite d'un allie tourne autour de sa position
+   * au DERNIER SNAPSHOT — sans ancre, elle resterait autour du point de tir.
+   */
+  it('l orbite d un allie suit sa position de snapshot (l ancre)', () => {
+    const CHAKRAM = 5;
+    const { client, tireur, avancer } = armerAllie(CHAKRAM, 300);
+    avancer();
+    expect(client.projectiles.count).toBeGreaterThan(0);
+    // L'allie se deplace loin de son point de tir.
+    tireur.x += 400;
+    for (let i = 0; i < 5; i++) {
+      avancer();
+    }
+    let lames = 0;
+    for (let i = 0; i < client.projectiles.count; i++) {
+      if (client.projectiles.weaponAt(i) !== CHAKRAM) {
+        continue;
+      }
+      lames++;
+      const d = Math.hypot(
+        (client.projectiles.x[i] ?? 0) - tireur.x,
+        (client.projectiles.y[i] ?? 0) - tireur.y,
+      );
+      expect(d).toBeLessThan(ORBIT_RADIUS * (1 + ORBIT_BREATH) + 2);
+    }
+    expect(lames).toBeGreaterThan(0);
   });
 });

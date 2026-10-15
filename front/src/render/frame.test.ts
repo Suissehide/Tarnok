@@ -65,6 +65,9 @@ class RecordingStage implements FrameStage {
   drawOrbs(...args: unknown[]): void {
     this.#record('orbes', ...args);
   }
+  drawOndesFrappes(...args: unknown[]): void {
+    this.#record('ondes-frappes', ...args);
+  }
   drawProjectiles(...args: unknown[]): void {
     this.#record('projectiles', ...args);
   }
@@ -126,6 +129,9 @@ class RecordingClient implements FrameClient {
   readonly damageNumbers = new DamageNumbers(8);
   readonly reactionFlashes = new ReactionFlashes(8);
   readonly chainFlashes = new ChainFlashes(8);
+  /** Deux listes DISTINCTES : les intervertir doit se voir. */
+  readonly ondes = [];
+  readonly frappes = [];
   readonly pings = new Map([[2, { playerId: 2, intent: 1, x: 5, y: 6, tick: 130 }]]);
   /**
    * Volontairement DIFFERENT de l'horloge murale passee a `composeFrame` : sans
@@ -303,6 +309,19 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(stage.argsOf('orbes')).toEqual([client.orbs, client.orbFlights, STATE.players, NOW]);
   });
 
+  /**
+   * Etape 12 : le calque des ondes et des frappes passe par ICI, comme la
+   * chaine — sans ce test, retirer l'appel de `composeFrame` laisserait la
+   * suite verte. Les deux listes ET l'horloge murale.
+   */
+  it('dessine les ondes et les frappes, avec l horloge murale', () => {
+    const { stage, client } = compose();
+    const args = stage.argsOf('ondes-frappes');
+    expect(args).toEqual([client.ondes, client.frappes, NOW]);
+    expect(args?.[0]).toBe(client.ondes);
+    expect(args?.[1]).toBe(client.frappes);
+  });
+
   it('dessine les projectiles', () => {
     const { stage, client } = compose();
     expect(stage.argsOf('projectiles')).toEqual([client.projectiles]);
@@ -405,6 +424,8 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'marques',
       'horde',
       'orbes',
+      // Etape 12 : sous les projectiles (§5), une nappe au sol.
+      'ondes-frappes',
       'projectiles',
       'chaine',
       'flashs-impact',
