@@ -938,27 +938,32 @@ const WEAPON_DEFS: readonly (Omit<
     // contrairement au halo : leur produit donne la LONGUEUR du trait, la meme
     // derivation que la portee de toutes les autres armes (voir `beamRange`).
     // Seul `blastRadius` change de sens — il devient la demi-largeur.
+    // ⚠️ **Renforce a l'etape 12** (retour de Leo : « tres faible »). Tant
+    // que la visee (±127) etait prise pour une longueur, le trait mesurait
+    // ~127 fois sa portee et fauchait tout l'ecran : ses chiffres n'avaient
+    // jamais ete regles pour sa vraie portee. 16 degats / 16 ticks = 30 par
+    // seconde sur CHAQUE ennemi de la ligne, 640 px, 52 px de large.
     name: 'Rayon arcanique',
     perks: [UPGRADE.ZONE, UPGRADE.RANGE],
     kind: 'faisceau',
-    /** La demi-largeur du trait : ce qui est a moins de 18 px du rayon est fauche. */
-    blastRadius: 18,
+    /** La demi-largeur du trait : ce qui est a moins de 26 px du rayon est fauche. */
+    blastRadius: 26,
     // Eclat turquoise a fort halo : c'est la teinte que le TRAIT prend a
     // l'ecran (voir le miroir cosmetique dans `GameClient`), donc elle reste
     // ce qui identifie l'arme — la forme, elle, ne sert plus a rien ici.
     look: {
       shape: 'eclat',
-      diameterPx: 20,
+      diameterPx: 25,
       tint: 0x28e6d0,
       glow: 0.6,
       trailTicks: 1.5,
       spinTurns: 1.6,
       trail: 'etincelles',
     },
-    cooldownTicks: 24,
-    damage: 10,
+    cooldownTicks: 16,
+    damage: 16,
     projectileSpeed: 480,
-    projectileLifeTicks: 30,
+    projectileLifeTicks: 40,
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.GIVRE,
