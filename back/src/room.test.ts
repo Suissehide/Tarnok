@@ -60,6 +60,7 @@ import {
   zoneElement,
   zoneReaction,
 } from '@shared/protocol';
+import { RARITY } from '@shared/rarity';
 import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -5363,5 +5364,23 @@ describe("l'invocation, posee par le salon (etape 8)", () => {
       room.step(DT);
     }
     expect(room.horde.slotOf(tardif)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('etape 10 : la rarete multiplie la carte, soin de vitalite compris', () => {
+  const VITALITE = PASSIVES.find((p) => p.kind === 'maxHp')?.id ?? -1;
+  const PAR_CARTE = passiveOf(VITALITE).magnitude;
+
+  it.each([
+    [RARITY.RARE, 2],
+    [RARITY.LEGENDAIRE, 3],
+  ] as const)('une vitalite de rarete %i releve le plafond de %i cartes, et soigne d autant', (rarity, fois) => {
+    const room = new Room(0x10_0a_0101);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: VITALITE, rarity });
+    expect(room.loadoutOf(1)?.stacksOf(VITALITE)).toBe(fois);
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP + fois * PAR_CARTE);
+    // Le soin suit : `grantCard` lit l'ecart de PV max avant/apres.
+    expect(hpOf(room, 1)).toBe(PLAYER_MAX_HP + fois * PAR_CARTE);
   });
 });

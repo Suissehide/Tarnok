@@ -1,10 +1,18 @@
 import { describe, expect, it } from 'vitest';
 
-import { CARD, drawSpread, OWNED_WEIGHT } from './cards';
+import {
+  applicationsOf,
+  applyCardToLoadout,
+  CARD,
+  type Card,
+  drawSpread,
+  OWNED_WEIGHT,
+} from './cards';
 import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { makeRandom } from './random';
+import { RARITY } from './rarity';
 import { BASE_WEAPON_ID, UPGRADE_KINDS, upgradesFor, WEAPONS, type Weapon } from './weapons';
 
 function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
@@ -221,5 +229,77 @@ describe('drawSpread — rien que personne ne peut prendre', () => {
       }
     }
     expect(vus.size).toBe(UPGRADE_KINDS);
+  });
+});
+
+describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
+  const ARME = WEAPONS[3]; // lance-flammes
+  if (!ARME) {
+    throw new Error('fixture : arme absente');
+  }
+  const ASPECT = upgradesFor(ARME)[1] ?? -1; // la cadence, toujours proposee
+
+  it('un passif rare donne 2 exemplaires, un legendaire 3, une commune 1', () => {
+    for (const [rarity, attendu] of [
+      [undefined, 1],
+      [RARITY.COMMUNE, 1],
+      [RARITY.RARE, 2],
+      [RARITY.LEGENDAIRE, 3],
+    ] as const) {
+      const l = new Loadout();
+      applyCardToLoadout(l, { nature: CARD.PASSIVE, refId: 1, rarity });
+      expect(l.stacksOf(1)).toBe(attendu);
+      // Un seul emplacement, quelle que soit la rarete.
+      expect(l.passiveSlotsUsed).toBe(1);
+    }
+  });
+
+  it('une arme rare NON possedee : l acquisition, plus un cran de SON aspect', () => {
+    const l = new Loadout();
+    applyCardToLoadout(l, {
+      nature: CARD.WEAPON,
+      refId: ARME.id,
+      upgrade: ASPECT,
+      rarity: RARITY.RARE,
+    });
+    expect(l.stacksOfWeapon(ARME.id)).toBe(2);
+    expect(l.upgradesOf(ARME.id, ASPECT)).toBe(1);
+    expect(l.weaponSlotsUsed).toBe(1);
+  });
+
+  it('une arme legendaire DEJA possedee : trois crans de son aspect', () => {
+    const l = new Loadout();
+    l.addWeapon(ARME.id);
+    applyCardToLoadout(l, {
+      nature: CARD.WEAPON,
+      refId: ARME.id,
+      upgrade: ASPECT,
+      rarity: RARITY.LEGENDAIRE,
+    });
+    expect(l.stacksOfWeapon(ARME.id)).toBe(4);
+    expect(l.upgradesOf(ARME.id, ASPECT)).toBe(3);
+  });
+
+  it('une rarete hors table venue du fil s applique une fois', () => {
+    const l = new Loadout();
+    applyCardToLoadout(l, { nature: CARD.PASSIVE, refId: 1, rarity: 200 });
+    expect(l.stacksOf(1)).toBe(1);
+  });
+
+  it('canTake se juge sur la PREMIERE application : un arsenal plein leve, et rien n est applique', () => {
+    const l = new Loadout();
+    for (let i = 0; i < WEAPON_SLOTS; i++) {
+      l.addWeapon(i + 1);
+    }
+    const nouvelle: Card = { nature: CARD.WEAPON, refId: WEAPON_SLOTS + 1, rarity: RARITY.RARE };
+    expect(() => applyCardToLoadout(l, nouvelle)).toThrow(/pleins/);
+    expect(l.stacksOfWeapon(WEAPON_SLOTS + 1)).toBe(0);
+    expect(l.weaponSlotsUsed).toBe(WEAPON_SLOTS);
+  });
+
+  it('applicationsOf dit combien de fois la carte s applique', () => {
+    expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1 })).toBe(1);
+    expect(applicationsOf({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.RARE })).toBe(2);
+    expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.LEGENDAIRE })).toBe(3);
   });
 });

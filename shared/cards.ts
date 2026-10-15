@@ -1,6 +1,7 @@
 import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
-import { PASSIVES } from './passives';
+import { PASSIVES, passiveOf } from './passives';
+import { multiplierOf } from './rarity';
 import { upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
@@ -33,6 +34,25 @@ export interface Card {
    * pas, la carte la donne. Absent : son premier bonus propre.
    */
   upgrade?: number;
+  /**
+   * La rarete tiree pour cette carte (`RARITY`, etape 10) : elle s'applique
+   * autant de fois que son multiplicateur. Absente : commune.
+   */
+  rarity?: number;
+}
+
+/** Un passif exclusivement legendaire (etape 10, §4) — jamais une arme. */
+export function isLegendaryOnly(card: Card): boolean {
+  return card.nature === CARD.PASSIVE && passiveOf(card.refId).legendary === true;
+}
+
+/**
+ * Combien de fois cette carte s'applique : le multiplicateur de sa rarete,
+ * sauf un passif exclusivement legendaire, qui s'applique x1 — le triple d'une
+ * regle serait du decor (§4 de la spec de l'etape 10).
+ */
+export function applicationsOf(card: Card): number {
+  return isLegendaryOnly(card) ? 1 : multiplierOf(card.rarity);
 }
 
 /**
@@ -51,17 +71,27 @@ export interface Card {
  * C'est l'appelant qui decide quoi en faire — le serveur ne devrait jamais en
  * produire une, le client peut en recevoir une pour un joueur dont il n'a pas
  * vu tout l'historique.
+ *
+ * ⚠️ **Une carte rare vaut deux cartes, et rien de plus** (etape 10) : elle
+ * s'applique `applicationsOf(card)` fois. Pour une arme non possedee, la
+ * premiere application est l'acquisition, les suivantes ameliorent le MEME
+ * aspect. `canTake` se juge donc sur la premiere : si elle leve, rien n'est
+ * applique ; si elle passe, les suivantes empilent ce qui est deja possede et
+ * ne peuvent plus lever.
  */
 export function applyCardToLoadout(loadout: Loadout, card: Card): void {
-  switch (card.nature) {
-    case CARD.WEAPON:
-      loadout.addWeapon(card.refId, card.upgrade);
-      break;
-    case CARD.PASSIVE:
-      loadout.addPassive(card.refId);
-      break;
-    default:
-      break;
+  const fois = applicationsOf(card);
+  for (let i = 0; i < fois; i++) {
+    switch (card.nature) {
+      case CARD.WEAPON:
+        loadout.addWeapon(card.refId, card.upgrade);
+        break;
+      case CARD.PASSIVE:
+        loadout.addPassive(card.refId);
+        break;
+      default:
+        break;
+    }
   }
 }
 

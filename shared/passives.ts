@@ -39,6 +39,11 @@ export interface Passive {
   /** Bonus apporte par CHAQUE carte prise (voir la doc de `PassiveKind`) — jamais un total cumule. */
   magnitude: number;
   kind: PassiveKind;
+  /**
+   * Exclusivement legendaire (etape 10, §4) : ne sort au tirage que sur un
+   * emplacement legendaire, et s'applique x1 — son effet est deja une regle.
+   */
+  legendary?: boolean;
 }
 
 /**
