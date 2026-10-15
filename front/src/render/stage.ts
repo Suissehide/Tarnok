@@ -8,6 +8,7 @@ import type { ZoneField } from '@shared/zones';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type {
+  ActivePing,
   BlastFlash,
   BossVitals,
   ChainFlashes,
@@ -29,6 +30,7 @@ import { ChargeRenderer } from './charge-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
 import { OrbRenderer } from './orb-renderer';
+import { livePings, PingRenderer } from './ping-renderer';
 import { PlayerRenderer } from './player-renderer';
 import {
   ImpactFlashRenderer,
@@ -95,6 +97,9 @@ export class Stage {
   readonly #impactFlashes = new ImpactFlashRenderer();
   readonly #reactionFlashes = new ReactionFlashRenderer();
   readonly #bossBar = new BossBarRenderer();
+  readonly #pings = new PingRenderer(
+    (id) => PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length] ?? 0xffffff,
+  );
   /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
   #obstaclesDrawn = false;
   /** La grille de fond : masquee des que la carte en tuiles la recouvre. */
@@ -147,6 +152,9 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    // Les pings (etape 9) EN DERNIER : un ping est une lecture, comme la barre
+    // du boss, et aucun effet de monde ne doit le masquer.
+    this.#pings,
   ];
 
   /**
@@ -172,6 +180,7 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    this.#pings,
   ];
 
   async init(parent: HTMLElement): Promise<void> {
@@ -188,6 +197,9 @@ export class Stage {
 
     this.#world.scale.set(1, VERTICAL_SQUASH);
     this.#app.stage.addChild(this.#world);
+    // Les fleches de bord (etape 9) : en coordonnees ECRAN, donc hors de `#world`.
+    // Ajoutees APRES le monde, elles passent au-dessus de lui.
+    this.#pings.attachScreen(this.#app.stage);
     this.#world.addChild(this.#grid);
 
     // Les calques du monde : apres la grille, avant les carres des joueurs
@@ -463,6 +475,33 @@ export class Stage {
    */
   drawBossBar(horde: Horde, boss: BossVitals | null): void {
     this.#bossBar.draw(horde, boss);
+  }
+
+  /** Coordonnees MONDE -> ECRAN, la reciproque exacte de `screenToWorld`. */
+  worldToScreen(x: number, y: number): { x: number; y: number } {
+    return { x: x + this.#world.x, y: y * VERTICAL_SQUASH + this.#world.y };
+  }
+
+  drawPings(
+    pings: ReadonlyMap<number, ActivePing>,
+    players: readonly { id: number; x: number; y: number }[],
+    localId: number | null,
+    tick: number,
+    _timeMs: number,
+  ): void {
+    const me = players.find((p) => p.id === localId);
+    const allies = me
+      ? players
+          .filter((p) => p.id !== localId)
+          .map((p) => ({ id: p.id, x: p.x, y: p.y, distance: Math.hypot(p.x - me.x, p.y - me.y) }))
+      : [];
+    this.#pings.draw(
+      livePings(pings, tick),
+      allies,
+      (x, y) => this.worldToScreen(x, y),
+      this.#app.screen.width,
+      this.#app.screen.height,
+    );
   }
 
   destroy(): void {

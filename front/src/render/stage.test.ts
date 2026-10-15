@@ -331,16 +331,16 @@ describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
 describe('Stage.composeWorld — chaque calque attache ET charge', () => {
   beforeAll(stubCanvas2d);
 
-  it('attache les onze calques du monde', () => {
+  it('attache les douze calques du monde', () => {
     const world = new Container();
     new Stage().composeWorld(world);
 
     // Zones, COULOIR DE CHARGE (etape 6a, tache 5 bis), VERBES (etape 8),
     // anneaux de marque (tache 13), orbes, horde, projectiles, CHAINE DE
     // FOUDRE (etape 5b, tache 3), flashs d'impact, flashs de reaction, BARRE DU
-    // BOSS (tache 5), et les COMPORTEMENTS (kamikaze, chaman) : douze, et un
-    // calque oublie est un calque invisible.
-    expect(world.children).toHaveLength(12);
+    // BOSS (tache 5), les COMPORTEMENTS (kamikaze, chaman) et les PINGS (etape
+    // 9) : treize, et un calque oublie est un calque invisible.
+    expect(world.children).toHaveLength(13);
   });
 
   it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {
@@ -349,7 +349,7 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
 
     // Dans l'ordre d'affichage : zones, couloir de charge, verbes, comportements, anneaux,
     // orbes, HORDE, projectiles, chaine de Foudre, flashs d'impact, flashs de
-    // reaction, barre du boss. Seule la horde reste `false` — son atlas se
+    // reaction, barre du boss, PINGS. Seule la horde reste `false` — son atlas se
     // fetch, et `init` le charge a part avec son propre rattrapage d'echec.
     expect(stage.layersLoaded).toEqual([
       true,
@@ -364,6 +364,7 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
       true,
       true,
       true,
+      true,
     ]);
   });
 
@@ -371,6 +372,7 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     // La moitie basse de la mutation : sans elle, un `layersLoaded` qui
     // rendrait `true` partout passerait le test precedent sans rien garder.
     expect(new Stage().layersLoaded).toEqual([
+      false,
       false,
       false,
       false,

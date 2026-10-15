@@ -79,6 +79,9 @@ class RecordingStage implements FrameStage {
   drawBossBar(...args: unknown[]): void {
     this.#record('barre-boss', ...args);
   }
+  drawPings(...args: unknown[]): void {
+    this.#record('pings', ...args);
+  }
   draw(...args: unknown[]): void {
     this.#record('joueurs', ...args);
   }
@@ -118,6 +121,7 @@ class RecordingClient implements FrameClient {
   readonly hitFlashes = new HitFlashes(8);
   readonly reactionFlashes = new ReactionFlashes(8);
   readonly chainFlashes = new ChainFlashes(8);
+  readonly pings = new Map([[2, { playerId: 2, intent: 1, x: 5, y: 6, tick: 130 }]]);
   /**
    * Volontairement DIFFERENT de l'horloge murale passee a `composeFrame` : sans
    * cet ecart, passer `now` la ou le tick est attendu resterait indetectable.
@@ -396,10 +400,35 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'flashs-reaction',
       'barre-boss',
       'joueurs',
+      // Les pings (etape 9) : APRES `joueurs`, qui recentre la camera — sinon
+      // les fleches de bord auraient une image de retard sur le cadrage.
+      'pings',
       // La secousse ferme la marche : elle deplace ce que `joueurs` vient de
       // cadrer, donc elle ne peut pas le preceder (voir `Stage.shakeCamera`).
       'secousse',
     ]);
+  });
+
+  /**
+   * ⚠️ **Les pings recoivent la carte du CLIENT, les joueurs DESSINES
+   * (`state.players`) et le TICK de horde** (etape 9) — jamais `now` pour
+   * decider qui vit : le tick de simulation, comme les zones et les marques,
+   * garde un ping affiche pendant le gel de l'etalage.
+   */
+  it('les pings recoivent la carte du client, les joueurs DESSINES et le tick de horde, apres le cadrage', () => {
+    const { stage, client, state } = compose();
+    expect(stage.argsOf('pings')).toEqual([
+      client.pings,
+      state.players,
+      state.localId,
+      client.hordeTick,
+      NOW,
+    ]);
+    const ordre = stage.order;
+    // Apres `draw` (qui recentre la camera) : sinon les fleches auraient une
+    // image de retard sur le cadrage.
+    expect(ordre.indexOf('pings')).toBeGreaterThan(ordre.indexOf('joueurs'));
+    expect(ordre.indexOf('pings')).toBeLessThan(ordre.indexOf('secousse'));
   });
 
   it('secoue la camera avec les MEMES flashs que les calques, et l horloge murale', () => {
