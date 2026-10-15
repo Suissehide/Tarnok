@@ -283,8 +283,8 @@ describe('le tireur', () => {
 
   it('un tir qui touche un joueur disparait et compte pour lui seul', () => {
     const shots = new EnemyShots();
-    shots.shots.push({ x: 100, y: 100, ux: 1, uy: 0, life: 1 });
-    shots.shots.push({ x: 500, y: 500, ux: 1, uy: 0, life: 1 });
+    shots.shots.push({ x: 100, y: 100, ux: 1, uy: 0, life: 1, archetype: 0 });
+    shots.shots.push({ x: 500, y: 500, ux: 1, uy: 0, life: 1, archetype: 0 });
     expect(
       shots.hits(
         [

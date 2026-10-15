@@ -29,6 +29,8 @@ export interface EnemyShot {
   uy: number;
   /** Secondes de vol restantes (echelle de temps de la horde). */
   life: number;
+  /** L'archetype du tireur : le rendu en tire son projectile (os, gland, harpon). */
+  archetype: number;
 }
 
 export function shotPhase(entityId: number): number {
@@ -61,6 +63,7 @@ export class EnemyShots {
         ux: vx / n,
         uy: vy / n,
         life: SHOT_LIFETIME_S,
+        archetype: horde.archetype[i] ?? 0,
       });
     }
     for (const s of this.shots) {

@@ -87,7 +87,7 @@ export class Stage {
   readonly #zones = new ZoneRenderer();
   readonly #charge = new ChargeRenderer();
   readonly #abilities = new AbilityRenderer();
-  readonly #behaviors = new BehaviorRenderer();
+  readonly #behaviors = new BehaviorRenderer(ASSETS_BASE);
   readonly #marks = new MarkRingRenderer();
   readonly #orbs = new OrbRenderer();
   readonly #projectiles = new ProjectileRenderer();

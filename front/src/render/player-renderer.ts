@@ -67,7 +67,8 @@ interface Body {
 
 const sheetCache = new Map<string, Promise<Texture[]>>();
 
-function framesOf(url: string, frame: number): Promise<Texture[]> {
+/** Decoupe une planche horizontale en images carrees de `frame` px (memoisee par URL). */
+export function framesOf(url: string, frame: number): Promise<Texture[]> {
   let p = sheetCache.get(url);
   if (!p) {
     p = Assets.load<Texture>(url).then((sheet) => {
