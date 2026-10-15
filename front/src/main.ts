@@ -41,7 +41,7 @@ import { Minimap } from './ui/minimap';
 import { wireOptions } from './ui/options';
 import { formatGold, PortalScreen } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
-import { loadSettings, saveSettings } from './ui/settings';
+import { loadPick, loadSettings, savePick, saveSettings } from './ui/settings';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
 import { applySkin } from './ui/skin';
 import { paintSummary, type SummaryElements, summaryTone } from './ui/summary';
@@ -542,7 +542,10 @@ function join(code: string): void {
         roomElements,
         lastLobby,
         roomStep,
-        (weaponId, classId) => client.pick(weaponId, classId),
+        (weaponId, classId) => {
+          savePick(weaponId, classId);
+          client.pick(weaponId, classId);
+        },
         (step) => {
           roomStep = step;
           paintRoom();
@@ -551,6 +554,11 @@ function join(code: string): void {
     }
   };
   client.onLobby = (state) => {
+    // Premier LOBBY de la page (quitter recharge) : on rejoue le dernier choix garde.
+    const saved = lastLobby === null ? loadPick() : null;
+    if (saved) {
+      client.pick(saved.weaponId, saved.classId);
+    }
     lastLobby = state;
     paintRoom();
   };

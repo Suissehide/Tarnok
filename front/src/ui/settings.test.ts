@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { CONTROLS, DEFAULT_SETTINGS, loadSettings, saveSettings } from './settings';
+import { CONTROLS, DEFAULT_SETTINGS, loadPick, loadSettings, savePick, saveSettings } from './settings';
 
 /** Un stockage en memoire, a la place de `localStorage`. */
 function memoire(): Storage {
@@ -56,5 +56,16 @@ describe('les options gardees dans le navigateur', () => {
 
   it('liste les touches du jeu', () => {
     expect(CONTROLS.map((c) => c.keys)).toContain('Espace');
+  });
+});
+
+describe('le dernier choix de salle d attente', () => {
+  it('relit la classe et l arme gardees, et ignore un contenu abime', () => {
+    const s = memoire();
+    expect(loadPick(s)).toBeNull();
+    savePick(3, 2, s);
+    expect(loadPick(s)).toEqual({ weaponId: 3, classId: 2 });
+    s.setItem('tarnok.pick', '{"weaponId":"x"');
+    expect(loadPick(s)).toBeNull();
   });
 });

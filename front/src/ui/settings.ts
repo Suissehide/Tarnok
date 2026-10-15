@@ -71,6 +71,34 @@ function volume(v: unknown, fallback: number): number {
     : fallback;
 }
 
+const PICK_KEY = 'tarnok.pick';
+
+/** Le dernier couple (arme, classe) choisi en salle d'attente, ou null. Le serveur revalide chacun. */
+export function loadPick(
+  storage: Pick<Storage, 'getItem'> | null = safeStorage(),
+): { weaponId: number; classId: number } | null {
+  try {
+    const p = JSON.parse(storage?.getItem(PICK_KEY) ?? 'null') as Record<string, unknown> | null;
+    return p && Number.isInteger(p.weaponId) && Number.isInteger(p.classId)
+      ? { weaponId: p.weaponId as number, classId: p.classId as number }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+export function savePick(
+  weaponId: number,
+  classId: number,
+  storage: Pick<Storage, 'setItem'> | null = safeStorage(),
+): void {
+  try {
+    storage?.setItem(PICK_KEY, JSON.stringify({ weaponId, classId }));
+  } catch {
+    // Stockage refuse : le choix vaut pour ce salon seulement.
+  }
+}
+
 function safeStorage(): Storage | null {
   try {
     return window.localStorage;
