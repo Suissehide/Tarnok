@@ -91,6 +91,19 @@ export interface Archetype {
    * faudra rouvrir.
    */
   bodyScale: number;
+  /**
+   * La hitbox de tir par rapport a celle de la pietaille
+   * (`PROJECTILE_HIT_RADIUS x hitScale`) — egale a `bodyScale`, sauf pour le
+   * boss (`BOSS_HIT_SCALE`).
+   *
+   * ⚠️ **Retour de playtest (etape 12) : « la hitbox du boss correspond pas
+   * au dessin ».** Le troll est mis a l'echelle sur la boite UNION de ses
+   * clips, et son coup de massue l'elargit a 290 px de cellule : le corps
+   * dessine en marche n'a plus qu'une aire equivalente a un disque de ~63 px
+   * de rayon, quand la touche en faisait 96. Le dessin reste ; c'est la touche
+   * qui suit le corps.
+   */
+  hitScale: number;
   /** Son ROLE dans la horde (`ROLES`) : ce qui le rend unique a l'ecran. */
   role: Role;
   /** Multiplie l'effectif d'une vague de cet archetype (`ROLES`). */
@@ -235,6 +248,14 @@ export const BOSS_HP_PER_PLAYER = HEAVY_HP * BOSS_HP_MULTIPLE;
  * plus grand »* — c'est un reglage de sensation, a juger a la tache 12.
  */
 export const BOSS_BODY_SCALE = 3;
+
+/**
+ * La hitbox de tir du boss, en multiple de `PROJECTILE_HIT_RADIUS` : 2,2, soit
+ * 70 px de rayon. Mesure sur l'atlas : le corps du troll en marche a l'aire
+ * d'un disque de ~63 px a l'ecran ; un peu plus large pour couvrir la tete et
+ * la massue, jamais le vide autour. Voir `Archetype.hitScale`.
+ */
+export const BOSS_HIT_SCALE = 2.2;
 
 /**
  * Plafond d'armure, applique a la LECTURE de la table (`capArmor`).
@@ -483,7 +504,7 @@ function armorOf(name: string, role: Role): number {
  */
 const FOOTSOLDIERS: readonly (Omit<
   Archetype,
-  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor' | 'behavior'
+  'id' | 'hp' | 'armor' | 'bodyScale' | 'hitScale' | 'countFactor' | 'behavior'
 > & { behavior?: Behavior })[] = [
   { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 100, role: 'troupe' },
   {
@@ -600,7 +621,7 @@ const FOOTSOLDIERS: readonly (Omit<
 /** Hors perimetre de l'etape 2 : regime de replication different (§3.3). */
 const ELITES: readonly Omit<
   Archetype,
-  'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor' | 'role' | 'behavior'
+  'id' | 'hp' | 'armor' | 'bodyScale' | 'hitScale' | 'countFactor' | 'role' | 'behavior'
 >[] = [
   {
     name: 'spear-goblin',
@@ -638,6 +659,7 @@ export const ARCHETYPES: readonly Archetype[] = [
   hp: hpOf(a.name, a.role),
   armor: capArmor(armorOf(a.name, a.role)),
   bodyScale: bodyScaleOf(a.name, a.role),
+  hitScale: a.name === BOSS_NAME ? BOSS_HIT_SCALE : bodyScaleOf(a.name, a.role),
   countFactor: ROLES[a.role].countFactor,
   behavior: ('behavior' in a ? (a.behavior as Behavior | undefined) : undefined) ?? 'aucun',
 }));

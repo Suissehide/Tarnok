@@ -73,6 +73,12 @@ import type { ZoneField } from './zones';
  * ca — `BOSS_CHARGE_WIDTH_PX` et `spriteScale` le lisent tous les deux depuis
  * l'etape 6a ; seule la collision l'ignorait.
  *
+ * ⚠️ **Etape 12 : trop grande cette fois, et c'est `hitScale` qui tranche.**
+ * `bodyScale` dit la taille de la CELLULE dessinee, pas celle du corps : le
+ * coup de massue du troll elargit sa cellule, et le corps visible n'occupait
+ * plus que les deux tiers des 96 px. La touche lit desormais
+ * `Archetype.hitScale`, mesure sur l'atlas (70 px pour le boss).
+ *
  * ⚠️ **Des TABLES, pas un calcul dans la boucle.** La boucle interne de
  * `collide` est en projectiles x ennemis — 49 millions de tests de distance par
  * tick ont deja ete mesures ici (voir le pre-filtre du Vif-argent). Une lecture
@@ -80,19 +86,16 @@ import type { ZoneField } from './zones';
  * `archetypeOf(...).bodyScale` y aurait mis une recherche d'objet.
  */
 /** Le rayon de touche (pas au carre) de chaque archetype — pour les projectiles grossis par le calibre. */
-const HIT_R_BY_ARCHETYPE = Float32Array.from(
-  ARCHETYPES,
-  (a) => PROJECTILE_HIT_RADIUS * a.bodyScale,
-);
+const HIT_R_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => PROJECTILE_HIT_RADIUS * a.hitScale);
 
 const HIT_R2_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => {
-  const r = PROJECTILE_HIT_RADIUS * a.bodyScale;
+  const r = PROJECTILE_HIT_RADIUS * a.hitScale;
   return r * r;
 });
 
 /** La meme table, majoree du bonus de Vif-argent : la borne du pre-filtre. */
 const WIDE_R2_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => {
-  const r = PROJECTILE_HIT_RADIUS * a.bodyScale + VIF_ARGENT_HIT_RADIUS_BONUS;
+  const r = PROJECTILE_HIT_RADIUS * a.hitScale + VIF_ARGENT_HIT_RADIUS_BONUS;
   return r * r;
 });
 
@@ -796,7 +799,7 @@ export class Projectiles {
    * consomme eclate s'il porte des eclats (`#consume`).
    *
    * ⚠️ **Le rayon teste suit le CORPS de la cible depuis l'etape 8** : un boss
-   * (`Archetype.bodyScale` = 3) encaisse sur 96 px de rayon, la pietaille sur
+   * (`Archetype.hitScale` = 2,2 depuis l etape 12) encaisse sur 70 px, la pietaille sur
    * 32. Voir `HIT_R2_BY_ARCHETYPE` — jusque-la, il fallait viser le centre
    * exact d'un corps dessine a 240 px de diametre.
    *
@@ -842,7 +845,7 @@ export class Projectiles {
         const ey = horde.y[e] ?? 0;
         const d2 = distanceToSegmentSquared(ex, ey, ax, ay, bx, by);
         // Le rayon de CE corps : `PROJECTILE_HIT_RADIUS` pour les vingt
-        // archetypes de pietaille, trois fois plus pour le boss. Voir
+        // archetypes de pietaille, 2,2 fois plus pour le boss (`hitScale`). Voir
         // `HIT_R2_BY_ARCHETYPE`.
         const kind = horde.archetype[e] ?? 0;
         let baseR2 = HIT_R2_BY_ARCHETYPE[kind] ?? defaultR2;
