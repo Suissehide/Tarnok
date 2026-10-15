@@ -1000,13 +1000,17 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!carte || !loadout) {
       throw new Error('etalage ou inventaire manquant');
     }
+    // Depuis l'etape 10, une carte rare ou legendaire vaut 2 ou 3 cartes :
+    // `applicationsOf` dit combien d'exemplaires la carte gagnee apporte.
     if (carte.nature === CARD.PASSIVE) {
-      expect(loadout.stacksOf(carte.refId)).toBe(1);
+      expect(loadout.stacksOf(carte.refId)).toBe(applicationsOf(carte));
     } else {
       // L'arme de depart est tiree au hasard de la carte : si l'etalage la
-      // repropose, elle etait deja la — d'ou le second exemplaire.
+      // repropose, elle etait deja la — d'ou l'exemplaire de plus.
       const depart = loadout.weaponIds[0];
-      expect(loadout.stacksOfWeapon(carte.refId)).toBe(carte.refId === depart ? 2 : 1);
+      expect(loadout.stacksOfWeapon(carte.refId)).toBe(
+        (carte.refId === depart ? 1 : 0) + applicationsOf(carte),
+      );
     }
 
     // Reprend : apres la fermeture du draft et la rampe de reprise, le joueur
