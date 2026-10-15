@@ -6,7 +6,7 @@ import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { RARITY } from '@shared/rarity';
-import { WEAPONS, weaponOf } from '@shared/weapons';
+import { UPGRADE, WEAPONS, weaponOf } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 // `?raw` de Vite : le HTML entre dans le bundle de test tel quel, sans que le
@@ -23,6 +23,7 @@ import {
   magnitudeLabel,
   rarityLabel,
   remainingSeconds,
+  upgradeLabel,
 } from './draft';
 
 /**
@@ -891,5 +892,28 @@ describe('etape 10 : la rarete a l ecran', () => {
       'Légendaire ×3',
       '',
     ]);
+  });
+});
+
+/**
+ * Etape 12 : la frappe ne tire pas de projectile. Ses cartes disent ce
+ * qu'elles ajoutent — un eclair, une portee —, l'onde garde le mot « zone ».
+ */
+describe('upgradeLabel — les familles de l etape 12', () => {
+  const carte = (kind: string, upgrade: number): Card => {
+    const arme = WEAPONS.find((w) => w.kind === kind);
+    if (!arme) {
+      throw new Error(`fixture : aucune arme de famille ${kind}`);
+    }
+    return { nature: CARD.WEAPON, refId: arme.id, upgrade };
+  };
+
+  it('compte des eclairs et une portee sur une frappe', () => {
+    expect(upgradeLabel(carte('frappe', UPGRADE.SALVO))).toBe('+1 éclair');
+    expect(upgradeLabel(carte('frappe', UPGRADE.RANGE))).toContain('portée');
+  });
+
+  it('agrandit la zone d une onde', () => {
+    expect(upgradeLabel(carte('onde', UPGRADE.ZONE))).toContain('zone');
   });
 });

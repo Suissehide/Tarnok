@@ -9,6 +9,7 @@ import {
   ZONE_RADIUS,
 } from '@shared/constants';
 import { ELEMENT, ELEMENTS } from '@shared/elements';
+import { FRAPPE_DELAY_TICKS, FRAPPE_SEARCH_RADIUS } from '@shared/onde-frappe';
 import {
   decode,
   encodeHello,
@@ -140,48 +141,108 @@ function porteeDe(weapon: Weapon): number {
 }
 
 /**
- * **L'arme de cet element qui porte le plus loin, parmi celles a projectile
- * UNIQUE.**
+ * **Cette arme marque-t-elle une cible visee a `dist` ?** Jusqu'a l'etape 12,
+ * « en deca de la portee » suffisait ; depuis, chaque forme a sa regle : la
+ * frappe tombe a sa portee PILE (et prend l'ennemi le plus proche dans
+ * `FRAPPE_SEARCH_RADIUS`), le mortier ne touche qu'a sa chute, le boomerang
+ * s'arrete au quart de la portee droite (il ralentit jusqu'a l'arret a
+ * mi-vie), l'onde, le halo et l'invocation ne vont pas plus loin que leur
+ * rayon.
+ */
+function atteint(w: Weapon, dist: number): boolean {
+  const portee = porteeDe(w);
+  if (w.kind === 'frappe') {
+    return Math.abs(dist - portee) < FRAPPE_SEARCH_RADIUS;
+  }
+  if (w.kind === 'onde' || w.kind === 'halo' || w.kind === 'invocation') {
+    return dist < w.blastRadius;
+  }
+  if (w.motion === 'mortier') {
+    return Math.abs(dist - portee) < w.blastRadius;
+  }
+  if (w.motion === 'boomerang') {
+    return dist < portee / 4;
+  }
+  return dist < portee;
+}
+
+/**
+ * La distance ou poser une cible pour que `atteint` la tienne avec de la marge
+ * — le point d'impact de la frappe, la chute du mortier un peu en deca, les
+ * autres a 60 % de leur allonge.
+ */
+function distanceDeTir(w: Weapon): number {
+  const portee = porteeDe(w);
+  if (w.kind === 'frappe') {
+    return portee;
+  }
+  if (w.kind === 'onde' || w.kind === 'halo' || w.kind === 'invocation') {
+    return w.blastRadius * 0.6;
+  }
+  if (w.motion === 'mortier') {
+    return portee - w.blastRadius / 2;
+  }
+  return (w.motion === 'boomerang' ? portee / 4 : portee) * 0.6;
+}
+
+/**
+ * **L'arme de cet element qui marque UNE cible visee de plus loin.**
  *
- * ⚠️ **`projectileCount === 1` n'est pas une coquetterie : c'est ce qui rend le
- * decor deterministe.** `Projectiles.#emit` repartit `projectileCount`
- * projectiles symetriquement autour de la visee — a n = 1 le `spreadRadians`
- * est ignore et le tir part EXACTEMENT dans la direction quantifiee. Une arme a
- * deux projectiles ecarte chacun de `spreadRadians / 2` : la bobine-tesla
- * (0,2 rad) manquerait une cible a 350 px de 33 px, soit juste au-dela de
- * `PROJECTILE_HIT_RADIUS` — « la reaction ne s'est pas produite » se lirait
- * alors comme un echec du jeu et non du decor.
+ * ⚠️ **Une seule trajectoire, connue d'avance : c'est ce qui rend le decor
+ * deterministe.** `Projectiles.#emit` repartit `projectileCount` projectiles
+ * symetriquement autour de la visee — a n = 1 le `spreadRadians` est ignore
+ * et le tir part EXACTEMENT dans la direction quantifiee. Une arme a deux
+ * projectiles ecarte chacun de `spreadRadians / 2` : la bobine-tesla (0,2 rad)
+ * manquerait une cible a 350 px de 33 px, soit juste au-dela de
+ * `PROJECTILE_HIT_RADIUS`. Pas de guidage ni de ricochet (ils iraient marquer
+ * la cible d'une autre phase), pas d'orbite, de sinus ni de spirale (leur
+ * trace n'est pas la visee), pas de halo ni d'invocation (ils ne visent rien).
+ *
+ * ⚠️ **Etape 12 : la frappe est admise malgre ses trois impacts** : elle ne
+ * disperse rien, elle prend les ennemis les plus proches du point vise — ici
+ * la seule cible vivante. C'est desormais la seule Foudre a viser juste (la
+ * Bobine tire deux arcs ecartes).
  */
 function armeDe(element: number): Weapon {
-  // ⚠️ Des tirs DROITS : chaque phase vise sa propre cible, et un missile
-  // guide (ou un ricochet) irait marquer celle d'une autre phase.
   const best = WEAPONS.filter(
-    (w) => w.element === element && w.projectileCount === 1 && w.homing === 0 && w.bounces === 0,
-  ).reduce<Weapon | null>((b, w) => (b === null || porteeDe(w) > porteeDe(b) ? w : b), null);
-  if (!best) {
-    throw new Error(`aucune arme a projectile unique pour l element ${element}`);
+    (w) =>
+      w.element === element &&
+      (w.kind === 'frappe' || w.projectileCount === 1) &&
+      w.kind !== 'halo' &&
+      w.kind !== 'invocation' &&
+      w.homing === 0 &&
+      w.bounces === 0 &&
+      w.emission === 'visee' &&
+      (w.motion === 'droit' || w.motion === 'mortier' || w.motion === 'boomerang'),
+  ).reduce<Weapon | null>(
+    (b, w) => (b === null || distanceDeTir(w) > distanceDeTir(b) ? w : b),
+    null,
+  );
+  if (!best || distanceDeTir(best) <= 0) {
+    throw new Error(`aucune arme qui vise juste pour l element ${element}`);
   }
   return best;
 }
 
 /**
- * L'arme de cet element qui tire le plus souvent — pour le decor du joueur seul.
+ * L'arme de cet element qui tire le plus souvent, parmi celles qui marquent
+ * une cible a `dist` — pour le decor du joueur seul.
  *
- * ⚠️ **Des TIRS seulement (`kind === 'tir'`)** : le decor pose sa cible a
- * `OFFSET` et la garde de portee lit `porteeDe`, qui ne vaut rien pour un halo.
- * L'Encensoir de poix (halo, etape 8) est la Poix la plus rapide du catalogue,
- * mais son rayon (110 px) n'atteint jamais une cible a 130 px : sans ce filtre,
- * la paire de Poix ne se formait jamais et le test attendait en vain.
+ * ⚠️ **`atteint`, et plus `kind === 'tir'`** : le filtre de l'etape 8 ecartait
+ * l'Encensoir de poix (halo, 110 px) parce que la cible etait a 130 px. Depuis
+ * l'etape 12, la Poix a projectile est un mortier qui ne touche qu'a sa chute
+ * et le Semoir de chaux ne quitte pas les pieds du tireur : c'est la portee
+ * EFFECTIVE de chaque forme qui decide, halo compris.
  */
-function armeRapideDe(element: number): Weapon {
+function armeRapideDe(element: number, dist: number): Weapon {
   const best = WEAPONS.filter(
-    (w) => w.element === element && w.kind === 'tir' && w.homing === 0 && w.bounces === 0,
+    (w) => w.element === element && w.homing === 0 && w.bounces === 0 && atteint(w, dist),
   ).reduce<Weapon | null>(
     (b, w) => (b === null || w.cooldownTicks < b.cooldownTicks ? w : b),
     null,
   );
   if (!best) {
-    throw new Error(`aucune arme pour l element ${element}`);
+    throw new Error(`aucune arme pour l element ${element} a ${dist} px`);
   }
   return best;
 }
@@ -439,6 +500,8 @@ interface Phase {
   y: number;
   porteurs: readonly number[];
   autres: readonly number[];
+  /** Ou chaque joueur se tient pendant CETTE phase (`debugPlace`), par rang. */
+  places: readonly Position[];
 }
 
 interface Position {
@@ -477,6 +540,28 @@ function positionCible(pi: Position, pj: Position, centre: Position): Position {
 }
 
 const BUCKET = 2 * ZONE_RADIUS;
+
+/**
+ * Ou se tiennent les deux joueurs qui ne jouent pas la phase : assez loin pour
+ * qu'aucune de leurs armes n'atteigne la cible, quelle que soit sa forme —
+ * l'onde ne vise rien, et un « visez a l'oppose » ne suffit plus a l'en
+ * ecarter. Verifie par la garde 3.
+ */
+const LOIN = 1200;
+
+/** Le point a `dist` de `cible`, du cote de `depuis`. */
+function versCible(cible: Position, depuis: Position, dist: number): Position {
+  const dx = depuis.x - cible.x;
+  const dy = depuis.y - cible.y;
+  const len = Math.hypot(dx, dy);
+  return { x: cible.x + (dx / len) * dist, y: cible.y + (dy / len) * dist };
+}
+
+/** Une visee nulle : plus aucune arme ne part (`#fireWeapons`). */
+function silence(client: Client): void {
+  client.seq++;
+  client.ws.send(encodeInput(client.seq, 0, 0, 0, 0));
+}
 
 /** Deux reactions par cible : une seule ne dirait pas que la paire se REJOUE. */
 const MIN_PAR_CIBLE = 2;
@@ -600,6 +685,20 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
           dejaVues.add(pair);
           const def = reactionForPair(pair);
           const cible = positionCible(pi, pj, centre);
+          // ⚠️ **Chaque joueur est REPLACE pour la phase (etape 12).** Les
+          // coins du depart mettaient toutes les cibles a ~350 px de leurs
+          // porteurs, ce qui suffisait a des tirs droits. Un mortier ne
+          // touche qu'a sa chute, un boomerang s'arrete a 250 px, une onde a
+          // 220, une frappe tombe a 480 pile : chaque porteur se tient donc a
+          // `distanceDeTir` de la cible, dans la direction d'ou il venait, et
+          // les deux autres a `LOIN`.
+          const places = positions.map((p, k) => {
+            const arme = armes[k];
+            if (!arme) {
+              throw new Error('quatre armes attendues');
+            }
+            return versCible(cible, p, k === i || k === j ? distanceDeTir(arme) : LOIN);
+          });
           phases.push({
             nom: def?.name ?? 'choc-thermique',
             pair,
@@ -610,6 +709,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
             y: cible.y,
             porteurs: [i, j],
             autres: [0, 1, 2, 3].filter((k) => k !== i && k !== j),
+            places,
           });
         }
       }
@@ -621,15 +721,31 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       // comme un succes silencieux du reste du test.
       for (const phase of phases) {
         for (const k of phase.porteurs) {
-          const p = positions[k];
+          const p = phase.places[k];
           const arme = armes[k];
           if (!p || !arme) {
             throw new Error('porteur et arme attendus');
           }
           expect(
-            Math.hypot(phase.x - p.x, phase.y - p.y),
+            atteint(arme, Math.hypot(phase.x - p.x, phase.y - p.y)),
             `${phase.nom} : la cible doit rester a portee de ${arme.name}`,
-          ).toBeLessThan(porteeDe(arme));
+          ).toBe(true);
+        }
+        // ⚠️ **Garde 3 : les deux autres ne l'atteignent JAMAIS.** Le
+        // pendant de la garde 1 : une onde (ou n'importe quelle forme a
+        // venir) d'un joueur a l'ecart qui toucherait la cible y ajouterait
+        // une paire etrangere. La borne prend le plus grand de tout ce que
+        // l'arme sait couvrir, frappe comprise.
+        for (const k of phase.autres) {
+          const p = phase.places[k];
+          const arme = armes[k];
+          if (!p || !arme) {
+            throw new Error('autre et arme attendus');
+          }
+          expect(
+            Math.hypot(phase.x - p.x, phase.y - p.y),
+            `${phase.nom} : ${arme.name} atteindrait la cible depuis l ecart`,
+          ).toBeGreaterThan(Math.max(porteeDe(arme), arme.blastRadius) + FRAPPE_SEARCH_RADIUS);
         }
       }
 
@@ -653,8 +769,34 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       }
 
       // ---- Les phases, l'une apres l'autre. --------------------------------
+      //
+      // ⚠️ **Un SILENCE avant chaque phase (etape 12).** Les joueurs changent
+      // de place d'une phase a l'autre : un boomerang qui revient vers son
+      // tireur replace, une onde ou une frappe encore en cours pourraient
+      // croiser la cible suivante et y poser l'element d'un joueur qui n'en
+      // est pas porteur. Visee nulle, horde videe, le temps que le plus long
+      // de ces tirs s'eteigne.
+      const SILENCE_TICKS =
+        Math.max(...armes.map((a) => a.projectileLifeTicks)) + FRAPPE_DELAY_TICKS + 5;
       let waveId = 9500;
       for (const phase of phases) {
+        for (const client of clients) {
+          silence(client);
+        }
+        const finSilence = room.tick + SILENCE_TICKS;
+        const balai = setInterval(() => viderSauf(room, []), 8);
+        try {
+          await waitFor(() => (room.tick >= finSilence ? true : null), 'le silence', 10_000);
+        } finally {
+          clearInterval(balai);
+        }
+        for (let k = 0; k < PLAYER_COUNT; k++) {
+          const client = clients[k];
+          const p = phase.places[k];
+          if (client && p) {
+            room.debugPlace(client.playerId, p.x, p.y);
+          }
+        }
         const cible = poseCible(room, waveId++, phase.x, phase.y);
         const dansLeLot = (r: ReactionMessage | ZoneMessage): boolean =>
           Math.hypot(r.x - phase.x, r.y - phase.y) < BUCKET;
@@ -674,18 +816,19 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
           }
           for (const k of phase.porteurs) {
             const client = clients[k];
-            const p = positions[k];
+            const p = phase.places[k];
             if (client && p) {
               vise(client, phase.x - p.x, phase.y - p.y);
             }
           }
           // ⚠️ **Les deux autres visent le VIDE, a l'ecart** : la direction
-          // exactement OPPOSEE a la cible. Leurs armes tirent donc vraiment —
-          // leurs deux elements sont bien en jeu dans ce salon — mais aucun de
-          // leurs projectiles ne peut atteindre la seule entite vivante.
+          // exactement OPPOSEE a la cible, depuis `LOIN`. Leurs armes tirent
+          // donc vraiment — leurs deux elements sont bien en jeu dans ce
+          // salon — mais aucun de leurs tirs ne peut atteindre la seule
+          // entite vivante (garde 3).
           for (const k of phase.autres) {
             const client = clients[k];
-            const p = positions[k];
+            const p = phase.places[k];
             if (client && p) {
               vise(client, p.x - phase.x, p.y - phase.y);
             }
@@ -858,7 +1001,12 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     expect(SIENS, 'le chemin solo doit porter la Chaux').toContain(ELEMENT.CHAUX);
     expect(SIENS, 'le chemin solo doit porter le Vif-argent').toContain(ELEMENT.VIF_ARGENT);
 
-    const armes = SIENS.map((e) => armeRapideDe(e));
+    // Une seule cible, a portee de ses QUATRE armes. ⚠️ **90 px et plus 130
+    // depuis l'etape 12** : la Poix qui l'atteint est le halo de l'Encensoir
+    // (110 px de rayon ; le mortier du Chaudron ne touche qu'a sa chute, bien
+    // plus loin), et la Chaux l'onde du Canon (le Semoir reste aux pieds).
+    const OFFSET = 90;
+    const armes = SIENS.map((e) => armeRapideDe(e, OFFSET));
     // Les quatre slots pour les quatre elements : sans la dague du depart.
     room.debugResetLoadout(a.playerId);
     for (const arme of armes) {
@@ -877,7 +1025,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     if (cinquieme === undefined) {
       throw new Error('un cinquieme element doit exister hors des quatre slots');
     }
-    const armeDeTrop = armeRapideDe(cinquieme);
+    const armeDeTrop = armeRapideDe(cinquieme, OFFSET);
     const loadout = room.loadoutOf(a.playerId);
     expect(
       loadout?.canTake(CARD.WEAPON, armeDeTrop.id),
@@ -900,10 +1048,8 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       throw new Error('le tireur doit etre dans le snapshot');
     }
 
-    // Une seule cible, a portee de ses QUATRE armes (la plus courte decide).
-    const OFFSET = 130;
     for (const arme of armes) {
-      expect(OFFSET, `${arme.name} doit atteindre la cible`).toBeLessThan(porteeDe(arme));
+      expect(atteint(arme, OFFSET), `${arme.name} doit atteindre la cible`).toBe(true);
     }
     const cibleX = pa.x + OFFSET;
     const cibleY = pa.y;
@@ -982,16 +1128,16 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
    * - salon LIBRE : la cible vit sous une zone d'*Arc caustique* (Foudre +
    *   Chaux), `zoneVifArgent: false`.
    *
-   * Le troisieme tireur porte la Poix dans les deux salons. Si et seulement si
-   * le rayon elargi existe, sa Poix accroche — et une paire PORTANT LA POIX
+   * Le troisieme tireur porte le froleur (la Grenade depuis l'etape 12) dans les deux salons. Si et seulement si
+   * le rayon elargi existe, son tir accroche — et une paire PORTANT SON ELEMENT
    * apparait. Dans le salon libre, elle ne doit jamais apparaitre : c'est la
-   * moitie negative, et sans elle « la Poix a touche » se lirait aussi bien
-   * « la Poix touche toujours ».
+   * moitie negative, et sans elle « le froleur a touche » se lirait aussi bien
+   * « le froleur touche toujours ».
    *
    * ⚠️ **Le salon libre porte une SECONDE cible, pile sur l'axe du frolement**
    * (ecart lateral zero, donc touchee au rayon de BASE quoi qu'il arrive), et
    * un quatrieme tireur pour lui donner son second element. C'est elle qui
-   * prouve que la Poix est armee ET qu'elle tire DANS CE SALON-CI : sans elle,
+   * prouve que le froleur est arme ET qu'elle tire DANS CE SALON-CI : sans elle,
    * la moitie negative serait satisfaite a vide par une regression qui perdrait
    * l'equipement ou la visee du troisieme tireur du second banc seulement.
    *
@@ -1033,14 +1179,43 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     const PAIRE_LIBRE = packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX);
 
     const FOUDRE = armeDe(ELEMENT.FOUDRE);
-    const POIX = armeDe(ELEMENT.POIX);
+    // ⚠️ **Le froleur n'est plus la Poix depuis l'etape 12.** Le frolement
+    // exige un projectile qui PERCUTE (le rayon elargi est celui de
+    // `collide`), droit et unique ; le Chaudron a poix est devenu un mortier
+    // qui ne percute rien en vol, et aucune autre Poix ne tire. Le froleur est
+    // donc la plus longue de ces armes hors des elements que le decor met
+    // deja en jeu (Foudre, Vif-argent, Chaux, et le Givre de la cible d'axe) :
+    // la Grenade, Braise. Ce que le test garde ne change pas — un element
+    // TIERS qui n'accroche qu'a la faveur du Vif-argent.
+    const FROLEUR = WEAPONS.filter(
+      (w) =>
+        w.kind === 'tir' &&
+        w.projectileCount === 1 &&
+        w.motion === 'droit' &&
+        w.emission === 'visee' &&
+        w.homing === 0 &&
+        w.bounces === 0 &&
+        w.projectileScale === 1 &&
+        !(
+          [
+            ELEMENT.NEUTRE,
+            ELEMENT.FOUDRE,
+            ELEMENT.VIF_ARGENT,
+            ELEMENT.CHAUX,
+            ELEMENT.GIVRE,
+          ] as number[]
+        ).includes(w.element),
+    ).reduce<Weapon | null>((b, w) => (b === null || porteeDe(w) > porteeDe(b) ? w : b), null);
+    if (!FROLEUR) {
+      throw new Error('aucune arme pour le frolement');
+    }
     const LIANT = armeDe(ELEMENT.VIF_ARGENT);
     const INERTE = armeDe(ELEMENT.CHAUX);
     /** Le second element de la cible d'AXE du salon libre — voir plus bas. */
     const AXE = armeDe(ELEMENT.GIVRE);
-    /** La paire que la cible d'axe doit produire : elle PORTE la Poix. */
-    const PAIRE_AXE = packElementPair(ELEMENT.GIVRE, ELEMENT.POIX);
-    expect(POIX.projectileCount, 'le frolement doit partir droit').toBe(1);
+    /** La paire que la cible d'axe doit produire : elle PORTE l'element du froleur. */
+    const PAIRE_AXE = packElementPair(ELEMENT.GIVRE, FROLEUR.element);
+    expect(FROLEUR.projectileCount, 'le frolement doit partir droit').toBe(1);
 
     interface Banc {
       nom: string;
@@ -1057,7 +1232,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       tickDebut: number;
       /**
        * Un releve PAR TICK : la distance perpendiculaire de la cible du
-       * frolement au rayon de la Poix, mesuree juste apres le pas qui vient de
+       * frolement au rayon du froleur, mesuree juste apres le pas qui vient de
        * resoudre les collisions.
        */
       ecarts: number[];
@@ -1075,13 +1250,13 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         throw new Error('le registre de salons doit etre accessible depuis l app');
       }
       const clients = await quatreClients(code);
-      const [poseurClient, foudreClient, poixClient, axeClient] = clients;
-      if (!poseurClient || !foudreClient || !poixClient || !axeClient) {
+      const [poseurClient, foudreClient, froleurClient, axeClient] = clients;
+      if (!poseurClient || !foudreClient || !froleurClient || !axeClient) {
         throw new Error('quatre tireurs attendus');
       }
       equipe(room, poseurClient.playerId, poseur.id);
       equipe(room, foudreClient.playerId, FOUDRE.id);
-      equipe(room, poixClient.playerId, POIX.id);
+      equipe(room, froleurClient.playerId, FROLEUR.id);
       // ⚠️ **Le quatrieme tireur n'existe QUE dans le salon libre**, et c'est
       // la moitie negative qui l'exige (voir sa cible, plus bas). Dans le
       // salon lie il reste desarme et sans visee : il ne tire donc jamais.
@@ -1098,15 +1273,13 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         }
         return { x: p.x, y: p.y };
       });
-      const pPoseur = pos[0];
-      const pFoudre = pos[1];
-      const pPoix = pos[2];
+      const pFroleur = pos[2];
       const pAxe = pos[3];
-      if (!pPoseur || !pFoudre || !pPoix || !pAxe) {
+      if (!pFroleur || !pAxe) {
         throw new Error('quatre positions attendues');
       }
 
-      // La cible : droit devant le tireur de Poix (visee +X exacte), decalee
+      // La cible : droit devant le froleur (visee +X exacte), decalee
       // lateralement de `ECART`. Sa visee passe donc a `ECART` d'elle, et a
       // `ECART` seulement — jamais sur elle.
       //
@@ -1114,32 +1287,49 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       // projectile MEURT a sa premiere touche (`Projectiles.collide` ->
       // `#removeAt`) : la cible d'axe doit donc etre DERRIERE celle du
       // frolement sur le meme rayon, sinon elle avalerait chaque projectile de
-      // Poix et la moitie negative redeviendrait vide par construction. Les
-      // deux doivent de plus tenir dans `porteeDe(POIX)` (405 px, la plus
-      // courte du decor) en restant ecartees de plus de `4 * ZONE_RADIUS` —
+      // froleur et la moitie negative redeviendrait vide par construction. Les
+      // deux doivent de plus tenir dans `porteeDe(FROLEUR)` (521 px pour
+      // la Grenade) en restant ecartees de plus de `4 * ZONE_RADIUS` —
       // d'ou 80 et 380 plutot que 300 seul.
       const AVANCE = 80;
       const AVANCE_AXE = 380;
-      const x = pPoix.x + AVANCE;
-      const y = pPoix.y + ECART;
-      const xAxe = pPoix.x + AVANCE_AXE;
-      const yAxe = pPoix.y;
+      const x = pFroleur.x + AVANCE;
+      const y = pFroleur.y + ECART;
+      const xAxe = pFroleur.x + AVANCE_AXE;
+      const yAxe = pFroleur.y;
+
+      // ⚠️ **Le poseur et la Foudre sont REPLACES (etape 12)**, a la distance
+      // ou leur forme marque la cible : le Glaive s'arrete a 250 px, l'onde a
+      // 220, la frappe tombe a 480 pile — les coins du depart ne conviennent a
+      // aucune. Le poseur en bas a gauche, loin de la cible d'axe (son onde
+      // n'a pas de direction) ; la Foudre droit en dessous, visee (0, -1)
+      // exacte, pour que l'impact tombe sur la cible et nulle part ailleurs.
+      const dPoseur = distanceDeTir(poseur) * Math.SQRT1_2;
+      const pPoseur = { x: x - dPoseur, y: y + dPoseur };
+      const pFoudre = { x, y: y + distanceDeTir(FOUDRE) };
+      room.debugPlace(poseurClient.playerId, pPoseur.x, pPoseur.y);
+      room.debugPlace(foudreClient.playerId, pFoudre.x, pFoudre.y);
 
       // Gardes : les cibles a portee des armes qui doivent les declencher, le
       // frolement RIGOUREUSEMENT lateral, et les deux cibles etanches.
-      expect(Math.hypot(x - pPoseur.x, y - pPoseur.y)).toBeLessThan(porteeDe(poseur));
-      expect(Math.hypot(x - pFoudre.x, y - pFoudre.y)).toBeLessThan(porteeDe(FOUDRE));
-      expect(Math.hypot(x - pPoix.x, y - pPoix.y)).toBeLessThan(porteeDe(POIX));
-      expect(y - pPoix.y, 'le frolement doit valoir exactement ECART').toBe(ECART);
-      expect(x).toBeGreaterThan(pPoix.x);
+      expect(atteint(poseur, Math.hypot(x - pPoseur.x, y - pPoseur.y))).toBe(true);
+      expect(atteint(FOUDRE, Math.hypot(x - pFoudre.x, y - pFoudre.y))).toBe(true);
+      expect(atteint(FROLEUR, Math.hypot(x - pFroleur.x, y - pFroleur.y))).toBe(true);
+      // L'onde du poseur ne doit pas atteindre la cible d'axe : elle y
+      // poserait la Chaux, une paire de plus autour de l'axe.
+      expect(Math.hypot(xAxe - pPoseur.x, yAxe - pPoseur.y)).toBeGreaterThan(
+        Math.max(porteeDe(poseur) / 4, poseur.blastRadius),
+      );
+      expect(y - pFroleur.y, 'le frolement doit valoir exactement ECART').toBe(ECART);
+      expect(x).toBeGreaterThan(pFroleur.x);
       expect(AVANCE_AXE, 'la cible d axe doit etre DERRIERE celle du frolement').toBeGreaterThan(
         AVANCE,
       );
-      expect(AVANCE_AXE, 'la cible d axe doit rester a portee de la Poix').toBeLessThan(
-        porteeDe(POIX),
+      expect(AVANCE_AXE, 'la cible d axe doit rester a portee du froleur').toBeLessThan(
+        porteeDe(FROLEUR),
       );
-      expect(yAxe - pPoix.y, 'la cible d axe doit etre PILE sur l axe').toBe(0);
-      expect(Math.hypot(xAxe - pAxe.x, yAxe - pAxe.y)).toBeLessThan(porteeDe(AXE));
+      expect(yAxe - pFroleur.y, 'la cible d axe doit etre PILE sur l axe').toBe(0);
+      expect(atteint(AXE, Math.hypot(xAxe - pAxe.x, yAxe - pAxe.y))).toBe(true);
       expect(
         Math.hypot(xAxe - x, yAxe - y),
         'les deux cibles declencheraient une zone fantome',
@@ -1150,9 +1340,9 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       let axe: Position | null = null;
       if (avecAxe) {
         // ⚠️ **La cible d'AXE : ecart lateral ZERO, donc touchee au rayon de
-        // BASE quoi qu'il arrive.** C'est elle qui prouve que la Poix est
-        // armee ET qu'elle tire DANS CE SALON-CI. Sans elle, « aucune paire
-        // portant la Poix dans le salon libre » serait satisfaite par une
+        // BASE quoi qu'il arrive.** C'est elle qui prouve que le froleur est
+        // arme ET qu'elle tire DANS CE SALON-CI. Sans elle, « aucune paire
+        // portant son element dans le salon libre » serait satisfaite par une
         // regression qui perdrait l'equipement ou la visee du troisieme
         // tireur du second banc seulement — et « le frolement n'accroche QUE
         // sous Vif-argent » resterait non prouve pendant que le test verdit.
@@ -1182,7 +1372,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       const releve = (): void => {
         const slot = room.horde.slotOf(cible);
         if (slot >= 0) {
-          ecarts.push(Math.abs((room.horde.y[slot] ?? 0) - pPoix.y));
+          ecarts.push(Math.abs((room.horde.y[slot] ?? 0) - pFroleur.y));
         }
       };
 
@@ -1200,7 +1390,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         vise(poseurClient, x - pPoseur.x, y - pPoseur.y);
         vise(foudreClient, x - pFoudre.x, y - pFoudre.y);
         // Le frolement : plein axe +X, jamais vers la cible.
-        vise(poixClient, 1, 0);
+        vise(froleurClient, 1, 0);
         if (avecAxe) {
           vise(axeClient, xAxe - pAxe.x, yAxe - pAxe.y);
         }
@@ -1238,31 +1428,31 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       throw new Error('le salon libre doit porter une cible d axe');
     }
 
-    /** Vrai si la paire porte la Poix — donc si le frolement a accroche. */
-    const parLaPoix = (r: ReactionMessage): boolean =>
-      unpackElementPair(r.pair).includes(ELEMENT.POIX);
+    /** Vrai si la paire porte l'element du froleur — donc si le frolement a accroche. */
+    const parLeFroleur = (r: ReactionMessage): boolean =>
+      unpackElementPair(r.pair).includes(FROLEUR.element);
 
     /**
      * Les reactions d'un point donne. **Le salon libre porte DEUX cibles**,
-     * donc « la Poix a accroche » n'a plus de sens sans dire OU.
+     * donc « le froleur a accroche » n'a plus de sens sans dire OU.
      */
     const autour = (client: Client, p: Position): ReactionMessage[] =>
       reactionsDe(client).filter((r) => Math.hypot(r.x - p.x, r.y - p.y) < BUCKET);
 
-    /** Dix secondes de tir dans le salon libre : la Poix a tire une dizaine de fois. */
+    /** Dix secondes de tir dans le salon libre : le froleur a tire une dizaine de fois. */
     const TICKS_DE_PREUVE = TICK_HZ * 10;
 
     try {
       await waitFor(
         () =>
-          autour(temoinLie, lie).filter(parLaPoix).length >= MIN_PAR_CIBLE &&
+          autour(temoinLie, lie).filter(parLeFroleur).length >= MIN_PAR_CIBLE &&
           autour(temoinLie, lie).some((r) => r.pair === PAIRE_LIEE) &&
           autour(temoinLibre, libre).some((r) => r.pair === PAIRE_LIBRE) &&
           autour(temoinLibre, axeLibre).some((r) => r.pair === PAIRE_AXE) &&
           libre.room.tick - libre.tickDebut >= TICKS_DE_PREUVE
             ? true
             : null,
-        'le frolement accroche dans la zone liante, et la Poix tire dans le salon libre',
+        'le frolement accroche dans la zone liante, et le froleur tire dans le salon libre',
         90_000,
       );
     } finally {
@@ -1306,23 +1496,23 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     //      sans elle, JAMAIS — et le salon libre a tire au moins aussi
     //      longtemps. -------------------------------------------------------
     expect(
-      autour(temoinLie, lie).filter(parLaPoix).length,
+      autour(temoinLie, lie).filter(parLeFroleur).length,
       'le frolement n a jamais accroche dans la zone liante',
     ).toBeGreaterThanOrEqual(MIN_PAR_CIBLE);
     expect(
-      autour(temoinLibre, libre).filter(parLaPoix),
+      autour(temoinLibre, libre).filter(parLeFroleur),
       'le frolement a accroche SANS zone de Vif-argent',
     ).toEqual([]);
     expect(libre.room.tick - libre.tickDebut).toBeGreaterThanOrEqual(TICKS_DE_PREUVE);
 
-    // ---- **Et la Poix du salon libre a bien TIRE.** La cible d'axe est a
+    // ---- **Et le froleur du salon libre a bien TIRE.** La cible d'axe est a
     //      ecart lateral ZERO : elle est touchee au rayon de BASE quoi qu'il
-    //      arrive. Cette seule assertion dit « la Poix est armee et tire dans
+    //      arrive. Cette seule assertion dit « le froleur est arme et tire dans
     //      CE salon » — donc que son absence sur la cible du frolement vient
     //      bien des 40 px, et de rien d'autre. ----------------------------
     expect(
-      autour(temoinLibre, axeLibre).filter(parLaPoix).length,
-      'la Poix du salon libre n a jamais tire',
+      autour(temoinLibre, axeLibre).filter(parLeFroleur).length,
+      'le froleur du salon libre n a jamais tire',
     ).toBeGreaterThanOrEqual(MIN_PAR_CIBLE);
   }, 120_000);
 
@@ -1393,8 +1583,8 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       // La cible, a mi-chemin exact des deux tireurs : a portee des deux.
       const x = (pUn.x + pDeux.x) / 2;
       const y = (pUn.y + pDeux.y) / 2 + 120;
-      expect(Math.hypot(x - pUn.x, y - pUn.y)).toBeLessThan(porteeDe(gauche));
-      expect(Math.hypot(x - pDeux.x, y - pDeux.y)).toBeLessThan(porteeDe(droite));
+      expect(atteint(gauche, Math.hypot(x - pUn.x, y - pUn.y))).toBe(true);
+      expect(atteint(droite, Math.hypot(x - pDeux.x, y - pDeux.y))).toBe(true);
 
       const cible = poseCible(room, 9700, x, y);
       // A partir d'ici, chaque snapshot porte les quatre joueurs : c'est le

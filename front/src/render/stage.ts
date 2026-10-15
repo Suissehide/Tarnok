@@ -14,8 +14,10 @@ import type {
   ChainFlashes,
   DamageNumbers,
   DerivedOrbs,
+  FrappeTrace,
   HitFlashes,
   ObstacleMap,
+  OndeTrace,
   OrbFlights,
   PickupTarget,
   ReactionFlashes,
@@ -26,11 +28,12 @@ import { ASSETS_BASE } from '../ui/config';
 import { AbilityRenderer } from './ability-renderer';
 import { BehaviorRenderer } from './behavior-renderer';
 import { BossBarRenderer } from './boss-bar-renderer';
-import { ChainRenderer } from './chain-renderer';
+import { type BeamAnchor, ChainRenderer } from './chain-renderer';
 import { ChargeRenderer } from './charge-renderer';
 import { DamageNumberRenderer } from './damage-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
+import { OndeFrappeRenderer } from './onde-frappe-renderer';
 import { OrbRenderer } from './orb-renderer';
 import { livePings, PingRenderer } from './ping-renderer';
 import { PlayerRenderer } from './player-renderer';
@@ -94,6 +97,7 @@ export class Stage {
   readonly #behaviors = new BehaviorRenderer(ASSETS_BASE);
   readonly #marks = new MarkRingRenderer();
   readonly #orbs = new OrbRenderer();
+  readonly #ondesFrappes = new OndeFrappeRenderer();
   readonly #projectiles = new ProjectileRenderer();
   readonly #chain = new ChainRenderer();
   readonly #impactFlashes = new ImpactFlashRenderer();
@@ -150,6 +154,9 @@ export class Stage {
     this.#marks,
     this.#orbs,
     this.#horde,
+    // Les ondes et les frappes (etape 12) : au-dessus de la horde qu'elles
+    // balaient, sous les projectiles (§5).
+    this.#ondesFrappes,
     this.#projectiles,
     this.#chain,
     this.#impactFlashes,
@@ -183,6 +190,7 @@ export class Stage {
     this.#behaviors,
     this.#marks,
     this.#orbs,
+    this.#ondesFrappes,
     this.#projectiles,
     this.#chain,
     this.#impactFlashes,
@@ -434,6 +442,15 @@ export class Stage {
     this.#orbs.draw(orbs, flights, players, this.viewRect(), timeMs);
   }
 
+  /** Ondes et frappes (etape 12), horloge murale — voir `OndeFrappeRenderer`. */
+  drawOndesFrappes(
+    ondes: readonly OndeTrace[],
+    frappes: readonly FrappeTrace[],
+    nowMs: number,
+  ): void {
+    this.#ondesFrappes.draw(ondes, frappes, nowMs);
+  }
+
   drawProjectiles(projectiles: Projectiles): void {
     this.#projectiles.draw(projectiles, this.viewRect());
   }
@@ -443,8 +460,8 @@ export class Stage {
    * correction 1). `nowMs` est l'horloge murale, comme `drawImpactFlashes` :
    * le chemin est deja figé dans `flashes` — voir `ChainRenderer.draw`.
    */
-  drawChain(flashes: ChainFlashes, nowMs: number): void {
-    this.#chain.draw(flashes, nowMs);
+  drawChain(flashes: ChainFlashes, nowMs: number, players: readonly BeamAnchor[] = []): void {
+    this.#chain.draw(flashes, nowMs, players);
   }
 
   /** `nowMs` doit etre la meme horloge murale que celle passee a `GameClient` (voir `ImpactFlashRenderer`). */

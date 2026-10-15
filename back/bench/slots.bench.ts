@@ -61,12 +61,23 @@ function mesure(
   // ⚠️ Les armes se prennent dans le CATALOGUE, pas par indice suppose : un
   // `refId` recopie a la main leve des que `WEAPON_SLOTS` change, et le banc
   // entier meurt au premier appel.
-  const arsenal = WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID)
-    .slice(0, slots)
-    .map((w) => w.id);
+  //
+  // ⚠️ **Depuis les classes (etape 8), un joueur arrive deja arme** : son arme
+  // de classe occupe un slot. On la compte, et on complete jusqu'a `slots`
+  // avec ce qu'il ne porte pas encore — sans quoi la derniere carte levait
+  // « slots d'armes pleins ».
   for (let p = 1; p <= 4; p++) {
-    for (const arme of arsenal) {
-      for (let k = 0; k < exemplaires; k++) {
+    const tenues = [...(room.loadoutOf(p)?.weaponIds ?? [])];
+    const arsenal = [
+      ...tenues.slice(0, slots),
+      ...WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID && !tenues.includes(w.id))
+        .slice(0, Math.max(0, slots - tenues.length))
+        .map((w) => w.id),
+    ];
+    for (const [rang, arme] of arsenal.entries()) {
+      // L'arme de classe est deja tenue une fois : un exemplaire de moins.
+      const deja = rang < Math.min(slots, tenues.length) ? 1 : 0;
+      for (let k = deja; k < exemplaires; k++) {
         room.grantCard(p, { nature: CARD.WEAPON, refId: arme });
       }
     }

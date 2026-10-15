@@ -1,8 +1,15 @@
-import { MAP_SIZE, PROJECTILE_CAPACITY, REACTION_RADIUS, ZONE_RADIUS } from '@shared/constants';
+import {
+  MAP_SIZE,
+  PROJECTILE_CAPACITY,
+  REACTION_RADIUS,
+  TICK_HZ,
+  ZONE_RADIUS,
+} from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair } from '@shared/protocol';
 import {
+  MORTAR_APEX_PX,
   type ProjectileShape,
   projectileAlpha,
   projectileTrailPx,
@@ -11,6 +18,7 @@ import {
 } from '@shared/weapons';
 import {
   Container,
+  type Graphics,
   type Particle,
   type ParticleContainer,
   Rectangle,
@@ -34,6 +42,8 @@ import {
   ImpactFlashRenderer,
   impactFlashScale,
   impactPower,
+  MORTAR_APEX_GROWTH,
+  mortarLift,
   POP_SCALE,
   POP_TICKS,
   PROJECTILE_ATLAS_PX,
@@ -213,7 +223,7 @@ describe('ReactionFlashRenderer — ce que le §6.6 exige du conteneur', () => {
 function drawnLayers(
   projectiles: Projectiles,
   view = new Rectangle(0, 0, MAP_SIZE, MAP_SIZE),
-): { heads: Particle[]; trails: Particle[] } {
+): { heads: Particle[]; trails: Particle[]; shadows: Graphics } {
   const renderer = new ProjectileRenderer();
   renderer.adoptTextures(
     new Texture({ source: new TextureSource({ width: 128, height: 128 }) }),
@@ -231,13 +241,14 @@ function drawnLayers(
   renderer.attach(world);
   renderer.draw(projectiles, view);
 
-  // `attach` pose UN groupe, qui contient les trainees puis les tetes.
+  // `attach` pose UN groupe, qui contient les ombres, les trainees puis les tetes.
   const group = world.children[0] as Container;
-  const trails = group.children[0] as ParticleContainer;
-  const heads = group.children[1] as ParticleContainer;
+  const trails = group.children[1] as ParticleContainer;
+  const heads = group.children[2] as ParticleContainer;
   return {
     heads: [...(heads.particleChildren as Particle[])],
     trails: [...(trails.particleChildren as Particle[])],
+    shadows: renderer.shadows,
   };
 }
 
@@ -322,8 +333,11 @@ describe('ProjectileRenderer.draw — neuf armes, neuf apparences distinctes', (
     // DERRIERE la position — mais son ancre, elle, est bien sur le projectile.
     // Sans ce cas, ne plus poser la position de la trainee laissait 214 tests
     // verts (mutation appliquee, pas raisonnee).
-    const { heads, trails } = drawnLayers(oneOfEachWeapon());
-    const attendues = WEAPONS.map((_, i) => ({ x: 200 + i * 100, y: 500 }));
+    // Lues sur la SIMULATION, pas recalculees : depuis l'etape 12, le Chakram
+    // nait deja sur son orbite, a `ORBIT_RADIUS` du point de tir.
+    const p = oneOfEachWeapon();
+    const { heads, trails } = drawnLayers(p);
+    const attendues = WEAPONS.map((_, i) => ({ x: p.x[i] ?? 0, y: p.y[i] ?? 0 }));
 
     expect(heads.map((h) => ({ x: h.x, y: h.y }))).toEqual(attendues);
     expect(trails.map((t) => ({ x: t.x, y: t.y }))).toEqual(attendues);
@@ -525,7 +539,12 @@ describe('SHAPE_PAINTERS — aucune forme ne bave dans la case voisine', () => {
  * n'avoir toujours aucune horloge en parametre — voir `POP_TICKS`.
  */
 describe('ProjectileRenderer.draw — le depart claque, et ce qui est lance tourne', () => {
+  // Le pop ne lit que l'echelle : le Chakram, meme en orbite, le garde.
   const CHAKRAM = 5;
+  // La rotation propre se mesure contre le CAP : il faut une arme qui tourne
+  // ET vole droit. Le Chakram tenait ce role avant l'etape 12 ; en orbite,
+  // son cap n'est plus la visee.
+  const MITRAILLE = 7;
   const DAGUE = 0;
   const TESLA = 9;
 
@@ -559,14 +578,14 @@ describe('ProjectileRenderer.draw — le depart claque, et ce qui est lance tour
     expect(jeune.scaleY).toBe(jeune.scaleX);
   });
 
-  it('fait tourner le chakram sur lui-meme en plus de son cap', () => {
-    const arme = weaponOf(CHAKRAM);
+  it('fait tourner le canon a mitraille sur lui-meme en plus de son cap', () => {
+    const arme = weaponOf(MITRAILLE);
     expect(arme.look.spinTurns).toBeGreaterThan(0);
     // Le cap est +x (tir vers la droite), donc zero : ce qui reste est la
     // rotation propre.
-    expect(teteApres(CHAKRAM, 0).rotation).toBeCloseTo(0, 6);
-    expect(teteApres(CHAKRAM, 4).rotation).toBeCloseTo(projectileSpin(arme.look.spinTurns, 4), 6);
-    expect(teteApres(CHAKRAM, 4).rotation).toBeGreaterThan(teteApres(CHAKRAM, 2).rotation);
+    expect(teteApres(MITRAILLE, 0).rotation).toBeCloseTo(0, 6);
+    expect(teteApres(MITRAILLE, 4).rotation).toBeCloseTo(projectileSpin(arme.look.spinTurns, 4), 6);
+    expect(teteApres(MITRAILLE, 4).rotation).toBeGreaterThan(teteApres(MITRAILLE, 2).rotation);
   });
 
   it('laisse la dague droite dans son axe, quel que soit son age', () => {
@@ -581,7 +600,7 @@ describe('ProjectileRenderer.draw — le depart claque, et ce qui est lance tour
   });
 
   it('ne fait JAMAIS tourner la trainee : elle dessine un chemin, pas un objet', () => {
-    const arme = weaponOf(CHAKRAM);
+    const arme = weaponOf(MITRAILLE);
     const p = new Projectiles(4);
     // Vers le bas : un cap laisse a zero passerait une trainee qui ignore tout.
     p.fireSalvoDirected(arme, 0, 1000, 1000, 0, 1, arme.damage, 1);
@@ -948,5 +967,64 @@ describe('ProjectileRenderer — ce qui est vraiment reteleverse a chaque image'
       vertex: true,
       color: true,
     });
+  });
+});
+
+/**
+ * Etape 12 (§5) : le Chaudron a poix vole en cloche. La position SIMULEE
+ * reste au sol — c'est elle qui explose — et le dessin la quitte vers le haut,
+ * au-dessus d'une ombre qui, elle, reste au point sol.
+ */
+describe('ProjectileRenderer.draw — le mortier monte en cloche au-dessus de son ombre', () => {
+  const CHAUDRON = 12;
+
+  function mortierApres(pas: number): Projectiles {
+    const arme = weaponOf(CHAUDRON);
+    expect(arme.motion).toBe('mortier');
+    const p = new Projectiles(4);
+    p.fireSalvoDirected(arme, 0, 1000, 1000, 1, 0, arme.damage, 1);
+    for (let i = 0; i < pas; i++) {
+      p.step(1 / TICK_HZ);
+    }
+    return p;
+  }
+
+  it('la cloche est nulle aux deux bouts et vaut 1 a mi-course', () => {
+    expect(mortarLift(0, 26)).toBe(0);
+    expect(mortarLift(26, 0)).toBe(0);
+    expect(mortarLift(13, 13)).toBe(1);
+  });
+
+  it('a mi-course, tete et trainee sont a MORTAR_APEX_PX au-dessus du point sol, et grossies', () => {
+    const mi = weaponOf(CHAUDRON).projectileLifeTicks / 2;
+    const p = mortierApres(mi);
+    const { heads, trails } = drawnLayers(p);
+    const solY = p.y[0] ?? 0;
+    expect(heads[0]?.y).toBeCloseTo(solY - MORTAR_APEX_PX, 6);
+    expect(trails[0]?.y).toBeCloseTo(solY - MORTAR_APEX_PX, 6);
+    expect(heads[0]?.x).toBeCloseTo(p.x[0] ?? 0, 6);
+    const nu = (weaponOf(CHAUDRON).look.diameterPx * p.scaleAt(0)) / PROJECTILE_CELL_PX;
+    expect(heads[0]?.scaleX).toBeCloseTo(nu * (1 + MORTAR_APEX_GROWTH), 6);
+  });
+
+  it('pose l ombre au POINT SOL, sous le projectile', () => {
+    const p = mortierApres(weaponOf(CHAUDRON).projectileLifeTicks / 2);
+    const { shadows } = drawnLayers(p);
+    const b = shadows.bounds;
+    expect(b.width).toBeGreaterThan(0);
+    expect((b.minX + b.maxX) / 2).toBeCloseTo(p.x[0] ?? 0, 3);
+    expect((b.minY + b.maxY) / 2).toBeCloseTo(p.y[0] ?? 0, 3);
+  });
+
+  it('ne pose aucune ombre pour un projectile droit, ni ne le souleve', () => {
+    const arme = weaponOf(0);
+    const p = new Projectiles(4);
+    p.fireSalvoDirected(arme, 0, 1000, 1000, 1, 0, arme.damage, 1);
+    for (let i = 0; i < 10; i++) {
+      p.step(1 / TICK_HZ);
+    }
+    const { heads, shadows } = drawnLayers(p);
+    expect(heads[0]?.y).toBeCloseTo(p.y[0] ?? 0, 6);
+    expect(shadows.bounds.width).toBe(0);
   });
 });

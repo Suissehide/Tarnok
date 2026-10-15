@@ -338,8 +338,13 @@ describe('assertWeaponElements', () => {
  * jamais une copie.
  */
 describe('salvoCount', () => {
-  /** `roue-de-lames` : dix projectiles de base. Un compte different de 1 est ce qui prouve qu'il est LU. */
-  const LARGE = 1;
+  /**
+   * `canon-a-mitraille` : huit projectiles de base. Un compte different de 1
+   * est ce qui prouve qu'il est LU. (La Roue de lames et ses dix lames
+   * tenaient ce role jusqu'a l'etape 12, ou elle est devenue une spirale a
+   * deux bras.)
+   */
+  const LARGE = 7;
   /** `arc-lourd` : un seul projectile de base. */
   const ARC_LOURD = 2;
 
@@ -365,14 +370,14 @@ describe('salvoCount', () => {
   it('elargit la salve de `stackGain` par exemplaire au-dela du premier', () => {
     const large = weaponOf(LARGE);
     const arc = weaponOf(ARC_LOURD);
-    // ⚠️ Deux armes aux comptes de base differents (10 et 1), et on verifie la
+    // ⚠️ Deux armes aux comptes de base differents (8 et 1), et on verifie la
     // valeur ABSOLUE, pas seulement la croissance : un `stacks` qui
     // remplacerait `projectileCount` au lieu de s'y ajouter ferait croitre la
     // salve tout autant, en oubliant l'arme.
-    expect(large.projectileCount).toBe(10);
-    expect(stackGain(large)).toBe(4);
-    expect(salvoCount(large, 2)).toBe(14);
-    expect(salvoCount(large, 3)).toBe(18);
+    expect(large.projectileCount).toBe(8);
+    expect(stackGain(large)).toBe(3);
+    expect(salvoCount(large, 2)).toBe(11);
+    expect(salvoCount(large, 3)).toBe(14);
 
     expect(arc.projectileCount).toBe(1);
     expect(stackGain(arc)).toBe(1);
@@ -412,7 +417,9 @@ describe('salvoCount', () => {
       expect(gain4(large)).toBeLessThan(gain4(etroite));
     });
 
-    it('ne touche PAS les armes a salve etroite : treize des dix-sept sont inchangees', () => {
+    // Etape 12 : la Roue de lames (10 -> 2) rentre dans le rang, le Missile
+    // guide (1 -> 5) en sort — toujours deux armes larges sur dix-neuf.
+    it('ne touche PAS les armes a salve etroite : toutes sauf deux sont inchangees', () => {
       const inchangees = WEAPONS.filter((w) => stackGain(w) === 1);
       expect(inchangees.length).toBe(WEAPONS.length - 2);
       for (const w of inchangees) {
@@ -437,6 +444,14 @@ describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
       // « la PLUS GRANDE zone » plus haut.
       if (w.kind === 'tir' && w.blastRadius > 0) {
         expect(w.projectileCount, w.name).toBe(1);
+        expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(mediane?.cooldownTicks ?? 0);
+      }
+      // ⚠️ **La frappe (etape 12) est TOLEREE a plusieurs impacts**, et c'est
+      // l'arme qui le veut : trois eclairs autour d'un point, chacun de ce
+      // rayon. Elle reste soumise a la moitie qui compte pour le §6.6 — la
+      // LENTEUR —, sans quoi ce serait l'explosion continue que la regle
+      // refuse.
+      if (w.kind === 'frappe') {
         expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(mediane?.cooldownTicks ?? 0);
       }
     }
@@ -675,17 +690,17 @@ describe('projectileAlpha — la portee se voit', () => {
 describe('projectileTrailPx', () => {
   it('rend les ticks de trainee convertis a la vitesse de l arme', () => {
     const arc = weaponOf(2);
-    // Valeur ABSOLUE, pas seulement un ordre : 900 px/s pendant 1,6 tick a
-    // 30 Hz. Un `trailTicks` ignore, ou un `TICK_HZ` oublie, rendrait un autre
-    // nombre tout en gardant l'ordre entre armes.
-    expect(arc.projectileSpeed).toBe(900);
+    // Valeur ABSOLUE, pas seulement un ordre : 600 px/s (900 avant l'etape
+    // 12) pendant 1,6 tick a 30 Hz. Un `trailTicks` ignore, ou un `TICK_HZ`
+    // oublie, rendrait un autre nombre tout en gardant l'ordre entre armes.
+    expect(arc.projectileSpeed).toBe(600);
     expect(arc.look.trailTicks).toBe(1.6);
-    expect(projectileTrailPx(arc)).toBeCloseTo((900 * 1.6) / TICK_HZ, 6);
+    expect(projectileTrailPx(arc)).toBeCloseTo((600 * 1.6) / TICK_HZ, 6);
   });
 
   it('suit la vitesse : l arme la plus lente ne traine pas comme la plus rapide', () => {
-    const lent = weaponOf(3); // lance-flammes, 300 px/s
-    const rapide = weaponOf(2); // arc-lourd, 900 px/s
+    const lent = weaponOf(3); // lance-flammes, 460 px/s
+    const rapide = weaponOf(2); // arc-lourd, 600 px/s
     expect(projectileTrailPx(lent)).toBeLessThan(projectileTrailPx(rapide));
   });
 });
@@ -791,6 +806,27 @@ describe('WeaponKind — ce qu une famille change, et ce qu elle ne change pas',
         // sa portee, et le client en derive le disque qu'il dessine.
         expect(w.blastRadius, w.name).toBeGreaterThan(0);
       }
+    }
+  });
+
+  /**
+   * Etape 12 : l'onde et la frappe ne posent aucun projectile, mais lisent les
+   * memes champs (`shared/onde-frappe.ts`). Un zero y serait une arme morte :
+   * une onde sans rayon max ne touche rien, une onde sans vitesse ne grandit
+   * pas, une frappe sans portee tombe sur le tireur.
+   */
+  it('donne a toute onde et toute frappe de quoi toucher', () => {
+    const ondes = WEAPONS.filter((w) => w.kind === 'onde');
+    const frappes = WEAPONS.filter((w) => w.kind === 'frappe');
+    expect(ondes.length).toBeGreaterThan(0);
+    expect(frappes.length).toBeGreaterThan(0);
+    for (const w of [...ondes, ...frappes]) {
+      expect(w.blastRadius, w.name).toBeGreaterThan(0);
+      expect(isLaunched(w), w.name).toBe(true);
+    }
+    for (const w of ondes) {
+      // L'onde balaie un DISQUE : son rayon max depasse le souffle de contact.
+      expect(w.blastRadius, w.name).toBeGreaterThan(HEAVY_BLAST_RADIUS);
     }
   });
 
@@ -927,9 +963,11 @@ describe('upgradedWeapon — les bonus propres de chaque arme', () => {
       expect(w.perks, w.name).not.toContain(UPGRADE.DAMAGE);
       expect(w.perks, w.name).not.toContain(UPGRADE.FIRE_RATE);
       if (w.kind !== 'tir') {
-        // Rien qui ne vive que sur un projectile.
+        // Rien qui ne vive que sur un projectile. ⚠️ **Sauf SALVO pour une
+        // frappe** (etape 12) : `projectileCount` y compte les eclairs, et
+        // une carte en ajoute un — ce n'est pas une carte vide.
         for (const u of [
-          UPGRADE.SALVO,
+          ...(w.kind === 'frappe' ? [] : [UPGRADE.SALVO]),
           UPGRADE.PIERCE,
           UPGRADE.CALIBRE,
           UPGRADE.VELOCITY,
