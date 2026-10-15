@@ -323,8 +323,9 @@
           <div class="bar bar--sml absolute left-[24px] right-[24px] top-[14px]">
             <i id="hud-synergy-fill" class="bar__fill"></i>
           </div>
+          <!-- Libelle masque (demande de Leo) ; l'element reste, `paintSynergy` l'ecrit. -->
           <span
-            class="f-mono ol absolute right-[40px] top-[22px] text-[14px] leading-none"
+            class="f-mono ol absolute right-[40px] top-[22px] hidden text-[14px] leading-none"
             title="Monte quand deux joueurs differents declenchent une reaction ensemble"
           >
             Synergie <span id="hud-synergy-label"></span>
@@ -403,9 +404,8 @@
               />
               <span id="hud-gold" class="f-jer ol text-[46px]">0</span>
             </div>
-            <span class="f-mono ol text-[16px]">OR NON SÉCURISÉ</span>
             <!-- Panneau de debogage (§4.6) : une mort arrivee trop tard pour etre rejouee. -->
-            <span class="f-mono ol text-[14px]">
+            <span class="f-mono ol hidden text-[14px]">
               morts tardives&nbsp;<span id="hud-late-deaths">0</span>
             </span>
           </div>
