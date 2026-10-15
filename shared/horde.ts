@@ -1,4 +1,12 @@
-import { archetypeOf, leapFactor, SHOOTER_RANGE, THIEF_FLEE_SPEED } from './archetypes';
+import {
+  archetypeOf,
+  GUARD_BODY,
+  GUARD_HOMING_RANGE,
+  GUARD_RING_RADIUS,
+  leapFactor,
+  SHOOTER_RANGE,
+  THIEF_FLEE_SPEED,
+} from './archetypes';
 import { type BossCharge, chargeHoldsAt, chargePointAt } from './boss';
 import {
   COIN_DROP_ONE_IN,
@@ -46,6 +54,45 @@ const STEERING_DEGENERATE_EPSILON = 1e-6;
  * pas de table de correspondance a synchroniser, donc pas de table a
  * desynchroniser.
  */
+/** La place d'un gardien sur son anneau : un angle tire de son identite (en degres entiers, puis radians). */
+export function guardAngle(entityId: number): number {
+  return (((entityId * 137) % 360) * Math.PI) / 180;
+}
+
+/**
+ * Repousse un joueur hors des gardiens qu'il chevauche, et rend le DECALAGE
+ * a appliquer (le serveur et la prediction le passent par `moveOnMap`, pour
+ * que le decor bloque aussi). Meme fonction des deux cotes.
+ */
+export function pushOutOfGuards(
+  x: number,
+  y: number,
+  horde: Horde,
+  playerBody: number,
+): { dx: number; dy: number } {
+  let dx = 0;
+  let dy = 0;
+  const r = GUARD_BODY + playerBody;
+  for (let i = 0; i < horde.count; i++) {
+    if (archetypeOf(horde.archetype[i] ?? 0).behavior !== 'gardien') {
+      continue;
+    }
+    const ox = x + dx - (horde.x[i] ?? 0);
+    const oy = y + dy - (horde.y[i] ?? 0);
+    const d = Math.hypot(ox, oy);
+    if (d >= r) {
+      continue;
+    }
+    if (d === 0) {
+      dx += r;
+      continue;
+    }
+    dx += (ox / d) * (r - d);
+    dy += (oy / d) * (r - d);
+  }
+  return { dx, dy };
+}
+
 export function entityIdOf(waveId: number, index: number): number {
   return waveId * MAX_PER_WAVE + index;
 }
@@ -158,6 +205,13 @@ export interface HordeState {
   mark: Uint8Array;
   markBy: Uint8Array;
   markUntil: Float64Array;
+  /**
+   * Les positions visees du dernier `retarget` (`Horde.aimX`/`aimY`) : le
+   * gardien s'en sert pour SE DEPLACER, donc un rejeu doit repartir des
+   * memes. ponytail: une copie de quatre nombres par tick enregistre.
+   */
+  aimX: number[];
+  aimY: number[];
 }
 
 /**
@@ -657,6 +711,8 @@ export class Horde {
     out.mark.set(this.mark);
     out.markBy.set(this.markBy);
     out.markUntil.set(this.markUntil);
+    out.aimX = this.aimX.slice();
+    out.aimY = this.aimY.slice();
   }
 
   /** Inverse de `saveState` : remplace l'etat courant par `state`. */
@@ -677,6 +733,8 @@ export class Horde {
     this.mark.set(state.mark);
     this.markBy.set(state.markBy);
     this.markUntil.set(state.markUntil);
+    this.aimX = state.aimX.slice();
+    this.aimY = state.aimY.slice();
   }
 
   /**
@@ -1289,6 +1347,31 @@ export class Horde {
    * monstres a l'eau, et le boss y partait en charge. Meme regle que
    * `moveOnMap` pour les joueurs, appelee des deux cotes avec le meme masque.
    */
+  /**
+   * Le gardien pres de sa place y va tout droit, puis la tient. Rend `false`
+   * s'il en est encore loin : il suit alors le flowfield comme tout le monde.
+   */
+  #guardStep(i: number, pas: number): boolean {
+    const t = this.targetField[i] ?? 0;
+    const ax = this.aimX[t];
+    const ay = this.aimY[t];
+    if (ax === undefined || ay === undefined) {
+      return false;
+    }
+    const angle = guardAngle(this.entityIdAt(i));
+    const dx = ax + Math.cos(angle) * GUARD_RING_RADIUS - (this.x[i] ?? 0);
+    const dy = ay + Math.sin(angle) * GUARD_RING_RADIUS - (this.y[i] ?? 0);
+    const d = Math.hypot(dx, dy);
+    if (d > GUARD_HOMING_RANGE) {
+      return false;
+    }
+    if (d > 0) {
+      const k = Math.min(1, pas / d);
+      this.#moveOnLand(i, (this.x[i] ?? 0) + dx * k, (this.y[i] ?? 0) + dy * k);
+    }
+    return true;
+  }
+
   #moveOnLand(i: number, nx: number, ny: number): void {
     const ox = this.x[i] ?? 0;
     const oy = this.y[i] ?? 0;
@@ -1322,10 +1405,14 @@ export class Horde {
       // le chemin sans zones reste bit-identique a celui d'avant.
       // Le bondisseur avance par bonds (`leapFactor`) : un facteur du PAS, comme
       // le Givre, derive du tick et de l'identite — identique partout.
-      const bond =
-        archetypeOf(this.archetype[i] ?? 0).behavior === 'bond'
-          ? leapFactor(this.entityIdAt(i), tick)
-          : 1;
+      const arch = archetypeOf(this.archetype[i] ?? 0);
+      if (
+        arch.behavior === 'gardien' &&
+        this.#guardStep(i, arch.speed * dt * (this.#slow[i] ?? 1))
+      ) {
+        continue;
+      }
+      const bond = arch.behavior === 'bond' ? leapFactor(this.entityIdAt(i), tick) : 1;
       // Le voleur en fuite remonte sa trajectoire : il s'eloigne du joueur
       // que le flowfield lui designe.
       const fuite = this.fleeing[i] === 1 ? -THIEF_FLEE_SPEED : 1;

@@ -353,7 +353,8 @@ export type Behavior =
   | 'voleur'
   | 'diviseur'
   | 'bouclier'
-  | 'necro';
+  | 'necro'
+  | 'gardien';
 
 /** La periode d'un bond, en ticks : une ruee puis une pause. */
 export const LEAP_PERIOD_TICKS = 27;
@@ -394,6 +395,15 @@ export const NECRO_RADIUS = 220;
 export const NECRO_RAISE_MAX = 3;
 export const NECRO_COOLDOWN_TICKS = 60;
 export const NECRO_CHILD = 'skull';
+/**
+ * Le gardien prend SA place sur un anneau autour de son joueur (angle tire de
+ * son identite), puis la tient : a plusieurs, ils font un mur que le joueur ne
+ * traverse pas (`pushOutOfGuards`).
+ */
+export const GUARD_RING_RADIUS = 95;
+export const GUARD_BODY = 30;
+/** Au-dela de cette distance de sa place, il suit le flowfield (le decor). */
+export const GUARD_HOMING_RANGE = 260;
 
 /** Le rayon de l'explosion d'un kamikaze, en px monde : c'est aussi le cercle d'alerte dessine. */
 export const KAMIKAZE_RADIUS = 110;
@@ -510,6 +520,7 @@ const FOOTSOLDIERS: readonly (Omit<
     cell: 192,
     speed: 55,
     role: 'colosse',
+    behavior: 'gardien',
   },
   {
     name: 'snake',

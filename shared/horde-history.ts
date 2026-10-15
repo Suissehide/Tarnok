@@ -42,6 +42,8 @@ export class HordeHistory {
       targetField: new Uint8Array(capacity),
       stopped: new Uint8Array(capacity),
       fleeing: new Uint8Array(capacity),
+      aimX: [],
+      aimY: [],
       hp: new Float32Array(capacity),
       mark: new Uint8Array(capacity),
       markBy: new Uint8Array(capacity),

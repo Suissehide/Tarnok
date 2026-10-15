@@ -1458,6 +1458,8 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
           mark: new Uint8Array(this.capacity),
           markBy: new Uint8Array(this.capacity),
           markUntil: new Float64Array(this.capacity),
+          aimX: [],
+          aimY: [],
         };
         horde.saveState(state);
         this.#states.set(tick, state);

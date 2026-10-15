@@ -32,7 +32,7 @@ import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
 import { FlowField } from '@shared/flowfield';
-import { Horde, leavesDrop } from '@shared/horde';
+import { Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
@@ -2113,6 +2113,7 @@ export class GameClient {
     if (this.#local === null) {
       // Premier snapshot ou l'on se voit : on se pose la, sans adoucissement.
       this.#local = new PredictedPlayer(mine.x, mine.y, this.#moveMap);
+      this.#local.guards = (x, y) => pushOutOfGuards(x, y, this.horde, CONTACT_RADIUS / 2);
     } else {
       this.#local.reconcile(mine.x, mine.y);
     }

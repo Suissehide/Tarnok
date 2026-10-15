@@ -55,6 +55,8 @@ describe('HordeHistory', () => {
     horde.markBy[0] = 3;
     horde.markUntil[0] = 4242;
 
+    horde.aimX = [10, 20];
+    horde.aimY = [30, 40];
     const history = new HordeHistory(horde.capacity);
     history.record(5, horde);
 
@@ -105,6 +107,8 @@ describe('HordeHistory', () => {
     horde.mark[0] = (attendu.mark + 1) % 256;
     horde.markBy[0] = (attendu.markBy + 1) % 256;
     horde.markUntil[0] = attendu.markUntil + 1;
+    horde.aimX = [99];
+    horde.aimY = [99];
     horde.kill([horde.entityIdAt(horde.count - 1)]);
     expect(horde.count).toBe(attendu.count - 1); // sanity : le compte a bien change
 
@@ -127,6 +131,9 @@ describe('HordeHistory', () => {
     expect(horde.mark[0]).toBe(attendu.mark);
     expect(horde.markBy[0]).toBe(attendu.markBy);
     expect(horde.markUntil[0]).toBe(attendu.markUntil);
+    // Les positions visees du gardien (hors tableaux types, donc verifiees a part).
+    expect(horde.aimX).toEqual([10, 20]);
+    expect(horde.aimY).toEqual([30, 40]);
   });
 
   it('restaurer un tick jamais enregistre rend false et ne modifie pas la horde', () => {

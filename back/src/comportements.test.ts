@@ -1,6 +1,8 @@
 import {
   ARCHETYPES,
   archetypeIdOf,
+  GUARD_BODY,
+  GUARD_RING_RADIUS,
   KAMIKAZE_MONSTER_DAMAGE,
   KAMIKAZE_PLAYER_DAMAGE,
   KAMIKAZE_RADIUS,
@@ -22,7 +24,7 @@ import {
 } from '@shared/archetypes';
 import { CONTACT_RADIUS, TICK_HZ } from '@shared/constants';
 import { EnemyShots, shotPhase } from '@shared/enemy-shots';
-import { Horde } from '@shared/horde';
+import { guardAngle, Horde, pushOutOfGuards } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { WEAPONS, type Weapon } from '@shared/weapons';
@@ -412,5 +414,50 @@ describe('le voleur, le diviseur, le porte-bouclier et le necromancien', () => {
     const deDos = coup(600);
     expect(deDos).toBeGreaterThan(0);
     expect(deFace).toBeCloseTo(deDos * (1 - SHIELD_BLOCK));
+  });
+});
+
+describe('le gardien qui encercle', () => {
+  const GARDIEN = de('gardien');
+
+  it('prend SA place sur l anneau autour de son joueur, et la tient', () => {
+    const horde = new Horde(4);
+    const id = poser(horde, 1, 1150, 1000, GARDIEN);
+    horde.retarget([1000], [1000]);
+    for (let t = 1; t <= 6 * TICK_HZ; t++) {
+      horde.step(DT, [], t);
+    }
+    const angle = guardAngle(id);
+    expect(horde.x[0]).toBeCloseTo(1000 + Math.cos(angle) * GUARD_RING_RADIUS, 0);
+    expect(horde.y[0]).toBeCloseTo(1000 + Math.sin(angle) * GUARD_RING_RADIUS, 0);
+  });
+
+  it('repousse un joueur qui le chevauche, et seulement lui', () => {
+    const horde = new Horde(4);
+    poser(horde, 1, 1000, 1000, GARDIEN);
+    poser(horde, 2, 1300, 1000, de('aucun'));
+    const p = pushOutOfGuards(1010, 1000, horde, 17);
+    expect(1010 + p.dx).toBeCloseTo(1000 + GUARD_BODY + 17);
+    expect(p.dy).toBeCloseTo(0);
+    expect(pushOutOfGuards(1290, 1000, horde, 17)).toEqual({ dx: 0, dy: 0 });
+  });
+
+  it('dans le salon, un joueur ne traverse pas un gardien', () => {
+    const room = new Room(5);
+    room.join(1);
+    room.step(DT);
+    const pos = room.positionOf(1) ?? { x: 0, y: 0 };
+    const g = poser(room.horde, 990_001, pos.x + 80, pos.y, GARDIEN);
+    room.horde.hp[room.horde.slotOf(g)] = 1e9;
+    for (let t = 0; t < 2 * TICK_HZ; t++) {
+      // Le gardien est tenu sur place : on ne mesure que le mur.
+      const slot = room.horde.slotOf(g);
+      room.horde.x[slot] = pos.x + 80;
+      room.horde.y[slot] = pos.y;
+      room.applyInput(1, t + 1, 127, 0, 0, 0);
+      room.step(DT);
+    }
+    const apres = room.positionOf(1) ?? { x: 0, y: 0 };
+    expect(apres.x).toBeLessThan(pos.x + 80);
   });
 });

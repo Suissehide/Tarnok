@@ -31,6 +31,8 @@ export class PredictedPlayer {
   /** Ecart entre ce qu'on affiche et ce que la simulation locale croit. */
   #errorX = 0;
   #errorY = 0;
+  /** La poussee des gardiens (`pushOutOfGuards` sur la horde locale) ; absente en test. */
+  guards: ((x: number, y: number) => { dx: number; dy: number }) | null = null;
 
   /**
    * `map` : le decor qui bloque le joueur, le MEME que celui du serveur. Sans
@@ -101,6 +103,29 @@ export class PredictedPlayer {
     } else {
       this.#x = clamp(this.#x + dx, 0, MAP_SIZE);
       this.#y = clamp(this.#y + dy, 0, MAP_SIZE);
+    }
+    // Les gardiens font mur, comme sur le serveur (`Room.step`).
+    const pousse = this.guards?.(this.#x, this.#y);
+    if (pousse && (pousse.dx !== 0 || pousse.dy !== 0)) {
+      const m = this.map;
+      const pos = m
+        ? moveOnMap(
+            this.#x,
+            this.#y,
+            pousse.dx,
+            pousse.dy,
+            m.mask,
+            m.cols,
+            m.rows,
+            m.cellSize,
+            MAP_SIZE,
+          )
+        : {
+            x: clamp(this.#x + pousse.dx, 0, MAP_SIZE),
+            y: clamp(this.#y + pousse.dy, 0, MAP_SIZE),
+          };
+      this.#x = pos.x;
+      this.#y = pos.y;
     }
 
     // Extinction exponentielle : monotone par construction, donc jamais

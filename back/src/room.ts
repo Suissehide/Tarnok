@@ -50,7 +50,7 @@ import {
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
 import { FlowField } from '@shared/flowfield';
-import { dropsCoin, entityIdOf, Horde } from '@shared/horde';
+import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
 import { bossHp, extractGold, palierGold, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
@@ -1325,8 +1325,26 @@ export class Room {
             x: clamp(p.x + p.moveX * speed * scaledDt, 0, MAP_SIZE),
             y: clamp(p.y + p.moveY * speed * scaledDt, 0, MAP_SIZE),
           };
-      p.x = pos.x;
-      p.y = pos.y;
+      // Les gardiens font mur : le joueur ne les traverse pas. Meme poussee
+      // que la prediction du client (`pushOutOfGuards`), et le decor bloque
+      // aussi la poussee.
+      const pousse = pushOutOfGuards(pos.x, pos.y, this.horde, CONTACT_RADIUS / 2);
+      const fin =
+        sol && (pousse.dx !== 0 || pousse.dy !== 0)
+          ? moveOnMap(
+              pos.x,
+              pos.y,
+              pousse.dx,
+              pousse.dy,
+              sol.blocked,
+              sol.cols,
+              sol.rows,
+              sol.cellSize,
+              MAP_SIZE,
+            )
+          : { x: clamp(pos.x + pousse.dx, 0, MAP_SIZE), y: clamp(pos.y + pousse.dy, 0, MAP_SIZE) };
+      p.x = fin.x;
+      p.y = fin.y;
     }
 
     // Arrondies, comme sur le fil (constat C1.4) : le client ne connaitra
