@@ -1000,7 +1000,10 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (carte.nature === CARD.PASSIVE) {
       expect(loadout.stacksOf(carte.refId)).toBe(1);
     } else {
-      expect(loadout.stacksOfWeapon(carte.refId)).toBe(1);
+      // L'arme de depart est tiree au hasard de la carte : si l'etalage la
+      // repropose, elle etait deja la — d'ou le second exemplaire.
+      const depart = loadout.weaponIds[0];
+      expect(loadout.stacksOfWeapon(carte.refId)).toBe(carte.refId === depart ? 2 : 1);
     }
 
     // Reprend : apres la fermeture du draft et la rampe de reprise, le joueur

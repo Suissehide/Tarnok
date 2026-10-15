@@ -681,8 +681,8 @@ export const WAVE_ORDER_BYTES = 19;
 export const DEATHS_HEADER_BYTES = 7;
 /** `type u8 · deadlineTick u32 · count u8`. */
 export const DRAFT_OPEN_HEADER_BYTES = 6;
-/** Une carte : `nature u8 · refId u8`. */
-export const DRAFT_CARD_BYTES = 2;
+/** Une carte : `nature u8 · refId u8 · upgrade u8`. */
+export const DRAFT_CARD_BYTES = 3;
 /** `type u8 · cardIndex u8`. */
 export const DRAFT_TOKEN_BYTES = 2;
 /** `type u8 · count u8`. */
@@ -1519,6 +1519,7 @@ export function decode(buf: ArrayBuffer): Message {
 export interface WireCard {
   nature: number;
   refId: number;
+  upgrade?: number;
 }
 
 /**
@@ -1538,6 +1539,7 @@ export function encodeDraftOpen(deadlineTick: number, cards: readonly WireCard[]
   for (const c of cards) {
     v.setUint8(o, c.nature);
     v.setUint8(o + 1, c.refId);
+    v.setUint8(o + 2, c.upgrade ?? 0);
     o += DRAFT_CARD_BYTES;
   }
   return buf;
@@ -1763,7 +1765,7 @@ function decodeDraftOpen(buf: ArrayBuffer): DraftOpenMessage {
   const cards: WireCard[] = [];
   let o = DRAFT_OPEN_HEADER_BYTES;
   for (let i = 0; i < count; i++) {
-    cards.push({ nature: v.getUint8(o), refId: v.getUint8(o + 1) });
+    cards.push({ nature: v.getUint8(o), refId: v.getUint8(o + 1), upgrade: v.getUint8(o + 2) });
     o += DRAFT_CARD_BYTES;
   }
   return { type: MSG.DRAFT_OPEN, deadlineTick: v.getUint32(1, true), cards };

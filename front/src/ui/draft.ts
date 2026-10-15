@@ -4,7 +4,14 @@ import { elementOf } from '@shared/elements';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
-import { weaponOf } from '@shared/weapons';
+import {
+  DAMAGE_PER_UPGRADE,
+  EFFECT_RADIUS_PER_STACK,
+  FIRE_RATE_PER_UPGRADE,
+  stackGain,
+  UPGRADE,
+  weaponOf,
+} from '@shared/weapons';
 
 import { elementBadge } from './element-icons';
 import { bonusIcon, ICON_WEAPON } from './icons';
@@ -96,7 +103,29 @@ export function stacksLabel(
     card.nature === CARD.PASSIVE
       ? loadout.stacksOf(card.refId)
       : loadout.stacksOfWeapon(card.refId);
-  return owned === 0 ? 'Nouveau' : `Possédé ×${owned}`;
+  if (owned === 0) {
+    return 'Nouveau';
+  }
+  return card.nature === CARD.PASSIVE ? `Possédé ×${owned}` : upgradeLabel(card);
+}
+
+/** Ce qu'une carte d'arme ameliore chez qui la possede deja — voir `UPGRADE`. */
+export function upgradeLabel(card: Card): string {
+  const pct = (f: number): string => `${Math.round(f * 100)} %`;
+  switch (card.upgrade ?? UPGRADE.SPECIFIC) {
+    case UPGRADE.DAMAGE:
+      return `+${pct(DAMAGE_PER_UPGRADE)} dégâts`;
+    case UPGRADE.FIRE_RATE:
+      return `+${pct(FIRE_RATE_PER_UPGRADE)} cadence`;
+    default: {
+      const weapon = weaponOf(card.refId);
+      if (weapon.kind !== 'tir') {
+        return `+${pct(EFFECT_RADIUS_PER_STACK)} rayon`;
+      }
+      const n = stackGain(weapon);
+      return `+${n} projectile${n > 1 ? 's' : ''}`;
+    }
+  }
 }
 
 /**

@@ -69,11 +69,14 @@ import {
   BASE_WEAPON_ID,
   beamRange,
   cooldownWithBonus,
+  DAMAGE_PER_UPGRADE,
   effectRadius,
+  FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardIsAlive,
   guardPulsesAt,
   salvoCount,
+  UPGRADE,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -2184,17 +2187,26 @@ export class Room {
     const weapon = weaponOf(weaponId);
     const cooldown = cooldownWithBonus(
       weapon.cooldownTicks,
-      p.loadout.bonus('fireRate') + p.accountBonuses.fireRate,
+      p.loadout.bonus('fireRate') +
+        p.accountBonuses.fireRate +
+        FIRE_RATE_PER_UPGRADE * p.loadout.upgradesOf(weaponId, UPGRADE.FIRE_RATE),
     );
     if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    const damage = weapon.damage * (1 + p.loadout.bonus('damage') + p.accountBonuses.damage);
+    const damage =
+      weapon.damage *
+      (1 +
+        p.loadout.bonus('damage') +
+        p.accountBonuses.damage +
+        DAMAGE_PER_UPGRADE * p.loadout.upgradesOf(weaponId, UPGRADE.DAMAGE));
     // ⚠️ Chaque exemplaire empile de cette arme elargit la salve d'un
     // projectile : « c'est l'accumulation des cartes qui fait la puissance ».
     // L'arme neutre n'est jamais empilee, `salvoCount` lui rend son compte de
     // base sans cas particulier.
-    const stacks = p.loadout.stacksOfWeapon(weaponId);
+    // ⚠️ Seules les cartes « specifique » comptent ici : degats et cadence
+    // sont deja dans `damage` et `cooldown`. `1 +` : l'exemplaire d'acquisition.
+    const stacks = 1 + p.loadout.upgradesOf(weaponId, UPGRADE.SPECIFIC);
     if (weapon.kind === 'halo') {
       // ⚠️ **Le halo ne tire rien : il met une PULSATION en file**, que
       // `resolveHalos` resoudra dans la meme passe que les projectiles (voir

@@ -381,13 +381,13 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
     // `DRAFT_OPEN_HEADER_BYTES`/`DRAFT_CARD_BYTES` passerait tout aussi bien
     // si ces constantes mentaient ensemble.
     //
-    // D'ou vient ce 16 : ce decor connecte exactement DEUX joueurs, donc
+    // D'ou vient ce 21 : ce decor connecte exactement DEUX joueurs, donc
     // l'etalage compte `2 + SPREAD_BONUS` cartes (`SPREAD_BONUS = 3`, voir
     // `shared/constants.ts`) soit 5 cartes. `DRAFT_OPEN` pese
-    // `DRAFT_OPEN_HEADER_BYTES + cartes * DRAFT_CARD_BYTES` (6 + 5 * 2 = 16,
-    // voir `shared/protocol.ts`). **A quatre joueurs ce serait 6 + 7 * 2 =
-    // 20** : si tu changes le nombre de joueurs de ce decor, RECALCULE ce
+    // `DRAFT_OPEN_HEADER_BYTES + cartes * DRAFT_CARD_BYTES` (6 + 5 * 3 = 21,
+    // voir `shared/protocol.ts`). **A quatre joueurs ce serait 6 + 7 * 3 =
+    // 27** : si tu changes le nombre de joueurs de ce decor, RECALCULE ce
     // nombre a la main plutot que de « reparer » la valeur a l'aveugle.
-    expect(taillesDraft.every((t) => t === 16)).toBe(true);
+    expect(taillesDraft.every((t) => t === 21)).toBe(true);
   }, 30_000);
 });

@@ -4,6 +4,7 @@ import { CARD } from './cards';
 import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
+import { UPGRADE, UPGRADE_KINDS } from './weapons';
 
 /**
  * ⚠️ Les identifiants d'epreuve evitent volontairement `0`.
@@ -190,5 +191,28 @@ describe('Loadout — les passifs empilent', () => {
   it('rend zero pour un kind dont aucun passif n est possede', () => {
     const l = new Loadout();
     expect(l.bonus('damage')).toBe(0);
+  });
+});
+
+describe('Loadout — une carte d arme reprise n ameliore QU UN aspect', () => {
+  it('la premiere carte donne l arme, les suivantes comptent sur leur seul aspect', () => {
+    const l = new Loadout();
+    l.addWeapon(ARME_A, UPGRADE.DAMAGE);
+    // L'acquisition n'ameliore rien, quel que soit l'aspect porte par la carte.
+    expect(l.upgradesOf(ARME_A, UPGRADE.DAMAGE)).toBe(0);
+    l.addWeapon(ARME_A, UPGRADE.FIRE_RATE);
+    l.addWeapon(ARME_A, UPGRADE.FIRE_RATE);
+    expect(l.upgradesOf(ARME_A, UPGRADE.FIRE_RATE)).toBe(2);
+    expect(l.upgradesOf(ARME_A, UPGRADE.DAMAGE)).toBe(0);
+    expect(l.upgradesOf(ARME_A, UPGRADE.SPECIFIC)).toBe(0);
+    // Une autre arme ne partage rien.
+    expect(l.upgradesOf(ARME_B, UPGRADE.FIRE_RATE)).toBe(0);
+    expect(l.stacksOfWeapon(ARME_A)).toBe(3);
+  });
+
+  it('refuse un aspect inconnu', () => {
+    const l = new Loadout();
+    l.addWeapon(ARME_A);
+    expect(() => l.addWeapon(ARME_A, UPGRADE_KINDS)).toThrow(/amelioration/);
   });
 });

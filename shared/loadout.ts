@@ -11,7 +11,7 @@ import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
 const CARD_WEAPON = 0;
 
 import { PASSIVES, type PassiveKind, passiveOf } from './passives';
-import { WEAPONS, weaponOf } from './weapons';
+import { UPGRADE, UPGRADE_KINDS, WEAPONS, weaponOf } from './weapons';
 
 /**
  * Ce qu'un joueur possede : ses armes et ses passifs, chacun avec son nombre
@@ -19,8 +19,8 @@ import { WEAPONS, weaponOf } from './weapons';
  *
  * ⚠️ **Les deux natures se comportent PAREIL, et c'est le modele du draft** :
  * tout s'empile, rien ne monte de niveau. *« C'est l'accumulation des cartes
- * qui fait la puissance. »* Une arme prise deux fois tire une salve plus
- * large ; un passif pris deux fois ajoute deux fois sa `magnitude`. Modele
+ * qui fait la puissance. »* Une arme reprise ameliore UN aspect — celui que
+ * porte la carte (`UPGRADE`) ; un passif pris deux fois ajoute deux fois sa `magnitude`. Modele
  * Risk of Rain, applique aux deux.
  *
  * Les niveaux d'arme et les evolutions ont existe un temps dans cette etape,
@@ -45,6 +45,13 @@ export class Loadout {
   readonly #passiveStacks = new Uint16Array(PASSIVES.length);
   /** Ordre d'acquisition — l'ordre des slots, pas l'ordre des identifiants. */
   readonly #weaponOrder: number[] = [];
+  /** `#upgrades[id * UPGRADE_KINDS + aspect]` : cartes prises sur cet aspect, la premiere (l'acquisition) exclue. */
+  readonly #upgrades = new Uint16Array(WEAPONS.length * UPGRADE_KINDS);
+
+  /** Cartes prises sur cet aspect de cette arme (voir `UPGRADE`), l'acquisition exclue. */
+  upgradesOf(weaponId: number, upgrade: number): number {
+    return this.#upgrades[weaponId * UPGRADE_KINDS + upgrade] ?? 0;
+  }
 
   /** Les armes possedees, dans l'ordre ou elles ont ete draftees. */
   get weaponIds(): readonly number[] {
@@ -79,16 +86,24 @@ export class Loadout {
   /**
    * Empile une arme. Ne consomme un slot que si le joueur ne la possedait PAS
    * encore — exactement comme `addPassive`, et pour la meme raison.
+   *
+   * La premiere carte donne l'arme ; chacune des suivantes n'ameliore que son
+   * `upgrade` (voir `UPGRADE`).
    */
-  addWeapon(weaponId: number): void {
+  addWeapon(weaponId: number, upgrade: number = UPGRADE.SPECIFIC): void {
     const stacks = this.stacksOfWeapon(weaponId);
     if (stacks === 0 && this.#weaponOrder.length >= WEAPON_SLOTS) {
       throw new Error(`slots d'armes pleins (${WEAPON_SLOTS})`);
     }
     weaponOf(weaponId); // leve si l'identifiant n'existe pas
+    if (upgrade < 0 || upgrade >= UPGRADE_KINDS) {
+      throw new Error(`amelioration inconnue : ${upgrade}`);
+    }
     this.#weaponStacks[weaponId] = stacks + 1;
     if (stacks === 0) {
       this.#weaponOrder.push(weaponId);
+    } else {
+      this.#upgrades[weaponId * UPGRADE_KINDS + upgrade] = this.upgradesOf(weaponId, upgrade) + 1;
     }
   }
 

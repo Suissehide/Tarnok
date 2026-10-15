@@ -735,15 +735,15 @@ describe('decode', () => {
 describe('DRAFT_OPEN', () => {
   // ⚠️ **Plus d'octet `owner`.** Il portait l'exclusivite des cartes reservees,
   // qui n'existe plus : toute carte est ouverte a tout le monde. Une carte
-  // tient donc en DEUX octets, et c'est l'assertion de taille ci-dessous qui
-  // le garde.
+  // tient en TROIS octets — le troisieme est l'aspect ameliore (`UPGRADE`) —,
+  // et c'est l'assertion de taille ci-dessous qui le garde.
   //
   // Les trois cartes ne partagent ni nature ni `refId` : un encodeur qui
   // intervertirait les deux octets se verrait.
   const cartes = [
-    { nature: 0, refId: 3 },
-    { nature: 1, refId: 7 },
-    { nature: 0, refId: 8 },
+    { nature: 0, refId: 3, upgrade: 2 },
+    { nature: 1, refId: 7, upgrade: 0 },
+    { nature: 0, refId: 8, upgrade: 1 },
   ];
 
   it('fait un aller-retour exact', () => {
@@ -767,7 +767,7 @@ describe('DRAFT_OPEN', () => {
     // ⚠️ La ligne ci-dessus se calcule AVEC la constante : elle passerait sur
     // une carte de trois octets si la constante mentait aussi. Le chiffre nu
     // est ce qui garde la disparition de l'octet `owner`.
-    expect(DRAFT_CARD_BYTES).toBe(2);
+    expect(DRAFT_CARD_BYTES).toBe(3);
     // ⚠️ **Meme trou, meme remede, cote en-tete.** Les deux assertions
     // precedentes calculent la taille AVEC `DRAFT_OPEN_HEADER_BYTES` : un
     // en-tete qui aurait grossi d'un masque d'eligibilite (§3.5 de la spec)
@@ -776,7 +776,7 @@ describe('DRAFT_OPEN', () => {
     // mesure (Ronde 2, tache 9 de l'etape 7b) : muter
     // `DRAFT_OPEN_HEADER_BYTES` a 7 laissait tout le reste de ce fichier vert.
     expect(DRAFT_OPEN_HEADER_BYTES).toBe(6);
-    expect(encodeDraftOpen(1, cartes).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES + 6);
+    expect(encodeDraftOpen(1, cartes).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES + 9);
   });
 
   it('leve sur un tampon tronque', () => {

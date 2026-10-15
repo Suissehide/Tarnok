@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
 import { CARD, drawSpread, OWNED_WEIGHT } from './cards';
-import { SPREAD_BONUS } from './constants';
+import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { makeRandom } from './random';
-import { BASE_WEAPON_ID, WEAPONS } from './weapons';
+import { BASE_WEAPON_ID, UPGRADE_KINDS, WEAPONS } from './weapons';
 
 function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
   // Les identifiants de joueur commencent a 1, comme partout dans le salon.
@@ -172,5 +172,54 @@ describe('drawSpread', () => {
     // l'arme neutre — ni rien d'autre. On COMPTE ce que le balayage a vu :
     // tout le pool, exactement.
     expect(vues.size).toBe(TAILLE_DU_POOL);
+  });
+});
+
+describe('drawSpread — rien que personne ne peut prendre', () => {
+  /** Un inventaire aux slots d'armes pleins, sans aucune autre arme. */
+  function arsenalComplet(): Loadout {
+    const l = new Loadout();
+    for (let i = 0; i < WEAPON_SLOTS; i++) {
+      l.addWeapon(i + 1);
+    }
+    return l;
+  }
+
+  it('ne propose plus une arme nouvelle quand TOUT le monde a son arsenal complet', () => {
+    const a = arsenalComplet();
+    const b = arsenalComplet();
+    for (let seed = 1; seed <= 200; seed++) {
+      for (const c of drawSpread(equipe(a, b), makeRandom(seed))) {
+        if (c.nature === CARD.WEAPON) {
+          expect(c.refId).toBeGreaterThanOrEqual(1);
+          expect(c.refId).toBeLessThanOrEqual(WEAPON_SLOTS);
+        }
+      }
+    }
+  });
+
+  it('la propose encore tant qu un seul joueur a de la place', () => {
+    const a = arsenalComplet();
+    let nouvelle = false;
+    for (let seed = 1; seed <= 200 && !nouvelle; seed++) {
+      nouvelle = drawSpread(equipe(a, new Loadout()), makeRandom(seed)).some(
+        (c) => c.nature === CARD.WEAPON && c.refId > WEAPON_SLOTS,
+      );
+    }
+    expect(nouvelle).toBe(true);
+  });
+
+  it('chaque carte d arme porte un aspect valide, et tous finissent par sortir', () => {
+    const vus = new Set<number>();
+    for (let seed = 1; seed <= 100; seed++) {
+      for (const c of drawSpread(equipe(new Loadout()), makeRandom(seed))) {
+        if (c.nature === CARD.WEAPON) {
+          expect(c.upgrade).toBeGreaterThanOrEqual(0);
+          expect(c.upgrade).toBeLessThan(UPGRADE_KINDS);
+          vus.add(c.upgrade ?? -1);
+        }
+      }
+    }
+    expect(vus.size).toBe(UPGRADE_KINDS);
   });
 });

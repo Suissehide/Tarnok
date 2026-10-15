@@ -1,7 +1,7 @@
 import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
 import { PASSIVES } from './passives';
-import { WEAPONS } from './weapons';
+import { UPGRADE_KINDS, WEAPONS } from './weapons';
 
 /**
  * Les deux natures de carte.
@@ -27,6 +27,12 @@ export interface Card {
   nature: number;
   /** Index dans `WEAPONS` ou dans `PASSIVES`, selon `nature`. */
   refId: number;
+  /**
+   * Arme seulement : l'aspect que la carte ameliore chez qui possede deja
+   * l'arme (`UPGRADE`). Chez qui ne la possede pas, la carte la donne.
+   * Absent : `UPGRADE.SPECIFIC`.
+   */
+  upgrade?: number;
 }
 
 /**
@@ -49,7 +55,7 @@ export interface Card {
 export function applyCardToLoadout(loadout: Loadout, card: Card): void {
   switch (card.nature) {
     case CARD.WEAPON:
-      loadout.addWeapon(card.refId);
+      loadout.addWeapon(card.refId, card.upgrade);
       break;
     case CARD.PASSIVE:
       loadout.addPassive(card.refId);
@@ -108,7 +114,11 @@ export function buildPool(): Card[] {
  */
 export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => number): Card[] {
   const wanted = loadouts.size + SPREAD_BONUS;
-  const pool = buildPool();
+  // ⚠️ **Une carte que PERSONNE ne peut prendre ne s'offre plus** : une fois
+  // l'arsenal de chacun complet, une arme que nul ne possede n'est qu'une case
+  // grisee pour tout le salon. `canTake` reste la seule regle.
+  const team = [...loadouts.values()];
+  const pool = buildPool().filter((card) => team.some((l) => l.canTake(card.nature, card.refId)));
   const spread: Card[] = [];
   // ⚠️ **Ce qu'un joueur possede deja revient plus souvent** (retour de
   // playtest : *« je dois pouvoir reprendre la meme arme pour l'ameliorer »*).
@@ -131,6 +141,9 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
     weights.splice(index, 1);
     if (!card) {
       break;
+    }
+    if (card.nature === CARD.WEAPON) {
+      card.upgrade = Math.min(UPGRADE_KINDS - 1, Math.floor(rng() * UPGRADE_KINDS));
     }
     spread.push(card);
   }

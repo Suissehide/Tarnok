@@ -1,5 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { ORB_PICKUP_RADIUS, SPREAD_BONUS } from '@shared/constants';
+import { PASSIVES } from '@shared/passives';
 import {
   decode,
   encodeDraftToken,
@@ -12,6 +13,7 @@ import {
   type WireOutcome,
 } from '@shared/protocol';
 import { FORMATION, type WaveOrder } from '@shared/waves';
+import { WEAPONS } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -488,9 +490,13 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     // ca, on aurait verifie un message et pas un effet.
     for (const client of clients) {
       const loadout = room.loadoutOf(client.playerId);
-      const items = (loadout?.weaponSlotsUsed ?? 0) + (loadout?.passiveSlotsUsed ?? 0);
-      // La dague du depart, plus la carte gagnee.
-      expect(items, `l inventaire du joueur ${client.playerId} est reste vide`).toBe(2);
+      // ⚠️ Des CARTES, pas des slots : une carte de l'arme de depart s'empile
+      // sans ouvrir de slot, et compter les slots la rendait invisible.
+      const cartes =
+        WEAPONS.reduce((n, w) => n + (loadout?.stacksOfWeapon(w.id) ?? 0), 0) +
+        PASSIVES.reduce((n, p) => n + (loadout?.stacksOf(p.id) ?? 0), 0);
+      // L'arme du depart, plus la carte gagnee.
+      expect(cartes, `l inventaire du joueur ${client.playerId} est reste vide`).toBe(2);
     }
   }, 90_000);
 });
