@@ -177,3 +177,41 @@ describe('OndeFrappeRenderer — cout borne par la capacite', () => {
     expect(circle).toHaveBeenCalledTimes(3 * ONDE_TRACE_CAPACITY + 3 * FRAPPE_TRACE_CAPACITY);
   });
 });
+
+describe('OndeFrappeRenderer — l aura de l homoncule (etape 12)', () => {
+  const guard = {
+    x: 0,
+    y: 0,
+    bornTick: 0,
+    lifeTicks: 96,
+    radius: 90,
+    damage: 6,
+    element: 0,
+    by: 3,
+    tint: 0xd7dcf5,
+    bornMs: 1000,
+  };
+
+  it('se centre sur son invocateur DESSINE, pas sur le point de pose', () => {
+    const renderer = new OndeFrappeRenderer();
+    renderer.load();
+    const circle = vi.spyOn(renderer.graphics, 'circle');
+
+    renderer.draw([], [], 1200, [guard], [{ id: 3, x: 500, y: 400 }]);
+
+    expect(circle).toHaveBeenCalledWith(500, 400, 90);
+    expect(circle).not.toHaveBeenCalledWith(0, 0, 90);
+  });
+
+  it('ne dessine qu une aura par invocateur, meme quand deux homoncules se chevauchent', () => {
+    const renderer = new OndeFrappeRenderer();
+    renderer.load();
+    const circle = vi.spyOn(renderer.graphics, 'circle');
+
+    renderer.draw([], [], 1200, [guard, { ...guard, bornTick: 30 }], [{ id: 3, x: 500, y: 400 }]);
+
+    const disques = circle.mock.calls.filter((c) => c[0] === 500 && c[1] === 400 && c[2] === 90);
+    // Le disque et le liseré blanc : deux appels pour UNE aura.
+    expect(disques).toHaveLength(2);
+  });
+});

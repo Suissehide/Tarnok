@@ -1,6 +1,20 @@
+import { TICK_HZ } from '@shared/constants';
+import { GUARD_PULSE_TICKS } from '@shared/weapons';
 import { type Container, Graphics } from 'pixi.js';
 
-import { FRAPPE_BOLT_MS, FRAPPE_DELAY_MS, type FrappeTrace, type OndeTrace } from '../net/client';
+import {
+  FRAPPE_BOLT_MS,
+  FRAPPE_DELAY_MS,
+  type FrappeTrace,
+  type GuardTrace,
+  type OndeTrace,
+} from '../net/client';
+import type { BeamAnchor } from './chain-renderer';
+
+/** Braises qui montent dans une aura : un nombre fixe, donc un cout borne. */
+export const AURA_EMBERS = 12;
+/** La periode d'une pulsation, en ms : la vague qui court au bord de l'aura la suit. */
+const AURA_PULSE_MS = (GUARD_PULSE_TICKS / TICK_HZ) * 1000;
 
 /**
  * Les deux familles sans projectile de l'etape 12 (§3.4, §5) : l'ONDE, un
@@ -64,10 +78,26 @@ export class OndeFrappeRenderer {
     this.#ready = true;
   }
 
-  draw(ondes: readonly OndeTrace[], frappes: readonly FrappeTrace[], nowMs: number): void {
+  draw(
+    ondes: readonly OndeTrace[],
+    frappes: readonly FrappeTrace[],
+    nowMs: number,
+    guards: readonly GuardTrace[] = [],
+    players: readonly BeamAnchor[] = [],
+  ): void {
     this.#graphics.clear();
     if (!this.#ready) {
       return;
+    }
+    // Une aura par invocateur : deux homoncules qui se chevauchent (cadence
+    // empilee) dessineraient deux fois le meme disque, plus opaque.
+    for (let i = 0; i < guards.length; i++) {
+      const guard = guards[i];
+      if (!guard || guards.findIndex((g) => g.by === guard.by) !== i) {
+        continue;
+      }
+      const owner = players.find((p) => p.id === guard.by);
+      this.#drawAura(guard, owner ?? guard, nowMs);
     }
     for (const onde of ondes) {
       this.#drawOnde(onde, nowMs);
@@ -110,6 +140,67 @@ export class OndeFrappeRenderer {
       width: Math.max(1, w * 0.3),
       alpha: 0.55 * fade,
     });
+  }
+
+  /**
+   * L'aura de l'homoncule (etape 12) : un disque de mercure qui SUIT son
+   * invocateur (`center`, sa position dessinee), un bord qui miroite, une
+   * vague qui court du dedans vers le bord a chaque pulsation, des braises qui
+   * montent, et l'homoncule lui-meme — une goutte qui tourne dans l'aura.
+   */
+  #drawAura(guard: GuardTrace, center: { x: number; y: number }, nowMs: number): void {
+    const g = this.#graphics;
+    const r = guard.radius;
+    const t = Math.max(0, nowMs - guard.bornMs) / 1000;
+    const cx = center.x;
+    const cy = center.y;
+    const tint = guard.tint;
+
+    g.circle(cx, cy, r).fill({ color: tint, alpha: 0.07 });
+    // Le bord qui miroite : un cercle module par une sinusoide qui tourne.
+    const n = 48;
+    for (let k = 0; k <= n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const rr = r * (1 + 0.035 * Math.sin(6 * a + t * 4));
+      const px = cx + Math.cos(a) * rr;
+      const py = cy + Math.sin(a) * rr;
+      if (k === 0) {
+        g.moveTo(px, py);
+      } else {
+        g.lineTo(px, py);
+      }
+    }
+    g.stroke({ color: tint, width: 3, alpha: 0.55 });
+    g.circle(cx, cy, r).stroke({ color: 0xffffff, width: 1, alpha: 0.25 });
+    // La pulsation : un anneau qui part des deux tiers et meurt au bord.
+    const phase = ((nowMs - guard.bornMs) % AURA_PULSE_MS) / AURA_PULSE_MS;
+    g.circle(cx, cy, r * (0.65 + 0.35 * phase)).stroke({
+      color: tint,
+      width: 6 * (1 - phase) + 1,
+      alpha: 0.35 * (1 - phase),
+    });
+    // Les braises : chacune nait a un point fixe de l'aura et monte en s'eteignant.
+    for (let e = 0; e < AURA_EMBERS; e++) {
+      const a = hash01(e, guard.by + 1) * Math.PI * 2;
+      const d = r * Math.sqrt(hash01(guard.by + 3, e)) * 0.95;
+      const cycle = (t * 0.9 + hash01(e + 5, guard.by)) % 1;
+      const ex = cx + Math.cos(a) * d;
+      const ey = cy + Math.sin(a) * d - cycle * 26;
+      g.circle(ex, ey, 1.8 * (1 - cycle) + 0.4).fill({
+        color: e % 3 === 0 ? 0xffffff : tint,
+        alpha: 0.8 * (1 - cycle),
+      });
+    }
+    // L'homoncule : une goutte de mercure qui tourne, avec sa trainee.
+    for (let s = 3; s >= 0; s--) {
+      const a = t * 2.4 - s * 0.16;
+      const hx = cx + Math.cos(a) * r * 0.6;
+      const hy = cy + Math.sin(a) * r * 0.6 + Math.sin(t * 6) * 2;
+      g.circle(hx, hy, 7 - s * 1.4).fill({ color: tint, alpha: s === 0 ? 0.95 : 0.25 });
+      if (s === 0) {
+        g.circle(hx - 2, hy - 2.5, 2.4).fill({ color: 0xffffff, alpha: 0.9 });
+      }
+    }
   }
 
   /** Pendant le delai : un cercle qui se resserre sur le rayon d'impact, et un point au centre. */

@@ -80,6 +80,7 @@ import {
   cooldownWithBonus,
   FIRE_RATE_PER_UPGRADE,
   type Guard,
+  guardCenter,
   guardIsAlive,
   guardPulsesAt,
   UPGRADE,
@@ -2219,8 +2220,8 @@ export class Room {
    * sont eteintes.
    *
    * ⚠️ **Elle alimente `#haloPulses`, elle ne resout rien** : une invocation
-   * frappe exactement comme un halo, a ceci pres que son centre ne suit pas
-   * son porteur. `resolveHalos` les resout donc ensemble, et le jeu ne gagne
+   * frappe exactement comme un halo (depuis l'etape 12, son centre suit aussi
+   * son invocateur — voir `guardCenter`). `resolveHalos` les resout donc ensemble, et le jeu ne gagne
    * pas un chemin de degat de plus.
    */
   #pulseGuards(tick: number): void {
@@ -2231,9 +2232,11 @@ export class Room {
       if (!guardPulsesAt(guard, tick)) {
         continue;
       }
+      // Le centre SUIT l'invocateur (etape 12) : l'aura brule autour de lui.
+      const centre = guardCenter(guard, this.#anchor);
       this.#haloPulses.push({
-        x: guard.x,
-        y: guard.y,
+        x: centre.x,
+        y: centre.y,
         radius: guard.radius,
         damage: guard.damage,
         element: guard.element,

@@ -78,6 +78,7 @@ import {
   cooldownWithBonus,
   FIRE_RATE_PER_UPGRADE,
   type Guard,
+  guardCenter,
   guardIsAlive,
   guardPulsesAt,
   UPGRADE,
@@ -1122,6 +1123,15 @@ export class ChainFlashes {
     }
     this.#count = last;
   }
+}
+
+/**
+ * Une invocation vivante cote client : la meme que celle du serveur, plus ce
+ * que seul le dessin lit — sa teinte et son heure murale de naissance.
+ */
+export interface GuardTrace extends Guard {
+  readonly tint: number;
+  readonly bornMs: number;
 }
 
 /** Un ping annonce par le salon (etape 9), tel que le rendu le lit. */
@@ -2638,11 +2648,11 @@ export class GameClient {
     // projectiles ») n'a pas ete suivi a la lettre ici — voir le rapport de
     // la tache 11.
     if (tick > this.#freezeUntilTick) {
+      this.#anchorPlayers = snapshot?.players ?? [];
       this.#fireWeapons(tick, snapshot?.players ?? [], nowMs);
       this.#pulseGuards(tick, nowMs);
       this.#sweepOndes(tick, nowMs);
       this.#strikeFrappes(tick, nowMs);
-      this.#anchorPlayers = snapshot?.players ?? [];
       // Le miroir cosmetique du souffle de fin de course (etape 8) : la
       // grenade explose meme sans avoir percute personne, cote serveur — ici
       // on en dessine le flash, au meme endroit et au meme rayon.
@@ -2927,7 +2937,12 @@ export class GameClient {
    * du serveur, derivee des memes trois choses, plus la TEINTE de l'arme qui
    * n'interesse que le dessin.
    */
-  #guards: (Guard & { tint: number })[] = [];
+  #guards: GuardTrace[] = [];
+
+  /** Les invocations vivantes, en lecture pour le calque de l'aura (etape 12). */
+  get guards(): readonly GuardTrace[] {
+    return this.#guards;
+  }
 
   /**
    * Dessine une pulsation par invocation due a ce tick, et oublie celles qui
@@ -2943,16 +2958,35 @@ export class GameClient {
       return;
     }
     for (const guard of this.#guards) {
-      if (guardPulsesAt(guard, tick)) {
-        this.hitFlashes.spawn(
-          guard.x,
-          guard.y,
-          guard.tint,
-          guard.radius,
-          guard.damage,
-          nowMs,
-          false,
-        );
+      if (!guardPulsesAt(guard, tick)) {
+        continue;
+      }
+      // Etape 12 : l'aura est DESSINEE en continu par son calque ; une
+      // pulsation n'est plus un grand disque, c'est la brulure sur chaque
+      // ennemi touche — petit flash, chiffre, marque du plus proche, la meme
+      // geometrie que `resolveHalos`.
+      const c = guardCenter(guard, this.#anchor);
+      const cx = c.x;
+      const cy = c.y;
+      const r2 = guard.radius * guard.radius;
+      let nearest = -1;
+      let nearestD2 = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < this.horde.count; i++) {
+        const ex = this.horde.x[i] ?? 0;
+        const ey = this.horde.y[i] ?? 0;
+        const d2 = (ex - cx) * (ex - cx) + (ey - cy) * (ey - cy);
+        if (d2 > r2) {
+          continue;
+        }
+        this.hitFlashes.spawn(ex, ey, guard.tint, 0, guard.damage, nowMs, false);
+        this.damageNumbers.spawn(ex, ey, guard.damage, false, guard.element, nowMs);
+        if (d2 < nearestD2) {
+          nearestD2 = d2;
+          nearest = i;
+        }
+      }
+      if (nearest >= 0 && guard.element !== ELEMENT.NEUTRE) {
+        this.#markLocally(nearest, guard.element, guard.by, tick);
       }
     }
     this.#guards = this.#guards.filter((g) => guardIsAlive(g, tick));
@@ -3214,6 +3248,7 @@ export class GameClient {
         // La teinte voyage AVEC l'invocation, pas a cote : c'est elle qui dira
         // a l'ecran de quelle arme vient la pulsation.
         tint: weapon.look.tint,
+        bornMs: nowMs,
       });
       last[weaponId] = tick;
       return;

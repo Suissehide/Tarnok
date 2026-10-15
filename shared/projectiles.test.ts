@@ -1031,7 +1031,10 @@ describe('Projectiles — la mine, un projectile qui ne part pas', () => {
   });
 
   it('rend au catalogue une arme qui se pose, et elle emporte un souffle', () => {
-    const mines = WEAPONS.filter((w) => w.projectileSpeed === 0);
+    // Les TIRS immobiles : l'homoncule (une invocation) a lui aussi une vitesse
+    // nulle, mais il n'attend rien — depuis l'etape 12 il accompagne son
+    // invocateur, et sa vie egale sa recharge.
+    const mines = WEAPONS.filter((w) => w.kind === 'tir' && w.projectileSpeed === 0);
     expect(mines.length).toBeGreaterThan(0);
     for (const w of mines) {
       expect(w.blastRadius, w.name).toBeGreaterThan(0);

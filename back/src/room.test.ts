@@ -5327,10 +5327,12 @@ describe("l'invocation, posee par le salon (etape 8)", () => {
     expect(room.horde.slotOf(cible)).toBe(-1);
   });
 
-  it('reste OU ELLE A ETE POSEE quand le joueur s en va', () => {
-    // Elle se detache : c'est la difference avec le halo, qui suit son
-    // porteur. Le joueur part a droite, l'invocation continue de frapper a
-    // gauche.
+  it('ne brule PLUS ou elle a ete posee quand le joueur s en va (etape 12)', () => {
+    // ⚠️ **Inverse a l'etape 12**, a la demande de Leo : « une zone autour de
+    // toi qui brule a petit feu plutot que de laisser la zone derriere toi ».
+    // Ce cas gardait le detachement ; il garde desormais qu'il n'y en a plus.
+    // Que l'aura brule bien autour du joueur arrive est garde par le bloc de
+    // l'etape 12 (« l homoncule brule autour de son invocateur »).
     const room = salonAvecInvocation();
     const depart = positionOf(room, 1);
 
@@ -5348,16 +5350,21 @@ describe("l'invocation, posee par le salon (etape 8)", () => {
     // Le joueur est bien PARTI, hors de portee de ce qu'il a pose…
     expect(arrivee.x - depart.x).toBeGreaterThan(2 * rayon);
 
-    // …et ce qui arrive la-bas meurt quand meme. Trop loin du joueur pour
-    // qu'une invocation POSTERIEURE (il en repose une toutes les 90 ticks, a
-    // sa nouvelle position) puisse y etre pour quelque chose.
+    // …et ce qui arrive la-bas ne brule plus : l'homoncule est parti avec lui.
+    // Tenu a 1 PV et sur place, pour que seule l'absence de l'aura le sauve.
     const cible = spawnMonsterAt(room, 501, depart.x, depart.y);
+    room.horde.hp[room.horde.slotOf(cible)] = 1;
     expect(Math.abs(arrivee.x - depart.x)).toBeGreaterThan(rayon);
-    for (let i = 0; i < 60 && room.horde.slotOf(cible) >= 0; i++) {
+    for (let i = 0; i < 60; i++) {
       room.applyInput(1, 100 + i, 127, 0, 127, 0);
+      const slot = room.horde.slotOf(cible);
+      if (slot >= 0) {
+        room.horde.x[slot] = depart.x;
+        room.horde.y[slot] = depart.y;
+      }
       room.step(DT);
     }
-    expect(room.horde.slotOf(cible)).toBe(-1);
+    expect(room.horde.slotOf(cible)).toBeGreaterThanOrEqual(0);
   });
 
   it('finit par s eteindre : un monstre pose trop tard survit', () => {
@@ -5492,6 +5499,31 @@ describe('etape 12 : onde, frappe differee et ancre, posees par le salon', () =>
     expect(room.tick).toBe(tir + FRAPPE_DELAY_TICKS);
     expect(vivant(room, cible)).toBe(false);
     expect(vivant(room, leurre)).toBe(true);
+  });
+
+  it('l homoncule brule autour de son invocateur, plus au point de pose', () => {
+    const { room, arme } = salonAvec('invocation');
+    const depart = positionOf(room, 1);
+    const marche = 30;
+    for (let i = 0; i < marche; i++) {
+      room.applyInput(1, i + 1, 0, 127, i === 0 ? 127 : 0, 0);
+      room.step(DT);
+    }
+    const arrivee = positionOf(room, 1);
+    expect(arrivee.y - depart.y).toBeGreaterThan(2 * arme.blastRadius + 20);
+    // Au point de pose : l'ancien homoncule y restait, celui-ci est parti.
+    const tenirPose = cloue(room, 630, depart.x, depart.y);
+    const pose = room.horde.entityIdAt(room.horde.count - 1);
+    const tenirPres = cloue(room, 631, arrivee.x + arme.blastRadius * 0.5, arrivee.y);
+    const pres = room.horde.entityIdAt(room.horde.count - 1);
+    for (let i = 0; i < arme.projectileLifeTicks - marche - 1; i++) {
+      room.applyInput(1, 100 + i, 0, 0, 0, 0);
+      tenirPose();
+      tenirPres();
+      room.step(DT);
+    }
+    expect(vivant(room, pres)).toBe(false);
+    expect(vivant(room, pose)).toBe(true);
   });
 
   it('l ancre : la lame d orbite suit son tireur qui se deplace', () => {

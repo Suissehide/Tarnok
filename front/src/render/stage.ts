@@ -15,6 +15,7 @@ import type {
   DamageNumbers,
   DerivedOrbs,
   FrappeTrace,
+  GuardTrace,
   HitFlashes,
   ObstacleMap,
   OndeTrace,
@@ -447,8 +448,10 @@ export class Stage {
     ondes: readonly OndeTrace[],
     frappes: readonly FrappeTrace[],
     nowMs: number,
+    guards: readonly GuardTrace[] = [],
+    players: readonly BeamAnchor[] = [],
   ): void {
-    this.#ondesFrappes.draw(ondes, frappes, nowMs);
+    this.#ondesFrappes.draw(ondes, frappes, nowMs, guards, players);
   }
 
   drawProjectiles(projectiles: Projectiles): void {

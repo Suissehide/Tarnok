@@ -132,6 +132,7 @@ class RecordingClient implements FrameClient {
   /** Deux listes DISTINCTES : les intervertir doit se voir. */
   readonly ondes = [];
   readonly frappes = [];
+  readonly guards = [];
   readonly pings = new Map([[2, { playerId: 2, intent: 1, x: 5, y: 6, tick: 130 }]]);
   /**
    * Volontairement DIFFERENT de l'horloge murale passee a `composeFrame` : sans
@@ -317,7 +318,8 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   it('dessine les ondes et les frappes, avec l horloge murale', () => {
     const { stage, client } = compose();
     const args = stage.argsOf('ondes-frappes');
-    expect(args).toEqual([client.ondes, client.frappes, NOW]);
+    // L'aura de l'homoncule (etape 12) suit les joueurs DESSINES.
+    expect(args).toEqual([client.ondes, client.frappes, NOW, client.guards, STATE.players]);
     expect(args?.[0]).toBe(client.ondes);
     expect(args?.[1]).toBe(client.frappes);
   });

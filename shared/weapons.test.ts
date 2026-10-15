@@ -857,7 +857,9 @@ describe('Guard — le rythme d une invocation', () => {
     x: 0,
     y: 0,
     bornTick: 100,
-    lifeTicks: 150,
+    // Un multiple de la pulsation : c'est ce qui tend le piege du modulo plus
+    // bas (un tick « multiple » juste apres l'extinction).
+    lifeTicks: 10 * GUARD_PULSE_TICKS,
     radius: 90,
     damage: 6,
     element: 0,

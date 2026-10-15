@@ -1276,6 +1276,13 @@ const WEAPON_DEFS: readonly (Omit<
     // milieu de la horde pose encore plus souvent l'occasion qu'une liaison
     // s'etablisse. Le Vif-argent garde ses deux armes avec le Glaive, et le
     // catalogue reste a dix-sept.
+    // ⚠️ **Etape 12 : l'homoncule ACCOMPAGNE son invocateur** (retour de
+    // Leo : « une zone autour de toi qui brule a petit feu plutot que de
+    // laisser la zone derriere toi »). Ses pulsations partent de la position
+    // COURANTE du joueur (`guardCenter`), et sa vie egale sa recharge : un
+    // homoncule s'eteint au tick ou le suivant nait, l'aura ne s'interrompt
+    // jamais. 6 degats toutes les `GUARD_PULSE_TICKS` (12) : 15 par seconde
+    // sur tout ce qui reste dans l'aura.
     name: 'Homoncule de mercure',
     perks: [UPGRADE.ZONE, UPGRADE.RANGE],
     kind: 'invocation',
@@ -1297,12 +1304,12 @@ const WEAPON_DEFS: readonly (Omit<
     // Trois secondes entre deux poses, cinq secondes de vie : deux homoncules
     // se chevauchent donc toujours un peu, et l'arme ne connait jamais de
     // silence complet.
-    cooldownTicks: 90,
+    cooldownTicks: 96,
     damage: 6,
     // Elle ne LANCE rien — meme regle que la mine, voir `MIN_MUZZLE_SPEED`.
     projectileSpeed: 0,
     /** La duree de vie de l'invocation, pas celle d'un projectile. */
-    projectileLifeTicks: 150,
+    projectileLifeTicks: 96,
     projectileCount: 1,
     spreadRadians: 0.18,
     element: ELEMENT.VIF_ARGENT,
@@ -1562,14 +1569,16 @@ export function isLaunched(weapon: Weapon): boolean {
  * compare. Il descendra dans `Weapon` le jour ou deux invocations devront
  * frapper a des rythmes differents.
  *
- * 15 : deux fois par seconde a `TICK_HZ`. Assez pour qu'on la voie travailler,
- * assez lent pour qu'on compte ses coups.
+ * 12 : 2,5 fois par seconde a `TICK_HZ` (etape 12 : « a petit feu », plus
+ * souvent et sans trou — la vie de l'homoncule, 96, en est un multiple, donc
+ * le suivant pulse exactement 12 ticks apres le dernier coup du precedent).
  */
-export const GUARD_PULSE_TICKS = 15;
+export const GUARD_PULSE_TICKS = 12;
 
 /**
- * Une invocation posee : un corps immobile qui frappe autour de lui jusqu'a
- * s'eteindre (etape 8).
+ * Une invocation : un corps qui frappe autour de lui jusqu'a s'eteindre
+ * (etape 8). Depuis l'etape 12 il suit son invocateur (`guardCenter`) ; `x`/`y`
+ * ne servent plus que si celui-ci a quitte le salon.
  *
  * ⚠️ **Elle vit dans `shared/` parce que les DEUX cotes la derivent.** Le
  * serveur en tire des degats, le client le dessin qui les accompagne — et ni
@@ -1589,6 +1598,18 @@ export interface Guard {
   readonly element: number;
   /** Le joueur qui l'a posee : c'est LUI que la marque retient, donc lui que la Synergie compare (§7). */
   readonly by: number;
+}
+
+/**
+ * Le centre d'une pulsation : la position COURANTE de l'invocateur (etape 12,
+ * l'homoncule le suit), ou le point de pose s'il n'est plus la. Meme fonction
+ * des deux cotes ; `anchor` est la meme que celle des projectiles.
+ */
+export function guardCenter(
+  guard: Guard,
+  anchor?: (by: number) => { readonly x: number; readonly y: number } | undefined,
+): { readonly x: number; readonly y: number } {
+  return anchor?.(guard.by) ?? guard;
 }
 
 /** Cette invocation tient-elle encore au tick `tick` ? */

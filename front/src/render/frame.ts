@@ -13,6 +13,7 @@ import type {
   DamageNumbers,
   DerivedOrbs,
   FrappeTrace,
+  GuardTrace,
   HitFlashes,
   OndeTrace,
   OrbFlights,
@@ -82,6 +83,8 @@ export interface FrameClient {
   readonly ondes: readonly OndeTrace[];
   /** Les impacts de frappe, en attente ou frappes (etape 12) — voir `GameClient.frappes`. */
   readonly frappes: readonly FrappeTrace[];
+  /** Les homoncules vivants (etape 12) : leur aura suit l'invocateur — voir `GameClient.guards`. */
+  readonly guards: readonly GuardTrace[];
   /**
    * Le tick de horde — **pas** l'horloge murale. C'est lui qui fait mourir les
    * zones et expirer les marques, avec le meme predicat que le serveur ; les
@@ -171,6 +174,8 @@ export interface FrameStage {
     ondes: readonly OndeTrace[],
     frappes: readonly FrappeTrace[],
     nowMs: number,
+    guards: readonly GuardTrace[],
+    players: readonly BeamAnchor[],
   ): void;
   drawProjectiles(projectiles: Projectiles): void;
   /**
@@ -307,7 +312,7 @@ export function composeFrame(
   stage.drawOrbs(client.orbs, client.orbFlights, state.players, now);
   // Sous les projectiles (§5) : une onde et un avertissement sont des nappes
   // au sol ; un tir qui les traverse doit rester lisible par-dessus.
-  stage.drawOndesFrappes(client.ondes, client.frappes, now);
+  stage.drawOndesFrappes(client.ondes, client.frappes, now, client.guards, state.players);
   stage.drawProjectiles(client.projectiles);
   // Juste au-dessus des projectiles, comme eux au-dessus de la horde : une
   // chaine relie des ennemis, elle doit donc rester lisible par-dessus leurs
