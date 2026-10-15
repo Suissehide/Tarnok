@@ -2009,6 +2009,32 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     // est celle qu'il avait : rien ne l'a touche.
     expect(horde.hp[horde.slotOf(loin)]).toBe(HEAVY_HP);
   });
+
+  it('etape 10 : Echo double les degats d une reaction declenchee par son porteur, pas celle d un autre', () => {
+    function perte(echoOf: (id: number) => number): number {
+      const horde = new Horde(10);
+      const cible = addOne(horde, 1, 1000, 1000, LOURD);
+      horde.hp[horde.slotOf(cible)] = 1000;
+      applyReactions(
+        horde,
+        new OrbField(10),
+        0,
+        [declencheur(1000, 1000)],
+        new ZoneField(),
+        new Reactions(),
+        echoOf,
+      );
+      return 1000 - (horde.hp[horde.slotOf(cible)] ?? 0);
+    }
+    const seul = perte(() => 0);
+    expect(seul).toBeCloseTo(coupSurLourd(REACTION_DAMAGE), 4);
+    // Le declencheur (`by: 2`) porte une carte : x2.
+    expect(perte((id) => (id === 2 ? 1 : 0))).toBeCloseTo(coupSurLourd(2 * REACTION_DAMAGE), 4);
+    // Deux cartes : x3 — « +100 % par carte ».
+    expect(perte((id) => (id === 2 ? 2 : 0))).toBeCloseTo(coupSurLourd(3 * REACTION_DAMAGE), 4);
+    // Le MARQUEUR (`markBy: 1`) la porte : rien ne change.
+    expect(perte((id) => (id === 1 ? 1 : 0))).toBeCloseTo(seul, 4);
+  });
 });
 
 /**
@@ -3744,6 +3770,26 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
 
     expect(zones.count).toBe(1);
     expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.ECLAT_DE_GEL);
+  });
+
+  it('etape 10 : Echo double aussi une reaction a effet propre (Eclat de gel)', () => {
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 1000, LOURD);
+    horde.hp[horde.slotOf(cible)] = 1000;
+    applyReactions(
+      horde,
+      new OrbField(10),
+      0,
+      [trigger(cible, 1000, 1000)],
+      new ZoneField(),
+      new Reactions(),
+      (id) => (id === 2 ? 1 : 0),
+    );
+    const armureDansLaZone = Math.max(0, HEAVY_ARMOR - CHAUX_ARMOR_REDUCTION);
+    expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(
+      1000 - 2 * ECLAT_DE_GEL_DAMAGE * (1 - armureDansLaZone),
+      5,
+    );
   });
 });
 

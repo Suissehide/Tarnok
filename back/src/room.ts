@@ -1557,6 +1557,8 @@ export class Room {
       triggers,
       this.#zones,
       this.#reactions,
+      // Echo (etape 10) : les reactions que CE joueur declenche.
+      (id) => this.#players.get(id)?.loadout.bonus('echo') ?? 0,
     );
     // ⚠️ **APRES `applyReactions`, et c'est la tache 21 qui l'a deplace.** Les
     // zones naissaient du projectile, donc avant `markInZones` ; elles naissent

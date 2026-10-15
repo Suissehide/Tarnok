@@ -5454,3 +5454,45 @@ describe('etape 10 : le critique du tireur dans le salon', () => {
     expect(appel?.[9]?.multiplier).toBeCloseTo(CRIT_MULTIPLIER + 0.3, 9);
   });
 });
+
+describe('etape 10 : Echo dans le salon', () => {
+  const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0;
+  const ECHO = PASSIVES.find((p) => p.kind === 'echo')?.id ?? -1;
+
+  /**
+   * Le decor de « annonce la reaction » : le joueur 1 declenche au Givre, le
+   * joueur 2 entretient la marque de Braise. Rend la perte de PV de la cible
+   * (indestructible) et le nombre de reactions.
+   */
+  function scene(porteur: number | null): { perte: number; reactions: number } {
+    const room = new Room(0xbaa1_5e10);
+    room.join(1);
+    room.join(2);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    if (porteur !== null) {
+      room.grantCard(porteur, { nature: CARD.PASSIVE, refId: ECHO });
+    }
+    const before = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 700, before.x + 100, before.y, LOURD);
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+    let reactions = 0;
+    for (let i = 0; i < 20; i++) {
+      room.horde.applyMark(room.horde.slotOf(cible), ELEMENT.BRAISE, 2, room.tick);
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions += room.drainReactions().length;
+    }
+    return { perte: 1e6 - (room.horde.hp[room.horde.slotOf(cible)] ?? 0), reactions };
+  }
+
+  it('le salon passe Echo au declencheur, jamais au marqueur', () => {
+    const sans = scene(null);
+    const declencheur = scene(1);
+    const marqueur = scene(2);
+    expect(sans.reactions).toBeGreaterThan(0);
+    expect(declencheur.reactions).toBe(sans.reactions);
+    expect(declencheur.perte).toBeGreaterThan(sans.perte);
+    expect(marqueur.perte).toBe(sans.perte);
+  });
+});
