@@ -111,7 +111,8 @@ const SHOT_SHEETS: Readonly<Record<string, { path: string; frame: number; spin: 
   },
   'harpoon-shark': { path: 'Monsters/Harpoon Shark/Harpoon.png', frame: 64, spin: false },
 };
-const EXPLOSION = { path: 'Particle FX/Explosion_01.png', frame: 192 };
+/** `content` : le diametre du dessin au plus fort, mesure sur la planche (64 px sur 192). */
+const EXPLOSION = { path: 'Particle FX/Explosion_01.png', frame: 192, content: 64 };
 const HEX_CAST = { path: 'Monsters/Hex Shaman/Hex Shaman_Explosion.png', frame: 128 };
 /** Le sort de transformation du pack : la bouffee qui releve un mort. */
 const RAISE = {
@@ -265,9 +266,17 @@ export class BehaviorRenderer {
         const n = this.#frames.get(EXPLOSION.path)?.length ?? 0;
         const t = 1 - s.alpha;
         const sp = n > 0 ? this.#sprite(EXPLOSION.path, Math.min(n - 1, Math.floor(t * n))) : null;
+        // Un eclair qui couvre EXACTEMENT la zone touchee, le premier quart :
+        // l'explosion du pack seule se lisait mal (retour de playtest).
+        if (t < 0.25) {
+          g.circle(s.x, s.y, KAMIKAZE_RADIUS).fill({
+            color: 0xffb347,
+            alpha: 0.45 * (1 - t / 0.25),
+          });
+        }
         if (sp) {
           sp.position.set(s.x, s.y);
-          sp.scale.set((KAMIKAZE_RADIUS * 2.4) / EXPLOSION.frame);
+          sp.scale.set((KAMIKAZE_RADIUS * 2) / EXPLOSION.content);
         } else {
           g.circle(s.x, s.y, s.radius).fill({ color: 0xffa21f, alpha: 0.55 * s.alpha });
           g.circle(s.x, s.y, s.radius).stroke({ color: 0xfff0b0, width: 5, alpha: s.alpha });

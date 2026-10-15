@@ -189,6 +189,20 @@ describe('l explosion du kamikaze', () => {
 });
 
 describe('la reaction en chaine', () => {
+  it('dans le salon, un kamikaze ABATTU explose aussi : le joueur dans son rayon encaisse', () => {
+    const room = new Room(5);
+    room.join(1);
+    room.step(DT);
+    const pos = room.positionOf(1) ?? { x: 0, y: 0 };
+    // Dans le rayon de l'explosion, hors du contact : seule sa mort peut blesser.
+    const k = poser(room.horde, 990_001, pos.x + 90, pos.y, KAMIKAZE);
+    room.horde.hp[room.horde.slotOf(k)] = 0.001;
+    const pvAvant = room.hpOf(1);
+    expect(abattre(room, k)).toBe(true);
+    room.step(DT);
+    expect(room.hpOf(1)).toBeLessThan(pvAvant);
+  });
+
   it('un kamikaze tue par une explosion explose a son tour, au tick suivant', () => {
     const room = new Room(5);
     room.join(1);
