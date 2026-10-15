@@ -38,6 +38,8 @@ describe('mini-carte', () => {
       ],
       enemies: { count: 2, x: new Float32Array([10, 20]), y: new Float32Array([10, 20]) },
       boss: null,
+      pings: [],
+      blinkOn: true,
     });
 
     // fond + 2 ennemis + 1 allie + contour + local
@@ -57,7 +59,37 @@ describe('mini-carte', () => {
         players: [],
         enemies: { count: 0, x: new Float32Array(), y: new Float32Array() },
         boss: null,
+        pings: [],
+        blinkOn: true,
       }),
     ).not.toThrow();
+  });
+
+  it('un ping clignote : un carre de 5 px de la couleur du joueur, seulement sur la phase allumee', () => {
+    const calls: { style: string; x: number; y: number; w: number; h: number }[] = [];
+    const ctx = {
+      fillStyle: '',
+      fillRect(x: number, y: number, w: number, h: number) {
+        calls.push({ style: this.fillStyle, x, y, w, h });
+      },
+    };
+    const canvas = {
+      width: 100,
+      height: 100,
+      getContext: () => ctx,
+    } as unknown as HTMLCanvasElement;
+    const map = new Minimap(canvas);
+    const base = {
+      localId: 1,
+      players: [],
+      enemies: { count: 0, x: new Float32Array(0), y: new Float32Array(0) },
+      boss: null,
+      pings: [{ playerId: 3, x: MAP_SIZE / 2, y: MAP_SIZE / 2 }],
+    };
+    map.draw({ ...base, blinkOn: true });
+    expect(calls.filter((c) => c.style === playerColor(3) && c.w === 5)).toHaveLength(1);
+    calls.length = 0;
+    map.draw({ ...base, blinkOn: false });
+    expect(calls.filter((c) => c.style === playerColor(3) && c.w === 5)).toHaveLength(0);
   });
 });

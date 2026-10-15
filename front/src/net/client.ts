@@ -47,12 +47,14 @@ import {
   encodeHello,
   encodeInput,
   encodePick,
+  encodePing,
   encodeStart,
   encodeVote,
   type LobbyMessage,
   MSG,
   NO_WEAPON,
   OUTCOME,
+  type PingShownMessage,
   type PlayerSnapshot,
   quantizeAxis,
   type WaveOrderMessage,
@@ -1058,6 +1060,21 @@ export class ChainFlashes {
   }
 }
 
+/** Un ping annonce par le salon (etape 9), tel que le rendu le lit. */
+export interface ActivePing {
+  playerId: number;
+  intent: number;
+  x: number;
+  y: number;
+  /**
+   * Tick de `GameClient#pingClock` a la RECEPTION : c'est lui qui fait
+   * expirer le ping. PAS le tick de horde (revue finale, etape 9) : celui-ci
+   * avance pendant le gel de niveau, et un ping date dessus s'eteindrait
+   * pendant que l'equipe choisit ses cartes — voir `pingClock`.
+   */
+  tick: number;
+}
+
 /**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
@@ -1312,6 +1329,18 @@ export class GameClient {
   readonly abilityEvents: AbilityUsed[] = [];
 
   /**
+   * Les pings annonces, AU PLUS UN par joueur (cle : son id) : un nouveau ping
+   * remplace l'ancien (§6 de la spec de l'etape 9). Jamais purges ici — c'est
+   * `livePings` qui dit lesquels sont encore vivants, a l'horloge `pingClock`
+   * (figee pendant le gel de niveau).
+   */
+  readonly pings = new Map<number, ActivePing>();
+  #pingCount = 0;
+  #lastPingIntent = -1;
+  /** Horloge de ping (revue finale, etape 9) : voir l'accesseur `pingClock`. */
+  #pingClock = 0;
+
+  /**
    * La charge du boss en cours, ou `null` — annoncee UNE FOIS par le serveur,
    * puis derivee ici tick par tick (§4 de la spec de l'etape 6a).
    *
@@ -1550,6 +1579,28 @@ export class GameClient {
    */
   get hordeTick(): number {
     return this.#lastHordeTick;
+  }
+
+  /**
+   * Horloge dediee aux pings (revue finale de l'etape 9). Avance comme
+   * `hordeTick` SAUF pendant que `isFrozen` est vrai — gel strict ET rampe de
+   * reprise comprises (tache 24) : c'est la MEME perturbation que celle que
+   * `isFrozen` decrit deja pour le HUD, et un ping pose juste avant une
+   * montee de niveau ne doit pas s'eteindre pendant que l'equipe choisit ses
+   * cartes. `hordeTick`, lui, avance a chaque pas fixe, gel ou pas — seul
+   * `#movementScale` ralentit le MOUVEMENT, jamais ce compteur, et c'est
+   * precisement la confusion que la revue a trouvee.
+   *
+   * ⚠️ **Mesuree UNE SEULE FOIS par appel a `update()`**, sur l'ECART du tick
+   * de horde entre le debut et la fin de cet appel — jamais depuis
+   * `#advanceHorde` : le rejeu (`#replayTick`) peut executer ce dernier
+   * plusieurs fois pour le MEME tick, et compterait alors deux fois le meme
+   * pas. `isFrozen` est stable sur toute la duree d'un `update()` : seul
+   * `#onFrame` (jamais appele depuis `update()`) fait avancer les bornes du
+   * gel.
+   */
+  get pingClock(): number {
+    return this.#pingClock;
   }
 
   /** L'etalage a afficher. Vide quand aucun draft n'est ouvert. */
@@ -1807,6 +1858,25 @@ export class GameClient {
     this.#ws?.send(encodeAbility(this.hordeTick, x, y));
   }
 
+  /**
+   * Pose un ping au point MONDE `(x, y)`. Le client PROPOSE : rien n'est
+   * affiche ici, pas meme pour soi — le ping apparait a l'annonce du salon,
+   * pour qu'un ping refuse n'existe chez personne (§5 de la spec de l'etape 9).
+   */
+  sendPing(intent: number, x: number, y: number): void {
+    this.#ws?.send(encodePing(intent, x, y));
+  }
+
+  /** Pings recus depuis la connexion : l'audio en deduit quand sonner. */
+  get pingCount(): number {
+    return this.#pingCount;
+  }
+
+  /** Intention du dernier ping recu, `-1` si aucun. */
+  get lastPingIntent(): number {
+    return this.#lastPingIntent;
+  }
+
   /** La classe du joueur local, ou `null` (arrive en cours de partie, sans salle d'attente). */
   get localClassId(): number | null {
     return this.#localClassId;
@@ -1872,6 +1942,19 @@ export class GameClient {
     if (msg.verb === VERB_IDS.relais && msg.playerId === this.#localId) {
       this.#local?.teleport(msg.x, msg.y);
     }
+  }
+
+  #onPingShown(msg: PingShownMessage): void {
+    this.pings.set(msg.playerId, {
+      playerId: msg.playerId,
+      intent: msg.intent,
+      x: msg.x,
+      y: msg.y,
+      // `pingClock`, pas `hordeTick` (revue finale, etape 9) : voir l'accesseur.
+      tick: this.pingClock,
+    });
+    this.#pingCount += 1;
+    this.#lastPingIntent = msg.intent;
   }
 
   connect(): void {
@@ -1963,6 +2046,7 @@ export class GameClient {
     const STEP = 1 / TICK_HZ;
     this.#hordeAcc += dt;
     let steps = 0;
+    const hordeTickAvant = this.#lastHordeTick;
     while (this.#hordeAcc >= STEP && steps < 5) {
       this.#advanceHorde(STEP, now);
       this.#hordeAcc -= STEP;
@@ -1970,6 +2054,14 @@ export class GameClient {
     }
     if (steps === 5) {
       this.#hordeAcc = 0;
+    }
+    // `pingClock` (revue finale, etape 9) : voir l'accesseur. Mesuree ICI,
+    // une seule fois pour tout cet appel — jamais dans `#advanceHorde`, que le
+    // rejeu peut executer plusieurs fois pour le meme tick. `#onFrame` ne
+    // s'execute jamais depuis `update()` (c'est le handler WebSocket qui
+    // l'appelle), donc `isFrozen` est stable sur toute la boucle ci-dessus.
+    if (!this.isFrozen) {
+      this.#pingClock += this.#lastHordeTick - hordeTickAvant;
     }
 
     const players = this.#buffer.sample(now);
@@ -2130,6 +2222,10 @@ export class GameClient {
     }
     if (msg.type === MSG.ABILITY_USED) {
       this.#onAbilityUsed(msg);
+      return;
+    }
+    if (msg.type === MSG.PING_SHOWN) {
+      this.#onPingShown(msg);
       return;
     }
     if (msg.type === MSG.BOSS_CHARGE) {

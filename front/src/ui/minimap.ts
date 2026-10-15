@@ -34,6 +34,10 @@ export interface MinimapView {
   players: readonly { id: number; x: number; y: number; hp: number }[];
   enemies: { readonly count: number; readonly x: Float32Array; readonly y: Float32Array };
   boss: { x: number; y: number } | null;
+  /** Les pings vivants (etape 9). */
+  pings: readonly { playerId: number; x: number; y: number }[];
+  /** Phase du clignotement, calculee par l'appelant : `draw` ne lit pas l'horloge. */
+  blinkOn: boolean;
 }
 
 /**
@@ -119,6 +123,14 @@ export class Minimap {
       const by = toMinimap(view.boss.y, MAP_SIZE, h);
       ctx.fillStyle = BOSS;
       ctx.fillRect(bx - 2, by - 2, 5, 5);
+    }
+
+    // Les pings (etape 9) : un carre de 5 px qui clignote, sous les joueurs.
+    if (view.blinkOn) {
+      for (const p of view.pings) {
+        ctx.fillStyle = playerColor(p.playerId);
+        ctx.fillRect(toMinimap(p.x, MAP_SIZE, w) - 2, toMinimap(p.y, MAP_SIZE, h) - 2, 5, 5);
+      }
     }
 
     // Allies d'abord, joueur local en DERNIER : il ne doit jamais etre

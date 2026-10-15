@@ -1188,3 +1188,48 @@
     color: var(--color-slate-title);
   }
 }
+
+/* La roue de ping (etape 9) : posee en fixe sur le curseur, sans capter la souris. */
+.ping-wheel {
+  position: fixed;
+  width: 0;
+  height: 0;
+  pointer-events: none;
+  z-index: 40;
+}
+.ping-wheel::before {
+  content: "";
+  position: absolute;
+  left: -70px;
+  top: -70px;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  border: 2px solid rgb(255 255 255 / 0.5);
+  background: rgb(20 17 15 / 0.45);
+}
+.ping-wheel__item {
+  position: absolute;
+  transform: translate(-50%, -50%);
+  white-space: nowrap;
+  font-size: 13px;
+  color: #fff;
+  text-shadow: 0 1px 2px #000;
+}
+.ping-wheel__item--haut {
+  left: 0;
+  top: -52px;
+  color: #ff6b5a;
+}
+.ping-wheel__item--droite {
+  left: 58px;
+  top: 0;
+}
+.ping-wheel__item--bas {
+  left: 0;
+  top: 52px;
+}
+.ping-wheel__item--gauche {
+  left: -54px;
+  top: 0;
+}

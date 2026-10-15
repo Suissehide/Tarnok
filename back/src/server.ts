@@ -2,6 +2,7 @@ import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
+import { clampToMap, PING_BURST, PING_INTENTS, PING_WINDOW_TICKS } from '@shared/ping';
 import {
   decode,
   encodeAbilityUsed,
@@ -13,6 +14,7 @@ import {
   encodeLevelUp,
   encodeLobby,
   encodePickups,
+  encodePingShown,
   encodePortalOpen,
   encodePortalResult,
   encodeReaction,
@@ -107,6 +109,12 @@ class Session {
   readonly #timer: NodeJS.Timeout;
   /** Octets reellement pousses sur le fil : l'encodage est mutualise, pas l'envoi. */
   #wireBytes = 0;
+  /**
+   * Ticks de salon des derniers pings ACCEPTES, par joueur (etape 9) : l'anti-spam.
+   * Ici et pas dans `Room` — un ping ne touche rien de la simulation, c'est une
+   * affaire de reseau.
+   */
+  readonly #pings = new Map<number, number[]>();
   /**
    * Vrai une fois `stop()` appelee. Un salon peut se refermer (dernier
    * joueur parti) PENDANT qu'une autre socket attend encore la resolution
@@ -328,6 +336,7 @@ class Session {
 
   remove(id: number): void {
     this.#clients.delete(id);
+    this.#pings.delete(id);
     this.#accounts.delete(id);
     this.room.leave(id);
     if (this.#clients.size === 0) {
@@ -451,6 +460,25 @@ class Session {
       // gestionnaire doublerait l'annonce : une premiere fois ici, une
       // seconde au drain.
       this.room.useAbility(id, msg.aimX, msg.aimY);
+      return;
+    }
+    if (msg.type === MSG.PING) {
+      // Meme discipline que le verbe : le client PROPOSE, le salon arbitre, et
+      // un refus est silencieux. Mais l'envoi est IMMEDIAT, contrairement au
+      // verbe : un ping ne touche rien de la simulation, il n'a aucun ordre a
+      // tenir face a `DEATHS` (§5 de la spec de l'etape 9).
+      if (msg.intent >= PING_INTENTS.length) {
+        return;
+      }
+      const now = this.room.tick;
+      const recents = (this.#pings.get(id) ?? []).filter((t) => now - t < PING_WINDOW_TICKS);
+      if (recents.length >= PING_BURST) {
+        this.#pings.set(id, recents);
+        return;
+      }
+      recents.push(now);
+      this.#pings.set(id, recents);
+      this.#send(encodePingShown(id, msg.intent, clampToMap(msg.x), clampToMap(msg.y)));
       return;
     }
     if (msg.type === MSG.DRAFT_TOKEN) {

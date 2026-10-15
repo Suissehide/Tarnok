@@ -83,6 +83,9 @@ class RecordingStage implements FrameStage {
   drawDamageNumbers(...args: unknown[]): void {
     this.#record('chiffres', ...args);
   }
+  drawPings(...args: unknown[]): void {
+    this.#record('pings', ...args);
+  }
   draw(...args: unknown[]): void {
     this.#record('joueurs', ...args);
   }
@@ -123,11 +126,18 @@ class RecordingClient implements FrameClient {
   readonly damageNumbers = new DamageNumbers(8);
   readonly reactionFlashes = new ReactionFlashes(8);
   readonly chainFlashes = new ChainFlashes(8);
+  readonly pings = new Map([[2, { playerId: 2, intent: 1, x: 5, y: 6, tick: 130 }]]);
   /**
    * Volontairement DIFFERENT de l'horloge murale passee a `composeFrame` : sans
    * cet ecart, passer `now` la ou le tick est attendu resterait indetectable.
    */
   readonly hordeTick = 137;
+  /**
+   * Volontairement DIFFERENT de `hordeTick` (revue finale, etape 9) : sans cet
+   * ecart, passer l'un a la place de l'autre a `drawPings` resterait
+   * indetectable — c'est exactement la confusion que la revue a trouvee.
+   */
+  readonly pingClock = 55;
   /**
    * Un boss reconnaissable, et surtout DISTINCT de la horde : `drawBossBar`
    * recoit les deux, et les intervertir ou n'en passer qu'un doit se voir.
@@ -404,6 +414,9 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       // apres tous les effets de monde (etape 8).
       'chiffres',
       'joueurs',
+      // Les pings (etape 9) : APRES `joueurs`, qui recentre la camera — sinon
+      // les fleches de bord auraient une image de retard sur le cadrage.
+      'pings',
       // La secousse ferme la marche : elle deplace ce que `joueurs` vient de
       // cadrer, donc elle ne peut pas le preceder (voir `Stage.shakeCamera`).
       'secousse',
@@ -413,6 +426,31 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   it('passe les chiffres de degats a l horloge MURALE, comme les flashs', () => {
     const { stage, client } = compose();
     expect(stage.argsOf('chiffres')).toEqual([client.damageNumbers, NOW]);
+  });
+
+  /**
+   * ⚠️ **Les pings recoivent la carte du CLIENT, les joueurs DESSINES
+   * (`state.players`) et `pingClock` — PAS `hordeTick`** (revue finale, etape
+   * 9) — jamais `now` pour decider qui vit. `hordeTick` avance a CHAQUE pas
+   * fixe, gel ou pas (seul `#movementScale` ralentit le mouvement) ; c'est
+   * `pingClock` qui n'avance pas pendant le gel de l'etalage, et qui garde
+   * donc un ping affiche pendant que l'equipe choisit ses cartes — voir
+   * `GameClient#pingClock`.
+   */
+  it('les pings recoivent la carte du client, les joueurs DESSINES et pingClock (pas hordeTick), apres le cadrage', () => {
+    const { stage, client, state } = compose();
+    expect(stage.argsOf('pings')).toEqual([
+      client.pings,
+      state.players,
+      state.localId,
+      client.pingClock,
+      NOW,
+    ]);
+    const ordre = stage.order;
+    // Apres `draw` (qui recentre la camera) : sinon les fleches auraient une
+    // image de retard sur le cadrage.
+    expect(ordre.indexOf('pings')).toBeGreaterThan(ordre.indexOf('joueurs'));
+    expect(ordre.indexOf('pings')).toBeLessThan(ordre.indexOf('secousse'));
   });
 
   it('secoue la camera avec les MEMES flashs que les calques, et l horloge murale', () => {

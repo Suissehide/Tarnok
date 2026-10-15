@@ -6,6 +6,7 @@ import type { Projectiles } from '@shared/projectiles';
 import type { ZoneField } from '@shared/zones';
 
 import type {
+  ActivePing,
   BlastFlash,
   BossVitals,
   ChainFlashes,
@@ -99,6 +100,15 @@ export interface FrameClient {
    * interpolee, donc elle n'est pas dans `RenderState`.
    */
   readonly bossCharge: BossCharge | null;
+  /** Les pings annonces (etape 9), au plus un par joueur — voir `GameClient.pings`. */
+  readonly pings: ReadonlyMap<number, ActivePing>;
+  /**
+   * L'horloge de ping (revue finale, etape 9) — voir `GameClient#pingClock`.
+   * Comme `hordeTick`, SAUF qu'elle n'avance pas pendant le gel de niveau :
+   * c'est elle, jamais `hordeTick`, qui decide quels pings `drawPings` garde
+   * vivants.
+   */
+  readonly pingClock: number;
 }
 
 /**
@@ -177,6 +187,18 @@ export interface FrameStage {
   drawDamageNumbers(numbers: DamageNumbers, nowMs: number): void;
   /** Les carres des joueurs et la camera — voir `Stage.draw`. */
   draw(state: RenderState): void;
+  /**
+   * Les pings (etape 9) : marqueurs dans le monde, fleches en bord d'ecran pour
+   * les pings ET les allies hors champ. Le TICK decide qui vit ; `players` sont
+   * les positions DESSINEES, comme pour `drawOrbs`.
+   */
+  drawPings(
+    pings: ReadonlyMap<number, ActivePing>,
+    players: readonly { id: number; x: number; y: number }[],
+    localId: number | null,
+    tick: number,
+    timeMs: number,
+  ): void;
 }
 
 /**
@@ -287,6 +309,14 @@ export function composeFrame(
   screens.updateDraft();
   screens.updatePortal();
   stage.draw(state);
+  // ⚠️ **APRES `draw`, qui recentre la camera** : les fleches de bord se
+  // calculent en coordonnees ecran, avec le cadrage de CETTE image.
+  //
+  // ⚠️ **`pingClock`, PAS `hordeTick`** (revue finale, etape 9) : les zones et
+  // les marques expirent au tick de horde meme pendant le gel, mais un ping
+  // ne doit pas s'effacer pendant que l'equipe choisit ses cartes — voir
+  // `GameClient#pingClock`.
+  stage.drawPings(client.pings, state.players, state.localId, client.pingClock, now);
   // ⚠️ **APRES `draw`, qui recentre la camera sur le joueur** : la secousse est
   // un decalage par-dessus le cadrage, pas un cadrage concurrent.
   stage.shakeCamera(client.hitFlashes, client.reactionFlashes, now);

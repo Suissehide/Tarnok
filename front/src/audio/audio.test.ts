@@ -12,6 +12,8 @@ const calme: CueSnapshot = {
   hp: 100,
   bossCharging: false,
   abilityCooldown: 0,
+  pings: 0,
+  lastPingIntent: -1,
 };
 
 describe('cuesBetween — le son se deduit de ce qui change', () => {
@@ -48,5 +50,15 @@ describe('cuesBetween — le son se deduit de ce qui change', () => {
     expect(
       cuesBetween({ ...calme, abilityCooldown: 180 }, { ...calme, abilityCooldown: 179 }),
     ).toEqual([]);
+  });
+
+  it('un ping recu joue le son de SON intention', () => {
+    expect(cuesBetween(calme, { ...calme, pings: 1, lastPingIntent: 1 })).toEqual(['ping-danger']);
+    expect(cuesBetween(calme, { ...calme, pings: 2, lastPingIntent: 3 })).toEqual([
+      'ping-jePrends',
+    ]);
+    expect(cuesBetween({ ...calme, pings: 2 }, { ...calme, pings: 2, lastPingIntent: 0 })).toEqual(
+      [],
+    );
   });
 });

@@ -8,6 +8,7 @@ import type { ZoneField } from '@shared/zones';
 import { Application, Container, Graphics, Rectangle } from 'pixi.js';
 
 import type {
+  ActivePing,
   BlastFlash,
   BossVitals,
   ChainFlashes,
@@ -31,6 +32,7 @@ import { DamageNumberRenderer } from './damage-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
 import { OrbRenderer } from './orb-renderer';
+import { livePings, PingRenderer } from './ping-renderer';
 import { PlayerRenderer } from './player-renderer';
 import {
   ImpactFlashRenderer,
@@ -98,6 +100,9 @@ export class Stage {
   readonly #reactionFlashes = new ReactionFlashRenderer();
   readonly #bossBar = new BossBarRenderer();
   readonly #damageNumbers = new DamageNumberRenderer();
+  readonly #pings = new PingRenderer(
+    (id) => PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length] ?? 0xffffff,
+  );
   /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
   #obstaclesDrawn = false;
   /** La grille de fond : masquee des que la carte en tuiles la recouvre. */
@@ -150,6 +155,9 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    // Les pings (etape 9) : une lecture, comme la barre du boss ; juste sous
+    // les chiffres de degats, qui restent tout en haut.
+    this.#pings,
     // ⚠️ **Les chiffres de degats TOUT EN HAUT** (etape 8) : ils se LISENT, et
     // une lecture ne doit etre masquee par rien — meme raison que la barre du
     // boss au-dessus des flashs, poussee d'un cran plus loin parce qu'un
@@ -180,6 +188,7 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    this.#pings,
     this.#damageNumbers,
   ];
 
@@ -197,6 +206,9 @@ export class Stage {
 
     this.#world.scale.set(1, VERTICAL_SQUASH);
     this.#app.stage.addChild(this.#world);
+    // Les fleches de bord (etape 9) : en coordonnees ECRAN, donc hors de `#world`.
+    // Ajoutees APRES le monde, elles passent au-dessus de lui.
+    this.#pings.attachScreen(this.#app.stage);
     this.#world.addChild(this.#grid);
 
     // Les calques du monde : apres la grille, avant les carres des joueurs
@@ -477,6 +489,33 @@ export class Stage {
   /** `nowMs` : la meme horloge murale que les flashs — voir `DamageNumbers`. */
   drawDamageNumbers(numbers: DamageNumbers, nowMs: number): void {
     this.#damageNumbers.draw(numbers, nowMs);
+  }
+
+  /** Coordonnees MONDE -> ECRAN, la reciproque exacte de `screenToWorld`. */
+  worldToScreen(x: number, y: number): { x: number; y: number } {
+    return { x: x + this.#world.x, y: y * VERTICAL_SQUASH + this.#world.y };
+  }
+
+  drawPings(
+    pings: ReadonlyMap<number, ActivePing>,
+    players: readonly { id: number; x: number; y: number }[],
+    localId: number | null,
+    tick: number,
+    _timeMs: number,
+  ): void {
+    const me = players.find((p) => p.id === localId);
+    const allies = me
+      ? players
+          .filter((p) => p.id !== localId)
+          .map((p) => ({ id: p.id, x: p.x, y: p.y, distance: Math.hypot(p.x - me.x, p.y - me.y) }))
+      : [];
+    this.#pings.draw(
+      livePings(pings, tick),
+      allies,
+      (x, y) => this.worldToScreen(x, y),
+      this.#app.screen.width,
+      this.#app.screen.height,
+    );
   }
 
   destroy(): void {
