@@ -493,7 +493,7 @@ const FOOTSOLDIERS: readonly (Omit<
     cell: 192,
     speed: 78,
     role: 'brute',
-    behavior: 'bouclier',
+    behavior: 'tir',
   },
   {
     name: 'spider',
@@ -584,6 +584,7 @@ const FOOTSOLDIERS: readonly (Omit<
     cell: 192,
     speed: 100,
     role: 'troupe',
+    behavior: 'bouclier',
   },
   {
     name: 'harpoon-shark',
