@@ -1,4 +1,5 @@
 import { MAP_SIZE } from '@shared/constants';
+import { ELEMENT } from '@shared/elements';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
 import { DAMAGE_NUMBER_LIFETIME_MS, type DamageNumbers } from '../net/client';
@@ -41,9 +42,81 @@ export const DAMAGE_RISE_PX = 46;
 /** Ce qu'un coup critique ajoute a la taille du nombre. */
 export const CRIT_SCALE = 1.6;
 
-/** Teinte d'un coup ordinaire, et celle d'un critique. */
+/**
+ * Degats au-dela desquels un chiffre ne grossit plus.
+ *
+ * ⚠️ **C'est ce qui fait SENTIR la progression** (*« que l'on sente la
+ * progression »*) : un 3 de lance-flammes et un 40 de grenade ne doivent pas
+ * s'ecrire de la meme taille, sinon la seule chose que le joueur lit est le
+ * nombre lui-meme — alors que ce qu'il veut savoir, c'est si ca monte.
+ *
+ * ⚠️ **Un PLAFOND, pas une echelle.** Au-dela, un coup empile par vingt cartes
+ * ecrirait des chiffres plus hauts que les monstres. 60 laisse de la marge
+ * au-dessus de la plus grosse arme du catalogue (40) sans la saturer d'emblee.
+ */
+export const DAMAGE_FULL = 60;
+
+/** Les bornes de taille d'un chiffre, en fraction de `DIGIT_HEIGHT_PX`. */
+export const DAMAGE_SCALE_MIN = 0.78;
+export const DAMAGE_SCALE_MAX = 1.35;
+
+/**
+ * La taille d'un chiffre pour `amount` degats, de `DAMAGE_SCALE_MIN` (une
+ * piqure) a `DAMAGE_SCALE_MAX` (un coup qui compte).
+ *
+ * ⚠️ **En racine, pas lineaire** : de 1 a 10 degats, l'ecart se VOIT ; de 50 a
+ * 60, il n'apprend plus rien. La racine donne ses marches la ou le catalogue
+ * est dense.
+ */
+export function damageScale(amount: number): number {
+  const part = Math.min(1, Math.max(0, amount / DAMAGE_FULL));
+  return DAMAGE_SCALE_MIN + (DAMAGE_SCALE_MAX - DAMAGE_SCALE_MIN) * Math.sqrt(part);
+}
+
+/**
+ * La teinte d'un chiffre, par element qui porte le coup (etape 8) — *« rouge
+ * et gros en crit, jaune en poison »*.
+ *
+ * ⚠️ **Ce ne sont PAS les teintes d'`ELEMENTS`, et c'est delibere.** Celles-la
+ * disent la matiere AU SOL, sur de l'herbe, a `ZONE_ALPHA` : la Poix y est un
+ * brun presque noir et la Chaux un blanc crayeux, deux couleurs qu'un chiffre
+ * de vingt pixels ne porterait pas. Ici la contrainte est inverse — se lire
+ * par-dessus n'importe quoi, en un dixieme de seconde — donc chaque element a
+ * une couleur VIVE qui lui ressemble sans etre la sienne : le poison tire au
+ * jaune acide, le givre au cyan clair, la foudre au jaune franc.
+ *
+ * ⚠️ **Le cerne noir cuit dans l'atlas fait le reste** : c'est lui qui permet
+ * a un jaune de rester lisible sur de l'herbe claire comme sur un sprite
+ * sombre.
+ */
+export const DAMAGE_TINTS: Record<number, number> = {
+  [ELEMENT.NEUTRE]: 0xffffff,
+  [ELEMENT.BRAISE]: 0xff8c1a,
+  [ELEMENT.GIVRE]: 0x5fd8ff,
+  [ELEMENT.FOUDRE]: 0xffe34a,
+  [ELEMENT.POIX]: 0xaee034,
+  [ELEMENT.CHAUX]: 0xf4ecc8,
+  [ELEMENT.VIF_ARGENT]: 0xc9bcff,
+};
+
+/** Teinte d'un coup ordinaire sans element : le repli de `DAMAGE_TINTS`. */
 export const DAMAGE_TINT = 0xffffff;
-export const CRIT_TINT = 0xffc23d;
+
+/**
+ * Teinte d'un coup CRITIQUE : rouge, et elle l'emporte sur l'element.
+ *
+ * ⚠️ **Un critique ne dit pas la meme chose qu'un element.** L'element dit ce
+ * que le coup PREPARE pour l'equipe (la marque, la reaction a venir) ; le
+ * critique dit que celui-la, a l'instant, a fait mal. Melanger les deux —
+ * un critique de Givre en cyan clair — ferait perdre le seul evenement rare
+ * des deux.
+ */
+export const CRIT_TINT = 0xff2b2b;
+
+/** La teinte d'un chiffre : le rouge du critique, sinon celle de son element. */
+export function damageTint(element: number, crit: boolean): number {
+  return crit ? CRIT_TINT : (DAMAGE_TINTS[element] ?? DAMAGE_TINT);
+}
 
 /**
  * Le noir du cerne — la MEME valeur que les orbes, les pieces et les
@@ -183,9 +256,14 @@ export class DamageNumberRenderer {
       const age = nowMs - (numbers.bornMs[i] ?? 0);
       const t = Math.min(1, Math.max(0, age / DAMAGE_NUMBER_LIFETIME_MS));
       const crit = (numbers.crit[i] ?? 0) === 1;
-      const chiffres = digitsOf(numbers.amount[i] ?? 0);
-      const echelle = ((crit ? CRIT_SCALE : 1) * DIGIT_HEIGHT_PX) / DIGIT_CELL_PX;
-      const pas = DIGIT_HEIGHT_PX * DIGIT_ADVANCE * (crit ? CRIT_SCALE : 1);
+      const montant = numbers.amount[i] ?? 0;
+      const chiffres = digitsOf(montant);
+      // La taille dit DEUX choses : ce que le coup pese (`damageScale`) et
+      // s'il etait critique. Les deux se multiplient — un gros coup critique
+      // doit etre le plus gros de tous.
+      const taille = damageScale(montant) * (crit ? CRIT_SCALE : 1);
+      const echelle = (taille * DIGIT_HEIGHT_PX) / DIGIT_CELL_PX;
+      const pas = DIGIT_HEIGHT_PX * DIGIT_ADVANCE * taille;
       // Centre sur le monstre : le nombre est pose autour de son axe, pas a
       // droite de lui.
       const gauche = (-(chiffres.length - 1) * pas) / 2;
@@ -202,7 +280,7 @@ export class DamageNumberRenderer {
         particle.y = y;
         particle.scaleX = echelle;
         particle.scaleY = echelle;
-        particle.tint = crit ? CRIT_TINT : DAMAGE_TINT;
+        particle.tint = damageTint(numbers.element[i] ?? 0, crit);
         particle.alpha = damageFade(t);
         children.push(particle);
         used++;

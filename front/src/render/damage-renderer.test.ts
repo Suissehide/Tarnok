@@ -1,4 +1,5 @@
 import { MAP_SIZE } from '@shared/constants';
+import { ELEMENT } from '@shared/elements';
 import { Container, type Particle, type ParticleContainer, Texture, TextureSource } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
@@ -6,8 +7,10 @@ import { DAMAGE_NUMBER_LIFETIME_MS, DamageNumbers } from '../net/client';
 import {
   CRIT_SCALE,
   CRIT_TINT,
+  DAMAGE_FULL,
   DAMAGE_RISE_PX,
   DAMAGE_TINT,
+  DAMAGE_TINTS,
   DamageNumberRenderer,
   DIGIT_CELL_PX,
   DIGITS_MAX,
@@ -41,9 +44,9 @@ function dessine(nombres: DamageNumbers, nowMs: number): Particle[] {
   return [...(container.particleChildren as Particle[])];
 }
 
-function unNombre(montant: number, crit = false): DamageNumbers {
+function unNombre(montant: number, crit = false, element: number = ELEMENT.NEUTRE): DamageNumbers {
   const n = new DamageNumbers(CAPACITE);
-  n.spawn(500, 400, montant, crit, 0);
+  n.spawn(500, 400, montant, crit, element, 0);
   return n;
 }
 
@@ -109,15 +112,52 @@ describe('DamageNumberRenderer.draw — ce que le joueur lit', () => {
     expect(dessine(unNombre(9), DAMAGE_NUMBER_LIFETIME_MS * 0.4)[0]?.alpha).toBe(1);
   });
 
-  it('ecrit un CRITIQUE plus gros et dore', () => {
+  it('ecrit un CRITIQUE plus gros et ROUGE', () => {
+    // A montant EGAL : sans ca, l'ecart de taille pourrait venir du montant
+    // (voir `damageScale`) et non du critique.
     const normal = dessine(unNombre(20), 0)[0];
-    const critique = dessine(unNombre(40, true), 0)[0];
+    const critique = dessine(unNombre(20, true), 0)[0];
     if (!normal || !critique) {
       throw new Error('chiffre manquant');
     }
     expect(critique.scaleX / normal.scaleX).toBeCloseTo(CRIT_SCALE, 6);
     expect(normal.tint).toBe(DAMAGE_TINT);
     expect(critique.tint).toBe(CRIT_TINT);
+  });
+
+  it('teinte le chiffre par l ELEMENT qui a porte le coup', () => {
+    const poison = dessine(unNombre(10, false, ELEMENT.POIX), 0)[0];
+    const givre = dessine(unNombre(10, false, ELEMENT.GIVRE), 0)[0];
+    const neutre = dessine(unNombre(10, false, ELEMENT.NEUTRE), 0)[0];
+
+    expect(poison?.tint).toBe(DAMAGE_TINTS[ELEMENT.POIX]);
+    expect(givre?.tint).toBe(DAMAGE_TINTS[ELEMENT.GIVRE]);
+    expect(neutre?.tint).toBe(DAMAGE_TINT);
+    // Les sept teintes sont DISTINCTES : sans ca, « teinte par element »
+    // serait vrai sans rien distinguer.
+    expect(new Set(Object.values(DAMAGE_TINTS)).size).toBe(Object.keys(DAMAGE_TINTS).length);
+  });
+
+  it('laisse le CRITIQUE l emporter sur l element', () => {
+    // Le critique est l'evenement rare : il ne doit pas se diluer dans sept
+    // couleurs d'element.
+    const critGivre = dessine(unNombre(10, true, ELEMENT.GIVRE), 0)[0];
+    expect(critGivre?.tint).toBe(CRIT_TINT);
+  });
+
+  it('ecrit PLUS GROS un coup qui pese, et plafonne', () => {
+    const petit = dessine(unNombre(2), 0)[0];
+    const moyen = dessine(unNombre(20), 0)[0];
+    const gros = dessine(unNombre(DAMAGE_FULL), 0)[0];
+    const absurde = dessine(unNombre(DAMAGE_FULL * 100), 0)[0];
+    if (!petit || !moyen || !gros || !absurde) {
+      throw new Error('chiffre manquant');
+    }
+    expect(moyen.scaleX).toBeGreaterThan(petit.scaleX);
+    expect(gros.scaleX).toBeGreaterThan(moyen.scaleX);
+    // ⚠️ Le plafond : un coup empile par vingt cartes n'ecrit pas des chiffres
+    // plus hauts que les monstres.
+    expect(absurde.scaleX).toBeCloseTo(gros.scaleX, 6);
   });
 
   /**
@@ -128,7 +168,7 @@ describe('DamageNumberRenderer.draw — ce que le joueur lit', () => {
   it('ne pose jamais plus de quatre quads par chiffre, a capacite pleine', () => {
     const n = new DamageNumbers(CAPACITE);
     for (let i = 0; i < CAPACITE; i++) {
-      n.spawn(0, 0, 9999, false, 0);
+      n.spawn(0, 0, 9999, false, ELEMENT.NEUTRE, 0);
     }
     const quads = dessine(n, 0);
     process.stdout.write(
@@ -162,27 +202,28 @@ describe('DamageNumberRenderer.draw — ce que le joueur lit', () => {
 describe('DamageNumbers — le reservoir', () => {
   it('arrondit et plancher a UN : un coup qui touche ne montre jamais zero', () => {
     const n = new DamageNumbers(4);
-    n.spawn(0, 0, 0.2, false, 0);
+    n.spawn(0, 0, 0.2, false, ELEMENT.NEUTRE, 0);
     expect(n.amount[0]).toBe(1);
   });
 
   it('expire au bout de sa vie, et compacte tout avec lui', () => {
     const n = new DamageNumbers(4);
-    n.spawn(1, 1, 10, true, 0);
-    n.spawn(2, 2, 20, false, 100);
+    n.spawn(1, 1, 10, true, ELEMENT.BRAISE, 0);
+    n.spawn(2, 2, 20, false, ELEMENT.GIVRE, 100);
     n.expire(DAMAGE_NUMBER_LIFETIME_MS);
     expect(n.count).toBe(1);
     // ⚠️ Le survivant garde SES valeurs : un champ oublie dans la compaction
     // ferait porter au second le montant du premier.
     expect(n.amount[0]).toBe(20);
     expect(n.crit[0]).toBe(0);
+    expect(n.element[0]).toBe(ELEMENT.GIVRE);
     expect(n.x[0]).toBe(2);
   });
 
   it('ignore silencieusement un debordement, comme les flashs', () => {
     const n = new DamageNumbers(1);
-    n.spawn(0, 0, 10, false, 0);
-    n.spawn(0, 0, 20, false, 0);
+    n.spawn(0, 0, 10, false, ELEMENT.NEUTRE, 0);
+    n.spawn(0, 0, 20, false, ELEMENT.NEUTRE, 0);
     expect(n.count).toBe(1);
   });
 });

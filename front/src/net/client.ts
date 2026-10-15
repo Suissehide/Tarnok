@@ -749,8 +749,18 @@ export class DamageNumbers {
   readonly y: Float32Array;
   /** Le nombre a ecrire, deja arrondi : le rendu ne decide pas du format. */
   readonly amount: Float32Array;
-  /** `1` pour un coup critique — il s'ecrit plus gros et dore. */
+  /** `1` pour un coup critique — il s'ecrit plus gros et rouge. */
   readonly crit: Uint8Array;
+  /**
+   * L'element qui a porte le coup, index dans `ELEMENTS` — `ELEMENT.NEUTRE`
+   * quand l'arme n'en porte aucun.
+   *
+   * ⚠️ **Il voyage avec le chiffre pour que le rendu le TEINTE**, et c'est le
+   * rendu qui choisit la couleur : celles de `ELEMENTS` disent la matiere au
+   * sol, sur de l'herbe, a `ZONE_ALPHA` — un chiffre, lui, doit se lire par
+   * dessus n'importe quoi. Voir `DAMAGE_TINTS`.
+   */
+  readonly element: Uint8Array;
   readonly bornMs: Float64Array;
   #count = 0;
 
@@ -759,6 +769,7 @@ export class DamageNumbers {
     this.y = new Float32Array(capacity);
     this.amount = new Float32Array(capacity);
     this.crit = new Uint8Array(capacity);
+    this.element = new Uint8Array(capacity);
     this.bornMs = new Float64Array(capacity);
   }
 
@@ -766,7 +777,7 @@ export class DamageNumbers {
     return this.#count;
   }
 
-  spawn(x: number, y: number, amount: number, crit: boolean, nowMs: number): void {
+  spawn(x: number, y: number, amount: number, crit: boolean, element: number, nowMs: number): void {
     if (this.#count >= this.capacity) {
       return;
     }
@@ -775,6 +786,7 @@ export class DamageNumbers {
     this.y[slot] = y;
     this.amount[slot] = Math.max(1, Math.round(amount));
     this.crit[slot] = crit ? 1 : 0;
+    this.element[slot] = element;
     this.bornMs[slot] = nowMs;
   }
 
@@ -793,6 +805,7 @@ export class DamageNumbers {
       this.y[slot] = this.y[last] ?? 0;
       this.amount[slot] = this.amount[last] ?? 0;
       this.crit[slot] = this.crit[last] ?? 0;
+      this.element[slot] = this.element[last] ?? 0;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -2630,11 +2643,15 @@ export class GameClient {
         // `Projectiles.critAt`). L'armure et les flaques, elles, restent
         // serveur : voir le docbloc de `DamageNumbers`.
         const critique = this.projectiles.critAt(projectileSlot);
+        // ⚠️ Lu ICI, avant le chiffre, et relu tel quel plus bas pour la
+        // marque : une seule lecture du creneau, deux usages.
+        const element = this.projectiles.elementAt(projectileSlot);
         this.damageNumbers.spawn(
           this.horde.x[slot] ?? 0,
           this.horde.y[slot] ?? 0,
           this.projectiles.damageAt(projectileSlot) * (critique ? CRIT_MULTIPLIER : 1),
           critique,
+          element,
           nowMs,
         );
         // Le venin : le serveur seul en tire des degats (`Venins`) ; ici, de
@@ -2646,7 +2663,6 @@ export class GameClient {
         // `#markLocally`. Le test `element !== NEUTRE` recopie celui de
         // `resolveProjectileDamage` (back/src/combat.ts) : une arme neutre ne
         // marque rien, et surtout n'EFFACE pas la marque d'une autre.
-        const element = this.projectiles.elementAt(projectileSlot);
         if (element !== ELEMENT.NEUTRE) {
           this.#markLocally(slot, element, this.projectiles.ownerAt(projectileSlot), tick);
           // Etape 5b, tache 3 (tour de correction 1) : la chaine est un
