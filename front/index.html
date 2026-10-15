@@ -51,7 +51,10 @@
                 Rejoindre
               </button>
             </div>
-            <button id="open-options" type="button" class="btn ol h-[129px]">Options</button>
+            <div class="flex h-[129px] items-stretch gap-[10px]">
+              <button id="open-options" type="button" class="btn ol min-w-0 flex-1">Options</button>
+              <button id="open-guide" type="button" class="btn ol min-w-0 flex-1">Guide</button>
+            </div>
             <button id="open-shop" type="button" class="btn ol h-[129px]">Boutique</button>
             <p id="error" class="ol m-0 min-h-[32px] text-center text-[22px]"></p>
           </div>
@@ -94,7 +97,7 @@
           <button
             id="close-shop"
             type="button"
-            class="btn btn--red ol absolute bottom-[34px] left-[40px] w-[300px]"
+            class="btn btn--tab btn--red ol absolute bottom-[40px] left-[40px] w-[240px]"
           >
             Retour
           </button>
@@ -120,6 +123,70 @@
             id="shop"
             class="absolute bottom-[26px] left-[370px] right-[40px] top-[110px] grid grid-cols-3 grid-rows-3 gap-[12px]"
           ></div>
+        </div>
+      </section>
+
+      <!--
+        18 · Guide : les regles, les armes, les passifs, les combinaisons et les
+        classes. Tout son contenu est DERIVE des catalogues de `shared/` par
+        `ui/guide.ts` — aucun libelle n'est ecrit ici. Les onglets suivent le
+        meme contrat `[data-tab]` / `[data-panel]` que l'ecran d'options, donc
+        `showTab` les fait marcher sans un mecanisme de plus.
+      -->
+      <section id="guide-screen" class="ui-screen bg-menu z-10 hidden">
+        <div class="ui-canvas">
+          <h2
+            class="rib f-meta ol absolute left-1/2 top-[44px] m-0 -translate-x-1/2 px-[24px] text-[44px] font-normal"
+          >
+            Guide
+          </h2>
+          <div class="absolute left-1/2 top-[150px] flex -translate-x-1/2 gap-[12px]">
+            <button type="button" data-tab="bases" class="btn btn--tab ol w-[300px]">Bases</button>
+            <button type="button" data-tab="armes" class="btn btn--tab ol w-[300px]">Armes</button>
+            <button type="button" data-tab="passifs" class="btn btn--tab ol w-[300px]">
+              Passifs
+            </button>
+            <button type="button" data-tab="combinaisons" class="btn btn--tab ol w-[340px]">
+              Combinaisons
+            </button>
+            <button type="button" data-tab="classes" class="btn btn--tab ol w-[300px]">
+              Classes
+            </button>
+          </div>
+          <div class="k k-scroll absolute bottom-[130px] left-[40px] right-[40px] top-[220px]">
+            <div id="guide-bases" data-panel="bases" class="guide-panel" style="--cols: 2"></div>
+            <div
+              id="guide-weapons"
+              data-panel="armes"
+              class="guide-panel hidden"
+              style="--cols: 4"
+            ></div>
+            <div
+              id="guide-passives"
+              data-panel="passifs"
+              class="guide-panel hidden"
+              style="--cols: 4"
+            ></div>
+            <div
+              id="guide-combos"
+              data-panel="combinaisons"
+              class="guide-panel hidden"
+              style="--cols: 4"
+            ></div>
+            <div
+              id="guide-classes"
+              data-panel="classes"
+              class="guide-panel hidden"
+              style="--cols: 2"
+            ></div>
+          </div>
+          <button
+            id="guide-back"
+            type="button"
+            class="btn btn--tab btn--red ol absolute bottom-[40px] left-[40px] w-[240px]"
+          >
+            Retour
+          </button>
         </div>
       </section>
 
@@ -299,14 +366,14 @@
           <button
             id="options-back"
             type="button"
-            class="btn btn--red ol absolute bottom-[34px] left-[40px] w-[300px]"
+            class="btn btn--tab btn--red ol absolute bottom-[40px] left-[40px] w-[240px]"
           >
             Retour
           </button>
           <button
             id="options-apply"
             type="button"
-            class="btn ol absolute right-[40px] bottom-[34px] w-[300px]"
+            class="btn btn--tab ol absolute right-[40px] bottom-[40px] w-[240px]"
           >
             Appliquer
           </button>

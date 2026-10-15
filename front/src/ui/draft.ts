@@ -209,7 +209,7 @@ export function natureLabel(nature: number): string {
 }
 
 /** Le nom de chaque rarete, dans l'ordre de `RARITY`. */
-const RARITY_NAMES = ['Commune', 'Rare', 'Légendaire'] as const;
+export const RARITY_NAMES = ['Commune', 'Rare', 'Légendaire'] as const;
 
 /**
  * L'etiquette de rarete (etape 10, §2.5) : le nom ET ce que la carte vaut
@@ -274,7 +274,12 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   salvo: (m) => `+${m} salve, armes de tir`,
   zone: (m) => `+${m} zone, toutes armes`,
   echo: (m) => `+${pourcent(m)} % dégâts de vos réactions`,
-  harvest: (m) => `+${m} PV par mort à ${HARVEST_RADIUS} px`,
+  // ⚠️ **« rendu », et le mot n'est pas decoratif** : « +1 PV par mort » se
+  // lit comme « +1 PV MAX par mort », c'est-a-dire l'inverse de ce que
+  // `resolveHarvest` fait — il SOIGNE, et son gain est meme PLAFONNE par les
+  // PV max (`Math.min(p.maxHp, ...)`). Seul « colosse », juste en dessous,
+  // parle vraiment du plafond.
+  harvest: (m) => `+${m} PV rendu${m > 1 ? 's' : ''} par mort à ${HARVEST_RADIUS} px`,
   colossus: (m) => `+${pourcent(m)} % dégâts par ${COLOSSUS_HP_STEP} PV max`,
 };
 

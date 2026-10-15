@@ -993,6 +993,54 @@
     width: 100%;
   }
 
+  /* --- Guide (ecran 18) ---------------------------------------------------- */
+
+  /* Le nombre de colonnes est porte par chaque panneau (`--cols` en ligne) :
+     dix-neuf armes ne se lisent pas sur le meme peigne que quatre classes. */
+  /* ⚠️ **Il DEFILE, et ce n'est pas de la prudence gratuite** : le canevas est
+     fige a 1920 x 1080 et `.ui-screen` coupe ce qui depasse, donc une arme de
+     plus au catalogue effacerait silencieusement la derniere rangee. Avec
+     `overflow-y`, le contenu grandit sans que la page mente. */
+  .guide-panel:not(.hidden) {
+    display: grid;
+    grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+    align-content: start;
+    gap: 2px 28px;
+    height: 100%;
+    overflow-y: auto;
+    padding-right: 8px;
+    scrollbar-width: thin;
+  }
+
+  .guide-entry {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: 6px 0;
+    border-bottom: 2px dotted var(--color-rule);
+  }
+
+  .guide-entry__head {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 24px;
+    line-height: 1.15;
+    color: var(--color-ink);
+  }
+
+  .guide-entry__meta {
+    font-size: 17px;
+    line-height: 1.25;
+    color: var(--color-ink-soft);
+  }
+
+  .guide-entry__line {
+    font-size: 19px;
+    line-height: 1.25;
+    color: var(--color-ink-label);
+  }
+
   /* --- Montee de niveau (ecran 05) ---------------------------------------- */
 
   .draft-card {
