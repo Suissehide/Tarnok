@@ -1400,7 +1400,7 @@ export class GameClient {
   #freezeStartTick = -1;
 
   /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien (§7.2). */
-  #draftCards: readonly { nature: number; refId: number }[] = [];
+  #draftCards: readonly Card[] = [];
   #draftDeadlineTick = 0;
   /**
    * `true` des que la negociation est close (`DRAFT_RESULT` de phase 0), et
@@ -1615,7 +1615,7 @@ export class GameClient {
   }
 
   /** L'etalage a afficher. Vide quand aucun draft n'est ouvert. */
-  get draftCards(): readonly { nature: number; refId: number }[] {
+  get draftCards(): readonly Card[] {
     return this.#draftCards;
   }
 

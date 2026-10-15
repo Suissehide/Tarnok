@@ -69,6 +69,7 @@ export function paintSynergy(fill: HTMLElement, label: HTMLElement, synergy: num
  * noms les decrirait de la meme facon.
  */
 export interface PassiveRow {
+  /** L'etiquette affichee (`Passive.label`, accentuee) — jamais l'identifiant `Passive.name`. */
   name: string;
   /** La cle de bonus du passif : c'est elle qui choisit l'icone (`ui/icons.ts`). */
   kind: PassiveKind;
@@ -131,7 +132,7 @@ export function passiveRows(source: HudSource): PassiveRow[] {
   for (const passive of PASSIVES) {
     const stacks = loadout.stacksOf(passive.id);
     if (stacks > 0) {
-      rows.push({ name: passive.name, kind: passive.kind, stacks });
+      rows.push({ name: passive.label, kind: passive.kind, stacks });
     }
   }
   return rows;

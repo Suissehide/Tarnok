@@ -427,7 +427,7 @@ describe("DraftScreen — l'etalage", () => {
     h.client.draftCards = [{ nature: CARD.PASSIVE, refId: 0 }];
     h.screen.update();
     expect(cards(h)).toHaveLength(1);
-    expect(cards(h)[0]?.querySelector('.draft-card__name')?.textContent).toBe('vitalite');
+    expect(cards(h)[0]?.querySelector('.draft-card__name')?.textContent).toBe('Vitalité');
   });
 
   it('affiche le chronometre de la fenetre, decompte compris', () => {
@@ -621,7 +621,7 @@ describe('DraftScreen — la revelation (§4.2)', () => {
     h.client.result([{ playerId: 1, cardIndex: 1, outcome: OUTCOME.AUTO }]);
     h.screen.update();
     expect(statesOf(h)[1]).toBe('won');
-    expect(h.status.textContent).toBe('Vous obtenez : cadence');
+    expect(h.status.textContent).toBe('Vous obtenez : Cadence');
   });
 
   it('montre au perdant ce qu il perd ET ce qu il obtient a la place, DANS LE MEME LOT', () => {
@@ -807,7 +807,7 @@ describe('une carte que mon inventaire refuse', () => {
     const cadence = cards(h)[1];
     expect(cadence?.disabled).toBe(true);
     expect(cadence?.title).toContain(`Passifs complets — ${PASSIVE_SLOTS}/${PASSIVE_SLOTS}`);
-    expect(cadence?.title).toContain(passiveOf(0).name);
+    expect(cadence?.title).toContain(passiveOf(0).label);
     cadence?.click();
     expect(h.client.sent).toEqual([]);
     // Les armes, elles, rentrent encore.

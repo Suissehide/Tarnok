@@ -5070,6 +5070,15 @@ describe('etape 10 : Moisson (resolveHarvest)', () => {
     resolveHarvest([p], [1000, 1000]);
     expect(p.hp).toBe(50);
   });
+
+  it('sans Moisson, un PV au dessus du max n est pas touche', () => {
+    // Construit directement (pas par `porteur`) : aucune carte de Moisson,
+    // et un hp deja au dessus de maxHp, pour verifier que
+    // `Math.min(maxHp, hp + 0)` ne vient pas l'ecreter en silence.
+    const p: HarvestPlayer = { x: 1000, y: 1000, hp: 150, maxHp: 100, loadout: new Loadout() };
+    resolveHarvest([p], [1000, 1000]);
+    expect(p.hp).toBe(150);
+  });
 });
 
 describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {

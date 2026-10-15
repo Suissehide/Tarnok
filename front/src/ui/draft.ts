@@ -185,7 +185,7 @@ export function blockedReason(card: Card, loadout: Loadout): string | null {
 export function ownedNames(nature: number, loadout: Loadout): string {
   if (nature === CARD.PASSIVE) {
     return PASSIVES.filter((p) => loadout.stacksOf(p.id) > 0)
-      .map((p) => p.name)
+      .map((p) => p.label)
       .join(', ');
   }
   return loadout.weaponIds.map((id) => weaponOf(id).name).join(', ');
@@ -239,7 +239,7 @@ export function rarityLabel(card: Card): string {
  * ecran de choix.
  */
 export function cardName(card: Card): string {
-  return card.nature === CARD.PASSIVE ? passiveOf(card.refId).name : weaponOf(card.refId).name;
+  return card.nature === CARD.PASSIVE ? passiveOf(card.refId).label : weaponOf(card.refId).name;
 }
 
 /**

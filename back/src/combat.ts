@@ -1767,6 +1767,9 @@ export function resolveHarvest(players: Iterable<HarvestPlayer>, fallen: readonl
       continue;
     }
     const parMort = p.loadout.bonus('harvest');
+    if (parMort === 0) {
+      continue;
+    }
     let gain = 0;
     for (let i = 0; i + 1 < fallen.length; i += 2) {
       const dx = (fallen[i] ?? 0) - p.x;

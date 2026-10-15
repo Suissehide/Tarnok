@@ -240,15 +240,15 @@ describe('passiveRows — ce que la colonne a a dire', () => {
     const source = new FakeSource().prend(VITALITE, 4).prend(CADENCE, 1);
 
     expect(passiveRows(source)).toEqual([
-      { name: passiveOf(VITALITE).name, kind: passiveOf(VITALITE).kind, stacks: 4 },
-      { name: passiveOf(CADENCE).name, kind: passiveOf(CADENCE).kind, stacks: 1 },
+      { name: passiveOf(VITALITE).label, kind: passiveOf(VITALITE).kind, stacks: 4 },
+      { name: passiveOf(CADENCE).label, kind: passiveOf(CADENCE).kind, stacks: 1 },
     ]);
   });
 
   it('ignore les passifs que le joueur n a pas pris', () => {
     const source = new FakeSource().prend(FOUGUE, 2);
 
-    expect(passiveRows(source).map((r) => r.name)).toEqual([passiveOf(FOUGUE).name]);
+    expect(passiveRows(source).map((r) => r.name)).toEqual([passiveOf(FOUGUE).label]);
   });
 
   it('suit l ordre du CATALOGUE, pas l ordre d acquisition', () => {
@@ -258,8 +258,8 @@ describe('passiveRows — ce que la colonne a a dire', () => {
     const source = new FakeSource().prend(FOUGUE).prend(VITALITE);
 
     expect(passiveRows(source).map((r) => r.name)).toEqual([
-      passiveOf(VITALITE).name,
-      passiveOf(FOUGUE).name,
+      passiveOf(VITALITE).label,
+      passiveOf(FOUGUE).label,
     ]);
   });
 
@@ -326,7 +326,7 @@ describe('paintPassives — les emplacements a l ecran', () => {
     paintPassives(el.passiveList, passiveRows(source));
 
     expect(lignes().length).toBeLessThanOrEqual(PASSIVES.length);
-    expect(lignes()).toEqual([`${passiveOf(VITALITE).name} ×2`, `${passiveOf(CADENCE).name} ×5`]);
+    expect(lignes()).toEqual([`${passiveOf(VITALITE).label} ×2`, `${passiveOf(CADENCE).label} ×5`]);
   });
 });
 
@@ -393,7 +393,7 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
 
     expect(
       [...el.passiveList.querySelectorAll<HTMLElement>('.hud-passive')].map((n) => n.title),
-    ).toEqual([`${passiveOf(VITALITE).name} ×4`]);
+    ).toEqual([`${passiveOf(VITALITE).label} ×4`]);
   });
 
   it('laisse les emplacements vides quand le joueur n a pris aucun passif', () => {

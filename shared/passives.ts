@@ -48,7 +48,18 @@ export type PassiveKind = (typeof PASSIVE_KINDS)[number];
 
 export interface Passive {
   id: number;
+  /**
+   * Identifiant lu par les tests et par le code (grep `name`) — jamais montre
+   * au joueur. Sans accent, comme tous les identifiants du depot.
+   */
   name: string;
+  /**
+   * Ce que l'ECRAN montre : carte de draft, colonne de PV, infobulle bloquee
+   * (etape 10, revue finale). `name` sert d'identifiant partout ailleurs — le
+   * changer casserait les lectures par nom — donc l'affichage passe par ce
+   * champ separe, accentue et capitalise, jamais par `name` directement.
+   */
+  label: string;
   /** Bonus apporte par CHAQUE carte prise (voir la doc de `PassiveKind`) — jamais un total cumule. */
   magnitude: number;
   kind: PassiveKind;
@@ -67,6 +78,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
   {
     // Points de vie maximum ajoutes par carte, en points bruts.
     name: 'vitalite',
+    label: 'Vitalité',
     kind: 'maxHp',
     magnitude: 20,
   },
@@ -74,6 +86,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Fraction de `Weapon.cooldownTicks` retiree par carte, appliquee a
     // chaque arme possedee (0.08 = -8 % de cadence par carte).
     name: 'cadence',
+    label: 'Cadence',
     kind: 'fireRate',
     magnitude: 0.08,
   },
@@ -81,6 +94,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Fraction de `Weapon.damage` ajoutee par carte, appliquee a chaque arme
     // possedee (0.10 = +10 % de degats par carte).
     name: 'puissance',
+    label: 'Puissance',
     kind: 'damage',
     magnitude: 0.1,
   },
@@ -88,6 +102,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Vitesse de deplacement ajoutee par carte, en pixels monde par seconde
     // (voir `PLAYER_SPEED`).
     name: 'fougue',
+    label: 'Fougue',
     kind: 'speed',
     magnitude: 15,
   },
@@ -96,6 +111,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // que `Loadout.bonus(kind)` (tache 2) somme a travers plusieurs passifs
     // distincts du meme `kind`, pas seulement les cartes d'un meme passif.
     name: 'acier',
+    label: 'Acier',
     kind: 'damage',
     magnitude: 0.06,
   },
@@ -124,6 +140,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // ⚠️ **Baisse de 2 a 0,6 au playtest** (*« le bonus de regen est trop
     // fort »*) : a 2 PV/s, deux cartes rendaient une vie entiere en 25 s.
     name: 'regain',
+    label: 'Regain',
     kind: 'regen',
     magnitude: 0.6,
   },
@@ -133,6 +150,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Lue par `critOf` (shared/firing.ts) a l'apparition du projectile, des
     // deux cotes ; la borne a 1 vit la-bas et nulle part ailleurs.
     name: 'precision',
+    label: 'Précision',
     kind: 'critChance',
     magnitude: 0.04,
   },
@@ -140,6 +158,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Ajoute au multiplicateur critique par carte (0,3 : x2 devient x2,3).
     // Emporte PAR PROJECTILE a son apparition (`Projectiles.critFactorAt`).
     name: 'ferocite',
+    label: 'Férocité',
     kind: 'critDamage',
     magnitude: 0.3,
   },
@@ -147,12 +166,14 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Crans de `UPGRADE.SALVO` ajoutes par carte a chaque arme de genre
     // `'tir'`, et a elles seules (`weaponUpgrades`, shared/firing.ts).
     name: 'volee',
+    label: 'Volée',
     kind: 'salvo',
     magnitude: 1,
   },
   {
     // Crans de `UPGRADE.ZONE` ajoutes par carte a TOUTES les armes.
     name: 'ampleur',
+    label: 'Ampleur',
     kind: 'zone',
     magnitude: 1,
   },
@@ -163,6 +184,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // +100 % des degats INSTANTANES des reactions que le porteur declenche
     // (`ReactionTrigger.by`), par carte. Serveur seul (`applyReactions`).
     name: 'echo',
+    label: 'Écho',
     kind: 'echo',
     magnitude: 1,
     legendary: true,
@@ -171,6 +193,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // PV rendus par ennemi mort a moins de `HARVEST_RADIUS` du porteur, quel
     // qu'en soit le tueur. Serveur seul (`resolveHarvest`).
     name: 'moisson',
+    label: 'Moisson',
     kind: 'harvest',
     magnitude: 1,
     legendary: true,
@@ -179,6 +202,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Fraction de degats ajoutee par tranche de `COLOSSUS_HP_STEP` PV max
     // (0,01 = +1 % par 10 PV). Lue par `shotDamage`, des deux cotes.
     name: 'colosse',
+    label: 'Colosse',
     kind: 'colossus',
     magnitude: 0.01,
     legendary: true,
