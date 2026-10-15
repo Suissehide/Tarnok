@@ -1,7 +1,7 @@
 import { MAP_SIZE, ZONE_RADIUS } from '@shared/constants';
 import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { zoneElement, zoneReaction } from '@shared/protocol';
-import { zoneLifetimeTicks } from '@shared/reactions';
+import { type ZoneShape, zoneLifetimeTicks, zoneRadius, zoneShape } from '@shared/reactions';
 import type { ZoneField } from '@shared/zones';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
@@ -367,12 +367,106 @@ function tracePath(
   ctx.closePath();
 }
 
-/** Nombre de cases de l'atlas : une rangee d'elements simples, une de reactions. */
-export const ZONE_CELL_COUNT = ELEMENTS.length * 2;
+/**
+ * L'identite visuelle des quatre familles de champ de REACTION (etape 8) —
+ * *« fais des zones de differentes tailles, duree, forme »*.
+ *
+ * ⚠️ **Indexees par la FAMILLE, pas par la reaction ni par l'element.** La
+ * teinte d'une particule dit deja l'element (elle est posee par `draw`, et
+ * l'atlas reste blanc) : ce qui manquait, c'est de quelle REACTION vient le
+ * champ. Quatorze silhouettes auraient voulu dire quatorze traces a tenir pour
+ * une lecture que le joueur fait au sol en un quart de seconde ; quatre
+ * familles — rond, lobes, etoile, fracture — suffisent a separer ce qui
+ * s'etale de ce qui eclate.
+ *
+ * ⚠️ **Le bord reste dans `[RIM_MIN, 1]`**, comme pour les elements : la ou
+ * l'encre s'arrete, la regle s'arrete (tache 16). Une silhouette qui
+ * deborderait promettrait du terrain que la zone ne couvre pas.
+ */
+const SHAPE_LOOKS: Record<ZoneShape, ElementLook> = {
+  /** Le repli : un disque franc, qui ne dit rien de plus que sa teinte. */
+  rond: {
+    rim: () => 1,
+    stroke: 'plein',
+    spin: 0.5,
+    pulseHz: 1,
+    pulseAmp: 0.03,
+    flicker: 0.06,
+    flickerHz: 1.1,
+  },
+  /** Trois bosses molles : ce qui s'etale et englue. */
+  lobes: {
+    rim: (t) => 1 - 0.1 * (1 - Math.cos(3 * t)) * 0.5,
+    stroke: 'plein',
+    spin: 0.35,
+    pulseHz: 0.7,
+    pulseAmp: 0.05,
+    flicker: 0.08,
+    flickerHz: 0.8,
+  },
+  /** Cinq pointes : ce qui eclate d'un coup. */
+  etoile: {
+    rim: (t) => 1 - 0.14 * (1 - Math.cos(5 * t)) * 0.5,
+    stroke: 'pointille',
+    spin: 1.1,
+    pulseHz: 2.2,
+    pulseAmp: 0.045,
+    flicker: 0.16,
+    flickerHz: 2.4,
+  },
+  /** Un bord brise : ce qui fracture et crepite. */
+  fracture: {
+    rim: (t) => 1 - 0.12 * ((Math.sin(7 * t) + 1) * 0.5) ** 3,
+    stroke: 'anneaux',
+    spin: -1.4,
+    pulseHz: 3.1,
+    pulseAmp: 0.025,
+    flicker: 0.2,
+    flickerHz: 3.3,
+  },
+};
 
-/** La case d'une zone : l'element en colonne, la rangee du bas si elle porte une reaction. */
+/** L'ordre des cases de reaction dans l'atlas — celui des cles de `SHAPE_LOOKS`. */
+export const ZONE_SHAPES = Object.keys(SHAPE_LOOKS) as ZoneShape[];
+
+/** La silhouette d'une famille de reaction. */
+export function shapeLook(shape: ZoneShape): ElementLook {
+  return SHAPE_LOOKS[shape] ?? SHAPE_LOOKS.rond;
+}
+
+/**
+ * L'apparence d'une zone : celle de sa REACTION si elle en porte une, celle de
+ * son element sinon.
+ *
+ * ⚠️ **La teinte, elle, reste toujours celle de l'element** (`draw`) : la
+ * forme dit l'evenement, la couleur dit la matiere — le meme partage que
+ * `Weapon.look` entre la silhouette d'un projectile et sa teinte.
+ */
+export function zoneLook(kind: number): ElementLook {
+  return zoneReaction(kind) !== 0 ? shapeLook(zoneShape(kind)) : lookOf(zoneElement(kind));
+}
+
+/**
+ * Nombre de cases de l'atlas : une rangee d'elements simples, une de
+ * silhouettes de reaction.
+ */
+export const ZONE_CELL_COUNT = ELEMENTS.length + ZONE_SHAPES.length;
+
+/**
+ * La case d'une zone : l'element en colonne sur la rangee du haut, la FAMILLE
+ * de reaction sur celle du bas.
+ *
+ * ⚠️ **La rangee du bas n'est plus indexee par element** (etape 8) : deux
+ * champs de reaction d'un meme element se ressemblaient donc trait pour trait,
+ * quelle que soit la reaction qui les avait poses. C'est la forme qui les
+ * separe desormais, et la teinte qui les relie a leur element.
+ */
 export function zoneCell(kind: number): number {
-  return zoneElement(kind) + (zoneReaction(kind) !== 0 ? ELEMENTS.length : 0);
+  if (zoneReaction(kind) === 0) {
+    return zoneElement(kind);
+  }
+  const rang = ZONE_SHAPES.indexOf(zoneShape(kind));
+  return ELEMENTS.length + (rang < 0 ? 0 : rang);
 }
 
 /**
@@ -418,11 +512,11 @@ export interface ViewBounds {
  * ennemis sont marques et ralentis, et c'est `ZONE_RADIUS` qui le decide
  * reellement (`markInZones`, `Horde#computeSlow`).
  */
-export function zoneScale(textureDiameterPx: number): number {
+export function zoneScale(textureDiameterPx: number, radiusPx = ZONE_RADIUS): number {
   if (textureDiameterPx <= 0) {
     return 1;
   }
-  return (2 * ZONE_RADIUS) / textureDiameterPx;
+  return (2 * radiusPx) / textureDiameterPx;
 }
 
 /**
@@ -495,11 +589,21 @@ function makeZoneAtlas(cell: number): Texture {
   const half = cell / 2;
   const lineWidth = cell * ZONE_RIM_WIDTH;
   const radius = half - lineWidth / 2;
-  for (let row = 0; row < 2; row++) {
-    const reaction = row === 1;
-    for (const element of ELEMENTS) {
-      const look = lookOf(element.id);
-      const cx = element.id * cell + half;
+  // Rangee du haut : une case par element (zones sans reaction). Rangee du
+  // bas : une case par FAMILLE de reaction — voir `zoneCell`.
+  const rangees: readonly { looks: readonly ElementLook[]; reaction: boolean }[] = [
+    { looks: ELEMENTS.map((e) => lookOf(e.id)), reaction: false },
+    { looks: ZONE_SHAPES.map((f) => shapeLook(f)), reaction: true },
+  ];
+  for (let row = 0; row < rangees.length; row++) {
+    const rangee = rangees[row];
+    if (!rangee) {
+      continue;
+    }
+    const reaction = rangee.reaction;
+    for (let col = 0; col < rangee.looks.length; col++) {
+      const look = rangee.looks[col] as ElementLook;
+      const cx = col * cell + half;
       const cy = row * cell + half;
       ctx.fillStyle = `rgba(255, 255, 255, ${reaction ? ZONE_REACTION_FILL_RATIO : ZONE_FILL_RATIO})`;
       tracePath(ctx, look, cx, cy, radius);
@@ -598,9 +702,12 @@ export class ZoneRenderer {
       (_, n) =>
         new Texture({
           source: atlas.source,
+          // Les deux rangees n'ont pas la meme largeur (sept elements, quatre
+          // familles) : la colonne se derive du rang DANS sa rangee, jamais
+          // d'un modulo sur une largeur commune qui n'existe pas.
           frame: new Rectangle(
-            (n % ELEMENTS.length) * cell,
-            Math.floor(n / ELEMENTS.length) * cell,
+            (n < ELEMENTS.length ? n : n - ELEMENTS.length) * cell,
+            (n < ELEMENTS.length ? 0 : 1) * cell,
             cell,
             cell,
           ),
@@ -625,7 +732,6 @@ export class ZoneRenderer {
     this.#ensureBuffers(zones.capacity);
 
     const count = selectZones(zones, tick, view, this.#selected);
-    const scale = zoneScale(ZONE_TEXTURE_DIAMETER);
     const seconds = timeMs / 1000;
 
     const children = this.#container.particleChildren;
@@ -638,18 +744,29 @@ export class ZoneRenderer {
       }
       const kind = zones.kind[i] ?? 0;
       const element = zoneElement(kind);
-      const look = lookOf(element);
-      // Une zone de reaction tourne plus vite : elle est l'evenement, le champ
-      // simple n'est que le terrain.
-      const spin = zoneReaction(kind) !== 0 ? look.spin * 1.6 : look.spin;
+      // La silhouette ET l'animation : celles de la REACTION si elle en porte
+      // une (etape 8), celles de l'element sinon. Voir `zoneLook`.
+      const look = zoneLook(kind);
+      // ⚠️ **Plus de facteur 1,6 sur les reactions** : leur rotation vient
+      // desormais de la silhouette de leur FAMILLE (`SHAPE_LOOKS`), qui la
+      // porte deja — une fracture tourne a l'envers, une etoile tourne vite.
+      // Multiplier par-dessus aurait rendu ces valeurs illisibles.
+      const spin = look.spin;
       const age = tick - (zones.bornTick[i] ?? 0);
       const seed = slotSeed(i);
 
       particle.texture = this.#cells[zoneCell(kind)] ?? particle.texture;
       particle.x = zones.x[i] ?? 0;
       particle.y = zones.y[i] ?? 0;
+      // ⚠️ **L'echelle suit le rayon de CETTE zone** (etape 8) : toutes ne font
+      // plus `ZONE_RADIUS`, et le disque dessine doit dire ce que la regle
+      // couvre — « le bord dit toujours la verite » (tache 16).
+      //
       // Un seul facteur pour les deux axes : la zone reste un CERCLE en monde.
-      const s = scale * zoneSpawnScale(age) * lookPulse(look, seconds, seed);
+      const s =
+        zoneScale(ZONE_TEXTURE_DIAMETER, zoneRadius(kind)) *
+        zoneSpawnScale(age) *
+        lookPulse(look, seconds, seed);
       particle.scaleX = s;
       particle.scaleY = s;
       particle.rotation = seed + spin * seconds;

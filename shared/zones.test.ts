@@ -14,7 +14,7 @@ import {
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import { packZoneKind, zoneElement } from './protocol';
-import { REACTION } from './reactions';
+import { REACTION, zoneLifetimeTicks, zoneRadius } from './reactions';
 import { ZoneField } from './zones';
 
 /**
@@ -803,18 +803,22 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
 
   it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
     const zones = new ZoneField();
-    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 0, 0, 0, 0);
+    // ⚠️ **Rayon et duree DERIVES du `kind`** (etape 8) : chaque reaction a
+    // les siens, donc les recopier ici depuis les constantes generiques
+    // ferait echouer ce cas pour une raison qui n'est pas celle qu'il garde.
+    const kind = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
+    const rayon = zoneRadius(kind);
+    const vie = zoneLifetimeTicks(kind);
+    zones.spawn(kind, 0, 0, 0, 0);
 
     // Dedans : la zone porte.
-    expect(zones.armorReductionAt(ZONE_RADIUS - 1, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
+    expect(zones.armorReductionAt(rayon - 1, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
     // Pile sur le cercle : la borne est STRICTE, comme `ampAt` et `slowsAt`.
-    expect(zones.armorReductionAt(ZONE_RADIUS, 0, 0)).toBe(0);
+    expect(zones.armorReductionAt(rayon, 0, 0)).toBe(0);
     // Perimee : `aliveAt` la saute, meme au centre exact.
-    expect(zones.armorReductionAt(0, 0, ZONE_LIFETIME_TICKS)).toBe(0);
+    expect(zones.armorReductionAt(0, 0, vie)).toBe(0);
     // Et elle vit encore au dernier tick de sa duree de vie.
-    expect(zones.armorReductionAt(0, 0, ZONE_LIFETIME_TICKS - 1)).toBe(
-      SUPRACONDUCTION_ARMOR_REDUCTION,
-    );
+    expect(zones.armorReductionAt(0, 0, vie - 1)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
   });
 
   /**
@@ -945,17 +949,21 @@ describe('ZoneField.collisionDamageAt — le degat de collision (etape 5b, tache
 
   it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
     const zones = new ZoneField();
-    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS), 0, 0, 0, 0);
+    // ⚠️ **Rayon et duree DERIVES du `kind`** (etape 8) : chaque reaction a
+    // les siens, donc les recopier ici depuis les constantes generiques
+    // ferait echouer ce cas pour une raison qui n'est pas celle qu'il garde.
+    const kind = packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS);
+    const rayon = zoneRadius(kind);
+    const vie = zoneLifetimeTicks(kind);
+    zones.spawn(kind, 0, 0, 0, 0);
 
-    expect(zones.collisionDamageAt(ZONE_RADIUS - 1, 0, 0)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
+    expect(zones.collisionDamageAt(rayon - 1, 0, 0)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
     // Pile sur le cercle : la borne est STRICTE, comme `ampAt` et `slowsAt`.
-    expect(zones.collisionDamageAt(ZONE_RADIUS, 0, 0)).toBe(0);
+    expect(zones.collisionDamageAt(rayon, 0, 0)).toBe(0);
     // Perimee : `aliveAt` la saute, meme au centre exact.
-    expect(zones.collisionDamageAt(0, 0, ZONE_LIFETIME_TICKS)).toBe(0);
+    expect(zones.collisionDamageAt(0, 0, vie)).toBe(0);
     // Et elle vit encore au dernier tick de sa duree de vie.
-    expect(zones.collisionDamageAt(0, 0, ZONE_LIFETIME_TICKS - 1)).toBe(
-      VERGLAS_COLLISION_DAMAGE_PER_TICK,
-    );
+    expect(zones.collisionDamageAt(0, 0, vie - 1)).toBe(VERGLAS_COLLISION_DAMAGE_PER_TICK);
   });
 
   /**
@@ -1039,19 +1047,26 @@ describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l et
 
   it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
     const zones = new ZoneField();
-    zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), 0, 0, 0, 0);
+    // ⚠️ **Rayon et duree DERIVES du `kind`** (etape 8) : chaque reaction a
+    // les siens, donc les recopier ici depuis les constantes generiques
+    // ferait echouer ce cas pour une raison qui n'est pas celle qu'il garde.
+    const kind = packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE);
+    const rayon = zoneRadius(kind);
+    const vie = zoneLifetimeTicks(kind);
+    zones.spawn(kind, 0, 0, 0, 0);
 
     // Dedans : la zone porte.
-    expect(zones.burnAt(ZONE_RADIUS - 1, 0, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
+    expect(zones.burnAt(rayon - 1, 0, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
     // Pile sur le cercle : la borne est STRICTE, comme `ampAt` et `slowsAt`.
-    expect(zones.burnAt(ZONE_RADIUS, 0, 0)).toBe(0);
-    // Perimee : `aliveAt` la saute, meme au centre exact — Surchauffe
-    // ALLONGE sa PROPRE duree de vie (voir le describe dedie plus haut),
-    // donc la borne est `SURCHAUFFE_ZONE_LIFETIME_TICKS`, pas
-    // `ZONE_LIFETIME_TICKS`.
-    expect(zones.burnAt(0, 0, SURCHAUFFE_ZONE_LIFETIME_TICKS)).toBe(0);
+    expect(zones.burnAt(rayon, 0, 0)).toBe(0);
+    // Perimee : `aliveAt` la saute, meme au centre exact. ⚠️ La borne est
+    // celle de SURCHAUFFE, qui allonge sa propre duree (voir le describe
+    // dedie plus haut) — `vie` la derive du `kind`, donc ce cas suit la table
+    // au lieu de recopier la constante une seconde fois.
+    expect(vie).toBe(SURCHAUFFE_ZONE_LIFETIME_TICKS);
+    expect(zones.burnAt(0, 0, vie)).toBe(0);
     // Et elle vit encore au dernier tick de sa duree de vie.
-    expect(zones.burnAt(0, 0, SURCHAUFFE_ZONE_LIFETIME_TICKS - 1)).toBe(SURCHAUFFE_BURN_PER_TICK);
+    expect(zones.burnAt(0, 0, vie - 1)).toBe(SURCHAUFFE_BURN_PER_TICK);
   });
 
   /**

@@ -25,7 +25,7 @@ import { FlowField } from './flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, type HordeState, leavesDrop } from './horde';
 import { PlayerHistory } from './player-history';
 import { packZoneKind } from './protocol';
-import { REACTION } from './reactions';
+import { REACTION, zoneLifetimeTicks } from './reactions';
 import { FORMATION, type WaveOrder } from './waves';
 import { applyObstacles, generateObstacles } from './worldmap';
 import { ZoneField } from './zones';
@@ -2804,9 +2804,15 @@ describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache
     expect(scellee.entityIdAt(0) % STEERING_RECOMPUTE_TICKS).toBe(STEERING_RECOMPUTE_TICKS - 1);
 
     const zones = new ZoneField();
-    zones.spawn(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF), 1000, 1000, 0, 0);
+    // ⚠️ **La duree de CE champ, pas la generique** (etape 8 : chaque reaction
+    // a la sienne). Mortier vif scelle moins longtemps que le champ commun ;
+    // boucler sur `ZONE_LIFETIME_TICKS` laissait donc l'entite repartir avant
+    // la fin du decor, et le gel semblait ne pas tenir.
+    const kindSceau = packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF);
+    const vieSceau = zoneLifetimeTicks(kindSceau);
+    zones.spawn(kindSceau, 1000, 1000, 0, 0);
 
-    for (let t = 0; t < ZONE_LIFETIME_TICKS; t++) {
+    for (let t = 0; t < vieSceau; t++) {
       scellee.step(DT, fields, t, zones);
       temoin.step(DT, fields, t);
     }
@@ -2817,11 +2823,11 @@ describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache
     expect((temoin.x[0] ?? 0) - 1000).toBeGreaterThan(0);
 
     const avant = scellee.x[0] ?? 0;
-    // Le tick meme ou la zone meurt (`ZONE_LIFETIME_TICKS`) : `#slow`
+    // Le tick meme ou la zone meurt (`vieSceau`) : `#slow`
     // repasse a 1, mais ce n'est PAS un tick de recalcul pour cette entite
     // (phase au pire cas) — `vx`/`vy` tiennent encore la fuite du dernier
     // recalcul, a l'interieur de la zone.
-    scellee.step(DT, fields, ZONE_LIFETIME_TICKS, zones);
+    scellee.step(DT, fields, vieSceau, zones);
     const apres = scellee.x[0] ?? 0;
 
     // La direction FUYANTE (vers les x decroissants, l'oppose du champ vers

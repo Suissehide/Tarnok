@@ -434,7 +434,7 @@ export class Projectiles {
    * parametre est parti avec son seul appelant, aucun test ne le tenait, et un
    * point d'extension que personne n'utilise est un point d'extension qui ment.
    */
-  step(dt: number): void {
+  step(dt: number, onExpire?: (slot: number) => void): void {
     for (let i = 0; i < this.#count; i++) {
       // Capture la position de DEBUT de pas avant de la faire avancer : c'est
       // le point de depart du segment que `collide` testera.
@@ -450,6 +450,16 @@ export class Projectiles {
     // etre lui-meme retire par erreur ensuite.
     for (let i = this.#count - 1; i >= 0; i--) {
       if ((this.#ticksRemaining[i] ?? 0) <= 0) {
+        // ⚠️ **AVANT `#removeAt`, pendant que le creneau est encore valide** :
+        // l'appelant y lit la position, le souffle et les degats du projectile
+        // qui s'eteint — exactement la fenetre que `collide` ouvre a l'impact.
+        //
+        // ⚠️ **Ce rappel RESSEMBLE a celui que la tache 21 a retire, et il ne
+        // fait pas la meme chose.** L'ancien servait le modele ou un projectile
+        // POSAIT une zone en fin de course ; celui-ci ne pose rien, il rend
+        // seulement la main — et c'est l'appelant qui decide, aujourd'hui pour
+        // faire sauter une arme de souffle qui n'a percute personne.
+        onExpire?.(i);
         this.#removeAt(i);
       }
     }

@@ -384,7 +384,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // le plus discret du catalogue.
     look: {
       shape: 'lame',
-      diameterPx: 10,
+      diameterPx: 11,
       tint: 0xeaf2ff,
       glow: 0.3,
       trailTicks: 1,
@@ -819,15 +819,27 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // casserait. Le `kind` ci-dessus dit ce qui compte vraiment.
     look: {
       shape: 'bouffee',
-      diameterPx: 11,
-      tint: 0x8a6d3f,
+      diameterPx: 10,
+      // ⚠️ **Ambre VIF, et plus un brun sourd** (*« on voit mal le halo »*) :
+      // la teinte d'une arme de halo n'habille pas un projectile de dix
+      // pixels, elle EST le disque qu'on voit battre autour du joueur.
+      // 0x8a6d3f se perdait sur l'herbe — le meme defaut que celui corrige
+      // pour les armes de Chaux et de Vif-argent, qui attendait ici le jour ou
+      // une teinte se mettrait a porter une surface plutot qu'un point.
+      tint: 0xe0a53c,
       glow: 0.2,
       trailTicks: 0.8,
       spinTurns: 0.8,
       trail: 'fumee',
     },
-    cooldownTicks: 18,
-    damage: 5,
+    // ⚠️ **12 ticks, et c'est un reglage de LISIBILITE** (*« on voit mal le
+    // halo »*) : une pulsation dure ce que dure son flash, 220 ms, et une
+    // recharge de 18 ticks (600 ms) laissait donc l'aura eteinte les deux
+    // tiers du temps. A 12 ticks (400 ms) elle bat presque sans interruption,
+    // et la puissance ne bouge pas — 5 degats toutes les 18 ticks font 8,3 par
+    // seconde, 4 toutes les 12 en font 10.
+    cooldownTicks: 12,
+    damage: 4,
     projectileSpeed: 480,
     projectileLifeTicks: 18,
     projectileCount: 1,
@@ -1446,6 +1458,30 @@ export function effectRadius(weapon: Weapon, stacks: number): number {
 export function beamRange(weapon: Weapon): number {
   return (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
 }
+
+/**
+ * Ce qu'une carte d'arme ameliore quand on possede DEJA l'arme — un seul
+ * aspect par carte (retour de jeu : *« les cartes des armes pourraient
+ * ameliorer qu'une partie a chaque fois »*).
+ *
+ * `SPECIFIC` est le levier propre a la famille : la salve d'un tir
+ * (`salvoCount`), le rayon du reste (`effectRadius`). Il vaut `0` pour qu'une
+ * carte sans aspect garde l'ancien effet d'un exemplaire empile.
+ */
+export const UPGRADE = {
+  SPECIFIC: 0,
+  DAMAGE: 1,
+  FIRE_RATE: 2,
+} as const;
+export const UPGRADE_KINDS = 3;
+
+/** Degats gagnes par carte « degats », en fraction des degats de base. */
+export const DAMAGE_PER_UPGRADE = 0.25;
+/**
+ * Recharge retiree par carte « cadence », en fraction — s'additionne aux
+ * passifs de cadence sous le meme plafond `MAX_FIRE_RATE_BONUS`.
+ */
+export const FIRE_RATE_PER_UPGRADE = 0.12;
 
 export function stackGain(weapon: Weapon): number {
   return Math.max(1, Math.ceil(weapon.projectileCount / 3));

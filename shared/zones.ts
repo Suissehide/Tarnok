@@ -10,6 +10,7 @@ import {
   zoneCollisionDamage,
   zoneDamageAmpTotal,
   zoneLifetimeTicks,
+  zoneRadius,
   zoneVifArgent,
 } from './reactions';
 
@@ -40,6 +41,27 @@ import {
  * que `Horde` et `Projectiles`), retrait par indice decroissant, expiration
  * derivee du `bornTick` sans un octet sur le fil.
  */
+/**
+ * Le rayon AU CARRE de chaque `kind` de zone possible, cuit au chargement.
+ *
+ * ⚠️ **Une table, pas un appel dans la boucle** — exactement la discipline de
+ * `HIT_R2_BY_ARCHETYPE` (`shared/projectiles.ts`). Les six balayages de cette
+ * classe sont appeles PAR ENTITE et par tick (`burnAt` en tete) : y mettre
+ * `zoneRadius(kind)`, qui fait une recherche dans `REACTION_DEFS`, aurait
+ * remplace une multiplication par un lookup dans une boucle en
+ * entites x zones. `kind` tient sur un octet (`Uint8Array`), donc 256 entrees
+ * couvrent tout ce qui peut exister.
+ */
+const ZONE_R2_BY_KIND = Float32Array.from({ length: 256 }, (_, kind) => {
+  const r = zoneRadius(kind);
+  return r * r;
+});
+
+/** Le rayon au carre de la zone du creneau `slot` — voir `ZONE_R2_BY_KIND`. */
+function r2Of(kind: number): number {
+  return ZONE_R2_BY_KIND[kind] ?? ZONE_RADIUS * ZONE_RADIUS;
+}
+
 export class ZoneField {
   /**
    * Ce que la zone porte : l'octet empaquete par `packZoneKind`
@@ -199,7 +221,10 @@ export class ZoneField {
    * `kind` valide, de reaction nulle.
    */
   spawn(kind: number, x: number, y: number, playerId: number, tick: number): number {
-    const r2 = ZONE_RADIUS * ZONE_RADIUS;
+    // ⚠️ **Le rayon de la zone qu'on POSE** : la fusion ne compare que des
+    // zones de meme `kind` (voir juste en dessous), donc les deux portent le
+    // meme rayon et il n'y a rien a arbitrer entre eux.
+    const r2 = r2Of(kind);
     for (let i = 0; i < this.#count; i++) {
       // ⚠️ **Le `kind` COMPLET, pas `zoneElement(kind)` seul.** Voir le
       // docbloc ci-dessus : comparer par element confondait deux effets
@@ -340,7 +365,6 @@ export class ZoneField {
    * du DECLENCHEUR, Poix OU Chaux selon l'ordre d'arrivee).
    */
   ampAt(x: number, y: number, tick: number): number {
-    const r2 = ZONE_RADIUS * ZONE_RADIUS;
     let amp = 1;
     for (let z = 0; z < this.#count; z++) {
       if (!this.aliveAt(z, tick)) {
@@ -348,7 +372,8 @@ export class ZoneField {
       }
       const dx = (this.x[z] ?? 0) - x;
       const dy = (this.y[z] ?? 0) - y;
-      if (dx * dx + dy * dy >= r2) {
+      // Le rayon de CETTE zone (etape 8) : toutes ne portent plus le meme.
+      if (dx * dx + dy * dy >= r2Of(this.kind[z] ?? 0)) {
         continue;
       }
       const factor = zoneDamageAmpTotal(this.kind[z] ?? 0);
@@ -388,7 +413,6 @@ export class ZoneField {
    * reaction, exactement comme `zoneSlowFactor` le fait pour la vitesse.
    */
   armorReductionAt(x: number, y: number, tick: number): number {
-    const r2 = ZONE_RADIUS * ZONE_RADIUS;
     let reduction = 0;
     for (let z = 0; z < this.#count; z++) {
       if (!this.aliveAt(z, tick)) {
@@ -396,7 +420,8 @@ export class ZoneField {
       }
       const dx = (this.x[z] ?? 0) - x;
       const dy = (this.y[z] ?? 0) - y;
-      if (dx * dx + dy * dy >= r2) {
+      // Le rayon de CETTE zone (etape 8) : toutes ne portent plus le meme.
+      if (dx * dx + dy * dy >= r2Of(this.kind[z] ?? 0)) {
         continue;
       }
       const factor = zoneArmorReductionTotal(this.kind[z] ?? 0);
@@ -430,7 +455,6 @@ export class ZoneField {
    * connait pas la horde, meme raisonnement qu'`ampAt`.
    */
   collisionDamageAt(x: number, y: number, tick: number): number {
-    const r2 = ZONE_RADIUS * ZONE_RADIUS;
     let damage = 0;
     for (let z = 0; z < this.#count; z++) {
       if (!this.aliveAt(z, tick)) {
@@ -438,7 +462,8 @@ export class ZoneField {
       }
       const dx = (this.x[z] ?? 0) - x;
       const dy = (this.y[z] ?? 0) - y;
-      if (dx * dx + dy * dy >= r2) {
+      // Le rayon de CETTE zone (etape 8) : toutes ne portent plus le meme.
+      if (dx * dx + dy * dy >= r2Of(this.kind[z] ?? 0)) {
         continue;
       }
       const factor = zoneCollisionDamage(this.kind[z] ?? 0);
@@ -490,7 +515,6 @@ export class ZoneField {
    * `resolveBurn`.
    */
   burnAt(x: number, y: number, tick: number): number {
-    const r2 = ZONE_RADIUS * ZONE_RADIUS;
     let burn = 0;
     for (let z = 0; z < this.#count; z++) {
       if (!this.aliveAt(z, tick)) {
@@ -498,7 +522,8 @@ export class ZoneField {
       }
       const dx = (this.x[z] ?? 0) - x;
       const dy = (this.y[z] ?? 0) - y;
-      if (dx * dx + dy * dy >= r2) {
+      // Le rayon de CETTE zone (etape 8) : toutes ne portent plus le meme.
+      if (dx * dx + dy * dy >= r2Of(this.kind[z] ?? 0)) {
         continue;
       }
       const factor = zoneBurnPerTick(this.kind[z] ?? 0);
@@ -559,7 +584,6 @@ export class ZoneField {
    * son docbloc dans `shared/reactions.ts` pour le detail complet.
    */
   hitRadiusBonusAt(x: number, y: number, tick: number): number {
-    const r2 = ZONE_RADIUS * ZONE_RADIUS;
     let bonus = 0;
     for (let z = 0; z < this.#count; z++) {
       if (!this.aliveAt(z, tick)) {
@@ -567,7 +591,8 @@ export class ZoneField {
       }
       const dx = (this.x[z] ?? 0) - x;
       const dy = (this.y[z] ?? 0) - y;
-      if (dx * dx + dy * dy >= r2) {
+      // Le rayon de CETTE zone (etape 8) : toutes ne portent plus le meme.
+      if (dx * dx + dy * dy >= r2Of(this.kind[z] ?? 0)) {
         continue;
       }
       if (!zoneVifArgent(this.kind[z] ?? 0)) {
@@ -613,10 +638,12 @@ export class ZoneField {
    * n'en a pas besoin.
    */
   overlaps(a: number, b: number): boolean {
-    // Toutes les zones portent le meme rayon aujourd'hui ; ecrit comme une
-    // somme parce que c'est ca, la regle, et qu'un rayon par zone ne serait
-    // alors qu'un changement local.
-    const sum = ZONE_RADIUS + ZONE_RADIUS;
+    // ⚠️ **La SOMME des deux rayons, et ils peuvent differer depuis l'etape
+    // 8.** Le commentaire d'avant disait « toutes les zones portent le meme
+    // rayon aujourd'hui ; ecrit comme une somme parce que c'est ca, la regle,
+    // et qu'un rayon par zone ne serait alors qu'un changement local » — il
+    // avait raison, et le changement local est celui-ci.
+    const sum = Math.sqrt(r2Of(this.kind[a] ?? 0)) + Math.sqrt(r2Of(this.kind[b] ?? 0));
     const dx = (this.x[a] ?? 0) - (this.x[b] ?? 0);
     const dy = (this.y[a] ?? 0) - (this.y[b] ?? 0);
     return dx * dx + dy * dy < sum * sum;

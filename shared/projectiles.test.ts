@@ -1008,3 +1008,71 @@ describe('Projectiles — la mine, un projectile qui ne part pas', () => {
     }
   });
 });
+
+/**
+ * Étape 8 — **le souffle de fin de course**, signale en jouant : *« la grenade
+ * doit exploser en fin de course meme si elle touche personne »*.
+ *
+ * Ce que `Projectiles` apporte ici est le RAPPEL ; ce qu'il emporte est decide
+ * par l'appelant (`resolveProjectileDamage`, back/src/combat.ts).
+ */
+describe('Projectiles.step — le rappel de fin de course', () => {
+  it('rend la main sur CHAQUE projectile qui s eteint, et une seule fois', () => {
+    const arme = { ...SINGLE, projectileLifeTicks: 3 };
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(arme, 0, 0, 0, 1, 0, arme.damage, 2);
+    const expires: number[] = [];
+    for (let i = 0; i < 10; i++) {
+      p.step(1 / TICK_HZ, () => expires.push(i));
+    }
+    // Les deux projectiles s'eteignent au meme pas, et plus rien ensuite.
+    expect(expires).toHaveLength(2);
+    expect(new Set(expires).size).toBe(1);
+  });
+
+  it('laisse LIRE le projectile avant de le retirer', () => {
+    // ⚠️ C'est toute la raison d'etre du rappel : au moment ou il est appele,
+    // le creneau porte encore la position, le souffle et les degats de ce qui
+    // vient de s'eteindre. Appele apres `#removeAt`, il n'aurait rien a lire.
+    const arme = { ...SINGLE, projectileLifeTicks: 2, blastRadius: 40, projectileSpeed: 600 };
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(arme, 0, 100, 200, 1, 0, arme.damage, 1);
+    const vus: { x: number; souffle: number; degats: number }[] = [];
+    for (let i = 0; i < 4; i++) {
+      p.step(1 / TICK_HZ, (slot) => {
+        vus.push({
+          x: p.x[slot] ?? 0,
+          souffle: p.blastRadiusAt(slot),
+          degats: p.damageAt(slot),
+        });
+      });
+    }
+    expect(vus).toHaveLength(1);
+    expect(vus[0]?.souffle).toBe(40);
+    expect(vus[0]?.degats).toBe(arme.damage);
+    // Et la position est celle du DERNIER pas, pas celle du tir.
+    expect(vus[0]?.x).toBeGreaterThan(100);
+  });
+
+  it('ne rappelle RIEN sans projectile expire', () => {
+    const arme = { ...SINGLE, projectileLifeTicks: 40 };
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(arme, 0, 0, 0, 1, 0, arme.damage, 1);
+    let appels = 0;
+    for (let i = 0; i < 5; i++) {
+      p.step(1 / TICK_HZ, () => {
+        appels++;
+      });
+    }
+    expect(appels).toBe(0);
+    expect(p.count).toBe(1);
+  });
+
+  it('reste optionnel : l appelant qui s en moque ne le passe pas', () => {
+    const arme = { ...SINGLE, projectileLifeTicks: 1 };
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(arme, 0, 0, 0, 1, 0, arme.damage, 1);
+    expect(() => p.step(1 / TICK_HZ)).not.toThrow();
+    expect(p.count).toBe(0);
+  });
+});

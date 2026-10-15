@@ -1249,9 +1249,36 @@ export function resolveProjectileDamage(
   // et le rappel `onExpire` de `Projectiles.step` qui n'existait que pour la
   // premiere. Ce qui reste au projectile, c'est de MARQUER ce qu'il touche :
   // le seul chemin qui mene a la premiere reaction, donc au premier champ.
-  projectiles.step(dt);
-
   const dead = new Set<number>();
+  // ⚠️ **Le souffle part AUSSI en fin de course** (etape 8) : *« la grenade
+  // doit exploser en fin de course meme si elle touche personne »*. Jusqu'ici
+  // une arme de zone qui n'avait percute personne disparaissait sans rien
+  // faire — ce qui est juste pour un trait, et faux pour une bombe.
+  //
+  // ⚠️ **Le meme balayage qu'a l'impact** (`damageInRadius`), au point ou le
+  // projectile s'eteint : il n'y a pas deux explosions dans ce fichier, il y
+  // en a une, atteinte par deux chemins.
+  //
+  // ⚠️ **Rien pour les armes SANS souffle** : seize sur dix-sept finissent leur
+  // course sans rien laisser, et c'est la ligne absente qui reste le cas
+  // courant.
+  projectiles.step(dt, (slot) => {
+    const souffle = projectiles.blastRadiusAt(slot);
+    if (souffle <= 0) {
+      return;
+    }
+    damageInRadius(
+      horde,
+      projectiles.x[slot] ?? 0,
+      projectiles.y[slot] ?? 0,
+      souffle,
+      projectiles.damageAt(slot),
+      zones,
+      tick,
+      dead,
+    );
+  });
+
   // ⚠️ **`zones, tick` en dernier : le rayon de touche elargi du Vif-argent
   // (etape 5c, tache 3), COTE SERVEUR SEUL.** Voir `ZoneField.hitRadiusBonusAt`
   // (`shared/zones.ts`) et le docbloc de `Projectiles.collide`

@@ -12,6 +12,7 @@ import {
   VERGLAS_COLLISION_DAMAGE_PER_TICK,
   VERGLAS_INERTIA_DAMPING,
   ZONE_LIFETIME_TICKS,
+  ZONE_RADIUS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import { packElementPair, packZoneKind, unpackElementPair, zoneReaction } from './protocol';
@@ -28,6 +29,8 @@ import {
   zoneFieldSign,
   zoneInertiaDamping,
   zoneLifetimeTicks,
+  zoneRadius,
+  zoneShape,
   zoneSlowFactor,
 } from './reactions';
 
@@ -444,34 +447,42 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
    * la fait rougir — un decor qui masquerait le jour ou cette coincidence
    * disparait.
    */
-  it('rend la duree GENERIQUE pour Embrasement et Court-circuit : `zoneLifetimeTicks: 0` n est pas une duree', () => {
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, REACTION.EMBRASEMENT))).toBe(
-      ZONE_LIFETIME_TICKS,
-    );
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.FOUDRE, REACTION.COURT_CIRCUIT))).toBe(
-      ZONE_LIFETIME_TICKS,
-    );
+  /**
+   * ⚠️ **Ces trois cas disaient « duree GENERIQUE » pour huit reactions, et ce
+   * n'est plus la regle depuis l'etape 8** (*« fais des zones de differentes
+   * tailles, duree, forme »*). Ce qui reste vrai, et ce qu'ils gardent
+   * desormais : la duree sort du `kind` seul, elle tient dans une fourchette
+   * lisible, et `0` continue de vouloir dire « la generique » — c'est la
+   * MECANIQUE qui est gardee, plus la valeur de chaque ligne.
+   */
+  it('rend une duree a chaque reaction, dans une fourchette lisible', () => {
+    for (const def of REACTION_DEFS) {
+      const vie = zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, def.id));
+      expect(vie, def.name).toBeGreaterThanOrEqual(ZONE_LIFETIME_TICKS / 2);
+      expect(vie, def.name).toBeLessThanOrEqual(ZONE_LIFETIME_TICKS * 2);
+    }
   });
 
-  it('rend la duree GENERIQUE pour Fournee et Eclat de gel (tache 4 de l etape 5c) : aucune des deux n allonge sa zone', () => {
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE))).toBe(
-      ZONE_LIFETIME_TICKS,
+  it('fait VARIER la duree d une reaction a l autre : deux bornes distinctes au moins', () => {
+    const vies = new Set(
+      REACTION_DEFS.map((def) => zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, def.id))),
     );
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL))).toBe(
-      ZONE_LIFETIME_TICKS,
-    );
+    // Trois valeurs distinctes au moins : sans ca, « des durees differentes »
+    // serait vrai sur le papier et faux a l'ecran.
+    expect(vies.size).toBeGreaterThanOrEqual(3);
+    expect(Math.min(...vies)).toBeLessThan(ZONE_LIFETIME_TICKS);
+    expect(Math.max(...vies)).toBeGreaterThan(ZONE_LIFETIME_TICKS);
   });
 
-  it('rend la duree GENERIQUE pour Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c) : aucune n allonge sa zone', () => {
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(
-      ZONE_LIFETIME_TICKS,
-    );
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE))).toBe(
-      ZONE_LIFETIME_TICKS,
-    );
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE))).toBe(
-      ZONE_LIFETIME_TICKS,
-    );
+  it('garde `0` comme « la generique », pour les lignes qui ne tranchent pas', () => {
+    // La mecanique, pas la valeur : une ligne a `zoneLifetimeTicks: 0` doit
+    // toujours retomber sur la duree commune.
+    const sansDuree = REACTION_DEFS.filter((def) => def.zoneLifetimeTicks === 0);
+    for (const def of sansDuree) {
+      expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, def.id)), def.name).toBe(
+        ZONE_LIFETIME_TICKS,
+      );
+    }
   });
 
   /**
@@ -500,13 +511,17 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
     );
   });
 
-  it('rend la duree GENERIQUE pour Mortier vif : aucune duree propre, contrairement a Gel profond et Aveuglement', () => {
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF))).toBe(
-      ZONE_LIFETIME_TICKS,
+  it('donne a Mortier vif une zone BREVE, la ou Gel profond et Aveuglement durent', () => {
+    // ⚠️ Ce cas disait « duree generique » jusqu'a l'etape 8 ; ce qu'il garde
+    // vraiment, c'est l'ECART entre une reaction qui pose un champ durable et
+    // une qui ne fait que passer — et cet ecart existe toujours, dans l'autre
+    // sens. L'element porte reste sans effet, comme partout ailleurs.
+    const mortier = zoneLifetimeTicks(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
+    expect(mortier).toBeLessThan(ZONE_LIFETIME_TICKS);
+    expect(mortier).toBeLessThan(
+      zoneLifetimeTicks(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND)),
     );
-    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF))).toBe(
-      ZONE_LIFETIME_TICKS,
-    );
+    expect(zoneLifetimeTicks(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF))).toBe(mortier);
   });
 
   /**
@@ -1420,5 +1435,53 @@ describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION
     for (const element of [a, b]) {
       expect(def?.zoneDamageAmp).toBeGreaterThanOrEqual(elementOf(element).damageAmp);
     }
+  });
+});
+
+/**
+ * Étape 8 — **les champs varient**, demande par l'auteur : *« fais des zones
+ * de differentes tailles, duree, forme »*. La duree existait deja (une seule
+ * reaction s'en servait) ; le rayon et la silhouette sont neufs, et tous
+ * trois se derivent du MEME octet de `kind`, donc sans rien annoncer de plus.
+ */
+describe('zoneRadius et zoneShape — ce qui distingue un champ d un autre', () => {
+  it('rend le rayon GENERIQUE pour un kind sans reaction', () => {
+    expect(zoneRadius(ELEMENT.BRAISE)).toBe(ZONE_RADIUS);
+    expect(zoneRadius(packZoneKind(ELEMENT.GIVRE, REACTION.AUCUNE))).toBe(ZONE_RADIUS);
+  });
+
+  it('donne a chaque reaction un rayon, dans une fourchette lisible', () => {
+    for (const def of REACTION_DEFS) {
+      const r = zoneRadius(packZoneKind(ELEMENT.BRAISE, def.id));
+      expect(r, def.name).toBeGreaterThanOrEqual(ZONE_RADIUS / 2);
+      expect(r, def.name).toBeLessThanOrEqual(ZONE_RADIUS * 2);
+    }
+  });
+
+  it('fait VARIER le rayon d une reaction a l autre, des deux cotes du generique', () => {
+    const rayons = new Set(
+      REACTION_DEFS.map((def) => zoneRadius(packZoneKind(ELEMENT.BRAISE, def.id))),
+    );
+    expect(rayons.size).toBeGreaterThanOrEqual(5);
+    expect(Math.min(...rayons)).toBeLessThan(ZONE_RADIUS);
+    expect(Math.max(...rayons)).toBeGreaterThan(ZONE_RADIUS);
+  });
+
+  it('ignore les autres bits du kind : seul le nibble de reaction compte', () => {
+    // Meme regle que pour la duree : l'element porte est celui du
+    // DECLENCHEUR, il ne doit pas changer la taille du champ.
+    const a = packZoneKind(ELEMENT.BRAISE, REACTION.VERGLAS);
+    const b = packZoneKind(ELEMENT.POIX, REACTION.VERGLAS);
+    expect(zoneRadius(a)).toBe(zoneRadius(b));
+    expect(zoneShape(a)).toBe(zoneShape(b));
+  });
+
+  it('donne une silhouette a chaque reaction, et s en sert de plus d une', () => {
+    const formes = new Set(
+      REACTION_DEFS.map((def) => zoneShape(packZoneKind(ELEMENT.BRAISE, def.id))),
+    );
+    expect(formes.size).toBeGreaterThanOrEqual(3);
+    // Une zone sans reaction garde la silhouette ronde.
+    expect(zoneShape(ELEMENT.BRAISE)).toBe('rond');
   });
 });

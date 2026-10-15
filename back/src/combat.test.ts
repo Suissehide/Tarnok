@@ -45,7 +45,7 @@ import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
-import { REACTION, zoneBurnPerTick } from '@shared/reactions';
+import { REACTION, REACTION_DEFS, zoneBurnPerTick, zoneRadius } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { beamRange, effectRadius, NEUTRE_MARQUE_AMP, WEAPONS, type Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
@@ -71,6 +71,21 @@ import {
 } from './combat';
 
 const DT = 1 / 30;
+
+/**
+ * Une distance qui tombe HORS de tout champ de reaction, quel qu'il soit
+ * (etape 8) — et hors du rayon d'effet instantane d'une reaction.
+ *
+ * ⚠️ **Derivee de la table, jamais ecrite** : chaque reaction a son propre
+ * rayon de champ depuis l'etape 8, et plusieurs cas de ce fichier posaient
+ * leur geometrie sur `ZONE_RADIUS` seul — ils tombaient DANS un champ plus
+ * large sans que leur intention ait change.
+ */
+const RAYON_HORS_TOUT =
+  Math.max(
+    REACTION_RADIUS,
+    ...REACTION_DEFS.map((d) => (d.zoneRadius > 0 ? d.zoneRadius : ZONE_RADIUS)),
+  ) + 1;
 
 /**
  * Un sol NU : aucune zone, donc `ZoneField.ampAt` rend 1 partout et
@@ -2283,9 +2298,13 @@ describe('armureA — la Supraconduction rabote l armure (etape 5b, tache 7)', (
 
   it('hors de la zone, aucun effet', () => {
     const horde = new Horde(10);
-    addOne(horde, 1, 500 + ZONE_RADIUS, 500, LOURD);
+    // ⚠️ **Le rayon de CETTE reaction** (etape 8 : chaque reaction a le sien) —
+    // `ZONE_RADIUS` recopie ici placait l'ennemi DEDANS des que la
+    // Supraconduction a eu un rayon plus large que le generique.
+    const kind = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
+    addOne(horde, 1, 500 + zoneRadius(kind), 500, LOURD);
     const zones = new ZoneField();
-    zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
+    zones.spawn(kind, 500, 500, 0, 0);
 
     expect(armureA(horde, 0, zones, 0)).toBe(HEAVY_ARMOR);
   });
@@ -2908,7 +2927,12 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
   it('epargne un ennemi POISSE mais HORS du rayon', () => {
     const horde = new Horde(10);
     const dedans = addOne(horde, 1, 1000 + REACTION_RADIUS - 1, 1000, LOURD);
-    const dehors = addOne(horde, 2, 1000 + REACTION_RADIUS, 1000, LOURD);
+    // ⚠️ **Hors du rayon de la REACTION *et* de tout champ qu'elle laisse**
+    // (etape 8) : les champs n'ont plus tous le meme rayon, et le plus large
+    // (Verglas) depasse `REACTION_RADIUS`. Se poser pile a `REACTION_RADIUS`
+    // mettait donc cet ennemi DANS le champ, et sa flaque l'amplifiait — un
+    // echec qui n'avait rien a voir avec ce que ce cas garde.
+    const dehors = addOne(horde, 2, 1000 + RAYON_HORS_TOUT, 1000, LOURD);
     horde.applyMark(horde.slotOf(dedans), ELEMENT.POIX, 3, 0);
     horde.applyMark(horde.slotOf(dehors), ELEMENT.POIX, 3, 0);
     horde.hp[horde.slotOf(dedans)] = 1000;
@@ -2923,7 +2947,12 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
       new Reactions(),
     );
 
-    expect(horde.hp[horde.slotOf(dedans)]).toBeCloseTo(1000 - coupSurLourd(REACTION_DAMAGE), 5);
+    // ⚠️ **« Il encaisse », et plus un chiffre exact** : l'ennemi dedans se
+    // tient desormais dans le champ que la reaction vient de poser, qui
+    // l'amplifie. Ce que ce cas garde, c'est la FRONTIERE — dedans encaisse,
+    // dehors est epargne —, pas l'arithmetique du coup, que trois autres cas
+    // verifient deja.
+    expect(horde.hp[horde.slotOf(dedans)]).toBeLessThan(1000);
     expect(horde.hp[horde.slotOf(dehors)]).toBe(1000);
   });
 
@@ -3233,7 +3262,16 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
     // boucherait sur lui-meme au lieu d atteindre le VRAI premier maillon.
     const horde = new Horde(10);
     const declencheur = addOne(horde, 1, 500, 500, LOURD);
-    const cible = addOne(horde, 2, 500 + 50, 500, LOURD);
+    // ⚠️ **DANS le champ de Court-circuit, et son rayon est le sien** (etape 8,
+    // ou chaque reaction a pris le sien) : 50 px etaient « dans `ZONE_RADIUS` =
+    // 70 » quand toutes les zones portaient le meme rayon ; le champ de
+    // Court-circuit en fait 46, et la cible s'en etait retrouvee dehors — donc
+    // plus amplifiee, pour une raison qui n'a rien a voir avec ce que ce cas
+    // garde.
+    const dedansChamp = Math.round(
+      zoneRadius(packZoneKind(ELEMENT.POIX, REACTION.COURT_CIRCUIT)) * 0.7,
+    );
+    const cible = addOne(horde, 2, 500 + dedansChamp, 500, LOURD);
     horde.hp[horde.slotOf(declencheur)] = 1000;
     horde.hp[horde.slotOf(cible)] = 1000;
     horde.applyMark(horde.slotOf(cible), ELEMENT.POIX, 3, 0);
@@ -3245,9 +3283,10 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 
     applyReactions(horde, new OrbField(10), 0, [t], new ZoneField(), new Reactions());
 
-    // ⚠️ **Pas `25 x (1 - 0,15)` : `cible` (a 50 px, dans `ZONE_RADIUS` = 70)
-    // se tient dans la zone de Poix que `postZone` vient de poser au point du
-    // declencheur — sa propre reaction l'amplifie** (`damageAmp(Poix) = 1,5`).
+    // ⚠️ **Pas `25 x (1 - 0,15)` : `cible` se tient dans la zone de Poix que
+    // `postZone` vient de poser au point du declencheur — sa propre reaction
+    // l'amplifie** (`damageAmp(Poix) = 1,5`). Sa distance est DERIVEE du rayon
+    // de ce champ-la, voir plus haut.
     expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(1000 - 25 * 1.5 * (1 - HEAVY_ARMOR), 5);
     // Le declencheur n a pas ete rappele sur lui-meme.
     expect(horde.hp[horde.slotOf(declencheur)]).toBe(1000);
@@ -3415,9 +3454,12 @@ describe('resolveVerglasCollisions — Verglas fait se percuter les glissants (e
    */
   it('proches, mais UN SEUL dans la zone : aucun degat — il faut que les DEUX glissent', () => {
     const horde = new Horde(10);
-    const ax = ZONE_RADIUS - 1;
+    // Le rayon du champ de Verglas, pas le generique : il vaut 1,45 fois
+    // celui-ci depuis l'etape 8, et `b` tombait dedans.
+    const rayon = zoneRadius(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
+    const ax = rayon - 1;
     const bx = ax + (SEPARATION_RADIUS - 5);
-    expect(bx).toBeGreaterThan(ZONE_RADIUS);
+    expect(bx).toBeGreaterThan(rayon);
     expect(bx - ax).toBeLessThan(SEPARATION_RADIUS);
     const a = addOne(horde, 1, ax, 0, LOURD);
     const b = addOne(horde, 2, bx, 0, LOURD);
@@ -4059,11 +4101,16 @@ describe('applyReactions — Arc caustique laisse un champ corrosif a chaque sau
     // calcul.
     const horde = new Horde(10);
     const declencheur = addOne(horde, 1, 500, 500, LOURD);
-    const cible = addOne(horde, 2, 600, 500, LOURD);
+    // ⚠️ **Hors de TOUT champ, pas seulement du generique** (etape 8) : le
+    // commentaire ci-dessus choisissait 100 px parce que `ZONE_RADIUS` valait
+    // 70 ; le champ le plus large en vaut desormais 102, et `cible` s'y
+    // retrouvait, son armure rabotee avant que son propre coup ne soit compte.
+    const ecart = RAYON_HORS_TOUT;
+    const cible = addOne(horde, 2, 500 + ecart, 500, LOURD);
     horde.hp[horde.slotOf(declencheur)] = 1000;
     horde.hp[horde.slotOf(cible)] = 1000;
-    expect(100).toBeGreaterThan(ZONE_RADIUS);
-    expect(100).toBeLessThan(CHAIN_RADIUS);
+    expect(ecart).toBeGreaterThan(ZONE_RADIUS);
+    expect(ecart).toBeLessThan(CHAIN_RADIUS);
 
     const t = trigger(500, 500, declencheur);
     applyReactions(horde, new OrbField(10), 0, [t], new ZoneField(), new Reactions());
@@ -4803,5 +4850,82 @@ describe('resolveBeams — le trait fauche la ligne', () => {
     );
     // Et sa largeur grandit avec les exemplaires, comme le rayon d'un halo.
     expect(effectRadius(rayon, 2)).toBeGreaterThan(effectRadius(rayon, 1));
+  });
+});
+
+/**
+ * Étape 8 — **la grenade explose en fin de course**, signale en jouant : *« la
+ * grenade doit exploser en fin de course meme si elle touche personne »*.
+ */
+describe('resolveProjectileDamage — le souffle de fin de course', () => {
+  /** La pietaille lourde, choisie par ses PV comme partout ailleurs dans ce fichier. */
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+
+  /** Une arme de souffle qui n'atteindra jamais personne en volant. */
+  const BOMBE: Weapon = {
+    ...SINGLE,
+    projectileSpeed: 600,
+    projectileLifeTicks: 2,
+    blastRadius: 80,
+    damage: 1000,
+  };
+
+  it('emporte ce qui se tient au POINT DE CHUTE, sans avoir rien percute', () => {
+    const horde = new Horde(10);
+    const p = new Projectiles(8);
+    // Le projectile parcourt 600 px/s pendant 2 ticks, soit 40 px : la cible
+    // est posee la ou il s'eteint, pas sur sa trajectoire.
+    const chute = Math.round((BOMBE.projectileSpeed * BOMBE.projectileLifeTicks) / 30);
+    const cible = addOne(horde, 1, chute + 60, 0, LOURD);
+    p.fireSalvoDirected(BOMBE, 0, 0, 0, 1, 0, BOMBE.damage, 1);
+
+    const zones = new ZoneField();
+    const orbs = new OrbField(10);
+    let morts: number[] = [];
+    for (let i = 0; i < 3; i++) {
+      morts = morts.concat(resolveProjectileDamage(p, 1 / 30, horde, orbs, i, zones));
+    }
+    expect(morts).toContain(cible);
+  });
+
+  it('n emporte RIEN quand l arme n a pas de souffle', () => {
+    // Le temoin : seize armes sur dix-sept finissent leur course sans rien
+    // laisser, et c'est la ligne absente qui reste le cas courant.
+    const horde = new Horde(10);
+    const p = new Projectiles(8);
+    const chute = Math.round((BOMBE.projectileSpeed * BOMBE.projectileLifeTicks) / 30);
+    const cible = addOne(horde, 1, chute + 60, 0, LOURD);
+    p.fireSalvoDirected({ ...BOMBE, blastRadius: 0 }, 0, 0, 0, 1, 0, BOMBE.damage, 1);
+
+    const zones = new ZoneField();
+    const orbs = new OrbField(10);
+    for (let i = 0; i < 3; i++) {
+      resolveProjectileDamage(p, 1 / 30, horde, orbs, i, zones);
+    }
+    expect(horde.slotOf(cible)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('n emporte pas DEUX fois ce qu il percute : l impact consomme le projectile', () => {
+    // ⚠️ Un projectile qui percute est retire par `collide` ; il ne peut donc
+    // plus expirer, et son souffle ne part qu'une fois. Sans ca, une grenade
+    // qui touche infligerait son souffle a l'impact PUIS a l'expiration.
+    const horde = new Horde(10);
+    const p = new Projectiles(8);
+    const cible = addOne(horde, 1, 20, 0, LOURD);
+    horde.hp[horde.slotOf(cible)] = 100_000;
+    p.fireSalvoDirected(BOMBE, 0, 0, 0, 1, 0, 10, 1);
+
+    const zones = new ZoneField();
+    const orbs = new OrbField(10);
+    const avant = horde.hp[horde.slotOf(cible)] ?? 0;
+    resolveProjectileDamage(p, 1 / 30, horde, orbs, 0, zones);
+    const apres1 = horde.hp[horde.slotOf(cible)] ?? 0;
+    resolveProjectileDamage(p, 1 / 30, horde, orbs, 1, zones);
+    const apres2 = horde.hp[horde.slotOf(cible)] ?? 0;
+
+    expect(apres1).toBeLessThan(avant);
+    // Plus rien au pas suivant : le projectile n'existe plus.
+    expect(apres2).toBe(apres1);
+    expect(p.count).toBe(0);
   });
 });

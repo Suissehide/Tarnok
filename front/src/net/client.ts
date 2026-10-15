@@ -64,11 +64,14 @@ import {
   BASE_WEAPON_ID,
   beamRange,
   cooldownWithBonus,
+  DAMAGE_PER_UPGRADE,
   effectRadius,
+  FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardIsAlive,
   guardPulsesAt,
   salvoCount,
+  UPGRADE,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -2349,7 +2352,23 @@ export class GameClient {
     if (tick > this.#freezeUntilTick) {
       this.#fireWeapons(tick, snapshot?.players ?? [], nowMs);
       this.#pulseGuards(tick, nowMs);
-      this.projectiles.step(dt * scale);
+      // Le miroir cosmetique du souffle de fin de course (etape 8) : la
+      // grenade explose meme sans avoir percute personne, cote serveur — ici
+      // on en dessine le flash, au meme endroit et au meme rayon.
+      this.projectiles.step(dt * scale, (slot) => {
+        const souffle = this.projectiles.blastRadiusAt(slot);
+        if (souffle <= 0) {
+          return;
+        }
+        this.hitFlashes.spawn(
+          this.projectiles.x[slot] ?? 0,
+          this.projectiles.y[slot] ?? 0,
+          weaponOf(this.projectiles.weaponAt(slot)).look.tint,
+          souffle,
+          this.projectiles.damageAt(slot),
+          nowMs,
+        );
+      });
       // Collision purement cosmetique : `collide` ne lit `horde` qu'en
       // lecture (position, `slotOf`) et ne consomme que les propres
       // projectiles du client — jamais un degat, jamais un `kill`. Arbitrer
@@ -2689,7 +2708,9 @@ export class GameClient {
     const weapon = weaponOf(weaponId);
     const cooldown = cooldownWithBonus(
       weapon.cooldownTicks,
-      loadout.bonus('fireRate') + this.accountBonuses.fireRate,
+      loadout.bonus('fireRate') +
+        this.accountBonuses.fireRate +
+        FIRE_RATE_PER_UPGRADE * loadout.upgradesOf(weaponId, UPGRADE.FIRE_RATE),
     );
     let last = this.#lastFireTick.get(playerId);
     if (!last) {
@@ -2699,11 +2720,18 @@ export class GameClient {
     if (tick - (last[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    const damage = weapon.damage * (1 + loadout.bonus('damage') + this.accountBonuses.damage);
+    const damage =
+      weapon.damage *
+      (1 +
+        loadout.bonus('damage') +
+        this.accountBonuses.damage +
+        DAMAGE_PER_UPGRADE * loadout.upgradesOf(weaponId, UPGRADE.DAMAGE));
     // Meme calcul que `Room#fireOne`, meme fonction : chaque exemplaire empile
     // elargit la salve d'un projectile. Deux formules divergeraient, et le
     // joueur verrait une salve que le serveur n'arbitre pas.
-    const stacks = loadout.stacksOfWeapon(weaponId);
+    // ⚠️ Seules les cartes « specifique » comptent ici : degats et cadence
+    // sont deja dans `damage` et `cooldown`. `1 +` : l'exemplaire d'acquisition.
+    const stacks = 1 + loadout.upgradesOf(weaponId, UPGRADE.SPECIFIC);
     if (weapon.kind === 'halo') {
       // ⚠️ **Le miroir cosmetique d'une pulsation de halo est un FLASH, pas un
       // projectile** : il porte le rayon que le serveur vient d'arbitrer

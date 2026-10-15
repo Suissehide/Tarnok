@@ -7,7 +7,7 @@ import {
 } from '@shared/constants';
 import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { packZoneKind } from '@shared/protocol';
-import { REACTION } from '@shared/reactions';
+import { REACTION, zoneRadius } from '@shared/reactions';
 import { ZoneField } from '@shared/zones';
 import { Container, type Particle, type ParticleContainer, Texture, TextureSource } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
@@ -384,9 +384,45 @@ describe('ZoneRenderer.draw — la silhouette suit l element, la reaction, et le
       POSEE,
     )[0];
 
-    expect(reaction?.texture.frame.x).toBe(simple?.texture.frame.x);
+    // ⚠️ **La rangee change, et la colonne AUSSI depuis l'etape 8** : la
+    // rangee du bas est indexee par FAMILLE de reaction, plus par element.
+    // Avant, deux champs de reaction d'un meme element se ressemblaient trait
+    // pour trait quelle que soit la reaction qui les avait poses.
     expect(reaction?.texture.frame.y).not.toBe(simple?.texture.frame.y);
+    // La teinte, elle, reste celle de l'element : la forme dit l'evenement,
+    // la couleur dit la matiere.
     expect(reaction?.tint).toBe(simple?.tint);
+  });
+
+  it('distingue DEUX reactions d un meme element : la forme dit laquelle', () => {
+    // Surchauffe est une « etoile », Embrasement aussi — mais Fournee est un
+    // « rond » : deux familles differentes, deux cases differentes.
+    const etoile = drawnZones(uneZone(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE)), POSEE)[0];
+    const rond = drawnZones(uneZone(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE)), POSEE)[0];
+
+    expect(etoile?.texture.frame.x).not.toBe(rond?.texture.frame.x);
+    expect(etoile?.texture.frame.y).toBe(rond?.texture.frame.y);
+    expect(etoile?.tint).toBe(rond?.tint);
+  });
+
+  it('met l echelle de chaque zone sur SON rayon, pas sur le generique', () => {
+    // ⚠️ « Le bord dit toujours la verite » (tache 16) : un champ de Verglas
+    // couvre 1,45 fois le rayon generique, et il doit se dessiner d'autant.
+    const large = drawnZones(uneZone(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS)), POSEE)[0];
+    const etroit = drawnZones(
+      uneZone(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE)),
+      POSEE,
+    )[0];
+    if (!large || !etroit) {
+      throw new Error('zone manquante');
+    }
+    expect(large.scaleX / etroit.scaleX).toBeCloseTo(
+      zoneRadius(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS)) /
+        zoneRadius(packZoneKind(ELEMENT.FOUDRE, REACTION.PARATONNERRE)),
+      5,
+    );
+    // Isotrope : une zone reste un CERCLE en monde.
+    expect(large.scaleY).toBe(large.scaleX);
   });
 
   /**

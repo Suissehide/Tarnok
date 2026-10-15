@@ -10,6 +10,7 @@ import {
   VERGLAS_COLLISION_DAMAGE_PER_TICK,
   VERGLAS_INERTIA_DAMPING,
   ZONE_LIFETIME_TICKS,
+  ZONE_RADIUS,
 } from './constants';
 import { ELEMENT, elementOf } from './elements';
 import { packElementPair, zoneElement, zoneReaction } from './protocol';
@@ -31,6 +32,23 @@ import { packElementPair, zoneElement, zoneReaction } from './protocol';
  * (`back/src/combat.ts`) l'y pose ; `zoneLifetimeTicks`/`zoneBurnPerTick`
  * ci-dessous l'en relisent.
  */
+/**
+ * Les silhouettes de champ (etape 8) — *« fais des zones de differentes
+ * tailles, duree, forme »*.
+ *
+ * ⚠️ **Un NOM, jamais un dessin.** Le trace vit cote client
+ * (`front/src/render/zone-renderer.ts`, qui en cuit une case d'atlas) ;
+ * `shared/` n'a ni canevas ni `document`. Exactement le rapport que
+ * `ProjectileShape` entretient avec ses peintres.
+ *
+ * ⚠️ **QUATRE familles pour quatorze reactions, pas quatorze silhouettes.**
+ * Une forme par reaction aurait voulu dire quatorze traces a dessiner et a
+ * tenir, pour une lecture que le joueur fait en un quart de seconde au sol. Ce
+ * qu'il faut distinguer, c'est la FAMILLE d'effet — ce qui brule, ce qui
+ * englue, ce qui eclate, ce qui fracture — et quatre suffisent a ca.
+ */
+export type ZoneShape = 'rond' | 'lobes' | 'etoile' | 'fracture';
+
 export const REACTION = {
   /** Aucun effet de reaction specifique — le nibble de reaction a zero. */
   AUCUNE: 0,
@@ -230,6 +248,31 @@ export interface ReactionDef {
    * que l'ancien filtre visait a resoudre ne se pose plus du tout ici.
    */
   readonly zoneVifArgent: boolean;
+  /**
+   * Rayon du champ que cette reaction laisse, en pixels monde. `0` : le rayon
+   * generique `ZONE_RADIUS`.
+   *
+   * ⚠️ **Meme forme et meme raison que `zoneLifetimeTicks` juste au-dessus** —
+   * zero veut dire « rien de particulier », et c'est la ligne ABSENTE qui est
+   * le cas courant. Les deux cotes du fil decodent le meme octet de `kind` et
+   * obtiennent le meme rayon : rien de plus ne transite (voir `zoneRadius`).
+   *
+   * ⚠️ **Le rayon DESSINE suit celui-ci**, jamais l'inverse : `ZoneRenderer`
+   * met l'echelle de chaque disque sur ce que la regle dit, parce que « le bord
+   * dit toujours la verite » (tache 16). Une zone deux fois plus large qui se
+   * dessinerait pareil mentirait sur ce qu'elle ralentit.
+   */
+  readonly zoneRadius: number;
+  /**
+   * La silhouette du champ — voir `ZoneShape`.
+   *
+   * ⚠️ **Elle n'a AUCUN effet de jeu** : la regle reste un disque de
+   * `zoneRadius`, et l'encre reste dans ce disque (`RIM_MIN`). Ce que la forme
+   * dit, c'est de QUELLE reaction vient le champ, la ou la teinte dit son
+   * element — exactement le partage que `Weapon.look` fait entre la forme et
+   * la teinte d'un projectile.
+   */
+  readonly zoneShape: ZoneShape;
 }
 
 /**
@@ -263,6 +306,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 0.8),
+    zoneShape: 'etoile',
   },
   {
     // Embrasement (Braise + Poix) : degats instantanes a tout ennemi POISSE
@@ -275,7 +320,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     name: 'embrasement',
     pair: packElementPair(ELEMENT.BRAISE, ELEMENT.POIX),
     zoneBurnPerTick: 0,
-    zoneLifetimeTicks: 0,
+    zoneLifetimeTicks: Math.round(ZONE_LIFETIME_TICKS * 0.7),
     radius: REACTION_RADIUS,
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
@@ -285,6 +330,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 1.3),
+    zoneShape: 'etoile',
   },
   {
     // Court-circuit (Foudre + Poix) : `chainTargets` (shared/chain.ts),
@@ -295,7 +342,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     name: 'court-circuit',
     pair: packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX),
     zoneBurnPerTick: 0,
-    zoneLifetimeTicks: 0,
+    zoneLifetimeTicks: Math.round(ZONE_LIFETIME_TICKS * 0.55),
     radius: 0,
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
@@ -305,6 +352,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 0.65),
+    zoneShape: 'fracture',
   },
   {
     // Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : vitesse
@@ -331,6 +380,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 1.15),
+    zoneShape: 'fracture',
   },
   {
     // Verglas (Givre + Poix, tache 8 de l'etape 5b) : friction REDUITE dans
@@ -344,7 +395,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     name: 'verglas',
     pair: packElementPair(ELEMENT.GIVRE, ELEMENT.POIX),
     zoneBurnPerTick: 0,
-    zoneLifetimeTicks: 0,
+    zoneLifetimeTicks: Math.round(ZONE_LIFETIME_TICKS * 1.4),
     radius: 0,
     damage: 0,
     // ⚠️ **EXPLICITE, jamais neutre (1) — voir le docbloc de `zoneSlowFactor`
@@ -364,6 +415,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: VERGLAS_COLLISION_DAMAGE_PER_TICK,
     zoneFieldSign: 1,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 1.45),
+    zoneShape: 'lobes',
   },
   {
     // Fournee (Braise + Chaux, tache 4 de l'etape 5c) : la combustion double
@@ -402,6 +455,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 1.1),
+    zoneShape: 'rond',
   },
   {
     // Eclat de gel (Givre + Chaux, tache 4 de l'etape 5c) : degats bruts
@@ -463,6 +518,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 0.7),
+    zoneShape: 'etoile',
   },
   {
     // Vaporisation (Braise + Vif-argent, tache 5 de l'etape 5c) : degats
@@ -491,7 +548,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     name: 'vaporisation',
     pair: packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT),
     zoneBurnPerTick: 0,
-    zoneLifetimeTicks: 0,
+    zoneLifetimeTicks: Math.round(ZONE_LIFETIME_TICKS * 1.2),
     radius: REACTION_RADIUS,
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
@@ -501,6 +558,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: true,
+    zoneRadius: Math.round(ZONE_RADIUS * 1.25),
+    zoneShape: 'lobes',
   },
   {
     // Arc caustique (Foudre + Chaux, tache 5 de l'etape 5c) : `chainTargets`
@@ -548,6 +607,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 0.85),
+    zoneShape: 'fracture',
   },
   {
     // Paratonnerre (Foudre + Vif-argent, tache 5 de l'etape 5c) :
@@ -572,7 +633,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     name: 'paratonnerre',
     pair: packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT),
     zoneBurnPerTick: 0,
-    zoneLifetimeTicks: 0,
+    zoneLifetimeTicks: Math.round(ZONE_LIFETIME_TICKS * 1.6),
     radius: 0,
     damage: REACTION_DAMAGE,
     zoneSlowFactor: 1,
@@ -582,6 +643,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: true,
+    zoneRadius: Math.round(ZONE_RADIUS * 0.6),
+    zoneShape: 'fracture',
   },
   {
     // Gel profond (Givre + Vif-argent, tache 6 de l'etape 5c) : vitesse
@@ -644,6 +707,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 1.35),
+    zoneShape: 'lobes',
   },
   {
     // Mortier vif (Poix + Chaux, tache 6 de l'etape 5c) : « scelles et
@@ -711,7 +776,7 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     name: 'mortier-vif',
     pair: packElementPair(ELEMENT.POIX, ELEMENT.CHAUX),
     zoneBurnPerTick: 0,
-    zoneLifetimeTicks: 0,
+    zoneLifetimeTicks: Math.round(ZONE_LIFETIME_TICKS * 0.6),
     radius: 0,
     damage: 0,
     zoneSlowFactor: 0,
@@ -721,6 +786,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 0.75),
+    zoneShape: 'rond',
   },
   {
     // Aveuglement (Chaux + Vif-argent, tache 6 de l'etape 5c) : la fuite,
@@ -777,6 +844,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign,
     zoneVifArgent: false,
+    zoneRadius: Math.round(ZONE_RADIUS * 1.2),
+    zoneShape: 'lobes',
   },
   {
     // Amalgame (Poix + Vif-argent, tache 7 de l'etape 5c) : « les degats
@@ -839,6 +908,8 @@ export const REACTION_DEFS: readonly ReactionDef[] = [
     zoneCollisionDamage: 0,
     zoneFieldSign: 1,
     zoneVifArgent: true,
+    zoneRadius: Math.round(ZONE_RADIUS * 0.9),
+    zoneShape: 'rond',
   },
 ];
 
@@ -911,6 +982,30 @@ export function zoneVifArgent(kind: number): boolean {
 export function zoneLifetimeTicks(kind: number): number {
   const def = reactionOfId(zoneReaction(kind));
   return def && def.zoneLifetimeTicks > 0 ? def.zoneLifetimeTicks : ZONE_LIFETIME_TICKS;
+}
+
+/**
+ * Le rayon qu'une zone doit couvrir, DERIVE de son `kind` empaquete —
+ * `ZONE_RADIUS` par defaut, le rayon propre a sa reaction si elle en porte un
+ * (etape 8).
+ *
+ * ⚠️ **Lu des DEUX cotes du fil**, exactement comme `zoneLifetimeTicks` : par
+ * `ZoneField` pour decider qui est dedans, par `ZoneRenderer` pour decider ce
+ * qu'il dessine. Le client et le serveur decodent le meme octet et obtiennent
+ * la meme reponse, sans rien annoncer de plus — c'est ce qui permet de faire
+ * varier la taille des champs sans toucher au protocole.
+ */
+export function zoneRadius(kind: number): number {
+  const def = reactionOfId(zoneReaction(kind));
+  return def && def.zoneRadius > 0 ? def.zoneRadius : ZONE_RADIUS;
+}
+
+/**
+ * La silhouette d'une zone, DERIVEE de son `kind` — `'rond'` pour une zone
+ * sans reaction, celle de sa reaction sinon.
+ */
+export function zoneShape(kind: number): ZoneShape {
+  return reactionOfId(zoneReaction(kind))?.zoneShape ?? 'rond';
 }
 
 /** Le degat par tick qu'une zone inflige d'elle-meme, derive de son `kind` empaquete (0 : elle ne brule pas). */
