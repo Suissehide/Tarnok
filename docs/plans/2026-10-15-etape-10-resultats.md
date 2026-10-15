@@ -53,6 +53,8 @@ boucle d'application à ×1 rougit l'étape 2.
   a été rétablie en deux commits (arbre identique), et la règle « jamais d'amend » ajoutée.
 - **Une régression rattrapée** : la tâche 2 avait laissé un test client comparer une carte décodée
   sans `rarity` ; corrigé avant la fin (`d68d802`).
+- **Revue finale : trois retouches mineures** (Moisson ignore les joueurs sans la carte, `draftCards`
+  typé `Card[]`, libellés accentués des passifs).
 - Fait sur la branche `etape-10-rarete`, `main` étant modifié en direct.
 
 ## 4. Le portique
@@ -80,6 +82,11 @@ en `5b946c7` ; `elements-5c` expire à 60 s ; Biome signale `icons.test.ts`, `se
   projectiles) ?
 - un build Précision + Férocité devient-il trop dominant ?
 - Moisson, Écho, Colosse : se sentent-ils en jeu, ou faut-il un retour visuel ?
+- les passifs exclusivement légendaires sont-ils visibles ? (≈ 3 % d'emplacements légendaires × 3
+  passifs de poids 1 parmi ~26 cartes : moins de 1,5 % par étalage — à régler via `RARITY_WEIGHTS`
+  ou un poids propre si on n'en voit jamais)
+- l'étiquette d'Ampleur promet « toutes armes », mais une arme de tir sans rayon n'y gagne rien — à
+  reformuler si ça trompe
 
 ## 6. Notes de revue laissées pour plus tard
 
