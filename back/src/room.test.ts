@@ -1170,10 +1170,12 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // chaque carte prise ajoute UN projectile a sa salve. C'est le levier le
     // plus lisible a l'ecran — on VOIT sa salve s'elargir.
     //
-    // ⚠️ L'arme choisie tire DEJA plusieurs projectiles (eventail, cinq) : sur
-    // une arme a projectile unique, un code qui rendrait `stacks` au lieu de
+    // ⚠️ L'arme choisie tire DEJA plusieurs projectiles : sur une arme a
+    // projectile unique, un code qui rendrait `stacks` au lieu de
     // `projectileCount + stacks - 1` donnerait exactement les memes nombres.
-    const EVENTAIL = 1;
+    // Le canon-a-mitraille (huit) depuis l'etape 12 : la Roue de lames (id 1,
+    // l'ancien eventail) n'en tire plus que deux, et `stackGain` y vaut 1.
+    const EVENTAIL = 7;
     const eventail = weaponOf(EVENTAIL);
     expect(eventail.projectileCount).toBeGreaterThan(1);
     const dague = weaponOf(BASE_WEAPON_ID);

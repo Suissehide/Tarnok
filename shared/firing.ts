@@ -19,10 +19,12 @@ import { DAMAGE_PER_UPGRADE, UPGRADE, upgradedWeapon, type Weapon, weaponOf } fr
 /**
  * Les crans d'un aspect pour CE joueur : ceux de l'arme (ses cartes), plus
  * ceux que ses passifs ajoutent a toutes ses armes — Volee (`salvo`) aux
- * seules armes de tir, Ampleur (`zone`) a toutes (§3.1).
+ * seules armes de tir et de frappe, Ampleur (`zone`) a toutes (§3.1).
  */
 export function weaponUpgrades(loadout: Loadout, weapon: Weapon): (upgrade: number) => number {
-  const volee = weapon.kind === 'tir' ? loadout.bonus('salvo') : 0;
+  // La frappe (etape 12) compte ses eclairs dans `projectileCount` : Volee
+  // en ajoute, comme a une salve.
+  const volee = weapon.kind === 'tir' || weapon.kind === 'frappe' ? loadout.bonus('salvo') : 0;
   const ampleur = loadout.bonus('zone');
   return (u) =>
     loadout.upgradesOf(weapon.id, u) +

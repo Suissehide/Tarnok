@@ -138,7 +138,8 @@ export function upgradeLabel(card: Card): string {
     case UPGRADE.PIERCE:
       return `Transperce +${PIERCE_PER_UPGRADE}`;
     case UPGRADE.RANGE:
-      return weapon.kind === 'tir' && weapon.projectileSpeed > 0
+      // La frappe (etape 12) vise a portee : la carte l'eloigne, comme un tir.
+      return (weapon.kind === 'tir' || weapon.kind === 'frappe') && weapon.projectileSpeed > 0
         ? `+${pct(RANGE_PER_UPGRADE)} portée`
         : `+${pct(RANGE_PER_UPGRADE)} durée`;
     case UPGRADE.CALIBRE:
@@ -155,7 +156,9 @@ export function upgradeLabel(card: Card): string {
       return 'Guidage +';
     default: {
       const n = stackGain(weapon);
-      return `+${n} projectile${n > 1 ? 's' : ''}`;
+      // Une frappe ne tire pas de projectile : SALVO lui ajoute un eclair.
+      const unite = weapon.kind === 'frappe' ? 'éclair' : 'projectile';
+      return `+${n} ${unite}${n > 1 ? 's' : ''}`;
     }
   }
 }
