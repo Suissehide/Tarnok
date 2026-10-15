@@ -1203,7 +1203,8 @@ export class GameClient {
   /**
    * Les pings annonces, AU PLUS UN par joueur (cle : son id) : un nouveau ping
    * remplace l'ancien (§6 de la spec de l'etape 9). Jamais purges ici — c'est
-   * `livePings` qui dit lesquels sont encore vivants, au tick de horde.
+   * `livePings` qui dit lesquels sont encore vivants, a l'horloge `pingClock`
+   * (figee pendant le gel de niveau).
    */
   readonly pings = new Map<number, ActivePing>();
   #pingCount = 0;

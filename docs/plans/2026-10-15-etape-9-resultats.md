@@ -40,7 +40,8 @@ joueurs : ≈ 170 o/s en pointe. `Room` n'est pas modifié : l'anti-spam vit dan
   les flèches vont dans un calque en coordonnées écran posé sur `app.stage`, au-dessus du monde.
   Conséquence acceptée : elles suivent la secousse de caméra, comme tout le reste de l'image.
 - **Un test client retiré** (tâche 3) : il redisait le test de datation et n'assertait rien
-  d'autre. L'expiration au gel est épinglée par `livePings` (`ping-renderer.test.ts`).
+  d'autre. La survie d'un ping au gel est épinglée depuis la revue finale par
+  `net/ping.test.ts` (« survit a un gel plus long que sa duree de vie »), voir le dernier point.
 - **`pingWheel` est créé avant `client.connect()`** dans `main.ts`, pour écarter tout accès avant
   déclaration depuis la lambda de visée.
 - **Fait sur une branche** (`etape-9-ping`), pas sur `main` : `main` recevait au même moment des
@@ -60,7 +61,7 @@ Lancé seul, sur `etape-9-ping` :
 | --- | --- |
 | typecheck (front + back) | vert |
 | lint des fichiers de l'étape | vert (3 avertissements CSS antérieurs, `noDescendingSpecificity`, lignes de l'étape du 14 octobre) |
-| tests front | 686 passent, **1 échoue** |
+| tests front | 689 passent, **1 échoue** (après la correction de la revue finale) |
 | tests back | 1359 passent, **1 échoue**, **1 fichier ne charge pas** |
 
 **Les trois échecs et les deux erreurs de lint sont antérieurs à l'étape 9**, vérifiés en les
@@ -88,7 +89,7 @@ Aucun de ces fichiers n'est touché par l'étape 9.
 
 ## 6. Notes de revue laissées pour plus tard
 
-Rien de bloquant ; chaque tâche a passé sa revue sans correction.
+Rien de bloquant. Chaque tâche a passé sa revue sans correction ; la revue finale a demandé une correction (horloge de ping, §3).
 
 - plusieurs `PING_SHOWN` dans la même image ne jouent que le son du dernier ;
 - le menu contextuel reste neutralisé en pause et pendant l'étalage tant que le HUD est affiché ;
