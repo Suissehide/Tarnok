@@ -18,6 +18,9 @@ et repris au §8.
 - **Moisson disparaît.** Elle doublait Regain : un légendaire qui est la version tiède d'une
   commune n'a pas de raison d'exister. C'est le diagnostic de Léo, et c'est la règle de sélection
   de tout le §4.
+- **Les passifs ne sont plus limités** (§2.0), décidé par Léo pendant l'exécution : *« contrairement
+  aux armes, on va pas mettre de limite aux passifs au lieu de limiter à 3 »*. Les armes gardent
+  leurs quatre emplacements.
 
 ### ⚠️ Elle se rebase sur les étapes 11 et 12, en vol au moment d'écrire
 
@@ -54,6 +57,25 @@ donne la carte, sans qu'un octet de plus parte ; un porteur de Transcendance sur
 contact que ses PV seuls n'encaisseraient pas, et meurt du suivant.
 
 ## 2. Les quatre paliers
+
+### 2.0 Les passifs n'ont plus d'emplacements
+
+`PASSIVE_SLOTS` disparaît. `Loadout.addPassive` ne lève plus, `canTake` rend toujours vrai pour un
+passif, et `blockedReason` n'a plus de raison pour cette nature. **`WEAPON_SLOTS` ne bouge pas** :
+l'arsenal reste à quatre, et c'est lui qui porte le renoncement.
+
+⚠️ **Ce n'est pas un assouplissement cosmétique, ça change ce que le draft EST.** Jusqu'ici un
+passif pouvait être refusé ; désormais une carte de passif est **toujours** prenable par tout le
+monde. Deux conséquences qui portent loin :
+
+1. **Le conflit devient le seul régime du draft sur les passifs.** Plus aucune case grisée : si
+   deux joueurs veulent la même carte, ils se la disputent, ils ne sont jamais bloqués par leur
+   propre inventaire.
+2. **Le filtre « une carte que personne ne peut prendre ne s'offre plus » de `drawSpread` ne
+   retire plus jamais un passif.** Seules les armes peuvent encore en sortir.
+
+⚠️ **Le HUD ne peut plus peindre un nombre fixe de cadres.** `paintPassives` complétait jusqu'à
+`PASSIVE_SLOTS` ; il doit maintenant peindre ce qui est possédé, et seulement ça.
 
 ### 2.1 Le modèle
 
@@ -99,15 +121,28 @@ tout du même `rng`.
 
 ⚠️ **Le `break` de sortie du §2.3 de l'étape 10 cesse d'être inatteignable, et c'est le risque
 principal de cette étape.** Son commentaire actuel dit lui-même : *« INATTEIGNABLE aujourd'hui, et
-aucun test ne la garde »*. Avec un filtre strict par palier, le cas devient courant : les trois
-emplacements de passifs pleins et aucun épique déjà possédé ⇒ aucune carte permise à ce palier ⇒ la
-boucle sortirait et **l'étalage aurait moins de cartes que `joueurs + SPREAD_BONUS`**, c'est-à-dire
-moins de cartes que de joueurs.
+aucun test ne la garde »*. Avec un filtre strict par palier, le cas devient courant — et la levée
+de la limite de passifs (§2.0) en **déplace la cause sans la supprimer** :
+
+- *Cause écartée par le §2.0* : « les emplacements de passifs sont pleins ». Un passif étant
+  désormais toujours prenable, ce cas-là n'arrive plus.
+- *Cause réelle, et plus probable qu'elle n'en a l'air* : **l'épuisement du pool dans un même
+  étalage.** `drawSpread` tire **sans remise** (`pool.splice`) ; il n'y a que **trois** épiques et
+  **trois** légendaires. Un étalage de quatre joueurs compte `4 + SPREAD_BONUS` cartes : dès qu'un
+  quatrième emplacement tire épique, le pool épique est vide.
+
+Dans les deux cas l'effet est le même : la boucle sortirait et **l'étalage aurait moins de cartes
+que `joueurs + SPREAD_BONUS`**, c'est-à-dire moins de cartes que de joueurs.
 
 Règle de remplacement, à tester : **un palier sans carte prenable redescend d'un cran**, jusqu'au
 plancher de l'emplacement (`floor`, étape 11) et jamais en dessous. Si même le plancher n'a aucune
 carte prenable, alors seulement la boucle s'arrête — et ce cas-là reste honnêtement inatteignable,
-puisqu'une arme déjà possédée est toujours prenable.
+puisqu'un passif est toujours prenable depuis le §2.0.
+
+⚠️ **Conséquence à assumer sur la fréquence affichée** : un étalage ne peut pas montrer plus de
+trois épiques ni plus de trois légendaires à la fois, et au-delà les emplacements redescendent. Les
+6 % et 2 % du §2.1 sont donc des poids de TIRAGE, pas des fréquences observées sur un grand
+étalage. À mesurer au bilan.
 
 ⚠️ **Effet de bord sur le coffre de l'étape 11, à annoncer.** `CHEST_RARITY_FLOOR = RARITY.RARE`
 renormalise sur `{20, 6, 2}` : un coffre donnera **71 % rare, 21 % épique, 7 % légendaire**. Il
@@ -274,6 +309,7 @@ passif.
   qui pénalise les alliés ferait du draft une négociation, mais c'est un système arbitré à part.
 - **Aucun bouclier achetable en boutique.** Le bouclier n'existe que par Transcendance.
 - **Aucune carte d'arme épique ou légendaire.** Les armes plafonnent à rare ×2 (§2.2).
+- **`WEAPON_SLOTS` ne bouge pas.** Seuls les passifs perdent leur limite (§2.0).
 - **Le plancher des événements** (`≥ légendaire`) reste à écrire, et devra changer de forme (§0).
 
 ## 6. Les tests et le livrable

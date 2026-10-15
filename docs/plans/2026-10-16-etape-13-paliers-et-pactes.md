@@ -65,6 +65,8 @@ C'est le point de départ ; toute régression vient de nous.
   Aucun message nouveau.
 - **Tous les chiffres d'équilibrage sont des molettes de playtest**, commentées comme telles dans
   la table, jamais dérivées d'autre chose.
+- **`PASSIVE_SLOTS` n'existe plus** (§2.0 de la spec) : un passif est toujours prenable.
+  `WEAPON_SLOTS = 4` ne bouge pas.
 - **Le français des libellés est celui du jeu** : accents, apostrophes typographiques (`’`), et les
   identifiants de code restent sans accent (`name: 'hate-funeste'`, `label: 'Hâte funeste'`).
 
@@ -82,9 +84,11 @@ test, rattaché à la tâche qui possède le code.
    facteur `1 − (−1) = 2` (voulu, un pacte s'empile) ; mais une armure de boutique > 1 rendrait le
    facteur négatif et **soignerait** au lieu de blesser. `hurtPlayer` borne le facteur à ≥ 0 →
    **test tâche 3**.
-3. **Un palier tiré sans aucune carte prenable.** Trois emplacements de passifs pleins ⇒ aucun
-   épique permis ⇒ `drawSpread` sortirait avec moins de cartes que de joueurs. La descente de
-   palier s'arrête au plancher de l'emplacement, jamais en dessous → **test tâche 2**.
+3. **Un palier tiré dont le pool est ÉPUISÉ dans le même étalage.** `drawSpread` tire sans remise
+   et il n'y a que trois épiques : au quatrième emplacement épique d'un étalage à quatre joueurs,
+   plus aucune carte n'est permise et `drawSpread` sortirait avec moins de cartes que de joueurs.
+   (La cause « emplacements de passifs pleins » disparaît avec la tâche 0 ; celle-ci reste.) La
+   descente s'arrête au plancher de l'emplacement → **test tâche 2**.
 4. **Un bouclier qui déborde ou qui descend sous zéro.** Coup de 50 sur une réserve de 40 : la
    réserve tombe à 0 (pas à −10) et les 10 restants mordent les PV ; une régénération ne dépasse
    jamais `SHIELD_POOL` → **test tâche 5**.
@@ -98,6 +102,7 @@ test, rattaché à la tâche qui possède le code.
 
 | Fichier | Rôle |
 | --- | --- |
+| `shared/constants.ts`, `shared/loadout.ts`, `front/src/ui/{draft,hud,guide}.ts` | **Tâche 0** : la limite de passifs disparaît |
 | `shared/rarity.ts`, `shared/rarity.test.ts` | Les quatre paliers, les multiplicateurs, les poids |
 | `shared/cards.ts`, `shared/cards.test.ts` | `tierOf`, l'exclusivité par palier, la descente de palier |
 | `shared/passives.ts`, `shared/passives.test.ts` | `tier`, `malus`, `rule`, le genre `armor`, le contenu, la suppression de Moisson |
@@ -133,6 +138,134 @@ rien connaître du reste, et il doit précéder le malus d'armure comme le boucl
 le bouclier (5) sont deux mécaniques indépendantes ; Transcendance (6) a besoin des deux ; le
 contenu (7) a besoin de tout ; l'écran (8) lit ce que les autres produisent ; le livrable (9)
 vient quand tout est là ; le portique (10) est au contrôleur.
+
+---
+
+### Tâche 0 : les passifs n'ont plus de limite
+
+Décidée par Léo pendant l'exécution, avant toute dispatch. **Elle précède la tâche 1** parce que la
+tâche 2 écrit des tests sur la prenabilité des passifs.
+
+**Fichiers :**
+- Modifier : `shared/constants.ts` (`PASSIVE_SLOTS` l.~422), `shared/loadout.ts` (l.1, l.118-119,
+  l.138), `front/src/ui/draft.ts` (l.5, l.180), `front/src/ui/hud.ts` (l.2, l.142, l.160),
+  `front/src/ui/guide.ts` (l.20, l.268)
+- Tester : `shared/loadout.test.ts`, `front/src/ui/draft.test.ts`, `front/src/ui/hud.test.ts`,
+  `front/src/ui/guide.test.ts`
+
+**Interfaces :**
+- Produit : `PASSIVE_SLOTS` **supprimé** ; `Loadout.canTake(CARD.PASSIVE, …)` rend toujours `true` ;
+  `Loadout.addPassive` ne lève plus ; `blockedReason` rend `null` pour tout passif.
+- ⚠️ `passiveSlotsUsed` **reste** : il compte les passifs distincts possédés, et le HUD s'en sert
+  pour savoir combien de cadres peindre. Il n'est simplement plus comparé à une borne.
+
+- [ ] **Étape 1 : écrire les tests qui échouent**
+
+```ts
+describe('etape 13 : les passifs ne sont plus limites', () => {
+  it('on peut empiler plus de passifs distincts qu il n y avait d emplacements', () => {
+    const l = new Loadout();
+    const distincts = PASSIVES.filter((p) => !p.tier).slice(0, 8);
+    expect(distincts.length).toBeGreaterThan(3);
+    for (const p of distincts) {
+      expect(l.canTake(CARD_PASSIVE, p.id)).toBe(true);
+      expect(() => l.addPassive(p.id)).not.toThrow();
+    }
+    expect(l.passiveSlotsUsed).toBe(distincts.length);
+  });
+
+  /** ⚠️ Les ARMES gardent leur limite : c'est elle qui porte le renoncement. */
+  it('l arsenal reste borne a WEAPON_SLOTS', () => {
+    const l = new Loadout();
+    for (let i = 0; i < WEAPON_SLOTS; i++) {
+      l.addWeapon(i);
+    }
+    expect(l.canTake(CARD_WEAPON, WEAPON_SLOTS + 1)).toBe(false);
+  });
+});
+```
+
+Dans `front/src/ui/draft.test.ts` :
+
+```ts
+it('etape 13 : une carte de passif n est jamais bloquee', () => {
+  const l = new Loadout();
+  for (const p of PASSIVES.filter((x) => !x.tier)) {
+    l.addPassive(p.id);
+  }
+  expect(blockedReason({ nature: CARD.PASSIVE, refId: 0 }, l)).toBeNull();
+});
+```
+
+Dans `front/src/ui/hud.test.ts` :
+
+```ts
+it('etape 13 : la colonne des passifs suit ce qui est possede, sans cadre vide', () => {
+  const el = hudElementsDeTest();
+  const l = new Loadout();
+  l.addPassive(0);
+  l.addPassive(1);
+  paintPassives(el.passiveList, l);
+  expect(el.passiveList.children).toHaveLength(2);
+});
+```
+
+- [ ] **Étape 2 : lancer les tests pour les voir échouer**
+
+Run : `npx vitest run shared/loadout.test.ts --config front/vitest.config.ts` puis
+`cd front && npx vitest run src/ui/draft.test.ts src/ui/hud.test.ts`
+Attendu : ÉCHEC — `addPassive` lève au 4ᵉ passif distinct, le HUD peint 3 cadres.
+
+- [ ] **Étape 3 : retirer la limite**
+
+Supprimer `PASSIVE_SLOTS` de `shared/constants.ts`. Dans `shared/loadout.ts` :
+
+```ts
+  /**
+   * Nombre de passifs DISTINCTS possedes.
+   *
+   * ⚠️ **Ce n'est plus une consommation d'emplacements** (etape 13, §2.0) : la
+   * limite de passifs a ete levee, les armes gardent la leur. Le compte reste
+   * utile — le HUD s'en sert pour savoir combien de cadres peindre.
+   */
+  get passiveSlotsUsed(): number { /* inchange */ }
+```
+
+`addPassive` perd son `throw`, et `canTake` :
+
+```ts
+  canTake(nature: number, refId: number): boolean {
+    if (nature === CARD_WEAPON) {
+      return this.stacksOfWeapon(refId) > 0 || this.#weaponOrder.length < WEAPON_SLOTS;
+    }
+    // ⚠️ **Toujours vrai depuis l'etape 13** : un passif ne peut plus etre
+    // refuse. Le parametre reste pour que la signature serve les deux natures.
+    return true;
+  }
+```
+
+- [ ] **Étape 4 : les trois écrans**
+
+- `draft.ts` : `blockedReason` rend `null` pour `CARD.PASSIVE` sans condition ; son docbloc dit
+  pourquoi (la règle `canTake` n'a plus de refus pour cette nature).
+- `hud.ts` : `paintPassives` peint `passiveSlotsUsed` cadres et plus de remplissage jusqu'à une
+  borne ; son docbloc perd la mention des cadres toujours visibles.
+- `guide.ts` : la règle « Emplacements » devient
+  `` `${WEAPON_SLOTS} armes au maximum. Les passifs, eux, ne sont pas limités.` ``
+
+- [ ] **Étape 5 : lancer les tests pour les voir passer**
+
+Run : `npx vitest run shared/loadout.test.ts shared/cards.test.ts --config front/vitest.config.ts`
+puis `cd front && npx vitest run src/ui/`
+Attendu : SUCCÈS. Les tests de l'étape 10 qui vérifiaient le refus d'un 4ᵉ passif disparaissent
+avec la règle — les supprimer, pas les contourner.
+
+- [ ] **Étape 6 : committer**
+
+```bash
+git add shared/constants.ts shared/loadout.ts shared/loadout.test.ts front/src/ui
+git commit -m "feat: les passifs ne sont plus limites, l arsenal si"
+```
 
 ---
 
@@ -327,30 +460,33 @@ describe('etape 13 : un palier, un pool', () => {
    * documente « INATTEIGNABLE » ; avec un filtre strict par palier il devient
    * courant, et l'etalage sortirait avec MOINS de cartes que de joueurs.
    */
-  it('emplacements de passifs pleins : l etalage sort quand meme au complet', () => {
-    const plein = (): Loadout => {
-      const l = new Loadout();
-      for (const p of PASSIVES.filter((x) => x.tier === undefined).slice(0, PASSIVE_SLOTS)) {
-        l.addPassive(p.id);
-      }
-      return l;
-    };
-    for (let seed = 1; seed <= 300; seed++) {
-      const loadouts = equipe(plein(), plein());
-      expect(drawSpread(loadouts, makeRandom(seed))).toHaveLength(loadouts.size + SPREAD_BONUS);
-    }
+  /**
+   * ⚠️ **La cause est l'EPUISEMENT DU POOL, pas des emplacements pleins** (la
+   * tache 0 a leve la limite de passifs). `drawSpread` tire sans remise et il
+   * n'y a que trois epiques : au quatrieme emplacement epique, plus rien n'est
+   * permis. On force le cas avec un rng qui tire TOUJOURS epique.
+   */
+  it('pool de palier epuise : l etalage sort quand meme au complet', () => {
+    // ⚠️ **Un `rng` CONSTANT a 0,8, pas un mock.** Avec les poids
+    // {72, 20, 6, 2}, `rollRarity` lit `0,8 x 100 = 80`, qui tombe dans la
+    // bande epique (72 <= 80 < 92) : chaque emplacement tire epique, a chaque
+    // fois, et le pool des trois epiques s'epuise des le quatrieme.
+    const toujoursEpique = (): number => 0.8;
+    const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
+    const spread = drawSpread(loadouts, toujoursEpique);
+    expect(spread).toHaveLength(loadouts.size + SPREAD_BONUS);
+    const epiquesAuCatalogue = PASSIVES.filter((p) => p.tier === 'epique').length;
+    expect(spread.filter((c) => c.rarity === RARITY.EPIQUE)).toHaveLength(epiquesAuCatalogue);
+    // Les emplacements au-dela du pool ont REDESCENDU, ils n'ont pas disparu.
+    expect(spread.filter((c) => c.rarity !== RARITY.EPIQUE).length).toBe(
+      loadouts.size + SPREAD_BONUS - epiquesAuCatalogue,
+    );
   });
 
   it('la descente s arrete au plancher : jamais de commune sous plancher rare', () => {
-    const plein = (): Loadout => {
-      const l = new Loadout();
-      for (const p of PASSIVES.filter((x) => x.tier === undefined).slice(0, PASSIVE_SLOTS)) {
-        l.addPassive(p.id);
-      }
-      return l;
-    };
     for (let seed = 1; seed <= 300; seed++) {
-      for (const c of drawSpread(equipe(plein(), plein()), makeRandom(seed), RARITY.RARE)) {
+      const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
+      for (const c of drawSpread(loadouts, makeRandom(seed), RARITY.RARE)) {
         expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
       }
     }
