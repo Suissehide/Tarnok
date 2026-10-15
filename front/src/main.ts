@@ -8,6 +8,7 @@ import { PingWheel } from './input/ping-wheel';
 import { acheter, fetchCompte, tokenBytes, tokenText } from './net/account';
 import { type ConnectionStatus, GameClient, type InputAxes, type RenderState } from './net/client';
 import { composeFrame } from './render/frame';
+import { livePings } from './render/ping-renderer';
 import { unitSheets } from './render/player-renderer';
 import { formatTimer, hudInfo, Stage } from './render/stage';
 import { preloadSheets, terrainSheets } from './render/terrain-renderer';
@@ -730,6 +731,8 @@ function join(code: string): void {
           players: state.players,
           enemies: client.horde,
           boss: null,
+          pings: livePings(client.pings, client.hordeTick),
+          blinkOn: Math.floor(now / 250) % 2 === 0,
         });
       }
       // L'aide des combinaisons met en avant ce que l'equipe peut declencher :
@@ -784,6 +787,8 @@ function join(code: string): void {
         hp: state.players.find((p) => p.id === state.localId)?.hp ?? 0,
         bossCharging: client.bossCharge !== null,
         abilityCooldown: client.abilityCooldownTicks,
+        pings: client.pingCount,
+        lastPingIntent: client.lastPingIntent,
       };
       for (const cue of cuesBetween(lastCues, cur)) {
         audio.play(cue);

@@ -12,6 +12,8 @@
  * module ne fait que jouer.
  */
 
+import { PING_INTENTS } from '@shared/ping';
+
 export type Cue =
   | 'hit'
   | 'kill'
@@ -22,7 +24,11 @@ export type Cue =
   | 'reaction'
   | 'charge'
   | 'ability'
-  | 'click';
+  | 'click'
+  | 'ping-viens'
+  | 'ping-danger'
+  | 'ping-boss'
+  | 'ping-jePrends';
 
 /** Ce que le jeu observe a chaque image, pour en deduire les effets. */
 export interface CueSnapshot {
@@ -35,6 +41,10 @@ export interface CueSnapshot {
   hp: number;
   bossCharging: boolean;
   abilityCooldown: number;
+  /** Pings recus depuis la connexion (etape 9). */
+  pings: number;
+  /** Intention du dernier ping recu, `-1` si aucun. */
+  lastPingIntent: number;
 }
 
 /**
@@ -72,6 +82,12 @@ export function cuesBetween(prev: CueSnapshot | null, cur: CueSnapshot): Cue[] {
   if (cur.abilityCooldown > prev.abilityCooldown) {
     out.push('ability');
   }
+  if (cur.pings > prev.pings) {
+    const cue = PING_CUES[cur.lastPingIntent];
+    if (cue) {
+      out.push(cue);
+    }
+  }
   return out;
 }
 
@@ -81,6 +97,9 @@ export interface Volumes {
   music: number;
   sfx: number;
 }
+
+/** Le son de chaque intention, dans l'ordre de `PING_INTENTS`. */
+const PING_CUES: readonly Cue[] = PING_INTENTS.map((i) => `ping-${i}` as Cue);
 
 /** Un effet ne se rejoue pas plus souvent que ca, en secondes : une rafale de coups reste un son. */
 const MIN_GAP_S: Record<Cue, number> = {
@@ -94,6 +113,10 @@ const MIN_GAP_S: Record<Cue, number> = {
   charge: 0.5,
   ability: 0.2,
   click: 0.05,
+  'ping-viens': 0.15,
+  'ping-danger': 0.15,
+  'ping-boss': 0.15,
+  'ping-jePrends': 0.15,
 };
 
 /** Re pour la musique : une gamme dorienne, modale et un peu medievale. */
@@ -248,6 +271,21 @@ export class AudioEngine {
       case 'ability':
         tone('triangle', 440, 880, 0, 0.15, 0.1);
         tone('sine', 660, 1320, 0.05, 0.2, 0.06);
+        break;
+      case 'ping-viens':
+        tone('sine', 660, 660, 0, 0.12, 0.08);
+        tone('sine', 880, 880, 0.1, 0.14, 0.08);
+        break;
+      case 'ping-danger':
+        // Le plus percant des quatre : deux impulsions carrees, aigues.
+        tone('square', 1320, 1100, 0, 0.08, 0.07);
+        tone('square', 1320, 1100, 0.12, 0.08, 0.07);
+        break;
+      case 'ping-boss':
+        tone('sawtooth', 220, 165, 0, 0.3, 0.09);
+        break;
+      case 'ping-jePrends':
+        tone('triangle', 520, 780, 0, 0.12, 0.08);
         break;
       case 'click':
         tone('square', 600, 400, 0, 0.04, 0.04);
