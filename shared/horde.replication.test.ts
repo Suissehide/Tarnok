@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DECOY_LIFETIME_TICKS } from './abilities';
-import { archetypeOf } from './archetypes';
+import { archetypeOf, PORTEUR_ARCHETYPE } from './archetypes';
 import { BOSS_CHARGE_LENGTH_PX, type BossCharge, makeBossCharge } from './boss';
 import {
   FLOWFIELD_CELL,
@@ -3128,5 +3128,112 @@ describe('etape 8 tache 6 : l Appat survit a la latence, avec et sans rejeu', ()
       expect(p.lateDecoys).toBe(0);
     }
     expect(r.maxDrift).toBe(0);
+  });
+});
+
+/**
+ * Etape 11, §3.2 : la fuite du porteur se decide dans `retarget`, sur les
+ * positions RETARDEES — les memes des deux cotes, a la meme cadence. Ce
+ * scenario le prouve sur une vraie poursuite : un porteur, une foule autour,
+ * et deux chasseurs qui le prennent en tenaille. Serveur et client doivent
+ * rester bit-identiques sur TOUTE la poursuite, attente comprise.
+ */
+describe('etape 11 : la fuite du porteur se derive a l identique', () => {
+  it('un porteur chasse par deux joueurs : 0,000 px de derive, attente et fuite comprises', () => {
+    const mapSeed = 0x11_f1_ee01;
+    const parts = [makeParticipant(mapSeed), makeParticipant(mapSeed)];
+    const porteur: WaveOrder = {
+      waveId: 1,
+      spawnTick: 0,
+      seed: 0x9047_e0f1,
+      archetype: PORTEUR_ARCHETYPE,
+      formation: FORMATION.POINT,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 1,
+    };
+    // Une foule autour : la fuite doit traverser du monde, pas un desert.
+    const foule: WaveOrder = {
+      waveId: 2,
+      spawnTick: 0,
+      seed: 0x51ee_d011,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 300,
+    };
+    for (const p of parts) {
+      p.horde.spawn(porteur, p.fields[0]);
+      p.horde.spawn(foule, p.fields[0]);
+    }
+    const [serveur, client] = parts;
+    if (!serveur || !client) {
+      throw new Error('deux participants attendus');
+    }
+    const id = entityIdOf(1, 0);
+    const depart = {
+      x: serveur.horde.x[serveur.horde.slotOf(id)] ?? 0,
+      y: serveur.horde.y[serveur.horde.slotOf(id)] ?? 0,
+    };
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    let maxDrift = 0;
+    let mismatches = 0;
+    let vuAttendre = false;
+    let vuFuir = false;
+
+    for (let tick = 0; tick < 600; tick++) {
+      // La tenaille : deux chasseurs partis a 1 200 px de part et d'autre,
+      // qui se referment en douze secondes jusqu'a 100 px de son point de depart.
+      const k = Math.min(1, tick / 360);
+      const xs = [depart.x - 1200 + 1100 * k, depart.x + 1200 - 1100 * k];
+      const ys = [depart.y, depart.y + 40];
+      for (const p of parts) {
+        p.history.record(tick, xs, ys);
+        if (tick % stepsPerField === 0) {
+          const seen = p.history.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 2; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        p.horde.step(DT, p.fields, tick);
+      }
+
+      expect(client.horde.count).toBe(serveur.horde.count);
+      for (let i = 0; i < serveur.horde.count; i++) {
+        const drift = Math.hypot(
+          (client.horde.x[i] ?? 0) - (serveur.horde.x[i] ?? 0),
+          (client.horde.y[i] ?? 0) - (serveur.horde.y[i] ?? 0),
+        );
+        maxDrift = Math.max(maxDrift, drift);
+        if (client.horde.entityIdAt(i) !== serveur.horde.entityIdAt(i)) {
+          mismatches++;
+        }
+      }
+      const s = serveur.horde.slotOf(id);
+      if (s >= 0 && serveur.horde.fleeing[s] === 1) {
+        vuFuir = true;
+      } else if (s >= 0 && serveur.horde.stopped[s] === 1) {
+        vuAttendre = true;
+      }
+    }
+
+    process.stdout.write(
+      `etape 11 : derive de la poursuite du porteur ${maxDrift.toFixed(3)} px\n`,
+    );
+    expect(mismatches).toBe(0);
+    expect(maxDrift).toBe(0);
+    // ⚠️ **Le decor produit-il ce qu'il pretend mesurer ?** Sans ces trois
+    // lignes, un porteur qui n'aurait jamais attendu, jamais fui ou jamais
+    // bouge passerait la derive nulle sans rien prouver.
+    expect(vuAttendre).toBe(true);
+    expect(vuFuir).toBe(true);
+    const fin = serveur.horde.slotOf(id);
+    expect(
+      Math.hypot((serveur.horde.x[fin] ?? 0) - depart.x, (serveur.horde.y[fin] ?? 0) - depart.y),
+    ).toBeGreaterThan(50);
   });
 });

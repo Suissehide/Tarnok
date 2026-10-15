@@ -4,6 +4,7 @@ import {
   GUARD_HOMING_RANGE,
   GUARD_RING_RADIUS,
   leapFactor,
+  PORTEUR_FLEE_RADIUS,
   SHOOTER_RANGE,
   THIEF_FLEE_SPEED,
 } from './archetypes';
@@ -848,6 +849,7 @@ export class Horde {
     this.aimY = [...playerY];
     const contactR2 = CONTACT_RADIUS * CONTACT_RADIUS;
     const shooterR2 = SHOOTER_RANGE * SHOOTER_RANGE;
+    const porteurR2 = PORTEUR_FLEE_RADIUS * PORTEUR_FLEE_RADIUS;
     for (let i = 0; i < this.#count; i++) {
       const ex = this.x[i] ?? 0;
       const ey = this.y[i] ?? 0;
@@ -866,6 +868,16 @@ export class Horde {
       // Le tireur s'arrete a portee de tir, pas au contact : meme donnee, meme
       // cadence, donc le meme arret des deux cotes.
       const behavior = archetypeOf(this.archetype[i] ?? 0).behavior;
+      // Etape 11, §3.2 : le porteur fuit le joueur le plus proche a
+      // `PORTEUR_FLEE_RADIUS` — sur `bestDist`, donc sur les positions
+      // RETARDEES, la meme decision au meme tick des deux cotes. PAS collant,
+      // contrairement au voleur. Hors du rayon il ATTEND (`stopped`) : sans ca
+      // il marcherait jusqu'a 400 px puis reculerait, en oscillant au bord.
+      if (behavior === 'porteur') {
+        this.fleeing[i] = bestDist <= porteurR2 ? 1 : 0;
+        this.stopped[i] = this.fleeing[i] === 1 ? 0 : 1;
+        continue;
+      }
       const stopR2 = behavior === 'tir' ? shooterR2 : contactR2;
       // Le voleur qui touche son joueur ne s'arrete pas : il vole et s'enfuit,
       // pour toujours (le serveur preleve l'or a ce meme passage).
@@ -1414,8 +1426,10 @@ export class Horde {
       }
       const bond = arch.behavior === 'bond' ? leapFactor(this.entityIdAt(i), tick) : 1;
       // Le voleur en fuite remonte sa trajectoire : il s'eloigne du joueur
-      // que le flowfield lui designe.
-      const fuite = this.fleeing[i] === 1 ? -THIEF_FLEE_SPEED : 1;
+      // que le flowfield lui designe. Le porteur aussi (etape 11), mais a SA
+      // vitesse : ses 234 px/s SONT sa vitesse de fuite, sans le facteur du voleur.
+      const fuite =
+        this.fleeing[i] === 1 ? (arch.behavior === 'porteur' ? -1 : -THIEF_FLEE_SPEED) : 1;
       const slow = (this.#slow[i] ?? 1) * bond * fuite;
       this.#moveOnLand(i, ex + (this.vx[i] ?? 0) * dt * slow, ey + (this.vy[i] ?? 0) * dt * slow);
     }
