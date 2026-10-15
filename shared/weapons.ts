@@ -293,6 +293,21 @@ export interface Weapon {
    * missile dessine suit celui qui frappe ; les degats restent au serveur.
    */
   homing: number;
+  /**
+   * Comment le projectile se deplace (etape 12, §3.1) — `'droit'` par defaut.
+   * Voir `MOTION` ; recopie sur le projectile a l'emission en code numerique.
+   *
+   * ⚠️ **Optionnel sur le type, et pas seulement dans `WEAPON_DEFS`** : les
+   * armes de test ecrites en entier (`projectiles.test.ts`, `combat.test.ts`)
+   * restent valides sans y toucher. `Projectiles` lit `?? 'droit'`.
+   */
+  motion?: Motion;
+  /** D'ou part l'angle de la salve — `'visee'` par defaut, voir `SPIRAL_RAD_PER_TICK`. */
+  emission?: 'visee' | 'spirale';
+  /** Eclats projetes en couronne quand le projectile est consomme — `0` par defaut. */
+  fragments?: number;
+  /** Croissance de l'echelle (`projectileScale`) par seconde de vol — `0` par defaut. */
+  growth?: number;
 }
 
 /**
@@ -467,6 +482,42 @@ export const RICOCHET_RANGE = 260;
 export const RICOCHET_MIN_LIFE_TICKS = 12;
 /** Jusqu'ou un projectile guide voit une cible, en pixels monde. */
 export const HOMING_RANGE = 420;
+
+/**
+ * Les mouvements d'un projectile (etape 12, §3.1), et leur code sur le
+ * `Uint8Array` de `Projectiles`. `droit` vaut 0 : un tableau neuf est droit.
+ */
+export const MOTION = { droit: 0, orbite: 1, boomerang: 2, mortier: 3, sinus: 4 } as const;
+export type Motion = keyof typeof MOTION;
+/** Rayon de l'orbite autour de l'ancre, en pixels monde. */
+export const ORBIT_RADIUS = 72;
+/** Le rayon de l'orbite respire de ± cette fraction. */
+export const ORBIT_BREATH = 0.1;
+/** Periode de cette respiration, en ticks. */
+export const ORBIT_BREATH_TICKS = 30;
+/** Tours par seconde d'un projectile en orbite. */
+export const ORBIT_TURNS_PER_S = 0.9;
+/**
+ * Age minimal (ticks) entre deux contacts d'un projectile jamais consomme
+ * (orbite, boomerang) avec le MEME ennemi.
+ */
+export const REHIT_TICKS = 20;
+/** Un boomerang qui revient disparait a moins de cette distance du tireur. */
+export const BOOMERANG_CATCH_PX = 24;
+/** Rotation de l'angle de base d'une salve en spirale, par tick de tir. */
+export const SPIRAL_RAD_PER_TICK = 0.35;
+/** Hauteur de la cloche d'un mortier a mi-vol — rendu seul, la simulation reste au sol. */
+export const MORTAR_APEX_PX = 90;
+/** Ecart lateral maximal d'un projectile en sinus autour de sa ligne, en pixels monde. */
+export const SINUS_AMPLITUDE = 36;
+/** Periode de l'ondulation, en ticks. */
+export const SINUS_PERIOD_TICKS = 12;
+/** Degats d'un eclat, en fraction des degats du projectile qui eclate. */
+export const FRAGMENT_DAMAGE_RATIO = 0.35;
+/** Echelle d'un eclat, en fraction de celle du projectile qui eclate. */
+export const FRAGMENT_SCALE_RATIO = 0.5;
+/** Vie d'un eclat, en ticks. */
+export const FRAGMENT_LIFE_TICKS = 8;
 
 const WEAPON_DEFS: readonly (Omit<
   Weapon,
@@ -1259,6 +1310,10 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   venom: 0,
   bounces: w.bounces ?? 0,
   homing: w.homing ?? 0,
+  motion: w.motion ?? 'droit',
+  emission: w.emission ?? 'visee',
+  fragments: w.fragments ?? 0,
+  growth: w.growth ?? 0,
 }));
 
 /**

@@ -7,7 +7,25 @@ import {
 } from './constants';
 import type { Horde } from './horde';
 import { hashRoll } from './random';
-import { HOMING_RANGE, RICOCHET_MIN_LIFE_TICKS, RICOCHET_RANGE, type Weapon } from './weapons';
+import {
+  BOOMERANG_CATCH_PX,
+  FRAGMENT_DAMAGE_RATIO,
+  FRAGMENT_LIFE_TICKS,
+  FRAGMENT_SCALE_RATIO,
+  HOMING_RANGE,
+  MOTION,
+  ORBIT_BREATH,
+  ORBIT_BREATH_TICKS,
+  ORBIT_RADIUS,
+  ORBIT_TURNS_PER_S,
+  REHIT_TICKS,
+  RICOCHET_MIN_LIFE_TICKS,
+  RICOCHET_RANGE,
+  SINUS_AMPLITUDE,
+  SINUS_PERIOD_TICKS,
+  SPIRAL_RAD_PER_TICK,
+  type Weapon,
+} from './weapons';
 import type { ZoneField } from './zones';
 
 /**
@@ -87,6 +105,17 @@ export interface Crit {
   readonly chance: number;
   readonly multiplier: number;
 }
+
+/**
+ * Ou est le tireur `by` MAINTENANT (etape 12, §3.2) — lu par l'orbite et le
+ * retour du boomerang seuls. `undefined` : le projectile se rabat sur son
+ * point d'emission.
+ */
+export type Anchor = (by: number) => { readonly x: number; readonly y: number } | undefined;
+
+/** Taille de l'anneau de recontact d'un projectile jamais consomme (§3.3). */
+const REHIT_RING = 8;
+const TAU = Math.PI * 2;
 
 /** Le critique sans aucune carte : celui de l'etape 8. */
 export const BASE_CRIT: Crit = Object.freeze({ chance: CRIT_CHANCE, multiplier: CRIT_MULTIPLIER });
@@ -194,10 +223,9 @@ export class Projectiles {
    * quatre.
    *
    * ponytail: un seul souvenir, donc A -> B -> A reste possible si le
-   * projectile recroise sa premiere cible apres une autre. Un ensemble par
-   * projectile couterait un tableau de plus par traversee pour un cas que la
-   * geometrie rend rare (les projectiles vont droit) ; a revoir si une arme a
-   * trajectoire courbe apparait.
+   * projectile recroise sa premiere cible apres une autre — rare pour ceux qui
+   * l'utilisent encore (droit, mortier, sinus). L'orbite et le boomerang, qui
+   * recroisent par construction, tiennent l'anneau `#ringId` a la place.
    */
   readonly #lastHit: Int32Array;
   /** Pas restants avant expiration. Decremente a chaque `step`. */
@@ -216,6 +244,37 @@ export class Projectiles {
    */
   readonly #prevX: Float32Array;
   readonly #prevY: Float32Array;
+  /** Mouvement, code `MOTION` — recopie de `Weapon.motion` (etape 12). */
+  readonly #motion: Uint8Array;
+  /** Eclats a projeter a la consommation — recopie de `Weapon.fragments`. */
+  readonly #fragments: Uint8Array;
+  /** Echelle gagnee par seconde de vol — recopie de `Weapon.growth`. */
+  readonly #growth: Float32Array;
+  /** Vitesse de base (px/s) : celle du boomerang a l'aller, de la ligne du sinus, du guidage. */
+  readonly #speed: Float32Array;
+  /**
+   * Cap de la ligne de vol (droit, mortier, sinus, boomerang a l'aller), ou
+   * angle courant sur le cercle pour l'orbite.
+   */
+  readonly #angle: Float32Array;
+  /**
+   * Point d'emission (centre de l'orbite et but du retour sans ancre), ou
+   * point courant de la ligne de vol du sinus.
+   */
+  readonly #ox: Float32Array;
+  readonly #oy: Float32Array;
+  /**
+   * Pas vecus depuis l'emission. ⚠️ Pas `life - ticksRemaining` : un ricochet
+   * rallonge la vie, et l'anneau de recontact veut une horloge qui ne recule pas.
+   */
+  readonly #age: Int32Array;
+  /**
+   * Anneau des `REHIT_RING` derniers ennemis touches par un projectile jamais
+   * consomme, avec son age au contact (§3.3), et la prochaine case a ecraser.
+   */
+  readonly #ringId: Int32Array;
+  readonly #ringAge: Int32Array;
+  readonly #ringNext: Uint8Array;
 
   #count = 0;
 
@@ -240,6 +299,17 @@ export class Projectiles {
     this.#ticksRemaining = new Int32Array(capacity);
     this.#prevX = new Float32Array(capacity);
     this.#prevY = new Float32Array(capacity);
+    this.#motion = new Uint8Array(capacity);
+    this.#fragments = new Uint8Array(capacity);
+    this.#growth = new Float32Array(capacity);
+    this.#speed = new Float32Array(capacity);
+    this.#angle = new Float32Array(capacity);
+    this.#ox = new Float32Array(capacity);
+    this.#oy = new Float32Array(capacity);
+    this.#age = new Int32Array(capacity);
+    this.#ringId = new Int32Array(capacity * REHIT_RING).fill(-1);
+    this.#ringAge = new Int32Array(capacity * REHIT_RING);
+    this.#ringNext = new Uint8Array(capacity);
   }
 
   get count(): number {
@@ -342,12 +412,13 @@ export class Projectiles {
     tick: number,
     x: number,
     y: number,
-    baseAngle: number,
+    angleVise: number,
     damage = weapon.damage,
     count = weapon.projectileCount,
     by = 0,
     crit: Crit = BASE_CRIT,
   ): void {
+    let baseAngle = angleVise;
     const n = count;
     const room = this.capacity - this.#count;
     const toFire = Math.min(n, room);
@@ -364,7 +435,17 @@ export class Projectiles {
     // deux extremes tombent sur les bords (`i / (n - 1)`) ; sur un cercle, ces
     // deux bords sont le MEME angle, et le dernier projectile se poserait sur
     // le premier. L'anneau se ferme donc en `i / n`.
-    const anneau = weapon.spreadRadians >= Math.PI * 2;
+    //
+    // La SPIRALE (etape 12) est un anneau dont l'angle de base tourne avec le
+    // tick de tir, sans regarder la visee : ses bras se repartissent sur tout
+    // le tour quel que soit `spreadRadians`. La visee nulle, elle, ne tire
+    // toujours pas — la regle est dans `fireSalvoDirected`, en amont.
+    const spirale = weapon.emission === 'spirale';
+    if (spirale) {
+      baseAngle = (tick * SPIRAL_RAD_PER_TICK) % TAU;
+    }
+    const anneau = spirale || weapon.spreadRadians >= TAU;
+    const motion = MOTION[weapon.motion ?? 'droit'];
     for (let i = 0; i < toFire; i++) {
       // Repartition symetrique autour de `baseAngle` : a n = 1, le spread
       // n'a pas de sens et est ignore — un seul projectile part droit sur la
@@ -376,13 +457,26 @@ export class Projectiles {
           : baseAngle;
 
       const slot = this.#count + i;
-      this.x[slot] = x;
-      this.y[slot] = y;
+      // L'orbite nait DEJA sur son cercle : nee au centre, elle sauterait de
+      // `ORBIT_RADIUS` au premier pas.
+      const r = motion === MOTION.orbite ? ORBIT_RADIUS : 0;
+      this.x[slot] = x + Math.cos(angle) * r;
+      this.y[slot] = y + Math.sin(angle) * r;
       // Avant le premier `step`, le segment parcouru est un point : prev =
       // position de depart. Un `collide` appele avant tout mouvement teste
       // donc simplement le point de tir, comme attendu.
-      this.#prevX[slot] = x;
-      this.#prevY[slot] = y;
+      this.#prevX[slot] = this.x[slot] ?? 0;
+      this.#prevY[slot] = this.y[slot] ?? 0;
+      this.#ox[slot] = x;
+      this.#oy[slot] = y;
+      this.#angle[slot] = angle;
+      this.#speed[slot] = weapon.projectileSpeed;
+      this.#motion[slot] = motion;
+      this.#fragments[slot] = weapon.fragments ?? 0;
+      this.#growth[slot] = weapon.growth ?? 0;
+      this.#age[slot] = 0;
+      this.#ringId.fill(-1, slot * REHIT_RING, (slot + 1) * REHIT_RING);
+      this.#ringNext[slot] = 0;
       this.#vx[slot] = Math.cos(angle) * weapon.projectileSpeed;
       this.#vy[slot] = Math.sin(angle) * weapon.projectileSpeed;
       this.#damage[slot] = damage;
@@ -499,13 +593,26 @@ export class Projectiles {
   /**
    * Direction de vol du projectile de ce slot, en radians.
    *
-   * Calculee a la demande plutot que stockee : la vitesse d'un projectile ne
-   * change jamais apres l'emission, mais un onzieme tableau par projectile
-   * couterait de la memoire a chaque tir pour une valeur que seul le rendu
-   * lit, une fois par image et seulement pour ce qui est a l'ecran.
+   * Calculee a la demande depuis la vitesse plutot que stockee. ⚠️ Ce n'est
+   * pas `#angle` : l'orbite, le boomerang et le sinus remettent `vx/vy` a la
+   * vitesse REELLE de leur dernier pas (etape 12), c'est elle qui oriente le
+   * sprite — `#angle` est le cap de la ligne, ou l'angle sur le cercle.
    */
   headingAt(slot: number): number {
     return Math.atan2(this.#vy[slot] ?? 0, this.#vx[slot] ?? 0);
+  }
+
+  /** Pas vecus depuis l'emission — voir `#age`. Le rendu du mortier y lit sa cloche. */
+  ageAt(slot: number): number {
+    return this.#age[slot] ?? 0;
+  }
+
+  /**
+   * Mouvement du projectile, code `MOTION`. Lu sur le projectile, pas sur
+   * l'arme : l'eclat d'un mortier vole droit.
+   */
+  motionAt(slot: number): number {
+    return this.#motion[slot] ?? MOTION.droit;
   }
 
   /**
@@ -533,19 +640,50 @@ export class Projectiles {
    * parametre est parti avec son seul appelant, aucun test ne le tenait, et un
    * point d'extension que personne n'utilise est un point d'extension qui ment.
    */
-  step(dt: number, onExpire?: (slot: number) => void, horde?: Horde): void {
+  /**
+   * `anchor` (etape 12, §3.2) : ou est chaque tireur a ce pas, lu par l'orbite
+   * et le retour du boomerang seuls. Sans elle, ils se rabattent sur leur
+   * point d'emission.
+   */
+  step(dt: number, onExpire?: (slot: number) => void, horde?: Horde, anchor?: Anchor): void {
     for (let i = 0; i < this.#count; i++) {
+      const motion = this.#motion[i] ?? MOTION.droit;
       // Le guidage tourne la vitesse AVANT le pas — sans horde (tests, bancs
-      // anciens), le missile file droit.
-      if (horde && (this.#homing[i] ?? 0) > 0) {
+      // anciens), le missile file droit. L'orbite et le boomerang suivent
+      // leur tireur, pas la horde : ils l'ignorent.
+      if (
+        horde &&
+        (this.#homing[i] ?? 0) > 0 &&
+        motion !== MOTION.orbite &&
+        motion !== MOTION.boomerang
+      ) {
         this.#steer(i, horde, dt);
       }
       // Capture la position de DEBUT de pas avant de la faire avancer : c'est
       // le point de depart du segment que `collide` testera.
-      this.#prevX[i] = this.x[i] ?? 0;
-      this.#prevY[i] = this.y[i] ?? 0;
-      this.x[i] = (this.x[i] ?? 0) + (this.#vx[i] ?? 0) * dt;
-      this.y[i] = (this.y[i] ?? 0) + (this.#vy[i] ?? 0) * dt;
+      const px = this.x[i] ?? 0;
+      const py = this.y[i] ?? 0;
+      this.#prevX[i] = px;
+      this.#prevY[i] = py;
+      const age = this.#age[i] ?? 0;
+      if (motion === MOTION.droit || motion === MOTION.mortier) {
+        this.x[i] = px + (this.#vx[i] ?? 0) * dt;
+        this.y[i] = py + (this.#vy[i] ?? 0) * dt;
+      } else {
+        if (motion === MOTION.orbite) {
+          this.#orbit(i, dt, age + 1, anchor);
+        } else if (motion === MOTION.boomerang) {
+          this.#boomerang(i, dt, age, anchor);
+        } else {
+          this.#sinus(i, dt, age + 1);
+        }
+        // La vitesse REELLE du pas : c'est elle que `headingAt` lit.
+        this.#vx[i] = ((this.x[i] ?? 0) - px) / dt;
+        this.#vy[i] = ((this.y[i] ?? 0) - py) / dt;
+      }
+      this.#age[i] = age + 1;
+      // La croissance agrandit `#scale`, donc la touche ET le dessin.
+      this.#scale[i] = (this.#scale[i] ?? 1) + (this.#growth[i] ?? 0) * dt;
       this.#ticksRemaining[i] = (this.#ticksRemaining[i] ?? 0) - 1;
     }
 
@@ -564,9 +702,63 @@ export class Projectiles {
         // seulement la main — et c'est l'appelant qui decide, aujourd'hui pour
         // faire sauter une arme de souffle qui n'a percute personne.
         onExpire?.(i);
-        this.#removeAt(i);
+        this.#consume(i, -1);
       }
     }
+  }
+
+  /** Tourne autour de l'ancre (ou du point d'emission), sur un rayon qui respire. */
+  #orbit(i: number, dt: number, age: number, anchor: Anchor | undefined): void {
+    const a = (this.#angle[i] ?? 0) + TAU * ORBIT_TURNS_PER_S * dt;
+    this.#angle[i] = a;
+    const c = anchor?.(this.#by[i] ?? 0);
+    const r = ORBIT_RADIUS * (1 + ORBIT_BREATH * Math.sin((TAU * age) / ORBIT_BREATH_TICKS));
+    this.x[i] = (c ? c.x : (this.#ox[i] ?? 0)) + Math.cos(a) * r;
+    this.y[i] = (c ? c.y : (this.#oy[i] ?? 0)) + Math.sin(a) * r;
+  }
+
+  /**
+   * L'aller ralentit lineairement jusqu'a l'arret a mi-vie ; le retour fonce
+   * a pleine vitesse vers l'ancre (ou le point d'emission) et s'eteint a
+   * `BOOMERANG_CATCH_PX` — comme une fin de course, `onExpire` compris.
+   * `age` est celui d'AVANT ce pas : le premier pas part a pleine vitesse.
+   */
+  #boomerang(i: number, dt: number, age: number, anchor: Anchor | undefined): void {
+    const speed = this.#speed[i] ?? 0;
+    // La vie totale ne change pas pour un boomerang (jamais de ricochet).
+    const life = age + (this.#ticksRemaining[i] ?? 0);
+    if (age * 2 < life) {
+      const v = speed * (1 - (age * 2) / life) * dt;
+      const a = this.#angle[i] ?? 0;
+      this.x[i] = (this.x[i] ?? 0) + Math.cos(a) * v;
+      this.y[i] = (this.y[i] ?? 0) + Math.sin(a) * v;
+      return;
+    }
+    const c = anchor?.(this.#by[i] ?? 0);
+    const tx = c ? c.x : (this.#ox[i] ?? 0);
+    const ty = c ? c.y : (this.#oy[i] ?? 0);
+    const dx = tx - (this.x[i] ?? 0);
+    const dy = ty - (this.y[i] ?? 0);
+    const d = Math.hypot(dx, dy);
+    const k = d > 0 ? Math.min(1, (speed * dt) / d) : 0;
+    this.x[i] = (this.x[i] ?? 0) + dx * k;
+    this.y[i] = (this.y[i] ?? 0) + dy * k;
+    if (d * (1 - k) < BOOMERANG_CATCH_PX) {
+      this.#ticksRemaining[i] = 0;
+    }
+  }
+
+  /** Le point de ligne avance tout droit ; le projectile ondule autour, perpendiculairement. */
+  #sinus(i: number, dt: number, age: number): void {
+    const a = this.#angle[i] ?? 0;
+    const step = (this.#speed[i] ?? 0) * dt;
+    const ox = (this.#ox[i] ?? 0) + Math.cos(a) * step;
+    const oy = (this.#oy[i] ?? 0) + Math.sin(a) * step;
+    this.#ox[i] = ox;
+    this.#oy[i] = oy;
+    const off = sinusOffset(age);
+    this.x[i] = ox - Math.sin(a) * off;
+    this.y[i] = oy + Math.cos(a) * off;
   }
 
   /**
@@ -595,6 +787,11 @@ export class Projectiles {
    * meme — voir `#lastHit`, sans quoi « transpercer » voudrait dire « frapper
    * le premier ennemi quatre fois ».
    *
+   * ⚠️ **Etape 12** : le mortier est ignore (il ne touche qu'en tombant, via
+   * `onExpire`) ; l'orbite et le boomerang ne sont JAMAIS consommes et ne
+   * retouchent un corps qu'apres `REHIT_TICKS` (`#ringId`) ; un projectile
+   * consomme eclate s'il porte des eclats (`#consume`).
+   *
    * ⚠️ **Le rayon teste suit le CORPS de la cible depuis l'etape 8** : un boss
    * (`Archetype.bodyScale` = 3) encaisse sur 96 px de rayon, la pietaille sur
    * 32. Voir `HIT_R2_BY_ARCHETYPE` — jusque-la, il fallait viser le centre
@@ -618,6 +815,14 @@ export class Projectiles {
     const defaultR2 = PROJECTILE_HIT_RADIUS * PROJECTILE_HIT_RADIUS;
 
     for (let i = this.#count - 1; i >= 0; i--) {
+      const motion = this.#motion[i] ?? MOTION.droit;
+      // Le mortier vole AU-DESSUS de la horde : il ne touche que la ou il
+      // tombe, par le souffle de fin de course (`onExpire`).
+      if (motion === MOTION.mortier) {
+        continue;
+      }
+      // L'orbite et le boomerang ne sont jamais consommes (§3.3).
+      const perpetuel = motion === MOTION.orbite || motion === MOTION.boomerang;
       const ax = this.#prevX[i] ?? 0;
       const ay = this.#prevY[i] ?? 0;
       const bx = this.x[i] ?? 0;
@@ -684,8 +889,9 @@ export class Projectiles {
           }
         }
         const id = horde.entityIdAt(e);
-        // Jamais deux fois de suite le meme corps — voir `#lastHit`.
-        if (id === this.#lastHit[i]) {
+        // Jamais deux fois de suite le meme corps — voir `#lastHit` ; jamais
+        // avant `REHIT_TICKS` pour un projectile perpetuel — voir `#ringId`.
+        if (perpetuel ? this.#recentlyHit(i, id) : id === this.#lastHit[i]) {
           continue;
         }
         if (d2 < bestDist2 || (d2 === bestDist2 && id < bestId)) {
@@ -707,7 +913,12 @@ export class Projectiles {
         // facon au premier ennemi qu'au dernier. Ce qui se consomme, c'est le
         // droit de continuer.
         const restantes = this.#pierce[i] ?? 0;
-        if (restantes > 0) {
+        if (perpetuel) {
+          const n = this.#ringNext[i] ?? 0;
+          this.#ringId[i * REHIT_RING + n] = bestId;
+          this.#ringAge[i * REHIT_RING + n] = this.#age[i] ?? 0;
+          this.#ringNext[i] = (n + 1) % REHIT_RING;
+        } else if (restantes > 0) {
           this.#pierce[i] = restantes - 1;
           this.#lastHit[i] = bestId;
         } else if ((this.#bounces[i] ?? 0) > 0 && this.#ricochet(i, horde, bestId, bestSlot)) {
@@ -718,10 +929,70 @@ export class Projectiles {
           this.#lastHit[i] = bestId;
           this.#ticksRemaining[i] = Math.max(this.#ticksRemaining[i] ?? 0, RICOCHET_MIN_LIFE_TICKS);
         } else {
-          this.#removeAt(i);
+          this.#consume(i, bestId);
         }
       }
     }
+  }
+
+  /** `id` est-il dans l'anneau de `i`, touche il y a moins de `REHIT_TICKS` pas ? */
+  #recentlyHit(i: number, id: number): boolean {
+    const age = this.#age[i] ?? 0;
+    for (let k = i * REHIT_RING; k < (i + 1) * REHIT_RING; k++) {
+      if (this.#ringId[k] === id && age - (this.#ringAge[k] ?? 0) < REHIT_TICKS) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Retire le projectile `i`, consomme — a l'impact (`hitId`) ou en fin de
+   * course (`-1`) —, apres l'avoir fait eclater s'il porte des eclats.
+   *
+   * ⚠️ **Le premier eclat PREND le creneau `i`, les autres s'ajoutent en fin
+   * de tableau** : aucun `#removeAt`, et les deux appelants parcourent par
+   * indice decroissant, donc aucun eclat n'est revu au pas ou il nait — ni
+   * deplace, ni teste. Chacun est une copie du parent (tireur, element,
+   * critique, venin, arme, bornTick) dont on ne change que ce qui fait un
+   * eclat. Ils ne retouchent pas `hitId`, que le parent vient de frapper.
+   */
+  #consume(i: number, hitId: number): void {
+    const n = this.#fragments[i] ?? 0;
+    if (n === 0) {
+      this.#removeAt(i);
+      return;
+    }
+    const extra = Math.min(n - 1, this.capacity - this.#count);
+    this.truncatedProjectiles += n - 1 - extra;
+    const heading = this.headingAt(i);
+    // Decroissant : le parent, en `i`, est copie AVANT de devenir l'eclat 0.
+    for (let k = extra; k >= 0; k--) {
+      const slot = k === 0 ? i : this.#count + k - 1;
+      if (k > 0) {
+        this.#copy(i, slot);
+      }
+      const a = heading + (TAU * k) / n;
+      const speed = this.#speed[slot] ?? 0;
+      this.#vx[slot] = Math.cos(a) * speed;
+      this.#vy[slot] = Math.sin(a) * speed;
+      this.#angle[slot] = a;
+      this.#prevX[slot] = this.x[slot] ?? 0;
+      this.#prevY[slot] = this.y[slot] ?? 0;
+      this.#damage[slot] = (this.#damage[slot] ?? 0) * FRAGMENT_DAMAGE_RATIO;
+      this.#scale[slot] = (this.#scale[slot] ?? 1) * FRAGMENT_SCALE_RATIO;
+      this.#blastRadius[slot] = 0;
+      this.#fragments[slot] = 0;
+      this.#motion[slot] = MOTION.droit;
+      this.#growth[slot] = 0;
+      this.#pierce[slot] = 0;
+      this.#bounces[slot] = 0;
+      this.#homing[slot] = 0;
+      this.#lastHit[slot] = hitId;
+      this.#age[slot] = 0;
+      this.#ticksRemaining[slot] = FRAGMENT_LIFE_TICKS;
+    }
+    this.#count += extra;
   }
 
   /**
@@ -747,10 +1018,10 @@ export class Projectiles {
     if (best < 0) {
       return false;
     }
-    const vx = this.#vx[i] ?? 0;
-    const vy = this.#vy[i] ?? 0;
-    const speed = Math.hypot(vx, vy);
-    const current = Math.atan2(vy, vx);
+    // Le cap de la LIGNE et la vitesse de base, pas `vx/vy` : chez le sinus,
+    // ceux-la sont la vitesse ondulante du dernier pas.
+    const speed = this.#speed[i] ?? 0;
+    const current = this.#angle[i] ?? 0;
     const wanted = Math.atan2((horde.y[best] ?? 0) - y, (horde.x[best] ?? 0) - x);
     // L'ecart le plus court, ramene dans [-pi, pi].
     let turn = wanted - current;
@@ -758,6 +1029,7 @@ export class Projectiles {
     const angle = current + Math.max(-maxTurn, Math.min(maxTurn, turn));
     this.#vx[i] = Math.cos(angle) * speed;
     this.#vy[i] = Math.sin(angle) * speed;
+    this.#angle[i] = angle;
     return true;
   }
 
@@ -779,34 +1051,59 @@ export class Projectiles {
   #ricochet(i: number, horde: Horde, hitId: number, hitSlot: number): boolean {
     this.x[i] = horde.x[hitSlot] ?? this.x[i] ?? 0;
     this.y[i] = horde.y[hitSlot] ?? this.y[i] ?? 0;
-    return this.#aim(i, horde, RICOCHET_RANGE, Number.POSITIVE_INFINITY, hitId);
+    const ok = this.#aim(i, horde, RICOCHET_RANGE, Number.POSITIVE_INFINITY, hitId);
+    if (ok && this.#motion[i] === MOTION.sinus) {
+      // La ligne du sinus repart de l'impact, decalee de l'ecart du moment :
+      // le projectile continue son onde depuis la, sans saut lateral.
+      const a = this.#angle[i] ?? 0;
+      const off = sinusOffset(this.#age[i] ?? 0);
+      this.#ox[i] = (this.x[i] ?? 0) + Math.sin(a) * off;
+      this.#oy[i] = (this.y[i] ?? 0) - Math.cos(a) * off;
+    }
+    return ok;
   }
 
   #removeAt(slot: number): void {
     const last = this.#count - 1;
     if (slot !== last) {
-      this.x[slot] = this.x[last] ?? 0;
-      this.y[slot] = this.y[last] ?? 0;
-      this.bornTick[slot] = this.bornTick[last] ?? 0;
-      this.#vx[slot] = this.#vx[last] ?? 0;
-      this.#vy[slot] = this.#vy[last] ?? 0;
-      this.#damage[slot] = this.#damage[last] ?? 0;
-      this.#element[slot] = this.#element[last] ?? 0;
-      this.#by[slot] = this.#by[last] ?? 0;
-      this.#blastRadius[slot] = this.#blastRadius[last] ?? 0;
-      this.#weapon[slot] = this.#weapon[last] ?? 0;
-      this.#pierce[slot] = this.#pierce[last] ?? 0;
-      this.#crit[slot] = this.#crit[last] ?? 1;
-      this.#scale[slot] = this.#scale[last] ?? 1;
-      this.#venom[slot] = this.#venom[last] ?? 0;
-      this.#bounces[slot] = this.#bounces[last] ?? 0;
-      this.#homing[slot] = this.#homing[last] ?? 0;
-      this.#lastHit[slot] = this.#lastHit[last] ?? -1;
-      this.#ticksRemaining[slot] = this.#ticksRemaining[last] ?? 0;
-      this.#prevX[slot] = this.#prevX[last] ?? 0;
-      this.#prevY[slot] = this.#prevY[last] ?? 0;
+      this.#copy(last, slot);
     }
     this.#count = last;
+  }
+
+  /** Recopie TOUT le projectile `from` dans `to` — chaque tableau par projectile, anneau compris. */
+  #copy(from: number, to: number): void {
+    this.x[to] = this.x[from] ?? 0;
+    this.y[to] = this.y[from] ?? 0;
+    this.bornTick[to] = this.bornTick[from] ?? 0;
+    this.#vx[to] = this.#vx[from] ?? 0;
+    this.#vy[to] = this.#vy[from] ?? 0;
+    this.#damage[to] = this.#damage[from] ?? 0;
+    this.#element[to] = this.#element[from] ?? 0;
+    this.#by[to] = this.#by[from] ?? 0;
+    this.#blastRadius[to] = this.#blastRadius[from] ?? 0;
+    this.#weapon[to] = this.#weapon[from] ?? 0;
+    this.#pierce[to] = this.#pierce[from] ?? 0;
+    this.#crit[to] = this.#crit[from] ?? 1;
+    this.#scale[to] = this.#scale[from] ?? 1;
+    this.#venom[to] = this.#venom[from] ?? 0;
+    this.#bounces[to] = this.#bounces[from] ?? 0;
+    this.#homing[to] = this.#homing[from] ?? 0;
+    this.#lastHit[to] = this.#lastHit[from] ?? -1;
+    this.#ticksRemaining[to] = this.#ticksRemaining[from] ?? 0;
+    this.#prevX[to] = this.#prevX[from] ?? 0;
+    this.#prevY[to] = this.#prevY[from] ?? 0;
+    this.#motion[to] = this.#motion[from] ?? 0;
+    this.#fragments[to] = this.#fragments[from] ?? 0;
+    this.#growth[to] = this.#growth[from] ?? 0;
+    this.#speed[to] = this.#speed[from] ?? 0;
+    this.#angle[to] = this.#angle[from] ?? 0;
+    this.#ox[to] = this.#ox[from] ?? 0;
+    this.#oy[to] = this.#oy[from] ?? 0;
+    this.#age[to] = this.#age[from] ?? 0;
+    this.#ringNext[to] = this.#ringNext[from] ?? 0;
+    this.#ringId.copyWithin(to * REHIT_RING, from * REHIT_RING, (from + 1) * REHIT_RING);
+    this.#ringAge.copyWithin(to * REHIT_RING, from * REHIT_RING, (from + 1) * REHIT_RING);
   }
 }
 
@@ -835,6 +1132,11 @@ export function distanceToSegmentSquared(
   const dx = px - cx;
   const dy = py - cy;
   return dx * dx + dy * dy;
+}
+
+/** Ecart lateral du sinus a l'age `age` : `SINUS_AMPLITUDE` au plus. */
+function sinusOffset(age: number): number {
+  return SINUS_AMPLITUDE * Math.sin((TAU * age) / SINUS_PERIOD_TICKS);
 }
 
 function clamp01(t: number): number {

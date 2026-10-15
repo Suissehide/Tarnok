@@ -10,10 +10,22 @@ import {
 } from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
-import { BASE_CRIT, Projectiles } from './projectiles';
+import { type Anchor, BASE_CRIT, Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
 import type { Weapon } from './weapons';
-import { projectileTrailPx, WEAPONS, weaponOf } from './weapons';
+import {
+  FRAGMENT_DAMAGE_RATIO,
+  FRAGMENT_LIFE_TICKS,
+  FRAGMENT_SCALE_RATIO,
+  MOTION,
+  ORBIT_RADIUS,
+  projectileTrailPx,
+  REHIT_TICKS,
+  SINUS_AMPLITUDE,
+  SPIRAL_RAD_PER_TICK,
+  WEAPONS,
+  weaponOf,
+} from './weapons';
 import { ZoneField } from './zones';
 
 /**
@@ -1286,5 +1298,366 @@ describe('Projectiles — le coup critique', () => {
     for (let i = 0; i < p.count; i++) {
       expect(p.critFactorAt(i)).toBeCloseTo(p.critAt(i) ? CRIT_MULTIPLIER : 1, 5);
     }
+  });
+});
+
+/**
+ * Etape 12 — **les trajectoires** : une propriete par mouvement (§6 de la
+ * spec). Les armes de test sont `SINGLE` plus un champ : le catalogue ne porte
+ * encore aucun de ces mouvements (tache 2).
+ */
+describe('Projectiles — les trajectoires de l etape 12', () => {
+  const DT = 1 / TICK_HZ;
+
+  /** Avance `pas` ticks en collisionnant, et rend les (tick, id) de chaque touche. */
+  function joue(
+    p: Projectiles,
+    horde: Horde,
+    pas: number,
+    anchor?: Anchor,
+    onExpire?: (slot: number) => void,
+  ): { tick: number; id: number; damage: number }[] {
+    const touches: { tick: number; id: number; damage: number }[] = [];
+    for (let t = 1; t <= pas; t++) {
+      p.step(DT, onExpire, undefined, anchor);
+      p.collide(horde, (id, damage) => touches.push({ tick: t, id, damage }));
+    }
+    return touches;
+  }
+
+  describe('orbite', () => {
+    const LAME: Weapon = { ...SINGLE, motion: 'orbite', projectileLifeTicks: 60 };
+
+    it('reste a ORBIT_RADIUS ±10 % de son point d emission sans ancre', () => {
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(LAME, 0, 300, -50, 0, 1);
+      for (let t = 0; t < 59; t++) {
+        const d = Math.hypot((p.x[0] ?? 0) - 300, (p.y[0] ?? 0) + 50);
+        expect(d).toBeGreaterThanOrEqual(ORBIT_RADIUS * 0.9 - 1e-3);
+        expect(d).toBeLessThanOrEqual(ORBIT_RADIUS * 1.1 + 1e-3);
+        p.step(DT);
+      }
+    });
+
+    it('suit l ancre qui bouge, et s oriente sur sa tangente', () => {
+      // L'ancre file a 200 px/s : sans elle, la lame resterait autour du point
+      // de tir et s'en retrouverait a 400 px au bout de deux secondes.
+      let ax = 0;
+      const anchor: Anchor = () => ({ x: ax, y: 0 });
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(LAME, 0, 0, 0, 1, 0);
+      for (let t = 0; t < 59; t++) {
+        ax += 200 * DT;
+        p.step(DT, undefined, undefined, anchor);
+        const rx = (p.x[0] ?? 0) - ax;
+        const ry = p.y[0] ?? 0;
+        const d = Math.hypot(rx, ry);
+        expect(d).toBeGreaterThanOrEqual(ORBIT_RADIUS * 0.9 - 1e-3);
+        expect(d).toBeLessThanOrEqual(ORBIT_RADIUS * 1.1 + 1e-3);
+      }
+      // Ancre immobile : le cap est presque perpendiculaire au rayon (la
+      // respiration n'y ajoute qu'une petite composante radiale). Le cap est
+      // celui de la CORDE du pas : on le compare au rayon en son milieu.
+      p.step(DT, undefined, undefined, anchor);
+      const h = p.headingAt(0);
+      const corde = (ORBIT_RADIUS * 2 * Math.PI * 0.9) / TICK_HZ;
+      const rx = (p.x[0] ?? 0) - (Math.cos(h) * corde) / 2 - ax;
+      const ry = (p.y[0] ?? 0) - (Math.sin(h) * corde) / 2;
+      expect(Math.abs(Math.cos(h) * rx + Math.sin(h) * ry) / Math.hypot(rx, ry)).toBeLessThan(0.2);
+    });
+
+    it('n est jamais consomme, et retouche le meme ennemi a chaque tour, jamais avant REHIT_TICKS', () => {
+      const horde = new Horde(4);
+      const id = addOne(horde, 1, 0, ORBIT_RADIUS);
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(LAME, 0, 0, 0, 1, 0);
+      const touches = joue(p, horde, 59);
+      // Un tour fait ~33 ticks : deux passages en 59.
+      expect(touches.length).toBeGreaterThanOrEqual(2);
+      expect(touches.every((h) => h.id === id)).toBe(true);
+      for (let k = 1; k < touches.length; k++) {
+        expect((touches[k]?.tick ?? 0) - (touches[k - 1]?.tick ?? 0)).toBeGreaterThanOrEqual(
+          REHIT_TICKS,
+        );
+      }
+      expect(p.count).toBe(1);
+    });
+  });
+
+  describe('boomerang', () => {
+    // Aller : 20 ticks en ralentissant, ~210 px. Retour a 600 px/s.
+    const GLAIVE: Weapon = {
+      ...SINGLE,
+      motion: 'boomerang',
+      projectileSpeed: 600,
+      projectileLifeTicks: 40,
+    };
+
+    it('revient, retouche a son retour l ennemi touche a l aller, jamais deux fois en REHIT_TICKS', () => {
+      const horde = new Horde(4);
+      const id = addOne(horde, 1, 100, 0);
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(GLAIVE, 0, 0, 0, 1, 0);
+      let retour = Number.NaN;
+      const touches: { tick: number; id: number }[] = [];
+      for (let t = 1; t <= 40 && p.count > 0; t++) {
+        p.step(DT);
+        p.collide(horde, (e) => touches.push({ tick: t, id: e }));
+        if (t === 25 && p.count > 0) {
+          retour = p.headingAt(0);
+        }
+      }
+      expect(touches.map((h) => h.id)).toEqual([id, id]);
+      expect((touches[1]?.tick ?? 0) - (touches[0]?.tick ?? 0)).toBeGreaterThanOrEqual(REHIT_TICKS);
+      // Le retour pointe vers le point de depart, et s'y eteint avant la fin de vie.
+      expect(Math.abs(retour)).toBeCloseTo(Math.PI, 3);
+      expect(p.count).toBe(0);
+    });
+
+    it('revient vers l ancre et s eteint pres d elle', () => {
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(GLAIVE, 0, 0, 0, 1, 0);
+      const ancre = { x: -80, y: 120 };
+      let fin: { x: number; y: number; t: number } | undefined;
+      for (let t = 1; t <= 40 && !fin; t++) {
+        p.step(
+          DT,
+          (slot) => {
+            fin = { x: p.x[slot] ?? 0, y: p.y[slot] ?? 0, t };
+          },
+          undefined,
+          () => ancre,
+        );
+      }
+      expect(fin).toBeDefined();
+      expect(Math.hypot((fin?.x ?? 0) - ancre.x, (fin?.y ?? 0) - ancre.y)).toBeLessThan(24);
+      expect(fin?.t ?? 99).toBeLessThan(40);
+    });
+  });
+
+  describe('mortier', () => {
+    it('ne touche rien en vol, et rend la main en fin de course pour le souffle', () => {
+      const POIX: Weapon = { ...SINGLE, motion: 'mortier', projectileSpeed: 300, blastRadius: 40 };
+      const horde = new Horde(4);
+      addOne(horde, 1, 20, 0); // en plein sur la trajectoire
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(POIX, 0, 0, 0, 1, 0);
+      expect(p.motionAt(0)).toBe(MOTION.mortier);
+      const fins: number[] = [];
+      const touches = joue(p, horde, 10, undefined, (slot) => fins.push(p.x[slot] ?? 0));
+      expect(touches).toEqual([]);
+      // Toute la portee : 300 px/s x 5 ticks.
+      expect(fins).toHaveLength(1);
+      expect(fins[0]).toBeCloseTo((300 * POIX.projectileLifeTicks) / TICK_HZ, 3);
+    });
+  });
+
+  describe('sinus', () => {
+    it('ondule autour de sa ligne, d au plus l amplitude, sans perdre son avance', () => {
+      const FRONDE: Weapon = { ...SINGLE, motion: 'sinus', projectileLifeTicks: 40 };
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(FRONDE, 0, 0, 0, 1, 0);
+      let ecartMax = 0;
+      let capMax = 0;
+      for (let t = 1; t < 40; t++) {
+        p.step(DT);
+        // La ligne : +x a 100 px/s. L'ecart : le long de y.
+        expect(p.x[0] ?? 0).toBeCloseTo((100 * t) / TICK_HZ, 3);
+        ecartMax = Math.max(ecartMax, Math.abs(p.y[0] ?? 0));
+        capMax = Math.max(capMax, Math.abs(p.headingAt(0)));
+      }
+      expect(ecartMax).toBeLessThanOrEqual(SINUS_AMPLITUDE + 1e-3);
+      // Il ondule vraiment, et le sprite le suit.
+      expect(ecartMax).toBeGreaterThan(SINUS_AMPLITUDE * 0.9);
+      expect(capMax).toBeGreaterThan(0.5);
+    });
+  });
+
+  describe('croissance', () => {
+    it('elargit la touche en vol : un ennemi hors de portee au depart finit touche', () => {
+      // Un projectile immobile : seul son rayon change.
+      const ecart = PROJECTILE_HIT_RADIUS + 12;
+      const essai = (growth: number): number => {
+        const horde = new Horde(4);
+        addOne(horde, 1, ecart, 0);
+        const p = new Projectiles(4);
+        p.fireSalvoDirected(
+          { ...SINGLE, growth, projectileSpeed: 0, projectileLifeTicks: 30 },
+          0,
+          0,
+          0,
+          1,
+          0,
+        );
+        return joue(p, horde, 29).length;
+      };
+      expect(essai(0)).toBe(0);
+      expect(essai(1.5)).toBe(1);
+    });
+
+    it('fait grandir scaleAt de growth par seconde', () => {
+      const p = new Projectiles(4);
+      p.fireSalvoDirected({ ...SINGLE, growth: 1.5, projectileLifeTicks: 40 }, 0, 0, 0, 1, 0);
+      for (let t = 0; t < TICK_HZ; t++) {
+        p.step(DT);
+      }
+      expect(p.scaleAt(0)).toBeCloseTo(2.5, 4);
+    });
+  });
+
+  describe('eclats', () => {
+    const GRENADE: Weapon = { ...SINGLE, fragments: 8, damage: 10, blastRadius: 30 };
+
+    it('en fin de course : une couronne de huit eclats, degats et echelle reduits, sans souffle', () => {
+      const p = new Projectiles(16);
+      p.fireSalvoDirected(GRENADE, 0, 0, 0, 1, 0);
+      for (let t = 0; t < GRENADE.projectileLifeTicks; t++) {
+        p.step(DT);
+      }
+      expect(p.count).toBe(8);
+      const caps: number[] = [];
+      for (let i = 0; i < 8; i++) {
+        expect(p.damageAt(i)).toBeCloseTo(10 * FRAGMENT_DAMAGE_RATIO, 5);
+        expect(p.scaleAt(i)).toBeCloseTo(FRAGMENT_SCALE_RATIO, 5);
+        expect(p.blastRadiusAt(i)).toBe(0);
+        expect(p.motionAt(i)).toBe(MOTION.droit);
+        expect(p.ticksRemainingAt(i)).toBe(FRAGMENT_LIFE_TICKS);
+        expect(p.weaponAt(i)).toBe(GRENADE.id);
+        expect(p.x[i]).toBeCloseTo((100 * GRENADE.projectileLifeTicks) / TICK_HZ, 3);
+        caps.push((p.headingAt(i) + Math.PI * 2) % (Math.PI * 2));
+      }
+      // Huit caps a pas egal sur tout le tour.
+      caps.sort((a, b) => a - b);
+      for (let k = 1; k < 8; k++) {
+        expect((caps[k] ?? 0) - (caps[k - 1] ?? 0)).toBeCloseTo(Math.PI / 4, 4);
+      }
+      // Ni eclats d'eclats : tout s'eteint apres leur vie.
+      for (let t = 0; t < FRAGMENT_LIFE_TICKS; t++) {
+        p.step(DT);
+      }
+      expect(p.count).toBe(0);
+    });
+
+    it('a l impact : les eclats epargnent la cible touchee et frappent ses voisins', () => {
+      const horde = new Horde(4);
+      const cible = addOne(horde, 1, 20, 0);
+      const voisin = addOne(horde, 2, 20, 40);
+      const p = new Projectiles(16);
+      p.fireSalvoDirected({ ...GRENADE, projectileSpeed: 600 }, 0, 0, 0, 1, 0);
+      const touches = joue(p, horde, FRAGMENT_LIFE_TICKS);
+      expect(touches[0]).toEqual({ tick: 1, id: cible, damage: 10 });
+      const eclats = touches.slice(1);
+      expect(eclats.length).toBeGreaterThan(0);
+      expect(eclats.every((h) => h.id === voisin)).toBe(true);
+      expect(eclats.every((h) => Math.abs(h.damage - 10 * FRAGMENT_DAMAGE_RATIO) < 1e-5)).toBe(
+        true,
+      );
+    });
+
+    it('compte les eclats qui ne trouvent pas de place', () => {
+      const p = new Projectiles(3);
+      p.fireSalvoDirected({ ...GRENADE, projectileLifeTicks: 1 }, 0, 0, 0, 1, 0);
+      p.step(DT);
+      // Le premier eclat prend le creneau du parent, deux s'ajoutent, cinq manquent.
+      expect(p.count).toBe(3);
+      expect(p.truncatedProjectiles).toBe(5);
+    });
+  });
+
+  describe('spirale', () => {
+    const ROUE: Weapon = { ...SINGLE, emission: 'spirale', projectileCount: 2, spreadRadians: 0.3 };
+    const caps = (tick: number, dirX: number, dirY: number): number[] => {
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(ROUE, tick, 0, 0, dirX, dirY);
+      return [0, 1].map((i) => p.headingAt(i));
+    };
+
+    it('tourne avec le tick, ignore la visee, et ses bras sont opposes', () => {
+      for (const tick of [0, 7, 1000]) {
+        const base = (tick * SPIRAL_RAD_PER_TICK) % (Math.PI * 2);
+        const [a, b] = caps(tick, 1, 0);
+        expect(Math.cos(a ?? 0)).toBeCloseTo(Math.cos(base), 5);
+        expect(Math.sin(a ?? 0)).toBeCloseTo(Math.sin(base), 5);
+        expect(Math.cos((b ?? 0) - (a ?? 0))).toBeCloseTo(-1, 5);
+        expect(caps(tick, -3, 5)).toEqual([a, b]);
+      }
+    });
+
+    it('ne tire toujours pas sur une visee nulle', () => {
+      const p = new Projectiles(4);
+      p.fireSalvoDirected(ROUE, 3, 0, 0, 0, 0);
+      expect(p.count).toBe(0);
+    });
+  });
+
+  it('la compaction emporte le mouvement et son etat : une orbite deplacee continue de tourner', () => {
+    const p = new Projectiles(4);
+    p.fireSalvoDirected({ ...SINGLE, projectileLifeTicks: 3 }, 0, 0, 0, 1, 0);
+    p.fireSalvoDirected({ ...SINGLE, motion: 'orbite', projectileLifeTicks: 60 }, 0, 500, 0, 1, 0);
+    for (let t = 0; t < 10; t++) {
+      p.step(DT);
+    }
+    // Le tir droit s'est eteint au pas 3 : l'orbite est passee en 0.
+    expect(p.count).toBe(1);
+    expect(p.motionAt(0)).toBe(MOTION.orbite);
+    expect(p.ageAt(0)).toBe(10);
+    const d = Math.hypot((p.x[0] ?? 0) - 500, p.y[0] ?? 0);
+    expect(Math.abs(d - ORBIT_RADIUS)).toBeLessThanOrEqual(ORBIT_RADIUS * 0.1 + 1e-3);
+  });
+
+  describe('derivation : deux instances, memes entrees, memes projectiles', () => {
+    const VARIANTES: [string, Partial<Weapon>][] = [
+      ['orbite', { motion: 'orbite', projectileLifeTicks: 40 }],
+      ['boomerang', { motion: 'boomerang', projectileSpeed: 600, projectileLifeTicks: 30 }],
+      ['mortier', { motion: 'mortier', projectileSpeed: 300 }],
+      ['sinus', { motion: 'sinus', projectileSpeed: 400, bounces: 2, projectileLifeTicks: 20 }],
+      ['croissance', { growth: 1.5, pierce: 3, projectileSpeed: 300, projectileLifeTicks: 20 }],
+      ['eclats', { fragments: 8, projectileSpeed: 300 }],
+      ['spirale', { emission: 'spirale', projectileCount: 3, pierce: 5, projectileLifeTicks: 20 }],
+    ];
+
+    /** Une horde fixe, reconstruite a l'identique de chaque cote. */
+    function horde(): Horde {
+      const h = new Horde(32);
+      for (let k = 0; k < 12; k++) {
+        addOne(h, k + 1, 40 + 25 * k, ((k * 37) % 90) - 45);
+      }
+      return h;
+    }
+
+    it.each(VARIANTES)('%s', (_nom, champs) => {
+      const arme: Weapon = { ...SINGLE, ...champs };
+      const cotes = [new Projectiles(256), new Projectiles(256)] as const;
+      const hordes = [horde(), horde()] as const;
+      const degats: number[][] = [[], []];
+      for (let tick = 0; tick < 33; tick++) {
+        const anchor: Anchor = () => ({ x: tick * 4, y: Math.sin(tick * 0.3) * 20 });
+        for (const c of [0, 1] as const) {
+          const p = cotes[c];
+          if (tick % 4 === 0) {
+            p.fireSalvoDirected(
+              arme,
+              tick,
+              tick * 4,
+              0,
+              Math.cos(tick * 0.2),
+              Math.sin(tick * 0.2),
+            );
+          }
+          p.step(DT, undefined, hordes[c], anchor);
+          p.collide(hordes[c], (id, d) => degats[c]?.push(id, d));
+        }
+      }
+      const [a, b] = cotes;
+      expect(a.count).toBeGreaterThan(0);
+      expect(b.count).toBe(a.count);
+      expect(degats[1]).toEqual(degats[0]);
+      for (let i = 0; i < a.count; i++) {
+        expect(b.x[i]).toBe(a.x[i]);
+        expect(b.y[i]).toBe(a.y[i]);
+        expect(b.scaleAt(i)).toBe(a.scaleAt(i));
+        expect(b.headingAt(i)).toBe(a.headingAt(i));
+      }
+    });
   });
 });
