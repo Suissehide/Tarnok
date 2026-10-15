@@ -90,7 +90,8 @@ describe('salle d attente', () => {
     await jusqua(() => invite.recus.find((m) => m.type === MSG.WELCOME));
     const room = app.rooms.get(salon);
     expect(room?.loadoutOf(2)?.weaponIds).toEqual([arme]);
-    expect(room?.loadoutOf(1)?.weaponIds).toEqual([]);
+    // Sans choix, la dague, dans un slot comme les autres.
+    expect(room?.loadoutOf(1)?.weaponIds).toEqual([BASE_WEAPON_ID]);
   });
 
   // Review Focus n1 : un classId inconnu, hors catalogue, ou invalide — le

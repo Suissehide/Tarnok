@@ -708,11 +708,7 @@ function join(code: string): void {
         el('pause-gold').textContent = formatGold(client.gold);
         el('pause-level').textContent = `${client.level}`;
         const id = client.localId;
-        paintWeapons(
-          el('pause-weapons'),
-          id === null ? null : client.loadoutOf(id),
-          id === null ? true : client.firesBase(id),
-        );
+        paintWeapons(el('pause-weapons'), id === null ? null : client.loadoutOf(id));
       }
     },
     updateDraft: (): void => draftScreen.update(),

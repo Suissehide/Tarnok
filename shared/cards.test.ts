@@ -12,8 +12,8 @@ function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
   return new Map(loadouts.map((l, i) => [i + 1, l]));
 }
 
-/** Toutes les cartes que `buildPool` peut produire : armes hors neutre, plus passifs. */
-const TAILLE_DU_POOL = WEAPONS.length - 1 + PASSIVES.length;
+/** Toutes les cartes que `buildPool` peut produire : toutes les armes (dague comprise), plus passifs. */
+const TAILLE_DU_POOL = WEAPONS.length + PASSIVES.length;
 
 describe('drawSpread', () => {
   it('tire joueurs + SPREAD_BONUS cartes', () => {
@@ -153,11 +153,9 @@ describe('drawSpread', () => {
     }
   });
 
-  it("n'offre JAMAIS l'arme neutre, qui vit hors des slots", () => {
-    // ⚠️ Defaut reel, trouve en ecrivant la tache 7 : `buildPool` parcourait
-    // `WEAPONS` en entier, arme neutre comprise. La prendre aurait empile
-    // l'arme que `Room#fireWeapons` tire DEJA hors des slots, et elle aurait
-    // gagne un projectile a chaque carte.
+  it("offre aussi la dague : une arme comme les autres, qui s'ameliore", () => {
+    // Retour de playtest : la dague vit dans les slots depuis `Room.join`, et
+    // la reprendre l'empile comme n'importe quelle arme.
     //
     // On balaie assez de graines pour que chaque carte du pool sorte au moins
     // une fois : un seul tirage ne prouverait rien.
@@ -166,13 +164,13 @@ describe('drawSpread', () => {
       const spread = drawSpread(equipe(new Loadout()), makeRandom(seed));
       for (const carte of spread) {
         vues.add(`${carte.nature}:${carte.refId}`);
-        expect(carte.nature === CARD.WEAPON && carte.refId === BASE_WEAPON_ID).toBe(false);
       }
     }
+    expect(vues.has(`${CARD.WEAPON}:${BASE_WEAPON_ID}`)).toBe(true);
     // ⚠️ **Le garde du garde.** Sans lui, un `buildPool` qui ne rendrait que
     // trois cartes passerait la boucle ci-dessus sans jamais faire sortir
     // l'arme neutre — ni rien d'autre. On COMPTE ce que le balayage a vu :
-    // tout le pool, moins l'arme neutre, exactement.
+    // tout le pool, exactement.
     expect(vues.size).toBe(TAILLE_DU_POOL);
   });
 });

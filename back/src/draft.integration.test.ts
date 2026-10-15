@@ -489,7 +489,8 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     for (const client of clients) {
       const loadout = room.loadoutOf(client.playerId);
       const items = (loadout?.weaponSlotsUsed ?? 0) + (loadout?.passiveSlotsUsed ?? 0);
-      expect(items, `l inventaire du joueur ${client.playerId} est reste vide`).toBe(1);
+      // La dague du depart, plus la carte gagnee.
+      expect(items, `l inventaire du joueur ${client.playerId} est reste vide`).toBe(2);
     }
   }, 90_000);
 });

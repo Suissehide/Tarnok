@@ -847,6 +847,8 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     expect(SIENS, 'le chemin solo doit porter le Vif-argent').toContain(ELEMENT.VIF_ARGENT);
 
     const armes = SIENS.map((e) => armeRapideDe(e));
+    // Les quatre slots pour les quatre elements : sans la dague du depart.
+    room.debugResetLoadout(a.playerId);
     for (const arme of armes) {
       equipe(room, a.playerId, arme.id);
     }

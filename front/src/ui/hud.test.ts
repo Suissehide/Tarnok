@@ -2,7 +2,6 @@
 import { PASSIVE_SLOTS, SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
-import { BASE_WEAPON_ID, weaponOf } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 // `?raw` de Vite : le HTML entre dans le bundle de test tel quel, meme motif
@@ -356,19 +355,9 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     expect(el.kills.textContent).toBe(`1${THIN_SPACE}284`);
   });
 
-  it('montre la dague, puis les emplacements d armes vides', () => {
+  it('montre les emplacements du loadout, la dague comprise, puis les vides', () => {
     paintHud(el, INFO, 0, 0, source);
-    expect(el.weapons.children).toHaveLength(WEAPON_SLOTS + 1);
-    expect((el.weapons.firstElementChild as HTMLElement).title).toContain(
-      weaponOf(BASE_WEAPON_ID).name,
-    );
-  });
-
-  it('une arme choisie au salon remplace la dague : ni dague, ni sixieme case', () => {
-    const avecArme = Object.assign(source, { firesBase: () => false });
-    paintHud(el, INFO, 0, 0, avecArme);
     expect(el.weapons.children).toHaveLength(WEAPON_SLOTS);
-    expect(el.weapons.querySelector('[title]')).toBeNull();
   });
 
   it('ecrit le niveau', () => {

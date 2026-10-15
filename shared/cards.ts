@@ -1,7 +1,7 @@
 import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
 import { PASSIVES } from './passives';
-import { BASE_WEAPON_ID, WEAPONS } from './weapons';
+import { WEAPONS } from './weapons';
 
 /**
  * Les deux natures de carte.
@@ -69,16 +69,13 @@ export function applyCardToLoadout(loadout: Loadout, card: Card): void {
  * etalage-ci se dispute. Armes et passifs s'empilent pareil : rien ne s'exclut
  * d'etre deja possede, c'est ce qui fait du conflit le regime NORMAL du draft.
  *
- * L'arme neutre est le seul retrait : elle vit hors des slots (§6.1), tout le
- * monde l'a des le depart, et la proposer l'empilerait sur elle-meme.
+ * La dague en fait partie : c'est une arme comme les autres, dans les slots,
+ * que le draft ameliore en l'empilant.
  */
 export function buildPool(): Card[] {
   const pool: Card[] = [];
 
   for (const w of WEAPONS) {
-    if (w.id === BASE_WEAPON_ID) {
-      continue;
-    }
     pool.push({ nature: CARD.WEAPON, refId: w.id });
   }
 

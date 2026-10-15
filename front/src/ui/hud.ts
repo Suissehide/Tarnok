@@ -2,7 +2,7 @@ import { classOf, type VerbKind } from '@shared/classes';
 import { PASSIVE_SLOTS, SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type PassiveKind } from '@shared/passives';
-import { BASE_WEAPON_ID, weaponOf } from '@shared/weapons';
+import { weaponOf } from '@shared/weapons';
 
 import type { HudInfo } from '../render/stage';
 import { elementBadge, elementLabel } from './element-icons';
@@ -105,8 +105,6 @@ export interface HudSource {
   /** Ennemis abattus depuis le debut de la run, tels que `DEATHS` les a annonces. */
   readonly kills: number;
   loadoutOf(playerId: number): Loadout;
-  /** Ce joueur tire-t-il la dague ? Absent : oui (un joueur sans arme de depart). */
-  firesBase?(playerId: number): boolean;
 }
 
 /**
@@ -170,14 +168,14 @@ export function paintPassives(list: HTMLElement, rows: readonly PassiveRow[]): v
  * salon la remplace (`firesBase`) —, puis les `WEAPON_SLOTS` du `Loadout`
  * dans l'ordre du draft, chacune avec l'icone de son element.
  */
-export function paintWeapons(list: HTMLElement, loadout: Loadout | null, firesBase = true): void {
-  const ids = loadout ? [...(firesBase ? [BASE_WEAPON_ID] : []), ...loadout.weaponIds] : [];
+export function paintWeapons(list: HTMLElement, loadout: Loadout | null): void {
+  const ids = loadout ? [...loadout.weaponIds] : [];
   const cells = ids.map((id) =>
     slot(
       '',
       {
         src: ICON_WEAPON,
-        count: id === BASE_WEAPON_ID ? 1 : (loadout?.stacksOfWeapon(id) ?? 0),
+        count: loadout?.stacksOfWeapon(id) ?? 0,
         title: `${weaponOf(id).name} — ${elementLabel(weaponOf(id).element)}`,
       },
       'paperx',
@@ -186,7 +184,7 @@ export function paintWeapons(list: HTMLElement, loadout: Loadout | null, firesBa
   for (const [i, id] of ids.entries()) {
     cells[i]?.append(elementBadge(weaponOf(id).element, 22));
   }
-  while (cells.length < WEAPON_SLOTS + (firesBase ? 1 : 0)) {
+  while (cells.length < WEAPON_SLOTS) {
     cells.push(slot('', null, 'paperx'));
   }
   list.replaceChildren(...cells);
@@ -275,11 +273,7 @@ export function paintHud(
   // deux ecritures du meme montant se contrediraient tot ou tard.
   el.gold.textContent = formatGold(source.gold);
   paintPassives(el.passiveList, passiveRows(source));
-  paintWeapons(
-    el.weapons,
-    id === null ? null : source.loadoutOf(id),
-    id === null ? true : (source.firesBase?.(id) ?? true),
-  );
+  paintWeapons(el.weapons, id === null ? null : source.loadoutOf(id));
   // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
   // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme
   // un plantage plutot que comme une pause voulue.
