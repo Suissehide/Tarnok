@@ -5,11 +5,17 @@ import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import {
+  CALIBRE_PER_UPGRADE,
   DAMAGE_PER_UPGRADE,
   EFFECT_RADIUS_PER_STACK,
   FIRE_RATE_PER_UPGRADE,
+  PIERCE_PER_UPGRADE,
+  RANGE_PER_UPGRADE,
+  RICOCHET_PER_UPGRADE,
   stackGain,
   UPGRADE,
+  VELOCITY_PER_UPGRADE,
+  VENOM_PER_UPGRADE,
   weaponOf,
 } from '@shared/weapons';
 
@@ -112,16 +118,35 @@ export function stacksLabel(
 /** Ce qu'une carte d'arme ameliore chez qui la possede deja — voir `UPGRADE`. */
 export function upgradeLabel(card: Card): string {
   const pct = (f: number): string => `${Math.round(f * 100)} %`;
-  switch (card.upgrade ?? UPGRADE.SPECIFIC) {
+  const weapon = weaponOf(card.refId);
+  switch (card.upgrade ?? weapon.perks[0]) {
     case UPGRADE.DAMAGE:
       return `+${pct(DAMAGE_PER_UPGRADE)} dégâts`;
     case UPGRADE.FIRE_RATE:
       return `+${pct(FIRE_RATE_PER_UPGRADE)} cadence`;
+    case UPGRADE.ZONE:
+      return weapon.kind === 'faisceau'
+        ? `+${pct(EFFECT_RADIUS_PER_STACK)} largeur`
+        : `+${pct(EFFECT_RADIUS_PER_STACK)} zone`;
+    case UPGRADE.PIERCE:
+      return `Transperce +${PIERCE_PER_UPGRADE}`;
+    case UPGRADE.RANGE:
+      return weapon.kind === 'tir' && weapon.projectileSpeed > 0
+        ? `+${pct(RANGE_PER_UPGRADE)} portée`
+        : `+${pct(RANGE_PER_UPGRADE)} durée`;
+    case UPGRADE.CALIBRE:
+      return `+${pct(CALIBRE_PER_UPGRADE)} calibre`;
+    case UPGRADE.VELOCITY:
+      return `+${pct(VELOCITY_PER_UPGRADE)} vitesse`;
+    case UPGRADE.DETONATION:
+      return 'Explose à l’impact';
+    case UPGRADE.VENOM:
+      return `Venin ${pct(VENOM_PER_UPGRADE)}`;
+    case UPGRADE.RICOCHET:
+      return `Ricochet +${RICOCHET_PER_UPGRADE}`;
+    case UPGRADE.HOMING:
+      return 'Guidage +';
     default: {
-      const weapon = weaponOf(card.refId);
-      if (weapon.kind !== 'tir') {
-        return `+${pct(EFFECT_RADIUS_PER_STACK)} rayon`;
-      }
       const n = stackGain(weapon);
       return `+${n} projectile${n > 1 ? 's' : ''}`;
     }

@@ -589,6 +589,7 @@ export class Projectiles {
       const by = this.y[i] ?? 0;
 
       let bestId = -1;
+      let bestSlot = -1;
       let bestDist2 = Number.POSITIVE_INFINITY;
       // Ce que le calibre ajoute au rayon de touche, en pixels. Zero pour
       // presque tous : la boucle garde alors ses tables telles quelles.
@@ -655,6 +656,7 @@ export class Projectiles {
         if (d2 < bestDist2 || (d2 === bestDist2 && id < bestId)) {
           bestDist2 = d2;
           bestId = id;
+          bestSlot = e;
         }
       }
 
@@ -673,7 +675,7 @@ export class Projectiles {
         if (restantes > 0) {
           this.#pierce[i] = restantes - 1;
           this.#lastHit[i] = bestId;
-        } else if ((this.#bounces[i] ?? 0) > 0 && this.#ricochet(i, horde, bestId)) {
+        } else if ((this.#bounces[i] ?? 0) > 0 && this.#ricochet(i, horde, bestId, bestSlot)) {
           // Le ricochet : le meme projectile repart vers un voisin, degats
           // pleins comme la perforation. Il ne peut pas reprendre tout de suite
           // celui qu'il quitte — `#lastHit`.
@@ -734,7 +736,14 @@ export class Projectiles {
     this.#aim(i, horde, HOMING_RANGE, (this.#homing[i] ?? 0) * dt, -1);
   }
 
-  #ricochet(i: number, horde: Horde, hitId: number): boolean {
+  /**
+   * Le ricochet repart du POINT D'IMPACT — l'ennemi touche —, pas de la fin du
+   * segment : un projectile rapide l'a deja depasse, et viserait le voisin
+   * depuis l'autre cote.
+   */
+  #ricochet(i: number, horde: Horde, hitId: number, hitSlot: number): boolean {
+    this.x[i] = horde.x[hitSlot] ?? this.x[i] ?? 0;
+    this.y[i] = horde.y[hitSlot] ?? this.y[i] ?? 0;
     return this.#aim(i, horde, RICOCHET_RANGE, Number.POSITIVE_INFINITY, hitId);
   }
 

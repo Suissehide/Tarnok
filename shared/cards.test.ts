@@ -5,7 +5,7 @@ import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { makeRandom } from './random';
-import { BASE_WEAPON_ID, UPGRADE_KINDS, WEAPONS } from './weapons';
+import { BASE_WEAPON_ID, UPGRADE_KINDS, upgradesFor, WEAPONS, type Weapon } from './weapons';
 
 function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
   // Les identifiants de joueur commencent a 1, comme partout dans le salon.
@@ -214,8 +214,8 @@ describe('drawSpread — rien que personne ne peut prendre', () => {
     for (let seed = 1; seed <= 100; seed++) {
       for (const c of drawSpread(equipe(new Loadout()), makeRandom(seed))) {
         if (c.nature === CARD.WEAPON) {
-          expect(c.upgrade).toBeGreaterThanOrEqual(0);
-          expect(c.upgrade).toBeLessThan(UPGRADE_KINDS);
+          // Seulement un aspect que CETTE arme propose.
+          expect(upgradesFor(WEAPONS[c.refId] as Weapon)).toContain(c.upgrade);
           vus.add(c.upgrade ?? -1);
         }
       }

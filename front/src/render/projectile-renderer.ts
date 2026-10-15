@@ -1171,7 +1171,10 @@ export class ProjectileRenderer {
       head.x = x;
       head.y = y;
       head.rotation = heading + projectileSpin(look.spinTurns, age);
-      head.scaleX = (look.diameterPx * projectilePop(age)) / PROJECTILE_CELL_PX;
+      // Le calibre (carte d'arme) grossit le projectile : `scaleAt` vaut 1
+      // sans lui. Le rayon de touche suit, cote simulation.
+      const size = look.diameterPx * projectiles.scaleAt(i);
+      head.scaleX = (size * projectilePop(age)) / PROJECTILE_CELL_PX;
       head.scaleY = head.scaleX;
       // ⚠️ **PLEINE opacite jusqu'a la derniere image.** Ce qui dit la fin de
       // course, c'est la case rongee (`wear`), pas un fondu : un projectile qui
@@ -1187,7 +1190,7 @@ export class ProjectileRenderer {
       trail.y = y;
       trail.rotation = heading;
       trail.scaleX = (projectileTrailPx(weapon) * alpha) / STREAK_LENGTH_PX;
-      trail.scaleY = (look.diameterPx * TRAIL_THICKNESS_FRACTION) / STREAK_THICKNESS_PX;
+      trail.scaleY = (size * TRAIL_THICKNESS_FRACTION) / STREAK_THICKNESS_PX;
       trail.tint = look.tint;
       trail.alpha = alpha * TRAIL_ALPHA;
 

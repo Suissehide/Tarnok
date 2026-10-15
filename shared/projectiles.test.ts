@@ -1153,7 +1153,8 @@ describe('Projectiles — guidage et ricochet', () => {
     const premier = addOne(horde, 1, 100, 0);
     const voisin = addOne(horde, 2, 100, 150);
     const p = new Projectiles(10);
-    p.fireSalvo({ ...SINGLE, bounces: 1 }, 0, 0, 0, premier, horde);
+    // Une vitesse de vraie arme : a 100 px/s, `SINGLE` n'atteindrait pas le voisin.
+    p.fireSalvo({ ...SINGLE, bounces: 1, projectileSpeed: 600 }, 0, 0, 0, premier, horde);
     const touches: number[] = [];
     p.step(1); // segment (0,0) -> au-dela du premier
     p.collide(horde, (id) => touches.push(id));

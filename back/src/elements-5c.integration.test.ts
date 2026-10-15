@@ -153,8 +153,10 @@ function porteeDe(weapon: Weapon): number {
  * alors comme un echec du jeu et non du decor.
  */
 function armeDe(element: number): Weapon {
+  // ⚠️ Des tirs DROITS : chaque phase vise sa propre cible, et un missile
+  // guide (ou un ricochet) irait marquer celle d'une autre phase.
   const best = WEAPONS.filter(
-    (w) => w.element === element && w.projectileCount === 1,
+    (w) => w.element === element && w.projectileCount === 1 && w.homing === 0 && w.bounces === 0,
   ).reduce<Weapon | null>((b, w) => (b === null || porteeDe(w) > porteeDe(b) ? w : b), null);
   if (!best) {
     throw new Error(`aucune arme a projectile unique pour l element ${element}`);
@@ -164,7 +166,9 @@ function armeDe(element: number): Weapon {
 
 /** L'arme de cet element qui tire le plus souvent — pour le decor du joueur seul. */
 function armeRapideDe(element: number): Weapon {
-  const best = WEAPONS.filter((w) => w.element === element).reduce<Weapon | null>(
+  const best = WEAPONS.filter(
+    (w) => w.element === element && w.homing === 0 && w.bounces === 0,
+  ).reduce<Weapon | null>(
     (b, w) => (b === null || w.cooldownTicks < b.cooldownTicks ? w : b),
     null,
   );

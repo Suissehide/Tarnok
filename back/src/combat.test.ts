@@ -68,6 +68,8 @@ import {
   resolveHalos,
   resolveProjectileDamage,
   resolveVerglasCollisions,
+  VENOM_MIN_RESERVE,
+  Venins,
 } from './combat';
 
 const DT = 1 / 30;
@@ -179,6 +181,11 @@ const SINGLE: Weapon = {
   blastRadius: 0,
   pierce: 0,
   kind: 'tir' as const,
+  perks: [],
+  projectileScale: 1,
+  venom: 0,
+  bounces: 0,
+  homing: 0,
   // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
   // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
   look: {
@@ -4927,5 +4934,43 @@ describe('resolveProjectileDamage — le souffle de fin de course', () => {
     // Plus rien au pas suivant : le projectile n'existe plus.
     expect(apres2).toBe(apres1);
     expect(p.count).toBe(0);
+  });
+});
+
+describe('Venins — le poison des cartes « venin »', () => {
+  it('ecoule TOUTE la reserve, puis oublie l ennemi', () => {
+    const horde = new Horde(10);
+    const id = addOne(horde, 1, 0, 0);
+    const slot = horde.slotOf(id);
+    horde.hp[slot] = 1000;
+    const venins = new Venins();
+    venins.add(id, 10);
+    venins.add(id, 5); // une reserve s'ADDITIONNE
+    const orbs = new OrbField(10);
+    let tick = 0;
+    while (venins.size > 0 && tick < 1000) {
+      expect(venins.resolve(horde, orbs, tick, solNu())).toEqual([]);
+      tick++;
+    }
+    expect(venins.size).toBe(0);
+    // Le poison passe par `appliquerDegats` : au plus 15, a la derniere miette pres.
+    const perdu = 1000 - (horde.hp[horde.slotOf(id)] ?? 0);
+    expect(perdu).toBeGreaterThan(15 - VENOM_MIN_RESERVE - 1e-3);
+    expect(perdu).toBeLessThanOrEqual(15 + 1e-3);
+    // Et ca prend du temps : c'est un poison, pas un second coup.
+    expect(tick).toBeGreaterThan(30);
+  });
+
+  it('tue, compacte la horde, pose l orbe et rend l identite', () => {
+    const horde = new Horde(10);
+    const id = addOne(horde, 1, 0, 0);
+    horde.hp[horde.slotOf(id)] = 0.5;
+    const venins = new Venins();
+    venins.add(id, 100);
+    const orbs = new OrbField(10);
+    expect(venins.resolve(horde, orbs, 0, solNu())).toEqual([id]);
+    expect(horde.slotOf(id)).toBe(-1);
+    expect(orbs.count).toBe(1);
+    expect(venins.size).toBe(0);
   });
 });

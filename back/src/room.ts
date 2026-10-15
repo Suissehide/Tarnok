@@ -70,13 +70,12 @@ import {
   beamRange,
   cooldownWithBonus,
   DAMAGE_PER_UPGRADE,
-  effectRadius,
   FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardIsAlive,
   guardPulsesAt,
-  salvoCount,
   UPGRADE,
+  upgradedWeapon,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -100,6 +99,7 @@ import {
   resolveHalos,
   resolveProjectileDamage,
   resolveVerglasCollisions,
+  Venins,
 } from './combat';
 import { Draft } from './draft';
 import { Portal } from './portal';
@@ -437,6 +437,8 @@ export class Room {
    * reproductibilite des tests, pas la convergence.
    */
   readonly #draftRng: () => number;
+  /** Le poison des cartes « venin » — serveur seul, voir `Venins`. */
+  readonly #venins = new Venins();
   /**
    * Le vote d'extraction en cours. `phase === 'closed'` : aucun portail ouvert.
    *
@@ -1539,6 +1541,7 @@ export class Room {
       this.#tick,
       this.#zones,
       this.#reactions,
+      this.#venins,
     );
     markInZones(this.horde, this.#zones, this.#tick, this.#reactions);
     // ⚠️ **Les reactions se resolvent ICI, apres les DEUX chemins qui les
@@ -1598,6 +1601,8 @@ export class Room {
       });
     }
     const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick, this.#zones);
+    // Le poison des cartes « venin », au meme titre que la brulure.
+    const poisonedIds = this.#venins.resolve(this.horde, this.#orbs, this.#tick, this.#zones);
     // ⚠️ **Verglas (tache 8 de l'etape 5b) : « les ennemis derapent ET se
     // percutent ».** Le derapage lui-meme vit dans `Horde.step`, deja joue
     // plus haut ; la collision est un degat, resolue ICI comme la brulure,
@@ -1613,6 +1618,7 @@ export class Room {
       ...deadIds,
       ...reactedIds,
       ...burntIds,
+      ...poisonedIds,
       ...collidedIds,
     ]);
     // ⚠️ **UN SEUL lot de morts par tick, brulures, reactions ET collisions
@@ -1632,6 +1638,7 @@ export class Room {
       beamIds.length > 0 ||
       reactedIds.length > 0 ||
       burntIds.length > 0 ||
+      poisonedIds.length > 0 ||
       collidedIds.length > 0 ||
       blastIds.length > 0
         ? [
@@ -1640,6 +1647,7 @@ export class Room {
             ...deadIds,
             ...reactedIds,
             ...burntIds,
+            ...poisonedIds,
             ...collidedIds,
             ...blastIds,
           ]
@@ -2184,7 +2192,9 @@ export class Room {
    * a chaque tir, a partir de l'inventaire du joueur.
    */
   #fireOne(p: PlayerState, weaponId: number, tick: number): void {
-    const weapon = weaponOf(weaponId);
+    // Ses bonus propres appliques (salve, zone, perforation, portee) : tout ce
+    // qui suit lit cette copie, jamais l'entree du catalogue.
+    const weapon = upgradedWeapon(weaponOf(weaponId), (u) => p.loadout.upgradesOf(weaponId, u));
     const cooldown = cooldownWithBonus(
       weapon.cooldownTicks,
       p.loadout.bonus('fireRate') +
@@ -2200,13 +2210,6 @@ export class Room {
         p.loadout.bonus('damage') +
         p.accountBonuses.damage +
         DAMAGE_PER_UPGRADE * p.loadout.upgradesOf(weaponId, UPGRADE.DAMAGE));
-    // ⚠️ Chaque exemplaire empile de cette arme elargit la salve d'un
-    // projectile : « c'est l'accumulation des cartes qui fait la puissance ».
-    // L'arme neutre n'est jamais empilee, `salvoCount` lui rend son compte de
-    // base sans cas particulier.
-    // ⚠️ Seules les cartes « specifique » comptent ici : degats et cadence
-    // sont deja dans `damage` et `cooldown`. `1 +` : l'exemplaire d'acquisition.
-    const stacks = 1 + p.loadout.upgradesOf(weaponId, UPGRADE.SPECIFIC);
     if (weapon.kind === 'halo') {
       // ⚠️ **Le halo ne tire rien : il met une PULSATION en file**, que
       // `resolveHalos` resoudra dans la meme passe que les projectiles (voir
@@ -2223,7 +2226,7 @@ export class Room {
       this.#haloPulses.push({
         x: p.x,
         y: p.y,
-        radius: effectRadius(weapon, stacks),
+        radius: weapon.blastRadius,
         damage,
         element: weapon.element,
         by: p.id,
@@ -2241,7 +2244,7 @@ export class Room {
         y: p.y,
         bornTick: tick,
         lifeTicks: weapon.projectileLifeTicks,
-        radius: effectRadius(weapon, stacks),
+        radius: weapon.blastRadius,
         damage,
         element: weapon.element,
         by: p.id,
@@ -2260,7 +2263,7 @@ export class Room {
         y: p.y,
         toX: p.x + p.aimX * portee,
         toY: p.y + p.aimY * portee,
-        width: effectRadius(weapon, stacks),
+        width: weapon.blastRadius,
         damage,
         element: weapon.element,
         by: p.id,
@@ -2268,7 +2271,7 @@ export class Room {
       p.lastFireTick[weaponId] = tick;
       return;
     }
-    const count = salvoCount(weapon, stacks);
+    const count = weapon.projectileCount;
     this.#projectiles.fireSalvoDirected(
       weapon,
       tick,

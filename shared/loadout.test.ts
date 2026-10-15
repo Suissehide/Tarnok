@@ -4,7 +4,7 @@ import { CARD } from './cards';
 import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
-import { UPGRADE, UPGRADE_KINDS } from './weapons';
+import { UPGRADE, UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
  * ⚠️ Les identifiants d'epreuve evitent volontairement `0`.
@@ -204,15 +204,29 @@ describe('Loadout — une carte d arme reprise n ameliore QU UN aspect', () => {
     l.addWeapon(ARME_A, UPGRADE.FIRE_RATE);
     expect(l.upgradesOf(ARME_A, UPGRADE.FIRE_RATE)).toBe(2);
     expect(l.upgradesOf(ARME_A, UPGRADE.DAMAGE)).toBe(0);
-    expect(l.upgradesOf(ARME_A, UPGRADE.SPECIFIC)).toBe(0);
+    expect(l.upgradesOf(ARME_A, UPGRADE.SALVO)).toBe(0);
     // Une autre arme ne partage rien.
     expect(l.upgradesOf(ARME_B, UPGRADE.FIRE_RATE)).toBe(0);
     expect(l.stacksOfWeapon(ARME_A)).toBe(3);
   });
 
-  it('refuse un aspect inconnu', () => {
+  it('refuse un aspect inconnu, ou que cette arme ne propose pas', () => {
     const l = new Loadout();
     l.addWeapon(ARME_A);
     expect(() => l.addWeapon(ARME_A, UPGRADE_KINDS)).toThrow(/amelioration/);
+    const sansPerforation = upgradesFor(weaponOf(ARME_A)).includes(UPGRADE.PIERCE)
+      ? UPGRADE.ZONE
+      : UPGRADE.PIERCE;
+    expect(upgradesFor(weaponOf(ARME_A))).not.toContain(sansPerforation);
+    expect(() => l.addWeapon(ARME_A, sansPerforation)).toThrow(/amelioration/);
+  });
+
+  it('sans aspect, une carte reprise donne le premier bonus propre de l arme', () => {
+    for (const w of WEAPONS) {
+      const l = new Loadout();
+      l.addWeapon(w.id);
+      l.addWeapon(w.id);
+      expect(l.upgradesOf(w.id, w.perks[0] ?? -1), w.name).toBe(1);
+    }
   });
 });

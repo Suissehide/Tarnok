@@ -261,6 +261,38 @@ export interface Weapon {
    * `blastRadius`.
    */
   pierce: number;
+  /**
+   * Les bonus PROPRES a cette arme (`UPGRADE`, hors degats et cadence) que ses
+   * cartes peuvent porter. Le premier est celui d'une carte sans aspect.
+   *
+   * ⚠️ **Seulement ce que l'arme sait faire** : une perforation sur un halo ou
+   * une salve sur une invocation seraient des cartes vides.
+   */
+  perks: readonly number[];
+  /** Echelle des projectiles, dessin et rayon de touche — `1` au catalogue, grandit avec le calibre. */
+  projectileScale: number;
+  /**
+   * Fraction des degats d'un impact rendue ensuite en poison — `0` au
+   * catalogue, grandit avec le venin. Voir `Venins` (`back/src/combat.ts`).
+   */
+  venom: number;
+  /**
+   * Rebonds : apres un impact, le projectile repart vers l'ennemi le plus
+   * proche (`RICOCHET_RANGE`) au lieu d'etre consomme. `0` : aucun.
+   *
+   * ⚠️ **Ce n'est pas `pierce`** : la perforation continue TOUT DROIT, le
+   * ricochet CHANGE de cap. Une arme qui a les deux perfore d'abord.
+   */
+  bounces: number;
+  /**
+   * Guidage, en radians par seconde : de combien le projectile peut tourner
+   * vers l'ennemi le plus proche (`HOMING_RANGE`). `0` : il file droit.
+   *
+   * ⚠️ **La seule trajectoire qui lit la horde.** Serveur et client la
+   * calculent chacun sur leur horde — la meme, a la replication pres — donc le
+   * missile dessine suit celui qui frappe ; les degats restent au serveur.
+   */
+  homing: number;
 }
 
 /**
@@ -359,7 +391,97 @@ export interface Weapon {
  */
 export const HEAVY_BLAST_RADIUS = ZONE_RADIUS / 2;
 
-const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pierce' | 'kind'> & {
+/**
+ * Ce qu'une carte d'arme ameliore quand on possede DEJA l'arme — un seul
+ * aspect par carte (retour de jeu : *« les cartes des armes pourraient
+ * ameliorer qu'une partie a chaque fois »*).
+ *
+ * `DAMAGE` et `FIRE_RATE` valent pour toute arme ; les autres sont des BONUS
+ * PROPRES, que chaque arme liste dans `Weapon.perks` — seuls ceux-la peuvent
+ * sortir sur ses cartes. L'index EST l'identifiant, et c'est l'octet du fil.
+ */
+export const UPGRADE = {
+  /** Salve plus large — `salvoCount`. */
+  SALVO: 0,
+  DAMAGE: 1,
+  FIRE_RATE: 2,
+  /** Rayon : explosion d'un tir, cercle d'un halo ou d'une invocation, largeur d'un faisceau — `effectRadius`. */
+  ZONE: 3,
+  /** Un ennemi de plus traverse — `Weapon.pierce`. */
+  PIERCE: 4,
+  /** Duree de vie : la portee d'un tir ou d'un faisceau, la duree d'une mine ou d'une invocation. */
+  RANGE: 5,
+  /** Des projectiles plus GROS : dessin et rayon de touche — `Weapon.projectileScale`. */
+  CALIBRE: 6,
+  /** Des projectiles plus rapides — donc qui portent plus loin dans la meme duree. */
+  VELOCITY: 7,
+  /** Une arme sans souffle explose a l'impact — `Weapon.blastRadius` part de zero. */
+  DETONATION: 8,
+  /** Une part de chaque impact revient en poison sur la duree — `Weapon.venom`. */
+  VENOM: 9,
+  /** Un rebond de plus vers l'ennemi voisin — `Weapon.bounces`. */
+  RICOCHET: 10,
+  /** Le projectile se guide vers l'ennemi le plus proche — `Weapon.homing`. */
+  HOMING: 11,
+} as const;
+export const UPGRADE_KINDS = 12;
+
+/** Degats gagnes par carte « degats », en fraction des degats de base. */
+export const DAMAGE_PER_UPGRADE = 0.25;
+/**
+ * Recharge retiree par carte « cadence », en fraction — s'additionne aux
+ * passifs de cadence sous le meme plafond `MAX_FIRE_RATE_BONUS`.
+ */
+export const FIRE_RATE_PER_UPGRADE = 0.12;
+/** Ennemis traverses en plus par carte « perforation ». */
+export const PIERCE_PER_UPGRADE = 1;
+/** Duree de vie gagnee par carte « portee », en fraction. */
+export const RANGE_PER_UPGRADE = 0.2;
+/** Echelle gagnee par carte « calibre », en fraction. */
+export const CALIBRE_PER_UPGRADE = 0.3;
+/** Vitesse gagnee par carte « velocite », en fraction. */
+export const VELOCITY_PER_UPGRADE = 0.25;
+/**
+ * Rayon d'explosion ajoute par carte « detonation », en pixels monde.
+ *
+ * ⚠️ **Une explosion est un balayage en O(horde) par impact** (`damageInRadius`) :
+ * la carte n'est offerte qu'a des armes LENTES, jamais au lance-flammes.
+ */
+export const DETONATION_RADIUS = 30;
+/**
+ * Part de chaque impact rendue en poison, par carte « venin ». Plus que la
+ * carte « degats » : le poison arrive en retard et se perd sur un ennemi deja
+ * mort.
+ */
+export const VENOM_PER_UPGRADE = 0.4;
+/** Rebonds gagnes par carte « ricochet ». */
+export const RICOCHET_PER_UPGRADE = 1;
+/** Guidage gagne par carte « guidage », en radians par seconde. */
+export const HOMING_PER_UPGRADE = 3;
+/** Jusqu'ou un ricochet cherche sa cible suivante, en pixels monde. */
+export const RICOCHET_RANGE = 260;
+/**
+ * Duree de vie minimale rendue a un projectile qui ricoche, en ticks : sans
+ * elle, un rebond en fin de course mourrait avant d'arriver.
+ */
+export const RICOCHET_MIN_LIFE_TICKS = 12;
+/** Jusqu'ou un projectile guide voit une cible, en pixels monde. */
+export const HOMING_RANGE = 420;
+
+const WEAPON_DEFS: readonly (Omit<
+  Weapon,
+  | 'id'
+  | 'element'
+  | 'blastRadius'
+  | 'pierce'
+  | 'kind'
+  | 'projectileScale'
+  | 'venom'
+  | 'bounces'
+  | 'homing'
+> & {
+  bounces?: number;
+  homing?: number;
   element?: number;
   blastRadius?: number;
   pierce?: number;
@@ -379,6 +501,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     //
     // Hors slots (§6.1) : jamais proposee par le draft, donc jamais empilee.
     name: 'Dague',
+    perks: [UPGRADE.SALVO, UPGRADE.PIERCE, UPGRADE.RICOCHET, UPGRADE.VENOM],
     // Lame d'acier, etroite et sobre : l'arme que tout le monde porte ne doit
     // jamais voler la vedette aux huit autres, d'ou le blanc bleute et le halo
     // le plus discret du catalogue.
@@ -420,6 +543,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // viser, donc elle repond a l'ENCERCLEMENT quand toutes les autres
     // demandent de choisir un cote. C'est un socle, au sens du §6.3.
     name: 'Roue de lames',
+    perks: [UPGRADE.SALVO, UPGRADE.RANGE, UPGRADE.CALIBRE, UPGRADE.VENOM],
     // Lame cramoisie, et la deuxieme plus tournante du catalogue apres le
     // chakram : ce qui part dans toutes les directions doit se lire comme un
     // tourbillon.
@@ -459,6 +583,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     //
     // Les degats restent PLEINS a chaque traversee : voir `Weapon.pierce`.
     name: 'Arc lourd',
+    perks: [UPGRADE.PIERCE, UPGRADE.SALVO, UPGRADE.DETONATION, UPGRADE.VELOCITY],
     // Le trait le plus gros, le plus rapide et le plus long du catalogue — et
     // le seul qui ne s'eteint JAMAIS en vol : sa vie (40 ticks) atteint
     // `PROJECTILE_FADE_REFERENCE_TICKS`, donc `projectileAlpha` le laisse a
@@ -521,6 +646,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // interdit — *« une dague plus rapide que le lance-flammes rendrait l'arme
     // gratuite meilleure que la carte »*.
     name: 'Lance-flammes',
+    perks: [UPGRADE.RANGE, UPGRADE.SALVO, UPGRADE.CALIBRE],
     // ⚠️ **Le cas que la tache 12 nomme** : 12 ticks de vie, donc l'usure la
     // plus precoce du catalogue (`projectileWear` en tire 70 % de sa vie). La
     // langue de feu se consume en vol au lieu de disparaitre d'un coup a bout
@@ -585,6 +711,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // cadence de la grenade (75 ticks) et le taux de touche de la dague.**
     // Signale, pas tranche ici : c'est du reglage, et il appartient a l'auteur.
     name: 'Grenade',
+    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VELOCITY],
     // Sphere verte, la plus grosse du catalogue : une arme a 40 degats et 75
     // ticks de recharge doit se voir partir. Vert franc face a l'ambre de
     // l'eventail — les deux armes de Braise ne se ressemblent pas.
@@ -609,6 +736,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
     name: 'Chakram',
+    perks: [UPGRADE.PIERCE, UPGRADE.RICOCHET, UPGRADE.CALIBRE, UPGRADE.VENOM],
     // Anneau magenta : la seule forme creuse du catalogue, pour une arme dont
     // le nom EST un disque perce.
     look: {
@@ -634,6 +762,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // seconde, de quoi entretenir des marques de Givre sur un front que la
     // Braise d'un allie viendra faire reagir (§6.2).
     name: 'Flèches jumelles',
+    perks: [UPGRADE.SALVO, UPGRADE.HOMING, UPGRADE.VENOM, UPGRADE.VELOCITY],
     // Aiguille outremer, la plus fine du catalogue : deux traits paralleles
     // doivent se lire comme deux traits, pas comme une tache. Outremer face au
     // turquoise du sceptre — les deux armes de Givre ne se ressemblent pas, et
@@ -659,6 +788,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // Salve tres large a courte portee : l'autre extreme de la dispersion,
     // face a `eventail`.
     name: 'Canon à mitraille',
+    perks: [UPGRADE.SALVO, UPGRADE.RANGE, UPGRADE.CALIBRE],
     // Grain citron, le plus petit du catalogue et la plus courte trainee (un
     // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
     look: {
@@ -702,6 +832,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // derivation que la portee de toutes les autres armes (voir `beamRange`).
     // Seul `blastRadius` change de sens — il devient la demi-largeur.
     name: 'Rayon arcanique',
+    perks: [UPGRADE.ZONE, UPGRADE.RANGE],
     kind: 'faisceau',
     /** La demi-largeur du trait : ce qui est a moins de 18 px du rayon est fauche. */
     blastRadius: 18,
@@ -735,6 +866,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // souvent, la ou une arme lente laisserait l'effet signature de l'element
     // se voir a peine.
     name: 'Bobine Tesla',
+    perks: [UPGRADE.SALVO, UPGRADE.RANGE, UPGRADE.HOMING],
     // Zigzag lavande a fort halo, trainee courte criblee d'etincelles, et il
     // scintille a contresens des autres (rotation NEGATIVE) : un arc qui
     // crepite plutot qu'un trait qui file — le mot etait deja dans ce
@@ -764,6 +896,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // Poix, `shared/reactions.ts`) parte d'un coup qui compte, pas d'une
     // piqure.
     name: 'Canon à arc',
+    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VELOCITY],
     // Javelot cyan electrique, la plus longue trainee des deux armes de
     // Foudre, criblee d'etincelles : elle se vise, donc elle se suit des yeux
     // comme le sceptre. Elle ne tourne pas — une hampe qui tourne ne perce
@@ -806,6 +939,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // tache 16 et deja partage avec la reaction elementaire : un halo est une
     // explosion qui se repete sur le joueur, pas un systeme de plus.
     name: 'Encensoir de poix',
+    perks: [UPGRADE.ZONE],
     kind: 'halo',
     // ⚠️ **`blastRadius` EST sa portee** : le rayon qui decide de ce qui meurt,
     // exactement comme pour la grenade — et le client en derive le disque
@@ -851,6 +985,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // en face de la grenade et du canon-a-arc. Elle vise a poisser une cible
     // choisie plutot qu'a arroser, le pendant exact de la seringue.
     name: 'Chaudron à poix',
+    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VENOM],
     // Masse brun fonce, la plus terne du catalogue : une motte informe qui
     // roule sur elle-meme en fumant, sans halo marque, conforme a une arme
     // qui n'illumine rien.
@@ -907,6 +1042,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // l'auteur veut un semis, il faudra un deport a l'emission, pas une regle
     // de plus ici.
     name: 'Semoir de chaux',
+    perks: [UPGRADE.ZONE, UPGRADE.RANGE, UPGRADE.VENOM],
     // ⚠️ **`blastRadius` est ce que la mine emporte en sautant** — le sens
     // ordinaire du champ (la grenade l'a depuis la tache 16), pas le sens
     // detourne du halo et du faisceau.
@@ -945,6 +1081,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // projectile unique, cadence lente, degats eleves. Le premier ennemi
     // touche doit deja fuir avant qu'un allie n'ait besoin de suivre.
     name: 'Canon à chaux',
+    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.CALIBRE],
     // Obus os-et-ocre, la plus sourde des deux armes de Chaux sans etre sombre
     // (etape 8 : 0x4f7a1a, un olive fonce, se perdait dans l'herbe) : une
     // capsule qui ne tourne pas, distincte de la teinte de l'element et de
@@ -1002,6 +1139,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // s'etablisse. Le Vif-argent garde ses deux armes avec le Glaive, et le
     // catalogue reste a dix-sept.
     name: 'Homoncule de mercure',
+    perks: [UPGRADE.ZONE, UPGRADE.RANGE],
     kind: 'invocation',
     // Le rayon de chaque pulsation — `blastRadius` au sens du halo : ce qui
     // decide de ce qui meurt.
@@ -1037,6 +1175,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // d'une liaison doit peser pour que l'allie qui la retrouve trouve deux
     // ennemis deja groupes.
     name: 'Glaive de mercure',
+    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.PIERCE],
     // Lame a garde lilas argente qui tourne sur elle-meme, fort halo : le
     // mercure se voit partir, contrairement a la poix qui n'illumine rien.
     // Eclaircie a l'etape 8 (0x45456e, une ardoise sombre, etait invisible sur
@@ -1060,6 +1199,53 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
     blastRadius: HEAVY_BLAST_RADIUS,
   },
+  {
+    // La fronde : un caillou qui ne s'arrete pas au premier. Il rebondit
+    // d'ennemi en ennemi (`bounces`) — l'arme des hordes serrees, la ou
+    // l'arc lourd veut des files.
+    name: 'Fronde à ricochets',
+    perks: [UPGRADE.RICOCHET, UPGRADE.SALVO, UPGRADE.VELOCITY, UPGRADE.VENOM],
+    look: {
+      shape: 'grain',
+      diameterPx: 19,
+      tint: 0xff8a1f,
+      glow: 0.35,
+      trailTicks: 1.5,
+      spinTurns: 2,
+      trail: 'tirets',
+    },
+    cooldownTicks: 24,
+    damage: 10,
+    projectileSpeed: 620,
+    projectileLifeTicks: 26,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    bounces: 3,
+  },
+  {
+    // Le missile : lent, mais il trouve sa cible (`homing`) et la fait
+    // sauter. Le seul tir qui pardonne une visee approximative.
+    name: 'Missile guidé',
+    perks: [UPGRADE.HOMING, UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VELOCITY],
+    look: {
+      shape: 'dard',
+      diameterPx: 26,
+      tint: 0xff3b5c,
+      glow: 0.6,
+      trailTicks: 3,
+      spinTurns: 0,
+      trail: 'fumee',
+    },
+    cooldownTicks: 42,
+    damage: 18,
+    projectileSpeed: 480,
+    projectileLifeTicks: 50,
+    projectileCount: 1,
+    spreadRadians: 0.05,
+    element: ELEMENT.BRAISE,
+    blastRadius: HEAVY_BLAST_RADIUS,
+    homing: 5,
+  },
 ];
 
 export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
@@ -1069,6 +1255,10 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   blastRadius: w.blastRadius ?? 0,
   pierce: w.pierce ?? 0,
   kind: w.kind ?? 'tir',
+  projectileScale: 1,
+  venom: 0,
+  bounces: w.bounces ?? 0,
+  homing: w.homing ?? 0,
 }));
 
 /**
@@ -1460,28 +1650,51 @@ export function beamRange(weapon: Weapon): number {
 }
 
 /**
- * Ce qu'une carte d'arme ameliore quand on possede DEJA l'arme — un seul
- * aspect par carte (retour de jeu : *« les cartes des armes pourraient
- * ameliorer qu'une partie a chaque fois »*).
+ * L'arme telle que CE joueur la tire : ses bonus propres appliques (salve,
+ * zone, perforation, portee). Degats et cadence n'y sont pas — ils se
+ * combinent aux passifs la ou le tir se decide.
  *
- * `SPECIFIC` est le levier propre a la famille : la salve d'un tir
- * (`salvoCount`), le rayon du reste (`effectRadius`). Il vaut `0` pour qu'une
- * carte sans aspect garde l'ancien effet d'un exemplaire empile.
+ * ⚠️ **Tout ce qu'elle change est recopie sur le projectile a l'emission**
+ * (`Projectiles`), donc l'impact n'a rien a relire : c'est ce qui permet de
+ * passer une copie modifiee au lieu de l'entree du catalogue.
+ *
+ * Rend l'entree du catalogue elle-meme quand rien n'est ameliore.
  */
-export const UPGRADE = {
-  SPECIFIC: 0,
-  DAMAGE: 1,
-  FIRE_RATE: 2,
-} as const;
-export const UPGRADE_KINDS = 3;
+export function upgradedWeapon(weapon: Weapon, upgrades: (upgrade: number) => number): Weapon {
+  const salvo = upgrades(UPGRADE.SALVO);
+  const zone = upgrades(UPGRADE.ZONE);
+  const pierce = upgrades(UPGRADE.PIERCE);
+  const range = upgrades(UPGRADE.RANGE);
+  const calibre = upgrades(UPGRADE.CALIBRE);
+  const velocity = upgrades(UPGRADE.VELOCITY);
+  const detonation = upgrades(UPGRADE.DETONATION);
+  const venom = upgrades(UPGRADE.VENOM);
+  const ricochet = upgrades(UPGRADE.RICOCHET);
+  const homing = upgrades(UPGRADE.HOMING);
+  if (
+    salvo + zone + pierce + range + calibre + velocity + detonation + venom + ricochet + homing ===
+    0
+  ) {
+    return weapon;
+  }
+  return {
+    ...weapon,
+    projectileCount: salvoCount(weapon, 1 + salvo),
+    blastRadius: effectRadius(weapon, 1 + zone) + DETONATION_RADIUS * detonation,
+    pierce: weapon.pierce + PIERCE_PER_UPGRADE * pierce,
+    projectileLifeTicks: Math.round(weapon.projectileLifeTicks * (1 + RANGE_PER_UPGRADE * range)),
+    projectileScale: weapon.projectileScale * (1 + CALIBRE_PER_UPGRADE * calibre),
+    projectileSpeed: weapon.projectileSpeed * (1 + VELOCITY_PER_UPGRADE * velocity),
+    venom: weapon.venom + VENOM_PER_UPGRADE * venom,
+    bounces: weapon.bounces + RICOCHET_PER_UPGRADE * ricochet,
+    homing: weapon.homing + HOMING_PER_UPGRADE * homing,
+  };
+}
 
-/** Degats gagnes par carte « degats », en fraction des degats de base. */
-export const DAMAGE_PER_UPGRADE = 0.25;
-/**
- * Recharge retiree par carte « cadence », en fraction — s'additionne aux
- * passifs de cadence sous le meme plafond `MAX_FIRE_RATE_BONUS`.
- */
-export const FIRE_RATE_PER_UPGRADE = 0.12;
+/** Les aspects que les cartes de cette arme peuvent porter : degats, cadence, puis ses bonus propres. */
+export function upgradesFor(weapon: Weapon): readonly number[] {
+  return [UPGRADE.DAMAGE, UPGRADE.FIRE_RATE, ...weapon.perks];
+}
 
 export function stackGain(weapon: Weapon): number {
   return Math.max(1, Math.ceil(weapon.projectileCount / 3));

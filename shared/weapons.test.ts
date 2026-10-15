@@ -7,7 +7,9 @@ import {
   assertWeaponElements,
   assertWeaponLooks,
   BASE_WEAPON_ID,
+  CALIBRE_PER_UPGRADE,
   cooldownWithBonus,
+  DETONATION_RADIUS,
   effectRadius,
   GUARD_PULSE_TICKS,
   guardIsAlive,
@@ -16,12 +18,18 @@ import {
   isLaunched,
   MAX_FIRE_RATE_BONUS,
   MIN_MUZZLE_SPEED,
+  PIERCE_PER_UPGRADE,
   PROJECTILE_FADE_REFERENCE_TICKS,
   projectileAlpha,
   projectileTrailPx,
   salvoCount,
   stackGain,
+  UPGRADE,
+  upgradedWeapon,
+  VELOCITY_PER_UPGRADE,
+  VENOM_PER_UPGRADE,
   WEAPONS,
+  type Weapon,
   weaponOf,
 } from './weapons';
 
@@ -39,9 +47,11 @@ describe('WEAPONS', () => {
    * haute reste loin du pool de quarante du §6.2 — cette tache ne visait que
    * le cablage minimal (deux armes par nouvel element), pas le pool complet.
    */
-  it('compte entre seize et dix-huit armes', () => {
+  it('compte entre seize et dix-neuf armes', () => {
+    // Dix-neuf depuis la fronde a ricochets et le missile guide (cartes
+    // d'arme) : deux mecaniques de trajectoire, pas un element de plus.
     expect(WEAPONS.length).toBeGreaterThanOrEqual(16);
-    expect(WEAPONS.length).toBeLessThanOrEqual(18);
+    expect(WEAPONS.length).toBeLessThanOrEqual(19);
   });
 
   it('donne des valeurs strictement positives a chaque arme', () => {
@@ -858,6 +868,101 @@ describe('Guard — le rythme d une invocation', () => {
       // Et elle ne lance rien : meme regle que la mine.
       expect(isLaunched(w), w.name).toBe(false);
       expect(w.blastRadius, w.name).toBeGreaterThan(0);
+    }
+  });
+});
+
+describe('upgradedWeapon — les bonus propres de chaque arme', () => {
+  const rien = (): number => 0;
+  const seul =
+    (aspect: number) =>
+    (u: number): number =>
+      u === aspect ? 2 : 0;
+
+  it('rend l entree du catalogue elle-meme quand rien n est ameliore', () => {
+    for (const w of WEAPONS) {
+      expect(upgradedWeapon(w, rien)).toBe(w);
+    }
+  });
+
+  it('chaque bonus ne touche que SON champ', () => {
+    const arc = WEAPONS.find((w) => w.perks.includes(UPGRADE.PIERCE)) as Weapon;
+    const salve = upgradedWeapon(arc, seul(UPGRADE.SALVO));
+    expect(salve.projectileCount).toBe(salvoCount(arc, 3));
+    expect(salve.pierce).toBe(arc.pierce);
+    const perce = upgradedWeapon(arc, seul(UPGRADE.PIERCE));
+    expect(perce.pierce).toBe(arc.pierce + 2 * PIERCE_PER_UPGRADE);
+    expect(perce.projectileCount).toBe(arc.projectileCount);
+    const loin = upgradedWeapon(arc, seul(UPGRADE.RANGE));
+    expect(loin.projectileLifeTicks).toBeGreaterThan(arc.projectileLifeTicks);
+    expect(loin.blastRadius).toBe(arc.blastRadius);
+    const zone = upgradedWeapon(arc, seul(UPGRADE.ZONE));
+    expect(zone.blastRadius).toBe(effectRadius(arc, 3));
+    const gros = upgradedWeapon(arc, seul(UPGRADE.CALIBRE));
+    expect(gros.projectileScale).toBeCloseTo(1 + 2 * CALIBRE_PER_UPGRADE, 5);
+    const vif = upgradedWeapon(arc, seul(UPGRADE.VELOCITY));
+    expect(vif.projectileSpeed).toBeCloseTo(
+      arc.projectileSpeed * (1 + 2 * VELOCITY_PER_UPGRADE),
+      3,
+    );
+    const boum = upgradedWeapon(arc, seul(UPGRADE.DETONATION));
+    expect(boum.blastRadius).toBe(arc.blastRadius + 2 * DETONATION_RADIUS);
+    const venin = upgradedWeapon(arc, seul(UPGRADE.VENOM));
+    expect(venin.venom).toBeCloseTo(2 * VENOM_PER_UPGRADE, 5);
+    for (const u of [gros, vif, boum, venin]) {
+      expect(u.pierce).toBe(arc.pierce);
+      expect(u.projectileCount).toBe(arc.projectileCount);
+    }
+    // Degats et cadence se combinent aux passifs ailleurs : jamais ici.
+    for (const u of [salve, perce, loin, zone]) {
+      expect(u.damage).toBe(arc.damage);
+      expect(u.cooldownTicks).toBe(arc.cooldownTicks);
+    }
+  });
+
+  it('chaque arme a au moins un bonus propre, et seulement ceux que sa famille sait faire', () => {
+    for (const w of WEAPONS) {
+      expect(w.perks.length, w.name).toBeGreaterThan(0);
+      expect(new Set(w.perks).size, w.name).toBe(w.perks.length);
+      expect(w.perks, w.name).not.toContain(UPGRADE.DAMAGE);
+      expect(w.perks, w.name).not.toContain(UPGRADE.FIRE_RATE);
+      if (w.kind !== 'tir') {
+        // Rien qui ne vive que sur un projectile.
+        for (const u of [
+          UPGRADE.SALVO,
+          UPGRADE.PIERCE,
+          UPGRADE.CALIBRE,
+          UPGRADE.VELOCITY,
+          UPGRADE.DETONATION,
+          UPGRADE.VENOM,
+          UPGRADE.RICOCHET,
+          UPGRADE.HOMING,
+        ]) {
+          expect(w.perks, w.name).not.toContain(u);
+        }
+      }
+      if (w.perks.includes(UPGRADE.HOMING) || w.perks.includes(UPGRADE.RICOCHET)) {
+        // Guider ou faire rebondir une mine ne fait rien.
+        expect(w.projectileSpeed, w.name).toBeGreaterThan(0);
+      }
+      if (w.perks.includes(UPGRADE.VELOCITY)) {
+        // Accelerer une mine ne fait rien.
+        expect(w.projectileSpeed, w.name).toBeGreaterThan(0);
+      }
+      if (w.perks.includes(UPGRADE.DETONATION)) {
+        // Une detonation sur une arme qui explose deja serait une carte « zone »
+        // deguisee ; sur une arme rapide, un balayage O(horde) a chaque tir.
+        expect(w.blastRadius, w.name).toBe(0);
+        expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(20);
+      }
+      if (w.kind === 'halo') {
+        // `projectileLifeTicks` est inerte sur un halo.
+        expect(w.perks, w.name).not.toContain(UPGRADE.RANGE);
+      }
+      if (w.perks.includes(UPGRADE.ZONE)) {
+        // Grandir un rayon nul ne fait rien.
+        expect(w.blastRadius, w.name).toBeGreaterThan(0);
+      }
     }
   });
 });

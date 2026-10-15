@@ -1,7 +1,7 @@
 import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
 import { PASSIVES } from './passives';
-import { UPGRADE_KINDS, WEAPONS } from './weapons';
+import { upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
  * Les deux natures de carte.
@@ -29,8 +29,8 @@ export interface Card {
   refId: number;
   /**
    * Arme seulement : l'aspect que la carte ameliore chez qui possede deja
-   * l'arme (`UPGRADE`). Chez qui ne la possede pas, la carte la donne.
-   * Absent : `UPGRADE.SPECIFIC`.
+   * l'arme (`UPGRADE`, l'un de ses `upgradesFor`). Chez qui ne la possede
+   * pas, la carte la donne. Absent : son premier bonus propre.
    */
   upgrade?: number;
 }
@@ -143,7 +143,8 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
       break;
     }
     if (card.nature === CARD.WEAPON) {
-      card.upgrade = Math.min(UPGRADE_KINDS - 1, Math.floor(rng() * UPGRADE_KINDS));
+      const options = upgradesFor(weaponOf(card.refId));
+      card.upgrade = options[Math.min(options.length - 1, Math.floor(rng() * options.length))];
     }
     spread.push(card);
   }

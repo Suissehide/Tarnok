@@ -11,7 +11,7 @@ import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
 const CARD_WEAPON = 0;
 
 import { PASSIVES, type PassiveKind, passiveOf } from './passives';
-import { UPGRADE, UPGRADE_KINDS, WEAPONS, weaponOf } from './weapons';
+import { UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
  * Ce qu'un joueur possede : ses armes et ses passifs, chacun avec son nombre
@@ -88,16 +88,18 @@ export class Loadout {
    * encore — exactement comme `addPassive`, et pour la meme raison.
    *
    * La premiere carte donne l'arme ; chacune des suivantes n'ameliore que son
-   * `upgrade` (voir `UPGRADE`).
+   * `upgrade` (voir `UPGRADE`), qui doit etre l'un des `upgradesFor` de l'arme.
    */
-  addWeapon(weaponId: number, upgrade: number = UPGRADE.SPECIFIC): void {
+  addWeapon(weaponId: number, upgrade?: number): void {
     const stacks = this.stacksOfWeapon(weaponId);
     if (stacks === 0 && this.#weaponOrder.length >= WEAPON_SLOTS) {
       throw new Error(`slots d'armes pleins (${WEAPON_SLOTS})`);
     }
-    weaponOf(weaponId); // leve si l'identifiant n'existe pas
-    if (upgrade < 0 || upgrade >= UPGRADE_KINDS) {
-      throw new Error(`amelioration inconnue : ${upgrade}`);
+    const weapon = weaponOf(weaponId); // leve si l'identifiant n'existe pas
+    // Sans aspect : le premier bonus propre de l'arme.
+    upgrade ??= weapon.perks[0] ?? upgradesFor(weapon)[0] ?? 0;
+    if (!upgradesFor(weapon).includes(upgrade)) {
+      throw new Error(`amelioration inconnue pour ${weapon.name} : ${upgrade}`);
     }
     this.#weaponStacks[weaponId] = stacks + 1;
     if (stacks === 0) {
