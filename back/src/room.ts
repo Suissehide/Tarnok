@@ -70,6 +70,9 @@ import {
   beamRange,
   cooldownWithBonus,
   effectRadius,
+  type Guard,
+  guardIsAlive,
+  guardPulsesAt,
   salvoCount,
   WEAPONS,
   weaponOf,
@@ -1500,6 +1503,10 @@ export class Room {
     const kamikazes = this.#behaviorsBeforeDamage();
 
     this.#fireWeapons(this.#tick);
+    // Les invocations posees aux ticks precedents frappent AVANT la resolution :
+    // leurs pulsations rejoignent celles des halos, qui sont la meme chose a un
+    // centre pres.
+    this.#pulseGuards(this.#tick);
     // Les halos, resolus AVANT les projectiles pour la meme raison que les
     // projectiles le sont avant les zones : chaque source de degat passe une
     // fois, et `Room.step` reste le seul endroit ou une mort se prononce.
@@ -2110,6 +2117,44 @@ export class Room {
   /** Les traits de faisceau du tick — meme vie que `#haloPulses` juste au-dessus. */
   readonly #beamPulses: BeamPulse[] = [];
 
+  /**
+   * Les invocations posees et encore vivantes (etape 8).
+   *
+   * ⚠️ **Elles SURVIVENT au tick, contrairement aux deux reserves
+   * ci-dessus** : une invocation tient plusieurs secondes et frappe
+   * periodiquement. C'est `#pulseGuards` qui la purge quand elle s'eteint.
+   */
+  #guards: Guard[] = [];
+
+  /**
+   * Verse une pulsation par invocation DUE a ce tick, et oublie celles qui se
+   * sont eteintes.
+   *
+   * ⚠️ **Elle alimente `#haloPulses`, elle ne resout rien** : une invocation
+   * frappe exactement comme un halo, a ceci pres que son centre ne suit pas
+   * son porteur. `resolveHalos` les resout donc ensemble, et le jeu ne gagne
+   * pas un chemin de degat de plus.
+   */
+  #pulseGuards(tick: number): void {
+    if (this.#guards.length === 0) {
+      return;
+    }
+    for (const guard of this.#guards) {
+      if (!guardPulsesAt(guard, tick)) {
+        continue;
+      }
+      this.#haloPulses.push({
+        x: guard.x,
+        y: guard.y,
+        radius: guard.radius,
+        damage: guard.damage,
+        element: guard.element,
+        by: guard.by,
+      });
+    }
+    this.#guards = this.#guards.filter((g) => guardIsAlive(g, tick));
+  }
+
   #fireWeapons(tick: number): void {
     if (this.#players.size === 0) {
       return;
@@ -2166,6 +2211,24 @@ export class Room {
       this.#haloPulses.push({
         x: p.x,
         y: p.y,
+        radius: effectRadius(weapon, stacks),
+        damage,
+        element: weapon.element,
+        by: p.id,
+      });
+      p.lastFireTick[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'invocation') {
+      // ⚠️ **Elle ne frappe pas ICI** : elle entre dans `#guards`, et c'est
+      // `#pulseGuards` qui en tirera une pulsation tous les
+      // `GUARD_PULSE_TICKS` jusqu'a son extinction. Poser et frapper sont deux
+      // choses, exactement comme la recharge et le tir.
+      this.#guards.push({
+        x: p.x,
+        y: p.y,
+        bornTick: tick,
+        lifeTicks: weapon.projectileLifeTicks,
         radius: effectRadius(weapon, stacks),
         damage,
         element: weapon.element,

@@ -64,6 +64,9 @@ import {
   beamRange,
   cooldownWithBonus,
   effectRadius,
+  type Guard,
+  guardIsAlive,
+  guardPulsesAt,
   salvoCount,
   WEAPONS,
   weaponOf,
@@ -2325,6 +2328,7 @@ export class GameClient {
     // la tache 11.
     if (tick > this.#freezeUntilTick) {
       this.#fireWeapons(tick, snapshot?.players ?? [], nowMs);
+      this.#pulseGuards(tick, nowMs);
       this.projectiles.step(dt * scale);
       // Collision purement cosmetique : `collide` ne lit `horde` qu'en
       // lecture (position, `slotOf`) et ne consomme que les propres
@@ -2561,6 +2565,42 @@ export class GameClient {
    * leur visee transmise par `SNAPSHOT`, ce client ne saurait pas ou dessiner
    * leurs projectiles (voir la doc de `PlayerSnapshot`).
    */
+  /**
+   * Les invocations vivantes, cote client (etape 8) — la meme liste que celle
+   * du serveur, derivee des memes trois choses, plus la TEINTE de l'arme qui
+   * n'interesse que le dessin.
+   */
+  #guards: (Guard & { tint: number })[] = [];
+
+  /**
+   * Dessine une pulsation par invocation due a ce tick, et oublie celles qui
+   * se sont eteintes — le miroir cosmetique de `Room#pulseGuards`.
+   *
+   * ⚠️ **Elle NE SECOUE PAS l'ecran** (`shakes: false`), pour la meme raison
+   * que le halo : une invocation frappe deux fois par seconde pendant cinq
+   * secondes, et une secousse continue est exactement ce que l'etape 8 vient
+   * de corriger.
+   */
+  #pulseGuards(tick: number, nowMs: number): void {
+    if (this.#guards.length === 0) {
+      return;
+    }
+    for (const guard of this.#guards) {
+      if (guardPulsesAt(guard, tick)) {
+        this.hitFlashes.spawn(
+          guard.x,
+          guard.y,
+          guard.tint,
+          guard.radius,
+          guard.damage,
+          nowMs,
+          false,
+        );
+      }
+    }
+    this.#guards = this.#guards.filter((g) => guardIsAlive(g, tick));
+  }
+
   #fireWeapons(tick: number, players: readonly PlayerSnapshot[], nowMs: number): void {
     if (players.length === 0) {
       return;
@@ -2663,6 +2703,28 @@ export class GameClient {
         nowMs,
         false,
       );
+      last[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'invocation') {
+      // ⚠️ **Le miroir garde la MEME liste que le serveur**, derivee des memes
+      // trois choses (l'arme, le tick, la position du tireur) : rien n'est
+      // annonce pour une invocation. Ce que le client en fait est cosmetique —
+      // une pulsation dessinee par `#pulseGuards` — mais la liste, elle, est
+      // la meme.
+      this.#guards.push({
+        x,
+        y,
+        bornTick: tick,
+        lifeTicks: weapon.projectileLifeTicks,
+        radius: effectRadius(weapon, stacks),
+        damage: weapon.damage,
+        element: weapon.element,
+        by: playerId,
+        // La teinte voyage AVEC l'invocation, pas a cote : c'est elle qui dira
+        // a l'ecran de quelle arme vient la pulsation.
+        tint: weapon.look.tint,
+      });
       last[weaponId] = tick;
       return;
     }

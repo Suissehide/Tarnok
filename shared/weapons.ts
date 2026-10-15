@@ -167,7 +167,7 @@ export interface ProjectileLook {
  * (serveur) et son miroir cosmetique dans `GameClient`. Une famille de plus y
  * ajoute une branche, nulle part ailleurs.
  */
-export type WeaponKind = 'tir' | 'halo' | 'faisceau';
+export type WeaponKind = 'tir' | 'halo' | 'faisceau' | 'invocation';
 
 export interface Weapon {
   id: number;
@@ -425,7 +425,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // tourbillon.
     look: {
       shape: 'lame',
-      diameterPx: 16,
+      diameterPx: 15,
       tint: 0xff2f6b,
       glow: 0.4,
       trailTicks: 1,
@@ -663,7 +663,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // demi-tick) : huit projectiles a la fois, chacun doit rester un grain.
     look: {
       shape: 'grain',
-      diameterPx: 15,
+      diameterPx: 14,
       tint: 0xd6f22b,
       glow: 0.25,
       trailTicks: 0.5,
@@ -742,7 +742,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // teinte de l'element (0xf3e94b, jaune) comme l'exige `assertWeaponLooks`.
     look: {
       shape: 'arc',
-      diameterPx: 14,
+      diameterPx: 13,
       tint: 0xb388ff,
       glow: 0.75,
       trailTicks: 0.8,
@@ -959,31 +959,63 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
   {
     // Tache 8 de l'etape 5c : le Vif-argent a enfin ses armes.
     //
-    // Le vif-argent « rapide », en face des fleches-jumelles et de la
-    // poire-a-chaux : deux aiguilles a cadence courte. `linkedNeighbours`
-    // (`shared/links.ts`) se derive d'une PAIRE de positions et d'une zone
-    // annoncee, jamais d'un champ porte par le projectile — une arme qui
-    // touche souvent pose donc plus souvent l'occasion qu'une liaison
-    // s'etablisse entre deux ennemis proches.
-    name: 'Fronde à mercure',
-    // Dard lilas pale, le plus fin du catalogue : distinct de l'outremer des
-    // fleches-jumelles et de la teinte de l'element (0xb9b4ff). Eclairci a
-    // l'etape 8 pour la meme raison que les armes de Chaux — un gris-mauve
-    // sombre ne se voit pas sur de l'herbe.
+    // ⚠️ **L'INVOCATION** (etape 8) — la cinquieme et derniere famille :
+    // *« ca peut etre des adds qui tapent et te protegent »*.
+    //
+    // ⚠️ **Elle REUTILISE le halo, en le DETACHANT du joueur.** Une invocation
+    // pose un corps immobile qui frappe autour de lui : c'est exactement une
+    // pulsation de halo, a ceci pres que son centre reste ou on l'a posee au
+    // lieu de suivre le porteur. `resolveHalos` les resout donc toutes les
+    // deux, sans une ligne de plus — voir `Guard` et `guardPulsesAt`.
+    //
+    // ⚠️ **Rien ne transite.** Une invocation est entierement determinee par
+    // l'arme, le tick et la position du tireur, comme un tir (§5.2) : les deux
+    // cotes la derivent, aucun octet ne part sur le fil.
+    //
+    // ⚠️ **Elle ne DETOURNE PAS la horde, et c'est une limite assumee.** Le
+    // « te protege » du brief demanderait de la verser dans le champ de flux,
+    // comme `substituteDecoys` le fait pour le leurre d'Appat — et ce champ est
+    // la seule chose que les deux cotes derivent au pixel pres, a partir de
+    // positions RETARDEES, precisement pour ne jamais diverger. Une invocation
+    // posee depuis une position predite cote client et arbitree cote serveur y
+    // entrerait a deux endroits legerement differents, et toute la horde s'en
+    // irait ailleurs. Elle protege donc en TUANT ce qui approche, pas en
+    // detournant — et si l'auteur veut le leurre, c'est une tache a part, pas
+    // une ligne de plus ici.
+    //
+    // ⚠️ **Elle REMPLACE la Fronde a mercure**, le vif-argent « rapide » :
+    // `linkedNeighbours` (`shared/links.ts`) se derive d'une PAIRE de
+    // positions, donc une invocation qui frappe deux fois par seconde au
+    // milieu de la horde pose encore plus souvent l'occasion qu'une liaison
+    // s'etablisse. Le Vif-argent garde ses deux armes avec le Glaive, et le
+    // catalogue reste a dix-sept.
+    name: 'Homoncule de mercure',
+    kind: 'invocation',
+    // Le rayon de chaque pulsation — `blastRadius` au sens du halo : ce qui
+    // decide de ce qui meurt.
+    blastRadius: 90,
+    // Masse lilas pale qui tourne sur place : un petit corps de mercure, pas un
+    // projectile. La teinte reste celle de l'arme (le client en teinte ses
+    // pulsations), distincte de celle de l'element (0xb9b4ff).
     look: {
-      shape: 'dard',
-      diameterPx: 13,
+      shape: 'masse',
+      diameterPx: 16,
       tint: 0xd7dcf5,
       glow: 0.3,
       trailTicks: 1.1,
-      spinTurns: 0,
+      spinTurns: 0.9,
       trail: 'lisse',
     },
-    cooldownTicks: 14,
+    // Trois secondes entre deux poses, cinq secondes de vie : deux homoncules
+    // se chevauchent donc toujours un peu, et l'arme ne connait jamais de
+    // silence complet.
+    cooldownTicks: 90,
     damage: 6,
-    projectileSpeed: 620,
-    projectileLifeTicks: 22,
-    projectileCount: 2,
+    // Elle ne LANCE rien — meme regle que la mine, voir `MIN_MUZZLE_SPEED`.
+    projectileSpeed: 0,
+    /** La duree de vie de l'invocation, pas celle d'un projectile. */
+    projectileLifeTicks: 150,
+    projectileCount: 1,
     spreadRadians: 0.18,
     element: ELEMENT.VIF_ARGENT,
   },
@@ -1153,6 +1185,67 @@ export const MIN_MUZZLE_SPEED = PLAYER_SPEED + 200;
  */
 export function isLaunched(weapon: Weapon): boolean {
   return weapon.projectileSpeed > 0;
+}
+
+/**
+ * Ticks entre deux pulsations d'une invocation.
+ *
+ * ⚠️ **Une constante partagee, pas un champ par arme.** La cadence d'une
+ * invocation se lit deja ailleurs : `cooldownTicks` dit a quel rythme on en
+ * POSE une, `projectileLifeTicks` combien de temps elle tient. Ce qu'il
+ * manquait, c'est son rythme de frappe — et tant qu'il n'y a qu'une
+ * invocation au catalogue, un champ de plus serait un reglage que personne ne
+ * compare. Il descendra dans `Weapon` le jour ou deux invocations devront
+ * frapper a des rythmes differents.
+ *
+ * 15 : deux fois par seconde a `TICK_HZ`. Assez pour qu'on la voie travailler,
+ * assez lent pour qu'on compte ses coups.
+ */
+export const GUARD_PULSE_TICKS = 15;
+
+/**
+ * Une invocation posee : un corps immobile qui frappe autour de lui jusqu'a
+ * s'eteindre (etape 8).
+ *
+ * ⚠️ **Elle vit dans `shared/` parce que les DEUX cotes la derivent.** Le
+ * serveur en tire des degats, le client le dessin qui les accompagne — et ni
+ * l'un ni l'autre n'annonce quoi que ce soit : une invocation est entierement
+ * determinee par l'arme, le tick et la position du tireur, exactement comme un
+ * tir (§5.2). Zero octet de plus sur le fil.
+ */
+export interface Guard {
+  readonly x: number;
+  readonly y: number;
+  readonly bornTick: number;
+  /** Combien de ticks elle tient — recopie de `projectileLifeTicks` a la pose. */
+  readonly lifeTicks: number;
+  /** Rayon de chaque pulsation, exemplaires empiles compris (`effectRadius`). */
+  readonly radius: number;
+  readonly damage: number;
+  readonly element: number;
+  /** Le joueur qui l'a posee : c'est LUI que la marque retient, donc lui que la Synergie compare (§7). */
+  readonly by: number;
+}
+
+/** Cette invocation tient-elle encore au tick `tick` ? */
+export function guardIsAlive(guard: Guard, tick: number): boolean {
+  return tick - guard.bornTick < guard.lifeTicks;
+}
+
+/**
+ * Cette invocation FRAPPE-t-elle a ce tick ?
+ *
+ * ⚠️ **Derive du tick, sans aucun compteur a tenir.** Un « prochain coup »
+ * stocke sur l'invocation aurait demande au client de le faire avancer
+ * exactement comme le serveur, donc une seconde horloge a synchroniser pour
+ * rien. Un modulo sur l'age dit la meme chose et ne peut pas deriver.
+ *
+ * Elle frappe des sa pose (age zero) : une invocation qui attendrait une
+ * demi-seconde avant son premier coup se ferait souvent eteindre avant.
+ */
+export function guardPulsesAt(guard: Guard, tick: number): boolean {
+  const age = tick - guard.bornTick;
+  return age >= 0 && age < guard.lifeTicks && age % GUARD_PULSE_TICKS === 0;
 }
 
 /**

@@ -5270,3 +5270,95 @@ describe('etape 8 tache 4a : Amorce', () => {
     expect(zoneElement(z?.kind ?? 255)).toBe(weaponOf(BASE_WEAPON_ID).element);
   });
 });
+
+/**
+ * Étape 8 — **l'invocation**, cinquieme famille d'armes. Ce bloc garde ce que
+ * `shared/weapons.test.ts` ne peut pas voir : qu'elle est bien POSEE par le
+ * salon, qu'elle frappe autour d'ELLE et pas autour du joueur, et qu'elle
+ * finit par s'eteindre.
+ */
+describe("l'invocation, posee par le salon (etape 8)", () => {
+  const HOMONCULE = WEAPONS.find((w) => w.kind === 'invocation');
+
+  /** Un salon ou le joueur ne porte QUE l'invocation — aucune autre arme ne peut tuer. */
+  function salonAvecInvocation(): Room {
+    if (!HOMONCULE) {
+      throw new Error('aucune invocation au catalogue');
+    }
+    const room = new Room();
+    room.join(1, undefined, HOMONCULE.id);
+    const inv = room.loadoutOf(1);
+    expect([...(inv?.weaponIds ?? [])]).toEqual([HOMONCULE.id]);
+    return room;
+  }
+
+  it('tue ce qui s approche, meme DANS LE DOS du joueur', () => {
+    // ⚠️ **Le dos, et c'est tout l'interet du cas** : la visee part a l'oppose,
+    // donc aucune arme qui TIRE n'aurait pu toucher. Ce qui tue ici ne peut
+    // etre que la pulsation de l'invocation, qui frappe tout autour d'elle.
+    const room = salonAvecInvocation();
+    const pos = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 500, pos.x - 60, pos.y);
+
+    for (let i = 0; i < 60 && room.horde.slotOf(cible) >= 0; i++) {
+      room.applyInput(1, i + 1, 0, 0, 127, 0);
+      room.step(DT);
+    }
+    expect(room.horde.slotOf(cible)).toBe(-1);
+  });
+
+  it('reste OU ELLE A ETE POSEE quand le joueur s en va', () => {
+    // Elle se detache : c'est la difference avec le halo, qui suit son
+    // porteur. Le joueur part a droite, l'invocation continue de frapper a
+    // gauche.
+    const room = salonAvecInvocation();
+    const depart = positionOf(room, 1);
+
+    // Un tick pour poser l'invocation, puis le joueur FUIT — et la cible
+    // n'arrive qu'apres, sinon elle mourrait avant qu'il ait bouge d'un pixel
+    // et ce cas ne mesurerait rien.
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    for (let i = 0; i < 30; i++) {
+      room.applyInput(1, i + 2, 127, 0, 127, 0);
+      room.step(DT);
+    }
+    const arrivee = positionOf(room, 1);
+    const rayon = HOMONCULE?.blastRadius ?? 0;
+    // Le joueur est bien PARTI, hors de portee de ce qu'il a pose…
+    expect(arrivee.x - depart.x).toBeGreaterThan(2 * rayon);
+
+    // …et ce qui arrive la-bas meurt quand meme. Trop loin du joueur pour
+    // qu'une invocation POSTERIEURE (il en repose une toutes les 90 ticks, a
+    // sa nouvelle position) puisse y etre pour quelque chose.
+    const cible = spawnMonsterAt(room, 501, depart.x, depart.y);
+    expect(Math.abs(arrivee.x - depart.x)).toBeGreaterThan(rayon);
+    for (let i = 0; i < 60 && room.horde.slotOf(cible) >= 0; i++) {
+      room.applyInput(1, 100 + i, 127, 0, 127, 0);
+      room.step(DT);
+    }
+    expect(room.horde.slotOf(cible)).toBe(-1);
+  });
+
+  it('finit par s eteindre : un monstre pose trop tard survit', () => {
+    const room = salonAvecInvocation();
+    const pos = positionOf(room, 1);
+    const vie = HOMONCULE?.projectileLifeTicks ?? 0;
+    const recharge = HOMONCULE?.cooldownTicks ?? 0;
+    // ⚠️ On laisse passer la vie de la PREMIERE invocation ET la recharge,
+    // pour qu'aucune autre ne soit posee pendant qu'on observe : sans ca, ce
+    // cas mesurerait la cadence de l'arme, pas l'extinction.
+    expect(vie).toBeGreaterThan(0);
+    for (let i = 0; i < vie + recharge; i++) {
+      // Visee NULLE : plus aucune arme ne part, donc plus aucune invocation.
+      room.applyInput(1, i + 1, 0, 0, 0, 0);
+      room.step(DT);
+    }
+    const tardif = spawnMonsterAt(room, 502, pos.x - 60, pos.y);
+    for (let i = 0; i < 60; i++) {
+      room.applyInput(1, 1000 + i, 0, 0, 0, 0);
+      room.step(DT);
+    }
+    expect(room.horde.slotOf(tardif)).toBeGreaterThanOrEqual(0);
+  });
+});

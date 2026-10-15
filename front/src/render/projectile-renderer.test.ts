@@ -812,9 +812,16 @@ describe('ProjectileRenderer.draw — le cout de la trainee, mesure', () => {
 
   it('ne depend PAS de la longueur des trainees : la plus longue coute comme la plus courte', () => {
     // C'est exactement ce qu'une trainee a segments ne sait pas faire.
-    const [courte, longue] = [...WEAPONS].sort(
-      (a, b) => projectileTrailPx(a) - projectileTrailPx(b),
-    );
+    //
+    // ⚠️ **Les deux EXTREMES, pas les deux premieres du tri** : la version
+    // d'avant lisait `[courte, longue]` en destructurant le tableau trie, donc
+    // les deux PLUS COURTES. Ca passait tant qu'elles differaient ; l'etape 8
+    // a pose deux armes qui ne lancent rien (une mine, une invocation), donc
+    // deux trainees de longueur nulle, et le cas a enfin dit ce qu'il mesurait
+    // mal.
+    const parLongueur = [...WEAPONS].sort((a, b) => projectileTrailPx(a) - projectileTrailPx(b));
+    const courte = parLongueur[0];
+    const longue = parLongueur.at(-1);
     if (!courte || !longue) {
       throw new Error('catalogue vide');
     }

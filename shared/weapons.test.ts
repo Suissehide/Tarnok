@@ -9,6 +9,9 @@ import {
   BASE_WEAPON_ID,
   cooldownWithBonus,
   effectRadius,
+  GUARD_PULSE_TICKS,
+  guardIsAlive,
+  guardPulsesAt,
   HEAVY_BLAST_RADIUS,
   isLaunched,
   MAX_FIRE_RATE_BONUS,
@@ -791,6 +794,70 @@ describe('WeaponKind — ce qu une famille change, et ce qu elle ne change pas',
       expect(effectRadius(w, 0), w.name).toBe(w.blastRadius);
       expect(effectRadius(w, 2), w.name).toBeGreaterThan(effectRadius(w, 1));
       expect(effectRadius(w, 5), w.name).toBeGreaterThan(effectRadius(w, 4));
+    }
+  });
+});
+
+/**
+ * Étape 8 — **l'invocation**, cinquieme et derniere famille : *« des adds qui
+ * tapent et te protegent »*.
+ *
+ * Ce bloc garde la seule chose que l'invocation ajoute vraiment : son RYTHME.
+ * Le reste — ce qui meurt, ce qui est marque — est celui du halo, et c'est
+ * `resolveHalos` qui le garde.
+ */
+describe('Guard — le rythme d une invocation', () => {
+  const GARDE = {
+    x: 0,
+    y: 0,
+    bornTick: 100,
+    lifeTicks: 150,
+    radius: 90,
+    damage: 6,
+    element: 0,
+    by: 1,
+  };
+
+  it('frappe DES sa pose : une invocation qui attend se fait eteindre avant', () => {
+    expect(guardPulsesAt(GARDE, 100)).toBe(true);
+  });
+
+  it('frappe tous les GUARD_PULSE_TICKS, et pas entre deux', () => {
+    expect(guardPulsesAt(GARDE, 100 + GUARD_PULSE_TICKS)).toBe(true);
+    expect(guardPulsesAt(GARDE, 100 + 2 * GUARD_PULSE_TICKS)).toBe(true);
+    for (let age = 1; age < GUARD_PULSE_TICKS; age++) {
+      expect(guardPulsesAt(GARDE, 100 + age), `age ${age}`).toBe(false);
+    }
+  });
+
+  it('ne frappe plus une fois eteinte, meme sur un tick multiple', () => {
+    // ⚠️ Le piege du modulo : sans la borne de vie, une invocation morte
+    // continuerait de frapper pour toujours, un coup tous les quinze ticks.
+    const apres = 100 + GARDE.lifeTicks;
+    expect(apres % GUARD_PULSE_TICKS).toBe(100 % GUARD_PULSE_TICKS);
+    expect(guardPulsesAt(GARDE, apres)).toBe(false);
+    expect(guardIsAlive(GARDE, apres)).toBe(false);
+  });
+
+  it('ne frappe pas AVANT d exister', () => {
+    expect(guardPulsesAt(GARDE, 85)).toBe(false);
+  });
+
+  it('tient exactement sa duree de vie, bornes comprises', () => {
+    expect(guardIsAlive(GARDE, 100)).toBe(true);
+    expect(guardIsAlive(GARDE, 100 + GARDE.lifeTicks - 1)).toBe(true);
+    expect(guardIsAlive(GARDE, 100 + GARDE.lifeTicks)).toBe(false);
+  });
+
+  it('donne a l invocation du catalogue de quoi frapper plusieurs fois', () => {
+    const invocations = WEAPONS.filter((w) => w.kind === 'invocation');
+    expect(invocations.length).toBeGreaterThan(0);
+    for (const w of invocations) {
+      // Une invocation qui ne frapperait qu'une fois serait un tir, en plus cher.
+      expect(w.projectileLifeTicks / GUARD_PULSE_TICKS, w.name).toBeGreaterThan(2);
+      // Et elle ne lance rien : meme regle que la mine.
+      expect(isLaunched(w), w.name).toBe(false);
+      expect(w.blastRadius, w.name).toBeGreaterThan(0);
     }
   });
 });
