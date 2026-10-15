@@ -18,6 +18,7 @@ import type {
   ReactionFlashes,
   RenderState,
 } from '../net/client';
+import type { BeamAnchor } from './chain-renderer';
 
 /**
  * Une image complete du jeu : ce qui est dessine, et dans quel ordre.
@@ -165,7 +166,7 @@ export interface FrameStage {
    * flash, il ne lit plus jamais la horde ni le tick de simulation — voir
    * `ChainRenderer.draw`.
    */
-  drawChain(flashes: ChainFlashes, nowMs: number): void;
+  drawChain(flashes: ChainFlashes, nowMs: number, players: readonly BeamAnchor[]): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
   /**
@@ -296,7 +297,8 @@ export function composeFrame(
   // correction 1, la chaine est un flash amorti par l'horloge murale, comme
   // `hitFlashes`/`reactionFlashes` — le chemin est deja figé au moment de
   // l'impact.
-  stage.drawChain(client.chainFlashes, now);
+  // Les joueurs DESSINES : un faisceau reste accroche a son tireur.
+  stage.drawChain(client.chainFlashes, now, state.players);
   stage.drawImpactFlashes(client.hitFlashes, now);
   stage.drawReactionFlashes(client.reactionFlashes, now);
   // Au-dessus de tous les effets de monde : c'est une LECTURE, et une lecture

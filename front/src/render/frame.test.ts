@@ -323,7 +323,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
    */
   it('dessine la chaine de Foudre, avec ses flashs et l horloge murale', () => {
     const { stage, client } = compose();
-    expect(stage.argsOf('chaine')).toEqual([client.chainFlashes, NOW]);
+    expect(stage.argsOf('chaine')).toEqual([client.chainFlashes, NOW, STATE.players]);
   });
 
   it('dessine les flashs d impact', () => {

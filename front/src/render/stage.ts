@@ -26,7 +26,7 @@ import { ASSETS_BASE } from '../ui/config';
 import { AbilityRenderer } from './ability-renderer';
 import { BehaviorRenderer } from './behavior-renderer';
 import { BossBarRenderer } from './boss-bar-renderer';
-import { ChainRenderer } from './chain-renderer';
+import { type BeamAnchor, ChainRenderer } from './chain-renderer';
 import { ChargeRenderer } from './charge-renderer';
 import { DamageNumberRenderer } from './damage-renderer';
 import { HordeRenderer } from './horde-renderer';
@@ -443,8 +443,8 @@ export class Stage {
    * correction 1). `nowMs` est l'horloge murale, comme `drawImpactFlashes` :
    * le chemin est deja figé dans `flashes` — voir `ChainRenderer.draw`.
    */
-  drawChain(flashes: ChainFlashes, nowMs: number): void {
-    this.#chain.draw(flashes, nowMs);
+  drawChain(flashes: ChainFlashes, nowMs: number, players: readonly BeamAnchor[] = []): void {
+    this.#chain.draw(flashes, nowMs, players);
   }
 
   /** `nowMs` doit etre la meme horloge murale que celle passee a `GameClient` (voir `ImpactFlashRenderer`). */

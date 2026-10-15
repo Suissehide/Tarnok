@@ -267,3 +267,30 @@ describe('ChainFlashes — teinte et epaisseur par flash', () => {
     expect(f.width[0]).toBe(8);
   });
 });
+
+describe('ChainRenderer.draw — le faisceau', () => {
+  it('reste accroche a son tireur : le trait part de sa position DESSINEE, direction figee', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(0, 0), pt(100, 0)], NOW, 0x28e6d0, 36, 7);
+    const renderer = new ChainRenderer();
+    renderer.load();
+    const moveTo = vi.spyOn(renderer.graphics, 'moveTo');
+    const lineTo = vi.spyOn(renderer.graphics, 'lineTo');
+
+    renderer.draw(flashes, NOW + 40, [{ id: 7, x: 50, y: 30 }]);
+
+    expect(moveTo).toHaveBeenCalledWith(50, 30);
+    expect(lineTo).toHaveBeenCalledWith(150, 30);
+  });
+
+  it('vit plus longtemps qu une chaine', () => {
+    const flashes = new ChainFlashes(4);
+    flashes.spawn([pt(0, 0), pt(100, 0)], NOW, 0x28e6d0, 36, 7);
+    flashes.spawn([pt(0, 0), pt(100, 0)], NOW);
+
+    flashes.expire(NOW + CHAIN_FLASH_LIFETIME_MS);
+
+    expect(flashes.count).toBe(1);
+    expect(flashes.owner[0]).toBe(7);
+  });
+});

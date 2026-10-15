@@ -37,7 +37,7 @@ import { Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { Loadout } from '@shared/loadout';
 import { PlayerHistory } from '@shared/player-history';
-import { Projectiles } from '@shared/projectiles';
+import { distanceToSegmentSquared, Projectiles } from '@shared/projectiles';
 import {
   type AbilityUsedMessage,
   type BossChargeMessage,
@@ -945,6 +945,14 @@ const CHAIN_FLASH_CAPACITY = 32;
 export const CHAIN_FLASH_LIFETIME_MS = 260;
 
 /**
+ * Duree de vie d'un trait de faisceau (`ChainFlashes.owner >= 0`) : plus
+ * longue que la chaine, le temps que la frappe, le corps et l'extinction du
+ * rayon se lisent (voir `ChainRenderer`). Cosmetique : les degats sont deja
+ * arbitres au tick du tir.
+ */
+export const BEAM_FLASH_LIFETIME_MS = 380;
+
+/**
  * Flashs de chaine de Foudre, cote client — purement cosmetiques, jamais
  * arbitres, exactement comme `HitFlashes` (et pour la meme raison : nes de
  * `Projectiles.collide` sur les PROPRES projectiles de ce client, voir
@@ -985,11 +993,18 @@ export class ChainFlashes {
   readonly tint: Uint32Array;
   /** Epaisseur du trait, en pixels monde : une chaine est fine, un faisceau a sa largeur d'arme. */
   readonly width: Float32Array;
+  /**
+   * Le tireur d'un faisceau, `-1` pour une chaine. Un faisceau SUIT son
+   * tireur a l'ecran (le trait reste accroche a lui, direction figee) ; une
+   * chaine relie des ennemis et ne suit personne.
+   */
+  readonly owner: Int32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `CHAIN_FLASH_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
 
   constructor(readonly capacity: number) {
+    this.owner = new Int32Array(capacity).fill(-1);
     this.tint = new Uint32Array(capacity);
     this.width = new Float32Array(capacity);
     this.x = new Float32Array(capacity * CHAIN_FLASH_MAX_POINTS);
@@ -1027,11 +1042,13 @@ export class ChainFlashes {
      */
     tint = 0,
     width = 0,
+    owner = -1,
   ): void {
     if (points.length < 2 || this.#count >= this.capacity) {
       return;
     }
     const slot = this.#count++;
+    this.owner[slot] = owner;
     this.tint[slot] = tint;
     this.width[slot] = width;
     const n = Math.min(points.length, CHAIN_FLASH_MAX_POINTS);
@@ -1047,7 +1064,8 @@ export class ChainFlashes {
   /** Retire les flashs dont la duree de vie a expire. */
   expire(nowMs: number): void {
     for (let i = this.#count - 1; i >= 0; i--) {
-      if (nowMs - (this.bornMs[i] ?? 0) >= CHAIN_FLASH_LIFETIME_MS) {
+      const life = (this.owner[i] ?? -1) >= 0 ? BEAM_FLASH_LIFETIME_MS : CHAIN_FLASH_LIFETIME_MS;
+      if (nowMs - (this.bornMs[i] ?? 0) >= life) {
         this.#removeAt(i);
       }
     }
@@ -1065,6 +1083,7 @@ export class ChainFlashes {
       this.pointCount[slot] = this.pointCount[last] ?? 0;
       this.tint[slot] = this.tint[last] ?? 0;
       this.width[slot] = this.width[last] ?? 0;
+      this.owner[slot] = this.owner[last] ?? -1;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -3050,15 +3069,42 @@ export class GameClient {
       // visee), donc le trait dessine est exactement celui que le serveur
       // vient de faucher.
       const portee = beamRange(weapon);
+      const toX = x + aimX * portee;
+      const toY = y + aimY * portee;
       this.chainFlashes.spawn(
         [
           { x, y },
-          { x: x + aimX * portee, y: y + aimY * portee },
+          { x: toX, y: toY },
         ],
         nowMs,
         weapon.look.tint,
         2 * weapon.blastRadius,
+        playerId,
       );
+      // Le retour d'impact, meme geometrie que `resolveBeams` : sans lui, le
+      // rayon traversait la horde sans qu'un seul ennemi ne reagisse, et il
+      // avait l'air de ne rien faire. Cosmetique, comme `projectiles.collide`.
+      const w2 = weapon.blastRadius * weapon.blastRadius;
+      let nearest = -1;
+      let nearestD2 = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < this.horde.count; i++) {
+        const ex = this.horde.x[i] ?? 0;
+        const ey = this.horde.y[i] ?? 0;
+        if (distanceToSegmentSquared(ex, ey, x, y, toX, toY) >= w2) {
+          continue;
+        }
+        this.hitFlashes.spawn(ex, ey, weapon.look.tint, 0, damage, nowMs, false);
+        this.damageNumbers.spawn(ex, ey, damage, false, weapon.element, nowMs);
+        this.#hitCount++;
+        const d2 = (ex - x) * (ex - x) + (ey - y) * (ey - y);
+        if (d2 < nearestD2) {
+          nearestD2 = d2;
+          nearest = i;
+        }
+      }
+      if (nearest >= 0 && weapon.element !== ELEMENT.NEUTRE) {
+        this.#markLocally(nearest, weapon.element, playerId, tick);
+      }
       last[weaponId] = tick;
       return;
     }
