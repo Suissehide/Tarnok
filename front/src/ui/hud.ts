@@ -89,6 +89,7 @@ export interface PassiveRow {
  */
 export interface HudSource {
   readonly localId: number | null;
+  readonly localClassId: number | null;
   /**
    * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte (§5 de
    * l'etape 6a).
@@ -260,7 +261,7 @@ export function paintHud(
   el.timer.textContent = info.timer;
   el.kills.textContent = formatGold(source.kills);
   const id = source.localId;
-  const portrait = id === null ? '' : avatar(id);
+  const portrait = id === null ? '' : avatar(id, source.localClassId ?? 0);
   if (el.portrait.getAttribute('src') !== portrait) {
     el.portrait.src = portrait;
   }

@@ -189,6 +189,7 @@ const INFO: HudInfo = {
  */
 class FakeSource implements HudSource {
   localId: number | null = 1;
+  localClassId: number | null = 1;
   /**
    * La cagnotte non securisee (tache 10).
    *

@@ -57,16 +57,6 @@ describe('etape 8 tache 8 : le choix de classe a l ecran', () => {
     expect(vus).toEqual([3]);
   });
 
-  it('les doublons ne sont PAS interdits a l ecran', () => {
-    // Deux joueurs sur la meme classe : les deux lignes restent cliquables.
-    const racine = document.createElement('div');
-    renderClasses(racine, DEFAULT_CLASS_ID, rien, [0, 0]);
-    for (const el of racine.querySelectorAll('button[data-classe]')) {
-      expect((el as HTMLButtonElement).disabled).toBe(false);
-    }
-    expect(racine.querySelector('[data-classe="0"]')?.textContent).toContain('2 alliés');
-  });
-
   /**
    * Le CABLAGE, pas seulement la logique : `main.ts` cherche ces identifiants
    * dans le vrai `index.html`, et un ecran parfait branche sur un `id`

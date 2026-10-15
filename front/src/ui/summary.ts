@@ -41,6 +41,7 @@ export function paintSummary(
   result: RunOverSummary,
   tone: ReturnType<typeof summaryTone>,
   localId: number | null,
+  classId: number | null,
 ): void {
   const info = formatSummary(result);
   el.root.classList.toggle('veil--defeat', !tone.victory);
@@ -50,7 +51,7 @@ export function paintSummary(
   el.title.classList.toggle('rib--yellow', tone.victory);
   // Defaite : portrait desature, comme la maquette 16.
   el.portrait.style.filter = tone.victory ? '' : 'grayscale(0.7) brightness(0.8)';
-  el.portrait.src = localId === null ? '' : avatar(localId);
+  el.portrait.src = localId === null ? '' : avatar(localId, classId ?? 0);
   el.name.textContent = localId === null ? '' : `Joueur ${localId}`;
   el.time.textContent = info.time;
   el.level.textContent = `${info.level}`;

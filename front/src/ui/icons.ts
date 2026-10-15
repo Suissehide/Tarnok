@@ -13,9 +13,21 @@ const UIE = '/tinyswords/UI%20Elements/UI%20Elements/';
 
 export const icon = (n: number): string => `${UIE}Icons/Icon_${String(n).padStart(2, '0')}.png`;
 
-/** Le portrait d'un joueur : un par slot, le meme partout (salon, HUD, bilan). */
-export const avatar = (playerId: number): string =>
-  `${UIE}Human%20Avatars/Avatars_${String(playerId).padStart(2, '0')}.png`;
+/**
+ * Les portraits du pack vont par cinq, une couleur par rangee : bleu, rouge,
+ * jaune, violet, noir. La rangee de chaque joueur, dans l'ordre de `UNIT_COLORS`
+ * (jaune, bleu, rouge, violet).
+ */
+const AVATAR_ROW_OF_PLAYER = [2, 0, 1, 3] as const;
+/** Le portrait de chaque classe dans sa rangee, comme `UNIT_OF_CLASS` : Archer, Warrior, Lancer, Monk. */
+const AVATAR_OF_CLASS = [2, 0, 1, 3] as const;
+
+/** Le portrait d'un joueur : la tete de son unite, dans sa couleur — le meme partout (salon, HUD, bilan). */
+export const avatar = (playerId: number, classId: number): string => {
+  const row = AVATAR_ROW_OF_PLAYER[(playerId - 1 + 4) % 4] ?? 0;
+  const n = row * 5 + (AVATAR_OF_CLASS[classId] ?? AVATAR_OF_CLASS[0]) + 1;
+  return `${UIE}Human%20Avatars/Avatars_${String(n).padStart(2, '0')}.png`;
+};
 
 export const ICON_GOLD = icon(3);
 export const ICON_WEAPON = icon(5);

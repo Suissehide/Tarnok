@@ -482,6 +482,7 @@ function join(code: string): void {
         result,
         summaryTone(client.portalDecision, client.portalGold, client.gold),
         client.localId,
+        client.localClassId,
       );
     },
     () => (paused ? { x: 0, y: 0 } : readAim()),

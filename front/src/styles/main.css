@@ -935,11 +935,6 @@
     color: var(--color-slate-soft);
   }
 
-  .class-card__taken {
-    font-size: 16px;
-    color: var(--color-slate-title);
-  }
-
   /* Etape 2 du salon : les armes, une rangee par element. */
   .weapon-families:not(.hidden) {
     display: flex;

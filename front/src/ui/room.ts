@@ -52,15 +52,13 @@ export const weaponLabel = (weaponId: number): string =>
 /**
  * Etape 1 : les quatre classes, leur verbe et leur trait.
  *
- * ⚠️ **Les doublons sont libres** (§4 de la spec) : rien n'est desactive parce
- * qu'un autre joueur a pris la meme classe. `others` ne sert qu'a l'afficher —
- * la negociation porte sur la couverture, « deux Remparts et aucune Amorce ».
+ * ⚠️ **Les doublons sont libres** (§4 de la spec) : rien n'est desactive ni
+ * signale parce qu'un autre joueur a pris la meme classe.
  */
 export function renderClasses(
   root: HTMLElement,
   chosen: number,
   onPick: (classId: number) => void,
-  others: readonly number[] = [],
 ): void {
   root.replaceChildren(
     ...CLASSES.map((c) => {
@@ -76,13 +74,6 @@ export function renderClasses(
       name.className = 'class-card__name f-meta ol';
       name.textContent = c.label;
       head.append(name);
-      const deja = others.filter((id) => id === c.id).length;
-      if (deja > 0) {
-        const tag = document.createElement('span');
-        tag.className = 'class-card__taken';
-        tag.textContent = deja === 1 ? 'déjà prise par 1 allié' : `déjà prise par ${deja} alliés`;
-        head.append(tag);
-      }
 
       const verb = document.createElement('span');
       verb.className = 'class-card__verb';
@@ -182,7 +173,7 @@ export function renderRoom(
     const portrait = document.createElement('div');
     portrait.className = 'k k-paperx room-player__portrait';
     const img = document.createElement('img');
-    img.src = avatar(p.playerId);
+    img.src = avatar(p.playerId, p.classId);
     img.alt = '';
     img.className = 'h-[96px] w-[96px]';
     portrait.append(img);
@@ -229,17 +220,11 @@ export function renderRoom(
   els.classes.classList.toggle('hidden', step !== 'classe');
   els.weapons.classList.toggle('hidden', step !== 'arme');
 
-  const autres = lobby.players.filter((p) => p.playerId !== lobby.you).map((p) => p.classId);
-  renderClasses(
-    els.classes,
-    maClasse,
-    (classId) => {
-      onPick(monArme, classId);
-      // La classe choisie, on passe a l'arme.
-      onStep('arme');
-    },
-    autres,
-  );
+  renderClasses(els.classes, maClasse, (classId) => {
+    onPick(monArme, classId);
+    // La classe choisie, on passe a l'arme.
+    onStep('arme');
+  });
   renderWeapons(els.weapons, monArme, (weaponId) => onPick(weaponId, maClasse));
 
   const hote = lobby.you === hoteId;
