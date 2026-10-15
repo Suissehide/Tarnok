@@ -9,6 +9,7 @@ import type {
   BlastFlash,
   BossVitals,
   ChainFlashes,
+  DamageNumbers,
   DerivedOrbs,
   HitFlashes,
   OrbFlights,
@@ -64,6 +65,8 @@ export interface FrameClient {
   readonly orbFlights: OrbFlights;
   readonly projectiles: Projectiles;
   readonly hitFlashes: HitFlashes;
+  /** Les chiffres de degats (etape 8) — purement cosmetiques, comme les flashs. */
+  readonly damageNumbers: DamageNumbers;
   readonly reactionFlashes: ReactionFlashes;
   /**
    * Flashs de chaine de Foudre (etape 5b, tache 3, tour de correction 1) —
@@ -167,6 +170,11 @@ export interface FrameStage {
    * `BossBarRenderer.draw`.
    */
   drawBossBar(horde: Horde, boss: BossVitals | null): void;
+  /**
+   * Les chiffres de degats (etape 8), a l'horloge MURALE comme les flashs :
+   * ils montent et s'effacent, ils n'arbitrent rien.
+   */
+  drawDamageNumbers(numbers: DamageNumbers, nowMs: number): void;
   /** Les carres des joueurs et la camera — voir `Stage.draw`. */
   draw(state: RenderState): void;
 }
@@ -272,6 +280,9 @@ export function composeFrame(
   // Au-dessus de tous les effets de monde : c'est une LECTURE, et une lecture
   // qu'un flash ne doit pas masquer au moment ou elle compte le plus.
   stage.drawBossBar(client.horde, client.boss);
+  // Au-dessus de tout ce qui precede : un chiffre est une LECTURE, et rien ne
+  // doit la masquer — voir l'ordre des calques dans `Stage`.
+  stage.drawDamageNumbers(client.damageNumbers, now);
   screens.updateHud(state);
   screens.updateDraft();
   screens.updatePortal();

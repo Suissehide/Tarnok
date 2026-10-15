@@ -13,6 +13,7 @@ import {
   CHAIN_JUMPS,
   CHAIN_RADIUS,
   CONTACT_RADIUS,
+  CRIT_MULTIPLIER,
   FIELD_INPUT_DELAY_TICKS,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -65,13 +66,12 @@ import {
   beamRange,
   cooldownWithBonus,
   DAMAGE_PER_UPGRADE,
-  effectRadius,
   FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardIsAlive,
   guardPulsesAt,
-  salvoCount,
   UPGRADE,
+  upgradedWeapon,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -712,6 +712,91 @@ export class HitFlashes {
   }
 }
 
+/** Capacite du reservoir de chiffres de degats — meme ordre que les flashs d'impact. */
+const DAMAGE_NUMBER_CAPACITY = 128;
+
+/**
+ * Duree de vie d'un chiffre de degats, en millisecondes d'horloge murale.
+ *
+ * ⚠️ **TROIS FOIS la vie d'un flash d'impact, et c'est pour ca que les
+ * chiffres ont leur propre reservoir** (etape 8). Le §4.3 veut le flash
+ * *« court, large et genereux »* — 220 ms — mais un nombre qui s'efface en
+ * 220 ms ne se LIT pas. Les faire vivre sur `HitFlashes` aurait voulu dire
+ * allonger le flash lui-meme, donc remplacer la regle du §4.3 par un reglage
+ * d'affichage.
+ */
+export const DAMAGE_NUMBER_LIFETIME_MS = 700;
+
+/**
+ * Les chiffres de degats qui montent au-dessus des monstres (etape 8) —
+ * *« il faut afficher les degats sur les monstres avec des chiffres »*.
+ *
+ * ⚠️ **Ce qu'ils affichent est ce que le TIR envoie, pas ce que l'ennemi
+ * encaisse.** Les PV ne sont pas sur le fil (§5.4) et l'armure comme les
+ * flaques sont arbitrees serveur : le client ne connait que les degats de
+ * l'arme, critique compris (lui est DERIVE du tir, donc exact — voir
+ * `Projectiles.critAt`). Un chiffre qui pretendrait dire le degat reel
+ * mentirait sur les ennemis blindes, exactement comme un flash teinte par
+ * l'element mentirait sur l'element qui a touche.
+ *
+ * Tableaux types, meme regle que `HitFlashes` : une volee d'impacts simultanes
+ * ne doit jamais allouer un objet par chiffre.
+ */
+export class DamageNumbers {
+  readonly x: Float32Array;
+  readonly y: Float32Array;
+  /** Le nombre a ecrire, deja arrondi : le rendu ne decide pas du format. */
+  readonly amount: Float32Array;
+  /** `1` pour un coup critique — il s'ecrit plus gros et dore. */
+  readonly crit: Uint8Array;
+  readonly bornMs: Float64Array;
+  #count = 0;
+
+  constructor(readonly capacity: number) {
+    this.x = new Float32Array(capacity);
+    this.y = new Float32Array(capacity);
+    this.amount = new Float32Array(capacity);
+    this.crit = new Uint8Array(capacity);
+    this.bornMs = new Float64Array(capacity);
+  }
+
+  get count(): number {
+    return this.#count;
+  }
+
+  spawn(x: number, y: number, amount: number, crit: boolean, nowMs: number): void {
+    if (this.#count >= this.capacity) {
+      return;
+    }
+    const slot = this.#count++;
+    this.x[slot] = x;
+    this.y[slot] = y;
+    this.amount[slot] = Math.max(1, Math.round(amount));
+    this.crit[slot] = crit ? 1 : 0;
+    this.bornMs[slot] = nowMs;
+  }
+
+  expire(nowMs: number): void {
+    for (let i = this.#count - 1; i >= 0; i--) {
+      if (nowMs - (this.bornMs[i] ?? 0) >= DAMAGE_NUMBER_LIFETIME_MS) {
+        this.#removeAt(i);
+      }
+    }
+  }
+
+  #removeAt(slot: number): void {
+    const last = this.#count - 1;
+    if (slot !== last) {
+      this.x[slot] = this.x[last] ?? 0;
+      this.y[slot] = this.y[last] ?? 0;
+      this.amount[slot] = this.amount[last] ?? 0;
+      this.crit[slot] = this.crit[last] ?? 0;
+      this.bornMs[slot] = this.bornMs[last] ?? 0;
+    }
+    this.#count = last;
+  }
+}
+
 /**
  * Duree de vie d'un flash de reaction, en millisecondes horloge murale.
  *
@@ -980,6 +1065,11 @@ export class ChainFlashes {
  * rend les axes courants. C'est ce qui permet de le tester sans navigateur, et
  * ce qui evite que le rendu et le reseau se contaminent.
  */
+/** Duree du bouillonnement vert apres un coup de venin, en ticks (~ la duree du poison serveur). */
+const POISON_VISUAL_TICKS = 75;
+const POISON_BUBBLE_EVERY = 8;
+const POISON_TINT = 0x7ccf3a;
+
 export class GameClient {
   #ws: WebSocket | null = null;
   #inputTimer: ReturnType<typeof setInterval> | null = null;
@@ -1108,6 +1198,42 @@ export class GameClient {
   /** Flashs d'impact derives des collisions locales (§4.3). Lecture publique pour le rendu. */
   /** Impacts et reactions vus depuis le debut : des compteurs QUI MONTENT, pour le son. */
   #hitCount = 0;
+  /** Ennemis touches par un projectile a venin -> tick ou l'effet visuel s'eteint. Cosmetique. */
+  readonly #poisoned = new Map<number, number>();
+
+  /**
+   * Des bulles vertes sur les ennemis empoisonnes, une toutes les
+   * `POISON_BUBBLE_EVERY` ticks — decalees par identite pour ne pas pulser en
+   * cadence. Approximation assumee : le client ne connait pas la reserve du
+   * serveur, seulement le dernier coup de venin qu'il a vu.
+   */
+  #bubblePoison(tick: number, nowMs: number): void {
+    if (this.#poisoned.size === 0) {
+      return;
+    }
+    // Un seul balayage de la horde — `slotOf` en est un, voir `Venins.resolve`.
+    for (let slot = 0; slot < this.horde.count; slot++) {
+      const id = this.horde.entityIdAt(slot);
+      const until = this.#poisoned.get(id);
+      if (until === undefined || tick > until || (tick + id) % POISON_BUBBLE_EVERY !== 0) {
+        continue;
+      }
+      this.hitFlashes.spawn(
+        this.horde.x[slot] ?? 0,
+        this.horde.y[slot] ?? 0,
+        POISON_TINT,
+        0,
+        1,
+        nowMs,
+        false,
+      );
+    }
+    for (const [id, until] of this.#poisoned) {
+      if (tick > until) {
+        this.#poisoned.delete(id);
+      }
+    }
+  }
   #reactionCount = 0;
   get hitCount(): number {
     return this.#hitCount;
@@ -1116,6 +1242,8 @@ export class GameClient {
     return this.#reactionCount;
   }
   readonly hitFlashes = new HitFlashes(HIT_FLASH_CAPACITY);
+  /** Les chiffres de degats qui montent au-dessus des monstres — voir `DamageNumbers`. */
+  readonly damageNumbers = new DamageNumbers(DAMAGE_NUMBER_CAPACITY);
   /**
    * Flashs de reaction, ANNONCES par `REACTION` (§6.1). Lecture publique pour
    * le rendu — voir `ReactionFlashes`.
@@ -2355,20 +2483,24 @@ export class GameClient {
       // Le miroir cosmetique du souffle de fin de course (etape 8) : la
       // grenade explose meme sans avoir percute personne, cote serveur — ici
       // on en dessine le flash, au meme endroit et au meme rayon.
-      this.projectiles.step(dt * scale, (slot) => {
-        const souffle = this.projectiles.blastRadiusAt(slot);
-        if (souffle <= 0) {
-          return;
-        }
-        this.hitFlashes.spawn(
-          this.projectiles.x[slot] ?? 0,
-          this.projectiles.y[slot] ?? 0,
-          weaponOf(this.projectiles.weaponAt(slot)).look.tint,
-          souffle,
-          this.projectiles.damageAt(slot),
-          nowMs,
-        );
-      });
+      this.projectiles.step(
+        dt * scale,
+        (slot) => {
+          const souffle = this.projectiles.blastRadiusAt(slot);
+          if (souffle <= 0) {
+            return;
+          }
+          this.hitFlashes.spawn(
+            this.projectiles.x[slot] ?? 0,
+            this.projectiles.y[slot] ?? 0,
+            weaponOf(this.projectiles.weaponAt(slot)).look.tint,
+            souffle,
+            this.projectiles.damageAt(slot),
+            nowMs,
+          );
+        },
+        this.horde,
+      );
       // Collision purement cosmetique : `collide` ne lit `horde` qu'en
       // lecture (position, `slotOf`) et ne consomme que les propres
       // projectiles du client — jamais un degat, jamais un `kill`. Arbitrer
@@ -2397,6 +2529,23 @@ export class GameClient {
           nowMs,
         );
         this.#hitCount++;
+        // ⚠️ **Le chiffre dit ce que CE tir envoie**, critique compris — il est
+        // derive du tir, donc le serveur arbitre exactement le meme (voir
+        // `Projectiles.critAt`). L'armure et les flaques, elles, restent
+        // serveur : voir le docbloc de `DamageNumbers`.
+        const critique = this.projectiles.critAt(projectileSlot);
+        this.damageNumbers.spawn(
+          this.horde.x[slot] ?? 0,
+          this.horde.y[slot] ?? 0,
+          this.projectiles.damageAt(projectileSlot) * (critique ? CRIT_MULTIPLIER : 1),
+          critique,
+          nowMs,
+        );
+        // Le venin : le serveur seul en tire des degats (`Venins`) ; ici, de
+        // quoi le VOIR — l'ennemi bouillonne de vert tant qu'il en porte.
+        if (this.projectiles.venomAt(projectileSlot) > 0) {
+          this.#poisoned.set(entityId, tick + POISON_VISUAL_TICKS);
+        }
         // Teinte elementaire, moitie « mes propres projectiles » — voir
         // `#markLocally`. Le test `element !== NEUTRE` recopie celui de
         // `resolveProjectileDamage` (back/src/combat.ts) : une arme neutre ne
@@ -2413,7 +2562,9 @@ export class GameClient {
         }
       });
     }
+    this.#bubblePoison(tick, nowMs);
     this.hitFlashes.expire(nowMs);
+    this.damageNumbers.expire(nowMs);
     this.reactionFlashes.expire(nowMs);
     this.blastFlashes = this.blastFlashes.filter((b) => nowMs - b.bornMs < flashLifeMs(b));
     this.chainFlashes.expire(nowMs);
@@ -2705,7 +2856,9 @@ export class GameClient {
     /** Horloge murale, pour le flash d'une pulsation de halo — voir plus bas. */
     nowMs: number,
   ): void {
-    const weapon = weaponOf(weaponId);
+    // Ses bonus propres appliques (salve, zone, perforation, portee) : tout ce
+    // qui suit lit cette copie, jamais l'entree du catalogue.
+    const weapon = upgradedWeapon(weaponOf(weaponId), (u) => loadout.upgradesOf(weaponId, u));
     const cooldown = cooldownWithBonus(
       weapon.cooldownTicks,
       loadout.bonus('fireRate') +
@@ -2726,16 +2879,13 @@ export class GameClient {
         loadout.bonus('damage') +
         this.accountBonuses.damage +
         DAMAGE_PER_UPGRADE * loadout.upgradesOf(weaponId, UPGRADE.DAMAGE));
-    // Meme calcul que `Room#fireOne`, meme fonction : chaque exemplaire empile
-    // elargit la salve d'un projectile. Deux formules divergeraient, et le
-    // joueur verrait une salve que le serveur n'arbitre pas.
-    // ⚠️ Seules les cartes « specifique » comptent ici : degats et cadence
-    // sont deja dans `damage` et `cooldown`. `1 +` : l'exemplaire d'acquisition.
-    const stacks = 1 + loadout.upgradesOf(weaponId, UPGRADE.SPECIFIC);
+    // Meme calcul que `Room#fireOne`, meme fonction (`upgradedWeapon`) : deux
+    // formules divergeraient, et le joueur verrait une salve que le serveur
+    // n'arbitre pas.
     if (weapon.kind === 'halo') {
       // ⚠️ **Le miroir cosmetique d'une pulsation de halo est un FLASH, pas un
       // projectile** : il porte le rayon que le serveur vient d'arbitrer
-      // (`effectRadius`, la meme fonction des deux cotes), donc le disque
+      // (`upgradedWeapon`, la meme fonction des deux cotes), donc le disque
       // dessine ne peut pas mentir sur la portee — meme discipline que
       // `reactionFlashScale` face a `REACTION_RADIUS`.
       //
@@ -2746,7 +2896,7 @@ export class GameClient {
         x,
         y,
         weapon.look.tint,
-        effectRadius(weapon, stacks),
+        weapon.blastRadius,
         weapon.damage,
         nowMs,
         false,
@@ -2765,7 +2915,7 @@ export class GameClient {
         y,
         bornTick: tick,
         lifeTicks: weapon.projectileLifeTicks,
-        radius: effectRadius(weapon, stacks),
+        radius: weapon.blastRadius,
         damage: weapon.damage,
         element: weapon.element,
         by: playerId,
@@ -2794,12 +2944,12 @@ export class GameClient {
         ],
         nowMs,
         weapon.look.tint,
-        2 * effectRadius(weapon, stacks),
+        2 * weapon.blastRadius,
       );
       last[weaponId] = tick;
       return;
     }
-    const count = salvoCount(weapon, stacks);
+    const count = weapon.projectileCount;
     this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY, damage, count);
     last[weaponId] = tick;
   }

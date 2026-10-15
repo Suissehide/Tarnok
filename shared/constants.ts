@@ -576,6 +576,33 @@ export const ZONE_REFRESH_INTERVAL_TICKS = Math.floor(ZONE_LIFETIME_TICKS / 2);
  * finissent donc toujours a plus de `ZONE_RADIUS` l'une de l'autre, ce qui
  * borne leur nombre par la surface couverte.
  */
+/**
+ * Part des tirs qui portent un COUP CRITIQUE, de 0 a 1 (etape 8) — *« un
+ * systeme de crit peut-etre aussi ? »*.
+ *
+ * ⚠️ **Le tirage n'est PAS une suite aleatoire**, c'est une fonction du tir :
+ * `hashRoll(tick, tireur, rang dans la salve)` (voir `shared/random.ts`). Un
+ * generateur a etat aurait demande aux deux cotes de le faire avancer au meme
+ * rythme, et le §5.2 tient justement a ce qu'un tir soit entierement determine
+ * par ce que les deux cotes possedent deja. Ici, le client peut annoncer le
+ * critique AU MOMENT du tir et le serveur arbitrer le meme, sans qu'un octet
+ * ne transite.
+ *
+ * 12 % : assez rare pour que le chiffre dore se remarque, assez frequent pour
+ * qu'on le voie dans la premiere minute de jeu.
+ */
+export const CRIT_CHANCE = 0.12;
+
+/**
+ * Ce qu'un coup critique multiplie.
+ *
+ * ⚠️ **Deux, et pas cinq.** Les degats d'une arme se lisent deja a sa taille
+ * (voir `ProjectileLook.diameterPx`) ; un critique qui quintuplerait ferait du
+ * hasard le premier facteur de la mise a mort, devant le choix d'arme et le
+ * placement, dans un jeu ou le §6.5 met la coordination au centre.
+ */
+export const CRIT_MULTIPLIER = 2;
+
 export const ZONE_RADIUS = 70;
 
 /**

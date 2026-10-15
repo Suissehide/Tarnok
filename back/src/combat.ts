@@ -15,6 +15,7 @@ import {
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
+  CRIT_MULTIPLIER,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
@@ -1242,6 +1243,7 @@ export function resolveProjectileDamage(
   tick: number,
   zones: ZoneField,
   reactions?: Reactions,
+  venins?: Venins,
 ): number[] {
   // ⚠️ **Un projectile ne laisse plus RIEN au sol** (tache 21). Il posait une
   // zone a ses DEUX fins de course — la vieillesse dans `step`, l'impact dans
@@ -1262,22 +1264,28 @@ export function resolveProjectileDamage(
   // ⚠️ **Rien pour les armes SANS souffle** : seize sur dix-sept finissent leur
   // course sans rien laisser, et c'est la ligne absente qui reste le cas
   // courant.
-  projectiles.step(dt, (slot) => {
-    const souffle = projectiles.blastRadiusAt(slot);
-    if (souffle <= 0) {
-      return;
-    }
-    damageInRadius(
-      horde,
-      projectiles.x[slot] ?? 0,
-      projectiles.y[slot] ?? 0,
-      souffle,
-      projectiles.damageAt(slot),
-      zones,
-      tick,
-      dead,
-    );
-  });
+  projectiles.step(
+    dt,
+    (slot) => {
+      const souffle = projectiles.blastRadiusAt(slot);
+      if (souffle <= 0) {
+        return;
+      }
+      damageInRadius(
+        horde,
+        projectiles.x[slot] ?? 0,
+        projectiles.y[slot] ?? 0,
+        souffle,
+        // Le critique vaut aussi pour un souffle de fin de course : c'est le
+        // MEME projectile, et son tirage date de son emission.
+        projectiles.damageAt(slot) * (projectiles.critAt(slot) ? CRIT_MULTIPLIER : 1),
+        zones,
+        tick,
+        dead,
+      );
+    },
+    horde,
+  );
 
   // ⚠️ **`zones, tick` en dernier : le rayon de touche elargi du Vif-argent
   // (etape 5c, tache 3), COTE SERVEUR SEUL.** Voir `ZoneField.hitRadiusBonusAt`
@@ -1308,10 +1316,17 @@ export function resolveProjectileDamage(
       }
       // Le neutre amplifie ce que l'equipe a marque (`NEUTRE_MARQUE_AMP`). Lu
       // AVANT les degats : la marque est celle que le tir trouve en arrivant.
-      const coup =
+      const ampNeutre =
         element === ELEMENT.NEUTRE && horde.markAt(slot, tick) !== ELEMENT.NEUTRE
-          ? damage * NEUTRE_MARQUE_AMP
-          : damage;
+          ? NEUTRE_MARQUE_AMP
+          : 1;
+      // ⚠️ **Le critique MULTIPLIE, il ne remplace pas** : il se compose avec
+      // l'amplification du neutre comme avec celle des flaques, parce que les
+      // trois disent des choses differentes — ce que le tir vaut, ce que
+      // l'equipe a prepare, et ce que le hasard accorde. Le tirage, lui, date
+      // de l'EMISSION (voir `Projectiles.critAt`) : le client a deja affiche
+      // le meme.
+      const coup = damage * ampNeutre * (projectiles.critAt(projectileSlot) ? CRIT_MULTIPLIER : 1);
       const blastRadius = projectiles.blastRadiusAt(projectileSlot);
       if (blastRadius > 0) {
         // ⚠️ **L'arme de zone passe par LE balayage commun** (tache 16), celui
@@ -1379,6 +1394,12 @@ export function resolveProjectileDamage(
         // par un test tout en ayant ete justifie par une raison inexacte, et
         // c'est le cas ici.
         return;
+      }
+      // Le venin (carte d'arme) : une part du coup revient en poison sur la
+      // duree. Un mort n'en recoit pas — le `return` ci-dessus l'a deja ecarte.
+      const venom = projectiles.venomAt(projectileSlot);
+      if (venins && venom > 0) {
+        venins.add(entityId, coup * venom);
       }
       if (element !== ELEMENT.NEUTRE) {
         // Le §6.2, premiere ligne : un ennemi deja marque d'un AUTRE element
@@ -1941,6 +1962,89 @@ export function markInZones(
  * `DEATHS` unique : un seul `dead`, une seule compaction, un seul appelant
  * cote `Room.step`.
  */
+/**
+ * Le poison que les cartes « venin » posent sur les ennemis — cote SERVEUR
+ * seul, comme toute decision de degat.
+ *
+ * Chaque ennemi porte une RESERVE de poison : un impact y ajoute
+ * `coup x Weapon.venom`, et chaque tick en retire une fraction fixe
+ * (`VENOM_DRAIN_PER_TICK`). La reserve s'ecoule donc en entier — le venin
+ * rend exactement ce qu'il promet — et d'autant plus vite qu'elle est pleine.
+ *
+ * ⚠️ **Une reserve, pas une duree rafraichie** : une arme rapide qui
+ * rafraichit sans cesse un « poison de N par seconde » ne s'arreterait jamais
+ * de cumuler. Ici dix petits coups et un gros coup de meme total empoisonnent
+ * pareil.
+ *
+ * Indexee par IDENTITE, jamais par creneau : la horde compacte ses creneaux a
+ * chaque mort, l'identite ne bouge pas. Hors de `Horde` pour la meme raison
+ * que tout ce qui n'est pas replique : le client ne simule pas le poison.
+ */
+export class Venins {
+  #reserve = new Map<number, number>();
+
+  add(entityId: number, amount: number): void {
+    this.#reserve.set(entityId, (this.#reserve.get(entityId) ?? 0) + amount);
+  }
+
+  /** Reserve restante de cet ennemi, `0` s'il n'est pas empoisonne. */
+  reserveOf(entityId: number): number {
+    return this.#reserve.get(entityId) ?? 0;
+  }
+
+  get size(): number {
+    return this.#reserve.size;
+  }
+
+  /**
+   * Un tick de poison : retire a chaque ennemi empoisonne sa part de reserve,
+   * par `appliquerDegats` — donc armure et amplification comme tout degat.
+   * Rend les identites mortes, compactees, orbes posees : meme contrat que
+   * `resolveBurn`.
+   */
+  resolve(horde: Horde, orbs: OrbField, tick: number, zones: ZoneField): number[] {
+    const dead: number[] = [];
+    if (this.#reserve.size === 0) {
+      return dead;
+    }
+    // ⚠️ **Un seul balayage de la horde, jamais `slotOf` par empoisonne** :
+    // `Horde.slotOf` est lui-meme un balayage, et des centaines d'ennemis
+    // empoisonnes en feraient un cout en empoisonnes x horde par tick. Ce qui
+    // n'est pas revu ici (mort, sorti de la horde, reserve soldee) tombe de la
+    // nouvelle table.
+    const next = new Map<number, number>();
+    for (let slot = 0; slot < horde.count; slot++) {
+      const id = horde.entityIdAt(slot);
+      const reserve = this.#reserve.get(id);
+      if (reserve === undefined || reserve < VENOM_MIN_RESERVE) {
+        continue;
+      }
+      const dose = Math.max(reserve * VENOM_DRAIN_PER_TICK, Math.min(reserve, VENOM_MIN_RESERVE));
+      const before = dead.length;
+      appliquerDegats(horde, slot, dose, zones, tick, dead);
+      if (dead.length > before) {
+        // Pas encore compacte : le creneau est toujours le sien.
+        orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      } else if (reserve - dose >= VENOM_MIN_RESERVE) {
+        next.set(id, reserve - dose);
+      }
+    }
+    this.#reserve = next;
+    if (dead.length > 0) {
+      horde.kill(dead);
+    }
+    return dead;
+  }
+}
+
+/**
+ * Part de la reserve de poison infligee a chaque tick : la reserve tombe a
+ * moitie en ~0,7 s, et l'essentiel s'ecoule en 2 a 3 s.
+ */
+export const VENOM_DRAIN_PER_TICK = 1 / 30;
+/** En dessous, la reserve est soldee d'un coup — sans quoi elle ne s'eteindrait jamais. */
+export const VENOM_MIN_RESERVE = 0.1;
+
 export function resolveBurn(
   horde: Horde,
   orbs: OrbField,

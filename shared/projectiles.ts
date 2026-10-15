@@ -1,7 +1,8 @@
 import { ARCHETYPES } from './archetypes';
-import { PROJECTILE_HIT_RADIUS, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
+import { CRIT_CHANCE, PROJECTILE_HIT_RADIUS, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
 import type { Horde } from './horde';
-import type { Weapon } from './weapons';
+import { hashRoll } from './random';
+import { HOMING_RANGE, RICOCHET_MIN_LIFE_TICKS, RICOCHET_RANGE, type Weapon } from './weapons';
 import type { ZoneField } from './zones';
 
 /**
@@ -55,6 +56,12 @@ import type { ZoneField } from './zones';
  * de tableau type remplace exactement l'ancienne constante ; un
  * `archetypeOf(...).bodyScale` y aurait mis une recherche d'objet.
  */
+/** Le rayon de touche (pas au carre) de chaque archetype — pour les projectiles grossis par le calibre. */
+const HIT_R_BY_ARCHETYPE = Float32Array.from(
+  ARCHETYPES,
+  (a) => PROJECTILE_HIT_RADIUS * a.bodyScale,
+);
+
 const HIT_R2_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => {
   const r = PROJECTILE_HIT_RADIUS * a.bodyScale;
   return r * r;
@@ -128,6 +135,32 @@ export class Projectiles {
    */
   readonly #pierce: Uint8Array;
   /**
+   * `1` si ce projectile porte un COUP CRITIQUE (etape 8).
+   *
+   * ⚠️ **Decide a l'EMISSION, pas a l'impact.** Les deux cotes emettent la
+   * meme salve a partir des memes trois entiers (le tick, le tireur, le rang
+   * du projectile) : ils tirent donc le meme critique, et le client peut
+   * l'afficher au moment ou le serveur l'arbitre. Le decider a l'impact aurait
+   * voulu dire deux tirages, a deux instants, sur deux machines.
+   */
+  readonly #crit: Uint8Array;
+  /**
+   * Echelle du projectile — recopie de `Weapon.projectileScale` a l'emission
+   * (carte « calibre »). Elargit le rayon de touche ET le dessin : un
+   * projectile plus gros a l'ecran qui ne toucherait pas plus large mentirait.
+   */
+  readonly #scale: Float32Array;
+  /**
+   * Fraction des degats de l'impact infligee ensuite en poison — recopie de
+   * `Weapon.venom` (carte « venin »). Le serveur seul la convertit en degats
+   * (`Venins`), le client n'en tire qu'un effet visuel.
+   */
+  readonly #venom: Float32Array;
+  /** Rebonds restants — recopie de `Weapon.bounces`, decremente a chaque ricochet. */
+  readonly #bounces: Uint8Array;
+  /** Guidage en radians par seconde — recopie de `Weapon.homing`. `0` : file droit. */
+  readonly #homing: Float32Array;
+  /**
    * Le dernier ennemi touche par ce projectile, ou `-1`.
    *
    * ⚠️ **Sans lui, « transpercer » devient « frapper le meme ennemi a chaque
@@ -175,6 +208,11 @@ export class Projectiles {
     this.#blastRadius = new Float32Array(capacity);
     this.#weapon = new Uint8Array(capacity);
     this.#pierce = new Uint8Array(capacity);
+    this.#crit = new Uint8Array(capacity);
+    this.#scale = new Float32Array(capacity);
+    this.#venom = new Float32Array(capacity);
+    this.#bounces = new Uint8Array(capacity);
+    this.#homing = new Float32Array(capacity);
     this.#lastHit = new Int32Array(capacity).fill(-1);
     this.#ticksRemaining = new Int32Array(capacity);
     this.#prevX = new Float32Array(capacity);
@@ -328,6 +366,14 @@ export class Projectiles {
       this.#blastRadius[slot] = weapon.blastRadius;
       this.#weapon[slot] = weapon.id;
       this.#pierce[slot] = weapon.pierce;
+      // Le critique, tire d'une fonction du TIR et non d'une suite — voir
+      // `CRIT_CHANCE` et `hashRoll`. Le rang `i` est ce qui empeche une salve
+      // entiere de criter d'un bloc.
+      this.#crit[slot] = hashRoll(tick, by, i) < CRIT_CHANCE ? 1 : 0;
+      this.#scale[slot] = weapon.projectileScale;
+      this.#venom[slot] = weapon.venom;
+      this.#bounces[slot] = weapon.bounces;
+      this.#homing[slot] = weapon.homing;
       this.#lastHit[slot] = -1;
       this.#ticksRemaining[slot] = weapon.projectileLifeTicks;
       this.bornTick[slot] = tick;
@@ -375,6 +421,16 @@ export class Projectiles {
     return this.#blastRadius[slot] ?? 0;
   }
 
+  /** Echelle du projectile — voir `#scale`. */
+  scaleAt(slot: number): number {
+    return this.#scale[slot] ?? 1;
+  }
+
+  /** Fraction de l'impact rendue en poison — voir `#venom`. */
+  venomAt(slot: number): number {
+    return this.#venom[slot] ?? 0;
+  }
+
   /**
    * Arme qui a tire le projectile de ce slot — voir `#weapon`. Lu par le seul
    * rendu (`ProjectileRenderer`), qui y trouve la forme, la taille, la teinte,
@@ -393,6 +449,14 @@ export class Projectiles {
    * — et il n'oblige pas la boucle de rendu a se faire passer un tick de plus.
    * C'est ce que `projectileAlpha` attend.
    */
+  /**
+   * Ce projectile porte-t-il un coup critique ? Lu par l'arbitrage (serveur) et
+   * par l'affichage des degats (client), qui obtiennent la meme reponse.
+   */
+  critAt(slot: number): boolean {
+    return (this.#crit[slot] ?? 0) === 1;
+  }
+
   ticksRemainingAt(slot: number): number {
     return this.#ticksRemaining[slot] ?? 0;
   }
@@ -434,8 +498,13 @@ export class Projectiles {
    * parametre est parti avec son seul appelant, aucun test ne le tenait, et un
    * point d'extension que personne n'utilise est un point d'extension qui ment.
    */
-  step(dt: number, onExpire?: (slot: number) => void): void {
+  step(dt: number, onExpire?: (slot: number) => void, horde?: Horde): void {
     for (let i = 0; i < this.#count; i++) {
+      // Le guidage tourne la vitesse AVANT le pas — sans horde (tests, bancs
+      // anciens), le missile file droit.
+      if (horde && (this.#homing[i] ?? 0) > 0) {
+        this.#steer(i, horde, dt);
+      }
       // Capture la position de DEBUT de pas avant de la faire avancer : c'est
       // le point de depart du segment que `collide` testera.
       this.#prevX[i] = this.x[i] ?? 0;
@@ -521,6 +590,9 @@ export class Projectiles {
 
       let bestId = -1;
       let bestDist2 = Number.POSITIVE_INFINITY;
+      // Ce que le calibre ajoute au rayon de touche, en pixels. Zero pour
+      // presque tous : la boucle garde alors ses tables telles quelles.
+      const extra = PROJECTILE_HIT_RADIUS * ((this.#scale[i] ?? 1) - 1);
       for (let e = 0; e < horde.count; e++) {
         const ex = horde.x[e] ?? 0;
         const ey = horde.y[e] ?? 0;
@@ -529,7 +601,13 @@ export class Projectiles {
         // archetypes de pietaille, trois fois plus pour le boss. Voir
         // `HIT_R2_BY_ARCHETYPE`.
         const kind = horde.archetype[e] ?? 0;
-        const baseR2 = HIT_R2_BY_ARCHETYPE[kind] ?? defaultR2;
+        let baseR2 = HIT_R2_BY_ARCHETYPE[kind] ?? defaultR2;
+        let wideR2 = WIDE_R2_BY_ARCHETYPE[kind] ?? defaultR2;
+        if (extra > 0) {
+          const r = (HIT_R_BY_ARCHETYPE[kind] ?? PROJECTILE_HIT_RADIUS) + extra;
+          baseR2 = r * r;
+          wideR2 = (r + VIF_ARGENT_HIT_RADIUS_BONUS) ** 2;
+        }
         if (d2 > baseR2) {
           // ⚠️ **Le rayon de base ne touche pas — le rayon ELARGI est-il
           // pose, et seulement s'il y a un `zones` a consulter ?** Cout
@@ -555,7 +633,7 @@ export class Projectiles {
           // c'est une optimisation a comportement identique. Ce qui le garde
           // est le BANC, pas la suite ; meme honnetete que la borne `<= 0` de
           // `resolveBurn`, qui assume qu'aucun test ne la distingue de `< 0`.
-          if (d2 > (WIDE_R2_BY_ARCHETYPE[kind] ?? defaultR2)) {
+          if (d2 > wideR2) {
             continue;
           }
           const bonus = zones.hitRadiusBonusAt(ex, ey, tick ?? 0);
@@ -595,11 +673,69 @@ export class Projectiles {
         if (restantes > 0) {
           this.#pierce[i] = restantes - 1;
           this.#lastHit[i] = bestId;
+        } else if ((this.#bounces[i] ?? 0) > 0 && this.#ricochet(i, horde, bestId)) {
+          // Le ricochet : le meme projectile repart vers un voisin, degats
+          // pleins comme la perforation. Il ne peut pas reprendre tout de suite
+          // celui qu'il quitte — `#lastHit`.
+          this.#bounces[i] = (this.#bounces[i] ?? 1) - 1;
+          this.#lastHit[i] = bestId;
+          this.#ticksRemaining[i] = Math.max(this.#ticksRemaining[i] ?? 0, RICOCHET_MIN_LIFE_TICKS);
         } else {
           this.#removeAt(i);
         }
       }
     }
+  }
+
+  /**
+   * Oriente le projectile `i` vers l'ennemi le plus proche de lui (sauf
+   * `exclude`) a moins de `range`, a vitesse constante. Rend `false` si
+   * personne n'est a portee. `maxTurn` borne la rotation (radians) :
+   * `Infinity` pour un ricochet, qui repart droit sur sa cible.
+   */
+  #aim(i: number, horde: Horde, range: number, maxTurn: number, exclude: number): boolean {
+    const x = this.x[i] ?? 0;
+    const y = this.y[i] ?? 0;
+    let best = -1;
+    let bestD2 = range * range;
+    for (let e = 0; e < horde.count; e++) {
+      const dx = (horde.x[e] ?? 0) - x;
+      const dy = (horde.y[e] ?? 0) - y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestD2 && horde.entityIdAt(e) !== exclude) {
+        bestD2 = d2;
+        best = e;
+      }
+    }
+    if (best < 0) {
+      return false;
+    }
+    const vx = this.#vx[i] ?? 0;
+    const vy = this.#vy[i] ?? 0;
+    const speed = Math.hypot(vx, vy);
+    const current = Math.atan2(vy, vx);
+    const wanted = Math.atan2((horde.y[best] ?? 0) - y, (horde.x[best] ?? 0) - x);
+    // L'ecart le plus court, ramene dans [-pi, pi].
+    let turn = wanted - current;
+    turn -= Math.round(turn / (2 * Math.PI)) * 2 * Math.PI;
+    const angle = current + Math.max(-maxTurn, Math.min(maxTurn, turn));
+    this.#vx[i] = Math.cos(angle) * speed;
+    this.#vy[i] = Math.sin(angle) * speed;
+    return true;
+  }
+
+  /**
+   * ⚠️ **Le guidage lit la horde : c'est la seule trajectoire qui le fasse.**
+   * O(horde) par projectile guide et par tick — le meme ordre que `collide`,
+   * reserve aux armes qui le portent. Le client le joue sur SA horde, la meme
+   * a la replication pres : le missile dessine suit celui qui frappe.
+   */
+  #steer(i: number, horde: Horde, dt: number): void {
+    this.#aim(i, horde, HOMING_RANGE, (this.#homing[i] ?? 0) * dt, -1);
+  }
+
+  #ricochet(i: number, horde: Horde, hitId: number): boolean {
+    return this.#aim(i, horde, RICOCHET_RANGE, Number.POSITIVE_INFINITY, hitId);
   }
 
   #removeAt(slot: number): void {
@@ -616,6 +752,11 @@ export class Projectiles {
       this.#blastRadius[slot] = this.#blastRadius[last] ?? 0;
       this.#weapon[slot] = this.#weapon[last] ?? 0;
       this.#pierce[slot] = this.#pierce[last] ?? 0;
+      this.#crit[slot] = this.#crit[last] ?? 0;
+      this.#scale[slot] = this.#scale[last] ?? 1;
+      this.#venom[slot] = this.#venom[last] ?? 0;
+      this.#bounces[slot] = this.#bounces[last] ?? 0;
+      this.#homing[slot] = this.#homing[last] ?? 0;
       this.#lastHit[slot] = this.#lastHit[last] ?? -1;
       this.#ticksRemaining[slot] = this.#ticksRemaining[last] ?? 0;
       this.#prevX[slot] = this.#prevX[last] ?? 0;

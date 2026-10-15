@@ -11,6 +11,7 @@ import type {
   BlastFlash,
   BossVitals,
   ChainFlashes,
+  DamageNumbers,
   DerivedOrbs,
   HitFlashes,
   ObstacleMap,
@@ -26,6 +27,7 @@ import { BehaviorRenderer } from './behavior-renderer';
 import { BossBarRenderer } from './boss-bar-renderer';
 import { ChainRenderer } from './chain-renderer';
 import { ChargeRenderer } from './charge-renderer';
+import { DamageNumberRenderer } from './damage-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
 import { OrbRenderer } from './orb-renderer';
@@ -95,6 +97,7 @@ export class Stage {
   readonly #impactFlashes = new ImpactFlashRenderer();
   readonly #reactionFlashes = new ReactionFlashRenderer();
   readonly #bossBar = new BossBarRenderer();
+  readonly #damageNumbers = new DamageNumberRenderer();
   /** Garde `drawObstacles` idempotent : la carte est statique, une seule construction suffit. */
   #obstaclesDrawn = false;
   /** La grille de fond : masquee des que la carte en tuiles la recouvre. */
@@ -147,6 +150,11 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    // ⚠️ **Les chiffres de degats TOUT EN HAUT** (etape 8) : ils se LISENT, et
+    // une lecture ne doit etre masquee par rien — meme raison que la barre du
+    // boss au-dessus des flashs, poussee d'un cran plus loin parce qu'un
+    // nombre illisible ne vaut pas mieux qu'un nombre absent.
+    this.#damageNumbers,
   ];
 
   /**
@@ -172,6 +180,7 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    this.#damageNumbers,
   ];
 
   async init(parent: HTMLElement): Promise<void> {
@@ -463,6 +472,11 @@ export class Stage {
    */
   drawBossBar(horde: Horde, boss: BossVitals | null): void {
     this.#bossBar.draw(horde, boss);
+  }
+
+  /** `nowMs` : la meme horloge murale que les flashs — voir `DamageNumbers`. */
+  drawDamageNumbers(numbers: DamageNumbers, nowMs: number): void {
+    this.#damageNumbers.draw(numbers, nowMs);
   }
 
   destroy(): void {

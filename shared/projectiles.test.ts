@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import { archetypeOf, BOSS_ARCHETYPE } from './archetypes';
-import { PROJECTILE_HIT_RADIUS, TICK_HZ, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
+import {
+  CRIT_CHANCE,
+  PROJECTILE_HIT_RADIUS,
+  TICK_HZ,
+  VIF_ARGENT_HIT_RADIUS_BONUS,
+} from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
 import { Projectiles } from './projectiles';
@@ -46,6 +51,11 @@ const SINGLE: Weapon = {
   blastRadius: 0,
   pierce: 0,
   kind: 'tir' as const,
+  perks: [],
+  projectileScale: 1,
+  venom: 0,
+  bounces: 0,
+  homing: 0,
   // Trois apparences DIFFERENTES entre les trois armes de test : c'est ce qui
   // permet aux cas de `weaponAt` ci-dessous de distinguer laquelle a tire.
   look: {
@@ -73,6 +83,11 @@ const SPREAD: Weapon = {
   blastRadius: 0,
   pierce: 0,
   kind: 'tir' as const,
+  perks: [],
+  projectileScale: 1,
+  venom: 0,
+  bounces: 0,
+  homing: 0,
   look: {
     shape: 'petale',
     diameterPx: 12,
@@ -98,6 +113,11 @@ const FAST: Weapon = {
   blastRadius: 0,
   pierce: 0,
   kind: 'tir' as const,
+  perks: [],
+  projectileScale: 1,
+  venom: 0,
+  bounces: 0,
+  homing: 0,
   look: {
     shape: 'fleche',
     diameterPx: 14,
@@ -1074,5 +1094,161 @@ describe('Projectiles.step — le rappel de fin de course', () => {
     p.fireSalvoDirected(arme, 0, 0, 0, 1, 0, arme.damage, 1);
     expect(() => p.step(1 / TICK_HZ)).not.toThrow();
     expect(p.count).toBe(0);
+  });
+});
+
+describe('Projectiles — le calibre elargit le rayon de touche', () => {
+  it('un projectile grossi touche un ennemi que le projectile normal frole', () => {
+    // Juste au-dela du rayon de base, dans le rayon d'un projectile x1,5.
+    const ecart = PROJECTILE_HIT_RADIUS + 8;
+    const essai = (scale: number): number[] => {
+      const horde = new Horde(10);
+      const cible = addOne(horde, 1, 1000, 0);
+      const victime = addOne(horde, 2, 100, ecart);
+      const p = new Projectiles(10);
+      p.fireSalvo({ ...SINGLE, projectileScale: scale }, 0, 0, 0, cible, horde);
+      p.step(1);
+      const touches: number[] = [];
+      p.collide(horde, (id) => touches.push(id));
+      expect(touches.every((id) => id === victime)).toBe(true);
+      return touches;
+    };
+    expect(essai(1)).toEqual([]);
+    expect(essai(1.5)).toHaveLength(1);
+  });
+
+  it('recopie echelle et venin sur le projectile a l emission', () => {
+    const horde = new Horde(10);
+    const cible = addOne(horde, 1, 1000, 0);
+    const p = new Projectiles(10);
+    p.fireSalvo({ ...SINGLE, projectileScale: 1.3, venom: 0.4 }, 0, 0, 0, cible, horde);
+    expect(p.scaleAt(0)).toBeCloseTo(1.3, 5);
+    expect(p.venomAt(0)).toBeCloseTo(0.4, 5);
+  });
+});
+
+describe('Projectiles — guidage et ricochet', () => {
+  it('un projectile guide tourne vers l ennemi, un projectile droit non', () => {
+    const vise = (homing: number): number => {
+      const horde = new Horde(10);
+      const cible = addOne(horde, 1, 1000, 0); // tir vers +x
+      addOne(horde, 2, 200, 200); // la proie, en diagonale
+      const p = new Projectiles(10);
+      p.fireSalvo({ ...SINGLE, homing }, 0, 0, 0, cible, horde);
+      horde.x[0] = 5000; // la cible de visee s'eloigne : seule la proie reste a portee
+      for (let t = 0; t < 5; t++) {
+        p.step(1 / TICK_HZ, undefined, horde);
+      }
+      return p.headingAt(0);
+    };
+    expect(vise(0)).toBeCloseTo(0, 5);
+    // Vers la proie (+y), mais jamais plus vite que `homing` rad/s.
+    const tourne = vise(3);
+    expect(tourne).toBeGreaterThan(0);
+    expect(tourne).toBeLessThanOrEqual((3 * 5) / TICK_HZ + 1e-6);
+  });
+
+  it('un projectile qui ricoche repart vers un voisin, degats pleins, et s use', () => {
+    const horde = new Horde(10);
+    const premier = addOne(horde, 1, 100, 0);
+    const voisin = addOne(horde, 2, 100, 150);
+    const p = new Projectiles(10);
+    p.fireSalvo({ ...SINGLE, bounces: 1 }, 0, 0, 0, premier, horde);
+    const touches: number[] = [];
+    p.step(1); // segment (0,0) -> au-dela du premier
+    p.collide(horde, (id) => touches.push(id));
+    expect(touches).toEqual([premier]);
+    expect(p.count).toBe(1);
+    // Il file maintenant vers le voisin, plein +y.
+    expect(p.headingAt(0)).toBeCloseTo(Math.PI / 2, 1);
+    for (let t = 0; t < 30 && p.count > 0; t++) {
+      p.step(1 / TICK_HZ);
+      p.collide(horde, (id) => touches.push(id));
+    }
+    expect(touches).toEqual([premier, voisin]);
+    // Plus de rebond : consomme sur le voisin.
+    expect(p.count).toBe(0);
+  });
+
+  it('sans voisin a portee, le ricochet ne sauve pas le projectile', () => {
+    const horde = new Horde(10);
+    const seul = addOne(horde, 1, 100, 0);
+    const p = new Projectiles(10);
+    p.fireSalvo({ ...SINGLE, bounces: 2 }, 0, 0, 0, seul, horde);
+    p.step(1);
+    p.collide(horde, () => undefined);
+    expect(p.count).toBe(0);
+  });
+});
+
+/**
+ * Étape 8 — **les coups critiques**, demandes par l'auteur : *« un systeme de
+ * crit peut-etre aussi ? »*.
+ *
+ * Ce que ces cas gardent n'est pas la chance elle-meme (un reglage), c'est ce
+ * qui rend le critique AFFICHABLE : il est decide a l'emission, par une
+ * fonction des trois entiers que les deux cotes possedent, donc le client peut
+ * montrer le chiffre que le serveur va arbitrer.
+ */
+describe('Projectiles — le coup critique', () => {
+  /** Les critiques d'une salve de `count` projectiles tiree au tick `tick` par `by`. */
+  function salve(tick: number, by: number, count: number): boolean[] {
+    const p = new Projectiles(64);
+    const arme = { ...SPREAD, projectileCount: count };
+    p.fireSalvoDirected(arme, tick, 0, 0, 1, 0, arme.damage, count, by);
+    return Array.from({ length: p.count }, (_, i) => p.critAt(i));
+  }
+
+  it('rend le MEME resultat pour le meme tir : deux instances independantes concordent', () => {
+    // ⚠️ C'est toute la propriete : le serveur et le client emettent la meme
+    // salve et doivent en tirer les memes critiques, sans rien s'annoncer.
+    expect(salve(1234, 3, 8)).toEqual(salve(1234, 3, 8));
+  });
+
+  it('ne fait PAS criter toute une salve d un bloc', () => {
+    // Sans le rang du projectile dans le melange, les huit partageraient leur
+    // tirage — un coup critique deviendrait une salve critique.
+    const longue = salve(77, 1, 40);
+    expect(new Set(longue).size).toBe(2);
+  });
+
+  it('change avec le TICK, le TIREUR et le rang', () => {
+    expect(salve(10, 1, 12)).not.toEqual(salve(11, 1, 12));
+    expect(salve(10, 1, 12)).not.toEqual(salve(10, 2, 12));
+  });
+
+  it('tombe pres de la chance annoncee sur un grand nombre de tirs', () => {
+    let crits = 0;
+    let total = 0;
+    for (let tick = 0; tick < 500; tick++) {
+      for (const c of salve(tick, tick % 4, 8)) {
+        total++;
+        if (c) {
+          crits++;
+        }
+      }
+    }
+    // ⚠️ Une fourchette LARGE : ce cas garde que le tirage n'est ni toujours
+    // vrai ni toujours faux, pas que le melange soit un bon generateur — le
+    // jour ou la chance devient un passif, c'est la valeur qui bougera, pas
+    // cette propriete.
+    expect(crits / total).toBeGreaterThan(CRIT_CHANCE / 2);
+    expect(crits / total).toBeLessThan(CRIT_CHANCE * 2);
+  });
+
+  it('suit le projectile jusqu a son impact, compaction comprise', () => {
+    // ⚠️ `#removeAt` deplace le DERNIER projectile dans le creneau libere : un
+    // `#crit` oublie dans cette copie ferait porter au survivant le tirage du
+    // mort.
+    const p = new Projectiles(16);
+    const arme = { ...SPREAD, projectileCount: 12 };
+    p.fireSalvoDirected(arme, 99, 0, 0, 1, 0, arme.damage, 12, 1);
+    const avant = Array.from({ length: p.count }, (_, i) => p.critAt(i));
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0);
+    p.collide(horde, () => undefined);
+    // Le creneau 0 a ete comble par le dernier : son critique doit l'avoir
+    // suivi.
+    expect(p.critAt(0)).toBe(avant[avant.length - 1]);
   });
 });

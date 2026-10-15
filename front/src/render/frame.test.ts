@@ -8,6 +8,7 @@ import { describe, expect, it } from 'vitest';
 import {
   type BossVitals,
   ChainFlashes,
+  DamageNumbers,
   DerivedOrbs,
   HitFlashes,
   OrbFlights,
@@ -79,6 +80,9 @@ class RecordingStage implements FrameStage {
   drawBossBar(...args: unknown[]): void {
     this.#record('barre-boss', ...args);
   }
+  drawDamageNumbers(...args: unknown[]): void {
+    this.#record('chiffres', ...args);
+  }
   draw(...args: unknown[]): void {
     this.#record('joueurs', ...args);
   }
@@ -116,6 +120,7 @@ class RecordingClient implements FrameClient {
   readonly orbFlights = new OrbFlights(8);
   readonly projectiles = new Projectiles(PROJECTILE_CAPACITY);
   readonly hitFlashes = new HitFlashes(8);
+  readonly damageNumbers = new DamageNumbers(8);
   readonly reactionFlashes = new ReactionFlashes(8);
   readonly chainFlashes = new ChainFlashes(8);
   /**
@@ -395,11 +400,19 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'flashs-impact',
       'flashs-reaction',
       'barre-boss',
+      // Les chiffres se LISENT : rien ne doit les masquer, donc ils passent
+      // apres tous les effets de monde (etape 8).
+      'chiffres',
       'joueurs',
       // La secousse ferme la marche : elle deplace ce que `joueurs` vient de
       // cadrer, donc elle ne peut pas le preceder (voir `Stage.shakeCamera`).
       'secousse',
     ]);
+  });
+
+  it('passe les chiffres de degats a l horloge MURALE, comme les flashs', () => {
+    const { stage, client } = compose();
+    expect(stage.argsOf('chiffres')).toEqual([client.damageNumbers, NOW]);
   });
 
   it('secoue la camera avec les MEMES flashs que les calques, et l horloge murale', () => {

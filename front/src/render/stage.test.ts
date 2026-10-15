@@ -205,6 +205,13 @@ function stubCanvas2d(): void {
     // canevas avant de le recopier dans sa bande — `softenAcross` travaille en
     // `destination-in`, qui ne connait pas les bandes (voir `makeStreakAtlas`).
     drawImage: noop,
+    // Étape 8 : l'atlas des chiffres de degats ECRIT du texte — le premier du
+    // monde Pixi, le HUD etant en DOM.
+    font: '' as unknown,
+    textAlign: '' as unknown,
+    textBaseline: '' as unknown,
+    strokeText: noop,
+    fillText: noop,
   };
   const canvas = HTMLCanvasElement.prototype as unknown as { getContext: () => unknown };
   canvas.getContext = (): unknown => context;
@@ -340,7 +347,8 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     // FOUDRE (etape 5b, tache 3), flashs d'impact, flashs de reaction, BARRE DU
     // BOSS (tache 5), et les COMPORTEMENTS (kamikaze, chaman) : douze, et un
     // calque oublie est un calque invisible.
-    expect(world.children).toHaveLength(12);
+    // Treize depuis l'etape 8 : les chiffres de degats ferment la marche.
+    expect(world.children).toHaveLength(13);
   });
 
   it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {
@@ -364,6 +372,9 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
       true,
       true,
       true,
+      // Les chiffres de degats (etape 8) : atlas procedural, charge comme les
+      // autres.
+      true,
     ]);
   });
 
@@ -371,6 +382,7 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     // La moitie basse de la mutation : sans elle, un `layersLoaded` qui
     // rendrait `true` partout passerait le test precedent sans rien garder.
     expect(new Stage().layersLoaded).toEqual([
+      false,
       false,
       false,
       false,
