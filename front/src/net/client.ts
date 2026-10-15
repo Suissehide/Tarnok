@@ -46,12 +46,14 @@ import {
   encodeHello,
   encodeInput,
   encodePick,
+  encodePing,
   encodeStart,
   encodeVote,
   type LobbyMessage,
   MSG,
   NO_WEAPON,
   OUTCOME,
+  type PingShownMessage,
   type PlayerSnapshot,
   quantizeAxis,
   type WaveOrderMessage,
@@ -973,6 +975,16 @@ export class ChainFlashes {
   }
 }
 
+/** Un ping annonce par le salon (etape 9), tel que le rendu le lit. */
+export interface ActivePing {
+  playerId: number;
+  intent: number;
+  x: number;
+  y: number;
+  /** Tick de horde a la RECEPTION : c'est lui qui fait expirer le ping. */
+  tick: number;
+}
+
 /**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
@@ -1182,6 +1194,15 @@ export class GameClient {
    * eclairs de Relais). Purges au-dela de quelques secondes.
    */
   readonly abilityEvents: AbilityUsed[] = [];
+
+  /**
+   * Les pings annonces, AU PLUS UN par joueur (cle : son id) : un nouveau ping
+   * remplace l'ancien (§6 de la spec de l'etape 9). Jamais purges ici — c'est
+   * `livePings` qui dit lesquels sont encore vivants, au tick de horde.
+   */
+  readonly pings = new Map<number, ActivePing>();
+  #pingCount = 0;
+  #lastPingIntent = -1;
 
   /**
    * La charge du boss en cours, ou `null` — annoncee UNE FOIS par le serveur,
@@ -1679,6 +1700,25 @@ export class GameClient {
     this.#ws?.send(encodeAbility(this.hordeTick, x, y));
   }
 
+  /**
+   * Pose un ping au point MONDE `(x, y)`. Le client PROPOSE : rien n'est
+   * affiche ici, pas meme pour soi — le ping apparait a l'annonce du salon,
+   * pour qu'un ping refuse n'existe chez personne (§5 de la spec de l'etape 9).
+   */
+  sendPing(intent: number, x: number, y: number): void {
+    this.#ws?.send(encodePing(intent, x, y));
+  }
+
+  /** Pings recus depuis la connexion : l'audio en deduit quand sonner. */
+  get pingCount(): number {
+    return this.#pingCount;
+  }
+
+  /** Intention du dernier ping recu, `-1` si aucun. */
+  get lastPingIntent(): number {
+    return this.#lastPingIntent;
+  }
+
   /** La classe du joueur local, ou `null` (arrive en cours de partie, sans salle d'attente). */
   get localClassId(): number | null {
     return this.#localClassId;
@@ -1744,6 +1784,18 @@ export class GameClient {
     if (msg.verb === VERB_IDS.relais && msg.playerId === this.#localId) {
       this.#local?.teleport(msg.x, msg.y);
     }
+  }
+
+  #onPingShown(msg: PingShownMessage): void {
+    this.pings.set(msg.playerId, {
+      playerId: msg.playerId,
+      intent: msg.intent,
+      x: msg.x,
+      y: msg.y,
+      tick: this.hordeTick,
+    });
+    this.#pingCount += 1;
+    this.#lastPingIntent = msg.intent;
   }
 
   connect(): void {
@@ -2002,6 +2054,10 @@ export class GameClient {
     }
     if (msg.type === MSG.ABILITY_USED) {
       this.#onAbilityUsed(msg);
+      return;
+    }
+    if (msg.type === MSG.PING_SHOWN) {
+      this.#onPingShown(msg);
       return;
     }
     if (msg.type === MSG.BOSS_CHARGE) {
