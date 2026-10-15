@@ -5,6 +5,7 @@ import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
+import { RARITY } from '@shared/rarity';
 import { WEAPONS, weaponOf } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -20,6 +21,7 @@ import {
   DraftScreen,
   type DraftSource,
   magnitudeLabel,
+  rarityLabel,
   remainingSeconds,
 } from './draft';
 
@@ -842,5 +844,52 @@ describe('une carte que mon inventaire refuse', () => {
 
   it('blockedReason rend null pour une carte prenable', () => {
     expect(blockedReason({ nature: CARD.WEAPON, refId: 3 }, new Loadout())).toBeNull();
+  });
+});
+
+describe('etape 10 : la rarete a l ecran', () => {
+  const LEGENDAIRE = PASSIVES.find((p) => p.legendary);
+  if (!LEGENDAIRE) {
+    throw new Error('fixture : aucun passif legendaire');
+  }
+
+  it('rarityLabel : rien pour une commune, le multiplicateur pour rare et legendaire', () => {
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1 })).toBe('');
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.RARE })).toBe('Rare ×2');
+    expect(rarityLabel({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.LEGENDAIRE })).toBe(
+      'Légendaire ×3',
+    );
+  });
+
+  it('un passif exclusivement legendaire se dit « Légendaire », sans x3 : il s applique une fois', () => {
+    expect(
+      rarityLabel({ nature: CARD.PASSIVE, refId: LEGENDAIRE.id, rarity: RARITY.LEGENDAIRE }),
+    ).toBe('Légendaire');
+    // Et s'il arrive avec une autre rarete, il ne promet rien de plus.
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: LEGENDAIRE.id, rarity: RARITY.RARE })).toBe(
+      'Rare',
+    );
+  });
+
+  it('une rarete inconnue venue du fil se lit commune', () => {
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1, rarity: 200 })).toBe('');
+  });
+
+  it('chaque carte porte sa rarete en data-rarity, et son etiquette', () => {
+    const h = harness();
+    h.client.draftCards = [
+      { nature: CARD.WEAPON, refId: 1 },
+      { nature: CARD.PASSIVE, refId: 1, rarity: RARITY.RARE },
+      { nature: CARD.WEAPON, refId: 3, rarity: RARITY.LEGENDAIRE },
+      { nature: CARD.WEAPON, refId: 2, rarity: 200 },
+    ];
+    h.screen.update();
+    expect(cards(h).map((c) => c.dataset.rarity)).toEqual(['0', '1', '2', '0']);
+    expect(cards(h).map((c) => c.querySelector('.draft-card__rarity')?.textContent)).toEqual([
+      '',
+      'Rare ×2',
+      'Légendaire ×3',
+      '',
+    ]);
   });
 });

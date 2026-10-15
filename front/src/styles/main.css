@@ -1078,6 +1078,52 @@
     border-color: #fff;
   }
 
+  /* La rarete (etape 10, §2.5) : gris, bleu, or. Declaree AVANT les etats :
+     l'illumination et la consomption d'une carte gagnee ou perdue portent la
+     meme propriete `animation` que le reflet legendaire, et doivent primer. */
+  .draft-card[data-rarity="0"] {
+    box-shadow: 0 0 0 5px #8f8f8f;
+  }
+
+  .draft-card[data-rarity="1"] {
+    box-shadow: 0 0 0 5px #4a8fe0;
+  }
+
+  .draft-card[data-rarity="2"] {
+    box-shadow: 0 0 0 5px #e8b830;
+    animation: draft-legendaire 1800ms ease-in-out infinite;
+  }
+
+  .draft-card__rarity {
+    min-height: 1em;
+    font-family: var(--font-jer);
+    font-size: 26px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+
+  .draft-card[data-rarity="1"] .draft-card__rarity {
+    color: #4a8fe0;
+  }
+
+  .draft-card[data-rarity="2"] .draft-card__rarity {
+    color: #e8b830;
+  }
+
+  @keyframes draft-legendaire {
+    50% {
+      box-shadow:
+        0 0 0 5px #f5d76e,
+        0 0 26px 6px rgb(245 215 110 / 0.75);
+    }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .draft-card[data-rarity="2"] {
+      animation: none;
+    }
+  }
+
   .draft-card[data-state="taken"] {
     opacity: 0.35;
   }
