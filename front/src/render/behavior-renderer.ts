@@ -142,6 +142,9 @@ export class BehaviorRenderer {
       } else if (s.kind === 'bouclier') {
         // L'arc du bouclier, devant lui : c'est le cote ou les tirs ricochent.
         const a = s.angle ?? 0;
+        // `moveTo` d'abord : sans lui, Pixi relie l'arc a la fin de la forme
+        // precedente — le long trait blanc vu en jeu.
+        g.moveTo(s.x + Math.cos(a - 0.9) * s.radius, s.y + Math.sin(a - 0.9) * s.radius);
         g.arc(s.x, s.y, s.radius, a - 0.9, a + 0.9).stroke({
           color: 0xd9e3f0,
           width: 5,
