@@ -3,13 +3,14 @@ import { describe, expect, it } from 'vitest';
 import { archetypeOf, BOSS_ARCHETYPE } from './archetypes';
 import {
   CRIT_CHANCE,
+  CRIT_MULTIPLIER,
   PROJECTILE_HIT_RADIUS,
   TICK_HZ,
   VIF_ARGENT_HIT_RADIUS_BONUS,
 } from './constants';
 import { ELEMENT } from './elements';
 import { Horde } from './horde';
-import { Projectiles } from './projectiles';
+import { BASE_CRIT, Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
 import type { Weapon } from './weapons';
 import { projectileTrailPx, WEAPONS, weaponOf } from './weapons';
@@ -1251,5 +1252,39 @@ describe('Projectiles — le coup critique', () => {
     // Le creneau 0 a ete comble par le dernier : son critique doit l'avoir
     // suivi.
     expect(p.critAt(0)).toBe(avant[avant.length - 1]);
+  });
+
+  it('etape 10 : une chance de 1 fait criter toute la salve, 0 aucun projectile', () => {
+    const p = new Projectiles(64);
+    const arme = { ...SPREAD, projectileCount: 20 };
+    p.fireSalvoDirected(arme, 5, 0, 0, 1, 0, arme.damage, 20, 1, { chance: 1, multiplier: 2.3 });
+    expect(Array.from({ length: p.count }, (_, i) => p.critAt(i)).every(Boolean)).toBe(true);
+    const q = new Projectiles(64);
+    q.fireSalvoDirected(arme, 5, 0, 0, 1, 0, arme.damage, 20, 1, { chance: 0, multiplier: 2.3 });
+    expect(Array.from({ length: q.count }, (_, i) => q.critAt(i)).some(Boolean)).toBe(false);
+    expect(q.critFactorAt(0)).toBe(1);
+  });
+
+  it('etape 10 : le projectile EMPORTE le multiplicateur du tireur, compaction comprise', () => {
+    const p = new Projectiles(16);
+    const arme = { ...SPREAD, projectileCount: 12 };
+    p.fireSalvoDirected(arme, 99, 0, 0, 1, 0, arme.damage, 12, 1, { chance: 1, multiplier: 2.6 });
+    expect(p.critFactorAt(0)).toBeCloseTo(2.6, 5);
+    const horde = new Horde(10);
+    addOne(horde, 1, 0, 0);
+    p.collide(horde, () => undefined);
+    expect(p.critFactorAt(0)).toBeCloseTo(2.6, 5);
+  });
+
+  it('etape 10 : sans critique precise, la salve tire au critique de base', () => {
+    expect(BASE_CRIT).toEqual({ chance: CRIT_CHANCE, multiplier: CRIT_MULTIPLIER });
+    const crit = salve(1234, 3, 8);
+    const p = new Projectiles(64);
+    const arme = { ...SPREAD, projectileCount: 8 };
+    p.fireSalvoDirected(arme, 1234, 0, 0, 1, 0, arme.damage, 8, 3, BASE_CRIT);
+    expect(Array.from({ length: p.count }, (_, i) => p.critAt(i))).toEqual(crit);
+    for (let i = 0; i < p.count; i++) {
+      expect(p.critFactorAt(i)).toBeCloseTo(p.critAt(i) ? CRIT_MULTIPLIER : 1, 5);
+    }
   });
 });

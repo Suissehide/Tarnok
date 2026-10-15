@@ -8,8 +8,17 @@ import type { PassiveKind } from './passives';
  * cartes ; chacune des autres a son site unique : `pickupRadius` dans
  * `Room#pickupRadius`, `armor` dans `combat.ts` (contact et charge), `xp` dans
  * `Room#gainXp` (moyenne d'equipe), `gold` au versement (`Session`).
+ *
+ * ⚠️ **Les genres de passif de l'etape 10 n'en font PAS partie** : la
+ * boutique ne les vend pas, et les y laisser entrer aurait ajoute sept cles a
+ * zero a `BONUS_ZERO` et a chaque compte.
  */
-export type BonusKind = PassiveKind | 'pickupRadius' | 'armor' | 'xp' | 'gold';
+export type BonusKind =
+  | Extract<PassiveKind, 'fireRate' | 'damage' | 'maxHp' | 'speed' | 'regen'>
+  | 'pickupRadius'
+  | 'armor'
+  | 'xp'
+  | 'gold';
 
 /**
  * Un article de la boutique.

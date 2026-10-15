@@ -1,9 +1,16 @@
-import { CARD, type Card } from '@shared/cards';
-import { PASSIVE_SLOTS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { applicationsOf, CARD, type Card } from '@shared/cards';
+import {
+  COLOSSUS_HP_STEP,
+  HARVEST_RADIUS,
+  PASSIVE_SLOTS,
+  TICK_HZ,
+  WEAPON_SLOTS,
+} from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
+import { normalizeRarity, RARITY } from '@shared/rarity';
 import {
   CALIBRE_PER_UPGRADE,
   DAMAGE_PER_UPGRADE,
@@ -178,7 +185,7 @@ export function blockedReason(card: Card, loadout: Loadout): string | null {
 export function ownedNames(nature: number, loadout: Loadout): string {
   if (nature === CARD.PASSIVE) {
     return PASSIVES.filter((p) => loadout.stacksOf(p.id) > 0)
-      .map((p) => p.name)
+      .map((p) => p.label)
       .join(', ');
   }
   return loadout.weaponIds.map((id) => weaponOf(id).name).join(', ');
@@ -201,6 +208,29 @@ export function natureLabel(nature: number): string {
   }
 }
 
+/** Le nom de chaque rarete, dans l'ordre de `RARITY`. */
+const RARITY_NAMES = ['Commune', 'Rare', 'Légendaire'] as const;
+
+/**
+ * L'etiquette de rarete (etape 10, §2.5) : le nom ET ce que la carte vaut
+ * vraiment — « Rare ×2 », « Légendaire ×3 ».
+ *
+ * ⚠️ **Le multiplicateur vient de `applicationsOf`, jamais de la table des
+ * raretes** : un passif exclusivement legendaire s'applique x1, et lui
+ * ecrire « ×3 » serait promettre trois cartes qu'il ne donne pas.
+ *
+ * Vide pour une commune : la bordure grise dit deja tout.
+ */
+export function rarityLabel(card: Card): string {
+  const rarity = normalizeRarity(card.rarity);
+  if (rarity === RARITY.COMMUNE) {
+    return '';
+  }
+  const nom = RARITY_NAMES[rarity] ?? '';
+  const fois = applicationsOf(card);
+  return fois > 1 ? `${nom} ×${fois}` : nom;
+}
+
 /**
  * Le nom de ce que la carte porte.
  *
@@ -209,7 +239,7 @@ export function natureLabel(nature: number): string {
  * ecran de choix.
  */
 export function cardName(card: Card): string {
-  return card.nature === CARD.PASSIVE ? passiveOf(card.refId).name : weaponOf(card.refId).name;
+  return card.nature === CARD.PASSIVE ? passiveOf(card.refId).label : weaponOf(card.refId).name;
 }
 
 /**
@@ -237,6 +267,15 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   // laisserait croire a un gain unique, c'est-a-dire exactement ce que
   // « vitalite » fait deja et que cette carte ne fait pas.
   regen: (m) => `+${m.toLocaleString('fr-FR')} PV/s`,
+  // Etape 10. ⚠️ Chacun dit OU il agit : « +1 salve » sans « armes de tir »
+  // laisserait croire que le halo en profite.
+  critChance: (m) => `+${pourcent(m)} % critique`,
+  critDamage: (m) => `+${pourcent(m)} % dégâts critiques`,
+  salvo: (m) => `+${m} salve, armes de tir`,
+  zone: (m) => `+${m} zone, toutes armes`,
+  echo: (m) => `+${pourcent(m)} % dégâts de vos réactions`,
+  harvest: (m) => `+${m} PV par mort à ${HARVEST_RADIUS} px`,
+  colossus: (m) => `+${pourcent(m)} % dégâts par ${COLOSSUS_HP_STEP} PV max`,
 };
 
 /**
@@ -391,6 +430,8 @@ export class DraftScreen {
       root.type = 'button';
       root.className = 'k k-banner draft-card';
       root.dataset.index = `${index}`;
+      // La rarete (etape 10) : la bordure et le reflet se lisent en CSS.
+      root.dataset.rarity = `${normalizeRarity(card.rarity)}`;
 
       // Le cadre d'icone de la maquette (ecran 05) : la cle du passif, ou
       // l'epee pour toute arme — l'element se lit dans le detail, en couleur.
@@ -407,6 +448,10 @@ export class DraftScreen {
         badge.classList.add('draft-card__element');
         frame.append(badge);
       }
+
+      const rarete = document.createElement('span');
+      rarete.className = 'draft-card__rarity ol';
+      rarete.textContent = rarityLabel(card);
 
       const nature = document.createElement('span');
       nature.className = 'draft-card__nature';
@@ -435,7 +480,7 @@ export class DraftScreen {
       const tokens = document.createElement('span');
       tokens.className = 'draft-card__tokens';
 
-      root.append(tokens, frame, nature, name, stacks, detail);
+      root.append(tokens, frame, rarete, nature, name, stacks, detail);
 
       // Une carte que mon inventaire refuse : simplement GRISEE et inerte
       // (retour de playtest : un bandeau en plus chargeait la carte). La raison

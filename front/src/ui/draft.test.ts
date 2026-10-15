@@ -5,6 +5,7 @@ import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
+import { RARITY } from '@shared/rarity';
 import { WEAPONS, weaponOf } from '@shared/weapons';
 import { beforeEach, describe, expect, it } from 'vitest';
 
@@ -20,6 +21,7 @@ import {
   DraftScreen,
   type DraftSource,
   magnitudeLabel,
+  rarityLabel,
   remainingSeconds,
 } from './draft';
 
@@ -316,6 +318,22 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
       expect(magnitudeLabel(p)).toMatch(/^[+−]\d/);
     }
   });
+
+  it.each([
+    ['critChance', '+4 % critique'],
+    ['critDamage', '+30 % dégâts critiques'],
+    ['salvo', '+1 salve, armes de tir'],
+    ['zone', '+1 zone, toutes armes'],
+    ['echo', '+100 % dégâts de vos réactions'],
+    ['harvest', '+1 PV par mort à 300 px'],
+    ['colossus', '+1 % dégâts par 10 PV max'],
+  ] as const)('etape 10 : %s se lit « %s »', (kind, attendu) => {
+    const passive = PASSIVES.find((p) => p.kind === kind);
+    if (!passive) {
+      throw new Error(`fixture : aucun passif de genre ${kind}`);
+    }
+    expect(magnitudeLabel(passive)).toBe(attendu);
+  });
 });
 
 describe('remainingSeconds', () => {
@@ -409,7 +427,7 @@ describe("DraftScreen — l'etalage", () => {
     h.client.draftCards = [{ nature: CARD.PASSIVE, refId: 0 }];
     h.screen.update();
     expect(cards(h)).toHaveLength(1);
-    expect(cards(h)[0]?.querySelector('.draft-card__name')?.textContent).toBe('vitalite');
+    expect(cards(h)[0]?.querySelector('.draft-card__name')?.textContent).toBe('Vitalité');
   });
 
   it('affiche le chronometre de la fenetre, decompte compris', () => {
@@ -603,7 +621,7 @@ describe('DraftScreen — la revelation (§4.2)', () => {
     h.client.result([{ playerId: 1, cardIndex: 1, outcome: OUTCOME.AUTO }]);
     h.screen.update();
     expect(statesOf(h)[1]).toBe('won');
-    expect(h.status.textContent).toBe('Vous obtenez : cadence');
+    expect(h.status.textContent).toBe('Vous obtenez : Cadence');
   });
 
   it('montre au perdant ce qu il perd ET ce qu il obtient a la place, DANS LE MEME LOT', () => {
@@ -789,7 +807,7 @@ describe('une carte que mon inventaire refuse', () => {
     const cadence = cards(h)[1];
     expect(cadence?.disabled).toBe(true);
     expect(cadence?.title).toContain(`Passifs complets — ${PASSIVE_SLOTS}/${PASSIVE_SLOTS}`);
-    expect(cadence?.title).toContain(passiveOf(0).name);
+    expect(cadence?.title).toContain(passiveOf(0).label);
     cadence?.click();
     expect(h.client.sent).toEqual([]);
     // Les armes, elles, rentrent encore.
@@ -826,5 +844,52 @@ describe('une carte que mon inventaire refuse', () => {
 
   it('blockedReason rend null pour une carte prenable', () => {
     expect(blockedReason({ nature: CARD.WEAPON, refId: 3 }, new Loadout())).toBeNull();
+  });
+});
+
+describe('etape 10 : la rarete a l ecran', () => {
+  const LEGENDAIRE = PASSIVES.find((p) => p.legendary);
+  if (!LEGENDAIRE) {
+    throw new Error('fixture : aucun passif legendaire');
+  }
+
+  it('rarityLabel : rien pour une commune, le multiplicateur pour rare et legendaire', () => {
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1 })).toBe('');
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.RARE })).toBe('Rare ×2');
+    expect(rarityLabel({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.LEGENDAIRE })).toBe(
+      'Légendaire ×3',
+    );
+  });
+
+  it('un passif exclusivement legendaire se dit « Légendaire », sans x3 : il s applique une fois', () => {
+    expect(
+      rarityLabel({ nature: CARD.PASSIVE, refId: LEGENDAIRE.id, rarity: RARITY.LEGENDAIRE }),
+    ).toBe('Légendaire');
+    // Et s'il arrive avec une autre rarete, il ne promet rien de plus.
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: LEGENDAIRE.id, rarity: RARITY.RARE })).toBe(
+      'Rare',
+    );
+  });
+
+  it('une rarete inconnue venue du fil se lit commune', () => {
+    expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1, rarity: 200 })).toBe('');
+  });
+
+  it('chaque carte porte sa rarete en data-rarity, et son etiquette', () => {
+    const h = harness();
+    h.client.draftCards = [
+      { nature: CARD.WEAPON, refId: 1 },
+      { nature: CARD.PASSIVE, refId: 1, rarity: RARITY.RARE },
+      { nature: CARD.WEAPON, refId: 3, rarity: RARITY.LEGENDAIRE },
+      { nature: CARD.WEAPON, refId: 2, rarity: 200 },
+    ];
+    h.screen.update();
+    expect(cards(h).map((c) => c.dataset.rarity)).toEqual(['0', '1', '2', '0']);
+    expect(cards(h).map((c) => c.querySelector('.draft-card__rarity')?.textContent)).toEqual([
+      '',
+      'Rare ×2',
+      'Légendaire ×3',
+      '',
+    ]);
   });
 });

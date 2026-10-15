@@ -15,7 +15,7 @@ import {
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
-  CRIT_MULTIPLIER,
+  HARVEST_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
@@ -24,6 +24,7 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import { linkedNeighbours } from '@shared/links';
+import type { Loadout } from '@shared/loadout';
 import { distanceToSegmentSquared, type Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
 import { REACTION, reactionForPair } from '@shared/reactions';
@@ -166,6 +167,24 @@ export class OrbField {
   truncatedOrbs = 0;
   #count = 0;
 
+  /**
+   * La position (x, y, a plat) de CHAQUE mort depuis le dernier
+   * `drainFallen`, qu'elle laisse un orbe ou non — pour Moisson (etape 10).
+   *
+   * ⚠️ **Ici parce que c'est le seul goulot qui voit chaque mort AVEC sa
+   * position** : les huit chemins de mort de ce fichier appellent `spawn`
+   * juste avant `horde.kill`, et une fois `kill` passe la horde est compactee
+   * — `Room.step` ne connait plus que des identites. `Room.step` vide la file
+   * a chaque tick.
+   */
+  #fallen: number[] = [];
+
+  drainFallen(): number[] {
+    const out = this.#fallen;
+    this.#fallen = [];
+    return out;
+  }
+
   constructor(readonly capacity: number) {
     this.id = new Uint32Array(capacity);
     this.x = new Float32Array(capacity);
@@ -207,6 +226,8 @@ export class OrbField {
    * gagnee qui s'evapore, c'est-a-dire exactement ce que cette tache retire.
    */
   spawn(entityId: number, x: number, y: number): void {
+    // AVANT la garde du butin : Moisson compte les morts, pas les orbes.
+    this.#fallen.push(x, y);
     if (!leavesDrop(entityId)) {
       return;
     }
@@ -1052,6 +1073,13 @@ function shareAmalgameDamage(
  * meme reserve de zones que si elles etaient seules — c'est la regle de fusion
  * qui decide, et elle a besoin de l'etat complet. Les degats, eux, ne
  * s'interessent pas aux zones.
+ *
+ * ⚠️ **Echo (etape 10, §4) : `echoOf(t.by)` cartes doublent, triplent… les
+ * degats INSTANTANES de la reaction** — tous ceux que cette fonction inflige,
+ * par le balayage, la chaine ou la cible unique. Le DECLENCHEUR (`by`), jamais
+ * le marqueur (`markBy`). Les champs poses au sol ne changent pas : ce ne sont
+ * pas des degats instantanes. Serveur seul : ce sont des PV, que le serveur
+ * arbitre seul — aucun octet de plus.
  */
 export function applyReactions(
   horde: Horde,
@@ -1060,6 +1088,7 @@ export function applyReactions(
   triggers: readonly ReactionTrigger[],
   zones: ZoneField,
   reactions: Reactions,
+  echoOf: (playerId: number) => number = () => 0,
 ): number[] {
   for (const t of triggers) {
     postZone(zones, t, tick, reactions);
@@ -1068,12 +1097,23 @@ export function applyReactions(
   const dead = new Set<number>();
   for (const t of triggers) {
     const def = reactionForPair(t.pair);
+    const echo = 1 + echoOf(t.by);
     if (def?.id === REACTION.EMBRASEMENT) {
       // ⚠️ **Fusionnee avec `damageInRadius` a la revue finale de l'etape 5b
       // (B4) : `damagePoisonedInRadius` n'existe plus, voir le docbloc de
       // `damageInRadius`.** `markFilter = ELEMENT.POIX` reproduit exactement
       // son comportement.
-      damageInRadius(horde, t.x, t.y, def.radius, def.damage, zones, tick, dead, ELEMENT.POIX);
+      damageInRadius(
+        horde,
+        t.x,
+        t.y,
+        def.radius,
+        def.damage * echo,
+        zones,
+        tick,
+        dead,
+        ELEMENT.POIX,
+      );
     } else if (def?.id === REACTION.COURT_CIRCUIT) {
       // ⚠️ **`def.damage` vaut ICI `REACTION_DAMAGE`, decision assumee de
       // `shared/reactions.ts` : Court-circuit reutilise le degat generique,
@@ -1082,7 +1122,7 @@ export function applyReactions(
       // perte de PV exacte (`def.damage * 3` au site d'appel y a ete mesure
       // et tue, revue de la tache 6) — une egalite de VALEUR n'exempte jamais
       // de garder le CHEMIN qui la lit.
-      chainWhilePoisoned(horde, t, def.damage, zones, tick, dead);
+      chainWhilePoisoned(horde, t, def.damage * echo, zones, tick, dead);
     } else if (def?.id === REACTION.ECLAT_DE_GEL) {
       // ⚠️ **Une SEULE cible, jamais un balayage** — `def.radius` vaut 0
       // (voir son docbloc dans `shared/reactions.ts`) : `damageInRadius`
@@ -1101,7 +1141,7 @@ export function applyReactions(
       // geometrique ou en chaine meme sans identite de declencheur.
       const slot = t.entityId !== undefined ? horde.slotOf(t.entityId) : -1;
       if (slot >= 0) {
-        appliquerDegats(horde, slot, def.damage, zones, tick, dead);
+        appliquerDegats(horde, slot, def.damage * echo, zones, tick, dead);
       }
     } else if (def?.id === REACTION.VAPORISATION) {
       // ⚠️ **Vaporisation (Braise + Vif-argent) : degats en RAYON autour de
@@ -1139,7 +1179,7 @@ export function applyReactions(
             horde.x[linkedSlot] ?? 0,
             horde.y[linkedSlot] ?? 0,
             def.radius,
-            def.damage,
+            def.damage * echo,
             zones,
             tick,
             dead,
@@ -1162,7 +1202,7 @@ export function applyReactions(
         if (slot < 0) {
           continue;
         }
-        appliquerDegats(horde, slot, def.damage, zones, tick, dead);
+        appliquerDegats(horde, slot, def.damage * echo, zones, tick, dead);
         // Le champ corrosif SUIT la cible, pas le point d'impact d'origine —
         // le declencheur `t` porte deja le bon couple/element, seule la
         // position change.
@@ -1171,13 +1211,13 @@ export function applyReactions(
     } else if (def?.id === REACTION.PARATONNERRE) {
       // Paratonnerre (Foudre + Vif-argent) : voir `chainPreferringLinked`
       // ci-dessus pour la forme complete (`exclude` pre-rempli des non-lies).
-      chainPreferringLinked(horde, t, def.damage, zones, tick, dead);
+      chainPreferringLinked(horde, t, def.damage * echo, zones, tick, dead);
     } else if (def?.id === REACTION.AMALGAME) {
       // Amalgame (Poix + Vif-argent) : voir `shareAmalgameDamage` ci-dessus
       // pour la forme complete (un seul niveau, aucune cascade).
-      shareAmalgameDamage(horde, t, def.damage, zones, tick, dead);
+      shareAmalgameDamage(horde, t, def.damage * echo, zones, tick, dead);
     } else {
-      damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE, zones, tick, dead);
+      damageInRadius(horde, t.x, t.y, REACTION_RADIUS, REACTION_DAMAGE * echo, zones, tick, dead);
     }
   }
   if (dead.size === 0) {
@@ -1278,7 +1318,7 @@ export function resolveProjectileDamage(
         souffle,
         // Le critique vaut aussi pour un souffle de fin de course : c'est le
         // MEME projectile, et son tirage date de son emission.
-        projectiles.damageAt(slot) * (projectiles.critAt(slot) ? CRIT_MULTIPLIER : 1),
+        projectiles.damageAt(slot) * projectiles.critFactorAt(slot),
         zones,
         tick,
         dead,
@@ -1326,7 +1366,7 @@ export function resolveProjectileDamage(
       // l'equipe a prepare, et ce que le hasard accorde. Le tirage, lui, date
       // de l'EMISSION (voir `Projectiles.critAt`) : le client a deja affiche
       // le meme.
-      const coup = damage * ampNeutre * (projectiles.critAt(projectileSlot) ? CRIT_MULTIPLIER : 1);
+      const coup = damage * ampNeutre * projectiles.critFactorAt(projectileSlot);
       const blastRadius = projectiles.blastRadiusAt(projectileSlot);
       if (blastRadius > 0) {
         // ⚠️ **L'arme de zone passe par LE balayage commun** (tache 16), celui
@@ -1697,6 +1737,48 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
       player.hp = Math.max(0, player.hp - CONTACT_DAMAGE * (1 - (player.armor ?? 0)));
       player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
     }
+  }
+}
+
+/** Ce que Moisson lit d'un joueur — `PlayerState` le satisfait tel quel. */
+export interface HarvestPlayer {
+  readonly x: number;
+  readonly y: number;
+  hp: number;
+  readonly maxHp: number;
+  readonly loadout: Pick<Loadout, 'bonus'>;
+}
+
+/**
+ * Moisson (etape 10, §4) : chaque ennemi mort a MOINS de `HARVEST_RADIUS` du
+ * porteur lui rend `bonus('harvest')` PV, borne par son PV max.
+ *
+ * ⚠️ **Cooperative par construction** : le serveur n'attribue pas les morts a
+ * un tueur, la proximite evite d'avoir a le faire — un allie qui tue pres de
+ * toi te soigne aussi.
+ *
+ * ⚠️ **Un joueur a terre ne se releve pas**, meme garde que `#regenerate` :
+ * sans elle, `#checkRunOver` verrait la run repartir.
+ */
+export function resolveHarvest(players: Iterable<HarvestPlayer>, fallen: readonly number[]): void {
+  const r2 = HARVEST_RADIUS * HARVEST_RADIUS;
+  for (const p of players) {
+    if (p.hp <= 0) {
+      continue;
+    }
+    const parMort = p.loadout.bonus('harvest');
+    if (parMort === 0) {
+      continue;
+    }
+    let gain = 0;
+    for (let i = 0; i + 1 < fallen.length; i += 2) {
+      const dx = (fallen[i] ?? 0) - p.x;
+      const dy = (fallen[i + 1] ?? 0) - p.y;
+      if (dx * dx + dy * dy < r2) {
+        gain += parMort;
+      }
+    }
+    p.hp = Math.min(p.maxHp, p.hp + gain);
   }
 }
 

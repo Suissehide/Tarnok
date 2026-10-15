@@ -1,10 +1,19 @@
 import { describe, expect, it } from 'vitest';
 
-import { CARD, drawSpread, OWNED_WEIGHT } from './cards';
+import {
+  applicationsOf,
+  applyCardToLoadout,
+  CARD,
+  type Card,
+  drawSpread,
+  isLegendaryOnly,
+  OWNED_WEIGHT,
+} from './cards';
 import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { makeRandom } from './random';
+import { RARITY } from './rarity';
 import { BASE_WEAPON_ID, UPGRADE_KINDS, upgradesFor, WEAPONS, type Weapon } from './weapons';
 
 function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
@@ -12,8 +21,11 @@ function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
   return new Map(loadouts.map((l, i) => [i + 1, l]));
 }
 
-/** Toutes les cartes que `buildPool` peut produire : toutes les armes (dague comprise), plus passifs. */
-const TAILLE_DU_POOL = WEAPONS.length + PASSIVES.length;
+/**
+ * Toutes les cartes que `buildPool` peut produire, hors passifs exclusivement
+ * legendaires, qui n'ont que 3 % des emplacements.
+ */
+const TAILLE_DU_POOL = WEAPONS.length + PASSIVES.filter((p) => !p.legendary).length;
 
 describe('drawSpread', () => {
   it('tire joueurs + SPREAD_BONUS cartes', () => {
@@ -160,10 +172,12 @@ describe('drawSpread', () => {
     // On balaie assez de graines pour que chaque carte du pool sorte au moins
     // une fois : un seul tirage ne prouverait rien.
     const vues = new Set<string>();
-    for (let seed = 1; seed <= 200; seed++) {
+    for (let seed = 1; seed <= 400; seed++) {
       const spread = drawSpread(equipe(new Loadout()), makeRandom(seed));
       for (const carte of spread) {
-        vues.add(`${carte.nature}:${carte.refId}`);
+        if (!isLegendaryOnly(carte)) {
+          vues.add(`${carte.nature}:${carte.refId}`);
+        }
       }
     }
     expect(vues.has(`${CARD.WEAPON}:${BASE_WEAPON_ID}`)).toBe(true);
@@ -221,5 +235,159 @@ describe('drawSpread — rien que personne ne peut prendre', () => {
       }
     }
     expect(vus.size).toBe(UPGRADE_KINDS);
+  });
+});
+
+describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
+  const ARME = WEAPONS[3]; // lance-flammes
+  if (!ARME) {
+    throw new Error('fixture : arme absente');
+  }
+  const ASPECT = upgradesFor(ARME)[1] ?? -1; // la cadence, toujours proposee
+
+  it('un passif rare donne 2 exemplaires, un legendaire 3, une commune 1', () => {
+    for (const [rarity, attendu] of [
+      [undefined, 1],
+      [RARITY.COMMUNE, 1],
+      [RARITY.RARE, 2],
+      [RARITY.LEGENDAIRE, 3],
+    ] as const) {
+      const l = new Loadout();
+      applyCardToLoadout(l, { nature: CARD.PASSIVE, refId: 1, rarity });
+      expect(l.stacksOf(1)).toBe(attendu);
+      // Un seul emplacement, quelle que soit la rarete.
+      expect(l.passiveSlotsUsed).toBe(1);
+    }
+  });
+
+  it('une arme rare NON possedee : l acquisition, plus un cran de SON aspect', () => {
+    const l = new Loadout();
+    applyCardToLoadout(l, {
+      nature: CARD.WEAPON,
+      refId: ARME.id,
+      upgrade: ASPECT,
+      rarity: RARITY.RARE,
+    });
+    expect(l.stacksOfWeapon(ARME.id)).toBe(2);
+    expect(l.upgradesOf(ARME.id, ASPECT)).toBe(1);
+    expect(l.weaponSlotsUsed).toBe(1);
+  });
+
+  it('une arme legendaire DEJA possedee : trois crans de son aspect', () => {
+    const l = new Loadout();
+    l.addWeapon(ARME.id);
+    applyCardToLoadout(l, {
+      nature: CARD.WEAPON,
+      refId: ARME.id,
+      upgrade: ASPECT,
+      rarity: RARITY.LEGENDAIRE,
+    });
+    expect(l.stacksOfWeapon(ARME.id)).toBe(4);
+    expect(l.upgradesOf(ARME.id, ASPECT)).toBe(3);
+  });
+
+  it('une rarete hors table venue du fil s applique une fois', () => {
+    const l = new Loadout();
+    applyCardToLoadout(l, { nature: CARD.PASSIVE, refId: 1, rarity: 200 });
+    expect(l.stacksOf(1)).toBe(1);
+  });
+
+  it('canTake se juge sur la PREMIERE application : un arsenal plein leve, et rien n est applique', () => {
+    const l = new Loadout();
+    for (let i = 0; i < WEAPON_SLOTS; i++) {
+      l.addWeapon(i + 1);
+    }
+    const nouvelle: Card = { nature: CARD.WEAPON, refId: WEAPON_SLOTS + 1, rarity: RARITY.RARE };
+    expect(() => applyCardToLoadout(l, nouvelle)).toThrow(/pleins/);
+    expect(l.stacksOfWeapon(WEAPON_SLOTS + 1)).toBe(0);
+    expect(l.weaponSlotsUsed).toBe(WEAPON_SLOTS);
+  });
+
+  it('applicationsOf dit combien de fois la carte s applique', () => {
+    expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1 })).toBe(1);
+    expect(applicationsOf({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.RARE })).toBe(2);
+    expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.LEGENDAIRE })).toBe(3);
+  });
+});
+
+describe('etape 10 : un passif exclusivement legendaire s applique x1', () => {
+  const LEGENDAIRES = PASSIVES.filter((p) => p.legendary);
+
+  it('quelle que soit la rarete que la carte porte, fil compris', () => {
+    expect(LEGENDAIRES.length).toBe(3);
+    for (const p of LEGENDAIRES) {
+      for (const rarity of [RARITY.COMMUNE, RARITY.RARE, RARITY.LEGENDAIRE, 200]) {
+        const l = new Loadout();
+        const carte: Card = { nature: CARD.PASSIVE, refId: p.id, rarity };
+        expect(isLegendaryOnly(carte)).toBe(true);
+        expect(applicationsOf(carte)).toBe(1);
+        applyCardToLoadout(l, carte);
+        expect(l.stacksOf(p.id)).toBe(1);
+      }
+    }
+  });
+
+  it('il occupe un emplacement de passif comme les autres', () => {
+    const l = new Loadout();
+    l.addPassive(0);
+    l.addPassive(1);
+    const legendaire = LEGENDAIRES[0];
+    if (!legendaire) {
+      throw new Error('fixture : aucun legendaire');
+    }
+    applyCardToLoadout(l, {
+      nature: CARD.PASSIVE,
+      refId: legendaire.id,
+      rarity: RARITY.LEGENDAIRE,
+    });
+    expect(l.passiveSlotsUsed).toBe(3);
+    expect(l.canTake(CARD.PASSIVE, 2)).toBe(false);
+  });
+
+  it('une arme n est jamais exclusivement legendaire', () => {
+    expect(isLegendaryOnly({ nature: CARD.WEAPON, refId: 10 })).toBe(false);
+  });
+});
+
+describe('drawSpread — la rarete (etape 10)', () => {
+  it('chaque carte porte une rarete, et les trois finissent par sortir', () => {
+    const vues = new Set<number>();
+    for (let seed = 1; seed <= 400; seed++) {
+      for (const c of drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed))) {
+        expect(c.rarity).toBeDefined();
+        vues.add(c.rarity ?? -1);
+      }
+    }
+    expect(vues).toEqual(new Set([RARITY.COMMUNE, RARITY.RARE, RARITY.LEGENDAIRE]));
+  });
+
+  it('les proportions suivent RARITY_WEIGHTS, a la louche', () => {
+    let communes = 0;
+    let total = 0;
+    for (let seed = 1; seed <= 2000; seed++) {
+      for (const c of drawSpread(equipe(new Loadout()), makeRandom(seed))) {
+        total++;
+        if (c.rarity === RARITY.COMMUNE) {
+          communes++;
+        }
+      }
+    }
+    expect(communes / total).toBeGreaterThan(0.76);
+    expect(communes / total).toBeLessThan(0.88);
+  });
+
+  it('un passif exclusivement legendaire ne sort QUE sur un emplacement legendaire', () => {
+    let vus = 0;
+    for (let seed = 1; seed <= 3000; seed++) {
+      for (const c of drawSpread(equipe(new Loadout()), makeRandom(seed))) {
+        if (isLegendaryOnly(c)) {
+          vus++;
+          expect(c.rarity).toBe(RARITY.LEGENDAIRE);
+        }
+      }
+    }
+    // Non-vacuite : sans cette ligne, un tirage qui ne les offrirait JAMAIS
+    // passerait l'assertion ci-dessus a vide.
+    expect(vus).toBeGreaterThan(0);
   });
 });

@@ -1,4 +1,5 @@
 import type { AddressInfo } from 'node:net';
+import { applicationsOf } from '@shared/cards';
 import { ORB_PICKUP_RADIUS, SPREAD_BONUS } from '@shared/constants';
 import { PASSIVES } from '@shared/passives';
 import {
@@ -495,8 +496,15 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
       const cartes =
         WEAPONS.reduce((n, w) => n + (loadout?.stacksOfWeapon(w.id) ?? 0), 0) +
         PASSIVES.reduce((n, p) => n + (loadout?.stacksOf(p.id) ?? 0), 0);
-      // L'arme du depart, plus la carte gagnee.
-      expect(cartes, `l inventaire du joueur ${client.playerId} est reste vide`).toBe(2);
+      // L'arme du depart, plus la carte gagnee — autant de fois que sa rarete
+      // le dit (etape 10) : une rare compte deux exemplaires.
+      const carte = spread.cards[granted.get(client.playerId) ?? -1];
+      if (!carte) {
+        throw new Error(`aucune carte attribuee au joueur ${client.playerId}`);
+      }
+      expect(cartes, `l inventaire du joueur ${client.playerId} est reste vide`).toBe(
+        1 + applicationsOf(carte),
+      );
     }
   }, 90_000);
 });

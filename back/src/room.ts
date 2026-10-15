@@ -49,6 +49,7 @@ import {
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
+import { armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
@@ -69,13 +70,11 @@ import {
   BASE_WEAPON_ID,
   beamRange,
   cooldownWithBonus,
-  DAMAGE_PER_UPGRADE,
   FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardIsAlive,
   guardPulsesAt,
   UPGRADE,
-  upgradedWeapon,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -97,6 +96,7 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveHalos,
+  resolveHarvest,
   resolveProjectileDamage,
   resolveVerglasCollisions,
   Venins,
@@ -264,7 +264,7 @@ export interface ReactionEvent {
 /** Un etalage a diffuser, tel que `DRAFT_OPEN` le transporte. */
 export interface DraftOpenEvent {
   deadlineTick: number;
-  cards: readonly { nature: number; refId: number }[];
+  cards: readonly Card[];
 }
 
 /** Une resolution a diffuser, telle que `DRAFT_RESULT` la transporte. */
@@ -1558,6 +1558,8 @@ export class Room {
       triggers,
       this.#zones,
       this.#reactions,
+      // Echo (etape 10) : les reactions que CE joueur declenche.
+      (id) => this.#players.get(id)?.loadout.bonus('echo') ?? 0,
     );
     // ⚠️ **APRES `applyReactions`, et c'est la tache 21 qui l'a deplace.** Les
     // zones naissaient du projectile, donc avant `markInZones` ; elles naissent
@@ -1712,6 +1714,10 @@ export class Room {
     });
     resolveContact([...this.#players.values()], this.horde);
     this.#regenerate();
+
+    // Moisson (etape 10) : les morts de CE tick, ou qu'elles viennent. Vide a
+    // chaque tick, porteur ou pas : la file ne doit jamais s'accumuler.
+    resolveHarvest(this.#players.values(), this.#orbs.drainFallen());
 
     const pickedIds = this.#orbs.resolvePickups(
       [...this.#players.values()].map((p) => ({
@@ -2192,9 +2198,9 @@ export class Room {
    * a chaque tir, a partir de l'inventaire du joueur.
    */
   #fireOne(p: PlayerState, weaponId: number, tick: number): void {
-    // Ses bonus propres appliques (salve, zone, perforation, portee) : tout ce
-    // qui suit lit cette copie, jamais l'entree du catalogue.
-    const weapon = upgradedWeapon(weaponOf(weaponId), (u) => p.loadout.upgradesOf(weaponId, u));
+    // Ses bonus propres ET ceux des passifs (Volee, Ampleur) appliques — la
+    // MEME fonction que le miroir client (`shared/firing.ts`).
+    const weapon = armedWeapon(p.loadout, weaponId);
     const cooldown = cooldownWithBonus(
       weapon.cooldownTicks,
       p.loadout.bonus('fireRate') +
@@ -2204,12 +2210,7 @@ export class Room {
     if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    const damage =
-      weapon.damage *
-      (1 +
-        p.loadout.bonus('damage') +
-        p.accountBonuses.damage +
-        DAMAGE_PER_UPGRADE * p.loadout.upgradesOf(weaponId, UPGRADE.DAMAGE));
+    const damage = shotDamage(weapon, p.loadout, p.accountBonuses.damage, p.maxHp);
     if (weapon.kind === 'halo') {
       // ⚠️ **Le halo ne tire rien : il met une PULSATION en file**, que
       // `resolveHalos` resoudra dans la meme passe que les projectiles (voir
@@ -2282,6 +2283,7 @@ export class Room {
       damage,
       count,
       p.id,
+      critOf(p.loadout),
     );
     p.lastFireTick[weaponId] = tick;
   }

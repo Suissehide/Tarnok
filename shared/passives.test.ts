@@ -9,9 +9,24 @@ describe('PASSIVES', () => {
     });
   });
 
-  it('compte entre quatre et six passifs', () => {
-    expect(PASSIVES.length).toBeGreaterThanOrEqual(4);
-    expect(PASSIVES.length).toBeLessThanOrEqual(6);
+  it('compte dix passifs ordinaires et trois exclusivement legendaires (etape 10)', () => {
+    expect(PASSIVES.filter((p) => !p.legendary)).toHaveLength(10);
+    expect(PASSIVES.filter((p) => p.legendary).map((p) => p.name)).toEqual([
+      'echo',
+      'moisson',
+      'colosse',
+    ]);
+  });
+
+  it('etape 10 : les magnitudes par carte de la spec', () => {
+    const de = (kind: string): number => PASSIVES.find((p) => p.kind === kind)?.magnitude ?? -1;
+    expect(de('critChance')).toBe(0.04);
+    expect(de('critDamage')).toBe(0.3);
+    expect(de('salvo')).toBe(1);
+    expect(de('zone')).toBe(1);
+    expect(de('echo')).toBe(1);
+    expect(de('harvest')).toBe(1);
+    expect(de('colossus')).toBe(0.01);
   });
 
   it('donne un nom et une magnitude strictement positive a chaque passif', () => {

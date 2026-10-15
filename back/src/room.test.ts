@@ -13,9 +13,11 @@ import {
   type BossCharge,
   chargePointAt,
 } from '@shared/boss';
-import { CARD, type Card } from '@shared/cards';
+import { applicationsOf, CARD, type Card } from '@shared/cards';
 import {
   COIN_DROP_ONE_IN,
+  CRIT_CHANCE,
+  CRIT_MULTIPLIER,
   EXTRACT_MULTIPLIER_STEP,
   FIELD_INPUT_DELAY_TICKS,
   FLOWFIELD_CELL,
@@ -60,6 +62,7 @@ import {
   zoneElement,
   zoneReaction,
 } from '@shared/protocol';
+import { RARITY } from '@shared/rarity';
 import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -1582,10 +1585,14 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!carte || !inv) {
       throw new Error('carte ou inventaire manquant');
     }
+    // L'arme du depart (la dague) est deja possedee par LES DEUX joueurs : une
+    // carte de dague s'empile dessus. (Le salon est a graine aleatoire : sans
+    // ce terme, le test rougissait chaque fois que la carte 0 etait la dague.)
+    const deja = carte.nature === CARD.WEAPON && carte.refId === BASE_WEAPON_ID ? 1 : 0;
     if (carte.nature === CARD.PASSIVE) {
       expect(inv.stacksOf(carte.refId)).toBe(0);
     } else {
-      expect(inv.stacksOfWeapon(carte.refId)).toBe(0);
+      expect(inv.stacksOfWeapon(carte.refId)).toBe(deja);
     }
     // Et le gagnant, lui, l'a bien eue : sans cette moitie, un code qui ne
     // donnerait la carte a PERSONNE passerait aussi.
@@ -1593,10 +1600,11 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!invGagnant) {
       throw new Error('inventaire du gagnant manquant');
     }
+    // La carte compte autant de fois que sa rarete (etape 10).
     if (carte.nature === CARD.PASSIVE) {
-      expect(invGagnant.stacksOf(carte.refId)).toBe(1);
+      expect(invGagnant.stacksOf(carte.refId)).toBe(applicationsOf(carte));
     } else {
-      expect(invGagnant.stacksOfWeapon(carte.refId)).toBe(1);
+      expect(invGagnant.stacksOfWeapon(carte.refId)).toBe(deja + applicationsOf(carte));
     }
   });
 
@@ -5363,5 +5371,167 @@ describe("l'invocation, posee par le salon (etape 8)", () => {
       room.step(DT);
     }
     expect(room.horde.slotOf(tardif)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+describe('etape 10 : la rarete multiplie la carte, soin de vitalite compris', () => {
+  const VITALITE = PASSIVES.find((p) => p.kind === 'maxHp')?.id ?? -1;
+  const PAR_CARTE = passiveOf(VITALITE).magnitude;
+
+  it.each([
+    [RARITY.RARE, 2],
+    [RARITY.LEGENDAIRE, 3],
+  ] as const)('une vitalite de rarete %i releve le plafond de %i cartes, et soigne d autant', (rarity, fois) => {
+    const room = new Room(0x10_0a_0101);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: VITALITE, rarity });
+    expect(room.loadoutOf(1)?.stacksOf(VITALITE)).toBe(fois);
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP + fois * PAR_CARTE);
+    // Le soin suit : `grantCard` lit l'ecart de PV max avant/apres.
+    expect(hpOf(room, 1)).toBe(PLAYER_MAX_HP + fois * PAR_CARTE);
+  });
+});
+
+describe('etape 10 : Volee dans le salon', () => {
+  const VOLEE = PASSIVES.find((p) => p.kind === 'salvo')?.id ?? -1;
+
+  it('la dague tire une salve elargie d un cran par carte de Volee', () => {
+    const room = new Room(0x10_0a_0501);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: VOLEE });
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    const appel = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    spy.mockRestore();
+    const dague = weaponOf(BASE_WEAPON_ID);
+    expect(dague.kind).toBe('tir');
+    expect(appel?.[7]).toBe(dague.projectileCount + stackGain(dague));
+  });
+});
+
+describe('etape 10 : Colosse dans le salon', () => {
+  const COLOSSE = PASSIVES.find((p) => p.kind === 'colossus')?.id ?? -1;
+  const VITALITE = PASSIVES.find((p) => p.kind === 'maxHp')?.id ?? -1;
+
+  function degatsDuPremierTir(vitalites: number): number {
+    const room = new Room(0x10_0a_0502);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: COLOSSE });
+    for (let i = 0; i < vitalites; i++) {
+      room.grantCard(1, { nature: CARD.PASSIVE, refId: VITALITE });
+    }
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    const appel = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    spy.mockRestore();
+    return appel?.[6] ?? 0;
+  }
+
+  it('lit le PV max DU SALON : 100 PV donnent x1,10, 120 PV x1,12', () => {
+    const base = weaponOf(BASE_WEAPON_ID).damage;
+    expect(degatsDuPremierTir(0)).toBeCloseTo(base * 1.1, 5);
+    expect(degatsDuPremierTir(1)).toBeCloseTo(base * 1.12, 5);
+  });
+});
+
+describe('etape 10 : le critique du tireur dans le salon', () => {
+  it('la salve part avec le tireur et SON critique, Precision et Ferocite comprises', () => {
+    const PRECISION = PASSIVES.find((p) => p.kind === 'critChance')?.id ?? -1;
+    const FEROCITE = PASSIVES.find((p) => p.kind === 'critDamage')?.id ?? -1;
+    const room = new Room(0x10_0a_0601);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: PRECISION });
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: FEROCITE });
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    const appel = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    spy.mockRestore();
+    expect(appel?.[8]).toBe(1);
+    expect(appel?.[9]?.chance).toBeCloseTo(CRIT_CHANCE + 0.04, 9);
+    expect(appel?.[9]?.multiplier).toBeCloseTo(CRIT_MULTIPLIER + 0.3, 9);
+  });
+});
+
+describe('etape 10 : Echo dans le salon', () => {
+  const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
+  const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0;
+  const ECHO = PASSIVES.find((p) => p.kind === 'echo')?.id ?? -1;
+
+  /**
+   * Le decor de « annonce la reaction » : le joueur 1 declenche au Givre, le
+   * joueur 2 entretient la marque de Braise. Rend la perte de PV de la cible
+   * (indestructible) et le nombre de reactions.
+   */
+  function scene(porteur: number | null): { perte: number; reactions: number } {
+    const room = new Room(0xbaa1_5e10);
+    room.join(1);
+    room.join(2);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    if (porteur !== null) {
+      room.grantCard(porteur, { nature: CARD.PASSIVE, refId: ECHO });
+    }
+    const before = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 700, before.x + 100, before.y, LOURD);
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+    let reactions = 0;
+    for (let i = 0; i < 20; i++) {
+      room.horde.applyMark(room.horde.slotOf(cible), ELEMENT.BRAISE, 2, room.tick);
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions += room.drainReactions().length;
+    }
+    return { perte: 1e6 - (room.horde.hp[room.horde.slotOf(cible)] ?? 0), reactions };
+  }
+
+  it('le salon passe Echo au declencheur, jamais au marqueur', () => {
+    const sans = scene(null);
+    const declencheur = scene(1);
+    const marqueur = scene(2);
+    expect(sans.reactions).toBeGreaterThan(0);
+    expect(declencheur.reactions).toBe(sans.reactions);
+    expect(declencheur.perte).toBeGreaterThan(sans.perte);
+    expect(marqueur.perte).toBe(sans.perte);
+  });
+});
+
+describe('etape 10 : Moisson dans le salon', () => {
+  const MOISSON = PASSIVES.find((p) => p.kind === 'harvest')?.id ?? -1;
+
+  /**
+   * Blesse le joueur au contact, puis fait tuer par sa dague une proie a 100
+   * px. Rend ses PV. Deux salons identiques a la carte pres : l'ecart EST ce
+   * que Moisson a rendu.
+   */
+  function pvApresUneMort(avecMoisson: boolean): number {
+    const room = new Room(0x10_0a_0801);
+    room.join(1);
+    const depart = positionOf(room, 1);
+    const contact = spawnMonsterAt(room, 700, depart.x, depart.y);
+    for (let t = 0; t < 20; t++) {
+      room.step(DT);
+    }
+    // Retire HORS du chemin des morts : ce monstre-ci ne doit rien rendre.
+    room.horde.kill([contact]);
+    if (avecMoisson) {
+      room.grantCard(1, { nature: CARD.PASSIVE, refId: MOISSON });
+    }
+    const pos = positionOf(room, 1);
+    const proie = spawnMonsterAt(room, 701, pos.x + 100, pos.y);
+    room.horde.hp[room.horde.slotOf(proie)] = 0.01;
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    for (let t = 0; t < 30 && room.horde.slotOf(proie) >= 0; t++) {
+      room.step(DT);
+    }
+    expect(room.horde.slotOf(proie)).toBe(-1);
+    return hpOf(room, 1);
+  }
+
+  it('une mort a 100 px rend exactement 1 PV a qui porte Moisson', () => {
+    const sans = pvApresUneMort(false);
+    expect(sans).toBeLessThan(PLAYER_MAX_HP - 1);
+    expect(pvApresUneMort(true) - sans).toBe(1);
   });
 });

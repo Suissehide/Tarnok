@@ -1,3 +1,4 @@
+import type { PassiveKind } from '@shared/passives';
 import type { BonusKind } from '@shared/shop';
 
 /**
@@ -32,7 +33,7 @@ export const avatar = (playerId: number, classId: number): string => {
 export const ICON_GOLD = icon(3);
 export const ICON_WEAPON = icon(5);
 
-const BONUS_ICONS: Record<BonusKind, number> = {
+const BONUS_ICONS: Record<BonusKind | PassiveKind, number> = {
   damage: 5,
   armor: 6,
   maxHp: 4,
@@ -42,9 +43,17 @@ const BONUS_ICONS: Record<BonusKind, number> = {
   fireRate: 10,
   xp: 11,
   gold: 3,
+  // Etape 10 : un choix d'affichage, comme le reste (douze icones en tout).
+  critChance: 9,
+  critDamage: 9,
+  salvo: 12,
+  zone: 1,
+  echo: 12,
+  harvest: 7,
+  colossus: 4,
 };
 
-export const bonusIcon = (kind: BonusKind): string => icon(BONUS_ICONS[kind]);
+export const bonusIcon = (kind: BonusKind | PassiveKind): string => icon(BONUS_ICONS[kind]);
 
 /**
  * Un emplacement a l'echelle 1, icone au centre, compte d'empilements en coin

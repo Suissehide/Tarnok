@@ -22,9 +22,10 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
+import { critOf } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
-import { passiveOf } from '@shared/passives';
+import { PASSIVES, passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
   decode,
@@ -52,6 +53,7 @@ import {
   TOKEN_BYTES,
   VOTE_CHOICE,
 } from '@shared/protocol';
+import { RARITY } from '@shared/rarity';
 import { bonusesOf, maxBonus, SHOP_ITEMS } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -2561,7 +2563,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // ...mais la carte que l'issue designe est toujours la, et c'est la bonne.
     expect(client.draftCards).toHaveLength(2);
     const gagnee = client.draftCards[client.draftOutcomes[0]?.cardIndex ?? -1];
-    expect(gagnee).toEqual({ nature: CARD.WEAPON, refId: GRENADE, upgrade: 0 });
+    expect(gagnee).toEqual({ nature: CARD.WEAPON, refId: GRENADE, upgrade: 0, rarity: 0 });
 
     // Le prochain etalage remplace le precedent, et rouvre la negociation :
     // c'est LUI qui borne l'affichage, pas la fermeture.
@@ -2969,6 +2971,80 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // Et surtout : PAS la vitesse de base. Sans cette ligne, un `toBeCloseTo`
     // trop laxiste laisserait passer la constante en dur.
     expect(parcouru).not.toBeCloseTo(PLAYER_SPEED * STEP * IMAGES, 1);
+  });
+
+  it('etape 10 : une carte RARE gagnee s applique deux fois au miroir, comme au salon', () => {
+    const { client, socket } = setup(1);
+    socket.emit('message', {
+      data: encodeDraftOpen(600, [{ nature: CARD.PASSIVE, refId: FOUGUE, rarity: RARITY.RARE }]),
+    });
+    socket.emit('message', {
+      data: encodeDraftResult(0, [{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]),
+    });
+    expect(client.loadoutOf(1).stacksOf(FOUGUE)).toBe(2);
+  });
+
+  it('etape 10 : une arme LEGENDAIRE servie d office a un allie : acquisition plus deux crans', () => {
+    const { client, socket } = setup(1);
+    socket.emit('message', {
+      data: encodeDraftOpen(600, [
+        { nature: CARD.WEAPON, refId: GRENADE, upgrade: 1, rarity: RARITY.LEGENDAIRE },
+      ]),
+    });
+    socket.emit('message', {
+      data: encodeDraftResult(0, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.AUTO }]),
+    });
+    expect(client.loadoutOf(2).stacksOfWeapon(GRENADE)).toBe(3);
+    expect(client.loadoutOf(2).upgradesOf(GRENADE, 1)).toBe(2);
+  });
+
+  it('etape 10 : Volee elargit la salve affichee exactement comme celle du serveur', () => {
+    const VOLEE = PASSIVES.find((p) => p.kind === 'salvo')?.id ?? -1;
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.PASSIVE, refId: VOLEE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
+    const base = weaponOf(BASE_WEAPON_ID);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    expect(tir?.[7]).toBe(base.projectileCount + stackGain(base));
+  });
+
+  it('etape 10 : Colosse voyage avec le projectile affiche, comme au salon', () => {
+    const COLOSSE = PASSIVES.find((p) => p.kind === 'colossus')?.id ?? -1;
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.PASSIVE, refId: COLOSSE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
+    const base = weaponOf(BASE_WEAPON_ID);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    expect(tir?.[6]).toBeCloseTo(base.damage * 1.1, 6);
+  });
+
+  it('etape 10 : le miroir tire avec le VRAI tireur et son critique — comme le salon', () => {
+    // ⚠️ Avant l'etape 10, le client ne passait pas `by` : son critique etait
+    // tire de `hashRoll(tick, 0, i)` quand le serveur tirait
+    // `hashRoll(tick, p.id, i)`. Le chiffre dore affiche n'etait pas celui
+    // arbitre.
+    const FEROCITE = PASSIVES.find((p) => p.kind === 'critDamage')?.id ?? -1;
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.PASSIVE, refId: FEROCITE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    expect(tir?.[8]).toBe(1);
+    expect(tir?.[9]).toEqual(critOf(client.loadoutOf(1)));
   });
 });
 
