@@ -685,8 +685,13 @@ export const WAVE_ORDER_BYTES = 19;
 export const DEATHS_HEADER_BYTES = 7;
 /** `type u8 · deadlineTick u32 · count u8`. */
 export const DRAFT_OPEN_HEADER_BYTES = 6;
-/** Une carte : `nature u8 · refId u8 · upgrade u8`. */
-export const DRAFT_CARD_BYTES = 3;
+/**
+ * Une carte : `nature u8 · refId u8 · upgrade u8 · rarity u8`.
+ *
+ * ⚠️ **Quatre octets depuis l'etape 10** : la rarete en ajoute un, dans un
+ * message envoye une fois par montee de niveau — jamais par tick.
+ */
+export const DRAFT_CARD_BYTES = 4;
 /** `type u8 · cardIndex u8`. */
 export const DRAFT_TOKEN_BYTES = 2;
 /** `type u8 · count u8`. */
@@ -1528,6 +1533,8 @@ export interface WireCard {
   nature: number;
   refId: number;
   upgrade?: number;
+  /** La rarete (`RARITY`, etape 10). Absente : commune. */
+  rarity?: number;
 }
 
 /**
@@ -1548,6 +1555,7 @@ export function encodeDraftOpen(deadlineTick: number, cards: readonly WireCard[]
     v.setUint8(o, c.nature);
     v.setUint8(o + 1, c.refId);
     v.setUint8(o + 2, c.upgrade ?? 0);
+    v.setUint8(o + 3, c.rarity ?? 0);
     o += DRAFT_CARD_BYTES;
   }
   return buf;
@@ -1773,7 +1781,12 @@ function decodeDraftOpen(buf: ArrayBuffer): DraftOpenMessage {
   const cards: WireCard[] = [];
   let o = DRAFT_OPEN_HEADER_BYTES;
   for (let i = 0; i < count; i++) {
-    cards.push({ nature: v.getUint8(o), refId: v.getUint8(o + 1), upgrade: v.getUint8(o + 2) });
+    cards.push({
+      nature: v.getUint8(o),
+      refId: v.getUint8(o + 1),
+      upgrade: v.getUint8(o + 2),
+      rarity: v.getUint8(o + 3),
+    });
     o += DRAFT_CARD_BYTES;
   }
   return { type: MSG.DRAFT_OPEN, deadlineTick: v.getUint32(1, true), cards };

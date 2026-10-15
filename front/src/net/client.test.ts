@@ -52,6 +52,7 @@ import {
   TOKEN_BYTES,
   VOTE_CHOICE,
 } from '@shared/protocol';
+import { RARITY } from '@shared/rarity';
 import { bonusesOf, maxBonus, SHOP_ITEMS } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -2969,6 +2970,31 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // Et surtout : PAS la vitesse de base. Sans cette ligne, un `toBeCloseTo`
     // trop laxiste laisserait passer la constante en dur.
     expect(parcouru).not.toBeCloseTo(PLAYER_SPEED * STEP * IMAGES, 1);
+  });
+
+  it('etape 10 : une carte RARE gagnee s applique deux fois au miroir, comme au salon', () => {
+    const { client, socket } = setup(1);
+    socket.emit('message', {
+      data: encodeDraftOpen(600, [{ nature: CARD.PASSIVE, refId: FOUGUE, rarity: RARITY.RARE }]),
+    });
+    socket.emit('message', {
+      data: encodeDraftResult(0, [{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]),
+    });
+    expect(client.loadoutOf(1).stacksOf(FOUGUE)).toBe(2);
+  });
+
+  it('etape 10 : une arme LEGENDAIRE servie d office a un allie : acquisition plus deux crans', () => {
+    const { client, socket } = setup(1);
+    socket.emit('message', {
+      data: encodeDraftOpen(600, [
+        { nature: CARD.WEAPON, refId: GRENADE, upgrade: 1, rarity: RARITY.LEGENDAIRE },
+      ]),
+    });
+    socket.emit('message', {
+      data: encodeDraftResult(0, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.AUTO }]),
+    });
+    expect(client.loadoutOf(2).stacksOfWeapon(GRENADE)).toBe(3);
+    expect(client.loadoutOf(2).upgradesOf(GRENADE, 1)).toBe(2);
   });
 });
 

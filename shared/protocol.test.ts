@@ -739,15 +739,15 @@ describe('decode', () => {
 describe('DRAFT_OPEN', () => {
   // ⚠️ **Plus d'octet `owner`.** Il portait l'exclusivite des cartes reservees,
   // qui n'existe plus : toute carte est ouverte a tout le monde. Une carte
-  // tient en TROIS octets — le troisieme est l'aspect ameliore (`UPGRADE`) —,
+  // tient en QUATRE octets — le quatrieme est la rarete (`RARITY`, etape 10) —,
   // et c'est l'assertion de taille ci-dessous qui le garde.
   //
   // Les trois cartes ne partagent ni nature ni `refId` : un encodeur qui
   // intervertirait les deux octets se verrait.
   const cartes = [
-    { nature: 0, refId: 3, upgrade: 2 },
-    { nature: 1, refId: 7, upgrade: 0 },
-    { nature: 0, refId: 8, upgrade: 1 },
+    { nature: 0, refId: 3, upgrade: 2, rarity: 0 },
+    { nature: 1, refId: 7, upgrade: 0, rarity: 2 },
+    { nature: 0, refId: 8, upgrade: 1, rarity: 1 },
   ];
 
   it('fait un aller-retour exact', () => {
@@ -769,9 +769,9 @@ describe('DRAFT_OPEN', () => {
     );
     expect(encodeDraftOpen(1, []).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES);
     // ⚠️ La ligne ci-dessus se calcule AVEC la constante : elle passerait sur
-    // une carte de trois octets si la constante mentait aussi. Le chiffre nu
-    // est ce qui garde la disparition de l'octet `owner`.
-    expect(DRAFT_CARD_BYTES).toBe(3);
+    // une carte de quatre octets si la constante mentait aussi. Le chiffre nu
+    // est ce qui garde l'ajout de l'octet de rarete.
+    expect(DRAFT_CARD_BYTES).toBe(4);
     // ⚠️ **Meme trou, meme remede, cote en-tete.** Les deux assertions
     // precedentes calculent la taille AVEC `DRAFT_OPEN_HEADER_BYTES` : un
     // en-tete qui aurait grossi d'un masque d'eligibilite (§3.5 de la spec)
@@ -780,12 +780,41 @@ describe('DRAFT_OPEN', () => {
     // mesure (Ronde 2, tache 9 de l'etape 7b) : muter
     // `DRAFT_OPEN_HEADER_BYTES` a 7 laissait tout le reste de ce fichier vert.
     expect(DRAFT_OPEN_HEADER_BYTES).toBe(6);
-    expect(encodeDraftOpen(1, cartes).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES + 9);
+    expect(encodeDraftOpen(1, cartes).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES + 12);
   });
 
   it('leve sur un tampon tronque', () => {
     const buf = encodeDraftOpen(1, cartes);
     expect(() => decode(buf.slice(0, DRAFT_OPEN_HEADER_BYTES + 1))).toThrow(/tronque/);
+  });
+
+  it('etape 10 : la rarete est le QUATRIEME octet de chaque carte', () => {
+    const buf = encodeDraftOpen(1, cartes);
+    const v = new DataView(buf);
+    expect(v.getUint8(DRAFT_OPEN_HEADER_BYTES + 3)).toBe(0);
+    expect(v.getUint8(DRAFT_OPEN_HEADER_BYTES + DRAFT_CARD_BYTES + 3)).toBe(2);
+    expect(v.getUint8(DRAFT_OPEN_HEADER_BYTES + 2 * DRAFT_CARD_BYTES + 3)).toBe(1);
+  });
+
+  it('etape 10 : une carte sans rarete part commune, et un octet inconnu revient tel quel', () => {
+    const msg = decode(
+      encodeDraftOpen(1, [
+        { nature: 1, refId: 2 },
+        { nature: 1, refId: 3, rarity: 200 },
+      ]),
+    );
+    if (msg.type !== MSG.DRAFT_OPEN) {
+      throw new Error('type inattendu');
+    }
+    expect(msg.cards[0]?.rarity).toBe(0);
+    // Le fil ne juge pas : c'est `normalizeRarity` qui ramene 200 a commune.
+    expect(msg.cards[1]?.rarity).toBe(200);
+  });
+
+  it('etape 10 : 6 + 5 x 4 = 26 octets a deux joueurs, un octet de plus par carte et rien d autre', () => {
+    const cinq = [...cartes, ...cartes.slice(0, 2)];
+    expect(cinq).toHaveLength(5);
+    expect(encodeDraftOpen(1, cinq).byteLength).toBe(26);
   });
 });
 
