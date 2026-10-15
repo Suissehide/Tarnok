@@ -48,6 +48,7 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
+import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
 import { bossHp, extractGold, hpScale, palierGold, palierHp } from '@shared/paliers';
 import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
@@ -67,8 +68,10 @@ import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
   BASE_WEAPON_ID,
+  beamRange,
   cooldownWithBonus,
   MAX_FIRE_RATE_BONUS,
+  ORBIT_RADIUS,
   stackGain,
   WEAPONS,
   weaponOf,
@@ -5377,6 +5380,142 @@ describe("l'invocation, posee par le salon (etape 8)", () => {
       room.step(DT);
     }
     expect(room.horde.slotOf(tardif)).toBeGreaterThanOrEqual(0);
+  });
+});
+
+/**
+ * Étape 12 — **l'onde, la frappe et l'ancre**, vues depuis le salon : ce que
+ * `shared/` ne voit pas, c'est que `Room` les pose, les resout et les purge.
+ */
+describe('etape 12 : onde, frappe differee et ancre, posees par le salon', () => {
+  /** Un salon ou le joueur ne porte QUE cette arme — rien d'autre ne peut tuer. */
+  function salonAvec(
+    kind: string,
+    motion?: string,
+  ): { room: Room; arme: (typeof WEAPONS)[number] } {
+    const arme = WEAPONS.find(
+      (w) => w.kind === kind && (motion === undefined || w.motion === motion),
+    );
+    if (!arme) {
+      throw new Error(`aucune arme ${kind} ${motion ?? ''} au catalogue`);
+    }
+    const room = new Room();
+    room.join(1, undefined, arme.id);
+    expect([...(room.loadoutOf(1)?.weaponIds ?? [])]).toEqual([arme.id]);
+    return { room, arme };
+  }
+
+  /** Un monstre a 1 PV, tenu sur place : la horde ne le fait pas marcher dans le coup. */
+  function cloue(room: Room, waveId: number, x: number, y: number): () => void {
+    const id = spawnMonsterAt(room, waveId, x, y);
+    room.horde.hp[room.horde.slotOf(id)] = 1;
+    return () => {
+      const slot = room.horde.slotOf(id);
+      if (slot >= 0) {
+        room.horde.x[slot] = x;
+        room.horde.y[slot] = y;
+      }
+    };
+  }
+
+  const vivant = (room: Room, id: number): boolean => room.horde.slotOf(id) >= 0;
+
+  it('l onde tue dans son rayon, pas au-dela', () => {
+    const { room, arme } = salonAvec('onde');
+    const pos = positionOf(room, 1);
+    const rayon = arme.blastRadius;
+    const tenirDedans = cloue(room, 600, pos.x - rayon * 0.7, pos.y);
+    const dedans = room.horde.entityIdAt(room.horde.count - 1);
+    const tenirDehors = cloue(room, 601, pos.x, pos.y + rayon + 60);
+    const dehors = room.horde.entityIdAt(room.horde.count - 1);
+    // Un tir (visee non nulle au premier tick), puis plus aucun : toute la vie
+    // de CETTE onde, et un peu plus.
+    for (let i = 0; i < arme.projectileLifeTicks + 10; i++) {
+      room.applyInput(1, i + 1, 0, 0, i === 0 ? 127 : 0, 0);
+      tenirDedans();
+      tenirDehors();
+      room.step(DT);
+    }
+    expect(vivant(room, dedans)).toBe(false);
+    expect(vivant(room, dehors)).toBe(true);
+  });
+
+  it('le faisceau s arrete a sa portee : la visee (±127) n est pas une longueur', () => {
+    const { room, arme } = salonAvec('faisceau');
+    const pos = positionOf(room, 1);
+    const portee = beamRange(arme);
+    const tenirPres = cloue(room, 620, pos.x + portee * 0.5, pos.y);
+    const pres = room.horde.entityIdAt(room.horde.count - 1);
+    const tenirLoin = cloue(room, 621, pos.x + portee * 1.5, pos.y);
+    const loin = room.horde.entityIdAt(room.horde.count - 1);
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    tenirPres();
+    tenirLoin();
+    room.step(DT);
+    expect(vivant(room, pres)).toBe(false);
+    // Avant `aimPoint`, le trait mesurait ~127 fois sa portee et fauchait ici.
+    expect(vivant(room, loin)).toBe(true);
+  });
+
+  it('la frappe ne tue pas avant l echeance, tue a l echeance, au point fige au tir', () => {
+    const { room, arme } = salonAvec('frappe');
+    const pos = positionOf(room, 1);
+    const vise = { x: pos.x + beamRange(arme), y: pos.y };
+    // Le leurre est LA ou la frappe vise au tir, puis s'en va : s'il etait
+    // suivi, l'impact partirait avec lui.
+    cloue(room, 610, vise.x, vise.y);
+    const leurre = room.horde.entityIdAt(room.horde.count - 1);
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    const tir = room.tick;
+    const loin = { x: vise.x, y: vise.y + 4 * arme.blastRadius };
+    // La cible arrive APRES le tir, sur le point fige.
+    const tenirCible = cloue(room, 612, vise.x, vise.y);
+    const cible = room.horde.entityIdAt(room.horde.count - 1);
+    const tenir = (): void => {
+      tenirCible();
+      const s = room.horde.slotOf(leurre);
+      if (s >= 0) {
+        room.horde.x[s] = loin.x;
+        room.horde.y[s] = loin.y;
+      }
+    };
+    while (room.tick < tir + FRAPPE_DELAY_TICKS - 1) {
+      room.applyInput(1, room.tick + 1, 0, 0, 0, 0);
+      tenir();
+      room.step(DT);
+    }
+    expect(vivant(room, cible)).toBe(true);
+    room.applyInput(1, room.tick + 1, 0, 0, 0, 0);
+    tenir();
+    room.step(DT);
+    expect(room.tick).toBe(tir + FRAPPE_DELAY_TICKS);
+    expect(vivant(room, cible)).toBe(false);
+    expect(vivant(room, leurre)).toBe(true);
+  });
+
+  it('l ancre : la lame d orbite suit son tireur qui se deplace', () => {
+    const { room, arme } = salonAvec('tir', 'orbite');
+    const depart = positionOf(room, 1);
+    // Le tir au premier tick, puis le joueur part vers le bas sans plus viser.
+    const marche = 20;
+    for (let i = 0; i < marche; i++) {
+      room.applyInput(1, i + 1, 0, 127, i === 0 ? 127 : 0, 0);
+      room.step(DT);
+    }
+    const arrivee = positionOf(room, 1);
+    // Assez loin pour que la couronne laissee au point de tir ne puisse rien
+    // atteindre autour du joueur : sans ancre, ce cas echoue.
+    expect(arrivee.y - depart.y).toBeGreaterThan(2 * ORBIT_RADIUS + 20);
+    expect(marche).toBeLessThan(arme.projectileLifeTicks - 15);
+    const tenir = cloue(room, 620, arrivee.x + ORBIT_RADIUS, arrivee.y);
+    const cible = room.horde.entityIdAt(room.horde.count - 1);
+    for (let i = 0; i < arme.projectileLifeTicks - marche - 1 && vivant(room, cible); i++) {
+      room.applyInput(1, 100 + i, 0, 0, 0, 0);
+      tenir();
+      room.step(DT);
+    }
+    expect(vivant(room, cible)).toBe(false);
   });
 });
 

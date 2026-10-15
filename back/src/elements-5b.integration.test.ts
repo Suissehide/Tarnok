@@ -1,6 +1,6 @@
 import type { AddressInfo } from 'node:net';
 import { CARD } from '@shared/cards';
-import { SYNERGY_MAX, TICK_HZ, ZONE_RADIUS } from '@shared/constants';
+import { PROJECTILE_HIT_RADIUS, SYNERGY_MAX, TICK_HZ, ZONE_RADIUS } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import {
   decode,
@@ -95,6 +95,23 @@ const CANON_A_ARC = armeParNom('Canon à arc');
 // devenue l'Encensoir de poix, un HALO qui ne tire rien (etape 8) : ce fichier
 // vise ses cibles, donc le Chaudron reste la seule Poix qui le puisse.
 const CHAUDRON_A_POIX = armeParNom('Chaudron à poix');
+
+/**
+ * Ou tombe un tir de Chaudron : un MORTIER depuis l'etape 12, qui ne touche
+ * personne en vol et ne frappe (et ne marque) qu'au point de chute, a sa
+ * portee pile. Une cible du Chaudron se pose donc A cette distance, pas en
+ * deca : un peu court (la moitie du souffle), pour que la chute la couvre.
+ */
+const CHUTE_POIX = porteeDe(CHAUDRON_A_POIX) - CHAUDRON_A_POIX.blastRadius / 2;
+
+/**
+ * Cette arme touche-t-elle une cible visee a `dist` ? Une ligne droite, tout
+ * ce qui est en deca de la portee ; le mortier, seulement sous sa chute.
+ */
+function atteint(weapon: Weapon, dist: number): boolean {
+  const portee = porteeDe(weapon);
+  return weapon.motion === 'mortier' ? Math.abs(dist - portee) < weapon.blastRadius : dist < portee;
+}
 
 type App = Awaited<ReturnType<typeof buildServer>>;
 
@@ -409,8 +426,9 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
         markBy: () => a.playerId,
         firer: d,
         pos: pd,
-        offsetX: 180,
-        offsetY: 180,
+        // En diagonale, a la distance de chute du mortier (etape 12).
+        offsetX: CHUTE_POIX / Math.SQRT2,
+        offsetY: CHUTE_POIX / Math.SQRT2,
         fireWeapon: CHAUDRON_A_POIX,
       },
       {
@@ -458,7 +476,6 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
       y: def.pos.y + def.offsetY,
       pair: packElementPair(def.markElement, def.fireWeapon.element),
       fireElement: def.fireWeapon.element,
-      portee: porteeDe(def.fireWeapon),
     }));
 
     // Six paires DISTINCTES : c'est le §6.3 tout entier, verifie une seule
@@ -472,9 +489,9 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     for (const cible of cibles) {
       const dist = Math.hypot(cible.offsetX, cible.offsetY);
       expect(
-        dist,
+        atteint(cible.fireWeapon, dist),
         `${cible.nom} : la cible doit rester a portee de son arme declenchante`,
-      ).toBeLessThan(cible.portee);
+      ).toBe(true);
     }
 
     // ⚠️ **Garde 2 : les six cibles restent etanches les unes des autres, DANS
@@ -730,7 +747,11 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
 
     // Cible SOLO : ni marque ni identite d'un autre joueur n'y touche
     // jamais — `a` seul la vise, avec ses deux armes.
-    const SOLO_OFFSET_X = 150;
+    // ⚠️ **A la chute du Chaudron (etape 12)**, plus a 150 px : le mortier ne
+    // touche qu'en tombant. Et dans l'axe x PILE : la visee (127, 0) est
+    // exacte, donc les deux Fleches jumelles passent a `CHUTE_POIX x
+    // tan(0,075)` ≈ 29 px de la cible, sous le rayon de touche de 32.
+    const SOLO_OFFSET_X = CHUTE_POIX;
     const SOLO_OFFSET_Y = 0;
     const soloX = pa.x + SOLO_OFFSET_X;
     const soloY = pa.y;
@@ -743,16 +764,20 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     // d'un carre (`SPAWN_OFFSETS`, back/src/room.ts), donc `a` et `c` ne
     // partagent pas la meme position.
     const DUO_OFFSET_X = 0;
-    const DUO_OFFSET_Y = 150;
+    const DUO_OFFSET_Y = CHUTE_POIX;
     const duoX = pc.x + DUO_OFFSET_X;
     const duoY = pc.y + DUO_OFFSET_Y;
 
     // Garde 1 : chaque cible reste a portee de l'arme qui la declenche
     // REELLEMENT — la cible solo, des DEUX armes de `a` (la plus courte
     // decide) ; la cible cooperative, de la seule arme de `c`.
-    expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(CHAUDRON_A_POIX));
-    expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(FLECHES_JUMELLES));
-    expect(Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y)).toBeLessThan(porteeDe(CHAUDRON_A_POIX));
+    expect(atteint(CHAUDRON_A_POIX, Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y))).toBe(true);
+    expect(atteint(FLECHES_JUMELLES, Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y))).toBe(true);
+    expect(
+      SOLO_OFFSET_X * Math.tan(FLECHES_JUMELLES.spreadRadians / 2),
+      'les deux fleches doivent encore froler la cible solo',
+    ).toBeLessThan(PROJECTILE_HIT_RADIUS);
+    expect(atteint(CHAUDRON_A_POIX, Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y))).toBe(true);
     // Garde 2 : etanches l'une de l'autre, comme les six cibles du test
     // precedent.
     const ecartCibles = Math.hypot(soloX - duoX, soloY - duoY);

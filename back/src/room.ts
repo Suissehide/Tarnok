@@ -49,13 +49,21 @@ import {
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
-import { armedWeapon, critOf, shotDamage } from '@shared/firing';
+import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
+import {
+  type FrappeImpact,
+  frappeDueTick,
+  frappeIsDue,
+  frappeTargets,
+  type Onde,
+  ondeIsAlive,
+} from '@shared/onde-frappe';
 import { bossHp, extractGold, palierGold, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
-import { Projectiles } from '@shared/projectiles';
+import { type Anchor, Projectiles } from '@shared/projectiles';
 import {
   encodeSnapshot,
   OUTCOME,
@@ -97,6 +105,7 @@ import {
   resolveContact,
   resolveHalos,
   resolveHarvest,
+  resolveOndes,
   resolveProjectileDamage,
   resolveVerglasCollisions,
   Venins,
@@ -1512,6 +1521,9 @@ export class Room {
     // leurs pulsations rejoignent celles des halos, qui sont la meme chose a un
     // centre pres.
     this.#pulseGuards(this.#tick);
+    // Les frappes echues (etape 12) aussi : un impact de frappe EST une
+    // pulsation de halo differee.
+    this.#dropFrappes(this.#tick);
     // Les halos, resolus AVANT les projectiles pour la meme raison que les
     // projectiles le sont avant les zones : chaque source de degat passe une
     // fois, et `Room.step` reste le seul endroit ou une mort se prononce.
@@ -1533,6 +1545,17 @@ export class Room {
       this.#reactions,
     );
     this.#beamPulses.length = 0;
+    const ondeIds = resolveOndes(
+      this.#ondes,
+      this.horde,
+      this.#orbs,
+      this.#tick,
+      this.#zones,
+      this.#reactions,
+    );
+    if (this.#ondes.length > 0) {
+      this.#ondes = this.#ondes.filter((o) => ondeIsAlive(o, this.#tick + 1));
+    }
     const deadIds = resolveProjectileDamage(
       this.#projectiles,
       scaledDt,
@@ -1542,6 +1565,7 @@ export class Room {
       this.#zones,
       this.#reactions,
       this.#venins,
+      this.#anchor,
     );
     markInZones(this.horde, this.#zones, this.#tick, this.#reactions);
     // ⚠️ **Les reactions se resolvent ICI, apres les DEUX chemins qui les
@@ -1617,6 +1641,7 @@ export class Room {
     const blastIds = this.#resolveKamikazes(kamikazes, [
       ...haloIds,
       ...beamIds,
+      ...ondeIds,
       ...deadIds,
       ...reactedIds,
       ...burntIds,
@@ -1638,6 +1663,7 @@ export class Room {
     const allDead =
       haloIds.length > 0 ||
       beamIds.length > 0 ||
+      ondeIds.length > 0 ||
       reactedIds.length > 0 ||
       burntIds.length > 0 ||
       poisonedIds.length > 0 ||
@@ -1646,6 +1672,7 @@ export class Room {
         ? [
             ...haloIds,
             ...beamIds,
+            ...ondeIds,
             ...deadIds,
             ...reactedIds,
             ...burntIds,
@@ -2144,6 +2171,50 @@ export class Room {
   #guards: Guard[] = [];
 
   /**
+   * Les ondes vivantes (etape 12) : comme les invocations, elles SURVIVENT au
+   * tick, et `step` oublie celles qui n'auront plus de bande a balayer.
+   */
+  #ondes: Onde[] = [];
+
+  /** Les impacts de frappe en attente de leur echeance (etape 12). */
+  #frappes: FrappeImpact[] = [];
+
+  /**
+   * Ou est le tireur `by` maintenant, pour l'orbite et le boomerang (§3.2).
+   * Une seule fonction pour la vie de la salle, et `PlayerState` EST un
+   * `{x, y}` : rien n'est alloue par projectile ni par tick.
+   */
+  readonly #anchor: Anchor = (by) => this.#players.get(by);
+
+  /**
+   * Verse dans `#haloPulses` les impacts de frappe echus et les oublie —
+   * exactement ce que `#pulseGuards` fait pour les invocations.
+   *
+   * ⚠️ **Le gel ne les retient pas** : `frappeIsDue` compare en `>=`, donc un
+   * impact du pendant un gel tombe au premier tick ou le monde reprend, au
+   * point fige au tir. Meme horloge que les invocations, qui vieillissent
+   * pendant le gel.
+   */
+  #dropFrappes(tick: number): void {
+    if (this.#frappes.length === 0) {
+      return;
+    }
+    for (const f of this.#frappes) {
+      if (frappeIsDue(f, tick)) {
+        this.#haloPulses.push({
+          x: f.x,
+          y: f.y,
+          radius: f.radius,
+          damage: f.damage,
+          element: f.element,
+          by: f.by,
+        });
+      }
+    }
+    this.#frappes = this.#frappes.filter((f) => !frappeIsDue(f, tick));
+  }
+
+  /**
    * Verse une pulsation par invocation DUE a ce tick, et oublie celles qui se
    * sont eteintes.
    *
@@ -2256,19 +2327,56 @@ export class Room {
     if (weapon.kind === 'faisceau') {
       // ⚠️ **La visee donne la DIRECTION, la portee donne la longueur** : les
       // deux bouts du trait sont derives ici une fois pour toutes, pour que
-      // `resolveBeams` n'ait plus qu'une geometrie a mesurer. `aimX`/`aimY`
-      // sont deja normalises (voir `applyInput`).
-      const portee = beamRange(weapon);
+      // `resolveBeams` n'ait plus qu'une geometrie a mesurer. La visee n'est
+      // PAS unitaire : voir `aimPoint`.
+      const bout = aimPoint(p.x, p.y, p.aimX, p.aimY, beamRange(weapon));
       this.#beamPulses.push({
         x: p.x,
         y: p.y,
-        toX: p.x + p.aimX * portee,
-        toY: p.y + p.aimY * portee,
+        toX: bout.x,
+        toY: bout.y,
         width: weapon.blastRadius,
         damage,
         element: weapon.element,
         by: p.id,
       });
+      p.lastFireTick[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'onde') {
+      // Centre fige au point de tir (§3.4) ; `resolveOndes` la fait frapper
+      // des ce tick, bande `[0, 0]`.
+      this.#ondes.push({
+        x: p.x,
+        y: p.y,
+        bornTick: tick,
+        speed: weapon.projectileSpeed,
+        maxRadius: weapon.blastRadius,
+        damage,
+        element: weapon.element,
+        by: p.id,
+      });
+      p.lastFireTick[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'frappe') {
+      // Le point vise est a PORTEE dans la direction visee (§2), et les cibles
+      // sont figees ICI : l'ennemi qui bouge pendant le delai l'esquive.
+      //
+      // La visee n'est PAS unitaire : voir `aimPoint`.
+      const vise = aimPoint(p.x, p.y, p.aimX, p.aimY, beamRange(weapon));
+      const dueTick = frappeDueTick(tick);
+      for (const pt of frappeTargets(this.horde, vise.x, vise.y, weapon.projectileCount)) {
+        this.#frappes.push({
+          x: pt.x,
+          y: pt.y,
+          radius: weapon.blastRadius,
+          damage,
+          element: weapon.element,
+          by: p.id,
+          dueTick,
+        });
+      }
       p.lastFireTick[weaponId] = tick;
       return;
     }
