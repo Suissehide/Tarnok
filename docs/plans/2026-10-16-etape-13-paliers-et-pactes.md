@@ -47,8 +47,13 @@ C'est le point de départ ; toute régression vient de nous.
 ## Contraintes globales
 
 - **Discipline de sous-agent (règle d'étape, établie en 5b et confirmée en 5c).** Un sous-agent qui
-  implémente une tâche ne lance **que ses fichiers ciblés** (`npx vitest run <son fichier>` depuis
-  `front/` ou `back/`), **jamais `npm test`**, **jamais un banc**. Le portique complet et toute
+  implémente une tâche ne lance **que ses fichiers ciblés**, **jamais `npm test`**, **jamais un
+  banc**.
+  ⚠️ **Les tests de `shared/` se lancent depuis `back/`** : `cd back && npx vitest run
+  ../shared/<fichier>.test.ts`. Seul `back/vitest.config.ts` câble `../shared/**/*.test.ts` ;
+  `front/vitest.config.ts` n'inclut que `src/**`, donc un `--config front/...` sur un fichier de
+  `shared/` ne collecte **rien** et rend un faux vert. Les tests du front se lancent depuis
+  `front/` : `npx vitest run src/ui/<fichier>.test.ts`. Le portique complet et toute
   mesure chiffrée sont au contrôleur, qui les lance **seuls, rien d'autre en vol** — un chiffre
   mesuré pendant qu'autre chose tourne est faux.
 - **Jamais `pkill -f`.** Les serveurs de développement de Léo tournent sur **5173** et **3100**, et
@@ -212,7 +217,7 @@ it('etape 13 : la colonne des passifs suit ce qui est possede, sans cadre vide',
 
 - [ ] **Étape 2 : lancer les tests pour les voir échouer**
 
-Run : `npx vitest run shared/loadout.test.ts --config front/vitest.config.ts` puis
+Run : `cd back && npx vitest run ../shared/loadout.test.ts` puis
 `cd front && npx vitest run src/ui/draft.test.ts src/ui/hud.test.ts`
 Attendu : ÉCHEC — `addPassive` lève au 4ᵉ passif distinct, le HUD peint 3 cadres.
 
@@ -255,7 +260,7 @@ Supprimer `PASSIVE_SLOTS` de `shared/constants.ts`. Dans `shared/loadout.ts` :
 
 - [ ] **Étape 5 : lancer les tests pour les voir passer**
 
-Run : `npx vitest run shared/loadout.test.ts shared/cards.test.ts --config front/vitest.config.ts`
+Run : `cd back && npx vitest run ../shared/loadout.test.ts ../shared/cards.test.ts`
 puis `cd front && npx vitest run src/ui/`
 Attendu : SUCCÈS. Les tests de l'étape 10 qui vérifiaient le refus d'un 4ᵉ passif disparaissent
 avec la règle — les supprimer, pas les contourner.
@@ -345,7 +350,7 @@ describe('etape 13 : quatre paliers', () => {
 
 - [ ] **Étape 2 : lancer les tests pour les voir échouer**
 
-Run : `cd shared/.. && npx vitest run shared/rarity.test.ts --config front/vitest.config.ts`
+Run : `cd shared/.. && cd back && npx vitest run ../shared/rarity.test.ts`
 Attendu : ÉCHEC — `RARITY.EPIQUE` vaut `undefined`.
 
 - [ ] **Étape 3 : écrire la table**
@@ -387,7 +392,7 @@ export const RARITY_WEIGHTS: readonly number[] = [72, 20, 6, 2];
 
 - [ ] **Étape 4 : lancer les tests pour les voir passer**
 
-Run : `npx vitest run shared/rarity.test.ts --config front/vitest.config.ts`
+Run : `cd back && npx vitest run ../shared/rarity.test.ts`
 Attendu : SUCCÈS. Les tests de `rarity.test.ts` hérités de l'étape 11 (suite relevée à graine
 fixe) **vont rougir** : les poids ont changé, donc la suite tirée aussi. Relever la nouvelle suite
 et remplacer le tableau attendu, en notant dans le test que l'étape 13 l'a refait.
@@ -496,7 +501,7 @@ describe('etape 13 : un palier, un pool', () => {
 
 - [ ] **Étape 2 : lancer les tests pour les voir échouer**
 
-Run : `npx vitest run shared/cards.test.ts --config front/vitest.config.ts`
+Run : `cd back && npx vitest run ../shared/cards.test.ts`
 Attendu : ÉCHEC — `tierOf` n'existe pas.
 
 - [ ] **Étape 3 : le champ sur le passif**
@@ -601,7 +606,7 @@ fixe.
 
 - [ ] **Étape 5 : lancer les tests pour les voir passer**
 
-Run : `npx vitest run shared/cards.test.ts --config front/vitest.config.ts`
+Run : `cd back && npx vitest run ../shared/cards.test.ts`
 Attendu : SUCCÈS. Les tests de l'étape 10 qui citent `isLegendaryOnly` doivent être réécrits avec
 `tierOf` — les supprimer serait perdre leur garde.
 
@@ -808,7 +813,7 @@ describe('etape 13 : un maximum qui baisse ne tue pas', () => {
 
 - [ ] **Étape 2 : lancer les tests pour les voir échouer**
 
-Run : `npx vitest run shared/loadout.test.ts --config front/vitest.config.ts` puis
+Run : `cd back && npx vitest run ../shared/loadout.test.ts` puis
 `cd back && npx vitest run src/room.test.ts -t "maximum qui baisse"`
 Attendu : ÉCHEC — `maxHpOf` absent, et le joueur blessé meurt.
 
@@ -913,7 +918,7 @@ et `room.ts:1142-1143` ainsi que `front/src/net/client.ts:1803` appellent `maxHp
 
 - [ ] **Étape 5 : lancer les tests pour les voir passer**
 
-Run : `npx vitest run shared/loadout.test.ts --config front/vitest.config.ts` puis
+Run : `cd back && npx vitest run ../shared/loadout.test.ts` puis
 `cd back && npx vitest run src/room.test.ts` puis `cd front && npx vitest run src/net/client.test.ts`
 Attendu : SUCCÈS aux trois.
 
@@ -1035,7 +1040,7 @@ describe('etape 13 : le bouclier sur le fil', () => {
 - [ ] **Étape 2 : lancer les tests pour les voir échouer**
 
 Run : `cd back && npx vitest run src/combat.test.ts -t "bouclier"` et
-`npx vitest run shared/protocol.test.ts --config front/vitest.config.ts -t "bouclier"`
+`cd back && npx vitest run ../shared/protocol.test.ts -t "bouclier"`
 Attendu : ÉCHEC — `shield` inconnu, `SNAPSHOT_PLAYER_BYTES` vaut 10.
 
 - [ ] **Étape 3 : les constantes**
@@ -1137,7 +1142,7 @@ et dans `encodeSnapshot`, à l'offset 10 : `v.setUint8(o + 10, Math.min(255, Mat
 - [ ] **Étape 7 : lancer les tests pour les voir passer**
 
 Run : `cd back && npx vitest run src/combat.test.ts src/room.test.ts` puis
-`npx vitest run shared/protocol.test.ts --config front/vitest.config.ts`
+`cd back && npx vitest run ../shared/protocol.test.ts`
 Attendu : SUCCÈS.
 
 - [ ] **Étape 8 : committer**
@@ -1206,7 +1211,7 @@ describe('etape 13 : Transcendance', () => {
 
 - [ ] **Étape 2 : lancer les tests pour les voir échouer**
 
-Run : `npx vitest run shared/loadout.test.ts --config front/vitest.config.ts -t "Transcendance"`
+Run : `cd back && npx vitest run ../shared/loadout.test.ts -t "Transcendance"`
 Attendu : ÉCHEC — `maxShieldOf` absent.
 
 - [ ] **Étape 3 : la règle, et son unique branche par côté**
@@ -1259,7 +1264,7 @@ tâche 4.
 
 - [ ] **Étape 4 : lancer les tests pour les voir passer**
 
-Run : `npx vitest run shared/loadout.test.ts --config front/vitest.config.ts` puis
+Run : `cd back && npx vitest run ../shared/loadout.test.ts` puis
 `cd back && npx vitest run src/room.test.ts -t "Transcendance"`
 Attendu : SUCCÈS.
 
@@ -1363,7 +1368,7 @@ describe('etape 13 : Contagion', () => {
 
 - [ ] **Étape 2 : lancer les tests pour les voir échouer**
 
-Run : `npx vitest run shared/passives.test.ts --config front/vitest.config.ts` et
+Run : `cd back && npx vitest run ../shared/passives.test.ts` et
 `cd back && npx vitest run src/combat.test.ts -t "Contagion"`
 Attendu : ÉCHEC.
 
@@ -1477,7 +1482,7 @@ avec `CONTAGION_RADIUS = 220` dans `shared/constants.ts` (molette de playtest).
 
 - [ ] **Étape 5 : lancer les tests pour les voir passer**
 
-Run : `npx vitest run shared/passives.test.ts --config front/vitest.config.ts` puis
+Run : `cd back && npx vitest run ../shared/passives.test.ts` puis
 `cd back && npx vitest run src/combat.test.ts src/room.test.ts`
 Attendu : SUCCÈS. Les tests de l'étape 10 qui citent `moisson` ou `harvest` disparaissent avec
 elle ; ceux qui comptent les passifs changent de nombre.
