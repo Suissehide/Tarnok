@@ -208,7 +208,7 @@ export function natureLabel(nature: number): string {
 }
 
 /** Le nom de chaque rarete, dans l'ordre de `RARITY`. */
-export const RARITY_NAMES = ['Commune', 'Rare', 'Légendaire'] as const;
+export const RARITY_NAMES = ['Commune', 'Rare', 'Épique', 'Légendaire'] as const;
 
 /**
  * L'etiquette de rarete (etape 10, §2.5) : le nom ET ce que la carte vaut

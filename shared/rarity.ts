@@ -1,33 +1,40 @@
 /**
- * La rarete d'une carte de l'etalage (etape 10, §2 de la spec).
+ * La rarete d'une carte de l'etalage (etape 13, §2 de la spec).
  *
- * Une carte rare vaut DEUX cartes, une legendaire TROIS — et rien de plus :
- * aucune regle d'empilement nouvelle, `applyCardToLoadout` applique la carte
- * autant de fois que son multiplicateur. L'index EST l'identifiant, et c'est
- * l'octet du fil (`DRAFT_CARD_BYTES`).
+ * ⚠️ **Deux familles, pas quatre.** COMMUNE et RARE MULTIPLIENT une carte
+ * ordinaire ; EPIQUE et LEGENDAIRE sont des cartes de REGLE, exclusives a leur
+ * palier (`Passive.tier`) et appliquees une seule fois. L'index EST
+ * l'identifiant, et c'est l'octet du fil (`DRAFT_CARD_BYTES`, inchange).
  */
 export const RARITY = {
   COMMUNE: 0,
   RARE: 1,
-  LEGENDAIRE: 2,
+  EPIQUE: 2,
+  LEGENDAIRE: 3,
 } as const;
 
-/** Combien de fois une carte s'applique, par rarete. */
-export const RARITY_MULTIPLIERS: readonly number[] = [1, 2, 3];
+/**
+ * Combien de fois une carte s'applique, par rarete.
+ *
+ * ⚠️ **1 pour les deux paliers hauts, et ce n'est pas un oubli** : le triple
+ * d'une regle serait du decor. C'etait un cas particulier (`isLegendaryOnly`)
+ * jusqu'a l'etape 13 ; la table le dit maintenant elle-meme.
+ */
+export const RARITY_MULTIPLIERS: readonly number[] = [1, 2, 1, 1];
 
 /**
- * Le poids de chaque rarete au tirage, en pourcents (82 / 15 / 3).
+ * Le poids de chaque rarete au tirage, en pourcents (72 / 20 / 6 / 2).
  *
- * ⚠️ **Un reglage de playtest, pas un invariant** : les legendaires doivent
- * etre assez rares pour faire evenement, assez frequentes pour etre vues.
+ * ⚠️ **Un reglage de playtest, pas un invariant.**
  */
-export const RARITY_WEIGHTS: readonly number[] = [82, 15, 3];
+export const RARITY_WEIGHTS: readonly number[] = [72, 20, 6, 2];
 
 /**
  * Le plancher de rarete d'un COFFRE (etape 11, §4.2) : toutes ses cartes sont
- * au moins rares. Le tirage RENORMALISE au-dessus du plancher (15/18 rare,
- * 3/18 legendaire) — un `Math.max(plancher, tirage)` aurait laisse la
- * legendaire a 3 % et ote au coffre sa raison d'etre un evenement.
+ * au moins rares. Le tirage RENORMALISE au-dessus du plancher (20/28 rare,
+ * 6/28 epique, 2/28 legendaire, etape 13) — un `Math.max(plancher, tirage)`
+ * aurait laisse la legendaire a 2 % et ote au coffre sa raison d'etre un
+ * evenement.
  */
 export const CHEST_RARITY_FLOOR: number = RARITY.RARE;
 
