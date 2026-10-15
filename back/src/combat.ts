@@ -58,6 +58,32 @@ import type { ZoneField } from '@shared/zones';
  * qui meurt par `DEATHS`, comme depuis l'etape 3. Rien de nouveau sur le fil.
  */
 
+/** Ce qu'il faut d'un joueur pour lui faire mal. `PlayerState` le satisfait. */
+export interface HurtablePlayer {
+  hp: number;
+  /** Fraction des degats absorbee. Absente : 0. Negative (malus) : il encaisse plus. */
+  readonly armor?: number;
+}
+
+/**
+ * Inflige `degats` a un joueur — **le SEUL endroit du depot ou les PV d'un
+ * joueur baissent**.
+ *
+ * ⚠️ **Il y en avait QUATRE copies** jusqu'a l'etape 13 : le tir d'ennemi
+ * (`room.ts`), le kamikaze, le contact et la charge du boss. Fusionner n'est
+ * pas du rangement : c'est la condition pour que le bouclier (tache 5) ne soit
+ * pas traversable par trois sources sur quatre — un bug qu'on ne decouvrirait
+ * qu'au boss.
+ *
+ * ⚠️ **Le facteur est borne a zero.** `armor` depasse 1 chez un compte tres
+ * ameliore ; sans cette borne, un coup SOIGNERAIT. La borne vit ici, donc une
+ * fois.
+ */
+export function hurtPlayer(p: HurtablePlayer, degats: number): void {
+  const facteur = Math.max(0, 1 - (p.armor ?? 0));
+  p.hp = Math.max(0, p.hp - degats * facteur);
+}
+
 /**
  * Un joueur tel que l'arbitrage de contact le voit : position en lecture,
  * points de vie et compte a rebours d'invulnerabilite mutables.
@@ -620,7 +646,7 @@ export function resolveBlasts(
     damageInRadius(horde, b.x, b.y, KAMIKAZE_RADIUS, KAMIKAZE_MONSTER_DAMAGE, zones, tick, dead);
     for (const p of players) {
       if (p.hp > 0 && Math.hypot(p.x - b.x, p.y - b.y) < KAMIKAZE_RADIUS) {
-        p.hp = Math.max(0, p.hp - KAMIKAZE_PLAYER_DAMAGE * (1 - (p.armor ?? 0)));
+        hurtPlayer(p, KAMIKAZE_PLAYER_DAMAGE);
       }
     }
   }
@@ -1839,7 +1865,7 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
     }
 
     if (touched) {
-      player.hp = Math.max(0, player.hp - CONTACT_DAMAGE * (1 - (player.armor ?? 0)));
+      hurtPlayer(player, CONTACT_DAMAGE);
       player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
     }
   }
@@ -1958,7 +1984,7 @@ export function resolveChargeHit(
     if (dx * dx + dy * dy > r2) {
       continue;
     }
-    player.hp = Math.max(0, player.hp - BOSS_CHARGE_DAMAGE * (1 - (player.armor ?? 0)));
+    hurtPlayer(player, BOSS_CHARGE_DAMAGE);
     // Le corps du boss reste sur lui le temps de le traverser : sans ce
     // rearmement, `resolveContact` lui reprendrait `CONTACT_DAMAGE` au tick
     // suivant pour le meme corps, et la borne « une fois par charge » ne

@@ -95,6 +95,7 @@ import {
   type Blast,
   type ContactPlayer,
   type HaloPulse,
+  hurtPlayer,
   markInZones,
   OrbField,
   Reactions,
@@ -1735,7 +1736,7 @@ export class Room {
     this.shots.hits(vivants, CONTACT_RADIUS / 2).forEach((n, k) => {
       const p = vivants[k];
       if (p && n > 0 && p.contactInvulnTicks === 0) {
-        p.hp = Math.max(0, p.hp - SHOT_DAMAGE * (1 - (p.armor ?? 0)));
+        hurtPlayer(p, SHOT_DAMAGE);
         p.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
       }
     });

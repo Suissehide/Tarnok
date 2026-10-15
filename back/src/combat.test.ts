@@ -61,6 +61,7 @@ import {
   type ChargeTarget,
   type ContactPlayer,
   type HarvestPlayer,
+  hurtPlayer,
   markInZones,
   OrbField,
   Reactions,
@@ -5208,5 +5209,36 @@ describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
     // Moisson compte les morts, pas les orbes : celle qui ne laisse rien compte.
     expect(orbs.drainFallen()).toEqual([10, 20, 30, 40]);
     expect(orbs.drainFallen()).toEqual([]);
+  });
+});
+
+describe('etape 13 : hurtPlayer, le point de passage unique', () => {
+  it('applique l armure avant les PV', () => {
+    const p = { hp: 100, armor: 0.5 };
+    hurtPlayer(p, 40);
+    expect(p.hp).toBe(80);
+  });
+
+  it('ne descend jamais sous zero', () => {
+    const p = { hp: 5 };
+    hurtPlayer(p, 999);
+    expect(p.hp).toBe(0);
+  });
+
+  /**
+   * ⚠️ Vigilance 2 : une armure > 1 rendrait le facteur negatif et SOIGNERAIT.
+   * Le facteur est borne a zero, ici et nulle part ailleurs.
+   */
+  it('une armure superieure a 1 ne soigne pas', () => {
+    const p = { hp: 50, armor: 1.5 };
+    hurtPlayer(p, 40);
+    expect(p.hp).toBe(50);
+  });
+
+  /** Une armure NEGATIVE (malus Hate funeste) fait mal davantage — c'est voulu. */
+  it('une armure negative augmente les degats', () => {
+    const p = { hp: 100, armor: -0.5 };
+    hurtPlayer(p, 40);
+    expect(p.hp).toBe(40);
   });
 });
