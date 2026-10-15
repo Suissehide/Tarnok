@@ -53,6 +53,8 @@ import {
   encodeInput,
   encodeLevelUp,
   encodePickups,
+  encodePing,
+  encodePingShown,
   encodePortalOpen,
   encodePortalResult,
   encodeReaction,
@@ -71,6 +73,8 @@ import {
   NO_BOSS_ID,
   NO_TOKEN,
   NO_VOTE,
+  PING_BYTES,
+  PING_SHOWN_BYTES,
   PORTAL_OPEN_BYTES,
   PORTAL_RESULT_BYTES,
   packElementPair,
@@ -1704,5 +1708,29 @@ describe('etape 8 tache 3 : ABILITY / ABILITY_USED, le socle du verbe', () => {
       expect(verb).toBeTypeOf('number');
     }
     expect(Object.values(ABILITY_COOLDOWN_TICKS).every((t) => t > 0)).toBe(true);
+  });
+});
+
+describe('etape 9 : PING et PING_SHOWN', () => {
+  it('PING fait 6 octets et revient a l identique, negatifs compris', () => {
+    const buf = encodePing(3, -12, 32767);
+    expect(buf.byteLength).toBe(PING_BYTES);
+    expect(PING_BYTES).toBe(6);
+    expect(decode(buf)).toEqual({ type: MSG.PING, intent: 3, x: -12, y: 32767 });
+  });
+
+  it('PING_SHOWN fait 7 octets et revient a l identique', () => {
+    const buf = encodePingShown(4, 1, 5999, 0);
+    expect(buf.byteLength).toBe(PING_SHOWN_BYTES);
+    expect(PING_SHOWN_BYTES).toBe(7);
+    expect(decode(buf)).toEqual({ type: MSG.PING_SHOWN, playerId: 4, intent: 1, x: 5999, y: 0 });
+  });
+
+  it('une intention hors liste passe le fil telle quelle : c est le salon qui la refuse', () => {
+    expect(decode(encodePing(200, 0, 0))).toMatchObject({ intent: 200 });
+  });
+
+  it('un PING tronque leve, il ne se decode jamais a moitie', () => {
+    expect(() => decode(encodePing(0, 1, 1).slice(0, 5))).toThrow(/tronque/);
   });
 });

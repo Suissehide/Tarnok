@@ -34,6 +34,8 @@ export const MSG = {
   START: 23,
   ABILITY: 24,
   ABILITY_USED: 25,
+  PING: 26,
+  PING_SHOWN: 27,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -375,7 +377,9 @@ export type Message =
   | PickMessage
   | StartMessage
   | AbilityMessage
-  | AbilityUsedMessage;
+  | AbilityUsedMessage
+  | PingMessage
+  | PingShownMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -1510,6 +1514,10 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeAbility(buf);
     case MSG.ABILITY_USED:
       return decodeAbilityUsed(buf);
+    case MSG.PING:
+      return decodePing(buf);
+    case MSG.PING_SHOWN:
+      return decodePingShown(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }
@@ -2022,5 +2030,80 @@ export function decodeAbilityUsed(buf: ArrayBuffer): AbilityUsedMessage {
     x: v.getInt16(7, true),
     y: v.getInt16(9, true),
     targetId: v.getUint8(11),
+  };
+}
+
+/**
+ * C -> S : le joueur pose un ping (etape 9), 6 octets.
+ *
+ * `type u8 · intent u8 · x i16 · y i16`
+ *
+ * ⚠️ **Un evenement, jamais un etat** : rien n'entre dans `SNAPSHOT`. L'intention
+ * n'est PAS validee ici — le decodage rend ce que le fil porte, et c'est le salon
+ * qui refuse une intention hors de `PING_INTENTS`.
+ */
+export interface PingMessage {
+  type: typeof MSG.PING;
+  intent: number;
+  x: number;
+  y: number;
+}
+
+/** S -> C : le salon annonce un ping accepte, a tous, emetteur compris (etape 9), 7 octets. */
+export interface PingShownMessage {
+  type: typeof MSG.PING_SHOWN;
+  playerId: number;
+  intent: number;
+  x: number;
+  y: number;
+}
+
+export const PING_BYTES = 6;
+export const PING_SHOWN_BYTES = 7;
+
+export function encodePing(intent: number, x: number, y: number): ArrayBuffer {
+  const buf = new ArrayBuffer(PING_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.PING);
+  v.setUint8(1, intent);
+  v.setInt16(2, Math.round(x), true);
+  v.setInt16(4, Math.round(y), true);
+  return buf;
+}
+
+function decodePing(buf: ArrayBuffer): PingMessage {
+  const v = viewOf(buf, PING_BYTES);
+  return {
+    type: MSG.PING,
+    intent: v.getUint8(1),
+    x: v.getInt16(2, true),
+    y: v.getInt16(4, true),
+  };
+}
+
+export function encodePingShown(
+  playerId: number,
+  intent: number,
+  x: number,
+  y: number,
+): ArrayBuffer {
+  const buf = new ArrayBuffer(PING_SHOWN_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.PING_SHOWN);
+  v.setUint8(1, playerId);
+  v.setUint8(2, intent);
+  v.setInt16(3, Math.round(x), true);
+  v.setInt16(5, Math.round(y), true);
+  return buf;
+}
+
+function decodePingShown(buf: ArrayBuffer): PingShownMessage {
+  const v = viewOf(buf, PING_SHOWN_BYTES);
+  return {
+    type: MSG.PING_SHOWN,
+    playerId: v.getUint8(1),
+    intent: v.getUint8(2),
+    x: v.getInt16(3, true),
+    y: v.getInt16(5, true),
   };
 }
