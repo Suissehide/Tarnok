@@ -1,3 +1,5 @@
+import { PLAYER_SPEED } from './constants';
+
 /**
  * Le bestiaire, et son regime de replication.
  *
@@ -343,6 +345,8 @@ export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
  * - `kamikaze` : explose a sa mort, et se fait exploser au contact ;
  * - `chaman` : les monstres dans son aura encaissent moitie moins ;
  * - `aucun` : marche droit vers sa cible.
+ * - `porteur` : le porteur de coffre (etape 11) — attend loin de l'equipe,
+ *   fuit le joueur le plus proche a `PORTEUR_FLEE_RADIUS`.
  */
 export type Behavior =
   | 'aucun'
@@ -354,7 +358,8 @@ export type Behavior =
   | 'diviseur'
   | 'bouclier'
   | 'necro'
-  | 'gardien';
+  | 'gardien'
+  | 'porteur';
 
 /** La periode d'un bond, en ticks : une ruee puis une pause. */
 export const LEAP_PERIOD_TICKS = 27;
@@ -385,6 +390,34 @@ export const SHOT_DAMAGE = 7;
 export const THIEF_STEAL_SHARE = 0.15;
 /** Sa fuite va plus vite que sa course : il faut le rattraper. */
 export const THIEF_FLEE_SPEED = 1.3;
+
+/**
+ * Le porteur de coffre (etape 11, §3.1 de la spec) : une elite d'UN
+ * exemplaire, que le directeur demande une fois par palier et que le hasard
+ * ne tire jamais (il n'est pas dans `STEP2_ARCHETYPES`). Un voleur agrandi,
+ * avec SA regle de fuite (`Horde.retarget`) : il n'en partage que les textures.
+ */
+export const PORTEUR_NAME = 'porteur';
+/** Ses PV, en multiple de `HEAVY_HP` comme le boss : 200 au palier 0, puis `palierHp`. */
+export const PORTEUR_HP_MULTIPLE = 10;
+export const PORTEUR_HP = HEAVY_HP * PORTEUR_HP_MULTIPLE;
+/**
+ * Il fuit si le joueur le plus proche — positions RETARDEES, celles du
+ * flowfield — est a cette distance ou moins. Hors du rayon, il attend.
+ *
+ * ⚠️ **Le reglage du §8 de la spec** : la plupart des armes portent au-dela
+ * de 400 px ; un tireur qui s'arrete a 450 px le crible pendant qu'il attend.
+ * Si c'est trop facile au playtest, c'est ce nombre (ou les PV) qu'on monte.
+ */
+export const PORTEUR_FLEE_RADIUS = 400;
+/** Sa vitesse en part de `PLAYER_SPEED` : un peu moins vite qu'un joueur. */
+export const PORTEUR_SPEED_FACTOR = 0.9;
+/**
+ * Dessine 1,6 fois plus gros qu'un voleur ordinaire — et TOUCHE 1,6 fois plus
+ * large : `shared/projectiles.ts` multiplie la hitbox par `bodyScale`.
+ */
+export const PORTEUR_BODY_SCALE = 1.6;
+
 /** Le diviseur laisse ce nombre de petits a sa mort. */
 export const SPLIT_COUNT = 3;
 export const SPLIT_CHILD = 'spider';
@@ -464,11 +497,17 @@ export const ROLES: Readonly<Record<Role, RoleDef>> = {
 export const ROLE_ORDER: readonly Role[] = ['nuee', 'troupe', 'brute', 'colosse'];
 
 function hpOf(name: string, role: Role): number {
+  if (name === PORTEUR_NAME) {
+    return PORTEUR_HP;
+  }
   return name === BOSS_NAME ? BOSS_HP_PER_PLAYER : ROLES[role].hp;
 }
 
-/** Le facteur de corps du role ; le boss deborde davantage. Voir `Archetype.bodyScale`. */
+/** Le facteur de corps du role ; le boss et le porteur debordent davantage. Voir `Archetype.bodyScale`. */
 function bodyScaleOf(name: string, role: Role): number {
+  if (name === PORTEUR_NAME) {
+    return PORTEUR_BODY_SCALE;
+  }
   return name === BOSS_NAME ? BOSS_BODY_SCALE : ROLES[role].bodyScale;
 }
 
@@ -616,6 +655,21 @@ const ELITES: readonly Omit<
   { name: 'troll', sheet: 'Troll/Troll_Walk.png', frames: 10, cell: 384, speed: 65 },
 ];
 
+/**
+ * Le porteur de coffre (etape 11) : la planche, le cycle et la cellule du
+ * voleur (`thief`), sa vitesse a lui. Range APRES le troll, pour qu'aucun
+ * identifiant existant ne bouge — le fil, l'atlas et les tests en dependent.
+ */
+const PORTEUR: Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor'> = {
+  name: PORTEUR_NAME,
+  sheet: 'Thief/Thief_Run.png',
+  frames: 6,
+  cell: 192,
+  speed: Math.round(PLAYER_SPEED * PORTEUR_SPEED_FACTOR),
+  role: 'troupe',
+  behavior: 'porteur',
+};
+
 /** Nombre d'archetypes de pietaille. Les elites viennent apres, dans le tableau. */
 export const FOOTSOLDIER_COUNT = FOOTSOLDIERS.length;
 
@@ -632,6 +686,8 @@ export const ARCHETYPES: readonly Archetype[] = [
   ...FOOTSOLDIERS,
   // Les elites ne sont jamais tirees (le boss mis a part) : role neutre.
   ...ELITES.map((e) => ({ ...e, role: 'troupe' as Role })),
+  // Etape 11 : le porteur, en DERNIER.
+  PORTEUR,
 ].map((a, id) => ({
   ...a,
   id,
@@ -682,3 +738,10 @@ export function archetypeIdOf(name: string): number {
   }
   return id;
 }
+
+/**
+ * Identifiant du porteur de coffre (etape 11), **derive du nom** comme
+ * `BOSS_ARCHETYPE` : un `20` en dur pointerait sur un autre monstre le jour
+ * ou un archetype serait insere avant lui.
+ */
+export const PORTEUR_ARCHETYPE: number = archetypeIdOf(PORTEUR_NAME);
