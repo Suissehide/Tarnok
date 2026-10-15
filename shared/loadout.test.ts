@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { CARD } from './cards';
-import { WEAPON_SLOTS } from './constants';
-import { Loadout } from './loadout';
+import { PLAYER_MAX_HP, WEAPON_SLOTS } from './constants';
+import { Loadout, maxHpOf } from './loadout';
 import { PASSIVES } from './passives';
 import { UPGRADE, UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
 
@@ -223,5 +223,45 @@ describe('Loadout — une carte d arme reprise n ameliore QU UN aspect', () => {
       l.addWeapon(w.id);
       expect(l.upgradesOf(w.id, w.perks[0] ?? -1), w.name).toBe(1);
     }
+  });
+});
+
+describe('etape 13 : un malus est un bonus negatif', () => {
+  // ⚠️ Le catalogue n'a ENCORE AUCUNE carte a malus (elle arrive a une tache
+  // ulterieure) : on ne peut donc pas exercer ici la branche
+  // `p.malus?.kind === kind` de `bonus()` via une vraie carte, et cette tache
+  // ne doit pas en inventer une dans `shared/passives.ts`. Les deux tests
+  // ci-dessous couvrent ce qui EST verifiable sans contenu invente : le genre
+  // ajoute au catalogue, la somme de `maxHpOf`, et la non-regression de
+  // `bonus()` pour des passifs qui n'ont PAS de malus (la branche ajoutee ne
+  // doit rien changer a ce chemin, qui est le seul que le jeu emprunte
+  // aujourd'hui).
+
+  it("PASSIVE_KINDS contient 'armor', atteignable par une carte depuis cette tache", () => {
+    const vide = new Loadout();
+    expect(vide.bonus('armor')).toBe(0);
+  });
+
+  it('maxHpOf est la meme somme des deux cotes : base, cartes, achats', () => {
+    const l = new Loadout();
+    expect(maxHpOf(l, 0)).toBe(PLAYER_MAX_HP);
+    expect(maxHpOf(l, 25)).toBe(PLAYER_MAX_HP + 25);
+  });
+
+  it('bonus() sans malus somme toujours pareil : la branche de retrait ne derange pas ce chemin', () => {
+    // 'puissance' et 'acier' sont deux passifs DISTINCTS de genre 'damage',
+    // aucun des deux n'a de malus — exactement le fixture du test plus haut
+    // qui prouve que `bonus` somme a travers plusieurs passifs d'un meme
+    // kind. On la rejoue ici pour garder la preuve apres l'ajout de la
+    // branche `p.malus?.kind === kind` dans `bonus()`.
+    const puissance = PASSIVES.find((p) => p.name === 'puissance');
+    const acier = PASSIVES.find((p) => p.name === 'acier');
+    if (!puissance || !acier) {
+      throw new Error('fixture : puissance ou acier absent du catalogue');
+    }
+    const l = new Loadout();
+    l.addPassive(puissance.id);
+    l.addPassive(acier.id);
+    expect(l.bonus('damage')).toBeCloseTo(puissance.magnitude + acier.magnitude, 6);
   });
 });

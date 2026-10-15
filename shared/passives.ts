@@ -43,6 +43,10 @@ export const PASSIVE_KINDS = [
   'echo',
   'harvest',
   'colossus',
+  // Etape 13 : le genre existait deja cote boutique (`BonusKind`) et cote
+  // combat (`p.armor`) ; il n'etait simplement pas atteignable par une carte.
+  // Une carte ne s'en sert aujourd'hui que pour un MALUS.
+  'armor',
 ] as const;
 export type PassiveKind = (typeof PASSIVE_KINDS)[number];
 
@@ -78,6 +82,15 @@ export interface Passive {
    * `cards.ts` au lieu de la mettre dans la table des raretes.
    */
   tier?: PassiveTier;
+  /**
+   * Ce que la carte COUTE, dans les memes genres que ce qu'elle donne
+   * (etape 13, §3.1). `Loadout.bonus` le retranche.
+   *
+   * ⚠️ **Une magnitude POSITIVE qui se retranche**, pas une magnitude negative
+   * qui s'ajoute : la carte dit « je coute 40 PV max », et l'ecran l'affiche
+   * tel quel. Un signe porte par la donnee se perdrait au premier affichage.
+   */
+  malus?: { kind: PassiveKind; magnitude: number };
 }
 
 /**

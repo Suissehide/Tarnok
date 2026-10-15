@@ -1,4 +1,4 @@
-import { WEAPON_SLOTS } from './constants';
+import { PLAYER_MAX_HP, WEAPON_SLOTS } from './constants';
 
 /**
  * Duplique `CARD.WEAPON` de `cards.ts`.
@@ -143,7 +143,7 @@ export class Loadout {
     return true;
   }
 
-  /** Somme des `magnitude` de tous les exemplaires possedes de ce genre. */
+  /** Somme des `magnitude` possedees de ce genre, MOINS les malus du meme genre. */
   bonus(kind: PassiveKind): number {
     let total = 0;
     for (let id = 0; id < this.#passiveStacks.length; id++) {
@@ -152,10 +152,30 @@ export class Loadout {
         continue;
       }
       const p = PASSIVES[id];
-      if (p && p.kind === kind) {
+      if (!p) {
+        continue;
+      }
+      if (p.kind === kind) {
         total += p.magnitude * stacks;
+      }
+      if (p.malus?.kind === kind) {
+        total -= p.malus.magnitude * stacks;
       }
     }
     return total;
   }
+}
+
+/**
+ * Les PV max d'un joueur : la base, les cartes, les achats — **et la seule
+ * ecriture de cette somme dans le depot**.
+ *
+ * ⚠️ **Elle etait recopiee aux deux bouts** : `Room#grantCard`
+ * (`back/src/room.ts`) et `GameClient#localMaxHp` (`front/src/net/client.ts`).
+ * Deux copies divergeraient a la premiere regle qui touche au plafond — et
+ * l'etape 13 en ajoute justement une (une carte a malus de PV max, tache
+ * suivante).
+ */
+export function maxHpOf(loadout: Loadout, accountMaxHp: number): number {
+  return PLAYER_MAX_HP + loadout.bonus('maxHp') + accountMaxHp;
 }

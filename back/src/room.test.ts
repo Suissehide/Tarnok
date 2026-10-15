@@ -2257,6 +2257,50 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     // Non-vacuite : la regeneration TOURNE pendant ces memes ticks.
     expect(hpOf(room, 2)).toBeGreaterThan(vieAvant);
   });
+
+  /**
+   * Etape 13 : la borne de `grantCard` sur `maxHp` (§3.1 — un malus est un
+   * bonus negatif).
+   *
+   * ⚠️ **Le cas que cette tache corrige vraiment** — un joueur blesse qui
+   * prend une carte a malus de PV max et dont `hp += nouveauMax - maxHp`
+   * passait sous zero — demande une carte a malus, et le catalogue n'en a
+   * ENCORE AUCUNE (elle arrive a une tache ulterieure). On verifie donc le
+   * CHEMIN INVERSE, le seul que le catalogue actuel permette d'exercer : un
+   * maximum qui NE BOUGE PAS ne doit faire sauter ni descendre `hp` d'un
+   * seul point chez un joueur deja blesse, et un maximum qui MONTE continue
+   * de rendre exactement le delta, jamais plus. Les trois lignes de borne
+   * (`vivant`, `Math.min`, `Math.max`) sont des no-op sur ces deux chemins —
+   * la preuve du plancher qui sauve le blesse attend la premiere carte a
+   * malus.
+   */
+  it('une carte qui ne touche pas maxHp laisse les PV exactement en l etat, meme blesse', () => {
+    const room = new Room(0x0e_9e_0004);
+    room.join(1);
+    const blesse1 = blesse(room, 1, 700, 40);
+    const maxAvant = room.maxHpOf(1);
+
+    // REGAIN est de genre 'regen', jamais 'maxHp' : le recalcul de
+    // `grantCard` tourne (toute carte de passif le declenche), mais trouve
+    // un delta nul.
+    prend(room, 1, REGAIN, 1);
+
+    expect(room.maxHpOf(1)).toBe(maxAvant);
+    expect(hpOf(room, 1)).toBe(blesse1);
+  });
+
+  it('une carte de vitalite soigne un joueur blesse du meme delta que son maximum, sans jamais le depasser', () => {
+    const room = new Room(0x0e_9e_0005);
+    room.join(1);
+    const blesse1 = blesse(room, 1, 700, 40);
+    const maxAvant = room.maxHpOf(1);
+
+    prend(room, 1, VITALITE, 1);
+
+    expect(room.maxHpOf(1)).toBe(maxAvant + PAR_CARTE_MAX_HP);
+    expect(hpOf(room, 1)).toBe(blesse1 + PAR_CARTE_MAX_HP);
+    expect(hpOf(room, 1)).toBeLessThanOrEqual(room.maxHpOf(1));
+  });
 });
 
 /**

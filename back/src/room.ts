@@ -38,7 +38,6 @@ import {
   MAX_ENTITIES,
   MAX_PLAYERS,
   ORB_PICKUP_RADIUS,
-  PLAYER_MAX_HP,
   PLAYER_SPEED,
   PORTAL_EVERY_WAVES,
   PROJECTILE_CAPACITY,
@@ -52,7 +51,7 @@ import { EnemyShots } from '@shared/enemy-shots';
 import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
-import { Loadout } from '@shared/loadout';
+import { Loadout, maxHpOf } from '@shared/loadout';
 import {
   type FrappeImpact,
   frappeDueTick,
@@ -1149,8 +1148,8 @@ export class Room {
       lastSeq: 0,
       accountBonuses: compte?.bonuses ?? BONUS_ZERO,
       armor: compte?.bonuses.armor ?? 0,
-      hp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
-      maxHp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
+      hp: maxHpOf(loadout, compte?.bonuses.maxHp ?? 0),
+      maxHp: maxHpOf(loadout, compte?.bonuses.maxHp ?? 0),
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout,
@@ -2691,9 +2690,19 @@ export class Room {
       // ne se verrait qu'apres avoir encaisse des degats. Hors inventaire,
       // donc hors `applyCardToLoadout` : `hp`/`maxHp` sont des champs de
       // `PlayerState`, que le client n'arbitre jamais (§5.4).
-      const nouveauMax =
-        PLAYER_MAX_HP + player.loadout.bonus('maxHp') + player.accountBonuses.maxHp;
-      player.hp += nouveauMax - player.maxHp;
+      const nouveauMax = maxHpOf(player.loadout, player.accountBonuses.maxHp);
+      // ⚠️ **Borne, depuis l'etape 13.** Le delta brut (`hp += nouveauMax -
+      // maxHp`) TUAIT un joueur blesse des qu'un maximum BAISSE (une carte a
+      // malus de PV max) : a 30 PV, un malus de 40 donnait `hp = -10` — mort
+      // en acceptant sa carte. Un vivant reste vivant (plancher a 1), et `hp`
+      // ne depasse jamais le nouveau maximum ; un joueur deja mort ne
+      // ressuscite pas.
+      const vivant = player.hp > 0;
+      player.hp = player.hp + (nouveauMax - player.maxHp);
+      player.hp = Math.min(nouveauMax, player.hp);
+      if (vivant) {
+        player.hp = Math.max(1, player.hp);
+      }
       player.maxHp = nouveauMax;
     }
   }

@@ -35,7 +35,7 @@ import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
-import { Loadout } from '@shared/loadout';
+import { Loadout, maxHpOf } from '@shared/loadout';
 import {
   FRAPPE_DELAY_TICKS,
   type FrappeImpact,
@@ -1831,13 +1831,19 @@ export class GameClient {
   }
 
   /**
-   * PV max du joueur local : meme somme que `Room` (base, cartes de vitalite,
-   * achats du compte), lue sur le miroir d'inventaire.
+   * PV max du joueur local : meme somme que `Room` (base, cartes, achats du
+   * compte), lue sur le miroir d'inventaire.
+   *
+   * ⚠️ **`maxHpOf` (`@shared/loadout`), pas une copie locale** — cette somme
+   * etait recopiee ici et dans `Room#grantCard` ; deux copies divergeraient a
+   * la premiere regle qui touche au plafond (etape 13).
    */
   get localMaxHp(): number {
     const id = this.#localId;
-    const cartes = id === null ? 0 : this.loadoutOf(id).bonus('maxHp');
-    return PLAYER_MAX_HP + cartes + this.accountBonuses.maxHp;
+    if (id === null) {
+      return maxHpOf(new Loadout(), this.accountBonuses.maxHp);
+    }
+    return maxHpOf(this.loadoutOf(id), this.accountBonuses.maxHp);
   }
 
   get lateDeaths(): number {

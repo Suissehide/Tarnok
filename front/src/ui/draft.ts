@@ -287,6 +287,10 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   // parle vraiment du plafond.
   harvest: (m) => `+${m} PV rendu${m > 1 ? 's' : ''} par mort à ${HARVEST_RADIUS} px`,
   colossus: (m) => `+${pourcent(m)} % dégâts par ${COLOSSUS_HP_STEP} PV max`,
+  // Etape 13 : meme genre que l'« armure » de la boutique (`shop.ts`), donc
+  // meme unite — une fraction des degats encaisses. Aucune carte ne le porte
+  // encore ; seul un malus l'atteindra (`Loadout.bonus` le retranche).
+  armor: (m) => `+${pourcent(m)} % armure`,
 };
 
 /**
