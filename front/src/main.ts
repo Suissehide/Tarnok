@@ -4,6 +4,7 @@ import { weaponOf } from '@shared/weapons';
 
 import { Keyboard } from './input/keyboard';
 import { Mouse } from './input/mouse';
+import { PingWheel } from './input/ping-wheel';
 import { acheter, fetchCompte, tokenBytes, tokenText } from './net/account';
 import { type ConnectionStatus, GameClient, type InputAxes, type RenderState } from './net/client';
 import { composeFrame } from './render/frame';
@@ -486,7 +487,7 @@ function join(code: string): void {
         client.localClassId,
       );
     },
-    () => (paused ? { x: 0, y: 0 } : readAim()),
+    () => (paused ? { x: 0, y: 0 } : aimHeld()),
     // Tache 28 : la carte n'existe qu'a partir du WELCOME (graine recue),
     // donc on ne peut dessiner les obstacles qu'a ce moment-la — jamais avant.
     // C'est aussi l'instant ou la salle d'attente cede la place au jeu.
@@ -600,6 +601,28 @@ function join(code: string): void {
   // Et au clic sur son titre : la touche seule ne se decouvre pas.
   el('hud-combos-toggle').addEventListener('click', toggleCombos);
 
+  // La roue de ping (etape 9) : en jeu seulement, et jamais pendant l'etalage —
+  // qui a deja ses jetons visibles.
+  const pingWheel = new PingWheel({
+    element: el('ping-wheel'),
+    canOpen: () =>
+      !hud.classList.contains('hidden') &&
+      summary.classList.contains('hidden') &&
+      !paused &&
+      !client.isFrozen,
+    toWorld: (cx, cy) => {
+      const rect = stage.canvas.getBoundingClientRect();
+      return stage.screenToWorld(cx - rect.left, cy - rect.top);
+    },
+    onPing: (intent, x, y) => client.sendPing(intent, x, y),
+  });
+  // Le menu du navigateur ne doit pas recouvrir la roue.
+  window.addEventListener('contextmenu', (e) => {
+    if (!hud.classList.contains('hidden')) {
+      e.preventDefault();
+    }
+  });
+
   client.connect();
 
   // L'etalage du §7.2 : il se met a jour a chaque image, dans `renderFrame`.
@@ -664,6 +687,19 @@ function join(code: string): void {
     const dy = world.y - local.y;
     const len = Math.hypot(dx, dy);
     return len === 0 ? { x: 0, y: 0 } : { x: dx / len, y: dy / len };
+  }
+
+  /**
+   * La visee, figee tant que la roue de ping est ouverte : sans ca, glisser
+   * vers un secteur ferait tourner les tirs vers la roue (§2 de la spec de
+   * l'etape 9).
+   */
+  let lastAim: InputAxes = { x: 0, y: 0 };
+  function aimHeld(): InputAxes {
+    if (!pingWheel.isOpen) {
+      lastAim = readAim();
+    }
+    return lastAim;
   }
 
   /**
@@ -734,6 +770,7 @@ function join(code: string): void {
    */
   let lastCues: CueSnapshot | null = null;
   function renderFrame(now: number, dt: number): RenderState {
+    pingWheel.update();
     const state = composeFrame(client, stage, screens, now, dt);
     // Le son de la partie, deduit de ce qui a change depuis l'image d'avant.
     if (!hud.classList.contains('hidden')) {
