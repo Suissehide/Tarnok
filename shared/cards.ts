@@ -147,8 +147,17 @@ export function buildPool(): Card[] {
  * emplacement qui vient de tirer legendaire. Tirer la carte d'abord obligerait
  * a retirer, ou a forcer la rarete — deux facons de fausser les 3 %. Rarete,
  * carte, aspect : tout vient du meme `rng`, dans cet ordre.
+ *
+ * `floor` (etape 11) : le plancher de rarete de CHAQUE emplacement, passe tel
+ * quel a `rollRarity` — `CHEST_RARITY_FLOOR` pour un coffre. Rien d'autre ne
+ * change : un passif exclusivement legendaire n'entre toujours que sur un
+ * emplacement legendaire.
  */
-export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => number): Card[] {
+export function drawSpread(
+  loadouts: ReadonlyMap<number, Loadout>,
+  rng: () => number,
+  floor: number = RARITY.COMMUNE,
+): Card[] {
   const wanted = loadouts.size + SPREAD_BONUS;
   // ⚠️ **Une carte que PERSONNE ne peut prendre ne s'offre plus** : une fois
   // l'arsenal de chacun complet, une arme que nul ne possede n'est qu'une case
@@ -163,7 +172,7 @@ export function drawSpread(loadouts: ReadonlyMap<number, Loadout>, rng: () => nu
   const weights = pool.map((card) => (ownedByAnyone(card, loadouts) ? OWNED_WEIGHT : 1));
 
   while (spread.length < wanted && pool.length > 0) {
-    const rarity = rollRarity(rng);
+    const rarity = rollRarity(rng, floor);
     const permis = pool.map((card, i) =>
       rarity === RARITY.LEGENDAIRE || !isLegendaryOnly(card) ? (weights[i] ?? 0) : 0,
     );

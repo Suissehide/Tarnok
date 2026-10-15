@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { makeRandom } from './random';
 import {
+  CHEST_RARITY_FLOOR,
   multiplierOf,
   normalizeRarity,
   RARITY,
@@ -49,5 +50,45 @@ describe('etape 10 : la rarete', () => {
     expect(multiplierOf(200)).toBe(1);
     expect(multiplierOf(RARITY.RARE)).toBe(2);
     expect(multiplierOf(RARITY.LEGENDAIRE)).toBe(3);
+  });
+});
+
+describe('etape 11 : le plancher de rarete', () => {
+  it('le coffre est au plancher rare', () => {
+    expect(CHEST_RARITY_FLOOR).toBe(RARITY.RARE);
+  });
+
+  /**
+   * ⚠️ **La suite RELEVEE sur main avant l'etape** (graine 0x110a0001, 40
+   * tirages) : sans plancher, une montee de niveau ne doit voir AUCUNE
+   * difference — ni de rarete, ni de consommation du `rng`.
+   */
+  it('sans plancher, le meme rng rend la meme suite qu avant l etape', () => {
+    const r = makeRandom(0x11_0a_0001);
+    expect(Array.from({ length: 40 }, () => rollRarity(r))).toEqual([
+      0, 0, 0, 0, 0, 0, 2, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+      0, 0, 0, 1, 0, 0, 0, 0, 0,
+    ]);
+  });
+
+  it('au plancher rare, sur un rng scripte : 15/18 rare, 3/18 legendaire', () => {
+    expect(rollRarity(() => 0, RARITY.RARE)).toBe(RARITY.RARE);
+    // 0,83 x 18 = 14,94 < 15 : encore rare ; 0,84 x 18 = 15,12 : legendaire.
+    expect(rollRarity(() => 0.83, RARITY.RARE)).toBe(RARITY.RARE);
+    expect(rollRarity(() => 0.84, RARITY.RARE)).toBe(RARITY.LEGENDAIRE);
+    expect(rollRarity(() => 0.999_999, RARITY.RARE)).toBe(RARITY.LEGENDAIRE);
+  });
+
+  it('au plancher rare, jamais commune, et encore legendaire ~17 % du temps', () => {
+    const rng = makeRandom(0x11_0a_0002);
+    const vus = [0, 0, 0];
+    const N = 50_000;
+    for (let i = 0; i < N; i++) {
+      const r = rollRarity(rng, CHEST_RARITY_FLOOR);
+      vus[r] = (vus[r] ?? 0) + 1;
+    }
+    expect(vus[RARITY.COMMUNE]).toBe(0);
+    expect((vus[RARITY.LEGENDAIRE] ?? 0) / N).toBeCloseTo(3 / 18, 1);
+    expect((vus[RARITY.RARE] ?? 0) / N).toBeCloseTo(15 / 18, 1);
   });
 });
