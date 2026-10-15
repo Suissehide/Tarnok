@@ -2989,7 +2989,12 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     expect(client.loadoutOf(1).stacksOf(FOUGUE)).toBe(2);
   });
 
-  it('etape 10 : une arme LEGENDAIRE servie d office a un allie : acquisition plus deux crans', () => {
+  // ⚠️ Legendaire change une regle, elle ne se multiplie pas
+  // (`RARITY_MULTIPLIERS` vaut 1 a cet index depuis l'etape 13) : une seule
+  // application, donc la pure acquisition, sans cran d'amelioration en plus.
+  // Ce test attendait encore le triple d'avant l'etape 13 ; voir le meme
+  // correctif cote serveur (`back/src/room.test.ts`, legendaire x1).
+  it('etape 10 : une arme LEGENDAIRE servie d office a un allie : acquisition seule, aucun cran', () => {
     const { client, socket } = setup(1);
     socket.emit('message', {
       data: encodeDraftOpen(600, [
@@ -2999,8 +3004,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     socket.emit('message', {
       data: encodeDraftResult(0, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.AUTO }]),
     });
-    expect(client.loadoutOf(2).stacksOfWeapon(GRENADE)).toBe(3);
-    expect(client.loadoutOf(2).upgradesOf(GRENADE, 1)).toBe(2);
+    expect(client.loadoutOf(2).stacksOfWeapon(GRENADE)).toBe(1);
+    expect(client.loadoutOf(2).upgradesOf(GRENADE, 1)).toBe(0);
   });
 
   it('etape 10 : Volee elargit la salve affichee exactement comme celle du serveur', () => {
