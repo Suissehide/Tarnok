@@ -103,7 +103,6 @@ export class ChainRenderer {
     if (!this.#ready) {
       return;
     }
-    const tint = elementOf(ELEMENT.FOUDRE).tint;
     for (let i = 0; i < flashes.count; i++) {
       const n = flashes.pointCount[i] ?? 0;
       if (n < 2) {
@@ -124,7 +123,16 @@ export class ChainRenderer {
       // Un `stroke` PAR FLASH, pas un seul a la fin : chaque chaine a son
       // propre age, donc sa propre opacite — un `stroke` commun appliquerait
       // la teinte du DERNIER flash a tous les traits deja tracés.
-      this.#graphics.stroke({ color: tint, width: CHAIN_LINE_WIDTH_PX, alpha });
+      // ⚠️ **La teinte et l'epaisseur viennent du FLASH, plus d'une constante**
+      // (etape 8) : ce calque trace desormais deux evenements — la chaine de
+      // Foudre, toujours jaune et fine, et le faisceau, qui porte la teinte et
+      // la largeur de son arme. Un repli sur la Foudre garde l'ancien chemin
+      // intact pour un flash qui n'aurait rien demande.
+      this.#graphics.stroke({
+        color: flashes.tint[i] || elementOf(ELEMENT.FOUDRE).tint,
+        width: flashes.width[i] || CHAIN_LINE_WIDTH_PX,
+        alpha,
+      });
     }
   }
 

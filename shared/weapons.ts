@@ -152,9 +152,28 @@ export interface ProjectileLook {
   trailTicks: number;
 }
 
+/**
+ * La FAMILLE d'une arme (etape 8) — *« il faut varier les types, pas que des
+ * projectiles »*.
+ *
+ * ⚠️ **Un discriminant, et le MINIMUM de valeurs possible.** `'tir'` couvre
+ * tout ce que le catalogue savait faire jusqu'ici, anneau compris : un tir
+ * circulaire n'est pas une famille, c'est une `spreadRadians` qui fait un tour
+ * (voir la Roue de lames). Une valeur n'entre ici que quand la donnee existante
+ * ne peut VRAIMENT pas la dire — pour le halo, c'est le cas : il ne part rien,
+ * donc aucun reglage de projectile ne le decrit.
+ *
+ * ⚠️ **Le branchement vit a UN SEUL endroit par cote** : `Room#fireOne`
+ * (serveur) et son miroir cosmetique dans `GameClient`. Une famille de plus y
+ * ajoute une branche, nulle part ailleurs.
+ */
+export type WeaponKind = 'tir' | 'halo' | 'faisceau';
+
 export interface Weapon {
   id: number;
   name: string;
+  /** La famille de l'arme — voir `WeaponKind`. `'tir'` par defaut. */
+  kind: WeaponKind;
   /**
    * Cadence de tir, en ticks.
    *
@@ -340,10 +359,11 @@ export interface Weapon {
  */
 export const HEAVY_BLAST_RADIUS = ZONE_RADIUS / 2;
 
-const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pierce'> & {
+const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pierce' | 'kind'> & {
   element?: number;
   blastRadius?: number;
   pierce?: number;
+  kind?: WeaponKind;
 })[] = [
   {
     // Arme neutre de base (§6.1) : faible, sans element, hors slots.
@@ -662,11 +682,32 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // du catalogue a « evoluer » ; les evolutions n'existent plus (§9.1 de la
     // spec), elle s'empile comme les autres.
     //
-    // Le givre « de placement » : projectile unique, longue portee, cadence
-    // moyenne — une zone posee ou on la vise, en face des fleches-jumelles.
-    name: 'Sceptre arcanique',
-    // Eclat turquoise a fort halo : l'arme « de placement » du Givre se vise,
-    // donc elle se suit des yeux.
+    // ⚠️ **LE FAISCEAU** (etape 8) — la troisieme famille, apres l'anneau et le
+    // halo. Il ne pose aucun projectile : a chaque recharge, il fauche TOUT ce
+    // qui se tient sur le trait, du joueur jusqu'au bout de sa portee.
+    //
+    // ⚠️ **Il REMPLACE le Sceptre arcanique**, le givre « de placement » : un
+    // trait qui part du joueur et traverse la ligne EST un placement, en plus
+    // franc. Le Givre garde ses deux armes avec les fleches-jumelles, et le
+    // catalogue reste a dix-sept.
+    //
+    // ⚠️ **Le balayage est celui des PROJECTILES** : `distanceToSegmentSquared`
+    // (`shared/projectiles.ts`), ecrit pour que `collide` teste le segment
+    // parcouru pendant un pas plutot que son seul point d'arrivee. Un faisceau
+    // est ce meme segment, mais tenu une image au lieu d'un tick — aucune
+    // geometrie nouvelle.
+    //
+    // ⚠️ **`projectileSpeed` et `projectileLifeTicks` ne sont PAS inertes ici**,
+    // contrairement au halo : leur produit donne la LONGUEUR du trait, la meme
+    // derivation que la portee de toutes les autres armes (voir `beamRange`).
+    // Seul `blastRadius` change de sens — il devient la demi-largeur.
+    name: 'Rayon arcanique',
+    kind: 'faisceau',
+    /** La demi-largeur du trait : ce qui est a moins de 18 px du rayon est fauche. */
+    blastRadius: 18,
+    // Eclat turquoise a fort halo : c'est la teinte que le TRAIT prend a
+    // l'ecran (voir le miroir cosmetique dans `GameClient`), donc elle reste
+    // ce qui identifie l'arme — la forme, elle, ne sert plus a rien ici.
     look: {
       shape: 'eclat',
       diameterPx: 20,
@@ -751,24 +792,45 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // etaler la marque sur un front — c'est `ZoneField.ampAt` (`shared/zones.ts`)
     // qui lit `damageAmp`, donc plus de zones posees par la reaction est plus
     // d'occasions pour un allie de frapper dans une flaque amplifiee.
-    name: 'Seringue à poix',
-    // Goutte ambre-brun, halo faible, trainee en tirets : la poix ne brille
-    // pas, elle englue — et elle part par paquets, jamais en trait continu.
-    // Distincte de la teinte de l'element (0x3d2b1f, brun fonce).
+    // ⚠️ **LE HALO** (etape 8) — *« ca peut etre un halo qui empoisonne »*. Il
+    // ne tire RIEN : a chaque recharge, il frappe tout ce qui se tient dans
+    // son rayon, autour du joueur.
+    //
+    // ⚠️ **Il REMPLACE la Seringue a poix**, la poix « rapide » qui etalait sa
+    // marque en trois gouttes : un halo fait la meme chose — etaler la marque
+    // sur un front — en disant mieux ce que la Poix EST. Le catalogue reste a
+    // dix-sept armes (*« on peut supprimer certaines armes pour eviter d'avoir
+    // un pool trop eleve »*), et la Poix garde ses deux armes avec le Chaudron.
+    //
+    // ⚠️ **Le balayage est celui de la GRENADE**, `damageInRadius`, ecrit a la
+    // tache 16 et deja partage avec la reaction elementaire : un halo est une
+    // explosion qui se repete sur le joueur, pas un systeme de plus.
+    name: 'Encensoir de poix',
+    kind: 'halo',
+    // ⚠️ **`blastRadius` EST sa portee** : le rayon qui decide de ce qui meurt,
+    // exactement comme pour la grenade — et le client en derive le disque
+    // qu'il dessine, donc le dessin ne peut pas mentir sur la portee.
+    blastRadius: 110,
+    // ⚠️ **Quatre reglages INERTES** (`projectileSpeed`, `projectileLifeTicks`,
+    // `projectileCount`, `spreadRadians`) : un halo ne pose aucun projectile.
+    // Ils restent renseignes et plausibles parce que le catalogue est lu par
+    // des derivations qui balaient TOUTES les armes (`PROJECTILE_CULL_MARGIN`,
+    // les tests de coherence du catalogue) — une valeur manquante les
+    // casserait. Le `kind` ci-dessus dit ce qui compte vraiment.
     look: {
-      shape: 'goutte',
+      shape: 'bouffee',
       diameterPx: 11,
       tint: 0x8a6d3f,
       glow: 0.2,
       trailTicks: 0.8,
       spinTurns: 0.8,
-      trail: 'tirets',
+      trail: 'fumee',
     },
     cooldownTicks: 18,
     damage: 5,
     projectileSpeed: 480,
     projectileLifeTicks: 18,
-    projectileCount: 3,
+    projectileCount: 1,
     spreadRadians: 0.4,
     element: ELEMENT.POIX,
   },
@@ -930,6 +992,7 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   element: w.element ?? ELEMENT.NEUTRE,
   blastRadius: w.blastRadius ?? 0,
   pierce: w.pierce ?? 0,
+  kind: w.kind ?? 'tir',
 }));
 
 /**
@@ -1203,6 +1266,48 @@ export function salvoCount(weapon: Weapon, stacks: number): number {
  * capacite n'est qu'un plafond memoire et `truncatedProjectiles` compte ce qui
  * deborde — mais le banc qui a fixe 2048 reste a relancer pour le confirmer.
  */
+/**
+ * De combien le rayon d'effet d'une arme SANS projectile grandit par
+ * exemplaire empile, en fraction.
+ *
+ * ⚠️ **C'est l'equivalent de `salvoCount` pour les armes qui ne tirent pas.**
+ * « L'accumulation des cartes fait la puissance » (§7.2) doit valoir pour
+ * toutes les familles, sinon une carte de halo ou de faisceau ne vaudrait rien
+ * a partir de la deuxieme. Le rayon plutot que les degats : c'est le levier le
+ * plus LISIBLE a l'ecran, exactement l'argument qui fait grandir la salve d'un
+ * tir.
+ */
+export const EFFECT_RADIUS_PER_STACK = 0.15;
+
+/**
+ * Rayon d'effet d'une arme sans projectile, exemplaires empiles compris : la
+ * portee du cercle pour un `'halo'`, la demi-largeur du trait pour un
+ * `'faisceau'`.
+ *
+ * ⚠️ **Une seule regle pour les deux familles, et c'est deliberé.** Deux
+ * fonctions identiques a un nom pres auraient fini par diverger au premier
+ * reglage — ce depot l'a deja paye trois fois sur des valeurs dupliquees.
+ *
+ * `stacks` a zero rend le rayon de base, comme `salvoCount` : aucune famille
+ * n'a de cas particulier pour l'arme neutre, qui n'est jamais empilee.
+ */
+export function effectRadius(weapon: Weapon, stacks: number): number {
+  return weapon.blastRadius * (1 + EFFECT_RADIUS_PER_STACK * Math.max(0, stacks - 1));
+}
+
+/**
+ * Portee d'un faisceau, en pixels monde — la MEME derivation que la portee
+ * d'un tir (`projectileSpeed x projectileLifeTicks / TICK_HZ`).
+ *
+ * ⚠️ **Et c'est pour ca que ces deux champs ne sont PAS inertes sur un
+ * faisceau**, contrairement au halo : un trait a une longueur, et la longueur
+ * d'une arme du catalogue se lit deja comme ca partout ailleurs. Reutiliser la
+ * formule evite un champ de plus qui dirait la meme chose a cote.
+ */
+export function beamRange(weapon: Weapon): number {
+  return (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
+}
+
 export function stackGain(weapon: Weapon): number {
   return Math.max(1, Math.ceil(weapon.projectileCount / 3));
 }

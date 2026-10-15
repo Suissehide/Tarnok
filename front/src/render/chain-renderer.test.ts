@@ -229,3 +229,41 @@ describe('ChainRenderer.draw — le calque dessine ce que ChainFlashes a fige', 
     expect(stroke.mock.calls.length).toBeLessThanOrEqual(flashes.capacity);
   });
 });
+
+/**
+ * Étape 8 — **le calque trace desormais DEUX evenements** : la chaine de
+ * Foudre et le faisceau. La teinte et l'epaisseur ont donc quitte les
+ * constantes pour le flash lui-meme.
+ */
+describe('ChainFlashes — teinte et epaisseur par flash', () => {
+  const DEUX = [
+    { x: 0, y: 0 },
+    { x: 100, y: 0 },
+  ];
+
+  it('retombe sur zero quand rien n est demande : le calque choisira', () => {
+    const f = new ChainFlashes(4);
+    f.spawn(DEUX, 0);
+    expect(f.tint[0]).toBe(0);
+    expect(f.width[0]).toBe(0);
+  });
+
+  it('retient ce qu on lui donne', () => {
+    const f = new ChainFlashes(4);
+    f.spawn(DEUX, 0, 0x28e6d0, 36);
+    expect(f.tint[0]).toBe(0x28e6d0);
+    expect(f.width[0]).toBe(36);
+  });
+
+  it('compacte teinte et epaisseur avec le reste a l expiration', () => {
+    // ⚠️ Le defaut classique d'un tableau type compacte a la main : un champ
+    // oublie dans `#removeAt` fait porter au survivant la couleur du mort.
+    const f = new ChainFlashes(4);
+    f.spawn(DEUX, 0, 0x111111, 2);
+    f.spawn(DEUX, 1000, 0x222222, 8);
+    f.expire(1000 + CHAIN_FLASH_LIFETIME_MS - 1);
+    expect(f.count).toBe(1);
+    expect(f.tint[0]).toBe(0x222222);
+    expect(f.width[0]).toBe(8);
+  });
+});

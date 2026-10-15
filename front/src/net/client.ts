@@ -59,7 +59,15 @@ import {
   zoneElement,
 } from '@shared/protocol';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
-import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
+import {
+  BASE_WEAPON_ID,
+  beamRange,
+  cooldownWithBonus,
+  effectRadius,
+  salvoCount,
+  WEAPONS,
+  weaponOf,
+} from '@shared/weapons';
 import { applyObstacles, generateWorld, type WorldMap } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 
@@ -611,6 +619,18 @@ export class HitFlashes {
    * celui-ci dit « ce coup-la pese lourd », ce qui est vrai de l'arme.
    */
   readonly power: Float32Array;
+  /**
+   * `1` si ce flash doit SECOUER la camera (etape 8).
+   *
+   * ⚠️ **Par defaut, c'est « ce coup a un souffle » — et le halo est
+   * l'exception qui a rendu le drapeau necessaire.** Une explosion est un
+   * EVENEMENT ; un halo PULSE toutes les dix-huit ticks, sans arret, tant que
+   * le joueur le porte. Le laisser secouer l'ecran aurait rendu la secousse
+   * permanente — exactement le defaut que la fenetre de `cameraShake` vient de
+   * corriger, et cette fois aucune fenetre n'y aurait suffi puisque la source
+   * est continue par nature.
+   */
+  readonly shakes: Uint8Array;
   /** Horloge murale de naissance (`performance.now()`), voir `HIT_FLASH_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
@@ -621,6 +641,7 @@ export class HitFlashes {
     this.tint = new Uint32Array(capacity);
     this.radius = new Float32Array(capacity);
     this.power = new Float32Array(capacity);
+    this.shakes = new Uint8Array(capacity);
     this.bornMs = new Float64Array(capacity);
   }
 
@@ -629,7 +650,15 @@ export class HitFlashes {
   }
 
   /** Fait naitre un flash. Ignore silencieusement si la capacite (un burst reste petit) est atteinte. */
-  spawn(x: number, y: number, tint: number, radius: number, power: number, nowMs: number): void {
+  spawn(
+    x: number,
+    y: number,
+    tint: number,
+    radius: number,
+    power: number,
+    nowMs: number,
+    shakes = radius > 0,
+  ): void {
     if (this.#count >= this.capacity) {
       return;
     }
@@ -639,6 +668,7 @@ export class HitFlashes {
     this.tint[slot] = tint;
     this.radius[slot] = radius;
     this.power[slot] = power;
+    this.shakes[slot] = shakes ? 1 : 0;
     this.bornMs[slot] = nowMs;
   }
 
@@ -659,6 +689,7 @@ export class HitFlashes {
       this.tint[slot] = this.tint[last] ?? 0;
       this.radius[slot] = this.radius[last] ?? 0;
       this.power[slot] = this.power[last] ?? 0;
+      this.shakes[slot] = this.shakes[last] ?? 0;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -829,11 +860,24 @@ export class ChainFlashes {
   readonly y: Float32Array;
   /** Nombre de points REELLEMENT valides pour ce flash — entre 2 (un saut) et `CHAIN_FLASH_MAX_POINTS`. */
   readonly pointCount: Uint8Array;
+  /**
+   * Teinte du trait, 0xRRGGBB — la Foudre par defaut (etape 8).
+   *
+   * ⚠️ **Elle etait CONSTANTE dans le renderer jusqu'ici**, parce qu'un seul
+   * evenement dessinait une polyligne : la chaine de Foudre. Le faisceau est
+   * le second, et il porte la teinte de SON arme — un rayon de Givre jaune
+   * aurait menti sur son element a chaque tir.
+   */
+  readonly tint: Uint32Array;
+  /** Epaisseur du trait, en pixels monde : une chaine est fine, un faisceau a sa largeur d'arme. */
+  readonly width: Float32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `CHAIN_FLASH_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
 
   constructor(readonly capacity: number) {
+    this.tint = new Uint32Array(capacity);
+    this.width = new Float32Array(capacity);
     this.x = new Float32Array(capacity * CHAIN_FLASH_MAX_POINTS);
     this.y = new Float32Array(capacity * CHAIN_FLASH_MAX_POINTS);
     this.pointCount = new Uint8Array(capacity);
@@ -858,11 +902,24 @@ export class ChainFlashes {
    * relier : la chaine n'a touche personne) ou une reserve pleine (meme
    * discipline que `HitFlashes`/`OrbFlights` : un burst reste petit).
    */
-  spawn(points: readonly { x: number; y: number }[], nowMs: number): void {
+  spawn(
+    points: readonly { x: number; y: number }[],
+    nowMs: number,
+    /**
+     * `0` : « rien de particulier », et c'est le CALQUE qui retombe alors sur
+     * la Foudre et sur son epaisseur de chaine. Les constantes de dessin
+     * vivent dans le renderer, jamais ici — ce fichier ne sait pas a quoi
+     * ressemble un trait.
+     */
+    tint = 0,
+    width = 0,
+  ): void {
     if (points.length < 2 || this.#count >= this.capacity) {
       return;
     }
     const slot = this.#count++;
+    this.tint[slot] = tint;
+    this.width[slot] = width;
     const n = Math.min(points.length, CHAIN_FLASH_MAX_POINTS);
     for (let p = 0; p < n; p++) {
       const point = points[p];
@@ -892,6 +949,8 @@ export class ChainFlashes {
         this.y[dst + p] = this.y[src + p] ?? 0;
       }
       this.pointCount[slot] = this.pointCount[last] ?? 0;
+      this.tint[slot] = this.tint[last] ?? 0;
+      this.width[slot] = this.width[last] ?? 0;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -1460,8 +1519,9 @@ export class GameClient {
    * `DRAFT_RESULT` recus. Meme signature que `Room.loadoutOf` cote serveur,
    * pour que les deux se comparent directement.
    *
-   * Cree l'entree a la volee : quatre joueurs au plus, et un inventaire vide
-   * est la bonne reponse pour un joueur qui n'a encore rien drafte.
+   * Cree l'entree a la volee, AVEC la dague : c'est ce que `Room.join` donne
+   * a qui n'a pas choisi d'arme (et ce qu'on suppose d'un joueur dont on ne
+   * connait pas le choix). Une arme choisie au salon la remplace au WELCOME.
    */
   loadoutOf(playerId: number): Loadout {
     const found = this.#loadouts.get(playerId);
@@ -1469,6 +1529,7 @@ export class GameClient {
       return found;
     }
     const fresh = new Loadout();
+    fresh.addWeapon(BASE_WEAPON_ID);
     this.#loadouts.set(playerId, fresh);
     return fresh;
   }
@@ -1569,19 +1630,6 @@ export class GameClient {
    */
   get boss(): BossVitals | null {
     return this.#boss;
-  }
-
-  /**
-   * Les joueurs qui ont choisi une arme de depart au salon : chez eux, elle
-   * remplace la dague. Rempli au WELCOME depuis le dernier `LOBBY` ; un client
-   * arrive en cours de partie ne connait pas les choix des autres, meme limite
-   * que le miroir d'inventaire.
-   */
-  readonly #withoutBase = new Set<number>();
-
-  /** Ce joueur tire-t-il l'arme neutre ? Meme regle que `Room` (`keepsBase`). */
-  firesBase(playerId: number): boolean {
-    return !this.#withoutBase.has(playerId);
   }
 
   /** Dernier etat de la salle d'attente, `null` avant le premier `LOBBY`. */
@@ -1887,11 +1935,14 @@ export class GameClient {
       // §5.1 appliquee au rendu, pas seulement a la simulation (tache 28).
       // Les armes de depart choisies en salle d'attente : `Room.join` les a
       // posees dans chaque `Loadout` au meme instant que ce WELCOME.
+      // Sans choix, la dague : meme regle que `Room.join`.
       for (const p of this.#lobby?.players ?? []) {
+        // Sans choix, la dague (`loadoutOf` la pose) ; une arme choisie la
+        // remplace — meme regle que `Room.join`.
         if (p.weaponId !== NO_WEAPON) {
-          this.loadoutOf(p.playerId).addWeapon(p.weaponId);
-          // L'arme choisie REMPLACE la dague (`Room`, `keepsBase`).
-          this.#withoutBase.add(p.playerId);
+          const choisi = new Loadout();
+          choisi.addWeapon(p.weaponId);
+          this.#loadouts.set(p.playerId, choisi);
         }
         if (p.playerId === msg.playerId) {
           this.#localClassId = p.classId;
@@ -2273,7 +2324,7 @@ export class GameClient {
     // projectiles ») n'a pas ete suivi a la lettre ici — voir le rapport de
     // la tache 11.
     if (tick > this.#freezeUntilTick) {
-      this.#fireWeapons(tick, snapshot?.players ?? []);
+      this.#fireWeapons(tick, snapshot?.players ?? [], nowMs);
       this.projectiles.step(dt * scale);
       // Collision purement cosmetique : `collide` ne lit `horde` qu'en
       // lecture (position, `slotOf`) et ne consomme que les propres
@@ -2510,7 +2561,7 @@ export class GameClient {
    * leur visee transmise par `SNAPSHOT`, ce client ne saurait pas ou dessiner
    * leurs projectiles (voir la doc de `PlayerSnapshot`).
    */
-  #fireWeapons(tick: number, players: readonly PlayerSnapshot[]): void {
+  #fireWeapons(tick: number, players: readonly PlayerSnapshot[], nowMs: number): void {
     if (players.length === 0) {
       return;
     }
@@ -2528,11 +2579,8 @@ export class GameClient {
         continue;
       }
       const loadout = this.loadoutOf(p.id);
-      if (this.firesBase(p.id)) {
-        this.#fireOne(p.id, BASE_WEAPON_ID, loadout, tick, x, y, aimX, aimY);
-      }
       for (const weaponId of loadout.weaponIds) {
-        this.#fireOne(p.id, weaponId, loadout, tick, x, y, aimX, aimY);
+        this.#fireOne(p.id, weaponId, loadout, tick, x, y, aimX, aimY, nowMs);
       }
     }
   }
@@ -2575,6 +2623,8 @@ export class GameClient {
     y: number,
     aimX: number,
     aimY: number,
+    /** Horloge murale, pour le flash d'une pulsation de halo — voir plus bas. */
+    nowMs: number,
   ): void {
     const weapon = weaponOf(weaponId);
     const cooldown = cooldownWithBonus(
@@ -2593,7 +2643,53 @@ export class GameClient {
     // Meme calcul que `Room#fireOne`, meme fonction : chaque exemplaire empile
     // elargit la salve d'un projectile. Deux formules divergeraient, et le
     // joueur verrait une salve que le serveur n'arbitre pas.
-    const count = salvoCount(weapon, loadout.stacksOfWeapon(weaponId));
+    const stacks = loadout.stacksOfWeapon(weaponId);
+    if (weapon.kind === 'halo') {
+      // ⚠️ **Le miroir cosmetique d'une pulsation de halo est un FLASH, pas un
+      // projectile** : il porte le rayon que le serveur vient d'arbitrer
+      // (`effectRadius`, la meme fonction des deux cotes), donc le disque
+      // dessine ne peut pas mentir sur la portee — meme discipline que
+      // `reactionFlashScale` face a `REACTION_RADIUS`.
+      //
+      // ⚠️ **Il ne SECOUE PAS** : un halo pulse sans arret, et une secousse
+      // continue est precisement ce que cette etape vient de corriger. Voir
+      // `HitFlashes.shakes`.
+      this.hitFlashes.spawn(
+        x,
+        y,
+        weapon.look.tint,
+        effectRadius(weapon, stacks),
+        weapon.damage,
+        nowMs,
+        false,
+      );
+      last[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'faisceau') {
+      // ⚠️ **Le miroir cosmetique d'un faisceau est une POLYLIGNE a deux
+      // points, et elle reutilise le calque de la chaine de Foudre** : c'est
+      // deja le seul calque du jeu qui sache tracer un trait entre deux points
+      // du monde, avec son extinction. Un calque de plus aurait redit la meme
+      // chose — et le §6.6 compte les calques.
+      //
+      // Les deux bouts sont derives comme cote serveur (`beamRange` et la
+      // visee), donc le trait dessine est exactement celui que le serveur
+      // vient de faucher.
+      const portee = beamRange(weapon);
+      this.chainFlashes.spawn(
+        [
+          { x, y },
+          { x: x + aimX * portee, y: y + aimY * portee },
+        ],
+        nowMs,
+        weapon.look.tint,
+        2 * effectRadius(weapon, stacks),
+      );
+      last[weaponId] = tick;
+      return;
+    }
+    const count = salvoCount(weapon, stacks);
     this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY, damage, count);
     last[weaponId] = tick;
   }

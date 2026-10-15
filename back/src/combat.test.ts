@@ -47,7 +47,7 @@ import { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
 import { REACTION, zoneBurnPerTick } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { NEUTRE_MARQUE_AMP, type Weapon } from '@shared/weapons';
+import { beamRange, effectRadius, NEUTRE_MARQUE_AMP, WEAPONS, type Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -61,9 +61,11 @@ import {
   OrbField,
   Reactions,
   type ReactionTrigger,
+  resolveBeams,
   resolveBurn,
   resolveChargeHit,
   resolveContact,
+  resolveHalos,
   resolveProjectileDamage,
   resolveVerglasCollisions,
 } from './combat';
@@ -161,6 +163,7 @@ const SINGLE: Weapon = {
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
   pierce: 0,
+  kind: 'tir' as const,
   // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
   // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
   look: {
@@ -4621,5 +4624,184 @@ describe('le neutre amplifie ce que l equipe a marque (NEUTRE_MARQUE_AMP)', () =
     const braise: Weapon = { ...SINGLE, element: ELEMENT.BRAISE };
     const { hp } = pvApresUnCoup(ELEMENT.BRAISE, braise);
     expect(hp).toBeCloseTo(HEAVY_HP - coupSurLourd(SINGLE.damage), 5);
+  });
+});
+
+/**
+ * Étape 8 — **le halo**, demande par l'auteur : *« il faut varier les types,
+ * pas que des projectiles, ca peut etre un halo qui empoisonne »*.
+ *
+ * Ce bloc garde les trois choses que `resolveHalos` decide et que personne
+ * d'autre ne decide : qui encaisse, qui est marque, et qui meurt.
+ */
+describe('resolveHalos — le halo frappe autour du porteur', () => {
+  function horde3(): { horde: Horde; ids: number[] } {
+    const horde = new Horde(16);
+    const ids = [addOne(horde, 1, 0, 0), addOne(horde, 2, 60, 0), addOne(horde, 3, 400, 0)];
+    return { horde, ids };
+  }
+
+  const PULSE = { x: 0, y: 0, radius: 110, damage: 1000, element: ELEMENT.POIX, by: 7 };
+
+  it('tue tout ce qui est DANS le rayon, et rien au-dela', () => {
+    const { horde, ids } = horde3();
+    const morts = resolveHalos([PULSE], horde, new OrbField(16), 0, new ZoneField());
+    expect(morts.sort()).toEqual([ids[0], ids[1]].sort());
+    expect(horde.slotOf(ids[2] ?? 0)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('ne fait RIEN sans pulsation : pas de balayage, pas de mort', () => {
+    const { horde } = horde3();
+    expect(resolveHalos([], horde, new OrbField(16), 0, new ZoneField())).toEqual([]);
+    expect(horde.count).toBe(3);
+  });
+
+  it('laisse une orbe sur chaque mort, comme les autres sources de degat', () => {
+    const { horde } = horde3();
+    const orbs = new OrbField(16);
+    resolveHalos([PULSE], horde, orbs, 0, new ZoneField());
+    expect(orbs.count).toBe(2);
+  });
+
+  it('ne marque QU UN ennemi, le plus proche, et pas tout le rayon', () => {
+    // ⚠️ La regle de l'arme de zone, reprise telle quelle : un halo qui
+    // marquerait ses quarante ennemis declencherait quarante reactions au tick
+    // suivant, donc quarante zones — `ZONE_CAPACITY` vaut 128 et le
+    // recouvrement est en O(zones²).
+    const horde = new Horde(16);
+    addOne(horde, 1, 80, 0);
+    addOne(horde, 2, 20, 0);
+    addOne(horde, 3, 50, 0);
+    const reactions = new Reactions();
+    resolveHalos([{ ...PULSE, damage: 0 }], horde, new OrbField(16), 0, new ZoneField(), reactions);
+    const marques = [0, 1, 2].filter((i) => horde.markAt(i, 0) !== ELEMENT.NEUTRE);
+    expect(marques).toHaveLength(1);
+    // Le plus proche du centre : celui pose a 20 px.
+    expect(horde.x[marques[0] ?? 0]).toBe(20);
+  });
+
+  it('ne marque PERSONNE quand le halo est neutre', () => {
+    const horde = new Horde(16);
+    addOne(horde, 1, 20, 0);
+    const reactions = new Reactions();
+    resolveHalos(
+      [{ ...PULSE, damage: 0, element: ELEMENT.NEUTRE }],
+      horde,
+      new OrbField(16),
+      0,
+      new ZoneField(),
+      reactions,
+    );
+    expect(horde.markAt(0, 0)).toBe(ELEMENT.NEUTRE);
+  });
+
+  it('ne marque pas un ennemi que la pulsation vient de tuer', () => {
+    // Le plus proche meurt : la marque passe au suivant encore vivant, jamais
+    // sur un mort — un mort ne porte pas d'element, c'est la reaction qui en
+    // consomme une.
+    const horde = new Horde(16);
+    addOne(horde, 1, 10, 0);
+    addOne(horde, 2, 90, 0);
+    horde.hp[1] = 10_000;
+    const reactions = new Reactions();
+    resolveHalos([PULSE], horde, new OrbField(16), 0, new ZoneField(), reactions);
+    // Le survivant est le seul creneau restant, et c'est lui qui porte la marque.
+    expect(horde.count).toBe(1);
+    expect(horde.markAt(0, 0)).toBe(ELEMENT.POIX);
+  });
+
+  it('empile : chaque exemplaire ELARGIT le rayon', () => {
+    const encensoir = WEAPONS.find((w) => w.kind === 'halo');
+    if (!encensoir) {
+      throw new Error('aucun halo au catalogue');
+    }
+    expect(effectRadius(encensoir, 1)).toBe(encensoir.blastRadius);
+    expect(effectRadius(encensoir, 3)).toBeGreaterThan(effectRadius(encensoir, 2));
+    // Et l'arme non empilee passe par le meme chemin, sans cas particulier.
+    expect(effectRadius(encensoir, 0)).toBe(encensoir.blastRadius);
+  });
+});
+
+/**
+ * Étape 8 — **le faisceau**, troisieme famille apres l'anneau et le halo.
+ */
+describe('resolveBeams — le trait fauche la ligne', () => {
+  /** Trois corps : deux sur l'axe +x, un loin au-dessus. */
+  function hordeEnLigne(): { horde: Horde; ids: number[] } {
+    const horde = new Horde(16);
+    const ids = [addOne(horde, 1, 100, 0), addOne(horde, 2, 300, 0), addOne(horde, 3, 200, 400)];
+    return { horde, ids };
+  }
+
+  const TRAIT = {
+    x: 0,
+    y: 0,
+    toX: 480,
+    toY: 0,
+    width: 18,
+    damage: 1000,
+    element: ELEMENT.GIVRE,
+    by: 7,
+  };
+
+  it('tue TOUT ce qui touche le trait, et rien a cote', () => {
+    const { horde, ids } = hordeEnLigne();
+    const morts = resolveBeams([TRAIT], horde, new OrbField(16), 0, new ZoneField());
+    expect(morts.sort()).toEqual([ids[0], ids[1]].sort());
+    expect(horde.slotOf(ids[2] ?? 0)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('s arrete au BOUT du trait : au-dela de la portee, rien', () => {
+    const horde = new Horde(16);
+    const loin = addOne(horde, 1, 600, 0);
+    resolveBeams([TRAIT], horde, new OrbField(16), 0, new ZoneField());
+    expect(horde.slotOf(loin)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('ne fauche pas DERRIERE le porteur', () => {
+    // Le trait est un SEGMENT, pas une droite : un ennemi a l'oppose de la
+    // visee est hors de portee, quelle que soit sa distance.
+    const horde = new Horde(16);
+    const derriere = addOne(horde, 1, -100, 0);
+    resolveBeams([TRAIT], horde, new OrbField(16), 0, new ZoneField());
+    expect(horde.slotOf(derriere)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('ne fait RIEN sans trait', () => {
+    const { horde } = hordeEnLigne();
+    expect(resolveBeams([], horde, new OrbField(16), 0, new ZoneField())).toEqual([]);
+    expect(horde.count).toBe(3);
+  });
+
+  it('ne marque QUE le premier corps rencontre', () => {
+    const horde = new Horde(16);
+    addOne(horde, 1, 300, 0);
+    addOne(horde, 2, 100, 0);
+    const reactions = new Reactions();
+    resolveBeams([{ ...TRAIT, damage: 0 }], horde, new OrbField(16), 0, new ZoneField(), reactions);
+    const marques = [0, 1].filter((i) => horde.markAt(i, 0) !== ELEMENT.NEUTRE);
+    expect(marques).toHaveLength(1);
+    // Le plus proche du PORTEUR : celui pose a 100 px, pas celui a 300.
+    expect(horde.x[marques[0] ?? 0]).toBe(100);
+  });
+
+  it('laisse une orbe sur chaque mort, comme les autres sources de degat', () => {
+    const { horde } = hordeEnLigne();
+    const orbs = new OrbField(16);
+    resolveBeams([TRAIT], horde, orbs, 0, new ZoneField());
+    expect(orbs.count).toBe(2);
+  });
+
+  it('derive sa portee comme toutes les autres armes du catalogue', () => {
+    const rayon = WEAPONS.find((w) => w.kind === 'faisceau');
+    if (!rayon) {
+      throw new Error('aucun faisceau au catalogue');
+    }
+    expect(beamRange(rayon)).toBeCloseTo(
+      (rayon.projectileSpeed * rayon.projectileLifeTicks) / 30,
+      6,
+    );
+    // Et sa largeur grandit avec les exemplaires, comme le rayon d'un halo.
+    expect(effectRadius(rayon, 2)).toBeGreaterThan(effectRadius(rayon, 1));
   });
 });

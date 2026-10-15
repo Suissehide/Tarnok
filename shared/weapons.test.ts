@@ -9,6 +9,7 @@ import {
   BASE_WEAPON_ID,
   cooldownWithBonus,
   HEAVY_BLAST_RADIUS,
+  effectRadius,
   MAX_FIRE_RATE_BONUS,
   MIN_MUZZLE_SPEED,
   PROJECTILE_FADE_REFERENCE_TICKS,
@@ -229,7 +230,12 @@ describe('le rayon de zone porte par une arme (tache 16)', () => {
    * qu'une seule des deux ne designe pas forcement la meme arme.
    */
   it('la PLUS GRANDE zone est celle qui frappe le plus fort et le plus lentement', () => {
-    const zone = [...WEAPONS].filter((w) => w.blastRadius > 0);
+    // ⚠️ **Les armes de famille `'halo'` sont HORS de cette regle** (etape 8) :
+    // leur `blastRadius` n'est pas un souffle d'impact, c'est leur PORTEE — le
+    // rayon autour du porteur. Les confondre ferait dire a ce cas qu'un halo
+    // doit etre plus lent que la grenade, ce qui n'a aucun sens pour une arme
+    // qui ne percute rien.
+    const zone = WEAPONS.filter((w) => w.kind === 'tir' && w.blastRadius > 0);
     // ⚠️ **Le souffle n'est plus l'apanage d'une seule arme depuis l'etape 8**
     // (les quatre lourdes a projectile unique en ont un de contact), mais il
     // reste une EXCEPTION : la regle du catalogue est « ce coup ne touche que
@@ -400,7 +406,9 @@ describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
       Math.floor(WEAPONS.length / 2)
     ];
     for (const w of WEAPONS) {
-      if (w.blastRadius > 0) {
+      // Hors famille `'tir'`, `blastRadius` n'est pas un souffle — voir le cas
+      // « la PLUS GRANDE zone » plus haut.
+      if (w.kind === 'tir' && w.blastRadius > 0) {
         expect(w.projectileCount, w.name).toBe(1);
         expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(mediane?.cooldownTicks ?? 0);
       }
@@ -408,8 +416,9 @@ describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
   });
 
   it('reste strictement sous celui de la grenade', () => {
-    const grenade = WEAPONS.reduce((a, b) => (a.blastRadius >= b.blastRadius ? a : b));
-    for (const w of WEAPONS) {
+    const tirs = WEAPONS.filter((w) => w.kind === 'tir');
+    const grenade = tirs.reduce((a, b) => (a.blastRadius >= b.blastRadius ? a : b));
+    for (const w of tirs) {
       if (w.blastRadius > 0 && w !== grenade) {
         expect(w.blastRadius, w.name).toBe(HEAVY_BLAST_RADIUS);
         expect(w.blastRadius, w.name).toBeLessThan(grenade.blastRadius);
@@ -724,5 +733,38 @@ describe('MIN_MUZZLE_SPEED — un projectile prend de l avance sur son tireur', 
     expect((2 * PROJECTILE_HIT_RADIUS) / relative, laPlusLente.name).toBeLessThanOrEqual(1 / 3);
     // Avant l'etape 8, la grenade (350 px/s) mettait plus du double.
     expect((2 * PROJECTILE_HIT_RADIUS) / (350 - PLAYER_SPEED)).toBeGreaterThan(2 / 3);
+  });
+});
+
+/**
+ * Étape 8 — **les familles d'armes**, demandees par l'auteur : *« il faut
+ * varier les types, pas que des projectiles »*.
+ */
+describe('WeaponKind — ce qu une famille change, et ce qu elle ne change pas', () => {
+  it('garde le TIR comme cas courant : la ligne absente est la regle', () => {
+    expect(WEAPONS.filter((w) => w.kind === 'tir').length).toBeGreaterThan(WEAPONS.length / 2);
+  });
+
+  it('donne a tout halo une portee propre, jamais zero', () => {
+    for (const w of WEAPONS) {
+      if (w.kind === 'halo') {
+        // Un halo sans rayon ne toucherait rien : c'est `blastRadius` qui porte
+        // sa portee, et le client en derive le disque qu'il dessine.
+        expect(w.blastRadius, w.name).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it('fait grandir le rayon d un halo a chaque exemplaire, comme une salve grandit', () => {
+    const halos = WEAPONS.filter((w) => w.kind === 'halo');
+    expect(halos.length).toBeGreaterThan(0);
+    for (const w of halos) {
+      expect(effectRadius(w, 1), w.name).toBe(w.blastRadius);
+      // ⚠️ Les DEUX bornes : a zero exemplaire aussi (l'arme neutre passerait
+      // par le meme chemin), et strictement croissant ensuite.
+      expect(effectRadius(w, 0), w.name).toBe(w.blastRadius);
+      expect(effectRadius(w, 2), w.name).toBeGreaterThan(effectRadius(w, 1));
+      expect(effectRadius(w, 5), w.name).toBeGreaterThan(effectRadius(w, 4));
+    }
   });
 });

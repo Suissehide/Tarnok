@@ -45,6 +45,7 @@ const SINGLE: Weapon = {
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
   pierce: 0,
+  kind: 'tir' as const,
   // Trois apparences DIFFERENTES entre les trois armes de test : c'est ce qui
   // permet aux cas de `weaponAt` ci-dessous de distinguer laquelle a tire.
   look: {
@@ -71,6 +72,7 @@ const SPREAD: Weapon = {
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
   pierce: 0,
+  kind: 'tir' as const,
   look: {
     shape: 'petale',
     diameterPx: 12,
@@ -95,6 +97,7 @@ const FAST: Weapon = {
   element: ELEMENT.NEUTRE,
   blastRadius: 0,
   pierce: 0,
+  kind: 'tir' as const,
   look: {
     shape: 'fleche',
     diameterPx: 14,

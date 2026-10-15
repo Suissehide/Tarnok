@@ -88,8 +88,14 @@ const DT = 1 / TICK_HZ;
  *
  * L'arme neutre est exclue : elle vit hors des slots (§6.1) et l'empiler la
  * ferait tirer deux fois par tick.
+ *
+ * ⚠️ **Les armes qui ne TIRENT pas aussi** (etape 8) : ce qu'on compte ici, ce
+ * sont des salves de projectiles, et un halo n'en pose aucune — il met une
+ * pulsation en file (voir `Room#fireOne`). L'y laisser ferait compter une
+ * salve de moins que de slots, pour une raison qui n'a rien a voir avec ce que
+ * ces cas gardent.
  */
-const ARSENAL_PLEIN = WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID)
+const ARSENAL_PLEIN = WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID && w.kind === 'tir')
   .slice(0, WEAPON_SLOTS)
   .map((w) => w.id);
 
@@ -1122,7 +1128,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect(compte.get(GRENADE)).toBe(attenduGrenade);
   });
 
-  it('l arme neutre reste hors slots : un arsenal PLEIN fait une salve de plus que ses slots', () => {
+  it('la dague occupe un slot : un arsenal PLEIN fait autant de salves que de slots, dague comprise', () => {
     const room = new Room();
     room.join(1);
     const inv = room.loadoutOf(1);
@@ -1133,7 +1139,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // `[1, 2, 3, 5, 6]` en dur : passer les slots de 5 a 4 (tache 19) faisait
     // lever `addWeapon` sur la cinquieme. C'est « la constante recopiee dans
     // une fixture », et le compte attendu se derive lui aussi.
-    const DRAFTEES = ARSENAL_PLEIN;
+    const DRAFTEES = ARSENAL_PLEIN.slice(0, WEAPON_SLOTS - 1);
     for (const id of DRAFTEES) {
       inv.addWeapon(id);
     }
@@ -1142,12 +1148,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // Un seul tick : aucune arme n'a jamais tire, donc toutes sont dues.
     const compte = salvesParArme(room, 1);
 
-    // ⚠️ UNE DE PLUS que le nombre de slots. L'arme neutre du §6.1 vit hors
-    // des slots : elle ne figure dans aucun `Loadout` et tire quand meme. Un
-    // `#fireWeapons` qui se contenterait de parcourir `weaponIds` en oubliant
-    // l'arme de base ferait exactement `WEAPON_SLOTS` salves — et le joueur
-    // qui drafte sa premiere arme perdrait celle avec laquelle il a commence.
-    expect([...compte.values()].reduce((a, b) => a + b, 0)).toBe(WEAPON_SLOTS + 1);
+    // La dague est dans le `Loadout` depuis `join` (retour de playtest : elle
+    // s'ameliore comme les autres) : elle tire, et prend un slot.
+    expect([...compte.values()].reduce((a, b) => a + b, 0)).toBe(WEAPON_SLOTS);
     expect([...compte.keys()].sort((a, b) => a - b)).toEqual([BASE_WEAPON_ID, ...DRAFTEES]);
   });
 
@@ -1514,6 +1517,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // se REMESURE, elle ne se recalcule pas de tete.
     const EXEMPLAIRES = 12;
     for (const id of [1, 2, 3, 4]) {
+      // Le pic est mesure sur quatre armes de tir : sans la dague du depart.
+      room.debugResetLoadout(id);
       for (const arme of ARMES) {
         for (let k = 0; k < EXEMPLAIRES; k++) {
           room.grantCard(id, { nature: CARD.WEAPON, refId: arme });

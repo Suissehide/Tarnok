@@ -2465,8 +2465,9 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
       { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
     ]);
 
-    expect([...client.loadoutOf(2).weaponIds]).toEqual([GRENADE]);
-    expect([...client.loadoutOf(1).weaponIds]).toEqual([]);
+    // Chacun part avec la dague (`loadoutOf`, comme `Room.join`).
+    expect([...client.loadoutOf(2).weaponIds]).toEqual([BASE_WEAPON_ID, GRENADE]);
+    expect([...client.loadoutOf(1).weaponIds]).toEqual([BASE_WEAPON_ID]);
   });
 
   it('une carte perdue au conflit ne donne rien, la meme carte gagnee la donne', () => {
@@ -2481,8 +2482,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
       { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
     ]);
 
-    expect([...client.loadoutOf(1).weaponIds]).toEqual([]);
-    expect([...client.loadoutOf(2).weaponIds]).toEqual([GRENADE]);
+    expect([...client.loadoutOf(1).weaponIds]).toEqual([BASE_WEAPON_ID]);
+    expect([...client.loadoutOf(2).weaponIds]).toEqual([BASE_WEAPON_ID, GRENADE]);
   });
 
   it('une attribution d office donne la carte comme une victoire', () => {
@@ -3736,12 +3737,19 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
   });
 
   it('un projectile ELEMENTAIRE du joueur local teint l ennemi qu il touche', () => {
-    // Arme a projectile UNIQUE et dispersion etroite : la seule qui touche a
-    // coup sur une cible isolee. Choisie par ses proprietes, jamais par un
-    // identifiant en dur — le catalogue est du contenu, il bouge.
-    const arme = WEAPONS.find((w) => w.element === ELEMENT.GIVRE && w.projectileCount === 1);
+    // Arme a dispersion etroite QUI TIRE : la seule qui touche a coup sur une
+    // cible isolee. Choisie par ses proprietes, jamais par un identifiant en
+    // dur — le catalogue est du contenu, il bouge.
+    //
+    // ⚠️ **`kind === 'tir'` depuis l'etape 8** : le Givre « de placement » est
+    // devenu un FAISCEAU, qui ne pose aucun projectile. Sans ce filtre, ce cas
+    // choisissait une arme qui ne tire rien et echouait pour une raison qui
+    // n'a aucun rapport avec ce qu'il garde.
+    const arme = WEAPONS.find(
+      (w) => w.kind === 'tir' && w.element !== ELEMENT.NEUTRE && w.spreadRadians < 0.3,
+    );
     if (!arme) {
-      throw new Error('aucune arme elementaire a projectile unique dans le catalogue');
+      throw new Error('aucune arme elementaire a dispersion etroite dans le catalogue');
     }
 
     const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0004, 93, () => ({
@@ -3774,7 +3782,9 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
       marque = client.horde.markAt(0, client.hordeTick - 1);
     }
 
-    expect(marque).toBe(ELEMENT.GIVRE);
+    // L'element de CETTE arme, pas un element ecrit en dur : c'est la marque
+    // du tir qu'on vient de choisir.
+    expect(marque).toBe(arme.element);
   });
 
   it('une arme NEUTRE n efface pas la marque d un autre element', () => {

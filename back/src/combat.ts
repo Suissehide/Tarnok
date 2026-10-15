@@ -23,7 +23,7 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import { linkedNeighbours } from '@shared/links';
-import type { Projectiles } from '@shared/projectiles';
+import { distanceToSegmentSquared, type Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
 import { REACTION, reactionForPair } from '@shared/reactions';
 import { NEUTRE_MARQUE_AMP } from '@shared/weapons';
@@ -1413,6 +1413,191 @@ export function resolveProjectileDamage(
     return [];
   }
 
+  const deadIds = [...dead];
+  for (const id of deadIds) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+    }
+  }
+  horde.kill(deadIds);
+  return deadIds;
+}
+
+/**
+ * Une pulsation de halo : ce qu'une arme de famille `'halo'` pose au tick ou
+ * sa recharge est faite (etape 8).
+ *
+ * ⚠️ **C'est `Room#fireOne` qui la fabrique, pas cette fonction.** Les
+ * reglages (recharge, passifs de cadence et de degats, exemplaires empiles)
+ * vivent deja la-bas pour toutes les familles : les recopier ici en ferait une
+ * seconde definition de « quand et combien », et les deux finiraient par se
+ * contredire. Ce qui arrive ici est deja resolu — un point, un rayon, un
+ * degat.
+ */
+export interface HaloPulse {
+  readonly x: number;
+  readonly y: number;
+  readonly radius: number;
+  readonly damage: number;
+  /** L'element porte par le halo, `ELEMENT.NEUTRE` s'il n'en porte aucun. */
+  readonly element: number;
+  /** Le joueur a qui ce halo appartient — c'est LUI que la marque retient (§7). */
+  readonly by: number;
+}
+
+/**
+ * Le halo (etape 8) : a chaque pulsation, tout ce qui se tient dans le rayon
+ * encaisse.
+ *
+ * ⚠️ **Le balayage est celui de la GRENADE** (`damageInRadius`, tache 16),
+ * deja partage avec la reaction elementaire : un halo est une explosion qui se
+ * repete sur le joueur, pas un systeme de plus. Rien de neuf ne decide ici de
+ * qui meurt.
+ *
+ * ⚠️ **Il ne MARQUE que le plus proche, pas tout le rayon — et c'est la regle
+ * de l'arme de zone, reprise telle quelle.** Une grenade tue large et ne
+ * marque que l'ennemi percute (voir `resolveProjectileDamage`) ; un halo qui
+ * marquerait ses quarante ennemis d'un coup declencherait quarante reactions
+ * au tick suivant, donc quarante zones — `ZONE_CAPACITY` vaut 128 et le
+ * recouvrement est en O(zones²). Le §6.6 veut la reaction RARE ; une arme ne
+ * doit pas pouvoir en faire une pluie.
+ *
+ * ⚠️ **Le plus proche VIVANT.** Marquer un mourant declencherait une reaction
+ * sur quelqu'un qui n'est plus la — exactement ce que `resolveProjectileDamage`
+ * evite avec son `dead.has(entityId)`.
+ *
+ * Rend les identites mortes, comme `resolveBurn` et `resolveProjectileDamage`,
+ * pour que `Room.step` n'ait qu'une seule facon de prononcer une mort.
+ */
+export function resolveHalos(
+  pulses: readonly HaloPulse[],
+  horde: Horde,
+  orbs: OrbField,
+  tick: number,
+  zones: ZoneField,
+  reactions?: Reactions,
+): number[] {
+  if (pulses.length === 0) {
+    return [];
+  }
+  const dead = new Set<number>();
+  for (const pulse of pulses) {
+    damageInRadius(horde, pulse.x, pulse.y, pulse.radius, pulse.damage, zones, tick, dead);
+    if (pulse.element === ELEMENT.NEUTRE || !reactions) {
+      continue;
+    }
+    let bestSlot = -1;
+    let bestDist2 = Number.POSITIVE_INFINITY;
+    const r2 = pulse.radius * pulse.radius;
+    for (let i = 0; i < horde.count; i++) {
+      if (dead.has(horde.entityIdAt(i))) {
+        continue;
+      }
+      const dx = (horde.x[i] ?? 0) - pulse.x;
+      const dy = (horde.y[i] ?? 0) - pulse.y;
+      const d2 = dx * dx + dy * dy;
+      // ⚠️ `>=` comme `damageInRadius` : le bord du rayon n'est PAS touche, et
+      // la marque ne doit pas aller plus loin que le degat.
+      if (d2 >= r2 || d2 >= bestDist2) {
+        continue;
+      }
+      bestDist2 = d2;
+      bestSlot = i;
+    }
+    if (bestSlot >= 0) {
+      applyElement(horde, reactions, bestSlot, pulse.element, pulse.by, tick);
+    }
+  }
+  if (dead.size === 0) {
+    return [];
+  }
+  const deadIds = [...dead];
+  for (const id of deadIds) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+    }
+  }
+  horde.kill(deadIds);
+  return deadIds;
+}
+
+/**
+ * Un trait de faisceau : ce qu'une arme de famille `'faisceau'` pose au tick
+ * ou sa recharge est faite (etape 8).
+ *
+ * Comme `HaloPulse`, il arrive DEJA resolu — `Room#fireOne` a applique la
+ * cadence, les passifs et les exemplaires empiles. Ce qui est ici est une
+ * geometrie et un degat.
+ */
+export interface BeamPulse {
+  /** L'origine : le joueur. */
+  readonly x: number;
+  readonly y: number;
+  /** L'autre bout du trait, deja derive de la visee et de la portee. */
+  readonly toX: number;
+  readonly toY: number;
+  /** Demi-largeur : ce qui est a moins que ca du segment est fauche. */
+  readonly width: number;
+  readonly damage: number;
+  readonly element: number;
+  readonly by: number;
+}
+
+/**
+ * Le faisceau (etape 8) : tout ce qui touche le trait encaisse, du porteur
+ * jusqu'au bout de sa portee.
+ *
+ * ⚠️ **La geometrie est celle des PROJECTILES**, `distanceToSegmentSquared` —
+ * ecrite pour que `collide` teste le segment parcouru pendant un pas plutot
+ * que son seul point d'arrivee. Un faisceau est ce meme segment, tenu une
+ * image au lieu d'un tick : rien de neuf ne mesure ici.
+ *
+ * ⚠️ **Il ne MARQUE que le plus proche**, exactement comme le halo et comme
+ * l'arme de zone — voir `resolveHalos` pour le raisonnement complet (une
+ * reaction par ennemi touche ferait une pluie de zones, que le §6.6 refuse).
+ * « Le plus proche » se mesure depuis le PORTEUR, pas depuis le trait : c'est
+ * le premier corps que le rayon rencontre.
+ */
+export function resolveBeams(
+  beams: readonly BeamPulse[],
+  horde: Horde,
+  orbs: OrbField,
+  tick: number,
+  zones: ZoneField,
+  reactions?: Reactions,
+): number[] {
+  if (beams.length === 0) {
+    return [];
+  }
+  const dead = new Set<number>();
+  for (const beam of beams) {
+    const w2 = beam.width * beam.width;
+    let bestSlot = -1;
+    let bestDist2 = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < horde.count; i++) {
+      const ex = horde.x[i] ?? 0;
+      const ey = horde.y[i] ?? 0;
+      if (distanceToSegmentSquared(ex, ey, beam.x, beam.y, beam.toX, beam.toY) >= w2) {
+        continue;
+      }
+      appliquerDegats(horde, i, beam.damage, zones, tick, dead);
+      const dx = ex - beam.x;
+      const dy = ey - beam.y;
+      const d2 = dx * dx + dy * dy;
+      if (d2 < bestDist2 && !dead.has(horde.entityIdAt(i))) {
+        bestDist2 = d2;
+        bestSlot = i;
+      }
+    }
+    if (bestSlot >= 0 && beam.element !== ELEMENT.NEUTRE && reactions) {
+      applyElement(horde, reactions, bestSlot, beam.element, beam.by, tick);
+    }
+  }
+  if (dead.size === 0) {
+    return [];
+  }
   const deadIds = [...dead];
   for (const id of deadIds) {
     const slot = horde.slotOf(id);

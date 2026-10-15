@@ -567,9 +567,11 @@ export function cameraShake(
     }
   };
   for (let i = 0; i < hits.count; i++) {
-    // Seuls les coups a SOUFFLE secouent : sans ce test, dix-sept armes
-    // feraient trembler l'ecran a chaque projectile qui touche.
-    if ((hits.radius[i] ?? 0) > 0) {
+    // Seuls les coups qui le DEMANDENT secouent : sans ce test, dix-sept armes
+    // feraient trembler l'ecran a chaque projectile qui touche. C'est le souffle
+    // qui le demande par defaut — et le halo qui s'en exclut, parce qu'il pulse
+    // sans fin (voir `HitFlashes.shakes`).
+    if ((hits.shakes[i] ?? 0) === 1) {
       retenir(hits.bornMs[i] ?? 0, SHAKE_BLAST_PX);
     }
   }

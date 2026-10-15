@@ -65,21 +65,33 @@ import {
 import { makeRandom } from '@shared/random';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
-import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
+import {
+  BASE_WEAPON_ID,
+  beamRange,
+  cooldownWithBonus,
+  effectRadius,
+  salvoCount,
+  WEAPONS,
+  weaponOf,
+} from '@shared/weapons';
 import { applyObstacles, generateObstacles, moveOnMap } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
 
 import {
   applyReactions,
+  type BeamPulse,
   type Blast,
   type ContactPlayer,
+  type HaloPulse,
   markInZones,
   OrbField,
   Reactions,
+  resolveBeams,
   resolveBlasts,
   resolveBurn,
   resolveChargeHit,
   resolveContact,
+  resolveHalos,
   resolveProjectileDamage,
   resolveVerglasCollisions,
 } from './combat';
@@ -169,13 +181,6 @@ export interface PlayerState extends ContactPlayer {
   readonly classId: number;
   /** Tick du dernier verbe ACCEPTE. `-Infinity` : jamais utilise. */
   lastAbilityTick: number;
-  /**
-   * Vrai si ce joueur tire l'arme neutre. **Une seule arme au depart** :
-   * l'arme choisie en salle d'attente REMPLACE la dague, elle ne s'y ajoute
-   * pas ; seul un joueur sans arme de depart (ou arrive en cours de partie)
-   * garde la dague. Pose a `join`, jamais modifie ensuite.
-   */
-  readonly keepsBase: boolean;
   /**
    * L'armure EFFECTIVE de ce tick, celle que `resolveContact` lit : le maximum
    * de l'armure du compte et de toute protection de Rempart qui couvre le
@@ -1066,6 +1071,17 @@ export class Room {
     this.#gold = gold;
   }
 
+  /**
+   * Ecriture de test, meme statut que `debugSetGold` : vide l'arsenal d'un
+   * joueur (la dague comprise), pour les tests qui ont besoin de TOUS les slots.
+   */
+  debugResetLoadout(id: number): void {
+    const p = this.#players.get(id);
+    if (p) {
+      p.loadout = new Loadout();
+    }
+  }
+
   /** Ecriture de test, meme statut que `debugSetGold` : le niveau de l'equipe. */
   debugSetLevel(level: number): void {
     this.#level = level;
@@ -1098,11 +1114,11 @@ export class Room {
       return false;
     }
     // L'arme de depart de la salle d'attente, deja validee par `Session`
-    // (`startingWeapons`). Elle entre dans le `Loadout` comme une carte draftee.
+    // (`startingWeapons`), ou la dague a defaut. Elle entre dans le `Loadout`
+    // comme une carte draftee : une arme comme les autres, que le draft
+    // ameliore (retour de playtest : *« la dague peut etre amelioree »*).
     const loadout = new Loadout();
-    if (startWeapon !== undefined) {
-      loadout.addWeapon(startWeapon);
-    }
+    loadout.addWeapon(startWeapon ?? BASE_WEAPON_ID);
     const offset = SPAWN_OFFSETS[this.#players.size] ?? [0, 0];
     this.#players.set(id, {
       id,
@@ -1122,7 +1138,6 @@ export class Room {
       loadout,
       classId,
       lastAbilityTick: Number.NEGATIVE_INFINITY,
-      keepsBase: startWeapon === undefined,
     });
     return true;
   }
@@ -1485,6 +1500,27 @@ export class Room {
     const kamikazes = this.#behaviorsBeforeDamage();
 
     this.#fireWeapons(this.#tick);
+    // Les halos, resolus AVANT les projectiles pour la meme raison que les
+    // projectiles le sont avant les zones : chaque source de degat passe une
+    // fois, et `Room.step` reste le seul endroit ou une mort se prononce.
+    const haloIds = resolveHalos(
+      this.#haloPulses,
+      this.horde,
+      this.#orbs,
+      this.#tick,
+      this.#zones,
+      this.#reactions,
+    );
+    this.#haloPulses.length = 0;
+    const beamIds = resolveBeams(
+      this.#beamPulses,
+      this.horde,
+      this.#orbs,
+      this.#tick,
+      this.#zones,
+      this.#reactions,
+    );
+    this.#beamPulses.length = 0;
     const deadIds = resolveProjectileDamage(
       this.#projectiles,
       scaledDt,
@@ -1562,6 +1598,8 @@ export class Room {
     // (leur position a ete relevee avant les degats), comme ceux que les
     // explosions de ce tick emportent — d'ou les reactions en chaine.
     const blastIds = this.#resolveKamikazes(kamikazes, [
+      ...haloIds,
+      ...beamIds,
       ...deadIds,
       ...reactedIds,
       ...burntIds,
@@ -1580,8 +1618,21 @@ export class Room {
     // identites deja listees n'existent plus dans la horde quand la suivante
     // la balaie.
     const allDead =
-      reactedIds.length > 0 || burntIds.length > 0 || collidedIds.length > 0 || blastIds.length > 0
-        ? [...deadIds, ...reactedIds, ...burntIds, ...collidedIds, ...blastIds]
+      haloIds.length > 0 ||
+      beamIds.length > 0 ||
+      reactedIds.length > 0 ||
+      burntIds.length > 0 ||
+      collidedIds.length > 0 ||
+      blastIds.length > 0
+        ? [
+            ...haloIds,
+            ...beamIds,
+            ...deadIds,
+            ...reactedIds,
+            ...burntIds,
+            ...collidedIds,
+            ...blastIds,
+          ]
         : deadIds;
     if (allDead.length > 0) {
       this.#totalKills += allDead.length;
@@ -2047,6 +2098,18 @@ export class Room {
    * cotes la voient identique — ne pas tirer est deterministe, choisir une
    * direction par defaut ne le serait pas (voir `Projectiles.fireSalvoDirected`).
    */
+  /**
+   * Les pulsations de halo du tick (etape 8), remplies par `#fireOne` et
+   * videes par `resolveHalos` dans `step`.
+   *
+   * ⚠️ **Vide a la fin de chaque tick**, jamais entre deux : une pulsation qui
+   * survivrait frapperait deux fois.
+   */
+  readonly #haloPulses: HaloPulse[] = [];
+
+  /** Les traits de faisceau du tick — meme vie que `#haloPulses` juste au-dessus. */
+  readonly #beamPulses: BeamPulse[] = [];
+
   #fireWeapons(tick: number): void {
     if (this.#players.size === 0) {
       return;
@@ -2058,12 +2121,6 @@ export class Room {
       }
       if (p.aimX === 0 && p.aimY === 0) {
         continue;
-      }
-      // L'arme neutre d'abord : elle vit hors des slots (§6.1) et ne figure
-      // dans aucun `Loadout`. Elle ne tire que chez qui n'a pas choisi d'arme
-      // de depart — l'arme choisie la remplace (`keepsBase`).
-      if (p.keepsBase) {
-        this.#fireOne(p, BASE_WEAPON_ID, tick);
       }
       for (const id of p.loadout.weaponIds) {
         this.#fireOne(p, id, tick);
@@ -2092,7 +2149,51 @@ export class Room {
     // projectile : « c'est l'accumulation des cartes qui fait la puissance ».
     // L'arme neutre n'est jamais empilee, `salvoCount` lui rend son compte de
     // base sans cas particulier.
-    const count = salvoCount(weapon, p.loadout.stacksOfWeapon(weaponId));
+    const stacks = p.loadout.stacksOfWeapon(weaponId);
+    if (weapon.kind === 'halo') {
+      // ⚠️ **Le halo ne tire rien : il met une PULSATION en file**, que
+      // `resolveHalos` resoudra dans la meme passe que les projectiles (voir
+      // `Room.step`). Resoudre ici l'aurait fait prononcer des morts au milieu
+      // du tir, alors que `Room.step` tient a n'avoir qu'un seul endroit ou
+      // une mort se prononce — c'est ce qui garantit un seul `DEATHS` par
+      // tick.
+      //
+      // ⚠️ **La visee n'y entre pas** : un halo est centre sur le joueur, donc
+      // il part meme quand le curseur est pile sur lui. Le filtre de visee
+      // nulle de `#fireWeapons` le laisse malgre tout passer par la — un halo
+      // dont le porteur ne vise rien ne pulse pas, et c'est une limite
+      // assumee : la visee est la preuve que le joueur est aux commandes.
+      this.#haloPulses.push({
+        x: p.x,
+        y: p.y,
+        radius: effectRadius(weapon, stacks),
+        damage,
+        element: weapon.element,
+        by: p.id,
+      });
+      p.lastFireTick[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'faisceau') {
+      // ⚠️ **La visee donne la DIRECTION, la portee donne la longueur** : les
+      // deux bouts du trait sont derives ici une fois pour toutes, pour que
+      // `resolveBeams` n'ait plus qu'une geometrie a mesurer. `aimX`/`aimY`
+      // sont deja normalises (voir `applyInput`).
+      const portee = beamRange(weapon);
+      this.#beamPulses.push({
+        x: p.x,
+        y: p.y,
+        toX: p.x + p.aimX * portee,
+        toY: p.y + p.aimY * portee,
+        width: effectRadius(weapon, stacks),
+        damage,
+        element: weapon.element,
+        by: p.id,
+      });
+      p.lastFireTick[weaponId] = tick;
+      return;
+    }
+    const count = salvoCount(weapon, stacks);
     this.#projectiles.fireSalvoDirected(
       weapon,
       tick,

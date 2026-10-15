@@ -623,7 +623,7 @@ export class Projectiles {
  * Au carre pour eviter une racine par paire projectile/entite : seule la
  * comparaison au carre du rayon compte dans `collide`.
  */
-function distanceToSegmentSquared(
+export function distanceToSegmentSquared(
   px: number,
   py: number,
   ax: number,
