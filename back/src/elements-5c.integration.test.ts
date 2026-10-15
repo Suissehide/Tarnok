@@ -164,10 +164,18 @@ function armeDe(element: number): Weapon {
   return best;
 }
 
-/** L'arme de cet element qui tire le plus souvent — pour le decor du joueur seul. */
+/**
+ * L'arme de cet element qui tire le plus souvent — pour le decor du joueur seul.
+ *
+ * ⚠️ **Des TIRS seulement (`kind === 'tir'`)** : le decor pose sa cible a
+ * `OFFSET` et la garde de portee lit `porteeDe`, qui ne vaut rien pour un halo.
+ * L'Encensoir de poix (halo, etape 8) est la Poix la plus rapide du catalogue,
+ * mais son rayon (110 px) n'atteint jamais une cible a 130 px : sans ce filtre,
+ * la paire de Poix ne se formait jamais et le test attendait en vain.
+ */
 function armeRapideDe(element: number): Weapon {
   const best = WEAPONS.filter(
-    (w) => w.element === element && w.homing === 0 && w.bounces === 0,
+    (w) => w.element === element && w.kind === 'tir' && w.homing === 0 && w.bounces === 0,
   ).reduce<Weapon | null>(
     (b, w) => (b === null || w.cooldownTicks < b.cooldownTicks ? w : b),
     null,

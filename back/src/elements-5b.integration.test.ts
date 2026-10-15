@@ -82,15 +82,18 @@ function porteeDe(weapon: Weapon): number {
   return (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
 }
 
-// Braise rapide et courte portee (ancienne, etape 5a).
-const EVENTAIL = armeParNom('Éventail');
+// Braise rapide et courte portee. L'Eventail de l'etape 5a est devenu la Roue
+// de lames, NEUTRE : le lance-flammes est desormais la Braise a tir rapide et
+// court qui tient ce role (portee ~169 px, au-dela des 130 px vises ici).
+const LANCE_FLAMMES = armeParNom('Lance-flammes');
 // Givre rapide (ancienne, etape 5a).
 const FLECHES_JUMELLES = armeParNom('Flèches jumelles');
 // Les deux armes de Foudre de la tache 9 de l'etape 5b.
 const BOBINE_TESLA = armeParNom('Bobine Tesla');
 const CANON_A_ARC = armeParNom('Canon à arc');
-// Les deux armes de Poix de la tache 9 de l'etape 5b.
-const SERINGUE_A_POIX = armeParNom('Seringue à poix');
+// La Poix a projectile. La Seringue a poix de la tache 9 de l'etape 5b est
+// devenue l'Encensoir de poix, un HALO qui ne tire rien (etape 8) : ce fichier
+// vise ses cibles, donc le Chaudron reste la seule Poix qui le puisse.
 const CHAUDRON_A_POIX = armeParNom('Chaudron à poix');
 
 type App = Awaited<ReturnType<typeof buildServer>>;
@@ -353,11 +356,10 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
       throw new Error('quatre clients attendus');
     }
 
-    equipe(room, a.playerId, EVENTAIL.id);
+    equipe(room, a.playerId, LANCE_FLAMMES.id);
     equipe(room, b.playerId, FLECHES_JUMELLES.id);
     equipe(room, c.playerId, BOBINE_TESLA.id);
     equipe(room, c.playerId, CANON_A_ARC.id);
-    equipe(room, d.playerId, SERINGUE_A_POIX.id);
     equipe(room, d.playerId, CHAUDRON_A_POIX.id);
 
     const snap = await fullSnapshot(a.ws);
@@ -387,7 +389,7 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
         pos: pa,
         offsetX: -130,
         offsetY: 0,
-        fireWeapon: EVENTAIL,
+        fireWeapon: LANCE_FLAMMES,
       },
       {
         nom: 'surchauffe',
@@ -409,7 +411,7 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
         pos: pd,
         offsetX: 180,
         offsetY: 180,
-        fireWeapon: SERINGUE_A_POIX,
+        fireWeapon: CHAUDRON_A_POIX,
       },
       {
         nom: 'supraconduction',
@@ -686,7 +688,7 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
    * decor ASSENAIT la propriete, il ne la GARANTISSAIT pas. `a` ne vise plus
    * JAMAIS la cible cooperative desormais : ses deux armes ne peuvent donc
    * plus physiquement l'atteindre, quel que soit le tick. `c` (deja
-   * connecte, jamais arme d'autre chose) porte la SEULE `SERINGUE_A_POIX` et
+   * connecte, jamais arme d'autre chose) porte le SEUL `CHAUDRON_A_POIX` et
    * vise en continu la cible cooperative — sa Poix declenche, `b` entretient
    * le Givre : `b` est desormais la SEULE source de Givre de cette cible, et
    * `markBy` (b) differe necessairement de `by` (c) — la barre DOIT charger,
@@ -712,10 +714,10 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     }
 
     equipe(room, a.playerId, FLECHES_JUMELLES.id);
-    equipe(room, a.playerId, SERINGUE_A_POIX.id);
+    equipe(room, a.playerId, CHAUDRON_A_POIX.id);
     // `c` ne porte QUE la Poix : la seule arme reelle qui touche jamais la
     // cible cooperative — voir le docbloc ci-dessus.
-    equipe(room, c.playerId, SERINGUE_A_POIX.id);
+    equipe(room, c.playerId, CHAUDRON_A_POIX.id);
 
     const snap = await fullSnapshot(a.ws);
     const pa = snap.players.find((p) => p.id === a.playerId);
@@ -746,11 +748,11 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     const duoY = pc.y + DUO_OFFSET_Y;
 
     // Garde 1 : chaque cible reste a portee de l'arme qui la declenche
-    // REELLEMENT — la cible solo, des DEUX armes de `a` (la plus courte, la
-    // seringue, decide) ; la cible cooperative, de la seule arme de `c`.
-    expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(SERINGUE_A_POIX));
+    // REELLEMENT — la cible solo, des DEUX armes de `a` (la plus courte
+    // decide) ; la cible cooperative, de la seule arme de `c`.
+    expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(CHAUDRON_A_POIX));
     expect(Math.hypot(SOLO_OFFSET_X, SOLO_OFFSET_Y)).toBeLessThan(porteeDe(FLECHES_JUMELLES));
-    expect(Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y)).toBeLessThan(porteeDe(SERINGUE_A_POIX));
+    expect(Math.hypot(DUO_OFFSET_X, DUO_OFFSET_Y)).toBeLessThan(porteeDe(CHAUDRON_A_POIX));
     // Garde 2 : etanches l'une de l'autre, comme les six cibles du test
     // precedent.
     const ecartCibles = Math.hypot(soloX - duoX, soloY - duoY);
@@ -905,7 +907,7 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     }
 
     // Salon VIEUX : Braise (reelle) + Givre (a la main) -> Choc thermique.
-    equipe(roomVieux, aVieux.playerId, EVENTAIL.id);
+    equipe(roomVieux, aVieux.playerId, LANCE_FLAMMES.id);
     // Salon NEUF : Foudre (reelle) + Givre (a la main) -> Supraconduction.
     equipe(roomNeuf, aNeuf.playerId, BOBINE_TESLA.id);
 
@@ -918,7 +920,7 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     }
 
     const OFFSET = -130;
-    expect(Math.abs(OFFSET)).toBeLessThan(porteeDe(EVENTAIL));
+    expect(Math.abs(OFFSET)).toBeLessThan(porteeDe(LANCE_FLAMMES));
     expect(Math.abs(OFFSET)).toBeLessThan(porteeDe(BOBINE_TESLA));
     const cibleVieuxX = paVieux.x + OFFSET;
     const cibleVieuxY = paVieux.y;
