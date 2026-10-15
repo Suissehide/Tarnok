@@ -45,26 +45,107 @@ export interface TileRef {
 }
 
 /**
- * Les plaques de couleur : chaque teinte du pack (2 vert, 3 vert franc, 4
- * herbe seche) recouvre la teinte 1 la ou son bruit depasse un seuil, avec une
- * opacite qui monte en douceur sur `[from, to]` — une transition, jamais un
- * bord net. La 5 (bleu-vert) jure trop avec le reste, elle n'est pas utilisee.
+ * Les biomes : l'ile se partage en grandes regions, une teinte du pack chacune
+ * (`Tilemap_color1` a `5`). Un Voronoi sur des centres semes en grille
+ * secouee, ses frontieres tordues par le bruit et fondues sur `BIOME_BLEND`
+ * cellules. Deux regions voisines n'ont jamais la meme teinte.
+ *
+ * La disposition depend de la carte (hachage de `terrain`) : chaque partie a
+ * la sienne, et chaque client dessine la meme.
  */
-export const PATCHES: readonly { color: number; from: number; to: number }[] = [
-  { color: 2, from: 0.5, to: 0.72 },
-  { color: 3, from: 0.58, to: 0.8 },
-  { color: 4, from: 0.66, to: 0.86 },
-];
-/** Taille des plaques de couleur, en cellules. */
-const PATCH_LATTICE = 9;
+export const BIOME_COLORS = [1, 2, 3, 4, 5] as const;
+/** Ecart entre deux centres de biome, en cellules. */
+const BIOME_SPACING = 30;
+/** Largeur du fondu a la frontiere, en cellules. */
+const BIOME_BLEND = 4;
+/** Amplitude de la torsion des frontieres, en cellules. */
+const BIOME_WOBBLE = 7;
 
-/** Le poids d'une plaque sur une cellule, dans `[0, 1]`. */
-export function patchWeight(
-  p: { color: number; from: number; to: number },
-  cx: number,
-  cy: number,
-): number {
-  return smoothstep(p.from, p.to, valueNoise(cx, cy, PATCH_LATTICE, 100 + p.color));
+/** Un sel stable par carte : FNV-1a sur le sol. */
+function worldSalt(world: WorldMap): number {
+  let h = 2166136261;
+  for (const v of world.terrain) {
+    h = Math.imul(h ^ v, 16777619) >>> 0;
+  }
+  return h % 100_000;
+}
+
+/**
+ * L'opacite de chaque calque de teinte, par cellule : `[0]` le fond (tout a
+ * 1), `[c - 1]` la teinte `c`. Les calques s'empilent 1 a 5 ; l'opacite du
+ * calque `k` vaut `w_k / (w_1 + ... + w_k)`, ce qui rend a chaque teinte
+ * exactement son poids `w_k` une fois tout empile — le fond ne transparait
+ * jamais a une frontiere.
+ */
+export function biomeLayers(world: WorldMap): Float32Array[] {
+  const { cols, rows } = world;
+  const salt = worldSalt(world);
+  const gcols = Math.ceil(cols / BIOME_SPACING) + 2;
+  const grows = Math.ceil(rows / BIOME_SPACING) + 2;
+  const centres: { x: number; y: number; color: number }[] = [];
+  for (let gy = 0; gy < grows; gy++) {
+    for (let gx = 0; gx < gcols; gx++) {
+      const h = hash(gx, gy, salt);
+      const x = (gx - 1 + 0.2 + 0.6 * ((h & 0xffff) / 0xffff)) * BIOME_SPACING;
+      const y = (gy - 1 + 0.2 + (0.6 * (h >>> 16)) / 0xffff) * BIOME_SPACING;
+      // La premiere teinte, a partir d'un tirage, que n'a aucun voisin deja
+      // pose (gauche, et les trois du dessus) : cinq teintes, quatre interdits.
+      const taken = new Set(
+        [
+          [gx - 1, gy],
+          [gx - 1, gy - 1],
+          [gx, gy - 1],
+          [gx + 1, gy - 1],
+        ].map(([nx = 0, ny = 0]) =>
+          nx >= 0 && ny >= 0 && nx < gcols ? centres[ny * gcols + nx]?.color : undefined,
+        ),
+      );
+      const start = hash(gx, gy, salt + 1) % BIOME_COLORS.length;
+      let color = 1;
+      for (let k = 0; k < BIOME_COLORS.length; k++) {
+        const c = BIOME_COLORS[(start + k) % BIOME_COLORS.length] ?? 1;
+        if (!taken.has(c)) {
+          color = c;
+          break;
+        }
+      }
+      centres.push({ x, y, color });
+    }
+  }
+
+  const layers = BIOME_COLORS.map(() => new Float32Array(cols * rows));
+  const nearest = new Float64Array(BIOME_COLORS.length);
+  const w = new Float64Array(BIOME_COLORS.length);
+  for (let cy = 0; cy < rows; cy++) {
+    for (let cx = 0; cx < cols; cx++) {
+      const px = cx + BIOME_WOBBLE * (2 * valueNoise(cx, cy, 9, salt + 2) - 1);
+      const py = cy + BIOME_WOBBLE * (2 * valueNoise(cx, cy, 9, salt + 3) - 1);
+      nearest.fill(Infinity);
+      for (const c of centres) {
+        const d = Math.hypot(c.x - px, c.y - py);
+        if (d < (nearest[c.color - 1] ?? Infinity)) {
+          nearest[c.color - 1] = d;
+        }
+      }
+      const d1 = Math.min(...nearest);
+      let sum = 0;
+      for (let k = 0; k < w.length; k++) {
+        w[k] = 1 - smoothstep(0, BIOME_BLEND, (nearest[k] ?? Infinity) - d1);
+        sum += w[k] ?? 0;
+      }
+      const i = cy * cols + cx;
+      let below = 0;
+      for (let k = 0; k < w.length; k++) {
+        const wk = (w[k] ?? 0) / sum;
+        below += wk;
+        const layer = layers[k];
+        if (layer) {
+          layer[i] = k === 0 ? 1 : below > 0 ? wk / below : 0;
+        }
+      }
+    }
+  }
+  return layers;
 }
 
 const smoothstep = (a: number, b: number, v: number): number => {
@@ -166,11 +247,25 @@ export function groundTiles(world: WorldMap): TileRef[] {
       const y = cy * TILE;
       const gx = edge(land(cx - 1, cy), land(cx + 1, cy)) * TILE;
       const gy = edge(land(cx, cy - 1), land(cx, cy + 1)) * TILE;
-      grass.push({ sheet: 'tileset', sx: gx, sy: gy, x, y, ...vary(gx, gy, cx, cy) });
+      grass.push({
+        sheet: 'tileset',
+        sx: gx,
+        sy: gy,
+        x,
+        y,
+        ...vary(gx, gy, cx, cy),
+      });
       if (top(cx, cy)) {
         const px = (5 + edge(top(cx - 1, cy), top(cx + 1, cy))) * TILE;
         const py = edge(top(cx, cy - 1), top(cx, cy + 1)) * TILE;
-        raised.push({ sheet: 'tileset', sx: px, sy: py, x, y, ...vary(px, py, cx, cy) });
+        raised.push({
+          sheet: 'tileset',
+          sx: px,
+          sy: py,
+          x,
+          y,
+          ...vary(px, py, cx, cy),
+        });
       } else if (cliff(cx, cy)) {
         raised.push({
           sheet: 'tileset',
@@ -187,21 +282,70 @@ export function groundTiles(world: WorldMap): TileRef[] {
       }
     }
   }
-  // Les plaques de couleur, posees sur le fond de la meme case, herbe puis
-  // dessus des plateaux — jamais sur une falaise.
-  const patches = (base: TileRef[]): TileRef[] =>
-    base.flatMap((tile) => {
-      if (tile.sy === 5 * TILE) {
-        return [];
-      }
-      const cx = tile.x / TILE;
-      const cy = tile.y / TILE;
-      return PATCHES.flatMap((p) => {
-        const alpha = patchWeight(p, cx, cy);
-        return alpha > 0 ? [{ ...tile, color: p.color, alpha }] : [];
-      });
+  // Les biomes, poses sur l'herbe de la meme case.
+  const layers = biomeLayers(world);
+  const tinted = grass.flatMap((tile) => {
+    const i = (tile.y / TILE) * cols + tile.x / TILE;
+    return BIOME_COLORS.slice(1).flatMap((color) => {
+      const alpha = layers[color - 1]?.[i] ?? 0;
+      return alpha > 0 ? [{ ...tile, color, alpha }] : [];
     });
-  return [...grass, ...patches(grass), ...raised, ...patches(raised)];
+  });
+  // Un plateau (dessus et falaise) prend D'UN BLOC la teinte qui domine en son
+  // centre : pas de fondu sur un relief, et jamais une frontiere qui le coupe.
+  const colorAt = plateauColors(world, layers);
+  for (const tile of raised) {
+    tile.color = colorAt.get((tile.y / TILE) * cols + tile.x / TILE) ?? 1;
+  }
+  return [...grass, ...tinted, ...raised];
+}
+
+/** La teinte la plus visible d'une cellule, une fois les calques empiles. */
+function dominantColor(layers: Float32Array[], i: number): number {
+  let best = 1;
+  let bestWeight = -1;
+  let above = 1;
+  for (let k = layers.length - 1; k >= 0; k--) {
+    const a = layers[k]?.[i] ?? 0;
+    if (a * above > bestWeight) {
+      bestWeight = a * above;
+      best = k + 1;
+    }
+    above *= 1 - a;
+  }
+  return best;
+}
+
+/** La teinte de chaque cellule de relief, par plateau (4-connexe, dessus et falaise). */
+function plateauColors(world: WorldMap, layers: Float32Array[]): Map<number, number> {
+  const { cols, rows, terrain } = world;
+  const raised = (i: number): boolean =>
+    terrain[i] === TERRAIN.PLATEAU || terrain[i] === TERRAIN.CLIFF;
+  const out = new Map<number, number>();
+  for (let start = 0; start < cols * rows; start++) {
+    if (!raised(start) || out.has(start)) {
+      continue;
+    }
+    const cells = [start];
+    out.set(start, 1);
+    // `for...of` revisite les cases poussees en cours de route : c'est le parcours en largeur.
+    for (const i of cells) {
+      const cx = i % cols;
+      for (const j of [i - cols, i + cols, cx > 0 ? i - 1 : -1, cx < cols - 1 ? i + 1 : -1]) {
+        if (j >= 0 && j < cols * rows && raised(j) && !out.has(j)) {
+          out.set(j, 1);
+          cells.push(j);
+        }
+      }
+    }
+    const mx = Math.round(cells.reduce((s, i) => s + (i % cols), 0) / cells.length);
+    const my = Math.round(cells.reduce((s, i) => s + Math.floor(i / cols), 0) / cells.length);
+    const color = dominantColor(layers, my * cols + mx);
+    for (const i of cells) {
+      out.set(i, color);
+    }
+  }
+  return out;
 }
 
 /**
@@ -282,7 +426,7 @@ export function coastCells(world: WorldMap): { x: number; y: number }[] {
 }
 
 const PATHS = {
-  tilesets: [1, 2, 3, 4].map((i) => `Terrain/Tileset/Tilemap_color${i}.png`),
+  tilesets: BIOME_COLORS.map((i) => `Terrain/Tileset/Tilemap_color${i}.png`),
   foam: 'Terrain/Tileset/Water%20Foam.png',
   trees: [1, 2, 3, 4].map((i) => `Terrain/Resources/Wood/Trees/Tree${i}.png`),
   rocks: [1, 2, 3, 4].map((i) => `Terrain/Decorations/Rocks/Rock${i}.png`),
@@ -332,7 +476,11 @@ function frames(sheet: Texture, w: number, h: number): Texture[] {
   const n = Math.floor(sheet.width / w);
   return Array.from(
     { length: n },
-    (_, i) => new Texture({ source: sheet.source, frame: new Rectangle(i * w, 0, w, h) }),
+    (_, i) =>
+      new Texture({
+        source: sheet.source,
+        frame: new Rectangle(i * w, 0, w, h),
+      }),
   );
 }
 
@@ -379,13 +527,15 @@ export async function buildTerrain(
     root.addChild(s);
   }
 
-  // Les plaques de couleur : chaque teinte dans son conteneur, a pleine
-  // opacite, sous un MASQUE lisse — une image d'un pixel par cellule (le poids
-  // `patchWeight`) etiree en filtrage lineaire. La transition se fait DANS les
-  // tuiles, en degrade, la ou une opacite par tuile faisait des marches.
+  // Les biomes : chaque teinte dans son conteneur, a pleine opacite, sous un
+  // MASQUE lisse — une image d'un pixel par cellule (`biomeLayers`) etiree en
+  // filtrage lineaire. La transition se fait DANS les tuiles, en degrade, la
+  // ou une opacite par tuile faisait des marches.
   const overlays = new Map<number, Container>();
   const masks: Sprite[] = [];
-  for (const p of PATCHES) {
+  const layers = biomeLayers(world);
+  for (const color of BIOME_COLORS.slice(1)) {
+    const weights = layers[color - 1];
     const layer = new Container();
     const canvas = document.createElement('canvas');
     canvas.width = world.cols;
@@ -399,7 +549,7 @@ export async function buildTerrain(
           img.data[o] = 255;
           img.data[o + 1] = 255;
           img.data[o + 2] = 255;
-          img.data[o + 3] = Math.round(255 * patchWeight(p, cx, cy));
+          img.data[o + 3] = Math.round(255 * (weights?.[cy * world.cols + cx] ?? 0));
         }
       }
       g.putImageData(img, 0, 0);
@@ -411,7 +561,7 @@ export async function buildTerrain(
     mask.scale.set(TILE);
     layer.mask = mask;
     masks.push(mask);
-    overlays.set(p.color, layer);
+    overlays.set(color, layer);
   }
 
   const cut = new Map<string, Texture>();
@@ -447,12 +597,10 @@ export async function buildTerrain(
     s.scale.set(tile.flipX ? -1 : 1, tile.flipY ? -1 : 1);
     const v = Math.round(255 * tile.shade);
     s.tint = (v << 16) | (v << 8) | v;
-    const layer = tile.color === 1 ? undefined : overlays.get(tile.color);
-    if (layer && tile.sx < 5 * TILE) {
-      layer.addChild(s);
-    } else if (tile.color === 1) {
-      root.addChild(s);
-    }
+    // L'herbe teintee va sous son masque ; le fond et le relief (deja dans
+    // la teinte de son plateau) se posent tels quels.
+    const layer = tile.color !== 1 && tile.sx < 5 * TILE ? overlays.get(tile.color) : undefined;
+    (layer ?? root).addChild(s);
   }
   if (!raisedStart) {
     for (const layer of overlays.values()) {

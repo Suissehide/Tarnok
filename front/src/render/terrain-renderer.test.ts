@@ -2,11 +2,11 @@ import { TERRAIN, type WorldMap } from '@shared/worldmap';
 import { describe, expect, it } from 'vitest';
 
 import {
+  BIOME_COLORS,
+  biomeLayers,
   coastCells,
   detailCells,
   groundTiles,
-  PATCHES,
-  patchWeight,
   SHADE_MIN,
 } from './terrain-renderer';
 
@@ -35,9 +35,12 @@ function carte(lignes: string[]): WorldMap {
   };
 }
 
-/** Les tuiles de FOND (teinte 1) d'une case : les plaques de couleur sont testees a part. */
+/**
+ * Les tuiles de FOND d'une case — l'herbe en teinte 1 et le relief, quelle que
+ * soit sa teinte : les plaques de biome sont testees a part.
+ */
 const at = (tiles: ReturnType<typeof groundTiles>, x: number, y: number) =>
-  tiles.filter((t) => t.x === x * 64 && t.y === y * 64 && t.color === 1);
+  tiles.filter((t) => t.x === x * 64 && t.y === y * 64 && (t.color === 1 || t.sx >= 5 * 64));
 
 describe('groundTiles — l autotuile du pack', () => {
   it('choisit coin, bord et milieu de l herbe selon ses voisins', () => {
@@ -114,22 +117,68 @@ describe('groundTiles — la variation de l herbe', () => {
   });
 });
 
-describe('les plaques de couleur', () => {
-  it('chaque teinte couvre une partie de l ile, jamais toute, avec des poids intermediaires', () => {
-    for (const p of PATCHES) {
-      const w = Array.from({ length: 60 * 60 }, (_, i) =>
-        patchWeight(p, i % 60, Math.floor(i / 60)),
-      );
-      expect(w.some((v) => v === 0)).toBe(true);
-      expect(w.some((v) => v > 0.9)).toBe(true);
-      // Le degrade : des cellules a mi-chemin, pas un bord net.
-      expect(w.some((v) => v > 0.2 && v < 0.8)).toBe(true);
+describe('les biomes', () => {
+  const ile = (n: number, bord = 1) =>
+    carte(
+      Array.from({ length: n }, (_, y) =>
+        y < bord || y >= n - bord
+          ? '~'.repeat(n)
+          : `${'~'.repeat(bord)}${'.'.repeat(n - 2 * bord)}${'~'.repeat(bord)}`,
+      ),
+    );
+  const grande = ile(94);
+  const layers = biomeLayers(grande);
+
+  it('le fond est plein, chaque calque dans [0, 1]', () => {
+    expect(layers[0]?.every((v) => v === 1)).toBe(true);
+    for (const l of layers) {
+      expect(l.every((v) => v >= 0 && v <= 1)).toBe(true);
     }
   });
 
-  it('une plaque ne recouvre jamais une falaise', () => {
-    const tiles = groundTiles(carte(['.......', '.PPPPP.', '.PPPPP.', '.CCCCC.', '.......']));
-    expect(tiles.filter((t) => t.sy === 5 * 64 && t.color !== 1)).toEqual([]);
+  it('les cinq teintes regnent quelque part, et se fondent aux frontieres', () => {
+    // La teinte visible d'une cellule : le plus haut calque presque opaque.
+    const visible = new Set<number>();
+    for (let i = 0; i < grande.cols * grande.rows; i++) {
+      let top = 1;
+      for (const c of BIOME_COLORS) {
+        if ((layers[c - 1]?.[i] ?? 0) > 0.99) {
+          top = c;
+        }
+      }
+      visible.add(top);
+    }
+    expect(visible).toEqual(new Set(BIOME_COLORS));
+    expect(layers.slice(1).some((l) => l.some((v) => v > 0.2 && v < 0.8))).toBe(true);
+  });
+
+  it('stable pour une meme carte, differente d une carte a l autre', () => {
+    expect(biomeLayers(grande)).toEqual(layers);
+    expect(biomeLayers(ile(94, 2))).not.toEqual(layers);
+  });
+
+  it('chaque plateau prend une seule teinte, falaise comprise, sans plaque par-dessus', () => {
+    // Des plateaux semes sur toute l'ile : au moins l'un sort de la teinte 1.
+    const lignes = Array.from({ length: 94 }, (_, y) => {
+      if (y === 0 || y === 93) {
+        return '~'.repeat(94);
+      }
+      const motif = y % 8 === 3 || y % 8 === 4 ? 'PPPP' : y % 8 === 5 ? 'CCCC' : '....';
+      return `~..${`${motif}....`.repeat(11)}${'.'.repeat(2)}~`;
+    });
+    const tiles = groundTiles(carte(lignes));
+    const relief = tiles.filter((t) => t.sx >= 5 * 64);
+    expect(relief.filter((t) => t.alpha !== 1)).toEqual([]);
+    // Un plateau = un bloc 4 x 3 : ses tuiles partagent la teinte.
+    const parPlateau = new Map<string, Set<number>>();
+    for (const t of relief) {
+      const k = `${Math.floor((t.x / 64 - 3) / 8)},${Math.floor(t.y / 64 / 8)}`;
+      parPlateau.set(k, (parPlateau.get(k) ?? new Set()).add(t.color));
+    }
+    expect([...parPlateau.values()].every((c) => c.size === 1)).toBe(true);
+    expect(relief.some((t) => t.color !== 1)).toBe(true);
+    // Une tuile de relief par case : aucune plaque de biome posee dessus.
+    expect(new Set(relief.map((t) => `${t.x},${t.y}`)).size).toBe(relief.length);
   });
 });
 
@@ -162,7 +211,10 @@ describe('detailCells — les petits details du pack, en taches', () => {
   });
 
   it('jamais sur une cellule bloquee', () => {
-    const bloquee = { ...ile, blocked: new Uint8Array(ile.blocked.length).fill(1) };
+    const bloquee = {
+      ...ile,
+      blocked: new Uint8Array(ile.blocked.length).fill(1),
+    };
     expect(detailCells(bloquee)).toEqual([]);
   });
 });
