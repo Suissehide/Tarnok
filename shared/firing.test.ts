@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { COLOSSUS_HP_STEP } from './constants';
-import { armedWeapon, shotDamage, weaponUpgrades } from './firing';
+import { COLOSSUS_HP_STEP, CRIT_CHANCE, CRIT_MULTIPLIER } from './constants';
+import { armedWeapon, critOf, shotDamage, weaponUpgrades } from './firing';
 import { Loadout } from './loadout';
 import { PASSIVES, type PassiveKind } from './passives';
 import {
@@ -110,5 +110,21 @@ describe('etape 10 : Colosse, +1 % de degats par tranche de 10 PV max', () => {
     const l = avec('damage', 1, TIR.id);
     l.addPassive(genre('colossus'));
     expect(shotDamage(TIR, l, 0, 100)).toBeCloseTo(TIR.damage * (1 + l.bonus('damage')) * 1.1, 6);
+  });
+});
+
+describe('etape 10 : le critique du tireur (critOf)', () => {
+  it('sans carte : la chance et le multiplicateur de base', () => {
+    expect(critOf(new Loadout())).toEqual({ chance: CRIT_CHANCE, multiplier: CRIT_MULTIPLIER });
+  });
+
+  it('Precision ajoute 4 points par carte, et s arrete a 100 %', () => {
+    expect(critOf(avec('critChance', 1)).chance).toBeCloseTo(CRIT_CHANCE + 0.04, 9);
+    expect(critOf(avec('critChance', 30)).chance).toBe(1);
+  });
+
+  it('Ferocite ajoute 0,3 au multiplicateur par carte, sans plafond', () => {
+    expect(critOf(avec('critDamage', 2)).multiplier).toBeCloseTo(CRIT_MULTIPLIER + 0.6, 9);
+    expect(critOf(avec('critDamage', 50)).multiplier).toBeCloseTo(CRIT_MULTIPLIER + 15, 9);
   });
 });

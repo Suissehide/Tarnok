@@ -49,7 +49,7 @@ import {
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
-import { armedWeapon, shotDamage } from '@shared/firing';
+import { armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
@@ -2276,6 +2276,7 @@ export class Room {
       damage,
       count,
       p.id,
+      critOf(p.loadout),
     );
     p.lastFireTick[weaponId] = tick;
   }

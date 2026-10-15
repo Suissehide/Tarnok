@@ -16,6 +16,8 @@ import {
 import { applicationsOf, CARD, type Card } from '@shared/cards';
 import {
   COIN_DROP_ONE_IN,
+  CRIT_CHANCE,
+  CRIT_MULTIPLIER,
   EXTRACT_MULTIPLIER_STEP,
   FIELD_INPUT_DELAY_TICKS,
   FLOWFIELD_CELL,
@@ -5431,5 +5433,24 @@ describe('etape 10 : Colosse dans le salon', () => {
     const base = weaponOf(BASE_WEAPON_ID).damage;
     expect(degatsDuPremierTir(0)).toBeCloseTo(base * 1.1, 5);
     expect(degatsDuPremierTir(1)).toBeCloseTo(base * 1.12, 5);
+  });
+});
+
+describe('etape 10 : le critique du tireur dans le salon', () => {
+  it('la salve part avec le tireur et SON critique, Precision et Ferocite comprises', () => {
+    const PRECISION = PASSIVES.find((p) => p.kind === 'critChance')?.id ?? -1;
+    const FEROCITE = PASSIVES.find((p) => p.kind === 'critDamage')?.id ?? -1;
+    const room = new Room(0x10_0a_0601);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: PRECISION });
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: FEROCITE });
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    const appel = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    spy.mockRestore();
+    expect(appel?.[8]).toBe(1);
+    expect(appel?.[9]?.chance).toBeCloseTo(CRIT_CHANCE + 0.04, 9);
+    expect(appel?.[9]?.multiplier).toBeCloseTo(CRIT_MULTIPLIER + 0.3, 9);
   });
 });

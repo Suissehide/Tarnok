@@ -1,5 +1,6 @@
-import { COLOSSUS_HP_STEP } from './constants';
+import { COLOSSUS_HP_STEP, CRIT_CHANCE, CRIT_MULTIPLIER } from './constants';
 import type { Loadout } from './loadout';
+import type { Crit } from './projectiles';
 import { DAMAGE_PER_UPGRADE, UPGRADE, upgradedWeapon, type Weapon, weaponOf } from './weapons';
 
 /**
@@ -61,4 +62,19 @@ export function shotDamage(
       DAMAGE_PER_UPGRADE * loadout.upgradesOf(weapon.id, UPGRADE.DAMAGE)) *
     colosse
   );
+}
+
+/**
+ * Le critique de CE tireur (etape 10, §3.2) : Precision ajoute a la chance,
+ * bornee a 1 — une chance au-dela de 100 % ne veut rien dire, c'est le seul
+ * plafond de l'etape ; Ferocite ajoute au multiplicateur, sans plafond.
+ *
+ * Le client le calcule pour TOUS les joueurs : il tient le miroir de leurs
+ * inventaires.
+ */
+export function critOf(loadout: Loadout): Crit {
+  return {
+    chance: Math.min(1, CRIT_CHANCE + loadout.bonus('critChance')),
+    multiplier: CRIT_MULTIPLIER + loadout.bonus('critDamage'),
+  };
 }

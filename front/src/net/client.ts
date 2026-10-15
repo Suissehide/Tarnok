@@ -13,7 +13,6 @@ import {
   CHAIN_JUMPS,
   CHAIN_RADIUS,
   CONTACT_RADIUS,
-  CRIT_MULTIPLIER,
   FIELD_INPUT_DELAY_TICKS,
   FLOWFIELD_CELL,
   FLOWFIELD_HZ,
@@ -32,7 +31,7 @@ import {
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
-import { armedWeapon, shotDamage } from '@shared/firing';
+import { armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
@@ -2648,7 +2647,7 @@ export class GameClient {
         this.damageNumbers.spawn(
           this.horde.x[slot] ?? 0,
           this.horde.y[slot] ?? 0,
-          this.projectiles.damageAt(projectileSlot) * (critique ? CRIT_MULTIPLIER : 1),
+          this.projectiles.damageAt(projectileSlot) * this.projectiles.critFactorAt(projectileSlot),
           critique,
           element,
           nowMs,
@@ -3064,7 +3063,21 @@ export class GameClient {
       return;
     }
     const count = weapon.projectileCount;
-    this.projectiles.fireSalvoDirected(weapon, tick, x, y, aimX, aimY, damage, count);
+    // ⚠️ **Le tireur ET son critique**, comme `Room#fireOne` : sans `playerId`
+    // le tirage partait de `hashRoll(tick, 0, i)`, et le critique affiche
+    // n'etait pas celui que le serveur arbitre (corrige a l'etape 10).
+    this.projectiles.fireSalvoDirected(
+      weapon,
+      tick,
+      x,
+      y,
+      aimX,
+      aimY,
+      damage,
+      count,
+      playerId,
+      critOf(loadout),
+    );
     last[weaponId] = tick;
   }
 

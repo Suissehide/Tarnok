@@ -1,5 +1,10 @@
 import { ARCHETYPES } from './archetypes';
-import { CRIT_CHANCE, PROJECTILE_HIT_RADIUS, VIF_ARGENT_HIT_RADIUS_BONUS } from './constants';
+import {
+  CRIT_CHANCE,
+  CRIT_MULTIPLIER,
+  PROJECTILE_HIT_RADIUS,
+  VIF_ARGENT_HIT_RADIUS_BONUS,
+} from './constants';
 import type { Horde } from './horde';
 import { hashRoll } from './random';
 import { HOMING_RANGE, RICOCHET_MIN_LIFE_TICKS, RICOCHET_RANGE, type Weapon } from './weapons';
@@ -73,6 +78,19 @@ const WIDE_R2_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => {
   return r * r;
 });
 
+/**
+ * Le critique d'un TIREUR (etape 10, §3.2) : sa chance (Precision) et son
+ * multiplicateur (Ferocite). Calcule par `critOf` (shared/firing.ts), des
+ * deux cotes, et passe a l'emission.
+ */
+export interface Crit {
+  readonly chance: number;
+  readonly multiplier: number;
+}
+
+/** Le critique sans aucune carte : celui de l'etape 8. */
+export const BASE_CRIT: Crit = Object.freeze({ chance: CRIT_CHANCE, multiplier: CRIT_MULTIPLIER });
+
 export class Projectiles {
   /** Position courante, publique en lecture pour le rendu — comme `Horde.x` / `Horde.y`. */
   readonly x: Float32Array;
@@ -135,15 +153,20 @@ export class Projectiles {
    */
   readonly #pierce: Uint8Array;
   /**
-   * `1` si ce projectile porte un COUP CRITIQUE (etape 8).
+   * Le multiplicateur critique EMPORTE par ce projectile : celui de son
+   * tireur si le tirage a crite, `1` sinon (etapes 8 et 10).
    *
    * ⚠️ **Decide a l'EMISSION, pas a l'impact.** Les deux cotes emettent la
    * meme salve a partir des memes trois entiers (le tick, le tireur, le rang
    * du projectile) : ils tirent donc le meme critique, et le client peut
    * l'afficher au moment ou le serveur l'arbitre. Le decider a l'impact aurait
    * voulu dire deux tirages, a deux instants, sur deux machines.
+   *
+   * ⚠️ **Le multiplicateur voyage, pas un booleen** (etape 10) : Ferocite le
+   * rend propre au tireur, et les trois lecteurs (deux dans `combat.ts`, un
+   * dans `client.ts`) lisent le projectile — plus jamais `CRIT_MULTIPLIER`.
    */
-  readonly #crit: Uint8Array;
+  readonly #crit: Float32Array;
   /**
    * Echelle du projectile — recopie de `Weapon.projectileScale` a l'emission
    * (carte « calibre »). Elargit le rayon de touche ET le dessin : un
@@ -208,7 +231,7 @@ export class Projectiles {
     this.#blastRadius = new Float32Array(capacity);
     this.#weapon = new Uint8Array(capacity);
     this.#pierce = new Uint8Array(capacity);
-    this.#crit = new Uint8Array(capacity);
+    this.#crit = new Float32Array(capacity);
     this.#scale = new Float32Array(capacity);
     this.#venom = new Float32Array(capacity);
     this.#bounces = new Uint8Array(capacity);
@@ -300,11 +323,12 @@ export class Projectiles {
     damage = weapon.damage,
     count = weapon.projectileCount,
     by = 0,
+    crit: Crit = BASE_CRIT,
   ): void {
     if (dirX === 0 && dirY === 0) {
       return;
     }
-    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX), damage, count, by);
+    this.#emit(weapon, tick, x, y, Math.atan2(dirY, dirX), damage, count, by, crit);
   }
 
   /**
@@ -322,6 +346,7 @@ export class Projectiles {
     damage = weapon.damage,
     count = weapon.projectileCount,
     by = 0,
+    crit: Crit = BASE_CRIT,
   ): void {
     const n = count;
     const room = this.capacity - this.#count;
@@ -368,8 +393,9 @@ export class Projectiles {
       this.#pierce[slot] = weapon.pierce;
       // Le critique, tire d'une fonction du TIR et non d'une suite — voir
       // `CRIT_CHANCE` et `hashRoll`. Le rang `i` est ce qui empeche une salve
-      // entiere de criter d'un bloc.
-      this.#crit[slot] = hashRoll(tick, by, i) < CRIT_CHANCE ? 1 : 0;
+      // entiere de criter d'un bloc. La chance et le multiplicateur sont ceux
+      // du TIREUR (etape 10).
+      this.#crit[slot] = hashRoll(tick, by, i) < crit.chance ? crit.multiplier : 1;
       this.#scale[slot] = weapon.projectileScale;
       this.#venom[slot] = weapon.venom;
       this.#bounces[slot] = weapon.bounces;
@@ -454,7 +480,16 @@ export class Projectiles {
    * par l'affichage des degats (client), qui obtiennent la meme reponse.
    */
   critAt(slot: number): boolean {
-    return (this.#crit[slot] ?? 0) === 1;
+    return (this.#crit[slot] ?? 1) > 1;
+  }
+
+  /**
+   * Ce qu'un impact de ce projectile multiplie : le multiplicateur de son
+   * tireur s'il a crite, `1` sinon. Lu par l'arbitrage (serveur) et par
+   * l'affichage des degats (client).
+   */
+  critFactorAt(slot: number): number {
+    return this.#crit[slot] ?? 1;
   }
 
   ticksRemainingAt(slot: number): number {
@@ -761,7 +796,7 @@ export class Projectiles {
       this.#blastRadius[slot] = this.#blastRadius[last] ?? 0;
       this.#weapon[slot] = this.#weapon[last] ?? 0;
       this.#pierce[slot] = this.#pierce[last] ?? 0;
-      this.#crit[slot] = this.#crit[last] ?? 0;
+      this.#crit[slot] = this.#crit[last] ?? 1;
       this.#scale[slot] = this.#scale[last] ?? 1;
       this.#venom[slot] = this.#venom[last] ?? 0;
       this.#bounces[slot] = this.#bounces[last] ?? 0;

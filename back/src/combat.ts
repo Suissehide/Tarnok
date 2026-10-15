@@ -15,7 +15,6 @@ import {
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
-  CRIT_MULTIPLIER,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
@@ -1278,7 +1277,7 @@ export function resolveProjectileDamage(
         souffle,
         // Le critique vaut aussi pour un souffle de fin de course : c'est le
         // MEME projectile, et son tirage date de son emission.
-        projectiles.damageAt(slot) * (projectiles.critAt(slot) ? CRIT_MULTIPLIER : 1),
+        projectiles.damageAt(slot) * projectiles.critFactorAt(slot),
         zones,
         tick,
         dead,
@@ -1326,7 +1325,7 @@ export function resolveProjectileDamage(
       // l'equipe a prepare, et ce que le hasard accorde. Le tirage, lui, date
       // de l'EMISSION (voir `Projectiles.critAt`) : le client a deja affiche
       // le meme.
-      const coup = damage * ampNeutre * (projectiles.critAt(projectileSlot) ? CRIT_MULTIPLIER : 1);
+      const coup = damage * ampNeutre * projectiles.critFactorAt(projectileSlot);
       const blastRadius = projectiles.blastRadiusAt(projectileSlot);
       if (blastRadius > 0) {
         // ⚠️ **L'arme de zone passe par LE balayage commun** (tache 16), celui
