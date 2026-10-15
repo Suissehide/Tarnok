@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+
 import { avatar } from './icons';
 
 describe('avatar — la tete de l unite, dans la couleur du joueur', () => {

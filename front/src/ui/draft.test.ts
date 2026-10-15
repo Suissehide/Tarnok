@@ -367,8 +367,8 @@ describe("DraftScreen — l'etalage", () => {
     expect(h.root.classList.contains('hidden')).toBe(false);
     expect(cards(h)).toHaveLength(4);
     expect(cards(h).map((c) => c.querySelector('.draft-card__name')?.textContent)).toEqual([
-      'Éventail',
-      'cadence',
+      'Roue de lames',
+      'Cadence',
       'Lance-flammes',
       'Arc lourd',
     ]);

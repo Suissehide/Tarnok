@@ -41,8 +41,11 @@ export function makeRandom(seed: number): () => number {
  * `a + b + c` nu aurait fait criter toute une salve ensemble.
  */
 export function hashRoll(a: number, b: number, c: number): number {
-  let state = (Math.imul(a | 0, 0x9e37_79b9) ^ Math.imul(b | 0, 0x85eb_ca6b) ^
-    Math.imul(c | 0, 0xc2b2_ae35)) >>> 0;
+  let state =
+    (Math.imul(a | 0, 0x9e37_79b9) ^
+      Math.imul(b | 0, 0x85eb_ca6b) ^
+      Math.imul(c | 0, 0xc2b2_ae35)) >>>
+    0;
   state = state || 0x9e37_79b9;
   state ^= state << 13;
   state >>>= 0;

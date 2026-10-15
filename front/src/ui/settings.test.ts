@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { CONTROLS, DEFAULT_SETTINGS, loadPick, loadSettings, savePick, saveSettings } from './settings';
+import {
+  CONTROLS,
+  DEFAULT_SETTINGS,
+  loadPick,
+  loadSettings,
+  savePick,
+  saveSettings,
+} from './settings';
 
 /** Un stockage en memoire, a la place de `localStorage`. */
 function memoire(): Storage {
