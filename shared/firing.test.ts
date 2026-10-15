@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { COLOSSUS_HP_STEP, CRIT_CHANCE, CRIT_MULTIPLIER } from './constants';
-import { armedWeapon, critOf, shotDamage, weaponUpgrades } from './firing';
+import { aimPoint, armedWeapon, critOf, shotDamage, weaponUpgrades } from './firing';
 import { Loadout } from './loadout';
 import { PASSIVES, type PassiveKind } from './passives';
 import {
@@ -126,5 +126,19 @@ describe('etape 10 : le critique du tireur (critOf)', () => {
   it('Ferocite ajoute 0,3 au multiplicateur par carte, sans plafond', () => {
     expect(critOf(avec('critDamage', 2)).multiplier).toBeCloseTo(CRIT_MULTIPLIER + 0.6, 9);
     expect(critOf(avec('critDamage', 50)).multiplier).toBeCloseTo(CRIT_MULTIPLIER + 15, 9);
+  });
+});
+
+describe('etape 12 : le point vise (aimPoint)', () => {
+  it('pose le point a la distance demandee, quelle que soit la norme de la visee', () => {
+    const p = aimPoint(10, 20, 127, 0, 100);
+    expect(p.x).toBeCloseTo(110);
+    expect(p.y).toBeCloseTo(20);
+    const d = aimPoint(0, 0, 90, -90, 50);
+    expect(Math.hypot(d.x, d.y)).toBeCloseTo(50);
+  });
+
+  it('rend le tireur sur une visee nulle', () => {
+    expect(aimPoint(3, 4, 0, 0, 100)).toEqual({ x: 3, y: 4 });
   });
 });

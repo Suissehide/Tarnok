@@ -25,7 +25,8 @@ import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import { linkedNeighbours } from '@shared/links';
 import type { Loadout } from '@shared/loadout';
-import { distanceToSegmentSquared, type Projectiles } from '@shared/projectiles';
+import { type Onde, ondeBand } from '@shared/onde-frappe';
+import { type Anchor, distanceToSegmentSquared, type Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
 import { REACTION, reactionForPair } from '@shared/reactions';
 import { NEUTRE_MARQUE_AMP } from '@shared/weapons';
@@ -1284,6 +1285,9 @@ export function resolveProjectileDamage(
   zones: ZoneField,
   reactions?: Reactions,
   venins?: Venins,
+  // Ou est chaque tireur (etape 12, §3.2) : l'orbite tourne autour, le
+  // boomerang y revient. Sans elle, ils se rabattent sur leur point d'emission.
+  anchor?: Anchor,
 ): number[] {
   // ⚠️ **Un projectile ne laisse plus RIEN au sol** (tache 21). Il posait une
   // zone a ses DEUX fins de course — la vieillesse dans `step`, l'impact dans
@@ -1311,10 +1315,12 @@ export function resolveProjectileDamage(
       if (souffle <= 0) {
         return;
       }
+      const x = projectiles.x[slot] ?? 0;
+      const y = projectiles.y[slot] ?? 0;
       damageInRadius(
         horde,
-        projectiles.x[slot] ?? 0,
-        projectiles.y[slot] ?? 0,
+        x,
+        y,
         souffle,
         // Le critique vaut aussi pour un souffle de fin de course : c'est le
         // MEME projectile, et son tirage date de son emission.
@@ -1323,8 +1329,26 @@ export function resolveProjectileDamage(
         tick,
         dead,
       );
+      // ⚠️ **Et il MARQUE le plus proche, depuis l'etape 12.** Le Chaudron a
+      // poix (mortier) ne percute plus rien en vol : sans cette ligne, sa
+      // seule touche etait ce souffle, et la Poix n'etait jamais posee. Pas
+      // de percute ici, donc la regle du halo (une marque, le plus proche).
+      marquePlusProche(
+        horde,
+        reactions,
+        {
+          x,
+          y,
+          radius: souffle,
+          element: projectiles.elementAt(slot),
+          by: projectiles.ownerAt(slot),
+        },
+        tick,
+        dead,
+      );
     },
     horde,
+    anchor,
   );
 
   // ⚠️ **`zones, tick` en dernier : le rayon de touche elargi du Vif-argent
@@ -1535,6 +1559,44 @@ export interface HaloPulse {
 }
 
 /**
+ * Marque le plus proche VIVANT du centre dans le rayon — la regle de marque de
+ * toute source de zone (halo, invocation, frappe, souffle de fin de course) :
+ * voir `resolveHalos` pour le pourquoi d'une seule marque.
+ */
+function marquePlusProche(
+  horde: Horde,
+  reactions: Reactions | undefined,
+  zone: Omit<HaloPulse, 'damage'>,
+  tick: number,
+  dead: ReadonlySet<number>,
+): void {
+  if (zone.element === ELEMENT.NEUTRE || !reactions) {
+    return;
+  }
+  let bestSlot = -1;
+  let bestDist2 = Number.POSITIVE_INFINITY;
+  const r2 = zone.radius * zone.radius;
+  for (let i = 0; i < horde.count; i++) {
+    if (dead.has(horde.entityIdAt(i))) {
+      continue;
+    }
+    const dx = (horde.x[i] ?? 0) - zone.x;
+    const dy = (horde.y[i] ?? 0) - zone.y;
+    const d2 = dx * dx + dy * dy;
+    // ⚠️ `>=` comme `damageInRadius` : le bord du rayon n'est PAS touche, et
+    // la marque ne doit pas aller plus loin que le degat.
+    if (d2 >= r2 || d2 >= bestDist2) {
+      continue;
+    }
+    bestDist2 = d2;
+    bestSlot = i;
+  }
+  if (bestSlot >= 0) {
+    applyElement(horde, reactions, bestSlot, zone.element, zone.by, tick);
+  }
+}
+
+/**
  * Le halo (etape 8) : a chaque pulsation, tout ce qui se tient dans le rayon
  * encaisse.
  *
@@ -1572,29 +1634,72 @@ export function resolveHalos(
   const dead = new Set<number>();
   for (const pulse of pulses) {
     damageInRadius(horde, pulse.x, pulse.y, pulse.radius, pulse.damage, zones, tick, dead);
-    if (pulse.element === ELEMENT.NEUTRE || !reactions) {
+    marquePlusProche(horde, reactions, pulse, tick, dead);
+  }
+  if (dead.size === 0) {
+    return [];
+  }
+  const deadIds = [...dead];
+  for (const id of deadIds) {
+    const slot = horde.slotOf(id);
+    if (slot >= 0) {
+      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+    }
+  }
+  horde.kill(deadIds);
+  return deadIds;
+}
+
+/**
+ * L'onde (etape 12, §3.4) : chaque onde vivante frappe les ennemis de la bande
+ * qu'elle balaie a ce tick, `ondeBand` — chacun une fois par onde, sans
+ * ensemble a tenir, puisque les bandes de deux ticks se touchent sans se
+ * recouvrir.
+ *
+ * ⚠️ **Meme discipline que `resolveHalos`** : `appliquerDegats` pour le degat,
+ * une seule marque (le plus proche VIVANT du centre parmi ceux touches a ce
+ * tick), les morts et leurs orbes prononces ici. Voir `resolveHalos` pour le
+ * pourquoi de la marque unique.
+ *
+ * Ne purge rien : `Room` oublie les ondes eteintes (`ondeIsAlive`).
+ */
+export function resolveOndes(
+  ondes: readonly Onde[],
+  horde: Horde,
+  orbs: OrbField,
+  tick: number,
+  zones: ZoneField,
+  reactions?: Reactions,
+): number[] {
+  if (ondes.length === 0) {
+    return [];
+  }
+  const dead = new Set<number>();
+  for (const onde of ondes) {
+    const band = ondeBand(onde, tick);
+    if (band === null) {
       continue;
     }
+    const in2 = band.inner < 0 ? -1 : band.inner * band.inner;
+    const out2 = band.outer * band.outer;
     let bestSlot = -1;
     let bestDist2 = Number.POSITIVE_INFINITY;
-    const r2 = pulse.radius * pulse.radius;
     for (let i = 0; i < horde.count; i++) {
-      if (dead.has(horde.entityIdAt(i))) {
-        continue;
-      }
-      const dx = (horde.x[i] ?? 0) - pulse.x;
-      const dy = (horde.y[i] ?? 0) - pulse.y;
+      const dx = (horde.x[i] ?? 0) - onde.x;
+      const dy = (horde.y[i] ?? 0) - onde.y;
       const d2 = dx * dx + dy * dy;
-      // ⚠️ `>=` comme `damageInRadius` : le bord du rayon n'est PAS touche, et
-      // la marque ne doit pas aller plus loin que le degat.
-      if (d2 >= r2 || d2 >= bestDist2) {
+      // Comparees au carre : `(inner, outer]` comme `ondeStrikes`, sans racine.
+      if (d2 <= in2 || d2 > out2) {
         continue;
       }
-      bestDist2 = d2;
-      bestSlot = i;
+      appliquerDegats(horde, i, onde.damage, zones, tick, dead);
+      if (d2 < bestDist2 && !dead.has(horde.entityIdAt(i))) {
+        bestDist2 = d2;
+        bestSlot = i;
+      }
     }
-    if (bestSlot >= 0) {
-      applyElement(horde, reactions, bestSlot, pulse.element, pulse.by, tick);
+    if (bestSlot >= 0 && onde.element !== ELEMENT.NEUTRE && reactions) {
+      applyElement(horde, reactions, bestSlot, onde.element, onde.by, tick);
     }
   }
   if (dead.size === 0) {

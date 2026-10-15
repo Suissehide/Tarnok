@@ -31,13 +31,22 @@ import {
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
-import { armedWeapon, critOf, shotDamage } from '@shared/firing';
+import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { Loadout } from '@shared/loadout';
+import {
+  FRAPPE_DELAY_TICKS,
+  type FrappeImpact,
+  frappeDueTick,
+  frappeIsDue,
+  frappeTargets,
+  type Onde,
+  ondeBand,
+} from '@shared/onde-frappe';
 import { PlayerHistory } from '@shared/player-history';
-import { Projectiles } from '@shared/projectiles';
+import { type Anchor, distanceToSegmentSquared, Projectiles } from '@shared/projectiles';
 import {
   type AbilityUsedMessage,
   type BossChargeMessage,
@@ -945,6 +954,39 @@ const CHAIN_FLASH_CAPACITY = 32;
 export const CHAIN_FLASH_LIFETIME_MS = 260;
 
 /**
+ * Duree de vie d'un trait de faisceau (`ChainFlashes.owner >= 0`) : plus
+ * longue que la chaine, le temps que la frappe, le corps et l'extinction du
+ * rayon se lisent (voir `ChainRenderer`). Cosmetique : les degats sont deja
+ * arbitres au tick du tir.
+ */
+export const BEAM_FLASH_LIFETIME_MS = 380;
+
+/** Une onde telle que le client la dessine : celle du serveur, plus sa teinte et sa naissance murale. */
+export interface OndeTrace extends Onde {
+  readonly tint: number;
+  /** Horloge murale du tir : le calque en interpole le rayon entre deux ticks. */
+  readonly bornMs: number;
+}
+
+/** Un impact de frappe tel que le client le dessine — voir `GameClient.frappes`. */
+export interface FrappeTrace extends FrappeImpact {
+  readonly tint: number;
+  /** Horloge murale du tir : l'avertissement se resserre sur `FRAPPE_DELAY_MS`. */
+  readonly bornMs: number;
+  /** Horloge murale de l'impact, `-1` tant qu'il est en attente. */
+  struckMs: number;
+}
+
+/** Ondes dessinees a la fois : bien au-dela d'une onde par joueur et par cadence. */
+export const ONDE_TRACE_CAPACITY = 32;
+/** Impacts de frappe tenus a la fois (attente et eclair compris). */
+export const FRAPPE_TRACE_CAPACITY = 64;
+/** Duree de l'eclair d'une frappe, a l'horloge murale. Cosmetique. */
+export const FRAPPE_BOLT_MS = 220;
+/** Le delai d'une frappe a l'horloge murale, pour l'avertissement qui se resserre. */
+export const FRAPPE_DELAY_MS = (FRAPPE_DELAY_TICKS * 1000) / TICK_HZ;
+
+/**
  * Flashs de chaine de Foudre, cote client — purement cosmetiques, jamais
  * arbitres, exactement comme `HitFlashes` (et pour la meme raison : nes de
  * `Projectiles.collide` sur les PROPRES projectiles de ce client, voir
@@ -985,11 +1027,18 @@ export class ChainFlashes {
   readonly tint: Uint32Array;
   /** Epaisseur du trait, en pixels monde : une chaine est fine, un faisceau a sa largeur d'arme. */
   readonly width: Float32Array;
+  /**
+   * Le tireur d'un faisceau, `-1` pour une chaine. Un faisceau SUIT son
+   * tireur a l'ecran (le trait reste accroche a lui, direction figee) ; une
+   * chaine relie des ennemis et ne suit personne.
+   */
+  readonly owner: Int32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `CHAIN_FLASH_LIFETIME_MS`. */
   readonly bornMs: Float64Array;
   #count = 0;
 
   constructor(readonly capacity: number) {
+    this.owner = new Int32Array(capacity).fill(-1);
     this.tint = new Uint32Array(capacity);
     this.width = new Float32Array(capacity);
     this.x = new Float32Array(capacity * CHAIN_FLASH_MAX_POINTS);
@@ -1027,11 +1076,13 @@ export class ChainFlashes {
      */
     tint = 0,
     width = 0,
+    owner = -1,
   ): void {
     if (points.length < 2 || this.#count >= this.capacity) {
       return;
     }
     const slot = this.#count++;
+    this.owner[slot] = owner;
     this.tint[slot] = tint;
     this.width[slot] = width;
     const n = Math.min(points.length, CHAIN_FLASH_MAX_POINTS);
@@ -1047,7 +1098,8 @@ export class ChainFlashes {
   /** Retire les flashs dont la duree de vie a expire. */
   expire(nowMs: number): void {
     for (let i = this.#count - 1; i >= 0; i--) {
-      if (nowMs - (this.bornMs[i] ?? 0) >= CHAIN_FLASH_LIFETIME_MS) {
+      const life = (this.owner[i] ?? -1) >= 0 ? BEAM_FLASH_LIFETIME_MS : CHAIN_FLASH_LIFETIME_MS;
+      if (nowMs - (this.bornMs[i] ?? 0) >= life) {
         this.#removeAt(i);
       }
     }
@@ -1065,6 +1117,7 @@ export class ChainFlashes {
       this.pointCount[slot] = this.pointCount[last] ?? 0;
       this.tint[slot] = this.tint[last] ?? 0;
       this.width[slot] = this.width[last] ?? 0;
+      this.owner[slot] = this.owner[last] ?? -1;
       this.bornMs[slot] = this.bornMs[last] ?? 0;
     }
     this.#count = last;
@@ -2587,6 +2640,9 @@ export class GameClient {
     if (tick > this.#freezeUntilTick) {
       this.#fireWeapons(tick, snapshot?.players ?? [], nowMs);
       this.#pulseGuards(tick, nowMs);
+      this.#sweepOndes(tick, nowMs);
+      this.#strikeFrappes(tick, nowMs);
+      this.#anchorPlayers = snapshot?.players ?? [];
       // Le miroir cosmetique du souffle de fin de course (etape 8) : la
       // grenade explose meme sans avoir percute personne, cote serveur — ici
       // on en dessine le flash, au meme endroit et au meme rayon.
@@ -2607,6 +2663,7 @@ export class GameClient {
           );
         },
         this.horde,
+        this.#anchor,
       );
       // Collision purement cosmetique : `collide` ne lit `horde` qu'en
       // lecture (position, `slotOf`) et ne consomme que les propres
@@ -2901,6 +2958,128 @@ export class GameClient {
     this.#guards = this.#guards.filter((g) => guardIsAlive(g, tick));
   }
 
+  /** Les joueurs que `#anchor` lit : ceux du dernier snapshot, pose a chaque tick avant `step`. */
+  #anchorPlayers: readonly PlayerSnapshot[] = [];
+  /** Le point que `#anchor` rend, reutilise : aucune allocation par projectile et par tick. */
+  readonly #anchorPoint = { x: 0, y: 0 };
+  /**
+   * Ou est le tireur `by` a ce tick (§3.2) — la MEME source que
+   * `#fireWeapons` : la position simulee pour le joueur local, celle du dernier
+   * snapshot pour les autres. Creee une fois ; l'orbite et le retour du
+   * boomerang la lisent.
+   */
+  readonly #anchor: Anchor = (by) => {
+    const local = by === this.#localId ? this.#local : null;
+    if (local) {
+      this.#anchorPoint.x = local.simX;
+      this.#anchorPoint.y = local.simY;
+      return this.#anchorPoint;
+    }
+    for (const p of this.#anchorPlayers) {
+      if (p.id === by) {
+        this.#anchorPoint.x = p.x;
+        this.#anchorPoint.y = p.y;
+        return this.#anchorPoint;
+      }
+    }
+    return undefined;
+  };
+
+  /**
+   * Les ondes vivantes, cote client (etape 12, §3.4) : la liste du serveur,
+   * derivee des memes trois choses, plus ce qui n'interesse que le dessin
+   * (teinte, horloge murale de naissance). Lecture publique pour
+   * `OndeFrappeRenderer`.
+   */
+  readonly ondes: OndeTrace[] = [];
+  /**
+   * Les impacts de frappe, en attente PUIS frappes (`struckMs >= 0`) le temps
+   * de l'eclair, `FRAPPE_BOLT_MS`. Lecture publique pour `OndeFrappeRenderer`.
+   */
+  readonly frappes: FrappeTrace[] = [];
+
+  /**
+   * Fait avancer chaque onde d'une bande, miroir cosmetique de la resolution
+   * serveur : flash (SANS secousse — une onde est une nappe, pas une
+   * explosion) et chiffre pour chaque ennemi franchi, marque du plus proche
+   * (une reaction par source, §6.6). Oublie les ondes eteintes, en place.
+   */
+  #sweepOndes(tick: number, nowMs: number): void {
+    let kept = 0;
+    for (const onde of this.ondes) {
+      const band = ondeBand(onde, tick);
+      if (band === null) {
+        continue;
+      }
+      this.ondes[kept++] = onde;
+      let nearest = -1;
+      let nearestD = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < this.horde.count; i++) {
+        const ex = this.horde.x[i] ?? 0;
+        const ey = this.horde.y[i] ?? 0;
+        const d = Math.hypot(ex - onde.x, ey - onde.y);
+        if (d <= band.inner || d > band.outer) {
+          continue;
+        }
+        this.hitFlashes.spawn(ex, ey, onde.tint, 0, onde.damage, nowMs, false);
+        this.damageNumbers.spawn(ex, ey, onde.damage, false, onde.element, nowMs);
+        this.#hitCount++;
+        if (d < nearestD) {
+          nearestD = d;
+          nearest = i;
+        }
+      }
+      if (nearest >= 0 && onde.element !== ELEMENT.NEUTRE) {
+        this.#markLocally(nearest, onde.element, onde.by, tick);
+      }
+    }
+    this.ondes.length = kept;
+  }
+
+  /**
+   * Frappe les impacts echus — le flash existant AVEC secousse (c'est un
+   * evenement, pas une pulsation), un chiffre par ennemi dans le rayon, la
+   * marque du plus proche — et oublie ceux dont l'eclair s'est eteint.
+   * L'horloge murale ne sert qu'au dessin : l'echeance, elle, est au tick.
+   */
+  #strikeFrappes(tick: number, nowMs: number): void {
+    let kept = 0;
+    for (const impact of this.frappes) {
+      if (impact.struckMs < 0 && frappeIsDue(impact, tick)) {
+        impact.struckMs = nowMs;
+        this.#strike(impact, tick, nowMs);
+      }
+      if (impact.struckMs < 0 || nowMs - impact.struckMs < FRAPPE_BOLT_MS) {
+        this.frappes[kept++] = impact;
+      }
+    }
+    this.frappes.length = kept;
+  }
+
+  #strike(impact: FrappeTrace, tick: number, nowMs: number): void {
+    this.hitFlashes.spawn(impact.x, impact.y, impact.tint, impact.radius, impact.damage, nowMs);
+    const r2 = impact.radius * impact.radius;
+    let nearest = -1;
+    let nearestD2 = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < this.horde.count; i++) {
+      const ex = this.horde.x[i] ?? 0;
+      const ey = this.horde.y[i] ?? 0;
+      const d2 = (ex - impact.x) * (ex - impact.x) + (ey - impact.y) * (ey - impact.y);
+      if (d2 > r2) {
+        continue;
+      }
+      this.damageNumbers.spawn(ex, ey, impact.damage, false, impact.element, nowMs);
+      this.#hitCount++;
+      if (d2 < nearestD2) {
+        nearestD2 = d2;
+        nearest = i;
+      }
+    }
+    if (nearest >= 0 && impact.element !== ELEMENT.NEUTRE) {
+      this.#markLocally(nearest, impact.element, impact.by, tick);
+    }
+  }
+
   #fireWeapons(tick: number, players: readonly PlayerSnapshot[], nowMs: number): void {
     if (players.length === 0) {
       return;
@@ -3049,16 +3228,87 @@ export class GameClient {
       // Les deux bouts sont derives comme cote serveur (`beamRange` et la
       // visee), donc le trait dessine est exactement celui que le serveur
       // vient de faucher.
-      const portee = beamRange(weapon);
+      // La visee n'est PAS unitaire : voir `aimPoint`.
+      const { x: toX, y: toY } = aimPoint(x, y, aimX, aimY, beamRange(weapon));
       this.chainFlashes.spawn(
         [
           { x, y },
-          { x: x + aimX * portee, y: y + aimY * portee },
+          { x: toX, y: toY },
         ],
         nowMs,
         weapon.look.tint,
         2 * weapon.blastRadius,
+        playerId,
       );
+      // Le retour d'impact, meme geometrie que `resolveBeams` : sans lui, le
+      // rayon traversait la horde sans qu'un seul ennemi ne reagisse, et il
+      // avait l'air de ne rien faire. Cosmetique, comme `projectiles.collide`.
+      const w2 = weapon.blastRadius * weapon.blastRadius;
+      let nearest = -1;
+      let nearestD2 = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < this.horde.count; i++) {
+        const ex = this.horde.x[i] ?? 0;
+        const ey = this.horde.y[i] ?? 0;
+        if (distanceToSegmentSquared(ex, ey, x, y, toX, toY) >= w2) {
+          continue;
+        }
+        this.hitFlashes.spawn(ex, ey, weapon.look.tint, 0, damage, nowMs, false);
+        this.damageNumbers.spawn(ex, ey, damage, false, weapon.element, nowMs);
+        this.#hitCount++;
+        const d2 = (ex - x) * (ex - x) + (ey - y) * (ey - y);
+        if (d2 < nearestD2) {
+          nearestD2 = d2;
+          nearest = i;
+        }
+      }
+      if (nearest >= 0 && weapon.element !== ELEMENT.NEUTRE) {
+        this.#markLocally(nearest, weapon.element, playerId, tick);
+      }
+      last[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'onde') {
+      // ⚠️ Le plafond est cosmetique : le serveur arbitre toutes ses ondes,
+      // ce calque n'en dessine que `ONDE_TRACE_CAPACITY` a la fois.
+      if (this.ondes.length < ONDE_TRACE_CAPACITY) {
+        this.ondes.push({
+          x,
+          y,
+          bornTick: tick,
+          speed: weapon.projectileSpeed,
+          maxRadius: weapon.blastRadius,
+          damage,
+          element: weapon.element,
+          by: playerId,
+          tint: weapon.look.tint,
+          bornMs: nowMs,
+        });
+      }
+      last[weaponId] = tick;
+      return;
+    }
+    if (weapon.kind === 'frappe') {
+      // Le point vise a PORTEE de l'arme (§2 : la visee n'est qu'une
+      // direction), et les cibles choisies sur NOTRE horde — approximation
+      // cosmetique, comme la chaine de Foudre.
+      const vise = aimPoint(x, y, aimX, aimY, beamRange(weapon));
+      for (const p of frappeTargets(this.horde, vise.x, vise.y, weapon.projectileCount)) {
+        if (this.frappes.length >= FRAPPE_TRACE_CAPACITY) {
+          break;
+        }
+        this.frappes.push({
+          x: p.x,
+          y: p.y,
+          radius: weapon.blastRadius,
+          damage,
+          element: weapon.element,
+          by: playerId,
+          dueTick: frappeDueTick(tick),
+          tint: weapon.look.tint,
+          bornMs: nowMs,
+          struckMs: -1,
+        });
+      }
       last[weaponId] = tick;
       return;
     }

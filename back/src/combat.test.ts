@@ -71,6 +71,7 @@ import {
   resolveContact,
   resolveHalos,
   resolveHarvest,
+  resolveOndes,
   resolveProjectileDamage,
   resolveVerglasCollisions,
   VENOM_MIN_RESERVE,
@@ -4912,6 +4913,93 @@ describe('resolveBeams — le trait fauche la ligne', () => {
 });
 
 /**
+ * Étape 12 — **l'onde** : un anneau qui grandit depuis le point de tir et
+ * frappe la bande qu'il balaie a chaque tick.
+ */
+describe('resolveOndes — l anneau frappe sa bande, une fois', () => {
+  /** 300 px/s a 30 Hz : 10 px par tick, eteinte a 100 px (au tick 10). */
+  const ONDE = {
+    x: 0,
+    y: 0,
+    bornTick: 0,
+    speed: 300,
+    maxRadius: 100,
+    damage: 1000,
+    element: ELEMENT.CHAUX,
+    by: 3,
+  };
+
+  /** Toute la vie de l'onde, et quelques ticks de plus pour voir qu'elle se tait. */
+  function deroule(horde: Horde, reactions?: Reactions): number[] {
+    const orbs = new OrbField(16);
+    const zones = new ZoneField();
+    let morts: number[] = [];
+    for (let t = 0; t <= 15; t++) {
+      morts = morts.concat(resolveOndes([ONDE], horde, orbs, t, zones, reactions));
+    }
+    return morts;
+  }
+
+  it('tue dans son rayon, pas au-dela', () => {
+    const horde = new Horde(16);
+    const pres = addOne(horde, 1, 0, 0);
+    const milieu = addOne(horde, 2, 0, -55);
+    const loin = addOne(horde, 3, 130, 0);
+    expect(deroule(horde).sort()).toEqual([pres, milieu].sort());
+    expect(horde.slotOf(loin)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('ne frappe pas DEUX FOIS un ennemi immobile', () => {
+    // Bandes jointives sans recouvrement : un ennemi pose PILE sur une borne
+    // (20 px, le rayon du tick 2) n'est frappe qu'a ce tick-la.
+    const horde = new Horde(16);
+    addOne(horde, 1, 20, 0);
+    addOne(horde, 2, 47, 0);
+    horde.hp[0] = 5000;
+    horde.hp[1] = 5000;
+    const orbs = new OrbField(16);
+    for (let t = 0; t <= 15; t++) {
+      resolveOndes([{ ...ONDE, damage: 1 }], horde, orbs, t, new ZoneField());
+    }
+    expect(horde.hp[0]).toBe(4999);
+    expect(horde.hp[1]).toBe(4999);
+  });
+
+  it('ne frappe que la bande du tick, et la tient a sa naissance', () => {
+    const horde = new Horde(16);
+    const centre = addOne(horde, 1, 0, 0);
+    const a35 = addOne(horde, 2, 35, 0);
+    // Tick 0 : bande [0, 0] — l'ennemi pile sur le tireur, rien d'autre.
+    expect(resolveOndes([ONDE], horde, new OrbField(16), 0, new ZoneField())).toEqual([centre]);
+    // Tick 3 : (20, 30] — 35 px n'y est pas encore.
+    expect(resolveOndes([ONDE], horde, new OrbField(16), 3, new ZoneField())).toEqual([]);
+    expect(resolveOndes([ONDE], horde, new OrbField(16), 4, new ZoneField())).toEqual([a35]);
+  });
+
+  it('ne marque QUE le plus proche des ennemis touches a ce tick', () => {
+    const horde = new Horde(16);
+    addOne(horde, 1, 36, 0);
+    addOne(horde, 2, 0, -38);
+    const reactions = new Reactions();
+    resolveOndes([{ ...ONDE, damage: 0 }], horde, new OrbField(16), 4, new ZoneField(), reactions);
+    const marques = [0, 1].filter((i) => horde.markAt(i, 4) !== ELEMENT.NEUTRE);
+    expect(marques).toHaveLength(1);
+    expect(horde.x[marques[0] ?? 0]).toBe(36);
+  });
+
+  it('laisse une orbe sur chaque mort', () => {
+    const horde = new Horde(16);
+    addOne(horde, 1, 10, 0);
+    addOne(horde, 2, 60, 0);
+    const orbs = new OrbField(16);
+    for (let t = 0; t <= 15; t++) {
+      resolveOndes([ONDE], horde, orbs, t, new ZoneField());
+    }
+    expect(orbs.count).toBe(2);
+  });
+});
+
+/**
  * Étape 8 — **la grenade explose en fin de course**, signale en jouant : *« la
  * grenade doit exploser en fin de course meme si elle touche personne »*.
  */
@@ -4961,6 +5049,31 @@ describe('resolveProjectileDamage — le souffle de fin de course', () => {
       resolveProjectileDamage(p, 1 / 30, horde, orbs, i, zones);
     }
     expect(horde.slotOf(cible)).toBeGreaterThanOrEqual(0);
+  });
+
+  it('MARQUE le plus proche vivant au point de chute (etape 12 : le mortier ne percute rien)', () => {
+    // Le Chaudron a poix ne touche personne en vol : ce souffle est sa seule
+    // touche, et sans marque la Poix ne serait jamais posee.
+    const horde = new Horde(10);
+    const p = new Projectiles(8);
+    const chute = Math.round((BOMBE.projectileSpeed * BOMBE.projectileLifeTicks) / 30);
+    const loin = addOne(horde, 1, chute + 60, 0, LOURD);
+    const pres = addOne(horde, 2, chute + 20, 0, LOURD);
+    const dehors = addOne(horde, 3, chute + 200, 0, LOURD);
+    for (const id of [loin, pres, dehors]) {
+      horde.hp[horde.slotOf(id)] = 100_000;
+    }
+    p.fireSalvoDirected({ ...BOMBE, element: ELEMENT.POIX }, 0, 0, 0, 1, 0, 10, 1);
+    const reactions = new Reactions();
+    const zones = new ZoneField();
+    const orbs = new OrbField(10);
+    for (let i = 0; i < 3; i++) {
+      resolveProjectileDamage(p, 1 / 30, horde, orbs, i, zones, reactions);
+    }
+    const marque = (id: number): number => horde.markAt(horde.slotOf(id), 2);
+    expect(marque(pres)).toBe(ELEMENT.POIX);
+    expect(marque(loin)).toBe(ELEMENT.NEUTRE);
+    expect(marque(dehors)).toBe(ELEMENT.NEUTRE);
   });
 
   it('n emporte pas DEUX fois ce qu il percute : l impact consomme le projectile', () => {

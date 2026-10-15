@@ -12,12 +12,15 @@ import type {
   ChainFlashes,
   DamageNumbers,
   DerivedOrbs,
+  FrappeTrace,
   HitFlashes,
+  OndeTrace,
   OrbFlights,
   PickupTarget,
   ReactionFlashes,
   RenderState,
 } from '../net/client';
+import type { BeamAnchor } from './chain-renderer';
 
 /**
  * Une image complete du jeu : ce qui est dessine, et dans quel ordre.
@@ -75,6 +78,10 @@ export interface FrameClient {
    * `ChainFlashes`.
    */
   readonly chainFlashes: ChainFlashes;
+  /** Les ondes vivantes (etape 12) — voir `GameClient.ondes`. */
+  readonly ondes: readonly OndeTrace[];
+  /** Les impacts de frappe, en attente ou frappes (etape 12) — voir `GameClient.frappes`. */
+  readonly frappes: readonly FrappeTrace[];
   /**
    * Le tick de horde — **pas** l'horloge murale. C'est lui qui fait mourir les
    * zones et expirer les marques, avec le meme predicat que le serveur ; les
@@ -156,6 +163,15 @@ export interface FrameStage {
     players: readonly PickupTarget[],
     timeMs: number,
   ): void;
+  /**
+   * Les ondes et les frappes (etape 12), a l'horloge MURALE comme la chaine :
+   * les degats sont deja arbitres, ce calque n'amortit qu'un dessin.
+   */
+  drawOndesFrappes(
+    ondes: readonly OndeTrace[],
+    frappes: readonly FrappeTrace[],
+    nowMs: number,
+  ): void;
   drawProjectiles(projectiles: Projectiles): void;
   /**
    * La polyligne de la chaine de Foudre (etape 5b, tache 3, tour de
@@ -165,7 +181,7 @@ export interface FrameStage {
    * flash, il ne lit plus jamais la horde ni le tick de simulation — voir
    * `ChainRenderer.draw`.
    */
-  drawChain(flashes: ChainFlashes, nowMs: number): void;
+  drawChain(flashes: ChainFlashes, nowMs: number, players: readonly BeamAnchor[]): void;
   drawImpactFlashes(flashes: HitFlashes, nowMs: number): void;
   drawReactionFlashes(flashes: ReactionFlashes, nowMs: number): void;
   /**
@@ -289,6 +305,9 @@ export function composeFrame(
     charge !== null && chargeWindsUpAt(charge, client.hordeTick) ? charge.entityId : null;
   stage.drawHorde(client.horde, hordeClock(client, now), armant);
   stage.drawOrbs(client.orbs, client.orbFlights, state.players, now);
+  // Sous les projectiles (§5) : une onde et un avertissement sont des nappes
+  // au sol ; un tir qui les traverse doit rester lisible par-dessus.
+  stage.drawOndesFrappes(client.ondes, client.frappes, now);
   stage.drawProjectiles(client.projectiles);
   // Juste au-dessus des projectiles, comme eux au-dessus de la horde : une
   // chaine relie des ennemis, elle doit donc rester lisible par-dessus leurs
@@ -296,7 +315,8 @@ export function composeFrame(
   // correction 1, la chaine est un flash amorti par l'horloge murale, comme
   // `hitFlashes`/`reactionFlashes` — le chemin est deja figé au moment de
   // l'impact.
-  stage.drawChain(client.chainFlashes, now);
+  // Les joueurs DESSINES : un faisceau reste accroche a son tireur.
+  stage.drawChain(client.chainFlashes, now, state.players);
   stage.drawImpactFlashes(client.hitFlashes, now);
   stage.drawReactionFlashes(client.reactionFlashes, now);
   // Au-dessus de tous les effets de monde : c'est une LECTURE, et une lecture

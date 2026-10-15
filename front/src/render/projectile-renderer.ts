@@ -3,6 +3,8 @@ import { elementOf } from '@shared/elements';
 import type { Projectiles } from '@shared/projectiles';
 import { unpackElementPair } from '@shared/protocol';
 import {
+  MORTAR_APEX_PX,
+  MOTION,
   type ProjectileLook,
   type ProjectileShape,
   type ProjectileTrail,
@@ -12,7 +14,7 @@ import {
   type Weapon,
   weaponOf,
 } from '@shared/weapons';
-import { Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
+import { Container, Graphics, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
 import {
   HIT_FLASH_LIFETIME_MS,
@@ -979,7 +981,15 @@ export class ProjectileRenderer {
     // raison qui fait `color: true` sur le conteneur de la horde.
     dynamicProperties: { position: true, rotation: true, vertex: true, color: true, uvs: true },
   });
-  /** Le calque, vu du monde : trainees puis tetes. Voir `attach`. */
+  /**
+   * Les ombres au sol des mortiers (etape 12, §5). ⚠️ **Un `Graphics`, pas
+   * une particule de plus** : les trainees sont additives (une ombre sombre
+   * s'y annulerait) et l'atlas des tetes n'a pas de case d'ellipse. Seuls les
+   * mortiers y tracent — une arme lente a projectile unique, une poignee a
+   * l'ecran — donc le cout reste borne par eux, pas par la capacite entiere.
+   */
+  readonly #shadows = new Graphics();
+  /** Le calque, vu du monde : ombres, trainees puis tetes. Voir `attach`. */
   readonly #group = new Container();
   readonly #headPool: Particle[] = [];
   readonly #trailPool: Particle[] = [];
@@ -1012,6 +1022,11 @@ export class ProjectileRenderer {
   }
 
   /** Expose pour le test : « additif » est une exigence du §6.6, pas un detail. */
+  /** Expose pour le test : l'ombre du mortier. */
+  get shadows(): Graphics {
+    return this.#shadows;
+  }
+
   get trailBlendMode(): string {
     return this.#trails.blendMode;
   }
@@ -1052,6 +1067,7 @@ export class ProjectileRenderer {
    * l'inverser en reordonnant `Stage.#layers`.
    */
   attach(parent: Container): void {
+    this.#group.addChild(this.#shadows);
     this.#group.addChild(this.#trails);
     this.#group.addChild(this.#heads);
     parent.addChild(this.#group);
@@ -1134,6 +1150,7 @@ export class ProjectileRenderer {
     const minY = view.y - PROJECTILE_CULL_MARGIN;
     const maxY = view.y + view.height + PROJECTILE_CULL_MARGIN;
 
+    this.#shadows.clear();
     const heads = this.#heads.particleChildren;
     const trails = this.#trails.particleChildren;
     heads.length = 0;
@@ -1167,13 +1184,30 @@ export class ProjectileRenderer {
       // trois courbes (fondu, pop, rotation) — voir `POP_TICKS`.
       const age = weapon.projectileLifeTicks - remaining;
 
+      // Le mortier vole en cloche AU-DESSUS de son point sol (§5) : la
+      // position simulee reste au sol, c'est elle qui explose, et l'ombre
+      // la dit. `lift` vaut 0 au depart et a l'arrivee, 1 a l'apogee.
+      let dy = 0;
+      let lift = 0;
+      if (projectiles.motionAt(i) === MOTION.mortier) {
+        lift = mortarLift(projectiles.ageAt(i), remaining);
+        dy = -MORTAR_APEX_PX * lift;
+      }
+
       head.texture = this.#cells[projectileCellIndex(weapon.id, wear)] ?? fallback;
       head.x = x;
-      head.y = y;
+      head.y = y + dy;
       head.rotation = heading + projectileSpin(look.spinTurns, age);
       // Le calibre (carte d'arme) grossit le projectile : `scaleAt` vaut 1
-      // sans lui. Le rayon de touche suit, cote simulation.
-      const size = look.diameterPx * projectiles.scaleAt(i);
+      // sans lui. Le rayon de touche suit, cote simulation. L'apogee du
+      // mortier y ajoute un peu : il se rapproche de la camera.
+      const size = look.diameterPx * projectiles.scaleAt(i) * (1 + MORTAR_APEX_GROWTH * lift);
+      if (lift > 0) {
+        // Plus le projectile monte, plus l'ombre se resserre et pâlit.
+        this.#shadows
+          .ellipse(x, y, size * (0.7 - 0.25 * lift), size * (0.3 - 0.1 * lift))
+          .fill({ color: 0x000000, alpha: 0.4 - 0.15 * lift });
+      }
       head.scaleX = (size * projectilePop(age)) / PROJECTILE_CELL_PX;
       head.scaleY = head.scaleX;
       // ⚠️ **PLEINE opacite jusqu'a la derniere image.** Ce qui dit la fin de
@@ -1187,7 +1221,7 @@ export class ProjectileRenderer {
       // c'est-a-dire DERRIERE le projectile une fois tourne de `heading`.
       trail.texture = this.#streaks[weapon.id] ?? streak;
       trail.x = x;
-      trail.y = y;
+      trail.y = y + dy;
       trail.rotation = heading;
       trail.scaleX = (projectileTrailPx(weapon) * alpha) / STREAK_LENGTH_PX;
       trail.scaleY = (size * TRAIL_THICKNESS_FRACTION) / STREAK_THICKNESS_PX;
@@ -1204,6 +1238,7 @@ export class ProjectileRenderer {
 
   /** Les trois noeuds, et pas seulement le groupe : `attach` peut n'avoir jamais eu lieu. */
   destroy(): void {
+    this.#shadows.destroy();
     this.#trails.destroy();
     this.#heads.destroy();
     this.#group.destroy();
@@ -1217,6 +1252,23 @@ export class ProjectileRenderer {
       this.#trailPool.push(new Particle({ texture: streak, anchorX: 1, anchorY: 0.5 }));
     }
   }
+}
+
+/** Grossissement du mortier a l'apogee, en fraction de son calibre. */
+export const MORTAR_APEX_GROWTH = 0.3;
+
+/**
+ * La cloche du mortier, `4p(1-p)` dans `[0, 1]`, avec `p` la fraction de vol
+ * ecoulee — lue sur le projectile (`ageAt`, compte a rebours), jamais sur
+ * l'arme : un ricochet ou une portee changent la vie.
+ */
+export function mortarLift(age: number, ticksRemaining: number): number {
+  const life = age + ticksRemaining;
+  if (life <= 0) {
+    return 0;
+  }
+  const p = age / life;
+  return 4 * p * (1 - p);
 }
 
 /** Echelle du flash a sa naissance (t=0) et juste avant de s'eteindre (t=1). Grandit en s'effacant. */

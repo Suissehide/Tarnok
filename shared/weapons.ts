@@ -159,15 +159,21 @@ export interface ProjectileLook {
  * ⚠️ **Un discriminant, et le MINIMUM de valeurs possible.** `'tir'` couvre
  * tout ce que le catalogue savait faire jusqu'ici, anneau compris : un tir
  * circulaire n'est pas une famille, c'est une `spreadRadians` qui fait un tour
- * (voir la Roue de lames). Une valeur n'entre ici que quand la donnee existante
- * ne peut VRAIMENT pas la dire — pour le halo, c'est le cas : il ne part rien,
- * donc aucun reglage de projectile ne le decrit.
+ * (les lames du Chakram), ou une `emission` en spirale (la Roue de lames). Une
+ * valeur n'entre ici que quand la donnee existante ne peut VRAIMENT pas la
+ * dire — pour le halo, c'est le cas : il ne part rien, donc aucun reglage de
+ * projectile ne le decrit.
+ *
+ * Etape 12 (§3.4) : `'onde'` (un anneau qui s'agrandit depuis le tireur,
+ * chaque ennemi frappe une fois) et `'frappe'` (des impacts differes autour du
+ * point vise) — ni l'une ni l'autre ne pose de projectile. Leur logique pure
+ * vit dans `shared/onde-frappe.ts`.
  *
  * ⚠️ **Le branchement vit a UN SEUL endroit par cote** : `Room#fireOne`
  * (serveur) et son miroir cosmetique dans `GameClient`. Une famille de plus y
  * ajoute une branche, nulle part ailleurs.
  */
-export type WeaponKind = 'tir' | 'halo' | 'faisceau' | 'invocation';
+export type WeaponKind = 'tir' | 'halo' | 'faisceau' | 'invocation' | 'onde' | 'frappe';
 
 export interface Weapon {
   id: number;
@@ -293,6 +299,21 @@ export interface Weapon {
    * missile dessine suit celui qui frappe ; les degats restent au serveur.
    */
   homing: number;
+  /**
+   * Comment le projectile se deplace (etape 12, §3.1) — `'droit'` par defaut.
+   * Voir `MOTION` ; recopie sur le projectile a l'emission en code numerique.
+   *
+   * ⚠️ **Optionnel sur le type, et pas seulement dans `WEAPON_DEFS`** : les
+   * armes de test ecrites en entier (`projectiles.test.ts`, `combat.test.ts`)
+   * restent valides sans y toucher. `Projectiles` lit `?? 'droit'`.
+   */
+  motion?: Motion;
+  /** D'ou part l'angle de la salve — `'visee'` par defaut, voir `SPIRAL_RAD_PER_TICK`. */
+  emission?: 'visee' | 'spirale';
+  /** Eclats projetes en couronne quand le projectile est consomme — `0` par defaut. */
+  fragments?: number;
+  /** Croissance de l'echelle (`projectileScale`) par seconde de vol — `0` par defaut. */
+  growth?: number;
 }
 
 /**
@@ -308,8 +329,9 @@ export interface Weapon {
  * percute ». QUATRE armes sur dix-sept sont neutres — *« un socle pour les
  * joueurs qui ne veulent pas jouer le systeme »* (§6.3 de l'orientation) ;
  * c'etaient cinq avant que le lance-flammes ne passe en Braise a l'etape 8.
- * Cinq explosent depuis l'etape 8 (la grenade et les quatre lourdes) : dans
- * les deux cas c'est la ligne ABSENTE qui reste le cas courant, et l'exception
+ * Cinq explosaient depuis l'etape 8 (la grenade et les quatre lourdes) ;
+ * depuis l'etape 12, deux projectiles seulement (grenade, chaudron) — voir
+ * `HEAVY_BLAST_RADIUS`. Dans les deux cas c'est la ligne ABSENTE qui reste le cas courant, et l'exception
  * se lit d'un coup d'oeil.
  *
  * ---
@@ -388,6 +410,13 @@ export interface Weapon {
  * `weapons.test.ts` le garde par une propriete : une arme rapide a souffle
  * poserait des explosions en continu, ce que le §6.6 refuse exactement comme il
  * refuse un halo permanent.
+ *
+ * ⚠️ **Etape 12 : des quatre, seul le Chaudron le garde.** Le Glaive revient
+ * (il touche deux fois, sans souffle), le Canon a chaux est devenu une onde et
+ * le Canon a arc une frappe — dont chaque impact est une pulsation de CE rayon
+ * (`blastRadius`, hors famille `'tir'`). Le Missile, devenu essaim, l'a perdu
+ * aussi : cinq souffles par salve, c'est l'explosion continue que la regle
+ * refuse.
  */
 export const HEAVY_BLAST_RADIUS = ZONE_RADIUS / 2;
 
@@ -468,6 +497,42 @@ export const RICOCHET_MIN_LIFE_TICKS = 12;
 /** Jusqu'ou un projectile guide voit une cible, en pixels monde. */
 export const HOMING_RANGE = 420;
 
+/**
+ * Les mouvements d'un projectile (etape 12, §3.1), et leur code sur le
+ * `Uint8Array` de `Projectiles`. `droit` vaut 0 : un tableau neuf est droit.
+ */
+export const MOTION = { droit: 0, orbite: 1, boomerang: 2, mortier: 3, sinus: 4 } as const;
+export type Motion = keyof typeof MOTION;
+/** Rayon de l'orbite autour de l'ancre, en pixels monde. */
+export const ORBIT_RADIUS = 72;
+/** Le rayon de l'orbite respire de ± cette fraction. */
+export const ORBIT_BREATH = 0.1;
+/** Periode de cette respiration, en ticks. */
+export const ORBIT_BREATH_TICKS = 30;
+/** Tours par seconde d'un projectile en orbite. */
+export const ORBIT_TURNS_PER_S = 0.9;
+/**
+ * Age minimal (ticks) entre deux contacts d'un projectile jamais consomme
+ * (orbite, boomerang) avec le MEME ennemi.
+ */
+export const REHIT_TICKS = 20;
+/** Un boomerang qui revient disparait a moins de cette distance du tireur. */
+export const BOOMERANG_CATCH_PX = 24;
+/** Rotation de l'angle de base d'une salve en spirale, par tick de tir. */
+export const SPIRAL_RAD_PER_TICK = 0.35;
+/** Hauteur de la cloche d'un mortier a mi-vol — rendu seul, la simulation reste au sol. */
+export const MORTAR_APEX_PX = 90;
+/** Ecart lateral maximal d'un projectile en sinus autour de sa ligne, en pixels monde. */
+export const SINUS_AMPLITUDE = 36;
+/** Periode de l'ondulation, en ticks. */
+export const SINUS_PERIOD_TICKS = 12;
+/** Degats d'un eclat, en fraction des degats du projectile qui eclate. */
+export const FRAGMENT_DAMAGE_RATIO = 0.35;
+/** Echelle d'un eclat, en fraction de celle du projectile qui eclate. */
+export const FRAGMENT_SCALE_RATIO = 0.5;
+/** Vie d'un eclat, en ticks. */
+export const FRAGMENT_LIFE_TICKS = 8;
+
 const WEAPON_DEFS: readonly (Omit<
   Weapon,
   | 'id'
@@ -539,31 +604,42 @@ const WEAPON_DEFS: readonly (Omit<
     // deux occupaient la meme case et l'Éventail y etait trois fois plus
     // faible. La Braise retombe a deux armes, et le catalogue reste a dix-sept.
     //
-    // Neutre, et c'est son interet : dix lames tout autour arrosent sans
+    // Neutre, et c'est son interet : ses lames tournent tout autour sans
     // viser, donc elle repond a l'ENCERCLEMENT quand toutes les autres
     // demandent de choisir un cote. C'est un socle, au sens du §6.3.
+    //
+    // ⚠️ **ETAPE 12 : la rafale a 360° devient une SPIRALE.** Dix lames d'un
+    // coup toutes les 40 ticks ressemblaient a la mitraille en plus large ;
+    // deux bras opposes toutes les 4 ticks, dont l'angle tourne avec le tick
+    // (`emission: 'spirale'`, `SPIRAL_RAD_PER_TICK`) et ignore la visee, se
+    // reconnaissent sans lire le nom. Degats par lame divises par deux pour
+    // le meme debit total : 2 x 3 x 30 / 4 = 45 /s, comme 10 x 6 x 30 / 40.
+    // SALVO ajoute un bras.
     name: 'Roue de lames',
     perks: [UPGRADE.SALVO, UPGRADE.RANGE, UPGRADE.CALIBRE, UPGRADE.VENOM],
     // Lame cramoisie, et la deuxieme plus tournante du catalogue apres le
     // chakram : ce qui part dans toutes les directions doit se lire comme un
-    // tourbillon.
+    // tourbillon. Le plus petit calibre du catalogue depuis l'etape 12 : 3
+    // degats par lame, et la taille suit les degats.
     look: {
       shape: 'lame',
-      diameterPx: 15,
+      diameterPx: 9,
       tint: 0xff2f6b,
       glow: 0.4,
       trailTicks: 1,
       spinTurns: 2,
       trail: 'lisse',
     },
-    cooldownTicks: 40,
-    damage: 6,
+    cooldownTicks: 4,
+    damage: 3,
     projectileSpeed: 520,
     projectileLifeTicks: 20,
-    projectileCount: 10,
-    // ⚠️ **Le tour complet, et c'est LUI qui fait l'arme** : `#emit` le
-    // reconnait et repartit les dix lames en anneau ferme.
-    spreadRadians: Math.PI * 2,
+    projectileCount: 2,
+    // Sans effet en spirale : les bras se repartissent sur le tour quel que
+    // soit l'angle (voir `#emit`). Renseigne pour la regle « tout positif »,
+    // et PAS a un tour : l'anneau du catalogue est desormais le Chakram.
+    spreadRadians: Math.PI,
+    emission: 'spirale',
   },
   {
     // Cadence lente, degats et portee eleves : prouve que la forme couvre
@@ -575,17 +651,24 @@ const WEAPON_DEFS: readonly (Omit<
     // la mediane du catalogue (22) pour la cadence la DEUXIEME plus lente.
     //
     // ⚠️ **Et c'est sa portee qui le justifie, pas seulement sa cadence.** Elle
-    // tire a 1 200 px, deux fois la dague : c'est la seule arme du catalogue
+    // tire a 1 000 px (1 200 avant l'etape 12), contre 607 pour la dague : la seule arme du catalogue
     // dont le projectile traverse assez de terrain pour rencontrer une file
-    // d'ennemis. Trois traversees portent sa valeur a ~83 degats par seconde
+    // d'ennemis. Trois traversees portaient sa valeur a ~83 degats par seconde
     // sur une file alignee, et la laissent a 20,8 sur une cible isolee — le
     // prix du transpercage est de VISER une file, pas d'etre plus faible.
     //
     // Les degats restent PLEINS a chaque traversee : voir `Weapon.pierce`.
+    //
+    // ⚠️ **ETAPE 12 : une fleche plus LENTE qui GROSSIT en vol** (`growth`,
+    // 1,5 d'echelle par seconde, dessin ET touche) et traverse quatre corps.
+    // Elle fendait l'ecran comme les autres traits ; elle se reconnait
+    // maintenant a ce qu'elle enfle. 600 px/s pendant 50 ticks : 1 000 px de
+    // portee (1 200 avant), le temps de grossir jusqu'a x3,5. Degats et
+    // cadence inchanges : 20,8 /s sur une cible, plus sur une file.
     name: 'Arc lourd',
     perks: [UPGRADE.PIERCE, UPGRADE.SALVO, UPGRADE.DETONATION, UPGRADE.VELOCITY],
-    // Le trait le plus gros, le plus rapide et le plus long du catalogue — et
-    // le seul qui ne s'eteint JAMAIS en vol : sa vie (40 ticks) atteint
+    // Le trait le plus gros et le plus long du catalogue — et il ne s'eteint
+    // JAMAIS en vol : sa vie (50 ticks) depasse
     // `PROJECTILE_FADE_REFERENCE_TICKS`, donc `projectileAlpha` le laisse a
     // pleine opacite jusqu'au bout. « Il file net », par derivation.
     look: {
@@ -599,11 +682,12 @@ const WEAPON_DEFS: readonly (Omit<
     },
     cooldownTicks: 36,
     damage: 25,
-    projectileSpeed: 900,
-    projectileLifeTicks: 40,
+    projectileSpeed: 600,
+    projectileLifeTicks: 50,
     projectileCount: 1,
     spreadRadians: 0.05,
-    pierce: 3,
+    pierce: 4,
+    growth: 1.5,
   },
   {
     // Cadence tres rapide, courte portee : un jet continu au contact.
@@ -710,10 +794,16 @@ const WEAPON_DEFS: readonly (Omit<
     // depasse pas 0,59. **Le levier n'est pas la surface d'une arme, c'est la
     // cadence de la grenade (75 ticks) et le taux de touche de la dague.**
     // Signale, pas tranche ici : c'est du reglage, et il appartient a l'auteur.
+    //
+    // ⚠️ **ETAPE 12 : elle ECLATE** (`fragments: 8`). Consommee a l'impact ou
+    // en fin de course, elle projette huit eclats en couronne (35 % de ses
+    // degats chacun, ~120 px de vol) : elle se reconnait au shrapnel, plus
+    // seulement a sa teinte. Ses degats passent de 40 a 36 pour payer une part
+    // des eclats — elle reste la plus forte et la plus lente des armes lancees.
     name: 'Grenade',
     perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VELOCITY],
-    // Sphere verte, la plus grosse du catalogue : une arme a 40 degats et 75
-    // ticks de recharge doit se voir partir. Vert franc face a l'ambre de
+    // Sphere verte, la plus grosse du catalogue : l'arme la plus forte et la
+    // plus lente doit se voir partir. Vert franc face a l'ambre de
     // l'eventail — les deux armes de Braise ne se ressemblent pas.
     look: {
       shape: 'sphere',
@@ -725,35 +815,52 @@ const WEAPON_DEFS: readonly (Omit<
       trail: 'fumee',
     },
     cooldownTicks: 45,
-    damage: 40,
+    damage: 36,
     projectileSpeed: 460,
     projectileLifeTicks: 34,
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.BRAISE,
     blastRadius: ZONE_RADIUS,
+    fragments: 8,
   },
   {
     // Milieu de gamme, sert de reference pour les armes voisines.
+    //
+    // ⚠️ **ETAPE 12 : trois lames en ORBITE autour du joueur** (`motion:
+    // 'orbite'`, `ORBIT_RADIUS`), jamais consommees, qui retouchent un meme
+    // ennemi apres `REHIT_TICKS`. Une couronne de protection, la seule arme
+    // qui ne part pas devant. Vie = cadence (40 ticks) : la couronne suivante
+    // nait quand la precedente s'eteint. Le tour complet (`spreadRadians`)
+    // repartit les lames a 120° ; `projectileSpeed` n'entre plus dans leur
+    // course (elles tournent a `ORBIT_TURNS_PER_S`), il reste pour les regles
+    // du catalogue. Un ennemi sur le cercle prend 3 x 0,9 = 2,7 passages par
+    // seconde : 6 degats y font 16 /s, contre 17 /s avant sur une cible.
+    //
+    // Atouts : une lame de plus (SALVO), CALIBRE, VENOM, RANGE (duree). Plus
+    // de PIERCE ni de RICOCHET : elle traverse tout, et ne quitte pas son
+    // cercle.
     name: 'Chakram',
-    perks: [UPGRADE.PIERCE, UPGRADE.RICOCHET, UPGRADE.CALIBRE, UPGRADE.VENOM],
+    perks: [UPGRADE.SALVO, UPGRADE.CALIBRE, UPGRADE.VENOM, UPGRADE.RANGE],
     // Anneau magenta : la seule forme creuse du catalogue, pour une arme dont
-    // le nom EST un disque perce.
+    // le nom EST un disque perce. Trainee courte : en orbite, une longue
+    // queue brouillerait la couronne.
     look: {
       shape: 'anneau',
-      diameterPx: 21,
+      diameterPx: 15,
       tint: 0xff45c8,
       glow: 0.35,
-      trailTicks: 1.5,
+      trailTicks: 0.6,
       spinTurns: 3.5,
       trail: 'lisse',
     },
-    cooldownTicks: 21,
-    damage: 12,
+    cooldownTicks: 40,
+    damage: 6,
     projectileSpeed: 500,
-    projectileLifeTicks: 35,
-    projectileCount: 1,
-    spreadRadians: 0.05,
+    projectileLifeTicks: 40,
+    projectileCount: 3,
+    spreadRadians: Math.PI * 2,
+    motion: 'orbite',
   },
   {
     // Deux projectiles paralleles, dispersion etroite.
@@ -895,15 +1002,22 @@ const WEAPON_DEFS: readonly (Omit<
     // d'une chaine doit peser pour que la reaction Court-circuit (Foudre +
     // Poix, `shared/reactions.ts`) parte d'un coup qui compte, pas d'une
     // piqure.
+    //
+    // ⚠️ **ETAPE 12 : une FRAPPE, plus un projectile** (`kind: 'frappe'`,
+    // `shared/onde-frappe.ts`). Au tir, le point vise a portee (600 x 24 / 30
+    // = 480 px, 750 avant) ; ses trois ennemis les plus proches recoivent
+    // chacun un eclair `FRAPPE_DELAY_TICKS` plus tard, une pulsation de rayon
+    // `blastRadius`. `projectileCount` compte les eclairs (SALVO en ajoute
+    // un), `projectileSpeed x projectileLifeTicks` donne la portee (RANGE).
+    // Trois cibles au lieu d'une : 12 degats par eclair, soit 11 /s par cible
+    // (14,5 avant) et 33 /s sur un groupe.
     name: 'Canon à arc',
-    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VELOCITY],
-    // Javelot cyan electrique, la plus longue trainee des deux armes de
-    // Foudre, criblee d'etincelles : elle se vise, donc elle se suit des yeux
-    // comme le sceptre. Elle ne tourne pas — une hampe qui tourne ne perce
-    // plus.
+    perks: [UPGRADE.SALVO, UPGRADE.ZONE, UPGRADE.RANGE],
+    kind: 'frappe',
+    // Javelot cyan electrique : la teinte est celle de l'eclair qui tombe.
     look: {
       shape: 'javelot',
-      diameterPx: 25,
+      diameterPx: 22,
       tint: 0x00e5ff,
       glow: 0.5,
       trailTicks: 1.4,
@@ -911,13 +1025,14 @@ const WEAPON_DEFS: readonly (Omit<
       trail: 'etincelles',
     },
     cooldownTicks: 33,
-    damage: 16,
-    projectileSpeed: 750,
-    projectileLifeTicks: 30,
-    projectileCount: 1,
+    damage: 12,
+    projectileSpeed: 600,
+    projectileLifeTicks: 24,
+    projectileCount: 3,
     spreadRadians: 0.05,
     element: ELEMENT.FOUDRE,
-    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
+    // Le rayon de chaque eclair — le souffle de contact de l'etape 8, voir
+    // `HEAVY_BLAST_RADIUS`.
     blastRadius: HEAVY_BLAST_RADIUS,
   },
   {
@@ -984,6 +1099,12 @@ const WEAPON_DEFS: readonly (Omit<
     // La poix « lourde » : projectile unique, cadence lente, degats eleves —
     // en face de la grenade et du canon-a-arc. Elle vise a poisser une cible
     // choisie plutot qu'a arroser, le pendant exact de la seringue.
+    //
+    // ⚠️ **ETAPE 12 : un MORTIER** (`motion: 'mortier'`). Il vole au-dessus de
+    // la horde sans toucher personne (`collide` l'ignore) et saute en fin de
+    // course, a 400 px, par le souffle de fin de course : on ne vise plus une
+    // cible, on vise un POINT. Le rendu le monte en cloche
+    // (`MORTAR_APEX_PX`) au-dessus de son ombre. Chiffres inchanges.
     name: 'Chaudron à poix',
     perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VENOM],
     // Masse brun fonce, la plus terne du catalogue : une motte informe qui
@@ -1005,8 +1126,10 @@ const WEAPON_DEFS: readonly (Omit<
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.POIX,
-    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
+    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`. Le seul coup
+    // du mortier, depuis l'etape 12.
     blastRadius: HEAVY_BLAST_RADIUS,
+    motion: 'mortier',
   },
   {
     // Tache 8 de l'etape 5c : la Chaux a enfin ses armes.
@@ -1080,12 +1203,20 @@ const WEAPON_DEFS: readonly (Omit<
     // La chaux « lourde », en face du chaudron-a-poix et du canon-a-arc :
     // projectile unique, cadence lente, degats eleves. Le premier ennemi
     // touche doit deja fuir avant qu'un allie n'ait besoin de suivre.
+    //
+    // ⚠️ **ETAPE 12 : une ONDE, plus un obus** (`kind: 'onde'`,
+    // `shared/onde-frappe.ts`). Un anneau de chaux part du joueur a
+    // `projectileSpeed` (460 px/s) jusqu'a `blastRadius` (220 px, que ZONE
+    // agrandit) et frappe une fois chaque ennemi qu'il franchit. Il touche
+    // TOUT un cercle au lieu d'une cible : la cadence passe de 38 a 44 ticks
+    // (10 /s par ennemi franchi, 11,8 avant sur une cible). Plus de SALVO ni
+    // de CALIBRE : il n'y a plus de projectile a multiplier ou grossir.
     name: 'Canon à chaux',
-    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.CALIBRE],
-    // Obus os-et-ocre, la plus sourde des deux armes de Chaux sans etre sombre
-    // (etape 8 : 0x4f7a1a, un olive fonce, se perdait dans l'herbe) : une
-    // capsule qui ne tourne pas, distincte de la teinte de l'element et de
-    // celle de la poire-a-chaux.
+    perks: [UPGRADE.ZONE],
+    kind: 'onde',
+    // Os-et-ocre, la plus sourde des deux armes de Chaux sans etre sombre
+    // (etape 8 : 0x4f7a1a, un olive fonce, se perdait dans l'herbe) : c'est
+    // la teinte de l'anneau, distincte de celle de l'element.
     look: {
       shape: 'obus',
       diameterPx: 24,
@@ -1095,15 +1226,17 @@ const WEAPON_DEFS: readonly (Omit<
       spinTurns: 0,
       trail: 'fumee',
     },
-    cooldownTicks: 38,
+    cooldownTicks: 44,
     damage: 15,
     projectileSpeed: 460,
-    projectileLifeTicks: 30,
+    // Inerte : l'onde vit jusqu'a son rayon max (220 / 460 s, ~15 ticks).
+    // Renseigne a cette valeur pour que les regles du catalogue lisent vrai.
+    projectileLifeTicks: 15,
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.CHAUX,
-    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
-    blastRadius: HEAVY_BLAST_RADIUS,
+    /** Le rayon ou l'onde s'eteint. */
+    blastRadius: 220,
   },
   {
     // Tache 8 de l'etape 5c : le Vif-argent a enfin ses armes.
@@ -1174,15 +1307,24 @@ const WEAPON_DEFS: readonly (Omit<
     // projectile unique, cadence lente, degats eleves. Le premier maillon
     // d'une liaison doit peser pour que l'allie qui la retrouve trouve deux
     // ennemis deja groupes.
+    //
+    // ⚠️ **ETAPE 12 : un BOOMERANG** (`motion: 'boomerang'`). Il part dans la
+    // visee en ralentissant jusqu'a l'arret a mi-vie, puis revient vers son
+    // tireur a pleine vitesse ; jamais consomme, il touche a l'aller ET au
+    // retour (`REHIT_TICKS`). Pour aller assez loin malgre le freinage, plus
+    // vif et plus long : 600 px/s, 50 ticks, ~250 px a l'aller. Plus de
+    // souffle (voir `HEAVY_BLAST_RADIUS`) ni de PIERCE (il traverse tout) :
+    // 12 degats, soit 11 /s par passage et 22 /s sur un ennemi qu'il croise
+    // deux fois (13 /s et un souffle avant).
     name: 'Glaive de mercure',
-    perks: [UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.PIERCE],
+    perks: [UPGRADE.SALVO, UPGRADE.CALIBRE, UPGRADE.RANGE],
     // Lame a garde lilas argente qui tourne sur elle-meme, fort halo : le
     // mercure se voit partir, contrairement a la poix qui n'illumine rien.
     // Eclaircie a l'etape 8 (0x45456e, une ardoise sombre, etait invisible sur
     // l'herbe) tout en restant plus sourde que le dard de la fronde.
     look: {
       shape: 'glaive',
-      diameterPx: 22,
+      diameterPx: 21,
       tint: 0xa89bdb,
       glow: 0.5,
       trailTicks: 1.3,
@@ -1190,19 +1332,22 @@ const WEAPON_DEFS: readonly (Omit<
       trail: 'lisse',
     },
     cooldownTicks: 32,
-    damage: 14,
-    projectileSpeed: 460,
-    projectileLifeTicks: 30,
+    damage: 12,
+    projectileSpeed: 600,
+    projectileLifeTicks: 50,
     projectileCount: 1,
     spreadRadians: 0.05,
     element: ELEMENT.VIF_ARGENT,
-    // Souffle de contact (etape 8) : voir `HEAVY_BLAST_RADIUS`.
-    blastRadius: HEAVY_BLAST_RADIUS,
+    motion: 'boomerang',
   },
   {
     // La fronde : un caillou qui ne s'arrete pas au premier. Il rebondit
     // d'ennemi en ennemi (`bounces`) — l'arme des hordes serrees, la ou
     // l'arc lourd veut des files.
+    //
+    // ⚠️ **ETAPE 12 : il ONDULE** (`motion: 'sinus'`, `SINUS_AMPLITUDE` px de
+    // part et d'autre de sa ligne). Les ricochets restent : la ligne repart
+    // de chaque impact. Chiffres inchanges.
     name: 'Fronde à ricochets',
     perks: [UPGRADE.RICOCHET, UPGRADE.SALVO, UPGRADE.VELOCITY, UPGRADE.VENOM],
     look: {
@@ -1221,15 +1366,24 @@ const WEAPON_DEFS: readonly (Omit<
     projectileCount: 1,
     spreadRadians: 0.05,
     bounces: 3,
+    motion: 'sinus',
   },
   {
-    // Le missile : lent, mais il trouve sa cible (`homing`) et la fait
-    // sauter. Le seul tir qui pardonne une visee approximative.
+    // Le missile : lent, mais il trouve sa cible (`homing`). Le seul tir qui
+    // pardonne une visee approximative.
+    //
+    // ⚠️ **ETAPE 12 : un ESSAIM.** Cinq mini-missiles en eventail (1,6 rad)
+    // qui se rabattent (guidage 5 -> 9 rad/s) au lieu d'un seul : il ne
+    // ressemblait plus qu'a une grenade d'une autre teinte. Plus de souffle —
+    // il reste aux armes a projectile unique, voir `HEAVY_BLAST_RADIUS` — ni
+    // de ZONE. 5 degats par missile : 18 /s si les cinq trouvent la meme
+    // cible, contre 13 /s et un souffle avant.
     name: 'Missile guidé',
-    perks: [UPGRADE.HOMING, UPGRADE.ZONE, UPGRADE.SALVO, UPGRADE.VELOCITY],
+    perks: [UPGRADE.HOMING, UPGRADE.SALVO, UPGRADE.VELOCITY],
+    // Dard, et petit : la taille suit les degats d'UN missile.
     look: {
       shape: 'dard',
-      diameterPx: 26,
+      diameterPx: 12,
       tint: 0xff3b5c,
       glow: 0.6,
       trailTicks: 3,
@@ -1237,14 +1391,13 @@ const WEAPON_DEFS: readonly (Omit<
       trail: 'fumee',
     },
     cooldownTicks: 42,
-    damage: 18,
+    damage: 5,
     projectileSpeed: 480,
     projectileLifeTicks: 50,
-    projectileCount: 1,
-    spreadRadians: 0.05,
+    projectileCount: 5,
+    spreadRadians: 1.6,
     element: ELEMENT.BRAISE,
-    blastRadius: HEAVY_BLAST_RADIUS,
-    homing: 5,
+    homing: 9,
   },
 ];
 
@@ -1259,6 +1412,10 @@ export const WEAPONS: readonly Weapon[] = WEAPON_DEFS.map((w, id) => ({
   venom: 0,
   bounces: w.bounces ?? 0,
   homing: w.homing ?? 0,
+  motion: w.motion ?? 'droit',
+  emission: w.emission ?? 'visee',
+  fragments: w.fragments ?? 0,
+  growth: w.growth ?? 0,
 }));
 
 /**
@@ -1337,9 +1494,9 @@ assertWeaponLooks(WEAPONS);
  * courte portee comme le lance-flammes »* : la portee ne peut pas bouger (elle
  * est du reglage de jeu), donc c'est le fondu qui la dit.
  *
- * 40 est la duree de vie de l'arc-lourd, la plus longue portee reelle du
- * catalogue hors grenade — `weapons.test.ts` le verifie plutot que de le
- * laisser en commentaire. Une arme qui l'atteint « file net » : son fondu vaut
+ * 40 etait la duree de vie de l'arc-lourd (50 depuis l'etape 12), la plus
+ * longue portee reelle du catalogue — `weapons.test.ts` verifie qu'il
+ * l'atteint plutot que de le laisser en commentaire. Une arme qui l'atteint « file net » : son fondu vaut
  * exactement zero.
  */
 export const PROJECTILE_FADE_REFERENCE_TICKS = 40;
@@ -1477,7 +1634,7 @@ function fadeFraction(lifeTicks: number): number {
  * | eventail | 12 | 70 % |
  * | dague | 28 | 30 % |
  * | chakram | 35 | 12,5 % |
- * | **arc-lourd** | **40** | **0 % — il file net** |
+ * | **arc-lourd** | **50** (40 avant l'etape 12) | **0 % — il file net** |
  * | grenade | 45 | 0 % |
  *
  * `ticksRemaining` est le compte a rebours de `Projectiles` (`ticksRemainingAt`),
