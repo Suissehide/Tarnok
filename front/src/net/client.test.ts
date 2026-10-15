@@ -24,7 +24,7 @@ import {
 import { ELEMENT } from '@shared/elements';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
-import { passiveOf } from '@shared/passives';
+import { PASSIVES, passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
   decode,
@@ -2995,6 +2995,21 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     });
     expect(client.loadoutOf(2).stacksOfWeapon(GRENADE)).toBe(3);
     expect(client.loadoutOf(2).upgradesOf(GRENADE, 1)).toBe(2);
+  });
+
+  it('etape 10 : Volee elargit la salve affichee exactement comme celle du serveur', () => {
+    const VOLEE = PASSIVES.find((p) => p.kind === 'salvo')?.id ?? -1;
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.PASSIVE, refId: VOLEE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
+    const base = weaponOf(BASE_WEAPON_ID);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    expect(tir?.[7]).toBe(base.projectileCount + stackGain(base));
   });
 });
 

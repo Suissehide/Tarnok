@@ -32,6 +32,7 @@ import {
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
+import { armedWeapon, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
@@ -67,13 +68,11 @@ import {
   BASE_WEAPON_ID,
   beamRange,
   cooldownWithBonus,
-  DAMAGE_PER_UPGRADE,
   FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardIsAlive,
   guardPulsesAt,
   UPGRADE,
-  upgradedWeapon,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -2968,9 +2967,9 @@ export class GameClient {
     /** Horloge murale, pour le flash d'une pulsation de halo — voir plus bas. */
     nowMs: number,
   ): void {
-    // Ses bonus propres appliques (salve, zone, perforation, portee) : tout ce
-    // qui suit lit cette copie, jamais l'entree du catalogue.
-    const weapon = upgradedWeapon(weaponOf(weaponId), (u) => loadout.upgradesOf(weaponId, u));
+    // La MEME fonction que `Room#fireOne` (`shared/firing.ts`), passifs
+    // globaux (Volee, Ampleur) compris.
+    const weapon = armedWeapon(loadout, weaponId);
     const cooldown = cooldownWithBonus(
       weapon.cooldownTicks,
       loadout.bonus('fireRate') +
@@ -2985,19 +2984,22 @@ export class GameClient {
     if (tick - (last[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    const damage =
-      weapon.damage *
-      (1 +
-        loadout.bonus('damage') +
-        this.accountBonuses.damage +
-        DAMAGE_PER_UPGRADE * loadout.upgradesOf(weaponId, UPGRADE.DAMAGE));
-    // Meme calcul que `Room#fireOne`, meme fonction (`upgradedWeapon`) : deux
+    // ⚠️ Le PV max d'un ALLIE se derive ici avec les bonus de compte du joueur
+    // LOCAL — la meme approximation que `accountBonuses.damage` juste a cote.
+    // Cosmetique (§5.4).
+    const damage = shotDamage(
+      weapon,
+      loadout,
+      this.accountBonuses.damage,
+      PLAYER_MAX_HP + loadout.bonus('maxHp') + this.accountBonuses.maxHp,
+    );
+    // Meme fonctions (`armedWeapon`, `shotDamage`) que `Room#fireOne` : deux
     // formules divergeraient, et le joueur verrait une salve que le serveur
     // n'arbitre pas.
     if (weapon.kind === 'halo') {
       // ⚠️ **Le miroir cosmetique d'une pulsation de halo est un FLASH, pas un
       // projectile** : il porte le rayon que le serveur vient d'arbitrer
-      // (`upgradedWeapon`, la meme fonction des deux cotes), donc le disque
+      // (`armedWeapon`, la meme fonction des deux cotes), donc le disque
       // dessine ne peut pas mentir sur la portee — meme discipline que
       // `reactionFlashScale` face a `REACTION_RADIUS`.
       //

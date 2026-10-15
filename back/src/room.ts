@@ -49,6 +49,7 @@ import {
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
+import { armedWeapon, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
 import { Loadout } from '@shared/loadout';
@@ -69,13 +70,11 @@ import {
   BASE_WEAPON_ID,
   beamRange,
   cooldownWithBonus,
-  DAMAGE_PER_UPGRADE,
   FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardIsAlive,
   guardPulsesAt,
   UPGRADE,
-  upgradedWeapon,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -2192,9 +2191,9 @@ export class Room {
    * a chaque tir, a partir de l'inventaire du joueur.
    */
   #fireOne(p: PlayerState, weaponId: number, tick: number): void {
-    // Ses bonus propres appliques (salve, zone, perforation, portee) : tout ce
-    // qui suit lit cette copie, jamais l'entree du catalogue.
-    const weapon = upgradedWeapon(weaponOf(weaponId), (u) => p.loadout.upgradesOf(weaponId, u));
+    // Ses bonus propres ET ceux des passifs (Volee, Ampleur) appliques — la
+    // MEME fonction que le miroir client (`shared/firing.ts`).
+    const weapon = armedWeapon(p.loadout, weaponId);
     const cooldown = cooldownWithBonus(
       weapon.cooldownTicks,
       p.loadout.bonus('fireRate') +
@@ -2204,12 +2203,7 @@ export class Room {
     if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    const damage =
-      weapon.damage *
-      (1 +
-        p.loadout.bonus('damage') +
-        p.accountBonuses.damage +
-        DAMAGE_PER_UPGRADE * p.loadout.upgradesOf(weaponId, UPGRADE.DAMAGE));
+    const damage = shotDamage(weapon, p.loadout, p.accountBonuses.damage, p.maxHp);
     if (weapon.kind === 'halo') {
       // ⚠️ **Le halo ne tire rien : il met une PULSATION en file**, que
       // `resolveHalos` resoudra dans la meme passe que les projectiles (voir

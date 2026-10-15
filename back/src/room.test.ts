@@ -5389,3 +5389,21 @@ describe('etape 10 : la rarete multiplie la carte, soin de vitalite compris', ()
     expect(hpOf(room, 1)).toBe(PLAYER_MAX_HP + fois * PAR_CARTE);
   });
 });
+
+describe('etape 10 : Volee dans le salon', () => {
+  const VOLEE = PASSIVES.find((p) => p.kind === 'salvo')?.id ?? -1;
+
+  it('la dague tire une salve elargie d un cran par carte de Volee', () => {
+    const room = new Room(0x10_0a_0501);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: VOLEE });
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    const appel = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    spy.mockRestore();
+    const dague = weaponOf(BASE_WEAPON_ID);
+    expect(dague.kind).toBe('tir');
+    expect(appel?.[7]).toBe(dague.projectileCount + stackGain(dague));
+  });
+});
