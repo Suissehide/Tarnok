@@ -20,22 +20,29 @@ Prisma/Postgres pour les tests d'intégration.
 
 **Spec :** [`docs/specs/2026-10-16-etape-13-paliers-et-pactes.md`](../specs/2026-10-16-etape-13-paliers-et-pactes.md)
 
-**Où l'on travaille :** dans un worktree, et **sur une base d'après-11**. `etape-11-porteur` modifie
-déjà `shared/rarity.ts` et `shared/cards.ts` : partir de `main` garantirait un conflit sur les deux
-fichiers centraux de cette étape.
+**Où l'on travaille :** dans le worktree `../Tarnok-pactes`, branche `etape-13-pactes`, **déjà
+créé et vérifié** — ne pas le recréer.
 
-```bash
-# À faire APRÈS la fusion de etape-11-porteur dans main. Vérifier d'abord :
-git log --oneline main | grep -q "etape-11" && echo "11 fusionnée : on peut partir"
+Sa base n'est ni `main` ni `etape-11-porteur`, mais les **deux** :
 
-git worktree add ../Tarnok-pactes -b etape-13-pactes
-cd ../Tarnok-pactes && npm ci && npm run db:generate -w back
-cp ../Tarnok/back/.env back/.env && cp ../Tarnok/front/.env front/.env
+```
+etape-11-porteur (3 commits : bestiaire, plancher de rareté, fuite)
+  + le Guide et les documents de l'étape 13
+  + merge de main (qui contient l'étape 12 : dix armes, dix formes de tir)
 ```
 
-Tous les chemins de ce plan sont relatifs à la racine du worktree (`../Tarnok-pactes`). Les ancres
-`l.~N` sont celles de `main` au commit `4070301` **plus le diff de `etape-11-porteur`** ; elles
-bougeront, ce sont des repères, pas des adresses.
+⚠️ **Pourquoi les deux, et pourquoi ce n'est pas négociable.** Les tâches 1 et 2 ont besoin de
+`rollRarity(rng, floor)` et `CHEST_RARITY_FLOOR`, qui ne vivent que dans `etape-11-porteur`
+(commit `51fb010`). Et `front/src/ui/guide.ts`, que la tâche 8 modifie, emploie le vocabulaire de
+l'étape 12 (`onde`, `motion`, `emission`, `fragments`, `growth`) : sur la seule base de l'étape 11
+il ne compile pas. La première tentative de worktree est morte exactement là.
+
+⚠️ **L'étape 11 est EN VOL** (3 tâches sur 11 au moment d'écrire). Cette branche en porte un
+instantané. Quand 11 finira et fusionnera, la fusion avec celle-ci se fera sur un ancêtre commun —
+mais si le `floor` ou `CHEST_RARITY_FLOOR` changent d'ici là, les tâches 1 et 2 sont à relire.
+
+État vérifié de la base, portique lancé seul : `lint` vert, `tsc` vert, **1496 tests passants**.
+C'est le point de départ ; toute régression vient de nous.
 
 ## Contraintes globales
 
