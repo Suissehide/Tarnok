@@ -316,6 +316,22 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
       expect(magnitudeLabel(p)).toMatch(/^[+−]\d/);
     }
   });
+
+  it.each([
+    ['critChance', '+4 % critique'],
+    ['critDamage', '+30 % dégâts critiques'],
+    ['salvo', '+1 salve, armes de tir'],
+    ['zone', '+1 zone, toutes armes'],
+    ['echo', '+100 % dégâts de vos réactions'],
+    ['harvest', '+1 PV par mort à 300 px'],
+    ['colossus', '+1 % dégâts par 10 PV max'],
+  ] as const)('etape 10 : %s se lit « %s »', (kind, attendu) => {
+    const passive = PASSIVES.find((p) => p.kind === kind);
+    if (!passive) {
+      throw new Error(`fixture : aucun passif de genre ${kind}`);
+    }
+    expect(magnitudeLabel(passive)).toBe(attendu);
+  });
 });
 
 describe('remainingSeconds', () => {

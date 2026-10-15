@@ -30,7 +30,20 @@
  * serveur seul (§5.4), et une regeneration appliquee des deux cotes ferait
  * diverger deux barres de vie.
  */
-export const PASSIVE_KINDS = ['fireRate', 'damage', 'maxHp', 'speed', 'regen'] as const;
+export const PASSIVE_KINDS = [
+  'fireRate',
+  'damage',
+  'maxHp',
+  'speed',
+  'regen',
+  'critChance',
+  'critDamage',
+  'salvo',
+  'zone',
+  'echo',
+  'harvest',
+  'colossus',
+] as const;
 export type PassiveKind = (typeof PASSIVE_KINDS)[number];
 
 export interface Passive {
@@ -113,6 +126,62 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     name: 'regain',
     kind: 'regen',
     magnitude: 0.6,
+  },
+  // ---- Etape 10 : quatre passifs qui s'empilent SANS PLAFOND (§3) ----------
+  {
+    // Chance de critique ajoutee par carte, en fraction (0,04 = +4 points).
+    // Lue par `critOf` (shared/firing.ts) a l'apparition du projectile, des
+    // deux cotes ; la borne a 1 vit la-bas et nulle part ailleurs.
+    name: 'precision',
+    kind: 'critChance',
+    magnitude: 0.04,
+  },
+  {
+    // Ajoute au multiplicateur critique par carte (0,3 : x2 devient x2,3).
+    // Emporte PAR PROJECTILE a son apparition (`Projectiles.critFactorAt`).
+    name: 'ferocite',
+    kind: 'critDamage',
+    magnitude: 0.3,
+  },
+  {
+    // Crans de `UPGRADE.SALVO` ajoutes par carte a chaque arme de genre
+    // `'tir'`, et a elles seules (`weaponUpgrades`, shared/firing.ts).
+    name: 'volee',
+    kind: 'salvo',
+    magnitude: 1,
+  },
+  {
+    // Crans de `UPGRADE.ZONE` ajoutes par carte a TOUTES les armes.
+    name: 'ampleur',
+    kind: 'zone',
+    magnitude: 1,
+  },
+  // ---- Etape 10 : trois passifs EXCLUSIVEMENT LEGENDAIRES (§4) -------------
+  // Ils changent une regle : s'appliquent x1, ne sortent que sur un
+  // emplacement legendaire, prennent un emplacement de passif normal.
+  {
+    // +100 % des degats INSTANTANES des reactions que le porteur declenche
+    // (`ReactionTrigger.by`), par carte. Serveur seul (`applyReactions`).
+    name: 'echo',
+    kind: 'echo',
+    magnitude: 1,
+    legendary: true,
+  },
+  {
+    // PV rendus par ennemi mort a moins de `HARVEST_RADIUS` du porteur, quel
+    // qu'en soit le tueur. Serveur seul (`resolveHarvest`).
+    name: 'moisson',
+    kind: 'harvest',
+    magnitude: 1,
+    legendary: true,
+  },
+  {
+    // Fraction de degats ajoutee par tranche de `COLOSSUS_HP_STEP` PV max
+    // (0,01 = +1 % par 10 PV). Lue par `shotDamage`, des deux cotes.
+    name: 'colosse',
+    kind: 'colossus',
+    magnitude: 0.01,
+    legendary: true,
   },
 ];
 

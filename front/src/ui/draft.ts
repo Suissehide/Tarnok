@@ -1,5 +1,11 @@
 import { CARD, type Card } from '@shared/cards';
-import { PASSIVE_SLOTS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import {
+  COLOSSUS_HP_STEP,
+  HARVEST_RADIUS,
+  PASSIVE_SLOTS,
+  TICK_HZ,
+  WEAPON_SLOTS,
+} from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
@@ -237,6 +243,15 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   // laisserait croire a un gain unique, c'est-a-dire exactement ce que
   // « vitalite » fait deja et que cette carte ne fait pas.
   regen: (m) => `+${m.toLocaleString('fr-FR')} PV/s`,
+  // Etape 10. ⚠️ Chacun dit OU il agit : « +1 salve » sans « armes de tir »
+  // laisserait croire que le halo en profite.
+  critChance: (m) => `+${pourcent(m)} % critique`,
+  critDamage: (m) => `+${pourcent(m)} % dégâts critiques`,
+  salvo: (m) => `+${m} salve, armes de tir`,
+  zone: (m) => `+${m} zone, toutes armes`,
+  echo: (m) => `+${pourcent(m)} % dégâts de vos réactions`,
+  harvest: (m) => `+${m} PV par mort à ${HARVEST_RADIUS} px`,
+  colossus: (m) => `+${pourcent(m)} % dégâts par ${COLOSSUS_HP_STEP} PV max`,
 };
 
 /**

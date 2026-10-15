@@ -6,6 +6,7 @@ import {
   CARD,
   type Card,
   drawSpread,
+  isLegendaryOnly,
   OWNED_WEIGHT,
 } from './cards';
 import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
@@ -168,7 +169,7 @@ describe('drawSpread', () => {
     // On balaie assez de graines pour que chaque carte du pool sorte au moins
     // une fois : un seul tirage ne prouverait rien.
     const vues = new Set<string>();
-    for (let seed = 1; seed <= 200; seed++) {
+    for (let seed = 1; seed <= 400; seed++) {
       const spread = drawSpread(equipe(new Loadout()), makeRandom(seed));
       for (const carte of spread) {
         vues.add(`${carte.nature}:${carte.refId}`);
@@ -301,5 +302,44 @@ describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
     expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1 })).toBe(1);
     expect(applicationsOf({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.RARE })).toBe(2);
     expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.LEGENDAIRE })).toBe(3);
+  });
+});
+
+describe('etape 10 : un passif exclusivement legendaire s applique x1', () => {
+  const LEGENDAIRES = PASSIVES.filter((p) => p.legendary);
+
+  it('quelle que soit la rarete que la carte porte, fil compris', () => {
+    expect(LEGENDAIRES.length).toBe(3);
+    for (const p of LEGENDAIRES) {
+      for (const rarity of [RARITY.COMMUNE, RARITY.RARE, RARITY.LEGENDAIRE, 200]) {
+        const l = new Loadout();
+        const carte: Card = { nature: CARD.PASSIVE, refId: p.id, rarity };
+        expect(isLegendaryOnly(carte)).toBe(true);
+        expect(applicationsOf(carte)).toBe(1);
+        applyCardToLoadout(l, carte);
+        expect(l.stacksOf(p.id)).toBe(1);
+      }
+    }
+  });
+
+  it('il occupe un emplacement de passif comme les autres', () => {
+    const l = new Loadout();
+    l.addPassive(0);
+    l.addPassive(1);
+    const legendaire = LEGENDAIRES[0];
+    if (!legendaire) {
+      throw new Error('fixture : aucun legendaire');
+    }
+    applyCardToLoadout(l, {
+      nature: CARD.PASSIVE,
+      refId: legendaire.id,
+      rarity: RARITY.LEGENDAIRE,
+    });
+    expect(l.passiveSlotsUsed).toBe(3);
+    expect(l.canTake(CARD.PASSIVE, 2)).toBe(false);
+  });
+
+  it('une arme n est jamais exclusivement legendaire', () => {
+    expect(isLegendaryOnly({ nature: CARD.WEAPON, refId: 10 })).toBe(false);
   });
 });
