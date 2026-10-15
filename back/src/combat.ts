@@ -4,6 +4,7 @@ import {
   KAMIKAZE_PLAYER_DAMAGE,
   KAMIKAZE_RADIUS,
   SHAMAN_AURA_REDUCTION,
+  SHIELD_BLOCK,
 } from '@shared/archetypes';
 import { BOSS_CHARGE_DAMAGE, type BossCharge, chargeHurtsAt } from '@shared/boss';
 import { chainTargets } from '@shared/chain';
@@ -1315,7 +1316,14 @@ export function resolveProjectileDamage(
         // armes sur neuf ne sont pas des armes de zone. Un balayage a rayon nul
         // serait la meme regle ecrite plus cher — et il toucherait en prime tout
         // ennemi pile aux memes coordonnees.
-        appliquerDegats(horde, slot, coup, zones, tick, dead);
+        // Le porte-bouclier arrete l'essentiel d'un tir qui le prend DE FACE
+        // (le tir remonte sa trajectoire) : il faut le contourner, ou passer par
+        // les explosions, les zones et les chaines, que le bouclier ignore.
+        const cap = projectiles.headingAt(projectileSlot);
+        const deFace =
+          archetypeOf(horde.archetype[slot] ?? 0).behavior === 'bouclier' &&
+          Math.cos(cap) * (horde.vx[slot] ?? 0) + Math.sin(cap) * (horde.vy[slot] ?? 0) < 0;
+        appliquerDegats(horde, slot, deFace ? coup * (1 - SHIELD_BLOCK) : coup, zones, tick, dead);
       }
       if (dead.has(entityId)) {
         // ⚠️ **UN ENNEMI QUI MEURT DU MEME IMPACT N'EST PAS MARQUE.** Un mort ne

@@ -18,7 +18,14 @@ export interface WaveOrder {
   count: number;
 }
 
-export const FORMATION = { SCATTER: 0, RING: 1, COLUMN: 2, CLUSTER: 3, ENCIRCLE: 4 } as const;
+export const FORMATION = {
+  SCATTER: 0,
+  RING: 1,
+  COLUMN: 2,
+  CLUSTER: 3,
+  ENCIRCLE: 4,
+  POINT: 5,
+} as const;
 
 export type FormationId = (typeof FORMATION)[keyof typeof FORMATION];
 
@@ -62,6 +69,8 @@ const COLUMN_WIDTH = 160;
 const CLUSTER_COUNT = 5;
 const CLUSTER_SPREAD = 800;
 const CLUSTER_RADIUS = 170;
+/** POINT : une poignee de petits nes sur place (diviseur, necromancien). */
+const POINT_RADIUS = 40;
 
 function clamp(v: number, min: number, max: number): number {
   return v < min ? min : v > max ? max : v;
@@ -227,6 +236,13 @@ export function formationPositions(
         const across = (rng() - 0.5) * COLUMN_WIDTH;
         dx = Math.cos(heading) * along - Math.sin(heading) * across;
         dy = Math.sin(heading) * along + Math.cos(heading) * across;
+        break;
+      }
+      case FORMATION.POINT: {
+        const angle = rng() * Math.PI * 2;
+        const radius = Math.sqrt(rng()) * POINT_RADIUS;
+        dx = Math.cos(angle) * radius;
+        dy = Math.sin(angle) * radius;
         break;
       }
       case FORMATION.CLUSTER: {

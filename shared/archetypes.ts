@@ -344,7 +344,16 @@ export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
  * - `chaman` : les monstres dans son aura encaissent moitie moins ;
  * - `aucun` : marche droit vers sa cible.
  */
-export type Behavior = 'aucun' | 'bond' | 'kamikaze' | 'chaman' | 'tir';
+export type Behavior =
+  | 'aucun'
+  | 'bond'
+  | 'kamikaze'
+  | 'chaman'
+  | 'tir'
+  | 'voleur'
+  | 'diviseur'
+  | 'bouclier'
+  | 'necro';
 
 /** La periode d'un bond, en ticks : une ruee puis une pause. */
 export const LEAP_PERIOD_TICKS = 27;
@@ -370,6 +379,21 @@ export const SHOT_SPEED = 260;
 export const SHOT_LIFETIME_S = 1.6;
 export const SHOT_RADIUS = 7;
 export const SHOT_DAMAGE = 7;
+
+/** Le voleur prend cette part de l'or non securise au contact, puis fuit. */
+export const THIEF_STEAL_SHARE = 0.15;
+/** Sa fuite va plus vite que sa course : il faut le rattraper. */
+export const THIEF_FLEE_SPEED = 1.3;
+/** Le diviseur laisse ce nombre de petits a sa mort. */
+export const SPLIT_COUNT = 3;
+export const SPLIT_CHILD = 'spider';
+/** Le porte-bouclier arrete cette part d'un tir qui le prend de face. */
+export const SHIELD_BLOCK = 0.8;
+/** Le necromancien releve les morts a ce rayon, au plus `NECRO_RAISE_MAX` toutes les `NECRO_COOLDOWN_TICKS`. */
+export const NECRO_RADIUS = 220;
+export const NECRO_RAISE_MAX = 3;
+export const NECRO_COOLDOWN_TICKS = 60;
+export const NECRO_CHILD = 'skull';
 
 /** Le rayon de l'explosion d'un kamikaze, en px monde : c'est aussi le cercle d'alerte dessine. */
 export const KAMIKAZE_RADIUS = 110;
@@ -452,7 +476,15 @@ const FOOTSOLDIERS: readonly (Omit<
   'id' | 'hp' | 'armor' | 'bodyScale' | 'countFactor' | 'behavior'
 > & { behavior?: Behavior })[] = [
   { name: 'skull', sheet: 'Skull/Skull_Run.png', frames: 6, cell: 192, speed: 100, role: 'troupe' },
-  { name: 'gnoll', sheet: 'Gnoll/Gnoll_Walk.png', frames: 8, cell: 192, speed: 78, role: 'brute' },
+  {
+    name: 'gnoll',
+    sheet: 'Gnoll/Gnoll_Walk.png',
+    frames: 8,
+    cell: 192,
+    speed: 78,
+    role: 'brute',
+    behavior: 'bouclier',
+  },
   {
     name: 'spider',
     sheet: 'Spider/Spider_Run.png',
@@ -469,6 +501,7 @@ const FOOTSOLDIERS: readonly (Omit<
     cell: 192,
     speed: 105,
     role: 'troupe',
+    behavior: 'necro',
   },
   {
     name: 'lizard',
@@ -478,7 +511,15 @@ const FOOTSOLDIERS: readonly (Omit<
     speed: 55,
     role: 'colosse',
   },
-  { name: 'snake', sheet: 'Snake/Snake_Run.png', frames: 8, cell: 192, speed: 72, role: 'brute' },
+  {
+    name: 'snake',
+    sheet: 'Snake/Snake_Run.png',
+    frames: 8,
+    cell: 192,
+    speed: 72,
+    role: 'brute',
+    behavior: 'diviseur',
+  },
   { name: 'gnome', sheet: 'Gnome/Gnome_Run.png', frames: 6, cell: 192, speed: 135, role: 'nuee' },
   {
     name: 'slingshot-gnome',
@@ -489,7 +530,15 @@ const FOOTSOLDIERS: readonly (Omit<
     role: 'troupe',
     behavior: 'tir',
   },
-  { name: 'thief', sheet: 'Thief/Thief_Run.png', frames: 6, cell: 192, speed: 150, role: 'nuee' },
+  {
+    name: 'thief',
+    sheet: 'Thief/Thief_Run.png',
+    frames: 6,
+    cell: 192,
+    speed: 150,
+    role: 'nuee',
+    behavior: 'voleur',
+  },
   {
     name: 'giant-bat',
     sheet: 'Giant Bat/Giant Bat_Move.png',
@@ -611,4 +660,13 @@ export function archetypeOf(id: number): Archetype {
     throw new Error(`archetype inconnu : ${id}`);
   }
   return found;
+}
+
+/** L'identifiant d'un archetype par son nom (les petits du diviseur, du necromancien). */
+export function archetypeIdOf(name: string): number {
+  const id = ARCHETYPES.findIndex((a) => a.name === name);
+  if (id < 0) {
+    throw new Error(`archetype inconnu : ${name}`);
+  }
+  return id;
 }

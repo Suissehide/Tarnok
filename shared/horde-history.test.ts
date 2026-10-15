@@ -21,7 +21,7 @@ function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
 
 describe('HordeHistory', () => {
   it('un aller-retour enregistrer / restaurer rend exactement l etat sauvegarde, champ par champ', () => {
-    // ⚠️ QUATORZE tableaux, pas sept ni onze : c'est exactement le defaut R13
+    // ⚠️ QUINZE tableaux (`fleeing` des voleurs compris), pas sept ni onze : c'est exactement le defaut R13
     // (voir le rapport de la tache 19) — un test qui n'en verifie qu'une
     // partie reste vert quand une copie manque dans `saveState`/`restoreState`.
     // `vx`/`vy` (tache 19), `hp` puis `mark`/`markBy`/`markUntil` (etape 5a)
@@ -49,6 +49,7 @@ describe('HordeHistory', () => {
     horde.vy[0] = -67.5;
     horde.targetField[0] = 3;
     horde.stopped[0] = 1;
+    horde.fleeing[0] = 1;
     horde.hp[0] = 13.5;
     horde.mark[0] = 2;
     horde.markBy[0] = 3;
@@ -69,6 +70,7 @@ describe('HordeHistory', () => {
       animPhase: horde.animPhase[0] ?? 0,
       targetField: horde.targetField[0] ?? 0,
       stopped: horde.stopped[0] ?? 0,
+      fleeing: horde.fleeing[0] ?? 0,
       hp: horde.hp[0] ?? 0,
       mark: horde.mark[0] ?? 0,
       markBy: horde.markBy[0] ?? 0,
@@ -98,6 +100,7 @@ describe('HordeHistory', () => {
     horde.animPhase[0] = (attendu.animPhase + 1) % 256;
     horde.targetField[0] = (attendu.targetField + 1) % 4;
     horde.stopped[0] = attendu.stopped === 1 ? 0 : 1;
+    horde.fleeing[0] = attendu.fleeing === 1 ? 0 : 1;
     horde.hp[0] = attendu.hp + 1;
     horde.mark[0] = (attendu.mark + 1) % 256;
     horde.markBy[0] = (attendu.markBy + 1) % 256;
@@ -119,6 +122,7 @@ describe('HordeHistory', () => {
     expect(horde.animPhase[0]).toBe(attendu.animPhase);
     expect(horde.targetField[0]).toBe(attendu.targetField);
     expect(horde.stopped[0]).toBe(attendu.stopped);
+    expect(horde.fleeing[0]).toBe(attendu.fleeing);
     expect(horde.hp[0]).toBe(attendu.hp);
     expect(horde.mark[0]).toBe(attendu.mark);
     expect(horde.markBy[0]).toBe(attendu.markBy);

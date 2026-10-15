@@ -1,4 +1,10 @@
-import { archetypeOf, KAMIKAZE_RADIUS, SHAMAN_AURA_RADIUS, SHOT_RADIUS } from '@shared/archetypes';
+import {
+  archetypeOf,
+  KAMIKAZE_RADIUS,
+  NECRO_RADIUS,
+  SHAMAN_AURA_RADIUS,
+  SHOT_RADIUS,
+} from '@shared/archetypes';
 import type { EnemyShot } from '@shared/enemy-shots';
 import type { Horde } from '@shared/horde';
 import { type Container, Graphics, type Rectangle } from 'pixi.js';
@@ -13,12 +19,14 @@ import { BLAST_FLASH_MS, type BlastFlash } from '../net/client';
  */
 
 export interface BehaviorShape {
-  kind: 'kamikaze' | 'chaman' | 'explosion';
+  kind: 'kamikaze' | 'chaman' | 'necro' | 'bouclier' | 'butin' | 'explosion';
   x: number;
   y: number;
   radius: number;
   /** De 0 a 1 : l'opacite (l'explosion s'eteint). */
   alpha: number;
+  /** Le bouclier : son cap, en radians. */
+  angle?: number;
 }
 
 /**
@@ -35,7 +43,14 @@ export function behaviorShapes(
   const marge = SHAMAN_AURA_RADIUS;
   for (let i = 0; i < horde.count; i++) {
     const behavior = archetypeOf(horde.archetype[i] ?? 0).behavior;
-    if (behavior !== 'kamikaze' && behavior !== 'chaman') {
+    const enFuite = behavior === 'voleur' && horde.fleeing[i] === 1;
+    if (
+      behavior !== 'kamikaze' &&
+      behavior !== 'chaman' &&
+      behavior !== 'necro' &&
+      behavior !== 'bouclier' &&
+      !enFuite
+    ) {
       continue;
     }
     const x = horde.x[i] ?? 0;
@@ -48,11 +63,18 @@ export function behaviorShapes(
     ) {
       continue;
     }
-    out.push(
-      behavior === 'kamikaze'
-        ? { kind: 'kamikaze', x, y, radius: KAMIKAZE_RADIUS, alpha: 1 }
-        : { kind: 'chaman', x, y, radius: SHAMAN_AURA_RADIUS, alpha: 1 },
-    );
+    if (behavior === 'kamikaze') {
+      out.push({ kind: 'kamikaze', x, y, radius: KAMIKAZE_RADIUS, alpha: 1 });
+    } else if (behavior === 'chaman') {
+      out.push({ kind: 'chaman', x, y, radius: SHAMAN_AURA_RADIUS, alpha: 1 });
+    } else if (behavior === 'necro') {
+      out.push({ kind: 'necro', x, y, radius: NECRO_RADIUS, alpha: 1 });
+    } else if (behavior === 'bouclier') {
+      const angle = Math.atan2(horde.vy[i] ?? 0, horde.vx[i] ?? 0);
+      out.push({ kind: 'bouclier', x, y, radius: 30, alpha: 1, angle });
+    } else {
+      out.push({ kind: 'butin', x, y: y - 42, radius: 7, alpha: 1 });
+    }
   }
   for (const b of blasts) {
     const t = (nowMs - b.bornMs) / BLAST_FLASH_MS;
@@ -113,6 +135,21 @@ export class BehaviorRenderer {
         // L'aura : un voile violet calme, qui dit « tuez-moi d'abord ».
         g.circle(s.x, s.y, s.radius).fill({ color: 0xa66bff, alpha: 0.08 });
         g.circle(s.x, s.y, s.radius).stroke({ color: 0xc9a2ff, width: 2, alpha: 0.45 });
+      } else if (s.kind === 'necro') {
+        // Le rayon ou les morts se relevent : vert d'outre-tombe.
+        g.circle(s.x, s.y, s.radius).fill({ color: 0x5bd16a, alpha: 0.06 });
+        g.circle(s.x, s.y, s.radius).stroke({ color: 0x7cf08a, width: 2, alpha: 0.4 });
+      } else if (s.kind === 'bouclier') {
+        // L'arc du bouclier, devant lui : c'est le cote ou les tirs ricochent.
+        const a = s.angle ?? 0;
+        g.arc(s.x, s.y, s.radius, a - 0.9, a + 0.9).stroke({
+          color: 0xd9e3f0,
+          width: 5,
+          alpha: 0.85,
+        });
+      } else if (s.kind === 'butin') {
+        // Le voleur en fuite porte l'or vole : une piece au-dessus de la tete.
+        g.circle(s.x, s.y, s.radius).fill(0xffd34d).stroke({ color: 0x1a0f0a, width: 2 });
       } else {
         g.circle(s.x, s.y, s.radius).fill({ color: 0xffa21f, alpha: 0.55 * s.alpha });
         g.circle(s.x, s.y, s.radius).stroke({ color: 0xfff0b0, width: 5, alpha: s.alpha });

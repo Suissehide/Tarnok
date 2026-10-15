@@ -10,7 +10,19 @@ import {
   REMPART_LIFETIME_TICKS,
   VERB_IDS,
 } from '@shared/abilities';
-import { archetypeOf, SHAMAN_AURA_RADIUS, SHOT_DAMAGE } from '@shared/archetypes';
+import {
+  archetypeIdOf,
+  archetypeOf,
+  NECRO_CHILD,
+  NECRO_COOLDOWN_TICKS,
+  NECRO_RADIUS,
+  NECRO_RAISE_MAX,
+  SHAMAN_AURA_RADIUS,
+  SHOT_DAMAGE,
+  SPLIT_CHILD,
+  SPLIT_COUNT,
+  THIEF_STEAL_SHARE,
+} from '@shared/archetypes';
 import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import { classOf, DEFAULT_CLASS_ID, type VerbKind } from '@shared/classes';
@@ -52,7 +64,7 @@ import {
 } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
-import type { WaveOrder } from '@shared/waves';
+import { FORMATION, type WaveOrder } from '@shared/waves';
 import { BASE_WEAPON_ID, cooldownWithBonus, salvoCount, WEAPONS, weaponOf } from '@shared/weapons';
 import { applyObstacles, generateObstacles, moveOnMap } from '@shared/worldmap';
 import { ZoneField } from '@shared/zones';
@@ -529,6 +541,12 @@ export class Room {
   #bosses: number[] = [];
   /** Explosions de kamikazes tues au tick precedent, a resoudre au suivant. */
   #pendingBlasts: Blast[] = [];
+  /** L'or que chaque voleur en fuite emporte, par identite : rendu a sa mort. */
+  readonly #loot = new Map<number, number>();
+  /** Positions d'avant degats des diviseurs et des morts a portee d'un necromancien. */
+  #splitters = new Map<number, Blast>();
+  #corpses = new Map<number, Blast>();
+  #necroReadyTick = 0;
   /** Vagues tombees depuis la derniere ouverture du portail. */
   #wavesSincePortal = 0;
 
@@ -1550,6 +1568,7 @@ export class Room {
     if (allDead.length > 0) {
       this.#totalKills += allDead.length;
       this.#pendingDeaths.push({ tick: this.#tick, ids: allDead });
+      this.#afterDeaths(allDead);
       // ⚠️ **LE palier se termine ICI, et nulle part ailleurs.** Le salon sait
       // deja quand une entite meurt : ce lot est le SEUL du tick, brulures et
       // reactions comprises (voir le commentaire ci-dessus). Un second chemin
@@ -2173,14 +2192,43 @@ export class Room {
   #behaviorsBeforeDamage(): Map<number, Blast> {
     const kamikazes = new Map<number, Blast>();
     const chamans: Blast[] = [];
+    const necros: Blast[] = [];
     this.horde.aura.clear();
+    this.#splitters = new Map();
+    this.#corpses = new Map();
     for (let i = 0; i < this.horde.count; i++) {
       const behavior = archetypeOf(this.horde.archetype[i] ?? 0).behavior;
+      const id = this.horde.entityIdAt(i);
       const pos = { x: this.horde.x[i] ?? 0, y: this.horde.y[i] ?? 0 };
       if (behavior === 'kamikaze') {
-        kamikazes.set(this.horde.entityIdAt(i), pos);
+        kamikazes.set(id, pos);
       } else if (behavior === 'chaman') {
         chamans.push(pos);
+      } else if (behavior === 'diviseur') {
+        this.#splitters.set(id, pos);
+      } else if (behavior === 'necro') {
+        necros.push(pos);
+      } else if (behavior === 'voleur' && this.horde.fleeing[i] === 1 && !this.#loot.has(id)) {
+        // `fleeing` vient de passer a 1 (au contact, dans `retarget`) : il vole.
+        const pris = Math.floor(this.#gold * THIEF_STEAL_SHARE);
+        this.#gold -= pris;
+        this.#loot.set(id, pris);
+      }
+    }
+    if (necros.length > 0 && this.#tick >= this.#necroReadyTick) {
+      for (let i = 0; i < this.horde.count; i++) {
+        const id = this.horde.entityIdAt(i);
+        if (
+          archetypeOf(this.horde.archetype[i] ?? 0).behavior === 'necro' ||
+          this.#bosses.includes(id)
+        ) {
+          continue;
+        }
+        const x = this.horde.x[i] ?? 0;
+        const y = this.horde.y[i] ?? 0;
+        if (necros.some((n) => Math.hypot(n.x - x, n.y - y) < NECRO_RADIUS)) {
+          this.#corpses.set(id, { x, y });
+        }
       }
     }
     if (chamans.length > 0) {
@@ -2193,6 +2241,52 @@ export class Room {
       }
     }
     return kamikazes;
+  }
+
+  /**
+   * Ce que les morts du tick declenchent : l'or des voleurs rendu, les petits
+   * des diviseurs, et les morts que releve un necromancien.
+   *
+   * ⚠️ **Les naissances passent par un ORDRE de vague ordinaire**, date du tick
+   * SUIVANT : le client le pose en tete de ce tick-la, exactement la ou le
+   * serveur l'a pose (apres le pas de celui-ci). Rien de neuf sur le fil.
+   */
+  #afterDeaths(dead: readonly number[]): void {
+    for (const id of dead) {
+      const butin = this.#loot.get(id);
+      if (butin !== undefined) {
+        this.#gold += butin;
+        this.#loot.delete(id);
+      }
+      const p = this.#splitters.get(id);
+      if (p) {
+        this.#spawnAt(p, archetypeIdOf(SPLIT_CHILD), SPLIT_COUNT);
+      }
+    }
+    const releves = dead.flatMap((id) => this.#corpses.get(id) ?? []).slice(0, NECRO_RAISE_MAX);
+    const premier = releves[0];
+    if (premier) {
+      this.#spawnAt(premier, archetypeIdOf(NECRO_CHILD), releves.length);
+      this.#necroReadyTick = this.#tick + NECRO_COOLDOWN_TICKS;
+    }
+  }
+
+  #spawnAt(at: Blast, archetype: number, count: number): void {
+    const waveId = this.#director.allocWaveId();
+    const order: WaveOrder = {
+      waveId,
+      spawnTick: this.#tick + 1,
+      seed: waveId,
+      archetype,
+      formation: FORMATION.POINT,
+      anchorX: Math.round(at.x),
+      anchorY: Math.round(at.y),
+      count,
+    };
+    const before = this.horde.count;
+    this.horde.spawn(order, this.#fields[0]);
+    this.#scalePalierHp(before);
+    this.#pendingOrders.push(order);
   }
 
   /** Explosions du tick ; rend les identites qu'elles tuent (kamikazes compris). */

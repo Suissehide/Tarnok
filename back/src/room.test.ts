@@ -1407,7 +1407,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       // Compte les IMPACTS, pas les ticks : la cadence est identique dans les
       // trois cas (« puissance » ne la touche pas), mais compter des ticks
       // ferait dependre le resultat du temps de vol du projectile.
-      const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
+      // Pas le porte-bouclier : il arrete les tirs de face, ce test compte des impacts.
+      const LOURD =
+        ARCHETYPES.find((a) => a.hp === HEAVY_HP && a.behavior !== 'bouclier')?.id ?? -1;
       expect(LOURD).toBeGreaterThanOrEqual(0);
 
       function impactsPourTuer(cartes: number): number {

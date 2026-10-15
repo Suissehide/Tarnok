@@ -419,6 +419,14 @@ export class WaveDirector {
   }
 
   /** Le numero de la derniere vague (groupe) emise, `0` avant la premiere. */
+  /**
+   * Un `waveId` neuf, hors du cycle : les petits d'un diviseur, les morts d'un
+   * necromancien. Meme compteur que les vagues, donc jamais deux fois le meme.
+   */
+  allocWaveId(): number {
+    return this.#nextWaveId++;
+  }
+
   get waveNumber(): number {
     return this.#waveNumber;
   }

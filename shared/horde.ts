@@ -1,4 +1,4 @@
-import { archetypeOf, leapFactor, SHOOTER_RANGE } from './archetypes';
+import { archetypeOf, leapFactor, SHOOTER_RANGE, THIEF_FLEE_SPEED } from './archetypes';
 import { type BossCharge, chargeHoldsAt, chargePointAt } from './boss';
 import {
   COIN_DROP_ONE_IN,
@@ -118,7 +118,7 @@ export function leavesDrop(entityId: number): boolean {
 /**
  * Instantane de l'etat de la horde, pour `HordeHistory` (§3.2).
  *
- * **Les QUATORZE memes tableaux que `Horde`, sans exception** (`stopped`
+ * **Les QUINZE memes tableaux que `Horde`, sans exception** (`fleeing`, `stopped`
  * depuis la tache 17.2, `vx`/`vy` depuis la tache 19, `hp` puis
  * `mark`/`markBy`/`markUntil` depuis l'etape 5a), plus le compte.
  * `HordeHistory` en alloue un par creneau de son anneau, une seule fois, et
@@ -153,6 +153,7 @@ export interface HordeState {
   animPhase: Uint8Array;
   targetField: Uint8Array;
   stopped: Uint8Array;
+  fleeing: Uint8Array;
   hp: Float32Array;
   mark: Uint8Array;
   markBy: Uint8Array;
@@ -226,6 +227,12 @@ export class Horde {
    */
   aimX: number[] = [];
   aimY: number[] = [];
+  /**
+   * `1` : un voleur qui a touche son joueur et s'enfuit, pour toujours.
+   * Decide par `retarget` (meme donnee des deux cotes), donc replique sans
+   * octet ; dans l'instantane comme `stopped`.
+   */
+  readonly fleeing: Uint8Array;
   readonly stopped: Uint8Array;
   /**
    * Les identites dans l'aura d'un chaman ce tick-ci (`Room`, cote SERVEUR
@@ -439,6 +446,7 @@ export class Horde {
     this.animPhase = new Uint8Array(capacity);
     this.targetField = new Uint8Array(capacity);
     this.stopped = new Uint8Array(capacity);
+    this.fleeing = new Uint8Array(capacity);
     this.hp = new Float32Array(capacity);
     this.mark = new Uint8Array(capacity);
     this.markBy = new Uint8Array(capacity);
@@ -529,6 +537,7 @@ export class Horde {
       // `stopped = 1` d'un mort qui occupait ce creneau traverserait le
       // joueur sans jamais l'attaquer, jusqu'au prochain `retarget`.
       this.stopped[slot] = 0;
+      this.fleeing[slot] = 0;
       // Etape 5a : la reserve de PV se derive de l'archetype, donc les deux
       // cotes posent la meme valeur de depart sans un octet de plus. Ecrite
       // sans condition, pour la meme raison que `targetField` et `stopped`
@@ -624,7 +633,7 @@ export class Horde {
    * parametre plutot que d'en allouer un ici est ce qui garde cette methode
    * hors du ramasse-miettes.
    *
-   * ⚠️ Les QUATORZE tableaux, plus le compte (`stopped` depuis la tache 17.2,
+   * ⚠️ Les QUINZE tableaux, plus le compte (`fleeing` des voleurs, `stopped` depuis la tache 17.2,
    * `vx`/`vy` depuis la tache 19, `hp` puis `mark`/`markBy`/`markUntil` depuis
    * l'etape 5a). Meme piege que
    * `#removeAt` : en oublier un laisse la suite verte jusqu'a ce qu'un rejeu
@@ -643,6 +652,7 @@ export class Horde {
     out.animPhase.set(this.animPhase);
     out.targetField.set(this.targetField);
     out.stopped.set(this.stopped);
+    out.fleeing.set(this.fleeing);
     out.hp.set(this.hp);
     out.mark.set(this.mark);
     out.markBy.set(this.markBy);
@@ -662,6 +672,7 @@ export class Horde {
     this.animPhase.set(state.animPhase);
     this.targetField.set(state.targetField);
     this.stopped.set(state.stopped);
+    this.fleeing.set(state.fleeing);
     this.hp.set(state.hp);
     this.mark.set(state.mark);
     this.markBy.set(state.markBy);
@@ -719,7 +730,7 @@ export class Horde {
   /**
    * Deplace la derniere entite dans le creneau libere.
    *
-   * ⚠️ **LES QUATORZE TABLEAUX, sans exception.** En oublier un laisse
+   * ⚠️ **LES QUINZE TABLEAUX, sans exception.** En oublier un laisse
    * l'entite deplacee avec une propriete du mort qu'elle remplace — a l'etape
    * 5a, ses PV entames, ou **la marque elementaire de celui qui vient de
    * mourir**, avec le joueur qui l'avait posee : un monstre indemne devient
@@ -744,6 +755,7 @@ export class Horde {
       this.animPhase[slot] = this.animPhase[last] ?? 0;
       this.targetField[slot] = this.targetField[last] ?? 0;
       this.stopped[slot] = this.stopped[last] ?? 0;
+      this.fleeing[slot] = this.fleeing[last] ?? 0;
       this.hp[slot] = this.hp[last] ?? 0;
       this.mark[slot] = this.mark[last] ?? 0;
       this.markBy[slot] = this.markBy[last] ?? 0;
@@ -795,8 +807,14 @@ export class Horde {
       this.targetField[i] = best;
       // Le tireur s'arrete a portee de tir, pas au contact : meme donnee, meme
       // cadence, donc le meme arret des deux cotes.
-      const stopR2 = archetypeOf(this.archetype[i] ?? 0).behavior === 'tir' ? shooterR2 : contactR2;
-      this.stopped[i] = bestDist <= stopR2 ? 1 : 0;
+      const behavior = archetypeOf(this.archetype[i] ?? 0).behavior;
+      const stopR2 = behavior === 'tir' ? shooterR2 : contactR2;
+      // Le voleur qui touche son joueur ne s'arrete pas : il vole et s'enfuit,
+      // pour toujours (le serveur preleve l'or a ce meme passage).
+      if (behavior === 'voleur' && bestDist <= contactR2) {
+        this.fleeing[i] = 1;
+      }
+      this.stopped[i] = this.fleeing[i] === 0 && bestDist <= stopR2 ? 1 : 0;
     }
   }
 
@@ -1308,7 +1326,10 @@ export class Horde {
         archetypeOf(this.archetype[i] ?? 0).behavior === 'bond'
           ? leapFactor(this.entityIdAt(i), tick)
           : 1;
-      const slow = (this.#slow[i] ?? 1) * bond;
+      // Le voleur en fuite remonte sa trajectoire : il s'eloigne du joueur
+      // que le flowfield lui designe.
+      const fuite = this.fleeing[i] === 1 ? -THIEF_FLEE_SPEED : 1;
+      const slow = (this.#slow[i] ?? 1) * bond * fuite;
       this.#moveOnLand(i, ex + (this.vx[i] ?? 0) * dt * slow, ey + (this.vy[i] ?? 0) * dt * slow);
     }
   }

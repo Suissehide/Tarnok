@@ -1,5 +1,6 @@
 import {
   ARCHETYPES,
+  archetypeIdOf,
   KAMIKAZE_MONSTER_DAMAGE,
   KAMIKAZE_PLAYER_DAMAGE,
   KAMIKAZE_RADIUS,
@@ -7,21 +8,35 @@ import {
   LEAP_PAUSE_SPEED,
   LEAP_PERIOD_TICKS,
   leapFactor,
+  NECRO_CHILD,
   SHAMAN_AURA_RADIUS,
   SHAMAN_AURA_REDUCTION,
+  SHIELD_BLOCK,
   SHOOTER_PERIOD_TICKS,
   SHOOTER_RANGE,
   SHOT_LIFETIME_S,
   SHOT_SPEED,
+  SPLIT_CHILD,
+  SPLIT_COUNT,
+  THIEF_STEAL_SHARE,
 } from '@shared/archetypes';
-import { TICK_HZ } from '@shared/constants';
+import { CONTACT_RADIUS, TICK_HZ } from '@shared/constants';
 import { EnemyShots, shotPhase } from '@shared/enemy-shots';
 import { Horde } from '@shared/horde';
+import { Projectiles } from '@shared/projectiles';
 import { FORMATION, type WaveOrder } from '@shared/waves';
+import { WEAPONS, type Weapon } from '@shared/weapons';
 import { ZoneField } from '@shared/zones';
 import { describe, expect, it } from 'vitest';
 
-import { appliquerDegats, armureA, type ContactPlayer, OrbField, resolveBlasts } from './combat';
+import {
+  appliquerDegats,
+  armureA,
+  type ContactPlayer,
+  OrbField,
+  resolveBlasts,
+  resolveProjectileDamage,
+} from './combat';
 import { Room } from './room';
 
 /**
@@ -57,6 +72,25 @@ function poser(horde: Horde, waveId: number, x: number, y: number, archetype: nu
   horde.x[slot] = x;
   horde.y[slot] = y;
   return horde.entityIdAt(slot);
+}
+
+/** Fait tirer le joueur 1 sur l'entite `cible` jusqu'a sa mort ; rend vrai si elle meurt. */
+function abattre(room: Room, cible: number, ticks = 4 * TICK_HZ): boolean {
+  for (let t = 0; t < ticks; t++) {
+    const slot = room.horde.slotOf(cible);
+    const pos = room.positionOf(1) ?? { x: 0, y: 0 };
+    if (slot >= 0) {
+      const dx = (room.horde.x[slot] ?? 0) - pos.x;
+      const dy = (room.horde.y[slot] ?? 0) - pos.y;
+      const n = Math.hypot(dx, dy) || 1;
+      room.applyInput(1, t + 1, 0, 0, (dx / n) * 127, (dy / n) * 127);
+    }
+    room.step(DT);
+    if (room.drainDeaths().some((d) => d.ids.includes(cible))) {
+      return true;
+    }
+  }
+  return false;
 }
 
 describe('le bondisseur avance par bonds', () => {
@@ -277,5 +311,106 @@ describe('le tireur', () => {
     const d = Math.hypot((room.horde.x[slot] ?? 0) - pos.x, (room.horde.y[slot] ?? 0) - pos.y);
     expect(d).toBeGreaterThan(SHOOTER_RANGE / 2);
     expect(room.hpOf(1)).toBeLessThan(pvAvant);
+  });
+});
+
+describe('le voleur, le diviseur, le porte-bouclier et le necromancien', () => {
+  const VOLEUR = de('voleur');
+  const DIVISEUR = de('diviseur');
+  const BOUCLIER = de('bouclier');
+  const NECRO = de('necro');
+  const ARME = WEAPONS.find(
+    (w) => w.blastRadius === 0 && w.pierce === 0 && w.projectileCount === 1 && w.damage > 0,
+  ) as Weapon;
+
+  it('le voleur qui touche son joueur s enfuit pour de bon, et recule', () => {
+    const horde = new Horde(4);
+    poser(horde, 1, 1000, 1000, VOLEUR);
+    horde.retarget([1000 + CONTACT_RADIUS - 1], [1000]);
+    expect(horde.fleeing[0]).toBe(1);
+    expect(horde.stopped[0]).toBe(0);
+    // Loin du joueur, il reste en fuite.
+    horde.retarget([5000], [5000]);
+    expect(horde.fleeing[0]).toBe(1);
+    // Sans champ, `step` remet la vitesse a zero quand il la recalcule : on la
+    // repose a chaque pas, comme pour le bondisseur.
+    for (let t = 1; t <= 10; t++) {
+      horde.vx[0] = 100;
+      horde.vy[0] = 0;
+      horde.step(DT, [], t);
+    }
+    expect(horde.x[0]).toBeLessThan(1000);
+  });
+
+  it('dans le salon, le voleur emporte de l or et le rend a sa mort', () => {
+    const room = new Room(5);
+    room.join(1);
+    room.step(DT);
+    room.debugSetGold(1000);
+    const pos = room.positionOf(1) ?? { x: 0, y: 0 };
+    const v = poser(room.horde, 990_001, pos.x + 10, pos.y, VOLEUR);
+    room.horde.hp[room.horde.slotOf(v)] = 1e9;
+    for (let t = 0; t < TICK_HZ && room.gold === 1000; t++) {
+      room.step(DT);
+    }
+    expect(room.gold).toBe(1000 - Math.floor(1000 * THIEF_STEAL_SHARE));
+    room.horde.hp[room.horde.slotOf(v)] = 0.001;
+    expect(abattre(room, v)).toBe(true);
+    expect(room.gold).toBeGreaterThanOrEqual(1000);
+  });
+
+  it('le diviseur laisse ses petits a l endroit de sa mort, par un ordre ordinaire', () => {
+    const room = new Room(5);
+    room.join(1);
+    room.step(DT);
+    room.drainWaveOrders();
+    const pos = room.positionOf(1) ?? { x: 0, y: 0 };
+    const d = poser(room.horde, 990_001, pos.x + 150, pos.y, DIVISEUR);
+    room.horde.hp[room.horde.slotOf(d)] = 0.001;
+    expect(abattre(room, d)).toBe(true);
+    const ordres = room.drainWaveOrders().filter((o) => o.archetype === archetypeIdOf(SPLIT_CHILD));
+    expect(ordres).toHaveLength(1);
+    expect(ordres[0]?.count).toBe(SPLIT_COUNT);
+    expect(ordres[0]?.formation).toBe(FORMATION.POINT);
+    expect(
+      Math.hypot((ordres[0]?.anchorX ?? 0) - pos.x - 150, (ordres[0]?.anchorY ?? 0) - pos.y),
+    ).toBeLessThan(60);
+  });
+
+  it('le necromancien releve en squelettes les morts a sa portee', () => {
+    const room = new Room(5);
+    room.join(1);
+    room.step(DT);
+    room.drainWaveOrders();
+    const pos = room.positionOf(1) ?? { x: 0, y: 0 };
+    const n = poser(room.horde, 990_001, pos.x + 400, pos.y, NECRO);
+    room.horde.hp[room.horde.slotOf(n)] = 1e9;
+    const victime = poser(room.horde, 990_002, pos.x + 250, pos.y + 100, de('aucun'));
+    room.horde.hp[room.horde.slotOf(victime)] = 0.001;
+    expect(abattre(room, victime)).toBe(true);
+    const ordres = room.drainWaveOrders().filter((o) => o.archetype === archetypeIdOf(NECRO_CHILD));
+    expect(ordres).toHaveLength(1);
+    expect(ordres[0]?.formation).toBe(FORMATION.POINT);
+  });
+
+  it('le porte-bouclier encaisse peu de face et tout de dos', () => {
+    const coup = (vxTir: number): number => {
+      const horde = new Horde(4);
+      poser(horde, 1, 1000, 1000, BOUCLIER);
+      horde.vx[0] = 100;
+      horde.vy[0] = 0;
+      horde.hp[0] = 1000;
+      const p = new Projectiles(8);
+      // Tire depuis la gauche (vers +x) ou la droite (vers -x) du monstre.
+      p.fireSalvo(ARME, 1, 1000 - Math.sign(vxTir) * 60, 1000, horde.entityIdAt(0), horde);
+      for (let t = 1; t < 10; t++) {
+        resolveProjectileDamage(p, DT, horde, new OrbField(8), t, new ZoneField());
+      }
+      return 1000 - (horde.hp[0] ?? 0);
+    };
+    const deFace = coup(-600);
+    const deDos = coup(600);
+    expect(deDos).toBeGreaterThan(0);
+    expect(deFace).toBeCloseTo(deDos * (1 - SHIELD_BLOCK));
   });
 });
