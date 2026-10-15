@@ -67,6 +67,30 @@ export function shotDamage(
 }
 
 /**
+ * Le point a `distance` du tireur dans la direction visee.
+ *
+ * ⚠️ **La visee n'est PAS unitaire** : ce sont les octets quantifies (±127) de
+ * `applyInput`, que les projectiles ne lisent que par `atan2`. Multiplier une
+ * portee par ces octets la multipliait par ~127 — le faisceau de l'etape 8 a
+ * vecu avec un trait de plusieurs dizaines de milliers de pixels. Une seule
+ * fonction pour le serveur et le miroir, pour que la regle ne diverge plus.
+ * Visee nulle : le tireur lui-meme (`#fireWeapons` l'ecarte de toute facon).
+ */
+export function aimPoint(
+  x: number,
+  y: number,
+  aimX: number,
+  aimY: number,
+  distance: number,
+): { x: number; y: number } {
+  const n = Math.hypot(aimX, aimY);
+  if (n === 0) {
+    return { x, y };
+  }
+  return { x: x + (aimX / n) * distance, y: y + (aimY / n) * distance };
+}
+
+/**
  * Le critique de CE tireur (etape 10, §3.2) : Precision ajoute a la chance,
  * bornee a 1 — une chance au-dela de 100 % ne veut rien dire, c'est le seul
  * plafond de l'etape ; Ferocite ajoute au multiplicateur, sans plafond.

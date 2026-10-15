@@ -677,9 +677,12 @@ export class Projectiles {
         } else {
           this.#sinus(i, dt, age + 1);
         }
-        // La vitesse REELLE du pas : c'est elle que `headingAt` lit.
-        this.#vx[i] = ((this.x[i] ?? 0) - px) / dt;
-        this.#vy[i] = ((this.y[i] ?? 0) - py) / dt;
+        // La vitesse REELLE du pas : c'est elle que `headingAt` lit. Un pas
+        // nul garde la precedente plutot que de diviser par zero.
+        if (dt > 0) {
+          this.#vx[i] = ((this.x[i] ?? 0) - px) / dt;
+          this.#vy[i] = ((this.y[i] ?? 0) - py) / dt;
+        }
       }
       this.#age[i] = age + 1;
       // La croissance agrandit `#scale`, donc la touche ET le dessin.
