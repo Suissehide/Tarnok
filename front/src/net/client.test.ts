@@ -3011,6 +3011,21 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
     expect(tir?.[7]).toBe(base.projectileCount + stackGain(base));
   });
+
+  it('etape 10 : Colosse voyage avec le projectile affiche, comme au salon', () => {
+    const COLOSSE = PASSIVES.find((p) => p.kind === 'colossus')?.id ?? -1;
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.PASSIVE, refId: COLOSSE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+    ]);
+    const base = weaponOf(BASE_WEAPON_ID);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    expect(tir?.[6]).toBeCloseTo(base.damage * 1.1, 6);
+  });
 });
 
 /**

@@ -5407,3 +5407,29 @@ describe('etape 10 : Volee dans le salon', () => {
     expect(appel?.[7]).toBe(dague.projectileCount + stackGain(dague));
   });
 });
+
+describe('etape 10 : Colosse dans le salon', () => {
+  const COLOSSE = PASSIVES.find((p) => p.kind === 'colossus')?.id ?? -1;
+  const VITALITE = PASSIVES.find((p) => p.kind === 'maxHp')?.id ?? -1;
+
+  function degatsDuPremierTir(vitalites: number): number {
+    const room = new Room(0x10_0a_0502);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: COLOSSE });
+    for (let i = 0; i < vitalites; i++) {
+      room.grantCard(1, { nature: CARD.PASSIVE, refId: VITALITE });
+    }
+    const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
+    room.applyInput(1, 1, 0, 0, 127, 0);
+    room.step(DT);
+    const appel = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    spy.mockRestore();
+    return appel?.[6] ?? 0;
+  }
+
+  it('lit le PV max DU SALON : 100 PV donnent x1,10, 120 PV x1,12', () => {
+    const base = weaponOf(BASE_WEAPON_ID).damage;
+    expect(degatsDuPremierTir(0)).toBeCloseTo(base * 1.1, 5);
+    expect(degatsDuPremierTir(1)).toBeCloseTo(base * 1.12, 5);
+  });
+});

@@ -1,3 +1,4 @@
+import { COLOSSUS_HP_STEP } from './constants';
 import type { Loadout } from './loadout';
 import { DAMAGE_PER_UPGRADE, UPGRADE, upgradedWeapon, type Weapon, weaponOf } from './weapons';
 
@@ -39,6 +40,11 @@ export function armedWeapon(loadout: Loadout, weaponId: number): Weapon {
  * « degats » de l'arme.
  *
  * `maxHp` est le PV max du tireur (lu par Colosse).
+ *
+ * ⚠️ **Colosse MULTIPLIE** (etape 10, §4) : +`magnitude` par tranche ENTIERE
+ * de `COLOSSUS_HP_STEP` PV max, applique au total des autres bonus — les
+ * passifs de l'etape « se multiplient entre eux ». Les achats de vitalite
+ * permanente montent aussi le PV max : c'est voulu (§7, a surveiller).
  */
 export function shotDamage(
   weapon: Weapon,
@@ -46,12 +52,13 @@ export function shotDamage(
   accountDamage: number,
   maxHp: number,
 ): number {
-  void maxHp;
+  const colosse = 1 + loadout.bonus('colossus') * Math.floor(maxHp / COLOSSUS_HP_STEP);
   return (
     weapon.damage *
     (1 +
       loadout.bonus('damage') +
       accountDamage +
-      DAMAGE_PER_UPGRADE * loadout.upgradesOf(weapon.id, UPGRADE.DAMAGE))
+      DAMAGE_PER_UPGRADE * loadout.upgradesOf(weapon.id, UPGRADE.DAMAGE)) *
+    colosse
   );
 }

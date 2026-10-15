@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
+import { COLOSSUS_HP_STEP } from './constants';
 import { armedWeapon, shotDamage, weaponUpgrades } from './firing';
 import { Loadout } from './loadout';
 import { PASSIVES, type PassiveKind } from './passives';
@@ -89,5 +90,25 @@ describe('etape 10 : la formule de degats partagee (shotDamage)', () => {
       TIR.damage * (1 + passif + 0.1 + DAMAGE_PER_UPGRADE),
       6,
     );
+  });
+});
+
+describe('etape 10 : Colosse, +1 % de degats par tranche de 10 PV max', () => {
+  it.each([
+    [0, 100, 1],
+    [1, 100, 1.1],
+    [1, 120, 1.12],
+    [1, 129, 1.12],
+    [2, 100, 1.2],
+  ])('%i carte(s) a %i PV max : x%f', (cartes, maxHp, facteur) => {
+    const l = avec('colossus', cartes, TIR.id);
+    expect(COLOSSUS_HP_STEP).toBe(10);
+    expect(shotDamage(TIR, l, 0, maxHp)).toBeCloseTo(TIR.damage * facteur, 6);
+  });
+
+  it('se MULTIPLIE aux autres bonus de degats, il ne s y ajoute pas', () => {
+    const l = avec('damage', 1, TIR.id);
+    l.addPassive(genre('colossus'));
+    expect(shotDamage(TIR, l, 0, 100)).toBeCloseTo(TIR.damage * (1 + l.bonus('damage')) * 1.1, 6);
   });
 });
