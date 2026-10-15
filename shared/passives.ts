@@ -46,6 +46,12 @@ export const PASSIVE_KINDS = [
 ] as const;
 export type PassiveKind = (typeof PASSIVE_KINDS)[number];
 
+/**
+ * Les deux paliers reserves a des cartes de REGLE (etape 13, §2.2). Chacun a
+ * son PROPRE pool au tirage : une carte d'un palier ne sort que la.
+ */
+export type PassiveTier = 'epique' | 'legendaire';
+
 export interface Passive {
   id: number;
   /**
@@ -64,10 +70,14 @@ export interface Passive {
   magnitude: number;
   kind: PassiveKind;
   /**
-   * Exclusivement legendaire (etape 10, §4) : ne sort au tirage que sur un
-   * emplacement legendaire, et s'applique x1 — son effet est deja une regle.
+   * Le palier qui lui est RESERVE. Absent : carte ordinaire, qui ne sort que
+   * sur un emplacement commun ou rare.
+   *
+   * ⚠️ **Remplace le booleen « exclusivement legendaire » de l'etape 10.** Il
+   * ne pouvait pas dire « epique », et surtout il laissait la REGLE du x1 dans
+   * `cards.ts` au lieu de la mettre dans la table des raretes.
    */
-  legendary?: boolean;
+  tier?: PassiveTier;
 }
 
 /**
@@ -177,9 +187,13 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     kind: 'zone',
     magnitude: 1,
   },
-  // ---- Etape 10 : trois passifs EXCLUSIVEMENT LEGENDAIRES (§4) -------------
-  // Ils changent une regle : s'appliquent x1, ne sortent que sur un
-  // emplacement legendaire, prennent un emplacement de passif normal.
+  // ---- Les passifs de REGLE, un par palier reserve (etape 13, §2.2) --------
+  // Ils changent une regle, donc s'appliquent x1 et ne sortent que sur un
+  // emplacement de LEUR palier — chaque palier a son propre pool.
+  //
+  // ⚠️ **Les trois tenaient dans un seul tas a l'etape 10.** Le palier les
+  // separe : un palier sans aucune carte ferait redescendre tous ses
+  // emplacements, et aucun test ne pourrait plus rien y affirmer.
   {
     // +100 % des degats INSTANTANES des reactions que le porteur declenche
     // (`ReactionTrigger.by`), par carte. Serveur seul (`applyReactions`).
@@ -187,7 +201,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     label: 'Écho',
     kind: 'echo',
     magnitude: 1,
-    legendary: true,
+    tier: 'epique',
   },
   {
     // PV rendus par ennemi mort a moins de `HARVEST_RADIUS` du porteur, quel
@@ -196,7 +210,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     label: 'Moisson',
     kind: 'harvest',
     magnitude: 1,
-    legendary: true,
+    tier: 'legendaire',
   },
   {
     // Fraction de degats ajoutee par tranche de `COLOSSUS_HP_STEP` PV max
@@ -205,7 +219,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     label: 'Colosse',
     kind: 'colossus',
     magnitude: 0.01,
-    legendary: true,
+    tier: 'epique',
   },
 ];
 

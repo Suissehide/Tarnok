@@ -15,7 +15,7 @@
  * `[data-tab]` / `[data-panel]` dans le HTML, donc aucun mecanisme de plus.
  */
 
-import { CARD } from '@shared/cards';
+import { CARD, rarityForTier } from '@shared/cards';
 import { CLASSES } from '@shared/classes';
 import { TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
@@ -198,12 +198,16 @@ export function renderGuidePassives(root: HTMLElement): void {
       img.className = 'h-[28px] w-[28px]';
       // L'empilement est la regle de TOUS les passifs, et l'onglet « Bases »
       // la pose une fois : la repeter douze fois noierait la seule ligne qui
-      // distingue vraiment une carte, celle de l'exception legendaire.
+      // distingue vraiment une carte, celle de son palier reserve.
+      const palier = rarityForTier(passive.tier);
+      const nomDuPalier = palier === undefined ? '' : (RARITY_NAMES[palier] ?? '');
       const row = entry(
         [img, passive.label],
-        passive.legendary
-          ? ['Légendaire — ne sort que sur un emplacement légendaire, et s’applique une fois']
-          : [],
+        nomDuPalier === ''
+          ? []
+          : [
+              `${nomDuPalier} — ne sort que sur un emplacement ${nomDuPalier.toLowerCase()}, et s’applique une fois`,
+            ],
         [`${magnitudeLabel(passive)} par carte`],
       );
       row.dataset.passiveId = String(passive.id);

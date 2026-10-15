@@ -9,13 +9,16 @@ describe('PASSIVES', () => {
     });
   });
 
-  it('compte dix passifs ordinaires et trois exclusivement legendaires (etape 10)', () => {
-    expect(PASSIVES.filter((p) => !p.legendary)).toHaveLength(10);
-    expect(PASSIVES.filter((p) => p.legendary).map((p) => p.name)).toEqual([
+  // ⚠️ **Chaque palier a son propre pool au tirage (etape 13)** : le compte par
+  // palier n'est pas de la cosmetique, un palier vide ferait redescendre tous
+  // ses emplacements.
+  it('compte dix passifs ordinaires, et repartit les cartes de regle par palier', () => {
+    expect(PASSIVES.filter((p) => !p.tier)).toHaveLength(10);
+    expect(PASSIVES.filter((p) => p.tier === 'epique').map((p) => p.name)).toEqual([
       'echo',
-      'moisson',
       'colosse',
     ]);
+    expect(PASSIVES.filter((p) => p.tier === 'legendaire').map((p) => p.name)).toEqual(['moisson']);
   });
 
   it('etape 10 : les magnitudes par carte de la spec', () => {

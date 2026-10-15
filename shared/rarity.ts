@@ -17,7 +17,7 @@ export const RARITY = {
  * Combien de fois une carte s'applique, par rarete.
  *
  * ⚠️ **1 pour les deux paliers hauts, et ce n'est pas un oubli** : le triple
- * d'une regle serait du decor. C'etait un cas particulier (`isLegendaryOnly`)
+ * d'une regle serait du decor. C'etait un cas particulier de `cards.ts`
  * jusqu'a l'etape 13 ; la table le dit maintenant elle-meme.
  */
 export const RARITY_MULTIPLIERS: readonly number[] = [1, 2, 1, 1];

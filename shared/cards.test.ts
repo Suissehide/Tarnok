@@ -6,8 +6,9 @@ import {
   CARD,
   type Card,
   drawSpread,
-  isLegendaryOnly,
   OWNED_WEIGHT,
+  rarityForTier,
+  tierOf,
 } from './cards';
 import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
@@ -22,10 +23,10 @@ function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
 }
 
 /**
- * Toutes les cartes que `buildPool` peut produire, hors passifs exclusivement
- * legendaires, qui n'ont que 3 % des emplacements.
+ * Toutes les cartes que `buildPool` peut produire, hors cartes de palier, qui
+ * n'ont que les 8 % d'emplacements epiques et legendaires.
  */
-const TAILLE_DU_POOL = WEAPONS.length + PASSIVES.filter((p) => !p.legendary).length;
+const TAILLE_DU_POOL = WEAPONS.length + PASSIVES.filter((p) => !p.tier).length;
 
 describe('drawSpread', () => {
   it('tire joueurs + SPREAD_BONUS cartes', () => {
@@ -175,7 +176,7 @@ describe('drawSpread', () => {
     for (let seed = 1; seed <= 400; seed++) {
       const spread = drawSpread(equipe(new Loadout()), makeRandom(seed));
       for (const carte of spread) {
-        if (!isLegendaryOnly(carte)) {
+        if (tierOf(carte) === undefined) {
           vues.add(`${carte.nature}:${carte.refId}`);
         }
       }
@@ -245,12 +246,16 @@ describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
   }
   const ASPECT = upgradesFor(ARME)[1] ?? -1; // la cadence, toujours proposee
 
-  it('un passif rare donne 2 exemplaires, un legendaire 3, une commune 1', () => {
+  // ⚠️ **Le x3 du legendaire est mort a l'etape 13** : les deux paliers hauts
+  // sont des cartes de REGLE, et une regle triplee serait du decor. C'est
+  // `RARITY_MULTIPLIERS` qui le dit, plus un cas particulier dans `cards.ts`.
+  it('un passif rare donne 2 exemplaires ; commune, epique et legendaire en donnent 1', () => {
     for (const [rarity, attendu] of [
       [undefined, 1],
       [RARITY.COMMUNE, 1],
       [RARITY.RARE, 2],
-      [RARITY.LEGENDAIRE, 3],
+      [RARITY.EPIQUE, 1],
+      [RARITY.LEGENDAIRE, 1],
     ] as const) {
       const l = new Loadout();
       applyCardToLoadout(l, { nature: CARD.PASSIVE, refId: 1, rarity });
@@ -273,17 +278,21 @@ describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
     expect(l.weaponSlotsUsed).toBe(1);
   });
 
-  it('une arme legendaire DEJA possedee : trois crans de son aspect', () => {
+  // ⚠️ Cette garde etait ecrite en LEGENDAIRE x3 ; depuis l'etape 13 le seul
+  // multiplicateur > 1 est celui du rare. Ce qu'elle garde est inchange : sur
+  // une arme DEJA possedee, toutes les applications vont dans l'aspect, aucune
+  // ne sert a l'acquisition.
+  it('une arme rare DEJA possedee : deux crans de son aspect, rien pour l acquisition', () => {
     const l = new Loadout();
     l.addWeapon(ARME.id);
     applyCardToLoadout(l, {
       nature: CARD.WEAPON,
       refId: ARME.id,
       upgrade: ASPECT,
-      rarity: RARITY.LEGENDAIRE,
+      rarity: RARITY.RARE,
     });
-    expect(l.stacksOfWeapon(ARME.id)).toBe(4);
-    expect(l.upgradesOf(ARME.id, ASPECT)).toBe(3);
+    expect(l.stacksOfWeapon(ARME.id)).toBe(3);
+    expect(l.upgradesOf(ARME.id, ASPECT)).toBe(2);
   });
 
   it('une rarete hors table venue du fil s applique une fois', () => {
@@ -306,20 +315,26 @@ describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
   it('applicationsOf dit combien de fois la carte s applique', () => {
     expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1 })).toBe(1);
     expect(applicationsOf({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.RARE })).toBe(2);
-    expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.LEGENDAIRE })).toBe(3);
+    expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.EPIQUE })).toBe(1);
+    expect(applicationsOf({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.LEGENDAIRE })).toBe(1);
   });
 });
 
-describe('etape 10 : un passif exclusivement legendaire s applique x1', () => {
-  const LEGENDAIRES = PASSIVES.filter((p) => p.legendary);
+describe('une carte de palier s applique x1 (etape 10, par la table depuis l etape 13)', () => {
+  const DE_PALIER = PASSIVES.filter((p) => p.tier !== undefined);
 
-  it('quelle que soit la rarete que la carte porte, fil compris', () => {
-    expect(LEGENDAIRES.length).toBe(3);
-    for (const p of LEGENDAIRES) {
-      for (const rarity of [RARITY.COMMUNE, RARITY.RARE, RARITY.LEGENDAIRE, 200]) {
+  // ⚠️ **La garde a change de porteur a l'etape 13.** Elle disait « quelle que
+  // soit la rarete portee » parce que `applicationsOf` corrigeait la carte ;
+  // c'est la TABLE qui dit x1 maintenant, donc on l'eprouve sur la rarete que
+  // la carte peut reellement porter — la sienne — plus une rarete hors table
+  // venue du fil, qui se lit commune.
+  it('sur son propre palier, et sur une rarete hors table venue du fil', () => {
+    expect(DE_PALIER.length).toBe(3);
+    for (const p of DE_PALIER) {
+      for (const rarity of [rarityForTier(p.tier), 200]) {
         const l = new Loadout();
         const carte: Card = { nature: CARD.PASSIVE, refId: p.id, rarity };
-        expect(isLegendaryOnly(carte)).toBe(true);
+        expect(tierOf(carte)).toBe(p.tier);
         expect(applicationsOf(carte)).toBe(1);
         applyCardToLoadout(l, carte);
         expect(l.stacksOf(p.id)).toBe(1);
@@ -331,27 +346,28 @@ describe('etape 10 : un passif exclusivement legendaire s applique x1', () => {
     const l = new Loadout();
     l.addPassive(0);
     l.addPassive(1);
-    const legendaire = LEGENDAIRES[0];
-    if (!legendaire) {
-      throw new Error('fixture : aucun legendaire');
+    const dePalier = DE_PALIER[0];
+    if (!dePalier) {
+      throw new Error('fixture : aucune carte de palier');
     }
     applyCardToLoadout(l, {
       nature: CARD.PASSIVE,
-      refId: legendaire.id,
-      rarity: RARITY.LEGENDAIRE,
+      refId: dePalier.id,
+      rarity: rarityForTier(dePalier.tier),
     });
     // ⚠️ Le compte reste — c'est lui que le HUD peint — mais depuis l'etape
     // 13 il ne bloque plus rien : `canTake` resterait `true` ici.
     expect(l.passiveSlotsUsed).toBe(3);
   });
 
-  it('une arme n est jamais exclusivement legendaire', () => {
-    expect(isLegendaryOnly({ nature: CARD.WEAPON, refId: 10 })).toBe(false);
+  it('une arme ne porte jamais de palier', () => {
+    expect(tierOf({ nature: CARD.WEAPON, refId: 10 })).toBeUndefined();
+    expect(rarityForTier(undefined)).toBeUndefined();
   });
 });
 
 describe('drawSpread — la rarete (etape 10)', () => {
-  it('chaque carte porte une rarete, et les trois finissent par sortir', () => {
+  it('chaque carte porte une rarete, et les QUATRE finissent par sortir', () => {
     const vues = new Set<number>();
     for (let seed = 1; seed <= 400; seed++) {
       for (const c of drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed))) {
@@ -359,7 +375,7 @@ describe('drawSpread — la rarete (etape 10)', () => {
         vues.add(c.rarity ?? -1);
       }
     }
-    expect(vues).toEqual(new Set([RARITY.COMMUNE, RARITY.RARE, RARITY.LEGENDAIRE]));
+    expect(vues).toEqual(new Set([RARITY.COMMUNE, RARITY.RARE, RARITY.EPIQUE, RARITY.LEGENDAIRE]));
   });
 
   it('les proportions suivent RARITY_WEIGHTS, a la louche', () => {
@@ -377,13 +393,14 @@ describe('drawSpread — la rarete (etape 10)', () => {
     expect(communes / total).toBeLessThan(0.88);
   });
 
-  it('un passif exclusivement legendaire ne sort QUE sur un emplacement legendaire', () => {
+  it('une carte de palier ne sort QUE sur un emplacement de SON palier', () => {
     let vus = 0;
     for (let seed = 1; seed <= 3000; seed++) {
       for (const c of drawSpread(equipe(new Loadout()), makeRandom(seed))) {
-        if (isLegendaryOnly(c)) {
+        const tier = tierOf(c);
+        if (tier !== undefined) {
           vus++;
-          expect(c.rarity).toBe(RARITY.LEGENDAIRE);
+          expect(c.rarity).toBe(rarityForTier(tier));
         }
       }
     }
@@ -394,7 +411,7 @@ describe('drawSpread — la rarete (etape 10)', () => {
 });
 
 describe('etape 11 : drawSpread au plancher du coffre', () => {
-  it('aucune carte commune sur 500 graines, des legendaires, et les exclusifs restent legendaires', () => {
+  it('aucune carte commune sur 500 graines, des legendaires, et chaque palier chez lui', () => {
     let legendaires = 0;
     for (let seed = 1; seed <= 500; seed++) {
       for (const c of drawSpread(
@@ -406,8 +423,9 @@ describe('etape 11 : drawSpread au plancher du coffre', () => {
         if (c.rarity === RARITY.LEGENDAIRE) {
           legendaires++;
         }
-        if (isLegendaryOnly(c)) {
-          expect(c.rarity).toBe(RARITY.LEGENDAIRE);
+        const tier = tierOf(c);
+        if (tier !== undefined) {
+          expect(c.rarity).toBe(rarityForTier(tier));
         }
       }
     }
@@ -423,5 +441,117 @@ describe('etape 11 : drawSpread au plancher du coffre', () => {
         drawSpread(equipe(l, new Loadout()), makeRandom(seed), RARITY.COMMUNE),
       );
     }
+  });
+});
+
+describe('etape 13 : un palier, un pool', () => {
+  /** Fixture : des passifs de chaque palier existent au catalogue. */
+  const epiques = PASSIVES.filter((p) => p.tier === 'epique');
+  const legendaires = PASSIVES.filter((p) => p.tier === 'legendaire');
+
+  it('le catalogue a de quoi remplir les deux paliers hauts', () => {
+    expect(epiques.length).toBeGreaterThan(0);
+    expect(legendaires.length).toBeGreaterThan(0);
+  });
+
+  it('une carte de palier ne sort que sur son palier, sur 500 graines', () => {
+    for (let seed = 1; seed <= 500; seed++) {
+      for (const c of drawSpread(equipe(new Loadout(), new Loadout()), makeRandom(seed))) {
+        const tier = tierOf(c);
+        if (c.rarity === RARITY.EPIQUE) {
+          expect(tier).toBe('epique');
+        } else if (c.rarity === RARITY.LEGENDAIRE) {
+          expect(tier).toBe('legendaire');
+        } else {
+          expect(tier).toBeUndefined();
+        }
+      }
+    }
+  });
+
+  it('une carte de palier s applique une seule fois, jamais deux', () => {
+    const l = new Loadout();
+    const epique = PASSIVES.find((p) => p.tier === 'epique');
+    if (!epique) {
+      throw new Error('fixture : aucun epique au catalogue');
+    }
+    applyCardToLoadout(l, { nature: CARD.PASSIVE, refId: epique.id, rarity: RARITY.EPIQUE });
+    expect(l.stacksOf(epique.id)).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Le risque principal de l'etape.** Le `break` de `drawSpread` etait
+   * documente « INATTEIGNABLE » ; avec un filtre strict par palier il devient
+   * courant, et l'etalage sortirait avec MOINS de cartes que de joueurs.
+   *
+   * ⚠️ **La cause est l'EPUISEMENT DU POOL, pas des emplacements pleins** (la
+   * tache 0 a leve la limite de passifs). `drawSpread` tire sans remise et les
+   * epiques se comptent sur une main : au premier emplacement epique de trop,
+   * plus rien n'est permis. On force le cas avec un rng qui tire TOUJOURS
+   * epique.
+   */
+  it('pool de palier epuise : l etalage sort quand meme au complet', () => {
+    // ⚠️ **Un `rng` CONSTANT, pas un mock.** Avec les poids {72, 20, 6, 2},
+    // les bandes CUMULEES sont [0, 72) commune, [72, 92) rare, [92, 98)
+    // epique, [98, 100) legendaire : `rollRarity` lit `0,95 x 100 = 95`, donc
+    // chaque emplacement tire epique, a chaque fois, et le pool des epiques
+    // s'epuise avant la fin de l'etalage.
+    const toujoursEpique = (): number => 0.95;
+    const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
+    const spread = drawSpread(loadouts, toujoursEpique);
+    expect(spread).toHaveLength(loadouts.size + SPREAD_BONUS);
+    const epiquesAuCatalogue = epiques.length;
+    expect(spread.filter((c) => c.rarity === RARITY.EPIQUE)).toHaveLength(epiquesAuCatalogue);
+    // Les emplacements au-dela du pool ont REDESCENDU, ils n'ont pas disparu.
+    expect(spread.filter((c) => c.rarity !== RARITY.EPIQUE).length).toBe(
+      loadouts.size + SPREAD_BONUS - epiquesAuCatalogue,
+    );
+  });
+
+  /**
+   * ⚠️ **La descente enchaine les crans, elle n'en lache pas qu'un.** Un seul
+   * `rarity--` sans boucle laisserait un emplacement legendaire retomber sur
+   * un palier epique LUI AUSSI vide, et `index < 0` ferait sortir l'etalage
+   * incomplet — exactement le bug que l'etape devait fermer.
+   */
+  it('deux crans d un coup : legendaire epuise, puis epique epuise, on finit en rare', () => {
+    // 0,99 x 100 = 99, dans la bande legendaire cumulee [98, 100).
+    const toujoursLegendaire = (): number => 0.99;
+    const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
+    const spread = drawSpread(loadouts, toujoursLegendaire);
+    expect(spread).toHaveLength(loadouts.size + SPREAD_BONUS);
+    expect(spread.filter((c) => c.rarity === RARITY.LEGENDAIRE)).toHaveLength(legendaires.length);
+    expect(spread.filter((c) => c.rarity === RARITY.EPIQUE)).toHaveLength(epiques.length);
+    // Tout le reste a descendu DEUX crans, jusqu'au rare — et rien n'a disparu.
+    expect(spread.filter((c) => c.rarity === RARITY.RARE)).toHaveLength(
+      loadouts.size + SPREAD_BONUS - legendaires.length - epiques.length,
+    );
+  });
+
+  it('la descente s arrete au plancher : jamais de commune sous plancher rare', () => {
+    for (let seed = 1; seed <= 300; seed++) {
+      const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
+      for (const c of drawSpread(loadouts, makeRandom(seed), RARITY.RARE)) {
+        expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
+      }
+    }
+  });
+
+  /**
+   * ⚠️ **Le plancher passe AVANT l'etalage complet.** Sous plancher rare la
+   * descente trouve toujours des cartes ordinaires, donc le `> floor` de la
+   * boucle ne se distingue pas d'un `> 0` : il fallait un plancher que les
+   * seuls paliers ne peuvent pas servir jusqu'au bout pour l'eprouver. A
+   * plancher epique l'etalage se raccourcit — c'est le `break` final, et c'est
+   * le comportement VOULU : rendre une commune ici trahirait le plancher.
+   */
+  it('plancher epique : l etalage se raccourcit plutot que de descendre sous le plancher', () => {
+    const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
+    const spread = drawSpread(loadouts, makeRandom(7), RARITY.EPIQUE);
+    for (const c of spread) {
+      expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.EPIQUE);
+    }
+    // Non-vacuite : les deux paliers ont tout donne, et rien de plus.
+    expect(spread).toHaveLength(epiques.length + legendaires.length);
   });
 });

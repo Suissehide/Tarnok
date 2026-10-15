@@ -1,6 +1,6 @@
 import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
-import { PASSIVES, passiveOf } from './passives';
+import { PASSIVES, type PassiveTier, passiveOf } from './passives';
 import { multiplierOf, RARITY, rollRarity } from './rarity';
 import { upgradesFor, WEAPONS, weaponOf } from './weapons';
 
@@ -41,18 +41,30 @@ export interface Card {
   rarity?: number;
 }
 
-/** Un passif exclusivement legendaire (etape 10, §4) — jamais une arme. */
-export function isLegendaryOnly(card: Card): boolean {
-  return card.nature === CARD.PASSIVE && passiveOf(card.refId).legendary === true;
+/** Le palier reserve de cette carte, `undefined` pour une carte ordinaire. */
+export function tierOf(card: Card): PassiveTier | undefined {
+  return card.nature === CARD.PASSIVE ? passiveOf(card.refId).tier : undefined;
+}
+
+/** La rarete qu'un palier reserve exige, `undefined` pour une carte ordinaire. */
+export function rarityForTier(tier: PassiveTier | undefined): number | undefined {
+  if (tier === 'epique') {
+    return RARITY.EPIQUE;
+  }
+  return tier === 'legendaire' ? RARITY.LEGENDAIRE : undefined;
 }
 
 /**
- * Combien de fois cette carte s'applique : le multiplicateur de sa rarete,
- * sauf un passif exclusivement legendaire, qui s'applique x1 — le triple d'une
- * regle serait du decor (§4 de la spec de l'etape 10).
+ * Combien de fois cette carte s'applique : le multiplicateur de sa rarete, et
+ * rien d'autre.
+ *
+ * ⚠️ **Le cas particulier du passif « exclusivement legendaire » a disparu a
+ * l'etape 13** : il forcait un legendaire a x1 contre une table qui disait x3.
+ * La table dit maintenant x1 elle-meme (`RARITY_MULTIPLIERS`), donc la
+ * fonction n'a plus rien a corriger.
  */
 export function applicationsOf(card: Card): number {
-  return isLegendaryOnly(card) ? 1 : multiplierOf(card.rarity);
+  return multiplierOf(card.rarity);
 }
 
 /**
@@ -143,15 +155,20 @@ export function buildPool(): Card[] {
  * test** — c'est la cinquieme occurrence de ce motif dans cette etape.
  *
  * ⚠️ **La rarete de l'EMPLACEMENT d'abord, la carte ensuite** (etape 10,
- * §2.3) : un passif exclusivement legendaire n'entre dans le pool QUE pour un
- * emplacement qui vient de tirer legendaire. Tirer la carte d'abord obligerait
- * a retirer, ou a forcer la rarete — deux facons de fausser les 3 %. Rarete,
- * carte, aspect : tout vient du meme `rng`, dans cet ordre.
+ * §2.3) : une carte de palier n'entre dans le pool QUE pour un emplacement qui
+ * vient de tirer SON palier. Tirer la carte d'abord obligerait a retirer, ou a
+ * forcer la rarete — deux facons de fausser les poids. Rarete, carte, aspect :
+ * tout vient du meme `rng`, dans cet ordre.
+ *
+ * ⚠️ **Un palier, un pool (etape 13, §2.2), et ces pools sont PETITS.** Le
+ * filtre n'est plus « legendaire ou carte ordinaire » mais une egalite stricte
+ * entre le palier de la carte et celui de l'emplacement. Comme le tirage est
+ * SANS REMISE (`pool.splice`), un palier qui a donne toutes ses cartes n'en a
+ * plus a offrir : c'est pour ca que la descente ci-dessous existe.
  *
  * `floor` (etape 11) : le plancher de rarete de CHAQUE emplacement, passe tel
- * quel a `rollRarity` — `CHEST_RARITY_FLOOR` pour un coffre. Rien d'autre ne
- * change : un passif exclusivement legendaire n'entre toujours que sur un
- * emplacement legendaire.
+ * quel a `rollRarity` — `CHEST_RARITY_FLOOR` pour un coffre. La descente le
+ * respecte : elle ne passe JAMAIS dessous.
  */
 export function drawSpread(
   loadouts: ReadonlyMap<number, Loadout>,
@@ -171,18 +188,41 @@ export function drawSpread(
   // jamais ; c'est le poids `OWNED_WEIGHT` des survivor-likes.
   const weights = pool.map((card) => (ownedByAnyone(card, loadouts) ? OWNED_WEIGHT : 1));
 
-  while (spread.length < wanted && pool.length > 0) {
-    const rarity = rollRarity(rng, floor);
-    const permis = pool.map((card, i) =>
-      rarity === RARITY.LEGENDAIRE || !isLegendaryOnly(card) ? (weights[i] ?? 0) : 0,
+  /** Les poids des cartes que CE palier permet, et leur somme. */
+  const permisAt = (rarity: number): { poids: number[]; total: number } => {
+    const attendu = rarity === RARITY.EPIQUE || rarity === RARITY.LEGENDAIRE ? rarity : undefined;
+    const poids = pool.map((card, i) =>
+      rarityForTier(tierOf(card)) === attendu ? (weights[i] ?? 0) : 0,
     );
-    let roll = rng() * permis.reduce<number>((a, b) => a + b, 0);
+    return { poids, total: poids.reduce<number>((a, b) => a + b, 0) };
+  };
+
+  while (spread.length < wanted && pool.length > 0) {
+    // ⚠️ **La descente de palier (etape 13, §2.3).** Un palier dont aucune
+    // carte n'est plus prenable — ses quelques cartes sont deja dans
+    // l'etalage, le tirage est sans remise — redescend d'un cran, jusqu'au
+    // `floor` de l'emplacement et JAMAIS en dessous. Sans elle, la boucle
+    // sortait et l'etalage avait MOINS de cartes que de joueurs : le `break`
+    // plus bas, documente « INATTEIGNABLE » a l'etape 10, cesse de l'etre des
+    // qu'un palier a son propre pool.
+    //
+    // ⚠️ **`rng` est consomme EXACTEMENT une fois par emplacement pour la
+    // rarete**, descente comprise : elle decremente, elle ne retire pas. C'est
+    // ce qui garde le tirage reproductible a graine fixe, et plusieurs tests
+    // herites en dependent.
+    let rarity = rollRarity(rng, floor);
+    let permis = permisAt(rarity);
+    while (permis.total === 0 && rarity > floor) {
+      rarity--;
+      permis = permisAt(rarity);
+    }
+    let roll = rng() * permis.total;
     // ⚠️ `index` suit la derniere carte PERMISE vue : si l'arrondi laisse
     // `roll` a peine positif en fin de boucle, c'est elle qui sort — jamais une
-    // carte de poids nul, donc jamais un legendaire sur un emplacement commun.
+    // carte de poids nul, donc jamais une carte de palier hors de son palier.
     let index = -1;
     for (let i = 0; i < pool.length; i++) {
-      const w = permis[i] ?? 0;
+      const w = permis.poids[i] ?? 0;
       if (w <= 0) {
         continue;
       }
@@ -192,10 +232,9 @@ export function drawSpread(
         break;
       }
     }
-    // ⚠️ INATTEIGNABLE aujourd'hui, et aucun test ne la garde : il faudrait
-    // un pool fait de seuls legendaires, or une arme deja possedee y reste
-    // toujours (`canTake`). Gardee parce que sans elle un pool sans carte
-    // permise ferait sortir `pool[-1]`.
+    // ⚠️ Atteignable seulement si MEME le plancher ne permet rien : un pool
+    // qui ne contiendrait plus que des cartes de palier, sur un plancher
+    // epique ou legendaire deja vide. Sans elle, `pool[-1]` sortirait.
     if (index < 0) {
       break;
     }
