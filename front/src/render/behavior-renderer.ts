@@ -9,7 +9,7 @@ import type { EnemyShot } from '@shared/enemy-shots';
 import type { Horde } from '@shared/horde';
 import { Container, Graphics, type Rectangle, Sprite, type Texture } from 'pixi.js';
 
-import { BLAST_FLASH_MS, type BlastFlash } from '../net/client';
+import { type BlastFlash, flashLifeMs } from '../net/client';
 import { framesOf } from './player-renderer';
 
 /**
@@ -20,7 +20,7 @@ import { framesOf } from './player-renderer';
  */
 
 export interface BehaviorShape {
-  kind: 'kamikaze' | 'chaman' | 'necro' | 'bouclier' | 'butin' | 'explosion';
+  kind: 'kamikaze' | 'chaman' | 'necro' | 'bouclier' | 'butin' | 'explosion' | 'releve';
   x: number;
   y: number;
   radius: number;
@@ -78,8 +78,12 @@ export function behaviorShapes(
     }
   }
   for (const b of blasts) {
-    const t = (nowMs - b.bornMs) / BLAST_FLASH_MS;
+    const t = (nowMs - b.bornMs) / flashLifeMs(b);
     if (t < 0 || t >= 1) {
+      continue;
+    }
+    if (b.kind === 'releve') {
+      out.push({ kind: 'releve', x: b.x, y: b.y, radius: 40, alpha: 1 - t });
       continue;
     }
     out.push({
@@ -109,6 +113,11 @@ const SHOT_SHEETS: Readonly<Record<string, { path: string; frame: number; spin: 
 };
 const EXPLOSION = { path: 'Particle FX/Explosion_01.png', frame: 192 };
 const HEX_CAST = { path: 'Monsters/Hex Shaman/Hex Shaman_Explosion.png', frame: 128 };
+/** Le sort de transformation du pack : la bouffee qui releve un mort. */
+const RAISE = {
+  path: 'Monsters/Extra/Hex Shaman Transformation Spell/Hex Shaman_Explosion Spell.png',
+  frame: 192,
+};
 const COIN = { path: 'UI Elements/UI Elements/Icons/Icon_03.png', frame: 64 };
 /** Le chaman lance son sort toutes les `HEX_PERIOD_MS`, pendant `HEX_CAST_MS`. */
 const HEX_PERIOD_MS = 2400;
@@ -142,7 +151,7 @@ export class BehaviorRenderer {
    */
   load(): void {
     this.#ready = true;
-    const all = [...Object.values(SHOT_SHEETS), EXPLOSION, HEX_CAST, COIN];
+    const all = [...Object.values(SHOT_SHEETS), EXPLOSION, HEX_CAST, RAISE, COIN];
     for (const sheet of all) {
       framesOf(`${this.assetsBase}/${encodeURI(sheet.path)}`, sheet.frame)
         .then((frames) => this.#frames.set(sheet.path, frames))
@@ -239,6 +248,17 @@ export class BehaviorRenderer {
           sp.scale.set(0.45);
         } else {
           g.circle(s.x, s.y, s.radius).fill(0xffd34d).stroke({ color: 0x1a0f0a, width: 2 });
+        }
+      } else if (s.kind === 'releve') {
+        // Le sort de transformation, la ou les squelettes se relevent ; un
+        // eclat vert en repli.
+        const n = this.#frames.get(RAISE.path)?.length ?? 0;
+        const t = 1 - s.alpha;
+        const sp = n > 0 ? this.#sprite(RAISE.path, Math.min(n - 1, Math.floor(t * n))) : null;
+        if (sp) {
+          sp.position.set(s.x, s.y - 20);
+        } else {
+          g.circle(s.x, s.y, s.radius).fill({ color: 0x7cf08a, alpha: 0.5 * s.alpha });
         }
       } else {
         // L'explosion du pack, etiree au rayon reel ; le disque en repli.

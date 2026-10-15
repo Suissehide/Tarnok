@@ -4,7 +4,7 @@ import { FORMATION, type WaveOrder } from '@shared/waves';
 import { Rectangle } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
-import { BLAST_FLASH_MS } from '../net/client';
+import { BLAST_FLASH_MS, RAISE_FLASH_MS } from '../net/client';
 import { behaviorShapes } from './behavior-renderer';
 
 const idOf = (behavior: string): number => ARCHETYPES.findIndex((a) => a.behavior === behavior);
@@ -54,5 +54,12 @@ describe('behaviorShapes', () => {
     expect(tot[0]?.alpha).toBe(1);
     expect(tard[0]?.alpha).toBeLessThan(0.2);
     expect(behaviorShapes(new Horde(1), blasts, view, 1000 + BLAST_FLASH_MS)).toEqual([]);
+  });
+
+  it('joue le sort de transformation la ou un mort se releve, plus longtemps qu une explosion', () => {
+    const view = new Rectangle(0, 0, 800, 600);
+    const releve = [{ x: 50, y: 60, bornMs: 0, kind: 'releve' as const }];
+    expect(behaviorShapes(new Horde(1), releve, view, BLAST_FLASH_MS)[0]?.kind).toBe('releve');
+    expect(behaviorShapes(new Horde(1), releve, view, RAISE_FLASH_MS)).toEqual([]);
   });
 });

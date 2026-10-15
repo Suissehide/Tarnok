@@ -4,7 +4,7 @@ import {
   DECOY_LIFETIME_TICKS,
   VERB_IDS,
 } from '@shared/abilities';
-import { archetypeOf } from '@shared/archetypes';
+import { archetypeIdOf, archetypeOf, NECRO_CHILD } from '@shared/archetypes';
 import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
 import { chainTargets } from '@shared/chain';
@@ -59,6 +59,7 @@ import {
   zoneElement,
 } from '@shared/protocol';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
+import { FORMATION } from '@shared/waves';
 import {
   BASE_WEAPON_ID,
   beamRange,
@@ -225,10 +226,19 @@ export interface BlastFlash {
   x: number;
   y: number;
   bornMs: number;
+  /** `releve` : un mort qui se releve sous le sort du necromancien. Absent : une explosion. */
+  kind?: 'releve';
 }
 
 /** Duree de l'explosion a l'ecran, en ms. */
 export const BLAST_FLASH_MS = 450;
+/** Duree du sort de transformation (necromancien) : dix images, plus lent. */
+export const RAISE_FLASH_MS = 800;
+
+/** Combien de temps cet eclat reste a l'ecran. */
+export function flashLifeMs(b: BlastFlash): number {
+  return b.kind === 'releve' ? RAISE_FLASH_MS : BLAST_FLASH_MS;
+}
 
 /**
  * Orbes vivants, cote client — **derives des morts, jamais transmis** (§6.1 de
@@ -1962,6 +1972,16 @@ export class GameClient {
     }
     if (msg.type === MSG.WAVE_ORDER) {
       this.#pendingOrders.push(msg);
+      // Des squelettes nes sur place : le necromancien vient de relever des
+      // morts (`Room#afterDeaths`). Le sort se joue la, sans octet de plus.
+      if (msg.formation === FORMATION.POINT && msg.archetype === archetypeIdOf(NECRO_CHILD)) {
+        this.blastFlashes.push({
+          x: msg.anchorX,
+          y: msg.anchorY,
+          bornMs: performance.now(),
+          kind: 'releve',
+        });
+      }
       return;
     }
     if (msg.type === MSG.DEATHS) {
@@ -2376,7 +2396,7 @@ export class GameClient {
     }
     this.hitFlashes.expire(nowMs);
     this.reactionFlashes.expire(nowMs);
-    this.blastFlashes = this.blastFlashes.filter((b) => nowMs - b.bornMs < BLAST_FLASH_MS);
+    this.blastFlashes = this.blastFlashes.filter((b) => nowMs - b.bornMs < flashLifeMs(b));
     this.chainFlashes.expire(nowMs);
 
     // Instantane pour le rejeu (§3.2) : DOIT etre pris a chaque tick, gel ou

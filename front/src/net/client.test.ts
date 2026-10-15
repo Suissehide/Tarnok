@@ -1,3 +1,4 @@
+import { archetypeIdOf, NECRO_CHILD, SPLIT_CHILD } from '@shared/archetypes';
 import { type BossCharge, makeBossCharge } from '@shared/boss';
 import { CARD } from '@shared/cards';
 import {
@@ -4394,5 +4395,31 @@ describe('GameClient — le HELLO envoye a l ouverture de la socket (tache 7)', 
     vi.advanceTimersByTime(1000 / INPUT_HZ);
     expect(socket.sent.length).toBeGreaterThan(0);
     expect(decode(socket.sent[0] as ArrayBuffer).type).not.toBe(MSG.HELLO);
+  });
+});
+
+describe('le sort du necromancien', () => {
+  it('joue le sort la ou des squelettes naissent sur place, pas pour les petits du diviseur', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 5000, 0xabc_def) });
+    const ordre = (archetype: number, waveId: number) =>
+      encodeWaveOrder({
+        waveId,
+        spawnTick: 5001,
+        seed: waveId,
+        archetype,
+        formation: FORMATION.POINT,
+        anchorX: 1200,
+        anchorY: 1300,
+        count: 2,
+      });
+    socket.emit('message', { data: ordre(archetypeIdOf(SPLIT_CHILD), 7) });
+    expect(client.blastFlashes).toHaveLength(0);
+    socket.emit('message', { data: ordre(archetypeIdOf(NECRO_CHILD), 8) });
+    expect(client.blastFlashes).toEqual([
+      expect.objectContaining({ x: 1200, y: 1300, kind: 'releve' }),
+    ]);
   });
 });
