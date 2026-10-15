@@ -59,10 +59,10 @@ lit l'écart de PV max avant/après.
 
 ### 2.3 Le tirage
 
-`drawSpread` tire la rareté **de chaque carte** après l'avoir choisie, avec le même `rng`. Les
-passifs exclusivement légendaires (§4) n'entrent dans le tirage **que** pour une carte qui sort
-légendaire : on tire d'abord la rareté de l'emplacement, puis la carte parmi le pool qui lui est
-permis.
+`drawSpread` tire, pour **chaque emplacement**, d'abord sa rareté, puis la carte parmi le pool que
+cette rareté permet, avec le même `rng`. Les passifs exclusivement légendaires (§4) n'entrent dans
+ce pool **que** pour un emplacement qui sort légendaire. (Corrigé au plan : une première rédaction
+disait « après l'avoir choisie », ce qui rendait le pool légendaire impossible.)
 
 Le plancher de rareté des coffres (≥ rare) et des événements (≥ légendaire) n'est **pas** dans
 cette étape : il arrive aux étapes 11 et 12, avec son premier appelant.
@@ -121,7 +121,7 @@ arbitre seul — donc sans risque de dérive et sans octet de plus.
 | Passif | Effet par carte | Point d'accroche |
 | --- | --- | --- |
 | **Écho** | les dégâts instantanés des réactions **que tu déclenches** sont doublés (+100 % par carte) | `applyReactions` : `ReactionTrigger.by` désigne le déclencheur |
-| **Moisson** | chaque ennemi qui meurt à moins de **300 px** de toi te rend **1 PV** | le drain des morts de `Room.step`, comme `regain` |
+| **Moisson** | chaque ennemi qui meurt à moins de **300 px** de toi te rend **1 PV** | les positions des morts relevées à `OrbField.spawn` (le seul endroit qui les voit toutes, avant le compactage de la horde), soldées dans `Room.step` |
 | **Colosse** | +1 % de dégâts par tranche de 10 PV max | la formule de dégâts, des deux côtés |
 
 Un passif légendaire s'applique **×1** : son effet est déjà une règle, le triple serait du
