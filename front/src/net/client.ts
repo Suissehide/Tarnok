@@ -21,7 +21,6 @@ import {
   MAP_SIZE,
   MAX_ENTITIES,
   MAX_PLAYERS,
-  PLAYER_MAX_HP,
   PLAYER_SPEED,
   PROJECTILE_CAPACITY,
   ROLLBACK_DEPTH_TICKS,
@@ -3171,11 +3170,17 @@ export class GameClient {
     // ⚠️ Le PV max d'un ALLIE se derive ici avec les bonus de compte du joueur
     // LOCAL — la meme approximation que `accountBonuses.damage` juste a cote.
     // Cosmetique (§5.4).
+    //
+    // ⚠️ **`maxHpOf`, pas une troisieme copie de la somme** (etape 13) :
+    // Colosse (`shared/firing.ts`) echelonne ses degats sur ce `maxHp`, et la
+    // tache suivante pose dans `maxHpOf` la regle de Transcendance (PV max
+    // ramenes a 1). Une copie figee ici continuerait de rendre ~100 et
+    // predirait des degats que le serveur n'arbitre pas.
     const damage = shotDamage(
       weapon,
       loadout,
       this.accountBonuses.damage,
-      PLAYER_MAX_HP + loadout.bonus('maxHp') + this.accountBonuses.maxHp,
+      maxHpOf(loadout, this.accountBonuses.maxHp),
     );
     // Meme fonctions (`armedWeapon`, `shotDamage`) que `Room#fireOne` : deux
     // formules divergeraient, et le joueur verrait une salve que le serveur
