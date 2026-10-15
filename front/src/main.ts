@@ -209,6 +209,7 @@ const summaryElements: SummaryElements = {
   level: el('summary-level'),
   kills: el('summary-kills'),
   gold: el('summary-gold'),
+  goldLabel: el('summary-gold-label'),
 };
 
 const keyboard = new Keyboard();
