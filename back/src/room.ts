@@ -1575,7 +1575,7 @@ export class Room {
     // `Projectiles.collide` ou `markInZones` balaient encore la horde par
     // indice de creneau. `drain` remet du meme coup la borne « une reaction
     // par ennemi et par tick » a zero.
-    const triggers = this.#reactions.drain();
+    const triggers = this.#reactions.drain(this.#tick);
     const reactedIds = applyReactions(
       this.horde,
       this.#orbs,

@@ -79,6 +79,7 @@ import {
 import { generateObstacles } from '@shared/worldmap';
 import { describe, expect, it, vi } from 'vitest';
 
+import { REACTION_COOLDOWN_TICKS } from './combat';
 import { type AccountGrants, type DraftOpenEvent, Room } from './room';
 
 const DT = 1 / TICK_HZ;
@@ -3434,14 +3435,28 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
       const parProjectile = spawnMonsterAt(room, 730, p1.x + ECART, p1.y, LOURD);
       const parReaction = spawnMonsterAt(room, 731, p2.x, p2.y + ECART, LOURD);
       room.horde.hp[room.horde.slotOf(parReaction)] = 1e6;
+      // ⚠️ **Une cible de projectiles plus coriace** (recharge par ennemi,
+      // `REACTION_COOLDOWN_TICKS`) : elle doit mourir APRES la premiere
+      // reaction de l'atelier ET une recharge entiere, pour que le champ de
+      // Givre soit pose et que la fenetre de silence ci-dessous tienne.
+      const sp = room.horde.slotOf(parProjectile);
+      room.horde.hp[sp] = (room.horde.hp[sp] ?? 0) * 4;
       // Le decor ne prouverait rien si les deux scenes se touchaient : une
       // reaction porte a `REACTION_RADIUS`.
       expect(ECART).toBeGreaterThan(2 * REACTION_RADIUS);
 
       const deaths: { tick: number; ids: number[] }[] = [];
-      for (let i = 0; i < 90; i++) {
+      for (let i = 0; i < 180; i++) {
         const s = room.horde.slotOf(parReaction);
-        if (s >= 0) {
+        // ⚠️ **Une fenetre de silence avant l'armement** (recharge par ennemi,
+        // `REACTION_COOLDOWN_TICKS`) : sans Braise pendant une recharge, la
+        // derniere reaction est assez vieille, et au tick vise la Braise posee
+        // a la main reagit avec le champ de Givre que l'atelier a laisse.
+        const silence =
+          tickDArmement !== null &&
+          room.tick >= tickDArmement - 1 - REACTION_COOLDOWN_TICKS &&
+          room.tick < tickDArmement - 1;
+        if (s >= 0 && !silence) {
           room.horde.applyMark(s, ELEMENT.BRAISE, 3, room.tick);
           if (tickDArmement !== null && room.tick === tickDArmement - 1) {
             // ⚠️ **Une reserve que le choc emporte A COUP SUR, armure
@@ -3544,8 +3559,10 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
 
   it('deux joueurs differents chargent la barre ; le meme joueur des deux cotes ne charge RIEN', () => {
     expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
-    const aDeux = scene(2, 15);
-    const seul = scene(1, 15);
+    // Assez de ticks pour plusieurs recharges : un ennemi ne reagit plus qu'une
+    // fois par `REACTION_COOLDOWN_TICKS`.
+    const aDeux = scene(2, 5 * REACTION_COOLDOWN_TICKS);
+    const seul = scene(1, 5 * REACTION_COOLDOWN_TICKS);
 
     // ⚠️ **La seconde moitie est celle qui porte le sens.** Un compteur qui
     // monterait a CHAQUE reaction — donc sans aucune comparaison — passerait
@@ -3613,7 +3630,8 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
     // (§1) : a cette etape la barre se charge, s'affiche, et ne se depense
     // JAMAIS. Le dire ici, sinon quelqu'un « corrigera » un jour ce plafond en
     // le prenant pour un compteur qu'on aurait oublie de remettre a zero.
-    const assezDeReactions = SYNERGY_MAX * 3;
+    // Une reaction par recharge au plus sur la cible unique du decor.
+    const assezDeReactions = (SYNERGY_MAX + 3) * REACTION_COOLDOWN_TICKS;
     const { synergie, reactions } = scene(2, assezDeReactions);
 
     // Le decor a produit STRICTEMENT plus de charges que le plafond : sans ce

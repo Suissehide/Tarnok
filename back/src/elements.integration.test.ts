@@ -438,41 +438,42 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
 
     // ---- 2. Les deux moities, champ a champ ------------------------------
     //
-    // Les reactions arrivent par paires : meme tick, meme point, meme couple.
-    // Seul le bit differe. Sans ce groupement, « aucune charge » se lirait
-    // aussi bien « aucune reaction en solo ».
-    const parTick = new Map<number, ReactionMessage[]>();
-    for (const r of recues) {
-      const lot = parTick.get(r.tick) ?? [];
-      lot.push(r);
-      parTick.set(r.tick, lot);
+    // Sans ce groupement, « aucune charge » se lirait aussi bien « aucune
+    // reaction en solo ».
+    // ⚠️ **Par PAIRES de ticks voisins, plus par tick, depuis la recharge par
+    // ennemi** (`REACTION_COOLDOWN_TICKS`). Le tick d'amorcage ne porte
+    // qu'une reaction : un projectile ne touche qu'une cible a la fois
+    // (`collide` departage a l'identite la plus petite, donc le duo). Le champ
+    // qu'elle laisse fait reagir la jumelle AU TICK SUIVANT — et la recharge,
+    // la meme pour les deux, garde ce decalage d'un tick pour toute la suite.
+    // Les reactions arrivent donc par paires (t, t + 1) : meme point, meme
+    // couple, seul le bit (et le tick) differe.
+    const triees = [...recues].sort((x, y) => x.tick - y.tick);
+    const paires: [ReactionMessage, ReactionMessage][] = [];
+    for (let k = 0; k + 1 < triees.length; k += 2) {
+      const [r1, r2] = [triees[k], triees[k + 1]];
+      if (r1 && r2) {
+        paires.push([r1, r2]);
+      }
     }
-    // Le dernier lot peut etre coupe en deux par la fin de l'attente : on le
-    // laisse de cote plutot que de le compter a moitie.
-    //
-    // ⚠️ **Et le PREMIER aussi, depuis la tache 21.** Le tick d'amorcage ne
-    // porte qu'une seule reaction : un projectile ne touche qu'une cible a la
-    // fois (`collide` departage a l'identite la plus petite), et tant qu'aucun
-    // champ n'existe c'est le seul chemin ouvert. C'est le champ laisse par
-    // cette premiere reaction qui couvre ENSUITE les deux jumelles et les fait
-    // reagir ensemble, tick apres tick.
-    const ticks = [...parTick.keys()].sort((x, y) => x - y).slice(1, -1);
-    expect(ticks.length, 'le decor n a pas produit assez de ticks reactifs').toBeGreaterThanOrEqual(
+    expect(paires.length, 'le decor n a pas produit assez de paires').toBeGreaterThanOrEqual(
       TICKS_REACTIFS - 2,
     );
 
-    for (const tick of ticks) {
-      const lot = parTick.get(tick) ?? [];
-      expect(lot, `le tick ${tick} n a pas produit ses DEUX reactions`).toHaveLength(2);
-      const [avecCharge, sansCharge] = lot[0]?.synergyCharge ? [lot[0], lot[1]] : [lot[1], lot[0]];
-      if (!avecCharge || !sansCharge) {
-        throw new Error('deux reactions attendues');
-      }
+    for (const [r1, r2] of paires) {
+      expect(
+        r2.tick - r1.tick,
+        `la paire du tick ${r1.tick} n est pas voisine`,
+      ).toBeLessThanOrEqual(1);
+      const [avecCharge, sansCharge] = r1.synergyCharge ? [r1, r2] : [r2, r1];
       // ⚠️ **Champ a champ** : tout est egal sauf le bit. C'est ce qui
       // interdit de lire « la barre ne bouge pas » comme « rien n'a reagi ».
       expect(avecCharge.synergyCharge).toBe(true);
       expect(sansCharge.synergyCharge).toBe(false);
-      expect({ ...sansCharge, synergyCharge: true }).toEqual(avecCharge);
+      // Un tick d'ecart : la position, reepinglee entre deux ticks, peut avoir
+      // glisse d'un pas de deplacement — pas davantage.
+      expect(sansCharge.pair).toBe(avecCharge.pair);
+      expect(Math.hypot(sansCharge.x - avecCharge.x, sansCharge.y - avecCharge.y)).toBeLessThan(8);
     }
 
     // ---- 3. La barre, lue dans le SNAPSHOT et nulle part ailleurs ---------
@@ -677,6 +678,16 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
         return;
       }
       vise(a, (room.horde.x[slot] ?? 0) - pa.x, (room.horde.y[slot] ?? 0) - pa.y);
+      // ⚠️ **L'alternance des elements, tenue a la main depuis la recharge par
+      // ennemi** (`REACTION_COOLDOWN_TICKS`). Un ennemi ne reagit plus qu'une
+      // fois par recharge, et au rythme fixe des deux armes c'est toujours le
+      // MEME element qui declenche : les champs successifs portent le meme
+      // element, se rafraichissent, et aucun couple de disques ne nait plus.
+      // Reposer, apres chaque reaction, la marque de l'element qui vient de
+      // declencher fait declencher l'AUTRE a la suivante — donc un champ de
+      // l'autre element, qui recoupe le precedent.
+      const element = reactionsDe(a).length % 2 === 0 ? ELEMENT.BRAISE : ELEMENT.GIVRE;
+      room.horde.applyMark(slot, element, a.playerId, room.tick);
     }, 8);
 
     /** Le tick qui porte DEUX reactions — impossible avec un seul ennemi. */

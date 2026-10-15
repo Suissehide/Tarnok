@@ -1064,6 +1064,18 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         room.horde.vx[slot] = 0;
         room.horde.vy[slot] = 0;
         room.horde.hp[slot] = 1e6;
+        // ⚠️ **La marque tourne sur ses quatre elements, a la main, depuis la
+        // recharge par ennemi** (`REACTION_COOLDOWN_TICKS`). La cible ne
+        // reagit plus qu'une fois par recharge, et au rythme fixe des quatre
+        // armes c'est toujours le meme couple qui part. Changer d'element
+        // marque a chaque reaction recue laisse les armes former les autres ;
+        // c'est toujours le joueur seul qui marque, et ses armes qui
+        // declenchent.
+        const n = reactionsDe(a).length;
+        const marque = SIENS[(n + Math.floor(n / SIENS.length)) % SIENS.length];
+        if (marque !== undefined) {
+          room.horde.applyMark(slot, marque, a.playerId, room.tick);
+        }
       }
       vise(a, OFFSET, 0);
     }, 8);

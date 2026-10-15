@@ -392,10 +392,27 @@ export interface ReactionTrigger {
  * raison sur le risque (*« la cascade est un risque de cout autant que de
  * lisibilite »*), pas sur le chiffre qui l'illustre.
  */
+/**
+ * Ticks pendant lesquels un ennemi qui vient de reagir ne reagit plus (0,5 s).
+ *
+ * ⚠️ **Retour de playtest : « un petit cooldown du proc de synergie sur une
+ * meme entite ».** La borne d'origine n'etait que d'UNE reaction par tick :
+ * deux armes d'elements differents qui remarquent le meme ennemi a chaque
+ * pulsation (homoncule, halo, faisceau) le faisaient reagir en boucle, une
+ * explosion et une charge de Synergie par coup. Pendant la recharge, le second
+ * element se contente de REMPLACER la marque — le meme comportement que quand
+ * la borne du tick etait atteinte, donc aucun troisieme cas.
+ */
+export const REACTION_COOLDOWN_TICKS = 15;
+
 export class Reactions {
   #pending: ReactionTrigger[] = [];
-  /** Identites ayant deja reagi depuis le dernier `drain`. */
-  readonly #reacted = new Set<number>();
+  /**
+   * Le tick de la derniere reaction de chaque identite, tant qu'elle est en
+   * recharge (`REACTION_COOLDOWN_TICKS`). Englobe la borne « une par tick » :
+   * un ecart de zero est sous la recharge.
+   */
+  readonly #lastReaction = new Map<number, number>();
 
   /** Nombre de reactions en attente de resolution. */
   get count(): number {
@@ -409,11 +426,12 @@ export class Reactions {
    * qui dit a l'appelant si la marque se consomme (§4.3) ou si le second
    * element se contente de la remplacer.
    */
-  onEntity(entityId: number, trigger: ReactionTrigger): boolean {
-    if (this.#reacted.has(entityId)) {
+  onEntity(entityId: number, trigger: ReactionTrigger, tick = 0): boolean {
+    const derniere = this.#lastReaction.get(entityId);
+    if (derniere !== undefined && tick - derniere < REACTION_COOLDOWN_TICKS) {
       return false;
     }
-    this.#reacted.add(entityId);
+    this.#lastReaction.set(entityId, tick);
     this.#pending.push(trigger);
     return true;
   }
@@ -494,10 +512,18 @@ export class Reactions {
    * qui viderait la file sans vider l'ensemble des ennemis ayant reagi
    * empecherait toute reaction pour le reste de la partie.
    */
-  drain(): ReactionTrigger[] {
+  drain(tick?: number): ReactionTrigger[] {
     const out = this.#pending;
     this.#pending = [];
-    this.#reacted.clear();
+    // Oublie les recharges ecoulees : la table ne garde que les ennemis qui
+    // ont reagi recemment, morts compris, jamais toute l'histoire du salon.
+    if (tick !== undefined) {
+      for (const [id, derniere] of this.#lastReaction) {
+        if (tick - derniere >= REACTION_COOLDOWN_TICKS) {
+          this.#lastReaction.delete(id);
+        }
+      }
+    }
     return out;
   }
 }
@@ -534,15 +560,19 @@ function applyElement(
 ): void {
   const porte = horde.markAt(slot, tick);
   if (reactions && porte !== ELEMENT.NEUTRE && porte !== element) {
-    const declenche = reactions.onEntity(horde.entityIdAt(slot), {
-      pair: packElementPair(porte, element),
-      x: horde.x[slot] ?? 0,
-      y: horde.y[slot] ?? 0,
-      markBy: horde.markBy[slot] ?? 0,
-      by,
-      element,
-      entityId: horde.entityIdAt(slot),
-    });
+    const declenche = reactions.onEntity(
+      horde.entityIdAt(slot),
+      {
+        pair: packElementPair(porte, element),
+        x: horde.x[slot] ?? 0,
+        y: horde.y[slot] ?? 0,
+        markBy: horde.markBy[slot] ?? 0,
+        by,
+        element,
+        entityId: horde.entityIdAt(slot),
+      },
+      tick,
+    );
     if (declenche) {
       // La marque se consomme : `NEUTRE` n'est pas un cas particulier de la
       // table des elements (voir `shared/elements.ts`), donc la reposer par le

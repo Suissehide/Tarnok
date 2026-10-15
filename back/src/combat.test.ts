@@ -63,6 +63,7 @@ import {
   type HarvestPlayer,
   markInZones,
   OrbField,
+  REACTION_COOLDOWN_TICKS,
   Reactions,
   type ReactionTrigger,
   resolveBeams,
@@ -1850,8 +1851,10 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     expect(reactions.count).toBe(20);
   });
 
-  it('drain remet la borne a zero : le tick suivant peut reagir a nouveau', () => {
-    // ⚠️ Sans cette remise a zero, un ennemi qui a reagi une fois ne
+  it('la recharge par ennemi : rien avant REACTION_COOLDOWN_TICKS, de nouveau apres', () => {
+    // ⚠️ Retour de playtest : la borne n'etait que d'une reaction par tick, et
+    // un ennemi remarque a chaque pulsation reagissait en boucle. Et l'autre
+    // moitie : sans fin de recharge, un ennemi qui a reagi une fois ne
     // reagirait plus jamais de toute la partie.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
@@ -1863,9 +1866,15 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     markInZones(horde, zones, 0, reactions);
     expect(reactions.drain().length).toBe(1);
 
-    horde.applyMark(horde.slotOf(cible), ELEMENT.BRAISE, 1, 1);
-    markInZones(horde, zones, 1, reactions);
-    expect(reactions.drain().length).toBe(1);
+    const juste = REACTION_COOLDOWN_TICKS - 1;
+    horde.applyMark(horde.slotOf(cible), ELEMENT.BRAISE, 1, juste);
+    markInZones(horde, zones, juste, reactions);
+    expect(reactions.drain(juste).length).toBe(0);
+
+    const apres = REACTION_COOLDOWN_TICKS;
+    horde.applyMark(horde.slotOf(cible), ELEMENT.BRAISE, 1, apres);
+    markInZones(horde, zones, apres, reactions);
+    expect(reactions.drain(apres).length).toBe(1);
   });
 });
 
