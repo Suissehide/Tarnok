@@ -8,8 +8,9 @@ import {
   assertWeaponLooks,
   BASE_WEAPON_ID,
   cooldownWithBonus,
-  HEAVY_BLAST_RADIUS,
   effectRadius,
+  HEAVY_BLAST_RADIUS,
+  isLaunched,
   MAX_FIRE_RATE_BONUS,
   MIN_MUZZLE_SPEED,
   PROJECTILE_FADE_REFERENCE_TICKS,
@@ -44,7 +45,15 @@ describe('WEAPONS', () => {
     for (const w of WEAPONS) {
       expect(w.cooldownTicks).toBeGreaterThan(0);
       expect(w.damage).toBeGreaterThan(0);
-      expect(w.projectileSpeed).toBeGreaterThan(0);
+      // ⚠️ **Sauf une mine, qui ne part pas** (etape 8) : `isLaunched` ecrit la
+      // regle, et le cas « plancher de vitesse » plus bas en garde les deux
+      // moities — ce qui part depasse le joueur, ce qui ne part pas vaut
+      // exactement zero.
+      if (isLaunched(w)) {
+        expect(w.projectileSpeed).toBeGreaterThan(0);
+      } else {
+        expect(w.projectileSpeed, w.name).toBe(0);
+      }
       expect(w.projectileLifeTicks).toBeGreaterThan(0);
       expect(w.projectileCount).toBeGreaterThan(0);
       expect(w.spreadRadians).toBeGreaterThan(0);
@@ -235,7 +244,11 @@ describe('le rayon de zone porte par une arme (tache 16)', () => {
     // rayon autour du porteur. Les confondre ferait dire a ce cas qu'un halo
     // doit etre plus lent que la grenade, ce qui n'a aucun sens pour une arme
     // qui ne percute rien.
-    const zone = WEAPONS.filter((w) => w.kind === 'tir' && w.blastRadius > 0);
+    // ⚠️ **Parmi les armes LANCEES seulement** (etape 8) : une mine a un
+    // souffle elle aussi, mais sa cadence n'est pas comparable a celle d'une
+    // arme qu'on lance — elle attend au sol, et ce qui la fait sauter n'est pas
+    // sa recharge mais l'ennemi qui s'approche.
+    const zone = WEAPONS.filter((w) => w.kind === 'tir' && isLaunched(w) && w.blastRadius > 0);
     // ⚠️ **Le souffle n'est plus l'apanage d'une seule arme depuis l'etape 8**
     // (les quatre lourdes a projectile unique en ont un de contact), mais il
     // reste une EXCEPTION : la regle du catalogue est « ce coup ne touche que
@@ -245,8 +258,9 @@ describe('le rayon de zone porte par une arme (tache 16)', () => {
     expect(zone.length).toBeLessThan(WEAPONS.length / 2);
 
     const plusLarge = zone.reduce((a, b) => (a.blastRadius >= b.blastRadius ? a : b));
-    const cadenceMax = Math.max(...WEAPONS.map((w) => w.cooldownTicks));
-    const degatsMax = Math.max(...WEAPONS.map((w) => w.damage));
+    const lancees = WEAPONS.filter(isLaunched);
+    const cadenceMax = Math.max(...lancees.map((w) => w.cooldownTicks));
+    const degatsMax = Math.max(...lancees.map((w) => w.damage));
     expect(plusLarge.cooldownTicks).toBe(cadenceMax);
     expect(plusLarge.damage).toBe(degatsMax);
     // Et son souffle est STRICTEMENT le plus large : sans ca, cinq armes ex
@@ -256,8 +270,8 @@ describe('le rayon de zone porte par une arme (tache 16)', () => {
     // Non-vacuite : ces deux extremes designent bien UNE arme, pas huit ex
     // aequo. Sans ca, un catalogue plat rendrait le test ci-dessus toujours
     // vrai.
-    expect(WEAPONS.filter((w) => w.cooldownTicks === cadenceMax).length).toBe(1);
-    expect(WEAPONS.filter((w) => w.damage === degatsMax).length).toBe(1);
+    expect(lancees.filter((w) => w.cooldownTicks === cadenceMax).length).toBe(1);
+    expect(lancees.filter((w) => w.damage === degatsMax).length).toBe(1);
   });
 
   /**
@@ -416,7 +430,7 @@ describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
   });
 
   it('reste strictement sous celui de la grenade', () => {
-    const tirs = WEAPONS.filter((w) => w.kind === 'tir');
+    const tirs = WEAPONS.filter((w) => w.kind === 'tir' && isLaunched(w));
     const grenade = tirs.reduce((a, b) => (a.blastRadius >= b.blastRadius ? a : b));
     for (const w of tirs) {
       if (w.blastRadius > 0 && w !== grenade) {
@@ -711,8 +725,18 @@ describe('les calibres de projectile disent les degats', () => {
  */
 describe('MIN_MUZZLE_SPEED — un projectile prend de l avance sur son tireur', () => {
   it('fait partir CHAQUE arme plus vite que le joueur, avec de la marge', () => {
-    for (const w of WEAPONS) {
+    for (const w of WEAPONS.filter(isLaunched)) {
       expect(w.projectileSpeed, w.name).toBeGreaterThanOrEqual(MIN_MUZZLE_SPEED);
+    }
+    // ⚠️ **L'autre moitie de la regle** : ce qui ne part pas vaut exactement
+    // zero. Entre les deux — une vitesse faible mais non nulle — il n'y a que
+    // des armes qui se tassent sur leur tireur.
+    for (const w of WEAPONS.filter((w) => !isLaunched(w))) {
+      expect(w.projectileSpeed, w.name).toBe(0);
+      // Une mine immobile qui n'emporte rien ne ferait jamais rien : c'est son
+      // souffle qui la rend utile, et le detecteur de proximite de `collide`
+      // qui la declenche.
+      expect(w.blastRadius, w.name).toBeGreaterThan(0);
     }
   });
 
@@ -724,7 +748,9 @@ describe('MIN_MUZZLE_SPEED — un projectile prend de l avance sur son tireur', 
   });
 
   it('laisse a la plus lente du catalogue de quoi sortir d un corps en un tiers de seconde', () => {
-    const laPlusLente = WEAPONS.reduce((a, b) => (a.projectileSpeed <= b.projectileSpeed ? a : b));
+    const laPlusLente = WEAPONS.filter(isLaunched).reduce((a, b) =>
+      a.projectileSpeed <= b.projectileSpeed ? a : b,
+    );
     const relative = laPlusLente.projectileSpeed - PLAYER_SPEED;
     // ⚠️ **Le temps qu'il faut au projectile le plus lent pour sortir du corps
     // de son tireur qui le suit** — un corps fait `2 x PROJECTILE_HIT_RADIUS`

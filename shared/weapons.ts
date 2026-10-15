@@ -770,7 +770,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // plus.
     look: {
       shape: 'javelot',
-      diameterPx: 27,
+      diameterPx: 25,
       tint: 0x00e5ff,
       glow: 0.5,
       trailTicks: 1.4,
@@ -844,7 +844,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // qui n'illumine rien.
     look: {
       shape: 'masse',
-      diameterPx: 24,
+      diameterPx: 23,
       tint: 0x5c3a21,
       glow: 0.15,
       trailTicks: 1.3,
@@ -864,35 +864,67 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
   {
     // Tache 8 de l'etape 5c : la Chaux a enfin ses armes.
     //
-    // La chaux « rapide », en face de la seringue-a-poix et des
-    // fleches-jumelles : trois projectiles a courte portee, pour etaler la
-    // marque sur un front. `armorReduction` et `fieldSign` (`shared/elements.ts`)
-    // se lisent a la ZONE que la reaction laisse au sol, jamais au projectile
-    // — donc une arme qui touche souvent seme donc plus souvent l'occasion
-    // qu'une zone de Chaux se pose.
-    name: 'Poire à chaux',
-    // Bouffee paille claire — trois lobes de poudre, pas un grain —, distincte
-    // du blanc crayeux de l'element (0xe8dcc0) : la zone au sol dit l'element,
-    // pas le projectile (`assertWeaponLooks`).
+    // ⚠️ **LA MINE** (etape 8) — la quatrieme famille, apres l'anneau, le halo
+    // et le faisceau.
     //
-    // ⚠️ **Eclaircie a l'etape 8** : 0x8fe34c etait un vert pose sur de
-    // l'herbe verte, donc invisible des que le projectile quittait le joueur.
-    // Ce qui se lit sur ce fond est un ecart de VALEUR — toutes les armes de
-    // Chaux et de Vif-argent sont passees en teintes PALES pour cette raison.
+    // ⚠️ **Elle n'a demande AUCUN type d'arme de plus, comme l'anneau.** Un
+    // projectile IMMOBILE a souffle EST une mine, et les trois pieces
+    // existaient deja :
+    //
+    // | Ce qu'il faut a une mine | Ce que la donnee dit deja |
+    // | --- | --- |
+    // | rester ou on la pose | `projectileSpeed: 0` |
+    // | attendre longtemps | `projectileLifeTicks` — ici 8 secondes |
+    // | sauter quand on s'approche | `collide` teste `PROJECTILE_HIT_RADIUS` autour d'elle : c'est deja un detecteur de proximite |
+    // | emporter le voisinage | `blastRadius`, l'arme de zone de la tache 16 |
+    //
+    // ⚠️ **Elle REMPLACE la Poire a chaux**, la chaux « rapide » qui etalait sa
+    // marque en trois bouffees courtes. La Chaux garde ses deux armes avec le
+    // Canon, et le catalogue reste a dix-sept.
+    //
+    // ⚠️ **Elle se pose AUX PIEDS du joueur**, pas devant : `#emit` depose a la
+    // position du tireur, et a vitesse nulle la direction visee n'a plus
+    // d'effet. C'est une arme qui demande de faire passer la horde SUR soi
+    // puis de s'ecarter — l'inverse exact du faisceau, qui demande de l'aligner
+    // devant.
+    //
+    // ponytail: empiler cette arme pose N mines AU MEME POINT (toutes les
+    // salves partent de la meme position a vitesse nulle), donc les
+    // exemplaires concentrent les degats au lieu de couvrir plus de terrain.
+    // Acceptable — ca reste « l'accumulation fait la puissance » —, mais si
+    // l'auteur veut un semis, il faudra un deport a l'emission, pas une regle
+    // de plus ici.
+    name: 'Semoir de chaux',
+    // ⚠️ **`blastRadius` est ce que la mine emporte en sautant** — le sens
+    // ordinaire du champ (la grenade l'a depuis la tache 16), pas le sens
+    // detourne du halo et du faisceau.
+    blastRadius: 60,
+    // Bouffee paille claire, qui TOURNE sur place : une mine posee doit se
+    // remarquer au sol sans bouger, et la rotation est le seul mouvement dont
+    // elle dispose. Distincte du blanc crayeux de l'element (0xe8dcc0) : la
+    // zone au sol dit l'element, pas le projectile (`assertWeaponLooks`).
     look: {
       shape: 'bouffee',
-      diameterPx: 7,
+      diameterPx: 27,
       tint: 0xf3ecb8,
       glow: 0.35,
+      // ⚠️ **Zero trainee** : `projectileTrailPx` multiplie par la vitesse, qui
+      // est nulle — la valeur est donc sans effet, et c'est juste.
       trailTicks: 0.9,
-      spinTurns: 0.6,
+      spinTurns: 0.4,
       trail: 'fumee',
     },
-    cooldownTicks: 17,
-    damage: 4,
-    projectileSpeed: 460,
-    projectileLifeTicks: 15,
-    projectileCount: 3,
+    cooldownTicks: 50,
+    damage: 18,
+    // ⚠️ **ZERO, et c'est la seule arme du catalogue a y avoir droit** : voir
+    // `MIN_MUZZLE_SPEED`, dont la regle est « un projectile part plus vite que
+    // son tireur, OU il ne part pas du tout ».
+    projectileSpeed: 0,
+    // Huit secondes au sol. C'est long pour un projectile et court pour un
+    // piege : assez pour que la vague suivante marche dessus, trop peu pour
+    // que le terrain se couvre de mines oubliees.
+    projectileLifeTicks: 240,
+    projectileCount: 1,
     spreadRadians: 0.4,
     element: ELEMENT.CHAUX,
   },
@@ -907,7 +939,7 @@ const WEAPON_DEFS: readonly (Omit<Weapon, 'id' | 'element' | 'blastRadius' | 'pi
     // celle de la poire-a-chaux.
     look: {
       shape: 'obus',
-      diameterPx: 25,
+      diameterPx: 24,
       tint: 0xcbbf9a,
       glow: 0.2,
       trailTicks: 1.2,
@@ -1108,6 +1140,20 @@ export const PROJECTILE_FADE_REFERENCE_TICKS = 40;
  * symptome sans ouvrir ce contrat.
  */
 export const MIN_MUZZLE_SPEED = PLAYER_SPEED + 200;
+
+/**
+ * Un projectile de cette arme PART-il ? `false` pour une mine, qui reste ou on
+ * la pose.
+ *
+ * ⚠️ **C'est la regle du plancher, ecrite a l'endroit** : un projectile part
+ * plus vite que son tireur, OU il ne part pas du tout. Entre les deux — une
+ * vitesse faible mais non nulle — il n'y a que des armes qui se tassent sur le
+ * joueur, et c'est exactement ce que `MIN_MUZZLE_SPEED` existe pour interdire.
+ * `weapons.test.ts` garde les deux moities.
+ */
+export function isLaunched(weapon: Weapon): boolean {
+  return weapon.projectileSpeed > 0;
+}
 
 /**
  * Part de sa vie qu'un projectile passe a s'eteindre, de 0 (jamais) a 1 (des

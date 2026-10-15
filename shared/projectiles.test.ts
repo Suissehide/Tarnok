@@ -7,7 +7,7 @@ import { Horde } from './horde';
 import { Projectiles } from './projectiles';
 import { FORMATION, type WaveOrder } from './waves';
 import type { Weapon } from './weapons';
-import { WEAPONS, weaponOf } from './weapons';
+import { projectileTrailPx, WEAPONS, weaponOf } from './weapons';
 import { ZoneField } from './zones';
 
 /**
@@ -929,6 +929,82 @@ describe('Projectiles — la salve en anneau', () => {
     for (const w of anneaux) {
       // Un anneau n'a de sens qu'a plusieurs projectiles.
       expect(w.projectileCount, w.name).toBeGreaterThan(2);
+    }
+  });
+});
+
+/**
+ * Étape 8 — **la mine**, quatrieme famille demandee par l'auteur. Comme
+ * l'anneau, elle n'a demande aucun type d'arme : un projectile IMMOBILE a
+ * souffle est une mine, et `collide` est deja un detecteur de proximite.
+ */
+describe('Projectiles — la mine, un projectile qui ne part pas', () => {
+  const MINE: Weapon = {
+    ...SINGLE,
+    projectileSpeed: 0,
+    projectileLifeTicks: 240,
+    blastRadius: 60,
+  };
+
+  it('reste EXACTEMENT ou on la pose, pas de pas en pas', () => {
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(MINE, 0, 300, 400, 1, 0, MINE.damage, 1);
+    for (let i = 0; i < 60; i++) {
+      p.step(1 / TICK_HZ);
+    }
+    expect(p.x[0]).toBe(300);
+    expect(p.y[0]).toBe(400);
+  });
+
+  it('ne saute QUE si un corps s approche', () => {
+    // ⚠️ Le detecteur, c'est `PROJECTILE_HIT_RADIUS` autour d'elle — le meme
+    // que pour un projectile en vol, applique a un segment degenere en point.
+    const loin = new Horde(10);
+    addOne(loin, 1, 300 + PROJECTILE_HIT_RADIUS + 5, 400);
+    const pLoin = new Projectiles(8);
+    pLoin.fireSalvoDirected(MINE, 0, 300, 400, 1, 0, MINE.damage, 1);
+    pLoin.step(1 / TICK_HZ);
+    let touches = 0;
+    pLoin.collide(loin, () => {
+      touches++;
+    });
+    expect(touches).toBe(0);
+    expect(pLoin.count).toBe(1);
+
+    const pres = new Horde(10);
+    addOne(pres, 1, 300 + PROJECTILE_HIT_RADIUS - 5, 400);
+    const pPres = new Projectiles(8);
+    pPres.fireSalvoDirected(MINE, 0, 300, 400, 1, 0, MINE.damage, 1);
+    pPres.step(1 / TICK_HZ);
+    pPres.collide(pres, () => {
+      touches++;
+    });
+    expect(touches).toBe(1);
+    // Et elle est consommee en sautant : une mine ne saute qu'une fois.
+    expect(pPres.count).toBe(0);
+  });
+
+  it('expire si personne ne marche dessus', () => {
+    const p = new Projectiles(8);
+    p.fireSalvoDirected(MINE, 0, 300, 400, 1, 0, MINE.damage, 1);
+    for (let i = 0; i < MINE.projectileLifeTicks; i++) {
+      p.step(1 / TICK_HZ);
+    }
+    expect(p.count).toBe(0);
+  });
+
+  it('ne tracte AUCUNE trainee : sa longueur est un produit par la vitesse', () => {
+    expect(projectileTrailPx(MINE)).toBe(0);
+  });
+
+  it('rend au catalogue une arme qui se pose, et elle emporte un souffle', () => {
+    const mines = WEAPONS.filter((w) => w.projectileSpeed === 0);
+    expect(mines.length).toBeGreaterThan(0);
+    for (const w of mines) {
+      expect(w.blastRadius, w.name).toBeGreaterThan(0);
+      // Elle doit ATTENDRE : une mine a la duree de vie d'un tir ne serait
+      // qu'un coup rate.
+      expect(w.projectileLifeTicks, w.name).toBeGreaterThan(100);
     }
   });
 });
