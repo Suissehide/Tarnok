@@ -46,6 +46,10 @@ export class PingWheel {
     events.addEventListener('pointerdown', (e) => this.#down(e as MouseEvent));
     events.addEventListener('pointerup', (e) => this.#up(e as MouseEvent));
     events.addEventListener('blur', () => this.#close());
+    // MINOR (revue finale, etape 9) : un geste coupe par le systeme (zoom,
+    // bascule d'appli, stylet) ne leve jamais de `pointerup` — sans ce
+    // listener la roue restait ouverte pour de bon, sans ping envoye.
+    events.addEventListener('pointercancel', () => this.#close());
   }
 
   get isOpen(): boolean {

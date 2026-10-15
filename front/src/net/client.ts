@@ -981,7 +981,12 @@ export interface ActivePing {
   intent: number;
   x: number;
   y: number;
-  /** Tick de horde a la RECEPTION : c'est lui qui fait expirer le ping. */
+  /**
+   * Tick de `GameClient#pingClock` a la RECEPTION : c'est lui qui fait
+   * expirer le ping. PAS le tick de horde (revue finale, etape 9) : celui-ci
+   * avance pendant le gel de niveau, et un ping date dessus s'eteindrait
+   * pendant que l'equipe choisit ses cartes — voir `pingClock`.
+   */
   tick: number;
 }
 
@@ -1203,6 +1208,8 @@ export class GameClient {
   readonly pings = new Map<number, ActivePing>();
   #pingCount = 0;
   #lastPingIntent = -1;
+  /** Horloge de ping (revue finale, etape 9) : voir l'accesseur `pingClock`. */
+  #pingClock = 0;
 
   /**
    * La charge du boss en cours, ou `null` — annoncee UNE FOIS par le serveur,
@@ -1443,6 +1450,28 @@ export class GameClient {
    */
   get hordeTick(): number {
     return this.#lastHordeTick;
+  }
+
+  /**
+   * Horloge dediee aux pings (revue finale de l'etape 9). Avance comme
+   * `hordeTick` SAUF pendant que `isFrozen` est vrai — gel strict ET rampe de
+   * reprise comprises (tache 24) : c'est la MEME perturbation que celle que
+   * `isFrozen` decrit deja pour le HUD, et un ping pose juste avant une
+   * montee de niveau ne doit pas s'eteindre pendant que l'equipe choisit ses
+   * cartes. `hordeTick`, lui, avance a chaque pas fixe, gel ou pas — seul
+   * `#movementScale` ralentit le MOUVEMENT, jamais ce compteur, et c'est
+   * precisement la confusion que la revue a trouvee.
+   *
+   * ⚠️ **Mesuree UNE SEULE FOIS par appel a `update()`**, sur l'ECART du tick
+   * de horde entre le debut et la fin de cet appel — jamais depuis
+   * `#advanceHorde` : le rejeu (`#replayTick`) peut executer ce dernier
+   * plusieurs fois pour le MEME tick, et compterait alors deux fois le meme
+   * pas. `isFrozen` est stable sur toute la duree d'un `update()` : seul
+   * `#onFrame` (jamais appele depuis `update()`) fait avancer les bornes du
+   * gel.
+   */
+  get pingClock(): number {
+    return this.#pingClock;
   }
 
   /** L'etalage a afficher. Vide quand aucun draft n'est ouvert. */
@@ -1792,7 +1821,8 @@ export class GameClient {
       intent: msg.intent,
       x: msg.x,
       y: msg.y,
-      tick: this.hordeTick,
+      // `pingClock`, pas `hordeTick` (revue finale, etape 9) : voir l'accesseur.
+      tick: this.pingClock,
     });
     this.#pingCount += 1;
     this.#lastPingIntent = msg.intent;
@@ -1887,6 +1917,7 @@ export class GameClient {
     const STEP = 1 / TICK_HZ;
     this.#hordeAcc += dt;
     let steps = 0;
+    const hordeTickAvant = this.#lastHordeTick;
     while (this.#hordeAcc >= STEP && steps < 5) {
       this.#advanceHorde(STEP, now);
       this.#hordeAcc -= STEP;
@@ -1894,6 +1925,14 @@ export class GameClient {
     }
     if (steps === 5) {
       this.#hordeAcc = 0;
+    }
+    // `pingClock` (revue finale, etape 9) : voir l'accesseur. Mesuree ICI,
+    // une seule fois pour tout cet appel — jamais dans `#advanceHorde`, que le
+    // rejeu peut executer plusieurs fois pour le meme tick. `#onFrame` ne
+    // s'execute jamais depuis `update()` (c'est le handler WebSocket qui
+    // l'appelle), donc `isFrozen` est stable sur toute la boucle ci-dessus.
+    if (!this.isFrozen) {
+      this.#pingClock += this.#lastHordeTick - hordeTickAvant;
     }
 
     const players = this.#buffer.sample(now);

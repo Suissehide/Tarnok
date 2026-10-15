@@ -45,6 +45,12 @@ joueurs : ≈ 170 o/s en pointe. `Room` n'est pas modifié : l'anti-spam vit dan
   déclaration depuis la lambda de visée.
 - **Fait sur une branche** (`etape-9-ping`), pas sur `main` : `main` recevait au même moment des
   modifications en direct sur `client.ts` et `room.ts`.
+- **Correction de la revue finale : une horloge de ping dédiée (`GameClient#pingClock`), distincte
+  de `hordeTick`.** Un ping daté sur `hordeTick` — qui avance à chaque pas fixe, gel ou pas —
+  s'éteignait pendant le gel de montée de niveau, le temps que l'équipe choisisse ses cartes.
+  `pingClock` n'avance pas tant que `client.isFrozen` est vrai (gel strict et rampe de reprise
+  comprises) ; `#onPingShown` date désormais le ping dessus, et les deux appelants de `livePings`
+  (`composeFrame`, la mini-carte) lui passent `pingClock` au lieu de `hordeTick`.
 
 ## 4. Le portique
 
@@ -77,6 +83,8 @@ Aucun de ces fichiers n'est touché par l'étape 9.
 - les quatre sons se distinguent-ils ?
 - sur un pavé tactile de Mac, le clic droit maintenu est-il praticable ? Sinon, les touches 1 à 4
   sont la réponse prévue (§9 de la spec), sans toucher au fil.
+- un ping posé derrière un arbre ou un joueur reste-t-il lisible ? (le marqueur est sous le calque
+  des joueurs et des arbres)
 
 ## 6. Notes de revue laissées pour plus tard
 
@@ -85,4 +93,6 @@ Rien de bloquant ; chaque tâche a passé sa revue sans correction.
 - plusieurs `PING_SHOWN` dans la même image ne jouent que le son du dernier ;
 - le menu contextuel reste neutralisé en pause et pendant l'étalage tant que le HUD est affiché ;
 - la fenêtre glissante de l'anti-spam est écrite en ligne dans `#onFrame` — à extraire si un
-  second appelant apparaît.
+  second appelant apparaît ;
+- le test d'ouverture de la roue s'appuie sur `client.isFrozen`, qui couvre aussi la seconde avant
+  l'étalage et la reprise après : un clic droit y est sans effet (accepté).

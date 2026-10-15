@@ -91,6 +91,21 @@ describe('PingWheel : le geste du clic droit', () => {
     expect(onPing).not.toHaveBeenCalled();
   });
 
+  /**
+   * MINOR de la revue finale (etape 9) : un `pointercancel` (le systeme coupe
+   * le geste — zoom gestuel, bascule d'appli, stylet qui perd le contact) ne
+   * levait jamais de `pointerup`, et la roue restait ouverte pour de bon.
+   */
+  it('un pointercancel ferme la roue sans rien envoyer', () => {
+    const { events, onPing, wheel } = monte();
+    events.dispatchEvent(pointeur('pointerdown', 50, 50));
+    expect(wheel.isOpen).toBe(true);
+    events.dispatchEvent(new Event('pointercancel'));
+    expect(wheel.isOpen).toBe(false);
+    events.dispatchEvent(pointeur('pointerup', 150, 50));
+    expect(onPing).not.toHaveBeenCalled();
+  });
+
   it('l etalage qui s ouvre pendant la roue la ferme sans rien envoyer', () => {
     let enJeu = true;
     const { events, onPing, wheel } = monte(() => enJeu);

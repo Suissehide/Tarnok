@@ -19,9 +19,12 @@ const WAVE_MIN = 18;
 const WAVE_MAX = 90;
 
 /**
- * Les pings vivants au tick de horde `tick`. Le tick, jamais l'horloge murale :
- * pendant le gel de l'etalage il n'avance pas, et un ping recu juste avant ne
- * doit pas s'eteindre pendant que personne ne peut le lire.
+ * Les pings vivants au tick `tick`. Jamais l'horloge murale — et, depuis la
+ * revue finale de l'etape 9, jamais `GameClient#hordeTick` non plus : les
+ * deux appelants (`composeFrame`, la mini-carte) passent `GameClient#pingClock`,
+ * qui n'avance pas pendant le gel de niveau (`isFrozen`). `hordeTick`, lui,
+ * avance a chaque pas fixe, gel ou pas — un ping recu juste avant un palier
+ * s'y eteindrait pendant que l'equipe choisit ses cartes.
  */
 export function livePings(pings: ReadonlyMap<number, ActivePing>, tick: number): LivePing[] {
   const out: LivePing[] = [];
@@ -100,8 +103,8 @@ function intentIcon(
   alpha: number,
 ): void {
   if (intent === DANGER) {
-    g.poly([x, y - r, x + r, y + r * 0.8, x - r, y + r * 0.8]).fill({ color: 0xff4a3a, alpha });
-    g.poly([x, y - r, x + r, y + r * 0.8, x - r, y + r * 0.8]).stroke({ color, width: 2, alpha });
+    const pts = [x, y - r, x + r, y + r * 0.8, x - r, y + r * 0.8];
+    g.poly(pts).fill({ color: 0xff4a3a, alpha }).stroke({ color, width: 2, alpha });
   } else if (intent === BOSS) {
     g.poly([x, y - r, x + r, y, x, y + r, x - r, y]).fill({ color, alpha });
   } else if (intent === JE_PRENDS) {

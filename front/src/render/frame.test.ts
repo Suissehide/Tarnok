@@ -128,6 +128,12 @@ class RecordingClient implements FrameClient {
    */
   readonly hordeTick = 137;
   /**
+   * Volontairement DIFFERENT de `hordeTick` (revue finale, etape 9) : sans cet
+   * ecart, passer l'un a la place de l'autre a `drawPings` resterait
+   * indetectable — c'est exactement la confusion que la revue a trouvee.
+   */
+  readonly pingClock = 55;
+  /**
    * Un boss reconnaissable, et surtout DISTINCT de la horde : `drawBossBar`
    * recoit les deux, et les intervertir ou n'en passer qu'un doit se voir.
    */
@@ -411,17 +417,20 @@ describe('composeFrame — chaque calque recoit son appel', () => {
 
   /**
    * ⚠️ **Les pings recoivent la carte du CLIENT, les joueurs DESSINES
-   * (`state.players`) et le TICK de horde** (etape 9) — jamais `now` pour
-   * decider qui vit : le tick de simulation, comme les zones et les marques,
-   * garde un ping affiche pendant le gel de l'etalage.
+   * (`state.players`) et `pingClock` — PAS `hordeTick`** (revue finale, etape
+   * 9) — jamais `now` pour decider qui vit. `hordeTick` avance a CHAQUE pas
+   * fixe, gel ou pas (seul `#movementScale` ralentit le mouvement) ; c'est
+   * `pingClock` qui n'avance pas pendant le gel de l'etalage, et qui garde
+   * donc un ping affiche pendant que l'equipe choisit ses cartes — voir
+   * `GameClient#pingClock`.
    */
-  it('les pings recoivent la carte du client, les joueurs DESSINES et le tick de horde, apres le cadrage', () => {
+  it('les pings recoivent la carte du client, les joueurs DESSINES et pingClock (pas hordeTick), apres le cadrage', () => {
     const { stage, client, state } = compose();
     expect(stage.argsOf('pings')).toEqual([
       client.pings,
       state.players,
       state.localId,
-      client.hordeTick,
+      client.pingClock,
       NOW,
     ]);
     const ordre = stage.order;
