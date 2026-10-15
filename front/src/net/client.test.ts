@@ -2562,7 +2562,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // ...mais la carte que l'issue designe est toujours la, et c'est la bonne.
     expect(client.draftCards).toHaveLength(2);
     const gagnee = client.draftCards[client.draftOutcomes[0]?.cardIndex ?? -1];
-    expect(gagnee).toEqual({ nature: CARD.WEAPON, refId: GRENADE, upgrade: 0 });
+    expect(gagnee).toEqual({ nature: CARD.WEAPON, refId: GRENADE, upgrade: 0, rarity: 0 });
 
     // Le prochain etalage remplace le precedent, et rouvre la negociation :
     // c'est LUI qui borne l'affichage, pas la fermeture.
