@@ -412,16 +412,6 @@ export const LEVEL_XP_BASE = 10;
 export const WEAPON_SLOTS = 4;
 
 /**
- * Nombre de slots de passifs d'un joueur (§6.1).
- *
- * ⚠️ Borne le nombre de passifs DISTINCTS possedes, pas le nombre de cartes
- * prises : un passif deja possede s'empile dans son slot existant sans en
- * consommer un nouveau (modele Risk of Rain, §3.3). L'extension a 6 slots par
- * evenements de run est hors perimetre de cette etape.
- */
-export const PASSIVE_SLOTS = 3;
-
-/**
  * Duree de la fenetre de draft, en ticks (20 s a `TICK_HZ`).
  *
  * ⚠️ Plafond du §7.4 valable seulement a PLUSIEURS joueurs : en solo, la

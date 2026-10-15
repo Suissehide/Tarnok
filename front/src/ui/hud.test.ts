@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { PASSIVE_SLOTS, SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -293,10 +293,10 @@ describe('paintPassives — les emplacements a l ecran', () => {
   const lignes = (): string[] =>
     [...el.passiveList.querySelectorAll<HTMLElement>('.hud-passive')].map((n) => n.title);
 
-  it('montre toujours PASSIVE_SLOTS emplacements, vides tant que rien n est pris', () => {
+  it('etape 13 : aucun cadre tant que rien n est pris, plus de remplissage a vide', () => {
     paintPassives(el.passiveList, []);
 
-    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
+    expect(el.passiveList.children).toHaveLength(0);
     expect(lignes()).toEqual([]);
   });
 
@@ -310,7 +310,7 @@ describe('paintPassives — les emplacements a l ecran', () => {
 
     expect(lignes()).toEqual(['vitalite ×4', 'cadence ×1']);
     expect(el.passiveList.querySelector('.hud-passive .slot__count')?.textContent).toBe('4');
-    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
+    expect(el.passiveList.children).toHaveLength(2);
   });
 
   it('repeint a chaque appel, sans cumuler les emplacements precedents', () => {
@@ -318,7 +318,7 @@ describe('paintPassives — les emplacements a l ecran', () => {
     paintPassives(el.passiveList, [{ name: 'vitalite', kind: 'maxHp', stacks: 2 }]);
 
     expect(lignes()).toEqual(['vitalite ×2']);
-    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
+    expect(el.passiveList.children).toHaveLength(1);
   });
 
   it('suit passiveRows, sans dupliquer', () => {
@@ -327,6 +327,13 @@ describe('paintPassives — les emplacements a l ecran', () => {
 
     expect(lignes().length).toBeLessThanOrEqual(PASSIVES.length);
     expect(lignes()).toEqual([`${passiveOf(VITALITE).label} ×2`, `${passiveOf(CADENCE).label} ×5`]);
+  });
+
+  it('etape 13 : la colonne des passifs suit ce qui est possede, sans cadre vide', () => {
+    const source = new FakeSource().prend(VITALITE, 1).prend(CADENCE, 1);
+    paintPassives(el.passiveList, passiveRows(source));
+
+    expect(el.passiveList.children).toHaveLength(2);
   });
 });
 

@@ -1,4 +1,4 @@
-import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
+import { WEAPON_SLOTS } from './constants';
 
 /**
  * Duplique `CARD.WEAPON` de `cards.ts`.
@@ -72,7 +72,13 @@ export class Loadout {
     return this.#weaponOrder.length;
   }
 
-  /** Nombre de passifs DISTINCTS possedes — jamais le nombre de cartes prises. */
+  /**
+   * Nombre de passifs DISTINCTS possedes.
+   *
+   * ⚠️ **Ce n'est plus une consommation d'emplacements** (etape 13, §2.0) : la
+   * limite de passifs a ete levee, les armes gardent la leur. Le compte reste
+   * utile — le HUD s'en sert pour savoir combien de cadres peindre.
+   */
   get passiveSlotsUsed(): number {
     let n = 0;
     for (const stacks of this.#passiveStacks) {
@@ -110,14 +116,11 @@ export class Loadout {
   }
 
   /**
-   * Empile un passif. Ne consomme un slot que si le joueur ne le possedait
-   * PAS encore — voir la doc de la classe.
+   * Empile un passif. Aucune limite depuis l'etape 13 : seul un identifiant
+   * inconnu fait lever.
    */
   addPassive(passiveId: number): void {
     const stacks = this.stacksOf(passiveId);
-    if (stacks === 0 && this.passiveSlotsUsed >= PASSIVE_SLOTS) {
-      throw new Error(`slots de passifs pleins (${PASSIVE_SLOTS})`);
-    }
     passiveOf(passiveId); // leve si l'identifiant n'existe pas
     this.#passiveStacks[passiveId] = stacks + 1;
   }
@@ -135,7 +138,9 @@ export class Loadout {
     if (nature === CARD_WEAPON) {
       return this.stacksOfWeapon(refId) > 0 || this.#weaponOrder.length < WEAPON_SLOTS;
     }
-    return this.stacksOf(refId) > 0 || this.passiveSlotsUsed < PASSIVE_SLOTS;
+    // ⚠️ **Toujours vrai depuis l'etape 13** : un passif ne peut plus etre
+    // refuse. Le parametre reste pour que la signature serve les deux natures.
+    return true;
   }
 
   /** Somme des `magnitude` de tous les exemplaires possedes de ce genre. */

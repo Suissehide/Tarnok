@@ -1,11 +1,5 @@
 import { applicationsOf, CARD, type Card } from '@shared/cards';
-import {
-  COLOSSUS_HP_STEP,
-  HARVEST_RADIUS,
-  PASSIVE_SLOTS,
-  TICK_HZ,
-  WEAPON_SLOTS,
-} from '@shared/constants';
+import { COLOSSUS_HP_STEP, HARVEST_RADIUS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
@@ -171,14 +165,16 @@ export function upgradeLabel(card: Card): string {
  * lit comme un bug. On dit donc la raison AVANT le clic, avec le compte des
  * slots. La regle elle-meme reste `canTake` — jamais recopiee ici, sinon
  * l'ecran et le serveur divergeraient a la premiere retouche.
+ *
+ * ⚠️ **Un passif n'est plus jamais bloque depuis l'etape 13** : `canTake` rend
+ * toujours `true` pour cette nature, donc cette fonction rend toujours `null`
+ * pour `CARD.PASSIVE` — seule l'arme garde une raison de refus a afficher.
  */
 export function blockedReason(card: Card, loadout: Loadout): string | null {
   if (loadout.canTake(card.nature, card.refId)) {
     return null;
   }
-  return card.nature === CARD.PASSIVE
-    ? `Passifs complets — ${loadout.passiveSlotsUsed}/${PASSIVE_SLOTS}`
-    : `Arsenal complet — ${loadout.weaponSlotsUsed}/${WEAPON_SLOTS} armes`;
+  return `Arsenal complet — ${loadout.weaponSlotsUsed}/${WEAPON_SLOTS} armes`;
 }
 
 /**

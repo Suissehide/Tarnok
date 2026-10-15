@@ -17,7 +17,7 @@
 
 import { CARD } from '@shared/cards';
 import { CLASSES } from '@shared/classes';
-import { PASSIVE_SLOTS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import { PASSIVES } from '@shared/passives';
 import { RARITY_MULTIPLIERS } from '@shared/rarity';
@@ -265,7 +265,7 @@ export function guideRules(): { titre: string; lignes: string[] }[] {
     {
       titre: 'Emplacements',
       lignes: [
-        `${WEAPON_SLOTS} armes et ${PASSIVE_SLOTS} passifs au maximum.`,
+        `${WEAPON_SLOTS} armes au maximum. Les passifs, eux, ne sont pas limités.`,
         'Empiler ce que vous possédez déjà ne prend aucun emplacement de plus.',
       ],
     },

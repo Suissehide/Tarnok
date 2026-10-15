@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import { CARD } from './cards';
-import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
+import { WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { UPGRADE, UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
@@ -98,15 +98,6 @@ describe('Loadout.canTake — ce qui remplace `owner`', () => {
     expect(l.canTake(CARD.WEAPON, ARME_A)).toBe(true);
   });
 
-  it('slots de passifs pleins : refuse un passif NOUVEAU, jamais un deja possede', () => {
-    const l = new Loadout();
-    for (let i = 0; i < PASSIVE_SLOTS; i++) {
-      l.addPassive(i);
-    }
-    expect(l.canTake(CARD.PASSIVE, PASSIVE_SLOTS)).toBe(false);
-    expect(l.canTake(CARD.PASSIVE, PASSIF_A)).toBe(true);
-  });
-
   it('lit la nature de la carte, et lit la BONNE : `CARD_WEAPON` ne derive pas de `CARD.WEAPON`', () => {
     // ⚠️ **La garde de la constante recopiee.** `loadout.ts` duplique
     // `CARD.WEAPON` sous le nom `CARD_WEAPON` pour ne pas importer `cards.ts`
@@ -114,24 +105,40 @@ describe('Loadout.canTake — ce qui remplace `owner`', () => {
     // observable : `canTake` choisit la branche ARMES ou la branche PASSIFS
     // selon elle.
     //
-    // Les deux inventaires ci-dessous sont deliberement ASYMETRIQUES — l'un
-    // n'a plus de slot d'arme et tous ses slots de passifs, l'autre l'inverse.
-    // Un `CARD_WEAPON` qui derive fait donc lire la branche du type de slot
-    // qui reste LIBRE, et les deux reponses s'inversent. Avec deux inventaires
-    // pleins des deux cotes, la mutation survivrait sans rien changer.
-    const armesPleines = new Loadout();
+    // ⚠️ **Depuis l'etape 13, les passifs ne bloquent plus jamais** : on ne
+    // peut donc plus construire l'asymetrie d'origine en remplissant les deux
+    // natures. Un seul inventaire suffit — armes pleines, meme identifiant
+    // interroge sur les deux natures : la branche ARMES doit refuser, la
+    // branche PASSIFS doit toujours accepter. Un `CARD_WEAPON` qui derive mal
+    // fait lire la mauvaise branche et les deux reponses convergent.
+    const l = new Loadout();
     for (let i = 0; i < WEAPON_SLOTS; i++) {
-      armesPleines.addWeapon(i + 1);
+      l.addWeapon(i + 1);
     }
-    expect(armesPleines.passiveSlotsUsed).toBe(0);
-    expect(armesPleines.canTake(CARD.WEAPON, WEAPON_SLOTS + 1)).toBe(false);
+    expect(l.canTake(CARD.WEAPON, WEAPON_SLOTS + 1)).toBe(false);
+    expect(l.canTake(CARD.PASSIVE, WEAPON_SLOTS + 1)).toBe(true);
+  });
+});
 
-    const passifsPleins = new Loadout();
-    for (let i = 0; i < PASSIVE_SLOTS; i++) {
-      passifsPleins.addPassive(i);
+describe('etape 13 : les passifs ne sont plus limites', () => {
+  it('on peut empiler plus de passifs distincts qu il n y avait d emplacements', () => {
+    const l = new Loadout();
+    const distincts = PASSIVES.slice(0, 8);
+    expect(distincts.length).toBeGreaterThan(3);
+    for (const p of distincts) {
+      expect(l.canTake(CARD.PASSIVE, p.id)).toBe(true);
+      expect(() => l.addPassive(p.id)).not.toThrow();
     }
-    expect(passifsPleins.weaponSlotsUsed).toBe(0);
-    expect(passifsPleins.canTake(CARD.PASSIVE, PASSIVE_SLOTS)).toBe(false);
+    expect(l.passiveSlotsUsed).toBe(distincts.length);
+  });
+
+  /** ⚠️ Les ARMES gardent leur limite : c'est elle qui porte le renoncement. */
+  it('l arsenal reste borne a WEAPON_SLOTS', () => {
+    const l = new Loadout();
+    for (let i = 0; i < WEAPON_SLOTS; i++) {
+      l.addWeapon(i);
+    }
+    expect(l.canTake(CARD.WEAPON, WEAPON_SLOTS + 1)).toBe(false);
   });
 });
 
@@ -162,18 +169,6 @@ describe('Loadout — les passifs empilent', () => {
     }
     expect(l.passiveSlotsUsed).toBe(1);
     expect(l.stacksOf(PASSIF_A)).toBe(12);
-  });
-
-  it('refuse un NOUVEAU passif au-dela de PASSIVE_SLOTS', () => {
-    const l = new Loadout();
-    for (let i = 0; i < PASSIVE_SLOTS; i++) {
-      l.addPassive(i + 1);
-    }
-    expect(l.passiveSlotsUsed).toBe(PASSIVE_SLOTS);
-    expect(() => l.addPassive(PASSIVE_SLOTS + 1)).toThrow();
-    // ... mais empiler un DEJA possede reste permis, slots pleins ou non.
-    expect(() => l.addPassive(1)).not.toThrow();
-    expect(l.stacksOf(1)).toBe(2);
   });
 
   it('ne melange pas les bonus de deux kinds differents', () => {

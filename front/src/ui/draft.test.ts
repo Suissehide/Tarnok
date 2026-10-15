@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { CARD, type Card } from '@shared/cards';
-import { PASSIVE_SLOTS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
@@ -798,21 +798,12 @@ describe('une carte que mon inventaire refuse', () => {
     expect(h.client.sent).toEqual([0]);
   });
 
-  it('bloque un passif NOUVEAU quand les slots de passifs sont pleins', () => {
-    const loadout = new Loadout();
-    // Tous sauf `cadence` (refId 1, celui de l'etalage).
-    for (const id of [0, 2, 3, 4].slice(0, PASSIVE_SLOTS)) {
-      loadout.addPassive(id);
+  it('etape 13 : une carte de passif n est jamais bloquee', () => {
+    const l = new Loadout();
+    for (const p of PASSIVES) {
+      l.addPassive(p.id);
     }
-    const h = blockedHarness(loadout);
-    const cadence = cards(h)[1];
-    expect(cadence?.disabled).toBe(true);
-    expect(cadence?.title).toContain(`Passifs complets — ${PASSIVE_SLOTS}/${PASSIVE_SLOTS}`);
-    expect(cadence?.title).toContain(passiveOf(0).label);
-    cadence?.click();
-    expect(h.client.sent).toEqual([]);
-    // Les armes, elles, rentrent encore.
-    expect(cards(h)[2]?.disabled).toBe(false);
+    expect(blockedReason({ nature: CARD.PASSIVE, refId: 0 }, l)).toBeNull();
   });
 
   it("ne bloque rien sans miroir d'inventaire", () => {
@@ -826,14 +817,14 @@ describe('une carte que mon inventaire refuse', () => {
   });
 
   it('dit, en tete, que rien ne rentrera quand TOUTES les cartes sont bloquees', () => {
+    // ⚠️ Depuis l'etape 13, un passif n'est plus jamais refuse : seules des
+    // armes NOUVELLES, aux slots pleins, peuvent encore composer un etalage
+    // entierement bloque.
     const loadout = fullWeapons();
-    for (const id of [0, 2, 3, 4].slice(0, PASSIVE_SLOTS)) {
-      loadout.addPassive(id);
-    }
     const h = harness();
     h.client.loadoutOf = () => loadout;
-    // Que des cartes refusees : deux armes nouvelles et un passif nouveau.
-    h.client.draftCards = [spread()[1], spread()[2], spread()[3]] as Card[];
+    // Que des cartes refusees : deux armes nouvelles.
+    h.client.draftCards = [spread()[2], spread()[3]] as Card[];
     h.screen.update();
     expect(h.status.textContent).toContain('Rien ne rentre dans votre inventaire');
   });

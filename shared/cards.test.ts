@@ -340,8 +340,9 @@ describe('etape 10 : un passif exclusivement legendaire s applique x1', () => {
       refId: legendaire.id,
       rarity: RARITY.LEGENDAIRE,
     });
+    // ⚠️ Le compte reste — c'est lui que le HUD peint — mais depuis l'etape
+    // 13 il ne bloque plus rien : `canTake` resterait `true` ici.
     expect(l.passiveSlotsUsed).toBe(3);
-    expect(l.canTake(CARD.PASSIVE, 2)).toBe(false);
   });
 
   it('une arme n est jamais exclusivement legendaire', () => {
