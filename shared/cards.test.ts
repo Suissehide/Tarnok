@@ -547,11 +547,21 @@ describe('etape 13 : un palier, un pool', () => {
    */
   it('plancher epique : l etalage se raccourcit plutot que de descendre sous le plancher', () => {
     const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
-    const spread = drawSpread(loadouts, makeRandom(7), RARITY.EPIQUE);
-    for (const c of spread) {
-      expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.EPIQUE);
+    const voulu = loadouts.size + SPREAD_BONUS;
+    for (let seed = 1; seed <= 200; seed++) {
+      const spread = drawSpread(loadouts, makeRandom(seed), RARITY.EPIQUE);
+      for (const c of spread) {
+        expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.EPIQUE);
+      }
+      // ⚠️ **La longueur exacte depend de la graine, et ce n'est pas une
+      // regle.** Selon que le legendaire sort avant ou apres l'epuisement des
+      // epiques, l'etalage fait deux ou trois cartes (mesure : 111 et 89 sur
+      // ces 200 graines). Ce qui est VRAI a chaque fois, c'est qu'il est plus
+      // court que voulu — donc que le `break` a tranche en faveur du plancher
+      // — et qu'il ne depasse jamais ce que les deux paliers contiennent.
+      expect(spread.length).toBeGreaterThan(0);
+      expect(spread.length).toBeLessThan(voulu);
+      expect(spread.length).toBeLessThanOrEqual(epiques.length + legendaires.length);
     }
-    // Non-vacuite : les deux paliers ont tout donne, et rien de plus.
-    expect(spread).toHaveLength(epiques.length + legendaires.length);
   });
 });

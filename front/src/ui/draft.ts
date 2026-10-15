@@ -212,11 +212,18 @@ export const RARITY_NAMES = ['Commune', 'Rare', 'Épique', 'Légendaire'] as con
 
 /**
  * L'etiquette de rarete (etape 10, §2.5) : le nom ET ce que la carte vaut
- * vraiment — « Rare ×2 », « Légendaire ×3 ».
+ * vraiment — « Rare ×2 », et « Épique » ou « Légendaire » tout court.
  *
- * ⚠️ **Le multiplicateur vient de `applicationsOf`, jamais de la table des
- * raretes** : un passif exclusivement legendaire s'applique x1, et lui
- * ecrire « ×3 » serait promettre trois cartes qu'il ne donne pas.
+ * ⚠️ **Le ×N n'apparait que s'il y a vraiment plus d'une carte a promettre.**
+ * Depuis l'etape 13 le rare est le SEUL multiplicateur > 1 : les deux paliers
+ * hauts sont des cartes de REGLE, a x1, et leur ecrire un « ×3 » promettrait
+ * trois cartes qu'ils ne donnent pas.
+ *
+ * ⚠️ **Le compte vient de `applicationsOf`, pas d'une seconde table ici.** Il
+ * y eut un cas particulier a l'etape 10 — le passif « exclusivement
+ * legendaire » corrige a x1 contre une table qui disait x3 ; il a disparu avec
+ * `RARITY_MULTIPLIERS`, qui dit le x1 lui-meme. L'ecran ne connait donc plus
+ * d'exception : une arme legendaire s'annonce comme un passif legendaire.
  *
  * Vide pour une commune : la bordure grise dit deja tout.
  */
