@@ -1161,14 +1161,6 @@ export class GameClient {
    * est perdue cote fil — voir `RunOverSummary` et le HUD (§4.6).
    */
   #level = 1;
-  /**
-   * `#level` a-t-il deja ete pose par un VRAI `LEVEL_UP` recu depuis la
-   * connexion ? Distinct de `#level` lui-meme, dont la valeur par defaut (1)
-   * est indiscernable d'un vrai niveau 1 annonce — voir le repli de
-   * `#draftIsChest` dans le gestionnaire de `LEVEL_UP`, qui a besoin de savoir
-   * si comparer a `#level` a seulement un sens.
-   */
-  #levelKnown = false;
   #seq = 0;
   #status: ConnectionStatus = 'closed';
 
@@ -1375,14 +1367,6 @@ export class GameClient {
    * Coffres dus : un par porteur dont `DEATHS` a annonce la mort, consommes un
    * par un au `LEVEL_UP` suivant. Le serveur ouvre un coffre du AVANT tout
    * niveau et diffuse les morts AVANT les `LEVEL_UP` (§4.3 de la spec).
-   *
-   * ⚠️ **Ce compteur est le PREMIER signal, pas le seul.** Un client qui
-   * rejoint ou se reconnecte pendant qu'un porteur est vivant n'a jamais recu
-   * son `WAVE_ORDER` (§5.4 de la spec de l'etape 11) : `#porteurId` reste
-   * `null`, donc sa mort n'incremente rien ici. Le gestionnaire de `LEVEL_UP`
-   * retombe alors sur un SECOND signal, sans octet de plus : un vrai niveau
-   * fait TOUJOURS monter `#level`, alors qu'un coffre porte le niveau
-   * d'avant-meme-tick — au plus egal a celui deja connu. Voir `#levelKnown`.
    */
   #chestsOwed = 0;
   #draftIsChest = false;
@@ -1922,11 +1906,7 @@ export class GameClient {
     return this.#pingCount;
   }
 
-  /**
-   * L'etalage courant est-il un coffre (etape 11) ? Fige au `LEVEL_UP` qui
-   * l'annonce, sur l'un des deux signaux portes par ce message — voir
-   * `#chestsOwed`.
-   */
+  /** L'etalage courant est-il un coffre (etape 11) ? Fige au `LEVEL_UP` qui l'annonce. */
   get draftIsChest(): boolean {
     return this.#draftIsChest;
   }
@@ -2369,28 +2349,17 @@ export class GameClient {
       this.#freezeStartTick = msg.tick;
       this.#freezeUntilTick = Number.MAX_SAFE_INTEGER;
       this.#resumeEndTick = Number.MAX_SAFE_INTEGER;
-      // Etape 11 (revue finale) : un coffre du (`#chestsOwed`) est TOUJOURS un
-      // coffre — le premier signal, pose par le `WAVE_ORDER` + `DEATHS` de CE
-      // porteur. Mais un client qui a rejoint pendant qu'un porteur etait deja
-      // vivant n'a jamais vu ce `WAVE_ORDER` : rien n'est du ici, et pourtant
-      // le serveur ouvre bien un coffre. Repli, sans octet de plus : une VRAIE
-      // montee de niveau fait TOUJOURS strictement monter `#level`, alors que
-      // le `LEVEL_UP` d'un coffre porte le niveau d'avant-meme-tick, au plus
-      // egal a celui deja connu — voir back/src/room.test.ts, test "coffre et
-      // niveau dus au MEME tick...". Inutilisable avant tout niveau connu
-      // (`#levelKnown` faux) : un client tout juste connecte ne doit jamais
-      // deviner un coffre sur la seule foi de son niveau par defaut.
-      this.#draftIsChest = this.#chestsOwed > 0 || (this.#levelKnown && msg.level <= this.#level);
-      if (this.#chestsOwed > 0) {
-        this.#chestsOwed--;
-      }
       // Contrairement au gel, le niveau affiche au HUD peut se mettre a jour
       // des la reception : ce n'est pas une simulation partagee qui doit
       // diverger identiquement des deux cotes, seulement un chiffre a
-      // afficher. Pose APRES le repli ci-dessus, qui compare au niveau
-      // D'AVANT ce message.
+      // afficher.
       this.#level = msg.level;
-      this.#levelKnown = true;
+      // Etape 11 : un coffre du est TOUJOURS le premier `LEVEL_UP` qui suit la
+      // mort du porteur — le salon l'ouvre avant tout niveau.
+      this.#draftIsChest = this.#chestsOwed > 0;
+      if (this.#draftIsChest) {
+        this.#chestsOwed--;
+      }
       return;
     }
 
