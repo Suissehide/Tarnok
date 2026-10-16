@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   ARCHETYPES,
+  archetypeIdOf,
   archetypeOf,
   BOSS_ARCHETYPE,
   BOSS_ARMOR,
@@ -14,12 +15,18 @@ import {
   HEAVY_HP,
   LIGHT_HP,
   MAX_ARMOR,
+  PORTEUR_ARCHETYPE,
+  PORTEUR_BODY_SCALE,
+  PORTEUR_HP,
+  PORTEUR_HP_MULTIPLE,
+  PORTEUR_NAME,
+  PORTEUR_SPEED_FACTOR,
   ROLE_ORDER,
   ROLES,
   type Role,
   STEP2_ARCHETYPES,
 } from './archetypes';
-import { MAX_PLAYERS, REACTION_DAMAGE } from './constants';
+import { MAX_PLAYERS, PLAYER_SPEED, REACTION_DAMAGE } from './constants';
 import { bossHp } from './paliers';
 import { weaponOf } from './weapons';
 
@@ -89,13 +96,18 @@ describe('la reserve de points de vie (etape 5a)', () => {
    * (`'gnol'` pour `'gnoll'`) ne leve rien, elle rend simplement l'archetype
    * leger — et toute la pietaille lourde disparaitrait en silence.
    */
-  it('donne a chaque pietaille les PV de son role, le boss seul faisant exception', () => {
+  it('donne a chaque pietaille les PV de son role, le boss et le porteur seuls faisant exception', () => {
     // Quatre brutes a `HEAVY_HP`, comme les quatre lourdes d'avant.
     expect(ARCHETYPES.filter((a) => a.hp === HEAVY_HP)).toHaveLength(4);
     for (const a of ARCHETYPES) {
-      // ⚠️ **Le boss est la SEULE exception, et elle est nommee** : comparer a
-      // l'identifiant dit qu'il n'y en a qu'un.
-      const attendu = a.id === BOSS_ARCHETYPE ? BOSS_HP_PER_PLAYER : ROLES[a.role].hp;
+      // ⚠️ **Deux exceptions, et elles sont nommees** (le porteur depuis
+      // l'etape 11) : comparer a l'identifiant dit qu'il n'y en a pas d'autre.
+      const attendu =
+        a.id === BOSS_ARCHETYPE
+          ? BOSS_HP_PER_PLAYER
+          : a.id === PORTEUR_ARCHETYPE
+            ? PORTEUR_HP
+            : ROLES[a.role].hp;
       expect(a.hp, a.name).toBe(attendu);
     }
   });
@@ -222,8 +234,9 @@ describe("l'archetype de boss (etape 6a)", () => {
       if (a.id === BOSS_ARCHETYPE) {
         continue;
       }
-      // Le corps du role — le colosse est plus gros — et toujours sous le boss.
-      expect(a.bodyScale, a.name).toBe(ROLES[a.role].bodyScale);
+      // Le porteur (etape 11) a SON facteur, lui aussi — sous celui du boss.
+      const attendu = a.id === PORTEUR_ARCHETYPE ? PORTEUR_BODY_SCALE : ROLES[a.role].bodyScale;
+      expect(a.bodyScale, a.name).toBe(attendu);
       expect(a.bodyScale).toBeLessThan(BOSS_BODY_SCALE);
     }
   });
@@ -289,5 +302,47 @@ describe("l'armure (etape 5b, tache 1)", () => {
     expect(capArmor(0.12)).toBe(0.12);
     // La borne est LARGE : une armure pile au plafond est legale.
     expect(capArmor(MAX_ARMOR)).toBe(MAX_ARMOR);
+  });
+});
+
+describe('etape 11 : le porteur de coffre', () => {
+  const PORTEUR = archetypeOf(PORTEUR_ARCHETYPE);
+  const VOLEUR = archetypeOf(archetypeIdOf('thief'));
+
+  it('vient APRES le troll : aucun identifiant existant ne bouge', () => {
+    expect(PORTEUR.name).toBe(PORTEUR_NAME);
+    expect(PORTEUR_ARCHETYPE).toBe(BOSS_ARCHETYPE + 1);
+    expect(ARCHETYPES[PORTEUR_ARCHETYPE - 1]?.name).toBe('troll');
+    expect(ARCHETYPES).toHaveLength(PORTEUR_ARCHETYPE + 1);
+  });
+
+  it('a son propre comportement, et n est jamais tire au hasard', () => {
+    expect(PORTEUR.behavior).toBe('porteur');
+    expect(STEP2_ARCHETYPES).not.toContain(PORTEUR_ARCHETYPE);
+    // Le voleur ordinaire ne change pas.
+    expect(VOLEUR.behavior).toBe('voleur');
+    expect(VOLEUR.id).toBe(8);
+  });
+
+  it('PV = HEAVY_HP x PORTEUR_HP_MULTIPLE, armure nulle, role troupe', () => {
+    expect(PORTEUR_HP).toBe(HEAVY_HP * PORTEUR_HP_MULTIPLE);
+    expect(PORTEUR.hp).toBe(200);
+    expect(PORTEUR.armor).toBe(0);
+    expect(PORTEUR.role).toBe('troupe');
+    expect(PORTEUR.countFactor).toBe(1);
+  });
+
+  it('un peu moins vite qu un joueur : round(PLAYER_SPEED x 0,9) = 234 px/s', () => {
+    expect(PORTEUR.speed).toBe(Math.round(PLAYER_SPEED * PORTEUR_SPEED_FACTOR));
+    expect(PORTEUR.speed).toBe(234);
+    expect(PORTEUR.speed).toBeLessThan(PLAYER_SPEED);
+  });
+
+  it('porte la planche du voleur, 1,6 fois plus grand', () => {
+    expect(PORTEUR.sheet).toBe(VOLEUR.sheet);
+    expect(PORTEUR.frames).toBe(VOLEUR.frames);
+    expect(PORTEUR.cell).toBe(VOLEUR.cell);
+    expect(PORTEUR.bodyScale).toBe(PORTEUR_BODY_SCALE);
+    expect(VOLEUR.bodyScale).toBe(1);
   });
 });

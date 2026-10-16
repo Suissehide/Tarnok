@@ -10,6 +10,7 @@ import type { Horde } from '@shared/horde';
 import { Container, Graphics, type Rectangle, Sprite, type Texture } from 'pixi.js';
 
 import { type BlastFlash, flashLifeMs } from '../net/client';
+import { COIN_TINT } from './orb-renderer';
 import { framesOf } from './player-renderer';
 
 /**
@@ -20,7 +21,7 @@ import { framesOf } from './player-renderer';
  */
 
 export interface BehaviorShape {
-  kind: 'kamikaze' | 'chaman' | 'necro' | 'bouclier' | 'butin' | 'explosion' | 'releve';
+  kind: 'kamikaze' | 'chaman' | 'necro' | 'bouclier' | 'butin' | 'coffre' | 'explosion' | 'releve';
   x: number;
   y: number;
   radius: number;
@@ -28,6 +29,36 @@ export interface BehaviorShape {
   alpha: number;
   /** Le bouclier : son cap, en radians. */
   angle?: number;
+}
+
+/**
+ * Le porteur de coffre (etape 11, §5.1) : un anneau dore sous ses pieds — ce
+ * rayon —, et un coffre au-dessus. Le corps reste celui d'un voleur (le
+ * `ParticleContainer` ne televerse pas la couleur) : l'or est AUTOUR.
+ */
+export const PORTEUR_RING_RADIUS = 46;
+/** Hauteur du coffre au-dessus du porteur, en px monde. */
+const CHEST_LIFT = 60;
+/** Le brun du contour, du couvercle et de la serrure. */
+const CHEST_BROWN = 0x5a3a1a;
+
+/**
+ * Un petit coffre procedural centre sur (x, y) : 22 x 15 px a l'echelle 1,
+ * dore, contoure de brun, couvercle au tiers haut, serrure au centre. Aucun
+ * fichier d'image. Partage avec la fleche de bord (`PingRenderer`).
+ */
+export function drawChest(g: Graphics, x: number, y: number, scale: number): void {
+  const w = 22 * scale;
+  const h = 15 * scale;
+  const left = x - w / 2;
+  const top = y - h / 2;
+  g.rect(left, top, w, h).fill(COIN_TINT).stroke({ color: CHEST_BROWN, width: 2 });
+  // `moveTo` d'abord : sans lui, Pixi relierait le couvercle a la forme precedente.
+  g.moveTo(left, top + h / 3)
+    .lineTo(left + w, top + h / 3)
+    .stroke({ color: CHEST_BROWN, width: 2 });
+  const k = 4 * scale;
+  g.rect(x - k / 2, y - k / 2, k, k).fill(CHEST_BROWN);
 }
 
 /**
@@ -50,6 +81,7 @@ export function behaviorShapes(
       behavior !== 'chaman' &&
       behavior !== 'necro' &&
       behavior !== 'bouclier' &&
+      behavior !== 'porteur' &&
       !enFuite
     ) {
       continue;
@@ -73,6 +105,10 @@ export function behaviorShapes(
     } else if (behavior === 'bouclier') {
       const angle = Math.atan2(horde.vy[i] ?? 0, horde.vx[i] ?? 0);
       out.push({ kind: 'bouclier', x, y, radius: 30, alpha: 1, angle });
+    } else if (behavior === 'porteur') {
+      // En permanence, a l'arret comme en fuite : c'est ce qui le distingue
+      // d'un voleur ordinaire d'un coup d'oeil, avec sa taille.
+      out.push({ kind: 'coffre', x, y, radius: PORTEUR_RING_RADIUS, alpha: 1 });
     } else {
       out.push({ kind: 'butin', x, y: y - 42, radius: 7, alpha: 1 });
     }
@@ -250,6 +286,11 @@ export class BehaviorRenderer {
         } else {
           g.circle(s.x, s.y, s.radius).fill(0xffd34d).stroke({ color: 0x1a0f0a, width: 2 });
         }
+      } else if (s.kind === 'coffre') {
+        // L'anneau dore sous ses pieds, rempli a 20 %, puis le coffre au-dessus.
+        g.circle(s.x, s.y, s.radius).fill({ color: COIN_TINT, alpha: 0.2 });
+        g.circle(s.x, s.y, s.radius).stroke({ color: COIN_TINT, width: 4 });
+        drawChest(g, s.x, s.y - CHEST_LIFT, 1);
       } else if (s.kind === 'releve') {
         // Le sort de transformation, la ou les squelettes se relevent ; un
         // eclat vert en repli.

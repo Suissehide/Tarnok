@@ -145,6 +145,8 @@ class RecordingClient implements FrameClient {
    * indetectable — c'est exactement la confusion que la revue a trouvee.
    */
   readonly pingClock = 55;
+  /** Le porteur (etape 11) : une position qui ne ressemble a rien d'autre du decor. */
+  readonly porteur = { x: 4321, y: 1234 };
   /**
    * Un boss reconnaissable, et surtout DISTINCT de la horde : `drawBossBar`
    * recoit les deux, et les intervertir ou n'en passer qu'un doit se voir.
@@ -468,6 +470,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       state.localId,
       client.pingClock,
       NOW,
+      client.porteur,
     ]);
     const ordre = stage.order;
     // Apres `draw` (qui recentre la camera) : sinon les fleches auraient une

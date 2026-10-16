@@ -4,7 +4,7 @@ import {
   DECOY_LIFETIME_TICKS,
   VERB_IDS,
 } from '@shared/abilities';
-import { archetypeIdOf, archetypeOf, NECRO_CHILD } from '@shared/archetypes';
+import { archetypeIdOf, archetypeOf, NECRO_CHILD, PORTEUR_ARCHETYPE } from '@shared/archetypes';
 import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
 import { chainTargets } from '@shared/chain';
@@ -33,7 +33,7 @@ import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
 import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
-import { Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
+import { entityIdOf, Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { Loadout } from '@shared/loadout';
 import {
@@ -245,6 +245,13 @@ export interface BlastFlash {
 
 /** Duree de l'explosion a l'ecran, en ms. */
 export const BLAST_FLASH_MS = 450;
+
+/**
+ * Duree du bandeau « Un porteur de coffre est apparu ! » (etape 11, §5.4), en
+ * horloge murale depuis la RECEPTION de son ordre — quelques ticks avant sa
+ * naissance, au meme moment chez chacun.
+ */
+export const PORTEUR_BANNER_MS = 4000;
 /** Duree du sort de transformation (necromancien) : dix images, plus lent. */
 export const RAISE_FLASH_MS = 800;
 
@@ -1410,6 +1417,22 @@ export class GameClient {
    */
   readonly pings = new Map<number, ActivePing>();
   #pingCount = 0;
+  /**
+   * Le porteur de coffre annonce et pas encore mort (etape 11), par identite.
+   * Reconnu a son `archetype` dans `WAVE_ORDER`, oublie a sa mort dans `DEATHS`.
+   */
+  #porteurId: number | null = null;
+  /** Ordres de porteur recus depuis la connexion : l'audio en deduit quand sonner. */
+  #porteurCount = 0;
+  /** Horloge murale de la derniere annonce, pour le bandeau. */
+  #porteurAnnouncedMs = Number.NEGATIVE_INFINITY;
+  /**
+   * Coffres dus : un par porteur dont `DEATHS` a annonce la mort, consommes un
+   * par un au `LEVEL_UP` suivant. Le serveur ouvre un coffre du AVANT tout
+   * niveau et diffuse les morts AVANT les `LEVEL_UP` (§4.3 de la spec).
+   */
+  #chestsOwed = 0;
+  #draftIsChest = false;
   #lastPingIntent = -1;
   /** Horloge de ping (revue finale, etape 9) : voir l'accesseur `pingClock`. */
   #pingClock = 0;
@@ -1946,6 +1969,37 @@ export class GameClient {
     return this.#pingCount;
   }
 
+  /** L'etalage courant est-il un coffre (etape 11) ? Fige au `LEVEL_UP` qui l'annonce. */
+  get draftIsChest(): boolean {
+    return this.#draftIsChest;
+  }
+
+  /** Ordres de porteur recus depuis la connexion (etape 11) : l'audio en deduit quand sonner. */
+  get porteurCount(): number {
+    return this.#porteurCount;
+  }
+
+  /** Le bandeau du porteur est-il allume (`PORTEUR_BANNER_MS` apres l'annonce) ? */
+  get porteurBannerOn(): boolean {
+    return performance.now() - this.#porteurAnnouncedMs < PORTEUR_BANNER_MS;
+  }
+
+  /**
+   * Position du porteur dans la horde DU CLIENT, `null` s'il n'est pas, ou
+   * plus, dans la horde. Un `slotOf` par appel : le meme balayage que la barre
+   * du boss, une fois par image.
+   */
+  get porteur(): { x: number; y: number } | null {
+    if (this.#porteurId === null) {
+      return null;
+    }
+    const slot = this.horde.slotOf(this.#porteurId);
+    if (slot < 0) {
+      return null;
+    }
+    return { x: this.horde.x[slot] ?? 0, y: this.horde.y[slot] ?? 0 };
+  }
+
   /** Intention du dernier ping recu, `-1` si aucun. */
   get lastPingIntent(): number {
     return this.#lastPingIntent;
@@ -2279,6 +2333,13 @@ export class GameClient {
           kind: 'releve',
         });
       }
+      // Etape 11 : le porteur se reconnait a son archetype, comme le releve du
+      // necromancien juste au-dessus. Annonce a la RECEPTION.
+      if (msg.archetype === PORTEUR_ARCHETYPE) {
+        this.#porteurId = entityIdOf(msg.waveId, 0);
+        this.#porteurCount++;
+        this.#porteurAnnouncedMs = performance.now();
+      }
       return;
     }
     if (msg.type === MSG.DEATHS) {
@@ -2286,6 +2347,12 @@ export class GameClient {
       // l'application (restauration, rejeu) a lieu dans `#advanceHorde`, au
       // tick local qui vient d'etre simule — voir `#applyDeaths`.
       this.#pendingDeaths.push({ tick: msg.tick, ids: msg.ids });
+      // Etape 11 : lu A LA RECEPTION, sur les identites du message — sans
+      // attendre que le rejeu l'applique. Le `LEVEL_UP` qui suit est le coffre.
+      if (this.#porteurId !== null && msg.ids.includes(this.#porteurId)) {
+        this.#chestsOwed++;
+        this.#porteurId = null;
+      }
       return;
     }
     if (msg.type === MSG.ZONE) {
@@ -2350,6 +2417,12 @@ export class GameClient {
       // diverger identiquement des deux cotes, seulement un chiffre a
       // afficher.
       this.#level = msg.level;
+      // Etape 11 : un coffre du est TOUJOURS le premier `LEVEL_UP` qui suit la
+      // mort du porteur — le salon l'ouvre avant tout niveau.
+      this.#draftIsChest = this.#chestsOwed > 0;
+      if (this.#draftIsChest) {
+        this.#chestsOwed--;
+      }
       return;
     }
 

@@ -1,4 +1,4 @@
-import { archetypeIdOf, NECRO_CHILD, SPLIT_CHILD } from '@shared/archetypes';
+import { archetypeIdOf, NECRO_CHILD, PORTEUR_ARCHETYPE, SPLIT_CHILD } from '@shared/archetypes';
 import { type BossCharge, makeBossCharge } from '@shared/boss';
 import { CARD } from '@shared/cards';
 import {
@@ -81,6 +81,7 @@ import {
   type ObstacleMap,
   ORB_FLIGHT_LIFETIME_MS,
   OrbFlights,
+  PORTEUR_BANNER_MS,
   REACTION_FLASH_LIFETIME_MS,
   trackBoss,
 } from './client';
@@ -4655,5 +4656,108 @@ describe('GameClient — le miroir de l onde et de la frappe (etape 12)', () => 
       expect(d).toBeLessThan(ORBIT_RADIUS * (1 + ORBIT_BREATH) + 2);
     }
     expect(lames).toBeGreaterThan(0);
+  });
+});
+
+describe('etape 11 : le client reconnait un coffre sans un octet de plus', () => {
+  const ORDRE: WaveOrder = {
+    waveId: 4242,
+    spawnTick: 0,
+    seed: 7,
+    archetype: PORTEUR_ARCHETYPE,
+    formation: FORMATION.POINT,
+    anchorX: 4500,
+    anchorY: 3000,
+    count: 1,
+  };
+  const PORTEUR_ID = entityIdOf(4242, 0);
+
+  function setup(): { client: GameClient; socket: FakeSocket } {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0x11_c0ff) });
+    return { client, socket };
+  }
+
+  it('l ordre du porteur, puis sa mort, puis LEVEL_UP : ce LEVEL_UP est un coffre', () => {
+    const { client, socket } = setup();
+    socket.emit('message', { data: encodeWaveOrder(ORDRE) });
+    socket.emit('message', { data: encodeDeaths(30, [PORTEUR_ID]) });
+    socket.emit('message', { data: encodeLevelUp(31, 1) });
+    expect(client.draftIsChest).toBe(true);
+    // Le niveau affiche n'a pas bouge : un coffre n'est pas un niveau.
+    expect(client.level).toBe(1);
+  });
+
+  it('un LEVEL_UP seul n est pas un coffre', () => {
+    const { client, socket } = setup();
+    socket.emit('message', { data: encodeLevelUp(31, 2) });
+    expect(client.draftIsChest).toBe(false);
+    expect(client.level).toBe(2);
+  });
+
+  it('un coffre du se consomme une fois : le LEVEL_UP suivant est un niveau', () => {
+    const { client, socket } = setup();
+    socket.emit('message', { data: encodeWaveOrder(ORDRE) });
+    socket.emit('message', { data: encodeDeaths(30, [PORTEUR_ID]) });
+    const second: WaveOrder = { ...ORDRE, waveId: 5000 };
+    socket.emit('message', { data: encodeWaveOrder(second) });
+    socket.emit('message', { data: encodeDeaths(40, [entityIdOf(5000, 0)]) });
+    const drapeaux: boolean[] = [];
+    for (const tick of [41, 42, 43]) {
+      socket.emit('message', { data: encodeLevelUp(tick, 2) });
+      drapeaux.push(client.draftIsChest);
+    }
+    expect(drapeaux).toEqual([true, true, false]);
+  });
+
+  it('une mort d identite inconnue, ou un porteur jamais annonce, ne fait pas de coffre', () => {
+    const { client, socket } = setup();
+    // Un client arrive apres l'ordre : il voit la mort, pas la naissance.
+    socket.emit('message', { data: encodeDeaths(30, [PORTEUR_ID]) });
+    socket.emit('message', { data: encodeLevelUp(31, 2) });
+    expect(client.draftIsChest).toBe(false);
+    // Et une mort ORDINAIRE apres l'annonce ne consomme pas le porteur.
+    socket.emit('message', { data: encodeWaveOrder(ORDRE) });
+    socket.emit('message', { data: encodeDeaths(32, [entityIdOf(77, 0)]) });
+    socket.emit('message', { data: encodeLevelUp(33, 3) });
+    expect(client.draftIsChest).toBe(false);
+  });
+
+  it('annonce : un compteur, et un bandeau de PORTEUR_BANNER_MS', () => {
+    const horloge = vi.spyOn(performance, 'now').mockReturnValue(10_000);
+    try {
+      const { client, socket } = setup();
+      expect(client.porteurCount).toBe(0);
+      expect(client.porteurBannerOn).toBe(false);
+      socket.emit('message', { data: encodeWaveOrder(ORDRE) });
+      expect(client.porteurCount).toBe(1);
+      expect(client.porteurBannerOn).toBe(true);
+      horloge.mockReturnValue(10_000 + PORTEUR_BANNER_MS - 1);
+      expect(client.porteurBannerOn).toBe(true);
+      horloge.mockReturnValue(10_000 + PORTEUR_BANNER_MS);
+      expect(client.porteurBannerOn).toBe(false);
+    } finally {
+      horloge.mockRestore();
+    }
+  });
+
+  it('porteur : sa position tant qu il est dans la horde du client, null des sa mort recue', () => {
+    const { client, socket } = setup();
+    expect(client.porteur).toBeNull();
+    socket.emit('message', { data: encodeWaveOrder(ORDRE) });
+    // Un tick fait naitre l'ordre (les ordres s'appliquent en tete d'`#advanceHorde`).
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [
+        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      ]),
+    });
+    client.update(0, STEP);
+    const slot = client.horde.slotOf(PORTEUR_ID);
+    expect(slot).toBeGreaterThanOrEqual(0);
+    expect(client.porteur).toEqual({ x: client.horde.x[slot], y: client.horde.y[slot] });
+    socket.emit('message', { data: encodeDeaths(1, [PORTEUR_ID]) });
+    expect(client.porteur).toBeNull();
   });
 });

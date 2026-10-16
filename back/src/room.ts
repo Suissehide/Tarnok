@@ -17,6 +17,7 @@ import {
   NECRO_COOLDOWN_TICKS,
   NECRO_RADIUS,
   NECRO_RAISE_MAX,
+  PORTEUR_ARCHETYPE,
   SHAMAN_AURA_RADIUS,
   SHOT_DAMAGE,
   SPLIT_CHILD,
@@ -72,6 +73,7 @@ import {
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
+import { CHEST_RARITY_FLOOR, RARITY } from '@shared/rarity';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -480,6 +482,13 @@ export class Room {
   #extractMultiplier = 1;
   /** Niveaux gagnes dont le draft n'a pas encore eu lieu. */
   #pendingLevels = 0;
+  /**
+   * Les coffres dus (etape 11, §4.1) : un par porteur abattu. Un coffre est un
+   * etalage d'equipe comme un niveau — meme gel, memes jetons, memes conflits —
+   * au plancher `CHEST_RARITY_FLOOR`. `#openDraft` en consomme un AVANT tout
+   * niveau : c'est ce qui laisse le client le reconnaitre sans octet (§4.3).
+   */
+  #chestsOwed = 0;
   #pendingDraftOpens: DraftOpenEvent[] = [];
   #pendingDraftResults: DraftResultEvent[] = [];
   #pendingRunOver: RunOverEvent | null = null;
@@ -562,6 +571,12 @@ export class Room {
    * (`SNAPSHOT`) et la charge.
    */
   #bosses: number[] = [];
+  /**
+   * Le porteur de coffre vivant (etape 11), par IDENTITE comme `#bosses` —
+   * `null` s'il n'y en a pas. Le directeur n'en demande pas d'autre tant que
+   * `porteurGone` n'est pas venu.
+   */
+  #porteur: number | null = null;
   /** Explosions de kamikazes tues au tick precedent, a resoudre au suivant. */
   #pendingBlasts: Blast[] = [];
   /** L'or que chaque voleur en fuite emporte, par identite : rendu a sa mort. */
@@ -1105,6 +1120,17 @@ export class Room {
     this.#level = level;
   }
 
+  /**
+   * Ecriture de test, meme statut que `debugSetGold` : `n` niveaux montes et
+   * dus, comme si l'XP venait de franchir `n` seuils. Sert a provoquer « un
+   * coffre et un niveau dus au meme tick » (etape 11), que le jeu ne produit
+   * qu'au hasard d'une orbe.
+   */
+  debugOweLevels(n: number): void {
+    this.#level += n;
+    this.#pendingLevels += n;
+  }
+
   get metrics(): Readonly<RoomMetrics> {
     return this.#metrics;
   }
@@ -1306,8 +1332,8 @@ export class Room {
       return;
     }
 
-    // Un niveau attend et aucun etalage n'est ouvert : on ouvre.
-    if (this.#draft.phase === 'closed' && this.#pendingLevels > 0) {
+    // Un coffre ou un niveau attend, et aucun etalage n'est ouvert : on ouvre.
+    if (this.#draft.phase === 'closed' && (this.#chestsOwed > 0 || this.#pendingLevels > 0)) {
       this.#openDraft();
     }
 
@@ -1474,6 +1500,17 @@ export class Room {
         }
       } else {
         this.#scalePalierHp(before);
+        // Etape 11 : le porteur passe par le chemin ordinaire des PV
+        // (`palierHp`), puis le salon retient son identite. Horde pleine : il
+        // n'existe pas, et le directeur doit le savoir (meme parade que
+        // `bossMissing`).
+        if (order.archetype === PORTEUR_ARCHETYPE) {
+          if (this.horde.count > before) {
+            this.#porteur = entityIdOf(order.waveId, 0);
+          } else {
+            this.#director.porteurGone();
+          }
+        }
       }
       this.#pendingOrders.push(order);
     }
@@ -1710,12 +1747,27 @@ export class Room {
         }
         this.#director.bossDefeated();
       }
+      // Etape 11 : le porteur tombe dans CE lot, le seul du tick (meme regle
+      // que le boss). Il doit un coffre ; `step` l'ouvrira au tick suivant.
+      if (this.#porteur !== null && allDead.includes(this.#porteur)) {
+        this.#porteur = null;
+        this.#chestsOwed++;
+        this.#director.porteurGone();
+      }
     }
 
     // Un boss retire de la horde hors du lot de morts (bancs, tests) ne doit pas
     // rester « vivant » ici : la barre et la charge suivraient un fantome.
     if (this.#bosses.some((id) => this.horde.slotOf(id) < 0)) {
       this.#bosses = this.#bosses.filter((id) => this.horde.slotOf(id) >= 0);
+    }
+
+    // Meme garde pour le porteur : retire hors du lot (bancs, tests), il ne
+    // doit AUCUN coffre — mais le directeur doit etre relache, sinon plus
+    // aucun porteur pour le reste de la run.
+    if (this.#porteur !== null && this.horde.slotOf(this.#porteur) < 0) {
+      this.#porteur = null;
+      this.#director.porteurGone();
     }
 
     // ⚠️ **APRES le deplacement de la horde, AVANT le contact ordinaire.** Le
@@ -2417,16 +2469,41 @@ export class Room {
    * ⚠️ Le `LEVEL_UP` est date d'ici, pas de `#gainXp` : c'est ici que le gel
    * commence reellement. Le §6.2 exige que les clients figent au tick indique
    * et non a la reception, sans quoi chacun figerait selon sa latence.
+   *
+   * ⚠️ **Un coffre passe AVANT un niveau** (etape 11, §4.1). Pendant un
+   * etalage le monde est gele, donc un porteur ne meurt jamais pendant qu'un
+   * etalage est ouvert ; le seul cas de file est « coffre et niveau dus au
+   * meme tick ». Coffre d'abord : le client sait alors, sans octet, que le
+   * premier `LEVEL_UP` apres la mort du porteur est le coffre.
    */
   #openDraft(): void {
-    this.#pendingLevels--;
+    const coffre = this.#chestsOwed > 0;
+    if (coffre) {
+      this.#chestsOwed--;
+    } else {
+      this.#pendingLevels--;
+    }
     const loadouts = new Map<number, Loadout>();
     for (const [id, p] of this.#players) {
       loadouts.set(id, p.loadout);
     }
-    const spread = drawSpread(loadouts, this.#draftRng);
+    const spread = drawSpread(
+      loadouts,
+      this.#draftRng,
+      coffre ? CHEST_RARITY_FLOOR : RARITY.COMMUNE,
+    );
     this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts);
-    this.#pendingLevelUps.push({ tick: this.#tick, level: this.#level });
+    // ⚠️ **Le niveau annonce pour un coffre est celui d'AVANT tout niveau
+    // encore en file.** `#level` inclut deja les niveaux montes mais pas
+    // encore tires (`#pendingLevels` en compte le nombre) : un coffre du au
+    // meme tick qu'un niveau ne doit pas anticiper ce niveau, sous peine de
+    // jouer le son de niveau et d'afficher le nouveau palier un etalage trop
+    // tot. `#level - #pendingLevels` est donc le niveau reellement affiche
+    // par le DERNIER `LEVEL_UP` deja tire ; un niveau ordinaire, lui, vient
+    // juste de decrementer `#pendingLevels` ci-dessus et annonce `#level` sans
+    // correction, le niveau qu'il REND visible.
+    const niveauAnnonce = coffre ? this.#level - this.#pendingLevels : this.#level;
+    this.#pendingLevelUps.push({ tick: this.#tick, level: niveauAnnonce });
     this.#pendingDraftOpens.push({ deadlineTick: this.#draft.deadlineTick, cards: spread });
   }
 

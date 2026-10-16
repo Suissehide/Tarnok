@@ -1,6 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
-import { ARCHETYPES, archetypeOf, HEAVY_HP, LIGHT_HP } from './archetypes';
+import {
+  ARCHETYPES,
+  archetypeOf,
+  HEAVY_HP,
+  LIGHT_HP,
+  PORTEUR_ARCHETYPE,
+  PORTEUR_FLEE_RADIUS,
+  THIEF_FLEE_SPEED,
+} from './archetypes';
 import { chargeHoldsAt, chargePointAt, makeBossCharge } from './boss';
 import {
   COIN_DROP_ONE_IN,
@@ -3681,5 +3689,78 @@ describe('la horde bute sur le decor, comme les joueurs', () => {
     expect(horde.x[0] ?? 0).toBeLessThan(25 * 64);
     // La charge l'a bien emmene jusque-la : sans elle, il serait reste vers 1000.
     expect(horde.x[0] ?? 0).toBeGreaterThan(1300);
+  });
+});
+
+describe('etape 11 : la fuite du porteur', () => {
+  const VOLEUR = ARCHETYPES.findIndex((a) => a.behavior === 'voleur');
+
+  /** Une horde d'une seule entite, posee en (1000, 1000). Meme `waveId` partout : meme phase de pilotage. */
+  function seul(archetype: number): Horde {
+    const h = new Horde(4);
+    h.spawn(order({ archetype, count: 1, formation: FORMATION.POINT }));
+    h.x[0] = 1000;
+    h.y[0] = 1000;
+    return h;
+  }
+
+  it('joueur (retarde) a 399 px : il fuit ; a 400 aussi ; a 401 : il attend sur place', () => {
+    const h = seul(PORTEUR_ARCHETYPE);
+    h.retarget([1000 + PORTEUR_FLEE_RADIUS - 1], [1000]);
+    expect(h.fleeing[0]).toBe(1);
+    expect(h.stopped[0]).toBe(0);
+    h.retarget([1000 + PORTEUR_FLEE_RADIUS], [1000]);
+    expect(h.fleeing[0]).toBe(1);
+    // ⚠️ **Pas collant**, contrairement au voleur : le joueur s'eloigne, la
+    // fuite s'arrete et il attend de nouveau.
+    h.retarget([1000 + PORTEUR_FLEE_RADIUS + 1], [1000]);
+    expect(h.fleeing[0]).toBe(0);
+    expect(h.stopped[0]).toBe(1);
+  });
+
+  it('c est le joueur le PLUS PROCHE qui decide ; sans joueur du tout, il attend', () => {
+    const h = seul(PORTEUR_ARCHETYPE);
+    h.retarget([2500, 1300], [1000, 1000]);
+    expect(h.fleeing[0]).toBe(1);
+    expect(h.targetField[0]).toBe(1);
+    h.retarget([], []);
+    expect(h.fleeing[0]).toBe(0);
+    expect(h.stopped[0]).toBe(1);
+    // Il attend : un pas ne le deplace pas.
+    h.vx[0] = 100;
+    h.step(DT, [], 1);
+    expect(h.x[0]).toBe(1000);
+    expect(Number.isNaN(h.x[0])).toBe(false);
+  });
+
+  it('en fuite il s eloigne a SA vitesse ; le voleur ordinaire, lui, a THIEF_FLEE_SPEED et pour toujours', () => {
+    const p = seul(PORTEUR_ARCHETYPE);
+    const v = seul(VOLEUR);
+    p.retarget([1300], [1000]);
+    v.retarget([1000 + CONTACT_RADIUS - 1], [1000]);
+    // Le voleur ne change pas : loin du joueur, il reste en fuite.
+    v.retarget([5000], [5000]);
+    expect(v.fleeing[0]).toBe(1);
+    expect(p.fleeing[0]).toBe(1);
+    // Sans champ, `step` remet la vitesse a zero quand il la recalcule : on la
+    // repose a chaque pas (meme recette que `comportements.test.ts`). Meme
+    // vitesse posee, meme phase : l'ecart ne vient QUE du facteur de fuite.
+    for (let t = 1; t <= 10; t++) {
+      for (const h of [p, v]) {
+        h.vx[0] = 100;
+        h.vy[0] = 0;
+        h.step(DT, [], t);
+      }
+    }
+    const dp = 1000 - (p.x[0] ?? 0);
+    const dv = 1000 - (v.x[0] ?? 0);
+    expect(dp).toBeGreaterThan(0);
+    expect(dv / dp).toBeCloseTo(THIEF_FLEE_SPEED, 3);
+  });
+
+  it('un voleur ordinaire hors de portee de contact ne fuit pas, meme a moins de PORTEUR_FLEE_RADIUS', () => {
+    const v = seul(VOLEUR);
+    v.retarget([1000 + PORTEUR_FLEE_RADIUS - 1], [1000]);
+    expect(v.fleeing[0]).toBe(0);
   });
 });

@@ -14,6 +14,7 @@ const calme: CueSnapshot = {
   abilityCooldown: 0,
   pings: 0,
   lastPingIntent: -1,
+  porteurs: 0,
 };
 
 describe('cuesBetween — le son se deduit de ce qui change', () => {
@@ -60,5 +61,13 @@ describe('cuesBetween — le son se deduit de ce qui change', () => {
     expect(cuesBetween({ ...calme, pings: 2 }, { ...calme, pings: 2, lastPingIntent: 0 })).toEqual(
       [],
     );
+  });
+
+  it('etape 11 : le porteur annonce sonne une fois, et le coffre ne joue pas le son de niveau', () => {
+    expect(cuesBetween(calme, { ...calme, porteurs: 1 })).toEqual(['porteur']);
+    expect(cuesBetween({ ...calme, porteurs: 1 }, { ...calme, porteurs: 1 })).toEqual([]);
+    // Le LEVEL_UP d'un coffre porte le niveau d'avant-meme-tick (pas une vraie
+    // montee) : la garantie est cote serveur, voir back/src/room.test.ts, test
+    // "coffre et niveau dus au MEME tick...", niveau 1 puis 2 sur le meme tick.
   });
 });

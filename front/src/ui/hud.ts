@@ -105,6 +105,10 @@ export interface HudSource {
   readonly localMaxHp: number;
   /** Ennemis abattus depuis le debut de la run, tels que `DEATHS` les a annonces. */
   readonly kills: number;
+  /** L'etalage en cours est un coffre (etape 11) : le bandeau de gel le dit. Absent : non. */
+  readonly draftIsChest?: boolean;
+  /** Le bandeau « un porteur est apparu » est-il allume (etape 11) ? Absent : non. */
+  readonly porteurBannerOn?: boolean;
   loadoutOf(playerId: number): Loadout;
 }
 
@@ -218,6 +222,8 @@ export interface HudElements {
   /** La cagnotte non securisee (§5 de l'etape 6a), visible en permanence. */
   gold: HTMLElement;
   freeze: HTMLElement;
+  /** Le bandeau du porteur de coffre (etape 11). Optionnel : les anciens HUD de test n'en ont pas. */
+  porteur?: HTMLElement;
   /** Les emplacements de passifs. */
   passiveList: HTMLElement;
 }
@@ -279,6 +285,9 @@ export function paintHud(
   // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme
   // un plantage plutot que comme une pause voulue.
   el.freeze.classList.toggle('hidden', !info.frozen);
+  // Etape 11 : un coffre gele comme un niveau, mais il le dit.
+  el.freeze.textContent = source.draftIsChest ? 'Coffre — pause…' : 'Niveau supérieur — pause…';
+  el.porteur?.classList.toggle('hidden', source.porteurBannerOn !== true);
 }
 
 /** L'icone du verbe de chaque classe : un choix d'affichage, comme `BONUS_ICONS`. */

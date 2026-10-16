@@ -3,14 +3,19 @@ import {
   BOSS_ARCHETYPE,
   HEAVY_HP,
   LIGHT_HP,
+  PORTEUR_ARCHETYPE,
   STEP2_ARCHETYPES,
 } from '@shared/archetypes';
-import { MAX_ENTITIES, MAX_PLAYERS, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
+import { MAP_SIZE, MAX_ENTITIES, MAX_PLAYERS, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
+import { Horde } from '@shared/horde';
 import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
 import {
+  PORTEUR_MIN_GAP_WAVES,
+  PORTEUR_SPAWN_DISTANCE,
+  PORTEUR_WAVE_IN_PALIER,
   playerShare,
   RAMP_LEVELS,
   WAVE_CYCLE,
@@ -565,7 +570,9 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     for (let tick = 0; tick < 4 * MINUTE; tick++) {
       const g = d.dueWave(tick, QUATRE, QUATRE, 8);
       if (g.length > 0) {
-        groupes.push(g);
+        // ⚠️ L'ordre du porteur (etape 11) a SON ancre, a 1 500 px : il n'est
+        // pas une escorte, et ce test parle des vagues ordinaires.
+        groupes.push(g.filter((o) => o.archetype !== PORTEUR_ARCHETYPE));
       }
     }
     const role = (o: WaveOrder | undefined): string => archetypeOf(o?.archetype ?? 0).role;
@@ -623,5 +630,136 @@ describe('la difficulte suit le niveau et le nombre de joueurs', () => {
   it('a la meme vague, un niveau plus haut fait une vague plus grande', () => {
     expect(premiereVague(4, RAMP_LEVELS)).toBeGreaterThan(premiereVague(4, 1));
     expect(waveCountBounds(RAMP_LEVELS)).toEqual(waveCountBounds(RAMP_LEVELS + 50));
+  });
+});
+
+describe('etape 11 : le directeur demande le porteur de coffre', () => {
+  const estPorteur = (o: WaveOrder): boolean => o.archetype === PORTEUR_ARCHETYPE;
+
+  /** FNV-1a 32 bits : une empreinte du flux, comparee a celle relevee sur main. */
+  function fnv1a(s: string): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h;
+  }
+
+  /**
+   * Les `vagues` premiers groupes d'un directeur. Le boss tombe a son
+   * apparition ; le porteur rend la main (`porteurGone`) a la sienne si `rendre`.
+   */
+  function groupes(
+    seed: number,
+    vagues: number,
+    rendre: boolean,
+    xs: readonly number[] = [3000],
+    ys: readonly number[] = [3000],
+  ): WaveOrder[][] {
+    const d = new WaveDirector(seed);
+    const out: WaveOrder[][] = [];
+    for (let tick = 0; out.length < vagues; tick++) {
+      const g = d.dueWave(tick, xs, ys);
+      if (g.length === 0) {
+        continue;
+      }
+      out.push(g);
+      if (d.bossWaveId === g[0]?.waveId) {
+        d.bossDefeated();
+      }
+      if (rendre && g.some(estPorteur)) {
+        d.porteurGone();
+      }
+    }
+    return out;
+  }
+
+  it('un porteur a la 2e vague du palier 0, en dernier : POINT, count 1, a PORTEUR_SPAWN_DISTANCE de son joueur', () => {
+    expect(PORTEUR_WAVE_IN_PALIER).toBe(2);
+    const g = groupes(5, 2, true);
+    expect(g[0]?.some(estPorteur)).toBe(false);
+    const groupe = g[1] ?? [];
+    const p = groupe[groupe.length - 1];
+    if (!p || !estPorteur(p)) {
+      throw new Error('le porteur doit etre le DERNIER ordre de la 2e vague');
+    }
+    expect(groupe.filter(estPorteur)).toHaveLength(1);
+    expect(p.formation).toBe(FORMATION.POINT);
+    expect(p.count).toBe(1);
+    expect(p.spawnTick).toBe(groupe[0]?.spawnTick);
+    expect(p.seed).toBe(((groupe[0]?.seed ?? 0) ^ 0x5f3a_c0f1) >>> 0);
+    // L'ancre arrondie au pixel : a moins d'un pixel de 1 500.
+    expect(
+      Math.abs(Math.hypot(p.anchorX - 3000, p.anchorY - 3000) - PORTEUR_SPAWN_DISTANCE),
+    ).toBeLessThan(1);
+  });
+
+  it('un par palier, jamais deux a moins de PORTEUR_MIN_GAP_WAVES vagues : aux vagues 2, 52 et 102', () => {
+    // Le boss tombe a chaque apparition : un palier toutes les cinq vagues. Sa
+    // 2e vague est la 5p + 2 ; le plancher de 50 ecarte toutes celles d'avant 52.
+    expect(PORTEUR_MIN_GAP_WAVES).toBe(50);
+    const g = groupes(5, 120, true);
+    const numeros = g.flatMap((gr, i) => (gr.some(estPorteur) ? [i + 1] : []));
+    expect(numeros).toEqual([2, 52, 102]);
+  });
+
+  it('pas de second porteur tant que porteurGone n est pas venu', () => {
+    const g = groupes(5, 120, false);
+    expect(g.flatMap((gr, i) => (gr.some(estPorteur) ? [i + 1] : []))).toEqual([2]);
+  });
+
+  /**
+   * ⚠️ **Aucun tirage de plus** (§2.2 de la spec) : l'empreinte des ordres
+   * ORDINAIRES — tick, graine, archetype, formation, ancre, effectif, tout sauf
+   * `waveId` — a ete RELEVEE sur main avant l'etape, avec exactement ce decor.
+   * Un porteur qui consommerait un seul `rng()` la ferait mentir.
+   */
+  it('les ordres ordinaires sont bit-identiques a ceux d avant l etape', () => {
+    const d = new WaveDirector(5);
+    const rows: number[][] = [];
+    let porteurs = 0;
+    for (let tick = 0; tick < TICK_HZ * 600; tick++) {
+      const g = d.dueWave(tick, [3000, 2000], [3000, 4000], 1 + Math.floor(rows.length / 3));
+      if (g.length > 0 && d.bossWaveId === g[0]?.waveId) {
+        d.bossDefeated();
+      }
+      if (g.some(estPorteur)) {
+        porteurs++;
+        d.porteurGone();
+      }
+      for (const o of g.filter((x) => !estPorteur(x))) {
+        rows.push([o.spawnTick, o.seed, o.archetype, o.formation, o.anchorX, o.anchorY, o.count]);
+      }
+    }
+    // Non-vacuite : des porteurs sont bien sortis pendant la mesure.
+    expect(porteurs).toBeGreaterThanOrEqual(2);
+    expect(rows).toHaveLength(159);
+    expect(fnv1a(JSON.stringify(rows))).toBe(761_168_326);
+  });
+
+  it('pres d un coin, l ancre peut sortir de la carte, mais le porteur nait dedans', () => {
+    let dehors = 0;
+    for (let seed = 1; seed <= 40; seed++) {
+      const p = groupes(seed, 2, true, [50], [50])[1]?.find(estPorteur);
+      if (!p) {
+        throw new Error(`graine ${seed} : pas de porteur a la 2e vague`);
+      }
+      // L'ancre voyage en int16 (`shared/protocol.ts`).
+      expect(p.anchorX).toBeGreaterThanOrEqual(-32_768);
+      expect(p.anchorX).toBeLessThanOrEqual(32_767);
+      if (p.anchorX < 0 || p.anchorY < 0) {
+        dehors++;
+      }
+      const h = new Horde(4);
+      h.spawn(p);
+      expect(h.count).toBe(1);
+      expect(h.x[0]).toBeGreaterThanOrEqual(0);
+      expect(h.x[0]).toBeLessThanOrEqual(MAP_SIZE);
+      expect(h.y[0]).toBeGreaterThanOrEqual(0);
+      expect(h.y[0]).toBeLessThanOrEqual(MAP_SIZE);
+    }
+    // Non-vacuite : le cas « hors carte » s'est bien presente.
+    expect(dehors).toBeGreaterThan(0);
   });
 });

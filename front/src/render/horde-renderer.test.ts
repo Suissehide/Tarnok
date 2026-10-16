@@ -1,4 +1,11 @@
-import { ARCHETYPES, BOSS_ARCHETYPE, BOSS_BODY_SCALE } from '@shared/archetypes';
+import {
+  ARCHETYPES,
+  archetypeIdOf,
+  BOSS_ARCHETYPE,
+  BOSS_BODY_SCALE,
+  PORTEUR_ARCHETYPE,
+  PORTEUR_BODY_SCALE,
+} from '@shared/archetypes';
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -705,5 +712,36 @@ describe('HordeRenderer.draw — le boss qui arme reste sur sa premiere image', 
     const horde = deuxArretes();
     const particules = particulesAnimees(horde, 999_999);
     expect(particleOf(particules, horde, 0).texture.frame.x).toBe(FIXTURE_ATTACK_FRAME_1_X);
+  });
+});
+
+/**
+ * Etape 11, §3.4 : l'atlas n'a PAS d'entree pour le porteur. Sans l'alias de
+ * `adoptAtlas`, il serait simule et tuable mais jamais dessine, en silence —
+ * le defaut que l'etape 6a a connu avec le boss. L'atlas synthetique ne range
+ * ici QUE le voleur : tout ce que le porteur dessine vient de l'alias.
+ */
+describe('etape 11 : le porteur emprunte le voleur, en plus grand', () => {
+  const VOLEUR = archetypeIdOf('thief');
+
+  it('dessine le porteur avec les textures du voleur', () => {
+    const horde = twoEnemies(PORTEUR_ARCHETYPE);
+    expect(drawnParticles(horde, VOLEUR)).toHaveLength(2);
+  });
+
+  it('a l arret il attend sur la PREMIERE image de sa course, jamais sur l attaque du voleur', () => {
+    const horde = twoEnemies(PORTEUR_ARCHETYPE);
+    horde.stopped[0] = 1;
+    horde.stopped[1] = 1;
+    const particule = particleOf(drawnParticles(horde, VOLEUR), horde, 0);
+    expect(particule.texture.frame.x).toBe(FIXTURE_RUN_X);
+  });
+
+  it('a 1,6 fois l echelle du voleur', () => {
+    const porteurs = twoEnemies(PORTEUR_ARCHETYPE);
+    const voleurs = twoEnemies(VOLEUR);
+    const p = particleOf(drawnParticles(porteurs, VOLEUR), porteurs, 0);
+    const v = particleOf(drawnParticles(voleurs, VOLEUR), voleurs, 0);
+    expect(p.scaleY / v.scaleY).toBeCloseTo(PORTEUR_BODY_SCALE, 5);
   });
 });

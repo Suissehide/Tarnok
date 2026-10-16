@@ -199,6 +199,7 @@ const hudElements: HudElements = {
   synergyLabel: hudSynergyLabel,
   gold: hudGold,
   freeze: hudFreeze,
+  porteur: el('hud-porteur'),
   passiveList: hudPassiveList,
 };
 
@@ -731,6 +732,7 @@ function join(code: string): void {
           players: state.players,
           enemies: client.horde,
           boss: null,
+          porteur: client.porteur,
           // `pingClock`, pas `hordeTick` (revue finale, etape 9) : voir
           // `GameClient#pingClock`.
           pings: livePings(client.pings, client.pingClock),
@@ -791,6 +793,7 @@ function join(code: string): void {
         abilityCooldown: client.abilityCooldownTicks,
         pings: client.pingCount,
         lastPingIntent: client.lastPingIntent,
+        porteurs: client.porteurCount,
       };
       for (const cue of cuesBetween(lastCues, cur)) {
         audio.play(cue);

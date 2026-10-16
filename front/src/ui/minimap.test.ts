@@ -92,4 +92,36 @@ describe('mini-carte', () => {
     map.draw({ ...base, blinkOn: false });
     expect(calls.filter((c) => c.style === playerColor(3) && c.w === 5)).toHaveLength(0);
   });
+
+  it('etape 11 : le porteur, un point or de 6 px, sous les joueurs ; rien sans porteur', () => {
+    const calls: { style: string; x: number; y: number; w: number; h: number }[] = [];
+    const ctx = {
+      fillStyle: '',
+      fillRect(x: number, y: number, w: number, h: number) {
+        calls.push({ style: this.fillStyle, x, y, w, h });
+      },
+    };
+    const canvas = {
+      width: 100,
+      height: 100,
+      getContext: () => ctx,
+    } as unknown as HTMLCanvasElement;
+    const map = new Minimap(canvas);
+    const base = {
+      localId: 1,
+      players: [{ id: 1, x: 0, y: 0, hp: 10 }],
+      enemies: { count: 0, x: new Float32Array(0), y: new Float32Array(0) },
+      boss: null,
+      pings: [],
+      blinkOn: true,
+    };
+    map.draw({ ...base, porteur: { x: MAP_SIZE / 2, y: MAP_SIZE / 2 } });
+    const or = calls.findIndex((c) => c.style === '#f5c542');
+    expect(calls[or]).toEqual({ style: '#f5c542', x: 47, y: 47, w: 6, h: 6 });
+    // Sous les joueurs : le joueur local est dessine APRES.
+    expect(calls.findIndex((c) => c.style === playerColor(1))).toBeGreaterThan(or);
+    calls.length = 0;
+    map.draw({ ...base, porteur: null });
+    expect(calls.filter((c) => c.style === '#f5c542')).toHaveLength(0);
+  });
 });

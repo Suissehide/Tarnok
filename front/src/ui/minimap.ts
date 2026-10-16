@@ -27,6 +27,7 @@ const TERRAIN_RGB: Partial<Record<number, readonly [number, number, number]>> = 
 };
 const ENEMY = '#e04040';
 const BOSS = '#ff2020';
+const PORTEUR = '#f5c542';
 const OUTLINE = '#ffffff';
 
 export interface MinimapView {
@@ -34,6 +35,8 @@ export interface MinimapView {
   players: readonly { id: number; x: number; y: number; hp: number }[];
   enemies: { readonly count: number; readonly x: Float32Array; readonly y: Float32Array };
   boss: { x: number; y: number } | null;
+  /** Le porteur de coffre (etape 11), un point or. Absent ou `null` : rien. */
+  porteur?: { x: number; y: number } | null;
   /** Les pings vivants (etape 9). */
   pings: readonly { playerId: number; x: number; y: number }[];
   /** Phase du clignotement, calculee par l'appelant : `draw` ne lit pas l'horloge. */
@@ -123,6 +126,17 @@ export class Minimap {
       const by = toMinimap(view.boss.y, MAP_SIZE, h);
       ctx.fillStyle = BOSS;
       ctx.fillRect(bx - 2, by - 2, 5, 5);
+    }
+
+    // Etape 11 : le porteur, au-dessus des ennemis et sous les joueurs.
+    if (view.porteur) {
+      ctx.fillStyle = PORTEUR;
+      ctx.fillRect(
+        toMinimap(view.porteur.x, MAP_SIZE, w) - 3,
+        toMinimap(view.porteur.y, MAP_SIZE, h) - 3,
+        6,
+        6,
+      );
     }
 
     // Les pings (etape 9) : un carre de 5 px qui clignote, sous les joueurs.

@@ -13,7 +13,7 @@ import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { makeRandom } from './random';
-import { RARITY } from './rarity';
+import { CHEST_RARITY_FLOOR, RARITY } from './rarity';
 import { BASE_WEAPON_ID, UPGRADE_KINDS, upgradesFor, WEAPONS, type Weapon } from './weapons';
 
 function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
@@ -389,5 +389,38 @@ describe('drawSpread — la rarete (etape 10)', () => {
     // Non-vacuite : sans cette ligne, un tirage qui ne les offrirait JAMAIS
     // passerait l'assertion ci-dessus a vide.
     expect(vus).toBeGreaterThan(0);
+  });
+});
+
+describe('etape 11 : drawSpread au plancher du coffre', () => {
+  it('aucune carte commune sur 500 graines, des legendaires, et les exclusifs restent legendaires', () => {
+    let legendaires = 0;
+    for (let seed = 1; seed <= 500; seed++) {
+      for (const c of drawSpread(
+        equipe(new Loadout(), new Loadout()),
+        makeRandom(seed),
+        CHEST_RARITY_FLOOR,
+      )) {
+        expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
+        if (c.rarity === RARITY.LEGENDAIRE) {
+          legendaires++;
+        }
+        if (isLegendaryOnly(c)) {
+          expect(c.rarity).toBe(RARITY.LEGENDAIRE);
+        }
+      }
+    }
+    // Non-vacuite : un plancher qui ne rendrait QUE du rare passerait le reste.
+    expect(legendaires).toBeGreaterThan(0);
+  });
+
+  it('sans plancher, l etalage est exactement celui du plancher commun', () => {
+    for (let seed = 1; seed <= 50; seed++) {
+      const l = new Loadout();
+      l.addWeapon(BASE_WEAPON_ID);
+      expect(drawSpread(equipe(l, new Loadout()), makeRandom(seed))).toEqual(
+        drawSpread(equipe(l, new Loadout()), makeRandom(seed), RARITY.COMMUNE),
+      );
+    }
   });
 });

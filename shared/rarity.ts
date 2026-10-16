@@ -24,6 +24,14 @@ export const RARITY_MULTIPLIERS: readonly number[] = [1, 2, 3];
 export const RARITY_WEIGHTS: readonly number[] = [82, 15, 3];
 
 /**
+ * Le plancher de rarete d'un COFFRE (etape 11, §4.2) : toutes ses cartes sont
+ * au moins rares. Le tirage RENORMALISE au-dessus du plancher (15/18 rare,
+ * 3/18 legendaire) — un `Math.max(plancher, tirage)` aurait laisse la
+ * legendaire a 3 % et ote au coffre sa raison d'etre un evenement.
+ */
+export const CHEST_RARITY_FLOOR: number = RARITY.RARE;
+
+/**
  * Ramene une rarete lue sur le fil dans la table : absente ou inconnue, la
  * carte est commune. Un octet ne peut pas mentir plus loin que ca.
  */
@@ -40,11 +48,19 @@ export function multiplierOf(rarity: number | undefined): number {
 /**
  * Tire une rarete selon `RARITY_WEIGHTS`. `rng` est injecte, comme pour
  * `drawSpread` : `shared/` n'appelle jamais `Math.random`.
+ *
+ * `floor` (etape 11) : ne tire que parmi les raretes `>= floor`, a leurs poids
+ * relatifs. ⚠️ **Au plancher par defaut, le calcul est EXACTEMENT celui
+ * d'avant** — meme somme dans le meme ordre, un seul `rng()` : une montee de
+ * niveau ne voit aucune difference.
  */
-export function rollRarity(rng: () => number): number {
-  const total = RARITY_WEIGHTS.reduce((a, b) => a + b, 0);
+export function rollRarity(rng: () => number, floor: number = RARITY.COMMUNE): number {
+  let total = 0;
+  for (let r = floor; r < RARITY_WEIGHTS.length; r++) {
+    total += RARITY_WEIGHTS[r] ?? 0;
+  }
   let roll = rng() * total;
-  for (let r = 0; r < RARITY_WEIGHTS.length; r++) {
+  for (let r = floor; r < RARITY_WEIGHTS.length; r++) {
     roll -= RARITY_WEIGHTS[r] ?? 0;
     if (roll < 0) {
       return r;

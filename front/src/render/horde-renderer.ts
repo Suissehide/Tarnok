@@ -1,4 +1,4 @@
-import { ARCHETYPES } from '@shared/archetypes';
+import { ARCHETYPES, archetypeIdOf, PORTEUR_ARCHETYPE } from '@shared/archetypes';
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import type { Horde } from '@shared/horde';
 import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
@@ -590,6 +590,18 @@ export class HordeRenderer {
       // tir, elle, ne varie pas : chacun doit donc recevoir SON propre facteur.
       sizesPx[a.id] = contentSizePx(a.bounds);
     }
+    // ⚠️ **Etape 11 : le porteur de coffre n'a PAS d'entree dans l'atlas** —
+    // c'est un voleur agrandi (§3.4 de la spec), aucun actif nouveau. Sans cet
+    // alias, `draw` le sauterait en silence faute de textures. Sa taille passe
+    // par le mecanisme du boss : `bodyScale` (1,6) multiplie la taille de
+    // contenu du voleur dans `archetypeScales`. Son clip d'« attaque » est la
+    // PREMIERE image de la course, figee : `selectClip` le montre quand
+    // `stopped` vaut 1, c'est-a-dire quand il attend — avec le vrai clip
+    // d'attaque du voleur, il frapperait dans le vide.
+    const voleur = archetypeIdOf('thief');
+    this.#runFrames[PORTEUR_ARCHETYPE] = this.#runFrames[voleur] ?? [];
+    this.#attackFrames[PORTEUR_ARCHETYPE] = this.#runFrames[voleur]?.slice(0, 1) ?? [];
+    sizesPx[PORTEUR_ARCHETYPE] = sizesPx[voleur] ?? 0;
     // Les trous de `sizesPx` valent `undefined` : `archetypeScales` y lit 0,
     // et `spriteScale` rend alors 1 — une echelle jamais utilisee, puisque
     // l'entite est sautee faute de textures.
