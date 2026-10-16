@@ -5622,22 +5622,33 @@ describe('etape 11 : le porteur de coffre dans le salon', () => {
   });
 
   it('sa mort ouvre au tick suivant un etalage gele dont TOUTES les cartes sont au moins rares', () => {
-    const room = new Room(0x11_0b_0002);
-    room.join(1);
-    const id = jusquAuPorteur(room);
-    abattrePorteur(room, id);
-    room.drainLevelUps();
-    room.step(DT);
-    const ups = room.drainLevelUps();
-    const opens = room.drainDraftOpens();
-    expect(ups).toHaveLength(1);
-    // Un coffre n'est pas un niveau : le niveau annonce ne monte pas.
-    expect(ups[0]?.level).toBe(1);
-    expect(opens).toHaveLength(1);
-    const cartes = opens[0]?.cards ?? [];
-    expect(cartes.length).toBeGreaterThanOrEqual(2);
-    for (const c of cartes) {
-      expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
+    const relache = vi.spyOn(WaveDirector.prototype, 'porteurGone');
+    try {
+      const room = new Room(0x11_0b_0002);
+      room.join(1);
+      const id = jusquAuPorteur(room);
+      abattrePorteur(room, id);
+      // La mort reelle (degats) relache le directeur exactement une fois :
+      // supprimer l'appel a `porteurGone()` dans le lot de morts doit faire
+      // rougir CETTE assertion, pas seulement les tests dedies a la horde
+      // pleine ou au retrait hors lot.
+      expect(relache).toHaveBeenCalledTimes(1);
+      room.drainLevelUps();
+      room.step(DT);
+      const ups = room.drainLevelUps();
+      const opens = room.drainDraftOpens();
+      expect(ups).toHaveLength(1);
+      // Un coffre n'est pas un niveau : le niveau annonce ne monte pas.
+      expect(ups[0]?.level).toBe(1);
+      expect(opens).toHaveLength(1);
+      const cartes = opens[0]?.cards ?? [];
+      expect(cartes.length).toBeGreaterThanOrEqual(2);
+      for (const c of cartes) {
+        expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
+      }
+      expect(relache).toHaveBeenCalledTimes(1);
+    } finally {
+      relache.mockRestore();
     }
   });
 
@@ -5651,7 +5662,12 @@ describe('etape 11 : le porteur de coffre dans le salon', () => {
     room.debugOweLevels(1);
     room.step(DT);
     const premier = room.drainDraftOpens();
+    const niveauxPremier = room.drainLevelUps();
     expect(premier).toHaveLength(1);
+    expect(niveauxPremier).toHaveLength(1);
+    // Le coffre annonce le niveau D'AVANT celui que `debugOweLevels` vient de
+    // faire gagner : il ne doit pas l'anticiper d'un etalage.
+    expect(niveauxPremier[0]?.level).toBe(1);
     for (const c of premier[0]?.cards ?? []) {
       expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
     }
@@ -5660,8 +5676,15 @@ describe('etape 11 : le porteur de coffre dans le salon', () => {
     expect(room.drainDraftResults()).toHaveLength(1);
     room.step(DT);
     // Le niveau attendait : il s'ouvre au tick suivant, sans plancher.
-    expect(room.drainDraftOpens()).toHaveLength(1);
-    expect(room.drainLevelUps()).toHaveLength(2);
+    const second = room.drainDraftOpens();
+    const niveauxSecond = room.drainLevelUps();
+    expect(second).toHaveLength(1);
+    expect(niveauxSecond).toHaveLength(1);
+    // Le vrai niveau, lui, annonce le niveau REELLEMENT atteint.
+    expect(niveauxSecond[0]?.level).toBe(2);
+    // Sans plancher (graine fixe, deterministe) : au moins une carte commune.
+    const secondCartes = second[0]?.cards ?? [];
+    expect(secondCartes.some((c) => (c.rarity ?? RARITY.COMMUNE) === RARITY.COMMUNE)).toBe(true);
   });
 
   it('horde pleine a l ordre du porteur : porteurGone, aucune entite, aucun coffre', () => {

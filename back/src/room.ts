@@ -2382,9 +2382,17 @@ export class Room {
       coffre ? CHEST_RARITY_FLOOR : RARITY.COMMUNE,
     );
     this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts);
-    // Le niveau ne monte pas pour un coffre : `#level` est celui d'avant, et
-    // `cuesBetween` ne joue le son de niveau que s'il augmente.
-    this.#pendingLevelUps.push({ tick: this.#tick, level: this.#level });
+    // ⚠️ **Le niveau annonce pour un coffre est celui d'AVANT tout niveau
+    // encore en file.** `#level` inclut deja les niveaux montes mais pas
+    // encore tires (`#pendingLevels` en compte le nombre) : un coffre du au
+    // meme tick qu'un niveau ne doit pas anticiper ce niveau, sous peine de
+    // jouer le son de niveau et d'afficher le nouveau palier un etalage trop
+    // tot. `#level - #pendingLevels` est donc le niveau reellement affiche
+    // par le DERNIER `LEVEL_UP` deja tire ; un niveau ordinaire, lui, vient
+    // juste de decrementer `#pendingLevels` ci-dessus et annonce `#level` sans
+    // correction, le niveau qu'il REND visible.
+    const niveauAnnonce = coffre ? this.#level - this.#pendingLevels : this.#level;
+    this.#pendingLevelUps.push({ tick: this.#tick, level: niveauAnnonce });
     this.#pendingDraftOpens.push({ deadlineTick: this.#draft.deadlineTick, cards: spread });
   }
 
