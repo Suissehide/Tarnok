@@ -4,7 +4,7 @@
 #
 # Le depot est public et la licence Pixel Frog interdit la redistribution, meme
 # apres modification (voir NOTICE-assets.md). Les assets vivent donc sur MinIO,
-# sous le prefixe `tarnok/`, et `assets/tinyswords/` est dans .gitignore.
+# dans le bucket `tiny-swords`, et `assets/tinyswords/` est dans .gitignore.
 #
 # Usage :
 #   cp deploy/.env.example .env   # puis renseigner les MINIO_*
