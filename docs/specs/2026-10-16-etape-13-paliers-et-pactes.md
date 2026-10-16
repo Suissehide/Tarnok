@@ -263,8 +263,18 @@ propre. Chez un porteur de Transcendance la part PV ne fait qu'un pixel, et c'es
 
 ## 4. Le contenu
 
-Règle de sélection, tirée du diagnostic de Léo sur Moisson : **une carte de palier haut ne doit
-recouper aucune commune.** Chacune ci-dessous s'accroche à un système que rien d'autre ne touche.
+Règle de sélection, tirée du diagnostic de Léo sur Moisson, **amendée par lui pendant
+l'exécution** : une carte de palier haut peut réutiliser le genre d'une commune **à condition de
+coûter quelque chose** (un `malus` ou une `rule`). Ce qui reste interdit, c'est une carte de palier
+**gratuite** qui recoupe une commune — ce serait la commune en plus gros, sans contrepartie, et
+c'est exactement le reproche fait à Moisson.
+
+⚠️ **Pourquoi l'amendement.** La revue de la tâche 7 a constaté que **Fournaise échoue la règle
+d'origine** : son genre est `damage`, c'est Puissance et Acier en plus gros, et seul son prix la
+distingue. Léo a tranché : *« la garder, le coût EST ce qui la distingue »* — un pacte n'a pas
+besoin d'un système neuf, la décision qu'il impose suffit. `shared/passives.test.ts` garde la règle
+sous sa forme amendée, et son corps s'exerce réellement sur Écho et Colosse, les deux épiques
+gratuits.
 
 ### 4.1 Épiques — une règle, gratuite
 
@@ -295,6 +305,21 @@ mord les quatre sources d'un coup, sans une ligne de plus.
 
 ⚠️ **Tous les chiffres de ces deux tables sont des molettes de playtest**, commentés comme tels dans
 la table, jamais des valeurs dérivées.
+
+⚠️ **Anti-synergie assumée : un porteur de Transcendance ne paie pas Fournaise.** `maxHpOf` statue
+en premier sur la règle de Transcendance, donc les −40 PV max de Fournaise sont gratuits chez lui :
++60 % de dégâts sans contrepartie. Trouvé en revue de la tâche 7, porté à Léo, **décision de le
+laisser en jeu** : *« c'est une trouvaille de joueur »* — et il faut déjà réunir deux légendaires à
+2 % chacun. À regarder au playtest, pas à corriger.
+
+⚠️ **Le malus d'armure DEMANDE un câblage, contrairement à ce que ce document affirmait.** La
+première rédaction du §3.1 disait qu'une armure négative mordrait les quatre sources « sans une
+ligne de plus » parce que `hurtPlayer` est le point de passage unique. C'est faux : `hurtPlayer`
+sait traiter une armure négative, mais `Room#armorOf` est le seul écrivain de `p.armor` et ne lisait
+pas `loadout.bonus('armor')`. Livrée telle quelle, Hâte funeste aurait donné **+50 % de cadence
+gratuits** sur un légendaire. Corrigé à la tâche 7 ; l'armure du compte et celle du Rempart se
+prennent au maximum entre elles, **puis** la contribution des cartes s'ajoute, négative comprise —
+un `Math.max` global avalerait le malus.
 
 ### 4.3 Ce que l'étape supprime
 
