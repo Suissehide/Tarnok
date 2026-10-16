@@ -1085,6 +1085,20 @@ export class Room {
   }
 
   /**
+   * Ecriture de test, meme statut que `debugSetGold` : pose les PV courants
+   * d'un joueur, sans toucher a son plafond — utile pour eprouver une carte a
+   * malus de PV max (Fournaise, etape 13) sur un joueur deja blesse, ce
+   * qu'aucun chemin de production n'a besoin de faire directement (`hp` n'y
+   * varie que par `hurtPlayer`, `#regenerate` et `grantCard`).
+   */
+  debugSetHp(playerId: number, hp: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      p.hp = hp;
+    }
+  }
+
+  /**
    * Le palier courant, `0` pour le premier — l'argument `k` des formules de
    * `shared/paliers.ts`.
    *
