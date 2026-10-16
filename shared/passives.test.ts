@@ -72,22 +72,29 @@ describe('etape 13 : le catalogue des paliers', () => {
   });
 
   /**
-   * La regle de selection de l'etape : un palier haut ne recoupe aucune
-   * commune.
+   * La regle de selection de l'etape, telle qu'arbitree par l'auteur du jeu
+   * (question portee par le coordinateur apres la revue) : une carte de
+   * palier haut PEUT recouper le genre d'une commune A CONDITION DE COUTER
+   * QUELQUE CHOSE — un `malus` ou une `rule`. Fournaise reste au catalogue
+   * pour cette raison : son `kind: 'damage'` recoupe « puissance »/« acier »,
+   * mais son malus de PV max est la decision qu'elle impose, pas un systeme
+   * neuf — le cout distingue, pas le genre.
    *
-   * ⚠️ **Seule une carte de REGLE (`rule`) est exemptee** (revue du
-   * coordinateur) : son `kind`/`magnitude` sont decoratifs par convention
-   * (voir le docbloc de `Passive.rule`), donc hors sujet pour ce test. Les
-   * exemptions par nom (`echo`, `colossus`) et par `malus` d'une version
-   * precedente de ce test sont retirees : aucune commune ne porte ces deux
-   * genres (l'exemption par nom etait un no-op), et le `malus` ne dit rien
-   * du GENRE d'une carte, seulement de son cout — le test porte sur le
-   * genre.
+   * Ce qui reste interdit, c'est une carte de palier GRATUITE qui recoupe
+   * une commune : ce serait la commune en plus gros, sans contrepartie —
+   * exactement le reproche fait a Moisson (doublait Regain, sans rien de
+   * plus).
+   *
+   * ⚠️ **Aucune exemption par nom.** `echo` et `colossus` n'en ont jamais eu
+   * besoin : aucune commune ne porte ces genres, donc la boucle s'execute
+   * pour elles aussi et prouve quelque chose — une version precedente de ce
+   * test les exemptait par nom, ce qui les rendait invisibles a la regle
+   * sans jamais rien affirmer a leur sujet.
    */
-  it('aucune carte de palier ne partage son genre avec une carte ordinaire, sauf une regle', () => {
+  it('une carte de palier gratuite ne partage jamais son genre avec une carte ordinaire', () => {
     const ordinaires = new Set(PASSIVES.filter((p) => !p.tier).map((p) => p.kind));
     for (const p of PASSIVES.filter((x) => x.tier)) {
-      if (p.rule === undefined) {
+      if (p.rule === undefined && p.malus === undefined) {
         expect(ordinaires.has(p.kind)).toBe(false);
       }
     }
