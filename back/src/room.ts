@@ -53,7 +53,7 @@ import { EnemyShots } from '@shared/enemy-shots';
 import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
-import { Loadout, maxHpOf } from '@shared/loadout';
+import { Loadout, maxHpOf, maxShieldOf } from '@shared/loadout';
 import {
   type FrappeImpact,
   frappeDueTick,
@@ -175,11 +175,8 @@ export interface PlayerState extends ContactPlayer {
   shieldCalmTicks: number;
   /**
    * Plafond de la reserve de bouclier de ce joueur : `SHIELD_POOL` chez un
-   * porteur de Transcendance, `0` sinon.
-   *
-   * ⚠️ **Vaut `0` pour TOUT LE MONDE tant que la tache 6 n'est pas faite** —
-   * aucune carte n'ouvre encore la reserve. C'est volontaire : cette tache
-   * livre un bouclier complet et inerte.
+   * porteur de Transcendance, `0` sinon — voir `maxShieldOf`
+   * (`shared/loadout.ts`), posee par `grantCard` a chaque carte de passif.
    */
   maxShield: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
@@ -1048,10 +1045,19 @@ export class Room {
     }
   }
 
+  /**
+   * ⚠️ **Restitue aussi `shield` et `shieldCalmTicks`, pas seulement `hp`.**
+   * Sans consequence tant que `maxShield` valait `0` pour tout le monde ;
+   * depuis Transcendance (etape 13, tache 6), un porteur ressuscite sans ce
+   * rattrapage garderait une reserve et un compteur de calme perimes — une
+   * reserve a `0` sous un plafond qui, lui, a bien ete restitue.
+   */
   debugRevive(playerId: number): void {
     const p = this.#players.get(playerId);
     if (p) {
       p.hp = p.maxHp;
+      p.shield = p.maxShield;
+      p.shieldCalmTicks = 0;
     }
   }
 
@@ -2770,6 +2776,11 @@ export class Room {
       player.hp = Math.min(nouveauMax, player.hp);
       player.hp = Math.max(vivant ? 1 : 0, player.hp);
       player.maxHp = nouveauMax;
+      // ⚠️ **Ouvre la reserve, ne la remplit pas.** `shield` part a `0` a la
+      // jonction (`join`) et y reste jusqu'a ce que cette carte souleve le
+      // plafond : rien a transferer, contrairement a `hp` ci-dessus, qui a
+      // un delta a repartir parce que `PLAYER_MAX_HP` n'est jamais nul.
+      player.maxShield = maxShieldOf(player.loadout);
     }
   }
 

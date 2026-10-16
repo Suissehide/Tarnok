@@ -17,6 +17,7 @@ import {
   PROJECTILE_HIT_RADIUS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
+  TRANSCENDANCE_MAX_HP,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
@@ -3385,6 +3386,55 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const base = weaponOf(BASE_WEAPON_ID);
     const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
     expect(tir?.[6]).toBeCloseTo(base.damage * 1.1, 6);
+  });
+
+  /**
+   * Etape 13, tache 6 — **le scenario pour lequel `maxHpOf` a ete descendu
+   * dans `shared/loadout.ts`** : un porteur de Transcendance ET de Colosse.
+   *
+   * `localMaxHp` (le HUD) et le miroir de `shotDamage` dans `#fireOne`
+   * (§5.4, Colosse) appellent tous les deux `maxHpOf` — jamais une copie
+   * locale. Sans ce test, rien ne garde le second appel : un code qui
+   * recopierait encore `PLAYER_MAX_HP` en dur continuerait d'echelonner
+   * Colosse sur ~100 PV quand le serveur, lui, arbitre sur 1 — exactement la
+   * divergence que cette architecture (une seule regle, posee une seule
+   * fois, partagee par construction) est censee rendre impossible.
+   */
+  it('etape 13 : Transcendance ecrase Colosse, cote client comme au salon — aucune divergence', () => {
+    const COLOSSE = PASSIVES.find((p) => p.kind === 'colossus')?.id ?? -1;
+    const TRANSCENDANCE = PASSIVES.find((p) => p.rule === 'transcendance')?.id ?? -1;
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.PASSIVE, refId: COLOSSE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    grant(socket, { nature: CARD.PASSIVE, refId: TRANSCENDANCE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    // ⚠️ Le HUD d'abord : `localMaxHp` doit voir la regle, pas seulement le
+    // miroir de tir plus bas — les DEUX appels de `client.ts` sont en jeu.
+    expect(client.localMaxHp).toBe(TRANSCENDANCE_MAX_HP);
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
+    ]);
+    const base = weaponOf(BASE_WEAPON_ID);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    // ⚠️ **`TRANSCENDANCE_MAX_HP` (1) est bien sous `COLOSSUS_HP_STEP` (10)** :
+    // `Math.floor(1 / 10) === 0`, donc Colosse ne rend STRICTEMENT rien ici —
+    // pas moins que d'habitude, RIEN. Comparer a `base.damage` tout court
+    // (pas a `base.damage * 1.1`, la valeur du test jumeau sans
+    // Transcendance juste au-dessus) est ce qui ferait rougir un miroir
+    // encore branche sur `PLAYER_MAX_HP`.
+    expect(tir?.[6]).toBeCloseTo(base.damage, 6);
   });
 
   it('etape 10 : le miroir tire avec le VRAI tireur et son critique — comme le salon', () => {

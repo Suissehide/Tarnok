@@ -56,6 +56,16 @@ export type PassiveKind = (typeof PASSIVE_KINDS)[number];
  */
 export type PassiveTier = 'epique' | 'legendaire';
 
+/**
+ * Une REGLE portee par une carte — ce qu'un malus chiffre ne peut pas dire.
+ *
+ * ⚠️ **« PV max -> 1 » n'est PAS `malus: { maxHp, 99 }`** : il doit resister a
+ * Vitalite et aux achats du compte, qui s'ajoutent apres. Meme idiome que
+ * `Weapon.kind` : un discriminant nomme dont la branche vit a un seul
+ * endroit par cote (`maxHpOf`/`maxShieldOf`, `shared/loadout.ts`).
+ */
+export type PassiveRule = 'transcendance';
+
 export interface Passive {
   id: number;
   /**
@@ -91,6 +101,17 @@ export interface Passive {
    * tel quel. Un signe porte par la donnee se perdrait au premier affichage.
    */
   malus?: { kind: PassiveKind; magnitude: number };
+  /**
+   * La regle que cette carte impose (voir `PassiveRule`). Absente : carte
+   * ordinaire, lue par `Loadout.bonus`.
+   *
+   * ⚠️ **`kind`/`magnitude` restent requis mais DEVIENNENT INERTES** chez une
+   * carte a regle : `maxHpOf` statue avant de lire `bonus('maxHp')`, qui ne
+   * voit donc jamais cette carte. `kind: 'maxHp'`, `magnitude: 0` par
+   * convention — le genre qu'elle concerne vraiment, un montant qui ne sert
+   * jamais.
+   */
+  rule?: PassiveRule;
 }
 
 /**
@@ -233,6 +254,25 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     kind: 'colossus',
     magnitude: 0.01,
     tier: 'epique',
+  },
+  {
+    // ⚠️ Carte de REGLE (etape 13, tache 6) : ramene les PV max a
+    // `TRANSCENDANCE_MAX_HP` (1) et ouvre a la place la reserve de
+    // `SHIELD_POOL`, voir `maxHpOf`/`maxShieldOf` (shared/loadout.ts). `kind`
+    // et `magnitude` sont inertes — la regle statue avant que `bonus('maxHp')`
+    // ne soit meme lu.
+    //
+    // ⚠️ **Trois consequences assumees, pas des bugs :** Vitalite devient
+    // inerte (elle releve un plafond force a 1), Regain aussi (il soigne des
+    // PV plafonnes a 1), et tout debordement du bouclier tue — il ne reste
+    // qu'un point de vie derriere. C'est le cout de la carte ; c'est pour ca
+    // que la regeneration du bouclier (`SHIELD_REGEN_PER_SEC`) est genereuse.
+    name: 'transcendance',
+    label: 'Transcendance',
+    kind: 'maxHp',
+    magnitude: 0,
+    tier: 'legendaire',
+    rule: 'transcendance',
   },
 ];
 

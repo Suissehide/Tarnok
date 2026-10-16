@@ -39,6 +39,7 @@ import {
   SHIELD_POOL,
   SYNERGY_MAX,
   TICK_HZ,
+  TRANSCENDANCE_MAX_HP,
   WAVES_PER_PALIER,
   WEAPON_SLOTS,
   WIPE_GOLD_KEPT,
@@ -1983,7 +1984,16 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
    * nombre, et le taux ne serait garde par rien.
    */
   it('verse de l or a chaque piece ramassee, et rien pour les autres morts', () => {
-    const { ids, ramasses, or } = ramasseUneVague(910, 4 * COIN_DROP_ONE_IN);
+    // ⚠️ **`waveId` 912, pas 910** (etape 13, tache 6). Le balayage de 900
+    // ticks ne tient debout que de justesse : avec 910, le joueur meurt au
+    // contact pendant la traversee, et un mort ne touche plus d'or (§9.3, le
+    // bon comportement — c'est la mesure qui en pâtissait). Transcendance
+    // ajoute le DEUXIEME candidat au pool legendaire (jusqu'ici Moisson
+    // seule) ; l'etalage AUTO de ce test en tire desormais une carte
+    // differente, qui decale assez la trajectoire du joueur pour croiser la
+    // horde autrement. Retune, pas un bug de `shared/` : la propriete testee
+    // (l'or suit les pieces ramassees) ne depend pas de `waveId`.
+    const { ids, ramasses, or } = ramasseUneVague(912, 4 * COIN_DROP_ONE_IN);
     const piecesRamassees = ramasses.filter((id) => dropsCoin(id));
 
     // ⚠️ **L'or suit ce qui a ete RAMASSE, jamais ce qui est tombe.** Le
@@ -5879,5 +5889,68 @@ describe('etape 13 : la regeneration du bouclier', () => {
     const apresLevelUp = room.shieldOf(1);
     avanceTicks(room, SHIELD_CALM_TICKS + TICK_HZ * 10);
     expect(room.shieldOf(1)).toBe(apresLevelUp);
+  });
+});
+
+describe('etape 13 : Transcendance', () => {
+  const TRANSCENDANCE = PASSIVES.find((p) => p.rule === 'transcendance')?.id;
+  const REGAIN = PASSIVES.find((p) => p.kind === 'regen')?.id;
+  if (TRANSCENDANCE === undefined || REGAIN === undefined) {
+    throw new Error('fixture : Transcendance ou Regain absents du catalogue');
+  }
+
+  it('ramene les PV max a 1 et OUVRE la reserve, sans la remplir d un coup', () => {
+    const room = new Room();
+    room.join(1);
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    expect(room.maxHpOf(1)).toBe(TRANSCENDANCE_MAX_HP);
+    expect(hpOf(room, 1)).toBe(TRANSCENDANCE_MAX_HP);
+    // ⚠️ La carte souleve le PLAFOND, elle ne remplit pas la reserve d'un
+    // coup comme `hp` plus haut : `shield` part a 0 (voir `join`) et ne
+    // remonte que par `#regenerateShield`, apres le calme habituel.
+    expect(room.shieldOf(1)).toBe(0);
+  });
+
+  it('Regain ne peut plus soigner au-dela de 1 : le plafond force prime sur la carte', () => {
+    const room = new Room();
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: REGAIN });
+    avanceTicks(room, TICK_HZ * 10);
+    expect(hpOf(room, 1)).toBe(TRANSCENDANCE_MAX_HP);
+  });
+
+  it('tout debordement du bouclier tue : un seul point de vie reste derriere', () => {
+    const room = new Room();
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    // Reserve pleine (debug), pour isoler le debordement du calme qui la remplit.
+    room.debugSetMaxShield(1, SHIELD_POOL);
+    room.debugHurt(1, SHIELD_POOL + 1);
+    expect(room.shieldOf(1)).toBe(0);
+    expect(hpOf(room, 1)).toBe(0);
+  });
+
+  /**
+   * Le piege du rapport : `debugRevive` (back/src/room.ts) ne restituait que
+   * `hp`. Sans consequence tant que `maxShield` valait `0` pour tout le
+   * monde ; un porteur de Transcendance ressuscite aurait garde une reserve
+   * entamee et un calme perime.
+   */
+  it('debugRevive restitue la reserve pleine, pas seulement les PV', () => {
+    const room = new Room();
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    // Reserve pleine (debug) avant le coup : `grantCard` l'ouvre mais ne la
+    // remplit pas (voir le test plus haut), et un coup sur une reserve a 0
+    // ne prouverait rien.
+    room.debugSetMaxShield(1, SHIELD_POOL);
+    room.debugHurt(1, 10);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL - 10);
+    room.debugKill(1);
+    room.debugRevive(1);
+    expect(hpOf(room, 1)).toBe(TRANSCENDANCE_MAX_HP);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL);
   });
 });

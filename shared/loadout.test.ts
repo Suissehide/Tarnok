@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
 import { CARD } from './cards';
-import { PLAYER_MAX_HP, WEAPON_SLOTS } from './constants';
-import { Loadout, maxHpOf } from './loadout';
+import { PLAYER_MAX_HP, SHIELD_POOL, TRANSCENDANCE_MAX_HP, WEAPON_SLOTS } from './constants';
+import { Loadout, maxHpOf, maxShieldOf } from './loadout';
 import { PASSIVES } from './passives';
 import { UPGRADE, UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
 
@@ -263,5 +263,39 @@ describe('etape 13 : un malus est un bonus negatif', () => {
     l.addPassive(puissance.id);
     l.addPassive(acier.id);
     expect(l.bonus('damage')).toBeCloseTo(puissance.magnitude + acier.magnitude, 6);
+  });
+});
+
+describe('etape 13 : Transcendance', () => {
+  const TRANSCENDANCE = PASSIVES.find((p) => p.rule === 'transcendance')?.id;
+  if (TRANSCENDANCE === undefined) {
+    throw new Error('fixture : Transcendance absente du catalogue');
+  }
+
+  it('ramene les PV max a 1, et resiste a Vitalite', () => {
+    const l = new Loadout();
+    l.addPassive(TRANSCENDANCE);
+    expect(maxHpOf(l, 0)).toBe(TRANSCENDANCE_MAX_HP);
+    const vitalite = PASSIVES.find((p) => p.name === 'vitalite');
+    if (!vitalite) {
+      throw new Error('fixture : vitalite absente du catalogue');
+    }
+    for (let i = 0; i < 5; i++) {
+      l.addPassive(vitalite.id);
+    }
+    expect(maxHpOf(l, 0)).toBe(TRANSCENDANCE_MAX_HP);
+  });
+
+  it('resiste aussi aux achats du compte', () => {
+    const l = new Loadout();
+    l.addPassive(TRANSCENDANCE);
+    expect(maxHpOf(l, 60)).toBe(TRANSCENDANCE_MAX_HP);
+  });
+
+  it('ouvre la reserve de bouclier, et elle seule', () => {
+    const l = new Loadout();
+    expect(maxShieldOf(l)).toBe(0);
+    l.addPassive(TRANSCENDANCE);
+    expect(maxShieldOf(l)).toBe(SHIELD_POOL);
   });
 });

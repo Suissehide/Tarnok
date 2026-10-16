@@ -1140,3 +1140,13 @@ export const SHIELD_POOL = 60;
 export const SHIELD_CALM_TICKS = 90;
 /** Points rendus par seconde une fois le calme atteint. Molette de playtest. */
 export const SHIELD_REGEN_PER_SEC = 20;
+
+/**
+ * Le plafond de PV que Transcendance impose (etape 13, tache 6), a la place
+ * de `PLAYER_MAX_HP` plus les cartes et les achats.
+ *
+ * ⚠️ **`1`, pas `0`** : un porteur reste vivant par la regle serveur
+ * (`hp <= 0`) tant que son dernier point n'est pas tombe — `0` le classerait
+ * mort a l'instant ou la carte s'applique.
+ */
+export const TRANSCENDANCE_MAX_HP = 1;

@@ -1,4 +1,4 @@
-import { PLAYER_MAX_HP, WEAPON_SLOTS } from './constants';
+import { PLAYER_MAX_HP, SHIELD_POOL, TRANSCENDANCE_MAX_HP, WEAPON_SLOTS } from './constants';
 
 /**
  * Duplique `CARD.WEAPON` de `cards.ts`.
@@ -10,7 +10,7 @@ import { PLAYER_MAX_HP, WEAPON_SLOTS } from './constants';
  */
 const CARD_WEAPON = 0;
 
-import { PASSIVES, type PassiveKind, passiveOf } from './passives';
+import { PASSIVES, type PassiveKind, type PassiveRule, passiveOf } from './passives';
 import { UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
@@ -143,6 +143,16 @@ export class Loadout {
     return true;
   }
 
+  /** Ce joueur porte-t-il au moins un exemplaire d'une carte a cette regle ? */
+  hasRule(rule: PassiveRule): boolean {
+    for (let id = 0; id < this.#passiveStacks.length; id++) {
+      if ((this.#passiveStacks[id] ?? 0) > 0 && PASSIVES[id]?.rule === rule) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Somme des `magnitude` possedees de ce genre, MOINS les malus du meme genre. */
   bonus(kind: PassiveKind): number {
     let total = 0;
@@ -178,5 +188,25 @@ export class Loadout {
  * max, tache suivante).
  */
 export function maxHpOf(loadout: Loadout, accountMaxHp: number): number {
+  // ⚠️ **La regle passe EN DERNIER**, apres les cartes et les achats : c'est
+  // exactement ce qui la rend insensible a Vitalite et aux achats du compte.
+  // Consequence assumee (etape 13, tache 6) : Vitalite et Regain deviennent
+  // inertes chez un porteur de Transcendance, puisqu'ils visent un plafond
+  // que cette regle force a `TRANSCENDANCE_MAX_HP`.
+  if (loadout.hasRule('transcendance')) {
+    return TRANSCENDANCE_MAX_HP;
+  }
   return PLAYER_MAX_HP + loadout.bonus('maxHp') + accountMaxHp;
+}
+
+/**
+ * La reserve de bouclier ouverte par les regles possedees (etape 13, tache
+ * 6) : `SHIELD_POOL` chez un porteur de Transcendance, `0` sinon.
+ *
+ * ⚠️ **Tout debordement de cette reserve tue** : derriere elle, il ne reste
+ * que `TRANSCENDANCE_MAX_HP` (1) point de vie (voir `hurtPlayer`,
+ * `back/src/combat.ts`).
+ */
+export function maxShieldOf(loadout: Loadout): number {
+  return loadout.hasRule('transcendance') ? SHIELD_POOL : 0;
 }
