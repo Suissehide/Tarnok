@@ -109,7 +109,7 @@ export interface ObstacleField {
  * l'apparition d'une vague, jamais par tick, mais un objet ou un tableau
  * intermediaire par entite reste un gaspillage evitable pour zero benefice.
  */
-function nudgeOutOfObstacle(
+export function nudgeOutOfObstacle(
   obstacles: ObstacleField,
   x: number,
   y: number,
