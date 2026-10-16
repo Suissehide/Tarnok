@@ -36,6 +36,9 @@ export const MSG = {
   ABILITY_USED: 25,
   PING: 26,
   PING_SHOWN: 27,
+  EVENT_START: 28,
+  EVENT_STATE: 29,
+  EVENT_END: 30,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -384,7 +387,10 @@ export type Message =
   | AbilityMessage
   | AbilityUsedMessage
   | PingMessage
-  | PingShownMessage;
+  | PingShownMessage
+  | EventStartMessage
+  | EventStateMessage
+  | EventEndMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -1558,6 +1564,12 @@ export function decode(buf: ArrayBuffer): Message {
       return decodePing(buf);
     case MSG.PING_SHOWN:
       return decodePingShown(buf);
+    case MSG.EVENT_START:
+      return decodeEventStart(buf);
+    case MSG.EVENT_STATE:
+      return decodeEventState(buf);
+    case MSG.EVENT_END:
+      return decodeEventEnd(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }
@@ -2154,4 +2166,122 @@ function decodePingShown(buf: ArrayBuffer): PingShownMessage {
     x: v.getInt16(3, true),
     y: v.getInt16(5, true),
   };
+}
+
+/**
+ * S -> C : un evenement bonus commence (etape 14, §6.1), `5 + 4n` octets.
+ *
+ * `type u8 · genre u8 · duree u16 · n u8 · n x (x i16, y i16)`
+ *
+ * ⚠️ **Une DUREE en ticks vivants, jamais une echeance datee.** Le tick du
+ * salon avance pendant le gel, l'evenement non : une echeance absolue serait
+ * fausse des le premier etalage. Le client pose la sienne sur `pingClock`, qui
+ * dort exactement quand l'evenement dort.
+ *
+ * Les points : les sceaux, la forge, ou le depart puis l'arrivee du convoi. Le
+ * client ne recalcule aucun placement. Aucun tick dans ces trois messages : ils
+ * ne touchent pas la simulation du client, ils s'affichent a la reception.
+ */
+export interface EventStartMessage {
+  type: typeof MSG.EVENT_START;
+  /** `EVENT_KIND`. */
+  kind: number;
+  durationTicks: number;
+  points: { x: number; y: number }[];
+}
+
+/**
+ * S -> C : ou en est l'evenement, a 5 Hz et seulement pendant un evenement, 7
+ * octets. `type u8 · progression u8 · chariot x i16 · chariot y i16 · pv u8`.
+ * Octets DEJA quantifies par le salon : progression `floor(255 x fraction)`,
+ * PV `ceil(255 x pv / pvMax)` (0 seulement detruit). Zeros hors convoi : un
+ * format fixe vaut mieux que trois.
+ */
+export interface EventStateMessage {
+  type: typeof MSG.EVENT_STATE;
+  progress: number;
+  cartX: number;
+  cartY: number;
+  cartHp: number;
+}
+
+/** S -> C : l'evenement s'acheve, 2 octets. `outcome` : `EVENT_OUTCOME`. */
+export interface EventEndMessage {
+  type: typeof MSG.EVENT_END;
+  outcome: number;
+}
+
+export type EventMessage = EventStartMessage | EventStateMessage | EventEndMessage;
+
+export const EVENT_START_HEADER_BYTES = 5;
+export const EVENT_POINT_BYTES = 4;
+export const EVENT_STATE_BYTES = 7;
+export const EVENT_END_BYTES = 2;
+
+/** Encode l'un des trois messages d'evenement : le salon les met en file tels quels. */
+export function encodeEvent(msg: EventMessage): ArrayBuffer {
+  if (msg.type === MSG.EVENT_START) {
+    const buf = new ArrayBuffer(EVENT_START_HEADER_BYTES + msg.points.length * EVENT_POINT_BYTES);
+    const v = new DataView(buf);
+    v.setUint8(0, MSG.EVENT_START);
+    v.setUint8(1, msg.kind);
+    v.setUint16(2, msg.durationTicks, true);
+    v.setUint8(4, msg.points.length);
+    msg.points.forEach((p, i) => {
+      const o = EVENT_START_HEADER_BYTES + i * EVENT_POINT_BYTES;
+      v.setInt16(o, Math.round(p.x), true);
+      v.setInt16(o + 2, Math.round(p.y), true);
+    });
+    return buf;
+  }
+  if (msg.type === MSG.EVENT_STATE) {
+    const buf = new ArrayBuffer(EVENT_STATE_BYTES);
+    const v = new DataView(buf);
+    v.setUint8(0, MSG.EVENT_STATE);
+    v.setUint8(1, msg.progress);
+    v.setInt16(2, Math.round(msg.cartX), true);
+    v.setInt16(4, Math.round(msg.cartY), true);
+    v.setUint8(6, msg.cartHp);
+    return buf;
+  }
+  const buf = new ArrayBuffer(EVENT_END_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.EVENT_END);
+  v.setUint8(1, msg.outcome);
+  return buf;
+}
+
+function decodeEventStart(buf: ArrayBuffer): EventStartMessage {
+  // L'en-tete d'abord, puis la longueur qu'il ANNONCE : un message tronque au
+  // milieu d'un point leve au lieu de rendre des positions fantaisistes.
+  const head = viewOf(buf, EVENT_START_HEADER_BYTES);
+  const n = head.getUint8(4);
+  const v = viewOf(buf, EVENT_START_HEADER_BYTES + n * EVENT_POINT_BYTES);
+  const points: { x: number; y: number }[] = [];
+  for (let i = 0; i < n; i++) {
+    const o = EVENT_START_HEADER_BYTES + i * EVENT_POINT_BYTES;
+    points.push({ x: v.getInt16(o, true), y: v.getInt16(o + 2, true) });
+  }
+  return {
+    type: MSG.EVENT_START,
+    kind: v.getUint8(1),
+    durationTicks: v.getUint16(2, true),
+    points,
+  };
+}
+
+function decodeEventState(buf: ArrayBuffer): EventStateMessage {
+  const v = viewOf(buf, EVENT_STATE_BYTES);
+  return {
+    type: MSG.EVENT_STATE,
+    progress: v.getUint8(1),
+    cartX: v.getInt16(2, true),
+    cartY: v.getInt16(4, true),
+    cartHp: v.getUint8(6),
+  };
+}
+
+function decodeEventEnd(buf: ArrayBuffer): EventEndMessage {
+  const v = viewOf(buf, EVENT_END_BYTES);
+  return { type: MSG.EVENT_END, outcome: v.getUint8(1) };
 }

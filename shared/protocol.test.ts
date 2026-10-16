@@ -10,6 +10,7 @@ import {
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, ELEMENTS } from './elements';
+import { EVENT_DURATION_TICKS, EVENT_KIND, EVENT_OUTCOME } from './evenements';
 import { entityIdOf } from './horde';
 import { bossHp, palierGold } from './paliers';
 import {
@@ -40,6 +41,11 @@ import {
   decodeWaveOrder,
   decodeWelcome,
   decodeZone,
+  EVENT_END_BYTES,
+  EVENT_POINT_BYTES,
+  EVENT_START_HEADER_BYTES,
+  EVENT_STATE_BYTES,
+  type EventMessage,
   EXTRACT_MULTIPLIER_MAX,
   encodeAbility,
   encodeAbilityUsed,
@@ -49,6 +55,7 @@ import {
   encodeDraftOpen,
   encodeDraftResult,
   encodeDraftToken,
+  encodeEvent,
   encodeHello,
   encodeInput,
   encodeLevelUp,
@@ -1795,5 +1802,90 @@ describe('etape 13 : le bouclier sur le fil', () => {
     expect(decodeSnapshot(buf).players[0]?.shield).toBe(42);
     const haut = encodeSnapshot(7, 0, 0, [unJoueur({ id: 1, shield: 9999 })], null, 0);
     expect(decodeSnapshot(haut).players[0]?.shield).toBe(255);
+  });
+});
+
+describe('etape 14 : EVENT_START, EVENT_STATE, EVENT_END', () => {
+  it('trois identifiants neufs, juste apres PING_SHOWN', () => {
+    expect([MSG.EVENT_START, MSG.EVENT_STATE, MSG.EVENT_END]).toEqual([28, 29, 30]);
+  });
+
+  it('le genre et l issue ont leurs valeurs du fil', () => {
+    expect(EVENT_KIND).toEqual({ SCEAUX: 0, FORGE: 1, CONVOI: 2 });
+    expect(EVENT_OUTCOME).toEqual({ REUSSI: 0, EXPIRE: 1, DETRUIT: 2 });
+  });
+
+  it('EVENT_START fait 5 + 4n octets — 9, 13, 21 — et revient a l identique', () => {
+    expect(EVENT_START_HEADER_BYTES).toBe(5);
+    expect(EVENT_POINT_BYTES).toBe(4);
+    const tailles: number[] = [];
+    for (const n of [1, 2, 4]) {
+      const msg: EventMessage = {
+        type: MSG.EVENT_START,
+        kind: EVENT_KIND.SCEAUX,
+        durationTicks: EVENT_DURATION_TICKS,
+        points: Array.from({ length: n }, (_, i) => ({ x: 1000 + 800 * i, y: 5999 - i })),
+      };
+      const buf = encodeEvent(msg);
+      tailles.push(buf.byteLength);
+      expect(decode(buf)).toEqual(msg);
+    }
+    expect(tailles).toEqual([9, 13, 21]);
+  });
+
+  it('positions negatives et au plafond de l int16', () => {
+    const msg: EventMessage = {
+      type: MSG.EVENT_START,
+      kind: EVENT_KIND.CONVOI,
+      durationTicks: EVENT_DURATION_TICKS,
+      points: [
+        { x: -32_768, y: 32_767 },
+        { x: 0, y: -1 },
+      ],
+    };
+    expect(decode(encodeEvent(msg))).toEqual(msg);
+  });
+
+  it('EVENT_STATE fait 7 octets et revient a l identique', () => {
+    expect(EVENT_STATE_BYTES).toBe(7);
+    const msg: EventMessage = {
+      type: MSG.EVENT_STATE,
+      progress: 254,
+      cartX: -12,
+      cartY: 5999,
+      cartHp: 1,
+    };
+    const buf = encodeEvent(msg);
+    expect(buf.byteLength).toBe(7);
+    expect(decode(buf)).toEqual(msg);
+  });
+
+  it('EVENT_END fait 2 octets et revient a l identique', () => {
+    expect(EVENT_END_BYTES).toBe(2);
+    const msg: EventMessage = { type: MSG.EVENT_END, outcome: EVENT_OUTCOME.DETRUIT };
+    const buf = encodeEvent(msg);
+    expect(buf.byteLength).toBe(2);
+    expect(decode(buf)).toEqual(msg);
+  });
+
+  it('un EVENT_START tronque au milieu d un point leve, il ne rend pas des points fantaisistes', () => {
+    const buf = encodeEvent({
+      type: MSG.EVENT_START,
+      kind: EVENT_KIND.SCEAUX,
+      durationTicks: EVENT_DURATION_TICKS,
+      points: [
+        { x: 1, y: 2 },
+        { x: 3, y: 4 },
+      ],
+    });
+    expect(() => decode(buf.slice(0, 11))).toThrow(/tronque/);
+    expect(() => decode(buf.slice(0, 4))).toThrow(/tronque/);
+  });
+
+  it('EVENT_STATE et EVENT_END tronques levent aussi', () => {
+    const etat = encodeEvent({ type: MSG.EVENT_STATE, progress: 1, cartX: 2, cartY: 3, cartHp: 4 });
+    expect(() => decode(etat.slice(0, 6))).toThrow(/tronque/);
+    const fin = encodeEvent({ type: MSG.EVENT_END, outcome: 0 });
+    expect(() => decode(fin.slice(0, 1))).toThrow(/tronque/);
   });
 });
