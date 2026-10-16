@@ -39,6 +39,15 @@ export const RARITY_WEIGHTS: readonly number[] = [72, 20, 6, 2];
 export const CHEST_RARITY_FLOOR: number = RARITY.RARE;
 
 /**
+ * Le plancher d'un etalage d'EVENEMENT (etape 14, §5.2) : toutes ses cartes
+ * sont des cartes de REGLE, epiques ou legendaires — {6, 2} renormalise, soit
+ * 75 % / 25 % par emplacement, un seul `rng()`. Aucune arme : elles plafonnent
+ * a rare. Pas « tout legendaire » : ce seraient toujours les trois memes
+ * pactes, tous payants.
+ */
+export const EVENT_RARITY_FLOOR: number = RARITY.EPIQUE;
+
+/**
  * Ramene une rarete lue sur le fil dans la table : absente ou inconnue, la
  * carte est commune. Un octet ne peut pas mentir plus loin que ca.
  */

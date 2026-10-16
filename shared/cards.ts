@@ -1,7 +1,7 @@
 import { SPREAD_BONUS } from './constants';
 import type { Loadout } from './loadout';
 import { PASSIVES, type PassiveTier, passiveOf } from './passives';
-import { multiplierOf, RARITY, rollRarity } from './rarity';
+import { multiplierOf, RARITY, RARITY_WEIGHTS, rollRarity } from './rarity';
 import { upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
@@ -167,8 +167,9 @@ export function buildPool(): Card[] {
  * plus a offrir : c'est pour ca que la descente ci-dessous existe.
  *
  * `floor` (etape 11) : le plancher de rarete de CHAQUE emplacement, passe tel
- * quel a `rollRarity` — `CHEST_RARITY_FLOOR` pour un coffre. La descente le
- * respecte : elle ne passe JAMAIS dessous.
+ * quel a `rollRarity` — `CHEST_RARITY_FLOOR` pour un coffre,
+ * `EVENT_RARITY_FLOOR` pour un evenement. La descente le respecte : elle ne
+ * passe JAMAIS dessous ; au plancher vide, l'emplacement REMONTE (etape 14).
  */
 export function drawSpread(
   loadouts: ReadonlyMap<number, Loadout>,
@@ -216,6 +217,18 @@ export function drawSpread(
       rarity--;
       permis = permisAt(rarity);
     }
+    // ⚠️ **La remontee (etape 14, §5.2).** Au plancher EPIQUE, un emplacement
+    // qui tire epique apres les trois epiques arretait l'etalage, meme s'il
+    // restait des legendaires : un evenement a quatre offrait parfois trois
+    // cartes. Au plancher vide, on monte d'un cran plutot que de s'arreter.
+    // Aucun `rng()` de plus : on change de palier, on ne retire pas. Elle ne
+    // se declenche jamais aux planchers commun et rare — la carte ordinaire
+    // d'une arme possedee y reste toujours permise —, donc le niveau et le
+    // coffre ne voient aucune difference (empreinte relevee, `cards.test.ts`).
+    while (permis.total === 0 && rarity < RARITY_WEIGHTS.length - 1) {
+      rarity++;
+      permis = permisAt(rarity);
+    }
     let roll = rng() * permis.total;
     // ⚠️ `index` suit la derniere carte PERMISE vue : si l'arrondi laisse
     // `roll` a peine positif en fin de boucle, c'est elle qui sort — jamais une
@@ -232,9 +245,9 @@ export function drawSpread(
         break;
       }
     }
-    // ⚠️ Atteignable seulement si MEME le plancher ne permet rien : un pool
-    // qui ne contiendrait plus que des cartes de palier, sur un plancher
-    // epique ou legendaire deja vide. Sans elle, `pool[-1]` sortirait.
+    // ⚠️ Atteignable seulement si AUCUN palier a partir du plancher ne permet
+    // plus rien : au plancher epique, les six cartes de regle deja sorties
+    // (etape 14). Sans elle, `pool[-1]` sortirait.
     if (index < 0) {
       break;
     }
