@@ -5138,71 +5138,80 @@ describe('Venins — le poison des cartes « venin »', () => {
 });
 
 describe('etape 13 : Contagion (spreadMarkOnDeath)', () => {
+  const TICK = 1000;
+
   /**
-   * Une horde ou chaque entite a la position et la marque donnees, aux
-   * creneaux 0..n-1 dans l'ordre — exactement ce que `spreadMarkOnDeath` lit
-   * (`horde.mark[slot]`, `horde.x[slot]`, `horde.y[slot]`), SANS passer par
-   * `horde.kill` : c'est le point precis que ce test isole, voir le docbloc
+   * Une horde de SURVIVANTS seuls, aux creneaux 0..n-1 dans l'ordre — jamais
+   * le mort : au moment ou `spreadMarkOnDeath` tourne (depuis `Room#step`,
+   * sur `OrbField.drainFallen()`), le mort est deja compacte hors de la
+   * horde. `fallen` porte sa position et sa marque a plat, voir le docbloc
    * de `spreadMarkOnDeath`.
    */
-  function hordeDe(entites: readonly { x: number; y: number; mark: number }[]): Horde {
-    const horde = new Horde(entites.length);
+  function hordeDe(entites: readonly { x: number; y: number }[]): Horde {
+    const horde = new Horde(Math.max(1, entites.length));
     entites.forEach((e, i) => {
       addOne(horde, 900 + i, e.x, e.y);
-      horde.mark[i] = e.mark;
     });
     return horde;
   }
 
   it('la marque d un mort saute sur le vivant le plus proche', () => {
     const horde = hordeDe([
-      { x: 0, y: 0, mark: ELEMENT.BRAISE },
-      { x: 50, y: 0, mark: ELEMENT.NEUTRE },
-      { x: 900, y: 0, mark: ELEMENT.NEUTRE },
+      { x: 50, y: 0 },
+      { x: 900, y: 0 },
     ]);
-    spreadMarkOnDeath(horde, [0]);
-    expect(horde.mark[1]).toBe(ELEMENT.BRAISE);
-    expect(horde.mark[2]).toBe(ELEMENT.NEUTRE);
+    // Le mort etait a (0, 0), marque Braise.
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.BRAISE);
+    expect(horde.markAt(1, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
   it('un mort sans marque ne propage rien', () => {
-    const horde = hordeDe([
-      { x: 0, y: 0, mark: ELEMENT.NEUTRE },
-      { x: 50, y: 0, mark: ELEMENT.NEUTRE },
-    ]);
-    spreadMarkOnDeath(horde, [0]);
-    expect(horde.mark[1]).toBe(ELEMENT.NEUTRE);
+    const horde = hordeDe([{ x: 50, y: 0 }]);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.NEUTRE], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
   it('sans voisin vivant, la marque meurt avec lui — jamais de NaN ni de boucle', () => {
-    const horde = hordeDe([{ x: 0, y: 0, mark: ELEMENT.BRAISE }]);
-    expect(() => spreadMarkOnDeath(horde, [0])).not.toThrow();
+    const horde = new Horde(1); // aucun survivant.
+    expect(() => spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK)).not.toThrow();
   });
 
   it('respecte CONTAGION_RADIUS : hors de portee, rien ne saute', () => {
-    const horde = hordeDe([
-      { x: 0, y: 0, mark: ELEMENT.BRAISE },
-      { x: CONTAGION_RADIUS + 1, y: 0, mark: ELEMENT.NEUTRE },
-    ]);
-    spreadMarkOnDeath(horde, [0]);
-    expect(horde.mark[1]).toBe(ELEMENT.NEUTRE);
+    const horde = hordeDe([{ x: CONTAGION_RADIUS + 1, y: 0 }]);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
   it('un voisin DEJA mort (hp <= 0) n est jamais choisi, meme plus proche', () => {
     const horde = hordeDe([
-      { x: 0, y: 0, mark: ELEMENT.BRAISE },
-      { x: 10, y: 0, mark: ELEMENT.NEUTRE },
-      { x: 50, y: 0, mark: ELEMENT.NEUTRE },
+      { x: 10, y: 0 },
+      { x: 50, y: 0 },
     ]);
-    horde.hp[1] = 0; // deja mort ce tick-ci, pas encore compacte.
-    spreadMarkOnDeath(horde, [0]);
-    expect(horde.mark[1]).toBe(ELEMENT.NEUTRE);
-    expect(horde.mark[2]).toBe(ELEMENT.BRAISE);
+    horde.hp[0] = 0; // mort ce tick-ci par un AUTRE chemin, pas encore compacte.
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
+    expect(horde.markAt(1, TICK)).toBe(ELEMENT.BRAISE);
+  });
+
+  /**
+   * Preuve directe du correctif C1 (revue du coordinateur) : `applyMark`,
+   * jamais une ecriture directe de `horde.mark[]`. Pose la marque vivante
+   * par le VRAI chemin (`applyMark`, attribuee a un joueur), verifie par le
+   * VRAI lecteur (`markAt`) ET que l'attribution de l'ANCIENNE marque ne
+   * survit pas a l'ecrasement.
+   */
+  it('ecrase une marque vivante existante : le NOUVEL element, et plus l ancienne attribution', () => {
+    const horde = hordeDe([{ x: 10, y: 0 }]);
+    horde.applyMark(0, ELEMENT.GIVRE, 7, TICK); // marque vivante, posee par le joueur 7.
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.BRAISE);
+    expect(horde.markBy[0]).toBe(0);
   });
 });
 
 describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
-  it('drainFallen rend toutes les positions, puis se vide', () => {
+  it('drainFallen rend toutes les positions et leur marque, puis se vide', () => {
     const orbs = new OrbField(10);
     const sansButin = Array.from({ length: 50 }, (_, i) => entityIdOf(1, i)).find(
       (id) => !leavesDrop(id),
@@ -5210,10 +5219,12 @@ describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
     if (sansButin === undefined) {
       throw new Error('fixture : aucune identite sans butin');
     }
-    orbs.spawn(entityIdOf(1, 0), 10, 20);
+    orbs.spawn(entityIdOf(1, 0), 10, 20, ELEMENT.BRAISE);
+    // Sans marque explicite : NEUTRE par defaut (etape 13, Contagion).
     orbs.spawn(sansButin, 30, 40);
-    // Moisson compte les morts, pas les orbes : celle qui ne laisse rien compte.
-    expect(orbs.drainFallen()).toEqual([10, 20, 30, 40]);
+    // Contagion (etape 13, ex-Moisson) compte les morts, pas les orbes : celle
+    // qui ne laisse rien compte.
+    expect(orbs.drainFallen()).toEqual([10, 20, ELEMENT.BRAISE, 30, 40, ELEMENT.NEUTRE]);
     expect(orbs.drainFallen()).toEqual([]);
   });
 });

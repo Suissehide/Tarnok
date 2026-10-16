@@ -109,6 +109,7 @@ import {
   resolveOndes,
   resolveProjectileDamage,
   resolveVerglasCollisions,
+  spreadMarkOnDeath,
   Venins,
 } from './combat';
 import { Draft } from './draft';
@@ -914,20 +915,35 @@ export class Room {
 
   /**
    * L'armure effective d'un joueur : le MAXIMUM de celle de son compte et de
-   * toute protection de Rempart qui le couvre.
+   * toute protection de Rempart qui le couvre, PUIS la contribution des
+   * cartes de passif.
    *
-   * ⚠️ **Un MAXIMUM, jamais une somme ni un produit** — la meme regle que
-   * `ZoneField` applique deja entre deux zones, et pour la raison que son
-   * docbloc donne : deux flaques qui se recouvrent « ne doublent pas : elles
-   * donnent la plus forte ». Une somme ferait de « cinq paliers d'Armure
-   * achetes, plus un Rempart » une quasi-immunite (§6.2 de la spec).
+   * ⚠️ **Le compte et le Rempart restent un MAXIMUM, jamais une somme ni un
+   * produit entre EUX DEUX** — la meme regle que `ZoneField` applique deja
+   * entre deux zones, et pour la raison que son docbloc donne : deux flaques
+   * qui se recouvrent « ne doublent pas : elles donnent la plus forte ». Une
+   * somme ferait de « cinq paliers d'Armure achetes, plus un Rempart » une
+   * quasi-immunite (§6.2 de la spec).
+   *
+   * ⚠️ **`loadout.bonus('armor')` s'AJOUTE apres ce maximum, lui** (etape 13,
+   * tache 7) — c'est le seul chemin par lequel le malus de Hate funeste
+   * (`{ kind: 'armor', magnitude: 0.5 }`) atteint `hurtPlayer`. `bonus`
+   * retranche deja les malus du meme genre (`Loadout.bonus`,
+   * `shared/loadout.ts`) et peut donc rendre ce total NEGATIF — delibere,
+   * c'est ce qui fait mordre l'armure plus fort que les degats bruts
+   * (`Math.max(0, 1 - armor)` dans `hurtPlayer` ne borne que par le haut).
+   * Aucune carte ordinaire ne touche ce genre aujourd'hui : seul un malus
+   * peut le faire baisser sous zero.
    */
   armorOf(playerId: number): number {
     const p = this.#players.get(playerId);
     if (!p) {
       return 0;
     }
-    return Math.max(p.accountBonuses.armor, this.#rempartCouvre(p) ? REMPART_ARMOR : 0);
+    return (
+      Math.max(p.accountBonuses.armor, this.#rempartCouvre(p) ? REMPART_ARMOR : 0) +
+      p.loadout.bonus('armor')
+    );
   }
 
   /**
@@ -1617,10 +1633,6 @@ export class Room {
     if (this.#ondes.length > 0) {
       this.#ondes = this.#ondes.filter((o) => ondeIsAlive(o, this.#tick + 1));
     }
-    // Contagion (etape 13) : un seul balayage des joueurs, hors de la boucle
-    // de resolution — `resolveProjectileDamage` ne lit ce booleen qu'une fois
-    // par tick, jamais par mort.
-    const contagion = [...this.#players.values()].some((p) => p.loadout.hasRule('contagion'));
     const deadIds = resolveProjectileDamage(
       this.#projectiles,
       scaledDt,
@@ -1631,7 +1643,6 @@ export class Room {
       this.#reactions,
       this.#venins,
       this.#anchor,
-      contagion,
     );
     markInZones(this.horde, this.#zones, this.#tick, this.#reactions);
     // ⚠️ **Les reactions se resolvent ICI, apres les DEUX chemins qui les
@@ -1812,6 +1823,21 @@ export class Room {
     // regeneration ne tourne donc pas pendant une montee de niveau, sans une
     // ligne pour le dire.
     this.#regenerateShield();
+
+    // Contagion (etape 13) : les morts de CE tick, ou qu'elles viennent
+    // (`OrbField.spawn` les note toutes, voir son docbloc). Drainee a chaque
+    // tick, porteur ou pas, pour que la file ne s'accumule jamais ; la carte
+    // elle-meme ne coute rien a verifier d'abord : sans elle, personne ne
+    // porte de marque a transmettre tant qu'aucune arme elementaire n'a
+    // tourne, et `[...].some(...)` reste bien moins cher que le balayage de
+    // `spreadMarkOnDeath` qu'il evite.
+    const fallenMarks = this.#orbs.drainFallen();
+    if (
+      fallenMarks.length > 0 &&
+      [...this.#players.values()].some((p) => p.loadout.hasRule('contagion'))
+    ) {
+      spreadMarkOnDeath(this.horde, fallenMarks, this.#tick);
+    }
 
     const pickedIds = this.#orbs.resolvePickups(
       [...this.#players.values()].map((p) => ({

@@ -75,24 +75,19 @@ describe('etape 13 : le catalogue des paliers', () => {
    * La regle de selection de l'etape : un palier haut ne recoupe aucune
    * commune.
    *
-   * ⚠️ **Elargie au `malus`, pas seulement a `rule`, par rapport au brief.**
-   * Fournaise (`kind: 'damage'`) et Hâte funeste (`kind: 'fireRate'`) RE-
-   * UTILISENT le genre d'une commune (« puissance »/« acier », « cadence ») —
-   * c'est ce qui leur evite tout code neuf (`Loadout.bonus` lit deja ces
-   * genres). Ce qu'aucune commune ne porte, ce n'est pas leur genre, c'est
-   * leur COUT : le `malus`. La version stricte du brief (seul `rule` exempte)
-   * ferait echouer les deux a tort — exactement le defaut qu'on reproche a
-   * Moisson, applique a l'envers.
+   * ⚠️ **Seule une carte de REGLE (`rule`) est exemptee** (revue du
+   * coordinateur) : son `kind`/`magnitude` sont decoratifs par convention
+   * (voir le docbloc de `Passive.rule`), donc hors sujet pour ce test. Les
+   * exemptions par nom (`echo`, `colossus`) et par `malus` d'une version
+   * precedente de ce test sont retirees : aucune commune ne porte ces deux
+   * genres (l'exemption par nom etait un no-op), et le `malus` ne dit rien
+   * du GENRE d'une carte, seulement de son cout — le test porte sur le
+   * genre.
    */
-  it('aucune carte de palier ne partage son genre avec une carte ordinaire, sauf a en payer le cout', () => {
+  it('aucune carte de palier ne partage son genre avec une carte ordinaire, sauf une regle', () => {
     const ordinaires = new Set(PASSIVES.filter((p) => !p.tier).map((p) => p.kind));
     for (const p of PASSIVES.filter((x) => x.tier)) {
-      if (
-        p.rule === undefined &&
-        p.malus === undefined &&
-        p.kind !== 'echo' &&
-        p.kind !== 'colossus'
-      ) {
+      if (p.rule === undefined) {
         expect(ordinaires.has(p.kind)).toBe(false);
       }
     }
