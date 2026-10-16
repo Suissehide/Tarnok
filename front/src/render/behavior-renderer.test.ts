@@ -1,11 +1,18 @@
 import { ARCHETYPES, KAMIKAZE_RADIUS, SHAMAN_AURA_RADIUS } from '@shared/archetypes';
+import {
+  CONVOI_ESCORT_RADIUS,
+  CONVOI_RADIUS,
+  EVENT_KIND,
+  FORGE_RADIUS,
+  SCEAU_RADIUS,
+} from '@shared/evenements';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { Rectangle } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
-import { BLAST_FLASH_MS, RAISE_FLASH_MS } from '../net/client';
-import { behaviorShapes, PORTEUR_RING_RADIUS } from './behavior-renderer';
+import { BLAST_FLASH_MS, type EventView, RAISE_FLASH_MS } from '../net/client';
+import { behaviorShapes, eventShapes, PORTEUR_RING_RADIUS } from './behavior-renderer';
 
 const idOf = (behavior: string): number => ARCHETYPES.findIndex((a) => a.behavior === behavior);
 
@@ -88,5 +95,58 @@ describe('etape 11 : l or du porteur', () => {
     expect(behaviorShapes(horde, [], view, 0)).toEqual([]);
     horde.fleeing[0] = 1;
     expect(behaviorShapes(horde, [], view, 0).map((s) => s.kind)).toEqual(['butin']);
+  });
+});
+
+describe('etape 14 : les formes d un evenement', () => {
+  const view = new Rectangle(0, 0, 800, 600);
+  const base = { progress: 0.5, secondsLeft: 30, cart: null, cartHp: 0 };
+
+  it('un sceau par point dans le cadre, OCCUPE si un joueur vivant s y tient, rien hors cadre', () => {
+    const sceaux: EventView = {
+      ...base,
+      kind: EVENT_KIND.SCEAUX,
+      points: [
+        { x: 100, y: 100 },
+        { x: 500, y: 100 },
+        { x: 9000, y: 9000 },
+      ],
+    };
+    const joueurs = [
+      { x: 100 + SCEAU_RADIUS, y: 100, hp: 50 },
+      { x: 500, y: 100, hp: 0 },
+    ];
+    expect(eventShapes(sceaux, joueurs, view)).toEqual([
+      { kind: 'sceau', x: 100, y: 100, radius: SCEAU_RADIUS, occupied: true, progress: 0.5 },
+      { kind: 'sceau', x: 500, y: 100, radius: SCEAU_RADIUS, occupied: false, progress: 0.5 },
+    ]);
+  });
+
+  it('la forge : sa zone et son anneau', () => {
+    const forge: EventView = { ...base, kind: EVENT_KIND.FORGE, points: [{ x: 300, y: 300 }] };
+    expect(eventShapes(forge, [{ x: 300, y: 300, hp: 10 }], view)).toEqual([
+      { kind: 'forge', x: 300, y: 300, radius: FORGE_RADIUS, occupied: false, progress: 0.5 },
+    ]);
+  });
+
+  it('le convoi : l arrivee et le chariot a sa position INTERPOLEE, jamais le depart', () => {
+    const convoi: EventView = {
+      ...base,
+      kind: EVENT_KIND.CONVOI,
+      points: [
+        { x: 50, y: 50 },
+        { x: 700, y: 400 },
+      ],
+      cart: { x: 200, y: 210 },
+      cartHp: 0.75,
+    };
+    expect(eventShapes(convoi, [], view)).toEqual([
+      { kind: 'arrivee', x: 700, y: 400, radius: CONVOI_RADIUS },
+      { kind: 'chariot', x: 200, y: 210, radius: CONVOI_ESCORT_RADIUS, hp: 0.75 },
+    ]);
+  });
+
+  it('rien sans evenement', () => {
+    expect(eventShapes(null, [], view)).toEqual([]);
   });
 });

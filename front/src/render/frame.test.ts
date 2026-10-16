@@ -1,5 +1,6 @@
 import type { BossCharge } from '@shared/boss';
 import { MAX_ENTITIES, ORB_PICKUP_RADIUS, PROJECTILE_CAPACITY } from '@shared/constants';
+import { EVENT_KIND } from '@shared/evenements';
 import { Horde } from '@shared/horde';
 import { Projectiles } from '@shared/projectiles';
 import { ZoneField } from '@shared/zones';
@@ -10,6 +11,7 @@ import {
   ChainFlashes,
   DamageNumbers,
   DerivedOrbs,
+  type EventView,
   HitFlashes,
   OrbFlights,
   ReactionFlashes,
@@ -149,6 +151,15 @@ class RecordingClient implements FrameClient {
   readonly pingClock = 55;
   /** Le porteur (etape 11) : une position qui ne ressemble a rien d'autre du decor. */
   readonly porteur = { x: 4321, y: 1234 };
+  /** L'evenement (etape 14) : une forge reconnaissable, distincte de tout le decor. */
+  readonly event: EventView = {
+    kind: EVENT_KIND.FORGE,
+    points: [{ x: 777, y: 888 }],
+    progress: 0.25,
+    secondsLeft: 42,
+    cart: null,
+    cartHp: 0,
+  };
   /**
    * Un boss reconnaissable, et surtout DISTINCT de la horde : `drawBossBar`
    * recoit les deux, et les intervertir ou n'en passer qu'un doit se voir.
@@ -479,6 +490,18 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     // image de retard sur le cadrage.
     expect(ordre.indexOf('pings')).toBeGreaterThan(ordre.indexOf('joueurs'));
     expect(ordre.indexOf('pings')).toBeLessThan(ordre.indexOf('secousse'));
+  });
+
+  it('etape 14 : les comportements recoivent l evenement du client et les joueurs DESSINES', () => {
+    const { stage, client, state } = compose();
+    expect(stage.argsOf('comportements')).toEqual([
+      client.horde,
+      client.blastFlashes,
+      client.shots.shots,
+      NOW,
+      client.event,
+      state.players,
+    ]);
   });
 
   it('secoue la camera avec les MEMES flashs que les calques, et l horloge murale', () => {

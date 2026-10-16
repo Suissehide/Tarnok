@@ -14,6 +14,7 @@ import type {
   ChainFlashes,
   DamageNumbers,
   DerivedOrbs,
+  EventView,
   FrappeTrace,
   GuardTrace,
   HitFlashes,
@@ -417,8 +418,10 @@ export class Stage {
     blasts: readonly BlastFlash[],
     shots: readonly EnemyShot[],
     timeMs: number,
+    event: EventView | null = null,
+    players: readonly { x: number; y: number; hp: number }[] = [],
   ): void {
-    this.#behaviors.draw(horde, blasts, shots, this.viewRect(), timeMs);
+    this.#behaviors.draw(horde, blasts, shots, this.viewRect(), timeMs, event, players);
   }
 
   drawAbilities(events: readonly AbilityUsed[], tick: number, timeMs: number): void {

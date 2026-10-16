@@ -12,6 +12,7 @@ import type {
   ChainFlashes,
   DamageNumbers,
   DerivedOrbs,
+  EventView,
   FrappeTrace,
   GuardTrace,
   HitFlashes,
@@ -124,6 +125,11 @@ export interface FrameClient {
    * Optionnel : les doubles qui n'en ont pas passent `null`.
    */
   readonly porteur?: { x: number; y: number } | null;
+  /**
+   * L'evenement en cours (etape 14), ou `null` — voir `GameClient.event`.
+   * Optionnel : les doubles qui n'en ont pas passent `null`.
+   */
+  readonly event?: EventView | null;
 }
 
 /**
@@ -147,6 +153,8 @@ export interface FrameStage {
     blasts: readonly BlastFlash[],
     shots: readonly EnemyShot[],
     timeMs: number,
+    event: EventView | null,
+    players: readonly { x: number; y: number; hp: number }[],
   ): void;
   /**
    * Les anneaux de marque, sous les pieds des ennemis marques (tache 13). Ils
@@ -306,7 +314,15 @@ export function composeFrame(
   // le boss doit passer par-dessus le couloir qu'il traverse.
   stage.drawBossCharge(client.bossCharge, client.hordeTick);
   stage.drawAbilities(client.abilityEvents, client.hordeTick, now);
-  stage.drawBehaviors(client.horde, client.blastFlashes, client.shots.shots, now);
+  // Etape 14 : l'evenement au sol, avec les joueurs DESSINES (occupation des sceaux).
+  stage.drawBehaviors(
+    client.horde,
+    client.blastFlashes,
+    client.shots.shots,
+    now,
+    client.event ?? null,
+    state.players,
+  );
   stage.drawMarks(client.horde, client.hordeTick, now);
   // ⚠️ **L'animation d'attaque ne part qu'au DASH** (tache 13). `stopped` vaut
   // deja 1 pendant le chargement — il sert au clip, pas au mouvement — donc
