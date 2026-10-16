@@ -22,10 +22,10 @@ import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
+  CONTAGION_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
   ECLAT_DE_GEL_DAMAGE,
   FOURNEE_BURN_PER_TICK,
-  HARVEST_RADIUS,
   LINK_RADIUS,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
@@ -44,8 +44,6 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
-import { Loadout } from '@shared/loadout';
-import { PASSIVES } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
 import { REACTION, REACTION_DEFS, zoneBurnPerTick, zoneRadius } from '@shared/reactions';
@@ -60,7 +58,6 @@ import {
   armureA,
   type ChargeTarget,
   type ContactPlayer,
-  type HarvestPlayer,
   hurtPlayer,
   markInZones,
   OrbField,
@@ -71,10 +68,10 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveHalos,
-  resolveHarvest,
   resolveOndes,
   resolveProjectileDamage,
   resolveVerglasCollisions,
+  spreadMarkOnDeath,
   VENOM_MIN_RESERVE,
   Venins,
 } from './combat';
@@ -5140,58 +5137,67 @@ describe('Venins — le poison des cartes « venin »', () => {
   });
 });
 
-describe('etape 10 : Moisson (resolveHarvest)', () => {
-  const MOISSON = PASSIVES.find((p) => p.kind === 'harvest')?.id ?? -1;
-
-  function porteur(hp: number, cartes = 1): HarvestPlayer {
-    const loadout = new Loadout();
-    for (let i = 0; i < cartes; i++) {
-      loadout.addPassive(MOISSON);
-    }
-    return { x: 1000, y: 1000, hp, maxHp: 100, loadout };
+describe('etape 13 : Contagion (spreadMarkOnDeath)', () => {
+  /**
+   * Une horde ou chaque entite a la position et la marque donnees, aux
+   * creneaux 0..n-1 dans l'ordre — exactement ce que `spreadMarkOnDeath` lit
+   * (`horde.mark[slot]`, `horde.x[slot]`, `horde.y[slot]`), SANS passer par
+   * `horde.kill` : c'est le point precis que ce test isole, voir le docbloc
+   * de `spreadMarkOnDeath`.
+   */
+  function hordeDe(entites: readonly { x: number; y: number; mark: number }[]): Horde {
+    const horde = new Horde(entites.length);
+    entites.forEach((e, i) => {
+      addOne(horde, 900 + i, e.x, e.y);
+      horde.mark[i] = e.mark;
+    });
+    return horde;
   }
 
-  it('une mort a 299 px soigne d 1 PV, a 301 px non', () => {
-    expect(HARVEST_RADIUS).toBe(300);
-    const pres = porteur(50);
-    resolveHarvest([pres], [1299, 1000]);
-    expect(pres.hp).toBe(51);
-    const loin = porteur(50);
-    resolveHarvest([loin], [1301, 1000]);
-    expect(loin.hp).toBe(50);
+  it('la marque d un mort saute sur le vivant le plus proche', () => {
+    const horde = hordeDe([
+      { x: 0, y: 0, mark: ELEMENT.BRAISE },
+      { x: 50, y: 0, mark: ELEMENT.NEUTRE },
+      { x: 900, y: 0, mark: ELEMENT.NEUTRE },
+    ]);
+    spreadMarkOnDeath(horde, [0]);
+    expect(horde.mark[1]).toBe(ELEMENT.BRAISE);
+    expect(horde.mark[2]).toBe(ELEMENT.NEUTRE);
   });
 
-  it('les morts d un tick s additionnent, et chaque carte compte', () => {
-    const p = porteur(50, 2);
-    resolveHarvest([p], [1000, 1000, 1100, 1000, 1000, 1200]);
-    expect(p.hp).toBe(56);
+  it('un mort sans marque ne propage rien', () => {
+    const horde = hordeDe([
+      { x: 0, y: 0, mark: ELEMENT.NEUTRE },
+      { x: 50, y: 0, mark: ELEMENT.NEUTRE },
+    ]);
+    spreadMarkOnDeath(horde, [0]);
+    expect(horde.mark[1]).toBe(ELEMENT.NEUTRE);
   });
 
-  it('jamais au-dela du PV max', () => {
-    const p = porteur(99.5);
-    resolveHarvest([p], [1000, 1000, 1010, 1000, 1020, 1000]);
-    expect(p.hp).toBe(100);
+  it('sans voisin vivant, la marque meurt avec lui — jamais de NaN ni de boucle', () => {
+    const horde = hordeDe([{ x: 0, y: 0, mark: ELEMENT.BRAISE }]);
+    expect(() => spreadMarkOnDeath(horde, [0])).not.toThrow();
   });
 
-  it('un joueur a terre ne se releve pas', () => {
-    const p = porteur(0);
-    resolveHarvest([p], [1000, 1000]);
-    expect(p.hp).toBe(0);
+  it('respecte CONTAGION_RADIUS : hors de portee, rien ne saute', () => {
+    const horde = hordeDe([
+      { x: 0, y: 0, mark: ELEMENT.BRAISE },
+      { x: CONTAGION_RADIUS + 1, y: 0, mark: ELEMENT.NEUTRE },
+    ]);
+    spreadMarkOnDeath(horde, [0]);
+    expect(horde.mark[1]).toBe(ELEMENT.NEUTRE);
   });
 
-  it('sans Moisson, rien', () => {
-    const p = porteur(50, 0);
-    resolveHarvest([p], [1000, 1000]);
-    expect(p.hp).toBe(50);
-  });
-
-  it('sans Moisson, un PV au dessus du max n est pas touche', () => {
-    // Construit directement (pas par `porteur`) : aucune carte de Moisson,
-    // et un hp deja au dessus de maxHp, pour verifier que
-    // `Math.min(maxHp, hp + 0)` ne vient pas l'ecreter en silence.
-    const p: HarvestPlayer = { x: 1000, y: 1000, hp: 150, maxHp: 100, loadout: new Loadout() };
-    resolveHarvest([p], [1000, 1000]);
-    expect(p.hp).toBe(150);
+  it('un voisin DEJA mort (hp <= 0) n est jamais choisi, meme plus proche', () => {
+    const horde = hordeDe([
+      { x: 0, y: 0, mark: ELEMENT.BRAISE },
+      { x: 10, y: 0, mark: ELEMENT.NEUTRE },
+      { x: 50, y: 0, mark: ELEMENT.NEUTRE },
+    ]);
+    horde.hp[1] = 0; // deja mort ce tick-ci, pas encore compacte.
+    spreadMarkOnDeath(horde, [0]);
+    expect(horde.mark[1]).toBe(ELEMENT.NEUTRE);
+    expect(horde.mark[2]).toBe(ELEMENT.BRAISE);
   });
 });
 

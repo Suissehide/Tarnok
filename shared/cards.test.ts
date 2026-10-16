@@ -329,7 +329,7 @@ describe('une carte de palier s applique x1 (etape 10, par la table depuis l eta
   // la carte peut reellement porter — la sienne — plus une rarete hors table
   // venue du fil, qui se lit commune.
   it('sur son propre palier, et sur une rarete hors table venue du fil', () => {
-    expect(DE_PALIER.length).toBe(3);
+    expect(DE_PALIER.length).toBe(6);
     for (const p of DE_PALIER) {
       for (const rarity of [rarityForTier(p.tier), 200]) {
         const l = new Loadout();

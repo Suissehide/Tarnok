@@ -594,11 +594,11 @@ export const CRIT_CHANCE = 0.12;
 export const CRIT_MULTIPLIER = 2;
 
 /**
- * Rayon de Moisson (etape 10, §4), en pixels monde : un ennemi qui meurt a
- * MOINS de cette distance du porteur lui rend `magnitude` PV. Strict : a 300
- * pile, rien. Le serveur seul l'applique ; l'ecran le lit pour l'ecrire.
+ * Rayon de Contagion (etape 13, §4.1), en pixels monde : la marque d'un
+ * ennemi qui meurt saute au vivant le plus proche DANS ce rayon (strict),
+ * mesure depuis la position du mort. Molette de playtest.
  */
-export const HARVEST_RADIUS = 300;
+export const CONTAGION_RADIUS = 220;
 
 /** Colosse (etape 10, §4) : un bonus de degats par tranche ENTIERE de ce nombre de PV max. */
 export const COLOSSUS_HP_STEP = 10;

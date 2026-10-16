@@ -1939,9 +1939,20 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
           // mesure retombait a zero — pas un bug de la carte, un accident de
           // tirage que ce helper n'avait aucune raison de subir. C'est CE
           // decouplage qui est le vrai correctif, pas la graine plus bas.
-          const index = ouverture.cards.findIndex(
-            (c) => c.nature !== CARD.PASSIVE || !passiveOf(c.refId).rule,
-          );
+          //
+          // ⚠️ **Elargi a `rule || malus` (etape 13, tache 7).** Fournaise
+          // porte un `malus` de 40 PV max, pas une `rule` — elle passait a
+          // travers le filtre `!rule` seul et pouvait retuer ce joueur
+          // simule en plein contact, exactement comme Transcendance avant
+          // elle. L'invariant reel : l'acceptation automatique ne doit
+          // jamais prendre une carte qui change la survie du joueur simule.
+          const index = ouverture.cards.findIndex((c) => {
+            if (c.nature !== CARD.PASSIVE) {
+              return true;
+            }
+            const p = passiveOf(c.refId);
+            return !p.rule && !p.malus;
+          });
           room.setDraftToken(1, index >= 0 ? index : 0);
         }
       }
@@ -2115,6 +2126,15 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
   const VITALITE = parGenre('maxHp');
   const PAR_SECONDE = passiveOf(REGAIN).magnitude;
   const PAR_CARTE_MAX_HP = passiveOf(VITALITE).magnitude;
+
+  /** Fournaise (etape 13, tache 7) : la seule carte a malus de `maxHp` du catalogue. */
+  const FOURNAISE = (() => {
+    const trouve = PASSIVES.find((p) => p.malus?.kind === 'maxHp');
+    if (!trouve) {
+      throw new Error('fixture : aucun passif a malus de maxHp');
+    }
+    return trouve.id;
+  })();
 
   function prend(room: Room, playerId: number, id: number, n: number): void {
     const carte: Card = { nature: CARD.PASSIVE, refId: id };
@@ -2293,15 +2313,17 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
    *
    * ⚠️ **Le cas que cette tache corrige vraiment** — un joueur blesse qui
    * prend une carte a malus de PV max et dont `hp += nouveauMax - maxHp`
-   * passait sous zero — demande une carte a malus, et le catalogue n'en a
-   * ENCORE AUCUNE (elle arrive a une tache ulterieure). On verifie donc le
-   * CHEMIN INVERSE, le seul que le catalogue actuel permette d'exercer : un
+   * passait sous zero — demandait une carte a malus, et le catalogue n'en
+   * avait ENCORE AUCUNE. Les deux premiers tests verifient donc le CHEMIN
+   * INVERSE, celui que le catalogue d'alors permettait deja d'exercer : un
    * maximum qui NE BOUGE PAS ne doit faire sauter ni descendre `hp` d'un
    * seul point chez un joueur deja blesse, et un maximum qui MONTE continue
    * de rendre exactement le delta, jamais plus. Les trois lignes de borne
-   * (`vivant`, `Math.min`, `Math.max`) sont des no-op sur ces deux chemins —
-   * la preuve du plancher qui sauve le BLESSE attend la premiere carte a
-   * malus.
+   * (`vivant`, `Math.min`, `Math.max`) sont des no-op sur ces deux chemins.
+   *
+   * **Fournaise (etape 13, tache 7) rend le troisieme test possible** : voir
+   * « Fournaise... » plus bas, LE test que cette borne attendait depuis le
+   * debut — un joueur BLESSE (pas mort) qui encaisse un malus de PV max.
    *
    * Le plancher du MORT, lui, se prouve des aujourd'hui : `debugResetLoadout`
    * fait baisser un maximum sans carte a malus (voir le troisieme test).
@@ -2366,6 +2388,28 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
 
     expect(room.maxHpOf(1)).toBeLessThan(maxAvant);
     expect(hpOf(room, 1)).toBe(0);
+  });
+
+  /**
+   * **LE test que la borne de `grantCard` attendait** (voir le docbloc du
+   * premier test de ce bloc) : un joueur BLESSE, pas mort, qui encaisse un
+   * malus de PV max.
+   *
+   * Sans le plancher (`Math.max(vivant ? 1 : 0, hp)`), ce joueur tombait a
+   * `30 + (60 - 100) = -10` — mort en acceptant sa carte, alors que la regle
+   * serveur veut qu'un BLESSE reste vivant a ce plancher.
+   */
+  it('Fournaise : un joueur blesse a 30 PV reste vivant, et sous son nouveau maximum', () => {
+    const room = new Room(0x0e_9e_0007);
+    room.join(1);
+    room.debugHurt(1, PLAYER_MAX_HP - 30);
+    expect(hpOf(room, 1)).toBe(30);
+
+    prend(room, 1, FOURNAISE, 1);
+
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP - 40);
+    expect(hpOf(room, 1)).toBeGreaterThan(0);
+    expect(hpOf(room, 1)).toBeLessThanOrEqual(room.maxHpOf(1));
   });
 });
 
@@ -5751,45 +5795,6 @@ describe('etape 10 : Echo dans le salon', () => {
     expect(declencheur.reactions).toBe(sans.reactions);
     expect(declencheur.perte).toBeGreaterThan(sans.perte);
     expect(marqueur.perte).toBe(sans.perte);
-  });
-});
-
-describe('etape 10 : Moisson dans le salon', () => {
-  const MOISSON = PASSIVES.find((p) => p.kind === 'harvest')?.id ?? -1;
-
-  /**
-   * Blesse le joueur au contact, puis fait tuer par sa dague une proie a 100
-   * px. Rend ses PV. Deux salons identiques a la carte pres : l'ecart EST ce
-   * que Moisson a rendu.
-   */
-  function pvApresUneMort(avecMoisson: boolean): number {
-    const room = new Room(0x10_0a_0801);
-    room.join(1);
-    const depart = positionOf(room, 1);
-    const contact = spawnMonsterAt(room, 700, depart.x, depart.y);
-    for (let t = 0; t < 20; t++) {
-      room.step(DT);
-    }
-    // Retire HORS du chemin des morts : ce monstre-ci ne doit rien rendre.
-    room.horde.kill([contact]);
-    if (avecMoisson) {
-      room.grantCard(1, { nature: CARD.PASSIVE, refId: MOISSON });
-    }
-    const pos = positionOf(room, 1);
-    const proie = spawnMonsterAt(room, 701, pos.x + 100, pos.y);
-    room.horde.hp[room.horde.slotOf(proie)] = 0.01;
-    room.applyInput(1, 1, 0, 0, 127, 0);
-    for (let t = 0; t < 30 && room.horde.slotOf(proie) >= 0; t++) {
-      room.step(DT);
-    }
-    expect(room.horde.slotOf(proie)).toBe(-1);
-    return hpOf(room, 1);
-  }
-
-  it('une mort a 100 px rend exactement 1 PV a qui porte Moisson', () => {
-    const sans = pvApresUneMort(false);
-    expect(sans).toBeLessThan(PLAYER_MAX_HP - 1);
-    expect(pvApresUneMort(true) - sans).toBe(1);
   });
 });
 

@@ -106,7 +106,6 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveHalos,
-  resolveHarvest,
   resolveOndes,
   resolveProjectileDamage,
   resolveVerglasCollisions,
@@ -1618,6 +1617,10 @@ export class Room {
     if (this.#ondes.length > 0) {
       this.#ondes = this.#ondes.filter((o) => ondeIsAlive(o, this.#tick + 1));
     }
+    // Contagion (etape 13) : un seul balayage des joueurs, hors de la boucle
+    // de resolution — `resolveProjectileDamage` ne lit ce booleen qu'une fois
+    // par tick, jamais par mort.
+    const contagion = [...this.#players.values()].some((p) => p.loadout.hasRule('contagion'));
     const deadIds = resolveProjectileDamage(
       this.#projectiles,
       scaledDt,
@@ -1628,6 +1631,7 @@ export class Room {
       this.#reactions,
       this.#venins,
       this.#anchor,
+      contagion,
     );
     markInZones(this.horde, this.#zones, this.#tick, this.#reactions);
     // ⚠️ **Les reactions se resolvent ICI, apres les DEUX chemins qui les
@@ -1808,10 +1812,6 @@ export class Room {
     // regeneration ne tourne donc pas pendant une montee de niveau, sans une
     // ligne pour le dire.
     this.#regenerateShield();
-
-    // Moisson (etape 10) : les morts de CE tick, ou qu'elles viennent. Vide a
-    // chaque tick, porteur ou pas : la file ne doit jamais s'accumuler.
-    resolveHarvest(this.#players.values(), this.#orbs.drainFallen());
 
     const pickedIds = this.#orbs.resolvePickups(
       [...this.#players.values()].map((p) => ({

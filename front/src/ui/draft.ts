@@ -1,5 +1,5 @@
 import { applicationsOf, CARD, type Card } from '@shared/cards';
-import { COLOSSUS_HP_STEP, HARVEST_RADIUS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { COLOSSUS_HP_STEP, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
@@ -280,12 +280,6 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   salvo: (m) => `+${m} salve, armes de tir`,
   zone: (m) => `+${m} zone, toutes armes`,
   echo: (m) => `+${pourcent(m)} % dégâts de vos réactions`,
-  // ⚠️ **« rendu », et le mot n'est pas decoratif** : « +1 PV par mort » se
-  // lit comme « +1 PV MAX par mort », c'est-a-dire l'inverse de ce que
-  // `resolveHarvest` fait — il SOIGNE, et son gain est meme PLAFONNE par les
-  // PV max (`Math.min(p.maxHp, ...)`). Seul « colosse », juste en dessous,
-  // parle vraiment du plafond.
-  harvest: (m) => `+${m} PV rendu${m > 1 ? 's' : ''} par mort à ${HARVEST_RADIUS} px`,
   colossus: (m) => `+${pourcent(m)} % dégâts par ${COLOSSUS_HP_STEP} PV max`,
   // Etape 13 : meme genre que l'« armure » de la boutique (`shop.ts`), donc
   // meme unite — une fraction des degats encaisses. Aucune carte ne le porte

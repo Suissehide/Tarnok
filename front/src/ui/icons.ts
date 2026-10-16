@@ -49,7 +49,6 @@ const BONUS_ICONS: Record<BonusKind | PassiveKind, number> = {
   salvo: 12,
   zone: 1,
   echo: 12,
-  harvest: 7,
   colossus: 4,
 };
 

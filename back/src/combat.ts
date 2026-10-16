@@ -14,8 +14,8 @@ import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
+  CONTAGION_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
-  HARVEST_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
@@ -24,7 +24,6 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import { linkedNeighbours } from '@shared/links';
-import type { Loadout } from '@shared/loadout';
 import { type Onde, ondeBand } from '@shared/onde-frappe';
 import { type Anchor, distanceToSegmentSquared, type Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
@@ -216,7 +215,7 @@ export class OrbField {
 
   /**
    * La position (x, y, a plat) de CHAQUE mort depuis le dernier
-   * `drainFallen`, qu'elle laisse un orbe ou non — pour Moisson (etape 10).
+   * `drainFallen`, qu'elle laisse un orbe ou non.
    *
    * ⚠️ **Ici parce que c'est le seul goulot qui voit chaque mort AVEC sa
    * position** : les huit chemins de mort de ce fichier appellent `spawn`
@@ -1334,6 +1333,11 @@ export function resolveProjectileDamage(
   // Ou est chaque tireur (etape 12, §3.2) : l'orbite tourne autour, le
   // boomerang y revient. Sans elle, ils se rabattent sur leur point d'emission.
   anchor?: Anchor,
+  // ⚠️ **Contagion (etape 13) : `false` par defaut, et c'est delibere.**
+  // Chaque appel existant (tests, autres resolveurs) garde son comportement
+  // a l'identique sans y penser ; seul `Room#step` sait si un joueur porte
+  // la carte, et c'est lui seul qui passe `true`.
+  contagion = false,
 ): number[] {
   // ⚠️ **Un projectile ne laisse plus RIEN au sol** (tache 21). Il posait une
   // zone a ses DEUX fins de course — la vieillesse dans `step`, l'impact dans
@@ -1572,11 +1576,21 @@ export function resolveProjectileDamage(
   }
 
   const deadIds = [...dead];
+  // ⚠️ **Les creneaux de Contagion sont recueillis ICI, PENDANT que
+  // `horde.kill` (plus bas) n'a pas encore compacte** : c'est le MEME instant
+  // que celui ou `orbs.spawn` lit `horde.x[slot]`/`horde.y[slot]` pour poser
+  // le butin, et pour la meme raison — apres `kill`, ces creneaux portent
+  // d'autres entites.
+  const slotsMorts: number[] = [];
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
       orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      slotsMorts.push(slot);
     }
+  }
+  if (contagion) {
+    spreadMarkOnDeath(horde, slotsMorts);
   }
   horde.kill(deadIds);
   return deadIds;
@@ -1891,45 +1905,40 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
   }
 }
 
-/** Ce que Moisson lit d'un joueur — `PlayerState` le satisfait tel quel. */
-export interface HarvestPlayer {
-  readonly x: number;
-  readonly y: number;
-  hp: number;
-  readonly maxHp: number;
-  readonly loadout: Pick<Loadout, 'bonus'>;
-}
-
 /**
- * Moisson (etape 10, §4) : chaque ennemi mort a MOINS de `HARVEST_RADIUS` du
- * porteur lui rend `bonus('harvest')` PV, borne par son PV max.
+ * Contagion (etape 13) : la marque d'un ennemi qui meurt passe au vivant le
+ * plus proche. Appelee avec le lot de morts d'UNE resolution, PENDANT que
+ * leurs creneaux sont encore valides — c'est-a-dire AVANT le `horde.kill` qui
+ * les compacte (voir `resolveProjectileDamage`, seul appelant, qui recueille
+ * les creneaux au meme endroit ou il pose les orbes de butin).
  *
- * ⚠️ **Cooperative par construction** : le serveur n'attribue pas les morts a
- * un tueur, la proximite evite d'avoir a le faire — un allie qui tue pres de
- * toi te soigne aussi.
- *
- * ⚠️ **Un joueur a terre ne se releve pas**, meme garde que `#regenerate` :
- * sans elle, `#checkRunOver` verrait la run repartir.
+ * ⚠️ **Une seule passe, pas de cascade.** Une marque transmise ne se
+ * retransmet pas au meme tick : sinon une vague de morts repeindrait la horde
+ * entiere d'un coup, et le cout serait quadratique.
  */
-export function resolveHarvest(players: Iterable<HarvestPlayer>, fallen: readonly number[]): void {
-  const r2 = HARVEST_RADIUS * HARVEST_RADIUS;
-  for (const p of players) {
-    if (p.hp <= 0) {
+export function spreadMarkOnDeath(horde: Horde, morts: readonly number[]): void {
+  for (const slot of morts) {
+    const mark = horde.mark[slot] ?? ELEMENT.NEUTRE;
+    if (mark === ELEMENT.NEUTRE) {
       continue;
     }
-    const parMort = p.loadout.bonus('harvest');
-    if (parMort === 0) {
-      continue;
-    }
-    let gain = 0;
-    for (let i = 0; i + 1 < fallen.length; i += 2) {
-      const dx = (fallen[i] ?? 0) - p.x;
-      const dy = (fallen[i + 1] ?? 0) - p.y;
-      if (dx * dx + dy * dy < r2) {
-        gain += parMort;
+    let meilleur = -1;
+    let d2 = CONTAGION_RADIUS * CONTAGION_RADIUS;
+    for (let i = 0; i < horde.count; i++) {
+      if (i === slot || (horde.hp[i] ?? 0) <= 0) {
+        continue;
+      }
+      const dx = (horde.x[i] ?? 0) - (horde.x[slot] ?? 0);
+      const dy = (horde.y[i] ?? 0) - (horde.y[slot] ?? 0);
+      const d = dx * dx + dy * dy;
+      if (d < d2) {
+        d2 = d;
+        meilleur = i;
       }
     }
-    p.hp = Math.min(p.maxHp, p.hp + gain);
+    if (meilleur >= 0) {
+      horde.mark[meilleur] = mark;
+    }
   }
 }
 

@@ -326,7 +326,6 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
     ['salvo', '+1 salve, armes de tir'],
     ['zone', '+1 zone, toutes armes'],
     ['echo', '+100 % dégâts de vos réactions'],
-    ['harvest', '+1 PV rendu par mort à 300 px'],
     ['colossus', '+1 % dégâts par 10 PV max'],
   ] as const)('etape 10 : %s se lit « %s »', (kind, attendu) => {
     const passive = PASSIVES.find((p) => p.kind === kind);

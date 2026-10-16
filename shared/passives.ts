@@ -41,7 +41,6 @@ export const PASSIVE_KINDS = [
   'salvo',
   'zone',
   'echo',
-  'harvest',
   'colossus',
   // Etape 13 : le genre existait deja cote boutique (`BonusKind`) et cote
   // combat (`p.armor`) ; il n'etait simplement pas atteignable par une carte.
@@ -63,8 +62,14 @@ export type PassiveTier = 'epique' | 'legendaire';
  * Vitalite et aux achats du compte, qui s'ajoutent apres. Meme idiome que
  * `Weapon.kind` : un discriminant nomme dont la branche vit a un seul
  * endroit par cote (`maxHpOf`/`maxShieldOf`, `shared/loadout.ts`).
+ *
+ * ⚠️ **`contagion` (etape 13) suit le meme idiome pour une raison differente** :
+ * ce n'est pas qu'un bonus chiffre ne peut pas la dire, c'est qu'elle n'a
+ * RIEN a sommer — son effet est une branche a la resolution des morts
+ * (`spreadMarkOnDeath`, `back/src/combat.ts`), lue via `Loadout.hasRule`,
+ * jamais via `Loadout.bonus`.
  */
-export type PassiveRule = 'transcendance';
+export type PassiveRule = 'transcendance' | 'contagion';
 
 export interface Passive {
   id: number;
@@ -221,13 +226,18 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     kind: 'zone',
     magnitude: 1,
   },
-  // ---- Les passifs de REGLE, un par palier reserve (etape 13, §2.2) --------
-  // Ils changent une regle, donc s'appliquent x1 et ne sortent que sur un
-  // emplacement de LEUR palier — chaque palier a son propre pool.
+  // ---- Les passifs de PALIER, trois par palier reserve (etape 13, §2.2) ---
+  // Chacun ne sort que sur un emplacement de SON palier — chaque palier a son
+  // propre pool. Ce qui les distingue d'une commune n'est jamais leur
+  // `kind` (voir le test « aucune carte de palier ne partage son genre ») :
+  // Écho et Colosse touchent une MECANIQUE qu'aucune commune ne lit deja
+  // (reactions, mise a l'echelle par les PV max) ; Contagion est une REGLE
+  // (`rule`) ; Fournaise et Hâte funeste coutent un MALUS qu'aucune commune
+  // ne porte.
   //
-  // ⚠️ **Les trois tenaient dans un seul tas a l'etape 10.** Le palier les
-  // separe : un palier sans aucune carte ferait redescendre tous ses
-  // emplacements, et aucun test ne pourrait plus rien y affirmer.
+  // ⚠️ **Les deux premiers tenaient dans un seul tas a l'etape 10.** Le
+  // palier les separe : un palier sans aucune carte ferait redescendre tous
+  // ses emplacements, et aucun test ne pourrait plus rien y affirmer.
   {
     // +100 % des degats INSTANTANES des reactions que le porteur declenche
     // (`ReactionTrigger.by`), par carte. Serveur seul (`applyReactions`).
@@ -238,15 +248,6 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     tier: 'epique',
   },
   {
-    // PV rendus par ennemi mort a moins de `HARVEST_RADIUS` du porteur, quel
-    // qu'en soit le tueur. Serveur seul (`resolveHarvest`).
-    name: 'moisson',
-    label: 'Moisson',
-    kind: 'harvest',
-    magnitude: 1,
-    tier: 'legendaire',
-  },
-  {
     // Fraction de degats ajoutee par tranche de `COLOSSUS_HP_STEP` PV max
     // (0,01 = +1 % par 10 PV). Lue par `shotDamage`, des deux cotes.
     name: 'colosse',
@@ -254,6 +255,19 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     kind: 'colossus',
     magnitude: 0.01,
     tier: 'epique',
+  },
+  {
+    // ⚠️ Carte de REGLE (etape 13, tache 7) : AUCUN bonus/malus chiffre — voir
+    // le docbloc de `PassiveRule`. `kind`/`magnitude` restent par convention
+    // (inertes, jamais lus par `Loadout.bonus` pour cette carte) ; l'effet
+    // vit dans `spreadMarkOnDeath` (`back/src/combat.ts`), appele quand
+    // `Loadout.hasRule('contagion')` est vrai pour au moins un joueur.
+    name: 'contagion',
+    label: 'Contagion',
+    kind: 'zone',
+    magnitude: 0,
+    tier: 'epique',
+    rule: 'contagion',
   },
   {
     // ⚠️ Carte de REGLE (etape 13, tache 6) : ramene les PV max a
@@ -273,6 +287,31 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     magnitude: 0,
     tier: 'legendaire',
     rule: 'transcendance',
+  },
+  {
+    // Molettes de playtest : +60 % de degats pour 40 PV max. `kind: 'damage'`
+    // est volontairement le MEME genre que « puissance »/« acier » — c'est ce
+    // qui fait lire ce bonus par la meme formule (`shotDamage`), sans code
+    // neuf — le malus de `maxHp` est ce qui la distingue d'une commune, pas
+    // son genre.
+    name: 'fournaise',
+    label: 'Fournaise',
+    kind: 'damage',
+    magnitude: 0.6,
+    tier: 'legendaire',
+    malus: { kind: 'maxHp', magnitude: 40 },
+  },
+  {
+    // Molettes de playtest : la recharge de moitie, les degats subis de
+    // moitie en plus. L'armure negative mord les QUATRE sources, parce que
+    // `hurtPlayer` est le point de passage unique (tache 3). Meme
+    // raisonnement que Fournaise pour `kind: 'fireRate'`.
+    name: 'hate-funeste',
+    label: 'Hâte funeste',
+    kind: 'fireRate',
+    magnitude: 0.5,
+    tier: 'legendaire',
+    malus: { kind: 'armor', magnitude: 0.5 },
   },
 ];
 
