@@ -7,6 +7,7 @@ import {
   TICK_HZ,
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
+import { EVENT_KIND, EVENT_OUTCOME } from '@shared/evenements';
 import {
   decode,
   encodeAbility,
@@ -813,5 +814,64 @@ describe('etape 8 tache 3, ronde de correction 1 : ABILITY_USED part une seule f
     expect(iDeaths).toBeGreaterThanOrEqual(0);
     expect(iUsed).toBeGreaterThanOrEqual(0);
     expect(iDeaths).toBeLessThan(iUsed);
+  }, 15_000);
+});
+
+describe('etape 14 : les evenements sur le fil', () => {
+  /**
+   * ⚠️ **La garantie du §6.4** : un client doit lire l'`EVENT_END` reussi
+   * AVANT le `LEVEL_UP` qui ouvre l'etalage, sans quoi il nommerait l'etalage
+   * « Niveau » — meme quand les deux partent dans le MEME envoi. Tout se joue
+   * dans un bloc SYNCHRONE : le minuteur du salon ne peut pas s'intercaler, et
+   * le `#broadcast` suivant draine depart, etats, fin et `LEVEL_UP` ensemble.
+   */
+  it('EVENT_START, puis les etats, puis EVENT_END reussi, puis LEVEL_UP, dans le meme envoi', async () => {
+    const code = await createRoomCode();
+    const { ws, playerId } = await connect(code);
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('salon introuvable');
+    }
+    const recus: Message[] = [];
+    ws.on('message', (data: ArrayBuffer) => {
+      const m = decode(data);
+      if (m.type !== MSG.SNAPSHOT) {
+        recus.push(m);
+      }
+    });
+
+    room.debugStartEvent(3 * 0x4_6a2b + EVENT_KIND.FORGE);
+    const forge = room.eventPoints?.[0];
+    if (!forge) {
+      throw new Error('forge attendue');
+    }
+    room.debugPlace(playerId, forge.x, forge.y);
+    for (let t = 0; t < 2000 && room.eventPoints !== null; t++) {
+      const ids: number[] = [];
+      for (let i = 0; i < room.horde.count; i++) {
+        ids.push(room.horde.entityIdAt(i));
+      }
+      if (ids.length > 0) {
+        room.horde.kill(ids);
+      }
+      room.step(1 / TICK_HZ);
+      room.debugRevive(playerId);
+    }
+    expect(room.eventPoints).toBeNull();
+    // L'etalage s'ouvre au tick suivant : LEVEL_UP en file avec la fin.
+    room.step(1 / TICK_HZ);
+
+    await nextMessage(ws, (m) => m.type === MSG.DRAFT_OPEN, 5000);
+    const types = recus.map((m) => m.type);
+    const iDebut = types.indexOf(MSG.EVENT_START);
+    const iEtat = types.indexOf(MSG.EVENT_STATE);
+    const iFin = types.indexOf(MSG.EVENT_END);
+    const iUp = types.indexOf(MSG.LEVEL_UP);
+    expect(iDebut).toBeGreaterThanOrEqual(0);
+    expect(iEtat).toBeGreaterThan(iDebut);
+    expect(iFin).toBeGreaterThan(iEtat);
+    expect(recus[iFin]).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.REUSSI });
+    expect(iUp).toBeGreaterThan(iFin);
+    expect(types.lastIndexOf(MSG.EVENT_STATE)).toBeLessThan(iFin);
   }, 15_000);
 });

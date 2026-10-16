@@ -11,6 +11,7 @@ import {
   encodeDraftIntents,
   encodeDraftOpen,
   encodeDraftResult,
+  encodeEvent,
   encodeLevelUp,
   encodeLobby,
   encodePickups,
@@ -620,6 +621,13 @@ class Session {
     }
     for (const batch of this.room.drainPickups()) {
       this.#send(encodePickups(batch.tick, batch.ids));
+    }
+    // Etape 14 : les evenements, APRES les morts et les ramassages (« ce qui
+    // en decoule »), et surtout AVANT `LEVEL_UP` — c'est ce qui garantit
+    // qu'un client a lu l'`EVENT_END` reussi avant le `LEVEL_UP` qui ouvre
+    // l'etalage, meme dans le meme envoi (§6.4).
+    for (const ev of this.room.drainEvents()) {
+      this.#send(encodeEvent(ev));
     }
     for (const levelUp of this.room.drainLevelUps()) {
       this.#send(encodeLevelUp(levelUp.tick, levelUp.level));
