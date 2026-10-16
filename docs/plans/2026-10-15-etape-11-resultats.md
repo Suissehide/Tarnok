@@ -29,7 +29,7 @@ coffre jamais comptée — toutes rougissent le test.
 
 | Pièce | Où |
 | --- | --- |
-| l'archétype porteur (id 20, après le boss), ses constantes | `shared/archetypes.ts` |
+| l'archétype porteur (id 20, après le troll (le boss)), ses constantes | `shared/archetypes.ts` |
 | le plancher de rareté (rare : ≈ 83 % rares, 17 % légendaires) | `shared/rarity.ts`, `drawSpread` |
 | la fuite (rayon 400 px, 90 % de la vitesse d'un joueur), non collante | `shared/horde.ts` |
 | un porteur par palier, 2ᵉ vague, 50 vagues d'écart, sans tirage de plus | `back/src/wave-director.ts` |
@@ -53,6 +53,8 @@ coffre jamais comptée — toutes rougissent le test.
   fuite, livrés en retard au client : **35,089 px** de dérive du porteur lui-même sans rejeu,
   **0,000 px** avec.
 - Fait sur la branche `etape-11-porteur`, `main` étant modifié en direct.
+- **Revue finale** : un client qui rejoint pendant qu'un porteur vit reconnaît quand même le
+  coffre, à son niveau qui ne monte pas ; un test tautologique retiré.
 
 ## 4. Le portique
 
