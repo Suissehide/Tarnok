@@ -29,30 +29,25 @@ import {
 import type { ZoneField } from './zones';
 
 /**
- * Les projectiles : simules localement, jamais repliques (§5.2 de la spec).
+ * Les projectiles : simules localement, jamais repliques.
  *
  * Un tir est entierement determine par des donnees que serveur et clients
- * possedent deja — l'arme, le tick, la position du tireur, et (§5.3 revu par
- * la tache 13 : la visee suit le curseur, ce n'est plus une auto-visee sur la
- * horde) la direction visee, transmise sur un octet signe par `INPUT` et
- * `SNAPSHOT`. C'est ce SEUL octet qui transite ; la salve elle-meme (position,
- * vitesse, degats de chaque projectile) reste calculee identiquement des deux
- * cotes a partir de la meme direction quantifiee — voir `fireSalvoDirected` et
- * `quantizeAxis` dans `shared/protocol.ts`. Le test de derivation de ce
- * fichier verrouille cette propriete : deux instances independantes, memes
- * entrees, memes projectiles.
+ * possedent deja — l'arme, le tick, la position du tireur et la direction
+ * visee (le curseur), transmise sur un octet signe par `INPUT` et
+ * `SNAPSHOT`. C'est ce SEUL octet qui transite ; la salve elle-meme reste
+ * calculee identiquement des deux cotes a partir de la meme direction
+ * quantifiee — voir `fireSalvoDirected` et `quantizeAxis` dans
+ * `shared/protocol.ts`. Le test de derivation de ce fichier le verrouille.
  *
- * ⚠️ **`Projectiles.collide` accepte `zones`/`tick` en optionnels depuis
- * l'etape 5c (tache 3), et ca ne rouvre PAS ce contrat.** Ils elargissent le
+ * ⚠️ **`Projectiles.collide` accepte `zones`/`tick` en optionnels, et ca ne
+ * rouvre PAS ce contrat.** Ils elargissent le
  * rayon de touche d'un ennemi en zone de Vif-argent — un effet de DEGAT, qui
  * decide QUI un projectile touche, jamais OU il va. La trajectoire
  * (`#emit`/`fireSalvoDirected`) reste aveugle a la horde et aux zones ; seule
  * `collide`, qui resout une collision DEJA CALCULEE, les consulte.
  *
- * Tableaux typés, jamais un objet par projectile (§4.4 de l'orientation) — a
- * plusieurs centaines de projectiles vivants, le meme raisonnement que pour
- * `Horde` s'applique. `x` et `y` sont publics en lecture, comme sur `Horde` :
- * le rendu (tache 11) les lit directement sans jamais materialiser d'objet.
+ * Tableaux typés, jamais un objet par projectile, comme `Horde`. `x` et `y`
+ * sont publics en lecture : le rendu les lit sans materialiser d'objet.
  *
  * L'expiration se compte en **pas de simulation**, pas en tick absolu : un
  * compte a rebours par projectile, decremente une fois par appel a `step`.
@@ -64,25 +59,13 @@ import type { ZoneField } from './zones';
  * Le rayon de touche AU CARRE de chaque archetype, et sa borne elargie — deux
  * tables cuites au chargement, indexees par `Horde.archetype`.
  *
- * ⚠️ **Le rayon de touche suit le CORPS, et c'est le defaut que l'etape 8
- * corrige.** `collide` testait un rayon unique de 32 px pour tout le monde,
- * alors que le boss est dessine a `BODY_SCALE x bodyScale` de ce rayon — soit
- * 240 px de diametre pour une cible de 64. Il fallait viser le centre d'un
- * corps douze fois plus large que la zone qui encaissait : en jeu, « la hitbox
- * du boss est trop petite ». `bodyScale` existait deja et disait exactement
- * ca — `BOSS_CHARGE_WIDTH_PX` et `spriteScale` le lisent tous les deux depuis
- * l'etape 6a ; seule la collision l'ignorait.
+ * ⚠️ **Le rayon de touche suit le CORPS** (`Archetype.hitScale`) : 120 px
+ * pour le boss, dessine a 240 px de diametre. Un rayon unique obligerait a
+ * viser le centre exact d'un gros corps.
  *
- * ⚠️ **Etape 12 : toujours trop petite, et c'est `hitScale` qui tranche.**
- * A 96 px, la touche du boss restait sous sa boite dessinee (240 px de
- * diametre). Elle lit desormais `Archetype.hitScale` : 120 px pour le boss,
- * le dessin entier.
- *
- * ⚠️ **Des TABLES, pas un calcul dans la boucle.** La boucle interne de
- * `collide` est en projectiles x ennemis — 49 millions de tests de distance par
- * tick ont deja ete mesures ici (voir le pre-filtre du Vif-argent). Une lecture
- * de tableau type remplace exactement l'ancienne constante ; un
- * `archetypeOf(...).bodyScale` y aurait mis une recherche d'objet.
+ * ⚠️ **Des TABLES, pas un calcul dans la boucle** : la boucle interne de
+ * `collide` est en projectiles x ennemis, et `archetypeOf(...)` y mettrait
+ * une recherche d'objet.
  */
 /** Le rayon de touche (pas au carre) de chaque archetype — pour les projectiles grossis par le calibre. */
 const HIT_R_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => PROJECTILE_HIT_RADIUS * a.hitScale);
@@ -99,7 +82,7 @@ const WIDE_R2_BY_ARCHETYPE = Float32Array.from(ARCHETYPES, (a) => {
 });
 
 /**
- * Le critique d'un TIREUR (etape 10, §3.2) : sa chance (Precision) et son
+ * Le critique d'un TIREUR : sa chance (Precision) et son
  * multiplicateur (Ferocite). Calcule par `critOf` (shared/firing.ts), des
  * deux cotes, et passe a l'emission.
  */
@@ -109,17 +92,17 @@ export interface Crit {
 }
 
 /**
- * Ou est le tireur `by` MAINTENANT (etape 12, §3.2) — lu par l'orbite et le
+ * Ou est le tireur `by` MAINTENANT — lu par l'orbite et le
  * retour du boomerang seuls. `undefined` : le projectile se rabat sur son
  * point d'emission.
  */
 export type Anchor = (by: number) => { readonly x: number; readonly y: number } | undefined;
 
-/** Taille de l'anneau de recontact d'un projectile jamais consomme (§3.3). */
+/** Taille de l'anneau de recontact d'un projectile jamais consomme. */
 const REHIT_RING = 8;
 const TAU = Math.PI * 2;
 
-/** Le critique sans aucune carte : celui de l'etape 8. */
+/** Le critique sans aucune carte. */
 export const BASE_CRIT: Crit = Object.freeze({ chance: CRIT_CHANCE, multiplier: CRIT_MULTIPLIER });
 
 export class Projectiles {
@@ -127,10 +110,8 @@ export class Projectiles {
   readonly x: Float32Array;
   readonly y: Float32Array;
   /**
-   * Tick de tir. Public en lecture : la tache 11 en aura besoin pour le
-   * rendu (par exemple un fondu a l'apparition), et `#removeAt` doit le
-   * compacter comme tout le reste — l'exposer permet de le verifier depuis
-   * un test sans ajouter de code de test dans la classe.
+   * Tick de tir. Public en lecture, pour le rendu et pour verifier depuis un
+   * test que `#removeAt` le compacte comme le reste.
    */
   readonly bornTick: Uint32Array;
 
@@ -139,63 +120,52 @@ export class Projectiles {
   readonly #damage: Float32Array;
   /**
    * Element porte par le projectile, index dans `ELEMENTS` — recopie de
-   * `Weapon.element` a l'emission (etape 5a, tache 6). `ELEMENT.NEUTRE` pour
-   * les cinq armes neutres, qui ne marquent rien et ne posent aucune zone.
+   * `Weapon.element` a l'emission. `ELEMENT.NEUTRE` pour les armes neutres,
+   * qui ne marquent rien.
    */
   readonly #element: Uint8Array;
   /**
    * Index du joueur qui a tire — c'est LUI que la marque retient (`Horde.markBy`)
-   * et que la zone porte (`ZoneField.by`), donc lui que la Synergie du §7
-   * comparera. Sans ce tableau, une reaction entre deux joueurs et une
+   * et que la zone porte (`ZoneField.by`), donc lui que la Synergie compare.
+   * Sans ce tableau, une reaction entre deux joueurs et une
    * reaction en solo seraient indiscernables au moment de l'impact.
    */
   readonly #by: Uint8Array;
   /**
    * Rayon de l'explosion a l'impact, en pixels monde — recopie de
-   * `Weapon.blastRadius` a l'emission (etape 6a, tache 16). `0` : ce
-   * projectile ne touche que ce qu'il percute.
+   * `Weapon.blastRadius` a l'emission. `0` : ce projectile ne touche que ce
+   * qu'il percute.
    *
-   * ⚠️ **Recopie a cote, JAMAIS relu dans `WEAPONS` a l'impact** — la meme
-   * raison que `#damage`, `#element` et `#by` juste au-dessus, et la raison
-   * exacte pour laquelle `#weapon` peut rester purement cosmetique : ce qui
-   * decide d'un degat ne doit pas dependre d'une table qu'on pourrait
-   * reindexer.
+   * ⚠️ **Recopie a cote, JAMAIS relu dans `WEAPONS` a l'impact**, comme
+   * `#damage`, `#element` et `#by` : ce qui decide d'un degat ne doit pas
+   * dependre d'une table qu'on pourrait reindexer.
    */
   readonly #blastRadius: Float32Array;
   /**
    * Identifiant de l'arme qui a tire, index dans `WEAPONS` — recopie de
-   * `Weapon.id` a l'emission (etape 5a, tache 12).
+   * `Weapon.id` a l'emission.
    *
-   * ⚠️ **Purement COSMETIQUE, et c'est le seul champ qui le soit.** Il existe
-   * pour que le rendu sache quel projectile dessiner : chaque arme, son
-   * apparence propre (`Weapon.look`). La simulation ne le lit jamais — ce qui
-   * decide d'un degat, d'une marque ou d'une zone est deja recopie a cote
-   * (`#damage`, `#element`, `#by`), justement pour que le tir ne depende pas
-   * d'une table.
-   *
-   * `Uint8Array` : le catalogue en compte treize (tache 9 de l'etape 5b), le
-   * §6.2 en projette quarante.
+   * ⚠️ **Purement COSMETIQUE.** Il dit au rendu quel projectile dessiner
+   * (`Weapon.look`) ; la simulation ne le lit jamais.
    */
   readonly #weapon: Uint8Array;
   /**
    * Traversees RESTANTES : combien d'ennemis supplementaires ce projectile
-   * peut encore transpercer avant d'etre consomme (etape 8). Recopie de
+   * peut encore transpercer avant d'etre consomme. Recopie de
    * `Weapon.pierce` a l'emission, decremente a chaque traversee.
    */
   readonly #pierce: Uint8Array;
   /**
    * Le multiplicateur critique EMPORTE par ce projectile : celui de son
-   * tireur si le tirage a crite, `1` sinon (etapes 8 et 10).
+   * tireur si le tirage a crite, `1` sinon.
    *
    * ⚠️ **Decide a l'EMISSION, pas a l'impact.** Les deux cotes emettent la
    * meme salve a partir des memes trois entiers (le tick, le tireur, le rang
    * du projectile) : ils tirent donc le meme critique, et le client peut
-   * l'afficher au moment ou le serveur l'arbitre. Le decider a l'impact aurait
-   * voulu dire deux tirages, a deux instants, sur deux machines.
+   * l'afficher au moment ou le serveur l'arbitre.
    *
-   * ⚠️ **Le multiplicateur voyage, pas un booleen** (etape 10) : Ferocite le
-   * rend propre au tireur, et les trois lecteurs (deux dans `combat.ts`, un
-   * dans `client.ts`) lisent le projectile — plus jamais `CRIT_MULTIPLIER`.
+   * ⚠️ **Le multiplicateur voyage, pas un booleen** : Ferocite le rend propre
+   * au tireur, et les lecteurs lisent le projectile, jamais `CRIT_MULTIPLIER`.
    */
   readonly #crit: Float32Array;
   /**
@@ -246,7 +216,7 @@ export class Projectiles {
    */
   readonly #prevX: Float32Array;
   readonly #prevY: Float32Array;
-  /** Mouvement, code `MOTION` — recopie de `Weapon.motion` (etape 12). */
+  /** Mouvement, code `MOTION` — recopie de `Weapon.motion`. */
   readonly #motion: Uint8Array;
   /** Eclats a projeter a la consommation — recopie de `Weapon.fragments`. */
   readonly #fragments: Uint8Array;
@@ -272,7 +242,7 @@ export class Projectiles {
   readonly #age: Int32Array;
   /**
    * Anneau des `REHIT_RING` derniers ennemis touches par un projectile jamais
-   * consomme, avec son age au contact (§3.3), et la prochaine case a ecraser.
+   * consomme, avec son age au contact, et la prochaine case a ecraser.
    */
   readonly #ringId: Int32Array;
   readonly #ringAge: Int32Array;
@@ -331,21 +301,15 @@ export class Projectiles {
    * deux cotes, donc rien ne se tire plutot que de deviner.
    *
    * **Cette regle peut faire diverger serveur et client, et c'est accepte.**
-   * Les deux visent sur l'etat COURANT de leur propre horde (jamais retarde
-   * — voir `nearestTarget`, corrige en tache 9). Si une mort n'est pas
-   * encore parvenue au client, sa horde peut encore contenir la cible que le
-   * serveur, lui, a deja retiree de la sienne — donc l'un saute le tir
-   * pendant que l'autre le lance, ou l'inverse. L'ecart est purement visuel
-   * et se resorbe au rejeu du §3.2 : les projectiles ne sont jamais
-   * repliques, et les degats restent arbitres par le serveur (§5.4). Ce qui
-   * serait inacceptable, ce serait qu'un client tire une conclusion sur les
-   * degats a partir de sa propre salve — ce n'est jamais le cas, `fireSalvo`
-   * ne fait que deplacer un projectile.
+   * Les deux visent sur l'etat COURANT de leur propre horde (voir
+   * `nearestTarget`). Si une mort n'est pas encore parvenue au client, l'un
+   * saute le tir pendant que l'autre le lance. L'ecart est purement visuel :
+   * les projectiles ne sont jamais repliques, et les degats restent arbitres
+   * par le serveur.
    */
   /**
-   * ⚠️ **Aucun appelant en production depuis la tache 13.** La visee suit le
-   * curseur, donc les salves partent par `fireSalvoDirected`. Conserve pour
-   * l'etape 4 (armes a tete chercheuse) ; ne decrit pas le comportement
+   * ⚠️ **Aucun appelant en production.** La visee suit le curseur, donc les
+   * salves partent par `fireSalvoDirected`. Ne decrit pas le comportement
    * actuel du jeu.
    */
   fireSalvo(
@@ -367,11 +331,8 @@ export class Projectiles {
   }
 
   /**
-   * Tire une salve de `weapon` depuis `(x, y)`, dans la direction `(dirX,
-   * dirY)` — decision de la tache 13 : la visee suit le curseur, elle n'est
-   * plus derivee d'une cible (voir `fireSalvo`, qui reste pour d'eventuelles
-   * armes futures a ciblage automatique, mais que plus personne n'appelle
-   * pour l'arme de base).
+   * Tire une salve de `weapon` depuis `(x, y)`, dans la direction
+   * `(dirX, dirY)` : la visee suit le curseur.
    *
    * `(dirX, dirY) = (0, 0)` ne tire pas : c'est la direction qu'envoie un
    * curseur pile sur le joueur, ou une souris jamais bougee, et les DEUX
@@ -380,10 +341,9 @@ export class Projectiles {
    *
    * Seul l'ANGLE de `(dirX, dirY)` compte (`Math.atan2` ignore la norme) :
    * l'appelant peut donc passer la paire quantifiee sur un octet signe
-   * (-127..127) telle quelle, sans la renormaliser — c'est d'ailleurs ce qui
-   * est exige : voir `quantizeAxis` dans `shared/protocol.ts`, dont la doc
-   * explique pourquoi tirer avec un flottant non quantifie desynchroniserait
-   * durablement serveur et client.
+   * (-127..127) telle quelle, et c'est exige : voir `quantizeAxis` dans
+   * `shared/protocol.ts` (un flottant non quantifie desynchroniserait
+   * serveur et client).
    */
   fireSalvoDirected(
     weapon: Weapon,
@@ -424,21 +384,17 @@ export class Projectiles {
     const n = count;
     const room = this.capacity - this.#count;
     const toFire = Math.min(n, room);
-    // Rend visible une troncature silencieuse. Une salve qui ne part pas est
-    // une carte que le joueur a payee et qui ne fait rien : ca ne doit jamais
-    // disparaitre sans trace. Meme motif que `RoomMetrics.truncatedSpawns`
-    // pour les vagues.
+    // Rend visible une troncature silencieuse : une salve qui ne part pas est
+    // une carte que le joueur a payee et qui ne fait rien.
     this.truncatedProjectiles += n - toFire;
 
     // ⚠️ **Une salve dont l'ouverture fait un TOUR COMPLET est un tir
-    // circulaire** (etape 8) — et c'est tout ce qu'il a fallu pour en avoir
-    // un : pas un type d'arme de plus, une valeur de plus dans un champ qui
-    // existait deja. Ce qui change est la REPARTITION : sur un arc ouvert, les
-    // deux extremes tombent sur les bords (`i / (n - 1)`) ; sur un cercle, ces
-    // deux bords sont le MEME angle, et le dernier projectile se poserait sur
-    // le premier. L'anneau se ferme donc en `i / n`.
+    // circulaire.** Sur un arc ouvert, les deux extremes tombent sur les bords
+    // (`i / (n - 1)`) ; sur un cercle, ces deux bords sont le MEME angle, et
+    // le dernier projectile se poserait sur le premier. L'anneau se ferme donc
+    // en `i / n`.
     //
-    // La SPIRALE (etape 12) est un anneau dont l'angle de base tourne avec le
+    // La SPIRALE est un anneau dont l'angle de base tourne avec le
     // tick de tir, sans regarder la visee : ses bras se repartissent sur tout
     // le tour quel que soit `spreadRadians`. La visee nulle, elle, ne tire
     // toujours pas — la regle est dans `fireSalvoDirected`, en amont.
@@ -490,7 +446,7 @@ export class Projectiles {
       // Le critique, tire d'une fonction du TIR et non d'une suite — voir
       // `CRIT_CHANCE` et `hashRoll`. Le rang `i` est ce qui empeche une salve
       // entiere de criter d'un bloc. La chance et le multiplicateur sont ceux
-      // du TIREUR (etape 10).
+      // du TIREUR.
       this.#crit[slot] = hashRoll(tick, by, i) < crit.chance ? crit.multiplier : 1;
       this.#scale[slot] = weapon.projectileScale;
       this.#venom[slot] = weapon.venom;
@@ -507,11 +463,9 @@ export class Projectiles {
   /**
    * Degats portes par le projectile de ce slot.
    *
-   * Depuis l'etape 5a, ce nombre **module l'issue** : `resolveProjectileDamage`
-   * le soustrait de `Horde.hp`, et une pietaille lourde (`HEAVY_HP`) survit ou
-   * non selon les passifs de degats du tireur. Il reste lisible ici parce que
-   * c'est le seul point ou le client peut verifier ce qu'il tire — mais ce
-   * n'est plus le seul endroit ou son effet s'observe.
+   * Ce nombre **module l'issue** : `resolveProjectileDamage` le soustrait de
+   * `Horde.hp`. C'est aussi le seul point ou le client peut verifier ce qu'il
+   * tire.
    */
   damageAt(slot: number): number {
     return this.#damage[slot] ?? 0;
@@ -521,9 +475,9 @@ export class Projectiles {
    * Element porte par le projectile de ce slot — voir `#element`.
    *
    * Lu par `resolveProjectileDamage` (back) a l'IMPACT, et seulement la : un
-   * projectile MARQUE ce qu'il touche, il ne laisse plus rien au sol (tache 21
-   * — c'est la reaction qui pose le champ). Le client, lui, le lit pour teindre
-   * la marque qu'il approxime ; les zones, elles, sont ANNONCEES (§5.3).
+   * projectile MARQUE ce qu'il touche, il ne laisse rien au sol (c'est la
+   * reaction qui pose le champ). Le client le lit pour teindre la marque
+   * qu'il approxime ; les zones, elles, sont ANNONCEES.
    */
   elementAt(slot: number): number {
     return this.#element[slot] ?? 0;
@@ -597,7 +551,7 @@ export class Projectiles {
    *
    * Calculee a la demande depuis la vitesse plutot que stockee. ⚠️ Ce n'est
    * pas `#angle` : l'orbite, le boomerang et le sinus remettent `vx/vy` a la
-   * vitesse REELLE de leur dernier pas (etape 12), c'est elle qui oriente le
+   * vitesse REELLE de leur dernier pas, c'est elle qui oriente le
    * sprite — `#angle` est le cap de la ligne, ou l'angle sur le cercle.
    */
   headingAt(slot: number): number {
@@ -622,28 +576,17 @@ export class Projectiles {
    * creation. Jamais remis a zero par `Projectiles` : c'est `Room` qui draine
    * ses metriques.
    *
-   * ⚠️ **Ce compteur existe parce que l'empilement a leve la borne.** Jusqu'a
-   * ce que les armes s'empilent, quatre joueurs aux slots pleins tenaient une
-   * centaine de projectiles simultanes contre une capacite de 256, et la marge
-   * tenait toute seule. Un exemplaire supplementaire elargit desormais la salve
-   * sans borne : la capacite peut etre atteinte, et sans ce compteur la salve
-   * manquante ne se verrait nulle part.
+   * ⚠️ **L'empilement des armes elargit les salves sans borne** : la capacite
+   * peut etre atteinte, et sans ce compteur la salve manquante ne se verrait
+   * nulle part.
    */
   truncatedProjectiles = 0;
 
   /**
    * Un pas de simulation. Appele exactement une fois par tick, `dt` fixe.
-   *
-   * ⚠️ **Un rappel `onExpire(slot)` a vecu ici, de la tache 6 a la tache 21 de
-   * l'etape 5a.** Il servait la moitie « n'a rien touche » du modele ou un
-   * projectile elementaire posait une zone au bout de sa course. Depuis que
-   * c'est la REACTION qui laisse un champ au sol (§5.1 de la spec, tache 21),
-   * plus rien ne s'interesse a la mort de vieillesse d'un projectile : le
-   * parametre est parti avec son seul appelant, aucun test ne le tenait, et un
-   * point d'extension que personne n'utilise est un point d'extension qui ment.
    */
   /**
-   * `anchor` (etape 12, §3.2) : ou est chaque tireur a ce pas, lu par l'orbite
+   * `anchor` : ou est chaque tireur a ce pas, lu par l'orbite
    * et le retour du boomerang seuls. Sans elle, ils se rabattent sur leur
    * point d'emission.
    */
@@ -701,11 +644,8 @@ export class Projectiles {
         // l'appelant y lit la position, le souffle et les degats du projectile
         // qui s'eteint — exactement la fenetre que `collide` ouvre a l'impact.
         //
-        // ⚠️ **Ce rappel RESSEMBLE a celui que la tache 21 a retire, et il ne
-        // fait pas la meme chose.** L'ancien servait le modele ou un projectile
-        // POSAIT une zone en fin de course ; celui-ci ne pose rien, il rend
-        // seulement la main — et c'est l'appelant qui decide, aujourd'hui pour
-        // faire sauter une arme de souffle qui n'a percute personne.
+        // Il ne pose rien, il rend seulement la main : l'appelant s'en sert
+        // pour faire sauter une arme de souffle qui n'a percute personne.
         onExpire?.(i);
         this.#consume(i, -1);
       }
@@ -774,42 +714,33 @@ export class Projectiles {
    * point d'arrivee.** Un projectile rapide peut parcourir plusieurs
    * dizaines de pixels en un seul tick ; une entite qui coupe sa trajectoire
    * AU MILIEU du pas peut se trouver hors du rayon des deux extremites tout
-   * en etant a l'interieur du rayon du segment lui-meme — c'est exactement
-   * le cas que le test de reproduction de ce fichier verifie : une entite a
-   * 30 px du segment mais a ~33,5 px de chacune de ses deux extremites,
-   * touchee uniquement parce que la distance mesuree est celle au segment.
-   * Se limiter au point d'arrivee la manquerait, et le defaut s'aggraverait
-   * avec la vitesse — precisement la ou on voudrait le plus de fiabilite.
+   * en etant dans le rayon du segment — le test de reproduction de ce
+   * fichier le verifie. Le defaut s'aggraverait avec la vitesse.
    *
    * A egalite, le plus petit identifiant gagne — meme departage que
    * `nearestTarget`, pour la meme raison : le resultat ne doit pas dependre
    * de l'ordre des entites dans le tableau.
    *
-   * ⚠️ **Un projectile TRANSPERCANT n'est pas consomme** (etape 8) : tant
+   * ⚠️ **Un projectile TRANSPERCANT n'est pas consomme** : tant
    * qu'il lui reste des traversees (`Weapon.pierce`, recopie a l'emission), il
    * poursuit sa course apres avoir appele `onHit`, et il inflige ses degats
    * PLEINS a chaque corps. Il ne peut jamais toucher deux fois de suite le
    * meme — voir `#lastHit`, sans quoi « transpercer » voudrait dire « frapper
    * le premier ennemi quatre fois ».
    *
-   * ⚠️ **Etape 12** : le mortier est ignore (il ne touche qu'en tombant, via
+   * ⚠️ Le mortier est ignore (il ne touche qu'en tombant, via
    * `onExpire`) ; l'orbite et le boomerang ne sont JAMAIS consommes et ne
    * retouchent un corps qu'apres `REHIT_TICKS` (`#ringId`) ; un projectile
    * consomme eclate s'il porte des eclats (`#consume`).
    *
-   * ⚠️ **Le rayon teste suit le CORPS de la cible depuis l'etape 8** : un boss
-   * (`Archetype.hitScale` = 3,75 depuis l etape 12) encaisse sur 120 px, la pietaille sur
-   * 32. Voir `HIT_R2_BY_ARCHETYPE` — jusque-la, il fallait viser le centre
-   * exact d'un corps dessine a 240 px de diametre.
+   * ⚠️ **Le rayon teste suit le CORPS de la cible** (`HIT_R2_BY_ARCHETYPE`) :
+   * le boss encaisse sur 120 px, la pietaille ordinaire sur 32.
    *
    * ⚠️ **`zones`/`tick` sont optionnels, et c'est ce qui branche le rayon de
-   * touche elargi du Vif-argent (§4 de la spec de l'etape 5c) COTE SERVEUR
-   * SEUL.** `back/src/combat.ts` les passe ; le client (`front/src/net/client.ts`,
-   * ses projectiles cosmetiques) appelle `collide` sans eux, et retombe donc
-   * exactement sur le rayon de base — aucun changement de comportement pour
-   * lui. Ceci ne touche AUCUNE trajectoire : `zones` n'entre jamais dans
-   * `#emit`/`fireSalvoDirected`, qui restent aveugles a la horde et aux
-   * zones — voir le docbloc du module.
+   * touche elargi du Vif-argent COTE SERVEUR SEUL.** `back/src/combat.ts` les
+   * passe ; le client (projectiles cosmetiques) appelle `collide` sans eux et
+   * retombe sur le rayon de base. Aucune trajectoire n'en depend (voir le
+   * docbloc du module).
    */
   collide(
     horde: Horde,
@@ -826,7 +757,7 @@ export class Projectiles {
       if (motion === MOTION.mortier) {
         continue;
       }
-      // L'orbite et le boomerang ne sont jamais consommes (§3.3).
+      // L'orbite et le boomerang ne sont jamais consommes.
       const perpetuel = motion === MOTION.orbite || motion === MOTION.boomerang;
       const ax = this.#prevX[i] ?? 0;
       const ay = this.#prevY[i] ?? 0;
@@ -843,8 +774,7 @@ export class Projectiles {
         const ex = horde.x[e] ?? 0;
         const ey = horde.y[e] ?? 0;
         const d2 = distanceToSegmentSquared(ex, ey, ax, ay, bx, by);
-        // Le rayon de CE corps : `PROJECTILE_HIT_RADIUS` pour les vingt
-        // archetypes de pietaille, 3,75 fois plus pour le boss (`hitScale`). Voir
+        // Le rayon de CE corps : `PROJECTILE_HIT_RADIUS x hitScale`. Voir
         // `HIT_R2_BY_ARCHETYPE`.
         const kind = horde.archetype[e] ?? 0;
         let baseR2 = HIT_R2_BY_ARCHETYPE[kind] ?? defaultR2;
@@ -864,21 +794,15 @@ export class Projectiles {
             continue;
           }
           // ⚠️ **Pre-filtre AVANT le balayage, et c'est une borne SUPERIEURE
-          // EXACTE, pas une approximation.** `hitRadiusBonusAt` est en
-          // O(zones) : l'appeler ici le mettait dans la boucle
-          // projectile x ennemi, donc un cout en projectiles x ennemis x
-          // zones — **49 millions de tests de distance par tick** mesures a
-          // 4 000 ennemis, 96 projectiles et 128 zones (banc des six
-          // elements, etape 5c). Aucun bonus ne depasse
-          // `VIF_ARGENT_HIT_RADIUS_BONUS`, donc un ennemi au-dela de
-          // `PROJECTILE_HIT_RADIUS + VIF_ARGENT_HIT_RADIUS_BONUS` ne peut
-          // etre touche par AUCUNE zone : le balayage ne sert plus qu'a
-          // l'anneau, une poignee d'entites.
+          // EXACTE.** `hitRadiusBonusAt` est en O(zones) : l'appeler pour
+          // chaque paire projectile x ennemi coute des dizaines de millions de
+          // tests de distance par tick a forte charge. Aucun bonus ne depasse
+          // `VIF_ARGENT_HIT_RADIUS_BONUS`, donc un ennemi hors de
+          // `WIDE_R2_BY_ARCHETYPE` ne peut etre touche par AUCUNE zone.
           //
-          // ⚠️ **AUCUN test ne peut separer ce pre-filtre de son absence** —
-          // c'est une optimisation a comportement identique. Ce qui le garde
-          // est le BANC, pas la suite ; meme honnetete que la borne `<= 0` de
-          // `resolveBurn`, qui assume qu'aucun test ne la distingue de `< 0`.
+          // ⚠️ **AUCUN test ne peut separer ce pre-filtre de son absence** :
+          // c'est une optimisation a comportement identique, gardee par le
+          // banc, pas par la suite.
           if (d2 > wideR2) {
             continue;
           }
@@ -909,7 +833,7 @@ export class Projectiles {
       if (bestId >= 0) {
         // `i` est passe pour que l'appelant puisse lire ce que le projectile
         // porte d'autre que ses degats — son element, son tireur, sa position
-        // d'impact (etape 5a, tache 6). Valide seulement pendant le rappel :
+        // d'impact. Valide seulement pendant le rappel :
         // `#removeAt` juste apres deplace le dernier projectile dans ce
         // creneau.
         onHit(bestId, this.#damage[i] ?? 0, i);

@@ -9,7 +9,7 @@ describe('PASSIVES', () => {
     });
   });
 
-  // ⚠️ **Chaque palier a son propre pool au tirage (etape 13)** : le compte par
+  // ⚠️ **Chaque palier a son propre pool au tirage** : le compte par
   // palier n'est pas de la cosmetique, un palier vide ferait redescendre tous
   // ses emplacements.
   it('compte dix passifs ordinaires, et repartit les cartes de palier par tier', () => {
@@ -39,11 +39,10 @@ describe('PASSIVES', () => {
   it('donne un nom et une magnitude strictement positive a chaque passif', () => {
     for (const p of PASSIVES) {
       expect(p.name.length).toBeGreaterThan(0);
-      // ⚠️ **Une carte de REGLE (`rule`, etape 13) est exclue de cette borne.**
-      // Son effet EST la regle, pas le nombre : `kind`/`magnitude` ne sont
-      // qu'une convention de typage inerte (voir le docbloc de `Passive.rule`),
-      // jamais lus par `maxHpOf`/`maxShieldOf`. Leur demander une magnitude
-      // positive reviendrait a exiger un chiffre qui ne sert jamais a rien.
+      // ⚠️ **Une carte de REGLE (`rule`) est exclue de cette borne.** Son effet
+      // EST la regle : `kind`/`magnitude` n'y sont qu'une convention de typage
+      // inerte (voir le docbloc de `Passive.rule`), jamais lus par
+      // `maxHpOf`/`maxShieldOf`.
       if (p.rule) {
         continue;
       }
@@ -72,24 +71,15 @@ describe('etape 13 : le catalogue des paliers', () => {
   });
 
   /**
-   * La regle de selection de l'etape, telle qu'arbitree par l'auteur du jeu
-   * (question portee par le coordinateur apres la revue) : une carte de
-   * palier haut PEUT recouper le genre d'une commune A CONDITION DE COUTER
-   * QUELQUE CHOSE — un `malus` ou une `rule`. Fournaise reste au catalogue
-   * pour cette raison : son `kind: 'damage'` recoupe « puissance »/« acier »,
-   * mais son malus de PV max est la decision qu'elle impose, pas un systeme
-   * neuf — le cout distingue, pas le genre.
+   * Une carte de palier haut PEUT recouper le genre d'une commune A CONDITION
+   * DE COUTER QUELQUE CHOSE — un `malus` ou une `rule`. Fournaise recoupe
+   * « puissance »/« acier » par son `kind: 'damage'`, mais son malus de PV max
+   * est la decision qu'elle impose : le cout distingue, pas le genre. Une carte
+   * de palier GRATUITE qui recoupe une commune ne serait que la commune en plus
+   * gros, sans contrepartie.
    *
-   * Ce qui reste interdit, c'est une carte de palier GRATUITE qui recoupe
-   * une commune : ce serait la commune en plus gros, sans contrepartie —
-   * exactement le reproche fait a Moisson (doublait Regain, sans rien de
-   * plus).
-   *
-   * ⚠️ **Aucune exemption par nom.** `echo` et `colossus` n'en ont jamais eu
-   * besoin : aucune commune ne porte ces genres, donc la boucle s'execute
-   * pour elles aussi et prouve quelque chose — une version precedente de ce
-   * test les exemptait par nom, ce qui les rendait invisibles a la regle
-   * sans jamais rien affirmer a leur sujet.
+   * ⚠️ **Aucune exemption par nom** : `echo` et `colossus` passent par la
+   * boucle comme les autres, sinon la regle ne dirait rien a leur sujet.
    */
   it('une carte de palier gratuite ne partage jamais son genre avec une carte ordinaire', () => {
     const ordinaires = new Set(PASSIVES.filter((p) => !p.tier).map((p) => p.kind));

@@ -80,13 +80,12 @@ import {
 const DT = 1 / 30;
 
 /**
- * Une distance qui tombe HORS de tout champ de reaction, quel qu'il soit
- * (etape 8) — et hors du rayon d'effet instantane d'une reaction.
+ * Une distance qui tombe HORS de tout champ de reaction, quel qu'il soit, et
+ * hors du rayon d'effet instantane d'une reaction.
  *
  * ⚠️ **Derivee de la table, jamais ecrite** : chaque reaction a son propre
- * rayon de champ depuis l'etape 8, et plusieurs cas de ce fichier posaient
- * leur geometrie sur `ZONE_RADIUS` seul — ils tombaient DANS un champ plus
- * large sans que leur intention ait change.
+ * rayon de champ, et une geometrie posee sur `ZONE_RADIUS` seul tomberait DANS
+ * un champ plus large.
  */
 const RAYON_HORS_TOUT =
   Math.max(
@@ -96,12 +95,10 @@ const RAYON_HORS_TOUT =
 
 /**
  * Un sol NU : aucune zone, donc `ZoneField.ampAt` rend 1 partout et
- * `appliquerDegats` n'amplifie rien. C'est le decor par defaut de tout ce
- * fichier sauf des tests qui parlent des zones.
+ * `appliquerDegats` n'amplifie rien. Decor par defaut du fichier.
  *
- * ⚠️ **Neuf a chaque appel, jamais partage** — meme raison que la reserve
- * neuve du helper `tue` plus bas : un decor partage ferait dependre un test de
- * ce qu'un autre a pose.
+ * ⚠️ **Neuf a chaque appel, jamais partage** : un decor partage ferait
+ * dependre un test de ce qu'un autre a pose.
  */
 function solNu(): ZoneField {
   return new ZoneField();
@@ -142,11 +139,10 @@ function addOne(horde: Horde, waveId: number, x: number, y: number, archetype = 
 /**
  * Une vague ENTIERE, a index CONSECUTIFS, alignee sur l'axe des x.
  *
- * ⚠️ **Ajoutee a la tache 17, et `addOne` ne peut pas la remplacer** : chaque
- * appel a `addOne` pose une vague d'un seul monstre, donc toujours l'index 0 —
- * et l'index 0 laisse toujours un orbe (`dropsOrb`). Un decor bati sur `addOne`
- * ne verrait donc jamais le taux de chute. C'est la « fixture qui masque » du
- * depot, prise ici a la source.
+ * ⚠️ **`addOne` ne peut pas la remplacer** : chaque appel a `addOne` pose une
+ * vague d'un seul monstre, donc toujours l'index 0 — et l'index 0 laisse
+ * toujours un orbe (`dropsOrb`). Un decor bati sur `addOne` ne verrait jamais
+ * le taux de chute.
  */
 function addWave(horde: Horde, waveId: number, count: number, step: number): number[] {
   const order: WaveOrder = {
@@ -191,8 +187,8 @@ const SINGLE: Weapon = {
   venom: 0,
   bounces: 0,
   homing: 0,
-  // Apparence quelconque : `combat.ts` ne lit jamais `look` (etape 5a, tache
-  // 12 — c'est le seul champ de `Weapon` que la simulation ignore).
+  // Apparence quelconque : `combat.ts` ne lit jamais `look` (le seul champ
+  // de `Weapon` que la simulation ignore).
   look: {
     shape: 'sphere',
     diameterPx: 10,
@@ -267,15 +263,11 @@ describe('resolveProjectileDamage', () => {
 });
 
 /**
- * Le rayon de touche elargi du Vif-argent (§4 de la spec de l'etape 5c,
- * tache 3) : `ZoneField.hitRadiusBonusAt` majore `PROJECTILE_HIT_RADIUS`,
- * mais SEULEMENT au site ou `resolveProjectileDamage` resout la collision —
- * c'est le branchement `zones, tick` de `projectiles.collide` (ce fichier)
- * qui est verifie ici, PAS la mecanique elle-meme (deja couverte, cote
- * `Projectiles`, par `shared/projectiles.test.ts`, et cote `ZoneField`, par
- * `shared/zones.test.ts`). Une regression qui oublierait de passer `zones`
- * ou `tick` a `projectiles.collide` ferait rougir CE test tout en laissant
- * les deux autres verts.
+ * Le rayon de touche elargi du Vif-argent : ce bloc verifie le branchement
+ * `zones, tick` de `projectiles.collide` dans `resolveProjectileDamage`, PAS
+ * la mecanique (couverte par `shared/projectiles.test.ts` et
+ * `shared/zones.test.ts`). Oublier de passer `zones` ou `tick` ferait rougir
+ * CE test en laissant les deux autres verts.
  */
 describe('resolveProjectileDamage — le rayon de touche elargi du Vif-argent (etape 5c, tache 3)', () => {
   const LEGER = ARCHETYPES.find((a) => a.hp === LIGHT_HP && a.armor === 0)?.id ?? -1;
@@ -359,15 +351,13 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
   }
 
   it('un ennemi lourd (20 PV, 15 % d armure) survit a quatre impacts de 5 et meurt au cinquieme', () => {
-    // ⚠️ **Le test qui compte.** C'est la seule chose qui separe « les degats
-    // sont soustraits » de « le premier impact tue », et c'est ce qui rend les
-    // deux passifs de degats capables de changer une issue.
+    // ⚠️ **Le test qui compte** : le seul qui separe « les degats sont
+    // soustraits » de « le premier impact tue ».
     //
-    // ⚠️ **Les restes sont ecrits EN CLAIR, pas derives de `HEAVY_ARMOR`.** Une
-    // suite `HEAVY_HP - SINGLE.damage * (1 - HEAVY_ARMOR) * coup` recopierait la
-    // formule de production et passerait quoi qu'elle fasse — c'est l'assertion
-    // creuse, dix-sept fois dans ce depot. 5 x 0,85 = 4,25 par coup : 15,75,
-    // 11,5, 7,25, 3 — puis -1,25, donc la mort au cinquieme.
+    // ⚠️ **Les restes sont ecrits EN CLAIR, pas derives de `HEAVY_ARMOR`** :
+    // les deriver recopierait la formule de production et passerait quoi
+    // qu'elle fasse. 5 x 0,85 = 4,25 par coup : 15,75, 11,5, 7,25, 3 — puis
+    // -1,25, donc la mort au cinquieme.
     const restes = [15.75, 11.5, 7.25, 3];
     const horde = new Horde(10);
     const targetId = addOne(horde, 1, 100, 0, LOURD);
@@ -387,18 +377,13 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
   });
 
   it('un ennemi leger meurt au premier impact — et il PORTE la borne <= 0, pas < 0', () => {
-    // La contrepartie de la porte du §3.3 : `LIGHT_HP` vaut les degats de la
-    // dague, donc rien ne change pour la pietaille legere — son armure est
-    // NULLE, et zero est une entree de la table, pas un cas particulier.
+    // `LIGHT_HP` vaut les degats de la dague et l'armure legere est NULLE
+    // (zero est une entree de la table, pas un cas particulier).
     //
-    // ⚠️ **C'est donc lui, et lui seul, qui met en scene le reste EXACTEMENT
-    // nul.** Le test qui portait cette borne le faisait sur un lourd frappe
-    // pour `HEAVY_HP` pile ; depuis l'armure, ce coup ne retire plus que
-    // 17 PV et ne prouve plus rien. Le refaire tomber pile demanderait
-    // `HEAVY_HP / (1 - HEAVY_ARMOR)`, dont le produit par 0,85 ne revient a 20
-    // qu'a la representation flottante pres : le test aurait eu l'air de
-    // mettre en scene la borne sans garantir de l'atteindre. Un seul garde,
-    // ici, ou il est exact.
+    // ⚠️ **Le seul test qui met en scene le reste EXACTEMENT nul.** Sur un
+    // lourd, tomber pile demanderait `HEAVY_HP / (1 - HEAVY_ARMOR)`, qui ne
+    // revient a 20 qu'a la representation flottante pres : la borne ne serait
+    // pas garantie.
     const horde = new Horde(10);
     const targetId = addOne(horde, 1, 100, 0, LEGER);
     const orbs = new OrbField(10);
@@ -412,8 +397,7 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
   it('les degats vont a l entite TOUCHEE, pas au creneau qui porte son indice', () => {
     // ⚠️ La compaction de `Horde.kill` deplace la derniere entite dans le trou :
     // confondre « identite » et « creneau » ferait descendre les PV d'un
-    // monstre au hasard. Deux lourds, on tue le premier par quatre impacts, et
-    // le second doit etre INTACT.
+    // monstre au hasard. Le second lourd doit rester INTACT.
     const horde = new Horde(10);
     const premier = addOne(horde, 1, 100, 0, LOURD);
     addOne(horde, 2, -4000, -4000, LOURD);
@@ -422,8 +406,7 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
     for (let coup = 1; coup <= 4; coup++) {
       frappe(horde, orbs, premier, coup * 40);
     }
-    // Quatre coups de 4,25 : il reste 3 PV. Ecrit en clair, voir le test du
-    // rythme de mise a mort plus haut.
+    // Quatre coups de 4,25 : il reste 3 PV (ecrit en clair, voir plus haut).
     expect(horde.hp[horde.slotOf(premier)]).toBeCloseTo(3, 5);
     // Le second n'a rien pris.
     const survivant = horde.entityIdAt(horde.slotOf(premier) === 0 ? 1 : 0);
@@ -437,9 +420,7 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
 });
 
 /**
- * Les armes de zone (etape 6a, tache 16) — *« les ennemis sont trop nombreux
- * par rapport aux degats des armes, il faut parfois des AoE sur certaines
- * armes comme les grenades »*.
+ * Les armes de zone.
  *
  * ⚠️ **Le decor est celui qui SEPARE les deux bornes.** Un voisin juste dedans
  * ET un voisin juste dehors, dans la MEME execution : avec le seul premier,
@@ -484,9 +465,8 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
 
   it('un seul impact tue le percute ET son voisin dans le rayon, jamais celui du bord', () => {
     // Degats largement au-dessus de la reserve, ARMURE COMPRISE : un coup
-    // suffit, donc la mort dit le rayon et rien d'autre. `HEAVY_HP` tout court
-    // ne suffirait plus (l'armure en retire 15 %), et un decor qui ne tue plus
-    // ferait echouer ce test pour une raison qui n'est pas la sienne.
+    // suffit, donc la mort dit le rayon et rien d'autre (`HEAVY_HP` tout court
+    // ne tuerait pas, l'armure en retire 15 %).
     const fatale: Weapon = { ...ZONE, damage: 2 * HEAVY_HP };
     const horde = new Horde(10);
     const { percute, dedans, dehors } = decor(horde);
@@ -501,10 +481,9 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
   });
 
   it('le percute ne prend pas les degats DEUX FOIS : il est dans son propre souffle', () => {
-    // ⚠️ **La moitie qui manquerait sans ce test.** Retirer `damage` au
-    // percute PUIS balayer le rayon lui infligerait le double du reste de la
-    // horde — invisible tant qu'un seul coup tue, et faux des que la reserve
-    // resiste. Degats volontairement insuffisants pour tuer.
+    // ⚠️ Retirer `damage` au percute PUIS balayer le rayon lui infligerait le
+    // double du reste de la horde — invisible tant qu'un seul coup tue, et faux
+    // des que la reserve resiste. Degats volontairement insuffisants pour tuer.
     const horde = new Horde(10);
     const { percute, dedans, dehors } = decor(horde);
     const orbs = new OrbField(10);
@@ -534,7 +513,7 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
   });
 
   it('l explosion MARQUE le seul percute, jamais le rayon qu elle emporte', () => {
-    // Le choix documente par `resolveProjectileDamage` : poser l'element sur
+    // Voir `resolveProjectileDamage` : poser l'element sur
     // tout le rayon ferait de chaque grenade un declencheur de masse, que la
     // borne « une reaction par ennemi et par tick » ne bornerait pas.
     const braise: Weapon = { ...ZONE, element: ELEMENT.BRAISE };
@@ -563,9 +542,8 @@ describe('les armes a effet de zone (etape 6a, tache 16)', () => {
   });
 
   it('les morts du souffle laissent leur orbe comme n importe quelle mort', () => {
-    // §12 de la spec de l'etape 5a : aucune facon de mourir ne prive l equipe
-    // de son experience. Les identites sont choisies pour que `dropsOrb` les
-    // accepte toutes les deux.
+    // Aucune facon de mourir ne prive l equipe de son experience. Les
+    // identites sont choisies pour que `dropsOrb` les accepte toutes les deux.
     const fatale: Weapon = { ...ZONE, damage: 2 * HEAVY_HP };
     const horde = new Horde(10);
     const percute = addOne(horde, ORB_DROP_ONE_IN, 300, 0, LOURD);
@@ -589,11 +567,9 @@ describe('resolveContact', () => {
     expect(p.hp).toBe(100 - CONTACT_DAMAGE);
     expect(p.contactInvulnTicks).toBe(CONTACT_INTERVAL_TICKS);
 
-    // Toujours au contact, mais invulnerable : aucun degat supplementaire
-    // pendant toute la fenetre. Le compteur part de CONTACT_INTERVAL_TICKS et
-    // se decremente d'un par appel ; il faut donc CONTACT_INTERVAL_TICKS
-    // appels pour l'epuiser jusqu'a zero (le dernier de ces appels le fait
-    // passer de 1 a 0 mais ne fait pas encore mal — voir resolveContact).
+    // Toujours au contact, mais invulnerable. Le compteur se decremente d'un
+    // par appel : il faut CONTACT_INTERVAL_TICKS appels pour l'epuiser, et le
+    // dernier (de 1 a 0) ne fait pas encore mal — voir resolveContact.
     for (let i = 0; i < CONTACT_INTERVAL_TICKS; i++) {
       resolveContact([p], horde);
     }
@@ -684,8 +660,8 @@ describe('resolveChargeHit — la charge du boss (etape 6a, tache 5 bis)', () =>
 
   /**
    * ⚠️ **Une fois par charge, pas une fois par tick.** Sans cette borne, un
-   * joueur immobile encaisserait dix-huit fois les degats de la charge — de quoi
-   * le tuer plusieurs fois. C'est `Room` qui tient l'ensemble ; ici on verifie
+   * joueur immobile encaisserait les degats de la charge a chaque tick. C'est
+   * `Room` qui tient l'ensemble ; ici on verifie
    * que la fonction le respecte.
    */
   it('ne touche jamais deux fois le meme joueur pour une meme charge', () => {
@@ -767,17 +743,15 @@ describe('resolveChargeHit — la charge du boss (etape 6a, tache 5 bis)', () =>
 });
 
 /**
- * Etape 5a, tache 17 : *« moins d'xp qui tombe »*. Le levier est le NOMBRE
- * d'objets au sol, et la garde vit au goulot — `spawn` — parce que trois
- * chemins de mort y menent (projectiles, brulures, reactions) et que l'etape
- * 5a vient d'en ajouter deux.
+ * Le taux de chute joue sur le NOMBRE d'objets au sol, et la garde vit au
+ * goulot — `spawn` — parce que tous les chemins de mort y menent
+ * (projectiles, brulures, reactions).
  */
 describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
   it('ne retient que ce que leavesDrop accepte, sur des index consecutifs d une meme vague', () => {
-    // ⚠️ **64 morts, pas 40** : depuis la tache 14 de l'etape 6a la reserve
-    // tient aussi les PIECES, et `COIN_DROP_ONE_IN` vaut quatre fois
-    // `ORB_DROP_ONE_IN` — un lot trop court n'en contiendrait aucune et la
-    // tache serait invisible ici.
+    // ⚠️ **64 morts** : la reserve tient aussi les PIECES, et
+    // `COIN_DROP_ONE_IN` vaut quatre fois `ORB_DROP_ONE_IN` — un lot trop
+    // court n'en contiendrait aucune.
     const MORTS = 64;
     const orbs = new OrbField(MORTS);
     const ids: number[] = [];
@@ -795,26 +769,12 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     expect(ids.filter((id) => dropsOrb(id) && dropsCoin(id))).toHaveLength(0);
   });
 
-  /**
-   * ⚠️ **Le COMPTE ne suffit pas** : un filtre qui garderait les
-   * `MORTS / ORB_DROP_ONE_IN` PREMIERES morts le satisferait aussi, et le
-   * client — qui applique le meme predicat sur les memes identites — ne
-   * retiendrait pas les memes. Ce sont les identites RETENUES qui doivent
-   * coincider avec `dropsOrb`, sans quoi les deux cotes du fil divergent.
-   */
   it('baisser le taux de chute ne change PAS le rythme de progression', () => {
-    // ⚠️ **L'invariant de la tache 17, et rien ne le gardait.** L'auteur voulait
-    // « moins d'xp qui tombe », pas « monter de niveau moins vite » — ce sont
-    // deux choses, et une seule est demandee.
-    //
-    // C'est pour ca que `XP_PER_ORB` est DERIVEE de `ORB_DROP_ONE_IN` : une
-    // mort sur quatre laisse une orbe, chaque orbe vaut quatre. L'experience
-    // par mort reste donc de 1, exactement comme avant la tache, et le test
-    // « le niveau 2 est atteignable » de l'etape 3 continue de mesurer la meme
-    // chose.
-    //
-    // Verifie par mutation : decoupler les deux constantes laissait 528 tests
-    // verts, et la progression aurait ete divisee par quatre en silence.
+    // ⚠️ **L'invariant** : moins d'objets au sol, pas une montee de niveau
+    // plus lente. `XP_PER_ORB` est DERIVEE de `ORB_DROP_ONE_IN` (une mort sur
+    // quatre laisse une orbe, chaque orbe vaut quatre) : l'experience par mort
+    // reste de 1. Decoupler les deux constantes diviserait la progression en
+    // silence, et ce test est le seul a le voir.
     const MORTS = 4000;
     let gagnee = 0;
     for (let id = 0; id < MORTS; id++) {
@@ -835,6 +795,12 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     expect(orbes).toBe(MORTS / ORB_DROP_ONE_IN);
   });
 
+  /**
+   * ⚠️ **Le COMPTE ne suffit pas** : un filtre qui garderait les premieres
+   * morts le satisferait aussi, et le client — qui applique le meme predicat
+   * sur les memes identites — ne retiendrait pas les memes. Ce sont les
+   * identites RETENUES qui doivent coincider avec `leavesDrop`.
+   */
   it('retient exactement les identites que leavesDrop accepte, position comprise', () => {
     const MORTS = 64;
     const orbs = new OrbField(MORTS);
@@ -851,10 +817,8 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     // Et la position suit bien l'identite retenue, pas le rang du creneau :
     // chaque objet pose est a l'abscisse de l'index dont il vient.
     //
-    // ⚠️ **DERIVEE de la liste retenue, pas ecrite.** Un `100 + ORB_DROP_ONE_IN`
-    // en dur decrivait le monde d'avant la tache 14 : le deuxieme objet du sol
-    // est desormais la PIECE de l'index `COIN_DROP_RESIDUE`, pas l'orbe de
-    // l'index 4.
+    // ⚠️ **DERIVEE de la liste retenue, pas ecrite** : le deuxieme objet du sol
+    // est la PIECE de l'index `COIN_DROP_RESIDUE`, pas l'orbe de l'index 4.
     const premier = entityIdOf(9, 0);
     for (const [slot, id] of attendues.entries()) {
       expect(orbs.x[slot], `creneau ${slot}`).toBe(100 + (id - premier));
@@ -872,8 +836,7 @@ describe('OrbField.spawn — toutes les morts ne laissent pas un orbe', () => {
     const projectiles = new Projectiles(50);
 
     // Cinq index CONSECUTIFS d'une meme vague — pas cinq vagues d'un monstre,
-    // qui tomberaient toutes sur l'index 0 et laisseraient donc toutes un orbe
-    // (voir « le decor qui masque », `shared/horde.test.ts`).
+    // qui tomberaient toutes sur l'index 0 et laisseraient donc toutes un orbe.
     const targets = addWave(horde, 12, 5, 50);
     for (const [i, targetId] of targets.entries()) {
       projectiles.fireSalvo(SINGLE, 0, 50 * (i + 1), -20, targetId, horde);
@@ -899,11 +862,9 @@ describe('OrbField.resolvePickups', () => {
   /**
    * Une identite dont la mort laisse VRAIMENT un orbe.
    *
-   * ⚠️ **`1` et `2` n'en laissent plus depuis la tache 17** : `spawn` filtre
-   * par `dropsOrb`, et un decor qui pose des identites choisies au hasard
-   * mesurerait le taux de chute au lieu du ramassage. Derivee de la constante,
-   * jamais recopiee — un `4` en dur ici cesserait de suivre `ORB_DROP_ONE_IN`
-   * a son premier reglage.
+   * ⚠️ **`1` et `2` n'en laissent pas** : `spawn` filtre par `dropsOrb`, et
+   * des identites prises au hasard mesureraient le taux de chute au lieu du
+   * ramassage. Derivee de `ORB_DROP_ONE_IN`, jamais recopiee.
    */
   const avecOrbe = (n: number): number => n * ORB_DROP_ONE_IN;
 
@@ -921,22 +882,17 @@ describe('OrbField.resolvePickups', () => {
   });
 
   it('un orbe que personne ne ramasse ATTEND : rien ne le retire, jamais (tache 15)', () => {
-    // ⚠️ **Le retour de jeu, en un test** : *« l'xp ne doit pas disparaitre »*.
-    // Ce test verifiait l'inverse — un orbe retire au bout de
-    // `ORB_LIFETIME_TICKS` — et la constante n'existe plus.
-    //
-    // ⚠️ **Aucune duree a deriver, et c'est la propriete testee** : ce qui est
-    // garde ici est une ABSENCE d'echeance. Le seul nombre qui reste est donc
-    // la duree qu'on accepte d'attendre, prise cinq fois plus longue que
-    // l'ancienne (600 ticks) pour qu'un rallongement deguise en suppression ne
-    // puisse pas s'y cacher.
+    // ⚠️ **L'xp ne doit pas disparaitre.** Ce qui est garde est une ABSENCE
+    // d'echeance : le seul nombre est la duree qu'on accepte d'attendre,
+    // assez longue pour qu'un simple rallongement de la duree de vie ne passe
+    // pas pour une suppression.
     const TRES_LONGTEMPS = 3000;
     const orbs = new OrbField(10);
     orbs.spawn(avecOrbe(1), 100, 100);
     expect(orbs.count).toBe(1);
 
     // Personne a proximite, des milliers de ticks durant : le ramassage est
-    // desormais la SEULE sortie.
+    // la SEULE sortie.
     for (let tick = 0; tick < TRES_LONGTEMPS; tick++) {
       expect(
         orbs.resolvePickups([{ x: -9000, y: -9000, pickupRadius: ORB_PICKUP_RADIUS }]),
@@ -953,8 +909,8 @@ describe('OrbField.resolvePickups', () => {
   });
 
   it('la capacite pleine refuse en SILENCE, et le compte (truncatedOrbs)', () => {
-    // ⚠️ **La capacite est devenue la seule borne de la reserve** (tache 15) :
-    // sans compteur, l'experience refusee au sol disparaitrait sans trace —
+    // ⚠️ **La capacite est la seule borne de la reserve** : sans compteur,
+    // l'experience refusee au sol disparaitrait sans trace —
     // meme role que `Projectiles.truncatedProjectiles` et
     // `ZoneField.truncatedZones`.
     const PLACES = 3;
@@ -1022,9 +978,7 @@ describe('etape 7b tache 7 : le rayon de ramassage est personnel', () => {
   it('un joueur au rayon elargi ramasse une orbe qu un joueur de base ne ramasse pas', () => {
     const champ = new OrbField(8);
     const loin = ORB_PICKUP_RADIUS + 30;
-    // Identite qui laisse VRAIMENT un orbe (`dropsOrb`) : `1` n'en laisse
-    // plus depuis la tache 17, meme convention que `avecOrbe` plus haut dans
-    // ce fichier.
+    // Identite qui laisse VRAIMENT un orbe (`dropsOrb`), comme `avecOrbe`.
     const orbeId = ORB_DROP_ONE_IN;
     champ.spawn(orbeId, loin, 0);
 
@@ -1035,21 +989,17 @@ describe('etape 7b tache 7 : le rayon de ramassage est personnel', () => {
   });
 
   /**
-   * ⚠️ **Ronde de correction 2 : l'INDEXATION, pas seulement le parametre.**
-   * Le test precedent prouve que `pickupRadius` est HONORE — deux appels
-   * successifs, un seul joueur chaque fois — mais pas que CHAQUE joueur d'un
-   * MEME appel compare a SON rayon et pas a celui d'un autre. Mesure :
-   * remplacer `r2[j]` par `r2[0]` dans `resolvePickups` laissait les 257
-   * tests de ce fichier verts, parce qu'aucun n'appelait `resolvePickups`
-   * avec deux joueurs de rayons DIFFERENTS dans le MEME tableau.
+   * ⚠️ **L'INDEXATION, pas seulement le parametre.** Le test precedent prouve
+   * que `pickupRadius` est HONORE, pas que CHAQUE joueur d'un MEME appel
+   * compare a SON rayon : `r2[0]` a la place de `r2[j]` dans `resolvePickups`
+   * ne se verrait qu'ici.
    *
-   * B n'est PAS au premier indice (A est devant lui) : si la methode
-   * comparait tout le monde au rayon du PREMIER joueur, l'orbe « dans la
-   * bande » ne serait jamais prise, puisque A est loin de tout.
+   * B n'est PAS au premier indice (A, loin de tout, est devant lui) : compare
+   * au rayon du PREMIER joueur, l'orbe « dans la bande » ne serait jamais
+   * prise.
    *
-   * ⚠️ **Et la seconde moitie, sans quoi le piege de la ronde 1 revient** :
-   * une orbe au-dela du rayon ELARGI de B doit rester au sol — sans elle, un
-   * rayon infini passerait aussi bien qu'un rayon correct.
+   * ⚠️ Une orbe au-dela du rayon ELARGI de B doit rester au sol — sans elle,
+   * un rayon infini passerait aussi bien qu'un rayon correct.
    */
   it('chaque joueur d un meme appel compare a SON rayon, pas a celui du premier', () => {
     const BONUS = 50;
@@ -1083,8 +1033,8 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
    *
    * Rend les morts ET le tick de l'impact : le projectile met plusieurs pas a
    * parcourir la distance, et c'est ce tick-la — pas celui du tir — qui date la
-   * marque et la zone. Le recopier a la main dans une assertion serait la
-   * constante recopiee, qui derive en silence des que la geometrie change.
+   * marque. Le recopier a la main deriverait en silence des que la geometrie
+   * change.
    */
   function frappe(
     horde: Horde,
@@ -1135,12 +1085,10 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
   });
 
   it('⚠️ un ennemi qui MEURT du meme impact n est PAS marque — et c est le voisin qui le prouve', () => {
-    // ⚠️ **Le test le plus important de cette tache.** La marque serait posee
-    // sur un creneau que `horde.kill` va COMPACTER : c'est le voisin deplace
-    // dans ce creneau qui en heriterait, avec le joueur qui l'a posee — donc
-    // la capacite de declencher une reaction, et une charge de Synergie, pour
-    // un element que personne ne lui a applique. Meme classe de defaut que R16
-    // de l'etape 4 (`Horde.spawn`).
+    // ⚠️ La marque serait posee sur un creneau que `horde.kill` va COMPACTER :
+    // c'est le voisin deplace dans ce creneau qui en heriterait, avec le joueur
+    // qui l'a posee — donc la capacite de declencher une reaction, et une
+    // charge de Synergie, pour un element que personne ne lui a applique.
     //
     // La victime est LEGERE (meurt en un coup) et occupe le creneau 0 ; le
     // voisin, indemne, est le dernier — c'est lui que `#removeAt` deplacera
@@ -1163,19 +1111,13 @@ describe('la marque elementaire posee a l impact (etape 5a, tache 6)', () => {
   });
 
   it('⚠️ NE POSE AUCUNE ZONE — ni a l impact, ni a l expiration (tache 21)', () => {
-    // ⚠️ **La non-regression de la tache 21, et elle porte les DEUX fins de
-    // course.** `postZone` etait appele aux deux — l'impact dans `collide`, la
-    // vieillesse par le rappel `onExpire` de `Projectiles.step` — et n'en
-    // retirer qu'une laisserait la moitie du modele en place, invisible au
-    // type comme au lint. Le decor met donc les deux en scene dans le meme
-    // test : un projectile qui touche, un projectile qui vieillit.
-    //
-    // Le champ de zones est passe a `markInZones` a la fin : il est LE meme
-    // objet, donc s'il s'etait rempli au passage on le verrait.
+    // ⚠️ **Les DEUX fins de course** : un projectile ne pose de zone ni a
+    // l'impact (`collide`) ni en vieillissant (`onExpire` de
+    // `Projectiles.step`). Le decor met les deux en scene : un projectile qui
+    // touche, un projectile qui vieillit.
     const horde = new Horde(10);
-    // Position non entiere : c'etait elle qui rendait l'arrondi de `postZone`
-    // observable. Gardee pour que le test echoue si la pose revenait, arrondie
-    // ou non.
+    // Position non entiere : le test echoue si une pose revenait, arrondie ou
+    // non.
     const cible = addOne(horde, 1, 100.4, 0.4, LOURD);
     const orbs = new OrbField(10);
     const zones = new ZoneField();
@@ -1252,12 +1194,11 @@ describe('la reaction laisse un champ au sol (etape 5a, tache 21)', () => {
   });
 
   it('⚠️ le champ porte l element qui DECLENCHE, et le joueur qui declenche', () => {
-    // ⚠️ **Le choix de la tache 21, et c'est le seul qui ne degenere pas.**
-    // Avec l'element de la MARQUE, le champ remarquerait l'ennemi de l'element
-    // que la reaction vient de consommer : le meme tireur redeclencherait a
-    // chaque volee, indefiniment, avec UNE SEULE arme. Avec l'element qui
-    // declenche, le §6.2 quatrieme ligne s'applique — meme element, simple
-    // rafraichissement — et il faut de nouveau l'autre element.
+    // ⚠️ **Le seul choix qui ne degenere pas.** Avec l'element de la MARQUE,
+    // le champ remarquerait l'ennemi de l'element que la reaction vient de
+    // consommer : le meme tireur redeclencherait a chaque volee, avec UNE
+    // SEULE arme. Avec l'element qui declenche, c'est un simple
+    // rafraichissement, et il faut de nouveau l'autre element.
     //
     // Les deux elements ET les deux joueurs sont distincts : sans ca, « porte
     // le declencheur » se lirait aussi bien « porte la marque ».
@@ -1277,7 +1218,7 @@ describe('la reaction laisse un champ au sol (etape 5a, tache 21)', () => {
   });
 
   it('deux reactions au meme endroit ne font qu un champ : la regle de fusion tient', () => {
-    // §5.1 bis : le compte des zones est fonction de la SURFACE, jamais du
+    // Le compte des zones est fonction de la SURFACE, jamais du
     // nombre de reactions. A moins d'un `ZONE_RADIUS`, la seconde rafraichit.
     const zones = new ZoneField();
 
@@ -1305,11 +1246,10 @@ describe('la reaction laisse un champ au sol (etape 5a, tache 21)', () => {
   });
 
   it('le champ pose declenche le couple avec une zone voisine d un AUTRE element', () => {
-    // ⚠️ **Le troisieme declencheur du §6.2 reste atteignable, et c'est par ce
-    // chemin-la qu'il l'est desormais** : les zones ne naissant plus que d'une
-    // reaction, deux zones ne peuvent se recouvrir que si DEUX reactions les
-    // ont posees. Sans cet appel a `onZoneCreated`, `ZoneField.overlaps`
-    // n'aurait plus aucun appelant de production.
+    // ⚠️ **Le seul chemin du declencheur « deux zones qui se recouvrent »** :
+    // les zones ne naissant que d'une reaction, deux zones ne se recouvrent
+    // que si DEUX reactions les ont posees. Sans cet appel a `onZoneCreated`,
+    // `ZoneField.overlaps` n'aurait plus aucun appelant de production.
     const zones = new ZoneField();
     const reactions = new Reactions();
     zones.spawn(ELEMENT.BRAISE, 1000, 1000, 5, 0);
@@ -1395,7 +1335,7 @@ describe('markInZones — un ennemi DANS une zone est marque (etape 5a, tache 6)
   });
 
   it('marque DES le tick de la pose — contrairement au ralentissement', () => {
-    // ⚠️ Les deux predicats du §5.1 bis, appliques au temps : `aliveAt` pour
+    // ⚠️ Deux predicats, appliques au temps : `aliveAt` pour
     // la marque (la zone existe deja quand ce balayage tourne), `slowsAt` pour
     // le ralentissement (la horde a deja avance ce tick-la).
     const horde = new Horde(10);
@@ -1411,7 +1351,7 @@ describe('markInZones — un ennemi DANS une zone est marque (etape 5a, tache 6)
 
   /**
    * ⚠️ **`markInZones` doit decoder `zones.kind`, pas le lire brut.** Une zone
-   * qui porte deja un type de reaction empaquete (§5b, tache 5) doit marquer
+   * qui porte un type de reaction empaquete doit marquer
    * l'ennemi avec l'ELEMENT seul — jamais l'octet complet, que `Horde.mark`
    * accepterait sans broncher (aucune validation la), mais que `elementOf`
    * refuserait plus tard (`resolveBurn`, la teinte). `kind !== element` ici :
@@ -1435,11 +1375,10 @@ describe('markInZones — un ennemi DANS une zone est marque (etape 5a, tache 6)
 describe('resolveBurn — la Braise brule (etape 5a, tache 6)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
   const BRULURE = elementOf(ELEMENT.BRAISE).burnPerTick;
-  // ⚠️ **Cinq decimales et plus six, depuis l'armure.** `Horde.hp` est un
-  // `Float32Array` : 19,915 (20 - 0,1 x 0,85) s'y arrondit a 9,2e-7 pres, la ou
-  // 19,9 tombait a 3,8e-7. C'est le format de stockage qui le dit, pas le
-  // calcul — et cinq decimales separent encore largement une brulure amputee de
-  // son armure d'une brulure qui ne le serait pas (0,085 contre 0,1).
+  // ⚠️ **Cinq decimales, pas six.** `Horde.hp` est un `Float32Array` : 19,915
+  // (20 - 0,1 x 0,85) s'y arrondit a 9,2e-7 pres. Cinq decimales separent
+  // encore largement une brulure amputee de son armure d'une brulure qui ne
+  // le serait pas (0,085 contre 0,1).
 
   it('descend les PV du marque Braise, laisse le marque Givre intact', () => {
     const horde = new Horde(10);
@@ -1476,8 +1415,7 @@ describe('resolveBurn — la Braise brule (etape 5a, tache 6)', () => {
     // ⚠️ **La MOITIE de la brulure, pas la brulure exacte.** `Horde.hp` est un
     // `Float32Array` et `burnPerTick` vaut 0,1, qui n'y est pas representable :
     // `hp = BRULURE` donnerait un reste de ~1,5e-9, positif. Le test aurait
-    // l'air de mettre en scene la borne `reste <= 0` sans jamais l'atteindre —
-    // exactement le defaut des deux tests d'arrondi de la tache 5.
+    // l'air de mettre en scene la borne `reste <= 0` sans jamais l'atteindre.
     horde.hp[horde.slotOf(cible)] = BRULURE / 2;
     horde.applyMark(horde.slotOf(cible), ELEMENT.BRAISE, 1, 0);
     const orbs = new OrbField(10);
@@ -1550,17 +1488,17 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     const [reaction, ...reste] = reactions.drain();
     expect(reste).toEqual([]);
     expect(reaction?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
-    // Les deux joueurs, que la tache 8 comparera — le message, lui, n'en
-    // portera aucun (§6.1).
+    // Les deux joueurs, que la Synergie compare — le message, lui, n'en
+    // porte aucun.
     expect(reaction?.markBy).toBe(2);
     expect(reaction?.by).toBe(3);
-    // §4.3 : l'ennemi ressort NU. Ni Braise, ni Givre.
+    // L'ennemi ressort NU. Ni Braise, ni Givre.
     expect(horde.markAt(horde.slotOf(cible), tick)).toBe(ELEMENT.NEUTRE);
   });
 
   it('ennemi marque Braise, touche par un projectile BRAISE : aucune reaction, la marque se rafraichit', () => {
-    // La quatrieme ligne du §6.2, celle qui dit « non ». Sans elle, une seule
-    // arme elementaire suffirait a declencher des reactions en boucle.
+    // Sans cette regle, une seule arme elementaire suffirait a declencher des
+    // reactions en boucle.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 300, 0, LOURD);
     horde.applyMark(horde.slotOf(cible), ELEMENT.BRAISE, 2, 0);
@@ -1580,11 +1518,10 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
   });
 
   it('un ennemi qui MEURT du meme impact ne reagit pas — il n y a plus rien a consommer', () => {
-    // ⚠️ **Consequence assumee, et elle se mesure** : la pietaille legere
-    // (LIGHT_HP) meurt au premier coup de la plupart des armes, donc elle ne
-    // declenchera jamais de reaction par PROJECTILE. C'est la pietaille lourde
-    // qui porte le systeme elementaire (§3.3 de la spec), et c'est pour ca
-    // qu'elle existe.
+    // ⚠️ **Consequence assumee** : la pietaille legere (LIGHT_HP) meurt au
+    // premier coup de la plupart des armes, donc elle ne declenchera jamais de
+    // reaction par PROJECTILE. C'est la pietaille lourde qui porte le systeme
+    // elementaire.
     //
     // Le meme `return` que celui qui empeche de marquer un mourant : une
     // reaction consomme une marque, et un mort n'en porte plus.
@@ -1632,9 +1569,8 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
   });
 
   it('une marque PERIMEE ne reagit plus : c est markAt qui decide, jamais le tableau brut', () => {
-    // ⚠️ **Mutation appliquee, elle survivait avant ce test** : lire
-    // `horde.mark[slot]` au lieu de `horde.markAt(slot, tick)` fait reagir un
-    // ennemi dont la Braise est tombee depuis longtemps. L'expiration d'une
+    // ⚠️ Lire `horde.mark[slot]` au lieu de `horde.markAt(slot, tick)` fait
+    // reagir un ennemi dont la Braise est tombee depuis longtemps. L'expiration d'une
     // marque est DERIVEE, jamais balayee (voir `Horde.markAt`) : le tableau
     // garde donc l'element d'une marque morte indefiniment.
     const horde = new Horde(10);
@@ -1656,7 +1592,7 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
   it('le couple d elements est CANONICALISE : Braise puis Givre et Givre puis Braise portent le meme octet', () => {
     // ⚠️ Sans `packElementPair`, les deux sens porteraient deux octets
     // differents pour le MEME evenement, et deux clients dessineraient deux
-    // flashs differents (constat de la tache 5).
+    // flashs differents.
     function pairDe(marque: number, zone: number): number {
       const horde = new Horde(10);
       const cible = addOne(horde, 1, 1000, 1000, LOURD);
@@ -1674,15 +1610,14 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
   });
 
   it('deux zones reagissent quand leurs DISQUES se coupent, pas quand leurs CENTRES se couvrent (R19)', () => {
-    // ⚠️ **Le facteur 2 de R19, mis en scene.** Deux predicats distincts :
-    // fusionner a la pose regarde le CENTRE (distance < ZONE_RADIUS), deux
-    // zones reagissent quand les DISQUES sont secants (distance
-    // < 2 x ZONE_RADIUS). La distance choisie ici tombe entre les deux : elle
-    // est le seul endroit ou les confondre se voit.
+    // ⚠️ **Le facteur 2.** Deux predicats distincts : fusionner a la pose
+    // regarde le CENTRE (distance < ZONE_RADIUS), deux zones reagissent quand
+    // les DISQUES sont secants (distance < 2 x ZONE_RADIUS). La distance
+    // choisie ici tombe entre les deux : le seul endroit ou les confondre se
+    // voit.
     // ⚠️ **Un ecart sur LES DEUX axes**, jamais sur un seul : avec deux zones
     // alignees, le milieu des centres et le centre de la seconde partagent
-    // l'autre coordonnee, et une mutation sur cet axe-la survit (appliquee,
-    // verifiee).
+    // l'autre coordonnee, et une mutation sur cet axe-la survit.
     const ECART_X = 60;
     const ECART_Y = 80;
     const distance = Math.hypot(ECART_X, ECART_Y);
@@ -1701,7 +1636,7 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     const [reaction, ...reste] = reactions.drain();
     expect(reste).toEqual([]);
     expect(reaction?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
-    // A la frontiere commune (§5.2) : le milieu des deux centres.
+    // A la frontiere commune : le milieu des deux centres.
     expect(reaction?.x).toBe(1000 + ECART_X / 2);
     expect(reaction?.y).toBe(1000 + ECART_Y / 2);
     expect(reaction?.markBy).toBe(1);
@@ -1709,12 +1644,10 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
   });
 
   it('deux zones du MEME element qui se recouvrent ne reagissent pas', () => {
-    // ⚠️ **Mutation appliquee, elle survivait avant ce test.** Ce n'est pas un
-    // cas theorique : la regle de fusion (§5.1 bis) espace les zones d'un
-    // meme element de plus d'un RAYON, pas d'un diametre — une trainee de tir
-    // est donc faite de zones du meme element qui SE RECOUVRENT. Sans ce
-    // garde, chaque zone posee reagirait avec toutes ses voisines de la
-    // trainee, a chaque tir.
+    // ⚠️ Pas un cas theorique : la regle de fusion espace les zones d'un meme
+    // element de plus d'un RAYON, pas d'un diametre — des zones du meme element
+    // peuvent donc SE RECOUVRIR. Sans ce garde, chacune reagirait avec toutes
+    // ses voisines.
     const zones = new ZoneField();
     zones.spawn(ELEMENT.BRAISE, 1000, 1000, 1, 0);
     const seconde = zones.spawn(ELEMENT.BRAISE, 1000 + ZONE_RADIUS + 10, 1000, 2, 0);
@@ -1729,7 +1662,7 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
 
   /**
    * ⚠️ **Le meme decor que ci-dessus, mais l octet BRUT differe alors que
-   * l element decode ne differe pas** (tache 5 de l'etape 5b). `onZoneCreated`
+   * l element decode ne differe pas**. `onZoneCreated`
    * doit comparer `zoneElement(...)` des deux cotes, jamais `zones.kind[...]`
    * brut : sinon deux zones de Braise portant deux types de reaction
    * empaquetes DIFFERENTS se verraient comme deux elements distincts, et
@@ -1806,8 +1739,8 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
   });
 
   it('la borne : vingt ennemis marques sous UNE zone de Givre font vingt reactions, une chacun', () => {
-    // La mise en scene exacte du §6.2. Vingt, pas une : la borne est PAR
-    // ENNEMI, pas par tick — un compteur global etoufferait dix-neuf flashs.
+    // Vingt, pas une : la borne est PAR ENNEMI, pas par tick — un compteur
+    // global etoufferait dix-neuf flashs.
     const horde = new Horde(50);
     for (let i = 0; i < 20; i++) {
       const id = addOne(horde, i + 1, 1000 + i, 1000, LOURD);
@@ -1826,8 +1759,8 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
     // ⚠️ **Le test qui porte la borne.** Trois zones balayees dans l'ordre —
     // Givre, Braise, Givre — remarquent l'ennemi entre deux reactions : sans
     // la borne, chaque ennemi reagirait DEUX fois au meme tick, et chaque
-    // reaction infligerait `REACTION_DAMAGE` a tous ses voisins. Le §6.2 :
-    // « la cascade est un risque de cout autant que de lisibilite ».
+    // reaction infligerait `REACTION_DAMAGE` a tous ses voisins : la cascade
+    // est un risque de cout autant que de lisibilite.
     const horde = new Horde(50);
     for (let i = 0; i < 20; i++) {
       const id = addOne(horde, i + 1, 1000 + i * 0.5, 1000, LOURD);
@@ -1850,10 +1783,9 @@ describe('la reaction — les quatre declencheurs du §6.2 (etape 5a, tache 7)',
   });
 
   it('la recharge par ennemi : rien avant REACTION_COOLDOWN_TICKS, de nouveau apres', () => {
-    // ⚠️ Retour de playtest : la borne n'etait que d'une reaction par tick, et
-    // un ennemi remarque a chaque pulsation reagissait en boucle. Et l'autre
-    // moitie : sans fin de recharge, un ennemi qui a reagi une fois ne
-    // reagirait plus jamais de toute la partie.
+    // ⚠️ Sans recharge, un ennemi remarque a chaque pulsation reagirait en
+    // boucle. Et l'autre moitie : sans fin de recharge, un ennemi qui a reagi
+    // une fois ne reagirait plus jamais de toute la partie.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     const zones = new ZoneField();
@@ -1917,8 +1849,8 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     expect(horde.slotOf(dedans)).toBe(-1);
     // Celui de dehors n'a rien pris du tout : sa reserve est intacte.
     expect(horde.hp[horde.slotOf(dehors)]).toBe(HEAVY_HP);
-    // Un orbe, a la position de la mort — le §12 de la spec : une mort
-    // elementaire ne prive pas l'equipe de son experience.
+    // Un orbe, a la position de la mort : une mort elementaire ne prive pas
+    // l'equipe de son experience.
     expect(orbs.count).toBe(1);
     expect(orbs.id[0]).toBe(dedans);
     expect(orbs.x[0]).toBe(1000 + REACTION_RADIUS - 1);
@@ -1928,12 +1860,11 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     // `REACTION_DAMAGE` n'est jamais recopie : l'assertion porte sur la
     // relation que la constante doit tenir, pas sur son chiffre.
     //
-    // ⚠️ **La relation a change a l'etape 5b, et la comparaison des deux
-    // constantes NUES ne la dit plus.** Le Choc thermique passe par
-    // `appliquerDegats` comme tout le reste, donc l'armure de la lourde le
+    // ⚠️ **Comparer les deux constantes NUES ne suffit pas.** Le Choc
+    // thermique passe par `appliquerDegats`, donc l'armure de la lourde le
     // rabote : c'est `REACTION_DAMAGE x (1 - HEAVY_ARMOR)` qu'il faut comparer
-    // a `HEAVY_HP` (21,25 contre 20). `expect(REACTION_DAMAGE > HEAVY_HP)`
-    // resterait vert avec une armure de 0,25, ou le choc ne tue plus rien.
+    // a `HEAVY_HP`. `expect(REACTION_DAMAGE > HEAVY_HP)` resterait vert avec
+    // une armure de 0,25, ou le choc ne tue plus rien.
     expect(REACTION_DAMAGE * (1 - HEAVY_ARMOR)).toBeGreaterThan(HEAVY_HP);
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
@@ -1942,12 +1873,10 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
   });
 
   it('un ennemi qui SURVIT au choc en garde la trace dans sa reserve', () => {
-    // ⚠️ **Mutation appliquee, elle survivait avant ce test** : ne pas ecrire
-    // `horde.hp` du tout laissait toute la suite verte, parce que
-    // `REACTION_DAMAGE` depasse `HEAVY_HP` et que rien ne survivait jamais
-    // pour le prouver. Les degats seraient devenus purement binaires — et le
-    // jour ou un archetype plus resistant arrive (les elites, l'etape 6), deux
-    // chocs ne l'useraient pas.
+    // ⚠️ `REACTION_DAMAGE` tue la pietaille lourde d'un coup : sans un
+    // survivant, ne pas ecrire `horde.hp` du tout passerait inapercu, les
+    // degats deviendraient binaires et deux chocs n'useraient pas un
+    // archetype plus resistant.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     horde.hp[horde.slotOf(cible)] = 1000;
@@ -1962,7 +1891,7 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
     // `burnPerTick` (0,1, non representable en `Float32`) dont la borne est
     // arithmetiquement intestable — voir `resolveBurn`.
     //
-    // ⚠️ **Sur un LEGER, depuis l'etape 5b.** Un lourd rabote les degats de son
+    // ⚠️ **Sur un LEGER.** Un lourd rabote les degats de son
     // armure, et `REACTION_DAMAGE x 0,85` ne retombe sur une reserve entiere
     // qu'a la representation flottante pres : le reste ne serait plus
     // exactement nul, et le test aurait l'air de mettre en scene la borne sans
@@ -1982,9 +1911,9 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
   });
 
   it('deux reactions qui achevent le meme ennemi ne le listent qu une fois', () => {
-    // Meme garantie que le `Set` de `resolveProjectileDamage` : le §3.1 de la
-    // spec de l'etape 3 suppose des identites uniques dans DEATHS, et
-    // `Horde.kill` supprimerait l'entite VIVANTE deplacee dans le creneau.
+    // Meme garantie que le `Set` de `resolveProjectileDamage` : DEATHS suppose
+    // des identites uniques, et `Horde.kill` supprimerait l'entite VIVANTE
+    // deplacee dans le creneau.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     const survivant = addOne(horde, 2, -5000, -5000, LOURD);
@@ -2051,9 +1980,8 @@ describe('applyReactions — la reaction tue par REACTION_RADIUS (etape 5a, tach
 });
 
 /**
- * **Le chemin unique des degats** (etape 5b, tache 1) : `appliquerDegats` est
- * la seule fonction qui ecrive `horde.hp`, et les trois sites qui retiraient
- * des PV eux-memes y passent desormais.
+ * **Le chemin unique des degats** : `appliquerDegats` est la seule fonction
+ * qui ecrive `horde.hp`, et tous les sites qui retirent des PV y passent.
  */
 describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -2064,14 +1992,8 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
     addOne(horde, 1, 0, 0, LOURD);
     addOne(horde, 2, 900, 900, LEGER);
     // ⚠️ **30 et 24 ne sont AUCUNE constante de production**, et c'est
-    // delibere : une valeur de decor egale a une valeur de production rend la
-    // tache inverifiable (`GEL_TICKS` valait `LEVEL_FREEZE_TICKS`, et 80 tests
-    // passaient sur une derivation fausse). Le decor precedent de ce test
-    // ecrivait `20` ici — qui EST `HEAVY_HP` par coincidence, meme si le
-    // commentaire pretendait le contraire. Ca n'aveuglait pas le test (voir
-    // l'assertion jumelle du leger, plus bas, qui tue la mutation a elle
-    // seule), mais le commentaire enseignait l'inverse exact de ce que ce
-    // depot traque : `24` leve la coincidence pour de bon.
+    // delibere : une valeur de decor egale a une valeur de production (`20`
+    // vaut `HEAVY_HP`) laisserait passer une derivation fausse.
     horde.hp[0] = 30;
     horde.hp[1] = 30;
 
@@ -2087,9 +2009,8 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
   });
 
   it('une reduction fractionnaire n est arrondie nulle part', () => {
-    // ⚠️ **C'est le test de R9**, l'arrondi qui a avale l'empilement des
-    // passifs a l'etape 4 et amplifie l'echelle de palier a l'etape 6a.
-    // `Horde.hp` est un `Float32Array` et la combustion y retire deja 0,1 par
+    // ⚠️ **Aucun arrondi sur le chemin** : un arrondi avalerait l'empilement
+    // des passifs. `Horde.hp` est un `Float32Array` et la combustion y retire deja 0,1 par
     // tick : rien n'impose un entier. Un `Math.round` glisse n'importe ou sur
     // le chemin fait rougir cette ligne.
     //
@@ -2126,7 +2047,7 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
 
     // 10 x (1 - 0,4) = 6.
     expect(horde.hp[0]).toBeCloseTo(94, 5);
-    // Et la phrase que le point de revue n° 3 demandait, dite telle quelle.
+    // La propriete elle-meme, dite telle quelle.
     expect(horde.hp[0] ?? 0).toBeLessThan(100);
   });
 
@@ -2151,12 +2072,10 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
   });
 
   /**
-   * **Les trois sites, un test chacun.** Chaque test remet une mutation en
-   * echec : « ce site-la retire les PV lui-meme au lieu de passer par
-   * `appliquerDegats` ». Un site debranche cesse de consulter `zones.ampAt`,
-   * et le mouchard le voit — y compris quand l'amplification vaut 1 partout,
-   * ce qu'aucune assertion sur les PV ne pourrait faire avant la Poix (tache
-   * 4).
+   * **Les trois sites, un test chacun.** Chaque test fait echouer « ce
+   * site-la retire les PV lui-meme au lieu de passer par `appliquerDegats` » :
+   * un site debranche cesse de consulter `zones.ampAt`, et le mouchard le
+   * voit — y compris quand l'amplification vaut 1 partout.
    *
    * ⚠️ **Le mouchard porte aussi la position, et c'est la moitie du test** :
    * l'amplification se lit AU PIED de l'ennemi frappe, jamais au centre du
@@ -2234,12 +2153,10 @@ describe("l'armure et le chemin unique des degats (etape 5b, tache 1)", () => {
 });
 
 /**
- * ⚠️ **Ferme M19 du rapport de la tache 1** : « la VALEUR rendue par
- * `ampAt` n'est consommee par aucune assertion ». Les trois tests du bloc
- * ci-dessus gardent l'APPEL (mouchard) — l'un d'eux debranche fait rougir.
- * Mais tant que `damageAmp` valait 1 partout, `brut x amp x (1 - armure)` et
- * `brut x (1 - armure)` (le facteur tombe, l'appel reste) rendaient le MEME
- * nombre de PV : personne ne rougissait. La Poix ferme cette mutation-la.
+ * ⚠️ **La VALEUR rendue par `ampAt`, pas seulement l'appel.** Les trois tests
+ * du bloc ci-dessus gardent l'APPEL (mouchard). Ceux-ci gardent que le
+ * facteur est bien applique : sans amplification, `brut x amp x (1 - armure)`
+ * et `brut x (1 - armure)` rendraient le MEME nombre de PV.
  */
 describe('la Poix amplifie reellement les degats retires (tache 4, ferme M19)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -2269,15 +2186,13 @@ describe('la Poix amplifie reellement les degats retires (tache 4, ferme M19)', 
 
     appliquerDegats(horde, 0, 6, flaqueDePoix, 0, new Set());
 
-    // damageAmp(Poix) est une valeur de production (comme HEAVY_ARMOR l a
-    // deja ete pour l armure a la tache 1) : la reference directement plutot
-    // que de recopier son nombre garde ce test valide si la tache 11 la
-    // regle a l oeil differemment.
+    // damageAmp(Poix) est referencee, pas recopiee : le test reste valide si
+    // son reglage change.
     const attendu = HEAVY_HP - 6 * elementOf(ELEMENT.POIX).damageAmp * (1 - HEAVY_ARMOR);
     expect(horde.hp[0]).toBeCloseTo(attendu, 5);
-    // Non-vacuite : si `damageAmp` valait encore 1 ici, `attendu` et
-    // `coupSurLourd(6)` soustrait de `HEAVY_HP` seraient IDENTIQUES, et
-    // cette assertion ne prouverait rien de plus que celle de la tache 1.
+    // Non-vacuite : si `damageAmp` valait 1, `attendu` et `coupSurLourd(6)`
+    // soustrait de `HEAVY_HP` seraient IDENTIQUES, et cette assertion ne
+    // prouverait rien de plus que celle de l'armure seule.
     expect(HEAVY_HP - 6 * elementOf(ELEMENT.POIX).damageAmp * (1 - HEAVY_ARMOR)).not.toBe(
       HEAVY_HP - coupSurLourd(6),
     );
@@ -2285,7 +2200,7 @@ describe('la Poix amplifie reellement les degats retires (tache 4, ferme M19)', 
 });
 
 /**
- * `armureA` — la Supraconduction rabote l armure (etape 5b, tache 7).
+ * `armureA` — la Supraconduction rabote l armure.
  *
  * ⚠️ **Une derivation, jamais un etat.** `appliquerDegats` l appelle a
  * chaque coup, exactement comme elle appelle `zones.ampAt` — voir son
@@ -2308,9 +2223,9 @@ describe('armureA — la Supraconduction rabote l armure (etape 5b, tache 7)', (
     const zones = new ZoneField();
     zones.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 500, 500, 0, 0);
 
-    // ⚠️ **Choisie a la tache 7 pour exactement annuler HEAVY_ARMOR** (voir
-    // le docbloc de `SUPRACONDUCTION_ARMOR_REDUCTION`, `shared/constants.ts`)
-    // — verifie la coincidence plutot que de la supposer, sinon le `toBe(0)`
+    // ⚠️ **Choisie pour exactement annuler HEAVY_ARMOR** (voir le docbloc de
+    // `SUPRACONDUCTION_ARMOR_REDUCTION`, `shared/constants.ts`) — verifie la
+    // coincidence plutot que de la supposer, sinon le `toBe(0)`
     // ci-dessous ne prouverait rien de plus qu une soustraction quelconque.
     expect(SUPRACONDUCTION_ARMOR_REDUCTION).toBe(HEAVY_ARMOR);
     expect(armureA(horde, 0, zones, 0)).toBe(0);
@@ -2344,9 +2259,9 @@ describe('armureA — la Supraconduction rabote l armure (etape 5b, tache 7)', (
 
   it('hors de la zone, aucun effet', () => {
     const horde = new Horde(10);
-    // ⚠️ **Le rayon de CETTE reaction** (etape 8 : chaque reaction a le sien) —
-    // `ZONE_RADIUS` recopie ici placait l'ennemi DEDANS des que la
-    // Supraconduction a eu un rayon plus large que le generique.
+    // ⚠️ **Le rayon de CETTE reaction** (chaque reaction a le sien) :
+    // `ZONE_RADIUS` placerait l'ennemi DEDANS si la Supraconduction a un rayon
+    // plus large que le generique.
     const kind = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
     addOne(horde, 1, 500 + zoneRadius(kind), 500, LOURD);
     const zones = new ZoneField();
@@ -2356,8 +2271,7 @@ describe('armureA — la Supraconduction rabote l armure (etape 5b, tache 7)', (
   });
 
   it('une zone portant une AUTRE reaction (Surchauffe) ne rabote rien : seule la Supraconduction a un effet d armure', () => {
-    // Meme discipline que `zoneArmorReduction` (shared/reactions.test.ts) :
-    // les trois reactions de la tache 6 n ont aucun effet sur l armure.
+    // Meme discipline que `zoneArmorReduction` (shared/reactions.test.ts).
     const horde = new Horde(10);
     addOne(horde, 1, 500, 500, LOURD);
     const zones = new ZoneField();
@@ -2370,7 +2284,7 @@ describe('armureA — la Supraconduction rabote l armure (etape 5b, tache 7)', (
 /**
  * `appliquerDegats` consulte reellement `armureA`, pas l armure brute de la
  * table — le pendant du bloc « les TROIS sites passent par le chemin
- * unique » (tache 1) pour l amplification.
+ * unique » pour l amplification.
  */
 describe('appliquerDegats passe par armureA, pas par l armure brute de l archetype (etape 5b, tache 7)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -2385,21 +2299,19 @@ describe('appliquerDegats passe par armureA, pas par l armure brute de l archety
     appliquerDegats(horde, 0, 24, zones, 0, new Set());
 
     // Armure a zero dans la zone (voir le describe `armureA` ci-dessus) :
-    // 24 x (1 - 0) = 24 entiers retires, contre 20,4 hors zone (tache 1,
-    // « reduit le coup de l armure de l ARCHETYPE »). 30 - 24 = 6.
+    // 24 x (1 - 0) = 24 entiers retires, contre 20,4 hors zone. 30 - 24 = 6.
     expect(horde.hp[0]).toBeCloseTo(6, 5);
   });
 
   /**
-   * Point de revue n° 4 du plan : une zone de Poix et une de Supraconduction
-   * sur le meme ennemi. Les deux effets sont derives au MEME endroit
-   * (`appliquerDegats`) — l'un amplifie (`ampAt`), l'autre desarme
-   * (`armureA`) — et ne doivent ni s'annuler ni se confondre.
+   * Une zone de Poix et une de Supraconduction sur le meme ennemi. Les deux
+   * effets sont derives au MEME endroit (`appliquerDegats`) — l'un amplifie
+   * (`ampAt`), l'autre desarme (`armureA`) — et ne doivent ni s'annuler ni se
+   * confondre.
    *
    * ⚠️ **Posees dans les DEUX ordres**, meme si ici chaque zone n'alimente
-   * qu'un seul des deux facteurs (aucun recouvrement de MEME nature) — la
-   * regle generale de cette etape le demande des qu'un decor superpose deux
-   * elements (voir le rapport de la tache 7 sur la mutation d'`ampAt`).
+   * qu'un seul des deux facteurs : un decor qui superpose deux elements doit
+   * toujours essayer les deux ordres de pose.
    */
   it('un ennemi poisse ET gele subit les deux effets, chacun par son chemin, dans les deux ordres de pose', () => {
     const brut = 5;
@@ -2455,16 +2367,13 @@ describe('appliquerDegats passe par armureA, pas par l armure brute de l archety
 });
 
 /**
- * La chaine de Foudre, cote serveur (etape 5b, tache 3) : `resolveProjectileDamage`
- * appelle `chainTargets` (le MEME que le client, `shared/chain.ts`) et applique
+ * La chaine de Foudre, cote serveur : `resolveProjectileDamage` appelle
+ * `chainTargets` (le MEME que le client, `shared/chain.ts`) et applique
  * `appliquerDegats` — LE seul chemin de degats — a chaque cible qu'elle rend.
  *
  * ⚠️ **Rien de neuf ne voyage.** Les morts de la chaine rejoignent le meme
- * `dead`/`deadIds` que n importe quelle autre mort de ce fichier : aucun
- * second tableau, aucun second message. Voir le dernier `describe` de ce
- * bloc, qui le met en scene directement — la forme la plus etroite mais
- * vraie de « la chaine n ajoute aucun octet au fil » qu un test SANS le
- * harnais a quatre sockets de la tache 11 puisse tenir (voir R3 du rapport).
+ * `dead`/`deadIds` que n importe quelle autre mort : aucun second tableau,
+ * aucun second message (voir le dernier test de ce bloc).
  */
 describe('la chaine de Foudre (etape 5b, tache 3)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -2473,9 +2382,8 @@ describe('la chaine de Foudre (etape 5b, tache 3)', () => {
 
   /**
    * Tire `arme` sur `targetId` depuis l origine, et avance jusqu a l impact.
-   * Rend les morts ET le tick de l impact — meme helper que `frappe` plus
-   * haut dans ce fichier, redefini ici en local pour ne pas dependre d une
-   * fermeture d un autre `describe`.
+   * Rend les morts ET le tick de l impact — redefini ici pour ne pas
+   * dependre d une fermeture d un autre `describe`.
    */
   function frappe(
     horde: Horde,
@@ -2503,7 +2411,7 @@ describe('la chaine de Foudre (etape 5b, tache 3)', () => {
     // chaque saut successif, mais pas deux sauts d un coup (200 > 150) — donc
     // la chaine ne peut que suivre la ligne, un maillon a la fois. Tous
     // LOURDS pour qu aucun ne meure en route : un maillon mort arreterait la
-    // propagation (point de revue n°1) et ce test ne verrait plus CHAIN_JUMPS.
+    // propagation et ce test ne verrait plus CHAIN_JUMPS.
     expect(100).toBeLessThan(CHAIN_RADIUS);
     expect(200).toBeGreaterThan(CHAIN_RADIUS);
     expect(CHAIN_JUMPS).toBe(3);
@@ -2607,14 +2515,10 @@ describe('la chaine de Foudre (etape 5b, tache 3)', () => {
   });
 
   it('les morts de la chaine partent dans le MEME deadIds que les morts par impact direct — aucun canal nouveau', () => {
-    // ⚠️ **La forme etroite mais vraie de « la chaine n ajoute aucun octet au
-    // fil » (R3).** Ce fichier ne monte pas quatre sockets reelles — ce
-    // harnais est celui de la tache 11. Ce qu il peut tenir ICI, et qui tient
-    // reellement la contrainte : `resolveProjectileDamage` ne rend riend de
-    // plus qu un `number[]` d identites mortes, EXACTEMENT comme pour tout
-    // autre chemin de mort de ce fichier (impact direct, souffle, brulure,
-    // reaction). C est ce meme tableau que `Room.step` transforme en DEATHS
-    // — aucun second canal n existe a cote pour la chaine.
+    // ⚠️ **« La chaine n ajoute aucun octet au fil », vu d ici** :
+    // `resolveProjectileDamage` ne rend rien de plus qu un `number[]`
+    // d identites mortes, comme tout autre chemin de mort. C est ce meme
+    // tableau que `Room.step` transforme en DEATHS — aucun second canal.
     const horde = new Horde(10);
     const percute = addOne(horde, 1, 300, 0, LOURD); // survit au coup direct
     const enchaine = addOne(horde, 2, 300, 100, LEGER); // meurt du SEUL saut de chaine
@@ -2627,22 +2531,17 @@ describe('la chaine de Foudre (etape 5b, tache 3)', () => {
     // rien de plus : pas de second retour, pas de champ supplementaire.
     expect(morts).toEqual([enchaine]);
     expect(horde.slotOf(percute)).toBeGreaterThanOrEqual(0);
-    // Le reste du pipeline EXISTANT s applique sans rien de nouveau non plus
-    // (etape 8 de `Room.step`) : l orbe nait comme pour n importe quelle
-    // autre mort.
+    // L orbe nait comme pour n importe quelle autre mort.
     expect(orbs.count).toBe(1);
     expect(orbs.id[0]).toBe(enchaine);
   });
 });
 
 /**
- * `postZone` (back/src/combat.ts) empaquette desormais le vrai type de
- * reaction de la table `shared/reactions.ts` (tache 6 de l'etape 5b) — plus
- * seulement l'element brut. Ferme les deux mutations heritees de la tache 5 :
- * `Room#announceZones` et `Session#broadcast` decodaient l'octet AVANT de
- * l'envoyer, et rien ne le voyait tant qu'aucune reaction ne posait de type
- * non nul (voir leur test dedie dans `room.test.ts` et
- * `elements.integration.test.ts`).
+ * `postZone` (back/src/combat.ts) empaquette le type de reaction de la table
+ * `shared/reactions.ts`, pas seulement l'element brut. C'est ce type non nul
+ * qui rend visible, dans `room.test.ts` et `elements.integration.test.ts`, un
+ * decodage de l'octet AVANT l'envoi.
  */
 describe('postZone empaquette le type de reaction de la table (etape 5b, tache 6)', () => {
   function trigger(pair: number, element: number): ReactionTrigger {
@@ -2731,14 +2630,14 @@ describe('postZone empaquette le type de reaction de la table (etape 5b, tache 6
     );
     expect(zones.count).toBe(1);
     expect(zoneReaction(zones.kind[0] ?? 0)).toBe(REACTION.AUCUNE);
-    // Et l'octet reste EGAL a l'element seul, exactement comme avant la
-    // tache 6 : `packZoneKind(element, 0) === element`.
+    // Et l'octet reste EGAL a l'element seul : `packZoneKind(element, 0) ===
+    // element`.
     expect(zones.kind[0]).toBe(ELEMENT.GIVRE);
   });
 });
 
 /**
- * Surchauffe (Braise + Foudre, tache 6 de l'etape 5b) : la zone brule
+ * Surchauffe (Braise + Foudre) : la zone brule
  * D'ELLE-MEME, independamment de toute marque — voir le second balayage de
  * `resolveBurn`.
  */
@@ -2777,9 +2676,9 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
 
   /**
    * ⚠️ **LES DEUX MOITIES.** Meme decor — un LOURD, meme tick, meme position —
-   * une seule fois marque Braise (le champ generique, §4.1), une seule fois
+   * une seule fois marque Braise (le champ generique), une seule fois
    * dans une zone de Surchauffe : seule la source de brulure differe. « Plus
-   * fort que le champ generique » (§5 de la spec) se lit ici a la difference
+   * fort que le champ generique » se lit ici a la difference
    * des deux pertes de PV, jamais a un chiffre recopie de production.
    */
   it('⚠️ brule PLUS FORT que le champ generique de la marque, sur le meme decor', () => {
@@ -2801,8 +2700,8 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
   });
 
   it('brule MEME quand la zone porte l element FOUDRE (le declencheur) : le taux vient de la reaction, pas de l element', () => {
-    // ⚠️ **La ligne qui tue la mutation « lire `elementOf(zoneElement(kind))`
-    // au lieu de `zoneBurnPerTick(kind)` ».** `elementOf(FOUDRE).burnPerTick`
+    // ⚠️ **Garde contre « lire `elementOf(zoneElement(kind))` au lieu de
+    // `zoneBurnPerTick(kind)` ».** `elementOf(FOUDRE).burnPerTick`
     // vaut zero : une lecture generique ne brulerait jamais ici.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
@@ -2816,11 +2715,9 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
   });
 
   /**
-   * Fournee (Braise + Chaux, tache 4 de l'etape 5c) : `FOURNEE_BURN_PER_TICK`
-   * wire jusqu'a `resolveBurn` par le MEME balayage, et la perte est EXACTE
-   * dans les DEUX ordres de declencheur — le meme motif que le test « brule
-   * MEME quand la zone porte l element FOUDRE » ci-dessus, pour le second
-   * couple de la Chaux.
+   * Fournee (Braise + Chaux) : `FOURNEE_BURN_PER_TICK` arrive jusqu'a
+   * `resolveBurn` par le MEME balayage, et la perte est EXACTE dans les DEUX
+   * ordres de declencheur.
    */
   it('Fournee brule PLUS FORT que Surchauffe, dans les DEUX ordres de declencheur', () => {
     const perte = (kind: number): number => {
@@ -2865,7 +2762,7 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
   });
 
   it('ne liste jamais deux fois le meme mort : marque ET zone touchent la meme entite deja a terre', () => {
-    // ⚠️ Ferme le risque introduit par le second balayage : sans la garde
+    // ⚠️ Le risque du second balayage : sans la garde
     // `hp <= 0`, un ennemi acheve par la marque au premier balayage
     // reprendrait un coup de la zone au second, et `dead` (un TABLEAU)
     // listerait son identite deux fois.
@@ -2884,16 +2781,11 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
   });
 
   /**
-   * ⚠️ **Corrige a la revue finale de l'etape 5b (B3) — le decor precedent
-   * posait `hp = 0,05` : la cible mourait a la PREMIERE application, la
-   * garde `hp <= 0` sautait la seconde, et les seules assertions (`dead`,
-   * `orbs.count`) prouvaient la deduplication des MORTS — exactement ce que
-   * le test juste au-dessus prouve deja. Le titre affirmait « ne brulent pas
-   * deux fois », mais rien ici ne pouvait observer un double degat : avec la
-   * mutation qui somme au lieu de prendre le maximum (B2), ce test restait
-   * VERT.** Des PV ELEVES, pour que les DEUX applications eventuelles
-   * restent observables, et une assertion sur la PERTE EXACTE — celle d'une
-   * seule application du taux de Surchauffe, jamais son double.
+   * ⚠️ **Des PV ELEVES**, pour que la cible survive et que les DEUX
+   * applications eventuelles restent observables : avec une cible qui meurt
+   * a la premiere, la garde `hp <= 0` saute la seconde et une somme (au lieu
+   * du maximum) passerait. L'assertion porte sur la PERTE EXACTE d'une seule
+   * application du taux de Surchauffe, jamais son double.
    */
   it('deux zones de Surchauffe qui se recouvrent ne brulent pas deux fois le meme ennemi', () => {
     const horde = new Horde(10);
@@ -2911,9 +2803,7 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
 
     const perte = 1000 - (horde.hp[horde.slotOf(cible)] ?? 0);
     // ⚠️ **La ligne qui tue la somme.** Une application vaut
-    // `coupSurLourd(zoneBurnPerTick(...))` ; deux applications en vaudraient
-    // le double — cette assertion les distingue, la precedente ne le
-    // pouvait pas.
+    // `coupSurLourd(zoneBurnPerTick(...))` ; deux en vaudraient le double.
     expect(perte).toBeCloseTo(coupSurLourd(zoneBurnPerTick(zones.kind[0] ?? 0)), 5);
     expect(dead).toEqual([]);
     expect(orbs.count).toBe(0);
@@ -2921,10 +2811,8 @@ describe('resolveBurn — Surchauffe brule la zone elle-meme (etape 5b, tache 6)
 });
 
 /**
- * Embrasement (Braise + Poix, tache 6 de l'etape 5b) : degats instantanes a
- * tout ennemi POISSE dans un rayon, filtre sur la marque — voir
- * `damageInRadius` (`markFilter`, fusionnee avec `damagePoisonedInRadius` a
- * la revue finale de l'etape 5b, B4).
+ * Embrasement (Braise + Poix) : degats instantanes a tout ennemi POISSE dans
+ * un rayon, filtre sur la marque — voir `damageInRadius` (`markFilter`).
  */
 describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, tache 6)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -2957,9 +2845,8 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
       new Reactions(),
     );
 
-    // ⚠️ **La perte EXACTE, pas seulement « moins » : `def.damage * 3` au
-    // site d'appel passait cette suite entiere avant que ce chiffre ne soit
-    // asserte (revue de la tache 6).**
+    // ⚠️ **La perte EXACTE, pas seulement « moins »** : un mauvais
+    // multiplicateur au site d'appel ne se verrait pas autrement.
     //
     // ⚠️ **Et ce n'est PAS le simple `25 x (1 - 0,15)` : `postZone` pose une
     // zone de Poix AVANT le balayage de degats (« les champs se posent
@@ -2973,11 +2860,10 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
   it('epargne un ennemi POISSE mais HORS du rayon', () => {
     const horde = new Horde(10);
     const dedans = addOne(horde, 1, 1000 + REACTION_RADIUS - 1, 1000, LOURD);
-    // ⚠️ **Hors du rayon de la REACTION *et* de tout champ qu'elle laisse**
-    // (etape 8) : les champs n'ont plus tous le meme rayon, et le plus large
-    // (Verglas) depasse `REACTION_RADIUS`. Se poser pile a `REACTION_RADIUS`
-    // mettait donc cet ennemi DANS le champ, et sa flaque l'amplifiait — un
-    // echec qui n'avait rien a voir avec ce que ce cas garde.
+    // ⚠️ **Hors du rayon de la REACTION *et* de tout champ qu'elle laisse** :
+    // les champs n'ont pas tous le meme rayon, et le plus large depasse
+    // `REACTION_RADIUS`. Pile a `REACTION_RADIUS`, l'ennemi serait DANS le
+    // champ, et sa flaque l'amplifierait.
     const dehors = addOne(horde, 2, 1000 + RAYON_HORS_TOUT, 1000, LOURD);
     horde.applyMark(horde.slotOf(dedans), ELEMENT.POIX, 3, 0);
     horde.applyMark(horde.slotOf(dehors), ELEMENT.POIX, 3, 0);
@@ -2993,11 +2879,9 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
       new Reactions(),
     );
 
-    // ⚠️ **« Il encaisse », et plus un chiffre exact** : l'ennemi dedans se
-    // tient desormais dans le champ que la reaction vient de poser, qui
-    // l'amplifie. Ce que ce cas garde, c'est la FRONTIERE — dedans encaisse,
-    // dehors est epargne —, pas l'arithmetique du coup, que trois autres cas
-    // verifient deja.
+    // ⚠️ **« Il encaisse », pas un chiffre exact** : l'ennemi dedans se tient
+    // dans le champ que la reaction vient de poser, qui l'amplifie. Ce cas
+    // garde la FRONTIERE, pas l'arithmetique du coup, verifiee ailleurs.
     expect(horde.hp[horde.slotOf(dedans)]).toBeLessThan(1000);
     expect(horde.hp[horde.slotOf(dehors)]).toBe(1000);
   });
@@ -3027,7 +2911,7 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
   });
 
   /**
-   * ⚠️ **LES DEUX MOITIES**, le test le plus important de cette tache. Meme
+   * ⚠️ **LES DEUX MOITIES.** Meme
    * decor exactement — un POISSE et un SAIN, au meme point, au meme tick —
    * pour deux couples differents : Embrasement (qui doit filtrer) et le Choc
    * thermique generique (qui ne filtre jamais). « Le sain ne bouge pas » se
@@ -3104,9 +2988,9 @@ describe('applyReactions — Embrasement ne touche que les POISSES (etape 5b, ta
 });
 
 /**
- * Court-circuit (Foudre + Poix, tache 6 de l'etape 5b) : `chainTargets`
- * (tache 2) reutilisee telle quelle, jumps non borne, tant que les cibles
- * restent POISSEES — voir `chainWhilePoisoned`.
+ * Court-circuit (Foudre + Poix) : `chainTargets` reutilisee telle quelle,
+ * au-dela de `CHAIN_JUMPS`, tant que les cibles restent POISSEES — voir
+ * `chainWhilePoisoned`.
  */
 describe('applyReactions — Court-circuit chaine tant que les cibles sont poissees (etape 5b, tache 6)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -3190,36 +3074,22 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
   });
 
   /**
-   * ⚠️ **SAUTE PAR-DESSUS un maillon SAIN, elle ne s'y arrete pas — corrige a
-   * la revue de la tache 6.** Le premier jet lisait « tant que les cibles
-   * sont poissees » comme une condition d'ARRET (un `break` sur la premiere
-   * cible saine). Mesure en execution : dans une horde dense, le voisin le
-   * plus proche d'un saut est presque toujours SAIN, donc la chaine
-   * s'arretait quasi systematiquement au premier maillon — « sans limite de
-   * sauts entre poisses » devenait lettre morte.
-   *
-   * La forme retenue (§ voir `chainWhilePoisoned`) : les non-poisses sont
-   * EXCLUS de la recherche elle-meme, donc invisibles pour `chainTargets` —
-   * la chaine les traverse comme s'ils n'existaient pas, et continue vers le
-   * prochain poisse tant qu'il reste a portee du DERNIER poisse touche.
+   * ⚠️ **SAUTE PAR-DESSUS un maillon SAIN, elle ne s'y arrete pas.** Lire
+   * « tant que les cibles sont poissees » comme une condition d'ARRET tuerait
+   * la reaction : dans une horde dense, le voisin le plus proche d'un saut
+   * est presque toujours SAIN. Les non-poisses sont donc EXCLUS de la
+   * recherche elle-meme (`chainWhilePoisoned`), invisibles pour
+   * `chainTargets`, et la chaine continue vers le prochain poisse a portee du
+   * DERNIER poisse touche.
    *
    * Trois maillons alignes : A (poisse, 100 px de l origine), B (SAIN,
-   * 150 px), C (poisse, 200 px). `distance(origine, A) = 100 < CHAIN_RADIUS`,
-   * `distance(A, C) = 100 < CHAIN_RADIUS`, mais `distance(origine, C) = 200
-   * > CHAIN_RADIUS` : C n'est PAS a portee de l'origine — il n'est a portee
-   * QUE du dernier poisse touche, A.
-   *
-   * ⚠️ **Corrige a la revue finale de l'etape 5b : ce commentaire affirmait
-   * a tort que C n'etait a portee « ni de l'origine ni de B (300 px) ».**
-   * `distance(B, C) = 50 < CHAIN_RADIUS` : C EST geometriquement a portee de
-   * B. Le test reste valide — B, SAIN, est exclu de la recherche elle-meme
-   * (voir plus haut), donc invisible pour `chainTargets` quelle que soit la
-   * distance — mais l'affirmation etait fausse : c'est l'EXCLUSION de B, pas
-   * la geometrie, qui l'empeche de relayer C.
+   * 150 px), C (poisse, 200 px). C n'est PAS a portee de l'origine
+   * (200 > CHAIN_RADIUS), il l'est de A (100). Il l'est aussi de B (50) :
+   * c'est l'EXCLUSION de B, pas la geometrie, qui l'empeche de relayer C.
    */
   it('⚠️ SAUTE PAR-DESSUS un maillon SAIN pour atteindre le poisse suivant', () => {
     expect(100).toBeLessThan(CHAIN_RADIUS);
-    expect(200).toBeGreaterThan(CHAIN_RADIUS); // B ne peut pas relayer C depuis l origine
+    expect(200).toBeGreaterThan(CHAIN_RADIUS); // C est hors de portee de l origine
     const horde = new Horde(10);
     const a = addOne(horde, 1, 100, 0, LOURD);
     const b = addOne(horde, 2, 150, 0, LOURD);
@@ -3235,8 +3105,8 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 
     const perte = coupSurLourd(REACTION_DAMAGE);
     expect(horde.hp[horde.slotOf(a)]).toBeCloseTo(1000 - perte, 5);
-    // ⚠️ La ligne qui prouve le saut : C est HORS de portee de l origine ET de
-    // B, seulement A peut l atteindre — et il a ete atteint.
+    // ⚠️ La ligne qui prouve le saut : C est HORS de portee de l origine, et
+    // B, sain, ne relaie pas — seul A peut l atteindre, et il a ete atteint.
     expect(horde.hp[horde.slotOf(c)]).toBeCloseTo(1000 - perte, 5);
     // B, lui, n a jamais ete une cible : ni touche par la chaine, ni relais.
     expect(horde.hp[horde.slotOf(b)]).toBe(1000);
@@ -3308,12 +3178,9 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
     // boucherait sur lui-meme au lieu d atteindre le VRAI premier maillon.
     const horde = new Horde(10);
     const declencheur = addOne(horde, 1, 500, 500, LOURD);
-    // ⚠️ **DANS le champ de Court-circuit, et son rayon est le sien** (etape 8,
-    // ou chaque reaction a pris le sien) : 50 px etaient « dans `ZONE_RADIUS` =
-    // 70 » quand toutes les zones portaient le meme rayon ; le champ de
-    // Court-circuit en fait 46, et la cible s'en etait retrouvee dehors — donc
-    // plus amplifiee, pour une raison qui n'a rien a voir avec ce que ce cas
-    // garde.
+    // ⚠️ **DANS le champ de Court-circuit, derive de SON rayon** (chaque
+    // reaction a le sien) : une distance ecrite en dur pourrait tomber dehors,
+    // et la cible ne serait plus amplifiee.
     const dedansChamp = Math.round(
       zoneRadius(packZoneKind(ELEMENT.POIX, REACTION.COURT_CIRCUIT)) * 0.7,
     );
@@ -3321,7 +3188,7 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
     horde.hp[horde.slotOf(declencheur)] = 1000;
     horde.hp[horde.slotOf(cible)] = 1000;
     horde.applyMark(horde.slotOf(cible), ELEMENT.POIX, 3, 0);
-    // Le declencheur ressort NU (§4.3) : sa propre marque est deja consommee.
+    // Le declencheur ressort NU : sa propre marque est deja consommee.
     expect(horde.markAt(horde.slotOf(declencheur), 0)).toBe(ELEMENT.NEUTRE);
 
     const t = trigger(500, 500);
@@ -3428,8 +3295,8 @@ describe('applyReactions — Court-circuit chaine tant que les cibles sont poiss
 });
 
 /**
- * `resolveVerglasCollisions` — la seconde moitie de Verglas (Givre + Poix,
- * tache 8 de l'etape 5b) : « les ennemis derapent ET se percutent ». Le
+ * `resolveVerglasCollisions` — la seconde moitie de Verglas (Givre + Poix) :
+ * « les ennemis derapent ET se percutent ». Le
  * derapage (qui VOYAGE) vit dans `Horde#recomputeSteering`
  * (`shared/horde.test.ts` le couvre) ; ce bloc-ci couvre la collision, un
  * DEGAT, serveur seul, aucune contrainte de replication.
@@ -3493,15 +3360,15 @@ describe('resolveVerglasCollisions — Verglas fait se percuter les glissants (e
 
   /**
    * ⚠️ **Geometrie choisie pour que la zone couvre `a` et pas `b`, malgre
-   * les 28 px qui les separent** — `ZONE_RADIUS` (70) est plus large que
-   * `SEPARATION_RADIUS` (28), donc une zone centree sur l'un des deux
+   * leur proximite** — le rayon de zone est plus large que
+   * `SEPARATION_RADIUS`, donc une zone centree sur l'un des deux
    * couvrirait presque toujours l'autre aussi. `a` est pose juste dedans,
    * `b` juste dehors, distants de moins de `SEPARATION_RADIUS`.
    */
   it('proches, mais UN SEUL dans la zone : aucun degat — il faut que les DEUX glissent', () => {
     const horde = new Horde(10);
-    // Le rayon du champ de Verglas, pas le generique : il vaut 1,45 fois
-    // celui-ci depuis l'etape 8, et `b` tombait dedans.
+    // Le rayon du champ de Verglas, pas le generique : il est plus large, et
+    // `b` tomberait dedans.
     const rayon = zoneRadius(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
     const ax = rayon - 1;
     const bx = ax + (SEPARATION_RADIUS - 5);
@@ -3598,7 +3465,7 @@ describe('resolveVerglasCollisions — Verglas fait se percuter les glissants (e
 });
 
 /**
- * Eclat de gel (Givre + Chaux, tache 4 de l'etape 5c) : degats bruts massifs
+ * Eclat de gel (Givre + Chaux) : degats bruts massifs
  * SUR LA SEULE CIBLE qui declenche — `damageInRadius` n'y participe pas
  * (`def.radius` vaut 0, voir son docbloc dans `shared/reactions.ts`) : la
  * branche dediee d'`applyReactions` retrouve directement le creneau du
@@ -3632,9 +3499,8 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
    */
   it('retire EXACTEMENT ECLAT_DE_GEL_DAMAGE x (1 - armure DANS SA PROPRE zone) a la cible — decor a PV eleves, pas un coup qui tue', () => {
     // ⚠️ **PV eleves, expres.** Une cible qui meurt au premier coup rendrait
-    // l'assertion de perte vraie a vide (le defaut « hp = 0,05 » de la
-    // re-revue finale de l'etape 5b) : 1000 survit largement a
-    // `ECLAT_DE_GEL_DAMAGE` (2 x `REACTION_DAMAGE`, tres en dessous).
+    // l'assertion de perte vraie a vide : 1000 survit largement a
+    // `ECLAT_DE_GEL_DAMAGE`.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     horde.hp[horde.slotOf(cible)] = 1000;
@@ -3648,8 +3514,8 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
       new Reactions(),
     );
 
-    // ⚠️ **La perte EXACTE, pas `toBeLessThan`** — voir le §5b cite dans le
-    // brief : `def.damage * 3` sur 214 tests verts avec une assertion molle.
+    // ⚠️ **La perte EXACTE, pas `toBeLessThan`** : une assertion molle
+    // laisserait passer un mauvais multiplicateur.
     const armureDansLaZone = Math.max(0, HEAVY_ARMOR - CHAUX_ARMOR_REDUCTION);
     expect(horde.hp[horde.slotOf(cible)]).toBeCloseTo(
       1000 - ECLAT_DE_GEL_DAMAGE * (1 - armureDansLaZone),
@@ -3732,8 +3598,8 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
     horde.hp[horde.slotOf(present)] = 1000;
     const orbs = new OrbField(10);
 
-    // ⚠️ **La garde `slot >= 0` survit a une mutation qui la retire, SANS ce
-    // troisieme controle.** Sans elle, `horde.slotOf(t.entityId)` rend `-1`
+    // ⚠️ **Sans ce troisieme controle, retirer la garde `slot >= 0` passerait
+    // inapercu.** Sans elle, `horde.slotOf(t.entityId)` rend `-1`
     // (aucune cible), et `appliquerDegats(horde, -1, ...)` ecrit sur un index
     // hors-bornes du `Float32Array` (silencieux en JS) puis lit
     // `horde.entityIdAt(-1)` — qui, `waveId[-1]` et `indexInWave[-1]` valant
@@ -3807,7 +3673,7 @@ describe('applyReactions — Eclat de gel degat brut massif sur la SEULE cible (
 });
 
 /**
- * Point de revue n°1 de la tache 4 de l'etape 5c : une zone de Chaux ET une
+ * Une zone de Chaux ET une
  * zone de Fournee sur le MEME ennemi ne doivent jamais pousser l'armure sous
  * zero — un negatif MAJORERAIT les degats (`1 - armure > 1`) au lieu de les
  * laisser bruts. `armureA` borne deja par le bas (`Math.max(0, ...)`) ; ce
@@ -3821,9 +3687,7 @@ describe('armureA — une zone de Chaux ET une de Fournee ne poussent jamais l a
   it('l armure effective vaut EXACTEMENT zero, jamais un negatif — decor a PV eleves', () => {
     // ⚠️ **PV eleves, expres** — meme raison que le test d'Eclat de gel
     // ci-dessus : une cible qui meurt au premier coup rendrait la perte
-    // « exacte » vraie a vide, sans jamais prouver que l'armure ne descend
-    // pas sous zero (le defaut `hp = 0,05` de la re-revue finale de l'etape
-    // 5b, cite par le brief).
+    // « exacte » vraie a vide.
     const horde = new Horde(10);
     const cible = addOne(horde, 1, 1000, 1000, LOURD);
     horde.hp[horde.slotOf(cible)] = 1000;
@@ -3864,26 +3728,16 @@ describe('armureA — une zone de Chaux ET une de Fournee ne poussent jamais l a
 });
 
 /**
- * Vaporisation (Braise + Vif-argent, tache 5 de l'etape 5c) : degats en
- * RAYON autour de CHAQUE ennemi LIE au declencheur — `damageInRadius` (LE
- * balayage par rayon) centre sur `linkedNeighbours` (tache 2), jamais sur le
- * point d'impact d'origine.
+ * Vaporisation (Braise + Vif-argent) : degats en RAYON autour de CHAQUE
+ * ennemi LIE au declencheur — `damageInRadius` centre sur `linkedNeighbours`,
+ * jamais sur le point d'impact d'origine.
  *
- * ⚠️ **La zone que Vaporisation pose POUR ELLE-MEME LIE aussi — elle porte
- * `zoneVifArgent: true` (`ReactionDef`, `shared/reactions.ts`).** L'ancien
- * pare-feu de la tache 3 (`zoneReaction(kind) === 0` dans
- * `linkedNeighbours`) excluait la zone que `postZone` pose a CHAQUE
- * declenchement (CE declencheur, a son propre point d'impact) : mort en
- * production, puisque cette zone porte TOUJOURS la reaction Vaporisation,
- * jamais une reaction nulle. Une premiere correction derivait la liaison de
- * la PAIRE (ordre-independante par `packElementPair`, mais faisant lier les
- * CINQ paires du Vif-argent) ; la revue suivante l'a RENVERSEE au profit
- * d'un champ epingle, `zoneVifArgent`, vrai seulement sur les trois reactions
- * qui en ont besoin (Vaporisation, Paratonnerre, Amalgame). Tout voisin a
- * moins de `ZONE_RADIUS` du declencheur ET moins de `LINK_RADIUS` de lui
- * est donc lie par CETTE seule zone, meme sans aucune autre zone de
- * Vif-argent posee ailleurs — voir le test dedie plus bas, qui le mesure
- * explicitement.
+ * ⚠️ **La zone que Vaporisation pose POUR ELLE-MEME LIE aussi** : elle porte
+ * `zoneVifArgent: true` (`ReactionDef`, `shared/reactions.ts`), vrai
+ * seulement sur les reactions qui en ont besoin (Vaporisation, Paratonnerre,
+ * Amalgame). Tout voisin dans le champ du declencheur ET a moins de
+ * `LINK_RADIUS` de lui est donc lie par CETTE seule zone, sans aucune autre
+ * zone de Vif-argent — voir le test dedie plus bas.
  */
 describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIES (tache 5 de l etape 5c)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -3939,9 +3793,9 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
   });
 
   /**
-   * ⚠️ **Revue post-tache 9 : sans AUCUNE zone posee ailleurs, Y est quand
-   * meme lie — par la zone que `postZone` vient de poser POUR Vaporisation
-   * elle-meme, au point d'impact de X.** Y (30 px) est a la fois sous
+   * ⚠️ **Sans AUCUNE zone posee ailleurs, Y est quand meme lie — par la zone
+   * que `postZone` vient de poser POUR Vaporisation elle-meme, au point
+   * d'impact de X.** Y (30 px) est a la fois sous
    * `ZONE_RADIUS` (70, dans cette zone) et sous `LINK_RADIUS` (80, lie a X).
    * Le degat, centre sur Y (le seul lie), rayonne sur `REACTION_RADIUS` (90)
    * et atteint donc aussi X (30 px de Y) : les deux prennent EXACTEMENT
@@ -3965,15 +3819,12 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
   });
 
   /**
-   * ⚠️ **L'ennemi LIE occupe le creneau 0 — mesure par mutation, pas
-   * suppose.** Dans tous les AUTRES decors de ce bloc, le declencheur est
-   * ajoute EN PREMIER a la horde (`addOne` l'y place au creneau 0) et le lie
-   * toujours APRES (creneau >= 1) : `linkedSlot < 0` n'y est donc jamais
-   * exerce avec `linkedSlot === 0`, et une mutation qui le relacherait en
-   * `<= 0` y restait invisible (mesuree). Ici, Y (le lie) est ajoute EN
-   * PREMIER (creneau 0) et X (le declencheur) EN SECOND (creneau 1) : si la
-   * garde devenait `linkedSlot <= 0`, Y serait ecarte a tort et personne ne
-   * prendrait de degat.
+   * ⚠️ **L'ennemi LIE occupe le creneau 0.** Dans les AUTRES decors de ce
+   * bloc, le declencheur est au creneau 0 et le lie APRES : une garde
+   * relachee de `linkedSlot < 0` en `<= 0` y resterait invisible. Ici, Y (le
+   * lie) est au creneau 0 et X (le declencheur) au creneau 1 : avec
+   * `linkedSlot <= 0`, Y serait ecarte a tort et personne ne prendrait de
+   * degat.
    */
   it('touche l ennemi LIE meme quand il occupe le creneau 0 de la horde', () => {
     const horde = new Horde(10);
@@ -3994,8 +3845,8 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
   });
 
   /**
-   * ⚠️ **Le champ `zoneVifArgent`, exerce directement — RENVERSE le pare-feu de
-   * la tache 3.** Sans aucune zone de Vif-argent ELEMENTAIRE posee ailleurs,
+   * ⚠️ **Le champ `zoneVifArgent`, exerce directement.** Sans aucune zone de
+   * Vif-argent ELEMENTAIRE posee ailleurs,
    * la SEULE zone de Vif-argent qui existe est celle que Vaporisation vient
    * de laisser au sol pour CE declencheur — et sa reaction (Vaporisation)
    * porte `zoneVifArgent: true` dans `REACTION_DEFS`, quel que soit l'element
@@ -4061,9 +3912,9 @@ describe('applyReactions — Vaporisation degats en rayon autour des ennemis LIE
 });
 
 /**
- * Arc caustique (Foudre + Chaux, tache 5 de l'etape 5c) : `chainTargets`
- * (tache 2) INCHANGEE — meme forme que la chaine de Foudre ordinaire — PLUS
- * une pose de zone corrosive a CHAQUE cible touchee.
+ * Arc caustique (Foudre + Chaux) : `chainTargets` INCHANGEE — meme forme que
+ * la chaine de Foudre ordinaire — PLUS une pose de zone corrosive a CHAQUE
+ * cible touchee.
  */
 describe('applyReactions — Arc caustique laisse un champ corrosif a chaque saut (tache 5 de l etape 5c)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
@@ -4085,8 +3936,8 @@ describe('applyReactions — Arc caustique laisse un champ corrosif a chaque sau
    * chacun a plus de `ZONE_RADIUS` (70) du precedent ET de l'origine, pour
    * qu'AUCUNE zone corrosive posee par un hop anterieur n'ampute l'armure du
    * hop suivant : chaque perte reste EXACTEMENT `coupSurLourd(REACTION_DAMAGE)`,
-   * jamais amplifiee par sa propre trace (le piege qu'Embrasement et Eclat
-   * de gel ont deja rencontre pour d'AUTRES grandeurs).
+   * jamais amplifiee par sa propre trace (meme piege qu'Embrasement et Eclat
+   * de gel).
    */
   it('chaine sur trois maillons, degat EXACT par saut, et un champ corrosif au sol a CHAQUE position touchee', () => {
     const horde = new Horde(10);
@@ -4115,7 +3966,7 @@ describe('applyReactions — Arc caustique laisse un champ corrosif a chaque sau
 
     // ⚠️ **L'effet FONCTIONNEL du champ corrosif, pas seulement son
     // existence** : a la position de CHAQUE maillon, l'armure retiree vaut
-    // desormais SUPRACONDUCTION_ARMOR_REDUCTION — un coup ULTERIEUR a cet
+    // SUPRACONDUCTION_ARMOR_REDUCTION — un coup ULTERIEUR a cet
     // endroit mordrait plus fort que `HEAVY_ARMOR` seule ne le laisserait.
     expect(zones.armorReductionAt(100, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
     expect(zones.armorReductionAt(200, 0, 0)).toBe(SUPRACONDUCTION_ARMOR_REDUCTION);
@@ -4159,18 +4010,12 @@ describe('applyReactions — Arc caustique laisse un champ corrosif a chaque sau
   });
 
   it('exclut l ennemi qui declenche : il ne saute pas sur lui-meme malgre la distance nulle', () => {
-    // ⚠️ **`cible` a 100 px, pas moins** : au-dela de `ZONE_RADIUS` (70) du
-    // point d'origine, pour que le champ corrosif que `postZone` y pose
-    // (le declencheur lui-meme) n'ampute pas l'armure de `cible` avant que
-    // son propre coup ne soit compte — meme piege que celui documente pour
-    // Embrasement/Eclat de gel, ferme ici par la geometrie plutot que par le
-    // calcul.
     const horde = new Horde(10);
     const declencheur = addOne(horde, 1, 500, 500, LOURD);
-    // ⚠️ **Hors de TOUT champ, pas seulement du generique** (etape 8) : le
-    // commentaire ci-dessus choisissait 100 px parce que `ZONE_RADIUS` valait
-    // 70 ; le champ le plus large en vaut desormais 102, et `cible` s'y
-    // retrouvait, son armure rabotee avant que son propre coup ne soit compte.
+    // ⚠️ **Hors de TOUT champ** : le champ corrosif que `postZone` pose au
+    // point du declencheur ne doit pas raboter l'armure de `cible` avant que
+    // son propre coup ne soit compte — meme piege qu'Embrasement/Eclat de gel,
+    // ferme ici par la geometrie plutot que par le calcul.
     const ecart = RAYON_HORS_TOUT;
     const cible = addOne(horde, 2, 500 + ecart, 500, LOURD);
     horde.hp[horde.slotOf(declencheur)] = 1000;
@@ -4187,8 +4032,8 @@ describe('applyReactions — Arc caustique laisse un champ corrosif a chaque sau
 });
 
 /**
- * Paratonnerre (Foudre + Vif-argent, tache 5 de l'etape 5c) : `chainTargets`
- * (tache 2) INCHANGEE, `exclude` pre-rempli des ennemis NON LIES au
+ * Paratonnerre (Foudre + Vif-argent) : `chainTargets`
+ * INCHANGEE, `exclude` pre-rempli des ennemis NON LIES au
  * declencheur — exactement la forme que Court-circuit a prise pour les
  * non-poisses (`chainPreferringLinked`, `back/src/combat.ts`).
  */
@@ -4209,25 +4054,18 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
 
   /**
    * ⚠️ **SAUTE PAR-DESSUS un voisin NON LIE, plus proche, pour atteindre un
-   * lie plus loin — le coeur de la preference. Geometrie recalibree a la
-   * revue post-tache 9** : `postZone` pose desormais TOUJOURS, pour CE
-   * declencheur, une zone a son propre point d'impact (D, ici (0,0)) qui
-   * LIE elle-meme (voir le docbloc du describe de Vaporisation) — tout point
-   * a moins de `ZONE_RADIUS` (70) de D serait donc lie par cette seule zone,
-   * quelle que soit la zone explicite du decor. N doit donc rester AU-DELA
-   * de `ZONE_RADIUS` de D pour echapper a cette zone-la EN PLUS de celle du
-   * decor.
+   * lie plus loin — le coeur de la preference.** `postZone` pose TOUJOURS,
+   * pour CE declencheur, une zone a son propre point d'impact qui LIE elle-meme
+   * (voir le docbloc du describe de Vaporisation) : N doit donc rester AU-DELA
+   * de `ZONE_RADIUS` (70) de D pour echapper a cette zone-la en plus de celle
+   * du decor.
    *
-   * D (declencheur, 0,0), L (lie, 78,0, sous `LINK_RADIUS`, 80) couverts par
-   * une zone de Vif-argent explicite centree en (39,0) (D a 39 px du centre,
-   * L a 39 px aussi, tous deux sous `ZONE_RADIUS`, 70). N (-72,0) est
-   * GEOMETRIQUEMENT plus proche de D (72 px) que L ne l'est (78 px) — une
-   * chaine ordinaire choisirait N en premier — mais N est a 72 px de D
-   * (AU-DELA de `ZONE_RADIUS`, 70 : hors de la zone du declencheur ET hors
-   * de la zone explicite, centree en (39,0), qui ne s'etend que jusqu'a
-   * -31) : aucune zone ne le couvre en meme temps que D, donc
-   * `linkedNeighbours` ne le lie jamais. `exclude` pre-rempli des non-lies
-   * rend N invisible pour `chainTargets` : L doit etre atteint, N jamais.
+   * D (declencheur, 0,0) et L (lie, 78,0, sous `LINK_RADIUS`, 80) sont couverts
+   * par une zone de Vif-argent centree en (39,0). N (-72,0) est plus proche de
+   * D (72 px) que L (78 px) — une chaine ordinaire le choisirait — mais aucune
+   * zone ne le couvre avec D, donc `linkedNeighbours` ne le lie jamais.
+   * `exclude` pre-rempli des non-lies le rend invisible pour `chainTargets` :
+   * L doit etre atteint, N jamais.
    */
   it('atteint le lie plus LOIN, ignore le non-lie plus PROCHE', () => {
     const horde = new Horde(10);
@@ -4254,14 +4092,11 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
   });
 
   /**
-   * ⚠️ **La cible chainee occupe le creneau 0 — mesure par mutation, pas
-   * suppose.** Meme piege que celui ferme pour Vaporisation : dans le test
-   * precedent, le declencheur est ajoute EN PREMIER (creneau 0), donc la
-   * cible chainee n'y occupe jamais ce creneau, et une mutation qui
-   * relacherait `slot < 0` en `slot <= 0` y restait invisible (mesuree).
-   * Ici, L (la cible liee) est ajoute EN PREMIER et D (le declencheur) EN
-   * SECOND : si la garde devenait `slot <= 0`, L serait ecarte a tort et
-   * personne ne prendrait de degat.
+   * ⚠️ **La cible chainee occupe le creneau 0.** Meme piege que pour
+   * Vaporisation : dans le test precedent, le declencheur est au creneau 0,
+   * et une garde relachee de `slot < 0` en `slot <= 0` y resterait
+   * invisible. Ici, L (la cible liee) est au creneau 0 : avec `slot <= 0`, L
+   * serait ecarte a tort et personne ne prendrait de degat.
    */
   it('touche la cible chainee meme quand elle occupe le creneau 0 de la horde', () => {
     const horde = new Horde(10);
@@ -4321,8 +4156,7 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
   });
 
   /**
-   * ⚠️ **Le point de revue n°3 du brief — geometrie recalibree a la revue
-   * post-tache 9.** `postZone` pose desormais, pour CE declencheur, une
+   * ⚠️ **Aucun ennemi lie.** `postZone` pose, pour CE declencheur, une
    * zone a son propre point d'impact (d, ici (0,0)) qui LIE elle-meme :
    * tout voisin a moins de `ZONE_RADIUS` (70) de d serait donc lie par
    * cette seule zone, meme sans AUCUNE zone posee ailleurs. Pour qu'aucun
@@ -4332,8 +4166,7 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
    * `chainTargets` doit rendre une liste VIDE — sans boucler ni lever. La
    * horde est REELLEMENT peuplee (garde de non-vacuite ci-dessous) : sans
    * elle, « personne ne prend de degat » passerait aussi bien parce qu'il
-   * n'y a personne a toucher — le « test qui renvoie zero » que le brief
-   * nomme explicitement.
+   * n'y a personne a toucher.
    */
   it('aucun ennemi lie : ne touche personne, ne boucle pas, ne leve pas — horde REELLEMENT peuplee', () => {
     const horde = new Horde(10);
@@ -4392,10 +4225,10 @@ describe('applyReactions — Paratonnerre : la chaine PREFERE les ennemis LIES (
 });
 
 /**
- * Amalgame (Poix + Vif-argent, tache 7 de l'etape 5c) : « les degats subis
- * par un ennemi lie frappent aussi ses voisins » — voir `shareAmalgameDamage`
- * (`back/src/combat.ts`). La SEULE reaction structurellement neuve de
- * l'etape : ni balayage par rayon (Vaporisation), ni chaine (Paratonnerre) —
+ * Amalgame (Poix + Vif-argent) : « les degats subis par un ennemi lie
+ * frappent aussi ses voisins » — voir `shareAmalgameDamage`
+ * (`back/src/combat.ts`). Ni balayage par rayon (Vaporisation), ni chaine
+ * (Paratonnerre) —
  * un appel DIRECT a `appliquerDegats` par voisin `linkedNeighbours` trouve,
  * UN SEUL niveau, jamais une cascade.
  */
@@ -4422,14 +4255,13 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
    * jamais dans aucune zone, jamais lie a personne — le temoin « personne ne
    * bouge sans raison ».
    *
-   * ⚠️ **`perte` inclut `zoneDamageAmp` — MESURE, pas suppose.** `postZone`
+   * ⚠️ **`perte` inclut `zoneDamageAmp`.** `postZone`
    * pose la zone d'Amalgame EXACTEMENT a la position d'A (le declencheur) —
    * A se tient donc TOUJOURS dans sa propre zone (distance nulle), qui porte
    * le plancher `elementOf(ELEMENT.POIX).damageAmp` (voir `REACTION_DEFS`
    * dans `shared/reactions.ts`). B, a 50 px, tombe aussi DANS cette meme
    * zone (rayon `ZONE_RADIUS`, 70) : les deux subissent donc le MEME degat
-   * amplifie, pas seulement le degat brut de la reaction — un premier jet de
-   * ce test l'ignorait et rougissait (voir le rapport de la tache 7).
+   * amplifie, pas seulement le degat brut de la reaction.
    */
   it('frappe le declencheur ET son voisin LIE, le MEME degat chacun — epargne le non lie', () => {
     expect(50).toBeLessThan(LINK_RADIUS);
@@ -4456,8 +4288,7 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
 
   /**
    * ⚠️ **LE test qui separe le partage par LIAISON d'un balayage GENERIQUE
-   * par `REACTION_RADIUS` — mesure par mutation, pas suppose (voir le
-   * rapport de la tache 7).** `LINK_RADIUS` (80) est STRICTEMENT sous
+   * par `REACTION_RADIUS`.** `LINK_RADIUS` (80) est STRICTEMENT sous
    * `REACTION_RADIUS` (90) : tout ennemi lie a A tombe donc, par
    * construction, TOUJOURS a l'interieur d'un rayon de 90 centre sur A —
    * aucun des tests precedents de ce bloc ne peut donc distinguer « degat
@@ -4493,14 +4324,11 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
   });
 
   /**
-   * ⚠️ **Le voisin LIE occupe le creneau 0 — mesure par mutation, pas
-   * suppose.** Dans le test precedent, le declencheur est ajoute EN PREMIER
-   * (creneau 0) et le lie toujours APRES : `linkedSlot < 0` n'y est donc
-   * jamais exerce avec `linkedSlot === 0`, et une mutation qui le
-   * relacherait en `<= 0` y restait invisible (mesuree). Ici, B (le lie) est
-   * ajoute EN PREMIER (creneau 0) et A (le declencheur) EN SECOND : si la
-   * garde devenait `linkedSlot <= 0`, B serait ecarte a tort et ne prendrait
-   * aucun degat partage.
+   * ⚠️ **Le voisin LIE occupe le creneau 0.** Dans le test precedent, le
+   * declencheur est au creneau 0, et une garde relachee de `linkedSlot < 0`
+   * en `<= 0` y resterait invisible. Ici, B (le lie) est au creneau 0 : avec
+   * `linkedSlot <= 0`, B serait ecarte a tort et ne prendrait aucun degat
+   * partage.
    */
   it('touche le voisin LIE meme quand il occupe le creneau 0 de la horde', () => {
     const horde = new Horde(10);
@@ -4525,11 +4353,7 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
   /**
    * ⚠️ **Le champ qu'Amalgame laisse elle-meme LIE, sans AUCUNE autre
    * zone — Amalgame porte `zoneVifArgent: true` (`ReactionDef`, `shared/
-   * reactions.ts`).** L'ancien pare-feu de la tache 3
-   * (`zoneReaction(kind) !== 0` dans `linkedNeighbours`) excluait la zone
-   * que `postZone` pose a CHAQUE declenchement, au point d'impact d'A :
-   * mort en production, puisque cette zone porte TOUJOURS la reaction
-   * Amalgame, jamais une reaction nulle. B, a 30 px d'A, est sous
+   * reactions.ts`).** B, a 30 px d'A, est sous
    * `LINK_RADIUS` ET sous `ZONE_RADIUS` de cette zone-la : il est donc LIE
    * par elle seule, et partage le MEME degat amplifie qu'A.
    */
@@ -4589,8 +4413,8 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
   });
 
   /**
-   * ⚠️ **Le test qui garde l'absence de recursion — brief tache 7, etape
-   * 3.** A lie a B (zone1, centree en (30,0)), B lie a C (zone2, centree en
+   * ⚠️ **Le test qui garde l'absence de recursion.** A lie a B (zone1,
+   * centree en (30,0)), B lie a C (zone2, centree en
    * (90,0)) — mais A n'est PAS lie a C : ni la meme zone (A a 90 px du
    * centre de zone2, C a 90 px du centre de zone1, toutes deux HORS de
    * `ZONE_RADIUS`, 70) ni la meme distance (A-C, 120 px, au-dela de
@@ -4630,8 +4454,7 @@ describe('applyReactions — Amalgame partage les degats entre lies, sans cascad
 
   /**
    * ⚠️ **Meme decor que ci-dessus, ordre d'INSERTION dans la horde
-   * DIFFERENT — la troisieme forme de « decor qui masque » que le brief de
-   * la tache 7 signale specifiquement pour cette reaction.** Le test
+   * DIFFERENT.** Le test
    * precedent ajoute toujours A (le declencheur) EN PREMIER (creneau 0) ;
    * ici C est ajoute EN PREMIER, B en second, A (le declencheur) EN
    * DERNIER (creneau 2) — une garde de creneau qui supposerait le
@@ -4741,11 +4564,8 @@ describe('le neutre amplifie ce que l equipe a marque (NEUTRE_MARQUE_AMP)', () =
 });
 
 /**
- * Étape 8 — **le halo**, demande par l'auteur : *« il faut varier les types,
- * pas que des projectiles, ca peut etre un halo qui empoisonne »*.
- *
- * Ce bloc garde les trois choses que `resolveHalos` decide et que personne
- * d'autre ne decide : qui encaisse, qui est marque, et qui meurt.
+ * **Le halo.** Ce bloc garde les trois choses que `resolveHalos` decide et
+ * que personne d'autre ne decide : qui encaisse, qui est marque, et qui meurt.
  */
 describe('resolveHalos — le halo frappe autour du porteur', () => {
   function horde3(): { horde: Horde; ids: number[] } {
@@ -4836,7 +4656,7 @@ describe('resolveHalos — le halo frappe autour du porteur', () => {
 });
 
 /**
- * Étape 8 — **le faisceau**, troisieme famille apres l'anneau et le halo.
+ * **Le faisceau** : un trait qui fauche tout ce qu'il touche.
  */
 describe('resolveBeams — le trait fauche la ligne', () => {
   /** Trois corps : deux sur l'axe +x, un loin au-dessus. */
@@ -4920,7 +4740,7 @@ describe('resolveBeams — le trait fauche la ligne', () => {
 });
 
 /**
- * Étape 12 — **l'onde** : un anneau qui grandit depuis le point de tir et
+ * **L'onde** : un anneau qui grandit depuis le point de tir et
  * frappe la bande qu'il balaie a chaque tick.
  */
 describe('resolveOndes — l anneau frappe sa bande, une fois', () => {
@@ -5007,8 +4827,8 @@ describe('resolveOndes — l anneau frappe sa bande, une fois', () => {
 });
 
 /**
- * Étape 8 — **la grenade explose en fin de course**, signale en jouant : *« la
- * grenade doit exploser en fin de course meme si elle touche personne »*.
+ * **Une arme de souffle explose en fin de course**, meme si elle n'a touche
+ * personne.
  */
 describe('resolveProjectileDamage — le souffle de fin de course', () => {
   /** La pietaille lourde, choisie par ses PV comme partout ailleurs dans ce fichier. */
@@ -5042,8 +4862,8 @@ describe('resolveProjectileDamage — le souffle de fin de course', () => {
   });
 
   it('n emporte RIEN quand l arme n a pas de souffle', () => {
-    // Le temoin : seize armes sur dix-sept finissent leur course sans rien
-    // laisser, et c'est la ligne absente qui reste le cas courant.
+    // Le temoin : la plupart des armes finissent leur course sans rien
+    // laisser.
     const horde = new Horde(10);
     const p = new Projectiles(8);
     const chute = Math.round((BOMBE.projectileSpeed * BOMBE.projectileLifeTicks) / 30);
@@ -5205,13 +5025,12 @@ describe('etape 13 : Contagion (spreadMarkOnDeath)', () => {
   });
 
   /**
-   * Preuve directe du correctif C1 (revue du coordinateur) : `applyMark`,
-   * jamais une ecriture directe de `horde.mark[]`. Pose la marque vivante
-   * par le VRAI chemin (`applyMark`, attribuee a un joueur), verifie par le
-   * VRAI lecteur (`markAt`) ET que l'attribution de l'ANCIENNE marque ne
-   * survit pas a l'ecrasement — c'est celle de la marque PROPAGEE qui doit
-   * rester, pas `0` (« aucun joueur ») : voir le second correctif du
-   * coordinateur sur `markBy`, docbloc de `spreadMarkOnDeath`.
+   * `applyMark`, jamais une ecriture directe de `horde.mark[]`. Pose la
+   * marque vivante par le VRAI chemin (`applyMark`, attribuee a un joueur),
+   * verifie par le VRAI lecteur (`markAt`) ET que l'attribution de
+   * l'ANCIENNE marque ne survit pas a l'ecrasement — c'est celle de la marque
+   * PROPAGEE qui doit rester, pas `0` (« aucun joueur ») : voir le docbloc de
+   * `spreadMarkOnDeath`.
    */
   it('ecrase une marque vivante existante : le NOUVEL element ET la NOUVELLE attribution', () => {
     const horde = hordeDe([{ x: 10, y: 0 }]);
@@ -5232,10 +5051,10 @@ describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
       throw new Error('fixture : aucune identite sans butin');
     }
     orbs.spawn(entityIdOf(1, 0), 10, 20, ELEMENT.BRAISE, 3);
-    // Sans marque ni auteur explicites : NEUTRE/0 par defaut (etape 13, Contagion).
+    // Sans marque ni auteur explicites : NEUTRE/0 par defaut.
     orbs.spawn(sansButin, 30, 40);
-    // Contagion (etape 13, ex-Moisson) compte les morts, pas les orbes : celle
-    // qui ne laisse rien compte.
+    // Contagion compte les morts, pas les orbes : celle qui ne laisse rien
+    // compte.
     expect(orbs.drainFallen()).toEqual([10, 20, ELEMENT.BRAISE, 3, 30, 40, ELEMENT.NEUTRE, 0]);
     expect(orbs.drainFallen()).toEqual([]);
   });
@@ -5255,7 +5074,7 @@ describe('etape 13 : hurtPlayer, le point de passage unique', () => {
   });
 
   /**
-   * ⚠️ Vigilance 2 : une armure > 1 rendrait le facteur negatif et SOIGNERAIT.
+   * ⚠️ Une armure > 1 rendrait le facteur negatif et SOIGNERAIT.
    * Le facteur est borne a zero, ici et nulle part ailleurs.
    */
   it('une armure superieure a 1 ne soigne pas', () => {
@@ -5282,7 +5101,7 @@ describe('etape 13 : le bouclier absorbe avant les PV', () => {
     expect(p.hp).toBe(100);
   });
 
-  /** ⚠️ Vigilance 4 : la reserve tombe a 0, pas a -10, et le reste mord. */
+  /** ⚠️ La reserve tombe a 0, pas a -10, et le reste mord. */
   it('le debordement mord les PV, et la reserve ne passe pas sous zero', () => {
     const p = joueur(40);
     hurtPlayer(p, 50);

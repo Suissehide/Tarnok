@@ -29,11 +29,10 @@ import {
 } from './draft';
 
 /**
- * L'ecran de draft se teste sous jsdom, et pas « ca n'a pas plante » : ce que
- * la spec exige de lui est OBSERVABLE dans le DOM — le jeton d'un autre joueur
- * sur la carte qu'il vise (§7.2 point 3), la carte qui brule chez le perdant
- * pendant qu'elle s'illumine chez le gagnant (§4.2), et l'indice envoye au
- * serveur quand on clique.
+ * L'ecran de draft se teste sous jsdom : ce qu'on exige de lui est OBSERVABLE
+ * dans le DOM — le jeton d'un autre joueur sur la carte qu'il vise, la carte
+ * qui brule chez le perdant pendant qu'elle s'illumine chez le gagnant, et
+ * l'indice envoye au serveur quand on clique.
  */
 
 class FakeClient implements DraftSource {
@@ -63,10 +62,7 @@ class FakeClient implements DraftSource {
 
   /**
    * Simule un `DRAFT_RESULT` : `GameClient` decode un tableau NEUF a chaque
-   * message.
-   *
-   * ⚠️ **Plus de parametre `phase`.** La repioche a disparu : le message est
-   * emis EXACTEMENT une fois par draft, et il ferme toujours la negociation.
+   * message. Il est emis une fois par draft, et ferme la negociation.
    */
   result(outcomes: DraftOutcomeView[]): void {
     this.draftOutcomes = outcomes;
@@ -104,11 +100,8 @@ function harness(): Harness {
 }
 
 /**
- * Un etalage lisible : quatre cartes, toutes OUVERTES A TOUS.
- *
- * ⚠️ **Plus aucune carte n'est reservee.** `owner` a disparu avec les montees
- * de niveau : l'eligibilite se derive de l'inventaire cote serveur, et l'ecran
- * n'a plus d'etat `locked` a peindre a l'ouverture.
+ * Un etalage lisible : quatre cartes, toutes ouvertes a tous (l'eligibilite
+ * se derive de l'inventaire cote serveur).
  */
 function spread(): Card[] {
   return [
@@ -166,10 +159,8 @@ function hexOf(tint: number): string {
 
 describe('cardDetail — ce que la carte dit en plus de son nom (tache 19)', () => {
   it("nomme l'element d'une arme elementaire, a la teinte de cet element", () => {
-    // ⚠️ **Tout le sujet du §6.5.** « eventail » ne dit pas si l'arme sert la
-    // Braise ou le Givre, donc ne dit pas si elle complete ce qu'un allie vient
-    // de prendre — et c'est cette lecture-la que l'etalage existe pour
-    // permettre.
+    // « eventail » ne dit pas si l'arme sert la Braise ou le Givre, donc pas si
+    // elle complete ce qu'un allie vient de prendre.
     const braise = WEAPONS.find((w) => w.element === ELEMENT.BRAISE);
     if (!braise) {
       throw new Error('fixture : aucune arme de Braise au catalogue');
@@ -198,9 +189,8 @@ describe('cardDetail — ce que la carte dit en plus de son nom (tache 19)', () 
   });
 
   it('fait lire une arme NEUTRE comme neutre, pas comme une carte incomplete', () => {
-    // ⚠️ Cinq armes du catalogue sur neuf sont neutres et le restent. Un detail
-    // vide sur celles-la se lirait comme une information manquante, pas comme
-    // le socle voulu par le §6.3 de l'orientation.
+    // Un detail vide sur une arme neutre se lirait comme une information
+    // manquante.
     const neutre = WEAPONS.find((w) => w.element === ELEMENT.NEUTRE);
     if (!neutre) {
       throw new Error('fixture : aucune arme neutre au catalogue');
@@ -247,11 +237,9 @@ describe('cardDetail — ce que la carte dit en plus de son nom (tache 19)', () 
 
 describe('cssColor — une teinte sombre reste une couleur CSS', () => {
   it('remplit a six chiffres, meme quand la composante rouge est nulle', () => {
-    // ⚠️ **Aucune teinte du catalogue n'exerce ce remplissage** — les trois
-    // commencent par un chiffre non nul — et la mutation qui le retire
-    // survivait a toute la suite. `0x00aabb` s'ecrirait « #aabb », que le
-    // navigateur ignore : la carte perdrait sa couleur, silencieusement, le
-    // jour ou un element sombre entre au catalogue.
+    // ⚠️ **Aucune teinte du catalogue n'exerce ce remplissage** : `0x00aabb`
+    // s'ecrirait « #aabb », que le navigateur ignore, et la carte perdrait sa
+    // couleur en silence.
     expect(cssColor(0x00aabb)).toBe('#00aabb');
     expect(cssColor(0x000000)).toBe('#000000');
   });
@@ -265,21 +253,16 @@ describe('cssColor — une teinte sombre reste une couleur CSS', () => {
 
 describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
   /**
-   * ⚠️ **Les cinq genres, chacun avec SON unite.** Les magnitudes du
-   * catalogue sont heterogenes par construction : `maxHp` en points bruts (20),
-   * `speed` en pixels par seconde (15), `regen` en points PAR SECONDE (2),
-   * `fireRate` et `damage` en FRACTIONS (0,08 et 0,10). Les afficher toutes de
-   * la meme facon laisserait croire que « vitalite » vaut deux cents fois
-   * « cadence », et que « regain » rend deux points une fois pour toutes.
+   * ⚠️ **Chaque genre avec SON unite** : les magnitudes sont heterogenes
+   * (points bruts, pixels par seconde, points par seconde, fractions). Voir
+   * `UNITES` dans `draft.ts`.
    */
   it.each([
     ['maxHp', ' PV max'],
     ['speed', ' px/s'],
     ['damage', ' % dégâts'],
     ['fireRate', ' % recharge'],
-    // ⚠️ **La seule unite de DEBIT du catalogue** (etape 6a, tache 17) :
-    // « regain » rend des points de vie par SECONDE, pas une fois pour toutes.
-    // L'ecrire « +2 PV » en ferait un doublon de « vitalite ».
+    // ⚠️ La seule unite de DEBIT : « regain » rend des PV par SECONDE.
     ['regen', ' PV/s'],
   ] as const)('finit %s par son unite', (kind, unite) => {
     const passive = PASSIVES.find((p) => p.kind === kind);
@@ -290,10 +273,8 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
   });
 
   it('lit la magnitude du CATALOGUE : deux passifs du meme genre ne disent pas la meme chose', () => {
-    // ⚠️ **C'est ce qui tue « le nombre est ecrit en dur ».** « puissance »
-    // (0,10) et « acier » (0,06) sont tous deux du genre `damage` : leur unite
-    // est la meme, leur valeur non. Un libelle constant passerait tous les
-    // tests d'unite ci-dessus.
+    // ⚠️ Deux passifs du meme genre, de valeurs differentes : un libelle
+    // constant passerait tous les tests d'unite ci-dessus.
     const memeGenre = PASSIVES.filter((p) => p.kind === 'damage');
     expect(memeGenre.length).toBeGreaterThan(1);
     expect(new Set(memeGenre.map((p) => p.magnitude)).size).toBe(memeGenre.length);
@@ -302,9 +283,8 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
   });
 
   it('dit le SENS du bonus : la cadence RETIRE de la recharge, tout le reste ajoute', () => {
-    // `cooldownWithBonus` retire une fraction de la recharge — l'ecrire « +8 % »
-    // dirait le contraire de ce que le nombre fait. Les cartes de REGLE (etape
-    // 13) n'ont rien a mesurer (magnitude nulle) : pas de signe a verifier.
+    // `cooldownWithBonus` retire une fraction de la recharge — « +8 % » dirait
+    // le contraire. Les cartes de REGLE (magnitude nulle) n'ont pas de signe.
     for (const p of PASSIVES) {
       if (p.magnitude === 0) {
         continue;
@@ -333,8 +313,7 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
 
   it('etape 13 : une magnitude nulle (carte de REGLE) ne s affiche pas', () => {
     // Contagion et Transcendance n'ont rien a chiffrer : leur `kind` est
-    // decoratif (voir le docbloc de `Passive.rule`). Les afficher rendrait
-    // « +0 zone, toutes armes », qui se lit comme un bonus mesure et ment.
+    // decoratif (voir `Passive.rule`).
     const contagion = PASSIVES.find((p) => p.name === 'contagion');
     if (!contagion) {
       throw new Error('fixture');
@@ -407,10 +386,8 @@ describe("DraftScreen — l'etalage", () => {
   });
 
   /**
-   * ⚠️ **Tache 19 : c'est ici que meurt la mutation « le detail n'est pas
-   * attache ».** `cardDetail` est gardee de son cote ; le fait de l'appeler et
-   * d'accrocher son resultat a la carte ne l'est que par cette assertion —
-   * c'est la distinction qui a coute trois etapes a ce depot.
+   * ⚠️ `cardDetail` est gardee de son cote ; qu'elle soit appelee et son
+   * resultat accroche a la carte ne l'est que par ce test.
    */
   it("porte l'element des armes et la valeur des passifs, a l'ecran", () => {
     h.client.draftCards = spread();
@@ -425,8 +402,7 @@ describe("DraftScreen — l'etalage", () => {
   });
 
   it("teinte le detail d'une arme a la couleur de son element, et laisse un passif sans teinte", () => {
-    // La teinte est ce qui fait le lien entre la carte et ce qu'on verra au sol
-    // en tirant : c'est la meme que celle de l'anneau de marque et de la zone.
+    // La meme teinte que l'anneau de marque et la zone au sol.
     h.client.draftCards = [
       { nature: CARD.WEAPON, refId: 1 },
       { nature: CARD.PASSIVE, refId: 1 },
@@ -554,11 +530,9 @@ describe('DraftScreen — le geste (§4.1 : poser un jeton EST la selection)', (
   });
 
   it('envoie l indice d une carte qu un AUTRE vise deja : c est ca, la negociation', () => {
-    // ⚠️ **Aucune carte ne se verrouille plus.** Le §7.2 point 3 veut qu'on
-    // puisse poser son jeton sur la carte que quelqu'un d'autre convoite —
-    // sans ca il n'y a pas de negociation, seulement une course au clic. Un
-    // ecran qui desactiverait la carte deja visee rendrait tout conflit
-    // impossible depuis l'interface, quoi que le serveur accepte.
+    // ⚠️ **Aucune carte ne se verrouille** : poser son jeton sur la carte
+    // qu'un autre convoite, c'est la negociation. La desactiver rendrait tout
+    // conflit impossible depuis l'interface.
     h.client.intents([[3, 2]]);
     h.screen.update();
     expect(tokensOn(h, 2)).toEqual(['3']);
@@ -628,13 +602,9 @@ describe('DraftScreen — la revelation (§4.2)', () => {
   });
 
   it('ne considere pas comme prise une carte qu un autre a seulement PERDUE', () => {
-    // ⚠️ **Etat que `Draft#resolve` ne produit pas aujourd'hui** : il emet
-    // toujours exactement un `WON` par carte contestee, donc un `LOST` y
-    // cotoie toujours un gagnant, et la mutation « `else` sans condition »
-    // survit a tout test de bout en bout (motif R8/R10 du registre).
-    //
-    // L'ecran, lui, est une fonction de ce qui arrive sur le fil. Ce test
-    // enonce SON contrat, pas une observation du serveur.
+    // ⚠️ **Etat que `Draft#resolve` ne produit pas aujourd'hui** (un `LOST` y
+    // cotoie toujours un `WON`). L'ecran depend du fil : ce test enonce SON
+    // contrat, pas une observation du serveur.
     h.client.result([{ playerId: 2, cardIndex: 1, outcome: OUTCOME.LOST }]);
     h.screen.update();
     expect(statesOf(h)[1]).toBe('idle');
@@ -648,14 +618,9 @@ describe('DraftScreen — la revelation (§4.2)', () => {
   });
 
   it('montre au perdant ce qu il perd ET ce qu il obtient a la place, DANS LE MEME LOT', () => {
-    // ⚠️ **Le point de bascule du modele, vu de l'ecran.** Il y avait ici
-    // DEUX `DRAFT_RESULT` : celui du conflit, puis celui de la repioche. Le
-    // perdant ne rechoisit plus — *« ca brule la carte si je l'ai pas eu et ca
-    // en illumine une autre »* — donc les deux issues arrivent ensemble, et
-    // l'ecran doit peindre les deux etats d'un seul coup.
-    //
-    // ⚠️ Un ecran qui ne regarderait que la PREMIERE issue d'un joueur
-    // s'arreterait au `LOST` et n'illuminerait rien. On exige donc les deux
+    // ⚠️ Le perdant ne rechoisit pas : ses deux issues (le `LOST` puis la
+    // carte de remplacement) arrivent dans le meme `DRAFT_RESULT`. Un ecran
+    // qui ne lirait que la PREMIERE s'arreterait au `LOST` : on exige les deux
     // etats a la fois, et le statut qui nomme la carte de remplacement.
     h.client.result([
       { playerId: 2, cardIndex: 0, outcome: OUTCOME.WON },
@@ -726,20 +691,9 @@ describe("DraftScreen — quand l'ecran s'arrete de dessiner (F2)", () => {
 
 describe('le jeton du tour precedent ne survit pas a l etalage suivant', () => {
   it('la carte reprise au niveau suivant se selectionne, elle ne se desselectionne pas', () => {
-    // ⚠️ **Defaut signale par l'auteur en jouant, mot pour mot** : « si je
-    // selectionne un passif "Passif 1" et qu'au niveau suivant il est encore
-    // la, j'ai deja mon jeton "1" dessus et je peux pas le reprendre ».
-    //
-    // Deux defauts s'y composaient. Cote serveur, `Draft` gardait ses jetons
-    // apres la fermeture et `Session#broadcast` les rediffusait a chaque tick.
-    // Cote client, `DRAFT_OPEN` ne vidait pas la `Map` des intentions. Le
-    // joueur voyait donc son jeton du tour precedent deja pose — et comme le
-    // §4.1 fait du reclic un RETRAIT, cliquer la carte qu'il voulait envoyait
-    // `NO_TOKEN` au lieu de son indice.
-    //
-    // Le cas est COURANT et pas tordu : les passifs ne sont jamais exclus de
-    // l'etalage (§3.4), donc celui qu'on vient de prendre revient au tour
-    // suivant.
+    // ⚠️ Un jeton du tour precedent encore affiche sur la meme carte ferait
+    // du clic un RETRAIT (`NO_TOKEN`) au lieu d'une pose. Cas courant : un
+    // passif pris revient souvent au tour suivant, au meme indice.
     const h = harness();
 
     // Premier tour : je pose sur la carte 1 et je la gagne.
@@ -795,7 +749,7 @@ describe('une carte que mon inventaire refuse', () => {
     const lance = cards(h)[2];
     expect(lance?.dataset.blocked).toBe('true');
     expect(lance?.disabled).toBe(true);
-    // Retour de playtest : plus de bandeau, juste la carte grisee.
+    // Pas de bandeau : juste la carte grisee.
     expect(lance?.querySelector('.draft-card__blocked')).toBeNull();
     expect(lance?.title).toContain(`Arsenal complet — ${WEAPON_SLOTS}/${WEAPON_SLOTS} armes`);
     expect(lance?.title).toContain(weaponOf(0).name);
@@ -839,9 +793,8 @@ describe('une carte que mon inventaire refuse', () => {
   });
 
   it('dit, en tete, que rien ne rentrera quand TOUTES les cartes sont bloquees', () => {
-    // ⚠️ Depuis l'etape 13, un passif n'est plus jamais refuse : seules des
-    // armes NOUVELLES, aux slots pleins, peuvent encore composer un etalage
-    // entierement bloque.
+    // Un passif n'est jamais refuse : seules des armes NOUVELLES, aux slots
+    // pleins, composent un etalage entierement bloque.
     const loadout = fullWeapons();
     const h = harness();
     h.client.loadoutOf = () => loadout;
@@ -867,10 +820,8 @@ describe('etape 10 : la rarete a l ecran', () => {
     throw new Error('fixture : aucun passif de palier');
   }
 
-  // ⚠️ **Le « ×N » suit la TABLE, plus la carte (etape 13).** Seul le rare
-  // multiplie ; epique et legendaire sont des cartes de regle, a x1, donc leur
-  // etiquette est un nom nu. Cette regle ne tient plus a l'identite de la
-  // carte : une arme legendaire s'annonce comme un passif legendaire.
+  // ⚠️ **Le « ×N » suit la TABLE, pas la carte.** Seul le rare multiplie ;
+  // epique et legendaire sont a x1, donc leur etiquette est un nom nu.
   it('rarityLabel : rien pour une commune, le ×N du rare, un nom nu pour les paliers hauts', () => {
     expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1 })).toBe('');
     expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.RARE })).toBe('Rare ×2');
@@ -930,11 +881,9 @@ describe('etape 13 : malusLabel — ce que la carte COUTE', () => {
   });
 
   /**
-   * ⚠️ **Le piege : inverser aveuglement le signe de l'unite mentirait sur
-   * Hâte funeste.** Son malus porte sur `armor`, dont l'unite dit DEJA le cout
-   * (« +50 % dégâts subis ») — l'inverser donnerait « −50 % dégâts subis »,
-   * c'est-a-dire l'exact CONTRAIRE : moins de degats subis serait un BIENFAIT,
-   * alors que cette carte en fait subir PLUS. `armor` garde donc son signe.
+   * ⚠️ **Inverser aveuglement le signe mentirait sur Hâte funeste** : l'unite
+   * de `armor` dit DEJA le cout (« +50 % dégâts subis ») ; « −50 % » dirait le
+   * contraire. `armor` garde son signe.
    */
   it('le malus d armure garde son signe : ce n est pas une perte, deja un cout', () => {
     const hateFuneste = PASSIVES.find((p) => p.name === 'hate-funeste');
@@ -965,8 +914,8 @@ describe('etape 13 : malusLabel — ce que la carte COUTE', () => {
 });
 
 /**
- * Etape 12 : la frappe ne tire pas de projectile. Ses cartes disent ce
- * qu'elles ajoutent — un eclair, une portee —, l'onde garde le mot « zone ».
+ * La frappe ne tire pas de projectile : ses cartes disent ce qu'elles
+ * ajoutent — un eclair, une portee —, l'onde garde le mot « zone ».
  */
 describe('upgradeLabel — les familles de l etape 12', () => {
   const carte = (kind: string, upgrade: number): Card => {

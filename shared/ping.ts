@@ -1,9 +1,8 @@
 import { MAP_SIZE, TICK_HZ } from './constants';
 
 /**
- * Les quatre intentions de la roue de ping (etape 9, levier 6 du §8 de
- * l'orientation). L'index EST l'identifiant sur le fil, comme partout dans
- * `shared/`.
+ * Les quatre intentions de la roue de ping. L'index EST l'identifiant sur le
+ * fil, comme partout dans `shared/`.
  */
 export const PING_INTENTS = ['viens', 'danger', 'boss', 'jePrends'] as const;
 export type PingIntent = (typeof PING_INTENTS)[number];

@@ -23,8 +23,7 @@ import {
 const CAPACITE = 128;
 
 /**
- * Étape 8 — **les chiffres de degats**, demandes par l'auteur : *« il faut
- * afficher les degats sur les monstres avec des chiffres »*.
+ * **Les chiffres de degats.**
  *
  * ⚠️ `draw` n'est atteignable que parce que `adoptAtlas` existe : `load()` cuit
  * son atlas sur un canevas 2D que l'environnement de test n'a pas. Meme
@@ -161,8 +160,7 @@ describe('DamageNumberRenderer.draw — ce que le joueur lit', () => {
   });
 
   /**
-   * ⚠️ **Le poste de cout de ce calque**, mesure comme la trainee l'a ete a la
-   * tache 12 : il est borne par le nombre de CHIFFRES vivants, jamais par la
+   * ⚠️ **Le poste de cout de ce calque** : il est borne par le nombre de CHIFFRES vivants, jamais par la
    * horde.
    */
   it('ne pose jamais plus de quatre quads par chiffre, a capacite pleine', () => {

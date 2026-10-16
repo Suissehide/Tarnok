@@ -56,12 +56,10 @@ export class SnapshotBuffer {
   /**
    * Le snapshot le plus recent, sans interpolation ni retard.
    *
-   * Rend aussi `tick` — le tick SERVEUR auquel ces positions ont ete
-   * calculees, pas celui du client. C'est ce qui manquait : un appelant qui
-   * jette `tick` et reenregistre ce contenu sous sa PROPRE cle de tick locale
-   * associe deux ticks qui n'ont aucune raison de coincider. `PlayerHistory`
-   * n'a de sens que si les deux cotes indexent sous le meme tick (§5 de la
-   * spec de l'etape 2) ; voir `GameClient#advanceHorde`.
+   * Rend aussi `tick` : le tick SERVEUR de ces positions, pas celui du client.
+   * Les reenregistrer sous un tick local associerait deux ticks sans rapport ;
+   * `PlayerHistory` exige que les deux cotes indexent sous le meme tick (voir
+   * `GameClient#advanceHorde`).
    */
   latest(): { tick: number; players: readonly PlayerSnapshot[] } | null {
     const newest = this.#samples[this.#samples.length - 1];
@@ -85,8 +83,8 @@ export class SnapshotBuffer {
     if (renderTime <= oldest.receivedAt) {
       return oldest.players.map((p) => ({ ...p }));
     }
-    // Rien de neuf n'arrive : on fige au dernier connu. Extrapoler ici
-    // inventerait des positions, et c'est le sujet de l'etape 2.
+    // Rien de neuf n'arrive : on fige au dernier connu. Extrapoler
+    // inventerait des positions.
     if (renderTime >= newest.receivedAt) {
       return newest.players.map((p) => ({ ...p }));
     }
@@ -110,19 +108,10 @@ export class SnapshotBuffer {
     // doit pas rester affiche, et un joueur qui vient d'arriver apparait a sa
     // position plutot que de glisser depuis un point qu'il n'a jamais occupe.
     //
-    // hp n'est pas interpole : c'est un compteur discret, pas une position
-    // continue. On garde celui du snapshot d'arrivee, comme l'id. (xp n'est
-    // plus ici : c'est un champ d'equipe, porte par `SnapshotMessage.xp`, pas
-    // par `PlayerSnapshot`.) aimX/aimY (tache 13) suivent la meme regle que
-    // hp : une direction quantifiee sur un octet n'a rien a gagner a etre
-    // interpolee entre deux valeurs deja discretes, et `#fireWeapons` doit de
-    // toute facon utiliser la visee du snapshot d'arrivee, pas un melange.
-    // pickupRadius (tache 7 de l'etape 7b) suit la meme regle : un rayon
-    // achete ne « transitionne » pas visuellement entre deux valeurs, et le
-    // ramassage (`DerivedOrbs#capture`) doit comparer celui que le serveur
-    // vient d'annoncer, pas un melange qui ferait rater ou mentir une capture.
-    // shield (etape 13) suit la meme regle : une reserve n'a rien a gagner a
-    // etre interpolee, c'est un compteur discret comme hp.
+    // Seuls x et y sont interpoles. hp, aimX/aimY, pickupRadius et shield sont
+    // discrets et pris au snapshot d'arrivee : `#fireWeapons` doit utiliser la
+    // visee annoncee, et `DerivedOrbs#capture` le rayon annonce, pas un
+    // melange qui ferait rater ou mentir une capture.
     return to.players.map((target) => {
       const previous = from.players.find((p) => p.id === target.id);
       if (!previous) {

@@ -1,7 +1,4 @@
-// La PREMIERE base du projet. Le §12 de la spec d'orientation a tranche la
-// pile (Prisma + PostgreSQL) des l'etape 0, et deploy/compose.yaml declare
-// deja une postgres:16-alpine avec son volume : il ne manquait que
-// l'applicatif.
+// Prisma + PostgreSQL (postgres:16-alpine, voir deploy/compose.yaml).
 generator client {
   provider = "prisma-client-js"
 }
@@ -11,17 +8,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/// Un compte anonyme. Cree sans friction a la premiere partie (§11 de
-/// l'orientation), identifie par un jeton dont seul le sha256 est stocke.
+/// Un compte anonyme, cree sans friction a la premiere partie.
 model Account {
   id        String   @id @default(uuid())
   /// sha256 du jeton, en hexadecimal. Le jeton EN CLAIR n'est jamais stocke :
   /// un dump de cette table ne donne donc aucun compte.
   tokenHash String   @unique
-  /// ⚠️ BigInt, et c'est un CALCUL, pas une precaution. GOLD_MAX vaut
-  /// 0xffffffff = 4 294 967 295 (le plein u32, borne du fil posee a l'etape
-  /// 6a), alors qu'un Int PostgreSQL plafonne a 2 147 483 647. Un Int
-  /// deborderait des la PREMIERE run au plafond, pas « a terme ».
+  /// ⚠️ BigInt, et c'est un CALCUL : GOLD_MAX (borne du fil) est le plein u32,
+  /// 4 294 967 295, alors qu'un Int PostgreSQL plafonne a 2 147 483 647. Un
+  /// Int deborderait des la premiere run au plafond.
   gold      BigInt   @default(0)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -38,8 +33,7 @@ model Purchase {
 
   account   Account  @relation(fields: [accountId], references: [id], onDelete: Cascade)
 
-  /// ⚠️ La cle composite interdit STRUCTURELLEMENT le doublon : deux onglets
-  /// qui achetent le meme article au meme instant ne peuvent pas creer deux
-  /// lignes, et c'est la base qui le garantit, pas le code applicatif.
+  /// ⚠️ La cle composite interdit STRUCTURELLEMENT le doublon : deux achats
+  /// concurrents du meme article ne creent pas deux lignes.
   @@id([accountId, itemId])
 }

@@ -46,45 +46,29 @@ describe('etape 7b tache 1 : le catalogue', () => {
   });
 
   /**
-   * Review Focus n°5 : le rayon voyage dans un `u8` depuis la tache 7. Ce test
-   * **derive** le maximum du catalogue, donc un article trop genereux ajoute
-   * plus tard fera rougir ICI au lieu de replier silencieusement sur le fil.
+   * Le rayon voyage dans un `u8`. Ce test **derive** le maximum du catalogue :
+   * un article trop genereux fait rougir ICI au lieu de replier silencieusement
+   * sur le fil.
    */
   it('le rayon de ramassage maximal tient dans un octet non signe', () => {
     expect(ORB_PICKUP_RADIUS + maxBonus('pickupRadius')).toBeLessThanOrEqual(255);
 
-    // ⚠️ **Le `toBeLessThanOrEqual` seul ne protege rien, et un simple
-    // `toBeGreaterThan(0)` non plus.** Un `maxBonus` qui sous-estime rend
-    // l'inegalite ci-dessus PLUS vraie, jamais fausse — mesure (Ronde 1) :
-    // `maxBonus` rendant `0` ou `1` au lieu de `80` passe les deux aussi bien
-    // qu'une vraie implementation. C'est exactement la classe de defaut que
-    // ce depot a deja payee une fois (`back/src/room.test.ts:1275` : un `u8`
-    // replie huit cartes de vitalite en 4 points de vie au decodage).
+    // ⚠️ **Le `toBeLessThanOrEqual` seul ne protege rien** : un `maxBonus` qui
+    // sous-estime (rend `0` ou `1`) rend l'inegalite PLUS vraie, jamais
+    // fausse. On epingle donc `maxBonus('pickupRadius')` a ce que l'article
+    // dit LUI-MEME (`levels` et `perLevel`), sans resommer `SHOP_ITEMS` (une
+    // seconde somme se tromperait avec la premiere).
     //
-    // On epingle donc `maxBonus('pickupRadius')` a ce que l'article du
-    // catalogue dit LUI-MEME — ses propres `levels` et `perLevel`, lus ici,
-    // jamais recalcules en rebouclant sur `SHOP_ITEMS` (une seconde somme se
-    // tromperait avec la premiere). Un seul article nomme : si `maxBonus`
-    // rend toujours `0`, ou `1`, ou oublie de multiplier par `levels`, cette
-    // egalite rougit.
-    //
-    // ⚠️ **Piege assume, pas un oubli : le jour ou un SECOND article de rayon
-    // rejoint le catalogue, ce test rougira**, parce que `maxBonus` sommera
-    // les deux articles alors que cette assertion n'en nomme qu'un. C'est
-    // voulu : ajouter un article de rayon est exactement le changement qui
-    // remet la marge du `u8` en danger, et son auteur doit etre force de
-    // revenir ici recalculer la marge plutot que de laisser le fil decider.
-    // Ne pas generaliser cette assertion pour la faire taire sans relire ce
-    // commentaire.
+    // ⚠️ **Piege voulu : un SECOND article de rayon fera rougir ce test**,
+    // puisque `maxBonus` sommera les deux. Ajouter un tel article remet la
+    // marge du `u8` en danger : son auteur doit revenir ici la recalculer. Ne
+    // pas generaliser cette assertion pour la faire taire.
     const aimant = SHOP_ITEMS.find((i) => i.id === 'aimant');
     if (!aimant) {
       throw new Error('article aimant introuvable');
     }
-    // ⚠️ **Pas de `?? 0` ici.** Si `perLevel` disparaissait de l'article
-    // `aimant`, l'attendu redeviendrait `0 * aimant.levels === 0` et cette
-    // egalite s'effondrerait en « zero contre zero » si `maxBonus` etait LUI
-    // AUSSI mute a rendre 0 — exactement la mutation que ce test existe pour
-    // attraper (ronde de correction 2). On leve explicitement.
+    // ⚠️ **Pas de `?? 0` ici** : sans `perLevel`, l'attendu vaudrait 0 et un
+    // `maxBonus` qui rend 0 passerait (« zero contre zero »). On leve.
     if (aimant.perLevel === undefined) {
       throw new Error('l article aimant n a pas de perLevel');
     }
@@ -93,34 +77,23 @@ describe('etape 7b tache 1 : le catalogue', () => {
 
   /**
    * ⚠️ **La clef de voute du pitch, epinglee ici parce que c'est la boutique
-   * qui pourrait la briser.**
+   * qui pourrait la briser.** Six slots d'armes feraient couvrir les QUINZE
+   * reactions a un joueur seul (C(6,2) = 15), et la premiere phrase du README
+   * tomberait.
    *
-   * Le §11 de l'orientation listait les « slots » parmi ce que l'or achete.
-   * Six slots d'armes font couvrir les QUINZE reactions a un joueur seul
-   * (C(6,2) = 15), donc la premiere phrase du README — et le livrable de
-   * l'etape 5c qui l'a rendue mesurable — tomberaient ensemble.
-   *
-   * La VRAIE garde est structurelle, pas nominale : `ShopItem.kind` est type
-   * `'weapon' | 'bonus'`, et `bonusKind` est type `BonusKind = PassiveKind |
-   * 'pickupRadius'`. Il n'existe aucun champ permettant d'encoder « vendre un
-   * slot ». Pour que ce soit meme possible, il faudrait d'abord elargir le
-   * type — et c'est CE CHANGEMENT-LA qui serait le vrai point de friction,
-   * pas une regex sur les noms. Ce test reste donc sur les CONSTANTES : que
-   * WEAPON_SLOTS ne bouge pas (et qu'elle garde son invariant meme si la
-   * boutique s'elargit).
+   * La vraie garde est structurelle : `ShopItem.kind` vaut `'weapon' |
+   * 'bonus'` et `bonusKind` est un `BonusKind`, aucun champ ne sait encoder
+   * « vendre un slot ». Ce test garde donc la constante.
    */
   it('WEAPON_SLOTS ne bouge pas', () => {
-    // ⚠️ Les passifs, eux, n'ont plus de borne depuis l'etape 13 (§2.0) : seul
-    // l'arsenal garde ce verrou.
+    // ⚠️ Les passifs n'ont pas de borne : seul l'arsenal garde ce verrou.
     expect(WEAPON_SLOTS).toBe(4);
   });
 });
 
 /**
- * `bonusesOf` est descendue ici depuis `back/src/accounts.ts` a la revue
- * finale de l'etape 7b : le miroir de prediction du client en a besoin, et une
- * seconde copie cote front aurait divergé de celle que `Room` applique. Ses
- * tests la suivent.
+ * `bonusesOf` vit dans `shared/` parce que le miroir de prediction du client
+ * doit appliquer exactement la meme somme que `Room`.
  */
 describe('les bonus d un compte, derives de ses achats', () => {
   it('bonusesOf somme les paliers, et rend zero sur une cle non achetee', () => {

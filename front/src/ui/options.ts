@@ -1,7 +1,7 @@
 import { CONTROLS, type Settings } from './settings';
 
 /**
- * L'ecran d'options (maquette 07) : un brouillon que les bascules modifient,
+ * L'ecran d'options : un brouillon que les bascules modifient,
  * et que seul « Appliquer » garde (`saveSettings`). Ce module peint ; il ne
  * garde rien lui-meme.
  */

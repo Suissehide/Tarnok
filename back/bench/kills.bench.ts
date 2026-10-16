@@ -1,40 +1,18 @@
 /**
- * Banc du rythme de mise a mort (etape 5a, tache 1) — **la porte du §3.3**.
+ * Banc du rythme de mise a mort.
  *
  * Donner des points de vie a la pietaille reduit MECANIQUEMENT le rythme de
- * mise a mort, et l'etape 3 a deja failli mourir de la : son generateur etait
- * reste calibre pour un test de charge du rendu (~37 apparitions/s contre
- * 2 morts/s) et la montee de niveau etait inatteignable avant que le joueur ne
- * meure encercle.
+ * mise a mort : si les apparitions le depassent trop, la montee de niveau
+ * devient inatteignable avant que le joueur ne meure encercle. `sim` ne tue
+ * rien ; ce banc mesure le pipeline REEL : quatre joueurs immobiles qui visent
+ * la menace la plus proche, le vrai `WaveDirector`, les vrais orbes. On compte
+ * les morts par seconde de jeu.
  *
- * ⚠️ **Aucun des quatre bancs existants ne repond a la question.** `sim` a sa
- * PROPRE horde locale et ne fait qu'avancer des positions — aucun combat ;
- * `net` ne compte que des octets ; `steering` ne regarde que la repulsion ;
- * `slots` mesure le COUT d'un tick, pas ce qu'il tue. Le plan demandait de
- * « rejouer `sim.bench.ts` et mesurer le rythme de mise a mort » : ce n'est pas
- * possible, `sim` ne tue rien. C'est le meme constat qu'a la tache 12 de
- * l'etape 4, qui avait du ecrire `slots.bench.ts` pour la meme raison.
- *
- * Ce banc mesure le pipeline REEL : quatre joueurs immobiles qui visent la
- * menace la plus proche, le vrai `WaveDirector`, la vraie arme de base, les
- * vrais orbes. On compte les morts par seconde de jeu.
- *
- * ⚠️ **DEUX DECORS depuis la tache 19, et le second existe parce que le
- * premier ne mesurait qu'UNE arme.** Le banc pretendait mesurer « le pipeline
- * reel » ; il ferme consciencieusement l'etalage a chaque montee de niveau
- * *« sinon on mesure un monde GELE »*. Mesure : **aucun etalage ne s'ouvre
- * jamais** — quatre joueurs immobiles ne ramassent pas dix orbes en 60 s
- * (colonne « drafts », qui vaut 0 partout et le dit desormais a voix haute).
- * Le banc mesurait donc la dague, et rien d'autre : faire varier la cadence des
- * huit autres armes rendait des chiffres **au bit pres identiques** a ne rien
- * changer du tout. Cinquieme occurrence du « banc qui rend zero » dans ce
- * depot.
- *
- * Le decor « dague seule » est garde tel quel : c'est lui qui porte l'historique
- * (0,49 avant la tache 16, 0,53 avec l'arme de zone, 0,41 apres la tache 18).
- * Le decor « arsenal plein » donne aux quatre joueurs `WEAPON_SLOTS` armes du
- * catalogue, comme `slots.bench.ts`, et c'est le seul des deux qui reponde a la
- * question « la cadence DU CATALOGUE ».
+ * Deux decors, parce que quatre joueurs immobiles n'ouvrent jamais d'etalage
+ * en 60 s (colonne « drafts ») : sans arme donnee d'avance, le banc ne mesure
+ * que la dague. Le decor « arsenal plein » donne `WEAPON_SLOTS` armes du
+ * catalogue a chaque joueur, comme `slots.bench.ts`, et c'est le seul qui
+ * reponde pour la cadence DU CATALOGUE.
  *
  *   npm run bench:kills -w back
  */
@@ -52,9 +30,8 @@ const DT = 1 / TICK_HZ;
  * Les deux decors mesures. `armes` est le nombre d'armes DRAFTEES donnees a
  * chaque joueur en plus de l'arme neutre, qui vit hors des slots.
  *
- * ⚠️ Les armes se prennent dans le CATALOGUE, jamais par indice recopie — meme
- * raison qu'a `slots.bench.ts` : un `refId` en dur meurt au premier changement
- * de `WEAPON_SLOTS`.
+ * ⚠️ Les armes se prennent dans le CATALOGUE, jamais par indice recopie : un
+ * `refId` en dur meurt au premier changement de `WEAPON_SLOTS`.
  */
 const DECORS = [
   { nom: 'dague seule', armes: 0 },
@@ -72,7 +49,7 @@ const GRAINES = [
 /**
  * Vise la menace la plus proche, sans bouger les pieds — le meme geste que le
  * test « un joueur passif atteint le niveau 2 » de `room.test.ts`. La visee est
- * une entree joueur depuis la tache 13 : sans elle, personne ne tire.
+ * une entree joueur : sans elle, personne ne tire.
  */
 function vise(room: Room, playerId: number, seq: number, px: number, py: number): void {
   let bestSlot = -1;
@@ -107,23 +84,18 @@ interface Mesure {
   premiereMort: number;
   /**
    * Objets au sol au pic de la fenetre mesuree, et objets qu'une reserve pleine
-   * a refuses (etape 6a, tache 15).
+   * a refuses. `OrbField` tient orbes ET pieces : le pic compte tout ce qui
+   * traine, ce que la capacite doit couvrir.
    *
-   * ⚠️ **Orbes ET pieces depuis la tache 14** : `OrbField` tient les deux, leur
-   * nature se relisant de l'identite. Le pic compte donc tout ce qui traine,
-   * ce qui est bien ce que la capacite doit couvrir.
-   *
-   * ⚠️ **C'est ce banc, et lui seul, qui dit si la CAPACITE tient.** Depuis
-   * que l'expiration a disparu, elle est la seule borne de `OrbField`, et elle
-   * est silencieuse : sans ces deux nombres ici, `Room.orbesTronquees`
-   * n'aurait aucun appelant hors de son propre test unitaire — exactement
-   * l'oubli que `zonesTronquees` a paye a l'etape 5a.
+   * ⚠️ C'est ce banc, et lui seul, qui dit si la CAPACITE tient : sans
+   * expiration, elle est la seule borne de `OrbField`, et elle tronque en
+   * silence.
    */
   orbesMax: number;
   orbesTronques: number;
   /**
    * Salves qu'une file de projectiles pleine a refusees, et pic de projectiles
-   * vivants (etape 6a, tache 19).
+   * vivants.
    *
    * ⚠️ **La cadence est le levier de premier ordre de ces deux nombres** :
    * `PROJECTILE_CAPACITY` est dimensionnee sur
@@ -136,12 +108,9 @@ interface Mesure {
   /**
    * Etalages ouverts pendant la fenetre mesuree.
    *
-   * ⚠️ **Il vaut ZERO, et c'est precisement pourquoi il est ici.** Le banc
-   * ferme les etalages pour ne pas mesurer un monde gele ; ce compteur dit si
-   * ce garde-fou a jamais servi. Tant qu'il affiche 0, aucun joueur ne monte de
-   * niveau dans la fenetre, donc AUCUNE arme draftee ni AUCUN passif n'entre
-   * dans la mesure — d'ou le decor « arsenal plein ». Un zero affiche est une
-   * mesure ; un zero tu est un banc qui ment.
+   * ⚠️ Il vaut ZERO en pratique, et c'est pourquoi il est affiche : tant qu'il
+   * vaut 0, aucune arme draftee ni aucun passif n'entre dans la mesure — d'ou
+   * le decor « arsenal plein ».
    */
   drafts: number;
 }
@@ -184,11 +153,9 @@ function unEssai(seed: number, armes: number): Mesure {
     apparitions += Math.max(0, room.horde.count - avant + lot);
     room.drainPickups();
     room.drainLevelUps();
-    // ⚠️ **Fermer l'etalage, sinon on mesure un monde GELE.** Une montee de
-    // niveau ouvre un draft qui gele le monde jusqu'a ce que tout le monde ait
-    // pose son jeton — ou jusqu'a l'echeance, 20 s plus tard. Sans ces deux
-    // lignes, la moitie de la fenetre mesuree ne tue rien du tout, et le banc
-    // repondrait a une autre question que celle posee.
+    // ⚠️ **Fermer l'etalage, sinon on mesure un monde GELE.** Un draft gele le
+    // monde jusqu'a ce que tout le monde ait pose son jeton, ou jusqu'a
+    // l'echeance, 20 s plus tard.
     for (const ouverture of room.drainDraftOpens()) {
       drafts++;
       const cartes = ouverture.cards.length;

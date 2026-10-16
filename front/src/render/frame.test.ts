@@ -18,17 +18,13 @@ import {
 import { composeFrame, type FrameClient, type FrameScreens, type FrameStage } from './frame';
 
 /**
- * Tache 9 bis : **la premiere suite du depot qui atteigne la boucle de rendu.**
- *
- * Jusqu'ici elle vivait dans `main.ts`, module qui fait `await stage.init()` au
- * niveau module — donc jamais importable en test, donc jamais mute. Sept
- * mutations y survivaient a 170 tests verts. `composeFrame` n'instancie rien :
- * elle recoit des cibles, et ce double les enregistre.
+ * **La boucle de rendu, hors de `main.ts`** (qui n'est pas importable en
+ * test). `composeFrame` n'instancie rien : elle recoit des cibles, et ce
+ * double les enregistre.
  *
  * ⚠️ **Le double enregistre les ARGUMENTS, pas seulement le fait de l'appel.**
- * Une des sept mutations ne retire aucune ligne : elle passe l'horloge murale
- * la ou `drawHorde` attend le tick de horde. Un double qui compterait les
- * appels la laisserait vivre.
+ * Passer l'horloge murale la ou le tick de horde est attendu ne retire aucune
+ * ligne : un double qui compterait les appels laisserait passer l'erreur.
  */
 
 /** Un appel de dessin tel que la scene l'a recu : son nom, et ses arguments. */
@@ -142,12 +138,11 @@ class RecordingClient implements FrameClient {
    */
   readonly hordeTick = 137;
   /**
-   * Volontairement DIFFERENT de `hordeTick` (revue finale, etape 9) : sans cet
-   * ecart, passer l'un a la place de l'autre a `drawPings` resterait
-   * indetectable — c'est exactement la confusion que la revue a trouvee.
+   * Volontairement DIFFERENT de `hordeTick` : sans cet ecart, passer l'un a
+   * la place de l'autre a `drawPings` resterait indetectable.
    */
   readonly pingClock = 55;
-  /** Le porteur (etape 11) : une position qui ne ressemble a rien d'autre du decor. */
+  /** Le porteur : une position qui ne ressemble a rien d'autre du decor. */
   readonly porteur = { x: 4321, y: 1234 };
   /**
    * Un boss reconnaissable, et surtout DISTINCT de la horde : `drawBossBar`
@@ -155,7 +150,7 @@ class RecordingClient implements FrameClient {
    */
   readonly boss: BossVitals | null = { id: 8193, hp: 4200, maxHp: 6000 };
   /**
-   * Une charge reconnaissable (etape 6a, tache 5 bis). Ses ticks encadrent
+   * Une charge reconnaissable. Ses ticks encadrent
    * `hordeTick` : le couloir est en plein chargement a l'image dessinee, donc un
    * `drawBossCharge` qui recevrait l'horloge murale a la place du tick ne
    * dessinerait rien du tout.
@@ -226,14 +221,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   });
 
   /**
-   * ⚠️ **Tache 13 : c'est ce calque qui porte desormais le piege du tick.**
-   * Il lit la MEME horde que `drawHorde`, mais au tick de simulation — celui
-   * qui fait expirer une marque. Passer `now` a la place laisserait des anneaux
-   * allumes ou eteints au hasard, et l'ecart entre `NOW` et `hordeTick` dans ce
-   * double est ce qui le rend visible.
-   */
-  /**
-   * ⚠️ **Le TICK, jamais l'horloge murale** (etape 6a, tache 5 bis) : c'est lui
+   * ⚠️ **Le TICK, jamais l'horloge murale** : c'est lui
    * qui fait monter l'opacite du couloir et qui le fait disparaitre, au meme
    * instant que le deplacement du boss qu'il annonce. `hordeTick` (137) tombe
    * dans le chargement de la charge du double ; `NOW` (5 000,5) est tres au-dela
@@ -244,17 +232,19 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(stage.argsOf('couloir-boss')).toEqual([client.bossCharge, client.hordeTick]);
   });
 
+  /**
+   * ⚠️ **Le piege du tick.** Ce calque lit la MEME horde que `drawHorde`, mais
+   * au tick de simulation — celui qui fait expirer une marque. Passer `now` a
+   * la place laisserait des anneaux allumes ou eteints au hasard.
+   */
   it('dessine les anneaux de marque, avec la horde et le TICK de horde', () => {
     const { stage, client } = compose();
     expect(stage.argsOf('marques')).toEqual([client.horde, client.hordeTick, NOW]);
   });
 
   /**
-   * ⚠️ **La horde ne recoit plus le tick depuis la tache 13** : il ne servait
-   * qu'a la teinte elementaire de son sprite, partie au sol. Un argument de
-   * plus, que personne ne lirait, serait du code qui ment — et la moitie
-   * « jamais l'horloge a la place du tick » de l'ancienne assertion vit
-   * maintenant sur `drawMarks`, juste au-dessus.
+   * ⚠️ **La horde ne recoit pas le tick** : la marque elementaire est dessinee
+   * au sol par `drawMarks`, qui porte le piege du tick.
    */
   it('dessine la horde avec la seule horloge murale', () => {
     const { stage, client } = compose();
@@ -262,9 +252,8 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   });
 
   /**
-   * ⚠️ **L'animation d'attaque ne part qu'au DASH** (etape 6a, tache 13) —
-   * *« lance pas l'animation d'attaque du boss avant qu'il dash, juste la frame
-   * 1 »*. `stopped` vaut 1 pendant TOUTE la charge : il sert au clip, jamais au
+   * ⚠️ **L'animation d'attaque ne part qu'au DASH** : avant, le clip reste
+   * sur sa premiere image. `stopped` vaut 1 pendant TOUTE la charge : il sert au clip, jamais au
    * mouvement, et il ne bouge pas. Les deux temps se distinguent donc ICI, dans
    * la boucle de rendu, au TICK de simulation — l'horloge murale ne saurait pas
    * dire ou en est le chargement.
@@ -298,13 +287,13 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   });
 
   /**
-   * ⚠️ **Les POSITIONS DE L'ETAT, pas une autre lecture** (tache 17) : c'est
+   * ⚠️ **Les POSITIONS DE L'ETAT, pas une autre lecture** : c'est
    * vers le joueur DESSINE qu'une orbe capturee vole, et `RenderState.players`
    * est le seul endroit qui le porte — la position predite pour soi, interpolee
    * pour les autres. Passer autre chose ferait arriver l'orbe sur un joueur qui
    * n'est pas a l'ecran la ou on le croit.
    *
-   * ⚠️ **Les DEUX collections** (tache 20) : les orbes au sol ET les orbes en
+   * ⚠️ **Les DEUX collections** : les orbes au sol ET les orbes en
    * vol. Elles sont separees parce que `PICKUPS` ne commande que la premiere —
    * un calque qui n'en recevrait qu'une ferait disparaitre l'orbe a la capture
    * au lieu de la faire arriver.
@@ -315,14 +304,13 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   });
 
   /**
-   * Etape 12 : le calque des ondes et des frappes passe par ICI, comme la
-   * chaine — sans ce test, retirer l'appel de `composeFrame` laisserait la
+   * Le calque des ondes et des frappes passe par ICI : sans ce test, retirer l'appel de `composeFrame` laisserait la
    * suite verte. Les deux listes ET l'horloge murale.
    */
   it('dessine les ondes et les frappes, avec l horloge murale', () => {
     const { stage, client } = compose();
     const args = stage.argsOf('ondes-frappes');
-    // L'aura de l'homoncule (etape 12) suit les joueurs DESSINES.
+    // L'aura de l'homoncule suit les joueurs DESSINES.
     expect(args).toEqual([client.ondes, client.frappes, NOW, client.guards, STATE.players]);
     expect(args?.[0]).toBe(client.ondes);
     expect(args?.[1]).toBe(client.frappes);
@@ -334,17 +322,9 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   });
 
   /**
-   * ⚠️ **Etape 5b, tache 3 : le piege de forme qui a mordu trois fois** (voir
-   * le tableau en tete de ce fichier). L'appel passe par ICI, jamais par la
-   * boucle de rendu de `main.ts` — sans ce test, retirer `stage.drawChain(...)`
-   * de `composeFrame` laisserait la suite verte, exactement comme
-   * `drawZones`/`drawReactionFlashes`/`paintSynergy` l'ont fait pendant 170
-   * tests avant la tache 9 bis.
-   *
-   * ⚠️ **Depuis le tour de correction 1, `chainFlashes` ET l'HORLOGE MURALE**
-   * — plus la horde, plus le tick de simulation. Le chemin est deja figé au
-   * moment de l'impact (`GameClient#seedChainFlash`) : ce calque n'est plus
-   * qu'un flash de plus, amorti comme `hitFlashes`/`reactionFlashes`.
+   * ⚠️ **`chainFlashes` ET l'HORLOGE MURALE**, ni la horde ni le tick : le
+   * chemin est deja fige au moment de l'impact (`GameClient#seedChainFlash`),
+   * ce calque est un flash amorti comme `hitFlashes`/`reactionFlashes`.
    */
   it('dessine la chaine de Foudre, avec ses flashs et l horloge murale', () => {
     const { stage, client } = compose();
@@ -362,7 +342,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   });
 
   /**
-   * ⚠️ **Les DEUX arguments** (etape 6a, tache 5) : la horde porte la POSITION
+   * ⚠️ **Les DEUX arguments** : la horde porte la POSITION
    * du boss, le snapshot porte ses PV, et aucune des deux ne suffit — voir
    * `BossBarRenderer.draw`. Un calque qui ne recevrait que le boss ne saurait
    * pas ou le dessiner ; un calque qui ne recevrait que la horde n'aurait
@@ -383,23 +363,16 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(screens.hud).toEqual([STATE]);
   });
 
-  /**
-   * La dette de l'etape 4, soldee ici : `draftScreen.update()` etait dans la
-   * boucle de rendu depuis 117 tests verts sans que rien ne l'appelle en test.
-   */
   it("met a jour l'etalage de cartes", () => {
     const { screens } = compose();
     expect(screens.drafts).toBe(1);
   });
 
   /**
-   * ⚠️ **La MEME dette, et c'est la quatrieme fois qu'on la paie d'avance**
-   * (etape 6a, tache 10). L'ecran du vote d'extraction aurait pu vivre dans
-   * `main.ts` a cote de son `el('portal')` : il y aurait ete invisible a toute
-   * la suite, exactement comme `draftScreen.update()` l'a ete pendant 117
-   * tests verts. Ce qui pend a ce fil-ci est le plus cher du jeu — vingt
-   * secondes pour engager tout l'or d'une run — et un appel perdu laisserait
-   * la fenetre se fermer sans que personne n'ait pu voter.
+   * ⚠️ **L'ecran du vote d'extraction passe par `composeFrame`**, pas par
+   * `main.ts` ou aucun test ne le verrait. Ce vote engage tout l'or d'une
+   * run : un appel perdu laisserait la fenetre se fermer sans que personne
+   * n'ait pu voter.
    *
    * ⚠️ **`toBe(1)`, pas `toBeGreaterThan(0)`** : appeler deux fois par image
    * reconstruirait la liste des votants deux fois par image pour rien, et ne
@@ -410,15 +383,16 @@ describe('composeFrame — chaque calque recoit son appel', () => {
     expect(screens.portals).toBe(1);
   });
 
-  /**
-   * ⚠️ **L'ordre EST le §6.6**, pas une commodite : les zones au sol sont le
-   * calque le plus bas, le flash de reaction passe devant tous les effets de
-   * monde, et les carres des joueurs (avec la camera) viennent en dernier.
-   */
   it('dessine les verbes annonces, avec le TICK de horde', () => {
     const { stage, client } = compose();
     expect(stage.argsOf('verbes')?.slice(0, 2)).toEqual([client.abilityEvents, client.hordeTick]);
   });
+
+  /**
+   * ⚠️ **L'ordre est une regle**, pas une commodite : les zones au sol sont le
+   * calque le plus bas, le flash de reaction passe devant tous les effets de
+   * monde, et les carres des joueurs (avec la camera) viennent en dernier.
+   */
 
   it('respecte la hierarchie de calques du §6.6', () => {
     const { stage } = compose();
@@ -430,7 +404,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'marques',
       'horde',
       'orbes',
-      // Etape 12 : sous les projectiles (§5), une nappe au sol.
+      // Sous les projectiles : une nappe au sol.
       'ondes-frappes',
       'projectiles',
       'chaine',
@@ -438,10 +412,10 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'flashs-reaction',
       'barre-boss',
       // Les chiffres se LISENT : rien ne doit les masquer, donc ils passent
-      // apres tous les effets de monde (etape 8).
+      // apres tous les effets de monde.
       'chiffres',
       'joueurs',
-      // Les pings (etape 9) : APRES `joueurs`, qui recentre la camera — sinon
+      // Les pings : APRES `joueurs`, qui recentre la camera — sinon
       // les fleches de bord auraient une image de retard sur le cadrage.
       'pings',
       // La secousse ferme la marche : elle deplace ce que `joueurs` vient de
@@ -457,8 +431,8 @@ describe('composeFrame — chaque calque recoit son appel', () => {
 
   /**
    * ⚠️ **Les pings recoivent la carte du CLIENT, les joueurs DESSINES
-   * (`state.players`) et `pingClock` — PAS `hordeTick`** (revue finale, etape
-   * 9) — jamais `now` pour decider qui vit. `hordeTick` avance a CHAQUE pas
+   * (`state.players`) et `pingClock` — PAS `hordeTick`**, jamais `now` pour
+   * decider qui vit. `hordeTick` avance a CHAQUE pas
    * fixe, gel ou pas (seul `#movementScale` ralentit le mouvement) ; c'est
    * `pingClock` qui n'avance pas pendant le gel de l'etalage, et qui garde
    * donc un ping affiche pendant que l'equipe choisit ses cartes — voir

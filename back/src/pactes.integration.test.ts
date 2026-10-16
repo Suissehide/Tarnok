@@ -30,7 +30,7 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * Le livrable de l'etape 13 : **sur vraies sockets, un emplacement legendaire
+ * **Sur vraies sockets, un emplacement legendaire
  * ne propose que des cartes de regle, et les deux clients du meme salon
  * voient le meme etalage ; Transcendance ramene les PV max a 1 des deux
  * cotes (salon arbitre ET miroir decode par le client) sans qu'un octet de
@@ -39,7 +39,7 @@ import { buildServer } from './server';
  * vide ; et Fournaise baisse les PV max sans achever un joueur deja blesse.**
  *
  * ⚠️ **La rarete est FORCEE par `vi.mock`, pas par un crochet de production**
- * — meme motif que `rarete.integration.test.ts` (etape 10). Vitest moque par
+ * — meme motif que `rarete.integration.test.ts`. Vitest moque par
  * chemin RESOLU : `@shared/rarity` ici et `./rarity` dans `shared/cards.ts`
  * designent le meme fichier, donc le `drawSpread` du salon tire LEGENDAIRE a
  * chaque emplacement. Le premier test le VERIFIE sur le fil avant tout le
@@ -66,9 +66,8 @@ interface Client {
   ws: WebSocket;
   playerId: number;
   /**
-   * Tout ce qui est arrive sur CETTE socket, snapshots compris —
-   * contrairement a `rarete.integration.test.ts` : le point 2 du livrable lit
-   * le `shield` d'un `SNAPSHOT` decode, pas seulement les messages de draft.
+   * Tout ce qui est arrive sur CETTE socket, snapshots compris : le test de
+   * Transcendance lit le `shield` d'un `SNAPSHOT` decode.
    */
   received: Message[];
   /** La taille BRUTE de chaque `SNAPSHOT` recu, en octets, dans le MEME ordre que les `SnapshotMessage` de `received`. */
@@ -113,7 +112,7 @@ async function waitFor<T>(probe: () => T | null, what: string, timeoutMs: number
   }
 }
 
-/** Poignee de main complete : connexion, `HELLO`, `WELCOME` — meme motif que `rarete.integration.test.ts`. */
+/** Poignee de main complete : connexion, `HELLO`, `WELCOME`. */
 async function connect(code: string): Promise<Client> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${code}`);
   ws.binaryType = 'arraybuffer';
@@ -160,8 +159,7 @@ function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): void 
 
 /**
  * Un anneau de monstres renouvele, et la visee sur le plus proche, PAR LA
- * SOCKET — meme motif que `rarete.integration.test.ts` : c'est ce qui fait
- * monter l'equipe d'un niveau sans tricher sur le chemin reseau.
+ * SOCKET : l'equipe monte d'un niveau sans tricher sur le chemin reseau.
  */
 function startCombatDriver(room: Room, pos: { x: number; y: number }, client: Client): () => void {
   let waveId = 9000;
@@ -211,7 +209,7 @@ function startCombatDriver(room: Room, pos: { x: number; y: number }, client: Cl
   };
 }
 
-/** Le premier `SNAPSHOT` qui porte CE joueur — generalise `firstSnapshot` de `rarete.integration.test.ts` au cas a plusieurs clients. */
+/** Le premier `SNAPSHOT` qui porte CE joueur. */
 function firstSnapshotOf(client: Client): Promise<SnapshotMessage> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => {
@@ -237,10 +235,8 @@ function firstSnapshotOf(client: Client): Promise<SnapshotMessage> {
  * Connecte `joueurs` clients au MEME salon et fait monter l'EQUIPE d'un
  * niveau — assez pour declencher UN `DRAFT_OPEN`, diffuse a tout le monde.
  *
- * ⚠️ **Un seul des clients combat.** L'experience est une donnee d'EQUIPE
- * (§5 de la spec de l'etape 4) : le `DRAFT_OPEN` qui en resulte atteint tout
- * le monde, meneur compris, et c'est exactement ce que le point 1 du livrable
- * verifie (« les deux clients voient le meme etalage »).
+ * ⚠️ **Un seul des clients combat.** L'experience est une donnee d'EQUIPE :
+ * le `DRAFT_OPEN` qui en resulte atteint tout le monde, meneur compris.
  */
 async function rejoindreEtMonterDUnNiveau(
   joueurs: number,
@@ -291,12 +287,10 @@ async function rejoindreEtMonterDUnNiveau(
  * joueur deja blesse, pour prouver qu'un malus de PV max ne l'acheve pas).
  *
  * ⚠️ **Transcendance seulement : attend le bouclier PLEIN avant de rendre la
- * main.** `Room#grantCard` « ouvre la reserve, ne la remplit pas » (voir son
- * docbloc) : `shield` reste a 0 jusqu'a `SHIELD_CALM_TICKS` sans degat puis
- * `SHIELD_REGEN_PER_SEC` jusqu'au plafond. Un test qui frapperait tout de
- * suite ne prouverait rien sur l'absorption — l'attente se fait sur LE FIL
- * (le dernier `SNAPSHOT` recu par le client), pas sur l'etat interne du
- * salon : c'est la seule maniere de rester fidele a « sur vraies sockets ».
+ * main.** `Room#grantCard` ouvre la reserve sans la remplir : `shield` reste
+ * a 0 jusqu'a `SHIELD_CALM_TICKS` sans degat puis `SHIELD_REGEN_PER_SEC`
+ * jusqu'au plafond. Un test qui frapperait tout de suite ne prouverait rien
+ * sur l'absorption.
  */
 async function prendreLaCarte(
   nomCarte: string,
@@ -330,9 +324,8 @@ async function prendreLaCarte(
     // reserve atteinte, sans jamais le depasser ; le `u8` du fil, lui,
     // ARRONDIT (`Math.round` dans `encodeSnapshot`) et peut annoncer « plein »
     // un cran flottant trop tot (59,93 arrondi affiche deja 60). Guetter le
-    // fil directement ferait sortir cette attente avant que la reserve ne
-    // soit VRAIMENT pleine cote salon — exactement le defaut observe en
-    // ecrivant ce test.
+    // fil ferait sortir cette attente avant que la reserve ne soit VRAIMENT
+    // pleine cote salon.
     await waitFor(
       () => (room.shieldOf(a.playerId) >= SHIELD_POOL ? true : null),
       'bouclier plein',
@@ -383,13 +376,10 @@ describe('etape 13 : le livrable, sur vraies sockets', () => {
     expect(ouvertureB).toEqual(ouvertureA);
 
     // ⚠️ `wanted = joueurs + SPREAD_BONUS` (ici 2 + 3 = 5) depasse le
-    // catalogue legendaire (3 cartes, etape 13) : la "descente de palier"
-    // documentee dans `shared/cards.ts` (`drawSpread`) sert alors les
-    // emplacements restants en EPIQUE plutot que de rendre un etalage trop
-    // court. Les deux paliers sont des cartes de REGLE (`shared/rarity.ts`) :
-    // c'est cette propriete-la que le livrable doit montrer, pas une
-    // rarete LEGENDAIRE partout — impossible dans ce salon des que
-    // `wanted` depasse 3.
+    // catalogue legendaire (3 cartes) : la "descente de palier" de `drawSpread`
+    // (`shared/cards.ts`) sert alors les emplacements restants en EPIQUE. Les
+    // deux paliers sont des cartes de REGLE (`shared/rarity.ts`) : c'est cette
+    // propriete-la qui est verifiee, pas une rarete LEGENDAIRE partout.
     for (const carte of ouvertureA?.cards ?? []) {
       expect([RARITY.EPIQUE, RARITY.LEGENDAIRE]).toContain(carte.rarity);
       expect(carte.nature).toBe(CARD.PASSIVE);
@@ -414,10 +404,9 @@ describe('etape 13 : le livrable, sur vraies sockets', () => {
     expect(maxHpOf(miroir, 0)).toBe(TRANSCENDANCE_MAX_HP);
 
     // ---- 3. Le bouclier plein, et RIEN de plus que les 11 octets --------
-    // (`SNAPSHOT_PLAYER_BYTES`, etape 13, tache 5) attendus par joueur :
-    // 22 (en-tete) + 11 x 1 joueur = 33, NU — jamais recalcule avec
-    // `SNAPSHOT_PLAYER_BYTES` lui-meme (meme piege documente dans
-    // `rarete.integration.test.ts`).
+    // (`SNAPSHOT_PLAYER_BYTES`) attendus par joueur : 22 (en-tete) + 11 x 1
+    // joueur = 33, NU — jamais recalcule avec `SNAPSHOT_PLAYER_BYTES`, qui
+    // passerait aussi si la constante mentait.
     const dernier = [...messages]
       .reverse()
       .find((m): m is SnapshotMessage => m.type === MSG.SNAPSHOT);

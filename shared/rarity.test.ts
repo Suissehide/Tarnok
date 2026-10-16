@@ -12,12 +12,6 @@ import {
 } from './rarity';
 
 describe('etape 10 : la rarete', () => {
-  /**
-   * ⚠️ **Refait a l'etape 13** : la table est passee de trois a quatre
-   * paliers (epique s'intercale), les valeurs exactes ci-dessous ont change en
-   * consequence — voir le describe `etape 13` plus bas pour le detail des
-   * poids et multiplicateurs.
-   */
   it('quatre raretes, dans l ordre du fil, x1 x2 x1 x1, a 72 / 20 / 6 / 2', () => {
     expect(RARITY).toEqual({ COMMUNE: 0, RARE: 1, EPIQUE: 2, LEGENDAIRE: 3 });
     expect(RARITY_MULTIPLIERS).toEqual([1, 2, 1, 1]);
@@ -32,7 +26,6 @@ describe('etape 10 : la rarete', () => {
     expect(rollRarity(() => 0.999_999)).toBe(RARITY.LEGENDAIRE);
   });
 
-  /** ⚠️ Poids refaits a l'etape 13 (72 / 20 / 6 / 2) : voir plus bas. */
   it('suit les poids sur un grand nombre de tirages', () => {
     const rng = makeRandom(0x10_0a_0001);
     const vus = [0, 0, 0, 0];
@@ -47,11 +40,7 @@ describe('etape 10 : la rarete', () => {
     expect((vus[2] ?? 0) / N).toBeLessThan(0.08);
   });
 
-  /**
-   * ⚠️ **3 n'est plus hors table depuis l'etape 13** (c'est LEGENDAIRE) : le
-   * sonde hors-table passe a 200 pour rester vraiment hors table, et le
-   * multiplicateur de LEGENDAIRE tombe a 1 (etait 3).
-   */
+  /** ⚠️ 3 n'est pas hors table (c'est LEGENDAIRE) : la sonde hors table est 200. */
   it('une rarete absente ou hors table se lit commune, x1', () => {
     expect(normalizeRarity(undefined)).toBe(RARITY.COMMUNE);
     expect(normalizeRarity(200)).toBe(RARITY.COMMUNE);
@@ -70,11 +59,9 @@ describe('etape 11 : le plancher de rarete', () => {
   });
 
   /**
-   * ⚠️ **Suite REFAITE a l'etape 13** (graine 0x110a0001, 40 tirages) : les
-   * poids sont passes de {82, 15, 3} a {72, 20, 6, 2}, donc la suite tiree a
-   * change — ce n'est PAS un oubli. Ce test garde seulement que le tirage
-   * reste reproductible (meme graine, meme rng, meme code -> meme suite),
-   * pas que cette suite particuliere est intemporelle.
+   * ⚠️ Ce test garde que le tirage reste reproductible (meme graine, meme rng,
+   * meme code -> meme suite), pas que cette suite particuliere est
+   * intemporelle : changer les poids change la suite, et il faut la relever.
    */
   it('sans plancher, le rng donne une suite reproductible (relevee a l etape 13)', () => {
     const r = makeRandom(0x11_0a_0001);
@@ -85,11 +72,9 @@ describe('etape 11 : le plancher de rarete', () => {
   });
 
   /**
-   * ⚠️ **Frontieres refaites a l'etape 13** : au plancher rare, le tirage
-   * renormalise desormais sur TROIS paliers (rare/epique/legendaire =
-   * 20/6/2 = 28), pas deux comme avant l'epique. Frontieres : rare en
-   * dessous de 20/28 ≈ 0,7143, epique en dessous de 26/28 ≈ 0,9286,
-   * legendaire au-dela.
+   * Au plancher rare, le tirage renormalise sur TROIS paliers
+   * (rare/epique/legendaire = 20/6/2 = 28). Frontieres : rare en dessous de
+   * 20/28 ≈ 0,7143, epique en dessous de 26/28 ≈ 0,9286, legendaire au-dela.
    */
   it('au plancher rare, sur un rng scripte : rare, puis epique, puis legendaire', () => {
     expect(rollRarity(() => 0, RARITY.RARE)).toBe(RARITY.RARE);
@@ -99,7 +84,6 @@ describe('etape 11 : le plancher de rarete', () => {
     expect(rollRarity(() => 0.999_999, RARITY.RARE)).toBe(RARITY.LEGENDAIRE);
   });
 
-  /** ⚠️ Refait a l'etape 13 : le plancher renormalise desormais sur {20, 6, 2} = 28. */
   it('au plancher rare, jamais commune, epique et legendaire visibles', () => {
     const rng = makeRandom(0x11_0a_0002);
     const vus = [0, 0, 0, 0];
@@ -123,7 +107,7 @@ describe('etape 13 : quatre paliers', () => {
 
   /**
    * ⚠️ Les deux paliers hauts valent 1 : une carte de REGLE ne se multiplie
-   * jamais. C'est la table qui le dit, plus un cas particulier dans `cards.ts`.
+   * jamais. C'est la table qui le dit, pas un cas particulier dans `cards.ts`.
    */
   it('seule la rare multiplie', () => {
     expect(RARITY_MULTIPLIERS).toEqual([1, 2, 1, 1]);
@@ -156,7 +140,7 @@ describe('etape 13 : quatre paliers', () => {
     expect((vus[RARITY.LEGENDAIRE] ?? 0) / N).toBeCloseTo(0.02, 2);
   });
 
-  /** Le plancher du coffre (etape 11) renormalise sur {20, 6, 2} = 28. */
+  /** Le plancher du coffre renormalise sur {20, 6, 2} = 28. */
   it('au plancher du coffre : 71 % rare, 21 % epique, 7 % legendaire', () => {
     const rng = makeRandom(0x13_0a_0002);
     const vus = [0, 0, 0, 0];

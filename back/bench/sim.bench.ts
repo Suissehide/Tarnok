@@ -6,8 +6,8 @@
  * toutes les entites.
  *
  * Verdict : le plus grand N dont le p95 reste sous **11 ms**, soit un tiers du
- * budget de 33 ms d'un tick a 30 Hz. Les deux autres tiers sont pour tout ce que
- * l'etape 0 ne fait pas encore — collisions, degats, reseau.
+ * budget de 33 ms d'un tick a 30 Hz. Les deux autres tiers restent pour les
+ * collisions, les degats et le reseau, que ce banc ne simule pas.
  *
  *   npm run bench:sim -w back
  */
@@ -38,11 +38,9 @@ interface Config {
 }
 
 /**
- * La horde en tableaux typés, jamais en objets (§4.4).
- *
- * A 1 500 entites, un objet par ennemi avec ses champs coute plus cher en
- * indirections et en pression memoire que tout le reste du pas reuni — et c'est
- * exactement le poste que Riot a du batcher.
+ * La horde en tableaux typés, jamais en objets : a 1 500 entites, un objet par
+ * ennemi coute plus cher en indirections et en pression memoire que tout le
+ * reste du pas reuni.
  */
 class Horde {
   readonly x: Float32Array;

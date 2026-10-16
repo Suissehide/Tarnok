@@ -8,12 +8,10 @@ RUN npm ci
 
 COPY . .
 
-# ⚠️ Piege connu, herite d'InkPoint (§5 du plan) : Vite **inline** ces valeurs
-# au moment du build, pas au demarrage du conteneur. Les passer en variables
-# d'environnement du conteneur ne sert a rien — le bundle livre retomberait sur
-# localhost, et sur un site en HTTPS chaque connexion serait bloquee en contenu
-# mixte. Le joueur lirait « connexion impossible » pour une erreur de
-# deploiement. Verifier le bundle produit, pas seulement que la CI est verte.
+# ⚠️ Vite **inline** ces valeurs au build, pas au demarrage du conteneur. En
+# variables d'environnement du conteneur, elles ne servent a rien : le bundle
+# retomberait sur localhost, bloque en contenu mixte sur un site HTTPS, et le
+# joueur lirait « connexion impossible ».
 ARG VITE_API_URL
 ARG VITE_WS_URL
 RUN npm run build -w front

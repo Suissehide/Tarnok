@@ -1,43 +1,31 @@
 /**
- * Banc des quatre elements (etape 5b, tache 10) — **les trois mesures que les
- * taches precedentes n'ont pas pu faire, faute d'armes portant Foudre et
- * Poix.** La tache 9 vient de les poser ; ce banc les exploite.
+ * Banc des elements — ce que coutent les armes elementaires en jeu reel.
  *
- * ⚠️ **Peuple de LOURDS, et c'est une legon deja payee.** Le banc `zones` a
- * menti une premiere fois avec de la pietaille legere : tuee du meme impact,
- * elle n'est jamais marquee, donc jamais de reaction, donc zero zone —
- * un banc qui rend zero et parait vert. C'est l'archetype LOURD
- * (`HEAVY_HP`) qui porte le systeme elementaire ; c'est lui qui peuple ce
- * banc, partout, sans exception.
+ * ⚠️ **Peuple de LOURDS, partout.** La pietaille legere, tuee du meme impact,
+ * n'est jamais marquee : jamais de reaction, zero zone, un banc qui rend zero
+ * et parait vert. C'est l'archetype LOURD (`HEAVY_HP`) qui porte le systeme
+ * elementaire.
  *
- * Trois mesures, trois questions distinctes :
+ * Questions mesurees :
  *
- * **1. La porte de performance du §7.** `chainTargets` (`shared/chain.ts`)
- * est une recherche `O(jumps x horde.count)` declenchee A CHAQUE IMPACT de
- * Foudre — pas une fois par tick, une fois par PROJECTILE qui touche. Avec
- * quatre joueurs qui portent la bobine-tesla (la Foudre la plus rapide du
- * catalogue, `cooldownTicks: 15`, deux projectiles par salve) et une horde a
- * 4000 entites, combien d'impacts simultanes le pas encaisse-t-il, et le p95
- * tient-il sous le budget de tick (`1000 / TICK_HZ / 3`, ~11,11 ms) ?
+ * **1. La chaine de Foudre.** `chainTargets` (`shared/chain.ts`) est une
+ * recherche `O(jumps x horde.count)` declenchee A CHAQUE IMPACT de Foudre, pas
+ * une fois par tick. Le p95 du pas tient-il sous le budget de tick
+ * (`1000 / TICK_HZ / 3`) quand quatre joueurs portent la Foudre la plus rapide ?
  *
- * **2. Le point de revue n°5 : `truncatedZones` a ZERO.** La tache 6 a
- * change la regle de fusion des zones — deux zones de `kind` different ne
- * fusionnent plus, un bug de production mesure et corrige. Sa seule mesure
- * etait SYNTHETIQUE (8 `kind` x 16 foyers, jusqu'a 100 % de `ZONE_CAPACITY`),
- * faute d'armes reelles pour les cinq reactions. Ce banc peut enfin equiper
- * quatre elements a la fois et regarder si `zonesTronquees` bouge en jeu
- * reel.
+ * **2. `truncatedZones` a ZERO.** Deux zones de `kind` different ne fusionnent
+ * pas : avec de vraies armes de plusieurs elements, `zonesTronquees`
+ * bouge-t-il ?
  *
  * **3. La densite en Verglas.** `resolveVerglasCollisions` est en O(k²) sur
  * sa liste `sliding`, dont le docbloc suppose que « la geometrie borne
- * naturellement k ». Rien ne le verifie. Une entite qui glisse SAUTE
- * entierement son calcul de repulsion (`shared/horde.ts`,
- * `#recomputeSteering`, le `continue` juste apres l'amortissement
- * d'inertie) : elle perd sa correction anti-agglomeration pendant qu'elle
- * glisse. Une vague qui converge en ENCIRCLE (la formation reelle d'un
- * spawn autour d'un joueur) vers un point unique ou tourne une zone de
- * Verglas est le cas adversarial exact que la repulsion existe pour empecher
- * — et Verglas desactive precisement cette garde la ou elle compte le plus.
+ * naturellement k ». Or une entite qui glisse SAUTE son calcul de repulsion
+ * (`shared/horde.ts`, `#recomputeSteering`) : une vague ENCIRCLE qui converge
+ * vers une zone de Verglas est le cas adversarial exact que la repulsion
+ * existe pour empecher.
+ *
+ * Suivent le cout de la liaison sous Amalgame et l'attribution du cout des
+ * balayages de zones.
  *
  *   npm run bench:elements -w back
  */
@@ -75,16 +63,13 @@ import { machineDescription, stats } from './harness';
 
 const DT = 1 / TICK_HZ;
 
-/** Budget d'un pas serveur (§10 de la spec, §7 pour la porte de Foudre). */
+/** Budget d'un pas serveur, en ms : un tiers d'un tick. */
 const BUDGET_MS = 1000 / TICK_HZ / 3;
 
 /** Ancre commune aux decors 1 et 2 : le centre de la carte, ou les joueurs naissent (`MAP_SIZE / 2`). */
 const CENTRE = MAP_SIZE / 2;
 
-/**
- * L'archetype LOURD — voir l'avertissement en tete de fichier. Meme
- * extraction que `zones.bench.ts`, jamais recopiee en dur.
- */
+/** L'archetype LOURD — voir l'avertissement en tete de fichier. Jamais recopie en dur. */
 const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
 if (LOURD < 0) {
   throw new Error('le catalogue doit porter au moins un archetype lourd');
@@ -92,20 +77,15 @@ if (LOURD < 0) {
 
 const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
 const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
-// bobine-tesla : la Foudre la plus rapide du catalogue (cooldownTicks: 15,
-// deux projectiles par salve) — le pire cas de frequence d'impact, donc le
-// pire cas d'appels a `chainTargets`.
+// La Foudre la plus rapide du catalogue : le pire cas de frequence d'impact,
+// donc d'appels a `chainTargets`.
 const ARME_FOUDRE = WEAPONS.find((w) => w.name === 'Bobine Tesla')?.id ?? -1;
-// seringue-a-poix : la Poix la plus rapide (cooldownTicks: 18, trois
-// projectiles) — meme raisonnement, pour maximiser les poses de zone.
+// La Poix la plus rapide : meme raisonnement, pour maximiser les poses de zone.
 const ARME_POIX = WEAPONS.find((w) => w.name === 'Seringue à poix')?.id ?? -1;
-// poire-a-chaux : la Chaux la plus rapide (cooldownTicks: 17, trois
-// projectiles, tache 8 de l'etape 5c) — meme raisonnement que les autres
-// armes "rapides" ci-dessus.
+// La Chaux la plus rapide.
 const ARME_CHAUX = WEAPONS.find((w) => w.name === 'Poire à chaux')?.id ?? -1;
-// fronde-a-mercure : le Vif-argent le plus rapide (cooldownTicks: 14, deux
-// aiguilles, tache 8 de l'etape 5c) — le pire cas de frequence de pose de
-// liaison, donc le pire cas d'appels a `linkedNeighbours` (tache 9).
+// Le Vif-argent le plus rapide : le pire cas de frequence de pose de liaison,
+// donc d'appels a `linkedNeighbours`.
 const ARME_MERCURE = WEAPONS.find((w) => w.name === 'Fronde à mercure')?.id ?? -1;
 if (
   ARME_BRAISE < 0 ||
@@ -120,8 +100,8 @@ if (
 
 /**
  * Peuple une horde de LOURDS en vagues de 200, ancrees au meme point que les
- * joueurs — identique a `peuple` de `zones.bench.ts`, dupliquee ici plutot
- * qu'importee (les deux bancs restent independants l'un de l'autre).
+ * joueurs. Copie de `peuple` de `zones.bench.ts`, pour garder les deux bancs
+ * independants.
  */
 function peuple(horde: Horde, n: number, anchorX = CENTRE, anchorY = CENTRE): void {
   let id = 90_000;
@@ -140,12 +120,8 @@ function peuple(horde: Horde, n: number, anchorX = CENTRE, anchorY = CENTRE): vo
     };
     horde.spawn(order);
   }
-  // ⚠️ **Le decor DOIT etre LOURD — assertionne, pas suppose.** Le banc
-  // `zones` a menti une fois en etant peuple de pietaille legere, morte au
-  // premier impact : zero marque, zero zone, un banc vert qui ne mesurait
-  // rien (voir le brief de la tache 9). Cette garde fait rougir LE BANC
-  // ENTIER, bruyamment, plutot que de laisser un decor fausse produire un
-  // zero silencieux.
+  // ⚠️ **Le decor DOIT etre LOURD — assertionne, pas suppose** : un decor
+  // fausse ferait rougir le banc entier plutot que produire un zero silencieux.
   if (n > 0 && (horde.hp[avant] ?? 0) !== HEAVY_HP) {
     throw new Error(
       `peuple() devait poser des LOURDS (HEAVY_HP=${HEAVY_HP}), a trouve ${horde.hp[avant]} au premier creneau pose`,
@@ -154,7 +130,7 @@ function peuple(horde: Horde, n: number, anchorX = CENTRE, anchorY = CENTRE): vo
 }
 
 // ---------------------------------------------------------------------------
-// 1. La porte du §7 — chainTargets par impact de Foudre
+// 1. chainTargets par impact de Foudre
 // ---------------------------------------------------------------------------
 
 /**
@@ -170,8 +146,7 @@ function salonFoudre(exemplaires: number, entites: number): Room {
     for (let k = 0; k < exemplaires; k++) {
       room.grantCard(id, { nature: CARD.WEAPON, refId: ARME_FOUDRE });
     }
-    // Visee fixe, meme discipline que `zones.bench.ts` : on mesure des
-    // impacts, pas la qualite d'un ciblage.
+    // Visee fixe : on mesure des impacts, pas la qualite d'un ciblage.
     room.applyInput(id, 1, 0, 0, 127, 40);
   }
   peuple(room.horde, entites);
@@ -194,10 +169,8 @@ function porteChaine(exemplaires: number, entites: number, ticks: number): numbe
 }
 
 /**
- * `chainTargets` seule, isolee de tout le reste du pas — le meme geste que
- * `balayage`/`recouvrement` dans `zones.bench.ts` : mesurer le terme
- * O(horde.count) tel que son docbloc le decrit, avant de le retrouver noye
- * dans un pas complet.
+ * `chainTargets` seule, isolee du reste du pas : le terme O(horde.count) tel
+ * que son docbloc le decrit, avant de le retrouver noye dans un pas complet.
  */
 function coutChaineSeule(entites: number, iterations = 2000): number {
   const horde = new Horde(MAX_ENTITIES);
@@ -213,13 +186,13 @@ function coutChaineSeule(entites: number, iterations = 2000): number {
 }
 
 // ---------------------------------------------------------------------------
-// 2. Le point de revue n°5 — truncatedZones a ZERO, avec de vraies armes
+// 2. truncatedZones a ZERO, avec de vraies armes
 // ---------------------------------------------------------------------------
 
 /**
  * Un salon a quatre joueurs, chacun portant `exemplaires` exemplaires des
  * QUATRE armes elementaires (Braise, Givre, Foudre, Poix) — de quoi
- * declencher les cinq reactions du §5 en jeu reel, pas en synthetique.
+ * declencher leurs reactions en jeu reel, pas en synthetique.
  */
 function salonQuatreElements(exemplaires: number, entites: number): Room {
   const room = new Room(0x20_0e_5b_20);
@@ -238,13 +211,10 @@ function salonQuatreElements(exemplaires: number, entites: number): Room {
 }
 
 /**
- * Tache 9 de l'etape 5c : les QUINZE reactions du §6.4 sont desormais toutes
- * atteignables par du vrai combat (les armes de Chaux et de Vif-argent datent
- * de la tache 8). `WEAPON_SLOTS` (4) interdit de donner les SIX elements a un
- * seul joueur ; ils sont donc repartis sur les quatre, chacun en portant
- * assez pour qu'aucun element ne manque a la table que la horde partagee
- * subit — les paires se forment entre projectiles de joueurs DIFFERENTS
- * aussi bien qu'entre deux tirs du meme, `applyElement` ne distingue pas.
+ * Les SIX elements, donc les quinze reactions, en vrai combat. `WEAPON_SLOTS`
+ * interdit de les donner tous a un seul joueur ; ils sont repartis sur les
+ * quatre. Les paires se forment entre projectiles de joueurs DIFFERENTS aussi
+ * bien qu'entre deux tirs du meme : `applyElement` ne distingue pas.
  */
 function salonSixElements(exemplaires: number, entites: number): Room {
   const room = new Room(0x20_0e_5c_90);
@@ -306,11 +276,9 @@ function occupationZones(
 
 /**
  * Meme decor, mais en REGIME SOUTENU : la horde statique de `occupationZones`
- * s'epuise en 20 s (rien ne la reapprovisionne), donc elle ne dit rien d'un
- * combat qui dure. Ici, une vague de LOURDS est reinjectee toutes les 3 s
- * (90 ticks — l'ordre de grandeur d'un `WaveDirector` reel) tant que la
- * population reste sous `plafond`, sur `ticks` pas (300 ticks = 60 s).
- * `truncatedZones` doit rester a zero ICI aussi : une fusion qui tient 20 s
+ * s'epuise vite, faute de reapprovisionnement. Ici, une vague de LOURDS est
+ * reinjectee tous les 90 ticks (3 s, l'ordre de grandeur d'un `WaveDirector`
+ * reel) tant que la population reste sous `plafond`. Une fusion qui tient 20 s
  * mais pas 60 s ne tiendrait pas une vraie run.
  */
 function occupationSoutenue(
@@ -345,14 +313,11 @@ function occupationSoutenue(
 // ---------------------------------------------------------------------------
 
 /**
- * Une vague ENCIRCLE de LOURDS, nee autour d'un point unique
- * (`ENCIRCLE_RADIUS`, 1800 px — la formation reelle d'un spawn autour d'un
- * joueur), convergeant vers ce meme point ou une zone de Verglas est
- * entretenue en continu (le feu soutenu de Givre + Poix qu'un vrai groupe
- * plante a un endroit produirait). `Horde.step` et `resolveVerglasCollisions`
- * sont les fonctions REELLES ; seule la creation de la zone est directe
- * (`zones.spawn`, ce que `postZone` ferait) pour isoler la question posee —
- * la geometrie de la convergence, pas le declenchement de la reaction.
+ * Une vague ENCIRCLE de LOURDS, nee a `ENCIRCLE_RADIUS` d'un point unique,
+ * convergeant vers ce point ou une zone de Verglas est entretenue en continu.
+ * `Horde.step` et `resolveVerglasCollisions` sont les fonctions REELLES ;
+ * seule la zone est posee directement (`zones.spawn`, ce que `postZone`
+ * ferait) pour isoler la geometrie de la convergence.
  */
 function densiteVerglas(
   tailleVague: number,
@@ -418,7 +383,7 @@ function densiteVerglas(
 }
 
 // ---------------------------------------------------------------------------
-// 4. Le cout de la liaison — linkedNeighbours sous Amalgame (tache 9)
+// 4. Le cout de la liaison — linkedNeighbours sous Amalgame
 // ---------------------------------------------------------------------------
 
 /** Le couple (Poix, Vif-argent) qui declenche Amalgame, canonicalise une fois. */
@@ -426,8 +391,8 @@ const AMALGAME_PAIR = packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT);
 
 /**
  * Un salon a quatre joueurs, chacun portant `exemplaires` exemplaires de
- * seringue-a-poix ET de fronde-a-mercure — la paire la plus rapide des deux
- * elements d'Amalgame, pour maximiser la cadence de declenchement reelle.
+ * l'arme de Poix ET de l'arme de Vif-argent les plus rapides, pour maximiser
+ * la cadence de declenchement reelle d'Amalgame.
  */
 function salonMercure(exemplaires: number, entites: number): Room {
   const room = new Room(0x20_0e_5c_a0);
@@ -451,21 +416,18 @@ interface CoutAmalgame {
    * Le nombre de zones annoncees ce run dont `ReactionDef.zoneVifArgent` est
    * vrai (`zoneVifArgent`, `shared/reactions.ts`) — celles que
    * `linkedNeighbours` suit reellement. Amalgame porte `zoneVifArgent: true`,
-   * donc toute zone qu'elle pose pour elle-meme compte ICI : voir le
-   * rapport, ce compte n'est PLUS a zero en jeu reel.
+   * donc toute zone qu'elle pose pour elle-meme compte ici.
    *
-   * ⚠️ **Mesure le predicat FINAL (champ epingle), pas le predicat
-   * intermediaire (paire canonicalisee) d'une revue precedente.** Pour ce
-   * decor precis (seul Amalgame se declenche), les deux predicats auraient
-   * rendu le meme compte — mais seul `zoneVifArgent` reste correct si Gel
-   * profond ou Aveuglement entraient un jour dans ce banc.
+   * ⚠️ Mesure le champ `zoneVifArgent`, pas la presence du Vif-argent dans la
+   * paire : Gel profond et Aveuglement contiennent le Vif-argent mais ne
+   * lient pas.
    */
   zonesLiantesVues: number;
 }
 
 /**
- * `shareAmalgameDamage` (tache 7 de l'etape 5c, `back/src/combat.ts`) est le
- * consommateur le PLUS LOURD de `linkedNeighbours` — elle l'appelle une fois
+ * `shareAmalgameDamage` (`back/src/combat.ts`) est le consommateur le PLUS
+ * LOURD de `linkedNeighbours` — elle l'appelle une fois
  * PAR DECLENCHEUR, pas une fois par tick. Ce decor la met sous tension via le
  * chemin reel (armes -> `Room.step` -> `applyReactions` -> ici), jamais en
  * appelant `linkedNeighbours` a vide.
@@ -503,22 +465,13 @@ function porteAmalgame(exemplaires: number, entites: number, ticks: number): Cou
  * (`applyReactions`, l'unique point d'entree public qui appelle
  * `shareAmalgameDamage`) — jamais `linkedNeighbours` directement.
  *
- * ⚠️ **Decor SYNTHETIQUE — mais `zonesLiantesVues` n'est PLUS a zero en jeu
- * reel.** `ReactionDef.zoneVifArgent` (`shared/reactions.ts`) est VRAI sur
- * Vaporisation, Paratonnerre et Amalgame — y compris via la zone que
- * `postZone` pose POUR le declencheur lui-meme — la mesure 5/5bis
- * ci-dessous le confirme (`zonesLiantesVues` compte desormais des dizaines
- * de zones par run). Gel profond et Aveuglement, eux, portent
- * `zoneVifArgent: false` et ne comptent jamais ici, meme si leur paire contient
- * le Vif-argent. Ce plafond reste utile
- * malgre tout : il isole le cout a un NOMBRE DE ZONES LIANTES CHOISI
- * (`zonesLiantes`), au lieu du nombre que le jeu produit organiquement, pour
- * mesurer comment `applyReactions` degrade quand les declencheurs/tick
- * augmentent — ⚠️ y COMPRIS l'effet du fait que `zones` est PARTAGE entre
- * toutes les iterations (postZone y ajoute reellement des zones a chaque
- * declencheur, jusqu'a `ZONE_CAPACITY`), donc ce plafond mesure un regime
- * OU LE NOMBRE DE ZONES CROIT avec les declencheurs/tick, pas un nombre de
- * zones liantes fixe — a lire comme un pire cas, pas un budget typique.
+ * Decor SYNTHETIQUE : il part d'un NOMBRE DE ZONES LIANTES CHOISI
+ * (`zonesLiantes`) pour mesurer comment `applyReactions` degrade quand les
+ * declencheurs/tick augmentent.
+ *
+ * ⚠️ `zones` est PARTAGE entre les iterations et `postZone` y ajoute des zones
+ * a chaque declencheur, jusqu'a `ZONE_CAPACITY` : le nombre de zones CROIT
+ * avec les declencheurs/tick. A lire comme un pire cas, pas un budget typique.
  */
 function coutLiaisonSousAmalgame(
   entites: number,
@@ -528,20 +481,16 @@ function coutLiaisonSousAmalgame(
 ): number {
   const horde = new Horde(MAX_ENTITIES);
   peuple(horde, entites);
-  // PV enormes : cette mesure isole le cout arithmetique de la liaison, pas
-  // la survie — une mort en cours de boucle compacterait la horde et
-  // fausserait le compte d'une iteration a l'autre (meme piege que partout
-  // ailleurs dans ce fichier).
+  // PV enormes : une mort en cours de boucle compacterait la horde et
+  // fausserait le compte d'une iteration a l'autre.
   for (let i = 0; i < horde.count; i++) {
     horde.hp[i] = 1e9;
   }
 
   const zones = new ZoneField();
   for (let i = 0; i < zonesLiantes; i++) {
-    // `zonesLiantes` foyers de Vif-argent PUR distincts — le seul type de
-    // zone que `linkedNeighbours` suit (tache 3) — repartis sur la carte
-    // pour ne pas se fusionner en un seul kind-foyer (deux zones de MEME
-    // kind fusionnent, §5.1 bis).
+    // Foyers de Vif-argent PUR distincts, repartis sur la carte : deux zones
+    // de MEME kind proches fusionneraient.
     zones.spawn(ELEMENT.VIF_ARGENT, (i * 137) % MAP_SIZE, (i * 211) % MAP_SIZE, i + 1, 1);
   }
 
@@ -612,15 +561,10 @@ for (const entites of [1500, 4000]) {
 console.table(chaineRows);
 
 /**
- * ⚠️ **8 exemplaires n'est PAS un plafond du jeu, et le tableau ci-dessus ne
- * le disait pas.** `Loadout#addWeapon` (`shared/loadout.ts`) ne borne que le
- * nombre d'armes DISTINCTES (`WEAPON_SLOTS`, 4) ; les exemplaires d'une meme
- * arme s'accumulent dans un `Uint16Array` SANS PLAFOND FORMEL —
- * `#weaponStacks[weaponId] = stacks + 1`, jamais borne. C'est le modele du
- * jeu depuis l'etape 4 (« aucun niveau d'arme, c'est l'empilement qui fait
- * la puissance ») : le meme angle mort qui avait deja fait deriver le cout a
- * cette etape-la, ici rejoue sur la chaine de Foudre. Ce banc doit donc
- * porter l'axe lui-meme, pas seulement le dire en commentaire.
+ * ⚠️ **8 exemplaires n'est PAS un plafond du jeu.** `Loadout#addWeapon`
+ * (`shared/loadout.ts`) ne borne que le nombre d'armes DISTINCTES
+ * (`WEAPON_SLOTS`) ; les exemplaires d'une meme arme s'empilent sans plafond
+ * formel. Ce banc porte donc l'axe lui-meme.
  */
 const pileRows: Record<string, unknown>[] = [];
 for (const exemplaires of [16, 32, 64]) {
@@ -772,12 +716,9 @@ for (const exemplaires of [16, 32, 64]) {
 }
 console.table(pileAmalgameRows);
 
-// ⚠️ **Le compteur qui ne compte pas est le defaut le plus frequent de ce
-// depot (brief de la tache 9) — gardee bruyamment.** Amalgame doit s'etre
-// DECLENCHE au moins une fois sur 2 100 ticks cumules (300 x 6 + 300 x 3) de
-// combat reel a quatre joueurs ; s'il ne s'est JAMAIS declenche, le decor
-// (armes, portee, marquage) est casse et le reste de cette section ne mesure
-// rien — exactement le piege « banc qui rend zero ».
+// ⚠️ **Garde contre le « banc qui rend zero ».** Si Amalgame ne s'est JAMAIS
+// declenche sur toute la campagne, le decor (armes, portee, marquage) est
+// casse et le reste de cette section ne mesure rien.
 if (declenchementsMaxGlobal === 0) {
   throw new Error(
     "le banc n'a declenche AUCUN Amalgame reel sur toute la campagne : decor fausse (armes/portee/marquage)",
@@ -813,15 +754,9 @@ for (const declencheurs of [10, 25, 50, 100, 250, 500]) {
 }
 console.table(plafondRows);
 
-// ⚠️ **`zonesLiantesVuesTotal` N'EST PLUS a zero — la boucle couteuse de
-// `linkedNeighbours` TOURNE desormais pour de vrai pendant 5/5bis.**
-// `ReactionDef.zoneVifArgent` (`shared/reactions.ts`) est VRAI sur Amalgame (la
-// seule reaction declenchee dans ce decor), y compris via la zone que
-// `postZone` pose POUR le declencheur lui-meme. Le pas p95 de 5/5bis reste
-// neanmoins dans le budget a toutes les configurations SAUF 4000/64
-// exemplaires (12,459 ms) — et la section 7 (attribution) impute ce
-// depassement a `appliquerDegats` (zones.ampAt/armorReductionAt), pas a
-// `linkedNeighbours` : voir son VERDICT, hors de cette tache.
+// La boucle de `linkedNeighbours` tourne pour de vrai en 5/5bis : Amalgame
+// porte `zoneVifArgent`. Si le pas deborde au plus fort empilement, la
+// section 7 dit quel balayage en est la cause.
 console.log(
   `\nInformatif (5/5bis) : pas COMPLET pire p95 ${pireAmalgameReel.toFixed(3)} ms, zonesLiantesVuesTotal = ${zonesLiantesVuesTotal} ` +
     '-> la liaison tourne reellement desormais ; le depassement a 4000/64 reste impute a appliquerDegats (section 7), pas a linkedNeighbours.',
@@ -871,7 +806,7 @@ const TICKS_SOUTENU_SIX = 1800;
 const soutenuSixRows: Record<string, unknown>[] = [];
 let tronqueesSoutenuSix = 0;
 let occupationSoutenueSixMax = 0;
-/** Le pas p95 de la ligne a 4 exemplaires — le decor DEBORDE que le coordinateur designe. */
+/** Le pas p95 de la ligne a 4 exemplaires : le decor qui deborde, reference de la section 7. */
 let pasReferenceDebordant = 0;
 for (const exemplaires of [1, 4, 8]) {
   const r = occupationSoutenue(salonSixElements, exemplaires, TICKS_SOUTENU_SIX);
@@ -897,7 +832,7 @@ console.log(
 );
 
 // ---------------------------------------------------------------------------
-// 7. Attribution — quel balayage domine au decor qui deborde (demande du coordinateur)
+// 7. Attribution — quel balayage domine au decor qui deborde
 // ---------------------------------------------------------------------------
 
 /**
@@ -911,8 +846,7 @@ console.log(
  * ⚠️ **Le delta couvre aussi toute consultation de zones dans
  * `#recomputeSteering`** (le derapage du Verglas, `densiteVerglas`
  * ci-dessus) : `step` lui passe `zones` aussi. Impossible de l'en separer
- * sans acces prive — le delta est donc etiquete pour les TROIS, jamais pour
- * les deux seules nommees par le coordinateur.
+ * sans acces prive — le delta est donc etiquete pour les TROIS.
  */
 function coutStepZones(
   horde: Horde,
@@ -975,14 +909,9 @@ console.log(
 // ⚠️ **Ce que cette section NE PEUT PAS attribuer.** `hitRadiusBonusAt` a un
 // SECOND site d'appel, `Projectiles.collide` (`shared/projectiles.ts`), dans
 // la boucle PROJECTILE x ENNEMI — un cout en projectiles x ennemis x zones,
-// PAS entites x zones comme les balayages ci-dessous. C'est ce site, pas
-// celui mesure ici, qu'un commit concurrent a ce banc (`fix(shared): pre-filtre
-// le rayon elargi de vif-argent avant de balayer les zones`) vient de corriger
-// par un pre-filtre, en citant CE MEME banc (49 millions de tests de distance
-// par tick a 4000 ennemis/96 projectiles/128 zones). La ligne
+// PAS entites x zones comme les balayages ci-dessous. La ligne
 // « hitRadiusBonusAt » ci-dessous reste une BORNE HAUTE du cout PAR ENTITE
-// (un balayage complet de la horde), jamais une mesure du site reel —
-// voir le rapport de la tache pour la lecture complete.
+// (un balayage complet de la horde), jamais une mesure de ce site.
 const hordeAttribution = new Horde(MAX_ENTITIES);
 peuple(hordeAttribution, MAX_ENTITIES);
 for (let i = 0; i < hordeAttribution.count; i++) {

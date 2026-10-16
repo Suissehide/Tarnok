@@ -5,37 +5,24 @@ import { NO_VOTE, VOTE_CHOICE } from '@shared/protocol';
 import { playerColor, remainingSeconds } from './draft';
 
 /**
- * L'ecran du vote d'extraction (§5 et §6 de la spec de l'etape 6a).
+ * L'ecran du vote d'extraction.
  *
- * Trois choses, et aucune des trois n'est du confort :
+ * 1. **Les votes des autres sont visibles, en continu** — on ne negocie pas un
+ *    choix qu'on ne voit pas. **L'abstention aussi** : « n'a pas vote » et
+ *    « a vote RESTER » sont deux etats differents.
+ * 2. **L'enjeu est chiffre** : ce qu'on gagne en partant MAINTENANT, et ce que
+ *    la meme cagnotte vaudrait au portail suivant — qu'on perd entierement si
+ *    l'equipe tombe entre les deux.
+ * 3. **Le chronometre se derive du TICK**, comme celui du draft.
  *
- * 1. **Les votes des autres sont visibles, en continu.** Le §7.2 de l'etape 4
- *    l'a etabli pour les jetons du draft — *« sans cette visibilite, la
- *    mecanique n'existe pas »* — et le §6 le dit plus fort encore : on ne
- *    negocie pas un choix qu'on ne voit pas. **Et l'abstention est visible
- *    AUSSI** : « n'a pas vote » et « a vote RESTER » sont deux etats
- *    differents, les confondre fausserait la negociation.
- * 2. **L'enjeu est chiffre.** Un vote dont on ne voit pas l'enjeu n'est pas un
- *    vote : l'ecran dit ce qu'on gagne en partant MAINTENANT, et ce que la
- *    meme cagnotte vaudrait au portail suivant — celle-la meme qu'on perd
- *    entierement si l'equipe tombe entre les deux.
- * 3. **Le chronometre se derive du TICK**, pas de l'horloge murale. Comme
- *    celui du draft, et pour la meme raison : c'est le tick que le serveur a
- *    date, donc le seul temps que les quatre joueurs partagent.
+ * ⚠️ **CE N'EST PAS UN MODALE.** Le draft gele le monde ; **le vote ne gele
+ * rien**, le temps est son enjeu. Un voile plein ecran cacherait la horde qui
+ * avance pendant qu'on decide : d'ou un bandeau, en bas, qui ne capte le
+ * pointeur que sur ses deux boutons.
  *
- * ⚠️ **CE N'EST PAS UN MODALE, et c'est la difference structurante avec
- * l'etalage de cartes.** Le draft GELE le monde, donc il peut occuper l'ecran
- * entier ; **le vote ne gele rien** (§6 : *« le temps EST son enjeu »*). Un
- * voile plein ecran cacherait la horde qui avance pendant qu'on decide,
- * c'est-a-dire exactement la pression que la fenetre existe pour produire.
- * D'ou un bandeau, en bas, qui ne capte le pointeur que sur ses deux boutons.
- *
- * ⚠️ **L'ecran ne se cache PAS pour un joueur mort.** Le §6 fait voter *« tout
- * joueur connecte, mort ou vif »*, et le §9.3 dit que la mort d'un seul ne
- * coute rien — donc elle ne coute ni la voix ni l'ecran. Il n'y a aucune
- * condition a ecrire ici : `PortalSource` ne porte pas de points de vie, et
- * c'est la forme que prend la regle. Un filtre a `false` serait une garde
- * qu'aucune mutation ne pourrait tuer.
+ * ⚠️ **L'ecran ne se cache PAS pour un joueur mort** : tout joueur connecte
+ * vote, mort ou vif. Aucune condition a ecrire : `PortalSource` ne porte pas
+ * de points de vie.
  */
 
 /** Ce que l'ecran lit — la surface de `GameClient` qui concerne le vote, et rien d'autre. */
@@ -54,54 +41,44 @@ export interface PortalSource {
 }
 
 /**
- * Un montant d'or, groupe par milliers.
- *
- * ⚠️ **Groupe a la main plutot que par `toLocaleString`.** Les separateurs
- * d'`Intl` changent d'une version de Node a l'autre (espace insecable, espace
- * fine insecable), et un test qui assene un montant se mettrait a rougir sur
- * une montee de runtime sans qu'une ligne de ce depot ait bouge. Ici le
- * separateur est choisi et il ne bouge pas.
- */
-/**
  * Le separateur des milliers : U+202F, espace fine insecable.
  *
- * ⚠️ **Ecrit par `fromCharCode`, pas comme caractere litteral.** Le formateur
- * du depot reecrit les sequences d'echappement des chaines en caracteres
- * reels : `'\u202f'` deviendrait un espace INVISIBLE dans la source, qu'une
- * relecture prendrait pour une espace ordinaire et qu'un editeur pourrait
- * normaliser sans bruit. Ici, il est nomme.
+ * ⚠️ **Ecrit par `fromCharCode`, pas comme caractere litteral** : le formateur
+ * du depot reecrit `'\u202f'` en caractere reel, une espace INVISIBLE dans la
+ * source qu'un editeur pourrait normaliser sans bruit.
  */
 export const THIN_SPACE = String.fromCharCode(0x202f);
 
+/**
+ * Un montant d'or, groupe par milliers.
+ *
+ * ⚠️ **Groupe a la main plutot que par `toLocaleString`** : les separateurs
+ * d'`Intl` changent d'une version de Node a l'autre, et les tests rougiraient
+ * sur une montee de runtime.
+ */
 export function formatGold(gold: number): string {
   return `${Math.round(gold)}`.replace(/\B(?=(\d{3})+(?!\d))/g, THIN_SPACE);
 }
 
 /**
- * Un multiplicateur, en ecriture francaise : `×1,25`.
- *
- * Deux decimales toujours, meme sur `1` : `×1` et `×1,25` cote a cote se
- * lisent comme deux grandeurs differentes, alors que c'est la MEME et que
- * c'est precisement sa progression qui est en jeu.
+ * Un multiplicateur, en ecriture francaise : `×1,25`. Deux decimales toujours,
+ * meme sur `1` : `×1` et `×1,25` cote a cote se liraient comme deux grandeurs
+ * differentes.
  */
 export function formatMultiplier(multiplier: number): string {
   return `×${multiplier.toFixed(2).replace('.', ',')}`;
 }
 
 /**
- * Ce qu'un joueur a decide, en un mot — et **l'abstention en est un a part
+ * Ce qu'un joueur a decide, en un mot — **l'abstention en est un a part
  * entiere**.
  *
- * ⚠️ **« n'a pas voté » ne doit JAMAIS se confondre avec « reste ».** Le
- * serveur ne compte pas l'abstention (`NO_VOTE = 255`, et `Portal#decide` ne
- * l'additionne d'aucun cote) ; l'ecran doit la montrer telle quelle, sans quoi
- * un joueur croirait avoir une majorite acquise alors que deux voix
- * manquent — et la negociation porterait sur un decompte faux.
+ * ⚠️ **« n'a pas voté » ne doit JAMAIS se confondre avec « reste »** : le
+ * serveur ne compte pas l'abstention (`Portal#decide`), et un joueur croirait
+ * sinon avoir une majorite acquise alors que des voix manquent.
  *
- * Tout ce qui n'est ni `STAY` ni `LEAVE` se lit comme une abstention : c'est
- * ce que `NO_VOTE` vaut, et un octet fantaisiste (le serveur en refuse
- * l'enregistrement, mais l'ecran est une fonction de ce qui arrive sur le fil)
- * n'est pas davantage une voix.
+ * Tout ce qui n'est ni `STAY` ni `LEAVE` (`NO_VOTE`, ou un octet fantaisiste)
+ * se lit comme une abstention.
  */
 export function voteLabel(choice: number): string {
   if (choice === VOTE_CHOICE.LEAVE) {
@@ -127,12 +104,10 @@ export function voteState(choice: number): VoteState {
  * Ce qu'on ACQUIERT en partant maintenant : la cagnotte, majoree du
  * multiplicateur courant.
  *
- * ⚠️ **Passe par `extractGold`, jamais par une multiplication ecrite ici.**
- * C'est la fonction que `Room#stepPortal` appelle pour calculer l'or reellement
- * verse : l'arrondi et la borne du fil (`GOLD_MAX`) vivent avec elle. Une
- * multiplication de plus dans ce fichier ferait annoncer a l'ecran un montant
- * different de celui que le joueur recevrait — un mensonge, exactement la ou
- * il se paie le plus cher.
+ * ⚠️ **Passe par `extractGold`, jamais par une multiplication ecrite ici** :
+ * c'est la fonction que `Room#stepPortal` appelle pour l'or reellement verse
+ * (arrondi et borne `GOLD_MAX` compris). L'ecran annonce donc ce que le joueur
+ * recevra.
  */
 export function leaveGold(gold: number, multiplier: number): number {
   return extractGold(gold, multiplier);
@@ -142,16 +117,12 @@ export function leaveGold(gold: number, multiplier: number): number {
  * Ce que la MEME cagnotte vaudrait au portail suivant, si l'equipe reste et
  * tient le palier.
  *
- * ⚠️ **Le multiplicateur suivant se DERIVE, il ne voyage pas.** `PORTAL_OPEN`
- * porte celui qui s'applique maintenant ; le suivant vaut
- * `+ EXTRACT_MULTIPLIER_STEP`, constante partagee que les deux cotes lisent
- * (`Room#stepPortal` l'ajoute avec la meme). Le porter aussi serait un second
- * exemplaire d'un nombre que le premier suffit a donner.
+ * ⚠️ **Le multiplicateur suivant se DERIVE, il ne voyage pas** : `PORTAL_OPEN`
+ * porte le courant, le suivant vaut `+ EXTRACT_MULTIPLIER_STEP`, constante
+ * partagee que `Room#stepPortal` ajoute aussi.
  *
- * ⚠️ **Ce n'est PAS une promesse.** Entre les deux portails la cagnotte peut
- * grossir (les monstres laissent de l'or) et surtout **tout se perdre** :
- * l'effacement de l'equipe garde `WIPE_GOLD_KEPT` de la mise, soit rien. C'est
- * le texte qui porte cette moitie-la, pas le chiffre — voir `stakeLines`.
+ * ⚠️ **Ce n'est PAS une promesse** : la cagnotte peut grossir, ou se perdre si
+ * l'equipe tombe. C'est le texte de `stakeLines` qui porte ce risque.
  */
 export function stayGold(gold: number, multiplier: number): number {
   return extractGold(gold, multiplier + EXTRACT_MULTIPLIER_STEP);
@@ -161,11 +132,8 @@ export function stayGold(gold: number, multiplier: number): number {
  * Les deux lignes de l'enjeu : ce qu'on gagne en partant, ce qu'on risque en
  * restant.
  *
- * ⚠️ **DEUX chiffres, et ils doivent etre DIFFERENTS.** Une version qui aurait
- * mis la meme cagnotte des deux cotes, avec seulement les mots qui changent,
- * n'aurait rien fait voir : ce qui se decide, c'est la difference entre
- * `×m` maintenant et `×(m + pas)` plus tard, contre la perte totale entre les
- * deux.
+ * ⚠️ **DEUX chiffres DIFFERENTS** : ce qui se decide, c'est `×m` maintenant
+ * contre `×(m + pas)` plus tard, au risque de tout perdre entre les deux.
  */
 export function stakeLines(gold: number, multiplier: number): { leave: string; stay: string } {
   return {
@@ -207,10 +175,7 @@ export class PortalScreen {
     this.#source = source;
   }
 
-  /**
-   * A appeler a chaque image : l'ecran n'a pas d'horloge propre, il lit le
-   * client — exactement comme `DraftScreen.update`.
-   */
+  /** A appeler a chaque image : l'ecran n'a pas d'horloge propre, il lit le client. */
   update(): void {
     const source = this.#source;
     const visible = source.portalOpen;
@@ -225,11 +190,7 @@ export class PortalScreen {
     this.#paint();
   }
 
-  /**
-   * Les deux boutons, une seule fois. **Deux faces, jamais N cartes** : c'est
-   * ce qui distingue ce vote du draft, ou le nombre de cartes depend du nombre
-   * de joueurs et impose une reconstruction par etalage.
-   */
+  /** Les deux boutons, construits une seule fois : deux faces, jamais N cartes. */
   #build(): void {
     this.#choices.replaceChildren();
     this.#cells = [
@@ -238,7 +199,7 @@ export class PortalScreen {
     ].map(({ choice, label }) => {
       const root = document.createElement('button');
       root.type = 'button';
-      // Partir quitte la run : le bouton rouge des sorties (ecran 06).
+      // Partir quitte la run : le bouton rouge des sorties.
       root.className = `btn btn--tab ol portal-choice${choice === VOTE_CHOICE.LEAVE ? ' btn--red' : ''}`;
       root.dataset.choice = voteState(choice);
       root.textContent = label;
@@ -262,18 +223,14 @@ export class PortalScreen {
   }
 
   /**
-   * Le geste : **cliquer une face EST le vote**, pas de survol puis
-   * validation — le meme parti que le jeton du draft.
+   * **Cliquer une face EST le vote**, comme le jeton du draft.
    *
-   * Recliquer la face qu'on a deja choisie la **retire** (`NO_VOTE`). Ce n'est
-   * pas de la symetrie gratuite : le §6 veut qu'on negocie vingt secondes en
-   * voyant les autres, et une voix qu'on ne pourrait plus reprendre
-   * transformerait la negociation en course au clic. C'est aussi le seul geste
-   * qui dise « je vous laisse decider ».
+   * Recliquer la face choisie la **retire** (`NO_VOTE`) : une voix qu'on ne
+   * pourrait plus reprendre ferait de la negociation une course au clic. C'est
+   * aussi le seul geste qui dise « je vous laisse decider ».
    *
-   * ⚠️ **On lit le vote du SERVEUR, jamais un vote local optimiste.** Le client
-   * ne decide rien (§7.2 de l'etape 4) : il envoie, et il affiche ce que
-   * `VOTES` rediffuse.
+   * ⚠️ **On lit le vote du SERVEUR, jamais un vote local optimiste** : le
+   * client envoie, et affiche ce que `VOTES` rediffuse.
    */
   #onVote(choice: number): void {
     const mine = this.#source.localId;
@@ -290,10 +247,9 @@ export class PortalScreen {
     this.#root.dataset.settled = settled ? 'true' : 'false';
     this.#status.textContent = this.#statusLine(decision);
 
-    // ⚠️ **L'or vient du SNAPSHOT, donc il bouge a chaque image** — les
-    // monstres continuent d'en laisser tomber pendant qu'on vote (tache 14).
-    // Le multiplicateur, lui, vient de l'annonce et ne bouge pas de toute la
-    // fenetre : c'est pour ca qu'il n'est pas dans le snapshot.
+    // ⚠️ **L'or vient du SNAPSHOT, donc il bouge pendant le vote** (les
+    // monstres en laissent toujours tomber). Le multiplicateur vient de
+    // l'annonce et ne bouge pas de toute la fenetre.
     const lines = stakeLines(source.gold, source.portalMultiplier);
     if (this.#leaveLine) {
       this.#leaveLine.textContent = lines.leave;
@@ -305,15 +261,14 @@ export class PortalScreen {
     for (const cell of this.#cells) {
       cell.root.dataset.mine =
         mine !== null && source.portalVotes.get(mine) === cell.choice ? 'true' : 'false';
-      // Cliquable tant que le verdict n'est pas tombe. Apres, il n'y a plus
-      // rien a negocier : le portail est ferme cote serveur, et un `VOTE` de
-      // plus serait refuse de toute facon.
+      // Cliquable tant que le verdict n'est pas tombe : ensuite le portail est
+      // ferme cote serveur, et un `VOTE` serait refuse.
       cell.root.disabled = settled;
     }
 
     // ⚠️ Tri par identifiant : l'ordre d'iteration d'une `Map` suit l'ordre
     // d'arrivee des messages, donc la latence. Les votants sauteraient de place
-    // a chaque rafraichissement — la lecon des jetons du draft.
+    // a chaque rafraichissement.
     const voters = [...source.portalVotes].sort((a, b) => a[0] - b[0]);
     this.#voters.replaceChildren(
       ...voters.map(([playerId, choice]) => voterFor(playerId, choice, playerId === mine)),
@@ -331,9 +286,8 @@ export class PortalScreen {
         : `L'équipe reste — ${formatGold(source.portalGold)} or toujours en jeu.`;
     }
     // ⚠️ **Derive du TICK, jamais de l'horloge murale** : c'est le tick que le
-    // serveur a date, donc le seul temps que les quatre joueurs partagent.
-    // `remainingSeconds` est celle du draft, importee plutot que recopiee — une
-    // seconde version de la meme formule finirait par en dire une autre.
+    // serveur a date, donc le seul temps que les joueurs partagent.
+    // `remainingSeconds` est celle du draft, importee plutot que recopiee.
     const seconds = remainingSeconds(source.portalDeadlineTick, source.hordeTick);
     return `Le portail est ouvert — ${seconds} s`;
   }
@@ -343,9 +297,8 @@ export class PortalScreen {
  * Un votant : l'avatar minimal d'un joueur, a sa couleur d'anneau, et **ce
  * qu'il a decide en toutes lettres**.
  *
- * ⚠️ **Le mot, pas seulement la couleur.** Un `data-choice` que seule la CSS
- * lirait laisserait « n'a pas vote » et « reste » se ressembler sur un ecran de
- * jeu ou l'on regarde surtout la horde. Le §6 veut qu'on VOIE les votes.
+ * ⚠️ **Le mot, pas seulement la couleur** : sinon « n'a pas vote » et
+ * « reste » se ressembleraient sur un ecran ou l'on regarde surtout la horde.
  */
 function voterFor(playerId: number, choice: number, isLocal: boolean): HTMLElement {
   const voter = document.createElement('span');

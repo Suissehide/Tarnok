@@ -32,30 +32,12 @@ const ENTITIES = 1000;
 /**
  * ⚠️ **300 s POUR CE FICHIER SEUL, contre les 60 s de `back/vitest.config.ts`.**
  *
- * C'est le TROISIEME relevement de ce delai pour ce meme fichier (30 s a
- * l'etape 4, 60 s a l'etape 6a), et le premier a etre mesure scenario par
- * scenario. Releve avec `--reporter=verbose`, ce fichier tournant SEUL :
- *
- * | scenario | cout |
- * | --- | --- |
- * | 11a — la charge deplace le boss | **104,3 s** |
- * | GF0 — Gel profond mord | **96,2 s** |
- * | MV0 — Mortier vif mord | **72,5 s** |
- * | 11b — charge sans rejeu | **65,5 s** |
- * | VF0 — Verglas mord | **63,4 s** |
- *
- * Cinq scenarios au-dessus des 60 s declares, dont deux au-dessus de 90 s. Ce
- * ne sont pas des tests fragiles : chacun fait converger plusieurs simulations
- * de mille entites sur des centaines de pas, et c'est exactement ce qui leur
- * donne leur valeur. Le meme releve dans la suite COMPLETE donne 62,2 s et
- * 71,7 s pour les deux pires — **moins** que seuls : le cout de ce fichier
- * varie d'un facteur 1,5 selon l'etat de la machine, donc un delai juste au
- * ras de la mesure rougirait au hasard.
- *
- * 300 s laisse ~3x la pire mesure. Et le reglage est **local a ce fichier** :
- * les 1 026 autres tests du depot gardent 60 s, parce qu'un vrai blocage doit
- * se voir vite. Relever le reglage global aurait emousse tout le portique pour
- * les besoins d'un seul fichier.
+ * Plusieurs scenarios (charge du boss, Gel profond, Mortier vif, Verglas)
+ * depassent 60 s, certains 90 s : chacun fait converger plusieurs simulations
+ * de mille entites sur des centaines de pas. Leur cout varie d'un facteur 1,5
+ * selon la machine, donc un delai au ras de la mesure rougirait au hasard ;
+ * 300 s laisse ~3x la pire. Le reglage reste **local a ce fichier** : ailleurs,
+ * un vrai blocage doit se voir vite.
  *
  * ⚠️ **A ne pas resoudre en allegeant les scenarios.** Un scenario de
  * replication qui ne fait plus converger assez de pas ne prouve plus rien ; le
@@ -98,12 +80,8 @@ interface DriftStats {
 /**
  * Fait avancer toutes les simulations de `fromTick` (inclus) a `toTick`
  * (exclu), en accumulant dans `stats` la derive maximale et le nombre de
- * mesappariements d'identite observes.
- *
- * Factorise la boucle commune aux deux tests : elle seule sait comment
- * nourrir l'historique de joueurs, recalculer les champs a la cadence de
- * `FLOWFIELD_HZ` a partir des positions retardees, et faire avancer chaque
- * horde d'un pas.
+ * mesappariements d'identite observes. Les champs sont recalcules a la
+ * cadence de `FLOWFIELD_HZ` a partir des positions retardees.
  */
 function advance(
   parts: readonly Participant[],
@@ -189,8 +167,7 @@ describe("le livrable de l'etape 2", () => {
     const stats: DriftStats = { maxDrift: 0, identityMismatches: 0 };
     advance(parts, 0, STEPS, stats);
 
-    // Le chiffre est affiche pour etre lisible plutot que cache : c'est lui qui
-    // permettra de confirmer ou d'ajuster le seuil (§12 de la spec). Vitest 4
+    // Le chiffre est affiche pour pouvoir ajuster le seuil. Vitest 4
     // n'imprime les `console.log` que pour les tests en echec : ecrire
     // directement sur le flux du process contourne cette interception.
     process.stdout.write(
@@ -202,11 +179,9 @@ describe("le livrable de l'etape 2", () => {
   });
 
   it('reste identique quand une seconde vague apparait en cours de partie', () => {
-    // Le premier test ne couvre que `spawn` sur une horde vide. En vrai, le
-    // serveur emet une vague toutes les six secondes environ : `spawn`
-    // s'exerce aussi sur une horde deja peuplee, avec la comptabilite de
-    // capacite que ca implique. C'est ce cas que ce test verifie, plutot que
-    // de dupliquer la premiere assertion sans avancer la simulation.
+    // Le premier test ne couvre que `spawn` sur une horde vide. En vrai,
+    // `spawn` s'exerce aussi sur une horde deja peuplee, avec la comptabilite
+    // de capacite que ca implique.
     const mapSeed = 0x7a11_0c0d;
     const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
 
@@ -256,14 +231,10 @@ describe("le livrable de l'etape 2", () => {
 
   it('mesure la derive due a une apparition tardive (latence reseau simulee)', () => {
     // Ce test ne verrouille pas une garantie, il MESURE un phenomene attendu.
-    // `Room.step` (tache 9) fait apparaitre une vague au tick decide par le
-    // serveur ; un client reel ne peut pas faire de meme au meme tick — l'ordre
-    // met du temps a traverser le reseau. Il l'appliquera donc un ou deux ticks
-    // plus tard (33 a 66 ms a 30 Hz), et ses entites auront alors ete avancees
-    // d'un ou deux pas de moins que celles du serveur : c'est une consequence
-    // de la latence, pas un bug de replication. Le chiffre mesure ici sert a
-    // decider, a la tache 13, si le client doit rattraper les pas manques ou
-    // simplement partir en retard.
+    // Un client reel recoit l'ordre de vague un ou deux ticks apres le serveur
+    // (33 a 66 ms a 30 Hz) : ses entites ont un ou deux pas de moins. C'est
+    // une consequence de la latence, pas un bug de replication ; le test
+    // suivant montre le rattrapage.
     const mapSeed = 0x5eed_1a7e;
     const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
     const reference = parts[0];
@@ -348,13 +319,9 @@ describe("le livrable de l'etape 2", () => {
     // d'apparition different.
     expect(stats.identityMismatches).toBe(0);
     // Pas de seuil serre ici : ce cas n'est pas cense respecter DRIFT_LIMIT_PX,
-    // puisqu'un ou deux pas de simulation manquent reellement. La mesure
-    // attendue etait ~694 px avant la tache 19 (voir §6.2 de la spec) ; le
-    // recalcul de trajectoire par intervalle (tache 19) l'a fait monter vers
-    // ~1450 px — une entite qui recalcule un tick sur K tient une direction
-    // quantifiee par cellule de flowfield jusqu'a K fois plus longtemps
-    // qu'avant, ce qui laisse plus de temps a un choix de cellule divergent de
-    // se propager avant correction. Borne large, toujours un filet contre une
+    // puisqu'un ou deux pas de simulation manquent reellement. Le recalcul de
+    // trajectoire par intervalle (un tick sur K) laisse un choix de cellule
+    // divergent se propager plus longtemps. Borne large : un filet contre une
     // explosion, jamais une garantie de precision.
     expect(stats.maxDrift).toBeLessThan(2000);
   });
@@ -362,8 +329,8 @@ describe("le livrable de l'etape 2", () => {
   it('avec spawnCatchingUp, la derive tardive redevient constante et petite', () => {
     // Meme scenario que le test precedent — meme apparition tardive de 1 a 2
     // ticks — mais chaque participant rattrape ses pas manques a l'apparition
-    // via `Horde.spawnCatchingUp`. Mesure : la derive tombe de ~694 px a
-    // ~20 px et cesse de croitre avec le temps (§6.2 de la spec).
+    // via `Horde.spawnCatchingUp` : la derive devient petite et cesse de
+    // croitre avec le temps.
     const mapSeed = 0x5eed_1a7e;
     const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
     const reference = parts[0];
@@ -402,8 +369,8 @@ describe("le livrable de l'etape 2", () => {
         // et generalement avant l'avancement de la horde du meme tick
         // (`#advanceHorde`). Rattraper avec un champ deja rafraichi ce tick-la
         // reviendrait a utiliser une entree que le serveur, lui, n'a vue qu'au
-        // tick suivant — et rouvre la meme sensibilite aux frontieres de
-        // cellules que le rattrapage cherche a eviter (§6.2 de la spec).
+        // tick suivant, et rouvre la sensibilite aux frontieres de cellules
+        // que le rattrapage cherche a eviter.
         const delay = SPAWN_DELAY[i] ?? 0;
         if (tick === SPAWN_TICK + delay) {
           p.horde.spawnCatchingUp(order, delay, DT, p.fields);
@@ -445,31 +412,23 @@ describe("le livrable de l'etape 2", () => {
     );
 
     expect(stats.identityMismatches).toBe(0);
-    // Le double des 20,3 px mesures a l'origine (tache 13) : marge pour ne
-    // pas etre fragile, tout en verrouillant que le rattrapage ramene bien la
-    // derive a une constante petite plutot qu'a une croissance lineaire.
+    // Marge pour ne pas etre fragile, tout en verrouillant que le rattrapage
+    // ramene la derive a une constante petite plutot qu'a une croissance
+    // lineaire.
     //
-    // ⚠️ La tache 19 avait fait monter cette mesure a 1220 px : le rattrapage
-    // avancait alors le long du champ (`#advanceAlongField`) pendant que la
-    // boucle normale avancait selon une vitesse tenue (`#advanceByVelocity`)
-    // — deux physiques differentes, qui divergeaient des le premier tick. La
-    // tache 20 unifie les deux chemins : le rattrapage recalcule desormais la
-    // trajectoire par phase et avance par vitesse tenue, EXACTEMENT comme la
-    // boucle normale, restreint aux seules entites qu'il vient de faire
-    // naitre (voir la doc de `Horde.spawnCatchingUp`). Mesure : retour a
-    // 0,000 px, exactement comme avant la tache 19.
+    // ⚠️ Le rattrapage doit avancer EXACTEMENT comme la boucle normale
+    // (trajectoire recalculee par phase, vitesse tenue), restreint aux
+    // entites qu'il vient de faire naitre (voir `Horde.spawnCatchingUp`) :
+    // deux physiques differentes divergent des le premier tick.
     expect(stats.maxDrift).toBeLessThan(40);
   });
 
   it('reproduit la configuration reelle : un serveur et quatre clients, chacun dans son propre ordre de tick', () => {
-    // Les deux tests precedents ont chacun valide un seul ordre — soit tout le
-    // monde en sequence serveur, soit tout le monde en sequence client — mais
-    // jamais confronte les deux entre eux. Or la partie reelle n'est ni l'un
-    // ni l'autre : c'est UN serveur qui suit `Room.step`
-    // (enregistrement -> rafraichissement -> spawn simple -> avancement) et
+    // Les deux tests precedents ne valident chacun qu'un seul ordre. La partie
+    // reelle confronte UN serveur qui suit `Room.step`
+    // (enregistrement -> rafraichissement -> spawn simple -> avancement) a
     // QUATRE clients qui suivent `GameClient#advanceHorde`
-    // (rattrapage -> enregistrement -> rafraichissement -> avancement). Rien
-    // n'avait encore mesure la derive entre ces deux ordres.
+    // (rattrapage -> enregistrement -> rafraichissement -> avancement).
     const mapSeed = 0x5eed_1a7e;
     const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
     const reference = parts[0];
@@ -504,7 +463,7 @@ describe("le livrable de l'etape 2", () => {
 
       parts.forEach((p, i) => {
         if (i === 0) {
-          // Sequence du serveur (`Room.step`, tache 9) : enregistrement,
+          // Sequence du serveur (`Room.step`) : enregistrement,
           // rafraichissement periodique, puis apparition simple — le serveur
           // n'est jamais en retard sur son propre tick, donc pas de
           // rattrapage a faire.
@@ -521,12 +480,10 @@ describe("le livrable de l'etape 2", () => {
           }
 
           if (tick === SPAWN_TICK) {
-            // `p.fields[0]` : tache 18, evite de faire naitre une entite en
-            // plein mur — exactement ce que fait `Room.step` cote serveur
-            // (`back/src/room.ts`). Un appel sans obstacles ici desaccorderait
-            // ce test de son propre modele : le client, lui, passe TOUJOURS
-            // par `spawnCatchingUp`, qui applique deja ce meme evitement (voir
-            // sa doc dans `shared/horde.ts`).
+            // `p.fields[0]` evite de faire naitre une entite en plein mur,
+            // comme `Room.step` (`back/src/room.ts`) et comme
+            // `spawnCatchingUp` cote client. Sans lui, ce test se desaccorderait
+            // de son propre modele.
             p.horde.spawn(order, p.fields[0]);
           }
 
@@ -534,7 +491,7 @@ describe("le livrable de l'etape 2", () => {
           return;
         }
 
-        // Sequence du client (`GameClient#advanceHorde`, tache 13) : les
+        // Sequence du client (`GameClient#advanceHorde`) : les
         // ordres en attente s'appliquent EN TETE de tick, avant tout
         // enregistrement et tout rafraichissement du champ.
         const delay = SPAWN_DELAY[i] ?? 0;
@@ -583,26 +540,18 @@ describe("le livrable de l'etape 2", () => {
     // Borne large et deliberement distincte de DRIFT_LIMIT_PX : ce test ne
     // verrouille pas une garantie fine puisque les deux ordres different
     // reellement, il attrape seulement une explosion qui signalerait que les
-    // deux sequences ne sont pas compatibles entre elles.
-    //
-    // ⚠️ La tache 19 avait fait monter cette mesure a 1220 px, pour la meme
-    // raison que le test precedent (deux physiques de rattrapage differentes,
-    // voir sa doc) ; la tache 20 l'unifie et ramene la mesure a 0,000 px,
-    // exactement comme avant la tache 19 — d'ou le retour a 200 px.
+    // deux sequences ne sont pas compatibles entre elles (par exemple deux
+    // physiques de rattrapage differentes, voir le test precedent).
     expect(stats.maxDrift).toBeLessThan(200);
   });
 
   /**
-   * C1 — le defaut que les cinq scenarios ci-dessus ne peuvent pas voir.
+   * C1 — le defaut que les scenarios ci-dessus ne peuvent pas voir.
    *
-   * Ils donnent tous, a TOUS les participants, exactement le meme tableau de
-   * positions sous exactement la meme cle de tick — `p.history.record(tick,
-   * xs, ys)`, ou `tick` est la variable de boucle commune. Structurellement,
-   * ca ne peut pas reveler le bug reel : `SnapshotBuffer.latest()` (cote
-   * client) jette le tick du serveur, et le client enregistre alors le
-   * contenu du dernier snapshot recu sous SA PROPRE cle de tick locale — qui
-   * n'a plus aucune raison de coincider avec le tick auquel ce contenu a ete
-   * produit cote serveur.
+   * Ils donnent a TOUS les participants le meme tableau de positions sous la
+   * meme cle de tick. Le danger reel : un client qui enregistre le contenu du
+   * dernier snapshot recu sous SA PROPRE cle de tick locale, sans rapport
+   * avec le tick serveur qui l'a produit.
    *
    * Les deux scenarios ci-dessous modelisent ce que fait REELLEMENT le
    * reseau, chacun avec une sequence de client differente :
@@ -633,8 +582,8 @@ describe("le livrable de l'etape 2", () => {
     const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
     const round = (v: number) => Math.round(v);
 
-    // Retard reseau de reception des positions, en ticks : 1 a 3, comme
-    // l'annonce le constat C1. Zero pour la reference : c'est le serveur.
+    // Retard reseau de reception des positions, en ticks : 1 a 3. Zero pour
+    // la reference : c'est le serveur.
     const NETWORK_DELAY: readonly number[] = [0, 1, 2, 3, 2];
     // Decalage initial du compteur de tick client, tel que le produirait un
     // WELCOME arrive apres un temps de trajet non nul — jamais zero en vrai.
@@ -642,15 +591,13 @@ describe("le livrable de l'etape 2", () => {
     // Tolerance de retard : au-dela, le compteur local est considere trop en
     // retard sur le tick serveur connu (onglet en arriere-plan, sursaut de
     // latence) et on le rattrape plutot que de laisser l'ecart s'installer
-    // pour de bon (correction C1.3). Volontairement asymetrique : le
-    // compteur local a de bonnes raisons d'etre EN AVANCE sur le dernier
-    // snapshot connu — c'est la latence reseau elle-meme, deja absorbee par
-    // `FIELD_INPUT_DELAY_TICKS` — donc seul un retard doit corriger.
+    // pour de bon. Volontairement asymetrique : le compteur local a de bonnes
+    // raisons d'etre EN AVANCE sur le dernier snapshot connu (la latence,
+    // deja absorbee par `FIELD_INPUT_DELAY_TICKS`), donc seul un retard doit
+    // corriger.
     //
-    // La valeur elle-meme est mesuree, pas devinee : ce champ de directions
-    // discret est sensible au point de faire la difference entre 0 et plus de
-    // 600 px de derive selon qu'un retard persistant de 1 ou de 2 ticks est
-    // tolere (voir le rapport final). D'ou une tolerance serree.
+    // Tolerance serree : ce champ de directions discret fait deriver de
+    // centaines de pixels des qu'un retard persistant de 2 ticks est tolere.
     const CATCHUP_TOLERANCE = 1;
 
     // Compteur de tick local de chaque client, initialise en retard comme le
@@ -674,8 +621,7 @@ describe("le livrable de l'etape 2", () => {
       parts.forEach((p, i) => {
         if (tick === SPAWN_TICK) {
           // Spawn synchrone, sans latence : ce scenario isole la derive du
-          // flowfield due a C1, pas celle de l'apparition tardive (scenarios
-          // precedents).
+          // flowfield due a C1, pas celle de l'apparition tardive.
           p.horde.spawn(order);
         }
 
@@ -721,8 +667,8 @@ describe("le livrable de l'etape 2", () => {
           localTick[i] =
             receivedServerTick - current > CATCHUP_TOLERANCE ? receivedServerTick : current + 1;
         } else {
-          // Jamais recale : c'est exactement le defaut C1.b — le compteur
-          // avance a son propre rythme, indefiniment decale.
+          // Jamais recale : le compteur avance a son propre rythme,
+          // indefiniment decale.
           localTick[i] = (localTick[i] ?? 0) + 1;
         }
 
@@ -739,11 +685,9 @@ describe("le livrable de l'etape 2", () => {
             p.horde.retarget(seen.x, seen.y);
           }
         }
-        // Le compteur de tick LOCAL du client, pas le tick vrai de la boucle
-        // (`tick`) : c'est exactement ce que ferait `GameClient#advanceHorde`,
-        // qui n'a jamais acces au tick serveur absolu autrement que via ce
-        // compteur resynchronise (ou non, selon le scenario) — voir la doc de
-        // `Horde.step` sur la phase de recalcul de trajectoire.
+        // Le compteur de tick LOCAL du client, pas le tick vrai de la boucle :
+        // `GameClient#advanceHorde` n'a pas d'autre acces au tick serveur (voir
+        // `Horde.step` sur la phase de recalcul de trajectoire).
         p.horde.step(DT, p.fields, queryTick);
       });
 
@@ -813,23 +757,18 @@ describe("le livrable de l'etape 2", () => {
 });
 
 /**
- * Le livrable de l'etape 3 : la replication survit-elle aux morts, une fois la
- * separation en jeu ?
+ * La replication survit-elle aux morts, une fois la separation en jeu ?
  *
- * La repulsion COUPLE les entites (`Horde#recomputeSteering`, tache 19) :
- * retirer un ennemi ne decale plus une seule entite mais des dizaines, de
- * proche en proche. Une mort appliquee un tick trop tard ne se noie plus
- * dans le bruit —
- * elle propage un ecart qui ne s'eteint plus. L'etape 2 a mesure ce que ca
- * donne pour l'apparition tardive d'une vague : 694 px apres dix secondes, sans
- * borne. La parade est le rejeu : `HordeHistory` (tache 3) restaure la horde au
- * tick de la mort, l'applique, puis rejoue le mouvement jusqu'au present.
+ * La repulsion COUPLE les entites (`Horde#recomputeSteering`) : retirer un
+ * ennemi en decale des dizaines, de proche en proche. Une mort appliquee un
+ * tick trop tard propage un ecart qui ne s'eteint plus. La parade est le
+ * rejeu : `HordeHistory` restaure la horde au tick de la mort, l'applique,
+ * puis rejoue le mouvement jusqu'au present.
  *
  * Comme le reste du fichier, ce bloc modelise ses clients lui-meme plutot que
  * d'importer `GameClient` : c'est la seule maniere de controler la latence
  * observee ici. Le signal "mort trop vieille" est donc un compteur local
- * (`lateDeaths`), pas celui de `GameClient` — la tache 10 recablera le meme
- * signal a cet endroit-la.
+ * (`lateDeaths`), pas celui de `GameClient`.
  */
 describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', () => {
   const WAVE_ID = 1;
@@ -838,30 +777,21 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
   // propager a tous les participants avant le suivant — sans quoi deux lots en
   // vol se melangeraient et la mesure ne distinguerait plus rien.
   //
-  // ⚠️ 151 et 13, PAS 150 et 12 : les deux valeurs sont choisies pour ne JAMAIS
-  // etre multiples de `stepsPerField` (3, = TICK_HZ/FLOWFIELD_HZ). Avec 150 et
-  // 12 (tous deux multiples de 3), chaque `deathTick` qui atteint reellement
-  // `primeFieldForReplay` tombe pile sur une frontiere de rafraichissement — et
-  // sur une frontiere, amorcer le champ AU tick de la mort ou au DERNIER
-  // rafraichissement du (`lastDue`) donnent la meme reponse, puisque les deux
-  // coincident. Un `primeFieldForReplay` qui utiliserait directement `atTick`
-  // au lieu de le ramener a `lastDue` — c'est-a-dire correct seulement sur les
-  // frontieres, faux ailleurs — passerait alors inapercu : ce fut le cas ici
-  // (ronde de correction 1), les dix tests passaient et le scenario 9
-  // rapportait toujours 0,000 px, malgre l'erreur. Avec 151 et 13 (13 n'est
-  // pas multiple de 3), les `deathTick` successifs parcourent les trois restes
-  // possibles modulo 3 (151%3=1, 164%3=2, 177%3=0, ...) : un rejeu qui ne
-  // ramenerait pas correctement `atTick` a `lastDue` echoue desormais sur les
-  // deux tiers des lots. Verifie par instrumentation (voir le rapport de la
-  // tache 8, section « Ronde de correction 1 ») : zero appel non aligne avec
-  // l'ancien calendrier, une majorite d'appels non alignes avec celui-ci.
+  // ⚠️ 151 et 13, PAS 150 et 12 : les deux valeurs ne doivent JAMAIS etre
+  // multiples de `stepsPerField` (3, = TICK_HZ/FLOWFIELD_HZ). Sur une frontiere
+  // de rafraichissement, amorcer le champ AU tick de la mort ou au dernier
+  // rafraichissement du (`lastDue`) donne la meme reponse : un
+  // `primeFieldForReplay` qui oublierait de ramener `atTick` a `lastDue`
+  // passerait inapercu. Avec 151 et 13, les `deathTick` successifs parcourent
+  // les trois restes modulo 3 (151%3=1, 164%3=2, 177%3=0, ...) et ce defaut
+  // echoue sur les deux tiers des lots.
   const DEATH_START = 151;
   const DEATH_INTERVAL = 13;
   const DEATH_BATCH = 12;
   const DEATH_BATCHES = 18;
   // Retard reseau d'application de la mort, en ticks : 0 pour la reference (le
-  // serveur arbitre et applique au meme instant), 1 a 3 pour les clients — comme
-  // l'exige la tache 8. Bien en-deca de ROLLBACK_DEPTH_TICKS(8) : les scenarios
+  // serveur arbitre et applique au meme instant), 1 a 3 pour les clients. Bien
+  // en-deca de ROLLBACK_DEPTH_TICKS(8) : les scenarios
   // 8 et 9 verifient ce que fait — ou ne fait pas — le rejeu DANS la portee de
   // l'anneau ; le scenario 10, plus bas, verifie ce qui se passe en dehors.
   const CLIENT_DELAY: readonly number[] = [0, 1, 2, 3, 2];
@@ -978,8 +908,8 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
 
   /**
    * Un pas de rejeu : les etapes 4 et 6 de la sequence serveur (rafraichir le
-   * champ si du, avancer la horde — recalcul de trajectoire par phase inclus,
-   * tache 19) — jamais l'arbitrage (etapes 7-9), qui reste la prerogative du
+   * champ si du, avancer la horde, recalcul de trajectoire par phase inclus)
+   * — jamais l'arbitrage (etapes 7-9), qui reste la prerogative du
    * serveur. Rejouer l'arbitrage prononcerait des morts que le serveur n'a
    * pas decidees, et ferait diverger le client precisement la ou le rejeu
    * cherche a le faire converger.
@@ -990,7 +920,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
    *
    * ⚠️ `tick` est passe TEL QUEL a `Horde.step` : c'est le meme tick absolu
    * que celui utilise par la simulation d'origine, condition pour que la
-   * phase de recalcul de trajectoire (tache 19) reste identique au rejeu.
+   * phase de recalcul de trajectoire reste identique au rejeu.
    */
   function replayTick(p: DeathParticipant, tick: number, stepsPerField: number): void {
     if (tick % stepsPerField === 0) {
@@ -1008,7 +938,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
 
   /**
    * Applique une mort en retard SANS rejeu : directement sur l'etat present.
-   * C'est le defaut que la tache 3 corrige — voir le scenario 8.
+   * C'est le defaut que le rejeu corrige : voir le scenario 8.
    */
   function applyDeathWithoutReplay(p: DeathParticipant, ids: readonly number[]): void {
     p.horde.kill(ids);
@@ -1017,9 +947,8 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
   /**
    * Remet le champ a son contenu du tick `atTick`, avant de commencer le rejeu.
    *
-   * ⚠️ Piege qu'un premier essai de ce fichier a bel et bien fait tomber dans
-   * ce test (derive mesuree : 709 px, l'ordre de grandeur des 694/769 px de
-   * l'etape 2 — voir le rapport de la tache 8). `HordeHistory.restore` remet la
+   * ⚠️ Sans cet amorcage, la derive explose (des centaines de pixels).
+   * `HordeHistory.restore` remet la
    * HORDE a l'etat du tick de la mort, mais le `FlowField` est un objet mutable
    * PARTAGE, jamais restaure par l'anneau : au moment ou le rejeu commence, il
    * porte encore le contenu du DERNIER rafraichissement reel — celui du tick
@@ -1046,7 +975,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
    * mort, applique, rejoue jusqu'au present. Si ce tick est sorti de l'anneau
    * (`ROLLBACK_DEPTH_TICKS`), retombe sur une application au present et le
    * SIGNALE via `p.lateDeaths` plutot que de le faire en silence — le pendant
-   * de `GameClient#applyDeaths` (tache 10).
+   * de `GameClient#applyDeaths`.
    */
   function applyDeathWithReplay(
     p: DeathParticipant,
@@ -1080,7 +1009,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
    * calendrier de morts que le serveur applique a l'instant decide tandis que
    * chaque client l'apprend 1 a 3 ticks plus tard. `withReplay` bascule entre
    * les deux strategies d'application — c'est la SEULE difference entre les
-   * scenarios 8 et 9, comme le demande le plan.
+   * scenarios 8 et 9.
    *
    * Le mouvement des joueurs, lui, n'est PAS retarde ici : la latence testee
    * est celle DES MORTS, isolee de la latence de position deja couverte par les
@@ -1127,12 +1056,9 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
     // une mort que le serveur a deja decidee. Pendant cette fenetre, le client
     // porte encore des voisins que le serveur a deja retires : la separation
     // les pousse different, et cet ecart est du au transit reseau lui-meme, pas
-    // a une imprecision du rejeu — le rejeu ne peut corriger que ce qui arrive
-    // APRES qu'il ait tourne, jamais les instants ou le message est encore en
-    // vol. Le mesurer la melangerait avec la seule chose que 8 et 9 cherchent a
-    // isoler : la qualite de la correction UNE FOIS appliquee. Meme principe
-    // que « on ne compare que les entites deja apparues » pour l'apparition
-    // tardive, applique cette fois a la disparition.
+    // a une imprecision du rejeu. Le mesurer la melangerait avec la seule chose
+    // que 8 et 9 cherchent a isoler : la qualite de la correction UNE FOIS
+    // appliquee.
     const pendingDeath: boolean[] = clients.map(() => false);
 
     for (let tick = 0; tick < END; tick++) {
@@ -1221,9 +1147,9 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
         `horde deplacee de ${result.travelled.toFixed(1)} px, ${TOTAL_KILLED} entites tuees sur ${ENTITIES}\n`,
     );
 
-    // Le scenario ne prouve rien si rien n'est mort ou si rien n'a bouge (barre
-    // de qualite de la tache 8) : ces trois assertions n'ont d'autre role que de
-    // garantir que le chiffre affiche plus haut mesure quelque chose de reel.
+    // Le scenario ne prouve rien si rien n'est mort ou si rien n'a bouge : ces
+    // trois assertions garantissent que le chiffre affiche mesure quelque chose
+    // de reel.
     expect(result.reference.count).toBe(ENTITIES - TOTAL_KILLED);
     expect(TOTAL_KILLED).toBeGreaterThan(100);
     expect(result.travelled).toBeGreaterThan(500);
@@ -1231,15 +1157,10 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
     // Borne large et volontaire : ce scenario existe pour que la derive EXISTE,
     // pas pour rester petite. La borne basse verifie que le chiffre est
     // reellement significatif — sinon les scenarios 8 et 9 rapporteraient tous
-    // les deux ~0 et la latence simulee ne prouverait rien (barre de qualite de
-    // la tache 8). La borne haute reste un filet contre une explosion, pas une
-    // garantie de precision.
-    //
-    // ⚠️ 687,893 px avant la tache 19, 800 de borne haute ; le recalcul de
-    // trajectoire par intervalle (tache 19) la fait monter vers ~1010 px —
-    // c'est UN DES DEUX CHIFFRES QUE LA TACHE 19 S'ATTEND A VOIR BOUGER (voir
-    // son rapport), la separation qu'il mesure n'etant plus recalculee a
-    // chaque tick.
+    // les deux ~0 et la latence simulee ne prouverait rien. La borne haute
+    // reste un filet contre une explosion, pas une garantie de precision : la
+    // separation n'etant pas recalculee a chaque tick, la derive peut monter
+    // au-dela de 1000 px.
     expect(result.maxDrift).toBeGreaterThan(20);
     expect(result.maxDrift).toBeLessThan(1500);
   });
@@ -1261,8 +1182,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
       // (scenario 10).
       expect(p.lateDeaths).toBe(0);
       expect(p.horde.count).toBe(result.reference.count);
-      // Assertion demandee par la tache : les identites sont STRICTEMENT
-      // egales, pas seulement leur nombre. `toEqual` sur deux tableaux tries
+      // Les identites sont STRICTEMENT egales, pas seulement leur nombre. `toEqual` sur deux tableaux tries
       // donne, en cas d'echec, l'index de vague precis qui differe.
       expect(aliveWaveIndices(p.horde)).toEqual(aliveWaveIndices(result.reference));
     }
@@ -1297,8 +1217,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
     const DEATH_TICK = 100;
     const DEATH_IDS = Array.from({ length: 20 }, (_, k) => entityIdOf(WAVE_ID, k));
     // Strictement au-dela de ROLLBACK_DEPTH_TICKS(8), avec de la marge : sinon
-    // l'anneau absorbe tout et ce scenario ne prouve rien (avertissement de la
-    // tache 8).
+    // l'anneau absorbe tout et ce scenario ne prouve rien.
     const LATE_DELAY = ROLLBACK_DEPTH_TICKS + 4;
     const END = DEATH_TICK + LATE_DELAY + 60;
 
@@ -1383,8 +1302,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
       expect(p.horde.count).toBe(reference.horde.count);
     }
 
-    // La derive residuelle est mesuree et affichee (obligation de la tache 8),
-    // pas verrouillee finement : ce chemin de secours n'a jamais pretendu
+    // La derive residuelle est mesuree et affichee, pas verrouillee finement : ce chemin de secours n'a jamais pretendu
     // preserver la precision du rejeu, seulement eviter le silence et le crash.
     expect(Number.isFinite(maxDrift)).toBe(true);
     expect(maxDrift).toBeLessThan(2000);
@@ -1392,36 +1310,23 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
 });
 
 /**
- * Taches 18, 19 et 21 : les correctifs (plafond de repulsion, apparition hors
- * mur, sortie de mur) doivent produire le MEME resultat des deux cotes,
- * exactement comme le reste de ce fichier le verifie pour la mort et le
- * rejeu. Un seul scenario, exerçant les comportements en sequence sur DEUX
- * simulations independantes (« le serveur » et « un client »), qui ne
- * partagent rien d'autre que la meme graine de carte et le meme ordre de
- * vague — comme deux processus reels.
+ * Plafond de repulsion, apparition hors mur, sortie de mur : ces
+ * comportements doivent produire le MEME resultat des deux cotes. Un seul
+ * scenario, exerçant les comportements en sequence sur DEUX simulations
+ * independantes (« le serveur » et « un client »), qui ne partagent rien
+ * d'autre que la meme graine de carte et le meme ordre de vague — comme deux
+ * processus reels.
  *
- * ⚠️ **Ce que la tache 19 change ici.** Avant elle, `SeparationGrid.apply`
- * etait un appel SEPARE de `Horde.step`, ce qui permettait de mesurer le
- * plafond par une simple difference de position avant/apres CET appel-la.
- * Depuis la tache 19, la repulsion est fondue dans `Horde.step` (recalcul de
- * trajectoire par phase, tache 19) : une difference de position avant/apres
- * `step` mesurerait la direction du champ ET la repulsion ET, pour un
- * entassement artificiel EXACTEMENT co-localise, un artefact du calendrier de
- * phase lui-meme (des entites identiques divergent des qu'elles n'ont pas
- * toutes la meme phase de recalcul — verifie a la main en ecrivant ce test,
- * voir le rapport de la tache 19). Le plafond se verifie donc desormais sur
- * `vx`/`vy` DIRECTEMENT (publics depuis la tache 19).
+ * ⚠️ **Le plafond se verifie sur `vx`/`vy` DIRECTEMENT.** La repulsion est
+ * fondue dans `Horde.step` : une difference de position avant/apres `step`
+ * melangerait la direction du champ, la repulsion et, pour un entassement
+ * EXACTEMENT co-localise, un artefact du calendrier de phase de recalcul.
  *
- * ⚠️ **Ce que la tache 21 change ici.** Le plafond n'est plus la SOMME des
- * deux contributions (`archetypeOf(...).speed + STEERING_REPULSION_STRENGTH`,
- * l'ancienne formule ADDITIVE) : melanger les directions puis ne remettre a
- * l'echelle qu'UNE SEULE fois par la vitesse propre rend cette somme sans
- * objet — la norme de `vx`/`vy` ne peut plus jamais depasser
- * `archetypeOf(...).speed` SEULE, quelle que soit la repulsion. Cette borne
- * etant desormais INTRINSEQUE (voir `shared/horde.test.ts` pour l'unite qui
- * la verifie sur un entassement dedie), la verifier ICI, a l'echelle d'un
- * scenario de replication realiste, est une confirmation supplementaire —
- * pas la seule preuve.
+ * La norme de `vx`/`vy` ne depasse jamais `archetypeOf(...).speed` seule,
+ * quelle que soit la repulsion (les directions sont melangees puis remises a
+ * l'echelle une seule fois). `shared/horde.test.ts` le prouve sur un
+ * entassement dedie ; ici, c'est une confirmation a l'echelle d'un scenario
+ * de replication realiste.
  */
 describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies identiques sur deux clients', () => {
   function fieldAt(fields: readonly FlowField[], i: number): FlowField {
@@ -1443,9 +1348,9 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
     // `mask` est calcule UNE fois puis copie dans chaque participant par
     // `applyObstacles` (comme le fait deja le reste de ce fichier) : c'est
     // fidele a la realite, ou deux cotes qui regenerent independamment la
-    // meme graine obtiennent par construction le meme masque (§5.1).
-    // ⚠️ SUR l'ile : depuis la carte en tuiles, la cellule (10, 10) est
-    // entouree d'eau, et la sortie de mur n'y trouvait plus d'herbe a temps.
+    // meme graine obtiennent par construction le meme masque.
+    // ⚠️ SUR l'ile : la cellule (10, 10), par exemple, est entouree d'eau et
+    // la sortie de mur n'y trouve pas d'herbe a temps.
     const anchorCol = 30;
     const anchorRow = 30;
     mask[anchorRow * probe.cols + anchorCol] = 1;
@@ -1530,10 +1435,9 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
         }
         p.horde.step(DT, p.fields, tick);
 
-        // Plafond (comportement 1) : verifie directement sur `vx`/`vy`, voir
-        // la doc de ce `describe`. Depuis la tache 21, la borne par entite
-        // est SA PROPRE vitesse d'archetype, SEULE — plus de terme de
-        // repulsion a additionner, quelle que soit la densite autour d'elle.
+        // Plafond (comportement 1), sur `vx`/`vy` (voir la doc de ce
+        // `describe`) : la borne par entite est SA PROPRE vitesse
+        // d'archetype, quelle que soit la densite autour d'elle.
         for (let i = 0; i < p.horde.count; i++) {
           const cap = archetypeOf(p.horde.archetype[i] ?? 0).speed * 1.0001; // marge flottante minime.
           const speed = Math.hypot(p.horde.vx[i] ?? 0, p.horde.vy[i] ?? 0);
@@ -1546,7 +1450,7 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
       }
 
       // --- Comportement 4 : accord tick pour tick entre les deux participants. ---
-      // Position ET vitesse tenue (tache 19) : deux clients qui divergeraient
+      // Position ET vitesse tenue : deux clients qui divergeraient
       // sur `vx`/`vy` seuls (vitesse sauvegardee/restauree differemment)
       // divergeraient sur la position au(x) pas suivant(s) — les verifier
       // TOUS LES DEUX rend le defaut visible un pas plus tot.
@@ -1559,7 +1463,7 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
       }
     }
 
-    // Depuis la tache 21, cette borne est intrinseque : toute entite dont le
+    // Cette borne est intrinseque : toute entite dont le
     // champ est non nul l'atteint exactement, entassement ou pas (voir
     // `shared/horde.test.ts` pour la mesure qui isole vraiment l'effet de la
     // densite). Ici, ce n'est plus une preuve que le pic a ete exerce, mais
@@ -1572,7 +1476,7 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
       p.horde.y[0] = anchorY;
       p.horde.targetField[0] = 0;
       // Sans ca, une entite reconnue "a portee de contact" lors d'un
-      // `retarget` anterieur resterait immobile (tache 17.2) quelle que soit
+      // `retarget` anterieur resterait immobile quelle que soit
       // la sortie de mur offerte par le champ — un faux negatif sans rapport
       // avec ce qu'on verifie ici.
       p.horde.stopped[0] = 0;
@@ -1611,11 +1515,11 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
 });
 
 /**
- * Etape 5a, tache 6 — **le ralentissement du Givre, mesure.**
+ * **Le ralentissement du Givre, mesure.**
  *
- * C'est le premier effet du projet qui touche le DEPLACEMENT, donc le contrat
- * de replication a 0,000 px que ce fichier tient depuis l'etape 2. Ce bloc
- * reprend, trait pour trait, la structure des scenarios 8 / 9 / 10 ci-dessus
+ * Un effet qui touche le DEPLACEMENT, donc le contrat de replication a
+ * 0,000 px. Ce bloc reprend, trait pour trait, la structure des scenarios
+ * 8 / 9 / 10 ci-dessus
  * — le meme calendrier arithmetique, les memes retards de 1 a 3 ticks, la
  * meme mesure par identite — en remplacant « une mort arrive en retard » par
  * « une zone arrive en retard ».
@@ -1624,8 +1528,8 @@ describe('taches 18, 19 et 21 : plafond de repulsion et sortie de mur, verifies 
  *
  * 1. **le ralentissement MORD** (`mordu`) — sans quoi une derive nulle voudrait
  *    dire « rien ne s'est passe » autant que « replication parfaite ». C'est le
- *    piege de la fixture qui masque, cinq fois rencontre dans ce depot : on
- *    COMPTE le cas qu'on croit creer, on ne le suppose pas. Ici, la reference
+ *    piege de la fixture qui masque : on COMPTE le cas qu'on croit creer, on
+ *    ne le suppose pas. Ici, la reference
  *    avec zones est comparee a une reference sans zones ;
  * 2. **sans rejeu, ca derive** (scenario Z1) — le pendant du scenario 8 ;
  * 3. **avec rejeu, ca retombe a zero** (scenario Z2) — le pendant du scenario 9.
@@ -1663,7 +1567,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
     lateZones: number;
   }
 
-  /** Ce que le message `ZONE` transporte (§8 de la spec) — rien de plus. */
+  /** Ce que le message `ZONE` transporte, rien de plus. */
   interface ZoneAnnounce {
     kind: number;
     x: number;
@@ -1772,13 +1676,11 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
    * `withReplay` bascule entre les deux strategies — la SEULE difference entre
    * Z1 et Z2. `delayOverride` sert au scenario Z3 (hors anneau).
    *
-   * ⚠️ **`kind` depuis la tache 7 de l'etape 5b, plus seulement un element
-   * brut.** `packZoneKind(element, 0) === element` pour tout element sur 3
-   * bits (voir le docbloc de `ZoneField.spawn`), donc les scenarios Z0 a Z3
-   * qui passent `ELEMENT.GIVRE`/`ELEMENT.NEUTRE` continuent de fonctionner
-   * tels quels ; les scenarios ZF passent un `kind` EMPAQUETE
-   * (`packZoneKind(element, REACTION.SUPRACONDUCTION)`) pour le gel de la
-   * Supraconduction.
+   * ⚠️ **`kind` est un `kind` empaquete, pas seulement un element brut.**
+   * `packZoneKind(element, 0) === element` pour tout element sur 3 bits (voir
+   * le docbloc de `ZoneField.spawn`), donc Z0 a Z3 passent
+   * `ELEMENT.GIVRE`/`ELEMENT.NEUTRE` tels quels ; les scenarios de reaction
+   * passent `packZoneKind(element, REACTION.…)`.
    */
   function runZoneScenario(
     mapSeed: number,
@@ -1852,7 +1754,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
           }
           // Arrondies, comme sur le fil : `encodeZone` ne transporte que des
           // `int16`, et le serveur s'impose l'arrondi qu'il inflige au client
-          // (meme discipline que les positions de joueurs, constat C1.4).
+          // (meme discipline que les positions de joueurs).
           reference.zones.spawn(
             kind,
             Math.round(reference.horde.x[slot] ?? 0),
@@ -1997,9 +1899,8 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
   });
 
   /**
-   * La Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : `slowFactor:
-   * 0`, la PREMIERE reaction de l'etape a toucher le deplacement — le
-   * contrat que ce fichier protege depuis l'etape 2. Meme decor que les
+   * La Supraconduction (Givre + Foudre) : `slowFactor: 0`, une reaction qui
+   * touche le deplacement, donc le contrat de replication. Meme decor que les
    * scenarios Z0 a Z2 ci-dessus, REUTILISE via `runZoneScenario` — un `kind`
    * empaquete (`packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION)`) au
    * lieu d'un element brut, rien de plus.
@@ -2053,8 +1954,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
       expect(result.announced).toBeGreaterThan(ZONE_BATCHES);
       // Borne large et volontaire, comme au scenario Z1 : ce scenario existe
       // pour que la derive EXISTE, pas pour qu'elle reste petite — c'est le
-      // chiffre non nul a cote duquel le zero de ZF2 prend son sens (§2 des
-      // resultats de la tache 6a, la lecon des deux lignes non nulles).
+      // chiffre non nul a cote duquel le zero de ZF2 prend son sens.
       expect(result.maxDrift).toBeGreaterThan(1);
     });
 
@@ -2075,19 +1975,13 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
   });
 
   /**
-   * Verglas (Givre + Poix, tache 8 de l'etape 5b) : « les ennemis
-   * derapent ». Meme decor que Z0 a Z2 et ZF0 a ZF2 ci-dessus, REUTILISE via
-   * `runZoneScenario` — un `kind` empaquete
-   * (`packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS)`), rien de plus.
+   * Verglas (Givre + Poix) : « les ennemis derapent ». Meme decor que Z0 a Z2
+   * et ZF0 a ZF2 ci-dessus, REUTILISE via `runZoneScenario` — un `kind`
+   * empaquete (`packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS)`), rien de plus.
    *
-   * ⚠️ **C'est le test que le brief de la tache 8 exige AVANT toute
-   * implementation** : « Verglas en jeu, avec rejeu, 0,000 px — et sans
-   * rejeu, un chiffre non nul ». `runZoneScenario` porte deja les DEUX
-   * moities de la mesure ; VF0 et VF1 sont les chiffres non nuls a cote
-   * desquels le zero de VF2 prend son sens (§2 des resultats de la tache
-   * 6a, la lecon des deux lignes non nulles — et la regle rappelee par le
-   * brief de cette tache : « une mesure qui ne sait produire que 0,000 px
-   * ne mesure pas »).
+   * ⚠️ Avec rejeu, 0,000 px ; sans rejeu, un chiffre non nul. VF0 et VF1 sont
+   * les chiffres non nuls a cote desquels le zero de VF2 prend son sens : une
+   * mesure qui ne sait produire que 0,000 px ne mesure pas.
    *
    * ⚠️ **Ce scenario mesure les DEUX moities de `Horde#recomputeSteering`
    * a la fois : la vitesse tenue amortie ET le `zoneSlowFactor` epingle au
@@ -2119,7 +2013,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
       );
       // ⚠️ **Une BORNE BASSE, pas la mesure complete.** `zoneSlowFactor` de
       // Verglas est EXPLICITEMENT epingle au facteur du Givre (voir
-      // `shared/reactions.ts`, R13) : quel que soit l'ordre d'arrivee, une
+      // `shared/reactions.ts`) : quel que soit l'ordre d'arrivee, une
       // horde derapee est AU MOINS aussi freinee qu'une horde givree — et le
       // derapage lui-meme (la perte de correction de trajectoire, en plus
       // du ralentissement) ne peut qu'AJOUTER de l'ecart au temoin neutre,
@@ -2163,15 +2057,14 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
   });
 
   /**
-   * La Chaux (tache 1 de l'etape 5c) : « il fuit » — la direction du champ
+   * La Chaux : « il fuit » — la direction du champ
    * s'inverse pour un ennemi en zone, une SUBSTITUTION au moment ou
    * `Horde#recomputeSteering` lit `fx`/`fy`, jamais une ecriture dans
    * `targetField` (voir le docbloc de `Horde#computeFieldSign`). Meme decor
    * que Z0 a Z2 et ZF0 a ZF2 ci-dessus, REUTILISE via `runZoneScenario` —
    * `packZoneKind(element, 0) === element`, donc `ELEMENT.CHAUX` seul est
-   * deja un `kind` valide (voir le docbloc de `ZoneField.spawn`) : aucune
-   * reaction nommee ne pair encore la Chaux (taches 4 a 7 de l'etape 5c,
-   * hors perimetre), c'est l'element SEUL qui porte la fuite ici.
+   * deja un `kind` valide (voir le docbloc de `ZoneField.spawn`) : c'est
+   * l'element SEUL qui porte la fuite ici.
    *
    * ⚠️ **Les trois memes preuves que Z0 a Z2 et ZF0 a ZF2, dans le meme
    * ordre, et il faut les trois** : CF0 prouve que la fuite MORD (sans quoi
@@ -2247,7 +2140,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
   });
 
   /**
-   * Gel profond (Givre + Vif-argent, tache 6 de l'etape 5c) : `slowFactor:
+   * Gel profond (Givre + Vif-argent) : `slowFactor:
    * 0`, EXACTEMENT comme la Supraconduction (ZF0 a ZF2 ci-dessus) — seule sa
    * duree change (`SURCHAUFFE_ZONE_LIFETIME_TICKS`, reutilisee, voir
    * `REACTION_DEFS`). Meme decor, REUTILISE via `runZoneScenario` : un
@@ -2309,7 +2202,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
   });
 
   /**
-   * Mortier vif (Poix + Chaux, tache 6 de l'etape 5c) : `slowFactor: 0`,
+   * Mortier vif (Poix + Chaux) : `slowFactor: 0`,
    * duree GENERIQUE (contrairement a Gel profond et Aveuglement). Meme
    * decor, REUTILISE via `runZoneScenario`.
    *
@@ -2362,7 +2255,7 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
   });
 
   /**
-   * Aveuglement (Chaux + Vif-argent, tache 6 de l'etape 5c) : « la fuite,
+   * Aveuglement (Chaux + Vif-argent) : « la fuite,
    * plus longue que la Chaux seule » — meme mecanisme que le bloc Chaux
    * (CF0 a CF2 ci-dessus), seule la duree change
    * (`SURCHAUFFE_ZONE_LIFETIME_TICKS`, reutilisee). Meme decor, REUTILISE
@@ -2418,26 +2311,22 @@ describe('etape 5a tache 6 : le Givre ralentit, et le rejeu le date au tick', ()
 });
 
 /**
- * ⚠️ **LA QUESTION OUVERTE DE LA TACHE 2, MESUREE PLUTOT QUE SUPPOSEE.**
+ * ⚠️ **L'echelle de PV du palier, MESUREE PLUTOT QUE SUPPOSEE.**
  *
- * Le plan de l'etape 6a la nomme dans son auto-relecture : les PV de depart se
- * derivent de l'archetype, qui voyage dans l'ordre de vague de 19 octets. Si le
- * serveur multiplie par `hpScale(k)` et que le client ne connait pas `k`, *« les
- * deux cotes n'ont pas les memes PV — et le client tue des monstres que le
- * serveur garde »*.
+ * Les PV de depart se derivent de l'archetype, qui voyage dans l'ordre de
+ * vague. Si le serveur multiplie par `hpScale(k)` et que le client ne connait
+ * pas `k`, les deux cotes n'ont pas les memes PV.
  *
- * **La reponse tenue ici : le client ne tue rien.** `Horde.hp` n'est lu que par
- * le serveur (sa propre documentation le dit depuis l'etape 5a) ; le client
- * apprend qui meurt par `DEATHS`, depuis l'etape 3. Une divergence de PV n'est
- * donc pas une divergence de simulation — c'est une donnee que l'un des deux
- * cotes n'utilise pas.
+ * **Le client ne tue rien pour autant.** `Horde.hp` n'est lu que par le
+ * serveur ; le client apprend qui meurt par `DEATHS`. Une divergence de PV
+ * n'est donc pas une divergence de simulation — c'est une donnee que l'un des
+ * deux cotes n'utilise pas.
  *
- * Ce bloc le MESURE, avec le meme juge que le ralentissement du Givre a
- * l'etape 5a : les deux moities y sont, la seconde etant celle qui empeche la
- * premiere de passer pour rien.
+ * Ce bloc le MESURE en deux moities, la seconde empechant la premiere de
+ * passer pour rien.
  */
 describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
-  /** Palier de mesure. 5, comme la colonne de la table du §3 de la spec. */
+  /** Palier de mesure. */
   const PALIER = 5;
   /** Un archetype de pietaille LOURDE : la legere mourrait du premier coup, quelle que soit l'echelle. */
   const ARCHETYPE_LOURD = 1;
@@ -2481,9 +2370,9 @@ describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
     // ⚠️ Le serveur, et lui seul. Les clients gardent les PV bruts de
     // l'archetype — c'est tout le sujet de ce bloc.
     //
-    // ⚠️ **`ARCHETYPE_LOURD`, et ce n'est pas indifferent depuis la tache 3.**
-    // Le salon n'applique plus `hpScale` a travers `palierHp`, qui EXEMPTE la
-    // pietaille legere : avec un archetype leger, `echelleServeur` vaudrait 1
+    // ⚠️ **`ARCHETYPE_LOURD`, et ce n'est pas indifferent.** Le salon
+    // applique `hpScale` a travers `palierHp`, qui EXEMPTE la pietaille
+    // legere : avec un archetype leger, `echelleServeur` vaudrait 1
     // quoi qu'on lui passe et ce bloc mesurerait une derive nulle « parce que
     // rien n'a change » — exactement le temoin degenere que le test suivant
     // existe pour ecarter. Sur un lourd, l'echelle passee ici EST celle que le
@@ -2552,7 +2441,7 @@ describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
     );
 
     // ⚠️ Le decor doit produire ce qu'il mesure : sans mort, aucune compaction
-    // de creneaux, et la mesure ne dirait rien du cas qui inquiete le plan.
+    // de creneaux, et la mesure ne dirait rien du cas qui inquiete.
     expect(morts).toBeGreaterThan(0);
     expect(stats.identityMismatches).toBe(0);
     // Exactement zero, pas « sous le seuil » : les cinq participants executent
@@ -2564,8 +2453,8 @@ describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
     // ⚠️ **La seconde moitie.** Le test precedent passerait a l'identique avec
     // `hpScale` rendant 1 partout : la derive serait nulle parce que RIEN
     // n'aurait change. Il faut donc montrer que l'echelle a bel et bien modifie
-    // ce que le serveur decide — c'est exactement le desaccord que le plan
-    // craignait, mesure ici, et qui reste sans effet observable.
+    // ce que le serveur decide — le desaccord redoute, mesure ici, et qui
+    // reste sans effet observable.
     const sans = scenarioMemo(1);
     const avec = scenarioMemo(hpScale(PALIER));
 
@@ -2583,13 +2472,11 @@ describe("etape 6a : l'echelle de PV du palier ne traverse pas le fil", () => {
 });
 
 /**
- * Etape 6a, tache 5 bis — **la charge du boss, le deuxieme effet qui touche le
- * DEPLACEMENT**.
+ * **La charge du boss, un effet qui touche le DEPLACEMENT**.
  *
- * ⚠️ **C'est le meme risque que le ralentissement du Givre a l'etape 5a**, et
- * ce fichier a deja tranche un cas identique : un effet qui pilote une position
- * touche le contrat de replication a 0,000 px. La parade est celle qui a deja
- * servi trois fois — le serveur annonce UNE FOIS (origine, direction, longueur,
+ * ⚠️ **C'est le meme risque que le ralentissement du Givre** : un effet qui
+ * pilote une position touche le contrat de replication a 0,000 px. Meme
+ * parade — le serveur annonce UNE FOIS (origine, direction, longueur,
  * largeur, ticks), et les deux cotes DERIVENT la position le long du couloir.
  *
  * Les trois memes marches que pour le Givre :
@@ -2904,8 +2791,8 @@ describe('etape 6a : la charge du boss survit a la latence, avec et sans rejeu',
   });
 
   /**
-   * ⚠️ **LE chiffre de la tache.** Le meme que le scenario 9 pour les morts et
-   * le scenario Z2 pour les zones : zero, pas « petit ».
+   * ⚠️ **LE chiffre qui compte**, comme le scenario 9 pour les morts et le
+   * scenario Z2 pour les zones : zero, pas « petit ».
    */
   it('scenario 11c — avec rejeu, la derive retombe a zero malgre la charge', () => {
     const result = runChargeScenario(0xc0de_0013, true);
@@ -2925,16 +2812,16 @@ describe('etape 6a : la charge du boss survit a la latence, avec et sans rejeu',
 });
 
 /**
- * Etape 8, tache 6 : l'Appat. Un leurre REMPLACE son lanceur dans l'entree du
- * champ (`substituteDecoys`), au tick des POSITIONS. Le serveur le connait des
- * sa pose ; chaque client l'apprend `delay` ticks plus tard et, s'il a deja
+ * L'Appat. Un leurre REMPLACE son lanceur dans l'entree du champ
+ * (`substituteDecoys`), au tick des POSITIONS. Le serveur le connait des sa
+ * pose ; chaque client l'apprend `delay` ticks plus tard et, s'il a deja
  * simule des ticks concernes, restaure son anneau a la naissance du leurre et
- * rejoue — le patron de la charge du boss (scenario 11c). Miroir exact de
+ * rejoue (le patron de la charge du boss, scenario 11c). Miroir exact de
  * `GameClient#applyDecoy`.
  *
  * Les retards vont jusqu'a 7 ticks : au-dela de `FIELD_INPUT_DELAY_TICKS` (3),
  * un client a FORCEMENT deja rafraichi son champ sans le leurre, et seul le
- * rejeu peut le rattraper — sous `ROLLBACK_DEPTH_TICKS` (8).
+ * rejeu peut le rattraper, sous `ROLLBACK_DEPTH_TICKS` (8).
  */
 describe('etape 8 tache 6 : l Appat survit a la latence, avec et sans rejeu', () => {
   const IDS = [1, 2, 3, 4];
@@ -3132,11 +3019,11 @@ describe('etape 8 tache 6 : l Appat survit a la latence, avec et sans rejeu', ()
 });
 
 /**
- * Etape 11, §3.2 : la fuite du porteur se decide dans `retarget`, sur les
- * positions RETARDEES — les memes des deux cotes, a la meme cadence. Ce
- * scenario le prouve sur une vraie poursuite : un porteur, une foule autour,
- * et deux chasseurs qui le prennent en tenaille. Serveur et client doivent
- * rester bit-identiques sur TOUTE la poursuite, attente comprise.
+ * La fuite du porteur se decide dans `retarget`, sur les positions RETARDEES,
+ * les memes des deux cotes, a la meme cadence. Ce scenario le prouve sur une
+ * vraie poursuite : un porteur, une foule autour, et deux chasseurs qui le
+ * prennent en tenaille. Serveur et client doivent rester bit-identiques sur
+ * TOUTE la poursuite, attente comprise.
  */
 describe('etape 11 : la fuite du porteur se derive a l identique', () => {
   it('un porteur chasse par deux joueurs : 0,000 px de derive, attente et fuite comprises', () => {
@@ -3239,41 +3126,24 @@ describe('etape 11 : la fuite du porteur se derive a l identique', () => {
 });
 
 /**
- * Etape 11, correction (revue du controleur, ronde 2) : la ronde 1 mesurait
- * une derive globale de horde (413 px), mais JAMAIS sur le porteur lui-meme —
- * les 12 victimes les plus proches de lui au tick de la mort restaient a
- * 270-330 px, hors de `SEPARATION_RADIUS` (28 px, voir
- * `shared/horde.ts#applyDeoverlap`) : le deoverlap ne le touchait jamais, et
- * la derive mesuree venait entierement du reste de la grosse grappe. Le
- * risque propre a cette tache — une mort tardive qui decale le porteur par
- * deoverlap, au point de faire basculer differemment le seuil binaire de
- * `PORTEUR_FLEE_RADIUS` d'un cote et de l'autre — n'etait donc pas teste.
+ * Une mort tardive qui decale le porteur par deoverlap pourrait faire
+ * basculer differemment le seuil binaire de `PORTEUR_FLEE_RADIUS` d'un cote
+ * et de l'autre. Pour que ce cas existe vraiment, le porteur doit chevaucher
+ * ses voisins : une derive globale de horde ne le prouve pas, la grosse
+ * grappe restant hors de `SEPARATION_RADIUS`.
  *
- * Pour forcer un chevauchement reel, une petite « escorte » partage
- * l'archetype du porteur (meme vitesse, meme regle de fuite/attente) et nait
- * sur son ancre : ses membres restent a quelques pixels de lui tout au long
- * de la poursuite (verifie par instrumentation), y compris PENDANT qu'il
- * fuit. C'est deliberement pendant la fuite (pas l'attente) que la mort est
- * programmee : `#applyDeoverlap` departage par priorite — l'entite la PLUS
- * LOIN de son champ vise cede (voir `#isBehind`/`#fieldDistAt`) — et un
- * porteur qui s'eloigne activement du joueur grandit sa propre distance plus
- * vite qu'une escorte qui, elle, continue de viser le meme joueur : c'est
- * cette dissymetrie qui donne au porteur l'exclusivite de ceder, donc de se
- * deplacer, quand un de ses voisins d'escorte meurt. Au tick 274 (7 ticks
- * apres que le porteur franchisse `PORTEUR_FLEE_RADIUS` pour la premiere fois
- * au tick 267, mesure par instrumentation sur ce meme decor), le serveur tue
- * les 3 voisins d'escorte les plus proches de lui ; le client l'apprend
- * DEATH_DELAY ticks plus tard — strictement la meme recette que l'etape 3
- * (`replayTick`, `HordeHistory.restore` puis rejeu), reprise ici pour un
- * porteur plutot qu'une horde nue.
- *
- * (Une premiere tentative a tue les 12 membres de la GROSSE grappe les plus
- * proches du porteur au tick 260 — pendant qu'il attend encore. Verifie par
- * instrumentation : derive du porteur lui-meme nulle des deux cotes, quel
- * que soit le rejeu — `stopped` ne bouge jamais par vitesse, et ses voisins
- * les plus proches a cet instant restaient hors de `SEPARATION_RADIUS`. Le
- * decor ci-dessous — escorte + mort pendant la fuite — est ce qui a fallu
- * pour que le porteur bouge reellement.)
+ * Une petite « escorte » partage donc l'archetype du porteur (meme vitesse,
+ * meme regle de fuite/attente) et nait sur son ancre : ses membres restent a
+ * quelques pixels de lui tout au long de la poursuite. La mort est programmee
+ * PENDANT la fuite, pas l'attente (`stopped` ne bouge jamais par vitesse) :
+ * `#applyDeoverlap` fait ceder l'entite la PLUS LOIN de son champ vise (voir
+ * `#isBehind`/`#fieldDistAt`), et un porteur qui s'eloigne du joueur grandit
+ * sa distance plus vite qu'une escorte qui continue de le viser. C'est donc
+ * lui qui se deplace quand un voisin d'escorte meurt. Au tick 274, peu apres
+ * que le porteur a franchi `PORTEUR_FLEE_RADIUS` sur ce decor, le serveur tue
+ * les 3 voisins d'escorte les plus proches ; le client l'apprend DEATH_DELAY
+ * ticks plus tard, avec la recette habituelle (`replayTick`,
+ * `HordeHistory.restore` puis rejeu).
  */
 describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', () => {
   const DEATH_TICK = 274;
@@ -3304,7 +3174,7 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
     };
   }
 
-  /** Les etapes 4 et 6 de la sequence serveur, comme `replayTick` a l'etape 3 : rafraichir le champ si du, avancer la horde. */
+  /** Rafraichir le champ si du, avancer la horde : le rejeu d'un tick serveur, sans l'arbitrage. */
   function replayTick(p: ChaseParticipant, tick: number, stepsPerField: number): void {
     if (tick % stepsPerField === 0) {
       const seen = p.history.delayed(tick);
@@ -3319,7 +3189,7 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
     p.hordeHistory.record(tick, p.horde);
   }
 
-  /** Meme garde-fou que l'etape 3 : remet le champ a son age au tick restaure avant de commencer le rejeu. */
+  /** Remet le champ a son age au tick restaure avant de commencer le rejeu. */
   function primeFieldForReplay(p: ChaseParticipant, atTick: number, stepsPerField: number): void {
     const lastDue = atTick - (((atTick % stepsPerField) + stepsPerField) % stepsPerField);
     const seen = p.history.delayed(lastDue);
@@ -3330,7 +3200,7 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
     }
   }
 
-  /** Identite -> creneau courant, pour comparer deux hordes compactees differemment (meme piege qu'a l'etape 3). */
+  /** Identite -> creneau courant, pour comparer deux hordes compactees differemment. */
   function slotByEntity(horde: Horde): Map<number, number> {
     const out = new Map<number, number>();
     for (let slot = 0; slot < horde.count; slot++) {
@@ -3400,9 +3270,8 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
       count: 300,
     };
     // L'escorte : meme archetype que le porteur (meme vitesse, meme regle de
-    // fuite/attente), nee sur sa meme ancre — c'est ce qui la garde a
-    // quelques pixels de lui tout au long de la poursuite, fuite comprise
-    // (voir le commentaire du describe pour la mesure qui le confirme).
+    // fuite/attente), nee sur sa meme ancre, ce qui la garde a quelques
+    // pixels de lui tout au long de la poursuite, fuite comprise.
     const escorte: WaveOrder = {
       waveId: 3,
       spawnTick: 0,
@@ -3490,8 +3359,7 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
 
       // Pendant la fenetre de transit (le message est encore en vol), le
       // client porte encore des voisins que le serveur a deja retires : ce
-      // n'est pas une derive de rejeu, c'est le reseau — meme principe qu'a
-      // l'etape 3.
+      // n'est pas une derive de rejeu, c'est le reseau.
       if (tick > DEATH_TICK + DEATH_DELAY) {
         const drift = measureDrift(serveur.horde, client.horde);
         if (drift > maxDrift) {
@@ -3531,9 +3399,8 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
     process.stdout.write(
       `etape 11, scenario PT1 (sans rejeu) : derive du porteur ${r.bearerDrift.toFixed(3)} px, derive de la horde ${r.maxDrift.toFixed(3)} px\n`,
     );
-    // Le scenario ne prouve rien si SEULE la foule derive : c'est
-    // precisement le defaut de la ronde 1, et ce que corrige le rejeu,
-    // scenario PT2 ci-dessous.
+    // Le scenario ne prouve rien si SEULE la foule derive : c'est le porteur
+    // lui-meme qui doit bouger, et que le rejeu (scenario PT2) ramene.
     expect(r.bearerDrift).toBeGreaterThan(0);
   });
 

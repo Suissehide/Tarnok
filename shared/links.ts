@@ -5,7 +5,7 @@ import type { ZoneField } from './zones';
 
 /**
  * Les voisins LIES d'une entite : ceux qui partagent une zone de Vif-argent
- * avec elle et sont a moins de `LINK_RADIUS` (§3 de la spec de l'etape 5c).
+ * avec elle et sont a moins de `LINK_RADIUS`.
  *
  * ⚠️ **Deterministe et NON TRANSITIVE.** Les positions de la horde sont
  * bit-identiques des deux cotes et les zones sont annoncees : la meme entree
@@ -13,16 +13,12 @@ import type { ZoneField } from './zones';
  * transitive serait un parcours de graphe, dont le resultat depend de
  * l'ordre de visite — cet ordre depend du compactage de la horde
  * (`Horde#removeAt` echange avec le dernier element), qui n'est PAS garanti
- * identique des deux cotes du fil. C'est la troisieme rencontre de ce piege
- * dans ce projet : la chaine de la Foudre (5b, tache 2) departage par
- * `entityId` plutot que par l'ordre du tableau, *Embrasement* (5b, tache 6)
- * est devenu un rayon plutot qu'une propagation de proche en proche, et la
- * liaison ici en est la troisieme forme — voir `shared/links.test.ts` pour
- * le test qui separe les deux modeles.
+ * identique des deux cotes du fil. Meme piege que la chaine de la Foudre et
+ * *Embrasement* ; `shared/links.test.ts` separe les deux modeles.
  *
  * ⚠️ **L'entite elle-meme n'est JAMAIS dans le resultat.** Son propre centre
  * est a distance NULLE d'elle-meme, donc dans TOUT rayon — sans exclusion
- * explicite, chaque ennemi serait lie a lui-meme et *Amalgame* (tache 7)
+ * explicite, chaque ennemi serait lie a lui-meme et *Amalgame*
  * le frapperait deux fois pour un seul impact recu.
  *
  * ⚠️ **« La meme zone », pas « une zone de Vif-argent chacun ».** Deux
@@ -30,50 +26,24 @@ import type { ZoneField } from './zones';
  * l'autre, ne sont pas lies si aucune zone ne les couvre TOUS LES DEUX a la
  * fois — voir le test dedie.
  *
- * ⚠️ **`O(zones x horde.count)`, meme famille que `ZoneField.ampAt` et
- * consorts.** Pas optimise davantage ici : la porte de performance du §8 de
- * la spec se mesure au banc dedie (tache 10), pas dans cette fonction.
+ * `O(zones x horde.count)`, comme `ZoneField.ampAt` : la performance se
+ * mesure au banc, pas ici.
  *
- * ⚠️ **`zoneVifArgent` (`shared/reactions.ts`), UN CHAMP de `REACTION_DEFS`
- * PARTAGE avec `ZoneField.hitRadiusBonusAt` — troisieme revue sur ce meme
- * bug.**
+ * ⚠️ **Le critere est `zoneVifArgent` (`shared/reactions.ts`), un champ
+ * EPINGLE de `REACTION_DEFS`, PARTAGE avec `ZoneField.hitRadiusBonusAt`** :
+ * un seul critere pour la liaison et le rayon de touche. `true` sur les
+ * TROIS reactions qui ont BESOIN du Vif-argent pour leur propre effet
+ * (Vaporisation, Paratonnerre, Amalgame), `false` partout ailleurs, y compris
+ * Gel profond et Aveuglement. Deux pieges evites :
+ * - `zoneReaction(kind) === 0` n'irait pas : une zone portant le Vif-argent
+ *   a TOUJOURS une reaction non nulle en production, rien ne lierait ;
+ * - deriver de la paire d'elements ferait lier les cinq paires du Vif-argent,
+ *   Gel profond et Aveuglement compris.
  *
- * Correctif n°1 (tache 3) : `zoneReaction(kind) === 0`, « seules les zones
- * purement elementaires lient ». Observation exacte (le nibble d'ELEMENT
- * d'une zone de reaction porte le DECLENCHEUR, le second projectile arrive,
- * Vif-argent OU son partenaire selon l'ordre) mais mauvaise conclusion : il
- * excluait TOUTE zone de reaction, alors que `postZone`
- * (`back/src/combat.ts`) est le SEUL createur de zones et que les CINQ
- * paires du Vif-argent sont TOUTES nommees dans `REACTION_DEFS` — une zone
- * portant le Vif-argent a donc TOUJOURS une reaction non nulle en
- * production. Mesure au banc : `zonesLiantesVues = 0` sur 2700 ticks.
- *
- * Correctif n°2 : derive la liaison de la PAIRE
- * (`reactionOfId(zoneReaction(kind))?.pair`, canonicalisee par
- * `packElementPair`) — ORDRE-INDEPENDANTE, mais faisant lier les CINQ
- * paires du Vif-argent, y compris Gel profond et Aveuglement, dont l'entree
- * de cette meme table (tache 6) decide l'INVERSE en citant le §5 de la spec
- * (« vitesse nulle » / « la fuite », jamais la liaison). Deriver de la
- * paire renversait cette decision EN SILENCE. Remplace par un champ EPINGLE
- * (`zoneLinks`, renomme depuis) — mais consulte SEULEMENT ici, pas par
- * `hitRadiusBonusAt` : Gel profond elargissait alors le rayon de touche
- * sans plus lier, une divergence que personne n'avait choisie.
- *
- * Correctif n°3 (celui-ci) : `zoneVifArgent` est le MEME champ, desormais lu
- * aussi par `hitRadiusBonusAt` (`shared/zones.ts`) — un seul critere, deux
- * consommateurs (§3 « la meme zone de Vif-argent », §4 « un ennemi dans une
- * zone de Vif-argent »). `true` sur les TROIS reactions qui ont BESOIN du
- * Vif-argent pour leur propre effet (Vaporisation, Paratonnerre, Amalgame),
- * `false` partout ailleurs, y compris Gel profond et Aveuglement, pour les
- * DEUX effets desormais.
- *
- * ⚠️ **Toujours ORDRE-INDEPENDANTE — mais plus pour la canonicalisation de
- * `packElementPair`.** `zoneVifArgent` est lu par `id` (`zoneReaction(kind)`),
- * jamais par un element : cette valeur ne depend d'AUCUN element, donc
- * d'aucun ordre d'arrivee des deux projectiles. Voir `shared/links.test.ts`
- * : les tests posent toujours les deux ordres de declencheur, mais c'est
- * maintenant parce que la grandeur vient de la TABLE, plus parce qu'une
- * paire est canonicalisee.
+ * ⚠️ **ORDRE-INDEPENDANTE** : `zoneVifArgent` est lu par `id`
+ * (`zoneReaction(kind)`), jamais par un element, donc ne depend d'aucun
+ * ordre d'arrivee des deux projectiles. `shared/links.test.ts` pose les deux
+ * ordres de declencheur.
  */
 export function linkedNeighbours(
   horde: Horde,
@@ -108,7 +78,6 @@ export function linkedNeighbours(
 
     for (let i = 0; i < horde.count; i++) {
       if (i === slot) {
-        // Jamais soi-meme : voir le docbloc ci-dessus.
         continue;
       }
 

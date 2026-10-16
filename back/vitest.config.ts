@@ -14,40 +14,16 @@ export default defineConfig({
     environment: 'node',
     include: ['src/**/*.test.ts', '../shared/**/*.test.ts'],
     /**
-     * ⚠️ 30 s, contre 5 s par defaut, et ce n'est PAS pour faire passer un test
-     * fragile.
-     *
-     * Deux tests de ce depot sont lourds par construction et le resteront :
-     *
-     * - `horde.replication.test.ts` fait converger cinq simulations de mille
-     *   entites, plusieurs fois — le livrable de l'etape 2. Mesure : ~5,7 s,
-     *   soit **juste au-dessus** des 5 s par defaut. Il echouait donc environ
-     *   une fois sur quatre, selon la charge de la machine, avec un message qui
-     *   ne dit rien du contrat qu'il garde.
-     * - `draft.integration.test.ts` fait jouer quatre vraies sockets pendant la
-     *   fenetre de draft de 20 s — le livrable de l'etape 4.
-     *
-     * **Un test intermittent est pire qu'un test absent : on finit par
-     * l'ignorer.** Declarer leur cout reel vaut mieux que de les voir rougir au
-     * hasard, et mieux que de les alleger jusqu'a ce qu'ils ne prouvent plus
-     * rien.
-     */
-    /**
-     * ⚠️ Releve de 30 a 60 s : le scenario Z0 de `horde.replication.test.ts`
-     * coute 16 s seul et 21 s dans son fichier, et **depassait les 30 s quand la
-     * machine est chargee** — constate a l'etape 6a, ou il a fait rougir une
-     * porte de commit sans rien dire du contrat qu'il garde.
-     *
-     * C'est la seconde fois que ce fichier frole son delai. Declarer son cout
-     * reel vaut mieux que de le voir rougir au hasard.
+     * ⚠️ 60 s, contre 5 s par defaut, et ce n'est PAS pour masquer un test
+     * fragile : `horde.replication.test.ts` (convergence de simulations de
+     * mille entites) et `draft.integration.test.ts` (quatre vraies sockets sur
+     * une fenetre de draft entiere) sont lourds par construction, et le premier
+     * depasse 30 s sur une machine chargee. Un test qui rougit au hasard finit
+     * ignore.
      */
     testTimeout: 60_000,
-    // ⚠️ `setupFiles`, pas `globalSetup` : il faut que ca tourne a CHAQUE
-    // FICHIER de test (chacun peut tomber sur un schema neuf), pas une fois
-    // pour toute la suite. C'est reellement une fois PAR FICHIER, pas par
-    // worker (voir le docblock de setup-db.ts) — la migration y est donc
-    // conditionnelle, pour que seul le premier fichier d'un schema paie le
-    // CLI Prisma.
+    // ⚠️ `setupFiles`, pas `globalSetup` : chaque fichier peut tomber sur un
+    // schema neuf (voir le docblock de setup-db.ts).
     setupFiles: ['./test/setup-db.ts'],
   },
 });

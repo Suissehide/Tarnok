@@ -9,7 +9,7 @@ import { TICK_HZ } from '@shared/constants';
 import { type Container, Graphics } from 'pixi.js';
 
 /**
- * Ce que les verbes laissent voir dans le monde (etape 8) : la zone d'un
+ * Ce que les verbes laissent voir dans le monde : la zone d'un
  * Rempart, le leurre d'un Appat, l'eclair d'arrivee d'un Relais. L'Amorce n'a
  * rien ici — sa zone arrive par `ZONE` et se dessine avec les autres.
  *

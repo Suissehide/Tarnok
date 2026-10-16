@@ -28,10 +28,9 @@ describe('etape 7a tache 7 : le jeton du client', () => {
   });
 
   /**
-   * ⚠️ **Le coeur du livrable : on ne frappe PAS un second compte.** Sans ce
-   * test, un bug qui reappellerait `POST /accounts` a chaque chargement
-   * donnerait un compte neuf — et un solde a zero — a chaque visite. « L'or
-   * survit » serait faux, et de la facon la plus silencieuse possible.
+   * ⚠️ **On ne frappe PAS un second compte.** Reappeler `POST /accounts` a
+   * chaque chargement donnerait un compte neuf, et un solde a zero, a chaque
+   * visite.
    */
   it('ne frappe RIEN si un jeton est deja la', async () => {
     const s = fausseStorage(JETON);
@@ -57,10 +56,8 @@ describe('etape 7a tache 7 : le jeton du client', () => {
 
   /**
    * ⚠️ **Un `mint` qui echoue (base injoignable) ne doit RIEN stocker.**
-   * `main.ts` compte sur ce rejet pour afficher un message plutot que de
-   * bloquer l'ecran d'accueil (voir son docblock) ; si `tokenText` avalait
-   * l'erreur ou stockait quand meme, l'ecran se peindrait avec un jeton
-   * inutilisable sans que personne ne le sache.
+   * `main.ts` compte sur ce rejet pour afficher un message ; avaler l'erreur
+   * laisserait un jeton inutilisable sans que personne ne le sache.
    */
   it('un mint qui leve ne stocke rien et laisse le stockage intact', async () => {
     const s = fausseStorage();
@@ -79,16 +76,10 @@ describe('etape 7a tache 7 : le jeton du client', () => {
   });
 
   /**
-   * ⚠️ **Un jeton bien forme mais INCONNU du serveur doit etre remplace, pas
-   * conserve.** Ruling P9 du coordinateur.
-   *
-   * Sans ca, une base reinitialisee — ce qui arrive constamment en
-   * developpement — laisse dans le navigateur un jeton mort que rien ne
-   * remplace : la socket est fermee a chaque tentative et **le joueur ne peut
-   * plus jamais jouer**, sans rien a l'ecran qui le lui dise. Le `401` de
-   * `GET /accounts/me` est le signal, et il est deja la : `verify` est ce que
-   * `main.ts` branche sur ce `401` sans qu'aucun navigateur ni serveur reel
-   * n'ait a tourner pour le prouver ici.
+   * ⚠️ **Un jeton bien forme mais INCONNU du serveur doit etre remplace.**
+   * Sinon une base reinitialisee laisse un jeton mort : la socket est fermee a
+   * chaque tentative et le joueur ne peut plus jouer, sans rien a l'ecran.
+   * `main.ts` branche `verify` sur le `401` de `GET /accounts/me`.
    */
   it('un jeton bien forme mais refuse par verify est remplace', async () => {
     const s = fausseStorage(JETON);
@@ -102,10 +93,8 @@ describe('etape 7a tache 7 : le jeton du client', () => {
   });
 
   /**
-   * ⚠️ **Et l'autre moitie de la regle, gardee a cote pour qu'on ne puisse
-   * pas satisfaire l'une en cassant l'autre** : un jeton que `verify` ACCEPTE
-   * n'est jamais re-frappe. Les deux tests ensemble disent la regle complete
-   * — on re-frappe si et seulement si le serveur refuse le jeton.
+   * L'autre moitie de la regle : on re-frappe si et seulement si le serveur
+   * refuse le jeton.
    */
   it('un jeton bien forme et accepte par verify n est jamais re-frappe', async () => {
     const s = fausseStorage(JETON);
@@ -116,11 +105,6 @@ describe('etape 7a tache 7 : le jeton du client', () => {
   });
 });
 
-/**
- * Amendement, point 1 : la lecture HTTP (`GET /accounts/me`) et l'achat
- * (`POST /accounts/me/purchases`) vivent dans la couche RESEAU, pas dans
- * `main.ts` qui dit de lui-meme « le DEMARRAGE, et rien d'autre ».
- */
 describe('etape 7b tache 8 : la lecture et l achat, cote reseau', () => {
   afterEach(() => {
     vi.unstubAllGlobals();
@@ -173,10 +157,9 @@ describe('etape 7b tache 8 : la lecture et l achat, cote reseau', () => {
   });
 
   /**
-   * ⚠️ **Le code HTTP survit jusqu'a l'appelant, en nombre nu.** C'est
-   * `ui/shop.ts#messageAchat` qui le traduit en message (402 contre 409) ;
-   * importer ici une constante qu'on viendrait verifier ne verifierait rien
-   * (doctrine du depot pour les contrats de fil).
+   * ⚠️ **Le code HTTP survit jusqu'a l'appelant, en nombre nu** :
+   * `ui/shop.ts#messageAchat` le traduit (402 contre 409). Un nombre nu, pas
+   * une constante importee : la constante ne verifierait rien.
    */
   it('acheter rend le code HTTP du refus, sans le traduire', async () => {
     vi.stubGlobal(

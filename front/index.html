@@ -288,8 +288,8 @@
       </section>
 
       <!--
-        07 · Options : seulement ce qui marche (`ui/settings.ts`). Les volumes,
-        la secousse et la langue de la maquette attendent ce qu'ils reglent.
+        07 · Options : seulement ce qui marche (`ui/settings.ts`). La secousse
+        et la langue de la maquette attendent ce qu'elles reglent.
       -->
       <section id="options-screen" class="ui-screen bg-menu z-10 hidden">
         <div class="ui-canvas">
@@ -387,12 +387,12 @@
         <div class="ui-canvas">
           <!--
             La Synergie de l'equipe sur le liseret du haut ; l'XP, elle, a sa vraie
-            jauge sous les PV (retour de playtest : on prenait la Synergie pour l'XP).
+            jauge sous les PV : on prenait la Synergie pour l'XP.
           -->
           <div class="bar bar--sml absolute left-[24px] right-[24px] top-[14px]">
             <i id="hud-synergy-fill" class="bar__fill"></i>
           </div>
-          <!-- Libelle masque (demande de Leo) ; l'element reste, `paintSynergy` l'ecrit. -->
+          <!-- Libelle masque ; l'element reste, `paintSynergy` l'ecrit. -->
           <span
             class="f-mono ol absolute right-[40px] top-[22px] hidden text-[14px] leading-none"
             title="Monte quand deux joueurs differents declenchent une reaction ensemble"
@@ -411,7 +411,7 @@
               <div class="relative w-[430px]">
                 <div class="bar">
                   <i id="hud-hp-fill" class="bar__fill"></i>
-                  <!-- Etape 13 : la reserve de bouclier (Transcendance), par-dessus les PV. -->
+                  <!-- La reserve de bouclier (Transcendance), par-dessus les PV. -->
                   <span id="hud-shield" class="hidden">
                     <i id="hud-shield-fill" class="bar__fill bar__fill--shield"></i>
                   </span>
@@ -429,7 +429,7 @@
               </div>
             </div>
             <!--
-              Le verbe de la classe (etape 8) : son icone, la recharge en secondes
+              Le verbe de la classe : son icone, la recharge en secondes
               tant qu'elle court, la touche. Cache sans classe (`paintAbility`).
             -->
             <div id="hud-ability" class="hidden">
@@ -474,7 +474,7 @@
               <span id="hud-kills" class="f-jer ol text-[46px]">0</span>
             </div>
             <!--
-              Étape 6a, §5 : l'or NON SÉCURISÉ de l'équipe, visible en PERMANENCE —
+              L'or NON SÉCURISÉ de l'équipe, visible en PERMANENCE —
               une mise en jeu qui se vit pendant tout le palier, pas un score de fin.
             -->
             <div class="flex items-center gap-[12px]">
@@ -485,7 +485,7 @@
               />
               <span id="hud-gold" class="f-jer ol text-[46px]">0</span>
             </div>
-            <!-- Panneau de debogage (§4.6) : une mort arrivee trop tard pour etre rejouee. -->
+            <!-- Panneau de debogage : une mort arrivee trop tard pour etre rejouee. -->
             <span class="f-mono ol hidden text-[14px]">
               morts tardives&nbsp;<span id="hud-late-deaths">0</span>
             </span>
@@ -543,7 +543,7 @@
             ÉCHAP — Menu
           </div>
         </div>
-        <!-- La roue de ping (etape 9) : centree sur le curseur par `PingWheel`. -->
+        <!-- La roue de ping : centree sur le curseur par `PingWheel`. -->
         <div id="ping-wheel" class="ping-wheel hidden" aria-hidden="true">
           <span class="ping-wheel__item ping-wheel__item--haut">Danger</span>
           <span class="ping-wheel__item ping-wheel__item--droite">Je prends</span>
@@ -553,7 +553,7 @@
       </section>
 
       <!--
-        05 · Montee de niveau : l'etalage du §7.2. Les cartes sont creees par
+        05 · Montee de niveau : l'etalage. Les cartes sont creees par
         `ui/draft.ts` a chaque `DRAFT_OPEN` — leur nombre depend du salon.
       -->
       <section id="draft" data-settled="false" class="ui-screen veil inset-0 z-20 hidden">
@@ -576,7 +576,7 @@
       </section>
 
       <!--
-        Vote d'extraction (§5 et §6 de l'étape 6a). ⚠️ **Ce n'est pas un modale** :
+        Vote d'extraction. ⚠️ **Ce n'est pas un modale** :
         le vote ne gèle rien, le temps EST son enjeu. Un bandeau en bas, la
         souris rendue au jeu partout ailleurs.
       -->

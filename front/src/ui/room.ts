@@ -29,7 +29,7 @@ export interface RoomElements {
  */
 export type RoomStep = 'classe' | 'arme';
 
-/** Ce que fait le verbe de chaque classe, en une phrase (§6 de la spec de l'etape 8). */
+/** Ce que fait le verbe de chaque classe, en une phrase. */
 export const VERB_TEXT: Readonly<Record<VerbKind, string>> = {
   amorce: 'Pose l’élément de votre arme en zone, sans dégâts.',
   rempart: 'Pose une zone où les alliés encaissent moins.',
@@ -37,7 +37,7 @@ export const VERB_TEXT: Readonly<Record<VerbKind, string>> = {
   relais: 'Se téléporte vers un allié, ou l’attire à soi.',
 };
 
-/** Ce que change le trait : une regle, jamais un nombre (§6.1). */
+/** Ce que change le trait : une regle, jamais un nombre. */
 export const TRAIT_TEXT: Readonly<Record<TraitKind, string>> = {
   residuPartout: 'Toute réaction déclenchée dans vos zones laisse un effet au sol.',
   remparteAllie: 'Votre protection couvre aussi l’allié adjacent.',
@@ -52,7 +52,7 @@ export const weaponLabel = (weaponId: number): string =>
 /**
  * Etape 1 : les quatre classes, leur verbe et leur trait.
  *
- * ⚠️ **Les doublons sont libres** (§4 de la spec) : rien n'est desactive ni
+ * ⚠️ **Les doublons sont libres** : rien n'est desactive ni
  * signale parce qu'un autre joueur a pris la meme classe.
  */
 export function renderClasses(
@@ -147,7 +147,7 @@ export function renderWeapons(
 }
 
 /**
- * Peint la salle d'attente (ecran 14 de la maquette) depuis le dernier `LOBBY`.
+ * Peint la salle d'attente depuis le dernier `LOBBY`.
  *
  * L'hote est le premier de la liste (le serveur la trie par slot) : seul lui
  * voit « Lancer » actif. Chaque choix renvoie le couple complet (arme,

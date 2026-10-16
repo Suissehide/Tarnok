@@ -3,21 +3,16 @@ import { PLAYER_MAX_HP, PROJECTILE_HIT_RADIUS, TICK_HZ } from './constants';
 import { CHARGE_DIR_SCALE } from './protocol';
 
 /**
- * La charge du troll (etape 6a, tache 5 bis).
+ * La charge du troll : une attaque lineaire, un long rectangle que le troll
+ * traverse en tournoyant.
  *
- * > *« Le troll charge une attaque lineaire, donc un long rectangle, et son
- * > animation le fait tourner, donc il spin rapidement a travers ce rectangle
- * > en avancant. »*
+ * ⚠️ **CE N'EST PAS UN TELEGRAPHE, C'EST UN DEPLACEMENT.** **Le boss traverse
+ * le rectangle**, donc sa position est pilotee par l'attaque et non par le
+ * champ de flux pendant toute la charge. Un effet qui touche le DEPLACEMENT
+ * touche le contrat de replication a 0,000 px.
  *
- * ⚠️ **CE N'EST PAS UN TELEGRAPHE, C'EST UN DEPLACEMENT.** Une zone qui se
- * remplit sur place ne touche rien ; ici, **le boss traverse le rectangle**,
- * donc sa position est pilotee par l'attaque et non par le champ de flux
- * pendant toute la charge. C'est le meme risque que le ralentissement du Givre
- * a l'etape 5a — un effet qui touche le DEPLACEMENT touche le contrat de
- * replication a 0,000 px.
- *
- * **La parade est celle qui a deja servi trois fois** (les zones, le gel de
- * niveau, le vol des orbes) : le serveur annonce **une fois** — origine,
+ * **Meme parade que les zones, le gel de niveau et le vol des orbes** : le
+ * serveur annonce **une fois** — origine,
  * direction, longueur, largeur, ticks de debut et de fin — et **les deux cotes
  * DERIVENT la position le long du couloir** a partir des ticks. Zero octet
  * apres l'annonce, meme position partout, par construction.
@@ -29,11 +24,9 @@ import { CHARGE_DIR_SCALE } from './protocol';
  * exactement sur les positions du serveur, sans avoir a sauvegarder quoi que
  * ce soit de la charge dans l'anneau (`HordeHistory`).
  *
- * ⚠️ **Les constantes de la charge vivent ICI et pas dans `constants.ts`**,
- * pour la meme raison que `BOSS_HP_MULTIPLE` et `BOSS_BODY_SCALE` vivent dans
- * `archetypes.ts` : la largeur du couloir se DERIVE du corps du boss, donc de
- * `BOSS_BODY_SCALE`, et `constants.ts` ne peut pas importer `archetypes.ts`
- * (c'est l'inverse qui est vrai).
+ * ⚠️ **Les constantes de la charge vivent ICI et pas dans `constants.ts`** :
+ * la largeur du couloir se DERIVE de `BOSS_BODY_SCALE`, et `constants.ts` ne
+ * peut pas importer `archetypes.ts` (c'est l'inverse qui est vrai).
  */
 
 /**
@@ -45,9 +38,7 @@ import { CHARGE_DIR_SCALE } from './protocol';
  * `PLAYER_SPEED` (260 px/s), une seconde donne 260 px de deplacement lateral
  * pour une demi-largeur de couloir de `BOSS_CHARGE_WIDTH_PX / 2` (96 px) : un
  * joueur qui voit le rectangle et bouge en sort largement, un joueur qui ne
- * regarde pas se fait prendre.
- *
- * **Reglage a l'oeil, tache 12.**
+ * regarde pas se fait prendre. Reglage a l'oeil.
  */
 export const BOSS_CHARGE_WINDUP_TICKS = TICK_HZ;
 
@@ -57,9 +48,7 @@ export const BOSS_CHARGE_WINDUP_TICKS = TICK_HZ;
  * Avec `BOSS_CHARGE_LENGTH_PX`, la vitesse de charge vaut 1 500 px/s, soit
  * 23 fois la vitesse de marche du troll (65 px/s) et presque six fois celle
  * d'un joueur : une fois partie, la charge ne se distance pas — **elle
- * s'esquive avant**, pendant le chargement. C'est la meme regle que le §4 de
- * la spec pose pour la direction (« figee au chargement ») : ce qui se joue,
- * se joue AVANT le depart.
+ * s'esquive avant**, pendant le chargement.
  */
 export const BOSS_CHARGE_TICKS = 18;
 
@@ -78,9 +67,7 @@ export const BOSS_CHARGE_LENGTH_PX = 900;
  *
  * `2 x PROJECTILE_HIT_RADIUS x BOSS_BODY_SCALE` = 192 px : exactement le
  * diametre de la hitbox du boss (`Archetype.bodyScale`). Le rectangle dessine
- * dit donc la verite sur ce qui va passer dedans — c'est la meme discipline que
- * `ZoneRenderer`, dont le disque garde exactement le rayon de la regle parce
- * que « la frontiere d'une zone est une regle de jeu ».
+ * dit donc la verite sur ce qui va passer dedans.
  *
  * ⚠️ Le SPRITE, lui, est dessine a `BODY_SCALE` (1,25) de plus par
  * `HordeRenderer` — le corps deborde donc un peu du couloir, exactement comme
@@ -96,8 +83,7 @@ export const BOSS_CHARGE_WIDTH_PX = 2 * PROJECTILE_HIT_RADIUS * BOSS_BODY_SCALE;
  * (`CONTACT_DAMAGE`), parce qu'une attaque annoncee une seconde a l'avance doit
  * couter plus cher que de frotter un monstre.
  *
- * ⚠️ **C'est un REGLAGE DE JEU, pas un invariant** — meme statut que
- * `REACTION_DAMAGE` : il se juge en jeu (tache 12), et **aucun test ne doit
+ * ⚠️ **C'est un REGLAGE DE JEU, pas un invariant** : **aucun test ne doit
  * ecrire 20 en dur**. Les assertions se derivent de cette constante ou la
  * comparent a `CONTACT_DAMAGE`.
  */
@@ -154,7 +140,7 @@ export interface BossCharge {
  *
  * ⚠️ **LA DIRECTION EST FIGEE ICI, une fois pour toutes.** Le couloir vise,
  * mais **il ne suit pas** : c'est ce qui rend l'esquive possible, et un couloir
- * qui suivrait sa cible serait une taxe, pas une attaque (§4 de la spec).
+ * qui suivrait sa cible serait une taxe, pas une attaque.
  * Aucune fonction de ce fichier ne prend de cible en parametre — il n'y a
  * qu'ICI qu'une position de joueur entre dans une charge.
  *
@@ -217,13 +203,10 @@ export function chargeHoldsAt(charge: BossCharge, tick: number): boolean {
 /**
  * La charge FAIT-elle mal au tick `tick` ?
  *
- * ⚠️ **RIEN NE FAIT MAL PENDANT LE CHARGEMENT** (§4 de la spec) : c'est ce qui
- * rend le telegraphe sur, et c'est ce qui donne au joueur sa fenetre de
- * reaction. La borne basse est STRICTE — au tick de depart, la progression vaut
- * encore 0 et le corps n'a pas bouge d'un pixel ; ce qui blesse, c'est le corps
- * **en mouvement**. Meme distinction que `ZoneField.slowsAt` face a `aliveAt`,
- * et pour une raison voisine : un tick d'ecart sur un effet, c'est un tick de
- * trop.
+ * ⚠️ **RIEN NE FAIT MAL PENDANT LE CHARGEMENT** : c'est la fenetre de reaction
+ * du joueur. La borne basse est STRICTE — au tick de depart, la progression
+ * vaut encore 0 et le corps n'a pas bouge d'un pixel ; ce qui blesse, c'est le
+ * corps **en mouvement**.
  */
 export function chargeHurtsAt(charge: BossCharge, tick: number): boolean {
   return tick > charge.startTick && tick <= charge.endTick;
@@ -233,17 +216,12 @@ export function chargeHurtsAt(charge: BossCharge, tick: number): boolean {
  * La charge est-elle encore en CHARGEMENT au tick `tick` — le boss arme son
  * coup, le couloir se remplit, rien n'a bouge ?
  *
- * ⚠️ **Le troisieme temps, et il n'existait pas.** `chargeHoldsAt` dit « il se
- * passe quelque chose », `chargeHurtsAt` dit « ca fait mal » ; entre les deux,
- * personne ne disait « ca n'est pas encore parti ». Le rendu en a besoin depuis
- * l'etape 6a, tache 13 : *« lance pas l'animation d'attaque du boss avant qu'il
- * dash, juste la frame 1 pour avoir l'impression qu'il charge son attaque »*.
+ * Le rendu s'en sert pour figer le boss sur la premiere image de son
+ * animation d'attaque tant que le dash n'est pas parti.
  *
- * ⚠️ **COMPOSEE de `chargeHoldsAt`, jamais reecrite a cote.** Recopier
+ * ⚠️ **COMPOSEE de `chargeHoldsAt`, jamais reecrite a cote** : recopier
  * `tick >= charge.windupTick` ici donnerait deux bornes basses a tenir
- * d'accord, et ce depot a solde seize fois le motif des « deux gardes qui se
- * couvrent ». Il ne reste donc qu'UNE comparaison propre a cette fonction, et
- * c'est celle qui la distingue.
+ * d'accord.
  *
  * ⚠️ **La borne haute est STRICTE, exactement comme la borne basse de
  * `chargeHurtsAt` est stricte.** Au tick de depart, `chargeProgressAt` vaut

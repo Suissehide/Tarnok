@@ -2,18 +2,16 @@
  * Lit la position du curseur en coordonnees ECRAN, relatives a un element
  * (le canevas du jeu) — jamais en coordonnees monde.
  *
- * Meme raisonnement que `Keyboard` : on suit un ETAT (la derniere position
- * connue), pas les evenements, pour que `screenPosition()` puisse etre
- * interroge a tout moment sans dependre de la cadence des `mousemove`.
+ * On suit un ETAT (la derniere position connue), pas les evenements :
+ * `screenPosition()` s'interroge a tout moment.
  *
  * ⚠️ Ne connait ni la camera ni le monde. La conversion ecran -> monde vit
  * dans `Stage.screenToWorld` (meme camera que le rendu) : la faire ici
- * ferait deriver la visee des que la camera bouge (tache 13).
+ * ferait deriver la visee des que la camera bouge.
  */
 export class Mouse {
   #x = 0;
   #y = 0;
-  /** Faux tant qu'aucun `mousemove` n'a ete recu — voir `screenPosition`. */
   #hasMoved = false;
 
   /**

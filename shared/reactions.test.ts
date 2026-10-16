@@ -73,10 +73,9 @@ describe('reactionForPair — une table pilotee par la donnee, pas un switch sur
   });
 
   it('rend `undefined` pour un couple SANS effet specifique — Braise+Givre, le Choc thermique generique', () => {
-    // Absence delibree de la table : `applyReactions` doit alors retomber
-    // sur le comportement generique de l'etape 5a. `undefined`, pas une
-    // entree « AUCUNE » : un appelant qui oublierait le fallback rougirait
-    // immediatement sur `.id`.
+    // Absence deliberee de la table : `applyReactions` retombe alors sur le
+    // comportement generique. `undefined`, pas une entree « AUCUNE » : un
+    // appelant qui oublierait le fallback rougirait immediatement sur `.id`.
     expect(reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE))).toBeUndefined();
   });
 });
@@ -101,8 +100,7 @@ describe('Fournee et Eclat de gel (tache 4 de l etape 5c) — deux lignes de plu
     const eclatDeGel = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
     expect(fournee?.id).toBe(REACTION.FOURNEE);
     expect(eclatDeGel?.id).toBe(REACTION.ECLAT_DE_GEL);
-    // Sept identifiants distincts au total, exactement comme le test des cinq
-    // reactions precedentes : une collision confondrait le mauvais couple.
+    // Sept identifiants distincts : une collision confondrait le mauvais couple.
     const surchauffe = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.FOUDRE));
     const embrasement = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.POIX));
     const courtCircuit = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.POIX));
@@ -161,8 +159,7 @@ describe('Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c) �
     const verglas = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.POIX));
     const fournee = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.CHAUX));
     const eclatDeGel = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.CHAUX));
-    // Dix identifiants distincts : une collision confondrait le mauvais
-    // couple, exactement comme les deux tests precedents de ce fichier.
+    // Dix identifiants distincts : une collision confondrait le mauvais couple.
     expect(
       new Set([
         surchauffe?.id,
@@ -237,8 +234,7 @@ describe('Gel profond, Mortier vif et Aveuglement (tache 6 de l etape 5c) — tr
     const vaporisation = reactionForPair(packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT));
     const arcCaustique = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX));
     const paratonnerre = reactionForPair(packElementPair(ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT));
-    // Treize identifiants distincts : une collision confondrait le mauvais
-    // couple, exactement comme les deux tests precedents de ce fichier.
+    // Treize identifiants distincts : une collision confondrait le mauvais couple.
     expect(
       new Set([
         surchauffe?.id,
@@ -282,13 +278,11 @@ describe('Gel profond, Mortier vif et Aveuglement (tache 6 de l etape 5c) — tr
   });
 
   it('aucune des trois ne pose d effet geometrique ou en chaine : radius et damage restent nuls', () => {
-    // ⚠️ **Verifie, pas suppose.** Les trois sont rangees « zone » au §5 de
-    // la spec, contrairement a Embrasement/Vaporisation (geometrique) ou
-    // Court-circuit/Arc caustique/Paratonnerre (chaine) : sans branche
-    // dediee dans `applyReactions` (`back/src/combat.ts`), elles retombent
-    // sur le degat GENERIQUE du Choc thermique (`REACTION_RADIUS`,
-    // `REACTION_DAMAGE`), exactement comme Supraconduction, Verglas et
-    // Fournee avant elles — voir le commentaire de leur branche par defaut.
+    // ⚠️ Les trois sont des reactions de « zone », contrairement a
+    // Embrasement/Vaporisation (geometrique) ou Court-circuit/Arc
+    // caustique/Paratonnerre (chaine) : sans branche dediee dans
+    // `applyReactions` (`back/src/combat.ts`), elles retombent sur le degat
+    // GENERIQUE du Choc thermique, comme Supraconduction, Verglas et Fournee.
     const gelProfond = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT));
     const mortierVif = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.CHAUX));
     const aveuglement = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT));
@@ -319,11 +313,8 @@ describe('Amalgame (tache 7 de l etape 5c) — la quatorzieme ligne, meme table'
     const gelProfond = reactionForPair(packElementPair(ELEMENT.GIVRE, ELEMENT.VIF_ARGENT));
     const mortierVif = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.CHAUX));
     const aveuglement = reactionForPair(packElementPair(ELEMENT.CHAUX, ELEMENT.VIF_ARGENT));
-    // Quatorze identifiants distincts : une collision confondrait le mauvais
-    // couple, exactement comme les trois tests precedents de ce fichier.
-    // ⚠️ **Le dernier de la serie — voir le describe « invariant de
-    // REACTION_DEFS » plus bas, qui remplace cette enumeration manuelle par
-    // une derivation depuis la table elle-meme.**
+    // Quatorze identifiants distincts. Le describe « invariant de
+    // REACTION_DEFS » plus bas derive la meme garde de la table elle-meme.
     expect(
       new Set([
         surchauffe?.id,
@@ -356,10 +347,9 @@ describe('Amalgame (tache 7 de l etape 5c) — la quatorzieme ligne, meme table'
   });
 
   it('Amalgame ne pose aucun effet geometrique ou en chaine propre a la table : radius nul, damage reutilise REACTION_DAMAGE', () => {
-    // ⚠️ **Verifie, pas suppose — voir `shareAmalgameDamage`
-    // (`back/src/combat.ts`), la branche DEDIEE qui lit `def.damage`
-    // directement (contrairement a Gel profond/Mortier vif/Aveuglement, qui
-    // retombent sur le Choc thermique generique faute de branche).**
+    // ⚠️ `shareAmalgameDamage` (`back/src/combat.ts`) est une branche DEDIEE
+    // qui lit `def.damage` directement, contrairement a Gel profond/Mortier
+    // vif/Aveuglement qui retombent sur le Choc thermique generique.
     const amalgame = reactionForPair(packElementPair(ELEMENT.POIX, ELEMENT.VIF_ARGENT));
     expect(amalgame?.radius).toBe(0);
     expect(amalgame?.damage).toBe(REACTION_DAMAGE);
@@ -367,25 +357,17 @@ describe('Amalgame (tache 7 de l etape 5c) — la quatorzieme ligne, meme table'
 });
 
 /**
- * ⚠️ **L'invariant que la table n'avait jamais eu — ajoute a la tache 7,
- * « a une ligne du plafond ».** `REACTION_DEFS` empaquete son `id` dans un
- * nibble de 4 bits (`packZoneKind`/`zoneReaction`, `shared/protocol.ts`) :
- * QUINZE valeurs sont maintenant occupees (`AUCUNE` + quatorze reactions
- * nommees) sur SEIZE possibles. La table n'avait jusqu'ici AUCUNE garde
- * structurelle — ni « tous les `id` <= 15 », ni l'unicite des `id`, ni celle
- * des `pair` — seule une enumeration manuelle, allongee a la main par chaque
- * tache (voir les describe ci-dessus), en tenait lieu. A une ligne du
- * plafond, une SEIZIEME reaction deborderait le nibble EN SILENCE
- * (`(reaction & 0x0f) << 3` tronque, ne leve jamais) : c'est le bon moment
- * pour un test qui la refuserait au lieu de la laisser passer.
+ * ⚠️ `REACTION_DEFS` empaquete son `id` dans un nibble de 4 bits
+ * (`packZoneKind`/`zoneReaction`, `shared/protocol.ts`) : QUINZE valeurs sont
+ * occupees (`AUCUNE` + quatorze reactions) sur SEIZE. Une reaction de trop
+ * deborderait le nibble EN SILENCE (`(reaction & 0x0f) << 3` tronque, ne leve
+ * jamais) : ces tests la refusent, et gardent l'unicite des `id` et des `pair`.
  */
 describe('invariant de table sur REACTION_DEFS (tache 7 de l etape 5c)', () => {
   // ⚠️ **La borne se DERIVE de la vraie largeur du nibble, jamais ecrite en
   // dur.** `zoneReaction` masque a `0x0f` : un `kind` dont tous les bits
-  // valent 1 rend la valeur MAXIMALE que le nibble peut representer
-  // aujourd'hui — si quelqu'un elargit un jour ce champ dans
-  // `shared/protocol.ts`, cette borne suit le changement au lieu de rester un
-  // 15 fige ici.
+  // valent 1 rend la valeur MAXIMALE du nibble : si ce champ s'elargit dans
+  // `shared/protocol.ts`, la borne suit.
   const maxReactionId = zoneReaction(0xffffffff);
 
   it('la borne se derive bien a 15 aujourd hui : un nibble de 4 bits, seize valeurs', () => {
@@ -438,22 +420,9 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   });
 
   /**
-   * ⚠️ **Embrasement et Court-circuit portent `zoneLifetimeTicks: 0` dans la
-   * table — « pas de duree propre », pas « duree nulle ».** Une mutation qui
-   * lirait ce zero comme une duree REELLE (`>= 0` au lieu de `> 0`) ferait
-   * mourir leur zone au tick meme de sa pose : `aliveAt` y rendrait `false`
-   * IMMEDIATEMENT (`tick - born < 0` n'est jamais vrai). Sans ce test, seule
-   * une coincidence d'un test d'un autre fichier (`zones.test.ts`, tache 5)
-   * la fait rougir — un decor qui masquerait le jour ou cette coincidence
-   * disparait.
-   */
-  /**
-   * ⚠️ **Ces trois cas disaient « duree GENERIQUE » pour huit reactions, et ce
-   * n'est plus la regle depuis l'etape 8** (*« fais des zones de differentes
-   * tailles, duree, forme »*). Ce qui reste vrai, et ce qu'ils gardent
-   * desormais : la duree sort du `kind` seul, elle tient dans une fourchette
-   * lisible, et `0` continue de vouloir dire « la generique » — c'est la
-   * MECANIQUE qui est gardee, plus la valeur de chaque ligne.
+   * Ces trois cas gardent la MECANIQUE, pas la valeur de chaque ligne : la
+   * duree sort du `kind` seul, elle tient dans une fourchette lisible, et `0`
+   * veut dire « la generique ».
    */
   it('rend une duree a chaque reaction, dans une fourchette lisible', () => {
     for (const def of REACTION_DEFS) {
@@ -475,8 +444,8 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   });
 
   it('garde `0` comme « la generique », pour les lignes qui ne tranchent pas', () => {
-    // La mecanique, pas la valeur : une ligne a `zoneLifetimeTicks: 0` doit
-    // toujours retomber sur la duree commune.
+    // ⚠️ `0` veut dire « pas de duree propre », pas « duree nulle » : lu comme
+    // une duree reelle, il ferait mourir la zone au tick meme de sa pose.
     const sansDuree = REACTION_DEFS.filter((def) => def.zoneLifetimeTicks === 0);
     for (const def of sansDuree) {
       expect(zoneLifetimeTicks(packZoneKind(ELEMENT.BRAISE, def.id)), def.name).toBe(
@@ -486,16 +455,12 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   });
 
   /**
-   * ⚠️ **LE chiffre qui distingue Gel profond de la Supraconduction —
-   * §5 de la spec : « plus forte ou plus longue ».** `slowFactor: 0` est
-   * DEJA un plancher absolu pour les deux reactions (voir leur entree dans
-   * `REACTION_DEFS`) : rien ne peut etre « plus fort » que zero, donc la
-   * duree est le SEUL levier restant. La Supraconduction n'allonge pas sa
-   * zone (`zoneLifetimeTicks: 0` dans sa ligne, duree GENERIQUE) ; Gel
-   * profond REUTILISE `SURCHAUFFE_ZONE_LIFETIME_TICKS` (1,5x la duree
-   * generique). Ce test assene la valeur EXACTE, pas seulement une
-   * inegalite — une assertion « > ZONE_LIFETIME_TICKS » seule laisserait
-   * passer n'importe quel reglage futur sans le remarquer.
+   * ⚠️ **LE chiffre qui distingue Gel profond de la Supraconduction** (« plus
+   * forte ou plus longue »). `slowFactor: 0` est DEJA un plancher absolu pour
+   * les deux : la duree est le SEUL levier restant. La Supraconduction garde
+   * la duree GENERIQUE ; Gel profond REUTILISE
+   * `SURCHAUFFE_ZONE_LIFETIME_TICKS`. Valeur EXACTE, pas une inegalite : un
+   * reglage futur ne doit pas passer inapercu.
    */
   it('Gel profond dure SURCHAUFFE_ZONE_LIFETIME_TICKS, strictement plus longtemps que la Supraconduction', () => {
     const gelProfond = zoneLifetimeTicks(packZoneKind(ELEMENT.GIVRE, REACTION.GEL_PROFOND));
@@ -512,10 +477,9 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   });
 
   it('donne a Mortier vif une zone BREVE, la ou Gel profond et Aveuglement durent', () => {
-    // ⚠️ Ce cas disait « duree generique » jusqu'a l'etape 8 ; ce qu'il garde
-    // vraiment, c'est l'ECART entre une reaction qui pose un champ durable et
-    // une qui ne fait que passer — et cet ecart existe toujours, dans l'autre
-    // sens. L'element porte reste sans effet, comme partout ailleurs.
+    // ⚠️ Ce que ce cas garde, c'est l'ECART entre une reaction qui pose un
+    // champ durable et une qui ne fait que passer. L'element porte reste sans
+    // effet, comme partout ailleurs.
     const mortier = zoneLifetimeTicks(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
     expect(mortier).toBeLessThan(ZONE_LIFETIME_TICKS);
     expect(mortier).toBeLessThan(
@@ -525,13 +489,11 @@ describe('zoneLifetimeTicks — la duree DERIVEE du kind empaquete', () => {
   });
 
   /**
-   * ⚠️ **LE chiffre qui distingue Aveuglement de la Chaux SEULE —
-   * §5 de la spec : « plus forte ou plus longue que la Chaux seule ».**
-   * `fieldSign` n'a que deux valeurs (+1/-1) : rien n'est « plus fort » que
-   * -1, donc la duree est le SEUL levier ici aussi. Une Chaux seule (sans
-   * reaction nommee, `packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE)`) vit la
-   * duree GENERIQUE ; Aveuglement REUTILISE le meme
-   * `SURCHAUFFE_ZONE_LIFETIME_TICKS` que Gel profond.
+   * ⚠️ **LE chiffre qui distingue Aveuglement de la Chaux SEULE** (« plus
+   * forte ou plus longue »). `fieldSign` n'a que deux valeurs (+1/-1) : rien
+   * n'est « plus fort » que -1, donc la duree est le SEUL levier ici aussi.
+   * Une Chaux seule (`packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE)`) vit la
+   * duree GENERIQUE ; Aveuglement REUTILISE `SURCHAUFFE_ZONE_LIFETIME_TICKS`.
    */
   it('Aveuglement dure SURCHAUFFE_ZONE_LIFETIME_TICKS, strictement plus longtemps que la Chaux seule', () => {
     const aveuglement = zoneLifetimeTicks(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT));
@@ -563,11 +525,10 @@ describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => 
   it('rend un degat STRICTEMENT positif pour Surchauffe, quel que soit l element porte', () => {
     const surBraise = zoneBurnPerTick(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE));
     const surFoudre = zoneBurnPerTick(packZoneKind(ELEMENT.FOUDRE, REACTION.SURCHAUFFE));
-    // ⚠️ **Le point precis du §5 : le degat ne doit PAS dependre de
-    // l element porte.** Si `resolveBurn` lisait `elementOf(...).burnPerTick`
-    // au lieu de `zoneBurnPerTick`, une zone de Surchauffe portant l element
-    // Foudre rendrait zero (`elementOf(FOUDRE).burnPerTick === 0`) — c est
-    // exactement ce que ce test separe.
+    // ⚠️ **Le degat ne doit PAS dependre de l element porte.** Si
+    // `resolveBurn` lisait `elementOf(...).burnPerTick` au lieu de
+    // `zoneBurnPerTick`, une zone de Surchauffe portant l element Foudre
+    // rendrait zero : c est ce que ce test separe.
     expect(surBraise).toBeGreaterThan(0);
     expect(surFoudre).toBeGreaterThan(0);
     expect(surBraise).toBe(surFoudre);
@@ -628,10 +589,10 @@ describe('zoneBurnPerTick — le degat de zone DERIVE du kind empaquete', () => 
 
 /**
  * ⚠️ **Embrasement et Court-circuit reutilisent le rayon et le degat
- * GENERIQUES de la reaction** (decision documentee dans `shared/reactions.ts`) :
- * l ecart avec le Choc thermique est la SELECTIVITE (poisses seulement),
- * jamais l intensite. Ce test garde cette decision plutot que de laisser une
- * table qui deriverait en silence vers deux chiffres arbitraires.
+ * GENERIQUES de la reaction** (voir `shared/reactions.ts`) : l ecart avec le
+ * Choc thermique est la SELECTIVITE (poisses seulement), jamais l intensite.
+ * Ce test empeche la table de deriver en silence vers deux chiffres
+ * arbitraires.
  */
 describe('Embrasement et Court-circuit reutilisent les grandeurs generiques de la reaction', () => {
   it('Embrasement porte REACTION_RADIUS et REACTION_DAMAGE', () => {
@@ -647,8 +608,8 @@ describe('Embrasement et Court-circuit reutilisent les grandeurs generiques de l
 });
 
 /**
- * `zoneSlowFactor` — la tache 7 de l'etape 5b : le facteur de vitesse DERIVE
- * du kind empaquete, lu par `Horde#computeSlow` (`shared/horde.ts`).
+ * `zoneSlowFactor` : le facteur de vitesse DERIVE du kind empaquete, lu par
+ * `Horde#computeSlow` (`shared/horde.ts`).
  */
 describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', () => {
   it('rend le facteur de l element seul quand la zone ne porte aucune reaction', () => {
@@ -680,15 +641,12 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
   });
 
   /**
-   * ⚠️ **La TROISIEME grandeur piegee, trouvee par la revue apres coup —
-   * ma propre regle de « deux planchers » etait incomplete.** Eclat de gel
-   * (Givre + Chaux) laissait `zoneSlowFactor` a sa valeur NEUTRE : le Givre,
-   * lui, porte un `slowFactor` non neutre (0,6), donc la zone ralentissait si
-   * Givre avait declenche, mais pas si Chaux avait declenche — exactement le
-   * meme piege d'ordre que `zoneArmorReductionTotal`/`zoneFieldSign`
-   * referment pour la Chaux. Corrige en reprenant le plancher de Verglas
-   * (`elementOf(ELEMENT.GIVRE).slowFactor`) : Eclat de gel garde la morsure
-   * du froid quel que soit l'ordre, comme les deux autres grandeurs.
+   * ⚠️ **La TROISIEME grandeur piegee par l'ordre d'arrivee.** Le Givre porte
+   * un `slowFactor` non neutre (0,6), pas la Chaux : sans plancher, une zone
+   * d'Eclat de gel ralentirait si Givre a declenche, mais pas si Chaux a
+   * declenche (le meme piege que `zoneArmorReductionTotal`/`zoneFieldSign`
+   * referment pour la Chaux). Eclat de gel reprend donc le plancher de
+   * Verglas (`elementOf(ELEMENT.GIVRE).slowFactor`).
    */
   it('Eclat de gel ne depend plus de l ordre d arrivee : le ralentissement vaut celui du Givre dans les deux ordres', () => {
     const givreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.GIVRE, REACTION.ECLAT_DE_GEL));
@@ -717,15 +675,13 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
   });
 
   /**
-   * ⚠️ **LE piege de la tache 8, signale par la revue de la tache 7 (R13)
-   * avant meme que le code n'existe.** Pour la Supraconduction,
+   * ⚠️ **LE piege d'ordre de Verglas.** Pour la Supraconduction,
    * `reactionFactor = 0` est un PLANCHER ABSOLU : `min(x, 0) = 0` quel que
-   * soit `x`. Verglas n'a pas ce luxe : si sa ligne portait `zoneSlowFactor:
-   * 1` (neutre, comme les trois reactions de la tache 6), ce test rendrait
-   * `0,6` quand Givre declenche et `1` quand Poix declenche — deux nombres
-   * DIFFERENTS, et la meme Verglas glisserait ou pas selon quel projectile a
-   * touche en second. La ligne de Verglas doit donc porter un facteur
-   * EXPLICITE qui reste un plancher dans les deux cas.
+   * soit `x`. Verglas n'a pas ce luxe : avec `zoneSlowFactor: 1` (neutre), ce
+   * test rendrait `0,6` quand Givre declenche et `1` quand Poix declenche, et
+   * la meme Verglas glisserait ou pas selon quel projectile a touche en
+   * second. Sa ligne porte donc un facteur EXPLICITE qui reste un plancher
+   * dans les deux cas.
    */
   it('rend le MEME facteur pour Verglas, quel que soit l element porte par le nibble (Givre OU Poix declenche)', () => {
     const givreDeclenche = zoneSlowFactor(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS));
@@ -742,24 +698,16 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
   });
 
   /**
-   * ⚠️ **L'invariant dont R13 depend, ASSENE — pas seulement observe.**
-   * `zoneSlowFactor` combine par MINIMUM (`Math.min(elementFactor,
-   * reactionFactor)`) : l'independance a l'ordre du declencheur que le test
-   * ci-dessus MESURE ne tient QUE SI `reactionFactor` reste un PLANCHER —
-   * inferieur ou egal au `slowFactor` de CHAQUE element qui peut apparaitre
-   * dans le nibble. Le test precedent verifie que Givre et Poix rendent le
-   * MEME nombre aujourd'hui ; il ne dit PAS pourquoi, et ne rougirait pas si
-   * la tache 12 donnait un jour a la Poix un `slowFactor` propre INFERIEUR
-   * a celui du Givre — le minimum redeviendrait alors dependant de l'ordre,
-   * exactement le bug que R13 visait a eliminer, et rien ne le verrait.
+   * ⚠️ **L'invariant dont le test precedent depend, ASSENE.** `zoneSlowFactor`
+   * combine par MINIMUM : l'independance a l'ordre ne tient QUE SI
+   * `reactionFactor` reste inferieur ou egal au `slowFactor` de CHAQUE
+   * element de la paire. Le test precedent ne rougirait pas si la Poix
+   * recevait un jour un `slowFactor` INFERIEUR a celui du Givre : le minimum
+   * redeviendrait dependant de l'ordre, et rien ne le verrait.
    *
-   * ⚠️ **Ni Givre ni Poix ne sont ecrits en dur ici.** La paire se DECODE de
-   * la table elle-meme (`unpackElementPair(def.pair)`), pas devinee — la
-   * propriete reste donc vraie si la tache 12 retouche `ELEMENT_DEFS`, ou si
-   * Verglas se declenchait un jour d'un troisieme couple. C'est la meme
-   * discipline que la garde de `CARD_WEAPON` dans `shared/loadout.ts` :
-   * une constante recopiee SANS garde derive en silence ; ici la garde
-   * protege une INEGALITE, pas une simple egalite de nom.
+   * ⚠️ **Ni Givre ni Poix ne sont ecrits en dur ici** : la paire se DECODE de
+   * la table (`unpackElementPair(def.pair)`), et la propriete reste vraie si
+   * `ELEMENT_DEFS` change.
    */
   it('le facteur de Verglas reste un PLANCHER pour les deux elements de sa propre paire', () => {
     const def = reactionOfId(REACTION.VERGLAS);
@@ -771,13 +719,11 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
   });
 
   /**
-   * ⚠️ **Vaporisation, Arc caustique et Paratonnerre (tache 5 de l etape 5c)
-   * n ont AUCUN plancher a fermer ici — verifie, pas suppose.** Aucun des
-   * six elements en jeu (Braise, Vif-argent, Foudre, Chaux) ne porte de
-   * `slowFactor` non neutre (seul le Givre en porte un, voir
-   * `ELEMENT_DEFS`) : les deux ordres de chaque paire doivent donc rendre 1
-   * (aucun ralentissement), sans qu aucune ligne de `REACTION_DEFS` n ait
-   * besoin d un `zoneSlowFactor` explicite.
+   * ⚠️ **Vaporisation, Arc caustique et Paratonnerre n ont AUCUN plancher a
+   * fermer ici, verifie, pas suppose.** Aucun des elements de leurs paires
+   * ne porte de `slowFactor` non neutre (seul le Givre en porte un, voir
+   * `ELEMENT_DEFS`) : les deux ordres de chaque paire rendent 1 sans
+   * `zoneSlowFactor` explicite.
    */
   it('rend 1 (aucun ralentissement) pour Vaporisation, Arc caustique et Paratonnerre, dans les DEUX ordres', () => {
     expect(zoneSlowFactor(packZoneKind(ELEMENT.BRAISE, REACTION.VAPORISATION))).toBe(1);
@@ -833,9 +779,8 @@ describe('zoneSlowFactor — le facteur de vitesse DERIVE du kind empaquete', ()
 });
 
 /**
- * `zoneArmorReduction` — la tache 7 de l'etape 5b : l'armure SOUSTRAITE,
- * DERIVEE du kind empaquete, lue par `ZoneField.armorReductionAt`
- * (`shared/zones.ts`).
+ * `zoneArmorReduction` : l'armure SOUSTRAITE, DERIVEE du kind empaquete, lue
+ * par `ZoneField.armorReductionAt` (`shared/zones.ts`).
  */
 describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', () => {
   it('rend zero pour un kind de reaction nulle : les zones generiques ne rabotent aucune armure', () => {
@@ -893,10 +838,9 @@ describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', (
 
   /**
    * ⚠️ **Mortier vif et Aveuglement REUTILISENT `elementOf(ELEMENT.CHAUX).armorReduction`
-   * (donc `CHAUX_ARMOR_REDUCTION`), pas `MAX_ARMOR` comme Fournee — meme
-   * choix qu Eclat de gel : ni l une ni l autre ne PRETEND a un effet
-   * d armure propre au §5 de la spec, le plancher garantit seulement ce
-   * qu une Chaux SEULE laisserait deja.**
+   * (donc `CHAUX_ARMOR_REDUCTION`), pas `MAX_ARMOR` comme Fournee**, meme
+   * choix qu Eclat de gel : ni l une ni l autre n a d effet d armure propre,
+   * le plancher garantit seulement ce qu une Chaux SEULE laisserait deja.
    */
   it('rend CHAUX_ARMOR_REDUCTION pour Mortier vif, dans les DEUX ordres (Poix OU Chaux declenche)', () => {
     const poixDeclenche = zoneArmorReduction(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
@@ -922,9 +866,9 @@ describe('zoneArmorReduction — l armure retiree, DERIVEE du kind empaquete', (
 });
 
 /**
- * `zoneArmorReductionTotal` — la tache 1 de l'etape 5c : combine
- * `zoneArmorReduction` (la reaction) et `Element.armorReduction` (la Chaux)
- * par un MAXIMUM, lue par `ZoneField.armorReductionAt` (`shared/zones.ts`).
+ * `zoneArmorReductionTotal` : combine `zoneArmorReduction` (la reaction) et
+ * `Element.armorReduction` (la Chaux) par un MAXIMUM, lue par
+ * `ZoneField.armorReductionAt` (`shared/zones.ts`).
  */
 describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION confondus', () => {
   it('rend zero pour un kind de reaction nulle sur un element sans effet propre', () => {
@@ -933,10 +877,9 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
   });
 
   it('rend CHAUX_ARMOR_REDUCTION pour un kind de reaction nulle porte par la Chaux : l element SEUL suffit', () => {
-    // ⚠️ C'est le chemin que traverse une zone de Chaux tant qu'aucune
-    // reaction nommee ne pair encore cet element (taches 4 a 7 de l'etape
-    // 5c, hors perimetre) — la reaction generique (Choc thermique) laisse
-    // `zoneArmorReduction` a zero, et c'est l'element seul qui porte l'effet.
+    // ⚠️ Le chemin d'une zone de Chaux sans reaction nommee : la reaction
+    // generique (Choc thermique) laisse `zoneArmorReduction` a zero, et c'est
+    // l'element seul qui porte l'effet.
     expect(CHAUX_ARMOR_REDUCTION).toBeGreaterThan(0);
     expect(zoneArmorReductionTotal(ELEMENT.CHAUX)).toBe(CHAUX_ARMOR_REDUCTION);
     expect(zoneArmorReductionTotal(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE))).toBe(
@@ -945,9 +888,8 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
   });
 
   it('rend toujours SUPRACONDUCTION_ARMOR_REDUCTION pour la Supraconduction : la reaction seule y suffit deja', () => {
-    // Non-regression : la Supraconduction ne pair ni Braise ni Chaux, donc
-    // la contribution ELEMENT reste nulle des deux cotes — seule celle de
-    // la reaction doit compter, exactement comme avant cette tache.
+    // La Supraconduction ne pair ni Braise ni Chaux : la contribution ELEMENT
+    // reste nulle des deux cotes, seule celle de la reaction compte.
     const surGivre = zoneArmorReductionTotal(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION));
     const surFoudre = zoneArmorReductionTotal(
       packZoneKind(ELEMENT.FOUDRE, REACTION.SUPRACONDUCTION),
@@ -957,28 +899,18 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
   });
 
   /**
-   * ⚠️ **LE test de l'etape 3 du brief — et une substitution assumee.** Le
-   * brief cite `REACTION.FOURNEE` (Braise + Chaux) pour ce test : cette
-   * reaction n'existe pas encore, elle nait a la tache 4 de l'etape 5c, HORS
-   * du perimetre de cette tache-ci. `REACTION.SUPRACONDUCTION` la remplace
-   * ici — n'importe quelle reaction dont `zoneArmorReduction` DOMINE la
-   * contribution de la Chaux demontre exactement la meme invariant
-   * (l'assertion de plancher juste en dessous rend cette substitution
-   * verifiable, pas suppose). Voir le rapport de cette tache pour la
-   * discussion complete.
-   *
-   * Meme motif que « la reduction d armure d une zone ne depend pas de
-   * l ordre d arrivee » exige par le brief : la MEME reaction, les deux
-   * ordres de declencheur (Braise, qui n a pas d effet propre, puis Chaux,
-   * qui en a un) doivent rendre la MEME reduction — sans quoi une zone de
-   * cette forme corroderait ou pas selon quel projectile a touche en second.
+   * ⚠️ Une reaction dont `zoneArmorReduction` DOMINE la contribution de la
+   * Chaux (ici la Supraconduction, sur un `kind` construit pour l'occasion)
+   * rend la MEME reduction dans les deux ordres de declencheur (Braise, sans
+   * effet propre, puis Chaux, qui en a un). Sinon une zone de cette forme
+   * corroderait ou pas selon quel projectile a touche en second. Fournee,
+   * le cas reel, a son propre test plus bas.
    */
   it('la reduction d armure d une zone ne depend pas de l ordre d arrivee', () => {
-    // ⚠️ Garde de plancher : c'est cette inegalite, et NON une coincidence
-    // de couple, qui rend le test suivant valide. Une tache 12 qui
-    // changerait l'une des deux constantes sans preserver ce plancher ferait
-    // rougir ICI, avec un message qui pointe la cause, plutot que de laisser
-    // l'egalite d'apres echouer pour une raison illisible.
+    // ⚠️ Garde de plancher : c'est cette inegalite, et NON une coincidence de
+    // couple, qui rend l'egalite suivante valide. Changer l'une des deux
+    // constantes sans preserver ce plancher fait rougir ICI, avec un message
+    // qui pointe la cause.
     expect(CHAUX_ARMOR_REDUCTION).toBeLessThanOrEqual(SUPRACONDUCTION_ARMOR_REDUCTION);
 
     const a = zoneArmorReductionTotal(packZoneKind(ELEMENT.BRAISE, REACTION.SUPRACONDUCTION));
@@ -990,12 +922,10 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
   });
 
   /**
-   * ⚠️ **LE test reel de l'etape 3 du brief, cette fois avec Fournee
-   * elle-meme** — plus une substitution, la reaction existe. Fournee pousse
-   * `zoneArmorReduction` a `MAX_ARMOR`, qui domine n'importe quelle
-   * contribution de l'element (`CHAUX_ARMOR_REDUCTION`, tres en dessous) :
-   * les deux ordres de declencheur (Braise, qui n'a pas d'effet d'armure
-   * propre, puis Chaux, qui en a un) doivent donc rendre la MEME reduction.
+   * ⚠️ **Le meme test avec Fournee elle-meme.** Fournee pousse
+   * `zoneArmorReduction` a `MAX_ARMOR`, qui domine la contribution de
+   * l'element (`CHAUX_ARMOR_REDUCTION`) : les deux ordres de declencheur
+   * doivent donc rendre la MEME reduction.
    */
   it('Fournee ne depend pas de l ordre d arrivee : l armure retiree vaut MAX_ARMOR dans les deux ordres', () => {
     expect(CHAUX_ARMOR_REDUCTION).toBeLessThan(MAX_ARMOR);
@@ -1007,11 +937,10 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
   });
 
   /**
-   * ⚠️ **Eclat de gel n'a pourtant AUCUN effet d'armure « a elle », et porte
-   * quand meme un plancher explicite** — voir le commentaire de son entree
-   * dans `REACTION_DEFS` (`shared/reactions.ts`) : la zone qu'elle laisse
-   * (posee par `postZone` pour CHAQUE declencheur, sans exception) porterait
-   * sinon la fuite de la Chaux une fois sur deux. Le plancher choisi
+   * ⚠️ **Eclat de gel n'a AUCUN effet d'armure « a elle », et porte quand meme
+   * un plancher explicite** (voir son entree dans `REACTION_DEFS`) : la zone
+   * qu'elle laisse (posee par `postZone` pour CHAQUE declencheur) porterait
+   * sinon l'effet de la Chaux une fois sur deux. Le plancher
    * (`elementOf(ELEMENT.CHAUX).armorReduction`) ne fait que garantir ce
    * qu'une Chaux SEULE laisserait deja.
    */
@@ -1048,10 +977,9 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
   });
 
   /**
-   * ⚠️ **Arc caustique apparie la Chaux : le plancher explicite
+   * ⚠️ **Arc caustique apparie la Chaux : son plancher explicite
    * (`SUPRACONDUCTION_ARMOR_REDUCTION`) doit dominer `CHAUX_ARMOR_REDUCTION`
-   * pour rendre les deux ordres identiques — meme garde de plancher que
-   * Fournee et Supraconduction ci-dessus.**
+   * pour rendre les deux ordres identiques.**
    */
   it('Arc caustique ne depend pas de l ordre d arrivee : l armure retiree vaut SUPRACONDUCTION_ARMOR_REDUCTION dans les deux ordres', () => {
     expect(CHAUX_ARMOR_REDUCTION).toBeLessThanOrEqual(SUPRACONDUCTION_ARMOR_REDUCTION);
@@ -1073,10 +1001,9 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
   });
 
   /**
-   * ⚠️ **Mortier vif et Aveuglement ne dependent pas de l ordre d arrivee :
-   * l armure retiree vaut CHAUX_ARMOR_REDUCTION dans les deux ordres —
-   * meme raisonnement qu Eclat de gel (le plancher garantit ce qu une Chaux
-   * SEULE laisserait deja, il ne l AUGMENTE pas).**
+   * ⚠️ **Mortier vif et Aveuglement** : meme raisonnement qu Eclat de gel, le
+   * plancher garantit ce qu une Chaux SEULE laisserait deja, il ne l AUGMENTE
+   * pas.
    */
   it('Mortier vif ne depend pas de l ordre d arrivee : l armure retiree vaut CHAUX_ARMOR_REDUCTION dans les deux ordres', () => {
     const poixDeclenche = zoneArmorReductionTotal(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
@@ -1107,9 +1034,8 @@ describe('zoneArmorReductionTotal — l armure retiree, ELEMENT et REACTION conf
 });
 
 /**
- * `zoneInertiaDamping` — la tache 8 de l'etape 5b : le facteur de
- * conservation de vitesse DERIVE du kind empaquete, lu par
- * `Horde#recomputeSteering` (`shared/horde.ts`), qui VOYAGE.
+ * `zoneInertiaDamping` : le facteur de conservation de vitesse DERIVE du kind
+ * empaquete, lu par `Horde#recomputeSteering` (`shared/horde.ts`), qui VOYAGE.
  */
 describe('zoneInertiaDamping — le facteur d inertie DERIVE du kind empaquete', () => {
   it('rend 1 (aucun effet) pour un kind de reaction nulle', () => {
@@ -1145,9 +1071,9 @@ describe('zoneInertiaDamping — le facteur d inertie DERIVE du kind empaquete',
 });
 
 /**
- * `zoneCollisionDamage` — la tache 8 de l'etape 5b : le degat de collision
- * DERIVE du kind empaquete, lu par `resolveVerglasCollisions`
- * (`back/src/combat.ts`), qui ne voyage JAMAIS (un degat, serveur seul).
+ * `zoneCollisionDamage` : le degat de collision DERIVE du kind empaquete, lu
+ * par `resolveVerglasCollisions` (`back/src/combat.ts`), qui ne voyage JAMAIS
+ * (un degat, serveur seul).
  */
 describe('zoneCollisionDamage — le degat de collision DERIVE du kind empaquete', () => {
   it('rend zero pour un kind de reaction nulle', () => {
@@ -1183,8 +1109,8 @@ describe('zoneCollisionDamage — le degat de collision DERIVE du kind empaquete
 });
 
 /**
- * `zoneFieldSign` — la tache 1 de l'etape 5c : le signe de direction DERIVE
- * du kind empaquete, lu par `Horde` (`shared/horde.ts`), qui VOYAGE.
+ * `zoneFieldSign` : le signe de direction DERIVE du kind empaquete, lu par
+ * `Horde` (`shared/horde.ts`), qui VOYAGE.
  */
 describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus', () => {
   it('rend +1 (aucun effet) pour un kind de reaction nulle sur un element sans effet propre', () => {
@@ -1193,9 +1119,8 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
   });
 
   it('rend -1 pour un kind de reaction nulle porte par la Chaux : l element SEUL suffit', () => {
-    // Meme chemin transitoire que `zoneArmorReductionTotal` avant Fournee :
-    // tant qu'aucune reaction nommee ne pair la Chaux (taches 4 a 7, hors
-    // perimetre), c'est l'element seul qui porte la fuite.
+    // Une zone de Chaux sans reaction nommee : c'est l'element seul qui porte
+    // la fuite.
     expect(zoneFieldSign(ELEMENT.CHAUX)).toBe(-1);
     expect(zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.AUCUNE))).toBe(-1);
   });
@@ -1209,27 +1134,19 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
   });
 
   /**
-   * ⚠️ **CORRIGE a la tache 6, tour de correction 1 — ce test gardait un
-   * etat de PRODUCTION qui n'existe plus, une revue l'a signale perime.**
-   * Ecrit avant la tache 4, quand AUCUN couple reel de la Chaux ne portait
-   * de plancher : ce n'est plus vrai — les cinq couples reels
-   * (Fournee, Eclat de gel, Arc caustique, Mortier vif, Aveuglement)
-   * portent tous desormais `zoneFieldSign: -1` explicite (voir leurs
-   * entrees dans `REACTION_DEFS`, `shared/reactions.ts`), et chacun a son
-   * propre test « ne depend pas de l'ordre d'arrivee » plus bas.
+   * ⚠️ **Ce test garde le MECANISME, pas un etat de production.** Les cinq
+   * couples reels de la Chaux (Fournee, Eclat de gel, Arc caustique, Mortier
+   * vif, Aveuglement) portent tous `zoneFieldSign: -1` explicite, chacun avec
+   * son test « ne depend pas de l'ordre d'arrivee » plus bas.
    *
-   * **Ce que ce test garde REELLEMENT maintenant : le MECANISME
-   * SOUS-JACENT** (`zoneFieldSign(kind) = Math.min(elementSign,
-   * reactionSign)`, `reactionSign` valant `1` par defaut pour toute paire
-   * ABSENTE de `REACTION_DEFS`) resterait ORDRE-DEPENDANT si une future
-   * paire de la Chaux etait ajoutee SANS porter ce plancher — pas qu'une
-   * telle paire existe aujourd'hui. `REACTION.SUPRACONDUCTION` (Givre +
-   * Foudre, fixee par `packElementPair`) ne peut JAMAIS reellement pairer
-   * la Chaux : c'est un `kind` FICTIF, construit a la seule fin d'exercer
-   * la combinaison sans plancher, pas un cas atteignable en jeu. Une
-   * regression sur une SIXIEME reaction de la Chaux ne serait donc PAS
-   * attrapee ICI — seule la ligne de `REACTION_DEFS` de cette future
-   * reaction, et son propre test, protegeraient.
+   * Ce qui reste vrai : `zoneFieldSign(kind) = Math.min(elementSign,
+   * reactionSign)`, avec `reactionSign` a `1` par defaut, reste
+   * ORDRE-DEPENDANT pour une paire de la Chaux SANS plancher.
+   * `REACTION.SUPRACONDUCTION` (Givre + Foudre) ne peut jamais pairer la
+   * Chaux : c'est un `kind` FICTIF qui exerce la combinaison sans plancher.
+   * Une SIXIEME reaction de la Chaux sans plancher ne serait donc PAS
+   * attrapee ici : seuls sa ligne de `REACTION_DEFS` et son propre test la
+   * protegeraient.
    */
   it('le mecanisme reste ORDRE-DEPENDANT sans plancher explicite — plus aucun couple REEL de la Chaux n est dans cet etat', () => {
     const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.SUPRACONDUCTION));
@@ -1239,12 +1156,10 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
   });
 
   /**
-   * ⚠️ **Fournee et Eclat de gel FERMENT le piege transitoire ci-dessus,
-   * pour leurs deux couples.** Toutes deux portent `zoneFieldSign: -1`
-   * EXPLICITE dans `REACTION_DEFS` (`shared/reactions.ts`) — jamais heritee
-   * de l'element — donc les deux ordres de declencheur rendent desormais la
-   * MEME reponse, -1, exactement le remede que Verglas a deja applique pour
-   * `zoneSlowFactor`.
+   * ⚠️ **Fournee et Eclat de gel ferment ce piege pour leurs deux couples** :
+   * toutes deux portent `zoneFieldSign: -1` EXPLICITE dans `REACTION_DEFS`,
+   * jamais herite de l'element, donc les deux ordres rendent -1 (le remede de
+   * Verglas pour `zoneSlowFactor`).
    */
   it('Fournee ne depend plus de l ordre d arrivee : -1 que Braise ou Chaux declenche', () => {
     const braiseDeclenche = zoneFieldSign(packZoneKind(ELEMENT.BRAISE, REACTION.FOURNEE));
@@ -1268,11 +1183,9 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
   });
 
   /**
-   * ⚠️ **Arc caustique FERME le meme piege transitoire, pour son propre
-   * couple.** Porte `zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign`
-   * EXPLICITE dans `REACTION_DEFS` — jamais heritee de l'element — donc les
-   * deux ordres de declencheur (Foudre, qui n'a pas d'effet propre, puis
-   * Chaux, qui en a un) rendent desormais la MEME reponse, -1.
+   * ⚠️ **Arc caustique ferme le meme piege** : `zoneFieldSign:
+   * elementOf(ELEMENT.CHAUX).fieldSign` EXPLICITE, donc les deux ordres
+   * (Foudre, sans effet propre, puis Chaux) rendent -1.
    */
   it('Arc caustique ne depend pas de l ordre d arrivee : -1 que Foudre ou Chaux declenche', () => {
     const foudreDeclenche = zoneFieldSign(packZoneKind(ELEMENT.FOUDRE, REACTION.ARC_CAUSTIQUE));
@@ -1287,15 +1200,11 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
   });
 
   /**
-   * ⚠️ **Mortier vif FERME le meme piege transitoire que Fournee/Eclat de
-   * gel/Arc caustique, pour son propre couple.** Porte
-   * `zoneFieldSign: elementOf(ELEMENT.CHAUX).fieldSign` EXPLICITE dans
-   * `REACTION_DEFS` — jamais heritee de l'element — donc les deux ordres de
-   * declencheur (Poix, qui n'a pas d'effet propre, puis Chaux, qui en a un)
-   * rendent desormais la MEME reponse, -1. L'effet PRATIQUE est masque par
-   * le gel total de `zoneSlowFactor` (voir le point de revue n°4,
-   * `shared/horde.test.ts`), mais l'OCTET, lui, ne doit pas dependre de
-   * l'ordre.
+   * ⚠️ **Mortier vif ferme le meme piege** : `zoneFieldSign:
+   * elementOf(ELEMENT.CHAUX).fieldSign` EXPLICITE, donc les deux ordres (Poix
+   * puis Chaux) rendent -1. L'effet PRATIQUE est masque par le gel total de
+   * `zoneSlowFactor` (voir `shared/horde.test.ts`), mais l'OCTET ne doit pas
+   * dependre de l'ordre.
    */
   it('Mortier vif ne depend pas de l ordre d arrivee : -1 que Poix ou Chaux declenche', () => {
     const poixDeclenche = zoneFieldSign(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
@@ -1305,12 +1214,9 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
   });
 
   /**
-   * ⚠️ **Aveuglement FERME le meme piege transitoire pour son propre
-   * couple — LA raison d'etre de la reaction.** Vif-argent est neutre sur
-   * `fieldSign` : sans le plancher explicite, une zone d'Aveuglement
-   * fuirait uniquement quand la Chaux est arrivee EN SECOND, exactement le
-   * meme etat transitoire documente par le docbloc de `zoneFieldSign` avant
-   * Fournee.
+   * ⚠️ **Aveuglement ferme le meme piege, et c'est sa raison d'etre.**
+   * Vif-argent est neutre sur `fieldSign` : sans le plancher explicite, une
+   * zone d'Aveuglement ne ferait fuir que si la Chaux est arrivee EN SECOND.
    */
   it('Aveuglement ne depend pas de l ordre d arrivee : -1 que Chaux ou Vif-argent declenche', () => {
     const chauxDeclenche = zoneFieldSign(packZoneKind(ELEMENT.CHAUX, REACTION.AVEUGLEMENT));
@@ -1328,11 +1234,9 @@ describe('zoneFieldSign — le signe de direction, ELEMENT et REACTION confondus
 });
 
 /**
- * `zoneDamageAmpTotal` — la tache 6 de l'etape 5c : l'amplification des
- * degats, ELEMENT et REACTION confondus, lue par `ZoneField.ampAt`
- * (`shared/zones.ts`). La piece qui manquait (voir le docbloc du champ
- * `zoneDamageAmp` dans `shared/reactions.ts`) — Mortier vif (Poix + Chaux)
- * est la premiere ligne de `REACTION_DEFS` a le porter.
+ * `zoneDamageAmpTotal` : l'amplification des degats, ELEMENT et REACTION
+ * confondus, lue par `ZoneField.ampAt` (`shared/zones.ts`). Voir le docbloc
+ * du champ `zoneDamageAmp` dans `shared/reactions.ts`.
  */
 describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION confondus', () => {
   it('rend 1 pour un kind de reaction nulle sur un element sans effet propre', () => {
@@ -1367,13 +1271,11 @@ describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION
 
   /**
    * ⚠️ **LE test qui separe la combinaison par maximum d une simple lecture
-   * de l element — meme forme que le test equivalent de `zoneSlowFactor`
-   * pour la Supraconduction.** Le nibble d'element d'une zone de Mortier vif
-   * porte celui du DECLENCHEUR (Poix OU Chaux selon l'ordre d'arrivee) :
-   * `elementOf(zoneElement(kind)).damageAmp` seul rendrait 1,5 (Poix) ou 1
-   * (Chaux), deux nombres DIFFERENTS. Le plancher explicite
-   * (`ReactionDef.zoneDamageAmp: elementOf(ELEMENT.POIX).damageAmp`) rend
-   * les deux ordres identiques.
+   * de l element.** Le nibble d'element d'une zone de Mortier vif porte celui
+   * du DECLENCHEUR (Poix OU Chaux selon l'ordre d'arrivee) :
+   * `elementOf(zoneElement(kind)).damageAmp` seul rendrait 1,5 ou 1. Le
+   * plancher explicite (`zoneDamageAmp: elementOf(ELEMENT.POIX).damageAmp`)
+   * rend les deux ordres identiques.
    */
   it('rend le damageAmp de la Poix pour Mortier vif, dans les DEUX ordres (Poix OU Chaux declenche)', () => {
     const poixDeclenche = zoneDamageAmpTotal(packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF));
@@ -1387,12 +1289,10 @@ describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION
   });
 
   /**
-   * ⚠️ **L'invariant dont le test precedent depend, ASSENE — pas seulement
-   * observe, meme discipline que le test equivalent de Verglas pour
-   * `zoneSlowFactor`.** `zoneDamageAmpTotal` combine par MAXIMUM
-   * (`Math.max(elementFactor, reactionFactor)`) : l'independance a l'ordre
-   * ne tient QUE SI `reactionFactor` reste un PLAFOND — superieur ou egal au
-   * `damageAmp` de CHAQUE element qui peut apparaitre dans le nibble.
+   * ⚠️ **L'invariant dont le test precedent depend, ASSENE.**
+   * `zoneDamageAmpTotal` combine par MAXIMUM : l'independance a l'ordre ne
+   * tient QUE SI `reactionFactor` reste superieur ou egal au `damageAmp` de
+   * CHAQUE element de la paire.
    */
   it('le plancher de Mortier vif reste un PLAFOND pour les deux elements de sa propre paire', () => {
     const def = reactionOfId(REACTION.MORTIER_VIF);
@@ -1404,12 +1304,10 @@ describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION
   });
 
   /**
-   * ⚠️ **Amalgame (Poix + Vif-argent, tache 7) reclame le MEME plancher que
-   * Mortier vif, pour la MEME raison : la Poix est l'unique moitie non
-   * neutre du couple, Vif-argent etant neutre sur les cinq grandeurs de
-   * cette table (voir `ELEMENT_DEFS`, `shared/elements.ts`).** Sans plancher
+   * ⚠️ **Amalgame (Poix + Vif-argent) reclame le MEME plancher que Mortier
+   * vif** : la Poix est l'unique moitie non neutre du couple. Sans plancher
    * explicite, `elementOf(zoneElement(kind)).damageAmp` seul rendrait 1,5
-   * (Poix declenche) OU 1 (Vif-argent declenche) — deux nombres DIFFERENTS.
+   * (Poix declenche) OU 1 (Vif-argent declenche).
    */
   it('rend le damageAmp de la Poix pour Amalgame, dans les DEUX ordres (Poix OU Vif-argent declenche)', () => {
     const poixDeclenche = zoneDamageAmpTotal(packZoneKind(ELEMENT.POIX, REACTION.AMALGAME));
@@ -1424,10 +1322,7 @@ describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION
     expect(poixDeclenche).toBe(elementOf(ELEMENT.POIX).damageAmp);
   });
 
-  /**
-   * ⚠️ **L'invariant dont le test precedent depend, ASSENE — meme
-   * discipline que le test equivalent de Mortier vif juste au-dessus.**
-   */
+  /** ⚠️ L'invariant dont le test precedent depend, ASSENE (comme pour Mortier vif). */
   it('le plancher d Amalgame reste un PLAFOND pour les deux elements de sa propre paire', () => {
     const def = reactionOfId(REACTION.AMALGAME);
     expect(def).toBeDefined();
@@ -1439,10 +1334,8 @@ describe('zoneDamageAmpTotal — l amplification des degats, ELEMENT et REACTION
 });
 
 /**
- * Étape 8 — **les champs varient**, demande par l'auteur : *« fais des zones
- * de differentes tailles, duree, forme »*. La duree existait deja (une seule
- * reaction s'en servait) ; le rayon et la silhouette sont neufs, et tous
- * trois se derivent du MEME octet de `kind`, donc sans rien annoncer de plus.
+ * **Les champs varient** en taille, duree et forme. Les trois se derivent du
+ * MEME octet de `kind`, donc sans rien annoncer de plus sur le fil.
  */
 describe('zoneRadius et zoneShape — ce qui distingue un champ d un autre', () => {
   it('rend le rayon GENERIQUE pour un kind sans reaction', () => {

@@ -23,34 +23,26 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * Le livrable du §13 de la spec de l'etape 4 : **quatre clients reels, sur des
- * sockets reelles**, qui montent de niveau, draftent et entrent en conflit.
- *
- * ⚠️ **Plus de repioche.** Elle a disparu du modele : la resolution est un
- * seul moment, et le perdant recoit sa carte de remplacement dans le MEME lot
- * d'issues. Ce test n'attend donc plus de second `DRAFT_RESULT` — il verifie
- * au contraire qu'un seul suffit a servir tout le monde.
+ * **Quatre clients reels, sur des sockets reelles**, qui montent de niveau,
+ * draftent et entrent en conflit. La resolution est un seul moment : le
+ * perdant recoit sa carte de remplacement dans le MEME `DRAFT_RESULT`.
  *
  * ⚠️ **Pourquoi headless et pas quatre onglets.** `requestAnimationFrame` est
- * suspendu dans un onglet en arriere-plan — mesure a l'etape 2, zero image en
- * quinze secondes. Trois des quatre onglets ne dessineraient rien, et une
- * capture d'ecran montrerait une image perimee qu'on prendrait pour un defaut
- * de replication. C'est ce test-la qui porte la preuve.
+ * suspendu dans un onglet en arriere-plan : trois onglets sur quatre ne
+ * dessineraient rien, et une capture montrerait une image perimee qu'on
+ * prendrait pour un defaut de replication.
  *
- * ⚠️ **Pourquoi la vraie socket et pas un `Room` pilote en direct.** Deux
- * lignes de `Session` n'etaient couvertes par AUCUN test a la fin de la tache
- * 6 — la diffusion de `DRAFT_OPEN` dans `#broadcast` et la reception de
- * `DRAFT_TOKEN` dans `#onFrame`. Neutraliser l'une ou l'autre laissait toute
- * la suite verte. Elles sont la dette « S1/S3 » du registre, et ce fichier est
- * ce qui la solde : il ne connait l'etalage que par ce que la socket lui
- * livre, et ne pose ses jetons que par ce qu'elle transporte.
+ * ⚠️ **Pourquoi la vraie socket et pas un `Room` pilote en direct.** C'est le
+ * seul test qui couvre la diffusion de `DRAFT_OPEN` dans `Session#broadcast`
+ * et la reception de `DRAFT_TOKEN` dans `Session#onFrame` : il ne connait
+ * l'etalage que par ce que la socket lui livre, et ne pose ses jetons que par
+ * ce qu'elle transporte.
  *
  * ⚠️ **Pourquoi les monstres sont poses a la main.** Attendre le generateur de
- * vagues coute une premiere vague au tick 180 (6 s) d'une taille variable de
- * 16 a 28 monstres, qui doivent encore traverser `ANCHOR_RADIUS` : lent ET
- * intermittent. Un anneau pose autour de chaque joueur, comme le fait
- * `room.test.ts`, amene le premier etalage en une poignee de secondes et sans
- * hasard. C'est pour ca que `buildServer` decore l'app de son registre.
+ * vagues est lent ET intermittent (taille variable, monstres qui doivent
+ * traverser `ANCHOR_RADIUS`). Un anneau autour de chaque joueur amene le
+ * premier etalage en quelques secondes et sans hasard ; c'est pour ca que
+ * `buildServer` decore l'app de son registre.
  */
 
 /** Graine imposee au salon : ce test ne doit rien devoir au hasard. */
@@ -147,8 +139,8 @@ async function connect(code: string): Promise<Client> {
     }
   });
 
-  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
-  // un slot : chaque client de ce harnais a donc son propre compte.
+  // Toute socket de jeu presente son jeton AVANT d'obtenir un slot : chaque
+  // client de ce harnais a donc son propre compte.
   const { token } = await createAccount();
   await ouverte;
   ws.send(encodeHello(token));
@@ -223,9 +215,9 @@ function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): void 
  * joueur, renouvele quand la horde se vide, et chaque joueur qui vise en
  * continu le monstre le plus proche de lui.
  *
- * ⚠️ **La visee passe par la socket**, comme le reste : depuis la tache 13 de
- * l'etape 3, la proximite d'un monstre ne declenche plus rien — sans
- * `aimX`/`aimY`, l'arme ne tire jamais et l'experience ne monte pas.
+ * ⚠️ **La visee passe par la socket**, comme le reste : la proximite d'un
+ * monstre ne declenche rien, sans `aimX`/`aimY` l'arme ne tire jamais et
+ * l'experience ne monte pas.
  *
  * Rend la fonction qui arrete le pilote.
  */
@@ -325,9 +317,8 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
 
     // ---- 1. L'etalage s'ouvre, et il s'ouvre SUR LA SOCKET ----------------
     //
-    // ⚠️ Mutation S1 : si `Session#broadcast` cesse de diffuser `DRAFT_OPEN`,
-    // c'est ici que le test rougit. Aucun client ne connaitrait l'etalage,
-    // donc aucun ne pourrait poser de jeton.
+    // ⚠️ Si `Session#broadcast` cesse de diffuser `DRAFT_OPEN`, c'est ici que
+    // le test rougit.
     const opens = await Promise.all(
       clients.map((client) =>
         waitFor(
@@ -349,16 +340,14 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     if (!spread || spread.type !== MSG.DRAFT_OPEN) {
       throw new Error('DRAFT_OPEN attendu');
     }
-    // §7.2 point 1 : `joueurs + SPREAD_BONUS` cartes, les memes pour tous.
+    // `joueurs + SPREAD_BONUS` cartes, les memes pour tous.
     expect(spread.cards).toHaveLength(PLAYER_COUNT + SPREAD_BONUS);
     for (const open of opens) {
       expect(open).toEqual(spread);
     }
-    // ⚠️ **L'octet `owner` a disparu** : plus aucune carte n'est reservee,
-    // toutes sont ouvertes a tout le monde. Ce qui rend le conflit ci-dessous
-    // possible se verifie donc autrement — l'etalage ne doit contenir que des
-    // natures que le modele connait, et aucune carte en double (deux cartes
-    // identiques rendraient un conflit illisible).
+    // Aucune carte n'est reservee : l'etalage ne doit contenir que des natures
+    // connues, et aucune carte en double (deux cartes identiques rendraient
+    // un conflit illisible).
     expect(spread.cards.every((card) => card.nature === 0 || card.nature === 1)).toBe(true);
     expect(new Set(spread.cards.map((c) => `${c.nature}:${c.refId}`)).size).toBe(
       spread.cards.length,
@@ -366,9 +355,8 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
 
     // ---- 2. Trois joueurs se disputent la meme carte, le quatrieme se tait -
     //
-    // ⚠️ Mutation S3 : si `Session#onFrame` ignore `DRAFT_TOKEN`, aucune
-    // intention n'est enregistree, `DRAFT_INTENTS` n'est jamais diffuse, et
-    // l'attente ci-dessous expire. Et si elle ne le faisait pas, l'absence de
+    // ⚠️ Si `Session#onFrame` ignore `DRAFT_TOKEN`, `DRAFT_INTENTS` n'est
+    // jamais diffuse et l'attente ci-dessous expire ; a defaut, l'absence de
     // `LOST` plus bas le dirait.
     const CONTESTED = 0;
     for (const client of [a, b, c]) {
@@ -399,8 +387,8 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     // ---- 3. La resolution : le conflit, et l'attribution d'office ---------
     //
     // Le joueur `d` ne pose rien : la fenetre va jusqu'a son echeance
-    // (`DRAFT_WINDOW_TICKS`, 20 s) — c'est precisement le §4.4, « un joueur
-    // absent ne bloque jamais », et le cout d'horloge de ce test.
+    // (`DRAFT_WINDOW_TICKS`, 20 s) : un joueur absent ne bloque jamais, et
+    // c'est le cout d'horloge de ce test.
     const first = await waitFor(
       () => a.received.find((m) => m.type === MSG.DRAFT_RESULT) ?? null,
       'DRAFT_RESULT',
@@ -414,11 +402,10 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     const won = first.outcomes.filter((o) => o.outcome === OUTCOME.WON);
     const lost = first.outcomes.filter((o) => o.outcome === OUTCOME.LOST);
 
-    // ⚠️ **L'assertion centrale, et le defaut n°1 de ce test si elle manque.**
-    // Un draft ou personne n'entre en conflit ne prouve rien du tout : on
-    // COMPTE les perdants, on ne les suppose pas. Elle vient AVANT toutes les
-    // autres pour que ce soit elle qui parle quand la mise en scene se
-    // degrade en silence.
+    // ⚠️ **L'assertion centrale.** Un draft sans conflit ne prouve rien : on
+    // COMPTE les perdants, on ne les suppose pas. Elle vient AVANT les autres
+    // pour que ce soit elle qui parle quand la mise en scene se degrade en
+    // silence.
     expect(
       lost.length,
       "aucun conflit n'a eu lieu : trois jetons sur la meme carte devaient faire deux perdants",
@@ -444,11 +431,8 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
 
     // ---- 4. Les perdants sont servis DANS LE MEME LOT ---------------------
     //
-    // ⚠️ **C'est le point de bascule du modele.** Il y avait ici une seconde
-    // fenetre de 5 s, un second `DRAFT_TOKEN` et un second `DRAFT_RESULT`. Le
-    // perdant ne rechoisit plus : *« ca brule la carte si je l'ai pas eu et ca
-    // en illumine une autre »*. Les deux issues — le `LOST` de la carte
-    // disputee, l'`AUTO` de celle qui la remplace — arrivent ensemble.
+    // Le perdant ne rechoisit pas : ses deux issues, le `LOST` de la carte
+    // disputee et l'`AUTO` de celle qui la remplace, arrivent ensemble.
     const losers = lost.map((l) => l.playerId);
     for (const id of losers) {
       const siennes = outcomesOf(first.outcomes, id);
@@ -492,12 +476,12 @@ describe('quatre clients reels draftent (livrable du §13)', () => {
     for (const client of clients) {
       const loadout = room.loadoutOf(client.playerId);
       // ⚠️ Des CARTES, pas des slots : une carte de l'arme de depart s'empile
-      // sans ouvrir de slot, et compter les slots la rendait invisible.
+      // sans ouvrir de slot, et compter les slots la rendrait invisible.
       const cartes =
         WEAPONS.reduce((n, w) => n + (loadout?.stacksOfWeapon(w.id) ?? 0), 0) +
         PASSIVES.reduce((n, p) => n + (loadout?.stacksOf(p.id) ?? 0), 0);
-      // L'arme du depart, plus la carte gagnee — autant de fois que sa rarete
-      // le dit (etape 10) : une rare compte deux exemplaires.
+      // L'arme du depart, plus la carte gagnee autant de fois que sa rarete
+      // le dit : une rare compte deux exemplaires.
       const carte = spread.cards[granted.get(client.playerId) ?? -1];
       if (!carte) {
         throw new Error(`aucune carte attribuee au joueur ${client.playerId}`);

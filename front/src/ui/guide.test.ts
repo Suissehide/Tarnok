@@ -76,10 +76,8 @@ describe('le Guide', () => {
   });
 
   /**
-   * ⚠️ **Le reglage du catalogue doit traverser jusqu'a l'ecran.** Le Guide
-   * n'existe que pour ca : une page d'aide qui recopierait les chiffres
-   * deviendrait fausse a la premiere retouche d'equilibrage, sans que rien ne
-   * le dise. On verifie donc que les degats de l'arme sortent de la table.
+   * ⚠️ **Le reglage du catalogue doit traverser jusqu'a l'ecran** : les
+   * degats affiches sortent de la table, jamais d'une recopie.
    */
   it('les degats affiches sont ceux de la table, arme par arme', () => {
     const root = ecran();
@@ -91,9 +89,8 @@ describe('le Guide', () => {
   });
 
   /**
-   * `blastRadius` ne dit pas la meme chose selon la famille : pour un halo,
-   * un faisceau ou une invocation, c'est sa PORTEE — annoncer « explose » la
-   * dirait projectile alors que rien ne part.
+   * Pour un halo, un faisceau ou une invocation, `blastRadius` est la
+   * PORTEE : « explose » le dirait projectile alors que rien ne part.
    */
   it('seul un tir peut annoncer une explosion', () => {
     for (const w of WEAPONS) {

@@ -1,20 +1,16 @@
 /**
  * Champ de flux (flowfield) : une passe par joueur, jamais d'A* par agent.
  *
- * C'est l'enseignement principal du post-mortem de Riot (§4.2 de la spec) :
- * leur pathfinding A* par agent scalait **quadratiquement** avec le nombre de
- * sbires, et ils l'ont remplace par une carte de Dijkstra. Le cout passe de
- * `O(ennemis x longueur du chemin)` a `O(cellules)` — donc independant du
- * nombre d'ennemis, ce qui est exactement la propriete qu'il faut pour tenir
- * 1 500 entites.
+ * Le cout passe de `O(ennemis x longueur du chemin)` a `O(cellules)`,
+ * independant du nombre d'ennemis : c'est ce qui permet de tenir 1 500
+ * entites (lecon du post-mortem de Riot sur l'A* par sbire).
  *
- * Benefice secondaire, et c'est lui qui rend le §3.3 possible : le champ **se
- * replique gratuitement**. Le client le recalcule a partir des quatre positions
- * de joueurs qu'il recoit deja, donc aucune position de monstre ne transite.
- * C'est pour cette raison que ce fichier vit dans `shared/` et pas dans `back/`.
+ * Le champ **se replique gratuitement** : le client le recalcule a partir des
+ * positions de joueurs qu'il recoit deja, donc aucune position de monstre ne
+ * transite. D'ou sa place dans `shared/`.
  *
- * Aucune contrainte de purete ici (§12.1) : on cherche la ressemblance entre
- * client et serveur, pas la reproduction au bit pres.
+ * Aucune contrainte de purete ici : on cherche la ressemblance entre client et
+ * serveur, pas la reproduction au bit pres.
  */
 
 /** Les huit voisins, en decalages de cellule. */
@@ -68,9 +64,8 @@ export class FlowField {
   /**
    * File du parcours en largeur, allouee une fois pour toutes.
    *
-   * Le champ est recalcule 5 a 10 fois par seconde et par joueur : une file qui
-   * s'agrandit a chaque passe rendrait le ramasse-miettes visible dans les
-   * mesures de l'etape 1, et on mesurerait le GC au lieu du flowfield.
+   * Le champ est recalcule plusieurs fois par seconde et par joueur : une file
+   * qui s'agrandit a chaque passe ferait mesurer le GC au lieu du flowfield.
    */
   readonly #queue: Int32Array;
 
@@ -101,43 +96,28 @@ export class FlowField {
   }
 
   /**
-   * Direction du champ echantillonnee par interpolation bilineaire (tache
-   * 25) autour de `(x, y)`, plutot que la direction unique de la cellule qui
-   * la contient.
+   * Direction du champ echantillonnee par interpolation bilineaire autour de
+   * `(x, y)`, plutot que la direction unique de la cellule qui la contient.
    *
-   * Une seule direction par cellule de `cellSize` px permet a la direction de
-   * s'inverser de 180° en franchissant une frontiere : avec une vitesse
-   * tenue plusieurs ticks (tache 19), l'entite depasse, recalcule dans la
-   * cellule voisine, et repart en arriere — le va-et-vient mesure au rapport
-   * de la tache 25. Lire les quatre cellules entourant la position et les
-   * melanger au prorata de la distance lit le champ comme continu : une
-   * position legerement differente donne desormais une direction legerement
-   * differente, jamais une direction opposee.
+   * Une seule direction par cellule permet a la direction de s'inverser de
+   * 180° en franchissant une frontiere : avec une vitesse tenue plusieurs
+   * ticks, l'entite depasse, recalcule dans la cellule voisine et repart en
+   * arriere. Le melange lit le champ comme continu.
    *
    * La grille de melange est centree sur le MILIEU de chaque cellule : au
-   * centre exact d'une cellule, les deux poids valent 0 et 1, et le melange
-   * degenere exactement en la lecture par cellule — c'est ce qui garde
-   * inchangee toute position deja testee pile sur un centre de cellule (voir
-   * `shared/horde.test.ts`, choisi ainsi avant cette tache).
+   * centre exact d'une cellule, le melange degenere exactement en la lecture
+   * par cellule (des tests de `shared/horde.test.ts` en dependent).
    *
-   * ⚠️ **Les cellules bloquees sont exclues du melange, jamais lues comme
-   * `(0, 0)`.** Une cellule bloquee porte, depuis `#carveExitsFromWalls`
-   * (tache 18), une direction de secours vers la sortie la plus proche —
-   * utile a une entite deja coincee dans le mur, mais sans rapport avec le
-   * chemin qui longe ce mur depuis l'exterieur. La melanger tirerait la
-   * direction vers cette sortie de secours au lieu de longer l'obstacle.
-   * C'est pour ca qu'on l'exclut par `this.blocked`, PAS par un test `dirX
-   * === 0 && dirY === 0` : ce test ne detecterait plus rien depuis la tache
-   * 18, une cellule muree ordinaire ayant desormais une direction non nulle.
-   * Les poids des cellules restantes sont renormalises par leur somme. Si
-   * les quatre sont bloquees, on retombe sur la lecture par cellule
-   * (`indexAt`).
+   * ⚠️ **Les cellules bloquees sont exclues du melange par `this.blocked`.**
+   * Elles portent une direction de secours (`#carveExitsFromWalls`) utile a
+   * une entite coincee dans le mur, mais qui tirerait vers cette sortie une
+   * entite qui longe l'obstacle. Un test `dirX === 0 && dirY === 0` ne les
+   * detecterait pas : leur direction est non nulle. Les poids restants sont
+   * renormalises ; si les quatre sont bloquees, on retombe sur `indexAt`.
    *
-   * Ecrit le resultat dans `out[0]` (x) et `out[1]` (y) : aucun tableau n'est
-   * alloue ici, `out` est un tampon fourni par l'appelant et reutilise a
-   * chaque appel. Cette methode tourne a chaque recalcul de trajectoire
-   * (tache 19) — une entite sur `STEERING_RECOMPUTE_TICKS` par tick — et une
-   * allocation ici deviendrait visible au banc (`bench:sep`).
+   * Ecrit dans `out[0]` (x) et `out[1]` (y), sans allocation : appelee a
+   * chaque recalcul de trajectoire, une allocation se verrait au banc
+   * (`bench:sep`).
    */
   sampleDirection(x: number, y: number, out: Float32Array): void {
     const { cellSize, cols, rows, blocked, dirX, dirY } = this;
@@ -229,19 +209,12 @@ export class FlowField {
    * cellule d'ou l'on vient : on evite ainsi une seconde passe sur toutes les
    * cellules pour chercher le plus petit voisin.
    *
-   * ⚠️ **Si la cellule cible est bloquee, le parcours ne part pas d'elle**
-   * (tache 27) : rien ne serait explore, et le champ ressortirait
-   * integralement vide — plus aucun monstre de la carte n'aurait de
-   * direction, alors que le probleme ne concerne qu'un joueur pousse,
-   * teleporte ou simplement debout sur un rocher (rien n'empeche
-   * aujourd'hui de marcher sur un obstacle). On amorce a la place depuis la
-   * cellule libre la plus proche (`#nearestFreeCell`), choisie de facon
-   * deterministe pour que serveur et client — qui recalculent chacun ce
-   * champ depuis la meme position de joueur — retombent sur exactement la
-   * meme cellule de depart. La cellule cible elle-meme reste bloquee et ne
-   * recoit donc aucune direction de ce premier parcours ; c'est la seconde
-   * passe, `#carveExitsFromWalls` (tache 18), qui lui en offre une, comme a
-   * n'importe quelle autre cellule muree.
+   * ⚠️ **Si la cellule cible est bloquee, le parcours ne part pas d'elle** :
+   * rien ne serait explore et plus aucun monstre n'aurait de direction, pour
+   * un seul joueur pousse ou teleporte dans un obstacle. On amorce depuis la
+   * cellule libre la plus proche (`#nearestFreeCell`, deterministe pour que
+   * serveur et client retombent sur la meme). La cellule cible recoit sa
+   * direction de `#carveExitsFromWalls`, comme toute cellule muree.
    */
   update(targetX: number, targetY: number): void {
     this.#revision++;
@@ -302,28 +275,19 @@ export class FlowField {
   }
 
   /**
-   * Cellule libre la plus proche de `from` (tache 27), au sens de la
-   * distance de Tchebychev — la meme metrique que le parcours en largeur a
-   * huit voisins de `update`, ou une diagonale coute exactement comme un pas
-   * orthogonal. Utilisee quand la cellule cible est bloquee : amorcer le
-   * parcours depuis cette cellule plutot que de renoncer, pour que le champ
-   * ne sorte jamais entierement vide (un joueur sur un rocher ne doit pas
-   * figer toute la horde).
+   * Cellule libre la plus proche de `from`, au sens de la distance de
+   * Tchebychev — la meme metrique que le parcours a huit voisins de `update`.
    *
    * Deterministe et sans allocation : parcourt les anneaux carres autour de
    * `from` par rayon croissant (0, 1, 2, ...), et a l'interieur d'un anneau
    * dans l'ordre croissant de `y` puis de `x` — qui est aussi l'ordre
    * croissant d'index de cellule (`y * cols + x`), puisque `x` reste borne a
    * `cols`. Le premier index libre trouve est donc a la fois le plus proche
-   * ET, a egalite de rayon, le plus petit index : aucun tirage, aucun ordre
-   * herite d'une iteration de `Map` ou d'objet. Server et client, recevant
-   * le meme masque et la meme position cible, produisent donc exactement la
-   * meme cellule de depart.
+   * ET, a egalite de rayon, le plus petit index : serveur et client
+   * produisent exactement la meme cellule de depart.
    *
-   * Ne cherche PAS le plus proche au sens du chemin contournant les
-   * obstacles (ce serait un second BFS, alloue ou non trivial) : juste la
-   * cellule libre geometriquement la plus proche pour amorcer le vrai
-   * parcours juste apres. Rend `UNREACHED` si la carte entiere est bloquee.
+   * Plus proche geometriquement, pas en chemin contournant les obstacles.
+   * Rend `UNREACHED` si la carte entiere est bloquee.
    */
   #nearestFreeCell(from: number, cols: number, rows: number, blocked: Uint8Array): number {
     const cx = from % cols;
@@ -363,16 +327,9 @@ export class FlowField {
   }
 
   /**
-   * Deuxieme parcours (tache 18) : offre une sortie a TOUTE cellule muree,
-   * quelle que soit la raison pour laquelle une entite s'y trouve.
-   *
-   * C'est le filet, distinct des deux autres correctifs de la tache : borner
-   * la separation et eviter de faire naitre une entite en plein mur
-   * suppriment les causes CONNUES d'un monstre coince dans un obstacle, mais
-   * une cause future, non prevue ici, doit degrader plutot que figer une
-   * entite pour toujours — c'est exactement ce qu'empechait l'absence de
-   * direction sur une cellule bloquee (`dirX`/`dirY` a `(0, 0)`, jamais
-   * ecrits par le premier parcours qui les saute explicitement).
+   * Deuxieme parcours : offre une sortie a TOUTE cellule muree, quelle que
+   * soit la raison pour laquelle une entite s'y trouve. C'est le filet : une
+   * cause imprevue doit degrader plutot que figer une entite pour toujours.
    *
    * BFS en largeur, en O(cellules) comme le premier : on part de TOUTES les
    * cellules deja atteintes (la frontiere du premier parcours) et on avance
@@ -384,10 +341,9 @@ export class FlowField {
    *
    * ⚠️ Ne touche PAS les cellules libres mais inatteignables (une poche isolee
    * par des murs tout autour) : ce n'est pas la meme classe de defaut — une
-   * entite qui s'y trouve n'est pas « dans un mur », elle est dans une zone
-   * legitimement libre mais coupee du reste de la carte, un probleme de
-   * connectivite hors du perimetre de cette tache. Seules les cellules dont
-   * `blocked[cellule] === 1` sont concernees ici.
+   * entite qui s'y trouve n'est pas « dans un mur », c'est un probleme de
+   * connectivite. Seules les cellules dont `blocked[cellule] === 1` sont
+   * concernees ici.
    *
    * Reutilise `#queue` : aucune allocation, comme le premier parcours.
    */

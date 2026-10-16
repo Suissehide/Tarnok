@@ -60,7 +60,7 @@ describe('etape 8 tache 8 : le choix de classe a l ecran', () => {
   /**
    * Le CABLAGE, pas seulement la logique : `main.ts` cherche ces identifiants
    * dans le vrai `index.html`, et un ecran parfait branche sur un `id`
-   * inexistant est vert et mort (doctrine de `hud.test.ts`).
+   * inexistant est vert et mort.
    */
   it('trouve dans index.html les cases que main.ts va chercher', () => {
     document.body.innerHTML = indexHtml;

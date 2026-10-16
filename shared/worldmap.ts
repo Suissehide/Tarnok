@@ -11,11 +11,10 @@ import { makeRandom } from './random';
  * couterait plus cher que tout le reste du protocole reuni.
  *
  * Le champ de flux ne concorde entre serveur et client que si les deux murent
- * exactement les memes cellules — c'est la condition du §5.1 de la spec. Et
- * depuis la carte en tuiles, les JOUEURS aussi butent sur ces cellules
+ * exactement les memes cellules. Les JOUEURS aussi butent sur ces cellules
  * (`moveOnMap`) : le serveur et la prediction doivent lire le meme masque.
  *
- * ⚠️ **L'ordre des tirages EST la carte.** Toute etape ajoutee ou deplacee
+ * ⚠️ **L'ordre des tirages EST la carte.** Tout tirage ajoute ou deplace
  * change toutes les cartes ; les deux cotes executent ce meme code, donc
  * rien ne diverge, mais une graine ne designe plus la meme ile.
  */

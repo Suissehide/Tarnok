@@ -30,52 +30,30 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * **Le livrable du §13 de la spec d'orientation, sur quatre sockets reelles :**
- * *« une run infinie avec un vote qui engage reellement l'or. »*
+ * Le portail de bout en bout, sur quatre sockets reelles : le boss meurt, le
+ * portail s'ouvre, les votes se voient, la majorite tranche, l'egalite
+ * continue, et **l'or bouge dans les DEUX sens** (acquis et majore en partant,
+ * efface avec l'equipe). Le monde ne s'arrete pas pendant qu'on negocie.
  *
- * Un palier se termine — le boss meurt —, le portail s'ouvre, les votes se
- * voient, la majorite tranche, l'egalite continue, et **l'or bouge dans les
- * DEUX sens** : acquis en partant, majore du multiplicateur ; efface quand
- * l'equipe l'est. Le monde, lui, ne s'arrete pas pendant qu'on negocie.
+ * ⚠️ Il faut quatre sockets : une seule ne produit ni majorite ni egalite, ne
+ * voit pas les votes des autres, et ne peut pas porter l'or majore du SECOND
+ * portail (le multiplicateur vaut 1 au premier).
  *
- * ⚠️ **Ce que ce fichier apporte, et que ni `room.test.ts` ni `server.test.ts`
- * ne pouvaient porter.** La regle vit dans `portal.ts` et `Room#stepPortal`, et
- * elle y est eprouvee a la main ; la ligne de diffusion est gardee par
- * `server.test.ts`, sur **une** socket. Une seule socket ne peut pas produire
- * ce qui fait le vote :
+ * ⚠️ **Le salon est avance DEPUIS LE TEST**, en plus de la boucle du serveur :
+ * atteindre un boss prend une trentaine de secondes d'horloge murale, et ce
+ * test en enchaine deux. **Les phases mesurees — le vote, le monde qui tourne
+ * — ne sont JAMAIS accelerees**, sinon les sockets n'ont pas le temps de parler.
  *
- * | | une socket | quatre sockets |
- * | --- | --- | --- |
- * | le verdict | toujours unanime | une **majorite**, et une **egalite** |
- * | un vote revoque | ne change aucun verdict | fait **basculer** l'egalite |
- * | `VOTES` | se relit soi-meme | chacun voit **les autres** |
- * | l'or acquis | au PREMIER portail, ou le multiplicateur vaut 1 | au SECOND, donc **majore** |
- * | l'or efface | jamais mesure sur le fil | mesure ici |
- *
- * ⚠️ **Le salon est avance DEPUIS LE TEST, en plus de la boucle du serveur**,
- * comme aux taches 5 bis et 9 de `server.test.ts` : atteindre un boss demande
- * quatre vagues, soit trente secondes d'horloge murale, et ce test en enchaine
- * DEUX. `Room.step` est public et le tick n'est qu'un compteur. **Les phases
- * qui se mesurent — le vote, le monde qui tourne — ne sont JAMAIS accelerees**,
- * elles tournent a la vitesse du serveur, sinon les sockets n'auraient pas le
- * temps de dire ce qu'on leur demande.
- *
- * ⚠️ **Les trois chiffres de replication ne sont PAS mesures ici, et ce n'est
- * pas un oubli.** Ils vivent dans `shared/horde.replication.test.ts` — scenario
- * 9 pour « morts + separation avec rejeu », le scenario de rattrapage pour
- * « apparition tardive », le scenario C1 pour « tick serveur recale en
- * continu » — et cette suite tourne dans la meme commande que ce fichier. Les y
- * recopier ici serait une **seconde mesure**, et elle serait FAUSSE : le decor
- * ci-dessous balaie la horde avec `Horde.kill`, qui court-circuite
- * volontairement le lot `DEATHS` du salon (voir `viderSauf`). Un client qui
- * derive sa horde de ce qui passe sur le fil divergerait donc **par
- * construction**, et le chiffre qu'on lirait ne dirait rien du portail.
+ * ⚠️ **La derive de replication ne se mesure pas ici** mais dans
+ * `shared/horde.replication.test.ts` : le decor balaie la horde avec
+ * `Horde.kill`, qui court-circuite `DEATHS` (voir `viderSauf`), donc un client
+ * qui derive sa horde du fil divergerait par construction.
  */
 
 /** Graine imposee au salon : ce test ne doit rien devoir au hasard. */
 const ROOM_SEED = 0x6a11_0007;
 
-/** Quatre joueurs : c'est le nombre que le livrable exige. */
+/** Quatre joueurs : le minimum pour une majorite ET une egalite. */
 const PLAYER_COUNT = 4;
 
 const DT = 1 / TICK_HZ;
@@ -83,9 +61,8 @@ const DT = 1 / TICK_HZ;
 /**
  * Distance a laquelle le boss est tenu devant son tueur.
  *
- * ⚠️ **Doit rester sous la portee de la dague**, la seule arme que les joueurs
- * portent ici : au-dela, le tireur tire dans le vide, le boss ne meurt jamais,
- * et le test expire sans dire pourquoi. Le garde rend la dependance bruyante.
+ * ⚠️ **Doit rester sous la portee de la dague** : au-dela, le boss ne meurt
+ * jamais et le test expire sans dire pourquoi. Le garde rend l'echec bruyant.
  */
 const DISTANCE_BOSS = 100;
 const DAGUE = weaponOf(BASE_WEAPON_ID);
@@ -96,12 +73,10 @@ if (DISTANCE_BOSS >= PORTEE_DAGUE) {
 
 /**
  * Distance a laquelle le temoin de « le monde tourne » est pose DERRIERE les
- * joueurs, qui marchent, eux, vers la gauche.
+ * joueurs, qui marchent vers la gauche.
  *
- * ⚠️ **Derriere, et pas devant** : un temoin place sur le chemin finirait au
- * contact, blesserait les votants, et le decor mesurerait une melee au lieu
- * d'un deplacement. Il reste loin : a 95 px/s contre 260, il ne rattrape
- * personne.
+ * ⚠️ **Derriere, pas devant** : sur le chemin, il blesserait les votants. A
+ * ~95 px/s contre 260, il ne rattrape personne.
  */
 const DISTANCE_TEMOIN = 900;
 
@@ -109,10 +84,9 @@ const DISTANCE_TEMOIN = 900;
 const TICKS_MESURE = 45;
 
 /**
- * Seuils de la mesure, en pixels monde. Le joueur va a `PLAYER_SPEED` (260
- * px/s), la pietaille a ~100 px/s : sur `TICKS_MESURE` (1,5 s) ils parcourent
- * ~390 px et ~150 px. Les seuils sont pris bien en dessous — ce qui est teste
- * est un mouvement, pas une vitesse.
+ * Seuils de la mesure, en pixels monde : bien sous les ~390 px (joueur) et
+ * ~150 px (pietaille) parcourus en `TICKS_MESURE`. On teste un mouvement, pas
+ * une vitesse.
  */
 const SEUIL_JOUEUR_PX = 100;
 const SEUIL_HORDE_PX = 30;
@@ -134,10 +108,9 @@ interface Client {
   /**
    * L'or tel que le FIL l'a dit, tick par tick.
    *
-   * ⚠️ **C'est lui qui date l'or d'AVANT le verdict.** Lire `room.gold` apres
-   * coup comparerait deux instants differents — et surtout l'or a deja ete
-   * majore a ce moment-la. Le verdict porte `effectTick` : c'est le dernier
-   * jalon d'avant ce tick qui dit ce que l'equipe risquait.
+   * ⚠️ **C'est lui qui date l'or d'AVANT le verdict** : apres coup, `room.gold`
+   * est deja majore. Le dernier jalon avant `effectTick` dit ce que l'equipe
+   * risquait.
    */
   jalonsOr: { tick: number; gold: number }[];
   seq: number;
@@ -171,10 +144,9 @@ async function connect(code: string): Promise<Client> {
   ws.binaryType = 'arraybuffer';
   openSockets.push(ws);
 
-  // ⚠️ L'ecoute de 'open' est posee ICI, avant tout `await` : sur
-  // localhost la socket peut s'ouvrir plus vite qu'une volee Prisma, et un
-  // `once('open', ...)` pose apres `createAccount()` manquerait l'evenement
-  // deja passe, bloquant `connect` jusqu'au timeout du test.
+  // ⚠️ L'ecoute de 'open' est posee avant tout `await` : sur localhost la
+  // socket peut s'ouvrir avant la fin de `createAccount()`, et l'evenement
+  // serait manque.
   const ouverte = new Promise<void>((resolve, reject) => {
     ws.once('open', () => resolve());
     ws.once('error', reject);
@@ -203,8 +175,8 @@ async function connect(code: string): Promise<Client> {
     client.received.push(msg);
   });
 
-  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
-  // un slot : chaque client de ce harnais a donc son propre compte.
+  // Toute socket de jeu presente son jeton AVANT d'obtenir un slot : chaque
+  // client a donc son propre compte.
   const { token } = await createAccount();
   await ouverte;
   ws.send(encodeHello(token));
@@ -267,17 +239,13 @@ function fullSnapshot(ws: WebSocket): Promise<SnapshotMessage> {
 }
 
 /**
- * Retire de la horde tout sauf les identites `garder` — copie conforme du
- * `viderSauf` de `room.test.ts`, et pour la meme raison : ces tests mesurent le
- * PORTAIL, pas la survie de quatre joueurs immobiles sous des vagues qui
- * tombent toutes les six secondes. Sans ce balayage, ils finiraient en
- * `RUN_OVER` avant qu'un seul boss ne tombe.
+ * Retire de la horde tout sauf les identites `garder` (comme `viderSauf` de
+ * `room.test.ts`) : ces tests mesurent le PORTAIL, et sans ce balayage les
+ * vagues finiraient la run avant qu'un boss ne tombe.
  *
- * ⚠️ **`Horde.kill` court-circuite volontairement le salon** : ces morts-la ne
- * comptent pas, ne laissent pas d'orbe — donc pas d'or, pas d'experience, pas
- * d'etalage qui gelerait le monde au milieu d'un vote — et **ne partent pas
- * dans `DEATHS`**. C'est aussi ce qui interdit a ce fichier de mesurer une
- * derive de replication (voir l'en-tete).
+ * ⚠️ **`Horde.kill` court-circuite le salon** : pas d'orbe, donc pas d'or, pas
+ * d'experience, pas d'etalage qui gelerait le monde pendant un vote — et rien
+ * dans `DEATHS`.
  */
 function viderSauf(room: Room, garder: readonly (number | null)[]): void {
   const ids: number[] = [];
@@ -294,8 +262,7 @@ function viderSauf(room: Room, garder: readonly (number | null)[]): void {
 
 /**
  * Pose une entite increvable a une position choisie, hors du generateur de
- * vagues — meme technique que `spawnMonsterAt` dans `room.test.ts`. Rend son
- * identite.
+ * vagues, et rend son identite.
  */
 function poseCible(room: Room, waveId: number, x: number, y: number): number {
   const order: WaveOrder = {
@@ -331,9 +298,8 @@ function epingler(room: Room, id: number, x: number, y: number): void {
 
 /**
  * Avance le salon **depuis le test** jusqu'a ce que `pret` soit vrai, en
- * executant `parTick` avant chaque pas et en rendant la main regulierement a la
- * boucle du serveur — sans quoi aucune diffusion n'aurait lieu et les sondes
- * qui lisent le fil ne verraient jamais rien.
+ * executant `parTick` avant chaque pas. Rend regulierement la main a la boucle
+ * du serveur, sans quoi rien n'est diffuse.
  */
 async function avancerJusqua(
   room: Room,
@@ -405,11 +371,10 @@ function hpDuFil(client: Client, id = client.playerId): number {
  * Coupe le deplacement et la visee d'un joueur, et rend sa position une fois
  * qu'elle a cesse de bouger.
  *
- * ⚠️ **Deux snapshots identiques, pas un seul.** Le snapshot ne porte pas
- * l'intention de deplacement, seulement son effet : la seule facon de savoir
- * que la trame « je m'arrete » a traverse le fil est de voir la position se
- * figer. Sans cette attente, le boss serait epingle par rapport a une position
- * perimee et sortirait de la portee de la dague.
+ * ⚠️ **Deux snapshots identiques, pas un seul** : le snapshot ne porte que
+ * l'effet du deplacement, et seule une position figee prouve que la trame
+ * « je m'arrete » est passee. Sinon le boss serait epingle par rapport a une
+ * position perimee, hors de portee de la dague.
  */
 async function immobiliser(client: Client): Promise<{ x: number; y: number }> {
   envoyer(client, 0, 0, 0, 0);
@@ -450,9 +415,8 @@ function finDeRun(client: Client): Message | undefined {
  * egale a `attendu`.
  *
  * ⚠️ **C'est l'assertion « les votes se voient », et elle porte sur LES
- * AUTRES.** Le §6 : *« on ne negocie pas un choix qu'on ne voit pas »*. Une
- * socket qui ne recevrait que son propre vote rendrait la mecanique inexistante
- * — et une seule socket ne pourrait pas s'en apercevoir.
+ * AUTRES** : on ne negocie pas un choix qu'on ne voit pas, et une socket seule
+ * ne verrait pas qu'elle ne recoit que son propre vote.
  */
 async function tousVoient(
   clients: readonly Client[],
@@ -479,15 +443,12 @@ async function tousVoient(
  * Amene le boss du palier courant puis le fait tomber **par le chemin de mort
  * normal du salon**, et rend son identite.
  *
- * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor** — meme raison
- * qu'aux taches 2, 6 et 9 : ce qui est mesure ici est le PORTAIL, pas une DPS.
- * Le temps de mise a mort reel est la porte du §7, et il se mesure au banc.
+ * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor** : on mesure le
+ * PORTAIL, pas une DPS. Le temps de mise a mort reel se mesure au banc.
  *
- * ⚠️ **Et cette boucle assene au passage que RIEN n'ouvre le portail avant la
- * mort** : un portail ouvert par un tick, par un ordre de vague ou par
- * l'apparition du boss ferait rougir ICI, avant que le moindre vote ne soit
- * emis. C'est la parade au defaut n°1 de ce depot — le test qui vote sur un
- * portail qui ne s'est jamais ouvert, et qui passe tout seul.
+ * ⚠️ La boucle d'approche assene aussi qu'aucun portail n'est ouvert avant
+ * l'apparition du boss : un vote sur un portail jamais ouvert passerait tout
+ * seul.
  */
 async function tuerLeBoss(room: Room, tireur: Client): Promise<number> {
   const k = room.palier;
@@ -513,9 +474,9 @@ async function tuerLeBoss(room: Room, tireur: Client): Promise<number> {
   expect(slot).toBeGreaterThanOrEqual(0);
   room.horde.hp[slot] = 1;
 
-  // ⚠️ **La visee passe par la SOCKET, et on attend qu'elle en REVIENNE.** Sans
-  // ca, la rafale de pas ci-dessous partirait avant que le serveur n'ait lu la
-  // trame : le joueur ne tirerait pas et le boss mourrait de vieillesse.
+  // ⚠️ **La visee passe par la SOCKET, et on attend qu'elle en REVIENNE** :
+  // sinon les pas ci-dessous partiraient avant que le serveur n'ait lu la
+  // trame, et le joueur ne tirerait pas.
   envoyer(tireur, 0, 0, 127, 0);
   await waitFor(
     () =>
@@ -541,9 +502,8 @@ async function tuerLeBoss(room: Room, tireur: Client): Promise<number> {
     },
   );
   expect(room.palier).toBe(k + 1);
-  // ⚠️ **Le portail ne suit plus la mort du boss** (retour de playtest) : il
-  // s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues. On avance, horde videe,
-  // jusqu'a lui.
+  // ⚠️ **Le portail ne suit pas la mort du boss** : il s'ouvre toutes les
+  // `PORTAL_EVERY_WAVES` vagues. On avance, horde videe, jusqu'a lui.
   await avancerJusqua(
     room,
     () => room.portalOpen,
@@ -617,22 +577,18 @@ async function verdictVuParTous(
 
 describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', () => {
   /**
-   * **La moitie POSITIVE : un palier se termine, l'egalite continue, la
-   * majorite fait partir, et l'or part MAJORE.**
+   * **La moitie POSITIVE : l'egalite continue, la majorite fait partir, et l'or
+   * part MAJORE.**
    *
    * ⚠️ **L'egalite vient de DEUX voix contre DEUX, jamais de deux voix et deux
-   * silences.** Le §6 fait de l'egalite le defaut : tout ce qui n'est pas une
-   * majorite de departs continue. Un decor ou deux joueurs se taisent rendrait
-   * donc le meme verdict pour une autre raison, et le test ne dirait rien. La
-   * preuve que les quatre ont vote tient en une ligne : le portail ne se ferme
-   * avant l'echeance que lorsque **tous** ont vote, donc un verdict qui tombe
-   * AVANT `deadlineTick` prouve qu'il n'y avait plus un seul silence.
+   * silences** : tout ce qui n'est pas une majorite de departs continue, donc
+   * deux silences rendraient le meme verdict pour une autre raison. Le portail
+   * ne se ferme avant l'echeance que si **tous** ont vote : un verdict AVANT
+   * `deadlineTick` prouve qu'il n'y avait plus de silence.
    *
-   * ⚠️ **Et l'or est majore, pas recopie.** Le multiplicateur vaut 1 au premier
-   * portail : partir la-bas rendrait exactement la cagnotte, et « majore » se
-   * lirait aussi bien d'un multiplicateur qui ne fait rien. Ce test reste une
-   * fois, tue un SECOND boss, et part au second portail — c'est le seul endroit
-   * du depot ou l'or majore traverse la socket.
+   * ⚠️ **L'or est majore, pas recopie** : le multiplicateur vaut 1 au premier
+   * portail, d'ou le depart au SECOND. C'est le seul endroit du depot ou l'or
+   * majore traverse la socket.
    */
   it('l egalite continue, puis la majorite fait partir avec l or MAJORE', async () => {
     const code = await createRoomCode();
@@ -647,8 +603,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       throw new Error('quatre clients attendus');
     }
 
-    // L'or part de zero : sans cette ligne, « l'or a bouge » plus bas pourrait
-    // se lire d'une cagnotte deja pleine a l'arrivee.
+    // L'or part de zero, sinon « l'or a bouge » plus bas ne prouverait rien.
     const depart = await fullSnapshot(a.ws);
     expect(depart.gold).toBe(0);
 
@@ -657,8 +612,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const mort1 = await mortDuBoss(a, boss1);
     const open1 = await ouvertureVueParTous(clients, 1);
 
-    // Le portail ne s'ouvre plus A la mort du boss mais toutes les
-    // `PORTAL_EVERY_WAVES` vagues (retour de playtest) : il vient APRES elle.
+    // Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues : APRES la mort.
     expect(open1.deadlineTick - PORTAL_WINDOW_TICKS).toBeGreaterThanOrEqual(mort1.tick);
     // Premier portail de la run : la mise n'est pas encore majoree.
     expect(open1.multiplier).toBe(1);
@@ -673,10 +627,9 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     /**
      * L'or tel que le FIL le disait juste avant le tick d'effet d'un verdict.
      *
-     * ⚠️ **Date, jamais releve apres coup.** Au moment ou le verdict arrive, la
-     * cagnotte du salon a deja ete majoree : la comparer a elle-meme ne dirait
-     * rien. Et un releve pris trop tot dirait un autre nombre — une piece
-     * ramassee entre-temps vaut un or de plus (`COIN_DROP_ONE_IN`).
+     * ⚠️ **Date, jamais releve apres coup** : a l'arrivee du verdict, la
+     * cagnotte est deja majoree. Un releve trop tot rate les pieces ramassees
+     * entre-temps (`COIN_DROP_ONE_IN`).
      */
     const orJusteAvant = (client: Client, effectTick: number): number => {
       const jalon = client.jalonsOr.filter((j) => j.tick < effectTick).at(-1);
@@ -686,22 +639,20 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
 
     // ---- 2. Les quatre sont votants, silence compris ----------------------
     //
-    // ⚠️ **Le portail est REELLEMENT ouvert avant qu'on vote.** C'est le defaut
-    // n°1 de ce depot — un vote sur un portail jamais ouvert passe tout seul.
+    // ⚠️ **Le portail est REELLEMENT ouvert avant qu'on vote** : un vote sur un
+    // portail jamais ouvert passerait tout seul.
     const silences = new Map(clients.map((x) => [x.playerId, NO_VOTE]));
     await tousVoient(clients, silences, 'les quatre silences a l ouverture');
 
     // ---- 3. LE MONDE NE S ARRETE PAS pendant qu'on negocie ----------------
     //
-    // ⚠️ **Les DEUX moities, et une seule laisserait la moitie de la mutation
-    // en vie** : un `if (portail ouvert) { #stepPortal(); return; }` calque sur
-    // le gel du draft arreterait la horde ET les joueurs.
-    // ⚠️ **Les joueurs marchent vers la GAUCHE, et le temoin est pose a
-    // DROITE.** Le corps du boss est tombe a `DISTANCE_BOSS` a la droite de A,
-    // et il y a laisse son orbe : marcher vers la droite ferait ramasser cette
-    // orbe — donc peut-etre une piece, donc un or de plus — a un tick que rien
-    // ne rend reproductible. `ORB_PICKUP_RADIUS` vaut 90 et le corps est a 100 :
-    // immobile ou en s'eloignant, personne ne le ramasse.
+    // ⚠️ **La horde ET les joueurs** : un `if (portail ouvert) return;` calque
+    // sur le gel du draft arreterait les deux, et n'en mesurer qu'un laisserait
+    // passer la moitie du defaut.
+    // ⚠️ **Les joueurs marchent vers la GAUCHE, le temoin est a DROITE** : le
+    // boss a laisse son orbe a `DISTANCE_BOSS` a droite de A, juste hors de
+    // `ORB_PICKUP_RADIUS`. Marcher vers elle ferait ramasser une piece
+    // eventuelle a un tick non reproductible.
     const ancreA = positionDuFil(a);
     const temoin = poseCible(room, 9500, ancreA.x + DISTANCE_TEMOIN, ancreA.y);
     const posTemoin = (): { x: number; y: number } => {
@@ -712,13 +663,12 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
 
     // Le pilote tourne a l'horloge REELLE : c'est le serveur qui simule, pas
     // le test. Il balaie la horde — sauf le temoin — et fait marcher les quatre
-    // joueurs vers la droite.
+    // joueurs vers la gauche.
     const stopPilote = piloter(() => {
       viderSauf(room, [temoin]);
       const slot = room.horde.slotOf(temoin);
       if (slot >= 0) {
-        // Increvable, mais LIBRE de se deplacer : c'est un deplacement qu'on
-        // mesure, pas une mise a mort.
+        // Increvable, mais LIBRE de se deplacer : on mesure un deplacement.
         room.horde.hp[slot] = 1e6;
       }
       for (const client of clients) {
@@ -741,8 +691,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       const dernierReleve = a.lastSnapshot?.tick ?? -1;
 
       // ⚠️ **Le portail est encore ouvert au dernier tick mesure**, sinon la
-      // mesure ne dirait rien du vote : elle dirait seulement que le monde
-      // tourne quand personne ne negocie.
+      // mesure ne dirait rien du vote.
       expect(room.portalOpen).toBe(true);
       expect(verdictsDe(a)).toHaveLength(0);
       expect(dernierReleve).toBeLessThan(open1.deadlineTick);
@@ -773,10 +722,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       await voir(b, VOTE_CHOICE.LEAVE, 'le vote de B vu par les quatre');
       await voir(c, VOTE_CHOICE.LEAVE, 'le vote de C vu par les quatre');
 
-      // ⚠️ **Trois departs sur quatre, et RIEN ne tranche.** Le portail ne se
-      // ferme pas des qu'une majorite semble acquise : les votes sont
-      // revocables, donc le decompte n'est stable qu'une fois tout le monde
-      // passe. Une fermeture anticipee ferait partir l'equipe ici.
+      // ⚠️ **Trois departs sur quatre, et RIEN ne tranche** : les votes sont
+      // revocables, le decompte n'est stable qu'une fois tout le monde passe.
       expect(verdictsDe(a)).toHaveLength(0);
       expect(room.portalOpen).toBe(true);
 
@@ -791,13 +738,11 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       // ---- 5. L'EGALITE CONTINUE ------------------------------------------
       const verdict1 = await verdictVuParTous(clients, 1);
       expect(verdict1.decision).toBe(VOTE_CHOICE.STAY);
-      // ⚠️ **La preuve que l'egalite est un 2-2 et non un 2-0 plus deux
-      // silences** : avant l'echeance, le portail ne se ferme QUE lorsque les
-      // quatre ont vote.
+      // ⚠️ Preuve d'un 2-2 et non d'un 2-0 plus deux silences : avant
+      // l'echeance, le portail ne se ferme QUE si les quatre ont vote.
       expect(verdict1.effectTick).toBeLessThan(open1.deadlineTick);
-      // L'or est REPORTE, pas acquis : la cagnotte ne bouge pas d'un pouce, et
-      // surtout elle n'est PAS majoree — c'est ce qui laisse quelque chose a
-      // risquer au palier suivant.
+      // L'or est REPORTE, ni acquis ni majore : il reste a risquer au palier
+      // suivant.
       const orAvant1 = orJusteAvant(a, verdict1.effectTick);
       expect(orAvant1).toBeGreaterThanOrEqual(apresLePremierBoss);
       expect(verdict1.gold).toBe(orAvant1);
@@ -810,9 +755,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
 
     // ---- 6. Un joueur MEURT avant le portail suivant ----------------------
     //
-    // ⚠️ **Il reste connecte, et il votera** (§6 : « tout joueur connecte, mort
-    // ou vif »). Sa voix sera DECISIVE plus bas, sans quoi le test ne dirait
-    // rien de sa mort.
+    // ⚠️ **Il reste connecte, et il votera** : tout joueur connecte vote, mort
+    // ou vif. Sa voix sera DECISIVE plus bas.
     for (const client of clients) {
       await immobiliser(client);
     }
@@ -831,7 +775,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     );
     viderSauf(room, []);
     expect(hpDuFil(d)).toBe(0);
-    // Les trois autres sont debout : la mort d'un seul ne termine rien (§5).
+    // Les trois autres sont debout : la mort d'un seul ne termine rien.
     for (const vivant of [a, b, c]) {
       expect(hpDuFil(vivant)).toBeGreaterThan(0);
     }
@@ -843,8 +787,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const open2 = await ouvertureVueParTous(clients, 2);
 
     expect(open2.deadlineTick - PORTAL_WINDOW_TICKS).toBeGreaterThanOrEqual(mort2.tick);
-    // ⚠️ **LA ligne que le premier portail ne peut pas garder** : rester a
-    // majore la mise, et c'est ce chiffre-la que l'ecran du vote multiplie.
+    // ⚠️ **Ce que le premier portail ne peut pas garder** : rester a majore la
+    // mise.
     expect(open2.multiplier).toBe(1 + EXTRACT_MULTIPLIER_STEP);
     expect(open2.multiplier).toBeGreaterThan(1);
 
@@ -862,29 +806,26 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       table2.set(client.playerId, choix);
       await tousVoient(clients, table2, `le vote du joueur ${client.playerId} vu par les quatre`);
     }
-    // ⚠️ **Il est toujours mort au moment de voter.** Sans cette ligne, « un
-    // mort vote » se lirait aussi bien d'un joueur qu'on aurait laisse revivre.
+    // ⚠️ **Il est toujours mort au moment de voter**, sinon « un mort vote » ne
+    // prouverait rien.
     expect(hpDuFil(d)).toBe(0);
     expect(hpDuFil(a)).toBeGreaterThan(0);
 
-    // C ne votera jamais : l'absence ne bloque pas, c'est l'echeance qui
-    // tranche. On y va en accelerant — la table des votes a deja fait le tour
-    // des quatre sockets.
+    // C ne votera jamais : c'est l'echeance qui tranche. On peut y aller en
+    // accelerant, la table des votes a deja fait le tour des quatre sockets.
     const releve = a.lastSnapshot;
     if (!releve) {
       throw new Error('aucun snapshot avant l echeance');
     }
     // ⚠️ **La cagnotte a GROSSI d'un palier a l'autre** : le bonus est paye a
-    // chaque boss, et il paye le palier qu'on vient de finir. Un bonus verse
-    // une seule fois passerait ici.
+    // chaque boss, pas une seule fois.
     const cagnotte = releve.gold;
     expect(cagnotte).toBeGreaterThan(apresLePremierBoss);
 
     await avancerJusqua(
       room,
-      // ⚠️ **Le SECOND verdict, pas « un verdict ».** Le premier est deja dans
-      // la liste : une sonde a `length > 0` rendrait la main tout de suite, et
-      // l'echeance ne serait jamais atteinte.
+      // ⚠️ **Le SECOND verdict** : le premier est deja dans la liste, une sonde
+      // a `length > 0` rendrait la main avant l'echeance.
       () => verdictsDe(a).length >= 2,
       'le verdict a l echeance du portail',
       PORTAL_WINDOW_TICKS + 10 * TICK_HZ,
@@ -895,20 +836,17 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
 
     const verdict2 = await verdictVuParTous(clients, 2);
 
-    // ⚠️ **La voix du mort est DECISIVE, et l'abstention ne compte pas.** Deux
-    // departs (dont le sien) contre un reste : sans sa voix, 1-1, egalite, on
-    // continue. Et si `NO_VOTE` se comptait comme « rester », le silence de C
-    // rendrait 2-2, donc « rester » lui aussi. Dans les deux cas, aucune fin de
-    // run, et ce qui suit rougirait.
+    // ⚠️ **La voix du mort est DECISIVE, et l'abstention ne compte pas** : sans
+    // sa voix, 1-1 ; si `NO_VOTE` comptait comme « rester », 2-2. Les deux
+    // donneraient « rester ».
     expect(verdict2.decision).toBe(VOTE_CHOICE.LEAVE);
-    // ⚠️ **Le tick d'effet est celui de l'echeance, a l'unite pres** — le
-    // client ne peut pas le deduire, et il ne doit pas avoir a le faire.
+    // ⚠️ **Le tick d'effet est celui de l'echeance, a l'unite pres** : le
+    // client n'a pas a le deduire.
     expect(verdict2.effectTick).toBe(open2.deadlineTick);
 
     // ---- 9. L'OR EST ACQUIS, ET MAJORE -----------------------------------
     //
-    // L'or d'avant le verdict vient du FIL, date : c'est le dernier jalon
-    // anterieur au tick d'effet. Le lire apres coup lirait l'or deja majore.
+    // L'or d'avant le verdict vient du FIL, date (voir `jalonsOr`).
     const fenetre = a.jalonsOr.filter((j) => j.tick >= releve.tick && j.tick < verdict2.effectTick);
     expect(fenetre.length, 'aucun snapshot pendant la fenetre de vote').toBeGreaterThan(0);
     // La cagnotte ne bouge pas pendant qu'on negocie : c'est ce qui rend la
@@ -920,12 +858,12 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     expect(orAvant).toBe(cagnotte);
 
     expect(verdict2.gold).toBe(Math.round(orAvant * open2.multiplier));
-    // ⚠️ **Et la majoration SE VOIT** : sans elle, les deux nombres seraient
-    // egaux, et « l'or est acquis » se lirait d'un or recopie.
+    // ⚠️ **Et la majoration SE VOIT**, sinon l'or pourrait etre simplement
+    // recopie.
     expect(verdict2.gold).toBeGreaterThan(orAvant);
 
-    // La run se termine — par le `RUN_OVER` de l'etape 3, pas par une seconde
-    // fin inventee pour le portail — et l'or acquis reste affiche.
+    // La run se termine par le `RUN_OVER` ordinaire, et l'or acquis reste
+    // affiche.
     for (const client of clients) {
       await waitFor(() => finDeRun(client) ?? null, `RUN_OVER pour ${client.playerId}`, 10_000);
     }
@@ -937,14 +875,12 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
   }, 120_000);
 
   /**
-   * **La moitie NEGATIVE, et c'est elle qui porte le sens** (§8 : *« l'or est
-   * acquis quand on part » se lit aussi bien avec un or qui ne bouge
-   * jamais*).
+   * **La moitie NEGATIVE, et c'est elle qui porte le sens** : « l'or est acquis
+   * quand on part » passerait aussi avec un or qui ne bouge jamais.
    *
-   * Le decor est celui de la moitie positive jusqu'a la mort du boss — meme
-   * salon, meme graine, meme balayage, meme cagnotte gagnee au palier. Ce qui
-   * change est ce qui arrive ENSUITE : l'equipe est effacee **pendant** qu'elle
-   * negocie, et la cagnotte tombe a `WIPE_GOLD_KEPT`.
+   * Meme decor que la moitie positive jusqu'a la mort du boss ; ensuite,
+   * l'equipe est effacee **pendant** qu'elle negocie, et la cagnotte tombe a
+   * `WIPE_GOLD_KEPT`.
    */
   it('l effacement de l equipe efface l or, sur le fil', async () => {
     const code = await createRoomCode();
@@ -967,9 +903,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const open = await ouvertureVueParTous(clients, 1);
     expect(open.deadlineTick - PORTAL_WINDOW_TICKS).toBeGreaterThanOrEqual(mort.tick);
 
-    // ⚠️ **La cagnotte est NON VIDE avant l'effacement.** Sans cette ligne,
-    // « l'or tombe a zero » se lirait aussi bien d'un or qui n'a jamais rien
-    // valu — le defaut « le test qui rend zero », cinq fois dans ce depot.
+    // ⚠️ **La cagnotte est NON VIDE avant l'effacement**, sinon « l'or tombe a
+    // zero » ne prouverait rien.
     const cagnotte = await waitFor(
       () => (a.lastSnapshot && a.lastSnapshot.gold > 0 ? a.lastSnapshot.gold : null),
       "l'or du bonus de palier dans le SNAPSHOT",
@@ -977,9 +912,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     );
     expect(cagnotte).toBeGreaterThan(0);
 
-    // Un bourreau increvable epingle sur chaque joueur : l'equipe entiere
-    // tombe, et c'est le seul chemin qui coute la cagnotte (§5 — la mort d'un
-    // seul ne coute rien, la moitie positive vient de le montrer).
+    // Un bourreau increvable epingle sur chaque joueur : seul l'effacement de
+    // l'equipe entiere coute la cagnotte.
     const bourreaux = new Map<number, { id: number; x: number; y: number }>();
     for (const client of clients) {
       const pos = positionDuFil(client);
@@ -1017,23 +951,15 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       10_000,
     );
 
-    // ⚠️ **`WIPE_GOLD_KEPT` est LE parametre du §9.3, et ce test ne le garde
-    // PAS — il ne peut pas.** Le §5 de la spec le dit lui-meme : *« tant que
-    // `WIPE_GOLD_KEPT` vaut 0, aucun test ne la distingue d'un zero ecrit en
-    // dur »*. Un `expect(gold).toBe(Math.round(cagnotte * WIPE_GOLD_KEPT))`
-    // ecrit ici PRETENDRAIT le garder et ne garderait rien : les deux cotes de
-    // la comparaison bougeraient ensemble. Il a ete ecrit puis retire — c'est
-    // l'assertion creuse, dix-sept fois dans ce depot.
-    //
-    // Ce que cette ligne-ci garde, c'est le DECOR : si le parametre montait a
-    // 1, l'attente ci-dessus expirerait au bout de dix secondes sans jamais
-    // dire pourquoi. Meme idiome que `expect(EXTRACT_MULTIPLIER_STEP)` dans
-    // `room.test.ts`.
+    // ⚠️ **Ce test ne garde PAS la valeur de `WIPE_GOLD_KEPT`** : tant qu'il
+    // vaut 0, rien ne le distingue d'un zero ecrit en dur, et un
+    // `expect(gold).toBe(Math.round(cagnotte * WIPE_GOLD_KEPT))` bougerait des
+    // deux cotes a la fois. Cette ligne garde le DECOR : si le parametre
+    // montait a 1, l'attente ci-dessus expirerait sans dire pourquoi.
     expect(WIPE_GOLD_KEPT).toBeLessThan(1);
 
-    // ⚠️ **Et le portail n'a jamais tranche** : la run s'est terminee pendant
-    // la fenetre, et `step` ne rappelle plus personne une fois `#runOver` vrai.
-    // Une equipe effacee ne part pas avec la mise.
+    // ⚠️ **Et le portail n'a jamais tranche** : une fois `#runOver` vrai, `step`
+    // ne rappelle plus personne. Une equipe effacee ne part pas avec la mise.
     expect(verdictsDe(a)).toHaveLength(0);
   }, 120_000);
 });

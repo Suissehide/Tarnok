@@ -1,8 +1,6 @@
 /**
- * Banc du boss (etape 6a, tache 3) — **LA PORTE du §7 de la spec**.
- *
- * Mesure, sans jouer, combien de temps quatre joueurs mettent a tuer le boss
- * du palier 0. Les trois issues sont engagees AVANT la mesure :
+ * Banc du boss — combien de temps quatre joueurs mettent a tuer le boss du
+ * palier 0. Les trois issues sont fixees AVANT la mesure :
  *
  * | Issue | Ce qu'on fait |
  * | --- | --- |
@@ -10,17 +8,15 @@
  * | moins de **15 s** | on monte `BOSS_HP_PER_PLAYER`, **pas la formule** |
  * | plus de **3 min** | on baisse `BOSS_HP_PER_PLAYER`, **et on rouvre `PALIER_HP_SCALE`** |
  *
- * ⚠️ **UN BANC QUI NE PEUT RIEN MESURER REND ZERO ET PARAIT VERT.** L'etape 5a
- * en a trouve un qui peuplait de pietaille legere, tuee du meme impact, donc
- * jamais marquee : il rendait zero partout. Ce banc-ci mesure donc DEUX
- * scenarios, et le premier existe pour valider le second :
+ * ⚠️ **UN BANC QUI NE PEUT RIEN MESURER REND ZERO ET PARAIT VERT.** Ce banc
+ * mesure donc DEUX scenarios, et le premier existe pour valider le second :
  *
  * - **le duel** : le boss seul, la horde balayee a chaque tick, quatre joueurs
  *   qui ne visent que lui. C'est le PLANCHER — la mise a mort la plus rapide
  *   que ce jeu puisse produire au palier 0. Si ce chiffre etait nul ou infini,
  *   rien de ce qui suit n'aurait de sens ;
  * - **la melee** : le pipeline reel, vrai `WaveDirector`, vraies vagues qui
- *   continuent de tomber pendant le combat (§2 de la spec), vrais orbes, vrais
+ *   continuent de tomber pendant le combat, vrais orbes, vrais
  *   drafts. C'est LUI qui repond a la porte, parce que c'est lui qui decrit un
  *   palier.
  *
@@ -59,14 +55,11 @@ const JOUEURS = [1, 2, 3, 4];
 /**
  * Cartes de vitalite posees d'office sur chaque joueur du scenario de melee.
  *
- * ⚠️ **LES JOUEURS SONT INCREVABLES, ET C'EST UNE DECISION DE DECOR, DECLAREE
- * ICI.** La porte du §7 demande *« combien de temps quatre joueurs mettent a
- * tuer le boss »*, pas *« survivent-ils »*. Sans ces cartes, la mesure ne se
- * fait pas du tout : quatre joueurs IMMOBILES perdent leur run avant que le
- * boss ne tombe, sur **8 graines sur 8** — releve garde dans le rapport de la
- * tache, parce que c'est un resultat, pas un incident. Un vrai joueur se
- * deplace ; ce banc ne sait pas le faire, alors il enleve la mort du chemin au
- * lieu de faire semblant.
+ * ⚠️ **LES JOUEURS SONT INCREVABLES, ET C'EST UNE DECISION DE DECOR.** La
+ * question est *« combien de temps pour tuer le boss »*, pas *« survivent-ils »*.
+ * Sans ces cartes, quatre joueurs IMMOBILES perdent leur run avant que le boss
+ * ne tombe sur toutes les graines. Un vrai joueur se deplace ; ce banc ne sait
+ * pas le faire, alors il enleve la mort du chemin.
  *
  * ⚠️ **La vitalite ne touche QUE `maxHp`** (`shared/passives.ts`) : ni la
  * cadence, ni les degats, ni la vitesse. Le rythme de mise a mort mesure donc
@@ -124,11 +117,8 @@ function vise(room: Room, playerId: number, seq: number, p: Position, cible: num
 }
 
 /**
- * Ferme l'etalage, sinon on mesure un monde GELE.
- *
- * Meme geste que `kills.bench.ts` : une montee de niveau ouvre un draft qui
- * gele le monde jusqu'a l'echeance, 20 s plus tard. Sans ces lignes, une
- * grande part de la fenetre mesuree ne tire pas un coup.
+ * Ferme l'etalage, sinon on mesure un monde GELE : un draft gele le monde
+ * jusqu'a l'echeance, 20 s plus tard.
  */
 function fermerLesDrafts(room: Room): void {
   for (const ouverture of room.drainDraftOpens()) {
@@ -198,8 +188,6 @@ function duel(seed: number): Mesure {
   // multiplication par le nombre de joueurs.** Sans cette ligne, le duel
   // mesurerait un boss de `BOSS_HP_PER_PLAYER` — le quart de celui que la
   // melee affronte — et son « plancher » ne serait plus le plancher de rien.
-  // La composer ici plutot que de lire la constante est ce qui garde les deux
-  // scenarios comparables (tache 3 bis).
   const slotNeuf = room.horde.slotOf(bossId);
   room.horde.hp[slotNeuf] = bossHp(0, JOUEURS.length);
   const pvApparition = pvDuBoss(room, bossId);
@@ -395,13 +383,13 @@ function main(): void {
   console.log('');
   verdict(medianeMelee);
 
-  // --- La divergence sur dix paliers, sans jouer (§7 B de la spec).
+  // --- La divergence sur dix paliers, sans jouer.
   console.log('\n--- Divergence sur dix paliers (effectif et PV totaux, sans jouer)');
   divergence();
 }
 
 /**
- * La seconde moitie du §7 : **la difficulte diverge-t-elle ?**
+ * **La difficulte diverge-t-elle ?**
  *
  * Effectif et PV totaux d'une vague au plafond, palier par palier. Le plafond
  * d'effectif est `waveCountBounds(waveNumber).max` en regime etabli, deja
@@ -409,11 +397,10 @@ function main(): void {
  * `waveCountScale` qui peut le faire deborder, et le test
  * `back/src/wave-director.test.ts` mesure a quel palier.
  *
- * ⚠️ **Les PV totaux ne suivent PAS `hpScale` sur la pietaille legere** depuis
- * l'etape 0 de cette tache : c'est `palierHp` qui decide, et la table ci-dessous
- * le montre en separant une vague legere d'une vague lourde. Une table qui ne
- * montrerait qu'un archetype ferait croire a une divergence deux fois plus
- * raide, ou deux fois plus plate, selon celui qu'on aurait choisi.
+ * ⚠️ **Les PV totaux ne suivent PAS `hpScale` sur la pietaille legere** : c'est
+ * `palierHp` qui decide, d'ou le melange leger/lourd ci-dessous. Une table a un
+ * seul archetype ferait croire a une divergence deux fois plus raide, ou deux
+ * fois plus plate.
  */
 function divergence(): void {
   const LEGER = 0;

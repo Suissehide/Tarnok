@@ -73,10 +73,9 @@ describe('FlowField, avec obstacles', () => {
   });
 
   it('offre une sortie a une cellule muree plutot que de la laisser sans direction (tache 18)', () => {
-    // Avant la tache 18, une cellule bloquee ne portait AUCUNE direction : une
-    // entite qui s'y retrouvait — apparition en plein mur, poussee de
-    // separation — n'en ressortait jamais. `FlowField.update` fait maintenant
-    // une seconde passe qui donne a toute cellule muree une direction vers la
+    // Une entite qui se retrouve dans un mur (apparition, poussee de
+    // separation) doit pouvoir en ressortir : la seconde passe de
+    // `FlowField.update` donne a toute cellule muree une direction vers la
     // cellule libre la plus proche.
     const field = new FlowField(300, 100);
     field.block(1, 1);
@@ -85,19 +84,14 @@ describe('FlowField, avec obstacles', () => {
     const i = field.indexAt(150, 150);
     const len = Math.hypot(field.dirX[i] ?? 0, field.dirY[i] ?? 0);
 
-    // Une direction UNITAIRE, pas juste "non nulle" : le premier parcours ne
-    // rend jamais autre chose que 0 ou une norme 1 (voir 'rend des directions
-    // normalisees' plus haut), et la seconde passe reutilise la meme
-    // convention — un test qui se contenterait de `!== 0` laisserait passer
-    // une direction mal normalisee.
+    // Une direction UNITAIRE, comme celles du premier parcours : un simple
+    // `!== 0` laisserait passer une direction mal normalisee.
     expect(len).toBeCloseTo(1, 5);
   });
 
   it('une entite placee au centre d un mur en ressort en quelques pas (tache 18)', () => {
-    // Le scenario reel : une entite se retrouve, pour une raison ou une
-    // autre, avec des coordonnees qui tombent dans une cellule bloquee. Sans
-    // la seconde passe de `update`, elle y resterait figee pour toujours —
-    // c'etait le douzieme sur douze immobiles mesures, tous dans un mur.
+    // Sans la seconde passe de `update`, une entite dans une cellule bloquee
+    // y resterait figee pour toujours.
     const field = new FlowField(300, 100);
     field.block(1, 1);
     field.update(250, 150);
@@ -136,19 +130,13 @@ describe('FlowField, avec obstacles', () => {
 
 describe('FlowField.update, cible sur un obstacle (tache 27)', () => {
   it('ne vide jamais le champ : depuis une cellule bloquee, le parcours atteint autant de cellules que depuis une cellule libre voisine', () => {
-    // Mesure a l'origine de la tache : un joueur poste sur un obstacle
-    // faisait tomber le nombre de cellules atteintes a 0/8836, contre ~8330
-    // depuis une position libre — plus aucun monstre de la carte n'avait de
-    // direction. Mutation visee : supprimer le repli vers la cellule libre
-    // la plus proche (revenir a un simple `return` quand la cible est
-    // bloquee) fait chuter `reachedFromBlocked` a 0 tout en laissant
-    // `reachedFromFreeNeighbour` inchange — l'egalite ci-dessous echoue.
+    // Un joueur poste sur un obstacle ne doit pas vider le champ (plus aucun
+    // monstre n'aurait de direction). Sans le repli vers la cellule libre la
+    // plus proche, `reachedFromBlocked` tombe a 0 et l'egalite echoue.
     //
-    // Fixture sur un VRAI masque : `generateObstacles` prend
-    // `(seed, cols, rows)` — l'appeler avec un seul argument rend un masque
-    // vide en silence, ce qui a deja coute trois diagnostics faux dans cette
-    // meme zone (voir le brief de la tache 27). On verifie donc explicitement
-    // que le masque contient des cellules bloquees avant de s'appuyer dessus.
+    // ⚠️ `generateObstacles` prend `(seed, cols, rows)` : avec un seul argument
+    // il rend un masque vide en silence. On verifie donc que le masque contient
+    // des cellules bloquees avant de s'appuyer dessus.
     const MAP_SIZE = 6000;
     const CELL = 64;
     const cols = Math.ceil(MAP_SIZE / CELL);
@@ -160,7 +148,7 @@ describe('FlowField.update, cible sur un obstacle (tache 27)', () => {
 
     // Premiere cellule bloquee, loin du bord, qui a au moins un voisin libre
     // (sinon elle ne temoignerait de rien : une poche entierement muree est
-    // un defaut de connectivite distinct, hors perimetre de cette tache).
+    // un defaut de connectivite distinct).
     let targetCell = -1;
     let freeNeighbourCell = -1;
     for (let cy = 10; cy < rows - 10 && targetCell === -1; cy++) {
@@ -225,14 +213,10 @@ describe('FlowField.update, cible sur un obstacle (tache 27)', () => {
   it("brise les egalites de facon deterministe : entre plusieurs cellules libres a distance egale, c'est toujours la plus petite en index qui amorce le parcours", () => {
     // Grille 3x3 : la cellule centrale (1,1), index 4, est bloquee — c'est la
     // cible. Les huit voisines sont TOUTES libres et TOUTES a distance de
-    // Tchebychev 1 : une egalite totale. La regle enoncee dans le brief est
-    // "plus petit index de cellule" ; en parcours ligne par ligne, colonne
-    // par colonne, la plus petite est l'index 0, la cellule (0,0).
-    //
-    // Mutation visee : un repli qui choisirait la premiere cellule libre
-    // trouvee dans un ordre different (par exemple l'ordre du tableau
-    // `NEIGHBOURS`, qui commence par (1,0) puis (-1,0)...) retomberait sur
-    // une autre cellule que l'index 0, et l'assertion sur `dist[0]` echouerait.
+    // Tchebychev 1 : une egalite totale. La regle est "plus petit index de
+    // cellule", ici l'index 0, la cellule (0,0). Un repli qui suivrait un
+    // autre ordre (celui de `NEIGHBOURS`, par exemple) choisirait une autre
+    // cellule.
     const field = new FlowField(300, 100); // cols = rows = 3
     field.block(1, 1);
     field.update(150, 150); // centre de la cellule bloquee (1, 1)
@@ -283,18 +267,14 @@ describe('FlowField.update', () => {
 
 describe('FlowField.sampleDirection (tache 25)', () => {
   it("deux positions distantes d'un pixel de part et d'autre d'une frontiere de cellule donnent des directions proches, la ou la lecture par cellule les donnerait tres differentes", () => {
-    // Mutation visee : `sampleDirection` qui retomberait sur la lecture par
-    // cellule (`indexAt` puis lecture directe de `dirX`/`dirY`) au lieu de
-    // melanger les quatre coins environnants — exactement le defaut mesure
-    // au rapport de la tache 25 (1282 demi-tours sur 400 trajets avant,
-    // contre 165 apres, pour un monstre isole).
+    // `sampleDirection` doit melanger les quatre coins environnants : la
+    // lecture par cellule fait faire des demi-tours aux monstres a chaque
+    // frontiere.
     //
-    // Deux cellules voisines directement posees a angle DROIT l'une de
-    // l'autre (est vs nord), pas a l'oppose exact (180°) : a l'oppose exact,
-    // meme une interpolation correcte redevient instable pile au point de
-    // melange 50/50 (les deux contributions s'annulant presque), ce qui
-    // n'est pas le defaut que cette tache corrige — le choisir aurait rendu
-    // ce test fragile sans rien prouver de plus.
+    // Deux cellules voisines a angle DROIT (est vs nord), pas a l'oppose
+    // exact : a 180°, meme une interpolation correcte devient instable au
+    // point de melange 50/50, et le test serait fragile sans rien prouver de
+    // plus.
     const field = new FlowField(400, 100);
     const cellA = field.indexAt(150, 150); // cellule (1, 1), centre (150, 150)
     const cellB = field.indexAt(250, 150); // cellule (2, 1), centre (250, 150)
@@ -324,11 +304,8 @@ describe('FlowField.sampleDirection (tache 25)', () => {
   });
 
   it('une position au bord d une cellule bloquee rend une direction qui ne pointe pas vers le mur', () => {
-    // Fixture avec un VRAI masque d'obstacles (pas une construction a la
-    // main) : `generateObstacles` prend `(seed, cols, rows)` — l'appeler
-    // avec un seul argument rend un masque vide en silence, ce qui a deja
-    // couté deux diagnostics faux dans cette meme zone (voir le brief de la
-    // tache 25).
+    // Un VRAI masque d'obstacles. ⚠️ `generateObstacles` prend
+    // `(seed, cols, rows)` : avec un seul argument, masque vide en silence.
     const MAP_SIZE = 6000;
     const CELL = 64;
     const cols = Math.ceil(MAP_SIZE / CELL);
@@ -339,8 +316,8 @@ describe('FlowField.sampleDirection (tache 25)', () => {
     field.update(MAP_SIZE / 2, MAP_SIZE / 2);
 
     // Une cellule libre avec un mur immediatement au NORD, CHERCHEE dans le
-    // masque plutot que recopiee : depuis la carte en tuiles (une ile), les
-    // coordonnees trouvees jadis par le script d'exploration ne tiennent plus.
+    // masque plutot que recopiee : des coordonnees en dur cassent des que la
+    // carte change.
     let freeCell = -1;
     // ⚠️ Et SOUS le centre : la cible est alors au nord, de l'autre cote du
     // mur — le seul cas ou « pointer vers le mur » serait la pente naturelle.

@@ -11,7 +11,7 @@ const JE_PRENDS = PING_INTENTS.indexOf('jePrends');
 /**
  * Le secteur vise par le vecteur centre -> curseur, en coordonnees ECRAN (y vers
  * le bas). Quatre secteurs de 90 degres ; une diagonale exacte tombe sur l'axe
- * vertical. Dans la zone morte : un clic bref, donc « viens » (§2 de la spec).
+ * vertical. Dans la zone morte : un clic bref, donc « viens ».
  */
 export function pingSectorAt(dx: number, dy: number): number {
   if (Math.hypot(dx, dy) < PING_DEADZONE_PX) {
@@ -32,8 +32,7 @@ export interface PingWheelOptions {
 }
 
 /**
- * La roue de ping : clic droit maintenu, glisser, relacher (§2 de la spec de
- * l'etape 9). Le ping part a la position MONDE de l'ouverture — on vise d'abord,
+ * La roue de ping : clic droit maintenu, glisser, relacher. Le ping part a la position MONDE de l'ouverture — on vise d'abord,
  * on choisit ensuite. Toute fermeture autre qu'un relachement n'envoie rien.
  */
 export class PingWheel {
@@ -46,9 +45,8 @@ export class PingWheel {
     events.addEventListener('pointerdown', (e) => this.#down(e as MouseEvent));
     events.addEventListener('pointerup', (e) => this.#up(e as MouseEvent));
     events.addEventListener('blur', () => this.#close());
-    // MINOR (revue finale, etape 9) : un geste coupe par le systeme (zoom,
-    // bascule d'appli, stylet) ne leve jamais de `pointerup` — sans ce
-    // listener la roue restait ouverte pour de bon, sans ping envoye.
+    // Un geste coupe par le systeme (zoom, bascule d'appli, stylet) ne leve
+    // jamais de `pointerup` : sans ce listener la roue resterait ouverte.
     events.addEventListener('pointercancel', () => this.#close());
   }
 

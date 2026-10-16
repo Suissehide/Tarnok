@@ -30,7 +30,7 @@ const SHEETS: Record<Unit, { idle: string; run: string; frame: number }> = {
   Monk: { idle: 'Monk/Idle.png', run: 'Monk/Run.png', frame: 192 },
 };
 
-/** Echelle d'une unite : un peu plus petite que les monstres (retour de playtest : 0,95 trop grand). */
+/** Echelle d'une unite : un peu plus petite que les monstres. */
 export const UNIT_SCALE = 0.6;
 /** Opacite du fantome : assez pour se voir derriere un arbre, pas assez pour doubler le trait. */
 export const GHOST_ALPHA = 0.35;

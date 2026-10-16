@@ -5,11 +5,8 @@ import { entityIdOf, Horde } from './horde';
 import { FORMATION, type WaveOrder } from './waves';
 
 /**
- * Meme convention que `shared/horde.test.ts` : un ordre minimal, une entite
- * a la fois, dont on ecrase la position juste apres `spawn` (formation
- * SCATTER, position aleatoire au depart) pour tenir une geometrie exacte —
- * le meme motif que les tests de `#applyDeoverlap`/`#recomputeSteering`
- * dans `shared/horde.test.ts` (`horde.x[0] = 100`, etc).
+ * Un ordre minimal, une entite a la fois, dont on ecrase la position juste
+ * apres `spawn` (SCATTER place au hasard) pour tenir une geometrie exacte.
  */
 function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
   return {
@@ -41,8 +38,7 @@ describe('chainTargets', () => {
     const proche = spawnAt(horde, 1, 10, 0);
     const moyenne = spawnAt(horde, 2, 50, 0);
     const loin = spawnAt(horde, 3, 200, 0);
-    // Horde reellement peuplee, et ce n'est pas accessoire : un decor vide
-    // rendrait [] quelle que soit l'implementation.
+    // Un decor vide rendrait [] quelle que soit l'implementation.
     expect(horde.count).toBe(3);
 
     const cibles = chainTargets(horde, 0, 0, 100, 1, new Set());
@@ -53,12 +49,9 @@ describe('chainTargets', () => {
   });
 
   /**
-   * ⚠️ **Ce decor NE DEPARTAGE PAS l'etoile de la chaine** — sur quatre
-   * points colineaires et regulierement espaces, mesurer chaque saut depuis
-   * l'origine ou depuis la cible precedente donne le MEME ordre (`a` est le
-   * plus proche des deux points de vue). C'est le test dedie plus bas
-   * (« l'etoile et la chaine divergent ») qui prouve que les sauts partent
-   * bien les uns des autres.
+   * ⚠️ **Ce decor NE DEPARTAGE PAS l'etoile de la chaine** : sur des points
+   * colineaires croissants depuis l'origine, les deux modeles donnent le meme
+   * ordre. C'est « l'etoile et la chaine divergent » qui le prouve.
    */
   it('rend jusqu a `jumps` cibles, dans l ordre des sauts', () => {
     const horde = new Horde();
@@ -76,13 +69,9 @@ describe('chainTargets', () => {
   });
 
   /**
-   * ⚠️ **LE test qui separe les deux modeles — sans lui, la mutation
-   * « repartir du point d'impact a chaque saut » (revenir a une etoile)
-   * reste VERTE.** Verifie en appliquant reellement cette mutation (voir le
-   * rapport de correction) : tous les autres tests de ce fichier restent
-   * verts malgre elle, parce qu'ils alignent leurs cibles a des distances
-   * croissantes DEPUIS L'ORIGINE, ce qui fait coincider les deux modeles par
-   * construction — exactement le piege « decor qui masque ».
+   * ⚠️ **LE test qui separe les deux modeles** : sans lui, « repartir du
+   * point d'impact a chaque saut » (une etoile) reste VERT, les autres tests
+   * alignant leurs cibles a des distances croissantes depuis l'origine.
    *
    * Trois ennemis colineaires, PAS regulierement espaces depuis l'origine :
    * A a 30 px, B a 55 px, C a 80 px. `radius = 60`.
@@ -176,14 +165,8 @@ describe('chainTargets', () => {
   });
 
   it('rend [] pour `jumps` nul ou negatif, sur une horde pourtant peuplee et a portee', () => {
-    // Historique : la premiere version (en etoile) tranchait par
-    // `Array.prototype.slice(0, jumps)`, ou un `jumps` negatif se compte
-    // depuis la fin du tableau — un decor a UN SEUL candidat masquait ce
-    // piege (`slice(0, -1)` sur un tableau d'un element rend deja [] par
-    // accident). La version actuelle (en sauts) n'a plus cette forme : la
-    // boucle `hop < jumps` n'execute simplement aucun tour quand
-    // `jumps <= 0`. Le decor a deux candidats est garde par prudence —
-    // aucune raison de le retrecir — mais ne garde plus rien de specifique.
+    // Deux candidats : sur un seul, un `slice(0, -1)` rendrait deja [] par
+    // accident.
     const horde = new Horde();
     spawnAt(horde, 1, 10, 0);
     spawnAt(horde, 2, 20, 0);
@@ -194,16 +177,11 @@ describe('chainTargets', () => {
   });
 
   /**
-   * ⚠️ **LE test de la tache.** Deux ennemis symetriques autour du point
-   * d'impact : meme distance au bit pres (`50 * 50` est calcule de la meme
-   * facon des deux cotes, aucune divergence flottante possible). L'ordre
-   * d'iteration ne peut PAS trancher — il depend du compactage de la horde
-   * (`Horde#removeAt` echange avec le dernier element), qui n'est PAS
-   * garanti identique entre le serveur et un client, ni entre deux clients.
-   * Un seul saut disponible : la chaine doit choisir le MEME des deux, quel
-   * que soit l'ordre dans lequel ils ont ete places dans le tableau — pose
-   * ici deux fois, avec les deux ordres d'insertion, pour le prouver plutot
-   * que de le supposer.
+   * ⚠️ Deux ennemis symetriques autour du point d'impact, a distance egale au
+   * bit pres. L'ordre d'iteration ne peut PAS trancher : il depend du
+   * compactage de la horde (`Horde#removeAt` echange avec le dernier), qui
+   * n'est pas garanti identique entre serveur et clients. La chaine doit
+   * choisir le MEME, pose ici avec les deux ordres d'insertion.
    */
   describe('departage deux ennemis a distance strictement egale par entityId', () => {
     it('ordre d insertion 1 : le petit identifiant est place en premier', () => {
@@ -222,8 +200,7 @@ describe('chainTargets', () => {
     it('ordre d insertion 2 : le petit identifiant est place en second (horde compactee dans l autre sens)', () => {
       const horde = new Horde();
       // wave 2 nait en premier -> occupe le slot 0 -> porte le PLUS GRAND id.
-      // Meme geometrie physique que le test precedent (petit id a -50,0 ;
-      // grand id a 50,0), mais l'ordre du TABLEAU est invers .
+      // Meme geometrie que le test precedent, ordre du TABLEAU inverse.
       const grand = spawnAt(horde, 2, 50, 0);
       const petit = spawnAt(horde, 1, -50, 0);
       expect(petit).toBeLessThan(grand);

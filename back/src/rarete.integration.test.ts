@@ -23,17 +23,15 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * Le livrable de l'etape 10 (§1 et §6 de la spec) : **sur vraies sockets, une
- * carte rare prise donne exactement deux exemplaires dans l'inventaire
- * arbitre par le salon, et le client en tient le meme miroir ; aucun octet de
- * plus par tick.**
+ * **Sur vraies sockets, une carte rare prise donne exactement deux exemplaires
+ * dans l'inventaire arbitre par le salon, et le client en tient le meme
+ * miroir ; aucun octet de plus par tick.**
  *
  * ⚠️ **La rarete est FORCEE par `vi.mock`, pas par un crochet de production.**
  * Vitest moque par chemin RESOLU : `@shared/rarity` ici et `./rarity` dans
  * `shared/cards.ts` designent le meme fichier, donc le `drawSpread` du salon
- * tire rare a chaque emplacement. Le test le VERIFIE sur le fil avant tout le
- * reste — un mock qui n'atteindrait pas le serveur ferait passer le reste pour
- * une commune.
+ * tire rare a chaque emplacement. Le test le VERIFIE sur le fil d'abord : un
+ * mock qui n'atteindrait pas le serveur ferait passer le reste pour une commune.
  *
  * ⚠️ **« Le miroir decode par le client »** est reconstitue exactement comme
  * `GameClient#applyDraftOutcomes` le fait : les cartes du `DRAFT_OPEN` DECODE,

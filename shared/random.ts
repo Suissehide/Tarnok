@@ -3,8 +3,7 @@
  *
  * C'est lui qui transforme la graine d'un ordre de vague en positions de
  * formation, identiquement des deux cotes. Sans determinisme ici, deux clients
- * font apparaitre la meme vague a des endroits differents et tout le §3.3 de
- * l'orientation s'effondre.
+ * font apparaitre la meme vague a des endroits differents.
  *
  * ⚠️ A n'utiliser qu'a **l'apparition**, jamais par tick : un tirage par tick
  * ferait dependre l'etat du nombre de pas executes, et la moindre difference de
@@ -27,18 +26,16 @@ export function makeRandom(seed: number): () => number {
 /**
  * Un tirage DETERMINISTE tire de trois entiers, dans `[0, 1)`.
  *
- * ⚠️ **Sans etat, et c'est tout l'interet.** `makeRandom` rend une SUITE : il
- * faut la tenir, la faire avancer au meme rythme des deux cotes, et le docbloc
- * ci-dessus interdit deja de l'appeler par tick pour cette raison. Ce que les
- * coups critiques demandent est l'inverse — une reponse qui ne depend QUE de
- * ce que les deux cotes savent deja (le tick du tir, le tireur, le rang du
- * projectile dans sa salve) et qui se recalcule a l'identique n'importe quand,
- * dans n'importe quel ordre.
+ * ⚠️ **Sans etat, et c'est tout l'interet.** `makeRandom` rend une SUITE qu'il
+ * faut faire avancer au meme rythme des deux cotes. Les coups critiques veulent
+ * une reponse qui ne depend QUE de ce que les deux cotes savent deja (le tick
+ * du tir, le tireur, le rang du projectile dans sa salve) et se recalcule a
+ * l'identique n'importe quand, dans n'importe quel ordre.
  *
- * Meme melange que `makeRandom` (xorshift32), applique une fois : les trois
- * entrees sont combinees par des grands nombres impairs avant d'y entrer, pour
- * que deux triplets voisins ne rendent pas deux valeurs voisines — un
- * `a + b + c` nu aurait fait criter toute une salve ensemble.
+ * Meme melange que `makeRandom` (xorshift32), applique une fois. Les entrees
+ * sont combinees par de grands nombres impairs pour que deux triplets voisins
+ * ne rendent pas deux valeurs voisines : un `a + b + c` nu ferait criter toute
+ * une salve ensemble.
  */
 export function hashRoll(a: number, b: number, c: number): number {
   let state =

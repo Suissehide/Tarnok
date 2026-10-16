@@ -20,45 +20,21 @@ function hash01(a: number, b: number): number {
 }
 
 /**
- * La polyligne de la chaine de Foudre, cote client (etape 5b, tache 3).
+ * La polyligne de la chaine de Foudre, et les faisceaux, cote client.
  *
- * ⚠️ **TOUR DE CORRECTION 1 : ce calque ne lit plus jamais la horde.** La
- * premiere version redérivait la chaine a CHAQUE IMAGE depuis
- * `horde.markAt(i, tick) === FOUDRE`, un balayage `O(horde)` par ennemi
- * marque — et `GameClient#markInZones` peut marquer TOUTE la horde d'un
- * coup (c'est litteralement le decor du pire cas de
- * `mark-renderer.test.ts`), donc le cout reel etait `O(horde²)` par image :
- * jusqu'a ~48 millions d'operations a `MAX_ENTITIES`, en JS pur. La revue l'a
- * releve, avec le precedent du depot : `mark-renderer.ts` et
- * `projectile-renderer.ts` bornent tous deux leur pire cas ET le testent, ce
- * que cette version ne faisait ni l'un ni l'autre.
+ * ⚠️ **Ce calque ne lit jamais la horde.** Le serveur chaine UNE FOIS, a
+ * l'impact (`resolveProjectileDamage`) : `GameClient#seedChainFlash` calcule
+ * le chemin au meme instant et le FIGE dans `ChainFlashes`, comme
+ * `HitFlashes`. Ce fichier ne fait que l'amortir sur
+ * `CHAIN_FLASH_LIFETIME_MS`, en iterant `flashes.count` : cout borne par la
+ * capacite du reservoir. Rederiver la chaine de la marque a chaque image
+ * coutait `O(horde²)` (`#markInZones` peut marquer toute la horde) et faisait
+ * suivre au trait des ennemis qui bougent pendant toute la duree de la marque.
  *
- * **Le second defaut etait de fidelite, pas seulement de cout.** Le serveur
- * chaine UNE FOIS, a l'impact (`resolveProjectileDamage`), et n'y revient
- * jamais. Redériver depuis la marque (un etat DURABLE, `MARK_DURATION_TICKS`
- * = 60 ticks = 2 s) empruntait la machinerie d'un etat persistant pour
- * dessiner un evenement ponctuel — la polyligne suivait des ennemis qui
- * bougent pendant deux secondes, et rebasculait d'une image a l'autre entre
- * deux voisins presque equidistants, sans que rien de tel n'ait jamais eu
- * lieu cote serveur.
- *
- * **La correction : un FLASH, seme une fois, comme `HitFlashes` et
- * `ReactionFlashes`.** `GameClient#seedChainFlash` calcule le chemin une
- * seule fois, au moment ou son propre projectile de Foudre touche (le meme
- * instant que `hitFlashes.spawn(...)`), et le FIGE dans `ChainFlashes`. Ce
- * fichier ne fait plus que lire ce qui a ete figé et l'amortir sur
- * `CHAIN_FLASH_LIFETIME_MS` — exactement le role de `ImpactFlashRenderer` et
- * `ReactionFlashRenderer` (`projectile-renderer.ts`), dont il reprend la
- * discipline : itérer `flashes.count` (jamais la horde), un cout borne par la
- * CAPACITE du reservoir, jamais par la taille de la horde.
- *
- * ⚠️ **Reste cosmetique et approximatif, exactement comme `#markLocally`.**
- * Le client seme depuis SON PROPRE impact predit, pas depuis une annonce du
- * serveur : deux clients peuvent tracer des chaines legerement differentes
- * l'un de l'autre (projectiles des AUTRES joueurs jamais chaines ici, morts
- * du meme tick jamais exclues comme cote serveur) — voir la doc de
- * `GameClient#seedChainFlash`. Sans consequence : rien de ce que ce fichier
- * dessine n'entre jamais dans une decision de jeu.
+ * ⚠️ **Cosmetique et approximatif, comme `#markLocally`** : le client seme
+ * depuis SON impact predit, donc deux clients peuvent tracer des chaines un
+ * peu differentes (voir `GameClient#seedChainFlash`). Rien ici n'entre dans
+ * une decision de jeu.
  */
 
 /** Largeur du trait, en pixels monde. */
@@ -66,24 +42,17 @@ export const CHAIN_LINE_WIDTH_PX = 4;
 
 /**
  * Opacite MAXIMALE du trait, a la naissance du flash. **Haute, contrairement
- * a `ZONE_ALPHA`** : la Foudre est un evenement instantane et rare (un flash
- * par impact), pas un etat persistant — meme raisonnement que
- * `MARK_RING_ALPHA`, qui casse deja la meme regle pour la meme raison.
- *
- * S'ETEINT avec l'age du flash, comme `ImpactFlashRenderer` : un trait qui
- * resterait a pleine opacite jusqu'a sa disparition nette lirait comme un
- * clignotement, pas comme un evenement qui s'estompe.
+ * a `ZONE_ALPHA`** : la Foudre est un evenement instantane et rare, pas un
+ * etat persistant (meme raison que `MARK_RING_ALPHA`). Elle s'eteint avec
+ * l'age du flash : une disparition nette lirait comme un clignotement.
  */
 export const CHAIN_LINE_ALPHA = 0.9;
 
 export class ChainRenderer {
   readonly #graphics = new Graphics();
   /**
-   * Rien de procedural a cuire (pas de canevas 2D, contrairement aux autres
-   * calques) : ce booleen existe uniquement pour que `Stage` continue de
-   * compter ses calques comme charges/pas charges par le meme protocole que
-   * les autres — voir `Stage.layersLoaded` et sa doc sur la dette des 170
-   * tests verts.
+   * Rien a cuire : ce booleen sert seulement le protocole de chargement
+   * commun a tous les calques (`Stage.layersLoaded`).
    */
   #ready = false;
 
@@ -105,14 +74,10 @@ export class ChainRenderer {
   }
 
   /**
-   * `nowMs` est l'horloge MURALE — meme convention que `drawImpactFlashes` /
-   * `drawReactionFlashes`, et pour la meme raison : un flash de chaine
-   * n'arbitre rien (§2), donc rien n'exige qu'il s'amortisse au rythme du
-   * tick de simulation.
+   * `nowMs` est l'horloge MURALE, comme `drawImpactFlashes` : un flash de
+   * chaine n'arbitre rien, il n'a pas a suivre le tick de simulation.
    *
-   * ⚠️ **Ne lit QUE `flashes` : jamais la horde, jamais `chainTargets`.** Le
-   * chemin est deja figé par `GameClient#seedChainFlash` — le recalculer ici
-   * serait exactement la regression que le tour de correction 1 corrige.
+   * ⚠️ **Ne lit QUE `flashes` : jamais la horde, jamais `chainTargets`.**
    */
   draw(flashes: ChainFlashes, nowMs: number, players: readonly BeamAnchor[] = []): void {
     this.#graphics.clear();
@@ -134,10 +99,8 @@ export class ChainRenderer {
         );
         continue;
       }
-      // S'ETEINT avec l'age, comme `ImpactFlashRenderer` : `t` de 0 (naissance)
-      // a 1 (juste avant l'expiration, que `GameClient#advanceHorde` a deja
-      // appliquee sur `flashes` avant cet appel — `flashes.count` n'inclut
-      // donc deja plus aucun flash perime).
+      // `t` de 0 (naissance) a 1 (expiration). `GameClient#advanceHorde` a
+      // deja retire les flashs perimes de `flashes.count`.
       const age = nowMs - (flashes.bornMs[i] ?? 0);
       const t = Math.min(1, Math.max(0, age / CHAIN_FLASH_LIFETIME_MS));
       const alpha = CHAIN_LINE_ALPHA * (1 - t);
@@ -149,11 +112,9 @@ export class ChainRenderer {
       // Un `stroke` PAR FLASH, pas un seul a la fin : chaque chaine a son
       // propre age, donc sa propre opacite — un `stroke` commun appliquerait
       // la teinte du DERNIER flash a tous les traits deja tracés.
-      // ⚠️ **La teinte et l'epaisseur viennent du FLASH, plus d'une constante**
-      // (etape 8) : ce calque trace desormais deux evenements — la chaine de
-      // Foudre, toujours jaune et fine, et le faisceau, qui porte la teinte et
-      // la largeur de son arme. Un repli sur la Foudre garde l'ancien chemin
-      // intact pour un flash qui n'aurait rien demande.
+      // ⚠️ **La teinte et l'epaisseur viennent du FLASH** : la chaine de
+      // Foudre est jaune et fine, le faisceau porte la teinte et la largeur de
+      // son arme. Un flash sans teinte ni largeur retombe sur la Foudre.
       this.#graphics.stroke({
         color: flashes.tint[i] || elementOf(ELEMENT.FOUDRE).tint,
         width: flashes.width[i] || CHAIN_LINE_WIDTH_PX,

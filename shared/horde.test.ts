@@ -80,16 +80,14 @@ describe('entityIdOf', () => {
 });
 
 /**
- * Etape 5a, tache 17 : *« moins d'xp qui tombe »*. Le taux de chute est le
- * levier du NOMBRE D'OBJETS AU SOL, et il doit se calculer identiquement des
- * deux cotes du fil — le serveur arbitre le ramassage, mais il n'annonce jamais
- * qu'un orbe existe : le client le derive du seul `DEATHS`.
+ * Le taux de chute doit se calculer identiquement des deux cotes du fil : le
+ * serveur arbitre le ramassage, mais il n'annonce jamais qu'un orbe existe, le
+ * client le derive du seul `DEATHS`.
  */
 describe('dropsOrb — quelles morts laissent un orbe', () => {
   /**
-   * ⚠️ **Exactement une sur `ORB_DROP_ONE_IN`, pas « une sur quatre en
-   * moyenne ».** C'est ce qui laisse l'experience par mort strictement
-   * inchangee malgre la rarefaction (voir `XP_PER_ORB`), au lieu de la laisser
+   * ⚠️ **Exactement une sur `ORB_DROP_ONE_IN`, pas « en moyenne ».** C'est ce
+   * qui fixe l'experience par mort (voir `XP_PER_ORB`) au lieu de la laisser
    * flotter d'une run a l'autre.
    */
   it('retient exactement une identite sur ORB_DROP_ONE_IN, sur des index consecutifs', () => {
@@ -121,10 +119,9 @@ describe('dropsOrb — quelles morts laissent un orbe', () => {
   });
 
   /**
-   * ⚠️ **Le piege du decor, garde ici plutot que rappele en commentaire** : un
-   * test qui pose son monstre avec `entityIdOf(waveId, 0)` tombe TOUJOURS sur
-   * un orbe. C'est la « fixture qui masque » du depot, et la raison pour
-   * laquelle les tests du taux de chute balaient des index CONSECUTIFS.
+   * ⚠️ **Le piege du decor** : un test qui pose son monstre avec
+   * `entityIdOf(waveId, 0)` tombe TOUJOURS sur un orbe. C'est pourquoi les
+   * tests du taux de chute balaient des index CONSECUTIFS.
    */
   it('laisse toujours un orbe au premier de chaque vague — le decor qui masque', () => {
     for (const wave of [0, 1, 600, 4095]) {
@@ -134,8 +131,7 @@ describe('dropsOrb — quelles morts laissent un orbe', () => {
 });
 
 /**
- * Etape 6a, tache 14 : *« les monstres ne droppent pas d'or j'ai
- * l'impression »*. Meme modele que `dropsOrb`, et pour la meme raison : le
+ * Meme modele que `dropsOrb`, et pour la meme raison : le
  * serveur credite l'or, mais il n'annonce jamais qu'une piece existe — le
  * client la derive du seul `DEATHS`, et `PICKUPS` ne transporte que des
  * identites nues.
@@ -151,9 +147,8 @@ describe('dropsCoin — quelles morts laissent une piece', () => {
     }
 
     expect(retenues).toBe(total / COIN_DROP_ONE_IN);
-    // ⚠️ **Plus RARE que l'orbe, et c'est la demande** : *« une piece doit etre
-    // un evenement, pas du bruit au sol »*. Ecrit comme une relation, jamais
-    // comme deux nombres a comparer de tete.
+    // ⚠️ **Plus RARE que l'orbe** : une piece doit etre un evenement, pas du
+    // bruit au sol. Ecrit comme une relation, pas comme deux nombres.
     expect(COIN_DROP_ONE_IN).toBeGreaterThan(ORB_DROP_ONE_IN);
   });
 
@@ -200,7 +195,7 @@ describe('dropsCoin — quelles morts laissent une piece', () => {
    * ⚠️ **Le piege du decor, en MIROIR de celui des orbes** : un test qui pose
    * son monstre a `entityIdOf(waveId, 0)` ne tombe JAMAIS sur une piece, la ou
    * il tombait toujours sur une orbe. Un decor bati sur l'index 0 est donc
-   * aveugle a cette tache entiere.
+   * aveugle a l'or.
    */
   it('ne laisse JAMAIS de piece au premier de chaque vague — le decor qui masque', () => {
     for (const wave of [0, 1, 600, 4095]) {
@@ -236,11 +231,10 @@ describe('Horde.spawn', () => {
   });
 
   /**
-   * Etape 5a : la reserve de PV se DERIVE de l'archetype, donc les deux cotes
-   * la posent identiquement sans un octet de plus sur le fil. Deux archetypes
-   * de PV differents dans le meme test : une mutation qui poserait une
-   * constante (`this.hp[slot] = 5`) au lieu de lire l'archetype passerait avec
-   * un seul.
+   * La reserve de PV se DERIVE de l'archetype, donc les deux cotes la posent
+   * identiquement sans un octet de plus sur le fil. Deux archetypes de PV
+   * differents : une constante posee au lieu de lire l'archetype passerait
+   * avec un seul.
    */
   it('remplit les PV depuis l archetype, pas depuis une constante', () => {
     const leger = ARCHETYPES.find((a) => a.hp === LIGHT_HP);
@@ -373,11 +367,9 @@ describe('Horde.spawnCatchingUp', () => {
   });
 
   it("n'affecte pas les entites deja presentes", () => {
-    // Mutation visee (tache 20) : appeler `#recomputeSteering` sur la plage
-    // ENTIERE (`[0, #count)`) plutot que restreinte a `[before, #count)` dans
-    // `spawnCatchingUp` — les entites de la vague 1, deja presentes, se
-    // verraient recalculer une trajectoire (et donc une vitesse non nulle)
-    // au passage d'un rattrapage qui ne les concerne pourtant pas.
+    // `spawnCatchingUp` ne recalcule la trajectoire que sur `[before, #count)` :
+    // sur la plage entiere, les entites deja presentes recevraient une vitesse
+    // d'un rattrapage qui ne les concerne pas.
     const horde = new Horde(1000);
     horde.spawn(order({ waveId: 1, count: 50, anchorX: 1000, anchorY: 1000 }));
     const fields = fieldsTowards(1000, 1000);
@@ -397,7 +389,7 @@ describe('Horde.spawnCatchingUp', () => {
 
     expect([...horde.x.slice(0, 50)]).toEqual(avantX);
     expect([...horde.y.slice(0, 50)]).toEqual(avantY);
-    // Position ET vitesse (tache 20) : une entite recalculee a tort par le
+    // Position ET vitesse : une entite recalculee a tort par le
     // rattrapage garderait la MEME position ce tick-la (le recalcul ne fait
     // que poser `vx`/`vy`, `#advanceByVelocity` n'est jamais appele sur
     // cette plage) mais pas la meme vitesse — verifier seulement x/y laisse
@@ -490,10 +482,10 @@ describe('Horde.retarget', () => {
   });
 
   /**
-   * Tache 17.2 : l'arret au contact se decide ICI, dans `retarget` — au meme
-   * endroit et a la meme cadence que le reciblage, a partir des positions
-   * DEJA retardees que l'appelant lui passe (§5 de la spec, voir
-   * `PlayerHistory.delayed`). `Horde` ne sait rien du reseau ; il ne fait que
+   * L'arret au contact se decide ICI, dans `retarget` : meme endroit et meme
+   * cadence que le reciblage, a partir des positions DEJA retardees que
+   * l'appelant lui passe (voir `PlayerHistory.delayed`). `Horde` ne sait rien
+   * du reseau ; il ne fait que
    * comparer sa propre position, deja identique des deux cotes par
    * construction, a celle qu'on lui donne.
    */
@@ -536,9 +528,8 @@ describe('Horde.retarget', () => {
 });
 
 /**
- * Tache 17.2 : une entite arretee cesse d'avancer, meme si le champ continue
- * de la tirer fort ailleurs — sans quoi elle traverserait quand meme le
- * joueur, exactement le defaut remonte en jeu.
+ * Une entite arretee cesse d'avancer, meme si le champ continue de la tirer
+ * fort ailleurs : sans quoi elle traverserait quand meme le joueur.
  */
 describe('Horde.step laisse une entite arretee sur place', () => {
   it("une entite marquee arretee (retarget) n'avance plus, meme apres plusieurs pas", () => {
@@ -567,9 +558,8 @@ describe('Horde.step laisse une entite arretee sur place', () => {
 });
 
 /**
- * Tache 17.2, garde-fou explicitement demande par le brief : « un monstre
- * arrive a portee cesse d'avancer, et les deux cotes s'arretent au meme
- * tick ». Rejoue la boucle production (`PlayerHistory.record/delayed`,
+ * Un monstre arrive a portee cesse d'avancer, et les deux cotes s'arretent au
+ * meme tick. Rejoue la boucle production (`PlayerHistory.record/delayed`,
  * `retarget` a la cadence du flowfield, `step` a chaque tick — exactement le
  * montage de `Room.step` et `GameClient#advanceHorde`) deux fois de suite,
  * sur deux graphes d'objets independants, et verifie que :
@@ -589,8 +579,7 @@ describe("Horde s'arrete au contact de facon deterministe", () => {
     // par depasser un monstre deja a l'arret et rouvre la distance — ce n'est
     // pas un defaut (l'arret n'a pas a etre un cliquet : un monstre distance
     // doit pouvoir se remettre a poursuivre), mais ca rendrait ce test
-    // instable pour une raison etrangere a ce qu'il verifie. Voir le rapport
-    // de la tache 17 pour la mesure qui a fait choisir ce palier.
+    // instable pour une raison etrangere a ce qu'il verifie.
     const TOTAL_TICKS = 500;
     const RAMP_TICKS = 200;
     const START_X = 0;
@@ -683,11 +672,10 @@ describe('Horde.kill', () => {
     expect(horde.count).toBe(5);
   });
 
-  // ⚠️ Note sur le test ci-dessous : il compare deux executions du MEME code,
-  // donc il prouve qu'un tri deterministe existe, pas qu'il est decroissant.
-  // C'est « preserve toutes les entites survivantes » qui porte cette
-  // exigence — verifie : passer le tri en croissant le fait echouer, et lui
-  // seul. Les deux se tiennent ; ne pas supprimer l'un en gardant l'autre.
+  // ⚠️ Le test ci-dessous compare deux executions du MEME code : il prouve
+  // qu'un tri deterministe existe, pas qu'il est decroissant. C'est « preserve
+  // toutes les entites survivantes » qui porte cette exigence. Ne pas
+  // supprimer l'un en gardant l'autre.
   it('donne le meme resultat quel que soit l ordre de la liste', () => {
     // Le protocole trie les identites, mais rien n'empeche un appelant de
     // passer une liste desordonnee : le resultat doit etre identique, sinon
@@ -742,14 +730,10 @@ describe('Horde.kill', () => {
    * Les tableaux que `#removeAt` doit recopier, **enumeres depuis une liste
    * unique**.
    *
-   * ⚠️ **Le piege connu de ce depot.** A l'etape 3, le test qui portait ce nom
-   * verifiait DEUX tableaux sur sept : supprimer la copie de `x`, de `y` ou de
-   * `targetField` laissait la suite verte. L'entite deplacee dans le creneau
-   * libere gardait alors une propriete du mort qu'elle remplace — a l'etape
-   * 5a, ses PV entames, donc un monstre qui meurt d'un coup au lieu de quatre
-   * ou l'inverse, ou **la marque elementaire du mort**, donc un ennemi indemne
-   * qui declenche une reaction et une charge de Synergie pour un element que
-   * personne ne lui a applique.
+   * ⚠️ Une copie oubliee laisse l'entite deplacee dans le creneau libere avec
+   * une propriete du mort qu'elle remplace : ses PV entames, ou **sa marque
+   * elementaire**, donc un ennemi indemne qui declenche une reaction pour un
+   * element que personne ne lui a applique.
    *
    * Une liste ecrite a la main ne suffit pas : elle vieillit. Le test verifie
    * donc AUSSI qu'elle couvre exactement les tableaux que porte l'instance
@@ -831,8 +815,7 @@ describe('Horde.kill', () => {
   it('ignore une identite inconnue melangee a une connue', () => {
     // ⚠️ C'est le seul cas qui rende le filtre `slot >= 0` porteur. Avec une
     // identite inconnue SEULE, le garde de doublon la confond avec `previous`
-    // initialise a -1 et masque le defaut par hasard : la mutation passe. Une
-    // inconnue melangee a une connue ne beneficie plus de cette coincidence.
+    // initialise a -1 et masque le defaut par hasard.
     //
     // Sans le filtre, `#removeAt(-1)` decremente `#count` en ecrivant dans le
     // vide — l'ecriture a un indice negatif sur un tableau type est un no-op
@@ -851,8 +834,8 @@ describe('tache 18 : pas de naissance en plein mur, sortie d un mur garantie', (
   it('Horde.spawn evite les cellules murees quand on lui passe un champ', () => {
     const field = new FlowField(6000, 64);
     // Un pate de mur autour de l'ancre, assez large pour que plusieurs des
-    // positions SCATTER calculees SANS le champ y tombent directement (verifie
-    // par la premiere boucle ci-dessous).
+    // positions SCATTER calculees SANS le champ y tombent (verifie par la
+    // premiere boucle ci-dessous).
     const anchorCol = field.indexAt(1000, 1000) % field.cols;
     const anchorRow = Math.floor(field.indexAt(1000, 1000) / field.cols);
     for (let dy = -3; dy <= 3; dy++) {
@@ -886,7 +869,7 @@ describe('tache 18 : pas de naissance en plein mur, sortie d un mur garantie', (
   it('une entite coincee dans un mur en ressort au bout de quelques pas de Horde.step', () => {
     const field = new FlowField(6000, 64);
     // Un mur epais de 3 cellules entre l'entite et la cible : sans la sortie
-    // de secours (tache 18), la cellule centrale ne porterait aucune
+    // de secours, la cellule centrale ne porterait aucune
     // direction et l'entite y resterait figee pour toujours.
     const startCol = field.indexAt(1000, 1000) % field.cols;
     const startRow = Math.floor(field.indexAt(1000, 1000) / field.cols);
@@ -899,11 +882,9 @@ describe('tache 18 : pas de naissance en plein mur, sortie d un mur garantie', (
     const horde = new Horde(10);
     horde.spawn(order({ count: 1, anchorX: 5000, anchorY: 5000 })); // loin du mur, position ecrasee juste apres
     // Centre de la cellule bloquee du milieu (colonne startCol+1, ligne
-    // startRow). ⚠️ Piege verifie a la main lors de l'ecriture de ce test :
-    // une premiere version utilisait la MEME formule pour x et y (1000 + 32),
-    // ce qui place l'entite ligne startRow+1 — jamais bloquee — et le test
-    // passait meme avec la sortie de secours desactivee, sans rien prouver.
-    // D'ou l'assertion de precondition juste en dessous.
+    // startRow). ⚠️ La meme formule pour x et y (1000 + 32) placerait
+    // l'entite ligne startRow+1, jamais bloquee, et le test passerait sans
+    // rien prouver : d'ou l'assertion de precondition juste en dessous.
     horde.x[0] = (startCol + 1 + 0.5) * 64;
     horde.y[0] = (startRow + 0.5) * 64;
     expect(field.blocked[field.indexAt(horde.x[0] ?? 0, horde.y[0] ?? 0)]).toBe(1);
@@ -924,8 +905,8 @@ describe('tache 18 : pas de naissance en plein mur, sortie d un mur garantie', (
 
 describe('tache 19 : recalcul de trajectoire par intervalle', () => {
   it('step avec dt <= 0 est un NO-OP STRICT, y compris pour vx/vy (rejoue le gel cote client)', () => {
-    // Mutation visee : `if (dt > 0) { ... }` retire de `Horde.step`. Rejoue
-    // exactement l'asymetrie gel decrite dans sa doc : le serveur (`Room.step`)
+    // Garde le `if (dt > 0)` de `Horde.step`. Rejoue l'asymetrie du gel
+    // decrite dans sa doc : le serveur (`Room.step`)
     // ne rappelle JAMAIS `horde.step` pendant le gel strict (retour anticipe
     // avant meme de calculer `scaledDt`), alors que `GameClient#advanceHorde`
     // l'appelle quand meme avec `dt * 0`. Si `dt <= 0` recalculait quand meme
@@ -971,27 +952,21 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
   });
 
   it('la vitesse est TENUE entre deux recalculs : elle ne bouge pas quand le champ change entre-temps', () => {
-    // Mutation visee : un recalcul qui aurait lieu a CHAQUE tick plutot qu'un
-    // tick sur K. Une seule entite, sans voisin (repulsion nulle par
+    // Le recalcul a lieu un tick sur K, pas a CHAQUE tick. Une seule entite,
+    // sans voisin (repulsion nulle par
     // construction), pour que la seule source de changement de vx/vy soit le
     // recalcul lui-meme.
     const horde = new Horde(10);
     horde.spawn(order({ count: 1, formation: FORMATION.SCATTER }));
-    // Centre EXACT d'une cellule de flowfield (64 px) sur les deux axes
-    // (tache 25) : depuis l'interpolation bilineaire, une position
-    // quelconque a l'interieur d'une cellule ne rend plus forcement la meme
-    // direction que le centre de cette cellule — seul le centre exact
-    // degenere en la lecture par cellule pure (voir `FlowField.sampleDirection`).
-    // Ce test verifie la conservation de la vitesse TENUE, pas la geometrie
-    // du champ : le centrage evite qu'une composante d'interpolation
-    // parasite la sanity check `vyApresRecalcul` ci-dessous.
+    // Centre EXACT d'une cellule de flowfield (64 px) sur les deux axes : avec
+    // l'interpolation bilineaire, seul le centre exact rend la direction de
+    // la cellule (voir `FlowField.sampleDirection`). Le centrage evite
+    // qu'une composante d'interpolation parasite `vyApresRecalcul` ci-dessous.
     horde.x[0] = 2976;
     horde.y[0] = 2976;
     // Vitesse explicitement nulle : sans ca, l'entite garderait la vitesse
-    // que `spawn` lui a posee a SA position de formation initiale (tache 20),
-    // pas a (2976, 2976), et deriverait avant meme le premier recalcul —
-    // inoffensif avec l'ancienne lecture par cellule (uniforme sur toute la
-    // cellule), plus depuis l'interpolation.
+    // que `spawn` lui a posee a SA position de formation initiale, et
+    // deriverait avant meme le premier recalcul.
     horde.vx[0] = 0;
     horde.vy[0] = 0;
     const fields = fieldsTowards(6000, 2976);
@@ -1013,7 +988,7 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
 
     // Le champ change de direction (vers le nord) APRES ce recalcul : si
     // l'entite recalculait a chaque tick, sa vitesse suivrait immediatement.
-    // Si elle la TIENT, comme le veut la tache 19, `vx`/`vy` doivent rester
+    // Si elle la TIENT, `vx`/`vy` doivent rester
     // EXACTEMENT ce qu'ils etaient, jusqu'a son prochain tick de phase.
     for (const f of fields) {
       f.update(2976, 0);
@@ -1037,10 +1012,9 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
   });
 
   it("la phase de recalcul vient de l'identite : deux entites d ids differents ne recalculent pas au meme tick, et l'identite suit une entite compactee dans un nouveau creneau", () => {
-    // Mutation visee : une phase derivee de l'INDICE DE CRENEAU plutot que de
-    // l'identite (`entityIdAt`). Les deux coincident a l'apparition — ce test
-    // les fait diverger expres par une compaction, pour que la mutation
-    // n'ait nulle part ou se cacher.
+    // La phase vient de l'identite (`entityIdAt`), pas de l'INDICE DE CRENEAU.
+    // Les deux coincident a l'apparition : ce test les fait diverger par une
+    // compaction.
     const K = STEERING_RECOMPUTE_TICKS;
     const horde = new Horde(20);
     horde.spawn(order({ waveId: 1, count: K + 1, formation: FORMATION.SCATTER }));
@@ -1080,26 +1054,18 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
   });
 
   it('aucun deplacement ne depasse la vitesse propre PLUS la borne de de-chevauchement en un tick, meme entassee (taches 21 et 22)', () => {
-    // ⚠️ Le champ doit rester NON NUL ici, contrairement a l'ancien test
-    // « plafond de repulsion » (tache 19) qui isolait la repulsion en posant
-    // les entites PILE sur leur cible. Depuis la tache 21, la repulsion est
-    // ponderee par un poids SANS DIMENSION (`STEERING_REPULSION_WEIGHT = 0,5`,
-    // bien plus petit que l'ancienne raideur en px/s) : sur un champ nul, meme
-    // une regression qui reintroduirait l'ADDITION (`vx = fx*vitesse +
-    // pushX*POIDS`) resterait sous la borne (poids max 0,5 px/s, negligeable
-    // devant les ~95 px/s d'une vitesse propre) et ce test ne verrait RIEN.
-    // Avec un champ non nul et des voisins places pour pousser dans le MEME
-    // sens que lui, la regression additive fait depasser la borne meme avec
-    // ce petit poids — voir la mutation en tete de ce fichier de tests.
+    // ⚠️ Le champ doit rester NON NUL ici. La repulsion est ponderee par un
+    // poids SANS DIMENSION (`STEERING_REPULSION_WEIGHT`) : sur un champ nul,
+    // une regression qui reviendrait a l'ADDITION (`vx = fx*vitesse +
+    // pushX*POIDS`) resterait sous la borne et ce test ne verrait RIEN. Avec
+    // un champ non nul et des voisins qui poussent dans le MEME sens, elle la
+    // depasse.
     //
-    // Tache 22 : le meme entassement — deliberement dense, des voisins a 2 px
-    // les uns des autres, tous BIEN EN DECA de `SEPARATION_RADIUS` (28 px) —
-    // sert AUSSI a saturer `#applyDeoverlap` : la borne totale a verifier
-    // n'est donc plus `vitesse_propre * dt` seule, mais CETTE valeur PLUS
-    // `DEOVERLAP_MAX_PX`. Sans un entassement aussi serre, la correction de
-    // position resterait sous sa propre borne sans jamais l'atteindre, et ce
-    // test ne prouverait rien sur elle — d'ou l'exigence de la tache : « a
-    // n'importe quelle densite », construit sur un tas deliberement dense.
+    // Le meme entassement (voisins a 2 px, BIEN EN DECA de
+    // `SEPARATION_RADIUS`) sert AUSSI a saturer `#applyDeoverlap` : la borne
+    // a verifier est `vitesse_propre * dt` PLUS `DEOVERLAP_MAX_PX`. Moins
+    // serre, la correction n'atteindrait jamais sa borne et le test ne
+    // prouverait rien sur elle.
     const ORIGIN_X = 1000;
     const ORIGIN_Y = 3000;
     const N = 11; // une « victime » plus dix voisins presque colles, tous derriere elle.
@@ -1110,9 +1076,8 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
 
     const fields = fieldsTowards(5000, ORIGIN_Y);
     // Direction REELLE du champ a la position de la victime, lue plutot que
-    // supposee (1, 0) : seul ce qui compte pour la mutation ci-dessus, c'est
-    // que les voisins poussent dans le MEME sens qu'elle, quelle que soit
-    // cette direction.
+    // supposee (1, 0) : ce qui compte, c'est que les voisins poussent dans le
+    // MEME sens qu'elle.
     const field0 = fields[0];
     if (!field0) {
       throw new Error('champ manquant');
@@ -1130,17 +1095,16 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       horde.y[i] = ORIGIN_Y - i * 2 * fy;
     }
     // Joueurs loin de la victime : contrairement a la cible du champ, un
-    // joueur proche la mettrait a portee de contact (tache 17.2) et
+    // joueur proche la mettrait a portee de contact et
     // l'arreterait (`stopped`), ce qui rendrait ce test aveugle a un
     // deplacement pourtant illegal (`#advanceByVelocity` n'avance jamais une
     // entite arretee).
     horde.retarget([0, 0, 0, 0], [0, 0, 0, 0]);
 
     const ownSpeed = archetypeOf(0).speed;
-    // Tache 22 : deplacement max legitime en UN tick = avancement par vitesse
-    // (borne intrinseque, tache 21) PLUS correction de de-chevauchement
-    // (borne explicite, tache 22) — les deux s'appliquent au MEME tick, dans
-    // cet ordre (voir `Horde.step`), et peuvent donc s'additionner.
+    // Deplacement max legitime en UN tick = avancement par vitesse PLUS
+    // correction de de-chevauchement : les deux s'appliquent au MEME tick
+    // (voir `Horde.step`) et peuvent donc s'additionner.
     const COMBINED_BOUND = ownSpeed * DT + DEOVERLAP_MAX_PX;
     const BOUND = COMBINED_BOUND + 1e-3; // marge flottante minime.
     let maxDisplacement = 0;
@@ -1167,16 +1131,11 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // trop petite (ou la supprimerait) resterait invisible a un seuil moins
     // exigeant que celui-ci.
     //
-    // ⚠️ **Tache 23 : ce n'est plus forcement la « victime » (creneau 0) qui
-    // sature.** Sous la priorite, la victime — la plus proche de la cible du
-    // champ — ne cede a AUCUN de ses dix voisins (tous plus loin qu'elle) :
-    // elle n'est plus corrigee du tout par `#applyDeoverlap`. C'est un AUTRE
-    // membre du tas (celui le plus loin derriere, qui cede a la quasi
-    // totalite des neuf autres) qui accumule la plus grosse correction et
-    // approche la borne — verifie par mesure ad hoc (rapport de la tache 23) :
-    // la borne combinee reste atteinte au pixel pres, juste par un creneau
-    // different. L'assertion ci-dessus, qui parcourt TOUTES les entites, reste
-    // donc valide sans changement.
+    // ⚠️ **Ce n'est pas la « victime » (creneau 0) qui sature.** Sous la
+    // priorite, la plus proche de la cible ne cede a AUCUN voisin et n'est pas
+    // corrigee par `#applyDeoverlap`. C'est un AUTRE membre du tas (le plus
+    // loin derriere) qui approche la borne : d'ou des assertions qui
+    // parcourent TOUTES les entites.
     expect(maxDisplacement).toBeGreaterThan(COMBINED_BOUND * 0.9);
   });
 
@@ -1185,29 +1144,16 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // « direction du champ + repulsion ponderee » s'annule EXACTEMENT, pas
     // approximativement.
     //
-    // ⚠️ **Mecanisme reecrit pour la tache 23.** Avant, la repulsion
-    // s'annulait par symetrie vectorielle (quatre voisins cardinaux
-    // equidistants, `+a` et `-a` s'annulant deux a deux). Depuis la priorite,
-    // la repulsion ne se resume plus par paire symetrique : ici, la victime
-    // et ses quatre voisins sont installes dans la MEME cellule de flowfield
-    // (`D = 20` px, bien en-deca de la demi-largeur de cellule 32 px) —
-    // exactement A EGALITE de `dist`. A egalite, le plus petit identifiant
-    // gagne (tache 23) : la victime est l'entite 0, la plus petite identite
-    // du groupe, donc elle ne cede JAMAIS a aucun de ses quatre voisins —
-    // elle n'accumule RIEN contre eux, quelle que soit leur position. La
-    // repulsion est donc nulle par ABSENCE d'accumulation, pas par
-    // annulation vectorielle — mais le code exerce, bit pour bit, le MEME
-    // garde-fou : la victime est PILE sur sa cible (direction de champ
-    // nulle), la repulsion accumulee est nulle, la somme est nulle, et la
-    // diviser sans garde-fou donnerait EXACTEMENT `0 / 0 = NaN`.
+    // La victime et ses quatre voisins sont dans la MEME cellule de flowfield
+    // (`D = 20` px, en-deca de la demi-largeur 32 px), donc A EGALITE de
+    // `dist`. A egalite, le plus petit identifiant gagne : la victime
+    // (entite 0) ne cede a aucun voisin et n'accumule AUCUNE repulsion. PILE
+    // sur sa cible (champ nul), la somme est nulle, et la diviser sans
+    // garde-fou donnerait EXACTEMENT `0 / 0 = NaN`.
     //
-    // Mutation visee : supprimer le garde-fou du cas degenere et diviser
-    // inconditionnellement (voir le rapport de la tache 21, mutation 2 —
-    // reproduite a la main pour verifier ce test, ce qu'un simple contexte
-    // n'aurait pas suffi a garantir ; revalidee tache 23). Un test qui ne
-    // verifierait que la NORME finale ne verrait rien : `Math.hypot(NaN,
-    // NaN)` est `NaN`, et `toBeLessThanOrEqual` echoue en silence dessus,
-    // alors que `Number.isFinite` le demasque sans ambiguite.
+    // ⚠️ Un test qui ne verifierait que la NORME finale ne verrait rien :
+    // `Math.hypot(NaN, NaN)` est `NaN`, et `toBeLessThanOrEqual` echoue en
+    // silence dessus, alors que `Number.isFinite` le demasque.
     const ORIGIN_X = 2976; // Centre d'une cellule de flowfield (64 px) : ...
     const ORIGIN_Y = 2976; // ... les 4 voisins a +-D restent dans LA MEME cellule.
     const D = 20; // < demi-largeur de cellule (32) : garantit l'egalite de dist.
@@ -1238,8 +1184,8 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     // quoi ce test ne serait pas le cas degenere qu'il pretend etre.
     expect(field0.dirX[cell] ?? -1).toBe(0);
     expect(field0.dirY[cell] ?? -1).toBe(0);
-    // Sanity (tache 23) : les cinq points partagent bien la MEME cellule —
-    // condition necessaire a l'egalite de `dist` dont ce test depend.
+    // Sanity : les cinq points partagent bien la MEME cellule, condition de
+    // l'egalite de `dist` dont ce test depend.
     for (let i = 1; i < horde.count; i++) {
       expect(field0.indexAt(horde.x[i] ?? 0, horde.y[i] ?? 0)).toBe(cell);
     }
@@ -1278,19 +1224,12 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
   it('un monstre entoure de voisins dont la repulsion s annule continue de suivre son champ (tache 21)', () => {
     // Complement du test precedent : ici, la victime n'est PAS sur sa cible
     // (champ non nul), et la repulsion accumulee est nulle (pas la somme
-    // entiere). Mutation visee : une implementation qui traiterait
-    // « repulsion nulle » comme le cas degenere (au lieu de « somme totale
-    // nulle ») et retomberait a tort sur une vitesse nulle, alors que la
-    // victime devrait continuer de suivre son champ normalement.
+    // entiere). Traiter « repulsion nulle » comme le cas degenere (au lieu de
+    // « somme totale nulle ») figerait a tort la victime.
     //
-    // ⚠️ **Mecanisme reecrit pour la tache 23**, meme raisonnement que le
-    // test precedent : victime et voisins dans la MEME cellule de flowfield
-    // (egalite exacte de `dist`), victime = identite la plus petite du
-    // groupe => elle ne cede a aucun de ses quatre voisins => repulsion
-    // accumulee nulle, PAR ABSENCE d'accumulation. La direction du champ,
-    // elle, est non nulle (la cible est ailleurs) : la somme MELANGEE reste
-    // donc non nulle, et le code doit suivre la branche NORMALE (jamais le
-    // garde-fou degenere) pour aboutir exactement a la direction du champ.
+    // Meme montage que le test precedent (meme cellule, victime = plus petite
+    // identite, donc repulsion nulle), mais la cible est ailleurs : la somme
+    // reste non nulle et le code doit suivre la branche NORMALE.
     const ORIGIN_X = 2976;
     const ORIGIN_Y = 2976;
     const D = 20;
@@ -1319,10 +1258,8 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     const fx = field0.dirX[cell] ?? 0;
     const fy = field0.dirY[cell] ?? 0;
     expect(Math.hypot(fx, fy)).toBeGreaterThan(0.9); // sanity : champ bien non nul.
-    // Sanity (tache 23) : les cinq points partagent bien la MEME cellule —
-    // condition necessaire a l'egalite de `dist` dont ce test depend, MEME
-    // quand la cible du champ est ailleurs (`dist` depend de la cellule, pas
-    // du point exact).
+    // Sanity : les cinq points partagent bien la MEME cellule (`dist` depend
+    // de la cellule, pas du point exact).
     for (let i = 1; i < horde.count; i++) {
       expect(field0.indexAt(horde.x[i] ?? 0, horde.y[i] ?? 0)).toBe(cell);
     }
@@ -1348,35 +1285,18 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
   });
 
   it('une entite qui recalcule voit TOUS ses voisins, meme ceux d un indice de creneau INFERIEUR', () => {
-    // Mutation visee : la reapparition du parcours symetrique `j > i` de
-    // l'ancien `SeparationGrid` (voir sa doc, tache 18) — une optimisation
-    // valide seulement quand tout le monde recalcule au meme tick, et que la
-    // tache 19 interdit precisement pour cette raison (voir le rapport).
-    // Avec `j > i`, l'entite de creneau 0 verrait l'entite de creneau 1 (1 >
-    // 0), mais l'entite de creneau 1 ne verrait JAMAIS celle de creneau 0
-    // (0 <= 1) : sa vitesse ne porterait alors QUE la direction du champ,
-    // jamais la repulsion de sa voisine.
+    // ⚠️ Un parcours symetrique `j > i` n'est valide que si tout le monde
+    // recalcule au meme tick, ce que le recalcul echelonne interdit : l'entite
+    // de creneau 1 ne verrait JAMAIS celle de creneau 0, et sa vitesse ne
+    // porterait que la direction du champ.
     //
-    // Deux entites presque colles, toutes deux posees PILE sur la cible de
-    // leur champ (flux nul, meme piege evite que le test precedent) : tout
-    // `vx`/`vy` mesure est donc ENTIEREMENT la repulsion.
-    //
-    // ⚠️ **Depuis la tache 23, la relation n'est plus symetrique.** Les deux
-    // entites sont a EGALE distance-cellule de la cible (meme cellule) : a
-    // egalite, le plus petit identifiant gagne, donc le creneau 0 (identite
-    // la plus petite) ne cede JAMAIS a l'autre — sa vitesse de repulsion doit
-    // rester EXACTEMENT nulle, pas seulement non verifiee. Seul le creneau 1
-    // (identite la plus grande) cede et porte une repulsion non nulle. Le
-    // piege que ce test attrape reste le meme (`j > i` empecherait le creneau
-    // de PLUS HAUT indice de voir celui de PLUS BAS indice), mais l'assertion
-    // change : ce n'est plus « les deux bougent », c'est « seul celui de
-    // derriere bouge, et celui de devant reste a zero au bit pres ».
-    // Centre EXACT d'une cellule de flowfield (tache 25) : sur sa propre
-    // cible, une entite doit rester direction (0, 0) au bit pres pour que
-    // l'assertion `vx[0] === 0` ci-dessous tienne — vrai seulement au centre
-    // de cellule depuis l'interpolation bilineaire (voir
-    // `FlowField.sampleDirection`), plus sur n'importe quel point de la
-    // cellule comme avant cette tache.
+    // Deux entites presque collees, PILE sur la cible de leur champ (flux
+    // nul) : tout `vx`/`vy` mesure est donc ENTIEREMENT la repulsion. Meme
+    // cellule, donc egalite de `dist` : le creneau 0 (plus petite identite) ne
+    // cede JAMAIS et doit rester a zero au bit pres ; seul le creneau 1 cede.
+    // Centre EXACT d'une cellule : avec l'interpolation bilineaire (voir
+    // `FlowField.sampleDirection`), seul le centre rend une direction (0, 0)
+    // au bit pres.
     const TARGET_X = 2976;
     const TARGET_Y = 2976;
     const horde = new Horde(2);
@@ -1391,15 +1311,10 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       [TARGET_Y, TARGET_Y, TARGET_Y, TARGET_Y],
     );
 
-    // Assez de pas pour que CHAQUE creneau ait recalcule AU MOINS UNE FOIS,
-    // pas plus : depuis la tache 22, `Horde.step` ecarte aussi les deux
-    // entites d'une correction de position bornee (`#applyDeoverlap`, EN
-    // PLUS de la repulsion de pilotage mesuree ici) — courir jusqu'a
-    // `2 * STEERING_RECOMPUTE_TICKS` comme avant les laisserait largement
-    // depasser `SEPARATION_RADIUS`, la repulsion s'annulerait ALORS
-    // legitimement (elles ne sont plus voisines), et le test ne mesurerait
-    // plus la meme chose. On s'arrete donc au premier recalcul de CHAQUE
-    // creneau.
+    // Assez de pas pour que CHAQUE creneau ait recalcule une fois, pas plus :
+    // `#applyDeoverlap` les ecarte aussi, et plus longtemps elles
+    // depasseraient `SEPARATION_RADIUS`, la repulsion s'annulant alors
+    // legitimement.
     const phase0 = horde.entityIdAt(0) % STEERING_RECOMPUTE_TICKS;
     const phase1 = horde.entityIdAt(1) % STEERING_RECOMPUTE_TICKS;
     for (let tick = 0; tick <= Math.max(phase0, phase1); tick++) {
@@ -1407,9 +1322,8 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
     }
 
     // Le creneau DE PLUS HAUT INDICE (1, identite la plus grande) doit porter
-    // une vitesse de repulsion non nulle — c'est precisement ce que `j > i`
-    // lui interdirait, et ce que la priorite (tache 23) lui impose puisqu'il
-    // cede a egalite de distance.
+    // une vitesse de repulsion non nulle : c'est ce que `j > i` lui
+    // interdirait, et il cede a egalite de distance.
     expect(Math.hypot(horde.vx[1] ?? 0, horde.vy[1] ?? 0)).toBeGreaterThan(0);
     // Le creneau 0 (identite la plus petite) ne cede JAMAIS a egalite : sa
     // vitesse de repulsion doit rester EXACTEMENT nulle, au bit pres — pas
@@ -1419,14 +1333,11 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
   });
 
   it('deux clients simules independamment s accordent tick pour tick, y compris a travers un rejeu (rollback)', () => {
-    // Le point precis que ce test cherche a attraper : une vitesse tenue
-    // (`vx`/`vy`) qui serait SAUVEGARDEE mais pas RESTAUREE (ou l'inverse) —
-    // exactement le defaut qu'une regression sur `HordeState`/`saveState`/
-    // `restoreState` introduirait sans faire rougir aucun autre test de ce
-    // fichier. Deux hordes independantes, une mort livree en RETARD a la
-    // seconde (latence reseau simulee), rejouee via restauration + rejeu —
-    // le meme montage que le scenario 9 de `horde.replication.test.ts`, en
-    // miniature et cible sur `vx`/`vy` specifiquement.
+    // Attrape une vitesse tenue (`vx`/`vy`) SAUVEGARDEE mais pas RESTAUREE
+    // (ou l'inverse) par `HordeState`/`saveState`/`restoreState`. Deux hordes
+    // independantes, une mort livree en RETARD a la seconde, rejouee via
+    // restauration + rejeu : le scenario 9 de `horde.replication.test.ts`, en
+    // miniature et cible sur `vx`/`vy`.
     const fields = fieldsTowards(6000, 3000);
     const stepsPerField = 3;
 
@@ -1439,12 +1350,11 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
       return { horde, history: new HordeHistoryLike(horde.capacity) };
     }
 
-    // ⚠️ **`HordeState` importe, jamais recopie ici.** Une copie locale de la
-    // forme etait une TROISIEME liste de tableaux a tenir a jour (avec
-    // `#removeAt` et `HordeHistory`), et c'est exactement la classe de defaut
-    // que ce depot paie le plus cher : elle vieillit en silence. Ajouter un
-    // tableau a `Horde` casse desormais la compilation ici, au lieu de laisser
-    // ce rejeu miniature travailler sur un instantane incomplet.
+    // ⚠️ **`HordeState` importe, jamais recopie ici.** Une copie locale serait
+    // une TROISIEME liste de tableaux a tenir a jour (avec `#removeAt` et
+    // `HordeHistory`), qui vieillirait en silence. Ajouter un tableau a
+    // `Horde` casse la compilation ici, au lieu de laisser ce rejeu
+    // travailler sur un instantane incomplet.
     class HordeHistoryLike {
       readonly #states = new Map<number, HordeState>();
       constructor(private readonly capacity: number) {}
@@ -1536,11 +1446,10 @@ describe('tache 19 : recalcul de trajectoire par intervalle', () => {
 
 describe('tache 20 : un seul modele de mouvement pour le rattrapage', () => {
   it('spawn pose une vitesse non nulle des l apparition, sans attendre le premier recalcul de phase', () => {
-    // Mutation visee : revenir a `vx = vy = 0` inconditionnel dans `spawn`
-    // (le comportement d'avant la tache 20) — une entite fraichement
-    // apparue resterait figee jusqu'a `STEERING_RECOMPUTE_TICKS - 1` pas
-    // (300 ms), un defaut visible a l'ecran. Verifie AVANT tout appel a
-    // `step` : seule `spawn` elle-meme a pu poser cette vitesse.
+    // Avec `vx = vy = 0` inconditionnel dans `spawn`, une entite fraichement
+    // apparue resterait figee jusqu'a `STEERING_RECOMPUTE_TICKS - 1` pas,
+    // visible a l'ecran. Verifie AVANT tout appel a `step` : seule `spawn`
+    // a pu poser cette vitesse.
     const fields = fieldsTowards(4000, 1000);
     const field = fields[0];
     if (!field) {
@@ -1562,10 +1471,9 @@ describe('tache 20 : un seul modele de mouvement pour le rattrapage', () => {
   });
 
   it('sans champ fourni, spawn garde le comportement d avant : vitesse nulle', () => {
-    // Sanity inverse du test precedent : la nouvelle branche de `spawn` ne
-    // doit s'activer que si un champ est passe, pas devenir le nouveau
-    // comportement par defaut partout (la plupart des tests de ce fichier
-    // spawnent sans champ et n'ont rien a voir avec ce mecanisme).
+    // Sanity inverse du test precedent : cette branche de `spawn` ne
+    // s'active que si un champ est passe (la plupart des tests de ce fichier
+    // spawnent sans champ).
     const horde = new Horde(10);
     horde.spawn(order({ count: 5, formation: FORMATION.SCATTER }));
 
@@ -1576,9 +1484,8 @@ describe('tache 20 : un seul modele de mouvement pour le rattrapage', () => {
   });
 
   it('une entite fraichement apparue avance des le tick suivant, sans attendre sa phase', () => {
-    // Mutation visee : la meme que le test precedent, mais observee par le
-    // mouvement plutot que par la vitesse brute — c'est le symptome que le
-    // corollaire du brief decrit (« ca se voit a l'ecran »). Le tick choisi
+    // Meme garde que l'avant-precedent, observee par le mouvement (le
+    // symptome a l'ecran) plutot que par la vitesse brute. Le tick choisi
     // ne correspond PAS a la phase de recalcul de l'entite : si elle bouge
     // quand meme, ce ne peut etre que la vitesse posee par `spawn`, jamais
     // un recalcul de `#recomputeSteering`.
@@ -1609,10 +1516,9 @@ describe('tache 20 : un seul modele de mouvement pour le rattrapage', () => {
     'un rattrapage tardif finit EXACTEMENT comme une apparition a l heure : position ET ' +
       'vitesse, tick par tick, sur plusieurs cycles de phase',
     () => {
-      // Mutation visee : reintroduire `#advanceAlongField` (l'ancienne
-      // physique du rattrapage, le long du champ) dans la boucle de
-      // `spawnCatchingUp`, a la place de `#recomputeSteering` +
-      // `#advanceByVelocity`. Les deux hordes ci-dessous partagent le meme
+      // `spawnCatchingUp` doit rejouer les pas manques avec le MEME modele
+      // que `step` (`#recomputeSteering` + `#advanceByVelocity`), pas une
+      // physique a part. Les deux hordes ci-dessous partagent le meme
       // champ, la meme cible, le meme ordre de vague — la SEULE difference
       // est que l'une apparait a l'heure et l'autre rattrape `DELAY` pas.
       // Sous un seul modele de mouvement, elles doivent coincider AU BIT
@@ -1694,44 +1600,28 @@ describe('tache 22/23 : la horde forme un anneau plutot que de s empiler', () =>
     'une horde lachee sur un joueur immobile s etale en anneau : bien moins ' +
       'que les 462 entites empilees sans correction, et la horde a reellement converge',
     () => {
-      // Mutation visee : supprimer `#applyDeoverlap` (ou vider sa borne a
-      // zero) laisse le pilotage seul faire converger la horde vers un TAS —
-      // mesure : 462 entites sur 800 a moins de `CONTACT_RADIUS` les unes des
-      // autres, sur 8 px² chacune (rapport de la tache 22). Un test qui ne
-      // verifierait QUE ce compte serait aveugle a une regression OPPOSEE :
-      // `STEERING_REPULSION_WEIGHT` remis a 4 ferait STAGNER la horde loin du
-      // joueur (rayon median mesure a 209 px, elle n'arrive jamais) — ce qui
-      // produit AUSSI un compte faible dans le rayon de contact, pour une
-      // raison inverse. D'ou la seconde assertion : le rayon median doit
-      // rester petit, preuve que la horde est bien ARRIVEE et pas seulement
-      // dispersee au loin.
+      // Sans `#applyDeoverlap`, le pilotage seul fait converger la horde vers
+      // un TAS. Ne verifier QUE le compte au contact serait aveugle a la
+      // regression OPPOSEE : une repulsion trop forte fait STAGNER la horde
+      // loin du joueur, ce qui donne AUSSI un compte faible. D'ou la seconde
+      // assertion : le rayon median doit rester petit, preuve que la horde est
+      // bien ARRIVEE et pas seulement dispersee au loin.
       //
-      // ⚠️ **Duree portee a 1500 pas (tache 23), pas 300.** Avec l'evitement
-      // par priorite, chaque paire n'est plus corrigee que par CELUI de
-      // derriere (l'autre n'accumule rien) : la horde converge vers le MEME
-      // anneau, mais plus lentement — mesure ad hoc (script hors depot) :
-      // rayon median 209 px a 10 s (300 pas, identique au chiffre de
-      // stagnation de l'ANCIEN poids 4, par pure coincidence de calendrier,
-      // pas parce qu'elle stagne : la mesure continue de baisser), 157 px a
-      // 30 s, puis un plateau stable a 148-158 px a partir de 35-40 s (1000+
-      // pas) jusqu'a 3600 pas (2 min), jamais en dessous. Mesurer a 10 s
-      // confondrait donc a tort une convergence reelle mais lente avec une
-      // stagnation — d'ou la duree portee a 1500 pas (50 s), largement dans
-      // le plateau. Voir le rapport de la tache 23 pour la mesure complete et
-      // la verification par mutation (poids remis a 4 : le median reste
-      // alors bloque a 226-237 px meme a 2 min, jamais sous 200).
+      // ⚠️ **1500 pas, pas moins.** Avec l'evitement par priorite, seul celui
+      // de derriere est corrige : la horde converge vers l'anneau, mais
+      // lentement, et n'atteint son plateau qu'apres une trentaine de
+      // secondes. Mesurer plus tot confondrait une convergence lente avec une
+      // stagnation.
       const N = 800;
       const PLAYER_X = 3000;
       const PLAYER_Y = 3000;
       const TOTAL_TICKS = 1500; // 50 s a TICK_HZ = 30 : voir la note ci-dessus.
-      // Valeurs mesurees dans le rapport de la tache 22 (repulsion seule,
-      // sans correction de position) : le point de comparaison, pas une
-      // borne que ce test cherche a reproduire au pixel pres.
+      // Compte mesure sans correction de position : le point de comparaison,
+      // pas une borne a reproduire au pixel pres.
       const STACKED_COUNT_WITHOUT_CORRECTION = 462;
-      // Rayon en-deca duquel la horde est reputee ARRIVEE (tache 23) : marge
-      // confortable sous le plateau mesure (148-158 px) et tres en-deca du
-      // point de stagnation d'une repulsion qui dominerait le champ (226-237
-      // px, verifie par mutation — voir la note ci-dessus).
+      // Rayon en-deca duquel la horde est reputee ARRIVEE : au-dessus du
+      // plateau de convergence (~150 px), en-deca du point de stagnation
+      // d'une repulsion qui dominerait le champ (~230 px).
       const ARRIVED_RADIUS = 200;
 
       const horde = new Horde(N);
@@ -1781,9 +1671,7 @@ describe('tache 22/23 : la horde forme un anneau plutot que de s empiler', () =>
       // suffit a distinguer un anneau d'un tas, sans etre fragile au bruit
       // d'un tirage particulier.
       expect(insideContact).toBeLessThan(STACKED_COUNT_WITHOUT_CORRECTION / 2);
-      // Et la horde a REELLEMENT converge, pas seulement dispersee au loin —
-      // voir la note sur `ARRIVED_RADIUS` ci-dessus pour la mesure qui motive
-      // ce seuil et la mutation qui le justifie.
+      // Et la horde a REELLEMENT converge, pas seulement dispersee au loin.
       expect(median).toBeLessThan(ARRIVED_RADIUS);
     },
   );
@@ -1794,18 +1682,16 @@ describe('tache 23 : evitement par priorite, celui de derriere cede', () => {
     'deux entites qui se chevauchent : seule celle de derriere bouge, celle de ' +
       'devant ne bouge pas d un seul pixel',
     () => {
-      // Mutation visee : reintroduire la moitie chacun (`* 0.5`) dans
-      // `#applyDeoverlap` au lieu du filtre de priorite — l'ancien
-      // comportement symetrique de la tache 22, ou LES DEUX membres d'une
-      // paire en chevauchement bougent. Verifiee plus bas.
+      // `#applyDeoverlap` filtre par priorite : une correction symetrique
+      // (la moitie chacun) ferait bouger LES DEUX membres de la paire.
       //
       // Deux entites a des distances DIFFERENTES (pas une egalite) du champ
       // qu'elles visent : `FRONT` tombe dans une cellule de flowfield plus
       // proche de la cible que `BEHIND` (64 px de cote, la frontiere de
       // cellule tombe entre les deux), tout en restant a 15 px l'une de
       // l'autre — bien EN DECA de `SEPARATION_RADIUS` (chevauchement reel).
-      // `FRONT` est donc strictement DEVANT `BEHIND` au sens de la priorite
-      // (tache 23) : c'est `BEHIND` qui doit ceder.
+      // `FRONT` est donc strictement DEVANT `BEHIND` au sens de la priorite :
+      // c'est `BEHIND` qui doit ceder.
       const FRONT_X = 3010; // cellule 47 : plus proche de la cible (5000, *).
       const FRONT_Y = 3000;
       const BEHIND_X = 2995; // cellule 46 : plus loin de la cible.
@@ -1867,17 +1753,12 @@ describe('tache 23 : evitement par priorite, celui de derriere cede', () => {
     'la distance au champ decide, l identite ne depart age qu a egalite : ' +
       'une identite plus grande devant ne cede pas a une plus petite derriere',
     () => {
-      // Mutation visee : un cache de priorite jamais rafraichi (ou toujours a
-      // zero) — `#buildPriorityCache` non appele, ou appele une seule fois a
-      // la construction plutot qu'a chaque tick. Toutes les distances
-      // paraitraient alors EGALES (0), et le departage retomberait
-      // systematiquement sur l'identite SEULE, jamais sur la distance
-      // reelle. Ce defaut serait invisible au test precedent : `FRONT` y a
-      // deja la plus PETITE identite, donc `FRONT` gagnerait de toute facon,
-      // que ce soit par sa distance ou par coincidence d'identite. Ici,
-      // `FRONT` recoit deliberement l'identite la plus GRANDE des deux : si
-      // la distance ne comptait pas, le departage par identite ferait CEDER
-      // `FRONT`, l'exact inverse de ce que ce test attend.
+      // Garde le rafraichissement de `#buildPriorityCache` a chaque tick : un
+      // cache jamais rafraichi rendrait toutes les distances EGALES, et le
+      // departage retomberait sur l'identite SEULE. Le test precedent n'y
+      // verrait rien (`FRONT` y a deja la plus PETITE identite). Ici, `FRONT`
+      // recoit l'identite la plus GRANDE : si la distance ne comptait pas,
+      // c'est lui qui cederait.
       const FRONT_X = 3010; // cellule 47 : plus proche de la cible.
       const FRONT_Y = 3000;
       const BEHIND_X = 2995; // cellule 46 : plus loin.
@@ -1930,11 +1811,9 @@ describe('tache 23 : evitement par priorite, celui de derriere cede', () => {
     'a egalite de distance au champ, le departage par identite tient quel que ' +
       'soit l ordre de construction des deux hordes',
     () => {
-      // Mutation visee : un departage qui, au lieu du plus petit identifiant,
-      // s'appuierait sur l'ordre du tableau (indice de creneau) — invisible
-      // tant qu'on ne construit la MEME paire d'identites dans les DEUX ordres
-      // de creneau possibles, comme `shared/separation.test.ts` le faisait
-      // pour la separation symetrique (tache 18).
+      // Un departage par ordre du tableau (indice de creneau) au lieu du plus
+      // petit identifiant est invisible tant qu'on ne construit pas la MEME
+      // paire d'identites dans les DEUX ordres de creneau.
       //
       // Deux entites A ET B, memes deux identites dans les deux hordes
       // (`SMALL_WAVE` < `BIG_WAVE`, donc identite(SMALL_WAVE) <
@@ -2031,28 +1910,17 @@ describe('tache 23 : evitement par priorite, celui de derriere cede', () => {
     },
   );
 
-  // Le troisieme test demande par le brief — « le deplacement total reste
-  // borne par la vitesse propre plus la correction, a n'importe quelle
-  // densite » — est deja couvert par le test existant (taches 21/22)
-  // « aucun deplacement ne depasse la vitesse propre PLUS la borne de
-  // de-chevauchement en un tick, meme entassee », plus haut dans ce fichier :
-  // sa fixture (une victime plus dix voisins presque colles) reste une pile
-  // dense sous la priorite, et j'ai verifie (voir son commentaire tache 23,
-  // et le rapport de la tache 23) que la saturation du plafond combine reste
-  // observee — juste par un creneau different de la pile, puisque la
-  // « victime » elle-meme, la plus proche de la cible, ne cede plus a aucun
-  // de ses dix voisins. Ecrire un second test redondant sur la meme
-  // proposition n'aurait rien ajoute.
+  // La borne du deplacement total sous la priorite, a n'importe quelle
+  // densite, est gardee plus haut par « aucun deplacement ne depasse la
+  // vitesse propre PLUS la borne de de-chevauchement en un tick, meme
+  // entassee ».
 });
 
 describe('tache 25 : la horde lit le champ par interpolation, pas par cellule', () => {
   it('la trajectoire tenue reflete le melange bilineaire, pas la lecture par cellule seule', () => {
-    // Mutation visee : EXACTEMENT celle deja arrivee sur ce plan (rapport de
-    // la tache 25) — un ajout qui fonctionne isole (`FlowField.sampleDirection`,
-    // couvert par `shared/flowfield.test.ts`) mais dont l'appelant, ici
-    // `Horde`, n'a jamais ete branche dessus et continue de lire `dirX`/`dirY`
-    // par cellule. Un test qui ne verifie QUE `FlowField` ne verrait jamais
-    // cette regression : il faut verifier `Horde` elle-meme.
+    // `FlowField.sampleDirection` est couvert par `shared/flowfield.test.ts`,
+    // mais rien n'y verifie que `Horde` s'en sert au lieu de lire
+    // `dirX`/`dirY` par cellule : c'est `Horde` elle-meme qu'il faut tester.
     //
     // Deux cellules voisines a angle droit (est vs nord), memes valeurs que
     // le test equivalent de `shared/flowfield.test.ts` — loin de l'oppose
@@ -2107,25 +1975,19 @@ describe('tache 25 : la horde lit le champ par interpolation, pas par cellule', 
   });
 
   it('la vitesse initiale posee par spawn reflete elle aussi le melange bilineaire, pas la lecture par cellule seule', () => {
-    // Meme risque que le test precedent, pour `spawn` (tache 20) plutot que
-    // `#recomputeSteering` (tache 19) : ce sont deux lectures DISTINCTES
-    // dans `Horde`, donc deux endroits ou le branchement peut avoir ete
-    // oublie independamment l'un de l'autre.
+    // Meme risque que le test precedent, pour `spawn` plutot que
+    // `#recomputeSteering` : deux lectures DISTINCTES dans `Horde`, donc deux
+    // branchements a garder independamment.
     //
-    // Champ REEL (obstacles + BFS complet), pas deux cellules a la main : la
-    // position de naissance vient de `formationPositions`, pas choisie par
-    // ce test. Graine et cible choisies (script d'exploration du rapport de
-    // la tache 25) pour que la position de naissance retombe pres d'un
-    // virage du champ — sans obstacle a proximite, un grand nombre de
-    // cellules voisines partagent exactement la meme direction et le
-    // melange bilineaire coincide alors avec la lecture par cellule par
-    // pure coincidence geometrique, ce qui aurait rendu ce test aveugle a la
-    // regression qu'il vise.
+    // Champ REEL (obstacles + BFS complet) : la position de naissance vient de
+    // `formationPositions`. Loin d'un virage du champ, les cellules voisines
+    // partagent la meme direction et le melange bilineaire coincide avec la
+    // lecture par cellule : le test serait aveugle.
     //
-    // ⚠️ **L'ancre est CHERCHEE depuis la carte en tuiles** : la cible
-    // (1900, 1900) choisie jadis est desormais de l'eau. On balaie les ancres
-    // jusqu'a la premiere dont la naissance tombe pres d'un virage du champ —
-    // la condition de contraste, verifiee plus bas, est celle qui compte.
+    // ⚠️ **L'ancre est CHERCHEE, pas recopiee** (des coordonnees en dur
+    // cassent quand la carte change) : on balaie les ancres jusqu'a la
+    // premiere dont la naissance tombe pres d'un virage. La condition de
+    // contraste, verifiee plus bas, est celle qui compte.
     const MAP_SIZE = 6000;
     const CELL = 64;
     const cols = Math.ceil(MAP_SIZE / CELL);
@@ -2153,8 +2015,8 @@ describe('tache 25 : la horde lit le champ par interpolation, pas par cellule', 
       const ex = horde.x[0] ?? 0;
       const ey = horde.y[0] ?? 0;
       // Valeur de reference : le MEME appel que celui que `spawn` doit faire,
-      // a la MEME position — un test de branchement, pas une redite de la
-      // formule (deja verifiee et mutee dans `shared/flowfield.test.ts`).
+      // a la MEME position : un test de branchement, pas une redite de la
+      // formule (verifiee dans `shared/flowfield.test.ts`).
       field.sampleDirection(ex, ey, expected);
       // Sanity : la lecture par cellule seule donnerait ici une direction
       // MESURABLEMENT differente du melange bilineaire attendu — sinon ce
@@ -2181,10 +2043,8 @@ describe('etape 5a, tache 3 : la marque elementaire et son expiration derivee', 
 
     expect(horde.mark[1]).toBe(ELEMENT.BRAISE);
     expect(horde.markBy[1]).toBe(2);
-    // Derive de la constante, JAMAIS le chiffre 60 : `MARK_DURATION_TICKS`
-    // est un reglage de jeu que l'auteur ajustera a l'oeil (tache 11), et un
-    // test qui le verrouille casse au premier reglage. Le depot vient de payer
-    // exactement ca sur `WAVE1_MIN_COUNT`.
+    // Derive de la constante, JAMAIS le chiffre : `MARK_DURATION_TICKS` est un
+    // reglage de jeu, et un test qui le verrouille casse au premier reglage.
     expect(horde.markUntil[1]).toBe(100 + MARK_DURATION_TICKS);
     // Les voisins ne sont pas touches : `applyMark` ecrit UN creneau.
     expect(horde.mark[0]).toBe(ELEMENT.NEUTRE);
@@ -2193,9 +2053,8 @@ describe('etape 5a, tache 3 : la marque elementaire et son expiration derivee', 
 
   it('markBy distingue deux joueurs — c est ce que la Synergie consomme', () => {
     // ⚠️ Sans ce tableau, une reaction entre deux joueurs et une reaction en
-    // solo sont indiscernables, et le §6.5 de l'orientation — « le coeur du
-    // projet » — n'a plus de donnees (§7 de la spec). Deux marques posees par
-    // deux joueurs differents doivent rester distinctes.
+    // solo sont indiscernables, et la Synergie, coeur du projet, n'a plus de
+    // donnees. Deux marques posees par deux joueurs doivent rester distinctes.
     const horde = new Horde(10);
     horde.spawn(order({ count: 2 }));
 
@@ -2280,9 +2139,8 @@ describe('etape 5a, tache 3 : la marque elementaire et son expiration derivee', 
     horde.kill([horde.entityIdAt(0), horde.entityIdAt(1)]);
 
     // Le cas qu'on croit creer, COMPTE et pas suppose : le creneau 0 est libre
-    // ET porte encore une marque ENCORE VALIDE au tick ou l'on va renaitre.
-    // Sans cette verification, une fixture ou la marque serait deja tombee (ou
-    // le creneau deja propre) rendrait le test vert quoi que fasse `spawn`.
+    // ET porte une marque ENCORE VALIDE au tick ou l'on va renaitre. Sinon le
+    // test serait vert quoi que fasse `spawn`.
     expect(horde.count).toBe(0);
     expect(horde.mark[0]).toBe(ELEMENT.BRAISE);
     expect(horde.markBy[0]).toBe(1);
@@ -2290,8 +2148,6 @@ describe('etape 5a, tache 3 : la marque elementaire et son expiration derivee', 
 
     horde.spawn(order({ waveId: 2, count: 1 }));
 
-    // Le cas qu'on croit creer, COMPTE et pas suppose : le creneau reutilise
-    // est bien celui qui portait une marque encore valide.
     expect(horde.count).toBe(1);
     expect(horde.mark[0]).toBe(ELEMENT.NEUTRE);
     expect(horde.markAt(0, 1)).toBe(ELEMENT.NEUTRE);
@@ -2320,17 +2176,6 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
     return horde;
   }
 
-  /**
-   * Avance `horde` des ticks `0` a `tick - 1`, puis rend la distance parcourue
-   * au tick `tick`.
-   *
-   * ⚠️ **Le chauffage depuis le tick 0 n'est pas decoratif.** Une entite ne
-   * recalcule sa trajectoire qu'un tick sur `STEERING_RECOMPUTE_TICKS`, selon
-   * la phase de son identifiant : demarrer directement au tick vise laisse
-   * `vx`/`vy` a zero, donc une distance parcourue nulle DES DEUX COTES — et
-   * l'assertion passerait en ne comparant que deux zeros. C'est le motif de la
-   * fixture qui masque, cinq fois rencontre dans ce depot.
-   */
   /** Un seul pas, au tick `tick`, sans chauffage : rend la distance parcourue par l'entite 0. */
   function pasDe(horde: Horde, fields: FlowField[], tick: number, zones?: ZoneField): number {
     const x0 = horde.x[0] ?? 0;
@@ -2339,6 +2184,15 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
     return Math.hypot((horde.x[0] ?? 0) - x0, (horde.y[0] ?? 0) - y0);
   }
 
+  /**
+   * Avance `horde` des ticks `0` a `tick - 1`, puis rend la distance parcourue
+   * au tick `tick`.
+   *
+   * ⚠️ **Le chauffage depuis le tick 0 n'est pas decoratif.** Une entite ne
+   * recalcule sa trajectoire qu'un tick sur `STEERING_RECOMPUTE_TICKS`, selon
+   * la phase de son identifiant : demarrer directement au tick vise laisse
+   * `vx`/`vy` a zero, et l'assertion ne comparerait que deux zeros.
+   */
   function pasAu(horde: Horde, fields: FlowField[], tick: number, zones?: ZoneField): number {
     for (let t = 0; t < tick; t++) {
       horde.step(DT, fields, t, zones);
@@ -2373,13 +2227,11 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
   });
 
   /**
-   * ⚠️ **`#computeSlow` doit decoder `zones.kind`, jamais le lire brut**
-   * (tache 5 de l'etape 5b). `packZoneKind(GIVRE, reaction)` avec une
-   * reaction non nulle vaut au moins 8 — hors de portee d'`ELEMENTS` (4
-   * entrees aujourd'hui) tant que l'element tient sur 3 bits. Un
+   * ⚠️ **`#computeSlow` doit decoder `zones.kind`, jamais le lire brut.**
+   * `packZoneKind(GIVRE, reaction)` avec une reaction non nulle vaut au moins
+   * 8, hors de portee d'`ELEMENTS` tant que l'element tient sur 3 bits. Un
    * `#computeSlow` qui lirait l'octet brut leverait au lieu de ralentir ; le
-   * bon code decode et retrouve exactement le meme ralentissement que
-   * l'element seul.
+   * bon code retrouve exactement le ralentissement de l'element seul.
    */
   it('ralentit pareil que l element seul quand la zone porte un type de reaction empaquete', () => {
     const fields = fieldsTowards(5000, 1000);
@@ -2435,25 +2287,24 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
   it('une zone perimee laissee dans la reserve ne ralentit plus rien, au tick pres', () => {
     // ⚠️ **Deux pas CONSECUTIFS de la MEME entite**, et pas deux hordes
     // paralleles : une horde temoin qui n'aurait jamais vu la zone aurait
-    // suivi un autre chemin pendant tout le chauffage, donc echantillonne le
-    // champ ailleurs — les deux distances differeraient de quelques 1e-5 sans
-    // que ca dise quoi que ce soit de la peremption.
+    // suivi un autre chemin pendant le chauffage, et les deux distances
+    // differeraient sans rien dire de la peremption.
     //
     // La zone nait au tick `NAISSANCE` et vit `ZONE_LIFETIME_TICKS` ticks :
     // elle ralentit encore au dernier, plus au suivant. `Uint32Array` oblige,
-    // `NAISSANCE` doit rester positif — un tick negatif y reboucle vers quatre
+    // `NAISSANCE` doit rester positif : un tick negatif y reboucle vers quatre
     // milliards et rendrait la zone « pas encore nee ».
     const NAISSANCE = 5;
     const dernierVivant = NAISSANCE + ZONE_LIFETIME_TICKS - 1;
     const fields = fieldsTowards(5000, 1000);
     const zones = new ZoneField();
-    // ⚠️ **Une TRAINEE de zones, pas une seule.** L'entite avance de quelques
-    // pixels par tick : sur une duree de vie entiere elle parcourt plusieurs
-    // fois `ZONE_RADIUS` et serait sortie d'un disque unique bien avant qu'il
-    // ne perime — le test aurait alors compare « dedans » a « dehors » en
-    // croyant comparer « vivante » a « perimee ». Espacees d'exactement
-    // `ZONE_RADIUS` : la fusion demande une distance STRICTEMENT inferieure,
-    // donc rien ne fusionne et la couverture reste continue (§5.1 bis).
+    // ⚠️ **Une TRAINEE de zones, pas une seule.** Sur une duree de vie
+    // entiere, l'entite parcourt plusieurs fois `ZONE_RADIUS` et sortirait
+    // d'un disque unique bien avant qu'il ne perime : le test comparerait
+    // « dedans » a « dehors » en croyant comparer « vivante » a « perimee ».
+    // Espacees d'exactement `ZONE_RADIUS` : la fusion demande une distance
+    // STRICTEMENT inferieure, donc rien ne fusionne et la couverture reste
+    // continue.
     for (let k = 0; k <= 8; k++) {
       zones.spawn(ELEMENT.GIVRE, 1000 + k * ZONE_RADIUS, 1000, 0, NAISSANCE);
     }
@@ -2499,8 +2350,8 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
   });
 
   it('sans zones, le pas est BIT pour BIT celui d avant la tache 6', () => {
-    // Le contrat de replication de l'etape 2 : le chemin sans zones ne doit
-    // pas bouger d'un ulp. `x * dt * 1` est exact en IEEE754.
+    // Le contrat de replication : le chemin sans zones ne doit pas bouger
+    // d'un ulp. `x * dt * 1` est exact en IEEE754.
     const fields = fieldsTowards(4000, 4000);
     const avec = new Horde(4000);
     const sans = new Horde(4000);
@@ -2550,12 +2401,10 @@ describe('Horde.step — le ralentissement des zones (etape 5a, tache 6)', () =>
 });
 
 /**
- * La Supraconduction (Givre + Foudre, tache 7 de l'etape 5b) : `slowFactor:
- * 0` sur le champ qu'elle laisse. Elle n'ajoute AUCUN mecanisme
- * d'immobilisation : c'est le MEME `#computeSlow` que le bloc Givre
- * ci-dessus, seul le facteur derive (`zoneSlowFactor`, `shared/reactions.ts`)
- * change. Le describe est separe parce que le SUJET differe (une reaction,
- * pas un element seul), pas parce que le mecanisme differe.
+ * La Supraconduction (Givre + Foudre) : `slowFactor: 0` sur le champ qu'elle
+ * laisse. AUCUN mecanisme d'immobilisation de plus : c'est le MEME
+ * `#computeSlow` que le bloc Givre ci-dessus, seul le facteur derive
+ * (`zoneSlowFactor`, `shared/reactions.ts`) change.
  */
 describe('Horde.step — la Supraconduction fige le deplacement (etape 5b, tache 7)', () => {
   /** Une entite unique, immobile a `(x, y)`, avec sa vitesse posee a la main. */
@@ -2589,13 +2438,11 @@ describe('Horde.step — la Supraconduction fige le deplacement (etape 5b, tache
   const MESURE = STEERING_RECOMPUTE_TICKS + 2;
 
   it('immobilise totalement, quel que soit l element porte par le nibble (Givre OU Foudre declenche)', () => {
-    // ⚠️ **Le point precis de `zoneSlowFactor` : le nibble d'element de la
-    // zone porte celui du DECLENCHEUR** (`ReactionTrigger.element`,
-    // `back/src/combat.ts`), Givre OU Foudre selon l'ordre d'arrivee des
-    // deux elements. `elementOf(ELEMENT.GIVRE).slowFactor` (0,6) et
-    // `elementOf(ELEMENT.FOUDRE).slowFactor` (1) sont TOUS DEUX faux pour la
-    // Supraconduction : seule la combinaison par minimum avec
-    // `ReactionDef.zoneSlowFactor` (0) rend le gel total, dans les deux cas.
+    // ⚠️ **Le nibble d'element de la zone porte celui du DECLENCHEUR**
+    // (`ReactionTrigger.element`, `back/src/combat.ts`), Givre OU Foudre selon
+    // l'ordre d'arrivee. Le `slowFactor` du Givre (0,6) et celui de la Foudre
+    // (1) sont TOUS DEUX faux pour la Supraconduction : seule la combinaison
+    // par minimum avec `ReactionDef.zoneSlowFactor` (0) rend le gel total.
     const fields = fieldsTowards(5000, 1000);
     const givreDeclenche = new ZoneField();
     givreDeclenche.spawn(packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION), 1000, 1000, 0, 0);
@@ -2633,14 +2480,13 @@ describe('Horde.step — la Supraconduction fige le deplacement (etape 5b, tache
   });
 
   /**
-   * Point de revue n° 4 du plan : une zone de Poix et une de Supraconduction
-   * au meme point. La Poix (`slowFactor` neutre, 1) ne doit ni annuler le
-   * gel ni s'y confondre — le minimum de `#computeSlow` doit rendre EXACTEMENT
-   * le facteur de la Supraconduction (0), quel que soit l'ordre de pose.
+   * Une zone de Poix et une de Supraconduction au meme point. La Poix
+   * (`slowFactor` neutre, 1) ne doit ni annuler le gel ni s'y confondre : le
+   * minimum de `#computeSlow` doit rendre EXACTEMENT 0, quel que soit l'ordre
+   * de pose.
    *
-   * ⚠️ **Posees dans les DEUX ordres**, comme la regle generale de cette
-   * etape l'exige des que deux elements se recouvrent dans un decor : voir le
-   * rapport de la tache 7 sur `ZoneField.ampAt`.
+   * ⚠️ **Posees dans les DEUX ordres**, comme chaque fois que deux elements
+   * se recouvrent dans un decor.
    */
   it('une zone de Poix superposee ne degele rien : le minimum reste 0, dans les deux ordres de pose', () => {
     const fields = fieldsTowards(5000, 1000);
@@ -2659,12 +2505,9 @@ describe('Horde.step — la Supraconduction fige le deplacement (etape 5b, tache
 });
 
 /**
- * Gel profond (Givre + Vif-argent) et Mortier vif (Poix + Chaux), tache 6 de
- * l'etape 5c : `slowFactor: 0` sur le champ qu'elles laissent — le MEME
- * `#computeSlow` que le bloc Supraconduction ci-dessus, seul le facteur
- * derive (`zoneSlowFactor`, `shared/reactions.ts`) change. Le describe est
- * separe pour la meme raison que Supraconduction l'etait du Givre : le SUJET
- * differe (deux reactions de plus), pas le mecanisme.
+ * Gel profond (Givre + Vif-argent) et Mortier vif (Poix + Chaux) :
+ * `slowFactor: 0` sur le champ qu'elles laissent, par le MEME `#computeSlow`
+ * que le bloc Supraconduction ci-dessus.
  */
 describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache 6 de l etape 5c)', () => {
   /** Une entite unique, immobile a `(x, y)`, avec sa vitesse posee a la main. */
@@ -2727,17 +2570,13 @@ describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache
   });
 
   /**
-   * ⚠️ **LE test qui assene LA DUREE, pas seulement l effet — §5 de la
-   * spec : « plus forte ou plus longue que Supraconduction ».**
-   * `zoneSlowFactor: 0` est un plancher ABSOLU des DEUX cotes : rien ne peut
-   * geler « plus fort » que zero, donc si les deux reactions ne se
-   * separaient que par cette assertion, Gel profond serait du CONTENU MORT
-   * a cote de la Supraconduction (§5 de la spec de l'etape 5c le dit en
-   * toutes lettres). La separation reelle est `zoneLifetimeTicks` : la
-   * Supraconduction degele a la duree GENERIQUE (`ZONE_LIFETIME_TICKS`, 90
-   * ticks), Gel profond continue jusqu'a `SURCHAUFFE_ZONE_LIFETIME_TICKS`
-   * (135 ticks, reutilisee — voir `REACTION_DEFS`). `MESURE` tombe entre les
-   * deux : la Supraconduction a deja degele, Gel profond gele encore.
+   * ⚠️ **LE test qui assene LA DUREE, pas seulement l effet** (« plus forte
+   * ou plus longue que Supraconduction »). `zoneSlowFactor: 0` est un
+   * plancher ABSOLU des DEUX cotes : rien ne gele « plus fort » que zero, et
+   * sans autre difference Gel profond serait du CONTENU MORT. La separation
+   * reelle est `zoneLifetimeTicks` : la Supraconduction degele a la duree
+   * GENERIQUE (`ZONE_LIFETIME_TICKS`), Gel profond tient jusqu'a
+   * `SURCHAUFFE_ZONE_LIFETIME_TICKS`. `MESURE` tombe entre les deux.
    */
   it('Gel profond reste gele au-dela de la duree de la Supraconduction : la DUREE les separe, pas l intensite', () => {
     const fields = fieldsTowards(5000, 1000);
@@ -2767,31 +2606,22 @@ describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache
   });
 
   /**
-   * ⚠️ **Tour de correction 1 — le test que le rapport de la tache 6
-   * annoncait « impossible » et que la revue a mesure en dix lignes.**
-   * `#advanceByVelocity` module le PAS par `#slow`, jamais la vitesse TENUE
-   * (`vx`/`vy`) — celle-ci reste la trajectoire que `#recomputeSteering`
-   * calcule, et qui ne tourne qu'une fois tous les `STEERING_RECOMPUTE_TICKS`
-   * ticks, PAR ENTITE (voir son docbloc). Pendant que Mortier vif vit,
-   * `#slow` a 0 fige la POSITION — mais si un recalcul survient PENDANT ce
-   * temps, `vx`/`vy` prennent quand meme la direction FUYANTE
-   * (`zoneFieldSign: -1`). A l'expiration de la zone, `#slow` repasse a 1
-   * AVANT le prochain recalcul : l'entite avance donc PLEIN POT dans la
-   * direction fuyante jusqu'a ce recalcul.
+   * ⚠️ `#advanceByVelocity` module le PAS par `#slow`, jamais la vitesse
+   * TENUE (`vx`/`vy`), que `#recomputeSteering` ne recalcule qu'une fois tous
+   * les `STEERING_RECOMPUTE_TICKS` ticks, PAR ENTITE. Pendant que Mortier vif
+   * vit, `#slow` a 0 fige la POSITION, mais un recalcul pendant ce temps
+   * donne a `vx`/`vy` la direction FUYANTE (`zoneFieldSign: -1`). A
+   * l'expiration, `#slow` repasse a 1 AVANT le prochain recalcul : l'entite
+   * avance PLEIN POT dans la direction fuyante jusqu'a ce recalcul.
    *
    * ⚠️ **Decor au PIRE CAS, pas un hasard d'entityId** : `waveId: 8` donne
    * `entityIdOf(8, 0) % STEERING_RECOMPUTE_TICKS === STEERING_RECOMPUTE_TICKS - 1`
-   * (asserte ci-dessous plutot que suppose), la phase qui maximise la
-   * fenetre de recul — le dernier recalcul possible avant l'expiration de
-   * `ZONE_LIFETIME_TICKS` (generique, Mortier vif ne l'allonge pas) tombe
-   * au tick juste avant, et le prochain juste apres la fenetre entiere de
-   * `STEERING_RECOMPUTE_TICKS` ticks.
+   * (asserte ci-dessous), la phase qui maximise la fenetre de recul.
    *
    * ⚠️ **Artefact de jeu NON TRANCHE, garde ici, pas corrige** (voir le
-   * docbloc de l'entree `MORTIER_VIF` dans `shared/reactions.ts` et la
-   * reserve du rapport de cette tache) : le §5 de la spec dit « scelles et
-   * fragiles », pas « ejectes » — ce test ASSENE que le recul existe et sa
-   * DIRECTION, il ne juge pas s'il doit rester.
+   * docbloc de `MORTIER_VIF` dans `shared/reactions.ts`) : l'effet voulu est
+   * « scelles et fragiles », pas « ejectes ». Ce test ASSENE que le recul
+   * existe et sa DIRECTION, il ne juge pas s'il doit rester.
    */
   it('Mortier vif : la horde scellee gicle en arriere a l expiration, vx/vy tenant encore la direction fuyante', () => {
     const fields = fieldsTowards(5000, 1000);
@@ -2812,10 +2642,10 @@ describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache
     expect(scellee.entityIdAt(0) % STEERING_RECOMPUTE_TICKS).toBe(STEERING_RECOMPUTE_TICKS - 1);
 
     const zones = new ZoneField();
-    // ⚠️ **La duree de CE champ, pas la generique** (etape 8 : chaque reaction
-    // a la sienne). Mortier vif scelle moins longtemps que le champ commun ;
-    // boucler sur `ZONE_LIFETIME_TICKS` laissait donc l'entite repartir avant
-    // la fin du decor, et le gel semblait ne pas tenir.
+    // ⚠️ **La duree de CE champ, pas la generique** : Mortier vif scelle
+    // moins longtemps que le champ commun, et boucler sur
+    // `ZONE_LIFETIME_TICKS` laisserait l'entite repartir avant la fin du
+    // decor.
     const kindSceau = packZoneKind(ELEMENT.POIX, REACTION.MORTIER_VIF);
     const vieSceau = zoneLifetimeTicks(kindSceau);
     zones.spawn(kindSceau, 1000, 1000, 0, 0);
@@ -2848,15 +2678,13 @@ describe('Horde.step — Gel profond et Mortier vif figent le deplacement (tache
 });
 
 /**
- * Verglas (Givre + Poix, tache 8 de l'etape 5b) : « les ennemis derapent ».
+ * Verglas (Givre + Poix) : « les ennemis derapent ».
  * `ReactionDef.zoneInertiaDamping` NON neutre intercepte
  * `Horde#recomputeSteering` : au tick ou l'entite recalculerait sa
- * trajectoire, elle GARDE sa vitesse precedente a la place, amortie d'un
- * facteur — voir le docbloc de la methode. `zoneSlowFactor` reste par
- * ailleurs epingle a celui du Givre (`shared/reactions.test.ts` le prouve a
- * l'unite) : deux mecanismes distincts pour les deux moities de la meme
- * reaction — « derapent » ici (VOYAGE), « et se percutent » cote serveur
- * seul (`back/src/combat.test.ts`, ne voyage PAS).
+ * trajectoire, elle GARDE sa vitesse precedente, amortie d'un facteur.
+ * `zoneSlowFactor` reste epingle a celui du Givre
+ * (`shared/reactions.test.ts`) : « derapent » ici (VOYAGE), « et se
+ * percutent » cote serveur seul (`back/src/combat.test.ts`, ne voyage PAS).
  */
 describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () => {
   /** Une entite unique, immobile a `(x, y)`. */
@@ -2989,10 +2817,9 @@ describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () 
   });
 
   /**
-   * Le piege de la tache 8 (R13), au point d'usage cette fois, pas
-   * seulement en unite sur `zoneSlowFactor`/`zoneInertiaDamping`
-   * (`shared/reactions.test.ts`) : le nibble d'element de la zone porte
-   * celui du DECLENCHEUR (Givre OU Poix selon l'ordre d'arrivee).
+   * Le piege d'ordre d'arrivee, au point d'usage cette fois (l'unite est dans
+   * `shared/reactions.test.ts`) : le nibble d'element de la zone porte celui
+   * du DECLENCHEUR (Givre OU Poix selon l'ordre d'arrivee).
    */
   it('le meme amortissement, quel que soit l element porte par le nibble (Givre OU Poix declenche)', () => {
     const fields = fieldsTowards(5000, 1000);
@@ -3018,10 +2845,10 @@ describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () 
   });
 
   it('spawnCatchingUp fait aussi deraper les pas rattrapes', () => {
-    // ⚠️ Meme raisonnement que le rattrapage du Givre (tache 6) : sans le
-    // parametre `zones` passe a `#recomputeSteering` depuis la boucle de
-    // rattrapage, celle-ci recalculerait la trajectoire depuis le champ pour
-    // chaque pas manque, meme dans une flaque de Verglas.
+    // ⚠️ Comme pour le rattrapage du Givre : sans le parametre `zones` passe
+    // a `#recomputeSteering` depuis la boucle de rattrapage, celle-ci
+    // recalculerait la trajectoire depuis le champ pour chaque pas manque,
+    // meme dans une flaque de Verglas.
     const fields = fieldsTowards(5000, 1000);
     const o = order({ count: 20, anchorX: 1000, anchorY: 1000, spawnTick: 1 });
 
@@ -3088,13 +2915,11 @@ describe('Horde.step — Verglas fait deraper la horde (etape 5b, tache 8)', () 
 });
 
 /**
- * La Chaux (tache 1 de l'etape 5c) : « il fuit » — substitution du VECTEUR
- * DE CHAMP au moment ou `Horde#recomputeSteering` le lit, jamais une
- * ecriture dans `targetField` (qui se recalcule a chaque tick depuis les
- * positions des joueurs — voir le docbloc de la methode). Contrairement au
- * Verglas juste au-dessus (qui INTERCEPTE avant de lire le champ), la Chaux
- * laisse la repulsion entre voisins intacte : seule la POURSUITE du joueur
- * s'inverse.
+ * La Chaux : « il fuit ». Substitution du VECTEUR DE CHAMP au moment ou
+ * `Horde#recomputeSteering` le lit, jamais une ecriture dans `targetField`
+ * (recalcule a chaque tick depuis les positions des joueurs). Contrairement
+ * au Verglas (qui INTERCEPTE avant de lire le champ), la Chaux laisse la
+ * repulsion entre voisins intacte : seule la POURSUITE du joueur s'inverse.
  */
 describe('Horde.step — la Chaux fait fuir (etape 5c, tache 1)', () => {
   /** Une entite unique, immobile a `(x, y)`. */
@@ -3195,13 +3020,11 @@ describe('Horde.step — la Chaux fait fuir (etape 5c, tache 1)', () => {
   });
 
   /**
-   * Point de revue n°4 du plan de l'etape 5c, ASSENE : le gel de la
-   * Supraconduction gagne SUR la fuite de la Chaux PAR CONSTRUCTION — pas
-   * par une regle de priorite ecrite quelque part, mais parce que
-   * `#advanceByVelocity` multiplie `vx`/`vy` par `#slow` (0, gel total)
-   * APRES que `#recomputeSteering` a deja fige leur DIRECTION : une vitesse
-   * inversee dont la norme finale est nulle produit un deplacement nul,
-   * dans les DEUX ordres de pose des zones.
+   * ⚠️ Le gel de la Supraconduction gagne SUR la fuite de la Chaux PAR
+   * CONSTRUCTION, pas par une regle de priorite : `#advanceByVelocity`
+   * multiplie `vx`/`vy` par `#slow` (0) APRES que `#recomputeSteering` a fige
+   * leur DIRECTION. Une vitesse inversee de norme finale nulle ne deplace
+   * rien, dans les DEUX ordres de pose.
    */
   it('le gel de la Supraconduction gagne sur la fuite de la Chaux : deplacement NUL, dans les deux ordres', () => {
     const fields = fieldsTowards(5000, 1000);
@@ -3231,14 +3054,10 @@ describe('Horde.step — la Chaux fait fuir (etape 5c, tache 1)', () => {
 });
 
 /**
- * Aveuglement (Chaux + Vif-argent, tache 6 de l'etape 5c) : « la fuite,
- * plus forte ou plus longue que la Chaux seule » (§5 de la spec). Le MEME
- * mecanisme que le bloc Chaux ci-dessus (`zoneFieldSign`, substitution du
- * VECTEUR DE CHAMP) — seule la duree la distingue (`zoneFieldSign` n'a que
- * deux valeurs, +1/-1, rien n'est « plus fort » que -1). Le describe est
- * separe pour la meme raison que Gel profond l'etait de la Supraconduction :
- * le SUJET differe (une reaction a DEUX elements, dont un seul — la Chaux —
- * fuit), pas le mecanisme.
+ * Aveuglement (Chaux + Vif-argent) : « la fuite, plus forte ou plus longue
+ * que la Chaux seule ». Le MEME mecanisme que le bloc Chaux ci-dessus
+ * (`zoneFieldSign`, substitution du VECTEUR DE CHAMP) : seule la duree la
+ * distingue, `zoneFieldSign` n'ayant que deux valeurs.
  */
 describe('Horde.step — Aveuglement fait fuir plus longtemps que la Chaux seule (tache 6 de l etape 5c)', () => {
   /** Une entite unique, immobile a `(x, y)`. */
@@ -3337,16 +3156,12 @@ describe('Horde.step — Aveuglement fait fuir plus longtemps que la Chaux seule
   });
 
   /**
-   * ⚠️ **LE test qui assene LA DUREE, pas seulement l effet — §5 de la
-   * spec : « plus forte ou plus longue que la Chaux seule ».**
-   * `zoneFieldSign` n'a que deux valeurs (+1/-1) : rien n'est « plus fort »
-   * que -1, donc si les deux ne se separaient que par « ca fuit », Aveuglement
-   * serait du CONTENU MORT a cote de la Chaux seule. La separation reelle est
-   * `zoneLifetimeTicks` : une Chaux seule (sans reaction nommee) fuit
-   * pendant la duree GENERIQUE (90 ticks), Aveuglement continue jusqu'a
-   * `SURCHAUFFE_ZONE_LIFETIME_TICKS` (135 ticks, reutilisee). Le tick de
-   * mesure tombe entre les deux : la Chaux seule a deja lache prise,
-   * Aveuglement fuit encore.
+   * ⚠️ **LE test qui assene LA DUREE, pas seulement l effet.** Rien n'est
+   * « plus fort » que -1 : sans autre difference, Aveuglement serait du
+   * CONTENU MORT a cote de la Chaux seule. La separation reelle est
+   * `zoneLifetimeTicks` : une Chaux seule fuit pendant la duree GENERIQUE,
+   * Aveuglement jusqu'a `SURCHAUFFE_ZONE_LIFETIME_TICKS`. Le tick de mesure
+   * tombe entre les deux.
    */
   it('continue de fuir au dela de la duree d une Chaux seule : la DUREE les separe, pas l intensite', () => {
     const fields = fieldsTowards(5000, 1000);
@@ -3379,16 +3194,12 @@ describe('Horde.step — Aveuglement fait fuir plus longtemps que la Chaux seule
 });
 
 /**
- * Point de revue n°4 du plan de l'etape 5c, applique aux DEUX reactions de
- * cette tache qui combinent gel et fuite au meme point : Aveuglement (la
- * fuite) et Gel profond (le gel). `#computeSlow` prend le MINIMUM : `0`
- * (Gel profond) gagne sur `1` (aucun ralentissement propre d'Aveuglement),
- * donc l'entite est GELEE — la fuite qu'impose `#fieldSign` devient sans
- * objet, `#advanceByVelocity` multipliant `vx`/`vy` par `#slow` (0) APRES
- * que `#recomputeSteering` a deja fige leur DIRECTION. Meme raisonnement,
- * exactement, que Chaux+Supraconduction plus haut — ici avec les DEUX
- * reactions livrees par cette tache plutot qu'un element et une reaction
- * d'une tache anterieure.
+ * Aveuglement (la fuite) et Gel profond (le gel) au meme point.
+ * `#computeSlow` prend le MINIMUM : `0` (Gel profond) gagne sur `1`, donc
+ * l'entite est GELEE ; la fuite qu'impose `#fieldSign` devient sans objet,
+ * `#advanceByVelocity` multipliant `vx`/`vy` par `#slow` (0) APRES que
+ * `#recomputeSteering` a fige leur DIRECTION. Meme raisonnement que
+ * Chaux + Supraconduction plus haut.
  */
 describe('Horde.step — un ennemi sous Aveuglement ET Gel profond est GELE, pas en fuite (point de revue n°4)', () => {
   function une(x: number, y: number): Horde {
@@ -3464,11 +3275,11 @@ describe('la charge du boss REMPLACE le deplacement (etape 6a, tache 5 bis)', ()
   });
 
   /**
-   * ⚠️ **LE test de la tache.** Le boss est DANS la horde, et `Horde.step`
-   * avance toutes les entites : si la charge s'AJOUTAIT au lieu de REMPLACER, il
-   * avancerait deux fois. La position doit valoir exactement celle que
-   * `chargePointAt` derive, au bit pres apres passage en `Float32Array` — pas
-   * « a peu pres ».
+   * ⚠️ **LE test du remplacement.** Le boss est DANS la horde, et
+   * `Horde.step` avance toutes les entites : si la charge s'AJOUTAIT au lieu
+   * de REMPLACER, il avancerait deux fois. La position doit valoir exactement
+   * celle que `chargePointAt` derive, au bit pres apres passage en
+   * `Float32Array`.
    */
   it('pose exactement la position derivee, a chaque tick de la charge', () => {
     const { horde, fields, id } = bossSeul();
@@ -3487,22 +3298,19 @@ describe('la charge du boss REMPLACE le deplacement (etape 6a, tache 5 bis)', ()
   });
 
   /**
-   * ⚠️ **La separation ne doit pas le pousser pendant qu'il charge.** C'est le
-   * second piege annonce par le plan : `#applyDeoverlap` s'applique a TOUTES les
-   * entites, arretees comprises. Ici cinquante voisines naissent sur lui —
-   * chevauchement maximal, correction maximale — et la position derivee doit
-   * quand meme etre exacte.
+   * ⚠️ **La separation ne doit pas le pousser pendant qu'il charge** :
+   * `#applyDeoverlap` s'applique a TOUTES les entites, arretees comprises.
+   * Ici cinquante voisines naissent sur lui (chevauchement et correction
+   * maximaux) et la position derivee doit quand meme etre exacte.
    */
   it('reste sur son couloir au pixel pres malgre cinquante voisines empilees dessus', () => {
     const fields = fieldsTowards(5000, 1000);
     const horde = new Horde(200);
-    // ⚠️ **Le boss porte l'identite la PLUS GRANDE** (vague 9 contre vague 6),
-    // et ce n'est pas cosmetique : `#applyDeoverlap` ne fait accumuler une
-    // correction qu'a l'entite DERRIERE, departagee a distance egale par le
-    // plus grand identifiant (`#isBehind`). Avec une identite plus petite que
-    // celle de ses voisines, le boss n'encaisse rien du tout — et la mutation
-    // « la charge s'applique avant la separation » survivait, appliquee sur le
-    // disque, malgre cinquante voisines collees sur lui.
+    // ⚠️ **Le boss porte l'identite la PLUS GRANDE** (vague 9 contre vague 6) :
+    // `#applyDeoverlap` ne fait accumuler une correction qu'a l'entite
+    // DERRIERE, departagee a distance egale par le plus grand identifiant
+    // (`#isBehind`). Avec une identite plus petite, le boss n'encaisserait
+    // rien, et « la charge s'applique avant la separation » passerait.
     horde.spawn(order({ waveId: 9, count: 1, anchorX: 1000, anchorY: 1000 }), fields[0]);
     const id = horde.entityIdAt(0);
     horde.spawn(
@@ -3513,13 +3321,11 @@ describe('la charge du boss REMPLACE le deplacement (etape 6a, tache 5 bis)', ()
     const attendu = new Float32Array(2);
 
     // ⚠️ **Les voisines sont POSEES SUR le boss a chaque tick, pas seulement
-    // nees a la meme ancre.** Deux vagues au meme point ne se chevauchent pas
-    // pour autant — `formationPositions` les disperse — et sans chevauchement
-    // reel, `#applyDeoverlap` n'exerce aucune correction : la mutation
-    // « la charge s'applique AVANT l'avancement et la separation » survivait
-    // alors, appliquee sur le disque, a la totalite de cette suite. C'est la
-    // « fixture qui masque », dixieme occurrence de ce depot. Les reposer a
-    // chaque tick est ce qui garantit une correction maximale a tous les ticks.
+    // nees a la meme ancre.** `formationPositions` disperse deux vagues au
+    // meme point, et sans chevauchement reel `#applyDeoverlap` n'exerce
+    // aucune correction : « la charge s'applique AVANT l'avancement et la
+    // separation » passerait alors toute la suite. Les reposer a chaque tick
+    // garantit une correction maximale a tous les ticks.
     for (let t = 1; t <= charge.endTick; t++) {
       const slotBoss = horde.slotOf(id);
       for (let i = 0; i < horde.count; i++) {
@@ -3589,9 +3395,8 @@ describe('la charge du boss REMPLACE le deplacement (etape 6a, tache 5 bis)', ()
    * ⚠️ **`dt <= 0` reste un NO-OP STRICT, charge comprise.** Le serveur ne fait
    * pas avancer sa horde pendant le gel de niveau (`Room.step` revient avant) ;
    * le client, lui, appelle `step` avec `dt * 0`. Deriver la position hors du
-   * garde ferait avancer le boss chez le client pendant que le serveur le laisse
-   * sur place — une divergence silencieuse, exactement ce que le scenario 9 de
-   * la replication existe pour attraper.
+   * garde ferait avancer le boss chez le client pendant que le serveur le
+   * laisse sur place : une divergence silencieuse.
    */
   it('ne bouge pas le boss quand dt est nul, meme en pleine charge', () => {
     const { horde, fields, id } = bossSeul();

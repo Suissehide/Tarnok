@@ -7,15 +7,10 @@ import { Portal } from './portal';
 const { STAY, LEAVE } = VOTE_CHOICE;
 
 /**
- * ⚠️ **Le decor doit produire le cas qu'il pretend creer.** Ce depot a trouve
- * dix fixtures qui rendaient une mutation invisible : un seul perdant la ou il
- * en fallait deux, des joueurs ayant tous une carte reservee, deux zones
- * alignees, un boss portant la plus petite identite donc jamais pousse.
- *
- * Ici le piege a une forme precise : **une egalite qu'on croit creer et qui
- * n'en est pas une.** Deux departs et une abstention ne sont pas 2-2, ce sont
- * 2-0 — et le test passerait en verifiant « on continue » alors que le salon
- * est en train de partir. Cette fonction compte ce que le decor a REELLEMENT
+ * ⚠️ **Le decor doit produire le cas qu'il pretend creer.** Ici le piege est
+ * **une egalite qu'on croit creer et qui n'en est pas une** : deux departs et
+ * une abstention ne sont pas 2-2 mais 2-0, et le test passerait pour une
+ * mauvaise raison. Cette fonction compte ce que le decor a REELLEMENT
  * produit, et chaque scenario declare son decompte attendu.
  */
 function decompte(portal: Portal): { rester: number; partir: number; silencieux: number } {
@@ -37,9 +32,8 @@ function decompte(portal: Portal): { rester: number; partir: number; silencieux:
 describe('le portail : ouverture', () => {
   it('dure VINGT SECONDES, et c est la seule ligne qui le garde', () => {
     // ⚠️ Tout le reste de ce fichier derive ses ticks de la constante et
-    // resterait vert si elle valait trois. Le §6 promet vingt secondes, et le
-    // §8 en fait une question de jugement (« est-ce assez pour decider a
-    // quatre ? ») : c'est ici, et nulle part ailleurs, que la promesse tient.
+    // resterait vert si elle valait trois : c'est ici, et nulle part
+    // ailleurs, que la promesse des vingt secondes tient.
     expect(PORTAL_WINDOW_TICKS).toBe(20 * TICK_HZ);
   });
 
@@ -60,7 +54,7 @@ describe('le portail : ouverture', () => {
     const portal = new Portal();
     portal.open(0, [4, 7, 9]);
 
-    // ⚠️ **La visibilite EST la mecanique** (§6) : on ne negocie pas un choix
+    // ⚠️ **La visibilite EST la mecanique** : on ne negocie pas un choix
     // qu'on ne voit pas, et « qui n'a pas encore tranche » fait partie de ce
     // qu'il faut voir. Une table qui ne porterait que les votes REELLEMENT
     // poses — comme les jetons du draft — laisserait les silencieux invisibles
@@ -130,10 +124,9 @@ describe("le portail : l'egalite continue (§6)", () => {
     portal.setVote(3, STAY);
     portal.setVote(4, STAY);
 
-    // ⚠️ **L'egalite comptee, pas supposee.** C'est LA fixture que ce depot
-    // rate : 2 departs et 2 silences se lisent aussi comme « egalite » si on
-    // ne regarde que les deux camps, et rendraient « on continue » pour une
-    // raison entierement differente — le silence, pas l'egalite.
+    // ⚠️ **L'egalite comptee, pas supposee.** 2 departs et 2 silences se
+    // liraient aussi comme « egalite » et rendraient « on continue » pour une
+    // tout autre raison : le silence, pas l'egalite.
     expect(decompte(portal)).toEqual({ rester: 2, partir: 2, silencieux: 0 });
 
     expect(portal.step(1)).toBe(STAY);
@@ -165,10 +158,9 @@ describe("le portail : l'absence ne bloque jamais (§4.4 de l'etape 4)", () => {
     // La fenetre va a son terme : deux joueurs n'ont pas tranche.
     expect(portal.step(portal.deadlineTick - 1)).toBeNull();
 
-    // ⚠️ **CE test est celui que `NO_VOTE = 255` rend possible**, et le seul
-    // qui distingue la sentinelle d'un zero. A `NO_VOTE = STAY = 0`, les deux
-    // silencieux voteraient « rester » et ce salon resterait a 2 contre 1 —
-    // exactement l'inversion que la doc de `NO_VOTE` annonce.
+    // ⚠️ **Le seul test qui distingue la sentinelle `NO_VOTE` d'un zero.** A
+    // `NO_VOTE = STAY = 0`, les deux silencieux voteraient « rester » et ce
+    // salon resterait a 2 contre 1.
     expect(portal.step(portal.deadlineTick)).toBe(LEAVE);
   });
 
@@ -182,9 +174,8 @@ describe("le portail : l'absence ne bloque jamais (§4.4 de l'etape 4)", () => {
   });
 
   it('un salon VIDE tranche au premier pas, et il continue', () => {
-    // Tout le monde s'est deconnecte pendant le vote (§10 de la spec, question
-    // laissee ouverte) : a l'echeance, on continue. Ici l'echeance est
-    // immediate — il n'y a plus personne dont on attende quoi que ce soit.
+    // Tout le monde s'est deconnecte pendant le vote : on continue, et
+    // l'echeance est immediate puisqu'on n'attend plus personne.
     const portal = new Portal();
     portal.open(0, []);
     expect(portal.step(1)).toBe(STAY);
@@ -252,9 +243,8 @@ describe('le portail : un seul verdict, et rien ne lui survit', () => {
     portal.step(1);
 
     // ⚠️ **Sans cette ligne, `VOTES` rediffuserait les voix du palier
-    // precedent a chaque tick** jusqu'au portail suivant — le defaut exact que
-    // les jetons du draft ont produit en jeu, signale par l'auteur : chacun
-    // voyait son vote deja pose avant d'avoir decide.
+    // precedent a chaque tick** jusqu'au portail suivant : chacun verrait son
+    // vote deja pose avant d'avoir decide.
     expect(portal.votes().size).toBe(0);
 
     portal.open(100, [1, 2]);

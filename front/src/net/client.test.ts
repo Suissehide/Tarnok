@@ -96,11 +96,9 @@ import {
 class FakeSocket {
   static instances: FakeSocket[] = [];
   /**
-   * Meme valeur que le vrai `WebSocket.OPEN` : `#sendInput` (client.ts) ne
-   * parle que si `readyState === WebSocket.OPEN`, et `WebSocket` est ici le
-   * symbole global stubbe sur CETTE classe (voir `vi.stubGlobal` plus bas) —
-   * sans cette constante, `WebSocket.OPEN` vaudrait `undefined` et aucun
-   * INPUT ne partirait jamais, meme apres un vrai `emit('open', ...)`.
+   * Meme valeur que le vrai `WebSocket.OPEN` : `#sendInput` ne parle que si
+   * `readyState === WebSocket.OPEN`, et `WebSocket` est ici CETTE classe
+   * (`vi.stubGlobal`). Sans elle, aucun INPUT ne partirait jamais.
    */
   static readonly OPEN = 1;
   readonly #listeners = new Map<string, ((event: { data: ArrayBuffer }) => void)[]>();
@@ -117,7 +115,7 @@ class FakeSocket {
     this.#listeners.set(type, list);
   }
 
-  /** Trames poussees par le client — le chemin SORTANT (`DRAFT_TOKEN`, tache 9). */
+  /** Trames poussees par le client — le chemin SORTANT (`DRAFT_TOKEN`...). */
   readonly sent: ArrayBuffer[] = [];
 
   send(data: ArrayBuffer): void {
@@ -129,10 +127,7 @@ class FakeSocket {
   }
 
   emit(type: string, event: { data: ArrayBuffer }): void {
-    // Un vrai WebSocket passe a OPEN AVANT de declencher son evenement
-    // 'open' : sans cette ligne, un test qui emet 'open' puis avance le
-    // temps ne verrait jamais `#sendInput` parler, faute de `readyState`
-    // credible.
+    // Un vrai WebSocket passe a OPEN AVANT de declencher son evenement 'open'.
     if (type === 'open') {
       this.readyState = FakeSocket.OPEN;
     }
@@ -170,11 +165,9 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
   });
 
   it('calcule un rattrapage non nul pour un ordre emis avant le tick local courant', () => {
-    // Sans l'alignement, `hordeTick` serait reste proche de zero alors que
-    // `order.spawnTick` est un tick serveur absolu et eleve : la soustraction
-    // `tick - spawnTick` serait massivement negative, `missed` clampe a zero
-    // en permanence, et le rattrapage ne s'executerait jamais — exactement la
-    // regression que ce test verrouille.
+    // Sans l'alignement, `tick - spawnTick` serait massivement negatif,
+    // `missed` clampe a zero en permanence, et le rattrapage ne s'executerait
+    // jamais.
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
     client.connect();
     const socket = latestSocket();
@@ -213,12 +206,11 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
       STEP,
       expect.anything(),
       // Les zones : le rattrapage doit ralentir comme le serveur l'a fait
-      // pendant les pas manques (tache 6).
+      // pendant les pas manques.
       client.zones,
-      // La charge du boss : meme raison (tache 5 bis de l'etape 6a). `null`
-      // ici — aucune charge n'a ete annoncee — mais le parametre DOIT etre
-      // passe, sans quoi un rattrapage tombant pendant une charge avancerait le
-      // boss par sa vitesse la ou le serveur le derivait le long du couloir.
+      // La charge du boss : meme raison. `null` ici, mais le parametre DOIT
+      // etre passe, sans quoi un rattrapage pendant une charge avancerait le
+      // boss par sa vitesse au lieu de le deriver le long du couloir.
       null,
     );
     expect(client.horde.count).toBe(10);
@@ -227,11 +219,9 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
 
 describe('GameClient — livre le masque d obstacles au rendu (tache 28)', () => {
   it('livre au rendu exactement le meme masque et la meme geometrie que ceux appliques aux champs de flux', () => {
-    // Mutation testee : que le WELCOME livre a `onMapReady` un masque
-    // regenere a part (autre graine, ou memes `cols`/`rows` mais decale
-    // d'une cellule) plutot que CELUI qui vient d'alimenter `#fields`
-    // ci-dessus dans `client.ts` fait echouer ce test — les deux tableaux
-    // divergeraient presque partout, pas seulement sur une cellule.
+    // Mutation testee : un masque regenere a part (autre graine, ou decale
+    // d'une cellule) plutot que CELUI qui alimente `#fields` fait echouer ce
+    // test.
     const mapSeed = 0x51ee_d0;
     const onMapReady = vi.fn();
     const client = new GameClient(
@@ -249,9 +239,8 @@ describe('GameClient — livre le masque d obstacles au rendu (tache 28)', () =>
     expect(onMapReady).toHaveBeenCalledTimes(1);
     const map = onMapReady.mock.calls[0]?.[0] as ObstacleMap;
 
-    // Reconstruit independamment, avec la meme sonde `FlowField` que celle
-    // que `client.ts` utilise pour connaitre `cols`/`rows` avant de tirer le
-    // masque — voir `makeReferenceServer` plus bas, meme discipline.
+    // Reconstruit independamment, avec la meme sonde `FlowField` que
+    // `client.ts`, comme `makeReferenceServer` plus bas.
     const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
     const expectedMask = generateObstacles(mapSeed, probe.cols, probe.rows);
 
@@ -317,11 +306,9 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
   );
 
   /**
-   * ⚠️ **Etape 13 : la valeur, pas seulement le champ.** `tsc` garantit deja
-   * que `shield` existe sur le joueur predit (`#localShield`) ; seule une
-   * valeur NON NULLE et NON PAR DEFAUT (33, ni 0 ni `ORB_PICKUP_RADIUS`-like)
-   * prouve que `#localShield` est bien lu depuis le dernier snapshot plutot
-   * que laisse a son defaut de construction.
+   * ⚠️ **La valeur, pas seulement le champ.** Seule une valeur NON NULLE et
+   * NON PAR DEFAUT (33) prouve que `#localShield` est lu depuis le dernier
+   * snapshot plutot que laisse a son defaut de construction.
    */
   it('reprend le bouclier du dernier snapshot pour le joueur local predit', () => {
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
@@ -377,7 +364,7 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
 });
 
 /**
- * La vie du boss, telle que le client la retient (etape 6a, tache 5).
+ * La vie du boss, telle que le client la retient.
  *
  * ⚠️ **Le maximum est OBSERVE, jamais recu** : le palier ne voyage nulle part,
  * donc `bossHp(k, joueurs)` est hors de portee du client — voir `BossVitals`.
@@ -397,18 +384,13 @@ describe('trackBoss — les PV du boss et le maximum que ce client lui a vu', ()
   /**
    * ⚠️ **Le changement d'IDENTITE remet le maximum a zero, et rien d'autre.**
    *
-   * ⚠️ **Le decor est un boss PLUS PETIT que le precedent, et ce n'est pas un
-   * caprice** : la premiere version de ce test faisait apparaitre un boss de
-   * 6 720 PV apres un de 6 000, ou `Math.max(ancien, nouveau)` rend deja la
-   * bonne reponse — la mutation « ne jamais reinitialiser sur un nouvel
-   * identifiant » y SURVIVAIT. C'est la « fixture qui masque », neuf fois dans
-   * ce depot.
+   * ⚠️ **Le decor est un boss PLUS PETIT que le precedent** : avec un boss
+   * plus gros, `Math.max(ancien, nouveau)` rend deja la bonne reponse et la
+   * mutation « ne jamais reinitialiser sur un nouvel identifiant » survit.
    *
-   * Et le cas est reel : `bossHp` suit le palier ET le nombre de joueurs
-   * (tache 3 bis). Un joueur qui se deconnecte entre deux paliers fait
-   * apparaitre un boss moins gros que le precedent — 1 680 PV pour un joueur
-   * seul au palier 1, contre 6 000 pour quatre au palier 0. Sans la remise a
-   * zero, sa barre naitrait au quart pleine.
+   * Et le cas est reel : `bossHp` suit le palier ET le nombre de joueurs. Un
+   * joueur qui se deconnecte entre deux paliers fait apparaitre un boss moins
+   * gros que le precedent.
    */
   it('repart d un maximum neuf quand un autre boss apparait, meme plus petit', () => {
     const premier = trackBoss(null, { id: 8193, hp: 6000 });
@@ -434,10 +416,7 @@ describe('trackBoss — les PV du boss et le maximum que ce client lui a vu', ()
 });
 
 describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
-  /**
-   * Le decor sans boss : `encodeSnapshot` met `NO_BOSS_ID` quand on ne lui en
-   * donne pas — c'est la tache 4 qui l'a pose.
-   */
+  /** Le decor sans boss : `encodeSnapshot` met `NO_BOSS_ID` quand on ne lui en donne pas. */
   it('n a pas de boss tant que le snapshot n en porte pas', () => {
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
     client.connect();
@@ -545,17 +524,13 @@ const STEPS_PER_FIELD = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
 /**
  * Duree de gel choisie par ces tests.
  *
- * ⚠️ Ce n'est plus une constante du jeu. Depuis l'etape 4, le gel dure jusqu'a
- * ce que tout le monde ait pose son jeton — en solo, jusqu'au clic — et **seul
- * le serveur en connait la fin**, qu'il annonce par `DRAFT_RESULT` de phase 0.
- * Un test qui la deduirait d'une constante testerait un contrat qui n'existe
- * plus.
+ * ⚠️ Ce n'est pas une constante du jeu : le gel dure jusqu'a ce que tout le
+ * monde ait pose son jeton, et **seul le serveur en connait la fin**, qu'il
+ * annonce par `DRAFT_RESULT` de phase 0.
  *
- * ⚠️ **137, et surtout pas 60.** 60 etait `LEVEL_FREEZE_TICKS`, l'ancienne
- * duree fixe. Tant que ces tests gelaient pendant 60 ticks, un client qui
- * recalculait `msg.tick + 60 - 1` au lieu d'attendre le message se comportait
- * exactement pareil — mutation appliquee, 80 tests verts. Une duree arbitraire,
- * egale a aucune constante du jeu, est ce qui rend le contrat verifiable.
+ * ⚠️ **Une duree arbitraire, egale a aucune constante du jeu** : c'est ce qui
+ * fait echouer un client qui deduirait la fin du gel d'une constante au lieu
+ * d'attendre le message.
  */
 const GEL_TICKS = 137;
 
@@ -677,10 +652,8 @@ function runClientDeathScenario(params: {
     anchorY: 1200,
     count: entities,
   };
-  // `ref.fields[0]` : tache 18, evite de faire naitre une entite en plein mur
-  // — exactement ce que fait `Room.step` cote serveur. Sans ca, cette
-  // reference desaccorde son propre modele du serveur, puisque `GameClient`,
-  // lui, applique deja cet evitement via `spawnCatchingUp`.
+  // `ref.fields[0]` evite de faire naitre une entite en plein mur, comme
+  // `Room.step` et comme `GameClient` via `spawnCatchingUp`.
   ref.horde.spawn(order, ref.fields[0]);
 
   const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
@@ -703,14 +676,10 @@ function runClientDeathScenario(params: {
   const trackedId = entityIdOf(waveId, entities - 1);
 
   for (let tick = 0; tick < ticks; tick++) {
-    // Arrondies, comme sur le fil (constat C1.4, voir `Room.step`) : le
-    // client ne connait jamais que la version quantifiee en int16 du
-    // protocole. Si la reference alimentait son propre flowfield avec des
-    // positions flottantes non arrondies, les deux cotes enracineraient leur
-    // BFS dans des cellules differentes a chaque frontiere de cellule, et la
-    // derive resultante n'aurait plus rien a voir avec le rejeu des morts —
-    // piege reel, trouve par mesure a l'ecriture de ce fichier (voir le
-    // rapport de la tache 10).
+    // ⚠️ Arrondies, comme sur le fil (voir `Room.step`) : le client ne connait
+    // que la version quantifiee en int16. Avec des flottants, les deux cotes
+    // enracineraient leur BFS dans des cellules differentes aux frontieres, et
+    // la derive n'aurait plus rien a voir avec le rejeu des morts.
     const xs = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.cos(tick * 0.02 + p) * 1500));
     const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(tick * 0.02 + p) * 1500));
 
@@ -747,8 +716,7 @@ function runClientDeathScenario(params: {
     }));
     socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
-    // Livraison retardee au client : latence reseau simulee, comme l'exige la
-    // tache 10.
+    // Livraison retardee au client : latence reseau simulee.
     deaths.forEach((batch, i) => {
       const delay = batch.delay ?? deathDelayTicks;
       if (!delivered[i] && batch.tick + delay === tick) {
@@ -796,7 +764,7 @@ describe('GameClient — morts appliquees par rejeu (rollback + replay, tache 10
       // 151, pas 150 : hors des frontieres de rafraichissement du champ
       // (stepsPerField = 3, et 151 % 3 = 1) — sinon un `primeFieldForReplay`
       // qui utiliserait directement `atTick` au lieu de le ramener a `lastDue`
-      // passerait inapercu, exactement le piege documente a la tache 8.
+      // passerait inapercu.
       const DEATH_TICK = 151;
       const DEATH_IDS = Array.from({ length: 30 }, (_, k) => entityIdOf(WAVE_ID, k));
       // Bien en-deca de ROLLBACK_DEPTH_TICKS (8) : latence reseau realiste
@@ -884,13 +852,10 @@ describe('GameClient — morts appliquees par rejeu (rollback + replay, tache 10
     'deux lots de morts decides a des ticks differents mais livres au MEME tick local ' +
       'sont tous les deux appliques (la file se draine entierement, pas un lot par tick)',
     () => {
-      // Piege trouve par mutation en ecrivant ce fichier (voir le rapport de
-      // la tache 10) : les deux tests precedents ne mettent jamais plus d'un
-      // lot en attente a la fois, donc rien n'y distingue `#drainPendingDeaths`
-      // qui viderait la file en entier de sa mutation qui n'en traiterait
-      // qu'UN par tick — les deux versions les faisaient passer. Un retard
-      // reseau variable peut pourtant tres bien faire arriver, au meme tick
-      // local, les morts decidees a deux ticks serveur differents.
+      // Les tests precedents ne mettent jamais plus d'un lot en attente : rien
+      // n'y distingue `#drainPendingDeaths` qui vide la file de sa mutation
+      // qui n'en traiterait qu'UN par tick. Un retard reseau variable peut
+      // pourtant livrer au meme tick local des morts de deux ticks serveur.
       const WAVE_ID = 23;
       const ENTITIES = 300;
       // 151 et 154 : deux decisions serveur distinctes (151 % 3 = 1, 154 % 3 = 1),
@@ -934,7 +899,7 @@ describe('GameClient — morts appliquees par rejeu (rollback + replay, tache 10
 });
 
 /**
- * Etape 5a, tache 17 : *« moins d'xp qui tombe »*.
+ * Toutes les morts ne laissent pas d'orbe.
  *
  * ⚠️ **La garde DOIT etre des deux cotes du fil.** Le client ne recoit jamais
  * « un orbe existe » : il le derive du seul `DEATHS`. Le predicat, lui, n'a pas
@@ -944,8 +909,8 @@ describe('DerivedOrbs.spawn — le client filtre les memes morts que le serveur'
   it('ne retient que les morts que leavesDrop accepte, orbes ET pieces', () => {
     // ⚠️ **Assez de morts pour qu'une PIECE tombe** : `COIN_DROP_ONE_IN` vaut
     // quatre fois `ORB_DROP_ONE_IN`, donc un lot de 40 index consecutifs en
-    // contient plusieurs de chaque — un lot plus court n'aurait montre que des
-    // orbes et la tache 14 y aurait ete invisible.
+    // contient plusieurs de chaque ; un lot plus court ne montrerait que des
+    // orbes.
     const MORTS = 64;
     const orbs = new DerivedOrbs(MORTS);
     const attendues: number[] = [];
@@ -971,25 +936,15 @@ describe('DerivedOrbs.spawn — le client filtre les memes morts que le serveur'
 });
 
 /**
- * Etape 5a, tache 20, sur retour de jeu : *« l'aimantation est plus proche du
- * joueur et attire l'xp jusqu'a lui, meme s'il l'eloigne »*.
+ * L'orbe ramassee vole jusqu'au joueur, meme s'il s'eloigne.
  *
- * ⚠️ **Le predicat est celui du serveur, inchange — mais plus au MEME rayon
- * depuis la tache 7 de l'etape 7b.** `OrbField.resolvePickups`
- * (`back/src/combat.ts`) arbitre au rayon PERSONNEL de chaque joueur
- * (`ORB_PICKUP_RADIUS` plus ses achats) ; la capture cliente compare les
- * MEMES positions repliquees, chacune au rayon DE SON PROPRE joueur
- * (`PickupTarget.pickupRadius`, transporte par le `SNAPSHOT`), et ne fait
- * rien d'autre que retirer l'orbe de la reserve pour la mettre en vol. Les
- * tests de ce describe utilisent tous le rayon de base — aucun joueur n'y
- * achete l'aimant — donc ils restent corrects, mais c'est la seule raison
- * pour laquelle « au MEME rayon » y paraissait encore vrai. **L'experience
- * est deja acquise quand le vol commence** — c'est ce qui autorise l'orbe a
- * suivre un joueur qui fuit sans jamais promettre ce qui n'arrivera pas.
- *
- * Ce que la tache 17 avait mis a sa place — `ORB_MAGNET_RADIUS`, une attraction
- * fonction de la distance — a disparu : un second rayon decrivant le meme
- * evenement finit toujours par contredire le premier.
+ * ⚠️ **Le predicat est celui du serveur** : `OrbField.resolvePickups`
+ * (`back/src/combat.ts`) arbitre au rayon PERSONNEL de chaque joueur ; la
+ * capture cliente compare les MEMES positions repliquees, chacune au rayon DE
+ * SON PROPRE joueur (`PickupTarget.pickupRadius`). **L'experience est deja
+ * acquise quand le vol commence** : c'est ce qui autorise l'orbe a suivre un
+ * joueur qui fuit. Pas de second rayon d'attraction : il finirait par
+ * contredire le premier.
  */
 describe('DerivedOrbs.capture — la capture EST le ramassage (tache 20)', () => {
   /** Un orbe unique. Le `count` verifie que le decor ne ment pas (`dropsOrb`). */
@@ -1097,21 +1052,16 @@ describe('DerivedOrbs.capture — la capture EST le ramassage (tache 20)', () =>
   });
 
   /**
-   * ⚠️ **Ronde de correction 2 : l'INDEXATION, pas seulement le cablage.** La
-   * ronde 1 a prouve que le rayon personnel ajoute bien le bon bonus ; rien
-   * ne prouvait que CHAQUE joueur compare a SON rayon et pas a celui d'un
-   * autre. Mesure : remplacer `r2[j]` par `r2[0]` dans `capture` laissait les
-   * 485 tests de ce fichier verts, parce qu'aucun n'appelait `capture` avec
-   * deux joueurs de rayons DIFFERENTS.
+   * ⚠️ **L'INDEXATION, pas seulement le cablage** : CHAQUE joueur compare a
+   * SON rayon. Seul un appel avec deux joueurs de rayons DIFFERENTS fait
+   * echouer la mutation `r2[j]` -> `r2[0]`.
    *
-   * Ici, B n'est PAS au premier indice (A est devant lui dans le tableau) :
-   * si la capture comparait tout le monde au rayon du PREMIER joueur,
-   * l'orbe « dans la bande » ne serait jamais prise, puisque A est loin de
-   * tout.
+   * Ici, B n'est PAS au premier indice : si la capture comparait tout le monde
+   * au rayon du PREMIER joueur, l'orbe « dans la bande » ne serait jamais
+   * prise, puisque A est loin de tout.
    *
-   * ⚠️ **Et la seconde moitie, sans quoi le piege signale en ronde 1
-   * revient** : une orbe au-dela du rayon ELARGI de B doit rester au sol —
-   * sans elle, un rayon infini passerait aussi bien qu'un rayon correct.
+   * ⚠️ **Et la seconde moitie** : une orbe au-dela du rayon ELARGI de B doit
+   * rester au sol, sans quoi un rayon infini passerait aussi.
    */
   it('cible le joueur au rayon elargi meme hors du premier indice, et ne ment pas au-dela', () => {
     const BONUS = 50;
@@ -1166,8 +1116,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
   /**
    * ⚠️ **Le meme filtre, atteint par le VRAI chemin** : un lot `DEATHS` d'une
    * vague entiere, index consecutifs. Sans ce test, la garde de
-   * `DerivedOrbs.spawn` pouvait etre retiree sans qu'une assertion bouge — elle
-   * l'a ete, et 280 tests sont restes verts.
+   * `DerivedOrbs.spawn` pourrait etre retiree sans qu'une assertion bouge.
    */
   it('un lot de morts a index consecutifs ne laisse que ce que leavesDrop accepte', () => {
     const WAVE_ID = 31;
@@ -1222,7 +1171,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     expect(client.orbs.count).toBe(attendues.length);
     const poses = [...client.orbs.id.slice(0, client.orbs.count)];
     expect(poses.every((id) => leavesDrop(id))).toBe(true);
-    // La tache 14 par le VRAI chemin : le lot contient des pieces, derivees du
+    // Les pieces par le VRAI chemin : le lot en contient, derivees du
     // seul `DEATHS` comme les orbes — pas un octet de plus sur le fil.
     expect(poses.filter((id) => dropsCoin(id))).toHaveLength(piecesAttendues.length);
     // Non-vacuite des deux cotes : il y a des pieces, et il n'y a pas QUE ca.
@@ -1252,11 +1201,9 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     };
     socket.emit('message', { data: encodeWaveOrder(order) });
 
-    // ⚠️ **Des index ESPACES de `ORB_DROP_ONE_IN`, pas 0 et 1.** Depuis la
-    // tache 17, une mort sur quatre seulement laisse un orbe (`dropsOrb`) :
-    // deux index consecutifs n'en donneraient qu'un, et ce test — qui parle du
-    // chemin `DEATHS` -> orbe -> `PICKUPS`, pas du taux de chute — se mettrait
-    // a mesurer autre chose que ce qu'il annonce.
+    // ⚠️ **Des index ESPACES de `ORB_DROP_ONE_IN`, pas 0 et 1** : toutes les
+    // morts ne laissent pas d'orbe (`dropsOrb`), et ce test parle du chemin
+    // `DEATHS` -> orbe -> `PICKUPS`, pas du taux de chute.
     const killedIds = [entityIdOf(WAVE_ID, 0), entityIdOf(WAVE_ID, ORB_DROP_ONE_IN)];
     const DEATH_TICK = 10;
     const DELAY = 2;
@@ -1298,10 +1245,9 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
   });
 
   /**
-   * ⚠️ **Tache 20 : le chemin complet de la capture, par le VRAI chemin.** Les
-   * quatre tests unitaires de `DerivedOrbs.capture` ne prouvent rien tant que
-   * `GameClient.update` ne l'appelle pas — c'est la dette qui a mordu trois
-   * fois dans ce depot (voir `frame.ts`). Ici la capture est declenchee par un
+   * ⚠️ **Le chemin complet de la capture, par le VRAI chemin.** Les tests
+   * unitaires de `DerivedOrbs.capture` ne prouvent rien tant que
+   * `GameClient.update` ne l'appelle pas. Ici la capture est declenchee par un
    * coequipier qui vient se poser sur l'orbe, aux positions DESSINEES.
    *
    * ⚠️ **Un COEQUIPIER, pas le joueur local** : sa position dessinee est
@@ -1419,13 +1365,9 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       // ramassage. Une peremption retiree d'un seul cote ferait disparaitre
       // ici un orbe que le serveur ramasse encore.
       //
-      // ⚠️ **Aucune constante a deriver, et c'est le fait teste.** Ce test
-      // comparait `tick - bornTick` a `ORB_LIFETIME_TICKS` a ses deux bornes ;
-      // la constante n'existe plus. La propriete gardee est desormais une
-      // ABSENCE d'echeance, donc le seul nombre qui reste est la duree qu'on
-      // accepte d'attendre — arbitrairement longue, et cinq fois l'ancienne
-      // duree de vie (600 ticks) pour qu'un rallongement passe pour une
-      // suppression ne puisse pas se cacher derriere.
+      // ⚠️ **La propriete gardee est une ABSENCE d'echeance** : le seul nombre
+      // est la duree qu'on accepte d'attendre, assez longue pour qu'un simple
+      // rallongement de la vie des orbes ne passe pas pour une suppression.
       const TRES_LONGTEMPS = 3000;
       const WAVE_ID = 60;
       const ENTITIES = 5;
@@ -1477,7 +1419,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
 
         if (tick === DEATH_TICK + DELAY) {
           // Non-vacuite : l'orbe a bien ete pose. Sans cette borne basse, un
-          // orbe jamais ne apasserait le test final sans rougir.
+          // orbe jamais ne passerait le test final sans rougir.
           expect(client.orbs.count).toBe(1);
           vuApresLaMort = true;
         }
@@ -1508,8 +1450,8 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
       formation: FORMATION.CLUSTER,
       // Loin de l'endroit ou les joueurs stationnent : assez de distance a
       // parcourir pour que le mouvement reste mesurable sur toute la duree du
-      // test, gel et reprise compris. ⚠️ SUR l'ile : (500, 500) est de l'eau
-      // depuis la carte en tuiles, et la vague y naissait collee au rivage.
+      // test, gel et reprise compris. ⚠️ SUR l'ile : (500, 500) est de l'eau,
+      // et la vague y naitrait collee au rivage.
       anchorX: 1500,
       anchorY: 1500,
       count: ENTITIES,
@@ -1553,9 +1495,8 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
       if (tick === 20) {
         socket.emit('message', { data: encodeLevelUp(FREEZE_START, 2) });
       }
-      // ⚠️ C'est le SERVEUR qui annonce la fin du gel : le client ne peut plus
-      // la deduire (etape 4). Sans ce message, il resterait gele pour toujours
-      // — et c'est bien le comportement voulu.
+      // ⚠️ C'est le SERVEUR qui annonce la fin du gel : sans ce message, le
+      // client resterait gele pour toujours, et c'est voulu.
       if (tick === FREEZE_END) {
         socket.emit('message', { data: encodeDraftResult(FREEZE_END, []) });
       }
@@ -1665,7 +1606,7 @@ describe('GameClient — la prediction locale honore le gel de niveau (tache 24)
 
       // Fige pendant le gel strict : sinon le joueur avance en prediction
       // pendant que la horde s'arrete, et se fait remettre en place au
-      // prochain snapshot — c'est exactement le rubber-band rapporte.
+      // prochain snapshot (effet elastique).
       expect(duringFreezeTravel).toBe(0);
       // Un gel permanent laisserait aussi `duringFreezeTravel` a zero : cette
       // seconde moitie est ce qui l'exclut.
@@ -1708,7 +1649,7 @@ describe('GameClient — isFrozen, pour l indication HUD du gel (tache 24)', () 
     expect(client.isFrozen).toBe(true);
 
     // Le serveur annonce la fin : c'est la SEULE facon pour le client de
-    // l'apprendre depuis l'etape 4.
+    // l'apprendre.
     socket.emit('message', { data: encodeDraftResult(FREEZE_END, []) });
     for (let tick = FREEZE_END; tick < RESUME_END - 5; tick++) {
       client.update(tick * STEP, STEP);
@@ -1782,15 +1723,12 @@ describe('GameClient — bilan de run (RUN_OVER, tache 11)', () => {
 });
 
 /**
- * Tir automatique cote client (tache 11, visee revue tache 13) — miroir
- * cosmetique de `Room#fireWeapons`/`resolveProjectileDamage` (back/src/room.ts,
- * back/src/combat.ts). Voir le commentaire de `GameClient#advanceHorde` :
- * jamais d'arbitrage de degats ici, seulement de quoi dessiner une salve et
- * un flash d'impact.
+ * Tir automatique cote client — miroir cosmetique de
+ * `Room#fireWeapons`/`resolveProjectileDamage` : jamais d'arbitrage de
+ * degats ici, seulement de quoi dessiner une salve et un flash d'impact.
  *
- * ⚠️ Depuis la tache 13, la visee vient de `readAim`, plus d'un ciblage
- * automatique sur la horde : chaque test doit donc fournir une direction, pas
- * seulement une position de joueur a portee.
+ * ⚠️ La visee vient de `readAim`, sans ciblage automatique : chaque test doit
+ * fournir une direction, pas seulement une position de joueur a portee.
  */
 describe('GameClient — tir automatique et impact cote client (tache 11/13)', () => {
   const MS_PER_TICK = 1000 / TICK_HZ;
@@ -1866,14 +1804,10 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     () => {
       const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0010, 70);
       // Distance CALCULEE, pas une constante en dur : elle doit laisser au
-      // moins un tick de vol au projectile avant l'impact, quelle que soit la
-      // vitesse de l'arme (reglee tache 14 — voir le rapport). Un decalage
-      // fixe trop petit ferait toucher des le meme tick que celui du tir : la
-      // boucle observerait `hitFlashes` avant d'avoir jamais vu
-      // `projectiles.count > 0`, et `firedAtTick` resterait a -1 comme
-      // constate lors du reglage de cette tache. Le monstre fonce droit sur
-      // le joueur (auto-cible du flowfield) — la meme ligne que celle visee
-      // par la salve (visee AIM_RIGHT, droit sur le monstre).
+      // moins un tick de vol au projectile, quelle que soit la vitesse de
+      // l'arme. Trop courte, l'impact tomberait au tick du tir et
+      // `firedAtTick` resterait a -1. Le monstre fonce droit sur le joueur,
+      // sur la ligne visee par la salve (AIM_RIGHT).
       const weapon = weaponOf(0);
       const perTickTravel = weapon.projectileSpeed / TICK_HZ;
       const offset = Math.round(perTickTravel * 3 + PROJECTILE_HIT_RADIUS);
@@ -1909,10 +1843,9 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
   );
 
   it('ne tire pas quand la visee est nulle, meme avec un monstre tout pres (tache 13)', () => {
-    // ⚠️ C'est LA regle centrale de la tache 13 : curseur pile sur le joueur,
-    // ou souris jamais bougee, `(0, 0)` ne tire pas — deterministe des deux
-    // cotes. Contrairement a l'ancien ciblage automatique, la proximite du
-    // monstre n'entre plus en jeu : c'est uniquement `readAim` qui gate ici.
+    // ⚠️ Curseur pile sur le joueur, ou souris jamais bougee : `(0, 0)` ne tire
+    // pas, deterministe des deux cotes. La proximite du monstre n'entre pas en
+    // jeu : seul `readAim` gate ici.
     const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0014, 74, () => ({
       x: 0,
       y: 0,
@@ -1992,8 +1925,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
   it('un flash d impact expire apres HIT_FLASH_LIFETIME_MS, jamais avant (verifie aux deux bornes)', () => {
     const { client, socket, monsterX, monsterY } = setupWithOneMonster(0xc1e2_0013, 73);
     // Tres proche : collision quasi immediate, avant que le cooldown de
-    // l'arme (7 ticks, tache 14) ne permette une seconde salve — la fenetre
-    // de 220 ms testee ci-dessous ne peut donc contenir qu'un seul flash.
+    // l'arme ne permette une seconde salve.
     const PLAYER = { x: monsterX - 20, y: monsterY };
 
     let hitNowMs = -1;
@@ -2032,18 +1964,14 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
 });
 
 /**
- * Etape 5b, tache 3 — TOUR DE CORRECTION 1 : la chaine de Foudre est
- * desormais un FLASH, seme UNE FOIS a l'impact predit par ce client
- * (`GameClient#seedChainFlash`), jamais redérivé de la horde a chaque image.
+ * La chaine de Foudre est un FLASH, seme UNE FOIS a l'impact predit par ce
+ * client (`GameClient#seedChainFlash`), jamais rederive de la horde a chaque
+ * image.
  *
- * ⚠️ **Aucune arme du catalogue (`shared/weapons.ts`) ne porte encore
- * `ELEMENT.FOUDRE`** — meme limite, et meme parade, que
- * `back/src/combat.test.ts` (tache 3) : une arme SYNTHETIQUE, tiree
- * directement sur `client.projectiles` (public, lecture ET ecriture pour le
- * test), en court-circuitant `#fireWeapons` et le catalogue/loadout entier.
- * `readAim` reste nul partout dans ce bloc : aucune arme reelle ne doit tirer
- * toute seule pendant ces tests, seul le projectile de Foudre tire a la main
- * doit voler.
+ * Une arme SYNTHETIQUE, tiree directement sur `client.projectiles`, en
+ * court-circuitant `#fireWeapons` et le loadout, comme `back/src/combat.test.ts`.
+ * `readAim` reste nul dans ce bloc : seul le projectile de Foudre tire a la
+ * main doit voler.
  */
 describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact (etape 5b, tache 3, tour de correction 1)', () => {
   const MS_PER_TICK = 1000 / TICK_HZ;
@@ -2103,10 +2031,9 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
     if (client.horde.count !== 2) {
       throw new Error(`amorce du test : horde.count=${client.horde.count}, attendu 2`);
     }
-    // Le percute a 300 px du joueur : largement sous la portee de l'arme
-    // synthetique (dague : 650 px/s x 28 ticks / TICK_HZ ~= 607 px), pour que
-    // le projectile ait le temps de la toucher avant d'expirer. 100 px
-    // separent le percute du voisin : dans CHAIN_RADIUS (150).
+    // Le percute a 300 px du joueur : sous la portee de l'arme synthetique,
+    // pour que le projectile le touche avant d'expirer. 100 px separent le
+    // percute du voisin : dans `CHAIN_RADIUS`.
     expect(100).toBeLessThan(CHAIN_RADIUS);
     client.horde.x[0] = 300;
     client.horde.y[0] = 0;
@@ -2181,11 +2108,9 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
   });
 
   /**
-   * ⚠️ **Le test que la revue a demande explicitement (exigence n°1).** Une
-   * chaine semee, puis la horde deplacee, puis une image de plus : la
+   * ⚠️ Une chaine semee, puis la horde deplacee, puis une image de plus : la
    * polyligne DEJA DESSINEE ne doit pas bouger d'un pixel. C'est la mutation
-   * « redériver a chaque image » (retour a l'ancienne version) qui doit
-   * rougir ici.
+   * « rederiver a chaque image » qui doit rougir ici.
    */
   it('le chemin est FIGE a la naissance : deplacer la horde ensuite ne change rien au flash deja seme', () => {
     const { client, socket, percuteId, voisinId } = setupPercuteEtVoisin(0xc1e2_00f1, 81);
@@ -2232,7 +2157,7 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
    * ⚠️ **Le filtre Foudre — une arme elementaire NON-Foudre marque mais ne
    * seme jamais de flash de chaine.** Seule `ELEMENT.FOUDRE` declenche
    * `#seedChainFlash` ; les autres elements suivent leur seul chemin
-   * existant (`#markLocally`), inchange par cette tache.
+   * (`#markLocally`).
    */
   it('un impact elementaire NON-Foudre marque, mais ne seme AUCUN flash de chaine', () => {
     const { client, socket, percuteId } = setupPercuteEtVoisin(0xc1e2_00f3, 83);
@@ -2247,7 +2172,6 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
   });
 
   /**
-   * ⚠️ **CHAIN_JUMPS n'est plus un detail invisible depuis ce fichier** :
    * `pointCount` d'un flash ne peut jamais depasser `1 + CHAIN_JUMPS` — un
    * controle direct sur ce que `ChainFlashes` accepte, complementaire de la
    * borne deja gardee cote serveur et cote `shared/chain.test.ts`.
@@ -2267,11 +2191,8 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
   const AIM_RIGHT: InputAxes = { x: 1, y: 0 };
 
   it('tire depuis la position PREDITE du joueur local, pas depuis celle du dernier snapshot', () => {
-    // ⚠️ Ce test existe parce que la mutation « jeter la prediction locale »
-    // (`const x = p.x` au lieu de `local ? local.simX : p.x`) laissait les
-    // dix-huit tests de ce fichier verts. Le commentaire de `#fireWeapons`
-    // affirme pourtant que le joueur local tire depuis sa position simulee,
-    // « plus a jour que le dernier snapshot recu ».
+    // ⚠️ Garde la mutation « jeter la prediction locale » (`const x = p.x` au
+    // lieu de `local ? local.simX : p.x`).
     //
     // On fait diverger les deux volontairement : le snapshot repete une
     // position FIXE pendant que l'entree pousse la prediction vers la droite.
@@ -2352,8 +2273,8 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     'tire avec la visee QUANTIFIEE (i8), jamais avec le flottant brut rendu par readAim ' +
       '(tache 13)',
     () => {
-      // ⚠️ C'est le coeur de la discipline de la tache 13 : la direction part
-      // sur le fil quantifiee sur un octet signe. Si `#localAim` utilisait le
+      // ⚠️ La direction part sur le fil quantifiee sur un octet signe. Si
+      // `#localAim` utilisait le
       // flottant brut de `readAim` au lieu de le faire passer par
       // `quantizeAxis`, cette assertion echouerait — 0.6 * 127 = 76,2, jamais
       // 76. Le vecteur (0.6, 0.8) est choisi PRECISEMENT parce que ses deux
@@ -2387,7 +2308,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       });
       // Le spy est pose AVANT le tout premier `update()` : c'est celui-la qui
       // tire (cooldown jamais entame), et le rater ferait attendre la
-      // prochaine fenetre de cooldown (7 ticks) pour rien.
+      // prochaine fenetre de cooldown pour rien.
       const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
       client.update(0, STEP);
       for (let tick = 1; tick <= 5 && spy.mock.calls.length === 0; tick++) {
@@ -2416,7 +2337,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
   );
 
   it('tire avec la visee LOCALE quantifiee, pas avec celle (retardee) du dernier snapshot recu', () => {
-    // ⚠️ Discipline de la tache 13 : le joueur local tire avec `#localAim`
+    // ⚠️ Le joueur local tire avec `#localAim`
     // (fraiche, calculee a chaque `update()`), jamais avec le bloc `aimX`/
     // `aimY` que son PROPRE snapshot rapporte — celui-ci a fait l'aller-retour
     // reseau et peut retarder d'un ou plusieurs ticks sur la souris reelle. On
@@ -2494,10 +2415,9 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
   });
 
   it('ne tire pas pendant le gel, et retire des la reprise', () => {
-    // ⚠️ Ce test existe parce que remplacer la garde `tick > #freezeUntilTick`
-    // par `if (true)` laissait les dix-huit tests verts : aucun n'exercait gel
-    // et tir ensemble. Les deux moities comptent — verifier seulement que le
-    // tir s'arrete laisserait passer un gel permanent.
+    // ⚠️ Garde la mutation `if (true)` a la place de `tick > #freezeUntilTick`.
+    // Les deux moities comptent : verifier seulement que le tir s'arrete
+    // laisserait passer un gel permanent.
     const client = new GameClient(
       'ws://test',
       () => ({ x: 0, y: 0 }),
@@ -2572,24 +2492,13 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
 });
 
 /**
- * Le draft, cote client (tache 9 de l'etape 4).
- *
- * Deux dettes inscrites au registre par les taches 7 et 8 se soldent ici, et
- * elles portent la moitie de ce bloc :
- *
- * - `#fireWeapons` tirait `weaponOf(0)` et rien d'autre, avec un compteur de
- *   recharge unique par joueur — la copie de ce que `Room` faisait AVANT la
- *   tache 7. Aucun projectile d'arme draftee ne s'affichait ;
- * - la prediction locale avancait a `PLAYER_SPEED` en dur, alors que le
- *   serveur y ajoute `bonus('speed')` — la premiere carte « fougue » faisait
- *   decrocher la prediction a chaque tick.
- *
- * Les deux se soldent par la meme chose : un `Loadout` par joueur, alimente
- * par `DRAFT_RESULT`.
+ * Le draft, cote client : un `Loadout` par joueur, alimente par
+ * `DRAFT_RESULT`. `#fireWeapons` en tire tout l'arsenal (une recharge par
+ * arme), et la prediction locale sa vitesse (`bonus('speed')`).
  */
 describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   const MS_PER_TICK = 1000 / TICK_HZ;
-  /** Une visee non nulle : sans elle, aucune des deux cotes ne tire (tache 13). */
+  /** Une visee non nulle : sans elle, aucun des deux cotes ne tire. */
   const AIM_RIGHT: InputAxes = { x: 1, y: 0 };
   /** Identifiants du catalogue, nommes ici pour que les tests se relisent. */
   const GRENADE = 4;
@@ -2602,7 +2511,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     localId = 1,
     readInput: () => InputAxes = () => ({ x: 0, y: 0 }),
     readAim: () => InputAxes = () => AIM_RIGHT,
-    /** Les bonus PERMANENTS du compte (boutique, etape 7b) — voir `GameClient`. */
+    /** Les bonus PERMANENTS du compte (boutique) — voir `GameClient`. */
     accountBonuses = bonusesOf(new Map()),
   ): { client: GameClient; socket: FakeSocket } {
     const client = new GameClient(
@@ -2675,15 +2584,12 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('un jeton refuse par le serveur ne s affiche pas comme pose', () => {
-    // ⚠️ Le §7.2 est categorique : le client ne DECIDE rien. Ce que l'ecran
-    // montre vient de `DRAFT_INTENTS`, jamais du geste local — un jeton
-    // affiche des le clic mentirait a chaque refus, et le joueur croirait
-    // viser une carte que le serveur ne lui accorde pas.
+    // ⚠️ Le client ne DECIDE rien : l'ecran montre `DRAFT_INTENTS`, jamais le
+    // geste local. Un jeton affiche des le clic mentirait a chaque refus.
     //
-    // ⚠️ **Il n'y a plus de carte reservee.** Le seul refus qui subsiste vient
-    // de l'inventaire (`Loadout.canTake` : des slots d'armes pleins refusent
-    // une arme NOUVELLE) — et le client, lui, n'en sait rien : c'est
-    // precisement pour ca qu'il ne doit rien afficher de facon optimiste.
+    // Le refus vient de l'inventaire (`Loadout.canTake` : des slots d'armes
+    // pleins refusent une arme NOUVELLE), que le client ne connait pas : d'ou
+    // l'interdiction de l'affichage optimiste.
     const { client, socket } = setup(1);
     const etalage = [
       { nature: CARD.WEAPON, refId: GRENADE },
@@ -2723,8 +2629,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   it('une carte perdue au conflit ne donne rien, la meme carte gagnee la donne', () => {
     // ⚠️ Les trois issues ne se valent pas : `LOST` (1) est le joueur qui
     // visait une carte qu'un AUTRE a eue. Les traiter comme les deux autres
-    // donnerait la carte contestee a tous ses pretendants — l'exclusivite du
-    // §6.2 s'effondre, et le conflit n'a plus d'enjeu.
+    // donnerait la carte contestee a tous ses pretendants.
     const { client, socket } = setup(1);
 
     grant(socket, { nature: CARD.WEAPON, refId: GRENADE }, [
@@ -2737,10 +2642,9 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('une attribution d office donne la carte comme une victoire', () => {
-    // Le joueur absent du §4.4 : il n'a pose aucun jeton, le serveur a tranche
-    // pour lui. `AUTO` (2) attribue tout autant que `WON` (0) — un client qui
-    // ne retiendrait que `WON` laisserait invisible tout l'arsenal d'un joueur
-    // en arriere-plan, cas explicitement decrit comme frequent.
+    // Le joueur absent : il n'a pose aucun jeton, le serveur a tranche pour
+    // lui. `AUTO` (2) attribue tout autant que `WON` (0) ; ne retenir que `WON`
+    // rendrait invisible l'arsenal d'un joueur en arriere-plan, cas frequent.
     const { client, socket } = setup(1);
 
     grant(socket, { nature: CARD.PASSIVE, refId: FOUGUE }, [
@@ -2751,19 +2655,10 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('un nouvel etalage efface les jetons du precedent', () => {
-    // ⚠️ Le pendant client du defaut signale par l'auteur en jouant.
-    //
-    // **Il a fallu la bonne entree pour que ce test prouve quelque chose.** Une
-    // premiere version enchainait `DRAFT_RESULT` puis `DRAFT_OPEN` : le
-    // resultat vide deja les intentions, donc neutraliser la remise a zero de
-    // `DRAFT_OPEN` ne cassait rien — la garde serveur et la garde client se
-    // couvraient l'une l'autre, quatrieme occurrence de ce motif dans cette
-    // etape.
-    //
-    // L'entree qui les separe est un `DRAFT_INTENTS` **perime**, arrivant apres
-    // le resultat. C'est exactement ce que le serveur emettait avant sa
-    // correction, et le client est un decodeur du FIL : ce qu'il fait d'une
-    // trame ne doit pas dependre de ce que `back/` emet ce mois-ci.
+    // ⚠️ L'entree est un `DRAFT_INTENTS` **perime**, arrivant apres le
+    // resultat : `DRAFT_RESULT` vide deja les intentions, donc sans ce message
+    // la remise a zero de `DRAFT_OPEN` ne serait pas exercee. Le client est un
+    // decodeur du FIL : il ne doit pas dependre de ce que `back/` emet.
     const { client, socket } = setup(1);
     socket.emit('message', {
       data: encodeDraftOpen(600, [{ nature: CARD.PASSIVE, refId: FOUGUE }]),
@@ -2778,7 +2673,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     socket.emit('message', { data: encodeDraftIntents([{ playerId: 1, cardIndex: 0 }]) });
     expect(client.draftIntents.get(1)).toBe(0);
 
-    // Le meme passif revient — les passifs ne sont JAMAIS exclus (§3.4), donc
+    // Le meme passif revient — les passifs ne sont JAMAIS exclus, donc
     // c'est le cas courant, pas un cas tordu.
     socket.emit('message', {
       data: encodeDraftOpen(900, [{ nature: CARD.PASSIVE, refId: FOUGUE }]),
@@ -2787,12 +2682,9 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('l etalage survit a la fermeture : c est la revelation qui en a besoin', () => {
-    // ⚠️ **Defaut trouve au balayage pre-vol de la tache 10.** Le client vidait
-    // `#draftCards` dans la branche `phase === 0` — c'est-a-dire a l'instant
-    // PRECIS ou l'ecran doit jouer la revelation du §4.2 : « la carte
-    // finalement obtenue s'illumine pour confirmer ». Les issues designent les
-    // cartes par leur INDICE ; l'etalage vide, l'ecran n'avait rien a
-    // illuminer et la revelation etait indessinable.
+    // ⚠️ L'etalage ne doit pas etre vide a la fermeture : c'est l'instant ou
+    // l'ecran illumine la carte obtenue, et les issues designent les cartes
+    // par leur INDICE.
     const { client, socket } = setup(1);
     const etalage = [
       { nature: CARD.PASSIVE, refId: FOUGUE },
@@ -2848,9 +2740,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     });
 
     // Le message a ete traite jusqu'au bout : la negociation est marquee close
-    // et le gel est date. On ne se sert PLUS de « l'etalage est vide » comme
-    // preuve — l'etalage survit desormais a la fermeture, pour que l'ecran
-    // puisse jouer la revelation du §4.2 sur des cartes qui existent encore.
+    // et le gel est date. (« L'etalage est vide » ne prouverait rien :
+    // l'etalage survit a la fermeture.)
     expect(client.draftSettled).toBe(true);
     expect(client.draftDeadlineTick).toBe(42);
     expect(client.draftOutcomes).toHaveLength(1);
@@ -2858,10 +2749,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('l arme draftee tire — pour son porteur comme pour son allie', () => {
-    // ⚠️ **La dette de la tache 7.** `#fireWeapons` tirait `weaponOf(0)` et
-    // rien d'autre : aucune arme draftee n'apparaissait a l'ecran, ni la
-    // sienne ni celle des autres. Deux armes DISTINCTES ici, une par joueur,
-    // parce que l'espion ne voit que l'arme — pas qui tire.
+    // ⚠️ Deux armes DISTINCTES, une par joueur, parce que l'espion ne voit que
+    // l'arme, pas qui tire.
     const { client, socket } = setup(1);
     socket.emit('message', { data: encodeDraftOpen(600, []) });
     grant(socket, { nature: CARD.WEAPON, refId: GRENADE }, [
@@ -2902,8 +2791,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('chaque arme a SA recharge : la grenade ne bride pas la dague, et tire quand meme', () => {
-    // ⚠️ **Le vrai enjeu de la dette.** Avec un compteur unique par joueur,
-    // l'une des deux armes disparait selon l'ordre du parcours : la lente si
+    // ⚠️ Avec un compteur unique par joueur, l'une des deux armes disparait
+    // selon l'ordre du parcours : la lente si
     // la rapide passe d'abord, la rapide sinon. Compter les DEUX est ce qui
     // ferme les deux cas d'un coup.
     const { client, socket } = setup(1);
@@ -2929,13 +2818,9 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const dague = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).map((c) => c[1]);
     const grenade = spy.mock.calls.filter((c) => c[0].id === GRENADE).length;
 
-    // ⚠️ **On lit les INTERVALLES, pas un compte.** Ce test comptait les
-    // salves et les comparait a `floor((TICKS - 1) / cadence) + 1`, une formule
-    // qui suppose que la premiere salve part au tick 1 — elle part au tick 2,
-    // et les deux comptes coincidaient par hasard a 7 ticks de recharge. La
-    // tache 19 a porte la dague a 4 ticks : le hasard tenait encore ici, plus
-    // au test voisin (les cartes de cadence). Un decor qui ne survit pas a un
-    // reglage de table est un decor qui mesurait autre chose.
+    // ⚠️ **On lit les INTERVALLES, pas un compte** : un compte depend du tick
+    // de la premiere salve et ne coincide avec une formule que par hasard,
+    // jusqu'au prochain reglage de la table.
     expect(dague.length).toBeGreaterThan(1);
     for (let i = 1; i < dague.length; i++) {
       expect((dague[i] ?? 0) - (dague[i - 1] ?? 0)).toBe(weaponOf(BASE_WEAPON_ID).cooldownTicks);
@@ -2953,8 +2838,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     //
     // ⚠️ Le canon a mitraille tire DEJA huit projectiles : sur une arme a
     // projectile unique, un miroir qui rendrait `stacks` au lieu de la vraie
-    // formule donnerait les memes nombres. (L'Eventail, id 1, tenait ce role
-    // jusqu'a l'etape 12 : devenu Roue de lames a deux bras, son gain vaut 1.)
+    // formule donnerait les memes nombres.
     const EVENTAIL = 7;
     const eventail = weaponOf(EVENTAIL);
     expect(eventail.projectileCount).toBeGreaterThan(1);
@@ -2991,8 +2875,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
       return salve[7] ?? 0;
     }
 
-    // ⚠️ **`stackGain` et pas `+ 1` depuis l'etape 8** : le gain suit la
-    // largeur de la salve de base. Ce que ce cas garde, c'est que le MIROIR
+    // ⚠️ **`stackGain` et pas `+ 1`** : le gain suit la largeur de la salve de
+    // base. Ce que ce cas garde, c'est que le MIROIR
     // lit la meme fonction que le serveur — la regle elle-meme est gardee par
     // `shared/weapons.test.ts`.
     const gain = stackGain(eventail);
@@ -3003,10 +2887,9 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('les passifs de cadence empiles accelerent le tir AFFICHE', () => {
-    // Le serveur applique `cooldownWithBonus` a chaque tir (tache 8) ; le
-    // client doit lire LA MEME fonction, pas la cadence brute du catalogue.
-    // Trois cartes : `round(4 * 0.76) = 3`, un pas visible malgre l'arrondi
-    // qui avale les deux premieres (R9 du registre).
+    // Le serveur applique `cooldownWithBonus` a chaque tir ; le client doit
+    // lire LA MEME fonction, pas la cadence brute du catalogue. Trois cartes :
+    // un pas visible malgre l'arrondi qui avale les deux premieres.
     const CARTES = 3;
     const { client, socket } = setup(1);
     for (let i = 0; i < CARTES; i++) {
@@ -3034,8 +2917,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const base = weaponOf(BASE_WEAPON_ID);
     const attendue = cooldownWithBonus(base.cooldownTicks, passiveOf(CADENCE).magnitude * CARTES);
     expect(attendue).toBeLessThan(base.cooldownTicks);
-    // ⚠️ L'INTERVALLE entre deux salves, jamais leur compte : voir la note du
-    // test « chaque arme a SA recharge » juste au-dessus.
+    // ⚠️ L'INTERVALLE entre deux salves, jamais leur compte : voir le test
+    // « chaque arme a SA recharge ».
     const salves = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).map((c) => c[1]);
     expect(salves.length).toBeGreaterThan(1);
     for (let i = 1; i < salves.length; i++) {
@@ -3045,7 +2928,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
   it('les passifs de degats empiles voyagent avec le projectile affiche', () => {
     // Inerte sur l'issue — la piétaille n'a pas de reserve de PV et le serveur
-    // arbitre seul (§5.4) — mais pas silencieux pour autant : le nombre porte
+    // arbitre seul — mais pas silencieux pour autant : le nombre porte
     // par le projectile est son seul point observable, et il doit valoir
     // exactement ce que `Room#fireOne` calcule.
     const CARTES = 2;
@@ -3078,14 +2961,10 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   /**
-   * Le troisieme site de la correction 2 de la revue finale. L'effet de jeu est
-   * NUL — la valeur est ignoree en aval, le serveur arbitre seul (§5.4) — donc
-   * le defaut etait entierement dans le docbloc de `#fireOne`, qui affirme
-   * qu'« un projectile affiche doit porter le MEME nombre que celui que le
-   * serveur arbitre ». Un docbloc faux est un bug dans ce depot ; ce test est
-   * ce qui le rend vrai, et il est le seul des trois a avoir rougi a la
-   * mutation SANS exister (`accountBonuses.damage` retire laissait les 101
-   * autres tests verts).
+   * Effet de jeu NUL (le serveur arbitre seul), mais le docbloc de `#fireOne`
+   * affirme qu'un projectile affiche porte le MEME nombre que celui que le
+   * serveur arbitre : ce test garde cette affirmation, et la mutation
+   * « retirer `accountBonuses.damage` ».
    *
    * ⚠️ L'attendu vient du catalogue (`maxBonus('damage')`), jamais du miroir.
    */
@@ -3125,17 +3004,10 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   /**
-   * Revue finale de l'etape 7b, correction 2 : le serveur somme les bonus de
-   * COMPTE aux passifs du draft (`Room#fireOne` :
-   * `loadout.bonus('fireRate') + accountBonuses.fireRate`). Ce miroir n'en
-   * lisait que le premier terme, et les bonus de compte n'arrivaient meme pas
-   * au front.
-   *
-   * **Mesure du defaut** : avec Cadence au palier maximum (+0,15), la recharge
-   * de l'arme neutre tombe de 4 a 3 ticks — un tiers de salves en plus. Sur
-   * 30 s a 30 Hz, 300 salves cote serveur contre 225 affichees : 25% de perte
-   * sur l'arme que tout le monde porte en permanence, et une phase qui derive
-   * sans borne faute de point de resynchronisation.
+   * Le serveur somme les bonus de COMPTE aux passifs du draft (`Room#fireOne` :
+   * `loadout.bonus('fireRate') + accountBonuses.fireRate`). Sans le second
+   * terme, l'arme neutre afficherait nettement moins de salves que le serveur,
+   * avec une phase qui derive sans borne.
    *
    * ⚠️ **L'attendu ne vient PAS du miroir.** Il est derive du CATALOGUE
    * (`maxBonus('fireRate')`) passe a la fonction partagee que `Room#fireOne`
@@ -3194,12 +3066,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   /**
-   * Le pendant pour `speed`. L'ecart mesure en regime etabli est de 1,57 px :
-   * un joueur reel ne le verra pas. Mais c'est le MECANISME que la tache 9 de
-   * l'etape 4 a paye une tache entiere pour fermer — « le joueur voit une
-   * reconciliation permanente, exactement le defaut que la prediction existe
-   * pour eviter » (docbloc de `PredictedPlayer.predict`) — et l'etape 7b le
-   * rouvrait d'un cran.
+   * Le pendant pour `speed` : l'ecart est faible, mais c'est le mecanisme de
+   * la reconciliation permanente (voir `PredictedPlayer.predict`).
    *
    * ⚠️ **Sans carte de draft, exprès** : seul le bonus de COMPTE est en jeu,
    * donc un miroir qui sommerait le draft mais pas le compte ne peut pas
@@ -3257,7 +3125,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   it('la prediction locale avance a la vitesse de l inventaire, pas a PLAYER_SPEED', () => {
-    // ⚠️ **La dette de la tache 8.** `Room.step` avance le joueur a
+    // ⚠️ `Room.step` avance le joueur a
     // `PLAYER_SPEED + bonus('speed')`. Une prediction cablee sur la constante
     // prend du retard a CHAQUE tick, et chaque snapshot la ramene en arriere :
     // le joueur voit une reconciliation permanente. Mesure sur la position
@@ -3323,10 +3191,9 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   // ⚠️ Legendaire change une regle, elle ne se multiplie pas
-  // (`RARITY_MULTIPLIERS` vaut 1 a cet index depuis l'etape 13) : une seule
-  // application, donc la pure acquisition, sans cran d'amelioration en plus.
-  // Ce test attendait encore le triple d'avant l'etape 13 ; voir le meme
-  // correctif cote serveur (`back/src/room.test.ts`, legendaire x1).
+  // (`RARITY_MULTIPLIERS` vaut 1 a cet index) : une seule application, donc
+  // la pure acquisition, sans cran d'amelioration. Meme regle cote serveur
+  // (`back/src/room.test.ts`, legendaire x1).
   it('etape 10 : une arme LEGENDAIRE servie d office a un allie : acquisition seule, aucun cran', () => {
     const { client, socket } = setup(1);
     socket.emit('message', {
@@ -3390,16 +3257,13 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
   });
 
   /**
-   * Etape 13, tache 6 — **le scenario pour lequel `maxHpOf` a ete descendu
-   * dans `shared/loadout.ts`** : un porteur de Transcendance ET de Colosse.
+   * Un porteur de Transcendance ET de Colosse : la raison d'etre de `maxHpOf`
+   * dans `shared/loadout.ts`.
    *
    * `localMaxHp` (le HUD) et le miroir de `shotDamage` dans `#fireOne`
-   * (§5.4, Colosse) appellent tous les deux `maxHpOf` — jamais une copie
-   * locale. Sans ce test, rien ne garde le second appel : un code qui
-   * recopierait encore `PLAYER_MAX_HP` en dur continuerait d'echelonner
-   * Colosse sur ~100 PV quand le serveur, lui, arbitre sur 1 — exactement la
-   * divergence que cette architecture (une seule regle, posee une seule
-   * fois, partagee par construction) est censee rendre impossible.
+   * appellent tous les deux `maxHpOf`. Ce test garde le second appel : une
+   * copie de `PLAYER_MAX_HP` en dur echelonnerait Colosse sur ~100 PV quand le
+   * serveur arbitre sur 1.
    */
   it('etape 13 : Transcendance ecrase Colosse, cote client comme au salon — aucune divergence', () => {
     const COLOSSE = PASSIVES.find((p) => p.kind === 'colossus')?.id ?? -1;
@@ -3433,16 +3297,15 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     // `Math.floor(1 / 10) === 0`, donc Colosse ne rend STRICTEMENT rien ici —
     // pas moins que d'habitude, RIEN. Comparer a `base.damage` tout court
     // (pas a `base.damage * 1.1`, la valeur du test jumeau sans
-    // Transcendance juste au-dessus) est ce qui ferait rougir un miroir
-    // encore branche sur `PLAYER_MAX_HP`.
+    // Transcendance) est ce qui ferait rougir un miroir branche sur
+    // `PLAYER_MAX_HP`.
     expect(tir?.[6]).toBeCloseTo(base.damage, 6);
   });
 
   it('etape 10 : le miroir tire avec le VRAI tireur et son critique — comme le salon', () => {
-    // ⚠️ Avant l'etape 10, le client ne passait pas `by` : son critique etait
-    // tire de `hashRoll(tick, 0, i)` quand le serveur tirait
-    // `hashRoll(tick, p.id, i)`. Le chiffre dore affiche n'etait pas celui
-    // arbitre.
+    // ⚠️ Sans `by`, le critique serait tire de `hashRoll(tick, 0, i)` quand le
+    // serveur tire `hashRoll(tick, p.id, i)` : le chiffre dore affiche ne
+    // serait pas celui arbitre.
     const FEROCITE = PASSIVES.find((p) => p.kind === 'critDamage')?.id ?? -1;
     const { client, socket } = setup(1);
     grant(socket, { nature: CARD.PASSIVE, refId: FEROCITE }, [
@@ -3468,8 +3331,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 });
 
 /**
- * Etape 5a, tache 6 — **le ralentissement du Givre, mesure de bout en bout**,
- * avec un VRAI `GameClient` cette fois (le pendant du scenario Z2 de
+ * **Le ralentissement du Givre, mesure de bout en bout**, avec un VRAI
+ * `GameClient` (le pendant du scenario Z2 de
  * `shared/horde.replication.test.ts`, qui mesure la meme chose sur un client
  * modele).
  *
@@ -3488,8 +3351,7 @@ function runClientZoneScenario(params: {
   element: number;
   /**
    * Ticks auxquels le serveur re-arrose les points DEJA poses au premier
-   * `zoneTicks`, sans bouger d'un pixel — le chemin du RAFRAICHISSEMENT
-   * (§5.1 bis).
+   * `zoneTicks`, sans bouger d'un pixel — le chemin du RAFRAICHISSEMENT.
    *
    * ⚠️ **Des points fixes, jamais les ancres.** Une ancre est une entite, et
    * une entite parcourt plus d'un `ZONE_RADIUS` en
@@ -3646,16 +3508,15 @@ function runClientZoneScenario(params: {
 describe('GameClient — les zones de Givre datees par tick (etape 5a, tache 6)', () => {
   const WAVE_ID = 41;
   const ENTITIES = 300;
-  // Hors des frontieres de rafraichissement du champ (`STEPS_PER_FIELD` = 3),
-  // pour la meme raison qu'a la tache 8 : sinon un `primeFieldForReplay` qui
-  // n'ecarterait pas `atTick` vers `lastDue` passerait inapercu.
+  // Hors des frontieres de rafraichissement du champ (`STEPS_PER_FIELD` = 3) :
+  // sinon un `primeFieldForReplay` qui n'ecarterait pas `atTick` vers
+  // `lastDue` passerait inapercu.
   const ZONE_TICKS = [100, 113, 127];
   const ANCHORS = [50, 150, 250];
   /**
    * Un tick d'arrosage des MEMES points, au-dela de
    * `ZONE_REFRESH_INTERVAL_TICKS` : c'est ce qui produit une prolongation, et
-   * donc une re-annonce. Sous l'intervalle, la parade de l'etape 3 bis ne
-   * prolonge pas — et n'annonce rien.
+   * donc une re-annonce. Sous l'intervalle, rien n'est prolonge ni annonce.
    */
   const REFRESH_TICKS = [(ZONE_TICKS[0] ?? 0) + ZONE_REFRESH_INTERVAL_TICKS];
 
@@ -3678,13 +3539,12 @@ describe('GameClient — les zones de Givre datees par tick (etape 5a, tache 6)'
         `${result.maxDrift.toFixed(3)} px, ${result.announced} zones annoncees\n`,
     );
 
-    // Le scenario ne prouve rien si rien n'a ete annonce ni recu.
     // Le scenario ne prouve rien si rien n'a ete annonce ni recu — et le
     // client doit tenir EXACTEMENT la meme reserve que le serveur.
     expect(result.zonesServeur).toBeGreaterThan(0);
     expect(result.zonesRecues).toBe(result.zonesServeur);
-    // ⚠️ Plus d'annonces que de zones : ce sont les RAFRAICHISSEMENTS (§5.1
-    // bis). Le client ne peut pas les deriver, donc ils voyagent — sans quoi
+    // ⚠️ Plus d'annonces que de zones : ce sont les RAFRAICHISSEMENTS. Le
+    // client ne peut pas les deriver, donc ils voyagent — sans quoi
     // sa zone mourrait avant celle du serveur.
     expect(result.announced).toBeGreaterThan(result.zonesServeur);
     expect(result.client.lateZones).toBe(0);
@@ -3715,7 +3575,7 @@ describe('GameClient — les zones de Givre datees par tick (etape 5a, tache 6)'
   it('une ZONE trop vieille pour l anneau est posee au present, comptee, sans planter', () => {
     // ⚠️ La degradation est ASSUMEE mais jamais silencieuse : appliquer au
     // present, COMPTER l'evenement, ne pas pretendre que c'est exact — meme
-    // regle que `lateDeaths` a l'etape 3.
+    // regle que `lateDeaths`.
     const DELAY = ROLLBACK_DEPTH_TICKS + 4;
     expect(DELAY).toBeGreaterThan(ROLLBACK_DEPTH_TICKS);
     const result = runClientZoneScenario({
@@ -3997,10 +3857,10 @@ describe('GameClient — une zone qui meurt PENDANT un rejeu (etape 5a, tache 6)
 
 /**
  * ---------------------------------------------------------------------------
- * Étape 5a, tache 9 : ce que le client RECOIT et ce qu'il APPROXIME.
+ * Ce que le client RECOIT et ce qu'il APPROXIME.
  * ---------------------------------------------------------------------------
  *
- * Deux regimes, et toute la tache tient dans leur difference :
+ * Deux regimes :
  *
  * | Ce qui est montre | D'ou ca vient | Ce qui se passe si c'est faux |
  * | --- | --- | --- |
@@ -4079,8 +3939,7 @@ describe('GameClient — la reaction annoncee (tache 9)', () => {
   it('ne tue personne : une reaction est un DESSIN cote client, les morts arrivent par DEATHS', () => {
     // ⚠️ La reaction TUE cote serveur (`REACTION_DAMAGE`), et c'est
     // precisement pourquoi elle est arbitree la-bas. Un client qui appliquerait
-    // les degats ici prononcerait une mort que le serveur n'a pas prononcee —
-    // exactement ce que `#applyDeaths` et le §3.2 interdisent au rejeu.
+    // les degats ici prononcerait une mort que le serveur n'a pas prononcee.
     const { client, socket, monsterX, monsterY } = setupOneMonster(0xf1a5_0001, 90);
     const avant = client.horde.count;
 
@@ -4164,8 +4023,8 @@ describe('GameClient — la barre de Synergie (tache 9)', () => {
   });
 
   it('ne se DEDUIT pas des REACTION recues : le total fait foi, le client ne recompte rien', () => {
-    // ⚠️ Le §7 est explicite : le bit porte la COMPARAISON, le total voyage
-    // dans le `SNAPSHOT`. Un client qui incrementerait sa propre barre a
+    // ⚠️ Le bit porte la COMPARAISON, le total voyage dans le `SNAPSHOT`. Un
+    // client qui incrementerait sa propre barre a
     // chaque reaction chargee divergerait de l'autorite des la premiere
     // reaction manquee (connexion en cours de partie, plafond atteint).
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
@@ -4198,10 +4057,10 @@ describe('GameClient — la barre de Synergie (tache 9)', () => {
 });
 
 /**
- * La teinte elementaire (§9, deuxieme ligne) est **cosmetique et approximee** :
- * voir la doc de `GameClient#markLocally`, qui porte la regle en entier.
+ * La teinte elementaire est **cosmetique et approximee** : voir la doc de
+ * `GameClient#markLocally`, qui porte la regle en entier.
  *
- * ⚠️ **Les deux moities, toujours** (R24/R25) : « aucun ennemi n'est jamais
+ * ⚠️ **Les deux moities, toujours** : « aucun ennemi n'est jamais
  * teinte » et « tous les ennemis sont teints tout le temps » se ressemblent
  * beaucoup dans un test faible. Chaque cas positif ci-dessous a donc son
  * negatif.
@@ -4221,8 +4080,8 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
   });
 
   /**
-   * ⚠️ **`GameClient#markInZones` (le mirroir cosmetique) doit decoder
-   * `zones.kind`, jamais le lire brut** (tache 5 de l'etape 5b). Le serveur
+   * ⚠️ **`GameClient#markInZones` (le miroir cosmetique) doit decoder
+   * `zones.kind`, jamais le lire brut.** Le serveur
    * envoie deja l'octet EMPAQUETE sur le fil ; un client qui marquerait avec
    * l'octet complet stockerait un `mark` different de `ELEMENT.GIVRE`, que ce
    * test attrape directement par egalite — pas besoin de lever pour le voir.
@@ -4258,10 +4117,9 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
     // cible isolee. Choisie par ses proprietes, jamais par un identifiant en
     // dur — le catalogue est du contenu, il bouge.
     //
-    // ⚠️ **`kind === 'tir'` depuis l'etape 8** : le Givre « de placement » est
-    // devenu un FAISCEAU, qui ne pose aucun projectile. Sans ce filtre, ce cas
-    // choisissait une arme qui ne tire rien et echouait pour une raison qui
-    // n'a aucun rapport avec ce qu'il garde.
+    // ⚠️ **`kind === 'tir'`** : un faisceau ne pose aucun projectile. Sans ce
+    // filtre, ce cas pourrait choisir une arme qui ne tire rien et echouer
+    // pour une raison sans rapport avec ce qu'il garde.
     const arme = WEAPONS.find(
       (w) => w.kind === 'tir' && w.element !== ELEMENT.NEUTRE && w.spreadRadians < 0.3,
     );
@@ -4353,15 +4211,11 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
 });
 
 /**
- * ⚠️ **Ce test existe parce qu'une mutation a SURVECU** : retirer le
- * `aliveAt` du balayage de zones du client laissait toute la suite verte.
- *
- * La raison est une garde qui en masque une autre — le motif le plus cher de
- * ce depot. Le client expire ses zones `ROLLBACK_DEPTH_TICKS` ticks EN RETARD
- * (il en a besoin pour rejouer), donc une zone perimee reste dans le tableau
- * huit ticks de plus. Sans `aliveAt`, elle continue d'y teindre pendant ces
- * huit ticks — et comme une marque dure `MARK_DURATION_TICKS` (60), l'ecart ne
- * se voit qu'a la toute fin de la teinte, huit ticks plus tard que prevu.
+ * ⚠️ **Garde la mutation « retirer le `aliveAt` du balayage de zones »**, que
+ * rien d'autre ne voit. Le client expire ses zones `ROLLBACK_DEPTH_TICKS`
+ * ticks EN RETARD (pour rejouer), donc une zone perimee reste dans le
+ * tableau. Sans `aliveAt`, elle continue d'y teindre, et l'ecart ne se voit
+ * qu'a la toute fin de la teinte (`MARK_DURATION_TICKS` plus tard).
  *
  * Le decor doit donc tenir un ennemi DANS une zone pendant toute la vie de
  * celle-ci, puis observer les deux bornes de l'extinction. Le joueur est place
@@ -4421,11 +4275,10 @@ describe('GameClient — la teinte s eteint quand la ZONE meurt, pas quand le ta
 });
 
 /**
- * Etape 6a, tache 5 bis — **la charge du boss, cote client**.
+ * **La charge du boss, cote client.**
  *
- * ⚠️ **Une charge DEPLACE le boss** : c'est le deuxieme effet du jeu a toucher
- * le deplacement, apres le ralentissement du Givre, et il obeit au meme modele —
- * annoncee une fois, datee par tick, appliquee par rejeu. Ce decor est le
+ * ⚠️ **Une charge DEPLACE le boss** : comme le ralentissement du Givre, elle
+ * est annoncee une fois, datee par tick, appliquee par rejeu. Ce decor est le
  * pendant client du scenario 11 de `shared/horde.replication.test.ts` : un
  * serveur de reference, un vrai `GameClient` derriere une socket, et la charge
  * livree avec du retard.
@@ -4434,9 +4287,9 @@ describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis
   const WAVE_ID = 43;
   const ENTITIES = 200;
   /**
-   * Hors des frontieres de rafraichissement du champ (`STEPS_PER_FIELD` = 3),
-   * pour la meme raison qu'aux taches 8 et 6 : sinon un `primeFieldForReplay`
-   * qui n'ecarterait pas `atTick` vers `lastDue` passerait inapercu.
+   * Hors des frontieres de rafraichissement du champ (`STEPS_PER_FIELD` = 3) :
+   * sinon un `primeFieldForReplay` qui n'ecarterait pas `atTick` vers
+   * `lastDue` passerait inapercu.
    */
   const CHARGE_TICK = 100;
   const BOSS_INDEX = 77;
@@ -4534,7 +4387,7 @@ describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis
   }
 
   /**
-   * ⚠️ **LE test de la tache cote client.** Le message arrive trois ticks apres
+   * ⚠️ Le message arrive trois ticks apres
    * le `windupTick` ; le client restaure sa horde a ce tick, installe la charge
    * et rejoue. Zero, pas « petit ».
    */
@@ -4554,7 +4407,7 @@ describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis
   /**
    * ⚠️ **Hors de l'anneau, on applique quand meme — et on COMPTE.** Meme
    * degradation assumee que pour une mort ou une zone trop vieille : une
-   * degradation silencieuse est un piege (§4.6 de l'orientation).
+   * degradation silencieuse est un piege.
    */
   it('une charge livree hors de l anneau est installee au present, et signalee', () => {
     const DELAY = ROLLBACK_DEPTH_TICKS + 4;
@@ -4602,14 +4455,9 @@ describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis
 });
 
 /**
- * Le vote d'extraction, cote reception (etape 6a, tache 10).
+ * Le vote d'extraction, cote reception.
  *
- * ⚠️ **Quatre messages arrivaient sur ce fil et AUCUN n'etait lu** avant cette
- * tache : `grep PORTAL front/src/net/client.ts` ne rendait rien. Le serveur les
- * emettait depuis deux commits, et le client les jetait en silence — le
- * `decode` les reconnaissait, aucune branche ne les prenait.
- *
- * ⚠️ **Le client ne DECIDE rien ici** (§7.2 de l'etape 4) : il expose ce qu'il
+ * ⚠️ **Le client ne DECIDE rien ici** : il expose ce qu'il
  * recoit et il envoie une intention. Le seul calcul qu'il fasse est celui du
  * chronometre, et il le fait au TICK.
  */
@@ -4618,7 +4466,7 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
    * ⚠️ **Des nombres qui ne ressemblent a rien du jeu.** Ni
    * `PORTAL_WINDOW_TICKS` (600), ni `GOLD_PER_PALIER_BASE` (100), ni un
    * multiple de l'un ou de l'autre : une fixture egale a une constante de
-   * production rend la tache invérifiable, dix fois dans ce depot.
+   * production masquerait une constante codee en dur.
    */
   const ECHEANCE = 4_137;
   const MULTIPLICATEUR = 1.75;
@@ -4712,7 +4560,7 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
   });
 
   it('envoie un VOTE portant le choix, et n enregistre RIEN localement', () => {
-    // ⚠️ **Le client PROPOSE, le serveur arbitre** (§7.2). Un vote affiche des
+    // ⚠️ **Le client PROPOSE, le serveur arbitre.** Un vote affiche des
     // le clic mentirait a chaque refus — portail ferme, joueur etranger au
     // vote — et le joueur croirait avoir vote.
     const { client, socket } = setup();
@@ -4738,10 +4586,9 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
   });
 
   /**
-   * ⚠️ **DATE PAR TICK, JAMAIS APPLIQUE A LA RECEPTION.** C'est la regle que
-   * trois etapes ont payee : un ecran ferme a l'arrivee du message se
-   * fermerait chez chacun a un tick different — celui de sa propre latence —
-   * au moment meme ou les quatre joueurs regardent le meme verdict.
+   * ⚠️ **DATE PAR TICK, JAMAIS APPLIQUE A LA RECEPTION** : un ecran ferme a
+   * l'arrivee du message se fermerait chez chacun a un tick different, celui
+   * de sa propre latence.
    *
    * L'ecart du decor (huit ticks) n'est pas decoratif : c'est lui qui rend la
    * mutation « fermer a la reception » visible.
@@ -4792,9 +4639,9 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
   });
 
   it('oublie les votes ET le verdict du palier precedent a l ouverture suivante', () => {
-    // La lecon des jetons du draft, payee une fois la-bas : sans cette remise a
-    // zero, chacun verrait son vote deja pose avant d'avoir decide, et le
-    // verdict du palier precedent resterait affiche par-dessus.
+    // Comme les jetons du draft : sans cette remise a zero, chacun verrait son
+    // vote deja pose avant d'avoir decide, et le verdict du palier precedent
+    // resterait affiche par-dessus.
     const { client, socket } = setup();
     auTick(socket, 900);
     socket.emit('message', { data: encodePortalOpen(ECHEANCE, MULTIPLICATEUR) });
@@ -4816,7 +4663,7 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
   });
 
   /**
-   * ⚠️ **L'or est une donnee d'EQUIPE, dans l'en-tete du snapshot** (§5) : il
+   * ⚠️ **L'or est une donnee d'EQUIPE, dans l'en-tete du snapshot** : il
    * se lit meme quand le bloc du joueur local est introuvable — un joueur mort,
    * ou un client dont le premier snapshot ne le porte pas encore. Le lire apres
    * le `return` du bloc joueur laisserait la cagnotte a zero tout ce temps-la,
@@ -4834,7 +4681,7 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
   it('suit l or a la hausse comme a la baisse — la cagnotte n est pas acquise', () => {
     // ⚠️ La moitie negative porte le sens : un client qui ne ferait que
     // cumuler afficherait une cagnotte intacte apres un effacement d'equipe,
-    // soit l'inverse exact de ce que le §5 met en jeu.
+    // soit l'inverse exact de ce qui est en jeu.
     const { client, socket } = setup();
 
     auTick(socket, 910, CAGNOTTE);
@@ -4846,23 +4693,17 @@ describe('GameClient — le vote d extraction (etape 6a, tache 10)', () => {
 });
 
 /**
- * ⚠️ **Premier `describe` de ce fichier a declencher reellement `'open'`.**
- * Trouvaille de la ronde de correction 1/5 sur la tache 7 : jusqu'ici, toute
- * la suite construisait `GameClient` puis `connect()`, mais n'emettait jamais
- * l'evenement `'open'` lui-meme — elle passait directement a `emit('message',
- * ...)`. Ni l'envoi du `HELLO` (tache 7), ni le `setInterval` d'`INPUT` qui
- * preexistait, n'etaient donc exerces par cette suite. Ce n'est pas une
- * regression de la tache 7 — c'est un trou anterieur qu'elle a rendu visible,
- * en portant desormais la ligne la plus importante du livrable (le jeton
- * part bien). Le prochain qui touche le gestionnaire `'open'` de `connect()`
- * sait maintenant qu'un test le regarde.
+ * ⚠️ **Le `describe` de ce fichier qui declenche reellement `'open'`** : les
+ * autres passent directement a `emit('message', ...)`. C'est lui qui exerce
+ * l'envoi du `HELLO` et le `setInterval` d'`INPUT` du gestionnaire `'open'`
+ * de `connect()`.
  */
 describe('GameClient — le HELLO envoye a l ouverture de la socket (tache 7)', () => {
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  /** Octets reconnaissables, jamais des zeros — memes repere qu'en tache 1. */
+  /** Octets reconnaissables, jamais des zeros. */
   const JETON = new Uint8Array(TOKEN_BYTES);
   for (let i = 0; i < TOKEN_BYTES; i++) {
     JETON[i] = (i * 7 + 3) & 0xff;
@@ -4913,9 +4754,8 @@ describe('GameClient — le HELLO envoye a l ouverture de la socket (tache 7)', 
   /**
    * ⚠️ Sans ce test negatif, un code qui enverrait un HELLO vide ou bidon a
    * CHAQUE connexion passerait le test precedent (qui ne construit qu'avec un
-   * jeton). Les 40 constructions existantes de ce fichier ne passent aucun
-   * jeton (septieme parametre par defaut a `null`) — elles ne doivent
-   * declencher AUCUN envoi a l'ouverture.
+   * jeton). Sans jeton (parametre a `null` par defaut), AUCUN envoi a
+   * l'ouverture.
    */
   it('n envoie AUCUN HELLO quand aucun jeton n est fourni', () => {
     vi.useFakeTimers();
@@ -4959,7 +4799,7 @@ describe('le sort du necromancien', () => {
 });
 
 /**
- * Etape 12 (§3.4, §5) : l'onde et la frappe ne posent aucun projectile. Le
+ * L'onde et la frappe ne posent aucun projectile. Le
  * client en rejoue un miroir cosmetique depuis `#fireOne`, comme le faisceau
  * et le halo : les listes qu'il seme (`ondes`, `frappes`) nourrissent le
  * calque, et les ennemis franchis REAGISSENT (flash, chiffre, marque) — sans
@@ -5099,7 +4939,7 @@ describe('GameClient — le miroir de l onde et de la frappe (etape 12)', () => 
   });
 
   /**
-   * §3.2 : l'ancre du client. L'orbite d'un allie tourne autour de sa position
+   * L'ancre du client. L'orbite d'un allie tourne autour de sa position
    * au DERNIER SNAPSHOT — sans ancre, elle resterait autour du point de tir.
    */
   it('l orbite d un allie suit sa position de snapshot (l ancre)', () => {

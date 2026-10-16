@@ -43,7 +43,6 @@ const BONUS_ICONS: Record<BonusKind | PassiveKind, number> = {
   fireRate: 10,
   xp: 11,
   gold: 3,
-  // Etape 10 : un choix d'affichage, comme le reste (douze icones en tout).
   critChance: 9,
   critDamage: 9,
   salvo: 12,

@@ -45,7 +45,7 @@ const TOUTE_LA_CARTE = new Rectangle(0, 0, MAP_SIZE, MAP_SIZE);
 /**
  * Une identite dont la mort laisse VRAIMENT un orbe.
  *
- * ⚠️ Depuis la tache 17, `DerivedOrbs.spawn` filtre par `dropsOrb` : un decor
+ * ⚠️ `DerivedOrbs.spawn` filtre par `dropsOrb` : un decor
  * qui pose `1` ou `2` ne poserait rien du tout, et chaque assertion de ce
  * fichier compterait zero particule sans rien prouver. Derivee de la constante,
  * jamais recopiee.
@@ -53,17 +53,12 @@ const TOUTE_LA_CARTE = new Rectangle(0, 0, MAP_SIZE, MAP_SIZE);
 const avecOrbe = (n: number): number => n * ORB_DROP_ONE_IN;
 
 /**
- * Étape 5a, tache 20, sur retour de jeu : *« l'aimantation est plus proche du
- * joueur et attire l'xp jusqu'a lui, meme s'il l'eloigne »*.
+ * Le vol d'une orbe capturee : elle rejoint son ramasseur, meme s'il
+ * s'eloigne.
  *
- * ⚠️ **Tout le corps de `OrbRenderer.draw` etait garde par RIEN avant la tache
- * 17**, et quatre mutations appliquees AVANT d'ecrire une ligne de test l'ont
- * montre — `particle.scaleX = 1`, `const pull = 0`, et les deux gardes de
- * chute — toutes vertes a 280 tests. C'est le motif des dix-sept assertions
- * creuses du depot, et la lecon de la tache 16 sur `ZoneRenderer` : `load()`
- * cuit sa texture sur un canevas 2D absent de node, donc `draw` retournait a son
- * premier `if (!texture)` et rien de ce qu'elle fait n'etait atteignable.
- * `adoptTexture` est le point d'accroche qui referme ça.
+ * ⚠️ `load()` cuit sa texture sur un canevas 2D absent de node : sans
+ * `adoptTexture`, `draw` ne passerait jamais sa garde en test et rien de ce
+ * qu'elle fait ne serait atteignable.
  */
 describe('orbFlightFraction — le vol decore un ramassage deja acquis', () => {
   it('ne bouge pas l orbe a l instant de la capture : elle part de la ou elle etait tombee', () => {
@@ -72,12 +67,10 @@ describe('orbFlightFraction — le vol decore un ramassage deja acquis', () => {
   });
 
   /**
-   * ⚠️ **L'ASSERTION CENTRALE DE LA TACHE.** La fraction vaut EXACTEMENT 1 a
-   * l'echeance, et la position dessinee est interpolee vers la position
-   * COURANTE du joueur : le vol arrive donc SUR lui, ou qu'il soit alle. C'est
-   * ce qui remplace la surete de la tache 17 — la ou une fonction de la
-   * distance garantissait « dessinee sur le joueur au rayon de ramassage »,
-   * c'est ici le declenchement (`DerivedOrbs.capture`, meme predicat que le
+   * ⚠️ **L'ASSERTION CENTRALE.** La fraction vaut EXACTEMENT 1 a l'echeance,
+   * et la position dessinee est interpolee vers la position COURANTE du
+   * joueur : le vol arrive donc SUR lui, ou qu'il soit alle. C'est le
+   * declenchement (`DerivedOrbs.capture`, meme predicat que le
    * serveur) qui garantit que le vol ne commence jamais avant le ramassage.
    */
   it('a pose tout le chemin a l echeance, exactement, et n en repart jamais', () => {
@@ -112,8 +105,7 @@ describe('orbFlightFraction — le vol decore un ramassage deja acquis', () => {
 
   /**
    * ⚠️ **Le vol doit DEPASSER un joueur qui fuit, pas le suivre.** Il part
-   * d'au plus `ORB_PICKUP_RADIUS` — c'est la le seul rayon du systeme depuis la
-   * tache 20 — et il a `ORB_FLIGHT_LIFETIME_MS` pour couvrir cette distance :
+   * d'au plus `ORB_PICKUP_RADIUS` — le seul rayon du systeme — et il a `ORB_FLIGHT_LIFETIME_MS` pour couvrir cette distance :
    * si la vitesse moyenne qui en resulte tombait sous `PLAYER_SPEED`, l'orbe
    * trainerait derriere le joueur au lieu d'etre aspiree. Une regle, pas un
    * reglage.
@@ -134,8 +126,7 @@ describe('orbFlightFraction — le vol decore un ramassage deja acquis', () => {
  */
 function calque(): { renderer: OrbRenderer; particules: () => Particle[] } {
   const renderer = new OrbRenderer();
-  // ⚠️ **L'atlas fait DEUX cases** depuis la tache 14 de l'etape 6a : l'orbe et
-  // la piece. Un decor d'une seule case laisserait `#kindOf` rendre la meme
+  // ⚠️ **L'atlas fait DEUX cases** : l'orbe et la piece. Un decor d'une seule case laisserait `#kindOf` rendre la meme
   // texture aux deux natures, et « la piece se dessine comme une piece »
   // deviendrait invérifiable.
   renderer.adoptTexture(
@@ -186,11 +177,9 @@ const RAMASSEUR = 7;
 /**
  * Horloge murale de la capture, dans tous les decors de vol de ce fichier.
  *
- * ⚠️ **Jamais zero, et c'est une « fixture qui masque » de moins.** Un vol ne a
- * l'instant 0 rend `timeMs - bornMs` egal a `timeMs` : oublier la naissance
- * dans le calcul de l'age serait alors indistinguable, et la mutation a
- * effectivement survecu tant que ce decor valait 0. Neuvieme occurrence du
- * motif dans ce depot.
+ * ⚠️ **Jamais zero.** Un vol ne a l'instant 0 rend `timeMs - bornMs` egal a
+ * `timeMs` : oublier la naissance dans le calcul de l'age serait alors
+ * indistinguable.
  */
 const NAISSANCE = 1234.5;
 
@@ -215,13 +204,12 @@ describe('OrbRenderer.draw — les orbes au sol', () => {
   });
 
   /**
-   * ⚠️ **L'AUTRE MOITIE DE LA TACHE 20 : plus rien ne glisse.** L'attraction
-   * par la distance de la tache 17 est SUPPRIMEE, `ORB_MAGNET_RADIUS` avec
-   * elle. Une orbe qu'un joueur touche n'est pas « attiree » : elle est
+   * ⚠️ **Rien ne glisse au sol.** Pas d'attraction par la distance : une orbe
+   * qu'un joueur touche n'est pas « attiree » : elle est
    * ramassee — `DerivedOrbs.capture` l'a deja retiree de cette reserve et mise
    * en vol. Une orbe qui serait encore ici avec un joueur dessus est une orbe
-   * que le serveur n'a pas prise, et la dessiner ailleurs qu'a sa place serait
-   * exactement le mensonge que la tache evite.
+   * que le serveur n'a pas prise : la dessiner ailleurs qu'a sa place
+   * mentirait.
    */
   it('ne deplace plus une orbe au sol, meme avec un joueur colle dessus', () => {
     const colle = drawnOrbs(unOrbe(1000, 1000), [
@@ -238,12 +226,9 @@ describe('OrbRenderer.draw — les orbes au sol', () => {
   });
 
   /**
-   * ⚠️ **Tache 17, etape 1 : l'orbe est dessinee a une taille CHOISIE, pas a la
-   * taille de sa texture.** Jusqu'ici la texture faisait 16 px et aucune echelle
-   * n'etait posee : `scaleX` valait 1 par defaut, donc toute mutation de
-   * l'echelle etait indistinguable de son absence — la « fixture qui masque »
-   * logee dans une constante de production, deja vue sur
-   * `MARK_RING_TEXTURE_DIAMETER` a la tache 15.
+   * ⚠️ **L'orbe est dessinee a une taille CHOISIE, pas a la taille de sa
+   * texture** : avec une echelle de 1, toute mutation de l'echelle serait
+   * indistinguable de son absence.
    */
   it('dessine l orbe au diametre voulu, et la texture est plus fine que l affichage', () => {
     const drawn = drawnOrbs(unOrbe(1000, 1000))[0];
@@ -262,12 +247,11 @@ describe('OrbRenderer.draw — les orbes au sol', () => {
   });
 
   /**
-   * La pulsation est EN TAILLE (retour de playtest : *« plus de contraste et
-   * pulsation »*) : l'orbe reste opaque, son echelle respire autour de
+   * La pulsation est EN TAILLE : l'orbe reste opaque, son echelle respire autour de
    * `ORB_SCALE` et touche ses deux bornes. La piece, elle, ne bouge pas.
    */
   it('pulse en taille autour de ORB_SCALE, opaque, et touche les deux bornes', () => {
-    // Douce : sensible, sans faire battre l'orbe (retour de playtest).
+    // Douce : sensible, sans faire battre l'orbe.
     expect(ORB_PULSE).toBeGreaterThan(0.03);
     expect(ORB_PULSE).toBeLessThanOrEqual(0.1);
     const orbs = new DerivedOrbs(MAX_ENTITIES);
@@ -293,11 +277,9 @@ describe('OrbRenderer.draw — les orbes au sol', () => {
   });
 
   /**
-   * ⚠️ **La marge de culling est celle du DESSIN, depuis la tache 20** : une
-   * orbe dont le centre vient de sortir du cadre en montre encore la moitie.
-   * Elle valait `ORB_MAGNET_RADIUS` (180 px) tant qu'une orbe pouvait etre
-   * dessinee loin de sa vraie place ; ce rayon a disparu, et une marge huit
-   * fois trop large est une marge que rien ne justifie.
+   * ⚠️ **La marge de culling est celle du DESSIN** : une orbe dont le centre
+   * vient de sortir du cadre en montre encore la moitie. Aucune orbe n'est
+   * dessinee loin de sa vraie place, une marge plus large ne se justifie pas.
    */
   it('garde une orbe a cheval sur le bord du cadre, des QUATRE cotes', () => {
     const vue = new Rectangle(0, 0, 800, 800);
@@ -356,15 +338,13 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
   });
 
   /**
-   * ⚠️ **LE TEST QUI SEPARE LES DEUX MODELES**, et la seule assertion qui le
-   * fasse. Le joueur capture l'orbe au rayon de ramassage puis S'EN ELOIGNE,
-   * jusqu'a trois fois ce rayon — au-dela des 180 px ou l'aimantation de la
-   * tache 17 rendait deja zero. Avec elle, l'orbe serait dessinee exactement a
-   * sa place au sol, a `3 × ORB_PICKUP_RADIUS` du joueur ; ici elle est SUR
-   * lui, et a trois rayons de la ou elle etait tombee.
+   * ⚠️ **Le vol SUIT le joueur.** Il capture l'orbe au rayon de ramassage puis
+   * S'EN ELOIGNE, jusqu'a trois fois ce rayon : l'orbe est SUR lui, a trois
+   * rayons de la ou elle etait tombee. Une aimantation par la distance
+   * l'aurait laissee a sa place au sol.
    *
-   * Un test qui verifierait seulement « l'orbe s'est rapprochee » passerait
-   * avec les deux modeles, et ne prouverait rien.
+   * Un test qui verifierait seulement « l'orbe s'est rapprochee » ne
+   * distinguerait pas les deux.
    */
   it('finit SUR un joueur qui s eloigne, pas a sa place au sol', () => {
     const fuyard = {
@@ -390,8 +370,7 @@ describe('OrbRenderer.draw — l orbe capturee rejoint son ramasseur', () => {
 
   /**
    * ⚠️ **Les DEUX axes.** Un decor ou le joueur ne fuit qu'en x laisse
-   * `particle.y = fromY` passer pour un vol : c'est la mutation qui a survecu
-   * a 289 tests verts a la tache 17, avec l'aimantation.
+   * `particle.y = fromY` passer pour un vol.
    */
   it('rejoint aussi en Y : l orbe arrive sur le joueur, pas sur sa colonne', () => {
     const fuyard = {
@@ -683,8 +662,7 @@ function bakeDropAtlas(): void {
 }
 
 /**
- * L'orbe d'experience, retravaillee au playtest : *« plus de contraste »*. Une
- * GEMME a facettes plutot qu'un disque — ce bloc garde sa FORME par des
+ * L'orbe d'experience : une GEMME a facettes plutot qu'un disque — ce bloc garde sa FORME par des
  * relations, jamais une recopie des valeurs de production.
  */
 describe('l atlas des objets au sol — l orbe est un cristal en pixel art', () => {
@@ -723,13 +701,12 @@ describe('l atlas des objets au sol — l orbe est un cristal en pixel art', () 
 });
 
 /**
- * La PIECE (etape 6a, tache 14) — *« les monstres ne droppent pas d'or j'ai
- * l'impression, t'as l'icone dans UI Elements/Icons/Icon_03 »*.
+ * La PIECE, d'apres `UI Elements/Icons/Icon_03` du pack.
  *
  * ⚠️ **Redessinee en code, pas importee.** Aucun asset n'entre dans ce depot
  * (licence Pixel Frog, depot public, la CI echoue sur
- * `git ls-files | grep '^assets/tinyswords'`), et l'atlas des monstres est deja
- * a 9,33 Mpx sur 16,78 — la tache 5 a du y renoncer a cinq elites. Ce bloc
+ * `git ls-files | grep '^assets/tinyswords'`), et l'atlas des monstres n'a
+ * pas de place pour une icone d'interface. Ce bloc
  * garde la FORME frappee : une face, un lisere, un cerne grave.
  */
 describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () => {
@@ -738,7 +715,7 @@ describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () 
   /**
    * ⚠️ **Deux cases, jamais une.** Une seule case rendrait la meme texture aux
    * deux natures et « la piece se dessine comme une piece » n'aurait plus de
-   * sens — le calque entier redeviendrait celui d'avant la tache.
+   * sens.
    */
   it('cuit DEUX cases cote a cote, et les decoupe a la bonne place', () => {
     expect(dropCellRect(DROP_ORB_CELL)).toEqual({
@@ -798,7 +775,7 @@ describe('l atlas des objets au sol — la piece est FRAPPEE, pas un jeton', () 
   /**
    * Le profil de la piece est DIFFERENT de celui de l'orbe : les deux se
    * croisent au sol, elles ne doivent pas se distinguer par la seule teinte.
-   * L'orbe est creuse au milieu, la piece est pleine.
+   * L'orbe est un cristal en pixel art, la piece un disque plein et grave.
    */
   it('ne se confond pas avec l orbe : l une est en relief opaque, l autre a une face translucide', () => {
     const tonsOrbe = traces.filter(
@@ -861,7 +838,7 @@ describe('OrbRenderer.draw — une piece ne se dessine pas comme une orbe', () =
 
   /**
    * ⚠️ **Une piece qui vole reste une piece.** Le vol ne sait rien du sol : sans
-   * `OrbFlights.dropId`, la piece capturee redeviendrait une orbe verte a
+   * `OrbFlights.dropId`, la piece capturee redeviendrait une orbe a
    * l'instant precis ou elle decolle vers le joueur.
    */
   it('garde son apparence une fois capturee et en vol', () => {

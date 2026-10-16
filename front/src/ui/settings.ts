@@ -1,10 +1,9 @@
 /**
- * Les options du joueur (maquette 07), gardees dans CE navigateur.
+ * Les options du joueur, gardees dans CE navigateur.
  *
- * ⚠️ **Seulement ce qui marche.** La maquette montre aussi une secousse de
- * camera, des degats affiches et une langue : le jeu n'a ni secousse, ni
- * chiffres de degats, ni traduction. Une option qui ne fait rien ment ; ces
- * lignes viendront avec ce qu'elles reglent.
+ * ⚠️ **Seulement ce qui marche** : une option qui ne fait rien ment (pas de
+ * secousse de camera, de chiffres de degats ni de langue tant que le jeu ne
+ * les a pas).
  *
  * `localStorage` peut manquer ou lever (navigation privee, stockage bloque) :
  * chaque acces est garde, et les valeurs par defaut s'appliquent alors.

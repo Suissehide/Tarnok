@@ -20,14 +20,12 @@ import { weaponOf } from './weapons';
  * - **valeur de base exacte a `k = 0`** — sans elle, une formule qui s'emballe
  *   passe.
  *
- * Ce depot a trouve **neuf decors** qui ne separaient pas deux cas qu'ils
- * pretendaient distinguer. Les deux moities sont donc ecrites en PREDICATS
- * plutot qu'en assertions inline, et le premier test ci-dessous les eprouve
- * l'une contre l'autre sur deux contre-exemples : c'est ce qui prouve qu'aucune
- * des deux n'est decorative.
+ * Les deux moities sont ecrites en PREDICATS, et le premier test ci-dessous
+ * les eprouve l'une contre l'autre sur deux contre-exemples : c'est ce qui
+ * prouve qu'aucune des deux n'est decorative.
  */
 
-/** Nombre de paliers sur lesquels la croissance est verifiee (§7 de la spec : « simuler dix paliers »). */
+/** Nombre de paliers sur lesquels la croissance est verifiee. */
 const PALIERS = 10;
 
 function croitStrictement(f: (k: number) => number): boolean {
@@ -103,10 +101,9 @@ describe('palierGold', () => {
 describe('la table du §3 de la spec', () => {
   /**
    * ⚠️ **Les seuls nombres ecrits en clair de ce fichier, et c'est delibere.**
-   * Ce ne sont pas des constantes recopiees : ce sont les valeurs que la SPEC
-   * annonce (`x1,75` et `x1,76` au palier 5), donc un contrat envers le
-   * document. Le jour ou `PALIER_COUNT_SCALE` ou `PALIER_HP_SCALE` bougent, ce
-   * test doit rougir — et la table de la spec doit bouger avec.
+   * Ce ne sont pas des constantes recopiees mais les valeurs visees (`x1,75`
+   * et `x1,76` au palier 5) : retoucher `PALIER_COUNT_SCALE` ou
+   * `PALIER_HP_SCALE` doit faire rougir ce test.
    *
    * Ce qu'il attrape et que les deux moities ne voient pas : **l'echange des
    * deux constantes**. `waveCountScale` batie sur `PALIER_HP_SCALE`
@@ -124,8 +121,8 @@ describe('la table du §3 de la spec', () => {
 });
 
 /**
- * `palierHp` — la porte par laquelle `hpScale` entre dans le jeu, et la
- * decision de l'etape 0 de la tache 3 : **la chair a canon ne monte pas**.
+ * `palierHp` — la porte par laquelle `hpScale` entre dans le jeu :
+ * **la chair a canon ne monte pas**.
  *
  * ⚠️ **DEUX MOITIES, et elles ne se couvrent pas.** « La legere ne monte
  * jamais » passe toute seule avec `return baseHp` — la difficulte
@@ -168,15 +165,14 @@ describe('palierHp — la chair a canon ne monte pas', () => {
    * ⚠️ **LA raison d'etre de cette fonction, ecrite en test.** La durabilite
    * se compte en COUPS, pas en points de vie : un point de plus que les degats
    * de la dague double le nombre de coups. Ce test dit que la pietaille legere
-   * reste a UN coup a tous les paliers — c'est la frontiere de R9 a l'envers,
-   * et rien d'autre ne la garde.
+   * reste a UN coup a tous les paliers, et rien d'autre ne le garde.
    */
   it('garde la pietaille legere a UN coup de dague, a tous les paliers', () => {
     for (let k = 0; k <= PALIERS; k++) {
       expect(Math.ceil(palierHp(LIGHT_HP, k) / DEGATS_DAGUE)).toBe(1);
     }
     // Et sans l'exemption, la marche est bien la des le palier 1 : le defaut
-    // que la tache 2 a mesure existe, ce test ne le suppose pas.
+    // existe, ce test ne le suppose pas.
     expect(Math.ceil((LIGHT_HP * hpScale(1)) / DEGATS_DAGUE)).toBe(2);
   });
 
@@ -188,19 +184,16 @@ describe('palierHp — la chair a canon ne monte pas', () => {
 });
 
 /**
- * `bossHp` — la formule de la tache 3 bis, et **elle a TROIS moities**, dont
- * aucune ne couvre les deux autres :
+ * `bossHp` a **TROIS moities**, dont aucune ne couvre les deux autres :
  *
  * - **valeur de base exacte** a `k = 0` et un joueur — sans elle, une formule
  *   qui s'emballe passe ;
  * - **croissance stricte** en `k` a effectif constant — sans elle, une
  *   constante passe ;
  * - **proportionnalite au nombre de joueurs** — sans elle, `palierHp` toute
- *   seule passe, et c'est exactement le defaut que cette tache corrige : un
- *   joueur seul recevait le boss de quatre.
+ *   seule passe, et un joueur seul recevrait le boss de quatre.
  *
- * Le dernier test les eprouve l'une contre l'autre sur le contre-exemple exact
- * qui a motive la tache — la formule d'AVANT.
+ * Le dernier test les eprouve l'une contre l'autre sur ce contre-exemple.
  */
 describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
   it('vaut exactement la reserve d un joueur au palier 0', () => {
@@ -215,9 +208,8 @@ describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
 
   /**
    * ⚠️ **LA MEME FORME QUE LE SEUIL D'EXPERIENCE** (`LEVEL_XP_BASE * niveau *
-   * joueurs`) : une PROPORTIONNALITE, pas une racine ni un palier. C'est ce
-   * rapport exact que le test assene, a tous les paliers, parce que c'est lui
-   * qui est promis au §4 de la spec.
+   * joueurs`) : une PROPORTIONNALITE, pas une racine ni un palier, assenee a
+   * tous les paliers.
    */
   it('multiplie exactement par le nombre de joueurs, a tous les paliers', () => {
     for (let k = 0; k <= PALIERS; k++) {
@@ -239,10 +231,9 @@ describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
   });
 
   /**
-   * ⚠️ **Le contre-exemple est la formule d'AVANT la tache 3 bis**, celle qui
-   * a coute 3 graines sur 40 en solo : elle passe les deux premieres moities
-   * et rate la troisieme. Sans ce test, affaiblir la proportionnalite ne
-   * ferait rougir personne.
+   * ⚠️ **Le contre-exemple ignore le nombre de joueurs** : il passe les deux
+   * premieres moities et rate la troisieme. Sans ce test, affaiblir la
+   * proportionnalite ne ferait rougir personne.
    */
   it('ne dit pas la meme chose que palierHp seule : la formule d avant le prouve', () => {
     const sansLesJoueurs = (k: number, _joueurs: number): number => palierHp(BOSS_HP_PER_PLAYER, k);
@@ -254,9 +245,8 @@ describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
 
   /**
    * ⚠️ **Le boss n'est PAS exempte de la montee en PV**, lui — c'est la
-   * pietaille legere qui l'est (`palierHp`). Le dire ici, sinon un jour
-   * quelqu'un elargira l'exemption sans voir qu'elle avale le seul ennemi qui
-   * porte la difficulte d'un palier.
+   * pietaille legere qui l'est (`palierHp`). Elargir l'exemption avalerait le
+   * seul ennemi qui porte la difficulte d'un palier.
    */
   it('monte bien avec le palier, exactement comme la pietaille lourde', () => {
     for (let k = 0; k <= PALIERS; k++) {

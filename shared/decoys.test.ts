@@ -12,7 +12,7 @@ describe('etape 8 tache 6 : la substitution du leurre', () => {
   });
 
   /**
-   * ⚠️ **LE test de cette tache.** `seen.x` est indexe par l'ordre d'iteration
+   * ⚠️ `seen.x` est indexe par l'ordre d'iteration
    * des joueurs, pas par identifiant : quand un joueur part, les indices de
    * ceux qui restent BOUGENT. Un leurre qui retiendrait un indice suivrait le
    * mauvais joueur, et un cran de decalage reassigne TOUTE la horde.
@@ -52,7 +52,6 @@ describe('etape 8 tache 6 : la substitution du leurre', () => {
     expect(substituteDecoys([1], [0], [0], [d], 10).x).toEqual([500]);
   });
 
-  /** Review Focus n°5 : un leurre dont le lanceur est mort ou deconnecte. */
   it('un leurre dont le lanceur n est plus dans la salle ne corrompt rien', () => {
     const d: Decoy = { playerId: 7, x: 500, y: 600, bornTick: 0 };
     const r = substituteDecoys([1, 2], [0, 1], [0, 1], [d], 0);

@@ -6,9 +6,8 @@ import type { ZoneField } from '@shared/zones';
 import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
 
 /**
- * Rendu des zones au sol (§9 de la spec de l'etape 5a, premiere ligne de la
- * hierarchie du §6.6 de l'orientation) : *« grand quad teinte, additif,
- * quelques dizaines de quads »*.
+ * Rendu des zones au sol : un grand quad teinte, additif, quelques dizaines
+ * de quads.
  *
  * Un `ParticleContainer` de plus, meme discipline que les trois de
  * `projectile-renderer.ts` : bornes explicites, reservoir de `Particle`
@@ -18,26 +17,23 @@ import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 
  * `Stage.init`) : une zone est du terrain teinte, pas un effet qui passe
  * devant les monstres qu'elle couvre.
  *
- * ⚠️ **Tache 16 : le quad teinte gagne un BORD** — *« rends les zones au sol
- * plus nettes, en anneau de different alpha si besoin »*. Un aplat diffus ne
+ * ⚠️ **Le quad teinte a un BORD.** Un aplat diffus ne
  * dit ni ou il commence ni ou il finit, et la frontiere d'une zone est une
  * **regle de jeu** : elle decide qui est marque, qui est ralenti, et ou deux
  * zones reagissent. Le disque garde exactement le rayon de la regle
- * (`zoneScale`, derive de `ZONE_RADIUS`) et le rend enfin lisible.
+ * (`zoneScale`, derive de `ZONE_RADIUS`) et le rend lisible.
  *
  * ⚠️ **Une zone reste un CERCLE en coordonnees monde**, contrairement a
- * l'anneau de marque que la tache 15 vient d'aplatir en ellipse. La difference
+ * l'anneau de marque, aplati en ellipse. La difference
  * n'est pas esthetique : le rayon de l'anneau ne decide de rien, celui de la
  * zone decide de tout, et il est compare en distance EUCLIDIENNE des deux
  * cotes du fil (`markInZones`, `reactions`). Une ellipse mentirait sur la
  * regle. C'est la camera seule qui l'ecrase de `VERTICAL_SQUASH`, uniformement
  * avec le reste du monde.
  *
- * ⚠️ **Une SILHOUETTE par element, pas seulement une teinte** — *« varier les
- * effets et zones en fonction des etats (animation, forme, taille) »*. Deux
- * teintes voisines (Givre et Vif-argent, Braise et Foudre) se confondaient des
- * qu'on regardait la horde plutot que le sol. Chaque element a desormais son
- * bord (`lookOf`), son animation (rotation, pulsation, scintillement) et la
+ * ⚠️ **Une SILHOUETTE par element, pas seulement une teinte.** Deux teintes
+ * voisines (Givre et Vif-argent, Braise et Foudre) se confondent des qu'on
+ * regarde la horde plutot que le sol. Chaque element a son bord (`lookOf`), son animation (rotation, pulsation, scintillement) et la
  * zone suit sa vie (`zoneSpawnScale`, `zoneFade`) ; une zone de REACTION a sa
  * propre case, a double contour et lavis plus dense. Tout reste dans le MEME
  * `ParticleContainer` : l'atlas est un seul canevas, une case par couple
@@ -58,28 +54,23 @@ const BOUNDS_MARGIN = 256;
 export const ZONE_TEXTURE_DIAMETER = 128;
 
 /**
- * Epaisseur du lisere, en fraction du cote de la case : ~0,09 du rayon, comme
- * le plateau opaque du profil radial de la tache 16 (0,88 -> 1).
+ * Epaisseur du lisere, en fraction du cote de la case : ~0,09 du rayon.
  */
 const ZONE_RIM_WIDTH = 0.045;
 
 /**
  * Opacite du BORD d'une zone. **Constante, et c'est un choix**, pas un oubli.
  *
- * ⚠️ **Le §6.6 est categorique : l'etat persistant est DISCRET.** Une zone vit
+ * ⚠️ **L'etat persistant est DISCRET.** Une zone vit
  * `ZONE_LIFETIME_TICKS` (3 s) et plusieurs se recouvrent des qu'un joueur
  * arrose : a pleine opacite, quelques dizaines de disques additifs suffisent a
  * blanchir l'ecran et plus rien ne se lit — ni la horde, ni le flash de
  * reaction, qui est precisement ce que le budget VFX doit rendre visible.
  *
- * ⚠️ **Elle monte de 0,22 a 0,34 a la tache 16, et le budget d'encre ne bouge
- * PAS.** C'est une redistribution, pas une hausse. L'ancien profil etait un
- * aplat plein jusqu'a 0,65 de rayon puis un fondu jusqu'au bord : son opacite
- * moyenne, ponderee par la surface, valait **0,69** de la valeur de cette
- * constante. Le nouveau — un lavis mince a `ZONE_FILL_RATIO` et un lisere au
- * bord — vaut **0,44**. A 0,34, la zone pose donc autant d'encre au total
- * qu'a 0,22 auparavant : elle blanchit l'ecran ni plus ni moins vite, mais on
- * lit ou elle s'arrete.
+ * ⚠️ **Le budget d'encre est la surface ponderee par l'opacite.** Le profil
+ * — un lavis mince a `ZONE_FILL_RATIO` et un lisere au bord — a une opacite
+ * moyenne de 0,44 fois cette constante : la valeur peut donc etre haute au
+ * bord sans blanchir l'ecran plus vite qu'un aplat plus pale.
  *
  * ⚠️ **Le fondu de fin de vie (`zoneFade`) a un PLANCHER, et c'est ce qui le
  * rend admissible.** Un fondu jusqu'a zero ferait une SECONDE garde
@@ -94,7 +85,7 @@ export const ZONE_ALPHA = 0.34;
  * Lavis d'une zone de REACTION, en fraction de l'opacite du bord : plus dense
  * que `ZONE_FILL_RATIO`, c'est l'« intensite » qui la distingue d'un champ
  * d'element simple, avec le double contour. Le budget d'encre tient : le banc
- * `zones` compte 3 a 5 zones vivantes depuis la tache 21, pas des dizaines.
+ * `zones` compte 3 a 5 zones vivantes, pas des dizaines.
  */
 export const ZONE_REACTION_FILL_RATIO = 0.48;
 
@@ -368,19 +359,18 @@ function tracePath(
 }
 
 /**
- * L'identite visuelle des quatre familles de champ de REACTION (etape 8) —
- * *« fais des zones de differentes tailles, duree, forme »*.
+ * L'identite visuelle des quatre familles de champ de REACTION.
  *
  * ⚠️ **Indexees par la FAMILLE, pas par la reaction ni par l'element.** La
  * teinte d'une particule dit deja l'element (elle est posee par `draw`, et
- * l'atlas reste blanc) : ce qui manquait, c'est de quelle REACTION vient le
- * champ. Quatorze silhouettes auraient voulu dire quatorze traces a tenir pour
+ * l'atlas reste blanc) : la forme dit de quelle REACTION vient le champ.
+ * Quatorze silhouettes auraient voulu dire quatorze traces a tenir pour
  * une lecture que le joueur fait au sol en un quart de seconde ; quatre
  * familles — rond, lobes, etoile, fracture — suffisent a separer ce qui
  * s'etale de ce qui eclate.
  *
  * ⚠️ **Le bord reste dans `[RIM_MIN, 1]`**, comme pour les elements : la ou
- * l'encre s'arrete, la regle s'arrete (tache 16). Une silhouette qui
+ * l'encre s'arrete, la regle s'arrete. Une silhouette qui
  * deborderait promettrait du terrain que la zone ne couvre pas.
  */
 const SHAPE_LOOKS: Record<ZoneShape, ElementLook> = {
@@ -456,10 +446,9 @@ export const ZONE_CELL_COUNT = ELEMENTS.length + ZONE_SHAPES.length;
  * La case d'une zone : l'element en colonne sur la rangee du haut, la FAMILLE
  * de reaction sur celle du bas.
  *
- * ⚠️ **La rangee du bas n'est plus indexee par element** (etape 8) : deux
- * champs de reaction d'un meme element se ressemblaient donc trait pour trait,
- * quelle que soit la reaction qui les avait poses. C'est la forme qui les
- * separe desormais, et la teinte qui les relie a leur element.
+ * ⚠️ **La rangee du bas n'est pas indexee par element** : deux champs de
+ * reaction d'un meme element se ressembleraient trait pour trait. C'est la
+ * forme qui les separe, et la teinte qui les relie a leur element.
  */
 export function zoneCell(kind: number): number {
   if (zoneReaction(kind) === 0) {
@@ -470,15 +459,13 @@ export function zoneCell(kind: number): number {
 }
 
 /**
- * Opacite de l'INTERIEUR de la zone, en fraction de celle du bord (tache 16) :
- * *« rends les zones au sol plus nettes, en anneau de different alpha si
- * besoin »*.
+ * Opacite de l'INTERIEUR de la zone, en fraction de celle du bord.
  *
  * Franchement en dessous de 1 : c'est ce qui fait qu'on lit un BORD et non un
  * aplat. Un disque uniformement diffus ne dit ni ou il commence ni ou il finit,
  * et sa frontiere est une **regle de jeu** — c'est elle qui decide qui est
  * marque (`markInZones`), qui est ralenti (`Horde#computeSlow`) et ou deux
- * zones reagissent (§5.2).
+ * zones reagissent.
  */
 export const ZONE_FILL_RATIO = 0.32;
 
@@ -505,8 +492,8 @@ export interface ViewBounds {
  * Facteur d'echelle d'une particule de zone : la texture dessinee doit couvrir
  * EXACTEMENT `2 x ZONE_RADIUS` pixels monde.
  *
- * ⚠️ **Derive de `ZONE_RADIUS`, jamais reglee a la main.** C'est la lecon de
- * `spriteScale` (tache 16, etape 3) : un sprite dessine a une taille choisie a
+ * ⚠️ **Derive de `ZONE_RADIUS`, jamais reglee a la main**, comme
+ * `spriteScale` : un sprite dessine a une taille choisie a
  * cote d'un rayon choisi a cote finit par mentir sur ce qu'il represente. Ici
  * le mensonge serait pire qu'esthetique — le disque dit au joueur ou ses
  * ennemis sont marques et ralentis, et c'est `ZONE_RADIUS` qui le decide
@@ -568,7 +555,7 @@ export function selectZones(
  * ⚠️ **Blanc, parce que `Particle.tint` MULTIPLIE** : en blanc, `tint` rend
  * exactement `Element.tint`, sans qu'un element soit plus fidele qu'un autre.
  *
- * ⚠️ **Le bord dit toujours la verite (tache 16).** Dans chaque case, le trace
+ * ⚠️ **Le bord dit toujours la verite.** Dans chaque case, le trace
  * est place pour que le bord EXTERIEUR de l'encre — rayon de la silhouette plus
  * demi-epaisseur du trait — tombe sur le bord de la case, que `zoneScale` ramene
  * a `ZONE_RADIUS`. Les silhouettes ondulent vers l'interieur (`RIM_MIN`), jamais
@@ -619,13 +606,12 @@ function makeZoneAtlas(cell: number): Texture {
 
 export class ZoneRenderer {
   readonly #container = new ParticleContainer({
-    // ⚠️ **Additif, comme le §6.6 l'exige.** Deux zones qui se recouvrent
-    // s'ADDITIONNENT — et leur recouvrement est precisement ce qui declenche
-    // une reaction (§5.2). En melange normal, la seconde masquerait la
+    // ⚠️ **Additif.** Deux zones qui se recouvrent s'ADDITIONNENT — et leur
+    // recouvrement est precisement ce qui declenche une reaction. En melange normal, la seconde masquerait la
     // premiere et la frontiere commune, la seule chose qu'il faille voir,
     // serait invisible.
     blendMode: 'add',
-    // Tout bouge a chaque image depuis que les zones s'animent : `vertex`
+    // Tout bouge a chaque image : `vertex`
     // (l'echelle respire), `rotation`, `color` (scintillement et fondu), et
     // `uvs` parce que le reservoir est REUTILISE — le creneau 3 peut porter la
     // case de Braise a cette image et celle de Givre a la suivante. Quelques
@@ -655,7 +641,7 @@ export class ZoneRenderer {
     return this.#container.boundsArea as Rectangle;
   }
 
-  /** Expose pour le test : « additif » est une exigence du §6.6, pas un detail. */
+  /** Expose pour le test : « additif » est une exigence, pas un detail. */
   get blendMode(): string {
     return this.#container.blendMode;
   }
@@ -667,8 +653,7 @@ export class ZoneRenderer {
   /**
    * Vrai des que `load` a pose sa texture. Expose pour le test, comme
    * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
-   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
-   * indetectable jusqu'a la tache 9 bis.
+   * `Stage.composeWorld` charge CHAQUE calque.
    */
   get loaded(): boolean {
     return this.#cells.length === ZONE_CELL_COUNT;
@@ -682,16 +667,8 @@ export class ZoneRenderer {
   /**
    * Rend le calque capable de dessiner a partir d'une texture deja cuite.
    *
-   * ⚠️ **Ajoute a la tache 16 parce que TOUT le corps de `draw` etait garde par
-   * rien.** Deux mutations l'ont montre, appliquees avant d'ecrire une ligne de
-   * test : `particle.scaleX = 1` (le disque ne suit plus `zoneScale`, donc plus
-   * `ZONE_RADIUS`) et la suppression de `particle.alpha` — **toutes deux vertes
-   * a 237 tests**. `zoneScale` etait teste, mais rien ne verifiait que `draw`
-   * s'en servait : le motif exact des dix-sept assertions creuses du depot, le
-   * test met en scene la bonne intention et rate la ligne qu'il nomme.
-   *
-   * Meme point d'accroche que `MarkRingRenderer.adoptTexture`, `adoptAtlas`
-   * (tache 9 bis) et `adoptTextures` (tache 12), et pour la meme raison :
+   * ⚠️ **Sans ce point d'accroche, TOUT le corps de `draw` est hors de portee
+   * des tests** (tester `zoneScale` ne prouve pas que `draw` s'en sert) :
    * `load()` cuit sa texture sur un canevas 2D que l'environnement de test ne
    * fournit pas, donc `draw` retournerait a son premier `if (!texture)`.
    */
@@ -718,7 +695,7 @@ export class ZoneRenderer {
   /**
    * `tick` est le tick de horde du client (`GameClient.hordeTick`) : c'est lui
    * qui decide quelles zones sont encore vivantes, avec exactement le meme
-   * predicat que le serveur (§5.3 — l'expiration est DERIVEE, jamais annoncee),
+   * predicat que le serveur (l'expiration est DERIVEE, jamais annoncee),
    * et quel age elles ont (apparition, fondu).
    *
    * `timeMs` est l'horloge MURALE, et ne sert qu'a l'animation (rotation,
@@ -745,12 +722,11 @@ export class ZoneRenderer {
       const kind = zones.kind[i] ?? 0;
       const element = zoneElement(kind);
       // La silhouette ET l'animation : celles de la REACTION si elle en porte
-      // une (etape 8), celles de l'element sinon. Voir `zoneLook`.
+      // une, celles de l'element sinon. Voir `zoneLook`.
       const look = zoneLook(kind);
-      // ⚠️ **Plus de facteur 1,6 sur les reactions** : leur rotation vient
-      // desormais de la silhouette de leur FAMILLE (`SHAPE_LOOKS`), qui la
-      // porte deja — une fracture tourne a l'envers, une etoile tourne vite.
-      // Multiplier par-dessus aurait rendu ces valeurs illisibles.
+      // ⚠️ **Aucun facteur sur les reactions** : leur rotation vient de la
+      // silhouette de leur FAMILLE (`SHAPE_LOOKS`) — une fracture tourne a
+      // l'envers, une etoile tourne vite.
       const spin = look.spin;
       const age = tick - (zones.bornTick[i] ?? 0);
       const seed = slotSeed(i);
@@ -758,9 +734,8 @@ export class ZoneRenderer {
       particle.texture = this.#cells[zoneCell(kind)] ?? particle.texture;
       particle.x = zones.x[i] ?? 0;
       particle.y = zones.y[i] ?? 0;
-      // ⚠️ **L'echelle suit le rayon de CETTE zone** (etape 8) : toutes ne font
-      // plus `ZONE_RADIUS`, et le disque dessine doit dire ce que la regle
-      // couvre — « le bord dit toujours la verite » (tache 16).
+      // ⚠️ **L'echelle suit le rayon de CETTE zone** : toutes ne font pas
+      // `ZONE_RADIUS`, et le disque dessine doit dire ce que la regle couvre.
       //
       // Un seul facteur pour les deux axes : la zone reste un CERCLE en monde.
       const s =

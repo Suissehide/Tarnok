@@ -40,16 +40,7 @@ describe('WEAPONS', () => {
     });
   });
 
-  /**
-   * ⚠️ **Dix-sept depuis la tache 8 de l'etape 5c** : neuf a l'etape 5a (deux
-   * Braise, deux Givre, cinq neutres), plus deux Foudre et deux Poix a la
-   * tache 9 de l'etape 5b, plus deux Chaux et deux Vif-argent ici. La borne
-   * haute reste loin du pool de quarante du §6.2 — cette tache ne visait que
-   * le cablage minimal (deux armes par nouvel element), pas le pool complet.
-   */
   it('compte entre seize et dix-neuf armes', () => {
-    // Dix-neuf depuis la fronde a ricochets et le missile guide (cartes
-    // d'arme) : deux mecaniques de trajectoire, pas un element de plus.
     expect(WEAPONS.length).toBeGreaterThanOrEqual(16);
     expect(WEAPONS.length).toBeLessThanOrEqual(19);
   });
@@ -58,7 +49,7 @@ describe('WEAPONS', () => {
     for (const w of WEAPONS) {
       expect(w.cooldownTicks).toBeGreaterThan(0);
       expect(w.damage).toBeGreaterThan(0);
-      // ⚠️ **Sauf une mine, qui ne part pas** (etape 8) : `isLaunched` ecrit la
+      // ⚠️ **Sauf une mine, qui ne part pas** : `isLaunched` ecrit la
       // regle, et le cas « plancher de vitesse » plus bas en garde les deux
       // moities — ce qui part depasse le joueur, ce qui ne part pas vaut
       // exactement zero.
@@ -74,7 +65,7 @@ describe('WEAPONS', () => {
   });
 
   /**
-   * L'apparence (etape 5a, tache 12). ⚠️ **`trailTicks <= projectileLifeTicks`**
+   * ⚠️ **`trailTicks <= projectileLifeTicks`**
    * n'est pas de la coquetterie : une trainee plus longue que le vol entier
    * dessinerait le projectile derriere son propre point de depart.
    */
@@ -97,15 +88,10 @@ describe('WEAPONS', () => {
   });
 
   /**
-   * L'autre extreme de la cadence (etape 6a, tache 19).
-   *
-   * ⚠️ **L'arme la plus rapide n'est PAS l'arme de base, et c'est ce qui a
-   * borne la main a la tache 19.** Accelerer tout du meme facteur amenait la
-   * dague a 4 ticks et le lance-flammes a 3 ; les deux valeurs ont ete posees a
-   * la main precisement pour que la dague ne devienne pas l'arme la plus rapide
-   * du catalogue. Une dague plus rapide que le lance-flammes retirerait a
-   * celui-ci sa seule raison d'exister — *« cadence tres rapide, courte
-   * portee »* — et rendrait l'arme gratuite meilleure que la carte.
+   * ⚠️ **L'arme la plus rapide n'est PAS l'arme de base.** Une dague plus
+   * rapide que le lance-flammes retirerait a celui-ci sa seule raison d'exister
+   * (cadence tres rapide, courte portee) et rendrait l'arme gratuite meilleure
+   * que la carte.
    */
   it("l'arme la plus rapide est unique, et ce n'est jamais l'arme de base", () => {
     const cadenceMin = Math.min(...WEAPONS.map((w) => w.cooldownTicks));
@@ -114,13 +100,10 @@ describe('WEAPONS', () => {
   });
 
   /**
-   * ⚠️ **LE garde-fou de la tache 19, et il porte sur le PASSIF, pas sur les
-   * armes.** `cooldownWithBonus` arrondit et plafonne : plus une arme est
-   * rapide, moins il reste de marches a la carte « cadence » avant qu'elle ne
-   * change plus rien. A 4 ticks le passif garde huit cartes utiles ; a 2 ticks
-   * il n'en garde plus que quatre, et *« le passif cesserait de servir »*.
-   * C'est ce qui a arrete l'acceleration au facteur 0,60 alors que le banc
-   * continuait de rendre un peu plus de morts en dessous.
+   * ⚠️ **Ce garde-fou porte sur le PASSIF, pas sur les armes.**
+   * `cooldownWithBonus` arrondit et plafonne : plus une arme est rapide, moins
+   * il reste de marches a la carte « cadence » avant qu'elle ne change plus
+   * rien. C'est ce qui borne l'acceleration des armes.
    *
    * Six cartes du meme passif, c'est deja six montees de niveau depensees sur
    * une seule ligne — au-dela, plus rien ne se joue de toute facon (le plafond
@@ -154,26 +137,18 @@ describe('WEAPONS', () => {
 
 describe("l'element porte par une arme (etape 5a)", () => {
   /**
-   * §4.2 : *« deux passent en Braise, deux en Givre, les cinq autres restent
-   * neutres »*, etendu par la tache 9 de l'etape 5b (deux de plus en Foudre,
-   * deux de plus en Poix) puis par la tache 8 de l'etape 5c (deux de plus en
-   * Chaux, deux de plus en Vif-argent) — le compte de neutres ne bouge pas a
-   * chaque fois. Compter, plutot que de faire confiance a la lecture de la
-   * table : c'est le seul endroit ou une arme elementaire oubliee ou ajoutee
-   * en trop se voit — plus loin dans l'etape, elle se contenterait de ne pas
-   * poser de zone.
+   * Compter, plutot que de faire confiance a la lecture de la table : c'est le
+   * seul endroit ou une arme elementaire oubliee ou en trop se voit ; ailleurs,
+   * elle se contenterait de ne pas poser de zone.
    */
   it('cable AU MOINS deux armes par element, et garde un socle de neutres', () => {
     const compte = (element: number) => WEAPONS.filter((w) => w.element === element).length;
 
-    // ⚠️ **« Au moins deux », et plus « exactement deux », depuis l'etape 8.**
-    // Chaque element a besoin d'une arme qui ARROSE et d'une qui FRAPPE —
-    // c'est ce que ce cas garde, et il le gardera a quarante armes (§6.2). Ce
-    // qu'il ne garde plus, c'est une symetrie parfaite : le lance-flammes est
-    // passe en Braise, qui en compte donc trois (l'eventail arrose, la grenade
-    // frappe, le lance-flammes entretient la marque au contact). Exiger
-    // l'egalite aurait voulu dire refuser toute arme elementaire de plus sans
-    // en ajouter cinq autres le meme jour.
+    // ⚠️ **« Au moins deux », pas « exactement deux ».** Chaque element a
+    // besoin d'une arme qui ARROSE et d'une qui FRAPPE. La symetrie n'est pas
+    // exigee : Braise en compte trois (le lance-flammes entretient la marque
+    // au contact), et l'egalite interdirait d'ajouter une arme elementaire
+    // sans en ajouter une a chaque autre element.
     for (const element of [
       ELEMENT.BRAISE,
       ELEMENT.GIVRE,
@@ -185,8 +160,8 @@ describe("l'element porte par une arme (etape 5a)", () => {
       expect(compte(element), `element ${element}`).toBeGreaterThanOrEqual(2);
     }
 
-    // Le socle neutre du §6.3 ne doit pas fondre arme par arme : quatre
-    // aujourd'hui, et jamais moins de trois sans que ce cas ne le dise.
+    // Le socle neutre ne doit pas fondre arme par arme : jamais moins de trois
+    // sans que ce cas ne le dise.
     expect(compte(ELEMENT.NEUTRE)).toBeGreaterThanOrEqual(3);
     // Non-vacuite : la somme retombe bien sur le catalogue entier.
     const total = [
@@ -202,18 +177,17 @@ describe("l'element porte par une arme (etape 5a)", () => {
   });
 
   /**
-   * ⚠️ **L'arme de base reste neutre, et ce n'est pas un oubli.** Le §6.3 de
-   * l'orientation en fait *« un socle pour les joueurs qui ne veulent pas
-   * jouer le systeme »* : elle est la seule arme que tout le monde porte a
-   * chaque tick, donc lui donner un element marquerait la horde entiere en
-   * permanence et rendrait le systeme elementaire subi plutot que choisi.
+   * ⚠️ **L'arme de base reste neutre, et ce n'est pas un oubli** : c'est le
+   * socle de qui ne veut pas jouer le systeme. Tout le monde la porte, donc
+   * lui donner un element marquerait la horde entiere en permanence et rendrait
+   * le systeme elementaire subi plutot que choisi.
    */
   it('laisse neutre l arme de base, avec laquelle toute run commence', () => {
     expect(weaponOf(BASE_WEAPON_ID).element).toBe(ELEMENT.NEUTRE);
   });
 
   /**
-   * L'omission vaut `NEUTRE` (§4.2) : c'est la ligne ABSENTE qui est le cas
+   * L'omission vaut `NEUTRE` : c'est la ligne ABSENTE qui est le cas
    * courant dans `WEAPON_DEFS`. Sans ce test, un defaut mal ecrit rendrait
    * `undefined` — et `undefined` n'est ni un element ni une erreur, il
    * traverserait tout le systeme en ne marquant jamais rien.
@@ -225,10 +199,6 @@ describe("l'element porte par une arme (etape 5a)", () => {
   });
 });
 
-/**
- * Les armes de zone (etape 6a, tache 16) — *« il faut parfois des AoE sur
- * certaines armes comme les grenades »*.
- */
 describe('le rayon de zone porte par une arme (tache 16)', () => {
   /**
    * Meme raison que pour `element` : l'omission vaut `0`, et `undefined`
@@ -246,27 +216,25 @@ describe('le rayon de zone porte par une arme (tache 16)', () => {
   /**
    * ⚠️ **Garde par une PROPRIETE, pas par un nom ni par un chiffre.** « La
    * grenade explose » se verifierait avec `weaponOf(4)`, et ce test survivrait
-   * a une reindexation du catalogue en mesurant autre chose. Ce que la tache
-   * demande, c'est que l'arme de zone soit *l'arme dont le tir doit peser* :
+   * a une reindexation du catalogue en mesurant autre chose. La regle : l'arme
+   * de zone est *l'arme dont le tir doit peser* :
    * la cadence la plus lente ET les degats les plus eleves. Les deux, parce
    * qu'une seule des deux ne designe pas forcement la meme arme.
    */
   it('la PLUS GRANDE zone est celle qui frappe le plus fort et le plus lentement', () => {
-    // ⚠️ **Les armes de famille `'halo'` sont HORS de cette regle** (etape 8) :
+    // ⚠️ **Les armes de famille `'halo'` sont HORS de cette regle** :
     // leur `blastRadius` n'est pas un souffle d'impact, c'est leur PORTEE — le
     // rayon autour du porteur. Les confondre ferait dire a ce cas qu'un halo
     // doit etre plus lent que la grenade, ce qui n'a aucun sens pour une arme
     // qui ne percute rien.
-    // ⚠️ **Parmi les armes LANCEES seulement** (etape 8) : une mine a un
+    // ⚠️ **Parmi les armes LANCEES seulement** : une mine a un
     // souffle elle aussi, mais sa cadence n'est pas comparable a celle d'une
     // arme qu'on lance — elle attend au sol, et ce qui la fait sauter n'est pas
     // sa recharge mais l'ennemi qui s'approche.
     const zone = WEAPONS.filter((w) => w.kind === 'tir' && isLaunched(w) && w.blastRadius > 0);
-    // ⚠️ **Le souffle n'est plus l'apanage d'une seule arme depuis l'etape 8**
-    // (les quatre lourdes a projectile unique en ont un de contact), mais il
-    // reste une EXCEPTION : la regle du catalogue est « ce coup ne touche que
-    // ce qu'il percute », et c'est la ligne absente qui doit rester le cas
-    // courant.
+    // ⚠️ **Le souffle reste une EXCEPTION** : la regle du catalogue est « ce
+    // coup ne touche que ce qu'il percute », et la ligne absente doit rester
+    // le cas courant.
     expect(zone.length).toBeGreaterThan(0);
     expect(zone.length).toBeLessThan(WEAPONS.length / 2);
 
@@ -319,7 +287,7 @@ describe('assertWeaponElements', () => {
   });
 
   /**
-   * ⚠️ Le piege de la fixture qui masque, pris a l'avance : une garde qui
+   * ⚠️ Le piege de la fixture qui masque : une garde qui
    * s'arreterait a la premiere arme passerait le test ci-dessus si la seule
    * arme cassee etait la premiere. La reference morte est ici la DERNIERE.
    */
@@ -340,9 +308,7 @@ describe('assertWeaponElements', () => {
 describe('salvoCount', () => {
   /**
    * `canon-a-mitraille` : huit projectiles de base. Un compte different de 1
-   * est ce qui prouve qu'il est LU. (La Roue de lames et ses dix lames
-   * tenaient ce role jusqu'a l'etape 12, ou elle est devenue une spirale a
-   * deux bras.)
+   * est ce qui prouve qu'il est LU.
    */
   const LARGE = 7;
   /** `arc-lourd` : un seul projectile de base. */
@@ -359,7 +325,7 @@ describe('salvoCount', () => {
   });
 
   it("rend aussi le compte de base a zero exemplaire : l'arme neutre passe par le meme chemin", () => {
-    // L'arme neutre du §6.1 ne figure dans aucun `Loadout`, donc son nombre
+    // L'arme neutre ne figure dans aucun `Loadout`, donc son nombre
     // d'exemplaires vaut toujours zero. Sans le `Math.max(0, ...)`, elle
     // tirerait un projectile de MOINS que le catalogue n'en annonce.
     for (const w of WEAPONS) {
@@ -394,10 +360,11 @@ describe('salvoCount', () => {
   });
 
   /**
-   * Étape 8 — **l'empilement ne punit plus les armes larges.** A +1 projectile
-   * par carte quelle que soit la salve de base, une arme a projectile unique
-   * quadruplait ses degats a quatre cartes quand le canon-a-mitraille gagnait
-   * 37 % : le classement du catalogue se retournait sur un detail de formule.
+   * **L'empilement ne punit pas les armes larges.** A +1 projectile par carte
+   * quelle que soit la salve de base, une arme a projectile unique
+   * quadruplerait ses degats a quatre cartes quand une arme large gagnerait a
+   * peine plus d'un tiers : le classement se retournerait sur un detail de
+   * formule.
    */
   describe('stackGain — le gain suit la largeur de la salve', () => {
     it('donne au moins un projectile par carte, a toutes les armes', () => {
@@ -411,14 +378,12 @@ describe('salvoCount', () => {
       const large = WEAPONS.reduce((a, b) => (a.projectileCount >= b.projectileCount ? a : b));
       const etroite = WEAPONS.reduce((a, b) => (a.projectileCount <= b.projectileCount ? a : b));
       expect(large.projectileCount).toBeGreaterThan(etroite.projectileCount);
-      // Avant : 1,375 contre 4. Le but n'est pas l'egalite — une arme large
-      // part de plus haut — mais que l'ecart cesse d'etre un gouffre.
+      // Le but n'est pas l'egalite (une arme large part de plus haut), mais
+      // que l'ecart ne soit pas un gouffre.
       expect(gain4(large)).toBeGreaterThan(2);
       expect(gain4(large)).toBeLessThan(gain4(etroite));
     });
 
-    // Etape 12 : la Roue de lames (10 -> 2) rentre dans le rang, le Missile
-    // guide (1 -> 5) en sort — toujours deux armes larges sur dix-neuf.
     it('ne touche PAS les armes a salve etroite : toutes sauf deux sont inchangees', () => {
       const inchangees = WEAPONS.filter((w) => stackGain(w) === 1);
       expect(inchangees.length).toBe(WEAPONS.length - 2);
@@ -430,12 +395,12 @@ describe('salvoCount', () => {
 });
 
 /**
- * Le souffle de contact des armes lourdes (etape 8), et la regle qui le borne.
+ * Le souffle de contact des armes lourdes, et la regle qui le borne.
  */
 describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
   it('n appartient qu a des armes LENTES a projectile unique', () => {
-    // Une arme rapide a souffle poserait des explosions en continu — ce que le
-    // §6.6 refuse exactement comme il refuse un halo permanent.
+    // Une arme rapide a souffle poserait des explosions en continu, refusees
+    // pour la meme raison qu'un halo permanent.
     const mediane = [...WEAPONS].sort((a, b) => a.cooldownTicks - b.cooldownTicks)[
       Math.floor(WEAPONS.length / 2)
     ];
@@ -446,11 +411,9 @@ describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
         expect(w.projectileCount, w.name).toBe(1);
         expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(mediane?.cooldownTicks ?? 0);
       }
-      // ⚠️ **La frappe (etape 12) est TOLEREE a plusieurs impacts**, et c'est
-      // l'arme qui le veut : trois eclairs autour d'un point, chacun de ce
-      // rayon. Elle reste soumise a la moitie qui compte pour le §6.6 — la
-      // LENTEUR —, sans quoi ce serait l'explosion continue que la regle
-      // refuse.
+      // ⚠️ **La frappe est TOLEREE a plusieurs impacts** (trois eclairs autour
+      // d'un point, chacun de ce rayon), mais reste soumise a la LENTEUR, sans
+      // quoi ce serait l'explosion continue que la regle refuse.
       if (w.kind === 'frappe') {
         expect(w.cooldownTicks, w.name).toBeGreaterThanOrEqual(mediane?.cooldownTicks ?? 0);
       }
@@ -470,32 +433,24 @@ describe('HEAVY_BLAST_RADIUS — a qui le souffle appartient', () => {
 });
 
 /**
- * Tache 16, etape 3 : « les tirs ne sont pas infini en distance » — 333 px
- * (la portee d'AVANT la tache 14, qui l'a portee a 650 * 28 / 30 ≈ 606,7 px,
- * voir `WEAPON_DEFS[0]` ci-dessus) faisaient un cinquieme d'un ecran mesure a
- * 1728 px. Ce chiffre du brief est donc perime sur le code actuel — mais la
- * demande reste valide : viser une FRACTION d'ecran plutot qu'un ressenti, et
- * proteger ce choix par un test plutot que par la seule lecture du chiffre
- * dans un commentaire.
+ * Les tirs ne portent pas a l'infini : la portee vise une FRACTION d'ecran
+ * plutot qu'un ressenti, et ce choix est garde par un test.
  */
 describe('portee du tir (tache 16, etape 3)', () => {
   /**
    * Repere de conception, pas une constante d'execution : la vue se
    * redimensionne a la fenetre (`resizeTo: parent`, `front/src/render/stage.ts`),
-   * rien dans le code ne fixe de largeur d'ecran. 1728 px est la largeur
-   * mesuree par l'auteur en jouant (brief de la tache 16) — une resolution de
-   * calibrage courante (MacBook Pro 16", en points), pas un contrat
-   * technique. Un test qui la reference documente l'intention de reglage sans
-   * pretendre qu'elle est garantie a l'execution.
+   * rien dans le code ne fixe de largeur d'ecran. 1728 px est une resolution
+   * de calibrage courante (MacBook Pro 16", en points), pas un contrat
+   * technique.
    */
   const REFERENCE_VIEWPORT_PX = 1728;
 
   /**
    * Bande visee, exprimee en fraction de `REFERENCE_VIEWPORT_PX` :
-   * - en dessous de 25 %, on retombe pres du defaut signale par le brief
-   *   (l'ancienne portee de 333 px faisait 19,3 % de 1728 px) ;
+   * - en dessous de 25 %, les tirs paraissent courts ;
    * - au-dessus de 50 %, la portee couvrirait plus de la moitie de l'ecran, ce
-   *   qui videe la notion meme de « portee limitee » a vue.
+   *   qui viderait la notion meme de « portee limitee » a vue.
    */
   const MIN_VIEWPORT_FRACTION = 0.25;
   const MAX_VIEWPORT_FRACTION = 0.5;
@@ -521,9 +476,6 @@ describe('weaponOf', () => {
 });
 
 /**
- * L'apparence des projectiles (etape 5a, tache 12), venue de l'auteur en
- * jouant : *« fais des projectiles differents pour chaque arme »*.
- *
  * ⚠️ **« Chaque arme a une apparence » et « toutes les armes ont la MEME
  * apparence » se ressemblent beaucoup dans un test faible.** D'ou la garde de
  * chargement `assertWeaponLooks`, et d'ou le fait que ces cas lui donnent des
@@ -557,8 +509,7 @@ describe('assertWeaponLooks — chaque arme, son apparence', () => {
   });
 
   /**
-   * ⚠️ Le piege de la fixture qui masque, pris a l'avance — comme pour
-   * `assertWeaponElements` : une garde qui s'arreterait a la premiere arme
+   * ⚠️ Comme pour `assertWeaponElements` : une garde qui s'arreterait a la premiere arme
    * passerait les deux cas ci-dessus. Le defaut est ici en DERNIERE position,
    * pour les deux regles.
    */
@@ -583,8 +534,7 @@ describe('assertWeaponLooks — chaque arme, son apparence', () => {
   /**
    * La moitie « et le catalogue reel, alors ? » : la garde ci-dessus protege
    * l'AVENIR, ce cas mesure le PRESENT. Les deux armes de chaque element sont
-   * explicitement confrontees — Foudre et Poix ont rejoint Braise et Givre a
-   * la tache 9 de l'etape 5b, Chaux et Vif-argent les rejoignent ici.
+   * explicitement confrontees.
    */
   it('donne a chaque arme du catalogue une teinte deux a deux distincte des autres', () => {
     expect(new Set(WEAPONS.map((w) => w.look.tint)).size).toBe(WEAPONS.length);
@@ -607,11 +557,10 @@ describe('assertWeaponLooks — chaque arme, son apparence', () => {
 });
 
 /**
- * Le fondu de fin de vie, DERIVE de `projectileLifeTicks` (etape 5a, tache
- * 12) : *« fais-les durer plus longtemps ou fade pour les armes courte portee
- * comme le lance-flammes »*.
+ * Le fondu de fin de vie, DERIVE de `projectileLifeTicks` : les armes courte
+ * portee, comme le lance-flammes, s'eteignent en vol.
  *
- * ⚠️ **Les deux moities, toujours** (R24/R25) : une fonction qui rendrait
+ * ⚠️ **Les deux moities, toujours** : une fonction qui rendrait
  * toujours 1 passerait tous les cas de l'arc-lourd, et une qui s'eteindrait
  * toujours passerait tous ceux du lance-flammes. Il faut les deux, et il faut
  * qu'ils DIFFERENT au meme age relatif.
@@ -690,8 +639,8 @@ describe('projectileAlpha — la portee se voit', () => {
 describe('projectileTrailPx', () => {
   it('rend les ticks de trainee convertis a la vitesse de l arme', () => {
     const arc = weaponOf(2);
-    // Valeur ABSOLUE, pas seulement un ordre : 600 px/s (900 avant l'etape
-    // 12) pendant 1,6 tick a 30 Hz. Un `trailTicks` ignore, ou un `TICK_HZ`
+    // Valeur ABSOLUE, pas seulement un ordre : 600 px/s pendant 1,6 tick a
+    // 30 Hz. Un `trailTicks` ignore, ou un `TICK_HZ`
     // oublie, rendrait un autre nombre tout en gardant l'ordre entre armes.
     expect(arc.projectileSpeed).toBe(600);
     expect(arc.look.trailTicks).toBe(1.6);
@@ -706,14 +655,9 @@ describe('projectileTrailPx', () => {
 });
 
 /**
- * Étape 8 — **la taille dit ce que le coup pese**, venu de l'auteur en jouant :
- * *« varie les tailles et impact des projectiles, on dirait qu'ils font tous
- * pareil »*.
- *
- * Avant ce tour, les calibres etaient varies mais ARBITRAIRES : le Canon a
- * chaux (15 degats) etait le plus gros du catalogue, la Grenade (40) le
- * cinquieme. Varier n'est pas informer — un joueur ne pouvait rien deduire de
- * ce qu'il voyait partir.
+ * **La taille dit ce que le coup pese.** Des calibres varies mais arbitraires
+ * n'informent pas : le joueur doit pouvoir deduire les degats de ce qu'il voit
+ * partir.
  */
 describe('les calibres de projectile disent les degats', () => {
   it('ne rend jamais un coup plus faible plus GROS qu un coup plus fort', () => {
@@ -747,9 +691,8 @@ describe('les calibres de projectile disent les degats', () => {
 });
 
 /**
- * Étape 8 — **le plancher de vitesse**, signale deux fois en jouant : *« quand
- * on avance dans la meme direction, les tirs sont sur moi »*, puis *« les
- * projectiles se tassent encore »*.
+ * **Le plancher de vitesse** : en avancant dans la direction du tir, les
+ * projectiles ne doivent pas se tasser sur le tireur.
  */
 describe('MIN_MUZZLE_SPEED — un projectile prend de l avance sur son tireur', () => {
   it('fait partir CHAQUE arme plus vite que le joueur, avec de la marge', () => {
@@ -782,18 +725,14 @@ describe('MIN_MUZZLE_SPEED — un projectile prend de l avance sur son tireur', 
     const relative = laPlusLente.projectileSpeed - PLAYER_SPEED;
     // ⚠️ **Le temps qu'il faut au projectile le plus lent pour sortir du corps
     // de son tireur qui le suit** — un corps fait `2 x PROJECTILE_HIT_RADIUS`
-    // de large. C'est CA que le joueur appelait « les tirs sont sur moi », et
-    // c'est donc ca qu'on mesure, plutot que la vitesse brute.
+    // de large. C'est ce que le joueur percoit, donc ce qu'on mesure, plutot
+    // que la vitesse brute.
     expect((2 * PROJECTILE_HIT_RADIUS) / relative, laPlusLente.name).toBeLessThanOrEqual(1 / 3);
-    // Avant l'etape 8, la grenade (350 px/s) mettait plus du double.
+    // Un projectile a 350 px/s mettrait plus du double : la borne a du sens.
     expect((2 * PROJECTILE_HIT_RADIUS) / (350 - PLAYER_SPEED)).toBeGreaterThan(2 / 3);
   });
 });
 
-/**
- * Étape 8 — **les familles d'armes**, demandees par l'auteur : *« il faut
- * varier les types, pas que des projectiles »*.
- */
 describe('WeaponKind — ce qu une famille change, et ce qu elle ne change pas', () => {
   it('garde le TIR comme cas courant : la ligne absente est la regle', () => {
     expect(WEAPONS.filter((w) => w.kind === 'tir').length).toBeGreaterThan(WEAPONS.length / 2);
@@ -810,7 +749,7 @@ describe('WeaponKind — ce qu une famille change, et ce qu elle ne change pas',
   });
 
   /**
-   * Etape 12 : l'onde et la frappe ne posent aucun projectile, mais lisent les
+   * L'onde et la frappe ne posent aucun projectile, mais lisent les
    * memes champs (`shared/onde-frappe.ts`). Un zero y serait une arme morte :
    * une onde sans rayon max ne touche rien, une onde sans vitesse ne grandit
    * pas, une frappe sans portee tombe sur le tireur.
@@ -845,9 +784,6 @@ describe('WeaponKind — ce qu une famille change, et ce qu elle ne change pas',
 });
 
 /**
- * Étape 8 — **l'invocation**, cinquieme et derniere famille : *« des adds qui
- * tapent et te protegent »*.
- *
  * Ce bloc garde la seule chose que l'invocation ajoute vraiment : son RYTHME.
  * Le reste — ce qui meurt, ce qui est marque — est celui du halo, et c'est
  * `resolveHalos` qui le garde.
@@ -966,7 +902,7 @@ describe('upgradedWeapon — les bonus propres de chaque arme', () => {
       expect(w.perks, w.name).not.toContain(UPGRADE.FIRE_RATE);
       if (w.kind !== 'tir') {
         // Rien qui ne vive que sur un projectile. ⚠️ **Sauf SALVO pour une
-        // frappe** (etape 12) : `projectileCount` y compte les eclairs, et
+        // frappe** : `projectileCount` y compte les eclairs, et
         // une carte en ajoute un — ce n'est pas une carte vide.
         for (const u of [
           ...(w.kind === 'frappe' ? [] : [UPGRADE.SALVO]),

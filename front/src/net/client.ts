@@ -99,10 +99,8 @@ const ABILITY_EVENT_MEMORY_TICKS = 10 * TICK_HZ;
 import { type MoveMap, PredictedPlayer } from './prediction';
 
 /**
- * Une paire d'axes dans [-1, 1] — reutilisee telle quelle pour le deplacement
- * ET pour la visee (tache 13) : les deux sont structurellement la meme chose,
- * un vecteur 2D normalise, seule leur INTERPRETATION differe (`readInput` vs
- * `readAim` ci-dessous).
+ * Une paire d'axes dans [-1, 1], pour le deplacement ET pour la visee : seule
+ * leur INTERPRETATION differe (`readInput` vs `readAim`).
  */
 export interface InputAxes {
   x: number;
@@ -110,9 +108,9 @@ export interface InputAxes {
 }
 
 /**
- * Masque d'obstacles livre au rendu (tache 28), avec la geometrie qui va
- * avec — `cols`/`rows`/`cellSize` viennent du MEME `FlowField` sonde que
- * celui qui a servi a generer `mask`, jamais recalcules a cote.
+ * Masque d'obstacles livre au rendu, avec sa geometrie : `cols`/`rows`/
+ * `cellSize` viennent du MEME `FlowField` que celui qui a genere `mask`,
+ * jamais recalcules a cote.
  */
 export interface ObstacleMap {
   mask: Uint8Array;
@@ -129,14 +127,12 @@ export interface RenderState {
   /** Experience de l'equipe — commune a tous, pas un champ par joueur. */
   xp: number;
   /**
-   * Charge de la barre de Synergie, commune a toute l'equipe — **un seul
-   * nombre dans le snapshot**, exactement comme `xp` (§7 et §8 de la spec de
-   * l'etape 5a), et pour la meme raison : c'est une ressource d'equipe, pas
-   * une statistique par joueur.
+   * Charge de la barre de Synergie, commune a toute l'equipe : un seul nombre
+   * dans le snapshot, comme `xp`.
    *
-   * Le client ne la calcule jamais : il l'affiche. La comparaison qui la fait
-   * monter — deux joueurs differents a l'origine d'une reaction — est arbitree
-   * serveur, et le bit qui en resulte voyage dans `REACTION`.
+   * Le client ne la calcule jamais : il l'affiche. Ce qui la fait monter
+   * (deux joueurs differents a l'origine d'une reaction) est arbitre serveur,
+   * et le bit qui en resulte voyage dans `REACTION`.
    */
   synergy: number;
   /** Positions a dessiner : les autres interpolees, la sienne predite. */
@@ -147,24 +143,16 @@ export interface RenderState {
 
 /**
  * Ce que ce client sait du boss vivant : ce que le `SNAPSHOT` transporte
- * (identite, PV courants — tache 4 de l'etape 6a) **plus le maximum qu'il lui a
- * vu**, qui ne voyage pas.
+ * (identite, PV courants) **plus le maximum qu'il lui a vu**, qui ne voyage pas.
  *
- * ⚠️ **Le maximum est OBSERVE, pas recu, et il ne peut pas etre derive.** Une
- * barre a besoin d'une fraction, donc d'un total, et le client n'a aucun moyen
- * de le calculer : `bossHp(k, joueurs)` demande le palier `k`, qui ne voyage
- * NULLE PART — ni dans `SNAPSHOT`, ni dans l'ordre de vague de 19 octets. C'est
- * une decision de la tache 2, assumee : l'echelle de palier est appliquee cote
- * serveur seul (`Room#step`, `back/src/room.ts`), et `Horde.spawn` pose de son
- * cote les PV bruts de l'archetype, que personne cote client ne lit.
+ * ⚠️ **Le maximum est OBSERVE, pas recu, et il ne peut pas etre derive** :
+ * `bossHp(k, joueurs)` demande le palier `k`, qui ne voyage nulle part.
+ * L'echelle de palier est appliquee cote serveur seul (`Room#step`).
  *
- * **Ce que ca coute, dit franchement** : un client qui rejoint un salon PENDANT
- * un combat de boss prend pour maximum les PV qu'il voit en arrivant. Sa barre
- * demarre donc pleine et se vide correctement ensuite — l'evolution est juste,
- * le point de depart est faux, et rien a l'ecran ne ment sur autre chose. La
- * seule alternative serait de faire voyager le total, soit quatre octets par
- * tick pour une valeur qui ne bouge qu'a l'apparition du boss — un choix qui
- * appartient au protocole (tache 4), pas au rendu.
+ * Consequence assumee : un client qui rejoint PENDANT un combat de boss prend
+ * pour maximum les PV qu'il voit en arrivant. Sa barre demarre pleine puis se
+ * vide correctement. Faire voyager le total couterait quatre octets par tick
+ * pour une valeur qui ne bouge qu'a l'apparition du boss.
  */
 export interface BossVitals {
   readonly id: number;
@@ -176,16 +164,13 @@ export interface BossVitals {
 
 /**
  * Met a jour ce qu'on sait du boss a partir de ce que le snapshot en dit.
- * PURE, donc testable sans WebSocket — meme motif que `orbFlightFraction` et
- * `hudInfo`.
+ * PURE, donc testable sans WebSocket.
  *
- * ⚠️ **Le changement d'IDENTITE remet le maximum a zero**, et c'est la seule
- * chose qui le remette : le boss du palier 2 a plus de PV que celui du palier 1
- * (`hpScale`), donc garder l'ancien maximum afficherait une barre pleine a 80 %
- * des l'apparition. La sentinelle est sur l'identite, jamais sur les PV — un
- * boss a 0 PV est un boss, il meurt au tick suivant par `DEATHS` (voir
- * `NO_BOSS_ID` dans `shared/protocol.ts`), et le lire comme une absence ferait
- * disparaitre sa barre juste avant sa mort.
+ * ⚠️ **Seul le changement d'IDENTITE remet le maximum a zero** : les boss
+ * successifs n'ont pas les memes PV (`hpScale`). La sentinelle est sur
+ * l'identite, jamais sur les PV : un boss a 0 PV est un boss, il meurt au tick
+ * suivant par `DEATHS` (voir `NO_BOSS_ID` dans `shared/protocol.ts`), et le
+ * lire comme une absence ferait disparaitre sa barre juste avant sa mort.
  */
 export function trackBoss(
   previous: BossVitals | null,
@@ -207,17 +192,13 @@ export type ConnectionStatus = 'connecting' | 'open' | 'closed';
  * serveur porte par le dernier snapshot recu.
  *
  * Volontairement asymetrique et serree. Etre EN AVANCE du tick serveur connu
- * est le fonctionnement normal — la latence reseau fait que le dernier
- * snapshot recu decrit toujours un instant deja passe — et ne doit jamais
- * declencher de recalage : le faire reviendrait a figer en permanence le
- * compteur local sur un tick perime, annulant l'absorption de latence de
- * `FIELD_INPUT_DELAY_TICKS`. Etre EN RETARD, en revanche, ne devrait jamais
- * arriver en fonctionnement normal — seulement apres une perte de pas (onglet
- * en arriere-plan, §6.1c de la spec) — et doit se corriger immediatement : le
- * flowfield est un champ de directions discret, mesure (voir
- * `shared/horde.replication.test.ts`, scenarios C1) a etre assez sensible
- * pour faire la difference entre 0 et plus de 600 px de derive selon qu'un
- * retard persistant d'un ou de deux ticks est tolere.
+ * est normal (le dernier snapshot decrit toujours un instant passe) et ne doit
+ * jamais recaler : ce serait figer le compteur sur un tick perime et annuler
+ * l'absorption de latence de `FIELD_INPUT_DELAY_TICKS`. Etre EN RETARD
+ * n'arrive qu'apres une perte de pas (onglet en arriere-plan) et doit se
+ * corriger aussitot : le flowfield est assez sensible pour qu'un retard
+ * persistant de deux ticks au lieu d'un fasse deriver la horde de centaines
+ * de pixels (voir `shared/horde.replication.test.ts`, scenarios C1).
  */
 const HORDE_TICK_LAG_TOLERANCE = 1;
 
@@ -227,7 +208,7 @@ const FIXED_DT = 1 / TICK_HZ;
 /** Cadence de rafraichissement du champ, en pas : meme calcul que `Room.step` et `Horde.replication.test.ts`. */
 const STEPS_PER_FIELD = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
 
-/** Un lot de morts en attente d'application, tel que recu par `DEATHS` (§3.1). */
+/** Un lot de morts en attente d'application, tel que recu par `DEATHS`. */
 interface PendingDeathBatch {
   tick: number;
   ids: number[];
@@ -246,7 +227,7 @@ export interface BlastFlash {
 export const BLAST_FLASH_MS = 450;
 
 /**
- * Duree du bandeau « Un porteur de coffre est apparu ! » (etape 11, §5.4), en
+ * Duree du bandeau « Un porteur de coffre est apparu ! », en
  * horloge murale depuis la RECEPTION de son ordre — quelques ticks avant sa
  * naissance, au meme moment chez chacun.
  */
@@ -260,18 +241,17 @@ export function flashLifeMs(b: BlastFlash): number {
 }
 
 /**
- * Orbes vivants, cote client — **derives des morts, jamais transmis** (§6.1 de
- * la spec). Meme raisonnement que `OrbField` cote serveur (`back/src/combat.ts`),
- * duplique ici plutot qu'importe : le client ne peut dependre que de `shared/`,
- * et `back/` connait `ws`/`fastify` (regle Biome, voir `room.ts`).
+ * Orbes vivants, cote client — **derives des morts, jamais transmis**. Meme
+ * raisonnement que `OrbField` cote serveur (`back/src/combat.ts`), duplique
+ * ici plutot qu'importe : le client ne peut dependre que de `shared/`, et
+ * `back/` connait `ws`/`fastify` (regle Biome).
  *
  * `PICKUPS` dit quelles identites ont ete ramassees ; l'existence et la
  * position de l'orbe, elles, ne transitent jamais — `GameClient` les pose a la
  * position de l'entite au moment de sa mort, lue depuis la horde restauree par
  * `HordeHistory` (voir `GameClient#applyDeaths`), avant compaction par `kill`.
  *
- * Tableaux types, jamais un objet par orbe — meme regle que `Horde` et
- * `Projectiles` (§4.4 de l'orientation).
+ * Tableaux types, jamais un objet par orbe, comme `Horde` et `Projectiles`.
  */
 export class DerivedOrbs {
   /** Identite du monstre qui a laisse l'orbe. */
@@ -294,20 +274,16 @@ export class DerivedOrbs {
   }
 
   /**
-   * Une mort DEMANDE un orbe ; toutes ne l'obtiennent pas (tache 17, etape 5a).
+   * Une mort DEMANDE un orbe ; toutes ne l'obtiennent pas.
    *
-   * ⚠️ **La MEME garde que `OrbField.spawn`, cote serveur, et elle DOIT y
-   * rester des deux cotes.** Le client ne recoit jamais « un orbe existe » : il
-   * le derive du seul `DEATHS`. La garde d'un seul cote ferait donc dessiner
-   * ici des orbes que le serveur ne ramassera jamais — ou l'inverse, des
-   * ramassages sans rien a l'ecran. Le predicat lui-meme, `leavesDrop`, vit
-   * dans `shared/` : c'est lui qui n'a pas le droit d'exister en deux
-   * exemplaires.
+   * ⚠️ **La MEME garde que `OrbField.spawn`, cote serveur, des deux cotes.**
+   * Le client derive l'orbe du seul `DEATHS` : une garde d'un seul cote
+   * dessinerait des orbes que le serveur ne ramassera jamais, ou l'inverse.
+   * Le predicat, `leavesDrop`, vit dans `shared/` pour n'exister qu'une fois.
    *
-   * ⚠️ **Depuis la tache 14 de l'etape 6a, la reserve tient les orbes ET les
-   * PIECES**, sans les distinguer : leur nature se relit de l'identite
-   * (`dropsOrb` / `dropsCoin`, disjoints) au moment de les dessiner. Voir
-   * `OrbField.spawn`, cote serveur, qui porte la meme remarque.
+   * ⚠️ **La reserve tient les orbes ET les PIECES**, sans les distinguer : leur
+   * nature se relit de l'identite (`dropsOrb` / `dropsCoin`, disjoints) au
+   * moment de les dessiner.
    *
    * Ignore silencieusement si la capacite (tres large) est atteinte.
    */
@@ -326,35 +302,23 @@ export class DerivedOrbs {
   }
 
   /**
-   * Retire les orbes qu'un joueur vient de RAMASSER et les confie a `flights`
-   * — tache 20, sur retour de jeu : *« l'aimantation est plus proche du joueur
-   * et attire l'xp jusqu'a lui, meme s'il l'eloigne »*.
+   * Retire les orbes qu'un joueur vient de RAMASSER et les confie a `flights`,
+   * qui les fait voler jusqu'a lui, meme s'il s'eloigne.
    *
    * ## La capture EST le ramassage
    *
-   * ⚠️ **Le predicat est celui du serveur, au pixel pres — mais plus au MEME
-   * rayon depuis la tache 7 de l'etape 7b.** C'est `OrbField.resolvePickups`
-   * (`back/src/combat.ts`) qui arbitre, et rien ici ne decide de
-   * l'experience ; les deux comparent les MEMES positions repliquees, chacune
-   * au rayon DE SON PROPRE joueur, transporte par le `SNAPSHOT` (voir
-   * `PickupTarget.pickupRadius`) — le rayon de ramassage est devenu
-   * personnel (boutique), donc un rayon unique ne suffit plus a dire qui
-   * atteint quoi. C'est precisement cela qui empeche la capture de mentir :
-   * le vol part a l'instant ou le serveur ramasse, au rayon que CE joueur a
-   * reellement. **L'experience est deja acquise quand le vol commence**, il
-   * ne fait que decorer un fait accompli.
+   * ⚠️ **Le predicat est celui du serveur, au pixel pres.** C'est
+   * `OrbField.resolvePickups` (`back/src/combat.ts`) qui arbitre ; les deux
+   * comparent les MEMES positions repliquees, chacune au rayon DE SON PROPRE
+   * joueur (`PickupTarget.pickupRadius`, transporte par le `SNAPSHOT` : le
+   * rayon s'achete en boutique). Le vol part donc a l'instant ou le serveur
+   * ramasse : **l'experience est deja acquise quand il commence**, il ne fait
+   * que decorer un fait accompli. C'est ce qui autorise l'orbe a suivre un
+   * joueur qui fuit sans mentir.
    *
-   * C'est cela, et rien d'autre, qui autorise l'orbe a suivre un joueur qui
-   * fuit. L'attraction de la tache 17 ne pouvait pas se le permettre : elle
-   * etait une fonction pure de la distance, donc elle revenait sur ses pas des
-   * que le joueur s'eloignait — elle ne promettait rien. Une capture qui
-   * PERSISTE, elle, dessine l'orbe sur un joueur ; elle mentirait si elle
-   * pouvait se declencher sans ramassage.
-   *
-   * ⚠️ **Le premier joueur a portee, pas le plus proche** — meme boucle que le
-   * serveur, qui s'arrete lui aussi au premier. Ce choix n'a d'effet que
-   * cosmetique : l'experience est une ressource d'EQUIPE (`XP_PER_ORB` va au
-   * salon, pas au ramasseur), seule la trajectoire dessinee en depend.
+   * ⚠️ **Le premier joueur a portee, pas le plus proche**, comme le serveur.
+   * Effet seulement cosmetique : l'experience va a l'EQUIPE, seule la
+   * trajectoire dessinee en depend.
    *
    * `PICKUPS` arrivera un aller-retour plus tard et ne trouvera plus rien a
    * retirer : `remove` ignore silencieusement une identite absente.
@@ -397,19 +361,12 @@ export class DerivedOrbs {
   }
 
   /*
-   * ⚠️ **`expire` a disparu ICI EN MEME TEMPS QUE COTE SERVEUR** (etape 6a,
-   * tache 15) : *« l'xp ne doit pas disparaitre »*. Un orbe non ramasse vivait
-   * `ORB_LIFETIME_TICKS` puis s'evaporait, des deux cotes, par derivation de
-   * `bornTick`.
+   * ⚠️ **Pas de peremption des orbes, ni ici ni cote serveur** : l'xp ne
+   * disparait pas. Si elle revenait, ce serait des DEUX cotes a la fois :
+   * d'un seul, un orbe disparaitrait ici alors que le serveur le ramasse
+   * encore, ou resterait a l'ecran sans `PICKUPS` a venir.
    *
-   * ⚠️ **Les deux cessent ENSEMBLE, ou pas du tout.** L'existence d'un orbe ne
-   * transite jamais : le client la derive de `DEATHS`, le serveur arbitre le
-   * ramassage. Une peremption retiree d'un seul cote ferait disparaitre ici un
-   * orbe que le serveur ramasse encore — ou laisserait a l'ecran un orbe dont
-   * le `PICKUPS` n'arrivera jamais. Meme raison que `dropsOrb`, qui vit dans
-   * `shared/` pour n'exister qu'une fois.
-   *
-   * `bornTick` reste, lui : `OrbRenderer` en tire la phase du scintillement.
+   * `bornTick` sert a `OrbRenderer` pour la phase du scintillement.
    */
 
   #slotOf(entityId: number): number {
@@ -437,35 +394,26 @@ export class DerivedOrbs {
  * Ce que la capture a besoin de connaitre d'un joueur : ou il est, et QUI il
  * est. `PlayerSnapshot` la satisfait sans rien declarer.
  *
- * **Jumelle de `PickupPoint`** (`back/src/combat.ts`), a l'identite pres : le
- * serveur compare des positions et n'a que faire de savoir qui ramasse, alors
- * que le vol, lui, doit pouvoir retrouver le joueur A CHAQUE IMAGE — c'est
- * toute la difference entre suivre quelqu'un et viser un point.
- *
- * Une interface plutot que `PlayerSnapshot`, pour que le test n'ait pas a
- * fabriquer un snapshot entier.
+ * **Jumelle de `PickupPoint`** (`back/src/combat.ts`), plus l'identite : le vol
+ * doit retrouver le joueur A CHAQUE IMAGE pour le suivre.
  */
 export interface PickupTarget {
   readonly id: number;
   readonly x: number;
   readonly y: number;
-  /** Rayon de ramassage de CE joueur, transporte par le `SNAPSHOT` (tache 7 de l'etape 7b). */
+  /** Rayon de ramassage de CE joueur, transporte par le `SNAPSHOT`. */
   readonly pickupRadius: number;
 }
 
 /**
- * Duree d'un vol d'orbe capturee, en millisecondes horloge murale — tache 20.
+ * Duree d'un vol d'orbe capturee, en millisecondes horloge murale : **le vol
+ * n'arbitre rien** (voir `DerivedOrbs.capture`), le serveur ignore cette
+ * constante.
  *
- * En millisecondes et pas en ticks, exactement comme `HIT_FLASH_LIFETIME_MS` :
- * **le vol n'arbitre rien**, il decore un ramassage deja acquis (voir
- * `DerivedOrbs.capture`), donc rien n'exige qu'il se calcule identiquement des
- * deux cotes du fil. Le serveur, lui, ne connait meme pas cette constante.
- *
- * ⚠️ **Assez court pour que l'orbe DEPASSE un joueur qui fuit.** Le vol part
- * d'au plus `ORB_PICKUP_RADIUS` (90 px) : 200 ms font une vitesse moyenne de
- * 450 px/s, largement au-dessus de `PLAYER_SPEED` (260). Plus long, l'orbe
- * trainerait derriere le joueur au lieu d'etre aspiree — c'est une regle, pas
- * un reglage, et `client.test.ts` la garde par ce rapport-la.
+ * ⚠️ **Assez court pour que l'orbe DEPASSE un joueur qui fuit** : vitesse
+ * moyenne `ORB_PICKUP_RADIUS / duree` bien au-dessus de `PLAYER_SPEED`. Plus
+ * long, l'orbe trainerait derriere le joueur. `client.test.ts` garde ce
+ * rapport.
  */
 export const ORB_FLIGHT_LIFETIME_MS = 200;
 
@@ -479,15 +427,13 @@ export const ORB_FLIGHT_LIFETIME_MS = 200;
 const ORB_FLIGHT_CAPACITY = 64;
 
 /**
- * Orbes CAPTUREES, en vol vers le joueur qui les a ramassees — tache 20.
+ * Orbes CAPTUREES, en vol vers le joueur qui les a ramassees.
  *
  * ⚠️ **Une collection cosmetique, hors de `DerivedOrbs`, et c'est structurel.**
- * `DerivedOrbs` est le miroir client de la reserve du serveur : ce qu'elle
- * contient est dicte par les morts et par `PICKUPS`. Une orbe ramassee n'y est
- * plus — ni ici, ni cote serveur — donc un vol ne peut pas y vivre comme un
- * drapeau sur une entree. Il vit ici, avec `HitFlashes` et `ReactionFlashes`
- * pour voisines : meme forme de tableaux types, meme duree de vie en
- * millisecondes, meme absence totale d'arbitrage.
+ * `DerivedOrbs` est le miroir de la reserve du serveur : une orbe ramassee n'y
+ * est plus, donc un vol ne peut pas y vivre comme un drapeau. Il vit ici,
+ * comme `HitFlashes` et `ReactionFlashes` : tableaux types, duree de vie en
+ * millisecondes, aucun arbitrage.
  *
  * La position DESSINEE n'est pas stockee : elle se calcule a l'image, depuis
  * la position de depart, l'age du vol et la position COURANTE de la cible —
@@ -501,14 +447,9 @@ export class OrbFlights {
   /** Identite du joueur vise — pas sa position : c'est la position courante qui compte. */
   readonly targetId: Uint32Array;
   /**
-   * Identite du MONSTRE qui a laisse l'objet — celle qui dit sa nature (etape
-   * 6a, tache 14).
-   *
-   * ⚠️ **Un vol doit garder l'apparence de ce qui vole.** Sans elle, une piece
-   * capturee redeviendrait une orbe verte a l'instant ou elle decolle : la
-   * nature se relit de l'identite (`dropsCoin`), donc elle doit voyager du sol
-   * jusqu'au vol. Purement local — cette identite est deja connue des deux
-   * cotes, rien de plus ne passe sur le fil.
+   * Identite du MONSTRE qui a laisse l'objet : elle dit sa nature
+   * (`dropsCoin`). Sans elle, une piece capturee redeviendrait une orbe verte
+   * en decollant. Purement local, rien de plus sur le fil.
    */
   readonly dropId: Uint32Array;
   /** Horloge murale de naissance (`performance.now()`), voir `ORB_FLIGHT_LIFETIME_MS`. */
@@ -541,10 +482,9 @@ export class OrbFlights {
   }
 
   /**
-   * Retire les vols arrives. **Un vol se termine quand l'orbe atteint le
-   * joueur**, et `orbFlightFraction` vaut 1 exactement a `ORB_FLIGHT_LIFETIME_MS` :
-   * la meme echeance decrit donc l'arrivee et la fin de vie, il n'y a pas deux
-   * regles a garder d'accord.
+   * Retire les vols arrives : `orbFlightFraction` vaut 1 exactement a
+   * `ORB_FLIGHT_LIFETIME_MS`, donc la meme echeance decrit l'arrivee et la fin
+   * de vie.
    */
   expire(nowMs: number): void {
     for (let i = this.#count - 1; i >= 0; i--) {
@@ -571,21 +511,16 @@ export class OrbFlights {
 const HIT_FLASH_CAPACITY = 128;
 
 /**
- * Duree de vie d'un flash d'impact, en millisecondes horloge murale — §4.3 :
- * « un flash court, large et genereux… pas un halo permanent ». Pas en ticks
- * comme `DerivedOrbs` : un flash est purement cosmetique, jamais arbitre, donc
- * rien n'exige qu'il se calcule identiquement des deux cotes (voir le
- * commentaire de `GameClient#advanceHorde` sur `Projectiles.collide`).
- * L'horloge murale donne une animation lisse, independante de la cadence des
- * pas de simulation.
+ * Duree de vie d'un flash d'impact, en millisecondes horloge murale : un flash
+ * court, pas un halo permanent. Pas en ticks : purement cosmetique, il n'a pas
+ * a se calculer identiquement des deux cotes, et l'horloge murale l'anime
+ * independamment de la cadence de simulation.
  */
 export const HIT_FLASH_LIFETIME_MS = 220;
 
 /**
- * Bilan de fin de run, tel que porte par `RUN_OVER` (§7 de la spec). Recopie
- * sous un nom local plutot que reexportee telle quelle : `main.ts` n'a besoin
- * que de ces trois champs, pas de `type`/`tick` qui n'interessent que le
- * protocole.
+ * Bilan de fin de run, tel que porte par `RUN_OVER`, sans `type`/`tick` qui
+ * n'interessent que le protocole.
  */
 export interface RunOverSummary {
   survivedTicks: number;
@@ -597,70 +532,54 @@ export interface RunOverSummary {
  * Flashs d'impact, cote client — purement cosmetiques, jamais arbitres.
  *
  * Nes de `Projectiles.collide` (voir `GameClient#advanceHorde`), qui ne
- * consomme que les propres projectiles du client et ne touche jamais `horde`
- * ni `hp` : ce n'est PAS de l'arbitrage de degats (reserve au serveur, §5.4),
- * seulement la meme divergence acceptee que documentee sur `fireSalvo`. Deux
- * clients peuvent donc voir des flashs legerement differents — sans
- * consequence, puisqu'aucune decision de jeu n'en depend.
+ * consomme que les projectiles du client et ne touche jamais `horde` ni `hp` :
+ * ce n'est PAS de l'arbitrage de degats. Deux clients peuvent voir des flashs
+ * legerement differents, sans consequence.
  *
- * Tableaux types, meme regle que `DerivedOrbs` et `Horde` (§4.4 de
- * l'orientation) — un burst d'impacts simultane ne doit jamais allouer un
- * objet par flash.
+ * Tableaux types : un burst d'impacts n'alloue jamais un objet par flash.
  */
 export class HitFlashes {
   readonly x: Float32Array;
   readonly y: Float32Array;
   /**
    * Teinte du flash, 0xRRGGBB : celle de l'ARME qui vient de toucher
-   * (`Weapon.look.tint`), recopiee a la naissance (etape 8).
+   * (`Weapon.look.tint`), recopiee a la naissance.
    *
-   * ⚠️ **Recopiee, jamais relue dans `WEAPONS` au dessin.** Le projectile qui
-   * a produit ce flash est consomme par `collide` a l'instant meme : son
-   * creneau est deja reutilise par un autre tir quand le calque dessine. Meme
-   * discipline que `Projectiles.#damage` et `#element`, qui sont recopies a
-   * l'emission pour que la suite ne depende plus d'une table.
+   * ⚠️ **Recopiee, jamais relue au dessin** : le projectile est consomme par
+   * `collide` a l'instant meme et son creneau deja reutilise quand le calque
+   * dessine.
    *
-   * ⚠️ **La teinte dit l'ARME, pas l'element** — c'est la regle du §6.6 que
-   * `assertWeaponLooks` garde : l'element se lit a la zone au sol et a la
-   * marque sur l'ennemi. Un flash d'impact teinte par l'element ferait de
-   * chaque coup une mini-reaction, et la hierarchie *« etat persistant
-   * discret, reaction spectaculaire »* s'effondrerait dans le bruit.
+   * ⚠️ **La teinte dit l'ARME, pas l'element** (garde par
+   * `assertWeaponLooks`) : l'element se lit a la zone au sol et a la marque
+   * sur l'ennemi. Teinte par l'element, chaque coup deviendrait une
+   * mini-reaction, et les vraies reactions se perdraient dans le bruit.
    */
   readonly tint: Uint32Array;
   /**
    * Rayon du souffle, en pixels monde : `Weapon.blastRadius` recopie du
-   * projectile qui vient de toucher (etape 8). `0` — seize armes sur
-   * dix-sept — : ce coup ne touche que ce qu'il percute, et son flash garde sa
-   * taille de coup.
+   * projectile qui vient de toucher. `0` pour la plupart des armes : le coup
+   * ne touche que ce qu'il percute.
    *
-   * ⚠️ **C'est le rayon qui DECIDE DE CE QUI MEURT**, lu sur le projectile
-   * (`Projectiles.blastRadiusAt`) et pas sur une table. Le flash s'y asservit
-   * exactement, comme `reactionFlashScale` s'asservit a `REACTION_RADIUS` : un
-   * souffle dessine plus large que le vrai promettrait des morts qui n'auront
-   * pas lieu, plus etroit il tuerait hors du dessin.
+   * ⚠️ **C'est le rayon qui DECIDE DE CE QUI MEURT** (`Projectiles.
+   * blastRadiusAt`). Le flash s'y asservit exactement : plus large, il
+   * promettrait des morts qui n'auront pas lieu ; plus etroit, il tuerait hors
+   * du dessin.
    */
   readonly radius: Float32Array;
   /**
-   * Degats du coup, recopies du projectile (etape 8). C'est la PUISSANCE de
-   * l'impact : elle decide de la taille du flash et du nombre d'eclats.
+   * Degats du coup, recopies du projectile : la PUISSANCE de l'impact, qui
+   * decide de la taille du flash et du nombre d'eclats.
    *
-   * ⚠️ **Les degats BRUTS de l'arme, pas ce que l'ennemi a reellement
-   * encaisse.** Les PV ne sont pas sur le fil (§5.4) et l'armure est arbitree
-   * serveur : le client ne connait que ce qu'il a tire. Un flash qui
-   * pretendrait dire le degat reel mentirait sur les ennemis blindes —
-   * celui-ci dit « ce coup-la pese lourd », ce qui est vrai de l'arme.
+   * ⚠️ **Les degats BRUTS de l'arme, pas ce que l'ennemi a encaisse** : les PV
+   * ne sont pas sur le fil et l'armure est arbitree serveur.
    */
   readonly power: Float32Array;
   /**
-   * `1` si ce flash doit SECOUER la camera (etape 8).
+   * `1` si ce flash doit SECOUER la camera.
    *
-   * ⚠️ **Par defaut, c'est « ce coup a un souffle » — et le halo est
-   * l'exception qui a rendu le drapeau necessaire.** Une explosion est un
-   * EVENEMENT ; un halo PULSE toutes les dix-huit ticks, sans arret, tant que
-   * le joueur le porte. Le laisser secouer l'ecran aurait rendu la secousse
-   * permanente — exactement le defaut que la fenetre de `cameraShake` vient de
-   * corriger, et cette fois aucune fenetre n'y aurait suffi puisque la source
-   * est continue par nature.
+   * ⚠️ **Par defaut, « ce coup a un souffle » ; le halo est l'exception.** Une
+   * explosion est un EVENEMENT, un halo PULSE sans arret tant que le joueur le
+   * porte : il rendrait la secousse permanente.
    */
   readonly shakes: Uint8Array;
   /** Horloge murale de naissance (`performance.now()`), voir `HIT_FLASH_LIFETIME_MS`. */
@@ -734,29 +653,21 @@ const DAMAGE_NUMBER_CAPACITY = 128;
 /**
  * Duree de vie d'un chiffre de degats, en millisecondes d'horloge murale.
  *
- * ⚠️ **TROIS FOIS la vie d'un flash d'impact, et c'est pour ca que les
- * chiffres ont leur propre reservoir** (etape 8). Le §4.3 veut le flash
- * *« court, large et genereux »* — 220 ms — mais un nombre qui s'efface en
- * 220 ms ne se LIT pas. Les faire vivre sur `HitFlashes` aurait voulu dire
- * allonger le flash lui-meme, donc remplacer la regle du §4.3 par un reglage
- * d'affichage.
+ * ⚠️ **Bien plus longue qu'un flash d'impact, d'ou un reservoir a part** : un
+ * nombre qui s'efface aussi vite qu'un flash ne se LIT pas, et le flash doit
+ * rester court.
  */
 export const DAMAGE_NUMBER_LIFETIME_MS = 700;
 
 /**
- * Les chiffres de degats qui montent au-dessus des monstres (etape 8) —
- * *« il faut afficher les degats sur les monstres avec des chiffres »*.
+ * Les chiffres de degats qui montent au-dessus des monstres.
  *
  * ⚠️ **Ce qu'ils affichent est ce que le TIR envoie, pas ce que l'ennemi
- * encaisse.** Les PV ne sont pas sur le fil (§5.4) et l'armure comme les
- * flaques sont arbitrees serveur : le client ne connait que les degats de
- * l'arme, critique compris (lui est DERIVE du tir, donc exact — voir
- * `Projectiles.critAt`). Un chiffre qui pretendrait dire le degat reel
- * mentirait sur les ennemis blindes, exactement comme un flash teinte par
- * l'element mentirait sur l'element qui a touche.
+ * encaisse** : les PV ne sont pas sur le fil, l'armure et les flaques sont
+ * arbitrees serveur. Le critique, lui, est DERIVE du tir, donc exact (voir
+ * `Projectiles.critAt`).
  *
- * Tableaux types, meme regle que `HitFlashes` : une volee d'impacts simultanes
- * ne doit jamais allouer un objet par chiffre.
+ * Tableaux types, comme `HitFlashes`.
  */
 export class DamageNumbers {
   readonly x: Float32Array;
@@ -829,17 +740,13 @@ export class DamageNumbers {
 /**
  * Duree de vie d'un flash de reaction, en millisecondes horloge murale.
  *
- * ⚠️ **Plus longue que `HIT_FLASH_LIFETIME_MS` (220 ms), et c'est toute la
- * hierarchie du §6.6.** *« L'etat persistant est discret, la reaction est
- * spectaculaire »* : le flash d'impact accompagne chaque projectile qui
- * touche — des dizaines par seconde — donc il doit rester bref ; la reaction
- * est rare et elle TUE, donc c'est la que passe le budget VFX. Deux fois plus
- * long reste « court » : au-dela, plusieurs reactions voisines se
- * recouvriraient en un halo continu, exactement ce que le §6.6 exclut.
+ * ⚠️ **Deux fois `HIT_FLASH_LIFETIME_MS`** : l'etat persistant est discret, la
+ * reaction spectaculaire. Le flash d'impact accompagne des dizaines de coups
+ * par seconde et reste bref ; la reaction est rare et TUE, c'est la que passe
+ * le budget VFX. Plus long, des reactions voisines se recouvriraient en un
+ * halo continu.
  *
- * En millisecondes et pas en ticks, meme raison que `HIT_FLASH_LIFETIME_MS` :
- * un flash n'arbitre rien, donc rien n'exige qu'il se calcule identiquement
- * des deux cotes du fil.
+ * En millisecondes : un flash n'arbitre rien.
  */
 export const REACTION_FLASH_LIFETIME_MS = 440;
 
@@ -847,7 +754,7 @@ export const REACTION_FLASH_LIFETIME_MS = 440;
  * Capacite du reservoir de flashs de reaction.
  *
  * Bien plus petite que `HIT_FLASH_CAPACITY` (128) : une reaction demande deux
- * elements differents sur la meme cible, elle est rare par construction (§6.2),
+ * elements differents sur la meme cible, elle est rare par construction,
  * et la borne serveur « une reaction par ennemi et par tick » la borne encore.
  */
 const REACTION_FLASH_CAPACITY = 64;
@@ -857,11 +764,11 @@ const REACTION_FLASH_CAPACITY = 64;
  * derives, a la difference des flashs d'impact juste au-dessus.
  *
  * C'est la seule chose de tout le systeme elementaire que le client ne devine
- * pas : la reaction TUE (§6.1 de la spec), donc elle est arbitree serveur et
+ * pas : la reaction TUE, donc elle est arbitree serveur et
  * annoncee par `REACTION`. La teinte des ennemis, elle, est approximee
  * localement — voir `GameClient#markLocally`.
  *
- * Tableaux types, meme regle que `HitFlashes` et `DerivedOrbs`.
+ * Tableaux types, comme `HitFlashes`.
  */
 export class ReactionFlashes {
   readonly x: Float32Array;
@@ -874,12 +781,11 @@ export class ReactionFlashes {
   readonly pair: Uint8Array;
   /**
    * `1` si cette reaction a charge la barre de Synergie, c'est-a-dire si deux
-   * joueurs DIFFERENTS en sont a l'origine (§7 de la spec).
+   * joueurs DIFFERENTS en sont a l'origine.
    *
-   * ⚠️ **Le client ne recalcule PAS cette comparaison, il la lit.** Le message
-   * ne porte volontairement pas les deux identites (§6.1) : les recomparer ici
-   * serait refaire l'arbitrage cote client, donc l'occasion de le faire
-   * diverger. Le TOTAL de la barre, lui, vit dans le `SNAPSHOT`.
+   * ⚠️ **Le client ne recalcule PAS cette comparaison, il la lit** : le message
+   * ne porte volontairement pas les deux identites, pour ne pas refaire
+   * l'arbitrage cote client. Le TOTAL de la barre vit dans le `SNAPSHOT`.
    */
   readonly charged: Uint8Array;
   /** Horloge murale de naissance (`performance.now()`), voir `REACTION_FLASH_LIFETIME_MS`. */
@@ -948,15 +854,13 @@ const CHAIN_FLASH_MAX_POINTS = 1 + CHAIN_JUMPS;
 const CHAIN_FLASH_CAPACITY = 32;
 
 /**
- * Duree de vie d'un flash de chaine, en millisecondes horloge murale — meme
- * famille que `REACTION_FLASH_LIFETIME_MS` (evenement rare, remarquable), pas
- * `HIT_FLASH_LIFETIME_MS` (un impact ordinaire, tres frequent). Voir le tour
- * de correction 1 de la tache 3 (etape 5b) : la chaine etait redessinee a
- * chaque image depuis la marque `FOUDRE` (60 ticks, 2 s) — un cout O(horde)
- * par ennemi marque et par image, jusqu'a O(horde²) une fois compose avec
- * `#markInZones`, qui peut marquer TOUTE la horde d'un coup. Un flash, semé
- * une fois puis amorti, n'a plus ce risque : le calcul n'a lieu qu'a
- * l'impact, jamais au dessin.
+ * Duree de vie d'un flash de chaine, en millisecondes horloge murale : meme
+ * famille que `REACTION_FLASH_LIFETIME_MS` (evenement rare), pas
+ * `HIT_FLASH_LIFETIME_MS`.
+ *
+ * ⚠️ Un flash seme a l'impact, pas une chaine redessinee chaque image depuis
+ * la marque `FOUDRE` : ce serait O(horde) par ennemi marque et par image,
+ * jusqu'a O(horde²) avec `#markInZones`, qui peut marquer toute la horde.
  */
 export const CHAIN_FLASH_LIFETIME_MS = 260;
 
@@ -994,28 +898,18 @@ export const FRAPPE_BOLT_MS = 220;
 export const FRAPPE_DELAY_MS = (FRAPPE_DELAY_TICKS * 1000) / TICK_HZ;
 
 /**
- * Flashs de chaine de Foudre, cote client — purement cosmetiques, jamais
- * arbitres, exactement comme `HitFlashes` (et pour la meme raison : nes de
- * `Projectiles.collide` sur les PROPRES projectiles de ce client, voir
- * `GameClient#seedChainFlash`).
+ * Flashs de chaine de Foudre, cote client : purement cosmetiques, comme
+ * `HitFlashes` (nes de `Projectiles.collide` sur les projectiles de ce
+ * client, voir `GameClient#seedChainFlash`).
  *
- * ⚠️ **Le CHEMIN est FIGE a la naissance, jamais redérivé.** Contrairement a
- * la marque elementaire (`#markLocally`, un etat DURABLE, redessine chaque
- * image depuis `Horde.markAt`), la chaine du serveur est un evenement
- * PONCTUEL : elle a lieu une fois, a l'impact, et n'existe plus ensuite —
- * voir `resolveProjectileDamage` (`back/src/combat.ts`), qui ne la recalcule
- * jamais au tick suivant. Stocker les points ici, plutot que de rappeler
- * `chainTargets` a chaque image depuis la horde courante, c'est donc dessiner
- * ce que le serveur a REELLEMENT fait, pas une approximation qui continuerait
- * de bouger avec des ennemis qui, eux, ont cesse d'etre chaines depuis
- * longtemps.
+ * ⚠️ **Le CHEMIN est FIGE a la naissance, jamais rederive.** La chaine du
+ * serveur est un evenement PONCTUEL (`resolveProjectileDamage`,
+ * `back/src/combat.ts`) : rappeler `chainTargets` a chaque image sur la horde
+ * courante dessinerait une approximation qui bouge, pas ce que le serveur a
+ * fait.
  *
- * Tableaux types a largeur FIXE (`CHAIN_FLASH_MAX_POINTS` par flash), meme
- * regle que `HitFlashes`/`ReactionFlashes`/`DerivedOrbs` (§4.4 de
- * l'orientation) : un burst de chaines simultanees ne doit jamais allouer un
- * objet (ni un tableau de taille variable) par flash. `CHAIN_JUMPS` (3) etant
- * une petite constante, la largeur fixe ne gaspille qu'un negligeable nombre
- * de flottants inutilises pour une chaine plus courte que le maximum.
+ * Tableaux types a largeur FIXE (`CHAIN_FLASH_MAX_POINTS` par flash) : aucune
+ * allocation par flash, pour quelques flottants perdus sur une chaine courte.
  */
 export class ChainFlashes {
   /** Points aplatis : le point `p` du flash `slot` est a l'indice `slot * CHAIN_FLASH_MAX_POINTS + p`. */
@@ -1024,12 +918,8 @@ export class ChainFlashes {
   /** Nombre de points REELLEMENT valides pour ce flash — entre 2 (un saut) et `CHAIN_FLASH_MAX_POINTS`. */
   readonly pointCount: Uint8Array;
   /**
-   * Teinte du trait, 0xRRGGBB — la Foudre par defaut (etape 8).
-   *
-   * ⚠️ **Elle etait CONSTANTE dans le renderer jusqu'ici**, parce qu'un seul
-   * evenement dessinait une polyligne : la chaine de Foudre. Le faisceau est
-   * le second, et il porte la teinte de SON arme — un rayon de Givre jaune
-   * aurait menti sur son element a chaque tir.
+   * Teinte du trait, 0xRRGGBB — la Foudre par defaut. Un faisceau porte la
+   * teinte de SON arme.
    */
   readonly tint: Uint32Array;
   /** Epaisseur du trait, en pixels monde : une chaine est fine, un faisceau a sa largeur d'arme. */
@@ -1069,17 +959,14 @@ export class ChainFlashes {
   /**
    * Fait naitre un flash a partir d'un chemin DEJA CALCULE — jamais recalcule
    * ici. Ignore silencieusement un chemin de moins de deux points (rien a
-   * relier : la chaine n'a touche personne) ou une reserve pleine (meme
-   * discipline que `HitFlashes`/`OrbFlights` : un burst reste petit).
+   * relier : la chaine n'a touche personne) ou une reserve pleine.
    */
   spawn(
     points: readonly { x: number; y: number }[],
     nowMs: number,
     /**
-     * `0` : « rien de particulier », et c'est le CALQUE qui retombe alors sur
-     * la Foudre et sur son epaisseur de chaine. Les constantes de dessin
-     * vivent dans le renderer, jamais ici — ce fichier ne sait pas a quoi
-     * ressemble un trait.
+     * `0` : le CALQUE retombe sur la Foudre et son epaisseur de chaine. Les
+     * constantes de dessin vivent dans le renderer, jamais ici.
      */
     tint = 0,
     width = 0,
@@ -1140,7 +1027,7 @@ export interface GuardTrace extends Guard {
   readonly bornMs: number;
 }
 
-/** Un ping annonce par le salon (etape 9), tel que le rendu le lit. */
+/** Un ping annonce par le salon, tel que le rendu le lit. */
 export interface ActivePing {
   playerId: number;
   intent: number;
@@ -1148,25 +1035,23 @@ export interface ActivePing {
   y: number;
   /**
    * Tick de `GameClient#pingClock` a la RECEPTION : c'est lui qui fait
-   * expirer le ping. PAS le tick de horde (revue finale, etape 9) : celui-ci
-   * avance pendant le gel de niveau, et un ping date dessus s'eteindrait
-   * pendant que l'equipe choisit ses cartes — voir `pingClock`.
+   * expirer le ping. PAS le tick de horde, qui avance pendant le gel de
+   * niveau — voir `pingClock`.
    */
   tick: number;
 }
 
-/**
- * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
- *
- * Il ne dessine rien et ne lit pas le clavier — il recoit une fonction qui lui
- * rend les axes courants. C'est ce qui permet de le tester sans navigateur, et
- * ce qui evite que le rendu et le reseau se contaminent.
- */
 /** Duree du bouillonnement vert apres un coup de venin, en ticks (~ la duree du poison serveur). */
 const POISON_VISUAL_TICKS = 75;
 const POISON_BUBBLE_EVERY = 8;
 const POISON_TINT = 0x7ccf3a;
 
+/**
+ * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
+ *
+ * Il ne dessine rien et ne lit pas le clavier : il recoit une fonction qui lui
+ * rend les axes courants, ce qui permet de le tester sans navigateur.
+ */
 export class GameClient {
   #ws: WebSocket | null = null;
   #inputTimer: ReturnType<typeof setInterval> | null = null;
@@ -1180,39 +1065,31 @@ export class GameClient {
   #localHp = 0;
   /**
    * Rayon de ramassage (personnel) du joueur local, tel que porte par le
-   * dernier snapshot (tache 7 de l'etape 7b) — meme regle que `#localHp` :
-   * non predit, c'est la derniere valeur serveur connue.
+   * dernier snapshot. Non predit, comme `#localHp`.
    */
   #localPickupRadius = 0;
   /**
    * Reserve de bouclier (personnelle) du joueur local, telle que portee par
-   * le dernier snapshot (etape 13) — meme regle que `#localHp` : non predite.
+   * le dernier snapshot. Non predite, comme `#localHp`.
    */
   #localShield = 0;
   /** Experience de l'equipe, telle que portee par le dernier snapshot. */
   #teamXp = 0;
   /**
-   * Charge de Synergie de l'equipe, telle que portee par le dernier snapshot
-   * (§7). Lue, jamais deduite : le client ne compte pas les `REACTION` chargees
-   * pour la reconstituer — un client connecte en cours de partie en aurait
-   * manque, et un client qui recompterait pourrait diverger du seul total qui
-   * fasse foi.
+   * Charge de Synergie de l'equipe, telle que portee par le dernier snapshot.
+   * Lue, jamais deduite des `REACTION` : un client connecte en cours de partie
+   * en aurait manque, et un recompte pourrait diverger du total qui fait foi.
    */
   #teamSynergy = 0;
   /**
-   * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte (§5 de
-   * la spec de l'etape 6a).
+   * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte.
    *
-   * ⚠️ **Il vit ici et PAS dans `RenderState`**, a la difference de `xp` et de
-   * `synergy` qui y sont pour des raisons historiques. `RenderState` est ce que
-   * la PREDICTION produit — des positions predites et interpolees — et l'or
-   * n'est ni predit ni interpole : c'est une valeur d'en-tete lue telle quelle,
-   * exactement comme `boss` juste en dessous, qui a ete tenu hors de
-   * `RenderState` pour ce motif precis.
+   * ⚠️ **Il vit ici et PAS dans `RenderState`** (ou `xp` et `synergy` sont
+   * restes par heritage) : `RenderState` est ce que la PREDICTION produit, et
+   * l'or n'est ni predit ni interpole, comme `boss`.
    *
    * ⚠️ **Lu a chaque snapshot, meme quand le bloc du joueur local est
-   * introuvable** — donnee d'EQUIPE, quatrieme fois : c'est le §5 de la spec,
-   * ce qui se decide au vote est ce que l'EQUIPE risque.
+   * introuvable** : c'est une donnee d'EQUIPE.
    */
   #teamGold = 0;
   /**
@@ -1225,7 +1102,7 @@ export class GameClient {
    * Niveau de l'equipe, tel que porte par le dernier `LEVEL_UP` (ou `RUN_OVER`
    * au bilan). Ne peut PAS se deriver de `#teamXp` seul : `xp` est remis a
    * l'excedent apres chaque niveau (`Room#gainXp`), donc la valeur cumulee
-   * est perdue cote fil — voir `RunOverSummary` et le HUD (§4.6).
+   * est perdue cote fil.
    */
   #level = 1;
   #seq = 0;
@@ -1238,32 +1115,30 @@ export class GameClient {
   #hordeAcc = 0;
   #lastHordeTick = 0;
 
-  /** Anneau d'etats de horde, pour le rejeu des morts en retard (§3.2). */
+  /** Anneau d'etats de horde, pour le rejeu des morts en retard. */
   readonly #hordeHistory = new HordeHistory(MAX_ENTITIES);
   /**
-   * Les zones au sol, ANNONCEES par le serveur et jamais derivees (§5.3 de
-   * l'etape 5a) — le client ne peut pas savoir ou finit un projectile serveur.
-   * Leur MORT, elle, se derive du seul `bornTick`, comme celle des orbes.
+   * Les zones au sol, ANNONCEES par le serveur et jamais derivees : le client
+   * ne peut pas savoir ou finit un projectile serveur. Leur MORT se derive du
+   * seul `bornTick`.
    *
-   * Lecture publique : le rendu (tache 9) y lit ses quads teintes, et
-   * `Horde.step` y lit le ralentissement du Givre.
+   * Lecture publique : le rendu y lit ses quads teintes, et `Horde.step` le
+   * ralentissement du Givre.
    */
   readonly zones = new ZoneField();
-  /** Orbes derives des morts (§6.1), jamais transmis. Lecture publique pour le rendu et le HUD. */
+  /** Orbes derives des morts, jamais transmis. Lecture publique pour le rendu et le HUD. */
   readonly orbs = new DerivedOrbs(MAX_ENTITIES);
   /**
-   * Orbes capturees, en vol vers leur ramasseur (tache 20) — purement
-   * cosmetique, jamais arbitre. Lecture publique pour le rendu.
+   * Orbes capturees, en vol vers leur ramasseur : purement cosmetique.
+   * Lecture publique pour le rendu.
    */
   readonly orbFlights = new OrbFlights(ORB_FLIGHT_CAPACITY);
 
   /**
-   * Projectiles, simules localement — **jamais repliques**, exactement comme
-   * documente sur `shared/projectiles.ts` : chaque cote (serveur, chaque
-   * client) tire ses propres salves a partir de donnees deja partagees
-   * (l'arme, le tick, la horde). `#fireWeapons` est le miroir client de
-   * `Room#fireWeapons` (back/src/room.ts). Lecture publique pour le rendu
-   * (tache 11).
+   * Projectiles, simules localement — **jamais repliques** (voir
+   * `shared/projectiles.ts`) : chaque cote tire ses propres salves a partir de
+   * donnees partagees. `#fireWeapons` est le miroir client de
+   * `Room#fireWeapons`. Lecture publique pour le rendu.
    */
   readonly projectiles = new Projectiles(PROJECTILE_CAPACITY);
   /**
@@ -1271,20 +1146,16 @@ export class GameClient {
    * `PlayerState.lastFireTick` cote serveur (un `Float64Array` indexe par
    * identifiant d'arme, `-Infinity` = jamais tire).
    *
-   * ⚠️ **Un seul compteur par joueur bridait tout l'arsenal.** C'est ce que ce
-   * fichier faisait jusqu'a la tache 9 : la recharge la plus lente qui vient
-   * de partir empechait toutes les autres armes de tirer. Le serveur, lui,
-   * compte par arme depuis la tache 7 — l'affichage aurait donc montre moins
-   * de salves que le serveur n'en arbitre, et de plus en plus a chaque carte
-   * draftee.
+   * ⚠️ **Pas un seul compteur par joueur** : la recharge la plus lente
+   * bloquerait toutes les autres armes, et l'affichage montrerait moins de
+   * salves que le serveur n'en arbitre.
    */
   readonly #lastFireTick = new Map<number, Float64Array>();
   /**
    * Miroir des inventaires, un par joueur, alimente par `DRAFT_RESULT`.
    *
-   * ⚠️ **Le client ne decide rien ici** (§7.2) : il range ce que le serveur
-   * lui dit d'avoir range, et rien d'autre. Deux usages, tous deux
-   * indispensables :
+   * ⚠️ **Le client ne decide rien ici** : il range ce que le serveur lui dit
+   * d'avoir range. Deux usages :
    *
    * - `#fireWeapons` en tire l'arsenal a afficher. Sans lui, aucun projectile
    *   d'arme draftee ne s'affiche — ni pour son porteur, ni pour ses allies ;
@@ -1297,7 +1168,6 @@ export class GameClient {
    * lui cree un `Loadout` vide au meme instant (`Room.join`).
    */
   readonly #loadouts = new Map<number, Loadout>();
-  /** Flashs d'impact derives des collisions locales (§4.3). Lecture publique pour le rendu. */
   /** Impacts et reactions vus depuis le debut : des compteurs QUI MONTENT, pour le son. */
   #hitCount = 0;
   /** Ennemis touches par un projectile a venin -> tick ou l'effet visuel s'eteint. Cosmetique. */
@@ -1343,11 +1213,12 @@ export class GameClient {
   get reactionCount(): number {
     return this.#reactionCount;
   }
+  /** Flashs d'impact derives des collisions locales. Lecture publique pour le rendu. */
   readonly hitFlashes = new HitFlashes(HIT_FLASH_CAPACITY);
   /** Les chiffres de degats qui montent au-dessus des monstres — voir `DamageNumbers`. */
   readonly damageNumbers = new DamageNumbers(DAMAGE_NUMBER_CAPACITY);
   /**
-   * Flashs de reaction, ANNONCES par `REACTION` (§6.1). Lecture publique pour
+   * Flashs de reaction, ANNONCES par `REACTION`. Lecture publique pour
    * le rendu — voir `ReactionFlashes`.
    */
   readonly reactionFlashes = new ReactionFlashes(REACTION_FLASH_CAPACITY);
@@ -1356,10 +1227,9 @@ export class GameClient {
   /** Les tirs des tireurs, derives de la horde — voir `EnemyShots`. */
   readonly shots = new EnemyShots();
   /**
-   * Flashs de chaine de Foudre, derives des collisions locales (etape 5b,
-   * tache 3, tour de correction 1) — meme famille que `hitFlashes` : semes
-   * une fois par `#seedChainFlash`, jamais redérivés. Lecture publique pour
-   * le rendu — voir `ChainFlashes`.
+   * Flashs de chaine de Foudre, derives des collisions locales comme
+   * `hitFlashes` : semes une fois par `#seedChainFlash`, jamais rederives.
+   * Lecture publique pour le rendu — voir `ChainFlashes`.
    */
   readonly chainFlashes = new ChainFlashes(CHAIN_FLASH_CAPACITY);
 
@@ -1367,7 +1237,7 @@ export class GameClient {
    * Nombre cumule d'identites tuees en dehors de la portee de `HordeHistory`
    * (`ROLLBACK_DEPTH_TICKS`) : appliquees au present plutot qu'au tick de la
    * mort, faute de pouvoir revenir en arriere. Lecture seule, pour le HUD de
-   * debug (§4.6 de l'orientation demande un HUD, pas des logs) et pour les tests.
+   * debug et pour les tests.
    */
   #lateDeaths = 0;
   /** Ennemis abattus depuis le WELCOME, cumules depuis les lots `DEATHS`. */
@@ -1380,10 +1250,8 @@ export class GameClient {
    * ⚠️ **Meme degradation que `#lateDeaths`, et pour la meme raison : elle ne
    * doit jamais etre silencieuse.** Le Givre ralentit le DEPLACEMENT ; une
    * zone appliquee au present ralentit quelques ticks trop tard, et l'ecart
-   * est exactement la latence excedentaire. L'etape 3 a chiffre le cas
-   * equivalent pour les morts (93,007 px). On applique quand meme — un effet
-   * que le joueur a paye ne doit pas disparaitre — mais on le COMPTE, plutot
-   * que de pretendre a l'exactitude.
+   * est exactement la latence excedentaire. On applique quand meme (un effet
+   * que le joueur a paye ne doit pas disparaitre), mais on le COMPTE.
    */
   #lateZones = 0;
 
@@ -1395,9 +1263,9 @@ export class GameClient {
 
   /** Charges de boss recues mais pas encore appliquees. Meme discipline que `#pendingZones`. */
   readonly #pendingCharges: BossChargeMessage[] = [];
-  /** Leurres annonces, en attente d'etre plantes au tick deja simule (`#applyDecoy`). */
   /** Le decor qui bloque le joueur local, pose au WELCOME (`PredictedPlayer`). */
   #moveMap: MoveMap | null = null;
+  /** Leurres annonces, en attente d'etre plantes au tick deja simule (`#applyDecoy`). */
   readonly #pendingDecoys: Decoy[] = [];
   /** Leurres plantes, que l'entree du champ substitue (`#feedFields`). */
   #decoys: Decoy[] = [];
@@ -1415,14 +1283,14 @@ export class GameClient {
 
   /**
    * Les pings annonces, AU PLUS UN par joueur (cle : son id) : un nouveau ping
-   * remplace l'ancien (§6 de la spec de l'etape 9). Jamais purges ici — c'est
+   * remplace l'ancien. Jamais purges ici — c'est
    * `livePings` qui dit lesquels sont encore vivants, a l'horloge `pingClock`
    * (figee pendant le gel de niveau).
    */
   readonly pings = new Map<number, ActivePing>();
   #pingCount = 0;
   /**
-   * Le porteur de coffre annonce et pas encore mort (etape 11), par identite.
+   * Le porteur de coffre annonce et pas encore mort, par identite.
    * Reconnu a son `archetype` dans `WAVE_ORDER`, oublie a sa mort dans `DEATHS`.
    */
   #porteurId: number | null = null;
@@ -1433,63 +1301,54 @@ export class GameClient {
   /**
    * Coffres dus : un par porteur dont `DEATHS` a annonce la mort, consommes un
    * par un au `LEVEL_UP` suivant. Le serveur ouvre un coffre du AVANT tout
-   * niveau et diffuse les morts AVANT les `LEVEL_UP` (§4.3 de la spec).
+   * niveau et diffuse les morts AVANT les `LEVEL_UP`.
    */
   #chestsOwed = 0;
   #draftIsChest = false;
   #lastPingIntent = -1;
-  /** Horloge de ping (revue finale, etape 9) : voir l'accesseur `pingClock`. */
+  /** Horloge de ping : voir l'accesseur `pingClock`. */
   #pingClock = 0;
 
   /**
    * La charge du boss en cours, ou `null` — annoncee UNE FOIS par le serveur,
-   * puis derivee ici tick par tick (§4 de la spec de l'etape 6a).
+   * puis derivee ici tick par tick.
    *
-   * ⚠️ **C'est le deuxieme effet du jeu qui touche le DEPLACEMENT**, apres le
-   * ralentissement du Givre : pendant toute la charge, la position du boss vient
-   * de cette valeur et non du champ de flux. Elle est donc DATEE PAR TICK et
-   * appliquee par rejeu, exactement comme une zone — voir `#applyBossCharge`.
+   * ⚠️ **Elle touche le DEPLACEMENT** : pendant la charge, la position du boss
+   * vient d'elle et non du champ de flux. Elle est donc DATEE PAR TICK et
+   * appliquee par rejeu, comme une zone — voir `#applyBossCharge`.
    *
-   * Gardee apres sa fin, jamais effacee par le temps : une charge finie est
-   * inerte (`chargeHoldsAt`), et la garder est ce qui permet a un rejeu qui
-   * enjambe sa fin de la retrouver — meme raisonnement que les zones que le
-   * client laisse mourir `ROLLBACK_DEPTH_TICKS` ticks en retard.
+   * Gardee apres sa fin : une charge finie est inerte (`chargeHoldsAt`), et un
+   * rejeu qui enjambe sa fin doit la retrouver.
    */
   #bossCharge: BossCharge | null = null;
 
   /**
    * Nombre cumule de charges annoncees trop tard pour l'anneau
-   * (`ROLLBACK_DEPTH_TICKS`), donc installees au present. Meme degradation
-   * assumee et meme refus du silence que `#lateZones` et `#lateDeaths` : le
-   * boss saute alors sur son couloir de l'ecart exact de la latence
-   * excedentaire.
+   * (`ROLLBACK_DEPTH_TICKS`), donc installees au present, comme `#lateZones`
+   * et `#lateDeaths` : le boss saute alors sur son couloir de l'ecart de la
+   * latence excedentaire.
    */
   #lateCharges = 0;
 
   /**
    * Dernier tick du gel courant (inclus), et dernier tick de la reprise
-   * progressive qui suit. `-1` hors gel — et non `0` comme cote serveur
-   * (`Room` commence son compteur a 1, jamais `GameClient`, dont le tout
-   * premier tick reel peut valoir `0` — voir `#onFrame`/WELCOME). Avec `0`
-   * comme sentinelle, `#movementScale(0)` rendrait `0` (gel) des le tout
-   * premier tick d'une connexion fraiche, sans qu'aucun `LEVEL_UP` ne soit
-   * jamais arrive : `-1` ecarte ce cas plutot que de le tolerer.
+   * progressive qui suit. `-1` hors gel, et non `0` comme cote serveur : le
+   * premier tick de `GameClient` peut valoir `0`, et `#movementScale(0)`
+   * rendrait alors un gel sans qu'aucun `LEVEL_UP` ne soit arrive.
    */
   #freezeUntilTick = -1;
   #resumeEndTick = -1;
   /**
    * Tick auquel le gel courant a commence, `-1` hors gel.
    *
-   * ⚠️ **Ce champ existe parce que la fin du gel n'est plus calculable.** A
-   * l'etape 3 le client la deduisait — `msg.tick + LEVEL_FREEZE_TICKS - 1` —
-   * parce que le gel durait une constante. Depuis l'etape 4, il dure jusqu'a ce
-   * que tout le monde ait pose son jeton, et en solo jusqu'au clic : seul le
-   * serveur la connait, et il l'annonce dans `DRAFT_RESULT`. Entre les deux, le
-   * client sait seulement qu'il est gele DEPUIS ce tick.
+   * ⚠️ **La fin du gel n'est pas calculable** : il dure jusqu'a ce que tout le
+   * monde ait pose son jeton. Seul le serveur la connait et l'annonce dans
+   * `DRAFT_RESULT` ; d'ici la, le client sait seulement qu'il est gele DEPUIS
+   * ce tick.
    */
   #freezeStartTick = -1;
 
-  /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien (§7.2). */
+  /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien. */
   #draftCards: readonly Card[] = [];
   #draftDeadlineTick = 0;
   /**
@@ -1497,9 +1356,8 @@ export class GameClient {
    * jusqu'au prochain `DRAFT_OPEN`.
    *
    * ⚠️ **Ce n'est pas la meme chose que « l'etalage est vide ».** L'etalage
-   * survit a la fermeture, exactement pour que l'ecran puisse jouer la
-   * revelation du §4.2 — illuminer la carte gagnee, consumer les perdues —
-   * sur des cartes qui existent encore. Ce drapeau est le signal « on ne
+   * survit a la fermeture, pour que l'ecran puisse jouer la revelation
+   * (illuminer la carte gagnee, consumer les perdues). Ce drapeau dit « on ne
    * negocie plus », pas « il n'y a plus rien a montrer ».
    */
   #draftSettled = false;
@@ -1512,23 +1370,15 @@ export class GameClient {
    * Le tick auquel le portail courant cesse d'etre affichable, `-1` quand il
    * n'y en a jamais eu.
    *
-   * ⚠️ **Trois valeurs, et la du milieu est la seule subtile.** `-1` : aucun
-   * portail. `Number.MAX_SAFE_INTEGER` : un portail est ouvert et **on ne sait
-   * pas encore quand il se fermera** — le vote se resout des que tout le monde
-   * a vote, donc n'importe quand entre l'ouverture et l'echeance, et seul le
-   * serveur le sait. Un tick fini : le `PORTAL_RESULT` est arrive et a dit son
-   * tick d'effet.
+   * ⚠️ **Trois valeurs.** `-1` : aucun portail. `Number.MAX_SAFE_INTEGER` : un
+   * portail est ouvert et **on ne sait pas encore quand il se fermera** (le
+   * vote se resout des que tout le monde a vote). Un tick fini : le
+   * `PORTAL_RESULT` a dit son tick d'effet. Repousser la borne a l'infini
+   * plutot que la deviner : fermer a `deadlineTick` laisserait l'ecran affiche
+   * longtemps apres un vote unanime.
    *
-   * C'est exactement la forme de `#freezeUntilTick` a l'etape 4, et pour la
-   * meme raison, payee d'une tache la-bas (lecon R3) : **repousser la borne a
-   * l'infini plutot que la deviner**. Deviner voudrait dire fermer a
-   * `deadlineTick`, et l'ecran resterait affiche vingt secondes apres un vote
-   * unanime rendu en trois.
-   *
-   * ⚠️ **Et la fermeture est DATEE PAR TICK, jamais appliquee a la
-   * reception.** Fermer a l'arrivee du message ferait fermer l'ecran de chaque
-   * client a un tick different — celui de sa propre latence — au moment meme
-   * ou les quatre joueurs regardent le meme verdict.
+   * ⚠️ **La fermeture est DATEE PAR TICK, jamais appliquee a la reception** :
+   * sinon chaque client fermerait a un tick different, celui de sa latence.
    */
   #portalCloseTick = -1;
   /** Echeance de la fenetre courante, pour le chronometre. Voir `portalDeadlineTick`. */
@@ -1536,34 +1386,26 @@ export class GameClient {
   /**
    * Le multiplicateur d'extraction annonce par le dernier `PORTAL_OPEN`.
    *
-   * ⚠️ **ANNONCE, jamais compte.** Le deriver du nombre de portails vus
-   * s'ouvrir tromperait tout client connecte en cours de run — il en a vu
-   * zero — et le coder en dur ferait mentir l'ecran au premier reglage de
-   * `EXTRACT_MULTIPLIER_STEP`. Voir `PortalOpenMessage`.
+   * ⚠️ **ANNONCE, jamais compte** : un client connecte en cours de run n'a pas
+   * vu les portails precedents. Voir `PortalOpenMessage`.
    *
-   * Vaut 1 avant le premier portail : c'est la valeur de depart cote salon
-   * (`Room#extractMultiplier`), donc un ecran qui s'afficherait avant toute
-   * annonce ne dirait rien de faux — mais il ne s'affiche pas, `portalOpen`
-   * etant faux.
+   * Vaut 1 avant le premier portail, comme `Room#extractMultiplier`.
    */
   #portalMultiplier = 1;
   /**
    * `playerId -> VOTE_CHOICE.STAY | VOTE_CHOICE.LEAVE | NO_VOTE` : qui a vote
    * quoi, remplacee entierement a chaque `VOTES`.
    *
-   * ⚠️ **L'abstention est une ENTREE, pas une absence d'entree** — `NO_VOTE`
-   * circule sur le fil exactement pour qu'on voie qui n'a pas encore tranche
-   * (§6). Un client qui la filtrerait ici rendrait « n'a pas vote »
-   * indistinguable de « a vote RESTER » a l'ecran, et la negociation serait
-   * fausse.
+   * ⚠️ **L'abstention est une ENTREE, pas une absence d'entree** : `NO_VOTE`
+   * circule pour qu'on voie qui n'a pas encore tranche. La filtrer rendrait
+   * « n'a pas vote » indistinguable de « a vote RESTER ».
    */
   #portalVotes: ReadonlyMap<number, number> = new Map();
   /**
    * Le verdict du dernier `PORTAL_RESULT`, `null` tant qu'aucun n'est tombe.
    *
    * Remis a `null` a chaque ouverture : un verdict de palier precedent
-   * s'afficherait sinon sur le portail suivant, comme les jetons du draft
-   * s'affichaient d'une negociation revolue.
+   * s'afficherait sinon sur le portail suivant.
    */
   #portalDecision: number | null = null;
   /** L'or du verdict : acquis si l'equipe part, reporte si elle reste. Voir `PortalResultMessage`. */
@@ -1574,17 +1416,15 @@ export class GameClient {
    *
    * Le gestionnaire de message ne fait QUE empiler. L'application a lieu dans
    * `#advanceHorde`, avant le rafraichissement du champ — l'ordre inverse
-   * multiplie la derive par trente-cinq (§6.2 de la spec).
+   * multiplie la derive par trente-cinq.
    */
   readonly #pendingOrders: WaveOrderMessage[] = [];
 
   /**
-   * Visee locale, quantifiee (tache 13) — memes entiers que ceux envoyes par
-   * le prochain `INPUT`. Recalculee a chaque `update()` a partir de
-   * `readAim()`, PUIS figee pour toute la duree de cet appel (elle peut
-   * avancer plusieurs pas de simulation fixes, voir `update`) : c'est ce qui
-   * garantit que `#fireWeapons` tire avec la valeur quantifiee, jamais avec
-   * le flottant brut renvoye par `readAim` (voir `quantizeAxis`).
+   * Visee locale, quantifiee : memes entiers que ceux du prochain `INPUT`.
+   * Recalculee a chaque `update()` puis figee pour tout l'appel (plusieurs pas
+   * fixes possibles) : `#fireWeapons` tire avec la valeur quantifiee, jamais
+   * le flottant brut de `readAim` (voir `quantizeAxis`).
    */
   #localAim: { x: number; y: number } = { x: 0, y: 0 };
 
@@ -1592,55 +1432,44 @@ export class GameClient {
     private readonly url: string,
     private readonly readInput: () => InputAxes,
     private readonly onStatusChange: (status: ConnectionStatus) => void,
-    /** Appele une seule fois, a la reception de `RUN_OVER` (§7 de la spec). */
+    /** Appele une seule fois, a la reception de `RUN_OVER`. */
     private readonly onRunOver: (summary: RunOverSummary) => void = () => undefined,
     /**
      * Rend la direction visee, en coordonnees MONDE, deja normalisee (ou
-     * `(0, 0)` si le joueur ne vise nulle part) — voir `front/src/input/mouse.ts`
-     * et `Stage.screenToWorld`. Par defaut, ne vise jamais : les tests qui ne
-     * s'interessent pas au tir n'ont donc rien a fournir ici, `(0, 0)` etant
-     * deja « pas de tir » (tache 13).
+     * `(0, 0)` si le joueur ne vise nulle part, ce qui vaut « pas de tir »).
+     * Par defaut, ne vise jamais.
      */
     private readonly readAim: () => InputAxes = () => ({ x: 0, y: 0 }),
     /**
-     * Appele une seule fois, a la reception de `WELCOME` — c'est le seul
-     * moment ou la carte d'obstacles existe (tache 28). Livre exactement le
-     * masque et la geometrie (`cols`/`rows`/`cellSize`) qui alimentent
-     * `#fields` juste en dessous : c'est ce qui garantit au rendu de dessiner
-     * les MEMES cellules murees que celles que le champ de flux evite, plutot
-     * que de regenerer un masque a cote qui pourrait diverger.
+     * Appele une seule fois, a la reception de `WELCOME`, seul moment ou la
+     * carte d'obstacles existe. Livre le masque et la geometrie qui alimentent
+     * `#fields` : le rendu dessine les MEMES cellules murees que celles que le
+     * champ de flux evite.
      */
     private readonly onMapReady: (map: ObstacleMap) => void = () => undefined,
     /**
      * Le jeton de compte, en octets. Envoye comme PREMIER message de la socket
      * (`MSG.HELLO`) : le serveur n'attribue aucun slot avant de l'avoir
-     * reconnu (§2.2 de la spec de l'etape 7a).
+     * reconnu.
      *
-     * ⚠️ **Optionnel ici, obligatoire cote SERVEUR.** Ce client n'a aucune
-     * autorite : une socket sans `HELLO` valide est fermee par le serveur.
-     * L'optionalite n'ouvre donc aucun chemin de jeu, elle evite seulement
-     * d'imposer une valeur inutile aux quarante constructions de
-     * `client.test.ts`.
+     * ⚠️ **Optionnel ici, obligatoire cote SERVEUR** : une socket sans `HELLO`
+     * valide est fermee. L'optionalite evite seulement d'imposer une valeur
+     * aux tests.
      */
     private readonly accountToken: Uint8Array | null = null,
     /**
-     * Les bonus PERMANENTS du compte (boutique, etape 7b), tels que
-     * `bonusesOf` les derive de ses achats.
+     * Les bonus PERMANENTS du compte (boutique), tels que `bonusesOf` les
+     * derive de ses achats.
      *
-     * ⚠️ **ZERO octet sur le fil, et c'est une contrainte, pas une economie.**
-     * Comme le grisage de l'etalage (§3.5 de la spec), le client lit SES
-     * PROPRES achats en HTTP au chargement (`GET /accounts/me`) et derive ces
-     * bonus avec la fonction partagee. Aucun message, aucune route, aucun champ
-     * de snapshot n'a ete ajoute pour eux.
+     * ⚠️ **ZERO octet sur le fil** : le client lit SES PROPRES achats en HTTP
+     * au chargement (`GET /accounts/me`) et derive ces bonus avec la fonction
+     * partagee.
      *
-     * ⚠️ **Fige a la construction, jamais relu.** Le serveur pose ces bonus une
-     * seule fois au `join` et ils sont constants sur toute la run (voir
-     * `Room.join`) : un miroir qui les relirait en continu reintroduirait
-     * exactement la divergence que ce parametre existe pour retirer.
+     * ⚠️ **Fige a la construction** : le serveur les pose une seule fois au
+     * `join`, constants sur toute la run (voir `Room.join`).
      *
-     * ⚠️ **Le serveur reste l'autorite.** Ces valeurs n'alimentent QUE la
-     * prediction d'affichage ; si un ecart subsiste, c'est le snapshot qui a
-     * raison.
+     * ⚠️ **Le serveur reste l'autorite** : ces valeurs n'alimentent QUE la
+     * prediction d'affichage.
      */
     private readonly accountBonuses: Readonly<Record<BonusKind, number>> = BONUS_ZERO,
   ) {}
@@ -1656,41 +1485,33 @@ export class GameClient {
   /**
    * Position AFFICHEE du joueur local (`PredictedPlayer.renderX/renderY`), ou
    * `null` tant qu'aucun snapshot ne l'a fait exister. Sert a `main.ts` pour
-   * convertir le curseur (coordonnees monde, via `Stage.screenToWorld`) en
-   * direction de visee (tache 13) : cette position est CELLE que la camera
-   * centre (voir `Stage#centerOn`), donc la direction calculee a partir
-   * d'elle correspond exactement a ce que l'ecran montre.
+   * convertir le curseur en direction de visee : c'est CELLE que la camera
+   * centre (`Stage#centerOn`), donc la direction correspond a ce que l'ecran
+   * montre.
    */
   get localPosition(): { x: number; y: number } | null {
     return this.#local ? { x: this.#local.renderX, y: this.#local.renderY } : null;
   }
 
-  /** Niveau courant de l'equipe, pour le HUD (§4.6). Voir `#level`. */
+  /** Niveau courant de l'equipe, pour le HUD. Voir `#level`. */
   get level(): number {
     return this.#level;
   }
 
   /**
    * Tick courant de la horde locale. Expose pour l'observabilite, comme
-   * `Room.fieldInputTick` cote serveur : c'est ce qui permet de verrouiller
-   * par test que le compteur reste aligne sur le tick absolu recu au WELCOME,
-   * puis recale en continu sur celui des snapshots recus (voir `#onFrame`) —
-   * sans quoi il resterait en permanence en retard du temps de trajet du
-   * WELCOME, pour toute la vie de la connexion (constat C1.b).
+   * `Room.fieldInputTick` : les tests verrouillent qu'il s'aligne sur le tick
+   * absolu du WELCOME puis se recale sur les snapshots (voir `#onFrame`).
    */
   get hordeTick(): number {
     return this.#lastHordeTick;
   }
 
   /**
-   * Horloge dediee aux pings (revue finale de l'etape 9). Avance comme
-   * `hordeTick` SAUF pendant que `isFrozen` est vrai — gel strict ET rampe de
-   * reprise comprises (tache 24) : c'est la MEME perturbation que celle que
-   * `isFrozen` decrit deja pour le HUD, et un ping pose juste avant une
-   * montee de niveau ne doit pas s'eteindre pendant que l'equipe choisit ses
-   * cartes. `hordeTick`, lui, avance a chaque pas fixe, gel ou pas — seul
-   * `#movementScale` ralentit le MOUVEMENT, jamais ce compteur, et c'est
-   * precisement la confusion que la revue a trouvee.
+   * Horloge dediee aux pings. Avance comme `hordeTick` SAUF pendant que
+   * `isFrozen` est vrai (gel strict ET rampe de reprise) : un ping pose juste
+   * avant une montee de niveau ne doit pas s'eteindre pendant le choix des
+   * cartes. `hordeTick`, lui, avance a chaque pas fixe, gel ou pas.
    *
    * ⚠️ **Mesuree UNE SEULE FOIS par appel a `update()`**, sur l'ECART du tick
    * de horde entre le debut et la fin de cet appel — jamais depuis
@@ -1720,13 +1541,13 @@ export class GameClient {
 
   /**
    * La negociation est close, mais l'etalage reste affichable — c'est pendant
-   * cette phase que se joue la revelation du §4.2.
+   * cette phase que se joue la revelation.
    */
   get draftSettled(): boolean {
     return this.#draftSettled;
   }
 
-  /** Qui vise quoi — c'est cette visibilite qui fait exister la negociation (§7.2 point 3). */
+  /** Qui vise quoi — c'est cette visibilite qui fait exister la negociation. */
   get draftIntents(): ReadonlyMap<number, number> {
     return this.#draftIntents;
   }
@@ -1748,12 +1569,8 @@ export class GameClient {
    * reception. Voir `#portalCloseTick` pour les trois valeurs et pour la
    * raison.
    *
-   * ⚠️ **Ne regarde NI les points de vie NI le joueur local.** Un joueur mort
-   * vote : le §6 dit *« tout joueur connecte, mort ou vif »*, et le §9.3 que
-   * *« la mort d'un seul joueur ne coute rien »* — donc elle ne coute pas la
-   * voix, donc elle ne coute pas l'ecran non plus. Il n'y a rien a filtrer
-   * ici : le filtre n'existe pas plutot que d'exister a `false`, exactement
-   * comme dans `Portal#pending` cote serveur.
+   * ⚠️ **Ne regarde NI les points de vie NI le joueur local** : tout joueur
+   * connecte vote, mort ou vif, comme dans `Portal#pending` cote serveur.
    */
   get portalOpen(): boolean {
     return this.#lastHordeTick < this.#portalCloseTick;
@@ -1772,7 +1589,7 @@ export class GameClient {
     return this.#portalMultiplier;
   }
 
-  /** Qui a vote quoi, abstentions comprises — c'est cette visibilite qui fait exister le vote (§6). */
+  /** Qui a vote quoi, abstentions comprises — c'est cette visibilite qui fait exister le vote. */
   get portalVotes(): ReadonlyMap<number, number> {
     return this.#portalVotes;
   }
@@ -1790,9 +1607,8 @@ export class GameClient {
   /**
    * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte.
    *
-   * C'est l'ENJEU du vote (§5, §6) et la seule chose que le HUD doive montrer
-   * en permanence : une cagnotte qu'on ne verrait qu'au moment du vote ne se
-   * VIT pas comme une cagnotte non securisee pendant cinq minutes.
+   * C'est l'ENJEU du vote, que le HUD montre en permanence : une cagnotte vue
+   * seulement au vote ne se vit pas comme un risque.
    */
   get gold(): number {
     return this.#teamGold;
@@ -1801,10 +1617,9 @@ export class GameClient {
   /**
    * C -> S : je vote, ou je retire mon vote (`NO_VOTE`).
    *
-   * ⚠️ **Le client PROPOSE, le serveur arbitre** (§7.2 de l'etape 4) : rien
-   * n'est enregistre localement ici. Un vote refuse — portail ferme, choix
-   * inconnu — n'est simplement pas pris, et la prochaine diffusion des votes le
-   * montrera. C'est le miroir exact de `placeToken`.
+   * ⚠️ **Le client PROPOSE, le serveur arbitre** : rien n'est enregistre
+   * localement. Un vote refuse n'est simplement pas pris, et la prochaine
+   * diffusion des votes le montrera. Comme `placeToken`.
    */
   castVote(choice: number): void {
     this.#ws?.send(encodeVote(choice));
@@ -1830,24 +1645,16 @@ export class GameClient {
     return fresh;
   }
 
-  /**
-   * Vrai pendant le gel de montee de niveau **et sa rampe de reprise**
-   * (tache 24).
-   *
-   * Sert la seule indication a l'ecran d'ici l'etalage de cartes de l'etape 4 :
-   * deux secondes ou plus rien ne bouge, sans explication, se lisent comme un
-   * plantage — l'auteur les a d'ailleurs signalees comme telles.
-   *
-   * ⚠️ Couvre la **rampe** autant que le gel strict : c'est toute la
-   * perturbation qui doit se voir, pas seulement sa moitie la plus visible. Un
-   * accesseur qui s'eteindrait a la fin du gel laisserait une seconde de
-   * ralenti inexpliquee.
-   */
   /** La vitesse du monde au tick courant : `0` gele, une rampe a la reprise, `1` sinon. */
   get motionScale(): number {
     return this.#movementScale(this.#lastHordeTick);
   }
 
+  /**
+   * Vrai pendant le gel de montee de niveau **et sa rampe de reprise** : un
+   * monde fige sans explication se lit comme un plantage, et une seconde de
+   * ralenti inexpliquee aussi.
+   */
   get isFrozen(): boolean {
     if (this.#freezeStartTick < 0) {
       return false;
@@ -1857,11 +1664,6 @@ export class GameClient {
     );
   }
 
-  /**
-   * Nombre cumule de morts appliquees au present, faute d'anneau assez
-   * profond pour les rejouer (`ROLLBACK_DEPTH_TICKS`). Lecture seule : voir
-   * `#lateDeaths`.
-   */
   /** Ennemis abattus depuis le debut de la run (ou du WELCOME pour un retardataire). */
   get kills(): number {
     return this.#kills;
@@ -1871,9 +1673,8 @@ export class GameClient {
    * PV max du joueur local : meme somme que `Room` (base, cartes, achats du
    * compte), lue sur le miroir d'inventaire.
    *
-   * ⚠️ **`maxHpOf` (`@shared/loadout`), pas une copie locale** — cette somme
-   * etait recopiee ici et dans `Room#grantCard` ; deux copies divergeraient a
-   * la premiere regle qui touche au plafond (etape 13).
+   * ⚠️ **`maxHpOf` (`@shared/loadout`), pas une copie locale** : deux copies
+   * divergeraient a la premiere regle qui touche au plafond.
    */
   get localMaxHp(): number {
     const id = this.#localId;
@@ -1883,6 +1684,10 @@ export class GameClient {
     return maxHpOf(this.loadoutOf(id), this.accountBonuses.maxHp);
   }
 
+  /**
+   * Nombre cumule de morts appliquees au present, faute d'anneau assez
+   * profond pour les rejouer (`ROLLBACK_DEPTH_TICKS`). Voir `#lateDeaths`.
+   */
   get lateDeaths(): number {
     return this.#lateDeaths;
   }
@@ -1901,8 +1706,7 @@ export class GameClient {
    * La charge du boss en cours, ou `null` — ce que le rectangle d'annonce
    * dessine a chaque image (`ChargeRenderer`).
    *
-   * Meme place que `boss`, `zones` ou `hordeTick`, et pour la meme raison : ce
-   * n'est ni predit ni interpole, c'est une valeur annoncee dont tout le reste
+   * Comme `boss` : ni predite ni interpolee, une valeur annoncee dont le reste
    * se derive au tick.
    */
   get bossCharge(): BossCharge | null {
@@ -1912,10 +1716,8 @@ export class GameClient {
   /**
    * Charge de Synergie de l'equipe, telle que portee par le dernier snapshot.
    *
-   * Doublon assume de `RenderState.synergy` : le HUD la lit dans l'etat de
-   * rendu (comme `xp`), et ce getter existe pour les tests et pour tout
-   * appelant qui n'a pas d'etat de rendu sous la main — exactement comme
-   * `level` a cote.
+   * Doublon assume de `RenderState.synergy`, pour les tests et les appelants
+   * sans etat de rendu.
    */
   get synergy(): number {
     return this.#teamSynergy;
@@ -1925,10 +1727,8 @@ export class GameClient {
    * Le boss vivant, ou `null` — ce que la barre de vie lit a chaque image
    * (`BossBarRenderer.draw`, via `composeFrame`).
    *
-   * Un getter et pas un champ de `RenderState` : `RenderState` est ce que la
-   * PREDICTION produit (positions predites et interpolees), et le boss n'est
-   * predit ni interpole. Meme place que `hordeTick`, `zones` ou `orbs`, lus eux
-   * aussi directement sur le client par la boucle de rendu.
+   * Un getter et pas un champ de `RenderState` : le boss n'est ni predit ni
+   * interpole.
    */
   get boss(): BossVitals | null {
     return this.#boss;
@@ -1968,7 +1768,7 @@ export class GameClient {
   /**
    * Pose un ping au point MONDE `(x, y)`. Le client PROPOSE : rien n'est
    * affiche ici, pas meme pour soi — le ping apparait a l'annonce du salon,
-   * pour qu'un ping refuse n'existe chez personne (§5 de la spec de l'etape 9).
+   * pour qu'un ping refuse n'existe chez personne.
    */
   sendPing(intent: number, x: number, y: number): void {
     this.#ws?.send(encodePing(intent, x, y));
@@ -1979,12 +1779,12 @@ export class GameClient {
     return this.#pingCount;
   }
 
-  /** L'etalage courant est-il un coffre (etape 11) ? Fige au `LEVEL_UP` qui l'annonce. */
+  /** L'etalage courant est-il un coffre ? Fige au `LEVEL_UP` qui l'annonce. */
   get draftIsChest(): boolean {
     return this.#draftIsChest;
   }
 
-  /** Ordres de porteur recus depuis la connexion (etape 11) : l'audio en deduit quand sonner. */
+  /** Ordres de porteur recus depuis la connexion : l'audio en deduit quand sonner. */
   get porteurCount(): number {
     return this.#porteurCount;
   }
@@ -2023,7 +1823,7 @@ export class GameClient {
   /**
    * Ticks avant que le verbe local soit de nouveau pret, `0` s'il l'est. Derive
    * de la DERNIERE annonce recue et de la recharge partagee : zero octet par
-   * tick (§5 de la spec de l'etape 8).
+   * tick.
    */
   get abilityCooldownTicks(): number {
     const classe = this.#localClassId === null ? undefined : classOf(this.#localClassId);
@@ -2034,7 +1834,7 @@ export class GameClient {
     return Math.max(0, pret - this.hordeTick);
   }
 
-  /** Leurres annonces trop tard pour l'anneau, plantes au present (diagnostic, §4.6). */
+  /** Leurres annonces trop tard pour l'anneau, plantes au present (diagnostic). */
   get lateDecoys(): number {
     return this.#lateDecoys;
   }
@@ -2088,7 +1888,7 @@ export class GameClient {
       intent: msg.intent,
       x: msg.x,
       y: msg.y,
-      // `pingClock`, pas `hordeTick` (revue finale, etape 9) : voir l'accesseur.
+      // `pingClock`, pas `hordeTick` : voir l'accesseur.
       tick: this.pingClock,
     });
     this.#pingCount += 1;
@@ -2140,26 +1940,15 @@ export class GameClient {
    */
   update(now: number, dt: number): RenderState {
     const axes = this.readInput();
-    // ⚠️ **La prediction locale honore le gel de niveau** (tache 24). Sans ce
-    // facteur, `Room.step` figeait tout le monde — joueur compris, il retourne
-    // tot pendant le gel — pendant que le client continuait d'avancer son
-    // personnage en local, puis se faisait remettre en place par le snapshot
-    // suivant. L'auteur voyait « les monstres se figent » et un retour
-    // elastique de son propre personnage.
+    // ⚠️ **La prediction locale honore le gel de niveau**, comme `Room.step` :
+    // sinon le personnage avancerait en local puis serait ramene en arriere
+    // par le snapshot suivant.
     //
     // Le tick de reference est celui de la horde, c'est-a-dire le tick SERVEUR
     // recale en continu : `#freezeUntilTick` et `#resumeEndTick` sont dates
-    // dans ce repere par le message `LEVEL_UP`, jamais dans un tick local.
+    // dans ce repere par `LEVEL_UP`, jamais dans un tick local.
     //
-    // ⚠️ **La vitesse vient de l'inventaire ET du compte, pas de
-    // `PLAYER_SPEED`** (tache 9 de l'etape 4, puis la revue finale de l'etape
-    // 7b). `Room.step` avance le joueur a
-    // `PLAYER_SPEED + loadout.bonus('speed') + accountBonuses.speed` ; des la
-    // premiere carte « fougue » (+15 px/s) ou du premier palier de « Celerite »
-    // achete (+6 px/s), une prediction qui omet un terme avance moins vite que
-    // l'autorite a CHAQUE tick, et chaque snapshot recale le personnage en
-    // arriere — le joueur voit une reconciliation permanente, exactement le
-    // defaut que la prediction existe pour eviter. Voir `#localSpeed`.
+    // ⚠️ **La vitesse vient de l'inventaire ET du compte** : voir `#localSpeed`.
     this.#local?.predict(
       axes.x,
       axes.y,
@@ -2168,13 +1957,10 @@ export class GameClient {
       this.#localSpeed(),
     );
 
-    // Visee locale (tache 13) : lue puis QUANTIFIEE une seule fois pour toute
-    // la duree de cet appel — voir la doc de `#localAim`. `readAim` rend deja
-    // une direction normalisee ou nulle ; la mise a l'echelle par 127 avant
-    // `quantizeAxis` reproduit exactement ce que `#sendInput` envoie sur le
-    // fil (memes constantes, meme fonction), pour que `#fireWeapons` ne tire
-    // jamais avec un flottant plus precis que ce que le serveur pourra jamais
-    // recevoir.
+    // Visee locale, lue puis QUANTIFIEE une seule fois pour tout l'appel (voir
+    // `#localAim`). La mise a l'echelle par 127 avant `quantizeAxis` reproduit
+    // exactement ce que `#sendInput` envoie : `#fireWeapons` ne tire jamais
+    // avec plus de precision que ce que le serveur recoit.
     const aim = this.readAim();
     this.#localAim = { x: quantizeAxis(aim.x * 127), y: quantizeAxis(aim.y * 127) };
 
@@ -2193,11 +1979,10 @@ export class GameClient {
     if (steps === 5) {
       this.#hordeAcc = 0;
     }
-    // `pingClock` (revue finale, etape 9) : voir l'accesseur. Mesuree ICI,
-    // une seule fois pour tout cet appel — jamais dans `#advanceHorde`, que le
-    // rejeu peut executer plusieurs fois pour le meme tick. `#onFrame` ne
-    // s'execute jamais depuis `update()` (c'est le handler WebSocket qui
-    // l'appelle), donc `isFrozen` est stable sur toute la boucle ci-dessus.
+    // ⚠️ `pingClock` se mesure ICI, une fois par appel, jamais dans
+    // `#advanceHorde`, que le rejeu peut executer plusieurs fois pour le meme
+    // tick. `#onFrame` ne s'execute jamais depuis `update()` (handler
+    // WebSocket), donc `isFrozen` est stable sur toute la boucle ci-dessus.
     if (!this.isFrozen) {
       this.#pingClock += this.#lastHordeTick - hordeTickAvant;
     }
@@ -2224,11 +2009,9 @@ export class GameClient {
     }
 
     // ⚠️ **Apres `players`, jamais avant, et jamais depuis `#advanceHorde`.**
-    // La capture compare les positions DESSINEES — celle qu'on se predit, celles
-    // qu'on interpole pour les autres — parce que ce sont les seules que l'oeil
-    // voie et que ce sont elles qui portent l'orbe. Un pas de horde peut ne pas
-    // tourner de l'image (accumulateur) ou tourner cinq fois : le ramassage
-    // n'est ni plus ni moins frequent que l'image qui le montre.
+    // La capture compare les positions DESSINEES (predite pour soi,
+    // interpolees pour les autres), celles qui portent l'orbe a l'ecran, une
+    // fois par image quel que soit le nombre de pas de horde.
     this.orbFlights.expire(now);
     this.orbs.capture(players, this.orbFlights, now);
 
@@ -2247,16 +2030,12 @@ export class GameClient {
    * (`PLAYER_SPEED + loadout.bonus('speed') + accountBonuses.speed`), pas une
    * approximation.
    *
-   * ⚠️ **Les TROIS termes, pas deux.** Ce miroir n'additionnait que les deux
-   * premiers : le bonus de compte « Celerite » (jusqu'a +30 px/s au palier
-   * maximum) manquait a chaque tick. Mesure de l'ecart en regime etabli : 1,57
-   * px de retard — invisible a l'oeil, mais c'est exactement le mecanisme que
-   * la tache 9 de l'etape 4 a paye une tache entiere pour fermer (voir le
-   * docbloc de `PredictedPlayer.predict`), rouvert d'un cran par l'etape 7b.
+   * ⚠️ **Les TROIS termes.** Un terme omis fait avancer la prediction moins
+   * vite que l'autorite, et chaque snapshot ramene le joueur en arriere (voir
+   * `PredictedPlayer.predict`).
    *
-   * Sans WELCOME, il n'y a pas d'inventaire a consulter — mais les bonus de
-   * compte, eux, sont connus des la construction : la vitesse de base les
-   * porte donc deja.
+   * Sans WELCOME, pas d'inventaire, mais les bonus de compte sont connus des
+   * la construction.
    */
   #localSpeed(): number {
     const base = PLAYER_SPEED + this.accountBonuses.speed;
@@ -2272,13 +2051,9 @@ export class GameClient {
       return;
     }
     const axes = this.readInput();
-    // Visee (tache 13) : `encodeInput` applique `quantizeAxis` en interne,
-    // exactement la meme fonction que celle utilisee par `update()` pour
-    // `#localAim` — c'est ce qui garantit que le tir local et l'entree
-    // envoyee au serveur reposent sur la meme discipline de quantification,
-    // meme si les deux lectures de `readAim()`/`readInput()` ne tombent pas
-    // au meme instant (cadences d'envoi et de simulation decouplees, comme
-    // deja le cas pour le deplacement).
+    // `encodeInput` applique `quantizeAxis`, la meme fonction que `update()`
+    // pour `#localAim` : tir local et entree envoyee partagent la meme
+    // quantification, meme lus a des instants differents.
     const aim = this.readAim();
     this.#seq = (this.#seq + 1) & 0xffff;
     ws.send(encodeInput(this.#seq, axes.x * 127, axes.y * 127, aim.x * 127, aim.y * 127));
@@ -2305,12 +2080,8 @@ export class GameClient {
         applyObstacles(f, mask);
         return f;
       });
-      // Meme `mask`, memes `probe.cols`/`probe.rows`/`probe.cellSize` que ceux
-      // qui viennent d'alimenter `#fields` ci-dessus : c'est la condition du
-      // §5.1 appliquee au rendu, pas seulement a la simulation (tache 28).
       // Les armes de depart choisies en salle d'attente : `Room.join` les a
       // posees dans chaque `Loadout` au meme instant que ce WELCOME.
-      // Sans choix, la dague : meme regle que `Room.join`.
       for (const p of this.#lobby?.players ?? []) {
         // Sans choix, la dague (`loadoutOf` la pose) ; une arme choisie la
         // remplace — meme regle que `Room.join`.
@@ -2323,6 +2094,8 @@ export class GameClient {
           this.#localClassId = p.classId;
         }
       }
+      // Meme `mask` et meme geometrie que `#fields` : le rendu dessine les
+      // obstacles que la simulation evite.
       this.#moveMap = { mask, cols: probe.cols, rows: probe.rows, cellSize: probe.cellSize };
       this.onMapReady({ ...this.#moveMap, world });
       return;
@@ -2344,7 +2117,7 @@ export class GameClient {
           kind: 'releve',
         });
       }
-      // Etape 11 : le porteur se reconnait a son archetype, comme le releve du
+      // Le porteur se reconnait a son archetype, comme le releve du
       // necromancien juste au-dessus. Annonce a la RECEPTION.
       if (msg.archetype === PORTEUR_ARCHETYPE) {
         this.#porteurId = entityIdOf(msg.waveId, 0);
@@ -2358,7 +2131,7 @@ export class GameClient {
       // l'application (restauration, rejeu) a lieu dans `#advanceHorde`, au
       // tick local qui vient d'etre simule — voir `#applyDeaths`.
       this.#pendingDeaths.push({ tick: msg.tick, ids: msg.ids });
-      // Etape 11 : lu A LA RECEPTION, sur les identites du message — sans
+      // Lu A LA RECEPTION, sur les identites du message — sans
       // attendre que le rejeu l'applique. Le `LEVEL_UP` qui suit est le coffre.
       if (this.#porteurId !== null && msg.ids.includes(this.#porteurId)) {
         this.#chestsOwed++;
@@ -2389,19 +2162,13 @@ export class GameClient {
       return;
     }
     if (msg.type === MSG.REACTION) {
-      // ⚠️ **Applique A LA RECEPTION, pas au tick date — a l'oppose exact de
-      // `ZONE` juste au-dessus, et la difference est le coeur du §2 de la
-      // spec.** Une zone RALENTIT : elle touche le deplacement, donc elle doit
-      // etre posee au tick que le serveur a date, quitte a rejouer. Un flash de
-      // reaction ne touche rien : il ne fait que se voir. Le dater par tick
-      // demanderait de convertir un tick en horloge murale pour une animation
-      // dont personne ne peut mesurer les quelques dizaines de millisecondes
-      // de retard — meme arbitrage que `HitFlashes`, qui est en horloge murale
-      // pour cette raison exacte.
+      // ⚠️ **Applique A LA RECEPTION, pas au tick date**, a l'oppose de `ZONE` :
+      // une zone RALENTIT, donc touche le deplacement ; un flash de reaction ne
+      // fait que se voir, et quelques dizaines de millisecondes de retard ne se
+      // voient pas.
       //
-      // ⚠️ **Le client ne rejoue rien et ne tue personne ici.** Les morts de la
-      // reaction arrivent par le `DEATHS` existant (§7 du plan : « aucun chemin
-      // de mort parallele »), et c'est le rejeu de l'etape 3 qui les place.
+      // ⚠️ **Le client ne rejoue rien et ne tue personne ici** : les morts de
+      // la reaction arrivent par `DEATHS`, sans chemin de mort parallele.
       this.reactionFlashes.spawn(msg.x, msg.y, msg.pair, msg.synergyCharge, performance.now());
       this.#reactionCount++;
       return;
@@ -2428,7 +2195,7 @@ export class GameClient {
       // diverger identiquement des deux cotes, seulement un chiffre a
       // afficher.
       this.#level = msg.level;
-      // Etape 11 : un coffre du est TOUJOURS le premier `LEVEL_UP` qui suit la
+      // Un coffre du est TOUJOURS le premier `LEVEL_UP` qui suit la
       // mort du porteur — le salon l'ouvre avant tout niveau.
       this.#draftIsChest = this.#chestsOwed > 0;
       if (this.#draftIsChest) {
@@ -2467,11 +2234,9 @@ export class GameClient {
       // ailleurs. Il ne peut pas la deduire : la fenetre dure jusqu'a ce que
       // tout le monde ait pose son jeton, et en solo elle se ferme au clic.
       //
-      // ⚠️ **L'etalage n'est PAS vide ici.** Une premiere version le faisait,
-      // et rendait la revelation du §4.2 impossible a dessiner : ce message
-      // est precisement celui qui dit quelle carte s'illumine, et les issues
-      // designent les cartes par leur INDICE dans l'etalage. Le vider ici
-      // laissait l'ecran avec des indices pointant vers rien.
+      // ⚠️ **L'etalage n'est PAS vide ici** : les issues designent les cartes
+      // par leur INDICE dans l'etalage, et l'ecran en a besoin pour jouer la
+      // revelation.
       //
       // C'est `draftSettled` qui dit « la negociation est finie », et c'est
       // l'ecran qui decide quand il arrete de dessiner. Le prochain
@@ -2488,22 +2253,17 @@ export class GameClient {
       // serveur applique. Voir `#portalMultiplier`.
       this.#portalMultiplier = msg.multiplier;
       // ⚠️ Un portail neuf : personne n'a encore vote, et le verdict du palier
-      // precedent ne doit pas rester affiche. Meme invariant que `DRAFT_OPEN`,
-      // qui vide les jetons d'une negociation revolue.
+      // precedent ne doit pas rester affiche.
       this.#portalVotes = new Map();
       this.#portalDecision = null;
-      // Fenetre de duree INCONNUE : elle commence, et ne finira que quand
-      // `PORTAL_RESULT` l'annoncera. La borne est repoussee a l'infini plutot
-      // que devinee — la deviner a `deadlineTick` laisserait l'ecran vingt
-      // secondes de plus qu'un vote unanime rendu en trois.
+      // Fenetre de duree INCONNUE, jusqu'a `PORTAL_RESULT` : voir
+      // `#portalCloseTick`.
       this.#portalCloseTick = Number.MAX_SAFE_INTEGER;
       return;
     }
 
     if (msg.type === MSG.VOTES) {
-      // ⚠️ **Les abstentions passent telles quelles.** `NO_VOTE` circule pour
-      // qu'on voie qui n'a pas encore tranche (§6) ; le filtrer ici rendrait
-      // « n'a pas vote » indistinguable de « a vote RESTER ».
+      // ⚠️ **Les abstentions passent telles quelles** : voir `#portalVotes`.
       this.#portalVotes = new Map(msg.votes.map((v) => [v.playerId, v.choice]));
       return;
     }
@@ -2512,18 +2272,14 @@ export class GameClient {
       this.#portalDecision = msg.decision;
       this.#portalGold = msg.gold;
       // ⚠️ **`msg.effectTick` est le tick d'EFFET, pas celui de la
-      // reception** — meme discipline que `LEVEL_UP` plus haut. Fermer l'ecran
-      // a l'arrivee du message le fermerait chez chacun a un tick different,
-      // celui de sa propre latence, au moment meme ou les quatre joueurs
-      // regardent le meme verdict.
+      // reception** : voir `#portalCloseTick`.
       this.#portalCloseTick = msg.effectTick;
       return;
     }
 
     if (msg.type === MSG.RUN_OVER) {
-      // Une seule fois par salon (§7) : `Room` ne met `RUN_OVER` en file
-      // qu'une fois (`#runOver`), donc rien ici n'a besoin de garde
-      // supplementaire cote client.
+      // Une seule fois par salon : `Room` ne met `RUN_OVER` en file qu'une
+      // fois (`#runOver`).
       this.onRunOver({ survivedTicks: msg.survivedTicks, level: msg.level, kills: msg.kills });
       return;
     }
@@ -2533,7 +2289,7 @@ export class GameClient {
 
     this.#buffer.push(msg, performance.now());
 
-    // Recalage continu (constat C1.b/c) : sans lui, le compteur reste calé
+    // Recalage continu : sans lui, le compteur reste calé
     // sur le retard du WELCOME pour toute la vie de la connexion, et un
     // onglet remis au premier plan après une pause ne rattrape jamais les pas
     // perdus. Voir `HORDE_TICK_LAG_TOLERANCE`.
@@ -2541,23 +2297,12 @@ export class GameClient {
       this.#lastHordeTick = msg.tick;
     }
 
-    // `xp` est celui de l'equipe : porte par le snapshot entier, pas par un
-    // bloc joueur — on le lit a chaque snapshot, meme si `mine` reste
-    // introuvable ci-dessous.
+    // Donnees d'EQUIPE, dans l'en-tete du snapshot et pas dans un bloc
+    // joueur : lues AVANT le `return` ci-dessous, meme quand `mine` est
+    // introuvable.
     this.#teamXp = msg.xp;
-    // Meme raisonnement que `xp` juste au-dessus : donnee d'EQUIPE, portee par
-    // le snapshot entier et pas par un bloc joueur, donc lue a chaque snapshot
-    // meme quand `mine` reste introuvable ci-dessous.
     this.#teamSynergy = msg.synergy;
-    // Meme raison, une troisieme fois : l'or est celui de l'EQUIPE (§5), porte
-    // par l'en-tete du snapshot et pas par un bloc joueur, donc lu a chaque
-    // snapshot meme quand `mine` reste introuvable ci-dessous. C'est l'ENJEU
-    // du vote : le HUD le montre en permanence, l'ecran du portail le
-    // multiplie.
     this.#teamGold = msg.gold;
-    // Meme raison, une quatrieme fois : le boss est dans l'EN-TETE du snapshot,
-    // pas dans un bloc joueur (§1.1 de la spec — il est UN). On le lit donc
-    // avant le `return` ci-dessous, qui ne concerne que le bloc du joueur local.
     this.#boss = trackBoss(this.#boss, msg.boss);
 
     const mine =
@@ -2584,9 +2329,8 @@ export class GameClient {
    *
    * ⚠️ **`OUTCOME.LOST` ne donne rien** : c'est le joueur qui visait une carte
    * qu'un autre a eue. Seuls `WON` (il l'a gagnee) et `AUTO` (le serveur a
-   * tranche pour lui, §4.4) attribuent. Traiter les trois pareil donnerait la
-   * carte contestee a TOUS ses pretendants — l'exclusivite du §6.2 s'effondre
-   * et le conflit n'aurait plus d'enjeu a l'ecran.
+   * tranche pour lui) attribuent. Traiter les trois pareil donnerait la carte
+   * contestee a TOUS ses pretendants.
    *
    * La traduction elle-meme vit dans `shared/cards.ts` : c'est la MEME
    * fonction que `Room#grantCard` appelle, pas une seconde copie.
@@ -2601,13 +2345,9 @@ export class GameClient {
       // Un indice qui ne designe aucune carte : le client a manque le
       // `DRAFT_OPEN` de ce tour (connexion en cours de draft).
       //
-      // ⚠️ **Cette garde n'est pas verrouillee par un test, et ne peut pas
-      // l'etre** — meme motif que R8 au registre : le `catch` plus bas absorbe
-      // son retrait, puisque `undefined.nature` y leve comme n'importe quoi
-      // d'autre. Ce qui la tient, c'est `noUncheckedIndexedAccess` : la
-      // supprimer ne compile pas (verifie), seul un `as Card` delibere la
-      // defait. Deux gardes qui se couvrent l'une l'autre ne sont gardees par
-      // aucun test — autant l'ecrire que le laisser croire.
+      // ⚠️ **Aucun test ne peut verrouiller cette garde** : le `catch` plus bas
+      // absorberait son retrait. C'est `noUncheckedIndexedAccess` qui la tient
+      // (la supprimer ne compile pas).
       const card: Card | undefined = this.#draftCards[issue.cardIndex];
       if (!card) {
         continue;
@@ -2618,8 +2358,8 @@ export class GameClient {
         // Miroir incomplet d'un joueur DISTANT : un client qui rejoint un
         // salon en cours n'a jamais vu les `DRAFT_RESULT` d'avant sa
         // connexion, donc une montee de niveau peut porter sur une arme qu'il
-        // ne lui connait pas. Purement cosmetique (§5.4 : le serveur arbitre
-        // seul), et le sien reste exact — il commence vide des deux cotes.
+        // ne lui connait pas. Purement cosmetique (le serveur arbitre seul), et
+        // le sien reste exact.
       }
     }
   }
@@ -2631,12 +2371,10 @@ export class GameClient {
     }
     const tick = this.#lastHordeTick++;
 
-    // ⚠️ LES ORDRES EN ATTENTE S'APPLIQUENT ICI, EN PREMIER — avant le
-    // rafraichissement du champ plus bas. Mesure (§6.2 de la spec) : dans cet
-    // ordre, la derive due a la latence reste bornee autour de 20 a 50 px ;
-    // dans l'ordre inverse, elle monte a 782 px, soit pire que de ne pas
-    // rattraper du tout. C'est la seule raison pour laquelle les ordres sont
-    // mis en file plutot qu'appliques a la reception.
+    // ⚠️ LES ORDRES EN ATTENTE S'APPLIQUENT ICI, EN PREMIER, avant le
+    // rafraichissement du champ : dans l'ordre inverse, la derive due a la
+    // latence devient pire que sans rattrapage du tout. C'est la raison de la
+    // file plutot qu'une application a la reception.
     while (this.#pendingOrders.length > 0) {
       const order = this.#pendingOrders.shift();
       if (order) {
@@ -2648,16 +2386,12 @@ export class GameClient {
 
     // Les positions telles que le client les connait : celles du dernier
     // snapshot recu, enregistrees sous le tick SERVEUR auquel elles ont ete
-    // calculees — jamais sous le tick local `tick` (constat C1.a). Le serveur
-    // enregistre les siennes sous son propre tick reel ; si le client
-    // enregistrait les memes positions sous une cle differente, `delayed()`
-    // ne lirait plus la meme chose des deux cotes, meme quand le compteur
-    // local est par ailleurs bien recale.
+    // calculees, jamais sous le tick local `tick` : sinon `delayed()` ne
+    // lirait plus la meme chose des deux cotes.
     //
     // ⚠️ Non gate par le gel : le serveur continue d'emettre des snapshots
-    // pendant le gel (positions inchangees mais tick qui avance), donc cet
-    // enregistrement reste la verite du serveur, gel ou pas. Le gater
-    // ouvrirait un trou dans l'anneau court de `PlayerHistory` pour rien.
+    // pendant le gel ; le gater ouvrirait un trou dans l'anneau court de
+    // `PlayerHistory`.
     const snapshot = this.#buffer.latest();
     if (snapshot) {
       this.#history.record(
@@ -2672,31 +2406,22 @@ export class GameClient {
 
     // Le rafraichissement du champ et le reciblage, eux, SONT gates par le
     // gel : le serveur ne les execute pas non plus pendant le gel (`Room.step`
-    // revient avant d'y arriver). Sans ce garde, le client rafraichirait un
-    // champ — et reciblerait la horde — a un instant ou le serveur ne l'a pas
-    // fait, ce qui desynchronise `targetField` independamment de toute
-    // difference de position.
+    // revient avant d'y arriver). Sans ce garde, `targetField` se
+    // desynchroniserait.
     if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
       this.#feedFields(tick, true);
     }
 
-    // Le mouvement de la horde est module par `#movementScale` : `0` pendant
-    // le gel strict, une rampe pendant la reprise, `1` sinon — exactement le
-    // facteur que `Room.step` applique a son propre `dt`. A `0` le pas ne
-    // fait litteralement rien (deplacement nul) : inutile de le sauter par un
-    // `if` separe. `tick` reste le tick ABSOLU, non mis a l'echelle : c'est
-    // lui qui decide la phase de recalcul de trajectoire (tache 19), et cette
-    // phase ne doit jamais deraper au gre du gel.
-    // ⚠️ **Expirer AVANT d'avancer, comme `Room.step`** — sauf que le client
-    // expire `ROLLBACK_DEPTH_TICKS` ticks EN RETARD, et c'est delibere :
-    // `HordeHistory` ne sauvegarde que la horde, jamais les zones. Un rejeu
-    // qui repart d'un tick ou une zone vivait encore doit pouvoir la
-    // retrouver — une zone retiree du tableau est irrecuperable. Elle reste
-    // donc en memoire quelques ticks de plus, inerte : c'est
-    // `ZoneField.slowsAt`, pas la presence dans le tableau, qui dit si elle
-    // agit (voir sa doc). Le serveur, lui, ne rejoue jamais et expire a
-    // l'heure ; les deux repondent la meme chose parce que les deux passent
-    // par le meme predicat.
+    // Le mouvement de la horde est module par `#movementScale`, le facteur que
+    // `Room.step` applique a son propre `dt` (a `0`, le pas ne deplace rien).
+    // `tick` reste le tick ABSOLU, non mis a l'echelle : il decide la phase de
+    // recalcul de trajectoire, qui ne doit jamais deraper au gre du gel.
+    //
+    // ⚠️ **Expirer AVANT d'avancer, comme `Room.step`**, mais
+    // `ROLLBACK_DEPTH_TICKS` ticks EN RETARD : `HordeHistory` ne sauvegarde
+    // pas les zones, et un rejeu doit retrouver celles qui vivaient encore.
+    // Une zone gardee est inerte : c'est `ZoneField.slowsAt`, pas sa presence
+    // dans le tableau, qui dit si elle agit.
     this.zones.expire(tick - ROLLBACK_DEPTH_TICKS);
     const scale = this.#movementScale(tick);
     // ⚠️ **La charge REMPLACE le deplacement du boss** : `Horde.step` l'applique
@@ -2714,31 +2439,20 @@ export class GameClient {
     // avance sa horde.
     this.#markInZones(tick);
 
-    // Tir, deplacement des projectiles, collision — miroir cosmetique de
-    // l'etape 8 de `Room.step` (back/src/room.ts). Gate par le meme garde de
-    // gel que le rafraichissement du champ ci-dessus (le serveur ne tire pas
-    // non plus pendant le gel strict, son `step()` y revient avant). Le
-    // ralentissement de la reprise (`scale`), lui, ne s'applique QU'au
-    // deplacement des projectiles, jamais au tir lui-meme — meme regle que
-    // `Room#movementScale` : « le tir automatique… n'est modere par aucune
-    // rampe ».
+    // Tir, deplacement des projectiles, collision : miroir cosmetique de
+    // `Room.step`, gate par le meme garde de gel que le champ. La rampe de
+    // reprise (`scale`) ne ralentit QUE le deplacement des projectiles, jamais
+    // le tir, comme `Room#movementScale`.
     //
     // ⚠️ Les projectiles ne sont PAS rejoues par `#replayTick` : leur position
-    // ne depend que de leur propre vitesse, jamais de la horde — contrairement
-    // au mouvement de la horde, il n'y a donc rien a corriger apres une mort
-    // tardive. Les y rejouer les ferait avancer deux fois pour les ticks deja
-    // simules en temps reel (une fois ici, une fois au rejeu) : une regression
-    // silencieuse, pas une amelioration. C'est pour cette meme raison que le
-    // pseudo-code du brief de la tache 10 (« le rejeu deplace aussi les
-    // projectiles ») n'a pas ete suivi a la lettre ici — voir le rapport de
-    // la tache 11.
+    // ne depend pas de la horde, et les rejouer les ferait avancer deux fois.
     if (tick > this.#freezeUntilTick) {
       this.#anchorPlayers = snapshot?.players ?? [];
       this.#fireWeapons(tick, snapshot?.players ?? [], nowMs);
       this.#pulseGuards(tick, nowMs);
       this.#sweepOndes(tick, nowMs);
       this.#strikeFrappes(tick, nowMs);
-      // Le miroir cosmetique du souffle de fin de course (etape 8) : la
+      // Le miroir cosmetique du souffle de fin de course : la
       // grenade explose meme sans avoir percute personne, cote serveur — ici
       // on en dessine le flash, au meme endroit et au meme rayon.
       this.projectiles.step(
@@ -2762,19 +2476,15 @@ export class GameClient {
       );
       // Collision purement cosmetique : `collide` ne lit `horde` qu'en
       // lecture (position, `slotOf`) et ne consomme que les propres
-      // projectiles du client — jamais un degat, jamais un `kill`. Arbitrer
-      // reellement les degats ici serait exactement l'erreur que le §3.2 et
-      // `#applyDeaths` interdisent deja au rejeu : prononcer une mort que le
-      // serveur n'a pas prononcee.
+      // projectiles du client — jamais un degat, jamais un `kill`, qui serait
+      // prononcer une mort que le serveur n'a pas prononcee.
       this.projectiles.collide(this.horde, (entityId, _damage, projectileSlot) => {
         const slot = this.horde.slotOf(entityId);
         if (slot < 0) {
           return;
         }
-        // La teinte de l'arme qui touche (etape 8) : dix-sept armes, dix-sept
-        // couleurs d'impact, la ou toutes partageaient le meme flash dore.
-        // `weaponAt` est le champ purement cosmetique de `Projectiles`, et
-        // c'est exactement son emploi.
+        // La teinte de l'arme qui touche : `weaponAt` est le champ purement
+        // cosmetique de `Projectiles`.
         this.hitFlashes.spawn(
           this.horde.x[slot] ?? 0,
           this.horde.y[slot] ?? 0,
@@ -2815,9 +2525,8 @@ export class GameClient {
         // marque rien, et surtout n'EFFACE pas la marque d'une autre.
         if (element !== ELEMENT.NEUTRE) {
           this.#markLocally(slot, element, this.projectiles.ownerAt(projectileSlot), tick);
-          // Etape 5b, tache 3 (tour de correction 1) : la chaine est un
-          // EVENEMENT, pas un etat — elle se seme ici, au meme instant que la
-          // marque, jamais redérivée au dessin. Voir `#seedChainFlash`.
+          // La chaine est un EVENEMENT, pas un etat : semee ici, jamais
+          // rederivee au dessin. Voir `#seedChainFlash`.
           if (element === ELEMENT.FOUDRE) {
             this.#seedChainFlash(slot, entityId, nowMs);
           }
@@ -2831,7 +2540,7 @@ export class GameClient {
     this.blastFlashes = this.blastFlashes.filter((b) => nowMs - b.bornMs < flashLifeMs(b));
     this.chainFlashes.expire(nowMs);
 
-    // Instantane pour le rejeu (§3.2) : DOIT etre pris a chaque tick, gel ou
+    // Instantane pour le rejeu : DOIT etre pris a chaque tick, gel ou
     // pas, sans quoi une mort qui viserait un tick gele serait « trop vieille »
     // a tort — l'anneau la jugerait absente plutot que simplement inchangee.
     this.#hordeHistory.record(tick, this.horde);
@@ -2850,18 +2559,15 @@ export class GameClient {
   /**
    * Pose une marque elementaire **cosmetique** sur un ennemi.
    *
-   * ⚠️⚠️ **CETTE MARQUE EST UNE APPROXIMATION, ET ELLE DOIT LE RESTER.**
-   * C'est le §2 de la spec de l'etape 5a, en toutes lettres : *« une teinte de
-   * sprite est cosmetique : si le client marque un ennemi que le serveur
-   * n'avait pas marque, personne ne meurt de travers »*. Le client marque ce
-   * que SES PROPRES projectiles touchent (des projectiles eux-memes cosmetiques
-   * depuis l'etape 3, tires d'une position predite puis reconciliee) et ce qui
-   * tombe dans une zone annoncee. Il se trompe donc regulierement, dans les
-   * deux sens :
+   * ⚠️⚠️ **CETTE MARQUE EST UNE APPROXIMATION, ET ELLE DOIT LE RESTER.** Une
+   * teinte de sprite est cosmetique : si le client marque un ennemi que le
+   * serveur n'avait pas marque, personne ne meurt de travers. Le client marque
+   * ce que SES PROPRES projectiles (cosmetiques) touchent et ce qui tombe dans
+   * une zone annoncee. Il se trompe donc regulierement :
    *
    * | Ce que le serveur fait et que ce client ne fait pas | Consequence |
    * | --- | --- |
-   * | consommer la marque quand une reaction a lieu (§4.3) | un ennemi reste teinte un peu trop longtemps |
+   * | consommer la marque quand une reaction a lieu | un ennemi reste teinte un peu trop longtemps |
    * | marquer depuis les projectiles des AUTRES joueurs | un ennemi teinte chez son tireur, pas ici |
    * | ne pas marquer un ennemi tue du meme impact | une teinte d'un tick sur un mourant |
    *
@@ -2876,12 +2582,9 @@ export class GameClient {
    *   (`DEATHS`, `REACTION`). Le client n'en prononce aucun.
    *
    * ⚠️ **NE PAS « CORRIGER » CETTE APPROXIMATION EN LA RENDANT AUTORITAIRE.**
-   * Rendre la marque exacte cote client demanderait d'y refaire l'arbitrage
-   * des reactions — donc de prononcer localement ce que le serveur seul
-   * prononce, et d'inviter la divergence dans le seul mecanisme que tout le
-   * projet protege depuis l'etape 2 (trois chiffres de replication a 0,000 px).
-   * Le bon reflexe, si la teinte parait fausse, est de la juger a l'oeil : elle
-   * n'a pas d'autre juge, et elle n'en merite pas d'autre.
+   * La rendre exacte demanderait de refaire l'arbitrage des reactions cote
+   * client, et d'inviter la divergence dans la replication de la horde. Si la
+   * teinte parait fausse, on la juge a l'oeil.
    */
   #markLocally(slot: number, element: number, by: number, tick: number): void {
     this.horde.applyMark(slot, element, by, tick);
@@ -2889,31 +2592,23 @@ export class GameClient {
 
   /**
    * Seme un flash de chaine de Foudre, **au moment de l'impact predit par CE
-   * client** — jamais depuis une annonce du serveur (etape 5b, tache 3, tour
-   * de correction 1).
+   * client** — jamais depuis une annonce du serveur.
    *
-   * ⚠️ **Meme contrat que `#markLocally`, et pour la meme raison.** §2 de la
-   * spec : le client ne prononce jamais un degat — il seme depuis ses PROPRES
-   * projectiles (cosmetiques, tires d'une position predite puis reconciliee),
-   * jamais depuis ceux des autres joueurs. Deux consequences assumees,
-   * identiques a celles de `#markLocally` :
+   * ⚠️ **Meme contrat que `#markLocally`** : semee depuis les PROPRES
+   * projectiles de ce client, jamais ceux des autres. Consequences assumees :
    *
    * | Ce que le serveur fait et que ce client ne fait pas | Consequence |
    * | --- | --- |
    * | chainer depuis les projectiles des AUTRES joueurs | une chaine tiree par un allie n'apparait pas ici |
    * | exclure les morts DU MEME tick (`dead`, cote serveur) | ce client ne connait aucune mort avant `DEATHS` : son chemin peut differer du serveur d'un maillon si un voisin vient tout juste de mourir d'un AUTRE impact |
    *
-   * **NE PAS « CORRIGER » EN LA RENDANT AUTORITAIRE** — meme interdiction que
-   * sur `#markLocally` : reproduire l'exclusion des morts demanderait de
-   * suivre ici l'etat de mort de chaque entite, donc de refaire une part de
-   * l'arbitrage serveur. Le flash reste un dessin approximatif d'un evenement
-   * arbitre ailleurs, pas une seconde source de verite.
+   * **NE PAS « CORRIGER » EN LA RENDANT AUTORITAIRE**, comme pour
+   * `#markLocally` : exclure les morts demanderait de refaire une part de
+   * l'arbitrage serveur.
    *
-   * ⚠️ **Le CHEMIN est calcule UNE FOIS, ICI, et FIGE dans `chainFlashes`** —
-   * voir sa doc. `chainTargets` n'est donc appele qu'a l'impact (un par
-   * projectile de Foudre qui touche), jamais a chaque image : c'est ce qui
-   * retire le cout O(horde) par ennemi marque et par image de l'ancienne
-   * version de ce calque (voir `CHAIN_FLASH_LIFETIME_MS`).
+   * ⚠️ **Le CHEMIN est calcule UNE FOIS, ICI, et FIGE dans `chainFlashes`** :
+   * `chainTargets` n'est appele qu'a l'impact, jamais a chaque image (voir
+   * `CHAIN_FLASH_LIFETIME_MS`).
    */
   #seedChainFlash(slot: number, entityId: number, nowMs: number): void {
     const cx = this.horde.x[slot] ?? 0;
@@ -2925,12 +2620,9 @@ export class GameClient {
     const points: { x: number; y: number }[] = [{ x: cx, y: cy }];
     for (const id of path) {
       const s = this.horde.slotOf(id);
-      // ⚠️ **INATTEIGNABLE par construction** — meme raisonnement que le
-      // `chainedSlot >= 0` de `resolveProjectileDamage` cote serveur :
-      // `chainTargets` ne rend que des identites lues DANS `horde` a
-      // l'instant meme de cet appel, et rien ne compacte entre les deux.
-      // Gardee quand meme : un point manquant silencieux briserait la
-      // polyligne sans qu'aucune trace n'existe.
+      // INATTEIGNABLE par construction : `chainTargets` ne rend que des
+      // identites lues DANS `horde` a l'instant meme, sans compaction entre
+      // les deux. Gardee quand meme, par prudence.
       if (s >= 0) {
         points.push({ x: this.horde.x[s] ?? 0, y: this.horde.y[s] ?? 0 });
       }
@@ -2944,25 +2636,19 @@ export class GameClient {
    * `markInZones` (back/src/combat.ts).
    *
    * ⚠️ **Miroir de la moitie qui teinte, jamais de celle qui arbitre.** Le
-   * balayage serveur passe par `applyElement`, qui declenche les reactions du
-   * §6.2 ; celui-ci pose la marque et rien d'autre. Une reaction decidee ici
-   * serait une reaction que le serveur n'a pas prononcee.
+   * balayage serveur passe par `applyElement`, qui declenche les reactions ;
+   * celui-ci pose la marque et rien d'autre.
    *
    * ⚠️ **`aliveAt`, pas `slowsAt`** — meme predicat que cote serveur : c'est
    * lui qui dit si la zone EXISTE, alors qu'elle ne ralentit qu'a partir de
    * `T + 1` (le deplacement de `T` etait deja joue). Confondre les deux ferait
    * clignoter la teinte d'un tick a la pose de chaque zone.
    *
-   * ⚠️ **Le serveur, lui, ne marque plus des le tick de la pose depuis la
-   * tache 21** : ses champs naissent de `applyReactions`, donc APRES son propre
-   * `markInZones`. L'ecart est d'un tick, sur une teinte — c'est exactement le
-   * genre d'approximation que `#markLocally` documente et assume, et le
-   * corriger ici demanderait au client de connaitre l'ordre du tick serveur.
+   * Le serveur, lui, ne marque pas au tick de la pose : ses champs naissent de
+   * `applyReactions`, APRES son `markInZones`. Un tick d'ecart sur une teinte,
+   * approximation assumee (voir `#markLocally`).
    *
-   * Cout : O(zones x entites) par tick, le meme que celui que le §5.2 annonce
-   * cote serveur. C'est la contrepartie assumee de la seule ligne du §9 qui
-   * soit gratuite a l'affichage (« teinte du sprite — 0 ») : la teinte ne coute
-   * rien au rendu, c'est la savoir qui coute.
+   * Cout : O(zones x entites) par tick, comme cote serveur.
    */
   #markInZones(tick: number): void {
     const r2 = ZONE_RADIUS * ZONE_RADIUS;
@@ -2985,46 +2671,13 @@ export class GameClient {
   }
 
   /**
-   * Tire les salves dues, cote client — miroir de `Room#fireWeapons`
-   * (back/src/room.ts), pour que les projectiles affiches correspondent a ce
-   * que chaque joueur voit tirer.
-   *
-   * Purement cosmetique : les degats restent arbitres par le serveur (§5.4),
-   * jamais deduits d'ici.
-   *
-   * ⚠️ **Parcourt TOUT l'arsenal de chaque joueur, pas la seule arme neutre.**
-   * Jusqu'a la tache 9 ce miroir tirait `weaponOf(0)` et rien d'autre — la
-   * copie de ce que `Room` faisait avant la tache 7 : aucun projectile d'arme
-   * draftee ne s'affichait, ni pour son porteur ni pour ses allies. L'ordre est
-   * celui du serveur : l'arme neutre d'abord, TOUJOURS (elle vit hors des
-   * slots, §6.1, ne figure dans aucun `Loadout` et ne disparait jamais), puis
-   * les armes draftees dans leur ordre d'acquisition.
-   *
-   * ⚠️ **La visee suit le curseur (tache 13), plus de ciblage.** Ce fichier ne
-   * cible donc plus rien dans `horde` : `nearestTarget` et `fireSalvo` (par
-   * cible) restent disponibles ailleurs mais ne sont plus appeles ici, voir
-   * le rapport de la tache 13. Une visee nulle ne tire pas — meme regle que
-   * cote serveur, voir `Projectiles.fireSalvoDirected`.
-   *
-   * `players` vient du dernier snapshot connu (voir l'appelant) : le client
-   * n'a pas de position « vraie » continue pour les joueurs distants, il n'a
-   * que la derniere connue — meme source que `#localHp`/`#teamXp`. Le joueur
-   * local, lui, utilise sa position simulee (`#local.simX/simY`), plus a jour
-   * que le dernier snapshot recu — et de meme, sa visee locale
-   * (`#localAim`, DEJA quantifiee, voir `update()`) plutot que celle,
-   * retardee par l'aller-retour reseau, que porterait son propre bloc dans
-   * `players`. Les allies, eux, n'ont pas d'autre source que ce bloc : sans
-   * leur visee transmise par `SNAPSHOT`, ce client ne saurait pas ou dessiner
-   * leurs projectiles (voir la doc de `PlayerSnapshot`).
-   */
-  /**
-   * Les invocations vivantes, cote client (etape 8) — la meme liste que celle
+   * Les invocations vivantes, cote client — la meme liste que celle
    * du serveur, derivee des memes trois choses, plus la TEINTE de l'arme qui
    * n'interesse que le dessin.
    */
   #guards: GuardTrace[] = [];
 
-  /** Les invocations vivantes, en lecture pour le calque de l'aura (etape 12). */
+  /** Les invocations vivantes, en lecture pour le calque de l'aura. */
   get guards(): readonly GuardTrace[] {
     return this.#guards;
   }
@@ -3033,10 +2686,8 @@ export class GameClient {
    * Dessine une pulsation par invocation due a ce tick, et oublie celles qui
    * se sont eteintes — le miroir cosmetique de `Room#pulseGuards`.
    *
-   * ⚠️ **Elle NE SECOUE PAS l'ecran** (`shakes: false`), pour la meme raison
-   * que le halo : une invocation frappe deux fois par seconde pendant cinq
-   * secondes, et une secousse continue est exactement ce que l'etape 8 vient
-   * de corriger.
+   * ⚠️ **Elle NE SECOUE PAS l'ecran** (`shakes: false`), comme le halo : une
+   * invocation frappe en continu, et la secousse deviendrait permanente.
    */
   #pulseGuards(tick: number, nowMs: number): void {
     if (this.#guards.length === 0) {
@@ -3046,7 +2697,7 @@ export class GameClient {
       if (!guardPulsesAt(guard, tick)) {
         continue;
       }
-      // Etape 12 : l'aura est DESSINEE en continu par son calque ; une
+      // L'aura est DESSINEE en continu par son calque ; une
       // pulsation n'est plus un grand disque, c'est la brulure sur chaque
       // ennemi touche — petit flash, chiffre, marque du plus proche, la meme
       // geometrie que `resolveHalos`.
@@ -3082,7 +2733,7 @@ export class GameClient {
   /** Le point que `#anchor` rend, reutilise : aucune allocation par projectile et par tick. */
   readonly #anchorPoint = { x: 0, y: 0 };
   /**
-   * Ou est le tireur `by` a ce tick (§3.2) — la MEME source que
+   * Ou est le tireur `by` a ce tick — la MEME source que
    * `#fireWeapons` : la position simulee pour le joueur local, celle du dernier
    * snapshot pour les autres. Creee une fois ; l'orbite et le retour du
    * boomerang la lisent.
@@ -3105,7 +2756,7 @@ export class GameClient {
   };
 
   /**
-   * Les ondes vivantes, cote client (etape 12, §3.4) : la liste du serveur,
+   * Les ondes vivantes, cote client : la liste du serveur,
    * derivee des memes trois choses, plus ce qui n'interesse que le dessin
    * (teinte, horloge murale de naissance). Lecture publique pour
    * `OndeFrappeRenderer`.
@@ -3121,7 +2772,7 @@ export class GameClient {
    * Fait avancer chaque onde d'une bande, miroir cosmetique de la resolution
    * serveur : flash (SANS secousse — une onde est une nappe, pas une
    * explosion) et chiffre pour chaque ennemi franchi, marque du plus proche
-   * (une reaction par source, §6.6). Oublie les ondes eteintes, en place.
+   * (une reaction par source). Oublie les ondes eteintes, en place.
    */
   #sweepOndes(tick: number, nowMs: number): void {
     let kept = 0;
@@ -3199,6 +2850,22 @@ export class GameClient {
     }
   }
 
+  /**
+   * Tire les salves dues, cote client — miroir cosmetique de
+   * `Room#fireWeapons` ; les degats restent arbitres par le serveur.
+   *
+   * ⚠️ **Parcourt TOUT l'arsenal de chaque joueur**, dans l'ordre du serveur :
+   * l'arme neutre d'abord, TOUJOURS (hors des slots, dans aucun `Loadout`),
+   * puis les armes draftees dans leur ordre d'acquisition.
+   *
+   * ⚠️ **La visee suit le curseur, sans ciblage dans `horde`.** Une visee
+   * nulle ne tire pas, comme cote serveur (`Projectiles.fireSalvoDirected`).
+   *
+   * `players` vient du dernier snapshot connu. Le joueur local utilise sa
+   * position simulee (`#local.simX/simY`) et sa visee locale (`#localAim`,
+   * DEJA quantifiee), plus a jour que son bloc du snapshot. Les allies n'ont
+   * pas d'autre source que ce bloc, d'ou la visee transmise par `SNAPSHOT`.
+   */
   #fireWeapons(tick: number, players: readonly PlayerSnapshot[], nowMs: number): void {
     if (players.length === 0) {
       return;
@@ -3228,29 +2895,17 @@ export class GameClient {
    * `Room#fireOne`, passifs empiles compris.
    *
    * ⚠️ **`cooldownWithBonus` vient de `shared/weapons.ts`, pas d'une copie
-   * locale** : c'est litteralement la fonction que le serveur applique. Le
-   * multiplicateur de degats l'accompagne pour la meme raison — un projectile
-   * affiche doit porter le meme nombre que celui que le serveur arbitre, meme
-   * si rien ici n'en decide l'issue (§5.4).
+   * locale** : c'est la fonction que le serveur applique. Les degats suivent
+   * la meme regle : un projectile affiche porte le nombre que le serveur
+   * arbitre.
    *
    * ⚠️ **Les bonus de COMPTE s'ajoutent aux passifs du draft, sur les deux
-   * calculs** (revue finale de l'etape 7b). `Room#fireOne` somme
-   * `loadout.bonus('fireRate') + accountBonuses.fireRate` et
-   * `1 + loadout.bonus('damage') + accountBonuses.damage` ; ce miroir n'en
-   * lisait que le premier terme. Mesure du defaut : avec Cadence au palier
-   * maximum (+0,15), sur 30 s a 30 Hz, l'arme neutre — celle que tout le monde
-   * porte en permanence — affichait **225 salves pour 300 cote serveur, 25% de
-   * perte**, parce que l'arrondi de `cooldownWithBonus` amplifie le bonus sur
-   * une recharge de 4 ticks. Et la phase derivait sans borne : les deux suites
-   * de ticks de tir n'ont aucun point de resynchronisation.
-   *
-   * ⚠️ **Ce que ca coutait depasse « des tirs manquants ».** `#markLocally`
-   * n'est appele que depuis `projectiles.collide` : la teinte elementaire etait
-   * donc posee 25% moins souvent que le serveur ne marque. Le joueur lisait un
-   * monstre non teinte, planifiait en consequence, et une reaction partait sans
-   * qu'il l'ait vue venir — le pendant exact du « une capture declenchee sans
-   * ramassage reel MENTIRAIT » que le §5 de la spec invoque pour justifier
-   * l'octet du rayon de ramassage.
+   * calculs**, comme dans `Room#fireOne`. En omettre un fait perdre des salves
+   * (l'arrondi de `cooldownWithBonus` amplifie le bonus sur une recharge
+   * courte), et la phase de tir derive sans borne. Comme `#markLocally` n'est
+   * appele que depuis `projectiles.collide`, la teinte elementaire serait
+   * posee moins souvent que le serveur ne marque : des reactions partiraient
+   * sans que le joueur les voie venir.
    */
   #fireOne(
     playerId: number,
@@ -3282,14 +2937,12 @@ export class GameClient {
       return;
     }
     // ⚠️ Le PV max d'un ALLIE se derive ici avec les bonus de compte du joueur
-    // LOCAL — la meme approximation que `accountBonuses.damage` juste a cote.
-    // Cosmetique (§5.4).
+    // LOCAL, la meme approximation que `accountBonuses.damage`. Cosmetique.
     //
-    // ⚠️ **`maxHpOf`, pas une troisieme copie de la somme** (etape 13) :
-    // Colosse (`shared/firing.ts`) echelonne ses degats sur ce `maxHp`, et la
-    // tache suivante pose dans `maxHpOf` la regle de Transcendance (PV max
-    // ramenes a 1). Une copie figee ici continuerait de rendre ~100 et
-    // predirait des degats que le serveur n'arbitre pas.
+    // ⚠️ **`maxHpOf`, pas une copie de la somme** : Colosse
+    // (`shared/firing.ts`) echelonne ses degats sur ce `maxHp`, et
+    // Transcendance le modifie. Une copie predirait des degats que le serveur
+    // n'arbitre pas.
     const damage = shotDamage(
       weapon,
       loadout,
@@ -3306,8 +2959,7 @@ export class GameClient {
       // dessine ne peut pas mentir sur la portee — meme discipline que
       // `reactionFlashScale` face a `REACTION_RADIUS`.
       //
-      // ⚠️ **Il ne SECOUE PAS** : un halo pulse sans arret, et une secousse
-      // continue est precisement ce que cette etape vient de corriger. Voir
+      // ⚠️ **Il ne SECOUE PAS** : un halo pulse sans arret. Voir
       // `HitFlashes.shakes`.
       this.hitFlashes.spawn(
         x,
@@ -3346,10 +2998,8 @@ export class GameClient {
     }
     if (weapon.kind === 'faisceau') {
       // ⚠️ **Le miroir cosmetique d'un faisceau est une POLYLIGNE a deux
-      // points, et elle reutilise le calque de la chaine de Foudre** : c'est
-      // deja le seul calque du jeu qui sache tracer un trait entre deux points
-      // du monde, avec son extinction. Un calque de plus aurait redit la meme
-      // chose — et le §6.6 compte les calques.
+      // points, et elle reutilise le calque de la chaine de Foudre**, seul
+      // calque qui trace un trait entre deux points du monde.
       //
       // Les deux bouts sont derives comme cote serveur (`beamRange` et la
       // visee), donc le trait dessine est exactement celui que le serveur
@@ -3367,8 +3017,8 @@ export class GameClient {
         playerId,
       );
       // Le retour d'impact, meme geometrie que `resolveBeams` : sans lui, le
-      // rayon traversait la horde sans qu'un seul ennemi ne reagisse, et il
-      // avait l'air de ne rien faire. Cosmetique, comme `projectiles.collide`.
+      // rayon aurait l'air de ne rien faire. Cosmetique, comme
+      // `projectiles.collide`.
       const w2 = weapon.blastRadius * weapon.blastRadius;
       let nearest = -1;
       let nearestD2 = Number.POSITIVE_INFINITY;
@@ -3414,7 +3064,7 @@ export class GameClient {
       return;
     }
     if (weapon.kind === 'frappe') {
-      // Le point vise a PORTEE de l'arme (§2 : la visee n'est qu'une
+      // Le point vise a PORTEE de l'arme (la visee n'est qu'une
       // direction), et les cibles choisies sur NOTRE horde — approximation
       // cosmetique, comme la chaine de Foudre.
       const vise = aimPoint(x, y, aimX, aimY, beamRange(weapon));
@@ -3441,7 +3091,7 @@ export class GameClient {
     const count = weapon.projectileCount;
     // ⚠️ **Le tireur ET son critique**, comme `Room#fireOne` : sans `playerId`
     // le tirage partait de `hashRoll(tick, 0, i)`, et le critique affiche
-    // n'etait pas celui que le serveur arbitre (corrige a l'etape 10).
+    // n'etait pas celui que le serveur arbitre.
     this.projectiles.fireSalvoDirected(
       weapon,
       tick,
@@ -3457,27 +3107,6 @@ export class GameClient {
     last[weaponId] = tick;
   }
 
-  /**
-   * Applique tous les lots de morts recus mais pas encore traites, au tick
-   * local `currentTick` — celui que `#advanceHorde` vient tout juste de
-   * simuler et d'enregistrer dans `#hordeHistory`.
-   *
-   * ⚠️ Suppose que la file reste dans l'ordre chronologique des ticks
-   * SERVEUR des lots, pas seulement dans l'ordre de leur reception. Deux
-   * faits, tous deux vrais aujourd'hui et tous deux necessaires, portent
-   * cette hypothese :
-   *   1. `Room.step` (voir `room.ts`) n'empile jamais qu'UN SEUL `DEATHS` par
-   *      tick, dans le tableau `#pendingDeaths` du serveur, donc l'emission
-   *      elle-meme est deja triee par tick croissant, sans jamais interfoliation.
-   *   2. WebSocket, sur une MEME connexion TCP, livre les trames dans leur
-   *      ordre d'emission — jamais de reordonnancement, jamais de duplication.
-   * Aucune des deux n'est reverifiee ici : ce n'est pas une garde, c'est une
-   * hypothese documentee, dont la rupture romprait un invariant que rien
-   * dans ce fichier ne produit aujourd'hui (voir le rapport de la tache 10,
-   * qui explique pourquoi une garde contre un desordre que rien ne cause n'a
-   * pas ete ajoutee). Rejouer un lot plus recent AVANT un lot plus ancien
-   * effacerait la correction du second par le rejeu du premier.
-   */
   /**
    * Applique toutes les zones recues mais pas encore posees, au tick local
    * `currentTick`.
@@ -3507,8 +3136,7 @@ export class GameClient {
    * ⚠️ **L'effet est DATE PAR TICK, jamais applique a la reception.** Le
    * serveur ralentit depuis `bornTick` ; le message arrive quelques ticks plus
    * tard. L'appliquer au present ferait diverger le client de sa latence
-   * exacte — c'est la lecon du gel de niveau de l'etape 3, transposee au
-   * premier effet qui touche le DEPLACEMENT.
+   * exacte, sur un effet qui touche le DEPLACEMENT.
    *
    * `bornTick >= currentTick` : rien a rejouer. Une zone ne ralentit qu'a
    * partir du tick SUIVANT sa pose (voir `ZoneField.slowsAt`), donc son effet
@@ -3563,13 +3191,12 @@ export class GameClient {
    * ⚠️ **UNE CHARGE DEPLACE LE BOSS.** Une zone ralentit ; une charge, elle,
    * PILOTE une position. L'installer au present ferait deriver le boss de la
    * latence exacte du message pendant tout le reste de la traversee — et le
-   * rejeu est precisement ce qui ramene cet ecart a zero (mesure : scenario 11
-   * de `shared/horde.replication.test.ts`).
+   * rejeu ramene cet ecart a zero (scenario 11 de
+   * `shared/horde.replication.test.ts`).
    *
-   * `windupTick >= currentTick` : rien a rejouer, la charge est entierement
-   * devant nous — c'est meme le cas NOMINAL, puisque le chargement dure
-   * `BOSS_CHARGE_WINDUP_TICKS` (30 ticks) et qu'un message met un a trois ticks
-   * a arriver. Le rejeu n'existe ici que pour la queue de distribution.
+   * `windupTick >= currentTick` : rien a rejouer. C'est le cas NOMINAL, le
+   * chargement (`BOSS_CHARGE_WINDUP_TICKS`) durant bien plus que le trajet
+   * d'un message ; le rejeu ne sert qu'a la queue de distribution.
    *
    * ⚠️ **La charge est installee AVANT le rejeu**, sans quoi le rejeu avancerait
    * le boss sans elle et ne corrigerait rien.
@@ -3603,6 +3230,16 @@ export class GameClient {
     }
   }
 
+  /**
+   * Applique tous les lots de morts recus mais pas encore traites, au tick
+   * local `currentTick` — celui que `#advanceHorde` vient de simuler et
+   * d'enregistrer dans `#hordeHistory`.
+   *
+   * ⚠️ Suppose la file triee par tick SERVEUR, sans le reverifier : `Room.step`
+   * n'emet qu'UN `DEATHS` par tick, et WebSocket livre les trames dans leur
+   * ordre d'emission. Rejouer un lot plus recent AVANT un plus ancien
+   * effacerait la correction du second par le rejeu du premier.
+   */
   #drainPendingDeaths(currentTick: number): void {
     while (this.#pendingDeaths.length > 0) {
       const batch = this.#pendingDeaths.shift();
@@ -3613,30 +3250,27 @@ export class GameClient {
   }
 
   /**
-   * Applique un lot de morts par rejeu (§3.2) : restaure la horde au tick de
-   * la mort, tue, rejoue jusqu'au present. Appliquer directement au present
-   * laisserait un ecart d'un ou plusieurs ticks s'installer — et la
-   * separation (tache 1) le propage a des dizaines de voisines plutot que de
-   * l'absorber : mesure a l'etape 2, l'equivalent sans rejeu croit sans borne
-   * jusqu'a 694 px en dix secondes (scenario 8 de `horde.replication.test.ts`).
+   * Applique un lot de morts par rejeu : restaure la horde au tick de la mort,
+   * tue, rejoue jusqu'au present. Appliquer directement au present laisserait
+   * un ecart s'installer, que la separation propage aux voisines : sans rejeu,
+   * la derive croit sans borne (scenario 8 de `horde.replication.test.ts`).
    *
    * Les orbes sont derives ICI, a la position lue dans la horde restauree —
    * juste avant `kill`, comme `resolveProjectileDamage` cote serveur lit la
    * position juste avant sa propre compaction (voir `back/src/combat.ts`).
    *
    * ⚠️ Le rejeu ne rejoue QUE le mouvement — champ, horde, separation — jamais
-   * l'arbitrage (degats, contact, ramassages) : ce sont les etapes 8 a 10 de
-   * `Room.step`, prerogative exclusive du serveur. Un client qui les rejouerait
-   * prononcerait des morts que le serveur n'a pas decidees, et divergerait
-   * precisement la ou le rejeu cherche a converger.
+   * l'arbitrage (degats, contact, ramassages), prerogative du serveur. Un
+   * client qui le rejouerait prononcerait des morts que le serveur n'a pas
+   * decidees.
    */
   #applyDeaths(deathTick: number, ids: readonly number[], currentTick: number): void {
     this.#kills += ids.length;
     if (!this.#hordeHistory.restore(deathTick, this.horde)) {
       // Trop vieux pour l'anneau (`ROLLBACK_DEPTH_TICKS`) : applique au
-      // present, et SIGNALE — une degradation silencieuse est un piege (§4.6
-      // de l'orientation demande un HUD, pas des logs). Scenario 10 de
-      // `horde.replication.test.ts` mesure la derive residuelle de ce chemin.
+      // present, et SIGNALE au HUD : une degradation silencieuse est un piege.
+      // Le scenario 10 de `horde.replication.test.ts` mesure la derive
+      // residuelle de ce chemin.
       this.#spawnOrbs(ids, deathTick);
       this.#lateDeaths += ids.length;
       this.horde.kill(ids);
@@ -3650,9 +3284,8 @@ export class GameClient {
     // remet la HORDE au tick de la mort, mais `FlowField` est un objet mutable
     // PARTAGE que l'anneau ne sauvegarde jamais. Sans ce reamorcage, le rejeu
     // demarrerait avec le contenu du DERNIER rafraichissement reel — celui du
-    // tick present, plusieurs generations plus frais que ce que le serveur
-    // avait sous les yeux au tick restaure. Mesure a la tache 8 : 79 px de
-    // derive residuelle sur un scenario qui aurait du rendre zero.
+    // tick present, plus frais que ce que le serveur avait au tick restaure,
+    // et le rejeu deriverait.
     this.#primeFieldForReplay(deathTick);
     for (let t = deathTick + 1; t <= currentTick; t++) {
       this.#replayTick(t);
@@ -3665,8 +3298,7 @@ export class GameClient {
    * ⚠️ **C'est le RENDU que ca protege, pas la simulation.** `Horde#applyCharge`
    * ne trouve deja plus de creneau pour une entite morte, donc rien ne bougeait
    * de travers ; mais le rectangle d'annonce, lui, continuerait de s'afficher
-   * jusqu'a `endTick` au-dessus d'un boss qui n'existe plus. Le boss tombe
-   * pendant sa charge — c'est un cas rare, pas un cas impossible.
+   * jusqu'a `endTick` au-dessus d'un boss qui n'existe plus.
    */
   #forgetChargeOf(ids: readonly number[]): void {
     const charge = this.#bossCharge;

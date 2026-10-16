@@ -3,9 +3,8 @@ import { priceOf, SHOP_ITEMS } from '@shared/shop';
 import { beforeEach, describe, expect, it } from 'vitest';
 
 // `?raw` de Vite : le vrai `index.html` entre dans le bundle de test tel
-// quel — meme motif que `hud.test.ts` et `draft.test.ts`, c'est ce qui
-// verifie le CABLAGE (l'`id` que `renderShop` ecrit existe reellement dans le
-// HTML) et pas seulement la logique d'affichage.
+// quel, ce qui verifie le CABLAGE (l'`id` que `renderShop` ecrit existe
+// reellement dans le HTML) et pas seulement la logique d'affichage.
 import indexHtml from '../../index.html?raw';
 import { achetable, type EtatBoutique, messageAchat, renderShop } from './shop';
 
@@ -41,21 +40,16 @@ describe('etape 7b tache 8 : la boutique', () => {
 });
 
 /**
- * Amendement, point 3 : 402 (solde insuffisant / palier max — gagner plus
- * d'or) et 409 (conflit — rafraichir et retenter) ne disent PAS la meme
- * chose. On n'epingle pas la prose exacte, seulement qu'elle differe, et les
- * codes HTTP sont des nombres nus (doctrine du depot pour les contrats de
- * fil) : importer une constante qu'on verifie ne verifierait rien.
+ * 402 (solde insuffisant / palier max — gagner plus d'or) et 409 (conflit —
+ * rafraichir et retenter) ne disent PAS la meme chose. Les codes HTTP sont
+ * des nombres nus : importer la constante qu'on verifie ne verifierait rien.
  */
 describe('messageAchat — les deux codes de refus ne disent pas la meme chose', () => {
   /**
-   * ⚠️ **Juste « les deux messages different » est une assertion creuse** :
-   * elle survit a l'echange des deux branches (402 <-> 409), puisqu'elles
-   * restent differentes l'une de l'autre apres l'echange aussi — verifie en
-   * appliquant la mutation. Ce test pointe donc chaque CONTENU vers son
-   * CODE : 402 doit parler d'argent/palier (gagner plus d'or), 409 de
-   * conflit/retentative — sans epingler la prose exacte au-dela de ce qui
-   * distingue les deux cas.
+   * ⚠️ **« Les deux messages different » seul est une assertion creuse** :
+   * elle survit a l'echange des deux branches. Ce test pointe donc chaque
+   * CONTENU vers son CODE (402 : argent/palier, 409 : conflit/retentative),
+   * sans epingler la prose exacte.
    */
   it('402 parle d or ou de palier (gagner plus, pas retenter)', () => {
     expect(messageAchat(402)).toMatch(/or|palier/i);
@@ -70,8 +64,7 @@ describe('messageAchat — les deux codes de refus ne disent pas la meme chose',
 
 /**
  * `renderShop` monte sur le vrai `index.html` : la ligne qui porte l'etalage
- * (`#shop`) doit exister dans le HTML, pas seulement dans l'imagination du
- * test. Meme discipline que `hud.test.ts` (`front/src/ui/hud.ts:163`).
+ * (`#shop`) doit exister dans le HTML, pas seulement dans le test.
  */
 describe('renderShop — le cablage vers index.html, et le grisage a l ecran', () => {
   let root: HTMLElement;
@@ -156,12 +149,10 @@ describe('renderShop — le cablage vers index.html, et le grisage a l ecran', (
   });
 
   /**
-   * Ronde de correction 2/5 : la garde anti-double-clic. Un double-clic
-   * rapide envoyait deux `POST` — l'un gagne et rend 200, l'autre rend 409 —
-   * et selon l'ordre d'arrivee le joueur pouvait voir « conflit, retente »
-   * alors que son achat avait reussi. Le correctif est natif : `disabled`
-   * pendant que la requete est EN VOL, reactive dans un `finally` (donc quel
-   * que soit l'issue — succes, 402, 409, ou meme une promesse rejetee).
+   * La garde anti-double-clic : deux `POST` rapides donnent un 200 et un 409,
+   * et le joueur pourrait lire « conflit, retente » alors que son achat a
+   * reussi. D'ou `disabled` pendant que la requete est EN VOL, reactive dans
+   * un `finally` quelle que soit l'issue.
    */
   it('un double clic avant resolution n envoie qu un seul achat', async () => {
     const article = SHOP_ITEMS[0];
