@@ -48,7 +48,7 @@ function mount(): Harness {
 }
 
 describe('le cablage vers index.html', () => {
-  it('trouve les deux elements que main.ts va chercher', () => {
+  it('trouve les cinq elements que main.ts va chercher', () => {
     document.body.innerHTML = indexHtml;
 
     // Meme garde que celle de `draft.test.ts` : `main.ts` fait
