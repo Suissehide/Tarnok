@@ -1,6 +1,7 @@
 import {
   archetypeOf,
   BOSS_ARCHETYPE,
+  PORTEUR_ARCHETYPE,
   ROLES,
   type Role,
   STEP2_ARCHETYPES,
@@ -340,6 +341,31 @@ export const WAVE_CYCLE: readonly Slot[] = [
  */
 const BOSS_WAVE_COUNT = 1;
 
+/**
+ * Le porteur de coffre (etape 11, §2 de la spec) : demande a la 2e vague
+ * (groupe) de chaque palier, boss compris dans le compte des vagues.
+ */
+export const PORTEUR_WAVE_IN_PALIER = 2;
+
+/**
+ * ...mais jamais a moins de 50 vagues (50 x 6 s = 5 min) du precedent.
+ *
+ * ⚠️ **« Un par palier » ne voulait pas dire « toutes les cinq minutes ».**
+ * Un boss sort toutes les `WAVES_PER_PALIER` vagues qu'un autre vive ou non,
+ * et CHAQUE boss abattu fait monter le palier : une equipe qui les tue a
+ * mesure change de palier toutes les 30 a 90 s. Un palier qui passe sa 2e
+ * vague sans porteur (plancher pas atteint, porteur precedent vivant) n'en
+ * aura pas : rien ne se rattrape.
+ */
+export const PORTEUR_MIN_GAP_WAVES = 50;
+
+/**
+ * Distance entre le joueur cible par la vague et l'ancre du porteur. La
+ * formation `POINT` le pose a 40 px pres ; pres d'un bord, `formationPositions`
+ * le ramene dans la carte, donc PLUS PRES — c'est le « ~ » du design.
+ */
+export const PORTEUR_SPAWN_DISTANCE = 1500;
+
 export class WaveDirector {
   #nextWaveId = 1;
   readonly #rng: () => number;
@@ -364,6 +390,16 @@ export class WaveDirector {
    * verrou : plusieurs boss peuvent vivre a la fois.
    */
   #bossWaveId: number | null = null;
+
+  /** Vagues (groupes) emises depuis le debut du palier ; remis a zero par `bossDefeated`. */
+  #wavesSincePalier = 0;
+  /** `#waveNumber` du dernier porteur demande. */
+  #lastPorteurWave = Number.NEGATIVE_INFINITY;
+  /**
+   * Vrai entre la demande d'un porteur et `porteurGone` : un porteur en vie
+   * bloque le suivant (§6 de la spec, pas deux a la fois).
+   */
+  #porteurEnJeu = false;
 
   constructor(seed: number) {
     this.#rng = makeRandom(seed);
@@ -400,6 +436,7 @@ export class WaveDirector {
     // vagues, qu'un autre soit encore en vie ou non, et CHAQUE boss abattu
     // fait monter le palier.
     this.#palier++;
+    this.#wavesSincePalier = 0;
   }
 
   /**
@@ -416,6 +453,52 @@ export class WaveDirector {
   bossMissing(): void {
     // La demande est rejouee a la prochaine echeance.
     this.#wavesInPalier = WAVES_PER_PALIER;
+  }
+
+  /**
+   * Le porteur demande n'est plus en jeu : il est mort, ou son ordre n'a rien
+   * fait naitre (horde pleine), ou il a ete retire hors du lot de morts.
+   *
+   * ⚠️ **La SEULE sortie de `#porteurEnJeu`**, sur le modele de `bossMissing` :
+   * une methode pour tous les cas, le directeur n'a pas a savoir lequel. Sans
+   * elle, plus aucun porteur pour le reste de la run.
+   */
+  porteurGone(): void {
+    this.#porteurEnJeu = false;
+  }
+
+  /**
+   * Ajoute l'ordre du porteur EN DERNIER a `groupe` s'il est du — boss
+   * compris. ⚠️ **Aucun tirage dans `#rng`** : sa graine et sa direction se
+   * DERIVENT de la graine du premier ordre, deja tiree. Les ordres ordinaires
+   * restent bit-identiques ; seuls les `waveId` qui suivent se decalent.
+   * L'ancre voyage en int16 : le client ne derive pas l'angle, il la lit.
+   */
+  #avecPorteur(groupe: WaveOrder[], tick: number, anchorX: number, anchorY: number): WaveOrder[] {
+    const principal = groupe[0];
+    if (
+      !principal ||
+      this.#wavesSincePalier !== PORTEUR_WAVE_IN_PALIER ||
+      this.#waveNumber - this.#lastPorteurWave < PORTEUR_MIN_GAP_WAVES ||
+      this.#porteurEnJeu
+    ) {
+      return groupe;
+    }
+    const seed = (principal.seed ^ 0x5f3a_c0f1) >>> 0;
+    const angle = (seed / 0x1_0000_0000) * Math.PI * 2;
+    this.#lastPorteurWave = this.#waveNumber;
+    this.#porteurEnJeu = true;
+    groupe.push({
+      waveId: this.#nextWaveId++,
+      spawnTick: tick,
+      seed,
+      archetype: PORTEUR_ARCHETYPE,
+      formation: FORMATION.POINT,
+      anchorX: Math.round(anchorX + Math.cos(angle) * PORTEUR_SPAWN_DISTANCE),
+      anchorY: Math.round(anchorY + Math.sin(angle) * PORTEUR_SPAWN_DISTANCE),
+      count: 1,
+    });
+    return groupe;
   }
 
   /** Le numero de la derniere vague (groupe) emise, `0` avant la premiere. */
@@ -472,6 +555,7 @@ export class WaveDirector {
     const anchorY = Math.round(playerY[target] ?? 0);
 
     this.#waveNumber++;
+    this.#wavesSincePalier++;
     const waveNumber = this.#waveNumber;
     // ⚠️ **La part ne s'applique qu'a partir du niveau 2** (voir `playerShare`).
     const share = level >= 2 ? playerShare(playerX.length) : 1;
@@ -497,7 +581,7 @@ export class WaveDirector {
       };
       this.#bossWaveId = boss.waveId;
       this.#wavesInPalier = 0;
-      return [boss];
+      return this.#avecPorteur([boss], tick, anchorX, anchorY);
     }
 
     const slot = WAVE_CYCLE[this.#wavesInPalier % WAVE_CYCLE.length] ?? WAVE_CYCLE[0];
@@ -533,6 +617,6 @@ export class WaveDirector {
     if (escortRole) {
       out.push(ordre(escortRole, partEscorte));
     }
-    return out;
+    return this.#avecPorteur(out, tick, anchorX, anchorY);
   }
 }
