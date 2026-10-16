@@ -3239,23 +3239,46 @@ describe('etape 11 : la fuite du porteur se derive a l identique', () => {
 });
 
 /**
- * Etape 11, correction (revue du controleur, ronde 1) : le scenario precedent
- * prouve que `Horde` est deterministe avec elle-meme (memes entrees des deux
- * cotes), jamais le risque propre a cette regle — une mort TARDIVE deplace la
- * horde, le deoverlap decale le porteur, et le seuil binaire de 400 px peut
- * alors trancher differemment d'un cote et de l'autre. Meme poursuite, meme
- * ancrage que le scenario precedent : une poignee de `foule` meurt au tick
- * 260 (cote serveur, applique a l'instant meme), 7 ticks avant que le
- * porteur ne franchisse `PORTEUR_FLEE_RADIUS` pour la premiere fois (tick
- * 267, mesure par instrumentation sur ce meme decor). Le client l'apprend
+ * Etape 11, correction (revue du controleur, ronde 2) : la ronde 1 mesurait
+ * une derive globale de horde (413 px), mais JAMAIS sur le porteur lui-meme —
+ * les 12 victimes les plus proches de lui au tick de la mort restaient a
+ * 270-330 px, hors de `SEPARATION_RADIUS` (28 px, voir
+ * `shared/horde.ts#applyDeoverlap`) : le deoverlap ne le touchait jamais, et
+ * la derive mesuree venait entierement du reste de la grosse grappe. Le
+ * risque propre a cette tache — une mort tardive qui decale le porteur par
+ * deoverlap, au point de faire basculer differemment le seuil binaire de
+ * `PORTEUR_FLEE_RADIUS` d'un cote et de l'autre — n'etait donc pas teste.
+ *
+ * Pour forcer un chevauchement reel, une petite « escorte » partage
+ * l'archetype du porteur (meme vitesse, meme regle de fuite/attente) et nait
+ * sur son ancre : ses membres restent a quelques pixels de lui tout au long
+ * de la poursuite (verifie par instrumentation), y compris PENDANT qu'il
+ * fuit. C'est deliberement pendant la fuite (pas l'attente) que la mort est
+ * programmee : `#applyDeoverlap` departage par priorite — l'entite la PLUS
+ * LOIN de son champ vise cede (voir `#isBehind`/`#fieldDistAt`) — et un
+ * porteur qui s'eloigne activement du joueur grandit sa propre distance plus
+ * vite qu'une escorte qui, elle, continue de viser le meme joueur : c'est
+ * cette dissymetrie qui donne au porteur l'exclusivite de ceder, donc de se
+ * deplacer, quand un de ses voisins d'escorte meurt. Au tick 274 (7 ticks
+ * apres que le porteur franchisse `PORTEUR_FLEE_RADIUS` pour la premiere fois
+ * au tick 267, mesure par instrumentation sur ce meme decor), le serveur tue
+ * les 3 voisins d'escorte les plus proches de lui ; le client l'apprend
  * DEATH_DELAY ticks plus tard — strictement la meme recette que l'etape 3
  * (`replayTick`, `HordeHistory.restore` puis rejeu), reprise ici pour un
  * porteur plutot qu'une horde nue.
+ *
+ * (Une premiere tentative a tue les 12 membres de la GROSSE grappe les plus
+ * proches du porteur au tick 260 — pendant qu'il attend encore. Verifie par
+ * instrumentation : derive du porteur lui-meme nulle des deux cotes, quel
+ * que soit le rejeu — `stopped` ne bouge jamais par vitesse, et ses voisins
+ * les plus proches a cet instant restaient hors de `SEPARATION_RADIUS`. Le
+ * decor ci-dessous — escorte + mort pendant la fuite — est ce qui a fallu
+ * pour que le porteur bouge reellement.)
  */
-describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans rejeu', () => {
-  const DEATH_TICK = 260;
+describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', () => {
+  const DEATH_TICK = 274;
   const DEATH_DELAY = 3;
-  const DEATH_COUNT = 12;
+  const DEATH_COUNT = 3;
 
   interface ChaseParticipant {
     horde: Horde;
@@ -3338,6 +3361,7 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
 
   interface ChaseDeathResult {
     maxDrift: number;
+    bearerDrift: number;
     vuAttendre: boolean;
     vuFuir: boolean;
     deplacement: number;
@@ -3345,11 +3369,12 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
 
   /**
    * Meme poursuite (porteur + foule + tenaille) que le scenario precedent,
-   * mais avec une mort tardive : le serveur (reference) tue DEATH_COUNT
-   * membres de la foule les plus proches du porteur au tick DEATH_TICK ; le
-   * client l'apprend DEATH_DELAY ticks plus tard et l'applique soit au
-   * present (`withReplay = false`), soit en restaurant l'etat au tick de la
-   * mort puis en rejouant (`withReplay = true`).
+   * plus une escorte (meme archetype, meme ancre) qui colle au porteur pour
+   * garantir un chevauchement reel. Mort tardive : le serveur (reference)
+   * tue DEATH_COUNT voisins d'escorte les plus proches du porteur au tick
+   * DEATH_TICK ; le client l'apprend DEATH_DELAY ticks plus tard et
+   * l'applique soit au present (`withReplay = false`), soit en restaurant
+   * l'etat au tick de la mort puis en rejouant (`withReplay = true`).
    */
   function runChaseDeathScenario(mapSeed: number, withReplay: boolean): ChaseDeathResult {
     const serveur = makeChaseParticipant(mapSeed);
@@ -3374,9 +3399,24 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
       anchorY: 3000,
       count: 300,
     };
+    // L'escorte : meme archetype que le porteur (meme vitesse, meme regle de
+    // fuite/attente), nee sur sa meme ancre — c'est ce qui la garde a
+    // quelques pixels de lui tout au long de la poursuite, fuite comprise
+    // (voir le commentaire du describe pour la mesure qui le confirme).
+    const escorte: WaveOrder = {
+      waveId: 3,
+      spawnTick: 0,
+      seed: 0x7a0e_1c33,
+      archetype: PORTEUR_ARCHETYPE,
+      formation: FORMATION.POINT,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 12,
+    };
     for (const p of [serveur, client]) {
       p.horde.spawn(porteur, p.fields[0]);
       p.horde.spawn(foule, p.fields[0]);
+      p.horde.spawn(escorte, p.fields[0]);
     }
     const id = entityIdOf(1, 0);
     const depart = {
@@ -3386,6 +3426,7 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
     const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
 
     let maxDrift = 0;
+    let bearerDrift = 0;
     let vuAttendre = false;
     let vuFuir = false;
     let killIds: number[] = [];
@@ -3409,10 +3450,10 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
       }
       client.hordeHistory.record(tick, client.horde);
 
-      // Le serveur arbitre et applique a l'instant : au tick ou le porteur
-      // approche du seuil de 400 px, les DEATH_COUNT membres de la foule les
-      // plus proches de lui meurent — un coup de zone plausible a cet
-      // instant precis, pas un tirage.
+      // Le serveur arbitre et applique a l'instant : pendant que le porteur
+      // fuit (tick 274, 7 ticks apres sa premiere fuite), les DEATH_COUNT
+      // voisins d'escorte les plus proches de lui meurent — un coup de zone
+      // plausible a cet instant precis, pas un tirage.
       if (tick === DEATH_TICK) {
         const s = serveur.horde.slotOf(id);
         const px = serveur.horde.x[s] ?? 0;
@@ -3456,6 +3497,17 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
         if (drift > maxDrift) {
           maxDrift = drift;
         }
+        const sServeur = serveur.horde.slotOf(id);
+        const sClient = client.horde.slotOf(id);
+        if (sServeur >= 0 && sClient >= 0) {
+          const bd = Math.hypot(
+            (client.horde.x[sClient] ?? 0) - (serveur.horde.x[sServeur] ?? 0),
+            (client.horde.y[sClient] ?? 0) - (serveur.horde.y[sServeur] ?? 0),
+          );
+          if (bd > bearerDrift) {
+            bearerDrift = bd;
+          }
+        }
       }
 
       const s = serveur.horde.slotOf(id);
@@ -3471,23 +3523,24 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
       (serveur.horde.x[fin] ?? 0) - depart.x,
       (serveur.horde.y[fin] ?? 0) - depart.y,
     );
-    return { maxDrift, vuAttendre, vuFuir, deplacement };
+    return { maxDrift, bearerDrift, vuAttendre, vuFuir, deplacement };
   }
 
-  it('scenario PT1 - sans rejeu, une mort tardive pres du seuil de 400 px laisse une derive mesurable', () => {
+  it('scenario PT1 - sans rejeu, une mort tardive pendant la fuite deplace le porteur LUI-MEME, pas seulement la foule', () => {
     const r = runChaseDeathScenario(0x11_f1_ee01, false);
     process.stdout.write(
-      `etape 11, scenario PT1 (sans rejeu) : derive maximale ${r.maxDrift.toFixed(3)} px\n`,
+      `etape 11, scenario PT1 (sans rejeu) : derive du porteur ${r.bearerDrift.toFixed(3)} px, derive de la horde ${r.maxDrift.toFixed(3)} px\n`,
     );
-    // Le scenario ne prouve rien si la derive reste nulle : c'est precisement
-    // le defaut que corrige le rejeu, scenario PT2 ci-dessous.
-    expect(r.maxDrift).toBeGreaterThan(0);
+    // Le scenario ne prouve rien si SEULE la foule derive : c'est
+    // precisement le defaut de la ronde 1, et ce que corrige le rejeu,
+    // scenario PT2 ci-dessous.
+    expect(r.bearerDrift).toBeGreaterThan(0);
   });
 
-  it('scenario PT2 - avec rejeu, la derive retombe a 0,000 px malgre la mort tardive', () => {
+  it('scenario PT2 - avec rejeu, la derive du porteur ET de la horde retombent a 0,000 px malgre la mort tardive', () => {
     const r = runChaseDeathScenario(0x11_f1_ee01, true);
     process.stdout.write(
-      `etape 11, scenario PT2 (avec rejeu) : derive maximale ${r.maxDrift.toFixed(3)} px\n`,
+      `etape 11, scenario PT2 (avec rejeu) : derive du porteur ${r.bearerDrift.toFixed(3)} px, derive de la horde ${r.maxDrift.toFixed(3)} px\n`,
     );
     // Memes preuves de non-vacuite que le scenario sans mort ci-dessus : le
     // porteur attend, fuit, et finit deplace — sinon une derive nulle ne
@@ -3495,6 +3548,7 @@ describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans
     expect(r.vuAttendre).toBe(true);
     expect(r.vuFuir).toBe(true);
     expect(r.deplacement).toBeGreaterThan(50);
+    expect(r.bearerDrift).toBe(0);
     expect(r.maxDrift).toBe(0);
   });
 });
