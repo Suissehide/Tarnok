@@ -15,16 +15,16 @@
  * `[data-tab]` / `[data-panel]` dans le HTML, donc aucun mecanisme de plus.
  */
 
-import { CARD, rarityForTier } from '@shared/cards';
+import { CARD } from '@shared/cards';
 import { CLASSES } from '@shared/classes';
 import { TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
-import { PASSIVES } from '@shared/passives';
+import { PASSIVES, type PassiveRule, type PassiveTier } from '@shared/passives';
 import { RARITY_MULTIPLIERS } from '@shared/rarity';
 import { WEAPONS, type Weapon, type WeaponKind } from '@shared/weapons';
 
 import { COMBO_IDS, NEUTRE_HELP, reactionHelp } from './combos';
-import { magnitudeLabel, RARITY_NAMES, upgradeLabel } from './draft';
+import { magnitudeLabel, malusLabel, RARITY_NAMES, upgradeLabel } from './draft';
 import { elementBadge, elementLabel } from './element-icons';
 import { bonusIcon } from './icons';
 import { showTab } from './options';
@@ -188,6 +188,31 @@ export function renderGuideWeapons(root: HTMLElement): void {
   );
 }
 
+/**
+ * Ce que chaque carte de REGLE fait, en une phrase.
+ *
+ * ⚠️ **`magnitudeLabel` rend une chaine vide pour elles** : leur `kind` est
+ * decoratif (voir le docbloc de `Passive.rule`), donc rien a lire dans
+ * `UNITES`. La ligne de la Guide a besoin d'autre chose a montrer — « ou
+ * rien » n'est pas une option ici, une entree du Guide veut au moins une
+ * ligne de fond (voir le test « aucune entree vide »).
+ */
+const RULE_TEXT: Readonly<Record<PassiveRule, string>> = {
+  contagion: 'À la mort d’un ennemi marqué, propage sa marque à l’ennemi le plus proche.',
+  transcendance: 'Ramène les PV max à 1 et ouvre à la place une réserve de bouclier.',
+};
+
+/**
+ * Le palier dans la méta (etape 13, §2.2) : les deux paliers hauts sont des
+ * paliers de REGLE — ils changent une regle plutot que d'empiler un nombre —
+ * et le légendaire se paie en plus (une regle qui coute, ou un malus chiffre
+ * qu'aucune commune ne porte).
+ */
+const META_PAR_PALIER: Readonly<Record<PassiveTier, string>> = {
+  epique: 'Épique — change une règle',
+  legendaire: 'Légendaire — change une règle, et se paie',
+};
+
 /** Les passifs, l'empilement dit sur chacun — c'est la regle qui compte. */
 export function renderGuidePassives(root: HTMLElement): void {
   root.replaceChildren(
@@ -196,19 +221,20 @@ export function renderGuidePassives(root: HTMLElement): void {
       img.src = bonusIcon(passive.kind);
       img.alt = '';
       img.className = 'h-[28px] w-[28px]';
-      // L'empilement est la regle de TOUS les passifs, et l'onglet « Bases »
-      // la pose une fois : la repeter douze fois noierait la seule ligne qui
-      // distingue vraiment une carte, celle de son palier reserve.
-      const palier = rarityForTier(passive.tier);
-      const nomDuPalier = palier === undefined ? '' : (RARITY_NAMES[palier] ?? '');
+      const magnitude = magnitudeLabel(passive);
+      const cout = malusLabel(passive);
+      // Etape 13 : une magnitude nulle est une carte de REGLE — on montre la
+      // regle a la place, jamais « +0 zone, toutes armes ».
+      const ligneEffet =
+        magnitude !== '' ? `${magnitude} par carte` : passive.rule ? RULE_TEXT[passive.rule] : null;
+      const lignes = [
+        ...(ligneEffet !== null ? [ligneEffet] : []),
+        ...(cout !== null ? [cout] : []),
+      ];
       const row = entry(
         [img, passive.label],
-        nomDuPalier === ''
-          ? []
-          : [
-              `${nomDuPalier} — ne sort que sur un emplacement ${nomDuPalier.toLowerCase()}, et s’applique une fois`,
-            ],
-        [`${magnitudeLabel(passive)} par carte`],
+        passive.tier ? [META_PAR_PALIER[passive.tier]] : [],
+        lignes,
       );
       row.dataset.passiveId = String(passive.id);
       return row;

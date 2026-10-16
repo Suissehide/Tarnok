@@ -62,6 +62,9 @@ describe('le cablage vers index.html', () => {
     expect(document.getElementById('hud-passive-list')).not.toBeNull();
     // Tache 10 de l'etape 6a : la cagnotte non securisee (§5).
     expect(document.getElementById('hud-gold')).not.toBeNull();
+    // Etape 13 : la barre de bouclier, posee sur celle des PV.
+    expect(document.getElementById('hud-shield')).not.toBeNull();
+    expect(document.getElementById('hud-shield-fill')).not.toBeNull();
   });
 });
 
@@ -163,6 +166,8 @@ function hudElements(): HudElements {
     freeze: pick('hud-freeze'),
     passiveList: pick('hud-passive-list'),
     hpFill: pick('hud-hp-fill'),
+    shield: pick('hud-shield'),
+    shieldFill: pick('hud-shield-fill'),
     xpFill: pick('hud-xp-fill'),
     xpLabel: pick('hud-xp-label'),
     portrait: pick('hud-portrait') as HTMLImageElement,
@@ -179,6 +184,8 @@ const INFO: HudInfo = {
   level: 4,
   timer: '2:07',
   frozen: false,
+  shield: 0,
+  shieldPool: 0,
 };
 
 /**
@@ -442,6 +449,28 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
 
     paintHud(el, { ...INFO, frozen: false }, 0, 0, source);
     expect(el.freeze.classList.contains('hidden')).toBe(true);
+  });
+
+  describe('etape 13 : la barre de bouclier', () => {
+    /**
+     * ⚠️ Vigilance 5 : elle se peint depuis le SNAPSHOT seul (`HudInfo`,
+     * derive de `RenderState.players`), jamais depuis le miroir d'inventaire
+     * (`HudSource.loadoutOf`). Un client qui ignore l'inventaire d'un joueur
+     * (arrive en cours de partie) doit quand meme afficher la bonne barre —
+     * c'est pour ca que ce test ne donne au `FakeSource` AUCUN passif.
+     */
+    it('se peint sans lire le miroir d inventaire', () => {
+      paintHud(el, { ...INFO, shield: 30, shieldPool: 60 }, 0, 0, source);
+
+      expect(el.shieldFill.style.getPropertyValue('--v')).toBe('0.5');
+      expect(el.shield.classList.contains('hidden')).toBe(false);
+    });
+
+    it('reste masquee sans bouclier', () => {
+      paintHud(el, { ...INFO, shield: 0, shieldPool: 0 }, 0, 0, source);
+
+      expect(el.shield.classList.contains('hidden')).toBe(true);
+    });
   });
 });
 

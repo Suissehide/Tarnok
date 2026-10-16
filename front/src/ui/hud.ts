@@ -203,6 +203,10 @@ export interface HudElements {
   hp: HTMLElement;
   /** Le remplissage de la barre de PV (`.bar__fill`). */
   hpFill: HTMLElement;
+  /** Le conteneur masquable de la barre de bouclier (etape 13), posee sur celle des PV. */
+  shield: HTMLElement;
+  /** Le remplissage de la barre de bouclier. */
+  shieldFill: HTMLElement;
   /** Le remplissage de la barre d'experience, en haut de l'ecran. */
   xpFill: HTMLElement;
   /** `xp / seuil` sur la jauge d'XP. Optionnel : les anciens HUD de test n'en ont pas. */
@@ -252,6 +256,19 @@ export function paintHud(
   const maxHp = Math.max(1, source.localMaxHp);
   el.hp.textContent = `${Math.ceil(info.hp)} / ${maxHp}`;
   el.hpFill.style.setProperty('--v', `${Math.min(1, Math.max(0, info.hp / maxHp))}`);
+  // Etape 13 : la reserve de bouclier (Transcendance), posee par-dessus les
+  // PV — voir `HudInfo.shield`/`shieldPool`.
+  //
+  // ⚠️ **Vigilance 5 : `info` vient du SNAPSHOT, jamais de `source`.** Un
+  // client qui n'a pas vu le `DRAFT_RESULT` d'un joueur (rejoint en cours de
+  // partie) n'a pas son `Loadout` dans le miroir, mais voit quand meme son
+  // bouclier sur le fil (`PlayerSnapshot.shield`) : lire `source.loadoutOf`
+  // ici afficherait une barre vide chez ce joueur-la.
+  el.shield.classList.toggle('hidden', info.shield <= 0);
+  el.shieldFill.style.setProperty(
+    '--v',
+    `${info.shieldPool > 0 ? Math.min(1, Math.max(0, info.shield / info.shieldPool)) : 0}`,
+  );
   el.xpFill.style.setProperty('--v', `${info.xpRatio}`);
   if (el.xpLabel) {
     el.xpLabel.textContent = `${Math.floor(info.xp)} / ${info.xpNeeded}`;

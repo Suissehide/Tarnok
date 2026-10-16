@@ -281,10 +281,13 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   zone: (m) => `+${m} zone, toutes armes`,
   echo: (m) => `+${pourcent(m)} % dégâts de vos réactions`,
   colossus: (m) => `+${pourcent(m)} % dégâts par ${COLOSSUS_HP_STEP} PV max`,
-  // Etape 13 : meme genre que l'« armure » de la boutique (`shop.ts`), donc
-  // meme unite — une fraction des degats encaisses. Aucune carte ne le porte
-  // encore ; seul un malus l'atteindra (`Loadout.bonus` le retranche).
-  armor: (m) => `+${pourcent(m)} % armure`,
+  // Etape 13 : Hâte funeste est la seule carte qui porte ce genre, et
+  // seulement en MALUS (`Loadout.bonus` retranche la magnitude, voir
+  // `armorOf`). L'unite n'ecrit donc pas « armure » mais son EFFET au joueur —
+  // une fraction de degats SUBIS en plus, ce que `hurtPlayer` applique
+  // reellement (`back/src/combat.ts`). C'est aussi pourquoi `malusLabel` ne
+  // retourne pas son signe (voir son docbloc) : ce libelle est deja un cout.
+  armor: (m) => `+${pourcent(m)} % dégâts subis`,
 };
 
 /**
@@ -307,7 +310,45 @@ function pourcent(fraction: number): string {
  * completent : « +20 PV max » sur la carte, « vitalite ×4 » dans le coin.
  */
 export function magnitudeLabel(passive: Passive): string {
+  // Etape 13 : une carte de REGLE (Contagion, Transcendance) porte une
+  // magnitude nulle PAR CONVENTION — son effet n'est pas un nombre, son
+  // `kind` est decoratif (voir le docbloc de `Passive.rule`). L'afficher
+  // ecrirait « +0 zone, toutes armes », qui se lit comme un bonus mesure
+  // alors que rien ne l'est : une magnitude nulle ne s'affiche pas.
+  if (passive.magnitude === 0) {
+    return '';
+  }
   return UNITES[passive.kind](passive.magnitude);
+}
+
+/**
+ * Les genres dont l'unite dit DEJA le cout, sans retourner le signe d'un
+ * gain.
+ *
+ * ⚠️ **Le piege signale en revue.** `UNITES[kind](m).replace(/^\+/, '−')` dit
+ * vrai pour `maxHp` — Fournaise PERD 40 PV max, « −40 PV max » — mais ment
+ * pour `armor` : son unite n'est pas une jauge qu'on ampute, c'est deja un
+ * COUT ecrit a l'endroit, « +50 % dégâts subis ». L'inverser donnerait
+ * « −50 % dégâts subis », l'exact CONTRAIRE de ce que Hâte funeste fait
+ * subir. Le signe ne se retourne donc que pour les genres ou le malus retire
+ * un GAIN (maxHp aujourd'hui) ; `armor` garde le sien.
+ */
+const COUT_SANS_RETOURNEMENT: ReadonlySet<PassiveKind> = new Set(['armor']);
+
+/**
+ * Ce que la carte COUTE, ou `null` si elle ne coute rien.
+ *
+ * Reutilise `UNITES` : le malus et le bonus d'un meme genre se lisent dans la
+ * meme unite (voir la doc de `Passive.malus`), donc pas de seconde table a
+ * maintenir en parallele.
+ */
+export function malusLabel(passive: Passive): string | null {
+  const m = passive.malus;
+  if (!m) {
+    return null;
+  }
+  const texte = UNITES[m.kind](m.magnitude);
+  return COUT_SANS_RETOURNEMENT.has(m.kind) ? texte : texte.replace(/^\+/, '−');
 }
 
 /**
@@ -490,6 +531,18 @@ export class DraftScreen {
       tokens.className = 'draft-card__tokens';
 
       root.append(tokens, frame, rarete, nature, name, stacks, detail);
+
+      // Etape 13 : ce que la carte COUTE, sous sa magnitude — une passif
+      // sans malus n'ajoute rien a l'ecran.
+      if (card.nature === CARD.PASSIVE) {
+        const cout = malusLabel(passiveOf(card.refId));
+        if (cout !== null) {
+          const malus = document.createElement('span');
+          malus.className = 'draft-card__malus';
+          malus.textContent = cout;
+          root.append(malus);
+        }
+      }
 
       // Une carte que mon inventaire refuse : simplement GRISEE et inerte
       // (retour de playtest : un bandeau en plus chargeait la carte). La raison

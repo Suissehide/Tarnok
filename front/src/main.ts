@@ -200,6 +200,8 @@ el<HTMLButtonElement>('guide-back').addEventListener('click', () => {
 const hudElements: HudElements = {
   hp: hudHp,
   hpFill: el('hud-hp-fill'),
+  shield: el('hud-shield'),
+  shieldFill: el('hud-shield-fill'),
   xpFill: el('hud-xp-fill'),
   xpLabel: el('hud-xp-label'),
   portrait: el<HTMLImageElement>('hud-portrait'),

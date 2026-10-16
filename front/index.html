@@ -407,7 +407,13 @@
             </div>
             <div class="flex flex-col gap-[10px]">
               <div class="relative w-[430px]">
-                <div class="bar"><i id="hud-hp-fill" class="bar__fill"></i></div>
+                <div class="bar">
+                  <i id="hud-hp-fill" class="bar__fill"></i>
+                  <!-- Etape 13 : la reserve de bouclier (Transcendance), par-dessus les PV. -->
+                  <span id="hud-shield" class="hidden">
+                    <i id="hud-shield-fill" class="bar__fill bar__fill--shield"></i>
+                  </span>
+                </div>
                 <span
                   id="hud-hp"
                   class="f-jer ol absolute left-0 right-0 top-[12px] text-center text-[26px] leading-none"

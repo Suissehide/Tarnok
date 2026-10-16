@@ -21,6 +21,8 @@ import {
   DraftScreen,
   type DraftSource,
   magnitudeLabel,
+  malusLabel,
+  RARITY_NAMES,
   rarityLabel,
   remainingSeconds,
   upgradeLabel,
@@ -299,8 +301,12 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
 
   it('dit le SENS du bonus : la cadence RETIRE de la recharge, tout le reste ajoute', () => {
     // `cooldownWithBonus` retire une fraction de la recharge — l'ecrire « +8 % »
-    // dirait le contraire de ce que le nombre fait.
+    // dirait le contraire de ce que le nombre fait. Les cartes de REGLE (etape
+    // 13) n'ont rien a mesurer (magnitude nulle) : pas de signe a verifier.
     for (const p of PASSIVES) {
+      if (p.magnitude === 0) {
+        continue;
+      }
       expect(magnitudeLabel(p).startsWith(p.kind === 'fireRate' ? '−' : '+')).toBe(true);
     }
   });
@@ -312,12 +318,27 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
     }
   });
 
-  it('donne une etiquette a CHAQUE passif du catalogue', () => {
+  it('donne une etiquette a CHAQUE passif MESURABLE du catalogue', () => {
     // Garde du garde : ajouter un `PassiveKind` sans unite rendrait `undefined`
     // sur la carte, et le draft afficherait un trou.
     for (const p of PASSIVES) {
+      if (p.magnitude === 0) {
+        continue;
+      }
       expect(magnitudeLabel(p)).toMatch(/^[+−]\d/);
     }
+  });
+
+  it('etape 13 : une magnitude nulle (carte de REGLE) ne s affiche pas', () => {
+    // Contagion et Transcendance n'ont rien a chiffrer : leur `kind` est
+    // decoratif (voir le docbloc de `Passive.rule`). Les afficher rendrait
+    // « +0 zone, toutes armes », qui se lit comme un bonus mesure et ment.
+    const contagion = PASSIVES.find((p) => p.name === 'contagion');
+    if (!contagion) {
+      throw new Error('fixture');
+    }
+    expect(contagion.magnitude).toBe(0);
+    expect(magnitudeLabel(contagion)).toBe('');
   });
 
   it.each([
@@ -881,6 +902,62 @@ describe('etape 10 : la rarete a l ecran', () => {
       'Épique',
       'Légendaire',
       '',
+    ]);
+  });
+});
+
+describe('etape 13 : malusLabel — ce que la carte COUTE', () => {
+  it('quatre noms de rarete', () => {
+    expect(RARITY_NAMES).toEqual(['Commune', 'Rare', 'Épique', 'Légendaire']);
+  });
+
+  it('le cout s affiche, signe compris — une PERTE de PV max se lit avec un moins', () => {
+    const fournaise = PASSIVES.find((p) => p.name === 'fournaise');
+    if (!fournaise) {
+      throw new Error('fixture');
+    }
+    expect(malusLabel(fournaise)).toBe('−40 PV max');
+  });
+
+  it('une carte sans cout n affiche pas de ligne de cout', () => {
+    const vitalite = PASSIVES.find((p) => p.name === 'vitalite');
+    if (!vitalite) {
+      throw new Error('fixture');
+    }
+    expect(malusLabel(vitalite)).toBeNull();
+  });
+
+  /**
+   * ⚠️ **Le piege : inverser aveuglement le signe de l'unite mentirait sur
+   * Hâte funeste.** Son malus porte sur `armor`, dont l'unite dit DEJA le cout
+   * (« +50 % dégâts subis ») — l'inverser donnerait « −50 % dégâts subis »,
+   * c'est-a-dire l'exact CONTRAIRE : moins de degats subis serait un BIENFAIT,
+   * alors que cette carte en fait subir PLUS. `armor` garde donc son signe.
+   */
+  it('le malus d armure garde son signe : ce n est pas une perte, deja un cout', () => {
+    const hateFuneste = PASSIVES.find((p) => p.name === 'hate-funeste');
+    if (!hateFuneste) {
+      throw new Error('fixture');
+    }
+    expect(malusLabel(hateFuneste)).toBe('+50 % dégâts subis');
+  });
+
+  it('la carte affiche sa ligne de cout sous la magnitude, et rien quand elle n en a pas', () => {
+    const fournaise = PASSIVES.find((p) => p.name === 'fournaise');
+    const vitalite = PASSIVES.find((p) => p.name === 'vitalite');
+    if (!fournaise || !vitalite) {
+      throw new Error('fixture');
+    }
+    const h = harness();
+    h.client.draftCards = [
+      { nature: CARD.PASSIVE, refId: fournaise.id, rarity: RARITY.LEGENDAIRE },
+      { nature: CARD.PASSIVE, refId: vitalite.id },
+    ];
+    h.screen.update();
+
+    expect(cards(h).map((c) => c.querySelector('.draft-card__malus')?.textContent)).toEqual([
+      '−40 PV max',
+      undefined,
     ]);
   });
 });
