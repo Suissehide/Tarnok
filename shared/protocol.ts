@@ -2238,10 +2238,12 @@ export function encodeEvent(msg: EventMessage): ArrayBuffer {
     const buf = new ArrayBuffer(EVENT_STATE_BYTES);
     const v = new DataView(buf);
     v.setUint8(0, MSG.EVENT_STATE);
-    v.setUint8(1, msg.progress);
+    // Meme borne que `hp`/`shield` plus haut : `setUint8` replie modulo 256,
+    // donc un PV de 256 deviendrait 0, lu comme « chariot detruit ».
+    v.setUint8(1, Math.min(255, Math.max(0, Math.round(msg.progress))));
     v.setInt16(2, Math.round(msg.cartX), true);
     v.setInt16(4, Math.round(msg.cartY), true);
-    v.setUint8(6, msg.cartHp);
+    v.setUint8(6, Math.min(255, Math.max(0, Math.round(msg.cartHp))));
     return buf;
   }
   const buf = new ArrayBuffer(EVENT_END_BYTES);

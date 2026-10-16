@@ -1860,6 +1860,25 @@ describe('etape 14 : EVENT_START, EVENT_STATE, EVENT_END', () => {
     expect(decode(buf)).toEqual(msg);
   });
 
+  it('EVENT_STATE borne progression et PV a 0..255, jamais un repli modulo 256', () => {
+    const haut = encodeEvent({
+      type: MSG.EVENT_STATE,
+      progress: 300,
+      cartX: 0,
+      cartY: 0,
+      cartHp: 300,
+    });
+    expect(decode(haut)).toMatchObject({ progress: 255, cartHp: 255 });
+    const bas = encodeEvent({
+      type: MSG.EVENT_STATE,
+      progress: -5,
+      cartX: 0,
+      cartY: 0,
+      cartHp: -5,
+    });
+    expect(decode(bas)).toMatchObject({ progress: 0, cartHp: 0 });
+  });
+
   it('EVENT_END fait 2 octets et revient a l identique', () => {
     expect(EVENT_END_BYTES).toBe(2);
     const msg: EventMessage = { type: MSG.EVENT_END, outcome: EVENT_OUTCOME.DETRUIT };
