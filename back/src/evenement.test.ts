@@ -119,6 +119,39 @@ describe('etape 14 : placeEvent', () => {
     }
   });
 
+  it('pres d un coin : deux sceaux ne se touchent jamais, l anneau tient dans la carte', () => {
+    const coins = [
+      { x: 30, y: 30 },
+      { x: MAP_SIZE - 30, y: 30 },
+      { x: 30, y: MAP_SIZE - 30 },
+      { x: MAP_SIZE - 30, y: MAP_SIZE - 30 },
+      { x: 600, y: 600 },
+      { x: 1000, y: 300 },
+    ];
+    for (const centre of coins) {
+      for (const n of [2, 3, 4]) {
+        const vivants = Array.from({ length: n }, () => centre);
+        for (let k = 0; k < 200; k++) {
+          const plan = placeEvent(graine(EVENT_KIND.SCEAUX, k), vivants, ouvert());
+          expect(plan.points).toHaveLength(n);
+          for (const p of plan.points) {
+            expect(p.x).toBeGreaterThanOrEqual(0);
+            expect(p.x).toBeLessThanOrEqual(MAP_SIZE);
+            expect(p.y).toBeGreaterThanOrEqual(0);
+            expect(p.y).toBeLessThanOrEqual(MAP_SIZE);
+          }
+          for (let i = 0; i < n; i++) {
+            for (let j = i + 1; j < n; j++) {
+              const a = plan.points[i] ?? { x: 0, y: 0 };
+              const b = plan.points[j] ?? { x: 0, y: 0 };
+              expect(dist(a, b)).toBeGreaterThan(2 * SCEAU_RADIUS);
+            }
+          }
+        }
+      }
+    }
+  });
+
   it('le convoi : depart au site, arrivee a CONVOI_DISTANCE vers le centre de la carte, et dans la carte', () => {
     for (const centre of [
       { x: 3000, y: 3000 },

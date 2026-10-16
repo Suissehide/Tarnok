@@ -122,19 +122,32 @@ export function placeEvent(
   const kind = seed % 3;
   const theta = ((seed >>> 8) / 0x100_0000) * Math.PI * 2;
   const solo = vivants.length <= 1;
+  if (kind === EVENT_KIND.SCEAUX && !solo) {
+    const rayon = SCEAUX_SPACING / (2 * Math.sin(Math.PI / vivants.length));
+    // ⚠️ **Le CENTRE de l'anneau est borne AVANT de poser chaque sceau**, pas
+    // chaque sceau separement : pres d'un coin, deux sceaux bornes chacun de
+    // son cote finissent colles sur les memes bords (mesure : jusqu'a 6,8 %
+    // des angles a N = 4, des paires a 239 px au lieu de 800). Border le
+    // centre dans `[rayon + marge, MAP_SIZE - rayon - marge]`, marge au moins
+    // `SCEAU_RADIUS`, garantit que l'anneau ENTIER tient dans la carte avant
+    // le moindre bornage par sceau ; le nudge hors mur par sceau reste utile
+    // (un sceau peut individuellement tomber dans un obstacle).
+    const marge = SCEAU_RADIUS;
+    const lo = rayon + marge;
+    const hi = MAP_SIZE - rayon - marge;
+    const siteX = Math.min(hi, Math.max(lo, cx + Math.cos(theta) * EVENT_SPAWN_DISTANCE));
+    const siteY = Math.min(hi, Math.max(lo, cy + Math.sin(theta) * EVENT_SPAWN_DISTANCE));
+    const points = vivants.map((_, k) => {
+      const a = theta + (2 * Math.PI * k) / vivants.length;
+      return poser(obstacles, siteX + Math.cos(a) * rayon, siteY + Math.sin(a) * rayon);
+    });
+    return { kind, points, solo };
+  }
   const site = poser(
     obstacles,
     cx + Math.cos(theta) * EVENT_SPAWN_DISTANCE,
     cy + Math.sin(theta) * EVENT_SPAWN_DISTANCE,
   );
-  if (kind === EVENT_KIND.SCEAUX && !solo) {
-    const rayon = SCEAUX_SPACING / (2 * Math.sin(Math.PI / vivants.length));
-    const points = vivants.map((_, k) => {
-      const a = theta + (2 * Math.PI * k) / vivants.length;
-      return poser(obstacles, site.x + Math.cos(a) * rayon, site.y + Math.sin(a) * rayon);
-    });
-    return { kind, points, solo };
-  }
   if (kind !== EVENT_KIND.CONVOI) {
     return { kind, points: [site], solo };
   }
