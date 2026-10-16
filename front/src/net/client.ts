@@ -1167,6 +1167,11 @@ export class GameClient {
    * non predit, c'est la derniere valeur serveur connue.
    */
   #localPickupRadius = 0;
+  /**
+   * Reserve de bouclier (personnelle) du joueur local, telle que portee par
+   * le dernier snapshot (etape 13) — meme regle que `#localHp` : non predite.
+   */
+  #localShield = 0;
   /** Experience de l'equipe, telle que portee par le dernier snapshot. */
   #teamXp = 0;
   /**
@@ -2145,6 +2150,7 @@ export class GameClient {
         aimX: this.#localAim.x,
         aimY: this.#localAim.y,
         pickupRadius: this.#localPickupRadius,
+        shield: this.#localShield,
       };
       if (index >= 0) {
         players[index] = predicted;
@@ -2480,6 +2486,7 @@ export class GameClient {
     // derniere valeur connue du serveur.
     this.#localHp = mine.hp;
     this.#localPickupRadius = mine.pickupRadius;
+    this.#localShield = mine.shield;
     if (this.#local === null) {
       // Premier snapshot ou l'on se voit : on se pose la, sans adoucissement.
       this.#local = new PredictedPlayer(mine.x, mine.y, this.#moveMap);

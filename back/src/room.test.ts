@@ -35,6 +35,8 @@ import {
   PORTAL_WINDOW_TICKS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  SHIELD_CALM_TICKS,
+  SHIELD_POOL,
   SYNERGY_MAX,
   TICK_HZ,
   WAVES_PER_PALIER,
@@ -5761,5 +5763,39 @@ describe('etape 10 : Moisson dans le salon', () => {
     const sans = pvApresUneMort(false);
     expect(sans).toBeLessThan(PLAYER_MAX_HP - 1);
     expect(pvApresUneMort(true) - sans).toBe(1);
+  });
+});
+
+/** Un salon a un joueur, la reserve de bouclier deja ouverte (debug, voir la tache 6). */
+function salonSoloAvecBouclier(): Room {
+  const room = new Room();
+  room.join(1);
+  room.debugSetMaxShield(1, SHIELD_POOL);
+  return room;
+}
+
+describe('etape 13 : la regeneration du bouclier', () => {
+  it('ne regenere pas avant le calme, puis remonte sans depasser la reserve', () => {
+    const room = salonSoloAvecBouclier();
+    room.debugHurt(1, 30);
+    const apresCoup = room.shieldOf(1);
+    room.debugSteps(SHIELD_CALM_TICKS - 1);
+    expect(room.shieldOf(1)).toBe(apresCoup);
+    room.debugSteps(SHIELD_CALM_TICKS + TICK_HZ * 10);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL);
+  });
+
+  /**
+   * ⚠️ Le gel ne demande AUCUN cas particulier : `step` retourne avant tout
+   * degat pendant le gel et pendant un etalage ouvert, donc la regeneration,
+   * qui vit apres ce retour, ne tourne pas non plus. Ce test garde la
+   * propriete, pas une ligne de code.
+   */
+  it('ne regenere pas pendant le gel de niveau', () => {
+    const room = salonSoloAvecBouclier();
+    room.debugHurt(1, 30);
+    const apresCoup = room.shieldOf(1);
+    room.debugFreeze(SHIELD_CALM_TICKS + TICK_HZ * 10);
+    expect(room.shieldOf(1)).toBe(apresCoup);
   });
 });

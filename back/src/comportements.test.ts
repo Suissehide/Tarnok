@@ -131,8 +131,15 @@ describe('l explosion du kamikaze', () => {
     const loin = poser(horde, 2, 1000 + KAMIKAZE_RADIUS * 2, 1000, 1);
     const pvProche = horde.hp[horde.slotOf(proche)] ?? 0;
     const joueurs: ContactPlayer[] = [
-      { x: 1000, y: 1030, hp: 100, contactInvulnTicks: 0 },
-      { x: 1000 + KAMIKAZE_RADIUS * 3, y: 1000, hp: 100, contactInvulnTicks: 0 },
+      { x: 1000, y: 1030, hp: 100, shield: 0, shieldCalmTicks: 0, contactInvulnTicks: 0 },
+      {
+        x: 1000 + KAMIKAZE_RADIUS * 3,
+        y: 1000,
+        hp: 100,
+        shield: 0,
+        shieldCalmTicks: 0,
+        contactInvulnTicks: 0,
+      },
     ];
     const morts = resolveBlasts(
       horde,

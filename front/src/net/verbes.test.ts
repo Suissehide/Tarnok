@@ -71,6 +71,7 @@ const joueur = (id: number, x: number, y: number) => ({
   aimX: 0,
   aimY: 0,
   pickupRadius: 0,
+  shield: 0,
 });
 
 /** Un client connecte, joueur local 1 de classe `classe`, au tick 0, joueurs 1 et 2 poses. */

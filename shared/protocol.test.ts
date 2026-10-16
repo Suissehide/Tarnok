@@ -75,6 +75,7 @@ import {
   NO_VOTE,
   PING_BYTES,
   PING_SHOWN_BYTES,
+  type PlayerSnapshot,
   PORTAL_OPEN_BYTES,
   PORTAL_RESULT_BYTES,
   packElementPair,
@@ -160,8 +161,8 @@ describe('encodeSnapshot / decodeSnapshot', () => {
       12_000,
       7,
       [
-        { id: 1, x: 100.4, y: 200.6, hp: 80, aimX: 90, aimY: -60, pickupRadius: 90 },
-        { id: 2, x: -3.2, y: 5999.9, hp: 42, aimX: 0, aimY: 0, pickupRadius: 170 },
+        { id: 1, x: 100.4, y: 200.6, hp: 80, aimX: 90, aimY: -60, pickupRadius: 90, shield: 0 },
+        { id: 2, x: -3.2, y: 5999.9, hp: 42, aimX: 0, aimY: 0, pickupRadius: 170, shield: 0 },
       ],
       { id: 8193, hp: 6000 },
       31_337,
@@ -173,8 +174,8 @@ describe('encodeSnapshot / decodeSnapshot', () => {
       xp: 12_000,
       synergy: 7,
       players: [
-        { id: 1, x: 100, y: 201, hp: 80, aimX: 90, aimY: -60, pickupRadius: 90 },
-        { id: 2, x: -3, y: 6000, hp: 42, aimX: 0, aimY: 0, pickupRadius: 170 },
+        { id: 1, x: 100, y: 201, hp: 80, aimX: 90, aimY: -60, pickupRadius: 90, shield: 0 },
+        { id: 2, x: -3, y: 6000, hp: 42, aimX: 0, aimY: 0, pickupRadius: 170, shield: 0 },
       ],
       boss: { id: 8193, hp: 6000 },
       gold: 31_337,
@@ -194,19 +195,19 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // `toBe(SNAPSHOT_HEADER_BYTES)` serait vraie quoi qu'il arrive.
   it('tient exactement SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES octets (18 -> 22 avec l or)', () => {
     const buf = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
-      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
-      { id: 3, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
+      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
+      { id: 3, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
     ]);
 
     expect(buf.byteLength).toBe(SNAPSHOT_HEADER_BYTES + 3 * SNAPSHOT_PLAYER_BYTES);
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(10);
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
   });
 
   it('tient les pv personnels sur un octet (u8, borne 255)', () => {
     const buf = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 255, aimX: 0, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: 255, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
     ]);
 
     expect(decodeSnapshot(buf).players[0]).toEqual({
@@ -217,6 +218,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
       aimX: 0,
       aimY: 0,
       pickupRadius: 90,
+      shield: 0,
     });
   });
 
@@ -228,7 +230,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // Meme repli silencieux que l'etape 4, cote negatif cette fois.
   it('un hp negatif ressort a zero au decodage, jamais replie pres de 65 536', () => {
     const buf = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: -40, aimX: 0, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: -40, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
     ]);
 
     expect(decodeSnapshot(buf).players[0]?.hp).toBe(0);
@@ -236,7 +238,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
 
   it('borne la visee redistribuee a -127..127, comme celle d un INPUT (tache 13)', () => {
     const buf = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 1, aimX: 500, aimY: -500, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 500, aimY: -500, pickupRadius: 90, shield: 0 },
     ]);
 
     expect(decodeSnapshot(buf).players[0]).toMatchObject({ aimX: 127, aimY: -127 });
@@ -313,8 +315,8 @@ describe('encodeSnapshot / decodeSnapshot', () => {
 
   it("leve quand l'en-tete annonce plus de joueurs que le buffer n'en contient", () => {
     const truncated = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
-      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
+      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
     ]).slice(0, SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
@@ -326,7 +328,7 @@ describe('encodeSnapshot / decodeSnapshot', () => {
   // passer inapercu tant que le buffer alloue reste assez grand.
   it('leve sur un buffer tronque juste avant la visee du joueur (tache 13)', () => {
     const truncated = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 1, aimX: 90, aimY: -60, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 90, aimY: -60, pickupRadius: 90, shield: 0 },
     ]).slice(0, SNAPSHOT_HEADER_BYTES + 6);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
@@ -340,22 +342,22 @@ describe('etape 7b tache 7 : le rayon de ramassage voyage par joueur', () => {
    * plus haut dans ce fichier. **9 devient 10, et c'est le cout affiche de
    * l'etape 7b** : sept etapes sans un octet ajoute par tick s'arretent ici.
    */
-  it('SNAPSHOT_PLAYER_BYTES vaut 10, et le snapshot a quatre joueurs fait 62 octets', () => {
+  it('SNAPSHOT_PLAYER_BYTES vaut 11, et le snapshot a quatre joueurs fait 66 octets', () => {
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(10);
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
     const buf = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
-      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
-      { id: 3, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
-      { id: 4, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
+      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
+      { id: 3, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
+      { id: 4, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
     ]);
-    expect(buf.byteLength).toBe(62);
+    expect(buf.byteLength).toBe(66);
   });
 
   it('le rayon fait l aller-retour, par joueur', () => {
     const buf = encodeSnapshot(1, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90 },
-      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 170 },
+      { id: 1, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
+      { id: 2, x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 170, shield: 0 },
     ]);
     const msg = decode(buf);
     if (msg.type !== MSG.SNAPSHOT) {
@@ -407,7 +409,7 @@ describe('le boss dans le snapshot (etape 6a, tache 4)', () => {
         42,
         12_000,
         7,
-        [{ id: 3, x: 11, y: 22, hp: 33, aimX: 44, aimY: -55, pickupRadius: 90 }],
+        [{ id: 3, x: 11, y: 22, hp: 33, aimX: 44, aimY: -55, pickupRadius: 90, shield: 0 }],
         {
           id: BOSS_ID,
           hp: 6000,
@@ -422,7 +424,7 @@ describe('le boss dans le snapshot (etape 6a, tache 4)', () => {
     expect(decoded.xp).toBe(12_000);
     expect(decoded.synergy).toBe(7);
     expect(decoded.players).toEqual([
-      { id: 3, x: 11, y: 22, hp: 33, aimX: 44, aimY: -55, pickupRadius: 90 },
+      { id: 3, x: 11, y: 22, hp: 33, aimX: 44, aimY: -55, pickupRadius: 90, shield: 0 },
     ]);
   });
 
@@ -1775,5 +1777,23 @@ describe('etape 9 : PING et PING_SHOWN', () => {
 
   it('un PING tronque leve, il ne se decode jamais a moitie', () => {
     expect(() => decode(encodePing(0, 1, 1).slice(0, 5))).toThrow(/tronque/);
+  });
+});
+
+/** Un `PlayerSnapshot` complet, pour ne poser que le champ qu'un test de bouclier fait varier. */
+function unJoueur(overrides: Partial<PlayerSnapshot> & { id: number }): PlayerSnapshot {
+  return { x: 0, y: 0, hp: 1, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0, ...overrides };
+}
+
+describe('etape 13 : le bouclier sur le fil', () => {
+  it('un octet de plus par joueur, pas deux', () => {
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
+  });
+
+  it('aller-retour, et borne a 255', () => {
+    const buf = encodeSnapshot(7, 0, 0, [unJoueur({ id: 1, shield: 42 })], null, 0);
+    expect(decodeSnapshot(buf).players[0]?.shield).toBe(42);
+    const haut = encodeSnapshot(7, 0, 0, [unJoueur({ id: 1, shield: 9999 })], null, 0);
+    expect(decodeSnapshot(haut).players[0]?.shield).toBe(255);
   });
 });

@@ -74,6 +74,11 @@ export interface PlayerSnapshot {
    * achetable — voir `SNAPSHOT_PLAYER_BYTES`.
    */
   pickupRadius: number;
+  /**
+   * Reserve de bouclier de CE joueur (etape 13), `0` chez qui ne porte pas
+   * Transcendance — voir `SNAPSHOT_PLAYER_BYTES`.
+   */
+  shield: number;
 }
 
 export interface WelcomeMessage {
@@ -644,9 +649,10 @@ export const NO_BOSS_ID = 0;
 /** Plus grande valeur que `bossHp` peut porter : voir `SNAPSHOT_HEADER_BYTES`. */
 export const BOSS_HP_MAX = 0xffff_ffff;
 /**
- * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8 · pickupRadius u8` — pas
- * de xp ici, voir `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8
- * de l'etape 4 : 8 -> 9 ; tache 7 de l'etape 7b : 9 -> 10.
+ * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8 · pickupRadius u8 ·
+ * shield u8` — tache 7 de l'etape 7b : 9 -> 10 ; etape 13 : 10 -> 11. Pas de
+ * xp ici, voir `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de
+ * l'etape 4 : 8 -> 9.
  *
  * ⚠️ **`hp` est passe de `u8` a `u16` a la tache 8 de l'etape 4**, et ce
  * n'etait pas prevu au plan. Le passif « vitalite » ajoute 20 points de vie
@@ -677,8 +683,18 @@ export const BOSS_HP_MAX = 0xffff_ffff;
  * ajoute un palier d'aimant, pas une assertion sur le `Math.min(255, ...)` de
  * l'encodeur — avec un maximum atteignable de 170, cette borne ne peut pas se
  * declencher aujourd'hui.
+ *
+ * ⚠️ **L'octet est ASSUME, et deux variantes moins cheres ont ete ecartees
+ * par ecrit** (§3.4 de la spec) : un `u16` doublerait le cout pour une reserve
+ * plafonnee, et reutiliser `hp` (chez un porteur, `maxHp` vaut 1, donc
+ * `hp + bouclier` est decodable) marcherait mais serait l'astuce qu'on
+ * dechiffre a 3 h du matin en se demandant pourquoi la barre d'un allie ment.
+ *
+ * ⚠️ **Pas « seulement pour le porteur »** : `encodeSnapshot` construit UN
+ * tampon pousse une fois pour tout le salon, donc un champ local demanderait
+ * un encodage par client — du CPU par tick contre un octet par joueur.
  */
-export const SNAPSHOT_PLAYER_BYTES = 10;
+export const SNAPSHOT_PLAYER_BYTES = 11;
 export const WAVE_ORDER_BYTES = 19;
 
 /** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
@@ -1051,6 +1067,11 @@ export function encodeSnapshot(
     v.setInt8(o + 7, quantizeAxis(p.aimX));
     v.setInt8(o + 8, quantizeAxis(p.aimY));
     v.setUint8(o + 9, Math.min(255, Math.max(0, Math.round(p.pickupRadius))));
+    // Meme borne, meme raison : `SHIELD_POOL` est fixe (60), donc largement
+    // sous 255, mais un champ non borne replierait modulo 256 au premier
+    // chemin futur qui le laisserait deraper — le repli silencieux de
+    // l'etape 4, cote bouclier cette fois.
+    v.setUint8(o + 10, Math.min(255, Math.max(0, Math.round(p.shield))));
     o += SNAPSHOT_PLAYER_BYTES;
   }
   return buf;
@@ -1082,6 +1103,7 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
       aimX: v.getInt8(o + 7),
       aimY: v.getInt8(o + 8),
       pickupRadius: v.getUint8(o + 9),
+      shield: v.getUint8(o + 10),
     });
     o += SNAPSHOT_PLAYER_BYTES;
   }

@@ -53,7 +53,16 @@ beforeEach(() => {
   vi.stubGlobal('WebSocket', FakeSocket);
 });
 
-const joueur = (id: number) => ({ id, x: 100, y: 100, hp: 100, aimX: 0, aimY: 0, pickupRadius: 0 });
+const joueur = (id: number) => ({
+  id,
+  x: 100,
+  y: 100,
+  hp: 100,
+  aimX: 0,
+  aimY: 0,
+  pickupRadius: 0,
+  shield: 0,
+});
 
 function connecte(): { client: GameClient; socket: FakeSocket } {
   const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());

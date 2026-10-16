@@ -61,6 +61,10 @@ import type { ZoneField } from '@shared/zones';
 /** Ce qu'il faut d'un joueur pour lui faire mal. `PlayerState` le satisfait. */
 export interface HurtablePlayer {
   hp: number;
+  /** Reserve de bouclier restante. `0` chez qui ne porte pas Transcendance. */
+  shield: number;
+  /** Ticks ecoules sans degat — remis a zero par tout coup recu. */
+  shieldCalmTicks: number;
   /** Fraction des degats absorbee. Absente : 0. Negative (malus) : il encaisse plus. */
   readonly armor?: number;
 }
@@ -78,10 +82,22 @@ export interface HurtablePlayer {
  * ⚠️ **Le facteur est borne a zero.** `armor` depasse 1 chez un compte tres
  * ameliore ; sans cette borne, un coup SOIGNERAIT. La borne vit ici, donc une
  * fois.
+ *
+ * ⚠️ **Ordre : armure, PUIS bouclier, PUIS PV** (etape 13, tache 5). Le
+ * bouclier mord sur ce qui RESTE apres l'armure, jamais sur le brut.
  */
 export function hurtPlayer(p: HurtablePlayer, degats: number): void {
-  const facteur = Math.max(0, 1 - (p.armor ?? 0));
-  p.hp = Math.max(0, p.hp - degats * facteur);
+  const recu = degats * Math.max(0, 1 - (p.armor ?? 0));
+  if (recu <= 0) {
+    return;
+  }
+  // ⚠️ **Tout degat RECU remet le calme a zero**, meme entierement absorbe :
+  // sinon un joueur grignote sa reserve indefiniment sans jamais retarder sa
+  // recharge, et le bouclier devient une reduction de degats permanente.
+  p.shieldCalmTicks = 0;
+  const absorbe = Math.min(p.shield, recu);
+  p.shield -= absorbe;
+  p.hp = Math.max(0, p.hp - (recu - absorbe));
 }
 
 /**
@@ -102,6 +118,10 @@ export interface ContactPlayer {
   readonly x: number;
   readonly y: number;
   hp: number;
+  /** Reserve de bouclier restante (etape 13). `0` chez qui ne porte pas Transcendance. */
+  shield: number;
+  /** Ticks ecoules sans degat — remis a zero par tout coup recu. */
+  shieldCalmTicks: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
   contactInvulnTicks: number;
   /**

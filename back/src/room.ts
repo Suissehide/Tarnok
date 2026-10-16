@@ -41,6 +41,8 @@ import {
   PLAYER_SPEED,
   PORTAL_EVERY_WAVES,
   PROJECTILE_CAPACITY,
+  SHIELD_CALM_TICKS,
+  SHIELD_REGEN_PER_SEC,
   SYNERGY_MAX,
   TICK_HZ,
   WIPE_GOLD_KEPT,
@@ -164,6 +166,22 @@ export interface PlayerState extends ContactPlayer {
    * cartes de vitalite empilees. Personnel, comme `hp`.
    */
   maxHp: number;
+  /**
+   * Reserve de bouclier de ce joueur (etape 13) — absorbe avant les PV, voir
+   * `hurtPlayer`. `0` chez qui ne porte pas Transcendance.
+   */
+  shield: number;
+  /** Ticks ecoules sans degat — remis a zero par tout coup recu, voir `hurtPlayer`. */
+  shieldCalmTicks: number;
+  /**
+   * Plafond de la reserve de bouclier de ce joueur : `SHIELD_POOL` chez un
+   * porteur de Transcendance, `0` sinon.
+   *
+   * ⚠️ **Vaut `0` pour TOUT LE MONDE tant que la tache 6 n'est pas faite** —
+   * aucune carte n'ouvre encore la reserve. C'est volontaire : cette tache
+   * livre un bouclier complet et inerte.
+   */
+  maxShield: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
   contactInvulnTicks: number;
   /**
@@ -893,6 +911,11 @@ export class Room {
     return this.#players.get(playerId)?.hp ?? 0;
   }
 
+  /** Reserve de bouclier courante d'un joueur (etape 13), `0` s'il est absent. */
+  shieldOf(playerId: number): number {
+    return this.#players.get(playerId)?.shield ?? 0;
+  }
+
   /**
    * L'armure effective d'un joueur : le MAXIMUM de celle de son compte et de
    * toute protection de Rempart qui le couvre.
@@ -1032,6 +1055,31 @@ export class Room {
     }
   }
 
+  /** Ecriture de test, meme statut que `debugSetGold` : passe `hurtPlayer` sur un joueur. */
+  debugHurt(playerId: number, degats: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      hurtPlayer(p, degats);
+    }
+  }
+
+  /** Ecriture de test, meme statut que `debugSetGold` : avance le salon de `n` ticks a `dt` fixe. */
+  debugSteps(n: number): void {
+    for (let i = 0; i < n; i++) {
+      this.step(1 / TICK_HZ);
+    }
+  }
+
+  /**
+   * Ecriture de test, meme statut que `debugSetGold` : gele le salon `ticks`
+   * ticks et les ecoule, pour eprouver ce qui ne doit PAS avancer pendant un
+   * gel (la regeneration du bouclier, entre autres).
+   */
+  debugFreeze(ticks: number): void {
+    this.#freezeUntilTick = this.#tick + ticks;
+    this.debugSteps(ticks);
+  }
+
   /**
    * Le palier courant, `0` pour le premier — l'argument `k` des formules de
    * `shared/paliers.ts`.
@@ -1104,6 +1152,19 @@ export class Room {
     this.#level = level;
   }
 
+  /**
+   * Ecriture de test, meme statut que `debugSetGold` : ouvre la reserve de
+   * bouclier d'un joueur avant que la tache 6 (Transcendance) ne le fasse en
+   * jeu — cette tache livre un bouclier complet, mais `maxShield` vaut `0`
+   * partout tant qu'aucune carte ne l'ouvre.
+   */
+  debugSetMaxShield(playerId: number, maxShield: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      p.maxShield = maxShield;
+    }
+  }
+
   get metrics(): Readonly<RoomMetrics> {
     return this.#metrics;
   }
@@ -1150,6 +1211,10 @@ export class Room {
       armor: compte?.bonuses.armor ?? 0,
       hp: maxHpOf(loadout, compte?.bonuses.maxHp ?? 0),
       maxHp: maxHpOf(loadout, compte?.bonuses.maxHp ?? 0),
+      // Bouclier inerte (etape 13, tache 5) : `maxShield` s'ouvrira a la tache 6.
+      shield: 0,
+      shieldCalmTicks: 0,
+      maxShield: 0,
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout,
@@ -1741,6 +1806,11 @@ export class Room {
     });
     resolveContact([...this.#players.values()], this.horde);
     this.#regenerate();
+    // ⚠️ **Apres le retour du gel, et c'est tout ce qu'il faut.** `step`
+    // retourne plus haut pendant le gel et pendant un etalage ouvert : la
+    // regeneration ne tourne donc pas pendant une montee de niveau, sans une
+    // ligne pour le dire.
+    this.#regenerateShield();
 
     // Moisson (etape 10) : les morts de CE tick, ou qu'elles viennent. Vide a
     // chaque tick, porteur ou pas : la file ne doit jamais s'accumuler.
@@ -1804,6 +1874,7 @@ export class Room {
         aimX: p.aimX,
         aimY: p.aimY,
         pickupRadius: this.#pickupRadiusOf(p),
+        shield: p.shield,
       });
     }
 
@@ -2761,6 +2832,27 @@ export class Room {
         p.maxHp,
         p.hp + (p.loadout.bonus('regen') + p.accountBonuses.regen) / TICK_HZ,
       );
+    }
+  }
+
+  /**
+   * Regeneration du bouclier (etape 13, tache 5) : `SHIELD_CALM_TICKS` sans
+   * degat avant que la reserve reprenne, puis `SHIELD_REGEN_PER_SEC` par
+   * seconde jusqu'au plafond.
+   *
+   * ⚠️ **Appelee APRES les retours de gel et d'etalage de `step`** — c'est
+   * la SEULE chose qui empeche une montee de niveau de recharger le bouclier
+   * gratuitement, et aucune ligne ici n'en parle : voir la garde dans `step`.
+   */
+  #regenerateShield(): void {
+    for (const p of this.#players.values()) {
+      if (p.hp <= 0 || p.maxShield === 0) {
+        continue;
+      }
+      p.shieldCalmTicks++;
+      if (p.shieldCalmTicks >= SHIELD_CALM_TICKS && p.shield < p.maxShield) {
+        p.shield = Math.min(p.maxShield, p.shield + SHIELD_REGEN_PER_SEC / TICK_HZ);
+      }
     }
   }
 

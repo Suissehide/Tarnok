@@ -24,6 +24,7 @@ function snapshot(
     aimX?: number;
     aimY?: number;
     pickupRadius?: number;
+    shield?: number;
   }[],
   xp = 0,
   synergy = 0,
@@ -38,6 +39,7 @@ function snapshot(
       aimX: 0,
       aimY: 0,
       pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
       ...p,
     })),
     // Ce decor n'interpole que des JOUEURS : le boss de la tache 4 (etape 6a)
@@ -69,6 +71,7 @@ describe('SnapshotBuffer.sample', () => {
         aimX: 0,
         aimY: 0,
         pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
       },
     ]);
   });
@@ -133,7 +136,16 @@ describe('SnapshotBuffer.sample', () => {
 
     // Temps de rendu negatif : on n'a pas encore de quoi interpoler.
     expect(buffer.sample(0)).toEqual([
-      { id: 1, x: 10, y: 20, hp: PLAYER_MAX_HP, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 10,
+        y: 20,
+        hp: PLAYER_MAX_HP,
+        aimX: 0,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
   });
 
@@ -172,6 +184,7 @@ describe('SnapshotBuffer.sample', () => {
       aimX: 0,
       aimY: 0,
       pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
     });
   });
 

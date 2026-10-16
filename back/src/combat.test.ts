@@ -207,7 +207,7 @@ const SINGLE: Weapon = {
 };
 
 function player(x: number, y: number, hp = 100): ContactPlayer {
-  return { x, y, hp, contactInvulnTicks: 0 };
+  return { x, y, hp, shield: 0, shieldCalmTicks: 0, contactInvulnTicks: 0 };
 }
 
 describe('resolveProjectileDamage', () => {
@@ -650,7 +650,7 @@ describe('resolveChargeHit — la charge du boss (etape 6a, tache 5 bis)', () =>
 
   /** Un joueur avec une identite, ce que la borne « une fois par charge » exige. */
   function cible(x: number, y: number, id = 1, hp = 100): ChargeTarget {
-    return { id, x, y, hp, contactInvulnTicks: 0 };
+    return { id, x, y, hp, shield: 0, shieldCalmTicks: 0, contactInvulnTicks: 0 };
   }
 
   /**
@@ -5214,13 +5214,13 @@ describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
 
 describe('etape 13 : hurtPlayer, le point de passage unique', () => {
   it('applique l armure avant les PV', () => {
-    const p = { hp: 100, armor: 0.5 };
+    const p = { hp: 100, shield: 0, shieldCalmTicks: 0, armor: 0.5 };
     hurtPlayer(p, 40);
     expect(p.hp).toBe(80);
   });
 
   it('ne descend jamais sous zero', () => {
-    const p = { hp: 5 };
+    const p = { hp: 5, shield: 0, shieldCalmTicks: 0 };
     hurtPlayer(p, 999);
     expect(p.hp).toBe(0);
   });
@@ -5230,15 +5230,48 @@ describe('etape 13 : hurtPlayer, le point de passage unique', () => {
    * Le facteur est borne a zero, ici et nulle part ailleurs.
    */
   it('une armure superieure a 1 ne soigne pas', () => {
-    const p = { hp: 50, armor: 1.5 };
+    const p = { hp: 50, shield: 0, shieldCalmTicks: 0, armor: 1.5 };
     hurtPlayer(p, 40);
     expect(p.hp).toBe(50);
   });
 
   /** Une armure NEGATIVE (malus Hate funeste) fait mal davantage — c'est voulu. */
   it('une armure negative augmente les degats', () => {
-    const p = { hp: 100, armor: -0.5 };
+    const p = { hp: 100, shield: 0, shieldCalmTicks: 0, armor: -0.5 };
     hurtPlayer(p, 40);
     expect(p.hp).toBe(40);
+  });
+});
+
+describe('etape 13 : le bouclier absorbe avant les PV', () => {
+  const joueur = (shield: number, hp = 100) => ({ hp, shield, shieldCalmTicks: 0 });
+
+  it('un coup plus petit que la reserve ne touche pas les PV', () => {
+    const p = joueur(40);
+    hurtPlayer(p, 10);
+    expect(p.shield).toBe(30);
+    expect(p.hp).toBe(100);
+  });
+
+  /** ⚠️ Vigilance 4 : la reserve tombe a 0, pas a -10, et le reste mord. */
+  it('le debordement mord les PV, et la reserve ne passe pas sous zero', () => {
+    const p = joueur(40);
+    hurtPlayer(p, 50);
+    expect(p.shield).toBe(0);
+    expect(p.hp).toBe(90);
+  });
+
+  it('l armure s applique AVANT le bouclier', () => {
+    const p = { hp: 100, shield: 40, shieldCalmTicks: 0, armor: 0.5 };
+    hurtPlayer(p, 40);
+    expect(p.shield).toBe(20);
+    expect(p.hp).toBe(100);
+  });
+
+  it('tout degat remet le calme a zero', () => {
+    const p = joueur(40);
+    p.shieldCalmTicks = 999;
+    hurtPlayer(p, 1);
+    expect(p.shieldCalmTicks).toBe(0);
   });
 });

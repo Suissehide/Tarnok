@@ -1123,3 +1123,20 @@ export const FOURNEE_BURN_PER_TICK = SURCHAUFFE_BURN_PER_TICK * 2;
  * elementaire.
  */
 export const ECLAT_DE_GEL_DAMAGE = REACTION_DAMAGE * 2;
+
+/**
+ * La reserve de bouclier de Transcendance (etape 13), en points.
+ *
+ * ⚠️ **FIXE, elle n'echelle pas sur les PV max** — c'est ce qui rend le
+ * `shield u8` du snapshot honnete, et ce qui empeche Vitalite de la gonfler
+ * chez un porteur dont le plafond vaut 1.
+ *
+ * ⚠️ **Molette de playtest.** Repere : le contact coute `CONTACT_DAMAGE` (8)
+ * toutes les `CONTACT_INTERVAL_TICKS` (15), soit 16 PV/s — la reserve tient
+ * moins de quatre secondes dans la horde.
+ */
+export const SHIELD_POOL = 60;
+/** Ticks sans degat avant que le bouclier reprenne. Molette de playtest. */
+export const SHIELD_CALM_TICKS = 90;
+/** Points rendus par seconde une fois le calme atteint. Molette de playtest. */
+export const SHIELD_REGEN_PER_SEC = 20;
