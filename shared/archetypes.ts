@@ -96,12 +96,11 @@ export interface Archetype {
    * (`PROJECTILE_HIT_RADIUS x hitScale`) — egale a `bodyScale`, sauf pour le
    * boss (`BOSS_HIT_SCALE`).
    *
-   * ⚠️ **Retour de playtest (etape 12) : « la hitbox du boss correspond pas
-   * au dessin ».** Le troll est mis a l'echelle sur la boite UNION de ses
-   * clips, et son coup de massue l'elargit a 290 px de cellule : le corps
-   * dessine en marche n'a plus qu'une aire equivalente a un disque de ~63 px
-   * de rayon, quand la touche en faisait 96. Le dessin reste ; c'est la touche
-   * qui suit le corps.
+   * ⚠️ **Retour de playtest (etape 12) : « la hitbox du boss est trop
+   * petite ».** A 96 px (`bodyScale` x 32), elle ne couvrait pas la boite
+   * dessinee (240 px de diametre, massue comprise) : des tirs qui touchaient
+   * visiblement le troll passaient au travers. La touche couvre desormais le
+   * dessin entier.
    */
   hitScale: number;
   /** Son ROLE dans la horde (`ROLES`) : ce qui le rend unique a l'ecran. */
@@ -250,12 +249,13 @@ export const BOSS_HP_PER_PLAYER = HEAVY_HP * BOSS_HP_MULTIPLE;
 export const BOSS_BODY_SCALE = 3;
 
 /**
- * La hitbox de tir du boss, en multiple de `PROJECTILE_HIT_RADIUS` : 2,2, soit
- * 70 px de rayon. Mesure sur l'atlas : le corps du troll en marche a l'aire
- * d'un disque de ~63 px a l'ecran ; un peu plus large pour couvrir la tete et
- * la massue, jamais le vide autour. Voir `Archetype.hitScale`.
+ * La hitbox de tir du boss, en multiple de `PROJECTILE_HIT_RADIUS` : 3,75, soit
+ * 120 px de rayon — la demi-boite DESSINEE du troll (`BODY_SCALE` 1,25 x
+ * `BOSS_BODY_SCALE` 3, 240 px de diametre a l'ecran). Retour de playtest :
+ * a 96 px la hitbox restait « trop petite » ; un tir qui touche le dessin, massue
+ * comprise, doit toucher le boss. Voir `Archetype.hitScale`.
  */
-export const BOSS_HIT_SCALE = 2.2;
+export const BOSS_HIT_SCALE = 3.75;
 
 /**
  * Plafond d'armure, applique a la LECTURE de la table (`capArmor`).

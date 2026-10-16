@@ -5522,7 +5522,7 @@ describe('etape 12 : onde, frappe differee et ancre, posees par le salon', () =>
   it('l homoncule brule autour de son invocateur, plus au point de pose', () => {
     const { room, arme } = salonAvec('invocation');
     const depart = positionOf(room, 1);
-    const marche = 30;
+    const marche = 45;
     for (let i = 0; i < marche; i++) {
       room.applyInput(1, i + 1, 0, 127, i === 0 ? 127 : 0, 0);
       room.step(DT);

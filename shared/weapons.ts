@@ -1282,13 +1282,13 @@ const WEAPON_DEFS: readonly (Omit<
     // COURANTE du joueur (`guardCenter`), et sa vie egale sa recharge : un
     // homoncule s'eteint au tick ou le suivant nait, l'aura ne s'interrompt
     // jamais. 6 degats toutes les `GUARD_PULSE_TICKS` (12) : 15 par seconde
-    // sur tout ce qui reste dans l'aura.
+    // sur tout ce qui reste dans l'aura, a 120 px (90 etait « un peu petit »).
     name: 'Homoncule de mercure',
     perks: [UPGRADE.ZONE, UPGRADE.RANGE],
     kind: 'invocation',
     // Le rayon de chaque pulsation — `blastRadius` au sens du halo : ce qui
     // decide de ce qui meurt.
-    blastRadius: 90,
+    blastRadius: 120,
     // Masse lilas pale qui tourne sur place : un petit corps de mercure, pas un
     // projectile. La teinte reste celle de l'arme (le client en teinte ses
     // pulsations), distincte de celle de l'element (0xb9b4ff).

@@ -73,11 +73,10 @@ import type { ZoneField } from './zones';
  * ca — `BOSS_CHARGE_WIDTH_PX` et `spriteScale` le lisent tous les deux depuis
  * l'etape 6a ; seule la collision l'ignorait.
  *
- * ⚠️ **Etape 12 : trop grande cette fois, et c'est `hitScale` qui tranche.**
- * `bodyScale` dit la taille de la CELLULE dessinee, pas celle du corps : le
- * coup de massue du troll elargit sa cellule, et le corps visible n'occupait
- * plus que les deux tiers des 96 px. La touche lit desormais
- * `Archetype.hitScale`, mesure sur l'atlas (70 px pour le boss).
+ * ⚠️ **Etape 12 : toujours trop petite, et c'est `hitScale` qui tranche.**
+ * A 96 px, la touche du boss restait sous sa boite dessinee (240 px de
+ * diametre). Elle lit desormais `Archetype.hitScale` : 120 px pour le boss,
+ * le dessin entier.
  *
  * ⚠️ **Des TABLES, pas un calcul dans la boucle.** La boucle interne de
  * `collide` est en projectiles x ennemis — 49 millions de tests de distance par
@@ -799,7 +798,7 @@ export class Projectiles {
    * consomme eclate s'il porte des eclats (`#consume`).
    *
    * ⚠️ **Le rayon teste suit le CORPS de la cible depuis l'etape 8** : un boss
-   * (`Archetype.hitScale` = 2,2 depuis l etape 12) encaisse sur 70 px, la pietaille sur
+   * (`Archetype.hitScale` = 3,75 depuis l etape 12) encaisse sur 120 px, la pietaille sur
    * 32. Voir `HIT_R2_BY_ARCHETYPE` — jusque-la, il fallait viser le centre
    * exact d'un corps dessine a 240 px de diametre.
    *
@@ -845,7 +844,7 @@ export class Projectiles {
         const ey = horde.y[e] ?? 0;
         const d2 = distanceToSegmentSquared(ex, ey, ax, ay, bx, by);
         // Le rayon de CE corps : `PROJECTILE_HIT_RADIUS` pour les vingt
-        // archetypes de pietaille, 2,2 fois plus pour le boss (`hitScale`). Voir
+        // archetypes de pietaille, 3,75 fois plus pour le boss (`hitScale`). Voir
         // `HIT_R2_BY_ARCHETYPE`.
         const kind = horde.archetype[e] ?? 0;
         let baseR2 = HIT_R2_BY_ARCHETYPE[kind] ?? defaultR2;

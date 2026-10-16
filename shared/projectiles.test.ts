@@ -752,17 +752,19 @@ describe('Projectiles.collide — le rayon de touche suit le corps de la cible',
     return touches > 0;
   }
 
-  // Etape 12 : la touche suit le CORPS mesure sur l'atlas (`hitScale`), plus la
-  // cellule (`bodyScale`) — 70 px, contre 96 quand la cellule debordait du corps.
-  it('oppose au boss un rayon plus de deux fois celui de la pietaille', () => {
-    expect(archetypeOf(BOSS_ARCHETYPE).hitScale).toBeGreaterThan(2);
-    expect(BOSS_R).toBeCloseTo(70.4, 6);
+  // Etape 12 : la touche couvre le DESSIN entier du boss (`hitScale`), 120 px —
+  // 96 restait « trop petit » en jeu.
+  it('oppose au boss un rayon plus de trois fois celui de la pietaille', () => {
+    expect(archetypeOf(BOSS_ARCHETYPE).hitScale).toBeGreaterThan(
+      archetypeOf(BOSS_ARCHETYPE).bodyScale,
+    );
+    expect(BOSS_R).toBeCloseTo(120, 6);
   });
 
   it('touche le boss bien au-dela du rayon de la pietaille', () => {
     // 80 px : hors des 32 px de la pietaille, largement dans le corps du boss.
-    expect(touche(BOSS_ARCHETYPE, 60)).toBe(true);
-    expect(touche(0, 60)).toBe(false);
+    expect(touche(BOSS_ARCHETYPE, 110)).toBe(true);
+    expect(touche(0, 110)).toBe(false);
   });
 
   it('garde la pietaille EXACTEMENT sur son rayon — rien n a grossi pour elle', () => {
