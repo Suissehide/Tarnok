@@ -42,6 +42,8 @@ class FakeClient implements DraftSource {
   draftOutcomes: readonly DraftOutcomeView[] = [];
   draftSettled = false;
   isFrozen = false;
+  level?: number;
+  draftIsChest?: boolean;
   /** Absent par defaut, comme chez les doubles qui n'ont pas de miroir d'inventaire. */
   loadoutOf?(playerId: number): Loadout;
   /** Ce qui est parti sur le fil — c'est la seule chose que l'ecran envoie. */
@@ -891,5 +893,24 @@ describe('etape 10 : la rarete a l ecran', () => {
       'Légendaire ×3',
       '',
     ]);
+  });
+});
+
+describe('etape 11 : le titre d un coffre', () => {
+  it('« Coffre » pour un etalage de coffre, « Niveau N » sinon', () => {
+    const h = harness();
+    // `DraftScreen` cherche `#draft-title` a sa construction : on le pose avant.
+    const titre = document.createElement('span');
+    titre.id = 'draft-title';
+    h.root.prepend(titre);
+    const ecran = new DraftScreen(h.root, h.status, h.list, h.client);
+    h.client.draftCards = spread();
+    h.client.level = 7;
+    h.client.draftIsChest = false;
+    ecran.update();
+    expect(titre.textContent).toBe('Niveau 7');
+    h.client.draftIsChest = true;
+    ecran.update();
+    expect(titre.textContent).toBe('Coffre');
   });
 });

@@ -62,6 +62,8 @@ describe('le cablage vers index.html', () => {
     expect(document.getElementById('hud-passive-list')).not.toBeNull();
     // Tache 10 de l'etape 6a : la cagnotte non securisee (§5).
     expect(document.getElementById('hud-gold')).not.toBeNull();
+    // Etape 11 : le bandeau du porteur de coffre.
+    expect(document.getElementById('hud-porteur')).not.toBeNull();
   });
 });
 
@@ -161,6 +163,7 @@ function hudElements(): HudElements {
     synergyLabel: pick('hud-synergy-label'),
     gold: pick('hud-gold'),
     freeze: pick('hud-freeze'),
+    porteur: pick('hud-porteur'),
     passiveList: pick('hud-passive-list'),
     hpFill: pick('hud-hp-fill'),
     xpFill: pick('hud-xp-fill'),
@@ -201,6 +204,8 @@ class FakeSource implements HudSource {
   /** PV max : 146, sans rapport avec `PLAYER_MAX_HP` (meme doctrine que `gold`). */
   localMaxHp = 146;
   kills = 0;
+  draftIsChest = false;
+  porteurBannerOn = false;
   readonly loadouts = new Map<number, Loadout>();
 
   loadoutOf(playerId: number): Loadout {
@@ -435,6 +440,25 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
 
     paintHud(el, { ...INFO, frozen: false }, 0, 0, source);
     expect(el.freeze.classList.contains('hidden')).toBe(true);
+  });
+
+  it('etape 11 : le bandeau de gel dit « Coffre » pendant un coffre, « Niveau superieur » sinon', () => {
+    source.draftIsChest = true;
+    paintHud(el, { ...INFO, frozen: true }, 0, 0, source);
+    expect(el.freeze.textContent).toBe('Coffre — pause…');
+    source.draftIsChest = false;
+    paintHud(el, { ...INFO, frozen: true }, 0, 0, source);
+    expect(el.freeze.textContent).toBe('Niveau supérieur — pause…');
+  });
+
+  it('etape 11 : le bandeau du porteur suit porteurBannerOn', () => {
+    source.porteurBannerOn = true;
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.porteur?.classList.contains('hidden')).toBe(false);
+    expect(el.porteur?.textContent?.trim()).toBe('Un porteur de coffre est apparu !');
+    source.porteurBannerOn = false;
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.porteur?.classList.contains('hidden')).toBe(true);
   });
 });
 

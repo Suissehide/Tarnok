@@ -28,7 +28,8 @@ export type Cue =
   | 'ping-viens'
   | 'ping-danger'
   | 'ping-boss'
-  | 'ping-jePrends';
+  | 'ping-jePrends'
+  | 'porteur';
 
 /** Ce que le jeu observe a chaque image, pour en deduire les effets. */
 export interface CueSnapshot {
@@ -45,6 +46,8 @@ export interface CueSnapshot {
   pings: number;
   /** Intention du dernier ping recu, `-1` si aucun. */
   lastPingIntent: number;
+  /** Porteurs de coffre annonces depuis la connexion (etape 11). */
+  porteurs: number;
 }
 
 /**
@@ -88,6 +91,9 @@ export function cuesBetween(prev: CueSnapshot | null, cur: CueSnapshot): Cue[] {
       out.push(cue);
     }
   }
+  if (cur.porteurs > prev.porteurs) {
+    out.push('porteur');
+  }
   return out;
 }
 
@@ -117,6 +123,7 @@ const MIN_GAP_S: Record<Cue, number> = {
   'ping-danger': 0.15,
   'ping-boss': 0.15,
   'ping-jePrends': 0.15,
+  porteur: 1,
 };
 
 /** Re pour la musique : une gamme dorienne, modale et un peu medievale. */
@@ -254,6 +261,13 @@ export class AudioEngine {
       case 'levelup':
         [0, 4, 7, 12].forEach((s, k) => {
           tone('triangle', hz(12 + s), hz(12 + s), k * 0.09, 0.3, 0.12);
+        });
+        break;
+      case 'porteur':
+        // Un arpege ASCENDANT et brillant, plus haut et plus serre que
+        // `levelup` : « quelque chose a chasser », pas « un palier franchi ».
+        [0, 4, 7, 12, 16].forEach((s, k) => {
+          tone('square', hz(19 + s), hz(19 + s), k * 0.06, 0.16, 0.06);
         });
         break;
       case 'hurt':

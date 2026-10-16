@@ -61,6 +61,8 @@ export interface DraftSource {
   readonly isFrozen: boolean;
   /** Le niveau atteint, pour le ruban de titre. Optionnel : les doubles de test s'en passent. */
   readonly level?: number;
+  /** L'etalage est un coffre (etape 11) : le ruban dit « Coffre ». Optionnel, comme `level`. */
+  readonly draftIsChest?: boolean;
   /** Le miroir d'inventaire, pour l'indicateur d'empilement de chaque carte. */
   loadoutOf?(playerId: number): Loadout;
   placeToken(cardIndex: number): void;
@@ -582,7 +584,9 @@ export class DraftScreen {
     });
 
     this.#status.textContent = this.#statusLine(spread, mine, settled);
-    if (this.#title && source.level !== undefined) {
+    if (this.#title && source.draftIsChest) {
+      this.#title.textContent = 'Coffre';
+    } else if (this.#title && source.level !== undefined) {
       this.#title.textContent = `Niveau ${source.level}`;
     }
   }

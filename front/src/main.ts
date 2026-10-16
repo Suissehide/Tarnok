@@ -199,6 +199,7 @@ const hudElements: HudElements = {
   synergyLabel: hudSynergyLabel,
   gold: hudGold,
   freeze: hudFreeze,
+  porteur: el('hud-porteur'),
   passiveList: hudPassiveList,
 };
 
@@ -791,6 +792,7 @@ function join(code: string): void {
         abilityCooldown: client.abilityCooldownTicks,
         pings: client.pingCount,
         lastPingIntent: client.lastPingIntent,
+        porteurs: client.porteurCount,
       };
       for (const cue of cuesBetween(lastCues, cur)) {
         audio.play(cue);

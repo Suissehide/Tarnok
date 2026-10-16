@@ -14,6 +14,7 @@ const calme: CueSnapshot = {
   abilityCooldown: 0,
   pings: 0,
   lastPingIntent: -1,
+  porteurs: 0,
 };
 
 describe('cuesBetween — le son se deduit de ce qui change', () => {
@@ -60,5 +61,12 @@ describe('cuesBetween — le son se deduit de ce qui change', () => {
     expect(cuesBetween({ ...calme, pings: 2 }, { ...calme, pings: 2, lastPingIntent: 0 })).toEqual(
       [],
     );
+  });
+
+  it('etape 11 : le porteur annonce sonne une fois, et le coffre ne joue pas le son de niveau', () => {
+    expect(cuesBetween(calme, { ...calme, porteurs: 1 })).toEqual(['porteur']);
+    expect(cuesBetween({ ...calme, porteurs: 1 }, { ...calme, porteurs: 1 })).toEqual([]);
+    // Le LEVEL_UP d'un coffre ne monte pas le niveau : rien a jouer.
+    expect(cuesBetween(calme, { ...calme, level: calme.level })).toEqual([]);
   });
 });
