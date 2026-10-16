@@ -4546,25 +4546,66 @@ describe('etape 11 : le client reconnait un coffre sans un octet de plus', () =>
     const second: WaveOrder = { ...ORDRE, waveId: 5000 };
     socket.emit('message', { data: encodeWaveOrder(second) });
     socket.emit('message', { data: encodeDeaths(40, [entityIdOf(5000, 0)]) });
+    // Les deux coffres dus portent le meme niveau d'avant-meme-tick (aucune
+    // vraie montee entre les deux) ; le troisieme LEVEL_UP, lui, est le vrai
+    // niveau qui monte enfin — sans dette, et sans etre pris pour un coffre.
+    const essais = [
+      { tick: 41, level: 2 },
+      { tick: 42, level: 2 },
+      { tick: 43, level: 3 },
+    ];
     const drapeaux: boolean[] = [];
-    for (const tick of [41, 42, 43]) {
-      socket.emit('message', { data: encodeLevelUp(tick, 2) });
+    for (const { tick, level } of essais) {
+      socket.emit('message', { data: encodeLevelUp(tick, level) });
       drapeaux.push(client.draftIsChest);
     }
     expect(drapeaux).toEqual([true, true, false]);
   });
 
-  it('une mort d identite inconnue, ou un porteur jamais annonce, ne fait pas de coffre', () => {
+  it('un porteur jamais annonce (rejoint/reconnecte pendant qu il vit) est reconnu par son niveau qui ne monte pas', () => {
     const { client, socket } = setup();
-    // Un client arrive apres l'ordre : il voit la mort, pas la naissance.
+    // Avant tout niveau connu, impossible de comparer : un client tout juste
+    // connecte ne doit JAMAIS deviner un coffre sur la seule foi de son
+    // niveau par defaut (1), meme si la mort qu'il voit est celle d'un
+    // porteur qu'il n'a jamais vu naitre.
     socket.emit('message', { data: encodeDeaths(30, [PORTEUR_ID]) });
     socket.emit('message', { data: encodeLevelUp(31, 2) });
     expect(client.draftIsChest).toBe(false);
-    // Et une mort ORDINAIRE apres l'annonce ne consomme pas le porteur.
+    expect(client.level).toBe(2);
+
+    // Le niveau est maintenant connu (2). Un second porteur, jamais annonce
+    // (son `WAVE_ORDER` est arrive avant que ce client ne rejoigne/se
+    // reconnecte — §5.4 de la spec), meurt sans creer de dette (`#porteurId`
+    // reste `null`). Son `LEVEL_UP` porte pourtant le niveau d'avant-meme-tick
+    // (2, qui ne monte pas) : c'est le signal de repli, sans octet de plus,
+    // qui le reconnait comme coffre.
+    socket.emit('message', { data: encodeDeaths(32, [entityIdOf(9999, 0)]) });
+    socket.emit('message', { data: encodeLevelUp(33, 2) });
+    expect(client.draftIsChest).toBe(true);
+
+    // Un porteur VRAIMENT annonce, lui, continue de passer par la dette ; et
+    // une mort ORDINAIRE apres son annonce ne la consomme pas. Le LEVEL_UP qui
+    // suit fait vraiment monter le niveau (3) : ni dette, ni repli.
     socket.emit('message', { data: encodeWaveOrder(ORDRE) });
-    socket.emit('message', { data: encodeDeaths(32, [entityIdOf(77, 0)]) });
-    socket.emit('message', { data: encodeLevelUp(33, 3) });
+    socket.emit('message', { data: encodeDeaths(34, [entityIdOf(77, 0)]) });
+    socket.emit('message', { data: encodeLevelUp(35, 3) });
     expect(client.draftIsChest).toBe(false);
+  });
+
+  it('une vraie montee de niveau n est jamais prise pour un coffre, meme sans dette', () => {
+    const { client, socket } = setup();
+    socket.emit('message', { data: encodeLevelUp(10, 1) });
+    expect(client.draftIsChest).toBe(false);
+    // Niveau connu (1), aucune dette : chaque vraie montee qui suit doit
+    // rester un niveau, jamais un coffre.
+    for (const [tick, level] of [
+      [20, 2],
+      [30, 3],
+      [40, 4],
+    ] as const) {
+      socket.emit('message', { data: encodeLevelUp(tick, level) });
+      expect(client.draftIsChest).toBe(false);
+    }
   });
 
   it('annonce : un compteur, et un bandeau de PORTEUR_BANNER_MS', () => {
