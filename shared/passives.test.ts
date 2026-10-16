@@ -18,7 +18,10 @@ describe('PASSIVES', () => {
       'echo',
       'colosse',
     ]);
-    expect(PASSIVES.filter((p) => p.tier === 'legendaire').map((p) => p.name)).toEqual(['moisson']);
+    expect(PASSIVES.filter((p) => p.tier === 'legendaire').map((p) => p.name)).toEqual([
+      'moisson',
+      'transcendance',
+    ]);
   });
 
   it('etape 10 : les magnitudes par carte de la spec', () => {
@@ -35,6 +38,14 @@ describe('PASSIVES', () => {
   it('donne un nom et une magnitude strictement positive a chaque passif', () => {
     for (const p of PASSIVES) {
       expect(p.name.length).toBeGreaterThan(0);
+      // ⚠️ **Une carte de REGLE (`rule`, etape 13) est exclue de cette borne.**
+      // Son effet EST la regle, pas le nombre : `kind`/`magnitude` ne sont
+      // qu'une convention de typage inerte (voir le docbloc de `Passive.rule`),
+      // jamais lus par `maxHpOf`/`maxShieldOf`. Leur demander une magnitude
+      // positive reviendrait a exiger un chiffre qui ne sert jamais a rien.
+      if (p.rule) {
+        continue;
+      }
       expect(p.magnitude).toBeGreaterThan(0);
     }
   });

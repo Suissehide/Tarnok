@@ -1931,7 +1931,18 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
       }
       for (const ouverture of room.drainDraftOpens()) {
         if (ouverture.cards.length > 0) {
-          room.setDraftToken(1, 0);
+          // ⚠️ **Ignore les cartes de REGLE** (etape 13, tache 6), plutot
+          // que d'accepter l'index 0 aveuglement. Ce test mesure l'or et les
+          // orbes ramasses ; il ne veut pas dependre de QUELLE carte sort au
+          // tirage AUTO. Transcendance (PV max a 1) l'a prouve : tombee sur
+          // ce joueur en plein balayage de contact, elle le tuait et l'or
+          // mesure retombait a zero — pas un bug de la carte, un accident de
+          // tirage que ce helper n'avait aucune raison de subir. C'est CE
+          // decouplage qui est le vrai correctif, pas la graine plus bas.
+          const index = ouverture.cards.findIndex(
+            (c) => c.nature !== CARD.PASSIVE || !passiveOf(c.refId).rule,
+          );
+          room.setDraftToken(1, index >= 0 ? index : 0);
         }
       }
       room.drainDraftResults();
@@ -1984,15 +1995,21 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
    * nombre, et le taux ne serait garde par rien.
    */
   it('verse de l or a chaque piece ramassee, et rien pour les autres morts', () => {
-    // ⚠️ **`waveId` 912, pas 910** (etape 13, tache 6). Le balayage de 900
-    // ticks ne tient debout que de justesse : avec 910, le joueur meurt au
-    // contact pendant la traversee, et un mort ne touche plus d'or (§9.3, le
-    // bon comportement — c'est la mesure qui en pâtissait). Transcendance
-    // ajoute le DEUXIEME candidat au pool legendaire (jusqu'ici Moisson
-    // seule) ; l'etalage AUTO de ce test en tire desormais une carte
-    // differente, qui decale assez la trajectoire du joueur pour croiser la
-    // horde autrement. Retune, pas un bug de `shared/` : la propriete testee
-    // (l'or suit les pieces ramassees) ne depend pas de `waveId`.
+    // ⚠️ **`waveId` 912, pas 910** (etape 13, tache 6) — mais le VRAI
+    // correctif est dans `fermeLEtalage` plus haut, pas ici. Avec 910 et un
+    // tirage AUTO qui acceptait encore l'index 0 aveuglement, le joueur
+    // simule pouvait recevoir Transcendance (PV max a 1) en plein balayage
+    // de contact et mourir en chemin — un mort ne touche plus d'or (§9.3,
+    // le bon comportement, c'est la MESURE qui en patissait). Le pool
+    // legendaire a deux candidats depuis cette tache (Moisson, puis
+    // Transcendance) au lieu d'un : la carte qui ressort au tirage AUTO n'est
+    // plus garantie, et la tache suivante (Fournaise, Hate funeste,
+    // Contagion, retrait de Moisson) va encore faire bouger ce pool. Faire
+    // ignorer les cartes de regle par `fermeLEtalage` rend la mesure
+    // INDIFFERENTE a la composition du pool — c'est ce qui evite d'avoir a
+    // re-chasser un `waveId` a chaque catalogue touche. `912` est garde
+    // pour ne rien changer de plus que necessaire, mais `910` tiendrait tout
+    // aussi bien desormais.
     const { ids, ramasses, or } = ramasseUneVague(912, 4 * COIN_DROP_ONE_IN);
     const piecesRamassees = ramasses.filter((id) => dropsCoin(id));
 
