@@ -53,8 +53,12 @@ coffre jamais comptée — toutes rougissent le test.
   fuite, livrés en retard au client : **35,089 px** de dérive du porteur lui-même sans rejeu,
   **0,000 px** avec.
 - Fait sur la branche `etape-11-porteur`, `main` étant modifié en direct.
-- **Revue finale** : un client qui rejoint pendant qu'un porteur vit reconnaît quand même le
-  coffre, à son niveau qui ne monte pas ; un test tautologique retiré.
+- **Revue finale** : un test tautologique retiré. Une détection de secours du coffre « à son
+  niveau qui ne monte pas » a été essayée puis **annulée** : un gros ramassage d'XP qui franchit
+  deux seuils fait annoncer deux fois le même niveau par le serveur, et le second étalage, un vrai
+  niveau, aurait été pris pour un coffre. **Limite connue** : un joueur qui rejoint pendant qu'un
+  porteur vit (il n'a pas reçu son `WAVE_ORDER`) voit l'étalage du coffre titré « Niveau N » —
+  cosmétique, les cartes sont bien au moins rares.
 
 ## 4. Le portique
 
