@@ -3237,3 +3237,264 @@ describe('etape 11 : la fuite du porteur se derive a l identique', () => {
     ).toBeGreaterThan(50);
   });
 });
+
+/**
+ * Etape 11, correction (revue du controleur, ronde 1) : le scenario precedent
+ * prouve que `Horde` est deterministe avec elle-meme (memes entrees des deux
+ * cotes), jamais le risque propre a cette regle — une mort TARDIVE deplace la
+ * horde, le deoverlap decale le porteur, et le seuil binaire de 400 px peut
+ * alors trancher differemment d'un cote et de l'autre. Meme poursuite, meme
+ * ancrage que le scenario precedent : une poignee de `foule` meurt au tick
+ * 260 (cote serveur, applique a l'instant meme), 7 ticks avant que le
+ * porteur ne franchisse `PORTEUR_FLEE_RADIUS` pour la premiere fois (tick
+ * 267, mesure par instrumentation sur ce meme decor). Le client l'apprend
+ * DEATH_DELAY ticks plus tard — strictement la meme recette que l'etape 3
+ * (`replayTick`, `HordeHistory.restore` puis rejeu), reprise ici pour un
+ * porteur plutot qu'une horde nue.
+ */
+describe('etape 11 : la fuite du porteur survit a une mort tardive, avec et sans rejeu', () => {
+  const DEATH_TICK = 260;
+  const DEATH_DELAY = 3;
+  const DEATH_COUNT = 12;
+
+  interface ChaseParticipant {
+    horde: Horde;
+    fields: FlowField[];
+    history: PlayerHistory;
+    hordeHistory: HordeHistory;
+  }
+
+  function makeChaseParticipant(mapSeed: number): ChaseParticipant {
+    const horde = new Horde(4000);
+    const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    const mask = generateObstacles(mapSeed, probe.cols, probe.rows);
+    const fields = Array.from({ length: 2 }, () => {
+      const f = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+      applyObstacles(f, mask);
+      return f;
+    });
+    return {
+      horde,
+      fields,
+      history: new PlayerHistory(),
+      hordeHistory: new HordeHistory(horde.capacity),
+    };
+  }
+
+  /** Les etapes 4 et 6 de la sequence serveur, comme `replayTick` a l'etape 3 : rafraichir le champ si du, avancer la horde. */
+  function replayTick(p: ChaseParticipant, tick: number, stepsPerField: number): void {
+    if (tick % stepsPerField === 0) {
+      const seen = p.history.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < 2; f++) {
+          p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        p.horde.retarget(seen.x, seen.y);
+      }
+    }
+    p.horde.step(DT, p.fields, tick);
+    p.hordeHistory.record(tick, p.horde);
+  }
+
+  /** Meme garde-fou que l'etape 3 : remet le champ a son age au tick restaure avant de commencer le rejeu. */
+  function primeFieldForReplay(p: ChaseParticipant, atTick: number, stepsPerField: number): void {
+    const lastDue = atTick - (((atTick % stepsPerField) + stepsPerField) % stepsPerField);
+    const seen = p.history.delayed(lastDue);
+    if (seen) {
+      for (let f = 0; f < 2; f++) {
+        p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+      }
+    }
+  }
+
+  /** Identite -> creneau courant, pour comparer deux hordes compactees differemment (meme piege qu'a l'etape 3). */
+  function slotByEntity(horde: Horde): Map<number, number> {
+    const out = new Map<number, number>();
+    for (let slot = 0; slot < horde.count; slot++) {
+      out.set(horde.entityIdAt(slot), slot);
+    }
+    return out;
+  }
+
+  function measureDrift(reference: Horde, participant: Horde): number {
+    const refSlots = slotByEntity(reference);
+    const partSlots = slotByEntity(participant);
+    let maxDrift = 0;
+    for (const [eid, rs] of refSlots) {
+      const ps = partSlots.get(eid);
+      if (ps === undefined) {
+        continue;
+      }
+      const drift = Math.hypot(
+        (participant.x[ps] ?? 0) - (reference.x[rs] ?? 0),
+        (participant.y[ps] ?? 0) - (reference.y[rs] ?? 0),
+      );
+      if (drift > maxDrift) {
+        maxDrift = drift;
+      }
+    }
+    return maxDrift;
+  }
+
+  interface ChaseDeathResult {
+    maxDrift: number;
+    vuAttendre: boolean;
+    vuFuir: boolean;
+    deplacement: number;
+  }
+
+  /**
+   * Meme poursuite (porteur + foule + tenaille) que le scenario precedent,
+   * mais avec une mort tardive : le serveur (reference) tue DEATH_COUNT
+   * membres de la foule les plus proches du porteur au tick DEATH_TICK ; le
+   * client l'apprend DEATH_DELAY ticks plus tard et l'applique soit au
+   * present (`withReplay = false`), soit en restaurant l'etat au tick de la
+   * mort puis en rejouant (`withReplay = true`).
+   */
+  function runChaseDeathScenario(mapSeed: number, withReplay: boolean): ChaseDeathResult {
+    const serveur = makeChaseParticipant(mapSeed);
+    const client = makeChaseParticipant(mapSeed);
+    const porteur: WaveOrder = {
+      waveId: 1,
+      spawnTick: 0,
+      seed: 0x9047_e0f1,
+      archetype: PORTEUR_ARCHETYPE,
+      formation: FORMATION.POINT,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 1,
+    };
+    const foule: WaveOrder = {
+      waveId: 2,
+      spawnTick: 0,
+      seed: 0x51ee_d011,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count: 300,
+    };
+    for (const p of [serveur, client]) {
+      p.horde.spawn(porteur, p.fields[0]);
+      p.horde.spawn(foule, p.fields[0]);
+    }
+    const id = entityIdOf(1, 0);
+    const depart = {
+      x: serveur.horde.x[serveur.horde.slotOf(id)] ?? 0,
+      y: serveur.horde.y[serveur.horde.slotOf(id)] ?? 0,
+    };
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+
+    let maxDrift = 0;
+    let vuAttendre = false;
+    let vuFuir = false;
+    let killIds: number[] = [];
+
+    for (let tick = 0; tick < 600; tick++) {
+      const k = Math.min(1, tick / 360);
+      const xs = [depart.x - 1200 + 1100 * k, depart.x + 1200 - 1100 * k];
+      const ys = [depart.y, depart.y + 40];
+      for (const p of [serveur, client]) {
+        p.history.record(tick, xs, ys);
+        if (tick % stepsPerField === 0) {
+          const seen = p.history.delayed(tick);
+          if (seen) {
+            for (let f = 0; f < 2; f++) {
+              p.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+            }
+            p.horde.retarget(seen.x, seen.y);
+          }
+        }
+        p.horde.step(DT, p.fields, tick);
+      }
+      client.hordeHistory.record(tick, client.horde);
+
+      // Le serveur arbitre et applique a l'instant : au tick ou le porteur
+      // approche du seuil de 400 px, les DEATH_COUNT membres de la foule les
+      // plus proches de lui meurent — un coup de zone plausible a cet
+      // instant precis, pas un tirage.
+      if (tick === DEATH_TICK) {
+        const s = serveur.horde.slotOf(id);
+        const px = serveur.horde.x[s] ?? 0;
+        const py = serveur.horde.y[s] ?? 0;
+        const candidats: { eid: number; d2: number }[] = [];
+        for (let slot = 0; slot < serveur.horde.count; slot++) {
+          const eid = serveur.horde.entityIdAt(slot);
+          if (eid === id) {
+            continue;
+          }
+          const dx = (serveur.horde.x[slot] ?? 0) - px;
+          const dy = (serveur.horde.y[slot] ?? 0) - py;
+          candidats.push({ eid, d2: dx * dx + dy * dy });
+        }
+        candidats.sort((a, b) => a.d2 - b.d2);
+        killIds = candidats.slice(0, DEATH_COUNT).map((c) => c.eid);
+        serveur.horde.kill(killIds);
+      }
+
+      // Le client l'apprend DEATH_DELAY ticks plus tard (sous
+      // ROLLBACK_DEPTH_TICKS = 8) : au present sans rejeu, ou restaure au
+      // tick de la mort puis rejoue jusqu'a present avec rejeu.
+      if (tick === DEATH_TICK + DEATH_DELAY) {
+        if (withReplay && client.hordeHistory.restore(DEATH_TICK, client.horde)) {
+          client.horde.kill(killIds);
+          primeFieldForReplay(client, DEATH_TICK, stepsPerField);
+          for (let t = DEATH_TICK + 1; t <= tick; t++) {
+            replayTick(client, t, stepsPerField);
+          }
+        } else {
+          client.horde.kill(killIds);
+        }
+      }
+
+      // Pendant la fenetre de transit (le message est encore en vol), le
+      // client porte encore des voisins que le serveur a deja retires : ce
+      // n'est pas une derive de rejeu, c'est le reseau — meme principe qu'a
+      // l'etape 3.
+      if (tick > DEATH_TICK + DEATH_DELAY) {
+        const drift = measureDrift(serveur.horde, client.horde);
+        if (drift > maxDrift) {
+          maxDrift = drift;
+        }
+      }
+
+      const s = serveur.horde.slotOf(id);
+      if (s >= 0 && serveur.horde.fleeing[s] === 1) {
+        vuFuir = true;
+      } else if (s >= 0 && serveur.horde.stopped[s] === 1) {
+        vuAttendre = true;
+      }
+    }
+
+    const fin = serveur.horde.slotOf(id);
+    const deplacement = Math.hypot(
+      (serveur.horde.x[fin] ?? 0) - depart.x,
+      (serveur.horde.y[fin] ?? 0) - depart.y,
+    );
+    return { maxDrift, vuAttendre, vuFuir, deplacement };
+  }
+
+  it('scenario PT1 - sans rejeu, une mort tardive pres du seuil de 400 px laisse une derive mesurable', () => {
+    const r = runChaseDeathScenario(0x11_f1_ee01, false);
+    process.stdout.write(
+      `etape 11, scenario PT1 (sans rejeu) : derive maximale ${r.maxDrift.toFixed(3)} px\n`,
+    );
+    // Le scenario ne prouve rien si la derive reste nulle : c'est precisement
+    // le defaut que corrige le rejeu, scenario PT2 ci-dessous.
+    expect(r.maxDrift).toBeGreaterThan(0);
+  });
+
+  it('scenario PT2 - avec rejeu, la derive retombe a 0,000 px malgre la mort tardive', () => {
+    const r = runChaseDeathScenario(0x11_f1_ee01, true);
+    process.stdout.write(
+      `etape 11, scenario PT2 (avec rejeu) : derive maximale ${r.maxDrift.toFixed(3)} px\n`,
+    );
+    // Memes preuves de non-vacuite que le scenario sans mort ci-dessus : le
+    // porteur attend, fuit, et finit deplace — sinon une derive nulle ne
+    // prouverait rien.
+    expect(r.vuAttendre).toBe(true);
+    expect(r.vuFuir).toBe(true);
+    expect(r.deplacement).toBeGreaterThan(50);
+    expect(r.maxDrift).toBe(0);
+  });
+});

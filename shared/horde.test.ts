@@ -3758,7 +3758,7 @@ describe('etape 11 : la fuite du porteur', () => {
     expect(dv / dp).toBeCloseTo(THIEF_FLEE_SPEED, 3);
   });
 
-  it('un voleur ordinaire hors de portee de contact ne fuit pas, porteur ou non a cote', () => {
+  it('un voleur ordinaire hors de portee de contact ne fuit pas, meme a moins de PORTEUR_FLEE_RADIUS', () => {
     const v = seul(VOLEUR);
     v.retarget([1000 + PORTEUR_FLEE_RADIUS - 1], [1000]);
     expect(v.fleeing[0]).toBe(0);
