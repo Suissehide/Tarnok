@@ -412,16 +412,6 @@ export const LEVEL_XP_BASE = 10;
 export const WEAPON_SLOTS = 4;
 
 /**
- * Nombre de slots de passifs d'un joueur (§6.1).
- *
- * ⚠️ Borne le nombre de passifs DISTINCTS possedes, pas le nombre de cartes
- * prises : un passif deja possede s'empile dans son slot existant sans en
- * consommer un nouveau (modele Risk of Rain, §3.3). L'extension a 6 slots par
- * evenements de run est hors perimetre de cette etape.
- */
-export const PASSIVE_SLOTS = 3;
-
-/**
  * Duree de la fenetre de draft, en ticks (20 s a `TICK_HZ`).
  *
  * ⚠️ Plafond du §7.4 valable seulement a PLUSIEURS joueurs : en solo, la
@@ -604,11 +594,11 @@ export const CRIT_CHANCE = 0.12;
 export const CRIT_MULTIPLIER = 2;
 
 /**
- * Rayon de Moisson (etape 10, §4), en pixels monde : un ennemi qui meurt a
- * MOINS de cette distance du porteur lui rend `magnitude` PV. Strict : a 300
- * pile, rien. Le serveur seul l'applique ; l'ecran le lit pour l'ecrire.
+ * Rayon de Contagion (etape 13, §4.1), en pixels monde : la marque d'un
+ * ennemi qui meurt saute au vivant le plus proche DANS ce rayon (strict),
+ * mesure depuis la position du mort. Molette de playtest.
  */
-export const HARVEST_RADIUS = 300;
+export const CONTAGION_RADIUS = 220;
 
 /** Colosse (etape 10, §4) : un bonus de degats par tranche ENTIERE de ce nombre de PV max. */
 export const COLOSSUS_HP_STEP = 10;
@@ -1133,3 +1123,30 @@ export const FOURNEE_BURN_PER_TICK = SURCHAUFFE_BURN_PER_TICK * 2;
  * elementaire.
  */
 export const ECLAT_DE_GEL_DAMAGE = REACTION_DAMAGE * 2;
+
+/**
+ * La reserve de bouclier de Transcendance (etape 13), en points.
+ *
+ * ⚠️ **FIXE, elle n'echelle pas sur les PV max** — c'est ce qui rend le
+ * `shield u8` du snapshot honnete, et ce qui empeche Vitalite de la gonfler
+ * chez un porteur dont le plafond vaut 1.
+ *
+ * ⚠️ **Molette de playtest.** Repere : le contact coute `CONTACT_DAMAGE` (8)
+ * toutes les `CONTACT_INTERVAL_TICKS` (15), soit 16 PV/s — la reserve tient
+ * moins de quatre secondes dans la horde.
+ */
+export const SHIELD_POOL = 60;
+/** Ticks sans degat avant que le bouclier reprenne. Molette de playtest. */
+export const SHIELD_CALM_TICKS = 90;
+/** Points rendus par seconde une fois le calme atteint. Molette de playtest. */
+export const SHIELD_REGEN_PER_SEC = 20;
+
+/**
+ * Le plafond de PV que Transcendance impose (etape 13, tache 6), a la place
+ * de `PLAYER_MAX_HP` plus les cartes et les achats.
+ *
+ * ⚠️ **`1`, pas `0`** : un porteur reste vivant par la regle serveur
+ * (`hp <= 0`) tant que son dernier point n'est pas tombe — `0` le classerait
+ * mort a l'instant ou la carte s'applique.
+ */
+export const TRANSCENDANCE_MAX_HP = 1;

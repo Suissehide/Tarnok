@@ -121,6 +121,8 @@ export class SnapshotBuffer {
     // achete ne « transitionne » pas visuellement entre deux valeurs, et le
     // ramassage (`DerivedOrbs#capture`) doit comparer celui que le serveur
     // vient d'annoncer, pas un melange qui ferait rater ou mentir une capture.
+    // shield (etape 13) suit la meme regle : une reserve n'a rien a gagner a
+    // etre interpolee, c'est un compteur discret comme hp.
     return to.players.map((target) => {
       const previous = from.players.find((p) => p.id === target.id);
       if (!previous) {
@@ -134,6 +136,7 @@ export class SnapshotBuffer {
         aimX: target.aimX,
         aimY: target.aimY,
         pickupRadius: target.pickupRadius,
+        shield: target.shield,
       };
     });
   }

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { CARD, type Card } from '@shared/cards';
-import { PASSIVE_SLOTS, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { ELEMENT, ELEMENTS, elementOf } from '@shared/elements';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
@@ -21,6 +21,8 @@ import {
   DraftScreen,
   type DraftSource,
   magnitudeLabel,
+  malusLabel,
+  RARITY_NAMES,
   rarityLabel,
   remainingSeconds,
   upgradeLabel,
@@ -301,8 +303,12 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
 
   it('dit le SENS du bonus : la cadence RETIRE de la recharge, tout le reste ajoute', () => {
     // `cooldownWithBonus` retire une fraction de la recharge — l'ecrire « +8 % »
-    // dirait le contraire de ce que le nombre fait.
+    // dirait le contraire de ce que le nombre fait. Les cartes de REGLE (etape
+    // 13) n'ont rien a mesurer (magnitude nulle) : pas de signe a verifier.
     for (const p of PASSIVES) {
+      if (p.magnitude === 0) {
+        continue;
+      }
       expect(magnitudeLabel(p).startsWith(p.kind === 'fireRate' ? '−' : '+')).toBe(true);
     }
   });
@@ -314,12 +320,27 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
     }
   });
 
-  it('donne une etiquette a CHAQUE passif du catalogue', () => {
+  it('donne une etiquette a CHAQUE passif MESURABLE du catalogue', () => {
     // Garde du garde : ajouter un `PassiveKind` sans unite rendrait `undefined`
     // sur la carte, et le draft afficherait un trou.
     for (const p of PASSIVES) {
+      if (p.magnitude === 0) {
+        continue;
+      }
       expect(magnitudeLabel(p)).toMatch(/^[+−]\d/);
     }
+  });
+
+  it('etape 13 : une magnitude nulle (carte de REGLE) ne s affiche pas', () => {
+    // Contagion et Transcendance n'ont rien a chiffrer : leur `kind` est
+    // decoratif (voir le docbloc de `Passive.rule`). Les afficher rendrait
+    // « +0 zone, toutes armes », qui se lit comme un bonus mesure et ment.
+    const contagion = PASSIVES.find((p) => p.name === 'contagion');
+    if (!contagion) {
+      throw new Error('fixture');
+    }
+    expect(contagion.magnitude).toBe(0);
+    expect(magnitudeLabel(contagion)).toBe('');
   });
 
   it.each([
@@ -328,7 +349,6 @@ describe('magnitudeLabel — une valeur sans unite ne veut rien dire', () => {
     ['salvo', '+1 salve, armes de tir'],
     ['zone', '+1 zone, toutes armes'],
     ['echo', '+100 % dégâts de vos réactions'],
-    ['harvest', '+1 PV par mort à 300 px'],
     ['colossus', '+1 % dégâts par 10 PV max'],
   ] as const)('etape 10 : %s se lit « %s »', (kind, attendu) => {
     const passive = PASSIVES.find((p) => p.kind === kind);
@@ -800,21 +820,12 @@ describe('une carte que mon inventaire refuse', () => {
     expect(h.client.sent).toEqual([0]);
   });
 
-  it('bloque un passif NOUVEAU quand les slots de passifs sont pleins', () => {
-    const loadout = new Loadout();
-    // Tous sauf `cadence` (refId 1, celui de l'etalage).
-    for (const id of [0, 2, 3, 4].slice(0, PASSIVE_SLOTS)) {
-      loadout.addPassive(id);
+  it('etape 13 : une carte de passif n est jamais bloquee', () => {
+    const l = new Loadout();
+    for (const p of PASSIVES) {
+      l.addPassive(p.id);
     }
-    const h = blockedHarness(loadout);
-    const cadence = cards(h)[1];
-    expect(cadence?.disabled).toBe(true);
-    expect(cadence?.title).toContain(`Passifs complets — ${PASSIVE_SLOTS}/${PASSIVE_SLOTS}`);
-    expect(cadence?.title).toContain(passiveOf(0).label);
-    cadence?.click();
-    expect(h.client.sent).toEqual([]);
-    // Les armes, elles, rentrent encore.
-    expect(cards(h)[2]?.disabled).toBe(false);
+    expect(blockedReason({ nature: CARD.PASSIVE, refId: 0 }, l)).toBeNull();
   });
 
   it("ne bloque rien sans miroir d'inventaire", () => {
@@ -828,14 +839,14 @@ describe('une carte que mon inventaire refuse', () => {
   });
 
   it('dit, en tete, que rien ne rentrera quand TOUTES les cartes sont bloquees', () => {
+    // ⚠️ Depuis l'etape 13, un passif n'est plus jamais refuse : seules des
+    // armes NOUVELLES, aux slots pleins, peuvent encore composer un etalage
+    // entierement bloque.
     const loadout = fullWeapons();
-    for (const id of [0, 2, 3, 4].slice(0, PASSIVE_SLOTS)) {
-      loadout.addPassive(id);
-    }
     const h = harness();
     h.client.loadoutOf = () => loadout;
-    // Que des cartes refusees : deux armes nouvelles et un passif nouveau.
-    h.client.draftCards = [spread()[1], spread()[2], spread()[3]] as Card[];
+    // Que des cartes refusees : deux armes nouvelles.
+    h.client.draftCards = [spread()[2], spread()[3]] as Card[];
     h.screen.update();
     expect(h.status.textContent).toContain('Rien ne rentre dans votre inventaire');
   });
@@ -851,27 +862,25 @@ describe('une carte que mon inventaire refuse', () => {
 });
 
 describe('etape 10 : la rarete a l ecran', () => {
-  const LEGENDAIRE = PASSIVES.find((p) => p.legendary);
-  if (!LEGENDAIRE) {
-    throw new Error('fixture : aucun passif legendaire');
+  const DE_PALIER = PASSIVES.find((p) => p.tier !== undefined);
+  if (!DE_PALIER) {
+    throw new Error('fixture : aucun passif de palier');
   }
 
-  it('rarityLabel : rien pour une commune, le multiplicateur pour rare et legendaire', () => {
+  // ⚠️ **Le « ×N » suit la TABLE, plus la carte (etape 13).** Seul le rare
+  // multiplie ; epique et legendaire sont des cartes de regle, a x1, donc leur
+  // etiquette est un nom nu. Cette regle ne tient plus a l'identite de la
+  // carte : une arme legendaire s'annonce comme un passif legendaire.
+  it('rarityLabel : rien pour une commune, le ×N du rare, un nom nu pour les paliers hauts', () => {
     expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1 })).toBe('');
     expect(rarityLabel({ nature: CARD.PASSIVE, refId: 1, rarity: RARITY.RARE })).toBe('Rare ×2');
+    expect(rarityLabel({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.EPIQUE })).toBe('Épique');
     expect(rarityLabel({ nature: CARD.WEAPON, refId: 2, rarity: RARITY.LEGENDAIRE })).toBe(
-      'Légendaire ×3',
+      'Légendaire',
     );
-  });
-
-  it('un passif exclusivement legendaire se dit « Légendaire », sans x3 : il s applique une fois', () => {
     expect(
-      rarityLabel({ nature: CARD.PASSIVE, refId: LEGENDAIRE.id, rarity: RARITY.LEGENDAIRE }),
+      rarityLabel({ nature: CARD.PASSIVE, refId: DE_PALIER.id, rarity: RARITY.LEGENDAIRE }),
     ).toBe('Légendaire');
-    // Et s'il arrive avec une autre rarete, il ne promet rien de plus.
-    expect(rarityLabel({ nature: CARD.PASSIVE, refId: LEGENDAIRE.id, rarity: RARITY.RARE })).toBe(
-      'Rare',
-    );
   });
 
   it('une rarete inconnue venue du fil se lit commune', () => {
@@ -883,16 +892,74 @@ describe('etape 10 : la rarete a l ecran', () => {
     h.client.draftCards = [
       { nature: CARD.WEAPON, refId: 1 },
       { nature: CARD.PASSIVE, refId: 1, rarity: RARITY.RARE },
-      { nature: CARD.WEAPON, refId: 3, rarity: RARITY.LEGENDAIRE },
+      { nature: CARD.WEAPON, refId: 3, rarity: RARITY.EPIQUE },
+      { nature: CARD.WEAPON, refId: 4, rarity: RARITY.LEGENDAIRE },
       { nature: CARD.WEAPON, refId: 2, rarity: 200 },
     ];
     h.screen.update();
-    expect(cards(h).map((c) => c.dataset.rarity)).toEqual(['0', '1', '2', '0']);
+    expect(cards(h).map((c) => c.dataset.rarity)).toEqual(['0', '1', '2', '3', '0']);
     expect(cards(h).map((c) => c.querySelector('.draft-card__rarity')?.textContent)).toEqual([
       '',
       'Rare ×2',
-      'Légendaire ×3',
+      'Épique',
+      'Légendaire',
       '',
+    ]);
+  });
+});
+
+describe('etape 13 : malusLabel — ce que la carte COUTE', () => {
+  it('quatre noms de rarete', () => {
+    expect(RARITY_NAMES).toEqual(['Commune', 'Rare', 'Épique', 'Légendaire']);
+  });
+
+  it('le cout s affiche, signe compris — une PERTE de PV max se lit avec un moins', () => {
+    const fournaise = PASSIVES.find((p) => p.name === 'fournaise');
+    if (!fournaise) {
+      throw new Error('fixture');
+    }
+    expect(malusLabel(fournaise)).toBe('−40 PV max');
+  });
+
+  it('une carte sans cout n affiche pas de ligne de cout', () => {
+    const vitalite = PASSIVES.find((p) => p.name === 'vitalite');
+    if (!vitalite) {
+      throw new Error('fixture');
+    }
+    expect(malusLabel(vitalite)).toBeNull();
+  });
+
+  /**
+   * ⚠️ **Le piege : inverser aveuglement le signe de l'unite mentirait sur
+   * Hâte funeste.** Son malus porte sur `armor`, dont l'unite dit DEJA le cout
+   * (« +50 % dégâts subis ») — l'inverser donnerait « −50 % dégâts subis »,
+   * c'est-a-dire l'exact CONTRAIRE : moins de degats subis serait un BIENFAIT,
+   * alors que cette carte en fait subir PLUS. `armor` garde donc son signe.
+   */
+  it('le malus d armure garde son signe : ce n est pas une perte, deja un cout', () => {
+    const hateFuneste = PASSIVES.find((p) => p.name === 'hate-funeste');
+    if (!hateFuneste) {
+      throw new Error('fixture');
+    }
+    expect(malusLabel(hateFuneste)).toBe('+50 % dégâts subis');
+  });
+
+  it('la carte affiche sa ligne de cout sous la magnitude, et rien quand elle n en a pas', () => {
+    const fournaise = PASSIVES.find((p) => p.name === 'fournaise');
+    const vitalite = PASSIVES.find((p) => p.name === 'vitalite');
+    if (!fournaise || !vitalite) {
+      throw new Error('fixture');
+    }
+    const h = harness();
+    h.client.draftCards = [
+      { nature: CARD.PASSIVE, refId: fournaise.id, rarity: RARITY.LEGENDAIRE },
+      { nature: CARD.PASSIVE, refId: vitalite.id },
+    ];
+    h.screen.update();
+
+    expect(cards(h).map((c) => c.querySelector('.draft-card__malus')?.textContent)).toEqual([
+      '−40 PV max',
+      undefined,
     ]);
   });
 });

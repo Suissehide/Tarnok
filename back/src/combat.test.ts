@@ -22,10 +22,10 @@ import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
+  CONTAGION_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
   ECLAT_DE_GEL_DAMAGE,
   FOURNEE_BURN_PER_TICK,
-  HARVEST_RADIUS,
   LINK_RADIUS,
   MARK_DURATION_TICKS,
   ORB_DROP_ONE_IN,
@@ -44,8 +44,6 @@ import {
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
-import { Loadout } from '@shared/loadout';
-import { PASSIVES } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneReaction } from '@shared/protocol';
 import { REACTION, REACTION_DEFS, zoneBurnPerTick, zoneRadius } from '@shared/reactions';
@@ -60,7 +58,7 @@ import {
   armureA,
   type ChargeTarget,
   type ContactPlayer,
-  type HarvestPlayer,
+  hurtPlayer,
   markInZones,
   OrbField,
   REACTION_COOLDOWN_TICKS,
@@ -71,10 +69,10 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveHalos,
-  resolveHarvest,
   resolveOndes,
   resolveProjectileDamage,
   resolveVerglasCollisions,
+  spreadMarkOnDeath,
   VENOM_MIN_RESERVE,
   Venins,
 } from './combat';
@@ -207,7 +205,7 @@ const SINGLE: Weapon = {
 };
 
 function player(x: number, y: number, hp = 100): ContactPlayer {
-  return { x, y, hp, contactInvulnTicks: 0 };
+  return { x, y, hp, shield: 0, shieldCalmTicks: 0, contactInvulnTicks: 0 };
 }
 
 describe('resolveProjectileDamage', () => {
@@ -650,7 +648,7 @@ describe('resolveChargeHit — la charge du boss (etape 6a, tache 5 bis)', () =>
 
   /** Un joueur avec une identite, ce que la borne « une fois par charge » exige. */
   function cible(x: number, y: number, id = 1, hp = 100): ChargeTarget {
-    return { id, x, y, hp, contactInvulnTicks: 0 };
+    return { id, x, y, hp, shield: 0, shieldCalmTicks: 0, contactInvulnTicks: 0 };
   }
 
   /**
@@ -5148,63 +5146,84 @@ describe('Venins — le poison des cartes « venin »', () => {
   });
 });
 
-describe('etape 10 : Moisson (resolveHarvest)', () => {
-  const MOISSON = PASSIVES.find((p) => p.kind === 'harvest')?.id ?? -1;
+describe('etape 13 : Contagion (spreadMarkOnDeath)', () => {
+  const TICK = 1000;
 
-  function porteur(hp: number, cartes = 1): HarvestPlayer {
-    const loadout = new Loadout();
-    for (let i = 0; i < cartes; i++) {
-      loadout.addPassive(MOISSON);
-    }
-    return { x: 1000, y: 1000, hp, maxHp: 100, loadout };
+  /**
+   * Une horde de SURVIVANTS seuls, aux creneaux 0..n-1 dans l'ordre — jamais
+   * le mort : au moment ou `spreadMarkOnDeath` tourne (depuis `Room#step`,
+   * sur `OrbField.drainFallen()`), le mort est deja compacte hors de la
+   * horde. `fallen` porte sa position et sa marque a plat, voir le docbloc
+   * de `spreadMarkOnDeath`.
+   */
+  function hordeDe(entites: readonly { x: number; y: number }[]): Horde {
+    const horde = new Horde(Math.max(1, entites.length));
+    entites.forEach((e, i) => {
+      addOne(horde, 900 + i, e.x, e.y);
+    });
+    return horde;
   }
 
-  it('une mort a 299 px soigne d 1 PV, a 301 px non', () => {
-    expect(HARVEST_RADIUS).toBe(300);
-    const pres = porteur(50);
-    resolveHarvest([pres], [1299, 1000]);
-    expect(pres.hp).toBe(51);
-    const loin = porteur(50);
-    resolveHarvest([loin], [1301, 1000]);
-    expect(loin.hp).toBe(50);
+  it('la marque d un mort saute sur le vivant le plus proche, AVEC son auteur', () => {
+    const horde = hordeDe([
+      { x: 50, y: 0 },
+      { x: 900, y: 0 },
+    ]);
+    // Le mort etait a (0, 0), marque Braise posee par le joueur 3.
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.BRAISE);
+    expect(horde.markBy[0]).toBe(3);
+    expect(horde.markAt(1, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
-  it('les morts d un tick s additionnent, et chaque carte compte', () => {
-    const p = porteur(50, 2);
-    resolveHarvest([p], [1000, 1000, 1100, 1000, 1000, 1200]);
-    expect(p.hp).toBe(56);
+  it('un mort sans marque ne propage rien', () => {
+    const horde = hordeDe([{ x: 50, y: 0 }]);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.NEUTRE, 3], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
-  it('jamais au-dela du PV max', () => {
-    const p = porteur(99.5);
-    resolveHarvest([p], [1000, 1000, 1010, 1000, 1020, 1000]);
-    expect(p.hp).toBe(100);
+  it('sans voisin vivant, la marque meurt avec lui — jamais de NaN ni de boucle', () => {
+    const horde = new Horde(1); // aucun survivant.
+    expect(() => spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK)).not.toThrow();
   });
 
-  it('un joueur a terre ne se releve pas', () => {
-    const p = porteur(0);
-    resolveHarvest([p], [1000, 1000]);
-    expect(p.hp).toBe(0);
+  it('respecte CONTAGION_RADIUS : hors de portee, rien ne saute', () => {
+    const horde = hordeDe([{ x: CONTAGION_RADIUS + 1, y: 0 }]);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
-  it('sans Moisson, rien', () => {
-    const p = porteur(50, 0);
-    resolveHarvest([p], [1000, 1000]);
-    expect(p.hp).toBe(50);
+  it('un voisin DEJA mort (hp <= 0) n est jamais choisi, meme plus proche', () => {
+    const horde = hordeDe([
+      { x: 10, y: 0 },
+      { x: 50, y: 0 },
+    ]);
+    horde.hp[0] = 0; // mort ce tick-ci par un AUTRE chemin, pas encore compacte.
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK);
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
+    expect(horde.markAt(1, TICK)).toBe(ELEMENT.BRAISE);
   });
 
-  it('sans Moisson, un PV au dessus du max n est pas touche', () => {
-    // Construit directement (pas par `porteur`) : aucune carte de Moisson,
-    // et un hp deja au dessus de maxHp, pour verifier que
-    // `Math.min(maxHp, hp + 0)` ne vient pas l'ecreter en silence.
-    const p: HarvestPlayer = { x: 1000, y: 1000, hp: 150, maxHp: 100, loadout: new Loadout() };
-    resolveHarvest([p], [1000, 1000]);
-    expect(p.hp).toBe(150);
+  /**
+   * Preuve directe du correctif C1 (revue du coordinateur) : `applyMark`,
+   * jamais une ecriture directe de `horde.mark[]`. Pose la marque vivante
+   * par le VRAI chemin (`applyMark`, attribuee a un joueur), verifie par le
+   * VRAI lecteur (`markAt`) ET que l'attribution de l'ANCIENNE marque ne
+   * survit pas a l'ecrasement — c'est celle de la marque PROPAGEE qui doit
+   * rester, pas `0` (« aucun joueur ») : voir le second correctif du
+   * coordinateur sur `markBy`, docbloc de `spreadMarkOnDeath`.
+   */
+  it('ecrase une marque vivante existante : le NOUVEL element ET la NOUVELLE attribution', () => {
+    const horde = hordeDe([{ x: 10, y: 0 }]);
+    horde.applyMark(0, ELEMENT.GIVRE, 7, TICK); // marque vivante, posee par le joueur 7.
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK); // le mort etait marque par le joueur 3.
+    expect(horde.markAt(0, TICK)).toBe(ELEMENT.BRAISE);
+    expect(horde.markBy[0]).toBe(3);
   });
 });
 
 describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
-  it('drainFallen rend toutes les positions, puis se vide', () => {
+  it('drainFallen rend toutes les positions, leur marque et son auteur, puis se vide', () => {
     const orbs = new OrbField(10);
     const sansButin = Array.from({ length: 50 }, (_, i) => entityIdOf(1, i)).find(
       (id) => !leavesDrop(id),
@@ -5212,10 +5231,90 @@ describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
     if (sansButin === undefined) {
       throw new Error('fixture : aucune identite sans butin');
     }
-    orbs.spawn(entityIdOf(1, 0), 10, 20);
+    orbs.spawn(entityIdOf(1, 0), 10, 20, ELEMENT.BRAISE, 3);
+    // Sans marque ni auteur explicites : NEUTRE/0 par defaut (etape 13, Contagion).
     orbs.spawn(sansButin, 30, 40);
-    // Moisson compte les morts, pas les orbes : celle qui ne laisse rien compte.
-    expect(orbs.drainFallen()).toEqual([10, 20, 30, 40]);
+    // Contagion (etape 13, ex-Moisson) compte les morts, pas les orbes : celle
+    // qui ne laisse rien compte.
+    expect(orbs.drainFallen()).toEqual([10, 20, ELEMENT.BRAISE, 3, 30, 40, ELEMENT.NEUTRE, 0]);
     expect(orbs.drainFallen()).toEqual([]);
+  });
+});
+
+describe('etape 13 : hurtPlayer, le point de passage unique', () => {
+  it('applique l armure avant les PV', () => {
+    const p = { hp: 100, shield: 0, shieldCalmTicks: 0, armor: 0.5 };
+    hurtPlayer(p, 40);
+    expect(p.hp).toBe(80);
+  });
+
+  it('ne descend jamais sous zero', () => {
+    const p = { hp: 5, shield: 0, shieldCalmTicks: 0 };
+    hurtPlayer(p, 999);
+    expect(p.hp).toBe(0);
+  });
+
+  /**
+   * ⚠️ Vigilance 2 : une armure > 1 rendrait le facteur negatif et SOIGNERAIT.
+   * Le facteur est borne a zero, ici et nulle part ailleurs.
+   */
+  it('une armure superieure a 1 ne soigne pas', () => {
+    const p = { hp: 50, shield: 0, shieldCalmTicks: 0, armor: 1.5 };
+    hurtPlayer(p, 40);
+    expect(p.hp).toBe(50);
+  });
+
+  /** Une armure NEGATIVE (malus Hate funeste) fait mal davantage — c'est voulu. */
+  it('une armure negative augmente les degats', () => {
+    const p = { hp: 100, shield: 0, shieldCalmTicks: 0, armor: -0.5 };
+    hurtPlayer(p, 40);
+    expect(p.hp).toBe(40);
+  });
+});
+
+describe('etape 13 : le bouclier absorbe avant les PV', () => {
+  const joueur = (shield: number, hp = 100) => ({ hp, shield, shieldCalmTicks: 0 });
+
+  it('un coup plus petit que la reserve ne touche pas les PV', () => {
+    const p = joueur(40);
+    hurtPlayer(p, 10);
+    expect(p.shield).toBe(30);
+    expect(p.hp).toBe(100);
+  });
+
+  /** ⚠️ Vigilance 4 : la reserve tombe a 0, pas a -10, et le reste mord. */
+  it('le debordement mord les PV, et la reserve ne passe pas sous zero', () => {
+    const p = joueur(40);
+    hurtPlayer(p, 50);
+    expect(p.shield).toBe(0);
+    expect(p.hp).toBe(90);
+  });
+
+  it('l armure s applique AVANT le bouclier', () => {
+    const p = { hp: 100, shield: 40, shieldCalmTicks: 0, armor: 0.5 };
+    hurtPlayer(p, 40);
+    expect(p.shield).toBe(20);
+    expect(p.hp).toBe(100);
+  });
+
+  it('tout degat remet le calme a zero', () => {
+    const p = joueur(40);
+    p.shieldCalmTicks = 999;
+    hurtPlayer(p, 1);
+    expect(p.shieldCalmTicks).toBe(0);
+  });
+
+  /**
+   * ⚠️ Un NON-coup ne remet rien a zero : une armure totale (1) rend `recu`
+   * nul, et `hurtPlayer` revient avant la ligne qui remettrait le calme a
+   * zero. Sans ce test, le `if (recu <= 0) return;` pourrait disparaitre
+   * sans qu'aucune assertion ne rougisse.
+   */
+  it('un coup entierement absorbe par l armure ne remet pas le calme a zero', () => {
+    const p = { hp: 100, shield: 40, shieldCalmTicks: 50, armor: 1 };
+    hurtPlayer(p, 40);
+    expect(p.shieldCalmTicks).toBe(50);
+    expect(p.shield).toBe(40);
+    expect(p.hp).toBe(100);
   });
 });

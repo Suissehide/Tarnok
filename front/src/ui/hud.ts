@@ -1,5 +1,5 @@
 import { classOf, type VerbKind } from '@shared/classes';
-import { PASSIVE_SLOTS, SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type PassiveKind } from '@shared/passives';
 import { weaponOf } from '@shared/weapons';
@@ -143,15 +143,18 @@ export function passiveRows(source: HudSource): PassiveRow[] {
 }
 
 /**
- * Peint les emplacements de passifs : les `PASSIVE_SLOTS` cadres sont toujours
- * la (ecran 04 de la maquette), les possedes d'abord, chacun avec son icone et
- * son compte d'empilements.
+ * Peint les emplacements de passifs (ecran 04 de la maquette) : exactement un
+ * cadre par passif POSSEDE, chacun avec son icone et son compte d'empilements.
+ *
+ * ⚠️ **Plus de cadre vide depuis l'etape 13** : les passifs n'ont plus de
+ * borne, donc plus de nombre fixe de cadres a completer — la colonne suit
+ * `rows`, rien de plus.
  *
  * ⚠️ **Le compte se lit meme a un seul exemplaire** : « 1 » puis « 2 » dit
  * qu'on vient d'empiler, la ou une icone qui ne bouge pas ne dit rien. Le nom
  * et le compte complets sont dans le `title` de l'emplacement (`.hud-passive`).
  *
- * `replaceChildren` plutot qu'un diff : trois cadres, une fois par image.
+ * `replaceChildren` plutot qu'un diff : une fois par image.
  */
 export function paintPassives(list: HTMLElement, rows: readonly PassiveRow[]): void {
   const cells = rows.map((row) =>
@@ -161,9 +164,6 @@ export function paintPassives(list: HTMLElement, rows: readonly PassiveRow[]): v
       title: `${row.name} ×${row.stacks}`,
     }),
   );
-  while (cells.length < PASSIVE_SLOTS) {
-    cells.push(slot('', null));
-  }
   list.replaceChildren(...cells);
 }
 
@@ -207,6 +207,10 @@ export interface HudElements {
   hp: HTMLElement;
   /** Le remplissage de la barre de PV (`.bar__fill`). */
   hpFill: HTMLElement;
+  /** Le conteneur masquable de la barre de bouclier (etape 13), posee sur celle des PV. */
+  shield: HTMLElement;
+  /** Le remplissage de la barre de bouclier. */
+  shieldFill: HTMLElement;
   /** Le remplissage de la barre d'experience, en haut de l'ecran. */
   xpFill: HTMLElement;
   /** `xp / seuil` sur la jauge d'XP. Optionnel : les anciens HUD de test n'en ont pas. */
@@ -258,6 +262,19 @@ export function paintHud(
   const maxHp = Math.max(1, source.localMaxHp);
   el.hp.textContent = `${Math.ceil(info.hp)} / ${maxHp}`;
   el.hpFill.style.setProperty('--v', `${Math.min(1, Math.max(0, info.hp / maxHp))}`);
+  // Etape 13 : la reserve de bouclier (Transcendance), posee par-dessus les
+  // PV — voir `HudInfo.shield`/`shieldPool`.
+  //
+  // ⚠️ **Vigilance 5 : `info` vient du SNAPSHOT, jamais de `source`.** Un
+  // client qui n'a pas vu le `DRAFT_RESULT` d'un joueur (rejoint en cours de
+  // partie) n'a pas son `Loadout` dans le miroir, mais voit quand meme son
+  // bouclier sur le fil (`PlayerSnapshot.shield`) : lire `source.loadoutOf`
+  // ici afficherait une barre vide chez ce joueur-la.
+  el.shield.classList.toggle('hidden', info.shield <= 0);
+  el.shieldFill.style.setProperty(
+    '--v',
+    `${info.shieldPool > 0 ? Math.min(1, Math.max(0, info.shield / info.shieldPool)) : 0}`,
+  );
   el.xpFill.style.setProperty('--v', `${info.xpRatio}`);
   if (el.xpLabel) {
     el.xpLabel.textContent = `${Math.floor(info.xp)} / ${info.xpNeeded}`;

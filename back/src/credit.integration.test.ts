@@ -801,7 +801,8 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
     expect(new Set(snap).size).toBe(1);
     expect(snap[0]).toBe(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES);
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(10);
+    // Etape 13 (pactes, §3.4) : +1 octet par joueur, le bouclier — 10 -> 11, voulu.
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
     expect(ZONE_BYTES).toBe(11);
     expect(REACTION_BYTES).toBe(11);
   });

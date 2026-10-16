@@ -1,4 +1,4 @@
-import { ORB_PICKUP_RADIUS, PASSIVE_SLOTS, WEAPON_SLOTS } from '@shared/constants';
+import { ORB_PICKUP_RADIUS, WEAPON_SLOTS } from '@shared/constants';
 import { describe, expect, it } from 'vitest';
 
 import { BONUS_ZERO, bonusesOf, maxBonus, priceOf, SHOP_ITEMS, shopItemOf } from './shop';
@@ -109,9 +109,10 @@ describe('etape 7b tache 1 : le catalogue', () => {
    * WEAPON_SLOTS ne bouge pas (et qu'elle garde son invariant meme si la
    * boutique s'elargit).
    */
-  it('WEAPON_SLOTS et PASSIVE_SLOTS ne bougent pas', () => {
+  it('WEAPON_SLOTS ne bouge pas', () => {
+    // ⚠️ Les passifs, eux, n'ont plus de borne depuis l'etape 13 (§2.0) : seul
+    // l'arsenal garde ce verrou.
     expect(WEAPON_SLOTS).toBe(4);
-    expect(PASSIVE_SLOTS).toBe(3);
   });
 });
 

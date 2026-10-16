@@ -14,8 +14,8 @@ import {
   CONTACT_DAMAGE,
   CONTACT_INTERVAL_TICKS,
   CONTACT_RADIUS,
+  CONTAGION_RADIUS,
   COURT_CIRCUIT_MAX_JUMPS,
-  HARVEST_RADIUS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
   SEPARATION_RADIUS,
@@ -24,7 +24,6 @@ import {
 import { ELEMENT, elementOf } from '@shared/elements';
 import { type Horde, leavesDrop } from '@shared/horde';
 import { linkedNeighbours } from '@shared/links';
-import type { Loadout } from '@shared/loadout';
 import { type Onde, ondeBand } from '@shared/onde-frappe';
 import { type Anchor, distanceToSegmentSquared, type Projectiles } from '@shared/projectiles';
 import { packElementPair, packZoneKind, zoneElement } from '@shared/protocol';
@@ -58,6 +57,48 @@ import type { ZoneField } from '@shared/zones';
  * qui meurt par `DEATHS`, comme depuis l'etape 3. Rien de nouveau sur le fil.
  */
 
+/** Ce qu'il faut d'un joueur pour lui faire mal. `PlayerState` le satisfait. */
+export interface HurtablePlayer {
+  hp: number;
+  /** Reserve de bouclier restante. `0` chez qui ne porte pas Transcendance. */
+  shield: number;
+  /** Ticks ecoules sans degat — remis a zero par tout coup recu. */
+  shieldCalmTicks: number;
+  /** Fraction des degats absorbee. Absente : 0. Negative (malus) : il encaisse plus. */
+  readonly armor?: number;
+}
+
+/**
+ * Inflige `degats` a un joueur — **le SEUL endroit du depot ou les PV d'un
+ * joueur baissent**.
+ *
+ * ⚠️ **Il y en avait QUATRE copies** jusqu'a l'etape 13 : le tir d'ennemi
+ * (`room.ts`), le kamikaze, le contact et la charge du boss. Fusionner n'est
+ * pas du rangement : c'est la condition pour que le bouclier (tache 5) ne soit
+ * pas traversable par trois sources sur quatre — un bug qu'on ne decouvrirait
+ * qu'au boss.
+ *
+ * ⚠️ **Le facteur est borne a zero.** `armor` depasse 1 chez un compte tres
+ * ameliore ; sans cette borne, un coup SOIGNERAIT. La borne vit ici, donc une
+ * fois.
+ *
+ * ⚠️ **Ordre : armure, PUIS bouclier, PUIS PV** (etape 13, tache 5). Le
+ * bouclier mord sur ce qui RESTE apres l'armure, jamais sur le brut.
+ */
+export function hurtPlayer(p: HurtablePlayer, degats: number): void {
+  const recu = degats * Math.max(0, 1 - (p.armor ?? 0));
+  if (recu <= 0) {
+    return;
+  }
+  // ⚠️ **Tout degat RECU remet le calme a zero**, meme entierement absorbe :
+  // sinon un joueur grignote sa reserve indefiniment sans jamais retarder sa
+  // recharge, et le bouclier devient une reduction de degats permanente.
+  p.shieldCalmTicks = 0;
+  const absorbe = Math.min(p.shield, recu);
+  p.shield -= absorbe;
+  p.hp = Math.max(0, p.hp - (recu - absorbe));
+}
+
 /**
  * Un joueur tel que l'arbitrage de contact le voit : position en lecture,
  * points de vie et compte a rebours d'invulnerabilite mutables.
@@ -76,6 +117,10 @@ export interface ContactPlayer {
   readonly x: number;
   readonly y: number;
   hp: number;
+  /** Reserve de bouclier restante (etape 13). `0` chez qui ne porte pas Transcendance. */
+  shield: number;
+  /** Ticks ecoules sans degat — remis a zero par tout coup recu. */
+  shieldCalmTicks: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
   contactInvulnTicks: number;
   /**
@@ -169,14 +214,29 @@ export class OrbField {
   #count = 0;
 
   /**
-   * La position (x, y, a plat) de CHAQUE mort depuis le dernier
-   * `drainFallen`, qu'elle laisse un orbe ou non — pour Moisson (etape 10).
+   * `(x, y, mark, markBy)` a plat de CHAQUE mort depuis le dernier
+   * `drainFallen`, qu'elle laisse un orbe ou non.
    *
    * ⚠️ **Ici parce que c'est le seul goulot qui voit chaque mort AVEC sa
-   * position** : les huit chemins de mort de ce fichier appellent `spawn`
-   * juste avant `horde.kill`, et une fois `kill` passe la horde est compactee
-   * — `Room.step` ne connait plus que des identites. `Room.step` vide la file
-   * a chaque tick.
+   * position ET sa marque encore valides** : les NEUF chemins de mort de ce
+   * fichier appellent `spawn` juste avant `horde.kill`, et une fois `kill`
+   * passe la horde est compactee — `Room.step` ne connait plus que des
+   * identites, et un creneau compacte ne porte plus la bonne marque. Lire
+   * `horde.markAt(slot, tick)`/`horde.markBy[slot]` ICI, au seul instant ou
+   * `slot` designe encore le mort, est ce qui rend Contagion (etape 13)
+   * possible sans brancher un booleen dans la signature des neuf resolveurs.
+   * `Room.step` vide la file a chaque tick.
+   *
+   * ⚠️ **`markBy` voyage AVEC `mark`, et c'est un correctif, pas un choix
+   * d'origine** (revue du coordinateur). Une premiere version ne portait que
+   * `mark` et reposait `playerId: 0` a l'arrivee ; `0` n'est pas une marque
+   * neutre dans ce depot, c'est la sentinelle « aucun joueur »
+   * (`#freeId`, `back/src/server.ts`, identites a partir de 1). La Synergie
+   * compare `markBy !== by` (`back/src/room.ts`) : une marque propagee sans
+   * son auteur aurait charge la barre a CHAQUE reaction qui la consommait, y
+   * compris en solo. Propager `markBy` avec `mark` est ce qui garde la
+   * comparaison honnete — Contagion recopie l'element ET qui l'a pose, pas
+   * seulement l'un des deux.
    */
   #fallen: number[] = [];
 
@@ -226,9 +286,14 @@ export class OrbField {
    * reserve : un refus qui ne laisserait aucune trace serait de l'experience
    * gagnee qui s'evapore, c'est-a-dire exactement ce que cette tache retire.
    */
-  spawn(entityId: number, x: number, y: number): void {
-    // AVANT la garde du butin : Moisson compte les morts, pas les orbes.
-    this.#fallen.push(x, y);
+  // ⚠️ **`mark`/`markBy` par defaut a `ELEMENT.NEUTRE`/`0`** : les tests de
+  // cette classe qui n'exercent ni les morts ni Contagion continuent de
+  // poser un orbe en deux coordonnees, sans rien savoir des marques. `0` est
+  // sans consequence ici : `spreadMarkOnDeath` ignore deja toute marque
+  // `NEUTRE`, donc son auteur par defaut ne voyage jamais.
+  spawn(entityId: number, x: number, y: number, mark: number = ELEMENT.NEUTRE, markBy = 0): void {
+    // AVANT la garde du butin : Contagion compte les morts, pas les orbes.
+    this.#fallen.push(x, y, mark, markBy);
     if (!leavesDrop(entityId)) {
       return;
     }
@@ -650,7 +715,7 @@ export function resolveBlasts(
     damageInRadius(horde, b.x, b.y, KAMIKAZE_RADIUS, KAMIKAZE_MONSTER_DAMAGE, zones, tick, dead);
     for (const p of players) {
       if (p.hp > 0 && Math.hypot(p.x - b.x, p.y - b.y) < KAMIKAZE_RADIUS) {
-        p.hp = Math.max(0, p.hp - KAMIKAZE_PLAYER_DAMAGE * (1 - (p.armor ?? 0)));
+        hurtPlayer(p, KAMIKAZE_PLAYER_DAMAGE);
       }
     }
   }
@@ -661,7 +726,13 @@ export function resolveBlasts(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(deadIds);
@@ -1258,7 +1329,13 @@ export function applyReactions(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(deadIds);
@@ -1559,7 +1636,13 @@ export function resolveProjectileDamage(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(deadIds);
@@ -1673,7 +1756,13 @@ export function resolveHalos(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(deadIds);
@@ -1739,7 +1828,13 @@ export function resolveOndes(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(deadIds);
@@ -1825,7 +1920,13 @@ export function resolveBeams(
   for (const id of deadIds) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(deadIds);
@@ -1869,51 +1970,65 @@ export function resolveContact(players: readonly ContactPlayer[], horde: Horde):
     }
 
     if (touched) {
-      player.hp = Math.max(0, player.hp - CONTACT_DAMAGE * (1 - (player.armor ?? 0)));
+      hurtPlayer(player, CONTACT_DAMAGE);
       player.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
     }
   }
 }
 
-/** Ce que Moisson lit d'un joueur — `PlayerState` le satisfait tel quel. */
-export interface HarvestPlayer {
-  readonly x: number;
-  readonly y: number;
-  hp: number;
-  readonly maxHp: number;
-  readonly loadout: Pick<Loadout, 'bonus'>;
-}
-
 /**
- * Moisson (etape 10, §4) : chaque ennemi mort a MOINS de `HARVEST_RADIUS` du
- * porteur lui rend `bonus('harvest')` PV, borne par son PV max.
+ * Contagion (etape 13) : la marque d'un ennemi qui meurt passe au vivant le
+ * plus proche, AVEC son auteur. Appelee par `Room#step` sur
+ * `OrbField.drainFallen()` — des positions ABSOLUES, pas des creneaux, parce
+ * qu'au moment ou `Room#step` voit le lot de morts du tick, les NEUF chemins
+ * de mort de `combat.ts` ont deja chacun compacte les leurs (`horde.kill`).
+ * `fallen` porte donc `(x, y, mark, markBy)` a plat par mort, `mark` et
+ * `markBy` deja resolus par `horde.markAt(slot, tick)`/`horde.markBy[slot]`
+ * au moment ou `slot` designait encore ce mort (voir le docbloc de
+ * `OrbField.#fallen`) — c'est ce qui couvre les neuf chemins sans brancher un
+ * booleen dans leur signature.
  *
- * ⚠️ **Cooperative par construction** : le serveur n'attribue pas les morts a
- * un tueur, la proximite evite d'avoir a le faire — un allie qui tue pres de
- * toi te soigne aussi.
+ * ⚠️ **`markBy` voyage AVEC `mark`, jamais `0` sur une marque vivante.** `0`
+ * est la sentinelle « aucun joueur » (`#freeId`, `back/src/server.ts`) : la
+ * Synergie compare `markBy !== by` (`back/src/room.ts`), et une marque
+ * propagee sans son auteur la chargerait a CHAQUE reaction qui la consomme,
+ * meme en solo — voir le docbloc de `OrbField.#fallen` pour la regression
+ * que ça a ete.
  *
- * ⚠️ **Un joueur a terre ne se releve pas**, meme garde que `#regenerate` :
- * sans elle, `#checkRunOver` verrait la run repartir.
+ * ⚠️ **Une seule passe, pas de cascade.** Une marque transmise ne se
+ * retransmet pas au meme tick : sinon une vague de morts repeindrait la horde
+ * entiere d'un coup, et le cout serait quadratique.
  */
-export function resolveHarvest(players: Iterable<HarvestPlayer>, fallen: readonly number[]): void {
-  const r2 = HARVEST_RADIUS * HARVEST_RADIUS;
-  for (const p of players) {
-    if (p.hp <= 0) {
+export function spreadMarkOnDeath(horde: Horde, fallen: readonly number[], tick: number): void {
+  for (let i = 0; i + 3 < fallen.length; i += 4) {
+    const x = fallen[i] ?? 0;
+    const y = fallen[i + 1] ?? 0;
+    const mark = fallen[i + 2] ?? ELEMENT.NEUTRE;
+    const markBy = fallen[i + 3] ?? 0;
+    if (mark === ELEMENT.NEUTRE) {
       continue;
     }
-    const parMort = p.loadout.bonus('harvest');
-    if (parMort === 0) {
-      continue;
-    }
-    let gain = 0;
-    for (let i = 0; i + 1 < fallen.length; i += 2) {
-      const dx = (fallen[i] ?? 0) - p.x;
-      const dy = (fallen[i + 1] ?? 0) - p.y;
-      if (dx * dx + dy * dy < r2) {
-        gain += parMort;
+    let meilleur = -1;
+    let d2 = CONTAGION_RADIUS * CONTAGION_RADIUS;
+    for (let slot = 0; slot < horde.count; slot++) {
+      if ((horde.hp[slot] ?? 0) <= 0) {
+        continue;
+      }
+      const dx = (horde.x[slot] ?? 0) - x;
+      const dy = (horde.y[slot] ?? 0) - y;
+      const d = dx * dx + dy * dy;
+      if (d < d2) {
+        d2 = d;
+        meilleur = slot;
       }
     }
-    p.hp = Math.min(p.maxHp, p.hp + gain);
+    if (meilleur >= 0) {
+      // `markBy` voyage AVEC `mark` — voir le docbloc de `OrbField.#fallen` :
+      // la carte recopie l'element ET son auteur, jamais `0` (« aucun
+      // joueur ») sur une marque vivante, sans quoi la Synergie chargerait a
+      // tort sur chaque reaction qui la consomme.
+      horde.applyMark(meilleur, mark, markBy, tick);
+    }
   }
 }
 
@@ -1988,7 +2103,7 @@ export function resolveChargeHit(
     if (dx * dx + dy * dy > r2) {
       continue;
     }
-    player.hp = Math.max(0, player.hp - BOSS_CHARGE_DAMAGE * (1 - (player.armor ?? 0)));
+    hurtPlayer(player, BOSS_CHARGE_DAMAGE);
     // Le corps du boss reste sur lui le temps de le traverser : sans ce
     // rearmement, `resolveContact` lui reprendrait `CONTACT_DAMAGE` au tick
     // suivant pour le meme corps, et la borne « une fois par charge » ne
@@ -2241,7 +2356,13 @@ export class Venins {
       appliquerDegats(horde, slot, dose, zones, tick, dead);
       if (dead.length > before) {
         // Pas encore compacte : le creneau est toujours le sien.
-        orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+        orbs.spawn(
+          id,
+          horde.x[slot] ?? 0,
+          horde.y[slot] ?? 0,
+          horde.markAt(slot, tick),
+          horde.markBy[slot] ?? 0,
+        );
       } else if (reserve - dose >= VENOM_MIN_RESERVE) {
         next.set(id, reserve - dose);
       }
@@ -2323,7 +2444,13 @@ export function resolveBurn(
   for (const id of dead) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(dead);
@@ -2437,7 +2564,13 @@ export function resolveVerglasCollisions(
   for (const id of dead) {
     const slot = horde.slotOf(id);
     if (slot >= 0) {
-      orbs.spawn(id, horde.x[slot] ?? 0, horde.y[slot] ?? 0);
+      orbs.spawn(
+        id,
+        horde.x[slot] ?? 0,
+        horde.y[slot] ?? 0,
+        horde.markAt(slot, tick),
+        horde.markBy[slot] ?? 0,
+      );
     }
   }
   horde.kill(dead);

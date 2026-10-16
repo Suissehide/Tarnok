@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { PASSIVE_SLOTS, SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -64,6 +64,9 @@ describe('le cablage vers index.html', () => {
     expect(document.getElementById('hud-gold')).not.toBeNull();
     // Etape 11 : le bandeau du porteur de coffre.
     expect(document.getElementById('hud-porteur')).not.toBeNull();
+    // Etape 13 : la barre de bouclier, posee sur celle des PV.
+    expect(document.getElementById('hud-shield')).not.toBeNull();
+    expect(document.getElementById('hud-shield-fill')).not.toBeNull();
   });
 });
 
@@ -166,6 +169,8 @@ function hudElements(): HudElements {
     porteur: pick('hud-porteur'),
     passiveList: pick('hud-passive-list'),
     hpFill: pick('hud-hp-fill'),
+    shield: pick('hud-shield'),
+    shieldFill: pick('hud-shield-fill'),
     xpFill: pick('hud-xp-fill'),
     xpLabel: pick('hud-xp-label'),
     portrait: pick('hud-portrait') as HTMLImageElement,
@@ -182,6 +187,8 @@ const INFO: HudInfo = {
   level: 4,
   timer: '2:07',
   frozen: false,
+  shield: 0,
+  shieldPool: 0,
 };
 
 /**
@@ -298,10 +305,10 @@ describe('paintPassives — les emplacements a l ecran', () => {
   const lignes = (): string[] =>
     [...el.passiveList.querySelectorAll<HTMLElement>('.hud-passive')].map((n) => n.title);
 
-  it('montre toujours PASSIVE_SLOTS emplacements, vides tant que rien n est pris', () => {
+  it('etape 13 : aucun cadre tant que rien n est pris, plus de remplissage a vide', () => {
     paintPassives(el.passiveList, []);
 
-    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
+    expect(el.passiveList.children).toHaveLength(0);
     expect(lignes()).toEqual([]);
   });
 
@@ -315,7 +322,7 @@ describe('paintPassives — les emplacements a l ecran', () => {
 
     expect(lignes()).toEqual(['vitalite ×4', 'cadence ×1']);
     expect(el.passiveList.querySelector('.hud-passive .slot__count')?.textContent).toBe('4');
-    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
+    expect(el.passiveList.children).toHaveLength(2);
   });
 
   it('repeint a chaque appel, sans cumuler les emplacements precedents', () => {
@@ -323,7 +330,7 @@ describe('paintPassives — les emplacements a l ecran', () => {
     paintPassives(el.passiveList, [{ name: 'vitalite', kind: 'maxHp', stacks: 2 }]);
 
     expect(lignes()).toEqual(['vitalite ×2']);
-    expect(el.passiveList.children).toHaveLength(PASSIVE_SLOTS);
+    expect(el.passiveList.children).toHaveLength(1);
   });
 
   it('suit passiveRows, sans dupliquer', () => {
@@ -332,6 +339,13 @@ describe('paintPassives — les emplacements a l ecran', () => {
 
     expect(lignes().length).toBeLessThanOrEqual(PASSIVES.length);
     expect(lignes()).toEqual([`${passiveOf(VITALITE).label} ×2`, `${passiveOf(CADENCE).label} ×5`]);
+  });
+
+  it('etape 13 : la colonne des passifs suit ce qui est possede, sans cadre vide', () => {
+    const source = new FakeSource().prend(VITALITE, 1).prend(CADENCE, 1);
+    paintPassives(el.passiveList, passiveRows(source));
+
+    expect(el.passiveList.children).toHaveLength(2);
   });
 });
 
@@ -459,6 +473,28 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     source.porteurBannerOn = false;
     paintHud(el, INFO, 0, 0, source);
     expect(el.porteur?.classList.contains('hidden')).toBe(true);
+  });
+
+  describe('etape 13 : la barre de bouclier', () => {
+    /**
+     * ⚠️ Vigilance 5 : elle se peint depuis le SNAPSHOT seul (`HudInfo`,
+     * derive de `RenderState.players`), jamais depuis le miroir d'inventaire
+     * (`HudSource.loadoutOf`). Un client qui ignore l'inventaire d'un joueur
+     * (arrive en cours de partie) doit quand meme afficher la bonne barre —
+     * c'est pour ca que ce test ne donne au `FakeSource` AUCUN passif.
+     */
+    it('se peint sans lire le miroir d inventaire', () => {
+      paintHud(el, { ...INFO, shield: 30, shieldPool: 60 }, 0, 0, source);
+
+      expect(el.shieldFill.style.getPropertyValue('--v')).toBe('0.5');
+      expect(el.shield.classList.contains('hidden')).toBe(false);
+    });
+
+    it('reste masquee sans bouclier', () => {
+      paintHud(el, { ...INFO, shield: 0, shieldPool: 0 }, 0, 0, source);
+
+      expect(el.shield.classList.contains('hidden')).toBe(true);
+    });
   });
 });
 

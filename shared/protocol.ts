@@ -74,6 +74,11 @@ export interface PlayerSnapshot {
    * achetable — voir `SNAPSHOT_PLAYER_BYTES`.
    */
   pickupRadius: number;
+  /**
+   * Reserve de bouclier de CE joueur (etape 13), `0` chez qui ne porte pas
+   * Transcendance — voir `SNAPSHOT_PLAYER_BYTES`.
+   */
+  shield: number;
 }
 
 export interface WelcomeMessage {
@@ -644,9 +649,10 @@ export const NO_BOSS_ID = 0;
 /** Plus grande valeur que `bossHp` peut porter : voir `SNAPSHOT_HEADER_BYTES`. */
 export const BOSS_HP_MAX = 0xffff_ffff;
 /**
- * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8 · pickupRadius u8` — pas
- * de xp ici, voir `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8
- * de l'etape 4 : 8 -> 9 ; tache 7 de l'etape 7b : 9 -> 10.
+ * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8 · pickupRadius u8 ·
+ * shield u8` — pas de xp ici, voir `PlayerSnapshot`. Historique des tailles :
+ * tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de l'etape 4 : 8 -> 9 ; tache 7 de
+ * l'etape 7b : 9 -> 10 ; tache 5 de l'etape 13 : 10 -> 11.
  *
  * ⚠️ **`hp` est passe de `u8` a `u16` a la tache 8 de l'etape 4**, et ce
  * n'etait pas prevu au plan. Le passif « vitalite » ajoute 20 points de vie
@@ -677,8 +683,23 @@ export const BOSS_HP_MAX = 0xffff_ffff;
  * ajoute un palier d'aimant, pas une assertion sur le `Math.min(255, ...)` de
  * l'encodeur — avec un maximum atteignable de 170, cette borne ne peut pas se
  * declencher aujourd'hui.
+ *
+ * ⚠️ **L'octet est ASSUME, et deux variantes moins cheres ont ete ecartees
+ * par ecrit** (§3.4 de la spec) : un `u16` doublerait le cout pour une reserve
+ * plafonnee, et reutiliser `hp` (chez un porteur, `maxHp` vaut 1, donc
+ * `hp + bouclier` est decodable) marcherait mais serait l'astuce qu'on
+ * dechiffre a 3 h du matin en se demandant pourquoi la barre d'un allie ment.
+ *
+ * ⚠️ **Pas « seulement pour le porteur »** : `encodeSnapshot` construit UN
+ * tampon pousse une fois pour tout le salon, donc un champ local demanderait
+ * un encodage par client — du CPU par tick contre un octet par joueur.
+ *
+ * Le cout, comme pour `pickupRadius` ci-dessus : +1 octet par joueur et par
+ * snapshot, soit +4 octets a quatre joueurs — **+0,47 ko/s pour le salon a
+ * 30 Hz**, le meme chiffre qu'a la tache 7 de l'etape 7b (meme largeur
+ * ajoutee, meme calcul).
  */
-export const SNAPSHOT_PLAYER_BYTES = 10;
+export const SNAPSHOT_PLAYER_BYTES = 11;
 export const WAVE_ORDER_BYTES = 19;
 
 /** En-tete commun a `DEATHS` et `PICKUPS` : type u8, tick u32, count u16. */
@@ -1039,10 +1060,23 @@ export function encodeSnapshot(
     v.setUint8(o, p.id);
     v.setInt16(o + 1, Math.round(p.x), true);
     v.setInt16(o + 3, Math.round(p.y), true);
-    v.setUint16(o + 5, p.hp, true);
+    // ⚠️ **Borne, pour la meme raison que le boss et l'or plus haut : le
+    // repli silencieux de l'etape 4.** `setUint16` applique `p.hp` modulo
+    // 2^16 ; sans cette borne, un `hp` negatif (etape 13 : un mort qui
+    // recevrait un malus avant le plancher de `Room#grantCard`, ou tout
+    // futur chemin qui laisserait `hp` filer sous zero) partirait sur le fil
+    // pres de 65536 — un mort affiche a PV quasi plein. La garde reste donc
+    // ICI, independante de celle de `room.ts` : elle rattrape n'importe quel
+    // chemin, present ou futur, pas seulement celui du jour.
+    v.setUint16(o + 5, Math.min(0xffff, Math.max(0, p.hp)), true);
     v.setInt8(o + 7, quantizeAxis(p.aimX));
     v.setInt8(o + 8, quantizeAxis(p.aimY));
     v.setUint8(o + 9, Math.min(255, Math.max(0, Math.round(p.pickupRadius))));
+    // Meme borne, meme raison : `SHIELD_POOL` est fixe (60), donc largement
+    // sous 255, mais un champ non borne replierait modulo 256 au premier
+    // chemin futur qui le laisserait deraper — le repli silencieux de
+    // l'etape 4, cote bouclier cette fois.
+    v.setUint8(o + 10, Math.min(255, Math.max(0, Math.round(p.shield))));
     o += SNAPSHOT_PLAYER_BYTES;
   }
   return buf;
@@ -1074,6 +1108,7 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
       aimX: v.getInt8(o + 7),
       aimY: v.getInt8(o + 8),
       pickupRadius: v.getUint8(o + 9),
+      shield: v.getUint8(o + 10),
     });
     o += SNAPSHOT_PLAYER_BYTES;
   }

@@ -39,10 +39,11 @@ import {
   MAX_ENTITIES,
   MAX_PLAYERS,
   ORB_PICKUP_RADIUS,
-  PLAYER_MAX_HP,
   PLAYER_SPEED,
   PORTAL_EVERY_WAVES,
   PROJECTILE_CAPACITY,
+  SHIELD_CALM_TICKS,
+  SHIELD_REGEN_PER_SEC,
   SYNERGY_MAX,
   TICK_HZ,
   WIPE_GOLD_KEPT,
@@ -53,7 +54,7 @@ import { EnemyShots } from '@shared/enemy-shots';
 import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
-import { Loadout } from '@shared/loadout';
+import { Loadout, maxHpOf, maxShieldOf } from '@shared/loadout';
 import {
   type FrappeImpact,
   frappeDueTick,
@@ -98,6 +99,7 @@ import {
   type Blast,
   type ContactPlayer,
   type HaloPulse,
+  hurtPlayer,
   markInZones,
   OrbField,
   Reactions,
@@ -107,10 +109,10 @@ import {
   resolveChargeHit,
   resolveContact,
   resolveHalos,
-  resolveHarvest,
   resolveOndes,
   resolveProjectileDamage,
   resolveVerglasCollisions,
+  spreadMarkOnDeath,
   Venins,
 } from './combat';
 import { Draft } from './draft';
@@ -167,6 +169,19 @@ export interface PlayerState extends ContactPlayer {
    * cartes de vitalite empilees. Personnel, comme `hp`.
    */
   maxHp: number;
+  /**
+   * Reserve de bouclier de ce joueur (etape 13) — absorbe avant les PV, voir
+   * `hurtPlayer`. `0` chez qui ne porte pas Transcendance.
+   */
+  shield: number;
+  /** Ticks ecoules sans degat — remis a zero par tout coup recu, voir `hurtPlayer`. */
+  shieldCalmTicks: number;
+  /**
+   * Plafond de la reserve de bouclier de ce joueur : `SHIELD_POOL` chez un
+   * porteur de Transcendance, `0` sinon — voir `maxShieldOf`
+   * (`shared/loadout.ts`), posee par `grantCard` a chaque carte de passif.
+   */
+  maxShield: number;
   /** Ticks restants avant qu'un nouveau contact puisse a nouveau faire mal. */
   contactInvulnTicks: number;
   /**
@@ -909,22 +924,42 @@ export class Room {
     return this.#players.get(playerId)?.hp ?? 0;
   }
 
+  /** Reserve de bouclier courante d'un joueur (etape 13), `0` s'il est absent. */
+  shieldOf(playerId: number): number {
+    return this.#players.get(playerId)?.shield ?? 0;
+  }
+
   /**
    * L'armure effective d'un joueur : le MAXIMUM de celle de son compte et de
-   * toute protection de Rempart qui le couvre.
+   * toute protection de Rempart qui le couvre, PUIS la contribution des
+   * cartes de passif.
    *
-   * ⚠️ **Un MAXIMUM, jamais une somme ni un produit** — la meme regle que
-   * `ZoneField` applique deja entre deux zones, et pour la raison que son
-   * docbloc donne : deux flaques qui se recouvrent « ne doublent pas : elles
-   * donnent la plus forte ». Une somme ferait de « cinq paliers d'Armure
-   * achetes, plus un Rempart » une quasi-immunite (§6.2 de la spec).
+   * ⚠️ **Le compte et le Rempart restent un MAXIMUM, jamais une somme ni un
+   * produit entre EUX DEUX** — la meme regle que `ZoneField` applique deja
+   * entre deux zones, et pour la raison que son docbloc donne : deux flaques
+   * qui se recouvrent « ne doublent pas : elles donnent la plus forte ». Une
+   * somme ferait de « cinq paliers d'Armure achetes, plus un Rempart » une
+   * quasi-immunite (§6.2 de la spec).
+   *
+   * ⚠️ **`loadout.bonus('armor')` s'AJOUTE apres ce maximum, lui** (etape 13,
+   * tache 7) — c'est le seul chemin par lequel le malus de Hate funeste
+   * (`{ kind: 'armor', magnitude: 0.5 }`) atteint `hurtPlayer`. `bonus`
+   * retranche deja les malus du meme genre (`Loadout.bonus`,
+   * `shared/loadout.ts`) et peut donc rendre ce total NEGATIF — delibere,
+   * c'est ce qui fait mordre l'armure plus fort que les degats bruts
+   * (`Math.max(0, 1 - armor)` dans `hurtPlayer` ne borne que par le haut).
+   * Aucune carte ordinaire ne touche ce genre aujourd'hui : seul un malus
+   * peut le faire baisser sous zero.
    */
   armorOf(playerId: number): number {
     const p = this.#players.get(playerId);
     if (!p) {
       return 0;
     }
-    return Math.max(p.accountBonuses.armor, this.#rempartCouvre(p) ? REMPART_ARMOR : 0);
+    return (
+      Math.max(p.accountBonuses.armor, this.#rempartCouvre(p) ? REMPART_ARMOR : 0) +
+      p.loadout.bonus('armor')
+    );
   }
 
   /**
@@ -1041,10 +1076,41 @@ export class Room {
     }
   }
 
+  /**
+   * ⚠️ **Restitue aussi `shield` et `shieldCalmTicks`, pas seulement `hp`.**
+   * Sans consequence tant que `maxShield` valait `0` pour tout le monde ;
+   * depuis Transcendance (etape 13, tache 6), un porteur ressuscite sans ce
+   * rattrapage garderait une reserve et un compteur de calme perimes — une
+   * reserve a `0` sous un plafond qui, lui, a bien ete restitue.
+   */
   debugRevive(playerId: number): void {
     const p = this.#players.get(playerId);
     if (p) {
       p.hp = p.maxHp;
+      p.shield = p.maxShield;
+      p.shieldCalmTicks = 0;
+    }
+  }
+
+  /** Ecriture de test, meme statut que `debugSetGold` : passe `hurtPlayer` sur un joueur. */
+  debugHurt(playerId: number, degats: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      hurtPlayer(p, degats);
+    }
+  }
+
+  /**
+   * Ecriture de test, meme statut que `debugSetGold` : pose les PV courants
+   * d'un joueur, sans toucher a son plafond — utile pour eprouver une carte a
+   * malus de PV max (Fournaise, etape 13) sur un joueur deja blesse, ce
+   * qu'aucun chemin de production n'a besoin de faire directement (`hp` n'y
+   * varie que par `hurtPlayer`, `#regenerate` et `grantCard`).
+   */
+  debugSetHp(playerId: number, hp: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      p.hp = hp;
     }
   }
 
@@ -1131,6 +1197,27 @@ export class Room {
     this.#pendingLevels += n;
   }
 
+  /**
+   * Ecriture de test, meme statut que `debugSetGold` : ouvre la reserve de
+   * bouclier d'un joueur avant que la tache 6 (Transcendance) ne le fasse en
+   * jeu — cette tache livre un bouclier complet, mais `maxShield` vaut `0`
+   * partout tant qu'aucune carte ne l'ouvre.
+   *
+   * ⚠️ **Remplit aussi `shield`, pas seulement le plafond.** `join` laisse
+   * `shield: 0` : sans ce remplissage, un test qui donne un coup juste apres
+   * comparerait 0 a 0, et ne prouverait jamais l'absorption. Aucun chemin de
+   * production n'a ce besoin — Transcendance (tache 6) posera `maxShield`
+   * sur un joueur qui a deja `shield: 0` a la jonction, et n'a donc rien a
+   * remplir.
+   */
+  debugSetMaxShield(playerId: number, maxShield: number): void {
+    const p = this.#players.get(playerId);
+    if (p) {
+      p.maxShield = maxShield;
+      p.shield = maxShield;
+    }
+  }
+
   get metrics(): Readonly<RoomMetrics> {
     return this.#metrics;
   }
@@ -1175,8 +1262,12 @@ export class Room {
       lastSeq: 0,
       accountBonuses: compte?.bonuses ?? BONUS_ZERO,
       armor: compte?.bonuses.armor ?? 0,
-      hp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
-      maxHp: PLAYER_MAX_HP + (compte?.bonuses.maxHp ?? 0),
+      hp: maxHpOf(loadout, compte?.bonuses.maxHp ?? 0),
+      maxHp: maxHpOf(loadout, compte?.bonuses.maxHp ?? 0),
+      // Bouclier inerte (etape 13, tache 5) : `maxShield` s'ouvrira a la tache 6.
+      shield: 0,
+      shieldCalmTicks: 0,
+      maxShield: 0,
       contactInvulnTicks: 0,
       lastFireTick: new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY),
       loadout,
@@ -1788,16 +1879,32 @@ export class Room {
     this.shots.hits(vivants, CONTACT_RADIUS / 2).forEach((n, k) => {
       const p = vivants[k];
       if (p && n > 0 && p.contactInvulnTicks === 0) {
-        p.hp = Math.max(0, p.hp - SHOT_DAMAGE * (1 - (p.armor ?? 0)));
+        hurtPlayer(p, SHOT_DAMAGE);
         p.contactInvulnTicks = CONTACT_INTERVAL_TICKS;
       }
     });
     resolveContact([...this.#players.values()], this.horde);
     this.#regenerate();
+    // ⚠️ **Apres le retour du gel, et c'est tout ce qu'il faut.** `step`
+    // retourne plus haut pendant le gel et pendant un etalage ouvert : la
+    // regeneration ne tourne donc pas pendant une montee de niveau, sans une
+    // ligne pour le dire.
+    this.#regenerateShield();
 
-    // Moisson (etape 10) : les morts de CE tick, ou qu'elles viennent. Vide a
-    // chaque tick, porteur ou pas : la file ne doit jamais s'accumuler.
-    resolveHarvest(this.#players.values(), this.#orbs.drainFallen());
+    // Contagion (etape 13) : les morts de CE tick, ou qu'elles viennent
+    // (`OrbField.spawn` les note toutes, voir son docbloc). Drainee a chaque
+    // tick, porteur ou pas, pour que la file ne s'accumule jamais ; la carte
+    // elle-meme ne coute rien a verifier d'abord : sans elle, personne ne
+    // porte de marque a transmettre tant qu'aucune arme elementaire n'a
+    // tourne, et `[...].some(...)` reste bien moins cher que le balayage de
+    // `spreadMarkOnDeath` qu'il evite.
+    const fallenMarks = this.#orbs.drainFallen();
+    if (
+      fallenMarks.length > 0 &&
+      [...this.#players.values()].some((p) => p.loadout.hasRule('contagion'))
+    ) {
+      spreadMarkOnDeath(this.horde, fallenMarks, this.#tick);
+    }
 
     const pickedIds = this.#orbs.resolvePickups(
       [...this.#players.values()].map((p) => ({
@@ -1857,6 +1964,7 @@ export class Room {
         aimX: p.aimX,
         aimY: p.aimY,
         pickupRadius: this.#pickupRadiusOf(p),
+        shield: p.shield,
       });
     }
 
@@ -2770,10 +2878,29 @@ export class Room {
       // ne se verrait qu'apres avoir encaisse des degats. Hors inventaire,
       // donc hors `applyCardToLoadout` : `hp`/`maxHp` sont des champs de
       // `PlayerState`, que le client n'arbitre jamais (§5.4).
-      const nouveauMax =
-        PLAYER_MAX_HP + player.loadout.bonus('maxHp') + player.accountBonuses.maxHp;
-      player.hp += nouveauMax - player.maxHp;
+      const nouveauMax = maxHpOf(player.loadout, player.accountBonuses.maxHp);
+      // ⚠️ **Borne, depuis l'etape 13.** Le delta brut (`hp += nouveauMax -
+      // maxHp`) TUAIT un joueur blesse des qu'un maximum BAISSE (une carte a
+      // malus de PV max) : a 30 PV, un malus de 40 donnait `hp = -10` — mort
+      // en acceptant sa carte. Un vivant reste vivant (plancher a 1), et `hp`
+      // ne depasse jamais le nouveau maximum.
+      //
+      // ⚠️ **Un mort reste a zero, jamais sous zero.** Le draft n'exclut pas
+      // les joueurs morts (un `AUTO` peut leur attribuer une carte) : sans ce
+      // second plancher, un mort a `hp = 0` qui recoit un malus de 40 sur un
+      // maximum de 100 finissait a `hp = -40` — toujours mort pour la regle
+      // serveur (`hp <= 0`), mais `shared/protocol.ts` encodait ce negatif en
+      // `u16` et le fil montrait un joueur mort a PV quasi plein.
+      const vivant = player.hp > 0;
+      player.hp = player.hp + (nouveauMax - player.maxHp);
+      player.hp = Math.min(nouveauMax, player.hp);
+      player.hp = Math.max(vivant ? 1 : 0, player.hp);
       player.maxHp = nouveauMax;
+      // ⚠️ **Ouvre la reserve, ne la remplit pas.** `shield` part a `0` a la
+      // jonction (`join`) et y reste jusqu'a ce que cette carte souleve le
+      // plafond : rien a transferer, contrairement a `hp` ci-dessus, qui a
+      // un delta a repartir parce que `PLAYER_MAX_HP` n'est jamais nul.
+      player.maxShield = maxShieldOf(player.loadout);
     }
   }
 
@@ -2827,6 +2954,34 @@ export class Room {
         p.maxHp,
         p.hp + (p.loadout.bonus('regen') + p.accountBonuses.regen) / TICK_HZ,
       );
+    }
+  }
+
+  /**
+   * Regeneration du bouclier (etape 13, tache 5) : `SHIELD_CALM_TICKS` sans
+   * degat avant que la reserve reprenne, puis `SHIELD_REGEN_PER_SEC` par
+   * seconde jusqu'au plafond.
+   *
+   * ⚠️ **Appelee APRES les retours de gel et d'etalage de `step`** — c'est
+   * la SEULE chose qui empeche une montee de niveau de recharger le bouclier
+   * gratuitement, et aucune ligne ici n'en parle : voir la garde dans `step`.
+   *
+   * ⚠️ **Decale d'UN tick par rapport a `SHIELD_CALM_TICKS` ticks « sans
+   * degat ».** `hurtPlayer` remet `shieldCalmTicks` a zero puis CETTE methode
+   * l'incremente, dans la MEME passe de `step` que le coup : le tick du coup
+   * compte donc comme le premier des `SHIELD_CALM_TICKS`. La reserve reprend
+   * apres `SHIELD_CALM_TICKS - 1` ticks suivant celui du coup, pas
+   * `SHIELD_CALM_TICKS`.
+   */
+  #regenerateShield(): void {
+    for (const p of this.#players.values()) {
+      if (p.hp <= 0 || p.maxShield === 0) {
+        continue;
+      }
+      p.shieldCalmTicks++;
+      if (p.shieldCalmTicks >= SHIELD_CALM_TICKS && p.shield < p.maxShield) {
+        p.shield = Math.min(p.maxShield, p.shield + SHIELD_REGEN_PER_SEC / TICK_HZ);
+      }
     }
   }
 

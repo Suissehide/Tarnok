@@ -23,6 +23,7 @@ import { AudioEngine, type CueSnapshot, cuesBetween } from './audio/audio';
 import { renderCombos } from './ui/combos';
 import { API_URL, ASSETS_BASE, gameSocketUrl } from './ui/config';
 import { DraftScreen } from './ui/draft';
+import { wireGuide } from './ui/guide';
 import {
   type AbilityElements,
   type HudElements,
@@ -183,10 +184,24 @@ el<HTMLButtonElement>('close-shop').addEventListener('click', () => {
   lobby.classList.remove('hidden');
 });
 
+// Le Guide (maquette 18) : peint une fois, son contenu ne depend d'aucune partie.
+const guideScreen = el('guide-screen');
+wireGuide(guideScreen);
+el<HTMLButtonElement>('open-guide').addEventListener('click', () => {
+  lobby.classList.add('hidden');
+  guideScreen.classList.remove('hidden');
+});
+el<HTMLButtonElement>('guide-back').addEventListener('click', () => {
+  guideScreen.classList.add('hidden');
+  lobby.classList.remove('hidden');
+});
+
 /** Les cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
 const hudElements: HudElements = {
   hp: hudHp,
   hpFill: el('hud-hp-fill'),
+  shield: el('hud-shield'),
+  shieldFill: el('hud-shield-fill'),
   xpFill: el('hud-xp-fill'),
   xpLabel: el('hud-xp-label'),
   portrait: el<HTMLImageElement>('hud-portrait'),

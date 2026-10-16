@@ -1,4 +1,4 @@
-import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
+import { PLAYER_MAX_HP, SHIELD_POOL, TRANSCENDANCE_MAX_HP, WEAPON_SLOTS } from './constants';
 
 /**
  * Duplique `CARD.WEAPON` de `cards.ts`.
@@ -10,7 +10,7 @@ import { PASSIVE_SLOTS, WEAPON_SLOTS } from './constants';
  */
 const CARD_WEAPON = 0;
 
-import { PASSIVES, type PassiveKind, passiveOf } from './passives';
+import { PASSIVES, type PassiveKind, type PassiveRule, passiveOf } from './passives';
 import { UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
@@ -72,7 +72,13 @@ export class Loadout {
     return this.#weaponOrder.length;
   }
 
-  /** Nombre de passifs DISTINCTS possedes — jamais le nombre de cartes prises. */
+  /**
+   * Nombre de passifs DISTINCTS possedes.
+   *
+   * ⚠️ **Ce n'est plus une consommation d'emplacements** (etape 13, §2.0) : la
+   * limite de passifs a ete levee, les armes gardent la leur. Le compte reste
+   * utile — le HUD s'en sert pour savoir combien de cadres peindre.
+   */
   get passiveSlotsUsed(): number {
     let n = 0;
     for (const stacks of this.#passiveStacks) {
@@ -110,14 +116,11 @@ export class Loadout {
   }
 
   /**
-   * Empile un passif. Ne consomme un slot que si le joueur ne le possedait
-   * PAS encore — voir la doc de la classe.
+   * Empile un passif. Aucune limite depuis l'etape 13 : seul un identifiant
+   * inconnu fait lever.
    */
   addPassive(passiveId: number): void {
     const stacks = this.stacksOf(passiveId);
-    if (stacks === 0 && this.passiveSlotsUsed >= PASSIVE_SLOTS) {
-      throw new Error(`slots de passifs pleins (${PASSIVE_SLOTS})`);
-    }
     passiveOf(passiveId); // leve si l'identifiant n'existe pas
     this.#passiveStacks[passiveId] = stacks + 1;
   }
@@ -135,10 +138,22 @@ export class Loadout {
     if (nature === CARD_WEAPON) {
       return this.stacksOfWeapon(refId) > 0 || this.#weaponOrder.length < WEAPON_SLOTS;
     }
-    return this.stacksOf(refId) > 0 || this.passiveSlotsUsed < PASSIVE_SLOTS;
+    // ⚠️ **Toujours vrai depuis l'etape 13** : un passif ne peut plus etre
+    // refuse. Le parametre reste pour que la signature serve les deux natures.
+    return true;
   }
 
-  /** Somme des `magnitude` de tous les exemplaires possedes de ce genre. */
+  /** Ce joueur porte-t-il au moins un exemplaire d'une carte a cette regle ? */
+  hasRule(rule: PassiveRule): boolean {
+    for (let id = 0; id < this.#passiveStacks.length; id++) {
+      if ((this.#passiveStacks[id] ?? 0) > 0 && PASSIVES[id]?.rule === rule) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Somme des `magnitude` possedees de ce genre, MOINS les malus du meme genre. */
   bonus(kind: PassiveKind): number {
     let total = 0;
     for (let id = 0; id < this.#passiveStacks.length; id++) {
@@ -147,10 +162,51 @@ export class Loadout {
         continue;
       }
       const p = PASSIVES[id];
-      if (p && p.kind === kind) {
+      if (!p) {
+        continue;
+      }
+      if (p.kind === kind) {
         total += p.magnitude * stacks;
+      }
+      if (p.malus?.kind === kind) {
+        total -= p.malus.magnitude * stacks;
       }
     }
     return total;
   }
+}
+
+/**
+ * Les PV max d'un joueur : la base, les cartes, les achats — **et la seule
+ * ecriture de cette somme dans le depot**.
+ *
+ * ⚠️ **Elle etait recopiee a TROIS endroits** : `Room#grantCard`
+ * (`back/src/room.ts`), `GameClient#localMaxHp` et `GameClient#fireOne`
+ * (`front/src/net/client.ts`, ce dernier pour le `maxHp` qu'echelonne
+ * Colosse). Des copies divergeraient a la premiere regle qui touche au
+ * plafond — et l'etape 13 en ajoute justement une (une carte a malus de PV
+ * max, tache suivante).
+ */
+export function maxHpOf(loadout: Loadout, accountMaxHp: number): number {
+  // ⚠️ **La regle passe EN DERNIER**, apres les cartes et les achats : c'est
+  // exactement ce qui la rend insensible a Vitalite et aux achats du compte.
+  // Consequence assumee (etape 13, tache 6) : Vitalite et Regain deviennent
+  // inertes chez un porteur de Transcendance, puisqu'ils visent un plafond
+  // que cette regle force a `TRANSCENDANCE_MAX_HP`.
+  if (loadout.hasRule('transcendance')) {
+    return TRANSCENDANCE_MAX_HP;
+  }
+  return PLAYER_MAX_HP + loadout.bonus('maxHp') + accountMaxHp;
+}
+
+/**
+ * La reserve de bouclier ouverte par les regles possedees (etape 13, tache
+ * 6) : `SHIELD_POOL` chez un porteur de Transcendance, `0` sinon.
+ *
+ * ⚠️ **Tout debordement de cette reserve tue** : derriere elle, il ne reste
+ * que `TRANSCENDANCE_MAX_HP` (1) point de vie (voir `hurtPlayer`,
+ * `back/src/combat.ts`).
+ */
+export function maxShieldOf(loadout: Loadout): number {
+  return loadout.hasRule('transcendance') ? SHIELD_POOL : 0;
 }

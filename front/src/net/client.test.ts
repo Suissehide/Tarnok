@@ -17,6 +17,7 @@ import {
   PROJECTILE_HIT_RADIUS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
+  TRANSCENDANCE_MAX_HP,
   ZONE_LIFETIME_TICKS,
   ZONE_RADIUS,
   ZONE_REFRESH_INTERVAL_TICKS,
@@ -296,7 +297,16 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
       socket.emit('message', { data: encodeWelcome(1, 0, 0) });
       socket.emit('message', {
         data: encodeSnapshot(0, 777, 0, [
-          { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 10,
+            y: 20,
+            hp: 42,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
 
@@ -306,6 +316,39 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
     },
   );
 
+  /**
+   * ⚠️ **Etape 13 : la valeur, pas seulement le champ.** `tsc` garantit deja
+   * que `shield` existe sur le joueur predit (`#localShield`) ; seule une
+   * valeur NON NULLE et NON PAR DEFAUT (33, ni 0 ni `ORB_PICKUP_RADIUS`-like)
+   * prouve que `#localShield` est bien lu depuis le dernier snapshot plutot
+   * que laisse a son defaut de construction.
+   */
+  it('reprend le bouclier du dernier snapshot pour le joueur local predit', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [
+        {
+          id: 1,
+          x: 10,
+          y: 20,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 33,
+        },
+      ]),
+    });
+
+    const state = client.update(0, 0);
+
+    expect(state.players.find((p) => p.id === 1)).toMatchObject({ shield: 33 });
+  });
+
   it("reprend l'experience d'equipe du dernier snapshot, au niveau du RenderState", () => {
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
     client.connect();
@@ -314,7 +357,16 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 777, 0, [
-        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 10,
+          y: 20,
+          hp: 42,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
 
@@ -394,7 +446,16 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 10,
+          y: 20,
+          hp: 42,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
 
@@ -419,7 +480,18 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
         0,
         0,
         0,
-        [{ id: 2, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS }],
+        [
+          {
+            id: 2,
+            x: 10,
+            y: 20,
+            hp: 42,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
+        ],
         {
           id: 8193,
           hp: 6000,
@@ -437,7 +509,7 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
 
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     const joueurs = [
-      { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS, shield: 0 },
     ];
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, joueurs, { id: 8193, hp: 6000 }),
@@ -456,7 +528,7 @@ describe('GameClient — le boss du snapshot (etape 6a, tache 5)', () => {
 
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     const joueurs = [
-      { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS, shield: 0 },
     ];
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, joueurs, { id: 8193, hp: 6000 }),
@@ -671,6 +743,7 @@ function runClientDeathScenario(params: {
       aimX: 0,
       aimY: 0,
       pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
     }));
     socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -1122,7 +1195,16 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     for (let tick = 0; tick <= DEATH_TICK + 3; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 3000,
+            y: 3000,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       if (tick === DEATH_TICK + 2) {
@@ -1182,7 +1264,16 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
     for (let tick = 0; tick < DEATH_TICK + DELAY + 5; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 3000,
+            y: 3000,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       if (tick === DEATH_TICK + DELAY) {
@@ -1251,6 +1342,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       aimX: 0,
       aimY: 0,
       pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
     };
     let tick = 0;
 
@@ -1259,7 +1351,7 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
           MOI,
-          { ...allie, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          { ...allie, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS, shield: 0 },
         ]),
       });
       if (tick === DEATH_TICK + 2) {
@@ -1366,7 +1458,16 @@ describe('GameClient — orbes derivees des morts (tache 10)', () => {
       for (let tick = 0; tick < DEATH_TICK + TRES_LONGTEMPS; tick++) {
         socket.emit('message', {
           data: encodeSnapshot(tick, 0, 0, [
-            { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+            {
+              id: 1,
+              x: 3000,
+              y: 3000,
+              hp: 100,
+              aimX: 0,
+              aimY: 0,
+              pickupRadius: ORB_PICKUP_RADIUS,
+              shield: 0,
+            },
           ]),
         });
         if (tick === DEATH_TICK + DELAY) {
@@ -1434,7 +1535,16 @@ describe('GameClient — le gel est date, pas applique a la reception (tache 10)
     for (let tick = 0; tick < END; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 3000, y: 3000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 3000,
+            y: 3000,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       // Envoye bien avant que le gel ne prenne effet : si le client gelait a
@@ -1507,7 +1617,16 @@ describe('GameClient — la prediction locale honore le gel de niveau (tache 24)
       // gel ou pas (voir `PredictedPlayer.reconcile`).
       socket.emit('message', {
         data: encodeSnapshot(0, 0, 0, [
-          { id: 1, x: 500, y: 500, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 500,
+            y: 500,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
 
@@ -1644,7 +1763,16 @@ describe('GameClient — bilan de run (RUN_OVER, tache 11)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     client.update(0, 0);
@@ -1707,7 +1835,16 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     // joueur pertinente — aucune assertion sur le tir ne porte sur ce tick.
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     client.update(0, STEP);
@@ -1746,7 +1883,15 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
       for (let tick = 1; tick <= 40; tick++) {
         socket.emit('message', {
           data: encodeSnapshot(tick, 0, 0, [
-            { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+            {
+              id: 1,
+              ...PLAYER,
+              hp: 100,
+              aimX: 0,
+              aimY: 0,
+              pickupRadius: ORB_PICKUP_RADIUS,
+              shield: 0,
+            },
           ]),
         });
         client.update(tick * MS_PER_TICK, STEP);
@@ -1778,7 +1923,15 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= 20; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            ...PLAYER,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -1795,7 +1948,7 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= 20; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 0, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          { id: 1, ...PLAYER, hp: 0, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS, shield: 0 },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -1816,7 +1969,15 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= TICKS; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            ...PLAYER,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -1839,7 +2000,15 @@ describe('GameClient — tir automatique et impact cote client (tache 11/13)', (
     for (let tick = 1; tick <= 20 && hitNowMs < 0; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            ...PLAYER,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       const nowMs = tick * MS_PER_TICK;
@@ -1918,7 +2087,16 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
     });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     client.update(0, STEP);
@@ -1964,7 +2142,16 @@ describe('GameClient — le flash de chaine de Foudre, seme une fois a l impact 
     for (let tick = startTick; tick < startTick + 20 && client.projectiles.count > 0; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 0,
+            y: 0,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       nowMs = tick * MS_PER_TICK;
@@ -2113,7 +2300,16 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     client.update(0, STEP);
@@ -2138,6 +2334,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
             aimX: 0,
             aimY: 0,
             pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
           },
         ]),
       });
@@ -2176,7 +2373,16 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       socket.emit('message', { data: encodeWelcome(1, 0, 0xc1e2_0023) });
       socket.emit('message', {
         data: encodeSnapshot(0, 0, 0, [
-          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 0,
+            y: 0,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       // Le spy est pose AVANT le tout premier `update()` : c'est celui-la qui
@@ -2187,7 +2393,16 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
       for (let tick = 1; tick <= 5 && spy.mock.calls.length === 0; tick++) {
         socket.emit('message', {
           data: encodeSnapshot(tick, 0, 0, [
-            { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+            {
+              id: 1,
+              x: 0,
+              y: 0,
+              hp: 100,
+              aimX: 0,
+              aimY: 0,
+              pickupRadius: ORB_PICKUP_RADIUS,
+              shield: 0,
+            },
           ]),
         });
         client.update(tick * MS_PER_TICK, STEP);
@@ -2233,7 +2448,16 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     client.update(0, STEP);
@@ -2250,7 +2474,15 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
         // s'y fiait pour le joueur local, aucun tir ne toucherait jamais le
         // monstre, a droite.
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: -127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            ...PLAYER,
+            hp: 100,
+            aimX: -127,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       client.update(tick * MS_PER_TICK, STEP);
@@ -2289,7 +2521,16 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     socket.emit('message', { data: encodeWaveOrder(order) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     client.update(0, STEP);
@@ -2300,7 +2541,7 @@ describe('GameClient — proprietes du tir que le code affirme (tache 11/13)', (
     const PLAYER = { x: monsterX - 50, y: monsterY };
     const snapshot = (tick: number): ArrayBuffer =>
       encodeSnapshot(tick, 0, 0, [
-        { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS, shield: 0 },
       ]);
 
     // Le gel prend effet au tick 2 : le message part avant, comme le fait le
@@ -2411,6 +2652,7 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
       aimX: number;
       aimY: number;
       pickupRadius: number;
+      shield: number;
     }[],
     withSnapshots = true,
   ): void {
@@ -2631,8 +2873,26 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 5, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
-      { id: 2, x: 2200, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
+      {
+        id: 2,
+        x: 2200,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
 
     const tirees = new Set(spy.mock.calls.map((c) => c[0].id));
@@ -2654,7 +2914,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     const TICKS = 70;
     run(client, socket, TICKS, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
 
     const dague = spy.mock.calls.filter((c) => c[0].id === BASE_WEAPON_ID).map((c) => c[1]);
@@ -2701,7 +2970,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
       const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
       run(client, socket, 3, [
-        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 2000,
+          y: 2000,
+          hp: 100,
+          aimX: 127,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]);
       const salve = spy.mock.calls.find((c) => c[0].id === EVENTAIL);
       const neutre = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
@@ -2741,7 +3019,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     const TICKS = 70;
     run(client, socket, TICKS, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
 
     const base = weaponOf(BASE_WEAPON_ID);
@@ -2771,7 +3058,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 3, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
 
     const base = weaponOf(BASE_WEAPON_ID);
@@ -2808,7 +3104,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 3, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
 
     const base = weaponOf(BASE_WEAPON_ID);
@@ -2866,7 +3171,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 70, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
 
     // ⚠️ L'INTERVALLE entre deux salves, jamais leur compte : meme raison que
@@ -2908,7 +3222,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 2000,
+          y: 2000,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
 
@@ -2946,7 +3269,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
 
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 2000, y: 2000, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 2000,
+          y: 2000,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     for (let i = 0; i < CARTES; i++) {
@@ -2990,7 +3322,12 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     expect(client.loadoutOf(1).stacksOf(FOUGUE)).toBe(2);
   });
 
-  it('etape 10 : une arme LEGENDAIRE servie d office a un allie : acquisition plus deux crans', () => {
+  // ⚠️ Legendaire change une regle, elle ne se multiplie pas
+  // (`RARITY_MULTIPLIERS` vaut 1 a cet index depuis l'etape 13) : une seule
+  // application, donc la pure acquisition, sans cran d'amelioration en plus.
+  // Ce test attendait encore le triple d'avant l'etape 13 ; voir le meme
+  // correctif cote serveur (`back/src/room.test.ts`, legendaire x1).
+  it('etape 10 : une arme LEGENDAIRE servie d office a un allie : acquisition seule, aucun cran', () => {
     const { client, socket } = setup(1);
     socket.emit('message', {
       data: encodeDraftOpen(600, [
@@ -3000,8 +3337,8 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     socket.emit('message', {
       data: encodeDraftResult(0, [{ playerId: 2, cardIndex: 0, outcome: OUTCOME.AUTO }]),
     });
-    expect(client.loadoutOf(2).stacksOfWeapon(GRENADE)).toBe(3);
-    expect(client.loadoutOf(2).upgradesOf(GRENADE, 1)).toBe(2);
+    expect(client.loadoutOf(2).stacksOfWeapon(GRENADE)).toBe(1);
+    expect(client.loadoutOf(2).upgradesOf(GRENADE, 1)).toBe(0);
   });
 
   it('etape 10 : Volee elargit la salve affichee exactement comme celle du serveur', () => {
@@ -3012,7 +3349,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     ]);
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 3, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
     const base = weaponOf(BASE_WEAPON_ID);
     const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
@@ -3027,11 +3373,69 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     ]);
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 3, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
     const base = weaponOf(BASE_WEAPON_ID);
     const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
     expect(tir?.[6]).toBeCloseTo(base.damage * 1.1, 6);
+  });
+
+  /**
+   * Etape 13, tache 6 — **le scenario pour lequel `maxHpOf` a ete descendu
+   * dans `shared/loadout.ts`** : un porteur de Transcendance ET de Colosse.
+   *
+   * `localMaxHp` (le HUD) et le miroir de `shotDamage` dans `#fireOne`
+   * (§5.4, Colosse) appellent tous les deux `maxHpOf` — jamais une copie
+   * locale. Sans ce test, rien ne garde le second appel : un code qui
+   * recopierait encore `PLAYER_MAX_HP` en dur continuerait d'echelonner
+   * Colosse sur ~100 PV quand le serveur, lui, arbitre sur 1 — exactement la
+   * divergence que cette architecture (une seule regle, posee une seule
+   * fois, partagee par construction) est censee rendre impossible.
+   */
+  it('etape 13 : Transcendance ecrase Colosse, cote client comme au salon — aucune divergence', () => {
+    const COLOSSE = PASSIVES.find((p) => p.kind === 'colossus')?.id ?? -1;
+    const TRANSCENDANCE = PASSIVES.find((p) => p.rule === 'transcendance')?.id ?? -1;
+    const { client, socket } = setup(1);
+    grant(socket, { nature: CARD.PASSIVE, refId: COLOSSE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    grant(socket, { nature: CARD.PASSIVE, refId: TRANSCENDANCE }, [
+      { playerId: 1, cardIndex: 0, outcome: OUTCOME.WON },
+    ]);
+    // ⚠️ Le HUD d'abord : `localMaxHp` doit voir la regle, pas seulement le
+    // miroir de tir plus bas — les DEUX appels de `client.ts` sont en jeu.
+    expect(client.localMaxHp).toBe(TRANSCENDANCE_MAX_HP);
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    run(client, socket, 3, [
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
+    ]);
+    const base = weaponOf(BASE_WEAPON_ID);
+    const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
+    // ⚠️ **`TRANSCENDANCE_MAX_HP` (1) est bien sous `COLOSSUS_HP_STEP` (10)** :
+    // `Math.floor(1 / 10) === 0`, donc Colosse ne rend STRICTEMENT rien ici —
+    // pas moins que d'habitude, RIEN. Comparer a `base.damage` tout court
+    // (pas a `base.damage * 1.1`, la valeur du test jumeau sans
+    // Transcendance juste au-dessus) est ce qui ferait rougir un miroir
+    // encore branche sur `PLAYER_MAX_HP`.
+    expect(tir?.[6]).toBeCloseTo(base.damage, 6);
   });
 
   it('etape 10 : le miroir tire avec le VRAI tireur et son critique — comme le salon', () => {
@@ -3046,7 +3450,16 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     ]);
     const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
     run(client, socket, 3, [
-      { id: 1, x: 2000, y: 2000, hp: 100, aimX: 127, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      {
+        id: 1,
+        x: 2000,
+        y: 2000,
+        hp: 100,
+        aimX: 127,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      },
     ]);
     const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
     expect(tir?.[8]).toBe(1);
@@ -3197,6 +3610,7 @@ function runClientZoneScenario(params: {
       aimX: 0,
       aimY: 0,
       pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
     }));
     socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -3402,6 +3816,7 @@ describe('GameClient — zones et morts livrees ensemble (etape 5a, tache 6)', (
         aimX: 0,
         aimY: 0,
         pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
       }));
       socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -3551,6 +3966,7 @@ describe('GameClient — une zone qui meurt PENDANT un rejeu (etape 5a, tache 6)
         aimX: 0,
         aimY: 0,
         pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
       }));
       socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -3617,7 +4033,7 @@ function setupOneMonster(
   });
   socket.emit('message', {
     data: encodeSnapshot(0, 0, 0, [
-      { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+      { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS, shield: 0 },
     ]),
   });
   client.update(0, 1 / TICK_HZ);
@@ -3716,7 +4132,16 @@ describe('GameClient — la barre de Synergie (tache 9)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 777, 13, [
-        { id: 1, x: 10, y: 20, hp: 42, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 10,
+          y: 20,
+          hp: 42,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
 
@@ -3749,7 +4174,16 @@ describe('GameClient — la barre de Synergie (tache 9)', () => {
     socket.emit('message', { data: encodeWelcome(1, 0, 0) });
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 4, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
 
@@ -3858,7 +4292,15 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
     for (let tick = 1; tick <= 40 && marque === ELEMENT.NEUTRE; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            ...PLAYER,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
@@ -3890,7 +4332,15 @@ describe('GameClient — la teinte elementaire, cosmetique et approximee (tache 
     for (let tick = 1; tick <= 20 && !touche; tick++) {
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, ...PLAYER, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            ...PLAYER,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       client.update(tick * (1000 / TICK_HZ), 1 / TICK_HZ);
@@ -3945,6 +4395,7 @@ describe('GameClient — la teinte s eteint quand la ZONE meurt, pas quand le ta
             aimX: 0,
             aimY: 0,
             pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
           },
         ]),
       });
@@ -4058,6 +4509,7 @@ describe('GameClient — la charge du boss datee par tick (etape 6a, tache 5 bis
         aimX: 0,
         aimY: 0,
         pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
       }));
       socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
 
@@ -4540,8 +4992,25 @@ describe('GameClient — le miroir de l onde et de la frappe (etape 12)', () => 
       tick++;
       socket.emit('message', {
         data: encodeSnapshot(tick, 0, 0, [
-          { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
-          { id: 2, ...tireur, hp: 100, aimX: 1, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+          {
+            id: 1,
+            x: 0,
+            y: 0,
+            hp: 100,
+            aimX: 0,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
+          {
+            id: 2,
+            ...tireur,
+            hp: 100,
+            aimX: 1,
+            aimY: 0,
+            pickupRadius: ORB_PICKUP_RADIUS,
+            shield: 0,
+          },
         ]),
       });
       const now = tick * MS_PER_TICK;
@@ -4750,7 +5219,16 @@ describe('etape 11 : le client reconnait un coffre sans un octet de plus', () =>
     // Un tick fait naitre l'ordre (les ordres s'appliquent en tete d'`#advanceHorde`).
     socket.emit('message', {
       data: encodeSnapshot(0, 0, 0, [
-        { id: 1, x: 0, y: 0, hp: 100, aimX: 0, aimY: 0, pickupRadius: ORB_PICKUP_RADIUS },
+        {
+          id: 1,
+          x: 0,
+          y: 0,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
       ]),
     });
     client.update(0, STEP);

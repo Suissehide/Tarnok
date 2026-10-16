@@ -1,11 +1,5 @@
 import { applicationsOf, CARD, type Card } from '@shared/cards';
-import {
-  COLOSSUS_HP_STEP,
-  HARVEST_RADIUS,
-  PASSIVE_SLOTS,
-  TICK_HZ,
-  WEAPON_SLOTS,
-} from '@shared/constants';
+import { COLOSSUS_HP_STEP, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
 import { elementOf } from '@shared/elements';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type Passive, type PassiveKind, passiveOf } from '@shared/passives';
@@ -173,14 +167,16 @@ export function upgradeLabel(card: Card): string {
  * lit comme un bug. On dit donc la raison AVANT le clic, avec le compte des
  * slots. La regle elle-meme reste `canTake` — jamais recopiee ici, sinon
  * l'ecran et le serveur divergeraient a la premiere retouche.
+ *
+ * ⚠️ **Un passif n'est plus jamais bloque depuis l'etape 13** : `canTake` rend
+ * toujours `true` pour cette nature, donc cette fonction rend toujours `null`
+ * pour `CARD.PASSIVE` — seule l'arme garde une raison de refus a afficher.
  */
 export function blockedReason(card: Card, loadout: Loadout): string | null {
   if (loadout.canTake(card.nature, card.refId)) {
     return null;
   }
-  return card.nature === CARD.PASSIVE
-    ? `Passifs complets — ${loadout.passiveSlotsUsed}/${PASSIVE_SLOTS}`
-    : `Arsenal complet — ${loadout.weaponSlotsUsed}/${WEAPON_SLOTS} armes`;
+  return `Arsenal complet — ${loadout.weaponSlotsUsed}/${WEAPON_SLOTS} armes`;
 }
 
 /**
@@ -214,15 +210,22 @@ export function natureLabel(nature: number): string {
 }
 
 /** Le nom de chaque rarete, dans l'ordre de `RARITY`. */
-const RARITY_NAMES = ['Commune', 'Rare', 'Légendaire'] as const;
+export const RARITY_NAMES = ['Commune', 'Rare', 'Épique', 'Légendaire'] as const;
 
 /**
  * L'etiquette de rarete (etape 10, §2.5) : le nom ET ce que la carte vaut
- * vraiment — « Rare ×2 », « Légendaire ×3 ».
+ * vraiment — « Rare ×2 », et « Épique » ou « Légendaire » tout court.
  *
- * ⚠️ **Le multiplicateur vient de `applicationsOf`, jamais de la table des
- * raretes** : un passif exclusivement legendaire s'applique x1, et lui
- * ecrire « ×3 » serait promettre trois cartes qu'il ne donne pas.
+ * ⚠️ **Le ×N n'apparait que s'il y a vraiment plus d'une carte a promettre.**
+ * Depuis l'etape 13 le rare est le SEUL multiplicateur > 1 : les deux paliers
+ * hauts sont des cartes de REGLE, a x1, et leur ecrire un « ×3 » promettrait
+ * trois cartes qu'ils ne donnent pas.
+ *
+ * ⚠️ **Le compte vient de `applicationsOf`, pas d'une seconde table ici.** Il
+ * y eut un cas particulier a l'etape 10 — le passif « exclusivement
+ * legendaire » corrige a x1 contre une table qui disait x3 ; il a disparu avec
+ * `RARITY_MULTIPLIERS`, qui dit le x1 lui-meme. L'ecran ne connait donc plus
+ * d'exception : une arme legendaire s'annonce comme un passif legendaire.
  *
  * Vide pour une commune : la bordure grise dit deja tout.
  */
@@ -279,8 +282,14 @@ const UNITES: Record<PassiveKind, (magnitude: number) => string> = {
   salvo: (m) => `+${m} salve, armes de tir`,
   zone: (m) => `+${m} zone, toutes armes`,
   echo: (m) => `+${pourcent(m)} % dégâts de vos réactions`,
-  harvest: (m) => `+${m} PV par mort à ${HARVEST_RADIUS} px`,
   colossus: (m) => `+${pourcent(m)} % dégâts par ${COLOSSUS_HP_STEP} PV max`,
+  // Etape 13 : Hâte funeste est la seule carte qui porte ce genre, et
+  // seulement en MALUS (`Loadout.bonus` retranche la magnitude, voir
+  // `armorOf`). L'unite n'ecrit donc pas « armure » mais son EFFET au joueur —
+  // une fraction de degats SUBIS en plus, ce que `hurtPlayer` applique
+  // reellement (`back/src/combat.ts`). C'est aussi pourquoi `malusLabel` ne
+  // retourne pas son signe (voir son docbloc) : ce libelle est deja un cout.
+  armor: (m) => `+${pourcent(m)} % dégâts subis`,
 };
 
 /**
@@ -303,7 +312,45 @@ function pourcent(fraction: number): string {
  * completent : « +20 PV max » sur la carte, « vitalite ×4 » dans le coin.
  */
 export function magnitudeLabel(passive: Passive): string {
+  // Etape 13 : une carte de REGLE (Contagion, Transcendance) porte une
+  // magnitude nulle PAR CONVENTION — son effet n'est pas un nombre, son
+  // `kind` est decoratif (voir le docbloc de `Passive.rule`). L'afficher
+  // ecrirait « +0 zone, toutes armes », qui se lit comme un bonus mesure
+  // alors que rien ne l'est : une magnitude nulle ne s'affiche pas.
+  if (passive.magnitude === 0) {
+    return '';
+  }
   return UNITES[passive.kind](passive.magnitude);
+}
+
+/**
+ * Les genres dont l'unite dit DEJA le cout, sans retourner le signe d'un
+ * gain.
+ *
+ * ⚠️ **Le piege signale en revue.** `UNITES[kind](m).replace(/^\+/, '−')` dit
+ * vrai pour `maxHp` — Fournaise PERD 40 PV max, « −40 PV max » — mais ment
+ * pour `armor` : son unite n'est pas une jauge qu'on ampute, c'est deja un
+ * COUT ecrit a l'endroit, « +50 % dégâts subis ». L'inverser donnerait
+ * « −50 % dégâts subis », l'exact CONTRAIRE de ce que Hâte funeste fait
+ * subir. Le signe ne se retourne donc que pour les genres ou le malus retire
+ * un GAIN (maxHp aujourd'hui) ; `armor` garde le sien.
+ */
+const COUT_SANS_RETOURNEMENT: ReadonlySet<PassiveKind> = new Set(['armor']);
+
+/**
+ * Ce que la carte COUTE, ou `null` si elle ne coute rien.
+ *
+ * Reutilise `UNITES` : le malus et le bonus d'un meme genre se lisent dans la
+ * meme unite (voir la doc de `Passive.malus`), donc pas de seconde table a
+ * maintenir en parallele.
+ */
+export function malusLabel(passive: Passive): string | null {
+  const m = passive.malus;
+  if (!m) {
+    return null;
+  }
+  const texte = UNITES[m.kind](m.magnitude);
+  return COUT_SANS_RETOURNEMENT.has(m.kind) ? texte : texte.replace(/^\+/, '−');
 }
 
 /**
@@ -486,6 +533,18 @@ export class DraftScreen {
       tokens.className = 'draft-card__tokens';
 
       root.append(tokens, frame, rarete, nature, name, stacks, detail);
+
+      // Etape 13 : ce que la carte COUTE, sous sa magnitude — une passif
+      // sans malus n'ajoute rien a l'ecran.
+      if (card.nature === CARD.PASSIVE) {
+        const cout = malusLabel(passiveOf(card.refId));
+        if (cout !== null) {
+          const malus = document.createElement('span');
+          malus.className = 'draft-card__malus';
+          malus.textContent = cout;
+          root.append(malus);
+        }
+      }
 
       // Une carte que mon inventaire refuse : simplement GRISEE et inerte
       // (retour de playtest : un bandeau en plus chargeait la carte). La raison

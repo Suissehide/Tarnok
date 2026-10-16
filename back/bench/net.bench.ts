@@ -37,6 +37,7 @@ function fakeEntities(count: number): PlayerSnapshot[] {
     aimX: 90,
     aimY: -60,
     pickupRadius: ORB_PICKUP_RADIUS,
+    shield: 0,
   }));
 }
 

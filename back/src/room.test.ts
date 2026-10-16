@@ -37,8 +37,11 @@ import {
   PORTAL_WINDOW_TICKS,
   REACTION_DAMAGE,
   REACTION_RADIUS,
+  SHIELD_CALM_TICKS,
+  SHIELD_POOL,
   SYNERGY_MAX,
   TICK_HZ,
+  TRANSCENDANCE_MAX_HP,
   WAVES_PER_PALIER,
   WEAPON_SLOTS,
   WIPE_GOLD_KEPT,
@@ -81,7 +84,7 @@ import {
 import { generateObstacles } from '@shared/worldmap';
 import { describe, expect, it, vi } from 'vitest';
 
-import { REACTION_COOLDOWN_TICKS } from './combat';
+import { REACTION_COOLDOWN_TICKS, spreadMarkOnDeath } from './combat';
 import { type AccountGrants, type DraftOpenEvent, Room } from './room';
 import { WaveDirector } from './wave-director';
 
@@ -1932,7 +1935,29 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
       }
       for (const ouverture of room.drainDraftOpens()) {
         if (ouverture.cards.length > 0) {
-          room.setDraftToken(1, 0);
+          // ⚠️ **Ignore les cartes de REGLE** (etape 13, tache 6), plutot
+          // que d'accepter l'index 0 aveuglement. Ce test mesure l'or et les
+          // orbes ramasses ; il ne veut pas dependre de QUELLE carte sort au
+          // tirage AUTO. Transcendance (PV max a 1) l'a prouve : tombee sur
+          // ce joueur en plein balayage de contact, elle le tuait et l'or
+          // mesure retombait a zero — pas un bug de la carte, un accident de
+          // tirage que ce helper n'avait aucune raison de subir. C'est CE
+          // decouplage qui est le vrai correctif, pas la graine plus bas.
+          //
+          // ⚠️ **Elargi a `rule || malus` (etape 13, tache 7).** Fournaise
+          // porte un `malus` de 40 PV max, pas une `rule` — elle passait a
+          // travers le filtre `!rule` seul et pouvait retuer ce joueur
+          // simule en plein contact, exactement comme Transcendance avant
+          // elle. L'invariant reel : l'acceptation automatique ne doit
+          // jamais prendre une carte qui change la survie du joueur simule.
+          const index = ouverture.cards.findIndex((c) => {
+            if (c.nature !== CARD.PASSIVE) {
+              return true;
+            }
+            const p = passiveOf(c.refId);
+            return !p.rule && !p.malus;
+          });
+          room.setDraftToken(1, index >= 0 ? index : 0);
         }
       }
       room.drainDraftResults();
@@ -1985,7 +2010,22 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
    * nombre, et le taux ne serait garde par rien.
    */
   it('verse de l or a chaque piece ramassee, et rien pour les autres morts', () => {
-    const { ids, ramasses, or } = ramasseUneVague(910, 4 * COIN_DROP_ONE_IN);
+    // ⚠️ **`waveId` 912, pas 910** (etape 13, tache 6) — mais le VRAI
+    // correctif est dans `fermeLEtalage` plus haut, pas ici. Avec 910 et un
+    // tirage AUTO qui acceptait encore l'index 0 aveuglement, le joueur
+    // simule pouvait recevoir Transcendance (PV max a 1) en plein balayage
+    // de contact et mourir en chemin — un mort ne touche plus d'or (§9.3,
+    // le bon comportement, c'est la MESURE qui en patissait). Le pool
+    // legendaire a deux candidats depuis cette tache (Moisson, puis
+    // Transcendance) au lieu d'un : la carte qui ressort au tirage AUTO n'est
+    // plus garantie, et la tache suivante (Fournaise, Hate funeste,
+    // Contagion, retrait de Moisson) va encore faire bouger ce pool. Faire
+    // ignorer les cartes de regle par `fermeLEtalage` rend la mesure
+    // INDIFFERENTE a la composition du pool — c'est ce qui evite d'avoir a
+    // re-chasser un `waveId` a chaque catalogue touche. `912` est garde
+    // pour ne rien changer de plus que necessaire, mais `910` tiendrait tout
+    // aussi bien desormais.
+    const { ids, ramasses, or } = ramasseUneVague(912, 4 * COIN_DROP_ONE_IN);
     const piecesRamassees = ramasses.filter((id) => dropsCoin(id));
 
     // ⚠️ **L'or suit ce qui a ete RAMASSE, jamais ce qui est tombe.** Le
@@ -2090,6 +2130,15 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
   const VITALITE = parGenre('maxHp');
   const PAR_SECONDE = passiveOf(REGAIN).magnitude;
   const PAR_CARTE_MAX_HP = passiveOf(VITALITE).magnitude;
+
+  /** Fournaise (etape 13, tache 7) : la seule carte a malus de `maxHp` du catalogue. */
+  const FOURNAISE = (() => {
+    const trouve = PASSIVES.find((p) => p.malus?.kind === 'maxHp');
+    if (!trouve) {
+      throw new Error('fixture : aucun passif a malus de maxHp');
+    }
+    return trouve.id;
+  })();
 
   function prend(room: Room, playerId: number, id: number, n: number): void {
     const carte: Card = { nature: CARD.PASSIVE, refId: id };
@@ -2260,6 +2309,111 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     expect(hpOf(room, 1)).toBe(0);
     // Non-vacuite : la regeneration TOURNE pendant ces memes ticks.
     expect(hpOf(room, 2)).toBeGreaterThan(vieAvant);
+  });
+
+  /**
+   * Etape 13 : la borne de `grantCard` sur `maxHp` (§3.1 — un malus est un
+   * bonus negatif).
+   *
+   * ⚠️ **Le cas que cette tache corrige vraiment** — un joueur blesse qui
+   * prend une carte a malus de PV max et dont `hp += nouveauMax - maxHp`
+   * passait sous zero — demandait une carte a malus, et le catalogue n'en
+   * avait ENCORE AUCUNE. Les deux premiers tests verifient donc le CHEMIN
+   * INVERSE, celui que le catalogue d'alors permettait deja d'exercer : un
+   * maximum qui NE BOUGE PAS ne doit faire sauter ni descendre `hp` d'un
+   * seul point chez un joueur deja blesse, et un maximum qui MONTE continue
+   * de rendre exactement le delta, jamais plus. Les trois lignes de borne
+   * (`vivant`, `Math.min`, `Math.max`) sont des no-op sur ces deux chemins.
+   *
+   * **Fournaise (etape 13, tache 7) rend le troisieme test possible** : voir
+   * « Fournaise... » plus bas, LE test que cette borne attendait depuis le
+   * debut — un joueur BLESSE (pas mort) qui encaisse un malus de PV max.
+   *
+   * Le plancher du MORT, lui, se prouve des aujourd'hui : `debugResetLoadout`
+   * fait baisser un maximum sans carte a malus (voir le troisieme test).
+   */
+  it('une carte qui ne touche pas maxHp laisse les PV exactement en l etat, meme blesse', () => {
+    const room = new Room(0x0e_9e_0004);
+    room.join(1);
+    const blesse1 = blesse(room, 1, 700, 40);
+    const maxAvant = room.maxHpOf(1);
+
+    // REGAIN est de genre 'regen', jamais 'maxHp' : le recalcul de
+    // `grantCard` tourne (toute carte de passif le declenche), mais trouve
+    // un delta nul.
+    prend(room, 1, REGAIN, 1);
+
+    expect(room.maxHpOf(1)).toBe(maxAvant);
+    expect(hpOf(room, 1)).toBe(blesse1);
+  });
+
+  it('une carte de vitalite soigne un joueur blesse du meme delta que son maximum, sans jamais le depasser', () => {
+    const room = new Room(0x0e_9e_0005);
+    room.join(1);
+    const blesse1 = blesse(room, 1, 700, 40);
+    const maxAvant = room.maxHpOf(1);
+
+    prend(room, 1, VITALITE, 1);
+
+    expect(room.maxHpOf(1)).toBe(maxAvant + PAR_CARTE_MAX_HP);
+    expect(hpOf(room, 1)).toBe(blesse1 + PAR_CARTE_MAX_HP);
+    expect(hpOf(room, 1)).toBeLessThanOrEqual(room.maxHpOf(1));
+  });
+
+  /**
+   * ⚠️ **Le cas trouve en revue, et le seul des quatre qu'aucune carte a
+   * malus future ne suffira a exercer facilement** (il faut un mort ET un
+   * maximum qui baisse, deux conditions a la fois). `debugResetLoadout`
+   * fait baisser un maximum SANS carte a malus : un joueur qui a pris
+   * plusieurs Vitalite, puis meurt, puis se voit vider son inventaire,
+   * recalcule au prochain `grantCard` un maximum bien plus bas que celui
+   * qu'il avait — exactement ce qu'un futur malus fera, par un autre
+   * chemin.
+   *
+   * Sans le second plancher (`Math.max(vivant ? 1 : 0, hp)`), ce joueur
+   * ressortait a `hp` negatif : toujours mort pour la regle serveur
+   * (`hp <= 0`), mais un `hp` negatif que `shared/protocol.ts` encodait
+   * jusqu'ici SANS BORNE — voir le test jumeau de `protocol.test.ts`.
+   */
+  it('un joueur MORT ne descend jamais sous zero, meme quand un maximum baisse', () => {
+    const room = new Room(0x0e_9e_0006);
+    room.join(1);
+    prend(room, 1, VITALITE, 5);
+    const maxAvant = room.maxHpOf(1);
+    expect(maxAvant).toBeGreaterThan(PLAYER_MAX_HP);
+
+    room.debugKill(1);
+    expect(hpOf(room, 1)).toBe(0);
+
+    // Vide l'inventaire : la PROCHAINE carte de passif recalcule un maximum
+    // de joueur neuf, bien plus bas que celui d'avant.
+    room.debugResetLoadout(1);
+    prend(room, 1, REGAIN, 1);
+
+    expect(room.maxHpOf(1)).toBeLessThan(maxAvant);
+    expect(hpOf(room, 1)).toBe(0);
+  });
+
+  /**
+   * **LE test que la borne de `grantCard` attendait** (voir le docbloc du
+   * premier test de ce bloc) : un joueur BLESSE, pas mort, qui encaisse un
+   * malus de PV max.
+   *
+   * Sans le plancher (`Math.max(vivant ? 1 : 0, hp)`), ce joueur tombait a
+   * `30 + (60 - 100) = -10` — mort en acceptant sa carte, alors que la regle
+   * serveur veut qu'un BLESSE reste vivant a ce plancher.
+   */
+  it('Fournaise : un joueur blesse a 30 PV reste vivant, et sous son nouveau maximum', () => {
+    const room = new Room(0x0e_9e_0007);
+    room.join(1);
+    room.debugHurt(1, PLAYER_MAX_HP - 30);
+    expect(hpOf(room, 1)).toBe(30);
+
+    prend(room, 1, FOURNAISE, 1);
+
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP - 40);
+    expect(hpOf(room, 1)).toBeGreaterThan(0);
+    expect(hpOf(room, 1)).toBeLessThanOrEqual(room.maxHpOf(1));
   });
 });
 
@@ -3647,6 +3801,52 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
     // Le total, lui, fait foi dans le SNAPSHOT, et le client n'a rien a
     // recalculer.
     expect(reactions[reactions.length - 1]?.synergyCharge).toBe(true);
+  });
+
+  /**
+   * La regression que C1 a traversee (revue du coordinateur, etape 13) :
+   * une premiere version de `spreadMarkOnDeath` propageait l'ELEMENT sans
+   * son AUTEUR (`markBy: 0`). `0` n'est pas une marque neutre dans ce
+   * depot — c'est la sentinelle « aucun joueur » (`#freeId`,
+   * `back/src/server.ts`, les identites commencent a 1). Une marque de
+   * Contagion aurait donc TOUJOURS charge la Synergie des qu'un second
+   * element la declenchait (`markBy !== by` est vrai des que `by >= 1`),
+   * meme en SOLO — exactement ce que le docbloc de la comparaison, plus
+   * haut dans ce fichier, affirme impossible par construction.
+   */
+  it('Contagion propage l auteur de la marque, pas seulement l element : le meme joueur ne charge pas la Synergie', () => {
+    expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
+    const room = new Room(GRAINE);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 800, before.x + 100, before.y, LOURD);
+    // Increvable : c'est la reaction qui est comptee, pas la mise a mort.
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+
+    // Ce que Contagion fait vraiment : la Braise d'un mort saute sur `cible`,
+    // AVEC l'auteur de ce mort — ici le joueur 1 lui-meme.
+    const slot = room.horde.slotOf(cible);
+    const x = room.horde.x[slot] ?? 0;
+    const y = room.horde.y[slot] ?? 0;
+    spreadMarkOnDeath(room.horde, [x, y, ELEMENT.BRAISE, 1], room.tick);
+    expect(room.horde.markBy[slot]).toBe(1);
+
+    const reactions: ReturnType<Room['drainReactions']> = [];
+    for (let i = 0; i < 15 && reactions.length === 0; i++) {
+      // La marque se consomme a la reaction (§4.3) : la reposer chaque tick
+      // tant qu'elle n'a pas encore reagi evite de ne dependre que du tout
+      // premier tick de tir.
+      room.horde.applyMark(slot, ELEMENT.BRAISE, 1, room.tick);
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions.push(...room.drainReactions());
+    }
+
+    // Le joueur 1 declenche, avec son Givre, sur sa PROPRE marque propagee.
+    expect(reactions.length).toBeGreaterThan(0);
+    expect(reactions.every((r) => r.synergyCharge === false)).toBe(true);
+    expect(synergyOf(room)).toBe(0);
   });
 });
 
@@ -5585,8 +5785,10 @@ describe('etape 10 : la rarete multiplie la carte, soin de vitalite compris', ()
 
   it.each([
     [RARITY.RARE, 2],
-    [RARITY.LEGENDAIRE, 3],
-  ] as const)('une vitalite de rarete %i releve le plafond de %i cartes, et soigne d autant', (rarity, fois) => {
+    // Legendaire change une regle, elle ne se multiplie pas (`RARITY_MULTIPLIERS`
+    // vaut 1 a cet index) : un palier haut triple serait du decor.
+    [RARITY.LEGENDAIRE, 1],
+  ] as const)('une vitalite de rarete %i releve le plafond de %i carte(s), et soigne d autant', (rarity, fois) => {
     const room = new Room(0x10_0a_0101);
     room.join(1);
     room.grantCard(1, { nature: CARD.PASSIVE, refId: VITALITE, rarity });
@@ -5702,42 +5904,182 @@ describe('etape 10 : Echo dans le salon', () => {
   });
 });
 
-describe('etape 10 : Moisson dans le salon', () => {
-  const MOISSON = PASSIVES.find((p) => p.kind === 'harvest')?.id ?? -1;
+/** Un salon a un joueur, la reserve de bouclier deja ouverte ET PLEINE (debug, voir la tache 6). */
+function salonSoloAvecBouclier(): Room {
+  const room = new Room();
+  room.join(1);
+  room.debugSetMaxShield(1, SHIELD_POOL);
+  return room;
+}
+
+/** Avance le salon de `n` ticks a `DT` fixe — meme discipline que `stepOneSecond`. */
+function avanceTicks(room: Room, n: number): void {
+  for (let i = 0; i < n; i++) {
+    room.step(DT);
+  }
+}
+
+describe('etape 13 : la regeneration du bouclier', () => {
+  it('ne regenere pas avant le calme, puis remonte sans depasser la reserve', () => {
+    const room = salonSoloAvecBouclier();
+    room.debugHurt(1, 30);
+    const apresCoup = room.shieldOf(1);
+    // ⚠️ La reserve DOIT avoir mordu : sinon les assertions qui suivent
+    // comparent 0 a 0 et ne prouvent rien (c'est exactement le bug corrige
+    // ici — `debugSetMaxShield` remplit desormais la reserve, pas seulement
+    // son plafond).
+    expect(apresCoup).toBe(SHIELD_POOL - 30);
+    avanceTicks(room, SHIELD_CALM_TICKS - 1);
+    expect(room.shieldOf(1)).toBe(apresCoup);
+    avanceTicks(room, SHIELD_CALM_TICKS + TICK_HZ * 10);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL);
+  });
+
+  it('un coup pendant un calme en cours remet le compteur a zero', () => {
+    const room = salonSoloAvecBouclier();
+    room.debugHurt(1, 10);
+    // Presque au seuil, mais pas encore : aucune regeneration n'a eu lieu.
+    avanceTicks(room, SHIELD_CALM_TICKS - 1);
+    const avantSecondCoup = room.shieldOf(1);
+    expect(avantSecondCoup).toBe(SHIELD_POOL - 10);
+    room.debugHurt(1, 5);
+    // Si le second coup n'avait pas remis le calme a zero, ces ticks
+    // suffiraient largement a declencher la regeneration (le compteur serait
+    // deja a `SHIELD_CALM_TICKS - 1 + SHIELD_CALM_TICKS - 1`, bien au-dela du
+    // seuil) et la reserve remonterait au-dessus de `avantSecondCoup - 5`.
+    avanceTicks(room, SHIELD_CALM_TICKS - 1);
+    expect(room.shieldOf(1)).toBe(avantSecondCoup - 5);
+  });
 
   /**
-   * Blesse le joueur au contact, puis fait tuer par sa dague une proie a 100
-   * px. Rend ses PV. Deux salons identiques a la carte pres : l'ecart EST ce
-   * que Moisson a rendu.
+   * ⚠️ Le TRANSPORT, pas seulement l'etat interne : `shieldOf` lit
+   * `PlayerState` directement, ce qui ne prouve rien de l'octet ajoute au
+   * `SNAPSHOT`. Decoder le tampon reellement emis par `Room#snapshot` est ce
+   * qui garde `encodeSnapshot(..., shield: p.shield, ...)` — un `shield: 0`
+   * code en dur a cette ligne passerait tous les autres tests de ce fichier
+   * (`maxShield` vaut `0` partout ailleurs) sans faire rougir celui-ci.
    */
-  function pvApresUneMort(avecMoisson: boolean): number {
-    const room = new Room(0x10_0a_0801);
+  it('la reserve voyage sur le SNAPSHOT, pas seulement dans l etat interne', () => {
+    const room = salonSoloAvecBouclier();
+    room.debugHurt(1, 23);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL - 23);
+    const out = collector();
+    room.snapshot(out);
+    const buf = out.sent[0];
+    if (!buf) {
+      throw new Error('aucun snapshot emis');
+    }
+    const found = decodeSnapshot(buf).players.find((p) => p.id === 1);
+    expect(found?.shield).toBe(SHIELD_POOL - 23);
+  });
+
+  /**
+   * ⚠️ Le gel ne demande AUCUN cas particulier : `step` retourne avant tout
+   * degat pendant le gel et pendant un etalage ouvert, donc la regeneration,
+   * qui vit apres ce retour, ne tourne pas non plus. Ce test garde la
+   * propriete via une VRAIE montee de niveau (meme protocole que le test
+   * « gele le monde a la montee de niveau » plus haut), pas un champ interne
+   * pose a la main : c'est le gel reel (l'etalage reste ouvert tant
+   * qu'aucun jeton n'est pose, voir `encodeDraftOpen`) qui protege ici, pas
+   * un `#freezeUntilTick` artificiel.
+   */
+  it('ne regenere pas tant qu un etalage reste ouvert (vraie montee de niveau)', () => {
+    const room = new Room();
     room.join(1);
-    const depart = positionOf(room, 1);
-    const contact = spawnMonsterAt(room, 700, depart.x, depart.y);
-    for (let t = 0; t < 20; t++) {
+    room.debugSetMaxShield(1, SHIELD_POOL);
+    const before = positionOf(room, 1);
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2;
+      spawnMonsterAt(
+        room,
+        2000 + i,
+        before.x + Math.cos(angle) * 50,
+        before.y + Math.sin(angle) * 50,
+      );
+    }
+    room.debugHurt(1, 30);
+
+    let levelUps: { tick: number; level: number }[] = [];
+    let ticks = 0;
+    while (levelUps.length === 0 && ticks < 1000) {
+      aimAtNearestMonster(room, 1, ticks + 1);
       room.step(DT);
+      ticks++;
+      levelUps = levelUps.concat(room.drainLevelUps());
     }
-    // Retire HORS du chemin des morts : ce monstre-ci ne doit rien rendre.
-    room.horde.kill([contact]);
-    if (avecMoisson) {
-      room.grantCard(1, { nature: CARD.PASSIVE, refId: MOISSON });
-    }
-    const pos = positionOf(room, 1);
-    const proie = spawnMonsterAt(room, 701, pos.x + 100, pos.y);
-    room.horde.hp[room.horde.slotOf(proie)] = 0.01;
-    room.applyInput(1, 1, 0, 0, 127, 0);
-    for (let t = 0; t < 30 && room.horde.slotOf(proie) >= 0; t++) {
-      room.step(DT);
-    }
-    expect(room.horde.slotOf(proie)).toBe(-1);
-    return hpOf(room, 1);
+    expect(levelUps.length).toBeGreaterThan(0);
+
+    // L'etalage est bien ouvert : c'est LUI qui tient le gel, et en solo il
+    // ne se referme qu'au jeton pose (`encodeDraftOpen`).
+    const opens = room.drainDraftOpens();
+    expect(opens.length).toBe(1);
+
+    const apresLevelUp = room.shieldOf(1);
+    avanceTicks(room, SHIELD_CALM_TICKS + TICK_HZ * 10);
+    expect(room.shieldOf(1)).toBe(apresLevelUp);
+  });
+});
+
+describe('etape 13 : Transcendance', () => {
+  const TRANSCENDANCE = PASSIVES.find((p) => p.rule === 'transcendance')?.id;
+  const REGAIN = PASSIVES.find((p) => p.kind === 'regen')?.id;
+  if (TRANSCENDANCE === undefined || REGAIN === undefined) {
+    throw new Error('fixture : Transcendance ou Regain absents du catalogue');
   }
 
-  it('une mort a 100 px rend exactement 1 PV a qui porte Moisson', () => {
-    const sans = pvApresUneMort(false);
-    expect(sans).toBeLessThan(PLAYER_MAX_HP - 1);
-    expect(pvApresUneMort(true) - sans).toBe(1);
+  it('ramene les PV max a 1 et OUVRE la reserve, sans la remplir d un coup', () => {
+    const room = new Room();
+    room.join(1);
+    expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    expect(room.maxHpOf(1)).toBe(TRANSCENDANCE_MAX_HP);
+    expect(hpOf(room, 1)).toBe(TRANSCENDANCE_MAX_HP);
+    // ⚠️ La carte souleve le PLAFOND, elle ne remplit pas la reserve d'un
+    // coup comme `hp` plus haut : `shield` part a 0 (voir `join`) et ne
+    // remonte que par `#regenerateShield`, apres le calme habituel.
+    expect(room.shieldOf(1)).toBe(0);
+  });
+
+  it('Regain ne peut plus soigner au-dela de 1 : le plafond force prime sur la carte', () => {
+    const room = new Room();
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: REGAIN });
+    avanceTicks(room, TICK_HZ * 10);
+    expect(hpOf(room, 1)).toBe(TRANSCENDANCE_MAX_HP);
+  });
+
+  it('tout debordement du bouclier tue : un seul point de vie reste derriere', () => {
+    const room = new Room();
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    // Reserve pleine (debug), pour isoler le debordement du calme qui la remplit.
+    room.debugSetMaxShield(1, SHIELD_POOL);
+    room.debugHurt(1, SHIELD_POOL + 1);
+    expect(room.shieldOf(1)).toBe(0);
+    expect(hpOf(room, 1)).toBe(0);
+  });
+
+  /**
+   * Le piege du rapport : `debugRevive` (back/src/room.ts) ne restituait que
+   * `hp`. Sans consequence tant que `maxShield` valait `0` pour tout le
+   * monde ; un porteur de Transcendance ressuscite aurait garde une reserve
+   * entamee et un calme perime.
+   */
+  it('debugRevive restitue la reserve pleine, pas seulement les PV', () => {
+    const room = new Room();
+    room.join(1);
+    room.grantCard(1, { nature: CARD.PASSIVE, refId: TRANSCENDANCE });
+    // Reserve pleine (debug) avant le coup : `grantCard` l'ouvre mais ne la
+    // remplit pas (voir le test plus haut), et un coup sur une reserve a 0
+    // ne prouverait rien.
+    room.debugSetMaxShield(1, SHIELD_POOL);
+    room.debugHurt(1, 10);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL - 10);
+    room.debugKill(1);
+    room.debugRevive(1);
+    expect(hpOf(room, 1)).toBe(TRANSCENDANCE_MAX_HP);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL);
   });
 });
 

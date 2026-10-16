@@ -241,8 +241,9 @@ describe('etape 8 : le livrable, un verbe par classe, de PICK a l effet', () => 
 
   it('le SNAPSHOT ne grossit pas d un octet, verbes utilises ou non', async () => {
     // Nombres NUS : contrat de fil.
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(10);
-    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(62);
+    // Etape 13 (pactes, §3.4) : +1 octet par joueur, le bouclier — 10 -> 11, voulu.
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
+    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(66);
 
     const { clients } = await partie([{ classe: REMPART }]);
     const [c] = clients as [Client];

@@ -80,7 +80,7 @@ describe('la prediction bute sur le decor, comme le serveur', () => {
     const depart = rivage.x - 3 * FLOWFIELD_CELL;
     socket.emit(
       encodeSnapshot(0, 0, 0, [
-        { id: 1, x: depart, y: rivage.y, hp: 100, aimX: 0, aimY: 0, pickupRadius: 0 },
+        { id: 1, x: depart, y: rivage.y, hp: 100, aimX: 0, aimY: 0, pickupRadius: 0, shield: 0 },
       ]),
     );
     for (let t = 0; t < 3 * TICK_HZ; t++) {

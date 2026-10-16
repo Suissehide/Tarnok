@@ -1696,7 +1696,8 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     // plus » pour le `SNAPSHOT`, exactement comme `ZONE_BYTES` /
     // `REACTION_BYTES` plus bas le portent pour les deux autres lots.
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(10);
+    // Etape 13 (pactes, §3.4) : +1 octet par joueur, le bouclier — 10 -> 11, voulu.
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
     const snapshotAttendu = SNAPSHOT_HEADER_BYTES + PLAYER_COUNT * SNAPSHOT_PLAYER_BYTES;
 
     for (const banc of [vieux, neuf]) {

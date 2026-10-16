@@ -41,10 +41,35 @@ export const PASSIVE_KINDS = [
   'salvo',
   'zone',
   'echo',
-  'harvest',
   'colossus',
+  // Etape 13 : le genre existait deja cote boutique (`BonusKind`) et cote
+  // combat (`p.armor`) ; il n'etait simplement pas atteignable par une carte.
+  // Une carte ne s'en sert aujourd'hui que pour un MALUS.
+  'armor',
 ] as const;
 export type PassiveKind = (typeof PASSIVE_KINDS)[number];
+
+/**
+ * Les deux paliers reserves a des cartes de REGLE (etape 13, §2.2). Chacun a
+ * son PROPRE pool au tirage : une carte d'un palier ne sort que la.
+ */
+export type PassiveTier = 'epique' | 'legendaire';
+
+/**
+ * Une REGLE portee par une carte — ce qu'un malus chiffre ne peut pas dire.
+ *
+ * ⚠️ **« PV max -> 1 » n'est PAS `malus: { maxHp, 99 }`** : il doit resister a
+ * Vitalite et aux achats du compte, qui s'ajoutent apres. Meme idiome que
+ * `Weapon.kind` : un discriminant nomme dont la branche vit a un seul
+ * endroit par cote (`maxHpOf`/`maxShieldOf`, `shared/loadout.ts`).
+ *
+ * ⚠️ **`contagion` (etape 13) suit le meme idiome pour une raison differente** :
+ * ce n'est pas qu'un bonus chiffre ne peut pas la dire, c'est qu'elle n'a
+ * RIEN a sommer — son effet est une branche a la resolution des morts
+ * (`spreadMarkOnDeath`, `back/src/combat.ts`), lue via `Loadout.hasRule`,
+ * jamais via `Loadout.bonus`.
+ */
+export type PassiveRule = 'transcendance' | 'contagion';
 
 export interface Passive {
   id: number;
@@ -64,10 +89,34 @@ export interface Passive {
   magnitude: number;
   kind: PassiveKind;
   /**
-   * Exclusivement legendaire (etape 10, §4) : ne sort au tirage que sur un
-   * emplacement legendaire, et s'applique x1 — son effet est deja une regle.
+   * Le palier qui lui est RESERVE. Absent : carte ordinaire, qui ne sort que
+   * sur un emplacement commun ou rare.
+   *
+   * ⚠️ **Remplace le booleen « exclusivement legendaire » de l'etape 10.** Il
+   * ne pouvait pas dire « epique », et surtout il laissait la REGLE du x1 dans
+   * `cards.ts` au lieu de la mettre dans la table des raretes.
    */
-  legendary?: boolean;
+  tier?: PassiveTier;
+  /**
+   * Ce que la carte COUTE, dans les memes genres que ce qu'elle donne
+   * (etape 13, §3.1). `Loadout.bonus` le retranche.
+   *
+   * ⚠️ **Une magnitude POSITIVE qui se retranche**, pas une magnitude negative
+   * qui s'ajoute : la carte dit « je coute 40 PV max », et l'ecran l'affiche
+   * tel quel. Un signe porte par la donnee se perdrait au premier affichage.
+   */
+  malus?: { kind: PassiveKind; magnitude: number };
+  /**
+   * La regle que cette carte impose (voir `PassiveRule`). Absente : carte
+   * ordinaire, lue par `Loadout.bonus`.
+   *
+   * ⚠️ **`kind`/`magnitude` restent requis mais DEVIENNENT INERTES** chez une
+   * carte a regle : `maxHpOf` statue avant de lire `bonus('maxHp')`, qui ne
+   * voit donc jamais cette carte. `kind: 'maxHp'`, `magnitude: 0` par
+   * convention — le genre qu'elle concerne vraiment, un montant qui ne sert
+   * jamais.
+   */
+  rule?: PassiveRule;
 }
 
 /**
@@ -177,9 +226,18 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     kind: 'zone',
     magnitude: 1,
   },
-  // ---- Etape 10 : trois passifs EXCLUSIVEMENT LEGENDAIRES (§4) -------------
-  // Ils changent une regle : s'appliquent x1, ne sortent que sur un
-  // emplacement legendaire, prennent un emplacement de passif normal.
+  // ---- Les passifs de PALIER, trois par palier reserve (etape 13, §2.2) ---
+  // Chacun ne sort que sur un emplacement de SON palier — chaque palier a son
+  // propre pool. Ce qui les distingue d'une commune n'est jamais leur
+  // `kind` (voir le test « aucune carte de palier ne partage son genre ») :
+  // Écho et Colosse touchent une MECANIQUE qu'aucune commune ne lit deja
+  // (reactions, mise a l'echelle par les PV max) ; Contagion est une REGLE
+  // (`rule`) ; Fournaise et Hâte funeste coutent un MALUS qu'aucune commune
+  // ne porte.
+  //
+  // ⚠️ **Les deux premiers tenaient dans un seul tas a l'etape 10.** Le
+  // palier les separe : un palier sans aucune carte ferait redescendre tous
+  // ses emplacements, et aucun test ne pourrait plus rien y affirmer.
   {
     // +100 % des degats INSTANTANES des reactions que le porteur declenche
     // (`ReactionTrigger.by`), par carte. Serveur seul (`applyReactions`).
@@ -187,16 +245,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     label: 'Écho',
     kind: 'echo',
     magnitude: 1,
-    legendary: true,
-  },
-  {
-    // PV rendus par ennemi mort a moins de `HARVEST_RADIUS` du porteur, quel
-    // qu'en soit le tueur. Serveur seul (`resolveHarvest`).
-    name: 'moisson',
-    label: 'Moisson',
-    kind: 'harvest',
-    magnitude: 1,
-    legendary: true,
+    tier: 'epique',
   },
   {
     // Fraction de degats ajoutee par tranche de `COLOSSUS_HP_STEP` PV max
@@ -205,7 +254,64 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     label: 'Colosse',
     kind: 'colossus',
     magnitude: 0.01,
-    legendary: true,
+    tier: 'epique',
+  },
+  {
+    // ⚠️ Carte de REGLE (etape 13, tache 7) : AUCUN bonus/malus chiffre — voir
+    // le docbloc de `PassiveRule`. `kind`/`magnitude` restent par convention
+    // (inertes, jamais lus par `Loadout.bonus` pour cette carte) ; l'effet
+    // vit dans `spreadMarkOnDeath` (`back/src/combat.ts`), appele quand
+    // `Loadout.hasRule('contagion')` est vrai pour au moins un joueur.
+    name: 'contagion',
+    label: 'Contagion',
+    kind: 'zone',
+    magnitude: 0,
+    tier: 'epique',
+    rule: 'contagion',
+  },
+  {
+    // ⚠️ Carte de REGLE (etape 13, tache 6) : ramene les PV max a
+    // `TRANSCENDANCE_MAX_HP` (1) et ouvre a la place la reserve de
+    // `SHIELD_POOL`, voir `maxHpOf`/`maxShieldOf` (shared/loadout.ts). `kind`
+    // et `magnitude` sont inertes — la regle statue avant que `bonus('maxHp')`
+    // ne soit meme lu.
+    //
+    // ⚠️ **Trois consequences assumees, pas des bugs :** Vitalite devient
+    // inerte (elle releve un plafond force a 1), Regain aussi (il soigne des
+    // PV plafonnes a 1), et tout debordement du bouclier tue — il ne reste
+    // qu'un point de vie derriere. C'est le cout de la carte ; c'est pour ca
+    // que la regeneration du bouclier (`SHIELD_REGEN_PER_SEC`) est genereuse.
+    name: 'transcendance',
+    label: 'Transcendance',
+    kind: 'maxHp',
+    magnitude: 0,
+    tier: 'legendaire',
+    rule: 'transcendance',
+  },
+  {
+    // Molettes de playtest : +60 % de degats pour 40 PV max. `kind: 'damage'`
+    // est volontairement le MEME genre que « puissance »/« acier » — c'est ce
+    // qui fait lire ce bonus par la meme formule (`shotDamage`), sans code
+    // neuf — le malus de `maxHp` est ce qui la distingue d'une commune, pas
+    // son genre.
+    name: 'fournaise',
+    label: 'Fournaise',
+    kind: 'damage',
+    magnitude: 0.6,
+    tier: 'legendaire',
+    malus: { kind: 'maxHp', magnitude: 40 },
+  },
+  {
+    // Molettes de playtest : la recharge de moitie, les degats subis de
+    // moitie en plus. L'armure negative mord les QUATRE sources, parce que
+    // `hurtPlayer` est le point de passage unique (tache 3). Meme
+    // raisonnement que Fournaise pour `kind: 'fireRate'`.
+    name: 'hate-funeste',
+    label: 'Hâte funeste',
+    kind: 'fireRate',
+    magnitude: 0.5,
+    tier: 'legendaire',
+    malus: { kind: 'armor', magnitude: 0.5 },
   },
 ];
 

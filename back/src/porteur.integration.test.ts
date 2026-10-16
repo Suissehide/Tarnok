@@ -38,8 +38,11 @@ import { buildServer } from './server';
  */
 
 const ROOM_SEED = 0x11_c0_ff3e;
-/** 22 octets d'en-tete + 2 joueurs x 10 : ecrit NU, jamais recalcule (voir l'etape 10). */
-const SNAPSHOT_A_DEUX = 42;
+/**
+ * 22 octets d'en-tete + 2 joueurs x 11 (le bouclier des pactes, etape 13 §3.4) : ecrit NU,
+ * jamais recalcule (voir l'etape 10).
+ */
+const SNAPSHOT_A_DEUX = 44;
 
 type App = Awaited<ReturnType<typeof buildServer>>;
 

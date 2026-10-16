@@ -334,11 +334,11 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
     expect(room2.maxHpOf(c2.playerId)).toBe(PLAYER_MAX_HP + v.perLevel);
   });
 
-  it('le SNAPSHOT fait 62 octets a quatre joueurs, et ZONE/REACTION/DRAFT_OPEN ne bougent pas', async () => {
+  it('le SNAPSHOT fait 66 octets a quatre joueurs, et ZONE/REACTION/DRAFT_OPEN ne bougent pas', async () => {
     // ⚠️ **Nombres nus, par doctrine du depot** : ce sont des largeurs de fil,
     // pas des reglages de jeu. Verifiees contre le depot (amendement du
-    // controleur) : 22 + 4 * 10 = 62.
-    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(62);
+    // controleur) : 22 + 4 * 11 = 66 (11 depuis le bouclier des pactes, etape 13 §3.4).
+    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(66);
     expect(ZONE_BYTES).toBe(11);
     expect(REACTION_BYTES).toBe(11);
 

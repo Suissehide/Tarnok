@@ -1,6 +1,6 @@
 import type { AbilityUsed } from '@shared/abilities';
 import type { BossCharge } from '@shared/boss';
-import { LEVEL_XP_BASE, MAP_SIZE, TICK_HZ } from '@shared/constants';
+import { LEVEL_XP_BASE, MAP_SIZE, SHIELD_POOL, TICK_HZ } from '@shared/constants';
 import type { EnemyShot } from '@shared/enemy-shots';
 import type { Horde } from '@shared/horde';
 import type { Projectiles } from '@shared/projectiles';
@@ -752,6 +752,19 @@ export interface HudInfo {
   timer: string;
   /** Vrai pendant le gel de montee de niveau (tache 24) — voir `GameClient.isFrozen`. */
   frozen: boolean;
+  /**
+   * Reserve de bouclier du joueur LOCAL (etape 13), lue sur le SNAPSHOT
+   * (`PlayerSnapshot.shield`) — jamais sur `Loadout`, voir la vigilance 5 de
+   * `paintHud`.
+   */
+  shield: number;
+  /**
+   * Le plafond de cette reserve. `SHIELD_POOL` est une constante UNIQUE du
+   * catalogue (pas une magnitude de carte) : porter le nombre ici, plutot que
+   * de le relire depuis `@shared/constants` dans `hud.ts`, garde `HudInfo`
+   * comme la SEULE source que `paintHud` lit pour cette barre.
+   */
+  shieldPool: number;
 }
 
 /**
@@ -780,6 +793,8 @@ export function hudInfo(
     level,
     timer: formatTimer(hordeTick),
     frozen,
+    shield: me?.shield ?? 0,
+    shieldPool: SHIELD_POOL,
   };
 }
 
