@@ -5274,4 +5274,18 @@ describe('etape 13 : le bouclier absorbe avant les PV', () => {
     hurtPlayer(p, 1);
     expect(p.shieldCalmTicks).toBe(0);
   });
+
+  /**
+   * ⚠️ Un NON-coup ne remet rien a zero : une armure totale (1) rend `recu`
+   * nul, et `hurtPlayer` revient avant la ligne qui remettrait le calme a
+   * zero. Sans ce test, le `if (recu <= 0) return;` pourrait disparaitre
+   * sans qu'aucune assertion ne rougisse.
+   */
+  it('un coup entierement absorbe par l armure ne remet pas le calme a zero', () => {
+    const p = { hp: 100, shield: 40, shieldCalmTicks: 50, armor: 1 };
+    hurtPlayer(p, 40);
+    expect(p.shieldCalmTicks).toBe(50);
+    expect(p.shield).toBe(40);
+    expect(p.hp).toBe(100);
+  });
 });

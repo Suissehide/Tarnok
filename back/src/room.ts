@@ -1063,23 +1063,6 @@ export class Room {
     }
   }
 
-  /** Ecriture de test, meme statut que `debugSetGold` : avance le salon de `n` ticks a `dt` fixe. */
-  debugSteps(n: number): void {
-    for (let i = 0; i < n; i++) {
-      this.step(1 / TICK_HZ);
-    }
-  }
-
-  /**
-   * Ecriture de test, meme statut que `debugSetGold` : gele le salon `ticks`
-   * ticks et les ecoule, pour eprouver ce qui ne doit PAS avancer pendant un
-   * gel (la regeneration du bouclier, entre autres).
-   */
-  debugFreeze(ticks: number): void {
-    this.#freezeUntilTick = this.#tick + ticks;
-    this.debugSteps(ticks);
-  }
-
   /**
    * Le palier courant, `0` pour le premier — l'argument `k` des formules de
    * `shared/paliers.ts`.
@@ -1157,11 +1140,19 @@ export class Room {
    * bouclier d'un joueur avant que la tache 6 (Transcendance) ne le fasse en
    * jeu — cette tache livre un bouclier complet, mais `maxShield` vaut `0`
    * partout tant qu'aucune carte ne l'ouvre.
+   *
+   * ⚠️ **Remplit aussi `shield`, pas seulement le plafond.** `join` laisse
+   * `shield: 0` : sans ce remplissage, un test qui donne un coup juste apres
+   * comparerait 0 a 0, et ne prouverait jamais l'absorption. Aucun chemin de
+   * production n'a ce besoin — Transcendance (tache 6) posera `maxShield`
+   * sur un joueur qui a deja `shield: 0` a la jonction, et n'a donc rien a
+   * remplir.
    */
   debugSetMaxShield(playerId: number, maxShield: number): void {
     const p = this.#players.get(playerId);
     if (p) {
       p.maxShield = maxShield;
+      p.shield = maxShield;
     }
   }
 
@@ -2843,6 +2834,13 @@ export class Room {
    * ⚠️ **Appelee APRES les retours de gel et d'etalage de `step`** — c'est
    * la SEULE chose qui empeche une montee de niveau de recharger le bouclier
    * gratuitement, et aucune ligne ici n'en parle : voir la garde dans `step`.
+   *
+   * ⚠️ **Decale d'UN tick par rapport a `SHIELD_CALM_TICKS` ticks « sans
+   * degat ».** `hurtPlayer` remet `shieldCalmTicks` a zero puis CETTE methode
+   * l'incremente, dans la MEME passe de `step` que le coup : le tick du coup
+   * compte donc comme le premier des `SHIELD_CALM_TICKS`. La reserve reprend
+   * apres `SHIELD_CALM_TICKS - 1` ticks suivant celui du coup, pas
+   * `SHIELD_CALM_TICKS`.
    */
   #regenerateShield(): void {
     for (const p of this.#players.values()) {

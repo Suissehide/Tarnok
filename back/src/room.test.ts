@@ -5766,7 +5766,7 @@ describe('etape 10 : Moisson dans le salon', () => {
   });
 });
 
-/** Un salon a un joueur, la reserve de bouclier deja ouverte (debug, voir la tache 6). */
+/** Un salon a un joueur, la reserve de bouclier deja ouverte ET PLEINE (debug, voir la tache 6). */
 function salonSoloAvecBouclier(): Room {
   const room = new Room();
   room.join(1);
@@ -5774,28 +5774,110 @@ function salonSoloAvecBouclier(): Room {
   return room;
 }
 
+/** Avance le salon de `n` ticks a `DT` fixe — meme discipline que `stepOneSecond`. */
+function avanceTicks(room: Room, n: number): void {
+  for (let i = 0; i < n; i++) {
+    room.step(DT);
+  }
+}
+
 describe('etape 13 : la regeneration du bouclier', () => {
   it('ne regenere pas avant le calme, puis remonte sans depasser la reserve', () => {
     const room = salonSoloAvecBouclier();
     room.debugHurt(1, 30);
     const apresCoup = room.shieldOf(1);
-    room.debugSteps(SHIELD_CALM_TICKS - 1);
+    // ⚠️ La reserve DOIT avoir mordu : sinon les assertions qui suivent
+    // comparent 0 a 0 et ne prouvent rien (c'est exactement le bug corrige
+    // ici — `debugSetMaxShield` remplit desormais la reserve, pas seulement
+    // son plafond).
+    expect(apresCoup).toBe(SHIELD_POOL - 30);
+    avanceTicks(room, SHIELD_CALM_TICKS - 1);
     expect(room.shieldOf(1)).toBe(apresCoup);
-    room.debugSteps(SHIELD_CALM_TICKS + TICK_HZ * 10);
+    avanceTicks(room, SHIELD_CALM_TICKS + TICK_HZ * 10);
     expect(room.shieldOf(1)).toBe(SHIELD_POOL);
+  });
+
+  it('un coup pendant un calme en cours remet le compteur a zero', () => {
+    const room = salonSoloAvecBouclier();
+    room.debugHurt(1, 10);
+    // Presque au seuil, mais pas encore : aucune regeneration n'a eu lieu.
+    avanceTicks(room, SHIELD_CALM_TICKS - 1);
+    const avantSecondCoup = room.shieldOf(1);
+    expect(avantSecondCoup).toBe(SHIELD_POOL - 10);
+    room.debugHurt(1, 5);
+    // Si le second coup n'avait pas remis le calme a zero, ces ticks
+    // suffiraient largement a declencher la regeneration (le compteur serait
+    // deja a `SHIELD_CALM_TICKS - 1 + SHIELD_CALM_TICKS - 1`, bien au-dela du
+    // seuil) et la reserve remonterait au-dessus de `avantSecondCoup - 5`.
+    avanceTicks(room, SHIELD_CALM_TICKS - 1);
+    expect(room.shieldOf(1)).toBe(avantSecondCoup - 5);
+  });
+
+  /**
+   * ⚠️ Le TRANSPORT, pas seulement l'etat interne : `shieldOf` lit
+   * `PlayerState` directement, ce qui ne prouve rien de l'octet ajoute au
+   * `SNAPSHOT`. Decoder le tampon reellement emis par `Room#snapshot` est ce
+   * qui garde `encodeSnapshot(..., shield: p.shield, ...)` — un `shield: 0`
+   * code en dur a cette ligne passerait tous les autres tests de ce fichier
+   * (`maxShield` vaut `0` partout ailleurs) sans faire rougir celui-ci.
+   */
+  it('la reserve voyage sur le SNAPSHOT, pas seulement dans l etat interne', () => {
+    const room = salonSoloAvecBouclier();
+    room.debugHurt(1, 23);
+    expect(room.shieldOf(1)).toBe(SHIELD_POOL - 23);
+    const out = collector();
+    room.snapshot(out);
+    const buf = out.sent[0];
+    if (!buf) {
+      throw new Error('aucun snapshot emis');
+    }
+    const found = decodeSnapshot(buf).players.find((p) => p.id === 1);
+    expect(found?.shield).toBe(SHIELD_POOL - 23);
   });
 
   /**
    * ⚠️ Le gel ne demande AUCUN cas particulier : `step` retourne avant tout
    * degat pendant le gel et pendant un etalage ouvert, donc la regeneration,
    * qui vit apres ce retour, ne tourne pas non plus. Ce test garde la
-   * propriete, pas une ligne de code.
+   * propriete via une VRAIE montee de niveau (meme protocole que le test
+   * « gele le monde a la montee de niveau » plus haut), pas un champ interne
+   * pose a la main : c'est le gel reel (l'etalage reste ouvert tant
+   * qu'aucun jeton n'est pose, voir `encodeDraftOpen`) qui protege ici, pas
+   * un `#freezeUntilTick` artificiel.
    */
-  it('ne regenere pas pendant le gel de niveau', () => {
-    const room = salonSoloAvecBouclier();
+  it('ne regenere pas tant qu un etalage reste ouvert (vraie montee de niveau)', () => {
+    const room = new Room();
+    room.join(1);
+    room.debugSetMaxShield(1, SHIELD_POOL);
+    const before = positionOf(room, 1);
+    for (let i = 0; i < 10; i++) {
+      const angle = (i / 10) * Math.PI * 2;
+      spawnMonsterAt(
+        room,
+        2000 + i,
+        before.x + Math.cos(angle) * 50,
+        before.y + Math.sin(angle) * 50,
+      );
+    }
     room.debugHurt(1, 30);
-    const apresCoup = room.shieldOf(1);
-    room.debugFreeze(SHIELD_CALM_TICKS + TICK_HZ * 10);
-    expect(room.shieldOf(1)).toBe(apresCoup);
+
+    let levelUps: { tick: number; level: number }[] = [];
+    let ticks = 0;
+    while (levelUps.length === 0 && ticks < 1000) {
+      aimAtNearestMonster(room, 1, ticks + 1);
+      room.step(DT);
+      ticks++;
+      levelUps = levelUps.concat(room.drainLevelUps());
+    }
+    expect(levelUps.length).toBeGreaterThan(0);
+
+    // L'etalage est bien ouvert : c'est LUI qui tient le gel, et en solo il
+    // ne se referme qu'au jeton pose (`encodeDraftOpen`).
+    const opens = room.drainDraftOpens();
+    expect(opens.length).toBe(1);
+
+    const apresLevelUp = room.shieldOf(1);
+    avanceTicks(room, SHIELD_CALM_TICKS + TICK_HZ * 10);
+    expect(room.shieldOf(1)).toBe(apresLevelUp);
   });
 });

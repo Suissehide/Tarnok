@@ -650,9 +650,9 @@ export const NO_BOSS_ID = 0;
 export const BOSS_HP_MAX = 0xffff_ffff;
 /**
  * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8 · pickupRadius u8 ·
- * shield u8` — tache 7 de l'etape 7b : 9 -> 10 ; etape 13 : 10 -> 11. Pas de
- * xp ici, voir `PlayerSnapshot`. Tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de
- * l'etape 4 : 8 -> 9.
+ * shield u8` — pas de xp ici, voir `PlayerSnapshot`. Historique des tailles :
+ * tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de l'etape 4 : 8 -> 9 ; tache 7 de
+ * l'etape 7b : 9 -> 10 ; tache 5 de l'etape 13 : 10 -> 11.
  *
  * ⚠️ **`hp` est passe de `u8` a `u16` a la tache 8 de l'etape 4**, et ce
  * n'etait pas prevu au plan. Le passif « vitalite » ajoute 20 points de vie
@@ -693,6 +693,11 @@ export const BOSS_HP_MAX = 0xffff_ffff;
  * ⚠️ **Pas « seulement pour le porteur »** : `encodeSnapshot` construit UN
  * tampon pousse une fois pour tout le salon, donc un champ local demanderait
  * un encodage par client — du CPU par tick contre un octet par joueur.
+ *
+ * Le cout, comme pour `pickupRadius` ci-dessus : +1 octet par joueur et par
+ * snapshot, soit +4 octets a quatre joueurs — **+0,47 ko/s pour le salon a
+ * 30 Hz**, le meme chiffre qu'a la tache 7 de l'etape 7b (meme largeur
+ * ajoutee, meme calcul).
  */
 export const SNAPSHOT_PLAYER_BYTES = 11;
 export const WAVE_ORDER_BYTES = 19;

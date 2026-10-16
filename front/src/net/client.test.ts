@@ -314,6 +314,39 @@ describe('GameClient — hp du joueur local et xp d equipe', () => {
     },
   );
 
+  /**
+   * ⚠️ **Etape 13 : la valeur, pas seulement le champ.** `tsc` garantit deja
+   * que `shield` existe sur le joueur predit (`#localShield`) ; seule une
+   * valeur NON NULLE et NON PAR DEFAUT (33, ni 0 ni `ORB_PICKUP_RADIUS`-like)
+   * prouve que `#localShield` est bien lu depuis le dernier snapshot plutot
+   * que laisse a son defaut de construction.
+   */
+  it('reprend le bouclier du dernier snapshot pour le joueur local predit', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+
+    socket.emit('message', { data: encodeWelcome(1, 0, 0) });
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [
+        {
+          id: 1,
+          x: 10,
+          y: 20,
+          hp: 100,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 33,
+        },
+      ]),
+    });
+
+    const state = client.update(0, 0);
+
+    expect(state.players.find((p) => p.id === 1)).toMatchObject({ shield: 33 });
+  });
+
   it("reprend l'experience d'equipe du dernier snapshot, au niveau du RenderState", () => {
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
     client.connect();
