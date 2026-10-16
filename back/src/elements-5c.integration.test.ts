@@ -1064,6 +1064,18 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         room.horde.vx[slot] = 0;
         room.horde.vy[slot] = 0;
         room.horde.hp[slot] = 1e6;
+        // ⚠️ **La marque tourne sur ses quatre elements, a la main, depuis la
+        // recharge par ennemi** (`REACTION_COOLDOWN_TICKS`). La cible ne
+        // reagit plus qu'une fois par recharge, et au rythme fixe des quatre
+        // armes c'est toujours le meme couple qui part. Changer d'element
+        // marque a chaque reaction recue laisse les armes former les autres ;
+        // c'est toujours le joueur seul qui marque, et ses armes qui
+        // declenchent.
+        const n = reactionsDe(a).length;
+        const marque = SIENS[(n + Math.floor(n / SIENS.length)) % SIENS.length];
+        if (marque !== undefined) {
+          room.horde.applyMark(slot, marque, a.playerId, room.tick);
+        }
       }
       vise(a, OFFSET, 0);
     }, 8);
@@ -1684,15 +1696,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     // plus » pour le `SNAPSHOT`, exactement comme `ZONE_BYTES` /
     // `REACTION_BYTES` plus bas le portent pour les deux autres lots.
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
-    // ⚠️ **L'etape 13 a paye un octet, assume.** `SNAPSHOT_PLAYER_BYTES` passe
-    // de 10 a 11 : un `shield u8` dans l'enregistrement joueur, pour la carte
-    // Transcendance (PV max contre bouclier) — un bouclier arbitre serveur,
-    // qu'un client ne peut pas rederiver de son cote. Cout mesure : +0,12 ko/s
-    // par client (62 -> 66 octets, 30 fois/s) et +0,47 ko/s d'egress serveur
-    // pour un salon de quatre, soit environ 11 % du relevé de l'etape 3
-    // (1,09 ko/s par joueur). La garde reste vivante : elle interdit toujours
-    // qu'un octet s'ajoute sans qu'on en assume le cout, elle n'a fait
-    // qu'absorber celui-ci.
+    // Etape 13 (pactes, §3.4) : +1 octet par joueur, le bouclier — 10 -> 11, voulu.
     expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
     const snapshotAttendu = SNAPSHOT_HEADER_BYTES + PLAYER_COUNT * SNAPSHOT_PLAYER_BYTES;
 

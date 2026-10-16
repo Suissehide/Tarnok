@@ -801,15 +801,7 @@ describe('etape 7a tache 6 : la fin de run credite les comptes connectes', () =>
     expect(new Set(snap).size).toBe(1);
     expect(snap[0]).toBe(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES);
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
-    // ⚠️ **L'etape 13 a paye un octet, assume.** `SNAPSHOT_PLAYER_BYTES` passe
-    // de 10 a 11 : un `shield u8` dans l'enregistrement joueur, pour la carte
-    // Transcendance (PV max contre bouclier) — un bouclier arbitre serveur,
-    // qu'un client ne peut pas rederiver de son cote. Cout mesure : +0,12 ko/s
-    // par client (62 -> 66 octets, 30 fois/s) et +0,47 ko/s d'egress serveur
-    // pour un salon de quatre, soit environ 11 % du relevé de l'etape 3
-    // (1,09 ko/s par joueur). La garde reste vivante : elle interdit toujours
-    // qu'un octet s'ajoute sans qu'on en assume le cout, elle n'a fait
-    // qu'absorber celui-ci.
+    // Etape 13 (pactes, §3.4) : +1 octet par joueur, le bouclier — 10 -> 11, voulu.
     expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
     expect(ZONE_BYTES).toBe(11);
     expect(REACTION_BYTES).toBe(11);
