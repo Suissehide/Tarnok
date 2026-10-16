@@ -334,11 +334,20 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
     expect(room2.maxHpOf(c2.playerId)).toBe(PLAYER_MAX_HP + v.perLevel);
   });
 
-  it('le SNAPSHOT fait 62 octets a quatre joueurs, et ZONE/REACTION/DRAFT_OPEN ne bougent pas', async () => {
+  it('le SNAPSHOT fait 66 octets a quatre joueurs, et ZONE/REACTION/DRAFT_OPEN ne bougent pas', async () => {
     // ⚠️ **Nombres nus, par doctrine du depot** : ce sont des largeurs de fil,
     // pas des reglages de jeu. Verifiees contre le depot (amendement du
-    // controleur) : 22 + 4 * 10 = 62.
-    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(62);
+    // controleur) : 22 + 4 * 11 = 66.
+    // ⚠️ **L'etape 13 a paye un octet, assume.** `SNAPSHOT_PLAYER_BYTES` passe
+    // de 10 a 11 : un `shield u8` dans l'enregistrement joueur, pour la carte
+    // Transcendance (PV max contre bouclier) — un bouclier arbitre serveur,
+    // qu'un client ne peut pas rederiver de son cote. Cout mesure : +0,12 ko/s
+    // par client (62 -> 66 octets, 30 fois/s) et +0,47 ko/s d'egress serveur
+    // pour un salon de quatre, soit environ 11 % du relevé de l'etape 3
+    // (1,09 ko/s par joueur). La garde reste vivante : elle interdit toujours
+    // qu'un octet s'ajoute sans qu'on en assume le cout, elle n'a fait
+    // qu'absorber celui-ci.
+    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(66);
     expect(ZONE_BYTES).toBe(11);
     expect(REACTION_BYTES).toBe(11);
 

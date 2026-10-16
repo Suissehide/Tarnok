@@ -241,8 +241,17 @@ describe('etape 8 : le livrable, un verbe par classe, de PICK a l effet', () => 
 
   it('le SNAPSHOT ne grossit pas d un octet, verbes utilises ou non', async () => {
     // Nombres NUS : contrat de fil.
-    expect(SNAPSHOT_PLAYER_BYTES).toBe(10);
-    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(62);
+    // ⚠️ **L'etape 13 a paye un octet, assume.** `SNAPSHOT_PLAYER_BYTES` passe
+    // de 10 a 11 : un `shield u8` dans l'enregistrement joueur, pour la carte
+    // Transcendance (PV max contre bouclier) — un bouclier arbitre serveur,
+    // qu'un client ne peut pas rederiver de son cote. Cout mesure : +0,12 ko/s
+    // par client (62 -> 66 octets, 30 fois/s) et +0,47 ko/s d'egress serveur
+    // pour un salon de quatre, soit environ 11 % du relevé de l'etape 3
+    // (1,09 ko/s par joueur). La garde reste vivante : elle interdit toujours
+    // qu'un octet s'ajoute sans qu'on en assume le cout, elle n'a fait
+    // qu'absorber celui-ci.
+    expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
+    expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(66);
 
     const { clients } = await partie([{ classe: REMPART }]);
     const [c] = clients as [Client];
