@@ -5,7 +5,7 @@ import { Rectangle } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
 import { BLAST_FLASH_MS, RAISE_FLASH_MS } from '../net/client';
-import { behaviorShapes } from './behavior-renderer';
+import { behaviorShapes, PORTEUR_RING_RADIUS } from './behavior-renderer';
 
 const idOf = (behavior: string): number => ARCHETYPES.findIndex((a) => a.behavior === behavior);
 
@@ -61,5 +61,32 @@ describe('behaviorShapes', () => {
     const releve = [{ x: 50, y: 60, bornMs: 0, kind: 'releve' as const }];
     expect(behaviorShapes(new Horde(1), releve, view, BLAST_FLASH_MS)[0]?.kind).toBe('releve');
     expect(behaviorShapes(new Horde(1), releve, view, RAISE_FLASH_MS)).toEqual([]);
+  });
+});
+
+describe('etape 11 : l or du porteur', () => {
+  const view = new Rectangle(0, 0, 800, 600);
+
+  it('un anneau et un coffre par porteur dans le cadre, aucun hors du cadre', () => {
+    const horde = hordeAt([
+      { x: 100, y: 100, behavior: 'porteur' },
+      { x: 9000, y: 9000, behavior: 'porteur' },
+    ]);
+    expect(behaviorShapes(horde, [], view, 0)).toEqual([
+      { kind: 'coffre', x: 100, y: 100, radius: PORTEUR_RING_RADIUS, alpha: 1 },
+    ]);
+  });
+
+  it('en permanence : a l arret comme en fuite', () => {
+    const horde = hordeAt([{ x: 100, y: 100, behavior: 'porteur' }]);
+    horde.fleeing[0] = 1;
+    expect(behaviorShapes(horde, [], view, 0).map((s) => s.kind)).toEqual(['coffre']);
+  });
+
+  it('un voleur ordinaire n a pas de coffre, et son butin ne sort toujours qu en fuite', () => {
+    const horde = hordeAt([{ x: 100, y: 100, behavior: 'voleur' }]);
+    expect(behaviorShapes(horde, [], view, 0)).toEqual([]);
+    horde.fleeing[0] = 1;
+    expect(behaviorShapes(horde, [], view, 0).map((s) => s.kind)).toEqual(['butin']);
   });
 });
