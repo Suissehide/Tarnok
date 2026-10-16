@@ -296,7 +296,7 @@ export function guideRules(): { titre: string; lignes: string[] }[] {
       titre: 'Emplacements',
       lignes: [
         `${WEAPON_SLOTS} armes au maximum. Les passifs, eux, ne sont pas limités.`,
-        'Empiler ce que vous possédez déjà ne prend aucun emplacement de plus.',
+        'Reprendre une arme que vous avez déjà ne prend aucun emplacement : elle s’empile.',
       ],
     },
     {
