@@ -15,6 +15,7 @@ const calme: CueSnapshot = {
   pings: 0,
   lastPingIntent: -1,
   porteurs: 0,
+  evenements: 0,
 };
 
 describe('cuesBetween — le son se deduit de ce qui change', () => {
@@ -69,5 +70,12 @@ describe('cuesBetween — le son se deduit de ce qui change', () => {
     // Le LEVEL_UP d'un coffre porte le niveau d'avant-meme-tick (pas une vraie
     // montee) : la garantie est cote serveur, voir back/src/room.test.ts, test
     // "coffre et niveau dus au MEME tick...", niveau 1 puis 2 sur le meme tick.
+  });
+
+  it('etape 14 : un evenement annonce sonne une fois ; sa reussite ne joue pas le son de niveau', () => {
+    expect(cuesBetween(calme, { ...calme, evenements: 1 })).toEqual(['evenement']);
+    expect(cuesBetween({ ...calme, evenements: 1 }, { ...calme, evenements: 1 })).toEqual([]);
+    // Le LEVEL_UP d'un evenement ne monte pas le niveau : rien a jouer.
+    expect(cuesBetween(calme, { ...calme, level: calme.level })).toEqual([]);
   });
 });

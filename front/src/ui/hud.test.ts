@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { EVENT_KIND } from '@shared/evenements';
 import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { beforeEach, describe, expect, it } from 'vitest';
@@ -8,9 +9,11 @@ import { beforeEach, describe, expect, it } from 'vitest';
 // que `draft.test.ts` — c'est ce qui permet de verifier le CABLAGE vers
 // `index.html` et pas seulement la fonction qui ecrit dedans.
 import indexHtml from '../../index.html?raw';
+import type { EventView } from '../net/client';
 import type { HudInfo } from '../render/stage';
 import {
   type AbilityElements,
+  eventStatusText,
   type HudElements,
   type HudSource,
   paintAbility,
@@ -67,6 +70,9 @@ describe('le cablage vers index.html', () => {
     // Etape 13 : la barre de bouclier, posee sur celle des PV.
     expect(document.getElementById('hud-shield')).not.toBeNull();
     expect(document.getElementById('hud-shield-fill')).not.toBeNull();
+    // Etape 14 : le bandeau d'evenement et son etat.
+    expect(document.getElementById('hud-evenement')).not.toBeNull();
+    expect(document.getElementById('hud-evenement-etat')).not.toBeNull();
   });
 });
 
@@ -167,6 +173,8 @@ function hudElements(): HudElements {
     gold: pick('hud-gold'),
     freeze: pick('hud-freeze'),
     porteur: pick('hud-porteur'),
+    evenement: pick('hud-evenement'),
+    evenementEtat: pick('hud-evenement-etat'),
     passiveList: pick('hud-passive-list'),
     hpFill: pick('hud-hp-fill'),
     shield: pick('hud-shield'),
@@ -213,6 +221,9 @@ class FakeSource implements HudSource {
   kills = 0;
   draftIsChest = false;
   porteurBannerOn = false;
+  draftIsEvent = false;
+  eventBanner: string | null = null;
+  event: EventView | null = null;
   readonly loadouts = new Map<number, Loadout>();
 
   loadoutOf(playerId: number): Loadout {
@@ -536,5 +547,59 @@ describe('paintAbility — la case du verbe', () => {
       vues.add(el.icon.getAttribute('src') ?? '');
     }
     expect(vues.size).toBe(4);
+  });
+});
+
+describe('etape 14 : l evenement au HUD', () => {
+  const forge: EventView = {
+    kind: EVENT_KIND.FORGE,
+    points: [{ x: 1, y: 2 }],
+    progress: 0.62,
+    secondsLeft: 40.2,
+    cart: null,
+    cartHp: 0,
+  };
+
+  it('eventStatusText : « La forge — 62 % — 0:41 », « Le convoi — 40 % — chariot 70 % — 0:33 »', () => {
+    expect(eventStatusText(forge)).toBe('La forge — 62 % — 0:41');
+    expect(
+      eventStatusText({
+        kind: EVENT_KIND.CONVOI,
+        points: [],
+        progress: 0.4,
+        secondsLeft: 32.5,
+        cart: { x: 0, y: 0 },
+        cartHp: 0.7,
+      }),
+    ).toBe('Le convoi — 40 % — chariot 70 % — 0:33');
+    expect(eventStatusText({ ...forge, kind: EVENT_KIND.SCEAUX, progress: 0 })).toBe(
+      'Les sceaux — 0 % — 0:41',
+    );
+  });
+
+  it('le bandeau de gel dit « Événement » pendant un etalage d evenement, « Coffre » d abord', () => {
+    const el = hudElements();
+    const source = new FakeSource();
+    source.draftIsEvent = true;
+    paintHud(el, { ...INFO, frozen: true }, 0, 0, source);
+    expect(el.freeze.textContent).toBe('Événement — pause…');
+    source.draftIsChest = true;
+    paintHud(el, { ...INFO, frozen: true }, 0, 0, source);
+    expect(el.freeze.textContent).toBe('Coffre — pause…');
+  });
+
+  it('le bandeau passager suit eventBanner, l etat suit event', () => {
+    const el = hudElements();
+    const source = new FakeSource();
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.evenement?.classList.contains('hidden')).toBe(true);
+    expect(el.evenementEtat?.classList.contains('hidden')).toBe(true);
+    source.eventBanner = "La forge s'allume !";
+    source.event = forge;
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.evenement?.classList.contains('hidden')).toBe(false);
+    expect(el.evenement?.textContent).toBe("La forge s'allume !");
+    expect(el.evenementEtat?.classList.contains('hidden')).toBe(false);
+    expect(el.evenementEtat?.textContent).toBe('La forge — 62 % — 0:41');
   });
 });

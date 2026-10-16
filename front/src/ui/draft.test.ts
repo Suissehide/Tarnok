@@ -47,6 +47,7 @@ class FakeClient implements DraftSource {
   isFrozen = false;
   level?: number;
   draftIsChest?: boolean;
+  draftIsEvent?: boolean;
   /** Absent par defaut, comme chez les doubles qui n'ont pas de miroir d'inventaire. */
   loadoutOf?(playerId: number): Loadout;
   /** Ce qui est parti sur le fil — c'est la seule chose que l'ecran envoie. */
@@ -998,6 +999,27 @@ describe('etape 11 : le titre d un coffre', () => {
     h.client.draftCards = spread();
     h.client.level = 7;
     h.client.draftIsChest = false;
+    ecran.update();
+    expect(titre.textContent).toBe('Niveau 7');
+    h.client.draftIsChest = true;
+    ecran.update();
+    expect(titre.textContent).toBe('Coffre');
+  });
+});
+
+describe('etape 14 : le titre d un etalage d evenement', () => {
+  it('« Événement » pour un etalage d evenement, « Coffre » et « Niveau N » inchanges', () => {
+    const h = harness();
+    const titre = document.createElement('span');
+    titre.id = 'draft-title';
+    h.root.prepend(titre);
+    const ecran = new DraftScreen(h.root, h.status, h.list, h.client);
+    h.client.draftCards = spread();
+    h.client.level = 7;
+    h.client.draftIsEvent = true;
+    ecran.update();
+    expect(titre.textContent).toBe('Événement');
+    h.client.draftIsEvent = false;
     ecran.update();
     expect(titre.textContent).toBe('Niveau 7');
     h.client.draftIsChest = true;
