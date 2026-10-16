@@ -130,14 +130,14 @@
 
   .bg-menu::before,
   .bg-menu::after {
-    content: '';
+    content: "";
     position: absolute;
     top: 0;
     bottom: 0;
     z-index: -1;
     /* Jamais plus large que sa moitie de planche : au-dela, l'autre moitie. */
     width: min(50%, var(--menu-h) * 1248 / 800);
-    background: url('/tinyswords/UI/MenuBackground.png') 0 0 / auto var(--menu-h) repeat-y;
+    background: url("/tinyswords/UI/MenuBackground.png") 0 0 / auto var(--menu-h) repeat-y;
   }
 
   .bg-menu::before {
