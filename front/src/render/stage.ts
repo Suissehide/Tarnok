@@ -526,6 +526,7 @@ export class Stage {
     tick: number,
     _timeMs: number,
     porteur: { x: number; y: number } | null = null,
+    event: EventView | null = null,
   ): void {
     const me = players.find((p) => p.id === localId);
     const allies = me
@@ -540,6 +541,7 @@ export class Stage {
       this.#app.screen.width,
       this.#app.screen.height,
       porteur,
+      event,
     );
   }
 

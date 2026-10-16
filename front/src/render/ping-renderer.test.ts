@@ -1,8 +1,9 @@
+import { EVENT_KIND } from '@shared/evenements';
 import { PING_LIFE_TICKS } from '@shared/ping';
 import { Container, type Graphics } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
-import type { ActivePing } from '../net/client';
+import type { ActivePing, EventView } from '../net/client';
 import { COIN_TINT } from './orb-renderer';
 import { allyArrowScale, edgeArrow, livePings, PingRenderer } from './ping-renderer';
 
@@ -115,5 +116,56 @@ describe('etape 11 : la fleche du porteur', () => {
   it('rien pour un porteur dans le champ, rien sans porteur', () => {
     expect(remplissagesOr({ x: 400, y: 300 })).toBe(0);
     expect(remplissagesOr(null)).toBe(0);
+  });
+});
+
+describe('etape 14 : les fleches d un evenement', () => {
+  /** Les remplissages OR du calque ECRAN par un `draw` sans ping, sans allie ni porteur. */
+  function flechesOr(event: EventView | null): number {
+    const r = new PingRenderer(() => 0xffffff);
+    const ecran = new Container();
+    r.attachScreen(ecran);
+    r.draw([], [], (x, y) => ({ x, y }), 800, 600, null, event);
+    const g = ecran.children[0] as Graphics;
+    return g.context.instructions.filter(
+      (i) =>
+        i.action === 'fill' && (i.data as { style: { color: number } }).style.color === COIN_TINT,
+    ).length;
+  }
+  const base = { progress: 0, secondsLeft: 60, cart: null, cartHp: 1 };
+
+  it('une fleche or par sceau HORS champ, aucune pour un sceau dans le champ', () => {
+    expect(
+      flechesOr({
+        ...base,
+        kind: EVENT_KIND.SCEAUX,
+        points: [
+          { x: 5000, y: 300 },
+          { x: -900, y: 300 },
+          { x: 400, y: 300 },
+        ],
+      }),
+    ).toBe(2);
+  });
+
+  it('la forge hors champ : une fleche', () => {
+    expect(flechesOr({ ...base, kind: EVENT_KIND.FORGE, points: [{ x: 400, y: 4000 }] })).toBe(1);
+  });
+
+  it('le convoi : une fleche vers le CHARIOT hors champ, jamais vers l arrivee', () => {
+    const convoi = {
+      ...base,
+      kind: EVENT_KIND.CONVOI,
+      points: [
+        { x: 400, y: 300 },
+        { x: 5000, y: 300 },
+      ],
+    };
+    expect(flechesOr({ ...convoi, cart: { x: 400, y: 300 } })).toBe(0);
+    expect(flechesOr({ ...convoi, cart: { x: 5000, y: 5000 } })).toBe(1);
+  });
+
+  it('rien sans evenement', () => {
+    expect(flechesOr(null)).toBe(0);
   });
 });

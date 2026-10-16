@@ -233,6 +233,7 @@ export interface FrameStage {
     tick: number,
     timeMs: number,
     porteur: { x: number; y: number } | null,
+    event: EventView | null,
   ): void;
 }
 
@@ -370,6 +371,7 @@ export function composeFrame(
     client.pingClock,
     now,
     client.porteur ?? null,
+    client.event ?? null,
   );
   // ⚠️ **APRES `draw`, qui recentre la camera sur le joueur** : la secousse est
   // un decalage par-dessus le cadrage, pas un cadrage concurrent.

@@ -484,6 +484,7 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       client.pingClock,
       NOW,
       client.porteur,
+      client.event,
     ]);
     const ordre = stage.order;
     // Apres `draw` (qui recentre la camera) : sinon les fleches auraient une
