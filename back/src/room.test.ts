@@ -6,6 +6,8 @@ import {
   HEAVY_ARMOR,
   HEAVY_HP,
   LIGHT_HP,
+  PORTEUR_ARCHETYPE,
+  PORTEUR_HP,
 } from '@shared/archetypes';
 import {
   BOSS_CHARGE_COOLDOWN_TICKS,
@@ -77,6 +79,7 @@ import { generateObstacles } from '@shared/worldmap';
 import { describe, expect, it, vi } from 'vitest';
 
 import { type AccountGrants, type DraftOpenEvent, Room } from './room';
+import { WaveDirector } from './wave-director';
 
 const DT = 1 / TICK_HZ;
 
@@ -3903,6 +3906,11 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
       }
       room.step(DT);
       for (const o of room.drainWaveOrders()) {
+        // Le porteur (etape 11) nait aussi en vague de count 1 : seconde
+        // exception, nommee, exclue des deux compteurs (ni boss ni ordinaire).
+        if (o.archetype === PORTEUR_ARCHETYPE) {
+          continue;
+        }
         if (o.count === 1) {
           ordresBoss++;
         } else {
@@ -4069,7 +4077,9 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
       for (const o of room.drainWaveOrders()) {
         if (room.bossEntityId !== null && entityIdOf(o.waveId, 0) === room.bossEntityId) {
           ordreBoss = o;
-        } else {
+        } else if (o.archetype !== PORTEUR_ARCHETYPE) {
+          // Le porteur (etape 11) est une seconde exception a « count 1 =
+          // boss » : nommee, exclue plutot que de casser l'hypothese du test.
           ordinaires.push(o);
         }
       }
@@ -5537,5 +5547,176 @@ describe('etape 10 : Moisson dans le salon', () => {
     const sans = pvApresUneMort(false);
     expect(sans).toBeLessThan(PLAYER_MAX_HP - 1);
     expect(pvApresUneMort(true) - sans).toBe(1);
+  });
+});
+
+describe('etape 11 : le porteur de coffre dans le salon', () => {
+  /**
+   * Retire tout sauf `garder`, HORS du lot de morts : ni XP, ni or, ni joueur
+   * submerge. Le decor mesure le coffre, pas la survie d'un joueur passif.
+   */
+  function viderSauf(room: Room, garder: number | null): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      const id = room.horde.entityIdAt(i);
+      if (id !== garder) {
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  /** Avance jusqu'a l'ordre du porteur (2e vague, tick 360) ; rend son identite. */
+  function jusquAuPorteur(room: Room): number {
+    for (let t = 0; t < 30 * TICK_HZ; t++) {
+      room.step(DT);
+      const ordre = room.drainWaveOrders().find((o) => o.archetype === PORTEUR_ARCHETYPE);
+      if (ordre) {
+        const id = entityIdOf(ordre.waveId, 0);
+        viderSauf(room, id);
+        return id;
+      }
+      viderSauf(room, null);
+    }
+    throw new Error('aucun porteur en 30 s');
+  }
+
+  /** Le pose a 60 px du joueur 1, presque mort, et le fait abattre par la visee. */
+  function abattrePorteur(room: Room, id: number): void {
+    const slot = room.horde.slotOf(id);
+    const pos = positionOf(room, 1);
+    room.horde.x[slot] = pos.x + 60;
+    room.horde.y[slot] = pos.y;
+    room.horde.hp[slot] = 0.001;
+    for (let t = 0; t < 4 * TICK_HZ; t++) {
+      const s = room.horde.slotOf(id);
+      if (s >= 0) {
+        const p = positionOf(room, 1);
+        const dx = (room.horde.x[s] ?? 0) - p.x;
+        const dy = (room.horde.y[s] ?? 0) - p.y;
+        const n = Math.hypot(dx, dy) || 1;
+        room.applyInput(1, room.tick + 1, 0, 0, (dx / n) * 127, (dy / n) * 127);
+      }
+      room.step(DT);
+      const morts = room.drainDeaths();
+      viderSauf(room, id);
+      if (morts.some((m) => m.ids.includes(id))) {
+        return;
+      }
+    }
+    throw new Error('le porteur n est pas tombe en 4 s');
+  }
+
+  it('nait a la 2e vague avec PORTEUR_HP a l echelle du palier : 200 au palier 0', () => {
+    const room = new Room(0x11_0b_0001);
+    room.join(1);
+    const id = jusquAuPorteur(room);
+    const slot = room.horde.slotOf(id);
+    expect(slot).toBeGreaterThanOrEqual(0);
+    expect(room.horde.archetype[slot]).toBe(PORTEUR_ARCHETYPE);
+    expect(room.palier).toBe(0);
+    expect(room.horde.hp[slot]).toBe(palierHp(PORTEUR_HP, room.palier));
+    expect(room.horde.hp[slot]).toBe(200);
+  });
+
+  it('sa mort ouvre au tick suivant un etalage gele dont TOUTES les cartes sont au moins rares', () => {
+    const room = new Room(0x11_0b_0002);
+    room.join(1);
+    const id = jusquAuPorteur(room);
+    abattrePorteur(room, id);
+    room.drainLevelUps();
+    room.step(DT);
+    const ups = room.drainLevelUps();
+    const opens = room.drainDraftOpens();
+    expect(ups).toHaveLength(1);
+    // Un coffre n'est pas un niveau : le niveau annonce ne monte pas.
+    expect(ups[0]?.level).toBe(1);
+    expect(opens).toHaveLength(1);
+    const cartes = opens[0]?.cards ?? [];
+    expect(cartes.length).toBeGreaterThanOrEqual(2);
+    for (const c of cartes) {
+      expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
+    }
+  });
+
+  it('coffre et niveau dus au MEME tick : le coffre d abord, le niveau ensuite, dans la meme file', () => {
+    const room = new Room(0x11_0b_0003);
+    room.join(1);
+    const id = jusquAuPorteur(room);
+    abattrePorteur(room, id);
+    // Le tick ou le porteur est tombe vient de finir : un niveau devient du
+    // AVANT que rien ne s'ouvre — exactement « les deux dus au meme tick ».
+    room.debugOweLevels(1);
+    room.step(DT);
+    const premier = room.drainDraftOpens();
+    expect(premier).toHaveLength(1);
+    for (const c of premier[0]?.cards ?? []) {
+      expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.RARE);
+    }
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    room.step(DT);
+    expect(room.drainDraftResults()).toHaveLength(1);
+    room.step(DT);
+    // Le niveau attendait : il s'ouvre au tick suivant, sans plancher.
+    expect(room.drainDraftOpens()).toHaveLength(1);
+    expect(room.drainLevelUps()).toHaveLength(2);
+  });
+
+  it('horde pleine a l ordre du porteur : porteurGone, aucune entite, aucun coffre', () => {
+    const relache = vi.spyOn(WaveDirector.prototype, 'porteurGone');
+    try {
+      const room = new Room(0x11_0b_0004);
+      room.join(1);
+      // Juste apres la 1re vague (tick 180), avant la 2e (tick 360).
+      while (room.tick < 200) {
+        room.step(DT);
+        viderSauf(room, null);
+      }
+      room.horde.spawn({
+        waveId: 999,
+        spawnTick: room.tick,
+        seed: 0x51ee_d001,
+        archetype: 0,
+        formation: FORMATION.SCATTER,
+        anchorX: 0,
+        anchorY: 0,
+        count: MAX_ENTITIES,
+      });
+      expect(room.horde.count).toBe(MAX_ENTITIES);
+      let ordre = false;
+      while (room.tick <= 360) {
+        room.step(DT);
+        ordre ||= room.drainWaveOrders().some((o) => o.archetype === PORTEUR_ARCHETYPE);
+      }
+      // L'ordre part quand meme (les clients, pleins aussi, ne feront rien naitre).
+      expect(ordre).toBe(true);
+      expect(relache).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < room.horde.count; i++) {
+        expect(room.horde.archetype[i]).not.toBe(PORTEUR_ARCHETYPE);
+      }
+      viderSauf(room, null);
+      room.step(DT);
+      expect(room.drainDraftOpens()).toEqual([]);
+    } finally {
+      relache.mockRestore();
+    }
+  });
+
+  it('retire hors du lot de morts (bancs) : pas de coffre, mais le directeur est relache', () => {
+    const relache = vi.spyOn(WaveDirector.prototype, 'porteurGone');
+    try {
+      const room = new Room(0x11_0b_0005);
+      room.join(1);
+      const id = jusquAuPorteur(room);
+      room.horde.kill([id]);
+      room.step(DT);
+      expect(relache).toHaveBeenCalledTimes(1);
+      room.step(DT);
+      expect(room.drainDraftOpens()).toEqual([]);
+    } finally {
+      relache.mockRestore();
+    }
   });
 });
