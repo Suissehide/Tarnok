@@ -2271,8 +2271,11 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
    * seul point chez un joueur deja blesse, et un maximum qui MONTE continue
    * de rendre exactement le delta, jamais plus. Les trois lignes de borne
    * (`vivant`, `Math.min`, `Math.max`) sont des no-op sur ces deux chemins —
-   * la preuve du plancher qui sauve le blesse attend la premiere carte a
+   * la preuve du plancher qui sauve le BLESSE attend la premiere carte a
    * malus.
+   *
+   * Le plancher du MORT, lui, se prouve des aujourd'hui : `debugResetLoadout`
+   * fait baisser un maximum sans carte a malus (voir le troisieme test).
    */
   it('une carte qui ne touche pas maxHp laisse les PV exactement en l etat, meme blesse', () => {
     const room = new Room(0x0e_9e_0004);
@@ -2300,6 +2303,40 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     expect(room.maxHpOf(1)).toBe(maxAvant + PAR_CARTE_MAX_HP);
     expect(hpOf(room, 1)).toBe(blesse1 + PAR_CARTE_MAX_HP);
     expect(hpOf(room, 1)).toBeLessThanOrEqual(room.maxHpOf(1));
+  });
+
+  /**
+   * ⚠️ **Le cas trouve en revue, et le seul des quatre qu'aucune carte a
+   * malus future ne suffira a exercer facilement** (il faut un mort ET un
+   * maximum qui baisse, deux conditions a la fois). `debugResetLoadout`
+   * fait baisser un maximum SANS carte a malus : un joueur qui a pris
+   * plusieurs Vitalite, puis meurt, puis se voit vider son inventaire,
+   * recalcule au prochain `grantCard` un maximum bien plus bas que celui
+   * qu'il avait — exactement ce qu'un futur malus fera, par un autre
+   * chemin.
+   *
+   * Sans le second plancher (`Math.max(vivant ? 1 : 0, hp)`), ce joueur
+   * ressortait a `hp` negatif : toujours mort pour la regle serveur
+   * (`hp <= 0`), mais un `hp` negatif que `shared/protocol.ts` encodait
+   * jusqu'ici SANS BORNE — voir le test jumeau de `protocol.test.ts`.
+   */
+  it('un joueur MORT ne descend jamais sous zero, meme quand un maximum baisse', () => {
+    const room = new Room(0x0e_9e_0006);
+    room.join(1);
+    prend(room, 1, VITALITE, 5);
+    const maxAvant = room.maxHpOf(1);
+    expect(maxAvant).toBeGreaterThan(PLAYER_MAX_HP);
+
+    room.debugKill(1);
+    expect(hpOf(room, 1)).toBe(0);
+
+    // Vide l'inventaire : la PROCHAINE carte de passif recalcule un maximum
+    // de joueur neuf, bien plus bas que celui d'avant.
+    room.debugResetLoadout(1);
+    prend(room, 1, REGAIN, 1);
+
+    expect(room.maxHpOf(1)).toBeLessThan(maxAvant);
+    expect(hpOf(room, 1)).toBe(0);
   });
 });
 

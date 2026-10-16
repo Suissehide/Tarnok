@@ -2695,14 +2695,18 @@ export class Room {
       // maxHp`) TUAIT un joueur blesse des qu'un maximum BAISSE (une carte a
       // malus de PV max) : a 30 PV, un malus de 40 donnait `hp = -10` — mort
       // en acceptant sa carte. Un vivant reste vivant (plancher a 1), et `hp`
-      // ne depasse jamais le nouveau maximum ; un joueur deja mort ne
-      // ressuscite pas.
+      // ne depasse jamais le nouveau maximum.
+      //
+      // ⚠️ **Un mort reste a zero, jamais sous zero.** Le draft n'exclut pas
+      // les joueurs morts (un `AUTO` peut leur attribuer une carte) : sans ce
+      // second plancher, un mort a `hp = 0` qui recoit un malus de 40 sur un
+      // maximum de 100 finissait a `hp = -40` — toujours mort pour la regle
+      // serveur (`hp <= 0`), mais `shared/protocol.ts` encodait ce negatif en
+      // `u16` et le fil montrait un joueur mort a PV quasi plein.
       const vivant = player.hp > 0;
       player.hp = player.hp + (nouveauMax - player.maxHp);
       player.hp = Math.min(nouveauMax, player.hp);
-      if (vivant) {
-        player.hp = Math.max(1, player.hp);
-      }
+      player.hp = Math.max(vivant ? 1 : 0, player.hp);
       player.maxHp = nouveauMax;
     }
   }

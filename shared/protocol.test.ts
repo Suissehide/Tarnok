@@ -220,6 +220,20 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     });
   });
 
+  // ⚠️ **Etape 13.** `Room#grantCard` plafonne deja `hp` a zero pour un mort,
+  // mais `setUint16` applique un modulo 2^16 a QUICONQUE l'appelle sans cette
+  // garde — ici ou dans n'importe quel chemin futur qui laisserait `hp` filer
+  // sous zero. Sans la borne, `hp = -40` (un mort qui recevrait un malus de
+  // PV max) partirait sur le fil a 65 496 : un mort affiche a PV quasi plein.
+  // Meme repli silencieux que l'etape 4, cote negatif cette fois.
+  it('un hp negatif ressort a zero au decodage, jamais replie pres de 65 536', () => {
+    const buf = encodeSnapshot(1, 0, 0, [
+      { id: 1, x: 0, y: 0, hp: -40, aimX: 0, aimY: 0, pickupRadius: 90 },
+    ]);
+
+    expect(decodeSnapshot(buf).players[0]?.hp).toBe(0);
+  });
+
   it('borne la visee redistribuee a -127..127, comme celle d un INPUT (tache 13)', () => {
     const buf = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 500, aimY: -500, pickupRadius: 90 },

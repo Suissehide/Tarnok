@@ -1039,7 +1039,15 @@ export function encodeSnapshot(
     v.setUint8(o, p.id);
     v.setInt16(o + 1, Math.round(p.x), true);
     v.setInt16(o + 3, Math.round(p.y), true);
-    v.setUint16(o + 5, p.hp, true);
+    // ⚠️ **Borne, pour la meme raison que le boss et l'or plus haut : le
+    // repli silencieux de l'etape 4.** `setUint16` applique `p.hp` modulo
+    // 2^16 ; sans cette borne, un `hp` negatif (etape 13 : un mort qui
+    // recevrait un malus avant le plancher de `Room#grantCard`, ou tout
+    // futur chemin qui laisserait `hp` filer sous zero) partirait sur le fil
+    // pres de 65536 — un mort affiche a PV quasi plein. La garde reste donc
+    // ICI, independante de celle de `room.ts` : elle rattrape n'importe quel
+    // chemin, present ou futur, pas seulement celui du jour.
+    v.setUint16(o + 5, Math.min(0xffff, Math.max(0, p.hp)), true);
     v.setInt8(o + 7, quantizeAxis(p.aimX));
     v.setInt8(o + 8, quantizeAxis(p.aimY));
     v.setUint8(o + 9, Math.min(255, Math.max(0, Math.round(p.pickupRadius))));

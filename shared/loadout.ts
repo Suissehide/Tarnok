@@ -170,11 +170,12 @@ export class Loadout {
  * Les PV max d'un joueur : la base, les cartes, les achats — **et la seule
  * ecriture de cette somme dans le depot**.
  *
- * ⚠️ **Elle etait recopiee aux deux bouts** : `Room#grantCard`
- * (`back/src/room.ts`) et `GameClient#localMaxHp` (`front/src/net/client.ts`).
- * Deux copies divergeraient a la premiere regle qui touche au plafond — et
- * l'etape 13 en ajoute justement une (une carte a malus de PV max, tache
- * suivante).
+ * ⚠️ **Elle etait recopiee a TROIS endroits** : `Room#grantCard`
+ * (`back/src/room.ts`), `GameClient#localMaxHp` et `GameClient#fireOne`
+ * (`front/src/net/client.ts`, ce dernier pour le `maxHp` qu'echelonne
+ * Colosse). Des copies divergeraient a la premiere regle qui touche au
+ * plafond — et l'etape 13 en ajoute justement une (une carte a malus de PV
+ * max, tache suivante).
  */
 export function maxHpOf(loadout: Loadout, accountMaxHp: number): number {
   return PLAYER_MAX_HP + loadout.bonus('maxHp') + accountMaxHp;
