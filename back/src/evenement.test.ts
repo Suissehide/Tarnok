@@ -8,6 +8,7 @@ import {
   SCEAU_RADIUS,
 } from '@shared/evenements';
 import { FlowField } from '@shared/flowfield';
+import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -54,6 +55,36 @@ const PERSONNE = horde([]);
 
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }): number =>
   Math.hypot(a.x - b.x, a.y - b.y);
+
+/** Une VRAIE carte generee (ile d'herbe dans l'eau) : `generateObstacles` + `applyObstacles`. */
+function carteReelle(mapSeed: number): FlowField {
+  const sonde = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+  const masque = generateObstacles(mapSeed, sonde.cols, sonde.rows);
+  const champ = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+  applyObstacles(champ, masque);
+  return champ;
+}
+
+/**
+ * La cellule libre la plus proche de `(x, y)` en marchant vers le centre de
+ * la carte, cellule par cellule — deterministe, bornee a `cols + rows` pas.
+ * Sert a poser une EQUIPE de test sur la terre la plus proche d'un coin (qui,
+ * lui, est toujours de l'eau sur une vraie carte).
+ */
+function terreProche(champ: FlowField, x: number, y: number): { x: number; y: number } {
+  const pasX = x < MAP_SIZE / 2 ? 1 : -1;
+  const pasY = y < MAP_SIZE / 2 ? 1 : -1;
+  let cx = Math.floor(x / FLOWFIELD_CELL);
+  let cy = Math.floor(y / FLOWFIELD_CELL);
+  for (let i = 0; i < champ.cols + champ.rows; i++) {
+    if (champ.blocked[cy * champ.cols + cx] === 0) {
+      return { x: (cx + 0.5) * FLOWFIELD_CELL, y: (cy + 0.5) * FLOWFIELD_CELL };
+    }
+    cx = Math.max(0, Math.min(champ.cols - 1, cx + pasX));
+    cy = Math.max(0, Math.min(champ.rows - 1, cy + pasY));
+  }
+  return { x: MAP_SIZE / 2, y: MAP_SIZE / 2 };
+}
 
 /** Fait `n` pas ; rend la premiere issue, ou `null`. */
 function pas(
@@ -200,6 +231,44 @@ describe('etape 14 : placeEvent', () => {
     const sorti = placeEvent(s, equipe, mure).points[0] ?? { x: 0, y: 0 };
     expect(mure.blocked[mure.indexAt(sorti.x, sorti.y)]).toBe(0);
     expect(dist(sorti, libre)).toBeLessThanOrEqual(3 * FLOWFIELD_CELL);
+  });
+
+  it('sur une VRAIE carte (ile generee, cotes et coins en eau) : les sceaux restent sur la terre, jamais colles', () => {
+    const coinsBruts = [
+      { x: 100, y: 100 },
+      { x: MAP_SIZE - 100, y: 100 },
+      { x: 100, y: MAP_SIZE - 100 },
+      { x: MAP_SIZE - 100, y: MAP_SIZE - 100 },
+    ];
+    const interieurBrut = [
+      { x: MAP_SIZE / 2, y: MAP_SIZE / 2 },
+      { x: 2000, y: 2000 },
+    ];
+    for (let mapSeed = 1; mapSeed <= 4; mapSeed++) {
+      const champ = carteReelle(mapSeed);
+      const centres = [...coinsBruts, ...interieurBrut].map((c) => terreProche(champ, c.x, c.y));
+      for (const centre of centres) {
+        for (const n of [1, 2, 3, 4]) {
+          const vivants = Array.from({ length: n }, () => centre);
+          for (let k = 0; k < 150; k++) {
+            const plan = placeEvent(graine(EVENT_KIND.SCEAUX, k), vivants, champ);
+            expect(plan.points).toHaveLength(n);
+            for (const p of plan.points) {
+              const cx = Math.floor(p.x / FLOWFIELD_CELL);
+              const cy = Math.floor(p.y / FLOWFIELD_CELL);
+              expect(champ.blocked[cy * champ.cols + cx]).toBe(0);
+            }
+            for (let i = 0; i < n; i++) {
+              for (let j = i + 1; j < n; j++) {
+                const a = plan.points[i] ?? { x: 0, y: 0 };
+                const b = plan.points[j] ?? { x: 0, y: 0 };
+                expect(dist(a, b)).toBeGreaterThan(2 * SCEAU_RADIUS);
+              }
+            }
+          }
+        }
+      }
+    }
   });
 
   it('sans vivant, le plan reste defini (jamais NaN) — le salon ne l appelle pas, mais rien ne casse', () => {

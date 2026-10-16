@@ -87,19 +87,107 @@ export interface EventHorde {
 const sortieX = new Float32Array(1);
 const sortieY = new Float32Array(1);
 
-/** Borne a la carte, sort du mur, arrondit au pixel : le point voyage en `int16`. */
+/**
+ * Borne a la carte, sort du mur, arrondit au pixel : le point voyage en
+ * `int16`.
+ *
+ * ⚠️ **Un second nudge, sur les coordonnees ARRONDIES.** `nudgeOutOfObstacle`
+ * confirme la cellule libre sur la position FRACTIONNAIRE ; l'arrondi au
+ * pixel qui suit peut, tout pres d'une frontiere de cellule, basculer le
+ * point dans la cellule voisine — muree, elle. Mesure sur une vraie carte
+ * generee (coins et cotes en eau) : un sceau pouvait ainsi atterrir sur une
+ * cellule muree. Le second appel revoit la cellule des coordonnees deja
+ * arrondies ; s'il ne bascule rien (le cas courant), il rend exactement les
+ * memes entiers. S'il doit nudger, il rend le CENTRE d'une cellule
+ * (`(n + 0.5) x FLOWFIELD_CELL`, deja entier puisque `FLOWFIELD_CELL` est
+ * pair) : un second arrondi n'y change plus rien, aucun aller-retour possible.
+ */
 function poser(obstacles: ObstacleField, x: number, y: number): EventPoint {
   const bx = Math.min(MAP_SIZE, Math.max(0, x));
   const by = Math.min(MAP_SIZE, Math.max(0, y));
   nudgeOutOfObstacle(obstacles, bx, by, sortieX, sortieY, 0);
-  return { x: Math.round(sortieX[0] ?? bx), y: Math.round(sortieY[0] ?? by) };
+  const rx = Math.round(sortieX[0] ?? bx);
+  const ry = Math.round(sortieY[0] ?? by);
+  nudgeOutOfObstacle(obstacles, rx, ry, sortieX, sortieY, 0);
+  return { x: Math.round(sortieX[0] ?? rx), y: Math.round(sortieY[0] ?? ry) };
+}
+
+const distance = (a: EventPoint, b: EventPoint): number => Math.hypot(a.x - b.x, a.y - b.y);
+
+/** Nombre d'essais de recentrage avant le dernier recours (le centre de la carte). */
+const RECENTRAGE_ESSAIS = 12;
+
+/**
+ * Pose un groupe de points (un site seul, ou l'anneau des sceaux) sur la
+ * terre ferme, en gardant leur geometrie (l'ecart entre eux, l'orientation
+ * de l'anneau), meme pres d'un rivage ou d'un coin de carte.
+ *
+ * Sur une VRAIE carte (§ carte, cotes en eau), poser chaque point separement
+ * (par `poser`, qui nudge vers la cellule libre la plus proche) peut faire
+ * converger PLUSIEURS points de l'anneau vers la meme etroite bande de terre
+ * — mesure : sur 2 coins sur 4, 100 % des graines, jusqu'a deux sceaux sur le
+ * meme pixel. `poser` reste correct pour un point isole pres d'un mur local
+ * (une tache de rochers au milieu de l'ile) ; c'est l'anneau ENTIER tombant
+ * en pleine mer qui n'a pas de reponse locale.
+ *
+ * La reponse : tenter le centre voulu (`cx`, `cy`), poser tous les points, et
+ * accepter seulement si AUCUN point n'a ete deplace de plus de
+ * `SCEAU_RADIUS` par le nudge et (s'il y en a plusieurs) si toute paire reste
+ * a plus de `2 x SCEAU_RADIUS`. Sinon, retenter en avancant le centre vers le
+ * centre de la carte — toujours cote terre, loin du rivage — par pas egaux,
+ * jusqu'a `RECENTRAGE_ESSAIS` fois ; le DERNIER essai pose exactement sur le
+ * centre de la carte et est retenu quoi qu'il arrive : il n'y a rien de mieux
+ * a tenter, et c'est le seul point de toute l'ile garanti loin de tout rivage
+ * (`SPAWN_CLEARANCE` dans `shared/worldmap.ts`).
+ *
+ * Deterministe (aucun tirage, seule la geometrie varie) et bornee a
+ * `RECENTRAGE_ESSAIS + 1` essais, chacun `O(points²)` pour les paires —
+ * `points` vaut au plus 4 (un sceau par joueur).
+ */
+function poserGroupe(
+  obstacles: ObstacleField,
+  cx: number,
+  cy: number,
+  bruts: (cx: number, cy: number) => readonly EventPoint[],
+): EventPoint[] {
+  const centreX = MAP_SIZE / 2;
+  const centreY = MAP_SIZE / 2;
+  let dernier: EventPoint[] = [];
+  for (let i = 0; i <= RECENTRAGE_ESSAIS; i++) {
+    const t = i / RECENTRAGE_ESSAIS;
+    const vx = i === RECENTRAGE_ESSAIS ? centreX : cx + (centreX - cx) * t;
+    const vy = i === RECENTRAGE_ESSAIS ? centreY : cy + (centreY - cy) * t;
+    const brut = bruts(vx, vy);
+    const points = brut.map((p) => poser(obstacles, p.x, p.y));
+    dernier = points;
+    const deplaceTrop = points.some((p, k) => distance(p, brut[k] ?? p) > SCEAU_RADIUS);
+    let colles = false;
+    for (let a = 0; a < points.length && !colles; a++) {
+      const pa = points[a];
+      if (!pa) {
+        continue;
+      }
+      for (let b = a + 1; b < points.length && !colles; b++) {
+        const pb = points[b];
+        if (pb && distance(pa, pb) <= 2 * SCEAU_RADIUS) {
+          colles = true;
+        }
+      }
+    }
+    if (!deplaceTrop && !colles) {
+      return points;
+    }
+  }
+  return dernier;
 }
 
 /**
  * Le genre et les points d'un evenement (§2.2). Le genre vient de `seed % 3`,
  * l'angle des bits `8..31` — disjoints. Le site est a `EVENT_SPAWN_DISTANCE`
  * du CENTRE des vivants (pas du joueur cible par la vague : l'evenement
- * s'adresse a l'equipe), puis borne et sorti des murs.
+ * s'adresse a l'equipe), puis posee sur la terre ferme par `poserGroupe`
+ * (voir sa doc) : jamais en pleine mer, et pour les sceaux, jamais deux
+ * sceaux a moins de `2 x SCEAU_RADIUS`.
  *
  * ⚠️ **N sceaux pour N vivants**, pas « 3 a 4, 2 a 2 » : le design valide dit
  * « un sceau par joueur ». Sans vivant, le centre vaut (0, 0) : le salon ne
@@ -122,32 +210,23 @@ export function placeEvent(
   const kind = seed % 3;
   const theta = ((seed >>> 8) / 0x100_0000) * Math.PI * 2;
   const solo = vivants.length <= 1;
+  const spawnX = cx + Math.cos(theta) * EVENT_SPAWN_DISTANCE;
+  const spawnY = cy + Math.sin(theta) * EVENT_SPAWN_DISTANCE;
   if (kind === EVENT_KIND.SCEAUX && !solo) {
     const rayon = SCEAUX_SPACING / (2 * Math.sin(Math.PI / vivants.length));
-    // ⚠️ **Le CENTRE de l'anneau est borne AVANT de poser chaque sceau**, pas
-    // chaque sceau separement : pres d'un coin, deux sceaux bornes chacun de
-    // son cote finissent colles sur les memes bords (mesure : jusqu'a 6,8 %
-    // des angles a N = 4, des paires a 239 px au lieu de 800). Border le
-    // centre dans `[rayon + marge, MAP_SIZE - rayon - marge]`, marge au moins
-    // `SCEAU_RADIUS`, garantit que l'anneau ENTIER tient dans la carte avant
-    // le moindre bornage par sceau ; le nudge hors mur par sceau reste utile
-    // (un sceau peut individuellement tomber dans un obstacle).
-    const marge = SCEAU_RADIUS;
-    const lo = rayon + marge;
-    const hi = MAP_SIZE - rayon - marge;
-    const siteX = Math.min(hi, Math.max(lo, cx + Math.cos(theta) * EVENT_SPAWN_DISTANCE));
-    const siteY = Math.min(hi, Math.max(lo, cy + Math.sin(theta) * EVENT_SPAWN_DISTANCE));
-    const points = vivants.map((_, k) => {
-      const a = theta + (2 * Math.PI * k) / vivants.length;
-      return poser(obstacles, siteX + Math.cos(a) * rayon, siteY + Math.sin(a) * rayon);
-    });
+    const points = poserGroupe(obstacles, spawnX, spawnY, (vx, vy) =>
+      vivants.map((_, k) => {
+        const a = theta + (2 * Math.PI * k) / vivants.length;
+        return { x: vx + Math.cos(a) * rayon, y: vy + Math.sin(a) * rayon };
+      }),
+    );
     return { kind, points, solo };
   }
-  const site = poser(
-    obstacles,
-    cx + Math.cos(theta) * EVENT_SPAWN_DISTANCE,
-    cy + Math.sin(theta) * EVENT_SPAWN_DISTANCE,
-  );
+  const [site] = poserGroupe(obstacles, spawnX, spawnY, (vx, vy) => [{ x: vx, y: vy }]);
+  if (!site) {
+    // Inatteignable : `poserGroupe` rend toujours au moins un point.
+    return { kind, points: [], solo };
+  }
   if (kind !== EVENT_KIND.CONVOI) {
     return { kind, points: [site], solo };
   }
@@ -160,12 +239,10 @@ export function placeEvent(
     dy = Math.sin(theta);
     d = 1;
   }
-  const arrivee = poser(
-    obstacles,
-    site.x + (dx / d) * CONVOI_DISTANCE,
-    site.y + (dy / d) * CONVOI_DISTANCE,
-  );
-  return { kind, points: [site, arrivee], solo };
+  const arriveeX = site.x + (dx / d) * CONVOI_DISTANCE;
+  const arriveeY = site.y + (dy / d) * CONVOI_DISTANCE;
+  const [arrivee] = poserGroupe(obstacles, arriveeX, arriveeY, (vx, vy) => [{ x: vx, y: vy }]);
+  return { kind, points: [site, arrivee ?? site], solo };
 }
 
 /**
