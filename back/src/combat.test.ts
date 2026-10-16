@@ -5155,31 +5155,32 @@ describe('etape 13 : Contagion (spreadMarkOnDeath)', () => {
     return horde;
   }
 
-  it('la marque d un mort saute sur le vivant le plus proche', () => {
+  it('la marque d un mort saute sur le vivant le plus proche, AVEC son auteur', () => {
     const horde = hordeDe([
       { x: 50, y: 0 },
       { x: 900, y: 0 },
     ]);
-    // Le mort etait a (0, 0), marque Braise.
-    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    // Le mort etait a (0, 0), marque Braise posee par le joueur 3.
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK);
     expect(horde.markAt(0, TICK)).toBe(ELEMENT.BRAISE);
+    expect(horde.markBy[0]).toBe(3);
     expect(horde.markAt(1, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
   it('un mort sans marque ne propage rien', () => {
     const horde = hordeDe([{ x: 50, y: 0 }]);
-    spreadMarkOnDeath(horde, [0, 0, ELEMENT.NEUTRE], TICK);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.NEUTRE, 3], TICK);
     expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
   it('sans voisin vivant, la marque meurt avec lui — jamais de NaN ni de boucle', () => {
     const horde = new Horde(1); // aucun survivant.
-    expect(() => spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK)).not.toThrow();
+    expect(() => spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK)).not.toThrow();
   });
 
   it('respecte CONTAGION_RADIUS : hors de portee, rien ne saute', () => {
     const horde = hordeDe([{ x: CONTAGION_RADIUS + 1, y: 0 }]);
-    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK);
     expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
   });
 
@@ -5189,7 +5190,7 @@ describe('etape 13 : Contagion (spreadMarkOnDeath)', () => {
       { x: 50, y: 0 },
     ]);
     horde.hp[0] = 0; // mort ce tick-ci par un AUTRE chemin, pas encore compacte.
-    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK);
     expect(horde.markAt(0, TICK)).toBe(ELEMENT.NEUTRE);
     expect(horde.markAt(1, TICK)).toBe(ELEMENT.BRAISE);
   });
@@ -5199,19 +5200,21 @@ describe('etape 13 : Contagion (spreadMarkOnDeath)', () => {
    * jamais une ecriture directe de `horde.mark[]`. Pose la marque vivante
    * par le VRAI chemin (`applyMark`, attribuee a un joueur), verifie par le
    * VRAI lecteur (`markAt`) ET que l'attribution de l'ANCIENNE marque ne
-   * survit pas a l'ecrasement.
+   * survit pas a l'ecrasement — c'est celle de la marque PROPAGEE qui doit
+   * rester, pas `0` (« aucun joueur ») : voir le second correctif du
+   * coordinateur sur `markBy`, docbloc de `spreadMarkOnDeath`.
    */
-  it('ecrase une marque vivante existante : le NOUVEL element, et plus l ancienne attribution', () => {
+  it('ecrase une marque vivante existante : le NOUVEL element ET la NOUVELLE attribution', () => {
     const horde = hordeDe([{ x: 10, y: 0 }]);
     horde.applyMark(0, ELEMENT.GIVRE, 7, TICK); // marque vivante, posee par le joueur 7.
-    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE], TICK);
+    spreadMarkOnDeath(horde, [0, 0, ELEMENT.BRAISE, 3], TICK); // le mort etait marque par le joueur 3.
     expect(horde.markAt(0, TICK)).toBe(ELEMENT.BRAISE);
-    expect(horde.markBy[0]).toBe(0);
+    expect(horde.markBy[0]).toBe(3);
   });
 });
 
 describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
-  it('drainFallen rend toutes les positions et leur marque, puis se vide', () => {
+  it('drainFallen rend toutes les positions, leur marque et son auteur, puis se vide', () => {
     const orbs = new OrbField(10);
     const sansButin = Array.from({ length: 50 }, (_, i) => entityIdOf(1, i)).find(
       (id) => !leavesDrop(id),
@@ -5219,12 +5222,12 @@ describe('etape 10 : OrbField note CHAQUE mort, orbe ou pas', () => {
     if (sansButin === undefined) {
       throw new Error('fixture : aucune identite sans butin');
     }
-    orbs.spawn(entityIdOf(1, 0), 10, 20, ELEMENT.BRAISE);
-    // Sans marque explicite : NEUTRE par defaut (etape 13, Contagion).
+    orbs.spawn(entityIdOf(1, 0), 10, 20, ELEMENT.BRAISE, 3);
+    // Sans marque ni auteur explicites : NEUTRE/0 par defaut (etape 13, Contagion).
     orbs.spawn(sansButin, 30, 40);
     // Contagion (etape 13, ex-Moisson) compte les morts, pas les orbes : celle
     // qui ne laisse rien compte.
-    expect(orbs.drainFallen()).toEqual([10, 20, ELEMENT.BRAISE, 30, 40, ELEMENT.NEUTRE]);
+    expect(orbs.drainFallen()).toEqual([10, 20, ELEMENT.BRAISE, 3, 30, 40, ELEMENT.NEUTRE, 0]);
     expect(orbs.drainFallen()).toEqual([]);
   });
 });

@@ -82,6 +82,7 @@ import {
 import { generateObstacles } from '@shared/worldmap';
 import { describe, expect, it, vi } from 'vitest';
 
+import { spreadMarkOnDeath } from './combat';
 import { type AccountGrants, type DraftOpenEvent, Room } from './room';
 
 const DT = 1 / TICK_HZ;
@@ -3780,6 +3781,52 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
     // Le total, lui, fait foi dans le SNAPSHOT, et le client n'a rien a
     // recalculer.
     expect(reactions[reactions.length - 1]?.synergyCharge).toBe(true);
+  });
+
+  /**
+   * La regression que C1 a traversee (revue du coordinateur, etape 13) :
+   * une premiere version de `spreadMarkOnDeath` propageait l'ELEMENT sans
+   * son AUTEUR (`markBy: 0`). `0` n'est pas une marque neutre dans ce
+   * depot — c'est la sentinelle « aucun joueur » (`#freeId`,
+   * `back/src/server.ts`, les identites commencent a 1). Une marque de
+   * Contagion aurait donc TOUJOURS charge la Synergie des qu'un second
+   * element la declenchait (`markBy !== by` est vrai des que `by >= 1`),
+   * meme en SOLO — exactement ce que le docbloc de la comparaison, plus
+   * haut dans ce fichier, affirme impossible par construction.
+   */
+  it('Contagion propage l auteur de la marque, pas seulement l element : le meme joueur ne charge pas la Synergie', () => {
+    expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
+    const room = new Room(GRAINE);
+    room.join(1);
+    room.grantCard(1, { nature: CARD.WEAPON, refId: ARME_GIVRE });
+    const before = positionOf(room, 1);
+    const cible = spawnMonsterAt(room, 800, before.x + 100, before.y, LOURD);
+    // Increvable : c'est la reaction qui est comptee, pas la mise a mort.
+    room.horde.hp[room.horde.slotOf(cible)] = 1e6;
+
+    // Ce que Contagion fait vraiment : la Braise d'un mort saute sur `cible`,
+    // AVEC l'auteur de ce mort — ici le joueur 1 lui-meme.
+    const slot = room.horde.slotOf(cible);
+    const x = room.horde.x[slot] ?? 0;
+    const y = room.horde.y[slot] ?? 0;
+    spreadMarkOnDeath(room.horde, [x, y, ELEMENT.BRAISE, 1], room.tick);
+    expect(room.horde.markBy[slot]).toBe(1);
+
+    const reactions: ReturnType<Room['drainReactions']> = [];
+    for (let i = 0; i < 15 && reactions.length === 0; i++) {
+      // La marque se consomme a la reaction (§4.3) : la reposer chaque tick
+      // tant qu'elle n'a pas encore reagi evite de ne dependre que du tout
+      // premier tick de tir.
+      room.horde.applyMark(slot, ELEMENT.BRAISE, 1, room.tick);
+      aimAtNearestMonster(room, 1, i + 1);
+      room.step(DT);
+      reactions.push(...room.drainReactions());
+    }
+
+    // Le joueur 1 declenche, avec son Givre, sur sa PROPRE marque propagee.
+    expect(reactions.length).toBeGreaterThan(0);
+    expect(reactions.every((r) => r.synergyCharge === false)).toBe(true);
+    expect(synergyOf(room)).toBe(0);
   });
 });
 
