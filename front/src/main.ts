@@ -732,6 +732,7 @@ function join(code: string): void {
           players: state.players,
           enemies: client.horde,
           boss: null,
+          porteur: client.porteur,
           // `pingClock`, pas `hordeTick` (revue finale, etape 9) : voir
           // `GameClient#pingClock`.
           pings: livePings(client.pings, client.pingClock),

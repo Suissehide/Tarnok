@@ -109,6 +109,11 @@ export interface FrameClient {
    * vivants.
    */
   readonly pingClock: number;
+  /**
+   * Le porteur de coffre (etape 11), ou `null` — voir `GameClient.porteur`.
+   * Optionnel : les doubles qui n'en ont pas passent `null`.
+   */
+  readonly porteur?: { x: number; y: number } | null;
 }
 
 /**
@@ -198,6 +203,7 @@ export interface FrameStage {
     localId: number | null,
     tick: number,
     timeMs: number,
+    porteur: { x: number; y: number } | null,
   ): void;
 }
 
@@ -316,7 +322,14 @@ export function composeFrame(
   // les marques expirent au tick de horde meme pendant le gel, mais un ping
   // ne doit pas s'effacer pendant que l'equipe choisit ses cartes — voir
   // `GameClient#pingClock`.
-  stage.drawPings(client.pings, state.players, state.localId, client.pingClock, now);
+  stage.drawPings(
+    client.pings,
+    state.players,
+    state.localId,
+    client.pingClock,
+    now,
+    client.porteur ?? null,
+  );
   // ⚠️ **APRES `draw`, qui recentre la camera sur le joueur** : la secousse est
   // un decalage par-dessus le cadrage, pas un cadrage concurrent.
   stage.shakeCamera(client.hitFlashes, client.reactionFlashes, now);

@@ -2,6 +2,8 @@ import { PING_INTENTS, PING_LIFE_TICKS } from '@shared/ping';
 import { type Container, Graphics } from 'pixi.js';
 
 import type { ActivePing } from '../net/client';
+import { drawChest } from './behavior-renderer';
+import { COIN_TINT } from './orb-renderer';
 
 /** Un ping a dessiner a cette image. */
 export interface LivePing {
@@ -148,6 +150,7 @@ export class PingRenderer {
     toScreen: (x: number, y: number) => { x: number; y: number },
     w: number,
     h: number,
+    porteur: { x: number; y: number } | null = null,
   ): void {
     const g = this.#world;
     const s = this.#screen;
@@ -180,6 +183,17 @@ export class PingRenderer {
       const a = edgeArrow(w, h, sp.x, sp.y, MARGIN);
       if (a) {
         drawArrow(s, a, allyArrowScale(ally.distance), this.colorOf(ally.id), 0.85);
+      }
+    }
+    // Etape 11 : le porteur hors champ — une fleche OR au bord, et le petit
+    // coffre en retrait comme l'icone d'une intention. Dans le champ, rien :
+    // l'anneau et le coffre au sol suffisent.
+    if (porteur) {
+      const sp = toScreen(porteur.x, porteur.y);
+      const a = edgeArrow(w, h, sp.x, sp.y, MARGIN);
+      if (a) {
+        drawArrow(s, a, 1.2, COIN_TINT, 1);
+        drawChest(s, a.x - Math.cos(a.angle) * 26, a.y - Math.sin(a.angle) * 26, 0.6);
       }
     }
   }

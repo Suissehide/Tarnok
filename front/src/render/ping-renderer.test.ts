@@ -1,8 +1,10 @@
 import { PING_LIFE_TICKS } from '@shared/ping';
+import { Container, type Graphics } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
 import type { ActivePing } from '../net/client';
-import { allyArrowScale, edgeArrow, livePings } from './ping-renderer';
+import { COIN_TINT } from './orb-renderer';
+import { allyArrowScale, edgeArrow, livePings, PingRenderer } from './ping-renderer';
 
 const ping = (playerId: number, tick: number): ActivePing => ({
   playerId,
@@ -89,5 +91,29 @@ describe('allyArrowScale : la fleche d un allie retrecit avec la distance', () =
     expect(allyArrowScale(0)).toBe(1);
     expect(allyArrowScale(100_000)).toBe(0.5);
     expect(allyArrowScale(1000)).toBeGreaterThan(allyArrowScale(2000));
+  });
+});
+
+describe('etape 11 : la fleche du porteur', () => {
+  /** Les remplissages OR poses sur le calque ECRAN par un `draw` sans ping ni allie. */
+  function remplissagesOr(porteur: { x: number; y: number } | null): number {
+    const r = new PingRenderer(() => 0xffffff);
+    const ecran = new Container();
+    r.attachScreen(ecran);
+    r.draw([], [], (x, y) => ({ x, y }), 800, 600, porteur);
+    const g = ecran.children[0] as Graphics;
+    return g.context.instructions.filter(
+      (i) =>
+        i.action === 'fill' && (i.data as { style: { color: number } }).style.color === COIN_TINT,
+    ).length;
+  }
+
+  it('une fleche or, au bord, pour un porteur hors champ', () => {
+    expect(remplissagesOr({ x: 5000, y: 300 })).toBeGreaterThan(0);
+  });
+
+  it('rien pour un porteur dans le champ, rien sans porteur', () => {
+    expect(remplissagesOr({ x: 400, y: 300 })).toBe(0);
+    expect(remplissagesOr(null)).toBe(0);
   });
 });

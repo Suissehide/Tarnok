@@ -502,6 +502,7 @@ export class Stage {
     localId: number | null,
     tick: number,
     _timeMs: number,
+    porteur: { x: number; y: number } | null = null,
   ): void {
     const me = players.find((p) => p.id === localId);
     const allies = me
@@ -515,6 +516,7 @@ export class Stage {
       (x, y) => this.worldToScreen(x, y),
       this.#app.screen.width,
       this.#app.screen.height,
+      porteur,
     );
   }
 
