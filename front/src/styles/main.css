@@ -118,10 +118,35 @@
     pointer-events: none;
   }
 
+  /* Le fond des menus de Dorok (`background.png` du pack, 2496 x 800) : nuages
+     a gauche et a droite, aplat au centre. Un `cover` rognerait les nuages ;
+     chaque moitie est donc ancree a son bord, l'aplat comble l'ecart, et la
+     planche se repete vers le bas. Echelle = hauteur, reduite si les deux
+     parties peintes (768 px chacune) ne tiennent pas dans la largeur. */
   .bg-menu {
-    background:
-      radial-gradient(120% 90% at 50% 30%, rgb(0 0 0 / 0) 40%, rgb(20 30 32 / 0.55) 100%),
-      repeating-linear-gradient(135deg, #3d7f80 0 26px, #3a7a7b 26px 52px);
+    --menu-h: min(100vh, 100vw * 800 / 1536);
+    background: #47aba9;
+  }
+
+  .bg-menu::before,
+  .bg-menu::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: -1;
+    /* Jamais plus large que sa moitie de planche : au-dela, l'autre moitie. */
+    width: min(50%, var(--menu-h) * 1248 / 800);
+    background: url('/tinyswords/UI/MenuBackground.png') 0 0 / auto var(--menu-h) repeat-y;
+  }
+
+  .bg-menu::before {
+    left: 0;
+  }
+
+  .bg-menu::after {
+    right: 0;
+    background-position: right top;
   }
 
   .veil {
