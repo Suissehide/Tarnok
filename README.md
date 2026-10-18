@@ -32,6 +32,7 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 9 | Roue de ping : quatre intentions, flèches en bord d'écran — **zéro octet de plus par tick** | 📝 — [spec](docs/specs/2026-10-15-etape-9-ping.md) · [plan](docs/plans/2026-10-15-etape-9-ping.md) · [résultats](docs/plans/2026-10-15-etape-9-resultats.md) |
 | 10 | Rareté (×1, ×2, ×3) et passifs qui s'empilent sans plafond — **zéro octet de plus par tick** | 📝 — [spec](docs/specs/2026-10-15-etape-10-rarete.md) · [plan](docs/plans/2026-10-15-etape-10-rarete.md) · [résultats](docs/plans/2026-10-15-etape-10-resultats.md) |
 | 11 | Élites porteurs de coffre : une battue, un étalage d'au moins rares — **zéro octet de plus par tick** | 📝 — [spec](docs/specs/2026-10-15-etape-11-porteur.md) · [plan](docs/plans/2026-10-15-etape-11-porteur.md) · [résultats](docs/plans/2026-10-15-etape-11-resultats.md) |
+| 14 | Événements bonus : sceaux, forge, convoi — un étalage d'au moins épiques | 📝 — [spec](docs/specs/2026-10-16-etape-14-evenements.md) · [plan](docs/plans/2026-10-16-etape-14-evenements.md) · [résultats](docs/plans/2026-10-16-etape-14-resultats.md) |
 
 L'or gagné en run, qui survit depuis l'étape 7a, se dépense depuis l'étape 7b : une boutique à
 l'écran d'accueil vend des améliorations permanentes de statistiques de départ, sur le modèle de
