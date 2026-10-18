@@ -56,6 +56,8 @@ dégâts du convoi coupés — chacune rougit le test.
   « détruit ».
 - **Le livrable a corrigé une donnée du plan** : un `waveId` de 990 014 dépassait le stockage
   16 bits de la horde.
+- **Revue finale** : un test tautologique retiré ; le correctif du chariot qui touchait le champ de
+  flux de la horde annulé (voir §5).
 - Fait sur la branche `etape-14-evenements`, `main` étant modifié en direct par une autre session.
 
 ## 4. Le portique
@@ -79,3 +81,6 @@ Lancé seul, sur `etape-14-evenements` :
 - 2 minutes avant le premier, 40 vagues entre deux : le bon rythme ?
 - un joueur qui ne choisit rien peut recevoir un pacte d'office (attribution automatique) —
   acceptable ?
+- le chariot dans un coin de mur concave : la direction mélangée du champ s'y amenuise, il
+  ralentit (≈ 2 % mesuré, aucun blocage reproduit). Un correctif dans `sampleDirection` a été
+  essayé puis **annulé** : cette fonction déplace aussi toute la horde, des deux côtés.
