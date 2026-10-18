@@ -75,7 +75,9 @@ describe('cuesBetween — le son se deduit de ce qui change', () => {
   it('etape 14 : un evenement annonce sonne une fois ; sa reussite ne joue pas le son de niveau', () => {
     expect(cuesBetween(calme, { ...calme, evenements: 1 })).toEqual(['evenement']);
     expect(cuesBetween({ ...calme, evenements: 1 }, { ...calme, evenements: 1 })).toEqual([]);
-    // Le LEVEL_UP d'un evenement ne monte pas le niveau : rien a jouer.
-    expect(cuesBetween(calme, { ...calme, level: calme.level })).toEqual([]);
+    // Le LEVEL_UP d'un evenement porte le niveau d'avant-meme-tick (pas une
+    // vraie montee) : la garantie est cote serveur, voir back/src/room.test.ts,
+    // test "coffre, evenement et niveau dus au MEME tick...", niveaux
+    // annonces [1, 1, 2] (coffre, evenement, niveau sur le meme tick).
   });
 });
