@@ -5,14 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { SnapshotBuffer } from './interpolation';
 
 /**
- * hp n'est pas le sujet de ces tests (l'interpolation de position l'est) : on
- * lui donne une valeur par defaut plutot que de l'imposer a chaque appel. xp
- * n'existe plus par joueur (c'est un champ d'equipe, sur `SnapshotMessage`) :
- * on le fixe a 0 par defaut, sauf pour les tests qui le portent explicitement.
- * Meme regle pour aimX/aimY (tache 13) : `(0, 0)`, « pas de tir », sauf pour
- * le test qui porte specifiquement sur la visee. Et pour pickupRadius (tache
- * 7 de l'etape 7b) : le rayon de base, sauf pour le test qui porte
- * specifiquement sur le rayon personnel.
+ * Les champs autres que la position ont une valeur par defaut (pv pleins,
+ * visee `(0, 0)`, rayon de base), sauf dans les tests qui portent sur eux.
  */
 function snapshot(
   tick: number,
@@ -42,12 +36,8 @@ function snapshot(
       shield: 0,
       ...p,
     })),
-    // Ce decor n'interpole que des JOUEURS : le boss de la tache 4 (etape 6a)
-    // ne passe pas par `SnapshotBuffer` — il n'a pas de position sur le fil,
-    // seulement une vie. `null` est donc l'etat reel, pas un remplissage.
+    // `SnapshotBuffer` n'interpole que les joueurs : ni le boss ni l'or.
     boss: null,
-    // Meme raison pour l'or (tache 7) : rien ne s'interpole ici, c'est un
-    // total d'equipe que ce decor ne lit pas.
     gold: 0,
   };
 }
@@ -77,11 +67,9 @@ describe('SnapshotBuffer.sample', () => {
   });
 
   it('porte la visee du snapshot d arrivee, sans l interpoler (tache 13)', () => {
-    // ⚠️ Meme raisonnement que le test des pv juste au-dessus : la mutation
-    // qui remplacerait `target.aimX`/`aimY` par `previous.aimX`/`aimY` (ou par
-    // une moyenne) doit faire echouer ce test. On choisit donc deux valeurs
-    // qui DIFFERENT visiblement entre les deux snapshots, jamais deux valeurs
-    // qui coincideraient par accident.
+    // ⚠️ Deux valeurs qui DIFFERENT entre les snapshots : remplacer
+    // `target.aimX`/`aimY` par `previous` (ou une moyenne) doit faire echouer
+    // ce test.
     const buffer = new SnapshotBuffer();
     buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0, aimX: 40, aimY: -20 }]), 0);
     buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0, aimX: -90, aimY: 60 }]), 50);
@@ -92,11 +80,9 @@ describe('SnapshotBuffer.sample', () => {
   });
 
   /**
-   * Etape 7b, tache 7 : `pickupRadius` est devenu personnel, et la
-   * reconstruction explicite de `sample` (`id, x, y, hp, aimX, aimY, …`) est
-   * exactement l'endroit ou un champ ajoute cote fil peut disparaitre en
-   * silence si personne ne l'y recopie. Deux valeurs qui DIFFERENT entre les
-   * deux snapshots, meme raisonnement que le test de la visee juste au-dessus.
+   * La reconstruction explicite de `sample` (`id, x, y, hp, aimX, aimY, …`)
+   * est l'endroit ou un champ ajoute cote fil disparait en silence si
+   * personne ne l'y recopie.
    */
   it('porte le rayon de ramassage du snapshot d arrivee, sans l interpoler', () => {
     const buffer = new SnapshotBuffer();
@@ -113,9 +99,6 @@ describe('SnapshotBuffer.sample', () => {
     buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0, hp: 80 }]), 0);
     buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0, hp: 55 }]), 50);
 
-    // Position a mi-chemin (voir le premier test), mais hp n'est pas une
-    // position : c'est un compteur discret, on prend celui du snapshot
-    // d'arrivee tel quel.
     const sampled = buffer.sample(INTERP_DELAY_MS + 25);
 
     expect(sampled[0]).toMatchObject({ hp: 55 });
@@ -154,8 +137,8 @@ describe('SnapshotBuffer.sample', () => {
     buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0 }]), 0);
     buffer.push(snapshot(2, [{ id: 1, x: 100, y: 0 }]), 50);
 
-    // Une seconde plus tard, rien de neuf n'est arrive. On fige au dernier
-    // connu plutot que d'extrapoler : l'extrapolation appartient a l'etape 2.
+    // Une seconde plus tard, rien de neuf n'est arrive : on fige au dernier
+    // connu plutot que d'extrapoler.
     expect(buffer.sample(1000)[0]?.x).toBe(100);
   });
 
@@ -215,9 +198,6 @@ describe('SnapshotBuffer.latest', () => {
   });
 
   it('rend le tick SERVEUR du dernier snapshot, pas un compteur local', () => {
-    // C'est la piece qui manquait (constat C1) : sans le tick, l'appelant ne
-    // peut qu'enregistrer ce contenu sous sa propre cle de tick, qui n'a
-    // aucune raison de coincider avec celle du serveur.
     const buffer = new SnapshotBuffer();
     buffer.push(snapshot(1, [{ id: 1, x: 0, y: 0 }]), 0);
     buffer.push(snapshot(7, [{ id: 1, x: 100, y: 0 }]), 50);

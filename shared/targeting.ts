@@ -1,19 +1,14 @@
 import type { Horde } from './horde';
 
 /**
- * ⚠️ **Aucun appelant en production depuis la tache 13.** L'auteur a choisi que
- * la visee suive le curseur : la direction de tir vient desormais de la souris,
- * transite dans `INPUT` puis dans le `SNAPSHOT`, et plus personne ne cherche
- * « l'ennemi le plus proche ».
- *
- * Ce module est conserve plutot que supprime parce que l'etape 4 tranchera la
- * question de l'arsenal, ou une arme a tete chercheuse le rendrait utile tel
- * quel. Mais tant que rien ne l'appelle, **il ne decrit pas le comportement du
+ * ⚠️ **Aucun appelant en production.** La visee suit le curseur : la direction
+ * de tir vient de la souris, transite dans `INPUT` puis dans le `SNAPSHOT`.
+ * Tant que rien n'appelle ce module, **il ne decrit pas le comportement du
  * jeu** : ne pas le lire comme la preuve que le ciblage serait automatique.
  */
 
 /**
- * L'auto-visee deterministe du §5.3 : le plus proche ennemi vivant, dans
+ * Auto-visee deterministe : le plus proche ennemi vivant, dans
  * `horde`, a portee de `maxRange` depuis `(fromX, fromY)`.
  *
  * Rend un **identifiant d'entite**, pas un indice de creneau : un indice ne
@@ -21,27 +16,17 @@ import type { Horde } from './horde';
  * le trou), et la cible doit rester valable entre le moment ou l'on vise et
  * celui ou le projectile arrive.
  *
- * ⚠️ **Vise sur l'etat COURANT de `horde`, jamais retarde.** Une premiere
- * version de cette doc demandait un retard `T − K` (par analogie avec le
- * flowfield), corrigee en tache 9 : le retard du flowfield fonctionne parce
- * qu'il porte sur des POSITIONS DE JOUEURS, repliquees avec un delai connu
- * des deux cotes — serveur et client peuvent s'accorder exactement sur « ce
- * qu'etait cette position il y a K ticks ». La horde, elle, est DERIVEE et
- * jamais repliquee : son desaccord entre deux participants ne vient pas d'une
- * latence d'entree qu'un retard pourrait absorber, mais de la PROPAGATION DES
- * MORTS (§3.2) — et retarder la lecture n'y change rien, sauf a faire tenir
- * un second anneau d'etats complet, jamais budgete par le banc de la tache 0.
- * La divergence de cible qui en resulte entre deux participants est acceptee,
- * exactement comme documente sur `Projectiles.fireSalvo`. Cette fonction n'a
- * de toute facon aucune notion du temps, exactement comme
- * `Horde#recomputeSteering` (tache 19) n'a aucune notion de vague — c'est a
- * l'appelant de lui passer l'etat qu'il souhaite interroger.
+ * ⚠️ **Vise sur l'etat COURANT de `horde`, jamais retarde.** Le retard du
+ * flowfield marche parce qu'il porte sur des positions de joueurs, repliquees
+ * avec un delai connu des deux cotes. La horde, elle, est DERIVEE : son
+ * desaccord entre participants vient de la propagation des morts, qu'un
+ * retard de lecture n'absorbe pas. La divergence de cible qui en resulte est
+ * acceptee, comme sur `Projectiles.fireSalvo`.
  *
  * **A egalite de distance, le plus petit identifiant gagne.** Une
  * comparaison flottante stricte laisserait le departage a l'ordre de
- * parcours du tableau — et deux clients compactent leurs tableaux
- * differemment apres des morts. Meme raisonnement que le tri canonique des
- * morts (§3.1) et l'application en bloc des forces de separation (§4).
+ * parcours du tableau, et deux clients compactent leurs tableaux
+ * differemment apres des morts.
  */
 export function nearestTarget(
   horde: Horde,

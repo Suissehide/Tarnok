@@ -4,9 +4,8 @@ import { extractGold } from '@shared/paliers';
 import { NO_VOTE, VOTE_CHOICE } from '@shared/protocol';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-// `?raw` de Vite : le HTML entre dans le bundle de test tel quel, meme motif
-// que `draft.test.ts` — c'est ce qui verifie le CABLAGE et pas seulement la
-// classe qui ecrit dedans.
+// `?raw` de Vite : le HTML entre dans le bundle de test tel quel, ce qui
+// verifie le CABLAGE et pas seulement la classe qui ecrit dedans.
 import indexHtml from '../../index.html?raw';
 import {
   formatGold,
@@ -22,19 +21,17 @@ import {
 } from './portal';
 
 /**
- * L'ecran du vote d'extraction se teste sous jsdom, et pas « ca n'a pas
- * plante » : ce que le §6 exige de lui est OBSERVABLE dans le DOM — le vote de
- * chaque autre joueur, l'abstention DISTINCTE d'un vote « rester », les deux
- * montants d'or, le chronometre derive du tick, et le choix envoye au serveur.
+ * L'ecran du vote d'extraction se teste sous jsdom : tout ce qu'on exige de lui
+ * est OBSERVABLE dans le DOM — le vote de chaque autre joueur, l'abstention
+ * DISTINCTE d'un vote « rester », les deux montants d'or, le chronometre
+ * derive du tick, et le choix envoye au serveur.
  */
 
 /**
  * Le client d'epreuve.
  *
- * ⚠️ **Aucun champ de points de vie, et c'est la forme que prend la regle du
- * §6** : *« tout joueur connecte, mort ou vif »*. L'ecran n'a rien a filtrer,
- * donc il n'y a rien a mettre ici — une garde a `false` serait une condition
- * qu'aucune mutation ne pourrait tuer.
+ * ⚠️ **Aucun champ de points de vie** : tout joueur connecte vote, mort ou
+ * vif, donc l'ecran n'a rien a filtrer.
  */
 class FakeClient implements PortalSource {
   localId: number | null = 2;
@@ -70,11 +67,9 @@ interface Harness {
 }
 
 /**
- * ⚠️ **Des nombres qui ne ressemblent a rien du jeu.** Ni `PORTAL_WINDOW_TICKS`
- * (600), ni `GOLD_PER_PALIER_BASE` (100), ni un multiple : une fixture egale a
- * une constante de production rend la tache invérifiable — dix fois dans ce
- * depot, dont un `GEL_TICKS = 60` qui valait `LEVEL_FREEZE_TICKS` et laissait
- * 80 tests passer sur une derivation fausse.
+ * ⚠️ **Des nombres qui ne ressemblent a rien du jeu** (ni `PORTAL_WINDOW_TICKS`,
+ * ni `GOLD_PER_PALIER_BASE`, ni un multiple) : une fixture egale a une
+ * constante de production laisse passer une derivation fausse.
  */
 const TICK = 4_017;
 const ECHEANCE = TICK + 7 * TICK_HZ + 4;
@@ -105,11 +100,8 @@ function harness(): Harness {
 }
 
 /**
- * Un portail REELLEMENT ouvert.
- *
- * ⚠️ **Le motif « le test qui rend zero », evite ici** : un scenario qui
- * peindrait un ecran ferme passerait tout seul, puisque `update` revient avant
- * d'ecrire quoi que ce soit. Chaque scenario part donc de cet etat-la.
+ * Un portail REELLEMENT ouvert : sur un ecran ferme, `update` revient avant
+ * d'ecrire quoi que ce soit, et tout scenario passerait tout seul.
  */
 function ouvert(h: Harness): void {
   h.client.portalOpen = true;
@@ -164,11 +156,9 @@ describe('le cablage vers index.html', () => {
   });
 
   /**
-   * ⚠️ **Le vote n'est PAS un modale, et c'est la difference structurante avec
-   * l'etalage de cartes.** Le draft gele le monde, donc `#draft` peut prendre
-   * `inset-0` ; le vote ne gele rien (§6 : *« le temps EST son enjeu »*), et un
-   * voile plein ecran cacherait la horde qui avance pendant qu'on negocie —
-   * c'est-a-dire la pression meme que la fenetre existe pour produire.
+   * ⚠️ **Le vote n'est PAS un modale.** Le draft gele le monde, donc `#draft`
+   * peut prendre `inset-0` ; le vote ne gele rien, et un voile plein ecran
+   * cacherait la horde qui avance pendant qu'on negocie.
    */
   it('pose le vote en bandeau, jamais en voile plein ecran comme le draft', () => {
     document.body.innerHTML = indexHtml;
@@ -197,11 +187,7 @@ describe('formatGold — un montant qui se lit pendant une vague', () => {
 });
 
 describe('formatMultiplier — la progression de la mise', () => {
-  /**
-   * ⚠️ **Deux decimales TOUJOURS, meme sur 1.** `×1` et `×1,25` cote a cote se
-   * lisent comme deux grandeurs differentes alors que c'est la meme, et c'est
-   * precisement sa progression qui est en jeu.
-   */
+  /** ⚠️ **Deux decimales TOUJOURS, meme sur 1** : voir `formatMultiplier`. */
   it('ecrit deux decimales et une virgule, meme sur un entier', () => {
     expect(formatMultiplier(1)).toBe('×1,00');
     expect(formatMultiplier(1.25)).toBe('×1,25');
@@ -210,12 +196,7 @@ describe('formatMultiplier — la progression de la mise', () => {
 });
 
 describe('voteLabel — l abstention est un etat A PART', () => {
-  /**
-   * ⚠️ **« n'a pas voté » ne doit JAMAIS se lire comme « reste ».** Le serveur
-   * ne compte l'abstention d'aucun cote (`Portal#decide`) : un ecran qui les
-   * confondrait ferait croire a une majorite acquise alors que des voix
-   * manquent, et toute la negociation porterait sur un decompte faux.
-   */
+  /** ⚠️ **« n'a pas voté » ne doit JAMAIS se lire comme « reste »** : voir `voteLabel`. */
   it('donne trois mots DIFFERENTS aux trois etats', () => {
     const mots = [voteLabel(VOTE_CHOICE.LEAVE), voteLabel(VOTE_CHOICE.STAY), voteLabel(NO_VOTE)];
 
@@ -226,9 +207,8 @@ describe('voteLabel — l abstention est un etat A PART', () => {
   });
 
   it('traite tout octet inconnu comme une abstention, jamais comme une voix', () => {
-    // L'ecran est une fonction de ce qui arrive sur le fil, pas de ce que
-    // `back/src/portal.ts` se trouve emettre ce mois-ci. Un `7` fantaisiste
-    // n'est pas davantage une voix qu'un silence.
+    // L'ecran depend du fil, pas de ce que `back/src/portal.ts` emet
+    // aujourd'hui : un `7` fantaisiste n'est pas davantage une voix.
     expect(voteLabel(7)).toBe(voteLabel(NO_VOTE));
     expect(voteState(7)).toBe('none');
   });
@@ -236,9 +216,8 @@ describe('voteLabel — l abstention est un etat A PART', () => {
 
 describe("les deux chiffres de l'enjeu", () => {
   /**
-   * ⚠️ **Passe par `extractGold`, la fonction que le SALON appelle.** Une
-   * multiplication ecrite dans l'ecran annoncerait un montant different de
-   * celui que le joueur recevrait — un mensonge la ou il se paie le plus cher.
+   * ⚠️ **Passe par `extractGold`, la fonction que le SALON appelle** : l'ecran
+   * annonce le montant que le joueur recevra.
    */
   it('ce qu on gagne en partant : la cagnotte majoree du multiplicateur COURANT', () => {
     expect(leaveGold(CAGNOTTE, MULTIPLICATEUR)).toBe(extractGold(CAGNOTTE, MULTIPLICATEUR));
@@ -247,9 +226,8 @@ describe("les deux chiffres de l'enjeu", () => {
   });
 
   /**
-   * ⚠️ **Le multiplicateur suivant se DERIVE de la constante partagee**, il ne
-   * voyage pas. Un ecran qui oublierait le pas afficherait deux fois le meme
-   * montant, et rester n'aurait plus aucune raison d'etre.
+   * ⚠️ **Le multiplicateur suivant se DERIVE de la constante partagee** : sans
+   * le pas, les deux montants seraient egaux.
    */
   it('ce qu on vise en restant : la meme cagnotte, au multiplicateur SUIVANT', () => {
     expect(stayGold(CAGNOTTE, MULTIPLICATEUR)).toBe(
@@ -259,9 +237,8 @@ describe("les deux chiffres de l'enjeu", () => {
   });
 
   it('dit AUSSI que tout se perd, parce que le chiffre seul ne le dit pas', () => {
-    // Le §5 : l'effacement de l'equipe fait tout perdre. Un ecran qui
-    // n'afficherait que « 12 000 au prochain portail » ne montrerait que la
-    // moitie positive de la decision.
+    // L'effacement de l'equipe fait tout perdre : « 12 000 au prochain
+    // portail » seul ne montrerait que la moitie positive de la decision.
     expect(stakeLines(CAGNOTTE, MULTIPLICATEUR).stay).toMatch(/perdu/i);
   });
 });
@@ -290,10 +267,8 @@ describe('PortalScreen — ce que le joueur voit', () => {
   });
 
   /**
-   * ⚠️ **DERIVE DU TICK, jamais de l'horloge murale.** C'est le tick que le
-   * serveur a date, donc le seul temps que les quatre joueurs partagent. Le
-   * decor place l'echeance a 7 secondes et 4 ticks : un chronometre qui lirait
-   * une horloge afficherait n'importe quoi, et un qui diviserait par la
+   * ⚠️ **DERIVE DU TICK, jamais de l'horloge murale.** Le decor place
+   * l'echeance a 7 secondes et 4 ticks : un chronometre qui diviserait par la
    * mauvaise cadence afficherait un nombre plausible et faux.
    */
   it('decompte les secondes a partir du TICK de horde', () => {
@@ -331,11 +306,9 @@ describe('PortalScreen — ce que le joueur voit', () => {
   });
 
   /**
-   * ⚠️ **L'or vient du SNAPSHOT, donc il bouge PENDANT la fenetre.** Les
-   * monstres continuent d'en laisser tomber (tache 14) : un ecran qui figerait
-   * le montant a l'ouverture mentirait des le tick suivant. Le multiplicateur,
-   * lui, ne bouge pas de toute la fenetre — c'est pour ca qu'il est annonce et
-   * pas repete.
+   * ⚠️ **L'or vient du SNAPSHOT, donc il bouge PENDANT la fenetre** : figer le
+   * montant a l'ouverture mentirait des le tick suivant. Le multiplicateur,
+   * annonce une fois, ne bouge pas.
    */
   it('suit l or du snapshot d une image a l autre', () => {
     ouvert(h);
@@ -350,12 +323,11 @@ describe('PortalScreen — ce que le joueur voit', () => {
   });
 
   /**
-   * ⚠️ **LA VISIBILITE EST LA MECANIQUE** (§6, et §7.2 de l'etape 4 pour les
-   * jetons) : *« on ne negocie pas un choix qu'on ne voit pas »*.
+   * ⚠️ **La visibilite est la mecanique** : on ne negocie pas un choix qu'on ne
+   * voit pas.
    *
-   * ⚠️ **Le decor porte les TROIS etats a la fois**, et il le faut : deux
-   * votants, ou deux etats sur trois, laisseraient passer un ecran qui
-   * confondrait l'abstention avec un vote « rester ».
+   * ⚠️ **Le decor porte les TROIS etats a la fois** : avec deux seulement, un
+   * ecran qui confondrait l'abstention avec « rester » passerait.
    */
   it('montre le vote de CHAQUE joueur, abstention comprise et DISTINCTE', () => {
     ouvert(h);
@@ -406,12 +378,9 @@ describe('PortalScreen — ce que le joueur voit', () => {
   });
 
   /**
-   * ⚠️ **L'ecran ne se cache PAS pour un joueur mort.** Le §6 fait voter
-   * *« tout joueur connecte, mort ou vif »* ; le §9.3 dit que la mort d'un seul
-   * ne coute rien, donc elle ne coute ni la voix ni l'ecran. Ce test ne tue
-   * aucune ligne — il n'y en a aucune a tuer, `PortalSource` ne porte pas de
-   * points de vie — mais il verrouille la SURFACE : ajouter un filtre de vie
-   * demanderait d'ajouter un champ, et se verrait ici.
+   * ⚠️ **L'ecran ne se cache PAS pour un joueur mort** : tout joueur connecte
+   * vote, mort ou vif. Ce test verrouille la SURFACE — un filtre de vie
+   * demanderait d'ajouter un champ a `PortalSource`, et se verrait ici.
    */
   it('reste affiche pour un joueur qui n est plus dans le salon vivant', () => {
     ouvert(h);
@@ -423,8 +392,8 @@ describe('PortalScreen — ce que le joueur voit', () => {
   });
 
   it('envoie le choix clique, sans rien afficher de facon optimiste', () => {
-    // ⚠️ Le §7.2 : le client PROPOSE, le serveur arbitre. Un vote affiche des
-    // le clic mentirait a chaque refus.
+    // ⚠️ Le client PROPOSE, le serveur arbitre : un vote affiche des le clic
+    // mentirait a chaque refus.
     ouvert(h);
     h.screen.update();
 
@@ -444,10 +413,8 @@ describe('PortalScreen — ce que le joueur voit', () => {
   });
 
   /**
-   * ⚠️ **Le vote est REVOCABLE**, comme le jeton du draft, et pour la meme
-   * raison : on negocie vingt secondes en voyant les autres, et une voix qu'on
-   * ne pourrait plus reprendre transformerait la negociation en course au clic.
-   * C'est aussi le seul geste qui dise « je vous laisse decider ».
+   * ⚠️ **Le vote est REVOCABLE**, comme le jeton du draft : une voix qu'on ne
+   * pourrait plus reprendre ferait de la negociation une course au clic.
    */
   it('recliquer la face qu on a deja choisie RETIRE la voix', () => {
     ouvert(h);

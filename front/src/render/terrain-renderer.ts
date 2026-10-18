@@ -530,7 +530,7 @@ export async function buildTerrain(
   // Les biomes : chaque teinte dans son conteneur, a pleine opacite, sous un
   // MASQUE lisse — une image d'un pixel par cellule (`biomeLayers`) etiree en
   // filtrage lineaire. La transition se fait DANS les tuiles, en degrade, la
-  // ou une opacite par tuile faisait des marches.
+  // ou une opacite par tuile ferait des marches.
   const overlays = new Map<number, Container>();
   const masks: Sprite[] = [];
   const layers = biomeLayers(world);

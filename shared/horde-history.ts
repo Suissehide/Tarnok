@@ -2,14 +2,13 @@ import { ROLLBACK_DEPTH_TICKS } from './constants';
 import type { Horde, HordeState } from './horde';
 
 /**
- * Anneau d'etats de horde, pour le rejeu du §3.2.
+ * Anneau d'etats de horde, pour le rejeu des morts.
  *
  * Une mort arrive en retard : le tick present a deja avance quand le message
- * traverse le reseau. Comme les entites sont couplees par la separation
- * (tache 1), l'appliquer au present plutot qu'a son tick d'origine deplace
- * des dizaines de voisines et l'ecart ne s'eteint plus — mesure a l'etape 2,
- * l'equivalent croit sans borne jusqu'a 694 px en dix secondes. La parade :
- * revenir au tick de la mort, l'appliquer, rejouer jusqu'au present.
+ * traverse le reseau. Comme les entites sont couplees par la separation,
+ * l'appliquer au present plutot qu'a son tick d'origine deplace des dizaines
+ * de voisines et l'ecart croit sans borne. La parade : revenir au tick de la
+ * mort, l'appliquer, rejouer jusqu'au present.
  *
  * `ROLLBACK_DEPTH_TICKS` borne la memoire necessaire : au-dela, une mort est
  * trop vieille pour etre rejouee et doit etre signalee plutot qu'appliquee en
@@ -19,9 +18,7 @@ import type { Horde, HordeState } from './horde';
  * la `Horde` qu'ils accompagnent — `Horde.capacity` est fixe, donc un etat qui
  * ne l'egalerait pas ne pourrait pas recevoir une copie complete. `record` ne
  * fait ensuite que des `.set()` dans ces tampons : **aucune allocation par
- * tick**, pour la meme raison que `FlowField` pre-alloue sa file et que la
- * grille de voisins de `Horde` (tache 19) pre-alloue son curseur — un
- * ramasse-miettes visible dans les mesures de la tache 0.
+ * tick**, le ramasse-miettes se verrait dans les mesures.
  */
 export class HordeHistory {
   readonly #ticks: Int32Array;

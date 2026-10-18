@@ -37,15 +37,12 @@ describe('drawSpread', () => {
   });
 
   it('offre TOUJOURS une arme deja portee par un allie : il n y a aucune exclusivite d equipe', () => {
-    // ⚠️ **C'est le point que l'auteur a signale en jouant** : *« si quelqu'un
-    // a deja pris lance-flammes, je peux lui voler la carte la prochaine
-    // fois »*. Chacun garde son propre exemplaire — ce qui se dispute, c'est
-    // la carte de CET etalage-ci, jamais l'arme de l'autre.
+    // ⚠️ Chacun garde son propre exemplaire : ce qui se dispute, c'est la
+    // carte de CET etalage-ci, jamais l'arme de l'autre.
     //
     // ⚠️ Le porteur est le DERNIER de l'equipe, deliberement, et le seul a
-    // porter quoi que ce soit : c'est la fixture qui rendait l'ancienne
-    // exclusivite visible, et elle reste celle qui rendrait visible son
-    // retour partiel (« ne consulter que le premier inventaire »).
+    // porter quoi que ce soit : une exclusivite partielle (« ne consulter que
+    // le premier inventaire ») resterait sinon invisible.
     const arme = WEAPONS[3]; // lance-flammes
     if (!arme) {
       throw new Error('fixture : arme absente');
@@ -55,8 +52,8 @@ describe('drawSpread', () => {
     porteur.addWeapon(arme.id);
 
     // On EXIGE de la revoir, on ne se contente pas de « elle n'est pas
-    // interdite » : avec 60 graines et un pool de treize cartes, une carte
-    // encore eligible ressort forcement. Si elle etait exclue, ce compteur
+    // interdite » : sur 60 graines, une carte encore eligible ressort
+    // forcement. Si elle etait exclue, ce compteur
     // resterait a zero.
     let revue = 0;
     for (let seed = 1; seed <= 60; seed++) {
@@ -99,9 +96,8 @@ describe('drawSpread', () => {
     a.addPassive(1); // deja empile deux fois : rien a exclure
 
     // ⚠️ On exige que le passif DEJA EMPILE (id 1) reapparaisse, pas seulement
-    // que « des » passifs apparaissent. Verifie : la mutation « exclure les
-    // passifs deja possedes » survivait, parce que les quatre autres passifs
-    // suffisaient a satisfaire un test moins precis.
+    // que « des » passifs apparaissent : « exclure les passifs deja possedes »
+    // passerait sinon, les autres passifs suffisant.
     let dejaPossedeRevu = false;
     for (let seed = 1; seed <= 60; seed++) {
       for (const c of drawSpread(equipe(a, b), makeRandom(seed))) {
@@ -114,8 +110,7 @@ describe('drawSpread', () => {
   });
 
   it('ne connait que deux natures de carte : arme et passif', () => {
-    // Les montees de niveau et les evolutions ont existe un temps puis ont ete
-    // retirees (§9). Une carte d'une troisieme nature traverserait
+    // Une carte d'une troisieme nature traverserait
     // `applyCardToLoadout` sans rien ranger — le draft deviendrait une
     // ceremonie sans effet pour cette carte, en silence.
     for (let seed = 1; seed <= 200; seed++) {
@@ -135,9 +130,8 @@ describe('drawSpread', () => {
   });
 
   it('fait revenir PLUS SOUVENT ce qu une equipe possede deja : de quoi l ameliorer', () => {
-    // Retour de playtest : *« je dois pouvoir reprendre la meme arme pour
-    // l'ameliorer »*. Avant, l'etalage ne dependait pas des inventaires et une
-    // arme possedee revenait une fois sur cinq etalages a peine.
+    // Un joueur doit pouvoir reprendre la meme arme pour l'ameliorer :
+    // l'etalage depend des inventaires.
     const arme = (spread: { nature: number; refId: number }[]): boolean =>
       spread.some((c) => c.nature === CARD.WEAPON && c.refId === 2);
     let avec = 0;
@@ -167,8 +161,8 @@ describe('drawSpread', () => {
   });
 
   it("offre aussi la dague : une arme comme les autres, qui s'ameliore", () => {
-    // Retour de playtest : la dague vit dans les slots depuis `Room.join`, et
-    // la reprendre l'empile comme n'importe quelle arme.
+    // La dague vit dans les slots des `Room.join`, et la reprendre l'empile
+    // comme n'importe quelle arme.
     //
     // On balaie assez de graines pour que chaque carte du pool sorte au moins
     // une fois : un seul tirage ne prouverait rien.
@@ -246,9 +240,9 @@ describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
   }
   const ASPECT = upgradesFor(ARME)[1] ?? -1; // la cadence, toujours proposee
 
-  // ⚠️ **Le x3 du legendaire est mort a l'etape 13** : les deux paliers hauts
-  // sont des cartes de REGLE, et une regle triplee serait du decor. C'est
-  // `RARITY_MULTIPLIERS` qui le dit, plus un cas particulier dans `cards.ts`.
+  // ⚠️ **Pas de x3 au legendaire** : les deux paliers hauts sont des cartes de
+  // REGLE, et une regle triplee serait du decor. C'est `RARITY_MULTIPLIERS`
+  // qui le dit, pas un cas particulier dans `cards.ts`.
   it('un passif rare donne 2 exemplaires ; commune, epique et legendaire en donnent 1', () => {
     for (const [rarity, attendu] of [
       [undefined, 1],
@@ -278,10 +272,8 @@ describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
     expect(l.weaponSlotsUsed).toBe(1);
   });
 
-  // ⚠️ Cette garde etait ecrite en LEGENDAIRE x3 ; depuis l'etape 13 le seul
-  // multiplicateur > 1 est celui du rare. Ce qu'elle garde est inchange : sur
-  // une arme DEJA possedee, toutes les applications vont dans l'aspect, aucune
-  // ne sert a l'acquisition.
+  // ⚠️ Sur une arme DEJA possedee, toutes les applications vont dans
+  // l'aspect, aucune ne sert a l'acquisition.
   it('une arme rare DEJA possedee : deux crans de son aspect, rien pour l acquisition', () => {
     const l = new Loadout();
     l.addWeapon(ARME.id);
@@ -323,11 +315,9 @@ describe('etape 10 : une carte rare vaut deux cartes, et rien de plus', () => {
 describe('une carte de palier s applique x1 (etape 10, par la table depuis l etape 13)', () => {
   const DE_PALIER = PASSIVES.filter((p) => p.tier !== undefined);
 
-  // ⚠️ **La garde a change de porteur a l'etape 13.** Elle disait « quelle que
-  // soit la rarete portee » parce que `applicationsOf` corrigeait la carte ;
-  // c'est la TABLE qui dit x1 maintenant, donc on l'eprouve sur la rarete que
-  // la carte peut reellement porter — la sienne — plus une rarete hors table
-  // venue du fil, qui se lit commune.
+  // ⚠️ C'est la TABLE qui dit x1, pas `applicationsOf` : on l'eprouve donc sur
+  // la rarete que la carte peut reellement porter (la sienne), plus une
+  // rarete hors table venue du fil, qui se lit commune.
   it('sur son propre palier, et sur une rarete hors table venue du fil', () => {
     expect(DE_PALIER.length).toBe(6);
     for (const p of DE_PALIER) {
@@ -355,8 +345,8 @@ describe('une carte de palier s applique x1 (etape 10, par la table depuis l eta
       refId: dePalier.id,
       rarity: rarityForTier(dePalier.tier),
     });
-    // ⚠️ Le compte reste — c'est lui que le HUD peint — mais depuis l'etape
-    // 13 il ne bloque plus rien : `canTake` resterait `true` ici.
+    // ⚠️ Le compte reste, c'est lui que le HUD peint, mais il ne bloque rien :
+    // `canTake` resterait `true` ici.
     expect(l.passiveSlotsUsed).toBe(3);
   });
 
@@ -480,12 +470,11 @@ describe('etape 13 : un palier, un pool', () => {
   });
 
   /**
-   * ⚠️ **Le risque principal de l'etape.** Le `break` de `drawSpread` etait
-   * documente « INATTEIGNABLE » ; avec un filtre strict par palier il devient
+   * ⚠️ Avec un filtre strict par palier, le `break` de `drawSpread` devient
    * courant, et l'etalage sortirait avec MOINS de cartes que de joueurs.
    *
-   * ⚠️ **La cause est l'EPUISEMENT DU POOL, pas des emplacements pleins** (la
-   * tache 0 a leve la limite de passifs). `drawSpread` tire sans remise et les
+   * ⚠️ **La cause est l'EPUISEMENT DU POOL, pas des emplacements pleins** (les
+   * passifs n'ont pas de limite). `drawSpread` tire sans remise et les
    * epiques se comptent sur une main : au premier emplacement epique de trop,
    * plus rien n'est permis. On force le cas avec un rng qui tire TOUJOURS
    * epique.
@@ -512,7 +501,7 @@ describe('etape 13 : un palier, un pool', () => {
    * ⚠️ **La descente enchaine les crans, elle n'en lache pas qu'un.** Un seul
    * `rarity--` sans boucle laisserait un emplacement legendaire retomber sur
    * un palier epique LUI AUSSI vide, et `index < 0` ferait sortir l'etalage
-   * incomplet — exactement le bug que l'etape devait fermer.
+   * incomplet.
    */
   it('deux crans d un coup : legendaire epuise, puis epique epuise, on finit en rare', () => {
     // 0,99 x 100 = 99, dans la bande legendaire cumulee [98, 100).

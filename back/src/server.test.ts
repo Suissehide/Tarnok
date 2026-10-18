@@ -67,17 +67,16 @@ async function connect(code: string): Promise<{ ws: WebSocket; playerId: number 
   // donc deja a l'ecoute avant que le HELLO ne parte.
   const welcomePromise = nextMessage(ws, (m) => m.type === MSG.WELCOME);
 
-  // ⚠️ L'ecoute de 'open' est posee ICI, avant tout `await` : sur
-  // localhost la socket peut s'ouvrir plus vite qu'une volee Prisma, et un
-  // `once('open', ...)` pose apres `createAccount()` manquerait l'evenement
-  // deja passe, bloquant `connect` jusqu'au timeout du test.
+  // ⚠️ L'ecoute de 'open' est posee avant tout `await` : sur localhost la
+  // socket peut s'ouvrir avant la fin de `createAccount()`, et l'evenement
+  // serait manque.
   const ouverte = new Promise<void>((resolve, reject) => {
     ws.once('open', () => resolve());
     ws.once('error', reject);
   });
 
-  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
-  // un slot : chaque client de ce harnais a donc son propre compte.
+  // Toute socket de jeu presente son jeton AVANT d'obtenir un slot : chaque
+  // client a donc son propre compte.
   const { token } = await createAccount();
   await ouverte;
   ws.send(encodeHello(token));
@@ -129,10 +128,7 @@ function nextSnapshot(
   return nextMessage(ws, (m) => m.type === MSG.SNAPSHOT && match(m)) as Promise<SnapshotMessage>;
 }
 
-/**
- * Pose une entite a une position choisie, hors du generateur de vagues — meme
- * technique que `spawnMonsterAt` dans `room.test.ts` et `combat.test.ts`.
- */
+/** Pose une entite a une position choisie, hors du generateur de vagues. */
 function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): number {
   const order: WaveOrder = {
     waveId,
@@ -229,12 +225,9 @@ describe('la socket de jeu', () => {
   });
 
   /**
-   * Le livrable de l'etape 0, sans navigateur.
-   *
-   * La verification a deux onglets est trompeuse : un onglet en arriere-plan a
-   * son `requestAnimationFrame` suspendu, donc il ne redessine pas — et une
-   * capture d'ecran montre alors une image perimee qu'on prend pour un bug de
-   * replication. Ce test-la ne depend d'aucun rendu.
+   * La replication entre deux joueurs, sans navigateur : a deux onglets, celui
+   * en arriere-plan suspend son `requestAnimationFrame` et montre une image
+   * perimee qu'on prend pour un bug de replication.
    */
   it('montre a chaque joueur le deplacement de l autre, arbitre par le serveur', async () => {
     const code = await createRoomCode();
@@ -276,21 +269,14 @@ describe('la socket de jeu', () => {
   });
 
   /**
-   * La formulation testable de « sans position sur le fil ».
+   * « Aucune position de monstre sur le fil », sous forme testable.
    *
-   * Bien meilleure qu'une inspection de code : elle survit aux
-   * refactorisations. Si quelqu'un ajoute un jour des positions de monstres
-   * dans le snapshot, ce test le voit tout de suite.
-   *
-   * Deux pieges evites par construction :
-   * - Comparer deux fenetres l'une a l'autre ne prouve rien si aucune vague
-   *   n'est sortie pendant l'une d'elles (WaveDirector n'en emet qu'une
-   *   toutes les 6 s) : on attend un premier WAVE_ORDER, preuve observable
-   *   que des centaines d'entites existent deja, avant de commencer a
-   *   mesurer.
-   * - Comparer a la fenetre precedente ne verrait pas une regression ou des
-   *   positions de monstres seraient presentes des le debut et de taille
-   *   stable : on compare a une valeur absolue, deduite du format de trame.
+   * Deux pieges evites :
+   * - on attend un premier WAVE_ORDER avant de mesurer, preuve qu'une horde
+   *   existe deja (une vague toutes les 6 s seulement) ;
+   * - on compare a une valeur absolue deduite du format de trame, pas a une
+   *   fenetre precedente, qui ne verrait pas des positions presentes des le
+   *   debut.
    */
   it('ne fait pas grossir le trafic avec le nombre d ennemis', async () => {
     const code = await createRoomCode();
@@ -307,8 +293,7 @@ describe('la socket de jeu', () => {
     });
 
     // Preuve qu'une horde existe avant de mesurer, plutot qu'une
-    // temporisation aveugle : on attend le premier WAVE_ORDER (periode de
-    // 6 s, delai genereux ci-dessous).
+    // temporisation aveugle.
     await nextMessage(ws, (m) => m.type === MSG.WAVE_ORDER, 10_000);
 
     // On ne mesure qu'a partir d'ici : la horde est deja apparue, mais son
@@ -323,11 +308,9 @@ describe('la socket de jeu', () => {
     const expectedBytesPerSecond = (SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES) * SNAPSHOT_HZ;
     const expectedBytes = expectedBytesPerSecond * (windowMs / 1000);
 
-    // Marge x5 : elle absorbe un ordre de vague occasionnel (19 octets, rare
-    // sur une fenetre de 3 s), la gigue de cadence et l'en-tete WebSocket,
-    // tout en restant deux ordres de grandeur sous ce que couterait la
-    // replication de la horde (des centaines d'entites x 5 octets x 30
-    // fois par seconde).
+    // Marge x5 : elle absorbe un ordre de vague occasionnel, la gigue de
+    // cadence et l'en-tete WebSocket, en restant deux ordres de grandeur sous
+    // ce que couterait la replication de la horde.
     const maxBytes = expectedBytes * 5;
 
     process.stdout.write(
@@ -347,15 +330,11 @@ describe('la socket de jeu', () => {
 
 describe('la reaction sur le fil (etape 5a, tache 7)', () => {
   /**
-   * ⚠️ **La diffusion de `REACTION` n'etait couverte par AUCUN test** —
-   * mutation appliquee, elle survivait, exactement comme les deux lignes de
-   * `Session` que la tache 6 de l'etape 4 avait laissees nues (dette « S1/S3 »
-   * du registre). La supprimer laisserait toute la suite verte, et la reaction
-   * n'arriverait simplement jamais chez personne.
+   * ⚠️ **Seul test qui garde la diffusion de `REACTION`** : sans lui, la
+   * supprimer laisserait la suite verte.
    *
-   * Le salon est pilote depuis le test (`app.rooms`, decore par
-   * `buildServer`), mais la PREUVE ne passe que par la socket : c'est le
-   * message decode qui est interroge, jamais `room.drainReactions()`.
+   * Le salon est pilote depuis le test (`app.rooms`), mais la PREUVE ne passe
+   * que par la socket, jamais par `room.drainReactions()`.
    */
   it('diffuse la reaction aux clients, avec un couple canonicalise', async () => {
     const ARME_GIVRE = WEAPONS.find((w) => w.element === ELEMENT.GIVRE)?.id ?? -1;
@@ -399,9 +378,8 @@ describe('la reaction sur le fil (etape 5a, tache 7)', () => {
       }
       expect(msg.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
       // ⚠️ La marque est posee par `playerId + 1`, et c'est `playerId` qui
-      // declenche : deux joueurs differents, donc une charge (§7). Le bit
-      // traverse la socket jusqu'ici — la regle de la tache 8 est bien celle
-      // que le client recoit, pas seulement celle que `Room` calcule.
+      // declenche : deux joueurs differents, donc une charge. Le bit doit
+      // traverser la socket, pas seulement etre calcule par `Room`.
       expect(msg.synergyCharge).toBe(true);
     } finally {
       clearInterval(pilote);
@@ -410,16 +388,11 @@ describe('la reaction sur le fil (etape 5a, tache 7)', () => {
 });
 
 /**
- * Etape 6a, tache 5 bis — **la charge du boss sur le fil**.
+ * ⚠️ **Seul test qui garde la diffusion de `BOSS_CHARGE`** : sans lui, retirer
+ * la boucle d'emission laisserait la suite verte, et le boss chargerait chez le
+ * serveur et nulle part ailleurs.
  *
- * ⚠️ **La diffusion de `BOSS_CHARGE` n'etait couverte par AUCUN test** :
- * mutation appliquee sur le disque, la boucle d'emission retiree, toute la
- * suite restait verte — exactement comme `REACTION` avant la tache 7, et comme
- * les deux lignes de `Session` du registre de dettes. La supprimer laisserait le
- * boss traverser son couloir chez le serveur et nulle part ailleurs.
- *
- * La PREUVE ne passe que par la socket : c'est le message decode qui est
- * interroge, jamais `room.drainBossCharges()`.
+ * La PREUVE ne passe que par la socket, jamais par `room.drainBossCharges()`.
  */
 describe('la charge du boss sur le fil (etape 6a, tache 5 bis)', () => {
   it('diffuse la charge aux clients, une fois, avec ses trois ticks', async () => {
@@ -431,10 +404,8 @@ describe('la charge du boss sur le fil (etape 6a, tache 5 bis)', () => {
     }
 
     // ⚠️ **Le salon est avance DEPUIS LE TEST**, en plus de la boucle du
-    // serveur : atteindre un boss demande quatre vagues, soit une trentaine de
-    // secondes d'horloge murale. `Room.step` est public et le tick n'est qu'un
-    // compteur — l'avancer ici fait apparaitre le boss en quelques
-    // millisecondes, et c'est bien le SERVEUR qui diffuse ce qu'il en tire.
+    // serveur : atteindre un boss prend une trentaine de secondes d'horloge
+    // murale. C'est toujours le SERVEUR qui diffuse ce qu'il en tire.
     const balayer = (): void => {
       const ids: number[] = [];
       for (let i = 0; i < room.horde.count; i++) {
@@ -473,17 +444,12 @@ describe('la charge du boss sur le fil (etape 6a, tache 5 bis)', () => {
 });
 
 /**
- * Etape 6a, tache 9 — **le portail sur le fil**.
+ * **Le portail sur le fil.**
  *
- * ⚠️ **La ligne de diffusion est l'angle mort de ce depot** : `REACTION` et
- * `BOSS_CHARGE` sont toutes deux passees sans test, et la dette « S1/S3 » du
- * registre disait deja la meme chose du draft. Trois lignes naissent ici —
- * l'ouverture, les votes, le verdict — et une quatrieme recoit le vote. Les
- * quatre sont mutees sur le disque a l'ecriture de ce test, et les quatre font
- * rougir ce fichier.
+ * ⚠️ Garde les quatre lignes de diffusion du portail (ouverture, votes,
+ * verdict, reception du vote) : en retirer une fait rougir ce fichier.
  *
- * La PREUVE ne passe que par la socket : ce sont les messages decodes qui sont
- * interroges, jamais `room.drainPortalOpens()`.
+ * La PREUVE ne passe que par la socket, jamais par `room.drainPortalOpens()`.
  */
 describe('le portail sur le fil (etape 6a, tache 9)', () => {
   it('diffuse l ouverture AVANT le snapshot qui en decoule, les votes, puis le verdict', async () => {
@@ -515,9 +481,7 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
       }
     };
 
-    // ⚠️ **Le salon est avance DEPUIS LE TEST**, en plus de la boucle du
-    // serveur : atteindre un boss demande quatre vagues, soit une trentaine de
-    // secondes d'horloge murale. Meme technique qu'a la tache 5 bis.
+    // ⚠️ **Le salon est avance DEPUIS LE TEST** (voir la charge du boss).
     for (let t = 0; t < 120 * TICK_HZ && room.bossEntityId === null; t++) {
       room.step(1 / TICK_HZ);
       balayer();
@@ -526,10 +490,8 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     expect(bossId).not.toBeNull();
 
     // ⚠️ **Rendre la main au serveur, sinon l'ordre teste plus bas n'existe
-    // pas.** Les boucles ci-dessus bloquent la boucle d'evenements : sans
-    // cette pause, AUCUNE diffusion n'aurait lieu tant que le boss est vivant,
-    // et « l'ouverture precede le snapshot sans boss » se lirait d'une suite
-    // de messages ou aucun snapshot n'aurait jamais porte de boss.
+    // pas** : les boucles ci-dessus bloquent la boucle d'evenements, et sans
+    // cette pause aucun snapshot ne porterait jamais le boss.
     await new Promise((r) => setTimeout(r, 120));
     expect(recus.some((m) => m.type === MSG.SNAPSHOT && m.boss !== null)).toBe(true);
 
@@ -553,9 +515,8 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     expect(room.palier).toBe(avant + 1);
     const tickMort = room.tick;
 
-    // ⚠️ **Le portail ne suit plus la mort du boss** (retour de playtest) : il
-    // s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues. On avance jusqu'a lui,
-    // horde entierement videe.
+    // ⚠️ **Le portail ne suit pas la mort du boss** : il s'ouvre toutes les
+    // `PORTAL_EVERY_WAVES` vagues. On avance jusqu'a lui, horde videe.
     for (let t = 0; t < 300 * TICK_HZ && !room.portalOpen; t++) {
       room.step(1 / TICK_HZ);
       room.horde.kill(Array.from({ length: room.horde.count }, (_, i) => room.horde.entityIdAt(i)));
@@ -568,11 +529,9 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
       throw new Error('PORTAL_OPEN attendu');
     }
     expect(open.deadlineTick).toBeGreaterThanOrEqual(tickMort + PORTAL_WINDOW_TICKS);
-    // ⚠️ **Le multiplicateur traverse la SOCKET, pas seulement l'encodeur**
-    // (tache 10) : c'est ici que se verifie que `#broadcast` lit bien
-    // l'evenement du salon et pas une valeur inventee. Premier portail de la
-    // run, donc 1 — ce que le second portail annonce est garde dans
-    // `room.test.ts`, la ou une run peut en enchainer deux.
+    // ⚠️ **Le multiplicateur traverse la SOCKET, pas seulement l'encodeur.**
+    // Premier portail de la run, donc 1 : le second est garde par le test
+    // suivant.
     expect(open.multiplier).toBe(room.extractMultiplier);
     expect(open.multiplier).toBe(1);
 
@@ -581,7 +540,7 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     if (votes.type !== MSG.VOTES) {
       throw new Error('VOTES attendu');
     }
-    // ⚠️ **On ne negocie pas un choix qu'on ne voit pas** (§6) : le silence
+    // ⚠️ **On ne negocie pas un choix qu'on ne voit pas** : le silence
     // circule, sinon personne ne sait qui n'a pas encore tranche.
     expect(votes.votes).toEqual([{ playerId, choice: NO_VOTE }]);
 
@@ -598,9 +557,9 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
     expect(verdict.gold).toBeGreaterThan(0);
 
     // ⚠️ **Partir termine la run, et la fin arrive APRES le verdict** : sinon
-    // l'ecran de fin s'ouvrait sans la decision et disait « L'equipe est
-    // tombee » a une equipe qui venait de partir (retour de playtest).
-    // Deja recu, dans le MEME envoi que le verdict : on le lit dans `recus`.
+    // l'ecran de fin s'ouvre sans la decision et dit « L'equipe est tombee » a
+    // une equipe qui vient de partir. Il part dans le MEME envoi que le
+    // verdict : on le lit dans `recus`.
     for (let i = 0; i < 100 && !recus.some((m) => m.type === MSG.RUN_OVER); i++) {
       await new Promise((r) => setTimeout(r, 20));
     }
@@ -611,10 +570,9 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
 
     // --- 4. L'ORDRE : l'evenement precede l'etat qui en decoule.
     //
-    // ⚠️ **La seule assertion du depot qui garde la POSITION du bloc du portail
-    // dans `#broadcast`** : l'ouverture part AVANT le premier snapshot date de
-    // son tick ou d'apres. Deplacer le bloc apres l'envoi du snapshot inverse
-    // les deux, et rien d'autre ne s'en apercevrait.
+    // ⚠️ **Seule assertion qui garde la POSITION du bloc du portail dans
+    // `#broadcast`** : l'ouverture part AVANT le premier snapshot date de son
+    // tick ou d'apres.
     const tickOuverture = open.deadlineTick - PORTAL_WINDOW_TICKS;
     const indexOuverture = recus.findIndex((m) => m.type === MSG.PORTAL_OPEN);
     const premierApres = recus.findIndex((m) => m.type === MSG.SNAPSHOT && m.tick >= tickOuverture);
@@ -623,16 +581,11 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
   }, 40_000);
 
   /**
-   * ⚠️ **Ce test existe parce qu'une mutation a SURVECU** (tache 10). Le test
-   * ci-dessus assene `open.multiplier === 1`, et c'est exactement ce que le
-   * premier portail d'une run vaut : remplacer `encodePortalOpen(deadline,
-   * open.multiplier)` par `encodePortalOpen(deadline, 1)` dans `#broadcast` le
-   * laissait ENTIEREMENT VERT. Le decor masquait la ligne qu'il pretendait
-   * garder — le motif « decor qui masque », dix fois dans ce depot.
-   *
-   * La seule facon de le tuer est d'ouvrir un SECOND portail, donc de rester
-   * une fois, donc de tuer deux boss sur une vraie socket. C'est long, et c'est
-   * le prix de la seule ligne du serveur qui porte ce chiffre.
+   * ⚠️ Au premier portail le multiplicateur vaut 1 : un
+   * `encodePortalOpen(deadline, 1)` code en dur dans `#broadcast` passerait le
+   * test ci-dessus. Seul un SECOND portail le distingue, d'ou deux boss sur
+   * une vraie socket. C'est long, mais c'est la seule ligne du serveur qui
+   * porte ce chiffre.
    */
   it('annonce le multiplicateur MAJORE au portail SUIVANT, sur le fil', async () => {
     const code = await createRoomCode();
@@ -658,9 +611,7 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
 
     /**
      * Amene un boss, puis le fait tomber par le chemin de mort normal du
-     * salon. Meme technique que le test ci-dessus : le salon est avance DEPUIS
-     * LE TEST, sinon quatre vagues coutent une trentaine de secondes
-     * d'horloge murale.
+     * salon, en avancant le salon DEPUIS LE TEST.
      */
     const tuerLeBoss = async (): Promise<void> => {
       for (let t = 0; t < 180 * TICK_HZ && room.bossEntityId === null; t++) {
@@ -721,13 +672,10 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
 
 describe('etape 8 tache 3, ronde de correction 1 : ABILITY_USED part une seule fois', () => {
   /**
-   * ⚠️ **La garde de la ronde 1.** `useAbility` met l'annonce en file
-   * (`Room#drainAbilities`) ET la rend a l'appelant ; si le gestionnaire de
-   * `MSG.ABILITY` envoyait AUSSI ce retour, chaque verbe accepte partirait
-   * deux fois — une immediate, une au prochain `#broadcast`. Ce test compte
-   * les `ABILITY_USED` reellement recus sur le fil, pas le retour de
-   * `useAbility` : voir la ronde 1 du rapport pour la mesure de ce doublon,
-   * applique puis annule.
+   * ⚠️ `useAbility` met l'annonce en file (`Room#drainAbilities`) ET la rend a
+   * l'appelant ; si le gestionnaire de `MSG.ABILITY` envoyait AUSSI ce retour,
+   * chaque verbe partirait deux fois. Ce test compte les `ABILITY_USED`
+   * reellement recus sur le fil.
    */
   it('un verbe accepte ne produit qu UNE seule annonce ABILITY_USED sur le fil', async () => {
     const code = await createRoomCode();
@@ -748,22 +696,15 @@ describe('etape 8 tache 3, ronde de correction 1 : ABILITY_USED part une seule f
   });
 
   /**
-   * ⚠️ **Le risque nomme par la ronde 1.** Un Relais (tache 7) derive sa
-   * cible du MEME tick que celui ou le serveur a tranche si l'allie etait
-   * encore vivant : si `ABILITY_USED` et `DEATHS` partaient dans un ordre non
-   * garanti, un client qui les appliquerait dans l'ordre inverse de l'autre
-   * deriverait un allie vivant la ou l'autre deriverait un mort.
+   * ⚠️ Un Relais derive sa cible du MEME tick que celui ou le serveur a
+   * tranche si l'allie etait vivant : si `ABILITY_USED` et `DEATHS` partaient
+   * dans un ordre non garanti, deux clients pourraient deriver l'un un allie
+   * vivant, l'autre un mort.
    *
-   * Ce test n'a PAS besoin de l'effet du Relais (il n'existe pas encore a
-   * cette tache, `targetId` vaut toujours 0) : il mesure directement, sur le
-   * fil, que lorsque une mort REELLE (par le pipeline de combat de `step`,
-   * pas un `horde.kill` de decor) et une acceptation de verbe sont prets au
-   * MEME tick, `DEATHS` part toujours avant `ABILITY_USED`. La mort et
-   * l'acceptation sont produites dans le MEME bloc synchrone, sans aucun
-   * `await` entre les deux : le minuteur reel du salon ne peut donc pas
-   * s'intercaler et driner l'un sans l'autre entretemps, ce qui rend la
-   * mesure reproductible plutot que suspendue a une course avec l'horloge
-   * murale.
+   * Une mort REELLE (pipeline de combat, pas `horde.kill`) et une acceptation
+   * de verbe sont produites dans le MEME bloc synchrone, sans `await` : le
+   * minuteur du salon ne peut pas s'intercaler, ce qui rend l'ordre mesure
+   * reproductible.
    */
   it('DEATHS part avant ABILITY_USED quand les deux sont prets au meme tick', async () => {
     const code = await createRoomCode();
@@ -782,11 +723,9 @@ describe('etape 8 tache 3, ronde de correction 1 : ABILITY_USED part une seule f
     const recus: Message[] = [];
     ws.on('message', (data: ArrayBuffer) => recus.push(decode(data)));
 
-    // A portee de l'arme de base mais hors de CONTACT_RADIUS, exactement
-    // comme room.test.ts isole le chemin « degats de projectile » du chemin
-    // « contact ». L'arme ne tire JAMAIS sans visee (`Room.join` laisse
-    // `aimX`/`aimY` a 0) : chaque tick vise le monstre, comme
-    // `aimAtNearestMonster` le fait dans room.test.ts.
+    // A portee de l'arme de base mais hors de CONTACT_RADIUS : seul le
+    // projectile tue. L'arme ne tire JAMAIS sans visee (`Room.join` laisse
+    // `aimX`/`aimY` a 0), d'ou une visee a chaque tick.
     const monstre = spawnMonsterAt(room, 888_000, moi.x + 100, moi.y);
     let seq = 1;
     for (let t = 0; t < 30 * TICK_HZ && room.horde.slotOf(monstre) >= 0; t++) {
@@ -799,8 +738,7 @@ describe('etape 8 tache 3, ronde de correction 1 : ABILITY_USED part une seule f
       }
       room.step(1 / TICK_HZ);
     }
-    // La mort est REELLE (pipeline de combat), pas un decor : c'est elle qui
-    // doit avoir mis une annonce DEATHS en file avant la ligne suivante.
+    // La mort REELLE a mis une annonce DEATHS en file avant la ligne suivante.
     expect(room.horde.slotOf(monstre)).toBe(-1);
     // Meme tick, meme bloc synchrone : aucun `await` ne separe la mort
     // ci-dessus de l'acceptation ci-dessous.

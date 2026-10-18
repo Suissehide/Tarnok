@@ -189,9 +189,9 @@ describe('Projectiles.fireSalvo', () => {
 });
 
 /**
- * `fireSalvoDirected` (tache 13) : une salve dans une direction donnee, sans
- * cible ni horde — c'est ce qu'appellent desormais `Room#fireWeapons` et
- * `GameClient#fireWeapons` pour l'arme de base, la visee venant du curseur.
+ * `fireSalvoDirected` : une salve dans une direction donnee, sans cible ni
+ * horde. C'est ce qu'appellent `Room#fireWeapons` et `GameClient#fireWeapons`
+ * pour l'arme de base, la visee venant du curseur.
  */
 describe('Projectiles.fireSalvoDirected', () => {
   it('une salve produit projectileCount projectiles, dans la direction donnee', () => {
@@ -213,10 +213,8 @@ describe('Projectiles.fireSalvoDirected', () => {
   it('seul l angle de (dirX, dirY) compte, pas sa norme', () => {
     // Un client transmet dirX/dirY quantifies sur un octet signe (-127..127) :
     // la salve doit partir identiquement, que la paire soit (1, 0) ou
-    // (127, 0) — sinon un client qui envoie sa direction sans la renormaliser
-    // d'abord tirerait plus vite ou plus loin selon la distance au curseur,
-    // ce qui n'a pas de sens physique et n'est jamais ce que fait le code de
-    // production (voir `quantizeAxis` dans `shared/protocol.ts`).
+    // (127, 0), sinon la vitesse dependrait de la distance au curseur (voir
+    // `quantizeAxis` dans `shared/protocol.ts`).
     const unit = new Projectiles(50);
     const scaled = new Projectiles(50);
 
@@ -316,15 +314,14 @@ describe('Projectiles.collide', () => {
   });
 
   it('detecte un ennemi qui coupe le SEGMENT parcouru pendant le pas, meme hors du rayon aux deux extremites', () => {
-    // Reproduction du defaut trouve en revue : un echantillonnage au seul
-    // point d'arrivee manque une cible qui coupe la trajectoire sur le cote,
-    // au milieu du pas — et le defaut s'aggrave avec la vitesse.
+    // Un echantillonnage au seul point d'arrivee manque une cible qui coupe la
+    // trajectoire sur le cote, au milieu du pas, et d'autant plus que le
+    // projectile est rapide.
     //
     // `FAST` va de (0,0) a (30,0) en un tick (900 px/s a 30 Hz). Un ennemi en
-    // (15,30) est a 30 px du SEGMENT (0,0)-(30,0) — dans le rayon de 32 —
-    // mais a ~33,5 px de CHACUNE des deux extremites — hors du rayon. Un
-    // `collide` qui n'echantillonnerait que le point de depart ou le point
-    // d'arrivee la manquerait ; le balayage de segment la touche.
+    // (15,30) est a 30 px du SEGMENT (dans le rayon de 32) mais a ~33,5 px de
+    // chacune des deux extremites (hors du rayon) : seul le balayage de
+    // segment le touche.
     const horde = new Horde(10);
     const targetId = addOne(horde, 1, 1000, 0); // loin sur l'axe : angle de tir nul
     const projectiles = new Projectiles(50);
@@ -342,13 +339,11 @@ describe('Projectiles.collide', () => {
   });
 
   /**
-   * ⚠️ **Le rayon de touche elargi du Vif-argent (etape 5c, tache 3), COTE
-   * SERVEUR SEUL.** `zones`/`tick` sont optionnels : le CLIENT
-   * (`front/src/net/client.ts`) appelle `collide` sans eux pour ses
-   * projectiles cosmetiques et garde donc le rayon de base — c'est
-   * exactement ce que le premier `collide` de ce test verifie, sur le MEME
-   * projectile, avant de le refaire avec `zones` pour montrer que le rayon
-   * elargi, lui, touche.
+   * ⚠️ **Le rayon de touche elargi du Vif-argent, COTE SERVEUR SEUL.**
+   * `zones`/`tick` sont optionnels : le CLIENT (`front/src/net/client.ts`)
+   * appelle `collide` sans eux pour ses projectiles cosmetiques et garde le
+   * rayon de base. Le test le verifie sur le MEME projectile, avant de le
+   * refaire avec `zones`.
    */
   it('elargit le rayon de touche pour un ennemi en zone de Vif-argent, seulement quand `zones` est fourni', () => {
     const horde = new Horde(10);
@@ -436,13 +431,11 @@ describe('Projectiles — bornTick et compaction', () => {
   });
 
   it('la position de depart de segment suit la compaction, meme sans step() entre deux collide()', () => {
-    // `#prevX`/`#prevY` ne sont pas exposes (contrairement a `bornTick`) —
-    // trouve en mutant leur compaction dans `#removeAt` : aucun des dix
-    // autres tests ne l'a vu passer au rouge. Sans elle, le SEGMENT teste
-    // par un `collide()` ulterieur melangerait le `prev` de l'occupant
-    // retire avec la position courante — correctement compactee, elle —
-    // du projectile deplace dans le trou : un segment fantome qui n'a
-    // jamais ete parcouru par personne.
+    // `#prevX`/`#prevY` ne sont pas exposes et aucun autre test ne garde leur
+    // compaction dans `#removeAt`. Sans elle, le SEGMENT teste par un
+    // `collide()` ulterieur melangerait le `prev` de l'occupant retire avec la
+    // position courante du projectile deplace dans le trou : un segment
+    // fantome que personne n'a parcouru.
     const horde = new Horde(10);
     const targetId = addOne(horde, 1, 1000, 0); // plein est, loin de tout le reste
 
@@ -480,23 +473,16 @@ describe('Projectiles — bornTick et compaction', () => {
 });
 
 /**
- * ⚠️ **Ce `describe` gardait `fireSalvo` (visee par cible) sous le titre
- * generique « derivation », et se faisait passer pour le contrat de
- * PRODUCTION — trouve en ecrivant le plan de la tache 3 (etape 5c) :
- * `fireSalvo` n'a plus un seul appelant en production depuis la tache 13 de
- * l'etape 6a (`room.ts:1526`, `client.ts:2190` appellent tous deux
- * `fireSalvoDirected`). Le contrat qu'il verifie reste reel — deux instances
- * independantes, memes entrees, memes projectiles — mais garde une fonction
- * QUE LE JEU N'APPELLE PLUS : `fireSalvo` reste dans `shared/projectiles.ts`
- * pour d'eventuelles armes a tete chercheuse (voir son docbloc), et ce test
- * continue de couvrir SA propre derivation. Le contrat de PRODUCTION est
- * desormais garde par le `describe` suivant.
+ * `fireSalvo` (visee par cible) n'a plus d'appelant en production :
+ * `room.ts` et `client.ts` appellent `fireSalvoDirected`. Elle reste pour
+ * d'eventuelles armes a tete chercheuse (voir son docbloc), et ce test garde
+ * SA derivation. Le contrat de PRODUCTION est garde par le `describe` suivant.
  */
 describe('Projectiles — derivation (fireSalvo, visee par cible, reservee aux armes futures)', () => {
   it('fireSalvo derive identiquement des deux cotes', () => {
     // Deux instances INDEPENDANTES (aucun tableau partage), memes armes, meme
     // tick de depart, memes positions : elles doivent produire exactement les
-    // memes salves. C'est ce qui permet de ne rien envoyer sur le fil (§5.2).
+    // memes salves. C'est ce qui permet de ne rien envoyer sur le fil.
     function buildSide(): { horde: Horde; projectiles: Projectiles; targetId: number } {
       const horde = new Horde(20);
       const targetId = addOne(horde, 1, 2000, 300);
@@ -545,23 +531,19 @@ describe('Projectiles — derivation (fireSalvo, visee par cible, reservee aux a
 });
 
 /**
- * Le contrat de PRODUCTION : `room.ts:1526` et `client.ts:2190` appellent
- * tous deux `fireSalvoDirected`, jamais `fireSalvo` — c'est ce chemin, et lui
- * seul, que « la salve reste calculee identiquement des deux cotes » doit
- * garder (docbloc du module).
+ * Le contrat de PRODUCTION : `room.ts` et `client.ts` appellent tous deux
+ * `fireSalvoDirected`, jamais `fireSalvo`. C'est ce chemin que « la salve
+ * reste calculee identiquement des deux cotes » doit garder.
  */
 describe('Projectiles — derivation (fireSalvoDirected, le chemin de PRODUCTION)', () => {
   it('fireSalvoDirected derive identiquement des deux cotes', () => {
-    // Meme scenario que le test de derivation de `fireSalvo` ci-dessus, sur
-    // le chemin de PRODUCTION : une direction quantifiee fixe par tick,
-    // jamais une cible.
+    // Meme scenario que ci-dessus, sur le chemin de PRODUCTION : une direction
+    // quantifiee fixe par tick, jamais une cible.
     const a = new Projectiles(200);
     const b = new Projectiles(200);
     const dt = 1 / 30;
-    // 33 : ni multiple de SINGLE.cooldownTicks (5) ni de SPREAD.cooldownTicks
-    // (10) — les deux dernieres salves sont donc encore vivantes a la fin de
-    // la boucle, et la comparaison finale porte reellement sur des
-    // projectiles actifs plutot que sur deux tableaux vides.
+    // 33 : ni multiple de 5 ni de 10, les dernieres salves sont encore
+    // vivantes a la fin et la comparaison porte sur des projectiles actifs.
     const TICKS = 33;
 
     for (let tick = 0; tick < TICKS; tick++) {
@@ -598,42 +580,22 @@ describe('Projectiles — derivation (fireSalvoDirected, le chemin de PRODUCTION
   });
 
   /**
-   * ⚠️ **AUCUN TEST NE PEUT prouver l'independance a la horde et aux zones
-   * DEPUIS ICI — et c'est STRUCTUREL, pas une lacune.** `fireSalvoDirected`
-   * et `#emit` (juste au-dessus dans `shared/projectiles.ts`) ne recoivent
-   * ni `horde` ni `zones` DANS LEUR SIGNATURE, et le constructeur de
-   * `Projectiles` ne garde de reference vers aucun des deux : rien dans
-   * cette classe ne peut seulement les NOMMER, encore moins les lire.
-   * L'independance est donc garantie AVANT tout test, par la forme du code
-   * lui-meme — exactement le meme raisonnement que la borne `<= 0` de
-   * `appliquerDegats` (`back/src/combat.ts`), dont le commentaire dit
-   * *« aucun test ne peut la separer de `< 0` »* et explique pourquoi plutot
-   * que de laisser croire a une borne testee.
-   *
-   * Une premiere version de ce test construisait deux `Horde` et deux
-   * `ZoneField` deliberement DIFFERENTS des deux cotes (avec de vraies
-   * assertions `not.toBe`), mais ne les passait JAMAIS a `fireSalvoDirected`
-   * — impossible, sa signature ne les accepte pas. Le test etait donc
-   * rigoureusement EQUIVALENT au test de determinisme ci-dessus : verifie
-   * par mutation en revue (un `zones?` ajoute a `fireSalvoDirected`, qui
-   * devie reellement l'angle emis, laissait les 24 tests de ce fichier
-   * verts, celui-la y compris). Un test qui ne peut pas distinguer une
-   * implementation correcte d'une implementation qui devie reellement ne
-   * garde rien — il a ete retire plutot que remplace par une forme plus
-   * elaboree mais tout aussi creuse.
-   *
-   * Ce qui protege reellement le contrat : ce docbloc, la signature de
-   * `fireSalvoDirected`/`#emit`, et la revue de code a chaque changement de
-   * signature — pas un test.
+   * ⚠️ **AUCUN TEST NE PEUT prouver ici l'independance a la horde et aux
+   * zones, et c'est STRUCTUREL.** `fireSalvoDirected` et `#emit` ne recoivent
+   * ni `horde` ni `zones`, et `Projectiles` ne garde de reference vers aucun
+   * des deux : l'independance est garantie par la forme du code. Un test qui
+   * passerait des horde et zones differentes des deux cotes ne pourrait pas
+   * les transmettre, et ne garderait donc rien de plus que le determinisme
+   * ci-dessus. Ce qui protege le contrat : la signature de
+   * `fireSalvoDirected`/`#emit`, et la revue a chaque changement de signature.
    */
 });
 
 describe('truncatedProjectiles — la salve qui ne part pas ne disparait pas en silence', () => {
   it('compte exactement ce qui manque, et rien tant que la place suffit', () => {
-    // ⚠️ Ce compteur existe parce que l'empilement a leve la borne : chaque
-    // exemplaire d'arme elargit la salve, et le plafond de `WEAPON_SLOTS` armes
-    // ne borne plus rien. Une salve tronquee est une CARTE que le joueur a
-    // payee et qui ne fait rien — ca ne doit jamais disparaitre sans trace.
+    // ⚠️ Chaque exemplaire d'arme elargit la salve, et `WEAPON_SLOTS` ne la
+    // borne pas. Une salve tronquee est une CARTE que le joueur a payee et qui
+    // ne fait rien : ca ne doit jamais disparaitre sans trace.
     const arme = weaponOf(0);
     const p = new Projectiles(10);
     expect(p.truncatedProjectiles).toBe(0);
@@ -656,8 +618,8 @@ describe('truncatedProjectiles — la salve qui ne part pas ne disparait pas en 
 });
 
 /**
- * Ce que le projectile porte POUR LE RENDU (etape 5a, tache 12) : l'arme qui
- * l'a tire, son compte a rebours, et sa direction de vol.
+ * Ce que le projectile porte POUR LE RENDU : l'arme qui l'a tire, son compte
+ * a rebours, et sa direction de vol.
  *
  * ⚠️ **Rien de tout ceci n'entre dans la simulation.** `weaponAt` est le seul
  * champ purement cosmetique de la classe ; ce qui decide d'un degat, d'une
@@ -720,18 +682,10 @@ describe('ce que le rendu lit sur un projectile', () => {
 });
 
 /**
- * Étape 8 — **le rayon de touche suit le CORPS**, signale par l'auteur en
- * jouant : *« la hitbox des boss n'est pas correcte, trop petite »*.
- *
- * Il avait raison, et le chiffre le dit : le boss est DESSINE a
- * `2 x PROJECTILE_HIT_RADIUS x BODY_SCALE x bodyScale` = 240 px de diametre,
- * et `collide` lui opposait les memes 64 px de diametre qu'a un gobelin. Il
- * fallait viser le centre exact d'un corps qui remplit un quart d'ecran.
- *
- * ⚠️ `bodyScale` EXISTAIT DEJA et disait exactement cela : `BOSS_CHARGE_WIDTH_PX`
- * et `spriteScale` le lisent depuis l'etape 6a. Seule la collision l'ignorait —
- * c'est pourquoi la correction est une lecture de plus, pas une constante de
- * plus.
+ * **Le rayon de touche suit le CORPS** : `collide` doit opposer au boss le
+ * rayon de son dessin, pas les 32 px d'un gobelin. La correction lit
+ * `bodyScale`/`hitScale`, deja portes par l'archetype, plutot que d'ajouter
+ * une constante.
  */
 describe('Projectiles.collide — le rayon de touche suit le corps de la cible', () => {
   const BOSS_R = PROJECTILE_HIT_RADIUS * archetypeOf(BOSS_ARCHETYPE).hitScale;
@@ -752,8 +706,8 @@ describe('Projectiles.collide — le rayon de touche suit le corps de la cible',
     return touches > 0;
   }
 
-  // Etape 12 : la touche couvre le DESSIN entier du boss (`hitScale`), 120 px —
-  // 96 restait « trop petit » en jeu.
+  // La touche couvre le DESSIN entier du boss (`hitScale`), 120 px : moins
+  // reste « trop petit » en jeu.
   it('oppose au boss un rayon plus de trois fois celui de la pietaille', () => {
     expect(archetypeOf(BOSS_ARCHETYPE).hitScale).toBeGreaterThan(
       archetypeOf(BOSS_ARCHETYPE).bodyScale,
@@ -762,7 +716,7 @@ describe('Projectiles.collide — le rayon de touche suit le corps de la cible',
   });
 
   it('touche le boss bien au-dela du rayon de la pietaille', () => {
-    // 80 px : hors des 32 px de la pietaille, largement dans le corps du boss.
+    // 110 px : hors des 32 px de la pietaille, dans le corps du boss.
     expect(touche(BOSS_ARCHETYPE, 110)).toBe(true);
     expect(touche(0, 110)).toBe(false);
   });
@@ -810,14 +764,9 @@ describe('Projectiles.collide — le rayon de touche suit le corps de la cible',
 });
 
 /**
- * Étape 8 — **le transpercage**, sur retour de jeu : *« l'arc lourd est nul, il
- * faudra peut-etre qu'il transperce les ennemis vu sa cadence de tir ? »*.
- *
- * Le releve lui donnait raison : 20,8 degats par seconde pour la cadence la
- * deuxieme plus lente du catalogue, sous la mediane. Et c'est son autre
- * extreme — 1 200 px de portee, le double de la dague — qui rend le
- * transpercage juste : c'est la seule arme dont le projectile traverse assez
- * de terrain pour rencontrer une FILE.
+ * **Le transpercage.** Il revient a l'arme a la plus longue portee et a la
+ * cadence lente : c'est la seule dont le projectile traverse assez de terrain
+ * pour rencontrer une FILE.
  */
 describe('Projectiles.collide — transpercer', () => {
   /** Trois ennemis en file sur l'axe +x, espaces de `ecart`. */
@@ -906,13 +855,10 @@ describe('Projectiles.collide — transpercer', () => {
 });
 
 /**
- * Étape 8 — **le tir circulaire**, demande par l'auteur : *« il faut varier les
- * types, pas que des projectiles… des tirs circulaires »*.
- *
- * ⚠️ **Aucun type d'arme de plus n'a ete ajoute** : une salve dont l'ouverture
- * fait un tour complet EST un anneau. Ce que ces cas gardent, c'est la seule
- * chose qui ait vraiment change — la REPARTITION, qui doit se fermer au lieu
- * de poser deux projectiles au meme endroit.
+ * **Le tir circulaire.** ⚠️ Ce n'est pas un type d'arme : une salve dont
+ * l'ouverture fait un tour complet EST un anneau. Ce que ces cas gardent,
+ * c'est la REPARTITION, qui doit se fermer au lieu de poser deux projectiles
+ * au meme endroit.
  */
 describe('Projectiles — la salve en anneau', () => {
   /** Les caps des projectiles vivants, tries, ramenes a [0, 2π). */
@@ -947,8 +893,8 @@ describe('Projectiles — la salve en anneau', () => {
   });
 
   it('ne touche PAS la repartition des salves en arc', () => {
-    // Le temoin : une arme a dispersion etroite garde exactement la
-    // repartition d'avant, bords compris.
+    // Le temoin : une arme a dispersion etroite garde la repartition d'un arc
+    // ouvert, bords compris.
     const arc = { ...SINGLE, projectileCount: 3, spreadRadians: Math.PI / 3 };
     const p = new Projectiles(32);
     p.fireSalvoDirected(arc, 0, 0, 0, 1, 0, arc.damage, arc.projectileCount);
@@ -971,9 +917,8 @@ describe('Projectiles — la salve en anneau', () => {
 });
 
 /**
- * Étape 8 — **la mine**, quatrieme famille demandee par l'auteur. Comme
- * l'anneau, elle n'a demande aucun type d'arme : un projectile IMMOBILE a
- * souffle est une mine, et `collide` est deja un detecteur de proximite.
+ * **La mine.** Pas de type d'arme non plus : un projectile IMMOBILE a souffle
+ * est une mine, et `collide` est deja un detecteur de proximite.
  */
 describe('Projectiles — la mine, un projectile qui ne part pas', () => {
   const MINE: Weapon = {
@@ -1036,8 +981,8 @@ describe('Projectiles — la mine, un projectile qui ne part pas', () => {
 
   it('rend au catalogue une arme qui se pose, et elle emporte un souffle', () => {
     // Les TIRS immobiles : l'homoncule (une invocation) a lui aussi une vitesse
-    // nulle, mais il n'attend rien — depuis l'etape 12 il accompagne son
-    // invocateur, et sa vie egale sa recharge.
+    // nulle, mais il n'attend rien : il accompagne son invocateur, et sa vie
+    // egale sa recharge.
     const mines = WEAPONS.filter((w) => w.kind === 'tir' && w.projectileSpeed === 0);
     expect(mines.length).toBeGreaterThan(0);
     for (const w of mines) {
@@ -1050,11 +995,9 @@ describe('Projectiles — la mine, un projectile qui ne part pas', () => {
 });
 
 /**
- * Étape 8 — **le souffle de fin de course**, signale en jouant : *« la grenade
- * doit exploser en fin de course meme si elle touche personne »*.
- *
- * Ce que `Projectiles` apporte ici est le RAPPEL ; ce qu'il emporte est decide
- * par l'appelant (`resolveProjectileDamage`, back/src/combat.ts).
+ * **Le souffle de fin de course** : la grenade explose en fin de course meme
+ * sans rien toucher. `Projectiles` apporte le RAPPEL ; ce qu'il emporte est
+ * decide par l'appelant (`resolveProjectileDamage`, back/src/combat.ts).
  */
 describe('Projectiles.step — le rappel de fin de course', () => {
   it('rend la main sur CHAQUE projectile qui s eteint, et une seule fois', () => {
@@ -1203,13 +1146,10 @@ describe('Projectiles — guidage et ricochet', () => {
 });
 
 /**
- * Étape 8 — **les coups critiques**, demandes par l'auteur : *« un systeme de
- * crit peut-etre aussi ? »*.
- *
- * Ce que ces cas gardent n'est pas la chance elle-meme (un reglage), c'est ce
- * qui rend le critique AFFICHABLE : il est decide a l'emission, par une
- * fonction des trois entiers que les deux cotes possedent, donc le client peut
- * montrer le chiffre que le serveur va arbitrer.
+ * **Les coups critiques.** Ce que ces cas gardent n'est pas la chance (un
+ * reglage) mais ce qui rend le critique AFFICHABLE : il est decide a
+ * l'emission, par une fonction des trois entiers que les deux cotes
+ * possedent, donc le client peut montrer le chiffre que le serveur arbitrera.
  */
 describe('Projectiles — le coup critique', () => {
   /** Les critiques d'une salve de `count` projectiles tiree au tick `tick` par `by`. */
@@ -1250,9 +1190,7 @@ describe('Projectiles — le coup critique', () => {
       }
     }
     // ⚠️ Une fourchette LARGE : ce cas garde que le tirage n'est ni toujours
-    // vrai ni toujours faux, pas que le melange soit un bon generateur — le
-    // jour ou la chance devient un passif, c'est la valeur qui bougera, pas
-    // cette propriete.
+    // vrai ni toujours faux, pas que le melange soit un bon generateur.
     expect(crits / total).toBeGreaterThan(CRIT_CHANCE / 2);
     expect(crits / total).toBeLessThan(CRIT_CHANCE * 2);
   });
@@ -1309,9 +1247,8 @@ describe('Projectiles — le coup critique', () => {
 });
 
 /**
- * Etape 12 — **les trajectoires** : une propriete par mouvement (§6 de la
- * spec). Les armes de test sont `SINGLE` plus un champ : le catalogue ne porte
- * encore aucun de ces mouvements (tache 2).
+ * **Les trajectoires** : une propriete par mouvement. Les armes de test sont
+ * `SINGLE` plus un champ, independamment du catalogue.
  */
 describe('Projectiles — les trajectoires de l etape 12', () => {
   const DT = 1 / TICK_HZ;

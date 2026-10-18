@@ -10,9 +10,8 @@ import { FORMATION, type WaveOrder } from './waves';
 import { ZoneField } from './zones';
 
 /**
- * Meme convention que `shared/chain.test.ts` : un ordre minimal, une entite
- * a la fois, dont on ecrase la position juste apres `spawn` (formation
- * SCATTER, position aleatoire au depart) pour tenir une geometrie exacte.
+ * Un ordre minimal, une entite a la fois, dont on ecrase la position juste
+ * apres `spawn` (SCATTER place au hasard) pour tenir une geometrie exacte.
  */
 function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
   return {
@@ -52,16 +51,13 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Le point de revue n° 2 du brief.** Son propre centre est a distance
-   * NULLE de lui-meme, donc dans TOUT rayon. Sans exclusion explicite,
-   * chaque ennemi serait lie a lui-meme et *Amalgame* (tache 7) le
+   * ⚠️ Un ennemi est a distance NULLE de lui-meme, donc dans TOUT rayon. Sans
+   * exclusion explicite, il serait lie a lui-meme et *Amalgame* le
    * frapperait deux fois pour un seul impact recu.
    *
-   * ⚠️ **Horde reellement peuplee de DEUX entites, et ce n'est pas
-   * accessoire** : avec une seule entite, un resultat vide passerait ce
-   * test quelle que soit l'implementation (le decor qui renvoie zero). Le
-   * voisin doit apparaitre dans le resultat pour que l'absence de `soi`
-   * prouve l'exclusion plutot qu'un tableau vide par hasard.
+   * ⚠️ **DEUX entites, et ce n'est pas accessoire** : avec une seule, un
+   * resultat vide passerait quelle que soit l'implementation. Le voisin doit
+   * apparaitre pour que l'absence de `soi` prouve l'exclusion.
    */
   it('un ennemi n est pas lie a lui-meme', () => {
     const horde = new Horde();
@@ -78,7 +74,7 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Le coeur de la tache.** A-B a moins de `LINK_RADIUS`, B-C a moins de
+   * ⚠️ A-B a moins de `LINK_RADIUS`, B-C a moins de
    * `LINK_RADIUS`, A-C au-dela : A et C ne sont PAS lies. Une fermeture
    * transitive (un amas) les aurait fusionnes par B, et le resultat aurait
    * alors dependu de l'ORDRE DE VISITE — donc du compactage de la horde, non
@@ -108,10 +104,10 @@ describe('linkedNeighbours', () => {
   /**
    * ⚠️ **La borne stricte sur l'appartenance de `slot` LUI-MEME a la zone,
    * pas seulement sur celle des candidats.** Les deux moities du predicat
-   * partagent la meme forme (`>= zoneR2` exclut le bord) ; sans ce test, une
-   * mutation qui relacherait UNIQUEMENT la moitie « slot » (`>` au lieu de
-   * `>=`) resterait verte, alors que la moitie « candidat » resterait
-   * gardee par le test « chacun dans SA PROPRE zone » plus bas.
+   * partagent la meme forme (`>= zoneR2` exclut le bord) ; sans ce test,
+   * relacher UNIQUEMENT la moitie « slot » (`>` au lieu de `>=`) resterait
+   * vert. La moitie « candidat » est gardee par « chacun dans SA PROPRE
+   * zone » plus bas.
    */
   it('ne lie personne quand `slot` est pile sur le bord de la zone (borne stricte)', () => {
     const horde = new Horde();
@@ -129,8 +125,8 @@ describe('linkedNeighbours', () => {
   /**
    * ⚠️ **« Moins de `LINK_RADIUS` », donc la borne est STRICTE — meme
    * convention que `ZoneField.spawn` (fusion) et `nearestTarget`. Sans ce
-   * test, une mutation qui relacherait `>= linkR2` en `> linkR2` resterait
-   * verte : tous les autres tests de ce fichier mesurent des distances
+   * test, relacher `>= linkR2` en `> linkR2` resterait vert : les autres
+   * tests de ce fichier mesurent des distances
    * franchement en-deca ou au-dela, jamais EXACTEMENT `LINK_RADIUS`.
    */
   it('ne lie pas a distance EXACTE de LINK_RADIUS : la borne est stricte', () => {
@@ -217,9 +213,8 @@ describe('linkedNeighbours', () => {
   });
 
   it('rend un tableau vide quand la horde ne porte qu une seule entite', () => {
-    // Ce test-ci vaut ce qu'il vaut sans son voisin ci-dessus : un resultat
-    // vide seul ne prouve rien (le decor qui renvoie zero). Il complete la
-    // couverture plutot que de s y substituer.
+    // Un resultat vide seul ne prouve rien : ce test complete « un ennemi
+    // n est pas lie a lui-meme », il ne s'y substitue pas.
     const horde = new Horde();
     const zones = new ZoneField();
     spawnAt(horde, 1, 0, 0);
@@ -229,13 +224,11 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Une reaction dont `zoneVifArgent` est `false` (par defaut, faute
-   * d'avoir ete epinglee a `true`) ne doit JAMAIS lier.** Supraconduction
-   * (Givre + Foudre) n'a aucun besoin de la liaison — `zoneVifArgent: false`
-   * dans son entree de `REACTION_DEFS`. Teste dans les DEUX ordres de
-   * declencheur : `zoneVifArgent` est lu par `id` (`zoneReaction(kind)`),
-   * jamais par l'element, donc les deux ordres doivent se comporter
-   * IDENTIQUEMENT — pas seulement l'un d'eux.
+   * ⚠️ **Une reaction dont `zoneVifArgent` est `false` ne doit JAMAIS
+   * lier.** Supraconduction (Givre + Foudre) n'a aucun besoin de la liaison.
+   * Teste dans les DEUX ordres de declencheur : `zoneVifArgent` est lu par
+   * `id` (`zoneReaction(kind)`), jamais par l'element, donc les deux ordres
+   * doivent se comporter IDENTIQUEMENT.
    */
   it('ne lie pas a travers une zone de REACTION dont zoneVifArgent est faux, quel que soit le declencheur', () => {
     const kindVifArgentDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
@@ -263,37 +256,21 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Deuxieme revue : RENVERSE le test precedent de cette suite (« les
-   * cinq reactions REELLES ... lient desormais »), qui derivait la liaison
-   * de la PAIRE.** Deriver de la paire reparait le bug mesure, mais faisait
-   * lier LES CINQ paires du Vif-argent — y compris Gel profond et
-   * Aveuglement, dont l'entree de `REACTION_DEFS` (tache 6) decide
-   * explicitement l'inverse (§5 de la spec : « vitesse nulle » / « la
-   * fuite », jamais la liaison). `zoneVifArgent` (`shared/reactions.ts`) est un
-   * CHAMP EPINGLE explicitement sur chaque reaction : `true` seulement sur
-   * les TROIS qui ont BESOIN de la liaison pour leur propre effet
+   * ⚠️ **La liaison ne se derive PAS de la paire** : sinon les cinq paires du
+   * Vif-argent lieraient, y compris Gel profond et Aveuglement. `zoneVifArgent`
+   * (`shared/reactions.ts`) est un CHAMP EPINGLE sur chaque reaction : `true`
+   * seulement sur les TROIS qui ont BESOIN de la liaison pour leur effet
    * (Vaporisation balaie un rayon autour de chaque lie, Paratonnerre
-   * enchaine en preferant les lies, Amalgame partage les degats entre
-   * lies) — Gel profond et Aveuglement restent a `false`, leur effet ne
-   * dependant d'aucun voisin.
+   * enchaine en preferant les lies, Amalgame partage les degats entre lies).
    *
-   * ⚠️ **Les DEUX ordres de declencheur restent testes — mais la raison
-   * CHANGE, dis-le.** Ce n'est plus la canonicalisation de `packElementPair`
-   * qui protege ce test (elle n'est plus lue du tout par `zoneVifArgent`) :
-   * c'est le fait que `zoneVifArgent` est un champ de la ligne de
-   * `REACTION_DEFS`, retrouvee par `id` (`zoneReaction(kind)`) — une valeur
-   * qui ne depend d'aucun element, donc d'aucun ordre d'arrivee des deux
-   * projectiles. Les deux ordres doivent donc se comporter IDENTIQUEMENT,
-   * pour une raison structurellement differente de celle du test "les cinq
-   * reactions" qu'il remplace.
+   * ⚠️ Les DEUX ordres de declencheur sont testes : `zoneVifArgent` est lu
+   * par `id` (`zoneReaction(kind)`), une valeur qui ne depend d'aucun
+   * element, donc d'aucun ordre d'arrivee des deux projectiles.
    *
-   * ⚠️ **`w`, le temoin entre `LINK_RADIUS` (80) et `REACTION_RADIUS` (90)
-   * — distingue la liaison du balayage GENERIQUE.** `w` partage la MEME
-   * zone que `p1`/`p2` (tous a moins de `ZONE_RADIUS`, 70, du centre) mais
-   * est a 85 px de `p1` : AU-DELA de `LINK_RADIUS`. Sans ce temoin, un
-   * `linkedNeighbours` qui confondrait par erreur `LINK_RADIUS` avec
-   * `REACTION_RADIUS` (le Choc thermique generique, plus large) resterait
-   * indetectable par ce test.
+   * ⚠️ **`w`, le temoin entre `LINK_RADIUS` (80) et `REACTION_RADIUS` (90),
+   * distingue la liaison du balayage GENERIQUE.** `w` partage la MEME zone
+   * que `p1`/`p2` mais est a 85 px de `p1`. Sans lui, un `linkedNeighbours`
+   * qui confondrait `LINK_RADIUS` avec `REACTION_RADIUS` passerait.
    */
   it('seules les TROIS reactions dont zoneVifArgent est vrai lient, dans les deux ordres de declencheur', () => {
     const REACTIONS_QUI_LIENT: ReadonlyArray<{ reaction: number; partner: number }> = [
@@ -325,12 +302,11 @@ describe('linkedNeighbours', () => {
   });
 
   /**
-   * ⚠️ **Le cas inverse, demande explicitement : Gel profond et Aveuglement
-   * ne lient PAS, malgre une paire qui contient le Vif-argent.** Sans ce
-   * test, une regression qui remettrait `zoneVifArgent: true` sur l'une des
-   * deux (ou qui en revenait a deriver de la paire) passerait inapercue.
-   * Testees dans les deux ordres de declencheur, meme discipline que le
-   * test positif ci-dessus.
+   * ⚠️ **Le cas inverse : Gel profond et Aveuglement ne lient PAS, malgre
+   * une paire qui contient le Vif-argent.** Leur effet ne depend d'aucun
+   * voisin. Sans ce test, `zoneVifArgent: true` sur l'une des deux (ou une
+   * liaison derivee de la paire) passerait inapercu. Dans les deux ordres
+   * de declencheur, comme le test positif ci-dessus.
    */
   it('Gel profond et Aveuglement (zoneVifArgent: false) ne lient jamais, dans les deux ordres de declencheur', () => {
     const REACTIONS_QUI_NE_LIENT_PAS: ReadonlyArray<{ reaction: number; partner: number }> = [

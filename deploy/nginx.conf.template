@@ -1,3 +1,17 @@
+# Chemin d'asset pris dans `$request_uri`, c'est-a-dire **encore encode**. Une
+# capture de `location` lit l'URI decodee : `UI%20Elements/...` y devient
+# `UI Elements/...`, que `proxy_pass` (avec variable) renvoie tel quel — une
+# espace brute dans la ligne de requete, et MinIO repond 400. Le pack a des
+# dossiers avec espaces (`UI Elements/`, `Particle FX/`).
+#
+# Revers : l'URI brute n'est pas normalisee par nginx. Tout `..` ou separateur
+# encode (`%2e`, `%2f`, `%5c`) est donc refuse ici, sinon on pourrait sortir de
+# `${ASSETS_BASE_URL}` vers un autre bucket du meme MinIO.
+map $request_uri $asset_path {
+  default "";
+  "~*^/tinyswords/(?!.*(?:\.\.|%2e|%2f|%5c))(?<p>[^?#]+)" $p;
+}
+
 server {
   listen 80;
   server_name _;
@@ -34,7 +48,8 @@ server {
   # ressemblerait, elle, a une redistribution.
   resolver ${ASSETS_RESOLVER} valid=30s ipv6=off;
 
-  location ~ ^/tinyswords/(?<asset_path>.*)$ {
+  location /tinyswords/ {
+    if ($asset_path = "") { return 404; }
     # Une seule variable porte la base complete — endpoint, bucket et prefixe
     # eventuel — parce que « bucket » et « prefixe » ne se devinent pas depuis
     # l'exterieur et que les recomposer ici invite a se tromper d'un segment.

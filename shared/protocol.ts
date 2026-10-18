@@ -1,11 +1,9 @@
 /**
- * Protocole binaire, jamais de JSON sur la boucle de jeu (§3.6 de la spec).
+ * Protocole binaire, jamais de JSON sur la boucle de jeu : retrofitter du
+ * binaire sur un protocole JSON coute toujours plus cher que de commencer
+ * binaire.
  *
- * Le choix est pris des le premier jour parce que retrofitter du binaire sur un
- * protocole JSON coute systematiquement plus cher que de commencer binaire.
- *
- * Tout est en little-endian : c'est l'ordre natif de x86 et d'ARM, donc aucun
- * echange d'octets a l'encodage comme au decodage.
+ * Tout est en little-endian, l'ordre natif de x86 et d'ARM.
  */
 
 export const MSG = {
@@ -46,20 +44,14 @@ export type MsgType = (typeof MSG)[keyof typeof MSG];
 /**
  * Position d'un joueur telle qu'elle passe sur le fil : quantifiee a l'entier.
  *
- * `hp` n'existe pas encore cote serveur (la tache 9 le fait vivre) : cette
- * version cable seulement le transport, `Room` le remplit avec `PLAYER_MAX_HP`.
+ * Pas de `xp` ici : l'experience est celle de l'equipe, et la porter par
+ * joueur creerait deux sources de verite pour un seul nombre ; elle vit dans
+ * `SnapshotMessage.xp`.
  *
- * Pas de `xp` ici : l'experience est **celle de l'equipe**, pas d'un joueur
- * (§2 de la spec d'orientation — un seul etalage de cartes pour tout le
- * monde). La porter par joueur creerait deux sources de verite pour un seul
- * nombre ; elle vit dans `SnapshotMessage.xp`.
- *
- * `aimX`/`aimY` (tache 13) : la direction de visee de CE joueur, quantifiee
- * sur un octet signe, exactement comme elle a transite dans son `INPUT`. Le
- * `SNAPSHOT` la redistribue a tous parce que chaque client derive aussi les
- * salves de ses allies pour les dessiner (§5.2/§5.3 revus) — sans leur visee,
- * il ne saurait pas ou poser leurs projectiles. `(0, 0)` signifie « ce joueur
- * ne tire pas », jamais une direction par defaut.
+ * `aimX`/`aimY` : la visee de CE joueur, quantifiee sur un octet signe comme
+ * dans son `INPUT`. Le `SNAPSHOT` la redistribue a tous parce que chaque
+ * client derive aussi les salves de ses allies pour les dessiner. `(0, 0)`
+ * signifie « ce joueur ne tire pas », jamais une direction par defaut.
  */
 export interface PlayerSnapshot {
   id: number;
@@ -72,14 +64,13 @@ export interface PlayerSnapshot {
   /** Composante Y de la visee, quantifiee (-127..127). Voir la doc de l'interface. */
   aimY: number;
   /**
-   * Rayon de ramassage de CE joueur (tache 7 de l'etape 7b) : `ORB_PICKUP_RADIUS`
-   * plus ses achats d'aimant. Personnel depuis que la boutique le rend
-   * achetable — voir `SNAPSHOT_PLAYER_BYTES`.
+   * Rayon de ramassage de CE joueur : `ORB_PICKUP_RADIUS` plus ses achats
+   * d'aimant. Voir `SNAPSHOT_PLAYER_BYTES`.
    */
   pickupRadius: number;
   /**
-   * Reserve de bouclier de CE joueur (etape 13), `0` chez qui ne porte pas
-   * Transcendance — voir `SNAPSHOT_PLAYER_BYTES`.
+   * Reserve de bouclier de CE joueur, `0` chez qui ne porte pas Transcendance.
+   * Voir `SNAPSHOT_PLAYER_BYTES`.
    */
   shield: number;
 }
@@ -98,15 +89,9 @@ export interface SnapshotMessage {
   /** Experience de l'equipe, commune a tous les joueurs. Sur deux octets. */
   xp: number;
   /**
-   * Charge du compteur de Synergie de l'EQUIPE (§7 de l'etape 5a), sur deux
-   * octets, exactement comme `xp` et pour la meme raison.
-   *
-   * ⚠️ **Un seul nombre pour l'equipe, jamais un par joueur.** Le §7 le dit
-   * mot pour mot : *« la barre est une donnee d'equipe, comme l'experience de
-   * l'etape 3 : un seul nombre dans le snapshot »*. Le porter dans
-   * `PlayerSnapshot` creerait deux sources de verite pour un seul nombre —
-   * l'erreur que l'etape 3 a faite avec l'experience, signalee a l'epoque par
-   * l'implementeur, et qui a valu son deplacement dans l'en-tete.
+   * Charge du compteur de Synergie de l'EQUIPE, sur deux octets comme `xp`.
+   * ⚠️ Un seul nombre pour l'equipe, jamais un par joueur : voir
+   * `SNAPSHOT_HEADER_BYTES`.
    */
   synergy: number;
   players: PlayerSnapshot[];
@@ -114,48 +99,31 @@ export interface SnapshotMessage {
    * Le boss du palier en cours, `null` quand aucun n'est en jeu.
    *
    * ⚠️ **La seule donnee PAR ENTITE que ce fil transporte, et c'est le NOMBRE
-   * qui l'autorise.** Le §1.1 de la spec de l'etape 6a : *« un boss par palier,
-   * jamais plus d'un vivant [...] c'est precisement parce qu'ils sont PEU que
-   * les joueurs sont repliques et que la horde ne l'est pas. Le boss est du
-   * cote des joueurs, pas du cote de la horde. »*
-   *
-   * ⚠️ **LA REGLE QUI NE DOIT PAS PLIER, et elle est ecrite ici plutot que
-   * dans un document** : le jour ou un palier fera apparaitre dix boss, ce ne
-   * sera plus un boss mais de la pietaille d'elite, et sa vie redeviendra
-   * SERVEUR SEUL. Ce champ n'est pas un tableau et ne doit pas le devenir : dix
-   * blocs par snapshot rouvriraient le contrat de replication que quatre etapes
-   * tiennent. Ce qui remplacerait ce champ, alors, c'est rien du tout — le
-   * client apprend deja les morts par `DEATHS` et n'a jamais eu besoin des PV
-   * de la horde.
+   * qui l'autorise** : un boss par palier, jamais plus d'un vivant. Ce champ
+   * n'est pas un tableau et ne doit pas le devenir : le jour ou un palier fera
+   * apparaitre dix boss, ce sera de la pietaille d'elite, dont la vie
+   * redeviendra SERVEUR SEUL — le client apprend les morts par `DEATHS` et n'a
+   * jamais eu besoin des PV de la horde.
    */
   boss: BossSnapshot | null;
   /**
-   * L'or NON SECURISE de l'equipe (§5 de la spec de l'etape 6a), sur quatre
-   * octets.
-   *
-   * ⚠️ **Un seul nombre pour l'equipe, dans l'EN-TETE, a cote de `xp` et de
-   * `synergy`** — trois grandeurs d'equipe, trois nombres uniques, aucun bloc
-   * de joueur ne les porte. Le porter par joueur serait l'erreur que l'etape 3
-   * a faite avec l'experience : deux sources de verite pour un seul nombre.
+   * L'or NON SECURISE de l'equipe, sur quatre octets, dans l'en-tete comme
+   * `xp` et `synergy`.
    *
    * ⚠️ **C'est un TOTAL, pas un evenement.** Il est repete a chaque tick parce
-   * que c'est l'ENJEU du vote (§6) : un vote dont on ne voit pas l'enjeu n'est
-   * pas un vote, et un client qui aurait manque le `PORTAL_RESULT` d'un palier
-   * precedent se recale au snapshot suivant sans que rien n'ait a etre
-   * rejoue. Quatre octets par snapshot le valent : la meme information portee
-   * par evenement demanderait un accuse de reception.
+   * que c'est l'enjeu du vote : un client qui aurait manque le `PORTAL_RESULT`
+   * d'un palier precedent se recale au snapshot suivant sans rien rejouer. Le
+   * porter par evenement demanderait un accuse de reception.
    */
   gold: number;
 }
 
 /**
- * Le boss vivant, tel que le `SNAPSHOT` le transporte : son identite et ses
- * points de vie, une fois par tick.
+ * Le boss vivant, tel que le `SNAPSHOT` le transporte, une fois par tick.
  *
- * ⚠️ **Son identite est une identite d'entite ordinaire** — `waveId *
- * MAX_PER_WAVE + index`, la meme arithmetique que `DEATHS` transporte depuis
- * l'etape 3. Le client peut donc la comparer a ce qu'il fait naitre, sans rien
- * apprendre de nouveau.
+ * Son identite est une identite d'entite ordinaire (`waveId * MAX_PER_WAVE +
+ * index`, celle que `DEATHS` transporte) : le client la compare a ce qu'il
+ * fait naitre.
  */
 export interface BossSnapshot {
   id: number;
@@ -169,11 +137,10 @@ export interface InputMessage {
   moveX: number;
   moveY: number;
   /**
-   * Direction de visee (tache 13), en coordonnees MONDE, deja normalisee cote
-   * client puis quantifiee sur un octet signe — jamais derivable comme le
-   * ciblage automatique du §5.3 d'origine, elle vient de la souris et doit
-   * donc transiter. `(0, 0)` : le joueur ne tire pas ce tick (curseur pile
-   * sur lui, ou souris jamais bougee) — voir `PlayerSnapshot`.
+   * Direction de visee en coordonnees MONDE, normalisee cote client puis
+   * quantifiee sur un octet signe. Elle vient de la souris, donc doit
+   * transiter. `(0, 0)` : le joueur ne tire pas ce tick (curseur pile sur lui,
+   * ou souris jamais bougee).
    */
   aimX: number;
   aimY: number;
@@ -194,11 +161,10 @@ export interface WaveOrderMessage {
 /**
  * S -> C : identites mortes ou ramassees pendant ce tick, batchees.
  *
- * `DEATHS` et `PICKUPS` partagent exactement cette forme (voir `encodeIdBatch`
- * / `decodeIdBatch`) : ils ne different que par leur octet de type. Les
- * identites sont **triees en ordre croissant** — c'est l'ordre canonique
- * d'application, celui qui garantit que deux clients recevant le meme lot en
- * tirent des tableaux identiques.
+ * `DEATHS` et `PICKUPS` partagent cette forme et ne different que par leur
+ * octet de type. Les identites sont **triees en ordre croissant** : c'est
+ * l'ordre canonique d'application, qui garantit que deux clients recevant le
+ * meme lot en tirent des tableaux identiques.
  */
 export interface DeathsMessage {
   type: typeof MSG.DEATHS;
@@ -213,16 +179,12 @@ export interface PickupsMessage {
 }
 
 /**
- * S -> C : l'equipe atteint un nouveau niveau.
+ * S -> C : l'equipe atteint un nouveau niveau. Pas de `playerId` :
+ * l'experience est celle de l'equipe.
  *
- * Pas de `playerId` : l'experience est celle de l'equipe, pas d'un joueur
- * (§2 de la spec d'orientation — un seul etalage de cartes pour tout le
- * monde). Personne ne monte de niveau individuellement.
- *
- * ⚠️ `tick` est celui auquel le **gel** prend effet, pas celui de l'emission —
- * la meme raison que pour `DeathsMessage.tick` : sans ce tick partage, chaque
- * client figerait a la reception, donc a un tick different selon sa latence,
- * et le gel deviendrait une source de divergence au lieu d'une pause commune.
+ * ⚠️ `tick` est celui auquel le **gel** prend effet, pas celui de l'emission :
+ * sans ce tick partage, chaque client figerait a la reception, donc a un tick
+ * different selon sa latence, et le gel deviendrait une source de divergence.
  */
 export interface LevelUpMessage {
   type: typeof MSG.LEVEL_UP;
@@ -231,10 +193,9 @@ export interface LevelUpMessage {
 }
 
 /**
- * S -> C : fin de run, une seule fois. `kills` tient sur 32 bits — une run
- * longue depasse 65 535 ennemis tues, et le message ne part qu'une fois par
- * run, donc son cout n'a pas a etre minimise au meme titre qu'un message
- * frequent.
+ * S -> C : fin de run, une seule fois. `kills` tient sur 32 bits : une run
+ * longue depasse 65 535 ennemis tues, et un message unique n'a pas a etre
+ * economise.
  */
 export interface RunOverMessage {
   type: typeof MSG.RUN_OVER;
@@ -245,33 +206,28 @@ export interface RunOverMessage {
 }
 
 /**
- * S -> C : une zone au sol vient d'etre posee (§5.3 de l'etape 5a).
+ * S -> C : une zone au sol vient d'etre posee.
  *
  * Annoncee A LA CREATION parce que le client ne peut pas savoir ou finit un
- * projectile serveur : les siens sont cosmetiques depuis l'etape 3, tires
- * depuis une position predite puis reconciliee. Une zone derivee localement
- * deriverait de quelques pixels, et deux zones qui se recouvrent d'un pixel
- * decident d'une reaction.
+ * projectile serveur : les siens sont cosmetiques, tires depuis une position
+ * predite puis reconciliee. Une zone derivee localement deriverait de quelques
+ * pixels, et deux zones qui se recouvrent d'un pixel decident d'une reaction.
  *
  * ⚠️ **La MORT d'une zone n'est JAMAIS annoncee.** Elle se derive de
- * `bornTick` et de `ZONE_LIFETIME_TICKS`, des deux cotes — c'est le modele que
- * les orbes ont porte de l'etape 3 a l'etape 6a (leur peremption a disparu a la
- * tache 15), et celui de `ZoneField.expire`.
- * Un `ZONE_GONE` doublerait le trafic des zones pour une information que les
- * deux cotes calculent deja.
+ * `bornTick` et de `ZONE_LIFETIME_TICKS`, des deux cotes (voir
+ * `ZoneField.expire`). Un `ZONE_GONE` doublerait le trafic des zones pour rien.
  *
  * ⚠️ **Pas de rayon sur le fil.** Toutes les zones portent `ZONE_RADIUS`, une
- * constante de `shared/` que les deux cotes lisent — l'annoncer en ferait une
- * seconde source de verite pour un seul nombre. Le jour ou une zone portera un
- * rayon propre, c'est un octet de plus, pas un changement de modele.
+ * constante partagee : l'annoncer en ferait une seconde source de verite. Le
+ * jour ou une zone portera un rayon propre, c'est un octet de plus, pas un
+ * changement de modele.
  *
- * `by` est l'indice du joueur qui l'a posee : c'est lui que la Synergie du §7
- * compare a celui de la marque.
+ * `by` est le joueur qui l'a posee : la Synergie le compare a celui de la
+ * marque.
  *
- * ⚠️ **Depuis la tache 5 de l'etape 5b, `kind` n'est plus un simple index
- * d'element** : c'est l'octet empaquete par `packZoneKind` (element dans les
- * bits 0-2, type de champ de reaction dans les bits 3-6). Le decoder avec
- * `zoneElement` / `zoneReaction`, jamais le lire brut — voir leur docbloc.
+ * ⚠️ **`kind` n'est pas un simple index d'element** : c'est l'octet empaquete
+ * par `packZoneKind`. Le decoder avec `zoneElement` / `zoneReaction`, jamais
+ * le lire brut.
  */
 export interface ZoneMessage {
   type: typeof MSG.ZONE;
@@ -286,23 +242,16 @@ export interface ZoneMessage {
 }
 
 /**
- * S -> C : une reaction a eu lieu (§6 de l'etape 5a).
+ * S -> C : une reaction a eu lieu.
  *
- * Elle est arbitree par le serveur et annoncee parce qu'elle **tue** — a la
- * difference de la teinte elementaire, qui est cosmetique et que le client
- * approxime (§2 de la spec).
+ * Arbitree par le serveur et annoncee parce qu'elle **tue**, a la difference
+ * de la teinte elementaire, cosmetique, que le client approxime. La charge de
+ * Synergie voyage ICI : les deux arrivent toujours ensemble.
  *
- * ⚠️ **La charge de Synergie voyage ICI, pas dans un message a part** (§8) :
- * les deux arrivent toujours ensemble, et un second message ne porterait rien
- * de plus.
- *
- * ⚠️ **Le message ne porte PAS les deux identifiants de joueurs**, bien que le
- * §6.1 de la spec l'annonce ainsi. Le §7 est explicite sur l'usage : c'est le
+ * ⚠️ **Le message ne porte PAS les deux identifiants de joueurs.** C'est le
  * SERVEUR qui compare le joueur de la marque et celui du declencheur, et la
- * comparaison ne rend qu'un booleen. Le total de la barre voyage dans le
- * `SNAPSHOT`. Le client n'a donc rien a faire de deux identites qu'il ne
- * pourrait que recomparer — et les envoyer inviterait a refaire l'arbitrage
- * cote client, donc a le faire diverger.
+ * comparaison ne rend qu'un booleen. Envoyer les identites inviterait a
+ * refaire l'arbitrage cote client, donc a le faire diverger.
  */
 export interface ReactionMessage {
   type: typeof MSG.REACTION;
@@ -316,29 +265,22 @@ export interface ReactionMessage {
 }
 
 /**
- * S -> C : le boss charge (etape 6a, tache 5 bis).
+ * S -> C : le boss charge.
  *
- * ⚠️ **UN SEUL MESSAGE, A L'ANNONCE, ET PLUS RIEN ENSUITE.** Ce n'est pas un
- * telegraphe cosmetique : pendant toute la charge, **la position du boss est
- * pilotee par cette attaque et non par le champ de flux** (§4 de la spec).
- * C'est donc le deuxieme effet du jeu qui touche le DEPLACEMENT, apres le
- * ralentissement du Givre — et la parade est la meme, celle qui a deja servi
- * trois fois : les TICKS voyagent, la progression se DERIVE. Les deux cotes
- * calculent la meme fraction sur les memes ticks, donc la meme position, pour
- * zero octet apres l'annonce.
+ * ⚠️ **UN SEUL MESSAGE, A L'ANNONCE, ET PLUS RIEN ENSUITE.** Pendant la
+ * charge, la position du boss est pilotee par cette attaque et non par le
+ * champ de flux. Les TICKS voyagent, la progression se DERIVE : les deux
+ * cotes calculent la meme fraction sur les memes ticks, donc la meme
+ * position, pour zero octet apres l'annonce.
  *
  * ⚠️ **La direction est figee au chargement et n'est jamais corrigee.** Un
  * message de suivi ferait suivre le couloir a sa cible : ce serait une taxe,
  * pas une attaque.
  *
  * ⚠️ **La longueur et la largeur SONT sur le fil, contrairement au rayon d'une
- * zone.** `ZoneMessage` documente le choix inverse (« pas de rayon sur le fil,
- * toutes les zones portent `ZONE_RADIUS` »), et il reste bon pour les zones :
- * elles partent par dizaines. Une charge part une fois toutes les ~3,6 s et par
- * boss : quatre octets y achetent un couloir qui pourra differer d'un boss a
- * l'autre (etape 6b, « le pool tournant ») sans changer le protocole. Le
- * desaccord avec la convention des zones est assume et dit ici plutot que
- * cache.
+ * zone** : les zones partent par dizaines, une charge une fois toutes les
+ * ~3,6 s et par boss. Quatre octets y achetent un couloir qui peut differer
+ * d'un boss a l'autre sans changer le protocole.
  */
 export interface BossChargeMessage {
   type: typeof MSG.BOSS_CHARGE;
@@ -418,45 +360,28 @@ export interface DraftResultMessage {
 /**
  * S -> C : le portail s'ouvre, et il se refermera a `deadlineTick`.
  *
- * ⚠️ **Calque sur `DRAFT_OPEN`, sauf sur un point : LE MONDE NE S'ARRETE
- * PAS.** Le §6 de la spec en fait la difference structurante — *« le draft
+ * ⚠️ **Calque sur `DRAFT_OPEN`, sauf que LE MONDE NE S'ARRETE PAS** : le draft
  * gele parce qu'un choix de carte n'a pas d'enjeu temporel ; le vote ne gele
- * pas parce que le temps EST son enjeu »*. Ce message n'annonce donc pas un
- * gel, seulement une echeance.
+ * pas parce que le temps EST son enjeu. Ce message annonce une echeance, pas
+ * un gel.
  *
- * ⚠️ **Il ne porte PAS l'or en jeu**, et c'est voulu : l'or est dans le
- * `SNAPSHOT`, trente fois par seconde, parce qu'il BOUGE pendant la fenetre —
- * la horde continue d'avancer, les monstres continuent de laisser des pieces
- * (tache 14). Le figer ici donnerait au client un chiffre perime des le tick
- * suivant.
+ * ⚠️ **Il ne porte PAS l'or en jeu** : l'or BOUGE pendant la fenetre (les
+ * monstres continuent de laisser des pieces), il vit donc dans le `SNAPSHOT`.
  *
- * ⚠️ **Il porte le MULTIPLICATEUR, et la version precedente de ce commentaire
- * se trompait deux fois en une phrase (tache 10).** Elle disait que le
- * multiplicateur etait « dans le `SNAPSHOT` » : il n'y a jamais ete —
- * `SNAPSHOT_HEADER_BYTES` porte `xp`, `synergy`, le boss et l'or, rien d'autre.
- * Et elle disait qu'il « bouge pendant la fenetre » : il ne bouge pas. La seule
- * ligne du jeu qui le change est dans `Room#stepPortal`, et elle s'execute
- * APRES le verdict — donc au moment ou la fenetre se ferme, jamais pendant.
- * C'est exactement le profil de `DRAFT_OPEN` : **une valeur constante sur toute
- * la fenetre, donc annoncee une fois plutot que repetee**.
- *
- * ⚠️ **Et le client ne peut PAS le deviner.** Ni en le codant en dur (c'est un
- * reglage, `EXTRACT_MULTIPLIER_STEP`), ni en comptant les portails qu'il a vus
- * s'ouvrir : un client qui se connecte au palier 7 en a vu zero et se
- * tromperait de 1,75. C'est la classe de bug que « annoncer une fois » existe
- * pour eviter, et c'est ce qui rend l'annonce obligatoire ici.
+ * ⚠️ **Il porte le MULTIPLICATEUR**, qui n'est pas dans le `SNAPSHOT` et ne
+ * bouge pas pendant la fenetre : la seule ligne qui le change, dans
+ * `Room#stepPortal`, s'execute APRES le verdict. Valeur constante sur la
+ * fenetre, donc annoncee une fois. Le client ne peut pas le deviner : c'est un
+ * reglage (`EXTRACT_MULTIPLIER_STEP`), et un client qui se connecte au palier
+ * 7 n'a vu s'ouvrir aucun portail.
  */
 export interface PortalOpenMessage {
   type: typeof MSG.PORTAL_OPEN;
   deadlineTick: number;
   /**
    * Le multiplicateur qui s'applique si l'equipe part MAINTENANT (1 au premier
-   * portail). Celui du portail SUIVANT s'en derive par
-   * `+ EXTRACT_MULTIPLIER_STEP`, constante partagee — inutile de porter les
-   * deux.
-   *
-   * Reconstruit a partir des centiemes transportes, donc a 0,01 pres : voir
-   * `EXTRACT_MULTIPLIER_SCALE`.
+   * portail). Celui du portail suivant s'en derive par
+   * `+ EXTRACT_MULTIPLIER_STEP`. A 0,01 pres : voir `EXTRACT_MULTIPLIER_SCALE`.
    */
   multiplier: number;
 }
@@ -465,12 +390,10 @@ export interface PortalOpenMessage {
  * C -> S : le PREMIER message de toute socket de jeu, avant l'attribution du
  * slot.
  *
- * ⚠️ **C'est le seul endroit par lequel le jeton atteint le serveur sur le
- * canal de jeu, et c'est voulu : il ne passe JAMAIS par une URL.** Une URL
- * atterrit dans les journaux du reverse proxy, dans `Referer` et dans
- * l'historique du navigateur — et ce jeton EST le compte (§2.3 de la spec). Le
- * navigateur interdisant les en-tetes personnalises sur un WebSocket, un
- * premier message est la seule voie qui n'expose rien.
+ * ⚠️ **Le jeton ne passe JAMAIS par une URL** : une URL atterrit dans les
+ * journaux du reverse proxy, dans `Referer` et dans l'historique, et ce jeton
+ * EST le compte. Le navigateur interdisant les en-tetes personnalises sur un
+ * WebSocket, un premier message est la seule voie qui n'expose rien.
  */
 export interface HelloMessage {
   type: typeof MSG.HELLO;
@@ -498,10 +421,8 @@ export interface WireVote {
 /**
  * S -> C : qui a vote quoi, en continu.
  *
- * ⚠️ **La visibilite EST la mecanique.** Le §7.2 de l'etape 4 l'a etabli pour
- * les jetons du draft — *« sans cette visibilite, la negociation n'existe
- * pas »* — et le §6 de la spec de l'etape 6a le dit plus fort encore : on ne
- * negocie pas un choix qu'on ne voit pas.
+ * ⚠️ **La visibilite EST la mecanique** : on ne negocie pas un choix qu'on ne
+ * voit pas.
  */
 export interface VotesMessage {
   type: typeof MSG.VOTES;
@@ -511,25 +432,16 @@ export interface VotesMessage {
 /**
  * S -> C : le portail a tranche.
  *
- * ⚠️ **`effectTick` est le TICK D'EFFET, et sans lui le client ne peut rien
- * deduire.** C'est la lecon R3 de l'etape 4, payee d'une tache : le
- * `DRAFT_RESULT` de l'epoque laissait le client recalculer la fin du gel
- * — `msg.tick + LEVEL_FREEZE_TICKS - 1` — et ce calcul est devenu faux le jour
- * ou la duree a cesse d'etre une constante. Ici il serait faux tout de suite :
- * le vote se resout a la MAJORITE des qu'elle est acquise, donc n'importe
- * quand entre l'ouverture et l'echeance. Le serveur le dit, le client le lit.
+ * ⚠️ **`effectTick` est indispensable** : le vote se resout a la MAJORITE des
+ * qu'elle est acquise, donc n'importe quand entre l'ouverture et l'echeance ;
+ * le client ne peut pas recalculer ce tick.
  *
- * ⚠️ **`decision` est un VERDICT, pas un decompte.** Le troisieme
- * enseignement du draft : un champ qui decrit ce que le serveur *compare* n'a
- * pas a voyager — `REACTION` ne porte pas les deux joueurs qu'il a compares,
- * il porte un bit. Les voix « rester » et « partir » sont ce que le serveur
- * compare ; leur comparaison est ce qui voyage. Le detail, lui, est deja
- * passe par `VOTES`, ou il vaut quelque chose (on le voit pendant qu'on
- * negocie) plutot qu'ici, ou il ne vaudrait plus rien.
+ * ⚠️ **`decision` est un VERDICT, pas un decompte.** Ce que le serveur compare
+ * n'a pas a voyager (`REACTION` porte un bit, pas deux joueurs) ; le detail
+ * des voix est deja passe par `VOTES`, pendant la negociation.
  *
- * ⚠️ **`decision` ne vaut JAMAIS `NO_VOTE`.** L'absence ne bloque pas : a
- * l'echeance on tranche avec ce qu'on a, et l'egalite continue (§6). Il n'y a
- * donc pas d'issue « personne n'a decide ».
+ * ⚠️ **`decision` ne vaut JAMAIS `NO_VOTE`** : a l'echeance on tranche avec ce
+ * qu'on a, et l'egalite continue.
  */
 export interface PortalResultMessage {
   type: typeof MSG.PORTAL_RESULT;
@@ -538,117 +450,59 @@ export interface PortalResultMessage {
   /** `VOTE_CHOICE.STAY` ou `VOTE_CHOICE.LEAVE`. Jamais `NO_VOTE`. */
   decision: number;
   /**
-   * L'or, **acquis** si l'equipe part, **reporte** si elle reste.
-   *
-   * ⚠️ **UN seul champ, et son sens se lit dans `decision`.** Deux champs
-   * (« acquis » et « reporte ») en laisseraient toujours un a zero : le fil
-   * porterait une case vide a chaque vote pour eviter une lecture
-   * conditionnelle d'une ligne.
+   * L'or, **acquis** si l'equipe part, **reporte** si elle reste : un seul
+   * champ, dont le sens se lit dans `decision`.
    */
   gold: number;
 }
 
 export const WELCOME_BYTES = 10;
-/** `type u8 · seq u16 · moveX i8 · moveY i8 · aimX i8 · aimY i8` (tache 13 : 5 -> 7). */
+/** `type u8 · seq u16 · moveX i8 · moveY i8 · aimX i8 · aimY i8`. */
 export const INPUT_BYTES = 7;
 /**
  * `type u8 · tick u32 · playerCount u8 · xp u16 · synergy u16 · bossId u32 ·
- * bossHp u32 · gold u32` — xp et synergy sont ceux de l'EQUIPE (tache 5 de
- * l'etape 5a : 8 -> 10), le boss vient de la tache 4 de l'etape 6a (10 -> 18),
- * l'or de la tache 7 (18 -> 22).
+ * bossHp u32 · gold u32`.
  *
- * Les nombres d'equipe vivent dans l'en-tete plutot que d'etre repetes — et
- * donc potentiellement divergents — dans chaque bloc joueur. Deux octets par
- * snapshot, quel que soit le nombre de joueurs ; les porter par joueur en
- * couterait deux par joueur pour la meme information recopiee. **Le boss suit
- * la meme regle pour la meme raison** : il est UN (§1.1), donc il est du cote
- * de l'en-tete.
+ * ⚠️ Les nombres d'equipe (`xp`, `synergy`, `gold`) et le boss, qui est UN,
+ * vivent dans l'en-tete : repetes dans chaque bloc joueur, ils couteraient
+ * plus et deviendraient plusieurs sources de verite pour un seul nombre.
  *
- * ⚠️ **`bossHp` EST UN u32, ET LA LARGEUR A ETE CALCULEE, PAS DEVINEE.** La
- * lecon de l'etape 4 est ecrite deux paragraphes plus bas : le `hp` du joueur
- * etait un `u8`, la huitieme carte de vitalite l'a pousse a 260, et il se
- * repliait EN SILENCE a 4 PV. Le calcul, ici : le boss vaut
- * `BOSS_HP_PER_PLAYER x 1,12^k x joueurs`, soit **6 000 PV** au palier 0 a
- * effectif plein, et il croit en `1,12^k` sans plafond.
- *
- * | Largeur | Deborde au palier | Soit, a ~5 min par palier |
- * | --- | --- | --- |
- * | `u8` (255) | **0** — des le premier boss | jamais tenable |
- * | `u16` (65 535) | **22** | 1,8 h de jeu |
- * | **`u32` (4 294 967 295)** | **119** | 9,9 h |
- *
- * ⚠️ **Le `u16` est refuse parce que le palier 22 est ATTEIGNABLE.** Rien ne
- * borne le palier — c'est le §3 de la spec qui en fait *« la duree de vie du
- * jeu »* — et une soiree longue y arrive. Un `u16` aurait replie le boss du
- * palier 22 a 7 000 PV en silence : le meme defaut qu'a l'etape 4, au meme
- * endroit du meme fichier. Les deux octets de plus coutent
- * `2 x SNAPSHOT_HZ` octets par seconde et par client, sur un trafic mesure a
- * 1,22 ko/s a l'etape 4. Au palier 119 le boss a 4,3 milliards de PV et le jeu
- * a cesse d'etre jouable bien avant ; `encodeSnapshot` y borne explicitement
- * plutot que de laisser `setUint32` replier, et un test le dit.
+ * ⚠️ **`bossHp` est un u32, et la largeur est calculee.** Le boss vaut
+ * `BOSS_HP_PER_PLAYER x 1,12^k x joueurs`, sans plafond sur le palier `k` : un
+ * `u16` deborderait au palier 22 (~1,8 h de jeu, atteignable) et replierait le
+ * boss EN SILENCE ; un `u32` tient jusqu'au palier 119. `encodeSnapshot` borne
+ * explicitement plutot que de laisser `setUint32` replier, et un test le dit.
  */
 export const SNAPSHOT_HEADER_BYTES = 22;
 
 /**
- * `gold` EST UN u32, ET LA LARGEUR A ETE CALCULEE, PAS DEVINEE — troisieme
- * fois dans ce fichier, meme methode que pour `bossHp` deux paragraphes plus
- * haut et pour le `hp` du joueur a l'etape 4.
- *
- * L'or cumule apres le palier `k` vaut la somme des `palierGold(i)`, i de 0 a
- * k — soit `100 x 1,12^i` arrondi (`shared/paliers.ts`) — et il est MAJORE du
- * multiplicateur d'extraction a la sortie. La colonne « majore » suppose la
- * forme du tableau des constantes du plan (`+ 0,25` par palier reste) ; c'est
- * la tache 9 qui la figera, elle ne change pas le verdict.
- *
- * | Largeur | Deborde a l'or brut | ... et majore | Soit, a ~5 min par palier |
- * | --- | --- | --- | --- |
- * | `u8` (255) | palier **2** | palier **1** | jamais tenable |
- * | `u16` (65 535) | palier **38** | palier **22** | **1,8 h** |
- * | **`u32`** (4 294 967 295) | palier **136** | palier **107** | **8,9 h** |
- *
- * ⚠️ **Le `u16` est refuse pour la raison qui a refuse le `u16` du boss, et
- * au meme palier : 22 est ATTEIGNABLE.** Rien ne borne le palier — le §3 de la
- * spec en fait *« la duree de vie du jeu »* — et une longue soiree y arrive.
- * Un `u16` aurait replie une cagnotte de 67 984 a 2 448 en silence, PILE au
- * moment ou elle vaut le plus cher : celui ou l'equipe decide si elle la
- * risque. Le repli silencieux de l'etape 4, sur le nombre qui porte l'enjeu
- * de toute l'etape.
- *
- * ⚠️ **Et l'or ne se compare pas au boss sur le trafic.** Les deux u32 de
- * l'en-tete coutent ensemble `8 x SNAPSHOT_HZ` octets par seconde et par
- * client, sur un trafic mesure a 1,22 ko/s a l'etape 4 — moins de 1 %.
+ * Plus grande valeur que `gold` peut porter : un u32, largeur calculee comme
+ * pour `bossHp`. L'or cumule croit en `100 x 1,12^i` par palier
+ * (`shared/paliers.ts`), majore du multiplicateur d'extraction a la sortie : un
+ * `u16` deborderait vers le palier 22, atteignable, et replierait la cagnotte
+ * en silence au moment ou elle vaut le plus cher ; un `u32` tient au-dela du
+ * palier 100.
  */
 export const GOLD_MAX = 0xffff_ffff;
 
 /**
  * Octets qu'il faut avoir recus pour connaitre le nombre de joueurs annonce :
- * `type u8 · tick u32 · playerCount u8`.
- *
- * ⚠️ **Ce n'est PAS une seconde ecriture de `SNAPSHOT_HEADER_BYTES`** — c'est
- * la borne du premier des deux controles de `decodeSnapshot`, et elle vaut
- * exactement ce qu'il faut lire pour dimensionner le second. Voir le
- * commentaire de `decodeSnapshot`.
+ * `type u8 · tick u32 · playerCount u8`. Ce n'est pas une copie de
+ * `SNAPSHOT_HEADER_BYTES` : voir `decodeSnapshot`.
  */
 const SNAPSHOT_COUNT_BYTES = 6;
 
 /**
  * « Aucun boss en jeu. »
  *
- * ⚠️ **Zero ne peut PAS etre une identite d'entite, et c'est la seule raison
- * pour laquelle c'est la bonne sentinelle.** Les identites valent
+ * ⚠️ **Zero ne peut PAS etre une identite d'entite** : les identites valent
  * `waveId * MAX_PER_WAVE + index` (`shared/horde.ts`) avec un `waveId` qui
- * commence a **1** — la plus petite identite possible vaut donc
- * `MAX_PER_WAVE` (4 096), et tout l'intervalle `0..4095` est inhabitable. Un
- * test le derive de `entityIdOf`, il ne le suppose pas.
- *
- * Meme regle que `NO_TOKEN = 255` a l'etape 4, choisi parce que la carte 0 est
- * une carte REELLE : une sentinelle n'est utilisable que si sa valeur ne
- * designe rien de reel.
+ * commence a 1, donc `0..MAX_PER_WAVE - 1` est inhabitable. Un test le derive
+ * de `entityIdOf`.
  *
  * ⚠️ **La sentinelle est sur l'IDENTITE, jamais sur les PV.** Un boss a 0 PV
- * est un boss (il meurt au tick suivant, par `DEATHS`, comme tout le monde) —
- * lire « pas de boss » dans un `hp` nul ferait disparaitre sa barre juste
- * avant sa mort.
+ * est un boss (il meurt au tick suivant, par `DEATHS`) : lire « pas de boss »
+ * dans un `hp` nul ferait disparaitre sa barre juste avant sa mort.
  */
 export const NO_BOSS_ID = 0;
 
@@ -656,54 +510,25 @@ export const NO_BOSS_ID = 0;
 export const BOSS_HP_MAX = 0xffff_ffff;
 /**
  * `id u8 · x i16 · y i16 · hp u16 · aimX i8 · aimY i8 · pickupRadius u8 ·
- * shield u8` — pas de xp ici, voir `PlayerSnapshot`. Historique des tailles :
- * tache 13 de l'etape 3 : 6 -> 8 ; tache 8 de l'etape 4 : 8 -> 9 ; tache 7 de
- * l'etape 7b : 9 -> 10 ; tache 5 de l'etape 13 : 10 -> 11.
+ * shield u8`.
  *
- * ⚠️ **`hp` est passe de `u8` a `u16` a la tache 8 de l'etape 4**, et ce
- * n'etait pas prevu au plan. Le passif « vitalite » ajoute 20 points de vie
- * maximum par carte : a partir de la huitieme (100 + 8 * 20 = 260), un `u8`
- * repliait silencieusement le joueur a 4 points de vie. Un plafond a 255
- * aurait rendu la carte inerte sans le dire. L'octet supplementaire par joueur
- * et par snapshot coute moins de 1 % du trafic mesure a l'etape 3
- * (1,09 ko/s par joueur).
+ * ⚠️ **`hp` est un `u16`** : chaque carte « vitalite » ajoute 20 PV maximum, et
+ * des la huitieme (260) un `u8` replierait le joueur a 4 PV en silence. Un
+ * plafond a 255 rendrait la carte inerte sans le dire.
  *
- * ⚠️ **9 est devenu 10 a l'etape 7b, et c'est le cout AFFICHE de cette
- * etape.** Sept etapes consecutives sans un octet ajoute par tick s'arretent
- * ici, par decision explicite : le rayon de ramassage devient achetable, donc
- * personnel, et `DerivedOrbs#capture` (`front/src/net/client.ts`) ne peut pas
- * predire le ramassage d'un coequipier sans connaitre SON rayon — son propre
- * docbloc dit qu'une capture declenchee sans ramassage reel « mentirait ».
+ * `pickupRadius` est personnel parce qu'achetable : `DerivedOrbs#capture`
+ * (`front/src/net/client.ts`) ne peut pas predire le ramassage d'un coequipier
+ * sans connaitre SON rayon. Un `u8` suffit : base 90 + bonus achetable 80 =
+ * 170. `shared/shop.test.ts` garde `ORB_PICKUP_RADIUS +
+ * maxBonus('pickupRadius') <= 255` en derivant le maximum du catalogue : c'est
+ * lui qui rougira si l'on ajoute un palier d'aimant, pas la borne de
+ * l'encodeur.
  *
- * La proportion : +4 octets par snapshot a quatre joueurs, soit +0,47 ko/s
- * pour le salon a 30 Hz. L'architecture du §3.3 a economise ~150 ko/s en ne
- * repliquant pas les positions de la horde ; ce surcout en represente 0,3 %.
- *
- * ⚠️ **`u8`, et c'est CALCULE** : la base (`ORB_PICKUP_RADIUS`) vaut 90, le
- * maximum achetable (`maxBonus('pickupRadius')`) vaut 80, donc le maximum
- * atteignable vaut 170 ; le plafond d'un octet non signe est 255, soit **85
- * px de marge** — et non 165 : une marge calculee en oubliant de retrancher
- * le bonus lui-meme serait fausse. `shared/shop.test.ts` assene
- * `ORB_PICKUP_RADIUS + maxBonus('pickupRadius') <= 255` en DERIVANT le
- * maximum du catalogue : c'est ce test qui rougira le jour ou quelqu'un
- * ajoute un palier d'aimant, pas une assertion sur le `Math.min(255, ...)` de
- * l'encodeur — avec un maximum atteignable de 170, cette borne ne peut pas se
- * declencher aujourd'hui.
- *
- * ⚠️ **L'octet est ASSUME, et deux variantes moins cheres ont ete ecartees
- * par ecrit** (§3.4 de la spec) : un `u16` doublerait le cout pour une reserve
- * plafonnee, et reutiliser `hp` (chez un porteur, `maxHp` vaut 1, donc
- * `hp + bouclier` est decodable) marcherait mais serait l'astuce qu'on
- * dechiffre a 3 h du matin en se demandant pourquoi la barre d'un allie ment.
- *
- * ⚠️ **Pas « seulement pour le porteur »** : `encodeSnapshot` construit UN
- * tampon pousse une fois pour tout le salon, donc un champ local demanderait
- * un encodage par client — du CPU par tick contre un octet par joueur.
- *
- * Le cout, comme pour `pickupRadius` ci-dessus : +1 octet par joueur et par
- * snapshot, soit +4 octets a quatre joueurs — **+0,47 ko/s pour le salon a
- * 30 Hz**, le meme chiffre qu'a la tache 7 de l'etape 7b (meme largeur
- * ajoutee, meme calcul).
+ * `shield` : un `u8` suffit pour une reserve plafonnee. Reutiliser `hp` (chez
+ * un porteur, `maxHp` vaut 1, donc `hp + bouclier` est decodable) marcherait,
+ * mais serait une astuce illisible. Le champ est envoye pour tous, pas
+ * seulement le porteur : `encodeSnapshot` construit UN tampon pour tout le
+ * salon, un champ local demanderait un encodage par client.
  */
 export const SNAPSHOT_PLAYER_BYTES = 11;
 export const WAVE_ORDER_BYTES = 19;
@@ -712,12 +537,7 @@ export const WAVE_ORDER_BYTES = 19;
 export const DEATHS_HEADER_BYTES = 7;
 /** `type u8 · deadlineTick u32 · count u8`. */
 export const DRAFT_OPEN_HEADER_BYTES = 6;
-/**
- * Une carte : `nature u8 · refId u8 · upgrade u8 · rarity u8`.
- *
- * ⚠️ **Quatre octets depuis l'etape 10** : la rarete en ajoute un, dans un
- * message envoye une fois par montee de niveau — jamais par tick.
- */
+/** Une carte : `nature u8 · refId u8 · upgrade u8 · rarity u8`. */
 export const DRAFT_CARD_BYTES = 4;
 /** `type u8 · cardIndex u8`. */
 export const DRAFT_TOKEN_BYTES = 2;
@@ -725,27 +545,18 @@ export const DRAFT_TOKEN_BYTES = 2;
 export const DRAFT_INTENTS_HEADER_BYTES = 2;
 /** Une intention : `playerId u8 · cardIndex u8`. */
 export const DRAFT_INTENT_BYTES = 2;
-/**
- * `type u8 · deadlineTick u32 · count u8`.
- *
- * ⚠️ **Il y avait un octet `phase` de plus.** Il distinguait « le draft est
- * termine » de « une repioche s'ouvre » ; la repioche n'existe plus, la
- * resolution est un seul moment, donc le message n'a plus qu'un sens possible.
- */
+/** `type u8 · deadlineTick u32 · count u8`. */
 export const DRAFT_RESULT_HEADER_BYTES = 6;
 /** Une issue : `playerId u8 · cardIndex u8 · outcome u8`. */
 export const DRAFT_OUTCOME_BYTES = 3;
 
 /**
  * Ce qui est arrive a un joueur, tel que l'octet `outcome` de `DRAFT_RESULT`
- * le transporte (§4.2 de la spec de l'etape 4).
+ * le transporte.
  *
- * ⚠️ **Vit ici et pas dans `back/src/draft.ts`, ou il est ne a la tache 5.**
- * C'est une valeur de fil : `Draft` la produit, `Room` la diffuse, et le
- * client la relit pour savoir quelles cartes ranger dans son miroir des
- * inventaires (tache 9). Le client ne peut pas importer `back/` — la
- * constante descend donc au seul endroit que les deux cotes partagent, plutot
- * que d'exister en deux exemplaires qui divergeraient.
+ * Vit dans `shared/` parce que c'est une valeur de fil : `Draft` la produit,
+ * `Room` la diffuse, le client la relit — et le client ne peut pas importer
+ * `back/`.
  */
 export const OUTCOME = {
   /** La carte lui revient — elle s'illumine chez lui. */
@@ -760,58 +571,28 @@ export const OUTCOME = {
  * « Ce joueur n'a pose aucun jeton. »
  *
  * ⚠️ Ne peut pas valoir `0` : la carte d'indice 0 est une carte comme une
- * autre. Une sentinelle n'est utilisable que si sa valeur ne designe rien de
- * reel — c'est ce qui rendait `owner = 0` legitime, du temps ou `Card` avait
- * un `owner`.
+ * autre.
  */
 export const NO_TOKEN = 255;
 
-/**
- * `type u8 · deadlineTick u32 · multiplicateur u16` (tache 10 : 5 -> 7).
- *
- * Les deux octets du multiplicateur partent **une fois par palier**, soit une
- * fois toutes les ~5 minutes et par client. Il n'y a pas d'arbitrage de trafic
- * a faire ici : c'est le prix d'un chiffre sans lequel l'ecran du vote ne peut
- * afficher aucun des deux montants qu'il doit montrer.
- */
+/** `type u8 · deadlineTick u32 · multiplicateur u16`, une fois par palier. */
 export const PORTAL_OPEN_BYTES = 7;
 
 /**
  * Facteur de quantification du multiplicateur d'extraction : il voyage en
- * CENTIEMES, dans un `u16`.
+ * CENTIEMES, dans un `u16`. Vit ici parce que c'est une propriete du fil ;
+ * `EXTRACT_MULTIPLIER_STEP`, reglage de jeu, reste dans `shared/constants.ts`.
  *
- * ⚠️ **Vit ICI, avec le reste du cadrage binaire**, comme `CHARGE_DIR_SCALE`
- * quelques lignes plus bas et pour la meme raison : c'est une propriete du FIL,
- * celle qui decide de la resolution qu'un nombre conserve en traversant.
- * `EXTRACT_MULTIPLIER_STEP` (0,25), lui, est un REGLAGE de jeu et reste dans
- * `shared/constants.ts`.
+ * ⚠️ **Des centiemes, pas un nombre de paliers restes** : le serveur dit la
+ * VALEUR qu'il applique et le client ne recalcule rien. Sinon les deux cotes
+ * referaient le meme calcul et divergeraient le jour ou la pente cesserait
+ * d'etre lineaire.
  *
- * ⚠️ **Des centiemes, et pas un nombre de paliers restes.** L'encodage
- * alternatif — un `u8` « k paliers restes », que le client remultiplierait par
- * `EXTRACT_MULTIPLIER_STEP` — obligerait les deux cotes a refaire le MEME
- * calcul a partir de la meme constante, donc a diverger le jour ou la pente
- * cesse d'etre lineaire (le §10 de la spec en fait une question ouverte :
- * *« trop plat, rester ne se justifie pas ; trop raide, partir tot devient
- * absurde »*). Ici, le serveur dit la VALEUR qu'il applique ; le client ne
- * recalcule rien.
- *
- * ⚠️ **ET LA BORNE A ETE CALCULEE, PAS DEVINEE** — quatrieme fois dans ce
- * fichier, meme methode que pour `bossHp` et pour `gold`. Le multiplicateur
- * vaut `1 + 0,25 k` apres `k` « rester » :
- *
- * | Largeur | Deborde au palier | Soit, a ~5 min par palier |
- * | --- | --- | --- |
- * | `u8` (2,55) | **7** | 35 min — **jamais tenable** |
- * | **`u16` (655,35)** | **2 618** | **218 h** |
- *
- * ⚠️ **Le `u8` est refuse pour la raison qui a refuse les `u16` du boss et de
- * l'or : le palier 7 est ATTEIGNABLE en une demi-heure.** Le `u16`, lui,
- * deborde plus de vingt fois APRES l'or : `extractGold` sature `GOLD_MAX` des
- * le palier 107 (voir `GOLD_MAX`), et le jeu a cesse d'etre jouable bien avant
- * l'un comme l'autre. `encodePortalOpen` borne quand meme explicitement plutot
- * que de laisser `setUint16` replier — un multiplicateur de 655,36 qui se
- * relirait 0,00 ferait dire au client que partir ne rapporte rien, au moment
- * exact ou il rapporte le plus. Un test le dit.
+ * ⚠️ **Largeur calculee** : le multiplicateur vaut `1 + 0,25 k` apres `k`
+ * « rester ». Un `u8` (2,55) deborderait au palier 7, atteignable en une
+ * demi-heure ; un `u16` (655,35) au palier 2 618. `encodePortalOpen` borne
+ * quand meme explicitement : un multiplicateur replie a 0,00 ferait dire au
+ * client que partir ne rapporte rien. Un test le dit.
  */
 export const EXTRACT_MULTIPLIER_SCALE = 100;
 
@@ -819,13 +600,9 @@ export const EXTRACT_MULTIPLIER_SCALE = 100;
 export const EXTRACT_MULTIPLIER_MAX = 0xffff / EXTRACT_MULTIPLIER_SCALE;
 
 /**
- * Longueur du jeton de compte, en octets — 32 octets de hasard
- * cryptographique, soit 43 caracteres en base64url.
- *
- * ⚠️ **Largeur FIXE, pas un prefixe de longueur.** Tout le protocole de ce
- * depot est a largeur fixe ou a compte explicite ; un jeton de longueur
- * variable ajouterait le seul champ du fil dont la taille depend de son
- * contenu, pour rien — un jeton n'a aucune raison de varier.
+ * Longueur du jeton de compte, en octets : 32 octets de hasard
+ * cryptographique, soit 43 caracteres en base64url. Largeur fixe, comme tout
+ * le protocole : un jeton n'a aucune raison de varier.
  */
 export const TOKEN_BYTES = 32;
 
@@ -838,28 +615,17 @@ export const VOTES_HEADER_BYTES = 2;
 /** Un vote : `playerId u8 · choice u8`. */
 export const VOTE_ENTRY_BYTES = 2;
 /**
- * `type u8 · effectTick u32 · decision u8 · gold u32`.
- *
- * ⚠️ **Pas de decompte des voix.** Il tiendrait en deux octets et il ne dit
- * rien que `VOTES` n'ait deja dit : ce qui voyage ici, c'est le VERDICT. Voir
- * `PortalResultMessage`.
+ * `type u8 · effectTick u32 · decision u8 · gold u32`. Pas de decompte des
+ * voix : voir `PortalResultMessage`.
  */
 export const PORTAL_RESULT_BYTES = 10;
 
 /**
- * Les deux faces du vote d'extraction (§6 de la spec de l'etape 6a).
+ * Les deux faces du vote d'extraction. Valeur de fil, donc dans `shared/`,
+ * comme `OUTCOME`.
  *
- * ⚠️ **Vit ici, pas dans `back/src/portal.ts` ou la machine du vote naitra
- * (tache 8).** C'est une valeur de fil : le client la produit dans son `VOTE`,
- * le serveur la rediffuse dans `VOTES` et la rend comme verdict dans
- * `PORTAL_RESULT`. Le client ne peut pas importer `back/` — la constante vit
- * donc au seul endroit que les deux cotes partagent, plutot qu'en deux
- * exemplaires qui divergeraient. Meme raisonnement que `OUTCOME`, ecrit
- * quelques lignes plus haut pour le draft.
- *
- * ⚠️ **`STAY` vaut ZERO, et ce n'est pas neutre : c'est la valeur par
- * defaut du jeu.** Le §6 tranche *« majorite ; egalite = on continue »* —
- * rester est ce qui arrive quand rien ne se decide.
+ * ⚠️ **`STAY` vaut ZERO, et ce n'est pas neutre** : majorite, et egalite = on
+ * continue. Rester est ce qui arrive quand rien ne se decide.
  */
 export const VOTE_CHOICE = {
   /** Rester : le multiplicateur monte, l'or reste non securise. */
@@ -871,18 +637,13 @@ export const VOTE_CHOICE = {
 /**
  * « Ce joueur n'a pas vote. »
  *
- * ⚠️ **Ne peut valoir NI 0 NI 1 : les deux sont des votes REELS.** C'est
- * exactement la raison qui a fait choisir `NO_TOKEN = 255` a l'etape 4 — la
- * carte 0 est une carte reelle — et le prendre a 0 ici ferait voter « rester »
- * a tous les silencieux, ce que le §6 confie a la regle d'egalite, pas a une
- * sentinelle. La difference se voit des que quelqu'un vote « partir » : deux
- * abstentions et un depart donneraient une majorite pour rester au lieu d'une
- * majorite pour partir.
+ * ⚠️ **Ne peut valoir NI 0 NI 1 : les deux sont des votes REELS.** A 0, tous
+ * les silencieux voteraient « rester » : deux abstentions et un depart
+ * donneraient une majorite pour rester au lieu d'une majorite pour partir.
  *
- * ⚠️ **Une abstention n'est pas une voix.** Elle circule dans `VOTES` — les
- * autres doivent voir qui n'a pas encore tranche, c'est la matiere de la
- * negociation — mais elle ne se compte pas. `PORTAL_RESULT.decision` ne la
- * porte donc jamais.
+ * Une abstention circule dans `VOTES` (les autres doivent voir qui n'a pas
+ * tranche) mais ne se compte pas : `PORTAL_RESULT.decision` ne la porte
+ * jamais.
  */
 export const NO_VOTE = 255;
 
@@ -891,23 +652,8 @@ export const DEATH_ID_BYTES = 4;
 
 /**
  * `type u8 · kind u8 · x i16 · y i16 · bornTick u32 · by u8` = **11 octets**.
- *
- * ⚠️ **`kind`, pas un simple `element` — perime des la tache 5 de l'etape
- * 5b, corrige a la revue finale.** L'octet empaquete par `packZoneKind`
- * porte l'element (bits 0-2) ET le type de champ de reaction (bits 3-6),
- * voir `ZoneMessage` et `zoneElement`/`zoneReaction` : ce champ documente ici
- * exactement le critere « zero octet de plus » de l'etape, au seul endroit
- * ou son cout sur le fil est compte — la liste ne peut pas se permettre de
- * decrire un octet perime.
- *
- * ⚠️ **Le plan annonce 12 octets pour cette liste de champs ; elle en fait
- * 11.** La spec (§2 et §5.3) ecrit « ~12 octets », un ordre de grandeur, et le
- * plan a durci l'approximation en chiffre exact sans la recompter. L'octet
- * manquant est vraisemblablement le `rayon` que la table du §8 de la spec
- * listait encore : il n'est pas sur le fil (voir `ZoneMessage`), le compte
- * tombe donc a 11. La liste de champs fait foi, pas le total.
- *
- * Aucun message de disparition : la mort d'une zone se derive de `bornTick`.
+ * `kind` est l'octet empaquete par `packZoneKind`, voir `ZoneMessage`. Aucun
+ * message de disparition : la mort d'une zone se derive de `bornTick`.
  */
 export const ZONE_BYTES = 11;
 
@@ -919,31 +665,22 @@ export const REACTION_BYTES = 11;
  * · largeur u16 · windupTick u32 · startTick u32 · endTick u32` = **29
  * octets**.
  *
- * ⚠️ **Trois ticks, et aucun n'est derivable des deux autres sans recopier une
- * constante.** `BOSS_CHARGE_WINDUP_TICKS` et `BOSS_CHARGE_TICKS` sont des
- * REGLAGES que la tache 12 va bouger : les envoyer explicitement rend une
- * charge deja en vol insensible a leur retouche, et evite qu'un client d'une
- * autre version ne derive une fenetre differente de celle que le serveur a
- * reellement jouee.
- *
- * Un seul message par charge, soit ~0,3 message/s et 8 octets/s par client
- * pendant un combat de boss — a comparer aux 1,22 ko/s de trafic total mesures
- * a l'etape 4.
+ * ⚠️ **Trois ticks, bien que derivables de `BOSS_CHARGE_WINDUP_TICKS` et
+ * `BOSS_CHARGE_TICKS`** : ce sont des reglages, et les envoyer rend une charge
+ * en vol insensible a leur retouche comme a un client d'une autre version.
  */
 export const BOSS_CHARGE_BYTES = 29;
 
 /**
  * Facteur de quantification des composantes de direction d'une charge.
  *
- * ⚠️ **Vit ICI, avec le reste du cadrage binaire, et pas dans `shared/boss.ts`
- * ou la charge est construite.** C'est une propriete du FIL : c'est elle qui
- * decide de la resolution qu'une direction conserve en traversant. La charge,
- * elle, l'importe pour se quantifier AVANT de partir — le serveur derive sa
- * position depuis exactement les nombres que le client decodera (voir
- * `makeBossCharge`), la meme discipline que le centre STOCKE d'une zone.
+ * ⚠️ **Vit ici, pas dans `shared/boss.ts`** : c'est une propriete du fil. La
+ * charge l'importe pour se quantifier AVANT de partir, afin que le serveur
+ * derive sa position depuis exactement les nombres que le client decodera
+ * (voir `makeBossCharge`).
  *
  * 10 000 tient dans un `int16` (max 32 767) et laisse 1e-4 de resolution, soit
- * moins de 0,1 px d'ecart sur toute la longueur d'un couloir de 900 px.
+ * moins de 0,1 px d'ecart sur un couloir de 900 px.
  */
 export const CHARGE_DIR_SCALE = 10000;
 
@@ -953,12 +690,9 @@ export const LEVEL_UP_BYTES = 6;
 export const RUN_OVER_BYTES = 14;
 
 /**
- * Ouvre une vue sur le buffer en exigeant une taille minimale.
- *
- * C'est le seul endroit ou l'on refuse un buffer court, et il n'existe que pour
- * ca : un decodeur qui lit au-dela de la fin rend des valeurs fantaisistes au
- * lieu de lever, et on passe ensuite des heures a chercher une bogue de gameplay
- * la ou il y a une bogue de cadrage reseau.
+ * Ouvre une vue sur le buffer en exigeant une taille minimale : un decodeur
+ * qui lit au-dela de la fin rend des valeurs fantaisistes au lieu de lever, et
+ * une bogue de cadrage reseau se deguise en bogue de gameplay.
  */
 function viewOf(buf: ArrayBuffer, minBytes: number): DataView {
   if (buf.byteLength < minBytes) {
@@ -968,16 +702,13 @@ function viewOf(buf: ArrayBuffer, minBytes: number): DataView {
 }
 
 /**
- * Arrondit et borne un axe sur l'intervalle d'un octet signe (-127..127) —
- * -128 est exclu pour rester symetrique, comme `moveX`/`moveY` l'ont toujours
- * ete.
+ * Arrondit et borne un axe sur un octet signe (-127..127, -128 exclu pour
+ * rester symetrique).
  *
- * Exportee (tache 13) : c'est la MEME fonction que le client doit appliquer a
- * sa visee avant de tirer localement, pas seulement avant d'encoder. Sinon le
- * client tire avec son flottant d'origine pendant que le serveur ne voit
- * jamais que la version quantifiee recue par `INPUT` — un ecart systematique
- * d'une fraction de degre, pas transitoire. Meme discipline que
- * `Math.round(p.x)` avant `PlayerHistory.record` cote serveur (tache 9).
+ * ⚠️ Le client doit l'appliquer a sa visee AVANT de tirer localement, pas
+ * seulement avant d'encoder : sinon il tire avec son flottant d'origine
+ * pendant que le serveur ne voit que la version quantifiee, un ecart
+ * systematique d'une fraction de degre.
  */
 export function quantizeAxis(v: number): number {
   const r = Math.round(v);
@@ -990,7 +721,7 @@ export function quantizeAxis(v: number): number {
   return r;
 }
 
-/** C -> S : une entree, 7 octets (tache 13 : +aimX +aimY). */
+/** C -> S : une entree, 7 octets. */
 export function encodeInput(
   seq: number,
   moveX: number,
@@ -1023,17 +754,8 @@ export function decodeInput(buf: ArrayBuffer): InputMessage {
 
 /**
  * S -> C : positions des joueurs, `SNAPSHOT_HEADER_BYTES` d'en-tete puis
- * `SNAPSHOT_PLAYER_BYTES` par joueur.
- *
- * `xp` et `synergy` sont des parametres a part, pas des champs de
- * `players[i]` : ce sont ceux de l'**equipe**, communs a tous (§2 de la spec
- * d'orientation, §7 de celle de l'etape 5a), et ils vivent dans l'en-tete
- * plutot que d'etre repetes — et donc potentiellement divergents — dans chaque
- * bloc joueur.
- *
- * `aimX`/`aimY` sont quantifies par `quantizeAxis`, comme dans `encodeInput` :
- * un joueur ne peut de toute facon jamais transmettre plus que cette
- * precision, le serveur n'a donc rien a arrondir de plus en la retransmettant.
+ * `SNAPSHOT_PLAYER_BYTES` par joueur. `xp`, `synergy` et `gold` sont ceux de
+ * l'equipe, dans l'en-tete.
  */
 export function encodeSnapshot(
   tick: number,
@@ -1051,37 +773,27 @@ export function encodeSnapshot(
   v.setUint16(6, xp, true);
   v.setUint16(8, synergy, true);
   v.setUint32(10, boss ? boss.id : NO_BOSS_ID, true);
-  // ⚠️ **Arrondi ET borne, explicitement.** `Horde.hp` est un flottant ; sans
-  // l'arrondi, `setUint32` tronquerait vers zero, et sans la borne il
-  // replierait modulo 2^32 au palier 119 — le repli silencieux de l'etape 4.
+  // ⚠️ Arrondi ET borne : `Horde.hp` est un flottant, `setUint32` tronquerait
+  // vers zero sans l'arrondi et replierait modulo 2^32 sans la borne.
   v.setUint32(14, boss ? Math.min(BOSS_HP_MAX, Math.max(0, Math.round(boss.hp))) : 0, true);
-  // Borne pour la meme raison que les PV du boss juste au-dessus : au-dela de
-  // `GOLD_MAX`, `setUint32` replierait modulo 2^32 et une cagnotte de quatre
-  // milliards se reveillerait a quelques pieces. L'arrondi, lui, couvre le
-  // multiplicateur d'extraction (tache 9), seul chemin par lequel l'or peut
-  // cesser d'etre entier.
+  // Borne : au-dela de `GOLD_MAX`, `setUint32` replierait modulo 2^32.
+  // L'arrondi couvre le multiplicateur d'extraction, seul chemin par lequel
+  // l'or peut cesser d'etre entier.
   v.setUint32(18, Math.min(GOLD_MAX, Math.max(0, Math.round(gold))), true);
   let o = SNAPSHOT_HEADER_BYTES;
   for (const p of players) {
     v.setUint8(o, p.id);
     v.setInt16(o + 1, Math.round(p.x), true);
     v.setInt16(o + 3, Math.round(p.y), true);
-    // ⚠️ **Borne, pour la meme raison que le boss et l'or plus haut : le
-    // repli silencieux de l'etape 4.** `setUint16` applique `p.hp` modulo
-    // 2^16 ; sans cette borne, un `hp` negatif (etape 13 : un mort qui
-    // recevrait un malus avant le plancher de `Room#grantCard`, ou tout
-    // futur chemin qui laisserait `hp` filer sous zero) partirait sur le fil
-    // pres de 65536 — un mort affiche a PV quasi plein. La garde reste donc
-    // ICI, independante de celle de `room.ts` : elle rattrape n'importe quel
-    // chemin, present ou futur, pas seulement celui du jour.
+    // ⚠️ Borne : `setUint16` applique `p.hp` modulo 2^16, et un `hp` negatif
+    // partirait pres de 65536 — un mort affiche a PV quasi plein. Garde
+    // independante de celle de `room.ts`, pour tout chemin futur.
     v.setUint16(o + 5, Math.min(0xffff, Math.max(0, p.hp)), true);
     v.setInt8(o + 7, quantizeAxis(p.aimX));
     v.setInt8(o + 8, quantizeAxis(p.aimY));
     v.setUint8(o + 9, Math.min(255, Math.max(0, Math.round(p.pickupRadius))));
-    // Meme borne, meme raison : `SHIELD_POOL` est fixe (60), donc largement
-    // sous 255, mais un champ non borne replierait modulo 256 au premier
-    // chemin futur qui le laisserait deraper — le repli silencieux de
-    // l'etape 4, cote bouclier cette fois.
+    // Meme borne : `SHIELD_POOL` est loin sous 255, mais un champ non borne
+    // replierait modulo 256 au premier chemin qui le laisserait deraper.
     v.setUint8(o + 10, Math.min(255, Math.max(0, Math.round(p.shield))));
     o += SNAPSHOT_PLAYER_BYTES;
   }
@@ -1089,14 +801,8 @@ export function encodeSnapshot(
 }
 
 export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
-  // ⚠️ **DEUX controles, et depuis la tache 4 ils ne se couvrent PLUS.**
-  // Celui-ci n'exige que les six octets qu'il faut avoir lus pour connaitre le
-  // nombre de joueurs ANNONCE ; le second exige tout le reste. Ecrit avec
-  // `SNAPSHOT_HEADER_BYTES` des deux cotes, le premier etait entierement
-  // couvert par le second au-dela de six octets — le motif « deux gardes qui
-  // se couvrent », quinze fois dans ce depot — et le reduire ne faisait rougir
-  // aucun test. Il ne garde donc plus que ce qu'il garde vraiment : un buffer
-  // trop court pour porter meme son compte de joueurs.
+  // ⚠️ DEUX controles qui ne se couvrent pas : celui-ci n'exige que les octets
+  // qui portent le nombre de joueurs annonce, le second exige tout le reste.
   const head = viewOf(buf, SNAPSHOT_COUNT_BYTES);
   const count = head.getUint8(5);
   // Le nombre de joueurs vient du buffer : on le confronte a sa taille reelle
@@ -1137,18 +843,13 @@ export function decodeSnapshot(buf: ArrayBuffer): SnapshotMessage {
  * Empaquette un couple d'elements sur UN octet : le plus petit identifiant
  * dans le quartet de poids fort, le plus grand dans celui de poids faible.
  *
- * ⚠️ **Canonique, donc insensible a l'ordre d'arrivee.** Un choc thermique
- * declenche par un projectile Givre sur une marque Braise et le meme par un
- * projectile Braise sur une marque Givre sont **la meme reaction** (§6.2 : le
- * tableau des declencheurs est symetrique), et ils doivent porter le meme
- * octet — sinon deux clients dessineraient deux flashs differents pour un
- * evenement identique, et une table de reactions indexee par `pair` aurait
- * deux entrees pour une seule ligne du §6.3.
+ * ⚠️ **Canonique, donc insensible a l'ordre d'arrivee.** Givre sur une marque
+ * Braise et Braise sur une marque Givre sont la meme reaction et doivent
+ * porter le meme octet, sinon deux clients dessineraient deux flashs
+ * differents et une table indexee par `pair` aurait deux entrees.
  *
- * ⚠️ **Un quartet, pas un octet par element**, parce que le couple tient alors
- * dans le meme octet que le `pair u8` du §8. Seize elements possibles pour six
- * prevus au §6.3 de l'orientation — `protocol.test.ts` garde la marge en
- * confrontant `ELEMENTS.length` a 16 plutot qu'en la supposant.
+ * Un quartet par element, donc seize elements possibles : `protocol.test.ts`
+ * garde la marge en confrontant `ELEMENTS.length` a 16.
  */
 export function packElementPair(a: number, b: number): number {
   const lo = Math.min(a, b);
@@ -1162,29 +863,19 @@ export function unpackElementPair(pair: number): [number, number] {
 }
 
 /**
- * Ce qu'une zone porte, dans l'octet que `ZONE` avait deja (etape 5b, tache
- * 5) : un COUPLE, pas une seule valeur.
+ * Ce qu'une zone porte dans l'octet `kind` : un COUPLE, sans octet de plus.
  *
  * | bits | contenu | 0 signifie |
  * | --- | --- | --- |
  * | 0-2 | l'element dont la zone MARQUE les ennemis | ne marque rien |
  * | 3-6 | le type de champ de REACTION | aucun effet de reaction |
  *
- * ⚠️ **Zero octet de plus** : `ZONE_BYTES` reste 11. Les deux cotes lisent
- * le meme octet et en derivent les deux sens — `zoneElement` et
- * `zoneReaction`.
+ * ⚠️ **Ne remplace PAS `ReactionTrigger.element`**, qui reste le SECOND
+ * element du couple (voir son docbloc dans `back/src/combat.ts`) et evite que
+ * le meme tireur redeclenche indefiniment avec une seule arme.
  *
- * ⚠️ **Ne remplace PAS `ReactionTrigger.element`, ne le mange pas non plus.**
- * Ce champ-ci reste le SECOND element du couple (voir son docbloc dans
- * `back/src/combat.ts`) : c'est lui qui evite que le meme tireur redeclenche
- * indefiniment avec une seule arme. Le type de reaction ajoute une donnee, il
- * n'en retire aucune.
- *
- * ⚠️ **7 bits sur 8 : le bit 7 reste a zero.** Six elements tiennent sur 3
- * bits (0-7), quinze types de reaction sur 4 (0-15). `element` et `reaction`
- * sont masques avant l'empaquetage : un appelant qui passerait une valeur
- * hors bornes se ferait tronquer, jamais lever — meme discipline que
- * `packElementPair`.
+ * Le bit 7 reste a zero. Les valeurs sont masquees : hors bornes, elles sont
+ * tronquees, jamais levees.
  */
 export function packZoneKind(element: number, reaction: number): number {
   return (element & 0x07) | ((reaction & 0x0f) << 3);
@@ -1201,13 +892,8 @@ export function zoneReaction(kind: number): number {
 }
 
 /**
- * S -> C : une zone au sol vient d'etre posee, 11 octets. Voir `ZoneMessage`
- * pour ce qui n'y est PAS — le rayon, et surtout la mort de la zone.
- *
- * ⚠️ **`kind` est DEJA empaquete par l'appelant** (`packZoneKind`), jamais un
- * element brut recompose ici. Cette fonction ne fait que poser l'octet sur le
- * fil, comme avant la tache 5 — c'est le CONTENU de l'octet qui a change, pas
- * son transport.
+ * S -> C : une zone au sol vient d'etre posee, 11 octets. Voir `ZoneMessage`.
+ * `kind` est DEJA empaquete par l'appelant (`packZoneKind`).
  */
 export function encodeZone(
   kind: number,
@@ -1228,14 +914,12 @@ export function encodeZone(
 }
 
 /**
- * S -> C : le boss charge, 29 octets. Voir `BossChargeMessage` — un seul par
- * charge, et **rien ensuite** : la progression se derive des ticks.
+ * S -> C : le boss charge, 29 octets, un seul message par charge.
  *
- * ⚠️ **Prend la `BossCharge` DEJA construite, jamais des composantes brutes.**
- * `makeBossCharge` a arrondi l'origine et quantifie la direction ; le serveur
- * derive sa propre position depuis ces nombres-la. Encoder autre chose ici
- * ferait suivre au client un couloir voisin mais different — le defaut exact
- * que le centre STOCKE d'une zone evite depuis l'etape 5a.
+ * ⚠️ **Prend la `BossCharge` DEJA construite** : `makeBossCharge` a arrondi
+ * l'origine et quantifie la direction, et le serveur derive sa position depuis
+ * ces nombres-la. Encoder autre chose ferait suivre au client un couloir
+ * voisin mais different.
  */
 export function encodeBossCharge(charge: Omit<BossChargeMessage, 'type'>): ArrayBuffer {
   const buf = new ArrayBuffer(BOSS_CHARGE_BYTES);
@@ -1283,13 +967,7 @@ export function decodeZone(buf: ArrayBuffer): ZoneMessage {
   };
 }
 
-/**
- * S -> C : une reaction a eu lieu, 11 octets.
- *
- * `synergyCharge` est le booleen du §7 — deux joueurs differents a l'origine —
- * deja arbitre par le serveur, et il voyage DANS ce message : les deux
- * arrivent toujours ensemble (§8).
- */
+/** S -> C : une reaction a eu lieu, 11 octets. Voir `ReactionMessage`. */
 export function encodeReaction(
   pair: number,
   x: number,
@@ -1322,12 +1000,8 @@ export function decodeReaction(buf: ArrayBuffer): ReactionMessage {
 
 /**
  * Coeur commun de `DEATHS` et `PICKUPS` : `type u8 · tick u32 · count u16 ·
- * id u32 x count`. Les deux messages ne different que par leur octet de type,
- * factoriser evite de dupliquer un decalage d'octet dans deux fonctions.
- *
- * Les identites sont triees en ordre croissant a l'encodage : c'est l'ordre
- * canonique d'application (voir `DeathsMessage`), impose ici plutot que
- * laisse a la discretion de chaque appelant.
+ * id u32 x count`. Le tri croissant (voir `DeathsMessage`) est impose ici
+ * plutot que laisse a chaque appelant.
  */
 function encodeIdBatch(type: number, tick: number, ids: readonly number[]): ArrayBuffer {
   const sorted = [...ids].sort((a, b) => a - b);
@@ -1456,13 +1130,11 @@ export function decodeWelcome(buf: ArrayBuffer): WelcomeMessage {
 
 /**
  * S -> C : l'ordre de faire apparaitre une vague. 19 octets, **quel que soit le
- * nombre d'entites**.
+ * nombre d'entites** : on ne replique pas la horde, on replique son generateur
+ * (repliquer 1 000 ennemis a 30 Hz couterait ~150 ko/s).
  *
- * C'est la mise en oeuvre du §3.3 : on ne replique pas la horde, on replique
- * son generateur. Repliquer 1 000 ennemis a 30 Hz couterait ~150 ko/s.
- *
- * Le parametre est un type structurel inline plutot que `WaveOrder` de
- * `shared/waves.ts` : le protocole ne doit pas dependre du module de vagues.
+ * Parametre structurel plutot que `WaveOrder` : le protocole ne doit pas
+ * dependre de `shared/waves.ts`.
  */
 export function encodeWaveOrder(order: {
   waveId: number;
@@ -1580,7 +1252,7 @@ export interface WireCard {
   nature: number;
   refId: number;
   upgrade?: number;
-  /** La rarete (`RARITY`, etape 10). Absente : commune. */
+  /** La rarete (`RARITY`). Absente : commune. */
   rarity?: number;
 }
 
@@ -1624,11 +1296,8 @@ export interface WireIntent {
 }
 
 /**
- * S -> C : qui a pose sur quoi.
- *
- * Le seul message du draft a cadence soutenue — et le §7.2 point 3 en fait la
- * condition d'existence de la mecanique : « sans cette visibilite, la
- * negociation n'existe pas ».
+ * S -> C : qui a pose sur quoi. Le seul message du draft a cadence soutenue :
+ * sans cette visibilite, la negociation n'existe pas.
  */
 export function encodeDraftIntents(intents: readonly WireIntent[]): ArrayBuffer {
   const buf = new ArrayBuffer(DRAFT_INTENTS_HEADER_BYTES + intents.length * DRAFT_INTENT_BYTES);
@@ -1652,17 +1321,11 @@ export interface WireOutcome {
 }
 
 /**
- * S -> C : la resolution.
+ * S -> C : la resolution, une fois par draft.
  *
- * ⚠️ **`deadlineTick` porte la fin du gel, et sans lui le client ne peut pas la
- * deduire.** A l'etape 3 il la calculait — `msg.tick + LEVEL_FREEZE_TICKS - 1`
- * — parce que le gel durait une constante. Ce n'est plus vrai : la fenetre
- * dure jusqu'a ce que tout le monde ait pose son jeton, et en solo elle se
- * ferme au clic.
- *
- * Ce message est emis EXACTEMENT une fois par draft : la resolution est un seul
- * moment. La carte gagnee s'illumine, la carte perdue brule, celle qui la
- * remplace s'illumine a son tour — tout est dans ces `outcomes`.
+ * ⚠️ **`deadlineTick` porte la fin du gel**, que le client ne peut pas
+ * deduire : la fenetre dure jusqu'a ce que tout le monde ait pose son jeton,
+ * et en solo elle se ferme au clic.
  */
 export function encodeDraftResult(
   deadlineTick: number,
@@ -1684,22 +1347,16 @@ export function encodeDraftResult(
 }
 
 /**
- * S -> C : le portail s'ouvre, jusqu'a `deadlineTick`.
- *
- * ⚠️ **Aucun gel n'est annonce ici, et c'est tout ce qui separe ce message de
- * `DRAFT_OPEN`** : le monde continue de tourner pendant le vote (§6 de la
- * spec). La vague suivante approche — c'est elle qui met la pression, et un
- * gel la supprimerait.
+ * S -> C : le portail s'ouvre, jusqu'a `deadlineTick`. Aucun gel : voir
+ * `PortalOpenMessage`.
  */
 export function encodePortalOpen(deadlineTick: number, multiplier: number): ArrayBuffer {
   const buf = new ArrayBuffer(PORTAL_OPEN_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, MSG.PORTAL_OPEN);
   v.setUint32(1, deadlineTick >>> 0, true);
-  // Borne et arrondi explicites, comme les PV du boss et l'or dans
-  // `encodeSnapshot` : sans la borne, `setUint16` replierait modulo 2^16 et un
-  // multiplicateur de 655,36 se relirait 0,00 — « partir ne rapporte rien » au
-  // moment ou partir rapporte le plus. Voir `EXTRACT_MULTIPLIER_SCALE`.
+  // Borne et arrondi explicites : sans la borne, `setUint16` replierait modulo
+  // 2^16. Voir `EXTRACT_MULTIPLIER_SCALE`.
   const cents = Math.round(multiplier * EXTRACT_MULTIPLIER_SCALE);
   v.setUint16(5, Math.min(0xffff, Math.max(0, cents)), true);
   return buf;
@@ -1708,10 +1365,9 @@ export function encodePortalOpen(deadlineTick: number, multiplier: number): Arra
 /**
  * C -> S : presente le jeton de compte.
  *
- * ⚠️ **Leve si le jeton ne fait pas exactement `TOKEN_BYTES`.** Sans cette
- * garde, un jeton trop court produirait un message de la BONNE taille complete
- * par des zeros : un jeton valide sur le fil, et faux. L'erreur serait alors un
- * refus d'authentification inexplicable, loin de sa cause.
+ * ⚠️ **Leve si le jeton ne fait pas exactement `TOKEN_BYTES`** : un jeton trop
+ * court donnerait un message de la bonne taille complete par des zeros, puis
+ * un refus d'authentification inexplicable loin de sa cause.
  */
 export function encodeHello(token: Uint8Array): ArrayBuffer {
   if (token.length !== TOKEN_BYTES) {
@@ -1738,14 +1394,7 @@ export function encodeVote(choice: number): ArrayBuffer {
   return buf;
 }
 
-/**
- * S -> C : qui a vote quoi.
- *
- * Le seul message du portail a cadence soutenue, exactement comme
- * `DRAFT_INTENTS` l'etait pour le draft — et pour la meme raison, qui est la
- * condition d'existence de la mecanique : on ne negocie pas un choix qu'on ne
- * voit pas.
- */
+/** S -> C : qui a vote quoi. Voir `VotesMessage`. */
 export function encodeVotes(votes: readonly WireVote[]): ArrayBuffer {
   const buf = new ArrayBuffer(VOTES_HEADER_BYTES + votes.length * VOTE_ENTRY_BYTES);
   const v = new DataView(buf);
@@ -1760,14 +1409,7 @@ export function encodeVotes(votes: readonly WireVote[]): ArrayBuffer {
   return buf;
 }
 
-/**
- * S -> C : le portail a tranche.
- *
- * `effectTick` est le tick d'effet, `decision` le verdict, `gold` l'or acquis
- * si l'equipe part et l'or reporte si elle reste. Voir `PortalResultMessage`
- * pour les trois raisons — une par champ — qui font que c'est exactement ce
- * qu'il faut porter, et rien de plus.
- */
+/** S -> C : le portail a tranche. Voir `PortalResultMessage`. */
 export function encodePortalResult(
   effectTick: number,
   decision: number,
@@ -1925,7 +1567,7 @@ export interface StartMessage {
 }
 
 /**
- * C -> S : le joueur demande son verbe (etape 8, tache 3), 9 octets.
+ * C -> S : le joueur demande son verbe.
  *
  * ⚠️ **Le joueur ne dit PAS quel verbe** : il n'en a qu'un, celui de sa classe,
  * et c'est le salon qui le lit. Laisser le client nommer son verbe l'autoriserait
@@ -1939,11 +1581,10 @@ export interface AbilityMessage {
 }
 
 /**
- * S -> C : le salon ANNONCE un verbe accepte (etape 8, tache 3), 12 octets.
+ * S -> C : le salon ANNONCE un verbe accepte.
  *
- * ⚠️ **L'annonce, jamais l'effet.** Les deux cotes derivent l'effet de ces
- * parametres et de ce tick — le patron de `BOSS_CHARGE`, dont la charge deplace
- * le boss de 2700 px en gardant une derive de 0,000 px (scenario 11c de
+ * ⚠️ **L'annonce, jamais l'effet** : les deux cotes derivent l'effet de ces
+ * parametres et de ce tick, comme pour `BOSS_CHARGE` (scenario 11c de
  * `shared/horde.replication.test.ts`).
  */
 export interface AbilityUsedMessage {
@@ -2012,15 +1653,7 @@ export function encodeStart(): ArrayBuffer {
   return buf;
 }
 
-/**
- * C -> S : le joueur demande son verbe, 9 octets.
- *
- * `type u8 · tick u32 · aimX i16 · aimY i16`
- *
- * ⚠️ **Le joueur ne dit PAS quel verbe** : il n'en a qu'un, celui de sa classe,
- * et c'est le salon qui le lit. Laisser le client nommer son verbe l'autoriserait
- * a demander celui d'une autre classe.
- */
+/** `type u8 · tick u32 · aimX i16 · aimY i16`. */
 export const ABILITY_BYTES = 9;
 
 export function encodeAbility(tick: number, aimX: number, aimY: number): ArrayBuffer {
@@ -2044,19 +1677,8 @@ export function decodeAbility(buf: ArrayBuffer): AbilityMessage {
 }
 
 /**
- * S -> C : le salon ANNONCE un verbe accepte, 12 octets.
- *
- * `type u8 · tick u32 · playerId u8 · verb u8 · x i16 · y i16 · targetId u8`
- *
- * ⚠️ **L'annonce, jamais l'effet.** Les deux cotes derivent l'effet de ces
- * parametres et de ce tick — le patron de `BOSS_CHARGE`, dont la charge deplace
- * le boss de 2700 px en gardant une derive de 0,000 px (scenario 11c de
- * `shared/horde.replication.test.ts`).
- *
- * ⚠️ **12 octets, pas 13.** L'addition `1 + 4 + 1 + 1 + 2 + 2 + 1` donne 12 :
- * aucun octet de reserve n'a ete garde, par choix (amendement du controleur,
- * tache 3 de l'etape 8) — les deux largeurs etaient acceptables, et celle-ci
- * n'engage aucun bit muet qu'il faudrait documenter puis un jour justifier.
+ * `type u8 · tick u32 · playerId u8 · verb u8 · x i16 · y i16 · targetId u8`,
+ * sans octet de reserve.
  */
 export const ABILITY_USED_BYTES = 12;
 
@@ -2094,13 +1716,11 @@ export function decodeAbilityUsed(buf: ArrayBuffer): AbilityUsedMessage {
 }
 
 /**
- * C -> S : le joueur pose un ping (etape 9), 6 octets.
+ * C -> S : le joueur pose un ping. `type u8 · intent u8 · x i16 · y i16`.
  *
- * `type u8 · intent u8 · x i16 · y i16`
- *
- * ⚠️ **Un evenement, jamais un etat** : rien n'entre dans `SNAPSHOT`. L'intention
- * n'est PAS validee ici — le decodage rend ce que le fil porte, et c'est le salon
- * qui refuse une intention hors de `PING_INTENTS`.
+ * ⚠️ **Un evenement, jamais un etat** : rien n'entre dans `SNAPSHOT`.
+ * L'intention n'est PAS validee ici : c'est le salon qui refuse une intention
+ * hors de `PING_INTENTS`.
  */
 export interface PingMessage {
   type: typeof MSG.PING;
@@ -2109,7 +1729,7 @@ export interface PingMessage {
   y: number;
 }
 
-/** S -> C : le salon annonce un ping accepte, a tous, emetteur compris (etape 9), 7 octets. */
+/** S -> C : le salon annonce un ping accepte, a tous, emetteur compris, 7 octets. */
 export interface PingShownMessage {
   type: typeof MSG.PING_SHOWN;
   playerId: number;

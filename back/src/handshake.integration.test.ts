@@ -4,10 +4,10 @@ import { encodeHello, encodeInput, MSG, TOKEN_BYTES } from '@shared/protocol';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
-// Import en espace de noms, pas nomme : le test du compte resolu APRES la
-// fermeture (C2) a besoin d'espionner `findAccountIdByToken` par-dessus le
-// LIEN VIVANT que `server.ts` importe -- un simple `const { x } = require(...)`
-// recopie la valeur et laisserait `server.ts` appeler l'originale.
+// Import en espace de noms, pas nomme : les tests d'attente simulee espionnent
+// `findAccountIdByToken` et `purchasesOf` par-dessus le LIEN VIVANT que
+// `server.ts` importe ; une destructuration recopierait la valeur et
+// laisserait `server.ts` appeler l'originale.
 import * as accounts from './accounts';
 import { buildServer, CLOSE_CODES } from './server';
 
@@ -69,8 +69,8 @@ function premiere(ws: WebSocket): Promise<{ type?: number; closed?: number }> {
  * Poignee de main WS minimaliste, en TCP brut : contourne entierement le
  * client `ws`, qui ne laisse aucun moyen de produire une trame invalide
  * (RSV pose, opcode inconnu, non masquee) depuis son API publique. Ces
- * erreurs sont au niveau DU PROTOCOLE WS, sous `decode()` -- c'est le seul
- * moyen d'atteindre reellement le receiver de `ws` cote serveur (C3).
+ * erreurs sont au niveau DU PROTOCOLE WS, sous `decode()` : c'est le seul
+ * moyen d'atteindre le receiver de `ws` cote serveur.
  */
 function poigneeDeMainBrute(path: string): Promise<net.Socket> {
   return new Promise((resolve, reject) => {
@@ -114,10 +114,9 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * Le WELCOME ne doit PAS arriver avant le HELLO. Si le serveur
-   * attribuait le slot a l'ouverture de la socket comme avant, ce test
-   * passerait sans que l'authentification serve a rien - et le compte ne serait
-   * jamais lie au joueur.
+   * Le WELCOME ne doit PAS arriver avant le HELLO : un slot attribue a
+   * l'ouverture de la socket rendrait l'authentification inutile, et le
+   * compte ne serait jamais lie au joueur.
    */
   it('aucun WELCOME tant que le HELLO n est pas envoye', async () => {
     const code = await salon();
@@ -136,8 +135,7 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * Review Focus n1 : un premier message qui n'est pas un HELLO, ou un HELLO
-   * tronque, doit fermer CETTE socket - jamais lever une exception non
+   * Un premier message qui n'est pas un HELLO, ou un HELLO tronque, doit fermer CETTE socket - jamais lever une exception non
    * attrapee, qui couperait la partie des autres joueurs du salon.
    */
   it('un premier message qui n est pas un HELLO valide ferme cette socket seule', async () => {
@@ -170,10 +168,9 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * La branche manquante de la liste ci-dessus : une trame VALIDE et
-   * DECODABLE, mais qui n'est pas un HELLO -- exactement un client d'avant
-   * l'etape 7a, qui enverrait un INPUT en premier. Les trois cas au-dessus
-   * sont tous illisibles (BAD_FRAME, 4002) ; aucun n'exerce jamais le code
+   * Une trame VALIDE et DECODABLE, mais qui n'est pas un HELLO (un client
+   * sans authentification qui enverrait un INPUT en premier). Les trames du
+   * test precedent sont illisibles (BAD_FRAME, 4002) ; seule celle-ci exerce
    * NO_HELLO (4005), qui suppose un `decode` reussi.
    */
   it('un INPUT envoye en premier, avant tout HELLO, ferme en NO_HELLO', async () => {
@@ -183,17 +180,14 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
     ws.send(encodeInput(0, 0, 0, 0, 0));
     const vu = await premiere(ws);
     // Chiffre nu, pas `CLOSE_CODES.NO_HELLO` : ce test doit rougir aussi si
-    // `CLOSE_CODES` lui-meme se trompait de valeur (deja arrive une fois,
-    // voir son docblock), pas seulement si le serveur arretait de s'y lire.
+    // `CLOSE_CODES` lui-meme se trompait de valeur.
     expect(vu.closed).toBe(4005);
   });
 
   /**
-   * S2.1 de la spec : le jeton ne passe JAMAIS par une URL. Ce test le
-   * prouve par la negative cote serveur - un client qui glisserait son jeton
-   * dans la chaine de requete, sans envoyer de HELLO, ne doit obtenir AUCUN
-   * slot. Si le serveur lisait l'URL, ce test passerait au vert et le jeton
-   * se mettrait a fuir dans les journaux du reverse proxy.
+   * Le jeton ne passe JAMAIS par une URL, ou il fuirait dans les journaux du
+   * reverse proxy : un client qui glisse son jeton dans la chaine de requete,
+   * sans envoyer de HELLO, ne doit obtenir AUCUN slot.
    */
   it('un jeton dans l URL ne vaut RIEN : le serveur ne lit que le HELLO', async () => {
     const code = await salon();
@@ -209,19 +203,15 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * Review Focus n2, ronde de correction 2/5 (C1) : un second HELLO ne doit
-   * JAMAIS attribuer un second slot. Sans garde, un client bavard
-   * occuperait les quatre places a lui seul.
+   * Un second HELLO ne doit JAMAIS attribuer un second slot. Sans garde, un
+   * client bavard occuperait les quatre places a lui seul.
    *
    * ⚠️ **Les deux HELLO partent dans la MEME volee, sans rien attendre entre
-   * eux.** Un premier jet de ce test attendait le WELCOME avant d'envoyer le
-   * second -- a ce moment, `onFirstSync` avait deja ete retire et le second
-   * HELLO tombait dans `#onFrame`, qui l'ignore sans jamais exercer la
-   * garde. Ce test restait vert alors que le bug existait (le retrait se
-   * faisait APRES l'`await` Prisma) : deux HELLO arrivant dans le meme
-   * segment TCP sont livres SYNCHRONIQUEMENT par le receiver de `ws`, donc
-   * le second peut entrer alors que le premier est encore en attente, et
-   * c'est CE scenario que la volee simultanee ci-dessous exerce.
+   * eux.** Attendre le WELCOME avant le second ferait tomber celui-ci dans
+   * `#onFrame`, qui l'ignore sans exercer la garde. Deux HELLO du meme
+   * segment TCP sont livres SYNCHRONIQUEMENT par le receiver de `ws` : le
+   * second entre alors que le premier attend encore Prisma, et c'est CE
+   * scenario qui doit etre garde.
    */
   it('un second HELLO dans la meme volee n attribue pas un second slot', async () => {
     const code = await salon();
@@ -243,17 +233,10 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * ⚠️ **Les codes de fermeture doivent etre deux a deux DISTINCTS.**
-   *
-   * L'etape 7a a ajoute deux codes en reutilisant par erreur 4003 et 4004,
-   * deja pris par `CLOSE_ROOM_FULL` et `CLOSE_UNKNOWN_ROOM` -- et les deux
-   * paires sont atteignables sur le MEME chemin de socket. Un client ne
-   * pouvait donc plus distinguer « salon inconnu » (afficher une erreur de
-   * code) de « jeton inconnu » (frapper un nouveau compte).
-   *
-   * Cet invariant remplace la vigilance par une assertion : le prochain code
-   * ajoute en doublon dans `CLOSE_CODES` fera rougir ce test au lieu d'etre
-   * decouvert par un comportement client inexplicable.
+   * ⚠️ **Les codes de fermeture doivent etre deux a deux DISTINCTS.** Ils
+   * sont atteignables sur le MEME chemin de socket : un doublon empecherait
+   * le client de distinguer, par exemple, « salon inconnu » (afficher une
+   * erreur de code) de « jeton inconnu » (frapper un nouveau compte).
    */
   it('les codes de fermeture sont deux a deux distincts', () => {
     const codes = Object.values(CLOSE_CODES);
@@ -261,26 +244,21 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * C2 (ronde de correction 2/5) : une socket qui se ferme PENDANT l'attente
-   * de la resolution du compte ne doit pas garder son slot pour toujours.
+   * Une socket qui se ferme PENDANT l'attente de la resolution du compte ne
+   * doit pas garder son slot pour toujours. Si `add` reprenait apres l'`await`
+   * sans regarder l'etat de la socket, le slot serait pris, `ws.send` serait
+   * un no-op silencieux, et aucun `'close'` ne viendrait declencher `remove` :
+   * le salon perdrait une place et le timer de la `Session` ne s'arreterait
+   * jamais.
    *
-   * Avant le correctif, `add` reprenait apres l'`await` de
-   * `findAccountIdByToken` sans regarder l'etat de la socket : le slot etait
-   * pris quand meme, `ws.send` restait un no-op silencieux (la socket est
-   * fermee), et aucun `'close'` ne se representait pour declencher `remove`
-   * -- le salon perdait une place pour toujours, et le timer de la `Session`
-   * ne s'arretait jamais.
-   *
-   * `findAccountIdByToken` est remplace ici par une promesse que CE TEST
-   * controle, pour forcer une fenetre large et deterministe entre le HELLO
-   * et sa resolution -- sans ce controle, la vraie requete Prisma est trop
+   * `findAccountIdByToken` est remplace par une promesse que CE TEST controle,
+   * pour une fenetre large et deterministe : la vraie requete Prisma est trop
    * rapide pour que la fermeture du client la devance de facon fiable.
    *
-   * ⚠️ **Autoportant (ronde de correction 3/5) :** sans l'assertion sur
-   * `espion`, `playerCount === 0` serait aussi vrai si l'espionnage ne
-   * mordait pas du tout (jeton inconnu -> `UNKNOWN_TOKEN` -> zero slot) --
-   * seul `toHaveBeenCalledTimes(1)` prouve que ce test exerce bien le
-   * chemin simule, pas un autre qui arrive au meme resultat par hasard.
+   * ⚠️ **Sans l'assertion sur `espion`, `playerCount === 0` serait aussi vrai
+   * si l'espionnage ne mordait pas** (jeton inconnu -> `UNKNOWN_TOKEN` -> zero
+   * slot) : seul `toHaveBeenCalledTimes(1)` prouve que le chemin simule est
+   * exerce.
    */
   it('une socket fermee pendant la resolution du compte ne garde pas son slot', async () => {
     const code = await salon();
@@ -302,10 +280,8 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
       ws.close();
       await new Promise((r) => setTimeout(r, 50));
 
-      // Le compte se resout APRES la fermeture : c'est exactement la fenetre
-      // que C2 corrige. L'identite du compte est sans importance ici, seul
-      // compte l'etat de la socket a la reprise -- un accountId quelconque,
-      // non nul, suffit a emprunter le chemin de succes de `add`.
+      // Le compte se resout APRES la fermeture. Un accountId quelconque, non
+      // nul, suffit a emprunter le chemin de succes de `add`.
       resoudre?.('un-compte-quelconque');
       await new Promise((r) => setTimeout(r, 50));
 
@@ -320,15 +296,12 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * Meme classe que C2, cote `Session` plutot que cote socket (ronde de
-   * correction 3/5) : la `Session` elle-meme peut se refermer PENDANT
-   * l'attente de la resolution du compte -- le dernier joueur slote part,
-   * `remove` declenche `onEmpty`, qui referme la `Session` (`stop()`,
-   * `clearInterval`, et le salon retire de `app.rooms`). Avant le
-   * correctif, la garde de `add` ne regardait que `ws.readyState`, pas la
-   * vivacite du salon : un second joueur accueilli APRES cette fermeture
-   * recevrait un WELCOME dans une partie gelee et dereferencee, sans
-   * qu'aucune diffusion ne vienne jamais.
+   * Meme classe que le test precedent, cote `Session` : elle peut se refermer
+   * PENDANT l'attente de la resolution du compte (le dernier joueur slote
+   * part, `remove` declenche `onEmpty`, qui arrete la `Session` et la retire
+   * de `app.rooms`). Une garde qui ne regarderait que `ws.readyState`
+   * accueillerait le second joueur dans une partie gelee et dereferencee,
+   * sans qu'aucune diffusion ne vienne jamais.
    */
   it('une session refermee pendant la resolution du compte n accueille personne', async () => {
     const code = await salon();
@@ -370,15 +343,10 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * C4 (ronde de correction 2/5) : un echec de `findAccountIdByToken` (base
-   * indisponible, pool epuise) ne doit fermer QUE cette socket, jamais faire
-   * tomber le process.
-   *
-   * Avant le correctif, `onFirstSync` appelait `void onFirst(data)` : un
-   * rejet de la promesse devenait un `unhandledRejection` -- et Node
-   * termine le process sur un rejet non gere, la meme consequence que C3.
-   * `onFirst(data).catch(...)` capture desormais ce rejet et ferme cette
-   * seule socket avec `CLOSE_CODES.INTERNAL_ERROR`.
+   * Un echec de `findAccountIdByToken` (base indisponible, pool epuise) ne
+   * doit fermer QUE cette socket (`CLOSE_CODES.INTERNAL_ERROR`), jamais
+   * faire tomber le process : Node termine le process sur un rejet de
+   * promesse non gere.
    */
   it('un echec de resolution du compte ferme cette socket, pas le process', async () => {
     const code = await salon();
@@ -398,20 +366,14 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
   });
 
   /**
-   * C3 (ronde de correction 2/5), la plus grave : une trame WS malformee
-   * AVANT le HELLO ne doit tuer NI cette socket seule NI le process entier.
+   * Une trame WS malformee AVANT le HELLO ne doit pas tuer le process entier.
+   * Le receiver de `ws` emet `'error'` sur une trame dont les bits RSV2/RSV3
+   * sont poses (entre autres), et un `EventEmitter` SANS listener `'error'`
+   * LEVE : sans `process.on('uncaughtException')` dans `back/src`, le process
+   * meurt avec tous les salons. Le listener doit donc etre pose des
+   * l'ouverture, pas apres le HELLO.
    *
-   * Avant le correctif, `add` ne posait `ws.on('error', ...)` qu'APRES un
-   * HELLO reussi. Le receiver de `ws` appelle `websocket.emit('error', err)`
-   * sur une trame dont les bits RSV2/RSV3 sont poses (entre autres causes),
-   * et un `EventEmitter` SANS listener `'error'` LEVE -- sans
-   * `process.on('uncaughtException')` dans `back/src` pour l'attraper, le
-   * process entier meurt, tous les salons de tous les joueurs avec lui.
-   *
-   * La trame est fabriquee en TCP brut (voir `poigneeDeMainBrute`) : le
-   * client `ws` ne permet pas de produire une trame invalide depuis son API
-   * publique, ce defaut vit SOUS `decode()`, au niveau du protocole WS
-   * lui-meme.
+   * La trame est fabriquee en TCP brut (voir `poigneeDeMainBrute`).
    */
   it('une trame WS avec RSV pose avant le HELLO ne tue pas le process', async () => {
     const code = await salon();
@@ -438,22 +400,16 @@ describe('etape 7a tache 5 : HELLO avant le slot', () => {
 });
 
 /**
- * Etape 7b, tache 6, ronde de correction 1 : le SECOND `await` de la
- * poignee de main (`purchasesOf`, apres le compte resolu) peut rouvrir
- * exactement la meme classe de defauts que C2 et son pendant cote Session,
- * si les gardes qui le suivent n'etaient pas rejouees. Meme forme que les
- * deux tests ci-dessus, espion deplace sur `purchasesOf`.
+ * Le SECOND `await` de la poignee de main (`purchasesOf`, apres le compte
+ * resolu) ouvre la meme fenetre que le premier : les gardes doivent etre
+ * relues apres lui aussi. Meme forme que les tests ci-dessus, espion deplace
+ * sur `purchasesOf`.
  */
 describe('etape 7b tache 6, ronde 1 : le second await (achats) rejoue bien ses gardes', () => {
   /**
-   * Meme classe que C2 : la socket peut se fermer PENDANT la lecture des
-   * achats, pas seulement pendant la resolution du compte. Lui attribuer un
-   * slot fuirait pour toujours, exactement comme documente au C2.
-   *
-   * ⚠️ **Sans `expect(espion).toHaveBeenCalledTimes(1)`, `playerCount === 0`
-   * serait aussi vrai si l'espionnage ne mordait pas du tout** (jeton
-   * inconnu, slot jamais attribue) -- meme piege que celui que le docbloc du
-   * C2 nomme, sur le DEUXIEME `await` cette fois.
+   * La socket peut se fermer PENDANT la lecture des achats : lui attribuer
+   * un slot le ferait fuir pour toujours. Meme piege d'espion que plus haut :
+   * `toHaveBeenCalledTimes(1)` prouve que le chemin simule est exerce.
    */
   it('une socket fermee pendant la lecture des achats ne garde pas son slot', async () => {
     const code = await salon();
@@ -492,9 +448,8 @@ describe('etape 7b tache 6, ronde 1 : le second await (achats) rejoue bien ses g
   });
 
   /**
-   * Meme classe que le pendant cote Session de C2 : elle peut se refermer
-   * PENDANT la lecture des achats du second joueur, pas seulement pendant la
-   * resolution de son compte.
+   * La Session peut aussi se refermer PENDANT la lecture des achats du
+   * second joueur.
    */
   it('une session refermee pendant la lecture des achats n accueille personne', async () => {
     const code = await salon();

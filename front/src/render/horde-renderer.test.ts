@@ -40,13 +40,12 @@ import {
 } from './horde-renderer';
 
 /**
- * Tache 15 : `bandOf` ne doit jamais pouvoir sortir de `[0, BAND_COUNT)`.
+ * `bandOf` ne doit jamais pouvoir sortir de `[0, BAND_COUNT)`.
  *
  * `counts[band]` (dans `sortByDepth`) est une ecriture sur `Uint32Array` : un
  * indice hors bornes y est un NO-OP SILENCIEUX (ni exception, ni `undefined`
- * a l'ecriture) — la meme propriete du langage qui avait deja fait tomber la
- * tache 7 (troncature de capacite des projectiles). `bandOf` est la seule
- * garde entre une position hors carte et cette ecriture.
+ * a l'ecriture). `bandOf` est la seule garde entre une position hors carte et
+ * cette ecriture.
  */
 describe('bandOf reste dans [0, BAND_COUNT) meme hors carte', () => {
   it('clampe les ordonnees negatives a la bande 0', () => {
@@ -61,11 +60,8 @@ describe('bandOf reste dans [0, BAND_COUNT) meme hors carte', () => {
   });
 
   it('laisse les ordonnees valides inchangees', () => {
-    // ⚠️ Derive de `DEPTH_BAND`, jamais code en dur. La premiere version
-    // affirmait `bandOf(63) === 0` et `bandOf(64) === 1` — vrai pour une bande
-    // de 64 px, faux des qu'on la retrecit. Passer la bande de 64 a 2 px pour
-    // corriger le clignotement a fait echouer ce test alors que `bandOf` etait
-    // parfaitement correcte : le test gardait la valeur d'une constante, pas le
+    // ⚠️ Derive de `DEPTH_BAND`, jamais code en dur : un test qui fige la
+    // largeur de bande garderait la valeur d'une constante, pas le
     // comportement de la fonction.
     expect(bandOf(0)).toBe(0);
     expect(bandOf(DEPTH_BAND - 1)).toBe(0);
@@ -103,7 +99,7 @@ describe('sortByDepth ne corrompt pas #sorted avec des entites hors carte', () =
 
     // Quelques entites hors carte : ce que `shared/` devrait desormais
     // empecher, mais le renderer ne doit pas en dependre pour rester correct
-    // (defense en profondeur, meme logique que la tache 7).
+    // (defense en profondeur).
     horde.y[0] = -800;
     horde.y[3] = MAP_SIZE + 950;
     horde.y[7] = -8612;
@@ -136,17 +132,11 @@ describe('sortByDepth ne corrompt pas #sorted avec des entites hors carte', () =
 });
 
 /**
- * Tache 16 : un sprite de monstre se dessinait a 192 px (la cellule native de
- * l'atlas, dessinee 1:1) pour une hitbox de tir de 64 px de diametre
- * (`PROJECTILE_HIT_RADIUS = 32`) — trois fois trop grand, un projectile qui
- * touche visiblement le corps passait au travers.
- *
- * `spriteScale` est la relation qui remplace « une echelle reglee a la main a
- * cote d'une hitbox reglee a la main » : elle DERIVE l'echelle de dessin de
- * `PROJECTILE_HIT_RADIUS`, pour n'importe quelle cellule native. Les deux
- * tests ci-dessous verifient la RELATION, pas un nombre fige — exactement la
- * legon de `bandOf(63) === 0` rappelee plus haut dans ce fichier : un test qui
- * pin la valeur d'aujourd'hui ne proteg rien du defaut de demain.
+ * `spriteScale` DERIVE l'echelle de dessin de `PROJECTILE_HIT_RADIUS`, pour
+ * n'importe quelle cellule native : une echelle reglee a la main a cote d'une
+ * hitbox reglee a la main finit par mentir (un projectile qui touche
+ * visiblement le corps passe au travers). Les tests verifient la RELATION,
+ * pas un nombre fige.
  */
 describe('spriteScale derive la taille dessinee de PROJECTILE_HIT_RADIUS', () => {
   it('le diametre dessine vaut le diametre de la hitbox de tir a BODY_SCALE pres, quelle que soit la cellule native', () => {
@@ -154,9 +144,7 @@ describe('spriteScale derive la taille dessinee de PROJECTILE_HIT_RADIUS', () =>
     // 192 px pour la pietaille courante, jusqu'a 384 px pour le troll.
     //
     // ⚠️ `BODY_SCALE` est DERIVE de la constante, jamais recopie : c'est un
-    // reglage de sensation (tache 14), et deux tests sont devenus
-    // intermittents a la tache 1 pour avoir recopie `WAVE1_MIN_COUNT`. Ce que
-    // ce test garde, c'est la RELATION — le diametre dessine suit la hitbox,
+    // reglage de sensation. Ce que ce test garde, c'est la RELATION — le diametre dessine suit la hitbox,
     // quelle que soit la valeur du facteur.
     for (const cell of [128, 192, 256, 320, 384]) {
       const scale = spriteScale(cell, PROJECTILE_HIT_RADIUS);
@@ -176,16 +164,13 @@ describe('spriteScale derive la taille dessinee de PROJECTILE_HIT_RADIUS', () =>
 });
 
 /**
- * Tache 14 : *« les ennemis sont trop petits par rapport a la taille des
- * projectiles »*. La correction se fait des deux cotes — la tache 12 a fait
- * passer les projectiles de 20 px uniformes a 7-18 px selon l'arme, et le
- * corps de la creature gagne `BODY_SCALE`.
+ * Le corps de la creature est agrandi de `BODY_SCALE` : a la taille exacte de
+ * la hitbox, les ennemis paraissent trop petits a cote des projectiles.
  *
- * ⚠️ **Ce facteur rend la hitbox menteuse dans l'AUTRE sens que le defaut de
- * l'etape 3** (des sprites de 192 px pour une hitbox de 64) : un tir qui frole
- * le bord du corps sans atteindre le cercle passe au travers. Ce qui le rend
- * acceptable est une borne, pas une opinion : le projectile est un POINT pour
- * la collision alors qu'il se dessine avec une empreinte — il porte deja un
+ * ⚠️ **Ce facteur rend la hitbox menteuse** : un tir qui frole le bord du
+ * corps sans atteindre le cercle passe au travers. Ce qui le rend acceptable
+ * est une borne, pas une opinion : le projectile est un POINT pour la
+ * collision alors qu'il se dessine avec une empreinte — il porte deja un
  * mensonge de meme nature, de la moitie de son plus grand diametre. Le corps
  * doit rester sous cette borne.
  *
@@ -209,25 +194,21 @@ describe('BODY_SCALE — un corps plus grand que sa hitbox, mais borne', () => {
 });
 
 /**
- * Tache 16, etape 2 : les monstres ne se retournaient jamais vers leur
- * direction de deplacement. `facingScaleX` deduit le signe de `scaleX`
- * (`vertex` dans le `ParticleContainer`, voir le commentaire de la classe)
- * du seul deplacement horizontal observe entre deux images — jamais d'un
- * champ ajoute a `Horde` ni d'un octet de plus sur le fil.
+ * Les monstres se retournent vers leur direction de deplacement.
+ * `facingScaleX` deduit le signe de `scaleX` (`vertex` dans le
+ * `ParticleContainer`, voir le commentaire de la classe) du seul deplacement
+ * horizontal observe entre deux images — jamais d'un champ ajoute a `Horde`
+ * ni d'un octet de plus sur le fil.
  *
  * Deux gardes, testees separement :
  * - `FACING_DEAD_ZONE_PX` : sous ce seuil, `dx` est trop proche de zero pour
  *   trancher un sens (deplacement quasi vertical, ou entite immobile entre
  *   deux ticks de simulation — le rendu tourne plus vite que la simulation) ;
- *   on conserve le sens precedent plutot que de papillotter sur un signe qui
- *   n'a plus de sens visuel.
+ *   on conserve le sens precedent plutot que de papillotter.
  * - `FACING_MAX_STEP_PX` : au-dessus de ce seuil, `dx` est trop grand pour
- *   etre un deplacement reel d'une image a l'autre (le tableau `Horde` est
- *   compacte par `#removeAt` — swap avec la derniere entite vivante — un
- *   creneau peut donc changer d'identite d'une image a l'autre et produire un
- *   `dx` de plusieurs centaines de pixels qui n'est le deplacement de
- *   PERSONNE) ; on conserve aussi le sens precedent plutot que de suivre ce
- *   saut.
+ *   etre un deplacement reel d'une image a l'autre (`Horde#removeAt` compacte
+ *   par permutation, un creneau peut changer d'identite et produire un `dx`
+ *   de plusieurs centaines de pixels) ; on conserve aussi le sens precedent.
  */
 describe('facingScaleX deduit le sens du sprite du seul deplacement horizontal', () => {
   const plausible = (FACING_DEAD_ZONE_PX + FACING_MAX_STEP_PX) / 2;
@@ -254,13 +235,11 @@ describe('facingScaleX deduit le sens du sprite du seul deplacement horizontal',
 });
 
 /**
- * Tache 17.1 : une cellule d'atlas Tiny Swords de 192 px est en grande partie
- * VIDE — la creature n'en occupe qu'une fraction. `spriteScale(cellPx, ...)`
- * (tache 16) ramenait le CADRE a la hitbox, ce qui rend le CORPS bien plus
- * petit qu'elle. `contentSizePx` est la mesure qui doit desormais nourrir
- * `spriteScale` : la plus grande dimension de la boite englobante du contenu
- * NON TRANSPARENT (`tools/build_monster_atlas.py` la calcule et la publie
- * dans le manifeste, voir `bounds` dans `AtlasManifest`).
+ * Une cellule d'atlas Tiny Swords de 192 px est en grande partie VIDE : ramener
+ * le CADRE a la hitbox rendrait le CORPS bien plus petit qu'elle.
+ * `contentSizePx` nourrit `spriteScale` : la plus grande dimension de la boite
+ * englobante du contenu NON TRANSPARENT (`tools/build_monster_atlas.py` la
+ * calcule et la publie dans le manifeste, voir `bounds` dans `AtlasManifest`).
  *
  * On retient la plus grande des deux dimensions, pas la largeur ni la hauteur
  * seules : une silhouette allongee horizontalement (un lezard qui court) ne
@@ -279,11 +258,10 @@ describe('contentSizePx retient la plus grande dimension de la boite englobante 
 });
 
 /**
- * Tache 17.2 : le choix du clip est du RENDU PUR, derive de l'etat d'arret
- * DEJA simule (`horde.stopped`, voir `shared/horde.ts`) — jamais recalcule ni
- * envoye sur le fil. `selectClip` isole cette seule decision pour qu'elle se
- * teste sans dependre du chargement de l'atlas (reseau/canevas absents en
- * test, meme raison que `sortByDepth`/`spriteScale` plus haut dans ce fichier).
+ * Le choix du clip est du RENDU PUR, derive de l'etat d'arret DEJA simule
+ * (`horde.stopped`, voir `shared/horde.ts`) — jamais recalcule ni envoye sur
+ * le fil. `selectClip` se teste sans l'atlas (reseau/canevas absents en
+ * test).
  */
 describe("selectClip choisit l'attaque a l'arret, la course sinon", () => {
   it('rend le clip d attaque quand l entite est arretee', () => {
@@ -296,27 +274,19 @@ describe("selectClip choisit l'attaque a l'arret, la course sinon", () => {
 });
 
 /**
- * Tache 9 bis : **le corps de `draw`, atteint pour la premiere fois.**
- *
- * `draw` retournait au premier `if (!this.#loaded)` dans tout environnement de
- * test, parce que `load` fetch un manifeste et un atlas. `adoptAtlas` separe le
- * decoupage du reseau, et un atlas synthetique suffit alors a mesurer ce que
- * `draw` pose vraiment.
- *
- * ⚠️ **Ce bloc gardait la teinte elementaire jusqu'a la tache 13.** Elle a
- * disparu du sprite — invisible en jeu — au profit d'un anneau au sol
- * (`mark-renderer.test.ts`). Ce qui reste ici est ce que `draw` pose encore :
- * une particule par ennemi visible, son ancre et son echelle (tache 14).
+ * **Le corps de `draw`, atteint.** `load` fetch un manifeste et un atlas ;
+ * `adoptAtlas` separe le decoupage du reseau, et un atlas synthetique suffit
+ * alors a mesurer ce que `draw` pose vraiment : une particule par ennemi
+ * visible, son ancre et son echelle.
  */
 /**
  * ⚠️ **La cellule, le contenu, la largeur et la hauteur valent tous des
- * nombres DIFFERENTS, et c'est delibere.** La premiere version de cette
- * fixture avait `cell: 32` et `bounds: { w: 32, h: 32 }` : l'echelle calculee
- * depuis la cellule, depuis la largeur du contenu, depuis sa hauteur ou depuis
- * la bonne valeur y donnaient toutes le meme resultat, et le test de l'echelle
- * posee par `draw` (plus bas) n'aurait distingue aucune de ces mutations. Avec
- * une cellule de 64, un contenu de 24x40, seule `contentSizePx(bounds) = 40`
- * rend l'echelle attendue.
+ * nombres DIFFERENTS, et c'est delibere.** Avec des valeurs egales, l'echelle
+ * calculee depuis la cellule, la largeur du contenu, sa hauteur ou la bonne
+ * valeur donnerait le meme resultat, et le test de l'echelle posee par `draw`
+ * ne distinguerait aucune de ces mutations. Avec une cellule de 64, un
+ * contenu de 24x40, seule `contentSizePx(bounds) = 40` rend l'echelle
+ * attendue.
  */
 const FIXTURE_CELL_PX = 64;
 const FIXTURE_BOUNDS = { x: 12, y: 8, w: 24, h: 40 } as const;
@@ -324,17 +294,16 @@ const FIXTURE_BOUNDS = { x: 12, y: 8, w: 24, h: 40 } as const;
 /**
  * Un atlas d'UN seul archetype, range a l'identifiant demande.
  *
- * ⚠️ **`id` est un PARAMETRE, et c'est le point** (etape 6a, tache 5) : depuis
- * que l'atlas embarque le boss (archetype 19) sans les cinq elites qui le
- * precedent, le manifeste a des TROUS et la position dans son tableau n'est
- * plus l'identifiant. Un decor qui ne sait ranger qu'a l'index 0 ne distingue
- * pas les deux lectures.
+ * ⚠️ **`id` est un PARAMETRE, et c'est le point** : le manifeste a des TROUS
+ * (le boss, archetype 19, sans les elites qui le precedent) et la position
+ * dans son tableau n'est pas l'identifiant. Un decor qui ne sait ranger qu'a
+ * l'index 0 ne distingue pas les deux lectures.
  */
 /**
  * ⚠️ **Les deux clips occupent des rectangles DIFFERENTS de l'atlas**, et c'est
  * ce qui rend le choix de `selectClip` observable sur la particule dessinee :
- * tant que la course et l'attaque partageaient le meme rectangle, `draw`
- * pouvait lire l'un pour l'autre sans qu'aucune assertion ne bouge.
+ * avec un rectangle commun, `draw` pourrait lire l'un pour l'autre sans
+ * qu'aucune assertion ne bouge.
  */
 const FIXTURE_RUN_X = 0;
 const FIXTURE_ATTACK_X = 64;
@@ -410,28 +379,25 @@ describe('HordeRenderer.draw — ce que le corps de draw pose vraiment', () => {
 });
 
 /**
- * **Le manifeste est indexe par IDENTIFIANT, jamais par position** (etape 6a,
- * tache 5).
+ * **Le manifeste est indexe par IDENTIFIANT, jamais par position.**
  *
- * L'atlas embarque desormais le BOSS — archetype 19 — mais pas les cinq elites
- * qui le precedent : les ranger toutes les six sature les 16,8 Mpx d'un atlas
- * de 4096 (mesure dans `tools/build_monster_atlas.py`). `SOURCES` porte donc
- * des trous, et le manifeste ne liste que ce qui est reellement range.
+ * L'atlas embarque le BOSS — archetype 19 — mais pas les cinq elites qui le
+ * precedent : les ranger toutes sature un atlas de 4096 (voir
+ * `tools/build_monster_atlas.py`). `SOURCES` porte donc des trous, et le
+ * manifeste ne liste que ce qui est reellement range.
  *
  * ⚠️ **La mutation que ce bloc tue est SILENCIEUSE et generale.** Lire la
  * position du tableau au lieu de `a.id` ne leve rien : elle donne au premier
  * archetype range les textures du creneau 0, au deuxieme celles du creneau 1,
- * et ainsi de suite. Le symptome n'est pas une erreur, c'est *« les monstres
- * ont change de sprite »* — le meme defaut, exactement, qu'inserer une ligne au
- * mauvais endroit dans `SOURCES`.
+ * et ainsi de suite. Le symptome n'est pas une erreur, c'est « les monstres
+ * ont change de sprite ».
  */
 /**
- * Tache 17.2 : `draw` doit LIRE le clip que `selectClip` choisit. La fonction
- * elle-meme est gardee plus haut, purement ; ce qui manquait, c'est le CABLAGE
- * — que le clip d'attaque range par `adoptAtlas` soit bien celui que `draw`
- * pose sur la particule d'une entite arretee. Une mutation qui rangeait les
- * clips d'attaque a la POSITION du manifeste plutot qu'a l'identifiant
- * d'archetype survivait sans ce bloc.
+ * `draw` doit LIRE le clip que `selectClip` choisit. La fonction elle-meme est
+ * gardee plus haut, purement ; ici on garde le CABLAGE — que le clip
+ * d'attaque range par `adoptAtlas` (a l'identifiant d'archetype, pas a la
+ * position du manifeste) soit bien celui que `draw` pose sur la particule
+ * d'une entite arretee.
  */
 describe('HordeRenderer.draw — le clip pose suit l etat d arret', () => {
   it('pose une image du clip de COURSE quand l entite avance', () => {
@@ -458,9 +424,8 @@ describe('adoptAtlas range par identifiant d archetype, pas par position', () =>
   /**
    * **La moitie basse** : sans elle, un `adoptAtlas` qui donnerait ses textures
    * a TOUS les archetypes passerait le test ci-dessus. Un archetype absent du
-   * manifeste ne doit rien dessiner — c'est le comportement qui a laisse le
-   * boss invisible jusqu'a cette tache, et il doit rester vrai pour les cinq
-   * elites qui n'y sont pas.
+   * manifeste ne doit rien dessiner — c'est le cas des elites qui n'y sont
+   * pas.
    */
   it('ne dessine rien pour un archetype absent du manifeste', () => {
     const horde = twoEnemies(0);
@@ -499,11 +464,7 @@ describe('adoptAtlas range par identifiant d archetype, pas par position', () =>
 });
 
 /**
- * Tache 14 : *« les ennemis sont trop petits par rapport a la taille des
- * projectiles et la hitbox semble plus basse »*.
- *
- * Ces deux assertions ne sont possibles que depuis la tache 9 bis : l'ancre et
- * l'echelle ne se lisent nulle part ailleurs que sur la particule reellement
+ * L'ancre et l'echelle ne se lisent que sur la particule reellement
  * dessinee. `spriteScale` et `contentSizePx` se testent purement plus haut ;
  * ici on garde le CABLAGE — que `draw` pose bien ce que `adoptAtlas` a
  * calcule, et depuis le CONTENU de l'atlas, pas depuis sa cellule.
@@ -514,9 +475,8 @@ describe('HordeRenderer.draw — le corps est centre sur la position et a la bon
     const particle = particleOf(drawnParticles(horde), horde, 0);
 
     // 0,5 n'est pas un reglage a deriver d'une constante : c'est la definition
-    // de « centre ». A 0,75 (l'ancre d'origine, les pieds sur la position), le
-    // corps montait de 25 % de sa hauteur au-dessus de la hitbox — les 16 px
-    // que l'auteur a vus.
+    // de « centre ». A 0,75 (les pieds sur la position), le corps monterait
+    // de 25 % de sa hauteur au-dessus de la hitbox.
     expect(particle.anchorY).toBe(0.5);
     expect(particle.anchorX).toBe(0.5);
   });
@@ -537,15 +497,14 @@ describe('HordeRenderer.draw — le corps est centre sur la position et a la bon
 });
 
 /**
- * Le facteur de corps du BOSS (etape 6a, tache 3).
+ * Le facteur de corps du BOSS.
  *
  * ⚠️ **`BODY_SCALE` reste plafonne, et le boss ne releve pas ce plafond.** Le
  * bloc ci-dessus mesure de combien la hitbox ment pour un monstre ORDINAIRE et
- * borne ce mensonge par celui que le rendu des projectiles assume deja. Cette
- * borne garde les vingt archetypes ; le boss apporte son propre facteur
- * (`Archetype.bodyScale`), qui MULTIPLIE le commun au lieu de le remplacer. Un
- * `BODY_SCALE` releve a 3 aurait agrandi tout le bestiaire pour n'en vouloir
- * qu'un — et fait rougir le plafond, a juste titre.
+ * borne ce mensonge par celui que le rendu des projectiles assume deja. Le
+ * boss apporte son propre facteur (`Archetype.bodyScale`), qui MULTIPLIE le
+ * commun au lieu de le remplacer. Un `BODY_SCALE` releve a 3 agrandirait tout
+ * le bestiaire pour n'en vouloir qu'un — et ferait rougir le plafond.
  */
 describe('bodyScale — le boss a son propre debordement, pas celui de tout le monde', () => {
   it('dessine le boss BOSS_BODY_SCALE fois plus grand qu une pietaille de meme cellule', () => {
@@ -575,7 +534,7 @@ describe('bodyScale — le boss a son propre debordement, pas celui de tout le m
         continue;
       }
       // Chacun a SON facteur de corps : 1 pour la pietaille, plus pour le
-      // colosse (role du playtest), jamais celui du boss.
+      // colosse, jamais celui du boss.
       expect(echelles[a.id], a.name).toBeCloseTo(
         spriteScale(192, PROJECTILE_HIT_RADIUS) * a.bodyScale,
         6,
@@ -586,14 +545,13 @@ describe('bodyScale — le boss a son propre debordement, pas celui de tout le m
 });
 
 /**
- * L'animation d'attaque ne part qu'au DASH (etape 6a, tache 13) — *« lance pas
- * l'animation d'attaque du boss avant qu'il dash, juste la frame 1 pour avoir
- * l'impression qu'il charge son attaque »*.
+ * L'animation d'attaque ne part qu'au DASH : pendant le chargement, le clip
+ * reste sur sa premiere image.
  *
  * ⚠️ **`stopped` n'est PAS touche**, et `selectClip` continue de basculer sur
- * l'attaque des le chargement : ce que la tache demande est de distinguer les
- * deux temps a l'AFFICHAGE, ou cela ne coute pas un octet sur le fil. Une
- * mutation qui toucherait `stopped` casserait le mouvement, pas le dessin.
+ * l'attaque des le chargement : les deux temps se distinguent a l'AFFICHAGE,
+ * ou cela ne coute pas un octet sur le fil. Une mutation qui toucherait
+ * `stopped` casserait le mouvement, pas le dessin.
  */
 describe("clipFrameIndex fige la premiere image tant que le coup n'est pas parti", () => {
   it('rend la premiere image, et rien d autre, quand le clip est tenu', () => {
@@ -716,10 +674,10 @@ describe('HordeRenderer.draw — le boss qui arme reste sur sa premiere image', 
 });
 
 /**
- * Etape 11, §3.4 : l'atlas n'a PAS d'entree pour le porteur. Sans l'alias de
- * `adoptAtlas`, il serait simule et tuable mais jamais dessine, en silence —
- * le defaut que l'etape 6a a connu avec le boss. L'atlas synthetique ne range
- * ici QUE le voleur : tout ce que le porteur dessine vient de l'alias.
+ * L'atlas n'a PAS d'entree pour le porteur. Sans l'alias de `adoptAtlas`, il
+ * serait simule et tuable mais jamais dessine, en silence. L'atlas
+ * synthetique ne range ici QUE le voleur : tout ce que le porteur dessine
+ * vient de l'alias.
  */
 describe('etape 11 : le porteur emprunte le voleur, en plus grand', () => {
   const VOLEUR = archetypeIdOf('thief');

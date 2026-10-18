@@ -20,12 +20,10 @@ import {
 /**
  * `hudInfo`/`formatSummary`/`formatTimer` sont des fonctions PURES, sans Pixi
  * ni `document` — voir leur doc dans `stage.ts`. C'est ce qui les rend
- * testables sans navigateur : c'est ici — et seulement ici — que « le HUD
- * reflete les pv et l'xp du snapshot » et « le bilan affiche les chiffres
- * portes par RUN_OVER » peuvent s'asserter.
+ * testables sans navigateur.
  *
- * Depuis la tache 9 bis, `Stage.composeWorld` s'y ajoute : voir le dernier
- * bloc, et la raison pour laquelle ce fichier tourne sous jsdom.
+ * `Stage.composeWorld` est teste dans le dernier bloc : c'est lui qui impose
+ * jsdom a ce fichier.
  */
 describe('hudInfo — le HUD reflete les pv et l xp du snapshot', () => {
   it('lit les pv du joueur local, pas d un autre joueur', () => {
@@ -155,8 +153,8 @@ describe('formatSummary — le bilan affiche les chiffres portes par RUN_OVER', 
 
 /**
  * `obstacleCells` est PURE (voir sa doc dans `stage.ts`) : c'est elle qui
- * porte « le rendu consulte le meme masque que le champ de flux » (tache
- * 28). `mapObstacles` (la construction Pixi elle-meme) n'est en revanche pas
+ * porte « le rendu consulte le meme masque que le champ de flux ».
+ * `mapObstacles` (la construction Pixi elle-meme) n'est en revanche pas
  * testable ici, meme raison que `Stage` — pas de canevas sous `vitest`.
  */
 describe('obstacleCells — geometrie des cellules bloquees, pour le dessin des obstacles (tache 28)', () => {
@@ -193,13 +191,10 @@ describe('obstacleCells — geometrie des cellules bloquees, pour le dessin des 
 });
 
 /**
- * Tache 9 bis : **la composition de la scene, gardee pour la premiere fois.**
- *
- * `Stage.init` construit une `Application` Pixi — un contexte WebGL qu'aucun
- * environnement de test ne fournit — et c'est ce qui mettait TOUT `init` hors
- * de portee : retirer un calque entier (« les zones ni attachees ni
- * chargees ») laissait la suite verte a 170 tests. `composeWorld` est la part
- * de `init` qui ne touche pas au GPU, et elle s'execute ici.
+ * **La composition de la scene.** `Stage.init` construit une `Application`
+ * Pixi — un contexte WebGL qu'aucun environnement de test ne fournit.
+ * `composeWorld` est la part de `init` qui ne touche pas au GPU, et elle
+ * s'execute ici : un calque ni attache ni charge doit faire rougir la suite.
  *
  * Le contexte 2D est bouchonne : jsdom n'en fournit pas (il faudrait le paquet
  * `canvas`), et les textures des calques sont procedurales. On ne verifie pas
@@ -215,9 +210,8 @@ function stubCanvas2d(): void {
   const gradient = { addColorStop: noop };
   const context = {
     createRadialGradient: () => gradient,
-    // Tache 12 : l'atlas des projectiles et la texture de trainee dessinent
-    // des chemins et un degrade lineaire, la ou zones/orbes/flashs se
-    // contentaient d'un disque a degrade radial.
+    // L'atlas des projectiles et la texture de trainee dessinent des chemins
+    // et un degrade lineaire.
     createLinearGradient: () => gradient,
     fillStyle: '' as unknown,
     globalCompositeOperation: '' as unknown,
@@ -234,19 +228,17 @@ function stubCanvas2d(): void {
     ellipse: noop,
     fill: noop,
     fillRect: noop,
-    // Tache 13 : les fleches du couloir de charge sont un chevron TRACE, pas
-    // un aplat — le premier trait du jeu.
+    // Les fleches du couloir de charge sont un chevron TRACE, pas un aplat.
     strokeStyle: '' as unknown,
     lineWidth: 0 as unknown,
     lineCap: '' as unknown,
     lineJoin: '' as unknown,
     stroke: noop,
-    // Étape 8 : l'atlas des trainees peint chaque profil sur son propre
+    // L'atlas des trainees peint chaque profil sur son propre
     // canevas avant de le recopier dans sa bande — `softenAcross` travaille en
     // `destination-in`, qui ne connait pas les bandes (voir `makeStreakAtlas`).
     drawImage: noop,
-    // Étape 8 : l'atlas des chiffres de degats ECRIT du texte — le premier du
-    // monde Pixi, le HUD etant en DOM.
+    // L'atlas des chiffres de degats ECRIT du texte.
     font: '' as unknown,
     textAlign: '' as unknown,
     textBaseline: '' as unknown,
@@ -258,10 +250,9 @@ function stubCanvas2d(): void {
 }
 
 /**
- * La secousse de camera (etape 8) : une fonction PURE des flashs vivants, donc
- * testable sans `Application` Pixi — c'est tout l'interet de l'avoir sortie de
- * `Stage`. Ce qu'elle garde : la hierarchie du §6.6, l'extinction, et le fait
- * qu'un coup ORDINAIRE ne secoue rien.
+ * La secousse de camera : une fonction PURE des flashs vivants, donc testable
+ * sans `Application` Pixi. Ce qu'elle garde : une reaction secoue plus qu'une
+ * explosion, l'extinction, et un coup ORDINAIRE ne secoue rien.
  */
 describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
   function avecImpact(radius: number, ageMs: number): { x: number; y: number } {
@@ -324,10 +315,6 @@ describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
     expect(ratios.size).toBeGreaterThan(3);
   });
 
-  /**
-   * Étape 8, sur retour de jeu : *« trop de vibration de l'ecran si je tape un
-   * boss, ca enclenche les effets en boucle »*.
-   */
   it('ne tremble JAMAIS en continu, meme sous un martelage d arme de souffle', () => {
     // Dix coups par seconde pendant deux secondes, comme sur un boss.
     const hits = martelage(100, 2000);
@@ -352,9 +339,9 @@ describe('cameraShake — ce qui se sent, et ce qui ne se sent pas', () => {
     // L'ecran passe la MAJORITE du temps immobile…
     expect(immobiles / total).toBeGreaterThan(0.5);
     // …et surtout il RETOMBE : chaque fenetre contient un silence d'au moins
-    // `SHAKE_WINDOW_MS - SHAKE_MS`. C'est la moitie qui compte — une secousse
+    // `SHAKE_WINDOW_MS - SHAKE_MS`. C'est la moitie qui compte : une secousse
     // qui ne s'arrete jamais plus de 20 ms serait « immobile la moitie du
-    // temps » elle aussi, et ce serait exactement le defaut signale.
+    // temps » elle aussi, et tremblerait en continu.
     expect(calmeMax).toBeGreaterThanOrEqual(SHAKE_WINDOW_MS - SHAKE_MS - PAS);
   });
 
@@ -382,14 +369,8 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     const world = new Container();
     new Stage().composeWorld(world);
 
-    // Zones, COULOIR DE CHARGE (etape 6a, tache 5 bis), VERBES (etape 8),
-    // anneaux de marque (tache 13), orbes, horde, projectiles, CHAINE DE
-    // FOUDRE (etape 5b, tache 3), flashs d'impact, flashs de reaction, BARRE DU
-    // BOSS (tache 5), et les COMPORTEMENTS (kamikaze, chaman) : douze, et un
-    // calque oublie est un calque invisible.
-    // Treize depuis l'etape 8 (les chiffres de degats), quatorze depuis
-    // l'etape 9 (les pings, juste sous les chiffres).
-    // Quinze depuis l'etape 12 (les ondes et les frappes).
+    // Quinze calques (voir le test suivant pour la liste) : un calque oublie
+    // est un calque invisible.
     expect(world.children).toHaveLength(15);
   });
 
@@ -397,10 +378,11 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     const stage = new Stage();
     stage.composeWorld(new Container());
 
-    // Dans l'ordre d'affichage : zones, couloir de charge, verbes, comportements, anneaux,
-    // orbes, HORDE, projectiles, chaine de Foudre, flashs d'impact, flashs de
-    // reaction, barre du boss, PINGS. Seule la horde reste `false` — son atlas se
-    // fetch, et `init` le charge a part avec son propre rattrapage d'echec.
+    // Dans l'ordre d'affichage : zones, couloir de charge, verbes, comportements,
+    // anneaux, orbes, HORDE, ondes et frappes, projectiles, chaine de Foudre,
+    // flashs d'impact, flashs de reaction, barre du boss, pings, chiffres.
+    // Seule la horde reste `false` — son atlas se fetch, et `init` le charge a
+    // part avec son propre rattrapage d'echec.
     expect(stage.layersLoaded).toEqual([
       true,
       true,
@@ -409,17 +391,13 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
       true,
       true,
       false,
-      // Les ondes et les frappes (etape 12), juste au-dessus de la horde.
       true,
       true,
       true,
       true,
       true,
       true,
-      // Les pings (etape 9).
       true,
-      // Les chiffres de degats (etape 8) : atlas procedural, charge comme les
-      // autres.
       true,
     ]);
   });

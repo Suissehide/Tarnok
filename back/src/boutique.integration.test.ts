@@ -16,22 +16,18 @@ import { FORMATION, type WaveOrder } from '@shared/waves';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
-// Import en espace de noms, pas nomme : meme discipline que
-// `bonus.integration.test.ts` et `handshake.integration.test.ts` — un import
-// nomme serait copie a la liaison, et une eventuelle espionne (`spyOn`) ne
-// mordrait pas sur le lien que `server.ts` importe.
+// Import en espace de noms, pas nomme : un import nomme serait copie a la
+// liaison, et une eventuelle espionne (`spyOn`) ne mordrait pas sur le lien
+// que `server.ts` importe.
 import * as comptes from './accounts';
 import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * **Le livrable de l'etape 7b.** Un joueur depense son or, et sa run
- * suivante en est changee.
+ * Un joueur depense son or, et sa run suivante en est changee.
  *
  * ⚠️ **Ce fichier duplique son propre harnais**, comme tous les fichiers
- * d'integration de ce depot (voir `bonus.integration.test.ts` et
- * `draft.integration.test.ts`) : aucun fichier d'integration n'en importe un
- * autre.
+ * d'integration de ce depot : aucun n'en importe un autre.
  */
 
 const ROOM_SEED = 0x07_6b_0009;
@@ -102,11 +98,11 @@ async function compteNeuf(): Promise<{ token: Uint8Array; accountId: string }> {
 }
 
 /**
- * Connecte une socket de jeu avec un jeton DEJA frappe, et enregistre
- * desormais tout ce qui arrive : les messages decodes (hors snapshots) ET la
- * taille BRUTE de chaque frame, par type — c'est cette seconde table que le
- * test du §3.5 (DRAFT_OPEN) interroge, parce qu'une valeur decodee ne dit
- * rien de ce qui a vraiment voyage sur le fil.
+ * Connecte une socket de jeu avec un jeton DEJA frappe, et enregistre tout ce
+ * qui arrive : les messages decodes (hors snapshots) ET la taille BRUTE de
+ * chaque frame, par type — c'est cette seconde table que le test de
+ * `DRAFT_OPEN` interroge, parce qu'une valeur decodee ne dit rien de ce qui a
+ * vraiment voyage sur le fil.
  */
 async function connectAvecJeton(code: string, token: Uint8Array): Promise<Client> {
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${code}`);
@@ -115,8 +111,7 @@ async function connectAvecJeton(code: string, token: Uint8Array): Promise<Client
 
   // ⚠️ L'ecoute de 'open' est posee ICI, avant tout `await` : sur localhost
   // la socket peut s'ouvrir avant la fin d'un aller-retour Prisma, et un
-  // listener pose apres l'aurait ratee (meme piege que
-  // `credit.integration.test.ts`).
+  // listener pose apres l'aurait ratee.
   const ouverte = new Promise<void>((resolve, reject) => {
     ws.once('open', () => resolve());
     ws.once('error', reject);
@@ -158,10 +153,7 @@ function tailleParType(client: Client, type: number): number[] {
   return client.rawSizesByType.get(type) ?? [];
 }
 
-/**
- * Pose une entite a une position choisie, hors du generateur de vagues —
- * meme technique que `draft.integration.test.ts`.
- */
+/** Pose une entite a une position choisie, hors du generateur de vagues. */
 function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): void {
   const order: WaveOrder = {
     waveId,
@@ -186,8 +178,7 @@ function spawnMonsterAt(room: Room, waveId: number, x: number, y: number): void 
  *
  * ⚠️ **La visee passe par la socket.** Sans `aimX`/`aimY` poses, l'arme ne
  * tire jamais, l'experience ne monte jamais, et l'appelant attend sans
- * jamais savoir pourquoi — piege deja paye dans
- * `draft.integration.test.ts`.
+ * jamais savoir pourquoi.
  *
  * Rend la fonction qui arrete le pilote.
  */
@@ -326,7 +317,7 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
     // ⚠️ **Pas de `?? 0` ici.** Si `perLevel` disparaissait de l'article
     // `vitalite`, l'attendu redeviendrait `PLAYER_MAX_HP` — exactement la
     // valeur de la run 1 — et la paire discriminante s'effondrerait en
-    // silence (ronde de correction 2). On leve explicitement plutot que de
+    // silence. On leve explicitement plutot que de
     // laisser un `undefined` se replier sur 0.
     if (v.perLevel === undefined) {
       throw new Error(`l article ${v.id} n a pas de perLevel`);
@@ -335,20 +326,16 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
   });
 
   it('le SNAPSHOT fait 66 octets a quatre joueurs, et ZONE/REACTION/DRAFT_OPEN ne bougent pas', async () => {
-    // ⚠️ **Nombres nus, par doctrine du depot** : ce sont des largeurs de fil,
-    // pas des reglages de jeu. Verifiees contre le depot (amendement du
-    // controleur) : 22 + 4 * 11 = 66 (11 depuis le bouclier des pactes, etape 13 §3.4).
+    // ⚠️ **Nombres nus** : ce sont des largeurs de fil, pas des reglages de
+    // jeu. 22 + 4 * 11 = 66.
     expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(66);
     expect(ZONE_BYTES).toBe(11);
     expect(REACTION_BYTES).toBe(11);
 
-    // ⚠️ **`DRAFT_OPEN` est le message que le grisage aurait pu faire grossir**,
-    // si on avait choisi d'envoyer un masque d'eligibilite au lieu de laisser
-    // le client griser depuis son propre ensemble. Mesure sa taille REELLE sur
-    // de VRAIES ouvertures de draft, sur de VRAIES sockets — pas seulement ses
-    // constantes : c'est le seul moyen de prouver que la decision du §3.5 de
-    // la spec a tenu. Deux joueurs reels, meme combat pilote que
-    // `draft.integration.test.ts`.
+    // ⚠️ **`DRAFT_OPEN` est le message que le grisage pourrait faire grossir**
+    // (un masque d'eligibilite envoye au lieu de laisser le client griser
+    // depuis son propre ensemble). Sa taille REELLE est mesuree sur de VRAIES
+    // ouvertures de draft, sur de VRAIES sockets, pas seulement ses constantes.
     const code = await createRoomCode();
     const room = app.rooms.get(code);
     if (!room) {
@@ -373,7 +360,7 @@ describe('etape 7b : le livrable — depenser change la run suivante', () => {
     const taillesDraft = [...tailleParType(a, MSG.DRAFT_OPEN), ...tailleParType(b, MSG.DRAFT_OPEN)];
     expect(taillesDraft.length).toBeGreaterThan(0);
     // ⚠️ **Un `Set(...).size === 1` ne verifie que la COHERENCE interne de la
-    // mesure, jamais sa VALEUR** (ronde de correction 2) : un `DRAFT_OPEN`
+    // mesure, jamais sa VALEUR** : un `DRAFT_OPEN`
     // qui aurait grossi d'un masque d'eligibilite serait uniforme lui aussi,
     // donc passerait cette assertion tout en ayant grossi. C'est pour ca que
     // le nombre ci-dessous est NU, jamais recalcule a partir des memes

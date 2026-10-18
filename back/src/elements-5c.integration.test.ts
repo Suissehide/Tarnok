@@ -39,54 +39,36 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * **Le livrable de la tache 10 de l'etape 5c :** six elements, quinze
- * reactions, zero octet de plus.
+ * Six elements, quinze reactions, sur de vraies sockets, sans octet de plus sur
+ * le fil (`ZONE_BYTES`, `REACTION_BYTES`, `SNAPSHOT_HEADER_BYTES` fixes) :
  *
- * L'etape 5c ajoute les deux derniers elements (Chaux, Vif-argent) et les neuf
- * dernieres reactions — pour ZERO octet supplementaire sur le fil
- * (`ZONE_BYTES`, `REACTION_BYTES` et `SNAPSHOT_HEADER_BYTES` ne bougent pas).
- * Ce fichier assene que tout ca fonctionne ENSEMBLE, sur de vraies sockets :
- *
- * 1. les **quinze** reactions se declenchent, **une par une et identifiee** :
- *    les quatorze de `REACTION_DEFS` plus le Choc thermique (Braise + Givre),
- *    la seule paire sans effet specifique, qui prend le chemin generique de
- *    l'etape 5a (`reactionId === REACTION.AUCUNE`) ;
+ * 1. les **quinze** reactions se declenchent, une par une et identifiee : les
+ *    quatorze de `REACTION_DEFS` plus le Choc thermique (Braise + Givre), seule
+ *    paire sans effet specifique (`reactionId === REACTION.AUCUNE`) ;
  * 2. **la moitie negative** : une paire qui ne doit rien produire ne produit
  *    RIEN, et une reaction qui n'est pas censee etre liante ne l'est pas ;
- * 3. les quinze sont **inter-joueurs par construction** ici, donc les quinze
- *    chargent la Synergie, et la barre du `SNAPSHOT` suit ;
- * 4. **le pitch du README, testable pour la premiere fois** : un joueur seul
- *    n'a que `WEAPON_SLOTS` slots, donc quatre elements au mieux, donc
- *    C(4, 2) = six paires — jamais quinze ;
- * 5. **le trafic par joueur ne bouge pas, dans les DEUX sens**, mesure au
- *    niveau socket sur la taille BRUTE de chaque message.
+ * 3. les quinze sont inter-joueurs par construction, donc chargent la Synergie,
+ *    et la barre du `SNAPSHOT` suit ;
+ * 4. un joueur seul n'a que `WEAPON_SLOTS` slots, donc quatre elements au
+ *    mieux, donc C(4, 2) = six paires — jamais quinze ;
+ * 5. le trafic par joueur ne bouge pas, dans les DEUX sens, mesure sur la
+ *    taille BRUTE de chaque message.
  *
- * ⚠️ **TROIS SALONS, et c'est une CONTRAINTE, pas un confort.** Aucun joueur ne
- * doit etre la seule source des DEUX elements d'une paire qu'il declenche :
- * c'est ce qui faisait echouer le livrable de l'etape 5b deux fois sur treize
- * (un joueur portait deux armes elementaires, et quand ses deux projectiles
- * atterrissaient dans le meme pas, la reaction cessait d'etre inter-joueurs).
- * Quatre joueurs portant chacun UNE arme elementaire couvrent quatre elements,
- * donc C(4, 2) = SIX paires : un salon unique ne peut donc PAS produire les
- * quinze avec les deux cotes tires par deux joueurs distincts. Trois salons de
- * quatre clients, une arme elementaire par joueur, 6 + 5 + 4 = 15 — et aucune
- * marque posee a la main, contrairement a l'etape 5b qui entretenait l'autre
- * element de la paire sur la cible.
+ * ⚠️ **TROIS SALONS, et c'est une CONTRAINTE.** Aucun joueur ne doit etre la
+ * seule source des DEUX elements d'une paire : si ses deux projectiles
+ * atterrissent dans le meme pas, la reaction cesse d'etre inter-joueurs. Avec
+ * UNE arme elementaire par joueur, quatre joueurs couvrent C(4, 2) = SIX paires
+ * seulement ; trois salons de quatre donnent 6 + 5 + 4 = 15, sans marque posee
+ * a la main.
  *
- * ⚠️ **Les chiffres de replication ne sont PAS mesures ici.** Ils vivent dans
- * `shared/horde.replication.test.ts`, en simulation pure : le decor d'un test
- * d'integration balaie la horde par `Horde.kill`, qui court-circuite
- * volontairement le lot `DEATHS` (voir le rapport de la tache 11 de l'etape
- * 6a) — un client qui deriverait sa horde du fil divergerait par construction,
- * et le chiffre lu ici ne dirait rien des reactions.
+ * ⚠️ **Les chiffres de replication ne sont PAS mesures ici** mais dans
+ * `shared/horde.replication.test.ts` : le decor balaie la horde par
+ * `Horde.kill`, qui court-circuite volontairement le lot `DEATHS`, donc un
+ * client qui deriverait sa horde du fil divergerait par construction.
  *
- * ⚠️ **Le harnais est celui de `draft.integration.test.ts` /
- * `elements.integration.test.ts` / `portal.integration.test.ts` /
- * `elements-5b.integration.test.ts`** : quatre vraies sockets,
- * `buildServer({ roomSeed })`, `app.rooms`, monstres poses a la main. Chaque
- * fichier de ce depot duplique ce harnais plutot que de le partager (aucun des
- * quatre existants ne s'importe l'un l'autre) — ce fichier suit la meme
- * convention.
+ * Le harnais (quatre vraies sockets, `buildServer({ roomSeed })`, `app.rooms`,
+ * monstres poses a la main) est duplique depuis les autres
+ * `*.integration.test.ts`, par convention du depot.
  */
 
 /** Graine imposee au salon : ce test ne doit rien devoir au hasard. */
@@ -105,9 +87,7 @@ const ELEMENTS_REELS: readonly number[] = ELEMENTS.filter((e) => e.id !== ELEMEN
 
 /**
  * **Les quinze couples, DERIVES — aucun identifiant ecrit en dur.** C(6, 2)
- * = 15, et `packElementPair` canonicalise l'ordre, donc cette liste est celle
- * du §6.4 de l'orientation sans qu'aucune de ses valeurs n'ait ete recopiee
- * (meme doctrine que le docbloc de `REACTION_DAMAGE`).
+ * = 15, et `packElementPair` canonicalise l'ordre.
  */
 const QUINZE_PAIRES: readonly number[] = ELEMENTS_REELS.flatMap((a, i) =>
   ELEMENTS_REELS.slice(i + 1).map((b) => packElementPair(a, b)),
@@ -115,19 +95,17 @@ const QUINZE_PAIRES: readonly number[] = ELEMENTS_REELS.flatMap((a, i) =>
 
 /**
  * Les trois reactions qui comptent comme du Vif-argent pour la liaison ET pour
- * le rayon de touche elargi (`ReactionDef.zoneVifArgent`, un seul critere et
- * deux consommateurs depuis le correctif R24).
+ * le rayon de touche elargi (`ReactionDef.zoneVifArgent`, un seul critere pour
+ * les deux).
  *
- * ⚠️ **Ecrit ici en ELEMENTS, pas en identifiants de reaction, et c'est la
- * moitie negative du §5 de la spec.** Cinq paires impliquent le Vif-argent ;
- * seules TROIS en ont besoin pour leur effet — Vaporisation (degats autour de
- * chaque lie), Paratonnerre (la chaine prefere les lies), Amalgame (partage
- * entre lies). *Gel profond* (Givre + Vif-argent, « vitesse nulle dans la
- * zone ») et *Aveuglement* (Chaux + Vif-argent, « la fuite ») n'en ont aucun
- * besoin : la decision est celle de la tache 6, confirmee au correctif R24, et
- * la deriver de la paire la renversait EN SILENCE. Cette liste est donc la
- * SECONDE liste, celle a laquelle `zoneVifArgent` est comparee champ a champ —
- * jamais une relecture de la table qu'elle verifie.
+ * ⚠️ **Ecrit ici en ELEMENTS, pas en identifiants de reaction.** Cinq paires
+ * impliquent le Vif-argent ; seules TROIS en ont besoin pour leur effet —
+ * Vaporisation (degats autour de chaque lie), Paratonnerre (la chaine prefere
+ * les lies), Amalgame (partage entre lies). *Gel profond* (Givre + Vif-argent)
+ * et *Aveuglement* (Chaux + Vif-argent) n'en ont aucun besoin, et deriver le
+ * critere de la paire le renverserait EN SILENCE. Cette liste est donc la
+ * SECONDE liste a laquelle `zoneVifArgent` est comparee champ a champ — jamais
+ * une relecture de la table qu'elle verifie.
  */
 const PAIRES_LIANTES: ReadonlySet<number> = new Set([
   packElementPair(ELEMENT.BRAISE, ELEMENT.VIF_ARGENT),
@@ -141,9 +119,8 @@ function porteeDe(weapon: Weapon): number {
 }
 
 /**
- * **Cette arme marque-t-elle une cible visee a `dist` ?** Jusqu'a l'etape 12,
- * « en deca de la portee » suffisait ; depuis, chaque forme a sa regle : la
- * frappe tombe a sa portee PILE (et prend l'ennemi le plus proche dans
+ * **Cette arme marque-t-elle une cible visee a `dist` ?** Chaque forme a sa
+ * regle : la frappe tombe a sa portee PILE (et prend l'ennemi le plus proche dans
  * `FRAPPE_SEARCH_RADIUS`), le mortier ne touche qu'a sa chute, le boomerang
  * s'arrete au quart de la portee droite (il ralentit jusqu'a l'arret a
  * mi-vie), l'onde, le halo et l'invocation ne vont pas plus loin que leur
@@ -198,10 +175,10 @@ function distanceDeTir(w: Weapon): number {
  * la cible d'une autre phase), pas d'orbite, de sinus ni de spirale (leur
  * trace n'est pas la visee), pas de halo ni d'invocation (ils ne visent rien).
  *
- * ⚠️ **Etape 12 : la frappe est admise malgre ses trois impacts** : elle ne
- * disperse rien, elle prend les ennemis les plus proches du point vise — ici
- * la seule cible vivante. C'est desormais la seule Foudre a viser juste (la
- * Bobine tire deux arcs ecartes).
+ * ⚠️ **La frappe est admise malgre ses trois impacts** : elle ne disperse
+ * rien, elle prend les ennemis les plus proches du point vise — ici la seule
+ * cible vivante. C'est la seule Foudre a viser juste (la Bobine tire deux arcs
+ * ecartes).
  */
 function armeDe(element: number): Weapon {
   const best = WEAPONS.filter(
@@ -228,11 +205,10 @@ function armeDe(element: number): Weapon {
  * L'arme de cet element qui tire le plus souvent, parmi celles qui marquent
  * une cible a `dist` — pour le decor du joueur seul.
  *
- * ⚠️ **`atteint`, et plus `kind === 'tir'`** : le filtre de l'etape 8 ecartait
- * l'Encensoir de poix (halo, 110 px) parce que la cible etait a 130 px. Depuis
- * l'etape 12, la Poix a projectile est un mortier qui ne touche qu'a sa chute
- * et le Semoir de chaux ne quitte pas les pieds du tireur : c'est la portee
- * EFFECTIVE de chaque forme qui decide, halo compris.
+ * ⚠️ **`atteint`, pas `kind === 'tir'`** : la Poix a projectile est un mortier
+ * qui ne touche qu'a sa chute et le Semoir de chaux ne quitte pas les pieds du
+ * tireur, donc c'est la portee EFFECTIVE de chaque forme qui decide, halo
+ * compris.
  */
 function armeRapideDe(element: number, dist: number): Weapon {
   const best = WEAPONS.filter(
@@ -264,9 +240,8 @@ interface Client {
   /**
    * Un releve par `SNAPSHOT` : la barre qu'il porte, et le nombre de
    * `REACTION` chargees (`synergyCharge === true`) deja arrivees sur CETTE
-   * socket. Meme mecanisme que `elements.integration.test.ts` et
-   * `elements-5b.integration.test.ts` — c'est ce qui rend la comparaison
-   * « barre = charges » insensible a l'horloge : `Session#broadcast` envoie
+   * socket. C'est ce qui rend la comparaison « barre = charges » insensible a
+   * l'horloge : `Session#broadcast` envoie
    * les `REACTION` d'un tick AVANT le `SNAPSHOT` du meme tick, et la socket
    * preserve l'ordre.
    */
@@ -343,8 +318,8 @@ async function connect(code: string): Promise<Client> {
     client.received.push(msg);
   });
 
-  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
-  // un slot : chaque client de ce harnais a donc son propre compte.
+  // Toute socket de jeu presente son jeton AVANT d'obtenir un slot : chaque
+  // client de ce harnais a donc son propre compte.
   const { token } = await createAccount();
   await ouverte;
   ws.send(encodeHello(token));
@@ -421,12 +396,11 @@ function poseCible(room: Room, waveId: number, x: number, y: number): number {
 }
 
 /**
- * Balaie la horde SAUF les identites retenues — meme technique que
- * `viderSauf` dans `portal.integration.test.ts`.
+ * Balaie la horde SAUF les identites retenues.
  *
  * ⚠️ **C'est ce qui rend « rien d'autre ne se declenche » tenable, et ce qui
  * interdit a ce fichier de mesurer une derive de replication** (voir
- * l'en-tete) : `Horde.kill` court-circuite le lot `DEATHS`. Sans ce balayage,
+ * l'en-tete). Sans ce balayage,
  * les vagues du directeur s'accumuleraient pendant la minute que durent les
  * trois salons, leurs morts feraient tomber des orbes, les orbes de
  * l'experience, l'experience un etalage — et l'etalage GELE le monde
@@ -454,7 +428,7 @@ function zonesDe(client: Client): ZoneMessage[] {
   return client.received.filter((m): m is ZoneMessage => m.type === MSG.ZONE);
 }
 
-/** Envoie une visee sur la socket : sans elle, aucune arme ne tire (tache 13). */
+/** Envoie une visee sur la socket : sans elle, aucune arme ne tire. */
 function vise(client: Client, dx: number, dy: number): void {
   const len = Math.hypot(dx, dy);
   if (len === 0) {
@@ -475,11 +449,10 @@ function equipe(room: Room, playerId: number, weaponId: number): void {
  * **La barre vaut, a CHAQUE instant, le nombre de reactions chargees deja
  * annoncees — plafonnee, et rien d'autre.**
  *
- * Meme mecanisme que `elements.integration.test.ts` (tache 10, §7) : une barre
- * qui monterait a chaque reaction sans comparer les identites ferait rougir
- * chaque releve ou une reaction non chargee est arrivee ; une barre qui ne
- * montait JAMAIS (la mutation `charge = false` de `Room.step`) ferait rougir
- * des que `chargees > 0`.
+ * Une barre qui monterait a chaque reaction sans comparer les identites ferait
+ * rougir chaque releve ou une reaction non chargee est arrivee ; une barre qui
+ * ne monterait JAMAIS (la mutation `charge = false` de `Room.step`) ferait
+ * rougir des que `chargees > 0`.
  */
 function barreSuitLesCharges(client: Client): void {
   const jalons = client.jalons.filter((j) => j.chargees > 0);
@@ -517,8 +490,8 @@ interface Position {
  * part a `ECART_DIAG` sur la perpendiculaire a la diagonale — son milieu EST le
  * centre, il ne designe aucune direction. Les deux gardes du test verifient ce
  * que ces deux nombres doivent satisfaire : chaque cible a portee de ses DEUX
- * armes (plus courte portee du decor : 405 px), et les six cibles ecartees de
- * plus de `4 * ZONE_RADIUS` les unes des autres (minimum atteint : 319 px).
+ * armes, et les six cibles ecartees de plus de `4 * ZONE_RADIUS` les unes des
+ * autres.
  */
 const ECART_AXE = 450;
 const ECART_DIAG = 297;
@@ -544,8 +517,8 @@ const BUCKET = 2 * ZONE_RADIUS;
 /**
  * Ou se tiennent les deux joueurs qui ne jouent pas la phase : assez loin pour
  * qu'aucune de leurs armes n'atteigne la cible, quelle que soit sa forme —
- * l'onde ne vise rien, et un « visez a l'oppose » ne suffit plus a l'en
- * ecarter. Verifie par la garde 3.
+ * l'onde ne vise rien, et viser a l'oppose ne suffit pas a l'en ecarter.
+ * Verifie par la garde 3.
  */
 const LOIN = 1200;
 
@@ -593,7 +566,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
    * sens.** Sans cette garde, une zone laissee par une phase pourrait recouvrir
    * celle d'une voisine et declencher une reaction FANTOME (`onZoneCreated`,
    * `back/src/combat.ts`) : « les quinze se declenchent » survivrait a un salon
-   * qui declenche n'importe quoi a cote — exactement le piege du §9 de la spec.
+   * qui declenche n'importe quoi a cote.
    */
   it('les quinze reactions se declenchent, une par une, et rien d autre', async () => {
     // La table du livrable, en ELEMENTS : les trois salons et ce que chacun
@@ -607,7 +580,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
 
     // ---- L'arithmetique du livrable, verifiee AVANT de jouer quoi que ce
     //      soit : quinze couples, quatorze lignes de table, un seul couple
-    //      generique (le Choc thermique de l'etape 5a). ---------------------
+    //      generique (le Choc thermique). -----------------------------------
     expect(QUINZE_PAIRES.length, 'C(6, 2) doit valoir quinze').toBe(15);
     expect(new Set(QUINZE_PAIRES).size, 'les quinze couples doivent etre distincts').toBe(15);
     expect(REACTION_DEFS.length, 'quatorze reactions a effet specifique').toBe(14);
@@ -685,13 +658,12 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
           dejaVues.add(pair);
           const def = reactionForPair(pair);
           const cible = positionCible(pi, pj, centre);
-          // ⚠️ **Chaque joueur est REPLACE pour la phase (etape 12).** Les
-          // coins du depart mettaient toutes les cibles a ~350 px de leurs
-          // porteurs, ce qui suffisait a des tirs droits. Un mortier ne
-          // touche qu'a sa chute, un boomerang s'arrete a 250 px, une onde a
-          // 220, une frappe tombe a 480 pile : chaque porteur se tient donc a
-          // `distanceDeTir` de la cible, dans la direction d'ou il venait, et
-          // les deux autres a `LOIN`.
+          // ⚠️ **Chaque joueur est REPLACE pour la phase.** Les coins du depart
+          // ne conviennent qu'aux tirs droits : un mortier ne touche qu'a sa
+          // chute, un boomerang s'arrete court, une onde ne va pas au-dela de
+          // son rayon, une frappe tombe a sa portee pile. Chaque porteur se
+          // tient donc a `distanceDeTir` de la cible, dans la direction d'ou il
+          // venait, et les deux autres a `LOIN`.
           const places = positions.map((p, k) => {
             const arme = armes[k];
             if (!arme) {
@@ -770,7 +742,7 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
 
       // ---- Les phases, l'une apres l'autre. --------------------------------
       //
-      // ⚠️ **Un SILENCE avant chaque phase (etape 12).** Les joueurs changent
+      // ⚠️ **Un SILENCE avant chaque phase.** Les joueurs changent
       // de place d'une phase a l'autre : un boomerang qui revient vers son
       // tireur replace, une onde ou une frappe encore en cours pourraient
       // croiser la cible suivante et y poser l'element d'un joueur qui n'en
@@ -861,9 +833,9 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       // ⚠️ **Et CHACUNE charge la barre.** Les deux cotes de chaque paire
       // sortent de deux joueurs DIFFERENTS, par une arme reelle : `markBy`
       // (celui qui a pose le premier element, ou la zone qui le porte) differe
-      // donc toujours de `by` (celui qui declenche). C'est precisement le
-      // scenario du §7, et la mutation « la Synergie ne charge jamais »
-      // (`const charge = false` dans `Room.step`) le fait rougir ici.
+      // donc toujours de `by` (celui qui declenche). La mutation « la
+      // Synergie ne charge jamais » (`const charge = false` dans `Room.step`)
+      // fait rougir ce test.
       const lots = phases.map((phase) =>
         recues.filter((r) => Math.hypot(r.x - phase.x, r.y - phase.y) < BUCKET),
       );
@@ -952,15 +924,13 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
   }, 240_000);
 
   /**
-   * **Le pitch du README, testable pour la premiere fois : un joueur seul ne
-   * peut couvrir que SIX paires sur quinze.**
+   * **Un joueur seul ne peut couvrir que SIX paires sur quinze.**
    *
    * `WEAPON_SLOTS` vaut quatre : un joueur seul porte au mieux quatre elements
    * differents, donc C(4, 2) = six couples. Les NEUF autres lui sont
    * inaccessibles — non pas parce que le decor les evite, mais parce qu'il ne
    * possede pas les elements qui les forment. C'est ce qui rend vraie la phrase
-   * « jouable seul, pense a quatre » : a quatre elements seulement (etape 5a
-   * puis 5b), un joueur seul couvrait TOUT.
+   * « jouable seul, pense a quatre ».
    *
    * ⚠️ **Les trois autres clients sont connectes et DESARMES.** Ils ne tirent
    * jamais (aucune visee ne leur est envoyee, et `fireSalvoDirected` ne tire pas
@@ -984,27 +954,25 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     //      porter — et c'est la QUEUE de `ELEMENTS_REELS`, pas sa tete. ----
     //
     // ⚠️ **La tete serait un decor qui masque.** `ELEMENTS_REELS` est dans
-    // l'ordre de `ELEMENT`, donc ses quatre PREMIERS sont exactement les
-    // quatre elements d'AVANT 5c (Braise, Givre, Foudre, Poix) : un joueur
-    // seul qui ne porterait qu'eux ne mettrait aucun des deux elements de
-    // cette etape sur le chemin solo, et ses neuf paires « interdites »
-    // seraient toutes et seulement celles qui EXIGENT la Chaux ou le
-    // Vif-argent — une moitie negative vraie par construction, qu'aucune arme
-    // du salon ne pourrait de toute facon former. La queue renverse les deux :
-    // les elements NEUFS passent par le chemin solo et ses neuf zones de
-    // reaction neuves, et ce sont les paires ANCIENNES qui peuplent la moitie
-    // negative. L'arithmetique est identique au chiffre pres (six accessibles,
-    // neuf interdites) : seule la charge de preuve change de camp.
+    // l'ordre de `ELEMENT`, donc ses quatre PREMIERS sont Braise, Givre,
+    // Foudre, Poix : un joueur seul qui ne porterait qu'eux ne mettrait ni la
+    // Chaux ni le Vif-argent sur le chemin solo, et ses neuf paires
+    // « interdites » seraient toutes et seulement celles qui les EXIGENT —
+    // une moitie negative vraie par construction, qu'aucune arme du salon ne
+    // pourrait de toute facon former. La queue renverse les deux : la Chaux et
+    // le Vif-argent passent par le chemin solo, et ce sont les autres paires
+    // qui peuplent la moitie negative. L'arithmetique est identique (six
+    // accessibles, neuf interdites) : seule la charge de preuve change de camp.
     const SIENS: readonly number[] = ELEMENTS_REELS.slice(ELEMENTS_REELS.length - WEAPON_SLOTS);
     expect(SIENS.length, 'quatre slots, donc quatre elements au plus').toBe(4);
     expect(WEAPON_SLOTS).toBe(4);
     expect(SIENS, 'le chemin solo doit porter la Chaux').toContain(ELEMENT.CHAUX);
     expect(SIENS, 'le chemin solo doit porter le Vif-argent').toContain(ELEMENT.VIF_ARGENT);
 
-    // Une seule cible, a portee de ses QUATRE armes. ⚠️ **90 px et plus 130
-    // depuis l'etape 12** : la Poix qui l'atteint est le halo de l'Encensoir
-    // (110 px de rayon ; le mortier du Chaudron ne touche qu'a sa chute, bien
-    // plus loin), et la Chaux l'onde du Canon (le Semoir reste aux pieds).
+    // Une seule cible, a portee de ses QUATRE armes. ⚠️ **90 px, pas plus** :
+    // la Poix qui l'atteint est le halo de l'Encensoir (le mortier du Chaudron
+    // ne touche qu'a sa chute, bien plus loin), et la Chaux l'onde du Canon (le
+    // Semoir reste aux pieds).
     const OFFSET = 90;
     const armes = SIENS.map((e) => armeRapideDe(e, OFFSET));
     // Les quatre slots pour les quatre elements : sans la dague du depart.
@@ -1064,9 +1032,9 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
         room.horde.vx[slot] = 0;
         room.horde.vy[slot] = 0;
         room.horde.hp[slot] = 1e6;
-        // ⚠️ **La marque tourne sur ses quatre elements, a la main, depuis la
-        // recharge par ennemi** (`REACTION_COOLDOWN_TICKS`). La cible ne
-        // reagit plus qu'une fois par recharge, et au rythme fixe des quatre
+        // ⚠️ **La marque tourne sur ses quatre elements, a la main, a cause
+        // de la recharge par ennemi** (`REACTION_COOLDOWN_TICKS`). La cible ne
+        // reagit qu'une fois par recharge, et au rythme fixe des quatre
         // armes c'est toujours le meme couple qui part. Changer d'element
         // marque a chaque reaction recue laisse les armes former les autres ;
         // c'est toujours le joueur seul qui marque, et ses armes qui
@@ -1116,18 +1084,17 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     expect(vues).toEqual(ACCESSIBLES);
 
     // ---- 3. Et rien n'a charge la Synergie : un joueur seul ne peut poser
-    //         que sa propre identite des deux cotes de la comparaison du §7.
-    //         (Assertion vraie A VIDE prise seule — c'est le livrable
-    //         ci-dessus, inter-joueurs, qui lui donne son pouvoir de
+    //         que sa propre identite des deux cotes de la comparaison
+    //         `markBy` / `by`. (Assertion vraie A VIDE prise seule — c'est le
+    //         test des quinze, inter-joueurs, qui lui donne son pouvoir de
     //         distinguer.) ----------------------------------------------------
     expect(recues.every((r) => r.synergyCharge === false)).toBe(true);
     expect(a.lastSnapshot?.synergy).toBe(0);
   }, 90_000);
 
   /**
-   * **Le rayon de touche elargi du §4, mesure au niveau socket et dans les DEUX
-   * sens — la cinquieme grandeur de zone, celle qu'aucun test d'integration ne
-   * voyait.**
+   * **Le rayon de touche elargi, mesure au niveau socket et dans les DEUX
+   * sens.**
    *
    * Un ennemi dans une zone de Vif-argent est plus facile a toucher :
    * `PROJECTILE_HIT_RADIUS` (32) est majore de `VIF_ARGENT_HIT_RADIUS_BONUS`
@@ -1140,8 +1107,8 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
    * - salon LIBRE : la cible vit sous une zone d'*Arc caustique* (Foudre +
    *   Chaux), `zoneVifArgent: false`.
    *
-   * Le troisieme tireur porte le froleur (la Grenade depuis l'etape 12) dans les deux salons. Si et seulement si
-   * le rayon elargi existe, son tir accroche — et une paire PORTANT SON ELEMENT
+   * Le troisieme tireur porte le froleur dans les deux salons. Si et seulement
+   * si le rayon elargi existe, son tir accroche — et une paire PORTANT SON ELEMENT
    * apparait. Dans le salon libre, elle ne doit jamais apparaitre : c'est la
    * moitie negative, et sans elle « le froleur a touche » se lirait aussi bien
    * « le froleur touche toujours ».
@@ -1161,14 +1128,13 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
    * l'horloge murale, et c'est ce qui separe un vert d'un faux vert.** La cible
    * est vivante et mobile (`archetype: 0`, `speed` non nul) et sa traction vers
    * le joueur le plus proche a une composante LATERALE, c'est-a-dire vers le
-   * rayon du frolement. Un pilote sur `setInterval` la re-epinglait en temps
+   * rayon du frolement. Un pilote sur `setInterval` la re-epinglerait en temps
    * MURAL, alors que la simulation avance en TICKS : `MAX_CATCH_UP_STEPS`
    * (`back/src/server.ts`) vaut cinq, donc un blocage de boucle enchaine
-   * jusqu'a cinq `room.step` sans un seul re-epinglage — cinq pas de derive
-   * laterale suffisaient a faire tomber l'ecart SOUS le rayon de base, et le
-   * frolement accrochait alors sans aucun bonus. Le test passait au vert avec
-   * le mecanisme du §4 retire. En enveloppant `Room#step`, la derive est bornee
-   * par UN tick, et bornee de facon deterministe plutot que statistique.
+   * jusqu'a cinq `room.step` sans re-epinglage — assez de derive laterale pour
+   * faire tomber l'ecart SOUS le rayon de base, et le test passerait au vert
+   * sans le rayon elargi. En enveloppant `Room#step`, la derive est bornee par
+   * UN tick, de facon deterministe plutot que statistique.
    *
    * ⚠️ **Et le TEMOIN la mesure, tick par tick.** `min >= PROJECTILE_HIT_RADIUS`
    * dit que la cible n'a JAMAIS ete a portee du rayon de base — donc que toute
@@ -1191,14 +1157,12 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     const PAIRE_LIBRE = packElementPair(ELEMENT.FOUDRE, ELEMENT.CHAUX);
 
     const FOUDRE = armeDe(ELEMENT.FOUDRE);
-    // ⚠️ **Le froleur n'est plus la Poix depuis l'etape 12.** Le frolement
-    // exige un projectile qui PERCUTE (le rayon elargi est celui de
-    // `collide`), droit et unique ; le Chaudron a poix est devenu un mortier
-    // qui ne percute rien en vol, et aucune autre Poix ne tire. Le froleur est
-    // donc la plus longue de ces armes hors des elements que le decor met
-    // deja en jeu (Foudre, Vif-argent, Chaux, et le Givre de la cible d'axe) :
-    // la Grenade, Braise. Ce que le test garde ne change pas — un element
-    // TIERS qui n'accroche qu'a la faveur du Vif-argent.
+    // ⚠️ **Le froleur** : le frolement exige un projectile qui PERCUTE (le
+    // rayon elargi est celui de `collide`), droit et unique — un mortier ne
+    // percute rien en vol. C'est la plus longue de ces armes hors des
+    // elements que le decor met deja en jeu (Foudre, Vif-argent, Chaux, et le
+    // Givre de la cible d'axe) : un element TIERS qui n'accroche qu'a la
+    // faveur du Vif-argent.
     const FROLEUR = WEAPONS.filter(
       (w) =>
         w.kind === 'tir' &&
@@ -1300,9 +1264,8 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       // `#removeAt`) : la cible d'axe doit donc etre DERRIERE celle du
       // frolement sur le meme rayon, sinon elle avalerait chaque projectile de
       // froleur et la moitie negative redeviendrait vide par construction. Les
-      // deux doivent de plus tenir dans `porteeDe(FROLEUR)` (521 px pour
-      // la Grenade) en restant ecartees de plus de `4 * ZONE_RADIUS` —
-      // d'ou 80 et 380 plutot que 300 seul.
+      // deux doivent de plus tenir dans `porteeDe(FROLEUR)` en restant
+      // ecartees de plus de `4 * ZONE_RADIUS` — d'ou 80 et 380.
       const AVANCE = 80;
       const AVANCE_AXE = 380;
       const x = pFroleur.x + AVANCE;
@@ -1310,10 +1273,9 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       const xAxe = pFroleur.x + AVANCE_AXE;
       const yAxe = pFroleur.y;
 
-      // ⚠️ **Le poseur et la Foudre sont REPLACES (etape 12)**, a la distance
-      // ou leur forme marque la cible : le Glaive s'arrete a 250 px, l'onde a
-      // 220, la frappe tombe a 480 pile — les coins du depart ne conviennent a
-      // aucune. Le poseur en bas a gauche, loin de la cible d'axe (son onde
+      // ⚠️ **Le poseur et la Foudre sont REPLACES**, a la distance ou leur
+      // forme marque la cible (`distanceDeTir`) : les coins du depart ne
+      // conviennent a aucune. Le poseur en bas a gauche, loin de la cible d'axe (son onde
       // n'a pas de direction) ; la Foudre droit en dessous, visee (0, -1)
       // exacte, pour que l'impact tombe sur la cible et nulle part ailleurs.
       const dPoseur = distanceDeTir(poseur) * Math.SQRT1_2;
@@ -1351,18 +1313,14 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
       const gardees = [cible];
       let axe: Position | null = null;
       if (avecAxe) {
-        // ⚠️ **La cible d'AXE : ecart lateral ZERO, donc touchee au rayon de
-        // BASE quoi qu'il arrive.** C'est elle qui prouve que le froleur est
-        // arme ET qu'elle tire DANS CE SALON-CI. Sans elle, « aucune paire
-        // portant son element dans le salon libre » serait satisfaite par une
-        // regression qui perdrait l'equipement ou la visee du troisieme
-        // tireur du second banc seulement — et « le frolement n'accroche QUE
-        // sous Vif-argent » resterait non prouve pendant que le test verdit.
+        // ⚠️ La cible d'AXE, touchee au rayon de BASE quoi qu'il arrive :
+        // elle prouve que le froleur est arme et tire DANS CE SALON-CI (voir
+        // le docbloc).
         gardees.push(poseCible(room, 9901, xAxe, yAxe));
         axe = { x: xAxe, y: yAxe };
       }
 
-      /** Le corps que le pilote mural executait : il repart de la position exacte. */
+      /** Remet les cibles a leur position exacte, a l'arret et increvables. */
       const epingle = (): void => {
         viderSauf(room, gardees);
         for (const id of gardees) {
@@ -1529,17 +1487,16 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
   }, 120_000);
 
   /**
-   * **Le critere de l'etape, mesure ou il compte : `Room`/socket, avec de
+   * **« Zero octet de plus », mesure ou il compte : `Room`/socket, avec de
    * vraies armes dans un vrai salon — dans les DEUX sens.**
    *
    * - le salon VIEUX : seules Braise et Givre tirent (Choc thermique, la
-   *   reaction generique de l'etape 5a) ;
+   *   reaction generique) ;
    * - le salon NEUF : la Chaux et le Vif-argent tirent (Aveuglement, la
    *   quinzieme reaction).
    *
    * ⚠️ **Le second doit produire des paires NOUVELLES**, sinon l'egalite
-   * comparerait deux ensembles vides — le cinquieme des « decors qui
-   * masquent » du §9 de la spec. Les deux ensembles de paires sont donc
+   * comparerait deux ensembles vides. Les deux ensembles de paires sont donc
    * assenes DISJOINTS et non vides avant toute mesure d'octets.
    *
    * ⚠️ **Ce que « le trafic ne bouge pas » prouve VRAIMENT ici.** D'un salon a
@@ -1664,11 +1621,9 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     const pairesNeuf = new Set(reactionsDe(aNeuf).map((r) => r.pair));
     expect(pairesVieux).toEqual(new Set([PAIR_VIEUX]));
     expect(pairesNeuf).toEqual(new Set([PAIR_NEUF]));
-    // ⚠️ **La seule chose que la disjonction disait de plus : les deux
-    // litteraux sont distincts.** Les deux egalites ci-dessus la donnent
-    // sinon mot pour mot — mais un `packElementPair` qui confondrait deux
-    // couples les satisferait toutes les deux en comparant des ensembles
-    // EGAUX, et les deux salons se recouvriraient en silence.
+    // ⚠️ **Les deux litteraux doivent etre distincts** : un `packElementPair`
+    // qui confondrait deux couples satisferait les deux egalites ci-dessus, et
+    // les deux salons se recouvriraient en silence.
     expect(PAIR_VIEUX, 'les deux salons se recouvrent').not.toBe(PAIR_NEUF);
     expect(
       zonesDe(aVieux).every(
@@ -1689,14 +1644,12 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     // ⚠️ **Les deux constantes du `SNAPSHOT`, en chiffres NUS.**
     // `snapshotAttendu` est la formule de production elle-meme : la comparer a
     // une taille que ces deux memes constantes produisent serait vraie quoi
-    // qu'il arrive — porter l'en-tete de 22 a 24 ferait attendre 60 et recevoir
-    // 60. C'est le piege que `shared/protocol.test.ts` nomme mot pour mot (« une
-    // assertion `toBe(SNAPSHOT_HEADER_BYTES)` serait vraie quoi qu'il
-    // arrive »), et ce sont ces deux lignes-ci qui portent « zero octet de
-    // plus » pour le `SNAPSHOT`, exactement comme `ZONE_BYTES` /
-    // `REACTION_BYTES` plus bas le portent pour les deux autres lots.
+    // qu'il arrive (meme piege que dans `shared/protocol.test.ts`). Ce sont
+    // ces deux lignes-ci qui portent « zero octet de plus » pour le
+    // `SNAPSHOT`, comme `ZONE_BYTES` / `REACTION_BYTES` plus bas pour les deux
+    // autres lots.
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
-    // Etape 13 (pactes, §3.4) : +1 octet par joueur, le bouclier — 10 -> 11, voulu.
+    // Dont un octet par joueur pour le bouclier des pactes.
     expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
     const snapshotAttendu = SNAPSHOT_HEADER_BYTES + PLAYER_COUNT * SNAPSHOT_PLAYER_BYTES;
 
@@ -1733,9 +1686,8 @@ describe('etape 5c, tache 10 : six elements, quinze reactions, zero octet de plu
     // ---- Et c'est vrai PAR JOUEUR, pas seulement pour le tireur. ---------
     //
     // ⚠️ **Aucun `if` ici.** Garder la comparaison derriere « s'il y en a »
-    // laissait une boucle VIDE et verte sous un commentaire qui affirmait le
-    // contraire : si la diffusion aux non-tireurs tombait a zero, rien n'aurait
-    // rougi. Les huit sockets doivent avoir recu les deux lots.
+    // laisserait une boucle VIDE et verte si la diffusion aux non-tireurs
+    // tombait a zero. Les huit sockets doivent avoir recu les deux lots.
     for (const client of toutesLesSockets) {
       const zoneSizes = tailles(client, MSG.ZONE, 0);
       const reactionSizes = tailles(client, MSG.REACTION, 0);

@@ -19,7 +19,7 @@ coverage/
 # Licence Pixel Frog : usage commercial autorise, credit facultatif, mais
 # REDISTRIBUTION INTERDITE, meme apres modification. Ce depot est public :
 # rien de derive du pack ne doit y entrer. Les assets vivent sur MinIO
-# (prefixe `tarnok/`) et se recuperent avec `tools/fetch-assets.sh`.
+# (bucket `tiny-swords`) et se recuperent avec `tools/fetch-assets.sh`.
 assets/tinyswords/
 assets/tinyswords-derived/
 #

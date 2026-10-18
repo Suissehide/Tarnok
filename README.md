@@ -121,7 +121,7 @@ Le banc de rendu est une page : `npm run dev -w front`, puis `/bench/render.html
 shared/    protocole binaire, flowfield, séparation, combat — code partagé, sans package.json
 front/     client TypeScript : PixiJS v8, Tailwind, Vite
 back/      serveur : Fastify (HTTP) + ws (jeu)
-deploy/    Dockerfiles, compose Traefik, template nginx
+deploy/    Dockerfiles, compose Traefik, variante Dokploy, template nginx
 docs/      specs, plans, maquettes
 tools/     scripts hors chaîne de build
 ```
@@ -144,7 +144,7 @@ Le placeholder est [Tiny Swords](https://pixelfrog-assets.itch.io/tiny-swords) (
 **La licence interdit la redistribution, même après modification**, et ce dépôt est public :
 les assets n'y sont donc pas, et ne sont pas non plus dans les images Docker.
 
-Ils vivent sur MinIO, bucket `tarnok`, à la racine :
+Ils vivent sur MinIO, bucket `tiny-swords`, à la racine :
 
 ```bash
 cp deploy/.env.example .env   # renseigner les MINIO_*

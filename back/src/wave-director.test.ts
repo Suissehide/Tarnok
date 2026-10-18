@@ -62,11 +62,9 @@ describe('WaveDirector', () => {
   });
 
   /**
-   * ⚠️ **L'ancre EST le joueur depuis la tache 18 de l'etape 6a**, elle n'est
-   * plus « pres de lui ». C'est `FORMATION.ENCIRCLE` qui pose la distance de
-   * naissance, a `ENCIRCLE_RADIUS` tout autour — la vague n'arrive plus d'un
-   * seul cote. L'assertion precedente (« a moins de 2 500 px ») ne verrouillait
-   * pas ca : un ancrage decale de 1 800 px la passait tout aussi bien.
+   * ⚠️ **L'ancre EST le joueur**, pas un point « pres de lui » : c'est
+   * `FORMATION.ENCIRCLE` qui pose la distance de naissance, a `ENCIRCLE_RADIUS`
+   * tout autour. Une assertion de proximite laisserait passer un ancrage decale.
    */
   it('ancre la vague SUR un joueur, pas a cote', () => {
     const d = new WaveDirector(77);
@@ -81,8 +79,8 @@ describe('WaveDirector', () => {
   });
 
   /**
-   * ⚠️ **Ce n'est pas un gout de formation, c'est une COHERENCE.** Maintenant
-   * que l'ancre est la position du joueur, toute formation qui n'encercle pas
+   * ⚠️ **Ce n'est pas un gout de formation, c'est une COHERENCE.** Puisque
+   * l'ancre est la position du joueur, toute formation qui n'encercle pas
    * ferait naitre la vague DANS ses jambes : `SCATTER` la seme dans un disque
    * de 900 px centre sur lui, `CLUSTER` lui pose cinq grappes sur la figure.
    * Le pool ne peut donc pas se rallonger sans que la question de l'ancre soit
@@ -129,7 +127,7 @@ describe('la part de pietaille lourde dans les vagues (etape 5a)', () => {
   const estLourde = (o: WaveOrder): boolean => archetypeOf(o.archetype).hp === HEAVY_HP;
 
   /**
-   * ⚠️ **La fixture qui masque, prise a l'avance.** Si aucun archetype tirable
+   * ⚠️ **La fixture qui masque.** Si aucun archetype tirable
    * n'etait lourd, TOUTES les assertions de ce bloc passeraient sans rien
    * prouver : « aucune vague lourde avant la vague 6 » serait vrai parce
    * qu'aucune vague n'est lourde du tout, jamais.
@@ -141,8 +139,7 @@ describe('la part de pietaille lourde dans les vagues (etape 5a)', () => {
   it('ne lache aucune vague lourde avant la sixieme, sur toutes les graines essayees', () => {
     // Le joueur n'a que la dague avant son premier draft : une vague lourde
     // des le debut lui coute quatre fois plus de tirs et fait s'accumuler la
-    // horde. Mesure : 3 runs solo perdues sur 20 avant le niveau 2 sans cette
-    // borne. Voir `HEAVY_FIRST_WAVE`.
+    // horde. Voir `HEAVY_FIRST_WAVE`.
     for (let seed = 1; seed <= 40; seed++) {
       const cinq = vagues(seed, 5);
       expect(cinq).toHaveLength(5);
@@ -151,11 +148,9 @@ describe('la part de pietaille lourde dans les vagues (etape 5a)', () => {
   });
 
   it('en lache ensuite, en minorite : ni jamais, ni tout le temps', () => {
-    // Les deux mutations que cette assertion attrape : `HEAVY_WAVE_SHARE = 0`
-    // (plus jamais de lourds, donc plus rien a marquer d'un element) et
-    // `HEAVY_WAVE_SHARE = 1` (que des lourds, et le rythme de mise a mort
-    // s'effondre). Balayage de graines plutot qu'une seule : la part est un
-    // tirage, une graine unique pourrait n'en produire aucune par hasard.
+    // Attrape `HEAVY_WAVE_SHARE = 0` (plus rien a marquer d'un element) et
+    // `HEAVY_WAVE_SHARE = 1` (le rythme de mise a mort s'effondre). Balayage de
+    // graines : la part est un tirage, une graine seule pourrait n'en produire aucune.
     let lourdes = 0;
     let total = 0;
     for (let seed = 1; seed <= 40; seed++) {
@@ -174,12 +169,8 @@ describe('la part de pietaille lourde dans les vagues (etape 5a)', () => {
 
 describe('waveCountBounds', () => {
   /**
-   * Forme, pas valeurs (tache 14) : les bornes ne peuvent jamais BAISSER
-   * quand le numero de vague augmente, et l'intervalle reste coherent
-   * (`min <= max`) a chaque etape. Verifie par mutation : une formule qui
-   * ferait redescendre les bornes passe une vague donnee (par exemple une
-   * interpolation qui deborde puis rebrousse) casserait cette boucle sans
-   * qu'aucune valeur precise ne soit epinglee ici.
+   * Forme, pas valeurs : les bornes ne BAISSENT jamais quand le numero de vague
+   * augmente, et `min <= max` a chaque vague. Aucune valeur n'est epinglee.
    */
   it('ne redescend jamais quand le numero de vague augmente', () => {
     let prevMin = Number.NEGATIVE_INFINITY;
@@ -196,11 +187,8 @@ describe('waveCountBounds', () => {
 
   /**
    * La premiere vague doit rester strictement en dessous du regime etabli :
-   * sans ca, un directeur qui rend les MEMES bornes a toutes les vagues (le
-   * comportement de l'etape 2, plat) passerait le test de monotonie
-   * ci-dessus — une suite constante ne redescend jamais non plus. C'est
-   * cette comparaison, pas la precedente, qui verrouille qu'il y a bien une
-   * MONTEE et pas un plateau depuis le debut.
+   * des bornes constantes passeraient le test de monotonie ci-dessus. C'est
+   * cette comparaison qui verrouille qu'il y a une MONTEE et pas un plateau.
    */
   it('la premiere vague est nettement plus petite que le regime etabli, loin dans la run', () => {
     const first = waveCountBounds(1);
@@ -210,14 +198,9 @@ describe('waveCountBounds', () => {
   });
 
   /**
-   * Bornee par `MAX_ENTITIES` (le plafond dur du salon) : meme a un numero
-   * de vague extreme, jamais depassee. Verifie par mutation : retirer le
-   * `Math.min(..., MAX_ENTITIES)` de `waveCountBounds` en gardant un plafond
-   * de regime etabli superieur a `MAX_ENTITIES` ferait echouer cette
-   * assertion — voir le rapport de la tache pour le releve de cette
-   * mutation (le plafond de regime etabli actuel, 320, reste tres en
-   * dessous de `MAX_ENTITIES` : c'est la garde qui compte ici, pas la valeur
-   * de reglage).
+   * Bornee par `MAX_ENTITIES` (le plafond dur du salon), meme a un numero de
+   * vague extreme. Le regime etabli actuel est tres en dessous : c'est la garde
+   * `Math.min(..., MAX_ENTITIES)` qui compte ici, pas la valeur de reglage.
    */
   it('reste bornee par MAX_ENTITIES, meme a un numero de vague extreme', () => {
     const { min, max } = waveCountBounds(1_000_000);
@@ -227,12 +210,9 @@ describe('waveCountBounds', () => {
 });
 
 /**
- * ⚠️ **Ce bloc vit dans `back/` et pas dans `shared/paliers.test.ts`, contre la
- * liste de fichiers de la tache 1 du plan.** Il n'y a pas le choix :
- * `waveCountBounds` vit dans `back/src/wave-director.ts` et `shared/` ne peut
- * pas importer `back/` — la dependance ne va que dans un sens. Le mesurer
- * ailleurs qu'ici demanderait de deplacer `waveCountBounds` dans `shared/`,
- * ce que rien d'autre ne justifie.
+ * Ce bloc vit dans `back/` et pas dans `shared/paliers.test.ts` : il a besoin
+ * de `waveCountBounds` (`back/src/wave-director.ts`), et `shared/` ne peut pas
+ * importer `back/`.
  */
 describe("la divergence du palier sur le nombre d'ennemis", () => {
   /**
@@ -247,11 +227,7 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
     return waveCountBounds(1_000_000).max * waveCountScale(k);
   }
 
-  /**
-   * **Le verdict de l'etape 3 de la tache 1 : le plafond TIENT sur dix
-   * paliers**, et il tient avec une marge d'un facteur douze au palier 0.
-   * C'est une mesure, pas un espoir : le test la refait a chaque execution.
-   */
+  /** Le plafond TIENT sur dix paliers ; le test le remesure a chaque execution. */
   it('reste sous MAX_ENTITIES sur les dix paliers que le §7 de la spec fait simuler', () => {
     for (let k = 0; k <= 10; k++) {
       expect(plafondAuPalier(k)).toBeLessThan(MAX_ENTITIES);
@@ -262,8 +238,7 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
    * ⚠️ **La moitie qui empeche le test precedent de passer pour rien.** Une
    * echelle nulle (`PALIER_COUNT_SCALE = 0`) le passerait aussi bien : la
    * pression doit MONTER, et le plafond doit finir par ceder — sinon la
-   * formule est plate et la run n'a pas de fin (§3 de la spec, « les deux sens
-   * comptent »).
+   * formule est plate et la run n'a pas de fin.
    *
    * Le palier ou elle cede est **derive, jamais ecrit** : c'est un rapport
    * entre trois constantes qui bougeront toutes. On verifie seulement qu'il
@@ -285,27 +260,19 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
     expect(premierDebordement).toBeLessThan(1000);
   });
 
-  // ⚠️ **Ce qui se passe au-dela n'est pas un plantage, et personne ne l'ecrit
-  // pour cette etape : `Horde.spawn` tronque deja** a `capacity` et
-  // `MAX_PER_WAVE`, et `Room.step` compte la troncature dans
-  // `RoomMetrics.truncatedSpawns`. Aucune garde nouvelle n'est donc ajoutee —
-  // une seconde garde qui ne se declencherait jamais serait exactement le motif
-  // « deux gardes qui se couvrent » rencontre quinze fois dans ce depot. Et le
-  // plafond de `waveCountBounds` lui-meme est deja garde plus haut
-  // (« reste bornee par MAX_ENTITIES, meme a un numero de vague extreme »).
+  // ⚠️ **Au-dela, ce n'est pas un plantage : `Horde.spawn` tronque deja** a
+  // `capacity` et `MAX_PER_WAVE`, et `Room.step` compte la troncature dans
+  // `RoomMetrics.truncatedSpawns`. Pas de seconde garde qui ne se declencherait
+  // jamais ; le plafond de `waveCountBounds` est garde plus haut.
 
   /**
-   * ⚠️ **L'AUTRE MOITIE DU §7 B, et elle a change de forme a la tache 3.** La
-   * question du plan est *« la difficulte diverge-t-elle ? »*, et depuis que
-   * `palierHp` exempte la chair a canon, la reponse ne se lit plus sur
-   * `hpScale` seule : une vague legere de palier 10 pese exactement ce qu'elle
-   * pesait au palier 0, a l'effectif pres. Ce qui monte, c'est le NOMBRE, la
-   * part de lourds, et le boss.
+   * ⚠️ **La difficulte diverge-t-elle ?** `palierHp` exempte la chair a canon :
+   * la reponse ne se lit donc pas sur `hpScale` seule, une vague legere de
+   * palier 10 pese ce qu'elle pesait au palier 0, a l'effectif pres. Ce qui
+   * monte, c'est le NOMBRE, la part de lourds, et le boss.
    *
-   * Le chiffre releve au banc `bench/boss.bench.ts` : la charge d'un palier
-   * (4 vagues au mix reel + le boss) passe de 13 040 PV au palier 0 a 54 767 PV
-   * au palier 10, soit **x4,2**. Ce test garde la FORME de cette courbe — elle
-   * monte, et elle ne s'emballe pas — pas les nombres du releve.
+   * Ce test garde la FORME de la charge d'un palier (4 vagues + le boss) — elle
+   * monte, et ne s'emballe pas — pas ses valeurs (mesurees par `bench/boss.bench.ts`).
    */
   it('fait monter la charge d un palier sans l emballer, sur dix paliers', () => {
     const moyen = (waveCountBounds(1_000_000).min + waveCountBounds(1_000_000).max) / 2;
@@ -313,10 +280,9 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
     function chargeDuPalier(k: number): number {
       const effectif = moyen * waveCountScale(k);
       const parVague = effectif * (0.8 * palierHp(LIGHT_HP, k) + 0.2 * palierHp(HEAVY_HP, k));
-      // ⚠️ **A effectif PLEIN, et il faut le dire** : depuis la tache 3 bis les
-      // PV du boss dependent aussi du nombre de joueurs. La charge d'un palier
-      // n'a donc plus de valeur unique — celle-ci est celle d'une equipe de
-      // quatre, la seule que la porte du §7 ait mesuree.
+      // ⚠️ **A effectif PLEIN** : les PV du boss dependent du nombre de
+      // joueurs, la charge d'un palier n'a donc pas de valeur unique. Celle-ci
+      // est celle d'une equipe de quatre.
       return WAVES_PER_PALIER * parVague + bossHp(k, MAX_PLAYERS);
     }
 
@@ -327,7 +293,7 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
     process.stdout.write(
       `charge d'un palier : x${facteur.toFixed(2)} entre le palier 0 et le 10\n`,
     );
-    // ⚠️ **Les deux sens comptent** (§3 de la spec) : trop plate, la run n'a
+    // ⚠️ **Les deux sens comptent** : trop plate, la run n'a
     // pas de fin ; trop raide, le palier 8 est un mur. Une bande large, parce
     // que ce qui est garde ici est un ORDRE DE GRANDEUR — le reglage fin se
     // juge en jeu, pas ici.
@@ -336,11 +302,9 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
   });
 
   /**
-   * ⚠️ **« Si le palier 8 depasse `MAX_ENTITIES`, c'est `waveCountBounds` qui
-   * plafonne — le dire, pas le decouvrir. »** Il ne le depasse pas : au palier
-   * 10 la borne haute d'une vague vaut 800, soit 20 % de `MAX_ENTITIES`. Ce
-   * test l'ecrit pour qu'on n'ait pas a le redecouvrir, et il PARLE, parce que
-   * la valeur interessante est le rapport, pas le booleen.
+   * Si le palier 8 depassait `MAX_ENTITIES`, c'est `waveCountBounds` qui
+   * plafonnerait : ce test l'ecrit plutot que de le laisser decouvrir, et il
+   * PARLE, parce que la valeur interessante est le rapport, pas le booleen.
    */
   it('dit ou en est le palier 8 vis-a-vis de MAX_ENTITIES', () => {
     const auPalier8 = plafondAuPalier(8);
@@ -412,8 +376,8 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     expect(cinquieme?.boss).toBe(true);
     expect(cinquieme?.order.count).toBe(1);
 
-    // ⚠️ **Plus de verrou** (retour de playtest) : personne ne l'a tue, et un
-    // boss revient quand meme toutes les `WAVES_PER_PALIER` vagues ordinaires.
+    // ⚠️ **Pas de verrou** : personne ne l'a tue, et un boss revient quand
+    // meme toutes les `WAVES_PER_PALIER` vagues ordinaires.
     const indices = emis.flatMap((e, i) => (e.boss ? [i] : []));
     expect(indices.length).toBeGreaterThan(1);
     for (let k = 1; k < indices.length; k++) {
@@ -422,8 +386,6 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
   });
 
   /**
-   * L'archetype du boss (etape 6a, tache 3).
-   *
    * ⚠️ **Les deux moities.** « Le boss a l'archetype de boss » passe tout seul
    * avec un generateur qui ne saurait plus produire QUE des boss ; « les vagues
    * ordinaires ne l'ont pas » passe tout seul avec un generateur qui ne
@@ -445,8 +407,8 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
   it('ne cesse PAS de lacher des vagues pendant le combat de boss', () => {
     // ⚠️ **Ce test existe pour empecher une « correction » future.**
     // L'intuition « le boss, seul, en duel » est tentante et fausse pour ce
-    // genre : un bullet heaven ou la horde disparait est un jeu qui s'arrete
-    // (§2 et §9 de la spec, ecart assume). Sans cette assertion, geler les
+    // genre : un bullet heaven ou la horde disparait est un jeu qui s'arrete.
+    // Sans cette assertion, geler les
     // vagues pendant le boss passerait tous les autres tests de ce fichier.
     const emis = emissions(1234, 2 * MINUTE, false);
     const indexBoss = emis.findIndex((e) => e.boss);
@@ -460,7 +422,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 
   it('ne fait PAS avancer le palier avec le temps : sans mort de boss, il reste a zero', () => {
     // La premiere moitie. Un palier date par tick punirait l'equipe qui peine
-    // et ennuierait celle qui domine (§2 de la spec).
+    // et ennuierait celle qui domine.
     const emis = emissions(1234, 10 * MINUTE, false);
 
     expect(emis.length).toBeGreaterThan(50);
@@ -574,7 +536,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     for (let tick = 0; tick < 4 * MINUTE; tick++) {
       const g = d.dueWave(tick, QUATRE, QUATRE, 8);
       if (g.length > 0) {
-        // ⚠️ L'ordre du porteur (etape 11) a SON ancre, a 1 500 px : il n'est
+        // ⚠️ L'ordre du porteur a SON ancre, a 1 500 px : il n'est
         // pas une escorte, et ce test parle des vagues ordinaires.
         groupes.push(g.filter((o) => o.archetype !== PORTEUR_ARCHETYPE));
       }
@@ -640,7 +602,7 @@ describe('la difficulte suit le niveau et le nombre de joueurs', () => {
 describe('etape 11 : le directeur demande le porteur de coffre', () => {
   const estPorteur = (o: WaveOrder): boolean => o.archetype === PORTEUR_ARCHETYPE;
 
-  /** FNV-1a 32 bits : une empreinte du flux, comparee a celle relevee sur main. */
+  /** FNV-1a 32 bits : une empreinte du flux des ordres. */
   function fnv1a(s: string): number {
     let h = 0x811c9dc5;
     for (let i = 0; i < s.length; i++) {
@@ -714,9 +676,9 @@ describe('etape 11 : le directeur demande le porteur de coffre', () => {
   });
 
   /**
-   * ⚠️ **Aucun tirage de plus** (§2.2 de la spec) : l'empreinte des ordres
+   * ⚠️ **Le porteur ne consomme aucun tirage** : l'empreinte des ordres
    * ORDINAIRES — tick, graine, archetype, formation, ancre, effectif, tout sauf
-   * `waveId` — a ete RELEVEE sur main avant l'etape, avec exactement ce decor.
+   * `waveId` — est celle d'un directeur sans porteur, avec exactement ce decor.
    * Un porteur qui consommerait un seul `rng()` la ferait mentir.
    */
   it('les ordres ordinaires sont bit-identiques a ceux d avant l etape', () => {

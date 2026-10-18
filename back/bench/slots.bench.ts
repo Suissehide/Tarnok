@@ -1,26 +1,14 @@
 /**
- * Banc des slots (etape 4, tache 12) — combien coute le tir depuis plusieurs
- * armes ?
+ * Banc des slots — combien coute le tir depuis plusieurs armes ?
  *
- * La tache 12 du plan demandait de rejouer les trois bancs parce que « le tir
- * depuis plusieurs slots change le cout du tick ». Aucun des trois ne le
- * mesurait : `sim` ne fait avancer que la horde, `net` ne compte que des
- * octets, `steering` ne regarde que la repulsion. Ce banc-la repond a la
- * question posee.
- *
- * Ce qui est en jeu : `Projectiles.collide` est en O(projectiles x entites), et
- * la tache 7 a mesure qu'un salon de quatre joueurs aux slots d'armes pleins
- * entretient un ordre de grandeur de plus de projectiles qu'avec la seule arme
- * neutre. Un tel facteur pouvait se payer cher.
- *
- * ⚠️ **Les chiffres cites ici etaient calcules a CINQ slots**, et la tache 19
- * a ramene `WEAPON_SLOTS` a quatre : ils ont ete retires plutot que corriges a
- * l'aveugle — un banc rapporte ce qu'il mesure, il n'a pas a promettre un
- * nombre d'avance. Les colonnes ci-dessous sont derivees de `WEAPON_SLOTS`,
- * donc le banc suit le reglage au lieu de lever « slots d'armes pleins ».
+ * `Projectiles.collide` est en O(projectiles x entites), et un salon de quatre
+ * joueurs aux slots pleins entretient un ordre de grandeur de plus de
+ * projectiles qu'avec la seule arme neutre. Les bancs `sim`, `net` et
+ * `steering` ne mesurent pas ce cout.
  *
  * On compare le meme salon a l'arme neutre seule puis a un arsenal plein,
- * empile de plus en plus, horde constante.
+ * empile de plus en plus, horde constante. Les colonnes sont derivees de
+ * `WEAPON_SLOTS`, donc le banc suit le reglage.
  */
 import { CARD } from '@shared/cards';
 import { MAX_ENTITIES, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
@@ -62,10 +50,9 @@ function mesure(
   // `refId` recopie a la main leve des que `WEAPON_SLOTS` change, et le banc
   // entier meurt au premier appel.
   //
-  // ⚠️ **Depuis les classes (etape 8), un joueur arrive deja arme** : son arme
-  // de classe occupe un slot. On la compte, et on complete jusqu'a `slots`
-  // avec ce qu'il ne porte pas encore — sans quoi la derniere carte levait
-  // « slots d'armes pleins ».
+  // ⚠️ Un joueur arrive deja arme : son arme de classe occupe un slot. On la
+  // compte, et on complete jusqu'a `slots` avec ce qu'il ne porte pas encore,
+  // sans quoi la derniere carte leve « slots d'armes pleins ».
   for (let p = 1; p <= 4; p++) {
     const tenues = [...(room.loadoutOf(p)?.weaponIds ?? [])];
     const arsenal = [

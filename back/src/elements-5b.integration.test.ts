@@ -31,42 +31,26 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * **Le livrable de la tache 11 de l'etape 5b :** quatre elements, six
- * reactions, zero octet de plus.
- *
- * L'etape 5b a ajoute deux elements (Foudre, Poix), une statistique
- * (l'armure), cinq reactions specifiques et quatre armes — pour ZERO octet
- * supplementaire sur le fil (`ZONE_BYTES`, `REACTION_BYTES` et
- * `SNAPSHOT_HEADER_BYTES` ne bougent pas). Ce fichier assene que tout ca
- * fonctionne ENSEMBLE, sur de vraies sockets :
+ * Quatre elements, six reactions, zero octet de plus sur le fil, verifie
+ * ENSEMBLE sur de vraies sockets :
  *
  * 1. quatre joueurs portant quatre elements differents declenchent les SIX
- *    reactions (Choc thermique, Surchauffe, Embrasement, Court-circuit,
- *    Supraconduction, Verglas), chacune identifiee au bon endroit ;
+ *    reactions, chacune identifiee au bon endroit ;
  * 2. un joueur seul portant deux elements n'en declenche jamais qu'UNE ;
- * 3. le trafic par joueur ne bouge pas, mesure dans les DEUX sens : un salon
- *    ou la Foudre et la Poix tirent, un salon ou elles ne tirent jamais.
+ * 3. le cout par message ne bouge pas, que la Foudre tire ou non.
  *
- * ⚠️ **Les trois chiffres de replication a 0,000 px ne sont PAS mesures ici.**
- * Ils vivent dans `shared/horde.replication.test.ts` (scenarios ZF0-ZF2 pour
- * la Supraconduction, VF0-VF2 pour Verglas), en simulation pure — le decor
- * d'un test d'integration balaie la horde par `Horde.kill`, qui court-circuite
- * volontairement le lot `DEATHS` (voir le rapport de la tache 11 de l'etape
- * 6a) : un client qui deriverait sa horde du fil divergerait par construction,
- * et le chiffre lu ici ne dirait rien des reactions.
+ * ⚠️ **La replication a 0,000 px n'est PAS mesuree ici** mais dans
+ * `shared/horde.replication.test.ts` : le decor d'un test d'integration
+ * balaie la horde par `Horde.kill`, qui court-circuite le lot `DEATHS`, donc
+ * un client derive du fil divergerait par construction.
  *
- * ⚠️ **Le harnais est celui de `draft.integration.test.ts` /
- * `elements.integration.test.ts` / `portal.integration.test.ts`** : quatre
- * vraies sockets, `buildServer({ roomSeed })`, `app.rooms`, monstres poses a
- * la main. Chaque fichier de ce depot duplique ce harnais plutot que de le
- * partager (aucun des trois existants ne s'importe l'un l'autre) — ce fichier
- * suit la meme convention.
+ * Le harnais (quatre sockets, `buildServer({ roomSeed })`, monstres poses a
+ * la main) est duplique d'un fichier d'integration a l'autre, par convention.
  */
 
 /** Graine imposee au salon : ce test ne doit rien devoir au hasard. */
 const ROOM_SEED = 0x5b11_ea01;
 
-/** Quatre joueurs : c'est le nombre que le livrable exige. */
 const PLAYER_COUNT = 4;
 
 function armeParNom(nom: string): Weapon {
@@ -82,25 +66,20 @@ function porteeDe(weapon: Weapon): number {
   return (weapon.projectileSpeed * weapon.projectileLifeTicks) / TICK_HZ;
 }
 
-// Braise rapide et courte portee. L'Eventail de l'etape 5a est devenu la Roue
-// de lames, NEUTRE : le lance-flammes est desormais la Braise a tir rapide et
-// court qui tient ce role (portee ~169 px, au-dela des 130 px vises ici).
+// Braise rapide et courte portee (~169 px, au-dela des 130 px vises ici).
 const LANCE_FLAMMES = armeParNom('Lance-flammes');
-// Givre rapide (ancienne, etape 5a).
 const FLECHES_JUMELLES = armeParNom('Flèches jumelles');
-// Les deux armes de Foudre de la tache 9 de l'etape 5b.
 const BOBINE_TESLA = armeParNom('Bobine Tesla');
 const CANON_A_ARC = armeParNom('Canon à arc');
-// La Poix a projectile. La Seringue a poix de la tache 9 de l'etape 5b est
-// devenue l'Encensoir de poix, un HALO qui ne tire rien (etape 8) : ce fichier
-// vise ses cibles, donc le Chaudron reste la seule Poix qui le puisse.
+// La seule Poix qui tire un projectile : l'Encensoir de poix est un halo, il
+// ne vise rien.
 const CHAUDRON_A_POIX = armeParNom('Chaudron à poix');
 
 /**
- * Ou tombe un tir de Chaudron : un MORTIER depuis l'etape 12, qui ne touche
- * personne en vol et ne frappe (et ne marque) qu'au point de chute, a sa
- * portee pile. Une cible du Chaudron se pose donc A cette distance, pas en
- * deca : un peu court (la moitie du souffle), pour que la chute la couvre.
+ * Ou tombe un tir de Chaudron : un MORTIER, qui ne touche personne en vol et
+ * ne frappe (et ne marque) qu'au point de chute, a sa portee pile. Une cible
+ * du Chaudron se pose donc A cette distance, un peu court (la moitie du
+ * souffle), pour que la chute la couvre.
  */
 const CHUTE_POIX = porteeDe(CHAUDRON_A_POIX) - CHAUDRON_A_POIX.blastRadius / 2;
 
@@ -123,18 +102,15 @@ interface Client {
   lastSnapshot: SnapshotMessage | null;
   /**
    * La taille BRUTE (`ArrayBuffer.byteLength`) de CHAQUE message recu,
-   * regroupee par type — c'est ce que la mesure de trafic (dernier test de ce
-   * fichier) interroge. Propre a ce fichier : aucun des trois autres fichiers
-   * d'integration n'en a besoin.
+   * regroupee par type, pour la mesure de trafic (dernier test).
    */
   rawByType: Map<number, number[]>;
   /**
    * Un releve par `SNAPSHOT` : la barre qu'il porte, et le nombre de
-   * `REACTION` chargees (`synergyCharge === true`) deja arrivees sur CETTE
-   * socket. Meme mecanisme que `elements.integration.test.ts` (tache 10) —
-   * c'est ce qui rend la comparaison « barre = charges » insensible a
-   * l'horloge : `Session#broadcast` envoie les `REACTION` d'un tick AVANT le
-   * `SNAPSHOT` du meme tick, et la socket preserve l'ordre.
+   * `REACTION` chargees deja arrivees sur CETTE socket. La comparaison
+   * « barre = charges » est insensible a l'horloge : `Session#broadcast`
+   * envoie les `REACTION` d'un tick AVANT le `SNAPSHOT` du meme tick, et la
+   * socket preserve l'ordre.
    */
   jalons: { synergy: number; chargees: number }[];
   seq: number;
@@ -209,8 +185,8 @@ async function connect(code: string): Promise<Client> {
     client.received.push(msg);
   });
 
-  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
-  // un slot : chaque client de ce harnais a donc son propre compte.
+  // Toute socket de jeu presente son jeton AVANT d'obtenir un slot : chaque
+  // client de ce harnais a donc son propre compte.
   const { token } = await createAccount();
   await ouverte;
   ws.send(encodeHello(token));
@@ -294,7 +270,7 @@ function zonesDe(client: Client): ZoneMessage[] {
   return client.received.filter((m): m is ZoneMessage => m.type === MSG.ZONE);
 }
 
-/** Envoie une visee sur la socket : sans elle, aucune arme ne tire (tache 13). */
+/** Envoie une visee sur la socket : sans elle, aucune arme ne tire. */
 function vise(client: Client, dx: number, dy: number): void {
   const len = Math.hypot(dx, dy);
   if (len === 0) {
@@ -306,20 +282,16 @@ function vise(client: Client, dx: number, dy: number): void {
   );
 }
 
-/** Petit raccourci local : `room.grantCard` attend un `Card`, pas un id nu. */
 function equipe(room: Room, playerId: number, weaponId: number): void {
   room.grantCard(playerId, { nature: CARD.WEAPON, refId: weaponId });
 }
 
 /**
  * **La barre vaut, a CHAQUE instant, le nombre de reactions chargees deja
- * annoncees — plafonnee, et rien d'autre.**
- *
- * Meme mecanisme que `elements.integration.test.ts` (tache 10, §7) : une
- * barre qui monterait a chaque reaction sans comparer les identites ferait
- * rougir chaque releve ou une reaction non chargee est arrivee ; une barre
- * qui ne montrait JAMAIS (la mutation `charge = false` de `Room.step`,
- * corrigee a cette tache) ferait rougir des que `chargees > 0`.
+ * annoncees — plafonnee, et rien d'autre.** Une barre qui monterait a chaque
+ * reaction sans comparer les identites rougit des qu'une reaction non
+ * chargee arrive ; une barre qui ne monte JAMAIS (`charge = false` dans
+ * `Room.step`) rougit des que `chargees > 0`.
  */
 function barreSuitLesCharges(client: Client): void {
   const jalons = client.jalons.filter((j) => j.chargees > 0);
@@ -331,34 +303,25 @@ function barreSuitLesCharges(client: Client): void {
 
 describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plus', () => {
   /**
-   * **Le livrable central : quatre joueurs, quatre elements, les six paires
-   * possibles — chacune identifiee, aucune paire fantome.**
+   * **Quatre joueurs, quatre elements, les six paires possibles — chacune
+   * identifiee, aucune paire fantome.**
    *
-   * Quatre elements distincts font exactement C(4,2) = 6 paires : Braise+Givre
-   * (Choc thermique, generique de l'etape 5a), Braise+Foudre (Surchauffe),
-   * Braise+Poix (Embrasement), Givre+Foudre (Supraconduction), Givre+Poix
-   * (Verglas), Foudre+Poix (Court-circuit). Un joueur par element porte une
-   * arme REELLE de cet element ; pour que chaque PAIRE ait sa propre cible
-   * (six paires, quatre porteurs), l'AUTRE element de chaque paire est
-   * entretenu a la main sur la cible (meme technique que le decor
-   * inter-joueurs de `elements.integration.test.ts`, tache 10) — c'est le seul
-   * geste manuel de ce test, tout le reste (armes, tirs, visee, zones,
-   * reactions) passe par le jeu et par le fil.
+   * Quatre elements font C(4,2) = 6 paires : Braise+Givre (Choc thermique,
+   * generique), Braise+Foudre (Surchauffe), Braise+Poix (Embrasement),
+   * Givre+Foudre (Supraconduction), Givre+Poix (Verglas), Foudre+Poix
+   * (Court-circuit). Un joueur par element porte une arme REELLE ; pour que
+   * chaque paire ait sa propre cible, l'AUTRE element est entretenu a la main
+   * sur la cible — seul geste manuel du test, tout le reste passe par le jeu
+   * et par le fil.
    *
-   * ⚠️ **Six cibles, ecartees de plus de `4 * ZONE_RADIUS`, dans les DEUX
-   * sens.** Sans cette garde, une zone d'une cible pourrait recouvrir celle
-   * d'une voisine et declencher une SEPTIEME reaction fantome (`onZoneCreated`,
-   * `back/src/combat.ts`) : la lecture « les six paires se declenchent »
-   * survivrait a un salon qui declenche n'importe quoi a cote — exactement le
-   * piege du §8 de la spec.
+   * ⚠️ **Six cibles, ecartees de plus de `4 * ZONE_RADIUS`.** Sinon une zone
+   * pourrait recouvrir celle d'une voisine et declencher une SEPTIEME reaction
+   * fantome (`onZoneCreated`), et « les six se declenchent » survivrait a un
+   * salon qui declenche n'importe quoi a cote.
    *
-   * ⚠️ **Chaque cible est aussi INTER-JOUEURS** : `markBy` designe un joueur,
-   * `firer` en est TOUJOURS un autre, sur les six lignes. C'est le scenario
-   * exact ou la Synergie du §7 doit charger — et ce fichier est le seul du
-   * depot a le verifier a quatre elements sur une vraie socket. Une revue a
-   * mute `Room.step` (`const charge = t.markBy !== t.by` -> `const charge =
-   * false`) et ce test restait vert tant que la barre n'etait pas lue : voir
-   * la note dans la premiere assertion ci-dessous.
+   * ⚠️ **Chaque cible est aussi INTER-JOUEURS** (`markBy` et `firer` toujours
+   * differents) : c'est le scenario ou la Synergie doit charger, et ce test
+   * le seul a le verifier a quatre elements sur une vraie socket.
    */
   it('quatre joueurs portant quatre elements differents declenchent les six reactions, une par une', async () => {
     const code = await createRoomCode();
@@ -426,7 +389,7 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
         markBy: () => a.playerId,
         firer: d,
         pos: pd,
-        // En diagonale, a la distance de chute du mortier (etape 12).
+        // En diagonale, a la distance de chute du mortier.
         offsetX: CHUTE_POIX / Math.SQRT2,
         offsetY: CHUTE_POIX / Math.SQRT2,
         fireWeapon: CHAUDRON_A_POIX,
@@ -466,10 +429,8 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
       },
     ] as const;
 
-    // ⚠️ **Le couple exact, derive de l'element marque et de l'element qui
-    // tire — jamais suppose.** `packElementPair` canonicalise l'ordre, donc
-    // c'est le meme calcul quel que soit celui des deux qui « arrive en
-    // premier » dans le decor.
+    // Le couple exact, derive de l'element marque et de l'element qui tire —
+    // jamais suppose. `packElementPair` canonicalise l'ordre.
     const cibles = brut.map((def) => ({
       ...def,
       x: def.pos.x + def.offsetX,
@@ -478,14 +439,12 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
       fireElement: def.fireWeapon.element,
     }));
 
-    // Six paires DISTINCTES : c'est le §6.3 tout entier, verifie une seule
-    // fois plutot que suppose a chaque assertion qui suit.
+    // Six paires DISTINCTES, verifie une fois plutot que suppose ensuite.
     expect(new Set(cibles.map((cible) => cible.pair)).size).toBe(6);
 
-    // ⚠️ **Garde 1 : chaque cible reste a portee de l'arme qui doit la
-    // declencher.** Sans elle, une cible hors de portee ne recevrait jamais
-    // de tir, et « la reaction ne s'est jamais produite » se lirait comme un
-    // succes silencieux du reste du test.
+    // Garde 1 : chaque cible reste a portee de l'arme qui doit la declencher.
+    // Sinon la cible ne recevrait jamais de tir et le test echouerait sans
+    // dire pourquoi.
     for (const cible of cibles) {
       const dist = Math.hypot(cible.offsetX, cible.offsetY);
       expect(
@@ -494,11 +453,8 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
       ).toBe(true);
     }
 
-    // ⚠️ **Garde 2 : les six cibles restent etanches les unes des autres, DANS
-    // LES DEUX SENS.** Sans elle, une zone laissee par une reaction pourrait
-    // recouvrir celle d'une cible voisine et declencher une SEPTIEME reaction
-    // fantome (`onZoneCreated`) — la lecture « les six se declenchent » se
-    // lirait alors aussi bien « n'importe quoi se declenche a cote ».
+    // Garde 2 : les six cibles restent etanches les unes des autres (voir le
+    // docbloc : pas de reaction fantome par recouvrement de zones).
     for (let i = 0; i < cibles.length; i++) {
       for (let j = i + 1; j < cibles.length; j++) {
         const ci = cibles[i];
@@ -540,9 +496,8 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
         room.horde.y[slot] = cible.y;
         room.horde.vx[slot] = 0;
         room.horde.vy[slot] = 0;
-        // Le seul geste manuel de ce decor : entretenir l'AUTRE element de la
-        // paire, pour que l'arme reelle du tireur trouve toujours de quoi
-        // reagir.
+        // Le seul geste manuel : entretenir l'AUTRE element de la paire, pour
+        // que l'arme reelle du tireur trouve toujours de quoi reagir.
         room.horde.applyMark(slot, cible.markElement, cible.markBy(), room.tick);
       }
 
@@ -602,15 +557,10 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     // ---- 1. Chaque cible a produit AU MOINS deux reactions, et EXACTEMENT
     //         celles de sa propre paire — jamais une autre. --------------------
     //
-    // ⚠️ **Et CHACUNE charge la barre.** Les six cibles ci-dessus sont TOUTES
-    // inter-joueurs par construction (`markBy` designe un joueur, `firer` en
-    // est un AUTRE, sur les six lignes) : c'est precisement le scenario ou
-    // `markBy !== by`, et donc le SEUL endroit ou la regle centrale du
-    // couplage cooperatif (§7) s'observe sur quatre vraies sockets. Une
-    // mutation qui ferait tomber la barre a JAMAIS (`charge = false` dans
-    // `Room.step`) laisserait les cinq autres assertions de ce test
-    // parfaitement vertes — sans celle-ci, ce fichier ne verifierait jamais
-    // la regle que le code lui-meme appelle « le coeur du projet ».
+    // ⚠️ **Et CHACUNE charge la barre.** Les six cibles sont inter-joueurs
+    // (`markBy !== by`) : sans cette assertion, `charge = false` dans
+    // `Room.step` laisserait toutes les autres vertes, et la regle centrale du
+    // couplage cooperatif ne serait jamais verifiee sur vraies sockets.
     const buckets = cibles.map((cible) => recues.filter(bucketDe(cible)));
     for (let i = 0; i < cibles.length; i++) {
       const cible = cibles[i];
@@ -635,10 +585,8 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
 
     // ---- 2. Champ a champ : AUCUNE reaction n'echappe aux six lots. --------
     //
-    // ⚠️ **La ligne qui tue « les six se declenchent, et n'importe quoi
-    // d'autre aussi ».** Sans elle, une reaction fantome nee d'un recouvrement
-    // de zones entre deux cibles voisines (ou d'une vague apparue par
-    // accident) passerait inapercue : chaque lot serait toujours assez
+    // ⚠️ Sans cette ligne, une reaction fantome (recouvrement de zones, vague
+    // apparue par accident) passerait inapercue : chaque lot serait assez
     // fourni, mais leur somme ne compterait plus le total recu.
     const total = buckets.reduce((n, lot) => n + lot.length, 0);
     expect(total, 'des reactions n appartiennent a aucune des six cibles').toBe(recues.length);
@@ -675,47 +623,25 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
    * **Un joueur seul, deux elements : jamais qu'une seule paire — et
    * l'assertion « la barre ne charge pas » rendue capable de DISTINGUER.**
    *
-   * Le joueur `a` porte a la fois Givre et Poix, REELLEMENT (deux armes
-   * distinctes) : quelle que soit laquelle des deux touche en premier sur sa
-   * PROPRE cible (solo), la seule paire que DEUX elements peuvent former est
-   * C(2, 2) = 1 — Verglas. Aucun decor ne peut faire surgir une sixieme
-   * paire fantome ici : c'est une propriete du MODELE (une seule paire
-   * possible avec deux elements), pas une convention du harnais.
+   * `a` porte REELLEMENT Givre et Poix : sur sa propre cible (solo), deux
+   * elements ne forment qu'une paire, Verglas. C'est une propriete du modele,
+   * pas une convention du harnais.
    *
-   * ⚠️ **Une revue a mute `Room.step` (`charge = t.markBy !== t.by` ->
-   * `charge = false`) et la version precedente de ce test restait VERTE.**
-   * « La barre ne charge jamais pour un joueur seul » est vrai quel que soit
-   * le code — un seul joueur ne peut ecrire que sa propre identite des DEUX
-   * cotes de la comparaison — donc une assertion qui ne verifie QUE ce cas
-   * est vraie A VIDE : elle ne distingue pas « la regle fonctionne et rend
-   * toujours faux ici » de « la regle est cassee et rend toujours faux
-   * partout ». La parade, tenue par ce depot depuis la tache 8 de l'etape 5a
-   * (le decor « inter-joueurs contre solo » de `elements.integration.test.ts`) :
-   * une SECONDE cible cooperative, ou `b` (deja connecte, jamais arme)
-   * entretient une marque de Givre a la main.
+   * ⚠️ **« La barre ne charge jamais pour un joueur seul » est vrai A VIDE** :
+   * un seul joueur ecrit sa propre identite des deux cotes de la comparaison,
+   * donc l'assertion seule resterait verte avec `charge = false` dans
+   * `Room.step`. D'ou une SECONDE cible cooperative, cote a cote dans le meme
+   * releve, ou `b` (jamais arme) entretient le Givre a la main.
    *
-   * ⚠️ **La cible cooperative est declenchee par `c`, jamais par `a` —
-   * corrige a la revue finale de l'etape 5b, apres un echec MESURE a 2
-   * executions sur 11 (~18%) de la suite `back` complete.** Le premier jet
-   * faisait tirer `a` sur les DEUX cibles, en alternant sa visee par phase :
-   * sa PROPRE fleche de Givre (`FLECHES_JUMELLES`, la meme arme que celle
-   * qui sert deja a la cible solo) atterrissait alors, de temps en temps,
-   * sur la cible cooperative — et quand elle tombait dans le MEME pas que sa
-   * Poix, `markBy` valait `a` au lieu de `b` : `charge` tombait a faux. Le
-   * decor ASSENAIT la propriete, il ne la GARANTISSAIT pas. `a` ne vise plus
-   * JAMAIS la cible cooperative desormais : ses deux armes ne peuvent donc
-   * plus physiquement l'atteindre, quel que soit le tick. `c` (deja
-   * connecte, jamais arme d'autre chose) porte le SEUL `CHAUDRON_A_POIX` et
-   * vise en continu la cible cooperative — sa Poix declenche, `b` entretient
-   * le Givre : `b` est desormais la SEULE source de Givre de cette cible, et
-   * `markBy` (b) differe necessairement de `by` (c) — la barre DOIT charger,
-   * sans dependre d'aucun ordre d'arrivee entre deux projectiles.
+   * ⚠️ **La cible cooperative est declenchee par `c`, jamais par `a`.** Si `a`
+   * la visait aussi, sa propre fleche de Givre y tomberait parfois dans le
+   * meme pas que sa Poix : `markBy` vaudrait `a`, `charge` tomberait a faux,
+   * et le test echouerait par intermittence. `c` ne porte que le Chaudron :
+   * `b` est la SEULE source de Givre de cette cible, donc `markBy` (b) differe
+   * toujours de `by` (c), sans dependre d'aucun ordre d'arrivee.
    *
-   * La paire reste Verglas dans les DEUX cas (toujours C(2,2) = 1 dans le
-   * SALON entier : ni `b` ni `c` n'ajoutent un element que le salon ne
-   * connaisse deja — Givre et Poix, rien d'autre). Les deux cibles, cote a
-   * cote dans le meme releve, sont ce qui rend l'assertion negative enfin
-   * capable de distinguer.
+   * La paire reste Verglas partout : ni `b` ni `c` n'ajoutent un element que
+   * le salon ne connaisse deja.
    */
   it('un joueur seul portant Givre et Poix ne declenche jamais que Verglas ; seule une marque inter-joueurs charge la barre', async () => {
     const code = await createRoomCode();
@@ -747,22 +673,19 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
 
     // Cible SOLO : ni marque ni identite d'un autre joueur n'y touche
     // jamais — `a` seul la vise, avec ses deux armes.
-    // ⚠️ **A la chute du Chaudron (etape 12)**, plus a 150 px : le mortier ne
-    // touche qu'en tombant. Et dans l'axe x PILE : la visee (127, 0) est
-    // exacte, donc les deux Fleches jumelles passent a `CHUTE_POIX x
-    // tan(0,075)` ≈ 29 px de la cible, sous le rayon de touche de 32.
+    // ⚠️ **A la chute du Chaudron** : le mortier ne touche qu'en tombant. Et
+    // dans l'axe x PILE : la visee (127, 0) est exacte, donc les deux Fleches
+    // jumelles passent a `CHUTE_POIX x tan(spread / 2)` de la cible, sous
+    // `PROJECTILE_HIT_RADIUS` (garde ci-dessous).
     const SOLO_OFFSET_X = CHUTE_POIX;
     const SOLO_OFFSET_Y = 0;
     const soloX = pa.x + SOLO_OFFSET_X;
     const soloY = pa.y;
 
     // Cible COOPERATIVE : `b` y entretient Givre a la main, la Poix reelle de
-    // `c` la declenche — `a` ne la vise jamais. Ancree sur `c`, qui la vise
-    // reellement (et non sur `a`, qui ne la vise plus jamais) : assez loin de
-    // la cible solo pour qu'aucune zone ne recouvre l'autre (meme garde qu'au
-    // test a quatre cibles) — les quatre joueurs spawnent aux quatre coins
-    // d'un carre (`SPAWN_OFFSETS`, back/src/room.ts), donc `a` et `c` ne
-    // partagent pas la meme position.
+    // `c` la declenche. Ancree sur `c`, qui spawne a un autre coin que `a`
+    // (`SPAWN_OFFSETS`, back/src/room.ts) : assez loin de la cible solo pour
+    // qu'aucune zone ne recouvre l'autre.
     const DUO_OFFSET_X = 0;
     const DUO_OFFSET_Y = CHUTE_POIX;
     const duoX = pc.x + DUO_OFFSET_X;
@@ -799,17 +722,15 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
           room.horde.vy[slot] = 0;
         }
       }
-      // Le seul geste manuel de ce decor : `b` entretient Givre sur la cible
-      // cooperative, jamais sur la cible solo — et jamais `a`, qui ne la
-      // vise plus.
+      // Le seul geste manuel : `b` entretient Givre sur la cible cooperative,
+      // jamais sur la cible solo.
       const slotDuo = room.horde.slotOf(duo);
       if (slotDuo >= 0) {
         room.horde.applyMark(slotDuo, ELEMENT.GIVRE, b.playerId, room.tick);
       }
 
-      // `a` vise EN CONTINU la cible solo, `c` EN CONTINU la cooperative :
-      // plus de phases, plus d'alternance, chaque tireur ne voit jamais que
-      // SA cible — deterministe par construction, pas par probabilite.
+      // Chaque tireur vise EN CONTINU sa seule cible, sans alternance :
+      // deterministe par construction, pas par probabilite.
       vise(a, soloX - pa.x, soloY - pa.y);
       vise(c, duoX - pc.x, duoY - pc.y);
     }, 8);
@@ -858,10 +779,8 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
     // ---- 2. La moitie negative, et la moitie positive, l'une A COTE DE
     //         L'AUTRE. ---------------------------------------------------
     //
-    // ⚠️ **La ligne que la revue a demandee.** Sans le lot cooperatif juste
-    // en dessous, « toujours faux » ne distinguerait pas la regle qui
-    // fonctionne (un seul joueur ne peut jamais differer de lui-meme) de la
-    // regle cassee (`charge = false`, mutation appliquee au §6 du rapport).
+    // ⚠️ Sans le lot cooperatif juste en dessous, « toujours faux » ne
+    // distinguerait pas la regle qui fonctionne de `charge = false`.
     expect(lotSolo.every((r) => r.synergyCharge === false)).toBe(true);
     expect(lotDuo.every((r) => r.synergyCharge === true)).toBe(true);
 
@@ -890,29 +809,19 @@ describe('etape 5b, tache 11 : quatre elements, six reactions, zero octet de plu
   }, 45_000);
 
   /**
-   * **Le critere de l'etape, mesure ou il compte enfin : `Room`/socket, avec
-   * de vraies armes dans un vrai salon — dans les DEUX sens.**
+   * **Zero octet de plus, mesure sur `Room`/socket avec de vraies armes.**
    *
-   * La tache 3 n'a pu tenir son test « aucun octet nouveau » qu'au niveau de
-   * `back/src/combat.ts`, faute d'armes portant Foudre et Poix (elles
-   * n'existaient pas encore). La tache 9 les a posees ; ce test-ci mesure la
-   * taille BRUTE (`ArrayBuffer.byteLength`, pas la taille decodee) de chaque
-   * message recu sur une socket reelle, dans deux salons distincts :
+   * Taille BRUTE (`ArrayBuffer.byteLength`, pas la taille decodee) de chaque
+   * message recu, dans deux salons :
    *
-   * - le salon VIEUX : seules Braise et Givre tirent (Choc thermique, la
-   *   seule reaction de l'etape 5a) ;
-   * - le salon NEUF : Foudre tire aussi (Supraconduction, une reaction de
-   *   l'etape 5b).
+   * - le salon VIEUX : seules Braise et Givre tirent (Choc thermique) ;
+   * - le salon NEUF : Foudre tire aussi (Supraconduction).
    *
-   * ⚠️ **Ce que « le trafic ne bouge pas » prouve VRAIMENT ici.** Un salon a
-   * l'autre, le NOMBRE de `ZONE`/`REACTION` recus differe forcement (deux
-   * armes de cadences differentes) : egaler ce compte ne prouverait rien
-   * qu'un decor bien choisi n'ait deja truque. Ce qui NE PEUT PAS bouger,
-   * structurellement, c'est le cout PAR MESSAGE — `ZONE_BYTES`,
-   * `REACTION_BYTES` et la formule du `SNAPSHOT` ne dependent QUE du nombre de
-   * joueurs, jamais du contenu qu'ils empaquettent (`packZoneKind`,
-   * `packElementPair`). C'est ca, le contrat a « zero octet de plus » du §2 :
-   * le cout d'UN evenement ne change pas, quel que soit l'element en cause.
+   * ⚠️ **On compare le cout PAR MESSAGE, pas le nombre de messages.** Le
+   * nombre de `ZONE`/`REACTION` differe forcement (cadences differentes) ; ce
+   * qui ne doit pas bouger, c'est que `ZONE_BYTES`, `REACTION_BYTES` et la
+   * formule du `SNAPSHOT` ne dependent que du nombre de joueurs, jamais de
+   * l'element empaquete (`packZoneKind`, `packElementPair`).
    */
   it('le trafic par joueur ne bouge pas : meme cout par message, foudre/poix tirent ou pas', async () => {
     const codeVieux = await createRoomCode();

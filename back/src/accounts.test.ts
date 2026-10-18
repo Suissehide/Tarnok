@@ -34,9 +34,7 @@ describe('etape 7a tache 2 : le compte, et son jeton jamais stocke en clair', ()
 
   /**
    * ⚠️ **La ligne en base ne doit porter AUCUNE trace du jeton.** Un dump de
-   * cette table ne doit pas suffire a se faire passer pour un joueur. C'est la
-   * propriete du §2 de la spec, et la mutation « stocker le jeton en clair »
-   * doit rougir ICI.
+   * cette table ne doit pas suffire a se faire passer pour un joueur.
    */
   it('la base stocke le HACHE, jamais le jeton', async () => {
     const { token } = await createAccount();
@@ -76,10 +74,9 @@ describe('etape 7a tache 2 : le compte, et son jeton jamais stocke en clair', ()
   });
 
   /**
-   * Review Focus n°4 : la colonne doit tenir ce que le FIL peut transporter.
-   * `GOLD_MAX` vaut le plein u32 et depasse deja `Int32` : la mutation
-   * « colonne Int » rougit ici, et elle rougit au PREMIER credit au plafond,
-   * pas apres mille runs.
+   * La colonne doit tenir ce que le FIL peut transporter. `GOLD_MAX` vaut le
+   * plein u32 et depasse deja `Int32` : une colonne Int rougit des le PREMIER
+   * credit au plafond, pas apres mille runs.
    */
   it('un solde au-dela d Int32 se reecrit et se relit sans perte', async () => {
     const INT32_MAX = 2_147_483_647n;
@@ -106,10 +103,9 @@ describe('etape 7a tache 2 : le compte, et son jeton jamais stocke en clair', ()
   });
 
   /**
-   * ⚠️ **Deux constantes pour une seule grandeur, c'est une divergence qui
-   * attend son tour.** `TOKEN_BYTES` borne le fil, et c'est elle qui frappe le
-   * jeton. Si une seconde apparaissait un jour et divergeait, tout jeton frappe
-   * serait refuse a l'encodage — et le symptome serait « personne ne peut se
+   * ⚠️ **Une seule constante pour une seule grandeur.** `TOKEN_BYTES` borne le
+   * fil, et c'est elle qui frappe le jeton. Une seconde qui divergerait ferait
+   * refuser tout jeton a l'encodage, avec pour symptome « personne ne peut se
    * connecter », tres loin de sa cause.
    */
   it('le jeton frappe fait exactement TOKEN_BYTES du protocole', () => {
@@ -137,7 +133,7 @@ describe('etape 7b tache 4 : acheter', () => {
   });
 
   /**
-   * Review Focus n°2 : un refus doit ne RIEN debiter et n'inserer RIEN. Un
+   * Un refus doit ne RIEN debiter et n'inserer RIEN. Un
    * debit partiel serait pire qu'un crash, parce qu'invisible — le joueur
    * verrait son or baisser sans rien recevoir.
    */
@@ -177,9 +173,6 @@ describe('etape 7b tache 4 : acheter', () => {
     expect(await goldOf(id)).toBe(0n);
   });
 
-  /**
-   * Review Focus n°3 : au-dela du dernier palier, le catalogue est la limite.
-   */
   it('acheter au-dela du dernier palier est refuse', async () => {
     const article = SHOP_ITEMS[0];
     if (!article) {
@@ -201,7 +194,7 @@ describe('etape 7b tache 4 : acheter', () => {
   });
 
   /**
-   * Review Focus n°1 : deux onglets, le meme article, au meme instant. La cle
+   * Deux onglets, le meme article, au meme instant. La cle
    * composite et la transaction doivent n'en laisser passer qu'UN, et ne
    * debiter qu'une fois.
    */
@@ -222,39 +215,21 @@ describe('etape 7b tache 4 : acheter', () => {
   });
 
   /**
-   * Ronde de correction 1/5 : la cle composite ne protege que la branche
-   * `create`. Un compte qui possede DEJA un palier bascule sur `update`, que
-   * la cle composite ne peut pas refuser en double puisque la ligne existe
-   * deja des les deux cotes : deux transactions concurrentes peuvent lire le
-   * MEME `level` avant qu'aucune n'ait commite, et les deux `UPDATE` reussissent
-   * alors chacun isolement, sans violer aucune contrainte. Ce test force cette
-   * branche (palier 1 deja possede, deux achats concurrents du palier 2) pour
-   * que la garantie de concurrence couvre aussi les cinq articles a paliers du
-   * catalogue.
+   * La cle composite ne protege que la branche `create`. Un compte qui
+   * possede DEJA un palier bascule sur `update` : deux transactions
+   * concurrentes peuvent lire le MEME `level` avant qu'aucune n'ait commite,
+   * et les deux `UPDATE` reussissent sans violer aucune contrainte. Ce test
+   * force cette branche (palier 1 possede, deux achats concurrents du
+   * palier 2).
    *
-   * ⚠️ **La fenetre de recouvrement est etroite et depend du minutage reel des
-   * allers-retours reseau** (mesure : la mettre en evidence a demande une
-   * quarantaine d'essais sur cette machine, contre une poignee pour la branche
-   * `create`). Une seule paire concurrente serait donc un test intermittent au
-   * sens ou la MAJORITE de ses essais passeraient sans rien prouver. Boucler
-   * sur des comptes frais multiplie les tirages pour que le test entier
-   * rougisse de facon fiable des que le defaut existe, sans pour autant tester
-   * autre chose que la scene exacte du Review Focus n°1 : deux achats
-   * VRAIMENT concurrents du meme palier.
-   *
-   * ⚠️ **Le `40` ci-dessous n'est PAS une garantie, c'est un calage empirique.**
-   * Mesure locale : ~7% de recouvrement reel par PAIRE sur cette machine, donc
-   * ~4,3% de chance qu'une execution de ce test passe au vert alors que le
-   * defaut existe (`1 - 0.93^40`). Ce taux depend du minutage reseau local —
-   * sur une machine plus rapide (recouvrement mesure a 0,5% dans la revue),
-   * cette MEME boucle aurait ~82% de chance de rater le defaut. **Ce canari
-   * est donc probabiliste par construction : ne monte PAS ce nombre pour
-   * "gagner du temps", et ne le crois PAS suffisant seul.** La propriete
-   * reelle — que le `where` filtre rejette un `level` perime — est fermee
-   * SANS alea par le test deterministe juste en dessous, qui appelle
-   * `prisma.purchase.update` directement et n'a besoin d'aucune course pour
-   * rougir. Ce test-ci reste necessaire a cote : seul lui passe par `buyItem`
-   * de bout en bout et verifie que le `catch` annule bien le debit.
+   * ⚠️ **Canari probabiliste.** La fenetre de recouvrement est etroite et
+   * depend du minutage reseau local : une seule paire passerait le plus
+   * souvent sans rien prouver, d'ou la boucle sur des comptes frais. Le `40`
+   * est un calage empirique, pas une garantie ; sur une machine rapide le
+   * defaut peut passer inapercu. La propriete reelle (le `where` rejette un
+   * `level` perime) est fermee SANS alea par le test juste en dessous ;
+   * celui-ci reste necessaire car seul lui passe par `buyItem` de bout en bout
+   * et verifie que le `catch` annule bien le debit.
    */
   it('deux achats CONCURRENTS du palier suivant n en passent qu un', async () => {
     const paliers = SHOP_ITEMS.find((i) => i.levels >= 2);
@@ -277,17 +252,12 @@ describe('etape 7b tache 4 : acheter', () => {
   });
 
   /**
-   * Ronde de correction 2/5 : le canari ci-dessus est probabiliste (~4,3% de
-   * faux vert mesure sur cette machine, voir son docbloc). Ce test-ci ferme
-   * la MEME propriete sans aucun alea : il appelle `prisma.purchase.update`
-   * directement, hors de `buyItem`, avec un `level` dans le `where` qui ne
-   * correspond PLUS a la ligne (elle est a 1, on filtre sur 2). Prisma 6.19.3
-   * accepte `level` en PLUS de la cle unique dans `PurchaseWhereUniqueInput`
-   * (`Prisma.AtLeast<{ accountId_itemId, ..., level, ... }, "accountId_itemId">`,
-   * verifie dans le type genere) : zero ligne correspond, donc l'update leve
-   * TOUJOURS, deterministe. C'est exactement le mecanisme que le verrou
-   * optimiste de `buyItem` exploite pour refuser un achat concurrent qui a
-   * deja fait avancer le palier.
+   * Ferme sans aucun alea la propriete du canari ci-dessus : un
+   * `prisma.purchase.update` direct, avec un `level` dans le `where` qui ne
+   * correspond PLUS a la ligne (elle est a 1, on filtre sur 2). Prisma accepte
+   * `level` en PLUS de la cle unique dans `PurchaseWhereUniqueInput` : zero
+   * ligne correspond, l'update leve TOUJOURS. C'est le mecanisme que le
+   * verrou optimiste de `buyItem` exploite.
    */
   it('un update filtre sur un level perime leve P2025, sans aucune course', async () => {
     const article = SHOP_ITEMS.find((i) => i.levels >= 2);
@@ -306,41 +276,26 @@ describe('etape 7b tache 4 : acheter', () => {
   });
 
   /**
-   * Ronde de correction de la revue finale : les DEUX mecanismes de
-   * concurrence ci-dessus sont par ARTICLE — la cle composite sur
-   * `[accountId, itemId]`, le verrou optimiste sur le `level` de CETTE ligne.
-   * Deux transactions qui visent deux `itemId` DIFFERENTS ne se croisaient donc
-   * nulle part : elles lisaient le meme solde, passaient toutes deux la
-   * comparaison `gold < prix`, et les deux `decrement` s'appliquaient. Le
-   * `where` du debit ne filtrait que sur l'identite du compte.
+   * Les DEUX mecanismes de concurrence ci-dessus sont par ARTICLE (la cle
+   * composite sur `[accountId, itemId]`, le verrou optimiste sur le `level` de
+   * CETTE ligne). Deux transactions sur deux `itemId` DIFFERENTS liraient le
+   * meme solde et passeraient toutes deux `gold < prix` : seule la garde du
+   * solde dans le `where` du debit les separe.
    *
-   * ⚠️ **Le chemin joueur est reel.** Le grisage et la garde anti-double-clic
-   * de la boutique sont par BOUTON, et l'etalage ne se repeint qu'au retour de
-   * la reponse : deux clics rapides sur deux LIGNES differentes partent en
-   * parallele. Le cas du meme article (teste plus haut) est justement celui que
-   * l'interface ferme deja — ce qui faisait de ce cas-ci le seul encore
-   * atteignable depuis la vraie interface.
+   * ⚠️ **Le chemin joueur est reel.** La garde anti-double-clic de la boutique
+   * est par BOUTON, et l'etalage ne se repeint qu'au retour de la reponse :
+   * deux clics rapides sur deux LIGNES differentes partent en parallele.
    *
-   * ⚠️ **La salve porte sur cinq articles (six armes a l'origine, retirees du
-   * catalogue depuis), pas sur une paire, et c'est ce qui
-   * rend ce test deterministe.** Mesure sur cette machine, avant correctif :
-   * une PAIRE d'articles differents passait `ok`/`ok` 19 fois sur 20 (une fois
-   * sur vingt, les deux transactions se serialisent d'elles-memes et la seconde
-   * rend `'solde-insuffisant'` par la voie normale) — donc ~5% de faux vert
-   * comme canari de mutation. La salve des six armes, elle, a rendu **au moins
-   * deux `ok` 20 fois sur 20, dont 19 fois les SIX, pour un solde de `-1500`**
-   * (le joueur encaissait 1800 d'or de marchandise pour 300). Le compte est
-   * credite du prix d'UNE seule arme et les six ont le MEME prix — une
-   * assertion du test le garde — donc apres correctif un seul `ok` est
-   * possible, quel que soit l'ordre dans lequel Postgres serialise les six
-   * transactions.
+   * ⚠️ **La salve porte sur au moins cinq articles, pas sur une paire, et c'est
+   * ce qui rend ce test deterministe** : une paire se serialise parfois
+   * d'elle-meme et passerait au vert sans rien prouver. Le compte est credite
+   * d'UN prix et tous les articles ont le MEME prix (une assertion le garde) :
+   * un seul `ok` est possible, quel que soit l'ordre de serialisation.
    *
-   * Le verdict des perdantes n'est pas assene a `'conflit'` exactement, et pour
-   * la meme raison que les deux tests ci-dessus : une perdante qui relit le
-   * solde APRES le commit de la gagnante rend `'solde-insuffisant'` par la voie
-   * normale, un verdict tout aussi legitime. Ce qui est assene, et qui est le
-   * defaut mesure : UN seul `ok`, UN seul achat, et surtout **un solde final
-   * jamais a decouvert**.
+   * Le verdict des perdantes n'est pas assene a `'conflit'` : une perdante qui
+   * relit le solde APRES le commit de la gagnante rend `'solde-insuffisant'`,
+   * tout aussi legitime. Ce qui est assene : UN seul `ok`, UN seul achat, et
+   * surtout **un solde final jamais a decouvert**.
    */
   it('une salve d achats CONCURRENTS de six articles DIFFERENTS n en passe qu un', async () => {
     // Les articles au prix de premier palier le plus partage du catalogue :
@@ -366,7 +321,7 @@ describe('etape 7b tache 4 : acheter', () => {
     const verdicts = await Promise.all(armes.map((a) => buyItem(id, a.id)));
     expect(verdicts.filter((r) => r === 'ok')).toHaveLength(1);
     // Le coeur du defaut : sans la garde du solde dans le `where` du debit, ce
-    // solde valait `-1500`.
+    // solde passe a decouvert.
     expect(await goldOf(id)).toBe(0n);
     expect((await purchasesOf(id)).size).toBe(1);
   });

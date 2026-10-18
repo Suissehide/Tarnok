@@ -3,19 +3,16 @@ import { DECOY_LIFETIME_TICKS } from './abilities';
 /**
  * Un leurre : un point qui compte comme cible, a la place de son lanceur.
  *
- * ⚠️ **Ce n'est PAS un deplacement de monstres**, et la distinction decide du
- * risque de cette etape. Le champ de flux est alimente par des positions
- * RETARDEES (`FIELD_INPUT_DELAY_TICKS`), identiques des deux cotes par
- * construction. Un leurre est une entree de ce meme tableau — annonce une fois
- * avec son tick, derive ensuite. Rien ne bouge qui ne bougeait pas.
+ * ⚠️ **Ce n'est PAS un deplacement de monstres.** Le champ de flux est
+ * alimente par des positions RETARDEES (`FIELD_INPUT_DELAY_TICKS`),
+ * identiques des deux cotes par construction. Un leurre est une entree de ce
+ * meme tableau — annonce une fois avec son tick, derive ensuite.
  */
 export interface Decoy {
   /**
    * ⚠️ **L'IDENTIFIANT du lanceur, jamais son indice.** `seen.x` est rempli par
-   * l'ordre d'iteration des joueurs : les indices BOUGENT quand quelqu'un part.
-   * Un leurre qui retiendrait un indice suivrait le mauvais joueur, et un cran
-   * de decalage reassigne toute la horde — une derive qui ne se rattrape pas,
-   * puisqu'elle s'accumule a chaque pas.
+   * l'ordre d'iteration des joueurs : les indices BOUGENT quand quelqu'un part,
+   * et un leurre qui retiendrait un indice suivrait le mauvais joueur.
    */
   readonly playerId: number;
   readonly x: number;

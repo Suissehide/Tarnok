@@ -17,10 +17,8 @@ export const VERB_IDS: Readonly<Record<VerbKind, number>> = Object.freeze({
 /**
  * Recharge de chaque verbe, en ticks.
  *
- * ⚠️ **Reglages d'equilibrage, a confronter au playtest** (§11 de la spec).
- * Ils sont ici, nommes et en un seul endroit, pour qu'une partie puisse les
- * bouger sans fouiller le code. **Aucun test ne doit les coder en dur** : ils
- * se lisent d'ici.
+ * ⚠️ **Reglages d'equilibrage, a confronter au playtest.** **Aucun test ne
+ * doit les coder en dur** : ils se lisent d'ici.
  */
 export const ABILITY_COOLDOWN_TICKS: Readonly<Record<VerbKind, number>> = Object.freeze({
   amorce: 6 * TICK_HZ,
@@ -51,9 +49,8 @@ export const RELAIS_INTANGIBLE_TICKS = Math.round(0.5 * TICK_HZ);
  * Reduction de degats offerte par une zone de Rempart.
  *
  * ⚠️ **Elle se combine avec l'armure du compte par le MAXIMUM, jamais par une
- * somme** (§6.2 de la spec). La boutique vend `Armure` sur cinq paliers : une
- * somme ferait de « cinq paliers plus un Rempart » une quasi-immunite, et
- * l'abus se paierait en or donc se verrait mal.
+ * somme** : la boutique vend `Armure` sur cinq paliers, et une somme ferait de
+ * « cinq paliers plus un Rempart » une quasi-immunite.
  */
 export const REMPART_ARMOR = 0.25;
 

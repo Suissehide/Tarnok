@@ -19,7 +19,7 @@ import {
 } from './onde-frappe-renderer';
 
 /**
- * Le calque de l'etape 12 : il trace CE QU'ON LUI DONNE (les listes semees
+ * Le calque des ondes et frappes : il trace CE QU'ON LUI DONNE (les listes semees
  * par `GameClient`), rien avant `load()`, et un cout borne par la capacite
  * des listes — jamais par la horde, qu'il ne lit pas.
  */

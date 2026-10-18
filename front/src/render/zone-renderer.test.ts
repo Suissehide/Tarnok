@@ -32,19 +32,11 @@ import {
 const TOUTE_LA_CARTE = { x: 0, y: 0, width: MAP_SIZE, height: MAP_SIZE };
 
 /**
- * Étape 5a, §9 / §6.6 de l'orientation : *« zone au sol : grand quad teinte,
- * additif »*, et tache 16 : *« rends les zones au sol plus nettes, en anneau
- * de different alpha si besoin »*.
+ * Les zones au sol : un grand quad teinte, additif, avec un bord net.
  *
- * ⚠️ **Tout le corps de `ZoneRenderer.draw` etait garde par RIEN jusqu'a la
- * tache 16**, et deux mutations appliquees avant d'ecrire une ligne de test
- * l'ont montre : `particle.scaleX = 1` et la suppression de `particle.alpha`
- * passaient toutes deux a 237 tests verts. `zoneScale` etait teste — mais rien
- * ne verifiait que `draw` s'en servait. Le motif exact des dix-sept assertions
- * creuses du depot : le test met en scene la bonne intention et rate la ligne
- * qu'il nomme. `adoptTexture` est le point d'accroche qui le ferme, et ce
- * fichier tourne desormais sous jsdom pour atteindre aussi le PROFIL de la
- * texture.
+ * ⚠️ Tester `zoneScale` ne prouve pas que `draw` s'en sert : `adoptTexture`
+ * est le point d'accroche qui atteint le corps de `draw`, et ce fichier tourne
+ * sous jsdom pour atteindre aussi le PROFIL de la texture.
  */
 describe('selectZones — quelles zones se dessinent, au tick courant', () => {
   it('retient une zone vivante, et rend son creneau', () => {
@@ -125,7 +117,7 @@ describe('selectZones — quelles zones se dessinent, au tick courant', () => {
     const zones = new ZoneField();
     for (let i = 0; i < 5; i++) {
       // Espacees de plus d'un `ZONE_RADIUS` : cinq zones distinctes, pas une
-      // seule rafraichie cinq fois (regle de fusion du §5.1 bis).
+      // seule rafraichie cinq fois (regle de fusion de `spawn`).
       zones.spawn(ELEMENT.GIVRE, 500 + i * 3 * ZONE_RADIUS, 500, 1, 10);
     }
     expect(zones.count).toBe(5);
@@ -139,7 +131,7 @@ describe('selectZones — quelles zones se dessinent, au tick courant', () => {
 
 /**
  * ⚠️ La taille dessinee est DERIVEE de `ZONE_RADIUS`, jamais reglee a cote —
- * meme discipline que `spriteScale` (tache 16 de l'etape 3), et pour un enjeu
+ * meme discipline que `spriteScale`, et pour un enjeu
  * plus grand : le disque dit au joueur ou ses ennemis sont marques et
  * ralentis, et c'est `ZONE_RADIUS` qui le decide reellement.
  */
@@ -162,9 +154,8 @@ describe('zoneScale — le disque dessine couvre exactement le rayon de la zone'
 });
 
 /**
- * Le corps de `draw`, atteint par `adoptTexture`. **La moitie qui manquait :**
- * `zoneScale` disait la bonne chose, personne ne verifiait que le disque
- * dessine s'en servait.
+ * Le corps de `draw`, atteint par `adoptTexture` : le disque dessine se sert
+ * bien de `zoneScale`.
  */
 function drawnZones(zones: ZoneField, tick: number, timeMs = 0): Particle[] {
   const renderer = new ZoneRenderer();
@@ -211,9 +202,9 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
   });
 
   /**
-   * ⚠️ **Tache 16, etape 2 : le bord dit la verite.** L'assertion porte sur ce
+   * ⚠️ **Le bord dit la verite.** L'assertion porte sur ce
    * qui est DESSINE — echelle x diametre de texture — et non sur `zoneScale`
-   * prise a part, qui ne prouvait rien de ce que `draw` fait. Une zone qui
+   * prise a part, qui ne prouve rien de ce que `draw` fait. Une zone qui
    * parait plus grande qu'elle n'est ment sur une regle : c'est `ZONE_RADIUS`
    * qui decide qui est marque et ou deux zones reagissent.
    */
@@ -224,10 +215,10 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
   });
 
   /**
-   * ⚠️ **Un CERCLE, pas une ellipse — l'inverse de l'anneau de marque de la
-   * tache 15.** La difference n'est pas esthetique : le rayon de l'anneau ne
+   * ⚠️ **Un CERCLE, pas une ellipse — l'inverse de l'anneau de marque.** La
+   * difference n'est pas esthetique : le rayon de l'anneau ne
    * decide de rien, celui de la zone est compare en distance euclidienne des
-   * deux cotes du fil (`markInZones`, `Horde#computeSlow`, §5.2). Un
+   * deux cotes du fil (`markInZones`, `Horde#computeSlow`). Un
    * aplatissement en monde ferait mentir la regle sur un axe. C'est la camera
    * seule qui l'ecrase, uniformement avec le reste du monde.
    */
@@ -246,10 +237,9 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
   });
 
   /**
-   * ⚠️ **`draw` doit decoder `zones.kind`, jamais le lire brut** (tache 5 de
-   * l'etape 5b). `packZoneKind(GIVRE, reaction)` avec une reaction non nulle
-   * depasse la portee d'`ELEMENTS` (4 entrees aujourd'hui) tant que l'element
-   * tient sur 3 bits : un `draw` qui lirait l'octet brut leverait au lieu de
+   * ⚠️ **`draw` doit decoder `zones.kind`, jamais le lire brut.**
+   * `packZoneKind(GIVRE, reaction)` avec une reaction non nulle depasse la
+   * portee d'`ELEMENTS` : un `draw` qui lirait l'octet brut leverait au lieu de
    * teinter. `kind !== element` : le decor empaquette une reaction non nulle.
    */
   it('teint du bon element meme quand la zone porte un type de reaction empaquete', () => {
@@ -288,18 +278,16 @@ describe('ZoneRenderer.draw — le disque dessine dit le rayon de la regle', () 
 });
 
 /**
- * *« Varier les effets et zones en fonction des etats (animation, forme,
- * taille) »* : chaque element a sa silhouette et son animation, et une zone de
+ * Chaque element a sa silhouette et son animation, et une zone de
  * reaction se distingue d'une zone d'element simple.
  */
 describe('lookOf — une silhouette par element, et le bord reste sur la regle', () => {
   const ANGLES = Array.from({ length: 360 }, (_, k) => (k * Math.PI) / 180);
 
   /**
-   * ⚠️ **LE test de la tache.** La signature d'un element est sa silhouette
+   * ⚠️ **L'essentiel.** La signature d'un element est sa silhouette
    * echantillonnee, son trace et son animation : deux elements qui la
-   * partageraient ne se distingueraient plus que par la teinte — exactement
-   * ce que l'auteur reprochait. Un element ajoute a `ELEMENT_DEFS` sans ligne
+   * partageraient ne se distingueraient plus que par la teinte. Un element ajoute a `ELEMENT_DEFS` sans ligne
    * dans la table retombe sur le Neutre et fait rougir ce test.
    */
   it('donne a chaque element une forme ET une animation qu aucun autre ne partage', () => {
@@ -317,7 +305,7 @@ describe('lookOf — une silhouette par element, et le bord reste sur la regle',
   });
 
   /**
-   * ⚠️ **Le bord dit toujours la verite (tache 16).** Les silhouettes
+   * ⚠️ **Le bord dit toujours la verite.** Les silhouettes
    * ondulent vers l'INTERIEUR, jamais au-dela du rayon de la case — que
    * `zoneScale` place a `ZONE_RADIUS` — et chacune touche ce rayon quelque
    * part : l'enveloppe exterieure est la regle.
@@ -384,10 +372,8 @@ describe('ZoneRenderer.draw — la silhouette suit l element, la reaction, et le
       POSEE,
     )[0];
 
-    // ⚠️ **La rangee change, et la colonne AUSSI depuis l'etape 8** : la
-    // rangee du bas est indexee par FAMILLE de reaction, plus par element.
-    // Avant, deux champs de reaction d'un meme element se ressemblaient trait
-    // pour trait quelle que soit la reaction qui les avait poses.
+    // ⚠️ **La rangee change, et la colonne AUSSI** : la rangee du bas est
+    // indexee par FAMILLE de reaction, pas par element.
     expect(reaction?.texture.frame.y).not.toBe(simple?.texture.frame.y);
     // La teinte, elle, reste celle de l'element : la forme dit l'evenement,
     // la couleur dit la matiere.
@@ -406,7 +392,7 @@ describe('ZoneRenderer.draw — la silhouette suit l element, la reaction, et le
   });
 
   it('met l echelle de chaque zone sur SON rayon, pas sur le generique', () => {
-    // ⚠️ « Le bord dit toujours la verite » (tache 16) : un champ de Verglas
+    // ⚠️ « Le bord dit toujours la verite » : un champ de Verglas
     // couvre 1,45 fois le rayon generique, et il doit se dessiner d'autant.
     const large = drawnZones(uneZone(packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS)), POSEE)[0];
     const etroit = drawnZones(
@@ -466,7 +452,7 @@ describe('ZoneRenderer.load — l atlas se cuit', () => {
 describe('ZoneRenderer — ce que le §6.6 exige du conteneur', () => {
   it('fusionne en ADDITIF : deux zones qui se recouvrent s additionnent, elles ne se masquent pas', () => {
     // Le recouvrement de deux zones d'elements differents est ce qui declenche
-    // une reaction (§5.2) : en melange normal, la seconde masquerait la
+    // une reaction : en melange normal, la seconde masquerait la
     // premiere et leur frontiere commune — la seule chose qu'il faille voir —
     // serait invisible.
     expect(new ZoneRenderer().blendMode).toBe('add');

@@ -4,8 +4,7 @@ import { makeRandom } from './random';
 /**
  * Un ordre de vague : la seule chose que le serveur decide et diffuse pour la
  * horde. 19 octets sur le fil (18 de charge utile + 1 octet de type), une
- * fois par vague, contre ~150 ko/s si l'on repliquait les positions (§2.1 de
- * la spec de l'etape 2).
+ * fois par vague, contre ~150 ko/s si l'on repliquait les positions.
  */
 export interface WaveOrder {
   waveId: number;
@@ -30,18 +29,11 @@ export const FORMATION = {
 export type FormationId = (typeof FORMATION)[keyof typeof FORMATION];
 
 /**
- * Rayon du cercle d'encerclement (tache 18 de l'etape 6a).
+ * Rayon du cercle d'encerclement.
  *
- * ⚠️ **C'est une constante PARTAGEE, et c'est tout l'interet.** L'ordre de
- * vague fait 19 octets (18 de charge utile + 1 de type) et n'a pas de champ de
- * rayon ; lui en ajouter un couterait un octet ET romprait un nombre que trois
- * documents citent — c'est le livrable de l'etape 2. Une formation dont le
- * rayon est une constante lue des deux cotes du fil ne coute rien : le serveur
- * et chaque client appellent deja `formationPositions`.
- *
- * La valeur reprend celle de l'ancien `ANCHOR_RADIUS` du directeur (1800 px),
- * qui posait l'ancre a cette distance du joueur : la horde nait aussi loin
- * qu'avant, mais tout autour au lieu d'un seul cote.
+ * ⚠️ **C'est une constante PARTAGEE, et c'est tout l'interet** : l'ordre de
+ * vague n'a pas de champ de rayon, et le serveur comme chaque client appellent
+ * deja `formationPositions`. Zero octet de plus sur le fil.
  */
 export const ENCIRCLE_RADIUS = 1800;
 
@@ -96,18 +88,16 @@ export interface ObstacleField {
 
 /**
  * Decale, DETERMINISTIQUEMENT, une position tombee dans une cellule muree vers
- * la cellule libre la plus proche — tache 18.
+ * la cellule libre la plus proche.
  *
  * ⚠️ Jamais un tirage, jamais une boucle dont le nombre d'iterations pourrait
- * differer d'un cote a l'autre (§ contraintes de determinisme de `shared/`) :
- * l'expansion se fait en anneaux carres de rayon croissant, dans un ordre de
+ * differer d'un cote a l'autre : l'expansion se fait en anneaux carres de
+ * rayon croissant, dans un ordre de
  * balayage FIXE (lignes du haut vers le bas, colonnes de gauche a droite dans
  * chaque ligne). Meme masque, meme position de depart => meme resultat, sur
  * le serveur comme sur chaque client.
  *
- * Ecrit directement dans `outX`/`outY` : cette fonction ne s'execute qu'a
- * l'apparition d'une vague, jamais par tick, mais un objet ou un tableau
- * intermediaire par entite reste un gaspillage evitable pour zero benefice.
+ * Ecrit directement dans `outX`/`outY`, sans objet intermediaire par entite.
  */
 export function nudgeOutOfObstacle(
   obstacles: ObstacleField,
@@ -154,9 +144,8 @@ export function nudgeOutOfObstacle(
     }
   }
 
-  // Carte entierement muree : cas degenere qui ne devrait jamais survenir en
-  // pratique (BLOCKED_RATIO = 0.06, voir shared/worldmap.ts). On degrade sans
-  // planter plutot que de boucler indefiniment ou de lever une exception.
+  // Carte entierement muree : cas degenere. On degrade sans planter plutot que
+  // de lever une exception.
   outX[i] = x;
   outY[i] = y;
 }
@@ -168,10 +157,7 @@ export function nudgeOutOfObstacle(
  * que deux clients font apparaitre la meme vague au meme endroit sans qu'un
  * seul octet de position ne transite.
  *
- * `obstacles`, si fourni, evite de faire naitre une entite en plein mur (tache
- * 18) : 185 des 489 entites d'une horde mesuree y naissaient directement,
- * faute de ce controle — `retarget`/`step` ne les en sortaient jamais, puisqu'une
- * cellule muree ne portait alors aucune direction (voir `shared/flowfield.ts`).
+ * `obstacles`, si fourni, evite de faire naitre une entite en plein mur.
  */
 export function formationPositions(
   order: WaveOrder,
@@ -182,7 +168,6 @@ export function formationPositions(
   const rng = makeRandom(order.seed);
   const { count, anchorX, anchorY } = order;
 
-  // Precalcul des parametres constants selon la formation
   let heading = 0;
   const clusterCentres: Array<{ cx: number; cy: number }> = [];
 
@@ -191,9 +176,8 @@ export function formationPositions(
     // endroit ne se superposent pas.
     heading = makeRandom(order.seed ^ 0x5f37_1d2b)() * Math.PI * 2;
   } else if (order.formation === FORMATION.CLUSTER) {
-    // Grappes denses : c'est ce qui fabrique la sensation de masse (§4.1),
-    // pas le compteur. Precalcul des centres pour eviter de recreer le generateur
-    // a chaque iteration.
+    // Grappes denses : c'est ce qui fabrique la sensation de masse, pas le
+    // compteur.
     for (let c = 0; c < CLUSTER_COUNT; c++) {
       const clusterRng = makeRandom(order.seed + c * 0x9e37_79b9);
       const cx = (clusterRng() - 0.5) * CLUSTER_SPREAD;
@@ -215,8 +199,7 @@ export function formationPositions(
         // Les secteurs sont REGULIERS, pas tires : `count` entites se
         // partagent le tour, chacune dans son secteur, avec un bruit borne a
         // une fraction du pas. Un angle tire uniformement (ce que fait RING)
-        // laisserait, a 14 entites, une chance tres reelle que la vague entiere
-        // tombe du meme cote — c'est-a-dire le pack qu'on cherche a supprimer.
+        // laisserait une chance reelle que la vague entiere tombe du meme cote.
         const step = (Math.PI * 2) / Math.max(1, count);
         const angle = i * step + (rng() - 0.5) * step * ENCIRCLE_ANGLE_JITTER;
         const radius = ENCIRCLE_RADIUS + (rng() - 0.5) * ENCIRCLE_JITTER;

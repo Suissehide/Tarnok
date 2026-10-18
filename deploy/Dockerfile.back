@@ -1,5 +1,8 @@
 FROM node:22-alpine AS build
 WORKDIR /app
+# Prisma detecte la version d'OpenSSL pour choisir son moteur : absente de
+# l'image alpine, il en prendrait un qui ne charge pas au runtime.
+RUN apk add --no-cache openssl
 
 COPY package*.json ./
 COPY front/package.json front/
@@ -7,17 +10,26 @@ COPY back/package.json back/
 RUN npm ci
 
 COPY . .
-RUN npm run build -w back
+# ⚠️ Sans `prisma generate`, `@prisma/client` reste un squelette qui leve des
+# l'import : le back plante au demarrage, redemarre en boucle, et Traefik n'a
+# jamais de conteneur vers qui router (404 et certificat par defaut).
+RUN npm run db:generate -w back && npm run build -w back
 
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
+RUN apk add --no-cache openssl
 
 # esbuild bundle avec `--packages=external` : les dependances runtime restent
 # dans node_modules, il faut donc les emporter.
 COPY --from=build /app/node_modules node_modules
 COPY --from=build /app/back/dist back/dist
 COPY --from=build /app/back/package.json back/
+COPY --from=build /app/back/prisma back/prisma
 
 EXPOSE 3000
-CMD ["node", "back/dist/server.js"]
+# Les migrations passent avant le serveur, a chaque demarrage : `migrate deploy`
+# n'applique que celles qui manquent. Le CLI `prisma` est une devDependency,
+# presente parce que tout `node_modules` du build est emporte.
+WORKDIR /app/back
+CMD ["sh", "-c", "npx prisma migrate deploy && exec node dist/server.js"]

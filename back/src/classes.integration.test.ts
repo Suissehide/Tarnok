@@ -24,8 +24,8 @@ import * as accounts from './accounts';
 import { buildServer } from './server';
 
 /**
- * Le livrable de l'etape 8 : **un joueur choisit une classe au salon, et son
- * verbe agit dans la partie.** Vraies sockets, du `PICK` a l'effet, observe a
+ * **Un joueur choisit une classe au salon, et son verbe agit dans la
+ * partie.** Vraies sockets, du `PICK` a l'effet, observe a
  * travers le DECODAGE — jamais depuis l'etat interne du salon. La seule
  * ecriture interne est un DECOR (le monstre du Rempart), jamais une mesure.
  *
@@ -241,7 +241,7 @@ describe('etape 8 : le livrable, un verbe par classe, de PICK a l effet', () => 
 
   it('le SNAPSHOT ne grossit pas d un octet, verbes utilises ou non', async () => {
     // Nombres NUS : contrat de fil.
-    // Etape 13 (pactes, §3.4) : +1 octet par joueur, le bouclier — 10 -> 11, voulu.
+    // 11 octets par joueur, dont 1 pour le bouclier des pactes.
     expect(SNAPSHOT_PLAYER_BYTES).toBe(11);
     expect(SNAPSHOT_HEADER_BYTES + 4 * SNAPSHOT_PLAYER_BYTES).toBe(66);
 
@@ -257,7 +257,7 @@ describe('etape 8 : le livrable, un verbe par classe, de PICK a l effet', () => 
 
     // ⚠️ La MESURE REELLE, comparee a une VALEUR — pas seulement a elle-meme.
     // Un instantane qui aurait grossi serait uniforme lui aussi, donc vert
-    // contre lui-meme : c'est la septieme forme du « decor qui masque ».
+    // contre lui-meme.
     const tailles = c.tailles.filter((t) => t.type === MSG.SNAPSHOT).map((t) => t.octets);
     expect(tailles.length).toBeGreaterThan(0);
     expect(tailles.every((t) => t === SNAPSHOT_HEADER_BYTES + SNAPSHOT_PLAYER_BYTES)).toBe(true);

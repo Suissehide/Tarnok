@@ -101,20 +101,13 @@ const DT = 1 / TICK_HZ;
 /**
  * Un arsenal PLEIN : `WEAPON_SLOTS` armes distinctes, toutes draftables.
  *
- * ⚠️ **Derive du catalogue et de la constante, jamais recopie.** Deux fixtures
- * de ce fichier ecrivaient `[1, 2, 3, 5, 6]` en dur ; passer les slots de 5 a 4
- * (tache 19) faisait lever `addWeapon` sur la cinquieme arme. C'est le defaut
- * le plus recurrent du depot — le meme que deux tests de vague ont paye en
- * recopiant `WAVE1_MIN_COUNT`.
+ * ⚠️ **Derive du catalogue et de la constante, jamais recopie** : une liste en
+ * dur fait lever `addWeapon` des que le nombre de slots change.
  *
- * L'arme neutre est exclue : elle vit hors des slots (§6.1) et l'empiler la
- * ferait tirer deux fois par tick.
- *
- * ⚠️ **Les armes qui ne TIRENT pas aussi** (etape 8) : ce qu'on compte ici, ce
- * sont des salves de projectiles, et un halo n'en pose aucune — il met une
- * pulsation en file (voir `Room#fireOne`). L'y laisser ferait compter une
- * salve de moins que de slots, pour une raison qui n'a rien a voir avec ce que
- * ces cas gardent.
+ * L'arme neutre est exclue : elle vit hors des slots et l'empiler la ferait
+ * tirer deux fois par tick. Les armes qui ne TIRENT pas aussi : on compte des
+ * salves, et un halo n'en pose aucune (il met une pulsation en file, voir
+ * `Room#fireOne`).
  */
 const ARSENAL_PLEIN = WEAPONS.filter((w) => w.id !== BASE_WEAPON_ID && w.kind === 'tir')
   .slice(0, WEAPON_SLOTS)
@@ -162,8 +155,7 @@ function hpOf(room: Room, id: number): number {
 }
 
 /**
- * Rayon de ramassage de CE joueur, lu a travers le SNAPSHOT decode — tache 7
- * de l'etape 7b, ronde de correction 1. Meme discipline que `hpOf` : eprouve
+ * Rayon de ramassage de CE joueur, lu a travers le SNAPSHOT decode : eprouve
  * le TRANSPORT (l'octet qui voyage), pas l'etat interne du salon.
  */
 function pickupRadiusOf(room: Room, id: number): number {
@@ -181,13 +173,12 @@ function pickupRadiusOf(room: Room, id: number): number {
 }
 
 /**
- * La barre de Synergie de l'EQUIPE (§7 de l'etape 5a).
+ * La barre de Synergie de l'EQUIPE.
  *
- * ⚠️ **Lue par le SEUL chemin qui la publie : l'en-tete du `SNAPSHOT`.** Pas
- * de `get synergy()` sur `Room` a cote — un accesseur de confort ferait une
- * seconde source de verite pour un seul nombre, exactement le defaut que
- * l'etape 3 a commis sur l'experience. Passer par le fil prouve du meme coup
- * qu'il n'y a QU UN nombre, partage, et aucun par joueur.
+ * ⚠️ **Lue par le SEUL chemin qui la publie : l'en-tete du `SNAPSHOT`.** Un
+ * `get synergy()` de confort sur `Room` ferait une seconde source de verite.
+ * Passer par le fil prouve du meme coup qu'il n'y a QU UN nombre, partage, et
+ * aucun par joueur.
  */
 function synergyOf(room: Room): number {
   const out = collector();
@@ -199,7 +190,7 @@ function synergyOf(room: Room): number {
   return decodeSnapshot(first).synergy;
 }
 
-/** Visee telle que redistribuee par le SNAPSHOT (tache 13) — voir `hpOf`. */
+/** Visee telle que redistribuee par le SNAPSHOT — voir `hpOf`. */
 function aimOf(room: Room, id: number): { aimX: number; aimY: number } {
   const out = collector();
   room.snapshot(out);
@@ -216,14 +207,10 @@ function aimOf(room: Room, id: number): { aimX: number; aimY: number } {
 
 /**
  * Fait viser `playerId` vers le monstre vivant le plus proche, comme le
- * ferait un vrai joueur avec sa souris (tache 13 : la visee n'est plus
- * derivee, elle doit etre poussee via `applyInput`, tick apres tick).
- *
- * Sert aux tests d'integration de ce fichier qui, avant la tache 13,
- * comptaient sur l'auto-visee du serveur pour faire avancer un pipeline de
- * combat sans piloter la souris. Aucun monstre vivant : n'envoie rien, la
- * visee nulle du dernier `applyInput` reste en vigueur (voir `Room.join`,
- * qui initialise `aimX`/`aimY` a 0).
+ * ferait un vrai joueur avec sa souris : le serveur ne vise pas seul, la visee
+ * doit etre poussee via `applyInput`, tick apres tick. Aucun monstre vivant :
+ * n'envoie rien, la visee du dernier `applyInput` reste en vigueur
+ * (`Room.join` initialise `aimX`/`aimY` a 0).
  */
 function aimAtNearestMonster(room: Room, playerId: number, seq: number): void {
   const pos = positionOf(room, playerId);
@@ -245,8 +232,7 @@ function aimAtNearestMonster(room: Room, playerId: number, seq: number): void {
   const dy = (room.horde.y[bestSlot] ?? 0) - pos.y;
   const len = Math.hypot(dx, dy);
   if (len === 0) {
-    // Monstre exactement sur le joueur : pas de direction, donc pas de tir —
-    // meme regle que partout ailleurs (§ « direction nulle = pas de tir »).
+    // Monstre exactement sur le joueur : direction nulle, donc pas de tir.
     return;
   }
   room.applyInput(playerId, seq, 0, 0, (dx / len) * 127, (dy / len) * 127);
@@ -380,14 +366,11 @@ describe('Room.applyInput', () => {
       '(tache 13)',
     () => {
       // ⚠️ Le test precedent ne peut PAS attraper le retrait du clamp dans
-      // `applyInput` lui-meme : `encodeSnapshot` requantifie deja aimX/aimY
-      // independamment avant de les mettre sur le fil (`quantizeAxis`), donc
-      // la valeur redistribuee resterait bornee meme sans lui — verifie par
-      // mutation en ecrivant ce test. On espionne donc directement l'appel a
-      // `Projectiles.fireSalvoDirected` pour observer ce que `#fireWeapons`
-      // lui passe REELLEMENT, avant toute reserialisation. `aimX` demesure
-      // (1000) a cote d'un `aimY` modeste (50) : sans clamp, l'angle de tir
-      // serait bien plus plat (`atan2(50, 1000)`) qu'avec (`atan2(50, 127)`).
+      // `applyInput` : `encodeSnapshot` requantifie deja aimX/aimY
+      // (`quantizeAxis`), la valeur redistribuee resterait bornee sans lui.
+      // On espionne donc ce que `#fireWeapons` passe REELLEMENT a
+      // `Projectiles.fireSalvoDirected`. Sans clamp, l'angle de tir serait
+      // `atan2(50, 1000)` au lieu de `atan2(50, 127)`.
       const room = new Room();
       room.join(1);
       const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
@@ -404,10 +387,9 @@ describe('Room.applyInput', () => {
   );
 
   it('ne normalise PAS la visee au cercle unite, contrairement au deplacement (tache 13)', () => {
-    // ⚠️ Seul l'angle de la visee compte (`Math.atan2` dans
-    // `Projectiles.fireSalvoDirected` ignore la norme) : rien ne justifie de
-    // lui imposer le meme cercle unite qu'au deplacement (§ « on avance 41 %
-    // plus vite en diagonale »), qui n'a de sens que pour une VITESSE.
+    // Seul l'angle de la visee compte (`Math.atan2` dans
+    // `Projectiles.fireSalvoDirected` ignore la norme) : le cercle unite du
+    // deplacement n'a de sens que pour une VITESSE.
     const room = new Room();
     room.join(1);
 
@@ -498,9 +480,8 @@ describe('Room.snapshot', () => {
 
     room.snapshot(out);
 
-    // En-tete + 2 joueurs (SNAPSHOT_HEADER_BYTES + n * SNAPSHOT_PLAYER_BYTES) —
-    // derive des constantes, pas une valeur en dur : leur taille a change avec
-    // la visee (tache 13), et ce test ne doit pas avoir a le savoir.
+    // En-tete + 2 joueurs, derive des constantes et non en dur : le format du
+    // snapshot grandit, ce test ne doit pas avoir a le savoir.
     expect(room.metrics.bytesSent).toBe(SNAPSHOT_HEADER_BYTES + 2 * SNAPSHOT_PLAYER_BYTES);
     expect(room.metrics.snapshots).toBe(1);
     expect(room.metrics.encodeMicros).toBeGreaterThanOrEqual(0);
@@ -573,14 +554,10 @@ describe('Room et la horde', () => {
 
   /**
    * Pre-remplit la horde pres de sa capacite, loin du joueur — hors de portee
-   * d'arme (~607 px pour l'arme de base, tache 14) et de contact (34 px) — pour observer
-   * une troncature SANS attendre qu'un vrai combat vide la horde ou tue le
-   * joueur. Depuis la tache 9, la horde ne sature plus « tant que rien ne
-   * meurt » (§11 de la spec, vrai a l'etape 2 seulement) : un joueur seul,
-   * laisse au contact d'une horde qui grossit organiquement pendant 130 s,
-   * meurt bien avant qu'elle n'atteigne MAX_ENTITIES — c'est precisement le
-   * livrable de cette etape (« on finit par mourir »). Le remplissage direct
-   * isole donc la mecanique de troncature de celle du combat.
+   * d'arme (~607 px pour l'arme de base) et de contact (34 px) — pour observer
+   * une troncature SANS attendre un vrai combat : un joueur seul au contact
+   * d'une horde qui grossit organiquement meurt bien avant qu'elle n'atteigne
+   * MAX_ENTITIES. Le remplissage direct isole la troncature du combat.
    */
   function fillHordeFarFromPlayer(room: Room, count: number): void {
     const order: WaveOrder = {
@@ -601,7 +578,7 @@ describe('Room et la horde', () => {
       'plutot que de tronquer en silence',
     () => {
       // Une troncature muette serait un piege : ce test verrouille qu'elle
-      // reste visible dans le HUD (§4.6).
+      // reste visible dans le HUD.
       const room = new Room();
       room.join(1);
       fillHordeFarFromPlayer(room, MAX_ENTITIES - 1);
@@ -610,13 +587,9 @@ describe('Room et la horde', () => {
       // horde pre-remplie ne laisse qu'UNE place, donc toute vague de deux
       // entites ou plus tronque, quel que soit le reglage de la rampe.
       //
-      // ⚠️ **Ce test etait intermittent, et c'est l'etape 5a qui l'a revele.**
-      // Il laissait 10 places en se fiant a « strictement sous le plancher de
-      // la premiere vague (`WAVE1_MIN_COUNT`) » — vrai tant que ce plancher
-      // valait 16. L'etape 7 bis l'a ramene a 10 : une vague de 10 tenait
-      // pile, ne tronquait rien, et le test echouait environ une fois sur
-      // neuf. La constante n'est pas exportee ; la fixture ne doit donc pas
-      // dependre de sa valeur du tout.
+      // ⚠️ Ne pas laisser plus de place en se fiant au plancher de la premiere
+      // vague (`WAVE1_MIN_COUNT`, non exporte) : une vague qui tient pile ne
+      // tronque rien, et le test devient intermittent.
       for (let i = 0; i < TICK_HZ * 6; i++) {
         room.step(DT);
       }
@@ -671,8 +644,7 @@ function spawnMonsterAt(room: Room, waveId: number, x: number, y: number, archet
  *
  * ⚠️ **`spawnMonsterAt` ne peut pas la remplacer** : elle pose une vague d'un
  * seul monstre, donc toujours l'index 0 — et l'index 0 laisse toujours un orbe
- * (`dropsOrb`, tache 17). Tout decor bati sur elle est aveugle au taux de
- * chute. C'est la « fixture qui masque » du depot, prise ici a la source.
+ * (`dropsOrb`). Tout decor bati sur elle est aveugle au taux de chute.
  */
 function spawnWaveAt(room: Room, waveId: number, count: number, x: number, y: number): number[] {
   const order: WaveOrder = {
@@ -704,15 +676,13 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     const room = new Room();
     room.join(1);
     const before = positionOf(room, 1);
-    // A portee de l'arme de base (~607 px, tache 14) mais hors de
-    // CONTACT_RADIUS (34 px) : isole le chemin "degats de projectile" du
-    // chemin "contact".
+    // A portee de l'arme de base (~607 px) mais hors de CONTACT_RADIUS
+    // (34 px) : isole le chemin "degats de projectile" du chemin "contact".
     const targetId = spawnMonsterAt(room, 500, before.x + 100, before.y);
 
     let deaths: { tick: number; ids: number[] }[] = [];
     for (let i = 0; i < 30 && deaths.length === 0; i++) {
-      // Visee tache 13 : sans elle, aimX/aimY restent a (0, 0) — voir
-      // `Room.join` — et l'arme ne tire jamais.
+      // Sans visee, aimX/aimY restent a (0, 0) et l'arme ne tire jamais.
       aimAtNearestMonster(room, 1, i + 1);
       room.step(DT);
       deaths = deaths.concat(room.drainDeaths());
@@ -724,10 +694,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   });
 
   it('ne tire jamais sur un monstre a portee si la visee reste nulle (tache 13)', () => {
-    // ⚠️ C'est LA regle centrale de la tache 13 : la proximite d'un monstre ne
-    // suffit plus a declencher un tir, contrairement a l'ancienne auto-visee
-    // (§5.3 d'origine). Sans `aimAtNearestMonster`, ce test doit voir le
-    // monstre survivre indefiniment malgre sa portee.
+    // ⚠️ La proximite d'un monstre ne suffit pas a declencher un tir : sans
+    // visee, le monstre survit indefiniment malgre sa portee.
     const room = new Room();
     room.join(1);
     const before = positionOf(room, 1);
@@ -742,22 +710,16 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   });
 
   it('une visee nulle ne consomme pas le cooldown : le premier tir reel part sans delai supplementaire', () => {
-    // ⚠️ Ce test existe parce qu'une mutation qui retire le garde « visee
-    // nulle » de `#fireWeapons` (en laissant `Projectiles.fireSalvoDirected`
-    // seul juge, via son propre garde interne) ne fait echouer AUCUN autre
-    // test de ce fichier : `horde.count` et les morts restent inchanges tant
-    // que la visee est nulle, dans les deux versions — la salve ne part
-    // jamais, `Projectiles` s'en charge deja. La seule difference observable
-    // est que `p.lastFireTick` avancerait quand meme a chaque tick de
-    // cooldown ecoule, meme sans salve : le VRAI premier tir, une fois la
-    // visee non nulle, serait alors retarde d'un cooldown complet.
+    // ⚠️ Seul test a garder le garde « visee nulle » de `#fireWeapons` :
+    // sans lui, `Projectiles.fireSalvoDirected` refuse deja la salve, donc
+    // morts et `horde.count` ne bougent pas. La seule difference observable
+    // est que `p.lastFireTick` avancerait quand meme, et le VRAI premier tir
+    // serait retarde d'un cooldown complet.
     //
-    // Un seul salon (pas de comparaison entre deux salons independants : leur
-    // `mapSeed` tire au hasard change la trajectoire du monstre pres des
-    // obstacles et aurait rendu la comparaison instable). Le monstre est gele
-    // a une distance FIXE du joueur tant que la visee reste nulle — sans quoi
-    // il se rapproche via le flowfield, ce qui fausserait le temps de vol
-    // mesure apres coup.
+    // Un seul salon : deux salons ont deux `mapSeed`, et les obstacles
+    // changeraient la trajectoire du monstre. Le monstre est gele a distance
+    // FIXE tant que la visee reste nulle, sans quoi il se rapproche via le
+    // flowfield et fausse le temps de vol mesure ensuite.
     const weapon = weaponOf(0);
     const room = new Room();
     room.join(1);
@@ -766,11 +728,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     const spawnY = before.y;
     spawnMonsterAt(room, 504, spawnX, spawnY);
 
-    // ⚠️ Duree d'amorcage choisie a DESSEIN pas multiple du cooldown : sur un
-    // multiple exact, la mutation retiree ci-dessus (garde de visee nulle)
-    // finit par re-tomber en phase avec un vrai cooldown par pur hasard
-    // arithmetique, et le test ne prouve plus rien (constate en ecrivant ce
-    // test). `cooldownTicks + 3` garantit un reste non nul.
+    // ⚠️ Duree d'amorcage a DESSEIN pas multiple du cooldown : sur un multiple
+    // exact, le code sans garde retombe en phase avec un vrai cooldown et le
+    // test ne prouve plus rien. `cooldownTicks + 3` garantit un reste non nul.
     let seq = 1;
     for (let i = 0; i < weapon.cooldownTicks + 3; i++) {
       room.applyInput(1, seq++, 0, 0, 0, 0);
@@ -779,17 +739,10 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       room.horde.y[0] = spawnY;
     }
 
-    // Visee reelle, maintenant : un tir correct part DES CE TICK (le
-    // cooldown n'a jamais ete entame par la phase de visee nulle qui
-    // precede). Le monstre, plus attire par le flowfield que repousse (il se
-    // rapproche encore du joueur pendant que le projectile vole), rend la
-    // mort quasi immediate : mesure a 1 tick apres le tir sur ce reglage.
-    // Sans le garde de visee nulle, le cooldown est arme des la phase de
-    // visee (0, 0) et retarde le premier tir REEL de plusieurs ticks —
-    // mesure a 5 ticks post-visee sur ce meme reglage, une fois le garde
-    // retire (verifie par mutation). Le seuil ci-dessous separe nettement
-    // les deux : tres au-dessus du cas correct, tres en-dessous du cas
-    // mutant.
+    // Visee reelle, maintenant : un tir correct part DES CE TICK (le cooldown
+    // n'a pas ete entame par la visee nulle) et la mort est quasi immediate.
+    // Sans le garde, le premier tir REEL part plusieurs ticks plus tard. Le
+    // seuil ci-dessous separe nettement les deux cas.
     room.applyInput(1, seq++, 0, 0, 127, 0);
 
     let deathTick = -1;
@@ -807,9 +760,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   it('tire dans la direction visee, pas necessairement vers le monstre le plus proche (tache 13)', () => {
     // ⚠️ Preuve que le tir est DIRIGE, pas cible : un monstre A l'ouest est le
     // plus proche, mais le joueur vise plein est, ou un second monstre B,
-    // deux fois plus loin, se trouve pile sur la ligne de mire. Avec l'ancien
-    // ciblage automatique (nearestTarget), A aurait ete tue en premier ; avec
-    // la visee au curseur, seul B peut l'etre.
+    // plus loin, se trouve pile sur la ligne de mire. Seul B peut mourir.
     const room = new Room();
     room.join(1);
     const before = positionOf(room, 1);
@@ -834,16 +785,12 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     const room = new Room();
     room.join(1);
     const before = positionOf(room, 1);
-    // Contact et arme partagent la meme cible potentielle des qu'un monstre
-    // est a portee de contact (34 px < ~607 px de portee d'arme, tache 14) :
-    // avec un seul monstre, l'arme le tue au tick 1 (tir depuis la position
-    // exacte du joueur, donc a distance nulle) et le contact ne voit plus
-    // jamais rien. Plusieurs monstres au meme point absorbent les tirs
-    // suivants (au plus un par fenetre de cooldown de l'arme, 7 ticks depuis
-    // la tache 14) — mais ce que ce test verrouille, c'est que meme si tous
-    // finissent par mourir, l'absence de degats jusqu'au tick 15 vient de la
-    // fenetre d'invulnerabilite de CONTACT (elle decompte tick par tick,
-    // qu'un monstre touche ou non), jamais du hasard de qui reste vivant.
+    // Un monstre au contact est aussi a portee d'arme : seul, il mourrait au
+    // tick 1 et le contact ne verrait plus rien. Plusieurs monstres au meme
+    // point absorbent les tirs suivants. Ce test verrouille que l'absence de
+    // degats jusqu'au tick 15 vient de la fenetre d'invulnerabilite de CONTACT
+    // (elle decompte tick par tick, qu'un monstre touche ou non), jamais du
+    // hasard de qui reste vivant.
     for (let i = 0; i < 3; i++) {
       spawnMonsterAt(room, 500 + i, before.x, before.y);
     }
@@ -876,15 +823,13 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     room.join(1);
     room.join(2);
     const p1 = positionOf(room, 1);
-    // Uniquement pres du JOUEUR 1 : si l'experience etait par joueur (elle ne
-    // l'est pas — §2 de la spec d'orientation), seul le joueur 1 en verrait
-    // le fruit. Le snapshot n'a de toute facon aucun champ xp par joueur.
+    // Uniquement pres du JOUEUR 1 : si l'experience etait par joueur, seul le
+    // joueur 1 en verrait le fruit. Le snapshot n'a aucun champ xp par joueur.
     spawnMonsterAt(room, 500, p1.x + 60, p1.y);
 
     let ticks = 0;
     let xp = 0;
     while (xp === 0 && ticks < 60) {
-      // Visee tache 13 : voir le commentaire du test precedent.
       aimAtNearestMonster(room, 1, ticks + 1);
       room.step(DT);
       ticks++;
@@ -905,24 +850,16 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     const before = positionOf(room, 1);
     // A un joueur, le seuil du niveau 1 vaut LEVEL_XP_BASE * 1 * 1 = 10 :
     // dix monstres a portee et a proximite de ramassage suffisent a le
-    // franchir. Le joueur ne bouge PAS encore : un joueur en mouvement
-    // s'eloignerait de ses propres cibles (260 px/s contre ~95 px/s pour un
-    // monstre) plus vite qu'il ne peut les abattre, ce qui a ete verifie en
-    // premiere version de ce test — le niveau n'arrivait qu'apres avoir
-    // heurte le bord de la carte.
+    // franchir. Le joueur ne bouge PAS encore : en mouvement, il s'eloignerait
+    // de ses cibles plus vite qu'il ne peut les abattre.
     //
-    // ⚠️ En ANNEAU, pas alignes sur un segment (regression constatee tache
-    // 14, en durcissant l'arme). Dix monstres colles en ligne, espaces de 2 px,
-    // sont tous a moins de `SEPARATION_RADIUS` (28 px) les uns des autres : la
-    // repulsion (tache 19 : `Horde#recomputeSteering`) les pousse activement
-    // pendant qu'ils attendent leur tour d'etre cibles, et le dernier abattu peut deriver
-    // au-dela d'`ORB_PICKUP_RADIUS` (90 px) avant de mourir — verifie en
-    // mesurant sa distance au joueur a l'instant de sa mort : 116 px avec
-    // l'arme reglee tache 14, contre 90 px de rayon de ramassage. Un anneau a
-    // 50 px, espace de `2 * 50 * sin(pi/10) ≈ 30,9 px` entre voisins
-    // immediats — juste au-dessus de `SEPARATION_RADIUS` — ne declenche
-    // aucune repulsion mutuelle : chaque monstre reste a portee de ramassage
-    // jusqu'a sa mort, quelle que soit la cadence de l'arme.
+    // ⚠️ En ANNEAU, pas en ligne : des monstres colles sont a moins de
+    // `SEPARATION_RADIUS` (28 px) les uns des autres, la repulsion
+    // (`Horde#recomputeSteering`) les disperse et le dernier abattu peut
+    // mourir hors d'`ORB_PICKUP_RADIUS` (90 px). Un anneau de 50 px espace ses
+    // voisins de `2 * 50 * sin(pi/10) ≈ 30,9 px`, juste au-dessus de
+    // `SEPARATION_RADIUS` : aucune repulsion, chaque monstre reste a portee de
+    // ramassage jusqu'a sa mort.
     for (let i = 0; i < 10; i++) {
       const angle = (i / 10) * Math.PI * 2;
       spawnMonsterAt(
@@ -936,8 +873,6 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     let levelUps: { tick: number; level: number }[] = [];
     let ticks = 0;
     while (levelUps.length === 0 && ticks < 1000) {
-      // Visee tache 13 : sans elle, l'arme ne tire jamais et l'anneau ne meurt
-      // jamais — voir le commentaire du premier test de cette description.
       aimAtNearestMonster(room, 1, ticks + 1);
       room.step(DT);
       ticks++;
@@ -946,42 +881,29 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
     expect(levelUps.length).toBeGreaterThan(0);
     expect(levelUps[0]?.level).toBe(2);
-    // ⚠️ Date du tick ou le gel COMMENCE reellement, qui est desormais le tick
-    // courant : l'etape 4 ouvre l'etalage au moment ou le niveau tombe, au lieu
-    // de programmer un gel de duree constante un tick plus tard.
-    //
-    // La propriete que ce test garde n'a pas change — le message porte un tick
-    // d'effet, et les clients gelent a CE tick plutot qu'a la reception (sans
-    // quoi chacun gelerait selon sa latence). Seul le decalage de `+1`, qui
-    // etait un artefact de la programmation a l'avance, a disparu.
+    // Le message porte le tick ou le gel COMMENCE (le tick courant : l'etalage
+    // s'ouvre quand le niveau tombe). Les clients gelent a CE tick plutot qu'a
+    // la reception, sans quoi chacun gelerait selon sa latence.
     expect(levelUps[0]?.tick).toBe(room.tick);
 
     // Le joueur se met en mouvement seulement MAINTENANT, pour observer le
     // gel : un joueur qui bouge doit s'arreter net des le tick d'effet.
     //
-    // ⚠️ `ticks + 1`, pas `1` : la boucle de visee ci-dessus a deja fait
-    // avancer `lastSeq` bien au-dela de 1 (tache 13) — envoyer `seq: 1`
-    // maintenant serait rejete par `isNewer` comme une entree perimee, et ce
-    // mouvement n'aurait jamais lieu.
+    // ⚠️ `ticks + 1`, pas `1` : la boucle de visee a deja fait avancer
+    // `lastSeq`, et `isNewer` rejetterait `seq: 1` comme perime.
     room.applyInput(1, ticks + 1, 127, 0);
-    // Un monstre au contact, pose juste avant le gel : le mouvement seul ne
-    // suffit pas a prouver que « le monde » est gele au sens du §6.2 — sans
-    // ce monstre, un gel qui suspendrait le DEPLACEMENT mais laisserait le
-    // COMBAT continuer (tir automatique, contact, ramassage — aucun des
-    // trois n'est modere par la rampe de vitesse, voir `#movementScale`)
-    // passerait ce test inapercu, puisque plus aucun monstre n'est a portee
-    // a cet instant. Verifie par mutation : retirer le garde de tete de
-    // `step()` sans ce monstre laissait ce test vert.
+    // Un monstre au contact, pose juste avant le gel : sans lui, un gel qui
+    // suspendrait le DEPLACEMENT mais laisserait le COMBAT continuer (tir,
+    // contact, ramassage — aucun n'est module par `#movementScale`) passerait
+    // inapercu. Retirer le garde de tete de `step()` doit faire echouer ce test.
     const atTrigger = positionOf(room, 1);
     spawnMonsterAt(room, 9000, atTrigger.x, atTrigger.y);
     const hpAtTrigger = hpOf(room, 1);
     const hordeCountAtTrigger = room.horde.count;
     room.drainDeaths(); // vide les morts accumulees pendant la phase de collecte, avant de mesurer
 
-    // ⚠️ TROIS FOIS l'ancienne duree de gel. C'est le coeur de ce que la tache
-    // 6 change : le gel ne dure plus une constante, il dure jusqu'a ce que le
-    // draft se ferme. Un pas de `LEVEL_FREEZE_TICKS` ne verrait pas la
-    // difference — celui-ci echoue des qu'une duree fixe reapparait.
+    // ⚠️ TROIS FOIS `LEVEL_FREEZE_TICKS` : le gel dure jusqu'a ce que le draft
+    // se ferme, pas une constante. Ce pas echoue si une duree fixe reapparait.
     for (let i = 0; i < LEVEL_FREEZE_TICKS * 3; i++) {
       room.step(DT);
     }
@@ -1003,12 +925,10 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     room.step(DT);
 
     const results = room.drainDraftResults();
-    // ⚠️ **UN SEUL resultat par draft** : la repioche a disparu, la resolution
-    // est un seul moment. L'octet `phase` qui distinguait « termine » de
-    // « repioche ouverte » n'existe plus.
+    // ⚠️ **UN SEUL resultat par draft** : pas de repioche, la resolution est
+    // un seul moment.
     expect(results.length).toBe(1);
-    // `deadlineTick` porte la fin du gel, que le client ne peut plus deduire
-    // (§8 de la spec).
+    // `deadlineTick` porte la fin du gel, que le client ne peut pas deduire.
     expect(results[0]?.deadlineTick).toBe(room.tick);
     // La carte pointee est bien celle qui a ete gagnee, et elle a atterri dans
     // l'inventaire — sans quoi le draft serait une ceremonie sans effet.
@@ -1018,8 +938,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!carte || !loadout) {
       throw new Error('etalage ou inventaire manquant');
     }
-    // Depuis l'etape 10, une carte rare ou legendaire vaut 2 ou 3 cartes :
-    // `applicationsOf` dit combien d'exemplaires la carte gagnee apporte.
+    // Une carte rare ou legendaire vaut 2 ou 3 cartes : `applicationsOf` dit
+    // combien d'exemplaires la carte gagnee apporte.
     if (carte.nature === CARD.PASSIVE) {
       expect(loadout.stacksOf(carte.refId)).toBe(applicationsOf(carte));
     } else {
@@ -1073,16 +993,11 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   /**
    * Ticks auxquels chaque arme a tire, sur `ticks` pas, visee fixe et non nulle.
    *
-   * ⚠️ **Garder la fenetre courte quand on mesure une cadence.** Le generateur
-   * lache une vague toutes les `TICK_HZ * 6` = 180 ticks ; le tir automatique
-   * finit par en tuer assez pour faire monter de niveau, et le draft qui
-   * s'ouvre gele le monde jusqu'a ce qu'un jeton soit pose — plus une seule
-   * salve ensuite.
-   *
-   * Ce n'est donc PAS la periode des vagues qui borne la mesure (une premiere
-   * version de ce commentaire l'affirmait, avec en prime un mauvais chiffre) :
-   * c'est le temps qu'il faut aux morts pour franchir le seuil d'experience.
-   * A 300 ticks et un seul joueur, la marge tient largement.
+   * ⚠️ **Garder la fenetre courte quand on mesure une cadence.** Le tir finit
+   * par tuer assez de monstres des vagues pour faire monter de niveau, et le
+   * draft qui s'ouvre gele le monde jusqu'a ce qu'un jeton soit pose — plus
+   * une seule salve ensuite. C'est ce seuil d'experience qui borne la mesure,
+   * pas la periode des vagues. A 300 ticks et un seul joueur, la marge tient.
    */
   function ticksDeSalves(room: Room, ticks: number): Map<number, number[]> {
     const spy = vi.spyOn(Projectiles.prototype, 'fireSalvoDirected');
@@ -1143,8 +1058,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     expect(compte.get(DAGUE) ?? 0).toBeGreaterThan(0);
     expect(compte.get(GRENADE) ?? 0).toBeGreaterThan(0);
 
-    // ⚠️ **Le coeur de cette tache.** Chacune tire a SA cadence. Avec un
-    // `lastFireTick` unique pour tout l'arsenal, la dague serait bridee a la
+    // ⚠️ Chacune tire a SA cadence. Avec un `lastFireTick` unique pour tout l'arsenal, la dague serait bridee a la
     // cadence de la grenade et les deux compteurs seraient EGAUX — un test qui
     // se contenterait de « des projectiles existent » passerait sans rien voir.
     //
@@ -1163,10 +1077,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!inv) {
       throw new Error('inventaire manquant');
     }
-    // ⚠️ **Un arsenal PLEIN, derive de `WEAPON_SLOTS`.** La liste valait
-    // `[1, 2, 3, 5, 6]` en dur : passer les slots de 5 a 4 (tache 19) faisait
-    // lever `addWeapon` sur la cinquieme. C'est « la constante recopiee dans
-    // une fixture », et le compte attendu se derive lui aussi.
+    // ⚠️ **Un arsenal PLEIN, derive de `WEAPON_SLOTS`** (voir `ARSENAL_PLEIN`),
+    // et le compte attendu se derive lui aussi.
     const DRAFTEES = ARSENAL_PLEIN.slice(0, WEAPON_SLOTS - 1);
     for (const id of DRAFTEES) {
       inv.addWeapon(id);
@@ -1176,23 +1088,21 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // Un seul tick : aucune arme n'a jamais tire, donc toutes sont dues.
     const compte = salvesParArme(room, 1);
 
-    // La dague est dans le `Loadout` depuis `join` (retour de playtest : elle
-    // s'ameliore comme les autres) : elle tire, et prend un slot.
+    // La dague est dans le `Loadout` des `join` (elle s'ameliore comme les
+    // autres) : elle tire, et prend un slot.
     expect([...compte.values()].reduce((a, b) => a + b, 0)).toBe(WEAPON_SLOTS);
     expect([...compte.keys()].sort((a, b) => a - b)).toEqual([BASE_WEAPON_ID, ...DRAFTEES]);
   });
 
   it('empiler une arme ELARGIT sa salve de stackGain par exemplaire', () => {
-    // ⚠️ **C'est ici que « l'accumulation des cartes fait la puissance »
-    // devient observable dans le salon.** Une arme ne monte pas de niveau :
-    // chaque carte prise ajoute UN projectile a sa salve. C'est le levier le
-    // plus lisible a l'ecran — on VOIT sa salve s'elargir.
+    // Une arme ne monte pas de niveau : chaque carte prise elargit sa salve.
+    // C'est le levier le plus lisible a l'ecran.
     //
     // ⚠️ L'arme choisie tire DEJA plusieurs projectiles : sur une arme a
     // projectile unique, un code qui rendrait `stacks` au lieu de
     // `projectileCount + stacks - 1` donnerait exactement les memes nombres.
-    // Le canon-a-mitraille (huit) depuis l'etape 12 : la Roue de lames (id 1,
-    // l'ancien eventail) n'en tire plus que deux, et `stackGain` y vaut 1.
+    // Le canon-a-mitraille (huit) : la Roue de lames (id 1) n'en tire que
+    // deux, et `stackGain` y vaut 1.
     const EVENTAIL = 7;
     const eventail = weaponOf(EVENTAIL);
     expect(eventail.projectileCount).toBeGreaterThan(1);
@@ -1226,11 +1136,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // Une seule carte n'elargit RIEN : c'est la deuxieme qui ajoute les
     // premiers projectiles.
     //
-    // ⚠️ **`stackGain` et pas `+ 1` depuis l'etape 8** : le gain suit la
-    // largeur de la salve de base (l'eventail en tire cinq, donc deux par
-    // carte). Ce que ce cas garde, c'est que le salon lit bien `salvoCount` —
-    // la REGLE, elle, est gardee par `shared/weapons.test.ts`, et la recopier
-    // ici en ferait une seconde definition a tenir.
+    // ⚠️ **`stackGain` et pas `+ 1`** : le gain suit la largeur de la salve de
+    // base. Ce cas garde que le salon lit bien `salvoCount` ; la REGLE est
+    // gardee par `shared/weapons.test.ts`, la recopier ici la dedoublerait.
     const gain = stackGain(eventail);
     expect(gain).toBeGreaterThan(1);
     expect(projectilesDeLaSalve(1)).toBe(eventail.projectileCount);
@@ -1281,8 +1189,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
       expect(intervalle(0)).toBe(attendu(0));
       expect(intervalle(1)).toBe(attendu(1));
-      // **Le coeur de la tache.** Le modele Risk of Rain veut que CHAQUE carte
-      // ajoute son bonus. Un code qui regarderait « ce passif est possede »
+      // Le modele Risk of Rain veut que CHAQUE carte ajoute son bonus. Un code qui regarderait « ce passif est possede »
       // sans compter les exemplaires donnerait le meme intervalle qu'a une
       // carte — et un test qui se contenterait de « c'est plus rapide qu'a
       // zero carte » ne le verrait pas.
@@ -1317,9 +1224,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       // ⚠️ Ces deux gardes se couvrent MUTUELLEMENT par le jeu : tant que le
       // plafond tient a 0,75, aucune arme du catalogue n'atteint le plancher,
       // et tant que le plancher tient, retirer le plafond ne casse pas la
-      // monotonie. Les deux mutations survivaient donc a 323 tests. Elles
-      // s'eprouvent ici directement, a des valeurs que le catalogue actuel
-      // n'atteint pas — mais qu'une arme future atteindra.
+      // monotonie. On les eprouve donc directement, a des valeurs que le
+      // catalogue n'atteint pas encore.
 
       // Le PLAFOND : sans lui, un bonus de 5 donnerait une recharge negative,
       // ramenee a 1 par le plancher — l'arme tirerait a chaque tick.
@@ -1352,10 +1258,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     });
 
     it('les points de vie depassent 255 sans se replier — le snapshot les porte sur deux octets', () => {
-      // ⚠️ Ce test garde l'elargissement `u8 -> u16` de `SNAPSHOT_PLAYER_BYTES`
-      // (tache 8). Avec un `u8`, huit cartes de vitalite (100 + 160 = 260)
-      // rendaient 4 points de vie au decodage : le joueur passait de presque
-      // trois barres de vie a la mort en un ramassage.
+      // ⚠️ Garde les PV sur `u16` dans `SNAPSHOT_PLAYER_BYTES` : sur un `u8`,
+      // 260 PV se decoderaient en 4.
       const magnitude = passiveOf(VITALITE).magnitude;
       const cartes = Math.ceil((256 - PLAYER_MAX_HP) / magnitude);
       const room = new Room();
@@ -1405,9 +1309,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
     it('deux cartes de puissance doublent le bonus de degats porte par le projectile', () => {
       // Le nombre transporte. Qu'il change une ISSUE — un ennemi lourd qui
-      // meurt en moins d'impacts — est verifie par le test suivant : c'est la
-      // dette de l'etape 4 (« `damage` ne module aucune issue ») qui se solde
-      // la, pas ici.
+      // meurt en moins d'impacts — est verifie par le test suivant.
       const magnitude = passiveOf(PUISSANCE).magnitude;
       const base = weaponOf(BASE_WEAPON_ID).damage;
 
@@ -1432,10 +1334,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     });
 
     it('deux cartes de puissance font mourir un ennemi lourd en MOINS d impacts', () => {
-      // ⚠️ **La dette de l'etape 4, soldee.** « Puissance » et « acier »
-      // calculaient un bonus qui ne modulait aucune issue : la pietaille
-      // n'avait pas de PV, un projectile qui touche etait toujours letal. Le
-      // test precedent ne garde que le NOMBRE ; celui-ci garde l'ISSUE.
+      // Le test precedent ne garde que le NOMBRE ; celui-ci garde l'ISSUE.
       //
       // Compte les IMPACTS, pas les ticks : la cadence est identique dans les
       // trois cas (« puissance » ne la touche pas), mais compter des ticks
@@ -1450,7 +1349,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
         room.join(1);
         prend(room, PUISSANCE, cartes);
         const pos = positionOf(room, 1);
-        // 500 px : dans la portee de la dague (~607 px, tache 14) et hors de
+        // 500 px : dans la portee de la dague (~607 px) et hors de
         // CONTACT_RADIUS, pour isoler le chemin « degats de projectile ».
         const cible = spawnMonsterAt(room, 900, pos.x + 500, pos.y, LOURD);
         let impacts = 0;
@@ -1475,10 +1374,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
       const degats = weaponOf(BASE_WEAPON_ID).damage;
       const magnitude = passiveOf(PUISSANCE).magnitude;
-      // ⚠️ **L'armure entre dans le compte depuis l'etape 5b.** Le lourd passe
-      // par `appliquerDegats` comme tout le monde, donc chaque impact ne lui
-      // retire que `degats x (1 - HEAVY_ARMOR)`. L'oublier ici ferait repondre
-      // au modele un palier que le salon ne franchit plus.
+      // ⚠️ **L'armure entre dans le compte** : le lourd passe par
+      // `appliquerDegats`, chaque impact ne lui retire que
+      // `degats x (1 - HEAVY_ARMOR)`.
       const impacts = (cartes: number) =>
         Math.ceil(HEAVY_HP / (degats * (1 + magnitude * cartes) * (1 - HEAVY_ARMOR)));
 
@@ -1488,16 +1386,13 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       expect(impactsPourTuer(0)).toBe(5);
       expect(impacts(0)).toBe(5);
 
-      // ⚠️ **UNE carte ne suffit pas, et c'est le motif R9 de l'etape 4 : le
-      // nombre d'impacts est un ENTIER, et le bonus une fraction.**
-      // 20 PV / (5 x 1,1 x 0,85) = 4,28, donc toujours cinq impacts. Le palier
-      // n'est pas la ou la fraction le suggere, et c'est tout l'interet du
-      // test.
+      // ⚠️ **UNE carte ne suffit pas : le nombre d'impacts est un ENTIER, et
+      // le bonus une fraction.** 20 PV / (5 x 1,1 x 0,85) = 4,28, donc
+      // toujours cinq impacts.
       expect(impactsPourTuer(1)).toBe(5);
       expect(impacts(1)).toBe(5);
 
       // **L'issue change a DEUX cartes** (20 / (5 x 1,2 x 0,85) = 3,92 -> 4).
-      // C'est ce qui separe cette etape de l'etape 4.
       expect(impactsPourTuer(2)).toBe(4);
       expect(impacts(2)).toBe(4);
       expect(impactsPourTuer(2)).toBeLessThan(impactsPourTuer(0));
@@ -1516,35 +1411,24 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
   });
 
   it('un arsenal lourdement empile ne tronque aucune salve', () => {
-    // ⚠️ **La borne que l'empilement a levee.** Tant qu'une arme ne se prenait
-    // qu'une fois, quatre joueurs aux slots pleins tenaient une centaine de
-    // projectiles simultanes contre 256 de capacite, et la marge tenait toute
-    // seule. Chaque exemplaire elargit desormais la salve d'un projectile, et
-    // **le plafond de slots d'armes ne borne plus rien** : c'est le nombre
-    // d'EXEMPLAIRES qui commande, et il n'a pas de plafond.
+    // ⚠️ Chaque exemplaire elargit la salve : le plafond de slots ne borne pas
+    // le nombre de projectiles, c'est le nombre d'EXEMPLAIRES qui commande, et
+    // il n'a pas de plafond.
     //
     // `Projectiles` tronque en SILENCE quand la capacite est atteinte : la salve
-    // que le joueur a payee en cartes ne partirait pas, sans aucun signal. Ce
-    // test est ce qui rend la constante verifiable. 256 n'est pas une constante
-    // du depot mais la valeur que `PROJECTILE_CAPACITY` avait AVANT
-    // l'empilement : le pic la depasse, donc la ramener a 256 ferait rougir.
+    // payee en cartes ne partirait pas, sans aucun signal. Ce test rend
+    // `PROJECTILE_CAPACITY` verifiable : le pic depasse 256, donc ramener la
+    // capacite a 256 le ferait rougir.
     const room = new Room(0x0ca9_ac17);
     for (const id of [1, 2, 3, 4]) {
       room.join(id);
     }
     const ARMES = ARSENAL_PLEIN;
-    // ⚠️ **Douze, et plus huit depuis la tache 19.** Retirer un slot d'arme a
-    // retire un cinquieme du debit : a huit exemplaires le pic tombait a 208,
-    // sous le seuil ci-dessous, et le test serait passe au vert en cessant de
-    // mesurer quoi que ce soit. C'est le nombre d'EXEMPLAIRES qui leve la
-    // borne, pas le nombre de slots — voir la doc de `PROJECTILE_CAPACITY`.
-    //
     // ⚠️ **Ce nombre est MESURE au reglage courant de `WEAPON_SLOTS`**, il ne
     // s'en derive pas : le debit depend aussi de QUELLES armes remplissent
-    // l'arsenal, et deux slots d'eventail et d'arc-lourd ne portent pas le
-    // meme reservoir que quatre. Le jour ou les slots rebougent, ce test
-    // rougit — bruyamment, ce qui est exactement ce qu'on veut : la capacite
-    // se REMESURE, elle ne se recalcule pas de tete.
+    // l'arsenal. Trop peu d'exemplaires, le pic passe sous le seuil
+    // ci-dessous et le test ne mesure plus rien. Si les slots bougent, ce test
+    // rougit : la capacite se REMESURE, elle ne se recalcule pas de tete.
     const EXEMPLAIRES = 12;
     for (const id of [1, 2, 3, 4]) {
       // Le pic est mesure sur quatre armes de tir : sans la dague du depart.
@@ -1562,8 +1446,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     //
     // ⚠️ On garde le PIC, pas le compte final. Les salves ne sont pas en phase :
     // a un tick donne le reservoir peut etre a moitie vide alors qu'il a frole
-    // sa capacite deux ticks plus tot. Une premiere version lisait le compte au
-    // dernier tick et mesurait 156 la ou le pic depasse 256.
+    // sa capacite deux ticks plus tot.
     let pic = 0;
     for (let i = 0; i < 300; i++) {
       room.step(DT);
@@ -1602,16 +1485,15 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // figure dans le meme lot de resultats que le gagnant. Rien dans la
     // structure du message ne distingue les deux — seul l'examen de
     // `outcome` le fait. Sans ce filtre, les deux joueurs empocheraient la
-    // carte 0 et le conflit ne servirait a rien (verifie par mutation :
-    // neutraliser le filtre laissait 310 tests verts).
+    // carte 0 ; aucun autre test ne le voit.
     const carte = cartes[0];
     const inv = room.loadoutOf(perdant.playerId);
     if (!carte || !inv) {
       throw new Error('carte ou inventaire manquant');
     }
     // L'arme du depart (la dague) est deja possedee par LES DEUX joueurs : une
-    // carte de dague s'empile dessus. (Le salon est a graine aleatoire : sans
-    // ce terme, le test rougissait chaque fois que la carte 0 etait la dague.)
+    // carte de dague s'empile dessus (le salon est a graine aleatoire, la
+    // carte 0 peut etre la dague).
     const deja = carte.nature === CARD.WEAPON && carte.refId === BASE_WEAPON_ID ? 1 : 0;
     if (carte.nature === CARD.PASSIVE) {
       expect(inv.stacksOf(carte.refId)).toBe(0);
@@ -1624,7 +1506,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     if (!invGagnant) {
       throw new Error('inventaire du gagnant manquant');
     }
-    // La carte compte autant de fois que sa rarete (etape 10).
+    // La carte compte autant de fois que sa rarete.
     if (carte.nature === CARD.PASSIVE) {
       expect(invGagnant.stacksOf(carte.refId)).toBe(applicationsOf(carte));
     } else {
@@ -1634,9 +1516,8 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
   it('deux niveaux gagnes au meme tick ouvrent deux drafts bout a bout, sans repit', () => {
     // ⚠️ Graine FIXE. La geometrie du tas d'orbes depend des obstacles, qui
-    // derivent de `mapSeed` : avec une graine tiree au hasard, ce test echouait
-    // environ une fois sur quatre. Un test intermittent est pire qu'un test
-    // absent — on finit par l'ignorer.
+    // derivent de `mapSeed` : avec une graine tiree au hasard, ce test devient
+    // intermittent.
     const room = new Room(0x7a11_c0de);
     room.join(1);
     const depart = positionOf(room, 1);
@@ -1655,17 +1536,12 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // `LEVEL_XP_BASE * n`, soit 10 puis 20 puis 30 — donc 30 d'experience d'un
     // seul tick franchissent DEUX seuils, et 60 en franchiraient trois.
     //
-    // ⚠️ **Le tas est ramasse d'UN SEUL coup depuis la tache 19** (voir la note
-    // dans la boucle ci-dessous), donc son total est exactement ce que
-    // `#gainXp` recoit : il doit tenir STRICTEMENT entre les deux bornes.
-    // Trop peu, un seul niveau tombe et le test ne prouve plus rien ; trop, un
-    // troisieme etalage s'ouvre derriere les deux observes et le monde ne rend
-    // jamais la main a la derniere assertion. Les deux moities sont gardees
-    // juste en dessous plutot que laissees a la lecture — ce decor s'est deja
-    // trompe deux fois de cote.
-    //
-    // ⚠️ **Derive de `XP_PER_ORB` depuis la tache 17**, jamais un nombre pose a
-    // cote : chaque orbe vaut `XP_PER_ORB` et non 1.
+    // ⚠️ **Le tas est ramasse d'UN SEUL coup** (voir la note dans la boucle
+    // ci-dessous), donc son total est exactement ce que `#gainXp` recoit : il
+    // doit tenir STRICTEMENT entre les deux bornes. Trop peu, un seul niveau
+    // tombe et le test ne prouve plus rien ; trop, un troisieme etalage
+    // s'ouvre et le monde ne rend jamais la main a la derniere assertion. Les
+    // deux bornes sont gardees juste en dessous, derivees de `XP_PER_ORB`.
     const ORBES = 10;
     expect(ORBES * XP_PER_ORB).toBeGreaterThanOrEqual(LEVEL_XP_BASE * (1 + 2));
     expect(ORBES * XP_PER_ORB).toBeLessThan(LEVEL_XP_BASE * (1 + 2 + 3));
@@ -1686,20 +1562,11 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       aimAtNearestMonster(room, 1, ticks + 1);
       room.step(DT);
       ticks++;
-      // ⚠️ **Le monstre est REPOSE sur le tas a chaque tick, et ce n'est pas
-      // de la coquetterie de decor.** Il marche vers le joueur tant qu'il vit,
-      // donc l'etalement du tas etait une fonction de sa DUREE DE VIE, elle
-      // meme une fonction de `cooldownTicks` : le tas s'etalait sur une
-      // douzaine de pixels a 7 ticks de recharge, le joueur en ramassait
-      // trente-quatre d'un coup, et deux niveaux tombaient ensemble. La tache
-      // 19 a porte la dague a 4 ticks — le monstre meurt plus tot, le tas se
-      // pose autrement, le joueur n'en ramasse plus que cinq au tick decisif
-      // et ce test ne voyait plus qu'UN niveau. Onzieme « fixture qui masque »
-      // du depot : le decor mesurait la cadence sans le dire.
-      //
-      // Repose ici, la derive d'un cadavre est bornee a UN tick de marche quoi
-      // que vaille la cadence, donc les quinze orbes tiennent dans le rayon de
-      // ramassage et le test observe ce qu'il pretend observer.
+      // ⚠️ **Le monstre est REPOSE sur le tas a chaque tick.** Il marche vers
+      // le joueur tant qu'il vit : sans ca, l'etalement du tas dependrait de
+      // sa duree de vie, donc de `cooldownTicks`, et le decor mesurerait la
+      // cadence sans le dire. Repose, la derive d'un cadavre est bornee a UN
+      // tick de marche, et tout le tas tient dans le rayon de ramassage.
       const slot = room.horde.slotOf(courant);
       if (slot >= 0) {
         room.horde.x[slot] = tas.x;
@@ -1749,10 +1616,9 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
       room.step(DT);
     }
     expect(positionOf(room, 1)).not.toEqual(positionGelee);
-    // ⚠️ On ne verifie PAS qu'aucun troisieme etalage ne s'ouvre ensuite : rien
-    // ici n'interdit au generateur de vagues de nourrir un troisieme niveau
-    // plus tard, et une premiere version de ce test l'a paye. Ce qui est
-    // garde, c'est que le monde REPREND la main — donc qu'aucun etalage ne
+    // ⚠️ On ne verifie PAS qu'aucun troisieme etalage ne s'ouvre ensuite : le
+    // generateur de vagues peut nourrir un troisieme niveau plus tard. Ce qui
+    // est garde, c'est que le monde REPREND la main — donc qu'aucun etalage ne
     // reste ouvert derriere les deux observes.
   });
 
@@ -1771,14 +1637,13 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // ⚠️ `room.tick + 1` : `seq` est compare modulo 16 bits (`isNewer`), donc
     // un grand nombre arbitraire peut passer pour PLUS ANCIEN que la sequence
     // deja atteinte par la boucle de visee — l'entree serait rejetee en
-    // silence et le joueur ne bougerait jamais (constate en ecrivant ce test).
+    // silence et le joueur ne bougerait jamais.
     room.applyInput(1, room.tick + 1, 127, 0);
 
     // ⚠️ On mesure la rampe ENTIERE, pas un tick. Le pas d'un seul tick au
     // debut de la rampe vaut une fraction de pixel, et `positionOf` lit le
     // snapshot, ou les positions sont arrondies a l'entier : un test tick a
-    // tick lirait 0 des deux cotes et ne prouverait rien (constate en
-    // ecrivant celui-ci).
+    // tick lirait 0 des deux cotes et ne prouverait rien.
     const debut = positionOf(room, 1);
     for (let i = 0; i < LEVEL_RESUME_TICKS; i++) {
       room.step(DT);
@@ -1799,8 +1664,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
     // La rampe monte lineairement de 0 a 1 : sur toute sa duree elle parcourt
     // environ la MOITIE de la distance a pleine vitesse. Sans la ligne qui
     // date la fin du gel (`#freezeUntilTick = tick` a la fermeture), l'echelle
-    // vaut 1 des le premier tick et les deux distances sont EGALES — mutation
-    // qui survivait aux 310 tests precedents.
+    // vaut 1 des le premier tick et les deux distances sont EGALES.
     expect(parcouruEnRampe).toBeLessThan(parcouruPlein * 0.7);
     // Mais elle avance quand meme : un gel qui ne finirait jamais passerait
     // aussi la ligne ci-dessus.
@@ -1854,8 +1718,7 @@ describe("l'arbitrage de combat integre au salon (tache 9)", () => {
 
 describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
   /**
-   * *« Moins d'xp qui tombe »* — et c'est bien le NOMBRE D'OBJETS AU SOL que
-   * l'auteur decrit, pas la courbe de progression. Ce test le mesure sur le
+   * Le NOMBRE D'OBJETS AU SOL, pas la courbe de progression, mesure sur le
    * pipeline reel : de vraies morts par projectile, dans un vrai salon.
    *
    * ⚠️ **Le tas meurt HORS portee de ramassage** (`ORB_PICKUP_RADIUS` = 90 px) :
@@ -1870,10 +1733,8 @@ describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
     const room = new Room(0x0b_e5_0017);
     room.join(1);
     const depart = positionOf(room, 1);
-    // ⚠️ **Assez large pour contenir des PIECES** (etape 6a, tache 14) :
-    // `COIN_DROP_ONE_IN` vaut quatre fois `ORB_DROP_ONE_IN`, donc une vague de
-    // 16 n'en laisserait aucune et le nouveau drop serait invisible ici. Pas
-    // plus large non plus : le budget de 300 ticks doit suffire a TOUT abattre,
+    // ⚠️ **Assez large pour contenir des PIECES**, plus rares que les orbes :
+    // trop etroite, la vague n'en laisserait aucune. Pas plus large non plus : le budget de 300 ticks doit suffire a TOUT abattre,
     // sinon le compte du sol mesure la duree du test.
     const ids = spawnWaveAt(room, 800, 2 * COIN_DROP_ONE_IN, depart.x + 520, depart.y - 120);
 
@@ -1897,25 +1758,15 @@ describe('le debit d orbes, dans le salon (etape 5a, tache 17)', () => {
     // Les deux natures sont bien la, et elles sont disjointes.
     expect(ids.filter((id) => dropsOrb(id))).toHaveLength(ids.length / ORB_DROP_ONE_IN);
     expect(ids.filter((id) => dropsCoin(id))).toHaveLength(ids.length / COIN_DROP_ONE_IN);
-    // ⚠️ **`orbesTronquees` n'est GARDE par rien de plus que ce zero au niveau
-    // du salon** — mutation appliquee, « rendre 0 » survit ici. Remplir
-    // `MAX_ENTITIES` (4000) creneaux d'orbes demande plus de morts qu'un test
-    // de salon n'en produit a un cout raisonnable ; c'est `combat.test.ts` qui
-    // eprouve le refus lui-meme, sur une reserve de trois places. Dit tel quel
-    // plutot que credite d'un test qui ne le tient pas — meme choix que
-    // `zonesTronquees`.
+    // ⚠️ **`orbesTronquees` n'est garde ici que par ce zero** : un « rendre 0 »
+    // passerait. Remplir `MAX_ENTITIES` creneaux d'orbes coute trop cher dans
+    // un test de salon ; c'est `combat.test.ts` qui eprouve le refus, sur une
+    // reserve de trois places. Meme choix que `zonesTronquees`.
     expect(room.orbesTronquees).toBe(0);
   });
 });
 
-/**
- * L'or qui tombe des monstres (etape 6a, tache 14) — *« les monstres ne
- * droppent pas d'or j'ai l'impression, t'as l'icone dans UI Elements/Icons/
- * Icon_03 »*.
- *
- * **L'auteur avait raison, et c'etait verifie** : `#gold` ne montait que par
- * `palierGold` a la mort du boss. Un monstre ne laissait rien.
- */
+/** L'or qui tombe des monstres, en plus de `palierGold` a la mort du boss. */
 describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
   /**
    * Abat une vague loin du joueur, puis le fait MARCHER dessus, et rend ce que
@@ -1943,21 +1794,13 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
       }
       for (const ouverture of room.drainDraftOpens()) {
         if (ouverture.cards.length > 0) {
-          // ⚠️ **Ignore les cartes de REGLE** (etape 13, tache 6), plutot
-          // que d'accepter l'index 0 aveuglement. Ce test mesure l'or et les
-          // orbes ramasses ; il ne veut pas dependre de QUELLE carte sort au
-          // tirage AUTO. Transcendance (PV max a 1) l'a prouve : tombee sur
-          // ce joueur en plein balayage de contact, elle le tuait et l'or
-          // mesure retombait a zero — pas un bug de la carte, un accident de
-          // tirage que ce helper n'avait aucune raison de subir. C'est CE
-          // decouplage qui est le vrai correctif, pas la graine plus bas.
-          //
-          // ⚠️ **Elargi a `rule || malus` (etape 13, tache 7).** Fournaise
-          // porte un `malus` de 40 PV max, pas une `rule` — elle passait a
-          // travers le filtre `!rule` seul et pouvait retuer ce joueur
-          // simule en plein contact, exactement comme Transcendance avant
-          // elle. L'invariant reel : l'acceptation automatique ne doit
-          // jamais prendre une carte qui change la survie du joueur simule.
+          // ⚠️ **Ignore les cartes de REGLE et a MALUS** plutot que de prendre
+          // l'index 0 : ce test mesure l'or et les orbes, il ne doit pas
+          // dependre de la carte tiree. Transcendance (PV max a 1) ou
+          // Fournaise (malus de PV max) tueraient ce joueur en plein contact,
+          // et l'or mesure retomberait a zero. L'invariant : l'acceptation
+          // automatique ne prend jamais une carte qui change la survie du
+          // joueur simule.
           const index = ouverture.cards.findIndex((c) => {
             if (c.nature !== CARD.PASSIVE) {
               return true;
@@ -2010,29 +1853,13 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
   }
 
   /**
-   * **LE test de la tache.** Une piece par identite que `dropsCoin` accepte, et
-   * pas une de plus.
+   * Une piece par identite que `dropsCoin` accepte, et pas une de plus.
    *
    * ⚠️ **La vague est assez large pour en contenir plusieurs** : a une seule,
    * « une piece par mort » et « une piece sur seize » rendraient le meme
    * nombre, et le taux ne serait garde par rien.
    */
   it('verse de l or a chaque piece ramassee, et rien pour les autres morts', () => {
-    // ⚠️ **`waveId` 912, pas 910** (etape 13, tache 6) — mais le VRAI
-    // correctif est dans `fermeLEtalage` plus haut, pas ici. Avec 910 et un
-    // tirage AUTO qui acceptait encore l'index 0 aveuglement, le joueur
-    // simule pouvait recevoir Transcendance (PV max a 1) en plein balayage
-    // de contact et mourir en chemin — un mort ne touche plus d'or (§9.3,
-    // le bon comportement, c'est la MESURE qui en patissait). Le pool
-    // legendaire a deux candidats depuis cette tache (Moisson, puis
-    // Transcendance) au lieu d'un : la carte qui ressort au tirage AUTO n'est
-    // plus garantie, et la tache suivante (Fournaise, Hate funeste,
-    // Contagion, retrait de Moisson) va encore faire bouger ce pool. Faire
-    // ignorer les cartes de regle par `fermeLEtalage` rend la mesure
-    // INDIFFERENTE a la composition du pool — c'est ce qui evite d'avoir a
-    // re-chasser un `waveId` a chaque catalogue touche. `912` est garde
-    // pour ne rien changer de plus que necessaire, mais `910` tiendrait tout
-    // aussi bien desormais.
     const { ids, ramasses, or } = ramasseUneVague(912, 4 * COIN_DROP_ONE_IN);
     const piecesRamassees = ramasses.filter((id) => dropsCoin(id));
 
@@ -2041,9 +1868,9 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
     // la trajectoire du joueur a travers le tas.
     expect(or).toBe(piecesRamassees.length);
     // Non-vacuite des deux cotes : des pieces ont bien ete ramassees, et le
-    // joueur a ramasse bien plus de choses que de pieces.
-    // Au moins une : depuis les roles, les vagues du directeur qui traversent
-    // le decor ne laissent plus toujours une seconde piece en chemin.
+    // joueur a ramasse bien plus de choses que de pieces. Au moins une
+    // seulement : les vagues du directeur ne laissent pas toujours une seconde
+    // piece en chemin.
     expect(piecesRamassees.length).toBeGreaterThanOrEqual(1);
     expect(ramasses.length).toBeGreaterThan(piecesRamassees.length);
     // Les pieces de la vague du TEST seulement : celles des vagues du
@@ -2054,10 +1881,7 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
   });
 
   /**
-   * ⚠️ **Une piece ne vaut AUCUNE experience, et une orbe aucun or.** Les deux
-   * ensembles sont disjoints (`COIN_DROP_RESIDUE`) ; les confondre reviendrait
-   * a ralentir les niveaux en rarefiant l'or, ou a rendre l'or fonction de la
-   * courbe d'experience.
+   * ⚠️ **Une piece ne vaut AUCUNE experience, et une orbe aucun or.**
    */
   it('separe les deux monnaies : une piece ne vaut aucune experience', () => {
     const { ramasses, or, xp } = ramasseUneVague(911, 4 * COIN_DROP_ONE_IN);
@@ -2065,9 +1889,8 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
     const pieces = ramasses.filter((id) => dropsCoin(id));
 
     expect(or).toBe(pieces.length);
-    // ⚠️ **LE coeur du test, et la mutation qu'il tue** : crediter aussi les
-    // pieces en experience laissait tout le reste vert. L'experience suit les
-    // ORBES, une par une.
+    // ⚠️ Seule cette ligne voit des pieces creditees en experience.
+    // L'experience suit les ORBES, une par une.
     expect(xp).toBe(orbes.length * XP_PER_ORB);
     expect(pieces.length).toBeGreaterThan(0);
     // ⚠️ **Les deux ensembles sont DISJOINTS** (`COIN_DROP_RESIDUE`) : aucun
@@ -2079,10 +1902,9 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
   });
 
   /**
-   * ⚠️ **L'or des monstres rejoint l'or NON SECURISE**, celui que le §9.3 fait
-   * perdre a la mort de l'equipe. Une seconde bourse aurait fait de la piece
-   * une monnaie a part, que le vote d'extraction ne mettrait pas en jeu — et
-   * c'est precisement le sel du palier.
+   * ⚠️ **L'or des monstres rejoint l'or NON SECURISE**, celui que la mort de
+   * l'equipe fait perdre : une seconde bourse echapperait a l'enjeu du vote
+   * d'extraction.
    */
   it('n en verse aucun quand personne ne va les chercher', () => {
     // La moitie basse : un `#gold` qui monterait a chaque MORT — ou a chaque
@@ -2113,12 +1935,10 @@ describe("l'or que laissent les monstres (etape 6a, tache 14)", () => {
 });
 
 /**
- * La regeneration (etape 6a, tache 17) — *« il faut un moyen de regen aussi »*.
- *
- * ⚠️ **RIEN NE SOIGNAIT avant cette tache** : « vitalite » releve `maxHp` et
- * offre le delta une seule fois, dans `grantCard`. Ce qui se garde ici a DEUX
- * moities, et la seconde n'est pas facultative : sans elle, une regeneration
- * qui deborde son plafond passerait.
+ * La regeneration. « vitalite » releve `maxHp` et offre le delta une seule
+ * fois, dans `grantCard` ; seul ce passif soigne dans la duree. DEUX moities,
+ * et la seconde n'est pas facultative : sans elle, une regeneration qui
+ * deborde son plafond passerait.
  */
 describe('le passif de regeneration (etape 6a, tache 17)', () => {
   /**
@@ -2139,7 +1959,7 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
   const PAR_SECONDE = passiveOf(REGAIN).magnitude;
   const PAR_CARTE_MAX_HP = passiveOf(VITALITE).magnitude;
 
-  /** Fournaise (etape 13, tache 7) : la seule carte a malus de `maxHp` du catalogue. */
+  /** Fournaise : la seule carte a malus de `maxHp` du catalogue. */
   const FOURNAISE = (() => {
     const trouve = PASSIVES.find((p) => p.malus?.kind === 'maxHp');
     if (!trouve) {
@@ -2160,7 +1980,7 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
    * le monstre. Rend les points de vie constates.
    *
    * ⚠️ **Aucun raccourci vers `PlayerState.hp`** : c'est le serveur qui arbitre
-   * la vie (§5.4), et un decor qui l'ecrirait a la main testerait un etat que
+   * la vie, et un decor qui l'ecrirait a la main testerait un etat que
    * le jeu ne peut pas produire.
    */
   function blesse(room: Room, playerId: number, waveId: number, ticks: number): number {
@@ -2183,9 +2003,8 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     // ⚠️ **L'empilement, pas seulement l'effet.** Un code qui regarderait
     // « ce passif est possede » sans compter les exemplaires soignerait autant
     // a une carte qu'a deux, et « la vie remonte » passerait quand meme.
-    // 150 ticks (5 s) : assez pour que deux cartes se distinguent nettement
-    // d'une, et assez peu pour rester sous le plafond de 100 apres blessure.
-    // Assez long pour que UNE carte rende au moins 10 PV (regen baissee au playtest).
+    // Assez long pour que UNE carte rende au moins 10 PV, assez court pour
+    // rester sous le plafond apres blessure.
     const REGEN_TICKS = Math.ceil((10 * TICK_HZ) / PAR_SECONDE) + 30;
 
     function remonte(cartes: number): number {
@@ -2212,15 +2031,15 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
       return apres - blesse1;
     }
 
-    // Sans carte, rien ne remonte : c'est l'etat d'avant la tache.
+    // Sans carte, rien ne remonte.
     expect(remonte(0)).toBe(0);
 
     // ⚠️ **A UN POINT PRES, et c'est le fil qui l'impose** : `hp` est un
     // flottant cote serveur (le bonus vaut `magnitude / TICK_HZ` par tick) et
-    // le `SNAPSHOT` le porte en `u16`, donc `hpOf` TRONQUE. La somme de 150
-    // fois 0,0666… ne tombe pas non plus pile sur 10 en virgule flottante.
-    // Un point de tolerance couvre les deux ; il ne couvre pas l'ecart de dix
-    // points que separe une carte de deux.
+    // le `SNAPSHOT` le porte en `u16`, donc `hpOf` TRONQUE, et la somme des
+    // increments ne tombe pas pile en virgule flottante. Un point de
+    // tolerance couvre les deux ; il ne couvre pas l'ecart d'au moins dix
+    // points qui separe une carte de deux.
     const attendu = (PAR_SECONDE * REGEN_TICKS) / TICK_HZ;
     expect(attendu).toBeGreaterThanOrEqual(10);
     expect(remonte(1)).toBeGreaterThanOrEqual(attendu - 1);
@@ -2230,15 +2049,13 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
   });
 
   it('SECONDE MOITIE : la vie PLAFONNE au maximum PERSONNEL, sans jamais le depasser', () => {
-    // ⚠️ **`maxHp`, pas `PLAYER_MAX_HP`.** Le plafond suit les cartes de
-    // vitalite depuis l'etape 4 : le lire dans la constante ferait d'une
-    // vitalite empilee un plafond qu'aucun soin ne peut remplir.
+    // ⚠️ **`maxHp`, pas `PLAYER_MAX_HP`** : le plafond suit les cartes de
+    // vitalite, le lire dans la constante ferait d'une vitalite empilee un
+    // plafond qu'aucun soin ne peut remplir.
     //
     // ⚠️ **Et le plafond est au-dela de 255**, pour que le `u16` du snapshot
-    // soit reellement en jeu : une regeneration qui deborderait rendrait 4 au
-    // decodage au lieu de 260, et le joueur passerait de trois barres de vie a
-    // la mort en un ramassage. C'est le meme cas que le test « les points de
-    // vie depassent 255 sans se replier », vu depuis le soin.
+    // soit reellement en jeu — le test « les points de vie depassent 255 sans
+    // se replier », vu depuis le soin.
     const cartesVie = Math.ceil((256 - PLAYER_MAX_HP) / PAR_CARTE_MAX_HP);
     const maxHp = PLAYER_MAX_HP + PAR_CARTE_MAX_HP * cartesVie;
     expect(maxHp).toBeGreaterThan(255);
@@ -2251,10 +2068,8 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     const vieBlesse = blesse(room, 1, 700, 40);
     prend(room, 1, REGAIN, 3);
 
-    // Trois cartes rendent 3 x `PAR_SECONDE` par seconde : de quoi combler
-    // plusieurs fois le trou en 300 ticks. Sans plafond, la vie deborderait
-    // largement.
-    // Assez long pour combler plusieurs fois le trou, quelle que soit la regen.
+    // Trois cartes, assez longtemps pour combler plusieurs fois le trou :
+    // sans plafond, la vie deborderait largement.
     const PLAFOND_TICKS = Math.ceil((200 * TICK_HZ) / (3 * PAR_SECONDE));
     const rendu = (3 * PAR_SECONDE * PLAFOND_TICKS) / TICK_HZ;
     expect(vieBlesse + rendu).toBeGreaterThan(maxHp);
@@ -2277,7 +2092,7 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     // `#regenerate`** — et il est MASQUE par le retour anticipe de `step` des
     // que TOUS les joueurs sont morts (la run est finie, plus rien n'avance).
     // Il faut donc un salon a deux joueurs : l'un tombe, l'autre tient la run
-    // ouverte, et la mutation redevient visible.
+    // ouverte.
     const room = new Room(0x0e_9e_0003);
     room.join(1);
     room.join(2);
@@ -2312,33 +2127,22 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
     for (let t = 0; t < 90; t++) {
       room.step(DT);
     }
-    // Le mort reste mort : sans le garde, il remonterait a 6 points de vie en
-    // 90 ticks et `#checkRunOver` verrait la run repartir.
+    // Le mort reste mort : sans le garde, il remonterait et `#checkRunOver`
+    // verrait la run repartir.
     expect(hpOf(room, 1)).toBe(0);
     // Non-vacuite : la regeneration TOURNE pendant ces memes ticks.
     expect(hpOf(room, 2)).toBeGreaterThan(vieAvant);
   });
 
   /**
-   * Etape 13 : la borne de `grantCard` sur `maxHp` (§3.1 — un malus est un
-   * bonus negatif).
+   * La borne de `grantCard` sur `maxHp` (un malus est un bonus negatif).
    *
-   * ⚠️ **Le cas que cette tache corrige vraiment** — un joueur blesse qui
-   * prend une carte a malus de PV max et dont `hp += nouveauMax - maxHp`
-   * passait sous zero — demandait une carte a malus, et le catalogue n'en
-   * avait ENCORE AUCUNE. Les deux premiers tests verifient donc le CHEMIN
-   * INVERSE, celui que le catalogue d'alors permettait deja d'exercer : un
-   * maximum qui NE BOUGE PAS ne doit faire sauter ni descendre `hp` d'un
-   * seul point chez un joueur deja blesse, et un maximum qui MONTE continue
-   * de rendre exactement le delta, jamais plus. Les trois lignes de borne
-   * (`vivant`, `Math.min`, `Math.max`) sont des no-op sur ces deux chemins.
-   *
-   * **Fournaise (etape 13, tache 7) rend le troisieme test possible** : voir
-   * « Fournaise... » plus bas, LE test que cette borne attendait depuis le
-   * debut — un joueur BLESSE (pas mort) qui encaisse un malus de PV max.
-   *
-   * Le plancher du MORT, lui, se prouve des aujourd'hui : `debugResetLoadout`
-   * fait baisser un maximum sans carte a malus (voir le troisieme test).
+   * Ces deux premiers tests gardent les chemins ou la borne
+   * (`vivant`, `Math.min`, `Math.max`) ne doit rien changer : un maximum qui
+   * NE BOUGE PAS ne fait ni sauter ni descendre `hp` chez un joueur blesse,
+   * et un maximum qui MONTE rend exactement le delta, jamais plus. Le malus
+   * sur un joueur BLESSE est garde par « Fournaise... » plus bas, le plancher
+   * du MORT par le test qui suit ceux-ci.
    */
   it('une carte qui ne touche pas maxHp laisse les PV exactement en l etat, meme blesse', () => {
     const room = new Room(0x0e_9e_0004);
@@ -2369,19 +2173,15 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
   });
 
   /**
-   * ⚠️ **Le cas trouve en revue, et le seul des quatre qu'aucune carte a
-   * malus future ne suffira a exercer facilement** (il faut un mort ET un
-   * maximum qui baisse, deux conditions a la fois). `debugResetLoadout`
-   * fait baisser un maximum SANS carte a malus : un joueur qui a pris
-   * plusieurs Vitalite, puis meurt, puis se voit vider son inventaire,
-   * recalcule au prochain `grantCard` un maximum bien plus bas que celui
-   * qu'il avait — exactement ce qu'un futur malus fera, par un autre
+   * ⚠️ Il faut un mort ET un maximum qui baisse. `debugResetLoadout` fait
+   * baisser un maximum SANS carte a malus : un joueur qui a pris plusieurs
+   * Vitalite, meurt, puis voit son inventaire vide, recalcule au prochain
+   * `grantCard` un maximum bien plus bas — ce qu'un malus fait par un autre
    * chemin.
    *
    * Sans le second plancher (`Math.max(vivant ? 1 : 0, hp)`), ce joueur
-   * ressortait a `hp` negatif : toujours mort pour la regle serveur
-   * (`hp <= 0`), mais un `hp` negatif que `shared/protocol.ts` encodait
-   * jusqu'ici SANS BORNE — voir le test jumeau de `protocol.test.ts`.
+   * ressortirait a `hp` negatif : toujours mort pour le serveur (`hp <= 0`),
+   * mais un negatif sur le fil — voir le test jumeau de `protocol.test.ts`.
    */
   it('un joueur MORT ne descend jamais sous zero, meme quand un maximum baisse', () => {
     const room = new Room(0x0e_9e_0006);
@@ -2403,11 +2203,10 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
   });
 
   /**
-   * **LE test que la borne de `grantCard` attendait** (voir le docbloc du
-   * premier test de ce bloc) : un joueur BLESSE, pas mort, qui encaisse un
+   * La borne de `grantCard` sur un joueur BLESSE, pas mort, qui encaisse un
    * malus de PV max.
    *
-   * Sans le plancher (`Math.max(vivant ? 1 : 0, hp)`), ce joueur tombait a
+   * Sans le plancher (`Math.max(vivant ? 1 : 0, hp)`), ce joueur tomberait a
    * `30 + (60 - 100) = -10` — mort en acceptant sa carte, alors que la regle
    * serveur veut qu'un BLESSE reste vivant a ce plancher.
    */
@@ -2426,12 +2225,10 @@ describe('le passif de regeneration (etape 6a, tache 17)', () => {
 });
 
 /**
- * Amendement du controleur (etape 7b, tache 6, point 2) : `join` applique
- * deja `accountBonuses.maxHp` au depart ET le recalcul de `grantCard` doit le
- * garder. Les deux sites sont COUPLES — corriger l'un sans l'autre fait
- * REDESCENDRE la vie maximum a la premiere carte de vitalite piochee, et ce
- * n'est pas un cas marginal : un acheteur de vitalite qui pioche une carte du
- * meme genre est un chemin tres ordinaire de la run.
+ * `join` applique `accountBonuses.maxHp` au depart ET le recalcul de
+ * `grantCard` doit le garder. Les deux sites sont COUPLES — corriger l'un sans
+ * l'autre fait REDESCENDRE la vie maximum a la premiere carte de vitalite
+ * piochee, un chemin tres ordinaire de la run.
  */
 describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)', () => {
   it('un bonus de compte sur la vitalite ne redescend jamais quand une carte de vitalite est piochee', () => {
@@ -2460,9 +2257,8 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
 
     room.grantCard(1, { nature: CARD.PASSIVE, refId: vitalite.id });
 
-    // La mutation « ignorer accountBonuses.maxHp au recalcul de grantCard »
-    // fait DESCENDRE ce maximum au lieu de le monter : voir le rapport pour
-    // la mesure.
+    // Ignorer accountBonuses.maxHp au recalcul de grantCard ferait DESCENDRE
+    // ce maximum au lieu de le monter.
     expect(room.maxHpOf(1)).toBeGreaterThan(maxAvant);
     expect(room.maxHpOf(1)).toBe(PLAYER_MAX_HP + 40 + vitalite.magnitude);
   });
@@ -2474,8 +2270,8 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   });
 
   /**
-   * Couvre le deuxieme site de la tache (sur les cinq) : un bonus de compte
-   * sur la vitesse doit se voir en jeu, pas seulement dans un champ jamais lu.
+   * Un bonus de compte sur la vitesse doit se voir en jeu, pas seulement dans
+   * un champ jamais lu.
    */
   it('un bonus de compte sur la vitesse s ajoute a PLAYER_SPEED en jeu', () => {
     const grants: AccountGrants = {
@@ -2502,8 +2298,8 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   });
 
   /**
-   * Troisieme site (ronde de correction 1) : un bonus de compte sur la
-   * cadence doit raccourcir la recharge, comme le ferait une carte
+   * Un bonus de compte sur la cadence doit raccourcir la recharge, comme le
+   * ferait une carte
    * « cadence » — meme mesure (intervalle entre deux salves), meme arme
    * lente (la grenade) pour eviter que l'arrondi n'ecrase le bonus, voir le
    * test de cadence par cartes plus haut dans ce fichier.
@@ -2563,9 +2359,9 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   });
 
   /**
-   * Quatrieme site : un bonus de compte sur la puissance doit augmenter le
-   * degat porte par le projectile, meme mesure que le test « deux cartes de
-   * puissance doublent le bonus de degats... » plus haut dans ce fichier.
+   * Un bonus de compte sur la puissance doit augmenter le degat porte par le
+   * projectile, meme mesure que le test « deux cartes de puissance doublent le
+   * bonus de degats... » plus haut dans ce fichier.
    */
   it('un bonus de compte sur la puissance augmente le degat porte par le projectile', () => {
     const puissance = PASSIVES.find((p) => p.kind === 'damage');
@@ -2609,22 +2405,20 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   });
 
   /**
-   * Cinquieme et dernier site : un bonus de compte sur la regeneration doit
-   * rendre la vie plus vite apres une blessure.
+   * Un bonus de compte sur la regeneration doit rendre la vie plus vite apres
+   * une blessure.
    *
-   * ⚠️ **Le joueur part a sa vie maximale** (amendement, point 2 du rapport
-   * de ronde 1) : sans le blesser d'abord, la regeneration ne pourrait rien
-   * rendre et ce test mesurerait zero AVEC ou SANS le bonus — vingt-quatrieme
-   * assertion creuse du depot. On le blesse par le vrai chemin (un monstre au
-   * contact), comme le fait `blesse` dans le describe de regeneration plus
-   * haut.
+   * ⚠️ **Le joueur part a sa vie maximale** : sans le blesser d'abord, la
+   * regeneration ne pourrait rien rendre et ce test mesurerait zero AVEC ou
+   * SANS le bonus. On le blesse par le vrai chemin (un monstre au contact),
+   * comme `blesse` dans le describe de regeneration plus haut.
    */
   it('un bonus de compte sur la regeneration rend la vie plus vite apres une blessure', () => {
     const regain = PASSIVES.find((p) => p.kind === 'regen');
     if (!regain) {
       throw new Error('fixture : aucun passif de genre regen');
     }
-    // Assez long pour que le bonus rende au moins 10 PV (regen baissee au playtest).
+    // Assez long pour que le bonus rende au moins 10 PV.
     const FENETRE = Math.ceil((10 * TICK_HZ) / regain.magnitude) + 30;
 
     function remonte(bonus: number): number {
@@ -2681,8 +2475,7 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   });
 
   /**
-   * Sixieme site (ronde de correction 1, tache 7) : le SNAPSHOT doit porter
-   * le rayon ELARGI, lu de sa source (`ORB_PICKUP_RADIUS` + le bonus), jamais
+   * Le SNAPSHOT doit porter le rayon ELARGI, lu de sa source (`ORB_PICKUP_RADIUS` + le bonus), jamais
    * un nombre pose a cote. Lu a travers le decodeur (`pickupRadiusOf`, meme
    * discipline que `hpOf`) : c'est le TRANSPORT qui est eprouve, pas l'etat
    * interne du salon.
@@ -2709,11 +2502,9 @@ describe('les bonus de compte entrent en jeu a la connexion (etape 7b, tache 6)'
   });
 
   /**
-   * Sixieme site, seconde moitie (ronde de correction 1) : la PAIRE
-   * discriminante — une orbe prise entre les deux bornes ET une orbe laissee
-   * au-dela, dans le MEME salon et au MEME tick. Sans la seconde moitie, un
-   * rayon INFINI passerait ce test aussi bien qu'un rayon correctement
-   * elargi — vingt-quatrieme assertion creuse du depot.
+   * La PAIRE discriminante — une orbe prise entre les deux bornes ET une orbe
+   * laissee au-dela, dans le MEME salon. Sans la seconde moitie, un rayon
+   * INFINI passerait ce test aussi bien qu'un rayon correctement elargi.
    *
    * ⚠️ **Les deux monstres sont repositionnes a chaque tick** (meme
    * technique que « deux niveaux gagnes au meme tick... » plus haut) : seule
@@ -2794,81 +2585,20 @@ describe('la run est jouable (tache 14)', () => {
    * le pipeline qu'un vrai client declenche. Un joueur IMMOBILE (le pire cas :
    * aucune approche active des orbes) doit tout de meme atteindre le niveau 2.
    *
-   * ⚠️ « Passif » porte sur le DEPLACEMENT, pas sur la visee (tache 13) : la
-   * visee est desormais une entree joueur, jamais automatique — un joueur qui
-   * ne vise litteralement rien (souris jamais bougee) ne tirerait jamais, quel
-   * que soit le reglage de l'arme. `aimAtNearestMonster` simule donc la souris
-   * d'un joueur qui suit la menace la plus proche sans bouger les pieds —
-   * exactement ce qu'un vrai joueur ferait dans cette situation.
+   * ⚠️ « Passif » porte sur le DEPLACEMENT, pas sur la visee : un joueur qui
+   * ne vise rien ne tire jamais. `aimAtNearestMonster` simule la souris d'un
+   * joueur qui suit la menace la plus proche sans bouger les pieds.
    *
-   * Avant la tache 14, ce test aurait echoue : la horde partait a 120-320
-   * entites des la premiere vague (~37 apparitions/s) contre 2 morts/s pour la
-   * dague de base, et le joueur mourait encercle en ~20 s — bien avant les 10
-   * orbes necessaires. Voir le rapport de la tache pour les mesures.
+   * ⚠️ Garde le debut de run : moins d'ennemis, c'est moins d'orbes, et un
+   * debut trop maigre (ou trop lourd, d'ou `HEAVY_FIRST_WAVE` dans
+   * `wave-director.ts`) repousserait la premiere arme.
    *
-   * Budget de 100 s (3000 ticks) : le banc `back/bench/_probe.ts` (jete,
-   * mesures dans le rapport) situe le niveau 2 entre 35 et 64 s sur une
-   * vingtaine d'essais avec un joueur passif — la graine de carte tiree au
-   * hasard a chaque `Room` (`Room.mapSeed`) fait varier ce delai d'un essai a
-   * l'autre. 100 s laisse une marge large sans figer de graine.
-   *
-   * ⚠️ **C'est LA garde de l'etape 7 bis de l'etape 5a** (« moins d'ennemi au
-   * debut »). Moins d'ennemis, c'est moins d'orbes, et le seuil de niveau ne
-   * bouge pas : un debut trop maigre repousserait la premiere arme au lieu de
-   * l'avancer. Remesure sur 40 graines apres la baisse de `WAVE1_*` (16-28 ->
-   * 10-18) et l'allongement de `RAMP_WAVES` (20 -> 30) : mediane **41,3 s**,
-   * maximum **50,1 s**, zero echec — contre 36,8 / 44,5 avant.
-   *
-   * ⚠️ Le meme releve a montre que des vagues LOURDES des le debut faisaient
-   * perdre la run avant le niveau 2 dans 3 essais sur 20 : ce test serait
-   * devenu intermittent a 15 %. C'est ce qui a impose `HEAVY_FIRST_WAVE`
-   * (`wave-director.ts`).
-   *
-   * ⚠️⚠️ **GRAINE FIXEE A L'ETAPE 6a, ET CE N'EST PAS UN CONFORT.** La
-   * structure en paliers coute une vague ordinaire par palier (la cinquieme
-   * devient le boss, `count: 1`) et, des le palier 1, `hpScale(1) = 1,12`
-   * fait passer la pietaille legere de 5 a 5,6 PV — **au-dessus des degats de
-   * la dague**, donc deux coups au lieu d'un. Remesure du meme releve, 40
-   * graines, budget de 100 s :
-   *
-   * | | Mediane | Maximum | Echecs |
-   * | --- | --- | --- | --- |
-   * | avant les paliers | 40,4 s | 55,1 s | **0/40** |
-   * | avec les paliers | 40,9 s | 64,2 s | **1/40** (graine 10 : run perdue au palier 1) |
-   *
-   * Avec `new Room()` (graine tiree au hasard), ce test devenait donc
-   * intermittent a 2,5 % — *« un test intermittent est pire qu'un test
-   * absent »*. La graine 5 est retenue parce qu'elle passe par le palier 1 :
-   * le cas DUR, a 53,9 s pour un budget de 100 s.
-   *
-   * ⚠️⚠️ **LE 1/40 EST RESOLU DEPUIS LA TACHE 3, et pas par
-   * `PALIER_HP_SCALE`.** La cause n'etait pas la pente mais la FRONTIERE :
-   * `LIGHT_HP` vaut exactement les degats de la dague, donc la premiere marche
-   * de l'escalier de durabilite doublait le cout de la pietaille legere pour
-   * +12 % de PV. `palierHp` (`shared/paliers.ts`) exempte desormais la chair a
-   * canon de la montee. Meme releve, 40 graines, budget de 100 s :
-   *
-   * | Etat du code | Mediane | Maximum | Echecs |
-   * | --- | --- | --- | --- |
-   * | avec les paliers, sans exemption | 40,9 s | 64,2 s | **1/40** |
-   * | avec l'exemption, boss pas encore reel | 41,3 s | 63,5 s | **0/40** |
-   * | **+ le boss reel (aujourd'hui)** | **40,8 s** | **60,0 s** | **3/40** |
-   *
-   * ⚠️⚠️ **LE 3/40 N'EST PAS UN RETOUR EN ARRIERE : ce n'est pas la meme
-   * cause.** Le boss porte desormais `BOSS_HP_PER_PLAYER` et apparait a 30 s sur
-   * TOUTES les graines. Un joueur seul vise la menace la plus proche — donc lui
-   * — et verse toute sa production dans 6 000 PV qu'il ne percera pas ; il
-   * cesse de tuer, donc de ramasser des orbes, et la horde l'emporte. Quatre
-   * joueurs le tuent en 87 s (`bench/boss.bench.ts`) ; un joueur, jamais.
-   * Une part en revient au DECOR : `aimAtNearestMonster` vise aveuglement, la
-   * ou un joueur reel laisserait le boss de cote pour continuer a moissonner la
-   * horde. C'est un pire cas de comportement, pas une impossibilite.
-   * **Question laissee ouverte a la tache 12 : un boss doit-il tomber dans une
-   * run solo ?** Rien dans la spec ne repond, et ce jeu vise quatre joueurs.
-   *
-   * La graine reste fixee, et c'est elle qui empeche ce test d'etre
-   * intermittent a 7,5 %. Le releve complet vit dans `bench/niveau2.bench.ts`,
-   * pas ici — ce test mesure une run, pas quarante.
+   * ⚠️ **Graine FIXEE, et ce n'est pas un confort.** Sur des graines tirees au
+   * hasard, une petite part des runs solo n'atteint pas le niveau 2 : le boss
+   * apparait sur toutes les graines, et `aimAtNearestMonster` vise aveuglement
+   * ses PV au lieu de moissonner la horde. La graine 5 passe par le palier 1,
+   * le cas DUR, bien sous le budget de 100 s. Le releve sur plusieurs graines
+   * vit dans `bench/niveau2.bench.ts` — ce test mesure une run, pas quarante.
    */
   it('un joueur passif atteint le niveau 2 via le pipeline reel (vagues, arme de base, orbes)', () => {
     const room = new Room(5);
@@ -2880,10 +2610,9 @@ describe('la run est jouable (tache 14)', () => {
     const budget = TICK_HZ * 100;
     for (let i = 0; i < budget && levelUps.length === 0; i++) {
       aimAtNearestMonster(room, 1, i + 1);
-      // Ce test garde le PIPELINE d'experience, pas la survie : un joueur
-      // immobile finissait deja la minute a ~30 PV, et les tireurs (qui
-      // blessent de 300 px, gardes par `comportements.test.ts`) le tuent avant
-      // qu'un orbe ne roule jusqu'a lui.
+      // Ce test garde le PIPELINE d'experience, pas la survie : les tireurs
+      // (qui blessent de 300 px, gardes par `comportements.test.ts`) tueraient
+      // le joueur immobile avant qu'un orbe ne roule jusqu'a lui.
       room.shots.shots = [];
       room.step(DT);
       totalDeaths += room.drainDeaths().reduce((n, d) => n + d.ids.length, 0);
@@ -2893,8 +2622,7 @@ describe('la run est jouable (tache 14)', () => {
 
     expect(levelUps.length).toBeGreaterThan(0);
     expect(levelUps[0]?.level).toBe(2);
-    // Garde-fou contre un test qui ne prouverait rien (§ « ne jamais rien
-    // tuer ») : la montee de niveau doit venir de vrais monstres tues et de
+    // Garde-fou contre un test qui ne prouverait rien : la montee de niveau doit venir de vrais monstres tues et de
     // vrais orbes ramasses, pas d'un chemin degenere.
     expect(totalDeaths).toBeGreaterThan(0);
     expect(totalPickups).toBeGreaterThan(0);
@@ -2911,8 +2639,8 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
    * et rend tous les lots de morts et toutes les zones vus au passage.
    *
    * `avantChaquePas` tourne juste avant `step`, avec le tick que ce pas va
-   * simuler DEJA connu du decor : c'est la ou les tests de la tache 21 posent
-   * la marque qu'une reaction va consommer.
+   * simuler DEJA connu du decor : c'est la que les tests posent la marque
+   * qu'une reaction va consommer.
    */
   function joue(
     room: Room,
@@ -2932,16 +2660,14 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   }
 
   /**
-   * **Le decor MINIMAL qui produit un champ au sol depuis la tache 21.**
+   * **Le decor MINIMAL qui produit un champ au sol.**
    *
-   * Un projectile ne pose plus rien : *« un projectile marque, un second
-   * element declenche, la reaction laisse un champ »* (§5.1). Il faut donc
-   * DEUX elements sur la meme cible pour voir un seul disque au sol — c'est
-   * exactement ce que la tache 21 a rendu vrai, et ce qu'un decor a une seule
-   * arme ne peut plus mettre en scene.
+   * Un projectile ne pose rien : il marque, un second element declenche, la
+   * reaction laisse un champ. Il faut donc DEUX elements sur la meme cible
+   * pour voir un seul disque au sol.
    *
    * Ici : le joueur 1 tire au Givre, le joueur `markBy` remet une marque de
-   * Braise a chaque tick. Chaque impact declenche (§6.2, premiere ligne) et
+   * Braise a chaque tick. Chaque impact declenche et
    * chaque reaction laisse un champ de Givre aux pieds de la cible. Une fois le
    * premier champ pose, il remarque la cible et la reaction se repete meme
    * entre deux volees — c'est ce qui fait de ce decor un champ ENTRETENU.
@@ -2969,10 +2695,8 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   }
 
   it('une arme de Braise marque et brule ce qu elle touche — et ne pose PLUS aucune zone', () => {
-    // ⚠️ **La non-regression de la tache 21, vue du salon.** Ce test disait
-    // l'inverse jusqu'ici : une arme elementaire posait un disque a chaque fin
-    // de course. Elle MARQUE encore — c'est le seul chemin qui reste vers la
-    // premiere reaction — mais le sol ne lui appartient plus.
+    // ⚠️ Une arme elementaire MARQUE — c'est le seul chemin vers la premiere
+    // reaction — mais ne pose aucun disque : le sol appartient aux reactions.
     expect(ARME_BRAISE).toBeGreaterThanOrEqual(0);
     const room = new Room(0xbaa1_5e00);
     room.join(1);
@@ -2998,7 +2722,7 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   });
 
   it('la REACTION, elle, laisse un champ — annonce, du bon element, du bon joueur', () => {
-    // Le pendant du test precedent : ce que le projectile ne fait plus, la
+    // Le pendant du test precedent : ce que le projectile ne fait pas, la
     // reaction le fait. Le joueur 2 entretient la Braise, le joueur 1 declenche
     // au Givre ; le champ porte l'element et l'identite du DECLENCHEUR (voir
     // `ReactionTrigger.element`).
@@ -3024,21 +2748,15 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   });
 
   /**
-   * ⚠️ **Ferme une mutation HERITEE de la tache 5** (etape 5b) : `#announceZones`
-   * (back/src/room.ts:1442) decodait `this.#zones.kind[z]` avant de le pousser
-   * dans `#pendingZones` — indetectable tant qu'aucune reaction ne posait de
-   * type non nul, puisque `zoneElement(kind) === kind` pour toute zone de
-   * reaction nulle. Surchauffe (Braise + Foudre, tache 6) est la premiere
-   * reaction reelle du jeu a empaqueter un nibble non nul : ce test doit
-   * rougir si `#announceZones` (ou n'importe quel site en amont) redecode
-   * l'octet par erreur.
+   * ⚠️ `#announceZones` doit pousser l'octet `kind` COMPLET dans
+   * `#pendingZones`, sans le decoder : un decodage passerait inapercu sur une
+   * zone de reaction nulle (`zoneElement(kind) === kind`). Surchauffe
+   * (Braise + Foudre) empaquette un nibble de reaction non nul : ce test rougit
+   * si `#announceZones`, ou un site en amont, redecode l'octet.
    *
-   * ⚠️ **Aucune arme de Foudre n'existe encore au catalogue** (elle arrive a
-   * la tache 9) : ce decor s'en passe. Le joueur 1 tire l'arme de Braise
-   * REELLE ; la cible est reposee marquee Foudre a la main, exactement comme
-   * `remarqueBraise` repose une marque de Braise plus haut dans ce fichier.
-   * Le couple (Foudre, Braise) — canonique (Braise, Foudre) — est Surchauffe,
-   * quel que soit celui des deux qui vient du catalogue.
+   * Le joueur 1 tire l'arme de Braise REELLE ; la cible est reposee marquee
+   * Foudre a la main, comme `remarqueBraise` plus haut. Le couple (Foudre,
+   * Braise) — canonique (Braise, Foudre) — est Surchauffe.
    */
   it('⚠️ Surchauffe empaquette un nibble de reaction non nul sur le fil (ferme une mutation heritee de la tache 5)', () => {
     const room = new Room(0xbaa1_5e11);
@@ -3057,14 +2775,14 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     expect(zones.length).toBeGreaterThan(0);
     const surchauffe = zones.find((z) => zoneReaction(z.kind) === REACTION.SURCHAUFFE);
     expect(surchauffe, 'aucune zone de Surchauffe annoncee').toBeDefined();
-    // ⚠️ **La ligne qui tue la mutation.** Un decodage avant l'envoi rendrait
+    // ⚠️ **La ligne qui porte le test.** Un decodage avant l'envoi rendrait
     // `kind` egal a son seul element (`zoneElement(kind) === kind`) : cette
     // comparaison ne peut rester vraie que si l'octet COMPLET a voyage.
     expect(surchauffe?.kind).not.toBe(zoneElement(surchauffe?.kind ?? 0));
   });
 
   it('une mort par BRULURE part dans le meme lot DEATHS que les morts par projectile', () => {
-    // ⚠️ **Le rejeu de l'etape 3 en depend** : `GameClient#drainPendingDeaths`
+    // ⚠️ **Le rejeu client en depend** : `GameClient#drainPendingDeaths`
     // suppose « un seul lot par tick » et rejouerait le second par-dessus la
     // correction du premier. Ce test met en scene un tick ou les deux chemins
     // tuent : un monstre acheve par la brulure seule (PV mis a un cheveu de
@@ -3118,11 +2836,10 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   });
 
   it('le champ de Givre ne d une REACTION ralentit la horde : le monstre arrive moins loin', () => {
-    // ⚠️ **La preuve que le ralentissement traverse tout le salon**, du tir a
-    // la position — et la chaine s'est allongee d'un maillon a la tache 21 :
+    // ⚠️ **La preuve que le ralentissement traverse tout le salon** :
     // tir → reaction → champ → ralentissement. Une arme de Givre ne ralentit
-    // plus rien A ELLE SEULE, puisqu'elle ne pose plus de disque ; il lui faut
-    // un second element sur la cible.
+    // rien A ELLE SEULE, elle ne pose pas de disque ; il lui faut un second
+    // element sur la cible.
     //
     // Deux salons de MEME graine, meme monstre, meme marque de Braise remise a
     // chaque tick, meme visee : seule l'arme du joueur 1 change. Sans le Givre,
@@ -3163,15 +2880,13 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   });
 
   /**
-   * **Etape 3 bis de la tache 10 : le trafic des rafraichissements, borne.**
+   * **Le trafic des rafraichissements, borne.**
    *
    * Une prolongation DOIT etre annoncee — sinon le client derive la mort de SA
    * zone d'un `bornTick` perime, elle s'eteint chez lui pendant qu'elle vit
    * encore chez le serveur, et le ralentissement du Givre diverge. Mais
-   * annoncer chaque fusion fait suivre au trafic la **cadence des armes**,
-   * exactement le couplage que la regle de pose venait de supprimer pour le
-   * COMPTE : 9,67 ko/s par client a 30 zones arrosees a chaque tick (banc
-   * `zones`), contre 1,22 ko/s de trafic TOTAL a l'etape 4.
+   * annoncer chaque fusion ferait suivre au trafic la **cadence des armes**
+   * (voir le banc `zones`).
    *
    * La parade est dans `ZoneField.spawn` : **l'annonce EST la verite**, une
    * prolongation par `ZONE_REFRESH_INTERVAL_TICKS` au plus, et entre deux le
@@ -3198,8 +2913,7 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     const cible = spawnMonsterAt(room, 620, before.x + 100, before.y);
     room.horde.hp[room.horde.slotOf(cible)] = 1e6;
 
-    // Depuis la tache 21, ce n'est plus la volee qui entretient le champ mais
-    // la REACTION : le joueur 2 remet la Braise, le Givre du joueur 1 la
+    // C'est la REACTION, pas la volee, qui entretient le champ : le joueur 2 remet la Braise, le Givre du joueur 1 la
     // declenche, et chaque reaction rearrose le meme point.
     const { zones } = joue(room, ticks, remarqueBraise(cible, 2));
     const loadout = room.loadoutOf(1);
@@ -3213,10 +2927,9 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   }
 
   it('le salon expose combien de zones il porte, et combien il en a perdues', () => {
-    // ⚠️ **Sans ce lecteur, `ZoneField.truncatedZones` n'avait AUCUN appelant
-    // hors de son propre test unitaire** : le second rideau de
-    // `ZONE_CAPACITY` se serait declenche sans que rien ne le dise. Meme motif
-    // que `projectilesTronques`.
+    // ⚠️ Sans ce lecteur, le second rideau de `ZONE_CAPACITY`
+    // (`ZoneField.truncatedZones`) se declencherait sans que rien ne le dise.
+    // Meme motif que `projectilesTronques`.
     const room = new Room(0xbaa1_5e0f);
     room.join(1);
     room.join(2);
@@ -3232,12 +2945,10 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
     // independantes de compter la meme chose, et elles doivent s'accorder.
     expect(room.zoneCount).toBe(new Set(zones.map((z) => `${z.x},${z.y}`)).size);
     expect(room.zoneCount).toBeGreaterThan(0);
-    // ⚠️ **`zonesTronquees` n'est GARDE par rien de plus que ce zero** —
-    // mutation appliquee, « rendre 0 » survit. Remplir 128 creneaux demande
-    // plus de zones que quatre joueurs n'en posent en une duree de vie, et
-    // aucun test unitaire ne peut les faire naitre a un cout raisonnable. Dit
-    // tel quel plutot que credite d'un test qui ne le tient pas — meme choix
-    // que le `slot < 0` de `resolveProjectileDamage`.
+    // ⚠️ **`zonesTronquees` n'est garde ici que par ce zero** : un « rendre 0 »
+    // passerait. Remplir la reserve demande plus de zones que quatre joueurs
+    // n'en posent en une duree de vie. Meme choix que le `slot < 0` de
+    // `resolveProjectileDamage`.
     expect(room.zonesTronquees).toBe(0);
   });
 
@@ -3281,10 +2992,9 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   });
 
   it('et PAS avec la cadence : la meme duree, une arme plus rapide, le meme plafond d annonces', () => {
-    // ⚠️ **C'est l'assertion du §3.3 de l'orientation** — le trafic ne doit
-    // dependre ni du nombre d'entites ni de la cadence des armes. Les cartes
-    // de cadence multiplient les poses ; les annonces, elles, ne doivent pas
-    // bouger d'un message.
+    // ⚠️ Le trafic ne doit dependre ni du nombre d'entites ni de la cadence
+    // des armes : les cartes de cadence multiplient les poses, les annonces ne
+    // doivent pas bouger d'un message.
     const ticks = ZONE_LIFETIME_TICKS * 3;
     const lente = annoncesEntretenues(0xbaa1_5e0e, ticks, 0);
     const rapide = annoncesEntretenues(0xbaa1_5e0e, ticks, 4);
@@ -3326,17 +3036,15 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   });
 
   it('un champ marque un ennemi que RIEN n a touche — c est le seul chemin qui le puisse', () => {
-    // ⚠️ **Sans ce test, retirer `markInZones` de `Room.step` ne fait rougir
-    // personne** (mutation appliquee, verifiee) : tous les autres cas ont un
-    // ennemi qui prend un projectile, et le projectile marque deja. Il faut
-    // donc un ennemi que le champ couvre et que RIEN n'a touche.
+    // ⚠️ **Seul test qui garde `markInZones` dans `Room.step`** : tous les
+    // autres cas ont un ennemi qui prend un projectile, et le projectile marque
+    // deja. Il faut un ennemi que le champ couvre et que RIEN n'a touche.
     //
-    // ⚠️ **Et depuis la tache 21, le voisin ne suffit plus.** `REACTION_RADIUS`
-    // (90) est plus GRAND que `ZONE_RADIUS` (70) : tout ce qui se trouve dans
-    // un champ au moment de sa pose a forcement pris les degats de la reaction
-    // qui l'a pose. « Il n'a rien pris » ne peut donc plus se prouver par la
-    // geometrie — il faut le TEMPS. Le temoin est tenu tres loin pendant que la
-    // reaction a lieu, puis amene dans le champ une fois le tir arrete.
+    // ⚠️ **Le voisin ne suffit pas.** `REACTION_RADIUS` est plus GRAND que
+    // `ZONE_RADIUS` : tout ce qui est dans un champ a sa pose a pris les degats
+    // de la reaction qui l'a pose. « Il n'a rien pris » se prouve donc par le
+    // TEMPS : le temoin est tenu tres loin pendant la reaction, puis amene dans
+    // le champ une fois le tir arrete.
     expect(REACTION_RADIUS).toBeGreaterThan(ZONE_RADIUS);
     const room = new Room(0xbaa1_5e05);
     room.join(1);
@@ -3405,9 +3113,8 @@ describe('la reaction dans le salon (etape 5a, tache 7)', () => {
 
   it('annonce la reaction : couple canonicalise, position, tick', () => {
     // Le joueur 2 entretient la marque de Braise, le joueur 1 la declenche au
-    // Givre. Ce test-ci ne regarde que le TRANSPORT — couple, ou, quand ; la
-    // regle de Synergie que ce couple d'identites declenche a son propre
-    // `describe` plus bas (tache 8).
+    // Givre. Ce test-ci ne regarde que le TRANSPORT (couple, ou, quand) ; la
+    // regle de Synergie a son propre `describe` plus bas.
     expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
     const room = new Room(0xbaa1_5e07);
     room.join(1);
@@ -3454,7 +3161,7 @@ describe('la reaction dans le salon (etape 5a, tache 7)', () => {
   });
 
   it('les morts d une reaction partent dans le lot DEATHS EXISTANT, un seul par tick', () => {
-    // ⚠️ **Le rejeu de l'etape 3 en depend** : `GameClient#drainPendingDeaths`
+    // ⚠️ **Le rejeu client en depend** : `GameClient#drainPendingDeaths`
     // suppose « un seul lot par tick » et rejouerait le second par-dessus la
     // correction du premier. Un amas de pietaille lourde marquee Braise, un
     // projectile de Givre : la reaction en tue plusieurs D UN COUP, et tout
@@ -3503,11 +3210,11 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
   const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? 0;
 
   it('une reaction declenchee par un IMPACT est annoncee — le chemin le plus facile a perdre', () => {
-    // ⚠️ **Mutation appliquee, elle survivait avant ce test.** Vider les
-    // reactions AVANT `markInZones` jette celles que les projectiles et les
-    // poses de zone ont deja declenchees, et le salon continue d'en annoncer
-    // par les zones : le defaut passe inapercu si le decor produit des
-    // reactions par plusieurs chemins a la fois. Ce test n'en laisse QU UN.
+    // ⚠️ Vider les reactions AVANT `markInZones` jetterait celles que les
+    // projectiles et les poses de zone ont deja declenchees, et le salon
+    // continuerait d'en annoncer par les zones : le defaut passe inapercu si
+    // le decor produit des reactions par plusieurs chemins. Ce test n'en
+    // laisse QU UN.
     //
     // Deux passes, comme pour les brulures : la premiere APPREND a quel tick
     // le premier projectile touche (aucune marque, donc aucune reaction — et
@@ -3557,23 +3264,17 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
   });
 
   it('une mort par REACTION part dans le meme lot DEATHS qu une mort par projectile', () => {
-    // ⚠️ **Mutation appliquee, elle survivait avant ce test.** Mettre les
-    // morts de reaction dans un lot A PART passe inapercu tant que la reaction
-    // est la SEULE a tuer ce tick-la : il n'y a alors qu'un lot de toute
-    // facon. C'est la fixture qui masque, et il faut donc un tick ou les DEUX
-    // chemins tuent.
+    // ⚠️ Des morts de reaction dans un lot A PART passeraient inapercues tant
+    // que la reaction est la SEULE a tuer ce tick-la : il faut un tick ou les
+    // DEUX chemins tuent. `GameClient#drainPendingDeaths` suppose « un seul lot
+    // par tick » et rejouerait le second par-dessus la correction du premier.
     //
-    // `GameClient#drainPendingDeaths` suppose « un seul lot par tick » et
-    // rejouerait le second par-dessus la correction du premier.
-    //
-    // ⚠️ **Deux joueurs qui visent dans deux directions opposees, depuis la
-    // tache 21.** Le decor precedent tenait sur « les zones de Givre posees a
-    // chaque impact couvrent le voisin » — ce chemin n'existe plus. Il faut
-    // maintenant un ATELIER a reactions (une cible remarquee de Braise a chaque
-    // tick, arrosee de Givre : chaque reaction y laisse un champ, et le champ
-    // redeclenche au tick suivant) et, LOIN de lui, une cible ordinaire que les
-    // projectiles tuent. Les deux points sont a plus de `REACTION_RADIUS` l'un
-    // de l'autre, sinon les degats de reaction acheveraient aussi la premiere.
+    // ⚠️ **Deux joueurs qui visent dans deux directions opposees** : un
+    // ATELIER a reactions (une cible remarquee de Braise a chaque tick, arrosee
+    // de Givre : chaque reaction y laisse un champ, qui redeclenche au tick
+    // suivant) et, LOIN de lui, une cible ordinaire que les projectiles tuent.
+    // Les deux points sont a plus de `REACTION_RADIUS` l'un de l'autre, sinon
+    // les degats de reaction acheveraient aussi la premiere.
     const GRAINE = 0xbaa1_5e0b;
     const ECART = 400;
 
@@ -3625,11 +3326,10 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
           room.horde.applyMark(s, ELEMENT.BRAISE, 3, room.tick);
           if (tickDArmement !== null && room.tick === tickDArmement - 1) {
             // ⚠️ **Une reserve que le choc emporte A COUP SUR, armure
-            // comprise.** Elle valait `REACTION_DAMAGE` pile, ce qui en
-            // faisait un decor de BORNE la ou ce test ne parle que de DATE :
-            // depuis l'etape 5b, l'armure de la lourde rabote le choc a 21,25
-            // et la cible survivrait a 3,75 PV. La borne `<= 0`, elle, a son
-            // propre test dans `combat.test.ts`.
+            // comprise** : ce test parle de DATE, pas de BORNE. L'armure de la
+            // lourde rabote le choc, et `REACTION_DAMAGE` pile laisserait la
+            // cible en vie. La borne `<= 0` a son propre test dans
+            // `combat.test.ts`.
             room.horde.hp[s] = 1;
           }
         }
@@ -3659,10 +3359,9 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
 });
 
 /**
- * **Le livrable du §13, arbitre cote serveur** : *« une reaction inter-joueurs
- * charge la barre, une reaction solo non »*. La tache 10 le rejouera sur
- * quatre sockets reelles ; ici, c'est la REGLE elle-meme qui est mise a
- * l'epreuve, la ou elle vit.
+ * **Une reaction inter-joueurs charge la barre, une reaction solo non** :
+ * la REGLE elle-meme, mise a l'epreuve la ou elle vit. `elements.integration.test.ts`
+ * la rejoue sur quatre sockets reelles.
  */
 describe('le compteur de Synergie (etape 5a, tache 8)', () => {
   const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
@@ -3686,14 +3385,11 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
    * vise jamais (`Room.join` met la visee a zero, et rien ne la pousse), donc
    * il ne tire pas et ne trouble rien.
    *
-   * ⚠️ **Et ce `join(2)` n'est GARDE par aucune assertion — sonde appliquee,
-   * pas raisonnee.** Le retirer laisse ces trois tests verts : la regle du §7
-   * ne compare que deux indices, elle ne demande a personne d'etre connecte.
-   * Il reste ici parce qu'un decor ou le joueur 2 ne serait qu'un numero pose
-   * sur une marque laisserait le doute entier — mais il est dit tel quel,
-   * plutot que credite d'un test qui ne le tient pas (meme choix que le garde
-   * de `#checkRunOver`). Ce qui prouve reellement que la charge survit a une
-   * vraie socket, c'est `server.test.ts`, et la tache 10 a quatre clients.
+   * ⚠️ **Et ce `join(2)` n'est GARDE par aucune assertion** : le retirer
+   * laisse ces trois tests verts, la regle ne compare que deux indices. Il
+   * reste pour lever le doute du lecteur. Ce qui prouve que la charge survit a
+   * une vraie socket, c'est `server.test.ts` et le test d'integration a
+   * quatre clients.
    */
   function scene(markBy: number, ticks: number) {
     const room = new Room(GRAINE);
@@ -3707,8 +3403,8 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
 
     const reactions: ReturnType<Room['drainReactions']> = [];
     for (let i = 0; i < ticks; i++) {
-      // La marque se consomme a chaque reaction (§4.3) : la reposer chaque
-      // tick est ce qui rend la reaction repetable, donc la barre comptable.
+      // La marque se consomme a chaque reaction : la reposer chaque tick est
+      // ce qui rend la reaction repetable, donc la barre comptable.
       room.horde.applyMark(room.horde.slotOf(cible), ELEMENT.BRAISE, markBy, room.tick);
       aimAtNearestMonster(room, 1, i + 1);
       room.step(DT);
@@ -3730,19 +3426,15 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
     const seul = scene(1, 5 * REACTION_COOLDOWN_TICKS);
 
     // ⚠️ **La seconde moitie est celle qui porte le sens.** Un compteur qui
-    // monterait a CHAQUE reaction — donc sans aucune comparaison — passerait
-    // la premiere assertion sans broncher. C'est exactement le mecanisme que
-    // le §6.5 de l'orientation appelle « le cœur du projet » : la cooperation
-    // devient une ressource visible, et elle ne se gagne QUE des que deux
-    // joueurs sont dans la meme melee.
+    // monterait a CHAQUE reaction, sans aucune comparaison, passerait la
+    // premiere assertion sans broncher. La cooperation ne se gagne QUE quand
+    // deux joueurs sont dans la meme melee.
     expect(aDeux.synergie).toBeGreaterThan(0);
     expect(seul.synergie).toBe(0);
 
-    // ⚠️ **Et la preuve que le decor separe vraiment les deux cas** (constat
-    // R24 de la tache 7 : une illustration qui ne les separe pas est une
-    // assertion creuse). Sans ce qui suit, « la barre ne bouge pas » se lirait
-    // aussi bien « aucune reaction n'a eu lieu » — et le test passerait avec
-    // un salon ou plus rien ne reagit.
+    // ⚠️ **Et la preuve que le decor separe vraiment les deux cas.** Sans ce
+    // qui suit, « la barre ne bouge pas » se lirait aussi bien « aucune
+    // reaction n'a eu lieu ».
     // PLUSIEURS reactions, pas une : « toutes sans charge » sur un echantillon
     // de un ne dirait pas grand-chose. Ce decor en produit une douzaine.
     expect(seul.reactions.length).toBeGreaterThan(3);
@@ -3763,10 +3455,9 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
     // peut ecrire que sa propre identite des deux cotes de la comparaison, et
     // aucune ligne de code n'a a le verifier.
     //
-    // C'est voulu, pas un effet de bord : le §6.5 en fait un outil de
-    // regroupement qui fonctionne PAR LE GAIN, jamais par la punition. Le
-    // joueur seul ne perd rien — sa reaction fait ses degats comme celle de
-    // n'importe qui. Il ne gagne simplement pas la charge d'equipe.
+    // C'est voulu : la Synergie regroupe PAR LE GAIN, jamais par la punition.
+    // Le joueur seul ne perd rien, sa reaction fait ses degats ; il ne gagne
+    // simplement pas la charge d'equipe.
     expect(ARME_BRAISE).toBeGreaterThanOrEqual(0);
     const room = new Room(0xbaa1_5e0d);
     room.join(1);
@@ -3790,11 +3481,9 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
   });
 
   it('la barre plafonne a SYNERGY_MAX, et rien ne la depense jamais', () => {
-    // ⚠️ **Le plafond est le comportement VOULU, pas un oubli.** L'ultime
-    // d'equipe que la barre pleine declenche est hors perimetre de l'etape 5a
-    // (§1) : a cette etape la barre se charge, s'affiche, et ne se depense
-    // JAMAIS. Le dire ici, sinon quelqu'un « corrigera » un jour ce plafond en
-    // le prenant pour un compteur qu'on aurait oublie de remettre a zero.
+    // ⚠️ **Le plafond est le comportement VOULU, pas un oubli** : la barre se
+    // charge, s'affiche, et ne se depense JAMAIS dans le salon. Ce n'est pas
+    // un compteur qu'on aurait oublie de remettre a zero.
     // Une reaction par recharge au plus sur la cible unique du decor.
     const assezDeReactions = (SYNERGY_MAX + 3) * REACTION_COOLDOWN_TICKS;
     const { synergie, reactions } = scene(2, assezDeReactions);
@@ -3812,15 +3501,11 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
   });
 
   /**
-   * La regression que C1 a traversee (revue du coordinateur, etape 13) :
-   * une premiere version de `spreadMarkOnDeath` propageait l'ELEMENT sans
-   * son AUTEUR (`markBy: 0`). `0` n'est pas une marque neutre dans ce
-   * depot — c'est la sentinelle « aucun joueur » (`#freeId`,
-   * `back/src/server.ts`, les identites commencent a 1). Une marque de
-   * Contagion aurait donc TOUJOURS charge la Synergie des qu'un second
-   * element la declenchait (`markBy !== by` est vrai des que `by >= 1`),
-   * meme en SOLO — exactement ce que le docbloc de la comparaison, plus
-   * haut dans ce fichier, affirme impossible par construction.
+   * `spreadMarkOnDeath` doit propager l'AUTEUR avec l'ELEMENT. `markBy: 0`
+   * n'est pas une marque neutre : c'est la sentinelle « aucun joueur » (les
+   * identites commencent a 1). Une marque de Contagion sans auteur
+   * chargerait donc TOUJOURS la Synergie (`markBy !== by` des que `by >= 1`),
+   * meme en SOLO.
    */
   it('Contagion propage l auteur de la marque, pas seulement l element : le meme joueur ne charge pas la Synergie', () => {
     expect(ARME_GIVRE).toBeGreaterThanOrEqual(0);
@@ -3842,7 +3527,7 @@ describe('le compteur de Synergie (etape 5a, tache 8)', () => {
 
     const reactions: ReturnType<Room['drainReactions']> = [];
     for (let i = 0; i < 15 && reactions.length === 0; i++) {
-      // La marque se consomme a la reaction (§4.3) : la reposer chaque tick
+      // La marque se consomme a la reaction : la reposer chaque tick
       // tant qu'elle n'a pas encore reagi evite de ne dependre que du tout
       // premier tick de tir.
       room.horde.applyMark(slot, ELEMENT.BRAISE, 1, room.tick);
@@ -3914,11 +3599,9 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 
     /**
      * ⚠️ **Le boss doit etre TENU A DISTANCE tant qu'on ne veut pas le tuer**,
-     * sinon il marche jusqu'au joueur — c'est son comportement, celui de la
-     * pietaille (§4 de la spec) — et le tue en une vingtaine de secondes : la
-     * run se terminait et `step` revenait aussitot sans plus rien emettre.
-     * Mesure faite avant de corriger : joueur a 0 pv au tick 1579, `RUN_OVER`
-     * en file. Un decor qui ne peut pas produire ce qu'il mesure.
+     * sinon il marche jusqu'au joueur, comme la pietaille, et le tue en une
+     * vingtaine de secondes : la run se termine et `step` revient aussitot
+     * sans plus rien emettre.
      */
     function eloignerLeBoss(): void {
       const slot = room.horde.slotOf(bossId ?? -1);
@@ -3942,7 +3625,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 
     // ⚠️ **L'assertion qui empeche une « correction » future.** L'intuition
     // « le boss, seul, en duel » est fausse pour ce genre : un bullet heaven ou
-    // la horde disparait est un jeu qui s'arrete (§2 de la spec).
+    // la horde disparait est un jeu qui s'arrete.
     expect(comptesPendantLeBoss.length).toBeGreaterThan(0);
     expect(comptesPendantLeBoss.every((c) => c > 1)).toBe(true);
     // Vingt secondes de plus, et toujours le palier 0 : il se termine a une
@@ -3975,13 +3658,12 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     // --- 4. Le boss meurt, par le chemin de mort normal du salon.
     //
     // ⚠️ **Sa reserve est RAMENEE A UN COUP, et c'est du decor, pas une
-    // triche.** Depuis la tache 3, le boss porte `BOSS_HP_PER_PLAYER` : un joueur
-    // solo a la dague ne l'entame pas en trente secondes, et ce test
-    // mesurerait alors une DPS au lieu de mesurer un palier. Ce qui est teste
-    // ici est le CHEMIN — les degats du salon, le lot unique de morts, le
-    // verrou qui se relache — et il est identique a 1 PV comme a 6 000. Le
-    // temps de mise a mort reel est mesure ailleurs, au banc
-    // `bench/boss.bench.ts`, qui est la porte du §7.
+    // triche.** Le boss porte `BOSS_HP_PER_PLAYER` : un joueur solo a la dague
+    // ne l'entame pas en trente secondes, et ce test mesurerait une DPS au
+    // lieu d'un palier. Ce qui est teste ici est le CHEMIN (les degats du
+    // salon, le lot unique de morts, le verrou qui se relache), identique a
+    // 1 PV comme a 6 000. Le temps de mise a mort reel est garde par
+    // `bench/boss.bench.ts`.
     const slotBossAffaibli = room.horde.slotOf(bossId ?? -1);
     expect(slotBossAffaibli).toBeGreaterThanOrEqual(0);
     room.horde.hp[slotBossAffaibli] = 1;
@@ -4001,22 +3683,20 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 
     expect(room.palier).toBe(1);
     expect(room.bossEntityId).toBeNull();
-    // Le boss est bien passe par le lot UNIQUE de morts du tick, celui de
-    // l'etape 3 — pas par un second chemin invente pour lui.
+    // Le boss est bien passe par le lot UNIQUE de morts du tick, pas par un
+    // second chemin invente pour lui.
     expect(lots.some((l) => l.ids.includes(bossId ?? -1))).toBe(true);
 
     // --- 5. Au palier 1, les PV d'apparition suivent `palierHp`.
     //
-    // ⚠️ **`palierHp`, plus `hpScale`** (tache 3, etape 0) : la pietaille
-    // LEGERE est exemptee de la montee, donc l'ordre ordinaire qui tombe ici
-    // peut tres bien rendre exactement les PV de son archetype. Comparer a
-    // `hpScale(1)` en dur rendrait ce test dependant de l'archetype tire —
-    // c'est-a-dire intermittent au premier changement de graine.
+    // ⚠️ **`palierHp`, pas `hpScale`** : la pietaille LEGERE est exemptee de
+    // la montee. Comparer a `hpScale(1)` en dur rendrait ce test dependant de
+    // l'archetype tire, donc intermittent au premier changement de graine.
     //
     // Deux vagues, pas une : la premiere donne les PV a l'apparition, la
-    // seconde sert de temoin — voir l'assertion finale.
+    // seconde sert de temoin (voir l'assertion finale).
     // Le joueur cesse de viser : la visee de la section 4 tirerait sur le
-    // temoin (et, depuis plusieurs boss a la fois, sur le boss suivant).
+    // temoin, et sur le boss suivant.
     room.applyInput(1, 20_000, 0, 0, 0, 0);
     let pvPalier1: { poses: number; archetype: number } | null = null;
     let temoin = -1;
@@ -4052,11 +3732,9 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     // --- 6. LA MOITIE QUI COMPTE : au palier 1, quelque chose monte VRAIMENT.
     //
     // ⚠️ **Sans elle, la section 5 passe avec une echelle constamment egale a
-    // 1** — elle se reduit alors aux PV de l'archetype, exactement comme au
-    // palier 0, et depuis l'exemption de la chair a canon c'est meme le cas le
-    // plus PROBABLE (quatre vagues sur cinq sont legeres). Le temoin choisi est
-    // le boss du palier 1 : c'est le seul dont la montee soit garantie par
-    // construction, sans dependre d'un tirage d'archetype.
+    // 1**, et c'est meme le cas le plus PROBABLE puisque la pietaille legere
+    // est exemptee. Le temoin choisi est le boss du palier 1 : le seul dont la
+    // montee soit garantie, sans dependre d'un tirage d'archetype.
     let pvBoss1: { poses: number; archetype: number } | null = null;
     for (let t = 0; t < 60 * TICK_HZ && pvBoss1 === null; t++) {
       room.step(DT);
@@ -4066,8 +3744,8 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
         }
       }
       // Tout le monde dehors, boss compris : on n'attend que l'ORDRE du
-      // prochain boss. Un boss garde en vie tuerait le joueur avant (depuis
-      // qu'un boss vient sans attendre la mort du precedent).
+      // prochain boss. Un boss garde en vie tuerait le joueur avant, puisque
+      // le suivant n'attend pas la mort du precedent.
       viderSauf(room, []);
     }
 
@@ -4078,7 +3756,6 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
   }, 30_000);
 
   it('plusieurs boss peuvent vivre a la fois : le suivant n attend pas la mort du premier', () => {
-    // Retour de playtest : *« on peut avoir plusieurs boss en meme temps »*.
     const room = new Room(4242);
     room.join(1);
     const ancre = positionOf(room, 1);
@@ -4118,9 +3795,9 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     for (let t = 0; t < 60 * TICK_HZ && ordresBoss === 0; t++) {
       // La horde n'est remplie qu'une fois les `WAVES_PER_PALIER` vagues
       // ordinaires passees, donc juste avant l'echeance du boss : la remplir
-      // des le debut ferait tourner soixante secondes de simulation a 4 000
-      // entites pour rien. Le declencheur est DERIVE du compte de vagues, pas
-      // d'un numero de tick recopie.
+      // des le debut ferait tourner une minute de simulation pleine pour rien.
+      // Le declencheur est DERIVE du compte de vagues, pas d'un numero de tick
+      // recopie.
       if (!rempli && ordinaires >= WAVES_PER_PALIER) {
         room.horde.spawn({
           waveId: 9000,
@@ -4137,8 +3814,8 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
       }
       room.step(DT);
       for (const o of room.drainWaveOrders()) {
-        // Le porteur (etape 11) nait aussi en vague de count 1 : seconde
-        // exception, nommee, exclue des deux compteurs (ni boss ni ordinaire).
+        // Le porteur nait aussi en vague de count 1 : seconde exception,
+        // exclue des deux compteurs (ni boss ni ordinaire).
         if (o.archetype === PORTEUR_ARCHETYPE) {
           continue;
         }
@@ -4149,10 +3826,8 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
         }
       }
       if (!rempli) {
-        // Meme raison que dans le test precedent, et mesuree de la meme
-        // facon : un joueur passif qui ne tire pas meurt sous les quatre
-        // premieres vagues avant le tick 900, `step` revient alors aussitot,
-        // et l'ordre de boss ne tombe jamais.
+        // Un joueur passif qui ne tire pas meurt sous les premieres vagues,
+        // `step` revient alors aussitot, et l'ordre de boss ne tombe jamais.
         viderSauf(room, []);
       }
     }
@@ -4179,14 +3854,12 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 });
 
 /**
- * Le boss vit DANS la horde (etape 6a, tache 3, etape 2 du plan).
+ * Le boss vit DANS la horde.
  *
- * ⚠️ **Rien n'a ete ecrit pour lui, et c'est ce que ce bloc verifie.**
+ * ⚠️ **Rien n'est ecrit pour lui, et c'est ce que ce bloc verifie.**
  * Identite arithmetique, champ de flux, separation, collision, orbes, marques
- * elementaires : il est une vague de `count: 1` avec un archetype different, et
- * tout le reste marche parce que quatre etapes l'ont construit. Le §1.2 de la
- * spec : *« seules deux choses le distinguent, et elles sont hors de la
- * horde »*.
+ * elementaires : il est une vague de `count: 1` avec un archetype different.
+ * Ce qui le distingue vit hors de la horde.
  */
 describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
   const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
@@ -4197,13 +3870,13 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
    * Un joueur, deux armes elementaires, une cible a portee — **et AUCUNE
    * marque posee a la main, AUCUN `hp = 1e6`**.
    *
-   * C'est le point : tous les decors de reaction de l'etape 5a devaient rendre
-   * leur cible increvable pour qu'une marque ait le temps d'etre consommee. Ce
-   * decor-ci ne triche pas, et c'est la reserve du JEU qui decide.
+   * C'est le point : les autres decors de reaction rendent leur cible
+   * increvable pour qu'une marque ait le temps d'etre consommee. Ce decor-ci
+   * ne triche pas, et c'est la reserve du JEU qui decide.
    *
    * ⚠️ **`reserve` est ce que le SALON aurait pose, pas une valeur de
    * confort.** `spawnMonsterAt` court-circuite `Room#step`, donc ni l'echelle
-   * du palier ni la multiplication par le nombre de joueurs (tache 3 bis) ne
+   * du palier ni la multiplication par le nombre de joueurs ne
    * s'appliquent : l'appelant les compose par `bossHp`, exactement comme le
    * banc `bench/boss.bench.ts` le fait pour son duel. Sans ce parametre, ce
    * decor mesurerait le boss d'UN joueur en le presentant comme LE boss.
@@ -4249,12 +3922,11 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
   }
 
   /**
-   * ⚠️ **LES DEUX MOITIES, et la premiere est le piege que l'etape 5a a
-   * paye.** Un banc peuplait de pietaille legere, tuee du meme impact, donc
-   * jamais marquee : il rendait zero partout et paraissait vert. Ici la
-   * pietaille legere EST la moitie temoin — elle doit rendre zero reaction ET
-   * mourir, sinon le zero ne prouve rien. Le boss est la seconde moitie : il
-   * encaisse, donc il porte, donc la reaction se voit.
+   * ⚠️ **LES DEUX MOITIES.** La pietaille legere, tuee du meme impact, n'est
+   * jamais marquee : un decor qui n'aurait qu'elle rendrait zero partout et
+   * paraitrait vert. Ici elle EST la moitie temoin : elle doit rendre zero
+   * reaction ET mourir, sinon le zero ne prouve rien. Le boss est la seconde
+   * moitie : il encaisse, donc il porte, donc la reaction se voit.
    */
   it('est le premier ennemi sur qui une reaction se voie — la pietaille legere meurt avant', () => {
     const legere = scene(LEGER);
@@ -4263,24 +3935,17 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
     expect(legere.morte).toBe(true);
     expect(legere.reactions).toEqual([]);
 
-    // ⚠️ **Le boss d'une equipe PLEINE, et il faut dire pourquoi.** Depuis la
-    // tache 3 bis, un boss n'a pas une reserve mais quatre — une par effectif.
-    // Le §4 de la spec (*« le premier ennemi qui survivra assez longtemps pour
-    // qu'une reaction se voie »*) parle du jeu que ce projet vise, qui est a
-    // quatre ; et le joueur unique de ce decor porte DEUX armes elementaires,
-    // soit deja la puissance de feu d'une equipe.
-    //
-    // ⚠️ **Mesure faite en passant, a garder** : avec la reserve d'un joueur
-    // SEUL (1 500 PV), ce meme decor tue le boss en 2,5 s — 55 reactions a
-    // 25 PV. Une equipe qui tient deux elements fond un boss par les
-    // reactions, pas par ses armes. C'est un resultat de la tache 3 bis, pas
-    // un incident, et c'est a la tache 12 d'en juger en jeu.
+    // ⚠️ **Le boss d'une equipe PLEINE** : sa reserve est par joueur, le jeu
+    // vise quatre joueurs, et le joueur unique de ce decor porte DEUX armes
+    // elementaires, soit deja la puissance de feu d'une equipe. Avec la
+    // reserve d'un joueur SEUL, ce decor fond le boss par les reactions en
+    // quelques secondes.
     const boss = scene(BOSS_ARCHETYPE, bossHp(0, MAX_PLAYERS));
     // Sa reserve vaut des dizaines de reactions : c'est CA qui laisse a une
     // marque le temps de se consommer sur lui.
     expect(boss.pvDepart).toBeGreaterThan(REACTION_DAMAGE * 10);
     // Il porte les marques comme tout le monde, et il vit assez pour qu'elles
-    // se consomment (§4 de la spec).
+    // se consomment.
     expect(boss.reactions.length).toBeGreaterThan(0);
     expect(boss.reactions[0]?.pair).toBe(packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE));
     // Et il SURVIT a la reaction — c'est ce qui la rend visible plutot que
@@ -4294,7 +3959,7 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
    * L'ordre de boss traverse le generateur sans rien de special : `count: 1`,
    * l'archetype de boss, et une identite arithmetique comme les autres.
    *
-   * ⚠️ **`count: 1` est une regle, pas un reglage** (§1.1) : la vie du boss n'a
+   * ⚠️ **`count: 1` est une regle, pas un reglage** : la vie du boss n'a
    * le droit de voyager que parce qu'il est UN.
    */
   it('apparait comme une vague de count 1, avec l archetype de boss', () => {
@@ -4309,8 +3974,8 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
         if (room.bossEntityId !== null && entityIdOf(o.waveId, 0) === room.bossEntityId) {
           ordreBoss = o;
         } else if (o.archetype !== PORTEUR_ARCHETYPE) {
-          // Le porteur (etape 11) est une seconde exception a « count 1 =
-          // boss » : nommee, exclue plutot que de casser l'hypothese du test.
+          // Le porteur est une seconde exception a « count 1 = boss » :
+          // exclue plutot que de casser l'hypothese du test.
           ordinaires.push(o);
         }
       }
@@ -4341,12 +4006,8 @@ describe('le boss vit dans la horde (etape 6a, tache 3)', () => {
 });
 
 /**
- * Les PV du boss suivent le nombre de joueurs (etape 6a, tache 3 bis).
- *
- * > *« les PV du boss doivent dependre du nombre de joueurs »* — decision de
- * > l'auteur, apres la mesure de la tache 3 : quatre joueurs tuaient le boss en
- * > 87 s, **un joueur seul ne le tuait jamais**, et 3 graines sur 40 y
- * > perdaient leur run avant le niveau 2 (`bench/niveau2.bench.ts`).
+ * Les PV du boss suivent le nombre de joueurs : avec une reserve fixe, un
+ * joueur seul ne tuerait jamais un boss taille pour quatre.
  *
  * ⚠️ **La formule vit dans `shared/paliers.ts` et elle y est testee pour
  * elle-meme.** Ce bloc-ci teste ce que le SALON en fait, et lui seul : le
@@ -4399,17 +4060,16 @@ describe('les PV du boss suivent le nombre de joueurs (etape 6a, tache 3 bis)', 
     // la reserve par joueur, sans rien d'autre.
     expect(solo).toBeCloseTo(BOSS_HP_PER_PLAYER, 4);
     // ⚠️ **LA MOITIE QUI COMPTE.** Sans elle, un salon qui ignorerait le nombre
-    // de joueurs passerait l'assertion precedente sans broncher — c'est
-    // exactement l'etat d'avant cette tache.
+    // de joueurs passerait l'assertion precedente sans broncher.
     expect(equipe).toBeCloseTo(solo * MAX_PLAYERS, 4);
   });
 
   /**
    * ⚠️ **FIGES A L'APPARITION, et c'est une decision.** Le nombre de joueurs
    * bouge pendant un palier ; le boss, lui, est deja la. Les faire suivre
-   * ferait REGAGNER de la vie a un boss entame parce qu'un joueur rejoint —
-   * ca se lirait comme un bug, et la barre de vie de la tache 5 le montrerait
-   * a l'ecran.
+   * ferait REGAGNER de la vie a un boss entame parce qu'un joueur rejoint :
+   * ca se lirait comme un bug, et la barre de vie du boss le montrerait a
+   * l'ecran.
    *
    * ⚠️ **Ce test et le precedent ne se couvrent pas** : celui-la dit que le
    * nombre de joueurs COMPTE, celui-ci qu'il ne compte qu'UNE FOIS. Un salon
@@ -4465,12 +4125,11 @@ describe('les PV du boss suivent le nombre de joueurs (etape 6a, tache 3 bis)', 
 });
 
 /**
- * La vie du boss voyage (etape 6a, tache 4).
+ * La vie du boss voyage.
  *
- * ⚠️ **La premiere donnee PAR ENTITE que le fil transporte, et c'est le NOMBRE
- * qui l'autorise** (§1.1 de la spec) : un seul boss vivant, jamais plus. La
- * regle est ecrite dans `shared/protocol.ts`, la ou elle risquerait d'etre
- * pliee ; ce bloc-ci verifie que le salon la sert.
+ * ⚠️ **Une donnee PAR ENTITE sur le fil, et c'est le NOMBRE qui l'autorise** :
+ * le snapshot ne porte qu'UN boss. La regle est ecrite dans
+ * `shared/protocol.ts` ; ce bloc-ci verifie que le salon la sert.
  */
 describe('la vie du boss voyage dans le snapshot (etape 6a, tache 4)', () => {
   /** Le boss tel que le FIL le porte — decode, jamais lu dans le salon. */
@@ -4519,7 +4178,7 @@ describe('la vie du boss voyage dans le snapshot (etape 6a, tache 4)', () => {
     expect(annonce?.id).toBe(room.bossEntityId);
     // ⚠️ **La vie annoncee EST celle de la horde**, pas une copie tenue a
     // cote : une seconde source de verite se decalerait au premier degat
-    // soigne autrement — l'erreur que l'etape 3 a faite avec l'experience.
+    // soigne autrement.
     expect(annonce?.hp).toBe(Math.round(pvDansLaHorde(room)));
     expect(annonce?.hp).toBeGreaterThan(0);
 
@@ -4612,11 +4271,8 @@ describe('la vie du boss voyage dans le snapshot (etape 6a, tache 4)', () => {
 });
 
 /**
- * Etape 6a, tache 5 bis — **la charge du troll**.
- *
- * > *« Le troll charge une attaque lineaire, donc un long rectangle, et son
- * > animation le fait tourner, donc il spin rapidement a travers ce rectangle
- * > en avancant. »*
+ * **La charge du troll** : une attaque lineaire, un long rectangle que le
+ * boss traverse en tournoyant.
  *
  * ⚠️ **Ce n'est pas un telegraphe, c'est un DEPLACEMENT** : pendant toute la
  * charge, la position du boss vient de l'attaque et non du champ de flux. Ce
@@ -4733,8 +4389,8 @@ describe('le boss charge (etape 6a, tache 5 bis)', () => {
       expect(room.horde.y[slot], `tick ${tick}`).toBe(Math.fround(attendu[1] ?? 0));
     }
 
-    // ⚠️ **ZERO OCTET APRES L'ANNONCE.** Quarante-huit ticks de charge, un
-    // seul message : tout le reste s'est derive des ticks, des deux cotes.
+    // ⚠️ **ZERO OCTET APRES L'ANNONCE.** Toute la charge, un seul message :
+    // tout le reste s'est derive des ticks, des deux cotes.
     expect(annonces).toBe(1);
 
     // --- Les degats : le corps en mouvement a traverse le joueur, une fois.
@@ -4773,8 +4429,8 @@ describe('le boss charge (etape 6a, tache 5 bis)', () => {
     room.join(1);
     const bossId = jusquAuBoss(room);
     const ancre = positionOf(room, 1);
-    // ⚠️ Un cote DEGAGE : depuis la carte en tuiles, le boss qui charge bute
-    // sur un arbre ou un rocher, et un obstacle entre lui et le joueur le
+    // ⚠️ Un cote DEGAGE : le boss qui charge bute sur un arbre ou un rocher
+    // de la carte, et un obstacle entre lui et le joueur le
     // protegerait — c'est voulu, mais ce n'est pas ce que ce test mesure.
     const probe = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
     const mask = generateObstacles(room.mapSeed, probe.cols, probe.rows);
@@ -4828,20 +4484,16 @@ describe('le boss charge (etape 6a, tache 5 bis)', () => {
 });
 
 /**
- * Etape 6a, tache 6 — **l'or non securise**.
- *
- * > *« L'or ramasse pendant la run n'est pas acquis. Il est non securise
- * > jusqu'a l'extraction. »* (§5 de la spec)
+ * **L'or non securise** : l'or ramasse pendant la run n'est acquis qu'a
+ * l'extraction.
  *
  * ⚠️ **Ce bloc a DEUX moities, et la seconde porte le sens.** L'or monte quand
  * un boss tombe **et** il tombe a `WIPE_GOLD_KEPT` quand l'equipe est effacee.
- * Sans la moitie negative, un or qui ne bougerait JAMAIS passerait la premiere
- * — c'est la lecon de la Synergie a l'etape 5a, ou seule la comparaison des
- * deux etats disait que « la barre ne bouge pas » ne voulait pas dire « rien ne
- * s'est passe ».
+ * Sans la moitie negative, un or qui ne bougerait JAMAIS passerait la
+ * premiere.
  *
  * ⚠️ **Le MULTIPLICATEUR d'extraction n'est pas ici** : il appartient au
- * portail (tache 9). Ce bloc ne connait que l'accumulation et la perte.
+ * portail. Ce bloc ne connait que l'accumulation et la perte.
  */
 describe("l'or non securise (etape 6a, tache 6)", () => {
   /** Vide la horde de tout sauf le boss courant : on mesure un or, pas une melee. */
@@ -4862,10 +4514,9 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
    * Tue le boss du palier courant **par le chemin de mort normal du salon** et
    * rend le numero du palier qu'il fermait.
    *
-   * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor, pas une triche** —
-   * meme raison qu'a la tache 2 : ce qui est mesure ici est l'OR, pas une DPS.
-   * Le temps de mise a mort reel est la porte du §7, mesuree au banc
-   * `bench/boss.bench.ts`.
+   * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor, pas une triche** :
+   * ce qui est mesure ici est l'OR, pas une DPS. Le temps de mise a mort reel
+   * est garde par `bench/boss.bench.ts`.
    *
    * ⚠️ **La horde est videe a chaque tick.** Sans ce nettoyage, ce decor
    * mesurerait la survie d'un joueur immobile sous quatre vagues : il finirait
@@ -4925,10 +4576,8 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
     expect(room.gold).toBe(palierGold(0) + palierGold(1));
 
     // ⚠️ **Et il SORT du salon.** Le total part dans l'en-tete du `SNAPSHOT`,
-    // a cote de l'experience et de la Synergie (tache 7) : sans cette ligne,
-    // un salon qui compterait juste mais ne dirait rien passerait tout ce
-    // bloc. C'est la « ligne de diffusion qu'aucun test n'atteint » du depot,
-    // qui a deja laisse passer `REACTION` et `BOSS_CHARGE`.
+    // a cote de l'experience et de la Synergie : sans cette ligne, un salon
+    // qui compterait juste mais ne dirait rien passerait tout ce bloc.
     const out = collector();
     room.snapshot(out);
     const premier = out.sent[0];
@@ -4937,8 +4586,7 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
 
     // ⚠️ **Le decor ne discrimine que si les deux montants DIFFERENT.** Une
     // recompense plate rendrait les deux assertions ci-dessus vraies quel que
-    // soit le palier lu. C'est la « fixture qui masque » du depot, prise a la
-    // source.
+    // soit le palier lu.
     expect(palierGold(1)).toBeGreaterThan(palierGold(0));
   }, 60_000);
 
@@ -4975,12 +4623,9 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
         if (ids.length > 0) {
           room.horde.kill(ids);
         }
-        // ⚠️ **Les bourreaux sont RENDUS INTUABLES et TENUS AU CONTACT.**
-        // Mesure faite avant de corriger : sans ces deux lignes, le tir
-        // automatique du joueur avait liquide les vingt-cinq monstres avant
-        // qu'ils ne l'aient descendu, et il se stabilisait a 28 pv pour le
-        // reste du test — un decor qui ne peut pas produire ce qu'il pretend
-        // mesurer. Meme technique que partout ailleurs dans ce fichier.
+        // ⚠️ **Les bourreaux sont RENDUS INTUABLES et TENUS AU CONTACT** :
+        // sinon le tir automatique du joueur les liquide avant qu'ils ne
+        // l'aient descendu, et il survit au test.
         for (const id of bourreaux) {
           const slot = room.horde.slotOf(id);
           if (slot >= 0) {
@@ -4997,7 +4642,7 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
       expect(hpOf(room, playerId)).toBe(0);
     }
 
-    // --- 1. Un seul joueur tombe : le §5 de la spec dit « rien ».
+    // --- 1. Un seul joueur tombe : l'or ne bouge pas.
     tuer(1);
     expect(hpOf(room, 2)).toBeGreaterThan(0);
     expect(room.drainRunOver()).toBeNull();
@@ -5008,11 +4653,9 @@ describe("l'or non securise (etape 6a, tache 6)", () => {
     expect(room.drainRunOver()).not.toBeNull();
 
     // ⚠️ **La constante n'est pas recopiee en chiffre : c'est sa PROPRIETE qui
-    // est assenee.** `toBe(0)` serait juste aujourd'hui et deviendrait faux le
-    // jour ou l'auteur essaie le plancher de 10 a 20 % que le §9.3 nomme —
-    // alors que ce test doit precisement survivre a cet essai. La ligne
-    // ci-dessous garde ce qui ne doit pas changer : l'equipe conserve la
-    // FRACTION `WIPE_GOLD_KEPT` de ce qu'elle avait, et rien d'autre.
+    // est assenee**, pour survivre a un reglage du plancher : l'equipe
+    // conserve la FRACTION `WIPE_GOLD_KEPT` de ce qu'elle avait, et rien
+    // d'autre.
     //
     // Et elle n'est pas tautologique : `WIPE_GOLD_KEPT < 1` garantit que la
     // valeur attendue DIFFERE de `gagne`, donc qu'un salon qui ne perdrait
@@ -5052,21 +4695,19 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
    * Tue le boss du palier courant **par le chemin de mort normal du salon** et
    * rend le tick de sa mort.
    *
-   * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor** — meme raison
-   * qu'aux taches 2 et 6 : ce qui est mesure ici est le PORTAIL, pas une DPS.
+   * ⚠️ **Sa reserve est ramenee a un coup, et c'est du decor** : ce qui est
+   * mesure ici est le PORTAIL, pas une DPS.
    *
    * ⚠️ **La horde est videe a chaque tick**, sans quoi ce decor mesurerait la
-   * survie d'un joueur immobile sous quatre vagues : il finirait en `RUN_OVER`
+   * survie d'un joueur immobile sous les vagues : il finirait en `RUN_OVER`
    * et aucun boss ne tomberait jamais.
    *
-   * ⚠️ **Il assene au passage que RIEN n'ouvre le portail avant la mort.** Un
-   * portail ouvert par un tick, par un ordre de vague ou par l'apparition du
-   * boss ferait rougir cette boucle-la, pas le test qui suit.
+   * ⚠️ **Il assene au passage que le portail reste ferme pendant tout le
+   * combat** : un portail ouvert par l'apparition ou la mort du boss ferait
+   * rougir cette boucle-la.
    *
    * ⚠️ **`tireur` n'est pas un confort** : le boss est pose a cote de lui et
-   * c'est lui qui vise, donc il doit etre VIVANT. Le test du joueur mort tue
-   * le joueur 1 avant le boss — le laisser tirer ferait mourir le boss de
-   * vieillesse, et le decor mesurerait une fin de run au lieu d'un vote.
+   * c'est lui qui vise, donc il doit etre VIVANT.
    */
   function tuerLeBoss(room: Room, tireur = 1): number {
     const k = room.palier;
@@ -5093,10 +4734,8 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
       expect(room.portalOpen).toBe(false);
       // ⚠️ **`20_000 + tick`, pas `40_000 + tick`** : `isNewer` compare sur
       // seize bits, et une premiere sequence au-dela de 0x8000 est vue comme
-      // ANCIENNE face au `lastSeq` de 0 d'un joueur qui vient d'arriver. Toutes
-      // les visees etaient alors rejetees, le joueur ne tirait pas, et le boss
-      // ne mourait jamais — un decor qui ne peut pas produire ce qu'il pretend
-      // produire, pris en trente minutes.
+      // ANCIENNE face au `lastSeq` de 0 d'un joueur qui vient d'arriver :
+      // toutes les visees seraient rejetees, et le boss ne mourrait jamais.
       aimAtNearestMonster(room, tireur, 20_000 + room.tick);
       pas(room);
     }
@@ -5107,11 +4746,11 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
 
   /**
    * Avance, horde videe a chaque tick, jusqu'a l'ouverture du portail ; rend
-   * son tick. Retour de playtest : *« ne fait pas de fin a chaque boss »* — le
-   * portail a son propre rythme, `PORTAL_EVERY_WAVES` vagues.
+   * son tick. Le portail a son propre rythme, `PORTAL_EVERY_WAVES` vagues, et
+   * pas une fin a chaque boss.
    *
-   * ⚠️ **Il assene qu'il ne s'ouvre PAS avant** la vingtieme vague, et qu'il
-   * s'ouvre AU TICK de celle-ci.
+   * ⚠️ **Il assene qu'il ne s'ouvre PAS avant** la `PORTAL_EVERY_WAVES`-ieme
+   * vague, et qu'il s'ouvre AU TICK de celle-ci.
    */
   function ouvrirLePortail(room: Room, exact = false): number {
     let vagues = 0;
@@ -5153,7 +4792,7 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     const tickMort = ouvrirLePortail(room, true);
 
     expect(room.portalOpen).toBe(true);
-    // ⚠️ **Le multiplicateur part AVEC l'ouverture** (tache 10) : le client ne
+    // ⚠️ **Le multiplicateur part AVEC l'ouverture** : le client ne
     // peut ni le coder en dur — c'est un reglage — ni le compter, puisqu'un
     // client connecte en cours de run n'a vu aucun des portails precedents.
     // C'est le premier portail de la run, donc le multiplicateur vaut encore 1.
@@ -5174,7 +4813,7 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     room.join(2);
     ouvrirLePortail(room);
 
-    // ⚠️ **La visibilite EST la mecanique** (§6) : les deux joueurs figurent
+    // ⚠️ **La visibilite EST la mecanique** : les deux joueurs figurent
     // dans la table des l'ouverture, avant d'avoir tranche quoi que ce soit.
     // On ne negocie pas un choix qu'on ne voit pas, et « qui n'a pas encore
     // vote » fait partie de ce qu'il faut voir.
@@ -5195,12 +4834,10 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
   }, 60_000);
 
   it('LE MONDE NE S ARRETE PAS : la horde avance et le joueur bouge pendant le vote', () => {
-    // ⚠️ **LE test de cette tache, et la mutation qu'il existe pour tuer** : la
-    // machinerie du gel est la, juste au-dessus dans `Room#step`, et elle
-    // marche. Un `if (portail ouvert) { #stepPortal(); return; }` calque sur
-    // celui du draft rendrait ce test rouge — et c'est le seul qui rougirait.
-    // Le §6 : *« le draft gele parce qu'un choix de carte n'a pas d'enjeu
-    // temporel ; le vote ne gele pas parce que le temps EST son enjeu »*.
+    // ⚠️ **Le seul test qui rougirait** si un `if (portail ouvert) {
+    // #stepPortal(); return; }` etait calque sur le gel du draft dans
+    // `Room#step`. Le draft gele parce qu'un choix de carte n'a pas d'enjeu
+    // temporel ; le vote ne gele pas parce que le temps EST son enjeu.
     const room = new Room(4242);
     room.join(1);
     ouvrirLePortail(room);
@@ -5234,15 +4871,15 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     // ⚠️ **Les DEUX moities du monde qui tourne.** La horde se rapproche...
     expect(distance()).toBeLessThan(depart - 100);
     // ...et le joueur se deplace. Un gel arreterait les deux, et une seule des
-    // deux assertions laisserait la moitie de la mutation en vie.
+    // deux assertions laisserait passer un gel partiel.
     expect(positionOf(room, 1).x).toBeGreaterThan(joueurAvant.x + 100);
   }, 60_000);
 
   it("PARTIR termine la run avec l'or ACQUIS, par le RUN_OVER de l'etape 3", () => {
     const room = new Room(4242);
     room.join(1);
-    // Depuis que le portail ne suit plus la mort d'un boss, rien n'a verse
-    // d'or en route : la cagnotte est posee, c'est du decor.
+    // Aucun boss n'est tue en route, donc rien n'a verse d'or : la cagnotte
+    // est posee, c'est du decor.
     room.debugSetGold(240);
     ouvrirLePortail(room);
     room.drainPortalOpens();
@@ -5264,13 +4901,13 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
 
     // ⚠️ **L'AUTRE moitie, et c'est elle qui porte le sens** : l'or acquis
     // n'est pas l'or perdu. Le chemin de l'effacement multiplie par
-    // `WIPE_GOLD_KEPT` (tache 6) ; celui-ci ne retire rien. Sans la ligne
+    // `WIPE_GOLD_KEPT` ; celui-ci ne retire rien. Sans la ligne
     // ci-dessous, une extraction qui viderait la cagnotte passerait.
     expect(WIPE_GOLD_KEPT).toBeLessThan(1);
     expect(room.gold).toBe(cagnotte);
 
     // ⚠️ **Une seule fin de run**, et le monde s'arrete pour de bon : c'est le
-    // garde de tete de `step`, celui-la meme que l'etape 3 avait pose.
+    // garde de tete de `step`.
     const compteAvant = room.horde.count;
     for (let t = 0; t < TICK_HZ; t++) {
       pas(room);
@@ -5284,8 +4921,7 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     // ⚠️ **Le decor DOIT enchainer DEUX paliers.** Au premier portail, le
     // multiplicateur vaut 1 : une extraction immediate rendrait exactement la
     // cagnotte, et « l'or est majore » se lirait aussi bien d'un
-    // multiplicateur qui ne fait rien. C'est la fixture qui masque, prise a la
-    // source — la meme que la tache 6 a du eviter en tuant deux boss.
+    // multiplicateur qui ne fait rien.
     expect(EXTRACT_MULTIPLIER_STEP).toBeGreaterThan(0);
 
     const room = new Room(4242);
@@ -5321,7 +4957,7 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     // endroit du depot qui le dise : au premier, le multiplicateur vaut 1, et
     // une ouverture qui porterait toujours 1 y passerait sans bruit. C'est ce
     // chiffre que l'ecran du vote multiplie pour dire « ce qu'on gagne en
-    // partant » (tache 10).
+    // partant ».
     expect(room.drainPortalOpens()).toEqual([
       { deadlineTick: room.tick + PORTAL_WINDOW_TICKS, multiplier: 1 + EXTRACT_MULTIPLIER_STEP },
     ]);
@@ -5346,8 +4982,8 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     room.join(2);
     room.join(3);
 
-    // Le joueur 1 tombe AVANT le boss : il sera mort a l'ouverture du portail,
-    // et toujours dans le salon — le §6 dit « tout joueur connecte ».
+    // Le joueur 1 tombe AVANT le portail : il sera mort a l'ouverture, et
+    // toujours dans le salon. Tout joueur connecte vote.
     const pos = positionOf(room, 1);
     const bourreaux: number[] = [];
     for (let i = 0; i < 25; i++) {
@@ -5388,14 +5024,8 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
  * Tue un joueur par contact, pour les tests qui n'ont besoin que de l'etat
  * MORT et pas d'un combat realiste.
  *
- * ⚠️ **Aucun utilitaire de mort reutilisable n'existait dans ce fichier.**
- * Chaque test de mort inscrit sa propre boucle de combat (`tuerLeBoss`, le
- * `tuer` local au test de credit d'or, la boucle en ligne du test de
- * `RUN_OVER`) ; aucun n'est un `tue(room, id)` a deux arguments, module-scope,
- * reutilisable depuis un nouveau describe. Celle-ci reprend le motif le plus
- * simple des trois — vingt-cinq monstres au contact, meme sans arme tiree
- * assez vite pour les tenir tous a distance, il en reste toujours un pour
- * continuer a faire mal — plutot que d'en inventer un quatrieme variant.
+ * Vingt-cinq monstres au contact : meme une arme rapide ne les tient pas
+ * tous a distance, il en reste toujours un pour continuer a faire mal.
  */
 function tue(room: Room, playerId: number): void {
   const pos = positionOf(room, playerId);
@@ -5424,7 +5054,7 @@ describe('etape 8 tache 3 : le socle du verbe', () => {
     expect(room.useAbility(1, 1, 0)).not.toBeNull();
   });
 
-  /** Review Focus n°3 : un spam a 30 Hz ne doit laisser passer qu'un usage. */
+  /** Un spam a 30 Hz ne doit laisser passer qu'un usage. */
   it('un spam de cent demandes dans le meme tick n en laisse passer qu une', () => {
     const room = new Room();
     room.join(1, undefined, undefined, 0);
@@ -5437,7 +5067,7 @@ describe('etape 8 tache 3 : le socle du verbe', () => {
     expect(acceptes).toBe(1);
   });
 
-  /** Review Focus n°2 : un joueur mort n a pas de verbe. */
+  /** Un joueur mort n'a pas de verbe. */
   it('un joueur mort est refuse en silence', () => {
     const room = new Room();
     room.join(1, undefined, undefined, 0);
@@ -5528,7 +5158,7 @@ describe('etape 8 tache 4a : Amorce', () => {
 });
 
 /**
- * Étape 8 — **l'invocation**, cinquieme famille d'armes. Ce bloc garde ce que
+ * **L'invocation**, cinquieme famille d'armes. Ce bloc garde ce que
  * `shared/weapons.test.ts` ne peut pas voir : qu'elle est bien POSEE par le
  * salon, qu'elle frappe autour d'ELLE et pas autour du joueur, et qu'elle
  * finit par s'eteindre.
@@ -5564,11 +5194,10 @@ describe("l'invocation, posee par le salon (etape 8)", () => {
   });
 
   it('ne brule PLUS ou elle a ete posee quand le joueur s en va (etape 12)', () => {
-    // ⚠️ **Inverse a l'etape 12**, a la demande de Leo : « une zone autour de
-    // toi qui brule a petit feu plutot que de laisser la zone derriere toi ».
-    // Ce cas gardait le detachement ; il garde desormais qu'il n'y en a plus.
-    // Que l'aura brule bien autour du joueur arrive est garde par le bloc de
-    // l'etape 12 (« l homoncule brule autour de son invocateur »).
+    // ⚠️ L'invocation est une aura qui brule autour du joueur, pas une zone
+    // laissee derriere lui : ce cas garde qu'elle ne reste pas au point de
+    // pose. Qu'elle brule bien autour du joueur arrive est garde par le test
+    // « l homoncule brule autour de son invocateur ».
     const room = salonAvecInvocation();
     const depart = positionOf(room, 1);
 
@@ -5627,7 +5256,7 @@ describe("l'invocation, posee par le salon (etape 8)", () => {
 });
 
 /**
- * Étape 12 — **l'onde, la frappe et l'ancre**, vues depuis le salon : ce que
+ * **L'onde, la frappe et l'ancre**, vues depuis le salon : ce que
  * `shared/` ne voit pas, c'est que `Room` les pose, les resout et les purge.
  */
 describe('etape 12 : onde, frappe differee et ancre, posees par le salon', () => {
@@ -5696,7 +5325,8 @@ describe('etape 12 : onde, frappe differee et ancre, posees par le salon', () =>
     tenirLoin();
     room.step(DT);
     expect(vivant(room, pres)).toBe(false);
-    // Avant `aimPoint`, le trait mesurait ~127 fois sa portee et fauchait ici.
+    // Le trait s'arrete a sa portee : sans `aimPoint`, la visee brute (jusqu'a
+    // 127) l'allongerait d'autant et faucherait ici.
     expect(vivant(room, loin)).toBe(true);
   });
 
@@ -5747,7 +5377,7 @@ describe('etape 12 : onde, frappe differee et ancre, posees par le salon', () =>
     }
     const arrivee = positionOf(room, 1);
     expect(arrivee.y - depart.y).toBeGreaterThan(2 * arme.blastRadius + 20);
-    // Au point de pose : l'ancien homoncule y restait, celui-ci est parti.
+    // Au point de pose : l'homoncule n'y reste pas, il suit le joueur.
     const tenirPose = cloue(room, 630, depart.x, depart.y);
     const pose = room.horde.entityIdAt(room.horde.count - 1);
     const tenirPres = cloue(room, 631, arrivee.x + arme.blastRadius * 0.5, arrivee.y);
@@ -5912,7 +5542,7 @@ describe('etape 10 : Echo dans le salon', () => {
   });
 });
 
-/** Un salon a un joueur, la reserve de bouclier deja ouverte ET PLEINE (debug, voir la tache 6). */
+/** Un salon a un joueur, la reserve de bouclier deja ouverte ET PLEINE (debug). */
 function salonSoloAvecBouclier(): Room {
   const room = new Room();
   room.join(1);
@@ -5933,9 +5563,8 @@ describe('etape 13 : la regeneration du bouclier', () => {
     room.debugHurt(1, 30);
     const apresCoup = room.shieldOf(1);
     // ⚠️ La reserve DOIT avoir mordu : sinon les assertions qui suivent
-    // comparent 0 a 0 et ne prouvent rien (c'est exactement le bug corrige
-    // ici — `debugSetMaxShield` remplit desormais la reserve, pas seulement
-    // son plafond).
+    // comparent 0 a 0 et ne prouvent rien (`debugSetMaxShield` doit remplir
+    // la reserve, pas seulement son plafond).
     expect(apresCoup).toBe(SHIELD_POOL - 30);
     avanceTicks(room, SHIELD_CALM_TICKS - 1);
     expect(room.shieldOf(1)).toBe(apresCoup);
@@ -5984,12 +5613,10 @@ describe('etape 13 : la regeneration du bouclier', () => {
   /**
    * ⚠️ Le gel ne demande AUCUN cas particulier : `step` retourne avant tout
    * degat pendant le gel et pendant un etalage ouvert, donc la regeneration,
-   * qui vit apres ce retour, ne tourne pas non plus. Ce test garde la
-   * propriete via une VRAIE montee de niveau (meme protocole que le test
-   * « gele le monde a la montee de niveau » plus haut), pas un champ interne
-   * pose a la main : c'est le gel reel (l'etalage reste ouvert tant
-   * qu'aucun jeton n'est pose, voir `encodeDraftOpen`) qui protege ici, pas
-   * un `#freezeUntilTick` artificiel.
+   * qui vit apres ce retour, ne tourne pas non plus. Ce test passe par une
+   * VRAIE montee de niveau (meme protocole que « gele le monde a la montee de
+   * niveau » plus haut) : c'est l'etalage reellement ouvert qui tient le gel,
+   * pas un champ interne pose a la main.
    */
   it('ne regenere pas tant qu un etalage reste ouvert (vraie montee de niveau)', () => {
     const room = new Room();
@@ -6069,10 +5696,9 @@ describe('etape 13 : Transcendance', () => {
   });
 
   /**
-   * Le piege du rapport : `debugRevive` (back/src/room.ts) ne restituait que
-   * `hp`. Sans consequence tant que `maxShield` valait `0` pour tout le
-   * monde ; un porteur de Transcendance ressuscite aurait garde une reserve
-   * entamee et un calme perime.
+   * `debugRevive` doit restituer le bouclier, pas seulement `hp` : sinon un
+   * porteur de Transcendance ressuscite garderait une reserve entamee et un
+   * calme perime.
    */
   it('debugRevive restitue la reserve pleine, pas seulement les PV', () => {
     const room = new Room();

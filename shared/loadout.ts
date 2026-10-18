@@ -18,13 +18,9 @@ import { UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
  * d'exemplaires.
  *
  * ⚠️ **Les deux natures se comportent PAREIL, et c'est le modele du draft** :
- * tout s'empile, rien ne monte de niveau. *« C'est l'accumulation des cartes
- * qui fait la puissance. »* Une arme reprise ameliore UN aspect — celui que
- * porte la carte (`UPGRADE`) ; un passif pris deux fois ajoute deux fois sa `magnitude`. Modele
- * Risk of Rain, applique aux deux.
- *
- * Les niveaux d'arme et les evolutions ont existe un temps dans cette etape,
- * puis ont ete retires — voir le §9 de la spec.
+ * tout s'empile, rien ne monte de niveau (modele Risk of Rain). Une arme
+ * reprise ameliore UN aspect — celui que porte la carte (`UPGRADE`) ; un
+ * passif pris deux fois ajoute deux fois sa `magnitude`.
  *
  * ⚠️ **Une carte deja possedee ne consomme pas un second slot.** Seule une
  * carte NOUVELLE en prend un. Compter un slot par carte remplirait l'inventaire
@@ -75,9 +71,9 @@ export class Loadout {
   /**
    * Nombre de passifs DISTINCTS possedes.
    *
-   * ⚠️ **Ce n'est plus une consommation d'emplacements** (etape 13, §2.0) : la
-   * limite de passifs a ete levee, les armes gardent la leur. Le compte reste
-   * utile — le HUD s'en sert pour savoir combien de cadres peindre.
+   * ⚠️ **Pas une consommation d'emplacements** : les passifs n'ont pas de
+   * limite, seules les armes en ont une. Le HUD s'en sert pour savoir combien
+   * de cadres peindre.
    */
   get passiveSlotsUsed(): number {
     let n = 0;
@@ -116,8 +112,7 @@ export class Loadout {
   }
 
   /**
-   * Empile un passif. Aucune limite depuis l'etape 13 : seul un identifiant
-   * inconnu fait lever.
+   * Empile un passif. Aucune limite : seul un identifiant inconnu fait lever.
    */
   addPassive(passiveId: number): void {
     const stacks = this.stacksOf(passiveId);
@@ -128,8 +123,8 @@ export class Loadout {
   /**
    * Ce joueur peut-il prendre cette carte ?
    *
-   * ⚠️ **C'est ce qui remplace `owner`.** L'eligibilite ne se transporte plus
-   * sur la carte : elle se DERIVE de l'inventaire de chacun, donc la meme carte
+   * ⚠️ L'eligibilite ne se transporte pas sur la carte (pas d'`owner`) : elle
+   * se DERIVE de l'inventaire de chacun, donc la meme carte
    * peut etre prenable par l'un et pas par l'autre sans que l'etalage ait a le
    * savoir. Une seule regle : on ne peut pas ouvrir un slot qu'on n'a plus.
    * Empiler ce qu'on possede deja reste toujours possible — c'est le modele.
@@ -138,8 +133,8 @@ export class Loadout {
     if (nature === CARD_WEAPON) {
       return this.stacksOfWeapon(refId) > 0 || this.#weaponOrder.length < WEAPON_SLOTS;
     }
-    // ⚠️ **Toujours vrai depuis l'etape 13** : un passif ne peut plus etre
-    // refuse. Le parametre reste pour que la signature serve les deux natures.
+    // Un passif n'est jamais refuse. Le parametre reste pour que la signature
+    // serve les deux natures.
     return true;
   }
 
@@ -180,19 +175,15 @@ export class Loadout {
  * Les PV max d'un joueur : la base, les cartes, les achats — **et la seule
  * ecriture de cette somme dans le depot**.
  *
- * ⚠️ **Elle etait recopiee a TROIS endroits** : `Room#grantCard`
- * (`back/src/room.ts`), `GameClient#localMaxHp` et `GameClient#fireOne`
- * (`front/src/net/client.ts`, ce dernier pour le `maxHp` qu'echelonne
- * Colosse). Des copies divergeraient a la premiere regle qui touche au
- * plafond — et l'etape 13 en ajoute justement une (une carte a malus de PV
- * max, tache suivante).
+ * ⚠️ **Lue par `Room#grantCard`, `GameClient#localMaxHp` et
+ * `GameClient#fireOne`** (le `maxHp` qu'echelonne Colosse) : des copies
+ * divergeraient a la premiere regle qui touche au plafond.
  */
 export function maxHpOf(loadout: Loadout, accountMaxHp: number): number {
   // ⚠️ **La regle passe EN DERNIER**, apres les cartes et les achats : c'est
   // exactement ce qui la rend insensible a Vitalite et aux achats du compte.
-  // Consequence assumee (etape 13, tache 6) : Vitalite et Regain deviennent
-  // inertes chez un porteur de Transcendance, puisqu'ils visent un plafond
-  // que cette regle force a `TRANSCENDANCE_MAX_HP`.
+  // Consequence assumee : Vitalite et Regain deviennent inertes chez un
+  // porteur de Transcendance.
   if (loadout.hasRule('transcendance')) {
     return TRANSCENDANCE_MAX_HP;
   }
@@ -200,8 +191,8 @@ export function maxHpOf(loadout: Loadout, accountMaxHp: number): number {
 }
 
 /**
- * La reserve de bouclier ouverte par les regles possedees (etape 13, tache
- * 6) : `SHIELD_POOL` chez un porteur de Transcendance, `0` sinon.
+ * La reserve de bouclier ouverte par les regles possedees : `SHIELD_POOL`
+ * chez un porteur de Transcendance, `0` sinon.
  *
  * ⚠️ **Tout debordement de cette reserve tue** : derriere elle, il ne reste
  * que `TRANSCENDANCE_MAX_HP` (1) point de vie (voir `hurtPlayer`,

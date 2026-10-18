@@ -3,26 +3,22 @@ import { priceOf, SHOP_ITEMS, type ShopItem } from '@shared/shop';
 import { bonusIcon, slot } from './icons';
 
 /**
- * La boutique du lobby (etape 7b, tache 8).
+ * La boutique du lobby.
  *
- * ⚠️ **Union + grisage : l'etalage montre TOUT.** Un article trop cher ou au
- * palier maximum reste dans la liste, grise (bouton desactive) plutot que
- * retire. Montrer ce qu'on pourra debloquer plus tard fait partie de
- * l'interet — decision de l'utilisateur pour cette tache.
+ * ⚠️ **L'etalage montre TOUT** : un article trop cher ou au palier maximum
+ * reste dans la liste, grise, plutot que retire — on voit ce qu'on pourra
+ * debloquer plus tard.
  *
- * ⚠️ **Aucun slot d'arme n'est vendu, et ne le sera jamais.** `SHOP_ITEMS`
- * n'a pas de nature pour ca (`shared/shop.ts`, teste a la tache 1) ; cette
- * boutique ne fait qu'afficher le catalogue tel qu'il est.
+ * ⚠️ **Aucun slot d'arme n'est vendu** : `SHOP_ITEMS` n'a pas de nature pour
+ * ca, et cette boutique ne fait qu'afficher le catalogue.
  */
 
 /** L'etat d'un compte, tel que la boutique en a besoin pour decider ce qui est grise. */
 export interface EtatBoutique {
   /**
-   * ⚠️ **`bigint`, jamais `number`.** L'or arrive en TEXTE sur le fil
-   * (`{ gold: string }`) parce que `bigint` n'est pas serialisable en JSON et
-   * qu'un nombre JSON perdrait la precision au-dela de 2^53 alors que la
-   * colonne tient jusqu'a 2^63. Convertir en `number` ici pour comparer un
-   * prix referait la meme perte sur le client.
+   * ⚠️ **`bigint`, jamais `number`.** L'or arrive en TEXTE sur le fil : un
+   * nombre JSON perdrait la precision au-dela de 2^53, la colonne tient
+   * jusqu'a 2^63. Convertir en `number` ici referait la meme perte.
    */
   gold: bigint;
   /** Palier atteint par article possede — absent si rien n'a encore ete achete. */
@@ -41,12 +37,9 @@ export function achetable(item: ShopItem, etat: EtatBoutique): boolean {
 /**
  * Le message d'un achat refuse, par code HTTP.
  *
- * ⚠️ **402 et 409 ne disent PAS la meme chose** (etape 7b, tache 5) : un 402
- * (solde insuffisant ou palier maximum) demande de gagner plus d'or ; un 409
- * est un conflit d'achat concurrent — rien n'a ete debite, l'action correcte
- * est de rafraichir et retenter. Confondre les deux dirait « solde
- * insuffisant » a un joueur qui a largement de quoi payer, juste parce qu'il a
- * double-clique.
+ * ⚠️ **402 et 409 ne disent PAS la meme chose** : un 402 (solde insuffisant
+ * ou palier maximum) demande de gagner plus d'or ; un 409 est un conflit
+ * d'achat concurrent — rien n'a ete debite, il faut rafraichir et retenter.
  */
 export function messageAchat(status: number): string {
   if (status === 402) {
@@ -87,25 +80,18 @@ export function effetLabel(item: ShopItem): string {
 }
 
 /**
- * Peint l'etalage (ecran 10 de la maquette) : une carte par article, son
- * effet par palier, le palier atteint, et un bouton de prix desactive quand
- * `achetable` est faux.
- *
- * `replaceChildren` plutot qu'un diff : au plus `SHOP_ITEMS.length` cartes, et
- * la boutique ne se repeint qu'a l'ouverture ou apres un achat.
+ * Peint l'etalage : une carte par article, son effet par palier, le palier
+ * atteint, et un bouton de prix desactive quand `achetable` est faux.
  *
  * ⚠️ **Un achat est definitif : il se confirme.** Le premier clic arme le
  * bouton (« Confirmer ? », en rouge), le second achete. Un clic ailleurs ou un
  * repeint desarme.
  *
- * ⚠️ **`onBuy` rend une promesse, et c'est la garde anti-double-clic (ronde
- * de correction 2/5, tache 8).** Un double-clic rapide envoyait deux `POST` —
- * l'un gagnant (200), l'autre en conflit (409) — et selon l'ordre d'arrivee
- * le joueur pouvait lire « conflit, retente » pour un achat qui avait
- * pourtant reussi. Le correctif est natif : le bouton se desactive AVANT
- * l'appel, et se reactive dans un `finally` — donc quelle que soit l'issue
- * (succes, 402, 409, ou meme une promesse rejetee). Un `then` de succes seul
- * laisserait un achat refuse avec un bouton mort pour toujours.
+ * ⚠️ **`onBuy` rend une promesse : c'est la garde anti-double-clic.** Deux
+ * `POST` rapides donneraient un 200 et un 409, et le joueur pourrait lire
+ * « conflit » pour un achat reussi. Le bouton se desactive AVANT l'appel et
+ * se reactive dans un `finally`, quelle que soit l'issue : un `then` de
+ * succes seul laisserait un bouton mort apres un refus.
  */
 export function renderShop(
   root: HTMLElement,

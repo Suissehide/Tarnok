@@ -21,24 +21,19 @@ function order(overrides: Partial<WaveOrder> = {}): WaveOrder {
 
 describe('HordeHistory', () => {
   it('un aller-retour enregistrer / restaurer rend exactement l etat sauvegarde, champ par champ', () => {
-    // ⚠️ QUINZE tableaux (`fleeing` des voleurs compris), pas sept ni onze : c'est exactement le defaut R13
-    // (voir le rapport de la tache 19) — un test qui n'en verifie qu'une
-    // partie reste vert quand une copie manque dans `saveState`/`restoreState`.
-    // `vx`/`vy` (tache 19), `hp` puis `mark`/`markBy`/`markUntil` (etape 5a)
-    // sont ICI au meme titre que les autres, verifies un par un par corruption
-    // puis restauration : supprimer la copie de l'UN QUELCONQUE de ces
-    // quatorze tableaux dans `saveState` ou `restoreState` doit faire echouer
-    // la ligne qui lui correspond, et elle seule.
+    // ⚠️ TOUS les tableaux types de la horde sont verifies, un par un, par
+    // corruption puis restauration : un test qui n'en verifie qu'une partie
+    // reste vert quand une copie manque dans `saveState`/`restoreState`.
+    // Supprimer la copie de l'un quelconque d'entre eux doit faire echouer la
+    // ligne qui lui correspond, et elle seule.
     //
     // ⚠️ `hp` et la marque ne sont lus que par le serveur, qui ne rejoue
-    // jamais — les laisser hors de l'instantane « marcherait » aujourd'hui.
-    // C'est precisement pourquoi ils y sont : deux listes a tenir a jour au
-    // lieu d'une, c'est la classe de defaut que ce depot paie le plus cher.
+    // jamais : les laisser hors de l'instantane « marcherait » aujourd'hui.
+    // Ils y sont pour n'avoir qu'une liste a tenir a jour, pas deux.
     //
-    // ⚠️ Et une liste ecrite a la main vieillit. Le test verifie donc AUSSI
-    // (`champsVerifies` plus bas) qu'elle couvre exactement les tableaux que
-    // porte l'instance — meme garde que le test « emmene toutes les
-    // proprietes » de `horde.test.ts`, pour la meme raison.
+    // ⚠️ Une liste ecrite a la main vieillit : `champsVerifies` plus bas
+    // verifie qu'elle couvre exactement les tableaux de l'instance, comme le
+    // test « emmene toutes les proprietes » de `horde.test.ts`.
     const horde = new Horde(20);
     horde.spawn(order({ waveId: 1, archetype: 2, count: 3 }));
     // Valeurs distinctives, posees a la main : le spawn seul ne fait pas

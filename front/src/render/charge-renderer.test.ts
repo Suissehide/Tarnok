@@ -20,11 +20,10 @@ import {
 } from './charge-renderer';
 
 /**
- * Le rectangle d'annonce de la charge du boss (etape 6a, tache 5 bis).
+ * Le rectangle d'annonce de la charge du boss.
  *
  * ⚠️ **Ce calque ne fait PAS tourner le boss, et aucun test ne doit lui
- * demander de le faire.** Decision de l'auteur : *« pas besoin de faire tourner
- * le boss, l'animation d'attaque le fait deja tourner »*. La rotation qu'on
+ * demander de le faire** : le clip d'attaque s'en charge. La rotation qu'on
  * teste ici est celle du COULOIR — l'orientation du rectangle — jamais celle du
  * sprite.
  *
@@ -121,10 +120,9 @@ describe('chargeQuad — ou le couloir se pose, et quand il ne se pose pas', () 
 });
 
 /**
- * **Le corps de `draw`, atteint.** Sans `adoptTexture`, `draw` retournerait a
- * son premier garde dans toute la suite et tout son corps pourrait etre retire
- * sans qu'une assertion ne bouge — c'est litteralement ce que `ZoneRenderer.draw`
- * a fait pendant 237 tests verts dans ce depot.
+ * **Le corps de `draw`, atteint.** Sans `adoptTexture`, `draw` ne passerait
+ * jamais sa garde en test et tout son corps pourrait etre retire sans qu'une
+ * assertion ne bouge.
  */
 function quadsDessines(c: BossCharge | null, tick: number): Particle[] {
   const monte = calque();
@@ -155,7 +153,7 @@ function calque(): {
   renderer.attach(world);
   // ⚠️ **Le calque du couloir n'ajoute qu'UN enfant au monde** : le couloir et
   // ses fleches sont deux `ParticleContainer` (un conteneur ne porte qu'une
-  // texture source) groupes sous un noeud, pour que le « neuf calques » de
+  // texture source) groupes sous un noeud, pour que le compte de calques de
   // `stage.test.ts` continue de nommer ce qu'il compte.
   const racine = world.children[0] as Container;
   expect(world.children).toHaveLength(1);
@@ -194,8 +192,7 @@ describe('ChargeRenderer.draw — ce que le quad porte vraiment', () => {
   /**
    * ⚠️ **L'echelle, pas la texture.** `CHARGE_TEXTURE_SIZE` (64) ne vaut ni la
    * longueur (900) ni la largeur (192) : une mutation qui poserait `scaleX = 1`
-   * — le couloir ne suit plus sa longueur — rougit donc ici. C'est le meme
-   * piege que `ZONE_TEXTURE_DIAMETER` a paye a l'etape 5a.
+   * — le couloir ne suit plus sa longueur — rougit donc ici.
    */
   it('etire le quad a la longueur ET a la largeur du couloir', () => {
     const c = charge();
@@ -252,7 +249,7 @@ describe('ChargeRenderer.draw — ce que le quad porte vraiment', () => {
 /**
  * ⚠️ **Le bord d'un couloir est une REGLE DE JEU** : c'est lui qui dit ou il
  * faut etre pour ne pas etre touche. Un aplat uniforme ne dit ni ou il commence
- * ni ou il finit — meme raisonnement, mot pour mot, que `ZONE_FILL_RATIO`.
+ * ni ou il finit — meme raisonnement que `ZONE_FILL_RATIO`.
  */
 describe('le couloir se lit : un lisere, pas un aplat', () => {
   it('garde l interieur franchement plus discret que le bord', () => {
@@ -261,9 +258,8 @@ describe('le couloir se lit : un lisere, pas un aplat', () => {
   });
 
   /**
-   * *« Legerement rouge »* (§4 de la spec) : le §6.6 de l'orientation est
-   * categorique sur le fait que l'etat persistant reste DISCRET, et ce
-   * rectangle est le plus grand aplat du jeu.
+   * Legerement rouge : un etat persistant reste DISCRET, et ce rectangle est
+   * le plus grand aplat du jeu.
    */
   it('reste discret : le couloir ne blanchit pas l ecran', () => {
     expect(CHARGE_ALPHA).toBeGreaterThan(0);
@@ -271,10 +267,8 @@ describe('le couloir se lit : un lisere, pas un aplat', () => {
   });
 
   /**
-   * ⚠️ **Le lisere est un TRAIT, pas un second aplat** (etape 6a, tache 13) —
-   * *« plus fins les bords de la zone rouge »*. Il occupait 14 % de la
-   * demi-largeur de chaque cote, soit 27 px sur 96 : a cette epaisseur, le
-   * couloir entier paraissait plein et la frontiere ne se lisait plus.
+   * ⚠️ **Le lisere est un TRAIT, pas un second aplat** : trop epais, le
+   * couloir entier parait plein et la frontiere ne se lit plus.
    *
    * Les deux moities : assez MINCE pour etre un trait, et non NUL — un lisere
    * disparu rendrait le couloir uniforme, ce que `CHARGE_FILL_RATIO` existe
@@ -292,12 +286,10 @@ describe('le couloir se lit : un lisere, pas un aplat', () => {
 });
 
 /**
- * Les fleches du couloir (etape 6a, tache 13) — *« fais des fleches qui
- * indiquent la direction au centre de la zone rouge »*.
+ * Les fleches du couloir.
  *
  * ⚠️ **Un couloir sans direction se lit comme une zone.** Le rectangle dit
- * *ou*, pas *vers ou*, et ses deux bouts se ressemblent : c'est la seule
- * information de la charge qu'aucun pixel ne portait.
+ * *ou*, pas *vers ou*, et ses deux bouts se ressemblent.
  */
 describe('chargeArrows — le couloir dit son sens', () => {
   it('ne pose aucune fleche quand il n y a pas de couloir', () => {
@@ -308,8 +300,7 @@ describe('chargeArrows — le couloir dit son sens', () => {
 
   /**
    * ⚠️ **Le compte se DERIVE de la longueur, il n'est pas ecrit.** Un « cinq
-   * fleches » en dur mentirait au premier couloir d'une autre longueur — et
-   * l'etape 6b en promet d'autres. Le test compare a la derivation, pas a 5.
+   * fleches » en dur mentirait au premier couloir d'une autre longueur. Le test compare a la derivation, pas a 5.
    */
   it('espace les fleches sur toute la longueur, au lieu d en poser un nombre fixe', () => {
     const c = charge();
@@ -326,7 +317,7 @@ describe('chargeArrows — le couloir dit son sens', () => {
   });
 
   /**
-   * **Le coeur de la tache.** Les fleches doivent etre DANS le couloir, sur son
+   * **L'essentiel.** Les fleches doivent etre DANS le couloir, sur son
    * axe, et progresser dans le sens de la charge — une fleche posee a l'origine
    * ou au-dela de l'extremite ne dirait plus rien du couloir.
    */
@@ -422,8 +413,7 @@ describe('ChargeRenderer.draw — les fleches posees sur leur propre calque', ()
   });
 
   /**
-   * ⚠️ **L'echelle, pas la texture** — le piege des taches 13 et 15 de l'etape
-   * 5a. `CHARGE_ARROW_TEXTURE_SIZE` (32) ne vaut pas la taille affichee (96 px
+   * ⚠️ **L'echelle, pas la texture.** `CHARGE_ARROW_TEXTURE_SIZE` (32) ne vaut pas la taille affichee (96 px
    * sur le couloir du troll), donc une mutation qui poserait `scaleX = 1`
    * rougit ici.
    */

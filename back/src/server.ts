@@ -55,21 +55,16 @@ const BROADCAST_MS = 1000 / SNAPSHOT_HZ;
  */
 const MAX_CATCH_UP_STEPS = 5;
 
-/** Periode du HUD de debug serveur (§4.6 : un HUD, pas des logs). */
+/** Periode du HUD de debug serveur (un HUD, pas des logs). */
 const METRICS_PERIOD_MS = 5000;
 
 /**
  * Codes de fermeture applicatifs, dans la plage privee 4000-4999.
  *
- * ⚠️ **Toutes les valeurs vivent ICI, et nulle part en dehors de cet objet.**
- * L'etape 7a a introduit une collision (deux paires de codes partageaient
- * 4003 et 4004) qu'une relecture n'a pas vue : un `const CLOSE_*` isole,
- * hors de cet objet, pourrait reproduire la meme erreur sans qu'aucun
- * controle ne la voie. En declarant chaque valeur comme propriete de
- * `CLOSE_CODES`, `handshake.integration.test.ts` peut assener qu'elles sont
- * deux a deux distinctes (`Object.values(CLOSE_CODES)`) sans recopier une
- * liste a la main, et un sixieme code oublie ici serait un sixieme code
- * absent du controle.
+ * ⚠️ **Toutes les valeurs vivent ICI, et nulle part en dehors de cet objet** :
+ * `handshake.integration.test.ts` verifie qu'elles sont deux a deux distinctes
+ * via `Object.values(CLOSE_CODES)`. Un `const CLOSE_*` isole echapperait a ce
+ * controle et pourrait entrer en collision sans que rien ne le voie.
  */
 export const CLOSE_CODES = Object.freeze({
   /** Code de salon absent du registre. */
@@ -111,16 +106,13 @@ class Session {
   /** Octets reellement pousses sur le fil : l'encodage est mutualise, pas l'envoi. */
   #wireBytes = 0;
   /**
-   * Ticks de salon des derniers pings ACCEPTES, par joueur (etape 9) : l'anti-spam.
-   * Ici et pas dans `Room` — un ping ne touche rien de la simulation, c'est une
-   * affaire de reseau.
+   * Ticks de salon des derniers pings ACCEPTES, par joueur : l'anti-spam.
+   * Ici et pas dans `Room` — un ping ne touche rien de la simulation.
    */
   readonly #pings = new Map<number, number[]>();
   /**
-   * Vrai une fois `stop()` appelee. Un salon peut se refermer (dernier
-   * joueur parti) PENDANT qu'une autre socket attend encore la resolution
-   * de son compte dans `add` -- ce drapeau est ce que cette attente relit a
-   * sa reprise, pour ne pas accueillir un client dans un salon dereference.
+   * Vrai une fois `stop()` appelee. Relu par `add` apres chaque `await` : le
+   * salon a pu se refermer pendant la resolution du compte.
    */
   #stopped = false;
   /**
@@ -174,16 +166,11 @@ class Session {
   }
 
   /**
-   * Accepte une socket. N'attribue PAS de slot tout de suite : le slot
-   * n'existe qu'une fois le HELLO presente et le compte reconnu. Une socket
-   * qui ne presente jamais de HELLO reste simplement ouverte et sans slot --
-   * il n'existe aucune echeance de poignee de main (dette nommee, voir le
-   * rapport de la tache 5).
-   *
-   * ⚠️ C'est un changement de forme, pas seulement de contenu : `add` ne rend
-   * plus d'identifiant. Le salon plein ne peut plus se detecter a
-   * l'ouverture, puisqu'une socket non authentifiee n'occupe aucune place --
-   * il se detecte apres le HELLO, et ferme alors la socket.
+   * Accepte une socket. Le slot n'existe qu'une fois le HELLO presente et le
+   * compte reconnu : une socket non authentifiee n'occupe aucune place, donc
+   * le salon plein se detecte apres le HELLO. Une socket qui ne presente
+   * jamais de HELLO reste ouverte et sans slot -- aucune echeance de poignee
+   * de main (dette connue).
    */
   add(ws: WebSocket): void {
     ws.binaryType = 'arraybuffer';
@@ -192,21 +179,16 @@ class Session {
     // tant qu'aucun compte n'est authentifie.
     let id: number | null = null;
 
-    // ⚠️ Pose DES L'ENTREE de `add`, jamais apres le HELLO. Le receiver de
-    // `ws` appelle `websocket.emit('error', err)` sur une trame WS malformee
-    // (bit RSV pose, opcode inconnu, trame non masquee...), et un
-    // `EventEmitter` SANS listener `'error'` leve -- sans
-    // `process.on('uncaughtException')` dans `back/src`, ca tuerait le
-    // process entier, tous les salons de tous les joueurs avec lui.
+    // ⚠️ Pose DES L'ENTREE de `add`, jamais apres le HELLO. `ws` emet `'error'`
+    // sur une trame WS malformee (bit RSV, opcode inconnu, trame non
+    // masquee...), et un `EventEmitter` SANS listener `'error'` leve : faute de
+    // `process.on('uncaughtException')`, ca tuerait le process et tous les
+    // salons avec lui.
     //
-    // ⚠️ **`'error'` ET `'close'` peuvent tous deux declencher cette
-    // liberation pour le MEME evenement reseau** : `receiverOnError` clot la
-    // socket, qui emet ensuite son propre `'close'` (observe a ~1 ms
-    // d'intervalle). `libere` est donc idempotente par construction : le
-    // drapeau `id = null` est pose AVANT l'appel a `remove`, ce qui ferme la
-    // fenetre meme si `remove` rendait la main de facon reentrante -- sans
-    // ca, le second appel pourrait evincer en silence un slot deja repris
-    // par un autre client entre les deux evenements.
+    // ⚠️ **`'error'` puis `'close'` arrivent pour le MEME evenement reseau.**
+    // `libere` est donc idempotente : `id = null` est pose AVANT `remove`, sans
+    // quoi le second appel pourrait evincer un slot deja repris par un autre
+    // client entre les deux evenements.
     const libere = (): void => {
       if (id !== null) {
         const victime = id;
@@ -239,36 +221,25 @@ class Session {
         return;
       }
 
-      // ⚠️ La socket a pu se fermer PENDANT l'attente Prisma ci-dessus
-      // (rafraichissement, double-clic, coupure). Lui attribuer un slot
-      // fuirait pour toujours : son evenement `'close'` est deja parti, et
-      // ne se represente jamais -- `#clients.size` ne retomberait jamais a
-      // zero, `onEmpty` ne partirait jamais, le timer de cette `Session` ne
-      // s'arreterait jamais.
+      // ⚠️ La socket a pu se fermer PENDANT l'attente Prisma. Lui attribuer un
+      // slot fuirait pour toujours : son `'close'` est deja parti, donc
+      // `onEmpty` ne partirait jamais et le timer de la `Session` non plus.
       if (ws.readyState !== ws.OPEN) {
         return;
       }
 
-      // ⚠️ La Session elle-meme a pu se refermer PENDANT l'attente Prisma
-      // ci-dessus (dernier joueur parti, `onEmpty` puis `closeSession`) :
-      // la socket, elle, est toujours ouverte -- sans cette garde, le
-      // client serait accueilli (WELCOME compris) dans un salon gele et
-      // dereference de `app.rooms`, sans qu'aucune diffusion ne vienne
-      // jamais.
+      // ⚠️ La Session a pu se refermer PENDANT l'attente Prisma (dernier joueur
+      // parti) : sans cette garde, le client serait accueilli dans un salon
+      // gele et dereference de `app.rooms`.
       if (this.#stopped) {
         ws.close(CLOSE_CODES.ROOM_CLOSED, 'salon ferme');
         return;
       }
 
-      // ⚠️ **UN SECOND `await` sur ce chemin, et c'est exactement la frontiere
-      // asynchrone dont les QUATRE defauts Critiques de l'etape 7a sont nes,
-      // dont deux tuaient le process entier.**
-      //
-      // Il est place APRES le garde `readyState` et le garde `#stopped`
-      // ci-dessus, et son echec est attrape ici meme : une panne de lecture ne
-      // doit pas refuser la partie. Le joueur entre sans ses ameliorations,
-      // son or reste en base, et la run suivante les retrouvera. Refuser la
-      // connexion pour un incident serveur punirait le joueur de notre panne.
+      // ⚠️ **Second `await` sur ce chemin : chaque frontiere asynchrone ici
+      // exige de relire les gardes ci-dessus.** Son echec est attrape sur place :
+      // une panne de lecture ne doit pas refuser la partie. Le joueur entre sans
+      // ses ameliorations, son or reste en base pour la run suivante.
       let grants: AccountGrants | undefined;
       try {
         const achats = await purchasesOf(accountId);
@@ -315,19 +286,15 @@ class Session {
     };
 
     const onFirstSync = (data: ArrayBuffer): void => {
-      // ⚠️ Retire EN PREMIER, avant tout `await` : deux `HELLO` arrivant
-      // dans le meme segment TCP sont livres SYNCHRONIQUEMENT par le
-      // receiver de `ws`, dans le meme appel de `socketOnData`. Si le
-      // retrait attendait la resolution de `onFirst` (apres l'`await`
-      // Prisma), le second `HELLO` trouverait ce listener encore attache et
-      // attribuerait un second slot au meme client (Review Focus n2).
+      // ⚠️ Retire EN PREMIER, avant tout `await` : deux `HELLO` dans le meme
+      // segment TCP sont livres SYNCHRONIQUEMENT par `ws`. Retire apres
+      // l'`await` Prisma, ce listener attribuerait un second slot au meme
+      // client.
       ws.off('message', onFirstSync);
       onFirst(data).catch(() => {
-        // Echec imprevu (ex: Prisma indisponible) pendant la poignee de
-        // main : CETTE socket se ferme, jamais le salon. Code dedie, pas
-        // CLOSE_CODES.BAD_FRAME : la trame etait lisible, c'est le serveur
-        // qui a failli, pas le client -- il peut reessayer sans frapper un
-        // nouveau compte.
+        // Echec serveur (ex: Prisma indisponible) : CETTE socket se ferme,
+        // jamais le salon. Pas BAD_FRAME : la trame etait lisible, le client
+        // peut reessayer sans frapper un nouveau compte.
         ws.close(CLOSE_CODES.INTERNAL_ERROR, 'erreur interne');
       });
     };
@@ -401,9 +368,8 @@ class Session {
       'ko/s emis': round2(wireBytes / 1024 / seconds),
       'ko/s par joueur': round2(wireBytes / players / 1024 / seconds),
       'us encodage / snapshot': round2(room.encodeMicros / Math.max(1, room.snapshots)),
-      // La horde sature a 4 000 entites tant que rien ne meurt (§11 de la
-      // spec, differe a l'etape 3) : ce compteur rend cette saturation
-      // visible dans le HUD plutot que silencieuse, comme le veut le §4.6.
+      // Rend visible dans le HUD la saturation de la horde (plafond
+      // d'entites), plutot que de la laisser silencieuse.
       'vagues tronquees': room.truncatedSpawns,
     };
   }
@@ -424,13 +390,10 @@ class Session {
         return;
       }
       if (msg.type === MSG.PICK) {
-        // Meme regle que l'ecran de selection : un choix hors liste (arme
-        // neutre, verrouillee non debloquee, inconnue) n'est pas enregistre.
-        // L'arme et la classe sont arbitrees INDEPENDAMMENT : une arme
-        // invalide ne doit pas faire perdre une classe valide envoyee dans
-        // le meme message, et reciproquement. Le refus est silencieux —
-        // meme discipline que DRAFT_TOKEN et VOTE — et une seule diffusion
-        // suit, qu'un seul, les deux, ou aucun des deux choix ait ete retenu.
+        // Un choix hors liste (arme verrouillee, inconnue) n'est pas
+        // enregistre, en silence. L'arme et la classe sont arbitrees
+        // INDEPENDAMMENT : une arme invalide ne fait pas perdre une classe
+        // valide du meme message. Une seule diffusion suit dans tous les cas.
         const libres = startingWeapons();
         if (msg.weaponId === NO_WEAPON || libres.includes(msg.weaponId)) {
           entry.weaponId = msg.weaponId;
@@ -449,25 +412,19 @@ class Session {
       return;
     }
     if (msg.type === MSG.ABILITY) {
-      // Meme discipline que partout ailleurs dans ce fichier : le client
-      // PROPOSE, le salon arbitre. Rien n'est diffuse sur un refus — pas de
-      // message d'erreur, pas d'accuse : le client sait que sa demande n'a
-      // pas abouti parce qu'aucune annonce n'arrive.
+      // Le client PROPOSE, le salon arbitre : un refus est silencieux, le
+      // client le deduit de l'absence d'annonce.
       //
-      // ⚠️ **Rien n'est envoye ICI, meme sur acceptation** (ronde de
-      // correction 1). `useAbility` met deja l'annonce en file (voir
-      // `Room#drainAbilities`), et c'est `#broadcast` — plus bas, au meme
-      // tick que `drainDeaths` — qui la diffusera. Envoyer aussi depuis ce
-      // gestionnaire doublerait l'annonce : une premiere fois ici, une
-      // seconde au drain.
+      // ⚠️ **Rien n'est envoye ICI, meme sur acceptation** : `useAbility` met
+      // l'annonce en file et `#broadcast` la diffuse apres `DEATHS`. Envoyer
+      // aussi d'ici la doublerait.
       this.room.useAbility(id, msg.aimX, msg.aimY);
       return;
     }
     if (msg.type === MSG.PING) {
-      // Meme discipline que le verbe : le client PROPOSE, le salon arbitre, et
-      // un refus est silencieux. Mais l'envoi est IMMEDIAT, contrairement au
-      // verbe : un ping ne touche rien de la simulation, il n'a aucun ordre a
-      // tenir face a `DEATHS` (§5 de la spec de l'etape 9).
+      // Refus silencieux, mais envoi IMMEDIAT, contrairement au verbe : un ping
+      // ne touche rien de la simulation, il n'a aucun ordre a tenir face a
+      // `DEATHS`.
       if (msg.intent >= PING_INTENTS.length) {
         return;
       }
@@ -483,46 +440,36 @@ class Session {
       return;
     }
     if (msg.type === MSG.DRAFT_TOKEN) {
-      // Le serveur arbitre : un geste refuse n'est simplement pas enregistre,
-      // et le client le verra a la prochaine diffusion des intentions. Aucun
-      // client ne decide de quoi que ce soit ici (§7.2).
+      // Un geste refuse n'est pas enregistre ; le client le verra a la
+      // prochaine diffusion des intentions.
       this.room.setDraftToken(id, msg.cardIndex);
       return;
     }
     if (msg.type === MSG.VOTE) {
-      // Meme discipline que le jeton : le client PROPOSE, le salon arbitre. Un
-      // vote refuse — portail ferme, choix inconnu — n'est simplement pas
-      // enregistre, et le client le verra a la prochaine diffusion des votes.
+      // Idem : un vote refuse (portail ferme, choix inconnu) n'est pas
+      // enregistre ; le client le verra a la prochaine diffusion des votes.
       this.room.setVote(id, msg.choice);
     }
   }
 
   /**
    * Verse la cagnotte sur le compte de CHAQUE joueur encore connecte -- la
-   * TOTALITE a chacun, pas une part (§4.1 de la spec).
+   * TOTALITE a chacun, pas une part : diviser ferait toucher a chacun moins
+   * qu'en solo, et le jeu ne doit pas punir le regroupement.
    *
-   * Diviser par le nombre de joueurs ferait toucher a chacun MOINS qu'en solo
-   * sur la part de palier, qui ne passe pas a l'echelle : le §8.1 de
-   * l'orientation interdit de punir le regroupement.
-   *
-   * ⚠️ **Trois tentatives, puis un journal, et c'est un plafond assume.** La
-   * sortie propre est une table d'« outbox » ecrite dans la meme transaction
-   * que la fin de run et rejouee jusqu'a succes. Elle n'est pas de cette
-   * etape (§4.4 de la spec) ; si une perte reelle est constatee, c'est la
-   * sortie.
+   * ⚠️ **Trois tentatives, puis un journal : plafond assume.** La sortie
+   * propre serait une table d'« outbox » ecrite dans la transaction de fin de
+   * run et rejouee jusqu'a succes, si une perte reelle est constatee.
    */
   async #creditAccounts(): Promise<void> {
     const montant = BigInt(this.room.gold);
-    // Cagnotte nulle (un wipe, `WIPE_GOLD_KEPT` valant 0 aujourd'hui) :
-    // `creditAccounts` est elle-meme un no-op sur un montant nul, ce retour
-    // n'evite donc qu'un aller-retour Prisma inutile. Le jour ou
-    // `WIPE_GOLD_KEPT` passe a 0.15, ce chemin ne s'emprunte simplement plus.
+    // Cagnotte nulle (un wipe) : `creditAccounts` serait un no-op, ce retour
+    // n'evite qu'un aller-retour Prisma.
     if (montant === 0n) {
       return;
     }
-    // `#accounts` ne porte que les slots encore connectes a cet instant --
-    // un depart (`remove`) l'en retire au meme moment que `#clients`, donc
-    // ses valeurs SONT les comptes a crediter, sans passer par `#clients`.
+    // `remove` retire un slot de `#accounts` en meme temps que de `#clients` :
+    // ses valeurs SONT les comptes encore connectes.
     const groupes = partsFortune(
       montant,
       [...this.#accounts].map(([id, accountId]) => [accountId, this.room.goldBonusOf(id)] as const),
@@ -547,19 +494,14 @@ class Session {
           );
           return;
         }
-        // Un delai entre deux essais, pas apres le dernier : sans lui, les
-        // trois tentatives tapent le MEME pool mort en moins de 10 ms (ex.
-        // Postgres qui redemarre, ~2s) et valent une seule tentative.
+        // Sans delai, les trois tentatives tapent le MEME pool mort en moins de
+        // 10 ms (ex. Postgres qui redemarre) et n'en valent qu'une.
         await new Promise((resolve) => setTimeout(resolve, 200 + Math.random() * 300));
       }
     }
   }
 
-  /**
-   * Diffuse `buf` a chaque client ouvert, et compte les octets reellement
-   * pousses sur le fil — `#wireBytes` ne doit compter que ce qui part
-   * vraiment, jamais ce qui est simplement encode.
-   */
+  /** Diffuse `buf` a chaque client ouvert ; `#wireBytes` ne compte que ce qui part vraiment. */
   #send(buf: ArrayBuffer): void {
     for (const ws of this.#clients.values()) {
       if (ws.readyState === ws.OPEN) {
@@ -572,23 +514,18 @@ class Session {
   #broadcast(): void {
     // Les ordres de vague, les morts, les ramassages, les montees de niveau
     // et la fin de run partent tous avant le snapshot DU MEME TICK : un
-    // client doit connaitre l'evenement avant de voir l'etat qui en decoule
-    // (§3.1 / §6.1 / §6.2 de la spec).
+    // client doit connaitre l'evenement avant de voir l'etat qui en decoule.
     for (const order of this.room.drainWaveOrders()) {
       this.#send(encodeWaveOrder(order));
     }
     for (const batch of this.room.drainDeaths()) {
       this.#send(encodeDeaths(batch.tick, batch.ids));
     }
-    // ⚠️ **APRES `DEATHS`, et dans le MEME drain** (ronde de correction 1,
-    // tache 3 de l'etape 8). Un Relais (tache 7) peut viser un allie qui
-    // meurt au MEME tick que celui ou le verbe est accepte : le serveur a
-    // deja tranche lequel des deux etats etait vrai a ce tick-la, et le
-    // client doit recevoir les deux messages dans un ordre FIXE pour deriver
-    // la meme chose. Un envoi immediat depuis `#onFrame` (ecarte a la ronde
-    // precedente) laissait cet ordre au hasard du reseau ; les deux partent
-    // maintenant dans le meme passage de `#broadcast`, donc dans le meme
-    // ordre a chaque tick.
+    // ⚠️ **APRES `DEATHS`, et dans le MEME drain.** Un Relais peut viser un
+    // allie qui meurt au tick meme ou le verbe est accepte : le client doit
+    // recevoir les deux messages dans un ordre FIXE pour deriver la meme
+    // chose que le serveur. Un envoi immediat depuis `#onFrame` laisserait cet
+    // ordre au hasard du reseau.
     for (const used of this.room.drainAbilities()) {
       this.#send(
         encodeAbilityUsed(used.tick, used.playerId, used.verb, used.x, used.y, used.targetId),
@@ -598,9 +535,7 @@ class Session {
       this.#send(encodeZone(zone.kind, zone.x, zone.y, zone.bornTick, zone.by));
     }
     // Une seule fois par charge, et rien ensuite : la progression du boss le
-    // long de son couloir se DERIVE des ticks que ce message porte (§4 de la
-    // spec). Avant le snapshot du meme tick, comme tout evenement : un client
-    // doit connaitre la charge avant de voir la position qui en decoule.
+    // long de son couloir se DERIVE des ticks que ce message porte.
     for (const charge of this.room.drainBossCharges()) {
       this.#send(encodeBossCharge(charge));
     }
@@ -649,22 +584,18 @@ class Session {
     // continu, puis le verdict — et tout cela AVANT le snapshot du meme tick.
     //
     // ⚠️ **Rien de tout ceci n'annonce un gel**, a la difference de
-    // `DRAFT_OPEN` : le monde continue de tourner pendant le vote (§6 de la
-    // spec de l'etape 6a). Le snapshot qui suit, ce tick-ci et les six cents
-    // suivants, montre une horde qui avance.
+    // `DRAFT_OPEN` : le monde continue de tourner pendant le vote.
     for (const open of this.room.drainPortalOpens()) {
       // ⚠️ **Le multiplicateur part ICI, avec l'ouverture, et nulle part
-      // ailleurs** : il est constant sur toute la fenetre (voir
-      // `PortalOpenMessage`). Zero octet par tick apres l'annonce, comme les
-      // cartes de `DRAFT_OPEN` et les ticks d'une charge de boss.
+      // ailleurs** : il est constant sur toute la fenetre. Zero octet par tick
+      // apres l'annonce.
       this.#send(encodePortalOpen(open.deadlineTick, open.multiplier));
     }
     const votes = this.room.portalVotes();
     if (votes.size > 0) {
-      // ⚠️ **La visibilite EST la mecanique** (§6, et §7.2 de l'etape 4 pour
-      // les jetons) : on ne negocie pas un choix qu'on ne voit pas. Les
-      // silencieux en font partie — `NO_VOTE` circule ici pour qu'on voie qui
-      // n'a pas encore tranche.
+      // ⚠️ **La visibilite EST la mecanique** : on ne negocie pas un choix
+      // qu'on ne voit pas. `NO_VOTE` circule pour qu'on voie qui n'a pas
+      // encore tranche.
       this.#send(encodeVotes([...votes].map(([playerId, choice]) => ({ playerId, choice }))));
     }
     for (const res of this.room.drainPortalResults()) {
@@ -672,20 +603,18 @@ class Session {
     }
 
     // ⚠️ **`RUN_OVER` APRES le verdict du portail.** Une extraction termine la
-    // run au tick meme du verdict : envoyee avant, la fin arrivait chez le
-    // client sans la decision, et l'ecran de fin affichait « L'equipe est
-    // tombee » a une equipe qui venait de PARTIR (retour de playtest).
+    // run au tick meme du verdict : envoyee avant, la fin arriverait sans la
+    // decision, et l'ecran de fin dirait « L'equipe est tombee » a une equipe
+    // qui vient de PARTIR.
     const runOver = this.room.drainRunOver();
     if (runOver) {
       this.#send(encodeRunOver(runOver.tick, runOver.survivedTicks, runOver.level, runOver.kills));
-      // ⚠️ **LE seul endroit qui verse l'or sur les comptes**, et il est
-      // atteint exactement une fois par run -- par DEUX invariants en serie :
-      // le garde de tete de `Room#step` rend un second `#endRun`
-      // inatteignable, et `drainRunOver` ANNULE l'evenement en le rendant.
-      // L'idempotence ne demande donc ni journal ni cle.
+      // ⚠️ **LE seul endroit qui verse l'or sur les comptes**, atteint
+      // exactement une fois par run : le garde de tete de `Room#step` rend un
+      // second `#endRun` inatteignable, et `drainRunOver` vide l'evenement en
+      // le rendant. Ni journal ni cle d'idempotence.
       //
-      // ⚠️ **Pas dans `Room`.** `Room` est de la logique de jeu sans aucune
-      // I/O : y glisser un appel Prisma la rendrait intestable sans base.
+      // Pas dans `Room`, qui reste sans I/O pour rester testable sans base.
       void this.#creditAccounts();
     }
 
@@ -734,19 +663,10 @@ function round2(v: number): number {
 }
 
 /**
- * Le registre de salons est **decore sur l'instance Fastify**, pas seulement
- * referme dans les routes.
- *
- * ⚠️ C'est ce qui rend testable ce qui passe par la vraie socket. Le livrable
- * du §13 (quatre clients headless) doit poser ses monstres lui-meme plutot
- * que d'attendre le generateur de vagues — premiere vague au tick 180, de
- * taille variable : lent ET intermittent. Sans acces au `Room`, un test qui
- * n'a que des sockets n'a aucun moyen de le faire, et deux lignes de
- * `Session` (la diffusion de `DRAFT_OPEN`, la reception de `DRAFT_TOKEN`)
- * restaient sans aucune couverture — verifie par mutation.
- *
- * Fastify decore d'ordinaire pour ce motif exact ; les routes ci-dessous
- * continuent de refermer `registry`.
+ * Le registre de salons est **decore sur l'instance Fastify** pour les tests :
+ * un test qui n'a que des sockets doit pouvoir poser ses monstres dans le
+ * `Room` plutot que d'attendre le generateur de vagues, lent et
+ * intermittent. Les routes ci-dessous continuent de refermer `registry`.
  */
 declare module 'fastify' {
   interface FastifyInstance {
@@ -812,12 +732,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     return reply.code(201).send({ code });
   });
 
-  // Le compte anonyme du §11 : aucun formulaire, aucun clic. Le client appelle
-  // cette route au premier chargement ou son localStorage ne porte pas deja un
-  // jeton, et jamais autrement.
+  // Le compte anonyme : aucun formulaire. Le client appelle cette route au
+  // premier chargement ou son localStorage ne porte pas deja un jeton.
   //
-  // ⚠️ Pas de plafond par IP : la table est donc remplissable par une boucle.
-  // Ecart assume au §7 de la spec, a traiter quand le jeu est expose.
+  // ⚠️ Pas de plafond par IP : la table est remplissable par une boucle.
+  // Ecart assume, a traiter quand le jeu est expose.
   app.post('/accounts', async (_req, reply) => {
     const { token } = await createAccount();
     return reply.code(201).send({ token: tokenToText(token) });
@@ -865,10 +784,8 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
       return reply.code(409).send({ error: verdict });
     }
     if (verdict !== 'ok') {
-      // Exhaustivite : tout verdict ajoute a `buyItem` sans etre mappe
-      // ci-dessus doit faire rougir le typecheck. Sans ce garde-fou il
-      // tombait dans le `send` final et rendait 200 — un refus rapporte
-      // comme un succes.
+      // Exhaustivite : un verdict ajoute a `buyItem` sans etre mappe ci-dessus
+      // fait rougir le typecheck au lieu de rendre 200 sur un refus.
       const jamais: never = verdict;
       throw new Error(`verdict non traite : ${jamais}`);
     }
@@ -900,13 +817,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
     });
   });
 
-  // §4.6 : la metrique qui a plafonne Riot n'est ni le CPU ni la RAM, c'est
-  // l'overhead reseau. Elle existe des la premiere version, sinon elle
-  // n'existera jamais.
+  // La metrique qui plafonne ce genre de jeu est l'overhead reseau, pas le CPU
+  // ni la RAM : elle est mesuree en continu.
   //
-  // Debrayable par TARNOK_METRICS=off : les bancs de l'etape 1 montent
-  // cinquante salons, et cinquante lignes de tableau toutes les cinq secondes
-  // noieraient le resultat qu'on cherche a lire.
+  // Debrayable par TARNOK_METRICS=off : les bancs montent des dizaines de
+  // salons, dont les tableaux noieraient le resultat.
   const metricsEnabled = process.env.TARNOK_METRICS !== 'off';
   const metricsTimer = setInterval(() => {
     if (!metricsEnabled) {

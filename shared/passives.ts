@@ -1,34 +1,24 @@
 /**
- * Le catalogue des passifs (§3.3 de la spec de l'etape 4).
+ * Le catalogue des passifs. Comme `archetypes.ts` et `weapons.ts` : l'index
+ * dans le tableau **est** l'identifiant, rien a synchroniser entre serveur et
+ * clients.
  *
- * Meme motif que `archetypes.ts` et `weapons.ts` : une table pilotee par la
- * donnee, l'index dans le tableau **est** l'identifiant, rien a synchroniser
- * entre serveur et clients.
- *
- * Modele Risk of Rain. Un passif ne monte jamais de niveau et ne se remplace
- * jamais : il **s'empile** — chaque carte prise s'ajoute aux precedentes
- * (`Loadout.addPassive`, tache 2). Consequence directe (§3.4) : l'etalage
- * n'exclut **jamais** un passif deja possede, meme par plusieurs cartes —
- * toute carte de passif reste convoitee par les N joueurs en permanence, ce
- * qui fait du conflit le regime normal du draft plutot qu'un accident.
+ * Modele Risk of Rain : un passif ne monte jamais de niveau, il **s'empile**
+ * (`Loadout.addPassive`). L'etalage n'exclut donc **jamais** un passif deja
+ * possede, ce qui fait du conflit le regime normal du draft.
  */
 
 /**
  * La grandeur mesurable qu'un passif fait varier.
  *
- * Restreint a des nombres deja mesurables ailleurs dans le jeu
- * (`Weapon.cooldownTicks`, `Weapon.damage`, `PLAYER_MAX_HP`, `PLAYER_SPEED`)
- * pour que la tache 8 puisse verifier qu'empiler deux cartes double bien le
- * bonus applique — un passif dont l'effet ne touche rien de mesurable ne se
- * pretterait pas a cette verification.
+ * Restreint a des nombres mesurables ailleurs dans le jeu, pour qu'un test
+ * puisse verifier qu'empiler deux cartes double bien le bonus applique.
  *
- * ⚠️ **`regen` est le seul genre qui agit A CHAQUE TICK** (etape 6a, tache 17,
- * sur retour de jeu : *« il faut un moyen de regen aussi »*). Les quatre autres
- * modulent une grandeur lue au moment ou elle sert — une recharge, un degat,
- * un plafond, une vitesse ; celui-ci MUTE `PlayerState.hp`. C'est pour ca qu'il
- * vit dans `Room.step` et nulle part ailleurs : `hp` est arbitre par le
- * serveur seul (§5.4), et une regeneration appliquee des deux cotes ferait
- * diverger deux barres de vie.
+ * ⚠️ **`regen` agit A CHAQUE TICK** : les autres modulent une grandeur lue au
+ * moment ou elle sert, celui-ci MUTE `PlayerState.hp`. Il vit donc dans
+ * `Room.step` et nulle part ailleurs : `hp` est arbitre par le serveur seul,
+ * et une regeneration appliquee des deux cotes ferait diverger deux barres de
+ * vie.
  */
 export const PASSIVE_KINDS = [
   'fireRate',
@@ -42,15 +32,14 @@ export const PASSIVE_KINDS = [
   'zone',
   'echo',
   'colossus',
-  // Etape 13 : le genre existait deja cote boutique (`BonusKind`) et cote
-  // combat (`p.armor`) ; il n'etait simplement pas atteignable par une carte.
-  // Une carte ne s'en sert aujourd'hui que pour un MALUS.
+  // Partage avec la boutique (`BonusKind`) et le combat (`p.armor`). Une
+  // carte ne s'en sert que pour un MALUS.
   'armor',
 ] as const;
 export type PassiveKind = (typeof PASSIVE_KINDS)[number];
 
 /**
- * Les deux paliers reserves a des cartes de REGLE (etape 13, §2.2). Chacun a
+ * Les deux paliers reserves a des cartes de REGLE. Chacun a
  * son PROPRE pool au tirage : une carte d'un palier ne sort que la.
  */
 export type PassiveTier = 'epique' | 'legendaire';
@@ -63,7 +52,7 @@ export type PassiveTier = 'epique' | 'legendaire';
  * `Weapon.kind` : un discriminant nomme dont la branche vit a un seul
  * endroit par cote (`maxHpOf`/`maxShieldOf`, `shared/loadout.ts`).
  *
- * ⚠️ **`contagion` (etape 13) suit le meme idiome pour une raison differente** :
+ * ⚠️ **`contagion` suit le meme idiome pour une raison differente** :
  * ce n'est pas qu'un bonus chiffre ne peut pas la dire, c'est qu'elle n'a
  * RIEN a sommer — son effet est une branche a la resolution des morts
  * (`spreadMarkOnDeath`, `back/src/combat.ts`), lue via `Loadout.hasRule`,
@@ -79,10 +68,9 @@ export interface Passive {
    */
   name: string;
   /**
-   * Ce que l'ECRAN montre : carte de draft, colonne de PV, infobulle bloquee
-   * (etape 10, revue finale). `name` sert d'identifiant partout ailleurs — le
-   * changer casserait les lectures par nom — donc l'affichage passe par ce
-   * champ separe, accentue et capitalise, jamais par `name` directement.
+   * Ce que l'ECRAN montre (carte de draft, colonne de PV, infobulle),
+   * accentue et capitalise. L'affichage ne passe jamais par `name` : le
+   * changer casserait les lectures par nom.
    */
   label: string;
   /** Bonus apporte par CHAQUE carte prise (voir la doc de `PassiveKind`) — jamais un total cumule. */
@@ -91,15 +79,11 @@ export interface Passive {
   /**
    * Le palier qui lui est RESERVE. Absent : carte ordinaire, qui ne sort que
    * sur un emplacement commun ou rare.
-   *
-   * ⚠️ **Remplace le booleen « exclusivement legendaire » de l'etape 10.** Il
-   * ne pouvait pas dire « epique », et surtout il laissait la REGLE du x1 dans
-   * `cards.ts` au lieu de la mettre dans la table des raretes.
    */
   tier?: PassiveTier;
   /**
-   * Ce que la carte COUTE, dans les memes genres que ce qu'elle donne
-   * (etape 13, §3.1). `Loadout.bonus` le retranche.
+   * Ce que la carte COUTE, dans les memes genres que ce qu'elle donne.
+   * `Loadout.bonus` le retranche.
    *
    * ⚠️ **Une magnitude POSITIVE qui se retranche**, pas une magnitude negative
    * qui s'ajoute : la carte dit « je coute 40 PV max », et l'ecran l'affiche
@@ -156,9 +140,8 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     magnitude: 15,
   },
   {
-    // Second passif de degats, magnitude differente de « puissance » : prouve
-    // que `Loadout.bonus(kind)` (tache 2) somme a travers plusieurs passifs
-    // distincts du meme `kind`, pas seulement les cartes d'un meme passif.
+    // Second passif de degats : les tests s'en servent pour verifier que
+    // `Loadout.bonus(kind)` somme a travers plusieurs passifs du meme `kind`.
     name: 'acier',
     label: 'Acier',
     kind: 'damage',
@@ -168,32 +151,21 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     // Points de vie rendus par carte et par SECONDE (`Room.step` divise par
     // `TICK_HZ`).
     //
-    // ⚠️ **RIEN NE SOIGNAIT avant cette carte.** « vitalite » releve le
-    // plafond et donne le delta UNE FOIS ; passe ce cadeau, la vie ne
-    // remontait jamais de la partie. Se soigner devient donc un CHOIX DE
-    // CONSTRUCTION — le draft existe, l'empilement existe, `bonus(kind)`
-    // existe — et pas un cadeau : c'est ce que le modele Risk of Rain de
-    // l'etape 4 appelle de ses vœux.
+    // Se soigner est un CHOIX DE CONSTRUCTION : « vitalite » ne donne son
+    // delta qu'une fois, et rien d'autre ne fait remonter la vie.
     //
-    // ⚠️ **Par seconde, pas par tick, et la difference n'est pas cosmetique.**
-    // Une magnitude par tick vaudrait 0,0667 : illisible sur une carte, et
-    // impossible a comparer aux 20 points bruts de « vitalite ». Le nombre que
-    // le joueur lit doit etre celui qu'il ressent.
+    // ⚠️ **Par seconde, pas par tick** : le nombre que le joueur lit sur la
+    // carte doit etre celui qu'il ressent.
     //
-    // ⚠️ **2 se juge contre `CONTACT_DAMAGE` (8) tous les
-    // `CONTACT_INTERVAL_TICKS` (15, soit 0,5 s), c'est-a-dire 16 PV/s au
-    // contact.** Une carte rend donc un huitieme de ce que coute le fait de
-    // rester dans la horde : elle recompense le DESENGAGEMENT, elle ne rend
-    // jamais un joueur immortel dedans. Empilee huit fois elle annulerait le
-    // contact — et il faudrait huit cartes, donc une construction entiere.
-    // ⚠️ **Baisse de 2 a 0,6 au playtest** (*« le bonus de regen est trop
-    // fort »*) : a 2 PV/s, deux cartes rendaient une vie entiere en 25 s.
+    // A comparer aux 16 PV/s du contact (`CONTACT_DAMAGE` tous les
+    // `CONTACT_INTERVAL_TICKS`) : la carte recompense le DESENGAGEMENT, elle
+    // ne rend jamais un joueur immortel dans la horde.
     name: 'regain',
     label: 'Regain',
     kind: 'regen',
     magnitude: 0.6,
   },
-  // ---- Etape 10 : quatre passifs qui s'empilent SANS PLAFOND (§3) ----------
+  // ---- Quatre passifs qui s'empilent SANS PLAFOND --------------------------
   {
     // Chance de critique ajoutee par carte, en fraction (0,04 = +4 points).
     // Lue par `critOf` (shared/firing.ts) a l'apparition du projectile, des
@@ -212,8 +184,8 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     magnitude: 0.3,
   },
   {
-    // Crans de `UPGRADE.SALVO` ajoutes par carte a chaque arme de genre
-    // `'tir'`, et a elles seules (`weaponUpgrades`, shared/firing.ts).
+    // Crans de `UPGRADE.SALVO` ajoutes par carte aux armes de genre `'tir'`
+    // et `'frappe'`, et a elles seules (`weaponUpgrades`, shared/firing.ts).
     name: 'volee',
     label: 'Volée',
     kind: 'salvo',
@@ -226,7 +198,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     kind: 'zone',
     magnitude: 1,
   },
-  // ---- Les passifs de PALIER, trois par palier reserve (etape 13, §2.2) ---
+  // ---- Les passifs de PALIER, trois par palier reserve ---------------------
   // Chacun ne sort que sur un emplacement de SON palier — chaque palier a son
   // propre pool. Ce qui les distingue d'une commune n'est jamais leur
   // `kind` (voir le test « aucune carte de palier ne partage son genre ») :
@@ -235,9 +207,8 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
   // (`rule`) ; Fournaise et Hâte funeste coutent un MALUS qu'aucune commune
   // ne porte.
   //
-  // ⚠️ **Les deux premiers tenaient dans un seul tas a l'etape 10.** Le
-  // palier les separe : un palier sans aucune carte ferait redescendre tous
-  // ses emplacements, et aucun test ne pourrait plus rien y affirmer.
+  // ⚠️ Un palier sans aucune carte ferait redescendre tous ses emplacements,
+  // et aucun test ne pourrait plus rien y affirmer.
   {
     // +100 % des degats INSTANTANES des reactions que le porteur declenche
     // (`ReactionTrigger.by`), par carte. Serveur seul (`applyReactions`).
@@ -257,7 +228,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     tier: 'epique',
   },
   {
-    // ⚠️ Carte de REGLE (etape 13, tache 7) : AUCUN bonus/malus chiffre — voir
+    // ⚠️ Carte de REGLE : AUCUN bonus/malus chiffre — voir
     // le docbloc de `PassiveRule`. `kind`/`magnitude` restent par convention
     // (inertes, jamais lus par `Loadout.bonus` pour cette carte) ; l'effet
     // vit dans `spreadMarkOnDeath` (`back/src/combat.ts`), appele quand
@@ -270,7 +241,7 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
     rule: 'contagion',
   },
   {
-    // ⚠️ Carte de REGLE (etape 13, tache 6) : ramene les PV max a
+    // ⚠️ Carte de REGLE : ramene les PV max a
     // `TRANSCENDANCE_MAX_HP` (1) et ouvre a la place la reserve de
     // `SHIELD_POOL`, voir `maxHpOf`/`maxShieldOf` (shared/loadout.ts). `kind`
     // et `magnitude` sont inertes — la regle statue avant que `bonus('maxHp')`
@@ -303,8 +274,8 @@ const PASSIVE_DEFS: readonly Omit<Passive, 'id'>[] = [
   },
   {
     // Molettes de playtest : la recharge de moitie, les degats subis de
-    // moitie en plus. L'armure negative mord les QUATRE sources, parce que
-    // `hurtPlayer` est le point de passage unique (tache 3). Meme
+    // moitie en plus. L'armure negative mord toutes les sources, parce que
+    // `hurtPlayer` est le point de passage unique. Meme
     // raisonnement que Fournaise pour `kind: 'fireRate'`.
     name: 'hate-funeste',
     label: 'Hâte funeste',

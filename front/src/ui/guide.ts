@@ -1,18 +1,16 @@
 /**
- * Le Guide (ecran 18) : ce que le jeu ne dit nulle part ailleurs — les regles
- * d'empilement, les dix-neuf armes, les douze passifs, les combinaisons et les
- * quatre classes. Accessible depuis le menu principal, hors partie.
+ * Le Guide : ce que le jeu ne dit nulle part ailleurs — regles d'empilement,
+ * armes, passifs, combinaisons et classes. Accessible depuis le menu
+ * principal, hors partie.
  *
- * ⚠️ **Rien n'est ECRIT ici qui vive deja dans une table.** Les noms, les
- * degats, les cadences, les bonus et les effets se DERIVENT de `shared/`
- * (`WEAPONS`, `PASSIVES`, `CLASSES`, `REACTION_DEFS`, `RARITY_MULTIPLIERS`) et
- * des libelles que les autres ecrans emploient deja (`upgradeLabel`,
- * `magnitudeLabel`, `reactionHelp`, `VERB_TEXT`, `TRAIT_TEXT`). Une page d'aide
- * qui recopierait le catalogue mentirait a la premiere retouche d'equilibrage —
- * et personne ne pense a mettre a jour une aide.
+ * ⚠️ **Rien n'est ECRIT ici qui vive deja dans une table.** Noms, degats,
+ * cadences, bonus et effets se DERIVENT de `shared/` et des libelles des
+ * autres ecrans (`upgradeLabel`, `magnitudeLabel`, `reactionHelp`,
+ * `VERB_TEXT`, `TRAIT_TEXT`) : une aide qui recopierait le catalogue
+ * mentirait a la premiere retouche d'equilibrage.
  *
- * Les onglets reutilisent `showTab` de l'ecran d'options : meme contrat
- * `[data-tab]` / `[data-panel]` dans le HTML, donc aucun mecanisme de plus.
+ * Les onglets reutilisent `showTab` de l'ecran d'options (meme contrat
+ * `[data-tab]` / `[data-panel]`).
  */
 
 import { CARD } from '@shared/cards';
@@ -44,9 +42,8 @@ const KIND_TEXT: Readonly<Record<WeaponKind, string>> = {
 };
 
 /**
- * Ce que chaque famille FAIT, en une phrase et sans chiffre (meme discipline
- * que les effets de `combos.ts` : les reglages bougent, la phrase doit rester
- * vraie). Derive des en-tetes de `WeaponKind` et des armes concernees.
+ * Ce que chaque famille FAIT, en une phrase et sans chiffre : les reglages
+ * bougent, la phrase doit rester vraie.
  */
 const KIND_HELP: Readonly<Record<WeaponKind, string>> = {
   tir: 'Des projectiles partent vers la cible.',
@@ -74,7 +71,7 @@ const RATE_WORD: Readonly<Record<WeaponKind, string>> = {
   frappe: 'frappe',
 };
 
-/** La forme d'un tir qui ne va pas droit (etape 12). */
+/** La forme d'un tir qui ne va pas droit. */
 const MOTION_TEXT: Readonly<Partial<Record<NonNullable<Weapon['motion']>, string>>> = {
   orbite: 'Tourne autour de vous',
   boomerang: 'Revient vers vous',
@@ -87,11 +84,7 @@ const WEAPON_KINDS = Object.keys(KIND_TEXT) as WeaponKind[];
 /** Au plus une decimale, virgule francaise : une cadence se lit « 7,5 », pas « 7.5 ». */
 const nombre = (n: number): string => n.toLocaleString('fr-FR', { maximumFractionDigits: 1 });
 
-/**
- * La cadence, accordee. Le pluriel francais ne part qu'a DEUX : « 1,3 salve/s »
- * et « 2,5 salves/s » — et la moitie du catalogue tire a moins d'un coup par
- * seconde, donc « 1 salves/s » se lisait sur la moitie de l'ecran.
- */
+/** La cadence, accordee : le pluriel francais ne part qu'a DEUX (« 1,3 salve/s », « 2,5 salves/s »). */
 const cadence = (weapon: Weapon): string => {
   const parSeconde = TICK_HZ / weapon.cooldownTicks;
   return `${nombre(parSeconde)} ${RATE_WORD[weapon.kind]}${parSeconde >= 2 ? 's' : ''}/s`;
@@ -119,11 +112,7 @@ function entry(head: (string | Node)[], meta: string[], lines: string[]): HTMLEl
   return row;
 }
 
-/**
- * Ce que l'arme sait faire SANS carte : seulement ce qui sort de l'ordinaire,
- * donc la ligne vide est le cas courant (seize armes sur dix-neuf n'ont ni
- * perforation, ni souffle, ni ricochet, ni guidage).
- */
+/** Ce que l'arme sait faire SANS carte : seulement ce qui sort de l'ordinaire. */
 export function weaponTraits(weapon: Weapon): string[] {
   const traits: string[] = [];
   if (weapon.pierce > 0) {
@@ -144,7 +133,7 @@ export function weaponTraits(weapon: Weapon): string[] {
   if (weapon.kind === 'tir' && weapon.projectileCount > 1) {
     traits.push(`${weapon.projectileCount} projectiles par salve`);
   }
-  // La forme du tir (etape 12) : ce qui distingue une arme des autres au premier regard.
+  // La forme du tir : ce qui distingue une arme au premier regard.
   const forme = weapon.motion ? MOTION_TEXT[weapon.motion] : undefined;
   if (forme) {
     traits.push(forme);
@@ -164,7 +153,7 @@ export function weaponTraits(weapon: Weapon): string[] {
   return traits;
 }
 
-/** Les dix-neuf armes, rangees par element puis par ordre de catalogue. */
+/** Les armes, rangees par element puis par ordre de catalogue. */
 export function renderGuideWeapons(root: HTMLElement): void {
   root.replaceChildren(
     ...[...WEAPONS]
@@ -191,11 +180,9 @@ export function renderGuideWeapons(root: HTMLElement): void {
 /**
  * Ce que chaque carte de REGLE fait, en une phrase.
  *
- * ⚠️ **`magnitudeLabel` rend une chaine vide pour elles** : leur `kind` est
- * decoratif (voir le docbloc de `Passive.rule`), donc rien a lire dans
- * `UNITES`. La ligne de la Guide a besoin d'autre chose a montrer — « ou
- * rien » n'est pas une option ici, une entree du Guide veut au moins une
- * ligne de fond (voir le test « aucune entree vide »).
+ * ⚠️ **`magnitudeLabel` rend une chaine vide pour elles** (`kind` decoratif,
+ * voir `Passive.rule`), or une entree du Guide veut au moins une ligne de fond
+ * (test « aucune entree vide »).
  */
 const RULE_TEXT: Readonly<Record<PassiveRule, string>> = {
   contagion: 'À la mort d’un ennemi marqué, propage sa marque à l’ennemi le plus proche.',
@@ -203,10 +190,9 @@ const RULE_TEXT: Readonly<Record<PassiveRule, string>> = {
 };
 
 /**
- * Le palier dans la méta (etape 13, §2.2) : les deux paliers hauts sont des
- * paliers de REGLE — ils changent une regle plutot que d'empiler un nombre —
- * et le légendaire se paie en plus (une regle qui coute, ou un malus chiffre
- * qu'aucune commune ne porte).
+ * Le palier dans la méta : les deux paliers hauts changent une regle plutot
+ * que d'empiler un nombre, et le légendaire se paie en plus (une regle qui
+ * coute, ou un malus chiffre).
  */
 const META_PAR_PALIER: Readonly<Record<PassiveTier, string>> = {
   epique: 'Épique — change une règle',
@@ -223,8 +209,7 @@ export function renderGuidePassives(root: HTMLElement): void {
       img.className = 'h-[28px] w-[28px]';
       const magnitude = magnitudeLabel(passive);
       const cout = malusLabel(passive);
-      // Etape 13 : une magnitude nulle est une carte de REGLE — on montre la
-      // regle a la place, jamais « +0 zone, toutes armes ».
+      // Une magnitude nulle est une carte de REGLE : on montre la regle.
       const ligneEffet =
         magnitude !== '' ? `${magnitude} par carte` : passive.rule ? RULE_TEXT[passive.rule] : null;
       const lignes = [
@@ -296,7 +281,7 @@ export function guideRules(): { titre: string; lignes: string[] }[] {
       titre: 'Emplacements',
       lignes: [
         `${WEAPON_SLOTS} armes au maximum. Les passifs, eux, ne sont pas limités.`,
-        'Empiler ce que vous possédez déjà ne prend aucun emplacement de plus.',
+        'Reprendre une arme que vous avez déjà ne prend aucun emplacement : elle s’empile.',
       ],
     },
     {

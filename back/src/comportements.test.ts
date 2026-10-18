@@ -42,9 +42,9 @@ import {
 import { Room } from './room';
 
 /**
- * Les comportements des monstres (retour de playtest : *« des ennemis qui
- * avancent par bond », kamikaze, chaman*). Chacun se derive de ce que serveur
- * et clients calculent deja : ces tests gardent la regle, puis le cablage.
+ * Les comportements des monstres (bondisseur, kamikaze, chaman...). Chacun se
+ * derive de ce que serveur et clients calculent deja : ces tests gardent la
+ * regle, puis le cablage.
  */
 const DT = 1 / TICK_HZ;
 const de = (behavior: string): number => {

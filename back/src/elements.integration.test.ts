@@ -33,38 +33,27 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * **Le livrable du §13 de la spec d'orientation, sur quatre sockets reelles :**
- * *« une reaction inter-joueurs charge la barre, une reaction solo non ; deux
- * zones qui se recouvrent reagissent. »*
+ * *« Une reaction inter-joueurs charge la barre, une reaction solo non ; deux
+ * zones qui se recouvrent reagissent. »* — verifie sur le fil.
  *
- * La tache 8 a fait naitre la regle et l'a mise a l'epreuve la ou elle vit,
- * dans `room.test.ts`, sur un `Room` pilote a la main. Ce fichier-ci prouve
- * qu'elle **survit au fil** : quatre `WebSocket` reelles, un vrai `Session`,
- * un vrai `buildServer`, et rien d'observe qui ne soit passe par un message.
- * La barre se lit dans le `SNAPSHOT`, les reactions dans `REACTION`, les zones
- * dans `ZONE` — jamais dans le salon.
+ * `room.test.ts` eprouve la regle sur un `Room` pilote a la main ; ce fichier
+ * prouve qu'elle **survit au fil** : quatre `WebSocket` reelles, un vrai
+ * `Session`, un vrai `buildServer`, et rien d'observe qui ne soit passe par un
+ * message. La barre se lit dans le `SNAPSHOT`, les reactions dans `REACTION`,
+ * les zones dans `ZONE` — jamais dans le salon.
  *
- * ⚠️ **Pourquoi le harnais est celui de `draft.integration.test.ts`.** Il
- * existe deja : `buildServer({ roomSeed })` fige la graine, `app.rooms` decore
- * l'app de son registre pour qu'un test qui n'a que des sockets puisse quand
- * meme poser ses monstres. Le generateur de vagues est lent (premiere vague au
- * tick 180) ET intermittent (taille variable) : quatre tests intermittents ont
- * deja ete produits par cette etape, et un test intermittent est pire qu'un
- * test absent.
- *
- * ⚠️ **Ce que ce fichier POSE lui-meme dans le salon, et pourquoi.** Les
- * monstres (comme `draft.integration.test.ts`), leurs points de vie (increvables :
- * ce sont les charges qui sont comptees, pas la mise a mort), leurs positions
- * (figees : une horde qui derive change la geometrie des zones d'un tick a
- * l'autre) et, dans le premier test seulement, la marque elementaire. Tout le
- * reste — les armes, les tirs, la visee, les zones, les reactions, la barre —
- * passe par le jeu et par le fil.
+ * ⚠️ **Les monstres sont poses a la main** (`app.rooms` expose le registre) :
+ * le generateur de vagues est lent (premiere vague au tick 180) ET
+ * intermittent, et un test intermittent est pire qu'un test absent. Le test
+ * pose aussi leurs points de vie (increvables : ce sont les charges qui sont
+ * comptees), leurs positions (figees : une horde qui derive change la
+ * geometrie des zones) et, quand il le faut, la marque elementaire. Tout le
+ * reste passe par le jeu et par le fil.
  */
 
 /** Graine imposee au salon : ce test ne doit rien devoir au hasard. */
 const ROOM_SEED = 0x5a10_e1e2;
 
-/** Quatre joueurs : c'est le nombre que le livrable exige. */
 const PLAYER_COUNT = 4;
 
 const ARME_BRAISE = WEAPONS.find((w) => w.element === ELEMENT.BRAISE)?.id ?? -1;
@@ -77,12 +66,10 @@ if (ARME_BRAISE < 0 || ARME_GIVRE < 0) {
  * Nombre de ticks reactifs attendus du decor apparie du premier test.
  *
  * ⚠️ **Plus d'un, et de loin.** « Toutes sans charge » sur un echantillon de
- * un ne dirait pas grand-chose : c'est le meme raisonnement que la douzaine de
- * reactions du decor de la tache 8.
+ * un ne dirait pas grand-chose.
  */
 const TICKS_REACTIFS = 8;
 
-/** Le seul couple d'elements que l'etape 5a connait (§6.1). */
 const CHOC_THERMIQUE = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
 
 /**
@@ -196,8 +183,8 @@ async function connect(code: string): Promise<Client> {
     client.received.push(msg);
   });
 
-  // Depuis l'etape 7a, toute socket de jeu presente son jeton AVANT d'obtenir
-  // un slot : chaque client de ce harnais a donc son propre compte.
+  // Toute socket de jeu presente son jeton AVANT d'obtenir un slot : chaque
+  // client de ce harnais a donc son propre compte.
   const { token } = await createAccount();
   await ouverte;
   ws.send(encodeHello(token));
@@ -222,11 +209,9 @@ async function waitFor<T>(probe: () => T | null, what: string, timeoutMs: number
 
 /**
  * **La barre vaut, a CHAQUE instant, le nombre de reactions chargees deja
- * annoncees — plafonnee, et rien d'autre.**
- *
- * C'est la forme la plus forte de la regle du §7, et c'est aussi la reponse au
- * constat R24 : une barre qui monterait a chaque reaction, sans comparer quoi
- * que ce soit, ferait rougir chaque releve ou une reaction solo est arrivee.
+ * annoncees — plafonnee, et rien d'autre.** Une barre qui monterait a chaque
+ * reaction, sans comparer les identites, rougit des qu'une reaction solo
+ * arrive.
  */
 function barreSuitLesCharges(client: Client): void {
   const jalons = client.jalons.filter((j) => j.chargees > 0);
@@ -302,7 +287,7 @@ function zonesDe(client: Client): ZoneMessage[] {
   return client.received.filter((m): m is ZoneMessage => m.type === MSG.ZONE);
 }
 
-/** Envoie une visee sur la socket : sans elle, aucune arme ne tire (tache 13). */
+/** Envoie une visee sur la socket : sans elle, aucune arme ne tire. */
 function vise(client: Client, dx: number, dy: number): void {
   const len = Math.hypot(dx, dy);
   if (len === 0) {
@@ -317,31 +302,27 @@ function vise(client: Client, dx: number, dy: number): void {
 describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', () => {
   /**
    * **Le meme decor pour les deux moities, au SEUL detail qui les separe :
-   * `markBy`** — et cette fois les deux moities tournent dans le MEME salon, au
-   * MEME tick, sur deux cibles qui occupent la MEME position.
+   * `markBy`** — les deux moities tournent dans le MEME salon, en meme temps,
+   * sur deux cibles qui occupent la MEME position.
    *
-   * ⚠️ **C'est le constat R24, traite de front.** « La barre ne bouge pas » se
-   * lit aussi bien « aucune reaction n'a eu lieu », et c'est le defaut le plus
-   * probable de ce test. La tache 8 l'a ecarte en comparant les deux listes de
-   * reactions champ a champ ; ici, les deux reactions naissent du meme tick et
-   * du meme point, donc `pair`, `x`, `y` et `tick` sont EGAUX et le seul champ
-   * qui differe est `synergyCharge`. Une comparaison entre deux runs d'horloge
-   * ne pourrait pas le faire : le tick auquel une socket reelle delivre sa
-   * premiere visee n'est pas reproductible.
+   * ⚠️ **« La barre ne bouge pas » se lit aussi bien « aucune reaction n'a eu
+   * lieu ».** Ici les deux reactions naissent au meme point, a un tick d'ecart
+   * (voir les paires plus bas), donc le seul champ qui doit differer est
+   * `synergyCharge`. Deux runs separes ne le permettraient pas : le tick
+   * auquel une socket reelle delivre sa premiere visee n'est pas
+   * reproductible.
    *
    * ⚠️ **Deux cibles a la MEME position, et ce n'est pas un artifice.**
    * `Horde#separate` ignore deliberement les voisins a distance nulle (`d2
    * === 0`), donc deux entites du meme archetype posees au meme point avancent
    * a l'identique, tick pour tick — c'est ce qui rend `x` et `y` comparables.
    * Et toute zone qui couvre l'une couvre l'autre, donc elles reagissent
-   * toujours ENSEMBLE : un tick ne peut pas produire une charge sans produire
-   * sa jumelle sans charge.
+   * ENSEMBLE : une charge ne vient jamais sans sa jumelle sans charge.
    *
-   * ⚠️ **La marque est posee a la main, comme a la tache 8, et c'est la seule
-   * facon.** Un element de zone ou de projectile couvre les deux cibles a la
-   * fois : aucun decor joue ne peut donner a l'une un `markBy` different de
-   * l'autre. Ce qui passe par le fil reste tout ce qui compte — l'arme, le
-   * tir, la reaction, la barre.
+   * ⚠️ **La marque est posee a la main, et c'est la seule facon.** Un element
+   * de zone ou de projectile couvre les deux cibles a la fois : aucun decor
+   * joue ne peut donner a l'une un `markBy` different de l'autre. L'arme, le
+   * tir, la reaction et la barre passent par le fil.
    */
   it('une reaction inter-joueurs charge la barre, la meme reaction en solo ne charge rien', async () => {
     const code = await createRoomCode();
@@ -369,14 +350,12 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     room.grantCard(a.playerId, { nature: CARD.WEAPON, refId: ARME_GIVRE });
     // ⚠️ **Deux vagues distantes de `STEERING_RECOMPUTE_TICKS`, et ce n'est
     // PAS cosmetique.** Une entite ne recalcule sa trajectoire qu'un tick sur
-    // `STEERING_RECOMPUTE_TICKS`, et **la phase vient de son identite**
-    // (`entityId % K`, voir `Horde#recomputeSteering`). Deux identites de
-    // phases differentes recalculent a des ticks differents : posees au meme
-    // point, elles avancent quand meme differemment, `#applyDeoverlap` les
-    // ecarte, et leurs positions cessent d'etre comparables — mesure, 7 px au
-    // dixieme tick. `entityIdOf` vaut `waveId * MAX_PER_WAVE + index`, donc
-    // deux vagues separees d'un multiple de `K` portent la MEME phase, quel
-    // que soit `MAX_PER_WAVE`.
+    // `K`, avec une phase tiree de son identite (`entityId % K`, voir
+    // `Horde#recomputeSteering`). Deux phases differentes, posees au meme
+    // point, avancent differemment, `#applyDeoverlap` les ecarte, et leurs
+    // positions cessent d'etre comparables. `entityIdOf` vaut
+    // `waveId * MAX_PER_WAVE + index` : deux vagues separees d'un multiple de
+    // `K` portent la MEME phase, quel que soit `MAX_PER_WAVE`.
     const duo = poseCible(room, 9100, cibleX, cibleY);
     const solo = poseCible(room, 9100 + STEERING_RECOMPUTE_TICKS, cibleX, cibleY);
     // Le garde qui rend cette dependance bruyante plutot que tacite.
@@ -397,8 +376,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
         room.horde.vy[slot] = 0;
       }
       // ⚠️ **LE SEUL parametre qui separe les deux moities.** La marque se
-      // consomme a chaque reaction (§4.3) : la reposer en continu est ce qui
-      // rend la reaction repetable, donc la barre comptable.
+      // consomme a chaque reaction : la reposer en continu rend la reaction
+      // repetable, donc la barre comptable.
       room.horde.applyMark(slotDuo, ELEMENT.BRAISE, b.playerId, room.tick);
       room.horde.applyMark(slotSolo, ELEMENT.BRAISE, a.playerId, room.tick);
       vise(a, DISTANCE_CIBLE, 0);
@@ -426,8 +405,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
 
     // ---- 1. Une reaction A EU LIEU, et elle est du bon couple -------------
     //
-    // ⚠️ **L'assertion centrale, et le defaut n°1 de ce test si elle
-    // manque** : on COMPTE les reactions, on ne les suppose pas.
+    // ⚠️ **L'assertion centrale** : on COMPTE les reactions, on ne les suppose
+    // pas.
     expect(recues.length, "aucune reaction n'est arrivee sur la socket").toBeGreaterThanOrEqual(
       2 * TICKS_REACTIFS,
     );
@@ -440,8 +419,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     //
     // Sans ce groupement, « aucune charge » se lirait aussi bien « aucune
     // reaction en solo ».
-    // ⚠️ **Par PAIRES de ticks voisins, plus par tick, depuis la recharge par
-    // ennemi** (`REACTION_COOLDOWN_TICKS`). Le tick d'amorcage ne porte
+    // ⚠️ **Par PAIRES de ticks voisins, pas par tick, a cause de la recharge
+    // par ennemi** (`REACTION_COOLDOWN_TICKS`). Le tick d'amorcage ne porte
     // qu'une reaction : un projectile ne touche qu'une cible a la fois
     // (`collide` departage a l'identite la plus petite, donc le duo). Le champ
     // qu'elle laisse fait reagir la jumelle AU TICK SUIVANT — et la recharge,
@@ -503,7 +482,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
    * ne peut ecrire que sa propre identite des deux cotes de la comparaison, et
    * aucune ligne de code n'a a le verifier.
    *
-   * ⚠️ **Et la borne anti-R24 est ici arithmetique** : la barre doit valoir
+   * ⚠️ **Et la borne est ici arithmetique** : la barre doit valoir
    * EXACTEMENT le nombre de reactions chargees, alors que le cote solo en a
    * produit plusieurs. « La barre ne bouge pas pour le solo » ne peut donc pas
    * se lire « le solo n'a rien produit ».
@@ -614,24 +593,15 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
   }, 60_000);
 
   /**
-   * **« Deux zones qui se recouvrent reagissent »** — la seconde voie du §6.3
-   * de l'orientation, et le troisieme declencheur du §6.2.
+   * **« Deux zones qui se recouvrent reagissent. »**
    *
-   * ⚠️ **Le decor « aucun ennemi » de la tache 10 n'existe plus, et il ne peut
-   * plus exister.** Il tenait sur le fait que deux projectiles posaient deux
-   * disques la ou ils finissaient leur course, sans rien toucher : c'etait
-   * l'unique moyen de faire naitre deux zones dans un salon vide, et donc
-   * d'isoler ce chemin des deux autres. Depuis la tache 21, **une zone ne nait
-   * que d'une reaction**, et une reaction ne nait que sur un ennemi ou entre
-   * deux zones — donc, a la racine, d'un ennemi. Un salon vide ne peut plus
-   * porter une seule zone.
+   * ⚠️ **On ne peut pas isoler ce chemin dans un salon vide** : une zone ne
+   * nait que d'une reaction, et une reaction, a la racine, d'un ennemi.
    *
-   * ⚠️ **Le discriminant devient le COMPTE, pas le decor.** Le §6.2 borne les
-   * reactions a **une par ennemi et par tick**. Avec UN SEUL ennemi dans le
-   * salon, un tick qui porte DEUX `REACTION` ne peut donc pas les tenir toutes
-   * les deux du chemin « ennemi marque + second element » : la seconde vient
-   * du recouvrement de deux champs. C'est une preuve par la borne, et elle est
-   * plus solide que la precedente — elle ne suppose rien de la geometrie.
+   * ⚠️ **Le discriminant est donc le COMPTE.** Les reactions sont bornees a
+   * **une par ennemi et par tick**. Avec UN SEUL ennemi dans le salon, un tick
+   * qui porte DEUX `REACTION` tient forcement la seconde du recouvrement de
+   * deux champs. Preuve par la borne, qui ne suppose rien de la geometrie.
    *
    * Le decor : un seul ennemi, un seul joueur portant LES DEUX armes
    * elementaires. Il marque, il declenche, chaque reaction laisse un champ ; et
@@ -667,7 +637,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
 
     // ⚠️ **La cible n'est PAS figee, contrairement aux autres decors de ce
     // fichier.** Une cible immobile verrait tous ses champs se rafraichir au
-    // meme point, et un rafraichissement ne declenche rien (§6.2) : le couple
+    // meme point, et un rafraichissement ne declenche rien : le couple
     // ne reagirait qu'une seule fois de toute la run. Qu'elle avance est ce qui
     // fait naitre des champs NEUFS, donc des couples neufs.
     let hordeMax = 0;
@@ -678,11 +648,11 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
         return;
       }
       vise(a, (room.horde.x[slot] ?? 0) - pa.x, (room.horde.y[slot] ?? 0) - pa.y);
-      // ⚠️ **L'alternance des elements, tenue a la main depuis la recharge par
-      // ennemi** (`REACTION_COOLDOWN_TICKS`). Un ennemi ne reagit plus qu'une
-      // fois par recharge, et au rythme fixe des deux armes c'est toujours le
-      // MEME element qui declenche : les champs successifs portent le meme
-      // element, se rafraichissent, et aucun couple de disques ne nait plus.
+      // ⚠️ **L'alternance des elements est tenue a la main, a cause de la
+      // recharge par ennemi** (`REACTION_COOLDOWN_TICKS`). Un ennemi ne reagit
+      // qu'une fois par recharge, et au rythme fixe des deux armes c'est
+      // toujours le MEME element qui declencherait : les champs successifs se
+      // rafraichiraient, et aucun couple de disques ne naitrait.
       // Reposer, apres chaque reaction, la marque de l'element qui vient de
       // declencher fait declencher l'AUTRE a la suivante — donc un champ de
       // l'autre element, qui recoupe le precedent.
@@ -743,7 +713,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
   }, 60_000);
 
   /**
-   * **Etape 3 bis : le trafic des rafraichissements, mesure sur le fil.**
+   * **Le trafic des rafraichissements, mesure sur le fil.**
    *
    * Une zone entretenue sans relache pendant plusieurs vies de zone doit etre
    * re-annoncee au rythme du TEMPS, jamais a celui de l'arme. La regle vit
@@ -782,8 +752,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
         room.horde.y[slot] = cibleY;
         room.horde.vx[slot] = 0;
         room.horde.vy[slot] = 0;
-        // ⚠️ **Depuis la tache 21, c'est la REACTION qui entretient le champ,
-        // plus la volee.** Le joueur B remet une marque de Braise en continu,
+        // ⚠️ **C'est la REACTION qui entretient le champ, pas la volee.** Le
+        // joueur B remet une marque de Braise en continu,
         // le Givre du joueur A la declenche : chaque reaction rearrose le meme
         // point, et le point est fige, donc c'est bien un RAFRAICHISSEMENT que
         // ce test compte.
@@ -814,8 +784,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
     }
     expect(parPoint.size, 'aucune zone annoncee sur la socket').toBeGreaterThan(0);
 
-    // ⚠️ **« Plusieurs annonces au meme point » ne prouve RIEN — mutation
-    // appliquee, elle survivait.** Une zone qui ne serait jamais prolongee
+    // ⚠️ **« Plusieurs annonces au meme point » ne prouve RIEN.** Une zone qui
+    // ne serait jamais prolongee
     // MOURRAIT au bout de `ZONE_LIFETIME_TICKS` et renaitrait au meme pixel au
     // tir suivant : deux annonces au meme point, exactement comme un
     // rafraichissement. Ce qui les separe, c'est l'ECART : une prolongation
@@ -833,9 +803,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
 
     // ⚠️ **Et la borne : jamais deux annonces plus serrees que l'intervalle.**
     // Le decor pose bien plus souvent que lui — l'arme tire deja plus vite, et
-    // depuis la tache 21 le champ redeclenche a CHAQUE tick une fois pose —
-    // donc sans la parade le trafic suivrait la cadence des poses au lieu du
-    // temps.
+    // le champ redeclenche a CHAQUE tick une fois pose — donc sans la parade
+    // le trafic suivrait la cadence des poses au lieu du temps.
     expect(weaponOf(ARME_GIVRE).cooldownTicks).toBeLessThan(ZONE_REFRESH_INTERVAL_TICKS);
     for (const e of ecarts) {
       expect(e, `deux annonces du meme point a ${e} ticks d ecart`).toBeGreaterThanOrEqual(
@@ -848,21 +817,15 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 5a, tache 10)', 
 });
 
 /**
- * ⚠️ **Ferme une mutation HERITEE de la tache 5** (etape 5b, tache 6) :
- * `Session#broadcast` (back/src/server.ts:213) decodait `zone.kind` avant de
- * l'encoder sur le fil — indetectable tant qu'aucune reaction ne posait de
- * type non nul, puisque `zoneElement(kind) === kind` pour toute zone de
- * reaction nulle (voir le rapport de la tache 5). Surchauffe (Braise + Foudre,
- * tache 6) est la premiere reaction reelle du jeu a empaqueter un nibble non
- * nul : ce test traverse le fil ENTIER — `Room#announceZones`,
- * `Session#broadcast`, `encodeZone`, la socket, `decodeZone` — et doit rougir
- * si l'un de ces sites redecode l'octet par erreur.
+ * ⚠️ **Le nibble de reaction de `zone.kind` doit survivre au fil ENTIER** —
+ * `Room#announceZones`, `Session#broadcast`, `encodeZone`, la socket,
+ * `decodeZone`. Un site qui decoderait `kind` avant de l'encoder passerait
+ * inapercu sur une zone de reaction nulle, puisque `zoneElement(kind) ===
+ * kind` ; Surchauffe (Braise + Foudre) empaquette un nibble non nul et le fait
+ * rougir.
  *
- * ⚠️ **Aucune arme de Foudre n'existe encore au catalogue** (tache 9) : ce
- * decor s'en passe, exactement comme le test-jumeau de `room.test.ts`. Le
- * joueur A tire l'arme de Braise REELLE ; la cible est reposee marquee Foudre
- * a la main, cote salon — c'est le seul geste de ce fichier qui touche
- * directement `room.horde`, tout le reste passe par le jeu et par le fil.
+ * Le joueur A tire l'arme de Braise REELLE ; la cible est reposee marquee
+ * Foudre a la main, cote salon.
  */
 describe('Surchauffe empaquette son nibble de reaction sur le fil (etape 5b, tache 6)', () => {
   it('⚠️ le client recoit une ZONE dont le nibble de reaction survit au trajet complet', async () => {
@@ -915,10 +878,9 @@ describe('Surchauffe empaquette son nibble de reaction sur le fil (etape 5b, tac
 
     const surchauffe = zonesDe(a).find((z) => zoneReaction(z.kind) === REACTION.SURCHAUFFE);
     expect(surchauffe, 'aucune zone de Surchauffe n est arrivee sur le fil').toBeDefined();
-    // ⚠️ **La ligne qui tue les deux mutations heritees.** Un decodage avant
-    // l'envoi, a l'un ou l'autre des deux sites, rendrait `kind` egal a son
-    // seul element : cette comparaison ne peut rester vraie que si l'octet
-    // COMPLET a fait tout le trajet.
+    // ⚠️ Un decodage avant l'envoi, a n'importe quel site, rendrait `kind`
+    // egal a son seul element : cette comparaison ne reste vraie que si
+    // l'octet COMPLET a fait tout le trajet.
     expect(surchauffe?.kind).not.toBe(zoneElement(surchauffe?.kind ?? 0));
   }, 30_000);
 });

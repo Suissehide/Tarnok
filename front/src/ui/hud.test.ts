@@ -5,9 +5,9 @@ import { Loadout } from '@shared/loadout';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { beforeEach, describe, expect, it } from 'vitest';
 
-// `?raw` de Vite : le HTML entre dans le bundle de test tel quel, meme motif
-// que `draft.test.ts` — c'est ce qui permet de verifier le CABLAGE vers
-// `index.html` et pas seulement la fonction qui ecrit dedans.
+// `?raw` de Vite : le HTML entre dans le bundle de test tel quel, ce qui
+// verifie le CABLAGE vers `index.html` et pas seulement la fonction qui
+// ecrit dedans.
 import indexHtml from '../../index.html?raw';
 import type { EventView } from '../net/client';
 import type { HudInfo } from '../render/stage';
@@ -25,15 +25,7 @@ import {
 } from './hud';
 import { THIN_SPACE } from './portal';
 
-/**
- * Étape 5a, §9 : *« la barre de Synergie : une jauge dans le HUD, visible de
- * tous »*.
- *
- * Testee sous jsdom parce que c'est la SEULE partie du rendu de cette tache
- * qui soit reellement observable sans navigateur : le reste passe par des
- * `ParticleContainer` dont les textures exigent un canevas 2D que jsdom ne
- * fournit pas (voir `zone-renderer.test.ts`).
- */
+/** La jauge de Synergie du HUD, visible de tous. */
 
 interface Harness {
   fill: HTMLElement;
@@ -54,20 +46,18 @@ describe('le cablage vers index.html', () => {
   it('trouve les cinq elements que main.ts va chercher', () => {
     document.body.innerHTML = indexHtml;
 
-    // Meme garde que celle de `draft.test.ts` : `main.ts` fait
-    // `await stage.init()` au niveau module et n'est pas importable en test,
-    // donc rien d'autre ne verifie que ces identifiants existent encore. Un
-    // renommage dans le HTML ferait planter le jeu au demarrage (`el()` leve),
-    // sans qu'aucune suite ne rougisse.
+    // `main.ts` n'est pas importable en test : rien d'autre ne verifie que ces
+    // identifiants existent. Un renommage dans le HTML ferait planter le jeu
+    // au demarrage (`el()` leve).
     expect(document.getElementById('hud-synergy-fill')).not.toBeNull();
     expect(document.getElementById('hud-synergy-label')).not.toBeNull();
-    // Tache 18 : les emplacements de passifs.
+    // Les emplacements de passifs.
     expect(document.getElementById('hud-passive-list')).not.toBeNull();
-    // Tache 10 de l'etape 6a : la cagnotte non securisee (§5).
+    // La cagnotte non securisee.
     expect(document.getElementById('hud-gold')).not.toBeNull();
-    // Etape 11 : le bandeau du porteur de coffre.
+    // Le bandeau du porteur de coffre.
     expect(document.getElementById('hud-porteur')).not.toBeNull();
-    // Etape 13 : la barre de bouclier, posee sur celle des PV.
+    // La barre de bouclier, posee sur celle des PV.
     expect(document.getElementById('hud-shield')).not.toBeNull();
     expect(document.getElementById('hud-shield-fill')).not.toBeNull();
     // Etape 14 : le bandeau d'evenement et son etat.
@@ -87,9 +77,8 @@ describe('synergyRatio — la part remplie de la barre', () => {
   });
 
   it('ne deborde jamais du cadre, meme au-dela du plafond', () => {
-    // Le serveur plafonne deja (tache 8) ; un serveur plus recent, dont le
-    // plafond aurait ete releve, ne doit pas faire deborder la barre d'un
-    // client plus ancien.
+    // Un serveur plus recent, au plafond releve, ne doit pas faire deborder la
+    // barre d'un client plus ancien.
     expect(synergyRatio(SYNERGY_MAX * 3)).toBe(1);
   });
 });
@@ -102,11 +91,10 @@ describe('paintSynergy — ce que le joueur voit', () => {
   });
 
   /**
-   * ⚠️ **Les deux extremes, dans le meme fichier** (R24/R25) : « la jauge ne
-   * se remplit jamais » et « la jauge est toujours pleine » se ressemblent
-   * beaucoup dans un test qui n'en verifierait qu'un. En solo la barre ne
-   * monte JAMAIS (§7), donc une jauge cassee a 0 % passerait inapercue en
-   * partie solo — c'est exactement le cas ou il faut que le test parle.
+   * ⚠️ **Les deux extremes, dans le meme fichier** : « jamais remplie » et
+   * « toujours pleine » passent chacun un test qui n'en verifierait qu'un. En
+   * solo la barre ne monte JAMAIS, donc une jauge cassee a 0 % y passerait
+   * inapercue.
    */
   it('ne remplit rien quand la barre est vide', () => {
     paintSynergy(dom.fill, dom.label, 0);
@@ -130,8 +118,7 @@ describe('paintSynergy — ce que le joueur voit', () => {
 
   it('affiche le compte en clair, pas seulement la barre', () => {
     // Une barre qui glisse de trois pixels ne dit pas ce qui l'a fait monter ;
-    // un « 3 / 20 » qui change juste apres un flash blanc, si. C'est le §6.5
-    // — la Synergie est *le coeur du projet*, elle doit se lire.
+    // un « 3 / 20 » qui change juste apres un flash blanc, si.
     paintSynergy(dom.fill, dom.label, 3);
 
     expect(dom.label.textContent).toBe(`3 / ${SYNERGY_MAX}`);
@@ -147,12 +134,10 @@ describe('paintSynergy — ce que le joueur voit', () => {
 });
 
 /**
- * Tache 9 bis : le HUD entier, monte sur le vrai `index.html`.
+ * Le HUD entier, monte sur le vrai `index.html`.
  *
- * ⚠️ **C'est ici que meurt la mutation « `paintSynergy` retiree ».** Avant
- * cette suite, l'appel vivait dans `main.ts` : la fonction etait gardee, le
- * fait de l'appeler ne l'etait pas. La distinction n'est pas theorique — trois
- * etapes de suite ont perdu une ligne de cablage exactement comme ca.
+ * ⚠️ Chaque fonction est gardee de son cote ; le fait de l'APPELER (ex.
+ * `paintSynergy`) ne l'est que par cette suite.
  */
 function hudElements(): HudElements {
   document.body.innerHTML = indexHtml;
@@ -200,20 +185,19 @@ const INFO: HudInfo = {
 };
 
 /**
- * Le client d'epreuve de la tache 18 : un identifiant local, et un inventaire
- * par joueur — la meme surface que `GameClient`, dont `loadoutOf` cree
- * l'entree manquante a la volee.
+ * Le client d'epreuve : un identifiant local, et un inventaire par joueur —
+ * la meme surface que `GameClient`, dont `loadoutOf` cree l'entree manquante
+ * a la volee.
  */
 class FakeSource implements HudSource {
   localId: number | null = 1;
   localClassId: number | null = 1;
   /**
-   * La cagnotte non securisee (tache 10).
+   * La cagnotte non securisee.
    *
-   * ⚠️ **Un nombre qui ne ressemble a rien du jeu** : ni `GOLD_PER_PALIER_BASE`
-   * (100), ni un multiple, ni un total de palier. Une fixture egale a une
-   * constante de production rend la tache invérifiable — dix fois dans ce
-   * depot.
+   * ⚠️ **Un nombre qui ne ressemble a rien du jeu** (ni `GOLD_PER_PALIER_BASE`,
+   * ni un multiple) : une fixture egale a une constante de production ne
+   * prouve rien.
    */
   gold = 0;
   /** PV max : 146, sans rapport avec `PLAYER_MAX_HP` (meme doctrine que `gold`). */
@@ -257,9 +241,8 @@ describe('passiveRows — ce que la colonne a a dire', () => {
   });
 
   it('rend une ligne par passif POSSEDE, avec son nombre d exemplaires', () => {
-    // ⚠️ Le coeur de la tache : deux passifs pris un nombre DIFFERENT de fois.
-    // Une colonne qui rendrait « 1 » partout, ou le nombre de passifs distincts,
-    // passerait un test ou les deux comptes seraient egaux.
+    // ⚠️ Deux passifs pris un nombre DIFFERENT de fois : une colonne qui
+    // rendrait « 1 » partout passerait un test ou les comptes seraient egaux.
     const source = new FakeSource().prend(VITALITE, 4).prend(CADENCE, 1);
 
     expect(passiveRows(source)).toEqual([
@@ -275,9 +258,8 @@ describe('passiveRows — ce que la colonne a a dire', () => {
   });
 
   it('suit l ordre du CATALOGUE, pas l ordre d acquisition', () => {
-    // Une colonne qui se reordonnerait a chaque carte prise devrait etre relue
-    // en entier, pendant une vague. `fougue` est pris le premier et s'affiche
-    // le dernier : c'est ce qui separe les deux ordres.
+    // `fougue` est pris le premier et s'affiche le dernier : c'est ce qui
+    // separe l'ordre du catalogue de l'ordre d'acquisition.
     const source = new FakeSource().prend(FOUGUE).prend(VITALITE);
 
     expect(passiveRows(source).map((r) => r.name)).toEqual([
@@ -295,9 +277,8 @@ describe('passiveRows — ce que la colonne a a dire', () => {
   });
 
   it("n'invente aucun inventaire tant que le joueur local n'existe pas", () => {
-    // ⚠️ `loadoutOf` CREE l'entree manquante : l'appeler avec un identifiant
-    // invente garnirait la `Map` du client d'un joueur qui n'existe pas. Avant
-    // le premier snapshot, `localId` est nul et la colonne est vide.
+    // ⚠️ `loadoutOf` CREE l'entree manquante : avant le premier snapshot,
+    // `localId` est nul et la colonne doit rester vide sans l'appeler.
     const source = new FakeSource();
     source.localId = null;
 
@@ -324,8 +305,8 @@ describe('paintPassives — les emplacements a l ecran', () => {
   });
 
   it('ecrit le nom ET le nombre d exemplaires, le compte visible en coin', () => {
-    // ⚠️ **Le nombre est la moitie du message.** Un passif pris quatre fois
-    // n'est pas un passif pris une fois : c'est tout le modele Risk of Rain.
+    // ⚠️ **Le nombre est la moitie du message** : un passif pris quatre fois
+    // n'est pas un passif pris une fois.
     paintPassives(el.passiveList, [
       { name: 'vitalite', kind: 'maxHp', stacks: 4 },
       { name: 'cadence', kind: 'fireRate', stacks: 1 },
@@ -412,10 +393,8 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
   });
 
   /**
-   * ⚠️ **Tache 18 : c'est ici que meurt la mutation « la colonne n'est pas
-   * peinte ».** `paintPassives` et `passiveRows` sont gardees chacune de leur
-   * cote ; le fait de les APPELER ne l'est que par cette assertion — c'est la
-   * distinction exacte qui a coute trois etapes a ce depot.
+   * ⚠️ `paintPassives` et `passiveRows` sont gardees chacune de leur cote ; le
+   * fait de les APPELER ne l'est que par ce test.
    */
   it('peint la colonne des passifs, du client jusqu au DOM', () => {
     source.prend(VITALITE, 4);
@@ -433,10 +412,9 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
   });
 
   /**
-   * ⚠️ **L'or du §5, EN PERMANENCE et pas seulement au moment du vote.** Une
-   * cagnotte qu'on ne verrait qu'a l'ouverture du portail se lirait comme un
-   * score de fin de manche, pas comme cinq minutes pendant lesquelles rien
-   * n'est acquis — c'est cette tension-la que le §5 met en jeu.
+   * ⚠️ **L'or EN PERMANENCE, pas seulement au moment du vote** : vue a
+   * l'ouverture du portail seulement, la cagnotte se lirait comme un score de
+   * fin de manche.
    *
    * Le montant est groupe : `1 234 567` se lit d'un coup d'oeil pendant une
    * vague, `1234567` non. Le separateur est l'espace fine insecable, pose par
@@ -458,7 +436,7 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     expect(el.gold.textContent).toBe('0');
   });
 
-  /** Tache 24 : le gel de niveau, la dette non gardee de l'etape 3. */
+  /** Le gel de niveau. */
   it('montre le bandeau de gel pendant le gel, et le cache sinon', () => {
     paintHud(el, { ...INFO, frozen: true }, 0, 0, source);
     expect(el.freeze.classList.contains('hidden')).toBe(false);
@@ -488,11 +466,9 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
 
   describe('etape 13 : la barre de bouclier', () => {
     /**
-     * ⚠️ Vigilance 5 : elle se peint depuis le SNAPSHOT seul (`HudInfo`,
-     * derive de `RenderState.players`), jamais depuis le miroir d'inventaire
-     * (`HudSource.loadoutOf`). Un client qui ignore l'inventaire d'un joueur
-     * (arrive en cours de partie) doit quand meme afficher la bonne barre —
-     * c'est pour ca que ce test ne donne au `FakeSource` AUCUN passif.
+     * ⚠️ Elle se peint depuis le SNAPSHOT seul (`HudInfo`), jamais depuis le
+     * miroir d'inventaire : un client arrive en cours de partie ignore
+     * l'inventaire des autres. D'ou un `FakeSource` sans AUCUN passif.
      */
     it('se peint sans lire le miroir d inventaire', () => {
       paintHud(el, { ...INFO, shield: 30, shieldPool: 60 }, 0, 0, source);

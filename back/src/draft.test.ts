@@ -10,9 +10,8 @@ import { Draft } from './draft';
 /**
  * Etalage d'epreuve : sept cartes, toutes OUVERTES A TOUS.
  *
- * ⚠️ **Plus aucune carte n'est reservee.** `owner` a disparu avec les montees
- * de niveau et les evolutions : l'eligibilite se derive de l'inventaire
- * (`Loadout.canTake`), et un etalage ne sait plus qui a droit a quoi.
+ * Aucune carte n'est reservee : l'eligibilite se derive de l'inventaire
+ * (`Loadout.canTake`), un etalage ne sait pas qui a droit a quoi.
  */
 function spread(): Card[] {
   return [
@@ -31,14 +30,11 @@ function spread(): Card[] {
  * remplir TOUS les slots d'un joueur sans qu'aucune carte n'y soit deja
  * possedee.
  *
- * ⚠️ **Derivee de `WEAPON_SLOTS`, jamais recopiee.** Cette liste valait
- * `[2, 5, 6, 7, 8]` en dur : passer les slots de 5 a 4 (tache 19) faisait
- * lever `addWeapon` au module et emportait tout le fichier. Deux tests de ce
- * depot sont deja devenus intermittents pour avoir recopie `WAVE1_MIN_COUNT`.
+ * ⚠️ **Derivee de `WEAPON_SLOTS`, jamais recopiee** : une liste en dur fait
+ * lever `addWeapon` au module des que le nombre de slots change.
  *
- * La garde ci-dessous reste : elle dit qu'il n'y a plus assez d'armes au
- * catalogue hors etalage pour remplir un inventaire — le jour ou `WEAPON_SLOTS`
- * depasserait ce que `WEAPONS` peut fournir, c'est la fixture qui est fausse,
+ * La garde ci-dessous dit qu'il n'y a plus assez d'armes au catalogue hors
+ * etalage pour remplir un inventaire : c'est alors la fixture qui est fausse,
  * pas le code teste.
  */
 const ARMES_DE_L_ETALAGE = new Set(
@@ -71,10 +67,8 @@ function ouvert(
 describe('Draft — le jeton', () => {
   it('accepte mon jeton sur une carte qu un AUTRE vise deja : c est ca, la negociation', () => {
     // ⚠️ **Sans ce comportement il n'y a pas de draft, seulement une course au
-    // clic.** Le §7.2 point 3 est explicite : *« quand un joueur a selectionne
-    // une carte, je peux poser mon jeton dessus »*. Une implementation qui
-    // refuserait la carte deja visee rendrait tout conflit impossible — et
-    // toutes les regles de resolution ci-dessous deviendraient du code mort.
+    // clic.** Refuser la carte deja visee rendrait tout conflit impossible, et
+    // les regles de resolution ci-dessous deviendraient du code mort.
     const d = ouvert();
     expect(d.setToken(2, 4)).toBe(true);
     expect(d.setToken(1, 4)).toBe(true);
@@ -103,10 +97,8 @@ describe('Draft — le jeton', () => {
   });
 
   it("refuse un jeton sur une carte que l'inventaire ne peut pas accueillir", () => {
-    // ⚠️ **C'est ce qui remplace `owner`** : l'eligibilite ne voyage plus sur
-    // la carte, elle se derive de l'inventaire. La MEME carte est donc
-    // refusee a l'un et offerte a l'autre — et c'est le seul cas ou un jeton
-    // se refuse encore.
+    // ⚠️ L'eligibilite ne voyage pas sur la carte, elle se derive de
+    // l'inventaire : la MEME carte est refusee a l'un et offerte a l'autre.
     const pleins = new Loadout();
     for (let i = 0; i < WEAPON_SLOTS; i++) {
       // Des armes qui ne figurent dans AUCUNE carte de l'etalage : l'etalage
@@ -185,10 +177,9 @@ describe('Draft — la resolution, un seul moment', () => {
     // servant les absents d'abord — la casserait sans casser un test qui ne
     // verifierait que l'ordre.
     // ⚠️ La collision doit exister pour que le test morde. Le joueur 3 vise la
-    // carte 0 — la PREMIERE libre, donc exactement celle que l'attribution
-    // d'office donnerait au joueur 1, qui reste absent. Avec les absents
-    // servis en premier, le joueur 3 perdrait la sienne. Verifie : sans cette
-    // collision, la mutation survivait.
+    // carte 0, la PREMIERE libre, donc celle que l'attribution d'office
+    // donnerait au joueur 1, absent. Avec les absents servis en premier, le
+    // joueur 3 perdrait la sienne.
     for (let seed = 0; seed < 20; seed++) {
       const d = ouvert();
       d.setToken(3, 0);
@@ -208,8 +199,7 @@ describe('Draft — la resolution, un seul moment', () => {
     // ordre different et designeraient d'autres gagnants.
     //
     // ⚠️ **Un `rng` CONSTANT ne peut pas voir ca** : il rend la meme valeur a
-    // chaque carte, donc l'ordre de consommation n'a aucun effet. Verifie :
-    // avec `fixe(0)`, la mutation « ne pas trier » survivait. Il faut une
+    // chaque carte, donc l'ordre de consommation n'a aucun effet. Il faut une
     // SUITE, et deux valeurs qui ne designent pas le meme pretendant.
     const suite = (...valeurs: number[]) => {
       let i = 0;
@@ -238,8 +228,8 @@ describe('Draft — la resolution, un seul moment', () => {
     // ⚠️ **La fenetre ne se referme pas au premier clic a plusieurs.** Si elle
     // le faisait, le plus rapide trancherait pour tout le monde : les deux
     // autres passeraient par l'attribution d'office sans avoir eu la main, et
-    // la negociation du §7.2 n'aurait jamais lieu. Verifie par mutation : sans
-    // ce test, `every` remplace par `some` survivait a toute la suite.
+    // la negociation n'aurait jamais lieu. C'est le seul test qui distingue
+    // `every` de `some`.
     const d = ouvert();
     expect(d.setToken(1, 0)).toBe(true);
     expect(d.step(101, fixe(0)), 'ferme des le premier jeton').toBeNull();
@@ -257,16 +247,11 @@ describe('Draft — la resolution, un seul moment', () => {
   });
 
   it('la fermeture ne laisse AUCUN jeton derriere elle', () => {
-    // ⚠️ **Defaut signale par l'auteur en jouant** : « si je selectionne un
-    // passif et qu'au niveau suivant il est encore la, j'ai deja mon jeton
-    // dessus et je peux pas le reprendre ».
-    //
-    // `Session#broadcast` diffuse `DRAFT_INTENTS` des que `intents()` n'est pas
-    // vide. Les jetons survivaient a la fermeture, donc le serveur rediffusait
-    // celui du tour precedent **a chaque tick** jusqu'a l'ouverture suivante.
-    // Le joueur voyait son propre jeton deja pose sur une carte du nouvel
-    // etalage — et comme le §4.1 fait du reclic un RETRAIT, cliquer la carte
-    // qu'il voulait la lui refusait.
+    // ⚠️ `Session#broadcast` diffuse `DRAFT_INTENTS` des que `intents()` n'est
+    // pas vide. Un jeton survivant a la fermeture serait rediffuse **a chaque
+    // tick** jusqu'a l'ouverture suivante : le joueur verrait son jeton deja
+    // pose sur une carte du nouvel etalage, et comme le reclic est un RETRAIT,
+    // cliquer la carte voulue la lui refuserait.
     const d = ouvert();
     d.setToken(1, 0);
     d.setToken(2, 1);
@@ -280,9 +265,8 @@ describe('Draft — la resolution, un seul moment', () => {
   });
 
   it('ne rend qu UN SEUL lot d issues : rejouer `step` ne rouvre rien', () => {
-    // ⚠️ **La repioche a disparu.** Il y avait ici une seconde fenetre de 5 s
-    // et un second lot d'issues ; la resolution est desormais un seul moment,
-    // et `phase` n'a plus que deux etats.
+    // La resolution est un seul moment : pas de seconde fenetre, et `phase`
+    // n'a que deux etats.
     const d = ouvert();
     d.setToken(1, 2);
     d.setToken(2, 2);
@@ -296,10 +280,8 @@ describe('Draft — la resolution, un seul moment', () => {
 
 describe('Draft — le perdant est servi dans le MEME lot', () => {
   it('recoit le LOST de la carte disputee ET l AUTO de celle qui la remplace', () => {
-    // ⚠️ **C'est l'histoire que l'ecran doit raconter** : *« ca brule la carte
-    // si je l'ai pas eu et ca en illumine une autre »*. Les deux issues
-    // arrivent ensemble — un second message n'existe plus, donc un ecran qui
-    // attendrait la suite ne verrait jamais rien s'illuminer.
+    // ⚠️ L'ecran brule la carte perdue et en illumine une autre : les deux
+    // issues arrivent ensemble, il n'y a pas de second message a attendre.
     const d = ouvert();
     d.setToken(1, 2);
     d.setToken(2, 2);
@@ -325,12 +307,10 @@ describe('Draft — le perdant est servi dans le MEME lot', () => {
   });
 
   it('deux perdants recoivent DEUX cartes de remplacement DIFFERENTES', () => {
-    // ⚠️ Ce test existe parce qu'une mutation survivait au precedent quand il
-    // ne produisait qu'un seul perdant : retirer `this.#taken.add(index)` de
-    // l'attribution d'office ne cassait rien, faute de collision possible.
-    // Il en faut DEUX, et aucun autre joueur pour consommer une carte entre
-    // les deux — sinon ce sont les cartes deja prises, et non le garde, qui
-    // les separent.
+    // ⚠️ Garde `this.#taken.add(index)` dans l'attribution d'office : avec un
+    // seul perdant, rien ne peut entrer en collision. Il en faut DEUX, et aucun
+    // autre joueur pour consommer une carte entre les deux, sinon ce sont les
+    // cartes deja prises, et non le garde, qui les separent.
     //
     // On COMPTE les perdants, on ne les suppose pas.
     for (let seed = 0; seed < 15; seed++) {

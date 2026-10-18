@@ -19,23 +19,16 @@ import type { Room } from './room';
 import { buildServer } from './server';
 
 /**
- * **La tache 8 de l'etape 7a, le livrable : l'or survit a la fermeture du
- * navigateur.**
+ * **L'or survit a la fermeture du navigateur.**
  *
- * ⚠️ **Ce fichier ne refait PAS ce que `credit.integration.test.ts` fait deja.**
- * Ce fichier-la prouve que le SERVEUR ECRIT (en relisant la base directement
- * par `goldOf`). Celui-ci prouve que l'or SURVIT : qu'une SECONDE connexion,
- * qui ne partage aucun etat avec la premiere -- ni socket, ni objet JS, ni
- * process memoire -- et qui ne presente que le jeton, retrouve le nouveau
- * solde via la meme route HTTP qu'un navigateur reel appellerait au
- * rechargement. Verifier que la base contient 1200 prouverait l'ecriture ;
- * verifier qu'une requete `GET /accounts/me` neuve, apres fermeture de la
- * socket, lit 1200 prouve la survie -- c'est la phrase du §13 rendue
- * executable, et la seule chose que ce fichier ajoute.
+ * `credit.integration.test.ts` prouve que le SERVEUR ECRIT (en relisant la
+ * base par `goldOf`). Celui-ci prouve que l'or SURVIT : une SECONDE
+ * connexion, sans aucun etat partage avec la premiere, qui ne presente que le
+ * jeton, retrouve le solde via la route HTTP qu'un navigateur appelle au
+ * rechargement.
  *
- * ⚠️ **Harnais duplique, pas importe** (ruling P3) : aucun fichier
- * d'integration de ce depot n'en importe un autre, chacun porte sa propre
- * copie -- voir `credit.integration.test.ts` et `portal.integration.test.ts`.
+ * ⚠️ **Harnais duplique, pas importe** : aucun fichier d'integration de ce
+ * depot n'en importe un autre, chacun porte sa propre copie.
  */
 
 const ROOM_SEED = 0x6a11_0008;
@@ -117,7 +110,7 @@ async function connectAvecJeton(code: string, token: Uint8Array): Promise<Client
 
   // ⚠️ L'ecoute de 'open' est posee ICI, avant tout `await` : sur localhost
   // la socket peut s'ouvrir avant la fin d'un aller-retour Prisma, et un
-  // listener pose apres l'aurait ratee (455 s perdues a la tache 5).
+  // listener pose apres l'aurait ratee.
   const ouverte = new Promise<void>((resolve, reject) => {
     ws.once('open', () => resolve());
     ws.once('error', reject);
@@ -294,9 +287,9 @@ async function tuerLeBoss(room: Room, tireur: Client): Promise<void> {
     },
   );
   expect(room.palier).toBe(k + 1);
-  // ⚠️ **Le portail ne suit plus la mort du boss** (retour de playtest) : il
-  // s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues. On avance, horde videe,
-  // jusqu'a lui — l'or du boss, lui, est deja dans la cagnotte.
+  // ⚠️ **Le portail ne suit pas la mort du boss** : il s'ouvre toutes les
+  // `PORTAL_EVERY_WAVES` vagues. On avance, horde videe, jusqu'a lui ; l'or
+  // du boss est deja dans la cagnotte.
   await avancerJusqua(
     room,
     () => room.portalOpen,
@@ -312,8 +305,8 @@ async function tuerLeBoss(room: Room, tireur: Client): Promise<void> {
 /**
  * Attend que le credit (fonction du drain de `RUN_OVER`, lance en « fire and
  * forget » par `Session`) ait eu le temps de s'ecrire, ou abandonne apres
- * `timeoutMs` en rendant la derniere valeur lue. Copie de
- * `credit.integration.test.ts` -- voir son docbloc pour le ceiling connu.
+ * `timeoutMs`. Copie de `credit.integration.test.ts` : voir son docbloc pour
+ * le ceiling connu.
  */
 async function attendreCreditOuAbandon(
   accountId: string,
@@ -336,13 +329,10 @@ async function attendreCreditOuAbandon(
  * `voteExtraction` dans `credit.integration.test.ts`.
  *
  * ⚠️ **La cagnotte posee par l'appelant est REIMPOSEE juste avant le vote.**
- * Tuer le boss pour ouvrir le portail paie AUSSI le bonus d'or du palier --
- * c'est `Room#step` qui l'ajoute, au tick de la mort du boss
- * (`this.#gold += palierGold(...)`), PAS `#endRun` : `#endRun` dit lui-meme
- * explicitement « l'or n'est pas touche ici ». Un piege de decor trouve a la
- * tache 6. Sans cette remise a niveau, le credit mesure plus loin serait
- * celui de `debugSetGold(...)` MAJORE d'un bonus que ce fichier n'a jamais
- * demande, et les montants attendus (1200, 700) ne tomberaient pas juste.
+ * Tuer le boss paie AUSSI le bonus d'or du palier (ajoute par `Room#step` au
+ * tick de sa mort, pas par `#endRun`) : sans cette remise a niveau, le credit
+ * serait majore d'un bonus jamais demande, et les montants attendus (1200,
+ * 700) ne tomberaient pas juste.
  */
 async function voteExtraction(clients: readonly Client[], room: Room): Promise<void> {
   const tireur = clients[0];
@@ -378,8 +368,6 @@ describe('etape 7a : le livrable du §13 — l or survit a la fermeture du navig
    * contient 1200 prouverait que le serveur a ecrit ; verifier qu'un client
    * qui REVIENT -- une requete HTTP neuve, sans socket, sans objet JS
    * partage avec la premiere connexion -- lit 1200 prouve que l'or survit.
-   * C'est la difference entre tester l'implementation et tester le
-   * livrable.
    */
   it('un joueur s extrait, ferme tout, revient, et retrouve son or', async () => {
     // 1. Un compte, comme le ferait un premier chargement du navigateur.

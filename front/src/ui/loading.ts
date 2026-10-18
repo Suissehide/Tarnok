@@ -1,11 +1,10 @@
 /**
- * L'ecran de chargement (maquette 03) : il couvre l'attente entre « Lancer la
- * partie » et la premiere image ou le joueur se voit — la latence du salon,
- * la generation de l'ile, le telechargement des planches. Sans lui, l'ecran
- * restait noir, ou montrait une carte a moitie habillee.
+ * L'ecran de chargement : il couvre l'attente entre « Lancer la partie » et la
+ * premiere image ou le joueur se voit — latence du salon, generation de l'ile,
+ * telechargement des planches.
  *
- * Ce module est PUR : `loadingProgress` dit ou en est le chargement a partir
- * de ce que `main.ts` observe, `paintLoading` l'ecrit. L'ecran ne decide rien.
+ * Module PUR : `loadingProgress` dit ou en est le chargement a partir de ce
+ * que `main.ts` observe, `paintLoading` l'ecrit.
  */
 
 export interface LoadingState {

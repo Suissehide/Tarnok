@@ -19,11 +19,9 @@ import { ZoneField } from './zones';
 
 /**
  * ⚠️ **Aucune assertion de ce fichier n'ecrit 90, 70 ou 128 en dur.** Les
- * trois constantes sont des reglages : `ZONE_LIFETIME_TICKS` et `ZONE_RADIUS`
- * se jugent a l'oeil (tache 11), `ZONE_CAPACITY` bougera avec le budget. Le
- * depot vient de payer l'erreur inverse — deux tests de troncature de vague se
- * fiaient a `WAVE1_MIN_COUNT = 16` et sont devenus intermittents des qu'il est
- * passe a 10.
+ * trois constantes sont des reglages (`ZONE_LIFETIME_TICKS` et `ZONE_RADIUS`
+ * se jugent a l'oeil, `ZONE_CAPACITY` suit le budget) : un test qui les fige
+ * casse ou devient intermittent au premier reglage.
  */
 
 /** Ecart sur lequel deux zones ne peuvent en aucun cas fusionner ni se recouvrir. */
@@ -45,8 +43,8 @@ describe('ZoneField — la pose', () => {
   /**
    * ⚠️ **Les deux moities comptent.** Sans la seconde, une fusion qui avale
    * TOUT — « ne jamais poser au-dela de la premiere zone » — passerait ce
-   * test les yeux fermes. C'est le §5.1 bis : le compte devient fonction de la
-   * SURFACE couverte, pas de la cadence.
+   * test les yeux fermes. Le compte est fonction de la SURFACE couverte, pas
+   * de la cadence.
    */
   it('mille poses au meme endroit ne font qu une zone', () => {
     const zones = new ZoneField();
@@ -88,8 +86,8 @@ describe('ZoneField — la pose', () => {
 
   /**
    * ⚠️ **La fusion est PAR ELEMENT.** Fusionner deux elements differents
-   * supprimerait la seconde voie de declenchement du §6.3 de l'orientation —
-   * « deux zones au sol se recouvrent » — avant meme qu'elle existe.
+   * supprimerait une voie de declenchement des reactions : « deux zones au sol
+   * se recouvrent ».
    */
   it('ne fusionne pas deux elements differents au meme endroit', () => {
     const zones = new ZoneField();
@@ -103,22 +101,14 @@ describe('ZoneField — la pose', () => {
 
   /**
    * ⚠️ **NE fusionne PAS deux `kind` de MEME element mais de types de
-   * reaction DIFFERENTS — corrige a la revue de la tache 6.** La version
-   * precedente de ce test affirmait l'inverse (« fusionne... meme si ...
-   * different »), et le code le faisait : le predicat de fusion ne comparait
-   * que `zoneElement`, donc une Surchauffe et un Choc thermique generique,
-   * tous deux BRAISE, se confondaient en un seul objet — et LEQUEL des deux
-   * octets survivait dependait de l'ORDRE d'arrivee (voir le docbloc de
-   * `spawn`, `shared/zones.ts`, pour la mesure : soit Surchauffe ne brule
-   * jamais, soit un Choc thermique ordinaire brule 4,5 s pour des joueurs qui
-   * n'ont jamais fait Braise+Foudre).
+   * reaction DIFFERENTS.** Un predicat qui ne comparerait que `zoneElement`
+   * confondrait une Surchauffe et un Choc thermique generique (tous deux
+   * BRAISE), et LEQUEL survit dependrait de l'ordre d'arrivee : soit la
+   * Surchauffe ne brule jamais, soit un Choc ordinaire brule comme elle (voir
+   * le docbloc de `spawn`, `shared/zones.ts`).
    *
-   * ⚠️ **Les DEUX ordres sont testes.** Un test a un seul ordre passerait
-   * avec un predicat qui retiendrait toujours le PREMIER ou toujours le
-   * SECOND `kind` — un decor qui masquerait exactement le defaut que la
-   * revue a mesure en execution. Ici, les deux octets sont geometriquement
-   * DISTINCTS (des zones qui ne fusionnent jamais), donc le decor ne peut pas
-   * se contenter d'un seul ordre pour le prouver.
+   * ⚠️ **Les DEUX ordres sont testes** : un seul ordre passerait avec un
+   * predicat qui retiendrait toujours le PREMIER ou toujours le SECOND `kind`.
    */
   it('ne fusionne pas deux `kind` du meme element mais de reactions differentes — dans les DEUX ordres', () => {
     const genericPuisSurchauffe = new ZoneField();
@@ -187,12 +177,10 @@ describe('ZoneField — la pose', () => {
   });
 
   /**
-   * **L'annonce EST la verite** (§5.1 bis, tache 10). Une zone n'est prolongee
-   * qu'au plus une fois par `ZONE_REFRESH_INTERVAL_TICKS` : entre deux, le
-   * serveur ne prolonge PAS non plus, sans quoi il faudrait annoncer chaque
-   * fusion et le trafic suivrait la cadence des armes au lieu du nombre de
-   * zones (mesure : 9,67 ko/s par client a 30 zones arrosees a chaque tick,
-   * contre 1,22 ko/s de trafic total a l'etape 4).
+   * **L'annonce EST la verite.** Une zone n'est prolongee qu'au plus une fois
+   * par `ZONE_REFRESH_INTERVAL_TICKS` : entre deux, le serveur ne prolonge PAS
+   * non plus, sans quoi il faudrait annoncer chaque fusion et le trafic
+   * suivrait la cadence des armes au lieu du nombre de zones.
    *
    * ⚠️ **La date exacte compte des deux cotes.** Le client applique ce meme
    * `spawn` : s'il prolongeait un tick plus tot ou plus tard que le serveur,
@@ -345,10 +333,8 @@ describe('ZoneField — l expiration derivee', () => {
    * (`kind === element`, reaction nulle) : une compaction qui ecrirait
    * `this.kind[slot] = zoneElement(this.kind[last])` passerait quand meme,
    * parce que decoder un octet de reaction nulle rend le meme nombre. Celui-ci
-   * empaquette une reaction non nulle sur la zone DEPLACEE pour separer les
-   * deux : `kind !== element` la designe sans ambiguite. Meme decor que
-   * « ne saute jamais... » ci-dessus — deux zones, la premiere perime, la
-   * seconde est deplacee du creneau 1 au creneau 0.
+   * empaquette une reaction non nulle sur la zone DEPLACEE (du creneau 1 au
+   * creneau 0) pour separer les deux.
    */
   it('deplace le kind empaquete ENTIER par la compaction, reaction comprise', () => {
     const zones = new ZoneField();
@@ -367,7 +353,7 @@ describe('ZoneField — l expiration derivee', () => {
 });
 
 /**
- * ⚠️ **Surchauffe (tache 6 de l'etape 5b) fait tenir `aliveAt`/`expire` PLUS
+ * ⚠️ **Surchauffe fait tenir `aliveAt`/`expire` PLUS
  * LONGTEMPS que la duree generique, DERIVEE du nibble de reaction empaquete
  * dans `kind`.** Le decor compare toujours deux zones au MEME `bornTick`,
  * l'une de reaction nulle et l'autre de Surchauffe, pour que la seule
@@ -405,10 +391,8 @@ describe('ZoneField — Surchauffe allonge la duree de vie de sa zone (tache 6)'
   });
 
   it('une zone de reaction nulle garde la duree GENERIQUE — non-regression', () => {
-    // Le decor a deux zones, la Surchauffe posee en second : la tache 4 a
-    // laisse vivante une mutation d'`ampAt` parce que, dans son decor, le
-    // plus fort etait toujours pose en second. Inverser l'ordre ici tient le
-    // meme risque a distance.
+    // La Surchauffe est posee en PREMIER : un decor qui pose toujours la zone
+    // speciale au meme rang peut masquer un defaut d'ordre.
     const zones = new ZoneField();
     zones.spawn(packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE), BIEN_LOIN, 0, 0, 0);
     zones.spawn(ELEMENT.GIVRE, 0, 0, 0, 0);
@@ -454,8 +438,7 @@ describe('ZoneField — le recouvrement', () => {
 describe('ZoneField — les deux predicats de temps (tache 6)', () => {
   /**
    * ⚠️ **`aliveAt` et `slowsAt` ne different que par leur borne BASSE**, et
-   * les confondre coute un tick de decalage sur le deplacement — le pendant
-   * temporel du facteur 2 entre fusion et recouvrement (§5.1 bis).
+   * les confondre coute un tick de decalage sur le deplacement.
    */
   it('aliveAt vaut des le tick de la pose, slowsAt seulement a partir du suivant', () => {
     const zones = new ZoneField();
@@ -492,7 +475,7 @@ describe('ZoneField — les deux predicats de temps (tache 6)', () => {
 
 describe('ZoneField — la pose rend le creneau touche (tache 6)', () => {
   it('rend le creneau cree, puis le MEME creneau quand elle rafraichit', () => {
-    // Le serveur annonce le centre STOCKE (§5.3) : sans ce retour, il n'aurait
+    // Le serveur annonce le centre STOCKE : sans ce retour, il n'aurait
     // aucun moyen de dire quelle zone une pose vient de rafraichir, et le
     // client verrait la sienne mourir avant celle du serveur.
     const zones = new ZoneField();
@@ -566,15 +549,12 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
 
   it('DEUX zones qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme', () => {
     // ⚠️ **Le test qui tue la somme.** Avec `amp += facteur`, deux zones
-    // rendraient 2 et trois zones 3, et l'empilement de Poix deviendrait la
-    // seule strategie du jeu (tache 4). Le maximum de deux 1 vaut 1, la somme
-    // vaut 2 : la mutation rougit ici des aujourd'hui, avant meme qu'un element
-    // n'amplifie quoi que ce soit.
+    // rendraient 2, et l'empilement de Poix deviendrait la seule strategie du
+    // jeu. Le maximum de deux 1 vaut 1, la somme vaut 2.
     //
     // ⚠️ **Ce que ce test ne separe PAS** : `Math.max` et `Math.min` rendent
-    // le meme 1 tant que les deux zones valent 1. Le describe suivant
-    // (« la Poix ferme le maximum contre le minimum ET le produit ») ferme
-    // cette mutation-la, avec `damageAmp > 1` sur la Poix.
+    // le meme 1 tant que les deux zones valent 1. Le describe de la Poix plus
+    // bas separe les deux.
     //
     // Deux elements DIFFERENTS : deux zones du meme element au meme point
     // fusionneraient (voir `spawn`), et il n'y en aurait qu'une a balayer.
@@ -587,26 +567,15 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
   });
 
   it('ne consulte QUE les zones qui couvrent le point, et au tick ou elles vivent', () => {
-    // ⚠️ **Le seul levier qui rend ce balayage observable avant la Poix, et il
-    // faut le dire.** Toute la table vaut `damageAmp: 1` : dedans comme dehors,
-    // `ampAt` rend 1, et un `return 1` en dur passerait toutes les autres
-    // assertions de ce fichier. Un element INCONNU, lui, fait lever
-    // `elementOf` — la reponse devient alors « leve » ou « rend 1 », et ces
-    // deux-la se distinguent.
+    // ⚠️ **Rendre ce balayage observable.** Les elements neutres valent
+    // `damageAmp: 1` : dedans comme dehors, `ampAt` rend 1, et un `return 1`
+    // en dur passerait. Un element INCONNU fait lever `elementOf` : la reponse
+    // devient « leve » ou « rend 1 », et ces deux-la se distinguent.
     //
-    // ⚠️ **7, pas 6, depuis la tache 2 de l'etape 5c — et pas 99, depuis la
-    // tache 5 de l'etape 5b.** `zones.kind` porte un octet EMPAQUETE
-    // (`packZoneKind`) : l'element n'occupe que les bits 0-2, et 99
-    // (0b1100011) s'y decode en 3 — Foudre, un element bien REEL, qui
-    // casserait ce test. **6 a ete CORRIGE ICI** : ce fichier le tenait pour
-    // inconnu « pour toujours » (le §6.3 de l'orientation en comptait six au
-    // total, ids 0 a 5), mais le Vif-argent (tache 2 de l'etape 5c) occupe
-    // precisement cet id — un catalogue complet a SEPT entrees (neutre + six
-    // elements), ids 0 a 6. **7 reste le seul id hors table aux 3 bits
-    // pleins** : le domaine d'un nibble de 3 bits va jusqu'a 7, et la table
-    // n'ira jamais au-dela de sept entrees (le §6.3 de l'orientation les
-    // compte toutes). Ce test a ete corrige par la tache 2, pas contourne —
-    // voir son rapport.
+    // ⚠️ **Pourquoi 7.** `zones.kind` porte un octet EMPAQUETE : l'element
+    // n'occupe que les bits 0-2 (un 99 s'y decoderait en 3, Foudre, bien
+    // reel). La table compte sept entrees, ids 0 a 6 : 7 est le seul id hors
+    // table que 3 bits savent ecrire.
     const zones = new ZoneField();
     zones.spawn(ELEMENT.BRAISE, 0, 0, 0, 0);
     zones.kind[0] = 7;
@@ -626,9 +595,8 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
 
   /**
    * ⚠️ **Le test qui separe `ampAt` decodant de `ampAt` lisant l'octet
-   * brut.** `packZoneKind(FOUDRE, reaction)` avec `reaction > 0` vaut au
-   * moins 8 des que `reaction >= 1` — hors de portee d'`ELEMENTS` (4
-   * entrees aujourd'hui, six au plus au §6.3) tant que l'element occupe 3
+   * brut.** `packZoneKind(FOUDRE, reaction)` vaut au moins 8 des que
+   * `reaction >= 1`, hors de portee d'`ELEMENTS` tant que l'element occupe 3
    * bits. Un `ampAt` qui lirait `this.kind[z]` sans le decoder recevrait
    * cet octet directement et leverait ; le vrai code le decode et rend le
    * `damageAmp` de la Foudre, 1 — sans lever.
@@ -647,20 +615,16 @@ describe('ZoneField.ampAt — l amplification des degats (etape 5b, tache 1)', (
 });
 
 /**
- * ⚠️ **Ce describe ferme les deux mutations laissees VERTES par la tache 1**
- * (M9 et M19 de son rapport) — la Poix est la PREMIERE ligne de la table a
- * porter `damageAmp > 1`, ce qui rend enfin le maximum distinguable du
- * minimum ET de la somme ET du produit. M19 (la valeur consommee cote
- * degats, pas seulement l'appel) se ferme, lui, dans `combat.test.ts` — voir
- * son describe « la Poix amplifie reellement les degats retires ».
+ * ⚠️ La Poix porte `damageAmp > 1`, ce qui rend le maximum distinguable du
+ * minimum, de la somme ET du produit. Que la valeur soit bien consommee cote
+ * degats se garde dans `combat.test.ts` (« la Poix amplifie reellement les
+ * degats retires »).
  */
 describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le produit (tache 4)', () => {
   it('rend le `damageAmp` de la Poix dans sa flaque, strictement plus que 1', () => {
-    // ⚠️ **Le test le plus etroit qui ferme deja M9.** `ampAt` part d'un
-    // `amp` neutre (1) et ne le releve QUE si `factor > amp`. Avec le
-    // minimum (`factor < amp`), 1,5 < 1 est faux : `amp` resterait a 1 au
-    // lieu de monter a 1,5. Une seule flaque suffit a separer les deux
-    // operateurs, sans recouvrement.
+    // ⚠️ `ampAt` part d'un `amp` neutre (1) et ne le releve QUE si
+    // `factor > amp`. Avec le minimum, `amp` resterait a 1 : une seule flaque
+    // suffit a separer les deux operateurs.
     const zones = new ZoneField();
     expect(zones.spawn(ELEMENT.POIX, 500, 500, 0, 0)).toBe(0);
     expect(elementOf(ELEMENT.POIX).damageAmp).toBeGreaterThan(1);
@@ -668,24 +632,16 @@ describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le p
   });
 
   it('POIX (amp > 1) puis BRAISE (amp neutre) qui se recouvrent : le plus FORT gagne, jamais le plus faible', () => {
-    // ⚠️ **Le test qui tue le minimum sur un recouvrement reel — ET
-    // l'affectation inconditionnelle (revue de la tache 7).** Deux zones
-    // d'amplifications DIFFERENTES : le minimum rendrait 1 (celui de la
-    // Braise), exactement comme si la Poix n'etait pas la — un bug invisible
-    // en jeu, une flaque de Poix qui n'amplifierait plus rien des qu'une
-    // autre zone la recouvre. Le maximum rend celui de la Poix.
+    // ⚠️ **Le test qui tue le minimum sur un recouvrement reel, ET
+    // l'affectation inconditionnelle.** Le minimum rendrait 1 (la Braise) :
+    // une flaque de Poix n'amplifierait plus rien des qu'une autre zone la
+    // recouvre.
     //
-    // ⚠️ **La Poix est posee EN PREMIER ici, deliberement — pas en second
-    // comme le reste du fichier.** Remplacer `if (factor > amp) { amp =
-    // factor; }` par une affectation inconditionnelle `amp = factor;` dans
-    // `ampAt` survivait a toute la suite avant cette inversion : les deux
-    // AUTRES tests a deux zones de ce fichier posent toujours la zone la
-    // plus forte en SECOND, si bien que la derniere ecriture coincidait avec
-    // le vrai maximum. Ici, la zone la plus forte (Poix) est ecrasee en
-    // dernier par la plus faible (Braise) si l'affectation est
-    // inconditionnelle : le resultat tomberait a 1 au lieu de 1,5, et cette
-    // assertion rougirait. Verifie par application de la mutation, pas
-    // raisonne (rapport de la tache 7).
+    // ⚠️ **La Poix est posee EN PREMIER, deliberement.** Une affectation
+    // inconditionnelle `amp = factor;` a la place de `if (factor > amp)`
+    // passerait tant que la zone la plus forte est posee en second (la
+    // derniere ecriture coincide alors avec le maximum). Ici la Braise
+    // l'ecraserait et le resultat tomberait a 1.
     //
     // Deux elements DIFFERENTS, comme le test voisin plus haut : deux zones
     // du meme element au meme point fusionneraient (voir `spawn`).
@@ -698,20 +654,13 @@ describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le p
   });
 
   it('DEUX flaques de POIX qui se recouvrent ne cumulent pas : le maximum, jamais la somme ni le produit', () => {
-    // ⚠️ **Le test demande par le brief de la tache 4, et celui qui tue le
-    // produit.** Deux zones du MEME element et du MEME facteur : la somme
-    // (1,5 + 1,5 = 3) ET le produit (1,5 x 1,5 = 2,25) different tous les
-    // deux du maximum (1,5) — c'est le seul des trois tests de ce bloc ou
-    // ces deux mutations-la se separent l'une de l'autre en plus du
-    // maximum.
+    // ⚠️ **Le test qui tue le produit.** Deux zones du MEME facteur : la somme
+    // (3) ET le produit (2,25) different tous deux du maximum (1,5).
     //
-    // ⚠️ **Deux zones qui ne FUSIONNENT pas, et c'est geometrique, pas un
-    // hasard.** `spawn` fusionne deux zones du MEME element si le nouveau
-    // centre tombe a MOINS de `ZONE_RADIUS` d'un centre existant (voir son
-    // docbloc) — ici, exactement `ZONE_RADIUS`, donc la borne stricte de la
-    // fusion n'est PAS franchie et les deux zones restent DISTINCTES. Leur
-    // point milieu, lui, tombe a `ZONE_RADIUS / 2` de CHAQUE centre — donc
-    // strictement DANS les deux disques, qui se recouvrent bien.
+    // ⚠️ **Deux zones qui ne FUSIONNENT pas, par construction.** `spawn`
+    // fusionne si le nouveau centre tombe a MOINS de `ZONE_RADIUS` : ici,
+    // exactement `ZONE_RADIUS`, donc deux zones distinctes. Leur point milieu
+    // tombe strictement DANS les deux disques.
     const zones = new ZoneField();
     expect(zones.spawn(ELEMENT.POIX, 0, 0, 0, 0)).toBe(0);
     expect(zones.spawn(ELEMENT.POIX, ZONE_RADIUS, 0, 0, 0)).toBe(1);
@@ -722,10 +671,9 @@ describe('ZoneField.ampAt — la Poix ferme le maximum contre le minimum ET le p
 });
 
 /**
- * `ZoneField.ampAt` consomme `zoneDamageAmpTotal` depuis la tache 6 de
- * l'etape 5c — Mortier vif (Poix + Chaux) est la PREMIERE reaction a porter
- * une amplification propre (`ReactionDef.zoneDamageAmp`), et non plus
- * seulement un `Element.damageAmp` lu directement sur le nibble.
+ * `ZoneField.ampAt` consomme `zoneDamageAmpTotal` : Mortier vif (Poix + Chaux)
+ * porte une amplification propre (`ReactionDef.zoneDamageAmp`), en plus du
+ * `Element.damageAmp` lu sur le nibble.
  */
 describe('ZoneField.ampAt — Mortier vif ferme le maximum ELEMENT x REACTION (tache 6)', () => {
   /**
@@ -751,11 +699,9 @@ describe('ZoneField.ampAt — Mortier vif ferme le maximum ELEMENT x REACTION (t
   });
 
   it('une zone de Mortier vif et une flaque de Poix qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme', () => {
-    // ⚠️ **Meme facteur (`elementOf(ELEMENT.POIX).damageAmp`) des deux
-    // cotes** : la somme (3) et le produit (2,25) different tous deux du
-    // maximum (1,5) — meme decor que le test equivalent du describe Poix
-    // plus haut, applique cette fois a une REACTION plutot qu'a un second
-    // element pur.
+    // ⚠️ **Meme facteur des deux cotes** : la somme et le produit different
+    // tous deux du maximum. Meme decor que dans le describe de la Poix, avec
+    // une REACTION a la place du second element.
     const zones = new ZoneField();
     expect(zones.spawn(packZoneKind(ELEMENT.CHAUX, REACTION.MORTIER_VIF), 0, 0, 0, 0)).toBe(0);
     expect(zones.spawn(ELEMENT.POIX, ZONE_RADIUS, 0, 0, 0)).toBe(1);
@@ -766,11 +712,8 @@ describe('ZoneField.ampAt — Mortier vif ferme le maximum ELEMENT x REACTION (t
 });
 
 /**
- * `ZoneField.armorReductionAt` — la tache 7 de l'etape 5b : meme FORME
- * qu'`ampAt` ci-dessus (meme balayage, meme `aliveAt`, meme MAXIMUM), pour
- * une raison DIFFERENTE — voir son docbloc. La Supraconduction (Givre +
- * Foudre) est la seule reaction a porter un `zoneArmorReduction` non nul
- * aujourd'hui.
+ * `ZoneField.armorReductionAt` : meme FORME qu'`ampAt` (meme balayage, meme
+ * `aliveAt`, meme MAXIMUM), pour une raison DIFFERENTE, voir son docbloc.
  */
 describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 7)', () => {
   it('rend 0 sur un sol nu : aucune zone, aucune reduction', () => {
@@ -803,7 +746,7 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
 
   it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
     const zones = new ZoneField();
-    // ⚠️ **Rayon et duree DERIVES du `kind`** (etape 8) : chaque reaction a
+    // ⚠️ **Rayon et duree DERIVES du `kind`** : chaque reaction a
     // les siens, donc les recopier ici depuis les constantes generiques
     // ferait echouer ce cas pour une raison qui n'est pas celle qu'il garde.
     const kind = packZoneKind(ELEMENT.GIVRE, REACTION.SUPRACONDUCTION);
@@ -823,11 +766,9 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
 
   /**
    * ⚠️ **Deux zones qui se recouvrent rendent le MAXIMUM, jamais la
-   * somme — meme raisonnement qu'`ampAt`, et posees dans les DEUX ordres**
-   * (regle generale de cette etape des qu'un decor superpose deux elements,
-   * voir le rapport de la tache 7 sur la mutation d'`ampAt`) : une zone
-   * neutre (reduction 0) et une de Supraconduction (reduction
-   * `SUPRACONDUCTION_ARMOR_REDUCTION`), dans chaque ordre de pose.
+   * somme — et posees dans les DEUX ordres**, pour qu'une affectation
+   * inconditionnelle ne passe pas grace a l'ordre de pose : une zone neutre
+   * (reduction 0) et une de Supraconduction.
    */
   it('DEUX zones qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme, dans les deux ordres de pose', () => {
     const neutrePuisSupra = new ZoneField();
@@ -848,11 +789,9 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
   });
 
   /**
-   * ⚠️ **Tache 1 de l'etape 5c : la Chaux rabote l'armure PAR ELLE-MEME**
-   * (`Element.armorReduction`), sans aucune reaction specifique — une zone
-   * generique (`packZoneKind(element, 0) === element`) qui porte l'element
-   * Chaux suffit desormais, la ou seule une reaction (Supraconduction) le
-   * pouvait avant cette tache.
+   * ⚠️ **La Chaux rabote l'armure PAR ELLE-MEME** (`Element.armorReduction`),
+   * sans reaction : une zone generique (`packZoneKind(element, 0) ===
+   * element`) de Chaux suffit.
    */
   it('rend CHAUX_ARMOR_REDUCTION dans une zone de Chaux SANS reaction, strictement positif', () => {
     const zones = new ZoneField();
@@ -862,8 +801,7 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
   });
 
   /**
-   * ⚠️ **Meme regle « poser dans les DEUX ordres » que le test
-   * Supraconduction/Braise ci-dessus, avec la Chaux cette fois** : une zone
+   * ⚠️ **Les DEUX ordres de pose, avec la Chaux cette fois** : une zone
    * de Chaux (reduction `CHAUX_ARMOR_REDUCTION`) et une de Supraconduction
    * (reduction `SUPRACONDUCTION_ARMOR_REDUCTION`, strictement plus forte)
    * qui se recouvrent ne doivent JAMAIS additionner leurs reductions.
@@ -892,8 +830,8 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
   /**
    * L'AUTRE sens de la domination : une reaction SANS effet d'armure propre
    * (Surchauffe) superposee a une zone de Chaux doit laisser passer la
-   * contribution de l'ELEMENT — sans quoi `armorReductionAt` ne lirait que
-   * la reaction et perdrait la moitie de la tache 1.
+   * contribution de l'ELEMENT, sans quoi `armorReductionAt` ne lirait que
+   * la reaction.
    */
   it('la contribution de la Chaux survit face a une reaction sans effet d armure propre, dans les deux ordres', () => {
     const chauxPuisSurchauffe = new ZoneField();
@@ -913,10 +851,8 @@ describe('ZoneField.armorReductionAt — la reduction d armure (etape 5b, tache 
 });
 
 /**
- * `ZoneField.collisionDamageAt` — la tache 8 de l'etape 5b : meme FORME
- * qu'`ampAt`/`armorReductionAt` ci-dessus (meme balayage, meme `aliveAt`,
- * meme MAXIMUM). Verglas (Givre + Poix) est la seule reaction a porter un
- * `zoneCollisionDamage` non nul aujourd'hui.
+ * `ZoneField.collisionDamageAt` : meme FORME qu'`ampAt`/`armorReductionAt`
+ * (meme balayage, meme `aliveAt`, meme MAXIMUM).
  */
 describe('ZoneField.collisionDamageAt — le degat de collision (etape 5b, tache 8)', () => {
   it('rend 0 sur un sol nu : aucune zone, aucun degat', () => {
@@ -949,9 +885,7 @@ describe('ZoneField.collisionDamageAt — le degat de collision (etape 5b, tache
 
   it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
     const zones = new ZoneField();
-    // ⚠️ **Rayon et duree DERIVES du `kind`** (etape 8) : chaque reaction a
-    // les siens, donc les recopier ici depuis les constantes generiques
-    // ferait echouer ce cas pour une raison qui n'est pas celle qu'il garde.
+    // ⚠️ Rayon et duree DERIVES du `kind`, comme plus haut.
     const kind = packZoneKind(ELEMENT.GIVRE, REACTION.VERGLAS);
     const rayon = zoneRadius(kind);
     const vie = zoneLifetimeTicks(kind);
@@ -968,8 +902,7 @@ describe('ZoneField.collisionDamageAt — le degat de collision (etape 5b, tache
 
   /**
    * ⚠️ **Deux zones qui se recouvrent rendent le MAXIMUM, jamais la
-   * somme — posees dans les DEUX ordres**, meme regle que le reste de cette
-   * etape des qu'un decor superpose deux elements.
+   * somme — posees dans les DEUX ordres.**
    */
   it('DEUX zones qui se recouvrent ne CUMULENT pas : le maximum, jamais la somme, dans les deux ordres de pose', () => {
     const neutrePuisVerglas = new ZoneField();
@@ -991,20 +924,13 @@ describe('ZoneField.collisionDamageAt — le degat de collision (etape 5b, tache
 });
 
 /**
- * `ZoneField.burnAt` — ajoutee a la revue finale de l'etape 5b (B2) : meme
- * FORME qu'`ampAt`/`armorReductionAt`/`collisionDamageAt` ci-dessus (meme
- * balayage, meme `aliveAt`, meme MAXIMUM). Surchauffe (Braise + Foudre) est
- * la seule reaction a porter un `zoneBurnPerTick` non nul aujourd'hui.
+ * `ZoneField.burnAt` : meme FORME qu'`ampAt`/`armorReductionAt`/
+ * `collisionDamageAt` (meme balayage, meme `aliveAt`, meme MAXIMUM).
  *
- * ⚠️ **La brulure de zone etait, avant cette revue, la SEULE des quatre
- * grandeurs de `ZoneField` a se CUMULER au lieu de prendre le maximum** —
- * `resolveBurn` (`back/src/combat.ts`) appelait `appliquerDegats` une fois
- * PAR ZONE couvrant l'ennemi, au lieu d'une fois par ennemi. Mesure : 0,300
- * PV/tick pour une zone, 0,600 pour deux superposees a declencheurs opposes,
- * 1,200 pour quatre — soit 72 PV/s, `HEAVY_HP` (20) en 0,28 s. Ce fichier
- * porte deja trois tests « ne CUMULENT pas : le maximum, jamais la somme »
- * pour les trois grandeurs voisines ; celui-ci est le QUATRIEME de la
- * famille.
+ * ⚠️ **La brulure de zone ne se CUMULE pas.** `resolveBurn`
+ * (`back/src/combat.ts`) doit appliquer `burnAt` une fois par ennemi, pas une
+ * fois PAR ZONE : quelques zones superposees fondraient sinon la pietaille
+ * lourde en une fraction de seconde.
  */
 describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l etape 5b, B2)', () => {
   it('rend 0 sur un sol nu : aucune zone, aucune brulure', () => {
@@ -1047,9 +973,7 @@ describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l et
 
   it('ne consulte que les zones qui couvrent le point, et au tick ou elles vivent', () => {
     const zones = new ZoneField();
-    // ⚠️ **Rayon et duree DERIVES du `kind`** (etape 8) : chaque reaction a
-    // les siens, donc les recopier ici depuis les constantes generiques
-    // ferait echouer ce cas pour une raison qui n'est pas celle qu'il garde.
+    // ⚠️ Rayon et duree DERIVES du `kind`, comme plus haut.
     const kind = packZoneKind(ELEMENT.BRAISE, REACTION.SURCHAUFFE);
     const rayon = zoneRadius(kind);
     const vie = zoneLifetimeTicks(kind);
@@ -1061,8 +985,7 @@ describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l et
     expect(zones.burnAt(rayon, 0, 0)).toBe(0);
     // Perimee : `aliveAt` la saute, meme au centre exact. ⚠️ La borne est
     // celle de SURCHAUFFE, qui allonge sa propre duree (voir le describe
-    // dedie plus haut) — `vie` la derive du `kind`, donc ce cas suit la table
-    // au lieu de recopier la constante une seconde fois.
+    // dedie plus haut).
     expect(vie).toBe(SURCHAUFFE_ZONE_LIFETIME_TICKS);
     expect(zones.burnAt(0, 0, vie)).toBe(0);
     // Et elle vit encore au dernier tick de sa duree de vie.
@@ -1070,14 +993,10 @@ describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l et
   });
 
   /**
-   * ⚠️ **Le test demande par la revue finale de l'etape 5b (B2), portant les
-   * DEUX decors MESURES avant la correction de `resolveBurn`.**
-   *
    * Cas 1 : deux zones de MEME reaction (Surchauffe) a DECLENCHEURS OPPOSES
    * — Braise (`kind` 9) et Foudre (`kind` 11), les deux valeurs que
    * `ReactionTrigger.element` peut porter pour cette reaction — aux MEMES
-   * coordonnees. Mesure en execution avant cette revue : 0,600 PV/tick au
-   * lieu de 0,300.
+   * coordonnees : elles ne fusionnent pas.
    *
    * Cas 2 : deux zones du MEME `kind`, centres ecartes de `1,2 x ZONE_RADIUS`
    * — au-dela de la borne de fusion de `spawn` (`< ZONE_RADIUS`), donc deux
@@ -1100,8 +1019,7 @@ describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l et
     ).toBe(1);
     expect(declencheursOpposes.count).toBe(2);
     // ⚠️ **Le test qui tue la somme.** Avec `burn += facteur`, ce point
-    // rendrait `2 x SURCHAUFFE_BURN_PER_TICK` (0,600) au lieu de
-    // `SURCHAUFFE_BURN_PER_TICK` (0,300) — la mutation mesuree en execution.
+    // rendrait `2 x SURCHAUFFE_BURN_PER_TICK`.
     expect(declencheursOpposes.burnAt(100, 0, 0)).toBe(SURCHAUFFE_BURN_PER_TICK);
 
     // Cas 2 : MEME kind, centres ecartes de 1,2 x ZONE_RADIUS.
@@ -1124,20 +1042,14 @@ describe('ZoneField.burnAt — le degat de brulure de zone (revue finale de l et
 });
 
 /**
- * `ZoneField.hitRadiusBonusAt` — la tache 3 de l'etape 5c : cinquieme FORME
- * de la meme famille qu'`ampAt`/`armorReductionAt`/`collisionDamageAt`/`burnAt`
- * ci-dessus (meme balayage, meme `aliveAt`, meme MAXIMUM) — pour une raison de
- * JEU cette fois (deux zones de Vif-argent qui se recouvrent ne doublent pas
- * le rayon de touche), pas la raison arithmetique du minimum de
- * `Horde#computeSlow`.
+ * `ZoneField.hitRadiusBonusAt` : meme FORME qu'`ampAt`/`armorReductionAt`/
+ * `collisionDamageAt`/`burnAt` (meme balayage, meme `aliveAt`, meme MAXIMUM),
+ * pour une raison de JEU : deux zones de Vif-argent qui se recouvrent ne
+ * doublent pas le rayon de touche.
  *
- * ⚠️ **Structurelle, comme `linkedNeighbours` (`shared/links.ts`) : lit
- * `zoneElement(kind) === ELEMENT.VIF_ARGENT` directement, jamais un champ de
- * `Element` ni de `ReactionDef`.** Le Vif-argent est, comme la Foudre, un
- * element dont l'effet reel ne vit pas dans ces tables (voir le docbloc de
- * `hitRadiusBonusAt` dans `shared/zones.ts`) — les decors ci-dessous
- * construisent donc des `kind` avec `packZoneKind(ELEMENT.VIF_ARGENT, ...)`
- * plutot que de piocher dans `REACTION_DEFS`.
+ * Le critere est `zoneVifArgent` (`shared/reactions.ts`), comme pour
+ * `linkedNeighbours` (`shared/links.ts`) : l'element Vif-argent pur, ou une
+ * reaction dont la ligne de `REACTION_DEFS` porte `zoneVifArgent`.
  */
 describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, tache 3)', () => {
   it('rend 0 sur un sol nu : aucune zone, aucun bonus', () => {
@@ -1184,12 +1096,11 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
   });
 
   /**
-   * ⚠️ **Le cas inverse de la revue post-tache 9 : une zone dont la PAIRE
-   * ne contient pas le Vif-argent ne doit JAMAIS elargir.** Supraconduction
-   * (Givre + Foudre) ne pair pas le Vif-argent — sans ca, tout elargirait.
-   * Teste dans les DEUX ordres de declencheur : la garde est desormais sur
-   * la PAIRE (`zoneInvolvesVifArgent`), jamais sur le nibble d'element, et
-   * les deux ordres doivent donc se comporter IDENTIQUEMENT.
+   * ⚠️ **Une zone de reaction qui ne compte pas comme du Vif-argent ne doit
+   * JAMAIS elargir**, meme si son nibble d'element vaut Vif-argent : le
+   * critere est la ligne de la reaction, jamais le nibble. Supraconduction
+   * (Givre + Foudre) ne compte pas ; les deux nibbles doivent se comporter
+   * IDENTIQUEMENT.
    */
   it('ne majore rien a travers une zone de REACTION dont la paire ne contient PAS le Vif-argent, quel que soit le declencheur', () => {
     const kindVifArgentDeclenche = packZoneKind(ELEMENT.VIF_ARGENT, REACTION.SUPRACONDUCTION);
@@ -1204,28 +1115,17 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
     expect(zonesB.hitRadiusBonusAt(500, 500, 0)).toBe(0);
   });
 
-  /**
-   * ⚠️ **Revue post-tache 9 : RENVERSE le test precedent de cette suite
-   * (« Gel profond et Aveuglement n elargissent jamais »).** Le filtre
-   * `zoneReaction(kind) === 0` etait MORT en production : les CINQ
-   * reactions qui apparient le Vif-argent (Vaporisation, Paratonnerre, Gel
-   * profond, Aveuglement, Amalgame) ELARGISSENT desormais le rayon de
-   * touche, `zoneInvolvesVifArgent` lisant leur PAIRE plutot que le nibble
-   * d'element — ORDRE-INDEPENDANT par construction, teste ici dans les
-   * DEUX ordres de declencheur pour chacune des cinq.
-   */
   it('les TROIS reactions qui comptent comme du Vif-argent elargissent, dans les deux ordres', () => {
-    // ⚠️ **TROIS, pas cinq.** Le critere est `ReactionDef.zoneVifArgent`, un
-    // champ EPINGLE dans la table — pas un predicat sur la paire. Vaporisation,
-    // Paratonnerre et Amalgame le portent parce que leur effet utilise la
-    // liaison ; Gel profond et Aveuglement ne la portent PAS, parce que le §5
-    // de la spec les decrit comme une vitesse nulle et une fuite, jamais comme
-    // liants (decision de la tache 6, documentee dans `REACTION_DEFS`).
+    // ⚠️ **TROIS, pas les cinq qui apparient le Vif-argent.** Le critere est
+    // `ReactionDef.zoneVifArgent`, un champ EPINGLE dans la table, pas un
+    // predicat sur la paire. Vaporisation, Paratonnerre et Amalgame le
+    // portent parce que leur effet utilise la liaison ; Gel profond et
+    // Aveuglement non (une vitesse nulle et une fuite, jamais des liants, voir
+    // `REACTION_DEFS`).
     //
-    // ⚠️ **Et c'est le champ de table qui rend l'effet independant de l'ordre
-    // d'arrivee**, pas la canonicite de la paire : une grandeur lue dans la
-    // table ne depend d'aucun declencheur. C'est la discipline que cette etape
-    // a etablie — epingler plutot que deriver d'un element.
+    // ⚠️ **C'est le champ de table qui rend l'effet independant de l'ordre
+    // d'arrivee** : une grandeur lue dans la table ne depend d'aucun
+    // declencheur.
     const COMPTENT: ReadonlyArray<{ reaction: number; partner: number }> = [
       { reaction: REACTION.VAPORISATION, partner: ELEMENT.BRAISE },
       { reaction: REACTION.PARATONNERRE, partner: ELEMENT.FOUDRE },
@@ -1261,15 +1161,12 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
   });
 
   /**
-   * ⚠️ **Les DEUX decors de `burnAt`, adaptes — et dans les DEUX ordres,
-   * l asymetrie relevee a la re-revue finale de l etape 5b sur `burnAt` (un
-   * seul ordre teste) n est PAS reproduite ici.**
+   * ⚠️ **Les DEUX decors de `burnAt`, adaptes, et dans les DEUX ordres.**
    *
    * Cas 1 : une zone de Vif-argent PUR (`kind` eligible) et une zone de
-   * REACTION appariant le Vif-argent (`kind` FILTRE par
-   * `zoneReaction(kind) === 0`, voir le test precedent), aux MEMES
-   * coordonnees — jamais fusionnees puisque `spawn` compare le `kind`
-   * COMPLET. Verifie que le filtre et le maximum cooperent : la contribution
+   * REACTION a nibble Vif-argent qui ne compte pas (`kind` FILTRE, voir plus
+   * haut), aux MEMES coordonnees — jamais fusionnees puisque `spawn` compare
+   * le `kind` COMPLET. Le filtre et le maximum cooperent : la contribution
    * FILTREE ne compte jamais, seule celle qui reste rend
    * `VIF_ARGENT_HIT_RADIUS_BONUS` — jamais son double, jamais zero.
    *
@@ -1293,7 +1190,7 @@ describe('ZoneField.hitRadiusBonusAt — le rayon de touche elargi (etape 5c, ta
     expect(purPuisFiltre.count).toBe(2);
     expect(purPuisFiltre.hitRadiusBonusAt(100, 0, 0)).toBe(VIF_ARGENT_HIT_RADIUS_BONUS);
 
-    // Cas 1, ordre filtre puis pur — l asymetrie que `burnAt` n a jamais testee.
+    // Cas 1, ordre filtre puis pur.
     const filtrePuisPur = new ZoneField();
     expect(filtrePuisPur.spawn(kindFiltre, 100, 0, 0, 0)).toBe(0);
     expect(filtrePuisPur.spawn(kindPur, 100, 0, 0, 0)).toBe(1);

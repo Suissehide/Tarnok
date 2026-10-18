@@ -134,14 +134,10 @@ describe('revue finale de l etape 9 : pingClock ne vieillit pas pendant le gel d
   });
 
   /**
-   * Constat de la revue finale : un ping pose juste avant une montee de
-   * niveau disparaissait pendant que l'equipe choisissait ses cartes, parce
-   * que `#onPingShown` datait au `hordeTick` — qui avance a CHAQUE pas fixe,
-   * gel ou pas (seul `#movementScale` ralentit le mouvement). `pingClock`,
+   * Un ping pose juste avant une montee de niveau doit survivre au choix des
+   * cartes. `hordeTick` avance a CHAQUE pas fixe, gel ou pas ; `pingClock`,
    * lui, n'avance pas tant que `isFrozen` est vrai (gel strict ET rampe de
-   * reprise — tache 24), ce qu'un gel plus long que `PING_LIFE_TICKS` suffit
-   * a prouver : sans la correction, ce test echouerait avec l'ancien
-   * comportement.
+   * reprise). Un gel plus long que `PING_LIFE_TICKS` le prouve.
    */
   it('un ping recu juste avant un palier survit a un gel plus long que sa duree de vie', () => {
     const { client, socket } = connecte();
@@ -165,7 +161,7 @@ describe('revue finale de l etape 9 : pingClock ne vieillit pas pendant le gel d
     expect(client.pingClock - ping.tick).toBe(ageAvantGel);
     expect(client.pingClock - ping.tick).toBeLessThan(PING_LIFE_TICKS);
 
-    // Le serveur annonce la fin du gel ; la rampe de reprise (tache 24) gele
+    // Le serveur annonce la fin du gel ; la rampe de reprise gele
     // encore l'horloge de ping, puisque `isFrozen` la couvre aussi.
     socket.emit(encodeDraftResult(client.hordeTick, []));
     for (let i = 0; i < LEVEL_RESUME_TICKS + 5; i++) {

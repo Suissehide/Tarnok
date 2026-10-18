@@ -47,8 +47,7 @@ describe('etape 7a tache 4 : les deux routes du compte', () => {
   });
 
   /**
-   * Review Focus n°3 : les trois formes de « pas de jeton valide » doivent
-   * rendre 401, jamais 500, et surtout **jamais un solde de 0** — qui se
+   * Les trois formes de « pas de jeton valide » doivent rendre 401, jamais 500, et surtout **jamais un solde de 0** — qui se
    * lirait comme « ton compte est vide » alors que le compte n'a pas ete
    * trouve. Le joueur verrait son or disparaitre.
    */
@@ -84,15 +83,14 @@ describe('etape 7a tache 4 : les deux routes du compte', () => {
     // ⚠️ **Les quatre corps doivent etre IDENTIQUES, pas seulement « sans
     // gold ».** Un message different par forme d'echec — « jeton malforme »
     // d'un cote, « jeton inconnu » de l'autre — renseignerait un attaquant sur
-    // l'existence d'un compte, et c'est precisement ce que le 401 uniforme
-    // interdit. Sans cette assertion, une telle regression resterait verte.
+    // l'existence d'un compte.
     for (const res of [vide, malForme, inconnu]) {
       expect(res.body).toBe(sans.body);
     }
   });
 
   /**
-   * Review Focus n°4 : `bigint` n'est pas serialisable en JSON. Sans
+   * `bigint` n'est pas serialisable en JSON. Sans
    * conversion explicite, cette route leverait « Do not know how to serialize
    * a BigInt » et rendrait 500 — pour tout solde, pas seulement les gros.
    */
@@ -194,7 +192,7 @@ describe('etape 7b tache 5 : la boutique en http', () => {
   });
 
   /**
-   * Review Focus n°3 : un `itemId` inconnu, ou absent du corps — deux causes
+   * Un `itemId` inconnu, ou absent du corps — deux causes
    * distinctes, qui doivent rendre deux CORPS distincts. Un 400 identique
    * pour les deux ne prouverait rien : la garde de type pourrait disparaitre
    * sans faire rougir ce test, puisque `shopItemOf` rend aussi `undefined`

@@ -1,14 +1,18 @@
+name: tarnok
+
 services:
   front:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.front
       args:
-        # Inlinees dans le bundle au build (§5 du plan). `wss`, jamais `ws` :
+        # Inlinees dans le bundle au build. `wss`, jamais `ws` :
         # une socket en clair depuis une page HTTPS est bloquee par le
         # navigateur, avec un message peu explicite.
         VITE_WS_URL: wss://${TRAEFIK_API_HOST}/ws
         VITE_API_URL: https://${TRAEFIK_API_HOST}
+    image: '${CONTAINER_REGISTRY_PREFIX}${APP_IMAGE_NAME}-front:${VERSION:-latest}'
+    container_name: '${APP_IMAGE_NAME}-front'
     environment:
       # Substituees dans nginx.conf.template au demarrage du conteneur.
       ASSETS_BASE_URL: ${ASSETS_BASE_URL}
@@ -19,9 +23,11 @@ services:
       ASSETS_RESOLVER: ${ASSETS_RESOLVER:-127.0.0.11}
     labels:
       - traefik.enable=true
+      - traefik.docker.network=proxy
       - traefik.http.routers.tarnok-front.rule=Host(`${TRAEFIK_FRONT_HOST}`)
-      - traefik.http.routers.tarnok-front.entrypoints=websecure
-      - traefik.http.routers.tarnok-front.tls.certresolver=le
+      - traefik.http.routers.tarnok-front.entrypoints=https
+      - traefik.http.routers.tarnok-front.tls=true
+      - traefik.http.routers.tarnok-front.tls.certresolver=ovh
       - traefik.http.services.tarnok-front.loadbalancer.server.port=80
     depends_on: [back]
     restart: unless-stopped
@@ -31,6 +37,8 @@ services:
     build:
       context: ..
       dockerfile: deploy/Dockerfile.back
+    image: '${CONTAINER_REGISTRY_PREFIX}${APP_IMAGE_NAME}-back:${VERSION:-latest}'
+    container_name: '${APP_IMAGE_NAME}-back'
     environment:
       PORT: 3000
       HOST: 0.0.0.0
@@ -38,9 +46,11 @@ services:
       DATABASE_URL: postgres://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
     labels:
       - traefik.enable=true
+      - traefik.docker.network=proxy
       - traefik.http.routers.tarnok-api.rule=Host(`${TRAEFIK_API_HOST}`)
-      - traefik.http.routers.tarnok-api.entrypoints=websecure
-      - traefik.http.routers.tarnok-api.tls.certresolver=le
+      - traefik.http.routers.tarnok-api.entrypoints=https
+      - traefik.http.routers.tarnok-api.tls=true
+      - traefik.http.routers.tarnok-api.tls.certresolver=ovh
       - traefik.http.services.tarnok-api.loadbalancer.server.port=3000
     healthcheck:
       # 127.0.0.1 et pas `localhost` : dans l'image alpine, `localhost` resout
@@ -58,13 +68,14 @@ services:
     networks: [proxy, internal]
     # ⚠️ Un salon vit dans la memoire d'un process : ne PAS monter de repliques
     # avant d'avoir choisi entre l'affinite de session Traefik et un routage par
-    # code de salon (§5 du plan). Un round-robin enverrait les joueurs d'un meme
-    # salon sur des process differents et plus rien ne fonctionnerait.
+    # code de salon. Un round-robin enverrait les joueurs d'un meme salon sur
+    # des process differents.
     deploy:
       replicas: 1
 
   db:
     image: postgres:16-alpine
+    container_name: '${APP_IMAGE_NAME}-db'
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
@@ -83,5 +94,7 @@ volumes:
 
 networks:
   proxy:
+    name: proxy
     external: true
-  internal: {}
+  internal:
+    name: tarnok-internal

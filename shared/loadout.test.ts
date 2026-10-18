@@ -7,12 +7,9 @@ import { PASSIVES } from './passives';
 import { UPGRADE, UPGRADE_KINDS, upgradesFor, WEAPONS, weaponOf } from './weapons';
 
 /**
- * ⚠️ Les identifiants d'epreuve evitent volontairement `0`.
- *
- * La tache 1 de cette etape a livre un test que la mutation « rendre toujours
- * `PASSIVES[0]` » traversait sans echouer, parce qu'il ne verifiait que
- * l'identifiant 0. Une valeur par defaut, un premier indice ou un joueur unique
- * rendent une implementation fausse invisible.
+ * ⚠️ Les identifiants d'epreuve evitent volontairement `0` : une valeur par
+ * defaut, un premier indice ou un joueur unique rendent une implementation
+ * fausse invisible (un « rendre toujours `PASSIVES[0]` » passerait).
  */
 const ARME_A = 1;
 const ARME_B = 2;
@@ -20,8 +17,7 @@ const PASSIF_A = 1;
 
 describe('Loadout — les armes EMPILENT, comme les passifs', () => {
   it('empile la meme arme sans jamais lever : c est le modele du draft', () => {
-    // ⚠️ **Le comportement exactement INVERSE de ce que ce fichier gardait.**
-    // Une arme ne monte pas de niveau et ne s'exclut pas d'elle-meme : chaque
+    // ⚠️ Une arme ne monte pas de niveau et ne s'exclut pas d'elle-meme : chaque
     // carte prise ajoute un exemplaire, et c'est l'accumulation qui fait la
     // puissance. Un `addWeapon` qui refuserait un doublon rendrait l'etalage
     // inutile des la deuxieme carte.
@@ -36,7 +32,7 @@ describe('Loadout — les armes EMPILENT, comme les passifs', () => {
 
   it('une arme DEJA possedee ne consomme pas un second slot', () => {
     // Le pendant strict du test des passifs plus bas : compter un slot par
-    // CARTE remplirait l'inventaire en cinq cartes, la ou le design attend
+    // CARTE remplirait les `WEAPON_SLOTS` en quelques cartes, la ou le design attend
     // qu'on empile la meme arme des dizaines de fois sur une run.
     const l = new Loadout();
     for (let i = 0; i < 12; i++) {
@@ -105,11 +101,9 @@ describe('Loadout.canTake — ce qui remplace `owner`', () => {
     // observable : `canTake` choisit la branche ARMES ou la branche PASSIFS
     // selon elle.
     //
-    // ⚠️ **Depuis l'etape 13, les passifs ne bloquent plus jamais** : on ne
-    // peut donc plus construire l'asymetrie d'origine en remplissant les deux
-    // natures. Un seul inventaire suffit — armes pleines, meme identifiant
-    // interroge sur les deux natures : la branche ARMES doit refuser, la
-    // branche PASSIFS doit toujours accepter. Un `CARD_WEAPON` qui derive mal
+    // ⚠️ Les passifs ne bloquent jamais : armes pleines, le meme identifiant
+    // interroge sur les deux natures doit etre refuse par la branche ARMES et
+    // accepte par la branche PASSIFS. Un `CARD_WEAPON` qui derive mal
     // fait lire la mauvaise branche et les deux reponses convergent.
     const l = new Loadout();
     for (let i = 0; i < WEAPON_SLOTS; i++) {
@@ -161,8 +155,9 @@ describe('Loadout — les passifs empilent', () => {
 
   it('un passif DEJA possede ne consomme pas un second slot', () => {
     // ⚠️ C'est le test qui porte le modele Risk of Rain. Une implementation
-    // qui compte un slot par CARTE remplirait l'inventaire en trois cartes,
-    // la ou le design attend qu'on empile le meme passif des dizaines de fois.
+    // qui compte un slot par CARTE gonflerait le compte (que le HUD peint) a
+    // chaque carte, la ou le design attend qu'on empile le meme passif des
+    // dizaines de fois.
     const l = new Loadout();
     for (let i = 0; i < 12; i++) {
       l.addPassive(PASSIF_A);
@@ -227,15 +222,10 @@ describe('Loadout — une carte d arme reprise n ameliore QU UN aspect', () => {
 });
 
 describe('etape 13 : un malus est un bonus negatif', () => {
-  // ⚠️ Le catalogue n'a ENCORE AUCUNE carte a malus (elle arrive a une tache
-  // ulterieure) : on ne peut donc pas exercer ici la branche
-  // `p.malus?.kind === kind` de `bonus()` via une vraie carte, et cette tache
-  // ne doit pas en inventer une dans `shared/passives.ts`. Les deux tests
-  // ci-dessous couvrent ce qui EST verifiable sans contenu invente : le genre
-  // ajoute au catalogue, la somme de `maxHpOf`, et la non-regression de
-  // `bonus()` pour des passifs qui n'ont PAS de malus (la branche ajoutee ne
-  // doit rien changer a ce chemin, qui est le seul que le jeu emprunte
-  // aujourd'hui).
+  // Ces tests n'exercent pas la branche `p.malus?.kind === kind` de `bonus()`
+  // par une vraie carte a malus : ils couvrent le genre `armor`, la somme de
+  // `maxHpOf`, et le fait que cette branche ne change rien pour des passifs
+  // SANS malus.
 
   it("PASSIVE_KINDS contient 'armor', atteignable par une carte depuis cette tache", () => {
     const vide = new Loadout();
@@ -250,10 +240,8 @@ describe('etape 13 : un malus est un bonus negatif', () => {
 
   it('bonus() sans malus somme toujours pareil : la branche de retrait ne derange pas ce chemin', () => {
     // 'puissance' et 'acier' sont deux passifs DISTINCTS de genre 'damage',
-    // aucun des deux n'a de malus — exactement le fixture du test plus haut
-    // qui prouve que `bonus` somme a travers plusieurs passifs d'un meme
-    // kind. On la rejoue ici pour garder la preuve apres l'ajout de la
-    // branche `p.malus?.kind === kind` dans `bonus()`.
+    // sans malus : la somme a travers un meme kind doit tenir malgre la
+    // branche de malus de `bonus()`.
     const puissance = PASSIVES.find((p) => p.name === 'puissance');
     const acier = PASSIVES.find((p) => p.name === 'acier');
     if (!puissance || !acier) {

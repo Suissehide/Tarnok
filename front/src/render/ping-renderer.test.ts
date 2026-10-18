@@ -24,11 +24,10 @@ describe('livePings : la vie d un ping se compte en ticks de horde', () => {
   });
 
   /**
-   * ⚠️ Ce test verifie seulement que `livePings` est une fonction PURE du
-   * tick qu'on lui passe : appele deux fois avec le meme tick, meme resultat.
-   * `livePings` ne connait rien du gel — c'est l'appelant qui, en lui passant
-   * `GameClient#pingClock` plutot que `hordeTick`, fait qu'un tick immobile
-   * correspond au gel de niveau (revue finale, etape 9).
+   * ⚠️ Ce test verifie seulement que `livePings` est PURE en son tick.
+   * `livePings` ne connait rien du gel : c'est l'appelant, en lui passant
+   * `GameClient#pingClock` plutot que `hordeTick`, qui fige le tick au gel
+   * de niveau.
    */
   it('un tick immobile donne le meme resultat (c est pingClock, pas livePings, qui fige pendant le gel)', () => {
     const m = new Map([[2, ping(2, 100)]]);

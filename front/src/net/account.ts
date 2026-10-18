@@ -15,27 +15,18 @@ function bienForme(text: string | null): text is string {
  *
  * ⚠️ **`mint` n'est appele QUE si le stockage n'en porte pas deja un de bonne
  * forme, OU que `verify` refuse celui qui y est.** Rappeler `mint` a chaque
- * chargement donnerait un compte neuf — donc un solde a zero — a chaque
- * visite, et « l'or survit a la fermeture du navigateur » serait faux de la
- * facon la plus silencieuse possible.
+ * chargement donnerait un compte neuf, donc un solde a zero, a chaque visite.
  *
- * `storage` est injecte plutot que lu globalement : c'est ce qui rend cette
- * fonction testable sans navigateur.
+ * `storage` est injecte pour tester sans navigateur.
  *
- * ⚠️ **`verify` ferme le cul-de-sac du ruling P9.** Un jeton bien forme mais
- * INCONNU du serveur — base reinitialisee en developpement, ligne
- * supprimee — resterait sinon stocke pour toujours : la socket serait fermee
- * a chaque tentative et le joueur ne pourrait plus jamais jouer, sans rien a
- * l'ecran qui le lui dise. Par defaut `verify` accepte tout sans appel
- * reseau, pour que les sites qui ne passent pas cet argument (y compris les
- * tests qui testaient cette fonction avant que ce parametre n'existe)
- * gardent exactement le meme comportement.
+ * ⚠️ **`verify` evite un cul-de-sac.** Un jeton bien forme mais INCONNU du
+ * serveur (base reinitialisee, ligne supprimee) resterait sinon stocke pour
+ * toujours : la socket serait fermee a chaque tentative, sans rien a l'ecran.
+ * Par defaut `verify` accepte tout sans appel reseau.
  *
- * ⚠️ **Le rendu de `mint` est valide avant d'etre stocke.** Une reponse
- * serveur mal formee (`{}`, par exemple) ecrirait sinon la chaine litterale
- * "undefined" dans le `localStorage` du joueur, ce qui `bienForme` detecte
- * mais ne corrigerait plus jamais tant que le navigateur garderait cette
- * valeur. On leve plutot que de stocker.
+ * ⚠️ **Le rendu de `mint` est valide avant d'etre stocke.** Une reponse mal
+ * formee (`{}`) ecrirait sinon "undefined" dans le `localStorage`. On leve
+ * plutot que de stocker.
  */
 export async function tokenText(
   storage: Pick<Storage, 'getItem' | 'setItem'>,
@@ -87,14 +78,9 @@ export interface CompteEtat {
 /**
  * Lit le solde et les achats du compte.
  *
- * ⚠️ **Couche RESEAU, et rien d'autre.** `main.ts` dit de lui-meme « le
- * DEMARRAGE, et rien d'autre » : un `fetch` y est mal place. Cette fonction
- * ne decide rien — ni ce qui s'affiche sur un refus (`null`), ni ce qui se
- * passe sur une panne reseau (elle leve, l'appelant decide).
- *
- * `null` sur un `!res.ok` plutot qu'une levee : `main.ts` traite deja une
- * reponse non-OK et une panne reseau de la meme facon (un tiret a l'ecran),
- * donc cette distinction n'a pas besoin de survivre jusqu'a l'appelant.
+ * Couche RESEAU seulement : elle ne decide rien de l'affichage. `null` sur un
+ * refus, levee sur une panne reseau ; `main.ts` traite les deux pareil (un
+ * tiret a l'ecran).
  */
 export async function fetchCompte(apiUrl: string, token: string): Promise<CompteEtat | null> {
   const res = await fetch(`${apiUrl}/accounts/me`, {
@@ -107,8 +93,8 @@ export async function fetchCompte(apiUrl: string, token: string): Promise<Compte
  * Le resultat d'un achat : soit le nouvel etat du compte, soit le CODE HTTP
  * du refus — jamais traduit ici en message, c'est `ui/shop.ts#messageAchat`
  * qui distingue 402 (solde insuffisant ou palier maximum : gagner plus d'or)
- * de 409 (conflit : rafraichir et retenter). Voir la doc de `buyItem`
- * (`back/src/accounts.ts`) pour le raisonnement complet.
+ * de 409 (conflit : rafraichir et retenter). Voir `buyItem` dans
+ * `back/src/accounts.ts`.
  */
 export type ReponseAchat = ({ ok: true } & CompteEtat) | { ok: false; status: number };
 

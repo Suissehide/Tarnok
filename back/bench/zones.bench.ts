@@ -1,23 +1,15 @@
 /**
- * Banc des zones au sol (etape 5a, tache 10) — **ce que les zones coutent, en
- * octets et en millisecondes.**
+ * Banc des zones au sol — **ce que les zones coutent, en octets et en
+ * millisecondes.**
  *
- * Deux questions, et aucun des cinq bancs existants n'y repondait : `sim` a sa
- * propre horde locale et n'avance que des positions, `net` ne compte que les
- * octets d'un salon SANS arme elementaire, `steering` ne regarde que la
- * repulsion, `slots` mesure le cout d'un tick sans zones, `kills` compte des
- * morts.
+ * **1. Le trafic.** La fusion rend le NOMBRE de zones fonction de la surface
+ * couverte, pas de la cadence. Mais le rafraichissement doit etre annonce —
+ * sinon la zone du client meurt avant celle du serveur — et l'annoncer a
+ * chaque fusion ferait suivre au trafic la cadence des armes. La parade : une
+ * re-annonce par `ZONE_REFRESH_INTERVAL_TICKS` au plus. Ce banc mesure le ko/s
+ * recu par chaque client, a 1, 4 et 8 exemplaires par arme.
  *
- * **1. Le trafic (§5.1 bis).** La fusion a rendu le NOMBRE de zones fonction de
- * la surface couverte, pas de la cadence. Mais le rafraichissement doit etre
- * annonce — sinon la zone du client meurt avant celle du serveur — et
- * l'annoncer a chaque fusion fait suivre au trafic la cadence des armes,
- * exactement le couplage que la fusion venait de supprimer pour le compte.
- * Ce banc mesure le ko/s recu par chaque client, a 1, 4 et 8 exemplaires par
- * arme, pour que la parade (« l'annonce EST la verite », une re-annonce par
- * `ZONE_REFRESH_INTERVAL_TICKS` au plus) soit un chiffre et pas une intention.
- *
- * **2. Le cout du balayage (§5.2).** Le recouvrement est en O(zones²) et le
+ * **2. Le cout du balayage.** Le recouvrement est en O(zones²) et le
  * marquage en O(zones x entites). `ZONE_RADIUS` est le levier des deux : il
  * fixe le nombre de zones qu'une surface donnee peut porter (la fusion les
  * espace d'au moins un rayon) ET la surface que chacune balaie. On mesure donc
@@ -42,23 +34,19 @@ import { stats } from './harness';
 
 const DT = 1 / TICK_HZ;
 
-/** Budget d'un pas serveur (§10 de la spec de l'etape 5a). */
+/** Budget d'un pas serveur, en ms : un tiers d'un tick a 30 Hz. */
 const BUDGET_MS = 11.11;
 
 /** Ancre commune a la horde et aux zones du banc de balayage. */
 const ANCRE = 3000;
 
 /**
- * L'archetype LOURD, et il n'est pas decoratif depuis la tache 21.
+ * L'archetype LOURD, pas decoratif.
  *
- * ⚠️ **Avec la pietaille legere, ce banc ne mesure plus RIEN.** Un ennemi tue
- * du meme impact n'est pas marque (`resolveProjectileDamage`), donc il ne
- * reagit jamais — et depuis que les zones naissent de la REACTION et non plus
- * du projectile, « pas de reaction » veut dire « pas une seule zone ». Le banc
- * tournait avec `archetype: 0` (une pietaille legere) et rendait des zeros
- * partout : un banc qui cesse de mesurer, exactement le motif que la tache 19
- * a trouve dans un test. C'est la pietaille LOURDE qui porte le systeme
- * elementaire (§3.3 de la spec), et c'est elle qu'il faut peupler ici.
+ * ⚠️ **Avec la pietaille legere, ce banc ne mesure RIEN.** Un ennemi tue du
+ * meme impact n'est pas marque (`resolveProjectileDamage`), donc il ne reagit
+ * jamais ; or les zones naissent de la REACTION : pas de reaction, pas une
+ * seule zone, et le banc rend des zeros partout.
  */
 const LOURD = ARCHETYPES.find((a) => a.hp === HEAVY_HP)?.id ?? -1;
 if (LOURD < 0) {
@@ -92,8 +80,8 @@ function peuple(horde: Horde, n: number, anchorX = ANCRE, anchorY = ANCRE): void
 /**
  * Un salon a quatre joueurs, chacun portant les deux armes elementaires en
  * `exemplaires` exemplaires, tous visant en continu — le decor de trafic le
- * plus defavorable que l'etape 4 permette (chaque exemplaire elargit la salve
- * d'un projectile, donc multiplie les fins de course, donc les poses).
+ * plus defavorable (chaque exemplaire elargit la salve d'un projectile, donc
+ * multiplie les fins de course, donc les poses).
  */
 function salonElementaire(exemplaires: number, entites: number): Room {
   const room = new Room(0x20_0e_5a_10);
@@ -252,8 +240,8 @@ console.table(recouvrementRows);
  * tick — la limite que la regle de pose autorise — et on compte les annonces.
  *
  * Sans plafond, c'est `zones x TICK_HZ` annonces par seconde, donc un trafic
- * fonction de la cadence des armes. Avec la parade (« l'annonce EST la
- * verite »), c'est `zones / (ZONE_REFRESH_INTERVAL_TICKS / TICK_HZ)`, donc un
+ * fonction de la cadence des armes. Avec le plafond de re-annonce, c'est
+ * `zones / (ZONE_REFRESH_INTERVAL_TICKS / TICK_HZ)`, donc un
  * trafic fonction du seul NOMBRE de zones — que la fusion borne deja par la
  * surface.
  */

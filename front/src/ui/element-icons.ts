@@ -15,7 +15,7 @@ const CONTOUR = '#221111';
 /**
  * Le neutre a pour teinte le blanc (identite Pixi) : gris pour l'icone.
  * Meme conversion que `cssColor` de `draft.ts`, recopiee plutot qu'importee :
- * `draft.ts` importera ce module, l'inverse ferait un cycle.
+ * `draft.ts` importe ce module, l'inverse ferait un cycle.
  */
 function fillOf(elementId: number): string {
   if (elementId === ELEMENT.NEUTRE) {

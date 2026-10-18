@@ -129,11 +129,9 @@ describe('encodeInput / decodeInput', () => {
     expect(decodeInput(encodeInput(65535, 0, 0, 0, 0)).seq).toBe(65535);
   });
 
-  // ⚠️ Ce test ne pourrait PAS attraper un decalage d'octet entre aimX et
-  // aimY (un aller-retour seul ne le peut jamais, encodeur et decodeur
-  // partageant la meme erreur) : c'est la raison d'etre du test de taille
-  // exacte ci-dessous, et de celui de troncature plus bas, qui portent sur
-  // le format lui-meme plutot que sur le seul aller-retour.
+  // ⚠️ Un aller-retour seul ne voit jamais un decalage d'octet entre aimX et
+  // aimY (encodeur et decodeur partagent l'erreur) : c'est le role des tests
+  // de taille exacte et de troncature, qui portent sur le format lui-meme.
   it('tient exactement INPUT_BYTES octets (5 -> 7, tache 13 : +aimX +aimY)', () => {
     expect(encodeInput(1, 1, 1, 1, 1).byteLength).toBe(INPUT_BYTES);
     expect(INPUT_BYTES).toBe(7);
@@ -145,11 +143,9 @@ describe('encodeInput / decodeInput', () => {
     expect(() => decodeInput(truncated)).toThrow(/tronqu/i);
   });
 
-  // ⚠️ Distinct du test de troncature generique ci-dessus : celui-ci coupe
-  // PILE avant les deux octets de visee ajoutes par la tache 13 (l'entree
-  // faisait 5 octets avant elle). Sans cette coupe precise, un decalage qui
-  // ecrirait aimX/aimY hors de INPUT_BYTES pourrait passer inapercu tant que
-  // le buffer alloue est assez grand pour absorber l'erreur.
+  // ⚠️ Coupe PILE avant les deux octets de visee. Sans cette coupe precise,
+  // un decalage qui ecrirait aimX/aimY hors de INPUT_BYTES passerait inapercu
+  // tant que le buffer alloue absorbe l'erreur.
   it('leve sur un buffer tronque juste avant la visee (5 octets, tache 13)', () => {
     const truncated = encodeInput(1, 1, 1, 90, -60).slice(0, 5);
 
@@ -229,12 +225,10 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     });
   });
 
-  // ⚠️ **Etape 13.** `Room#grantCard` plafonne deja `hp` a zero pour un mort,
-  // mais `setUint16` applique un modulo 2^16 a QUICONQUE l'appelle sans cette
-  // garde — ici ou dans n'importe quel chemin futur qui laisserait `hp` filer
-  // sous zero. Sans la borne, `hp = -40` (un mort qui recevrait un malus de
-  // PV max) partirait sur le fil a 65 496 : un mort affiche a PV quasi plein.
-  // Meme repli silencieux que l'etape 4, cote negatif cette fois.
+  // ⚠️ `setUint16` applique un modulo 2^16 a quiconque l'appelle sans cette
+  // garde, meme si `Room#grantCard` plafonne deja `hp` a zero pour un mort.
+  // Sans la borne, `hp = -40` (un mort qui recevrait un malus de PV max)
+  // partirait sur le fil a 65 496 : un mort affiche a PV quasi plein.
   it('un hp negatif ressort a zero au decodage, jamais replie pres de 65 536', () => {
     const buf = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: -40, aimX: 0, aimY: 0, pickupRadius: 90, shield: 0 },
@@ -261,11 +255,9 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     expect(decodeSnapshot(encodeSnapshot(1, 0, 65_535, [])).synergy).toBe(65_535);
   });
 
-  // ⚠️ La lecon de l'etape 4 : `hp` etait encode sur un octet, le passif
-  // « vitalite » a pousse un joueur a 260 PV, et il se repliait en silence a
-  // 4 PV au decodage. Un champ n'est pas assez large parce qu'il en a l'air :
-  // on confronte la valeur que le JEU produit reellement a la largeur du
-  // champ, sans jamais reecrire 20 en dur (le plafond est un reglage).
+  // ⚠️ Un champ n'est pas assez large parce qu'il en a l'air (un `hp` sur un
+  // octet a deja replie 260 PV en 4) : on confronte la valeur que le JEU
+  // produit a la largeur du champ, sans reecrire le plafond en dur.
   it('SYNERGY_MAX tient dans le u16 du snapshot, sans repli silencieux', () => {
     expect(SYNERGY_MAX).toBeLessThanOrEqual(65_535);
     expect(decodeSnapshot(encodeSnapshot(1, 0, SYNERGY_MAX, [])).synergy).toBe(SYNERGY_MAX);
@@ -297,15 +289,11 @@ describe('encodeSnapshot / decodeSnapshot', () => {
 
   // ⚠️ **Coupe PILE avant les quatre octets de PV du boss** (identite lue,
   // vie manquante). Et `toThrow(/tronqu/i)`, jamais `toThrow()` nu : un
-  // `RangeError` de `DataView` ferait passer un `toThrow()` nu meme si le
-  // controle de longueur avait disparu — defaut reel de l'etape 4.
+  // `RangeError` de `DataView` le ferait passer meme sans controle de longueur.
   it('leve sur un en-tete tronque juste avant les PV du boss', () => {
-    // ⚠️ **14, pas `SNAPSHOT_HEADER_BYTES - 4`.** La coupe visait la fin de
-    // l'en-tete tant que les PV du boss la terminaient ; l'or de la tache 7
-    // s'est ajoute derriere, et la formule relative aurait suivi en silence —
-    // ce test aurait alors coupe avant l'OR en pretendant couper avant les PV,
-    // et le nom du test serait devenu un mensonge. L'octet vise est nomme par
-    // sa position dans la liste de champs, pas par sa distance a la fin.
+    // ⚠️ **14, pas `SNAPSHOT_HEADER_BYTES - 4`** : l'or suit les PV du boss
+    // dans l'en-tete, et une coupe relative a la fin couperait avant l'OR.
+    // L'octet vise est nomme par sa position, pas par sa distance a la fin.
     const truncated = encodeSnapshot(1, 12_000, 7, [], { id: 8193, hp: 6000 }).slice(0, 14);
 
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
@@ -329,10 +317,9 @@ describe('encodeSnapshot / decodeSnapshot', () => {
     expect(() => decodeSnapshot(truncated)).toThrow(/tronqu/i);
   });
 
-  // ⚠️ Coupe PILE avant les deux octets de visee du premier joueur (bloc de
-  // 8 octets, tache 13 : les 6 premiers passent, aimX/aimY manquent). Sans ce
-  // test precis, un decalage qui placerait aimX/aimY hors du bloc pourrait
-  // passer inapercu tant que le buffer alloue reste assez grand.
+  // ⚠️ Coupe PILE avant les deux octets de visee du premier joueur (les 6
+  // premiers octets du bloc passent, aimX/aimY manquent). Sans ce test, un
+  // decalage qui placerait aimX/aimY hors du bloc pourrait passer inapercu.
   it('leve sur un buffer tronque juste avant la visee du joueur (tache 13)', () => {
     const truncated = encodeSnapshot(1, 0, 0, [
       { id: 1, x: 0, y: 0, hp: 1, aimX: 90, aimY: -60, pickupRadius: 90, shield: 0 },
@@ -344,10 +331,9 @@ describe('encodeSnapshot / decodeSnapshot', () => {
 
 describe('etape 7b tache 7 : le rayon de ramassage voyage par joueur', () => {
   /**
-   * ⚠️ **Epingle en chiffres NUS.** Une assertion `toBe(SNAPSHOT_PLAYER_BYTES)`
-   * serait vraie quoi qu'il arrive — c'est la doctrine deja appliquee a 22 et 9
-   * plus haut dans ce fichier. **9 devient 10, et c'est le cout affiche de
-   * l'etape 7b** : sept etapes sans un octet ajoute par tick s'arretent ici.
+   * ⚠️ **Epingle en chiffres NUS** : une assertion `toBe(SNAPSHOT_PLAYER_BYTES)`
+   * serait vraie quoi qu'il arrive. Chaque octet par joueur se paie a chaque
+   * tick : le grossir doit faire rougir ce test.
    */
   it('SNAPSHOT_PLAYER_BYTES vaut 11, et le snapshot a quatre joueurs fait 66 octets', () => {
     expect(SNAPSHOT_HEADER_BYTES).toBe(22);
@@ -373,31 +359,25 @@ describe('etape 7b tache 7 : le rayon de ramassage voyage par joueur', () => {
     expect(msg.players.map((p) => p.pickupRadius)).toEqual([90, 170]);
   });
 
-  // ⚠️ **Pas de test du `Math.min(255, ...)` de l'encodeur ici, et c'est
-  // deliberer** : amendement du controleur sur cette tache. Le maximum
-  // atteignable (90 + maxBonus('pickupRadius') = 170, voir
-  // `shared/shop.test.ts`) ne touche jamais 255 — un test qui pretendrait
-  // declencher cette borne serait du theatre sur du code inatteignable.
-  // C'est l'invariant du catalogue qui garde cette propriete, pas une
-  // assertion sur l'encodeur.
+  // ⚠️ **Pas de test du `Math.min(255, ...)` de l'encodeur, deliberement** :
+  // le maximum atteignable (90 + maxBonus('pickupRadius') = 170, voir
+  // `shared/shop.test.ts`) ne touche jamais 255, et un test qui pretendrait
+  // declencher cette borne serait du theatre. C'est l'invariant du catalogue
+  // qui garde cette propriete.
 });
 
 /**
- * La vie du boss sur le fil (etape 6a, tache 4).
- *
- * ⚠️ **La premiere donnee PAR ENTITE que ce protocole transporte, et c'est le
- * NOMBRE qui l'autorise** (§1.1 de la spec) : un seul boss vivant. Le jour ou
- * un palier en fera dix, ce ne sera plus un boss mais de la pietaille d'elite,
- * et sa vie redeviendra serveur seul.
+ * ⚠️ **La seule donnee PAR ENTITE que ce protocole transporte, et c'est le
+ * NOMBRE qui l'autorise** : un seul boss vivant. Dix boss seraient de la
+ * pietaille d'elite, dont la vie reste serveur seul.
  */
 describe('le boss dans le snapshot (etape 6a, tache 4)', () => {
   /** Une identite d'entite REELLE : vague 2, indice 1. Jamais un nombre invente. */
   const BOSS_ID = entityIdOf(2, 1);
 
   /**
-   * Premier palier ou un `u16` aurait deborde — **CALCULE ici**, jamais un 22
-   * recopie : le jour ou `BOSS_HP_PER_PLAYER` ou `PALIER_HP_SCALE` bougent, ce
-   * nombre bouge avec eux et le test continue de dire la meme chose.
+   * Premier palier ou un `u16` aurait deborde, **CALCULE ici** : il suit
+   * `BOSS_HP_PER_PLAYER` et `PALIER_HP_SCALE` s'ils bougent.
    */
   const PALIER_LIMITE_U16 = ((): number => {
     let k = 0;
@@ -441,11 +421,9 @@ describe('le boss dans le snapshot (etape 6a, tache 4)', () => {
 
   /**
    * ⚠️ **La sentinelle ne peut PAS valoir une identite reelle, et ce test le
-   * DERIVE de `entityIdOf` au lieu de le supposer.** Les identites valent
-   * `waveId * MAX_PER_WAVE + index` et le premier `waveId` vaut 1 : le plus
-   * petit numero atteignable est donc `MAX_PER_WAVE`. C'est la meme regle que
-   * `NO_TOKEN = 255` a l'etape 4 — la carte 0 etant une carte reelle, zero
-   * n'aurait rien pu signifier.
+   * DERIVE de `entityIdOf`.** Les identites valent `waveId * MAX_PER_WAVE +
+   * index` et le premier `waveId` vaut 1 : le plus petit numero atteignable
+   * est donc `MAX_PER_WAVE`.
    */
   it('choisit une sentinelle qu aucune identite d entite ne peut atteindre', () => {
     expect(NO_BOSS_ID).toBeLessThan(entityIdOf(1, 0));
@@ -465,10 +443,9 @@ describe('le boss dans le snapshot (etape 6a, tache 4)', () => {
   });
 
   /**
-   * ⚠️ **LA LECON DE L'ETAPE 4, appliquee a la lettre.** Le `hp` du joueur
-   * etait un `u8` ; la huitieme carte de vitalite l'a pousse a 260 et il se
-   * repliait en silence a 4 PV. On confronte donc la valeur que le JEU produit
-   * a la largeur du champ, en la CALCULANT — jamais un 6 000 recopie.
+   * ⚠️ On confronte la valeur que le JEU produit a la largeur du champ, en la
+   * CALCULANT plutot qu'en recopiant un nombre : un champ trop etroit replie
+   * en silence.
    */
   it('tient le boss le plus lourd que le jeu sache produire, sans repli silencieux', () => {
     // Le boss d'une equipe pleine, palier par palier, jusqu'a la ou un u16
@@ -488,10 +465,9 @@ describe('le boss dans le snapshot (etape 6a, tache 4)', () => {
 
   /**
    * ⚠️ **Au-dela du u32, on BORNE, on ne replie pas.** `setUint32` prendrait le
-   * modulo — un boss de 4,3 milliards de PV se reveillerait a quelques
+   * modulo : un boss de 4,3 milliards de PV se reveillerait a quelques
    * centaines. Le palier ou cela arrive (119, ~10 h de jeu) est hors de
-   * portee, mais le repli silencieux est exactement le defaut de l'etape 4 et
-   * il ne se rattrape pas : il se refuse.
+   * portee, mais un repli silencieux ne se rattrape pas : il se refuse.
    */
   it('borne au lieu de replier au-dela du u32', () => {
     const decoded = decodeSnapshot(
@@ -760,10 +736,9 @@ describe('decode', () => {
 });
 
 describe('DRAFT_OPEN', () => {
-  // ⚠️ **Plus d'octet `owner`.** Il portait l'exclusivite des cartes reservees,
-  // qui n'existe plus : toute carte est ouverte a tout le monde. Une carte
-  // tient en QUATRE octets — le quatrieme est la rarete (`RARITY`, etape 10) —,
-  // et c'est l'assertion de taille ci-dessous qui le garde.
+  // ⚠️ Pas d'octet `owner` : toute carte est ouverte a tout le monde. Une
+  // carte tient en QUATRE octets (le quatrieme est la rarete), et c'est
+  // l'assertion de taille ci-dessous qui le garde.
   //
   // Les trois cartes ne partagent ni nature ni `refId` : un encodeur qui
   // intervertirait les deux octets se verrait.
@@ -791,17 +766,11 @@ describe('DRAFT_OPEN', () => {
       DRAFT_OPEN_HEADER_BYTES + cartes.length * DRAFT_CARD_BYTES,
     );
     expect(encodeDraftOpen(1, []).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES);
-    // ⚠️ La ligne ci-dessus se calcule AVEC la constante : elle passerait sur
-    // une carte de quatre octets si la constante mentait aussi. Le chiffre nu
-    // est ce qui garde l'ajout de l'octet de rarete.
+    // ⚠️ La ligne ci-dessus se calcule AVEC la constante : elle passerait si
+    // la constante mentait aussi. Le chiffre nu garde la taille de la carte.
     expect(DRAFT_CARD_BYTES).toBe(4);
-    // ⚠️ **Meme trou, meme remede, cote en-tete.** Les deux assertions
-    // precedentes calculent la taille AVEC `DRAFT_OPEN_HEADER_BYTES` : un
-    // en-tete qui aurait grossi d'un masque d'eligibilite (§3.5 de la spec)
-    // resterait invisible, l'encodeur et le decodeur partageant la meme
-    // constante mutee. Le chiffre nu ci-dessous est ce qui l'attrape —
-    // mesure (Ronde 2, tache 9 de l'etape 7b) : muter
-    // `DRAFT_OPEN_HEADER_BYTES` a 7 laissait tout le reste de ce fichier vert.
+    // ⚠️ **Meme trou, meme remede, cote en-tete** : un en-tete qui grossirait
+    // resterait invisible, encodeur et decodeur partageant la meme constante.
     expect(DRAFT_OPEN_HEADER_BYTES).toBe(6);
     expect(encodeDraftOpen(1, cartes).byteLength).toBe(DRAFT_OPEN_HEADER_BYTES + 12);
   });
@@ -905,16 +874,12 @@ describe('DRAFT_RESULT', () => {
   });
 
   it('porte la fin du gel, que le client ne peut PAS deduire', () => {
-    // ⚠️ **Il y avait un octet `phase` avant `deadlineTick`.** Il distinguait
-    // « le draft est termine » de « une repioche s'ouvre » ; la repioche n'a
-    // plus lieu, la resolution est un seul moment, et le message n'a plus
-    // qu'un sens possible.
-    //
-    // Ce qui reste indispensable, c'est `deadlineTick` : la fenetre dure
-    // jusqu'a ce que tout le monde ait pose son jeton, et en solo elle se
-    // ferme au clic — chaque client devinerait une fin de gel differente. On
-    // eprouve DEUX echeances distinctes : un champ code en dur passerait avec
-    // une seule.
+    // ⚠️ Le message n'a qu'un sens possible (la resolution est un seul
+    // moment), donc pas d'octet `phase`. Ce qui reste indispensable, c'est
+    // `deadlineTick` : la fenetre dure jusqu'a ce que tout le monde ait pose
+    // son jeton, et en solo elle se ferme au clic, donc chaque client
+    // devinerait une fin de gel differente. On eprouve DEUX echeances
+    // distinctes : un champ code en dur passerait avec une seule.
     for (const deadline of [700, 0x1234_5678]) {
       const msg = decode(encodeDraftResult(deadline, issues));
       if (msg.type !== MSG.DRAFT_RESULT) {
@@ -925,18 +890,16 @@ describe('DRAFT_RESULT', () => {
   });
 
   it('tient sur SIX octets d en-tete : l octet de phase a disparu', () => {
-    // La taille est le seul endroit ou la disparition de `phase` se constate
-    // sans lire le code — et un en-tete de sept octets se decoderait sans
-    // lever, en decalant simplement toutes les issues.
+    // Un en-tete de sept octets se decoderait sans lever, en decalant
+    // simplement toutes les issues : seule la taille le voit.
     expect(DRAFT_RESULT_HEADER_BYTES).toBe(6);
     expect(encodeDraftResult(900, []).byteLength).toBe(6);
   });
 
   it('leve un message TRONQUE explicite, pas une erreur de bornes fortuite', () => {
-    // ⚠️ Assener seulement `toThrow()` ne prouve rien ici : sans le controle
-    // de longueur, le `DataView` finit par lever tout seul en depassant. La
-    // mutation « retirer le controle » survivait a un test moins precis.
-    // C'est le MESSAGE qui rend ce controle porteur.
+    // ⚠️ Un `toThrow()` nu ne prouve rien ici : sans le controle de longueur,
+    // le `DataView` finit par lever tout seul. C'est le MESSAGE qui rend ce
+    // controle porteur.
     const buf = encodeDraftResult(1, issues);
     expect(() => decode(buf.slice(0, DRAFT_RESULT_HEADER_BYTES + 1))).toThrow(/tronque/);
   });
@@ -952,7 +915,7 @@ describe('packElementPair / unpackElementPair', () => {
   // ⚠️ La moitie qui manque toujours : « le meme octet » serait aussi vrai
   // d'une fonction qui rend une constante. Deux couples differents doivent
   // porter deux octets differents, sinon le client dessinerait le meme flash
-  // pour deux reactions du §6.3.
+  // pour deux reactions.
   it('donne un octet different a chaque couple distinct', () => {
     const braiseGivre = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
     const neutreGivre = packElementPair(ELEMENT.NEUTRE, ELEMENT.GIVRE);
@@ -980,20 +943,16 @@ describe('packElementPair / unpackElementPair', () => {
   });
 
   // Le couple tient sur UN octet parce que chaque element tient sur un
-  // quartet. Six elements sont prevus au §6.3 de l'orientation, seize
-  // rentrent : la marge est verifiee, pas supposee — un dix-septieme element
-  // replierait les couples en silence, exactement comme `hp` sur un octet a
-  // l'etape 4.
+  // quartet : seize elements au plus. La marge est verifiee, pas supposee :
+  // un dix-septieme element replierait les couples en silence.
   it('garde la marge du quartet : au plus seize elements', () => {
     expect(ELEMENTS.length).toBeLessThanOrEqual(16);
   });
 });
 
 /**
- * Etape 5b, tache 5 : `ZONE` porte deja un `u8` — l'element que la zone
- * marque. Cette tache le fait porter un COUPLE, sans en ajouter un second :
- * l'element dans les bits 0-2, le type de champ de reaction dans les bits
- * 3-6.
+ * `ZONE` porte un seul `u8` pour un COUPLE : l'element dans les bits 0-2, le
+ * type de champ de reaction dans les bits 3-6.
  */
 describe('packZoneKind / zoneElement / zoneReaction', () => {
   /**
@@ -1013,11 +972,9 @@ describe('packZoneKind / zoneElement / zoneReaction', () => {
     }
   });
 
-  // ⚠️ **Le piege exact que ce depot nomme « le decor qui masque » :**
-  // `packZoneKind(element, 0)` vaut NUMERIQUEMENT `element` — un aller-retour
-  // qui n'empaquetterait qu'avec une reaction nulle passerait avec une
-  // fonction identite a la place de `packZoneKind`. Ce test-ci exige
-  // `kind !== element`.
+  // ⚠️ **Le decor qui masque** : `packZoneKind(element, 0)` vaut
+  // NUMERIQUEMENT `element`, donc un aller-retour avec une reaction nulle
+  // passerait avec une fonction identite. Ce test exige `kind !== element`.
   it('kind differe de l element seul des qu une reaction est empaquetee', () => {
     const kind = packZoneKind(ELEMENT.GIVRE, 5);
 
@@ -1050,9 +1007,8 @@ describe('packZoneKind / zoneElement / zoneReaction', () => {
     expect(zoneReaction(base)).toBe(7);
   });
 
-  // ⚠️ **La contrainte dure de la tache : zero octet de plus.** `ZONE` reste
-  // a 11 octets — le couple tient dans l'octet qu'il avait deja, jamais dans
-  // un second.
+  // ⚠️ **Zero octet de plus** : `ZONE` reste a 11 octets, le couple tient
+  // dans l'octet qu'il avait deja.
   it('ZONE_BYTES reste a 11 : le couple tient dans l octet existant', () => {
     expect(ZONE_BYTES).toBe(11);
   });
@@ -1086,14 +1042,12 @@ describe('encodeBossCharge / decodeBossCharge', () => {
   });
 
   /**
-   * ⚠️ **LE test de cette tache, cote fil.** Le serveur derive la position du
-   * boss depuis la charge qu'il a construite ; le client depuis celle qu'il
-   * decode. Si l'aller-retour changeait le moindre bit d'une composante, les
-   * deux suivraient deux couloirs voisins mais distincts, et l'ecart croitrait
-   * tout du long — le defaut exact que le centre STOCKE d'une zone evite depuis
-   * l'etape 5a. `makeBossCharge` quantifie A LA CONSTRUCTION pour cette raison,
-   * et c'est ce que ce test verifie : la valeur construite survit au fil A
-   * L'IDENTIQUE, pas « a peu pres ».
+   * ⚠️ Le serveur derive la position du boss depuis la charge qu'il a
+   * construite ; le client depuis celle qu'il decode. Si l'aller-retour
+   * changeait le moindre bit d'une composante, les deux suivraient deux
+   * couloirs voisins mais distincts, et l'ecart croitrait tout du long.
+   * `makeBossCharge` quantifie donc A LA CONSTRUCTION, et ce test verifie
+   * que la valeur construite survit au fil A L'IDENTIQUE.
    */
   it('rend une charge BIT POUR BIT identique a celle que `makeBossCharge` a construite', () => {
     // Une direction volontairement irrationnelle : ni axiale, ni a 45 degres,
@@ -1208,8 +1162,8 @@ describe('encodeReaction / decodeReaction', () => {
   });
 
   // ⚠️ **Les deux moities, toujours.** Un aller-retour qui ne verifie que la
-  // charge passe avec un encodeur qui met 1 en dur — et la Synergie du §7,
-  // « le coeur du projet », monterait alors a chaque reaction, solo comprise.
+  // charge passe avec un encodeur qui met 1 en dur, et la Synergie monterait
+  // alors a chaque reaction, solo comprise.
   it('rend une reaction SANS charge de synergie, celle d un joueur seul', () => {
     const pair = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
 
@@ -1229,8 +1183,8 @@ describe('encodeReaction / decodeReaction', () => {
   });
 
   // La charge coute ZERO octet de plus : elle voyage dans ce message plutot
-  // que dans un second (§8), et une reaction chargee pese donc exactement ce
-  // que pese une reaction solo.
+  // que dans un second, et une reaction chargee pese ce que pese une
+  // reaction solo.
   it('ne coute pas un octet de plus quand elle charge la barre', () => {
     expect(encodeReaction(1, 0, 0, 0, true).byteLength).toBe(
       encodeReaction(1, 0, 0, 0, false).byteLength,
@@ -1258,13 +1212,10 @@ describe('encodeReaction / decodeReaction', () => {
 });
 
 /**
- * L'or de l'equipe dans le snapshot (etape 6a, tache 7).
- *
- * ⚠️ **La troisieme grandeur d'EQUIPE de l'en-tete**, apres l'experience et la
- * Synergie, et le §5 de la spec en fait l'enjeu de tout le vote : c'est le
- * nombre qu'on risque. Il est donc repete a chaque tick plutot qu'annonce par
- * evenement — un client qui aurait manque un `PORTAL_RESULT` se recale au
- * snapshot suivant.
+ * ⚠️ **L'or, troisieme grandeur d'EQUIPE de l'en-tete** apres l'experience et
+ * la Synergie : c'est le nombre que le vote met en jeu. Il est repete a chaque
+ * tick plutot qu'annonce par evenement : un client qui aurait manque un
+ * `PORTAL_RESULT` se recale au snapshot suivant.
  */
 describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
   /** Or cumule apres avoir vaincu les boss des paliers 0 a `k`. */
@@ -1277,10 +1228,9 @@ describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
   }
 
   /**
-   * Le palier auquel un `u16` aurait replie la cagnotte — **derive de
-   * `palierGold`, jamais recopie**. Le jour ou `GOLD_PER_PALIER_BASE` ou
-   * `PALIER_HP_SCALE` bougent, ce nombre suit ; un 38 ecrit a la main
-   * mentirait en silence.
+   * Le palier auquel un `u16` aurait replie la cagnotte, **derive de
+   * `palierGold`, jamais recopie** : il suit `GOLD_PER_PALIER_BASE` et
+   * `PALIER_HP_SCALE` s'ils bougent.
    */
   const PALIER_LIMITE_U16 = (() => {
     let k = 0;
@@ -1291,13 +1241,11 @@ describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
   })();
 
   /**
-   * ⚠️ **LA LARGEUR A ETE CALCULEE, PAS DEVINEE** — c'est ce test qui porte le
-   * calcul, la table complete etant dans la doc de `GOLD_MAX`. Le `u16`
-   * debordait au palier 38 sur l'or brut et au palier **22** une fois majore
-   * du multiplicateur d'extraction, soit moins de deux heures de jeu a cinq
-   * minutes par palier — et rien ne borne le palier, le §3 de la spec en fait
-   * *« la duree de vie du jeu »*. Le repli aurait ramene 67 984 pieces a
-   * 2 448, PILE au moment ou ce nombre vaut le plus cher.
+   * ⚠️ **La largeur est calculee, pas devinee** (table complete dans la doc
+   * de `GOLD_MAX`). Un `u16` deborderait en moins de deux heures de jeu une
+   * fois l'or majore du multiplicateur d'extraction, et rien ne borne le
+   * palier. Le repli ramenerait la cagnotte a presque rien, PILE au moment ou
+   * elle vaut le plus cher.
    */
   it('tient la plus grosse cagnotte que le jeu sache produire, sans repli silencieux', () => {
     const auPalierU16 = cumulJusquA(PALIER_LIMITE_U16);
@@ -1310,10 +1258,8 @@ describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
 
   /**
    * ⚠️ **Borne, jamais repli.** Sans le `Math.min`, `setUint32` prend le
-   * modulo : une cagnotte de 4,3 milliards de pieces se reveillerait a 999, et
-   * l'equipe verrait sa fortune s'evaporer a l'affichage. Meme garde que pour
-   * les PV du boss, ecrite parce que le repli SILENCIEUX du `hp` de l'etape 4
-   * a coute une tache.
+   * modulo : une cagnotte de 4,3 milliards de pieces se reveillerait a 999.
+   * Meme garde que pour les PV du boss.
    */
   it('borne au lieu de replier au-dela de GOLD_MAX', () => {
     expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, GOLD_MAX + 1000)).gold).toBe(GOLD_MAX);
@@ -1323,8 +1269,8 @@ describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
 
   /**
    * L'or reste entier sur le fil. Le seul chemin par lequel il peut cesser de
-   * l'etre est le multiplicateur d'extraction (tache 9) ; sans cet arrondi,
-   * `setUint32` tronquerait vers zero et une extraction perdrait une piece.
+   * l'etre est le multiplicateur d'extraction ; sans cet arrondi, `setUint32`
+   * tronquerait vers zero et une extraction perdrait une piece.
    */
   it("arrondit l'or a l'entier plutot que de le tronquer", () => {
     expect(decodeSnapshot(encodeSnapshot(1, 0, 0, [], null, 1499.6)).gold).toBe(1500);
@@ -1336,18 +1282,14 @@ describe("l'or dans le snapshot (etape 6a, tache 7)", () => {
 });
 
 /**
- * Le protocole du vote d'extraction (etape 6a, tache 7).
- *
  * **Quatre messages, calques sur le draft** : une ouverture datee, des
- * intentions rediffusees, une resolution annoncee (§6 de la spec). Ce qui
- * change : deux choix au lieu de N cartes, **aucun gel**, et une majorite au
- * lieu d'un tirage.
+ * intentions rediffusees, une resolution annoncee. Ce qui change : deux choix
+ * au lieu de N cartes, **aucun gel**, et une majorite au lieu d'un tirage.
  *
- * ⚠️ **Les trois lecons du draft, chacune payee d'une tache, sont gardees
- * ici** : le resultat porte le TICK D'EFFET (R3 de l'etape 4), la sentinelle
- * d'abstention ne vaut aucun choix reel (`NO_TOKEN = 255`, parce que la carte
- * 0 est une carte reelle), et ce que le serveur COMPARE ne voyage pas — seul
- * son verdict voyage, comme `REACTION` porte un bit et non les deux joueurs.
+ * ⚠️ **Les trois regles du draft sont gardees ici** : le resultat porte le
+ * TICK D'EFFET, la sentinelle d'abstention ne vaut aucun choix reel, et ce
+ * que le serveur COMPARE ne voyage pas (seul son verdict voyage, comme
+ * `REACTION` porte un bit et non les deux joueurs).
  */
 describe('le vote d extraction (etape 6a, tache 7)', () => {
   describe('PORTAL_OPEN', () => {
@@ -1436,15 +1378,14 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
 
     /**
      * ⚠️ **La sentinelle est gardee par sa PROPRIETE, pas par son chiffre.**
-     * `toBe(255)` serait une recopie de la constante : elle passerait meme si
-     * `VOTE_CHOICE` grandissait jusqu'a l'atteindre. Ce qui doit rester vrai,
-     * c'est qu'aucun vote REEL ne vaut la sentinelle — la lecon de
-     * `NO_TOKEN = 255`, choisi ainsi parce que la carte 0 est une carte reelle.
+     * `toBe(255)` passerait meme si `VOTE_CHOICE` grandissait jusqu'a
+     * l'atteindre. Ce qui doit rester vrai, c'est qu'aucun vote REEL ne vaut
+     * la sentinelle.
      *
-     * ⚠️ **Et `0` serait le pire choix possible ici**, parce que `STAY` vaut
-     * zero : toutes les abstentions se compteraient comme des voix pour
-     * rester, alors que le §6 confie ce cas a la regle d'egalite. La
-     * difference se voit des qu'un seul joueur vote « partir ».
+     * ⚠️ **Et `0` serait le pire choix possible**, parce que `STAY` vaut zero :
+     * toutes les abstentions se compteraient comme des voix pour rester, alors
+     * que ce cas releve de la regle d'egalite. La difference se voit des qu'un
+     * seul joueur vote « partir ».
      */
     it('la sentinelle d abstention ne vaut aucun vote reel', () => {
       const reels: number[] = Object.values(VOTE_CHOICE);
@@ -1469,9 +1410,8 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
   describe('VOTES', () => {
     // ⚠️ **Trois joueurs, trois choix TOUS DIFFERENTS, et des identifiants qui
     // ne valent aucun choix.** Un encodeur qui intervertirait les deux octets
-    // d'une entree, ou qui recopierait la premiere, se verrait. Une liste ou
-    // tout le monde voterait pareil ne verrait ni l'un ni l'autre — c'est la
-    // « fixture qui masque » du depot.
+    // d'une entree, ou qui recopierait la premiere, se verrait ; une liste ou
+    // tout le monde vote pareil ne verrait ni l'un ni l'autre.
     const votes = [
       { playerId: 4, choice: VOTE_CHOICE.LEAVE },
       { playerId: 7, choice: VOTE_CHOICE.STAY },
@@ -1483,12 +1423,10 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
     });
 
     /**
-     * ⚠️ **L'abstention CIRCULE — elle ne se compte pas, mais elle se voit.**
-     * Les autres doivent savoir qui n'a pas encore tranche : c'est la matiere
-     * de la negociation, et le §6 en fait la condition d'existence de la
-     * mecanique, *« on ne negocie pas un choix qu'on ne voit pas »*. Un
-     * encodeur qui filtrerait les abstentions ferait disparaitre les indecis
-     * de l'ecran des autres.
+     * ⚠️ **L'abstention CIRCULE : elle ne se compte pas, mais elle se voit.**
+     * Les autres doivent savoir qui n'a pas encore tranche, c'est la matiere
+     * de la negociation. Un encodeur qui filtrerait les abstentions ferait
+     * disparaitre les indecis de l'ecran des autres.
      */
     it('diffuse aussi ceux qui n ont pas vote', () => {
       const msg = decode(encodeVotes(votes));
@@ -1550,10 +1488,10 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
     });
 
     /**
-     * ⚠️ **Le TICK D'EFFET voyage, et c'est R3 de l'etape 4.** Le client ne
-     * peut rien deduire : le vote se resout des que la majorite est acquise,
-     * donc n'importe quand entre l'ouverture et l'echeance. Un tick d'effet
-     * different de l'echeance annoncee doit donc passer intact.
+     * ⚠️ **Le TICK D'EFFET voyage.** Le client ne peut rien deduire : le vote
+     * se resout des que la majorite est acquise, donc n'importe quand entre
+     * l'ouverture et l'echeance. Un tick d'effet different de l'echeance
+     * annoncee doit donc passer intact.
      */
     it('porte un tick d effet independant de l echeance annoncee a l ouverture', () => {
       const ouverture = decode(encodePortalOpen(1200, 1));
@@ -1587,15 +1525,10 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
     });
 
     /**
-     * ⚠️ **Aucun decompte de voix sur le fil, et c'est la troisieme lecon du
-     * draft.** Ce que le serveur COMPARE — les voix « rester » et les voix
-     * « partir » — n'a pas a voyager ; seul son verdict voyage, comme
-     * `REACTION` porte un bit plutot que les deux joueurs qu'il a compares. Le
-     * detail est deja passe par `VOTES`, ou il vaut quelque chose : pendant
-     * qu'on negocie.
-     *
-     * La taille en chiffre nu est ce qui garde cette decision : deux octets de
-     * decompte de plus la feraient rougir.
+     * ⚠️ **Aucun decompte de voix sur le fil.** Ce que le serveur COMPARE n'a
+     * pas a voyager ; seul son verdict voyage. Le detail est deja passe par
+     * `VOTES`, ou il vaut quelque chose : pendant qu'on negocie. La taille en
+     * chiffre nu garde cette decision : un decompte la ferait rougir.
      */
     it('tient exactement PORTAL_RESULT_BYTES octets, sans place pour un decompte', () => {
       expect(encodePortalResult(1, VOTE_CHOICE.STAY, 1).byteLength).toBe(PORTAL_RESULT_BYTES);
@@ -1635,9 +1568,8 @@ describe('le vote d extraction (etape 6a, tache 7)', () => {
 
 describe('etape 7a tache 1 : HELLO porte le jeton, en largeur FIXE', () => {
   /**
-   * ⚠️ **Les deux largeurs sont epinglees en chiffres NUS.** Une assertion
-   * `toBe(HELLO_BYTES)` serait vraie quoi qu'il arrive — c'est la meme raison
-   * qui fait epingler 22 et 9 pour le snapshot plus haut dans ce fichier.
+   * ⚠️ **Les deux largeurs sont epinglees en chiffres NUS** : une assertion
+   * `toBe(HELLO_BYTES)` serait vraie quoi qu'il arrive.
    */
   it('HELLO_BYTES vaut 33, et TOKEN_BYTES vaut 32', () => {
     expect(TOKEN_BYTES).toBe(32);
@@ -1669,11 +1601,10 @@ describe('etape 7a tache 1 : HELLO porte le jeton, en largeur FIXE', () => {
   });
 
   /**
-   * Review Focus n°1 : un HELLO tronque doit LEVER a l'encodage comme au
-   * decodage, jamais rendre un jeton a moitie lu. C'est `viewOf` qui garde le
-   * decodage ; l'encodage se garde lui-meme, parce qu'un jeton trop court
-   * produirait un message de la bonne taille avec des zeros a la fin — donc un
-   * jeton VALIDE mais faux.
+   * Un HELLO tronque doit LEVER a l'encodage comme au decodage, jamais rendre
+   * un jeton a moitie lu. C'est `viewOf` qui garde le decodage ; l'encodage se
+   * garde lui-meme, parce qu'un jeton trop court produirait un message de la
+   * bonne taille avec des zeros a la fin : un jeton VALIDE mais faux.
    */
   it('refuse un jeton qui ne fait pas exactement TOKEN_BYTES', () => {
     expect(() => encodeHello(new Uint8Array(0))).toThrow();
@@ -1701,8 +1632,7 @@ describe('etape 8 tache 3 : ABILITY / ABILITY_USED, le socle du verbe', () => {
 
     /**
      * ⚠️ **Largeur epinglee en chiffre NU** : une assertion `toBe(ABILITY_BYTES)`
-     * serait vraie quoi qu'il arrive, meme discipline que `VOTE_BYTES` et
-     * `HELLO_BYTES` plus haut dans ce fichier.
+     * serait vraie quoi qu'il arrive.
      */
     it('tient exactement 9 octets : type u8 + tick u32 + aimX i16 + aimY i16', () => {
       expect(encodeAbility(1, 0, 0).byteLength).toBe(9);
@@ -1729,8 +1659,7 @@ describe('etape 8 tache 3 : ABILITY / ABILITY_USED, le socle du verbe', () => {
     });
 
     /**
-     * ⚠️ **12 octets, pas 13** — choix du controleur (amendement, tache 3 de
-     * l'etape 8) : `1 + 4 + 1 + 1 + 2 + 2 + 1` fait 12, sans octet de reserve.
+     * ⚠️ **12 octets** : `1 + 4 + 1 + 1 + 2 + 2 + 1`, sans octet de reserve.
      * Epinglee en chiffre NU, comme `ABILITY_BYTES` ci-dessus.
      */
     it('tient exactement 12 octets : type u8 + tick u32 + playerId u8 + verb u8 + x i16 + y i16 + targetId u8', () => {
@@ -1753,9 +1682,9 @@ describe('etape 8 tache 3 : ABILITY / ABILITY_USED, le socle du verbe', () => {
   });
 
   it('chaque verbe du catalogue a une recharge superieure a zero tick', () => {
-    // Discipline de la tache : les reglages se lisent de `shared/abilities.ts`,
-    // jamais en dur ici — voir `shared/abilities.test.ts` pour la garde
-    // complete sur `VERB_IDS` / `ABILITY_COOLDOWN_TICKS`.
+    // Les reglages se lisent de `shared/abilities.ts`, jamais en dur ici (voir
+    // `shared/abilities.test.ts` pour la garde de `VERB_IDS` /
+    // `ABILITY_COOLDOWN_TICKS`).
     for (const verb of Object.values(VERB_IDS)) {
       expect(verb).toBeTypeOf('number');
     }
