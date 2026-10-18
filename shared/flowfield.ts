@@ -39,6 +39,22 @@ const UNREACHED = -1;
  */
 const SAMPLE_DEGENERATE_EPSILON = 1e-6;
 
+/**
+ * Norme du melange EN DESSOUS de laquelle on ne lui fait plus confiance
+ * (tache 14, relecture finale) : pres d'un coin concave, deux cellules
+ * voisines peuvent pointer dans des directions presque opposees (l'une
+ * contourne le mur par le haut, l'autre par le bas) — leur melange se
+ * rapproche alors de (0, 0) SANS l'atteindre exactement, et le diviser par sa
+ * propre norme (quasi nulle) l'amplifie en un vecteur unitaire de confiance
+ * totale pointant dans une direction que le bruit flottant a choisie au
+ * hasard, pas le terrain. Sous ce seuil, on retombe sur la direction de la
+ * seule cellule porteuse (comme le fait deja la branche `weight` ci-dessus)
+ * plutot que de faire confiance a ce melange quasi annule. Volontairement
+ * plus large que `SAMPLE_DEGENERATE_EPSILON` : la poche a eviter n'est pas un
+ * point isole, c'est tout un voisinage du coin.
+ */
+const SAMPLE_WEAK_BLEND_MAGNITUDE = 0.5;
+
 export class FlowField {
   readonly cols: number;
   readonly rows: number;
@@ -208,10 +224,21 @@ export class FlowField {
     const blendY = sumY / weight;
     const mag = Math.hypot(blendX, blendY);
 
-    if (mag <= SAMPLE_DEGENERATE_EPSILON) {
-      // Cible pile sur une des cellules melangees, ou annulation exacte de
-      // directions opposees : meme convention que la lecture par cellule,
-      // (0, 0) plutot qu'une division par une norme quasi nulle.
+    if (mag < SAMPLE_WEAK_BLEND_MAGNITUDE) {
+      // Melange trop proche de l'annulation pour qu'on le renormalise sans
+      // risque (tache 14) : la direction de la cellule occupee, elle,
+      // n'a pas ce probleme (toujours (0, 0) ou de norme 1, jamais entre les
+      // deux). Cible pile sur une des cellules melangees, ou cellule occupee
+      // elle-meme sans direction de secours (mur non encore perce par
+      // `#carveExitsFromWalls`) : on garde alors (0, 0), comme avant.
+      const fallback = this.indexAt(x, y);
+      const fallbackX = dirX[fallback] ?? 0;
+      const fallbackY = dirY[fallback] ?? 0;
+      if (fallbackX !== 0 || fallbackY !== 0) {
+        out[0] = fallbackX;
+        out[1] = fallbackY;
+        return;
+      }
       out[0] = 0;
       out[1] = 0;
       return;

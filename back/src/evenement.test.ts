@@ -408,6 +408,52 @@ describe('etape 14 : EventRun — le convoi', () => {
     expect(issue).toBe(EVENT_OUTCOME.REUSSI);
   });
 
+  /**
+   * ⚠️ **Un coin CONCAVE** (relecture finale, tache 14) : un mur en L, pas un
+   * simple segment droit. Pres de l'interieur du coude, deux cellules
+   * voisines du champ pointent dans des directions presque opposees (l'une
+   * contourne par le bras vertical, l'autre par le bras horizontal) ; leur
+   * melange bilineaire s'approche alors de (0, 0) SANS l'atteindre
+   * exactement, et `sampleDirection` le renormalisait quand meme — un vecteur
+   * unitaire de pleine confiance mais oriente par du bruit flottant, pas par
+   * le terrain. Mesure AVANT le correctif (seuil `1e-6`, pas de repli) sur
+   * cette geometrie precise : 769 ticks pour arriver. APRES (seuil `0.5`,
+   * repli sur la direction de la cellule, voir `shared/flowfield.ts`) : 752.
+   * Les deux bornes ci-dessous encadrent cet ecart, mesure et deterministe
+   * (aucun hasard dans le BFS ni le deplacement) — jamais inventif a relire.
+   */
+  it('coin concave (mur en L) : jamais dans le mur, vitesse nominale en ligne droite, arrivee sans trainer', () => {
+    const terrain = new FlowField(1600, FLOWFIELD_CELL);
+    // bras vertical puis bras horizontal, perpendiculaires : un vrai coin
+    // concave, pas juste l extremite d un segment droit.
+    for (let cy = 5; cy <= 15; cy++) {
+      terrain.block(12, cy);
+    }
+    for (let cx = 12; cx <= 20; cx++) {
+      terrain.block(cx, 15);
+    }
+    const coinS = { x: 480, y: 704 };
+    const coinE = { x: 1200, y: 900 };
+    const planCoin: EventPlan = { kind: EVENT_KIND.CONVOI, points: [coinS, coinE], solo: false };
+    const run = new EventRun(planCoin, terrain);
+
+    // Vitesse nominale sur le tronc commun, loin du coin.
+    const depart = { x: run.cart.x, y: run.cart.y };
+    pas(run, 10, [joueur(run.cart.x, run.cart.y)]);
+    expect(dist(run.cart, depart)).toBeCloseTo(CONVOI_SPEED * 10 * DT, 1);
+
+    let issue: number | null = null;
+    for (let t = 10; t < EVENT_DURATION_TICKS && issue === null; t++) {
+      issue = run.step([joueur(run.cart.x, run.cart.y)], PERSONNE, DT);
+      // Jamais dans le mur, meme en frottant le coin.
+      expect(terrain.blocked[terrain.indexAt(run.cart.x, run.cart.y)]).toBe(0);
+    }
+    expect(issue).toBe(EVENT_OUTCOME.REUSSI);
+    // Avant le correctif : 769 ticks. Apres : 752. La borne ci-dessous ne
+    // passe qu avec le repli sur la direction de la cellule.
+    expect(run.elapsed).toBeLessThanOrEqual(760);
+  });
+
   it('cinq ennemis colles ou cinquante coutent pareil : 5 x 8 PV toutes les 15 ticks', () => {
     const cinq = new EventRun(plan, ouvert());
     pas(cinq, 15, [], horde(Array.from({ length: 5 }, () => S)));
