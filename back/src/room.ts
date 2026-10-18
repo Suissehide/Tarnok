@@ -51,6 +51,7 @@ import {
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
+import { EVENT_DURATION_TICKS, EVENT_OUTCOME, EVENT_STATE_PERIOD_TICKS } from '@shared/evenements';
 import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
@@ -67,14 +68,16 @@ import { bossHp, extractGold, palierGold, palierHp } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { type Anchor, Projectiles } from '@shared/projectiles';
 import {
+  type EventMessage,
   encodeSnapshot,
+  MSG,
   OUTCOME,
   type PlayerSnapshot,
   packZoneKind,
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
-import { CHEST_RARITY_FLOOR, RARITY } from '@shared/rarity';
+import { CHEST_RARITY_FLOOR, EVENT_RARITY_FLOOR, RARITY } from '@shared/rarity';
 import { BONUS_ZERO, type BonusKind } from '@shared/shop';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -116,6 +119,7 @@ import {
   Venins,
 } from './combat';
 import { Draft } from './draft';
+import { EventRun, placeEvent } from './evenement';
 import { Portal } from './portal';
 import { WaveDirector } from './wave-director';
 
@@ -367,6 +371,12 @@ export class Room {
   readonly horde = new Horde(MAX_ENTITIES);
   readonly #players = new Map<number, PlayerState>();
   readonly #fields: FlowField[];
+  /**
+   * Le champ de flux du chariot (etape 14, §3.3) : meme masque que `#fields`,
+   * construit UNE fois au constructeur, un BFS par convoi. Serveur seul : le
+   * client lit la position du chariot, il ne la derive pas.
+   */
+  readonly #convoiField: FlowField;
   readonly #history = new PlayerHistory();
   readonly #director: WaveDirector;
   readonly #projectiles = new Projectiles(PROJECTILE_CAPACITY);
@@ -466,6 +476,19 @@ export class Room {
    * ce qui laisse le client le reconnaitre sans octet.
    */
   #chestsOwed = 0;
+  /**
+   * Les etalages d'evenement dus (etape 14, §5.1), un par evenement reussi.
+   * `#openDraft` les sert APRES les coffres et AVANT les niveaux, au plancher
+   * `EVENT_RARITY_FLOOR`.
+   */
+  #eventDraftsOwed = 0;
+  /**
+   * L'evenement en cours (etape 14), `null` hors evenement. Au plus un : le
+   * plancher de 40 vagues du directeur le garantit a lui seul.
+   */
+  #event: EventRun | null = null;
+  /** `EVENT_START` / `EVENT_STATE` / `EVENT_END` a diffuser, dans l'ordre. */
+  #pendingEvents: EventMessage[] = [];
   #pendingDraftOpens: DraftOpenEvent[] = [];
   #pendingDraftResults: DraftResultEvent[] = [];
   #pendingRunOver: RunOverEvent | null = null;
@@ -561,6 +584,8 @@ export class Room {
       applyObstacles(f, mask);
       return f;
     });
+    this.#convoiField = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
+    applyObstacles(this.#convoiField, mask);
     this.#director = new WaveDirector(this.mapSeed ^ 0x5bf0_3a17);
   }
 
@@ -648,6 +673,21 @@ export class Room {
     const out = this.#pendingPickups;
     this.#pendingPickups = [];
     return out;
+  }
+
+  /**
+   * Les messages d'evenement a diffuser (etape 14, §6.4), dans l'ordre de mise
+   * en file : un depart precede toujours ses etats, qui precedent sa fin.
+   */
+  drainEvents(): EventMessage[] {
+    const out = this.#pendingEvents;
+    this.#pendingEvents = [];
+    return out;
+  }
+
+  /** Les points de l'evenement en cours (etape 14), `null` hors evenement. Lecture etroite. */
+  get eventPoints(): readonly { x: number; y: number }[] | null {
+    return this.#event?.points ?? null;
   }
 
   /** Les etalages ouverts depuis le dernier drainage. */
@@ -1103,6 +1143,24 @@ export class Room {
   }
 
   /**
+   * Ecriture de test, meme statut que `debugOweLevels` : `n` coffres dus, comme
+   * si `n` porteurs venaient de tomber. Sert a provoquer « coffre, evenement et
+   * niveau dus au meme tick » (etape 14).
+   */
+  debugOweChests(n: number): void {
+    this.#chestsOwed += n;
+  }
+
+  /**
+   * Ecriture de test, meme statut que `debugOweLevels` : demarre tout de suite
+   * l'evenement de graine `seed`, comme si le directeur venait de la rendre.
+   * Attendre la vague 20 couterait deux minutes de temps reel par test.
+   */
+  debugStartEvent(seed: number): void {
+    this.#startEvent(seed);
+  }
+
+  /**
    * Ecriture de test, meme statut que `debugSetGold` : ouvre la reserve de
    * bouclier d'un joueur sans passer par Transcendance.
    *
@@ -1293,8 +1351,12 @@ export class Room {
       return;
     }
 
-    // Un coffre ou un niveau attend, et aucun etalage n'est ouvert : on ouvre.
-    if (this.#draft.phase === 'closed' && (this.#chestsOwed > 0 || this.#pendingLevels > 0)) {
+    // Un coffre, un evenement ou un niveau attend, et aucun etalage n'est
+    // ouvert : on ouvre (`#openDraft` choisit lequel, dans cet ordre).
+    if (
+      this.#draft.phase === 'closed' &&
+      (this.#chestsOwed > 0 || this.#eventDraftsOwed > 0 || this.#pendingLevels > 0)
+    ) {
       this.#openDraft();
     }
 
@@ -1457,6 +1519,12 @@ export class Room {
         }
       }
       this.#pendingOrders.push(order);
+    }
+    // Etape 14 : la vague qui vient de sortir a peut-etre marque un evenement.
+    // Lue ICI, une fois : le directeur l'oublie a la lecture.
+    const graineEvenement = this.#director.takeEventSeed();
+    if (graineEvenement !== null) {
+      this.#startEvent(graineEvenement);
     }
     // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, et
     // seulement la : la mort d'un boss ne l'ouvre pas. Une vague = un groupe,
@@ -1756,6 +1824,9 @@ export class Room {
       }
     }
 
+    // Etape 14 : apres le deplacement des joueurs, de la horde et le contact —
+    // l'evenement lit les positions de CE tick.
+    this.#stepEvent(dt);
     this.#checkRunOver();
     // ⚠️ **APRES `#checkRunOver`, et SANS garde de fin de run.** Si l'equipe
     // est effacee au tick ou le portail tranche, l'effacement a deja ramene la
@@ -2267,11 +2338,18 @@ export class Room {
    * niveau dus au meme tick » (le monde est gele pendant un etalage) : le
    * client sait alors, sans octet, que le premier `LEVEL_UP` apres la mort du
    * porteur est le coffre.
+   *
+   * ⚠️ **Puis un etalage d'evenement, puis un niveau** (etape 14, §5.1). La
+   * priorite est FIXE des deux cotes : deux dus ne coexistent que s'ils sont
+   * nes au meme tick, et pour ceux-la le client deduit la meme suite.
    */
   #openDraft(): void {
     const coffre = this.#chestsOwed > 0;
+    const evenement = !coffre && this.#eventDraftsOwed > 0;
     if (coffre) {
       this.#chestsOwed--;
+    } else if (evenement) {
+      this.#eventDraftsOwed--;
     } else {
       this.#pendingLevels--;
     }
@@ -2279,18 +2357,17 @@ export class Room {
     for (const [id, p] of this.#players) {
       loadouts.set(id, p.loadout);
     }
-    const spread = drawSpread(
-      loadouts,
-      this.#draftRng,
-      coffre ? CHEST_RARITY_FLOOR : RARITY.COMMUNE,
-    );
+    const plancher = coffre ? CHEST_RARITY_FLOOR : evenement ? EVENT_RARITY_FLOOR : RARITY.COMMUNE;
+    const spread = drawSpread(loadouts, this.#draftRng, plancher);
     this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts);
     // ⚠️ **Le niveau annonce pour un coffre est celui d'AVANT tout niveau
     // encore en file.** `#level` inclut deja les niveaux montes mais pas
     // encore tires (`#pendingLevels`) : sans la soustraction, le client
     // jouerait le son de niveau un etalage trop tot. Un niveau ordinaire vient
     // de decrementer `#pendingLevels` et annonce `#level`.
-    const niveauAnnonce = coffre ? this.#level - this.#pendingLevels : this.#level;
+    // Un evenement, comme un coffre, n'est pas un niveau (etape 14).
+    const bonus = coffre || evenement;
+    const niveauAnnonce = bonus ? this.#level - this.#pendingLevels : this.#level;
     this.#pendingLevelUps.push({ tick: this.#tick, level: niveauAnnonce });
     this.#pendingDraftOpens.push({ deadlineTick: this.#draft.deadlineTick, cards: spread });
   }
@@ -2324,6 +2401,58 @@ export class Room {
     this.#freezeUntilTick = this.#tick;
     this.#resumeEndTick = this.#tick + LEVEL_RESUME_TICKS;
     this.#pendingDraftResults.push({ deadlineTick: this.#tick, outcomes: issues });
+  }
+
+  /**
+   * Demarre l'evenement de graine `seed` (etape 14, §2.2). Le genre, le site et
+   * les points se derivent de la graine et des joueurs VIVANTS : un mort ne
+   * compte ni pour le centre ni pour N. Personne debout : rien — la run
+   * s'acheve a ce tick de toute facon.
+   */
+  #startEvent(seed: number): void {
+    const vivants = [...this.#players.values()].filter((p) => p.hp > 0);
+    if (vivants.length === 0) {
+      return;
+    }
+    // `#convoiField` porte le meme masque que `#fields` et n'est jamais
+    // `undefined` : il sert aussi a sortir les points des murs.
+    const plan = placeEvent(seed, vivants, this.#convoiField);
+    this.#event = new EventRun(plan, this.#convoiField);
+    this.#pendingEvents.push({
+      type: MSG.EVENT_START,
+      kind: plan.kind,
+      durationTicks: EVENT_DURATION_TICKS,
+      points: plan.points,
+    });
+  }
+
+  /**
+   * Un tick de l'evenement en cours (etape 14, §2.4 et §6.2).
+   *
+   * ⚠️ **Il dort tant que `#tick <= #resumeEndTick` — la rampe comprise.**
+   * Pendant un etalage ou un gel, `step` est deja sorti plus haut ; pendant la
+   * rampe de reprise, c'est ce garde. Le client compte le temps restant sur
+   * `pingClock`, qui s'arrete pendant `isFrozen` (gel ET rampe) : courir
+   * pendant la rampe decalerait son compte a rebours d'une seconde par
+   * etalage.
+   */
+  #stepEvent(dt: number): void {
+    const ev = this.#event;
+    if (ev === null || this.#tick <= this.#resumeEndTick) {
+      return;
+    }
+    const issue = ev.step([...this.#players.values()], this.horde, dt);
+    if (issue === null) {
+      if (ev.elapsed % EVENT_STATE_PERIOD_TICKS === 0) {
+        this.#pendingEvents.push({ type: MSG.EVENT_STATE, ...ev.wireState() });
+      }
+      return;
+    }
+    this.#event = null;
+    if (issue === EVENT_OUTCOME.REUSSI) {
+      this.#eventDraftsOwed++;
+    }
+    this.#pendingEvents.push({ type: MSG.EVENT_END, outcome: issue });
   }
 
   /**

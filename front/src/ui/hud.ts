@@ -1,10 +1,12 @@
 import { classOf, type VerbKind } from '@shared/classes';
 import { SYNERGY_MAX, TICK_HZ, WEAPON_SLOTS } from '@shared/constants';
+import { EVENT_KIND } from '@shared/evenements';
 import type { Loadout } from '@shared/loadout';
 import { PASSIVES, type PassiveKind } from '@shared/passives';
 import { weaponOf } from '@shared/weapons';
 
-import type { HudInfo } from '../render/stage';
+import type { EventView } from '../net/client';
+import { formatTimer, type HudInfo } from '../render/stage';
 import { elementBadge, elementLabel } from './element-icons';
 import { avatar, bonusIcon, ICON_WEAPON, icon, slot } from './icons';
 import { formatGold } from './portal';
@@ -79,6 +81,12 @@ export interface HudSource {
   readonly draftIsChest?: boolean;
   /** Le bandeau « un porteur est apparu » est-il allume ? Absent : non. */
   readonly porteurBannerOn?: boolean;
+  /** L'etalage en cours est un etalage d'evenement (etape 14). Absent : non. */
+  readonly draftIsEvent?: boolean;
+  /** Le texte du bandeau d'evenement, ou `null` (etape 14). Absent : rien. */
+  readonly eventBanner?: string | null;
+  /** L'evenement en cours (etape 14), ou `null`. Absent : rien. */
+  readonly event?: EventView | null;
   loadoutOf(playerId: number): Loadout;
 }
 
@@ -180,6 +188,10 @@ export interface HudElements {
   freeze: HTMLElement;
   /** Le bandeau du porteur de coffre. Optionnel : les anciens HUD de test n'en ont pas. */
   porteur?: HTMLElement;
+  /** Le bandeau passager d'un evenement (etape 14). Optionnel, comme `porteur`. */
+  evenement?: HTMLElement;
+  /** L'etat d'un evenement en cours (etape 14). Optionnel. */
+  evenementEtat?: HTMLElement;
   /** Les emplacements de passifs. */
   passiveList: HTMLElement;
 }
@@ -196,6 +208,24 @@ export interface HudElements {
  * l'appel `passiveRows(client)` retournerait dans `main.ts`, ou rien ne le
  * garde.
  */
+
+/** Le nom de chaque evenement au HUD, par `EVENT_KIND`. */
+const EVENT_NAMES: readonly string[] = ['Les sceaux', 'La forge', 'Le convoi'];
+
+/**
+ * « La forge — 62 % — 0:41 », « Le convoi — 40 % — chariot 70 % — 0:33 »
+ * (etape 14, §7.4). PURE. Le temps est arrondi a la seconde SUPERIEURE : un
+ * compte a rebours ne montre « 0:00 » qu'a la fin.
+ */
+export function eventStatusText(event: EventView): string {
+  const nom = EVENT_NAMES[event.kind] ?? 'Événement';
+  const avance = `${Math.floor(event.progress * 100)} %`;
+  const temps = formatTimer(Math.ceil(event.secondsLeft) * TICK_HZ);
+  return event.kind === EVENT_KIND.CONVOI
+    ? `${nom} — ${avance} — chariot ${Math.round(event.cartHp * 100)} % — ${temps}`
+    : `${nom} — ${avance} — ${temps}`;
+}
+
 export function paintHud(
   el: HudElements,
   info: HudInfo,
@@ -239,9 +269,24 @@ export function paintHud(
   // Seule indication du gel avant l'etalage de cartes : sans elle, la pause
   // se lit comme un plantage.
   el.freeze.classList.toggle('hidden', !info.frozen);
-  // Un coffre gele comme un niveau, mais il le dit.
-  el.freeze.textContent = source.draftIsChest ? 'Coffre — pause…' : 'Niveau supérieur — pause…';
+  // Etape 11 : un coffre gele comme un niveau, mais il le dit.
+  el.freeze.textContent = source.draftIsChest
+    ? 'Coffre — pause…'
+    : source.draftIsEvent
+      ? 'Événement — pause…'
+      : 'Niveau supérieur — pause…';
   el.porteur?.classList.toggle('hidden', source.porteurBannerOn !== true);
+  // Etape 14 : le bandeau passager, puis l'etat tant qu'un evenement court.
+  const banniere = source.eventBanner ?? null;
+  if (el.evenement) {
+    el.evenement.classList.toggle('hidden', banniere === null);
+    el.evenement.textContent = banniere ?? '';
+  }
+  const ev = source.event ?? null;
+  if (el.evenementEtat) {
+    el.evenementEtat.classList.toggle('hidden', ev === null);
+    el.evenementEtat.textContent = ev ? eventStatusText(ev) : '';
+  }
 }
 
 /** L'icone du verbe de chaque classe : un choix d'affichage, comme `BONUS_ICONS`. */

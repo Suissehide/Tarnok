@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest';
 import { makeRandom } from './random';
 import {
   CHEST_RARITY_FLOOR,
+  EVENT_RARITY_FLOOR,
   multiplierOf,
   normalizeRarity,
   RARITY,
@@ -153,5 +154,42 @@ describe('etape 13 : quatre paliers', () => {
     expect((vus[RARITY.RARE] ?? 0) / N).toBeCloseTo(20 / 28, 2);
     expect((vus[RARITY.EPIQUE] ?? 0) / N).toBeCloseTo(6 / 28, 2);
     expect((vus[RARITY.LEGENDAIRE] ?? 0) / N).toBeCloseTo(2 / 28, 2);
+  });
+});
+
+describe('etape 14 : le plancher d un evenement', () => {
+  it('est epique', () => {
+    expect(EVENT_RARITY_FLOOR).toBe(RARITY.EPIQUE);
+  });
+
+  /** {6, 2} renormalise : epique sous 6/8 = 0,75, legendaire au-dela. */
+  it('frontiere : epique sous 0,75, legendaire au-dela', () => {
+    expect(rollRarity(() => 0, EVENT_RARITY_FLOOR)).toBe(RARITY.EPIQUE);
+    expect(rollRarity(() => 0.74, EVENT_RARITY_FLOOR)).toBe(RARITY.EPIQUE);
+    expect(rollRarity(() => 0.76, EVENT_RARITY_FLOOR)).toBe(RARITY.LEGENDAIRE);
+    expect(rollRarity(() => 0.999_999, EVENT_RARITY_FLOOR)).toBe(RARITY.LEGENDAIRE);
+  });
+
+  it('ne rend qu epique ou legendaire, a 75 / 25, sur 50 000 tirages', () => {
+    const rng = makeRandom(0x14_0a_0001);
+    const vus = [0, 0, 0, 0];
+    const N = 50_000;
+    for (let i = 0; i < N; i++) {
+      const r = rollRarity(rng, EVENT_RARITY_FLOOR);
+      vus[r] = (vus[r] ?? 0) + 1;
+    }
+    expect(vus[RARITY.COMMUNE]).toBe(0);
+    expect(vus[RARITY.RARE]).toBe(0);
+    expect((vus[RARITY.EPIQUE] ?? 0) / N).toBeCloseTo(0.75, 1);
+    expect((vus[RARITY.LEGENDAIRE] ?? 0) / N).toBeCloseTo(0.25, 1);
+  });
+
+  it('consomme UN seul rng() par tirage, comme tout plancher', () => {
+    let appels = 0;
+    rollRarity(() => {
+      appels++;
+      return 0.5;
+    }, EVENT_RARITY_FLOOR);
+    expect(appels).toBe(1);
   });
 });

@@ -6,10 +6,17 @@ import {
   SHOT_RADIUS,
 } from '@shared/archetypes';
 import type { EnemyShot } from '@shared/enemy-shots';
+import {
+  CONVOI_ESCORT_RADIUS,
+  CONVOI_RADIUS,
+  EVENT_KIND,
+  FORGE_RADIUS,
+  SCEAU_RADIUS,
+} from '@shared/evenements';
 import type { Horde } from '@shared/horde';
 import { Container, Graphics, type Rectangle, Sprite, type Texture } from 'pixi.js';
 
-import { type BlastFlash, flashLifeMs } from '../net/client';
+import { type BlastFlash, type EventView, flashLifeMs } from '../net/client';
 import { COIN_TINT } from './orb-renderer';
 import { framesOf } from './player-renderer';
 
@@ -39,7 +46,7 @@ export const PORTEUR_RING_RADIUS = 46;
 /** Hauteur du coffre au-dessus du porteur, en px monde. */
 const CHEST_LIFT = 60;
 /** Le brun du contour, du couvercle et de la serrure. */
-const CHEST_BROWN = 0x5a3a1a;
+export const CHEST_BROWN = 0x5a3a1a;
 
 /**
  * Un petit coffre procedural centre sur (x, y) : 22 x 15 px a l'echelle 1,
@@ -132,6 +139,114 @@ export function behaviorShapes(
   return out;
 }
 
+/** Une forme d'evenement au sol (etape 14, §7.2). */
+export interface EventShape {
+  kind: 'sceau' | 'forge' | 'chariot' | 'arrivee';
+  x: number;
+  y: number;
+  radius: number;
+  /** Sceau : un joueur vivant du SNAPSHOT s'y tient (cosmetique, derive ici). */
+  occupied?: boolean;
+  /** Sceau, forge : la progression de l'anneau, de 0 a 1. */
+  progress?: number;
+  /** Chariot : ses PV, de 0 a 1. */
+  hp?: number;
+}
+
+/** Le brun du chariot, sous le contour `CHEST_BROWN`. */
+const CART_BROWN = 0x7a4e2a;
+/** L'orange de la forge. */
+const FORGE_ORANGE = 0xff8a3d;
+
+/**
+ * Les formes d'un evenement dans le cadre `view` (et sa marge). PURE : c'est
+ * elle que les tests lisent. Le convoi montre le CHARIOT (interpole) et son
+ * arrivee, jamais son depart.
+ */
+export function eventShapes(
+  event: EventView | null,
+  players: readonly { x: number; y: number; hp: number }[],
+  view: Rectangle,
+): EventShape[] {
+  if (!event) {
+    return [];
+  }
+  const marge = CONVOI_ESCORT_RADIUS;
+  const dedans = (x: number, y: number): boolean =>
+    x >= view.x - marge &&
+    x <= view.x + view.width + marge &&
+    y >= view.y - marge &&
+    y <= view.y + view.height + marge;
+  const out: EventShape[] = [];
+  if (event.kind === EVENT_KIND.CONVOI) {
+    const arrivee = event.points[1];
+    if (arrivee && dedans(arrivee.x, arrivee.y)) {
+      out.push({ kind: 'arrivee', x: arrivee.x, y: arrivee.y, radius: CONVOI_RADIUS });
+    }
+    if (event.cart && dedans(event.cart.x, event.cart.y)) {
+      out.push({
+        kind: 'chariot',
+        x: event.cart.x,
+        y: event.cart.y,
+        radius: CONVOI_ESCORT_RADIUS,
+        hp: event.cartHp,
+      });
+    }
+    return out;
+  }
+  const forge = event.kind === EVENT_KIND.FORGE;
+  const radius = forge ? FORGE_RADIUS : SCEAU_RADIUS;
+  for (const p of event.points) {
+    if (!dedans(p.x, p.y)) {
+      continue;
+    }
+    const occupied =
+      !forge && players.some((j) => j.hp > 0 && Math.hypot(j.x - p.x, j.y - p.y) <= radius);
+    out.push({
+      kind: forge ? 'forge' : 'sceau',
+      x: p.x,
+      y: p.y,
+      radius,
+      occupied,
+      progress: event.progress,
+    });
+  }
+  return out;
+}
+
+/** L'anneau de progression autour d'une zone : un arc or, depuis midi, dans le sens horaire. */
+function progressRing(g: Graphics, s: EventShape): void {
+  const p = s.progress ?? 0;
+  if (p <= 0) {
+    return;
+  }
+  const r = s.radius + 10;
+  const debut = -Math.PI / 2;
+  // `moveTo` d'abord : sans lui, Pixi relierait l'arc a la forme precedente.
+  g.moveTo(s.x + Math.cos(debut) * r, s.y + Math.sin(debut) * r);
+  g.arc(s.x, s.y, r, debut, debut + Math.PI * 2 * p).stroke({ color: COIN_TINT, width: 6 });
+}
+
+/** Le chariot : l'escorte en pointille, les roues, la caisse, un coffre dessus, sa barre de PV. */
+function drawCart(g: Graphics, s: EventShape): void {
+  const { x, y } = s;
+  for (let k = 0; k < 24; k += 2) {
+    const a0 = (k * Math.PI * 2) / 24;
+    const a1 = ((k + 1) * Math.PI * 2) / 24;
+    g.moveTo(x + Math.cos(a0) * s.radius, y + Math.sin(a0) * s.radius);
+    g.arc(x, y, s.radius, a0, a1).stroke({ color: COIN_TINT, width: 2, alpha: 0.25 });
+  }
+  g.circle(x - 14, y + 15, 8).fill(CHEST_BROWN);
+  g.circle(x + 14, y + 15, 8).fill(CHEST_BROWN);
+  g.rect(x - 24, y - 15, 48, 30)
+    .fill(CART_BROWN)
+    .stroke({ color: CHEST_BROWN, width: 2 });
+  drawChest(g, x, y - 23, 0.8);
+  const hp = Math.min(1, Math.max(0, s.hp ?? 1));
+  g.rect(x - 24, y - 41, 48, 5).fill(0x1a0f0a);
+  g.rect(x - 24, y - 41, 48 * hp, 5).fill(hp > 0.5 ? 0x5bd16a : hp > 0.25 ? COIN_TINT : 0xff3b2f);
+}
+
 /**
  * Les planches du pack que ces effets jouent, par nom d'archetype pour les
  * tirs. `frame` : le cote d'une image ; `spin` : le projectile tourne en vol
@@ -222,6 +337,8 @@ export class BehaviorRenderer {
     shots: readonly EnemyShot[],
     view: Rectangle,
     nowMs: number,
+    event: EventView | null = null,
+    players: readonly { x: number; y: number; hp: number }[] = [],
   ): void {
     const g = this.#graphics;
     g.clear();
@@ -321,6 +438,30 @@ export class BehaviorRenderer {
           g.circle(s.x, s.y, s.radius).fill({ color: 0xffa21f, alpha: 0.55 * s.alpha });
           g.circle(s.x, s.y, s.radius).stroke({ color: 0xfff0b0, width: 5, alpha: s.alpha });
         }
+      }
+    }
+    // Etape 14 : l'evenement au sol, en Graphics procedural — aucun fichier
+    // d'image. L'or du porteur : « dore » veut dire « recompense » partout.
+    for (const s of eventShapes(event, players, view)) {
+      if (s.kind === 'sceau') {
+        g.circle(s.x, s.y, s.radius).fill({ color: COIN_TINT, alpha: s.occupied ? 0.35 : 0.12 });
+        g.circle(s.x, s.y, s.radius).stroke({ color: COIN_TINT, width: s.occupied ? 5 : 3 });
+        progressRing(g, s);
+      } else if (s.kind === 'forge') {
+        g.circle(s.x, s.y, s.radius).fill({ color: FORGE_ORANGE, alpha: 0.2 });
+        g.circle(s.x, s.y, s.radius).stroke({ color: COIN_TINT, width: 3 });
+        // Une petite enclume : deux rectangles bruns.
+        g.rect(s.x - 14, s.y - 6, 28, 8).fill(CHEST_BROWN);
+        g.rect(s.x - 6, s.y + 2, 12, 10).fill(CHEST_BROWN);
+        progressRing(g, s);
+      } else if (s.kind === 'chariot') {
+        drawCart(g, s);
+      } else {
+        // L'arrivee : un fanion, un trait de 40 px et un triangle or.
+        g.moveTo(s.x, s.y)
+          .lineTo(s.x, s.y - 40)
+          .stroke({ color: CHEST_BROWN, width: 3 });
+        g.poly([s.x, s.y - 40, s.x + 22, s.y - 33, s.x, s.y - 26]).fill(COIN_TINT);
       }
     }
     for (let k = this.#used; k < this.#pool.length; k++) {

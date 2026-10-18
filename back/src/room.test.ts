@@ -51,6 +51,12 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT, elementOf } from '@shared/elements';
+import {
+  EVENT_DURATION_TICKS,
+  EVENT_KIND,
+  EVENT_OUTCOME,
+  EVENT_STATE_PERIOD_TICKS,
+} from '@shared/evenements';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
 import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
@@ -59,6 +65,8 @@ import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
   decodeSnapshot,
+  type EventMessage,
+  MSG,
   NO_VOTE,
   OUTCOME,
   packElementPair,
@@ -68,7 +76,7 @@ import {
   zoneElement,
   zoneReaction,
 } from '@shared/protocol';
-import { RARITY } from '@shared/rarity';
+import { EVENT_RARITY_FLOOR, RARITY } from '@shared/rarity';
 import { REACTION } from '@shared/reactions';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
@@ -5900,5 +5908,264 @@ describe('etape 11 : le porteur de coffre dans le salon', () => {
     } finally {
       relache.mockRestore();
     }
+  });
+});
+
+describe('etape 14 : les evenements dans le salon', () => {
+  /** Une graine du genre voulu : le genre est `graine % 3`. */
+  const graine = (genre: number): number => 3 * 0x4_6a2b + genre;
+
+  /** Retire toute la horde HORS du lot de morts : ni XP, ni or, ni porteur qui doive un coffre. */
+  function viderHorde(room: Room): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      ids.push(room.horde.entityIdAt(i));
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  /**
+   * Un tick de decor : horde videe avant et apres, joueurs remis sur pied. Le
+   * decor mesure l'evenement, pas la survie d'un joueur passif.
+   */
+  function pas(room: Room): EventMessage[] {
+    viderHorde(room);
+    room.step(DT);
+    viderHorde(room);
+    for (let id = 1; id <= MAX_PLAYERS; id++) {
+      room.debugRevive(id);
+    }
+    return room.drainEvents();
+  }
+
+  /** Demarre les sceaux en solo, pose le joueur dessus, avance jusqu'a la fin. */
+  function reussirSceauxSolo(room: Room): void {
+    room.debugStartEvent(graine(EVENT_KIND.SCEAUX));
+    const [sceau] = room.eventPoints ?? [];
+    if (!sceau) {
+      throw new Error('un sceau attendu en solo');
+    }
+    room.debugPlace(1, sceau.x, sceau.y);
+    for (let t = 0; t < EVENT_DURATION_TICKS; t++) {
+      const fin = pas(room).find((m) => m.type === MSG.EVENT_END);
+      if (fin) {
+        expect(fin).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.REUSSI });
+        return;
+      }
+    }
+    throw new Error('les sceaux n ont pas abouti en 60 s');
+  }
+
+  it('EVENT_START : genre, duree, un point par vivant, et eventPoints les memes', () => {
+    const room = new Room(0x14_0e_0001);
+    room.join(1);
+    room.join(2);
+    room.debugStartEvent(graine(EVENT_KIND.SCEAUX));
+    const [start] = room.drainEvents();
+    if (start?.type !== MSG.EVENT_START) {
+      throw new Error('EVENT_START attendu');
+    }
+    expect(start.kind).toBe(EVENT_KIND.SCEAUX);
+    expect(start.durationTicks).toBe(EVENT_DURATION_TICKS);
+    expect(start.points).toHaveLength(2);
+    expect(room.eventPoints).toEqual(start.points);
+  });
+
+  it('un evenement reussi ouvre au tick suivant un etalage gele, toutes ses cartes au moins epiques', () => {
+    const room = new Room(0x14_0e_0002);
+    room.join(1);
+    reussirSceauxSolo(room);
+    expect(room.eventPoints).toBeNull();
+    room.drainLevelUps();
+    room.drainDraftOpens();
+    room.step(DT);
+    const ups = room.drainLevelUps();
+    const opens = room.drainDraftOpens();
+    // Un evenement n'est pas un niveau : le niveau annonce ne monte pas.
+    expect(ups).toEqual([{ tick: room.tick, level: 1 }]);
+    expect(opens).toHaveLength(1);
+    const cartes = opens[0]?.cards ?? [];
+    expect(cartes).toHaveLength(4);
+    for (const c of cartes) {
+      expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(EVENT_RARITY_FLOOR);
+    }
+  });
+
+  /**
+   * ⚠️ **La priorite est fixe, et c'est ce qui laisse le client nommer
+   * l'etalage sans octet** (§5.1). Les trois dus naissent au MEME tick : le
+   * tick ou l'evenement reussit vient de finir, un coffre et un niveau
+   * deviennent dus avant que rien ne s'ouvre.
+   *
+   * ⚠️ Distinguer le coffre de l'evenement se lit sur les raretes : un
+   * coffre de quatre cartes a presque toujours une rare, un niveau presque
+   * toujours une commune. A graine fixe, c'est deterministe ; si l'une de ces
+   * deux lignes rougissait par malchance de graine (~1 %), changer la graine
+   * DU SALON de ce seul test et le dire.
+   */
+  it('coffre, evenement et niveau dus au MEME tick : coffre, puis evenement, puis niveau', () => {
+    const room = new Room(0x14_0e_0003);
+    room.join(1);
+    reussirSceauxSolo(room);
+    room.debugOweChests(1);
+    room.debugOweLevels(1);
+    room.drainLevelUps();
+    const raretes: number[][] = [];
+    for (let k = 0; k < 3; k++) {
+      room.step(DT);
+      const open = room.drainDraftOpens();
+      expect(open).toHaveLength(1);
+      raretes.push((open[0]?.cards ?? []).map((c) => c.rarity ?? RARITY.COMMUNE));
+      expect(room.setDraftToken(1, 0)).toBe(true);
+      room.step(DT);
+      expect(room.drainDraftResults()).toHaveLength(1);
+    }
+    const [coffre = [], evenement = [], niveau = []] = raretes;
+    expect(Math.min(...coffre)).toBe(RARITY.RARE);
+    expect(Math.min(...evenement)).toBeGreaterThanOrEqual(RARITY.EPIQUE);
+    expect(Math.min(...niveau)).toBe(RARITY.COMMUNE);
+    // Le niveau ne s'annonce qu'au troisieme : coffre et evenement disent celui d'avant.
+    expect(room.drainLevelUps().map((u) => u.level)).toEqual([1, 1, 2]);
+  });
+
+  it('EVENT_STATE tous les EVENT_STATE_PERIOD_TICKS ticks vivants, et rien hors evenement', () => {
+    const room = new Room(0x14_0e_0004);
+    room.join(1);
+    for (let t = 0; t < 60; t++) {
+      expect(pas(room)).toEqual([]);
+    }
+    room.debugStartEvent(graine(EVENT_KIND.FORGE));
+    const debut = room.tick;
+    expect(room.drainEvents().map((m) => m.type)).toEqual([MSG.EVENT_START]);
+    const ticks: number[] = [];
+    for (let t = 0; t < 60; t++) {
+      for (const m of pas(room)) {
+        // Personne sur la forge (elle est a 1 200 px) : progression nulle, zeros hors convoi.
+        expect(m).toEqual({ type: MSG.EVENT_STATE, progress: 0, cartX: 0, cartY: 0, cartHp: 0 });
+        ticks.push(room.tick);
+      }
+    }
+    expect(ticks).toEqual(
+      Array.from(
+        { length: 60 / EVENT_STATE_PERIOD_TICKS },
+        (_, i) => debut + EVENT_STATE_PERIOD_TICKS * (i + 1),
+      ),
+    );
+  });
+
+  /**
+   * ⚠️ **La rampe aussi** (§2.4) : c'est ce qui rend juste, sans octet, le
+   * compte a rebours du client pose sur `pingClock`. L'evenement s'eteint
+   * apres EXACTEMENT `EVENT_DURATION_TICKS` ticks vivants : la fin tombe
+   * d'autant plus tard que l'etalage, son gel et sa rampe ont dure.
+   */
+  it('l evenement dort pendant l etalage ET pendant la rampe : 1 800 ticks VIVANTS', () => {
+    const room = new Room(0x14_0e_0005);
+    room.join(1);
+    room.debugStartEvent(graine(EVENT_KIND.FORGE));
+    const debut = room.tick;
+    room.drainEvents();
+    const etats: number[] = [];
+    const releve = (evs: EventMessage[]): EventMessage | undefined => {
+      for (const m of evs) {
+        if (m.type === MSG.EVENT_STATE) {
+          etats.push(room.tick);
+        }
+      }
+      return evs.find((m) => m.type === MSG.EVENT_END);
+    };
+    for (let t = 0; t < 100; t++) {
+      releve(pas(room));
+    }
+    room.debugOweLevels(1);
+    room.drainLevelUps();
+    releve(pas(room));
+    const ouverture = room.drainLevelUps()[0]?.tick ?? -1;
+    expect(ouverture).toBe(room.tick);
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    releve(pas(room));
+    const fermeture = room.drainDraftResults()[0]?.deadlineTick ?? -1;
+    expect(fermeture).toBe(room.tick);
+    let fin: EventMessage | undefined;
+    for (let t = 0; t < 2 * EVENT_DURATION_TICKS && !fin; t++) {
+      fin = releve(pas(room));
+    }
+    expect(fin).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.EXPIRE });
+    expect(room.tick).toBe(
+      debut + EVENT_DURATION_TICKS + (fermeture + LEVEL_RESUME_TICKS - ouverture + 1),
+    );
+    // Aucun etat de l'ouverture de l'etalage a la fin de la rampe.
+    expect(etats.filter((t) => t >= ouverture && t <= fermeture + LEVEL_RESUME_TICKS)).toEqual([]);
+    expect(etats).toHaveLength(EVENT_DURATION_TICKS / EVENT_STATE_PERIOD_TICKS - 1);
+  });
+
+  it('la graine du directeur demarre l evenement au tick meme ou il la rend', () => {
+    const lire = vi.spyOn(WaveDirector.prototype, 'takeEventSeed').mockReturnValue(null);
+    try {
+      const room = new Room(0x14_0e_0006);
+      room.join(1);
+      for (let t = 0; t < 40; t++) {
+        expect(pas(room)).toEqual([]);
+      }
+      lire.mockReturnValueOnce(graine(EVENT_KIND.CONVOI));
+      const [start] = pas(room);
+      expect(start).toMatchObject({
+        type: MSG.EVENT_START,
+        kind: EVENT_KIND.CONVOI,
+        durationTicks: EVENT_DURATION_TICKS,
+      });
+      expect(room.eventPoints).toHaveLength(2);
+    } finally {
+      lire.mockRestore();
+    }
+  });
+
+  it('personne debout quand la graine tombe : aucun evenement, aucun message', () => {
+    const room = new Room(0x14_0e_0007);
+    room.join(1);
+    room.debugKill(1);
+    room.debugStartEvent(graine(EVENT_KIND.SCEAUX));
+    expect(room.eventPoints).toBeNull();
+    expect(room.drainEvents()).toEqual([]);
+  });
+
+  it('la fin de run l emporte sans message : plus aucun EVENT_* apres RUN_OVER, aucun etalage du', () => {
+    const room = new Room(0x14_0e_0008);
+    room.join(1);
+    room.debugStartEvent(graine(EVENT_KIND.FORGE));
+    room.drainEvents();
+    room.debugKill(1);
+    room.step(DT);
+    expect(room.drainRunOver()).not.toBeNull();
+    room.drainEvents();
+    for (let t = 0; t < 60; t++) {
+      room.step(DT);
+    }
+    expect(room.drainEvents()).toEqual([]);
+    expect(room.drainDraftOpens()).toEqual([]);
+  });
+
+  /** N est FIGE au depart (§3.1) : le sceau de qui part reste, l'evenement s'eteint a 60 s. */
+  it('sceaux a deux, un joueur part : son sceau reste, l evenement expire sans planter ni etalage', () => {
+    const room = new Room(0x14_0e_0009);
+    room.join(1);
+    room.join(2);
+    room.debugStartEvent(graine(EVENT_KIND.SCEAUX));
+    const [premier] = room.eventPoints ?? [];
+    if (!premier) {
+      throw new Error('deux sceaux attendus');
+    }
+    expect(room.eventPoints).toHaveLength(2);
+    room.debugPlace(1, premier.x, premier.y);
+    room.leave(2);
+    let fin: EventMessage | undefined;
+    for (let t = 0; t < EVENT_DURATION_TICKS + 5 && !fin; t++) {
+      fin = pas(room).find((m) => m.type === MSG.EVENT_END);
+    }
+    expect(fin).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.EXPIRE });
+    room.step(DT);
+    expect(room.drainDraftOpens()).toEqual([]);
   });
 });

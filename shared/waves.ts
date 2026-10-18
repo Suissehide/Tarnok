@@ -99,7 +99,7 @@ export interface ObstacleField {
  *
  * Ecrit directement dans `outX`/`outY`, sans objet intermediaire par entite.
  */
-function nudgeOutOfObstacle(
+export function nudgeOutOfObstacle(
   obstacles: ObstacleField,
   x: number,
   y: number,

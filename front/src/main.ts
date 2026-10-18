@@ -206,6 +206,8 @@ const hudElements: HudElements = {
   gold: hudGold,
   freeze: hudFreeze,
   porteur: el('hud-porteur'),
+  evenement: el('hud-evenement'),
+  evenementEtat: el('hud-evenement-etat'),
   passiveList: hudPassiveList,
 };
 
@@ -771,6 +773,7 @@ function join(code: string): void {
         pings: client.pingCount,
         lastPingIntent: client.lastPingIntent,
         porteurs: client.porteurCount,
+        evenements: client.eventCount,
       };
       for (const cue of cuesBetween(lastCues, cur)) {
         audio.play(cue);

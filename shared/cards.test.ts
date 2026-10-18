@@ -14,7 +14,7 @@ import { SPREAD_BONUS, WEAPON_SLOTS } from './constants';
 import { Loadout } from './loadout';
 import { PASSIVES } from './passives';
 import { makeRandom } from './random';
-import { CHEST_RARITY_FLOOR, RARITY } from './rarity';
+import { CHEST_RARITY_FLOOR, EVENT_RARITY_FLOOR, RARITY } from './rarity';
 import { BASE_WEAPON_ID, UPGRADE_KINDS, upgradesFor, WEAPONS, type Weapon } from './weapons';
 
 function equipe(...loadouts: Loadout[]): Map<number, Loadout> {
@@ -530,11 +530,16 @@ describe('etape 13 : un palier, un pool', () => {
    * ⚠️ **Le plancher passe AVANT l'etalage complet.** Sous plancher rare la
    * descente trouve toujours des cartes ordinaires, donc le `> floor` de la
    * boucle ne se distingue pas d'un `> 0` : il fallait un plancher que les
-   * seuls paliers ne peuvent pas servir jusqu'au bout pour l'eprouver. A
-   * plancher epique l'etalage se raccourcit — c'est le `break` final, et c'est
-   * le comportement VOULU : rendre une commune ici trahirait le plancher.
+   * seuls paliers ne peuvent pas servir jusqu'au bout pour l'eprouver.
+   *
+   * ⚠️ **Etape 14 : au plancher epique, l'etalage plafonne aux SIX cartes de
+   * regle.** Avant la remontee, un emplacement qui tirait epique apres les
+   * trois epiques arretait l'etalage (mesure sur 200 graines a quatre joueurs :
+   * 3, 4, 5 ou 6 cartes, 92 / 62 / 31 / 15). Depuis, il remonte au legendaire :
+   * six cartes a chaque graine — une de moins que voulu a quatre, assume — et
+   * aucune ne passe sous le plancher.
    */
-  it('plancher epique : l etalage se raccourcit plutot que de descendre sous le plancher', () => {
+  it('plancher epique : jamais sous le plancher, et six cartes de regle au plus', () => {
     const loadouts = equipe(new Loadout(), new Loadout(), new Loadout(), new Loadout());
     const voulu = loadouts.size + SPREAD_BONUS;
     for (let seed = 1; seed <= 200; seed++) {
@@ -542,15 +547,98 @@ describe('etape 13 : un palier, un pool', () => {
       for (const c of spread) {
         expect(c.rarity ?? RARITY.COMMUNE).toBeGreaterThanOrEqual(RARITY.EPIQUE);
       }
-      // ⚠️ **La longueur exacte depend de la graine, et ce n'est pas une
-      // regle.** Selon que le legendaire sort avant ou apres l'epuisement des
-      // epiques, l'etalage fait deux ou trois cartes. Ce qui est VRAI a chaque
-      // fois, c'est qu'il est plus
-      // court que voulu — donc que le `break` a tranche en faveur du plancher
-      // — et qu'il ne depasse jamais ce que les deux paliers contiennent.
-      expect(spread.length).toBeGreaterThan(0);
       expect(spread.length).toBeLessThan(voulu);
-      expect(spread.length).toBeLessThanOrEqual(epiques.length + legendaires.length);
+      expect(spread.length).toBe(epiques.length + legendaires.length);
     }
+  });
+});
+
+describe('etape 14 : drawSpread au plancher d un evenement — la remontee', () => {
+  /** FNV-1a 32 bits : une empreinte du flux, comparee a celle relevee sur main. */
+  function fnv1a(s: string): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h;
+  }
+  const regles = PASSIVES.filter((p) => p.tier !== undefined).length;
+  const joueurs = (n: number): Map<number, Loadout> =>
+    equipe(...Array.from({ length: n }, () => new Loadout()));
+
+  it('six cartes de regle au catalogue, la limite de tout etalage d evenement', () => {
+    expect(regles).toBe(6);
+  });
+
+  it('min(N + 3, 6) cartes, toutes epiques ou legendaires et chacune chez elle, N = 1 a 4, 300 graines', () => {
+    for (let n = 1; n <= 4; n++) {
+      for (let seed = 1; seed <= 300; seed++) {
+        const spread = drawSpread(joueurs(n), makeRandom(seed), EVENT_RARITY_FLOOR);
+        expect(spread).toHaveLength(Math.min(n + SPREAD_BONUS, regles));
+        for (const c of spread) {
+          expect(c.rarity).toBeGreaterThanOrEqual(RARITY.EPIQUE);
+          expect(c.rarity).toBe(rarityForTier(tierOf(c)));
+        }
+      }
+    }
+  });
+
+  /**
+   * ⚠️ **La graine 1 en solo est le cas de la spec, mesure sur main avant
+   * l'etape** : trois epiques, puis un quatrieme emplacement qui tire epique
+   * — palier vide, plancher atteint, `break` : 3 cartes pour un etalage de 4.
+   */
+  it('graine 1 en solo : la quatrieme carte REMONTE en legendaire au lieu d arreter l etalage', () => {
+    const spread = drawSpread(joueurs(1), makeRandom(1), EVENT_RARITY_FLOOR);
+    expect(spread.map((c) => c.rarity)).toEqual([
+      RARITY.EPIQUE,
+      RARITY.EPIQUE,
+      RARITY.EPIQUE,
+      RARITY.LEGENDAIRE,
+    ]);
+  });
+
+  /**
+   * Une carte de regle coute deux `rng()` (rarete, carte) ; la remontee,
+   * aucun. N = 1 a 3 seulement : a quatre, un septieme emplacement ne trouve
+   * plus rien (six cartes de regle) et coute ses deux `rng()` avant le `break`.
+   */
+  it('la remontee ne consomme aucun rng() de plus', () => {
+    for (const n of [1, 2, 3]) {
+      for (let seed = 1; seed <= 100; seed++) {
+        const source = makeRandom(seed);
+        let appels = 0;
+        const spread = drawSpread(
+          joueurs(n),
+          () => {
+            appels++;
+            return source();
+          },
+          EVENT_RARITY_FLOOR,
+        );
+        expect(spread).toHaveLength(n + SPREAD_BONUS);
+        expect(appels).toBe(2 * spread.length);
+      }
+    }
+  });
+
+  /**
+   * ⚠️ **Le niveau et le coffre ne voient AUCUNE difference.** Empreinte des
+   * etalages aux planchers commun et rare, N = 1 a 4, graines 1 a 100,
+   * RELEVEE sur `76613ab` avant l'etape : la remontee ne se declenche que si
+   * le plancher lui-meme est vide, ce qui n'arrive pas tant qu'une carte
+   * ordinaire reste prenable.
+   */
+  it('aux planchers commun et rare, les etalages sont bit-identiques a ceux d avant l etape', () => {
+    const rows: unknown[] = [];
+    for (const floor of [RARITY.COMMUNE, RARITY.RARE]) {
+      for (let n = 1; n <= 4; n++) {
+        for (let seed = 1; seed <= 100; seed++) {
+          rows.push(drawSpread(joueurs(n), makeRandom(seed), floor));
+        }
+      }
+    }
+    expect(fnv1a(JSON.stringify(rows))).toBe(2_604_871_415);
   });
 });

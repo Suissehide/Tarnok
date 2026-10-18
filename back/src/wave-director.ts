@@ -222,6 +222,24 @@ export const PORTEUR_MIN_GAP_WAVES = 50;
  */
 export const PORTEUR_SPAWN_DISTANCE = 1500;
 
+/**
+ * Les evenements bonus (etape 14, §2.1) : marques a la 3e vague (groupe) d'un
+ * palier, boss compris dans le compte — le porteur vient a la 2e.
+ */
+export const EVENT_WAVE_IN_PALIER = 3;
+
+/** ...jamais a moins de 40 vagues (40 x 6 s = 4 min) du precedent. */
+export const EVENT_MIN_GAP_WAVES = 40;
+
+/**
+ * ...et pas avant la vague qui tombe, au plus tot, a 2 min de jeu (decision
+ * de Leo). Une vague n tombe au plus tot au tick `n x PERIOD_TICKS` ; un gel
+ * retarde les vagues, jamais ne les avance. ⚠️ **Ecrit en formule** : si la
+ * cadence des vagues change, le seuil suit. C'est un MINIMUM : le premier
+ * evenement est a la premiere 3e vague de palier a partir de celle-ci.
+ */
+export const EVENT_FIRST_WAVE = Math.ceil((120 * TICK_HZ) / PERIOD_TICKS);
+
 export class WaveDirector {
   #nextWaveId = 1;
   readonly #rng: () => number;
@@ -255,6 +273,17 @@ export class WaveDirector {
    * bloque le suivant (jamais deux a la fois).
    */
   #porteurEnJeu = false;
+
+  /** `#waveNumber` du dernier evenement marque. */
+  #lastEventWave = Number.NEGATIVE_INFINITY;
+  /**
+   * La graine de l'evenement du a la derniere vague, lue UNE fois par le
+   * salon (`takeEventSeed`). ⚠️ **Pas de `#evenementEnJeu`, contrairement au
+   * porteur** : un evenement dure au plus `EVENT_DURATION_TICKS` ticks
+   * vivants (11 vagues au plus), loin des 40 du plancher — un second garde
+   * serait de ceux qu'aucun test ne tient.
+   */
+  #eventSeed: number | null = null;
 
   constructor(seed: number) {
     this.#rng = makeRandom(seed);
@@ -345,6 +374,33 @@ export class WaveDirector {
   }
 
   /**
+   * Marque un evenement si la vague qui sort le doit. ⚠️ **Aucun tirage dans
+   * `#rng`, et pas meme un `waveId`** : un evenement n'est pas un ordre de
+   * vague, et sa graine se DERIVE de celle de l'ordre principal, deja tiree,
+   * par un autre masque que celui du porteur. Le lieu, le genre et l'etat
+   * vivent dans le salon, qui seul connait les joueurs vivants et les murs.
+   */
+  #marquerEvenement(principal: WaveOrder | undefined): void {
+    if (
+      !principal ||
+      this.#waveNumber < EVENT_FIRST_WAVE ||
+      this.#wavesSincePalier !== EVENT_WAVE_IN_PALIER ||
+      this.#waveNumber - this.#lastEventWave < EVENT_MIN_GAP_WAVES
+    ) {
+      return;
+    }
+    this.#lastEventWave = this.#waveNumber;
+    this.#eventSeed = (principal.seed ^ 0x2c9e_7d43) >>> 0;
+  }
+
+  /** La graine de l'evenement du a cette vague, ou `null` ; la lit et l'oublie. */
+  takeEventSeed(): number | null {
+    const s = this.#eventSeed;
+    this.#eventSeed = null;
+    return s;
+  }
+
+  /**
    * Un `waveId` neuf, hors du cycle : les petits d'un diviseur, les morts d'un
    * necromancien. Meme compteur que les vagues, donc jamais deux fois le meme.
    */
@@ -424,6 +480,7 @@ export class WaveDirector {
       };
       this.#bossWaveId = boss.waveId;
       this.#wavesInPalier = 0;
+      this.#marquerEvenement(boss);
       return this.#avecPorteur([boss], tick, anchorX, anchorY);
     }
 
@@ -460,6 +517,7 @@ export class WaveDirector {
     if (escortRole) {
       out.push(ordre(escortRole, partEscorte));
     }
+    this.#marquerEvenement(out[0]);
     return this.#avecPorteur(out, tick, anchorX, anchorY);
   }
 }

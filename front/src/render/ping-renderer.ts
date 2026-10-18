@@ -1,7 +1,8 @@
+import { EVENT_KIND } from '@shared/evenements';
 import { PING_INTENTS, PING_LIFE_TICKS } from '@shared/ping';
 import { type Container, Graphics } from 'pixi.js';
 
-import type { ActivePing } from '../net/client';
+import type { ActivePing, EventView } from '../net/client';
 import { drawChest } from './behavior-renderer';
 import { COIN_TINT } from './orb-renderer';
 
@@ -150,6 +151,7 @@ export class PingRenderer {
     w: number,
     h: number,
     porteur: { x: number; y: number } | null = null,
+    event: EventView | null = null,
   ): void {
     const g = this.#world;
     const s = this.#screen;
@@ -193,6 +195,20 @@ export class PingRenderer {
       if (a) {
         drawArrow(s, a, 1.2, COIN_TINT, 1);
         drawChest(s, a.x - Math.cos(a.angle) * 26, a.y - Math.sin(a.angle) * 26, 0.6);
+      }
+    }
+    // Etape 14 : chaque cible d'evenement hors champ — chaque sceau, la forge,
+    // ou le CHARIOT (pas l'arrivee) — une fleche or au bord, sur le modele
+    // exact du porteur. Dans le champ, rien : le sol suffit.
+    if (event) {
+      const cibles =
+        event.kind === EVENT_KIND.CONVOI ? (event.cart ? [event.cart] : []) : event.points;
+      for (const c of cibles) {
+        const sp = toScreen(c.x, c.y);
+        const a = edgeArrow(w, h, sp.x, sp.y, MARGIN);
+        if (a) {
+          drawArrow(s, a, 1.2, COIN_TINT, 1);
+        }
       }
     }
   }

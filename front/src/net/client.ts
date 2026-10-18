@@ -30,6 +30,7 @@ import {
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
+import { EVENT_KIND, EVENT_OUTCOME, EVENT_STATE_PERIOD_TICKS } from '@shared/evenements';
 import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
@@ -50,6 +51,7 @@ import {
   type AbilityUsedMessage,
   type BossChargeMessage,
   decode,
+  type EventMessage,
   encodeAbility,
   encodeDraftToken,
   encodeHello,
@@ -232,6 +234,62 @@ export const BLAST_FLASH_MS = 450;
  * naissance, au meme moment chez chacun.
  */
 export const PORTEUR_BANNER_MS = 4000;
+
+/**
+ * Duree du bandeau d'un evenement (etape 14, §7.1), depart ou fin, en
+ * horloge murale depuis la RECEPTION du message.
+ */
+export const EVENT_BANNER_MS = 4000;
+
+/**
+ * Le chariot est montre une periode d'`EVENT_STATE` en retard, interpole sur
+ * elle (§6.2) : 200 ms, 12 px a 60 px/s. Les PV, eux, viennent du serveur.
+ */
+const CART_LERP_MS = (1000 * EVENT_STATE_PERIOD_TICKS) / TICK_HZ;
+
+/** Le bandeau du depart, par genre (`EVENT_KIND`). */
+const EVENT_START_BANNERS: readonly string[] = [
+  "Les sceaux s'éveillent !",
+  "La forge s'allume !",
+  'Un convoi attend son escorte !',
+];
+
+/** Le bandeau de la fin, par issue (`EVENT_OUTCOME`). */
+const EVENT_END_BANNERS: readonly string[] = [
+  'Réussi — étalage de règles !',
+  "L'événement s'éteint…",
+  'Le convoi est détruit…',
+];
+
+/** Ce que l'ecran montre d'un evenement (etape 14) : HUD, sol, fleches de bord. */
+export interface EventView {
+  /** `EVENT_KIND`. */
+  kind: number;
+  /** Tels qu'`EVENT_START` les a portes : sceaux, forge, ou depart puis arrivee. */
+  points: readonly { x: number; y: number }[];
+  /** De 0 a 1. */
+  progress: number;
+  /** Sur `pingClock` : fige pendant le gel et la rampe, comme l'evenement au serveur. */
+  secondsLeft: number;
+  /** Le chariot interpole (convoi), `null` sinon. */
+  cart: { x: number; y: number } | null;
+  /** PV du chariot, de 0 a 1. */
+  cartHp: number;
+}
+
+/** Le miroir d'un evenement en cours, tel que les messages l'ont dit. */
+interface EventMirror {
+  kind: number;
+  points: readonly { x: number; y: number }[];
+  /** Echeance sur `pingClock`, posee a la reception d'`EVENT_START`. */
+  deadline: number;
+  progress: number;
+  cartFrom: { x: number; y: number };
+  cartTo: { x: number; y: number };
+  cartAtMs: number;
+  cartHp: number;
+}
+
 /** Duree du sort de transformation (necromancien) : dix images, plus lent. */
 export const RAISE_FLASH_MS = 800;
 
@@ -1305,6 +1363,18 @@ export class GameClient {
    */
   #chestsOwed = 0;
   #draftIsChest = false;
+  /** L'evenement en cours (etape 14), `null` hors evenement. Pose, mis a jour et efface par le fil. */
+  #event: EventMirror | null = null;
+  /** `EVENT_START` recus depuis la connexion : l'audio en deduit quand sonner. */
+  #eventCount = 0;
+  /** Le dernier bandeau d'evenement, depart ou fin. */
+  #eventBanner: { text: string; atMs: number } | null = null;
+  /**
+   * Etalages d'evenement dus : un par `EVENT_END` reussi, consommes au
+   * `LEVEL_UP` suivant APRES les coffres — la meme priorite fixe que le salon.
+   */
+  #eventDraftsOwed = 0;
+  #draftIsEvent = false;
   #lastPingIntent = -1;
   /** Horloge de ping : voir l'accesseur `pingClock`. */
   #pingClock = 0;
@@ -1810,6 +1880,38 @@ export class GameClient {
     return { x: this.horde.x[slot] ?? 0, y: this.horde.y[slot] ?? 0 };
   }
 
+  /** L'etalage courant est-il un etalage d'evenement (etape 14) ? Fige au `LEVEL_UP`. */
+  get draftIsEvent(): boolean {
+    return this.#draftIsEvent;
+  }
+
+  /** `EVENT_START` recus depuis la connexion (etape 14). */
+  get eventCount(): number {
+    return this.#eventCount;
+  }
+
+  /** Le texte du bandeau d'evenement pendant `EVENT_BANNER_MS`, sinon `null`. */
+  get eventBanner(): string | null {
+    const b = this.#eventBanner;
+    return b !== null && performance.now() - b.atMs < EVENT_BANNER_MS ? b.text : null;
+  }
+
+  /** L'evenement en cours (etape 14), ou `null`. */
+  get event(): EventView | null {
+    const ev = this.#event;
+    if (ev === null) {
+      return null;
+    }
+    return {
+      kind: ev.kind,
+      points: ev.points,
+      progress: ev.progress,
+      secondsLeft: Math.max(0, ev.deadline - this.#pingClock) / TICK_HZ,
+      cart: ev.kind === EVENT_KIND.CONVOI ? this.#cartAt(ev, performance.now()) : null,
+      cartHp: ev.cartHp,
+    };
+  }
+
   /** Intention du dernier ping recu, `-1` si aucun. */
   get lastPingIntent(): number {
     return this.#lastPingIntent;
@@ -1893,6 +1995,61 @@ export class GameClient {
     });
     this.#pingCount += 1;
     this.#lastPingIntent = msg.intent;
+  }
+
+  /**
+   * Les trois messages d'evenement (etape 14), lus A LA RECEPTION : ils ne
+   * touchent pas la simulation, rien a rejouer.
+   */
+  #onEvent(msg: EventMessage): void {
+    const now = performance.now();
+    if (msg.type === MSG.EVENT_START) {
+      const depart = msg.points[0] ?? { x: 0, y: 0 };
+      this.#event = {
+        kind: msg.kind,
+        points: msg.points,
+        // Une DUREE, posee sur `pingClock` : elle dort exactement quand
+        // l'evenement dort au serveur.
+        deadline: this.#pingClock + msg.durationTicks,
+        progress: 0,
+        cartFrom: depart,
+        cartTo: depart,
+        cartAtMs: now,
+        cartHp: 1,
+      };
+      this.#eventCount++;
+      this.#eventBanner = { text: EVENT_START_BANNERS[msg.kind] ?? '', atMs: now };
+      return;
+    }
+    if (msg.type === MSG.EVENT_STATE) {
+      const ev = this.#event;
+      // Arrive en cours d'evenement : sans depart, rien a montrer (§10).
+      if (ev === null) {
+        return;
+      }
+      ev.progress = msg.progress / 255;
+      ev.cartFrom = this.#cartAt(ev, now);
+      ev.cartTo = { x: msg.cartX, y: msg.cartY };
+      ev.cartAtMs = now;
+      ev.cartHp = msg.cartHp / 255;
+      return;
+    }
+    this.#event = null;
+    // ⚠️ Compte meme sans depart vu (ecart n° 12 du plan) : l'`EVENT_END`
+    // suffit a nommer l'etalage qui suit.
+    if (msg.outcome === EVENT_OUTCOME.REUSSI) {
+      this.#eventDraftsOwed++;
+    }
+    this.#eventBanner = { text: EVENT_END_BANNERS[msg.outcome] ?? '', atMs: now };
+  }
+
+  /** Le chariot a l'instant `now`, entre ses deux derniers etats connus. */
+  #cartAt(ev: EventMirror, now: number): { x: number; y: number } {
+    const t = Math.min(1, Math.max(0, (now - ev.cartAtMs) / CART_LERP_MS));
+    return {
+      x: ev.cartFrom.x + (ev.cartTo.x - ev.cartFrom.x) * t,
+      y: ev.cartFrom.y + (ev.cartTo.y - ev.cartFrom.y) * t,
+    };
   }
 
   connect(): void {
@@ -2153,6 +2310,14 @@ export class GameClient {
       this.#onPingShown(msg);
       return;
     }
+    if (
+      msg.type === MSG.EVENT_START ||
+      msg.type === MSG.EVENT_STATE ||
+      msg.type === MSG.EVENT_END
+    ) {
+      this.#onEvent(msg);
+      return;
+    }
     if (msg.type === MSG.BOSS_CHARGE) {
       // Meme discipline que les zones et les morts : empiler ici, appliquer (et
       // rejouer) au tick local deja simule — voir `#applyBossCharge`. Une
@@ -2195,11 +2360,16 @@ export class GameClient {
       // diverger identiquement des deux cotes, seulement un chiffre a
       // afficher.
       this.#level = msg.level;
-      // Un coffre du est TOUJOURS le premier `LEVEL_UP` qui suit la
-      // mort du porteur — le salon l'ouvre avant tout niveau.
+      // Etape 11 : un coffre du est TOUJOURS le premier `LEVEL_UP` qui suit la
+      // mort du porteur — le salon l'ouvre avant tout niveau. Etape 14 : puis
+      // un etalage d'evenement, avant tout niveau. Meme priorite que le salon.
       this.#draftIsChest = this.#chestsOwed > 0;
       if (this.#draftIsChest) {
         this.#chestsOwed--;
+      }
+      this.#draftIsEvent = !this.#draftIsChest && this.#eventDraftsOwed > 0;
+      if (this.#draftIsEvent) {
+        this.#eventDraftsOwed--;
       }
       return;
     }
@@ -2280,6 +2450,8 @@ export class GameClient {
     if (msg.type === MSG.RUN_OVER) {
       // Une seule fois par salon : `Room` ne met `RUN_OVER` en file qu'une
       // fois (`#runOver`).
+      // Etape 14 : la fin de run l'emporte sans message (§2.4).
+      this.#event = null;
       this.onRunOver({ survivedTicks: msg.survivedTicks, level: msg.level, kills: msg.kills });
       return;
     }

@@ -7,12 +7,16 @@ import {
   STEP2_ARCHETYPES,
 } from '@shared/archetypes';
 import { MAP_SIZE, MAX_ENTITIES, MAX_PLAYERS, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
+import { EVENT_DURATION_TICKS } from '@shared/evenements';
 import { Horde } from '@shared/horde';
 import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
 import {
+  EVENT_FIRST_WAVE,
+  EVENT_MIN_GAP_WAVES,
+  EVENT_WAVE_IN_PALIER,
   PORTEUR_MIN_GAP_WAVES,
   PORTEUR_SPAWN_DISTANCE,
   PORTEUR_WAVE_IN_PALIER,
@@ -723,5 +727,157 @@ describe('etape 11 : le directeur demande le porteur de coffre', () => {
     }
     // Non-vacuite : le cas « hors carte » s'est bien presente.
     expect(dehors).toBeGreaterThan(0);
+  });
+});
+
+describe('etape 14 : le directeur marque les evenements, sans tirage de plus', () => {
+  const estPorteur = (o: WaveOrder): boolean => o.archetype === PORTEUR_ARCHETYPE;
+
+  /** FNV-1a 32 bits : une empreinte du flux, comparee a celle relevee sur main. */
+  function fnv1a(s: string): number {
+    let h = 0x811c9dc5;
+    for (let i = 0; i < s.length; i++) {
+      h ^= s.charCodeAt(i);
+      h = Math.imul(h, 0x01000193) >>> 0;
+    }
+    return h;
+  }
+
+  interface Marque {
+    /** Numero de la vague (1 pour la premiere). */
+    numero: number;
+    tick: number;
+    graine: number;
+    /** Graine de l'ordre principal de la vague. */
+    principal: number;
+  }
+
+  /**
+   * Les `vagues` premieres vagues d'un directeur, boss abattu a son
+   * apparition, porteur rendu a la sienne : les evenements marques. Hors
+   * vague, `takeEventSeed` doit rendre `null`.
+   */
+  function marques(seed: number, vagues: number): Marque[] {
+    const d = new WaveDirector(seed);
+    const out: Marque[] = [];
+    let n = 0;
+    for (let tick = 0; n < vagues; tick++) {
+      const g = d.dueWave(tick, [3000], [3000]);
+      if (g.length === 0) {
+        expect(d.takeEventSeed()).toBeNull();
+        continue;
+      }
+      n++;
+      if (d.bossWaveId === g[0]?.waveId) {
+        d.bossDefeated();
+      }
+      if (g.some(estPorteur)) {
+        d.porteurGone();
+      }
+      const graine = d.takeEventSeed();
+      if (graine !== null) {
+        out.push({ numero: n, tick, graine, principal: g[0]?.seed ?? 0 });
+      }
+    }
+    return out;
+  }
+
+  it('les constantes de la spec, le seuil de 2 min ecrit en formule', () => {
+    expect(EVENT_WAVE_IN_PALIER).toBe(3);
+    expect(EVENT_MIN_GAP_WAVES).toBe(40);
+    expect(EVENT_FIRST_WAVE).toBe(20);
+  });
+
+  /**
+   * Le boss tombe a son apparition : un palier toutes les cinq vagues, sa 3e
+   * vague est la 5p + 3. Rien aux vagues 3, 8, 13 et 18 (avant la 20e), puis
+   * la premiere 3e vague a partir de 20 — la 23e —, puis rien avant 40 vagues.
+   */
+  it('aux vagues 23, 63 et 103 : jamais avant la 20e, jamais a moins de 40 vagues', () => {
+    expect(marques(5, 120).map((m) => m.numero)).toEqual([23, 63, 103]);
+  });
+
+  it('la graine se DERIVE de l ordre principal, par un autre masque que le porteur', () => {
+    const ms = marques(5, 70);
+    expect(ms.length).toBeGreaterThan(0);
+    for (const m of ms) {
+      expect(m.graine).toBe((m.principal ^ 0x2c9e_7d43) >>> 0);
+      expect(m.graine).not.toBe((m.principal ^ 0x5f3a_c0f1) >>> 0);
+    }
+  });
+
+  it('takeEventSeed rend la graine une fois, null a la seconde lecture', () => {
+    const d = new WaveDirector(5);
+    let vues = 0;
+    for (let tick = 0; vues === 0 && tick < 200 * TICK_HZ; tick++) {
+      const g = d.dueWave(tick, [3000], [3000]);
+      if (g.length > 0 && d.bossWaveId === g[0]?.waveId) {
+        d.bossDefeated();
+      }
+      if (g.some(estPorteur)) {
+        d.porteurGone();
+      }
+      if (d.takeEventSeed() !== null) {
+        vues++;
+        expect(d.takeEventSeed()).toBeNull();
+      }
+    }
+    expect(vues).toBe(1);
+  });
+
+  /**
+   * ⚠️ **Au plus un a la fois, par le seul plancher** (§2.1) : un evenement
+   * dure au plus `EVENT_DURATION_TICKS` ticks vivants, et les vagues ne
+   * tombent que sur des ticks vivants (pas pendant un gel). Deux marques
+   * sont donc toujours separees de plus que cette duree.
+   */
+  it('deux evenements sont separes de plus d EVENT_DURATION_TICKS ticks : jamais deux en jeu', () => {
+    const ms = marques(5, 200);
+    expect(ms.length).toBeGreaterThanOrEqual(3);
+    for (let i = 1; i < ms.length; i++) {
+      expect((ms[i]?.tick ?? 0) - (ms[i - 1]?.tick ?? 0)).toBeGreaterThan(EVENT_DURATION_TICKS);
+    }
+  });
+
+  /**
+   * ⚠️ **Aucun tirage, aucun `waveId` de plus** (§2.1) : l'empreinte de TOUS
+   * les ordres — `waveId` et porteur compris — a ete RELEVEE sur `76613ab`
+   * avant l'etape, avec exactement ce decor (celui du test d'empreinte de
+   * l'etape 11, qui, lui, laisse le `waveId` de cote).
+   */
+  it('tous les ordres, waveId compris, sont bit-identiques a ceux d avant l etape', () => {
+    const d = new WaveDirector(5);
+    const rows: number[][] = [];
+    let ordinaires = 0;
+    let evenements = 0;
+    for (let tick = 0; tick < TICK_HZ * 600; tick++) {
+      const g = d.dueWave(tick, [3000, 2000], [3000, 4000], 1 + Math.floor(ordinaires / 3));
+      if (g.length > 0 && d.bossWaveId === g[0]?.waveId) {
+        d.bossDefeated();
+      }
+      if (g.some(estPorteur)) {
+        d.porteurGone();
+      }
+      if (d.takeEventSeed() !== null) {
+        evenements++;
+      }
+      for (const o of g) {
+        rows.push([
+          o.waveId,
+          o.spawnTick,
+          o.seed,
+          o.archetype,
+          o.formation,
+          o.anchorX,
+          o.anchorY,
+          o.count,
+        ]);
+      }
+      ordinaires += g.filter((o) => !estPorteur(o)).length;
+    }
+    // Non-vacuite : des evenements sont bien sortis pendant la mesure.
+    expect(evenements).toBeGreaterThanOrEqual(2);
+    expect(rows).toHaveLength(161);
+    expect(fnv1a(JSON.stringify(rows))).toBe(3_330_581_021);
   });
 });

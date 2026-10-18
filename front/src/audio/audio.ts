@@ -28,7 +28,8 @@ export type Cue =
   | 'ping-danger'
   | 'ping-boss'
   | 'ping-jePrends'
-  | 'porteur';
+  | 'porteur'
+  | 'evenement';
 
 /** Ce que le jeu observe a chaque image, pour en deduire les effets. */
 export interface CueSnapshot {
@@ -47,6 +48,8 @@ export interface CueSnapshot {
   lastPingIntent: number;
   /** Porteurs de coffre annonces depuis la connexion. */
   porteurs: number;
+  /** Evenements annonces depuis la connexion (etape 14). */
+  evenements: number;
 }
 
 /**
@@ -93,6 +96,9 @@ export function cuesBetween(prev: CueSnapshot | null, cur: CueSnapshot): Cue[] {
   if (cur.porteurs > prev.porteurs) {
     out.push('porteur');
   }
+  if (cur.evenements > prev.evenements) {
+    out.push('evenement');
+  }
   return out;
 }
 
@@ -123,6 +129,7 @@ const MIN_GAP_S: Record<Cue, number> = {
   'ping-boss': 0.15,
   'ping-jePrends': 0.15,
   porteur: 1,
+  evenement: 1,
 };
 
 /** Re pour la musique : une gamme dorienne, modale et un peu medievale. */
@@ -267,6 +274,14 @@ export class AudioEngine {
         // `levelup` : « quelque chose a chasser », pas « un palier franchi ».
         [0, 4, 7, 12, 16].forEach((s, k) => {
           tone('square', hz(19 + s), hz(19 + s), k * 0.06, 0.16, 0.06);
+        });
+        break;
+      case 'evenement':
+        // Trois notes GRAVES puis une quinte : « un objectif », distinct de
+        // l'arpege brillant du porteur. La reussite n'a pas de son : le
+        // bandeau l'annonce, et son LEVEL_UP ne monte pas le niveau.
+        [0, 0, 0, 7].forEach((s, k) => {
+          tone('triangle', hz(-12 + s), hz(-12 + s), k * 0.16, 0.22, 0.12);
         });
         break;
       case 'hurt':
