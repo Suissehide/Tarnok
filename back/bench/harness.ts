@@ -1,10 +1,4 @@
-/**
- * Petit outillage commun aux bancs de l'etape 1.
- *
- * L'etape 1 est une porte : son livrable n'est pas du code, c'est un tableau de
- * chiffres. Tant qu'il n'est pas rempli, la cible de 1 500 entites, la carte
- * immense et le scaling x N sont des hypotheses.
- */
+/** Petit outillage commun aux bancs : statistiques et description de la machine. */
 
 export interface Stats {
   median: number;

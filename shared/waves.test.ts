@@ -143,28 +143,26 @@ describe('FORMATION.ENCIRCLE — la vague encercle le joueur (etape 6a, tache 18
       somme += r;
       minR = Math.min(minR, r);
       maxR = Math.max(maxR, r);
-      // Derive de la constante, jamais recopiee : deux tests de ce depot sont
-      // devenus intermittents pour avoir epingle `WAVE1_MIN_COUNT = 16`.
+      // Derive de la constante, jamais recopiee : epingler sa valeur rend le
+      // test intermittent quand elle bouge.
       expect(Math.abs(r - ENCIRCLE_RADIUS)).toBeLessThan(ENCIRCLE_RADIUS * 0.1);
     }
     expect(Math.abs(somme / o.count - ENCIRCLE_RADIUS)).toBeLessThan(ENCIRCLE_RADIUS * 0.02);
 
-    // ⚠️ **L'anneau a une EPAISSEUR, et rien d'autre ne le disait** : la
-    // mutation `ENCIRCLE_JITTER = 0` survivait aux 674 tests du depot. Sur un
-    // cercle parfait, toute la vague part a la meme distance et arrive au
-    // contact au meme instant, en un rang d'un seul monstre — le mur qu'on
-    // vient justement de defaire. Le bruit exact est un reglage, son existence
-    // ne l'est pas — d'ou un plancher d'un pixel plutot qu'une valeur.
+    // ⚠️ **L'anneau a une EPAISSEUR, et seul ce test le garde** (contre
+    // `ENCIRCLE_JITTER = 0`). Sur un cercle parfait, toute la vague arrive au
+    // contact au meme instant, en un rang d'un seul monstre : un mur. Le bruit
+    // exact est un reglage, son existence ne l'est pas — d'ou un plancher d'un
+    // pixel plutot qu'une valeur.
     //
-    // ⚠️ **Un simple `maxR > minR` NE SUFFIT PAS, et la mutation l'a montre** :
-    // `outX`/`outY` sont des `Float32Array`, donc meme a bruit nul les rayons
-    // relus different au dernier bit (~2e-4 px a 1 800 px de l'ancre). La
-    // mutation passait cette forme-la de l'assertion.
+    // ⚠️ **Un simple `maxR > minR` NE SUFFIT PAS** : `outX`/`outY` sont des
+    // `Float32Array`, donc meme a bruit nul les rayons relus different au
+    // dernier bit (~2e-4 px a 1 800 px de l'ancre).
     expect(maxR - minR).toBeGreaterThan(1);
   });
 
   /**
-   * ⚠️ **C'EST L'ASSERTION DE LA TACHE, et le rayon ne suffisait pas.**
+   * ⚠️ **L'assertion centrale de l'encerclement : le rayon ne suffit pas.**
    * `FORMATION.RING` pose lui aussi ses entites sur un cercle de rayon
    * constant ; ce qu'il ne fait pas, c'est le REMPLIR. A douze entites — la
    * taille d'une premiere vague — un tirage uniforme laisse regulierement un
@@ -183,8 +181,7 @@ describe('FORMATION.ENCIRCLE — la vague encercle le joueur (etape 6a, tache 18
   });
 
   /**
-   * ⚠️ **La garde contre la fixture qui masque** — dix occurrences dans ce
-   * depot. Sans elle, l'assertion precedente pourrait etre vraie de N'IMPORTE
+   * ⚠️ **La garde contre la fixture qui masque.** Sans elle, l'assertion precedente pourrait etre vraie de N'IMPORTE
    * QUELLE formation posee sur un cercle, et ne prouverait donc rien de
    * l'encerclement. Les memes graines, le meme effectif, passes a `RING` :
    * le trou depasse bel et bien deux secteurs.

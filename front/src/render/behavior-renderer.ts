@@ -14,9 +14,8 @@ import { COIN_TINT } from './orb-renderer';
 import { framesOf } from './player-renderer';
 
 /**
- * Ce que les comportements montrent au sol (retour de playtest : *« des
- * monstres uniques »*) : le cercle d'alerte d'un kamikaze — exactement le
- * rayon de son explosion —, l'aura d'un chaman, et les explosions elles-memes.
+ * Ce que les comportements montrent au sol : le cercle d'alerte d'un
+ * kamikaze — exactement le rayon de son explosion —, l'aura d'un chaman, et les explosions elles-memes.
  * Tout est DERIVE de la horde et des morts deja recues : aucun octet de plus.
  */
 
@@ -32,7 +31,7 @@ export interface BehaviorShape {
 }
 
 /**
- * Le porteur de coffre (etape 11, §5.1) : un anneau dore sous ses pieds — ce
+ * Le porteur de coffre : un anneau dore sous ses pieds — ce
  * rayon —, et un coffre au-dessus. Le corps reste celui d'un voleur (le
  * `ParticleContainer` ne televerse pas la couleur) : l'or est AUTOUR.
  */
@@ -308,7 +307,7 @@ export class BehaviorRenderer {
         const t = 1 - s.alpha;
         const sp = n > 0 ? this.#sprite(EXPLOSION.path, Math.min(n - 1, Math.floor(t * n))) : null;
         // Un eclair qui couvre EXACTEMENT la zone touchee, le premier quart :
-        // l'explosion du pack seule se lisait mal (retour de playtest).
+        // l'explosion du pack seule se lit mal.
         if (t < 0.25) {
           g.circle(s.x, s.y, KAMIKAZE_RADIUS).fill({
             color: 0xffb347,

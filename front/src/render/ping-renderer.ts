@@ -21,12 +21,11 @@ const WAVE_MIN = 18;
 const WAVE_MAX = 90;
 
 /**
- * Les pings vivants au tick `tick`. Jamais l'horloge murale — et, depuis la
- * revue finale de l'etape 9, jamais `GameClient#hordeTick` non plus : les
- * deux appelants (`composeFrame`, la mini-carte) passent `GameClient#pingClock`,
- * qui n'avance pas pendant le gel de niveau (`isFrozen`). `hordeTick`, lui,
- * avance a chaque pas fixe, gel ou pas — un ping recu juste avant un palier
- * s'y eteindrait pendant que l'equipe choisit ses cartes.
+ * Les pings vivants au tick `tick`. Ni l'horloge murale ni
+ * `GameClient#hordeTick` : les appelants (`composeFrame`, la mini-carte)
+ * passent `GameClient#pingClock`, qui s'arrete pendant le gel de niveau
+ * (`isFrozen`). Avec `hordeTick`, qui avance gel ou pas, un ping recu juste
+ * avant un palier s'eteindrait pendant que l'equipe choisit ses cartes.
  */
 export function livePings(pings: ReadonlyMap<number, ActivePing>, tick: number): LivePing[] {
   const out: LivePing[] = [];
@@ -117,7 +116,7 @@ function intentIcon(
 }
 
 /**
- * Le calque des pings (etape 9) : un `Graphics` dans le MONDE pour les
+ * Le calque des pings : un `Graphics` dans le MONDE pour les
  * marqueurs, un autre en coordonnees ECRAN pour les fleches de bord.
  */
 export class PingRenderer {
@@ -185,7 +184,7 @@ export class PingRenderer {
         drawArrow(s, a, allyArrowScale(ally.distance), this.colorOf(ally.id), 0.85);
       }
     }
-    // Etape 11 : le porteur hors champ — une fleche OR au bord, et le petit
+    // Le porteur hors champ : une fleche OR au bord, et le petit
     // coffre en retrait comme l'icone d'une intention. Dans le champ, rien :
     // l'anneau et le coffre au sol suffisent.
     if (porteur) {

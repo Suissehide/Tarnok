@@ -94,7 +94,7 @@ describe('salle d attente', () => {
     expect(room?.loadoutOf(1)?.weaponIds).toEqual([BASE_WEAPON_ID]);
   });
 
-  // Review Focus n1 : un classId inconnu, hors catalogue, ou invalide — le
+  // Un classId inconnu, hors catalogue, ou invalide — le
   // client peut envoyer n'importe quoi, le choix n'est simplement pas
   // enregistre, exactement comme une arme hors liste.
   it('un classId hors catalogue n est PAS enregistre, et le joueur garde la classe par defaut', async () => {
@@ -156,11 +156,9 @@ describe('salle d attente', () => {
   });
 
   /**
-   * Amendement du controleur (tache 3 de l'etape 8, point 2) : `#start` doit
-   * lire le `classId` de l'entree de salon — que ce fichier verifie deja
-   * cote TRANSPORT (les tests ci-dessus) — et le passer a `Room#join`. Un
-   * cablage parfait cote salon qui n'atteindrait pas la partie serait vert
-   * et mort, exactement le trou que l'etape 7b a du faire reprendre.
+   * `#start` doit lire le `classId` de l'entree de salon (verifie cote
+   * TRANSPORT par les tests ci-dessus) et le passer a `Room#join`. Un cablage
+   * parfait cote salon qui n'atteindrait pas la partie serait vert et mort.
    */
   it('la classe choisie au salon donne le verbe de CETTE classe une fois la partie lancee', async () => {
     const res = await app.inject({ method: 'POST', url: '/rooms' });

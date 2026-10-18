@@ -11,9 +11,8 @@ describe('ELEMENTS', () => {
   });
 
   it('reste dans le domaine des effets : reduction d armure positive ou nulle, signe de champ +1 ou -1', () => {
-    // ⚠️ Meme discipline que le test « reste dans le domaine des effets »
-    // plus bas pour `burnPerTick`/`slowFactor`/`damageAmp` : un intervalle
-    // large, complementaire aux tests NOMMES de la Chaux ci-dessous.
+    // Un intervalle large, complementaire aux tests NOMMES de la Chaux
+    // ci-dessous.
     for (const e of ELEMENTS) {
       expect(e.armorReduction, e.name).toBeGreaterThanOrEqual(0);
       expect(e.fieldSign === 1 || e.fieldSign === -1, e.name).toBe(true);
@@ -29,9 +28,8 @@ describe('ELEMENTS', () => {
     // ⚠️ **La valeur neutre, et elle doit etre LUE.** `ZoneField.ampAt`
     // multiplie les degats par ce champ : un element qui l'oublierait
     // (`undefined`) rendrait `NaN` et effacerait les PV de tout ce qui pietine
-    // sa zone. La Poix est la PREMIERE ligne a depasser 1 — exclue NOMMEMENT
-    // ici plutot que par un `!==` generique, pour forcer a relire ce test le
-    // jour ou une seconde ligne amplifiera.
+    // sa zone. La Poix est exclue NOMMEMENT plutot que par un `!==` generique,
+    // pour forcer a relire ce test le jour ou une seconde ligne amplifiera.
     const AMPLIFIENT = new Set<number>([ELEMENT.POIX]);
     for (const e of ELEMENTS) {
       if (AMPLIFIENT.has(e.id)) {
@@ -50,10 +48,10 @@ describe('ELEMENTS', () => {
   });
 
   /**
-   * ⚠️ Deux elements de meme teinte rendraient l'encodage visuel du §9 muet :
-   * le joueur lit l'etat d'un ennemi a la couleur de son sprite et rien
-   * d'autre — il n'y a **aucune barre de PV** (§3.4) et pas d'anneau bicolore
-   * (§11). Les teintes sont donc une donnee de jeu, pas de la decoration.
+   * ⚠️ Deux elements de meme teinte rendraient l'encodage visuel muet : le
+   * joueur lit l'etat d'un ennemi a la couleur de son sprite et rien d'autre
+   * (**aucune barre de PV**, pas d'anneau bicolore). Les teintes sont une
+   * donnee de jeu, pas de la decoration.
    */
   it('donne une teinte distincte a chaque element, dans le domaine 0xRRGGBB', () => {
     for (const e of ELEMENTS) {
@@ -75,9 +73,8 @@ describe('ELEMENTS', () => {
 });
 
 /**
- * `ELEMENT` recopie des positions de `ELEMENT_DEFS`. Le dossier a deja paye ce
- * motif une fois (`CARD_WEAPON` dans `loadout.ts`, garde par un test
- * d'egalite) : **une constante recopiee sans garde derive en silence.** Sans
+ * `ELEMENT` recopie des positions de `ELEMENT_DEFS` : **une constante
+ * recopiee sans garde derive en silence.** Sans
  * ces trois assertions, inserer un element au milieu de la table teinterait
  * les ennemis de la mauvaise couleur et les brulerait quand meme, sans qu'un
  * seul test rougisse.
@@ -126,60 +123,26 @@ describe('le neutre est une entree de la table, pas un cas particulier', () => {
    * arme pourrait le porter, une zone l'afficher, et rien n'arriverait jamais
    * a l'ennemi marque ni a qui pietine sa zone.
    *
-   * ⚠️ **CORRIGEE a la tache 9 de l'etape 5b.** Avant cette tache, ce test
-   * exigeait `burnPerTick > 0 || slowFactor < 1` — vrai pour un catalogue de
-   * trois elements (Neutre, Braise, Givre), et deja faux pour la Poix (tache
-   * 4) des son introduction : elle n'agit ni par brulure ni par
-   * ralentissement, elle amplifie (`damageAmp`, `ZoneField.ampAt`). La garde
-   * traitait donc la Poix — et la Foudre, meme raison — comme des exceptions
-   * NOMMEES a une regle qui affirmait implicitement *« tout element a un
-   * effet de MARQUE »*, alors que l'invariant reel du catalogue a toujours
-   * ete plus large : *« tout element a AU MOINS UN effet »*, la marque
-   * (`burnPerTick`/`slowFactor`) n'en etant qu'une famille parmi celles que
-   * `ELEMENT_DEFS` porte — la zone (`damageAmp`) en est une autre. Une garde
-   * qu'il faut reouvrir a chaque element ajoute n'est pas une garde, c'est une
-   * liste qui attend le prochain oubli.
+   * L'invariant est *« tout element a AU MOINS UN effet »*, et chaque champ
+   * d'effet de `ELEMENT_DEFS` compte : la marque (`burnPerTick`,
+   * `slowFactor`), la zone (`damageAmp`), l'armure (`armorReduction`) et le
+   * champ (`fieldSign`). Une garde qu'il faudrait rouvrir a chaque element
+   * ajoute ne serait qu'une liste qui attend le prochain oubli.
    *
-   * La regle ci-dessous compte donc `damageAmp > 1` parmi les effets valables
-   * — ce qui retire la Poix de toute exception, sa ligne le satisfaisant
-   * directement (tache 4). **Seule la Foudre reste une exception NOMMEE, et
-   * pour une raison structurelle qu'aucun elargissement de predicat ne peut
-   * lever** : `chainTargets` (`shared/chain.ts`) ne se derive pas d'un CHAMP
-   * de `Element` mais d'un point d'impact reconnu par identifiant
-   * (`ELEMENT.FOUDRE`, voir `resolveProjectileDamage`, `back/src/combat.ts`)
-   * — le docbloc de `ELEMENT_DEFS` explique pourquoi lui donner un champ ici
-   * n'aurait rien generalise. C'est `shared/chain.test.ts` qui garde que
-   * cet effet-la n'est pas mort.
-   *
-   * ⚠️ **ETENDUE a la tache 1 de l'etape 5c : `armorReduction > 0` et
-   * `fieldSign < 0` rejoignent la liste des effets valables.** La Chaux
-   * n'agit ni par la marque ni par l'amplification de zone — sans cet
-   * elargissement, elle serait a tort une seconde exception NOMMEE, alors
-   * que ses deux effets vivent bel et bien dans cette table (voir son
-   * docbloc dans `ELEMENT_DEFS`).
-   *
-   * ⚠️ **Le Vif-argent (tache 2 de l'etape 5c) REJOINT `EFFET_HORS_TABLE`,
-   * il n'elargit PAS le predicat.** La question a ete posee explicitement :
-   * a la tache 9 de l'etape 5b, elargir a valu mieux qu'exempter — pour la
-   * Poix, dont l'effet REEL (`damageAmp`) etait deja un champ de cette
-   * table, simplement absent de ce predicat-la. Le Vif-argent n'est pas dans
-   * ce cas : sa liaison se derive d'une PAIRE de positions et d'une zone
-   * annoncee (`linkedNeighbours`, `shared/links.ts`), jamais d'un champ que
-   * `Element` porterait pour lui seul — structurellement identique a la
-   * Foudre (`chainTargets` se derive d'un point d'impact, pas d'un champ).
-   * Un appelant doit de toute facon savoir qu'il tient du Vif-argent
-   * (`ELEMENT.VIF_ARGENT`) avant d'appeler `linkedNeighbours`, exactement
-   * comme il doit savoir qu'il tient de la Foudre avant d'appeler
-   * `chainTargets` — ajouter un champ ici n'aurait rien generalise.
-   * Elargir le predicat aurait donc invente un champ SANS AUTRE LECTEUR que
-   * ce test, ce qui n'est pas generaliser, c'est deplacer la meme exception
-   * d'un endroit a un autre.
+   * ⚠️ **La Foudre et le Vif-argent restent des exceptions NOMMEES, pour une
+   * raison structurelle** : leur effet ne se derive d'aucun CHAMP de
+   * `Element`. `chainTargets` (`shared/chain.ts`) part d'un point d'impact
+   * reconnu par identifiant (`resolveProjectileDamage`,
+   * `back/src/combat.ts`) ; `linkedNeighbours` (`shared/links.ts`) d'une
+   * paire de positions et d'une zone annoncee. Un appelant doit de toute
+   * facon savoir quel element il tient : un champ ici n'aurait aucun autre
+   * lecteur que ce test, il deplacerait l'exception sans la generaliser.
+   * Ces effets sont gardes par `shared/chain.test.ts` et
+   * `shared/links.test.ts`.
    */
   it('est le SEUL sans effet : tout autre element porte au moins un effet (marque, zone, ou une exception nommee)', () => {
-    // La Foudre et le Vif-argent : les deux cas ou l'effet vit hors de
-    // cette table (voir le docbloc ci-dessus). Pas une dette bornee a une
-    // tache — une consequence structurelle de la forme de `chainTargets` et
-    // de `linkedNeighbours`, permanente pour les deux.
+    // La Foudre et le Vif-argent : l'effet vit hors de cette table (voir le
+    // docbloc ci-dessus).
     const EFFET_HORS_TABLE = new Set<number>([ELEMENT.FOUDRE, ELEMENT.VIF_ARGENT]);
     for (const e of ELEMENTS) {
       if (e.id === ELEMENT.NEUTRE || EFFET_HORS_TABLE.has(e.id)) {
@@ -211,9 +174,8 @@ describe('les deux elements de l etape 5a', () => {
   });
 
   /**
-   * §4.1 : *« Braise : degats sur la duree. Givre : ralentit. »* Les deux
-   * effets doivent etre PORTES PAR DES ELEMENTS DIFFERENTS — un catalogue ou
-   * le meme element ferait les deux rendrait la reaction du §6.1 illisible :
+   * Brulure et ralentissement doivent etre PORTES PAR DES ELEMENTS
+   * DIFFERENTS : un element qui ferait les deux rendrait la reaction illisible :
    * on ne verrait plus lequel des deux etats l'a declenchee.
    */
   it('ne fait porter les deux effets par le meme element a aucun element', () => {
@@ -227,9 +189,8 @@ describe('les deux elements de l etape 5a', () => {
  * ⚠️ **Sans ce bloc, `burnPerTick`/`slowFactor` de la Foudre ne sont
  * consultes par AUCUNE assertion nommee.** La table generique (« reste dans
  * le domaine des effets ») ne verifie qu'un intervalle large (`>= 0`,
- * `]0, 1]`), et la Foudre y reste a l'interieur meme si on lui pretait par
- * erreur une combustion ou un ralentissement — une mutation qui resterait
- * verte sans ces deux assertions dediees.
+ * `]0, 1]`), et la Foudre y resterait meme si on lui pretait par erreur une
+ * combustion ou un ralentissement.
  */
 describe('la foudre (tache 2)', () => {
   it('ne brule pas et ne ralentit pas : son effet est la chaine, pas une marque', () => {
@@ -242,14 +203,11 @@ describe('la foudre (tache 2)', () => {
 /**
  * ⚠️ Meme raison que le bloc precedent, portee sur la Poix : la table
  * generique (« reste dans le domaine des effets ») ne verifie qu'un
- * intervalle large (`]0, 1]`) — une mutation qui preterait un ralentissement
- * a la Poix y resterait sans qu'aucune assertion nommee ne rougisse.
+ * intervalle large (`]0, 1]`) : un ralentissement prete a la Poix y resterait.
  *
- * ⚠️ **`slowFactor: 1` est un ECART ASSUME avec le §6.3 de l'orientation**
- * (« englue, ralentit, amplifie »), pas un oubli : le docbloc de la ligne
- * `poix` dans `ELEMENT_DEFS` (`shared/elements.ts`) porte la raison de jeu
- * complete (le Givre ralentit deja ; deux ralentissements seraient du
- * contenu mort). Ce test-ci GARDE la decision, il ne la justifie pas.
+ * ⚠️ **`slowFactor: 1` est voulu, pas un oubli** : le Givre ralentit deja,
+ * deux ralentissements seraient du contenu mort (voir la ligne `poix` dans
+ * `ELEMENT_DEFS`, `shared/elements.ts`).
  */
 describe('la poix (tache 4)', () => {
   it('ne brule pas et ne ralentit pas : le Givre ralentit deja, la Poix amplifie', () => {
@@ -265,9 +223,8 @@ describe('la poix (tache 4)', () => {
 
 /**
  * ⚠️ Meme raison que les deux blocs precedents (Foudre, Poix) : la table
- * generique ne verifie que des intervalles larges — une mutation qui
- * preterait une brulure, un ralentissement ou une amplification a la Chaux
- * y resterait sans qu'aucune assertion nommee ne rougisse. Ses deux VRAIS
+ * generique ne verifie que des intervalles larges, une brulure, un
+ * ralentissement ou une amplification pretes a la Chaux y resteraient. Ses deux VRAIS
  * effets (`armorReduction`, `fieldSign`) sont eux aussi assenes ici, pas
  * seulement bornes par le test « domaine des effets ».
  */
@@ -296,10 +253,8 @@ describe('la chaux (tache 1 de l etape 5c)', () => {
 
 /**
  * ⚠️ Meme raison que les blocs Foudre/Poix/Chaux precedents : la table
- * generique ne verifie que des intervalles larges — une mutation qui
- * preterait une brulure, un ralentissement, une amplification, une
- * reduction d'armure ou une inversion de champ au Vif-argent y resterait
- * sans qu'aucune assertion nommee ne rougisse. Son VRAI effet — la liaison
+ * generique ne verifie que des intervalles larges, ou un effet de table
+ * prete par erreur au Vif-argent resterait. Son VRAI effet — la liaison
  * — est garde par `shared/links.test.ts`, pas ici : ce fichier ne garde que
  * ce que la table elle-meme porte, et la table du Vif-argent est
  * entierement neutre (voir `EFFET_HORS_TABLE` plus haut).
@@ -340,22 +295,9 @@ describe('le catalogue des elements et celui des armes', () => {
    * n'arrive jamais. C'est le pendant exact de la reference morte gardee par
    * `assertWeaponElements`.
    *
-   * ⚠️ **`ARMEMENT_DIFFERE` a deja existe ici, une premiere fois, et a ete
-   * supprime a la tache 9 de l'etape 5b** (Foudre tache 2, Poix tache 4,
-   * armes cablees toutes les deux a la tache 9). `ARME_DIFFEREE` en a ete le
-   * second exemplaire, pour la meme raison : le plan de l'etape 5c
-   * construisait le catalogue avant les armes qui le portent — la Chaux et
-   * le Vif-argent sont nes aux taches 1 et 2, `shared/weapons.ts` ne leur a
-   * cable au moins deux armes chacun qu'a la tache 8.
-   *
-   * ⚠️ **La dette est SOLDEE.** `ARME_DIFFEREE` est desormais VIDE : la
-   * tache 8 a cable la Chaux (`poire-a-chaux`, `canon-a-chaux`) et le
-   * Vif-argent (`fronde-a-mercure`, `glaive-de-mercure`), donc la garde
-   * ci-dessous couvre a nouveau les SEPT elements du catalogue sans
-   * exception, exactement comme `ARMEMENT_DIFFERE` avant elle. Le nom reste
-   * — vide, il redevient un simple point d'extension si un futur element du
-   * §6.3 naissait avant ses armes, comme `ARME_DIFFEREE` l'a ete pour la
-   * Chaux et le Vif-argent.
+   * `ARME_DIFFEREE` est VIDE : la garde couvre tous les elements du
+   * catalogue. Il reste comme point d'extension, pour un element qui
+   * naitrait avant ses armes.
    */
   const ARME_DIFFEREE = new Set<number>([]);
 

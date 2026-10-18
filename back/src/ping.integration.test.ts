@@ -9,7 +9,7 @@ import * as accounts from './accounts';
 import { buildServer } from './server';
 
 /**
- * Le livrable de l'etape 9 : **le ping de A arrive chez A et chez B**, avec la
+ * **Le ping de A arrive chez A et chez B**, avec la
  * bonne intention et la bonne position, et le salon coupe le spam. Vraies
  * sockets, observe a travers le DECODAGE uniquement.
  */

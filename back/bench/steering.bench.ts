@@ -1,19 +1,13 @@
 /**
- * Banc — que coute le recalcul de trajectoire par intervalle (tache 19) ?
+ * Banc — que coute le recalcul de trajectoire par intervalle ?
  *
- * Avant la tache 19, ce banc mesurait `Horde.step` puis `SeparationGrid.apply`
- * comme deux passes distinctes : la separation recalculait sa repulsion a
- * CHAQUE tick, pour CHAQUE entite. Depuis la tache 19, les deux sont fondues
- * dans `Horde.step` — chaque entite ne recalcule sa trajectoire (direction du
- * champ melangee a la repulsion, tache 21) qu'un tick sur
- * `STEERING_RECOMPUTE_TICKS`, et conserve sa vitesse le reste du temps. Ce
- * banc mesure ce que ca coute REELLEMENT — pas separement.
+ * Dans `Horde.step`, chaque entite ne recalcule sa trajectoire (direction du
+ * champ melangee a la repulsion) qu'un tick sur `STEERING_RECOMPUTE_TICKS`, et
+ * conserve sa vitesse le reste du temps. Ce banc mesure le pas complet.
  *
- * Depuis la tache 21, le saut maximal par tick n'est plus une consequence
- * REGLEE de `K` et du poids de repulsion : il est devenu INTRINSEQUE (la
- * vitesse propre de l'archetype, quelle que soit la densite). Ce banc publie
- * quand meme le saut maximal observe, en colonne, pour verifier PAR LA MESURE
- * que cette borne tient a l'echelle — pas pour la regler.
+ * Le saut maximal par tick est borne par la vitesse propre de l'archetype,
+ * quelle que soit la densite ; la colonne « saut maximal » verifie que cette
+ * borne tient a l'echelle.
  *
  *   npm run bench:sep -w back
  */
@@ -38,31 +32,21 @@ const MEASURED_STEPS = 300;
 /**
  * Chauffe avant mesure, en ticks.
  *
- * ⚠️ **Monte de 300 a 900 a la tache 18 de l'etape 6a, et sans ca le banc
- * mesurait autre chose que ce qu'il annonce.** `ENCIRCLE` fait naitre la horde
- * a `ENCIRCLE_RADIUS` (1 800 px) de sa cible ; a la vitesse de l'archetype 0
- * (95 px/s) il lui faut ~19 s, soit 570 ticks, pour seulement ARRIVER. Avec
- * 300 ticks de chauffe (10 s), la fenetre mesuree tombait en plein trajet :
- * un cout bas et une densite basse, mais ceux d'une horde qui n'est pas encore
- * la — le « decor qui ne produit pas ce qu'il pretend mesurer ». 900 ticks
- * (30 s) laissent la horde arriver ET s'entasser avant qu'on la chronometre.
- * `CLUSTER` naissait deja a ~400 px et n'en avait pas besoin ; il garde la
- * meme chauffe pour que les deux tableaux restent comparables.
+ * ⚠️ `ENCIRCLE` fait naitre la horde a `ENCIRCLE_RADIUS` (1 800 px) de sa
+ * cible ; a 95 px/s (archetype 0) il lui faut ~570 ticks pour seulement
+ * ARRIVER. Une chauffe plus courte mesurerait une horde en plein trajet, peu
+ * dense et bon marche. 900 ticks (30 s) la laissent arriver ET s'entasser.
+ * `CLUSTER` garde la meme chauffe pour que les deux tableaux restent comparables.
  */
 const WARMUP_STEPS = 900;
 
 /**
- * Les deux geometries de naissance mesurees.
+ * Les deux geometries de naissance mesurees : `CLUSTER`, reference des lignes
+ * de cout du depot et pire cas de densite a la naissance, et `ENCIRCLE`, ce
+ * que le directeur emet en jeu.
  *
- * ⚠️ **`CLUSTER` n'est plus ce que le directeur emet — `ENCIRCLE` l'est**
- * (tache 18 de l'etape 6a). Ce banc l'ignorait completement : sa formation
- * etait ecrite en dur, donc il aurait rendu EXACTEMENT les memes chiffres
- * apres le changement qu'avant, sans rien mesurer de ce qu'on lui demandait.
- * C'est le piege du « banc qui rend zero », deja paye par le banc des zones.
- *
- * Les deux restent mesurees : `CLUSTER` parce que c'est la reference
- * historique de toutes les lignes de cout du depot et le pire cas de densite
- * a la naissance, `ENCIRCLE` parce que c'est ce qui tourne desormais en jeu.
+ * ⚠️ Si le directeur change de formation, l'ajouter ici : une formation ecrite
+ * en dur rendrait les memes chiffres sans mesurer ce qui tourne en jeu.
  */
 const FORMATIONS = [
   { id: FORMATION.CLUSTER, label: 'CLUSTER (reference historique)' },
@@ -77,8 +61,8 @@ function makeHorde(count: number, formation: number): { horde: Horde; fields: Fl
     seed: 0x51ee_d001,
     archetype: 0,
     formation,
-    // L'ancre EST la position des joueurs : c'est ce que fait le directeur
-    // depuis la tache 18, et `ENCIRCLE` ne veut rien dire sans ca.
+    // L'ancre EST la position des joueurs, comme dans le directeur :
+    // `ENCIRCLE` ne veut rien dire sans ca.
     anchorX: 3000,
     anchorY: 3000,
     count,
@@ -96,10 +80,9 @@ function makeHorde(count: number, formation: number): { horde: Horde; fields: Fl
 /**
  * Nombre moyen de voisins dans le rayon, par force brute.
  *
- * ⚠️ Meme role que dans l'ancien banc de separation : le cout d'un recalcul
- * croit avec le CARRE de la densite de voisins, donc cette colonne dit si le
- * chiffre de cout mesure un regime stable ou un entassement encore en train
- * de se former. Voir la doc equivalente dans `git log` (tache 0 / tache 18).
+ * ⚠️ Le cout d'un recalcul croit avec le CARRE de la densite de voisins : cette
+ * colonne dit si le chiffre de cout mesure un regime stable ou un entassement
+ * encore en train de se former.
  */
 function meanNeighbours(horde: Horde): number {
   const n = horde.count;
@@ -191,9 +174,8 @@ function tableau(formation: number): void {
   const rows = [250, 500, 1000, 1500, 2500, 4000].map((n) => {
     const m = measure(n, formation);
     const rejeu4 = m.median * 4;
-    // Meme raisonnement que l'ancien banc de separation : une horde a moins de
-    // 8 voisins par entite reste dans un regime bon marche, meme mal
-    // stabilisee — le verdict ne peut pas etre faux dans cette bande.
+    // Une horde a moins de 8 voisins par entite reste dans un regime bon
+    // marche, meme mal stabilisee : le verdict ne peut pas etre faux la.
     const stable = m.neighboursLate < 8 || m.neighboursLate <= m.neighboursEarly * 1.5;
     return {
       entites: n,

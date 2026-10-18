@@ -19,7 +19,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { GameClient } from './client';
 
 /**
- * Le miroir client des verbes (etape 8, taches 6 et 7, et la touche du verbe).
+ * Le miroir client des verbes, et la touche du verbe.
  * Les classes s'epinglent en nombres nus : 2 Appat, 3 Relais.
  */
 const APPAT = 2;

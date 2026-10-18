@@ -17,7 +17,7 @@ export const AURA_EMBERS = 12;
 const AURA_PULSE_MS = (GUARD_PULSE_TICKS / TICK_HZ) * 1000;
 
 /**
- * Les deux familles sans projectile de l'etape 12 (§3.4, §5) : l'ONDE, un
+ * Les deux familles sans projectile : l'ONDE, un
  * anneau qui s'agrandit depuis le tireur, et la FRAPPE, un avertissement au
  * sol puis un eclair qui tombe du ciel.
  *
@@ -143,7 +143,7 @@ export class OndeFrappeRenderer {
   }
 
   /**
-   * L'aura de l'homoncule (etape 12) : un disque de mercure qui SUIT son
+   * L'aura de l'homoncule : un disque de mercure qui SUIT son
    * invocateur (`center`, sa position dessinee), un bord qui miroite, une
    * vague qui court du dedans vers le bord a chaque pulsation, des braises qui
    * montent, et l'homoncule lui-meme — une goutte qui tourne dans l'aura.

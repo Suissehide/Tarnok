@@ -26,29 +26,21 @@ import {
 /**
  * Rendu des projectiles et des flashs d'impact et de reaction.
  *
- * ⚠️ **Les orbes ont quitte ce module a la tache 17**, pour `orb-renderer.ts`.
- * Elles y partageaient `makeGlowTexture` avec les flashs alors qu'elles disent
- * l'inverse d'eux : un flash s'evanouit, un objet a ramasser a un contour. Ce
- * partage etait exactement ce qui gardait l'orbe floue.
- *
- * Quatre `ParticleContainer`s (les projectiles en comptent deux depuis la tache
- * 12 : leurs trainees et leurs tetes), meme discipline que `HordeRenderer` :
- * bornes explicites (`boundsArea`, voir sa doc — un `ParticleContainer` ne les
- * calcule jamais lui-meme), un reservoir de `Particle` reutilise, aucune
- * allocation en regime etabli dans `draw()`.
+ * Quatre `ParticleContainer`s (les projectiles en comptent deux : leurs
+ * trainees et leurs tetes), meme discipline que `HordeRenderer` : bornes
+ * explicites (`boundsArea` — un `ParticleContainer` ne les calcule jamais
+ * lui-meme), un reservoir de `Particle` reutilise, aucune allocation en
+ * regime etabli dans `draw()`.
  *
  * Pas de tri en profondeur par bande ici, contrairement a la horde :
- * projectiles et flashs sont de petits points, sans la hauteur de
- * sprite qui rend l'ordre visible sur la vue ecrasee du §4.5 — l'ordre entre
- * particules d'un meme calque ne se voit pas a l'oeil.
+ * projectiles et flashs sont de petits points, sans la hauteur de sprite qui
+ * rend l'ordre visible sur la vue ecrasee.
  *
  * Textures procedurales (canvas 2D), pas un asset Tiny Swords : aucun atlas
- * dedie a ces elements n'existe encore sur MinIO (seul `derived/monsters.json`
- * existe a ce jour), et en ajouter un au depot risquerait la contrainte de
- * licence (§4 du brief). Depuis la tache 12, les projectiles ne sont plus un
- * simple disque : leur atlas est CUIT au chargement, une case par arme, a
- * partir de `Weapon.look` — mais toujours au vol, et il peut etre remplace par
- * de l'art reel sans toucher a l'API de ces classes.
+ * dedie n'existe sur MinIO, et aucun actif du pack ne doit entrer dans le
+ * depot (licence). L'atlas des projectiles est CUIT au chargement, une case
+ * par arme, a partir de `Weapon.look` — il peut etre remplace par de l'art
+ * reel sans toucher a l'API de ces classes.
  */
 
 /** Marge des bornes explicites, meme raisonnement que `HordeRenderer.BOUNDS_MARGIN`. */
@@ -65,9 +57,7 @@ function mapBoundsArea(): Rectangle {
 
 /**
  * Un disque radieux dessine une seule fois sur un canevas 2D, puis reutilise
- * comme texture unique de tout un `ParticleContainer` — exactement le « un
- * seul atlas pour tout ce qui est massif » du §4.3, degenere au cas le plus
- * simple : un seul quad.
+ * comme texture unique de tout un `ParticleContainer` : un seul quad.
  */
 function makeGlowTexture(diameter: number, color: string): Texture {
   const canvas = document.createElement('canvas');
@@ -101,38 +91,28 @@ export const PROJECTILE_CELL_PX = 32;
 /**
  * Stades d'usure d'un projectile : intact, fissure, en miettes.
  *
- * ⚠️ **C'est ce qui remplace le FONDU** (etape 8, demande de l'auteur :
- * *« evite le fade, fais plutot se desagreger »*). Un projectile qui perd son
- * opacite devient un fantome puis rien ; un projectile qui s'effrite perd des
- * morceaux et reste un OBJET jusqu'a sa derniere image — c'est la difference
- * entre « le dessin s'eteint » et « la chose se casse ».
+ * ⚠️ **Le projectile se desagrege au lieu de s'estomper.** Un projectile qui
+ * perd son opacite devient un fantome puis rien ; un projectile qui s'effrite
+ * perd des morceaux et reste un OBJET jusqu'a sa derniere image.
  *
  * ⚠️ **Trois, et pas huit.** Chaque stade est une case d'atlas de plus pour
- * CHAQUE arme : dix-sept armes x trois stades font 51 cases, soit une grille
- * de 8 x 8 et un canevas de 256 px — toujours cuit une seule fois au
- * chargement. A huit stades il aurait fallu 136 cases pour une difference
- * qu'on ne verrait pas : a dix pixels a l'ecran, « entier / fissure / en
- * miettes » est deja une lecture fine.
+ * CHAQUE arme, toujours cuite une seule fois au chargement. A dix pixels a
+ * l'ecran, « entier / fissure / en miettes » est deja une lecture fine.
  *
  * ⚠️ **Le RYTHME n'est pas ici**, il reste derive de `projectileLifeTicks` par
- * `projectileAlpha` — voir `projectileWear`. Une arme a courte portee s'effrite
- * tot, l'arc-lourd ne s'effrite jamais : c'est la meme regle qu'avant, lue
- * autrement.
+ * `projectileAlpha` — voir `projectileWear`. Une arme a courte portee
+ * s'effrite tot, l'arc-lourd ne s'effrite jamais.
  */
 export const PROJECTILE_WEAR_STAGES = 3;
 
 /**
  * Cases par ligne dans l'atlas.
  *
- * ⚠️ **DERIVEE de `WEAPONS.length`, jamais un plafond fixe** (tache 8 de
- * l'etape 5c) : un `4` code en dur suffisait a treize armes et a plante au
- * chargement reel (`Stage.composeWorld`) a dix-sept — la Chaux et le
- * Vif-argent l'ont depasse. Un `8` fixe n'aurait fait que reculer la meme
- * classe de defaut a soixante-cinq armes. Meme discipline que
- * `PROJECTILE_CULL_MARGIN` juste en dessous : le catalogue est une constante
- * au chargement, le canevas ne se cuit qu'une fois, et racine carree de
- * dix-sept armes fait toujours une grille minuscule (5 x 5 = 25 cases, 160 px
- * de cote).
+ * ⚠️ **DERIVEE de `WEAPONS.length`, jamais un plafond fixe** : un nombre code
+ * en dur plante au chargement reel (`Stage.composeWorld`) des que le
+ * catalogue le depasse. Le catalogue est une constante au chargement et le
+ * canevas ne se cuit qu'une fois : la racine carree garde une grille
+ * minuscule.
  */
 const PROJECTILE_ATLAS_COLS = Math.ceil(Math.sqrt(WEAPONS.length * PROJECTILE_WEAR_STAGES));
 
@@ -149,8 +129,8 @@ export const PROJECTILE_ATLAS_PX = PROJECTILE_CELL_PX * PROJECTILE_ATLAS_COLS;
  * reglage de taille cache derriere un reglage de lumiere, et le joueur ne
  * pourrait plus comparer deux projectiles.
  *
- * Exportee depuis l'etape 8 : c'est avec elle que le test mesure qu'aucune
- * forme ne DEBORDE de sa case (voir `SHAPE_PAINTERS`).
+ * Exportee : c'est avec elle que le test mesure qu'aucune forme ne DEBORDE de
+ * sa case (voir `SHAPE_PAINTERS`).
  */
 export const PROJECTILE_SHAPE_FRACTION = 0.62;
 
@@ -184,11 +164,9 @@ const HALO_REACH = 0.86;
  * Marge de culling des projectiles, DERIVEE du catalogue : la plus grande
  * empreinte qu'une arme puisse laisser a l'ecran (sa trainee plus son corps).
  *
- * ⚠️ **Le rendu d'avant la tache 12 n'en avait aucune** : un projectile dont
- * le centre venait de quitter le cadre disparaissait d'un coup. Avec une
- * trainee, ce qui disparait n'est plus un point mais un trait de plusieurs
- * dizaines de pixels — et il faut donc continuer a le dessiner tant qu'un
- * bout de lui peut encore etre dans le cadre. Derivee et non choisie, comme
+ * ⚠️ **Avec une trainee, ce qui sort du cadre n'est pas un point mais un trait
+ * de plusieurs dizaines de pixels** : il faut le dessiner tant qu'un bout de
+ * lui peut encore etre dans le cadre. Derivee et non choisie, comme
  * `zoneScale` : ajouter une arme a longue trainee elargit la marge toute
  * seule.
  */
@@ -202,7 +180,7 @@ export const PROJECTILE_CULL_MARGIN = WEAPONS.reduce(
  *
  * Leve hors de la grille : un atlas trop petit pour le catalogue ferait
  * silencieusement dessiner toutes les armes suivantes avec la texture d'une
- * autre — exactement le defaut que la tache 12 vient corriger.
+ * autre.
  */
 /**
  * La case de l'arme `weaponId` a son stade d'usure `wear` — l'ORDRE est « une
@@ -254,13 +232,11 @@ function cssTintAlpha(tint: number, alpha: number): string {
  * de le verifier, et un test qui le ferait serait une seconde garde derriere
  * celle-ci.
  *
- * ⚠️ **Ce que le compilateur ne voit PAS, c'est l'encre qui sort de la case**
- * (etape 8, ou le catalogue est passe de neuf a dix-sept dessins). Les cases
- * sont JOINTIVES dans l'atlas : un trace qui depasse son rayon ne bave pas
- * dans le vide, il bave dans la case de l'arme voisine, et deux armes
- * finissent dessinees avec un bout l'une de l'autre. C'est pourquoi la table
- * est exportee — `projectile-renderer.test.ts` rejoue chaque peintre sur un
- * contexte mouchard et mesure son empreinte reelle, bord de trait compris.
+ * ⚠️ **Ce que le compilateur ne voit PAS, c'est l'encre qui sort de la case.**
+ * Les cases sont JOINTIVES dans l'atlas : un trace qui depasse son rayon bave
+ * dans la case de l'arme voisine. C'est pourquoi la table est exportee —
+ * `projectile-renderer.test.ts` rejoue chaque peintre sur un contexte
+ * mouchard et mesure son empreinte reelle, bord de trait compris.
  */
 export const SHAPE_PAINTERS: Record<
   ProjectileShape,
@@ -334,10 +310,10 @@ export const SHAPE_PAINTERS: Record<
    * Zigzag : un arc electrique, le seul dessin TRACE du catalogue.
    *
    * ⚠️ **Il prend `fillStyle` pour en faire son `strokeStyle`**, et c'est la
-   * seule facon de garder l'API d'un peintre (le caller choisit la couleur,
-   * ici comme pour les huit autres) tout en dessinant une ligne brisee : un
-   * zigzag rempli demanderait deux cotes decales a la main, donc douze
-   * sommets pour ce que trois segments disent.
+   * seule facon de garder l'API d'un peintre (le caller choisit la couleur)
+   * tout en dessinant une ligne brisee : un zigzag rempli demanderait deux
+   * cotes decales a la main, donc douze sommets pour ce que trois segments
+   * disent.
    */
   arc: (ctx, r) => {
     ctx.strokeStyle = ctx.fillStyle;
@@ -386,9 +362,9 @@ export const SHAPE_PAINTERS: Record<
    */
   masse: (ctx, r) => {
     // ⚠️ **Onze rayons, et pas huit.** A huit sommets regulierement espaces,
-    // des rayons tous entre 0,7 et 1 rendaient un LOSANGE net (constate sur la
-    // planche) : l'oeil recompose l'octogone avant de voir l'irregularite.
-    // Onze sommets, et un creux franc entre chaque bosse, font enfin une motte.
+    // des rayons tous entre 0,7 et 1 rendent un LOSANGE net : l'oeil
+    // recompose l'octogone avant de voir l'irregularite. Onze sommets, et un
+    // creux franc entre chaque bosse, font une motte.
     const rayons = [1, 0.72, 0.95, 0.62, 0.88, 0.66, 0.9, 0.6, 0.98, 0.7, 0.82];
     ctx.beginPath();
     for (let i = 0; i < rayons.length; i++) {
@@ -409,7 +385,7 @@ export const SHAPE_PAINTERS: Record<
   bouffee: (ctx, r) => {
     // ⚠️ **Un `moveTo` AVANT chaque disque**, sinon le canevas relie la fin
     // d'un arc au debut du suivant par un segment, et ce segment taille deux
-    // coins sombres dans la bouffee — exactement ce que la planche montrait.
+    // coins sombres dans la bouffee.
     const lobes: readonly [number, number, number][] = [
       [0.34 * r, 0, 0.6 * r],
       [-0.3 * r, -0.34 * r, 0.5 * r],
@@ -487,11 +463,10 @@ export const SHAPE_PAINTERS: Record<
  *
  * ⚠️ **La teinte est CUITE dans la case, pas posee par `Particle.tint`.**
  * `tint` multiplie composante par composante : il ne sait pas garder un coeur
- * blanc plus clair que le corps colore, alors que c'est exactement ce qui
- * faisait qu'on suivait l'ancien `makeBoltTexture` des yeux en vol (tache 16,
- * etape 3 : *« le projectile EST une tache floue »*, corrige en un disque
- * net). Cuire la couleur rend les trois strates possibles ; l'atlas ne coute
- * rien de plus, il est dessine une fois au chargement.
+ * blanc plus clair que le corps colore, et c'est ce coeur qui rend le
+ * projectile suivable des yeux en vol. Cuire la couleur rend les trois
+ * strates possibles ; l'atlas ne coute rien de plus, il est dessine une fois
+ * au chargement.
  *
  * La trainee, elle, fait l'inverse — texture blanche teintee par particule
  * (voir `makeStreakTexture`) : elle n'a qu'une strate, donc `tint` suffit.
@@ -511,11 +486,9 @@ function paintProjectileCell(
 
   if (look.glow > 0) {
     // ⚠️ **Un halo COURT et a marches, pas un degrade continu jusqu'au bord de
-    // la case** (etape 8). Le degre d'origine partait a 0,35 du corps et
-    // mourait au bord : sur l'herbe claire, dix-sept armes rendaient dix-sept
-    // nuages mous, et la silhouette cernee qu'on venait de dessiner se noyait
-    // dedans. Deux paliers francs et une portee courte donnent une lueur qui
-    // RESSEMBLE au reste du jeu — la meme logique que le cerne.
+    // la case** : sur l'herbe claire, un degrade long fait un nuage mou ou la
+    // silhouette cernee se noie. Deux paliers francs et une portee courte
+    // donnent une lueur qui RESSEMBLE au reste du jeu.
     const halo = ctx.createRadialGradient(0, 0, body * 0.9, 0, 0, r * HALO_REACH);
     halo.addColorStop(0, cssTintAlpha(look.tint, look.glow));
     halo.addColorStop(0.55, cssTintAlpha(look.tint, look.glow * 0.5));
@@ -529,10 +502,9 @@ function paintProjectileCell(
 
   // ⚠️ **Le corps sur son propre calque, et c'est l'usure qui l'exige.**
   // `erodeCell` travaille en `destination-out` : peint directement ici, il
-  // aurait mordu le HALO avec le corps — constate sur la planche, ou les
-  // morsures decoupaient des encoches franches dans la lueur et lisaient
-  // comme un defaut d'affichage, pas comme une casse. Ce qui se brise, c'est
-  // l'objet ; sa lumiere, elle, ne s'ecaille pas.
+  // mordrait le HALO avec le corps, et des encoches dans la lueur lisent comme
+  // un defaut d'affichage. Ce qui se brise, c'est l'objet ; sa lumiere, elle,
+  // ne s'ecaille pas.
   const layer = document.createElement('canvas');
   layer.width = PROJECTILE_CELL_PX;
   layer.height = PROJECTILE_CELL_PX;
@@ -555,8 +527,7 @@ function paintProjectileBody(
   body: number,
 ): void {
   const paint = SHAPE_PAINTERS[look.shape];
-  // Le cerne noir, exactement comme les orbes et les pieces (etape 8 : *« des
-  // projectiles dans le theme du jeu »*) — c'est lui qui pose un projectile
+  // Le cerne noir, exactement comme les orbes et les pieces — c'est lui qui pose un projectile
   // SUR le decor au lieu de le laisser flotter dedans, et c'est la meme
   // signature graphique que le reste du jeu.
   //
@@ -573,9 +544,8 @@ function paintProjectileBody(
   // Coeur blanc, la meme forme reduite : c'est lui qui donne au projectile son
   // point chaud et le rend suivable a dix pixels de cote.
   //
-  // ⚠️ **0,32 et plus 0,42 (etape 8)** : sur les formes rondes — grenade,
-  // chakram, bouffee — un coeur a 0,42 faisait une pupille, et les trois
-  // lisaient comme des cibles plutot que comme des projectiles.
+  // ⚠️ **0,32** : sur les formes rondes — grenade, chakram, bouffee — un
+  // coeur plus gros fait une pupille, et elles lisent comme des cibles.
   ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
   paint(ctx, body * 0.32);
 }
@@ -593,10 +563,9 @@ function paintProjectileBody(
  *
  * ⚠️ **Sur le calque du CORPS, jamais sur la case entiere ni sur l'atlas.**
  * `destination-out` ne connait ni les cases ni les couches : applique a la
- * case, il mordait le halo avec le corps (encoches franches dans la lueur, vu
- * sur la planche) ; applique a l'atlas, il mordrait les cases voisines. Meme
- * precaution que `softenAcross` pour les trainees. Le calque est centre sur
- * l'origine, comme les peintres de forme.
+ * case, il mordrait le halo avec le corps ; applique a l'atlas, il mordrait
+ * les cases voisines. Meme precaution que `softenAcross` pour les trainees.
+ * Le calque est centre sur l'origine, comme les peintres de forme.
  */
 function erodeCell(ctx: CanvasRenderingContext2D, stage: number): void {
   const bites: readonly (readonly [number, number, number])[] = [
@@ -629,9 +598,10 @@ function erodeCell(ctx: CanvasRenderingContext2D, stage: number): void {
  * Cuit l'atlas des projectiles : une case par arme, `look` compris.
  *
  * Un seul canevas, donc une seule `TextureSource`, donc **un seul appel de
- * dessin** pour les neuf apparences : le `ParticleContainer` de Pixi lie la
+ * dessin** pour toutes les apparences : le `ParticleContainer` de Pixi lie la
  * source de son PREMIER enfant et dessine tout le lot avec (voir
- * `GlParticleContainerAdaptor`). Neuf conteneurs auraient donne neuf lots.
+ * `GlParticleContainerAdaptor`). Un conteneur par arme donnerait un lot par
+ * arme.
  */
 function makeProjectileAtlas(): Texture {
   const canvas = document.createElement('canvas');
@@ -789,13 +759,13 @@ export function streakCellRect(profile: ProjectileTrail): {
 }
 
 /**
- * Cuit l'atlas des trainees : une bande par profil (etape 8).
+ * Cuit l'atlas des trainees : une bande par profil.
  *
- * ⚠️ **UN atlas, pas quatre textures.** Un `ParticleContainer` ne lie que la
- * source de son PREMIER enfant et dessine tout le lot avec (voir
- * `GlParticleContainerAdaptor`) : quatre textures distinctes auraient voulu
- * dire quatre conteneurs, donc quatre lots pour ce qui tient en un. Meme
- * raisonnement, et meme forme, que `makeProjectileAtlas` au-dessus.
+ * ⚠️ **UN atlas, pas une texture par profil.** Un `ParticleContainer` ne lie
+ * que la source de son PREMIER enfant et dessine tout le lot avec (voir
+ * `GlParticleContainerAdaptor`) : des textures distinctes voudraient dire un
+ * conteneur, donc un lot, par profil. Meme raisonnement que
+ * `makeProjectileAtlas`.
  */
 function makeStreakAtlas(): Texture {
   const canvas = document.createElement('canvas');
@@ -825,33 +795,27 @@ function makeStreakAtlas(): Texture {
  * Epaisseur de la trainee, en fraction du calibre du projectile. Plus fine que
  * le corps : une trainee aussi large que la tete masquerait la tete.
  *
- * ⚠️ **0,85 depuis l'etape 8, contre 0,6.** La trainee porte desormais une
- * MATIERE (`STREAK_PAINTERS` : des bouffees, des tirets, des etincelles), et a
- * 0,6 d'un calibre de dix pixels elle faisait six pixels d'epaisseur — ou
- * aucune de ces matieres ne se distingue d'un trait uni. Elle reste strictement
- * plus fine que la tete, ce que le test garde arme par arme.
+ * ⚠️ **Assez epaisse pour porter une MATIERE** (`STREAK_PAINTERS` : des
+ * bouffees, des tirets, des etincelles) : trop fine, aucune ne se distingue
+ * d'un trait uni. Elle reste strictement plus fine que la tete, ce que le
+ * test garde arme par arme.
  */
 const TRAIL_THICKNESS_FRACTION = 0.85;
 
 /**
  * Duree du « pop » de naissance, en ticks de vol, et sur-echelle a t = 0.
  *
- * ⚠️ **Le pop se compte en TICKS, comme le fondu et la trainee** (etape 8) :
+ * ⚠️ **Le pop se compte en TICKS, comme l'usure et la trainee** :
  * `ProjectileRenderer.draw` ne recoit aucune horloge, et il n'en a pas besoin
  * — `Projectiles.ticksRemainingAt` est deja un compte a rebours par
- * projectile. Un pop en millisecondes aurait demande une horloge murale au
- * calque, donc un second temps a cote de celui de la simulation.
+ * projectile.
  *
  * Trois ticks (100 ms) a x1,6 : assez pour que le depart du tir CLAQUE, trop
  * court pour qu'on lise un projectile plus gros qu'il n'est. Le reste de sa
  * course, il fait exactement son `diameterPx` — c'est ce qui garde la
  * comparaison entre deux armes honnete (voir `PROJECTILE_SHAPE_FRACTION`).
- *
- * ⚠️ **x1,4 sur 2 ticks d'abord, releve apres coup.** 66 ms sur un projectile
- * de dix pixels ne se voyait pas — le pop existait dans le test et nulle part
- * sur l'ecran. C'est le meme constat qui a fait monter les calibres du
- * catalogue d'un cran : a cette taille, une courbe timide est une courbe
- * absente.
+ * Plus court ou plus timide, sur un projectile de dix pixels, le pop ne se
+ * voit pas.
  */
 export const POP_TICKS = 3;
 export const POP_SCALE = 1.6;
@@ -875,17 +839,15 @@ export function projectilePop(ageTicks: number): number {
  * Le stade d'usure d'un projectile, de `0` (intact) a
  * `PROJECTILE_WEAR_STAGES - 1` (en miettes).
  *
- * ⚠️ **DERIVE de `projectileAlpha`, et c'est tout l'interet.** L'ancien fondu
- * portait deja la regle *« plus la portee est courte, plus tot il commence a
+ * ⚠️ **DERIVE de `projectileAlpha`, et c'est tout l'interet.** La courbe
+ * porte la regle *« plus la portee est courte, plus tot il commence a
  * disparaitre »*, calee arme par arme sur `projectileLifeTicks` — le
- * lance-flammes sur les trois quarts de sa course, l'arc-lourd jamais. En
- * lisant cette meme courbe comme une EROSION au lieu d'une opacite, le rythme
- * ne bouge pas d'un tick et il n'y a toujours qu'une seule regle a maintenir :
- * une seconde courbe a cote aurait fini par la contredire, comme ce depot l'a
- * deja vu trois fois.
+ * lance-flammes sur les trois quarts de sa course, l'arc-lourd jamais. La lire
+ * comme une EROSION garde une seule regle a maintenir : une seconde courbe a
+ * cote finirait par la contredire.
  *
  * L'arc-lourd reste donc intact de bout en bout (`projectileAlpha` vaut 1 sur
- * toute sa vie), et c'est voulu : *« il file net »*.
+ * toute sa vie), et c'est voulu : il file net.
  */
 export function projectileWear(lifeTicks: number, ticksRemaining: number): number {
   const reste = projectileAlpha(lifeTicks, ticksRemaining);
@@ -909,9 +871,9 @@ export function projectileSpin(spinTurns: number, ageTicks: number): number {
 /**
  * Opacite de la trainee, relative a celle du projectile.
  *
- * ⚠️ **Le §6.6 vaut ici aussi.** La trainee est additive, et il y en a une par
- * projectile : a pleine opacite, une salve de lance-flammes suffit a blanchir
- * la zone de contact — exactement ce que `ZONE_ALPHA` evite pour les zones.
+ * ⚠️ **La trainee est additive**, et il y en a une par projectile : a pleine
+ * opacite, une salve de lance-flammes suffit a blanchir la zone de contact —
+ * exactement ce que `ZONE_ALPHA` evite pour les zones.
  */
 export const TRAIL_ALPHA = 0.4;
 
@@ -936,57 +898,51 @@ function dynamicChannelsOf(container: ParticleContainer): {
 
 /**
  * Rendu batché des projectiles (`shared/projectiles.ts`) : **une apparence par
- * arme** (etape 5a, tache 12).
+ * arme**.
  *
  * ⚠️ **Deux quads par projectile, jamais plus — c'est la borne, et elle est
  * de CONSTRUCTION.** La trainee est un seul quad etire dans l'axe du vol, pas
  * une file de segments : a `PROJECTILE_CAPACITY` (2048) projectiles, ce
- * renderer pose au pire **4 096 quads**. Une trainee a six segments en aurait
- * pose 12 288, et rien dans le code ne l'aurait rappele — le §4.3 de
- * l'orientation dit que *« le danger est le VFX, pas les sprites »*, et la
- * tache 4 de cette etape a deja montre ce que « quelques dizaines » devient
- * quand personne ne compte (368 zones mesurees). Le compte est mesure par
+ * renderer pose au pire **4 096 quads**. Une trainee a six segments en
+ * poserait 12 288, et rien dans le code ne le rappellerait : le danger est le
+ * VFX, pas les sprites. Le compte est mesure par
  * `projectile-renderer.test.ts`, et il ne depend PAS de la longueur des
  * trainees.
  *
- * Deux `ParticleContainer`s : les trainees dessous (additives, une seule
- * texture blanche teintee par particule), les tetes dessus (l'atlas, une case
- * par arme). Un `ParticleContainer` ne porte qu'une texture source et qu'un
- * mode de fusion — les separer n'est pas un choix.
+ * Deux `ParticleContainer`s : les trainees dessous (additives, une texture
+ * blanche teintee par particule), les tetes dessus (l'atlas, une case par
+ * arme). Un `ParticleContainer` ne porte qu'une texture source et qu'un mode
+ * de fusion — les separer n'est pas un choix.
  */
 export class ProjectileRenderer {
   readonly #trails = new ParticleContainer({
-    // Additif, comme les zones et le flash de reaction (§6.6) : deux trainees
+    // Additif, comme les zones et le flash de reaction : deux trainees
     // qui se croisent s'additionnent au lieu de se masquer.
     blendMode: 'add',
     // `rotation` : la trainee est orientee dans l'axe du vol. `vertex` : elle
     // est etiree a la longueur de l'arme. `color` : teinte de l'arme et fondu
     // de fin de vie.
     //
-    // ⚠️ **`uvs` est passe a `true` a l'etape 8**, quand la trainee a cesse
-    // d'etre une texture unique pour devenir une bande d'atlas par profil
-    // (`STREAK_PAINTERS`) : c'est exactement la raison deja ecrite sur les
-    // tetes juste en dessous — le reservoir est REUTILISE, et le creneau qui
-    // porte un lance-flammes (profil `fumee`) a cette image peut porter une
-    // dague (profil `lisse`) a la suivante. A `false`, la bande televersee une
-    // fois ne changerait plus jamais et toutes les armes finiraient avec la
-    // premiere rencontree.
+    // ⚠️ **`uvs` : une bande d'atlas par profil** (`STREAK_PAINTERS`), et le
+    // reservoir est REUTILISE — le creneau qui porte un lance-flammes (profil
+    // `fumee`) a cette image peut porter une dague (profil `lisse`) a la
+    // suivante. A `false`, toutes les armes garderaient la premiere bande
+    // rencontree.
     dynamicProperties: { position: true, rotation: true, vertex: true, color: true, uvs: true },
   });
   readonly #heads = new ParticleContainer({
     // `uvs` : le reservoir est REUTILISE, et le creneau 3 peut porter une
     // dague a cette image et une grenade a la suivante — a `false`, la case
     // d'atlas televersee une fois ne changerait plus jamais et toutes les
-    // armes finiraient dessinees avec la premiere rencontree. C'est la meme
-    // raison qui fait `color: true` sur le conteneur de la horde.
+    // armes finiraient dessinees avec la premiere rencontree.
     dynamicProperties: { position: true, rotation: true, vertex: true, color: true, uvs: true },
   });
   /**
-   * Les ombres au sol des mortiers (etape 12, §5). ⚠️ **Un `Graphics`, pas
-   * une particule de plus** : les trainees sont additives (une ombre sombre
-   * s'y annulerait) et l'atlas des tetes n'a pas de case d'ellipse. Seuls les
-   * mortiers y tracent — une arme lente a projectile unique, une poignee a
-   * l'ecran — donc le cout reste borne par eux, pas par la capacite entiere.
+   * Les ombres au sol des mortiers. ⚠️ **Un `Graphics`, pas une particule de
+   * plus** : les trainees sont additives (une ombre sombre s'y annulerait) et
+   * l'atlas des tetes n'a pas de case d'ellipse. Seuls les mortiers y tracent
+   * — une arme lente a projectile unique, une poignee a l'ecran — donc le cout
+   * reste borne par eux, pas par la capacite entiere.
    */
   readonly #shadows = new Graphics();
   /** Le calque, vu du monde : ombres, trainees puis tetes. Voir `attach`. */
@@ -1021,7 +977,7 @@ export class ProjectileRenderer {
     return this.#trails.boundsArea as Rectangle;
   }
 
-  /** Expose pour le test : « additif » est une exigence du §6.6, pas un detail. */
+  /** Expose pour le test : « additif » est une exigence, pas un detail. */
   /** Expose pour le test : l'ombre du mortier. */
   get shadows(): Graphics {
     return this.#shadows;
@@ -1037,20 +993,18 @@ export class ProjectileRenderer {
    * traduit `dynamicProperties` en descripteurs, et seule cette traduction dit
    * ce qui sera reellement rafraichi.
    *
-   * ⚠️ **Meme motif que `HordeRenderer.dynamicTint`, et pour la meme raison :
-   * la mutation survit sans lui.** Elle a d'abord survecu ici — passer
-   * `uvs: false` sur les tetes laisse 212 tests verts, parce que `draw` pose
-   * bien `head.texture` sur l'objet JS et que le test le relit. Seul le
-   * televersement change : le reservoir de particules etant REUTILISE, la case
-   * d'atlas du premier occupant d'un creneau y resterait pour toujours et les
-   * neuf armes finiraient dessinees avec la meme forme — exactement le defaut
-   * que cette tache corrige.
+   * ⚠️ **La mutation survit sans lui** : passer `uvs: false` sur les tetes
+   * laisse les tests verts, parce que `draw` pose bien `head.texture` sur
+   * l'objet JS et que le test le relit. Seul le televersement change : le
+   * reservoir etant REUTILISE, la case d'atlas du premier occupant d'un
+   * creneau y resterait pour toujours et toutes les armes finiraient
+   * dessinees avec la meme forme.
    */
   get dynamicHeadChannels(): { uvs: boolean; rotation: boolean; vertex: boolean; color: boolean } {
     return dynamicChannelsOf(this.#heads);
   }
 
-  /** Idem pour les trainees, qui n'ont qu'une texture donc pas d'`uvs` a suivre. */
+  /** Idem pour les trainees (sans `uvs`, que ce getter n'expose pas). */
   get dynamicTrailChannels(): { rotation: boolean; vertex: boolean; color: boolean } {
     const { rotation, vertex, color } = dynamicChannelsOf(this.#trails);
     return { rotation, vertex, color };
@@ -1059,12 +1013,11 @@ export class ProjectileRenderer {
   /**
    * Attache **un seul** enfant au monde, comme tous les autres calques.
    *
-   * ⚠️ **Un groupe, pas deux enfants poses cote a cote dans le monde.** Le
-   * §6.6 compte six calques et `stage.test.ts` le verifie en comptant les
-   * enfants du monde ; y verser deux conteneurs ferait de « un renderer, un
-   * calque » une regle a exceptions. Le groupe garantit en plus que la trainee
-   * reste immediatement SOUS sa tete — l'ordre est interne, personne ne peut
-   * l'inverser en reordonnant `Stage.#layers`.
+   * ⚠️ **Un groupe, pas deux enfants poses cote a cote dans le monde.**
+   * `stage.test.ts` compte les enfants du monde ; y verser deux conteneurs
+   * ferait de « un renderer, un calque » une regle a exceptions. Le groupe
+   * garantit en plus que la trainee reste immediatement SOUS sa tete — l'ordre
+   * est interne, personne ne peut l'inverser en reordonnant `Stage.#layers`.
    */
   attach(parent: Container): void {
     this.#group.addChild(this.#shadows);
@@ -1076,8 +1029,7 @@ export class ProjectileRenderer {
   /**
    * Vrai des que `load` a pose ses textures. Expose pour le test, comme
    * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
-   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
-   * indetectable jusqu'a la tache 9 bis.
+   * `Stage.composeWorld` charge CHAQUE calque.
    */
   get loaded(): boolean {
     return this.#streaks.length > 0;
@@ -1098,13 +1050,12 @@ export class ProjectileRenderer {
    * Decoupe l'atlas et rend le renderer capable de dessiner.
    *
    * ⚠️ **Separe de `load` PARCE QUE `load` a besoin d'un canevas 2D**, que
-   * l'environnement de test n'a pas — exactement la raison de
-   * `HordeRenderer.adoptAtlas` (tache 9 bis). Tant que les deux ne faisaient
-   * qu'un, `draw` retournait au premier `if (!texture)` en test et **tout son
-   * corps pouvait etre retire sans qu'une assertion ne bouge.**
+   * l'environnement de test n'a pas. Sans ce point d'accroche, `draw` ne
+   * passerait jamais sa garde en test et **tout son corps pourrait etre retire
+   * sans qu'une assertion ne bouge.**
    */
   adoptTextures(atlas: Texture, streak: Texture): void {
-    // Une case par arme ET PAR STADE d'usure (etape 8) : `#cells` est indexe
+    // Une case par arme ET PAR STADE d'usure : `#cells` est indexe
     // par `projectileCellIndex`, jamais par `Weapon.id` seul.
     this.#cells = WEAPONS.flatMap((w) =>
       Array.from({ length: PROJECTILE_WEAR_STAGES }, (_, wear) => {
@@ -1176,7 +1127,7 @@ export class ProjectileRenderer {
       const remaining = projectiles.ticksRemainingAt(i);
       const alpha = projectileAlpha(weapon.projectileLifeTicks, remaining);
       const heading = projectiles.headingAt(i);
-      // Le stade d'usure, lu sur la MEME courbe que l'ancien fondu — voir
+      // Le stade d'usure, lu sur la MEME courbe que le fondu — voir
       // `projectileWear`.
       const wear = projectileWear(weapon.projectileLifeTicks, remaining);
       // L'age du projectile, en ticks de vol : la vie de l'arme moins ce qui
@@ -1184,7 +1135,7 @@ export class ProjectileRenderer {
       // trois courbes (fondu, pop, rotation) — voir `POP_TICKS`.
       const age = weapon.projectileLifeTicks - remaining;
 
-      // Le mortier vole en cloche AU-DESSUS de son point sol (§5) : la
+      // Le mortier vole en cloche AU-DESSUS de son point sol : la
       // position simulee reste au sol, c'est elle qui explose, et l'ombre
       // la dit. `lift` vaut 0 au depart et a l'arrivee, 1 a l'apogee.
       let dy = 0;
@@ -1274,10 +1225,9 @@ export function mortarLift(age: number, ticksRemaining: number): number {
 /** Echelle du flash a sa naissance (t=0) et juste avant de s'eteindre (t=1). Grandit en s'effacant. */
 const FLASH_MIN_SCALE = 0.6;
 /**
- * Exportee (etape 5a) pour que le test puisse confronter la taille du flash
- * d'IMPACT a celle du flash de REACTION : *« l'etat persistant est discret, la
- * reaction est spectaculaire »* (§6.6) n'est une regle que si l'ecart entre
- * les deux est verifiable.
+ * Exportee pour que le test puisse confronter la taille du flash d'IMPACT a
+ * celle du flash de REACTION : « l'etat persistant est discret, la reaction
+ * est spectaculaire » n'est une regle que si l'ecart est verifiable.
  */
 export const FLASH_MAX_SCALE = 2.4;
 
@@ -1285,21 +1235,18 @@ export const FLASH_MAX_SCALE = 2.4;
 export const IMPACT_TEXTURE_DIAMETER = 48;
 
 /**
- * Le flash d'impact : un coeur blanc, un BORD CHAUD, puis rien (etape 8).
+ * Le flash d'impact : un coeur blanc, un BORD CHAUD, puis rien.
  *
- * ⚠️ **Blanc, et plus dore comme jusqu'a l'etape 6a.** `Particle.tint`
- * multiplie composante par composante : une texture deja doree aurait rendu
- * fausse la teinte de l'arme que `HitFlashes.tint` porte desormais — c'est la
- * meme raison qui fait la trainee blanche (`STREAK_PAINTERS`) et l'atlas des
- * zones blanc.
+ * ⚠️ **Blanc**, parce que `Particle.tint` multiplie composante par composante :
+ * une texture coloree fausserait la teinte de l'arme que `HitFlashes.tint`
+ * porte — meme raison que la trainee blanche et l'atlas des zones.
  *
  * ⚠️ **Le bord est ce qui fait lire « eclat » et pas « halo ».** Un simple
- * degre du centre vers le vide (`makeGlowTexture`) grossit en s'eteignant
+ * degrade du centre vers le vide (`makeGlowTexture`) grossit en s'eteignant
  * comme une tache floue ; une crete d'opacite aux trois quarts du rayon donne
- * au meme quad une onde qui part — le §4.3 demande *« un flash court, large et
- * genereux »*, et c'est le bord qui en dit la largeur. Un second quad
- * (anneau separe) aurait dit la meme chose en doublant le cout d'un effet qui
- * accompagne CHAQUE coup, des dizaines par seconde.
+ * au meme quad une onde qui part, un flash court, large et genereux. Un
+ * second quad (anneau separe) doublerait le cout d'un effet qui accompagne
+ * CHAQUE coup, des dizaines par seconde.
  */
 function makeBurstTexture(diameter: number): Texture {
   const canvas = document.createElement('canvas');
@@ -1329,10 +1276,10 @@ function makeBurstTexture(diameter: number): Texture {
  * gerbe et tout son flash.
  *
  * ⚠️ **PLAFOND, pas echelle.** La Grenade (40 degats) frappe huit fois plus
- * fort que le Lance-flammes (3) ; un flash huit fois plus large aurait blanchi
- * l'ecran et pietine la hierarchie du §6.6, ou le spectaculaire appartient a
- * la REACTION. 20 degats suffisent a separer les trois familles du catalogue
- * (les arroseuses a 3-7, le milieu a 10-16, les lourdes au-dela).
+ * fort que le Lance-flammes (3) ; un flash huit fois plus large blanchirait
+ * l'ecran, alors que le spectaculaire appartient a la REACTION. 20 degats
+ * suffisent a separer les trois familles du catalogue (les arroseuses a 3-7,
+ * le milieu a 10-16, les lourdes au-dela).
  */
 export const IMPACT_POWER_FULL = 20;
 
@@ -1352,14 +1299,12 @@ export function impactPower(power: number): number {
  *
  * ⚠️ **C'est LA borne de cet effet, et elle est multiplicative.**
  * `HIT_FLASH_CAPACITY` vaut 128 : a six eclats, ce calque pose au pire
- * **768 quads** — contre 4 096 pour les projectiles eux-memes. Le §4.3 dit que
- * *« le danger est le VFX, pas les sprites »*, et la tache 4 a deja montre ce
- * que « quelques dizaines » devient quand personne ne compte : le compte est
- * donc mesure par `projectile-renderer.test.ts`, pas espere.
+ * **768 quads** — contre 4 096 pour les projectiles eux-memes. Le compte est
+ * mesure par `projectile-renderer.test.ts`, pas espere.
  *
  * Six, et pas douze : un impact accompagne CHAQUE projectile qui touche, des
- * dizaines par seconde. Ce qui doit rester spectaculaire, c'est la reaction
- * (§6.6).
+ * dizaines par seconde. Ce qui doit rester spectaculaire, c'est la
+ * reaction.
  */
 export const SPARKS_PER_FLASH = 6;
 
@@ -1371,10 +1316,9 @@ export const SPARKS_MIN = 2;
  * `SPARKS_PER_FLASH`.
  *
  * ⚠️ **C'est l'un des deux canaux qui font qu'un coup de dague et un coup de
- * grenade ne se ressemblent pas** (etape 8 : *« varie les tailles et impact
- * des projectiles, on dirait qu'ils font tous pareil »*). L'autre est la taille
- * du flash. La BORNE, elle, ne bouge pas : le reservoir reste dimensionne a
- * `SPARKS_PER_FLASH`, donc le pire cas mesure par le test est inchange.
+ * grenade ne se ressemblent pas**. L'autre est la taille du flash. La BORNE,
+ * elle, ne bouge pas : le reservoir reste dimensionne a `SPARKS_PER_FLASH`,
+ * donc le pire cas mesure par le test est inchange.
  */
 export function sparkCount(power: number): number {
   return SPARKS_MIN + Math.round((SPARKS_PER_FLASH - SPARKS_MIN) * impactPower(power));
@@ -1478,11 +1422,10 @@ export function impactFlashScale(
 /**
  * Rendu batché des flashs d'impact (`HitFlashes`, `net/client.ts`).
  *
- * §4.3 : « le budget VFX passe dans un flash court, large et genereux, pas
- * dans un halo permanent ». Traduit ici en deux courbes sur la duree de vie
- * du flash (`t` de 0 a 1) : l'echelle GRANDIT (large) pendant que l'opacite
- * S'ETEINT (court) — l'effet inverse (un point qui reste allume) lirait
- * comme un halo continu, exactement ce que le §4.3 exclut.
+ * Le budget VFX passe dans un flash court, large et genereux, pas dans un halo
+ * permanent : sur la duree de vie du flash (`t` de 0 a 1), l'echelle GRANDIT
+ * (large) pendant que l'opacite S'ETEINT (court). L'inverse lirait comme un
+ * halo continu.
  */
 export class ImpactFlashRenderer {
   readonly #container = new ParticleContainer({
@@ -1491,8 +1434,8 @@ export class ImpactFlashRenderer {
   /**
    * Les eclats, au-DESSUS du flash et dans leur propre conteneur : ils n'ont
    * ni la meme texture ni la meme rotation, et un `ParticleContainer` ne porte
-   * qu'une texture source. Additif, comme les zones et la reaction (§6.6) :
-   * deux gerbes qui se croisent s'additionnent au lieu de se masquer.
+   * qu'une texture source. Additif, comme les zones et la reaction : deux
+   * gerbes qui se croisent s'additionnent au lieu de se masquer.
    */
   readonly #sparks = new ParticleContainer({
     blendMode: 'add',
@@ -1519,7 +1462,7 @@ export class ImpactFlashRenderer {
     return this.#sparks.boundsArea as Rectangle;
   }
 
-  /** Expose pour le test : « additif » est une exigence du §6.6, pas un detail. */
+  /** Expose pour le test : « additif » est une exigence, pas un detail. */
   get sparkBlendMode(): string {
     return this.#sparks.blendMode;
   }
@@ -1539,8 +1482,7 @@ export class ImpactFlashRenderer {
   /**
    * Vrai des que `load` a pose sa texture. Expose pour le test, comme
    * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
-   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
-   * indetectable jusqu'a la tache 9 bis.
+   * `Stage.composeWorld` charge CHAQUE calque.
    */
   get loaded(): boolean {
     return this.#texture !== null;
@@ -1553,11 +1495,10 @@ export class ImpactFlashRenderer {
   /**
    * Rend le renderer capable de dessiner sans canevas 2D.
    *
-   * ⚠️ **Separe de `load` pour la meme raison que `ProjectileRenderer.adoptTextures`
-   * (tache 9 bis)** : tant que les deux ne faisaient qu'un, `draw` retournait
-   * au premier `if (!texture)` en test et **tout son corps pouvait etre retire
-   * sans qu'une assertion ne bouge** — ce qui etait encore vrai de la teinte
-   * du flash a l'etape 8, la ligne meme que cette etape ajoute.
+   * ⚠️ **Separe de `load` pour la meme raison que
+   * `ProjectileRenderer.adoptTextures`** : sans ce point d'accroche, `draw` ne
+   * passerait jamais sa garde en test et **tout son corps pourrait etre retire
+   * sans qu'une assertion ne bouge**.
    */
   adoptTexture(texture: Texture, spark: Texture): void {
     this.#texture = texture;
@@ -1610,10 +1551,9 @@ export class ImpactFlashRenderer {
         spark.x = x + Math.cos(angle) * travel * course;
         spark.y = y + Math.sin(angle) * travel * course;
         spark.rotation = angle;
-        // Il retrecit en volant : un eclat de taille constante lirait comme un
-        // projectile de plus, pas comme un debris.
-        // Il retrecit en volant, et il part d'autant plus gros que le coup
-        // pesait : le troisieme canal de « dix-sept armes, dix-sept impacts ».
+        // Il retrecit en volant (de taille constante, il lirait comme un
+        // projectile de plus, pas comme un debris), et il part d'autant plus
+        // gros que le coup pesait : le troisieme canal qui distingue les armes.
         spark.scaleX = (1 - 0.6 * t) * (0.7 + 0.5 * impactPower(power)) * (radius > 0 ? 1.6 : 1);
         spark.scaleY = spark.scaleX;
         spark.tint = tint;
@@ -1672,7 +1612,7 @@ export const REACTION_TEXTURE_DIAMETER = 64;
  *
  * Il GRANDIT en s'eteignant, comme le flash d'impact — mais il part de plus
  * loin et arrive plus haut : c'est la difference entre « court » et
- * « spectaculaire » du §6.6.
+ * « spectaculaire ».
  */
 const REACTION_FLASH_MIN_FRACTION = 0.45;
 
@@ -1711,18 +1651,17 @@ export function reactionFlashScale(t: number, textureDiameterPx: number): number
  * | declenchee par DEUX joueurs (`charged`) | `0xffffff` — la texture blanche, telle quelle |
  * | declenchee en solo | la moyenne des teintes des deux elements |
  *
- * ⚠️ **La teinte est le seul encodage de « le coeur du projet » DANS LE
- * MONDE.** Le §6.5 de l'orientation fait de la reaction inter-joueurs la
- * mecanique centrale ; la jauge du HUD en montre le total, mais un chiffre
- * dans un coin d'ecran ne dit pas *quel* moment vient de compter. `0xffffff`
- * est l'identite du produit que fait `tint` (voir `shared/elements.ts`) : la
- * reaction chargee est donc, litteralement, la plus lumineuse que ce renderer
- * puisse dessiner — sans jamais changer sa TAILLE, qui reste asservie a
- * `REACTION_RADIUS` (voir `reactionFlashScale`).
+ * ⚠️ **La teinte est le seul encodage de la reaction inter-joueurs DANS LE
+ * MONDE.** C'est la mecanique centrale ; la jauge du HUD en montre le total,
+ * mais un chiffre dans un coin d'ecran ne dit pas *quel* moment vient de
+ * compter. `0xffffff` est l'identite du produit que fait `tint` (voir
+ * `shared/elements.ts`) : la reaction chargee est donc la plus lumineuse que
+ * ce renderer puisse dessiner — sans jamais changer sa TAILLE, qui reste
+ * asservie a `REACTION_RADIUS` (voir `reactionFlashScale`).
  *
- * ⚠️ **Aucune table par couple d'elements.** Les quatorze reactions restantes
- * du §6.4 (etape 5b) prendront leur teinte ici sans une ligne de plus : c'est
- * le meme pari que `ELEMENT_DEFS`, ou l'index EST l'identifiant.
+ * ⚠️ **Aucune table par couple d'elements** : une reaction ajoutee prend sa
+ * teinte ici sans une ligne de plus, comme `ELEMENT_DEFS` ou l'index EST
+ * l'identifiant.
  */
 export function reactionTint(pair: number, charged: boolean): number {
   if (charged) {
@@ -1740,12 +1679,10 @@ export function reactionTint(pair: number, charged: boolean): number {
 /**
  * Rendu batche des flashs de reaction (`ReactionFlashes`, `net/client.ts`).
  *
- * ⚠️ **C'est ICI que passe le budget VFX** (§6.6) : la reaction est le seul
- * evenement de cette etape qui soit a la fois rare, arbitre serveur et
- * mortel. Le flash d'impact, lui, accompagne chaque projectile qui touche —
- * il doit donc rester bref et petit, sans quoi les deux se confondent et la
- * hierarchie *« etat persistant discret, reaction spectaculaire »* s'effondre
- * dans un bruit de fond continu.
+ * ⚠️ **C'est ICI que passe le budget VFX** : la reaction est a la fois rare,
+ * arbitree serveur et mortelle. Le flash d'impact, lui, accompagne chaque
+ * projectile qui touche — il doit donc rester bref et petit, sans quoi les
+ * deux se confondent dans un bruit de fond continu.
  *
  * Un conteneur separe de `ImpactFlashRenderer` plutot qu'un drapeau dans le
  * meme : les deux n'ont ni la meme texture, ni la meme duree, ni la meme
@@ -1753,7 +1690,7 @@ export function reactionTint(pair: number, charged: boolean): number {
  */
 export class ReactionFlashRenderer {
   readonly #container = new ParticleContainer({
-    // Additif comme les zones (§6.6) : deux reactions voisines s'additionnent
+    // Additif comme les zones : deux reactions voisines s'additionnent
     // au lieu de se masquer, et le flash reste lisible par-dessus le sol
     // teinte des zones qui l'ont produit.
     blendMode: 'add',
@@ -1770,7 +1707,7 @@ export class ReactionFlashRenderer {
     return this.#container.boundsArea as Rectangle;
   }
 
-  /** Expose pour le test : « additif » est une exigence du §6.6, pas un detail. */
+  /** Expose pour le test : « additif » est une exigence, pas un detail. */
   get blendMode(): string {
     return this.#container.blendMode;
   }
@@ -1780,16 +1717,13 @@ export class ReactionFlashRenderer {
   }
 
   /**
-   * Texture BLANCHE, pas doree comme celle du flash d'impact : c'est
-   * `reactionTint` qui la colore, et `tint` multiplie — une texture deja
-   * coloree rendrait la teinte du couple d'elements fausse (meme raison que
-   * `makeZoneAtlas`).
+   * Texture BLANCHE : c'est `reactionTint` qui la colore, et `tint` multiplie
+   * — une texture deja coloree fausserait la teinte du couple d'elements.
    */
   /**
    * Vrai des que `load` a pose sa texture. Expose pour le test, comme
    * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
-   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
-   * indetectable jusqu'a la tache 9 bis.
+   * `Stage.composeWorld` charge CHAQUE calque.
    */
   get loaded(): boolean {
     return this.#texture !== null;

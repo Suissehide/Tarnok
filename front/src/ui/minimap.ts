@@ -35,9 +35,9 @@ export interface MinimapView {
   players: readonly { id: number; x: number; y: number; hp: number }[];
   enemies: { readonly count: number; readonly x: Float32Array; readonly y: Float32Array };
   boss: { x: number; y: number } | null;
-  /** Le porteur de coffre (etape 11), un point or. Absent ou `null` : rien. */
+  /** Le porteur de coffre, un point or. Absent ou `null` : rien. */
   porteur?: { x: number; y: number } | null;
-  /** Les pings vivants (etape 9). */
+  /** Les pings vivants. */
   pings: readonly { playerId: number; x: number; y: number }[];
   /** Phase du clignotement, calculee par l'appelant : `draw` ne lit pas l'horloge. */
   blinkOn: boolean;
@@ -128,7 +128,7 @@ export class Minimap {
       ctx.fillRect(bx - 2, by - 2, 5, 5);
     }
 
-    // Etape 11 : le porteur, au-dessus des ennemis et sous les joueurs.
+    // Le porteur, au-dessus des ennemis et sous les joueurs.
     if (view.porteur) {
       ctx.fillStyle = PORTEUR;
       ctx.fillRect(
@@ -139,7 +139,7 @@ export class Minimap {
       );
     }
 
-    // Les pings (etape 9) : un carre de 5 px qui clignote, sous les joueurs.
+    // Les pings : un carre de 5 px qui clignote, sous les joueurs.
     if (view.blinkOn) {
       for (const p of view.pings) {
         ctx.fillStyle = playerColor(p.playerId);

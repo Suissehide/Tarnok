@@ -20,9 +20,7 @@ import {
 import { BODY_SCALE } from './horde-renderer';
 
 /**
- * La barre de vie du boss (etape 6a, tache 5).
- *
- * > *« Prevois une petite barre d'hp au dessus des boss. »*
+ * La barre de vie du boss.
  *
  * Trois choses a garder, et elles sont independantes : la FRACTION (ce que la
  * barre dit), le PLACEMENT (ou elle se pose, et quand elle ne se pose pas), et
@@ -90,7 +88,7 @@ describe('bossHpFraction — ce que la barre dit', () => {
 
 /**
  * ⚠️ **Le decalage se DERIVE de la taille dessinee, jamais d'un nombre ecrit a
- * la main** (plan, tache 5, etape 2). Ces deux assertions sont les deux moities
+ * la main**. Ces deux assertions sont les deux moities
  * de cette exigence, et aucune ne suffit :
  * - la premiere dit que la barre est bien AU-DESSUS du corps, pas dessus ;
  * - la seconde dit qu'elle suit la taille du BOSS et pas celle de la pietaille.
@@ -101,7 +99,7 @@ describe('bossHpFraction — ce que la barre dit', () => {
 describe('BOSS_BAR_OFFSET_PX — derive de la taille DESSINEE du boss', () => {
   it('pose le bas de la barre au-dessus du haut du corps', () => {
     const basDeLaBarre = BOSS_BAR_OFFSET_PX - BOSS_BAR_HEIGHT_PX / 2 - BOSS_BAR_BORDER_PX;
-    // `BODY_ANCHOR_Y` vaut 0,5 depuis l'etape 5a : le corps est CENTRE sur la
+    // `BODY_ANCHOR_Y` vaut 0,5 : le corps est CENTRE sur la
     // position, donc son bord haut est a une demi-taille dessinee au-dessus.
     expect(basDeLaBarre).toBeGreaterThanOrEqual(BOSS_BODY_SIZE_PX / 2);
   });
@@ -115,11 +113,9 @@ describe('BOSS_BAR_OFFSET_PX — derive de la taille DESSINEE du boss', () => {
 });
 
 /**
- * ⚠️ **La forme de la barre n'etait gardee par RIEN, et une mutation l'a
- * montre** : `BOSS_BAR_WIDTH_PX = 80` (une longueur ecrite a la main) survivait
- * a toute la suite, parce que chaque assertion de `draw` compare une echelle a
- * cette meme constante — elle se recopiait des deux cotes. Ce bloc garde donc
- * la PROPRIETE, pas la valeur : la barre appartient a la creature.
+ * ⚠️ **La PROPRIETE, pas la valeur** : chaque assertion de `draw` compare une
+ * echelle a `BOSS_BAR_WIDTH_PX`, donc une longueur ecrite a la main y
+ * survivrait. Ce bloc garde que la barre appartient a la creature.
  *
  * Les deux moities, encore : « assez large pour etre celle d'un boss » sans
  * « pas plus large que son corps » autoriserait un bandeau qui deborde de lui
@@ -137,7 +133,7 @@ describe('la barre a la forme d une petite barre posee sur la creature', () => {
   });
 
   /**
-   * *« Une PETITE barre »* : c'est l'epaisseur qui le dit. Un trait, pas un
+   * Une PETITE barre : c'est l'epaisseur qui le dit. Un trait, pas un
    * bandeau — au plus un huitieme de sa longueur.
    */
   it('est un trait, pas un bandeau', () => {
@@ -152,7 +148,7 @@ describe('bossBarLayout — ou la barre se pose, et quand elle ne se pose pas', 
   });
 
   /**
-   * ⚠️ **C'est ainsi que la barre DISPARAIT** (plan, tache 5, etape 2) : le
+   * ⚠️ **C'est ainsi que la barre DISPARAIT** : le
    * client apprend la mort du boss par `DEATHS`, comme pour tout le monde, et
    * `Horde.kill` retire le creneau. Le snapshot peut encore porter le boss le
    * temps d'un tick de decalage — c'est la horde qui fait foi.
@@ -202,10 +198,9 @@ describe('bossBarLayout — ou la barre se pose, et quand elle ne se pose pas', 
 });
 
 /**
- * **Le corps de `draw`, atteint.** Sans `adoptTexture`, `draw` retournerait a
- * son premier `if (!texture)` dans toute la suite et tout son corps pourrait
- * etre retire sans qu'une assertion ne bouge — c'est litteralement ce que
- * `ZoneRenderer.draw` a fait pendant 237 tests verts dans ce depot.
+ * **Le corps de `draw`, atteint.** Sans `adoptTexture`, `draw` ne passerait
+ * jamais sa garde en test et tout son corps pourrait etre retire sans qu'une
+ * assertion ne bouge.
  */
 function quadsDessines(horde: Horde, boss: BossVitals | null): Particle[] {
   const renderer = new BossBarRenderer();

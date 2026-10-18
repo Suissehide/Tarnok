@@ -1,82 +1,22 @@
 /**
- * Banc de la montee au niveau 2 (etape 6a, tache 3, etape 0).
+ * Banc de la montee au niveau 2.
  *
  * Rejoue sur 40 graines de carte le scenario du test « un joueur passif atteint
  * le niveau 2 » de `back/src/room.test.ts` — un joueur IMMOBILE qui vise la
  * menace la plus proche, le pipeline reel, un budget de 100 s — et compte les
+ * echecs. Le test ne joue qu'UNE graine ; ce banc donne la part de graines qui
+ * echouent, et c'est lui qui garde `HEAVY_FIRST_WAVE` et `palierHp`.
+ *
+ * ⚠️ Ce releve est anti-correle a la puissance des armes tant que le joueur ne
+ * bouge pas : une arme plus forte tue PLUS LOIN, les orbes tombent au-dela
+ * d'`ORB_PICKUP_RADIUS` et rien ne va les chercher (l'aimantation est un effet
+ * de rendu, pas de jeu). Une cadence plus rapide peut donc AUGMENTER les
+ * echecs ; le levier est le rayon de ramassage, pas la cadence.
+ *
+ * ⚠️ Pour un joueur seul, le boss coute d'abord par sa PRESENCE (un corps de
+ * plus qui capte le tir automatique, un palier qui avance quand il tombe), bien
+ * plus que par sa reserve de PV : baisser ses PV ne fait presque pas bouger les
  * echecs.
- *
- * ⚠️ **Ce banc existe parce qu'un TEST ne peut pas repondre a la question qu'il
- * pose.** `room.test.ts` joue UNE graine ; ce qu'on veut savoir, c'est la part
- * de graines qui echouent. Les mesures qui ont fixe `HEAVY_FIRST_WAVE` (etape
- * 5a) et `palierHp` (etape 6a) sortent toutes les deux de ce releve, et elles
- * etaient jusqu'ici invérifiables : le script qui les avait produites n'avait
- * pas ete garde (`_probe.ts`, jete a l'etape 3). Celui-ci l'est.
- *
- * | Etat du code | Mediane | Maximum | Echecs |
- * | --- | --- | --- | --- |
- * | avant les paliers (etape 5a) | 40,4 s | 55,1 s | 0/40 |
- * | avec les paliers, sans exemption | 40,9 s | 64,2 s | **1/40** |
- * | avec `palierHp`, boss pas encore reel | 41,3 s | 63,5 s | **0/40** |
- * | + le boss reel a 6 000 PV (tache 3) | 40,8 s | 60,0 s | **3/40** |
- * | **+ les PV par joueur (tache 3 bis, 1 500 PV en solo)** | **40,8 s** | **60,0 s** | **3/40** |
- * | apres la tache 18 (les vagues baissent, la horde encercle) | 42,0 s | 45,3 s | **4/40** |
- * | **+ les cadences accelerees (tache 19)** | **42,5 s** | **45,7 s** | **19/40** |
- *
- * ⚠️ **LA TACHE 19 DEGRADE CE RELEVE, ET SA CAUSE EST MESUREE — ce n'est PAS
- * la cadence.** Le plan attendait l'inverse (*« une cadence plus rapide devrait
- * l'ameliorer — si elle l'aggrave, c'est qu'on a casse autre chose »*). L'autre
- * chose existe, elle est ancienne, et elle n'a rien a voir avec le tir : **une
- * arme plus forte tue PLUS LOIN, et le butin reste ou l'ennemi tombe.** Meme
- * decor qu'ici, dix graines, 45 s, un joueur immobile :
- *
- * | Cadence de la dague | Morts | Distance moyenne de mort | Ramassages | Orbes restes au sol |
- * | --- | --- | --- | --- | --- |
- * | 7 (avant) | 692 | 298 px | **27** | 162 |
- * | 5 | 759 | 326 px | 22 | 189 |
- * | **4 (apres)** | **797** | **341 px** | **15** | **205** |
- *
- * Le joueur tue 15 % de plus et ramasse 44 % de moins : les orbes tombent
- * au-dela d'`ORB_PICKUP_RADIUS` (90 px) et **rien ne va les chercher** — il n'y
- * a aucune aimantation de JEU, la capture de la tache 20 de l'etape 5a est un
- * effet de rendu. Le releve ci-dessus est donc anti-correle a la puissance des
- * armes tant que le joueur ne bouge pas : deja 9/40 a 6 ticks de recharge, soit
- * −14 % de cadence.
- *
- * ⚠️ **La mediane ne bouge pas (42,0 -> 42,5 s), le MAXIMUM non plus (45,3 ->
- * 45,7 s).** Les quinze pertes sont des graines ou le niveau 2 arrivait deja
- * apres 45 s et ou la run se perd a 47-51 s : la queue de la distribution passe
- * de l'autre cote d'une falaise fixee par le calendrier des vagues, pas un
- * ralentissement general. **Signale, pas tranche ici** : ce qui se regle est le
- * RAYON DE RAMASSAGE (ou une aimantation de jeu), pas la cadence, et cela
- * appartient a l'auteur.
- *
- * ⚠️ **Les deux premieres lignes de boss n'ont PAS la meme cause que les
- * precedentes.** `palierHp` solde la marche de durabilite (1/40 -> 0/40, a boss
- * constant). Le 3/40 vient du boss, qui apparait a 30 s sur toutes les graines
- * et que le joueur SEUL prend pour cible — c'est la menace la plus proche.
- *
- * ⚠️ **ET LA TACHE 3 BIS NE LE BOUGE PAS : 3/40 -> 3/40, aux memes graines
- * (8, 10, 31) et a la seconde pres.** Diviser le boss solo par quatre
- * (6 000 -> 1 500 PV) ne change RIEN a ce releve, et il faut le dire plutot que
- * de laisser croire a un correctif : a la dague seule (~21 degats/s au niveau
- * 1), 1 500 PV demandent encore 70 s quand la run est perdue a 50-60 s.
- *
- * **Deux mesures de controle, faites pour ne pas supposer la cause** :
- *
- * | Decor | Echecs |
- * | --- | --- |
- * | aucun boss du tout (`WAVES_PER_PALIER` porte a 1000) | **0/40** |
- * | boss a 100 PV — tue en quelques secondes | **2/40** |
- * | boss a 1 500 PV (solo, aujourd'hui) ou a 6 000 (hier) | **3/40** |
- *
- * ⚠️ **Ce que ces trois lignes disent, et qui contredit le plan** : le plan de
- * la tache 3 bis attribue les trois pertes aux *« 6 000 PV qu'il ne percera
- * pas »*. La mesure dit **deux tiers presence, un tiers reserve** — deux
- * graines sur trois tombent avec un boss qu'on tue en quelques secondes. Ce que
- * coute un boss a un joueur seul, c'est d'abord d'EXISTER : un corps de plus
- * qui capte le tir automatique, et un palier qui avance quand il tombe. La
- * reserve n'ajoute qu'une graine.
  *
  *   npm run bench:niveau2 -w back
  */

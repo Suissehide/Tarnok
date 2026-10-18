@@ -8,10 +8,8 @@ on:
 jobs:
   check:
     runs-on: ubuntu-latest
-    # La PREMIERE base du projet entre dans le portique. L'image est la MEME
-    # que celle de deploy/compose.yaml : aucune derive entre ce qui est teste
-    # et ce qui est deploye n'est donc possible — c'est la premiere forme du
-    # « decor qui masque » recensee a l'etape 5c, et on la ferme d'avance.
+    # La MEME image Postgres que deploy/compose.yaml : pas de derive entre ce
+    # qui est teste et ce qui est deploye.
     services:
       postgres:
         image: postgres:16-alpine
@@ -42,10 +40,8 @@ jobs:
       # fichier n'est pas formate : pas de debat de style en revue.
       - run: npm run lint
       # AVANT le typecheck : sans ca, `@prisma/client` n'a que les types de
-      # secours ecrits par son `postinstall` (`PrismaClient` en `any`), et le
-      # typecheck de la CI ne verifie alors AUCUN usage de Prisma -- un nom de
-      # champ faux (`gold` ecrit `golds`) passerait le typecheck et ne
-      # rougirait qu'aux tests.
+      # secours de son `postinstall` (`PrismaClient` en `any`), et un nom de
+      # champ faux passerait le typecheck.
       - run: npm run db:generate -w back
         env:
           DATABASE_URL: postgresql://tarnok:tarnok@127.0.0.1:5432/tarnok

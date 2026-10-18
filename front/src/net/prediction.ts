@@ -20,10 +20,6 @@ export interface MoveMap {
  * position serveur dans la simulation, et on garde l'ecart de cote pour le
  * laisser s'eteindre exponentiellement a l'ecran : la correction devient une
  * derive de quelques pixels au lieu d'un saut.
- *
- * C'est la version naive annoncee au plan. La vraie reconciliation — rejouer
- * les entrees non encore acquittees par-dessus l'etat serveur — appartient a
- * l'etape 2, et elle remplacera ce fichier sans toucher au reste.
  */
 export class PredictedPlayer {
   #x: number;
@@ -66,23 +62,17 @@ export class PredictedPlayer {
   }
 
   /**
-   * `moveX` et `moveY` sont normalises dans [-1, 1]. `scale` (tache 24) est le
-   * meme facteur que `Room#movementScale` cote serveur : `0` pendant le gel
-   * strict de la montee de niveau, une rampe pendant la reprise, `1` par
-   * defaut. Ne module QUE le deplacement, jamais l'extinction de l'ecart de
-   * reconciliation ci-dessous — celle-ci reste une pure animation d'affichage,
-   * sans lien avec la simulation que le serveur gele ou pas.
+   * `moveX` et `moveY` sont normalises dans [-1, 1]. `scale` est le meme
+   * facteur que `Room#movementScale` cote serveur (`0` pendant le gel de la
+   * montee de niveau, une rampe a la reprise). Il ne module QUE le
+   * deplacement, jamais l'extinction de l'ecart, pure animation d'affichage.
    *
-   * ⚠️ **`speed` est un parametre depuis la tache 9 de l'etape 4, et ce n'est
-   * pas une commodite.** Le serveur avance le joueur a
+   * ⚠️ **`speed` doit valoir celle du serveur** :
    * `PLAYER_SPEED + loadout.bonus('speed') + accountBonuses.speed` (voir
-   * `Room.step`) : des la premiere carte « fougue » (+15 px/s) ou du premier
-   * palier de « Celerite » achete (+6 px/s), une prediction qui omet un terme
-   * avance moins vite que l'autorite a chaque tick, et le joueur voit une
-   * reconciliation permanente — sa position rattrapee en arriere par chaque
-   * snapshot. C'est `GameClient#localSpeed` qui somme les trois termes ; la
-   * valeur par defaut reste `PLAYER_SPEED`, c'est exactement ce que vaut un
-   * inventaire vide sur un compte sans achat.
+   * `Room.step`). Une prediction qui omet un terme avance moins vite que
+   * l'autorite, et chaque snapshot ramene le joueur en arriere.
+   * `GameClient#localSpeed` somme les trois termes ; le defaut `PLAYER_SPEED`
+   * vaut un inventaire vide sur un compte sans achat.
    */
   predict(moveX: number, moveY: number, dt: number, scale = 1, speed = PLAYER_SPEED): void {
     let nx = moveX;

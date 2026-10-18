@@ -7,10 +7,7 @@ import type { BossVitals } from '../net/client';
 import { BODY_SCALE } from './horde-renderer';
 
 /**
- * La barre de vie du boss (etape 6a, tache 5).
- *
- * > Decision de l'auteur : *« prevois une petite barre d'hp au dessus des
- * > boss »*.
+ * La barre de vie du boss.
  *
  * ⚠️ **Elle appartient a la CREATURE, pas a l'ecran.** Ce n'est pas un bandeau
  * de HUD : elle vit dans le monde, en coordonnees monde, elle suit le boss et
@@ -24,21 +21,16 @@ import { BODY_SCALE } from './horde-renderer';
  * `SmallBar_Fill.png`. **Ils ne sont pas utilises, et ils ne doivent jamais
  * entrer dans le depot** : la licence Pixel Frog interdit la redistribution
  * meme apres modification, ce depot est public, et la CI echoue sur
- * `git ls-files | grep '^assets/tinyswords'`. Les integrer aurait demande un
- * SECOND pipeline (un outil de `tools/`, un derive de plus a deposer sur MinIO,
- * un chargement reseau de plus a rattraper quand il echoue — voir le
- * `try/catch` de `Stage.init`) pour deux rectangles. Le plan de la tache 5
- * tranche explicitement : *« si le chemin MinIO n'est pas praticable dans la
- * tache, dessiner la barre en code »*, comme `makeGlowTexture`,
- * `makeZoneAtlas`, `makeRingAtlas` et l'atlas de projectiles le font deja.
+ * `git ls-files | grep '^assets/tinyswords'`. Les servir depuis MinIO
+ * demanderait un pipeline et un chargement reseau de plus (et son echec a
+ * rattraper) pour deux rectangles.
  *
  * ## Deux quads, et c'est tout
  *
  * Le socle (sombre, largeur pleine) et le remplissage (rouge, ancre a GAUCHE
- * pour vider vers la droite). Il n'y a qu'un boss vivant a la fois — c'est le
- * NOMBRE qui autorise sa vie a voyager sur le fil (§1.1 de la spec), et c'est le
- * meme nombre qui autorise ce calque a ne rien borner ni culler : deux quads au
- * pire, contre les 4 000 de la horde.
+ * pour vider vers la droite). Il n'y a qu'un boss vivant a la fois : ce calque
+ * n'a rien a borner ni a culler, deux quads au pire contre les 4 000 de la
+ * horde.
  */
 
 /** Marge des bornes explicites, meme raisonnement que `ZoneRenderer`/`MarkRingRenderer`. */
@@ -49,11 +41,9 @@ const BOUNDS_MARGIN = 256;
  *
  * ⚠️ **DERIVEE, jamais ecrite a la main.** `spriteScale` ramene la plus grande
  * dimension du contenu de l'atlas a `2 x PROJECTILE_HIT_RADIUS x BODY_SCALE x
- * bodyScale` : c'est donc exactement ce produit qui donne la taille dessinee,
- * et il suit tout seul le jour ou la hitbox de tir, le facteur commun ou le
- * facteur du boss bougent. Lire `bodyScale` sur l'archetype plutot que
- * `BOSS_BODY_SCALE` directement, c'est la meme raison qui fait que
- * `BOSS_ARCHETYPE` se derive du nom : un seul endroit decide.
+ * bodyScale` : ce produit est donc la taille dessinee, et il suit tout seul
+ * la hitbox de tir, le facteur commun et le facteur du boss. `bodyScale` est
+ * lu sur l'archetype : un seul endroit decide.
  */
 export const BOSS_BODY_SIZE_PX =
   2 * PROJECTILE_HIT_RADIUS * BODY_SCALE * archetypeOf(BOSS_ARCHETYPE).bodyScale;
@@ -83,16 +73,15 @@ export const BOSS_BAR_BORDER_PX = BOSS_BAR_HEIGHT_PX / 4;
 /**
  * De combien la barre monte au-dessus de la position du boss.
  *
- * ⚠️ **DERIVE DE LA TAILLE DESSINEE, jamais un nombre choisi.** Depuis la
- * tache 14 de l'etape 5a, `BODY_ANCHOR_Y` vaut 0,5 — le corps est CENTRE sur la
- * position, comme tout ce qui touche l'entite (`PROJECTILE_HIT_RADIUS`,
+ * ⚠️ **DERIVE DE LA TAILLE DESSINEE, jamais un nombre choisi.**
+ * `BODY_ANCHOR_Y` vaut 0,5 — le corps est CENTRE sur la position, comme tout ce qui touche l'entite (`PROJECTILE_HIT_RADIUS`,
  * `CONTACT_RADIUS`, `ORB_PICKUP_RADIUS`). Le haut du corps est donc a une
  * demi-taille dessinee au-dessus, et la barre se pose juste au-dessus de lui.
  * C'est le symetrique exact de `MARK_RING_FOOT_OFFSET_PX`, qui descend d'autant
  * pour se poser sous les pieds.
  *
- * **L'approximation, dite plutot que cachee** — la meme que celle de l'anneau
- * de marque, et dans le bon sens : `spriteScale` ramene la plus GRANDE des deux
+ * **L'approximation**, la meme que celle de l'anneau de marque, et dans le
+ * bon sens : `spriteScale` ramene la plus GRANDE des deux
  * dimensions du contenu au diametre, donc la demi-taille majore la demi-hauteur
  * reelle des que la silhouette est plus large que haute. Le troll l'est
  * (290x225 px de contenu), et la barre flotte donc quelques dizaines de pixels
@@ -107,8 +96,7 @@ export const BOSS_BAR_OFFSET_PX = BOSS_BODY_SIZE_PX / 2 + BOSS_BAR_HEIGHT_PX;
  * l'echelle.
  *
  * ⚠️ **Different de toutes les tailles affichees, et il faut que ca le reste.**
- * `MARK_RING_TEXTURE_DIAMETER` porte le meme avertissement pour l'avoir paye :
- * quand une constante de production vaut sa valeur d'affichage, l'echelle
+ * Quand une constante de production vaut sa valeur d'affichage, l'echelle
  * calculee devient indistinguable de l'absence d'echelle et toute mutation y
  * survit. 16 ne vaut ni `BOSS_BAR_WIDTH_PX` (240) ni `BOSS_BAR_HEIGHT_PX` (12).
  */
@@ -159,10 +147,9 @@ export function bossHpFraction(hp: number, maxHp: number): number {
  * motif que `selectMarkedRings` et `sortByDepth`.
  *
  * **Les deux facons dont la barre disparait, et elles sont distinctes :**
- * - `boss === null` : aucun boss en jeu, la sentinelle du snapshot (tache 4) ;
+ * - `boss === null` : aucun boss en jeu, la sentinelle du snapshot ;
  * - `slotOf(...) < 0` : le boss n'est plus dans la horde de CE client, parce
- *   qu'il a appris sa mort par `DEATHS` — comme pour tout le monde (§2 de la
- *   spec). Le snapshot peut encore le porter le temps d'un tick de decalage :
+ *   qu'il a appris sa mort par `DEATHS`, comme pour tout monstre. Le snapshot peut encore le porter le temps d'un tick de decalage :
  *   c'est la horde qui fait foi pour la POSITION, donc c'est elle qui decide.
  *
  * Le cout est un `slotOf`, soit un balayage lineaire de la horde par image. A
@@ -189,9 +176,8 @@ export function bossBarLayout(horde: Horde, boss: BossVitals | null): BossBarLay
 /**
  * Carre BLANC opaque, teinte ensuite par particule.
  *
- * Blanc, parce que `Particle.tint` MULTIPLIE — meme raison, mot pour mot, que
- * `makeRingAtlas` et `makeZoneAtlas` : en blanc, `tint` rend exactement la
- * couleur demandee.
+ * Blanc, parce que `Particle.tint` MULTIPLIE : en blanc, `tint` rend
+ * exactement la couleur demandee.
  */
 function makeBarTexture(size: number): Texture {
   const canvas = document.createElement('canvas');
@@ -220,12 +206,9 @@ export class BossBarRenderer {
   /**
    * Socle et remplissage, construits une fois : il n'y a jamais qu'un boss.
    *
-   * ⚠️ **UN seul champ nullable, pas trois.** Une texture, un socle et un
-   * remplissage separement nullables donnaient trois gardes qui se couvraient
-   * l'une l'autre — le motif que ce depot a solde seize fois, plusieurs fois
-   * par une suppression de code. Les deux quads naissent ensemble dans
-   * `adoptTexture` ou n'existent pas : c'est une seule question, elle se pose
-   * une seule fois.
+   * ⚠️ **UN seul champ nullable, pas trois** : trois champs separement
+   * nullables donneraient trois gardes qui se couvrent l'une l'autre. Les deux
+   * quads naissent ensemble dans `adoptTexture` ou n'existent pas.
    */
   #bar: { base: Particle; fill: Particle } | null = null;
 
@@ -254,11 +237,9 @@ export class BossBarRenderer {
 
   /**
    * ⚠️ **Separe de `load` PARCE QUE `load` a besoin d'un canevas 2D** que node
-   * ne fournit pas — exactement la raison de `adoptAtlas` et de `adoptTexture`
-   * sur les autres calques. Sans ce point d'accroche, `draw` retournerait a son
-   * premier `if (!texture)` dans toute la suite, et **tout son corps pourrait
-   * etre retire sans qu'une assertion ne bouge** : c'est litteralement ce que
-   * `ZoneRenderer.draw` a fait pendant 237 tests verts.
+   * ne fournit pas. Sans ce point d'accroche, `draw` ne passerait jamais sa
+   * garde en test, et **tout son corps pourrait etre retire sans qu'une
+   * assertion ne bouge**.
    */
   adoptTexture(texture: Texture): void {
     this.#bar = {

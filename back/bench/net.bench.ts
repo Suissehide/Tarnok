@@ -1,10 +1,9 @@
 /**
  * Banc reseau — combien d'octets par joueur, et combien de salons par machine ?
  *
- * Le §4.6 est explicite : la metrique qui a plafonne Riot (~200 parties par
- * machine) n'etait ni le CPU de simulation ni la RAM, mais **l'overhead des
- * threads reseau**. C'est donc le poste a instrumenter en premier, et le seul
- * du banc qui merite de vraies sockets plutot qu'une mesure d'encodage seule.
+ * Le plafond de salons par machine tient d'abord a **l'overhead reseau**, pas
+ * au CPU de simulation ni a la RAM : d'ou de vraies sockets plutot qu'une
+ * mesure d'encodage seule.
  *
  * Deux parties :
  *   1. Le cout d'encodage pur, sans reseau — le plancher.
@@ -21,7 +20,7 @@ import { WebSocket } from 'ws';
 import { buildServer } from '../src/server';
 import { machineDescription, round2, stats } from './harness';
 
-/** 4 joueurs, plus 0, 10 ou 20 elites — les seules entites vraiment repliquees (§3.3). */
+/** 4 joueurs, plus 0, 10 ou 20 elites — les seules entites vraiment repliquees. */
 const REPLICATED_COUNTS = [4, 14, 24];
 
 const ENCODE_ITERATIONS = 20_000;
@@ -126,8 +125,7 @@ async function benchRooms(rooms: number): Promise<RoomResult> {
         setInterval(() => {
           if (ws.readyState === ws.OPEN) {
             seq = (seq + 1) & 0xffff;
-            // Visee non nulle (tache 13) : un vrai client vise presque toujours
-            // quelque chose, la charge montante doit en tenir compte.
+            // Visee non nulle : un vrai client vise presque toujours quelque chose.
             ws.send(encodeInput(seq, 127, 40, 90, -60));
           }
         }, 1000 / INPUT_HZ),

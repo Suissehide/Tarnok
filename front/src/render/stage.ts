@@ -51,18 +51,17 @@ import { ZoneRenderer } from './zone-renderer';
  *
  * Les joueurs restent quatre `Graphics` — a cette echelle, un objet par
  * entite ne coute rien, et rien ne justifierait le batching. La horde, elle,
- * est deleguee a `HordeRenderer` : c'est la ou vit le `ParticleContainer` et
- * l'atlas de la tache 11-12, la decision d'y passer etant venue d'une mesure
- * (etape 1), pas d'une intuition. `Stage` ne fait qu'orchestrer les deux :
+ * est deleguee a `HordeRenderer`, avec son `ParticleContainer` et son atlas.
+ * `Stage` ne fait qu'orchestrer les deux :
  * ordre d'affichage, camera commune, et le rectangle de vue qui sert de
  * culling a la horde (`viewRect`).
  */
 
-/** Un anneau colore par joueur : avec quatre cameras, il faut savoir qui est qui (§6.6). */
+/** Un anneau colore par joueur : avec quatre cameras, il faut savoir qui est qui. */
 /** Une couleur par joueur, celle de son unite du pack (`UNIT_COLORS`) : jaune, bleu, rouge, violet. */
 const PLAYER_COLORS = [0xe0b84e, 0x6fa8dc, 0xe06666, 0xc27ba0];
 
-/** §4.5 : vue de dessus, tres legerement ecrasee. Pas d'isometrique. */
+/** Vue de dessus, tres legerement ecrasee. Pas d'isometrique. */
 const VERTICAL_SQUASH = 0.82;
 
 /** Un calque du monde : il s'attache a la scene, et sait dire si sa texture est posee. */
@@ -89,8 +88,6 @@ export class Stage {
     this.#ghosts,
     (id) => PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length] ?? 0xffffff,
   );
-  // Corrigé par rapport au brief : `readonly` assigné dans `init()` ne
-  // compile pas sous `strictPropertyInitialization`. Initialisation directe.
   #horde = new HordeRenderer(ASSETS_BASE);
   readonly #zones = new ZoneRenderer();
   readonly #charge = new ChargeRenderer();
@@ -115,7 +112,7 @@ export class Stage {
 
   /**
    * Les calques du monde, **du sol vers le ciel** : l'ordre de ce tableau EST
-   * la hierarchie du §6.6 traduite en z-order.
+   * le z-order.
    *
    * ⚠️ **Les zones EN PREMIER, et le flash de reaction EN DERNIER.** Une zone
    * est du terrain teinte, discret, que rien ne doit masquer les monstres qui
@@ -124,29 +121,28 @@ export class Stage {
    * horde ; les projectiles et les flashs apres, pour rester visibles par-
    * dessus les monstres qu'ils visent.
    *
-   * ⚠️ **Le couloir de charge juste apres les zones** (etape 6a, tache 5 bis) :
+   * ⚠️ **Le couloir de charge juste apres les zones** :
    * c'est un aplat au sol comme elles, et il doit passer SOUS le boss qui va le
    * traverser — un rectangle par-dessus la creature masquerait precisement ce
    * qu'on regarde.
    *
-   * ⚠️ **Les anneaux de marque juste apres les zones** (tache 13) : ils se
+   * ⚠️ **Les anneaux de marque juste apres les zones** : ils se
    * posent SOUS les pieds des creatures, donc ils doivent passer sous elles.
    * Au-dessus des zones, parce qu'ils marquent un ennemi individuel sur le sol
    * que la zone vient de teindre en grand.
    *
-   * ⚠️ **La chaine de Foudre juste apres les projectiles** (etape 5b, tache
-   * 3) : elle relie des ennemis par un trait, donc elle doit rester lisible
-   * par-dessus leurs sprites — le meme raisonnement qui place deja les
-   * projectiles au-dessus de la horde.
+   * ⚠️ **La chaine de Foudre juste apres les projectiles** : elle relie des
+   * ennemis par un trait, donc elle doit rester lisible par-dessus leurs
+   * sprites.
    *
-   * ⚠️ **La barre du boss EN DERNIER** (etape 6a, tache 5) : c'est une lecture,
+   * ⚠️ **La barre du boss apres les flashs** : c'est une lecture,
    * pas un effet, et aucun flash ne doit la masquer a l'instant ou l'on regarde
    * si le boss va tomber.
    */
   readonly #layers: readonly SceneLayer[] = [
     this.#zones,
     this.#charge,
-    // Les verbes (etape 8) : la zone d'un Rempart et le leurre d'un Appat sont
+    // Les verbes : la zone d'un Rempart et le leurre d'un Appat sont
     // poses au sol comme le couloir de charge, donc sous les creatures.
     this.#abilities,
     // Les comportements (cercle du kamikaze, aura du chaman) : au sol, sous
@@ -155,21 +151,19 @@ export class Stage {
     this.#marks,
     this.#orbs,
     this.#horde,
-    // Les ondes et les frappes (etape 12) : au-dessus de la horde qu'elles
-    // balaient, sous les projectiles (§5).
+    // Les ondes et les frappes : au-dessus de la horde qu'elles balaient,
+    // sous les projectiles.
     this.#ondesFrappes,
     this.#projectiles,
     this.#chain,
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
-    // Les pings (etape 9) : une lecture, comme la barre du boss ; juste sous
+    // Les pings : une lecture, comme la barre du boss ; juste sous
     // les chiffres de degats, qui restent tout en haut.
     this.#pings,
-    // ⚠️ **Les chiffres de degats TOUT EN HAUT** (etape 8) : ils se LISENT, et
-    // une lecture ne doit etre masquee par rien — meme raison que la barre du
-    // boss au-dessus des flashs, poussee d'un cran plus loin parce qu'un
-    // nombre illisible ne vaut pas mieux qu'un nombre absent.
+    // ⚠️ **Les chiffres de degats TOUT EN HAUT** : ils se LISENT, et une
+    // lecture ne doit etre masquee par rien.
     this.#damageNumbers,
   ];
 
@@ -179,10 +173,9 @@ export class Stage {
    * exactement `#layers` moins `#horde`, dont le chargement est asynchrone et
    * a son propre rattrapage d'echec dans `init`.
    *
-   * ⚠️ **`#chain` n'a rien de procedural (pas de canevas 2D, une polyligne
-   * tracee au vol) et figure quand meme ici** : son `load()` ne fait que
-   * poser un booleen, pour que `Stage.layersLoaded` continue de compter tous
-   * ses calques par le meme protocole — voir `ChainRenderer`.
+   * ⚠️ **`#chain` n'a rien de procedural et figure quand meme ici** : son
+   * `load()` ne fait que poser un booleen, pour que `Stage.layersLoaded`
+   * compte tous ses calques par le meme protocole.
    */
   readonly #procedural: readonly ProceduralLayer[] = [
     this.#zones,
@@ -215,7 +208,7 @@ export class Stage {
 
     this.#world.scale.set(1, VERTICAL_SQUASH);
     this.#app.stage.addChild(this.#world);
-    // Les fleches de bord (etape 9) : en coordonnees ECRAN, donc hors de `#world`.
+    // Les fleches de bord : en coordonnees ECRAN, donc hors de `#world`.
     // Ajoutees APRES le monde, elles passent au-dessus de lui.
     this.#pings.attachScreen(this.#app.stage);
     this.#world.addChild(this.#grid);
@@ -228,14 +221,12 @@ export class Stage {
     // Les joueurs et les arbres par-dessus tous les calques, puis leurs fantomes.
     this.#world.addChild(this.#depth, this.#ghosts);
 
-    // Constat I4 : sans ce try/catch, un atlas absent (404 sur le manifeste,
-    // deploiement ou l'atlas n'a pas ete depose sur MinIO) fait echouer cette
-    // promesse. `main.ts` fait `await stage.init(...)` au niveau module ; une
-    // rejection y arrete l'evaluation du module AVANT que les gestionnaires de
-    // clic ne soient installes — lobby mort, sans le moindre message. Mieux
-    // vaut demarrer sans horde visible que bloquer tout le jeu pour un asset
-    // manquant. `HordeRenderer.draw` sait deja ne rien faire tant que
-    // `#loaded` est faux.
+    // ⚠️ Sans ce try/catch, un atlas absent (404 sur le manifeste, atlas pas
+    // depose sur MinIO) rejette cette promesse. `main.ts` fait
+    // `await stage.init(...)` au niveau module : la rejection y arrete
+    // l'evaluation AVANT que les gestionnaires de clic ne soient installes —
+    // lobby mort, sans message. Mieux vaut demarrer sans horde visible ;
+    // `HordeRenderer.draw` ne fait rien tant que `#loaded` est faux.
     try {
       await this.#horde.load();
     } catch (cause) {
@@ -251,10 +242,8 @@ export class Stage {
    * leurs textures procedurales.
    *
    * ⚠️ **Separee de `init` PARCE QUE `init` construit une `Application` Pixi**
-   * — un contexte WebGL qu'aucun environnement de test ne fournit. Tant que
-   * cette composition vivait dans `init`, retirer un calque entier (« les
-   * zones ni attachees ni chargees ») laissait la suite verte a 170 tests.
-   * Ceci s'execute sans GPU : voir `stage.test.ts`.
+   * — un contexte WebGL qu'aucun environnement de test ne fournit. Ceci
+   * s'execute sans GPU : voir `stage.test.ts`.
    *
    * `HordeRenderer.load` n'en fait pas partie : elle va sur le reseau, et son
    * echec a un traitement a elle dans `init`.
@@ -285,9 +274,8 @@ export class Stage {
    * Branche la boucle de rendu.
    *
    * ⚠️ **`frame` dessine tout, y compris les joueurs.** Le ticker n'appelle
-   * plus `draw` lui-meme depuis la tache 9 bis : sinon la moitie de l'image
-   * (les carres des joueurs et la camera) resterait hors de `composeFrame`,
-   * donc hors de portee du test — exactement la faille qu'on solde ici.
+   * pas `draw` lui-meme : les carres des joueurs et la camera resteraient
+   * hors de `composeFrame`, donc hors de portee du test.
    */
   run(frame: (now: number, dt: number) => void): void {
     this.#app.ticker.add((ticker) => {
@@ -323,11 +311,10 @@ export class Stage {
    * Convertit un point ECRAN (par exemple la position du curseur, relative au
    * canevas) en coordonnees MONDE, via la MEME camera que celle qui positionne
    * `#world` dans `#centerOn` — jamais une reconstruction approximative a
-   * cote. C'est la regle de la tache 13 : le curseur vit en coordonnees
-   * ecran, la visee est une direction monde, et faire cette conversion
-   * ailleurs qu'ici ferait deriver la visee des que la camera bouge.
+   * cote : faire cette conversion ailleurs ferait deriver la visee des que
+   * la camera bouge.
    *
-   * `VERTICAL_SQUASH` n'affecte que l'axe Y (§4.5 : vue de dessus ecrasee),
+   * `VERTICAL_SQUASH` n'affecte que l'axe Y (vue de dessus ecrasee),
    * d'ou la division qui n'apparait que sur `y`.
    */
   screenToWorld(screenX: number, screenY: number): { x: number; y: number } {
@@ -348,7 +335,7 @@ export class Stage {
   }
 
   /**
-   * Dessine les obstacles de la carte (tache 28) — appele une seule fois,
+   * Dessine les obstacles de la carte — appele une seule fois,
    * depuis le `onMapReady` passe a `GameClient`, qui ne se declenche qu'a la
    * reception de WELCOME (voir sa doc dans `client.ts`). `map` porte le MEME
    * masque que celui applique aux `FlowField` du client : le rendu ne
@@ -385,8 +372,8 @@ export class Stage {
   /**
    * `timeMs` est l'horloge murale de l'animation — voir `HordeRenderer.draw`.
    *
-   * `heldEntityId` est l'entite dont le clip reste sur sa PREMIERE image
-   * (tache 13) : le boss qui arme sa charge. `null` le reste du temps, ce qui
+   * `heldEntityId` est l'entite dont le clip reste sur sa PREMIERE image :
+   * le boss qui arme sa charge. `null` le reste du temps, ce qui
    * est le cas courant — voir `clipFrameIndex`.
    */
   drawHorde(horde: Horde, timeMs: number, heldEntityId: number | null): void {
@@ -402,7 +389,7 @@ export class Stage {
   }
 
   /**
-   * Le couloir de la charge du boss (etape 6a, tache 5 bis). Ni vue ni horloge
+   * Le couloir de la charge du boss. Ni vue ni horloge
    * murale : un seul quad, donc rien a cadrer, et son opacite se derive du TICK
    * — le meme que celui qui deplace le boss. Voir `ChargeRenderer.draw`.
    */
@@ -410,7 +397,7 @@ export class Stage {
     this.#charge.draw(charge, tick);
   }
 
-  /** Les verbes annonces (etape 8) : le tick decide de leur vie, `timeMs` les anime. */
+  /** Les verbes annonces : le tick decide de leur vie, `timeMs` les anime. */
   /** Les cercles des comportements et les explosions — voir `BehaviorRenderer`. */
   drawBehaviors(
     horde: Horde,
@@ -443,7 +430,7 @@ export class Stage {
     this.#orbs.draw(orbs, flights, players, this.viewRect(), timeMs);
   }
 
-  /** Ondes et frappes (etape 12), horloge murale — voir `OndeFrappeRenderer`. */
+  /** Ondes et frappes, horloge murale — voir `OndeFrappeRenderer`. */
   drawOndesFrappes(
     ondes: readonly OndeTrace[],
     frappes: readonly FrappeTrace[],
@@ -459,8 +446,7 @@ export class Stage {
   }
 
   /**
-   * La polyligne de la chaine de Foudre (etape 5b, tache 3, tour de
-   * correction 1). `nowMs` est l'horloge murale, comme `drawImpactFlashes` :
+   * La polyligne de la chaine de Foudre. `nowMs` est l'horloge murale, comme `drawImpactFlashes` :
    * le chemin est deja figé dans `flashes` — voir `ChainRenderer.draw`.
    */
   drawChain(flashes: ChainFlashes, nowMs: number, players: readonly BeamAnchor[] = []): void {
@@ -478,14 +464,13 @@ export class Stage {
   }
 
   /**
-   * La secousse de camera (etape 8) : une explosion et une reaction se SENTENT.
+   * La secousse de camera : une explosion et une reaction se SENTENT.
    *
    * ⚠️ **Posee sur `app.stage`, JAMAIS sur `#world`.** `screenToWorld` et
    * `viewRect` derivent tous les deux de `#world.x/y` : secouer le monde aurait
    * fait trembler la VISEE avec l'image, c'est-a-dire que le tir serait parti a
    * cote pendant la secousse. Le parent, lui, deplace ce qui est dessine sans
-   * rien dire a la camera — la conversion curseur -> monde reste exactement
-   * celle du §13, inchangee.
+   * rien dire a la camera — la conversion curseur -> monde reste intacte.
    *
    * ⚠️ **`prefers-reduced-motion` coupe l'effet, pas le jeu.** Une secousse est
    * du confort ; la refuser ne retire aucune information (le flash et la gerbe
@@ -498,7 +483,7 @@ export class Stage {
   }
 
   /**
-   * La barre de vie du boss (etape 6a, tache 5). Ni vue ni horloge : elle ne
+   * La barre de vie du boss. Ni vue ni horloge : elle ne
    * cadre rien (il n'y a qu'un boss, donc deux quads au pire) et n'anime rien —
    * elle suit une position et une fraction de PV. Voir `BossBarRenderer.draw`.
    */
@@ -544,7 +529,7 @@ export class Stage {
     this.#app.destroy(true, { children: true });
   }
 
-  /** Une camera par joueur (§14) : chacun est centre sur son propre carre. */
+  /** Une camera par joueur : chacun est centre sur son propre carre. */
   #centerOn(state: RenderState): void {
     const me = state.players.find((p) => p.id === state.localId);
     if (!me) {
@@ -560,19 +545,16 @@ export class Stage {
  *
  * Plus COURTE que la vie du flash qui la declenche (220 ms pour un impact,
  * 440 pour une reaction) : la secousse doit etre finie quand l'oeil revient a
- * la lecture du terrain, sinon elle devient un tremblement de fond — c'est le
- * meme raisonnement que le §4.3 sur le flash, *« court, large et genereux… pas
- * un halo permanent »*.
+ * la lecture du terrain, sinon elle devient un tremblement de fond.
  */
 export const SHAKE_MS = 180;
 
 /**
  * Amplitude d'une secousse, en pixels ECRAN.
  *
- * ⚠️ **La reaction secoue plus fort que l'explosion, et c'est le §6.6.** Une
- * reaction est rare, arbitree serveur et mortelle ; une grenade part toutes
- * les une virgule cinq secondes. Si les deux secouaient pareil, la hierarchie
- * *« etat persistant discret, reaction spectaculaire »* se perdrait dans un
+ * ⚠️ **La reaction secoue plus fort que l'explosion.** Une reaction est rare,
+ * arbitree serveur et mortelle ; une grenade part toutes les une virgule cinq
+ * secondes. Si les deux secouaient pareil, la reaction se perdrait dans un
  * tremblement continu.
  */
 export const SHAKE_BLAST_PX = 5;
@@ -581,13 +563,10 @@ export const SHAKE_REACTION_PX = 7;
 /**
  * Fenetre de regroupement des secousses, en millisecondes.
  *
- * ⚠️ **C'est le remede au tremblement CONTINU**, signale en jouant : *« trop
- * de vibration de l'ecran si je tape un boss, ca enclenche les effets en
- * boucle »*. Et c'etait inevitable : une secousse par evenement, sur un boss
- * qu'on touche dix fois par seconde avec une arme a souffle, redemarre
- * l'enveloppe avant qu'elle ne soit retombee — donc l'ecran ne se stabilise
- * JAMAIS. Le §6.6 interdit exactement ca pour les flashs (*« court, large et
- * genereux, pas un halo permanent »*) ; la camera n'y echappe pas.
+ * ⚠️ **C'est le remede au tremblement CONTINU.** Une secousse par evenement,
+ * sur un boss qu'on touche dix fois par seconde avec une arme a souffle,
+ * redemarre l'enveloppe avant qu'elle ne soit retombee — l'ecran ne se
+ * stabilise JAMAIS.
  *
  * Tous les declencheurs nes dans la meme fenetre partagent donc une SEULE
  * enveloppe, calee sur le debut de la fenetre : la secousse dure au plus
@@ -596,9 +575,7 @@ export const SHAKE_REACTION_PX = 7;
  * et c'est un maximum de construction**, pas une moyenne esperee.
  *
  * ⚠️ **Toujours AUCUN etat.** La fenetre se derive de la naissance du flash
- * (`floor(born / SHAKE_WINDOW_MS)`), pas d'un compteur que `draw` entretiendrait
- * — un accumulateur aurait pu rester bloque en haut si une image sautait,
- * c'est-a-dire un ecran qui tremble pour toujours.
+ * (`floor(born / SHAKE_WINDOW_MS)`), pas d'un compteur — voir `cameraShake`.
  */
 export const SHAKE_WINDOW_MS = 420;
 
@@ -611,9 +588,7 @@ export const SHAKE_WINDOW_MS = 420;
  * un `dt` fiable (il n'y en a pas dans `draw`) et aurait pu rester bloque en
  * haut si une image sautait — un ecran qui tremble pour toujours.
  *
- * ⚠️ **Les declencheurs sont REGROUPES PAR FENETRE** (etape 8, sur retour de
- * jeu) : sans ca, taper un boss a l'arme de souffle relancait l'enveloppe a
- * chaque coup et l'ecran ne se stabilisait jamais. Voir `SHAKE_WINDOW_MS`.
+ * ⚠️ **Les declencheurs sont REGROUPES PAR FENETRE** : voir `SHAKE_WINDOW_MS`.
  *
  * Deux frequences volontairement incommensurables (0,08 et 0,11 rad/ms, soit
  * ~12,7 et ~17,5 Hz) : a frequence egale sur les deux axes, le decalage
@@ -679,7 +654,7 @@ function mapBorder(): Graphics {
   return grid;
 }
 
-/** Gris pierre, dans la meme famille terreuse que la bordure ci-dessus (§4.5). */
+/** Gris pierre, dans la meme famille terreuse que la bordure ci-dessus. */
 const OBSTACLE_FILL = 0x4f4a42;
 const OBSTACLE_STROKE = 0x2f2b26;
 
@@ -688,7 +663,7 @@ const OBSTACLE_STROKE = 0x2f2b26;
  *
  * PURE, sans Pixi — testable sans navigateur, meme raison que `hudInfo`
  * ci-dessous. C'est cette fonction qui porte « le rendu consulte le MEME
- * masque que le champ de flux » (tache 28) : un masque decale d'une cellule,
+ * masque que le champ de flux » : un masque decale d'une cellule,
  * ou regenere avec une autre graine, se voit directement dans les
  * coordonnees qu'elle rend — voir `stage.test.ts`.
  */
@@ -710,18 +685,16 @@ export function obstacleCells(
 }
 
 /**
- * Tous les obstacles en UN SEUL objet Pixi — jamais un par cellule (§4.3) :
+ * Tous les obstacles en UN SEUL objet Pixi — jamais un par cellule :
  * ~506 cellules bloquees sur cette carte, et le terrain est statique, donc
  * le construire une fois suffit. Meme discipline que `mapBorder` juste
  * au-dessus : on accumule les rectangles, puis un SEUL `.fill()`/`.stroke()`
  * les peint tous d'un coup.
  *
- * Remplissage uni plutot qu'un sprite de l'atlas Tiny Swords : ce dernier
- * n'a pas de tuile "rocher" derivee par `tools/build_monster_atlas.py`
- * (seuls les monstres le sont), et en fabriquer une pour ce seul usage
- * aurait ajoute un chargement reseau asynchrone (et son echec possible, cf.
- * la doc de `Stage.init` sur l'atlas de la horde) pour un gain visuel
- * marginal sur un aplat dans la meme palette terreuse que le cadre.
+ * Remplissage uni plutot qu'un sprite de l'atlas Tiny Swords : l'atlas ne
+ * derive que les monstres (`tools/build_monster_atlas.py`), et une tuile
+ * "rocher" ajouterait un chargement reseau (et son echec possible) pour un
+ * gain visuel marginal.
  */
 function mapObstacles(mask: Uint8Array, cols: number, rows: number, cellSize: number): Graphics {
   const g = new Graphics();
@@ -733,7 +706,7 @@ function mapObstacles(mask: Uint8Array, cols: number, rows: number, cellSize: nu
 }
 
 /**
- * Contenu du HUD (§4.6 : un HUD, pas des logs), separe de son ecriture DOM
+ * Contenu du HUD, separe de son ecriture DOM
  * dans `main.ts` — cette fonction est PURE, sans Pixi ni `document`, pour
  * rester testable sans navigateur : c'est elle qui porte « le HUD reflete
  * les points de vie et l'experience du snapshot ».
@@ -750,12 +723,11 @@ export interface HudInfo {
   xpNeeded: number;
   level: number;
   timer: string;
-  /** Vrai pendant le gel de montee de niveau (tache 24) — voir `GameClient.isFrozen`. */
+  /** Vrai pendant le gel de montee de niveau — voir `GameClient.isFrozen`. */
   frozen: boolean;
   /**
-   * Reserve de bouclier du joueur LOCAL (etape 13), lue sur le SNAPSHOT
-   * (`PlayerSnapshot.shield`) — jamais sur `Loadout`, voir la vigilance 5 de
-   * `paintHud`.
+   * Reserve de bouclier du joueur LOCAL, lue sur le SNAPSHOT
+   * (`PlayerSnapshot.shield`) — jamais sur `Loadout`.
    */
   shield: number;
   /**
@@ -771,9 +743,8 @@ export interface HudInfo {
  * `level`, `hordeTick` et `frozen` ne sont pas dans `RenderState` : le niveau
  * vient de `GameClient.level` (derive des `LEVEL_UP`, pas de l'xp seul — voir
  * sa doc), le tick de `GameClient.hordeTick`, et `frozen` de
- * `GameClient.isFrozen` (tache 24). Le HUD lit donc les trois directement sur
- * le client, en plus de `state`. `frozen` vaut `false` par defaut : aucun
- * appelant existant (avant la tache 24) n'a a fournir cet argument.
+ * `GameClient.isFrozen`. Le HUD lit donc les trois directement sur le
+ * client, en plus de `state`. `frozen` vaut `false` par defaut.
  */
 export function hudInfo(
   state: RenderState,
@@ -806,7 +777,7 @@ export function formatTimer(ticks: number): string {
   return `${minutes}:${String(seconds).padStart(2, '0')}`;
 }
 
-/** Contenu de l'ecran de bilan, tel que porte par `RUN_OVER` (§7) — pure, meme raison que `hudInfo`. */
+/** Contenu de l'ecran de bilan, tel que porte par `RUN_OVER` — pure, meme raison que `hudInfo`. */
 export interface SummaryInfo {
   time: string;
   level: number;

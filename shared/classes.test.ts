@@ -4,7 +4,7 @@ import { CLASSES, classOf, DEFAULT_CLASS_ID, type GameClass } from './classes';
 
 describe('etape 8 tache 1 : le catalogue des classes', () => {
   it('porte exactement quatre classes, aux identifiants 0 a 3', () => {
-    // ⚠️ Nombre NU : c'est une decision de la spec (§6), pas un reglage de jeu.
+    // ⚠️ Nombre NU : c'est une decision de design, pas un reglage de jeu.
     expect(CLASSES.length).toBe(4);
     expect(CLASSES.map((c) => c.id)).toEqual([0, 1, 2, 3]);
   });
@@ -16,10 +16,8 @@ describe('etape 8 tache 1 : le catalogue des classes', () => {
 
   it('aucune classe ne porte d element ni d arme — le TYPE ne le permet pas', () => {
     // ⚠️ Ce test n'est PAS le garde structurel : le garde, c'est que `GameClass`
-    // n'a aucun champ d'element ni d'arme. Un test textuel serait du theatre —
-    // la lecon de la tache 1 de l'etape 7b. Celui-ci epingle seulement que les
-    // clefs du catalogue restent les quatre attendues, donc qu'aucune n'a ete
-    // ajoutee en douce.
+    // n'a aucun champ d'element ni d'arme. Celui-ci epingle seulement que les
+    // clefs du catalogue restent les quatre attendues.
     for (const c of CLASSES) {
       expect(Object.keys(c).sort()).toEqual(['id', 'label', 'trait', 'verb']);
     }

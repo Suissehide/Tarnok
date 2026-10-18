@@ -6,28 +6,19 @@ import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture
 /**
  * Rendu batché de la pietaille.
  *
- * Un seul `ParticleContainer`, un seul atlas. Le §4.3 de l'orientation est
- * categorique : « le GPU se moque de 1 500 quads ; ce qui tue, c'est le cout
- * JavaScript par objet et par transform ». Le banc de l'etape 1 a chiffre
- * l'ecart avec des objets `Sprite` : x6.
+ * Un seul `ParticleContainer`, un seul atlas : le GPU se moque de quelques
+ * milliers de quads, ce qui tue c'est le cout JavaScript par objet et par
+ * transform (des objets `Sprite` coutent six fois plus).
  *
- * `uvs` en propriete dynamique permet l'animation.
- *
- * ⚠️ **Ce fichier a longtemps annonce que `color` donnerait « gratuitement la
- * teinte elementaire du §6.6 a l'etape 5 ». La promesse a ete tenue, puis
- * retiree** (tache 13 de l'etape 5a) : la teinte etait bien gratuite, et bien
- * invisible — *« je ne vois pas la marque sur les ennemis »*. Elle multipliait
- * un sprite deja sombre et bariole par une couleur d'element, ce qui ne change
- * presque rien a ce qu'on lit. La marque est passee au sol, sous les pieds,
- * dans `mark-renderer.ts` ; `markTint`, le `color` dynamique du conteneur et le
- * `tick` que `draw` recevait sont partis avec elle. **Ce renderer ne connait
- * plus les elements.**
+ * `uvs` en propriete dynamique permet l'animation. Ce renderer ne connait pas
+ * les elements : la marque est un anneau au sol (`mark-renderer.ts`), une
+ * teinte de sprite serait invisible sur des monstres deja sombres et barioles.
  *
  * Aucun de `draw()`, `#depthSort()` ou `#ensurePool()` n'alloue en regime
  * etabli : reservoir de particules, tableaux de comptage et tableau
- * d'indices sont tous poses une fois puis reutilises. C'est le meme §4.3 qui
- * le justifie — a soixante images par seconde, un objet jete par image est un
- * objet jete soixante fois par seconde.
+ * d'indices sont tous poses une fois puis reutilises. A soixante images par
+ * seconde, un objet jete par image est un objet jete soixante fois par
+ * seconde.
  */
 
 /** Une planche empaquetee (course ou attaque) : ses images, dans l'ordre du cycle. */
@@ -38,10 +29,9 @@ export interface AtlasClip {
 
 /**
  * Boite englobante du contenu NON TRANSPARENT d'un archetype, en pixels de
- * cellule native — publiee par `tools/build_monster_atlas.py` (tache 17.1),
- * union sur TOUTES les images (course + attaque) pour donner une echelle
- * unique qui ne varie pas d'une image d'animation a l'autre. Voir
- * `contentSizePx`.
+ * cellule native — publiee par `tools/build_monster_atlas.py`, union sur
+ * TOUTES les images (course + attaque) pour donner une echelle unique qui ne
+ * varie pas d'une image d'animation a l'autre. Voir `contentSizePx`.
  */
 export interface ContentBounds {
   readonly x: number;
@@ -62,43 +52,26 @@ export interface AtlasManifest {
   }[];
 }
 
-/** Images par seconde de l'animation, comme le pack (§12.2 de l'orientation). */
+/** Images par seconde de l'animation, comme le pack. */
 const ANIM_FPS = 10;
 
 /**
  * Hauteur d'une bande de tri. Voir `#depthSort`.
  *
- * ⚠️ **Valait 64 px, et c'etait la cause du clignotement de z-index** remonte a
- * la verification manuelle de l'etape 3. Le commentaire d'origine justifiait ce
- * chiffre par « a l'interieur d'une bande, l'ordre est indifferent — c'est la
- * hauteur d'un demi-sprite ». C'est faux, et exactement a l'envers : sur un
- * demi-sprite de haut, deux entites se **recouvrent presque totalement**, donc
- * savoir laquelle passe devant est on ne peut plus visible. L'ordre intra-bande
- * suit l'ordre du tableau, qui n'a aucun rapport avec `y` — et il change des
- * qu'une des deux franchit une frontiere de bande.
+ * ⚠️ **Etroite, sinon le z-index clignote.** A l'interieur d'une bande,
+ * l'ordre suit le tableau, sans rapport avec `y` — et il change des qu'une
+ * entite franchit une frontiere de bande. Sur une bande d'un demi-sprite,
+ * deux entites se **recouvrent presque totalement** : laquelle passe devant
+ * se voit. A 2 px, les inversions d'ordre injustifiees tombent a 0,15 % des
+ * paires et ne concernent que des entites separees de moins de deux pixels en
+ * `y`, ou la profondeur est de toute facon ambigue.
  *
- * Mesure, 300 entites sur 40 images, en comptant les inversions d'ordre de
- * dessin que **rien dans les `y` ne justifie** :
+ * ⚠️ Fausses pistes deja ecartees par la mesure : un `bandOf` hors bornes (il
+ * est garde) et l'instabilite de l'ordre du tableau apres compaction (un
+ * departage stable par identite ne change rien). Le coupable est la largeur
+ * de bande, seule.
  *
- * | Bande | Inversions injustifiees |
- * | --- | --- |
- * | 64 px | 1,99 % des paires |
- * | 16 px | 1,00 % |
- * | 8 px | 0,60 % |
- * | 4 px | 0,34 % |
- * | **2 px** | **0,15 %** |
- *
- * Le residuel a 2 px ne concerne que des entites separees de moins de deux
- * pixels en `y`, ou la profondeur est de toute facon ambigue.
- *
- * ⚠️ Deux fausses pistes ecartees par la mesure, pour qu'on ne les reprenne pas :
- * la corruption du tri par un `bandOf` hors bornes (il est garde depuis
- * toujours), et l'instabilite de l'ordre du tableau apres compaction — un
- * departage stable par identite a ete essaye et ne change **rien**
- * (31 228 inversions contre 31 698). Le coupable est la largeur de bande, seule.
- *
- * Le cout ne bouge pas : le tri par comptage est en `O(entites + bandes)`, et
- * passer de 94 a 3 001 bandes ajoute deux parcours de tableau typé par image.
+ * Le cout ne bouge pas : le tri par comptage est en `O(entites + bandes)`.
  */
 export const DEPTH_BAND = 2;
 
@@ -107,7 +80,7 @@ export const DEPTH_BAND = 2;
  * borne a `[0, MAP_SIZE]` par la simulation (`shared/horde.ts`,
  * `shared/separation.ts`), donc ce nombre ne varie jamais en cours de partie.
  *
- * Exporte pour le test (tache 15) : `bandOf` et `sortByDepth` se verifient
+ * Exporte pour le test : `bandOf` et `sortByDepth` se verifient
  * directement sans passer par `draw()`, qui exige un atlas charge (reseau,
  * indisponible en test).
  */
@@ -117,33 +90,19 @@ export const BAND_COUNT = Math.floor(MAP_SIZE / DEPTH_BAND) + 1;
  * Ancre verticale du sprite d'un monstre : **le corps est centre sur la
  * position**.
  *
- * ⚠️ **Valait 0,75, et c'est ce que la verification manuelle de l'etape 5a a
- * remonte** : *« la hitbox semble plus basse »*. Elle l'etait de 16 px. Le
- * commentaire d'origine (etape 2) justifiait 0,75 ainsi : *« place les pieds
- * du sprite sur la position logique, pas son centre : c'est ce qui fait que le
- * tri par `y` correspond a ce que l'oeil attend »* — la convention habituelle
- * de la vue de dessus, ou une entite « est » la ou elle pose les pieds.
+ * ⚠️ **Pas aux pieds.** La convention habituelle de la vue de dessus (ancre a
+ * 0,75, l'entite « est » ou elle pose les pieds) ne vaut pas ici : TOUT ce
+ * qui touche une entite est un cercle centre sur sa position — le tir
+ * (`PROJECTILE_HIT_RADIUS`), le contact (`CONTACT_RADIUS`), le ramassage
+ * (`ORB_PICKUP_RADIUS`), la separation (`SEPARATION_RADIUS`). Avec les pieds
+ * sur la position, on vise le corps et le projectile passe sous les pieds.
  *
- * **Ce que l'intention d'origine ne voyait pas** : dans ce jeu, une entite
- * n'« est » pas ses pieds. TOUT ce qui la touche est un cercle centre sur sa
- * position — le tir (`PROJECTILE_HIT_RADIUS`), le contact (`CONTACT_RADIUS`),
- * le ramassage (`ORB_PICKUP_RADIUS`), la separation (`SEPARATION_RADIUS`).
- * Avec 0,75, le sprite (64 px de haut une fois mis a l'echelle) s'etendait de
- * `y-48` a `y+16` : son centre visuel etait a `y-16`, soit **un quart du corps
- * au-dessus de la hitbox**. On visait le corps, et le projectile passait sous
- * les pieds.
- *
- * **Ce que ce changement casse, et il casse quelque chose** : les pieds ne
- * sont plus sur la position, ils sont a `y + hauteurDessinee / 2`. Deux
- * consequences, toutes deux assumees :
- * - le tri en profondeur (`#depthSort`) trie toujours par `horde.y`, donc par
- *   le CENTRE des corps et non par les pieds. L'ordre entre deux entites est
- *   inchange (le decalage est le meme pour toutes, a silhouette egale), mais
- *   la ligne de contact au sol de chaque sprite descend de 16 px par rapport a
- *   la position qui la classe ;
- * - **l'anneau au sol de la tache 13 ne peut plus etre pose sur la position**
- *   s'il doit etre « sous les pieds » : il lui faudra ce meme decalage vers le
- *   bas. C'est pourquoi la tache 14 passe avant la 13.
+ * **Consequences assumees** : les pieds sont a `y + hauteurDessinee / 2`.
+ * - le tri en profondeur (`#depthSort`) trie par `horde.y`, donc par le
+ *   CENTRE des corps. L'ordre entre deux entites est le meme (le decalage est
+ *   le meme pour toutes, a silhouette egale) ;
+ * - l'anneau de marque doit descendre d'autant pour etre « sous les pieds »
+ *   (`MARK_RING_FOOT_OFFSET_PX`).
  *
  * `0,5` n'est pas un reglage : c'est la definition de « centre ». Le reglage
  * de sensation de ce fichier est `BODY_SCALE`, et lui seul — d'ou une
@@ -158,12 +117,8 @@ const CULL_MARGIN = 128;
 /**
  * Marge des bornes explicites du `ParticleContainer`, pour absorber les
  * sprites qui depassent leur point d'ancrage — au plus une demi-hauteur de
- * corps dans chaque sens depuis la tache 14, l'ancre etant centree
- * (`BODY_ANCHOR_Y`), contre trois quarts vers le haut auparavant. La marge de
- * 256 px couvre les deux tres largement : un corps dessine fait
- * `2 * PROJECTILE_HIT_RADIUS * BODY_SCALE` = 80 px.
- * (Le commentaire d'origine renvoyait a un « §12.3 de l'orientation » qui
- * n'existe pas — la section 12 s'arrete a 12.2.)
+ * corps dans chaque sens (`BODY_ANCHOR_Y`). Un corps dessine fait
+ * `2 * PROJECTILE_HIT_RADIUS * BODY_SCALE` = 80 px : 256 px couvre largement.
  * Un `ParticleContainer` ne calcule pas ses bornes automatiquement — sans
  * `boundsArea`, son getter de bornes renvoie un rectangle vide statique, et le
  * culling comme toute extraction se comportent mal.
@@ -178,9 +133,8 @@ const BOUNDS_MARGIN = 256;
  * ecriture ignoree) corromprait le tri sans jamais lever d'erreur. Le clamp
  * est le prix, negligeable, de ne jamais avoir a s'en inquieter.
  *
- * Exportee (tache 15) : c'est la seule garde entre une position hors carte
- * et une ecriture hors bornes dans `sortByDepth`, donc elle merite un test
- * direct plutot qu'une confiance aveugle dans son appelant.
+ * Exportee : c'est la seule garde entre une position hors carte et une
+ * ecriture hors bornes dans `sortByDepth`, donc elle merite un test direct.
  */
 export function bandOf(y: number): number {
   const band = Math.floor(y / DEPTH_BAND);
@@ -197,10 +151,8 @@ export function bandOf(y: number): number {
  * Tri en profondeur par comptage, pur : deux passes lineaires sur `visible`,
  * sans allocation, ecrivant dans les tampons fournis par l'appelant.
  *
- * Extrait de `HordeRenderer#depthSort` (tache 15) pour etre teste directement
- * sans dependre du chargement de l'atlas (reseau/canevas absents en test) —
- * la classe elle-meme se contente d'appeler cette fonction avec ses propres
- * tampons prives, comportement inchange.
+ * Extrait de `HordeRenderer#depthSort` pour etre teste sans dependre du
+ * chargement de l'atlas (reseau/canevas absents en test).
  */
 export function sortByDepth(
   y: Float32Array,
@@ -241,32 +193,22 @@ export function sortByDepth(
 /**
  * Facteur de CORPS : de combien le corps dessine deborde la hitbox de tir.
  *
- * ⚠️ **C'est un reglage de sensation, et le seul de ce fichier.** Il vient de
- * la verification manuelle de l'etape 5a — *« les ennemis sont trop petits par
- * rapport a la taille des projectiles »* — et il est ecrit ici, nomme, plutot
- * que glisse dans le corps de `spriteScale` : un test qui le recopierait en
- * dur garderait une valeur, pas un comportement (voir `bandOf(63) === 0` dans
- * le test, et `WAVE1_MIN_COUNT` a la tache 1).
+ * ⚠️ **C'est un reglage de sensation, et le seul de ce fichier** : les ennemis
+ * dessines a la taille exacte de la hitbox paraissent trop petits a cote des
+ * projectiles. Il est nomme ici plutot que glisse dans `spriteScale` : un test
+ * qui le recopierait en dur garderait une valeur, pas un comportement.
  *
- * **Ce qu'il coute, dit franchement** : la hitbox MENT de
+ * **Ce qu'il coute** : la hitbox MENT de
  * `PROJECTILE_HIT_RADIUS * (BODY_SCALE - 1)` = 8 px. Un tir qui frole le bord
- * du corps sans l'atteindre passe au travers. C'est le defaut de la tache 16
- * de l'etape 3 (« les hitbox sont mauvaises »), en beaucoup plus petit et dans
- * l'autre sens.
+ * du corps sans l'atteindre passe au travers.
  *
  * **Pourquoi 8 px restent acceptables** : le projectile lui-meme est un POINT
  * pour la collision (`Projectiles.collide` teste la distance de l'entite au
  * segment parcouru) alors qu'il se dessine avec une empreinte allant jusqu'a
- * 18 px de diametre (`ProjectileLook.diameterPx`, tache 12). Il porte donc
- * deja un mensonge de 9 px, de meme nature et dans le meme sens. Le corps
- * reste sous cette borne — il n'ajoute pas un ecart plus grand que celui que
- * le rendu des projectiles assume deja. C'est la regle qui borne ce reglage,
- * et le test la verifie a partir du catalogue d'armes, pas d'un nombre.
- *
- * **L'autre moitie de la correction n'est pas ici** : la tache 12 a fait
- * passer les projectiles de 20 px uniformes a 7-18 px selon l'arme. Le rapport
- * de taille se corrige des deux cotes ; c'est pour ca que ce facteur peut
- * rester petit.
+ * 18 px de diametre (`ProjectileLook.diameterPx`). Il porte donc deja un
+ * mensonge de 9 px, de meme nature et dans le meme sens. Le corps reste sous
+ * cette borne : c'est la regle qui borne ce reglage, et le test la verifie a
+ * partir du catalogue d'armes, pas d'un nombre.
  */
 export const BODY_SCALE = 1.25;
 
@@ -274,34 +216,17 @@ export const BODY_SCALE = 1.25;
  * Echelle de dessin d'un monstre, DERIVEE de `PROJECTILE_HIT_RADIUS` — jamais
  * l'inverse.
  *
- * Tache 16 : un sprite se dessinait a 192 px (la cellule native de l'atlas,
- * dessinee 1:1) pour une hitbox de tir de 64 px de diametre — trois fois trop
- * grand, on tirait sur le corps et le projectile passait au travers. Ecrire
- * une echelle reglee a la main a cote d'une hitbox reglee a la main est
- * exactement ce qui a produit ce defaut ; le tableau « Coherence des
- * constantes » du plan existe pour l'empecher.
+ * Une echelle reglee a la main a cote d'une hitbox reglee a la main finit par
+ * mentir : on tire sur le corps et le projectile passe au travers.
  *
- * ⚠️ Tache 17.1 : la tache 16 appelait cette fonction avec la CELLULE (192 px)
- * — mais une cellule de Tiny Swords est en grande partie vide, la creature
- * n'en occupe qu'une fraction. Ramener le CADRE a la hitbox rend alors le
- * CORPS bien plus petit qu'elle, exactement l'inverse du but (« les monstres
- * sont minuscules » remonte en jeu). Cette fonction reste correcte et
- * inchangee — c'est `sizePx` qui doit desormais etre la taille du CONTENU
- * (`contentSizePx`), jamais celle de la cellule. Voir le site d'appel dans
+ * ⚠️ `sizePx` est la taille du CONTENU (`contentSizePx`), jamais celle de la
+ * cellule : une cellule de Tiny Swords est en grande partie vide, et ramener
+ * le CADRE a la hitbox rendrait la creature minuscule. Voir l'appel dans
  * `load()`.
  *
- * La relation reste la plus simple qui se laisse enoncer : la largeur dessinee
- * du CONTENU vaut le diametre de la hitbox de tir, a `BODY_SCALE` pres.
- *
- * ⚠️ **Tache 14 de l'etape 5a : ce paragraphe disait exactement l'inverse.**
- * Il refusait tout facteur de generosite — *« un peu plus grand pour que ca se
- * voie »* — comme « un nombre choisi au ressenti, non derive de la hitbox
- * qu'il est cense representer ». La verification manuelle a tranche contre :
- * *« les ennemis sont trop petits par rapport a la taille des projectiles »*.
- * Le facteur existe donc, mais il est NOMME et BORNE (voir `BODY_SCALE`) au
- * lieu d'etre dissous dans cette formule — ce qui garde intacte la seule chose
- * que le paragraphe d'origine protegeait vraiment : que personne ne puisse
- * regler la taille d'un monstre sans voir a cote de combien la hitbox ment.
+ * La relation : la largeur dessinee du CONTENU vaut le diametre de la hitbox
+ * de tir, a `BODY_SCALE` pres — un facteur NOMME et BORNE, pour que personne
+ * ne regle la taille d'un monstre sans voir de combien la hitbox ment.
  *
  * Prend la taille en parametre plutot qu'une constante figee : les plus gros
  * archetypes de `shared/archetypes.ts` (ours, panda, tortue, minotaure,
@@ -309,12 +234,11 @@ export const BODY_SCALE = 1.25;
  * ramener au meme diametre a l'ecran, puisque `PROJECTILE_HIT_RADIUS` ne
  * varie pas par archetype.
  *
- * ⚠️ **`bodyScale` (etape 6a, tache 3) est le facteur PROPRE a l'archetype**,
- * `1` pour toute la pietaille et davantage pour le boss. Il MULTIPLIE
- * `BODY_SCALE` au lieu de le remplacer : le plafond du test ci-contre continue
- * de garder la pietaille — ce qu'il mesure, c'est de combien la hitbox ment
- * pour un monstre ordinaire — et le boss apporte son propre debordement sans
- * relever ce plafond pour les vingt autres. Voir `Archetype.bodyScale`.
+ * ⚠️ **`bodyScale` est le facteur PROPRE a l'archetype**, `1` pour toute la
+ * pietaille et davantage pour le boss. Il MULTIPLIE `BODY_SCALE` au lieu de
+ * le remplacer : le plafond du test continue de garder la pietaille, et le
+ * boss apporte son propre debordement sans relever ce plafond pour les
+ * autres. Voir `Archetype.bodyScale`.
  */
 export function spriteScale(sizePx: number, hitRadiusPx: number, bodyScale = 1): number {
   if (sizePx <= 0) {
@@ -345,7 +269,7 @@ export function archetypeScales(
 }
 
 /**
- * Taille de reference d'un contenu d'atlas, pour `spriteScale` (tache 17.1) :
+ * Taille de reference d'un contenu d'atlas, pour `spriteScale` :
  * la plus GRANDE des deux dimensions de sa boite englobante.
  *
  * Pas la largeur ni la hauteur seules : une silhouette allongee dans un sens
@@ -358,32 +282,27 @@ export function contentSizePx(bounds: { readonly w: number; readonly h: number }
 }
 
 /**
- * Choix du clip anime a dessiner (tache 17.2) : RENDU PUR, deduit de l'etat
+ * Choix du clip anime a dessiner : RENDU PUR, deduit de l'etat
  * d'arret DEJA simule (`horde.stopped`, `shared/horde.ts`) — jamais recalcule
  * ici a partir d'une distance, jamais transmis sur le fil. Isolee pour se
- * tester sans le reseau/canevas qu'exige `load()`, meme raison que
- * `spriteScale`/`facingScaleX` plus haut.
+ * tester sans le reseau/canevas qu'exige `load()`.
  */
 export function selectClip<T>(stopped: boolean, run: T, attack: T): T {
   return stopped ? attack : run;
 }
 
 /**
- * Image a dessiner dans le clip courant (etape 6a, tache 13) — *« lance pas
- * l'animation d'attaque du boss avant qu'il dash, juste la frame 1 pour avoir
- * l'impression qu'il charge son attaque »*.
+ * Image a dessiner dans le clip courant.
  *
- * ⚠️ **Le clip et l'ANIMATION du clip sont deux choses, et rien ne les
- * distinguait.** `Horde#applyCharge` pose `stopped = 1` pendant TOUTE la
- * charge, donc `selectClip` bascule sur l'attaque des le chargement et les six
- * images du troll defilaient pendant qu'il ne bougeait pas : le boss avait
- * l'air d'attaquer une seconde avant de partir, et le couloir devenait la seule
- * chose qui disait qu'il ne s'etait rien passe encore.
+ * ⚠️ **Le clip et l'ANIMATION du clip sont deux choses.** `Horde#applyCharge`
+ * pose `stopped = 1` pendant TOUTE la charge, donc `selectClip` bascule sur
+ * l'attaque des le chargement : sans cette fonction, le boss aurait l'air
+ * d'attaquer une seconde avant de partir.
  *
  * ⚠️ **`stopped` N'EST PAS TOUCHE, et il ne doit pas l'etre** : il sert au
- * choix du clip, jamais au mouvement (voir le commentaire de `selectClip`
- * juste au-dessus), et il est simule des deux cotes. La distinction des deux
- * temps se fait ICI, a l'affichage, ou elle ne coute rien au fil.
+ * choix du clip, jamais au mouvement, et il est simule des deux cotes. La
+ * distinction des deux temps se fait ICI, a l'affichage, ou elle ne coute
+ * rien au fil.
  *
  * `held` vrai : la PREMIERE image, figee — le troll arme son coup.
  */
@@ -418,17 +337,11 @@ export const FACING_DEAD_ZONE_PX = 0.05;
  * (voir `shared/horde.ts`) : un creneau peut donc porter une entite
  * differente d'une image a l'autre, avec une position sans rapport. Le pas le
  * plus rapide qu'un VRAI monstre puisse franchir en un tick est borne par sa
- * vitesse tenue (tache 19), et depuis la tache 21 cette borne est INTRINSEQUE :
- * `archetypeOf(...).speed` SEULE (95 a 130 px/s dans `shared/archetypes.ts`),
- * la repulsion ne pouvant plus s'y ajouter (elle devie la direction, elle ne
- * propulse plus) — soit, a `TICK_HZ = 30`, 3,2 a 4,3 px par tick, quelle que
- * soit la densite de voisins. Ce seuil garde donc une marge tres large,
- * heritee d'une epoque ou la borne etait plus lache (44 px avant la tache 19,
- * 18 px entre les taches 19 et 21) et jamais resserree depuis faute de raison
- * de le faire : il reste tres inferieur a la distance separant deux points
- * choisis sans rapport sur une carte de `MAP_SIZE = 6000` px — c'est cet ecart
- * d'ordre de grandeur qui rend le departage fiable, pas une precision au
- * pixel pres.
+ * vitesse propre (`archetypeOf(...).speed`, 95 a 130 px/s ; la repulsion
+ * devie sans propulser) — soit, a `TICK_HZ = 30`, 3,2 a 4,3 px par tick. Le
+ * seuil garde une marge tres large : ce qui compte est qu'il reste tres
+ * inferieur a la distance separant deux points sans rapport sur une carte de
+ * `MAP_SIZE = 6000` px.
  */
 export const FACING_MAX_STEP_PX = 96;
 
@@ -461,26 +374,20 @@ export class HordeRenderer {
     // flashs d'impact (`projectile-renderer.ts`) fait deja ce meme choix pour
     // la meme raison.
     //
-    // `color` : FAUX depuis la tache 13. Il a porte la teinte elementaire du
-    // §6.6 le temps des taches 9 a 12 ; la marque est maintenant un anneau au
-    // sol (`mark-renderer.ts`), et plus rien ici n'ecrit `Particle.tint`.
-    // Reteleverser a chaque image une couleur que personne ne pose serait un
+    // `color` : FAUX. Rien ici n'ecrit `Particle.tint`. Reteleverser a chaque image une couleur que personne ne pose serait un
     // canal paye pour rien, sur le plus gros batch du jeu.
     dynamicProperties: { position: true, uvs: true, vertex: true, color: false, rotation: false },
   });
   /** Réservoir de particules réutilisées : aucune allocation en régime établi. */
   readonly #pool: Particle[] = [];
   /**
-   * `#runFrames[archetype][image]` / `#attackFrames[archetype][image]` —
-   * tache 17.2 : deux clips par archetype, choisis par `selectClip` selon
-   * `horde.stopped`. Auparavant un seul `#frames` (course uniquement) :
-   * l'atlas n'embarquait pas l'attaque.
+   * `#runFrames[archetype][image]` / `#attackFrames[archetype][image]` : deux
+   * clips par archetype, choisis par `selectClip` selon `horde.stopped`.
    *
-   * ⚠️ **Indexes par IDENTIFIANT d'archetype, donc TROUES** (etape 6a, tache 5) :
-   * l'atlas ne range pas tout le bestiaire, et le boss est l'archetype 19 alors
-   * que les cinq elites qui le precedent n'y sont pas. Une case vide se lit
-   * `undefined`, et `draw` saute l'entite — le meme comportement qu'avant cette
-   * tache pour les six elites.
+   * ⚠️ **Indexes par IDENTIFIANT d'archetype, donc TROUES** : l'atlas ne range
+   * pas tout le bestiaire (le boss est l'archetype 19, les elites qui le
+   * precedent n'y sont pas). Une case vide se lit `undefined`, et `draw` saute
+   * l'entite.
    */
   #runFrames: Texture[][] = [];
   #attackFrames: Texture[][] = [];
@@ -492,10 +399,8 @@ export class HordeRenderer {
    * l'affaire, mais `Particle` en exige une : c'est la premiere que l'atlas
    * porte, quelle que soit sa place.
    *
-   * ⚠️ **Lue dans `adoptAtlas`, PAS dans `#ensurePool`.** Elle y valait
-   * `#runFrames[0]?.[0]` — l'archetype 0 en dur, ce qui n'est plus une
-   * hypothese tenable depuis que les indices sont troues : le premier archetype
-   * range pourrait un jour n'etre pas le zero.
+   * ⚠️ **Lue dans `adoptAtlas`, PAS dans `#ensurePool`** : les indices etant
+   * troues, rien ne garantit que l'archetype 0 soit range.
    */
   #placeholder: Texture | null = null;
   #loaded = false;
@@ -517,7 +422,7 @@ export class HordeRenderer {
    * que `#visible`/`#sorted` — voir `#ensureSortBuffers`.
    *
    * Purement cosmetique : aucune des deux valeurs ne sort jamais de ce
-   * fichier, ni ne participe a la simulation (tache 16, etape 2).
+   * fichier, ni ne participe a la simulation.
    */
   #prevX = new Float32Array(0);
   #facing = new Int8Array(0);
@@ -546,15 +451,12 @@ export class HordeRenderer {
   /**
    * Decoupe l'atlas et rend le renderer capable de dessiner.
    *
-   * ⚠️ **Separe de `load` PARCE QUE `load` va sur le reseau** (tache 9 bis) :
-   * un `fetch` et un `Assets.load` qu'aucun environnement de test n'a. Tant
-   * que les deux etaient une seule methode, `draw` retournait toujours au
-   * premier `if (!this.#loaded)` en test, et **tout son corps pouvait etre
-   * retire sans qu'une seule assertion ne bouge.** Verifie par mutation a
-   * l'etape 5a. Avec ce point d'accroche, `horde-renderer.test.ts` adopte un
-   * atlas synthetique et mesure ce que `draw` pose reellement sur les
-   * particules — ce qui a d'abord garde la teinte elementaire, et garde
-   * aujourd'hui l'ancre et l'echelle de la tache 14.
+   * ⚠️ **Separe de `load` PARCE QUE `load` va sur le reseau** : un `fetch` et
+   * un `Assets.load` qu'aucun environnement de test n'a. Sans ce point
+   * d'accroche, `draw` ne passerait jamais sa garde en test, et **tout son
+   * corps pourrait etre retire sans qu'une seule assertion ne bouge**. Avec
+   * lui, `horde-renderer.test.ts` adopte un atlas synthetique et mesure ce que
+   * `draw` pose reellement sur les particules (ancre, echelle).
    */
   adoptAtlas(manifest: AtlasManifest, atlas: Texture): void {
     const texturesOf = (clip: AtlasClip): Texture[] =>
@@ -565,13 +467,10 @@ export class HordeRenderer {
             frame: new Rectangle(r.x, r.y, r.w, r.h),
           }),
       );
-    // ⚠️ **Range par `a.id`, jamais par la position dans le tableau** (etape 6a,
-    // tache 5). Tant que l'atlas contenait exactement les quatorze pietailles,
-    // les deux coincidaient ; depuis qu'il embarque le boss (archetype 19) sans
-    // les cinq elites qui le precedent, le manifeste a des TROUS. Lire la
-    // position donnerait au boss les textures du creneau 14 — c'est-a-dire
-    // aucune, et surtout la meme classe de defaut que « les monstres ont change
-    // de sprite » : silencieuse, et fausse pour tout le monde.
+    // ⚠️ **Range par `a.id`, jamais par la position dans le tableau** : le
+    // manifeste a des TROUS (le boss, archetype 19, sans les elites qui le
+    // precedent). Lire la position donnerait a un archetype les textures d'un
+    // autre, silencieusement.
     this.#runFrames = [];
     this.#attackFrames = [];
     this.#placeholder = null;
@@ -582,16 +481,14 @@ export class HordeRenderer {
       this.#attackFrames[a.id] = texturesOf(a.clips.attack);
       this.#placeholder ??= run[0] ?? null;
       // Un facteur d'echelle par archetype, DERIVE de `PROJECTILE_HIT_RADIUS` —
-      // voir `spriteScale`. Tache 17.1 : a partir du CONTENU non transparent
-      // (`contentSizePx`), pas de la cellule — une cellule de Tiny Swords est en
-      // grande partie vide, et la rapporter a la hitbox rendait le corps de la
-      // creature bien plus petit qu'elle. Les archetypes n'ont pas tous la meme
+      // voir `spriteScale`. A partir du CONTENU non transparent
+      // (`contentSizePx`), pas de la cellule. Les archetypes n'ont pas tous la meme
       // cellule native (192 a 384 px, `shared/archetypes.ts`), la hitbox de
       // tir, elle, ne varie pas : chacun doit donc recevoir SON propre facteur.
       sizesPx[a.id] = contentSizePx(a.bounds);
     }
-    // ⚠️ **Etape 11 : le porteur de coffre n'a PAS d'entree dans l'atlas** —
-    // c'est un voleur agrandi (§3.4 de la spec), aucun actif nouveau. Sans cet
+    // ⚠️ **Le porteur de coffre n'a PAS d'entree dans l'atlas** — c'est un
+    // voleur agrandi, aucun actif nouveau. Sans cet
     // alias, `draw` le sauterait en silence faute de textures. Sa taille passe
     // par le mecanisme du boss : `bodyScale` (1,6) multiplie la taille de
     // contenu du voleur dans `archetypeScales`. Son clip d'« attaque » est la
@@ -622,14 +519,11 @@ export class HordeRenderer {
    * Dessine les entites visibles.
    *
    * Le client **simule** toute la horde mais ne **dessine** que ce que la
-   * camera voit. Le §4.5 rappelle pourquoi la vue de dessus rend ce filtrage
-   * trivial : la fenetre visible est un rectangle aligne sur les axes du monde.
+   * camera voit. La vue de dessus rend ce filtrage trivial : la fenetre visible est un rectangle aligne sur les axes du monde.
    */
   /**
-   * `timeMs` est l'horloge MURALE de l'animation. **Ce renderer ne recoit plus
-   * le tick de horde depuis la tache 13** : il ne servait qu'a la teinte
-   * elementaire, et un parametre que plus personne ne lit est du code qui ment.
-   * C'est `MarkRingRenderer.draw` qui le recoit desormais.
+   * `timeMs` est l'horloge MURALE de l'animation. **Ce renderer ne recoit pas
+   * le tick de horde** : c'est `MarkRingRenderer.draw` qui le recoit.
    */
   draw(horde: Horde, view: Rectangle, timeMs: number, heldEntityId: number | null = null): void {
     if (!this.#loaded) {
@@ -658,7 +552,7 @@ export class HordeRenderer {
       const x = horde.x[i] ?? 0;
       const y = horde.y[i] ?? 0;
 
-      // Orientation (tache 16, etape 2) : deduite ici, sur TOUTE la horde et
+      // Orientation : deduite ici, sur TOUTE la horde et
       // pas seulement les entites visibles, dans cette meme passe deja en
       // O(horde.count) — pas de second parcours pour un cout de rendu qui ne
       // doit pas grandir. Une entite hors-vue garde ainsi un sens a jour des
@@ -683,7 +577,7 @@ export class HordeRenderer {
       const i = sorted[n] ?? 0;
       const particle = this.#pool[n];
       const archetype = horde.archetype[i] ?? 0;
-      // Tache 17.2 : le clip est du rendu pur, deduit de l'etat d'arret DEJA
+      // Le clip est du rendu pur, deduit de l'etat d'arret DEJA
       // simule (`horde.stopped`) — voir `selectClip`. Jamais recalcule ici a
       // partir d'une distance : ce calcul-la vit dans `Horde.retarget`
       // (`shared/horde.ts`), pour rester identique des deux cotes.
@@ -722,21 +616,17 @@ export class HordeRenderer {
    * Tri en profondeur par **compartiments**, pas par `sort()` global — et par
    * **comptage**, pas par une `Map`.
    *
-   * Un `ParticleContainer` dessine dans l'ordre du tableau. Le §4.5 tranche
-   * deja : a 1 500 entites, c'est la difference entre un tri complet par image
-   * et un rangement en compartiments. A l'interieur d'une bande, l'ordre suit
-   * le tableau et n'a donc aucun rapport avec `y` — c'est pourquoi la bande
-   * doit rester **etroite** (voir `DEPTH_BAND`) ; **entre** bandes, l'ordre
-   * croissant en `y` est respecte, sans quoi une entite basse passerait
-   * derriere une entite haute.
+   * Un `ParticleContainer` dessine dans l'ordre du tableau. Un rangement en
+   * compartiments evite un tri complet par image. A l'interieur d'une bande,
+   * l'ordre suit le tableau et n'a donc aucun rapport avec `y` — c'est
+   * pourquoi la bande doit rester **etroite** (voir `DEPTH_BAND`) ; **entre**
+   * bandes, l'ordre croissant en `y` est respecte.
    *
    * Le tri par comptage est lineaire et n'alloue rien : deux passes sur
    * `visible`, en s'appuyant sur des tampons de taille fixe (`#bandCounts`,
-   * `#bandOffsets`, `#sorted`) reutilises d'une image a l'autre. Le §4.3 est
-   * categorique sur ce point precis — le cout qui tue n'est pas le GPU, c'est
-   * l'objet JavaScript alloue puis jete a chaque image ; une `Map` et ses
-   * tableaux de bande, recrees soixante fois par seconde, sont exactement ce
-   * cout-la.
+   * `#bandOffsets`, `#sorted`) reutilises d'une image a l'autre. Une `Map` et
+   * ses tableaux de bande, recrees soixante fois par seconde, sont exactement
+   * le cout JavaScript a eviter.
    */
   #depthSort(horde: Horde, visible: Int32Array, visibleCount: number): Int32Array {
     sortByDepth(horde.y, visible, visibleCount, this.#bandCounts, this.#bandOffsets, this.#sorted);
@@ -770,8 +660,7 @@ export class HordeRenderer {
     while (this.#pool.length < needed) {
       // Le corps est centre sur la position, en `x` comme en `y` — tout ce qui
       // touche l'entite est un cercle centre sur cette meme position. Voir
-      // `BODY_ANCHOR_Y` pour ce que l'ancre a 0,75 visait, et ce que la
-      // recentrer casse.
+      // `BODY_ANCHOR_Y`.
       this.#pool.push(new Particle({ texture: first, anchorX: 0.5, anchorY: BODY_ANCHOR_Y }));
     }
   }

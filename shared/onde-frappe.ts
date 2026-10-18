@@ -2,7 +2,7 @@ import { TICK_HZ } from './constants';
 import type { Horde } from './horde';
 
 /**
- * Les deux familles de l'etape 12 (§3.4) qui ne posent aucun projectile :
+ * Les deux familles d'armes qui ne posent aucun projectile :
  * l'ONDE (un anneau qui s'agrandit depuis le point de tir) et la FRAPPE (des
  * impacts differes autour d'un point vise).
  *
@@ -25,7 +25,7 @@ export interface Onde {
   readonly maxRadius: number;
   readonly damage: number;
   readonly element: number;
-  /** Le tireur : c'est lui que la marque retient (§7). */
+  /** Le tireur : c'est lui que la marque retient. */
   readonly by: number;
 }
 

@@ -8,13 +8,10 @@ import { FORMATION, type WaveOrder } from './waves';
 const DT = 1 / TICK_HZ;
 
 /**
- * Tache 15 : les entites ne doivent jamais quitter `[0, MAP_SIZE]`.
- *
- * Recette mesuree par le diagnostic (voir le rapport de la tache 15) : un
- * joueur colle a un coin de la carte tire tout le champ vers ce coin, une
- * horde dense y forme un entassement, et la repulsion (tache 19, devenue
- * deviation de trajectoire a la tache 21) pousse la victime vers le bord —
- * sans clamp, les entites giclent hors du monde.
+ * Les entites ne doivent jamais quitter `[0, MAP_SIZE]`. Un joueur colle a un
+ * coin tire tout le champ vers ce coin, une horde dense s'y entasse, et la
+ * deviation de trajectoire pousse la victime vers le bord : sans clamp, les
+ * entites giclent hors du monde.
  */
 describe('les entites ne quittent jamais la carte', () => {
   it(
@@ -40,7 +37,7 @@ describe('les entites ne quittent jamais la carte', () => {
       horde.spawn(order);
 
       // Le joueur reste colle au coin : le champ tire toute la horde vers le
-      // bord en permanence, exactement la configuration mesuree.
+      // bord en permanence.
       const field = new FlowField(MAP_SIZE, FLOWFIELD_CELL);
       field.update(0, 0);
       const fields = [field];

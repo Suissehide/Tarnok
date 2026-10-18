@@ -1,5 +1,5 @@
 /**
- * La rarete d'une carte de l'etalage (etape 13, §2 de la spec).
+ * La rarete d'une carte de l'etalage.
  *
  * ⚠️ **Deux familles, pas quatre.** COMMUNE et RARE MULTIPLIENT une carte
  * ordinaire ; EPIQUE et LEGENDAIRE sont des cartes de REGLE, exclusives a leur
@@ -17,8 +17,7 @@ export const RARITY = {
  * Combien de fois une carte s'applique, par rarete.
  *
  * ⚠️ **1 pour les deux paliers hauts, et ce n'est pas un oubli** : le triple
- * d'une regle serait du decor. C'etait un cas particulier de `cards.ts`
- * jusqu'a l'etape 13 ; la table le dit maintenant elle-meme.
+ * d'une regle serait du decor.
  */
 export const RARITY_MULTIPLIERS: readonly number[] = [1, 2, 1, 1];
 
@@ -30,11 +29,10 @@ export const RARITY_MULTIPLIERS: readonly number[] = [1, 2, 1, 1];
 export const RARITY_WEIGHTS: readonly number[] = [72, 20, 6, 2];
 
 /**
- * Le plancher de rarete d'un COFFRE (etape 11, §4.2) : toutes ses cartes sont
- * au moins rares. Le tirage RENORMALISE au-dessus du plancher (20/28 rare,
- * 6/28 epique, 2/28 legendaire, etape 13) — un `Math.max(plancher, tirage)`
- * aurait laisse la legendaire a 2 % et ote au coffre sa raison d'etre un
- * evenement.
+ * Le plancher de rarete d'un COFFRE : toutes ses cartes sont au moins rares.
+ * Le tirage RENORMALISE au-dessus du plancher (20/28 rare, 6/28 epique, 2/28
+ * legendaire) : un `Math.max(plancher, tirage)` laisserait la legendaire a 2 %
+ * et oterait au coffre sa raison d'etre un evenement.
  */
 export const CHEST_RARITY_FLOOR: number = RARITY.RARE;
 
@@ -56,10 +54,8 @@ export function multiplierOf(rarity: number | undefined): number {
  * Tire une rarete selon `RARITY_WEIGHTS`. `rng` est injecte, comme pour
  * `drawSpread` : `shared/` n'appelle jamais `Math.random`.
  *
- * `floor` (etape 11) : ne tire que parmi les raretes `>= floor`, a leurs poids
- * relatifs. ⚠️ **Au plancher par defaut, le calcul est EXACTEMENT celui
- * d'avant** — meme somme dans le meme ordre, un seul `rng()` : une montee de
- * niveau ne voit aucune difference.
+ * `floor` : ne tire que parmi les raretes `>= floor`, a leurs poids relatifs.
+ * Un seul `rng()` par tirage, quel que soit le plancher.
  */
 export function rollRarity(rng: () => number, floor: number = RARITY.COMMUNE): number {
   let total = 0;

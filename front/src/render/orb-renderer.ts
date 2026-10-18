@@ -10,28 +10,18 @@ import {
 } from '../net/client';
 
 /**
- * Rendu des orbes d'experience (`DerivedOrbs` et `OrbFlights`,
- * `net/client.ts`) — taches 17 puis 20 de l'etape 5a, sur retour de jeu :
+ * Rendu des orbes d'experience et des pieces (`DerivedOrbs` et `OrbFlights`,
+ * `net/client.ts`).
  *
- * > *« L'xp plus nette aussi, legerement attiree par le joueur s'il passe a
- * > cote. Moins d'xp qui tombe ou plus par niveau. »*
+ * ⚠️ **Pas d'aimantation.** Une orbe qu'un joueur touche est RAMASSEE — meme
+ * predicat que le serveur, avec le rayon de CE joueur (base plus ses achats
+ * d'aimant), transporte par le `SNAPSHOT` (voir `PickupTarget.pickupRadius`).
+ * Ce qu'on voit ensuite est un vol, qui decore un ramassage deja acquis. Voir
+ * `orbFlightFraction`.
  *
- * > *« L'aimantation est plus proche du joueur et attire l'xp jusqu'a lui,
- * > meme s'il l'eloigne. »*
- *
- * ⚠️ **La tache 20 a REMPLACE l'aimantation, elle ne l'a pas reglee.** Il n'y
- * a plus de rayon d'aimant ni d'attraction fonction de la distance : une orbe
- * qu'un joueur touche est RAMASSEE — meme predicat que le serveur. Depuis la
- * tache 7 de l'etape 7b, ce n'est plus `ORB_PICKUP_RADIUS` pour tout le
- * monde : chaque joueur a SON rayon (base plus ses achats d'aimant), transporte
- * par le `SNAPSHOT` (voir `PickupTarget.pickupRadius`). Ce qu'on voit ensuite
- * est un vol, qui decore un ramassage deja acquis. Voir `orbFlightFraction`.
- *
- * ⚠️ **Un module a part depuis cette tache**, comme `zone-renderer.ts` et
- * `mark-renderer.ts` avant lui. L'orbe vivait dans `projectile-renderer.ts` et
- * y partageait `makeGlowTexture` avec les flashs — or les deux disent l'inverse
- * l'un de l'autre : un flash doit s'evanouir sans bord, un objet a ramasser
- * doit avoir un contour. **C'est ce partage qui la gardait floue.**
+ * ⚠️ **Un module a part, sans `makeGlowTexture`** : un flash doit s'evanouir
+ * sans bord, un objet a ramasser doit avoir un contour. Partager la texture
+ * des flashs rend l'orbe floue.
  *
  * Meme discipline de conteneur que ses deux voisins : un `ParticleContainer`,
  * des bornes explicites, un reservoir de `Particle` reutilise, aucune
@@ -44,11 +34,9 @@ const BOUNDS_MARGIN = 256;
 /**
  * Cote de la texture d'orbe, en pixels.
  *
- * ⚠️ **DIFFERENT de `ORB_DIAMETER_PX`, et il faut que ça le reste** — c'est la
- * lecon de `MARK_RING_TEXTURE_DIAMETER` (tache 15), la « fixture qui masque »
- * logee dans une constante de production. Jusqu'a la tache 17, l'orbe etait
- * une texture de 16 px dessinee sans aucune echelle : `scaleX` valait 1 par
- * defaut, et toute mutation de l'echelle etait indistinguable de son absence.
+ * ⚠️ **DIFFERENT de `ORB_DIAMETER_PX`, et il faut que ça le reste** : a
+ * egalite, l'echelle vaudrait 1 et toute mutation de l'echelle serait
+ * indistinguable de son absence.
  *
  * Ce n'est PAS la taille a l'ecran : c'est la finesse du dessin, que
  * `ORB_SCALE` ramene ensuite a `ORB_DIAMETER_PX`. Meme role que
@@ -65,16 +53,12 @@ export const ORB_TEXTURE_DIAMETER = 64;
  * six fois plus grand : la dessiner a ce rayon-la remplirait l'ecran de
  * disques et mentirait sur ce qu'elle est — un objet, pas une aire d'effet.
  *
- * 16 jusqu'a la tache 17, puis 22 (trois morts sur quatre ne laissant plus
- * rien, ce qui restait devait se lire de plus loin), puis **14 a la tache 21**
- * — l'auteur a joue et les a trouvees trop grosses au sol. La capture de la
- * tache 20 a rendu l'orbe mobile et donc lisible par son mouvement : elle n'a
- * plus besoin de sa taille pour se signaler.
+ * Petite : plus grosse, elle encombre le sol. Le vol de capture la rend
+ * lisible par son mouvement, elle n'a pas besoin de sa taille pour se
+ * signaler.
  *
- * ⚠️ **Toujours DIFFERENT de `ORB_TEXTURE_DIAMETER`, et il faut que ca le
- * reste** — voir la doc de cette constante-la : c'est le piege de la tache 13,
- * ou l'echelle valait 1 et rendait toute mutation de l'echelle indistinguable
- * de son absence.
+ * ⚠️ **Toujours DIFFERENT de `ORB_TEXTURE_DIAMETER`** — voir cette
+ * constante-la.
  */
 export const ORB_DIAMETER_PX = 24;
 
@@ -82,30 +66,26 @@ export const ORB_DIAMETER_PX = 24;
 export const ORB_SCALE = ORB_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
 
 /**
- * Teinte de l'orbe. Portee par la PARTICULE et non cuite dans la texture
- * depuis la tache 17 — meme raison que `makeZoneAtlas` et `makeRingAtlas` :
- * en blanc, `tint` rend exactement la couleur demandee.
+ * Teinte de l'orbe. Portee par la PARTICULE et non cuite dans la texture :
+ * `tint` multiplie les tons gris cuits (`ORB_SHADES`).
  */
 //
-// ⚠️ **Cyan vif, plus vert** : sur l'herbe de la carte en tuiles, un orbe vert
-// disparaissait dans le sol (retour de playtest). Le contraste vient des tons
-// cuits en gris (`ORB_SHADES`), que la teinte decline en bleus.
+// ⚠️ **Cyan vif, pas vert** : sur l'herbe de la carte en tuiles, un orbe vert
+// disparait dans le sol.
 export const ORB_TINT = 0x3ad8ff;
 
 /**
  * La pulsation de l'orbe, EN TAILLE : son echelle respire entre
  * `1 - ORB_PULSE` et `1 + ORB_PULSE` fois `ORB_SCALE`. Elle reste OPAQUE — une
- * pulsation d'opacite eteignait l'orbe dans l'herbe, une pulsation de taille
- * l'allume (retour de playtest : *« plus de contraste et pulsation »*), et
- * reste DOUCE — ample et rapide, elle fatiguait l'oeil (retour suivant).
+ * pulsation d'opacite eteint l'orbe dans l'herbe — et DOUCE : ample et
+ * rapide, elle fatigue l'oeil.
  */
 export const ORB_PULSE = 0.07;
 /** Periode de la pulsation, en ms. */
 export const ORB_PULSE_MS = 1600;
 
 /**
- * Diametre de la PIECE dans le monde, en pixels — etape 6a, tache 14 : *« les
- * monstres ne droppent pas d'or »*.
+ * Diametre de la PIECE dans le monde, en pixels.
  *
  * ⚠️ **Plus grande que l'orbe, et c'est la seule chose que sa taille dit** :
  * une piece tombe quatre fois moins souvent (`COIN_DROP_ONE_IN` contre
@@ -113,8 +93,7 @@ export const ORB_PULSE_MS = 1600;
  * paie. Une piece de la taille d'une orbe serait un objet de plus a trier dans
  * un tas ; c'en est un qu'on doit repérer.
  *
- * ⚠️ **Toujours DIFFERENT de `ORB_TEXTURE_DIAMETER`** (64) — le piege des
- * taches 13 et 15 de l'etape 5a : a l'egalite, l'echelle vaudrait 1 et toute
+ * ⚠️ **Toujours DIFFERENT de `ORB_TEXTURE_DIAMETER`** (64) : a l'egalite, l'echelle vaudrait 1 et toute
  * mutation d'echelle deviendrait indistinguable de son absence. **Et different
  * d'`ORB_DIAMETER_PX`**, sans quoi dessiner les deux a la meme echelle
  * passerait le test.
@@ -129,9 +108,8 @@ export const COIN_SCALE = COIN_DIAMETER_PX / ORB_TEXTURE_DIAMETER;
  * texture est cuite en niveaux de gris, `tint` la dore.
  *
  * L'or de `UI Elements/Icons/Icon_03` du pack, **redessine en code** : aucun
- * asset n'entre dans ce depot (licence Pixel Frog, depot public), et l'atlas
- * des monstres est deja a 9,33 Mpx sur 16,78 — une icone d'interface n'y a rien
- * a faire. C'est la sixieme texture procedurale du jeu.
+ * asset n'entre dans ce depot (licence Pixel Frog, depot public), et une icone
+ * d'interface n'a rien a faire dans l'atlas des monstres.
  */
 export const COIN_TINT = 0xf5c542;
 
@@ -140,11 +118,8 @@ export const COIN_TINT = 0xf5c542;
  * que `ZoneRenderer.CULL_MARGIN` et `MarkRingRenderer.CULL_MARGIN`. Une orbe
  * dont le centre vient de sortir du cadre en montre encore la moitie.
  *
- * ⚠️ **Elle valait `ORB_MAGNET_RADIUS` (180 px) jusqu'a la tache 20**, parce
- * qu'une orbe pouvait alors etre dessinee tres loin de sa vraie position. Ce
- * n'est plus le cas : une orbe au sol est dessinee exactement ou elle est, et
- * une orbe en vol est cullee sur sa position DESSINEE, pas sur son point de
- * depart.
+ * Une orbe au sol est dessinee exactement ou elle est, et une orbe en vol est
+ * cullee sur sa position DESSINEE, pas sur son point de depart.
  */
 const CULL_MARGIN = (ORB_DIAMETER_PX * (1 + ORB_PULSE)) / 2;
 
@@ -161,24 +136,15 @@ const COIN_ENGRAVING_ALPHA = 0.34;
 
 /**
  * Quelle FRACTION du chemin vers son ramasseur une orbe capturee a parcourue,
- * a l'ecran, `elapsedMs` apres sa capture — tache 20.
+ * a l'ecran, `elapsedMs` apres sa capture.
  *
- * ## La surete a change de place ; elle n'a pas disparu
- *
- * A la tache 17, l'attraction etait une fonction pure de la DISTANCE, et sa
- * FORME portait toute la surete : 1 a `ORB_PICKUP_RADIUS`, donc a l'instant du
- * ramassage l'orbe etait dessinee sur le joueur — ecart nul par construction —
- * et 0 au-dela, donc une orbe non ramassee restait exactement ou le serveur la
- * croyait. Le prix de cette surete, c'est qu'elle ne SUIVAIT personne : un
- * joueur qui s'eloignait la voyait revenir a sa place.
- *
- * ⚠️ **Ici, la surete est dans le DECLENCHEMENT, plus dans la courbe.** Un vol
+ * ⚠️ **La surete est dans le DECLENCHEMENT, pas dans la courbe.** Un vol
  * n'existe que la ou le predicat de ramassage du serveur est deja vrai
  * (`DerivedOrbs.capture`, `ORB_PICKUP_RADIUS` inchange) : l'experience est
  * acquise avant la premiere image du vol. Une animation qui ne peut pas se
  * declencher a tort peut se permettre de coller au joueur — elle ne promet
- * rien qui puisse ne pas arriver. C'est exactement ce qu'une capture naive,
- * declenchee a un rayon a elle, n'aurait pas pu dire.
+ * rien qui puisse ne pas arriver — contrairement a une capture declenchee a
+ * un rayon a elle.
  *
  * ⚠️ **Elle vaut exactement 1 a l'echeance, et c'est ce qui fait qu'elle
  * ARRIVE.** La position dessinee est interpolee vers la position COURANTE de
@@ -188,8 +154,8 @@ const COIN_ENGRAVING_ALPHA = 0.34;
  * un second reglage a garder d'accord avec `PLAYER_SPEED` et avec chaque carte
  * « fougue » draftee. Il n'y en a pas.
  *
- * Courbe en S (`smoothstep`) plutot que le carre de la tache 17 : le carre
- * accelerait jusqu'au bout et l'orbe percutait le joueur ; ici elle se decolle
+ * Courbe en S (`smoothstep`) plutot qu'un carre : le carre accelere jusqu'au
+ * bout et l'orbe percute le joueur ; ici elle se decolle
  * sans a-coup et se pose. Aux 11/12 du vol — la derniere image dessinee a
  * 60 Hz avant qu'`OrbFlights.expire` ne retire le vol — elle a deja couvert
  * plus de 97 % du chemin.
@@ -207,8 +173,8 @@ export function orbFlightFraction(elapsedMs: number): number {
 
 /**
  * Le contour sombre des objets au sol, en part du rayon de la case : sur
- * l'herbe de la carte en tuiles, un orbe ou une piece sans contour se perdait
- * dans le sol (retour de playtest). NOIR, donc insensible a `tint` — une
+ * l'herbe de la carte en tuiles, un orbe ou une piece sans contour se perd
+ * dans le sol. NOIR, donc insensible a `tint` — une
  * multiplication garde le noir noir.
  */
 export const DROP_OUTLINE = 0.16;
@@ -225,9 +191,7 @@ function drawOutline(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: n
 
 /**
  * L'orbe d'experience en PIXEL ART, dessinee pixel par pixel comme les icones
- * du pack. Retours de playtest : *« plus de contraste »*, puis *« garde le cote
- * rond »*, puis *« trop rond, trop cartoon »* — une forme vectorielle lisse
- * jurait avec les sprites. Un cristal de 9 x 10 pixels, contour d'un pixel,
+ * du pack : une forme vectorielle lisse jure avec les sprites. Un cristal de 9 x 10 pixels, contour d'un pixel,
  * facettes claires en haut a gauche et sombres en bas a droite.
  *
  * Legende : `.` vide, `o` contour, `w` eclat blanc, `a` clair, `b` moyen,
@@ -291,8 +255,7 @@ function drawOrb(ctx: CanvasRenderingContext2D, cx: number, cy: number, _outer: 
  * conteneur de particules ne porte qu'une texture source ; deux textures
  * independantes auraient demande deux calques, deux reservoirs et deux passes
  * de culling pour des objets qui tombent au meme endroit et se ramassent au
- * meme rayon. C'est exactement ce que `ProjectileRenderer` fait deja avec ses
- * neuf armes.
+ * meme rayon. `ProjectileRenderer` fait de meme avec ses armes.
  */
 export function dropCellRect(index: number): { x: number; y: number; w: number; h: number } {
   return {
@@ -325,8 +288,8 @@ export const DROP_CELL_COUNT = 2;
  *
  * ⚠️ **Le profil est DIFFERENT de celui de l'orbe, et il doit le rester** : les
  * deux objets se croisent au sol, ils ne doivent pas se confondre a la seule
- * teinte. L'orbe est creuse au milieu (deux traits concentriques), la piece est
- * pleine et gravee.
+ * teinte. L'orbe est un cristal en pixel art, la piece est pleine et
+ * gravee.
  */
 function drawCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: number): void {
   // La face pleine, jusqu'au lisere.
@@ -378,15 +341,15 @@ function makeDropAtlas(): { atlas: Texture; canvas: HTMLCanvasElement } {
  * meme objet a deux instants de sa vie.
  *
  * ⚠️ **Le seul calque dont une partie des positions dessinees n'existe dans
- * aucun modele** (tache 20) : une orbe en vol est placee par une interpolation
+ * aucun modele** : une orbe en vol est placee par une interpolation
  * entre son point de capture et la position courante de sa cible. Voir
  * `orbFlightFraction` pour ce qui rend cette invention sans consequence.
  */
 export class OrbRenderer {
   readonly #container = new ParticleContainer({
-    // `position` : une orbe en vol change de place a chaque image (tache 20).
-    // `color` : la pulsation fait bouger l'opacite, et le reservoir est
-    // reutilise d'une image a l'autre.
+    // `position` : une orbe en vol change de place a chaque image.
+    // `color` : le reservoir est reutilise d'une image a l'autre, et une meme
+    // particule peut passer d'une orbe a une piece.
     // `vertex` : la pulsation de l'orbe est une ECHELLE qui bouge a chaque image.
     dynamicProperties: { position: true, color: true, rotation: false, uvs: false, vertex: true },
   });
@@ -394,9 +357,8 @@ export class OrbRenderer {
   /**
    * Les deux cases de l'atlas : l'orbe et la piece.
    *
-   * ⚠️ **UN tableau, jamais deux champs nullables.** Deux textures separement
-   * nullables donneraient deux gardes qui se couvrent l'une l'autre — le motif
-   * que ce depot a solde seize fois. `loaded` ne lit qu'une chose.
+   * ⚠️ **UN tableau, jamais deux champs nullables** : deux gardes se
+   * couvriraient l'une l'autre. `loaded` ne lit qu'une chose.
    */
   #cells: Texture[] = [];
   /** `COIN_TINT` sur la piece procedurale ; blanc une fois l'icone du HUD recollee. */
@@ -422,8 +384,7 @@ export class OrbRenderer {
   /**
    * Vrai des que `load` a pose sa texture. Expose pour le test, comme
    * `boundsArea` : c'est ce qui permet a `stage.test.ts` de verifier que
-   * `Stage.composeWorld` charge CHAQUE calque — retirer un `load` y etait
-   * indetectable jusqu'a la tache 9 bis.
+   * `Stage.composeWorld` charge CHAQUE calque.
    */
   get loaded(): boolean {
     return this.#cells.length === DROP_CELL_COUNT;
@@ -456,12 +417,10 @@ export class OrbRenderer {
   /**
    * Rend le calque capable de dessiner a partir d'une texture deja cuite.
    *
-   * ⚠️ **Ajoute a la tache 17, pour la meme raison qu'a la tache 16 sur
-   * `ZoneRenderer`** : `load()` cuit sa texture sur un canevas 2D que node ne
+   * ⚠️ `load()` cuit sa texture sur un canevas 2D que node ne
    * fournit pas, donc sans ce point d'accroche `draw` retourne a son premier
    * `if (!texture)` et **tout son corps** — echelle, teinte, vols, culling —
-   * reste hors de portee de la suite. Voir `adoptAtlas` (tache 9 bis) et
-   * `adoptTextures` (tache 12).
+   * reste hors de portee de la suite.
    */
   adoptTexture(atlas: Texture): void {
     this.#cells = [DROP_ORB_CELL, DROP_COIN_CELL].map((cell) => {
@@ -475,7 +434,7 @@ export class OrbRenderer {
 
   /**
    * La case, l'echelle et la teinte d'un objet au sol, DEDUITES de son
-   * identite (etape 6a, tache 14).
+   * identite.
    *
    * ⚠️ **Rien n'est transmis pour ca.** `dropsCoin` vit dans `shared/`, donc le
    * dessin d'une piece ne coute pas un octet — exactement le modele de
@@ -516,8 +475,8 @@ export class OrbRenderer {
     children.length = 0;
     let used = 0;
 
-    // Les orbes au sol : dessinees exactement ou elles sont. Depuis la tache
-    // 20, plus aucune ne glisse — celle qu'un joueur touche a quitte cette
+    // Les orbes au sol : dessinees exactement ou elles sont. Aucune ne
+    // glisse — celle qu'un joueur touche a quitte cette
     // reserve pour `flights`, a l'instant meme ou le serveur l'a ramassee.
     for (let i = 0; i < orbs.count; i++) {
       const x = orbs.x[i] ?? 0;

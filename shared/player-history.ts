@@ -11,7 +11,7 @@ import { FIELD_INPUT_DELAY_TICKS, MAX_PLAYERS } from './constants';
  *
  * La parade : les deux cotes lisent les positions du tick `T - K`. Le serveur
  * s'impose le retard qu'il inflige au client, et les entrees redeviennent
- * identiques. Voir §5 de la spec de l'etape 2.
+ * identiques.
  */
 
 /** Profondeur d'historique : de quoi couvrir le retard et un peu de gigue. */
@@ -23,7 +23,7 @@ export interface PlayerPositions {
   x: number[];
   y: number[];
   /**
-   * L'identifiant du joueur de chaque rang (etape 8, tache 6). Un leurre
+   * L'identifiant du joueur de chaque rang. Un leurre
    * remplace son lanceur dans l'entree du champ, et il le retrouve par cet
    * identifiant — jamais par un indice, qui bouge quand un joueur part
    * (`shared/decoys.ts`).

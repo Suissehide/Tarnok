@@ -18,20 +18,19 @@ import { createAccount, prisma } from './accounts';
 import { buildServer } from './server';
 
 /**
- * Le livrable de l'etape 11 (§1 de la spec) : **sur deux vraies sockets,
- * l'ordre du porteur arrive aux deux clients, sa mort leur ouvre un
- * `DRAFT_OPEN` dont chaque carte est au moins rare, et chaque client sait que
- * cet etalage est un coffre sans un octet de plus.**
+ * **Sur deux vraies sockets, l'ordre du porteur arrive aux deux clients, sa
+ * mort leur ouvre un `DRAFT_OPEN` dont chaque carte est au moins rare, et
+ * chaque client sait que cet etalage est un coffre sans un octet de plus.**
  *
- * ⚠️ **Le seul cas de file reel est force** (ecart n° 5 du plan) : pendant un
- * etalage le monde est gele, donc le porteur ne meurt jamais derriere un
- * etalage ouvert. `room.step` est enveloppe : au tick ou le porteur quitte la
- * horde, un niveau devient du AU MEME TICK (`debugOweLevels`). Le coffre doit
- * passer d'abord, le niveau ensuite.
+ * ⚠️ **Le seul cas de file reel est force** : pendant un etalage le monde est
+ * gele, donc le porteur ne meurt jamais derriere un etalage ouvert.
+ * `room.step` est enveloppe : au tick ou le porteur quitte la horde, un niveau
+ * devient du AU MEME TICK (`debugOweLevels`). Le coffre doit passer d'abord,
+ * le niveau ensuite.
  *
- * ⚠️ **« Son `GameClient` dit `draftIsChest` »** est rejoue par
- * `drapeauxDeCoffre`, la regle exacte de `GameClient` (ecart n° 4) : le back
- * n'importe pas le front. `client.test.ts` couvre le `GameClient` lui-meme.
+ * ⚠️ `drapeauxDeCoffre` rejoue la regle exacte de `GameClient`
+ * (`draftIsChest`) : le back n'importe pas le front. `client.test.ts` couvre
+ * le `GameClient` lui-meme.
  *
  * ⚠️ **La pietaille est retiree HORS du lot de morts** a chaque tick : ni XP
  * (donc aucun niveau parasite), ni joueur submerge. Le decor mesure le coffre.
@@ -39,8 +38,8 @@ import { buildServer } from './server';
 
 const ROOM_SEED = 0x11_c0_ff3e;
 /**
- * 22 octets d'en-tete + 2 joueurs x 11 (le bouclier des pactes, etape 13 §3.4) : ecrit NU,
- * jamais recalcule (voir l'etape 10).
+ * 22 octets d'en-tete + 2 joueurs x 11 : ecrit NU, jamais recalcule, pour
+ * que toute croissance du snapshot fasse rougir ce test.
  */
 const SNAPSHOT_A_DEUX = 44;
 
@@ -134,7 +133,7 @@ async function waitFor<T>(probe: () => T | null, what: string, timeoutMs: number
 }
 
 /**
- * La regle de `GameClient` (etape 11, §4.3), rejouee sur les messages DECODES,
+ * La regle de `GameClient`, rejouee sur les messages DECODES,
  * dans l'ordre d'arrivee : un drapeau « coffre ? » par `LEVEL_UP`.
  */
 function drapeauxDeCoffre(recus: readonly Message[]): boolean[] {
@@ -166,7 +165,7 @@ describe('etape 11 : le porteur de coffre, sur vraies sockets (le livrable)', ()
     }
     const a = await connect(code);
     const b = await connect(code);
-    // A un seul joueur, le snapshot fait 32 octets : on ne mesure qu'a deux.
+    // A un seul joueur, le snapshot fait 33 octets : on ne mesure qu'a deux.
     a.snapshotBytes.clear();
     b.snapshotBytes.clear();
 

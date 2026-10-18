@@ -1,5 +1,5 @@
 /**
- * L'habillage des ecrans (kit d'interface, ecran 18 de la maquette) : chaque
+ * L'habillage des ecrans (kit d'interface) : chaque
  * cadre, bouton, ruban et jauge est RECOLLE dans le navigateur depuis les
  * planches du pack, puis pose en variable CSS (`--k-<cle>`) que `main.css`
  * consomme en `border-image`.
@@ -105,7 +105,7 @@ const NINES: Record<string, Nine> = {
       [640, 256, 64, 64],
     ],
   },
-  // Le bois de la mini-carte (ecran 04). Sa bande basse a une marche de 5,2
+  // Le bois de la mini-carte. Sa bande basse a une marche de 5,2
   // entre ses bords (README de la maquette) : recousue par rampe.
   wood: {
     file: `${UIE}Wood%20Table/WoodTable.png`,

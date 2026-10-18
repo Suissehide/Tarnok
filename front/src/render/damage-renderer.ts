@@ -5,8 +5,7 @@ import { type Container, Particle, ParticleContainer, Rectangle, Texture } from 
 import { DAMAGE_NUMBER_LIFETIME_MS, type DamageNumbers } from '../net/client';
 
 /**
- * Rendu des chiffres de degats (etape 8) — *« il faut afficher les degats sur
- * les monstres avec des chiffres »*.
+ * Rendu des chiffres de degats.
  *
  * ⚠️ **Un ATLAS DE CHIFFRES, pas des objets `Text`.** Un `Text` de Pixi cuit sa
  * propre texture a chaque contenu different : a plusieurs dizaines d'impacts
@@ -17,8 +16,8 @@ import { DAMAGE_NUMBER_LIFETIME_MS, type DamageNumbers } from '../net/client';
  *
  * ⚠️ **Le cout est BORNE par le nombre de chiffres, pas par la horde** :
  * `DAMAGE_NUMBER_CAPACITY` (128) chiffres de quatre caracteres au pire font
- * 512 quads, contre 4 096 pour les projectiles seuls. Le test de ce fichier le
- * mesure plutot que de l'esperer, comme la trainee l'a ete a la tache 12.
+ * 512 quads, contre 4 096 pour les projectiles seuls. `damage-renderer.test.ts`
+ * le mesure.
  */
 
 /** Marge des bornes explicites, meme raisonnement que `HordeRenderer.BOUNDS_MARGIN`. */
@@ -45,8 +44,7 @@ export const CRIT_SCALE = 1.6;
 /**
  * Degats au-dela desquels un chiffre ne grossit plus.
  *
- * ⚠️ **C'est ce qui fait SENTIR la progression** (*« que l'on sente la
- * progression »*) : un 3 de lance-flammes et un 40 de grenade ne doivent pas
+ * ⚠️ **C'est ce qui fait SENTIR la progression** : un 3 de lance-flammes et un 40 de grenade ne doivent pas
  * s'ecrire de la meme taille, sinon la seule chose que le joueur lit est le
  * nombre lui-meme — alors que ce qu'il veut savoir, c'est si ca monte.
  *
@@ -74,8 +72,7 @@ export function damageScale(amount: number): number {
 }
 
 /**
- * La teinte d'un chiffre, par element qui porte le coup (etape 8) — *« rouge
- * et gros en crit, jaune en poison »*.
+ * La teinte d'un chiffre, par element qui porte le coup.
  *
  * ⚠️ **Ce ne sont PAS les teintes d'`ELEMENTS`, et c'est delibere.** Celles-la
  * disent la matiere AU SOL, sur de l'herbe, a `ZONE_ALPHA` : la Poix y est un
@@ -129,8 +126,7 @@ const OUTLINE_RGBA = 'rgba(20, 16, 18, 1)';
  * Cuit l'atlas : une case par chiffre, blanc cerne de noir.
  *
  * Blanc pour la meme raison que la trainee et les zones : `Particle.tint`
- * multiplie, donc une case blanche rend exactement la teinte demandee — ici le
- * dore d'un critique ou le blanc d'un coup ordinaire.
+ * multiplie, donc une case blanche rend exactement la teinte demandee.
  */
 function makeDigitAtlas(): Texture {
   const canvas = document.createElement('canvas');
@@ -225,8 +221,7 @@ export class DamageNumberRenderer {
   }
 
   /**
-   * Decoupe l'atlas. Separe de `load` pour la meme raison que partout ailleurs
-   * (tache 9 bis) : `load` a besoin d'un canevas 2D que l'environnement de
+   * Decoupe l'atlas. Separe de `load` : `load` a besoin d'un canevas 2D que l'environnement de
    * test n'a pas, et sans ce point d'entree `draw` retournerait a son premier
    * `if` sans qu'aucune assertion ne puisse l'atteindre.
    */

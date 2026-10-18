@@ -1,15 +1,10 @@
 /**
  * Banc de rendu — combien de sprites a 60 fps, et a quel prix ?
  *
- * Le §4.3 est categorique : chez Riot le goulot client n'etait pas le nombre
- * d'entites mais **les particules, a 34 ms par image**. Et « le GPU se moque de
- * 1 500 quads ; ce qui tue, c'est le cout JavaScript par objet et par
- * transform ». Ce banc mesure donc le cout CPU de soumission d'une image, pas
- * la charge GPU.
- *
- * La comparaison `ParticleContainer` contre autant d'objets `Sprite` est le
- * point du banc : elle doit **chiffrer** l'ecart, pas le supposer. C'est lui qui
- * justifiera de n'ecrire le rendu qu'une fois.
+ * Le GPU se moque de 1 500 quads ; ce qui coute, c'est le JavaScript par objet
+ * et par transform, et les particules. Ce banc mesure donc le cout CPU de
+ * soumission d'une image, pas la charge GPU, et chiffre l'ecart entre
+ * `ParticleContainer` et autant d'objets `Sprite`.
  *
  * Les deux premieres mesures rendent en boucle serree, sans rAF : elles restent
  * valides dans un onglet en arriere-plan, ou rAF est suspendu.
@@ -71,7 +66,7 @@ document.body.appendChild(app.canvas);
 // des images qu'on ne compte pas.
 app.ticker.stop();
 
-/** Petit quad blanc : un seul atlas pour tout ce qui est massif (§4.3). */
+/** Petit quad blanc : un seul atlas pour tout ce qui est massif. */
 function makeTexture(): Texture {
   const canvas = document.createElement('canvas');
   canvas.width = 16;
@@ -98,9 +93,9 @@ function percentile(sorted: readonly number[], q: number): number {
 /**
  * Une scene mesurable : elle sait bouger toutes ses entites et etre rendue.
  *
- * Le deplacement fait partie de la mesure a dessein — c'est precisement le
- * « cout JavaScript par objet et par transform » du §4.3 qu'on cherche a
- * chiffrer, pas le cout d'un `render()` sur une scene figee.
+ * Le deplacement fait partie de la mesure a dessein : c'est le cout
+ * JavaScript par objet et par transform qu'on chiffre, pas un `render()` sur
+ * une scene figee.
  */
 interface Scene {
   advance(t: number): void;
@@ -176,9 +171,8 @@ function buildSpriteScene(count: number): Scene {
 /**
  * Scene de horde animee : un seul atlas, chaque particule change d'image.
  *
- * C'est le montage exact du §9 de la spec de l'etape 2. On le prouve ici avant
- * d'ecrire le rendu du jeu, parce que si `uvs` dynamique ne fonctionne pas, la
- * conception du rendu est a refaire.
+ * Le meme montage que le rendu du jeu : si `uvs` dynamique ne fonctionne pas,
+ * la conception du rendu est a refaire.
  */
 function buildAnimatedScene(count: number): Scene {
   const FRAMES = 8;
@@ -358,9 +352,8 @@ function sweep(): SweepResult {
 /**
  * Budget de particules d'effet.
  *
- * On empile des particules par-dessus une horde de 1 500 entites — la cible du
- * §4.1 — parce que c'est dans ces conditions-la que le budget compte, pas sur
- * une scene vide.
+ * On empile des particules par-dessus une horde de 1 500 entites, la cible :
+ * c'est la que le budget compte, pas sur une scene vide.
  */
 function particleBudget(): SweepResult {
   const horde = buildParticleScene(1500);
@@ -404,7 +397,7 @@ function particleBudget(): SweepResult {
   };
 }
 
-/** Horde animee : le montage du §9 de la spec, mesure comme les autres. */
+/** Horde animee, mesuree comme les autres. */
 function animatedSweep(): SweepResult {
   const rows: Row[] = [];
   for (const count of SPRITE_COUNTS) {

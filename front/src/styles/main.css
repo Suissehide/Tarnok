@@ -12,8 +12,8 @@
  * - **encre blanche + contour sombre** sur sprite, bruns sans contour sur
  *   parchemin, jamais de texte semi-transparent.
  *
- * §6.6 de l'orientation : seul le terrain de jeu doit rester sombre et
- * desature ; les menus peuvent etre chauds et lisibles.
+ * Seul le terrain de jeu reste sombre et desature ; les menus peuvent etre
+ * chauds et lisibles.
  */
 
 @theme {
@@ -118,7 +118,7 @@
     pointer-events: none;
   }
 
-  /* Le fond des menus de Dorok (`background.png` du pack, 2496 x 800) : nuages
+  /* Le fond des menus (`background.png` du pack, 2496 x 800) : nuages
      a gauche et a droite, aplat au centre. Un `cover` rognerait les nuages ;
      chaque moitie est donc ancree a son bord, l'aplat comble l'ecart, et la
      planche se repete vers le bas. Echelle = hauteur, reduite si les deux
@@ -130,14 +130,14 @@
 
   .bg-menu::before,
   .bg-menu::after {
-    content: '';
+    content: "";
     position: absolute;
     top: 0;
     bottom: 0;
     z-index: -1;
     /* Jamais plus large que sa moitie de planche : au-dela, l'autre moitie. */
     width: min(50%, var(--menu-h) * 1248 / 800);
-    background: url('/tinyswords/UI/MenuBackground.png') 0 0 / auto var(--menu-h) repeat-y;
+    background: url("/tinyswords/UI/MenuBackground.png") 0 0 / auto var(--menu-h) repeat-y;
   }
 
   .bg-menu::before {
@@ -671,12 +671,9 @@
   }
 
   /*
-   * Etape 13 : le bouclier (Transcendance), POSE PAR-DESSUS le remplissage
-   * des PV — meme formule `--v`, meme ancre a gauche, mais plus loin dans le
-   * DOM que `#hud-hp-fill` donc peint par-dessus lui. Une teinte propre
-   * (cyan) pour ne jamais se confondre avec le rouge des PV ni le bleu de
-   * l'XP : chez un porteur de Transcendance, c'est elle qui porte la vraie
-   * lecture, le fil de PV en dessous ne faisant qu'un pixel.
+   * Le bouclier (Transcendance), PAR-DESSUS le remplissage des PV : meme
+   * formule `--v`, mais plus loin dans le DOM que `#hud-hp-fill`. Cyan, pour
+   * ne se confondre ni avec le rouge des PV ni avec le bleu de l'XP.
    */
   .bar__fill--shield {
     background: #5fd0d6;
@@ -1138,7 +1135,7 @@
     color: var(--color-ink-label);
   }
 
-  /* Les jetons visibles des autres joueurs, au-dessus de la carte (§7.2). */
+  /* Les jetons visibles des autres joueurs, au-dessus de la carte. */
   .draft-card__tokens {
     position: absolute;
     top: -70px;
@@ -1167,10 +1164,10 @@
     border-color: #fff;
   }
 
-  /* La rarete (etape 10, §2.5 ; les quatre paliers, etape 13) : gris, bleu,
-     violet, or. Declaree AVANT les etats : l'illumination et la consomption
-     d'une carte gagnee ou perdue portent la meme propriete `animation` que le
-     reflet legendaire, et doivent primer. */
+  /* La rarete, quatre paliers : gris, bleu, violet, or. Declaree AVANT les
+     etats : l'illumination et la consomption d'une carte gagnee ou perdue
+     portent la meme propriete `animation` que le reflet legendaire, et
+     doivent primer. */
   .draft-card[data-rarity="0"] {
     box-shadow: 0 0 0 5px #8f8f8f;
   }
@@ -1179,7 +1176,7 @@
     box-shadow: 0 0 0 5px #4a8fe0;
   }
 
-  /* Etape 13 : l'epique, palier de regle reserve (voir `Passive.tier`). */
+  /* L'epique, palier de regle reserve (voir `Passive.tier`). */
   .draft-card[data-rarity="2"] {
     box-shadow: 0 0 0 5px #9b5de0;
   }
@@ -1223,7 +1220,7 @@
     }
   }
 
-  /* Etape 13 : ce que la carte COUTE, en rouge — meme teinte que `.btn--red`. */
+  /* Ce que la carte COUTE, en rouge — meme teinte que `.btn--red`. */
   .draft-card__malus {
     font-size: 24px;
     line-height: 1.4;
@@ -1269,9 +1266,9 @@
     transition: background 250ms linear;
   }
 
-  /* Une carte que MON inventaire refuse (`blockedReason`, ui/draft.ts). Les
-     jetons des autres restent nets : la carte reste disputable par eux. */
-  /* Une carte que mon inventaire refuse : grisee, sans bandeau (raison au survol). */
+  /* Une carte que MON inventaire refuse (`blockedReason`, ui/draft.ts) : grisee,
+     sans bandeau (raison au survol). Les jetons des autres restent nets : la
+     carte reste disputable par eux. */
   .draft-card[data-blocked="true"] {
     filter: grayscale(1) brightness(0.85);
   }
@@ -1341,7 +1338,7 @@
   }
 }
 
-/* La roue de ping (etape 9) : posee en fixe sur le curseur, sans capter la souris. */
+/* La roue de ping : posee en fixe sur le curseur, sans capter la souris. */
 .ping-wheel {
   position: fixed;
   width: 0;

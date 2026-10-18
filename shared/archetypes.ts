@@ -3,14 +3,12 @@ import { PLAYER_SPEED } from './constants';
 /**
  * Le bestiaire, et son regime de replication.
  *
- * La taille des sprites du pack tombe pile sur la distinction du §3.3 de
- * l'orientation, ce qui n'est pas un hasard : les 192 px n'ont qu'un `Walk`,
- * les gros ont `Windup` / `Attack` / `Recovery`, ce qui est un vocabulaire de
- * boss.
+ * La taille des sprites du pack tombe pile sur la distinction : les 192 px
+ * n'ont qu'un `Walk`, les gros ont `Windup` / `Attack` / `Recovery`, ce qui
+ * est un vocabulaire de boss.
  *
  * - **Pietaille** (192 px) : repliquee par le generateur, rendue en batch.
- * - **Elite** (256 px et plus) : repliquee comme entite, rendue en `Sprite`.
- *   Hors perimetre de l'etape 2, recensee ici pour que l'ajouter soit du
+ * - **Elite** (256 px et plus) : recensee ici pour que l'ajouter soit du
  *   contenu et pas de l'architecture.
  */
 export interface Archetype {
@@ -25,13 +23,11 @@ export interface Archetype {
   /** Vitesse de deplacement, en pixels monde par seconde. */
   speed: number;
   /**
-   * Reserve de points de vie de depart (etape 5a, §3.2 de la spec).
+   * Reserve de points de vie de depart.
    *
    * **Les deux cotes derivent la meme valeur sans un octet de plus** :
-   * l'archetype voyage deja dans l'ordre de vague de 19 octets, donc
-   * `Horde.spawn` la pose identiquement sur le serveur et sur chaque client.
-   * Seul le serveur soustrait les degats — le client n'a jamais besoin de
-   * connaitre les PV, il apprend qui meurt par `DEATHS` (§2 de la spec).
+   * l'archetype voyage deja dans l'ordre de vague. Seul le serveur soustrait
+   * les degats — le client apprend qui meurt par `DEATHS`.
    */
   hp: number;
   /**
@@ -40,57 +36,34 @@ export interface Archetype {
    *
    * ⚠️ **Zero est une entree de la table, pas un cas particulier.** Toute la
    * pietaille legere porte `0`, et elle passe par exactement le meme calcul
-   * que le boss : c'est le role que `ELEMENT.NEUTRE` joue pour les elements et
-   * `blastRadius: 0` pour les armes. Aucun site d'application n'a de branche
-   * `if (armor > 0)` a maintenir.
+   * que le boss : aucun site d'application n'a de branche `if (armor > 0)`.
    *
    * ⚠️ **Lue au SEUL endroit ou un ennemi perd des PV** (`appliquerDegats`,
-   * back/src/combat.ts). Deux formules d'armure divergeraient, et le jour ou
-   * elles divergent c'est un test qui manque, pas un bug qui se voit.
+   * back/src/combat.ts) : deux formules d'armure divergeraient.
    *
    * ⚠️ **Bornee a la LECTURE de la table, par `capArmor`** — voir `MAX_ARMOR`.
-   * Une borne posee au site d'application laisserait une valeur aberrante
-   * vivre dans la donnee et n'echouer que la ou personne ne regarde.
    *
-   * ⚠️ **Ne voyage pas, et n'a pas a voyager.** Seul le serveur soustrait des
-   * degats (voir `hp` ci-dessus) : le client apprend les morts par `DEATHS`.
-   * Rien de nouveau sur le fil.
+   * Ne voyage pas : seul le serveur soustrait des degats.
    */
   armor: number;
   /**
    * De combien le CORPS dessine deborde la hitbox de tir, **pour cet
-   * archetype** — `1` pour toute la pietaille, davantage pour le boss
-   * (etape 6a, tache 3).
+   * archetype** — `1` pour la plupart, davantage pour le boss, le colosse et
+   * le porteur.
    *
    * ⚠️ **Ce n'est PAS `BODY_SCALE`, et les deux se multiplient.**
    * `front/src/render/horde-renderer.ts` porte un facteur COMMUN
-   * (`BODY_SCALE = 1,25`), borne par un test qui dit qu'au-dela la hitbox ment
-   * plus que le rendu des projectiles ne la fait deja mentir. Ce plafond garde
-   * la pietaille et doit continuer de la garder : le boss ne le releve pas, il
-   * apporte SON facteur. Relever le plafond commun aurait agrandi les vingt
-   * archetypes pour n'en vouloir qu'un.
+   * (`BODY_SCALE = 1,25`), plafonne par un test : au-dela, la hitbox mentirait
+   * trop. Un archetype plus gros apporte SON facteur au lieu de relever le
+   * plafond commun.
    *
-   * ⚠️ **Ce que le facteur du boss coute, dit franchement** : sa hitbox de tir
-   * reste celle de tout le monde (`PROJECTILE_HIT_RADIUS` ne varie pas par
-   * archetype), donc un tir qui touche visiblement son flanc peut passer au
-   * travers. C'est le prix de la lisibilite du §4 de la spec — *« nettement
-   * plus grand que la pietaille, c'est ce qui le rend lisible dans la
-   * melee »* — et **c'est une question laissee ouverte a la verification
-   * manuelle** (tache 12) : si le boss se tire comme un mur invisible, la
-   * reponse est une hitbox par archetype, pas un facteur plus petit.
-   *
-   * ⚠️ **Cote rendu — RESOLU a la tache 5, et il faut dire jusqu'ou.** L'atlas
-   * de `tools/` n'embarquait que les quatorze pietailles (`SOURCES`), et
-   * `HordeRenderer.draw` saute silencieusement un archetype sans textures : le
-   * boss etait donc simule, touche, marque et tue, mais pas DESSINE. La tache 5
-   * y a ajoute le troll — **lui seul**. Ranger les six elites sature l'atlas
-   * (16,2 Mpx de contenu pour 16,8 Mpx disponibles ; mesure dans
-   * `tools/build_monster_atlas.py`), et les cinq autres n'apparaissent jamais
-   * en jeu. `SOURCES` porte desormais des trous explicites pour que son index
-   * reste l'identifiant d'archetype, et le manifeste publie un `id` que
-   * `HordeRenderer.adoptAtlas` lit — jamais la position dans le tableau. Le
-   * jour ou l'etape 6b fera tourner un pool d'elites, c'est `ATLAS_SIZE` qu'il
-   * faudra rouvrir.
+   * ⚠️ **Rendu** : l'atlas de `tools/` n'embarque que la pietaille et le
+   * troll ; ranger les six elites le sature (voir
+   * `tools/build_monster_atlas.py`), et `HordeRenderer.draw` saute en silence
+   * un archetype sans textures. `SOURCES` porte des trous explicites pour que
+   * son index reste l'identifiant d'archetype, et `HordeRenderer.adoptAtlas`
+   * lit l'`id` du manifeste, jamais la position. Faire tourner un pool
+   * d'elites demandera de rouvrir `ATLAS_SIZE`.
    */
   bodyScale: number;
   /**
@@ -98,11 +71,8 @@ export interface Archetype {
    * (`PROJECTILE_HIT_RADIUS x hitScale`) — egale a `bodyScale`, sauf pour le
    * boss (`BOSS_HIT_SCALE`).
    *
-   * ⚠️ **Retour de playtest (etape 12) : « la hitbox du boss est trop
-   * petite ».** A 96 px (`bodyScale` x 32), elle ne couvrait pas la boite
-   * dessinee (240 px de diametre, massue comprise) : des tirs qui touchaient
-   * visiblement le troll passaient au travers. La touche couvre desormais le
-   * dessin entier.
+   * La touche du boss couvre le dessin entier, massue comprise : un tir qui
+   * touche visiblement le troll doit le toucher.
    */
   hitScale: number;
   /** Son ROLE dans la horde (`ROLES`) : ce qui le rend unique a l'ecran. */
@@ -115,9 +85,8 @@ export interface Archetype {
 
 /**
  * PV de la pietaille legere. **Egal a `damage` de la dague** (`shared/weapons.ts`,
- * arme 0) : elle meurt donc en un coup, exactement comme avant que les PV
- * n'existent, et le rythme de mise a mort de l'etape 3 est preserve a
- * l'identique. C'est le point de depart de la porte du §3.3 de la spec.
+ * arme 0) : elle meurt en un coup. Voir `palierHp` (`shared/paliers.ts`) pour
+ * le piege d'arrondi que cette egalite cree.
  *
  * ⚠️ Si la dague change de degats, cette valeur doit suivre — le test
  * `archetypes.test.ts` les compare.
@@ -129,25 +98,13 @@ export const LIGHT_HP = 5;
  * depuis `HEAVY_ARMOR` (20 / (5 x 0,85) = 4,7).
  *
  * Un ennemi qui meurt en un coup ne porte jamais d'element assez longtemps
- * pour reagir (§3.3) : il faut donc que la reserve VARIE par archetype, et
- * c'est la premiere fois que choisir un archetype veut dire autre chose qu'un
- * sprite et une vitesse.
+ * pour reagir : il faut donc que la reserve VARIE par archetype.
  */
 export const HEAVY_HP = 20;
 
 /**
- * Nom de l'archetype de boss. **Le troll, et le depot le disait deja.**
- *
- * La doc des elites, ci-dessous, annonce depuis l'etape 2 que *« c'est l'etape
- * 6 qui leur donnera une reserve digne d'un boss »*, et l'en-tete de ce module
- * que les gros du pack ont `Windup`/`Attack`/`Recovery`, *« ce qui est un
- * vocabulaire de boss »*. L'etape 6a tient cette promesse sur UN d'entre eux
- * plutot que d'inventer un vingt-et-unieme archetype : le pool tournant est
- * l'etape 6b.
- *
- * Le troll parmi les six : la plus grosse cellule du pack (384 px) et la plus
- * LENTE (65 px/s). « Lourd et lent » est deja la lecture que `HEAVY_NAMES`
- * revendique — le boss la pousse a son terme.
+ * Nom de l'archetype de boss : le troll, la plus grosse cellule du pack
+ * (384 px) et la plus LENTE (65 px/s). « Lourd et lent », pousse a son terme.
  */
 const BOSS_NAME = 'troll';
 
@@ -156,80 +113,21 @@ const BOSS_NAME = 'troll';
  * multiplication par le nombre de joueurs, toutes deux faites par `bossHp`
  * (`shared/paliers.ts`).
  *
- * ⚠️ **PAR JOUEUR, et le nom le dit — tache 3 bis.** Le §4 de la spec veut des
- * PV *« croissant en 1,12^k ET avec le nombre de joueurs — meme forme que le
- * seuil d'experience »*, et ce seuil vaut `LEVEL_XP_BASE * niveau * joueurs`.
- * La meme forme impose que cette constante-ci soit la part d'UN joueur : c'est
- * elle qui se multiplie. Elle a donc ete divisee par quatre en meme temps
- * qu'elle changeait de nom (300 -> 75 fois `HEAVY_HP`), **pour que le boss que
- * la tache 3 a mesure ne bouge pas d'un point** : 75 x 4 joueurs = 300, soit
- * exactement les 6 000 PV du releve ci-dessous. Le verdict de la porte reste
- * donc valide sans etre rejoue de complaisance — c'est la MEME configuration.
+ * ⚠️ **PAR JOUEUR, et le nom le dit** : meme forme que le seuil d'experience
+ * (`LEVEL_XP_BASE * niveau * joueurs`), donc cette constante est la part d'UN
+ * joueur, celle qui se multiplie. A quatre joueurs, le boss vaut 300 fois la
+ * pietaille lourde (6 000 PV) ; en solo, 75 fois.
  *
- * ⚠️ **Renommee plutot que redefinie en silence.** `BOSS_HP_BASE` valait 6 000
- * et vaudrait 1 500 : garder le nom aurait laisse chaque lecture existante dire
- * autre chose que ce qu'elle disait — le motif « la fixture qui masque »,
- * neuf fois dans ce depot. Le renommage force chaque appelant a se relire.
+ * Reglee au banc `back/bench/boss.bench.ts` (4 joueurs, palier 0) : le combat
+ * doit durer entre 30 et 90 s. La mesure tombe haut dans la bande ; si le
+ * combat parait long en jeu, c'est cette constante qui baisse, pas la
+ * formule. Le banc donne des PV d'office a ses joueurs immobiles
+ * (`CARTES_DE_VITALITE`) : ce que vaut ce combat pour une equipe qui bouge
+ * reste a juger en jeu.
  *
- * ⚠️ **CE QUE CA COUTE, dit en face : en solo le boss ne vaut plus « plusieurs
- * centaines de fois la pietaille lourde », mais 75 fois.** Le §4 de la spec
- * ecrit les deux phrases cote a cote — *« plusieurs centaines de fois »* ET
- * *« croissant avec le nombre de joueurs »* — et elles ne peuvent etre vraies
- * ensemble qu'a effectif plein. C'est a effectif plein que la formulation de la
- * spec se lit, parce que c'est l'equipe de quatre que ce jeu vise et que c'est
- * elle que la porte a mesuree.
- *
- * ⚠️ **MESURE, tache 3, et c'est LA porte du §7 de la spec.** Le plan disait
- * de cette valeur qu'elle etait *« le seul chiffre de ce document qui soit un
- * trou »*, et engageait ses trois issues d'avance : 30 a 90 s pour tuer le
- * boss au palier 0 avec quatre joueurs, on garde ; moins de 15 s, on monte
- * cette valeur (pas la formule) ; plus de 3 min, on la baisse et on rouvre
- * `PALIER_HP_SCALE`.
- *
- * **Releve au banc `back/bench/boss.bench.ts`** (4 joueurs, palier 0, 8 graines
- * de carte, deux decors) :
- *
- * | Decor | Mediane | Min | Max |
- * | --- | --- | --- | --- |
- * | duel (boss seul, horde balayee, arme de base) | **70,1 s** | 70,1 | 70,1 |
- * | **melee (pipeline reel — LA PORTE)** | **86,9 s** | 46,0 | 126,5 |
- *
- * **VERDICT : 86,9 s, dans la bande 30-90 s -> ON GARDE.** L'issue etait
- * engagee avant la mesure et elle est appliquee telle quelle.
- *
- * ⚠️ **Le chiffre est HAUT dans sa bande, et il faut le dire.** 86,9 s laisse
- * 3 s de marge sous la borne de 90 : c'est le genre d'ecart que l'etape 5a a
- * refuse pour `HEAVY_WAVE_SHARE` (0,25 rejete a 1,2 point de sa borne). La
- * difference est qu'ici l'issue etait **ecrite d'avance** — la retoucher apres
- * avoir vu le nombre serait exactement ce que « engager les issues AVANT la
- * mesure » interdit. Si la verification manuelle (tache 12) trouve le combat
- * long, c'est cette constante qui baisse, pas la formule.
- *
- * ⚠️ **Le duel a 70,1 s est le PLANCHER, et il ne varie pas d'une graine a
- * l'autre** : sans horde il n'y a plus d'orbe, donc plus de montee de niveau,
- * donc l'arme de base seule — 6 000 / 70,1 = 85,6 degats/s, soit exactement
- * quatre dagues. C'est la validation du decor : le banc sait tuer un boss, et
- * son chiffre s'explique par un calcul independant. Les 6 000 PV du duel sont
- * ceux de QUATRE joueurs : depuis la tache 3 bis le banc les compose lui-meme
- * par `bossHp`, au lieu de lire cette constante et de mesurer un quart de boss.
- *
- * ⚠️ **Deux resultats a ne pas perdre, tires de ce meme banc :**
- * - une graine sur huit (0x88888888) ne tue **jamais** le boss en 300 s : la
- *   horde y atteint 950 entites de moyenne et absorbe tous les tirs. Ce n'est
- *   pas le boss qui est trop dur, c'est le decor qui sature ;
- * - avec des joueurs MORTELS et immobiles, la run est perdue avant la mort du
- *   boss sur **8 graines sur 8**. Le banc leur donne donc des points de vie
- *   d'office et le declare (voir `CARTES_DE_VITALITE`). Un vrai joueur se
- *   deplace ; **savoir ce que vaut ce combat pour une equipe qui bouge reste
- *   ouvert**, et c'est la tache 12 qui y repondra.
- *
- * ⚠️ **C'est un multiple de `HEAVY_HP`, ecrit comme tel.** Le §4 de la spec dit
- * *« plusieurs centaines de fois ceux de la pietaille lourde »* : ecrire le
- * produit garde ce rapport lisible, et le fait bouger tout seul le jour ou la
- * pietaille lourde est retouchee — c'est exactement ce que `LIGHT_HP` ne fait
- * PAS vis-a-vis de la dague, et ce qui a coute la marche de durabilite que
- * l'etape 0 de cette tache vient de solder. Le rapport annonce par la spec se
- * lit desormais sur `BOSS_HP_MULTIPLE * MAX_PLAYERS`, et un test le garde.
+ * ⚠️ **C'est un multiple de `HEAVY_HP`, ecrit comme tel**, pour que le
+ * rapport suive la pietaille lourde si elle change. Un test garde
+ * `BOSS_HP_MULTIPLE * MAX_PLAYERS`.
  */
 export const BOSS_HP_MULTIPLE = 75;
 export const BOSS_HP_PER_PLAYER = HEAVY_HP * BOSS_HP_MULTIPLE;
@@ -237,25 +135,17 @@ export const BOSS_HP_PER_PLAYER = HEAVY_HP * BOSS_HP_MULTIPLE;
 /**
  * Facteur de corps du boss — voir `Archetype.bodyScale`.
  *
- * ⚠️ **Le sien, pas celui de la pietaille.** `BODY_SCALE` vaut 1,25 et est
- * PLAFONNE par un test de `front/src/render/horde-renderer.test.ts` qui dit
- * qu'au-dela la hitbox ment plus que le rendu des projectiles ne la fait deja
- * mentir. Ce plafond garde la pietaille et continue de la garder : le boss ne
- * le releve pas.
- *
  * 3 : le corps de la pietaille est dessine a 80 px de diametre
- * (`2 x PROJECTILE_HIT_RADIUS x BODY_SCALE`) ; le boss est donc dessine a
- * 240 px. Le §4 de la spec ne demande rien de plus precis que *« nettement
- * plus grand »* — c'est un reglage de sensation, a juger a la tache 12.
+ * (`2 x PROJECTILE_HIT_RADIUS x BODY_SCALE`), le boss a 240 px. Reglage de
+ * sensation : il doit etre nettement plus grand que la pietaille.
  */
 export const BOSS_BODY_SCALE = 3;
 
 /**
  * La hitbox de tir du boss, en multiple de `PROJECTILE_HIT_RADIUS` : 3,75, soit
  * 120 px de rayon — la demi-boite DESSINEE du troll (`BODY_SCALE` 1,25 x
- * `BOSS_BODY_SCALE` 3, 240 px de diametre a l'ecran). Retour de playtest :
- * a 96 px la hitbox restait « trop petite » ; un tir qui touche le dessin, massue
- * comprise, doit toucher le boss. Voir `Archetype.hitScale`.
+ * `BOSS_BODY_SCALE` 3, 240 px de diametre a l'ecran). Voir
+ * `Archetype.hitScale`.
  */
 export const BOSS_HIT_SCALE = 3.75;
 
@@ -267,63 +157,40 @@ export const BOSS_HIT_SCALE = 3.75;
  * lit comme un bug, jamais comme un reglage. A 0,9, un coup retire toujours au
  * moins un dixieme de son brut, quelle que soit la ligne de la table.
  *
- * ⚠️ **Au site de LECTURE, pas au site d'APPLICATION.** Un `Math.max` dans
- * `appliquerDegats` donnerait le meme resultat en jeu tout en laissant la
- * valeur aberrante vivre dans `ARCHETYPES` — visible nulle part, et fausse
- * partout ou quelqu'un lit la table plutot que de frapper (l'interface, un
- * banc, un futur ecran de bestiaire).
+ * ⚠️ **Au site de LECTURE, pas au site d'APPLICATION** : une valeur
+ * aberrante ne doit pas vivre dans `ARCHETYPES`, ou d'autres la liraient
+ * (interface, banc).
  *
- * ⚠️ **Aucune valeur de production ne l'atteint aujourd'hui**, et il faut le
- * dire : la mutation « la table cesse d'appeler `capArmor` » survit donc a
- * toute la suite. C'est `capArmor` lui-meme qui est teste, pas son usage —
- * meme franchise que le `slot < 0` de `resolveProjectileDamage`.
+ * Aucune valeur de production ne l'atteint : c'est `capArmor` lui-meme qui
+ * est teste, pas son usage.
  */
 export const MAX_ARMOR = 0.9;
 
 /**
  * Armure de la pietaille lourde.
  *
- * ⚠️ **CE QUE CA COUTE, dit en face : la lourde ne meurt plus en quatre coups
- * de dague, mais en cinq.** 20 PV / (5 x 0,85) = 4,7. Le docbloc de `HEAVY_HP`
- * le dit desormais. L'armure est une AUGMENTATION de durabilite, pas une
- * redistribution : c'est ce qui donne quelque chose a mordre a la
- * Supraconduction (etape 5b, tache 7), dont l'effet est precisement de retirer
- * de l'armure. Une armure compensee par des PV en moins serait un no-op le
- * jour de sa naissance.
+ * Une AUGMENTATION de durabilite (cinq coups de dague au lieu de quatre) :
+ * c'est ce qui donne quelque chose a mordre a la Supraconduction.
  *
- * ⚠️ **0,15 et pas davantage, et c'est `REACTION_DAMAGE` qui le decide.** Le
- * docbloc de cette constante (`shared/constants.ts`) engage une relation de
- * jeu : *« 25, c'est plus que `HEAVY_HP` (20), donc la reaction tue la
- * pietaille lourde d'un coup »*. L'armure s'applique AUSSI au Choc thermique
- * (il passe par `appliquerDegats` comme tout le reste), donc la relation
- * devient `REACTION_DAMAGE x (1 - HEAVY_ARMOR) > HEAVY_HP` : elle tient a 0,15
- * (21,25), se joue a la virgule pres a 0,20 (20,0 exactement) et TOMBE a 0,25
- * (18,75) — le Choc thermique cesserait alors de nettoyer la pietaille lourde,
- * en silence. `combat.test.ts` garde desormais la relation complete, et plus
- * la simple comparaison des deux constantes nues.
+ * ⚠️ **0,15 et pas davantage, a cause de `REACTION_DAMAGE`.** La relation
+ * `REACTION_DAMAGE x (1 - HEAVY_ARMOR) > HEAVY_HP` doit tenir pour que le Choc
+ * thermique tue la pietaille lourde d'un coup : elle tient a 0,15, se joue a
+ * la virgule a 0,20 et tombe a 0,25. `combat.test.ts` la garde.
  */
 export const HEAVY_ARMOR = 0.15;
 
 /**
  * Armure du boss.
  *
- * ⚠️ **INVALIDE LA PORTE DU §7 DE L'ETAPE 6a, et ca ne doit pas passer en
- * silence.** Le releve du banc `boss.bench.ts` donnait 86,9 s pour tuer le
- * boss a quatre joueurs au palier 0, dans la bande engagee de 30-90 s. Une
- * armure de 0,4 multiplie sa durabilite effective par 1/(1-0,4) = 1,67 : le
- * meme combat demanderait ~145 s, hors bande. **Aucune valeur strictement
- * positive ne garde ce chiffre dans sa bande** — la porte etait deja haute
- * dedans (3 s de marge). Deux issues possibles, aucune tranchee ici :
- * remesurer et rouvrir la bande a la tache 12, ou compenser exactement en
- * ramenant `BOSS_HP_MULTIPLE` de 75 a 45 (45 / (1 - 0,4) = 75, entier), ce qui
- * preserverait la mesure au point pres mais ferait de l'armure du boss un
- * no-op le jour de sa naissance. Le choix appartient a la revue, pas a la
- * tache 1.
+ * ⚠️ **Elle multiplie la durabilite effective du boss par 1/(1-0,4) = 1,67**,
+ * ce qui le sort de la bande de 30-90 s mesuree par `boss.bench.ts` (voir
+ * `BOSS_HP_MULTIPLE`). Deux issues ouvertes : remesurer et rouvrir la bande,
+ * ou ramener `BOSS_HP_MULTIPLE` a 45 (45 / (1 - 0,4) = 75), ce qui ferait de
+ * l'armure un no-op.
  *
  * ⚠️ **0,5 a ete EVITE volontairement.** A 0,5, `brut x (1 - armor)` et
  * `brut x armor` donnent le meme nombre : tout test d'arithmetique ecrit sur
- * le boss passerait avec la formule inversee. C'est exactement « le decor qui
- * masque », dix fois dans ce depot.
+ * le boss passerait avec la formule inversee.
  */
 export const BOSS_ARMOR = 0.4;
 
@@ -339,26 +206,23 @@ export function capArmor(raw: number): number {
 }
 
 /**
- * Les ROLES de la horde (retour de playtest : *« il faudrait que les types de
- * monstres soient uniques — certains plus lents et plus tanky, moins
- * nombreux, des hordes de petits plus rapides »*). Un role fixe les PV,
- * l'armure, la taille de vague et le moment ou il apparait ; la VITESSE reste
- * propre a chaque archetype (`FOOTSOLDIERS`), dans la fourchette du role.
+ * Les ROLES de la horde, pour que chaque type de monstre soit unique. Un role
+ * fixe les PV, l'armure, la taille de vague et le moment ou il apparait ; la
+ * VITESSE reste propre a chaque archetype (`FOOTSOLDIERS`), dans la
+ * fourchette du role.
  *
  * - **nuee** : fragile et tres rapide, en grandes hordes ;
  * - **troupe** : la pietaille de reference (`LIGHT_HP`) ;
  * - **brute** : lente et blindee (`HEAVY_HP`, `HEAVY_ARMOR`), peu nombreuse ;
  * - **colosse** : tres lent, tres resistant, plus gros, quelques-uns par vague.
  *
- * ⚠️ **Troupe et brute gardent les valeurs d'avant** (5 et 20 PV) : le rythme
- * du debut de partie, mesure aux bancs, ne bouge presque pas ; ce sont la
- * nuee et le colosse qui elargissent l'eventail. Reglages de depart.
+ * Troupe et brute portent `LIGHT_HP` et `HEAVY_HP` ; nuee et colosse
+ * elargissent l'eventail. Reglages de depart.
  */
 export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
 
 /**
- * Les comportements (retour de playtest : *« des ennemis qui avancent par
- * bond », « des kamikazes », « un chaman »*). Chacun se DERIVE de ce que le
+ * Les comportements. Chacun se DERIVE de ce que le
  * serveur et les clients calculent deja a l'identique — le tick, l'identite,
  * les morts annoncees — donc aucun ne coute un octet sur le fil.
  *
@@ -366,7 +230,7 @@ export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
  * - `kamikaze` : explose a sa mort, et se fait exploser au contact ;
  * - `chaman` : les monstres dans son aura encaissent moitie moins ;
  * - `aucun` : marche droit vers sa cible.
- * - `porteur` : le porteur de coffre (etape 11) — attend loin de l'equipe,
+ * - `porteur` : le porteur de coffre — attend loin de l'equipe,
  *   fuit le joueur le plus proche a `PORTEUR_FLEE_RADIUS`.
  */
 export type Behavior =
@@ -391,12 +255,6 @@ export const LEAP_DASH_SPEED = 2.3;
 export const LEAP_PAUSE_SPEED = 0.1;
 
 /**
- * Le facteur de vitesse d'un bondisseur au tick `tick`. **Pur et deterministe**
- * : le tick absolu et l'identite, rien d'autre — le serveur et chaque client
- * le derivent a l'identique, et le rejeu le retrouve. Dephase par entite, pour
- * que la nuee ne bondisse pas d'un seul bloc.
- */
-/**
  * Le tireur s'arrete a `SHOOTER_RANGE` du joueur (au lieu du contact) et tire
  * tous les `SHOOTER_PERIOD_TICKS`, phase par identite — voir `EnemyShots`.
  */
@@ -413,7 +271,7 @@ export const THIEF_STEAL_SHARE = 0.15;
 export const THIEF_FLEE_SPEED = 1.3;
 
 /**
- * Le porteur de coffre (etape 11, §3.1 de la spec) : une elite d'UN
+ * Le porteur de coffre : une elite d'UN
  * exemplaire, que le directeur demande une fois par palier et que le hasard
  * ne tire jamais (il n'est pas dans `STEP2_ARCHETYPES`). Un voleur agrandi,
  * avec SA regle de fuite (`Horde.retarget`) : il n'en partage que les textures.
@@ -426,8 +284,9 @@ export const PORTEUR_HP = HEAVY_HP * PORTEUR_HP_MULTIPLE;
  * Il fuit si le joueur le plus proche — positions RETARDEES, celles du
  * flowfield — est a cette distance ou moins. Hors du rayon, il attend.
  *
- * ⚠️ **Le reglage du §8 de la spec** : la plupart des armes portent au-dela
- * de 400 px ; un tireur qui s'arrete a 450 px le crible pendant qu'il attend.
+ * ⚠️ **Le reglage de difficulte du porteur** : la plupart des armes portent
+ * au-dela de 400 px ; un tireur qui s'arrete a 450 px le crible pendant qu'il
+ * attend.
  * Si c'est trop facile au playtest, c'est ce nombre (ou les PV) qu'on monte.
  */
 export const PORTEUR_FLEE_RADIUS = 400;
@@ -435,7 +294,7 @@ export const PORTEUR_FLEE_RADIUS = 400;
 export const PORTEUR_SPEED_FACTOR = 0.9;
 /**
  * Dessine 1,6 fois plus gros qu'un voleur ordinaire — et TOUCHE 1,6 fois plus
- * large : `shared/projectiles.ts` multiplie la hitbox par `bodyScale`.
+ * large : hors boss, `hitScale` vaut `bodyScale`.
  */
 export const PORTEUR_BODY_SCALE = 1.6;
 
@@ -470,6 +329,12 @@ export const SHAMAN_AURA_RADIUS = 200;
 /** La part des degats que l'aura retire, combinee a l'armure (1 - (1 - a)(1 - r)). */
 export const SHAMAN_AURA_REDUCTION = 0.5;
 
+/**
+ * Le facteur de vitesse d'un bondisseur au tick `tick`. **Pur et deterministe**
+ * : le tick absolu et l'identite, rien d'autre — le serveur et chaque client
+ * le derivent a l'identique, et le rejeu le retrouve. Dephase par entite, pour
+ * que la nuee ne bondisse pas d'un seul bloc.
+ */
 export function leapFactor(entityId: number, tick: number): number {
   const phase = (entityId * 7) % LEAP_PERIOD_TICKS;
   return (tick + phase) % LEAP_PERIOD_TICKS < LEAP_DASH_TICKS ? LEAP_DASH_SPEED : LEAP_PAUSE_SPEED;
@@ -539,7 +404,7 @@ function armorOf(name: string, role: Role): number {
 
 /**
  * Les cellules font toutes 192 px en pietaille : c'est ce qui permet un
- * rangement par etageres quasi optimal dans l'atlas (§9.2 de la spec).
+ * rangement par etageres quasi optimal dans l'atlas.
  */
 const FOOTSOLDIERS: readonly (Omit<
   Archetype,
@@ -657,7 +522,7 @@ const FOOTSOLDIERS: readonly (Omit<
   },
 ];
 
-/** Hors perimetre de l'etape 2 : regime de replication different (§3.3). */
+/** Les elites : jamais tirees par le generateur, sauf le boss. */
 const ELITES: readonly Omit<
   Archetype,
   'id' | 'hp' | 'armor' | 'bodyScale' | 'hitScale' | 'countFactor' | 'role' | 'behavior'
@@ -677,7 +542,7 @@ const ELITES: readonly Omit<
 ];
 
 /**
- * Le porteur de coffre (etape 11) : la planche, le cycle et la cellule du
+ * Le porteur de coffre : la planche, le cycle et la cellule du
  * voleur (`thief`), sa vitesse a lui. Range APRES le troll, pour qu'aucun
  * identifiant existant ne bouge — le fil, l'atlas et les tests en dependent.
  */
@@ -695,19 +560,15 @@ const PORTEUR: Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale' | 'hitScale' 
 export const FOOTSOLDIER_COUNT = FOOTSOLDIERS.length;
 
 /**
- * ⚠️ **Les elites prennent `LIGHT_HP` faute de mieux — SAUF le boss.** Elles ne
- * sont recensees ici que pour que les ajouter soit du contenu (§3.3 de la spec
- * d'orientation) : le generateur ne les tire jamais. La promesse de ce
- * paragraphe — *« c'est l'etape 6 qui leur donnera une reserve digne d'un
- * boss »* — est tenue par `BOSS_NAME` a l'etape 6a, sur une seule d'entre
- * elles. Les cinq autres gardent leur placeholder de 5 PV, assume, jusqu'a
- * l'etape 6b et son pool tournant.
+ * ⚠️ **Les elites prennent `LIGHT_HP` faute de mieux — SAUF le boss.** Le
+ * generateur ne les tire jamais : elles ne sont recensees que pour que les
+ * ajouter soit du contenu.
  */
 export const ARCHETYPES: readonly Archetype[] = [
   ...FOOTSOLDIERS,
   // Les elites ne sont jamais tirees (le boss mis a part) : role neutre.
   ...ELITES.map((e) => ({ ...e, role: 'troupe' as Role })),
-  // Etape 11 : le porteur, en DERNIER.
+  // Le porteur, en DERNIER.
   PORTEUR,
 ].map((a, id) => ({
   ...a,
@@ -722,8 +583,7 @@ export const ARCHETYPES: readonly Archetype[] = [
 
 /**
  * Les archetypes que le generateur tire : TOUTE la pietaille, chacun dans son
- * role (`ROLES`). Ce n'etait que quatre a l'etape 2 ; le playtest a demande
- * des monstres « uniques ».
+ * role (`ROLES`).
  */
 export const STEP2_ARCHETYPES: readonly number[] = Array.from(
   { length: FOOTSOLDIERS.length },
@@ -735,8 +595,7 @@ export const STEP2_ARCHETYPES: readonly number[] = Array.from(
  * chiffre**.
  *
  * Un `19` en dur pointerait sur un autre monstre le jour ou un archetype est
- * insere avant lui — et le generateur ferait apparaitre une tortue a 6 000 PV
- * sans qu'un test ne bouge, puisque tout ce qui suit ne connait qu'un numero.
+ * insere avant lui, sans qu'un test ne bouge.
  */
 export const BOSS_ARCHETYPE: number =
   ARCHETYPES.find((a) => a.name === BOSS_NAME)?.id ??
@@ -762,7 +621,7 @@ export function archetypeIdOf(name: string): number {
 }
 
 /**
- * Identifiant du porteur de coffre (etape 11), **derive du nom** comme
+ * Identifiant du porteur de coffre, **derive du nom** comme
  * `BOSS_ARCHETYPE` : un `20` en dur pointerait sur un autre monstre le jour
  * ou un archetype serait insere avant lui.
  */

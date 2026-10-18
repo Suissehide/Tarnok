@@ -2,53 +2,30 @@
 """
 Construit l'atlas de la pietaille depuis le pack Tiny Swords.
 
-Le §9.2 de la spec de l'etape 2 impose **une seule texture de base** : un
-`ParticleContainer` ne batche que si toutes les particules partagent le meme
-atlas, et sans batch tout l'interet disparait.
+**Une seule texture de base** : un `ParticleContainer` ne batche que si toutes
+les particules partagent le meme atlas.
 
 Les planches sources sont des bandes horizontales dont la cellule est carree,
 de cote egal a la hauteur : `Gnoll_Walk.png` en 1536x192 fait 8 images de 192.
+Chaque archetype embarque DEUX clips, course et attaque (joue a l'arret, au
+contact). C'est ce volume qui impose `ATLAS_SIZE = 4096` : 2048 ne suffit pas.
 
-Tache 17.2 : l'atlas embarque desormais DEUX planches par archetype — course
-et attaque — plutot que la seule course. Un monstre a portee de contact
-s'arrete et joue son clip d'attaque (`shared/horde.ts` decide l'arret,
-`front/src/render/horde-renderer.ts` choisit le clip). Consequence mecanique :
-~189 images a ranger au lieu de 83, ce qui ne tient plus dans les 3,93 Mpx
-utiles d'un atlas de 2048 (dix rangees de 192) — d'ou `ATLAS_SIZE = 4096`
-(9 rangees de 192 suffisent, tres large marge).
+⚠️ Quatre archetypes a distance (gnoll, slingshot-gnome, bomb-fish,
+harpoon-shark) n'ont pas de `..._Attack.png`, seulement `..._Throw.png` ou
+`..._Shoot.png` : `SOURCES` les reference explicitement plutot que de deviner
+un nom de fichier.
 
-⚠️ Toutes les planches de pietaille n'ont pas de fichier `..._Attack.png` :
-quatre archetypes du pack (gnoll, slingshot-gnome, bomb-fish, harpoon-shark)
-sont a distance et n'ont qu'un `..._Throw.png` ou `..._Shoot.png` — pas de
-`..._Attack.png` du tout. C'est l'equivalent fonctionnel (l'animation jouee a
-l'arret, au contact) : `SOURCES` la reference explicitement plutot que de
-deviner un nom de fichier a l'execution. Voir le rapport de la tache 17.
+Le manifeste publie, par archetype, la boite englobante du contenu NON
+TRANSPARENT (union des deux clips, pour une echelle stable d'une image a
+l'autre). C'est elle, pas la cellule en grande partie vide, que
+`front/src/render/horde-renderer.ts` met a l'echelle de `PROJECTILE_HIT_RADIUS`.
 
-Tache 17.1 : le manifeste publie aussi, par archetype, la boite englobante du
-contenu NON TRANSPARENT — union sur toutes les images des DEUX clips, pour une
-echelle qui ne varie pas d'une image d'animation a l'autre. C'est elle, pas la
-cellule, que `front/src/render/horde-renderer.ts` doit mettre a l'echelle de
-`PROJECTILE_HIT_RADIUS` : une cellule de 192 px est en grande partie vide, la
-creature n'en occupe qu'une fraction.
-
-Tache 5 de l'etape 6a : **le BOSS entre dans l'atlas**. Il etait simule, touche,
-marque et tue depuis la tache 3, mais pas dessine — `SOURCES` ne listait que les
-quatorze pietailles, et `HordeRenderer.draw` saute silencieusement un archetype
-sans textures. Le troll (`BOSS_NAME`, `shared/archetypes.ts`) est l'archetype
-19, donc six creneaux apres la derniere pietaille : `SOURCES` porte desormais
-des TROUS explicites (`None`) pour que son index reste son identifiant.
-
-⚠️ **Les cinq autres elites restent des trous, et c'est une MESURE, pas un
-oubli.** Empaqueter les six elites du bestiaire sature l'atlas : leurs cellules
-font 256 a 384 px et leurs clips d'attaque sont longs (jusqu'a 13 images pour le
-panda), soit 9,2 Mpx a ajouter aux 7,0 Mpx de la pietaille — 16,2 Mpx de contenu
-pour 16,8 Mpx d'atlas, que le rangement par etageres ne sait pas placer sans
-perte. Verifie en simulant l'empaquetage : SATURE a six elites, 9,33 Mpx sur
-16,78 avec le seul troll. Les cinq autres n'apparaissent jamais en jeu (le
-generateur ne tire que dans la pietaille), donc les ranger serait payer un
-depassement pour un contenu que personne ne voit. Le jour ou l'etape 6b leur
-donnera un pool tournant, c'est `ATLAS_SIZE` — ou un second atlas — qu'il faudra
-rouvrir, pas cette liste.
+⚠️ **Parmi les elites, seul le boss (troll) est range, et c'est une MESURE.**
+Les six elites ont des cellules de 256 a 384 px et de longs clips d'attaque :
+avec la pietaille, elles saturent l'atlas de 4096. Les cinq autres
+n'apparaissent jamais en jeu (le generateur ne tire que dans la pietaille). Le
+jour ou elles sortiront, c'est `ATLAS_SIZE` — ou un second atlas — qu'il faudra
+rouvrir.
 
     python3 tools/build_monster_atlas.py
 
@@ -74,17 +51,13 @@ ATLAS_SIZE = 4096
 # Doit rester d'accord avec `ARCHETYPES` de shared/archetypes.ts, dans le meme
 # ordre : l'index dans cette liste EST l'identifiant d'archetype.
 #
-# ⚠️ **Un `None` est un archetype QUI N'ENTRE PAS DANS L'ATLAS**, pas une case
-# qu'on aurait oublie de remplir. C'est ce qui permet de ranger le boss
-# (archetype 19) sans ranger les cinq elites qui le precedent — voir la note du
-# module — tout en gardant l'invariant « index == identifiant », qui est la
-# convention de tout `shared/`. Le manifeste, lui, ne publie que les archetypes
-# reellement ranges, chacun avec son `id` explicite : c'est ce champ, et pas la
-# position dans le tableau, que `HordeRenderer.adoptAtlas` lit.
+# ⚠️ **Un `None` est un archetype QUI N'ENTRE PAS DANS L'ATLAS**, pas un oubli :
+# il garde l'invariant « index == identifiant » tout en sautant les elites.
+# Le manifeste ne publie que les archetypes ranges, chacun avec son `id`
+# explicite : c'est ce champ que `HordeRenderer.adoptAtlas` lit.
 #
-# Troisieme colonne : la planche d'attaque. `_Attack.png` quand le pack en a
-# une ; sinon le clip d'action a distance du pack (`_Throw.png`/`_Shoot.png`)
-# — voir la note du module ci-dessus, ces quatre-la n'ont pas de `_Attack.png`.
+# Troisieme colonne : la planche d'attaque (`_Throw.png`/`_Shoot.png` pour les
+# archetypes a distance, voir la note du module).
 SOURCES = [
     ("skull", "Skull/Skull_Run.png", "Skull/Skull_Attack.png"),
     ("gnoll", "Gnoll/Gnoll_Walk.png", "Gnoll/Gnoll_Throw.png"),
@@ -129,9 +102,8 @@ SOURCES = [
 class Shelf:
     """
     L'etat mutable du rangement par etageres, partage par TOUS les
-    archetypes et leurs deux clips — c'est ce qui rend l'empaquetage
-    quasi optimal (voir le docstring du module) : rien ne force un
-    archetype ou un clip a commencer une nouvelle rangee.
+    archetypes et leurs deux clips : rien ne force un archetype ou un clip a
+    commencer une nouvelle rangee.
     """
 
     def __init__(self) -> None:
@@ -171,10 +143,8 @@ def frame_bbox(frame: Image.Image) -> tuple[int, int, int, int] | None:
     Boite englobante du contenu non transparent d'UNE image, dans le repere de
     la cellule (pas de l'atlas). `None` si l'image est entierement transparente.
 
-    Passe explicitement par le canal alpha plutot que par
-    `Image.getbbox(alpha_only=True)` : ce parametre n'existe que depuis
-    Pillow 9.2, et `split()[-1].getbbox()` donne la meme reponse sur toute
-    version installee.
+    Passe par le canal alpha plutot que par `Image.getbbox(alpha_only=True)`,
+    qui n'existe que depuis Pillow 9.2.
     """
     return frame.split()[-1].getbbox()
 
@@ -230,10 +200,8 @@ def main() -> None:
     shelf = Shelf()
 
     for archetype_id, source in enumerate(SOURCES):
-        # Un trou : cet archetype existe dans `ARCHETYPES` mais n'entre pas dans
-        # l'atlas. Rien n'est range, et le manifeste ne le mentionne pas — c'est
-        # `HordeRenderer.draw` qui saute alors silencieusement les entites de cet
-        # archetype, comme il le faisait pour les vingt elites avant cette tache.
+        # Un trou : absent du manifeste, `HordeRenderer.draw` saute alors
+        # silencieusement les entites de cet archetype.
         if source is None:
             continue
         name, run_relative, attack_relative = source
@@ -250,15 +218,12 @@ def main() -> None:
         run_clip, run_bbox = pack_clip(atlas, shelf, run_sheet, f"{name} (course)")
         attack_clip, attack_bbox = pack_clip(atlas, shelf, attack_sheet, f"{name} (attaque)")
 
-        # Boite englobante du CONTENU (tache 17.1), union des deux clips :
-        # une echelle unique par archetype, qui ne varie pas entre la course
-        # et l'attaque ni d'une image a l'autre du meme cycle.
+        # Boite englobante du CONTENU, union des deux clips : une echelle
+        # unique par archetype.
         boxes = [b for b in (run_bbox, attack_bbox) if b is not None]
         if not boxes:
-            # Planche entierement transparente : ne devrait jamais arriver
-            # sur de vraies planches Tiny Swords. Repli sur la cellule
-            # entiere plutot que planter — mieux vaut un monstre a la bonne
-            # taille de cadre qu'un build casse.
+            # Planche entierement transparente (jamais vu sur le pack) :
+            # repli sur la cellule entiere plutot qu'un build casse.
             bounds = {"x": 0, "y": 0, "w": cell, "h": cell}
         else:
             bx0 = min(b[0] for b in boxes)

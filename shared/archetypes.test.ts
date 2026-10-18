@@ -68,11 +68,10 @@ describe('ARCHETYPES', () => {
 
 describe('la reserve de points de vie (etape 5a)', () => {
   /**
-   * ⚠️ **C'est la porte du §3.3 de la spec, ecrite en test.** Si la pietaille
-   * legere n'a pas EXACTEMENT les degats de la dague, elle ne meurt plus en un
-   * coup et le rythme de mise a mort de l'etape 3 change — ce que la spec
-   * refuse comme point de depart. Les deux nombres sont lies, pas coincidents :
-   * cette assertion est ce qui les tient ensemble si la dague est retouchee.
+   * ⚠️ Si la pietaille legere n'a pas EXACTEMENT les degats de la dague, elle
+   * ne meurt plus en un coup et tout le rythme de mise a mort change. Les deux
+   * nombres sont lies, pas coincidents : cette assertion les tient ensemble si
+   * la dague est retouchee.
    */
   it('la pietaille legere meurt en UN coup de dague : LIGHT_HP vaut les degats de l arme de base', () => {
     expect(LIGHT_HP).toBe(weaponOf(0).damage);
@@ -91,17 +90,15 @@ describe('la reserve de points de vie (etape 5a)', () => {
   });
 
   /**
-   * Le plan demande QUATRE lourds parmi les vingt. Compte, plutot que de faire
-   * confiance a la liste de noms : une faute de frappe dans `HEAVY_NAMES`
-   * (`'gnol'` pour `'gnoll'`) ne leve rien, elle rend simplement l'archetype
-   * leger — et toute la pietaille lourde disparaitrait en silence.
+   * QUATRE lourds parmi les vingt. Compte, plutot que de faire confiance a la
+   * liste de noms : une faute de frappe (`'gnol'` pour `'gnoll'`) ne leve rien,
+   * elle rend l'archetype leger en silence.
    */
   it('donne a chaque pietaille les PV de son role, le boss et le porteur seuls faisant exception', () => {
-    // Quatre brutes a `HEAVY_HP`, comme les quatre lourdes d'avant.
     expect(ARCHETYPES.filter((a) => a.hp === HEAVY_HP)).toHaveLength(4);
     for (const a of ARCHETYPES) {
-      // ⚠️ **Deux exceptions, et elles sont nommees** (le porteur depuis
-      // l'etape 11) : comparer a l'identifiant dit qu'il n'y en a pas d'autre.
+      // ⚠️ **Deux exceptions, et elles sont nommees** : comparer a
+      // l'identifiant dit qu'il n'y en a pas d'autre.
       const attendu =
         a.id === BOSS_ARCHETYPE
           ? BOSS_HP_PER_PLAYER
@@ -113,8 +110,7 @@ describe('la reserve de points de vie (etape 5a)', () => {
   });
 
   /**
-   * Retour de playtest : *« il faudrait que les types de monstres soient
-   * uniques »*. Le contrat des roles, ordonne : la nuee est la plus rapide et
+   * Le contrat des roles, ordonne : la nuee est la plus rapide et
    * la plus nombreuse, le colosse le plus lent, le plus resistant et le plus
    * rare — et chaque role compte au moins un archetype tirable.
    */
@@ -143,13 +139,10 @@ describe('la reserve de points de vie (etape 5a)', () => {
   });
 
   /**
-   * ⚠️ **Le piege de la fixture qui masque, pris a l'avance.** `WaveDirector`
-   * ne tire que dans `STEP2_ARCHETYPES` : quatre lourds choisis EN DEHORS de
-   * ces quatre-la n'apparaitraient jamais en jeu, la porte du §3.3 mesurerait
-   * un rythme de mise a mort rigoureusement inchange, et on en conclurait a
-   * tort que donner des PV ne coute rien. Le registre de l'etape 4 compte
-   * quatre mutations survivantes pour cette raison exacte — « compter le cas
-   * qu'on croit creer, pas le supposer ».
+   * ⚠️ **Le piege de la fixture qui masque.** `WaveDirector` ne tire que dans
+   * `STEP2_ARCHETYPES` : des lourds choisis EN DEHORS n'apparaitraient jamais
+   * en jeu, et on mesurerait un rythme de mise a mort inchange en concluant a
+   * tort que donner des PV ne coute rien.
    */
   it('au moins une pietaille lourde est tirable par le generateur de vagues', () => {
     const tirables = STEP2_ARCHETYPES.map((id) => archetypeOf(id));
@@ -164,8 +157,6 @@ describe('archetypeOf', () => {
 });
 
 /**
- * L'archetype de boss (etape 6a, tache 3).
- *
  * ⚠️ **Ce que ces tests gardent n'est PAS « le boss a beaucoup de PV »** — ca,
  * n'importe quel nombre le satisferait. Ils gardent trois regles de conception
  * que le reste du jeu suppose sans jamais les verifier : qu'il n'y en ait
@@ -174,12 +165,10 @@ describe('archetypeOf', () => {
  */
 describe("l'archetype de boss (etape 6a)", () => {
   /**
-   * ⚠️ **LA regle du §1.1 de la spec, ecrite en test.** La vie du boss n'a le
-   * droit de voyager dans le snapshot QUE parce qu'il est un : *« si un jour un
-   * palier fait apparaitre dix boss, ce n'est plus un boss, c'est de la
-   * pietaille d'elite — et sa vie redevient serveur seul »*. Ce compte est ce
-   * qui fera rougir la tache 4 le jour ou quelqu'un ajoutera un second boss au
-   * bestiaire en croyant faire du contenu.
+   * ⚠️ La vie du boss n'a le droit de voyager dans le snapshot QUE parce qu'il
+   * est un : dix boss, ce serait de la pietaille d'elite, dont la vie reste
+   * serveur seul. Ce compte rougit le jour ou quelqu'un ajoute un second boss
+   * au bestiaire.
    */
   it("n'existe qu'en UN exemplaire dans tout le bestiaire", () => {
     expect(ARCHETYPES.filter((a) => a.hp === BOSS_HP_PER_PLAYER)).toHaveLength(1);
@@ -187,17 +176,12 @@ describe("l'archetype de boss (etape 6a)", () => {
   });
 
   /**
-   * Le §4 de la spec : *« plusieurs centaines de fois ceux de la pietaille
-   * lourde »*. Le rapport est DERIVE de `HEAVY_HP`, jamais un 6 000 recopie —
-   * retoucher la pietaille lourde deplacerait sinon le boss sans que rien ne le
-   * dise.
+   * Le rapport est DERIVE de `HEAVY_HP`, jamais un nombre recopie : retoucher
+   * la pietaille lourde deplacerait sinon le boss sans que rien ne le dise.
    *
-   * ⚠️ **Le rapport se lit A EFFECTIF PLEIN depuis la tache 3 bis**, et c'est
-   * la seule lecture qui rende vraies ensemble les deux phrases du §4 —
-   * *« plusieurs centaines de fois »* ET *« croissant avec le nombre de
-   * joueurs »*. En solo le boss vaut 75 fois la pietaille lourde ; a quatre,
-   * 300. C'est l'equipe de quatre que ce jeu vise et que la porte du §7 a
-   * mesuree.
+   * ⚠️ **Le rapport se lit A EFFECTIF PLEIN** : c'est la seule lecture qui
+   * rende vrais ensemble « plusieurs centaines de fois » et « croissant avec
+   * le nombre de joueurs » (75 fois en solo, 300 a quatre, l'equipe visee).
    */
   it('encaisse plusieurs centaines de fois la pietaille lourde a effectif plein, comme le §4 le demande', () => {
     expect(BOSS_HP_PER_PLAYER).toBe(HEAVY_HP * BOSS_HP_MULTIPLE);
@@ -209,11 +193,9 @@ describe("l'archetype de boss (etape 6a)", () => {
   });
 
   /**
-   * ⚠️ **Le piege de la fixture qui masque, dans son autre sens.** Le
-   * generateur ne tire QUE dans `STEP2_ARCHETYPES` pour ses vagues ordinaires
-   * (`back/src/wave-director.ts`) : si le boss s'y glissait, une vague de 200
-   * boss tomberait toutes les six secondes et le §1.1 serait viole sans qu'un
-   * seul test du salon ne bouge.
+   * ⚠️ Le generateur ne tire QUE dans `STEP2_ARCHETYPES` pour ses vagues
+   * ordinaires (`back/src/wave-director.ts`) : si le boss s'y glissait, des
+   * vagues entieres de boss tomberaient sans qu'un seul test du salon ne bouge.
    */
   it("n'est jamais tirable comme une vague ordinaire", () => {
     expect(STEP2_ARCHETYPES).not.toContain(BOSS_ARCHETYPE);
@@ -234,7 +216,7 @@ describe("l'archetype de boss (etape 6a)", () => {
       if (a.id === BOSS_ARCHETYPE) {
         continue;
       }
-      // Le porteur (etape 11) a SON facteur, lui aussi — sous celui du boss.
+      // Le porteur a SON facteur, lui aussi, sous celui du boss.
       const attendu = a.id === PORTEUR_ARCHETYPE ? PORTEUR_BODY_SCALE : ROLES[a.role].bodyScale;
       expect(a.bodyScale, a.name).toBe(attendu);
       expect(a.bodyScale).toBeLessThan(BOSS_BODY_SCALE);
@@ -273,12 +255,9 @@ describe("l'armure (etape 5b, tache 1)", () => {
 
   it('le Choc thermique tue encore la pietaille lourde MALGRE son armure', () => {
     // ⚠️ **La relation que `HEAVY_ARMOR` doit respecter, et qui se perdrait en
-    // silence.** Le docbloc de `REACTION_DAMAGE` engage *« 25, c'est plus que
-    // `HEAVY_HP` (20), donc la reaction tue la pietaille lourde d'un coup »* ;
-    // le choc passant par `appliquerDegats`, c'est le produit qu'il faut
-    // comparer. A 0,25 d'armure il vaudrait 18,75 et le Choc thermique
-    // cesserait de nettoyer la lourde — sans qu'aucun test ne bouge si celui-ci
-    // n'existait pas.
+    // silence** : la reaction doit tuer la pietaille lourde d'un coup. Le choc
+    // passant par `appliquerDegats`, c'est le produit avec l'armure qu'il faut
+    // comparer a `HEAVY_HP`.
     expect(REACTION_DAMAGE * (1 - HEAVY_ARMOR)).toBeGreaterThan(HEAVY_HP);
   });
 
@@ -295,8 +274,7 @@ describe("l'armure (etape 5b, tache 1)", () => {
   it('capArmor rabat une valeur aberrante sur le plafond et laisse le reste intact', () => {
     // ⚠️ **0,97 et 0,12 ne sont AUCUNE constante de production**, et c'est le
     // point : une valeur de decor egale a une valeur de production rend la
-    // borne inverifiable (`GEL_TICKS` valait `LEVEL_FREEZE_TICKS`, et 80 tests
-    // passaient sur une derivation fausse).
+    // borne inverifiable.
     expect(capArmor(0.97)).toBe(MAX_ARMOR);
     expect(capArmor(1)).toBe(MAX_ARMOR);
     expect(capArmor(0.12)).toBe(0.12);

@@ -75,9 +75,7 @@ import {
 
 /**
  * Cases par cote de l'atlas, DERIVEE des deux constantes exportees plutot que
- * recopiee : un nombre en dur aurait suivi le meme sort que `16` a la tache 8
- * de l'etape 5c, ou l'atlas est passe de 4 x 4 a 8 x 8 pour tenir les dix-sept
- * armes du catalogue sans que ce test n'ait rien vu venir.
+ * recopiee : un nombre en dur casse des que le catalogue grandit.
  */
 const PROJECTILE_ATLAS_COLS_MESURE = PROJECTILE_ATLAS_PX / PROJECTILE_CELL_PX;
 
@@ -86,10 +84,10 @@ const PROJECTILE_ATLAS_COLS_MESURE = PROJECTILE_ATLAS_PX / PROJECTILE_CELL_PX;
  * construction — sans jamais appeler `load()`, qui a besoin d'un canevas 2D
  * (donc d'un navigateur) que l'environnement de test (`vitest`, `node`) n'a
  * pas. C'est precisement pour ca que `mapBoundsArea()` est appliquee dans le
- * CONSTRUCTEUR de chaque classe plutot que dans `load()` : un `ParticleContainer`
- * ne calcule jamais ses propres bornes (voir le spike de l'etape 2, rappele
- * dans `horde-renderer.ts`), et sans ce test rien ne l'aurait attrape si un
- * futur refactor deplacait l'affectation.
+ * CONSTRUCTEUR de chaque classe plutot que dans `load()` : un
+ * `ParticleContainer` ne calcule jamais ses propres bornes (voir
+ * `horde-renderer.ts`), et sans ce test rien n'attraperait un refactor qui
+ * deplacerait l'affectation.
  */
 describe('rendu des projectiles/flashs — bornes explicites du ParticleContainer', () => {
   const expected = {
@@ -111,14 +109,9 @@ describe('rendu des projectiles/flashs — bornes explicites du ParticleContaine
 });
 
 /**
- * Étape 5a, §9 : *« la reaction : flash court, large, genereux — c'est la que
- * passe le budget VFX »*, et la regle qui va avec : **l'etat persistant est
- * discret, la reaction est spectaculaire**.
- *
- * Cette regle n'est pas une intention, c'est une comparaison : le flash de
- * reaction doit etre visiblement plus grand que celui d'un impact ordinaire,
- * sans quoi les deux se confondent et le budget de particules repart en bruit
- * de fond. Elle se teste, et c'est ce que fait le premier cas ci-dessous.
+ * La reaction : un flash court, large, genereux — c'est la que passe le
+ * budget VFX. **L'etat persistant est discret, la reaction est
+ * spectaculaire.**
  */
 describe('reactionFlashScale — la taille du flash de reaction', () => {
   it('couvre EXACTEMENT 2 x REACTION_RADIUS a la fin de sa vie : ni plus, ni moins', () => {
@@ -154,10 +147,10 @@ describe('reactionFlashScale — la taille du flash de reaction', () => {
 });
 
 /**
- * ⚠️ **Les deux moities, toujours** (R24/R25) : une fonction qui rendrait
- * toujours `0xffffff` passerait le cas « charge », et une qui rendrait
- * toujours la moyenne passerait le cas « solo ». Il faut les deux, et il faut
- * qu'ils DIFFERENT.
+ * ⚠️ **Les deux moities, toujours** : une fonction qui rendrait toujours
+ * `0xffffff` passerait le cas « charge », et une qui rendrait toujours la
+ * moyenne passerait le cas « solo ». Il faut les deux, et il faut qu'ils
+ * DIFFERENT.
  */
 describe('reactionTint — ce que la teinte du flash encode', () => {
   const CHOC_THERMIQUE = packElementPair(ELEMENT.BRAISE, ELEMENT.GIVRE);
@@ -165,7 +158,7 @@ describe('reactionTint — ce que la teinte du flash encode', () => {
   it('rend l identite 0xffffff quand la reaction a charge la Synergie (deux joueurs)', () => {
     // `0xffffff` est l'identite du produit que fait `tint` : la reaction
     // inter-joueurs est donc, litteralement, la plus lumineuse que ce
-    // renderer puisse dessiner (§6.5 — « le coeur du projet »).
+    // renderer puisse dessiner.
     expect(reactionTint(CHOC_THERMIQUE, true)).toBe(0xffffff);
   });
 
@@ -208,17 +201,11 @@ describe('ReactionFlashRenderer — ce que le §6.6 exige du conteneur', () => {
 });
 
 /**
- * Étape 5a, tache 12 — **une apparence par arme**, venue de l'auteur en
- * jouant : *« fais des projectiles differents pour chaque arme, en forme,
- * taille, couleur, halo, avec une trainee »*. Jusqu'ici les neuf armes
- * tiraient le meme point lumineux.
+ * **Une apparence par arme** : forme, taille, couleur, halo, trainee.
  *
- * ⚠️ **`draw` n'etait atteignable par AUCUN test avant ce bloc**, exactement
- * comme celui de `HordeRenderer` avant la tache 9 bis : il retournait au
- * premier `if (!texture)` faute de canevas 2D, et tout son corps pouvait etre
- * retire sans qu'une assertion ne bouge. `adoptTextures` separe le decoupage
- * de la cuisson, et un atlas synthetique suffit alors a mesurer ce que `draw`
- * pose reellement sur les particules.
+ * ⚠️ `draw` retourne au premier `if (!texture)` faute de canevas 2D :
+ * `adoptTextures` separe le decoupage de la cuisson, et un atlas synthetique
+ * suffit alors a mesurer ce que `draw` pose reellement sur les particules.
  */
 function drawnLayers(
   projectiles: Projectiles,
@@ -227,7 +214,7 @@ function drawnLayers(
   const renderer = new ProjectileRenderer();
   renderer.adoptTextures(
     new Texture({ source: new TextureSource({ width: 128, height: 128 }) }),
-    // Une bande par profil (etape 8) : un atlas trop court ferait decouper des
+    // Une bande par profil : un atlas trop court ferait decouper des
     // cases hors source, exactement ce que `streakCellRect` numerote.
     new Texture({
       source: new TextureSource({
@@ -269,10 +256,10 @@ describe('ProjectileRenderer.draw — neuf armes, neuf apparences distinctes', (
   });
 
   /**
-   * ⚠️ **« Neuf armes ont une apparence » et « neuf armes ont la MEME
-   * apparence » se ressemblent beaucoup.** On assene donc que les neuf
-   * diffèrent DEUX A DEUX, sur chacun des trois canaux que `draw` pose : la
-   * case d'atlas (la forme), la teinte, et le calibre.
+   * ⚠️ **« Chaque arme a une apparence » et « toutes ont la MEME apparence »
+   * se ressemblent beaucoup.** On assene donc qu'elles different DEUX A DEUX,
+   * sur chacun des trois canaux que `draw` pose : la case d'atlas (la forme),
+   * la teinte, et le calibre.
    */
   it('pose une case d atlas differente par arme', () => {
     const { heads } = drawnLayers(oneOfEachWeapon());
@@ -283,14 +270,14 @@ describe('ProjectileRenderer.draw — neuf armes, neuf apparences distinctes', (
   it('pose une teinte differente par arme sur la trainee', () => {
     const { trails } = drawnLayers(oneOfEachWeapon());
     expect(new Set(trails.map((t) => t.tint)).size).toBe(WEAPONS.length);
-    // Et ce sont bien CELLES du catalogue, pas neuf valeurs quelconques.
+    // Et ce sont bien CELLES du catalogue, pas des valeurs quelconques.
     expect(trails.map((t) => t.tint)).toEqual(WEAPONS.map((w) => w.look.tint));
   });
 
   it('pose un calibre different par arme, derive de son diametre', () => {
     const { heads } = drawnLayers(oneOfEachWeapon());
     // ⚠️ `projectilePop(0)` : ces projectiles viennent de PARTIR, donc ils
-    // claquent (etape 8). Le calibre nu se mesure en regime etabli, plus bas.
+    // claquent. Le calibre nu se mesure en regime etabli, plus bas.
     expect(heads.map((h) => h.scaleX)).toEqual(
       WEAPONS.map((w) => (w.look.diameterPx * projectilePop(0)) / PROJECTILE_CELL_PX),
     );
@@ -303,7 +290,7 @@ describe('ProjectileRenderer.draw — neuf armes, neuf apparences distinctes', (
 
   it('donne a la trainee une epaisseur qui suit le calibre, et plus fine que la tete', () => {
     const { trails } = drawnLayers(oneOfEachWeapon());
-    // Elle SUIT le calibre : neuf armes, neuf epaisseurs.
+    // Elle SUIT le calibre : une epaisseur par arme.
     expect(new Set(trails.map((t) => t.scaleY)).size).toBe(WEAPONS.length);
     trails.forEach((t, i) => {
       const w = WEAPONS[i];
@@ -331,10 +318,9 @@ describe('ProjectileRenderer.draw — neuf armes, neuf apparences distinctes', (
   it('pose tete ET trainee sur la position du projectile', () => {
     // ⚠️ Les deux moities : la trainee est ancree a droite, donc elle s'etend
     // DERRIERE la position — mais son ancre, elle, est bien sur le projectile.
-    // Sans ce cas, ne plus poser la position de la trainee laissait 214 tests
-    // verts (mutation appliquee, pas raisonnee).
-    // Lues sur la SIMULATION, pas recalculees : depuis l'etape 12, le Chakram
-    // nait deja sur son orbite, a `ORBIT_RADIUS` du point de tir.
+    // Sans ce cas, ne plus poser la position de la trainee passerait.
+    // Lues sur la SIMULATION, pas recalculees : le Chakram nait deja sur son
+    // orbite, a `ORBIT_RADIUS` du point de tir.
     const p = oneOfEachWeapon();
     const { heads, trails } = drawnLayers(p);
     const attendues = WEAPONS.map((_, i) => ({ x: p.x[i] ?? 0, y: p.y[i] ?? 0 }));
@@ -450,24 +436,13 @@ function unSeulTir(weaponId: number): Projectiles {
 }
 
 /**
- * Les dix-sept silhouettes (etape 8 : neuf jusque-la), mesurees sur un
- * contexte 2D MOUCHARD.
- *
- * ⚠️ **Les cases de l'atlas sont jointives**, donc une forme qui depasse son
- * rayon bave dans la case de l'arme voisine et deux armes finissent dessinees
- * avec un bout l'une de l'autre — a l'ecran, pas en test. Rien dans le
- * compilateur ne voit ca : le `Record<ProjectileShape, …>` garantit qu'un
- * dessin existe, jamais qu'il tient dans sa case.
- *
- * Le mouchard note toutes les coordonnees que le peintre lui passe, et le
- * demi-trait des formes TRACEES (`arc` est la seule aujourd'hui) : c'est
- * l'empreinte reelle de l'encre, pas celle du chemin.
+ * Les silhouettes du catalogue, mesurees sur un contexte 2D MOUCHARD.
  */
 describe('SHAPE_PAINTERS — aucune forme ne bave dans la case voisine', () => {
   /** Le rayon du corps plein dans une case, tel que `paintProjectileCell` le calcule. */
   // Le rayon reellement demande au peintre par `paintProjectileCell` : le corps
   // plein DILATE, puisque c'est la silhouette du CERNE qui est la plus grosse
-  // des deux (etape 8).
+  // des deux.
   const BODY = (PROJECTILE_CELL_PX / 2) * PROJECTILE_SHAPE_FRACTION * SHAPE_OUTLINE_DILATION;
   const DEMI_CASE = PROJECTILE_CELL_PX / 2;
 
@@ -531,8 +506,7 @@ describe('SHAPE_PAINTERS — aucune forme ne bave dans la case voisine', () => {
 });
 
 /**
- * Étape 8 — **le jus**, venu de l'auteur en jouant : *« ameliore et diversifie
- * les projectiles, animation, particule, forme »*.
+ * **Le jus** : animation, particule, forme.
  *
  * Trois courbes, et toutes les trois tirent leur temps du MEME compteur que le
  * fondu : `Projectiles.ticksRemainingAt`. C'est ce qui permet a `draw` de
@@ -542,8 +516,7 @@ describe('ProjectileRenderer.draw — le depart claque, et ce qui est lance tour
   // Le pop ne lit que l'echelle : le Chakram, meme en orbite, le garde.
   const CHAKRAM = 5;
   // La rotation propre se mesure contre le CAP : il faut une arme qui tourne
-  // ET vole droit. Le Chakram tenait ce role avant l'etape 12 ; en orbite,
-  // son cap n'est plus la visee.
+  // ET vole droit : le Chakram, en orbite, n'a pas la visee pour cap.
   const MITRAILLE = 7;
   const DAGUE = 0;
   const TESLA = 9;
@@ -614,9 +587,9 @@ describe('ProjectileRenderer.draw — le depart claque, et ce qui est lance tour
 });
 
 /**
- * Les profils de trainee (etape 8) : quatre matieres cuites dans UN atlas,
- * donc toujours un seul quad etire par projectile — ce que le bloc de cout
- * juste en dessous mesure, inchange.
+ * Les profils de trainee : quatre matieres cuites dans UN atlas, donc
+ * toujours un seul quad etire par projectile — ce que le bloc de cout juste
+ * en dessous mesure.
  */
 describe('ProjectileRenderer.draw — la matiere de la trainee', () => {
   it('donne a chaque arme la bande de SON profil', () => {
@@ -651,7 +624,7 @@ describe('ProjectileRenderer.draw — la matiere de la trainee', () => {
 });
 
 /**
- * Le flash d'impact prend la teinte de l'ARME qui vient de toucher (etape 8).
+ * Le flash d'impact prend la teinte de l'ARME qui vient de toucher.
  *
  * ⚠️ Ce bloc n'existe que parce que `adoptTexture` existe : sans ce point
  * d'entree, `draw` retourne au premier `if (!texture)` faute de canevas 2D, et
@@ -751,7 +724,7 @@ describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => 
 
   /**
    * ⚠️ **Le poste de cout de cet effet.** Six eclats par flash et 128 flashs
-   * font 768 quads : mesure, comme la trainee l'a ete a la tache 12.
+   * font 768 quads : mesure, pas espere.
    */
   it('ne pose JAMAIS plus de six eclats par flash, a capacite pleine', () => {
     const coups = Array.from({ length: HIT_FLASH_CAPACITY_TEST }, () => ({
@@ -793,7 +766,7 @@ describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => 
     expect(impactPower(IMPACT_POWER_FULL * 10)).toBe(1);
     expect(sparkCount(IMPACT_POWER_FULL)).toBe(SPARKS_PER_FLASH);
     expect(sparkCount(IMPACT_POWER_FULL * 10)).toBe(SPARKS_PER_FLASH);
-    // Et il ne depasse jamais le plafond que le §6.6 oppose a la reaction.
+    // Et il ne depasse jamais le plafond qui le garde sous la reaction.
     expect(impactFlashScale(1, 0, IMPACT_TEXTURE_DIAMETER, 1e6)).toBe(FLASH_MAX_SCALE);
   });
 
@@ -805,13 +778,11 @@ describe('ImpactFlashRenderer.draw — dix-sept armes, dix-sept impacts', () => 
 });
 
 /**
- * ⚠️ **Le poste de cout de la tache 12**, et le §4.3 de l'orientation est
- * explicite : *« le danger est le VFX, pas les sprites »*. `PROJECTILE_CAPACITY`
- * vaut 2048, et une trainee de N segments multiplierait les quads par N — a
- * six segments, 12 288 quads. La borne est **de construction** : la trainee est
- * UN quad etire, jamais une file de segments. Ces cas la mesurent au lieu de
- * l'esperer, comme la tache 4 a du compter ses zones (368 la ou « quelques
- * dizaines » etaient budgetees).
+ * ⚠️ **Le poste de cout des projectiles** : le danger est le VFX, pas les
+ * sprites. `PROJECTILE_CAPACITY` vaut 2048, et une trainee de N segments
+ * multiplierait les quads par N — a six segments, 12 288 quads. La borne est
+ * **de construction** : la trainee est UN quad etire, jamais une file de
+ * segments. Ces cas la mesurent au lieu de l'esperer.
  */
 describe('ProjectileRenderer.draw — le cout de la trainee, mesure', () => {
   it('ne pose JAMAIS plus de deux quads par projectile visible, a capacite pleine', () => {
@@ -832,12 +803,9 @@ describe('ProjectileRenderer.draw — le cout de la trainee, mesure', () => {
   it('ne depend PAS de la longueur des trainees : la plus longue coute comme la plus courte', () => {
     // C'est exactement ce qu'une trainee a segments ne sait pas faire.
     //
-    // ⚠️ **Les deux EXTREMES, pas les deux premieres du tri** : la version
-    // d'avant lisait `[courte, longue]` en destructurant le tableau trie, donc
-    // les deux PLUS COURTES. Ca passait tant qu'elles differaient ; l'etape 8
-    // a pose deux armes qui ne lancent rien (une mine, une invocation), donc
-    // deux trainees de longueur nulle, et le cas a enfin dit ce qu'il mesurait
-    // mal.
+    // ⚠️ **Les deux EXTREMES, pas les deux premieres du tri** : des armes
+    // qui ne lancent rien (une mine, une invocation) ont des trainees de
+    // longueur nulle, et les deux plus courtes peuvent etre egales.
     const parLongueur = [...WEAPONS].sort((a, b) => projectileTrailPx(a) - projectileTrailPx(b));
     const courte = parLongueur[0];
     const longue = parLongueur.at(-1);
@@ -942,14 +910,12 @@ describe('ProjectileRenderer — le cadre, la grille et les bornes', () => {
 });
 
 /**
- * ⚠️ **Les canaux dynamiques, lus sur le conteneur.** Ces quatre cas viennent
- * d'une mutation qui a SURVECU : `uvs: false` sur les tetes laissait 212 tests
- * verts, parce que `draw` pose bien `head.texture` et que le test le relit —
- * seul le televersement changeait. Le reservoir de particules etant reutilise,
- * la case d'atlas du premier occupant d'un creneau y serait restee pour
- * toujours, et les neuf armes auraient fini dessinees avec la meme forme.
- * C'est le meme motif que `HordeRenderer.dynamicTint`, ne de la meme surprise
- * a la tache 9 bis.
+ * ⚠️ **Les canaux dynamiques, lus sur le conteneur.** `uvs: false` sur les
+ * tetes passerait les autres tests, parce que `draw` pose bien `head.texture`
+ * et que le test le relit — seul le televersement change. Le reservoir de
+ * particules etant reutilise, la case d'atlas du premier occupant d'un
+ * creneau y resterait pour toujours, et toutes les armes finiraient
+ * dessinees avec la meme forme.
  */
 describe('ProjectileRenderer — ce qui est vraiment reteleverse a chaque image', () => {
   it('rafraichit case, orientation, calibre et couleur sur les tetes', () => {
@@ -971,9 +937,9 @@ describe('ProjectileRenderer — ce qui est vraiment reteleverse a chaque image'
 });
 
 /**
- * Etape 12 (§5) : le Chaudron a poix vole en cloche. La position SIMULEE
- * reste au sol — c'est elle qui explose — et le dessin la quitte vers le haut,
- * au-dessus d'une ombre qui, elle, reste au point sol.
+ * Le Chaudron a poix vole en cloche. La position SIMULEE reste au sol —
+ * c'est elle qui explose — et le dessin la quitte vers le haut, au-dessus
+ * d'une ombre qui, elle, reste au point sol.
  */
 describe('ProjectileRenderer.draw — le mortier monte en cloche au-dessus de son ombre', () => {
   const CHAUDRON = 12;

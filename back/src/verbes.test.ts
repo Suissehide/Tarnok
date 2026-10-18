@@ -18,8 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { Room } from './room';
 
 /**
- * Les verbes des taches 5 a 7 de l'etape 8 (Rempart, Appat, Relais), cote
- * salon. Les identifiants de classe s'epinglent en nombres nus, comme au
+ * Les verbes de classe (Rempart, Appat, Relais), cote salon. Les identifiants de classe s'epinglent en nombres nus, comme au
  * catalogue (`shared/classes.ts`) : 0 Amorce, 1 Rempart, 2 Appat, 3 Relais.
  */
 const AMORCE = 0;
@@ -89,10 +88,9 @@ describe('etape 8 tache 5 : Rempart', () => {
   });
 
   /**
-   * ⚠️ **MAXIMUM, jamais une somme** — §6.2 de la spec. La boutique vend
-   * `Armure` sur cinq paliers ; une somme ferait de « cinq paliers plus un
-   * Rempart » une quasi-immunite, et l'abus se paierait en or donc se verrait
-   * mal.
+   * ⚠️ **MAXIMUM, jamais une somme.** La boutique vend `Armure` sur cinq
+   * paliers ; une somme ferait de « cinq paliers plus un Rempart » une
+   * quasi-immunite.
    */
   it('l armure du compte et celle du Rempart se combinent par le MAXIMUM', () => {
     const armure = SHOP_ITEMS.find((i) => i.bonusKind === 'armor');
@@ -249,7 +247,7 @@ describe('etape 8 tache 7 : Relais', () => {
     expect(room.useAbility(1, 1750, 1000)?.targetId).toBe(3);
   });
 
-  /** Review Focus n°4 : vers soi-meme, et vers un allie disparu. */
+  /** Les cas limites : vers soi-meme, et vers un allie disparu. */
   it('un Relais vers soi-meme est refuse en silence', () => {
     const room = new Room(1);
     room.join(1, undefined, undefined, RELAIS);

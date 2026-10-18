@@ -2,14 +2,13 @@
  * Le son et la musique, SYNTHETISES dans le navigateur (Web Audio) : aucun
  * fichier, donc ni licence ni depot sur MinIO. Les effets sont de courtes
  * enveloppes d'oscillateurs et de bruit ; la musique est une boucle generee a
- * la volee, une gamme et une progression fixes, une melodie tiree d'une graine.
+ * la volee, une gamme et une progression fixes, une melodie tiree au hasard.
  *
  * ⚠️ **Le contexte audio nait au premier geste du joueur.** Les navigateurs
  * refusent de jouer un son avant une interaction (`unlock`) ; tout appel avant
  * ne fait rien, sans erreur.
  *
- * Ce qui DECLENCHE un effet vit ailleurs (`cuesBetween`, pur et teste) : ce
- * module ne fait que jouer.
+ * Ce qui DECLENCHE un effet est `cuesBetween`, pur et teste.
  */
 
 import { PING_INTENTS } from '@shared/ping';
@@ -42,11 +41,11 @@ export interface CueSnapshot {
   hp: number;
   bossCharging: boolean;
   abilityCooldown: number;
-  /** Pings recus depuis la connexion (etape 9). */
+  /** Pings recus depuis la connexion. */
   pings: number;
   /** Intention du dernier ping recu, `-1` si aucun. */
   lastPingIntent: number;
-  /** Porteurs de coffre annonces depuis la connexion (etape 11). */
+  /** Porteurs de coffre annonces depuis la connexion. */
   porteurs: number;
 }
 

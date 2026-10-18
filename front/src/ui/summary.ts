@@ -20,8 +20,7 @@ export interface SummaryElements {
 }
 
 /**
- * Ce que la fin de run doit dire. **Deux fins, un seul ecran** (maquettes 16
- * et 17) : l'equipe a vote « partir » au dernier portail — extraction reussie,
+ * Ce que la fin de run doit dire. **Deux fins, un seul ecran** : l'equipe a vote « partir » au dernier portail — extraction reussie,
  * l'or est acquis (`portalGold`, multiplicateur compris) — ou elle est tombee,
  * et seule la part que l'effacement laisse part sur les comptes.
  *
@@ -68,7 +67,7 @@ export function paintSummary(
   el.title.textContent = tone.title;
   el.title.classList.toggle('rib--red', !tone.victory);
   el.title.classList.toggle('rib--yellow', tone.victory);
-  // Defaite : portrait desature, comme la maquette 16.
+  // Defaite : portrait desature.
   el.portrait.style.filter = tone.victory ? '' : 'grayscale(0.7) brightness(0.8)';
   el.portrait.src = localId === null ? '' : avatar(localId, classId ?? 0);
   el.name.textContent = localId === null ? '' : `Joueur ${localId}`;

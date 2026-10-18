@@ -6,7 +6,7 @@ services:
       context: ..
       dockerfile: deploy/Dockerfile.front
       args:
-        # Inlinees dans le bundle au build (§5 du plan). `wss`, jamais `ws` :
+        # Inlinees dans le bundle au build. `wss`, jamais `ws` :
         # une socket en clair depuis une page HTTPS est bloquee par le
         # navigateur, avec un message peu explicite.
         VITE_WS_URL: wss://${TRAEFIK_API_HOST}/ws
@@ -68,8 +68,8 @@ services:
     networks: [proxy, internal]
     # ⚠️ Un salon vit dans la memoire d'un process : ne PAS monter de repliques
     # avant d'avoir choisi entre l'affinite de session Traefik et un routage par
-    # code de salon (§5 du plan). Un round-robin enverrait les joueurs d'un meme
-    # salon sur des process differents et plus rien ne fonctionnerait.
+    # code de salon. Un round-robin enverrait les joueurs d'un meme salon sur
+    # des process differents.
     deploy:
       replicas: 1
 

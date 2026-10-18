@@ -2,16 +2,15 @@
  * Le panneau d'aide des combinaisons d'elements : une ligne par reaction,
  * `[icone A] + [icone B] → Nom : effet`.
  *
- * ⚠️ **Les textes d'effet sont DERIVES de `shared/reactions.ts`** (les champs
- * et commentaires de chaque ligne de `REACTION_DEFS`), jamais inventes, et
- * sans chiffre : les reglages bougent, la phrase doit rester vraie.
+ * ⚠️ **Les textes d'effet sont DERIVES de `REACTION_DEFS`**
+ * (`shared/reactions.ts`), et sans chiffre : les reglages bougent, la phrase
+ * doit rester vraie.
  *
  * ⚠️ **Une ligne de PLUS que `REACTION_DEFS` : le Choc thermique (Braise +
- * Givre).** Cette paire est volontairement ABSENTE de la table — elle rend
- * le comportement generique (`REACTION_DAMAGE` dans `REACTION_RADIUS`, voir
- * l'en-tete de `shared/reactions.ts`) — mais elle reagit bel et bien en jeu :
- * l'aide doit la montrer. Elle porte `REACTION.AUCUNE` (0), le nibble que
- * `postZone` pose justement pour une paire sans effet specifique.
+ * Givre).** Absente de la table, la paire rend le comportement generique
+ * (`REACTION_DAMAGE` dans `REACTION_RADIUS`) mais reagit bien en jeu. Elle
+ * porte `REACTION.AUCUNE` (0), le nibble que `postZone` pose pour une paire
+ * sans effet specifique.
  */
 
 import { ELEMENT } from '@shared/elements';
@@ -157,8 +156,7 @@ export function renderCombos(root: HTMLElement, known: ReadonlySet<number>): voi
       arrow.className = 'f-jer ol';
       arrow.textContent = '→';
 
-      // Compact : le nom seul, l'effet au survol — l'aide ne doit pas
-      // manger l'ecran.
+      // Le nom seul, l'effet au survol : l'aide ne doit pas manger l'ecran.
       row.title = `${title} : ${effect}`;
       const text = document.createElement('span');
       text.className = 'f-meta ol';

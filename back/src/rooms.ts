@@ -5,9 +5,8 @@ import { Room } from './room';
 /**
  * Alphabet des codes de salon : 24 lettres, sans I ni O.
  *
- * Un code se dicte a voix haute ou se recopie depuis un message. « I » se lit
- * pour « 1 » et « O » pour « 0 » ; les retirer coute deux combinaisons sur
- * 331 776 et evite une classe entiere de « ca marche pas chez moi ».
+ * Un code se dicte a voix haute ou se recopie : « I » se confond avec « 1 » et
+ * « O » avec « 0 ».
  */
 export const ROOM_CODE_ALPHABET = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
 
@@ -29,10 +28,8 @@ export class RoomRegistry {
    * Ouvre un salon. `seed` fixe la graine de sa carte — obstacles, generateur
    * de vagues et tirage du draft en derivent tous (voir `Room.mapSeed`).
    *
-   * ⚠️ Sans graine, `Room` en tire une au hasard : c'est ce que fait la route
-   * `POST /rooms`. La passer sert le test d'integration a quatre clients, qui
-   * serait sinon intermittent — et un test intermittent est pire qu'un test
-   * absent.
+   * Sans graine, `Room` en tire une au hasard (route `POST /rooms`). Les tests
+   * d'integration la fixent pour ne pas etre intermittents.
    */
   create(seed?: number): CreatedRoom {
     const code = this.#freshCode();

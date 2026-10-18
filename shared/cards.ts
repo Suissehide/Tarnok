@@ -7,9 +7,8 @@ import { upgradesFor, WEAPONS, weaponOf } from './weapons';
 /**
  * Les deux natures de carte.
  *
- * ⚠️ **Il y en avait quatre.** `WEAPON_LEVEL` et `EVOLUTION` ont ete retires :
- * une arme ne monte pas de niveau, elle s'empile comme un passif. Voir le §9
- * de la spec. L'index EST l'identifiant, comme partout ailleurs dans `shared/`.
+ * Une arme ne monte pas de niveau, elle s'empile comme un passif. L'index EST
+ * l'identifiant, comme partout ailleurs dans `shared/`.
  */
 export const CARD = {
   WEAPON: 0,
@@ -17,12 +16,8 @@ export const CARD = {
 } as const;
 
 /**
- * Une carte de l'etalage.
- *
- * ⚠️ **Il n'y a plus d'`owner`.** Il portait l'exclusivite des cartes reservees
- * a leur porteur — montees de niveau, evolutions — qui n'existent plus. Toute
- * carte est ouverte a tout le monde, sans exception : c'est ce qui fait du
- * conflit le regime normal du draft plutot qu'un accident.
+ * Une carte de l'etalage. Pas d'`owner` : toute carte est ouverte a tout le
+ * monde, c'est ce qui fait du conflit le regime normal du draft.
  */
 export interface Card {
   nature: number;
@@ -35,7 +30,7 @@ export interface Card {
    */
   upgrade?: number;
   /**
-   * La rarete tiree pour cette carte (`RARITY`, etape 10) : elle s'applique
+   * La rarete tiree pour cette carte (`RARITY`) : elle s'applique
    * autant de fois que son multiplicateur. Absente : commune.
    */
   rarity?: number;
@@ -56,12 +51,7 @@ export function rarityForTier(tier: PassiveTier | undefined): number | undefined
 
 /**
  * Combien de fois cette carte s'applique : le multiplicateur de sa rarete, et
- * rien d'autre.
- *
- * ⚠️ **Le cas particulier du passif « exclusivement legendaire » a disparu a
- * l'etape 13** : il forcait un legendaire a x1 contre une table qui disait x3.
- * La table dit maintenant x1 elle-meme (`RARITY_MULTIPLIERS`), donc la
- * fonction n'a plus rien a corriger.
+ * rien d'autre (les paliers hauts valent x1 dans `RARITY_MULTIPLIERS`).
  */
 export function applicationsOf(card: Card): number {
   return multiplierOf(card.rarity);
@@ -84,7 +74,7 @@ export function applicationsOf(card: Card): number {
  * produire une, le client peut en recevoir une pour un joueur dont il n'a pas
  * vu tout l'historique.
  *
- * ⚠️ **Une carte rare vaut deux cartes, et rien de plus** (etape 10) : elle
+ * ⚠️ **Une carte rare vaut deux cartes, et rien de plus** : elle
  * s'applique `applicationsOf(card)` fois. Pour une arme non possedee, la
  * premiere application est l'acquisition, les suivantes ameliorent le MEME
  * aspect. `canTake` se juge donc sur la premiere : si elle leve, rien n'est
@@ -135,38 +125,32 @@ export function buildPool(): Card[] {
 }
 
 /**
- * Tire l'etalage d'un niveau : `joueurs + SPREAD_BONUS` cartes distinctes
- * (§7.2 point 1).
+ * Tire l'etalage d'un niveau : `joueurs + SPREAD_BONUS` cartes distinctes.
  *
- * ⚠️ `rng` est **injecte**. `shared/` interdit `Math.random` — non par
- * principe, mais parce que tout ce qui vit ici tourne des deux cotes du fil.
- * Le draft, lui, n'est calcule que par le serveur (§2 de la spec de l'etape
- * 4) : l'injection sert donc surtout a rendre le tirage testable a graine
- * fixe.
+ * ⚠️ `rng` est **injecte** : `shared/` interdit `Math.random`. Le draft n'est
+ * calcule que par le serveur, l'injection sert surtout a rendre le tirage
+ * testable a graine fixe.
  *
  * ⚠️ **Les cartes sont distinctes.** Deux cartes identiques dans un meme
  * etalage rendraient un conflit illisible : deux joueurs poseraient sur « la
  * meme » carte sans etre en conflit.
  *
- * Ce sont le `splice` et un pool sans doublon qui le garantissent, a eux deux.
- * Un `Set` des cartes deja vues doublait cette garde ici : chacune survivait
- * seule a sa mutation, seule leur suppression conjointe faisait rougir la
- * suite. **Deux gardes qui se couvrent l'une l'autre ne sont gardees par aucun
- * test** — c'est la cinquieme occurrence de ce motif dans cette etape.
+ * Ce sont le `splice` et un pool sans doublon qui le garantissent ; n'y
+ * ajoutez pas un `Set` des cartes vues : deux gardes qui se couvrent l'une
+ * l'autre ne sont gardees par aucun test.
  *
- * ⚠️ **La rarete de l'EMPLACEMENT d'abord, la carte ensuite** (etape 10,
- * §2.3) : une carte de palier n'entre dans le pool QUE pour un emplacement qui
+ * ⚠️ **La rarete de l'EMPLACEMENT d'abord, la carte ensuite** : une carte de
+ * palier n'entre dans le pool QUE pour un emplacement qui
  * vient de tirer SON palier. Tirer la carte d'abord obligerait a retirer, ou a
  * forcer la rarete — deux facons de fausser les poids. Rarete, carte, aspect :
  * tout vient du meme `rng`, dans cet ordre.
  *
- * ⚠️ **Un palier, un pool (etape 13, §2.2), et ces pools sont PETITS.** Le
- * filtre n'est plus « legendaire ou carte ordinaire » mais une egalite stricte
- * entre le palier de la carte et celui de l'emplacement. Comme le tirage est
- * SANS REMISE (`pool.splice`), un palier qui a donne toutes ses cartes n'en a
- * plus a offrir : c'est pour ca que la descente ci-dessous existe.
+ * ⚠️ **Un palier, un pool, et ces pools sont PETITS** : egalite stricte entre
+ * le palier de la carte et celui de l'emplacement. Comme le tirage est SANS
+ * REMISE (`pool.splice`), un palier qui a donne toutes ses cartes n'en a plus
+ * a offrir : c'est pour ca que la descente ci-dessous existe.
  *
- * `floor` (etape 11) : le plancher de rarete de CHAQUE emplacement, passe tel
+ * `floor` : le plancher de rarete de CHAQUE emplacement, passe tel
  * quel a `rollRarity` — `CHEST_RARITY_FLOOR` pour un coffre. La descente le
  * respecte : elle ne passe JAMAIS dessous.
  */
@@ -182,10 +166,9 @@ export function drawSpread(
   const team = [...loadouts.values()];
   const pool = buildPool().filter((card) => team.some((l) => l.canTake(card.nature, card.refId)));
   const spread: Card[] = [];
-  // ⚠️ **Ce qu'un joueur possede deja revient plus souvent** (retour de
-  // playtest : *« je dois pouvoir reprendre la meme arme pour l'ameliorer »*).
-  // Tirage uniforme sur ~20 cartes, une arme possedee ne revenait presque
-  // jamais ; c'est le poids `OWNED_WEIGHT` des survivor-likes.
+  // ⚠️ **Ce qu'un joueur possede deja revient plus souvent** (`OWNED_WEIGHT`) :
+  // en tirage uniforme, une arme possedee ne reviendrait presque jamais pour
+  // etre amelioree.
   const weights = pool.map((card) => (ownedByAnyone(card, loadouts) ? OWNED_WEIGHT : 1));
 
   /** Les poids des cartes que CE palier permet, et leur somme. */
@@ -198,18 +181,14 @@ export function drawSpread(
   };
 
   while (spread.length < wanted && pool.length > 0) {
-    // ⚠️ **La descente de palier (etape 13, §2.3).** Un palier dont aucune
-    // carte n'est plus prenable — ses quelques cartes sont deja dans
-    // l'etalage, le tirage est sans remise — redescend d'un cran, jusqu'au
-    // `floor` de l'emplacement et JAMAIS en dessous. Sans elle, la boucle
-    // sortait et l'etalage avait MOINS de cartes que de joueurs : le `break`
-    // plus bas, documente « INATTEIGNABLE » a l'etape 10, cesse de l'etre des
-    // qu'un palier a son propre pool.
+    // ⚠️ **La descente de palier.** Un palier dont aucune carte n'est plus
+    // prenable (deja dans l'etalage, tirage sans remise) redescend d'un cran,
+    // jusqu'au `floor` de l'emplacement et JAMAIS en dessous. Sans elle,
+    // l'etalage aurait MOINS de cartes que de joueurs.
     //
     // ⚠️ **`rng` est consomme EXACTEMENT une fois par emplacement pour la
-    // rarete**, descente comprise : elle decremente, elle ne retire pas. C'est
-    // ce qui garde le tirage reproductible a graine fixe, et plusieurs tests
-    // herites en dependent.
+    // rarete**, descente comprise : elle decremente, elle ne retire pas. Des
+    // tests a graine fixe en dependent.
     let rarity = rollRarity(rng, floor);
     let permis = permisAt(rarity);
     while (permis.total === 0 && rarity > floor) {

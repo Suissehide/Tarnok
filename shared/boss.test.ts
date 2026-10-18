@@ -37,8 +37,7 @@ describe('la charge du boss : une valeur, et des fonctions du tick', () => {
   /**
    * ⚠️ **Le couloir vise, mais il ne SUIT pas.** C'est ce qui rend l'esquive
    * possible : un couloir qui suivrait sa cible serait une taxe, pas une
-   * attaque. Le test le dit de la seule facon qui compte — la valeur ne porte
-   * aucune cible, donc rien dans le reste du fichier ne peut la relire.
+   * attaque. La valeur ne porte aucune cible : rien ne peut la relire.
    */
   it('ne retient aucune cible : rien ne peut plus la recorriger', () => {
     expect(Object.keys(charge()).sort()).toEqual([
@@ -148,7 +147,7 @@ describe('la charge du boss : une valeur, et des fonctions du tick', () => {
   });
 
   /**
-   * Le TROISIEME temps (etape 6a, tache 13) : ni « il se passe quelque chose »
+   * Le TROISIEME temps : ni « il se passe quelque chose »
    * ni « ca fait mal », mais « ca n'est pas encore parti ». Le rendu en a besoin
    * pour ne lancer l'animation d'attaque qu'au dash.
    *
@@ -201,14 +200,13 @@ describe('la charge du boss : une valeur, et des fonctions du tick', () => {
   });
 
   /**
-   * ⚠️ **Cette propriete PORTE une suppression de code.** `Room#stepBossCharge`
-   * n'a plus qu'une garde pour decider qu'une nouvelle charge peut s'annoncer —
-   * `tick >= #nextChargeTick`, qui vaut `endTick + BOSS_CHARGE_COOLDOWN_TICKS`.
-   * Elle ne couvre la charge en cours que si ce delai est **non nul** ; a zero,
-   * une seconde charge pourrait s'annoncer au tick meme ou la premiere finit,
-   * et deux couloirs se disputeraient la position d'un seul boss. Le delai est
-   * un REGLAGE que la tache 12 va bouger : c'est donc ici, sur la propriete, que
-   * la borne se garde — jamais par une valeur recopiee.
+   * ⚠️ **`Room#stepBossCharge` repose sur cette propriete** : sa seule garde
+   * pour annoncer une nouvelle charge est `tick >= #nextChargeTick`, qui vaut
+   * `endTick + BOSS_CHARGE_COOLDOWN_TICKS`. Elle ne couvre la charge en cours
+   * que si ce delai est **non nul** ; a zero, une seconde charge pourrait
+   * s'annoncer au tick meme ou la premiere finit, et deux couloirs se
+   * disputeraient la position d'un seul boss. Le delai est un REGLAGE : la
+   * borne se garde ici, sur la propriete, jamais par une valeur recopiee.
    */
   it('separe deux charges par un delai NON NUL — la propriete qui autorise une seule garde', () => {
     expect(BOSS_CHARGE_COOLDOWN_TICKS).toBeGreaterThan(0);

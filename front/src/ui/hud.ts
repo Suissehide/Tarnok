@@ -10,47 +10,29 @@ import { avatar, bonusIcon, ICON_WEAPON, icon, slot } from './icons';
 import { formatGold } from './portal';
 
 /**
- * La jauge de Synergie du HUD — derniere ligne de la hierarchie du §6.6 :
- * *« la barre de Synergie : une jauge dans le HUD, visible de tous »*.
- *
- * En DOM et pas en Pixi, comme tout le reste du HUD (pv, niveau, chronometre,
- * gel) : c'est de l'interface, pas du monde. Le §6.6 la chiffre a « 1 quad »
- * pour dire qu'elle ne coute rien, pas pour exiger qu'elle soit dessinee par
- * le moteur.
+ * Le HUD, en DOM et pas en Pixi : c'est de l'interface, pas du monde.
  *
  * ⚠️ **Dans un module a part, et pas dans `main.ts`.** `main.ts` fait
  * `await stage.init()` au niveau module : il n'est pas importable en test, et
- * tout ce qu'on y ecrit devient invisible a la suite. La dette de l'etape 4
- * est exactement la (`draftScreen.update()`, que rien ne garde). Ici, la
- * regle — combien la barre est pleine, et ce qu'elle affiche — vit dans une
- * fonction testable sous jsdom ; il ne reste dans `main.ts` que l'appel.
+ * tout ce qu'on y ecrit echappe a la suite. Ici, la regle vit dans des
+ * fonctions testables sous jsdom ; il ne reste dans `main.ts` que l'appel.
  */
 
 /**
- * Part de la barre effectivement remplie, dans `[0, 1]`.
+ * Part de la jauge de Synergie effectivement remplie, dans `[0, 1]`.
  *
- * ⚠️ **Borne HAUTE indispensable.** `SYNERGY_MAX` est un plafond que le
- * serveur applique deja (tache 8), mais un client qui recevrait un total plus
- * grand — version de serveur plus recente, plafond releve — dessinerait une
- * barre qui deborde de son cadre. La borne BASSE, elle, ne peut pas etre
- * franchie : le total est un `u16` sur le fil.
- *
- * `SYNERGY_MAX` est lu dans `shared/`, jamais recopie : c'est le meme nombre
- * que celui contre lequel le serveur plafonne, et deux copies feraient une
- * jauge qui ment sur sa propre echelle.
+ * ⚠️ **Borne HAUTE indispensable** : le serveur plafonne a `SYNERGY_MAX`, mais
+ * un serveur plus recent (plafond releve) ferait deborder la barre. La borne
+ * basse ne peut pas etre franchie : le total est un `u16` sur le fil.
  */
 export function synergyRatio(synergy: number): number {
   return Math.min(1, Math.max(0, synergy / SYNERGY_MAX));
 }
 
 /**
- * Peint la jauge : la largeur du remplissage, et le compte en clair.
- *
- * Le compte en clair accompagne la barre parce que la barre seule ne dit pas
- * ce qui la fait monter — et ce qui la fait monter (deux joueurs differents a
- * l'origine d'une reaction, §7) est *« le coeur du projet »*. Un joueur qui
- * voit `3 / 20` bouger d'un cran juste apres un flash blanc fait le lien ; une
- * barre qui glisse de trois pixels, non.
+ * Peint la jauge : la largeur du remplissage, et le compte en clair. Un joueur
+ * qui voit `3 / 20` bouger d'un cran juste apres un flash blanc fait le lien
+ * avec la reaction ; une barre qui glisse de trois pixels, non.
  */
 export function paintSynergy(fill: HTMLElement, label: HTMLElement, synergy: number): void {
   // `--v` : la jauge du kit (`.bar__fill`) en tire sa largeur, retraits compris.
@@ -60,13 +42,8 @@ export function paintSynergy(fill: HTMLElement, label: HTMLElement, synergy: num
 
 /**
  * Une ligne de la colonne des passifs : ce qu'on a pris, et **combien de
- * fois**.
- *
- * ⚠️ **`stacks` n'est pas une decoration.** Rien ne monte de niveau dans ce
- * jeu : chaque carte s'empile et ajoute une fois sa `magnitude` (§3.3 de la
- * spec de l'etape 4). « vitalite » pris quatre fois et « vitalite » pris une
- * fois sont deux builds differents, et une colonne qui n'afficherait que les
- * noms les decrirait de la meme facon.
+ * fois** — rien ne monte de niveau, chaque carte s'empile et ajoute une fois
+ * sa `magnitude`.
  */
 export interface PassiveRow {
   /** L'etiquette affichee (`Passive.label`, accentuee) — jamais l'identifiant `Passive.name`. */
@@ -77,54 +54,41 @@ export interface PassiveRow {
 }
 
 /**
- * Ce que la colonne lit du client : qui je suis, et ce que je possede.
+ * Ce que le HUD lit du client. Interface structurelle plutot que `GameClient`,
+ * comme `FrameClient` et `DraftSource` : le test en fabrique un double sans
+ * ouvrir de WebSocket.
  *
- * Une interface structurelle plutot que `GameClient` — meme motif que
- * `FrameClient` et `DraftSource` : `GameClient` la satisfait sans rien
- * declarer, et le test peut en fabriquer un double sans ouvrir de WebSocket.
- *
- * ⚠️ **Rien a ajouter au protocole.** `GameClient.loadoutOf` tient le miroir
- * des inventaires depuis l'etape 4, reconstitue des `DRAFT_RESULT` recus : les
- * passifs sont deja la, cote client, et les annoncer une seconde fois serait
- * du trafic pour une information deja connue.
+ * Les inventaires viennent du miroir `GameClient.loadoutOf`, reconstitue des
+ * `DRAFT_RESULT` recus : rien a ajouter au protocole.
  */
 export interface HudSource {
   readonly localId: number | null;
   readonly localClassId: number | null;
   /**
-   * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte (§5 de
-   * l'etape 6a).
+   * L'or NON SECURISE de l'equipe, tel que le dernier snapshot le porte.
    *
-   * ⚠️ **Lu sur le client, pas sur `RenderState`.** `RenderState` est ce que la
-   * PREDICTION produit ; l'or n'est ni predit ni interpole, c'est une valeur
-   * d'en-tete lue telle quelle — exactement le motif qui a tenu `boss` hors de
-   * `RenderState` a la tache 5.
+   * ⚠️ **Lu sur le client, pas sur `RenderState`** : `RenderState` est ce que
+   * la PREDICTION produit, et l'or n'est ni predit ni interpole.
    */
   readonly gold: number;
   /** PV max du joueur local : base, cartes de vitalite et achats du compte. */
   readonly localMaxHp: number;
   /** Ennemis abattus depuis le debut de la run, tels que `DEATHS` les a annonces. */
   readonly kills: number;
-  /** L'etalage en cours est un coffre (etape 11) : le bandeau de gel le dit. Absent : non. */
+  /** L'etalage en cours est un coffre : le bandeau de gel le dit. Absent : non. */
   readonly draftIsChest?: boolean;
-  /** Le bandeau « un porteur est apparu » est-il allume (etape 11) ? Absent : non. */
+  /** Le bandeau « un porteur est apparu » est-il allume ? Absent : non. */
   readonly porteurBannerOn?: boolean;
   loadoutOf(playerId: number): Loadout;
 }
 
 /**
- * Les passifs du joueur LOCAL, dans l'ordre du catalogue.
+ * Les passifs du joueur LOCAL, dans l'ordre du catalogue — stable, donc la
+ * colonne se relit d'un coup d'oeil au lieu de se reordonner a chaque carte.
  *
- * ⚠️ **L'ordre du catalogue, pas l'ordre d'acquisition** : `Loadout` ne retient
- * l'ordre de draft que pour les armes (`weaponIds`, l'ordre des slots). Un
- * ordre stable vaut mieux qu'un ordre juste — la colonne se relit d'un coup
- * d'oeil pendant une vague, et des lignes qui se reordonnent a chaque carte
- * prise obligeraient a la relire en entier.
- *
- * `localId` nul — avant le premier snapshot qui fait apparaitre le joueur —
- * rend une colonne vide plutot qu'un inventaire d'emprunt : `loadoutOf` cree
- * l'entree manquante a la volee, donc l'appeler avec un identifiant invente
- * garnirait la `Map` du client d'un joueur qui n'existe pas.
+ * ⚠️ `localId` nul rend une colonne vide : `loadoutOf` cree l'entree
+ * manquante a la volee, et un identifiant invente garnirait la `Map` du client
+ * d'un joueur qui n'existe pas.
  */
 export function passiveRows(source: HudSource): PassiveRow[] {
   const id = source.localId;
@@ -143,18 +107,10 @@ export function passiveRows(source: HudSource): PassiveRow[] {
 }
 
 /**
- * Peint les emplacements de passifs (ecran 04 de la maquette) : exactement un
- * cadre par passif POSSEDE, chacun avec son icone et son compte d'empilements.
- *
- * ⚠️ **Plus de cadre vide depuis l'etape 13** : les passifs n'ont plus de
- * borne, donc plus de nombre fixe de cadres a completer — la colonne suit
- * `rows`, rien de plus.
- *
- * ⚠️ **Le compte se lit meme a un seul exemplaire** : « 1 » puis « 2 » dit
- * qu'on vient d'empiler, la ou une icone qui ne bouge pas ne dit rien. Le nom
- * et le compte complets sont dans le `title` de l'emplacement (`.hud-passive`).
- *
- * `replaceChildren` plutot qu'un diff : une fois par image.
+ * Peint les emplacements de passifs : exactement un cadre par passif POSSEDE
+ * (les passifs n'ont pas de borne, donc pas de cadre vide), avec son icone et
+ * son compte d'empilements — meme a un seul exemplaire : « 1 » puis « 2 » dit
+ * qu'on vient d'empiler. Nom et compte complets dans le `title`.
  */
 export function paintPassives(list: HTMLElement, rows: readonly PassiveRow[]): void {
   const cells = rows.map((row) =>
@@ -168,10 +124,9 @@ export function paintPassives(list: HTMLElement, rows: readonly PassiveRow[]): v
 }
 
 /**
- * Peint les emplacements d'armes sur la case ardoise (ecran 04 de la
- * maquette) : la dague d'abord **si ce joueur la tire** — une arme choisie au
- * salon la remplace (`firesBase`) —, puis les `WEAPON_SLOTS` du `Loadout`
- * dans l'ordre du draft, chacune avec l'icone de son element.
+ * Peint les `WEAPON_SLOTS` emplacements d'armes : celles du `Loadout` dans
+ * l'ordre du draft, chacune avec l'icone de son element, puis des cadres
+ * vides.
  */
 export function paintWeapons(list: HTMLElement, loadout: Loadout | null): void {
   const ids = loadout ? [...loadout.weaponIds] : [];
@@ -196,18 +151,15 @@ export function paintWeapons(list: HTMLElement, loadout: Loadout | null): void {
 }
 
 /**
- * Les elements du HUD, tels que `index.html` les nomme.
- *
- * Passes en argument plutot que cherches ici : `paintHud` reste alors une
- * fonction qui ecrit dans ce qu'on lui donne, et le test peut lui donner le
- * vrai `index.html` monte sous jsdom — c'est ce qui verifie le CABLAGE, et
- * pas seulement l'ecriture.
+ * Les elements du HUD, tels que `index.html` les nomme. Passes en argument
+ * plutot que cherches ici : le test peut donner le vrai `index.html` monte
+ * sous jsdom, et verifier le CABLAGE.
  */
 export interface HudElements {
   hp: HTMLElement;
   /** Le remplissage de la barre de PV (`.bar__fill`). */
   hpFill: HTMLElement;
-  /** Le conteneur masquable de la barre de bouclier (etape 13), posee sur celle des PV. */
+  /** Le conteneur masquable de la barre de bouclier, posee sur celle des PV. */
   shield: HTMLElement;
   /** Le remplissage de la barre de bouclier. */
   shieldFill: HTMLElement;
@@ -223,34 +175,26 @@ export interface HudElements {
   lateDeaths: HTMLElement;
   synergyFill: HTMLElement;
   synergyLabel: HTMLElement;
-  /** La cagnotte non securisee (§5 de l'etape 6a), visible en permanence. */
+  /** La cagnotte non securisee, visible en permanence. */
   gold: HTMLElement;
   freeze: HTMLElement;
-  /** Le bandeau du porteur de coffre (etape 11). Optionnel : les anciens HUD de test n'en ont pas. */
+  /** Le bandeau du porteur de coffre. Optionnel : les anciens HUD de test n'en ont pas. */
   porteur?: HTMLElement;
   /** Les emplacements de passifs. */
   passiveList: HTMLElement;
 }
 
 /**
- * Ecrit tout le HUD (§4.6 : un HUD, pas des logs) a partir du contenu pur
- * calcule par `hudInfo`.
- *
- * ⚠️ **Tache 9 bis : cette fonction vivait dans `main.ts`, donc nulle part.**
- * Retirer l'appel a `paintSynergy` y laissait la suite entierement verte a 170
- * tests — la jauge de Synergie, *« le coeur du projet »* (§7), n'etait gardee
- * par rien d'autre que sa propre fonction, jamais par le fait qu'on l'appelle.
- * Ici, une mutation qui retire une seule de ces lignes rougit.
+ * Ecrit tout le HUD a partir du contenu pur calcule par `hudInfo`. Hors de
+ * `main.ts` pour qu'une mutation qui retire une seule de ces lignes rougisse.
  *
  * `lateDeaths` et `synergy` ne sont pas dans `HudInfo` : le premier vient de
- * `GameClient.lateDeaths` (compteur de diagnostic, §2), le second de
+ * `GameClient.lateDeaths` (compteur de diagnostic), le second de
  * `RenderState.synergy` (donnee d'equipe du snapshot, comme l'xp).
  *
- * ⚠️ **`source` est le client lui-meme, pas une liste deja calculee** (tache
- * 18). Passer les lignes toutes faites remettrait le `passiveRows(client)` de
- * l'appel dans `main.ts`, c'est-a-dire exactement la ou trois etapes de suite
- * ont perdu une ligne de cablage sans qu'une seule assertion ne le voie. Ici,
- * une mutation qui rend `[]` au lieu de la colonne rougit.
+ * ⚠️ **`source` est le client lui-meme, pas une liste deja calculee** : sinon
+ * l'appel `passiveRows(client)` retournerait dans `main.ts`, ou rien ne le
+ * garde.
  */
 export function paintHud(
   el: HudElements,
@@ -262,14 +206,11 @@ export function paintHud(
   const maxHp = Math.max(1, source.localMaxHp);
   el.hp.textContent = `${Math.ceil(info.hp)} / ${maxHp}`;
   el.hpFill.style.setProperty('--v', `${Math.min(1, Math.max(0, info.hp / maxHp))}`);
-  // Etape 13 : la reserve de bouclier (Transcendance), posee par-dessus les
-  // PV — voir `HudInfo.shield`/`shieldPool`.
+  // La reserve de bouclier (Transcendance), posee par-dessus les PV.
   //
-  // ⚠️ **Vigilance 5 : `info` vient du SNAPSHOT, jamais de `source`.** Un
-  // client qui n'a pas vu le `DRAFT_RESULT` d'un joueur (rejoint en cours de
-  // partie) n'a pas son `Loadout` dans le miroir, mais voit quand meme son
-  // bouclier sur le fil (`PlayerSnapshot.shield`) : lire `source.loadoutOf`
-  // ici afficherait une barre vide chez ce joueur-la.
+  // ⚠️ **Lue dans `info` (le SNAPSHOT), jamais dans `source`** : un client
+  // rejoint en cours de partie n'a pas le `Loadout` des autres dans le miroir,
+  // mais voit leur bouclier sur le fil (`PlayerSnapshot.shield`).
   el.shield.classList.toggle('hidden', info.shield <= 0);
   el.shieldFill.style.setProperty(
     '--v',
@@ -289,20 +230,16 @@ export function paintHud(
   }
   el.lateDeaths.textContent = `${lateDeaths}`;
   paintSynergy(el.synergyFill, el.synergyLabel, synergy);
-  // Tache 10 : la cagnotte NON SECURISEE, en permanence et pas seulement au
-  // moment du vote. Le §5 en fait un enjeu qui se vit pendant tout un palier —
-  // cinq minutes ou rien n'est acquis — et un chiffre qu'on ne decouvrirait
-  // qu'a l'ouverture du portail se lirait comme un score de fin de manche.
-  // `formatGold` est celui de l'ecran du portail, importe plutot que recopie :
-  // deux ecritures du meme montant se contrediraient tot ou tard.
+  // La cagnotte NON SECURISEE, en permanence et pas seulement au vote : c'est
+  // un enjeu qui se vit pendant tout le palier. `formatGold` est celui du
+  // portail, importe plutot que recopie.
   el.gold.textContent = formatGold(source.gold);
   paintPassives(el.passiveList, passiveRows(source));
   paintWeapons(el.weapons, id === null ? null : source.loadoutOf(id));
-  // Tache 24 : seule indication du gel de niveau avant l'etalage de cartes
-  // (etape 4) — sans elle, les deux secondes ou tout s'arrete se lisent comme
-  // un plantage plutot que comme une pause voulue.
+  // Seule indication du gel avant l'etalage de cartes : sans elle, la pause
+  // se lit comme un plantage.
   el.freeze.classList.toggle('hidden', !info.frozen);
-  // Etape 11 : un coffre gele comme un niveau, mais il le dit.
+  // Un coffre gele comme un niveau, mais il le dit.
   el.freeze.textContent = source.draftIsChest ? 'Coffre — pause…' : 'Niveau supérieur — pause…';
   el.porteur?.classList.toggle('hidden', source.porteurBannerOn !== true);
 }

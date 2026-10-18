@@ -7,18 +7,15 @@ import { WebSocket } from 'ws';
 
 // Import en espace de noms, pas nomme : le test de la panne de lecture
 // espionne `purchasesOf` par-dessus le LIEN VIVANT que `server.ts` importe --
-// un import nomme serait copie a la liaison et `spyOn` ne mordrait pas (meme
-// piege que handshake.integration.test.ts sur `findAccountIdByToken`).
+// un import nomme serait copie a la liaison et `spyOn` ne mordrait pas.
 import * as comptes from './accounts';
 import { buildServer } from './server';
 
 /**
- * **La tache 6 de l'etape 7b : les achats d'un compte changent sa run
- * suivante.**
+ * **Les achats d'un compte changent sa run suivante.**
  *
  * ⚠️ **Ce fichier duplique son propre harnais, comme tous les fichiers
- * d'integration de ce depot** (voir `credit.integration.test.ts`) : aucun
- * fichier d'integration n'en importe un autre.
+ * d'integration de ce depot** : aucun n'en importe un autre.
  */
 
 const ROOM_SEED = 0x07_6b_0006;
@@ -86,8 +83,7 @@ async function connectAvecJeton(code: string, token: Uint8Array): Promise<Client
 
   // ⚠️ L'ecoute de 'open' est posee ICI, avant tout `await` : sur localhost
   // la socket peut s'ouvrir avant la fin d'un aller-retour Prisma, et un
-  // listener pose apres l'aurait ratee (455 s perdues a la tache 5 de
-  // l'etape 7a sur ce meme piege, voir `credit.integration.test.ts`).
+  // listener pose apres l'aurait ratee.
   const ouverte = new Promise<void>((resolve, reject) => {
     ws.once('open', () => resolve());
     ws.once('error', reject);
@@ -113,8 +109,8 @@ async function connectAvecJeton(code: string, token: Uint8Array): Promise<Client
 
 describe('etape 7b tache 6 : les achats changent la run', () => {
   /**
-   * Le coeur de l'etape : un achat se VOIT dans la partie suivante. La mutation
-   * « ignorer les bonus du compte » doit rougir ici.
+   * Un achat se VOIT dans la partie suivante : ignorer les bonus du compte
+   * doit rougir ici.
    */
   it('la vitalite achetee monte le maximum de vie du joueur', async () => {
     const v = SHOP_ITEMS.find((i) => i.bonusKind === 'maxHp');
@@ -150,21 +146,16 @@ describe('etape 7b tache 6 : les achats changent la run', () => {
   });
 
   /**
-   * Review Focus n°4 : une panne de lecture ne doit pas refuser la partie. Le
-   * joueur entre SANS ses ameliorations plutot que de ne pas entrer — son or
-   * est en base, la run suivante les retrouvera.
+   * Une panne de lecture ne doit pas refuser la partie. Le joueur entre SANS
+   * ses ameliorations plutot que de ne pas entrer : son or est en base, la
+   * run suivante les retrouvera.
    *
-   * ⚠️ **Ronde de correction de la revue finale : « entre SANS ses
-   * ameliorations » veut dire des bonus NULS, jamais PARTIELS, et c'est ce que
-   * l'espion sur `join` assene.** Le §6.2 de la spec promet seulement que la
-   * partie n'est pas refusee ; le code tient davantage — l'assignation de
-   * `grants` est atomique dans le meme `try`, donc une panne ne laisse JAMAIS
-   * un demi-jeu de bonus. Cette propriete-la n'etait gardee par rien : la seule
-   * assertion de bonus ci-dessous est `maxHpOf`, donc un `grants` partiel qui
-   * remplirait `speed`, `fireRate` ou `regen` sans toucher `maxHp` passait au
-   * vert. L'espion verifie que `join` recoit `undefined` — pas un objet
-   * incomplet — ce qui ferme les six cles d'un coup sans ajouter aucune couture
-   * dans le code de production.
+   * ⚠️ **« SANS ses ameliorations » veut dire des bonus NULS, jamais PARTIELS,
+   * et c'est ce que l'espion sur `join` assene.** La seule assertion de bonus
+   * ci-dessous est `maxHpOf` : un `grants` partiel qui remplirait `speed`,
+   * `fireRate` ou `regen` sans toucher `maxHp` passerait au vert. L'espion
+   * verifie que `join` recoit `undefined`, pas un objet incomplet, ce qui
+   * ferme toutes les cles d'un coup sans couture dans le code de production.
    *
    * ⚠️ L'espion ne remplace PAS `join` : `vi.spyOn` garde l'implementation
    * reelle, donc le joueur entre pour de vrai et les assertions de bout en bout

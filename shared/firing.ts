@@ -4,13 +4,11 @@ import type { Crit } from './projectiles';
 import { DAMAGE_PER_UPGRADE, UPGRADE, upgradedWeapon, type Weapon, weaponOf } from './weapons';
 
 /**
- * Ce qu'un tir vaut, calcule UNE fois pour les deux cotes du fil (etape 10).
+ * Ce qu'un tir vaut, calcule UNE fois pour les deux cotes du fil.
  *
  * ⚠️ **`Room#fireOne` et `GameClient#fireOne` appellent ces fonctions, jamais
- * deux copies.** La formule de degats existait en deux exemplaires
- * (`room.ts` et `client.ts`) : ils auraient diverge au premier passif ajoute,
- * et le client aurait dessine une salve que le serveur ne tire pas — le meme
- * argument que `applyCardToLoadout` et `cooldownWithBonus`.
+ * deux copies** : deux exemplaires divergeraient au premier passif ajoute, et
+ * le client dessinerait une salve que le serveur ne tire pas.
  *
  * Hors de `weapons.ts` parce que tout ici lit un `Loadout`, et que
  * `loadout.ts` importe deja `weapons.ts`.
@@ -19,10 +17,10 @@ import { DAMAGE_PER_UPGRADE, UPGRADE, upgradedWeapon, type Weapon, weaponOf } fr
 /**
  * Les crans d'un aspect pour CE joueur : ceux de l'arme (ses cartes), plus
  * ceux que ses passifs ajoutent a toutes ses armes — Volee (`salvo`) aux
- * seules armes de tir et de frappe, Ampleur (`zone`) a toutes (§3.1).
+ * seules armes de tir et de frappe, Ampleur (`zone`) a toutes.
  */
 export function weaponUpgrades(loadout: Loadout, weapon: Weapon): (upgrade: number) => number {
-  // La frappe (etape 12) compte ses eclairs dans `projectileCount` : Volee
+  // La frappe compte ses eclairs dans `projectileCount` : Volee
   // en ajoute, comme a une salve.
   const volee = weapon.kind === 'tir' || weapon.kind === 'frappe' ? loadout.bonus('salvo') : 0;
   const ampleur = loadout.bonus('zone');
@@ -44,10 +42,9 @@ export function armedWeapon(loadout: Loadout, weaponId: number): Weapon {
  *
  * `maxHp` est le PV max du tireur (lu par Colosse).
  *
- * ⚠️ **Colosse MULTIPLIE** (etape 10, §4) : +`magnitude` par tranche ENTIERE
- * de `COLOSSUS_HP_STEP` PV max, applique au total des autres bonus — les
- * passifs de l'etape « se multiplient entre eux ». Les achats de vitalite
- * permanente montent aussi le PV max : c'est voulu (§7, a surveiller).
+ * ⚠️ **Colosse MULTIPLIE** : +`magnitude` par tranche ENTIERE de
+ * `COLOSSUS_HP_STEP` PV max, applique au total des autres bonus. Les achats
+ * de vitalite permanente montent aussi le PV max : c'est voulu.
  */
 export function shotDamage(
   weapon: Weapon,
@@ -71,10 +68,9 @@ export function shotDamage(
  *
  * ⚠️ **La visee n'est PAS unitaire** : ce sont les octets quantifies (±127) de
  * `applyInput`, que les projectiles ne lisent que par `atan2`. Multiplier une
- * portee par ces octets la multipliait par ~127 — le faisceau de l'etape 8 a
- * vecu avec un trait de plusieurs dizaines de milliers de pixels. Une seule
- * fonction pour le serveur et le miroir, pour que la regle ne diverge plus.
- * Visee nulle : le tireur lui-meme (`#fireWeapons` l'ecarte de toute facon).
+ * portee par ces octets la multiplierait par ~127. Une seule fonction pour le
+ * serveur et le miroir. Visee nulle : le tireur lui-meme (`#fireWeapons`
+ * l'ecarte de toute facon).
  */
 export function aimPoint(
   x: number,
@@ -91,9 +87,8 @@ export function aimPoint(
 }
 
 /**
- * Le critique de CE tireur (etape 10, §3.2) : Precision ajoute a la chance,
- * bornee a 1 — une chance au-dela de 100 % ne veut rien dire, c'est le seul
- * plafond de l'etape ; Ferocite ajoute au multiplicateur, sans plafond.
+ * Le critique de CE tireur : Precision ajoute a la chance, bornee a 1 ;
+ * Ferocite ajoute au multiplicateur, sans plafond.
  *
  * Le client le calcule pour TOUS les joueurs : il tient le miroir de leurs
  * inventaires.

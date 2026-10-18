@@ -7,23 +7,16 @@ import { CHAIN_FLASH_LIFETIME_MS, ChainFlashes } from '../net/client';
 import { CHAIN_LINE_ALPHA, CHAIN_LINE_WIDTH_PX, ChainRenderer } from './chain-renderer';
 
 /**
- * Etape 5b, tache 3, TOUR DE CORRECTION 1 : la polyligne de la chaine de
- * Foudre est desormais un FLASH, seme une fois par
- * `GameClient#seedChainFlash` et FIGE dans `ChainFlashes` — jamais redérivé
- * de la horde. Ce fichier ne construit donc plus jamais de `Horde` : c'est le
- * point meme de la correction (voir le docbloc de `chain-renderer.ts`). Le
- * seeding lui-meme (le calcul du chemin, l'exclusion de l'origine, le filtre
- * `ELEMENT.FOUDRE`) est teste cote `GameClient`, dans `net/client.test.ts` —
- * c'est la ou vivent `Horde` et `chainTargets` desormais.
+ * La chaine de Foudre est un FLASH fige dans `ChainFlashes` par
+ * `GameClient#seedChainFlash`, jamais rederive de la horde : ce fichier ne
+ * construit aucune `Horde`. Le calcul du chemin est teste dans
+ * `net/client.test.ts`.
  *
- * Ce qui se garde ICI, comme sur `projectile-renderer.test.ts` pour
- * `ImpactFlashRenderer`/`ReactionFlashRenderer` :
+ * Ce qui se garde ICI :
  * 1. **quoi** dessiner — chaque flash vivant, dans l'ordre de ses points ;
- * 2. **comment** il s'eteint — l'opacite decroit avec l'age, comme les
- *    autres flashs ;
- * 3. **le pire cas, mesure plutot que suppose** — la revue a note que ce
- *    fichier ne le faisait pas ; le voici, et il n'est plus fonction de la
- *    horde du tout, seulement de la capacite du reservoir.
+ * 2. **comment** il s'eteint — l'opacite decroit avec l'age ;
+ * 3. **le pire cas, mesure** — borne par la capacite du reservoir, jamais
+ *    par la horde.
  */
 
 const NOW = 10_000;
@@ -53,10 +46,9 @@ describe('ChainRenderer.draw — le calque dessine ce que ChainFlashes a fige', 
   });
 
   /**
-   * ⚠️ **Le corps de `draw` ne doit PAS tourner avant `load()`** — meme
-   * garde que `ZoneRenderer`/`MarkRingRenderer` sur leur texture, adaptee ici
-   * a l'absence de texture : rien de procedural a cuire, mais `Stage` doit
-   * quand meme pouvoir compter ce calque comme « pas encore charge ».
+   * ⚠️ **Le corps de `draw` ne doit PAS tourner avant `load()`** : rien a
+   * cuire, mais `Stage` doit pouvoir compter ce calque comme « pas encore
+   * charge ».
    */
   it('ne trace rien tant que load() n a pas ete appele', () => {
     const flashes = new ChainFlashes(4);
@@ -184,25 +176,14 @@ describe('ChainRenderer.draw — le calque dessine ce que ChainFlashes a fige', 
   });
 
   /**
-   * ⚠️ **La mesure du pire cas, faite plutot que supposee** (revue, tour de
-   * correction 1) — meme discipline que `mark-renderer.test.ts` : un decor au
-   * pire cas REALISTE, le nombre reel de traits comptes et assertionnes
-   * contre une borne, la borne ecrite en commentaire.
-   *
-   * ⚠️ **Le point de la correction, rendu visible ICI** : la borne est la
-   * CAPACITE DU RESERVOIR, plus jamais la taille de la horde. Avant cette
-   * correction, remplir une horde de `MAX_ENTITIES` ennemis tous marques
-   * Foudre aurait fait grimper le cout de ce calque avec elle ; maintenant,
-   * `ChainFlashes` refuse silencieusement tout flash au-dela de sa capacite
-   * (meme discipline que `HitFlashes`/`OrbFlights`), donc `draw` ne peut
-   * jamais tracer plus que `capacity` polylignes, quelle que soit la horde —
-   * qu'il ne lit d'ailleurs plus du tout.
+   * ⚠️ **La mesure du pire cas, faite plutot que supposee** : un decor au
+   * pire cas, le nombre reel de traits compte et borne. `ChainFlashes` refuse
+   * tout flash au-dela de sa capacite, donc `draw` ne trace jamais plus de
+   * `capacity` polylignes, quelle que soit la horde.
    */
   it('borne le nombre de traits par la CAPACITE du reservoir, jamais par une taille de horde', () => {
-    // Capacite choisie pour ce test : `CHAIN_FLASH_CAPACITY` est un detail
-    // interne de `net/client.ts` (non exporte, comme `HIT_FLASH_CAPACITY`) —
-    // ce qui compte ici n'est pas sa valeur exacte, mais que le cout de
-    // `draw` suive `flashes.capacity`, quel qu'il soit.
+    // `CHAIN_FLASH_CAPACITY` n'est pas exporte : ce qui compte est que le
+    // cout de `draw` suive `flashes.capacity`, quelle qu'elle soit.
     const CAPACITE_TEST = 200;
     const flashes = new ChainFlashes(CAPACITE_TEST);
     for (let i = 0; i < CAPACITE_TEST; i++) {
@@ -231,9 +212,8 @@ describe('ChainRenderer.draw — le calque dessine ce que ChainFlashes a fige', 
 });
 
 /**
- * Étape 8 — **le calque trace desormais DEUX evenements** : la chaine de
- * Foudre et le faisceau. La teinte et l'epaisseur ont donc quitte les
- * constantes pour le flash lui-meme.
+ * **Le calque trace DEUX evenements** : la chaine de Foudre et le faisceau.
+ * La teinte et l'epaisseur sont donc portees par le flash.
  */
 describe('ChainFlashes — teinte et epaisseur par flash', () => {
   const DEUX = [
