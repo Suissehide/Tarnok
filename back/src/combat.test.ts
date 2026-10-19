@@ -377,8 +377,9 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
   });
 
   it('un ennemi leger meurt au premier impact — et il PORTE la borne <= 0, pas < 0', () => {
-    // `LIGHT_HP` vaut les degats de la dague et l'armure legere est NULLE
-    // (zero est une entree de la table, pas un cas particulier).
+    // La reserve est POSEE aux degats de la dague (depuis l'etape 15,
+    // `LIGHT_HP` est strictement dessous) et l'armure legere est NULLE (zero
+    // est une entree de la table, pas un cas particulier).
     //
     // ⚠️ **Le seul test qui met en scene le reste EXACTEMENT nul.** Sur un
     // lourd, tomber pile demanderait `HEAVY_HP / (1 - HEAVY_ARMOR)`, qui ne
@@ -388,7 +389,7 @@ describe('resolveProjectileDamage soustrait au lieu de tuer (etape 5a)', () => {
     const targetId = addOne(horde, 1, 100, 0, LEGER);
     const orbs = new OrbField(10);
     expect(ARCHETYPES[LEGER]?.armor).toBe(0);
-    expect(SINGLE.damage).toBe(LIGHT_HP); // le reste est exactement zero
+    horde.hp[horde.slotOf(targetId)] = SINGLE.damage; // le reste est exactement zero
 
     expect(frappe(horde, orbs, targetId, 0)).toEqual([targetId]);
     expect(horde.count).toBe(0);
@@ -2449,7 +2450,7 @@ describe('la chaine de Foudre (etape 5b, tache 3)', () => {
     const victime = addOne(horde, 1, 100, 0, LEGER);
     const voisin = addOne(horde, 2, 100, 100, LOURD); // a 100 px : dans CHAIN_RADIUS
     const orbs = new OrbField(10);
-    expect(FOUDRE.damage).toBe(LIGHT_HP);
+    expect(FOUDRE.damage).toBeGreaterThanOrEqual(LIGHT_HP);
 
     const { morts } = frappe(horde, orbs, victime, 0, FOUDRE);
 
@@ -2523,7 +2524,7 @@ describe('la chaine de Foudre (etape 5b, tache 3)', () => {
     const percute = addOne(horde, 1, 300, 0, LOURD); // survit au coup direct
     const enchaine = addOne(horde, 2, 300, 100, LEGER); // meurt du SEUL saut de chaine
     const orbs = new OrbField(10);
-    expect(FOUDRE.damage).toBe(LIGHT_HP);
+    expect(FOUDRE.damage).toBeGreaterThanOrEqual(LIGHT_HP);
 
     const { morts } = frappe(horde, orbs, percute, 0, FOUDRE);
 

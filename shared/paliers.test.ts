@@ -4,11 +4,20 @@ import { ARCHETYPES, BOSS_HP_PER_PLAYER, HEAVY_HP, LIGHT_HP } from './archetypes
 import {
   EXTRACT_MULTIPLIER_STEP,
   GOLD_PER_PALIER_BASE,
+  LEVEL_HP_SCALE,
   MAX_PLAYERS,
   PALIER_COUNT_SCALE,
   PALIER_HP_SCALE,
 } from './constants';
-import { bossHp, extractGold, hpScale, palierGold, palierHp, waveCountScale } from './paliers';
+import {
+  bossHp,
+  extractGold,
+  hpScale,
+  levelHpScale,
+  monsterHp,
+  palierGold,
+  waveCountScale,
+} from './paliers';
 import { decodeSnapshot, encodeSnapshot, GOLD_MAX } from './protocol';
 import { weaponOf } from './weapons';
 
@@ -121,100 +130,99 @@ describe('la table du §3 de la spec', () => {
 });
 
 /**
- * `palierHp` — la porte par laquelle `hpScale` entre dans le jeu :
- * **la chair a canon ne monte pas**.
+ * `levelHpScale` et `monsterHp` — la porte par laquelle le NIVEAU d'equipe
+ * entre dans les PV de la horde (etape 15) : **tout le monde monte**, la chair
+ * a canon comprise.
  *
- * ⚠️ **DEUX MOITIES, et elles ne se couvrent pas.** « La legere ne monte
- * jamais » passe toute seule avec `return baseHp` — la difficulte
- * disparaitrait alors du jeu entier sans qu'un test ne bouge. « La lourde suit
- * `hpScale` » passe toute seule avec `baseHp * hpScale(k)` — l'escalier de
- * durabilite reviendrait intact. Il faut les deux, et le troisieme test les
- * eprouve l'une contre l'autre sur ces deux contre-exemples exacts.
+ * ⚠️ Le niveau est 1-based (`Room#level`), contrairement au palier : la base
+ * se lit a `niveau = 1`, et `croitStrictement` (ecrit pour `k` a partir de 0)
+ * s'applique a `k + 1`.
  */
-describe('palierHp — la chair a canon ne monte pas', () => {
+describe('levelHpScale / monsterHp — tout le monde monte avec le niveau', () => {
   /** La dague, arme 0 : c'est SON degat qui definit la frontiere, jamais un 5 recopie. */
   const DEGATS_DAGUE = weaponOf(0).damage;
 
-  it('laisse la pietaille legere a sa reserve de depart sur dix paliers', () => {
-    for (let k = 0; k <= PALIERS; k++) {
-      expect(palierHp(LIGHT_HP, k)).toBe(LIGHT_HP);
-    }
+  it('vaut exactement 1 au niveau 1, et jamais moins en dessous', () => {
+    expect(levelHpScale(1)).toBe(1);
+    expect(levelHpScale(0)).toBe(1);
+    expect(levelHpScale(-3)).toBe(1);
   });
 
-  it('fait monter la pietaille lourde exactement a hpScale', () => {
-    for (let k = 0; k <= PALIERS; k++) {
-      expect(palierHp(HEAVY_HP, k)).toBeCloseTo(HEAVY_HP * hpScale(k), 10);
-    }
-    expect(croitStrictement((k) => palierHp(HEAVY_HP, k))).toBe(true);
+  it('croit strictement sur dix niveaux, a la pente LEVEL_HP_SCALE', () => {
+    expect(croitStrictement((k) => levelHpScale(k + 1))).toBe(true);
+    expect(levelHpScale(6)).toBeCloseTo(LEVEL_HP_SCALE ** 5, 10);
   });
 
-  it('ne dit pas la meme chose des deux : les deux raccourcis ratent chacun une moitie', () => {
-    const rienNeMonte = (base: number, _k: number): number => base;
-    const toutMonte = (base: number, k: number): number => base * hpScale(k);
-
-    // Le raccourci « rien ne monte » satisfait la legere et trahit la lourde.
-    expect(rienNeMonte(LIGHT_HP, 5)).toBe(palierHp(LIGHT_HP, 5));
-    expect(rienNeMonte(HEAVY_HP, 5)).not.toBe(palierHp(HEAVY_HP, 5));
-
-    // Le raccourci « tout monte » satisfait la lourde et trahit la legere.
-    expect(toutMonte(HEAVY_HP, 5)).toBeCloseTo(palierHp(HEAVY_HP, 5), 10);
-    expect(toutMonte(LIGHT_HP, 5)).not.toBe(palierHp(LIGHT_HP, 5));
+  it('vaut exactement la reserve de depart au niveau 1, quel que soit l archetype', () => {
+    for (const a of ARCHETYPES) {
+      expect(monsterHp(a.hp, 1)).toBe(a.hp);
+    }
   });
 
   /**
-   * ⚠️ **LA raison d'etre de cette fonction, ecrite en test.** La durabilite
-   * se compte en COUPS, pas en points de vie : un point de plus que les degats
-   * de la dague double le nombre de coups. Ce test dit que la pietaille legere
-   * reste a UN coup a tous les paliers, et rien d'autre ne le garde.
+   * ⚠️ **LA moitie qui distingue l'etape 15 de l'etape 6a** : avant, la
+   * pietaille legere etait exemptee (`return baseHp`). Si l'exemption
+   * revenait, la difficulte reposerait de nouveau sur le seul nombre — ce que
+   * Leo a demande de quitter.
    */
-  it('garde la pietaille legere a UN coup de dague, a tous les paliers', () => {
-    for (let k = 0; k <= PALIERS; k++) {
-      expect(Math.ceil(palierHp(LIGHT_HP, k) / DEGATS_DAGUE)).toBe(1);
+  it('fait monter la pietaille LEGERE comme la lourde : aucune exemption', () => {
+    for (let k = 0; k < PALIERS; k++) {
+      const niveau = k + 2;
+      expect(monsterHp(LIGHT_HP, niveau)).toBeCloseTo(LIGHT_HP * levelHpScale(niveau), 10);
+      expect(monsterHp(LIGHT_HP, niveau)).toBeGreaterThan(LIGHT_HP);
+      expect(monsterHp(HEAVY_HP, niveau)).toBeCloseTo(HEAVY_HP * levelHpScale(niveau), 10);
     }
-    // Et sans l'exemption, la marche est bien la des le palier 1 : le defaut
-    // existe, ce test ne le suppose pas.
-    expect(Math.ceil((LIGHT_HP * hpScale(1)) / DEGATS_DAGUE)).toBe(2);
   });
 
-  it('vaut exactement la reserve de depart au palier 0, quel que soit l archetype', () => {
-    for (const a of ARCHETYPES) {
-      expect(palierHp(a.hp, 0)).toBe(a.hp);
+  /**
+   * ⚠️ **Le piege d'arrondi, desamorce par la MARGE et non par l'exemption.**
+   * La durabilite se compte en COUPS : des que la legere depasse les degats
+   * de la dague, il en faut deux. `LIGHT_HP` est sous la dague, donc la
+   * premiere marche n'arrive pas au niveau 2 mais quelques niveaux plus loin —
+   * et une seule carte « degats » (x1,25) la repousse d'autant. Ce test garde
+   * les deux faits : la marche existe (c'est la pression voulue), et elle
+   * n'est pas immediate.
+   */
+  it('laisse la pietaille legere a UN coup de dague aux niveaux 1 a 3, puis la marche vient', () => {
+    for (let niveau = 1; niveau <= 3; niveau++) {
+      expect(Math.ceil(monsterHp(LIGHT_HP, niveau) / DEGATS_DAGUE)).toBe(1);
     }
+    expect(Math.ceil(monsterHp(LIGHT_HP, 30) / DEGATS_DAGUE)).toBeGreaterThan(1);
   });
 });
 
 /**
  * `bossHp` a **TROIS moities**, dont aucune ne couvre les deux autres :
  *
- * - **valeur de base exacte** a `k = 0` et un joueur — sans elle, une formule
- *   qui s'emballe passe ;
- * - **croissance stricte** en `k` a effectif constant — sans elle, une
+ * - **valeur de base exacte** au niveau 1 et un joueur — sans elle, une
+ *   formule qui s'emballe passe ;
+ * - **croissance stricte** en niveau a effectif constant — sans elle, une
  *   constante passe ;
- * - **proportionnalite au nombre de joueurs** — sans elle, `palierHp` toute
+ * - **proportionnalite au nombre de joueurs** — sans elle, `monsterHp` toute
  *   seule passe, et un joueur seul recevrait le boss de quatre.
  *
  * Le dernier test les eprouve l'une contre l'autre sur ce contre-exemple.
  */
-describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
-  it('vaut exactement la reserve d un joueur au palier 0', () => {
-    expect(bossHp(0, 1)).toBe(BOSS_HP_PER_PLAYER);
+describe('bossHp — le boss suit le niveau ET le nombre de joueurs', () => {
+  it('vaut exactement la reserve d un joueur au niveau 1', () => {
+    expect(bossHp(1, 1)).toBe(BOSS_HP_PER_PLAYER);
   });
 
-  it('croit strictement sur dix paliers, a effectif constant', () => {
+  it('croit strictement sur dix niveaux, a effectif constant', () => {
     for (let joueurs = 1; joueurs <= MAX_PLAYERS; joueurs++) {
-      expect(croitStrictement((k) => bossHp(k, joueurs))).toBe(true);
+      expect(croitStrictement((k) => bossHp(k + 1, joueurs))).toBe(true);
     }
   });
 
   /**
    * ⚠️ **LA MEME FORME QUE LE SEUIL D'EXPERIENCE** (`LEVEL_XP_BASE * niveau *
    * joueurs`) : une PROPORTIONNALITE, pas une racine ni un palier, assenee a
-   * tous les paliers.
+   * tous les niveaux.
    */
-  it('multiplie exactement par le nombre de joueurs, a tous les paliers', () => {
-    for (let k = 0; k <= PALIERS; k++) {
+  it('multiplie exactement par le nombre de joueurs, a tous les niveaux', () => {
+    for (let niveau = 1; niveau <= PALIERS; niveau++) {
       for (let joueurs = 1; joueurs <= MAX_PLAYERS; joueurs++) {
-        expect(bossHp(k, joueurs)).toBeCloseTo(bossHp(k, 1) * joueurs, 6);
+        expect(bossHp(niveau, joueurs)).toBeCloseTo(bossHp(niveau, 1) * joueurs, 6);
       }
     }
   });
@@ -223,11 +231,11 @@ describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
    * ⚠️ **Le plancher `max(1, ...)` est un chemin TESTE, pas une garde morte.**
    * `WaveDirector.due` n'emet rien quand le salon est vide, donc l'appelant
    * reel ne passe jamais zero — mais cette fonction est pure et publique, et
-   * un `bossHp(0, 0)` doit rendre un boss, pas un boss a zero PV.
+   * un `bossHp(1, 0)` doit rendre un boss, pas un boss a zero PV.
    */
   it('rend le boss d un joueur quand on ne lui en donne aucun', () => {
-    expect(bossHp(0, 0)).toBe(bossHp(0, 1));
-    expect(bossHp(3, -5)).toBe(bossHp(3, 1));
+    expect(bossHp(1, 0)).toBe(bossHp(1, 1));
+    expect(bossHp(4, -5)).toBe(bossHp(4, 1));
   });
 
   /**
@@ -235,22 +243,18 @@ describe('bossHp — le boss suit le palier ET le nombre de joueurs', () => {
    * premieres moities et rate la troisieme. Sans ce test, affaiblir la
    * proportionnalite ne ferait rougir personne.
    */
-  it('ne dit pas la meme chose que palierHp seule : la formule d avant le prouve', () => {
-    const sansLesJoueurs = (k: number, _joueurs: number): number => palierHp(BOSS_HP_PER_PLAYER, k);
+  it('ne dit pas la meme chose que monsterHp seule : la formule d avant le prouve', () => {
+    const sansLesJoueurs = (niveau: number, _joueurs: number): number =>
+      monsterHp(BOSS_HP_PER_PLAYER, niveau);
 
-    expect(sansLesJoueurs(0, 1)).toBe(bossHp(0, 1));
-    expect(croitStrictement((k) => sansLesJoueurs(k, MAX_PLAYERS))).toBe(true);
-    expect(sansLesJoueurs(0, MAX_PLAYERS)).not.toBe(bossHp(0, MAX_PLAYERS));
+    expect(sansLesJoueurs(1, 1)).toBe(bossHp(1, 1));
+    expect(croitStrictement((k) => sansLesJoueurs(k + 1, MAX_PLAYERS))).toBe(true);
+    expect(sansLesJoueurs(1, MAX_PLAYERS)).not.toBe(bossHp(1, MAX_PLAYERS));
   });
 
-  /**
-   * ⚠️ **Le boss n'est PAS exempte de la montee en PV**, lui — c'est la
-   * pietaille legere qui l'est (`palierHp`). Elargir l'exemption avalerait le
-   * seul ennemi qui porte la difficulte d'un palier.
-   */
-  it('monte bien avec le palier, exactement comme la pietaille lourde', () => {
-    for (let k = 0; k <= PALIERS; k++) {
-      expect(bossHp(k, 1) / bossHp(0, 1)).toBeCloseTo(hpScale(k), 10);
+  it('monte avec le niveau, exactement comme la pietaille', () => {
+    for (let niveau = 1; niveau <= PALIERS; niveau++) {
+      expect(bossHp(niveau, 1) / bossHp(1, 1)).toBeCloseTo(levelHpScale(niveau), 10);
     }
   });
 });

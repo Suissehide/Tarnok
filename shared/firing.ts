@@ -37,10 +37,19 @@ export function armedWeapon(loadout: Loadout, weaponId: number): Weapon {
 }
 
 /**
- * Les degats d'un tir : passifs de degats + bonus de compte + cartes
- * « degats » de l'arme.
+ * Les degats d'un tir : (passifs de degats + bonus de compte) x cartes
+ * « degats » de l'arme, COMPOSEES.
  *
  * `maxHp` est le PV max du tireur (lu par Colosse).
+ *
+ * ⚠️ **Les cartes « degats » de l'arme se COMPOSENT** (etape 15) :
+ * `(1 + DAMAGE_PER_UPGRADE)^n`, pas `1 + n x DAMAGE_PER_UPGRADE`. Additive, la
+ * huitieme carte ne valait plus que +7 % relatifs et les chiffres restaient
+ * petits ; composee, chaque carte vaut +25 % de ce que l'arme fait DEJA, et
+ * huit cartes font x6 au lieu de x3. C'est le levier des gros chiffres de fin
+ * de run, face a des monstres dont les PV montent avec le niveau
+ * (`monsterHp`). Les passifs (Puissance, Acier) restent additifs entre eux :
+ * modele Risk of Rain, une pile, pas une multiplication.
  *
  * ⚠️ **Colosse MULTIPLIE** : +`magnitude` par tranche ENTIERE de
  * `COLOSSUS_HP_STEP` PV max, applique au total des autres bonus. Les achats
@@ -53,14 +62,8 @@ export function shotDamage(
   maxHp: number,
 ): number {
   const colosse = 1 + loadout.bonus('colossus') * Math.floor(maxHp / COLOSSUS_HP_STEP);
-  return (
-    weapon.damage *
-    (1 +
-      loadout.bonus('damage') +
-      accountDamage +
-      DAMAGE_PER_UPGRADE * loadout.upgradesOf(weapon.id, UPGRADE.DAMAGE)) *
-    colosse
-  );
+  const cartes = (1 + DAMAGE_PER_UPGRADE) ** loadout.upgradesOf(weapon.id, UPGRADE.DAMAGE);
+  return weapon.damage * (1 + loadout.bonus('damage') + accountDamage) * cartes * colosse;
 }
 
 /**

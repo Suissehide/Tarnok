@@ -68,13 +68,17 @@ describe('ARCHETYPES', () => {
 
 describe('la reserve de points de vie (etape 5a)', () => {
   /**
-   * ⚠️ Si la pietaille legere n'a pas EXACTEMENT les degats de la dague, elle
-   * ne meurt plus en un coup et tout le rythme de mise a mort change. Les deux
-   * nombres sont lies, pas coincidents : cette assertion les tient ensemble si
-   * la dague est retouchee.
+   * ⚠️ Si la pietaille legere depasse les degats de la dague, elle ne meurt
+   * plus en un coup au niveau 1 et tout le rythme de mise a mort change. Et si
+   * elle les EGALE, le systeme est pile sur la frontiere : la premiere marche
+   * de `monsterHp` (`shared/paliers.ts`) doublerait sa durabilite des le
+   * niveau 2. Strictement dessous, donc — les deux nombres sont lies, pas
+   * coincidents, et cette assertion les tient ensemble si la dague est
+   * retouchee.
    */
-  it('la pietaille legere meurt en UN coup de dague : LIGHT_HP vaut les degats de l arme de base', () => {
-    expect(LIGHT_HP).toBe(weaponOf(0).damage);
+  it('la pietaille legere meurt en UN coup de dague, avec de la marge : LIGHT_HP est SOUS les degats de l arme de base', () => {
+    expect(LIGHT_HP).toBeLessThan(weaponOf(0).damage);
+    expect(LIGHT_HP).toBeGreaterThan(0);
   });
 
   it('la pietaille lourde survit a trois coups de dague et meurt au quatrieme', () => {

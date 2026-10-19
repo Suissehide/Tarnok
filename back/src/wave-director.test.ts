@@ -9,7 +9,7 @@ import {
 import { MAP_SIZE, MAX_ENTITIES, MAX_PLAYERS, TICK_HZ, WAVES_PER_PALIER } from '@shared/constants';
 import { EVENT_DURATION_TICKS } from '@shared/evenements';
 import { Horde } from '@shared/horde';
-import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
+import { bossHp, monsterHp, waveCountScale } from '@shared/paliers';
 import { FORMATION, type WaveOrder } from '@shared/waves';
 import { describe, expect, it } from 'vitest';
 
@@ -266,24 +266,26 @@ describe("la divergence du palier sur le nombre d'ennemis", () => {
   // jamais ; le plafond de `waveCountBounds` est garde plus haut.
 
   /**
-   * ⚠️ **La difficulte diverge-t-elle ?** `palierHp` exempte la chair a canon :
-   * la reponse ne se lit donc pas sur `hpScale` seule, une vague legere de
-   * palier 10 pese ce qu'elle pesait au palier 0, a l'effectif pres. Ce qui
-   * monte, c'est le NOMBRE, la part de lourds, et le boss.
+   * ⚠️ **La difficulte diverge-t-elle ?** Depuis l'etape 15, les PV suivent le
+   * NIVEAU d'equipe (`monsterHp`) et le nombre suit le palier : la charge se
+   * lit en faisant avancer les deux ensemble, un niveau par palier, ce qui est
+   * la cadence la plus LENTE qu'une equipe qui tue ses boss puisse tenir.
    *
    * Ce test garde la FORME de la charge d'un palier (4 vagues + le boss) — elle
    * monte, et ne s'emballe pas — pas ses valeurs (mesurees par `bench/boss.bench.ts`).
    */
   it('fait monter la charge d un palier sans l emballer, sur dix paliers', () => {
     const moyen = (waveCountBounds(1_000_000).min + waveCountBounds(1_000_000).max) / 2;
-    /** PV a abattre dans un palier `k` : 4 vagues au mix du generateur, plus le boss. */
+    /** PV a abattre dans un palier `k`, au niveau `k + 1` : 4 vagues au mix du generateur, plus le boss. */
     function chargeDuPalier(k: number): number {
+      const niveau = k + 1;
       const effectif = moyen * waveCountScale(k);
-      const parVague = effectif * (0.8 * palierHp(LIGHT_HP, k) + 0.2 * palierHp(HEAVY_HP, k));
+      const parVague =
+        effectif * (0.8 * monsterHp(LIGHT_HP, niveau) + 0.2 * monsterHp(HEAVY_HP, niveau));
       // ⚠️ **A effectif PLEIN** : les PV du boss dependent du nombre de
       // joueurs, la charge d'un palier n'a donc pas de valeur unique. Celle-ci
       // est celle d'une equipe de quatre.
-      return WAVES_PER_PALIER * parVague + bossHp(k, MAX_PLAYERS);
+      return WAVES_PER_PALIER * parVague + bossHp(niveau, MAX_PLAYERS);
     }
 
     for (let k = 0; k < 10; k++) {

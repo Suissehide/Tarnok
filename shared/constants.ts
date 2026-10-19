@@ -499,15 +499,31 @@ export const PORTAL_EVERY_WAVES = 20;
 export const PALIER_COUNT_SCALE = 0.15;
 
 /**
- * Base de la montee des points de vie : `x 1,12^k` au palier `k`. Si le boss
- * du palier 0 tient trop longtemps, c'est `BOSS_HP_PER_PLAYER` qui baisse
- * **et** cette valeur qui se rouvre.
- *
- * ⚠️ **Exponentielle, la seule des trois formules a l'etre** : 3,1 a `k = 10`,
- * 9,6 a `k = 20`. La run doit finir par s'arreter, mais toute retouche se
- * juge loin, pas au palier 1.
+ * Base de la montee de l'OR par palier : `x 1,12^k` au palier `k`
+ * (`palierGold`). Depuis l'etape 15, les PV des monstres ne suivent plus le
+ * palier mais le NIVEAU d'equipe (`LEVEL_HP_SCALE`) : cette constante ne
+ * regle plus que la recompense.
  */
 export const PALIER_HP_SCALE = 1.12;
+
+/**
+ * Base de la montee des points de vie des monstres : `x 1,10^(niveau - 1)` au
+ * niveau d'equipe `niveau` (`monsterHp`, `shared/paliers.ts`). TOUS les
+ * monstres la suivent, pietaille legere comprise, le boss et le porteur aussi.
+ *
+ * ⚠️ **Le niveau, pas le temps ni le palier** (etape 15, decision de Leo). Le
+ * niveau suit deja le temps par l'experience, et la rampe de vagues
+ * (`waveCountBounds`) l'utilise deja : une seule horloge pour la horde. Une
+ * equipe qui ne monte plus est deja en train de perdre.
+ *
+ * ⚠️ **Rien d'inne ne monte chez le joueur** : sa puissance vient des cartes
+ * seules (Risk of Rain : l'accumulation fait la puissance), dont les cartes
+ * « degats » d'arme se COMPOSENT (`DAMAGE_PER_UPGRADE`). C'est pour ca que la
+ * pente est plus douce que l'ancienne pente de palier (1,12) : un build qui ne
+ * prend aucune carte de degats prend du retard, et c'est la pression voulue.
+ * 2,4 au niveau 10, 6,1 au niveau 20, 15,9 au niveau 30. A regler au playtest.
+ */
+export const LEVEL_HP_SCALE = 1.1;
 
 /**
  * Or verse a l'equipe quand le boss du palier 0 tombe ; les paliers suivants

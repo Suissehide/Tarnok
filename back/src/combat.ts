@@ -524,6 +524,7 @@ export function resolveBlasts(
   players: readonly ContactPlayer[],
   tick: number,
   zones: ZoneField,
+  scale = 1,
 ): number[] {
   const dead = new Set<number>(selfIds);
   for (const id of selfIds) {
@@ -533,7 +534,16 @@ export function resolveBlasts(
     }
   }
   for (const b of blasts) {
-    damageInRadius(horde, b.x, b.y, KAMIKAZE_RADIUS, KAMIKAZE_MONSTER_DAMAGE, zones, tick, dead);
+    damageInRadius(
+      horde,
+      b.x,
+      b.y,
+      KAMIKAZE_RADIUS,
+      KAMIKAZE_MONSTER_DAMAGE * scale,
+      zones,
+      tick,
+      dead,
+    );
     for (const p of players) {
       if (p.hp > 0 && Math.hypot(p.x - b.x, p.y - b.y) < KAMIKAZE_RADIUS) {
         hurtPlayer(p, KAMIKAZE_PLAYER_DAMAGE);
@@ -847,6 +857,7 @@ export function applyReactions(
   zones: ZoneField,
   reactions: Reactions,
   echoOf: (playerId: number) => number = () => 0,
+  scale = 1,
 ): number[] {
   for (const t of triggers) {
     postZone(zones, t, tick, reactions);
@@ -855,7 +866,9 @@ export function applyReactions(
   const dead = new Set<number>();
   for (const t of triggers) {
     const def = reactionForPair(t.pair);
-    const echo = 1 + echoOf(t.by);
+    // `scale` : l'echelle de niveau des degats fixes (`levelHpScale`), voir
+    // `shared/paliers.ts`. Elle multiplie les memes degats INSTANTANES qu'Echo.
+    const echo = (1 + echoOf(t.by)) * scale;
     if (def?.id === REACTION.EMBRASEMENT) {
       // `damageInRadius` filtre par la Poix.
       damageInRadius(
@@ -1766,6 +1779,7 @@ export function resolveBurn(
   orbs: OrbField,
   tick: number,
   zones: ZoneField,
+  scale = 1,
 ): number[] {
   const dead: number[] = [];
   for (let i = 0; i < horde.count; i++) {
@@ -1776,7 +1790,7 @@ export function resolveBurn(
     // ⚠️ La borne `<= 0` d'`appliquerDegats` ne se teste pas d'ici : 0,1 n'est
     // pas representable en `Float32Array`, la reserve ne tombe jamais pile a
     // zero. Ce sont les degats ENTIERS qui la tiennent.
-    appliquerDegats(horde, i, burn, zones, tick, dead);
+    appliquerDegats(horde, i, burn * scale, zones, tick, dead);
   }
   // `aliveAt`, pas `slowsAt` : un degat, pas un deplacement.
   //
@@ -1793,7 +1807,7 @@ export function resolveBurn(
     if (burn <= 0) {
       continue;
     }
-    appliquerDegats(horde, i, burn, zones, tick, dead);
+    appliquerDegats(horde, i, burn * scale, zones, tick, dead);
   }
   if (dead.length === 0) {
     return dead;
@@ -1842,6 +1856,7 @@ export function resolveVerglasCollisions(
   orbs: OrbField,
   tick: number,
   zones: ZoneField,
+  scale = 1,
 ): number[] {
   const dead: number[] = [];
   const sliding: number[] = [];
@@ -1855,7 +1870,7 @@ export function resolveVerglasCollisions(
       continue;
     }
     sliding.push(i);
-    slidingDamage.push(damage);
+    slidingDamage.push(damage * scale);
   }
 
   const r2 = SEPARATION_RADIUS * SEPARATION_RADIUS;

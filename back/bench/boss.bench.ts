@@ -31,7 +31,7 @@ import { archetypeOf, BOSS_ARCHETYPE, BOSS_HP_PER_PLAYER } from '@shared/archety
 import { CARD } from '@shared/cards';
 import { MAP_SIZE, MAX_ENTITIES, TICK_HZ } from '@shared/constants';
 import { entityIdOf } from '@shared/horde';
-import { bossHp, palierHp, waveCountScale } from '@shared/paliers';
+import { bossHp, monsterHp, waveCountScale } from '@shared/paliers';
 import { PASSIVES } from '@shared/passives';
 import { decodeSnapshot } from '@shared/protocol';
 import { FORMATION } from '@shared/waves';
@@ -189,7 +189,7 @@ function duel(seed: number): Mesure {
   // mesurerait un boss de `BOSS_HP_PER_PLAYER` — le quart de celui que la
   // melee affronte — et son « plancher » ne serait plus le plancher de rien.
   const slotNeuf = room.horde.slotOf(bossId);
-  room.horde.hp[slotNeuf] = bossHp(0, JOUEURS.length);
+  room.horde.hp[slotNeuf] = bossHp(1, JOUEURS.length);
   const pvApparition = pvDuBoss(room, bossId);
 
   let ticks = 0;
@@ -344,8 +344,8 @@ function main(): void {
   console.log(
     `Banc du boss — 4 joueurs immobiles, palier 0, ${GRAINES.length} graines de carte.\n` +
       `BOSS_HP_PER_PLAYER = ${BOSS_HP_PER_PLAYER} par joueur, soit ` +
-      `${bossHp(0, JOUEURS.length)} PV a ${JOUEURS.length} joueurs au palier 0 ` +
-      `(${bossHp(0, JOUEURS.length) / archetypeOf(0).hp}x la pietaille legere, ` +
+      `${bossHp(1, JOUEURS.length)} PV a ${JOUEURS.length} joueurs au niveau 1 ` +
+      `(${bossHp(1, JOUEURS.length) / archetypeOf(0).hp}x la pietaille legere, ` +
       `archetype ${BOSS_ARCHETYPE} « ${archetypeOf(BOSS_ARCHETYPE).name} »).\n`,
   );
 
@@ -397,10 +397,10 @@ function main(): void {
  * `waveCountScale` qui peut le faire deborder, et le test
  * `back/src/wave-director.test.ts` mesure a quel palier.
  *
- * ⚠️ **Les PV totaux ne suivent PAS `hpScale` sur la pietaille legere** : c'est
- * `palierHp` qui decide, d'ou le melange leger/lourd ci-dessous. Une table a un
- * seul archetype ferait croire a une divergence deux fois plus raide, ou deux
- * fois plus plate.
+ * ⚠️ **Les PV suivent le NIVEAU (`monsterHp`), le nombre suit le palier**
+ * (etape 15) : la table fait avancer les deux ensemble, un niveau par palier,
+ * la cadence la plus lente d'une equipe qui tue ses boss. Le melange
+ * leger/lourd suit le mix du generateur.
  */
 function divergence(): void {
   const LEGER = 0;
@@ -411,21 +411,25 @@ function divergence(): void {
   const moyen = (bornes.min + bornes.max) / 2;
   const lignes: Record<string, unknown>[] = [];
   for (let k = 0; k <= 10; k++) {
+    const niveau = k + 1;
     const echelle = waveCountScale(k);
     const plafond = Math.round(bornes.max * echelle);
     const effectif = moyen * echelle;
     // Mix reel du generateur : une vague sur cinq est lourde (HEAVY_WAVE_SHARE).
     const pvParVague =
       effectif *
-      (0.8 * palierHp(archetypeOf(LEGER).hp, k) + 0.2 * palierHp(archetypeOf(LOURD).hp, k));
+      (0.8 * monsterHp(archetypeOf(LEGER).hp, niveau) +
+        0.2 * monsterHp(archetypeOf(LOURD).hp, niveau));
+    const boss = bossHp(niveau, JOUEURS.length);
     lignes.push({
       palier: k,
+      niveau,
       'effectif moyen/vague': Math.round(effectif),
       'effectif au plafond': plafond,
       'plafond / MAX_ENTITIES': `${Math.round((100 * plafond) / MAX_ENTITIES)} %`,
-      'PV du boss': Math.round(bossHp(k, JOUEURS.length)),
-      'PV du palier (4 vagues + boss)': Math.round(4 * pvParVague + bossHp(k, JOUEURS.length)),
-      'x palier 0': +((4 * pvParVague + bossHp(k, JOUEURS.length)) / reference(bornes)).toFixed(2),
+      'PV du boss': Math.round(boss),
+      'PV du palier (4 vagues + boss)': Math.round(4 * pvParVague + boss),
+      'x palier 0': +((4 * pvParVague + boss) / reference(bornes)).toFixed(2),
     });
   }
   console.table(lignes);
@@ -441,7 +445,7 @@ function divergence(): void {
 function reference(bornes: { min: number; max: number }): number {
   const moyen = (bornes.min + bornes.max) / 2;
   return (
-    4 * moyen * (0.8 * archetypeOf(0).hp + 0.2 * archetypeOf(1).hp) + bossHp(0, JOUEURS.length)
+    4 * moyen * (0.8 * archetypeOf(0).hp + 0.2 * archetypeOf(1).hp) + bossHp(1, JOUEURS.length)
   );
 }
 

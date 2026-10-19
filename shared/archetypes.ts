@@ -84,14 +84,17 @@ export interface Archetype {
 }
 
 /**
- * PV de la pietaille legere. **Egal a `damage` de la dague** (`shared/weapons.ts`,
- * arme 0) : elle meurt en un coup. Voir `palierHp` (`shared/paliers.ts`) pour
- * le piege d'arrondi que cette egalite cree.
+ * PV de la pietaille legere. **Strictement SOUS `damage` de la dague**
+ * (`shared/weapons.ts`, arme 0) : elle meurt en un coup au niveau 1, et la
+ * marge (4 contre 5) absorbe les premiers niveaux de `monsterHp`
+ * (`shared/paliers.ts`) avant qu'il ne faille deux coups sans carte de degats.
+ * Avant l'etape 15 elle valait EXACTEMENT la dague, et c'est ce qui l'exemptait
+ * de toute montee.
  *
- * ⚠️ Si la dague change de degats, cette valeur doit suivre — le test
+ * ⚠️ Si la dague change de degats, cette valeur doit rester dessous — le test
  * `archetypes.test.ts` les compare.
  */
-export const LIGHT_HP = 5;
+export const LIGHT_HP = 4;
 
 /**
  * PV de la pietaille lourde : quatre coups de dague **avant l'armure**, cinq

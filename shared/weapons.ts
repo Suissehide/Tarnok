@@ -369,7 +369,11 @@ export const UPGRADE = {
 } as const;
 export const UPGRADE_KINDS = 12;
 
-/** Degats gagnes par carte « degats », en fraction des degats de base. */
+/**
+ * Degats gagnes par carte « degats », en fraction des degats COURANTS de
+ * l'arme : les cartes se composent, `x 1,25^n` (`shotDamage`,
+ * `shared/firing.ts`).
+ */
 export const DAMAGE_PER_UPGRADE = 0.25;
 /**
  * Recharge retiree par carte « cadence », en fraction — s'additionne aux

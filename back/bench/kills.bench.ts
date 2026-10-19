@@ -28,14 +28,16 @@ const DT = 1 / TICK_HZ;
 
 /**
  * Les deux decors mesures. `armes` est le nombre d'armes DRAFTEES donnees a
- * chaque joueur en plus de l'arme neutre, qui vit hors des slots.
+ * chaque joueur en plus de la dague de depart, qui occupe le premier slot.
  *
  * ⚠️ Les armes se prennent dans le CATALOGUE, jamais par indice recopie : un
  * `refId` en dur meurt au premier changement de `WEAPON_SLOTS`.
  */
 const DECORS = [
   { nom: 'dague seule', armes: 0 },
-  { nom: 'arsenal plein', armes: WEAPON_SLOTS },
+  // ⚠️ La dague de depart occupe DEJA un slot (`Room#join`) : `WEAPON_SLOTS`
+  // armes de plus feraient lever « slots d'armes pleins ».
+  { nom: 'arsenal plein', armes: WEAPON_SLOTS - 1 },
 ] as const;
 
 /** Duree mesuree, en secondes de jeu. */

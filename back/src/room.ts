@@ -64,7 +64,7 @@ import {
   type Onde,
   ondeIsAlive,
 } from '@shared/onde-frappe';
-import { bossHp, extractGold, palierGold, palierHp } from '@shared/paliers';
+import { bossHp, extractGold, levelHpScale, monsterHp, palierGold } from '@shared/paliers';
 import { PlayerHistory } from '@shared/player-history';
 import { type Anchor, Projectiles } from '@shared/projectiles';
 import {
@@ -1480,15 +1480,16 @@ export class Room {
         if (this.horde.count > before) {
           const premier = this.#bosses.length === 0;
           this.#bosses.push(entityIdOf(order.waveId, 0));
-          // ⚠️ **Le boss ne passe PAS par `#scalePalierHp`** : `bossHp`
-          // contient deja `palierHp`, une seule ecriture suffit. Le creneau est
+          // ⚠️ **Le boss ne passe PAS par `#scaleMonsterHp`** : `bossHp`
+          // contient deja `monsterHp`, une seule ecriture suffit. Le creneau est
           // `before` : la vague de boss vaut `count: 1`.
           //
           // ⚠️ **Les PV du boss sont FIGES A SON APPARITION** (`#players.size`
-          // lu une fois) : suivre le nombre de joueurs ferait regagner de la
-          // vie a un boss entame quand quelqu'un rejoint. Le prix : trois
-          // joueurs qui quittent laissent au dernier un boss de quatre.
-          this.horde.hp[before] = bossHp(this.#director.palier, this.#players.size);
+          // et `#level` lus une fois) : suivre le nombre de joueurs ferait
+          // regagner de la vie a un boss entame quand quelqu'un rejoint. Le
+          // prix : trois joueurs qui quittent laissent au dernier un boss de
+          // quatre.
+          this.horde.hp[before] = bossHp(this.#level, this.#players.size);
           // ⚠️ **Il n'arrive pas en chargeant** : il apparait au bord de la
           // carte, et une charge immediate traverserait un couloir vide. Le
           // premier delai est celui qui separe deux charges. Un boss de plus ne
@@ -1505,9 +1506,9 @@ export class Room {
           this.#director.bossMissing();
         }
       } else {
-        this.#scalePalierHp(before);
+        this.#scaleMonsterHp(before);
         // Le porteur passe par le chemin ordinaire des PV
-        // (`palierHp`), puis le salon retient son identite. Horde pleine : il
+        // (`monsterHp`), puis le salon retient son identite. Horde pleine : il
         // n'existe pas, et le directeur doit le savoir (meme parade que
         // `bossMissing`).
         if (order.archetype === PORTEUR_ARCHETYPE) {
@@ -1627,6 +1628,8 @@ export class Room {
       this.#reactions,
       // Echo : les reactions que CE joueur declenche.
       (id) => this.#players.get(id)?.loadout.bonus('echo') ?? 0,
+      // Les degats fixes suivent les PV des monstres (`shared/paliers.ts`).
+      levelHpScale(this.#level),
     );
     // ⚠️ **APRES `applyReactions`** : voir l'etape 7 bis du docbloc de `step`.
     this.#announceZones();
@@ -1658,13 +1661,20 @@ export class Room {
         synergyCharge: charge,
       });
     }
-    const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick, this.#zones);
+    const echelle = levelHpScale(this.#level);
+    const burntIds = resolveBurn(this.horde, this.#orbs, this.#tick, this.#zones, echelle);
     // Le poison des cartes « venin », au meme titre que la brulure.
     const poisonedIds = this.#venins.resolve(this.horde, this.#orbs, this.#tick, this.#zones);
     // ⚠️ **Verglas : les ennemis derapent ET se percutent.** Le derapage vit
     // dans `Horde.step`, deja joue ; la collision est un degat, resolue ICI
     // comme la brulure. Voir `resolveVerglasCollisions`.
-    const collidedIds = resolveVerglasCollisions(this.horde, this.#orbs, this.#tick, this.#zones);
+    const collidedIds = resolveVerglasCollisions(
+      this.horde,
+      this.#orbs,
+      this.#tick,
+      this.#zones,
+      echelle,
+    );
     // Les kamikazes : ceux qui touchent leur cible se font sauter maintenant,
     // ceux que les passes precedentes ont tues exploseront au tick suivant
     // (leur position a ete relevee avant les degats), comme ceux que les
@@ -1964,25 +1974,25 @@ export class Room {
   }
 
   /**
-   * Applique l'echelle de PV du palier aux entites nees a ce tick, c'est-a-dire
-   * a tous les creneaux a partir de `depuis`.
+   * Applique l'echelle de PV du NIVEAU d'equipe aux entites nees a ce tick,
+   * c'est-a-dire a tous les creneaux a partir de `depuis`.
    *
    * ⚠️ **Les PV mis a l'echelle NE VOYAGENT PAS** : le client ne lit jamais
    * `Horde.hp`, il apprend qui meurt par `DEATHS`.
    * `shared/horde.replication.test.ts` verifie qu'un serveur a PV mis a
-   * l'echelle et un client a PV bruts ne derivent pas. La regle (pietaille
-   * LEGERE exemptee) vit dans `palierHp`.
+   * l'echelle et un client a PV bruts ne derivent pas. La regle vit dans
+   * `monsterHp` (`shared/paliers.ts`).
    *
    * ⚠️ **LE BOSS NE PASSE PAS PAR ICI** : `step` ecrit sa reserve par `bossHp`,
-   * qui contient deja `palierHp`.
+   * qui contient deja `monsterHp`.
    *
-   * ⚠️ **`horde.hp[i]` doit etre la reserve d'archetype intacte** : `palierHp`
-   * decide sur cette valeur, donc cet appel doit preceder tout degat.
+   * ⚠️ **`horde.hp[i]` doit etre la reserve d'archetype intacte** : l'echelle
+   * multiplie cette valeur, donc cet appel doit preceder tout degat.
    */
-  #scalePalierHp(depuis: number): void {
-    const palier = this.#director.palier;
+  #scaleMonsterHp(depuis: number): void {
+    const niveau = this.#level;
     for (let i = depuis; i < this.horde.count; i++) {
-      this.horde.hp[i] = palierHp(this.horde.hp[i] ?? 0, palier);
+      this.horde.hp[i] = monsterHp(this.horde.hp[i] ?? 0, niveau);
     }
   }
 
@@ -2568,7 +2578,7 @@ export class Room {
     };
     const before = this.horde.count;
     this.horde.spawn(order, this.#fields[0]);
-    this.#scalePalierHp(before);
+    this.#scaleMonsterHp(before);
     this.#pendingOrders.push(order);
   }
 
@@ -2605,6 +2615,7 @@ export class Room {
       [...this.#players.values()],
       this.#tick,
       this.#zones,
+      levelHpScale(this.#level),
     );
     for (const id of ids) {
       const b = kamikazes.get(id);

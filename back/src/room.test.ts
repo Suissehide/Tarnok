@@ -60,7 +60,7 @@ import {
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
 import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
-import { bossHp, extractGold, hpScale, palierGold, palierHp } from '@shared/paliers';
+import { bossHp, extractGold, monsterHp, palierGold } from '@shared/paliers';
 import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
 import { Projectiles } from '@shared/projectiles';
 import {
@@ -3687,17 +3687,20 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     // second chemin invente pour lui.
     expect(lots.some((l) => l.ids.includes(bossId ?? -1))).toBe(true);
 
-    // --- 5. Au palier 1, les PV d'apparition suivent `palierHp`.
+    // --- 5. Les PV d'apparition suivent `monsterHp` au NIVEAU d'equipe
+    // (etape 15), plus le palier : le palier 1 vient d'etre atteint, et le
+    // niveau est force a 2 pour que l'echelle soit visible.
     //
-    // ⚠️ **`palierHp`, pas `hpScale`** : la pietaille LEGERE est exemptee de
-    // la montee. Comparer a `hpScale(1)` en dur rendrait ce test dependant de
-    // l'archetype tire, donc intermittent au premier changement de graine.
+    // ⚠️ **`monsterHp`, pas une constante en dur** : comparer a `1,1` rendrait
+    // ce test dependant de la pente, faite pour etre retouchee.
     //
     // Deux vagues, pas une : la premiere donne les PV a l'apparition, la
     // seconde sert de temoin (voir l'assertion finale).
     // Le joueur cesse de viser : la visee de la section 4 tirerait sur le
     // temoin, et sur le boss suivant.
     room.applyInput(1, 20_000, 0, 0, 0, 0);
+    const NIVEAU = 2;
+    room.debugSetLevel(NIVEAU);
     let pvPalier1: { poses: number; archetype: number } | null = null;
     let temoin = -1;
     let vaguesSuivantes = 0;
@@ -3718,28 +3721,30 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
     }
 
     expect(pvPalier1).not.toBeNull();
-    expect(pvPalier1?.poses).toBeCloseTo(palierHp(pvPalier1?.archetype ?? 0, 1), 4);
+    expect(pvPalier1?.poses).toBeCloseTo(monsterHp(pvPalier1?.archetype ?? 0, NIVEAU), 4);
+    // LA MOITIE QUI COMPTE : au niveau 2, quelque chose monte VRAIMENT — tout
+    // le monde, depuis l'etape 15, la pietaille legere comprise. Sans elle, la
+    // ligne ci-dessus passe avec une echelle constamment egale a 1.
+    expect(pvPalier1?.poses).toBeGreaterThan(pvPalier1?.archetype ?? 0);
 
     // ⚠️ **L'echelle s'applique aux entites NEES a ce tick, pas a la horde
-    // entiere.** Un `#scalePalierHp(0)` la reappliquerait a tout le monde a
-    // chaque vague : un monstre deja la se renforcerait de 12 % toutes les six
+    // entiere.** Un `#scaleMonsterHp(0)` la reappliquerait a tout le monde a
+    // chaque vague : un monstre deja la se renforcerait de 10 % toutes les six
     // secondes, indefiniment. Rien d'autre dans ce fichier ne le verrait.
     expect(vaguesSuivantes).toBe(1);
     const slotTemoin = room.horde.slotOf(temoin);
     expect(slotTemoin).toBeGreaterThanOrEqual(0);
     expect(room.horde.hp[slotTemoin]).toBeCloseTo(pvPalier1?.poses ?? 0, 4);
 
-    // --- 6. LA MOITIE QUI COMPTE : au palier 1, quelque chose monte VRAIMENT.
-    //
-    // ⚠️ **Sans elle, la section 5 passe avec une echelle constamment egale a
-    // 1**, et c'est meme le cas le plus PROBABLE puisque la pietaille legere
-    // est exemptee. Le temoin choisi est le boss du palier 1 : le seul dont la
-    // montee soit garantie, sans dependre d'un tirage d'archetype.
+    // --- 6. Le boss suit la meme echelle de niveau, par `bossHp`, et pas le
+    // palier : un boss de palier 1 au niveau 2 porte `bossHp(2, 1)`.
     let pvBoss1: { poses: number; archetype: number } | null = null;
     for (let t = 0; t < 60 * TICK_HZ && pvBoss1 === null; t++) {
       room.step(DT);
       for (const o of room.drainWaveOrders()) {
-        if (o.count === 1) {
+        // Par l'ARCHETYPE, pas par `count === 1` : au niveau 2, une escorte
+        // de colosse (`countFactor` 0,15) sort aussi en ordre d'un seul.
+        if (o.archetype === BOSS_ARCHETYPE) {
           pvBoss1 = pvALApparition(room, o);
         }
       }
@@ -3751,7 +3756,7 @@ describe('le palier structure la run (etape 6a, tache 2)', () => {
 
     expect(pvBoss1).not.toBeNull();
     expect(pvBoss1?.archetype).toBe(BOSS_HP_PER_PLAYER);
-    expect(pvBoss1?.poses).toBeCloseTo(BOSS_HP_PER_PLAYER * hpScale(1), 4);
+    expect(pvBoss1?.poses).toBeCloseTo(bossHp(NIVEAU, 1), 4);
     expect(pvBoss1?.poses).toBeGreaterThan(BOSS_HP_PER_PLAYER);
   }, 30_000);
 
@@ -5776,7 +5781,7 @@ describe('etape 11 : le porteur de coffre dans le salon', () => {
     throw new Error('le porteur n est pas tombe en 4 s');
   }
 
-  it('nait a la 2e vague avec PORTEUR_HP a l echelle du palier : 200 au palier 0', () => {
+  it('nait a la 2e vague avec PORTEUR_HP a l echelle du niveau : 200 au niveau 1', () => {
     const room = new Room(0x11_0b_0001);
     room.join(1);
     const id = jusquAuPorteur(room);
@@ -5784,7 +5789,7 @@ describe('etape 11 : le porteur de coffre dans le salon', () => {
     expect(slot).toBeGreaterThanOrEqual(0);
     expect(room.horde.archetype[slot]).toBe(PORTEUR_ARCHETYPE);
     expect(room.palier).toBe(0);
-    expect(room.horde.hp[slot]).toBe(palierHp(PORTEUR_HP, room.palier));
+    expect(room.horde.hp[slot]).toBe(monsterHp(PORTEUR_HP, 1));
     expect(room.horde.hp[slot]).toBe(200);
   });
 

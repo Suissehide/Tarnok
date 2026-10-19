@@ -81,15 +81,33 @@ describe('etape 10 : crans de l arme + crans des passifs (weaponUpgrades)', () =
 });
 
 describe('etape 10 : la formule de degats partagee (shotDamage)', () => {
-  it('somme passifs, compte et cartes « degats » comme le faisaient les deux copies', () => {
+  it('somme passifs et compte, puis MULTIPLIE par les cartes « degats » de l arme', () => {
     const l = avec('damage', 2, TIR.id);
     l.addWeapon(TIR.id, UPGRADE.DAMAGE);
     const passif = l.bonus('damage');
     expect(passif).toBeGreaterThan(0);
     expect(shotDamage(TIR, l, 0.1, 100)).toBeCloseTo(
-      TIR.damage * (1 + passif + 0.1 + DAMAGE_PER_UPGRADE),
+      TIR.damage * (1 + passif + 0.1) * (1 + DAMAGE_PER_UPGRADE),
       6,
     );
+  });
+
+  /**
+   * ⚠️ **Etape 15 : les cartes « degats » se COMPOSENT.** Additive, la
+   * formule d'avant (`1 + n x 0,25`) passe le test a une carte ci-dessus ; a
+   * quatre cartes elle rend x2, la composee x2,44. C'est cet ecart que ce test
+   * garde — et la raison : la huitieme carte additive ne valait plus que
+   * +7 % relatifs, les chiffres de fin de run restaient petits.
+   */
+  it('quatre cartes « degats » font (1 + DAMAGE_PER_UPGRADE)^4, pas 1 + 4 x DAMAGE_PER_UPGRADE', () => {
+    const l = avec('damage', 0, TIR.id);
+    for (let i = 0; i < 4; i++) {
+      l.addWeapon(TIR.id, UPGRADE.DAMAGE);
+    }
+    const composee = (1 + DAMAGE_PER_UPGRADE) ** 4;
+    const additive = 1 + 4 * DAMAGE_PER_UPGRADE;
+    expect(composee).not.toBeCloseTo(additive, 2);
+    expect(shotDamage(TIR, l, 0, 100)).toBeCloseTo(TIR.damage * composee, 6);
   });
 });
 
