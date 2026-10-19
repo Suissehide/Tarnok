@@ -14,6 +14,11 @@ import { AnimatedSprite, Assets, type Container, Graphics, Rectangle, Texture } 
  * sur son original et ne change rien ; derriere un arbre, elle est la seule a
  * se voir — le joueur passe en transparence derriere l'objet, sans test de
  * recouvrement par image.
+ *
+ * ⚠️ **Le socle.** Un cercle a la couleur du joueur, pose a ses pieds et
+ * classe juste SOUS son sprite dans le calque trie — donc par-dessus la
+ * horde. C'est le seul repere qui tienne quand vingt monstres se collent au
+ * groupe : on retrouve les quatre couleurs au premier coup d'oeil.
  */
 
 /** L'unite du pack de chaque classe, par identifiant : 0 Amorce, 1 Rempart, 2 Appat, 3 Relais. */
@@ -34,6 +39,8 @@ const SHEETS: Record<Unit, { idle: string; run: string; frame: number }> = {
 export const UNIT_SCALE = 0.6;
 /** Opacite du fantome : assez pour se voir derriere un arbre, pas assez pour doubler le trait. */
 export const GHOST_ALPHA = 0.35;
+/** Rayon du socle, en px monde : un peu plus large que l'unite, jamais autant qu'un monstre. */
+export const BASE_RADIUS_PX = 22;
 /** Un deplacement plus petit, d'une image a l'autre, ne compte pas comme une course. */
 const RUN_EPSILON_PX = 0.4;
 /** Le joueur court encore ce long apres son dernier pas : pas de clignotement. */
@@ -55,6 +62,8 @@ interface Body {
   key: string;
   body: AnimatedSprite | null;
   ghost: AnimatedSprite | null;
+  /** Le socle a la couleur du joueur : ce qui le distingue de la horde. */
+  base: Graphics;
   fallback: Graphics;
   lastX: number;
   lastY: number;
@@ -120,6 +129,11 @@ export class PlayerRenderer {
       const running = nowMs - b.lastMoveMs < RUN_HOLD_MS;
       const alpha = p.id === localId ? 1 : 0.9;
 
+      b.base.position.set(p.x, p.y);
+      // Juste SOUS son propre sprite dans le calque trie, donc au-dessus de la
+      // horde : c'est tout l'interet du socle, se voir au milieu des monstres.
+      b.base.zIndex = p.y - 1;
+      b.base.alpha = p.id === localId ? 1 : 0.7;
       b.fallback.position.set(p.x, p.y);
       b.fallback.zIndex = p.y;
       b.fallback.visible = b.body === null;
@@ -148,6 +162,7 @@ export class PlayerRenderer {
       if (!seen.has(id)) {
         b.body?.destroy();
         b.ghost?.destroy();
+        b.base.destroy();
         b.fallback.destroy();
         this.#bodies.delete(id);
       }
@@ -165,14 +180,23 @@ export class PlayerRenderer {
       // La classe a change (salon) : on repart d'une unite neuve.
       existing.body?.destroy();
       existing.ghost?.destroy();
+      existing.base.destroy();
       existing.fallback.destroy();
     }
-    const fallback = new Graphics().rect(-18, -18, 36, 36).fill(this.fallbackColor(id));
-    this.depth.addChild(fallback);
+    const color = this.fallbackColor(id);
+    // Un cercle, pas une ellipse : la camera l'ecrase deja de `VERTICAL_SQUASH`.
+    const baseRing = new Graphics()
+      .circle(0, 0, BASE_RADIUS_PX)
+      .fill({ color, alpha: 0.22 })
+      .circle(0, 0, BASE_RADIUS_PX)
+      .stroke({ color, width: 2.5, alpha: 0.9 });
+    const fallback = new Graphics().rect(-18, -18, 36, 36).fill(color);
+    this.depth.addChild(baseRing, fallback);
     const b: Body = {
       key,
       body: null,
       ghost: null,
+      base: baseRing,
       fallback,
       lastX: x,
       lastY: y,
