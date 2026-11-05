@@ -707,7 +707,8 @@ export class Horde {
       // Le porteur fuit le joueur le plus proche sous `PORTEUR_FLEE_RADIUS`,
       // sans etre collant comme le voleur. Hors du rayon il ATTEND (`stopped`) :
       // sinon il avancerait jusqu'au bord du rayon puis reculerait, en oscillant.
-      if (behavior === 'porteur') {
+      // La proie de la chasse (etape 16) partage cette regle.
+      if (behavior === 'porteur' || behavior === 'proie') {
         this.fleeing[i] = bestDist <= porteurR2 ? 1 : 0;
         this.stopped[i] = this.fleeing[i] === 1 ? 0 : 1;
         continue;
@@ -1115,9 +1116,13 @@ export class Horde {
       }
       const bond = arch.behavior === 'bond' ? leapFactor(this.entityIdAt(i), tick) : 1;
       // En fuite, le voleur remonte le flowfield a `THIEF_FLEE_SPEED` ; le
-      // porteur a sa vitesse propre, qui est deja sa vitesse de fuite.
+      // porteur et la proie a leur vitesse propre, qui est deja leur vitesse de fuite.
       const fuite =
-        this.fleeing[i] === 1 ? (arch.behavior === 'porteur' ? -1 : -THIEF_FLEE_SPEED) : 1;
+        this.fleeing[i] === 1
+          ? arch.behavior === 'porteur' || arch.behavior === 'proie'
+            ? -1
+            : -THIEF_FLEE_SPEED
+          : 1;
       const slow = (this.#slow[i] ?? 1) * bond * fuite;
       this.#moveOnLand(i, ex + (this.vx[i] ?? 0) * dt * slow, ey + (this.vy[i] ?? 0) * dt * slow);
     }

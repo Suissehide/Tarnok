@@ -235,6 +235,7 @@ export type Role = 'nuee' | 'troupe' | 'brute' | 'colosse';
  * - `aucun` : marche droit vers sa cible.
  * - `porteur` : le porteur de coffre — attend loin de l'equipe,
  *   fuit le joueur le plus proche a `PORTEUR_FLEE_RADIUS`.
+ * - `proie` : la proie de la chasse (etape 16) — la regle du porteur, a sa vitesse.
  */
 export type Behavior =
   | 'aucun'
@@ -247,7 +248,8 @@ export type Behavior =
   | 'bouclier'
   | 'necro'
   | 'gardien'
-  | 'porteur';
+  | 'porteur'
+  | 'proie';
 
 /** La periode d'un bond, en ticks : une ruee puis une pause. */
 export const LEAP_PERIOD_TICKS = 27;
@@ -300,6 +302,21 @@ export const PORTEUR_SPEED_FACTOR = 0.9;
  * large : hors boss, `hitScale` vaut `bodyScale`.
  */
 export const PORTEUR_BODY_SCALE = 1.6;
+
+/**
+ * La proie de la chasse (etape 16, §5) : une elite que le SALON fait naitre
+ * pendant l'evenement, jamais le hasard ni le directeur. Un gnoll agrandi qui
+ * emprunte la regle de fuite du porteur (`Horde.retarget`) — attendre loin,
+ * fuir le plus proche sous `PORTEUR_FLEE_RADIUS` — a sa vitesse a elle.
+ */
+export const PROIE_NAME = 'proie';
+/** Ses PV, en multiple de `HEAVY_HP` : 160 au niveau 1, puis `monsterHp` (etape 15). */
+export const PROIE_HP_MULTIPLE = 8;
+export const PROIE_HP = HEAVY_HP * PROIE_HP_MULTIPLE;
+/** 195 px/s : plus lente que le porteur (234), on la rattrape a 65 px/s. */
+export const PROIE_SPEED_FACTOR = 0.75;
+/** Dessinee 1,6 fois plus grande — et touchee 1,6 fois plus large, comme le porteur. */
+export const PROIE_BODY_SCALE = 1.6;
 
 /** Le diviseur laisse ce nombre de petits a sa mort. */
 export const SPLIT_COUNT = 3;
@@ -386,14 +403,20 @@ export const ROLES: Readonly<Record<Role, RoleDef>> = {
 export const ROLE_ORDER: readonly Role[] = ['nuee', 'troupe', 'brute', 'colosse'];
 
 function hpOf(name: string, role: Role): number {
+  if (name === PROIE_NAME) {
+    return PROIE_HP;
+  }
   if (name === PORTEUR_NAME) {
     return PORTEUR_HP;
   }
   return name === BOSS_NAME ? BOSS_HP_PER_PLAYER : ROLES[role].hp;
 }
 
-/** Le facteur de corps du role ; le boss et le porteur debordent davantage. Voir `Archetype.bodyScale`. */
+/** Le facteur de corps du role ; le boss, le porteur et la proie debordent davantage. Voir `Archetype.bodyScale`. */
 function bodyScaleOf(name: string, role: Role): number {
+  if (name === PROIE_NAME) {
+    return PROIE_BODY_SCALE;
+  }
   if (name === PORTEUR_NAME) {
     return PORTEUR_BODY_SCALE;
   }
@@ -559,6 +582,20 @@ const PORTEUR: Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale' | 'hitScale' 
   behavior: 'porteur',
 };
 
+/**
+ * La proie : la planche, le cycle et la cellule du gnoll, sa vitesse a elle.
+ * Rangee APRES le porteur, pour qu'aucun identifiant existant ne bouge.
+ */
+const PROIE: Omit<Archetype, 'id' | 'hp' | 'armor' | 'bodyScale' | 'hitScale' | 'countFactor'> = {
+  name: PROIE_NAME,
+  sheet: 'Gnoll/Gnoll_Walk.png',
+  frames: 8,
+  cell: 192,
+  speed: Math.round(PLAYER_SPEED * PROIE_SPEED_FACTOR),
+  role: 'troupe',
+  behavior: 'proie',
+};
+
 /** Nombre d'archetypes de pietaille. Les elites viennent apres, dans le tableau. */
 export const FOOTSOLDIER_COUNT = FOOTSOLDIERS.length;
 
@@ -573,6 +610,8 @@ export const ARCHETYPES: readonly Archetype[] = [
   ...ELITES.map((e) => ({ ...e, role: 'troupe' as Role })),
   // Le porteur, en DERNIER.
   PORTEUR,
+  // La proie (etape 16), apres lui.
+  PROIE,
 ].map((a, id) => ({
   ...a,
   id,
@@ -629,3 +668,6 @@ export function archetypeIdOf(name: string): number {
  * ou un archetype serait insere avant lui.
  */
 export const PORTEUR_ARCHETYPE: number = archetypeIdOf(PORTEUR_NAME);
+
+/** Identifiant de la proie de la chasse, derive du nom comme `PORTEUR_ARCHETYPE`. */
+export const PROIE_ARCHETYPE: number = archetypeIdOf(PROIE_NAME);

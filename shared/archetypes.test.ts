@@ -21,6 +21,12 @@ import {
   PORTEUR_HP_MULTIPLE,
   PORTEUR_NAME,
   PORTEUR_SPEED_FACTOR,
+  PROIE_ARCHETYPE,
+  PROIE_BODY_SCALE,
+  PROIE_HP,
+  PROIE_HP_MULTIPLE,
+  PROIE_NAME,
+  PROIE_SPEED_FACTOR,
   ROLE_ORDER,
   ROLES,
   type Role,
@@ -101,14 +107,16 @@ describe('la reserve de points de vie (etape 5a)', () => {
   it('donne a chaque pietaille les PV de son role, le boss et le porteur seuls faisant exception', () => {
     expect(ARCHETYPES.filter((a) => a.hp === HEAVY_HP)).toHaveLength(4);
     for (const a of ARCHETYPES) {
-      // ⚠️ **Deux exceptions, et elles sont nommees** : comparer a
+      // ⚠️ **Trois exceptions, et elles sont nommees** : comparer a
       // l'identifiant dit qu'il n'y en a pas d'autre.
       const attendu =
         a.id === BOSS_ARCHETYPE
           ? BOSS_HP_PER_PLAYER
           : a.id === PORTEUR_ARCHETYPE
             ? PORTEUR_HP
-            : ROLES[a.role].hp;
+            : a.id === PROIE_ARCHETYPE
+              ? PROIE_HP
+              : ROLES[a.role].hp;
       expect(a.hp, a.name).toBe(attendu);
     }
   });
@@ -221,7 +229,12 @@ describe("l'archetype de boss (etape 6a)", () => {
         continue;
       }
       // Le porteur a SON facteur, lui aussi, sous celui du boss.
-      const attendu = a.id === PORTEUR_ARCHETYPE ? PORTEUR_BODY_SCALE : ROLES[a.role].bodyScale;
+      const attendu =
+        a.id === PORTEUR_ARCHETYPE
+          ? PORTEUR_BODY_SCALE
+          : a.id === PROIE_ARCHETYPE
+            ? PROIE_BODY_SCALE
+            : ROLES[a.role].bodyScale;
       expect(a.bodyScale, a.name).toBe(attendu);
       expect(a.bodyScale).toBeLessThan(BOSS_BODY_SCALE);
     }
@@ -295,7 +308,7 @@ describe('etape 11 : le porteur de coffre', () => {
     expect(PORTEUR.name).toBe(PORTEUR_NAME);
     expect(PORTEUR_ARCHETYPE).toBe(BOSS_ARCHETYPE + 1);
     expect(ARCHETYPES[PORTEUR_ARCHETYPE - 1]?.name).toBe('troll');
-    expect(ARCHETYPES).toHaveLength(PORTEUR_ARCHETYPE + 1);
+    expect(ARCHETYPES).toHaveLength(PROIE_ARCHETYPE + 1);
   });
 
   it('a son propre comportement, et n est jamais tire au hasard', () => {
@@ -326,5 +339,40 @@ describe('etape 11 : le porteur de coffre', () => {
     expect(PORTEUR.cell).toBe(VOLEUR.cell);
     expect(PORTEUR.bodyScale).toBe(PORTEUR_BODY_SCALE);
     expect(VOLEUR.bodyScale).toBe(1);
+  });
+});
+
+describe('etape 16 : la proie de la chasse', () => {
+  const PROIE = archetypeOf(PROIE_ARCHETYPE);
+  const GNOLL = archetypeOf(archetypeIdOf('gnoll'));
+
+  it('vient APRES le porteur : aucun identifiant existant ne bouge', () => {
+    expect(PROIE.name).toBe(PROIE_NAME);
+    expect(PROIE_ARCHETYPE).toBe(PORTEUR_ARCHETYPE + 1);
+    expect(ARCHETYPES[PORTEUR_ARCHETYPE]?.name).toBe(PORTEUR_NAME);
+    expect(PORTEUR_ARCHETYPE).toBe(BOSS_ARCHETYPE + 1);
+  });
+
+  it('PV = HEAVY_HP x 8 = 160, armure nulle, role troupe, jamais tiree au hasard', () => {
+    expect(PROIE_HP).toBe(HEAVY_HP * PROIE_HP_MULTIPLE);
+    expect(PROIE.hp).toBe(160);
+    expect(PROIE.armor).toBe(0);
+    expect(PROIE.role).toBe('troupe');
+    expect(STEP2_ARCHETYPES).not.toContain(PROIE_ARCHETYPE);
+  });
+
+  it('round(PLAYER_SPEED x 0,75) = 195 px/s, plus lente que le porteur', () => {
+    expect(PROIE.speed).toBe(Math.round(PLAYER_SPEED * PROIE_SPEED_FACTOR));
+    expect(PROIE.speed).toBe(195);
+    expect(PROIE.speed).toBeLessThan(archetypeOf(PORTEUR_ARCHETYPE).speed);
+  });
+
+  it('la planche du gnoll, 1,6 fois plus grande, le comportement proie', () => {
+    expect(PROIE.sheet).toBe(GNOLL.sheet);
+    expect(PROIE.frames).toBe(GNOLL.frames);
+    expect(PROIE.cell).toBe(GNOLL.cell);
+    expect(PROIE.bodyScale).toBe(PROIE_BODY_SCALE);
+    expect(PROIE.hitScale).toBe(PROIE_BODY_SCALE);
+    expect(PROIE.behavior).toBe('proie');
   });
 });

@@ -7,6 +7,7 @@ import {
   LIGHT_HP,
   PORTEUR_ARCHETYPE,
   PORTEUR_FLEE_RADIUS,
+  PROIE_ARCHETYPE,
   THIEF_FLEE_SPEED,
 } from './archetypes';
 import { chargeHoldsAt, chargePointAt, makeBossCharge } from './boss';
@@ -3567,5 +3568,43 @@ describe('etape 11 : la fuite du porteur', () => {
     const v = seul(VOLEUR);
     v.retarget([1000 + PORTEUR_FLEE_RADIUS - 1], [1000]);
     expect(v.fleeing[0]).toBe(0);
+  });
+});
+
+describe('etape 16 : la proie fuit avec la regle du porteur', () => {
+  function seule(archetype: number): Horde {
+    const h = new Horde(4);
+    h.spawn(order({ archetype, count: 1, formation: FORMATION.POINT }));
+    h.x[0] = 1000;
+    h.y[0] = 1000;
+    return h;
+  }
+
+  it('joueur (retarde) a 400 px : elle fuit ; a 401 : elle attend sur place', () => {
+    const h = seule(PROIE_ARCHETYPE);
+    h.retarget([1000 + PORTEUR_FLEE_RADIUS], [1000]);
+    expect(h.fleeing[0]).toBe(1);
+    expect(h.stopped[0]).toBe(0);
+    h.retarget([1000 + PORTEUR_FLEE_RADIUS + 1], [1000]);
+    expect(h.fleeing[0]).toBe(0);
+    expect(h.stopped[0]).toBe(1);
+  });
+
+  it('en fuite elle s eloigne au facteur -1 de SA vitesse, comme le porteur (pas THIEF_FLEE_SPEED)', () => {
+    const proie = seule(PROIE_ARCHETYPE);
+    const porteur = seule(PORTEUR_ARCHETYPE);
+    for (const h of [proie, porteur]) {
+      h.retarget([1300], [1000]);
+    }
+    for (let t = 1; t <= 10; t++) {
+      for (const h of [proie, porteur]) {
+        h.vx[0] = 100;
+        h.vy[0] = 0;
+        h.step(DT, [], t);
+      }
+    }
+    expect(proie.x[0]).toBeLessThan(1000);
+    // Meme vitesse posee, meme facteur de fuite : le meme pas.
+    expect(proie.x[0]).toBeCloseTo(porteur.x[0] ?? 0, 3);
   });
 });

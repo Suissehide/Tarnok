@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 
 import { DECOY_LIFETIME_TICKS } from './abilities';
-import { archetypeOf, PORTEUR_ARCHETYPE } from './archetypes';
+import { archetypeOf, PORTEUR_ARCHETYPE, PROIE_ARCHETYPE } from './archetypes';
 import { BOSS_CHARGE_LENGTH_PX, type BossCharge, makeBossCharge } from './boss';
 import {
   FLOWFIELD_CELL,
@@ -3246,14 +3246,18 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
    * l'applique soit au present (`withReplay = false`), soit en restaurant
    * l'etat au tick de la mort puis en rejouant (`withReplay = true`).
    */
-  function runChaseDeathScenario(mapSeed: number, withReplay: boolean): ChaseDeathResult {
+  function runChaseDeathScenario(
+    mapSeed: number,
+    withReplay: boolean,
+    archetype: number = PORTEUR_ARCHETYPE,
+  ): ChaseDeathResult {
     const serveur = makeChaseParticipant(mapSeed);
     const client = makeChaseParticipant(mapSeed);
     const porteur: WaveOrder = {
       waveId: 1,
       spawnTick: 0,
       seed: 0x9047_e0f1,
-      archetype: PORTEUR_ARCHETYPE,
+      archetype,
       formation: FORMATION.POINT,
       anchorX: 3000,
       anchorY: 3000,
@@ -3276,7 +3280,7 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
       waveId: 3,
       spawnTick: 0,
       seed: 0x7a0e_1c33,
-      archetype: PORTEUR_ARCHETYPE,
+      archetype,
       formation: FORMATION.POINT,
       anchorX: 3000,
       anchorY: 3000,
@@ -3412,6 +3416,32 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
     // Memes preuves de non-vacuite que le scenario sans mort ci-dessus : le
     // porteur attend, fuit, et finit deplace — sinon une derive nulle ne
     // prouverait rien.
+    expect(r.vuAttendre).toBe(true);
+    expect(r.vuFuir).toBe(true);
+    expect(r.deplacement).toBeGreaterThan(50);
+    expect(r.bearerDrift).toBe(0);
+    expect(r.maxDrift).toBe(0);
+  });
+
+  /**
+   * Etape 16 : la proie de la chasse emprunte la regle du porteur
+   * (`behavior === 'porteur' || 'proie'`) a une autre vitesse (195 px/s au
+   * lieu de 234). Meme decor, meme mort tardive : sans rejeu la horde derive,
+   * avec rejeu 0,000 px — la proie ne coute rien a la horde repliquee.
+   */
+  it('scenario PR1 - la proie : sans rejeu, la mort tardive laisse une derive mesurable', () => {
+    const r = runChaseDeathScenario(0x11_f1_ee30, false, PROIE_ARCHETYPE);
+    process.stdout.write(
+      `etape 16, scenario PR1 (sans rejeu) : derive de la proie ${r.bearerDrift.toFixed(3)} px, derive de la horde ${r.maxDrift.toFixed(3)} px\n`,
+    );
+    expect(r.maxDrift).toBeGreaterThan(0);
+  });
+
+  it('scenario PR2 - la proie : avec rejeu, 0,000 px, attente et fuite vues', () => {
+    const r = runChaseDeathScenario(0x11_f1_ee30, true, PROIE_ARCHETYPE);
+    process.stdout.write(
+      `etape 16, scenario PR2 (avec rejeu) : derive de la proie ${r.bearerDrift.toFixed(3)} px, derive de la horde ${r.maxDrift.toFixed(3)} px\n`,
+    );
     expect(r.vuAttendre).toBe(true);
     expect(r.vuFuir).toBe(true);
     expect(r.deplacement).toBeGreaterThan(50);
