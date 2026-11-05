@@ -417,6 +417,20 @@ export class EventRun {
     return c;
   }
 
+  /**
+   * Le joueur `id` a quitte le salon. `step` dort pendant un gel : sans cet
+   * oubli, un nouveau venu qui reprend l'id heriterait de la relique ou de la
+   * lanterne. Relique : au sol a sa position courante, un EVENT_STATE part au
+   * prochain pas. Noir : la lanterne est perdue, DETRUIT au prochain pas.
+   */
+  forget(id: number): void {
+    if (id === 0 || id !== this.#carrier) {
+      return;
+    }
+    this.#carrier = 0;
+    this.#carrierChanged = this.kind === EVENT_KIND.RELIQUE;
+  }
+
   /** La relique ralentit son porteur (`relicSpeedFactor`). 1 pour tout autre, et hors relique. */
   speedFactorOf(id: number): number {
     return this.holdsFire(id) ? relicSpeedFactor(this.solo) : 1;

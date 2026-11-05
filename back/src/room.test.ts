@@ -6340,6 +6340,25 @@ describe('etape 16 : les quatre evenements dans le salon', () => {
       expect(chute).toHaveLength(1);
       expect(chute[0]).toMatchObject({ type: MSG.EVENT_STATE, cartHp: 0 });
     });
+
+    it('leave du porteur : la relique tombe aussitot, un nouveau venu au meme id ne l herite pas', () => {
+      const room = new Room(0x16_0e_0005);
+      room.join(1);
+      room.join(2);
+      room.debugStartEvent(graine(EVENT_KIND.RELIQUE));
+      const r = relique(room);
+      room.debugPlace(1, r.x, r.y);
+      pas(room);
+      expect(room.eventCarrier).toBe(1);
+      room.leave(1);
+      expect(room.eventCarrier).toBe(0);
+      room.join(1);
+      room.debugPlace(1, CENTRE.x, CENTRE.y);
+      expect(pas(room)).toContainEqual(
+        expect.objectContaining({ type: MSG.EVENT_STATE, cartHp: 0 }),
+      );
+      expect(room.eventCarrier).toBe(0);
+    });
   });
 
   describe('la chasse', () => {

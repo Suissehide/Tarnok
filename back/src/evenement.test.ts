@@ -686,6 +686,24 @@ describe('etape 16 : EventRun — la relique', () => {
     expect(run.carrier).toBe(0);
   });
 
+  it('forget : le porteur parti (pendant un gel) la lache sur place ; un nouveau venu au meme id ne l herite pas', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, [joueur(S.x, S.y, { id: 1 })]);
+    pas(run, 1, [joueur(1300, 3000, { id: 1 })]);
+    run.takeCarrierChanged();
+    run.forget(2);
+    expect(run.carrier).toBe(1);
+    expect(run.takeCarrierChanged()).toBe(false);
+    run.forget(1);
+    expect(run.carrier).toBe(0);
+    expect(run.holdsFire(1)).toBe(false);
+    expect(run.takeCarrierChanged()).toBe(true);
+    expect(run.cart).toEqual({ x: 1300, y: 3000 });
+    // Le nouveau venu reprend l'id 1, loin de la relique : elle reste au sol.
+    pas(run, 1, [joueur(5000, 5000, { id: 1 })]);
+    expect(run.carrier).toBe(0);
+  });
+
   it('livree a 80 px de l autel : reussi ; la progression suit la relique comme le chariot', () => {
     const run = new EventRun(plan, ouvert());
     pas(run, 1, [joueur(S.x, S.y)]);
@@ -787,6 +805,15 @@ describe('etape 16 : EventRun — le noir', () => {
     expect(run.step([joueur(0, 0, { id: 2, hp: 0 })], PERSONNE, DT)).toBe(EVENT_OUTCOME.DETRUIT);
     const parti = new EventRun(plan, ouvert());
     expect(parti.step([joueur(0, 0, { id: 1 })], PERSONNE, DT)).toBe(EVENT_OUTCOME.DETRUIT);
+  });
+
+  it('forget : le porteur de lanterne parti, un nouveau venu au meme id ne la reprend pas : detruit', () => {
+    const run = new EventRun(plan, ouvert());
+    expect(pas(run, 10, [joueur(0, 0, { id: 2 })])).toBeNull();
+    run.forget(1);
+    expect(run.carrier).toBe(2);
+    run.forget(2);
+    expect(run.step([joueur(0, 0, { id: 2 })], PERSONNE, DT)).toBe(EVENT_OUTCOME.DETRUIT);
   });
 
   it('reussi a 1 200 ticks : il ne peut pas expirer ; progression elapsed / 1 200', () => {

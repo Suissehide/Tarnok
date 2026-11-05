@@ -1254,6 +1254,9 @@ export class Room {
 
   leave(id: number): void {
     this.#players.delete(id);
+    // Etape 16 : l'evenement dort pendant un gel, il doit oublier le parti
+    // tout de suite (un nouveau venu peut reprendre l'id).
+    this.#event?.forget(id);
   }
 
   /**
