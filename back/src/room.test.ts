@@ -5917,8 +5917,8 @@ describe('etape 11 : le porteur de coffre dans le salon', () => {
 });
 
 describe('etape 14 : les evenements dans le salon', () => {
-  /** Une graine du genre voulu : le genre est `graine % 3`. */
-  const graine = (genre: number): number => 3 * 0x4_6a2b + genre;
+  /** Une graine du genre voulu : le genre est `graine % EVENT_KIND_COUNT` (7). */
+  const graine = (genre: number): number => 7 * 0x4_6a2b + genre;
 
   /** Retire toute la horde HORS du lot de morts : ni XP, ni or, ni porteur qui doive un coffre. */
   function viderHorde(room: Room): void {

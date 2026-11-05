@@ -11,6 +11,7 @@ import {
   CONVOI_RADIUS,
   EVENT_DURATION_TICKS,
   EVENT_KIND,
+  EVENT_KIND_COUNT,
   EVENT_OUTCOME,
   FORGE_RADIUS,
   SCEAU_RADIUS,
@@ -53,6 +54,13 @@ export const CONVOI_CONTACT_DAMAGE = CONTACT_DAMAGE;
 export const CONVOI_MAX_HITTERS = 5;
 export const CONVOI_ARRIVAL_RADIUS = 32;
 
+/** La relique (etape 16, §4) : l'autel est a cette distance du site, vers le centre de la carte. */
+export const RELIQUE_DISTANCE = 1500;
+/** La chasse (§5) : deux lieux de naissance voisins sont a 1 200 px (rayons 693 et 600 px). */
+export const CHASSE_SPACING = 1200;
+export const CHASSE_PREY = 3;
+export const CHASSE_PREY_SOLO = 2;
+
 export interface EventPoint {
   x: number;
   y: number;
@@ -61,10 +69,19 @@ export interface EventPoint {
 /** Ce que `placeEvent` decide, et ce que `EVENT_START` transporte (plus `solo`, qui reste ici). */
 export interface EventPlan {
   kind: number;
-  /** Les sceaux ; la forge ; le depart puis l'arrivee du convoi. Entiers, dans la carte, hors mur. */
+  /**
+   * Les sceaux ; la forge ; le depart puis l'arrivee du convoi ; le totem ;
+   * la relique puis l'autel ; les lieux des proies ; rien pour le noir.
+   * Entiers, dans la carte, hors mur.
+   */
   points: EventPoint[];
   /** Un seul vivant au depart : forge en 15 s, chariot a 800 PV. FIGE pour tout l'evenement. */
   solo: boolean;
+  /**
+   * Le noir : l'id du porteur de lanterne, derive de la graine (§6.1), fige
+   * pour tout l'evenement. 0 pour tout autre genre.
+   */
+  carrier: number;
 }
 
 /** Ce qu'un evenement lit d'un joueur. `PlayerState` le satisfait tel quel. */
@@ -182,20 +199,24 @@ function poserGroupe(
 }
 
 /**
- * Le genre et les points d'un evenement (§2.2). Le genre vient de `seed % 3`,
- * l'angle des bits `8..31` — disjoints. Le site est a `EVENT_SPAWN_DISTANCE`
- * du CENTRE des vivants (pas du joueur cible par la vague : l'evenement
- * s'adresse a l'equipe), puis posee sur la terre ferme par `poserGroupe`
- * (voir sa doc) : jamais en pleine mer, et pour les sceaux, jamais deux
- * sceaux a moins de `2 x SCEAU_RADIUS`.
+ * Le genre et les points d'un evenement (§2.2). Le genre vient de
+ * `seed % EVENT_KIND_COUNT`, l'angle des bits `8..31` — disjoints. Le site
+ * est a `EVENT_SPAWN_DISTANCE` du CENTRE des vivants (pas du joueur cible par
+ * la vague : l'evenement s'adresse a l'equipe), puis posee sur la terre
+ * ferme par `poserGroupe` (voir sa doc) : jamais en pleine mer, et pour les
+ * sceaux, jamais deux sceaux a moins de `2 x SCEAU_RADIUS`.
  *
  * ⚠️ **N sceaux pour N vivants**, pas « 3 a 4, 2 a 2 » : le design valide dit
  * « un sceau par joueur ». Sans vivant, le centre vaut (0, 0) : le salon ne
  * l'appelle pas ainsi, mais rien ici ne rend `NaN`.
+ *
+ * Le noir (etape 16) n'a pas de lieu : la meme fraction que l'angle choisit
+ * le porteur de lanterne parmi les vivants, sans tirage. La chasse pose ses
+ * proies sur l'anneau des sceaux, a `CHASSE_SPACING`.
  */
 export function placeEvent(
   seed: number,
-  vivants: readonly { x: number; y: number }[],
+  vivants: readonly { id: number; x: number; y: number }[],
   obstacles: ObstacleField,
 ): EventPlan {
   const n = Math.max(1, vivants.length);
@@ -207,30 +228,45 @@ export function placeEvent(
   }
   cx /= n;
   cy /= n;
-  const kind = seed % 3;
-  const theta = ((seed >>> 8) / 0x100_0000) * Math.PI * 2;
+  const kind = seed % EVENT_KIND_COUNT;
+  const fraction = (seed >>> 8) / 0x100_0000;
+  const theta = fraction * Math.PI * 2;
   const solo = vivants.length <= 1;
+  if (kind === EVENT_KIND.NOIR) {
+    const porteur = vivants[Math.floor(fraction * vivants.length)];
+    return { kind, points: [], solo, carrier: porteur?.id ?? 0 };
+  }
   const spawnX = cx + Math.cos(theta) * EVENT_SPAWN_DISTANCE;
   const spawnY = cy + Math.sin(theta) * EVENT_SPAWN_DISTANCE;
-  if (kind === EVENT_KIND.SCEAUX && !solo) {
-    const rayon = SCEAUX_SPACING / (2 * Math.sin(Math.PI / vivants.length));
+  // Un anneau : un sceau par vivant (a plusieurs), ou les proies de la chasse.
+  const anneau =
+    kind === EVENT_KIND.CHASSE
+      ? solo
+        ? CHASSE_PREY_SOLO
+        : CHASSE_PREY
+      : kind === EVENT_KIND.SCEAUX && !solo
+        ? vivants.length
+        : 0;
+  if (anneau > 1) {
+    const ecart = kind === EVENT_KIND.CHASSE ? CHASSE_SPACING : SCEAUX_SPACING;
+    const rayon = ecart / (2 * Math.sin(Math.PI / anneau));
     const points = poserGroupe(obstacles, spawnX, spawnY, (vx, vy) =>
-      vivants.map((_, k) => {
-        const a = theta + (2 * Math.PI * k) / vivants.length;
+      Array.from({ length: anneau }, (_, k) => {
+        const a = theta + (2 * Math.PI * k) / anneau;
         return { x: vx + Math.cos(a) * rayon, y: vy + Math.sin(a) * rayon };
       }),
     );
-    return { kind, points, solo };
+    return { kind, points, solo, carrier: 0 };
   }
   const [site] = poserGroupe(obstacles, spawnX, spawnY, (vx, vy) => [{ x: vx, y: vy }]);
   if (!site) {
     // Inatteignable : `poserGroupe` rend toujours au moins un point.
-    return { kind, points: [], solo };
+    return { kind, points: [], solo, carrier: 0 };
   }
-  if (kind !== EVENT_KIND.CONVOI) {
-    return { kind, points: [site], solo };
+  if (kind !== EVENT_KIND.CONVOI && kind !== EVENT_KIND.RELIQUE) {
+    return { kind, points: [site], solo, carrier: 0 };
   }
-  // Le convoi va vers le centre de la carte : l'arrivee reste toujours dedans.
+  // Le convoi et la relique vont vers le centre de la carte : l'arrivee (l'autel) reste dedans.
   let dx = MAP_SIZE / 2 - site.x;
   let dy = MAP_SIZE / 2 - site.y;
   let d = Math.hypot(dx, dy);
@@ -239,10 +275,11 @@ export function placeEvent(
     dy = Math.sin(theta);
     d = 1;
   }
-  const arriveeX = site.x + (dx / d) * CONVOI_DISTANCE;
-  const arriveeY = site.y + (dy / d) * CONVOI_DISTANCE;
+  const trajet = kind === EVENT_KIND.RELIQUE ? RELIQUE_DISTANCE : CONVOI_DISTANCE;
+  const arriveeX = site.x + (dx / d) * trajet;
+  const arriveeY = site.y + (dy / d) * trajet;
   const [arrivee] = poserGroupe(obstacles, arriveeX, arriveeY, (vx, vy) => [{ x: vx, y: vy }]);
-  return { kind, points: [site, arrivee ?? site], solo };
+  return { kind, points: [site, arrivee ?? site], solo, carrier: 0 };
 }
 
 /**

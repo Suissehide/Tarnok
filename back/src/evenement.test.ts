@@ -3,6 +3,7 @@ import {
   CONVOI_ESCORT_RADIUS,
   EVENT_DURATION_TICKS,
   EVENT_KIND,
+  EVENT_KIND_COUNT,
   EVENT_OUTCOME,
   FORGE_RADIUS,
   SCEAU_RADIUS,
@@ -12,6 +13,9 @@ import { applyObstacles, generateObstacles } from '@shared/worldmap';
 import { describe, expect, it } from 'vitest';
 
 import {
+  CHASSE_PREY,
+  CHASSE_PREY_SOLO,
+  CHASSE_SPACING,
   CONVOI_CONTACT_RADIUS,
   CONVOI_DISTANCE,
   CONVOI_HP,
@@ -25,6 +29,7 @@ import {
   FORGE_HOLD_TICKS,
   FORGE_HOLD_TICKS_SOLO,
   placeEvent,
+  RELIQUE_DISTANCE,
   SCEAUX_HOLD_TICKS,
   SCEAUX_SPACING,
 } from './evenement';
@@ -34,11 +39,15 @@ const DT = 1 / TICK_HZ;
 /** Une carte sans un mur : la geometrie seule. */
 const ouvert = (): FlowField => new FlowField(MAP_SIZE, FLOWFIELD_CELL);
 
-/** Une graine du genre voulu, a angle varie. */
+/** Une graine du genre voulu, a angle varie : le genre est `graine % EVENT_KIND_COUNT`. */
 function graine(genre: number, k: number): number {
   const s = (Math.imul(k + 1, 0x9e37_79b9) >>> 0) % 0xffff_fff0;
-  return s - (s % 3) + genre;
+  return s - (s % EVENT_KIND_COUNT) + genre;
 }
+
+/** Des vivants avec leur identifiant (1, 2, ...) : `placeEvent` les lit depuis l'etape 16. */
+const ids = (pts: readonly { x: number; y: number }[]): { id: number; x: number; y: number }[] =>
+  pts.map((p, k) => ({ id: k + 1, x: p.x, y: p.y }));
 
 function joueur(x: number, y: number, extra: Partial<EventPlayer> = {}): EventPlayer {
   return { x, y, hp: 100, moveX: 0, moveY: 0, ...extra };
@@ -102,15 +111,17 @@ function pas(
   return null;
 }
 
-describe('etape 14 : placeEvent', () => {
-  const equipe = [
-    { x: 2900, y: 3000 },
-    { x: 3100, y: 3000 },
-  ];
+const equipe = [
+  { id: 1, x: 2900, y: 3000 },
+  { id: 2, x: 3100, y: 3000 },
+];
 
-  it('le genre est graine % 3', () => {
-    for (let s = 0; s < 300; s++) {
-      expect(placeEvent(s, equipe, ouvert()).kind).toBe(s % 3);
+describe('etape 14 : placeEvent', () => {
+  it('le genre est graine % 7, sans tirage : la meme graine rend le meme plan', () => {
+    for (let s = 0; s < 700; s++) {
+      const plan = placeEvent(s, equipe, ouvert());
+      expect(plan.kind).toBe(s % EVENT_KIND_COUNT);
+      expect(placeEvent(s, equipe, ouvert())).toEqual(plan);
     }
   });
 
@@ -133,10 +144,10 @@ describe('etape 14 : placeEvent', () => {
 
   it('les sceaux : un en solo, N a SCEAUX_SPACING de leurs voisins pour N = 2, 3, 4', () => {
     expect(
-      placeEvent(graine(EVENT_KIND.SCEAUX, 1), [{ x: 3000, y: 3000 }], ouvert()).points,
+      placeEvent(graine(EVENT_KIND.SCEAUX, 1), ids([{ x: 3000, y: 3000 }]), ouvert()).points,
     ).toHaveLength(1);
     for (const n of [2, 3, 4]) {
-      const vivants = Array.from({ length: n }, () => ({ x: 3000, y: 3000 }));
+      const vivants = ids(Array.from({ length: n }, () => ({ x: 3000, y: 3000 })));
       for (let k = 0; k < 50; k++) {
         const plan = placeEvent(graine(EVENT_KIND.SCEAUX, k), vivants, ouvert());
         expect(plan.points).toHaveLength(n);
@@ -161,7 +172,7 @@ describe('etape 14 : placeEvent', () => {
     ];
     for (const centre of coins) {
       for (const n of [2, 3, 4]) {
-        const vivants = Array.from({ length: n }, () => centre);
+        const vivants = ids(Array.from({ length: n }, () => centre));
         for (let k = 0; k < 200; k++) {
           const plan = placeEvent(graine(EVENT_KIND.SCEAUX, k), vivants, ouvert());
           expect(plan.points).toHaveLength(n);
@@ -190,7 +201,7 @@ describe('etape 14 : placeEvent', () => {
       { x: 5950, y: 120 },
     ]) {
       for (let k = 0; k < 100; k++) {
-        const plan = placeEvent(graine(EVENT_KIND.CONVOI, k), [centre], ouvert());
+        const plan = placeEvent(graine(EVENT_KIND.CONVOI, k), ids([centre]), ouvert());
         const [s, e] = plan.points;
         if (!s || !e) {
           throw new Error('le convoi a deux points');
@@ -208,10 +219,10 @@ describe('etape 14 : placeEvent', () => {
     for (let s = 0; s < 300; s++) {
       for (const p of placeEvent(
         s,
-        [
+        ids([
           { x: 30, y: 30 },
           { x: 60, y: 10 },
-        ],
+        ]),
         ouvert(),
       ).points) {
         expect(p.x).toBeGreaterThanOrEqual(0);
@@ -249,7 +260,7 @@ describe('etape 14 : placeEvent', () => {
       const centres = [...coinsBruts, ...interieurBrut].map((c) => terreProche(champ, c.x, c.y));
       for (const centre of centres) {
         for (const n of [1, 2, 3, 4]) {
-          const vivants = Array.from({ length: n }, () => centre);
+          const vivants = ids(Array.from({ length: n }, () => centre));
           for (let k = 0; k < 150; k++) {
             const plan = placeEvent(graine(EVENT_KIND.SCEAUX, k), vivants, champ);
             expect(plan.points).toHaveLength(n);
@@ -272,8 +283,133 @@ describe('etape 14 : placeEvent', () => {
   });
 
   it('sans vivant, le plan reste defini (jamais NaN) — le salon ne l appelle pas, mais rien ne casse', () => {
-    for (const p of placeEvent(graine(EVENT_KIND.SCEAUX, 3), [], ouvert()).points) {
+    for (const p of placeEvent(graine(EVENT_KIND.SCEAUX, 3), ids([]), ouvert()).points) {
       expect(Number.isFinite(p.x) && Number.isFinite(p.y)).toBe(true);
+    }
+  });
+});
+
+describe('etape 16 : placeEvent — siege, relique, chasse, noir', () => {
+  const centre = { x: 3000, y: 3000 };
+
+  it('le siege : un totem, a EVENT_SPAWN_DISTANCE du centre des vivants, comme la forge', () => {
+    for (let k = 0; k < 100; k++) {
+      const s = graine(EVENT_KIND.SIEGE, k);
+      const plan = placeEvent(s, equipe, ouvert());
+      expect(plan.points).toHaveLength(1);
+      expect(plan.carrier).toBe(0);
+      const t = plan.points[0] ?? { x: 0, y: 0 };
+      expect(Math.abs(dist(t, centre) - EVENT_SPAWN_DISTANCE)).toBeLessThanOrEqual(1);
+      expect(Number.isInteger(t.x) && Number.isInteger(t.y)).toBe(true);
+    }
+  });
+
+  it('la relique : la relique au site, l autel a RELIQUE_DISTANCE vers le centre de la carte', () => {
+    for (const c of [centre, { x: 50, y: 50 }, { x: 5950, y: 120 }]) {
+      for (let k = 0; k < 100; k++) {
+        const plan = placeEvent(graine(EVENT_KIND.RELIQUE, k), ids([c]), ouvert());
+        const [s, e] = plan.points;
+        if (!s || !e) {
+          throw new Error('la relique a deux points');
+        }
+        expect(Math.abs(dist(s, e) - RELIQUE_DISTANCE)).toBeLessThanOrEqual(1);
+        const milieu = { x: MAP_SIZE / 2, y: MAP_SIZE / 2 };
+        expect(dist(e, milieu)).toBeLessThan(dist(s, milieu) + 1);
+        expect(plan.carrier).toBe(0);
+      }
+    }
+  });
+
+  it('la chasse : 3 lieux a CHASSE_SPACING (rayon 693 px), 2 en solo (600 px)', () => {
+    for (const [vivants, n] of [
+      [equipe, CHASSE_PREY],
+      [ids([centre]), CHASSE_PREY_SOLO],
+    ] as const) {
+      for (let k = 0; k < 50; k++) {
+        const plan = placeEvent(graine(EVENT_KIND.CHASSE, k), vivants, ouvert());
+        expect(plan.points).toHaveLength(n);
+        for (let i = 0; i < n; i++) {
+          const a = plan.points[i] ?? { x: 0, y: 0 };
+          const b = plan.points[(i + 1) % n] ?? { x: 0, y: 0 };
+          expect(Math.abs(dist(a, b) - CHASSE_SPACING)).toBeLessThanOrEqual(2);
+        }
+      }
+    }
+    // Les rayons de la spec, ecrits nus.
+    expect(Math.round(CHASSE_SPACING / (2 * Math.sin(Math.PI / 3)))).toBe(693);
+    expect(Math.round(CHASSE_SPACING / (2 * Math.sin(Math.PI / 2)))).toBe(600);
+  });
+
+  it('le noir : aucun point, le porteur de lanterne derive de la graine, sans tirage', () => {
+    const quatre = ids([centre, centre, centre, centre]);
+    const vus = new Set<number>();
+    for (let k = 0; k < 400; k++) {
+      const s = graine(EVENT_KIND.NOIR, k);
+      const plan = placeEvent(s, quatre, ouvert());
+      expect(plan.points).toEqual([]);
+      const attendu = quatre[Math.floor(((s >>> 8) / 0x100_0000) * quatre.length)]?.id;
+      expect(plan.carrier).toBe(attendu);
+      vus.add(plan.carrier);
+    }
+    // Chaque joueur porte la lanterne un jour : la fraction couvre [0, 1).
+    expect([...vus].sort()).toEqual([1, 2, 3, 4]);
+    // Seul : le seul vivant ; personne : 0, jamais d'indice hors tableau.
+    expect(placeEvent(graine(EVENT_KIND.NOIR, 1), [{ id: 3, x: 1, y: 1 }], ouvert()).carrier).toBe(
+      3,
+    );
+    expect(placeEvent(graine(EVENT_KIND.NOIR, 1), [], ouvert()).carrier).toBe(0);
+  });
+
+  it('les trois genres de l etape 14 ne portent pas de porteur', () => {
+    for (const genre of [EVENT_KIND.SCEAUX, EVENT_KIND.FORGE, EVENT_KIND.CONVOI]) {
+      expect(placeEvent(graine(genre, 2), equipe, ouvert()).carrier).toBe(0);
+    }
+  });
+
+  /**
+   * ⚠️ **La lecon de l'etape 14** : sur un champ ouvert tout passe ; sur une
+   * VRAIE ile (cotes en eau), un site pres d'un coin tombe a l'eau si
+   * `poserGroupe` ne recentre pas. Memes cartes et memes centres que le test
+   * des sceaux.
+   */
+  it('sur une VRAIE carte : totem, relique, autel et proies sur la terre, dans la carte, entiers ; proies jamais collees', () => {
+    const bruts = [
+      { x: 100, y: 100 },
+      { x: MAP_SIZE - 100, y: 100 },
+      { x: 100, y: MAP_SIZE - 100 },
+      { x: MAP_SIZE - 100, y: MAP_SIZE - 100 },
+      { x: MAP_SIZE / 2, y: MAP_SIZE / 2 },
+      { x: 2000, y: 2000 },
+    ];
+    for (let mapSeed = 1; mapSeed <= 4; mapSeed++) {
+      const champ = carteReelle(mapSeed);
+      for (const c of bruts.map((b) => terreProche(champ, b.x, b.y))) {
+        for (const n of [1, 2, 4]) {
+          const vivants = ids(Array.from({ length: n }, () => c));
+          for (const genre of [EVENT_KIND.SIEGE, EVENT_KIND.RELIQUE, EVENT_KIND.CHASSE]) {
+            for (let k = 0; k < 60; k++) {
+              const plan = placeEvent(graine(genre, k), vivants, champ);
+              for (const p of plan.points) {
+                expect(p.x).toBeGreaterThanOrEqual(0);
+                expect(p.x).toBeLessThanOrEqual(MAP_SIZE);
+                expect(p.y).toBeGreaterThanOrEqual(0);
+                expect(p.y).toBeLessThanOrEqual(MAP_SIZE);
+                expect(Number.isInteger(p.x) && Number.isInteger(p.y)).toBe(true);
+                expect(champ.blocked[champ.indexAt(p.x, p.y)]).toBe(0);
+              }
+              if (genre === EVENT_KIND.CHASSE) {
+                for (let i = 0; i < plan.points.length; i++) {
+                  for (let j = i + 1; j < plan.points.length; j++) {
+                    const a = plan.points[i] ?? { x: 0, y: 0 };
+                    const b = plan.points[j] ?? { x: 0, y: 0 };
+                    expect(dist(a, b)).toBeGreaterThan(2 * SCEAU_RADIUS);
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
     }
   });
 });
@@ -286,6 +422,7 @@ describe('etape 14 : EventRun — les trois sceaux', () => {
       { x: 1800, y: 1000 },
     ],
     solo: false,
+    carrier: 0,
   };
 
   it('tous tenus, ca avance ; un vide SUSPEND sans remettre a zero', () => {
@@ -323,7 +460,7 @@ describe('etape 14 : EventRun — les trois sceaux', () => {
 
 describe('etape 14 : EventRun — la forge', () => {
   const forge = { x: 2000, y: 2000 };
-  const duo: EventPlan = { kind: EVENT_KIND.FORGE, points: [forge], solo: false };
+  const duo: EventPlan = { kind: EVENT_KIND.FORGE, points: [forge], solo: false, carrier: 0 };
   const solo: EventPlan = { ...duo, solo: true };
 
   it('immobile dans le rayon : 30 s a plusieurs, 15 s seul', () => {
@@ -363,7 +500,7 @@ describe('etape 14 : EventRun — la forge', () => {
 describe('etape 14 : EventRun — le convoi', () => {
   const S = { x: 1000, y: 3000 };
   const E = { x: 1000 + CONVOI_DISTANCE, y: 3000 };
-  const plan: EventPlan = { kind: EVENT_KIND.CONVOI, points: [S, E], solo: false };
+  const plan: EventPlan = { kind: EVENT_KIND.CONVOI, points: [S, E], solo: false, carrier: 0 };
 
   it('sans escorte il attend ; escorte, il avance de CONVOI_SPEED px/s', () => {
     const run = new EventRun(plan, ouvert());

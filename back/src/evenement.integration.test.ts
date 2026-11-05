@@ -35,8 +35,8 @@ import { buildServer } from './server';
 const ROOM_SEED = 0x14_e0_e0e0;
 /** 22 octets d'en-tete + 2 joueurs x 11 (le bouclier des pactes) : ecrit NU, jamais recalcule. */
 const SNAPSHOT_A_DEUX = 44;
-/** Une graine du genre voulu : le genre est `graine % 3`. */
-const graine = (genre: number): number => 3 * 0x4_6a2b + genre;
+/** Une graine du genre voulu : le genre est `graine % EVENT_KIND_COUNT` (7). */
+const graine = (genre: number): number => 7 * 0x4_6a2b + genre;
 
 type App = Awaited<ReturnType<typeof buildServer>>;
 
