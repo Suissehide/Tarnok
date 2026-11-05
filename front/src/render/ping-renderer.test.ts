@@ -1,9 +1,13 @@
+import { PROIE_ARCHETYPE } from '@shared/archetypes';
 import { EVENT_KIND } from '@shared/evenements';
+import { Horde } from '@shared/horde';
 import { PING_LIFE_TICKS } from '@shared/ping';
+import { FORMATION } from '@shared/waves';
 import { Container, type Graphics } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
 import type { ActivePing, EventView } from '../net/client';
+import { eventTargets } from '../net/client';
 import { COIN_TINT } from './orb-renderer';
 import { allyArrowScale, edgeArrow, livePings, PingRenderer } from './ping-renderer';
 
@@ -140,25 +144,33 @@ describe('etape 14 : les fleches d un evenement', () => {
     carrierId: 0,
     relic: null,
     startedAtMs: 0,
-    targets: [],
   };
+  /** La vue complete : ses cibles, calculees comme le client les calcule. */
+  const vue = (v: Omit<EventView, 'targets'>, horde = new Horde(4)): EventView => ({
+    ...v,
+    targets: eventTargets(v, horde, [], 1),
+  });
 
   it('une fleche or par sceau HORS champ, aucune pour un sceau dans le champ', () => {
     expect(
-      flechesOr({
-        ...base,
-        kind: EVENT_KIND.SCEAUX,
-        points: [
-          { x: 5000, y: 300 },
-          { x: -900, y: 300 },
-          { x: 400, y: 300 },
-        ],
-      }),
+      flechesOr(
+        vue({
+          ...base,
+          kind: EVENT_KIND.SCEAUX,
+          points: [
+            { x: 5000, y: 300 },
+            { x: -900, y: 300 },
+            { x: 400, y: 300 },
+          ],
+        }),
+      ),
     ).toBe(2);
   });
 
   it('la forge hors champ : une fleche', () => {
-    expect(flechesOr({ ...base, kind: EVENT_KIND.FORGE, points: [{ x: 400, y: 4000 }] })).toBe(1);
+    expect(flechesOr(vue({ ...base, kind: EVENT_KIND.FORGE, points: [{ x: 400, y: 4000 }] }))).toBe(
+      1,
+    );
   });
 
   it('le convoi : une fleche vers le CHARIOT hors champ, jamais vers l arrivee', () => {
@@ -170,11 +182,80 @@ describe('etape 14 : les fleches d un evenement', () => {
         { x: 5000, y: 300 },
       ],
     };
-    expect(flechesOr({ ...convoi, cart: { x: 400, y: 300 } })).toBe(0);
-    expect(flechesOr({ ...convoi, cart: { x: 5000, y: 5000 } })).toBe(1);
+    expect(flechesOr(vue({ ...convoi, cart: { x: 400, y: 300 } }))).toBe(0);
+    expect(flechesOr(vue({ ...convoi, cart: { x: 5000, y: 5000 } }))).toBe(1);
   });
 
   it('rien sans evenement', () => {
     expect(flechesOr(null)).toBe(0);
+  });
+});
+
+describe('etape 16 : les fleches des quatre evenements', () => {
+  function flechesOr(event: EventView | null): number {
+    const r = new PingRenderer(() => 0xffffff);
+    const ecran = new Container();
+    r.attachScreen(ecran);
+    r.draw([], [], (x, y) => ({ x, y }), 800, 600, null, event);
+    const g = ecran.children[0] as Graphics;
+    return g.context.instructions.filter(
+      (i) =>
+        i.action === 'fill' && (i.data as { style: { color: number } }).style.color === COIN_TINT,
+    ).length;
+  }
+  const base = {
+    progress: 0,
+    secondsLeft: 60,
+    cart: null,
+    cartHp: 1,
+    solo: false,
+    carrierId: 0,
+    relic: null,
+    startedAtMs: 0,
+  };
+  const loin = { x: 5000, y: 300 };
+  const ici = { x: 400, y: 300 };
+
+  it('le calque ne lit QUE targets : une fleche par cible hors champ, aucune dans le champ', () => {
+    const v: EventView = {
+      ...base,
+      kind: EVENT_KIND.NOIR,
+      points: [],
+      targets: [loin, ici, { x: -800, y: 300 }],
+    };
+    expect(flechesOr(v)).toBe(2);
+  });
+
+  it('relique portee : la fleche va a l autel hors champ, pas a la relique dans le champ', () => {
+    const v = { ...base, kind: EVENT_KIND.RELIQUE, points: [ici, loin], carrierId: 2 };
+    expect(flechesOr({ ...v, targets: eventTargets(v, new Horde(4), [], 1) })).toBe(1);
+    const auSol = { ...v, carrierId: 0, relic: ici };
+    expect(flechesOr({ ...auSol, targets: eventTargets(auSol, new Horde(4), [], 1) })).toBe(0);
+  });
+
+  it('chasse : une fleche par proie hors champ', () => {
+    const h = new Horde(8);
+    h.spawn({
+      waveId: 3,
+      spawnTick: 0,
+      seed: 3,
+      archetype: PROIE_ARCHETYPE,
+      formation: FORMATION.POINT,
+      anchorX: 5000,
+      anchorY: 5000,
+      count: 2,
+    });
+    const v = { ...base, kind: EVENT_KIND.CHASSE, points: [] };
+    expect(flechesOr({ ...v, targets: eventTargets(v, h, [], 1) })).toBe(2);
+  });
+
+  it('noir : vers le porteur de lanterne hors champ ; aucune si c est soi', () => {
+    const joueurs = [
+      { id: 1, x: 400, y: 300 },
+      { id: 2, x: 5000, y: 300 },
+    ];
+    const v = { ...base, kind: EVENT_KIND.NOIR, points: [], carrierId: 2 };
+    expect(flechesOr({ ...v, targets: eventTargets(v, new Horde(4), joueurs, 1) })).toBe(1);
+    expect(flechesOr({ ...v, targets: eventTargets(v, new Horde(4), joueurs, 2) })).toBe(0);
   });
 });

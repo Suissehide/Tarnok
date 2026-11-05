@@ -1,4 +1,3 @@
-import { EVENT_KIND } from '@shared/evenements';
 import { PING_INTENTS, PING_LIFE_TICKS } from '@shared/ping';
 import { type Container, Graphics } from 'pixi.js';
 
@@ -197,13 +196,12 @@ export class PingRenderer {
         drawChest(s, a.x - Math.cos(a.angle) * 26, a.y - Math.sin(a.angle) * 26, 0.6);
       }
     }
-    // Etape 14 : chaque cible d'evenement hors champ — chaque sceau, la forge,
-    // ou le CHARIOT (pas l'arrivee) — une fleche or au bord, sur le modele
-    // exact du porteur. Dans le champ, rien : le sol suffit.
+    // Etape 14 et 16 : chaque cible d'evenement hors champ — sceau, forge,
+    // chariot, totem, relique ou autel, proie, porteur de lanterne
+    // (`eventTargets`, calculees par le client) —, une fleche or au bord, sur
+    // le modele exact du porteur. Dans le champ, rien : le sol suffit.
     if (event) {
-      const cibles =
-        event.kind === EVENT_KIND.CONVOI ? (event.cart ? [event.cart] : []) : event.points;
-      for (const c of cibles) {
+      for (const c of event.targets) {
         const sp = toScreen(c.x, c.y);
         const a = edgeArrow(w, h, sp.x, sp.y, MARGIN);
         if (a) {
