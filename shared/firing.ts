@@ -1,7 +1,15 @@
 import { COLOSSUS_HP_STEP, CRIT_CHANCE, CRIT_MULTIPLIER } from './constants';
 import type { Loadout } from './loadout';
 import type { Crit } from './projectiles';
-import { DAMAGE_PER_UPGRADE, UPGRADE, upgradedWeapon, type Weapon, weaponOf } from './weapons';
+import {
+  cooldownWithBonus,
+  DAMAGE_PER_UPGRADE,
+  FIRE_RATE_PER_UPGRADE,
+  UPGRADE,
+  upgradedWeapon,
+  type Weapon,
+  weaponOf,
+} from './weapons';
 
 /**
  * Ce qu'un tir vaut, calcule UNE fois pour les deux cotes du fil.
@@ -101,4 +109,43 @@ export function critOf(loadout: Loadout): Crit {
     chance: Math.min(1, CRIT_CHANCE + loadout.bonus('critChance')),
     multiplier: CRIT_MULTIPLIER + loadout.bonus('critDamage'),
   };
+}
+
+/**
+ * La recharge d'une arme pour CE joueur, en ticks : cartes de cadence, bonus
+ * de compte, aspects « cadence » de l'arme. L'expression etait ecrite deux
+ * fois (`Room#fireOne`, `GameClient#fireOne`) ; le recalage du porteur de
+ * relique (etape 16, §8.3) en fait une troisieme lecture.
+ */
+export function fireCooldown(loadout: Loadout, weaponId: number, accountFireRate: number): number {
+  return cooldownWithBonus(
+    armedWeapon(loadout, weaponId).cooldownTicks,
+    loadout.bonus('fireRate') +
+      accountFireRate +
+      FIRE_RATE_PER_UPGRADE * loadout.upgradesOf(weaponId, UPGRADE.FIRE_RATE),
+  );
+}
+
+/**
+ * La derniere salve tiree AVANT `nextTick` par une arme muette jusqu'a
+ * `from` (le porteur de relique livre ou tombe a `from - 1`), si elle visait
+ * sans arret : la premiere salve part a `max(from, last + cooldown)`, les
+ * suivantes tous les `cooldown`. Rend `last` si aucune n'est encore partie.
+ *
+ * C'est le calendrier exact de `Room#fireOne` (tick - last >= cooldown) ; le
+ * client s'y recale quand il apprend la fin du port EN RETARD (etape 16,
+ * §8.3, ecart n° 6 du plan) — `last = from` seul garderait une phase decalee
+ * des que le retard depasse une recharge.
+ */
+export function lastFireAfterCarry(
+  last: number,
+  from: number,
+  nextTick: number,
+  cooldown: number,
+): number {
+  const first = Math.max(from, last + cooldown);
+  if (first >= nextTick) {
+    return last;
+  }
+  return first + Math.floor((nextTick - 1 - first) / cooldown) * cooldown;
 }

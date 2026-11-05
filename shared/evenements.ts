@@ -86,3 +86,56 @@ export function relicSpeedFactor(solo: boolean): number {
 export function lightRadius(solo: boolean): number {
   return solo ? NOIR_LIGHT_RADIUS_SOLO : NOIR_LIGHT_RADIUS;
 }
+
+/**
+ * Le porteur de la relique (ou de la lanterne) tel qu'un CLIENT le date
+ * (etape 16, §8.1), sans un octet : l'`EVENT_STATE` d'un changement part
+ * AVANT le `SNAPSHOT` du meme envoi (`server.ts`), et le salon change le
+ * porteur en fin de pas (`#stepEvent`), apres le deplacement et le tir. Un
+ * changement au tick D arrive donc juste avant le `SNAPSHOT` date D, et vaut a
+ * partir de D + 1 — des deux cotes.
+ *
+ * ⚠️ Exact quand un pas precede un envoi (le cas nominal) ; sous rattrapage
+ * (jusqu'a `MAX_CATCH_UP_STEPS` pas par envoi), date du dernier pas : au plus
+ * 4 ticks de retard.
+ *
+ * Vit ici et pas dans `client.ts` : le livrable (back) rejoue les messages
+ * decodes de la vraie socket dans CE code (ecart n° 7 du plan).
+ */
+export class CarrierClock {
+  /** Le porteur a partir de `fromTick` ; 0 = aucun (relique au sol). */
+  carrier = 0;
+  /** Le porteur d'avant `fromTick`. */
+  previous = 0;
+  fromTick = 0;
+  #pending: number | null = null;
+
+  /**
+   * L'octet d'etat d'un `EVENT_STATE` : en attente de sa date. Egal au porteur
+   * courant, il EFFACE l'attente (ramasse puis lachee dans le meme envoi).
+   */
+  heard(byte: number): void {
+    this.#pending = byte !== this.carrier ? byte : null;
+  }
+
+  /**
+   * Le `SNAPSHOT` date `snapshotTick` qui suit : applique l'octet en attente.
+   * Rend la date et l'ANCIEN porteur (0 s'il n'y en avait pas), `null` si rien
+   * n'attendait.
+   */
+  dated(snapshotTick: number): { from: number; released: number } | null {
+    if (this.#pending === null) {
+      return null;
+    }
+    this.previous = this.carrier;
+    this.carrier = this.#pending;
+    this.#pending = null;
+    this.fromTick = snapshotTick + 1;
+    return { from: this.fromTick, released: this.previous };
+  }
+
+  /** Le porteur au tick `tick`. */
+  at(tick: number): number {
+    return tick >= this.fromTick ? this.carrier : this.previous;
+  }
+}

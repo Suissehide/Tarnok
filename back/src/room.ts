@@ -52,7 +52,7 @@ import {
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
 import { EVENT_DURATION_TICKS, EVENT_OUTCOME, EVENT_STATE_PERIOD_TICKS } from '@shared/evenements';
-import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
+import { aimPoint, armedWeapon, critOf, fireCooldown, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
 import { Loadout, maxHpOf, maxShieldOf } from '@shared/loadout';
@@ -83,13 +83,10 @@ import { FORMATION, type WaveOrder } from '@shared/waves';
 import {
   BASE_WEAPON_ID,
   beamRange,
-  cooldownWithBonus,
-  FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardCenter,
   guardIsAlive,
   guardPulsesAt,
-  UPGRADE,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -2222,12 +2219,7 @@ export class Room {
     // Ses bonus propres ET ceux des passifs (Volee, Ampleur) appliques — la
     // MEME fonction que le miroir client (`shared/firing.ts`).
     const weapon = armedWeapon(p.loadout, weaponId);
-    const cooldown = cooldownWithBonus(
-      weapon.cooldownTicks,
-      p.loadout.bonus('fireRate') +
-        p.accountBonuses.fireRate +
-        FIRE_RATE_PER_UPGRADE * p.loadout.upgradesOf(weaponId, UPGRADE.FIRE_RATE),
-    );
+    const cooldown = fireCooldown(p.loadout, weaponId, p.accountBonuses.fireRate);
     if (tick - (p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }

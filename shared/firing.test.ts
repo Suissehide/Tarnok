@@ -1,14 +1,25 @@
 import { describe, expect, it } from 'vitest';
 
 import { COLOSSUS_HP_STEP, CRIT_CHANCE, CRIT_MULTIPLIER } from './constants';
-import { aimPoint, armedWeapon, critOf, shotDamage, weaponUpgrades } from './firing';
+import {
+  aimPoint,
+  armedWeapon,
+  critOf,
+  fireCooldown,
+  lastFireAfterCarry,
+  shotDamage,
+  weaponUpgrades,
+} from './firing';
 import { Loadout } from './loadout';
 import { PASSIVES, type PassiveKind } from './passives';
 import {
+  cooldownWithBonus,
   DAMAGE_PER_UPGRADE,
   effectRadius,
+  FIRE_RATE_PER_UPGRADE,
   salvoCount,
   UPGRADE,
+  upgradesFor,
   WEAPONS,
   type Weapon,
   weaponOf,
@@ -158,5 +169,50 @@ describe('etape 12 : le point vise (aimPoint)', () => {
 
   it('rend le tireur sur une visee nulle', () => {
     expect(aimPoint(3, 4, 0, 0, 100)).toEqual({ x: 3, y: 4 });
+  });
+});
+
+describe('etape 16 : la recharge et la reprise apres un port de relique', () => {
+  /** L'expression ecrite dans `Room#fireOne` et `GameClient#fireOne` avant l'etape. */
+  function ancienne(l: Loadout, w: number, compte: number): number {
+    return cooldownWithBonus(
+      armedWeapon(l, w).cooldownTicks,
+      l.bonus('fireRate') + compte + FIRE_RATE_PER_UPGRADE * l.upgradesOf(w, UPGRADE.FIRE_RATE),
+    );
+  }
+
+  it('fireCooldown rend ce que Room#fireOne calculait, armes, cartes de cadence, aspects et compte', () => {
+    for (const w of WEAPONS) {
+      for (const cartes of [0, 1, 3]) {
+        for (const compte of [0, 0.1]) {
+          const l = avec('fireRate', cartes, w.id);
+          if (upgradesFor(w).includes(UPGRADE.FIRE_RATE)) {
+            l.addWeapon(w.id, UPGRADE.FIRE_RATE);
+            l.addWeapon(w.id, UPGRADE.FIRE_RATE);
+          }
+          expect(fireCooldown(l, w.id, compte)).toBe(ancienne(l, w.id, compte));
+        }
+      }
+    }
+  });
+
+  it('lastFireAfterCarry : recharge faite au depart, la premiere salve a `from`, puis tous les `cooldown`', () => {
+    // Derniere salve a 100, recharge 4, porte de 101 a 150 : libre a 151.
+    expect(lastFireAfterCarry(100, 151, 151, 4)).toBe(100); // rien de tire avant 151
+    expect(lastFireAfterCarry(100, 151, 152, 4)).toBe(151);
+    expect(lastFireAfterCarry(100, 151, 155, 4)).toBe(151);
+    expect(lastFireAfterCarry(100, 151, 156, 4)).toBe(155);
+    expect(lastFireAfterCarry(100, 151, 158, 4)).toBe(155);
+  });
+
+  it('lastFireAfterCarry : recharge PAS faite a `from` — la premiere salve attend last + cooldown', () => {
+    // Port court : derniere salve a 100, recharge 36 (grenade), libre a 105.
+    expect(lastFireAfterCarry(100, 105, 120, 36)).toBe(100);
+    expect(lastFireAfterCarry(100, 105, 137, 36)).toBe(136);
+  });
+
+  it('lastFireAfterCarry : jamais tire (-Infinity), la premiere salve est `from`', () => {
+    expect(lastFireAfterCarry(Number.NEGATIVE_INFINITY, 40, 41, 4)).toBe(40);
+    expect(lastFireAfterCarry(Number.NEGATIVE_INFINITY, 40, 40, 4)).toBe(Number.NEGATIVE_INFINITY);
   });
 });

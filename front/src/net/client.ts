@@ -31,7 +31,7 @@ import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
 import { EVENT_KIND, EVENT_OUTCOME, EVENT_STATE_PERIOD_TICKS } from '@shared/evenements';
-import { aimPoint, armedWeapon, critOf, shotDamage } from '@shared/firing';
+import { aimPoint, armedWeapon, critOf, fireCooldown, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
@@ -76,13 +76,10 @@ import { FORMATION } from '@shared/waves';
 import {
   BASE_WEAPON_ID,
   beamRange,
-  cooldownWithBonus,
-  FIRE_RATE_PER_UPGRADE,
   type Guard,
   guardCenter,
   guardIsAlive,
   guardPulsesAt,
-  UPGRADE,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -3066,7 +3063,7 @@ export class GameClient {
    * Tire une salve de cette arme si SA PROPRE recharge est faite — miroir de
    * `Room#fireOne`, passifs empiles compris.
    *
-   * ⚠️ **`cooldownWithBonus` vient de `shared/weapons.ts`, pas d'une copie
+   * ⚠️ **`fireCooldown` vient de `shared/firing.ts`, pas d'une copie
    * locale** : c'est la fonction que le serveur applique. Les degats suivent
    * la meme regle : un projectile affiche porte le nombre que le serveur
    * arbitre.
@@ -3094,12 +3091,7 @@ export class GameClient {
     // La MEME fonction que `Room#fireOne` (`shared/firing.ts`), passifs
     // globaux (Volee, Ampleur) compris.
     const weapon = armedWeapon(loadout, weaponId);
-    const cooldown = cooldownWithBonus(
-      weapon.cooldownTicks,
-      loadout.bonus('fireRate') +
-        this.accountBonuses.fireRate +
-        FIRE_RATE_PER_UPGRADE * loadout.upgradesOf(weaponId, UPGRADE.FIRE_RATE),
-    );
+    const cooldown = fireCooldown(loadout, weaponId, this.accountBonuses.fireRate);
     let last = this.#lastFireTick.get(playerId);
     if (!last) {
       last = new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY);
