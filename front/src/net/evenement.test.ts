@@ -27,7 +27,7 @@ import { FORMATION } from '@shared/waves';
 import { BASE_WEAPON_ID } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EVENT_BANNER_MS, eventTargets, GameClient } from './client';
+import { EVENT_BANNER_MS, eventEndBanner, eventTargets, GameClient } from './client';
 
 /**
  * Le miroir client des evenements (etape 14, §6.5 et §7.1), sur le patron de
@@ -580,5 +580,41 @@ describe('etape 16 : eventTargets — vers quoi pointent les fleches', () => {
     const n = { ...base, kind: EVENT_KIND.NOIR, points: [], carrierId: 2 };
     expect(eventTargets(n, vide, joueurs, 1)).toEqual([{ x: 3, y: 4 }]);
     expect(eventTargets(n, vide, joueurs, 2)).toEqual([]);
+  });
+});
+
+describe('etape 16 : les bandeaux des quatre evenements', () => {
+  it('au depart, un bandeau par genre ; eventCount compte (le son « evenement » en depend)', () => {
+    const textes: Record<number, string> = {
+      [EVENT_KIND.SIEGE]: 'Un totem appelle ses défenseurs !',
+      [EVENT_KIND.RELIQUE]: 'Une relique attend son porteur !',
+      [EVENT_KIND.CHASSE]: 'Des proies rôdent !',
+      [EVENT_KIND.NOIR]: 'La nuit tombe !',
+    };
+    for (const [kind, texte] of Object.entries(textes)) {
+      const { client, socket } = connecte();
+      socket.emit(ev({ ...FORGE, kind: Number(kind) }));
+      expect(client.eventBanner).toBe(texte);
+      expect(client.eventCount).toBe(1);
+    }
+  });
+
+  it('a la fin, par (genre, issue) : le genre est lu AVANT d effacer le miroir', () => {
+    const fin = (kind: number, outcome: number): string | null => {
+      const { client, socket } = connecte();
+      socket.emit(ev({ ...FORGE, kind }));
+      socket.emit(ev({ type: MSG.EVENT_END, outcome }));
+      return client.eventBanner;
+    };
+    expect(fin(EVENT_KIND.SIEGE, EVENT_OUTCOME.DETRUIT)).toBe('Le totem est tombé…');
+    expect(fin(EVENT_KIND.NOIR, EVENT_OUTCOME.DETRUIT)).toBe("La lanterne s'éteint…");
+    expect(fin(EVENT_KIND.CONVOI, EVENT_OUTCOME.DETRUIT)).toBe('Le convoi est détruit…');
+    expect(fin(EVENT_KIND.RELIQUE, EVENT_OUTCOME.EXPIRE)).toBe("L'événement s'éteint…");
+    expect(fin(EVENT_KIND.CHASSE, EVENT_OUTCOME.REUSSI)).toBe('Réussi — étalage de règles !');
+  });
+
+  it('sans miroir (arrive en cours d evenement), le texte de l issue seule', () => {
+    expect(eventEndBanner(null, EVENT_OUTCOME.DETRUIT)).toBe('Le convoi est détruit…');
+    expect(eventEndBanner(null, EVENT_OUTCOME.EXPIRE)).toBe("L'événement s'éteint…");
   });
 });

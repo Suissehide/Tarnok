@@ -210,20 +210,40 @@ export interface HudElements {
  */
 
 /** Le nom de chaque evenement au HUD, par `EVENT_KIND`. */
-const EVENT_NAMES: readonly string[] = ['Les sceaux', 'La forge', 'Le convoi'];
+const EVENT_NAMES: readonly string[] = [
+  'Les sceaux',
+  'La forge',
+  'Le convoi',
+  'Le siège',
+  'La relique',
+  'La chasse',
+  'Le noir',
+];
 
 /**
  * « La forge — 62 % — 0:41 », « Le convoi — 40 % — chariot 70 % — 0:33 »
- * (etape 14, §7.4). PURE. Le temps est arrondi a la seconde SUPERIEURE : un
- * compte a rebours ne montre « 0:00 » qu'a la fin.
+ * (etape 14, §7.4) ; « Le siège — 62 % — totem 70 % — 0:41 », « La chasse —
+ * 1 / 3 — 0:41 » (etape 16, §9.1). PURE. Le temps est arrondi a la seconde
+ * SUPERIEURE : un compte a rebours ne montre « 0:00 » qu'a la fin.
+ *
+ * La chasse compte ses proies : `round(progres x n)`, exact pour n <= 3
+ * puisque l'octet vaut `floor(255 k / n)`.
  */
 export function eventStatusText(event: EventView): string {
   const nom = EVENT_NAMES[event.kind] ?? 'Événement';
-  const avance = `${Math.floor(event.progress * 100)} %`;
   const temps = formatTimer(Math.ceil(event.secondsLeft) * TICK_HZ);
-  return event.kind === EVENT_KIND.CONVOI
-    ? `${nom} — ${avance} — chariot ${Math.round(event.cartHp * 100)} % — ${temps}`
-    : `${nom} — ${avance} — ${temps}`;
+  if (event.kind === EVENT_KIND.CHASSE) {
+    const n = event.points.length;
+    return `${nom} — ${Math.round(event.progress * n)} / ${n} — ${temps}`;
+  }
+  const avance = `${Math.floor(event.progress * 100)} %`;
+  if (event.kind === EVENT_KIND.CONVOI) {
+    return `${nom} — ${avance} — chariot ${Math.round(event.cartHp * 100)} % — ${temps}`;
+  }
+  if (event.kind === EVENT_KIND.SIEGE) {
+    return `${nom} — ${avance} — totem ${Math.round(event.cartHp * 100)} % — ${temps}`;
+  }
+  return `${nom} — ${avance} — ${temps}`;
 }
 
 export function paintHud(

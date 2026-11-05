@@ -268,14 +268,35 @@ const EVENT_START_BANNERS: readonly string[] = [
   "Les sceaux s'éveillent !",
   "La forge s'allume !",
   'Un convoi attend son escorte !',
+  'Un totem appelle ses défenseurs !',
+  'Une relique attend son porteur !',
+  'Des proies rôdent !',
+  'La nuit tombe !',
 ];
 
-/** Le bandeau de la fin, par issue (`EVENT_OUTCOME`). */
+/** Le bandeau de la fin, par issue (`EVENT_OUTCOME`) — le repli sans genre connu. */
 const EVENT_END_BANNERS: readonly string[] = [
   'Réussi — étalage de règles !',
   "L'événement s'éteint…",
   'Le convoi est détruit…',
 ];
+
+/** « Detruit » se dit selon ce qui l'a ete (etape 16, §9.1). */
+const EVENT_DESTROYED_BANNERS: Readonly<Record<number, string>> = {
+  [EVENT_KIND.CONVOI]: 'Le convoi est détruit…',
+  [EVENT_KIND.SIEGE]: 'Le totem est tombé…',
+  [EVENT_KIND.NOIR]: "La lanterne s'éteint…",
+};
+
+/**
+ * Le bandeau d'`EVENT_END`, par (genre, issue). `kind` vaut `null` pour un
+ * client sans miroir (arrive en cours d'evenement) : le texte de l'issue seule.
+ */
+export function eventEndBanner(kind: number | null, outcome: number): string {
+  const detruit =
+    outcome === EVENT_OUTCOME.DETRUIT && kind !== null ? EVENT_DESTROYED_BANNERS[kind] : undefined;
+  return detruit ?? EVENT_END_BANNERS[outcome] ?? '';
+}
 
 /** Ce que l'ecran montre d'un evenement (etape 14) : HUD, sol, fleches de bord. */
 export interface EventView {
@@ -2168,13 +2189,15 @@ export class GameClient {
       this.#event.clock.heard(0);
       this.#endedRelic = this.#event.clock;
     }
+    // ⚠️ Le genre est lu AVANT d'effacer le miroir : le bandeau en depend.
+    const kind = this.#event?.kind ?? null;
     this.#event = null;
     // ⚠️ Compte meme sans depart vu (ecart n° 12 du plan) : l'`EVENT_END`
     // suffit a nommer l'etalage qui suit.
     if (msg.outcome === EVENT_OUTCOME.REUSSI) {
       this.#eventDraftsOwed++;
     }
-    this.#eventBanner = { text: EVENT_END_BANNERS[msg.outcome] ?? '', atMs: now };
+    this.#eventBanner = { text: eventEndBanner(kind, msg.outcome), atMs: now };
   }
 
   /** Le chariot a l'instant `now`, entre ses deux derniers etats connus. */

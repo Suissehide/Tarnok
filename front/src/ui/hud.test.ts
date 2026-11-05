@@ -563,6 +563,23 @@ describe('etape 14 : l evenement au HUD', () => {
     );
   });
 
+  it('etape 16 : « Le siège — 62 % — totem 70 % », « La relique — 40 % », « La chasse — 1 / 3 », « Le noir — 55 % »', () => {
+    expect(eventStatusText({ ...forge, kind: EVENT_KIND.SIEGE, progress: 0.62, cartHp: 0.7 })).toBe(
+      'Le siège — 62 % — totem 70 % — 0:41',
+    );
+    expect(
+      eventStatusText({ ...forge, kind: EVENT_KIND.RELIQUE, progress: 0.4, secondsLeft: 32.5 }),
+    ).toBe('La relique — 40 % — 0:33');
+    // L'octet de progression : floor(255 x 1 / 3) = 85 ; 85 / 255 x 3 s'arrondit a 1.
+    const p = { x: 1, y: 2 };
+    const chasse: EventView = { ...forge, kind: EVENT_KIND.CHASSE, points: [p, p, p] };
+    expect(eventStatusText({ ...chasse, progress: 85 / 255 })).toBe('La chasse — 1 / 3 — 0:41');
+    expect(eventStatusText({ ...chasse, progress: 170 / 255 })).toBe('La chasse — 2 / 3 — 0:41');
+    expect(
+      eventStatusText({ ...forge, kind: EVENT_KIND.NOIR, progress: 0.55, secondsLeft: 17.4 }),
+    ).toBe('Le noir — 55 % — 0:18');
+  });
+
   it('le bandeau de gel dit « Événement » pendant un etalage d evenement, « Coffre » d abord', () => {
     const el = hudElements();
     const source = new FakeSource();
