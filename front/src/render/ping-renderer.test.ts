@@ -122,29 +122,32 @@ describe('etape 11 : la fleche du porteur', () => {
   });
 });
 
+/** Les remplissages OR du calque ECRAN par un `draw` sans ping, sans allie ni porteur. */
+function flechesOr(event: EventView | null): number {
+  const r = new PingRenderer(() => 0xffffff);
+  const ecran = new Container();
+  r.attachScreen(ecran);
+  r.draw([], [], (x, y) => ({ x, y }), 800, 600, null, event);
+  const g = ecran.children[0] as Graphics;
+  return g.context.instructions.filter(
+    (i) =>
+      i.action === 'fill' && (i.data as { style: { color: number } }).style.color === COIN_TINT,
+  ).length;
+}
+
+/** Une vue d'evenement neutre, a completer par genre. */
+const base = {
+  progress: 0,
+  secondsLeft: 60,
+  cart: null,
+  cartHp: 1,
+  solo: false,
+  carrierId: 0,
+  relic: null,
+  startedAtMs: 0,
+};
+
 describe('etape 14 : les fleches d un evenement', () => {
-  /** Les remplissages OR du calque ECRAN par un `draw` sans ping, sans allie ni porteur. */
-  function flechesOr(event: EventView | null): number {
-    const r = new PingRenderer(() => 0xffffff);
-    const ecran = new Container();
-    r.attachScreen(ecran);
-    r.draw([], [], (x, y) => ({ x, y }), 800, 600, null, event);
-    const g = ecran.children[0] as Graphics;
-    return g.context.instructions.filter(
-      (i) =>
-        i.action === 'fill' && (i.data as { style: { color: number } }).style.color === COIN_TINT,
-    ).length;
-  }
-  const base = {
-    progress: 0,
-    secondsLeft: 60,
-    cart: null,
-    cartHp: 1,
-    solo: false,
-    carrierId: 0,
-    relic: null,
-    startedAtMs: 0,
-  };
   /** La vue complete : ses cibles, calculees comme le client les calcule. */
   const vue = (v: Omit<EventView, 'targets'>, horde = new Horde(4)): EventView => ({
     ...v,
@@ -192,27 +195,6 @@ describe('etape 14 : les fleches d un evenement', () => {
 });
 
 describe('etape 16 : les fleches des quatre evenements', () => {
-  function flechesOr(event: EventView | null): number {
-    const r = new PingRenderer(() => 0xffffff);
-    const ecran = new Container();
-    r.attachScreen(ecran);
-    r.draw([], [], (x, y) => ({ x, y }), 800, 600, null, event);
-    const g = ecran.children[0] as Graphics;
-    return g.context.instructions.filter(
-      (i) =>
-        i.action === 'fill' && (i.data as { style: { color: number } }).style.color === COIN_TINT,
-    ).length;
-  }
-  const base = {
-    progress: 0,
-    secondsLeft: 60,
-    cart: null,
-    cartHp: 1,
-    solo: false,
-    carrierId: 0,
-    relic: null,
-    startedAtMs: 0,
-  };
   const loin = { x: 5000, y: 300 };
   const ici = { x: 400, y: 300 };
 

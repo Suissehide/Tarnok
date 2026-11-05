@@ -6451,6 +6451,50 @@ describe('etape 16 : les quatre evenements dans le salon', () => {
       expect(room.drainEvents()).toEqual([]);
     });
 
+    it('horde a MAX_ENTITIES - 1 : une seule proie nee, un point annonce, la chasse se compte sur 1', () => {
+      const room = new Room(0x16_0e_0009);
+      room.join(1);
+      room.join(2);
+      for (let k = 0; room.horde.count < MAX_ENTITIES - 1 && k < 100; k++) {
+        room.horde.spawn({
+          waveId: 60_000 + k,
+          spawnTick: room.tick,
+          seed: 1,
+          archetype: 0,
+          formation: FORMATION.SCATTER,
+          anchorX: CENTRE.x,
+          anchorY: CENTRE.y,
+          count: MAX_ENTITIES - 1 - room.horde.count,
+        });
+      }
+      expect(room.horde.count).toBe(MAX_ENTITIES - 1);
+      room.drainWaveOrders();
+      room.debugStartEvent(graine(EVENT_KIND.CHASSE));
+      // Les trois ordres partent (le client tronque comme le serveur) ; un seul nait.
+      const ordres = room
+        .drainWaveOrders()
+        .filter((o) => room.horde.slotOf(entityIdOf(o.waveId, 0)) >= 0);
+      expect(ordres).toHaveLength(1);
+      const [start] = room.drainEvents();
+      expect(start).toMatchObject({ type: MSG.EVENT_START, kind: EVENT_KIND.CHASSE });
+      expect(start?.type === MSG.EVENT_START && start.points).toEqual([
+        { x: ordres[0]?.anchorX, y: ordres[0]?.anchorY },
+      ]);
+      const proie = new Set(ordres.map((o) => entityIdOf(o.waveId, 0)));
+      // Vivante, la proie laisse la progression a 0 : les deux non nees ne comptent pas tombees.
+      let etat: EventMessage | undefined;
+      for (let t = 0; t < 60 && !etat; t++) {
+        etat = pas(room, proie).find((m) => m.type === MSG.EVENT_STATE);
+      }
+      expect(etat).toMatchObject({ type: MSG.EVENT_STATE, progress: 0 });
+      // L'unique proie tombee : la chasse est reussie (1 / 1), pas a 1 / 3.
+      room.horde.kill([...proie]);
+      expect(pas(room, proie).find((m) => m.type === MSG.EVENT_END)).toEqual({
+        type: MSG.EVENT_END,
+        outcome: EVENT_OUTCOME.REUSSI,
+      });
+    });
+
     /**
      * ⚠️ **Aucun `rng()` consomme** : apres une chasse, les ordres du
      * directeur sont ceux d'apres un siege, `waveId` decale des trois proies

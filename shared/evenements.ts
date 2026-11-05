@@ -134,7 +134,7 @@ export class CarrierClock {
     return { from: this.fromTick, released: this.previous };
   }
 
-  /** Le porteur au tick `tick`. */
+  /** Le porteur au tick `tick` ; ne se souvient que d'UN porteur precedent (avant `fromTick`). */
   at(tick: number): number {
     return tick >= this.fromTick ? this.carrier : this.previous;
   }

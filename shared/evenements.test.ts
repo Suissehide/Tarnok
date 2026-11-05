@@ -56,4 +56,25 @@ describe('etape 16 : CarrierClock', () => {
     expect(c.dated(40)).toBeNull();
     expect(c.at(41)).toBe(0);
   });
+
+  it('porte, lachee puis reprise par le meme dans le meme envoi : l attente s efface, rien a dater', () => {
+    const c = new CarrierClock();
+    c.heard(1);
+    c.dated(10);
+    c.heard(0);
+    c.heard(1);
+    expect(c.dated(20)).toBeNull();
+    expect(c.at(21)).toBe(1);
+  });
+
+  it('passage de A a B dans le meme envoi : B date, A rendu comme ancien porteur', () => {
+    const c = new CarrierClock();
+    c.heard(1);
+    c.dated(10);
+    c.heard(0);
+    c.heard(2);
+    expect(c.dated(30)).toEqual({ from: 31, released: 1 });
+    expect(c.at(30)).toBe(1);
+    expect(c.at(31)).toBe(2);
+  });
 });

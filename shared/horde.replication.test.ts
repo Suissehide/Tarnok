@@ -3426,14 +3426,18 @@ describe('etape 11 : une mort tardive deplace le porteur, le rejeu le ramene', (
   /**
    * Etape 16 : la proie de la chasse emprunte la regle du porteur
    * (`behavior === 'porteur' || 'proie'`) a une autre vitesse (195 px/s au
-   * lieu de 234). Meme decor, meme mort tardive : sans rejeu la horde derive,
-   * avec rejeu 0,000 px — la proie ne coute rien a la horde repliquee.
+   * lieu de 234). Meme mort tardive, mais PAS le meme decor que PT1/PT2 :
+   * sur la graine 0x11_f1_ee01, a 195 px/s, la mort tardive ne laisse aucune
+   * derive mesurable (effet de geometrie propre a cette carte) ; 0x11_f1_ee30
+   * en laisse une. Sans rejeu la proie et la horde derivent, avec rejeu
+   * 0,000 px — la proie ne coute rien a la horde repliquee.
    */
   it('scenario PR1 - la proie : sans rejeu, la mort tardive laisse une derive mesurable', () => {
     const r = runChaseDeathScenario(0x11_f1_ee30, false, PROIE_ARCHETYPE);
     process.stdout.write(
       `etape 16, scenario PR1 (sans rejeu) : derive de la proie ${r.bearerDrift.toFixed(3)} px, derive de la horde ${r.maxDrift.toFixed(3)} px\n`,
     );
+    expect(r.bearerDrift).toBeGreaterThan(0);
     expect(r.maxDrift).toBeGreaterThan(0);
   });
 

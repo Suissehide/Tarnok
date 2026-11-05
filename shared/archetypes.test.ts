@@ -104,7 +104,7 @@ describe('la reserve de points de vie (etape 5a)', () => {
    * liste de noms : une faute de frappe (`'gnol'` pour `'gnoll'`) ne leve rien,
    * elle rend l'archetype leger en silence.
    */
-  it('donne a chaque pietaille les PV de son role, le boss et le porteur seuls faisant exception', () => {
+  it('donne a chaque pietaille les PV de son role, le boss, le porteur et la proie seuls faisant exception', () => {
     expect(ARCHETYPES.filter((a) => a.hp === HEAVY_HP)).toHaveLength(4);
     for (const a of ARCHETYPES) {
       // ⚠️ **Trois exceptions, et elles sont nommees** : comparer a
