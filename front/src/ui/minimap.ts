@@ -73,6 +73,14 @@ export function minimapEnemies(
   return event?.kind === EVENT_KIND.NOIR ? AUCUN_ENNEMI : horde;
 }
 
+/** Le porteur de coffre est un monstre : cache pendant le noir, comme la horde. */
+export function minimapPorteur(
+  event: { kind: number } | null,
+  porteur: MinimapView['porteur'],
+): MinimapView['porteur'] {
+  return event?.kind === EVENT_KIND.NOIR ? null : (porteur ?? null);
+}
+
 export class Minimap {
   private readonly ctx: CanvasRenderingContext2D | null;
   private obstacles: HTMLCanvasElement | null = null;

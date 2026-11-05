@@ -4,7 +4,7 @@ import { EVENT_KIND } from '@shared/evenements';
 import { describe, expect, it } from 'vitest';
 
 import { playerColor } from './draft';
-import { Minimap, minimapEnemies, toMinimap } from './minimap';
+import { Minimap, minimapEnemies, minimapPorteur, toMinimap } from './minimap';
 
 describe('mini-carte', () => {
   it('convertit le monde en pixels entiers bornes au cadre', () => {
@@ -134,5 +134,13 @@ describe('etape 16 : la mini-carte ne trahit pas la horde dans le noir', () => {
     expect(minimapEnemies({ kind: EVENT_KIND.NOIR }, horde).count).toBe(0);
     expect(minimapEnemies({ kind: EVENT_KIND.SIEGE }, horde)).toBe(horde);
     expect(minimapEnemies(null, horde)).toBe(horde);
+  });
+
+  it('pendant le noir : pas de porteur de coffre non plus ; sinon, tel quel', () => {
+    const porteur = { x: 10, y: 20 };
+    expect(minimapPorteur({ kind: EVENT_KIND.NOIR }, porteur)).toBeNull();
+    expect(minimapPorteur({ kind: EVENT_KIND.SIEGE }, porteur)).toBe(porteur);
+    expect(minimapPorteur(null, porteur)).toBe(porteur);
+    expect(minimapPorteur(null, null)).toBeNull();
   });
 });
