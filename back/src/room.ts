@@ -18,6 +18,7 @@ import {
   NECRO_RADIUS,
   NECRO_RAISE_MAX,
   PORTEUR_ARCHETYPE,
+  PROIE_ARCHETYPE,
   SHAMAN_AURA_RADIUS,
   SHOT_DAMAGE,
   SPLIT_CHILD,
@@ -51,7 +52,12 @@ import {
 } from '@shared/constants';
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { EnemyShots } from '@shared/enemy-shots';
-import { EVENT_DURATION_TICKS, EVENT_OUTCOME, EVENT_STATE_PERIOD_TICKS } from '@shared/evenements';
+import {
+  EVENT_DURATION_TICKS,
+  EVENT_KIND,
+  EVENT_OUTCOME,
+  EVENT_STATE_PERIOD_TICKS,
+} from '@shared/evenements';
 import { aimPoint, armedWeapon, critOf, fireCooldown, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, entityIdOf, Horde, pushOutOfGuards } from '@shared/horde';
@@ -116,7 +122,7 @@ import {
   Venins,
 } from './combat';
 import { Draft } from './draft';
-import { EventRun, placeEvent } from './evenement';
+import { EventRun, NOIR_DRAIN_PER_SEC, placeEvent } from './evenement';
 import { Portal } from './portal';
 import { WaveDirector } from './wave-director';
 
@@ -687,6 +693,20 @@ export class Room {
     return this.#event?.points ?? null;
   }
 
+  /** Lecture etroite (etape 16) : le porteur de la relique ou de la lanterne, 0 sinon. */
+  get eventCarrier(): number {
+    return this.#event?.carrier ?? 0;
+  }
+
+  /**
+   * Lecture etroite (etape 16), comme `positionOf` : le dernier tick de tir de
+   * cette arme pour ce joueur, `-Infinity` jamais tire ou absent. C'est elle
+   * qui prouve « aucune salve » au tick pres, sans compter des projectiles.
+   */
+  lastFireTickOf(playerId: number, weaponId: number): number {
+    return this.#players.get(playerId)?.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY;
+  }
+
   /** Les etalages ouverts depuis le dernier drainage. */
   drainDraftOpens(): DraftOpenEvent[] {
     const out = this.#pendingDraftOpens;
@@ -1154,7 +1174,10 @@ export class Room {
    * Attendre la vague 20 couterait deux minutes de temps reel par test.
    */
   debugStartEvent(seed: number): void {
-    this.#startEvent(seed);
+    // ⚠️ HORS du pas : la horde a deja fait le pas `#tick`. Une proie datee
+    // `#tick` serait posee par le client AVANT ce pas — elle nait donc au
+    // tick suivant, comme les petits du diviseur (ecart n° 3 du plan).
+    this.#startEvent(seed, this.#tick + 1);
   }
 
   /**
@@ -1379,8 +1402,12 @@ export class Room {
 
     for (const p of this.#players.values()) {
       // Vitesse propre a ce joueur : les cartes « fougue » empilees s'ajoutent
-      // a `PLAYER_SPEED`, en pixels monde par seconde.
-      const speed = PLAYER_SPEED + p.loadout.bonus('speed') + p.accountBonuses.speed;
+      // a `PLAYER_SPEED`, en pixels monde par seconde. Etape 16 : le porteur
+      // de relique avance a `relicSpeedFactor` de la vitesse ENTIERE ; la
+      // poussee des gardiens, plus bas, ne vient pas de l'entree et n'est pas ralentie.
+      const speed =
+        (PLAYER_SPEED + p.loadout.bonus('speed') + p.accountBonuses.speed) *
+        (this.#event?.speedFactorOf(p.id) ?? 1);
       // Le decor bloque les joueurs comme la horde : meme masque que le champ
       // de flux (`#fields[0]`), meme regle que la prediction (`moveOnMap`).
       const sol = this.#fields[0];
@@ -1522,7 +1549,8 @@ export class Room {
     // Lue ICI, une fois : le directeur l'oublie a la lecture.
     const graineEvenement = this.#director.takeEventSeed();
     if (graineEvenement !== null) {
-      this.#startEvent(graineEvenement);
+      // Dans le pas, apres les ordres et AVANT horde.step : les proies sont datees de CE tick.
+      this.#startEvent(graineEvenement, this.#tick);
     }
     // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, et
     // seulement la : la mort d'un boss ne l'ouvre pas. Une vague = un groupe,
@@ -2202,6 +2230,12 @@ export class Room {
       if (p.hp <= 0) {
         continue;
       }
+      // Etape 16 : le porteur de relique ne tire pas — toutes ses armes, halo
+      // et invocation compris, passent par `#fireOne`. `lastFireTick` reste
+      // fige : a la livraison ou a la chute, la recharge est deja faite.
+      if (this.#event?.holdsFire(p.id)) {
+        continue;
+      }
       if (p.aimX === 0 && p.aimY === 0) {
         continue;
       }
@@ -2410,16 +2444,35 @@ export class Room {
    * les points se derivent de la graine et des joueurs VIVANTS : un mort ne
    * compte ni pour le centre ni pour N. Personne debout : rien — la run
    * s'acheve a ce tick de toute facon.
+   *
+   * Etape 16 : la chasse fait naitre ses proies ICI, par `#spawnAt` — des
+   * `WAVE_ORDER` ordinaires, sans un `rng()`, datees `spawnTick` (le tick
+   * courant dans le pas, le suivant hors du pas). Horde pleine : pas d'evenement
+   * du tout, aucun message. Les points annonces sont ceux des proies NEES.
    */
-  #startEvent(seed: number): void {
+  #startEvent(seed: number, spawnTick: number): void {
     const vivants = [...this.#players.values()].filter((p) => p.hp > 0);
     if (vivants.length === 0) {
       return;
     }
     // `#convoiField` porte le meme masque que `#fields` et n'est jamais
     // `undefined` : il sert aussi a sortir les points des murs.
-    const plan = placeEvent(seed, vivants, this.#convoiField);
-    this.#event = new EventRun(plan, this.#convoiField);
+    let plan = placeEvent(seed, vivants, this.#convoiField);
+    const proies: number[] = [];
+    if (plan.kind === EVENT_KIND.CHASSE) {
+      const nees = plan.points.filter((p) => {
+        const id = this.#spawnAt(p, PROIE_ARCHETYPE, 1, spawnTick);
+        if (id !== null) {
+          proies.push(id);
+        }
+        return id !== null;
+      });
+      if (proies.length === 0) {
+        return;
+      }
+      plan = { ...plan, points: nees };
+    }
+    this.#event = new EventRun(plan, this.#convoiField, proies);
     this.#pendingEvents.push({
       type: MSG.EVENT_START,
       kind: plan.kind,
@@ -2446,8 +2499,24 @@ export class Room {
     }
     const issue = ev.step([...this.#players.values()], this.horde, dt);
     if (issue === null) {
-      if (ev.elapsed % EVENT_STATE_PERIOD_TICKS === 0) {
+      // ⚠️ Lu AVANT la cadence (ecart n° 9) : un `||` court-circuiterait le
+      // drapeau, qui pousserait un etat de trop au tick suivant.
+      const change = ev.takeCarrierChanged();
+      // Etape 16 : un etat HORS cadence quand le porteur de relique change —
+      // il part avant le SNAPSHOT du meme envoi, qui le date (§7.3, §8.1).
+      if (change || ev.elapsed % EVENT_STATE_PERIOD_TICKS === 0) {
         this.#pendingEvents.push({ type: MSG.EVENT_STATE, ...ev.wireState() });
+      }
+      // La nuit (§6.3), au serveur seul : une soustraction, pas `hurtPlayer`
+      // — l'obscurite n'est pas un coup (ni armure, ni bouclier, et
+      // `shieldCalmTicks` n'est pas remis a zero). Comme `#regenerate`, `hp`
+      // devient fractionnaire ; `encodeSnapshot` le tronque. APRES le contact
+      // et la regeneration, AVANT `#checkRunOver` : un joueur acheve par le
+      // noir est vu mort au meme tick. `inDark` est faux en solo.
+      for (const p of this.#players.values()) {
+        if (p.hp > 0 && ev.inDark(p)) {
+          p.hp = Math.max(0, p.hp - NOIR_DRAIN_PER_SEC / TICK_HZ);
+        }
       }
       return;
     }
@@ -2557,11 +2626,23 @@ export class Room {
     }
   }
 
-  #spawnAt(at: Blast, archetype: number, count: number): void {
+  /**
+   * Fait naitre `count` entites d'`archetype` en `at`, par un ORDRE de vague
+   * ordinaire (`allocWaveId` : un compteur, pas un `rng()`). `spawnTick` :
+   * le tick SUIVANT par defaut (apres le pas de horde : les petits) ; le tick
+   * courant pour une naissance AVANT le pas (les proies, etape 16). Rend
+   * l'identite de la premiere entite nee, `null` si la horde etait pleine.
+   */
+  #spawnAt(
+    at: { x: number; y: number },
+    archetype: number,
+    count: number,
+    spawnTick = this.#tick + 1,
+  ): number | null {
     const waveId = this.#director.allocWaveId();
     const order: WaveOrder = {
       waveId,
-      spawnTick: this.#tick + 1,
+      spawnTick,
       seed: waveId,
       archetype,
       formation: FORMATION.POINT,
@@ -2573,6 +2654,7 @@ export class Room {
     this.horde.spawn(order, this.#fields[0]);
     this.#scaleMonsterHp(before);
     this.#pendingOrders.push(order);
+    return this.horde.count > before ? entityIdOf(waveId, 0) : null;
   }
 
   /** Explosions du tick ; rend les identites qu'elles tuent (kamikazes compris). */

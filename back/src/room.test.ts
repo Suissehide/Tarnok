@@ -8,6 +8,8 @@ import {
   LIGHT_HP,
   PORTEUR_ARCHETYPE,
   PORTEUR_HP,
+  PROIE_ARCHETYPE,
+  PROIE_HP,
 } from '@shared/archetypes';
 import {
   BOSS_CHARGE_COOLDOWN_TICKS,
@@ -56,7 +58,10 @@ import {
   EVENT_KIND,
   EVENT_OUTCOME,
   EVENT_STATE_PERIOD_TICKS,
+  NOIR_LIGHT_RADIUS,
+  RELIQUE_CARRIER_SPEED,
 } from '@shared/evenements';
+import { fireCooldown, lastFireAfterCarry } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
 import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
@@ -93,6 +98,7 @@ import { generateObstacles } from '@shared/worldmap';
 import { describe, expect, it, vi } from 'vitest';
 
 import { REACTION_COOLDOWN_TICKS, spreadMarkOnDeath } from './combat';
+import { CHASSE_PREY } from './evenement';
 import { type AccountGrants, type DraftOpenEvent, Room } from './room';
 import { WaveDirector } from './wave-director';
 
@@ -6172,5 +6178,374 @@ describe('etape 14 : les evenements dans le salon', () => {
     expect(fin).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.EXPIRE });
     room.step(DT);
     expect(room.drainDraftOpens()).toEqual([]);
+  });
+});
+
+describe('etape 16 : les quatre evenements dans le salon', () => {
+  /** Une graine du genre voulu : le genre est `graine % 7`. */
+  const graine = (genre: number): number => 7 * 0x4_6a2b + genre;
+  /** Le centre de l'ile : toujours degage (`SPAWN_CLEARANCE`), on y bouge sans mur. */
+  const CENTRE = { x: MAP_SIZE / 2, y: MAP_SIZE / 2 };
+  const FOUGUE: Card = {
+    nature: CARD.PASSIVE,
+    refId: PASSIVES.find((p) => p.kind === 'speed')?.id ?? -1,
+  };
+
+  /** Retire de la horde, HORS du lot de morts, tout ce qui n'est pas dans `garder`. */
+  function viderSauf(room: Room, garder: ReadonlySet<number> = new Set()): void {
+    const ids: number[] = [];
+    for (let i = 0; i < room.horde.count; i++) {
+      const id = room.horde.entityIdAt(i);
+      if (!garder.has(id)) {
+        ids.push(id);
+      }
+    }
+    if (ids.length > 0) {
+      room.horde.kill(ids);
+    }
+  }
+
+  /** Un tick de decor, horde videe (sauf `garder`) ; PAS de remise sur pied : le noir doit mordre. */
+  function pas(room: Room, garder?: ReadonlySet<number>): EventMessage[] {
+    viderSauf(room, garder);
+    room.step(DT);
+    viderSauf(room, garder);
+    return room.drainEvents();
+  }
+
+  function ou(room: Room, id: number): { x: number; y: number } {
+    const p = room.positionOf(id);
+    if (!p) {
+      throw new Error(`joueur ${id} absent`);
+    }
+    return p;
+  }
+
+  function relique(room: Room): { x: number; y: number } {
+    const [r] = room.eventPoints ?? [];
+    if (!r) {
+      throw new Error('la relique a un point');
+    }
+    return r;
+  }
+
+  describe('la relique', () => {
+    it('le porteur avance a 0,6 x sa vitesse ENTIERE (fougue comprise) a partir de D + 1, pas de D', () => {
+      expect(FOUGUE.refId).toBeGreaterThanOrEqual(0);
+      const room = new Room(0x16_0e_0001);
+      room.join(1);
+      room.join(2);
+      room.grantCard(1, FOUGUE);
+      room.grantCard(2, FOUGUE);
+      room.debugStartEvent(graine(EVENT_KIND.RELIQUE));
+      const r = relique(room);
+      // Ramassee au site, portee au centre, lachee la : la relique au sol, en terrain degage.
+      room.debugPlace(1, r.x, r.y);
+      pas(room);
+      room.debugPlace(1, CENTRE.x, CENTRE.y);
+      pas(room);
+      room.debugKill(1);
+      pas(room);
+      expect(room.eventCarrier).toBe(0);
+      room.debugRevive(1);
+      room.debugPlace(2, CENTRE.x, CENTRE.y + 120);
+      room.applyInput(1, 1, 127, 0);
+      room.applyInput(2, 1, 127, 0);
+      const a0 = ou(room, 1).x;
+      const b0 = ou(room, 2).x;
+      // Tick D : 1 bouge a pleine vitesse, PUIS ramasse (en fin de pas).
+      pas(room);
+      expect(room.eventCarrier).toBe(1);
+      const a1 = ou(room, 1).x;
+      const b1 = ou(room, 2).x;
+      expect(a1 - a0).toBeCloseTo(b1 - b0, 6);
+      // Tick D + 1 : ralenti, sur la vitesse ENTIERE (une fougue chacun : le rapport resterait
+      // (0,6 x 260 + 15) / 275 si le facteur ne portait que sur PLAYER_SPEED).
+      pas(room);
+      const a2 = ou(room, 1).x;
+      const b2 = ou(room, 2).x;
+      expect(b2 - b1).toBeGreaterThan(0);
+      expect((a2 - a1) / (b2 - b1)).toBeCloseTo(RELIQUE_CARRIER_SPEED, 6);
+    });
+
+    it('aucune salve tant qu il porte (projectile ni halo) ; a la chute, la reprise suit lastFireAfterCarry', () => {
+      const halo = WEAPONS.find((w) => w.kind === 'halo');
+      if (!halo) {
+        throw new Error('un halo au catalogue');
+      }
+      const room = new Room(0x16_0e_0002);
+      room.join(1);
+      room.join(2);
+      room.grantCard(1, { nature: CARD.WEAPON, refId: halo.id });
+      // Vise a droite, immobile : il tire a chaque recharge.
+      room.applyInput(1, 1, 0, 0, 127, 0);
+      room.debugStartEvent(graine(EVENT_KIND.RELIQUE));
+      for (let t = 0; t < 10; t++) {
+        pas(room);
+      }
+      const r = relique(room);
+      room.debugPlace(1, r.x, r.y);
+      pas(room); // tick D : il a tire, puis ramasse
+      expect(room.eventCarrier).toBe(1);
+      const loadout = room.loadoutOf(1);
+      if (!loadout) {
+        throw new Error('un inventaire');
+      }
+      const armes = [...loadout.weaponIds];
+      expect(armes).toContain(halo.id);
+      const avant = armes.map((w) => room.lastFireTickOf(1, w));
+      for (const t of avant) {
+        expect(t).toBeGreaterThan(Number.NEGATIVE_INFINITY);
+      }
+      for (let t = 0; t < 40; t++) {
+        pas(room);
+        armes.forEach((w, k) => expect(room.lastFireTickOf(1, w)).toBe(avant[k]));
+      }
+      // La chute au tick E ; releve aussitot, il peut tirer a E + 1.
+      room.debugKill(1);
+      pas(room);
+      expect(room.eventCarrier).toBe(0);
+      const E = room.tick;
+      room.debugRevive(1);
+      // Releve LOIN de la relique tombee a ses pieds : sinon il la reprend a E + 1.
+      room.debugPlace(1, CENTRE.x, CENTRE.y);
+      for (let t = 0; t < 20; t++) {
+        pas(room);
+        armes.forEach((w, k) =>
+          expect(room.lastFireTickOf(1, w)).toBe(
+            lastFireAfterCarry(avant[k] ?? 0, E + 1, room.tick + 1, fireCooldown(loadout, w, 0)),
+          ),
+        );
+      }
+      // La premiere salve est partie a E + 1 : le port a dure plus qu'une recharge.
+      expect(room.lastFireTickOf(1, BASE_WEAPON_ID)).toBeGreaterThan(E);
+    });
+
+    it('un EVENT_STATE hors cadence au ramassage et a la chute — un seul, et rien au tick d apres', () => {
+      const room = new Room(0x16_0e_0003);
+      room.join(1);
+      room.join(2);
+      room.debugStartEvent(graine(EVENT_KIND.RELIQUE));
+      room.drainEvents();
+      const r = relique(room);
+      room.debugPlace(1, r.x, r.y);
+      const ramassage = pas(room); // elapsed 1 : pas un tick de cadence
+      expect(ramassage).toHaveLength(1);
+      expect(ramassage[0]).toMatchObject({ type: MSG.EVENT_STATE, cartHp: 1 });
+      expect(pas(room)).toEqual([]); // elapsed 2 : ni cadence ni changement
+      room.debugKill(1);
+      const chute = pas(room); // elapsed 3
+      expect(chute).toHaveLength(1);
+      expect(chute[0]).toMatchObject({ type: MSG.EVENT_STATE, cartHp: 0 });
+    });
+  });
+
+  describe('la chasse', () => {
+    it('debugStartEvent : 3 WAVE_ORDER de proies dates tick + 1, PV monsterHp(160, niveau), puis l EVENT_START', () => {
+      const room = new Room(0x16_0e_0004);
+      room.join(1);
+      room.join(2);
+      room.debugSetLevel(10);
+      room.drainWaveOrders();
+      room.debugStartEvent(graine(EVENT_KIND.CHASSE));
+      const ordres = room.drainWaveOrders();
+      expect(ordres).toHaveLength(CHASSE_PREY);
+      for (const o of ordres) {
+        expect(o).toMatchObject({
+          archetype: PROIE_ARCHETYPE,
+          count: 1,
+          spawnTick: room.tick + 1,
+          formation: FORMATION.POINT,
+        });
+        const slot = room.horde.slotOf(entityIdOf(o.waveId, 0));
+        expect(slot).toBeGreaterThanOrEqual(0);
+        expect(room.horde.hp[slot]).toBe(Math.fround(monsterHp(PROIE_HP, 10)));
+      }
+      const [start] = room.drainEvents();
+      if (start?.type !== MSG.EVENT_START) {
+        throw new Error('EVENT_START attendu');
+      }
+      expect(start).toMatchObject({ kind: EVENT_KIND.CHASSE, solo: false });
+      expect(start.points).toEqual(ordres.map((o) => ({ x: o.anchorX, y: o.anchorY })));
+    });
+
+    it('au pas, les proies sont datees du tick MEME : apres la boucle des ordres, avant horde.step', () => {
+      const lire = vi.spyOn(WaveDirector.prototype, 'takeEventSeed').mockReturnValue(null);
+      try {
+        const room = new Room(0x16_0e_0005);
+        room.join(1);
+        room.join(2);
+        pas(room);
+        room.drainWaveOrders();
+        lire.mockReturnValueOnce(graine(EVENT_KIND.CHASSE));
+        viderSauf(room);
+        room.step(DT);
+        const proies = room.drainWaveOrders().filter((o) => o.archetype === PROIE_ARCHETYPE);
+        expect(proies).toHaveLength(CHASSE_PREY);
+        for (const o of proies) {
+          expect(o.spawnTick).toBe(room.tick);
+        }
+      } finally {
+        lire.mockRestore();
+      }
+    });
+
+    it('reussie quand toutes les proies sont tombees ; tant qu une vit, rien', () => {
+      const room = new Room(0x16_0e_0006);
+      room.join(1);
+      room.join(2);
+      room.debugStartEvent(graine(EVENT_KIND.CHASSE));
+      room.drainEvents();
+      const ids = room.drainWaveOrders().map((o) => entityIdOf(o.waveId, 0));
+      for (let t = 0; t < 30; t++) {
+        expect(pas(room, new Set(ids)).some((m) => m.type === MSG.EVENT_END)).toBe(false);
+      }
+      room.horde.kill(ids.slice(0, 2));
+      expect(pas(room, new Set(ids)).some((m) => m.type === MSG.EVENT_END)).toBe(false);
+      room.horde.kill(ids.slice(2));
+      expect(pas(room, new Set(ids)).find((m) => m.type === MSG.EVENT_END)).toEqual({
+        type: MSG.EVENT_END,
+        outcome: EVENT_OUTCOME.REUSSI,
+      });
+    });
+
+    it('horde pleine : aucune proie nee, aucun evenement, aucun message', () => {
+      const room = new Room(0x16_0e_0007);
+      room.join(1);
+      for (let k = 0; room.horde.count < room.horde.capacity && k < 100; k++) {
+        room.horde.spawn({
+          waveId: 60_000 + k,
+          spawnTick: room.tick,
+          seed: 1,
+          archetype: 0,
+          formation: FORMATION.SCATTER,
+          anchorX: CENTRE.x,
+          anchorY: CENTRE.y,
+          count: room.horde.capacity,
+        });
+      }
+      expect(room.horde.count).toBe(room.horde.capacity);
+      room.debugStartEvent(graine(EVENT_KIND.CHASSE));
+      expect(room.eventPoints).toBeNull();
+      expect(room.drainEvents()).toEqual([]);
+    });
+
+    /**
+     * ⚠️ **Aucun `rng()` consomme** : apres une chasse, les ordres du
+     * directeur sont ceux d'apres un siege, `waveId` decale des trois proies
+     * — la mesure exacte du « decalage de 2 ou 3 » de la spec (§5.2).
+     */
+    it('les ordres du directeur qui suivent sont les memes qu apres un siege, waveId + 3', () => {
+      function ordresApres(genre: number): WaveOrder[] {
+        const room = new Room(0x16_0e_0008);
+        room.join(1);
+        room.join(2);
+        room.debugStartEvent(graine(genre));
+        const proies = new Set(room.drainWaveOrders().map((o) => entityIdOf(o.waveId, 0)));
+        const out: WaveOrder[] = [];
+        for (let t = 0; t < 400; t++) {
+          pas(room, proies);
+          room.debugRevive(1);
+          room.debugRevive(2);
+          out.push(...room.drainWaveOrders());
+        }
+        return out;
+      }
+      const siege = ordresApres(EVENT_KIND.SIEGE);
+      const chasse = ordresApres(EVENT_KIND.CHASSE);
+      expect(siege.length).toBeGreaterThan(0);
+      expect(chasse.map((o) => ({ ...o, waveId: o.waveId - CHASSE_PREY }))).toEqual(siege);
+    });
+  });
+
+  describe('le noir', () => {
+    function noir(seed: number): { room: Room; lanterne: number; autre: number } {
+      const room = new Room(seed);
+      room.join(1);
+      room.join(2);
+      room.debugStartEvent(graine(EVENT_KIND.NOIR));
+      room.drainEvents();
+      const lanterne = room.eventCarrier;
+      expect([1, 2]).toContain(lanterne);
+      room.debugPlace(lanterne, CENTRE.x, CENTRE.y);
+      return { room, lanterne, autre: lanterne === 1 ? 2 : 1 };
+    }
+
+    it('hors de la lumiere : -2 PV/s, sans toucher au bouclier ; a 350 px pile, rien ; la lanterne rien', () => {
+      const { room, lanterne, autre } = noir(0x16_0e_0009);
+      room.debugSetMaxShield(autre, 40);
+      room.debugPlace(autre, CENTRE.x + NOIR_LIGHT_RADIUS + 50, CENTRE.y);
+      const pv = room.hpOf(autre);
+      const pvLanterne = room.hpOf(lanterne);
+      for (let t = 0; t < TICK_HZ; t++) {
+        pas(room);
+      }
+      expect(room.hpOf(autre)).toBeCloseTo(pv - 2, 6);
+      expect(room.shieldOf(autre)).toBe(40);
+      expect(room.hpOf(lanterne)).toBe(pvLanterne);
+      room.debugPlace(autre, CENTRE.x + NOIR_LIGHT_RADIUS, CENTRE.y);
+      const borne = room.hpOf(autre);
+      for (let t = 0; t < TICK_HZ; t++) {
+        pas(room);
+      }
+      expect(room.hpOf(autre)).toBe(borne);
+    });
+
+    it('la lanterne part : EVENT_END detruit au pas suivant, aucun etalage', () => {
+      const { room, lanterne } = noir(0x16_0e_000a);
+      pas(room);
+      room.leave(lanterne);
+      expect(pas(room).find((m) => m.type === MSG.EVENT_END)).toEqual({
+        type: MSG.EVENT_END,
+        outcome: EVENT_OUTCOME.DETRUIT,
+      });
+      room.step(DT);
+      expect(room.drainDraftOpens()).toEqual([]);
+    });
+
+    it('seul : aucune perte de PV, ou qu il soit', () => {
+      const room = new Room(0x16_0e_000b);
+      room.join(1);
+      room.debugStartEvent(graine(EVENT_KIND.NOIR));
+      expect(room.eventCarrier).toBe(1);
+      const pv = room.hpOf(1);
+      for (let t = 0; t < 60; t++) {
+        pas(room);
+      }
+      expect(room.hpOf(1)).toBe(pv);
+    });
+  });
+
+  it('le siege : progression suspendue sans defenseur, reprise avec, jamais redescendue', () => {
+    const room = new Room(0x16_0e_000c);
+    room.join(1);
+    room.join(2);
+    room.debugStartEvent(graine(EVENT_KIND.SIEGE));
+    room.drainEvents();
+    const [totem] = room.eventPoints ?? [];
+    if (!totem) {
+      throw new Error('un totem');
+    }
+    const progres = (n: number, place: boolean): number[] => {
+      const out: number[] = [];
+      for (let t = 0; t < n; t++) {
+        if (place) {
+          room.debugPlace(1, totem.x, totem.y);
+        }
+        for (const m of pas(room)) {
+          if (m.type === MSG.EVENT_STATE) {
+            out.push(m.progress);
+          }
+        }
+      }
+      return out;
+    };
+    expect(progres(30, false).every((p) => p === 0)).toBe(true);
+    const tenu = progres(60, true);
+    expect(tenu.at(-1)).toBeGreaterThan(0);
+    room.debugPlace(1, CENTRE.x, CENTRE.y);
+    room.debugPlace(2, CENTRE.x, CENTRE.y);
+    const apres = progres(30, false);
+    expect(apres.every((p) => p === tenu.at(-1))).toBe(true);
   });
 });
