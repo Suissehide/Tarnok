@@ -6299,7 +6299,9 @@ describe('etape 16 : les quatre evenements dans le salon', () => {
       }
       for (let t = 0; t < 40; t++) {
         pas(room);
-        armes.forEach((w, k) => expect(room.lastFireTickOf(1, w)).toBe(avant[k]));
+        armes.forEach((w, k) => {
+          expect(room.lastFireTickOf(1, w)).toBe(avant[k]);
+        });
       }
       // La chute au tick E ; releve aussitot, il peut tirer a E + 1.
       room.debugKill(1);
@@ -6311,11 +6313,11 @@ describe('etape 16 : les quatre evenements dans le salon', () => {
       room.debugPlace(1, CENTRE.x, CENTRE.y);
       for (let t = 0; t < 20; t++) {
         pas(room);
-        armes.forEach((w, k) =>
+        armes.forEach((w, k) => {
           expect(room.lastFireTickOf(1, w)).toBe(
             lastFireAfterCarry(avant[k] ?? 0, E + 1, room.tick + 1, fireCooldown(loadout, w, 0)),
-          ),
-        );
+          );
+        });
       }
       // La premiere salve est partie a E + 1 : le port a dure plus qu'une recharge.
       expect(room.lastFireTickOf(1, BASE_WEAPON_ID)).toBeGreaterThan(E);
