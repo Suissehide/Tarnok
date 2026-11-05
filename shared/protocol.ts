@@ -6,6 +6,8 @@
  * Tout est en little-endian, l'ordre natif de x86 et d'ARM.
  */
 
+import { EVENT_SOLO_FLAG } from './evenements';
+
 export const MSG = {
   WELCOME: 1,
   SNAPSHOT: 2,
@@ -1806,16 +1808,24 @@ export interface EventStartMessage {
   type: typeof MSG.EVENT_START;
   /** `EVENT_KIND`. */
   kind: number;
+  /**
+   * Un seul vivant au depart (etape 16, §7.1) : le BIT HAUT de l'octet de
+   * genre, zero octet de plus.
+   */
+  solo: boolean;
   durationTicks: number;
   points: { x: number; y: number }[];
 }
 
 /**
- * S -> C : ou en est l'evenement, a 5 Hz et seulement pendant un evenement, 7
- * octets. `type u8 · progression u8 · chariot x i16 · chariot y i16 · pv u8`.
- * Octets DEJA quantifies par le salon : progression `floor(255 x fraction)`,
- * PV `ceil(255 x pv / pvMax)` (0 seulement detruit). Zeros hors convoi : un
- * format fixe vaut mieux que trois.
+ * S -> C : ou en est l'evenement, a 5 Hz de jeu vivant (et une fois de plus
+ * a chaque changement de porteur de relique), 7 octets.
+ * `type u8 · progression u8 · x i16 · y i16 · etat u8`. Octets DEJA
+ * quantifies par le salon. `x, y` : le chariot (convoi), la relique ; zeros
+ * sinon. L'octet d'etat `cartHp` se lit selon le genre (etape 16, §7.2) :
+ * PV `ceil(255 x pv / pvMax)` du chariot ou du totem (0 seulement detruit),
+ * l'id du porteur de la relique (0 au sol), l'id du porteur de lanterne ;
+ * zero sinon.
  */
 export interface EventStateMessage {
   type: typeof MSG.EVENT_STATE;
@@ -1844,7 +1854,8 @@ export function encodeEvent(msg: EventMessage): ArrayBuffer {
     const buf = new ArrayBuffer(EVENT_START_HEADER_BYTES + msg.points.length * EVENT_POINT_BYTES);
     const v = new DataView(buf);
     v.setUint8(0, MSG.EVENT_START);
-    v.setUint8(1, msg.kind);
+    // Masque a 7 bits : un genre hors bornes ne deborde jamais sur le bit solo.
+    v.setUint8(1, (msg.kind & 0x7f) | (msg.solo ? EVENT_SOLO_FLAG : 0));
     v.setUint16(2, msg.durationTicks, true);
     v.setUint8(4, msg.points.length);
     msg.points.forEach((p, i) => {
@@ -1884,9 +1895,11 @@ function decodeEventStart(buf: ArrayBuffer): EventStartMessage {
     const o = EVENT_START_HEADER_BYTES + i * EVENT_POINT_BYTES;
     points.push({ x: v.getInt16(o, true), y: v.getInt16(o + 2, true) });
   }
+  const genre = v.getUint8(1);
   return {
     type: MSG.EVENT_START,
-    kind: v.getUint8(1),
+    kind: genre & 0x7f,
+    solo: (genre & EVENT_SOLO_FLAG) !== 0,
     durationTicks: v.getUint16(2, true),
     points,
   };

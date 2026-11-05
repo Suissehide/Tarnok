@@ -2431,6 +2431,7 @@ export class Room {
     this.#pendingEvents.push({
       type: MSG.EVENT_START,
       kind: plan.kind,
+      solo: plan.solo,
       durationTicks: EVENT_DURATION_TICKS,
       points: plan.points,
     });

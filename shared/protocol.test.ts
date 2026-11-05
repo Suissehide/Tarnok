@@ -10,7 +10,15 @@ import {
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, ELEMENTS } from './elements';
-import { EVENT_DURATION_TICKS, EVENT_KIND, EVENT_OUTCOME } from './evenements';
+import {
+  EVENT_DURATION_TICKS,
+  EVENT_KIND,
+  EVENT_KIND_COUNT,
+  EVENT_OUTCOME,
+  EVENT_SOLO_FLAG,
+  lightRadius,
+  relicSpeedFactor,
+} from './evenements';
 import { entityIdOf } from './horde';
 import { bossHp, palierGold } from './paliers';
 import {
@@ -1739,8 +1747,17 @@ describe('etape 14 : EVENT_START, EVENT_STATE, EVENT_END', () => {
     expect([MSG.EVENT_START, MSG.EVENT_STATE, MSG.EVENT_END]).toEqual([28, 29, 30]);
   });
 
-  it('le genre et l issue ont leurs valeurs du fil', () => {
-    expect(EVENT_KIND).toEqual({ SCEAUX: 0, FORGE: 1, CONVOI: 2 });
+  it('le genre et l issue ont leurs valeurs du fil : les trois premiers genres ne bougent pas', () => {
+    expect(EVENT_KIND).toEqual({
+      SCEAUX: 0,
+      FORGE: 1,
+      CONVOI: 2,
+      SIEGE: 3,
+      RELIQUE: 4,
+      CHASSE: 5,
+      NOIR: 6,
+    });
+    expect(EVENT_KIND_COUNT).toBe(7);
     expect(EVENT_OUTCOME).toEqual({ REUSSI: 0, EXPIRE: 1, DETRUIT: 2 });
   });
 
@@ -1752,6 +1769,7 @@ describe('etape 14 : EVENT_START, EVENT_STATE, EVENT_END', () => {
       const msg: EventMessage = {
         type: MSG.EVENT_START,
         kind: EVENT_KIND.SCEAUX,
+        solo: false,
         durationTicks: EVENT_DURATION_TICKS,
         points: Array.from({ length: n }, (_, i) => ({ x: 1000 + 800 * i, y: 5999 - i })),
       };
@@ -1766,6 +1784,7 @@ describe('etape 14 : EVENT_START, EVENT_STATE, EVENT_END', () => {
     const msg: EventMessage = {
       type: MSG.EVENT_START,
       kind: EVENT_KIND.CONVOI,
+      solo: false,
       durationTicks: EVENT_DURATION_TICKS,
       points: [
         { x: -32_768, y: 32_767 },
@@ -1820,6 +1839,7 @@ describe('etape 14 : EVENT_START, EVENT_STATE, EVENT_END', () => {
     const buf = encodeEvent({
       type: MSG.EVENT_START,
       kind: EVENT_KIND.SCEAUX,
+      solo: false,
       durationTicks: EVENT_DURATION_TICKS,
       points: [
         { x: 1, y: 2 },
@@ -1835,5 +1855,90 @@ describe('etape 14 : EVENT_START, EVENT_STATE, EVENT_END', () => {
     expect(() => decode(etat.slice(0, 6))).toThrow(/tronque/);
     const fin = encodeEvent({ type: MSG.EVENT_END, outcome: 0 });
     expect(() => decode(fin.slice(0, 1))).toThrow(/tronque/);
+  });
+});
+
+describe('etape 16 : le bit solo d EVENT_START, l octet d etat d EVENT_STATE', () => {
+  it('EVENT_SOLO_FLAG est le bit haut : les sept genres tiennent sous lui', () => {
+    expect(EVENT_SOLO_FLAG).toBe(0x80);
+    expect(EVENT_KIND_COUNT - 1).toBeLessThan(EVENT_SOLO_FLAG);
+  });
+
+  it('aller-retour de solo vrai et faux pour les sept genres ; l octet vaut kind | 0x80 en solo', () => {
+    for (let kind = 0; kind < EVENT_KIND_COUNT; kind++) {
+      for (const solo of [false, true]) {
+        const msg: EventMessage = {
+          type: MSG.EVENT_START,
+          kind,
+          solo,
+          durationTicks: EVENT_DURATION_TICKS,
+          points: [{ x: 100 + kind, y: 200 }],
+        };
+        const buf = encodeEvent(msg);
+        expect(new DataView(buf).getUint8(1)).toBe(solo ? kind | 0x80 : kind);
+        expect(decode(buf)).toEqual(msg);
+      }
+    }
+  });
+
+  it('le genre est masque a 7 bits : un genre hors bornes ne deborde jamais sur le bit solo', () => {
+    const buf = encodeEvent({
+      type: MSG.EVENT_START,
+      kind: 0x83,
+      solo: false,
+      durationTicks: EVENT_DURATION_TICKS,
+      points: [],
+    });
+    expect(decode(buf)).toMatchObject({ kind: 3, solo: false });
+  });
+
+  it('tailles : siege 9 o, relique 13 o, chasse 17 o (13 o en solo), noir 5 o (n = 0)', () => {
+    const taille = (kind: number, n: number): number =>
+      encodeEvent({
+        type: MSG.EVENT_START,
+        kind,
+        solo: false,
+        durationTicks: EVENT_DURATION_TICKS,
+        points: Array.from({ length: n }, (_, i) => ({ x: i, y: i })),
+      }).byteLength;
+    expect(taille(EVENT_KIND.SIEGE, 1)).toBe(9);
+    expect(taille(EVENT_KIND.RELIQUE, 2)).toBe(13);
+    expect(taille(EVENT_KIND.CHASSE, 3)).toBe(17);
+    expect(taille(EVENT_KIND.CHASSE, 2)).toBe(13);
+    expect(taille(EVENT_KIND.NOIR, 0)).toBe(5);
+    const noir = encodeEvent({
+      type: MSG.EVENT_START,
+      kind: EVENT_KIND.NOIR,
+      solo: true,
+      durationTicks: EVENT_DURATION_TICKS,
+      points: [],
+    });
+    expect(decode(noir)).toEqual({
+      type: MSG.EVENT_START,
+      kind: EVENT_KIND.NOIR,
+      solo: true,
+      durationTicks: EVENT_DURATION_TICKS,
+      points: [],
+    });
+  });
+
+  it('l octet d etat porte un identifiant de joueur intact (1 a 4), et 0 « au sol »', () => {
+    for (const id of [0, 1, 2, 3, 4]) {
+      const buf = encodeEvent({
+        type: MSG.EVENT_STATE,
+        progress: 10,
+        cartX: 5,
+        cartY: 6,
+        cartHp: id,
+      });
+      expect(decode(buf)).toMatchObject({ cartHp: id });
+    }
+  });
+
+  it('la relique ralentit a 0,6 (0,8 seul) ; la lanterne eclaire 350 px (500 seul)', () => {
+    expect(relicSpeedFactor(false)).toBe(0.6);
+    expect(relicSpeedFactor(true)).toBe(0.8);
+    expect(lightRadius(false)).toBe(350);
+    expect(lightRadius(true)).toBe(500);
   });
 });

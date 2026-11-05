@@ -105,12 +105,14 @@ const ev = (msg: EventMessage): ArrayBuffer => encodeEvent(msg);
 const FORGE: EventMessage = {
   type: MSG.EVENT_START,
   kind: EVENT_KIND.FORGE,
+  solo: false,
   durationTicks: EVENT_DURATION_TICKS,
   points: [{ x: 4200, y: 3000 }],
 };
 const CONVOI: EventMessage = {
   type: MSG.EVENT_START,
   kind: EVENT_KIND.CONVOI,
+  solo: false,
   durationTicks: EVENT_DURATION_TICKS,
   points: [
     { x: 1000, y: 3000 },
