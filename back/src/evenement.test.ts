@@ -6,7 +6,10 @@ import {
   EVENT_KIND_COUNT,
   EVENT_OUTCOME,
   FORGE_RADIUS,
+  NOIR_LIGHT_RADIUS,
+  RELIQUE_ALTAR_RADIUS,
   SCEAU_RADIUS,
+  SIEGE_DEFEND_RADIUS,
 } from '@shared/evenements';
 import { FlowField } from '@shared/flowfield';
 import { applyObstacles, generateObstacles } from '@shared/worldmap';
@@ -28,10 +31,17 @@ import {
   EventRun,
   FORGE_HOLD_TICKS,
   FORGE_HOLD_TICKS_SOLO,
+  NOIR_DRAIN_PER_SEC,
+  NOIR_HOLD_TICKS,
   placeEvent,
   RELIQUE_DISTANCE,
+  RELIQUE_PICKUP_RADIUS,
   SCEAUX_HOLD_TICKS,
   SCEAUX_SPACING,
+  SIEGE_CONTACT_RADIUS,
+  SIEGE_HOLD_TICKS,
+  SIEGE_HP,
+  SIEGE_HP_SOLO,
 } from './evenement';
 
 const DT = 1 / TICK_HZ;
@@ -50,14 +60,19 @@ const ids = (pts: readonly { x: number; y: number }[]): { id: number; x: number;
   pts.map((p, k) => ({ id: k + 1, x: p.x, y: p.y }));
 
 function joueur(x: number, y: number, extra: Partial<EventPlayer> = {}): EventPlayer {
-  return { x, y, hp: 100, moveX: 0, moveY: 0, ...extra };
+  return { id: 1, x, y, hp: 100, moveX: 0, moveY: 0, ...extra };
 }
 
-function horde(points: readonly { x: number; y: number }[]): EventHorde {
+/** Une horde de test ; `vivantes` : les identites encore presentes (`slotOf >= 0`). */
+function horde(
+  points: readonly { x: number; y: number }[],
+  vivantes: ReadonlySet<number> = new Set(),
+): EventHorde {
   return {
     count: points.length,
     x: Float32Array.from(points.map((p) => p.x)),
     y: Float32Array.from(points.map((p) => p.y)),
+    slotOf: (id: number) => (vivantes.has(id) ? 0 : -1),
   };
 }
 const PERSONNE = horde([]);
@@ -581,5 +596,225 @@ describe('etape 14 : EventRun — le convoi', () => {
     expect(run.wireState()).toEqual({ progress: 0, cartX: S.x, cartY: S.y, cartHp: 255 });
     pas(run, 15, [], horde([S]));
     expect(run.wireState().cartHp).toBe(Math.ceil((255 * (CONVOI_HP - 8)) / CONVOI_HP));
+  });
+});
+
+describe('etape 16 : EventRun — le siege', () => {
+  const T = { x: 2000, y: 2000 };
+  const plan: EventPlan = { kind: EVENT_KIND.SIEGE, points: [T], solo: false, carrier: 0 };
+
+  it('un defenseur a 150 px fait monter ; personne suspend sans redescendre', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 90, [joueur(T.x + SIEGE_DEFEND_RADIUS, T.y)]);
+    expect(run.progress).toBeCloseTo(90 / SIEGE_HOLD_TICKS, 6);
+    pas(run, 90, [joueur(T.x + SIEGE_DEFEND_RADIUS + 1, T.y), joueur(T.x, T.y, { hp: 0 })]);
+    expect(run.progress).toBeCloseTo(90 / SIEGE_HOLD_TICKS, 6);
+  });
+
+  it('cinq ennemis colles coutent 40 PV par 15 ticks, cinquante pas plus ; juste hors de 45 px rien', () => {
+    expect(SIEGE_CONTACT_RADIUS).toBe(45);
+    const cinq = new EventRun(plan, ouvert());
+    pas(cinq, 15, [], horde(Array.from({ length: 5 }, () => T)));
+    expect(cinq.cartHp).toBe(SIEGE_HP - 40);
+    const cinquante = new EventRun(plan, ouvert());
+    pas(cinquante, 15, [], horde(Array.from({ length: 50 }, () => T)));
+    expect(cinquante.cartHp).toBe(SIEGE_HP - 40);
+    const loin = new EventRun(plan, ouvert());
+    pas(loin, 15, [], horde([{ x: T.x + SIEGE_CONTACT_RADIUS + 1, y: T.y }]));
+    expect(loin.cartHp).toBe(SIEGE_HP);
+  });
+
+  it('detruit a 0 PV : 600 PV sous cinq ennemis au 225e tick ; 1 200 en solo', () => {
+    const run = new EventRun(plan, ouvert());
+    const cinq = horde(Array.from({ length: 5 }, () => T));
+    expect(pas(run, 224, [], cinq)).toBeNull();
+    expect(run.step([], cinq, DT)).toBe(EVENT_OUTCOME.DETRUIT);
+    const seul = new EventRun({ ...plan, solo: true }, ouvert());
+    expect(seul.cartHpMax).toBe(SIEGE_HP_SOLO);
+    expect(pas(seul, 225, [], cinq)).toBeNull();
+    expect(seul.cartHp).toBe(SIEGE_HP_SOLO - 600);
+  });
+
+  it('reussi a 1 350 ticks tenus ; wireState porte les PV du totem et zero position', () => {
+    const run = new EventRun(plan, ouvert());
+    expect(pas(run, SIEGE_HOLD_TICKS - 1, [joueur(T.x, T.y)])).toBeNull();
+    expect(run.step([joueur(T.x, T.y)], PERSONNE, DT)).toBe(EVENT_OUTCOME.REUSSI);
+    const etat = new EventRun(plan, ouvert());
+    pas(etat, 15, [], horde([T]));
+    expect(etat.wireState()).toEqual({
+      progress: 0,
+      cartX: 0,
+      cartY: 0,
+      cartHp: Math.ceil((255 * (SIEGE_HP - 8)) / SIEGE_HP),
+    });
+  });
+});
+
+describe('etape 16 : EventRun — la relique', () => {
+  const S = { x: 1000, y: 3000 };
+  const E = { x: 2500, y: 3000 };
+  const plan: EventPlan = { kind: EVENT_KIND.RELIQUE, points: [S, E], solo: false, carrier: 0 };
+
+  it('ramassage a 48 px par le PREMIER vivant dans l ordre ; un mort ne ramasse pas', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, [joueur(S.x + RELIQUE_PICKUP_RADIUS + 1, S.y, { id: 2 })]);
+    expect(run.carrier).toBe(0);
+    pas(run, 1, [
+      joueur(S.x, S.y, { id: 3, hp: 0 }),
+      joueur(S.x + RELIQUE_PICKUP_RADIUS, S.y, { id: 2 }),
+      joueur(S.x, S.y, { id: 4 }),
+    ]);
+    expect(run.carrier).toBe(2);
+  });
+
+  it('elle suit son porteur, arrondie ; sa mort la laisse au sol a sa derniere position ; un autre la reprend', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, [joueur(S.x, S.y, { id: 1 })]);
+    pas(run, 1, [joueur(1300.4, 3010.6, { id: 1 })]);
+    expect(run.cart).toEqual({ x: 1300, y: 3011 });
+    pas(run, 1, [joueur(1400, 3000, { id: 1, hp: 0 }), joueur(5000, 5000, { id: 2 })]);
+    expect(run.carrier).toBe(0);
+    expect(run.cart).toEqual({ x: 1300, y: 3011 });
+    pas(run, 1, [joueur(1300, 3011 + RELIQUE_PICKUP_RADIUS, { id: 2 })]);
+    expect(run.carrier).toBe(2);
+  });
+
+  it('un porteur absent (parti) la lache aussi', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, [joueur(S.x, S.y, { id: 1 })]);
+    pas(run, 1, [joueur(5000, 5000, { id: 2 })]);
+    expect(run.carrier).toBe(0);
+  });
+
+  it('livree a 80 px de l autel : reussi ; la progression suit la relique comme le chariot', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, [joueur(S.x, S.y)]);
+    pas(run, 1, [joueur(S.x + 750, S.y)]);
+    expect(run.progress).toBeCloseTo(0.5, 5);
+    expect(pas(run, 1, [joueur(E.x - RELIQUE_ALTAR_RADIUS - 1, E.y)])).toBeNull();
+    expect(run.step([joueur(E.x - RELIQUE_ALTAR_RADIUS, E.y)], PERSONNE, DT)).toBe(
+      EVENT_OUTCOME.REUSSI,
+    );
+  });
+
+  it('la chute du porteur n est pas un echec : seules 60 s sans livraison le sont', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, [joueur(S.x, S.y)]);
+    expect(pas(run, EVENT_DURATION_TICKS - 2, [joueur(S.x, S.y, { hp: 0 })])).toBeNull();
+    expect(run.step([], PERSONNE, DT)).toBe(EVENT_OUTCOME.EXPIRE);
+  });
+
+  it('speedFactorOf : 0,6 pour le porteur (0,8 seul), 1 pour les autres, et 1 hors relique', () => {
+    const run = new EventRun(plan, ouvert());
+    expect(run.speedFactorOf(1)).toBe(1);
+    pas(run, 1, [joueur(S.x, S.y, { id: 1 })]);
+    expect(run.speedFactorOf(1)).toBe(0.6);
+    expect(run.speedFactorOf(2)).toBe(1);
+    expect(run.speedFactorOf(0)).toBe(1);
+    const seul = new EventRun({ ...plan, solo: true }, ouvert());
+    pas(seul, 1, [joueur(S.x, S.y, { id: 1 })]);
+    expect(seul.speedFactorOf(1)).toBe(0.8);
+    const forge = new EventRun(
+      { kind: EVENT_KIND.FORGE, points: [S], solo: false, carrier: 0 },
+      ouvert(),
+    );
+    pas(forge, 1, [joueur(S.x, S.y, { id: 1 })]);
+    expect(forge.speedFactorOf(1)).toBe(1);
+    expect(forge.holdsFire(1)).toBe(false);
+  });
+
+  it('holdsFire vrai pour le seul porteur ; takeCarrierChanged vrai UNE fois par transition', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, []);
+    expect(run.takeCarrierChanged()).toBe(false);
+    pas(run, 1, [joueur(S.x, S.y, { id: 1 })]);
+    expect(run.holdsFire(1)).toBe(true);
+    expect(run.holdsFire(2)).toBe(false);
+    expect(run.takeCarrierChanged()).toBe(true);
+    expect(run.takeCarrierChanged()).toBe(false);
+    pas(run, 1, [joueur(S.x, S.y, { id: 1 })]);
+    expect(run.takeCarrierChanged()).toBe(false);
+    pas(run, 1, [joueur(S.x, S.y, { id: 1, hp: 0 })]);
+    expect(run.holdsFire(1)).toBe(false);
+    expect(run.takeCarrierChanged()).toBe(true);
+  });
+
+  it('wireState : la relique en x, y et l id du porteur dans l octet d etat (0 au sol)', () => {
+    const run = new EventRun(plan, ouvert());
+    expect(run.wireState()).toEqual({ progress: 0, cartX: S.x, cartY: S.y, cartHp: 0 });
+    pas(run, 1, [joueur(S.x + 10, S.y, { id: 3 })]);
+    expect(run.wireState()).toMatchObject({ cartX: S.x + 10, cartY: S.y, cartHp: 3 });
+  });
+});
+
+describe('etape 16 : EventRun — la chasse', () => {
+  const plan: EventPlan = {
+    kind: EVENT_KIND.CHASSE,
+    points: [
+      { x: 1000, y: 1000 },
+      { x: 2200, y: 1000 },
+      { x: 1600, y: 2000 },
+    ],
+    solo: false,
+    carrier: 0,
+  };
+  const proies = [101, 102, 103];
+
+  it('reussie quand toutes les proies ont slotOf < 0, progression tombees / nees', () => {
+    const run = new EventRun(plan, ouvert(), proies);
+    expect(pas(run, 10, [], horde([], new Set(proies)))).toBeNull();
+    expect(run.progress).toBe(0);
+    expect(pas(run, 1, [], horde([], new Set([102, 103])))).toBeNull();
+    expect(run.progress).toBeCloseTo(1 / 3, 6);
+    expect(run.wireState()).toEqual({ progress: 85, cartX: 0, cartY: 0, cartHp: 0 });
+    expect(run.step([], horde([], new Set()), DT)).toBe(EVENT_OUTCOME.REUSSI);
+  });
+
+  it('expiree a 60 s si une proie survit', () => {
+    const run = new EventRun(plan, ouvert(), proies);
+    const une = horde([], new Set([101]));
+    expect(pas(run, EVENT_DURATION_TICKS - 1, [], une)).toBeNull();
+    expect(run.step([], une, DT)).toBe(EVENT_OUTCOME.EXPIRE);
+  });
+});
+
+describe('etape 16 : EventRun — le noir', () => {
+  const plan: EventPlan = { kind: EVENT_KIND.NOIR, points: [], solo: false, carrier: 2 };
+
+  it('detruit a la mort du porteur de lanterne, ou a son depart', () => {
+    const run = new EventRun(plan, ouvert());
+    expect(pas(run, 10, [joueur(0, 0, { id: 2 })])).toBeNull();
+    expect(run.step([joueur(0, 0, { id: 2, hp: 0 })], PERSONNE, DT)).toBe(EVENT_OUTCOME.DETRUIT);
+    const parti = new EventRun(plan, ouvert());
+    expect(parti.step([joueur(0, 0, { id: 1 })], PERSONNE, DT)).toBe(EVENT_OUTCOME.DETRUIT);
+  });
+
+  it('reussi a 1 200 ticks : il ne peut pas expirer ; progression elapsed / 1 200', () => {
+    const run = new EventRun(plan, ouvert());
+    expect(pas(run, NOIR_HOLD_TICKS / 2, [joueur(0, 0, { id: 2 })])).toBeNull();
+    expect(run.progress).toBeCloseTo(0.5, 6);
+    expect(run.wireState()).toEqual({ progress: 127, cartX: 0, cartY: 0, cartHp: 2 });
+    expect(pas(run, NOIR_HOLD_TICKS / 2, [joueur(0, 0, { id: 2 })])).toBe(EVENT_OUTCOME.REUSSI);
+  });
+
+  it('inDark : a 351 px de la lanterne oui, a 350 non ; jamais en solo, jamais hors noir', () => {
+    const run = new EventRun(plan, ouvert());
+    pas(run, 1, [joueur(1000, 1000, { id: 2 })]);
+    expect(run.inDark({ x: 1000 + NOIR_LIGHT_RADIUS + 1, y: 1000 })).toBe(true);
+    expect(run.inDark({ x: 1000 + NOIR_LIGHT_RADIUS, y: 1000 })).toBe(false);
+    expect(run.inDark({ x: 1000, y: 1000 })).toBe(false);
+    const seul = new EventRun({ ...plan, solo: true }, ouvert());
+    pas(seul, 1, [joueur(1000, 1000, { id: 2 })]);
+    expect(seul.inDark({ x: 4000, y: 4000 })).toBe(false);
+    const siege = new EventRun(
+      { kind: EVENT_KIND.SIEGE, points: [{ x: 0, y: 0 }], solo: false, carrier: 0 },
+      ouvert(),
+    );
+    expect(siege.inDark({ x: 4000, y: 4000 })).toBe(false);
+  });
+
+  it('NOIR_DRAIN_PER_SEC vaut 2 : 50 s pour tuer 100 PV, plus que les 40 s de l evenement', () => {
+    expect(NOIR_DRAIN_PER_SEC).toBe(2);
+    expect(100 / NOIR_DRAIN_PER_SEC).toBeGreaterThan(NOIR_HOLD_TICKS / TICK_HZ);
   });
 });

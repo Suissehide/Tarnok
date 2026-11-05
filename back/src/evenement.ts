@@ -14,7 +14,12 @@ import {
   EVENT_KIND_COUNT,
   EVENT_OUTCOME,
   FORGE_RADIUS,
+  lightRadius,
+  RELIQUE_ALTAR_RADIUS,
+  relicSpeedFactor,
   SCEAU_RADIUS,
+  SIEGE_DEFEND_RADIUS,
+  TOTEM_RADIUS,
 } from '@shared/evenements';
 import type { FlowField } from '@shared/flowfield';
 import { nudgeOutOfObstacle, type ObstacleField } from '@shared/waves';
@@ -60,6 +65,18 @@ export const RELIQUE_DISTANCE = 1500;
 export const CHASSE_SPACING = 1200;
 export const CHASSE_PREY = 3;
 export const CHASSE_PREY_SOLO = 2;
+/** Le siege (etape 16, §3) : 45 s CUMULEES avec un defenseur a `SIEGE_DEFEND_RADIUS`. */
+export const SIEGE_HOLD_TICKS = 1350;
+/** Noye sous cinq ennemis (40 PV / 15 ticks), le totem tient 7,5 s ; 15 s seul. Fixes : le contact l'est. */
+export const SIEGE_HP = 600;
+export const SIEGE_HP_SOLO = 1200;
+export const SIEGE_CONTACT_RADIUS = TOTEM_RADIUS + CONTACT_RADIUS / 2;
+/** Un vivant a cette distance de la relique au sol la ramasse. */
+export const RELIQUE_PICKUP_RADIUS = 48;
+/** Le noir (§6) : 40 s a tenir, dans la fenetre de 60 — il ne peut pas expirer. */
+export const NOIR_HOLD_TICKS = 1200;
+/** Hors de la lumiere : 2 PV/s, au serveur seul (`Room#stepEvent`), jamais en solo. */
+export const NOIR_DRAIN_PER_SEC = 2;
 
 export interface EventPoint {
   x: number;
@@ -86,6 +103,7 @@ export interface EventPlan {
 
 /** Ce qu'un evenement lit d'un joueur. `PlayerState` le satisfait tel quel. */
 export interface EventPlayer {
+  readonly id: number;
   readonly x: number;
   readonly y: number;
   readonly hp: number;
@@ -94,11 +112,13 @@ export interface EventPlayer {
   readonly moveY: number;
 }
 
-/** Ce qu'un convoi lit de la horde. `Horde` le satisfait tel quel. */
+/** Ce qu'un convoi, un siege ou une chasse lit de la horde. `Horde` le satisfait tel quel. */
 export interface EventHorde {
   readonly count: number;
   readonly x: Float32Array;
   readonly y: Float32Array;
+  /** Le creneau d'une identite, `-1` si elle n'est plus dans la horde (la chasse). */
+  slotOf(id: number): number;
 }
 
 const sortieX = new Float32Array(1);
@@ -290,7 +310,10 @@ export function placeEvent(
 export class EventRun {
   readonly kind: number;
   readonly points: readonly EventPoint[];
-  /** Le chariot (convoi) : sa position SERVEUR, que `EVENT_STATE` transporte. */
+  /**
+   * Le chariot (convoi) ou la relique (relique) : sa position SERVEUR, que
+   * `EVENT_STATE` transporte. La relique est posee sur `points[0]`.
+   */
   readonly cart: EventPoint;
   readonly cartHpMax: number;
   #cartHp: number;
@@ -301,22 +324,48 @@ export class EventRun {
   readonly #trajet: number;
   readonly #field: FlowField;
   readonly #dir = new Float32Array(2);
+  /** Un seul vivant au depart : fige pour tout l'evenement. */
+  readonly solo: boolean;
+  /** Relique : l'id du porteur (0 au sol). Noir : le porteur de lanterne, fige. */
+  #carrier: number;
+  /** Leve par toute transition de `#carrier` (relique), lu une fois par le salon. */
+  #carrierChanged = false;
+  /** Chasse : les identites des proies nees ; `#tombees` celles qui n'y sont plus. */
+  readonly #proies: readonly number[];
+  #tombees = 0;
+  /** Noir : la position de la lanterne au dernier pas, `null` avant le premier. */
+  #lanterne: EventPoint | null = null;
 
-  constructor(plan: EventPlan, field: FlowField) {
+  constructor(plan: EventPlan, field: FlowField, proies: readonly number[] = []) {
     this.kind = plan.kind;
     this.points = plan.points;
     this.#field = field;
+    this.solo = plan.solo;
+    this.#carrier = plan.carrier;
+    this.#proies = proies;
     const depart = plan.points[0] ?? { x: 0, y: 0 };
     const arrivee = plan.points[1] ?? depart;
     this.cart = { x: depart.x, y: depart.y };
-    this.cartHpMax = plan.solo ? CONVOI_HP_SOLO : CONVOI_HP;
+    // `cartHpMax` : les PV du chariot (convoi) ou du totem (siege).
+    this.cartHpMax =
+      plan.kind === EVENT_KIND.SIEGE
+        ? plan.solo
+          ? SIEGE_HP_SOLO
+          : SIEGE_HP
+        : plan.solo
+          ? CONVOI_HP_SOLO
+          : CONVOI_HP;
     this.#cartHp = this.cartHpMax;
     this.#holdTicks =
       plan.kind === EVENT_KIND.FORGE
         ? plan.solo
           ? FORGE_HOLD_TICKS_SOLO
           : FORGE_HOLD_TICKS
-        : SCEAUX_HOLD_TICKS;
+        : plan.kind === EVENT_KIND.SIEGE
+          ? SIEGE_HOLD_TICKS
+          : plan.kind === EVENT_KIND.NOIR
+            ? NOIR_HOLD_TICKS
+            : SCEAUX_HOLD_TICKS;
     this.#trajet = Math.max(1, Math.hypot(arrivee.x - depart.x, arrivee.y - depart.y));
     if (plan.kind === EVENT_KIND.CONVOI) {
       // ⚠️ **UN SEUL BFS par convoi**, enracine sur l'arrivee : une ligne
@@ -334,9 +383,18 @@ export class EventRun {
     return this.#cartHp;
   }
 
-  /** De 0 a 1. Le convoi : `1 - distance(chariot, E) / distance(S, E)`, borne ; 1 a l'arrivee. */
+  /**
+   * De 0 a 1. Convoi et relique : `1 - distance(point mobile, E) / distance(S, E)`,
+   * borne ; 1 a l'arrivee du chariot. Chasse : tombees / nees. Noir : le temps.
+   */
   get progress(): number {
-    if (this.kind !== EVENT_KIND.CONVOI) {
+    if (this.kind === EVENT_KIND.CHASSE) {
+      return this.#proies.length === 0 ? 0 : this.#tombees / this.#proies.length;
+    }
+    if (this.kind === EVENT_KIND.NOIR) {
+      return Math.min(1, this.#elapsed / this.#holdTicks);
+    }
+    if (this.kind !== EVENT_KIND.CONVOI && this.kind !== EVENT_KIND.RELIQUE) {
       return Math.min(1, this.#held / this.#holdTicks);
     }
     if (this.#arrived) {
@@ -347,33 +405,81 @@ export class EventRun {
     return Math.min(1, Math.max(0, 1 - reste / this.#trajet));
   }
 
+  /** Relique : le porteur (0 au sol). Noir : la lanterne. 0 sinon. */
+  get carrier(): number {
+    return this.#carrier;
+  }
+
+  /** Vrai une fois apres chaque changement de porteur de relique (§7.3), puis faux. */
+  takeCarrierChanged(): boolean {
+    const c = this.#carrierChanged;
+    this.#carrierChanged = false;
+    return c;
+  }
+
+  /** La relique ralentit son porteur (`relicSpeedFactor`). 1 pour tout autre, et hors relique. */
+  speedFactorOf(id: number): number {
+    return this.holdsFire(id) ? relicSpeedFactor(this.solo) : 1;
+  }
+
+  /** Vrai si `id` porte la relique : il ne tire pas (§4.2). */
+  holdsFire(id: number): boolean {
+    return this.kind === EVENT_KIND.RELIQUE && id !== 0 && id === this.#carrier;
+  }
+
+  /**
+   * Hors de la lumiere du noir (§6.3) : a plus de `NOIR_LIGHT_RADIUS` de la
+   * lanterne au dernier pas. Jamais en solo (le seul joueur la porte), jamais
+   * hors noir, jamais avant le premier pas.
+   */
+  inDark(p: { x: number; y: number }): boolean {
+    const l = this.#lanterne;
+    if (this.kind !== EVENT_KIND.NOIR || this.solo || l === null) {
+      return false;
+    }
+    return Math.hypot(p.x - l.x, p.y - l.y) > lightRadius(false);
+  }
+
   step(players: readonly EventPlayer[], horde: EventHorde, dt: number): number | null {
     this.#elapsed++;
     const vivants = players.filter((p) => p.hp > 0);
+    let issue: number | null;
     if (this.kind === EVENT_KIND.CONVOI) {
-      const issue = this.#stepConvoi(vivants, horde, dt);
-      if (issue !== null) {
-        return issue;
-      }
+      issue = this.#stepConvoi(vivants, horde, dt);
+    } else if (this.kind === EVENT_KIND.SIEGE) {
+      issue = this.#stepSiege(vivants, horde);
+    } else if (this.kind === EVENT_KIND.RELIQUE) {
+      issue = this.#stepRelique(vivants);
+    } else if (this.kind === EVENT_KIND.CHASSE) {
+      issue = this.#stepChasse(horde);
+    } else if (this.kind === EVENT_KIND.NOIR) {
+      issue = this.#stepNoir(vivants);
     } else {
       if (this.#tenu(vivants)) {
         this.#held++;
       }
-      if (this.#held >= this.#holdTicks) {
-        return EVENT_OUTCOME.REUSSI;
-      }
+      issue = this.#held >= this.#holdTicks ? EVENT_OUTCOME.REUSSI : null;
+    }
+    if (issue !== null) {
+      return issue;
     }
     return this.#elapsed >= EVENT_DURATION_TICKS ? EVENT_OUTCOME.EXPIRE : null;
   }
 
-  /** Les octets d'`EVENT_STATE`, deja quantifies (§6.1). Zeros hors convoi. */
+  /**
+   * Les octets d'`EVENT_STATE`, deja quantifies (§7.2). `x, y` : le chariot
+   * ou la relique ; l'octet d'etat : PV du chariot ou du totem, id du porteur
+   * de relique ou de lanterne ; zeros sinon. L'encodeur borne a [0, 255].
+   */
   wireState(): { progress: number; cartX: number; cartY: number; cartHp: number } {
-    const convoi = this.kind === EVENT_KIND.CONVOI;
+    const mobile = this.kind === EVENT_KIND.CONVOI || this.kind === EVENT_KIND.RELIQUE;
+    const pv = this.kind === EVENT_KIND.CONVOI || this.kind === EVENT_KIND.SIEGE;
+    const porteur = this.kind === EVENT_KIND.RELIQUE || this.kind === EVENT_KIND.NOIR;
     return {
       progress: Math.floor(255 * this.progress),
-      cartX: convoi ? Math.round(this.cart.x) : 0,
-      cartY: convoi ? Math.round(this.cart.y) : 0,
-      cartHp: convoi ? Math.ceil((255 * this.#cartHp) / this.cartHpMax) : 0,
+      cartX: mobile ? Math.round(this.cart.x) : 0,
+      cartY: mobile ? Math.round(this.cart.y) : 0,
+      cartHp: pv ? Math.ceil((255 * this.#cartHp) / this.cartHpMax) : porteur ? this.#carrier : 0,
     };
   }
 
@@ -442,24 +548,102 @@ export class EventRun {
       this.#arrived = true;
       return EVENT_OUTCOME.REUSSI;
     }
-    // Les degats : le meme balayage lineaire que `resolveContact`, un seul
-    // point, toutes les `CONTACT_INTERVAL_TICKS` ticks VIVANTS. La horde ne le
-    // vise pas : il ne prend que ce qui le frole.
-    if (this.#elapsed % CONTACT_INTERVAL_TICKS === 0) {
-      const r2 = CONVOI_CONTACT_RADIUS * CONVOI_CONTACT_RADIUS;
-      let n = 0;
-      for (let i = 0; i < horde.count && n < CONVOI_MAX_HITTERS; i++) {
-        const hx = (horde.x[i] ?? 0) - this.cart.x;
-        const hy = (horde.y[i] ?? 0) - this.cart.y;
-        if (hx * hx + hy * hy <= r2) {
-          n++;
-        }
-      }
-      this.#cartHp = Math.max(0, this.#cartHp - n * CONVOI_CONTACT_DAMAGE);
-      if (this.#cartHp === 0) {
-        return EVENT_OUTCOME.DETRUIT;
+    return this.#subirContact(this.cart.x, this.cart.y, CONVOI_CONTACT_RADIUS, horde);
+  }
+
+  /**
+   * Les degats d'un point fixe ou mobile (convoi, siege) : le meme balayage
+   * lineaire que `resolveContact`, toutes les `CONTACT_INTERVAL_TICKS` ticks
+   * VIVANTS, `CONVOI_MAX_HITTERS` frappeurs au plus. La horde ne le vise pas :
+   * il ne prend que ce qui le frole.
+   */
+  #subirContact(x: number, y: number, rayon: number, horde: EventHorde): number | null {
+    if (this.#elapsed % CONTACT_INTERVAL_TICKS !== 0) {
+      return null;
+    }
+    const r2 = rayon * rayon;
+    let n = 0;
+    for (let i = 0; i < horde.count && n < CONVOI_MAX_HITTERS; i++) {
+      const hx = (horde.x[i] ?? 0) - x;
+      const hy = (horde.y[i] ?? 0) - y;
+      if (hx * hx + hy * hy <= r2) {
+        n++;
       }
     }
-    return null;
+    this.#cartHp = Math.max(0, this.#cartHp - n * CONVOI_CONTACT_DAMAGE);
+    return this.#cartHp === 0 ? EVENT_OUTCOME.DETRUIT : null;
+  }
+
+  /**
+   * Le siege (§3) : un vivant a `SIEGE_DEFEND_RADIUS` fait avancer le compte,
+   * personne le suspend sans le faire redescendre. ⚠️ « Tenir » se lit
+   * « present » : la horde ne vise que les joueurs, un totem sans defenseur
+   * ne serait jamais touche.
+   */
+  #stepSiege(vivants: readonly EventPlayer[], horde: EventHorde): number | null {
+    const t = this.points[0];
+    if (!t) {
+      return null;
+    }
+    if (vivants.some((p) => Math.hypot(p.x - t.x, p.y - t.y) <= SIEGE_DEFEND_RADIUS)) {
+      this.#held++;
+    }
+    if (this.#held >= this.#holdTicks) {
+      return EVENT_OUTCOME.REUSSI;
+    }
+    return this.#subirContact(t.x, t.y, SIEGE_CONTACT_RADIUS, horde);
+  }
+
+  /**
+   * La relique (§4.1), dans cet ordre : le porteur tombe ou part (elle reste
+   * a sa derniere position), ramassage par le PREMIER vivant dans l'ordre de
+   * `players`, elle suit (arrondie, elle voyage en int16), livraison.
+   */
+  #stepRelique(vivants: readonly EventPlayer[]): number | null {
+    if (this.#carrier !== 0 && !vivants.some((p) => p.id === this.#carrier)) {
+      this.#carrier = 0;
+      this.#carrierChanged = true;
+    }
+    if (this.#carrier === 0) {
+      const p = vivants.find(
+        (v) => Math.hypot(v.x - this.cart.x, v.y - this.cart.y) <= RELIQUE_PICKUP_RADIUS,
+      );
+      if (p) {
+        this.#carrier = p.id;
+        this.#carrierChanged = true;
+      }
+    }
+    const porteur = vivants.find((p) => p.id === this.#carrier);
+    if (!porteur || this.#carrier === 0) {
+      return null;
+    }
+    this.cart.x = Math.round(porteur.x);
+    this.cart.y = Math.round(porteur.y);
+    const autel = this.points[1];
+    return autel && Math.hypot(porteur.x - autel.x, porteur.y - autel.y) <= RELIQUE_ALTAR_RADIUS
+      ? EVENT_OUTCOME.REUSSI
+      : null;
+  }
+
+  /**
+   * La chasse (§5.4) : une proie dont `slotOf < 0` est tombee — morte dans le
+   * lot du tick, ou retiree (bancs, tests). Les survivantes a l'expiration
+   * restent dans la horde : seule une mort les retire.
+   */
+  #stepChasse(horde: EventHorde): number | null {
+    this.#tombees = this.#proies.filter((id) => horde.slotOf(id) < 0).length;
+    return this.#proies.length > 0 && this.#tombees === this.#proies.length
+      ? EVENT_OUTCOME.REUSSI
+      : null;
+  }
+
+  /** Le noir (§6.2) : la lanterne tombe ou part, c'est l'echec ; 40 s, la reussite. */
+  #stepNoir(vivants: readonly EventPlayer[]): number | null {
+    const l = vivants.find((p) => p.id === this.#carrier);
+    if (!l) {
+      return EVENT_OUTCOME.DETRUIT;
+    }
+    this.#lanterne = { x: l.x, y: l.y };
+    return this.#elapsed >= this.#holdTicks ? EVENT_OUTCOME.REUSSI : null;
   }
 }
