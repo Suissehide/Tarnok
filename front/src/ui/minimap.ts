@@ -1,4 +1,5 @@
 import { MAP_SIZE } from '@shared/constants';
+import { EVENT_KIND } from '@shared/evenements';
 import { DECO, TERRAIN } from '@shared/worldmap';
 
 import type { ObstacleMap } from '../net/client';
@@ -53,6 +54,23 @@ export interface MinimapView {
 export function toMinimap(v: number, worldSize: number, size: number): number {
   const p = Math.floor((v / worldSize) * size);
   return p < 0 ? 0 : p >= size ? size - 1 : p;
+}
+
+const AUCUN_ENNEMI: MinimapView['enemies'] = {
+  count: 0,
+  x: new Float32Array(0),
+  y: new Float32Array(0),
+};
+
+/**
+ * Pendant le noir (etape 16), la mini-carte trahirait la horde que le voile
+ * cache : aucun ennemi. Sinon, la horde telle quelle.
+ */
+export function minimapEnemies(
+  event: { kind: number } | null,
+  horde: MinimapView['enemies'],
+): MinimapView['enemies'] {
+  return event?.kind === EVENT_KIND.NOIR ? AUCUN_ENNEMI : horde;
 }
 
 export class Minimap {

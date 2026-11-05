@@ -81,6 +81,9 @@ class RecordingStage implements FrameStage {
   drawBossBar(...args: unknown[]): void {
     this.#record('barre-boss', ...args);
   }
+  drawDarkness(...args: unknown[]): void {
+    this.#record('obscurite', ...args);
+  }
   drawDamageNumbers(...args: unknown[]): void {
     this.#record('chiffres', ...args);
   }
@@ -427,6 +430,8 @@ describe('composeFrame — chaque calque recoit son appel', () => {
       'flashs-impact',
       'flashs-reaction',
       'barre-boss',
+      // Le noir : apres la barre du boss, avant les chiffres.
+      'obscurite',
       // Les chiffres se LISENT : rien ne doit les masquer, donc ils passent
       // apres tous les effets de monde.
       'chiffres',
@@ -487,5 +492,10 @@ describe('composeFrame — chaque calque recoit son appel', () => {
   it('secoue la camera avec les MEMES flashs que les calques, et l horloge murale', () => {
     const { stage, client } = compose();
     expect(stage.argsOf('secousse')).toEqual([client.hitFlashes, client.reactionFlashes, NOW]);
+  });
+
+  it('etape 16 : l obscurite recoit l evenement du client, les joueurs DESSINES et l horloge murale', () => {
+    const { stage, client, state } = compose();
+    expect(stage.argsOf('obscurite')).toEqual([client.event, state.players, NOW]);
   });
 });

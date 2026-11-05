@@ -33,6 +33,7 @@ import { BossBarRenderer } from './boss-bar-renderer';
 import { type BeamAnchor, ChainRenderer } from './chain-renderer';
 import { ChargeRenderer } from './charge-renderer';
 import { DamageNumberRenderer } from './damage-renderer';
+import { DarknessRenderer } from './darkness-renderer';
 import { HordeRenderer } from './horde-renderer';
 import { MarkRingRenderer } from './mark-renderer';
 import { OndeFrappeRenderer } from './onde-frappe-renderer';
@@ -102,6 +103,7 @@ export class Stage {
   readonly #impactFlashes = new ImpactFlashRenderer();
   readonly #reactionFlashes = new ReactionFlashRenderer();
   readonly #bossBar = new BossBarRenderer();
+  readonly #darkness = new DarknessRenderer();
   readonly #damageNumbers = new DamageNumberRenderer();
   readonly #pings = new PingRenderer(
     (id) => PLAYER_COLORS[(id - 1) % PLAYER_COLORS.length] ?? 0xffffff,
@@ -160,6 +162,10 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    // Etape 16 : le noir. APRES la barre du boss (la menace disparait sous
+    // lui), AVANT les pings et les chiffres ; les joueurs et les arbres
+    // (`#depth`) et les fleches de bord (ecran) restent au-dessus.
+    this.#darkness,
     // Les pings : une lecture, comme la barre du boss ; juste sous
     // les chiffres de degats, qui restent tout en haut.
     this.#pings,
@@ -191,6 +197,7 @@ export class Stage {
     this.#impactFlashes,
     this.#reactionFlashes,
     this.#bossBar,
+    this.#darkness,
     this.#pings,
     this.#damageNumbers,
   ];
@@ -492,6 +499,15 @@ export class Stage {
    */
   drawBossBar(horde: Horde, boss: BossVitals | null): void {
     this.#bossBar.draw(horde, boss);
+  }
+
+  /** Le noir (etape 16) : le porteur de lanterne DESSINE, l'horloge murale pour le fondu. */
+  drawDarkness(
+    event: EventView | null,
+    players: readonly { id: number; x: number; y: number; hp: number }[],
+    nowMs: number,
+  ): void {
+    this.#darkness.draw(event, players, this.viewRect(), nowMs);
   }
 
   /** `nowMs` : la meme horloge murale que les flashs — voir `DamageNumbers`. */

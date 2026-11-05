@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
 import { MAP_SIZE } from '@shared/constants';
+import { EVENT_KIND } from '@shared/evenements';
 import { describe, expect, it } from 'vitest';
 
 import { playerColor } from './draft';
-import { Minimap, toMinimap } from './minimap';
+import { Minimap, minimapEnemies, toMinimap } from './minimap';
 
 describe('mini-carte', () => {
   it('convertit le monde en pixels entiers bornes au cadre', () => {
@@ -123,5 +124,15 @@ describe('mini-carte', () => {
     calls.length = 0;
     map.draw({ ...base, porteur: null });
     expect(calls.filter((c) => c.style === '#f5c542')).toHaveLength(0);
+  });
+});
+
+describe('etape 16 : la mini-carte ne trahit pas la horde dans le noir', () => {
+  const horde = { count: 2, x: Float32Array.of(1, 2), y: Float32Array.of(3, 4) };
+
+  it('pendant le noir : aucun ennemi ; sinon, la horde telle quelle', () => {
+    expect(minimapEnemies({ kind: EVENT_KIND.NOIR }, horde).count).toBe(0);
+    expect(minimapEnemies({ kind: EVENT_KIND.SIEGE }, horde)).toBe(horde);
+    expect(minimapEnemies(null, horde)).toBe(horde);
   });
 });

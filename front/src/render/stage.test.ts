@@ -369,9 +369,9 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     const world = new Container();
     new Stage().composeWorld(world);
 
-    // Quinze calques (voir le test suivant pour la liste) : un calque oublie
+    // Seize calques (voir le test suivant pour la liste) : un calque oublie
     // est un calque invisible.
-    expect(world.children).toHaveLength(15);
+    expect(world.children).toHaveLength(16);
   });
 
   it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {
@@ -380,7 +380,8 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
 
     // Dans l'ordre d'affichage : zones, couloir de charge, verbes, comportements,
     // anneaux, orbes, HORDE, ondes et frappes, projectiles, chaine de Foudre,
-    // flashs d'impact, flashs de reaction, barre du boss, pings, chiffres.
+    // flashs d'impact, flashs de reaction, barre du boss, obscurite (etape 16),
+    // pings, chiffres.
     // Seule la horde reste `false` — son atlas se fetch, et `init` le charge a
     // part avec son propre rattrapage d'echec.
     expect(stage.layersLoaded).toEqual([
@@ -399,6 +400,7 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
       true,
       true,
       true,
+      true,
     ]);
   });
 
@@ -406,6 +408,7 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     // La moitie basse de la mutation : sans elle, un `layersLoaded` qui
     // rendrait `true` partout passerait le test precedent sans rien garder.
     expect(new Stage().layersLoaded).toEqual([
+      false,
       false,
       false,
       false,

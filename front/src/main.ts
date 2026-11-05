@@ -40,7 +40,7 @@ import {
   paintLoading,
   tipFor,
 } from './ui/loading';
-import { Minimap } from './ui/minimap';
+import { Minimap, minimapEnemies } from './ui/minimap';
 import { wireOptions } from './ui/options';
 import { formatGold, PortalScreen } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
@@ -713,7 +713,7 @@ function join(code: string): void {
         minimap.draw({
           localId: client.localId,
           players: state.players,
-          enemies: client.horde,
+          enemies: minimapEnemies(client.event, client.horde),
           boss: null,
           porteur: client.porteur,
           // `pingClock`, pas `hordeTick` : voir `GameClient#pingClock`.

@@ -202,6 +202,12 @@ export interface FrameStage {
    * `BossBarRenderer.draw`.
    */
   drawBossBar(horde: Horde, boss: BossVitals | null): void;
+  /** Le noir (etape 16) : l'evenement, les joueurs DESSINES, l'horloge murale du fondu. */
+  drawDarkness(
+    event: EventView | null,
+    players: readonly { id: number; x: number; y: number; hp: number }[],
+    nowMs: number,
+  ): void;
   /**
    * Les chiffres de degats, a l'horloge MURALE comme les flashs :
    * ils montent et s'effacent, ils n'arbitrent rien.
@@ -325,6 +331,9 @@ export function composeFrame(
   // Au-dessus de tous les effets de monde : c'est une LECTURE, et une lecture
   // qu'un flash ne doit pas masquer au moment ou elle compte le plus.
   stage.drawBossBar(client.horde, client.boss);
+  // Le noir (etape 16) : apres la barre du boss (la menace disparait sous
+  // lui), avant les chiffres.
+  stage.drawDarkness(client.event ?? null, state.players, now);
   // Au-dessus de tout ce qui precede : un chiffre est une LECTURE, et rien ne
   // doit la masquer — voir l'ordre des calques dans `Stage`.
   stage.drawDamageNumbers(client.damageNumbers, now);
