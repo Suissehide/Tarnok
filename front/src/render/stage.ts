@@ -406,7 +406,7 @@ export class Stage {
     shots: readonly EnemyShot[],
     timeMs: number,
     event: EventView | null = null,
-    players: readonly { x: number; y: number; hp: number }[] = [],
+    players: readonly { id: number; x: number; y: number; hp: number }[] = [],
   ): void {
     this.#behaviors.draw(horde, blasts, shots, this.viewRect(), timeMs, event, players);
   }

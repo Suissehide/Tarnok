@@ -5,6 +5,8 @@ import {
   BOSS_BODY_SCALE,
   PORTEUR_ARCHETYPE,
   PORTEUR_BODY_SCALE,
+  PROIE_ARCHETYPE,
+  PROIE_BODY_SCALE,
 } from '@shared/archetypes';
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import { Horde } from '@shared/horde';
@@ -701,5 +703,29 @@ describe('etape 11 : le porteur emprunte le voleur, en plus grand', () => {
     const p = particleOf(drawnParticles(porteurs, VOLEUR), porteurs, 0);
     const v = particleOf(drawnParticles(voleurs, VOLEUR), voleurs, 0);
     expect(p.scaleY / v.scaleY).toBeCloseTo(PORTEUR_BODY_SCALE, 5);
+  });
+});
+
+/** La proie n'a PAS d'entree dans l'atlas : le gnoll, par alias, comme le porteur et le voleur. */
+describe('etape 16 : la proie emprunte le gnoll, en plus grand', () => {
+  const GNOLL = archetypeIdOf('gnoll');
+
+  it('dessine la proie avec les textures du gnoll', () => {
+    expect(drawnParticles(twoEnemies(PROIE_ARCHETYPE), GNOLL)).toHaveLength(2);
+  });
+
+  it('a l arret elle attend sur la PREMIERE image de sa course', () => {
+    const horde = twoEnemies(PROIE_ARCHETYPE);
+    horde.stopped[0] = 1;
+    horde.stopped[1] = 1;
+    expect(particleOf(drawnParticles(horde, GNOLL), horde, 0).texture.frame.x).toBe(FIXTURE_RUN_X);
+  });
+
+  it('a 1,6 fois l echelle du gnoll', () => {
+    const proies = twoEnemies(PROIE_ARCHETYPE);
+    const gnolls = twoEnemies(GNOLL);
+    const p = particleOf(drawnParticles(proies, GNOLL), proies, 0);
+    const g = particleOf(drawnParticles(gnolls, GNOLL), gnolls, 0);
+    expect(p.scaleY / g.scaleY).toBeCloseTo(PROIE_BODY_SCALE, 5);
   });
 });

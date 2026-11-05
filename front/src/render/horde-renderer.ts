@@ -1,4 +1,4 @@
-import { ARCHETYPES, archetypeIdOf, PORTEUR_ARCHETYPE } from '@shared/archetypes';
+import { ARCHETYPES, archetypeIdOf, PORTEUR_ARCHETYPE, PROIE_ARCHETYPE } from '@shared/archetypes';
 import { MAP_SIZE, PROJECTILE_HIT_RADIUS } from '@shared/constants';
 import type { Horde } from '@shared/horde';
 import { Assets, type Container, Particle, ParticleContainer, Rectangle, Texture } from 'pixi.js';
@@ -499,6 +499,14 @@ export class HordeRenderer {
     this.#runFrames[PORTEUR_ARCHETYPE] = this.#runFrames[voleur] ?? [];
     this.#attackFrames[PORTEUR_ARCHETYPE] = this.#runFrames[voleur]?.slice(0, 1) ?? [];
     sizesPx[PORTEUR_ARCHETYPE] = sizesPx[voleur] ?? 0;
+    // ⚠️ **La proie de la chasse (etape 16) non plus** : un gnoll agrandi, le
+    // meme mecanisme que le porteur — sa course, la premiere image figee a
+    // l'arret (elle attend), la taille de contenu du gnoll que `bodyScale`
+    // (1,6) agrandit. Aucun actif nouveau sur MinIO.
+    const gnoll = archetypeIdOf('gnoll');
+    this.#runFrames[PROIE_ARCHETYPE] = this.#runFrames[gnoll] ?? [];
+    this.#attackFrames[PROIE_ARCHETYPE] = this.#runFrames[gnoll]?.slice(0, 1) ?? [];
+    sizesPx[PROIE_ARCHETYPE] = sizesPx[gnoll] ?? 0;
     // Les trous de `sizesPx` valent `undefined` : `archetypeScales` y lit 0,
     // et `spriteScale` rend alors 1 — une echelle jamais utilisee, puisque
     // l'entite est sautee faute de textures.

@@ -4,7 +4,9 @@ import {
   CONVOI_RADIUS,
   EVENT_KIND,
   FORGE_RADIUS,
+  RELIQUE_ALTAR_RADIUS,
   SCEAU_RADIUS,
+  SIEGE_DEFEND_RADIUS,
 } from '@shared/evenements';
 import { Horde } from '@shared/horde';
 import { FORMATION, type WaveOrder } from '@shared/waves';
@@ -12,7 +14,13 @@ import { Rectangle } from 'pixi.js';
 import { describe, expect, it } from 'vitest';
 
 import { BLAST_FLASH_MS, type EventView, RAISE_FLASH_MS } from '../net/client';
-import { behaviorShapes, eventShapes, PORTEUR_RING_RADIUS } from './behavior-renderer';
+import {
+  behaviorShapes,
+  eventShapes,
+  PORTEUR_RING_RADIUS,
+  PROIE_RING_RADIUS,
+  RELIC_LIFT,
+} from './behavior-renderer';
 
 const idOf = (behavior: string): number => ARCHETYPES.findIndex((a) => a.behavior === behavior);
 
@@ -123,8 +131,8 @@ describe('etape 14 : les formes d un evenement', () => {
       ],
     };
     const joueurs = [
-      { x: 100 + SCEAU_RADIUS, y: 100, hp: 50 },
-      { x: 500, y: 100, hp: 0 },
+      { id: 1, x: 100 + SCEAU_RADIUS, y: 100, hp: 50 },
+      { id: 2, x: 500, y: 100, hp: 0 },
     ];
     expect(eventShapes(sceaux, joueurs, view)).toEqual([
       { kind: 'sceau', x: 100, y: 100, radius: SCEAU_RADIUS, occupied: true, progress: 0.5 },
@@ -134,7 +142,7 @@ describe('etape 14 : les formes d un evenement', () => {
 
   it('la forge : sa zone et son anneau', () => {
     const forge: EventView = { ...base, kind: EVENT_KIND.FORGE, points: [{ x: 300, y: 300 }] };
-    expect(eventShapes(forge, [{ x: 300, y: 300, hp: 10 }], view)).toEqual([
+    expect(eventShapes(forge, [{ id: 1, x: 300, y: 300, hp: 10 }], view)).toEqual([
       { kind: 'forge', x: 300, y: 300, radius: FORGE_RADIUS, occupied: false, progress: 0.5 },
     ]);
   });
@@ -158,5 +166,85 @@ describe('etape 14 : les formes d un evenement', () => {
 
   it('rien sans evenement', () => {
     expect(eventShapes(null, [], view)).toEqual([]);
+  });
+});
+
+describe('etape 16 : les formes des quatre evenements', () => {
+  const view = new Rectangle(0, 0, 800, 600);
+  const base = {
+    progress: 0.5,
+    secondsLeft: 30,
+    cart: null,
+    cartHp: 0.7,
+    solo: false,
+    carrierId: 0,
+    relic: null,
+    startedAtMs: 0,
+    targets: [],
+  };
+
+  it('le siege : le totem, sa zone de defense, son anneau et ses PV', () => {
+    const siege: EventView = { ...base, kind: EVENT_KIND.SIEGE, points: [{ x: 300, y: 300 }] };
+    expect(eventShapes(siege, [], view)).toEqual([
+      { kind: 'totem', x: 300, y: 300, radius: SIEGE_DEFEND_RADIUS, progress: 0.5, hp: 0.7 },
+    ]);
+  });
+
+  it('la relique au sol : la relique interpolee et l autel, jamais le site', () => {
+    const relique: EventView = {
+      ...base,
+      kind: EVENT_KIND.RELIQUE,
+      points: [
+        { x: 50, y: 50 },
+        { x: 700, y: 400 },
+      ],
+      relic: { x: 120, y: 130 },
+    };
+    expect(eventShapes(relique, [], view)).toEqual([
+      { kind: 'autel', x: 700, y: 400, radius: RELIQUE_ALTAR_RADIUS, progress: 0.5 },
+      { kind: 'relique', x: 120, y: 130, radius: 14 },
+    ]);
+  });
+
+  it('portee : au-dessus du porteur DESSINE (sa position dans `players`), jamais en retard', () => {
+    const portee: EventView = {
+      ...base,
+      kind: EVENT_KIND.RELIQUE,
+      points: [
+        { x: 50, y: 50 },
+        { x: 700, y: 400 },
+      ],
+      carrierId: 2,
+    };
+    const joueurs = [
+      { id: 1, x: 10, y: 10, hp: 100 },
+      { id: 2, x: 400, y: 300, hp: 100 },
+    ];
+    expect(eventShapes(portee, joueurs, view)).toContainEqual({
+      kind: 'relique',
+      x: 400,
+      y: 300 - RELIC_LIFT,
+      radius: 14,
+    });
+    // Porteur introuvable (pas encore dans le snapshot) : pas de relique flottante.
+    expect(eventShapes(portee, [], view).map((s) => s.kind)).toEqual(['autel']);
+  });
+
+  it('chasse et noir : rien au sol (les proies sont dans behaviorShapes, la nuit a son calque)', () => {
+    expect(
+      eventShapes({ ...base, kind: EVENT_KIND.CHASSE, points: [{ x: 1, y: 1 }] }, [], view),
+    ).toEqual([]);
+    expect(eventShapes({ ...base, kind: EVENT_KIND.NOIR, points: [] }, [], view)).toEqual([]);
+  });
+
+  it('behaviorShapes : un anneau rouge par proie dans le cadre, en permanence', () => {
+    const horde = hordeAt([
+      { x: 100, y: 100, behavior: 'proie' },
+      { x: 9000, y: 9000, behavior: 'proie' },
+    ]);
+    horde.fleeing[0] = 1;
+    expect(behaviorShapes(horde, [], view, 0)).toEqual([
+      { kind: 'proie', x: 100, y: 100, radius: PROIE_RING_RADIUS, alpha: 1 },
+    ]);
   });
 });

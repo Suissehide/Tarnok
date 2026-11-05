@@ -145,7 +145,7 @@ export interface FrameStage {
     shots: readonly EnemyShot[],
     timeMs: number,
     event: EventView | null,
-    players: readonly { x: number; y: number; hp: number }[],
+    players: readonly { id: number; x: number; y: number; hp: number }[],
   ): void;
   /**
    * Les anneaux de marque, sous les pieds des ennemis marques. Ils

@@ -11,7 +11,9 @@ import {
   CONVOI_RADIUS,
   EVENT_KIND,
   FORGE_RADIUS,
+  RELIQUE_ALTAR_RADIUS,
   SCEAU_RADIUS,
+  SIEGE_DEFEND_RADIUS,
 } from '@shared/evenements';
 import type { Horde } from '@shared/horde';
 import { Container, Graphics, type Rectangle, Sprite, type Texture } from 'pixi.js';
@@ -27,7 +29,16 @@ import { framesOf } from './player-renderer';
  */
 
 export interface BehaviorShape {
-  kind: 'kamikaze' | 'chaman' | 'necro' | 'bouclier' | 'butin' | 'coffre' | 'explosion' | 'releve';
+  kind:
+    | 'kamikaze'
+    | 'chaman'
+    | 'necro'
+    | 'bouclier'
+    | 'butin'
+    | 'coffre'
+    | 'explosion'
+    | 'releve'
+    | 'proie';
   x: number;
   y: number;
   radius: number;
@@ -47,6 +58,13 @@ export const PORTEUR_RING_RADIUS = 46;
 const CHEST_LIFT = 60;
 /** Le brun du contour, du couvercle et de la serrure. */
 export const CHEST_BROWN = 0x5a3a1a;
+/** La proie de la chasse (etape 16, §9.2) : un anneau ROUGE sous ses pieds, en permanence. */
+export const PROIE_RED = 0xe0352b;
+export const PROIE_RING_RADIUS = 46;
+/** La relique portee flotte a cette hauteur au-dessus de son porteur dessine. */
+export const RELIC_LIFT = 48;
+/** Le gris du pilier du totem. */
+const TOTEM_GREY = 0x8a8f99;
 
 /**
  * Un petit coffre procedural centre sur (x, y) : 22 x 15 px a l'echelle 1,
@@ -88,6 +106,7 @@ export function behaviorShapes(
       behavior !== 'necro' &&
       behavior !== 'bouclier' &&
       behavior !== 'porteur' &&
+      behavior !== 'proie' &&
       !enFuite
     ) {
       continue;
@@ -115,6 +134,9 @@ export function behaviorShapes(
       // En permanence, a l'arret comme en fuite : c'est ce qui le distingue
       // d'un voleur ordinaire d'un coup d'oeil, avec sa taille.
       out.push({ kind: 'coffre', x, y, radius: PORTEUR_RING_RADIUS, alpha: 1 });
+    } else if (behavior === 'proie') {
+      // En permanence, comme l'anneau du porteur : la cible de la chasse se lit d'un coup d'oeil.
+      out.push({ kind: 'proie', x, y, radius: PROIE_RING_RADIUS, alpha: 1 });
     } else {
       out.push({ kind: 'butin', x, y: y - 42, radius: 7, alpha: 1 });
     }
@@ -141,15 +163,15 @@ export function behaviorShapes(
 
 /** Une forme d'evenement au sol (etape 14, §7.2). */
 export interface EventShape {
-  kind: 'sceau' | 'forge' | 'chariot' | 'arrivee';
+  kind: 'sceau' | 'forge' | 'chariot' | 'arrivee' | 'totem' | 'relique' | 'autel';
   x: number;
   y: number;
   radius: number;
   /** Sceau : un joueur vivant du SNAPSHOT s'y tient (cosmetique, derive ici). */
   occupied?: boolean;
-  /** Sceau, forge : la progression de l'anneau, de 0 a 1. */
+  /** Sceau, forge, totem, autel : la progression de l'anneau, de 0 a 1. */
   progress?: number;
-  /** Chariot : ses PV, de 0 a 1. */
+  /** Chariot, totem : ses PV, de 0 a 1. */
   hp?: number;
 }
 
@@ -165,7 +187,7 @@ const FORGE_ORANGE = 0xff8a3d;
  */
 export function eventShapes(
   event: EventView | null,
-  players: readonly { x: number; y: number; hp: number }[],
+  players: readonly { id: number; x: number; y: number; hp: number }[],
   view: Rectangle,
 ): EventShape[] {
   if (!event) {
@@ -178,6 +200,49 @@ export function eventShapes(
     y >= view.y - marge &&
     y <= view.y + view.height + marge;
   const out: EventShape[] = [];
+  if (event.kind === EVENT_KIND.CHASSE || event.kind === EVENT_KIND.NOIR) {
+    // Les proies sont dans `behaviorShapes` ; la nuit a son propre calque.
+    return out;
+  }
+  if (event.kind === EVENT_KIND.SIEGE) {
+    const t = event.points[0];
+    if (t && dedans(t.x, t.y)) {
+      out.push({
+        kind: 'totem',
+        x: t.x,
+        y: t.y,
+        radius: SIEGE_DEFEND_RADIUS,
+        progress: event.progress,
+        hp: event.cartHp,
+      });
+    }
+    return out;
+  }
+  if (event.kind === EVENT_KIND.RELIQUE) {
+    const autel = event.points[1];
+    if (autel && dedans(autel.x, autel.y)) {
+      out.push({
+        kind: 'autel',
+        x: autel.x,
+        y: autel.y,
+        radius: RELIQUE_ALTAR_RADIUS,
+        progress: event.progress,
+      });
+    }
+    // Au sol : sa position interpolee. Portee : au-dessus du porteur DESSINE
+    // (predit si c'est soi, interpole sinon) — jamais en retard de 200 ms.
+    const porteur = players.find((p) => p.id === event.carrierId);
+    const r =
+      event.carrierId === 0
+        ? event.relic
+        : porteur
+          ? { x: porteur.x, y: porteur.y - RELIC_LIFT }
+          : null;
+    if (r && dedans(r.x, r.y)) {
+      out.push({ kind: 'relique', x: r.x, y: r.y, radius: 14 });
+    }
+    return out;
+  }
   if (event.kind === EVENT_KIND.CONVOI) {
     const arrivee = event.points[1];
     if (arrivee && dedans(arrivee.x, arrivee.y)) {
@@ -227,24 +292,34 @@ function progressRing(g: Graphics, s: EventShape): void {
   g.arc(s.x, s.y, r, debut, debut + Math.PI * 2 * p).stroke({ color: COIN_TINT, width: 6 });
 }
 
-/** Le chariot : l'escorte en pointille, les roues, la caisse, un coffre dessus, sa barre de PV. */
-function drawCart(g: Graphics, s: EventShape): void {
-  const { x, y } = s;
+/** Un cercle pointille or a 25 % : l'escorte du chariot, la defense du totem. */
+function dashedCircle(g: Graphics, x: number, y: number, r: number): void {
   for (let k = 0; k < 24; k += 2) {
     const a0 = (k * Math.PI * 2) / 24;
     const a1 = ((k + 1) * Math.PI * 2) / 24;
-    g.moveTo(x + Math.cos(a0) * s.radius, y + Math.sin(a0) * s.radius);
-    g.arc(x, y, s.radius, a0, a1).stroke({ color: COIN_TINT, width: 2, alpha: 0.25 });
+    g.moveTo(x + Math.cos(a0) * r, y + Math.sin(a0) * r);
+    g.arc(x, y, r, a0, a1).stroke({ color: COIN_TINT, width: 2, alpha: 0.25 });
   }
+}
+
+/** Une barre de PV de 48 x 5 px centree sur `x`, haut a `top` : verte, or, rouge. */
+function hpBar(g: Graphics, x: number, top: number, fraction: number): void {
+  const hp = Math.min(1, Math.max(0, fraction));
+  g.rect(x - 24, top, 48, 5).fill(0x1a0f0a);
+  g.rect(x - 24, top, 48 * hp, 5).fill(hp > 0.5 ? 0x5bd16a : hp > 0.25 ? COIN_TINT : 0xff3b2f);
+}
+
+/** Le chariot : l'escorte en pointille, les roues, la caisse, un coffre dessus, sa barre de PV. */
+function drawCart(g: Graphics, s: EventShape): void {
+  const { x, y } = s;
+  dashedCircle(g, x, y, s.radius);
   g.circle(x - 14, y + 15, 8).fill(CHEST_BROWN);
   g.circle(x + 14, y + 15, 8).fill(CHEST_BROWN);
   g.rect(x - 24, y - 15, 48, 30)
     .fill(CART_BROWN)
     .stroke({ color: CHEST_BROWN, width: 2 });
   drawChest(g, x, y - 23, 0.8);
-  const hp = Math.min(1, Math.max(0, s.hp ?? 1));
-  g.rect(x - 24, y - 41, 48, 5).fill(0x1a0f0a);
-  g.rect(x - 24, y - 41, 48 * hp, 5).fill(hp > 0.5 ? 0x5bd16a : hp > 0.25 ? COIN_TINT : 0xff3b2f);
+  hpBar(g, x, y - 41, s.hp ?? 1);
 }
 
 /**
@@ -338,7 +413,7 @@ export class BehaviorRenderer {
     view: Rectangle,
     nowMs: number,
     event: EventView | null = null,
-    players: readonly { x: number; y: number; hp: number }[] = [],
+    players: readonly { id: number; x: number; y: number; hp: number }[] = [],
   ): void {
     const g = this.#graphics;
     g.clear();
@@ -407,6 +482,9 @@ export class BehaviorRenderer {
         g.circle(s.x, s.y, s.radius).fill({ color: COIN_TINT, alpha: 0.2 });
         g.circle(s.x, s.y, s.radius).stroke({ color: COIN_TINT, width: 4 });
         drawChest(g, s.x, s.y - CHEST_LIFT, 1);
+      } else if (s.kind === 'proie') {
+        g.circle(s.x, s.y, s.radius).fill({ color: PROIE_RED, alpha: 0.15 });
+        g.circle(s.x, s.y, s.radius).stroke({ color: PROIE_RED, width: 4 });
       } else if (s.kind === 'releve') {
         // Le sort de transformation, la ou les squelettes se relevent ; un
         // eclat vert en repli.
@@ -456,6 +534,26 @@ export class BehaviorRenderer {
         progressRing(g, s);
       } else if (s.kind === 'chariot') {
         drawCart(g, s);
+      } else if (s.kind === 'totem') {
+        dashedCircle(g, s.x, s.y, s.radius);
+        progressRing(g, s);
+        // Un pilier de 24 x 56 px, coiffe d'un losange or, sa barre de PV au-dessus.
+        g.rect(s.x - 12, s.y - 56, 24, 56)
+          .fill(TOTEM_GREY)
+          .stroke({ color: CHEST_BROWN, width: 2 });
+        g.poly([s.x, s.y - 72, s.x + 9, s.y - 63, s.x, s.y - 54, s.x - 9, s.y - 63]).fill(
+          COIN_TINT,
+        );
+        hpBar(g, s.x, s.y - 84, s.hp ?? 1);
+      } else if (s.kind === 'autel') {
+        g.circle(s.x, s.y, s.radius).fill({ color: COIN_TINT, alpha: 0.12 });
+        g.circle(s.x, s.y, s.radius).stroke({ color: COIN_TINT, width: 3 });
+        progressRing(g, s);
+      } else if (s.kind === 'relique') {
+        g.circle(s.x, s.y, s.radius * 1.8).fill({ color: COIN_TINT, alpha: 0.3 });
+        g.poly([s.x, s.y - s.radius, s.x + s.radius, s.y, s.x, s.y + s.radius, s.x - s.radius, s.y])
+          .fill(COIN_TINT)
+          .stroke({ color: CHEST_BROWN, width: 2 });
       } else {
         // L'arrivee : un fanion, un trait de 40 px et un triangle or.
         g.moveTo(s.x, s.y)
