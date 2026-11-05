@@ -154,6 +154,11 @@ class RecordingClient implements FrameClient {
     secondsLeft: 42,
     cart: null,
     cartHp: 0,
+    solo: false,
+    carrierId: 0,
+    relic: null,
+    startedAtMs: 0,
+    targets: [],
   };
   /**
    * Un boss reconnaissable, et surtout DISTINCT de la horde : `drawBossBar`

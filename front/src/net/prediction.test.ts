@@ -1,4 +1,5 @@
 import { PLAYER_SPEED, TICK_HZ } from '@shared/constants';
+import { RELIQUE_CARRIER_SPEED } from '@shared/evenements';
 import { describe, expect, it } from 'vitest';
 
 import { PredictedPlayer } from './prediction';
@@ -134,5 +135,25 @@ describe('PredictedPlayer.reconcile', () => {
 
     // La correction porte sur y ; la commande sur x doit passer quand meme.
     expect(player.renderX).toBeGreaterThan(before);
+  });
+});
+
+describe('etape 16 : la vitesse du porteur de relique, toleree par la reconciliation', () => {
+  /**
+   * Le client ne rejoue pas les entrees : une vitesse predite fausse ne
+   * s'accumule jamais au-dela d'un intervalle de snapshot (§8.2).
+   */
+  it('260 predits contre 156 au serveur : l ecart d un snapshot reste sous 4 px et s eteint', () => {
+    const p = new PredictedPlayer(1000, 1000);
+    p.predict(1, 0, DT, 1, PLAYER_SPEED);
+    const serveur = 1000 + (PLAYER_SPEED * RELIQUE_CARRIER_SPEED) / TICK_HZ;
+    p.reconcile(serveur, 1000);
+    expect(p.simX).toBe(serveur);
+    expect(Math.abs(p.renderX - serveur)).toBeGreaterThan(3);
+    expect(Math.abs(p.renderX - serveur)).toBeLessThan(4);
+    for (let i = 0; i < 10; i++) {
+      p.predict(0, 0, DT);
+    }
+    expect(Math.abs(p.renderX - serveur)).toBeLessThan(0.1);
   });
 });

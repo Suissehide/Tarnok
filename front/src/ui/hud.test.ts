@@ -534,6 +534,11 @@ describe('etape 14 : l evenement au HUD', () => {
     secondsLeft: 40.2,
     cart: null,
     cartHp: 0,
+    solo: false,
+    carrierId: 0,
+    relic: null,
+    startedAtMs: 0,
+    targets: [],
   };
 
   it('eventStatusText : « La forge — 62 % — 0:41 », « Le convoi — 40 % — chariot 70 % — 0:33 »', () => {
@@ -546,6 +551,11 @@ describe('etape 14 : l evenement au HUD', () => {
         secondsLeft: 32.5,
         cart: { x: 0, y: 0 },
         cartHp: 0.7,
+        solo: false,
+        carrierId: 0,
+        relic: null,
+        startedAtMs: 0,
+        targets: [],
       }),
     ).toBe('Le convoi — 40 % — chariot 70 % — 0:33');
     expect(eventStatusText({ ...forge, kind: EVENT_KIND.SCEAUX, progress: 0 })).toBe(

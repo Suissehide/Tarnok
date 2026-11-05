@@ -100,7 +100,17 @@ describe('etape 11 : l or du porteur', () => {
 
 describe('etape 14 : les formes d un evenement', () => {
   const view = new Rectangle(0, 0, 800, 600);
-  const base = { progress: 0.5, secondsLeft: 30, cart: null, cartHp: 0 };
+  const base = {
+    progress: 0.5,
+    secondsLeft: 30,
+    cart: null,
+    cartHp: 0,
+    solo: false,
+    carrierId: 0,
+    relic: null,
+    startedAtMs: 0,
+    targets: [],
+  };
 
   it('un sceau par point dans le cadre, OCCUPE si un joueur vivant s y tient, rien hors cadre', () => {
     const sceaux: EventView = {

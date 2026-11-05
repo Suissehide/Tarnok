@@ -131,7 +131,17 @@ describe('etape 14 : les fleches d un evenement', () => {
         i.action === 'fill' && (i.data as { style: { color: number } }).style.color === COIN_TINT,
     ).length;
   }
-  const base = { progress: 0, secondsLeft: 60, cart: null, cartHp: 1 };
+  const base = {
+    progress: 0,
+    secondsLeft: 60,
+    cart: null,
+    cartHp: 1,
+    solo: false,
+    carrierId: 0,
+    relic: null,
+    startedAtMs: 0,
+    targets: [],
+  };
 
   it('une fleche or par sceau HORS champ, aucune pour un sceau dans le champ', () => {
     expect(

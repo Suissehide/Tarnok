@@ -4,7 +4,13 @@ import {
   DECOY_LIFETIME_TICKS,
   VERB_IDS,
 } from '@shared/abilities';
-import { archetypeIdOf, archetypeOf, NECRO_CHILD, PORTEUR_ARCHETYPE } from '@shared/archetypes';
+import {
+  archetypeIdOf,
+  archetypeOf,
+  NECRO_CHILD,
+  PORTEUR_ARCHETYPE,
+  PROIE_ARCHETYPE,
+} from '@shared/archetypes';
 import type { BossCharge } from '@shared/boss';
 import { applyCardToLoadout, type Card } from '@shared/cards';
 import { chainTargets } from '@shared/chain';
@@ -30,8 +36,21 @@ import {
 import { type Decoy, substituteDecoys } from '@shared/decoys';
 import { ELEMENT } from '@shared/elements';
 import { EnemyShots } from '@shared/enemy-shots';
-import { EVENT_KIND, EVENT_OUTCOME, EVENT_STATE_PERIOD_TICKS } from '@shared/evenements';
-import { aimPoint, armedWeapon, critOf, fireCooldown, shotDamage } from '@shared/firing';
+import {
+  CarrierClock,
+  EVENT_KIND,
+  EVENT_OUTCOME,
+  EVENT_STATE_PERIOD_TICKS,
+  relicSpeedFactor,
+} from '@shared/evenements';
+import {
+  aimPoint,
+  armedWeapon,
+  critOf,
+  fireCooldown,
+  lastFireAfterCarry,
+  shotDamage,
+} from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { entityIdOf, Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
@@ -272,6 +291,19 @@ export interface EventView {
   cart: { x: number; y: number } | null;
   /** PV du chariot, de 0 a 1. */
   cartHp: number;
+  /** Un seul vivant au depart (bit haut de l'octet de genre). */
+  solo: boolean;
+  /**
+   * Relique : le porteur au tick de horde COURANT (0 au sol), date par
+   * `CarrierClock`. Noir : le porteur de lanterne. 0 sinon.
+   */
+  carrierId: number;
+  /** Relique AU SOL, interpolee comme le chariot ; `null` portee ou hors relique. */
+  relic: { x: number; y: number } | null;
+  /** Horloge murale de la reception d'`EVENT_START` : le fondu du noir part de la. */
+  startedAtMs: number;
+  /** Les cibles des fleches de bord (`eventTargets`). */
+  targets: readonly { x: number; y: number }[];
 }
 
 /** Le miroir d'un evenement en cours, tel que les messages l'ont dit. */
@@ -285,6 +317,10 @@ interface EventMirror {
   cartTo: { x: number; y: number };
   cartAtMs: number;
   cartHp: number;
+  solo: boolean;
+  startedAtMs: number;
+  /** Relique, noir : le porteur, date au SNAPSHOT qui suit son EVENT_STATE. */
+  clock: CarrierClock;
 }
 
 /** Duree du sort de transformation (necromancien) : dix images, plus lent. */
@@ -1712,6 +1748,56 @@ export class GameClient {
     return fresh;
   }
 
+  /** Lecture de test (etape 16) : le dernier tick de tir du miroir, `-Infinity` jamais. */
+  lastFireTickOf(playerId: number, weaponId: number): number {
+    return this.#lastFireTick.get(playerId)?.[weaponId] ?? Number.NEGATIVE_INFINITY;
+  }
+
+  /** Le porteur de la RELIQUE au tick `tick` (0 au sol, et hors relique). */
+  #relicCarrierAt(tick: number): number {
+    const ev = this.#event;
+    return ev !== null && ev.kind === EVENT_KIND.RELIQUE ? ev.clock.at(tick) : 0;
+  }
+
+  /**
+   * Date l'octet de porteur en attente (§8.1). Si la fin d'un port de relique
+   * arrive EN RETARD — le client a deja simule `from` en croyant au port —,
+   * recale le miroir de tir de l'ancien porteur sur la DERNIERE salve que le
+   * serveur a tiree (`lastFireAfterCarry`, ecart n° 6 du plan) : sans quoi sa
+   * phase resterait decalee pour toute la run. Seulement s'il vise : le
+   * serveur ne tire pas sans visee.
+   */
+  #dateCarrier(tick: number, players: readonly PlayerSnapshot[]): void {
+    const ev = this.#event;
+    const d = ev?.clock.dated(tick) ?? null;
+    if (ev === null || d === null || ev.kind !== EVENT_KIND.RELIQUE || d.released === 0) {
+      return;
+    }
+    if (this.#lastHordeTick <= d.from) {
+      return;
+    }
+    const allie = players.find((p) => p.id === d.released);
+    const aim =
+      d.released === this.#localId
+        ? this.#localAim
+        : allie
+          ? { x: allie.aimX, y: allie.aimY }
+          : null;
+    const last = this.#lastFireTick.get(d.released);
+    if (aim === null || (aim.x === 0 && aim.y === 0) || !last) {
+      return;
+    }
+    const loadout = this.loadoutOf(d.released);
+    for (const w of loadout.weaponIds) {
+      last[w] = lastFireAfterCarry(
+        last[w] ?? Number.NEGATIVE_INFINITY,
+        d.from,
+        this.#lastHordeTick,
+        fireCooldown(loadout, w, this.accountBonuses.fireRate),
+      );
+    }
+  }
+
   /** La vitesse du monde au tick courant : `0` gele, une rampe a la reprise, `1` sinon. */
   get motionScale(): number {
     return this.#movementScale(this.#lastHordeTick);
@@ -1899,14 +1985,29 @@ export class GameClient {
     if (ev === null) {
       return null;
     }
-    return {
+    const now = performance.now();
+    const porteur = ev.kind === EVENT_KIND.RELIQUE || ev.kind === EVENT_KIND.NOIR;
+    const carrierId = porteur ? ev.clock.at(this.#lastHordeTick) : 0;
+    const vue: EventView = {
       kind: ev.kind,
       points: ev.points,
       progress: ev.progress,
       secondsLeft: Math.max(0, ev.deadline - this.#pingClock) / TICK_HZ,
-      cart: ev.kind === EVENT_KIND.CONVOI ? this.#cartAt(ev, performance.now()) : null,
+      cart: ev.kind === EVENT_KIND.CONVOI ? this.#cartAt(ev, now) : null,
       cartHp: ev.cartHp,
+      solo: ev.solo,
+      carrierId,
+      relic: ev.kind === EVENT_KIND.RELIQUE && carrierId === 0 ? this.#cartAt(ev, now) : null,
+      startedAtMs: ev.startedAtMs,
+      targets: [],
     };
+    vue.targets = eventTargets(
+      vue,
+      this.horde,
+      this.#buffer.latest()?.players ?? [],
+      this.#localId,
+    );
+    return vue;
   }
 
   /** Intention du dernier ping recu, `-1` si aucun. */
@@ -2013,6 +2114,9 @@ export class GameClient {
         cartTo: depart,
         cartAtMs: now,
         cartHp: 1,
+        solo: msg.solo,
+        startedAtMs: now,
+        clock: new CarrierClock(),
       };
       this.#eventCount++;
       this.#eventBanner = { text: EVENT_START_BANNERS[msg.kind] ?? '', atMs: now };
@@ -2028,7 +2132,13 @@ export class GameClient {
       ev.cartFrom = this.#cartAt(ev, now);
       ev.cartTo = { x: msg.cartX, y: msg.cartY };
       ev.cartAtMs = now;
-      ev.cartHp = msg.cartHp / 255;
+      // L'octet d'etat se lit selon le genre (§7.2) : PV du chariot ou du
+      // totem, porteur de relique ou de lanterne — ce dernier ATTEND sa date.
+      if (ev.kind === EVENT_KIND.RELIQUE || ev.kind === EVENT_KIND.NOIR) {
+        ev.clock.heard(msg.cartHp);
+      } else {
+        ev.cartHp = msg.cartHp / 255;
+      }
       return;
     }
     this.#event = null;
@@ -2196,7 +2306,15 @@ export class GameClient {
     if (this.#localId === null) {
       return base;
     }
-    return base + this.loadoutOf(this.#localId).bonus('speed');
+    const speed = base + this.loadoutOf(this.#localId).bonus('speed');
+    // Etape 16 : porteur de relique, au tick de horde courant. Le facteur
+    // multiplie la vitesse ENTIERE, comme `Room.step` ; la rampe (`scale`)
+    // reste a part. Une date en retard coute au plus ~3,5 px par snapshot,
+    // que la reconciliation eteint (§8.2) : on la tolere, on ne la previent pas.
+    const ev = this.#event;
+    return ev !== null && this.#relicCarrierAt(this.#lastHordeTick) === this.#localId
+      ? speed * relicSpeedFactor(ev.solo)
+      : speed;
   }
 
   #sendInput(): void {
@@ -2465,6 +2583,9 @@ export class GameClient {
     if (msg.tick - this.#lastHordeTick > HORDE_TICK_LAG_TOLERANCE) {
       this.#lastHordeTick = msg.tick;
     }
+    // Etape 16 : l'EVENT_STATE d'un changement de porteur est parti juste
+    // avant CE snapshot (meme envoi) : il vaut a partir de msg.tick + 1.
+    this.#dateCarrier(msg.tick, msg.players);
 
     // Donnees d'EQUIPE, dans l'en-tete du snapshot et pas dans un bloc
     // joueur : lues AVANT le `return` ci-dessous, meme quand `mine` est
@@ -3044,6 +3165,10 @@ export class GameClient {
       if (p.hp <= 0) {
         continue;
       }
+      // Etape 16 : le garde du serveur, a la meme date (D + 1, `CarrierClock`).
+      if (p.id === this.#relicCarrierAt(tick)) {
+        continue;
+      }
       const local = p.id === this.#localId ? this.#local : null;
       const x = local ? local.simX : p.x;
       const y = local ? local.simY : p.y;
@@ -3596,4 +3721,46 @@ export class GameClient {
       this.onStatusChange(status);
     }
   }
+}
+
+/**
+ * Les cibles des fleches de bord d'un evenement (§9.3), PURE. Sceaux, forge,
+ * siege : leurs points ; convoi : le chariot ; relique : elle au sol, l'autel
+ * portee ; chasse : les proies vivantes de la horde du client (un balayage
+ * par image, comme `behaviorShapes`) ; noir : le porteur de lanterne, rien si
+ * c'est soi.
+ */
+export function eventTargets(
+  ev: Pick<EventView, 'kind' | 'points' | 'cart' | 'relic' | 'carrierId'>,
+  horde: Horde,
+  players: readonly { id: number; x: number; y: number }[],
+  localId: number | null,
+): { x: number; y: number }[] {
+  if (ev.kind === EVENT_KIND.CONVOI) {
+    return ev.cart ? [ev.cart] : [];
+  }
+  if (ev.kind === EVENT_KIND.RELIQUE) {
+    if (ev.carrierId === 0) {
+      return ev.relic ? [ev.relic] : [];
+    }
+    const autel = ev.points[1];
+    return autel ? [autel] : [];
+  }
+  if (ev.kind === EVENT_KIND.CHASSE) {
+    const out: { x: number; y: number }[] = [];
+    for (let i = 0; i < horde.count; i++) {
+      if (horde.archetype[i] === PROIE_ARCHETYPE) {
+        out.push({ x: horde.x[i] ?? 0, y: horde.y[i] ?? 0 });
+      }
+    }
+    return out;
+  }
+  if (ev.kind === EVENT_KIND.NOIR) {
+    if (ev.carrierId === localId) {
+      return [];
+    }
+    const p = players.find((j) => j.id === ev.carrierId);
+    return p ? [{ x: p.x, y: p.y }] : [];
+  }
+  return [...ev.points];
 }

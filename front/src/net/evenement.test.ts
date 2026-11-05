@@ -1,7 +1,14 @@
-import { PORTEUR_ARCHETYPE } from '@shared/archetypes';
-import { LEVEL_RESUME_TICKS, TICK_HZ } from '@shared/constants';
-import { EVENT_DURATION_TICKS, EVENT_KIND, EVENT_OUTCOME } from '@shared/evenements';
-import { entityIdOf } from '@shared/horde';
+import { PORTEUR_ARCHETYPE, PROIE_ARCHETYPE } from '@shared/archetypes';
+import { LEVEL_RESUME_TICKS, PLAYER_SPEED, TICK_HZ } from '@shared/constants';
+import {
+  EVENT_DURATION_TICKS,
+  EVENT_KIND,
+  EVENT_OUTCOME,
+  RELIQUE_CARRIER_SPEED,
+  RELIQUE_CARRIER_SPEED_SOLO,
+} from '@shared/evenements';
+import { fireCooldown } from '@shared/firing';
+import { entityIdOf, Horde } from '@shared/horde';
 import {
   type EventMessage,
   encodeDeaths,
@@ -17,9 +24,10 @@ import {
   NO_WEAPON,
 } from '@shared/protocol';
 import { FORMATION } from '@shared/waves';
+import { BASE_WEAPON_ID } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { EVENT_BANNER_MS, GameClient } from './client';
+import { EVENT_BANNER_MS, eventTargets, GameClient } from './client';
 
 /**
  * Le miroir client des evenements (etape 14, §6.5 et §7.1), sur le patron de
@@ -134,6 +142,11 @@ describe('etape 14 : le client tient l evenement', () => {
       secondsLeft: 60,
       cart: null,
       cartHp: 1,
+      solo: false,
+      carrierId: 0,
+      relic: null,
+      startedAtMs: 10_000,
+      targets: [{ x: 4200, y: 3000 }],
     });
     expect(client.eventCount).toBe(1);
     expect(client.eventBanner).toBe("La forge s'allume !");
@@ -268,5 +281,263 @@ describe('etape 14 : le client reconnait l etalage d evenement, sans un octet', 
     socket.emit(ev(REUSSI));
     socket.emit(encodeLevelUp(31, 1));
     expect(client.draftIsEvent).toBe(true);
+  });
+});
+
+const RELIQUE: EventMessage = {
+  type: MSG.EVENT_START,
+  kind: EVENT_KIND.RELIQUE,
+  solo: false,
+  durationTicks: EVENT_DURATION_TICKS,
+  points: [
+    { x: 1000, y: 3000 },
+    { x: 2500, y: 3000 },
+  ],
+};
+const etat = (porteur: number): EventMessage => ({
+  type: MSG.EVENT_STATE,
+  progress: 0,
+  cartX: 1000,
+  cartY: 3000,
+  cartHp: porteur,
+});
+
+/** Comme `connecte`, mais le joueur local vise a droite (il tire) et pousse a droite. */
+function connecteTireur(): { client: GameClient; socket: FakeSocket } {
+  const client = new GameClient(
+    'ws://test',
+    () => ({ x: 1, y: 0 }),
+    vi.fn(),
+    vi.fn(),
+    () => ({ x: 1, y: 0 }),
+  );
+  client.connect();
+  const socket = FakeSocket.last;
+  if (!socket) {
+    throw new Error('aucune socket');
+  }
+  socket.emit(
+    encodeLobby(1, [
+      { playerId: 1, weaponId: NO_WEAPON, classId: 0 },
+      { playerId: 2, weaponId: NO_WEAPON, classId: 0 },
+    ]),
+  );
+  socket.emit(encodeWelcome(1, 0, 0x51ee_d0));
+  socket.emit(encodeSnapshot(0, 0, 0, [joueur(1), joueur(2)]));
+  client.update(0, STEP);
+  return { client, socket };
+}
+
+/**
+ * `n` pas de horde. Avant chacun, si `reseau`, le SNAPSHOT du tick que le
+ * serveur vient de faire (`hordeTick - 1` : le client simule le suivant).
+ * Rend les ticks auxquels le client a tire l'arme de base pour `id`.
+ */
+function simule(
+  client: GameClient,
+  socket: FakeSocket,
+  n: number,
+  reseau = true,
+  id = 1,
+  allie = joueur(2),
+): number[] {
+  const tirs: number[] = [];
+  for (let i = 0; i < n; i++) {
+    const t = client.hordeTick;
+    if (reseau) {
+      socket.emit(encodeSnapshot(t - 1, 0, 0, [joueur(1), allie]));
+    }
+    horloge += 1000 / TICK_HZ;
+    client.update(horloge, STEP);
+    if (client.lastFireTickOf(id, BASE_WEAPON_ID) === t) {
+      tirs.push(t);
+    }
+  }
+  return tirs;
+}
+
+/** Le calendrier du SERVEUR (`Room#fireOne`) apres un port fini a `from - 1`, de `from` a `jusqua` exclu. */
+function calendrier(last: number, from: number, jusqua: number, cd: number): number[] {
+  const out: number[] = [];
+  for (let t = Math.max(from, last + cd); t < jusqua; t += cd) {
+    out.push(t);
+  }
+  return out;
+}
+
+describe('etape 16 : le bit solo et le porteur date au SNAPSHOT qui suit', () => {
+  it('EVENT_START porte solo ; la vue le rend', () => {
+    const { client, socket } = connecte();
+    socket.emit(ev({ ...RELIQUE, solo: true }));
+    expect(client.event?.solo).toBe(true);
+  });
+
+  it('un EVENT_STATE de relique puis un SNAPSHOT date D : le porteur vaut a partir de D + 1', () => {
+    const { client, socket } = connecteTireur();
+    socket.emit(ev(RELIQUE));
+    simule(client, socket, 5);
+    const D = client.hordeTick - 1;
+    socket.emit(ev(etat(1)));
+    // Sans son SNAPSHOT, l'octet attend.
+    expect(client.event?.carrierId).toBe(0);
+    socket.emit(encodeSnapshot(D, 0, 0, [joueur(1), joueur(2)]));
+    // `hordeTick` = D + 1 : le prochain tick simule est deja porte.
+    expect(client.hordeTick).toBe(D + 1);
+    expect(client.event?.carrierId).toBe(1);
+    expect(client.event?.relic).toBeNull();
+    expect(client.event?.targets).toEqual([{ x: 2500, y: 3000 }]);
+  });
+
+  it('nominal : le miroir se tait de D + 1 a E et reprend au tick exact du serveur', () => {
+    const { client, socket } = connecteTireur();
+    socket.emit(ev(RELIQUE));
+    const libres = simule(client, socket, 12);
+    expect(libres.length).toBeGreaterThan(1);
+    const last = libres.at(-1) ?? 0;
+    const D = client.hordeTick - 1;
+    socket.emit(ev(etat(1)));
+    socket.emit(encodeSnapshot(D, 0, 0, [joueur(1), joueur(2)]));
+    expect(simule(client, socket, 30)).toEqual([]);
+    const E = client.hordeTick - 1;
+    socket.emit(ev(etat(0)));
+    socket.emit(encodeSnapshot(E, 0, 0, [joueur(1), joueur(2)]));
+    const cd = fireCooldown(client.loadoutOf(1), BASE_WEAPON_ID, 0);
+    expect(simule(client, socket, 20)).toEqual(calendrier(last, E + 1, E + 21, cd));
+  });
+
+  /**
+   * ⚠️ **La fin du port apprise EN RETARD** (le client a deja simule E + 1 a
+   * E + 7) : le serveur a tire a E + 1 et E + 5 sans que le client ne dessine
+   * rien. Sans le recalage, le client tirerait a E + 8 — une phase decalee
+   * pour le reste de la run. Avec, il tire a E + 9, comme le serveur.
+   */
+  it('livraison apprise en retard : recalage, puis exactement le calendrier du serveur', () => {
+    const { client, socket } = connecteTireur();
+    socket.emit(ev(RELIQUE));
+    const last = simule(client, socket, 12).at(-1) ?? 0;
+    const D = client.hordeTick - 1;
+    socket.emit(ev(etat(1)));
+    socket.emit(encodeSnapshot(D, 0, 0, [joueur(1), joueur(2)]));
+    simule(client, socket, 30);
+    const E = client.hordeTick - 1;
+    // Le reseau se tait 7 ticks : le client avance, toujours muet.
+    expect(simule(client, socket, 7, false)).toEqual([]);
+    socket.emit(ev(etat(0)));
+    socket.emit(encodeSnapshot(E, 0, 0, [joueur(1), joueur(2)]));
+    const cd = fireCooldown(client.loadoutOf(1), BASE_WEAPON_ID, 0);
+    const serveur = calendrier(last, E + 1, E + 8 + 20, cd);
+    expect(client.lastFireTickOf(1, BASE_WEAPON_ID)).toBe(serveur.filter((t) => t < E + 8).at(-1));
+    expect(simule(client, socket, 20)).toEqual(serveur.filter((t) => t >= E + 8));
+  });
+
+  it('un allie porteur : le miroir ne tire pas pour lui non plus', () => {
+    const { client, socket } = connecteTireur();
+    const vise = { ...joueur(2), aimX: 127 };
+    socket.emit(ev(RELIQUE));
+    expect(simule(client, socket, 12, true, 2, vise).length).toBeGreaterThan(0);
+    const D = client.hordeTick - 1;
+    socket.emit(ev(etat(2)));
+    socket.emit(encodeSnapshot(D, 0, 0, [joueur(1), vise]));
+    expect(simule(client, socket, 30, true, 2, vise)).toEqual([]);
+  });
+
+  it('la prediction du porteur local : x 0,6, et x 0,8 en solo', () => {
+    for (const [solo, facteur] of [
+      [false, RELIQUE_CARRIER_SPEED],
+      [true, RELIQUE_CARRIER_SPEED_SOLO],
+    ] as const) {
+      const { client, socket } = connecteTireur();
+      socket.emit(ev({ ...RELIQUE, solo }));
+      const D = client.hordeTick - 1;
+      socket.emit(ev(etat(1)));
+      socket.emit(encodeSnapshot(D, 0, 0, [joueur(1), joueur(2)]));
+      // Dix images sans snapshot : l'erreur de reconciliation s'eteint (tau 33 ms).
+      let x = 0;
+      for (let i = 0; i < 11; i++) {
+        horloge += 1000 / TICK_HZ;
+        const avant = x;
+        x = client.update(horloge, STEP).players.find((p) => p.id === 1)?.x ?? 0;
+        if (i === 10) {
+          expect(x - avant).toBeCloseTo((PLAYER_SPEED * facteur) / TICK_HZ, 2);
+        }
+      }
+    }
+  });
+
+  it('noir : la lanterne datee de meme, sans recalage de tir', () => {
+    const { client, socket } = connecte();
+    socket.emit(ev({ ...RELIQUE, kind: EVENT_KIND.NOIR, points: [] }));
+    socket.emit(ev(etat(2)));
+    socket.emit(encodeSnapshot(client.hordeTick - 1, 0, 0, [joueur(1), joueur(2)]));
+    expect(client.event?.carrierId).toBe(2);
+    expect(client.event?.targets).toEqual([{ x: 100, y: 100 }]);
+  });
+});
+
+describe('etape 16 : eventTargets — vers quoi pointent les fleches', () => {
+  const vide = new Horde(8);
+  const base = { cart: null, relic: null, carrierId: 0 };
+  const pts = [
+    { x: 10, y: 20 },
+    { x: 30, y: 40 },
+  ];
+
+  it('sceaux, forge, siege : leurs points ; convoi : le chariot', () => {
+    for (const kind of [EVENT_KIND.SCEAUX, EVENT_KIND.FORGE, EVENT_KIND.SIEGE]) {
+      expect(eventTargets({ ...base, kind, points: pts }, vide, [], 1)).toEqual(pts);
+    }
+    expect(
+      eventTargets(
+        { ...base, kind: EVENT_KIND.CONVOI, points: pts, cart: { x: 5, y: 6 } },
+        vide,
+        [],
+        1,
+      ),
+    ).toEqual([{ x: 5, y: 6 }]);
+  });
+
+  it('relique : au sol la relique, portee l autel', () => {
+    const r = { ...base, kind: EVENT_KIND.RELIQUE, points: pts };
+    expect(eventTargets({ ...r, relic: { x: 7, y: 8 } }, vide, [], 1)).toEqual([{ x: 7, y: 8 }]);
+    expect(eventTargets({ ...r, carrierId: 2 }, vide, [], 1)).toEqual([{ x: 30, y: 40 }]);
+  });
+
+  it('chasse : chaque proie vivante de la horde du client', () => {
+    const h = new Horde(16);
+    h.spawn({
+      waveId: 7,
+      spawnTick: 0,
+      seed: 7,
+      archetype: PROIE_ARCHETYPE,
+      formation: FORMATION.POINT,
+      anchorX: 500,
+      anchorY: 600,
+      count: 2,
+    });
+    h.spawn({
+      waveId: 8,
+      spawnTick: 0,
+      seed: 8,
+      archetype: 0,
+      formation: FORMATION.POINT,
+      anchorX: 50,
+      anchorY: 60,
+      count: 3,
+    });
+    const cibles = eventTargets({ ...base, kind: EVENT_KIND.CHASSE, points: pts }, h, [], 1);
+    expect(cibles).toHaveLength(2);
+    for (const c of cibles) {
+      expect(Math.hypot(c.x - 500, c.y - 600)).toBeLessThan(100);
+    }
+  });
+
+  it('noir : le porteur de lanterne (dernier SNAPSHOT) ; rien si c est soi', () => {
+    const joueurs = [
+      { id: 1, x: 1, y: 2 },
+      { id: 2, x: 3, y: 4 },
+    ];
+    const n = { ...base, kind: EVENT_KIND.NOIR, points: [], carrierId: 2 };
+    expect(eventTargets(n, vide, joueurs, 1)).toEqual([{ x: 3, y: 4 }]);
+    expect(eventTargets(n, vide, joueurs, 2)).toEqual([]);
   });
 });
