@@ -1,5 +1,14 @@
 import type { AddressInfo } from 'node:net';
-import { EVENT_KIND, EVENT_OUTCOME, EVENT_STATE_PERIOD_TICKS } from '@shared/evenements';
+import { PROIE_ARCHETYPE } from '@shared/archetypes';
+import { MAP_SIZE } from '@shared/constants';
+import {
+  CarrierClock,
+  EVENT_KIND,
+  EVENT_OUTCOME,
+  EVENT_STATE_PERIOD_TICKS,
+  NOIR_LIGHT_RADIUS,
+  RELIQUE_CARRIER_SPEED,
+} from '@shared/evenements';
 import { entityIdOf } from '@shared/horde';
 import {
   decode,
@@ -8,9 +17,12 @@ import {
   encodeInput,
   type Message,
   MSG,
+  type SnapshotMessage,
+  type WaveOrderMessage,
 } from '@shared/protocol';
 import { EVENT_RARITY_FLOOR } from '@shared/rarity';
 import { FORMATION } from '@shared/waves';
+import { BASE_WEAPON_ID } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
 
@@ -50,6 +62,8 @@ interface Client {
   /** Les tailles BRUTES des messages d'evenement, par type. */
   eventBytes: Map<number, Set<number>>;
   seq: number;
+  /** TOUT ce qui est arrive, snapshots compris, dans l'ordre d'arrivee (la datation en depend). */
+  flux: Message[];
 }
 
 let app: App;
@@ -91,9 +105,11 @@ async function connect(code: string): Promise<Client> {
     snapshotBytes: new Set(),
     eventBytes: new Map(),
     seq: 0,
+    flux: [],
   };
   ws.on('message', (data: ArrayBuffer) => {
     const msg = decode(data);
+    client.flux.push(msg);
     if (msg.type === MSG.WELCOME) {
       client.playerId = msg.playerId;
     }
@@ -400,5 +416,328 @@ describe('etape 14 : les evenements bonus, sur vraies sockets (le livrable)', ()
     expect(drapeauxDEvenement(a.received)).toEqual([]);
     expect([...a.snapshotBytes]).toEqual([SNAPSHOT_A_DEUX]);
     expect([...b.snapshotBytes]).toEqual([SNAPSHOT_A_DEUX]);
+  }, 30_000);
+});
+
+describe('etape 16 : quatre evenements de plus, sur vraies sockets (le livrable)', () => {
+  const CENTRE = { x: MAP_SIZE / 2, y: MAP_SIZE / 2 };
+  const snapshots = (c: Client): SnapshotMessage[] =>
+    c.flux.filter((m): m is SnapshotMessage => m.type === MSG.SNAPSHOT);
+
+  /** Rejoue le flux d'un client dans `CarrierClock` : les dates `from` de chaque changement. */
+  function datesDuClient(c: Client): number[] {
+    let horloge: CarrierClock | null = null;
+    const dates: number[] = [];
+    for (const m of c.flux) {
+      if (m.type === MSG.EVENT_START) {
+        horloge = m.kind === EVENT_KIND.RELIQUE ? new CarrierClock() : null;
+      } else if (m.type === MSG.EVENT_STATE) {
+        horloge?.heard(m.cartHp);
+      } else if (m.type === MSG.EVENT_END) {
+        horloge = null;
+      } else if (m.type === MSG.SNAPSHOT && horloge) {
+        const d = horloge.dated(m.tick);
+        if (d) {
+          dates.push(d.from);
+        }
+      }
+    }
+    return dates;
+  }
+
+  it('la relique : meme porteur, date D + 1 chez les deux, 60 % au serveur, aucune salve, livraison → etalage epique', async () => {
+    const { room, a, b } = await salonADeux();
+    const changes: number[] = [];
+    const tirsDuPorteur = new Set<number>();
+    let porteur = 0;
+    let ramasser = true;
+    envelopper(room, () => {
+      viderSauf(room, new Set());
+      if (room.eventPoints === null) {
+        return;
+      }
+      const c = room.eventCarrier;
+      if (c !== porteur) {
+        changes.push(room.tick);
+        porteur = c;
+      }
+      if (c === a.playerId) {
+        ramasser = false;
+        tirsDuPorteur.add(room.lastFireTickOf(a.playerId, BASE_WEAPON_ID));
+      }
+      const r = room.eventPoints[0];
+      if (ramasser && r) {
+        room.debugPlace(a.playerId, r.x, r.y);
+      }
+    });
+    // A vise a droite, par la socket : il tire tant qu'il ne porte pas.
+    a.seq++;
+    a.ws.send(encodeInput(a.seq, 0, 0, 127, 0));
+    await dormir(300);
+    room.debugStartEvent(graine(EVENT_KIND.RELIQUE));
+
+    // ---- 1. Le ramassage, et le meme octet de porteur chez les deux --------
+    await waitFor(() => (room.eventCarrier === a.playerId ? true : null), 'ramassage', 5_000);
+    await Promise.all(
+      [a, b].map((c) =>
+        waitFor(
+          () => (etats(c).some((e) => e.cartHp === a.playerId) ? true : null),
+          `octet de porteur (joueur ${c.playerId})`,
+          3_000,
+        ),
+      ),
+    );
+
+    // ---- 2. 60 % au serveur : A porte, B non, meme entree, au centre degage --
+    room.debugPlace(a.playerId, CENTRE.x - 120, CENTRE.y);
+    room.debugPlace(b.playerId, CENTRE.x - 120, CENTRE.y + 100);
+    a.seq++;
+    a.ws.send(encodeInput(a.seq, 127, 0, 127, 0));
+    b.seq++;
+    b.ws.send(encodeInput(b.seq, 127, 0, 0, 0));
+    await dormir(200);
+    const n0 = snapshots(a).length;
+    await dormir(400);
+    const fenetre = snapshots(a).slice(n0);
+    const premier = fenetre[0];
+    const dernier = fenetre.at(-1);
+    if (!premier || !dernier) {
+      throw new Error('des snapshots pendant la marche');
+    }
+    const dx = (id: number): number =>
+      (dernier.players.find((p) => p.id === id)?.x ?? 0) -
+      (premier.players.find((p) => p.id === id)?.x ?? 0);
+    expect(dx(b.playerId)).toBeGreaterThan(50);
+    expect(dx(a.playerId) / dx(b.playerId)).toBeCloseTo(RELIQUE_CARRIER_SPEED, 1);
+
+    // ---- 3. Aucune salve pour le porteur, au serveur : un seul tick de tir --
+    expect(tirsDuPorteur.size).toBe(1);
+
+    // ---- 4. La livraison ---------------------------------------------------
+    const autel = room.eventPoints?.[1];
+    if (!autel) {
+      throw new Error('un autel');
+    }
+    room.debugPlace(a.playerId, autel.x, autel.y);
+    const fins = await Promise.all(
+      [a, b].map((c) =>
+        waitFor(
+          () => c.received.find((m) => m.type === MSG.EVENT_END) ?? null,
+          `EVENT_END (joueur ${c.playerId})`,
+          5_000,
+        ),
+      ),
+    );
+    for (const f of fins) {
+      expect(f).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.REUSSI });
+    }
+    const opens = await Promise.all(
+      [a, b].map((c) =>
+        waitFor(
+          () => c.received.find((m) => m.type === MSG.DRAFT_OPEN) ?? null,
+          `DRAFT_OPEN (joueur ${c.playerId})`,
+          5_000,
+        ),
+      ),
+    );
+    for (const c of [a, b]) {
+      const types = c.received.map((m) => m.type);
+      expect(types.indexOf(MSG.LEVEL_UP)).toBeGreaterThan(types.indexOf(MSG.EVENT_END));
+      expect(types.indexOf(MSG.DRAFT_OPEN)).toBeGreaterThan(types.indexOf(MSG.LEVEL_UP));
+      expect(drapeauxDEvenement(c.received)).toEqual([true]);
+    }
+    for (const open of opens) {
+      if (open.type !== MSG.DRAFT_OPEN) {
+        throw new Error('DRAFT_OPEN attendu');
+      }
+      for (const carte of open.cards) {
+        expect(carte.rarity).toBeGreaterThanOrEqual(EVENT_RARITY_FLOOR);
+      }
+    }
+
+    // ---- 5. Le meme depart (13 o), les memes dates, D + 1 a 4 ticks pres ----
+    const departs = [a, b].map((c) => c.received.find((m) => m.type === MSG.EVENT_START));
+    expect(departs[0]).toEqual(departs[1]);
+    expect(departs[0]).toMatchObject({ kind: EVENT_KIND.RELIQUE, solo: false });
+    expect([...(a.eventBytes.get(MSG.EVENT_START) ?? [])]).toEqual([13]);
+    const datesA = datesDuClient(a);
+    expect(datesDuClient(b)).toEqual(datesA);
+    expect(datesA).toHaveLength(changes.length);
+    datesA.forEach((from, i) => {
+      const d = changes[i] ?? 0;
+      expect(from - (d + 1)).toBeGreaterThanOrEqual(0);
+      expect(from - (d + 1)).toBeLessThanOrEqual(4);
+    });
+    // L'ORDRE d'envoi qui fait la date (spec §12) : l'etat du ramassage arrive avant tout
+    // SNAPSHOT date D ou plus. Inverse (`SNAPSHOT` avant `EVENT_*`), la date glisserait d'un
+    // envoi en restant dans la tolerance ci-dessus : c'est cette ligne qui le verrait.
+    for (const c of [a, b]) {
+      const iEtat = c.flux.findIndex((m) => m.type === MSG.EVENT_STATE && m.cartHp === a.playerId);
+      expect(iEtat).toBeGreaterThan(0);
+      const avant = c.flux
+        .slice(0, iEtat)
+        .filter((m): m is SnapshotMessage => m.type === MSG.SNAPSHOT);
+      expect(avant.at(-1)?.tick ?? -1).toBeLessThan(changes[0] ?? 0);
+    }
+
+    // ---- 6. Rien de plus par tick ------------------------------------------
+    expect([...a.snapshotBytes]).toEqual([SNAPSHOT_A_DEUX]);
+    expect([...b.snapshotBytes]).toEqual([SNAPSHOT_A_DEUX]);
+  }, 30_000);
+
+  it('le noir : PV hors lumiere qui baissent dans les SNAPSHOT, lanterne tombee → detruit, aucun etalage', async () => {
+    const { room, a, b } = await salonADeux();
+    room.debugStartEvent(graine(EVENT_KIND.NOIR));
+    const lanterne = room.eventCarrier;
+    expect([a.playerId, b.playerId]).toContain(lanterne);
+    const autre = lanterne === a.playerId ? b.playerId : a.playerId;
+    envelopper(room, () => {
+      viderSauf(room, new Set());
+      if (room.eventPoints !== null) {
+        room.debugPlace(lanterne, CENTRE.x, CENTRE.y);
+        room.debugPlace(autre, CENTRE.x + NOIR_LIGHT_RADIUS + 100, CENTRE.y);
+      }
+    });
+    await dormir(1_500);
+    // Le meme depart, 5 octets (n = 0), et l'octet d'etat dit la lanterne chez les deux.
+    const departs = [a, b].map((c) => c.received.find((m) => m.type === MSG.EVENT_START));
+    expect(departs[0]).toEqual(departs[1]);
+    expect(departs[0]).toMatchObject({ kind: EVENT_KIND.NOIR, points: [] });
+    for (const c of [a, b]) {
+      expect([...(c.eventBytes.get(MSG.EVENT_START) ?? [])]).toEqual([5]);
+      expect(etats(c).length).toBeGreaterThan(0);
+      for (const e of etats(c)) {
+        expect(e.cartHp).toBe(lanterne);
+      }
+    }
+    const pv = snapshots(a).map((s) => s.players.find((p) => p.id === autre)?.hp ?? 0);
+    expect(pv).toEqual([...pv].sort((x, y) => y - x));
+    expect((pv[0] ?? 0) - (pv.at(-1) ?? 0)).toBeGreaterThanOrEqual(2);
+    const pvLanterne = snapshots(a).map((s) => s.players.find((p) => p.id === lanterne)?.hp);
+    expect(new Set(pvLanterne).size).toBe(1);
+
+    room.debugKill(lanterne);
+    const fins = await Promise.all(
+      [a, b].map((c) =>
+        waitFor(
+          () => c.received.find((m) => m.type === MSG.EVENT_END) ?? null,
+          `EVENT_END (joueur ${c.playerId})`,
+          3_000,
+        ),
+      ),
+    );
+    for (const f of fins) {
+      expect(f).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.DETRUIT });
+    }
+    await dormir(1_000);
+    for (const c of [a, b]) {
+      expect(c.received.some((m) => m.type === MSG.DRAFT_OPEN)).toBe(false);
+    }
+    expect([...a.snapshotBytes]).toEqual([SNAPSHOT_A_DEUX]);
+  }, 30_000);
+
+  it('la chasse : trois WAVE_ORDER de proies avant le meme EVENT_START (17 o), toutes tombees → etalage', async () => {
+    const { room, a, b } = await salonADeux();
+    room.debugStartEvent(graine(EVENT_KIND.CHASSE));
+    const proies = new Set<number>();
+    for (let i = 0; i < room.horde.count; i++) {
+      if (room.horde.archetype[i] === PROIE_ARCHETYPE) {
+        proies.add(room.horde.entityIdAt(i));
+      }
+    }
+    expect(proies.size).toBe(3);
+    envelopper(room, () => viderSauf(room, proies));
+    await Promise.all(
+      [a, b].map((c) =>
+        waitFor(
+          () => c.received.find((m) => m.type === MSG.EVENT_START) ?? null,
+          `EVENT_START (joueur ${c.playerId})`,
+          3_000,
+        ),
+      ),
+    );
+    const ordresDe = (c: Client): WaveOrderMessage[] =>
+      c.received.filter(
+        (m): m is WaveOrderMessage => m.type === MSG.WAVE_ORDER && m.archetype === PROIE_ARCHETYPE,
+      );
+    expect(ordresDe(a)).toHaveLength(3);
+    expect(ordresDe(a)).toEqual(ordresDe(b));
+    for (const c of [a, b]) {
+      const types = c.received.map((m) => m.type);
+      const iDepart = types.indexOf(MSG.EVENT_START);
+      expect(c.received.lastIndexOf(ordresDe(c).at(-1) as Message)).toBeLessThan(iDepart);
+      expect([...(c.eventBytes.get(MSG.EVENT_START) ?? [])]).toEqual([17]);
+    }
+    await dormir(500);
+    room.horde.kill([...proies]);
+    await Promise.all(
+      [a, b].map((c) =>
+        waitFor(
+          () => c.received.find((m) => m.type === MSG.DRAFT_OPEN) ?? null,
+          `DRAFT_OPEN (joueur ${c.playerId})`,
+          5_000,
+        ),
+      ),
+    );
+    for (const c of [a, b]) {
+      expect(c.received.find((m) => m.type === MSG.EVENT_END)).toEqual({
+        type: MSG.EVENT_END,
+        outcome: EVENT_OUTCOME.REUSSI,
+      });
+      expect(drapeauxDEvenement(c.received)).toEqual([true]);
+    }
+    expect([...a.snapshotBytes]).toEqual([SNAPSHOT_A_DEUX]);
+  }, 30_000);
+
+  it('le siege : sans defenseur la progression reste nulle, cinq ennemis l abattent — aucun etalage', async () => {
+    const { room, a, b } = await salonADeux();
+    room.debugStartEvent(graine(EVENT_KIND.SIEGE));
+    const totem = room.eventPoints?.[0];
+    if (!totem) {
+      throw new Error('un totem');
+    }
+    room.horde.spawn({
+      waveId: 61_016,
+      spawnTick: room.tick,
+      seed: 1,
+      archetype: 0,
+      formation: FORMATION.SCATTER,
+      anchorX: totem.x,
+      anchorY: totem.y,
+      count: 5,
+    });
+    const frappeurs = new Set(Array.from({ length: 5 }, (_, k) => entityIdOf(61_016, k)));
+    envelopper(room, () => {
+      viderSauf(room, frappeurs);
+      for (let i = 0; i < room.horde.count; i++) {
+        room.horde.x[i] = totem.x;
+        room.horde.y[i] = totem.y;
+      }
+    });
+    const fins = await Promise.all(
+      [a, b].map((c) =>
+        waitFor(
+          () => c.received.find((m) => m.type === MSG.EVENT_END) ?? null,
+          `EVENT_END (joueur ${c.playerId})`,
+          15_000,
+        ),
+      ),
+    );
+    for (const f of fins) {
+      expect(f).toEqual({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.DETRUIT });
+    }
+    const departs = [a, b].map((c) => c.received.find((m) => m.type === MSG.EVENT_START));
+    expect(departs[0]).toEqual(departs[1]);
+    expect(departs[0]).toMatchObject({ kind: EVENT_KIND.SIEGE, points: [totem] });
+    expect([...(a.eventBytes.get(MSG.EVENT_START) ?? [])]).toEqual([9]);
+    const pv = etats(a).map((e) => e.cartHp);
+    expect(pv[0]).toBe(255);
+    expect(pv).toEqual([...pv].sort((x, y) => y - x));
+    for (const e of etats(a)) {
+      expect(e.progress).toBe(0);
+    }
+    await dormir(1_000);
+    expect(a.received.some((m) => m.type === MSG.DRAFT_OPEN)).toBe(false);
+    expect([...a.snapshotBytes]).toEqual([SNAPSHOT_A_DEUX]);
   }, 30_000);
 });
