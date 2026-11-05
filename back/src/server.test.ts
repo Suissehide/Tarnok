@@ -778,7 +778,7 @@ describe('etape 14 : les evenements sur le fil', () => {
       }
     });
 
-    room.debugStartEvent(3 * 0x4_6a2b + EVENT_KIND.FORGE);
+    room.debugStartEvent(7 * 0x4_6a2b + EVENT_KIND.FORGE);
     const forge = room.eventPoints?.[0];
     if (!forge) {
       throw new Error('forge attendue');
