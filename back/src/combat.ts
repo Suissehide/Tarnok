@@ -57,9 +57,11 @@ export interface HurtablePlayer {
 }
 
 /**
- * Inflige `degats` a un joueur — **le SEUL endroit du depot ou les PV d'un
- * joueur baissent**. Tir d'ennemi, kamikaze, contact et charge du boss passent
- * tous ici : sinon le bouclier serait traversable par les sources oubliees.
+ * Inflige `degats` a un joueur — **le seul endroit ou un COUP fait baisser
+ * ses PV**. Tir d'ennemi, kamikaze, contact et charge du boss passent tous
+ * ici : sinon le bouclier serait traversable par les sources oubliees. Seule
+ * exception, voulue : la nuit du noir (`Room#stepEvent`) ronge les PV en
+ * direct, sans armure ni bouclier — ce n'est pas un coup.
  *
  * ⚠️ **Le facteur est borne a zero.** `armor` depasse 1 chez un compte tres
  * ameliore ; sans cette borne, un coup SOIGNERAIT.
