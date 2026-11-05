@@ -1421,8 +1421,9 @@ export class GameClient {
   #event: EventMirror | null = null;
   /**
    * Une relique eteinte ENCORE portee : le serveur ne dit pas « au sol », il
-   * leve le garde de tir a E + 1. Son horloge entend 0 a l'`EVENT_END` et
-   * survit jusqu'au SNAPSHOT qui la date (`#dateCarrier`), puis tombe.
+   * leve le garde de tir a E + 1. Son horloge entend 0 a l'`EVENT_END`, est
+   * datee au SNAPSHOT qui suit (`#dateCarrier`) et vit jusqu'a l'`EVENT_START`
+   * suivant (ou `RUN_OVER`).
    */
   #endedRelic: CarrierClock | null = null;
   /** `EVENT_START` recus depuis la connexion : l'audio en deduit quand sonner. */
@@ -1783,7 +1784,12 @@ export class GameClient {
   /** Le porteur de la RELIQUE au tick `tick` (0 au sol, et hors relique). */
   #relicCarrierAt(tick: number): number {
     const ev = this.#event;
-    return ev !== null && ev.kind === EVENT_KIND.RELIQUE ? ev.clock.at(tick) : 0;
+    if (ev !== null) {
+      return ev.kind === EVENT_KIND.RELIQUE ? ev.clock.at(tick) : 0;
+    }
+    // Relique eteinte encore portee : le serveur tient le tir jusqu'a E, meme
+    // si le client simule encore E (ou avant) a la reception de l'EVENT_END.
+    return this.#endedRelic?.at(tick) ?? 0;
   }
 
   /**
@@ -1795,8 +1801,9 @@ export class GameClient {
    * serveur ne tire pas sans visee.
    */
   #dateCarrier(tick: number, players: readonly PlayerSnapshot[]): void {
+    // ⚠️ L'horloge eteinte SURVIT a sa datation : elle repond encore pour
+    // les ticks <= E ; `dated()` rend ensuite `null`. EVENT_START l'efface.
     const ended = this.#endedRelic;
-    this.#endedRelic = null;
     if (ended !== null) {
       this.#resyncReleased(ended.dated(tick), players);
     }
@@ -2144,6 +2151,7 @@ export class GameClient {
   #onEvent(msg: EventMessage): void {
     const now = performance.now();
     if (msg.type === MSG.EVENT_START) {
+      this.#endedRelic = null;
       const depart = msg.points[0] ?? { x: 0, y: 0 };
       this.#event = {
         kind: msg.kind,

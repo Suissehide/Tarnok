@@ -502,6 +502,28 @@ describe('etape 16 : une relique qui s eteint ENCORE portee', () => {
     expect(simule(client, socket, 20)).toEqual(serveur.filter((t) => t >= E + 8));
   });
 
+  /**
+   * ⚠️ La fin apprise EN AVANCE (le client n'a pas encore simule E) : le
+   * serveur tenait encore le tir a E, le client ne doit pas tirer a E pour
+   * l'ancien porteur, mais exactement au calendrier du serveur, depuis E + 1.
+   */
+  it('EVENT_END (EXPIRE) appris en avance : pas de salve a E, le calendrier du serveur depuis E + 1', () => {
+    const { client, socket } = connecteTireur();
+    socket.emit(ev(RELIQUE));
+    const last = simule(client, socket, 12).at(-1) ?? 0;
+    const D = client.hordeTick - 1;
+    socket.emit(ev(etat(1)));
+    socket.emit(encodeSnapshot(D, 0, 0, [joueur(1), joueur(2)]));
+    simule(client, socket, 30);
+    const E = client.hordeTick;
+    socket.emit(ev({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.EXPIRE }));
+    socket.emit(encodeSnapshot(E, 0, 0, [joueur(1), joueur(2)]));
+    expect(client.hordeTick).toBe(E);
+    const cd = fireCooldown(client.loadoutOf(1), BASE_WEAPON_ID, 0);
+    const tirs = [...simule(client, socket, 1, false), ...simule(client, socket, 20)];
+    expect(tirs).toEqual(calendrier(last, E + 1, E + 21, cd));
+  });
+
   it('EVENT_END sans porteur : rien ne bouge, et un EVENT_START suivant repart d une horloge neuve', () => {
     const { client, socket } = connecteTireur();
     socket.emit(ev(RELIQUE));
