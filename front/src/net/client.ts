@@ -1398,6 +1398,12 @@ export class GameClient {
   #draftIsChest = false;
   /** L'evenement en cours (etape 14), `null` hors evenement. Pose, mis a jour et efface par le fil. */
   #event: EventMirror | null = null;
+  /**
+   * Une relique eteinte ENCORE portee : le serveur ne dit pas « au sol », il
+   * leve le garde de tir a E + 1. Son horloge entend 0 a l'`EVENT_END` et
+   * survit jusqu'au SNAPSHOT qui la date (`#dateCarrier`), puis tombe.
+   */
+  #endedRelic: CarrierClock | null = null;
   /** `EVENT_START` recus depuis la connexion : l'audio en deduit quand sonner. */
   #eventCount = 0;
   /** Le dernier bandeau d'evenement, depart ou fin. */
@@ -1768,9 +1774,24 @@ export class GameClient {
    * serveur ne tire pas sans visee.
    */
   #dateCarrier(tick: number, players: readonly PlayerSnapshot[]): void {
+    const ended = this.#endedRelic;
+    this.#endedRelic = null;
+    if (ended !== null) {
+      this.#resyncReleased(ended.dated(tick), players);
+    }
     const ev = this.#event;
     const d = ev?.clock.dated(tick) ?? null;
-    if (ev === null || d === null || ev.kind !== EVENT_KIND.RELIQUE || d.released === 0) {
+    if (ev !== null && ev.kind === EVENT_KIND.RELIQUE) {
+      this.#resyncReleased(d, players);
+    }
+  }
+
+  /** Le recalage de `#dateCarrier` pour l'ancien porteur d'une relique. */
+  #resyncReleased(
+    d: { from: number; released: number } | null,
+    players: readonly PlayerSnapshot[],
+  ): void {
+    if (d === null || d.released === 0) {
       return;
     }
     if (this.#lastHordeTick <= d.from) {
@@ -2140,6 +2161,12 @@ export class GameClient {
         ev.cartHp = msg.cartHp / 255;
       }
       return;
+    }
+    // Relique encore portee : une liberation comme une autre, datee au
+    // SNAPSHOT qui suit (meme envoi).
+    if (this.#event?.kind === EVENT_KIND.RELIQUE && this.#event.clock.carrier !== 0) {
+      this.#event.clock.heard(0);
+      this.#endedRelic = this.#event.clock;
     }
     this.#event = null;
     // ⚠️ Compte meme sans depart vu (ecart n° 12 du plan) : l'`EVENT_END`
@@ -2567,6 +2594,7 @@ export class GameClient {
       // fois (`#runOver`).
       // Etape 14 : la fin de run l'emporte sans message (§2.4).
       this.#event = null;
+      this.#endedRelic = null;
       this.onRunOver({ survivedTicks: msg.survivedTicks, level: msg.level, kills: msg.kills });
       return;
     }

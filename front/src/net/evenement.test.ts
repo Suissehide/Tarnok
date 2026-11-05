@@ -7,7 +7,7 @@ import {
   RELIQUE_CARRIER_SPEED,
   RELIQUE_CARRIER_SPEED_SOLO,
 } from '@shared/evenements';
-import { fireCooldown } from '@shared/firing';
+import { fireCooldown, lastFireAfterCarry } from '@shared/firing';
 import { entityIdOf, Horde } from '@shared/horde';
 import {
   type EventMessage,
@@ -471,6 +471,47 @@ describe('etape 16 : le bit solo et le porteur date au SNAPSHOT qui suit', () =>
     socket.emit(encodeSnapshot(client.hordeTick - 1, 0, 0, [joueur(1), joueur(2)]));
     expect(client.event?.carrierId).toBe(2);
     expect(client.event?.targets).toEqual([{ x: 100, y: 100 }]);
+  });
+});
+
+describe('etape 16 : une relique qui s eteint ENCORE portee', () => {
+  /**
+   * Le serveur n'envoie aucun EVENT_STATE « au sol » : il efface l'evenement
+   * a E et leve le garde de tir a E + 1. Apprise en retard, cette fin doit
+   * recaler l'ancien porteur comme une chute.
+   */
+  it('EVENT_END (EXPIRE) appris en retard : recalage, puis le calendrier du serveur', () => {
+    const { client, socket } = connecteTireur();
+    socket.emit(ev(RELIQUE));
+    const last = simule(client, socket, 12).at(-1) ?? 0;
+    const D = client.hordeTick - 1;
+    socket.emit(ev(etat(1)));
+    socket.emit(encodeSnapshot(D, 0, 0, [joueur(1), joueur(2)]));
+    simule(client, socket, 30);
+    const E = client.hordeTick - 1;
+    expect(simule(client, socket, 7, false)).toEqual([]);
+    const avant = client.lastFireTickOf(1, BASE_WEAPON_ID);
+    socket.emit(ev({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.EXPIRE }));
+    socket.emit(encodeSnapshot(E, 0, 0, [joueur(1), joueur(2)]));
+    expect(client.event).toBeNull();
+    const cd = fireCooldown(client.loadoutOf(1), BASE_WEAPON_ID, 0);
+    expect(client.lastFireTickOf(1, BASE_WEAPON_ID)).toBe(
+      lastFireAfterCarry(avant, E + 1, client.hordeTick, cd),
+    );
+    const serveur = calendrier(last, E + 1, E + 8 + 20, cd);
+    expect(simule(client, socket, 20)).toEqual(serveur.filter((t) => t >= E + 8));
+  });
+
+  it('EVENT_END sans porteur : rien ne bouge, et un EVENT_START suivant repart d une horloge neuve', () => {
+    const { client, socket } = connecteTireur();
+    socket.emit(ev(RELIQUE));
+    simule(client, socket, 12);
+    const avant = client.lastFireTickOf(1, BASE_WEAPON_ID);
+    socket.emit(ev({ type: MSG.EVENT_END, outcome: EVENT_OUTCOME.EXPIRE }));
+    socket.emit(encodeSnapshot(client.hordeTick - 1, 0, 0, [joueur(1), joueur(2)]));
+    expect(client.lastFireTickOf(1, BASE_WEAPON_ID)).toBe(avant);
+    socket.emit(ev(RELIQUE));
+    expect(client.event?.carrierId).toBe(0);
   });
 });
 
