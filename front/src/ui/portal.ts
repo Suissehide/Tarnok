@@ -42,7 +42,7 @@ export interface PortalSource {
  * Le separateur des milliers : U+202F, espace fine insecable.
  *
  * ⚠️ **Ecrit par `fromCharCode`, pas comme caractere litteral** : le formateur
- * du depot reecrit `' '` en caractere reel, une espace INVISIBLE dans la
+ * du depot reecrit `' '` en caractere reel, une espace INVISIBLE dans la
  * source qu'un editeur pourrait normaliser sans bruit.
  */
 export const THIN_SPACE = String.fromCharCode(0x202f);
@@ -222,10 +222,19 @@ export class PortalScreen {
       // Partir quitte la run : le bouton rouge des sorties.
       root.className = `btn btn--tab ol portal-choice${choice === VOTE_CHOICE.LEAVE ? ' btn--red' : ''}`;
       root.dataset.choice = state;
+      // Raccourci porte par le bouton : un lecteur d'ecran l'annonce sans
+      // avoir besoin du `<kbd>` visuel, masque ci-dessous.
+      root.setAttribute('aria-keyshortcuts', key);
+      const text = document.createElement('b');
+      text.className = 'portal-choice__label';
+      text.textContent = label;
       const hint = document.createElement('kbd');
       hint.className = 'portal-choice__key';
       hint.textContent = key;
-      root.append(label, hint);
+      // Masque : l'info est deja sur le bouton via `aria-keyshortcuts`, la
+      // repeter doublerait l'annonce du lecteur d'ecran.
+      hint.setAttribute('aria-hidden', 'true');
+      root.append(text, hint);
       root.addEventListener('click', () => {
         this.#onVote(choice);
       });

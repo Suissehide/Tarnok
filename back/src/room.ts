@@ -449,10 +449,10 @@ export class Room {
   /**
    * Le vote d'extraction en cours. `phase === 'closed'` : aucun portail ouvert.
    *
-   * ⚠️ **Il n'est PAS le pendant de `#draft` dans `step`.** Un etalage ouvert
-   * gele le monde ; un portail ouvert non : la horde avance, les vagues
-   * tombent. Le draft gele parce qu'un choix de carte n'a pas d'enjeu
-   * temporel ; le vote ne gele pas parce que le temps est son enjeu.
+   * ⚠️ **Il est gele en tete de `step`, comme l'etalage.** Verdict et etalage
+   * ne se chevauchent jamais : un etalage du pendant le vote attend le
+   * verdict, et un « rester » le libere au pas suivant ; un « partir »
+   * l'abandonne.
    */
   readonly #portal = new Portal();
   /** Ouvertures de portail depuis le dernier drainage. Voir `PortalOpenEvent`. */
@@ -1957,8 +1957,7 @@ export class Room {
     // `#xp`, `#synergy`, `#gold` et le boss dans l'EN-TETE : donnees
     // d'equipe, aucun bloc de joueur ne les porte.
     //
-    // ⚠️ **L'or part a CHAQUE tick, pas au vote** : c'est l'enjeu du portail,
-    // et il bouge pendant la fenetre.
+    // ⚠️ **L'or part a CHAQUE tick, pas au vote** : c'est l'enjeu du portail.
     const buf = encodeSnapshot(
       this.#tick,
       this.#xp,
