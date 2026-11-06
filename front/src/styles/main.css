@@ -23,7 +23,7 @@
   --color-rule: #c3b190;
   --color-slate-text: #cfc7b4;
   --color-slate-title: #d8c98a;
-  --color-slate-soft: #9aa1ab;
+  --color-slate-soft: #c0c6ce;
   --color-outline: #221111;
   --color-off-text: #e8dcc0;
   --font-meta: "Metamorphous", serif;
@@ -816,7 +816,8 @@
     box-sizing: border-box;
     background: none;
     border: none;
-    outline: none;
+    /* Le focus clavier de la couche `base` reste visible, dans le cadre. */
+    outline-offset: -8px;
     font-family: var(--font-jer);
     font-size: 46px;
     letter-spacing: 0.3em;
@@ -863,7 +864,8 @@
   }
 
   .shop-card__buy {
-    min-width: 190px;
+    /* « Confirmer ? » doit tenir entre les deux bouts du 3-slice. */
+    min-width: 250px;
   }
 
   /* --- Salon (ecran 14) --------------------------------------------------- */
@@ -897,7 +899,7 @@
 
   .room-player__name {
     font-family: var(--font-meta);
-    font-size: 30px;
+    font-size: 26px;
     white-space: nowrap;
     line-height: 1.3;
   }
@@ -909,7 +911,7 @@
 
   .room-player__tag {
     margin-top: 6px;
-    width: 190px;
+    width: 220px;
     font-weight: 700;
     font-size: 18px;
     letter-spacing: 3px;
@@ -992,7 +994,8 @@
     display: flex;
     align-items: center;
     gap: 8px;
-    font-size: 22px;
+    /* 18 px : « Vif-argent » et son badge tiennent dans la colonne de 160 px. */
+    font-size: 18px;
     white-space: nowrap;
   }
 
@@ -1029,6 +1032,8 @@
 
   .room-weapon {
     width: 100%;
+    /* « Homoncule de mercure » a 18 px depasse le bouton (223 px). */
+    font-size: 16px;
   }
 
   /* --- Guide (ecran 18) ---------------------------------------------------- */
@@ -1093,6 +1098,24 @@
     transition:
       transform 80ms linear,
       opacity 300ms ease-out;
+  }
+
+  /* `joueurs + SPREAD_BONUS` cartes : a cinq et plus, elles sont reduites
+     pour tenir sur UNE ligne (1840 px), plutot que de passer SOUS l'ecran. */
+  #draft-cards:has(> :nth-child(5)) .draft-card {
+    zoom: 0.8;
+  }
+
+  #draft-cards:has(> :nth-child(6)) .draft-card {
+    zoom: 0.66;
+  }
+
+  #draft-cards:has(> :nth-child(7)) {
+    gap: 20px;
+  }
+
+  #draft-cards:has(> :nth-child(7)) .draft-card {
+    zoom: 0.58;
   }
 
   .draft-card:not(:disabled):hover {

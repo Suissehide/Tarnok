@@ -58,7 +58,7 @@
               <button id="open-guide" type="button" class="btn ol min-w-0 flex-1">Guide</button>
             </div>
             <button id="open-shop" type="button" class="btn ol h-[129px]">Boutique</button>
-            <p id="error" class="ol m-0 min-h-[32px] text-center text-[22px]"></p>
+            <p id="error" aria-live="polite" class="ol m-0 min-h-[32px] text-center text-[22px]"></p>
           </div>
 
           <div class="f-mono ol absolute bottom-[48px] left-[56px] flex flex-col gap-[6px] text-[20px]">
@@ -205,7 +205,7 @@
               <b id="room-code" class="f-jer ol text-[46px] font-normal tracking-[6px]"></b>
             </div>
             <!-- Copier le code : c'est lui qu'on partage pour faire venir les autres. -->
-            <button id="room-copy" type="button" class="btn btn--tab ol w-[200px]">
+            <button id="room-copy" type="button" class="btn btn--tab ol w-[260px]">
               Copier le code
             </button>
           </div>
@@ -218,7 +218,7 @@
           <div
             class="k k-paperx absolute bottom-[34px] left-[40px] flex w-[1060px] items-center justify-between gap-[24px]"
           >
-            <p id="room-hint" class="m-0 text-[24px] leading-[1.4]"></p>
+            <p id="room-hint" aria-live="polite" class="m-0 text-[24px] leading-[1.4]"></p>
             <button
               id="room-leave"
               type="button"
@@ -364,7 +364,7 @@
               <ul id="options-controls" class="m-0 flex list-none flex-col gap-[14px] p-0"></ul>
             </div>
           </div>
-          <p id="options-status" class="ol absolute bottom-[90px] left-1/2 m-0 -translate-x-1/2 text-[22px]"></p>
+          <p id="options-status" aria-live="polite" class="ol absolute bottom-[90px] left-1/2 m-0 -translate-x-1/2 text-[22px]"></p>
           <button
             id="options-back"
             type="button"
@@ -438,7 +438,7 @@
                 <span id="hud-ability-cooldown" class="ability-cooldown f-jer ol"></span>
               </div>
               <span id="hud-ability-name" class="f-meta ol text-[20px]"></span>
-              <span class="f-mono ol text-[14px]">ESPACE</span>
+              <span class="f-mono ol text-[18px]">ESPACE</span>
             </div>
           </div>
 
@@ -449,7 +449,7 @@
             <div class="srib srib--red f-meta ol min-w-[320px] text-[24px]">
               Salon&nbsp;<b id="hud-code" class="font-normal"></b>
             </div>
-            <span id="hud-status" class="f-mono ol text-[16px]"></span>
+            <span id="hud-status" class="f-mono ol text-[18px]"></span>
             <div
               id="hud-freeze"
               class="k k-carved3 f-meta ol mt-[10px] hidden text-[24px]"
@@ -541,7 +541,7 @@
           </div>
 
           <div
-            class="k k-carved3 f-mono ol absolute bottom-[44px] right-[420px] flex items-center gap-[10px] text-[18px]"
+            class="k k-carved3 f-mono ol absolute bottom-[44px] right-[520px] flex items-center gap-[10px] text-[18px]"
           >
             <img
               src="/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_10.png"
@@ -574,11 +574,12 @@
           </h2>
           <p
             id="draft-status"
+            aria-live="polite"
             class="ol absolute left-1/2 top-[166px] m-0 -translate-x-1/2 whitespace-nowrap text-[26px] uppercase tracking-[4px]"
           ></p>
           <div
             id="draft-cards"
-            class="absolute left-[40px] right-[40px] top-[290px] flex flex-wrap justify-center gap-[30px]"
+            class="absolute left-[40px] right-[40px] top-[290px] flex justify-center gap-[30px]"
           ></div>
         </div>
       </section>
@@ -593,9 +594,9 @@
           <div
             id="portal"
             data-settled="false"
-            class="k k-paperx pointer-events-none absolute bottom-[40px] left-1/2 hidden w-[1100px] -translate-x-1/2 flex-col items-center gap-[10px] text-center"
+            class="k k-paperx pointer-events-none absolute bottom-[40px] left-1/2 hidden w-[1000px] -translate-x-1/2 flex-col items-center gap-[10px] text-center"
           >
-            <p id="portal-status" class="f-meta m-0 text-[30px] text-[var(--color-slate-title)]"></p>
+            <p id="portal-status" aria-live="polite" class="f-meta m-0 text-[30px] text-[var(--color-slate-title)]"></p>
             <div id="portal-stakes" class="flex flex-col gap-[2px] text-[22px]"></div>
             <div id="portal-choices" class="pointer-events-auto flex gap-[24px]"></div>
             <div id="portal-voters" class="flex flex-wrap justify-center gap-[18px]"></div>
@@ -624,7 +625,7 @@
                 Reprendre
               </button>
               <button id="pause-quit" type="button" class="btn btn--red ol h-[129px]">
-                Quitter au lobby
+                Quitter la partie
               </button>
               <p class="m-0 text-[22px] leading-[1.4]">
                 Le monde ne s’arrête pas : vos alliés jouent encore.

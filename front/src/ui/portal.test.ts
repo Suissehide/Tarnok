@@ -203,7 +203,7 @@ describe('voteLabel — l abstention est un etat A PART', () => {
     expect(new Set(mots).size).toBe(3);
     expect(voteLabel(VOTE_CHOICE.LEAVE)).toBe('part');
     expect(voteLabel(VOTE_CHOICE.STAY)).toBe('reste');
-    expect(voteLabel(NO_VOTE)).toBe("n'a pas voté");
+    expect(voteLabel(NO_VOTE)).toBe('n’a pas voté');
   });
 
   it('traite tout octet inconnu comme une abstention, jamais comme une voix', () => {
@@ -341,7 +341,7 @@ describe('PortalScreen — ce que le joueur voit', () => {
     expect(votants(h)).toEqual([
       { id: '1', choice: 'leave', label: 'part' },
       { id: '3', choice: 'stay', label: 'reste' },
-      { id: '4', choice: 'none', label: "n'a pas voté" },
+      { id: '4', choice: 'none', label: 'n’a pas voté' },
     ]);
   });
 
@@ -459,7 +459,7 @@ describe('PortalScreen — ce que le joueur voit', () => {
     h.client.portalGold = 14_723;
     h.screen.update();
 
-    expect(h.status.textContent).toBe(`L'équipe part — 14${THIN_SPACE}723 or acquis.`);
+    expect(h.status.textContent).toBe(`L’équipe part — 14${THIN_SPACE}723 or acquis.`);
     expect(h.root.dataset.settled).toBe('true');
     expect(boutons(h).map((b) => b.disabled)).toEqual([true, true]);
   });
@@ -474,7 +474,7 @@ describe('PortalScreen — ce que le joueur voit', () => {
     h.client.portalGold = 14_723;
     h.screen.update();
 
-    expect(h.status.textContent).toBe(`L'équipe reste — 14${THIN_SPACE}723 or toujours en jeu.`);
+    expect(h.status.textContent).toBe(`L’équipe reste — 14${THIN_SPACE}723 or toujours en jeu.`);
   });
 
   it('disparait quand le client ferme le vote', () => {

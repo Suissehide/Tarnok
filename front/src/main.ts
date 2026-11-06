@@ -1,4 +1,4 @@
-import type { LobbyMessage } from '@shared/protocol';
+import { CLOSE_CODES, type LobbyMessage } from '@shared/protocol';
 import { bonusesOf } from '@shared/shop';
 import { weaponOf } from '@shared/weapons';
 
@@ -185,6 +185,24 @@ el<HTMLButtonElement>('open-guide').addEventListener('click', () => {
 el<HTMLButtonElement>('guide-back').addEventListener('click', () => {
   guideScreen.classList.add('hidden');
   lobby.classList.remove('hidden');
+});
+// Echap ferme l'ecran de menu ouvert (options, guide, boutique), comme son
+// bouton « Retour » ; en jeu, le menu de pause a sa propre gestion plus bas.
+const MENU_BACKS: readonly [HTMLElement, string][] = [
+  [optionsScreen, 'options-back'],
+  [guideScreen, 'guide-back'],
+  [shopScreen, 'close-shop'],
+];
+window.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') {
+    return;
+  }
+  for (const [screen, back] of MENU_BACKS) {
+    if (!screen.classList.contains('hidden')) {
+      el<HTMLButtonElement>(back).click();
+      return;
+    }
+  }
 });
 
 /** Les cases du HUD, cherchees une fois — c'est `paintHud` qui decide de leur contenu. */
@@ -461,6 +479,9 @@ function join(code: string): void {
   const setPaused = (value: boolean): void => {
     paused = value;
     pause.classList.toggle('hidden', !value);
+    // Sous le voile, le HUD et l'etalage ne doivent plus repondre a Tab/Entree.
+    hud.toggleAttribute('inert', value);
+    el('draft').toggleAttribute('inert', value);
   };
   const leave = (): void => {
     client.disconnect();
@@ -475,6 +496,9 @@ function join(code: string): void {
     onStatus,
     (result) => {
       setPaused(false);
+      hud.toggleAttribute('inert', true);
+      el('draft').toggleAttribute('inert', true);
+      el('portal-layer').toggleAttribute('inert', true);
       paintSummary(
         summaryElements,
         result,
@@ -586,7 +610,14 @@ function join(code: string): void {
       }
     }
     // H replie ou deplie l'aide des combinaisons, en jeu seulement.
-    if (e.key.toLowerCase() === 'h' && !hud.classList.contains('hidden') && !paused) {
+    if (
+      e.key.toLowerCase() === 'h' &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.altKey &&
+      !hud.classList.contains('hidden') &&
+      !paused
+    ) {
       toggleCombos();
     }
   });
@@ -817,19 +848,27 @@ function join(code: string): void {
   }
 }
 
-function onStatus(status: ConnectionStatus): void {
+/** Motif de fermeture par code serveur ; les autres codes gardent le message generique. */
+const CLOSE_HINTS: Record<number, string> = {
+  [CLOSE_CODES.UNKNOWN_ROOM]: 'Salon introuvable — vérifie le code.',
+  [CLOSE_CODES.ROOM_FULL]: 'Salon plein.',
+};
+
+function onStatus(status: ConnectionStatus, code?: number): void {
   const label: Record<ConnectionStatus, string> = {
     connecting: 'connexion…',
     open: 'connecté',
-    // Le serveur coupé fige les carrés : c'est la preuve que l'autorite est
+    // Le serveur coupé fige le monde : c'est la preuve que l'autorite est
     // serveur et pas locale, pas un bug a masquer.
-    closed: 'serveur injoignable — les carrés se figent',
+    closed: 'serveur injoignable — le monde se fige',
   };
   hudStatus.textContent = label[status];
   // Salle d'attente encore affichee et socket fermee : salon inconnu, plein ou
   // serveur coupe. Le dire plutot que laisser une liste vide.
   if (status === 'closed' && !room.classList.contains('hidden')) {
-    el('room-hint').textContent = 'Connexion perdue — salon introuvable, plein ou serveur coupé.';
+    el('room-hint').textContent =
+      (code !== undefined && CLOSE_HINTS[code]) ||
+      'Connexion perdue — salon introuvable, plein ou serveur coupé.';
     el<HTMLButtonElement>('room-start').disabled = true;
   }
 }

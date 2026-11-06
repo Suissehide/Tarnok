@@ -87,7 +87,7 @@ export function voteLabel(choice: number): string {
   if (choice === VOTE_CHOICE.STAY) {
     return 'reste';
   }
-  return "n'a pas voté";
+  return 'n’a pas voté';
 }
 
 /** L'etat d'un votant, tel qu'il s'ecrit dans `data-choice` — donc tel que les tests le lisent. */
@@ -138,7 +138,7 @@ export function stayGold(gold: number, multiplier: number): number {
 export function stakeLines(gold: number, multiplier: number): { leave: string; stay: string } {
   return {
     leave: `Partir maintenant : ${formatGold(leaveGold(gold, multiplier))} or acquis (${formatMultiplier(multiplier)})`,
-    stay: `Rester : ${formatGold(stayGold(gold, multiplier))} or au prochain portail (${formatMultiplier(multiplier + EXTRACT_MULTIPLIER_STEP)}) — tout est perdu si l'équipe tombe`,
+    stay: `Rester : ${formatGold(stayGold(gold, multiplier))} or au prochain portail (${formatMultiplier(multiplier + EXTRACT_MULTIPLIER_STEP)}) — tout est perdu si l’équipe tombe`,
   };
 }
 
@@ -282,8 +282,8 @@ export class PortalScreen {
       // seul champ d'or dont le sens se lit dans la decision : acquis si
       // l'equipe part, reporte si elle reste (voir `PortalResultMessage`).
       return decision === VOTE_CHOICE.LEAVE
-        ? `L'équipe part — ${formatGold(source.portalGold)} or acquis.`
-        : `L'équipe reste — ${formatGold(source.portalGold)} or toujours en jeu.`;
+        ? `L’équipe part — ${formatGold(source.portalGold)} or acquis.`
+        : `L’équipe reste — ${formatGold(source.portalGold)} or toujours en jeu.`;
     }
     // ⚠️ **Derive du TICK, jamais de l'horloge murale** : c'est le tick que le
     // serveur a date, donc le seul temps que les joueurs partagent.

@@ -144,7 +144,7 @@ export function renderCombos(root: HTMLElement, known: ReadonlySet<number>): voi
       // Elle reste lisible ; seules celles ou l'equipe n'a rien s'attenuent.
       const partial = !active && (known.has(a) || known.has(b));
       const row = document.createElement('div');
-      row.className = 'combo flex items-center gap-[4px] text-[16px] leading-[1.25]';
+      row.className = 'combo flex items-center gap-[4px] text-[18px] leading-[1.25]';
       row.dataset.reaction = String(id);
       row.dataset.active = String(active);
       row.dataset.partial = String(partial);
@@ -175,7 +175,7 @@ export const NEUTRE_HELP = `+${Math.round((NEUTRE_MARQUE_AMP - 1) * 100)} % de d
 /** La derniere ligne : le neutre ne combine rien, il amplifie ce que l'equipe marque. */
 function neutreRow(): HTMLElement {
   const row = document.createElement('div');
-  row.className = 'combo-neutre flex items-center gap-[4px] text-[16px] leading-[1.25]';
+  row.className = 'combo-neutre flex items-center gap-[4px] text-[18px] leading-[1.25]';
   row.title = `Neutre : ${NEUTRE_HELP}`;
   const name = document.createElement('span');
   name.className = 'f-meta ol';
