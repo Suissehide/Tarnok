@@ -285,9 +285,26 @@ describe('PortalScreen — ce que le joueur voit', () => {
     ouvert(h);
     h.screen.update();
 
-    expect(boutonDe(h, VOTE_CHOICE.LEAVE).textContent).toBe('Partir1');
-    expect(boutonDe(h, VOTE_CHOICE.STAY).textContent).toBe('Rester2');
+    expect(boutonDe(h, VOTE_CHOICE.LEAVE).querySelector('.portal-choice__label')?.textContent).toBe(
+      'Partir',
+    );
+    expect(boutonDe(h, VOTE_CHOICE.STAY).querySelector('.portal-choice__label')?.textContent).toBe(
+      'Rester',
+    );
     expect(boutonDe(h, VOTE_CHOICE.LEAVE).querySelector('kbd')?.textContent).toBe('1');
+  });
+
+  it('porte les attributs ARIA du clavier : kbd masque, raccourci sur le bouton', () => {
+    ouvert(h);
+    h.screen.update();
+
+    const partir = boutonDe(h, VOTE_CHOICE.LEAVE);
+    const rester = boutonDe(h, VOTE_CHOICE.STAY);
+
+    expect(partir.querySelector('kbd')?.getAttribute('aria-hidden')).toBe('true');
+    expect(rester.querySelector('kbd')?.getAttribute('aria-hidden')).toBe('true');
+    expect(partir.getAttribute('aria-keyshortcuts')).toBe('1');
+    expect(rester.getAttribute('aria-keyshortcuts')).toBe('2');
   });
 
   /**

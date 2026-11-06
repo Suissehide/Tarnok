@@ -673,6 +673,9 @@ function join(code: string): void {
     const choice = portalKeyChoice(
       e.code,
       e.repeat ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey ||
         paused ||
         hud.classList.contains('hidden') ||
         !summary.classList.contains('hidden'),

@@ -3879,6 +3879,11 @@ export class GameClient {
    * veille, la vague que l'ordre precedent venait de poser.
    */
   #applyPendingOrders(tick: number, dt: number): void {
+    // Rien a faire la plupart des ticks : sortir avant `splice` evite une
+    // allocation de tableau vide a chaque pas.
+    if (this.#pendingOrders.length === 0) {
+      return;
+    }
     // Tri stable : a tick egal, l'ordre d'arrivee, celui du salon.
     const orders = this.#pendingOrders.splice(0).sort((a, b) => a.spawnTick - b.spawnTick);
     const first = orders[0];
