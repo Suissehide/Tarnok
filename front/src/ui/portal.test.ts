@@ -308,8 +308,9 @@ describe('PortalScreen — ce que le joueur voit', () => {
   });
 
   /**
-   * ⚠️ **L'or vient du SNAPSHOT, donc il bouge PENDANT la fenetre** : figer le
-   * montant a l'ouverture mentirait des le tick suivant. Le multiplicateur,
+   * ⚠️ **L'or vient du SNAPSHOT, relu a chaque image** : le monde est gele
+   * pendant le vote, mais figer le montant a la reception de `PORTAL_OPEN`
+   * mentirait si un snapshot en retard le corrige. Le multiplicateur,
    * annonce une fois, ne bouge pas.
    */
   it('suit l or du snapshot d une image a l autre', () => {

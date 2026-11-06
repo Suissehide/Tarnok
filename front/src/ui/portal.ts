@@ -42,7 +42,7 @@ export interface PortalSource {
  * Le separateur des milliers : U+202F, espace fine insecable.
  *
  * ⚠️ **Ecrit par `fromCharCode`, pas comme caractere litteral** : le formateur
- * du depot reecrit `' '` en caractere reel, une espace INVISIBLE dans la
+ * du depot reecrit `'\u202f'` en caractere reel, une espace INVISIBLE dans la
  * source qu'un editeur pourrait normaliser sans bruit.
  */
 export const THIN_SPACE = String.fromCharCode(0x202f);
