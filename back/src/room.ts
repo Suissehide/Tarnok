@@ -537,10 +537,10 @@ export class Room {
 
   /**
    * Dernier tick du gel courant (inclus) : tant que `#tick <= #freezeUntilTick`,
-   * `step` ne fait qu'incrementer le tick et revient. `0` hors gel, puisque le
-   * premier tick reel vaut 1.
+   * `step` ne fait qu'incrementer le tick et revient. `-1` hors gel, comme au
+   * client : `useAbility` compare au tick COURANT, qui vaut 0 avant le premier pas.
    */
-  #freezeUntilTick = 0;
+  #freezeUntilTick = -1;
   /** Dernier tick de la reprise progressive qui suit le gel (voir `#movementScale`). */
   #resumeEndTick = 0;
 
@@ -1257,6 +1257,9 @@ export class Room {
     // Etape 16 : l'evenement dort pendant un gel, il doit oublier le parti
     // tout de suite (un nouveau venu peut reprendre l'id).
     this.#event?.forget(id);
+    // Un parti ne tient ni l'etalage ni le portail ouverts jusqu'a l'echeance.
+    this.#draft.forget(id);
+    this.#portal.forget(id);
   }
 
   /**
@@ -1308,6 +1311,11 @@ export class Room {
    * quand elle refuse, sinon le verbe devient gratuit.
    */
   useAbility(playerId: number, aimX: number, aimY: number): AbilityUsed | null {
+    // Memes gardes que `step` : rien ne se joue apres la fin, pendant un
+    // etalage ni pendant le gel — un verbe pose la s'appliquerait a un monde fige.
+    if (this.#runOver || this.#draft.phase !== 'closed' || this.#tick <= this.#freezeUntilTick) {
+      return null;
+    }
     const p = this.#players.get(playerId);
     if (!p || p.hp <= 0) {
       return null;
@@ -1337,8 +1345,8 @@ export class Room {
    *
    * ```
    * 1. tick++
-   * 2. deplacer les joueurs
-   * 3. enregistrer l'historique de positions (arrondi !)
+   * 2. deplacer les joueurs (les vivants)
+   * 3. relever les positions des vivants (arrondi !) pour les vagues
    * 4. rafraichir les champs si du (tick % stepsPerField)
    * 5. appliquer les ordres de vague en attente
    * 6. avancer la horde — `Horde.step` recalcule d'abord la trajectoire des
@@ -1353,6 +1361,7 @@ export class Room {
    *    joueur acheve par le contact de ce tick-ci ne se releve pas
    * 9. resoudre les ramassages d'orbes
    * 10. mettre en file morts et ramassages pour diffusion
+   * 11. enregistrer l'historique de positions des vivants, en FIN de pas
    * ```
    *
    * ⚠️ **Etape 7 bis : l'annonce vient APRES la reaction.** `#announceZones`
@@ -1368,9 +1377,7 @@ export class Room {
 
     if (this.#runOver) {
       // Fin de run : plus rien n'avance, mais le tick continue de compter —
-      // c'est lui qui date le message deja mis en file. Seul garde de cette
-      // garantie : le deplacement plus bas ne verifie pas `hp`, et un joueur
-      // a 0 pv glisserait encore sur la carte.
+      // c'est lui qui date le message deja mis en file.
       return;
     }
 
@@ -1404,6 +1411,10 @@ export class Room {
     const scaledDt = dt * movementScale;
 
     for (const p of this.#players.values()) {
+      // Un mort ne bouge plus (la prediction du client fait de meme : `#localSpeed`).
+      if (p.hp <= 0) {
+        continue;
+      }
       // Vitesse propre a ce joueur : les cartes « fougue » empilees s'ajoutent
       // a `PLAYER_SPEED`, en pixels monde par seconde. Etape 16 : le porteur
       // de relique avance a `relicSpeedFactor` de la vitesse ENTIERE ; la
@@ -1452,21 +1463,18 @@ export class Room {
       p.y = fin.y;
     }
 
-    // Arrondies, comme sur le fil : le client ne connait que la version
-    // quantifiee en int16 (`encodeSnapshot`). Avec des positions flottantes,
-    // les deux cotes enracineraient parfois leur BFS dans des cellules
-    // differentes : le serveur s'impose l'arrondi comme il s'impose le retard.
-    const ids: number[] = [];
+    // Les vivants seuls : un mort n'est ni une cible de la horde ni un
+    // point d'ancrage de vague. Le client applique le MEME filtre sur le
+    // snapshot (`hp > 0`), et l'historique s'enregistre en FIN de pas pour
+    // que les deux cotes lisent les PV de fin de tick.
     const xs: number[] = [];
     const ys: number[] = [];
     for (const p of this.#players.values()) {
-      ids.push(p.id);
-      xs.push(Math.round(p.x));
-      ys.push(Math.round(p.y));
+      if (p.hp > 0) {
+        xs.push(Math.round(p.x));
+        ys.push(Math.round(p.y));
+      }
     }
-    // Les identifiants voyagent avec les positions : un leurre retrouve son
-    // lanceur par son id, jamais par un rang qui bouge (`shared/decoys.ts`).
-    this.#history.record(this.#tick, xs, ys, ids);
 
     const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
     if (this.#tick % stepsPerField === 0) {
@@ -1832,12 +1840,15 @@ export class Room {
       spreadMarkOnDeath(this.horde, fallenMarks, this.#tick);
     }
 
+    // Un mort ne ramasse rien.
     const pickedIds = this.#orbs.resolvePickups(
-      [...this.#players.values()].map((p) => ({
-        x: p.x,
-        y: p.y,
-        pickupRadius: this.#pickupRadiusOf(p),
-      })),
+      [...this.#players.values()]
+        .filter((p) => p.hp > 0)
+        .map((p) => ({
+          x: p.x,
+          y: p.y,
+          pickupRadius: this.#pickupRadiusOf(p),
+        })),
     );
     if (pickedIds.length > 0) {
       this.#pendingPickups.push({ tick: this.#tick, ids: pickedIds });
@@ -1874,6 +1885,30 @@ export class Room {
     // Rien au-dessus de cette ligne ne consulte le portail : le monde a tourne
     // tout entier pendant le vote.
     this.#stepPortal();
+
+    // Arrondies, comme sur le fil : le client ne connait que la version
+    // quantifiee en int16 (`encodeSnapshot`). Avec des positions flottantes,
+    // les deux cotes enracineraient parfois leur BFS dans des cellules
+    // differentes : le serveur s'impose l'arrondi comme il s'impose le retard.
+    //
+    // ⚠️ **En fin de pas, vivants seuls.** Les positions n'ont pas bouge
+    // depuis le deplacement, mais les PV si : le client filtre les morts du
+    // snapshot de ce tick, qui porte les PV de FIN de pas. Enregistrer avant
+    // le contact ferait viser un tick de plus le joueur qui vient de tomber.
+    // Le reciblage plus haut lit `tick - FIELD_INPUT_DELAY_TICKS`, jamais ce tick.
+    const ids: number[] = [];
+    const rxs: number[] = [];
+    const rys: number[] = [];
+    for (const p of this.#players.values()) {
+      if (p.hp > 0) {
+        ids.push(p.id);
+        rxs.push(Math.round(p.x));
+        rys.push(Math.round(p.y));
+      }
+    }
+    // Les identifiants voyagent avec les positions : un leurre retrouve son
+    // lanceur par son id, jamais par un rang qui bouge (`shared/decoys.ts`).
+    this.#history.record(this.#tick, rxs, rys, ids);
   }
 
   snapshot(out: Outbox): void {
@@ -2398,7 +2433,10 @@ export class Room {
     }
     const plancher = coffre ? CHEST_RARITY_FLOOR : evenement ? EVENT_RARITY_FLOOR : RARITY.COMMUNE;
     const spread = drawSpread(loadouts, this.#draftRng, plancher);
-    this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts);
+    // Tous participent (un mort est servi d'office), mais seuls les vivants
+    // sont attendus : un mort ne tient pas la fenetre ouverte.
+    const vivants = [...this.#players.values()].filter((p) => p.hp > 0).map((p) => p.id);
+    this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts, vivants);
     // ⚠️ **Le niveau annonce pour un coffre est celui d'AVANT tout niveau
     // encore en file.** `#level` inclut deja les niveaux montes mais pas
     // encore tires (`#pendingLevels`) : sans la soustraction, le client

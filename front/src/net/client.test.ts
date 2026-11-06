@@ -30,6 +30,7 @@ import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import {
+  CLOSE_CODES,
   decode,
   encodeBossCharge,
   encodeDeaths,
@@ -93,6 +94,9 @@ import {
  * `WebSocket` explicitement — il lit le symbole global — donc le remplacer
  * globalement suffit a l'isoler du reseau.
  */
+/** `data` pour `message`, `code` pour `close` : le strict necessaire des deux evenements. */
+type FakeEvent = { data?: ArrayBuffer; code?: number };
+
 class FakeSocket {
   static instances: FakeSocket[] = [];
   /**
@@ -101,7 +105,7 @@ class FakeSocket {
    * (`vi.stubGlobal`). Sans elle, aucun INPUT ne partirait jamais.
    */
   static readonly OPEN = 1;
-  readonly #listeners = new Map<string, ((event: { data: ArrayBuffer }) => void)[]>();
+  readonly #listeners = new Map<string, ((event: FakeEvent) => void)[]>();
   binaryType = '';
   readyState = 0;
 
@@ -109,7 +113,7 @@ class FakeSocket {
     FakeSocket.instances.push(this);
   }
 
-  addEventListener(type: string, cb: (event: { data: ArrayBuffer }) => void): void {
+  addEventListener(type: string, cb: (event: FakeEvent) => void): void {
     const list = this.#listeners.get(type) ?? [];
     list.push(cb);
     this.#listeners.set(type, list);
@@ -126,7 +130,7 @@ class FakeSocket {
     // Rien a fermer.
   }
 
-  emit(type: string, event: { data: ArrayBuffer }): void {
+  emit(type: string, event: FakeEvent): void {
     // Un vrai WebSocket passe a OPEN AVANT de declencher son evenement 'open'.
     if (type === 'open') {
       this.readyState = FakeSocket.OPEN;
@@ -149,6 +153,19 @@ function latestSocket(): FakeSocket {
   }
   return socket;
 }
+
+describe('GameClient — le code de fermeture remonte a onStatusChange', () => {
+  it('transmet le code du CloseEvent avec le statut closed', () => {
+    const onStatus = vi.fn();
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), onStatus);
+    client.connect();
+    latestSocket().emit('open', {});
+
+    latestSocket().emit('close', { code: CLOSE_CODES.ROOM_FULL });
+
+    expect(onStatus).toHaveBeenLastCalledWith('closed', CLOSE_CODES.ROOM_FULL);
+  });
+});
 
 describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
   it('initialise hordeTick avec le tick absolu du WELCOME, pas avec zero', () => {
@@ -3327,6 +3344,35 @@ describe('GameClient — le draft recu et ses effets (tache 9)', () => {
     const tir = spy.mock.calls.find((c) => c[0].id === BASE_WEAPON_ID);
     expect(tir?.[8]).toBe(1);
     expect(tir?.[9]).toEqual(critOf(client.loadoutOf(1)));
+  });
+
+  it('la prediction locale n avance plus a 0 pv, comme le salon', () => {
+    let entree: InputAxes = { x: 0, y: 0 };
+    const { client, socket } = setup(1, () => entree);
+    socket.emit('message', {
+      data: encodeSnapshot(0, 0, 0, [
+        {
+          id: 1,
+          x: 2000,
+          y: 2000,
+          hp: 0,
+          aimX: 0,
+          aimY: 0,
+          pickupRadius: ORB_PICKUP_RADIUS,
+          shield: 0,
+        },
+      ]),
+    });
+    const CHAUFFE = LEVEL_RESUME_TICKS + 5;
+    for (let i = 0; i < CHAUFFE; i++) {
+      client.update(i * MS_PER_TICK, STEP);
+    }
+    const avant = client.localPosition;
+    entree = { x: 1, y: 0 };
+    for (let i = 0; i < 20; i++) {
+      client.update((CHAUFFE + i) * MS_PER_TICK, STEP);
+    }
+    expect(client.localPosition).toEqual(avant);
   });
 });
 

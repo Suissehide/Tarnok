@@ -1562,7 +1562,8 @@ export class GameClient {
   constructor(
     private readonly url: string,
     private readonly readInput: () => InputAxes,
-    private readonly onStatusChange: (status: ConnectionStatus) => void,
+    /** `code` : le code de fermeture WS (`CLOSE_CODES`), seulement sur `closed` par le serveur. */
+    private readonly onStatusChange: (status: ConnectionStatus, code?: number) => void,
     /** Appele une seule fois, a la reception de `RUN_OVER`. */
     private readonly onRunOver: (summary: RunOverSummary) => void = () => undefined,
     /**
@@ -2241,19 +2242,19 @@ export class GameClient {
       this.#onFrame(event.data);
     });
 
-    ws.addEventListener('close', () => {
-      this.disconnect();
+    ws.addEventListener('close', (event: CloseEvent) => {
+      this.disconnect(event.code);
     });
   }
 
-  disconnect(): void {
+  disconnect(code?: number): void {
     if (this.#inputTimer !== null) {
       clearInterval(this.#inputTimer);
       this.#inputTimer = null;
     }
     this.#ws?.close();
     this.#ws = null;
-    this.#setStatus('closed');
+    this.#setStatus('closed', code);
   }
 
   /**
@@ -2360,6 +2361,10 @@ export class GameClient {
    * la construction.
    */
   #localSpeed(): number {
+    // Un mort ne bouge plus, comme au salon (`Room.step`).
+    if (this.#localHp <= 0) {
+      return 0;
+    }
     const base = PLAYER_SPEED + this.accountBonuses.speed;
     if (this.#localId === null) {
       return base;
@@ -2743,13 +2748,16 @@ export class GameClient {
     // `PlayerHistory`.
     const snapshot = this.#buffer.latest();
     if (snapshot) {
+      // Les vivants seuls, comme `Room.step` (un mort n'est pas une cible) :
+      // le serveur enregistre en fin de pas, avec les PV que ce snapshot porte.
+      const vivants = snapshot.players.filter((p) => p.hp > 0);
       this.#history.record(
         snapshot.tick,
-        snapshot.players.map((p) => p.x),
-        snapshot.players.map((p) => p.y),
+        vivants.map((p) => p.x),
+        vivants.map((p) => p.y),
         // Le meme ordre que le serveur, et les identifiants avec : un leurre
         // retrouve son lanceur par son id (`shared/decoys.ts`).
-        snapshot.players.map((p) => p.id),
+        vivants.map((p) => p.id),
       );
     }
 
@@ -3774,10 +3782,10 @@ export class GameClient {
     return Math.min(1, Math.max(0, sinceFreezeEnd / LEVEL_RESUME_TICKS));
   }
 
-  #setStatus(status: ConnectionStatus): void {
+  #setStatus(status: ConnectionStatus, code?: number): void {
     if (this.#status !== status) {
       this.#status = status;
-      this.onStatusChange(status);
+      this.onStatusChange(status, code);
     }
   }
 }

@@ -4,6 +4,7 @@ import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
 import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import { clampToMap, PING_BURST, PING_INTENTS, PING_WINDOW_TICKS } from '@shared/ping';
 import {
+  CLOSE_CODES,
   decode,
   encodeAbilityUsed,
   encodeBossCharge,
@@ -32,6 +33,10 @@ import { startingWeapons } from '@shared/weapons';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
 
+// Les codes vivent dans `shared/protocol.ts` (le client les lit aussi) ; les
+// tests du back les importent d'ici.
+export { CLOSE_CODES };
+
 import {
   buyItem,
   createAccount,
@@ -57,39 +62,6 @@ const MAX_CATCH_UP_STEPS = 5;
 
 /** Periode du HUD de debug serveur (un HUD, pas des logs). */
 const METRICS_PERIOD_MS = 5000;
-
-/**
- * Codes de fermeture applicatifs, dans la plage privee 4000-4999.
- *
- * ⚠️ **Toutes les valeurs vivent ICI, et nulle part en dehors de cet objet** :
- * `handshake.integration.test.ts` verifie qu'elles sont deux a deux distinctes
- * via `Object.values(CLOSE_CODES)`. Un `const CLOSE_*` isole echapperait a ce
- * controle et pourrait entrer en collision sans que rien ne le voie.
- */
-export const CLOSE_CODES = Object.freeze({
-  /** Code de salon absent du registre. */
-  UNKNOWN_ROOM: 4004,
-  /** Salon a `MAX_PLAYERS` places, toutes deja occupees. */
-  ROOM_FULL: 4003,
-  /** Trame WS illisible ou de longueur inattendue, HELLO compris. */
-  BAD_FRAME: 4002,
-  /** Premier message recu, mais ce n'est pas un HELLO. */
-  NO_HELLO: 4005,
-  /** HELLO bien forme, jeton inconnu -- le client doit frapper un nouveau compte. */
-  UNKNOWN_TOKEN: 4006,
-  /**
-   * Echec interne pendant la poignee de main (ex: base indisponible) : ce
-   * n'est pas le client qui est en faute, il peut reessayer sans frapper un
-   * nouveau compte.
-   */
-  INTERNAL_ERROR: 4007,
-  /**
-   * Compte reconnu, mais la Session s'est refermee (dernier joueur parti)
-   * PENDANT l'attente -- le salon n'existe plus dans `app.rooms`, accueillir
-   * ce client y serait l'accueillir dans une partie gelee et dereferencee.
-   */
-  ROOM_CLOSED: 4008,
-});
 
 /**
  * Un salon en cours d'execution : la simulation, ses sockets, et sa boucle.

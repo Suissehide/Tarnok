@@ -6614,3 +6614,53 @@ describe('etape 16 : les quatre evenements dans le salon', () => {
     expect(apres.every((p) => p === tenu.at(-1))).toBe(true);
   });
 });
+
+describe('le mort n est pas un leurre invulnerable', () => {
+  it('un mort ne bouge plus, meme avec une entree de mouvement', () => {
+    const room = new Room(0x0d_ea_0001);
+    room.join(1);
+    room.join(2); // un vivant : la run continue, `step` ne revient pas en tete
+    room.debugPlace(1, 2000, 2000);
+    room.debugKill(1);
+    room.applyInput(1, 1, 127, 0);
+    const avant = positionOf(room, 1);
+    for (let i = 0; i < 10; i++) {
+      room.step(DT);
+    }
+    expect(positionOf(room, 1)).toEqual(avant);
+  });
+
+  it('un mort ne tient pas l etalage ouvert : le vivant seul referme la fenetre', () => {
+    const room = new Room(0x0d_ea_0002);
+    room.join(1);
+    room.join(2);
+    room.debugKill(1);
+    room.debugOweLevels(1);
+    room.step(DT);
+    expect(room.drainDraftOpens()).toHaveLength(1);
+    expect(room.setDraftToken(2, 0)).toBe(true);
+    room.step(DT);
+    const results = room.drainDraftResults();
+    expect(results).toHaveLength(1);
+    const issues = results[0]?.outcomes ?? [];
+    expect(issues).toContainEqual({ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON });
+    // Le mort est servi d'office : il participe, il n'est pas attendu.
+    expect(issues.some((r) => r.playerId === 1 && r.outcome === OUTCOME.AUTO)).toBe(true);
+  });
+
+  it('un parti ne tient pas l etalage ouvert, meme jeton pose', () => {
+    const room = new Room(0x0d_ea_0003);
+    room.join(1);
+    room.join(2);
+    room.debugOweLevels(1);
+    room.step(DT);
+    expect(room.drainDraftOpens()).toHaveLength(1);
+    expect(room.setDraftToken(1, 1)).toBe(true);
+    room.leave(1);
+    expect(room.setDraftToken(2, 0)).toBe(true);
+    room.step(DT);
+    const results = room.drainDraftResults();
+    expect(results).toHaveLength(1);
+    expect(results[0]?.outcomes).toEqual([{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]);
+  });
+});

@@ -44,6 +44,39 @@ export const MSG = {
 export type MsgType = (typeof MSG)[keyof typeof MSG];
 
 /**
+ * Codes de fermeture applicatifs, dans la plage privee 4000-4999.
+ *
+ * ⚠️ **Toutes les valeurs vivent ICI, et nulle part en dehors de cet objet** :
+ * `back/src/handshake.integration.test.ts` verifie qu'elles sont deux a deux distinctes
+ * via `Object.values(CLOSE_CODES)`. Un `const CLOSE_*` isole echapperait a ce
+ * controle et pourrait entrer en collision sans que rien ne le voie.
+ */
+export const CLOSE_CODES = Object.freeze({
+  /** Code de salon absent du registre. */
+  UNKNOWN_ROOM: 4004,
+  /** Salon a `MAX_PLAYERS` places, toutes deja occupees. */
+  ROOM_FULL: 4003,
+  /** Trame WS illisible ou de longueur inattendue, HELLO compris. */
+  BAD_FRAME: 4002,
+  /** Premier message recu, mais ce n'est pas un HELLO. */
+  NO_HELLO: 4005,
+  /** HELLO bien forme, jeton inconnu -- le client doit frapper un nouveau compte. */
+  UNKNOWN_TOKEN: 4006,
+  /**
+   * Echec interne pendant la poignee de main (ex: base indisponible) : ce
+   * n'est pas le client qui est en faute, il peut reessayer sans frapper un
+   * nouveau compte.
+   */
+  INTERNAL_ERROR: 4007,
+  /**
+   * Compte reconnu, mais la Session s'est refermee (dernier joueur parti)
+   * PENDANT l'attente -- le salon n'existe plus dans `app.rooms`, accueillir
+   * ce client y serait l'accueillir dans une partie gelee et dereferencee.
+   */
+  ROOM_CLOSED: 4008,
+});
+
+/**
  * Position d'un joueur telle qu'elle passe sur le fil : quantifiee a l'entier.
  *
  * Pas de `xp` ici : l'experience est celle de l'equipe, et la porter par

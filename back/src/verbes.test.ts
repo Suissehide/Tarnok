@@ -305,3 +305,23 @@ describe('etape 8 tache 7 : Relais', () => {
     expect(room.intangibleTicksOf(2)).toBe(0);
   });
 });
+
+describe('les verbes pendant un etalage et pendant le gel', () => {
+  it('refuse le verbe tant qu un etalage est ouvert, puis pendant le gel qui le suit', () => {
+    const room = new Room(1);
+    room.join(1, undefined, undefined, REMPART);
+    room.debugPlace(1, 2000, 2000);
+    room.debugOweLevels(1);
+    room.step(DT); // ouvre l'etalage : le monde est gele
+    expect(room.drainDraftOpens()).toHaveLength(1);
+    expect(room.useAbility(1, 2000, 2000)).toBeNull();
+
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    room.step(DT); // referme : `#freezeUntilTick` vaut ce tick
+    expect(room.drainDraftResults()).toHaveLength(1);
+    expect(room.useAbility(1, 2000, 2000)).toBeNull();
+
+    room.step(DT); // le gel est passe
+    expect(room.useAbility(1, 2000, 2000)).not.toBeNull();
+  });
+});

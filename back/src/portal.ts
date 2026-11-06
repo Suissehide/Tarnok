@@ -92,6 +92,12 @@ export class Portal {
     return true;
   }
 
+  /** Un joueur parti ne vote plus et n'est plus attendu, comme `Draft.forget`. */
+  forget(playerId: number): void {
+    this.#pending = this.#pending.filter((id) => id !== playerId);
+    this.#votes.delete(playerId);
+  }
+
   /** Qui a vote quoi — ce que `VOTES` rediffuse. Vide hors vote. */
   votes(): ReadonlyMap<number, number> {
     return this.#votes;
