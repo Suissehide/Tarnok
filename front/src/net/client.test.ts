@@ -230,6 +230,8 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
       // etre passe, sans quoi un rattrapage pendant une charge avancerait le
       // boss par sa vitesse au lieu de le deriver le long du couloir.
       null,
+      // Etape 17 : le facteur de `dt` de chaque pas rattrape (gel, rampe).
+      expect.any(Function),
     );
     expect(client.horde.count).toBe(10);
   });
@@ -5214,7 +5216,50 @@ describe('etape 17 : le portail gele le client, date au tick', () => {
 
     socket.emit('message', { data: encodePortalOpen(ECHEANCE, 1.5) });
     expect(client.draftCards).toHaveLength(0);
+    // Revue 1 : le badge est date comme le gel, il change a son premier tick.
+    expect(client.freezeIsPortal).toBe(false);
+    auTick(socket, OUVERTURE + 1);
     expect(client.freezeIsPortal).toBe(true);
+  });
+
+  it('revue 1 : un LEVEL_UP recu pendant la rampe du portail ne coupe pas isFrozen avant son tick', () => {
+    const { client, socket } = setup();
+    auTick(socket, OUVERTURE);
+    socket.emit('message', { data: encodePortalOpen(ECHEANCE, 1.5) });
+    socket.emit('message', { data: encodePortalResult(VERDICT, VOTE_CHOICE.STAY, 0) });
+    auTick(socket, VERDICT + 5);
+    expect(client.isFrozen).toBe(true);
+    expect(client.freezeIsPortal).toBe(true);
+
+    // Recu en avance, date VERDICT + 20 : jusque-la, c'est encore la rampe du portail.
+    socket.emit('message', { data: encodeLevelUp(VERDICT + 20, 2) });
+    expect(client.isFrozen).toBe(true);
+    expect(client.freezeIsPortal).toBe(true);
+    expect(client.motionScale).toBeCloseTo(5 / LEVEL_RESUME_TICKS, 9);
+
+    auTick(socket, VERDICT + 20);
+    expect(client.isFrozen).toBe(true);
+    expect(client.freezeIsPortal).toBe(false);
+    expect(client.motionScale).toBe(0);
+  });
+
+  it('revue 1 : un gel trop vieux pour l anneau se compte dans lateFreezes', () => {
+    const { client, socket } = setup();
+    auTick(socket, OUVERTURE);
+    // Le premier `update` pose les champs et l'anneau.
+    client.update(0, STEP);
+    expect(client.lateFreezes).toBe(0);
+    for (let i = 0; i < ROLLBACK_DEPTH_TICKS + 4; i++) {
+      client.update(0, STEP);
+    }
+    // Un gel date d'avant le fond de l'anneau : impossible a rejouer.
+    socket.emit('message', { data: encodeLevelUp(OUVERTURE + 1, 2) });
+    expect(client.lateFreezes).toBe(1);
+    // Et un gel rejouable ne compte pas.
+    socket.emit('message', {
+      data: encodeDraftResult(client.hordeTick - 3, []),
+    });
+    expect(client.lateFreezes).toBe(1);
   });
 
   it('un LEVEL_UP recu AVANT son tick ne gele pas le present (le gel est date, enfin)', () => {
@@ -5253,20 +5298,38 @@ interface PortalScenarioResult {
  * le client recoit l'ouverture avant d'avoir simule `OUVERTURE` (le cas
  * ordinaire : il suit le dernier snapshot) ; au-dela de 1, il a deja simule
  * des ticks que le serveur a geles (ou rampes), et doit les rejouer.
+ *
+ * Revue 1 : le salon n'ouvre un portail que dans un pas qui sort une vague
+ * (`Room#step`) : un `WAVE_ORDER` de `spawnTick = OUVERTURE` voyage donc
+ * TOUJOURS avec le `PORTAL_OPEN`, et son rattrapage doit respecter le gel.
+ * `ouverture` choisit si le tick d'ouverture tombe sur un rafraichissement du
+ * champ (`STEPS_PER_FIELD`) ou non.
+ *
+ * `etalage` (revue 1, point de vigilance 1) : un etalage du s'ouvre au pas qui
+ * suit « rester » ; le monde regele de `VERDICT + 1` a `VERDICT + etalage`
+ * inclus, puis reprend. `LEVEL_UP` voyage avec le `PORTAL_RESULT`, et
+ * `DRAFT_RESULT` part avec le meme retard.
  */
 function runClientPortalScenario(params: {
   mapSeed: number;
   openDelay: number;
   resultDelay: number;
+  ouverture?: number;
+  etalage?: number;
 }): PortalScenarioResult {
   const { mapSeed, openDelay, resultDelay } = params;
   const WAVE_ID = 77;
   const ENTITIES = 40;
-  const OUVERTURE = 120;
+  const VAGUE_ID = 78;
+  const VAGUE = 30;
+  const OUVERTURE = params.ouverture ?? 120;
   const VERDICT = OUVERTURE + GEL_TICKS;
-  const TICKS = VERDICT + LEVEL_RESUME_TICKS + 90;
+  const ETALAGE = params.etalage ?? 0;
+  // Le dernier tick gele, etalage enchaine compris.
+  const FIN = VERDICT + ETALAGE;
+  const TICKS = FIN + LEVEL_RESUME_TICKS + 90;
 
-  const ref = makeReferenceServer(mapSeed, ENTITIES);
+  const ref = makeReferenceServer(mapSeed, ENTITIES + VAGUE);
   const order: WaveOrder = {
     waveId: WAVE_ID,
     spawnTick: 0,
@@ -5278,6 +5341,23 @@ function runClientPortalScenario(params: {
     count: ENTITIES,
   };
   ref.horde.spawn(order, ref.fields[0]);
+  const vague: WaveOrder = {
+    waveId: VAGUE_ID,
+    spawnTick: OUVERTURE,
+    seed: 0x51ee_d078,
+    archetype: 0,
+    formation: FORMATION.CLUSTER,
+    // Pres du joueur 0 a l'ouverture : loin des joueurs, un champ perime
+    // (un rafraichissement que le salon n'a pas fait) ne change presque
+    // aucune direction, et la derive ne le verrait pas.
+    anchorX: 1900,
+    anchorY: 4000,
+    count: VAGUE,
+  };
+  const ids = [
+    ...Array.from({ length: ENTITIES }, (_, i) => entityIdOf(WAVE_ID, i)),
+    ...Array.from({ length: VAGUE }, (_, i) => entityIdOf(VAGUE_ID, i)),
+  ];
 
   const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
   client.connect();
@@ -5293,13 +5373,17 @@ function runClientPortalScenario(params: {
   let prev: { x: number; y: number } | null = null;
 
   for (let tick = 0; tick < TICKS; tick++) {
-    const gele = tick > OUVERTURE && tick <= VERDICT;
+    const gele = tick > OUVERTURE && tick <= FIN;
     if (!gele) {
       vivant++;
     }
     const xs = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.cos(vivant * 0.02 + p) * 1500));
     const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(vivant * 0.02 + p) * 1500));
 
+    if (tick === OUVERTURE) {
+      // Les ordres d'abord, avant le champ et la horde : l'ordre de `Room#step`.
+      ref.horde.spawn(vague, ref.fields[0]);
+    }
     if (!gele) {
       ref.playerHistory.record(tick, xs, ys);
       if (tick % STEPS_PER_FIELD === 0) {
@@ -5311,8 +5395,8 @@ function runClientPortalScenario(params: {
           ref.horde.retarget(seen.x, seen.y);
         }
       }
-      // La rampe de `Room#movementScale` : `(tick − VERDICT) / LEVEL_RESUME_TICKS`.
-      const echelle = tick > VERDICT ? Math.min(1, (tick - VERDICT) / LEVEL_RESUME_TICKS) : 1;
+      // La rampe de `Room#movementScale` : `(tick − FIN) / LEVEL_RESUME_TICKS`.
+      const echelle = tick > FIN ? Math.min(1, (tick - FIN) / LEVEL_RESUME_TICKS) : 1;
       ref.horde.step(STEP * echelle, ref.fields, tick);
     }
 
@@ -5328,10 +5412,17 @@ function runClientPortalScenario(params: {
     }));
     socket.emit('message', { data: encodeSnapshot(tick, 0, 0, players) });
     if (tick === OUVERTURE + openDelay) {
+      socket.emit('message', { data: encodeWaveOrder(vague) });
       socket.emit('message', { data: encodePortalOpen(OUVERTURE + PORTAL_WINDOW_TICKS, 1) });
     }
     if (tick === VERDICT + resultDelay) {
       socket.emit('message', { data: encodePortalResult(VERDICT, VOTE_CHOICE.STAY, 0) });
+      if (ETALAGE > 0) {
+        socket.emit('message', { data: encodeLevelUp(VERDICT + 1, 2) });
+      }
+    }
+    if (ETALAGE > 0 && tick === FIN + resultDelay) {
+      socket.emit('message', { data: encodeDraftResult(FIN, []) });
     }
 
     client.update(tick * STEP, STEP);
@@ -5340,9 +5431,10 @@ function runClientPortalScenario(params: {
     // a fait : un ecart du au transit, pas au rejeu. On mesure APRES livraison.
     const enVol =
       (tick > OUVERTURE && tick < OUVERTURE + openDelay) ||
-      (tick > VERDICT && tick < VERDICT + resultDelay);
+      (tick > VERDICT && tick < VERDICT + resultDelay) ||
+      (tick > FIN && tick < FIN + resultDelay);
     if (!enVol) {
-      maxDrift = Math.max(maxDrift, measureDrift(ref.horde, client.horde, ENTITIES));
+      maxDrift = Math.max(maxDrift, measureDriftById(ref.horde, client.horde, ids));
     }
 
     const slot = ref.horde.slotOf(trackedId);
@@ -5352,7 +5444,7 @@ function runClientPortalScenario(params: {
         const d = Math.hypot(pos.x - prev.x, pos.y - prev.y);
         if (gele) {
           frozenTravel += d;
-        } else if (tick > VERDICT + LEVEL_RESUME_TICKS) {
+        } else if (tick > FIN + LEVEL_RESUME_TICKS) {
           resumedTravel += d;
         }
       }
@@ -5361,6 +5453,26 @@ function runClientPortalScenario(params: {
   }
 
   return { maxDrift, frozenTravel, resumedTravel };
+}
+
+/** Derive maximale, appariee par IDENTITE (deux vagues : `indexInWave` ne suffit plus). */
+function measureDriftById(reference: Horde, participant: Horde, ids: readonly number[]): number {
+  let max = 0;
+  for (const id of ids) {
+    const rs = reference.slotOf(id);
+    const ps = participant.slotOf(id);
+    if (rs < 0 || ps < 0) {
+      continue;
+    }
+    max = Math.max(
+      max,
+      Math.hypot(
+        (participant.x[ps] ?? 0) - (reference.x[rs] ?? 0),
+        (participant.y[ps] ?? 0) - (reference.y[rs] ?? 0),
+      ),
+    );
+  }
+  return max;
 }
 
 describe('etape 17 : un portail traverse, la horde du client reste celle du serveur', () => {
@@ -5386,5 +5498,103 @@ describe('etape 17 : un portail traverse, la horde du client reste celle du serv
     expect(r.frozenTravel).toBe(0);
     expect(r.resumedTravel).toBeGreaterThan(50);
     expect(r.maxDrift).toBeLessThan(0.0005);
+  });
+
+  it.each([
+    { ouverture: 120, delai: 2 },
+    { ouverture: 121, delai: 0 },
+    { ouverture: 121, delai: 2 },
+    { ouverture: 121, delai: 5 },
+    { ouverture: 121, delai: 3, etalage: 41 },
+    { ouverture: 120, delai: 4, etalage: 41 },
+  ])('revue 1 : la vague du tick d ouverture (ouverture $ouverture, retard $delai) ne rattrape pas le gel', ({
+    ouverture,
+    delai,
+    etalage,
+  }) => {
+    const r = runClientPortalScenario({
+      mapSeed: 0x17e_0001,
+      openDelay: delai,
+      resultDelay: delai,
+      ouverture,
+      etalage,
+    });
+    process.stdout.write(
+      `[etape 17] ouverture ${ouverture}, retard ${delai}, etalage ${etalage ?? 0} : ` +
+        `derive=${r.maxDrift.toFixed(3)}px\n`,
+    );
+    expect(r.frozenTravel).toBe(0);
+    expect(r.resumedTravel).toBeGreaterThan(50);
+    expect(r.maxDrift).toBeLessThan(0.0005);
+  });
+});
+
+describe('etape 17, revue 1 : un gel en retard ne ressuscite pas un mort de la veille', () => {
+  /**
+   * Une mort au tick `DEBUT − 1`, livree a l'heure, puis un gel date `DEBUT`
+   * livre 3 ticks en retard : le rejeu du gel restaure l'anneau a `DEBUT − 1`,
+   * qui doit deja porter la mort.
+   */
+  function survivant(gel: ((socket: FakeSocket, debut: number) => void) | null): number {
+    const WAVE_ID = 31;
+    const DEBUT = 61;
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0xd8a5_0031) });
+    socket.emit('message', {
+      data: encodeWaveOrder({
+        waveId: WAVE_ID,
+        spawnTick: 0,
+        seed: 0x51ee_d031,
+        archetype: 0,
+        formation: FORMATION.CLUSTER,
+        anchorX: 1200,
+        anchorY: 1200,
+        count: 20,
+      }),
+    });
+    const victime = entityIdOf(WAVE_ID, 3);
+    const joueurs = [0, 1, 2, 3].map((i) => ({
+      id: i,
+      x: 3000 + i * 200,
+      y: 3000,
+      hp: 100,
+      aimX: 0,
+      aimY: 0,
+      pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
+    }));
+    for (let tick = 0; tick < DEBUT + 10; tick++) {
+      socket.emit('message', { data: encodeSnapshot(tick, 0, 0, joueurs) });
+      if (tick === DEBUT - 1) {
+        socket.emit('message', { data: encodeDeaths(DEBUT - 1, [victime]) });
+      }
+      if (tick === DEBUT + 3 && gel) {
+        gel(socket, DEBUT);
+      }
+      client.update(tick * STEP, STEP);
+    }
+    return client.horde.slotOf(victime);
+  }
+
+  it('temoin : sans gel, la victime est morte', () => {
+    expect(survivant(null)).toBe(-1);
+  });
+
+  it('LEVEL_UP en retard de 3 ticks : la victime reste morte', () => {
+    expect(
+      survivant((socket, debut) => socket.emit('message', { data: encodeLevelUp(debut, 2) })),
+    ).toBe(-1);
+  });
+
+  it('PORTAL_OPEN en retard de 3 ticks : la victime reste morte', () => {
+    expect(
+      survivant((socket, debut) =>
+        socket.emit('message', {
+          data: encodePortalOpen(debut - 1 + PORTAL_WINDOW_TICKS, 1),
+        }),
+      ),
+    ).toBe(-1);
   });
 });

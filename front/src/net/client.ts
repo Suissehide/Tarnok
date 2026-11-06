@@ -227,6 +227,12 @@ const FIXED_DT = 1 / TICK_HZ;
 
 /** Cadence de rafraichissement du champ, en pas : meme calcul que `Room.step` et `Horde.replication.test.ts`. */
 const STEPS_PER_FIELD = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+/**
+ * Rafraichissements du champ gardes par `#fieldInputs` : de quoi couvrir
+ * `ROLLBACK_DEPTH_TICKS`, plus celui d'avant (l'amorce d'un rejeu remonte au
+ * dernier rafraichissement du ou avant le tick restaure).
+ */
+const FIELD_INPUT_LOG = Math.ceil(ROLLBACK_DEPTH_TICKS / STEPS_PER_FIELD) + 2;
 
 /** Un lot de morts en attente d'application, tel que recu par `DEATHS`. */
 interface PendingDeathBatch {
@@ -1399,7 +1405,7 @@ export class GameClient {
    * Les pings annonces, AU PLUS UN par joueur (cle : son id) : un nouveau ping
    * remplace l'ancien. Jamais purges ici — c'est
    * `livePings` qui dit lesquels sont encore vivants, a l'horloge `pingClock`
-   * (figee pendant le gel de niveau).
+   * (figee pendant un gel, etalage ou portail).
    */
   readonly pings = new Map<number, ActivePing>();
   #pingCount = 0;
@@ -1472,7 +1478,9 @@ export class GameClient {
   #freezeUntilTick = -1;
   #resumeEndTick = -1;
   /**
-   * Tick auquel le gel courant a commence, `-1` hors gel.
+   * Tick auquel le gel courant (le DERNIER annonce) a commence, `-1` tant
+   * qu'aucun gel n'a ete annonce. Jamais remis a `-1` : un gel fini garde son
+   * debut, et ce sont les bornes (`#untilAt`) qui disent qu'il est fini.
    *
    * ⚠️ **La fin du gel n'est pas calculable** : il dure jusqu'a ce que tout le
    * monde ait pose son jeton. Seul le serveur la connait et l'annonce dans
@@ -1493,6 +1501,21 @@ export class GameClient {
   #prevResumeEndTick = -1;
   /** Le gel courant est-il celui d'un portail (etape 17) ? Le badge du HUD le dit. */
   #freezeIsPortal = false;
+  /** Debut du gel PRECEDENT : avant lui, aucune borne connue ne s'applique (`#untilAt`). */
+  #prevFreezeStartTick = -1;
+  #prevFreezeIsPortal = false;
+  /** Voir le getter `lateFreezes`. */
+  #lateFreezes = 0;
+  /**
+   * Les entrees des derniers rafraichissements du champ, par tick (pas
+   * courant et rejeu, jamais l'amorce).
+   *
+   * ⚠️ **Un rejeu qui part d'un tick gele** (un `PORTAL_RESULT` ou un
+   * `LEVEL_UP` en retard) doit retrouver le champ d'avant le gel, et
+   * `PlayerHistory` (16 ticks) ne couvre plus un gel de plusieurs secondes.
+   * Voir `#primeFieldForReplay`.
+   */
+  #fieldInputs: { tick: number; x: readonly number[]; y: readonly number[] }[] = [];
 
   /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien. */
   #draftCards: readonly Card[] = [];
@@ -1869,22 +1892,40 @@ export class GameClient {
   }
 
   /**
-   * Vrai pendant le gel de montee de niveau **et sa rampe de reprise** : un
+   * Vrai pendant un gel (etalage ou portail) **et sa rampe de reprise** : un
    * monde fige sans explication se lit comme un plantage, et une seconde de
    * ralenti inexpliquee aussi.
+   *
+   * ⚠️ **Date comme `#untilAt`** : avant le debut du gel courant, ce sont les
+   * bornes du precedent qui valent — un `LEVEL_UP` recu en avance pendant la
+   * rampe d'un portail ne la coupe pas a la reception.
    */
   get isFrozen(): boolean {
-    if (this.#freezeStartTick < 0) {
-      return false;
+    const t = this.#lastHordeTick;
+    if (t >= this.#freezeStartTick) {
+      return this.#freezeStartTick >= 0 && t <= this.#resumeEndTick;
     }
     return (
-      this.#lastHordeTick >= this.#freezeStartTick && this.#lastHordeTick <= this.#resumeEndTick
+      this.#prevFreezeStartTick >= 0 &&
+      t >= this.#prevFreezeStartTick &&
+      t <= this.#prevResumeEndTick
     );
   }
 
   /** Le gel courant (et sa rampe) vient-il d'un portail ? Voir `#freezeIsPortal`. */
   get freezeIsPortal(): boolean {
-    return this.#freezeIsPortal;
+    return this.#lastHordeTick >= this.#freezeStartTick
+      ? this.#freezeIsPortal
+      : this.#prevFreezeIsPortal;
+  }
+
+  /**
+   * Gels (debut ou fin) annonces trop tard pour l'anneau
+   * (`ROLLBACK_DEPTH_TICKS`), donc NON rejoues : la horde garde l'ecart. Meme
+   * degradation signalee que `lateDeaths`. Voir `#replayFrom`.
+   */
+  get lateFreezes(): number {
+    return this.#lateFreezes;
   }
 
   /** Ennemis abattus depuis le debut de la run (ou du WELCOME pour un retardataire). */
@@ -2283,13 +2324,14 @@ export class GameClient {
    */
   update(now: number, dt: number): RenderState {
     const axes = this.readInput();
-    // ⚠️ **La prediction locale honore le gel de niveau**, comme `Room.step` :
+    // ⚠️ **La prediction locale honore le gel** (etalage ou portail), comme `Room.step` :
     // sinon le personnage avancerait en local puis serait ramene en arriere
     // par le snapshot suivant.
     //
     // Le tick de reference est celui de la horde, c'est-a-dire le tick SERVEUR
-    // recale en continu : `#freezeUntilTick` et `#resumeEndTick` sont dates
-    // dans ce repere par `LEVEL_UP`, jamais dans un tick local.
+    // recale en continu : les bornes du gel sont datees dans ce repere par
+    // `LEVEL_UP`, `PORTAL_OPEN`, `DRAFT_RESULT` et `PORTAL_RESULT` (`#freezeFrom`,
+    // `#thawAt`), jamais dans un tick local.
     //
     // ⚠️ **La vitesse vient de l'inventaire ET du compte** : voir `#localSpeed`.
     this.#local?.predict(
@@ -2760,14 +2802,7 @@ export class GameClient {
     // rafraichissement du champ : dans l'ordre inverse, la derive due a la
     // latence devient pire que sans rattrapage du tout. C'est la raison de la
     // file plutot qu'une application a la reception.
-    while (this.#pendingOrders.length > 0) {
-      const order = this.#pendingOrders.shift();
-      if (order) {
-        // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
-        const missed = Math.max(0, tick - order.spawnTick);
-        this.horde.spawnCatchingUp(order, missed, dt, this.#fields, this.zones, this.#bossCharge);
-      }
-    }
+    this.#applyPendingOrders(tick, dt);
 
     // Les positions telles que le client les connait : celles du dernier
     // snapshot recu, enregistrees sous le tick SERVEUR auquel elles ont ete
@@ -3667,6 +3702,11 @@ export class GameClient {
     this.#spawnOrbs(ids, deathTick);
     this.horde.kill(ids);
     this.#forgetChargeOf(ids);
+    // ⚠️ **Reecrire le creneau `deathTick` lui-meme**, pas seulement ceux du
+    // rejeu : un rejeu suivant qui restaurerait CE tick (un gel date
+    // `deathTick + 1` et livre en retard, `#replayFrom`) y retrouverait sinon
+    // les victimes vivantes, ressuscitees pour toujours.
+    this.#hordeHistory.record(deathTick, this.horde);
     // ⚠️ Le champ de flux n'est pas dans l'anneau : `HordeHistory.restore`
     // remet la HORDE au tick de la mort, mais `FlowField` est un objet mutable
     // PARTAGE que l'anneau ne sauvegarde jamais. Sans ce reamorcage, le rejeu
@@ -3719,8 +3759,22 @@ export class GameClient {
    * Version de reference : `primeFieldForReplay` de `shared/horde.replication.test.ts`.
    */
   #primeFieldForReplay(atTick: number): void {
-    const lastDue = atTick - (((atTick % STEPS_PER_FIELD) + STEPS_PER_FIELD) % STEPS_PER_FIELD);
-    this.#feedFields(lastDue, false);
+    let lastDue = atTick - (((atTick % STEPS_PER_FIELD) + STEPS_PER_FIELD) % STEPS_PER_FIELD);
+    // Etape 17 : un tick gele ne rafraichit rien au salon (`Room#step` revient
+    // avant). Le champ d'un rejeu qui part d'un gel est celui d'AVANT le gel.
+    while (lastDue >= 0 && lastDue <= this.#untilAt(lastDue)) {
+      lastDue -= STEPS_PER_FIELD;
+    }
+    // Ce qui suit `lastDue` va etre rejoue (ou n'a jamais eu lieu au salon).
+    this.#fieldInputs = this.#fieldInputs.filter((f) => f.tick <= lastDue);
+    const logged = this.#fieldInputs.find((f) => f.tick === lastDue);
+    if (!logged) {
+      this.#feedFields(lastDue, false);
+      return;
+    }
+    for (let f = 0; f < logged.x.length && f < this.#fields.length; f++) {
+      this.#fields[f]?.update(logged.x[f] ?? 0, logged.y[f] ?? 0);
+    }
   }
 
   /**
@@ -3741,6 +3795,11 @@ export class GameClient {
     }
     if (retarget) {
       this.horde.retarget(cible.x, cible.y);
+      this.#fieldInputs = this.#fieldInputs.filter((f) => f.tick < tick);
+      this.#fieldInputs.push({ tick, x: cible.x, y: cible.y });
+      if (this.#fieldInputs.length > FIELD_INPUT_LOG) {
+        this.#fieldInputs.shift();
+      }
     }
   }
 
@@ -3799,6 +3858,56 @@ export class GameClient {
   }
 
   /**
+   * Fait naitre les vagues en attente. En retard (`spawnTick < tick`) et dans
+   * l'anneau : par REJEU, comme une mort tardive — restaurer la veille de la
+   * plus ancienne, faire naitre chaque vague a son tick, rejouer jusqu'au
+   * present. Exact : tout le monde avance et se repousse ensemble, comme au
+   * salon, et le gel ou la rampe de chaque tick rejoue s'appliquent.
+   *
+   * Hors de l'anneau : `spawnCatchingUp`, dont le residu (les voisins vus a
+   * leur position presente) est documente la-bas ; la mise a l'echelle par
+   * tick y fait au moins respecter le gel.
+   *
+   * ⚠️ **Toutes les vagues en attente d'un coup** : un salon sort plusieurs
+   * ordres au meme tick, et un rejeu par ordre effacerait, en restaurant la
+   * veille, la vague que l'ordre precedent venait de poser.
+   */
+  #applyPendingOrders(tick: number, dt: number): void {
+    // Tri stable : a tick egal, l'ordre d'arrivee, celui du salon.
+    const orders = this.#pendingOrders.splice(0).sort((a, b) => a.spawnTick - b.spawnTick);
+    const first = orders[0];
+    if (!first) {
+      return;
+    }
+    let k = 0;
+    if (first.spawnTick < tick && this.#hordeHistory.restore(first.spawnTick - 1, this.horde)) {
+      this.#primeFieldForReplay(first.spawnTick - 1);
+      for (let t = first.spawnTick; t < tick; t++) {
+        // Les ordres d'abord, avant le champ et la horde : l'ordre de `Room#step`.
+        for (let o = orders[k]; o && o.spawnTick <= t; o = orders[++k]) {
+          this.horde.spawnCatchingUp(o, 0, dt, this.#fields);
+        }
+        this.#replayTick(t);
+      }
+    }
+    for (; k < orders.length; k++) {
+      const order = orders[k];
+      if (order) {
+        // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
+        this.horde.spawnCatchingUp(
+          order,
+          Math.max(0, tick - order.spawnTick),
+          dt,
+          this.#fields,
+          this.zones,
+          this.#bossCharge,
+          (t) => this.#movementScale(t),
+        );
+      }
+    }
+  }
+
+  /**
    * Un gel commence a `startTick` (`LEVEL_UP`, `PORTAL_OPEN`), pour une duree
    * inconnue : ses deux bornes hautes sont repoussees a l'infini jusqu'a ce que
    * `#thawAt` les pose.
@@ -3811,6 +3920,8 @@ export class GameClient {
   #freezeFrom(startTick: number, portal: boolean): void {
     this.#prevFreezeUntilTick = this.#freezeUntilTick;
     this.#prevResumeEndTick = this.#resumeEndTick;
+    this.#prevFreezeStartTick = this.#freezeStartTick;
+    this.#prevFreezeIsPortal = this.#freezeIsPortal;
     this.#freezeStartTick = startTick;
     this.#freezeUntilTick = Number.MAX_SAFE_INTEGER;
     this.#resumeEndTick = Number.MAX_SAFE_INTEGER;
@@ -3834,11 +3945,16 @@ export class GameClient {
    * que la horde a DEJA simules. Rien si elle ne l'a pas encore atteint.
    *
    * ponytail: trop vieux pour l'anneau (`ROLLBACK_DEPTH_TICKS`), on ne rejoue
-   * pas et l'ecart reste ; un compteur au HUD comme `lateDeaths` si ca se voit.
+   * pas et l'ecart reste, compte dans `lateFreezes` ; l'afficher au HUD comme
+   * `lateDeaths` si ca se voit.
    */
   #replayFrom(fromTick: number): void {
     const current = this.#lastHordeTick - 1;
-    if (fromTick > current || !this.#hordeHistory.restore(fromTick - 1, this.horde)) {
+    if (fromTick > current) {
+      return;
+    }
+    if (!this.#hordeHistory.restore(fromTick - 1, this.horde)) {
+      this.#lateFreezes++;
       return;
     }
     this.#primeFieldForReplay(fromTick - 1);
@@ -3847,9 +3963,16 @@ export class GameClient {
     }
   }
 
-  /** Le dernier tick gele qui vaut pour `tick` : celui du gel courant des son debut, du precedent avant. */
+  /**
+   * Le dernier tick gele qui vaut pour `tick` : celui du gel courant des son
+   * debut, du precedent avant, et `-1` avant le debut du precedent (un gel plus
+   * ancien est fini depuis longtemps).
+   */
   #untilAt(tick: number): number {
-    return tick < this.#freezeStartTick ? this.#prevFreezeUntilTick : this.#freezeUntilTick;
+    if (tick >= this.#freezeStartTick) {
+      return this.#freezeUntilTick;
+    }
+    return tick >= this.#prevFreezeStartTick ? this.#prevFreezeUntilTick : -1;
   }
 
   /**
@@ -3860,7 +3983,12 @@ export class GameClient {
    * d'un tick gele ou en reprise avance exactement comme le serveur l'a fait.
    */
   #movementScale(tick: number): number {
-    const resumeEnd = tick < this.#freezeStartTick ? this.#prevResumeEndTick : this.#resumeEndTick;
+    const resumeEnd =
+      tick >= this.#freezeStartTick
+        ? this.#resumeEndTick
+        : tick >= this.#prevFreezeStartTick
+          ? this.#prevResumeEndTick
+          : -1;
     if (tick > resumeEnd) {
       return 1;
     }
