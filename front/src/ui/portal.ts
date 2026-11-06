@@ -117,6 +117,28 @@ export function stayGold(gold: number, multiplier: number): number {
   return extractGold(gold, multiplier + EXTRACT_MULTIPLIER_STEP);
 }
 
+/**
+ * La touche d'un vote : `1` part, `2` reste — rangee du haut ou pave
+ * numerique, lus sur `KeyboardEvent.code` (la touche PHYSIQUE : en AZERTY, `1`
+ * sans majuscule donne « & »). `null` pour toute autre touche.
+ *
+ * ⚠️ **`blocked` vient de `main.ts`** : menu Echap ouvert, bilan affiche, HUD
+ * cache, ou touche tenue (`repeat`, qui ferait clignoter la voix). Il est
+ * ICI, et pas seulement dans `main.ts`, pour qu'un test le tienne.
+ */
+export function portalKeyChoice(code: string, blocked: boolean): number | null {
+  if (blocked) {
+    return null;
+  }
+  if (code === 'Digit1' || code === 'Numpad1') {
+    return VOTE_CHOICE.LEAVE;
+  }
+  if (code === 'Digit2' || code === 'Numpad2') {
+    return VOTE_CHOICE.STAY;
+  }
+  return null;
+}
+
 interface ChoiceCell {
   root: HTMLButtonElement;
   choice: number;
@@ -166,6 +188,22 @@ export class PortalScreen {
       this.#build();
     }
     this.#paint();
+  }
+
+  /**
+   * Vote au clavier (voir `portalKeyChoice`) : la MEME regle que le clic —
+   * rappuyer sur la touche de sa voix la retire.
+   *
+   * ⚠️ **Inerte hors d'un vote ouvert et non tranche** : apres le verdict, le
+   * portail est ferme cote serveur, et un `VOTE` y serait refuse ; sans portail,
+   * `1` et `2` ne veulent rien dire.
+   */
+  vote(choice: number): void {
+    const source = this.#source;
+    if (!source.portalOpen || source.portalDecision !== null) {
+      return;
+    }
+    this.#onVote(choice);
   }
 
   /**

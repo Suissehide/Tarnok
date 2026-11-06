@@ -12,6 +12,7 @@ import {
   leaveGold,
   PortalScreen,
   type PortalSource,
+  portalKeyChoice,
   stayGold,
   THIN_SPACE,
   voteLabel,
@@ -483,5 +484,75 @@ describe('PortalScreen — ce que le joueur voit', () => {
     // Meme noeud : une reconstruction par image perdrait le focus clavier et
     // relancerait toute animation CSS a chaque image.
     expect(boutonDe(h, VOTE_CHOICE.LEAVE)).toBe(premier);
+  });
+});
+
+describe('portalKeyChoice — 1 part, 2 reste (etape 17)', () => {
+  it('lit le CODE physique : rangee du haut et pave numerique, AZERTY compris', () => {
+    // `e.code`, pas `e.key` : en AZERTY, la touche 1 sans majuscule donne « & ».
+    expect(portalKeyChoice('Digit1', false)).toBe(VOTE_CHOICE.LEAVE);
+    expect(portalKeyChoice('Numpad1', false)).toBe(VOTE_CHOICE.LEAVE);
+    expect(portalKeyChoice('Digit2', false)).toBe(VOTE_CHOICE.STAY);
+    expect(portalKeyChoice('Numpad2', false)).toBe(VOTE_CHOICE.STAY);
+  });
+
+  it('ignore toute autre touche', () => {
+    for (const code of ['Digit3', 'Numpad0', 'KeyA', 'Space', 'Escape', 'Enter']) {
+      expect(portalKeyChoice(code, false)).toBeNull();
+    }
+  });
+
+  /**
+   * ⚠️ **Menu Echap ouvert, bilan affiche, HUD cache, touche tenue** :
+   * `main.ts` le dit par `blocked`, et rien ne part.
+   */
+  it('ne rend rien quand les entrees sont bloquees', () => {
+    expect(portalKeyChoice('Digit1', true)).toBeNull();
+    expect(portalKeyChoice('Numpad2', true)).toBeNull();
+  });
+});
+
+describe('PortalScreen#vote — le clavier suit la regle du clic', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = harness();
+  });
+
+  it('vote, puis RETIRE sa voix sur la meme touche', () => {
+    ouvert(h);
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.LEAVE);
+    // Le serveur rediffuse : c'est lui qui dit ce que j'ai vote.
+    h.client.votes([[2, VOTE_CHOICE.LEAVE]]);
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.LEAVE);
+
+    expect(h.client.sent).toEqual([VOTE_CHOICE.LEAVE, NO_VOTE]);
+  });
+
+  it('change de voix sur l AUTRE touche', () => {
+    ouvert(h);
+    h.client.votes([[2, VOTE_CHOICE.LEAVE]]);
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.STAY);
+
+    expect(h.client.sent).toEqual([VOTE_CHOICE.STAY]);
+  });
+
+  it('est inerte une fois le verdict tombe (la rampe de reprise comprise)', () => {
+    ouvert(h);
+    h.client.portalDecision = VOTE_CHOICE.STAY;
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.LEAVE);
+
+    expect(h.client.sent).toEqual([]);
+  });
+
+  it('est inerte sans portail ouvert', () => {
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.STAY);
+
+    expect(h.client.sent).toEqual([]);
   });
 });

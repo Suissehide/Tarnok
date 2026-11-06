@@ -42,7 +42,7 @@ import {
 } from './ui/loading';
 import { Minimap, minimapEnemies, minimapPorteur } from './ui/minimap';
 import { wireOptions } from './ui/options';
-import { formatGold, PortalScreen } from './ui/portal';
+import { formatGold, PortalScreen, portalKeyChoice } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
 import { loadPick, loadSettings, savePick, saveSettings } from './ui/settings';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
@@ -665,6 +665,22 @@ function join(code: string): void {
     el('portal-voters'),
     client,
   );
+
+  // Etape 17 : 1 part, 2 reste, tant que la carte est ouverte et non tranchee
+  // (`PortalScreen#vote`) — jamais menu Echap ouvert, bilan affiche ou touche
+  // tenue (`portalKeyChoice`).
+  window.addEventListener('keydown', (e) => {
+    const choice = portalKeyChoice(
+      e.code,
+      e.repeat ||
+        paused ||
+        hud.classList.contains('hidden') ||
+        !summary.classList.contains('hidden'),
+    );
+    if (choice !== null) {
+      portalScreen.vote(choice);
+    }
+  });
 
   lobby.classList.add('hidden');
   room.classList.remove('hidden');
