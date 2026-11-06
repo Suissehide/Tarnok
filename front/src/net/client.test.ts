@@ -5381,7 +5381,11 @@ function runClientPortalScenario(params: {
     const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(vivant * 0.02 + p) * 1500));
 
     if (tick === OUVERTURE) {
-      // Les ordres d'abord, avant le champ et la horde : l'ordre de `Room#step`.
+      // ⚠️ L'ordre du CLIENT (les vagues avant le champ), PAS celui de
+      // `Room#step`, qui fait naitre ses vagues APRES le rafraichissement du
+      // champ et le reciblage : un ecart anterieur a l'etape 17, documente
+      // dans `GameClient#applyPendingOrders`. Cette reference mesure le
+      // rejeu du gel, pas cet ecart.
       ref.horde.spawn(vague, ref.fields[0]);
     }
     if (!gele) {
@@ -5596,5 +5600,50 @@ describe('etape 17, revue 1 : un gel en retard ne ressuscite pas un mort de la v
         }),
       ),
     ).toBe(-1);
+  });
+});
+
+describe('etape 17, revue 2 : une vague en retard ne rejoue la horde que si un gel touche sa fenetre', () => {
+  /**
+   * Le chemin cher (restaurer, faire naitre, rejouer toute la horde) se
+   * reconnait a son `spawnCatchingUp(order, 0, …)` ; le rattrapage ordinaire
+   * passe les pas manques, `missed > 0`.
+   */
+  function rattrapage(gel: ((socket: FakeSocket) => void) | null): number[] {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 5000, 0xabc_def) });
+    for (let i = 0; i < 6; i++) {
+      client.update(i * STEP, STEP);
+    }
+    gel?.(socket);
+    const spy = vi.spyOn(client.horde, 'spawnCatchingUp');
+    // L'anneau couvre 5001 : le rejeu SERAIT possible.
+    socket.emit('message', {
+      data: encodeWaveOrder({
+        waveId: 1,
+        spawnTick: 5002,
+        seed: 0x51ee_d001,
+        archetype: 0,
+        formation: FORMATION.CLUSTER,
+        anchorX: 3000,
+        anchorY: 3000,
+        count: 10,
+      }),
+    });
+    client.update(6 * STEP, STEP);
+    expect(client.horde.count).toBe(10);
+    return spy.mock.calls.map((c) => c[1]);
+  }
+
+  it('vague ordinaire en retard : rattrapage des seules nouvelles entites, aucun rejeu', () => {
+    expect(rattrapage(null)).toEqual([4]);
+  });
+
+  it('un gel dans la fenetre (LEVEL_UP date 5004) : rejeu', () => {
+    expect(
+      rattrapage((socket) => socket.emit('message', { data: encodeLevelUp(5004, 2) })),
+    ).toEqual([0]);
   });
 });

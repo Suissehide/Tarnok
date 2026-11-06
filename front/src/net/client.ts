@@ -3858,15 +3858,21 @@ export class GameClient {
   }
 
   /**
-   * Fait naitre les vagues en attente. En retard (`spawnTick < tick`) et dans
-   * l'anneau : par REJEU, comme une mort tardive — restaurer la veille de la
-   * plus ancienne, faire naitre chaque vague a son tick, rejouer jusqu'au
-   * present. Exact : tout le monde avance et se repousse ensemble, comme au
-   * salon, et le gel ou la rampe de chaque tick rejoue s'appliquent.
+   * Fait naitre les vagues en attente. D'ordinaire par `spawnCatchingUp` : les
+   * seules nouvelles entites rattrapent les pas manques, residu documente
+   * la-bas.
    *
-   * Hors de l'anneau : `spawnCatchingUp`, dont le residu (les voisins vus a
-   * leur position presente) est documente la-bas ; la mise a l'echelle par
-   * tick y fait au moins respecter le gel.
+   * Etape 17 : quand un gel ou sa rampe touche la fenetre rattrapee (la vague
+   * du tick d'ouverture d'un portail, livree en retard avec lui), par REJEU,
+   * comme une mort tardive — restaurer la veille de la plus ancienne, faire
+   * naitre chaque vague a son tick, rejouer jusqu'au present : tout le monde
+   * avance et se repousse ensemble, gel et rampe compris.
+   *
+   * ⚠️ **Jamais pour une vague ordinaire** : le client tourne en avance de la
+   * latence, presque chaque `WAVE_ORDER` arrive en retard, et rejouer toute la
+   * horde coute 7 a 14 ms par lot a 4 000 entites (revue 2). Au plus une fois
+   * par etalage ou portail ici. Hors de l'anneau : `spawnCatchingUp`, la mise a
+   * l'echelle par tick y fait au moins respecter le gel.
    *
    * ⚠️ **Toutes les vagues en attente d'un coup** : un salon sort plusieurs
    * ordres au meme tick, et un rejeu par ordre effacerait, en restaurant la
@@ -3880,10 +3886,21 @@ export class GameClient {
       return;
     }
     let k = 0;
-    if (first.spawnTick < tick && this.#hordeHistory.restore(first.spawnTick - 1, this.horde)) {
+    if (
+      this.#freezeTouches(first.spawnTick, tick) &&
+      this.#hordeHistory.restore(first.spawnTick - 1, this.horde)
+    ) {
       this.#primeFieldForReplay(first.spawnTick - 1);
       for (let t = first.spawnTick; t < tick; t++) {
-        // Les ordres d'abord, avant le champ et la horde : l'ordre de `Room#step`.
+        // L'ordre du CLIENT (`#advanceHorde`) : les vagues avant le champ.
+        //
+        // ponytail: le salon fait l'inverse — rafraichissement du champ et
+        // reciblage (`room.ts` l.~1511), PUIS les vagues du directeur
+        // (l.~1528) et les proies (`#startEvent`), puis la horde. Ecart
+        // anterieur a l'etape 17, au tick d'un rafraichissement seulement
+        // (~4 px mesures pour une vague sortie ce tick-la), a l'heure comme
+        // en retard. Remede : dire au client si un ordre nait avant ou apres
+        // le rafraichissement de son tick.
         for (let o = orders[k]; o && o.spawnTick <= t; o = orders[++k]) {
           this.horde.spawnCatchingUp(o, 0, dt, this.#fields);
         }
@@ -3905,6 +3922,16 @@ export class GameClient {
         );
       }
     }
+  }
+
+  /** Un tick de `[from, to)` est-il gele ou en rampe, bornes datees ? Vide si `from >= to`. */
+  #freezeTouches(from: number, to: number): boolean {
+    for (let t = from; t < to; t++) {
+      if (this.#movementScale(t) !== 1) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /**
