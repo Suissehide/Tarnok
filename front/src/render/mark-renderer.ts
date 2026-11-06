@@ -75,11 +75,12 @@ export const MARK_RING_DIAMETER_PX = 2 * PROJECTILE_HIT_RADIUS;
  * Vue de dessus, un disque pose au sol ne se projette pas en cercle. L'anneau
  * garde sa largeur — qui dit le diametre de la hitbox — et perd de la hauteur.
  *
- * ⚠️ **NE PAS y recopier le `VERTICAL_SQUASH` (0,82) de `stage.ts` : la camera
- * l'applique DEJA.** Le monde entier est dessine avec `scale.set(1, 0,82)`,
- * donc un anneau circulaire en coordonnees monde arrive a l'ecran comme une
- * ellipse de rapport 0,82, encore trop ronde. Ce facteur-ci se COMPOSE avec celui-la : a l'ecran, l'anneau lit
- * 0,55 x 0,82 ≈ **0,45**. Recopier 0,82 ici l'appliquerait deux fois.
+ * ⚠️ **NE PAS y recopier le `VERTICAL_SQUASH` de `stage.ts` : la camera
+ * l'applique DEJA.** Le monde entier est dessine avec `scale.set(1,
+ * VERTICAL_SQUASH)`, et ce facteur-ci se COMPOSE avec celui-la. Depuis le
+ * 6 novembre 2026 la camera n'ecrase plus (1, pour un pixel art a echelle
+ * entiere) : a l'ecran, l'anneau lit 0,55 tout court. Si l'ecrasement revient,
+ * il s'y composera sans rien changer ici.
  */
 export const MARK_RING_SQUASH = 0.55;
 

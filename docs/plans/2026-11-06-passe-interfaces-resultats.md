@@ -49,6 +49,15 @@ menu de pause et le bilan n'ont rien montré d'autre à cette échelle.
 - **Un joueur mort se voit mort** : alpha 0,35, socle à 0,25 (`player-renderer.ts` lit `hp`).
 - **Un sprite de comportement recyclé repart à l'échelle 1** (`behavior-renderer.ts`) : la
   bouffée de relève des squelettes héritait de l'échelle d'une explosion (3,4) ou d'un tir (0,7).
+- **Le pixel art à échelle entière** (décision de Léo, 6 novembre, second passage) :
+  `VERTICAL_SQUASH` passe de 0,82 à **1** (une tuile de 64 px vaut exactement 2 px d'écran par
+  texel à DPR 2, 1 à DPR 1 ; plus de rangée perdue une fois sur six) ; `UNIT_SCALE` de 0,6 à
+  **0,5** (un texel = un pixel d'écran dense) ; la horde repasse en **`linear`** parce que son
+  échelle est dérivée de la hitbox (de 0,28 pour le troll à 0,86 pour le poisson-bombe, mesuré
+  sur le manifeste de MinIO) et ne sera jamais entière — le vrai remède est de cuire l'échelle
+  dans l'atlas (`tools/build_monster_atlas.py`), un actif à redéposer ; les `img` du canevas
+  (icônes de 64 px affichées de 28 à 112 px) passent en lissage, les 9-slices restent crénelés.
+  Toutes les constantes restent les seuls boutons : l'écrasement se remet en une ligne.
 
 ### Interfaces (`front/index.html`, `main.css`, `ui/`, `main.ts`)
 
@@ -114,9 +123,9 @@ Par ordre d'importance, avec la ligne — pour une étape à venir, pas pour cet
 8. **Focus clavier perdu à chaque `LOBBY`** (`room.ts` `replaceChildren`) et après chaque achat.
 9. **Monstre devant un tronc dessiné derrière** : `#horde` est un `ParticleContainer` entier sous
    `#depth`, non entrelaçable. À documenter plutôt qu'à corriger.
-10. **Pixel art à échelle non entière** partout (`VERTICAL_SQUASH` 0,82, `UNIT_SCALE` 0,6, icônes
-    64 px affichées à 28–112 px, Jersey 15 à des tailles non multiples de 15) : bandes et
-    crénelage inégal. Une décision d'ensemble (échelles entières ou `linear`), pas un patch.
+10. **Pixel art à échelle non entière** : traité au second passage (§2, rendu), sauf la police
+    Jersey 15 à des tailles non multiples de 15 (faible) et l'échelle de la horde, à cuire dans
+    l'atlas un jour.
 11. Détails : barre d'XP mordue de 3 px par le badge de niveau ; bandeaux porteur/événement
     visibles entre les cartes une fois l'étalage réglé ; roue de ping non mise à l'échelle ;
     ombres du mortier au-dessus des monstres ; secousse qui fait trembler les flèches de bord ;
@@ -159,8 +168,9 @@ Les points que les tests ne jugent pas, à regarder en jouant :
    sept est-il encore confortable, ou faut-il deux rangées plus courtes ?
 2. **Demi-tour des monstres** : plus de saut horizontal ; le corps reste centré sur l'anneau de
    marque.
-3. **Horde en `nearest`** : net ou trop dur à côté des unités ? (Un seul mot à changer si
-   l'inverse est préféré.)
+3. **Échelles entières** : le monde n'est plus écrasé (vue de dessus franche, cercles ronds au
+   sol), les unités font 0,5 au lieu de 0,6 — trop petites face aux monstres ? La horde est
+   lissée (`linear`) : acceptable, ou faut-il cuire l'échelle dans l'atlas tout de suite ?
 4. **Nuit** : les arbres ne sont plus éclairés hors du trou de lumière ; les chiffres passent
    devant les troncs.
 5. **Un joueur mort** : ombre à 35 %, immobile, la horde l'ignore, il ne ramasse plus — et

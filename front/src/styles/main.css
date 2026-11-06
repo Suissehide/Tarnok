@@ -79,7 +79,9 @@
 }
 
 @layer components {
-  img,
+  /* Les cadres (9-slices) restent crenes : leur irregularite se lit comme
+     une texture. Les `img` (icones de 64 px affichees de 28 a 112 px, puis
+     l'echelle du canevas) ne sont a aucune echelle entiere : lissees. */
   .k,
   .btn,
   .bbtn,

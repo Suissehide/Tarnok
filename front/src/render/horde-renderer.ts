@@ -451,8 +451,14 @@ export class HordeRenderer {
     // `Texture.from` est synchrone : elle ne telecharge rien. Il faut passer
     // par `Assets.load` pour recuperer l'atlas depuis son URL.
     const atlas = await Assets.load<Texture>(`${this.assetsBase}/derived/${manifest.image}`);
-    // Comme les unites et le sol : du pixel art net, pas lisse.
-    atlas.source.scaleMode = 'nearest';
+    // ⚠️ **`linear`, pas `nearest` comme les unites et le sol** : l'echelle
+    // d'un monstre est DERIVEE de sa hitbox (`spriteScale`), donc jamais
+    // entiere (0,5 a 0,8 selon l'archetype). En `nearest`, une echelle non
+    // entiere perd des rangees de pixels irregulierement et le contour rampe
+    // a chaque pas ; lisser est le moindre mal. Le vrai remede est de cuire
+    // l'echelle dans l'atlas (`tools/build_monster_atlas.py`) pour dessiner a
+    // 1 — un actif a redeposer sur MinIO.
+    atlas.source.scaleMode = 'linear';
     this.adoptAtlas(manifest, atlas);
   }
 

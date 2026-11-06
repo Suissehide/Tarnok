@@ -41,7 +41,7 @@ import { lookOf, MAX_PULSE_AMP, type ViewBounds, ZONE_ALPHA } from './zone-rende
 const TICK = 100;
 /** Un ecran 1920x1080, ecrase de 0,82 en y comme `Stage.viewRect` le fait. */
 const SCREEN_W = 1920;
-const SCREEN_H = 1080 / 0.82;
+const SCREEN_H = 1080;
 
 /** Une vue centree sur un point du monde, de la taille d'un vrai ecran. */
 function screenAt(cx: number, cy: number): ViewBounds {
@@ -335,8 +335,8 @@ describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => 
    * projection.
    *
    * Le rapport se lit sur ce qui est DESSINE, et il doit etre franchement
-   * inferieur a 1 : la camera en applique deja un de 0,82 (`VERTICAL_SQUASH`
-   * dans `stage.ts`), encore trop rond.
+   * inferieur a 1 : la camera en applique deja un (`VERTICAL_SQUASH` dans
+   * `stage.ts`, 1 depuis le 6 novembre 2026), qui se compose avec celui-ci.
    */
   it('aplatit l anneau verticalement, et le laisse intact horizontalement', () => {
     const horde = deuxEnnemis();
@@ -347,8 +347,8 @@ describe('MarkRingRenderer.draw — l anneau arrive bien sous les pieds', () => 
     expect((ring?.scaleY ?? 0) / (ring?.scaleX ?? 1)).toBeCloseTo(MARK_RING_SQUASH, 6);
     // La moitie qui rend la mutation « scaleY = scaleX » impossible a survivre.
     expect(ring?.scaleY).toBeLessThan(ring?.scaleX ?? 0);
-    // Et celle qui interdit d'y recopier le 0,82 de la camera : compose avec
-    // elle, l'ellipse lirait 0,82 x 0,82 ≈ 0,67, encore trop ronde.
+    // Et celle qui interdit d'y recopier un ecrasement de camera (0,82 jadis) :
+    // compose avec lui, l'ellipse aurait lu 0,82 x 0,82 ≈ 0,67, trop ronde.
     expect(MARK_RING_SQUASH).toBeLessThan(0.7);
   });
 

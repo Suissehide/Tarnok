@@ -63,8 +63,17 @@ import { ZoneRenderer } from './zone-renderer';
 /** Une couleur par joueur, celle de son unite du pack (`UNIT_COLORS`) : jaune, bleu, rouge, violet. */
 const PLAYER_COLORS = [0xe0b84e, 0x6fa8dc, 0xe06666, 0xc27ba0];
 
-/** Vue de dessus, tres legerement ecrasee. Pas d'isometrique. */
-const VERTICAL_SQUASH = 0.82;
+/**
+ * Vue de dessus, PAS ecrasee : 1. Pas d'isometrique.
+ *
+ * ⚠️ **Etait 0,82 jusqu'au 6 novembre 2026.** Du pixel art en `nearest` ne
+ * supporte qu'une echelle entiere en pixels d'ecran : a 0,82 chaque tuile de
+ * 64 px perdait une rangee sur six, differemment d'une tuile a l'autre, et les
+ * contours rampaient. A 1, une tuile vaut exactement 2 pixels d'ecran par texel
+ * sur un ecran dense (DPR 2), 1 sur un ecran simple. La constante reste le
+ * seul bouton si l'ecrasement revient un jour : tout le reste la lit.
+ */
+const VERTICAL_SQUASH = 1;
 
 /** Un calque du monde : il s'attache a la scene, et sait dire si sa texture est posee. */
 interface SceneLayer {

@@ -35,8 +35,16 @@ const SHEETS: Record<Unit, { idle: string; run: string; frame: number }> = {
   Monk: { idle: 'Monk/Idle.png', run: 'Monk/Run.png', frame: 192 },
 };
 
-/** Echelle d'une unite : un peu plus petite que les monstres. */
-export const UNIT_SCALE = 0.6;
+/**
+ * Echelle d'une unite : un peu plus petite que les monstres.
+ *
+ * ⚠️ **Une demi-echelle, pas 0,6** : les planches font 192 px (320 pour le
+ * Lancier) et sont rendues en `nearest`. A 0,5, un texel vaut exactement un
+ * pixel d'ecran sur un ecran dense (DPR 2) et un demi sur un ecran simple —
+ * une rangee sur deux, uniformement. A 0,6, c'etait 1,2 : une rangee sur cinq
+ * doublee, et un contour qui rampe a chaque pas.
+ */
+export const UNIT_SCALE = 0.5;
 /** Opacite du fantome : assez pour se voir derriere un arbre, pas assez pour doubler le trait. */
 export const GHOST_ALPHA = 0.35;
 /** Rayon du socle, en px monde : un peu plus large que l'unite, jamais autant qu'un monstre. */
@@ -191,7 +199,8 @@ export class PlayerRenderer {
       existing.fallback.destroy();
     }
     const color = this.fallbackColor(id);
-    // Un cercle, pas une ellipse : la camera l'ecrase deja de `VERTICAL_SQUASH`.
+    // Un cercle, pas une ellipse : c'est la camera qui decide de l'ecrasement
+    // (`VERTICAL_SQUASH`), uniformement pour tout le monde.
     const baseRing = new Graphics()
       .circle(0, 0, BASE_RADIUS_PX)
       .fill({ color, alpha: 0.22 })
