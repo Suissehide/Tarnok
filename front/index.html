@@ -585,21 +585,28 @@
       </section>
 
       <!--
-        Vote d'extraction. ⚠️ **Ce n'est pas un modale** :
-        le vote ne gèle rien, le temps EST son enjeu. Un bandeau en bas, la
-        souris rendue au jeu partout ailleurs.
+        Vote d'extraction (etape 17). Le portail GELE le monde, comme l'etalage :
+        une carte compacte au centre, sur un voile leger. Le voile ne capte pas
+        le pointeur ; seule la carte le reprend.
       -->
       <section id="portal-layer" class="ui-screen ui-screen--overlay z-20">
-        <div class="ui-canvas">
-          <div
-            id="portal"
-            data-settled="false"
-            class="k k-paperx pointer-events-none absolute bottom-[40px] left-1/2 hidden w-[1000px] -translate-x-1/2 flex-col items-center gap-[10px] text-center"
-          >
-            <p id="portal-status" aria-live="polite" class="f-meta m-0 text-[30px] text-[var(--color-slate-title)]"></p>
-            <div id="portal-stakes" class="flex flex-col gap-[2px] text-[22px]"></div>
-            <div id="portal-choices" class="pointer-events-auto flex gap-[24px]"></div>
-            <div id="portal-voters" class="flex flex-wrap justify-center gap-[18px]"></div>
+        <div
+          id="portal"
+          data-settled="false"
+          class="veil pointer-events-none absolute inset-0 hidden"
+        >
+          <div class="ui-canvas">
+            <div
+              class="k k-paperx pointer-events-auto absolute left-1/2 top-1/2 flex w-[520px] -translate-x-1/2 -translate-y-1/2 flex-col items-center gap-[14px] text-center"
+            >
+              <p
+                id="portal-status"
+                aria-live="polite"
+                class="f-meta m-0 text-[30px] text-[var(--color-slate-title)]"
+              ></p>
+              <div id="portal-choices" class="flex justify-center gap-[20px]"></div>
+              <div id="portal-voters" class="flex flex-wrap justify-center gap-[12px]"></div>
+            </div>
           </div>
         </div>
       </section>

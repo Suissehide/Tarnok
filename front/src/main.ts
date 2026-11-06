@@ -482,6 +482,9 @@ function join(code: string): void {
     // Sous le voile, le HUD et l'etalage ne doivent plus repondre a Tab/Entree.
     hud.toggleAttribute('inert', value);
     el('draft').toggleAttribute('inert', value);
+    // Etape 17 : la carte du portail reprend le pointeur ; sous le menu Echap,
+    // ses boutons ne doivent pas non plus repondre a Tab/Entree.
+    el('portal-layer').toggleAttribute('inert', value);
   };
   const leave = (): void => {
     client.disconnect();
@@ -653,12 +656,11 @@ function join(code: string): void {
   // des quatre joueurs.
   const draftScreen = new DraftScreen(el('draft'), el('draft-status'), el('draft-cards'), client);
 
-  // Le vote d'extraction. Un BANDEAU, pas un modale : le monde ne s'arrete
-  // pas pendant qu'on vote (voir `ui/portal.ts`).
+  // Le vote d'extraction : une carte au centre, le monde gele (etape 17, voir
+  // `ui/portal.ts`).
   const portalScreen = new PortalScreen(
     el('portal'),
     el('portal-status'),
-    el('portal-stakes'),
     el('portal-choices'),
     el('portal-voters'),
     client,

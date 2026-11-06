@@ -5,20 +5,18 @@ import { NO_VOTE, VOTE_CHOICE } from '@shared/protocol';
 import { playerColor, remainingSeconds } from './draft';
 
 /**
- * L'ecran du vote d'extraction.
+ * L'ecran du vote d'extraction : une carte compacte, au centre (etape 17).
  *
- * 1. **Les votes des autres sont visibles, en continu** — on ne negocie pas un
- *    choix qu'on ne voit pas. **L'abstention aussi** : « n'a pas vote » et
+ * 1. **Les votes des autres sont visibles, en continu** — une pastille par
+ *    joueur, a sa couleur. **L'abstention aussi** : « n'a pas vote » et
  *    « a vote RESTER » sont deux etats differents.
- * 2. **L'enjeu est chiffre** : ce qu'on gagne en partant MAINTENANT, et ce que
- *    la meme cagnotte vaudrait au portail suivant — qu'on perd entierement si
- *    l'equipe tombe entre les deux.
+ * 2. **Un montant par bouton** : l'or acquis en partant, l'or vise en restant
+ *    « si l'equipe tient ». Le multiplicateur ne s'ecrit plus.
  * 3. **Le chronometre se derive du TICK**, comme celui du draft.
  *
- * ⚠️ **CE N'EST PAS UN MODALE.** Le draft gele le monde ; **le vote ne gele
- * rien**, le temps est son enjeu. Un voile plein ecran cacherait la horde qui
- * avance pendant qu'on decide : d'ou un bandeau, en bas, qui ne capte le
- * pointeur que sur ses deux boutons.
+ * ⚠️ **Le portail GELE le monde** (`Room#step`, etape 17) : on decide a l'abri,
+ * d'ou un voile leger comme l'etalage. Le voile ne capte pas le pointeur ;
+ * seule la carte le reprend.
  *
  * ⚠️ **L'ecran ne se cache PAS pour un joueur mort** : tout joueur connecte
  * vote, mort ou vif. Aucune condition a ecrire : `PortalSource` ne porte pas
@@ -44,7 +42,7 @@ export interface PortalSource {
  * Le separateur des milliers : U+202F, espace fine insecable.
  *
  * ⚠️ **Ecrit par `fromCharCode`, pas comme caractere litteral** : le formateur
- * du depot reecrit `'\u202f'` en caractere reel, une espace INVISIBLE dans la
+ * du depot reecrit `' '` en caractere reel, une espace INVISIBLE dans la
  * source qu'un editeur pourrait normaliser sans bruit.
  */
 export const THIN_SPACE = String.fromCharCode(0x202f);
@@ -61,21 +59,12 @@ export function formatGold(gold: number): string {
 }
 
 /**
- * Un multiplicateur, en ecriture francaise : `×1,25`. Deux decimales toujours,
- * meme sur `1` : `×1` et `×1,25` cote a cote se liraient comme deux grandeurs
- * differentes.
- */
-export function formatMultiplier(multiplier: number): string {
-  return `×${multiplier.toFixed(2).replace('.', ',')}`;
-}
-
-/**
- * Ce qu'un joueur a decide, en un mot — **l'abstention en est un a part
+ * Ce qu'un joueur a decide, en un mot court — **l'abstention en est un a part
  * entiere**.
  *
- * ⚠️ **« n'a pas voté » ne doit JAMAIS se confondre avec « reste »** : le
- * serveur ne compte pas l'abstention (`Portal#decide`), et un joueur croirait
- * sinon avoir une majorite acquise alors que des voix manquent.
+ * ⚠️ **« … » (pas encore vote) ne doit JAMAIS se confondre avec « reste »** :
+ * le serveur ne compte pas l'abstention (`Portal#decide`), et un joueur
+ * croirait sinon avoir une majorite acquise alors que des voix manquent.
  *
  * Tout ce qui n'est ni `STAY` ni `LEAVE` (`NO_VOTE`, ou un octet fantaisiste)
  * se lit comme une abstention.
@@ -87,7 +76,7 @@ export function voteLabel(choice: number): string {
   if (choice === VOTE_CHOICE.STAY) {
     return 'reste';
   }
-  return 'n’a pas voté';
+  return '…';
 }
 
 /** L'etat d'un votant, tel qu'il s'ecrit dans `data-choice` — donc tel que les tests le lisent. */
@@ -122,54 +111,43 @@ export function leaveGold(gold: number, multiplier: number): number {
  * partagee que `Room#stepPortal` ajoute aussi.
  *
  * ⚠️ **Ce n'est PAS une promesse** : la cagnotte peut grossir, ou se perdre si
- * l'equipe tombe. C'est le texte de `stakeLines` qui porte ce risque.
+ * l'equipe tombe. C'est le « si l'equipe tient » sous le bouton qui le dit.
  */
 export function stayGold(gold: number, multiplier: number): number {
   return extractGold(gold, multiplier + EXTRACT_MULTIPLIER_STEP);
 }
 
-/**
- * Les deux lignes de l'enjeu : ce qu'on gagne en partant, ce qu'on risque en
- * restant.
- *
- * ⚠️ **DEUX chiffres DIFFERENTS** : ce qui se decide, c'est `×m` maintenant
- * contre `×(m + pas)` plus tard, au risque de tout perdre entre les deux.
- */
-export function stakeLines(gold: number, multiplier: number): { leave: string; stay: string } {
-  return {
-    leave: `Partir maintenant : ${formatGold(leaveGold(gold, multiplier))} or acquis (${formatMultiplier(multiplier)})`,
-    stay: `Rester : ${formatGold(stayGold(gold, multiplier))} or au prochain portail (${formatMultiplier(multiplier + EXTRACT_MULTIPLIER_STEP)}) — tout est perdu si l’équipe tombe`,
-  };
-}
-
 interface ChoiceCell {
   root: HTMLButtonElement;
   choice: number;
+  /** Le montant affiche sous le bouton. */
+  gold: HTMLElement;
 }
+
+/** Les deux faces, dans l'ordre affiche, avec leur touche (voir `portalKeyChoice`). */
+const FACES = [
+  { choice: VOTE_CHOICE.LEAVE, label: 'Partir', key: '1' },
+  { choice: VOTE_CHOICE.STAY, label: 'Rester', key: '2' },
+] as const;
 
 export class PortalScreen {
   readonly #root: HTMLElement;
   readonly #status: HTMLElement;
-  readonly #stakes: HTMLElement;
   readonly #choices: HTMLElement;
   readonly #voters: HTMLElement;
   readonly #source: PortalSource;
 
-  #leaveLine: HTMLElement | null = null;
-  #stayLine: HTMLElement | null = null;
   #cells: ChoiceCell[] = [];
 
   constructor(
     root: HTMLElement,
     status: HTMLElement,
-    stakes: HTMLElement,
     choices: HTMLElement,
     voters: HTMLElement,
     source: PortalSource,
   ) {
     this.#root = root;
     this.#status = status;
-    this.#stakes = stakes;
     this.#choices = choices;
     this.#voters = voters;
     this.#source = source;
@@ -190,36 +168,44 @@ export class PortalScreen {
     this.#paint();
   }
 
-  /** Les deux boutons, construits une seule fois : deux faces, jamais N cartes. */
+  /**
+   * Les deux faces, construites une seule fois : un bouton (libelle et
+   * touche), son montant dessous, et « si l'equipe tient » sous Rester.
+   */
   #build(): void {
     this.#choices.replaceChildren();
-    this.#cells = [
-      { choice: VOTE_CHOICE.LEAVE, label: 'Partir' },
-      { choice: VOTE_CHOICE.STAY, label: 'Rester' },
-    ].map(({ choice, label }) => {
+    this.#cells = FACES.map(({ choice, label, key }) => {
+      const state = voteState(choice);
+      const option = document.createElement('div');
+      option.className = 'portal-option';
+
       const root = document.createElement('button');
       root.type = 'button';
       // Partir quitte la run : le bouton rouge des sorties.
       root.className = `btn btn--tab ol portal-choice${choice === VOTE_CHOICE.LEAVE ? ' btn--red' : ''}`;
-      root.dataset.choice = voteState(choice);
-      root.textContent = label;
+      root.dataset.choice = state;
+      const hint = document.createElement('kbd');
+      hint.className = 'portal-choice__key';
+      hint.textContent = key;
+      root.append(label, hint);
       root.addEventListener('click', () => {
         this.#onVote(choice);
       });
-      this.#choices.append(root);
-      return { root, choice };
-    });
 
-    this.#stakes.replaceChildren();
-    const leave = document.createElement('span');
-    leave.className = 'portal-stake';
-    leave.dataset.stake = 'leave';
-    const stay = document.createElement('span');
-    stay.className = 'portal-stake';
-    stay.dataset.stake = 'stay';
-    this.#stakes.append(leave, stay);
-    this.#leaveLine = leave;
-    this.#stayLine = stay;
+      const gold = document.createElement('span');
+      gold.className = 'portal-option__gold f-jer ol';
+      gold.dataset.gold = state;
+      option.append(root, gold);
+
+      if (choice === VOTE_CHOICE.STAY) {
+        const note = document.createElement('span');
+        note.className = 'portal-option__note';
+        note.textContent = 'si l’équipe tient';
+        option.append(note);
+      }
+      this.#choices.append(option);
+      return { root, choice, gold };
+    });
   }
 
   /**
@@ -247,18 +233,14 @@ export class PortalScreen {
     this.#root.dataset.settled = settled ? 'true' : 'false';
     this.#status.textContent = this.#statusLine(decision);
 
-    // ⚠️ **L'or vient du SNAPSHOT, donc il bouge pendant le vote** (les
-    // monstres en laissent toujours tomber). Le multiplicateur vient de
-    // l'annonce et ne bouge pas de toute la fenetre.
-    const lines = stakeLines(source.gold, source.portalMultiplier);
-    if (this.#leaveLine) {
-      this.#leaveLine.textContent = lines.leave;
-    }
-    if (this.#stayLine) {
-      this.#stayLine.textContent = lines.stay;
-    }
-
     for (const cell of this.#cells) {
+      // L'or vient du SNAPSHOT ; le monde est gele pendant le vote, mais
+      // l'ecran ne decide rien : il relit a chaque image.
+      const montant =
+        cell.choice === VOTE_CHOICE.LEAVE
+          ? leaveGold(source.gold, source.portalMultiplier)
+          : stayGold(source.gold, source.portalMultiplier);
+      cell.gold.textContent = `${formatGold(montant)} or`;
       cell.root.dataset.mine =
         mine !== null && source.portalVotes.get(mine) === cell.choice ? 'true' : 'false';
       // Cliquable tant que le verdict n'est pas tombe : ensuite le portail est
@@ -278,27 +260,28 @@ export class PortalScreen {
   #statusLine(decision: number | null): string {
     const source = this.#source;
     if (decision !== null) {
-      // ⚠️ **Le verdict se LIT, et l'or avec lui.** `PORTAL_RESULT` porte un
-      // seul champ d'or dont le sens se lit dans la decision : acquis si
-      // l'equipe part, reporte si elle reste (voir `PortalResultMessage`).
+      // ⚠️ **Le verdict se LIT** jusqu'a la disparition de la carte
+      // (`#portalCloseTick`). `PORTAL_RESULT` porte un seul champ d'or dont le
+      // sens se lit dans la decision : on ne l'affiche que s'il est ACQUIS.
       return decision === VOTE_CHOICE.LEAVE
-        ? `L’équipe part — ${formatGold(source.portalGold)} or acquis.`
-        : `L’équipe reste — ${formatGold(source.portalGold)} or toujours en jeu.`;
+        ? `L’équipe part — ${formatGold(source.portalGold)} or`
+        : 'L’équipe reste';
     }
     // ⚠️ **Derive du TICK, jamais de l'horloge murale** : c'est le tick que le
     // serveur a date, donc le seul temps que les joueurs partagent.
     // `remainingSeconds` est celle du draft, importee plutot que recopiee.
     const seconds = remainingSeconds(source.portalDeadlineTick, source.hordeTick);
-    return `Le portail est ouvert — ${seconds} s`;
+    return `Portail — ${seconds} s`;
   }
 }
 
 /**
- * Un votant : l'avatar minimal d'un joueur, a sa couleur d'anneau, et **ce
- * qu'il a decide en toutes lettres**.
+ * Un votant : une pastille a la couleur du joueur, son numero, et **ce qu'il a
+ * decide en un mot court**.
  *
- * ⚠️ **Le mot, pas seulement la couleur** : sinon « n'a pas vote » et
- * « reste » se ressembleraient sur un ecran ou l'on regarde surtout la horde.
+ * ⚠️ **Le mot, pas seulement la couleur** : sinon « pas encore vote » et
+ * « reste » se ressembleraient. La pastille creuse (CSS, `data-choice="none"`)
+ * le redit.
  */
 function voterFor(playerId: number, choice: number, isLocal: boolean): HTMLElement {
   const voter = document.createElement('span');
