@@ -70,6 +70,8 @@ interface Body {
   lastMoveMs: number;
   facing: 1 | -1;
   running: boolean;
+  /** Distance du centre aux pieds, en px monde : le tri en profondeur se fait aux pieds. */
+  feet: number;
   idle: Texture[];
   run: Texture[];
 }
@@ -107,7 +109,7 @@ export class PlayerRenderer {
   ) {}
 
   draw(
-    players: readonly { id: number; x: number; y: number }[],
+    players: readonly { id: number; x: number; y: number; hp?: number }[],
     classOf: (playerId: number) => number,
     localId: number | null,
     nowMs: number,
@@ -127,15 +129,20 @@ export class PlayerRenderer {
       b.lastX = p.x;
       b.lastY = p.y;
       const running = nowMs - b.lastMoveMs < RUN_HOLD_MS;
-      const alpha = p.id === localId ? 1 : 0.9;
+      // Un mort reste dans le snapshot : on le voit, mais en ombre.
+      const dead = (p.hp ?? 1) <= 0;
+      const alpha = dead ? 0.35 : p.id === localId ? 1 : 0.9;
+      // Les arbres sont tries par leur pied (`terrain-renderer`) : le joueur
+      // aussi, sinon il passe derriere un tronc 46 px trop tot.
+      const depth = p.y + b.feet;
 
       b.base.position.set(p.x, p.y);
       // Juste SOUS son propre sprite dans le calque trie, donc au-dessus de la
       // horde : c'est tout l'interet du socle, se voir au milieu des monstres.
-      b.base.zIndex = p.y - 1;
-      b.base.alpha = p.id === localId ? 1 : 0.7;
+      b.base.zIndex = depth - 1;
+      b.base.alpha = dead ? 0.25 : p.id === localId ? 1 : 0.7;
       b.fallback.position.set(p.x, p.y);
-      b.fallback.zIndex = p.y;
+      b.fallback.zIndex = depth;
       b.fallback.visible = b.body === null;
       for (const [s, a] of [
         [b.body, alpha],
@@ -149,7 +156,7 @@ export class PlayerRenderer {
           s.play();
         }
         s.position.set(p.x, p.y);
-        s.zIndex = p.y;
+        s.zIndex = depth;
         s.scale.set(UNIT_SCALE * b.facing, UNIT_SCALE);
         s.alpha = a;
       }
@@ -203,6 +210,8 @@ export class PlayerRenderer {
       lastMoveMs: Number.NEGATIVE_INFINITY,
       facing: 1,
       running: false,
+      // L'ancre est a 0,6 de la hauteur : les pieds sont 0,4 image plus bas.
+      feet: 0.4 * sheets.frame * UNIT_SCALE,
       idle: [],
       run: [],
     };

@@ -369,9 +369,10 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     const world = new Container();
     new Stage().composeWorld(world);
 
-    // Seize calques (voir le test suivant pour la liste) : un calque oublie
-    // est un calque invisible.
-    expect(world.children).toHaveLength(16);
+    // Seize calques (voir le test suivant pour la liste), plus les joueurs et
+    // leurs fantomes inseres au-dessus du noir : un calque oublie est un
+    // calque invisible.
+    expect(world.children).toHaveLength(18);
   });
 
   it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {

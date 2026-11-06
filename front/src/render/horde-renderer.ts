@@ -394,6 +394,12 @@ export class HordeRenderer {
   /** `#scale[archetype]` : voir `spriteScale`/`contentSizePx`, calculee une fois dans `load()`. */
   #scale = new Float32Array(0);
   /**
+   * `#anchorX[archetype]` : le centre du CONTENU dans sa cellule, calcule dans
+   * `adoptAtlas`. Avec l'ancre au centre de la cellule, un contenu decale
+   * sautait de deux fois ce decalage au demi-tour (`scaleX` negatif).
+   */
+  #anchorX: number[] = [];
+  /**
    * Texture posee sur les particules du reservoir a leur creation — remplacee
    * a chaque image par celle du clip courant (`draw`). N'importe laquelle fait
    * l'affaire, mais `Particle` en exige une : c'est la premiere que l'atlas
@@ -445,6 +451,8 @@ export class HordeRenderer {
     // `Texture.from` est synchrone : elle ne telecharge rien. Il faut passer
     // par `Assets.load` pour recuperer l'atlas depuis son URL.
     const atlas = await Assets.load<Texture>(`${this.assetsBase}/derived/${manifest.image}`);
+    // Comme les unites et le sol : du pixel art net, pas lisse.
+    atlas.source.scaleMode = 'nearest';
     this.adoptAtlas(manifest, atlas);
   }
 
@@ -486,6 +494,7 @@ export class HordeRenderer {
       // cellule native (192 a 384 px, `shared/archetypes.ts`), la hitbox de
       // tir, elle, ne varie pas : chacun doit donc recevoir SON propre facteur.
       sizesPx[a.id] = contentSizePx(a.bounds);
+      this.#anchorX[a.id] = (a.bounds.x + a.bounds.w / 2) / a.cell;
     }
     // ⚠️ **Le porteur de coffre n'a PAS d'entree dans l'atlas** — c'est un
     // voleur agrandi, aucun actif nouveau. Sans cet
@@ -499,6 +508,7 @@ export class HordeRenderer {
     this.#runFrames[PORTEUR_ARCHETYPE] = this.#runFrames[voleur] ?? [];
     this.#attackFrames[PORTEUR_ARCHETYPE] = this.#runFrames[voleur]?.slice(0, 1) ?? [];
     sizesPx[PORTEUR_ARCHETYPE] = sizesPx[voleur] ?? 0;
+    this.#anchorX[PORTEUR_ARCHETYPE] = this.#anchorX[voleur] ?? 0.5;
     // ⚠️ **La proie de la chasse (etape 16) non plus** : un gnoll agrandi, le
     // meme mecanisme que le porteur — sa course, la premiere image figee a
     // l'arret (elle attend), la taille de contenu du gnoll que `bodyScale`
@@ -507,6 +517,7 @@ export class HordeRenderer {
     this.#runFrames[PROIE_ARCHETYPE] = this.#runFrames[gnoll] ?? [];
     this.#attackFrames[PROIE_ARCHETYPE] = this.#runFrames[gnoll]?.slice(0, 1) ?? [];
     sizesPx[PROIE_ARCHETYPE] = sizesPx[gnoll] ?? 0;
+    this.#anchorX[PROIE_ARCHETYPE] = this.#anchorX[gnoll] ?? 0.5;
     // Les trous de `sizesPx` valent `undefined` : `archetypeScales` y lit 0,
     // et `spriteScale` rend alors 1 — une echelle jamais utilisee, puisque
     // l'entite est sautee faute de textures.
@@ -608,6 +619,7 @@ export class HordeRenderer {
       // donc `scaleX` negatif est la seule des deux mises a l'echelle a
       // changer de signe.
       const scale = this.#scale[archetype] ?? 1;
+      particle.anchorX = this.#anchorX[archetype] ?? 0.5;
       particle.scaleX = scale * (this.#facing[i] === -1 ? -1 : 1);
       particle.scaleY = scale;
       children.push(particle);

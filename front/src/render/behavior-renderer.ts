@@ -403,6 +403,9 @@ export class BehaviorRenderer {
     s.visible = true;
     s.alpha = 1;
     s.rotation = 0;
+    // Un sprite recycle garde sinon l'echelle de son occupant precedent
+    // (une explosion a 3,4, un tir a 0,7).
+    s.scale.set(1);
     return s;
   }
 

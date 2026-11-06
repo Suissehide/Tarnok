@@ -480,7 +480,11 @@ describe('HordeRenderer.draw — le corps est centre sur la position et a la bon
     // de « centre ». A 0,75 (les pieds sur la position), le corps monterait
     // de 25 % de sa hauteur au-dessus de la hitbox.
     expect(particle.anchorY).toBe(0.5);
-    expect(particle.anchorX).toBe(0.5);
+    // En x, l'ancre est le centre du CONTENU (`bounds`), pas de la cellule :
+    // sinon le corps saute de deux fois le decalage a chaque demi-tour.
+    expect(particle.anchorX).toBeCloseTo(
+      (FIXTURE_BOUNDS.x + FIXTURE_BOUNDS.w / 2) / FIXTURE_CELL_PX,
+    );
   });
 
   it('met le sprite a l echelle du CONTENU de l atlas, pas de sa cellule', () => {

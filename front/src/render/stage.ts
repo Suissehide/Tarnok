@@ -226,8 +226,6 @@ export class Stage {
     // sous la horde. Voir `composeWorld` — c'est la seule partie de `init` que
     // la suite sait executer.
     this.composeWorld(this.#world);
-    // Les joueurs et les arbres par-dessus tous les calques, puis leurs fantomes.
-    this.#world.addChild(this.#depth, this.#ghosts);
 
     // ⚠️ Sans ce try/catch, un atlas absent (404 sur le manifeste, atlas pas
     // depose sur MinIO) rejette cette promesse. `main.ts` fait
@@ -259,6 +257,12 @@ export class Stage {
   composeWorld(world: Container): void {
     for (const layer of this.#layers) {
       layer.attach(world);
+      // Les joueurs et les arbres (puis leurs fantomes) juste au-dessus du
+      // noir : eclaires dans la nuit, mais SOUS les pings et les chiffres,
+      // qui se lisent et qu'un tronc ne doit pas cacher.
+      if (layer === this.#darkness) {
+        world.addChild(this.#depth, this.#ghosts);
+      }
     }
     for (const layer of this.#procedural) {
       layer.load();
@@ -556,8 +560,10 @@ export class Stage {
     if (!me) {
       return;
     }
-    this.#world.x = this.#app.screen.width / 2 - me.x;
-    this.#world.y = this.#app.screen.height / 2 - me.y * VERTICAL_SQUASH;
+    // Arrondie au pixel : en `nearest`, une camera fractionnaire fait ramper
+    // les contours a chaque image.
+    this.#world.x = Math.round(this.#app.screen.width / 2 - me.x);
+    this.#world.y = Math.round(this.#app.screen.height / 2 - me.y * VERTICAL_SQUASH);
   }
 }
 
