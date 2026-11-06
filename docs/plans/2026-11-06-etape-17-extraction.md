@@ -22,27 +22,64 @@ Prisma/Postgres pour les tests qui ouvrent de vraies sockets.
 
 **Spec :** [`docs/specs/2026-11-06-etape-17-extraction.md`](../specs/2026-11-06-etape-17-extraction.md)
 
-**Où l'on travaille :** dans un worktree, sur la branche `etape-17-extraction`, depuis `main`
-(`5c4a0e0`, qui porte la spec).
+**Où l'on travaille :** dans le worktree `../Tarnok-extraction`, sur la branche
+`etape-17-extraction`, déjà créée depuis `main` à `3c1b007` (la spec, puis la passe interfaces).
 
 ```bash
-git worktree add ../Tarnok-extraction -b etape-17-extraction
 cd ../Tarnok-extraction && npm ci && npm run db:generate -w back
 cp ../Tarnok/back/.env back/.env && cp ../Tarnok/front/.env front/.env
 ```
 
-Tous les chemins de ce plan sont relatifs à la racine du worktree. Les ancres `l.~N` sont celles
-du commit `5c4a0e0`.
+Tous les chemins de ce plan sont relatifs à la racine du worktree. Les ancres `l.N` sont celles
+du commit `3c1b007`.
 
-⚠️ **Travail concurrent non commité.** Pendant l'écriture de ce plan, l'arbre de travail de
-`../Tarnok` (sur `main`) portait des retouches d'une autre session, **non commitées** : codes de
-fermeture WS, `aria-live`, `inert` sous le menu Échap et le bilan (`front/src/main.ts`), largeur du
-bandeau du portail (`front/index.html`), apostrophes typographiques (`front/src/ui/portal.ts`), et
-`Portal#forget` (`back/src/portal.ts` — un joueur parti n'est plus attendu). Le worktree part de
-`5c4a0e0` **sans elles**. Si elles sont commitées avant que le worktree ne soit créé, les ancres
-glissent de quelques lignes : les remplacements de ce plan portent sur des blocs entiers et restent
-valables ; garder alors `aria-live="polite"` sur `#portal-status` et les `inert` de `main.ts`, et
-ne pas réécrire `Portal#forget`.
+## Réconciliation avec la passe interfaces (3c1b007)
+
+Le plan a été écrit contre `5c4a0e0` ; une autre session a commité depuis `ec8900b`, `32c789f`,
+`18b0999`, `7e4f8ab`, `3c1b007`. Ce qui a changé ici, une ligne chacun :
+
+- **Ancres recalées** partout (room.ts, server.ts, client.ts, main.ts, index.html, main.css) ;
+  `room.test.ts` (l.4847-4887, `});` du `describe` l.5049), `portal.integration.test.ts`,
+  `portal.test.ts`, `hud.ts`, `hud.test.ts`, `ui/draft.ts`, `shared/constants.ts`,
+  `back/src/portal.ts` (doc l.6-26) n'ont pas bougé là où le plan les touche.
+- **Fin de `step` (tâche 1)** : `room.ts` l.1890-1911 enregistre désormais l'historique des vivants
+  **après** `#stepPortal()` ; le remplacement ne retire que l'appel et son commentaire
+  (l.1880-1887) et **garde** ce bloc. Le garde de tête rend la main avant lui, comme le gel d'un
+  étalage (l.1399) : pas d'historique serveur pendant le vote, exactement comme pendant un étalage.
+- **Verbes (tâche 1, tranché)** : `useAbility` refuse désormais pendant un étalage et le gel
+  (`room.ts` l.1314-1318, test `verbes.test.ts` l.309-326), mais pas pendant le portail, que
+  `#freezeUntilTick` ne couvre pas. Le garde gagne `this.portalOpen`, et un huitième test
+  (« un verbe est refusé pendant le vote ») le tient — sinon un Relais téléporterait dans un
+  monde gelé. Le constat « hors périmètre » du bilan (tâche 6) est mis à jour en conséquence.
+- **`Portal#forget`** (`back/src/portal.ts` l.95-99, appelé par `Room#leave` l.1262) : déjà fait,
+  conservé, non réécrit. Avec le garde de tête, `#stepPortal` tourne chaque pas : un parti qui
+  quitte pendant le vote ferme le portail dès que les présents ont voté.
+- **Morts** (`18b0999`) : un mort ne bouge plus (`room.ts` l.1414-1417, `client.ts` `#localSpeed`
+  l.2364-2367), n'est plus une cible ni ancré dans l'historique (`client.ts` l.2751-2761) ;
+  `Draft.open` n'attend que les vivants. Rien à changer : `Portal` attend toujours tous les
+  connectés, et le test « un MORT vote pendant le gel » reste juste.
+- **Le gel client (tâche 2) n'a pas été touché** par la passe : `LEVEL_UP` / `DRAFT_RESULT` /
+  `#movementScale` / les trois gardes sont identiques à `5c4a0e0` (l.2533-2535, l.2593-2594,
+  l.3777-3783, l.2768, l.2806, l.3762). La tâche 2 s'applique telle quelle, ancres recalées ;
+  aucun chevauchement à arbitrer.
+- **Apostrophes typographiques** (`7e4f8ab`, `front/src/ui/portal.ts` l.90, l.141, l.285-286) :
+  les textes affichés de la nouvelle carte et leurs tests passent à `’` (« si l’équipe tient »,
+  « L’équipe part — … », « L’équipe reste »).
+- **`inert`** (`main.ts` l.483-484 `setPaused`, l.499-501 au `RUN_OVER`) : la tâche 3 ajoute
+  `el('portal-layer').toggleAttribute('inert', value)` dans `setPaused` — la carte devient
+  cliquable (`pointer-events-auto`) et atteignable à Tab, le voile du menu Échap (z-30) ne
+  l'arrête qu'à la souris. Le `RUN_OVER` le pose déjà, rien à ajouter.
+- **Bandeau du portail élargi à 1 000 px et bloc ÉCHAP décalé** (`index.html` l.597, l.544) :
+  rendu caduc par la carte centrée de la tâche 3 ; le bloc ÉCHAP reste où la passe l'a mis.
+  `aria-live="polite"` sur `#portal-status` (l.599) est déjà dans le HTML de la tâche 3.
+- **Échap ferme les menus** (`main.ts` l.189-206, écran d'accueil seulement) et **H ignore
+  Ctrl/Cmd/Alt** (l.613-622) : aucune interaction avec `1` / `2` ; `paused`, `hud`, `summary`
+  que lit la tâche 4 existent toujours (l.478, écouteur `keydown` de `join` l.591).
+- **Bilan de la passe, §3 point 6** (« Extraction réussie + 0 » quand effacement et « partir »
+  tombent au même tick, `#checkRunOver` puis `#stepPortal`) : **refermé par la tâche 1**, puisque
+  le vote ne tourne plus qu'à monde gelé. Le bilan de l'étape 17 le dit.
+- `--color-slate-soft` est passé à `#c0c6ce` (`main.css` l.26) : la note « si l’équipe tient »
+  qui l'emploie sera plus claire ; rien à changer.
 
 ## Contraintes globales
 
@@ -62,8 +99,8 @@ ne pas réécrire `Portal#forget`.
 - Les commentaires qui disent « le vote ne gèle rien » / « le monde continue de tourner » sont
   **réécrits**, jamais laissés faux : `back/src/portal.ts` (tableau de la classe), `shared/constants.ts`
   (`PORTAL_WINDOW_TICKS`), `back/src/room.ts` (getter `portalOpen`, bloc des vagues, fin de
-  `step`), `back/src/server.ts` (l.583-587), `front/index.html` (commentaire de `#portal-layer`),
-  `front/src/ui/portal.ts` (doc de classe), `front/src/main.ts` (l.625-626).
+  `step`), `back/src/server.ts` (l.555-559), `front/index.html` (commentaire de `#portal-layer`),
+  `front/src/ui/portal.ts` (doc de classe), `front/src/main.ts` (l.656-657).
 - Commentaires de code en français **sans accents** ; textes affichés avec leurs accents ;
   messages de commit conventionnels en français sans accents, sujet en minuscules
   (`feat(back): ...`, `test(front): ...`, `docs: ...`).
@@ -89,18 +126,18 @@ ne pas réécrire `Portal#forget`.
 La spec (§1) écrit : « le rejeu existant absorbe un `PORTAL_OPEN` reçu après le début du gel, comme
 il absorbe un `LEVEL_UP` tardif ». Vérifié faux, deux fois :
 
-- **Gel appliqué à la réception.** `LEVEL_UP` (`front/src/net/client.ts` l.2528-2530) pose
-  `#freezeUntilTick = #resumeEndTick = MAX` tout de suite, et `#movementScale` (l.3769-3775) comme
-  les gardes du champ (l.2760, l.2798, l.3754) ne lisent jamais `#freezeStartTick` : tout tick
+- **Gel appliqué à la réception.** `LEVEL_UP` (`front/src/net/client.ts` l.2533-2535) pose
+  `#freezeUntilTick = #resumeEndTick = MAX` tout de suite, et `#movementScale` (l.3777-3783) comme
+  les gardes du champ (l.2768, l.2806, l.3762) ne lisent jamais `#freezeStartTick` : tout tick
   simulé après la réception est gelé, même avant le début daté. Mesuré :
   `cd front && npx vitest run src/net/client.test.ts -t "gel est date"` imprime
   `avant=53.3px` — la horde s'arrête au tick 20 (réception) au lieu du tick 200 (date) ; le seuil
   du test (`> 50`) le laisse passer. Pour le portail c'est le cas **ordinaire** : `PORTAL_OPEN`
-  part avec le `SNAPSHOT` de `T` (`back/src/server.ts` l.581-592), et la horde du client, calée sur
-  le dernier snapshot (`HORDE_TICK_LAG_TOLERANCE = 1`, l.221 et l.2642), n'a souvent pas encore
+  part avec le `SNAPSHOT` de `T` (`back/src/server.ts` l.555-566), et la horde du client, calée sur
+  le dernier snapshot (`HORDE_TICK_LAG_TOLERANCE = 1`, l.221 et l.2647), n'a souvent pas encore
   simulé `T` (voire `T − 1`), que le serveur a fait tourner.
 - **Aucun rejeu sur un gel.** Les rejeux n'existent que pour les morts, zones, charges et leurres
-  (`#applyDeaths` l.3615, `#applyZone` l.3496, `#applyBossCharge`, `#applyDecoy` l.3717) ;
+  (`#applyDeaths` l.3623, `#applyZone` l.3504, `#applyBossCharge` l.3560, `#applyDecoy` l.3725) ;
   `LEVEL_UP` et `DRAFT_RESULT` n'en déclenchent aucun. Aucun test de dérive ne couvre un gel tardif
   (`grep LEVEL_UP shared/horde.replication.test.ts` : rien).
 
@@ -113,7 +150,7 @@ profitent aussi (le test « gel est date » passe de 53 à ~480 px avant le gel,
 
 **Écart assumé n° 2 — `isFrozen` vrai pendant le portail réveille l'étalage précédent.**
 `front/src/ui/draft.ts` l.409 : `visible = spread.length > 0 && (!draftSettled || isFrozen)`, et
-`#draftCards` survit à sa fermeture jusqu'au `DRAFT_OPEN` suivant (`client.ts` l.2581-2586). Sans
+`#draftCards` survit à sa fermeture jusqu'au `DRAFT_OPEN` suivant (`client.ts` l.2585-2591). Sans
 rien faire, les cartes du dernier étalage réapparaîtraient sous le portail. `PORTAL_OPEN` vide donc
 `#draftCards` (aucun étalage n'est ouvert à ce moment : un étalage gèle le monde, aucune vague ne
 sort). La spec ne cite que la roue de ping parmi les lecteurs d'`isFrozen`.
@@ -125,11 +162,11 @@ badge dit « Portail — pause… » pendant le vote et sa rampe.
 
 **Écart assumé n° 4 — « partir » ne dégèle pas le client.** La spec dit qu'à `PORTAL_RESULT`
 `#freezeUntilTick = effectTick` sans distinguer le verdict. Au salon, « partir » termine la run
-(`#endRun`, `back/src/room.ts` l.2729) et ne pose aucune reprise : le client fait de même et ne
+(`#endRun`, `back/src/room.ts` l.2764) et ne pose aucune reprise : le client fait de même et ne
 dégèle que sur `VOTE_CHOICE.STAY`.
 
 **Écart assumé n° 5 — le garde des vagues `&& !this.portalOpen` disparaît.** `back/src/room.ts`
-l.1563 : depuis le garde de tête, aucune vague ne sort pendant un vote ; la condition est morte.
+l.1571 : depuis le garde de tête, aucune vague ne sort pendant un vote ; la condition est morte.
 
 **Écart assumé n° 6 — trois tests existants changent de sens** (tous trois disaient « le monde
 tourne pendant le vote ») :
@@ -176,6 +213,9 @@ la spec (§3) retire ; l'état reste distinct par `data-choice` et par le style 
 5. **Un événement en cours pendant le vote** (premier événement et premier portail tombent tous
    deux vers la vague 20, `EVENT_FIRST_WAVE` et `PORTAL_EVERY_WAVES`) : aucun `EVENT_STATE`
    pendant le gel ni la rampe, il repart ensuite → test tâche 1.
+6. **Un verbe (Espace) pendant le vote** : `Room#useAbility` agit hors de `step` ; refusé pendant
+   le vote et au tick du verdict, comme pendant un étalage depuis la passe interfaces → test
+   tâche 1.
 
 ---
 
@@ -183,9 +223,9 @@ la spec (§3) retire ; l'état reste distinct par `data-choice` et par le style 
 
 | Fichier | Rôle |
 | --- | --- |
-| `back/src/room.ts` | le garde du portail en tête de `step`, la reprise après « rester », les commentaires |
+| `back/src/room.ts` | le garde du portail en tête de `step`, le portail dans le garde de `useAbility`, la reprise après « rester », les commentaires |
 | `back/src/portal.ts`, `shared/constants.ts`, `back/src/server.ts` | commentaires réécrits (le vote gèle) |
-| `back/src/room.test.ts` | le gel, le vote solo et la rampe, l'étalage qui attend, « partir », les points de vigilance 1, 2, 4, 5 |
+| `back/src/room.test.ts` | le gel, le vote solo et la rampe, l'étalage qui attend, « partir », les points de vigilance 1, 2, 4, 5, 6 |
 | `back/src/portal.integration.test.ts` | deux tests existants inversés (tâche 1), **le livrable** (tâche 5) |
 | `front/src/net/client.ts`, `front/src/net/client.test.ts` | `#freezeFrom`, `#thawAt`, `#untilAt`, `#replayFrom`, `freezeIsPortal`, l'étalage vidé ; dérive 0,000 px |
 | `front/src/ui/hud.ts`, `front/src/ui/hud.test.ts` | « Portail — pause… » |
@@ -205,13 +245,13 @@ revue (datation, rejeu, dérive) et réunit les trois lecteurs d'`isFrozen` ; la
 ### Tâche 1 : serveur — le portail gèle le monde
 
 **Fichiers :**
-- Modifier : `back/src/room.ts` (docbloc de `step` l.1338-1355 ; garde de tête l.1373-1388 ; bloc
-  des vagues l.1558-1567 ; fin de `step` l.1865-1877 ; getter `portalOpen` l.769-772 ; docbloc et
-  verdict de `#stepPortal` l.2706-2738), `back/src/portal.ts` (doc de classe l.6-26),
-  `shared/constants.ts` (doc de `PORTAL_WINDOW_TICKS` l.557-566), `back/src/server.ts`
-  (commentaire l.581-587)
-- Tester : `back/src/room.test.ts` (le test l.4847-4887 réécrit ; sept tests ajoutés à la fin du
-  `describe` « le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues », avant sa `});` l.~5030),
+- Modifier : `back/src/room.ts` (garde de `useAbility` l.1314-1318 ; docbloc de `step` l.1340-1374 ;
+  garde de tête l.1375-1391 ; bloc des vagues l.1566-1575 ; fin de `step` l.1876-1911 ; getter
+  `portalOpen` l.769-772 ; docbloc et verdict de `#stepPortal` l.2745-2777),
+  `back/src/portal.ts` (doc de classe l.6-26), `shared/constants.ts` (doc de `PORTAL_WINDOW_TICKS` l.557-566), `back/src/server.ts`
+  (commentaire l.555-559)
+- Tester : `back/src/room.test.ts` (le test l.4847-4887 réécrit ; huit tests ajoutés à la fin du
+  `describe` « le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues », avant sa `});` l.5049),
   `back/src/portal.integration.test.ts` (en-tête l.32-50 ; constantes l.74-91 ; phase 3 l.647-711 ;
   test l.877-964)
 
@@ -274,7 +314,7 @@ revue (datation, rejeu, dérive) et réunit les trois lecteurs d'`isFrozen` ; la
 ```
 
 À la fin du même `describe` (après le test « un joueur MORT vote, et sa voix fait BASCULER le
-verdict », avant la `});` qui ferme le `describe`, l.~5030), ajouter :
+verdict », avant la `});` qui ferme le `describe`, l.5049), ajouter :
 
 ```ts
   it('etape 17 : en solo, un vote ferme le portail au tick suivant ; RESTER rend le monde par la rampe', () => {
@@ -434,6 +474,26 @@ verdict », avant la `});` qui ferme le `describe`, l.~5030), ajouter :
     }
     expect(room.drainEvents().map((m) => m.type)).toContain(MSG.EVENT_STATE);
   }, 60_000);
+
+  it('etape 17 : un verbe est refuse pendant le vote et au tick du verdict, comme pendant un etalage', () => {
+    // La passe interfaces (3c1b007) refuse deja les verbes pendant un etalage
+    // et le gel qui le suit (`verbes.test.ts`) ; le portail, que
+    // `#freezeUntilTick` ne couvre pas, doit faire de meme.
+    const room = new Room(4242);
+    room.join(1, undefined, undefined, 0); // Amorce
+    ouvrirLePortail(room);
+    const p = positionOf(room, 1);
+    expect(room.useAbility(1, p.x, p.y)).toBeNull();
+
+    room.setVote(1, VOTE_CHOICE.STAY);
+    pas(room);
+    expect(room.drainPortalResults()).toHaveLength(1);
+    // Le tick du verdict est encore gele (`#freezeUntilTick = C`).
+    expect(room.useAbility(1, p.x, p.y)).toBeNull();
+
+    pas(room);
+    expect(room.useAbility(1, p.x, p.y)).not.toBeNull();
+  }, 60_000);
 ```
 
 - [ ] **Étape 2 : les lancer, ils échouent**
@@ -441,21 +501,22 @@ verdict », avant la `});` qui ferme le `describe`, l.~5030), ajouter :
 Run : `cd back && npx vitest run src/room.test.ts -t "portail"`
 Attendu : FAIL — « LE MONDE GELE » (le joueur a avancé, la horde aussi, des vagues sont sorties),
 « en solo… la rampe » (le joueur bouge au tick du verdict), « un etalage du… » (l'étalage s'ouvre
-pendant le vote), « le minuteur d un evenement… » (des `EVENT_STATE` pendant le vote). « PARTIR
+pendant le vote), « le minuteur d un evenement… » (des `EVENT_STATE` pendant le vote), « un verbe
+est refuse pendant le vote… » (`useAbility` rend un `AbilityUsed` pendant le vote). « PARTIR
 termine la run sans ouvrir l etalage du », « un vote pendant la rampe » et « un MORT vote… »
 peuvent déjà passer ou non selon l'ordre actuel : ce sont des gardes de non-régression.
 
 - [ ] **Étape 3 : le garde du portail**
 
-`back/src/room.ts`, docbloc de `step` : la ligne ` * 1. tick++` (l.~1339) devient
+`back/src/room.ts`, docbloc de `step` : la ligne ` * 1. tick++` (l.1347) devient
 
 ```ts
    * 1. tick++ — puis, portail ouvert (etape 17) : seul le vote avance, et
    *    `step` rend la main (le monde est gele, comme pendant un etalage)
 ```
 
-Dans `step`, entre la fin du garde `#runOver` (le `return;` suivi de `}`, l.~1381) et le
-commentaire « Un coffre, un evenement ou un niveau attend… » (l.~1383), insérer :
+Dans `step`, entre la fin du garde `#runOver` (le `return;` suivi de `}`, l.1381-1382) et le
+commentaire « Un coffre, un evenement ou un niveau attend… » (l.1384), insérer :
 
 ```ts
     // Etape 17 : le portail GELE le monde, comme l'etalage. Ni joueurs, ni
@@ -471,7 +532,7 @@ commentaire « Un coffre, un evenement ou un niveau attend… » (l.~1383), ins�
     }
 ```
 
-Bloc des vagues (l.1558-1567) : remplacer
+Bloc des vagues (l.1566-1571) : remplacer
 
 ```ts
     // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, et
@@ -498,7 +559,7 @@ par
       if (this.#wavesSincePortal >= PORTAL_EVERY_WAVES) {
 ```
 
-Fin de `step` (l.1865-1877) : remplacer
+Fin de `step` (l.1878-1887) : remplacer
 
 ```ts
     this.#stepEvent(dt);
@@ -511,7 +572,6 @@ Fin de `step` (l.1865-1877) : remplacer
     // Rien au-dessus de cette ligne ne consulte le portail : le monde a tourne
     // tout entier pendant le vote.
     this.#stepPortal();
-  }
 ```
 
 par
@@ -521,10 +581,30 @@ par
     this.#checkRunOver();
     // Etape 17 : le vote avance en tete de `step`, monde gele — jamais ici. Une
     // equipe ne peut donc plus etre effacee pendant qu'elle negocie.
-  }
 ```
 
-`#stepPortal` (l.2706-2738) : à la fin de son docbloc, avant ` */`, ajouter
+⚠️ **Le bloc qui suit reste tel quel** (l.1889-1911, « Arrondies, comme sur le fil… » jusqu'à
+`this.#history.record(this.#tick, rxs, rys, ids);`) : depuis `18b0999`, l'historique des
+vivants s'enregistre en FIN de pas. Le garde de tête rend la main avant lui, comme le gel d'un
+étalage : un tick de vote n'enregistre rien, exactement comme un tick d'étalage.
+
+`useAbility` (l.1314-1318) : le garde posé par la passe interfaces devient
+
+```ts
+    // Memes gardes que `step` : rien ne se joue apres la fin, pendant un
+    // etalage, pendant le vote du portail (etape 17) ni pendant le gel — un
+    // verbe pose la s'appliquerait a un monde fige.
+    if (
+      this.#runOver ||
+      this.#draft.phase !== 'closed' ||
+      this.portalOpen ||
+      this.#tick <= this.#freezeUntilTick
+    ) {
+      return null;
+    }
+```
+
+`#stepPortal` (l.2745-2777) : à la fin de son docbloc, avant ` */`, ajouter
 
 ```ts
    *
@@ -601,7 +681,7 @@ devient
  */
 ```
 
-`back/src/server.ts` l.581-587 : remplacer
+`back/src/server.ts` l.555-559 : remplacer
 
 ```ts
     // Le portail, dans le meme ordre que le draft : l'ouverture, les votes en
@@ -624,16 +704,17 @@ par
 
 - [ ] **Étape 5 : les relancer, ils passent**
 
-Run : `cd back && npx vitest run src/room.test.ts -t "portail" && npx vitest run src/portal.test.ts`
-Attendu : PASS — les tests d'avant du filtre `portail` (dont le réécrit) et les 7 nouveaux, puis
-`portal.test.ts` entier.
+Run : `cd back && npx vitest run src/room.test.ts -t "portail" && npx vitest run src/portal.test.ts src/verbes.test.ts`
+Attendu : PASS — les tests d'avant du filtre `portail` (dont le réécrit) et les 8 nouveaux, puis
+`portal.test.ts` et `verbes.test.ts` entiers (le garde des verbes de la passe interfaces tient
+toujours).
 
 - [ ] **Étape 6 : les deux tests sur vraies sockets qui disaient « le monde tourne »**
 
 Les lancer d'abord, pour voir ce que le garde a cassé :
 
 Run : `cd back && npx vitest run src/portal.integration.test.ts`
-Attendu : FAIL — « la horde est figee pendant le vote » (l.703) dans le premier test,
+Attendu : FAIL — « la horde est figee pendant le vote » (l.702) dans le premier test,
 `expect(verdictsDe(a)).toHaveLength(0)` (l.963) dans le second.
 
 `back/src/portal.integration.test.ts`, dans le docbloc d'en-tête (l.32-50) : la phrase
@@ -739,9 +820,9 @@ git commit -m "feat(back): le portail gele le monde, rester reprend comme un eta
 
 **Fichiers :**
 - Modifier : `front/src/net/client.ts` (imports `@shared/constants` l.18-35 et `@shared/protocol`
-  l.~69-92 ; champs du gel l.1463-1480 ; getter `isFrozen` l.1855-1868 ; branches `LEVEL_UP`
-  l.2520-2530, `DRAFT_RESULT` l.2568-2590, `PORTAL_OPEN` l.2592-2606, `PORTAL_RESULT` l.2614-2621 ;
-  gardes du champ et du tir l.2760, l.2798 ; `#replayTick` l.3754 ; `#movementScale` l.3762-3775),
+  l.~69-92 ; champs du gel l.1464-1480 ; getter `isFrozen` l.1856-1868 ; branches `LEVEL_UP`
+  l.2525-2553, `DRAFT_RESULT` l.2573-2596, `PORTAL_OPEN` l.2597-2611, `PORTAL_RESULT` l.2619-2626 ;
+  gardes du champ et du tir l.2768, l.2806 ; `#replayTick` l.3762 ; `#movementScale` l.3770-3783),
   `front/src/ui/hud.ts` (`HudSource` l.66-90 ; texte du badge l.291-296)
 - Tester : `front/src/net/client.test.ts` (import des constantes l.4-24 ; deux `describe` en fin de
   fichier), `front/src/ui/hud.test.ts` (`FakeSource` l.~206 ; un test après l.455)
@@ -1053,7 +1134,7 @@ HUD dit « Coffre — pause… ».
 `@shared/constants` (après `PLAYER_SPEED,`) et `VOTE_CHOICE,` à celui de `@shared/protocol`
 (ordre alphabétique, Biome le range).
 
-Champs (l.1463-1480) : le docbloc de `#freezeUntilTick` / `#resumeEndTick` garde son texte ; après
+Champs (l.1464-1480) : le docbloc de `#freezeUntilTick` / `#resumeEndTick` garde son texte ; après
 `#freezeStartTick = -1;` ajouter :
 
 ```ts
@@ -1134,8 +1215,8 @@ ajouter :
       }
 ```
 
-Les trois gardes `tick > this.#freezeUntilTick` (dans `#advanceHorde` l.2760 et l.2798, dans
-`#replayTick` l.3754) deviennent `tick > this.#untilAt(tick)` :
+Les trois gardes `tick > this.#freezeUntilTick` (dans `#advanceHorde` l.2768 et l.2806, dans
+`#replayTick` l.3762) deviennent `tick > this.#untilAt(tick)` :
 
 ```ts
     if (tick > this.#untilAt(tick) && tick % STEPS_PER_FIELD === 0) {
@@ -1149,7 +1230,7 @@ Les trois gardes `tick > this.#freezeUntilTick` (dans `#advanceHorde` l.2760 et 
     if (tick > this.#untilAt(tick) && tick % STEPS_PER_FIELD === 0) {
 ```
 
-`#movementScale` (l.3762-3775) est remplacé par ce bloc (son docbloc gardé, les quatre aides
+`#movementScale` (l.3770-3783) est remplacé par ce bloc (son docbloc gardé, les quatre aides
 avant lui) :
 
 ```ts
@@ -1282,8 +1363,9 @@ git commit -m "feat(front): le gel du portail, date au tick et rejoue s il arriv
 
 **Fichiers :**
 - Modifier : `front/src/ui/portal.ts` (réécrit en entier), `front/index.html` (section
-  `#portal-layer` et son commentaire, l.586-605), `front/src/styles/main.css` (bloc « Vote
-  d'extraction » l.1297-1339), `front/src/main.ts` (construction de `PortalScreen` l.625-634)
+  `#portal-layer` et son commentaire, l.587-605), `front/src/styles/main.css` (bloc « Vote
+  d'extraction » l.1320-1361), `front/src/main.ts` (`setPaused` l.479-485 ; construction de
+  `PortalScreen` l.656-665)
 - Tester : `front/src/ui/portal.test.ts`
 
 **Interfaces :**
@@ -1298,7 +1380,8 @@ git commit -m "feat(front): le gel du portail, date au tick et rejoue s il arriv
 
 - [ ] **Étape 1 : réécrire les tests de l'écran**
 
-`front/src/ui/portal.test.ts` :
+`front/src/ui/portal.test.ts` (⚠️ depuis `7e4f8ab`, les textes affichés portent l'apostrophe
+typographique `’` — `'n’a pas voté'`, `L’équipe …` ; les attentes ci-dessous la gardent) :
 
 1. Import (l.10-21) : retirer `formatMultiplier` et `stakeLines`.
 2. `interface Harness` (l.59-67) et `harness()` (l.79-100) : retirer `stakes` partout ; `harness()`
@@ -1404,7 +1487,7 @@ describe('le cablage vers index.html', () => {
     // Le multiplicateur ne s'ecrit plus en toutes lettres (spec §3).
     expect(h.root.textContent).not.toContain('×');
     expect(boutonDe(h, VOTE_CHOICE.STAY).parentElement?.textContent).toContain(
-      "si l'équipe tient",
+      'si l’équipe tient',
     );
     expect(boutonDe(h, VOTE_CHOICE.LEAVE).parentElement?.textContent).not.toContain('tient');
   });
@@ -1426,7 +1509,7 @@ describe('le cablage vers index.html', () => {
    - « montre le vote de CHAQUE joueur, abstention comprise et DISTINCTE » : la troisième ligne
      attendue devient `{ id: '4', choice: 'none', label: '…' }` ;
    - « affiche le verdict PARTIR avec l or acquis, et ferme les deux faces » : l'attente du statut
-     devient `` expect(h.status.textContent).toBe(`L'équipe part — 14${THIN_SPACE}723 or`); `` ;
+     devient `` expect(h.status.textContent).toBe(`L’équipe part — 14${THIN_SPACE}723 or`); `` ;
    - « affiche le verdict RESTER avec l or toujours en jeu » devient
 
 ```ts
@@ -1437,7 +1520,7 @@ describe('le cablage vers index.html', () => {
     h.client.portalGold = 14_723;
     h.screen.update();
 
-    expect(h.status.textContent).toBe("L'équipe reste");
+    expect(h.status.textContent).toBe('L’équipe reste');
   });
 ```
 
@@ -1450,7 +1533,8 @@ voile.
 
 - [ ] **Étape 3 : la carte**
 
-`front/src/ui/portal.ts`, en entier :
+`front/src/ui/portal.ts`, en entier (textes affichés à l'apostrophe typographique `’`, comme depuis
+`7e4f8ab` ; commentaires sans accents, apostrophe droite) :
 
 ```ts
 import { EXTRACT_MULTIPLIER_STEP } from '@shared/constants';
@@ -1655,7 +1739,7 @@ export class PortalScreen {
       if (choice === VOTE_CHOICE.STAY) {
         const note = document.createElement('span');
         note.className = 'portal-option__note';
-        note.textContent = "si l'équipe tient";
+        note.textContent = 'si l’équipe tient';
         option.append(note);
       }
       this.#choices.append(option);
@@ -1719,8 +1803,8 @@ export class PortalScreen {
       // (`#portalCloseTick`). `PORTAL_RESULT` porte un seul champ d'or dont le
       // sens se lit dans la decision : on ne l'affiche que s'il est ACQUIS.
       return decision === VOTE_CHOICE.LEAVE
-        ? `L'équipe part — ${formatGold(source.portalGold)} or`
-        : "L'équipe reste";
+        ? `L’équipe part — ${formatGold(source.portalGold)} or`
+        : 'L’équipe reste';
     }
     // ⚠️ **Derive du TICK, jamais de l'horloge murale** : c'est le tick que le
     // serveur a date, donc le seul temps que les joueurs partagent.
@@ -1763,7 +1847,7 @@ function voterFor(playerId: number, choice: number, isLocal: boolean): HTMLEleme
 - [ ] **Étape 4 : le HTML, le style, le câblage**
 
 `front/index.html` : remplacer **toute** la section `#portal-layer` et le commentaire qui la précède
-(l.586-605, de `<!--` « Vote d'extraction. ⚠️ **Ce n'est pas un modale** » jusqu'au `</section>`
+(l.587-605, de `<!--` « Vote d'extraction. ⚠️ **Ce n'est pas un modale** » jusqu'au `</section>`
 qui ferme `#portal-layer`) par :
 
 ```html
@@ -1797,7 +1881,7 @@ qui ferme `#portal-layer`) par :
 
 `front/src/styles/main.css` : remplacer le bloc qui va du commentaire
 `/* --- Vote d'extraction (bandeau, ne gele rien) -------------------------- */` jusqu'à la règle
-`.portal-voter__badge { … }` incluse (l.1297-1325) par :
+`.portal-voter__badge { … }` incluse (l.1320-1348) par :
 
 ```css
   /* --- Vote d'extraction (etape 17 : une carte au centre, le monde gele) --- */
@@ -1866,9 +1950,9 @@ qui ferme `#portal-layer`) par :
 ```
 
 (les trois règles `.portal-voter[data-choice="none"|"leave"|"stay"] .portal-voter__label`
-l.1327-1338 restent telles quelles).
+l.1350-1361 restent telles quelles).
 
-`front/src/main.ts`, l.625-634 : remplacer
+`front/src/main.ts`, l.656-665 : remplacer
 
 ```ts
   // Le vote d'extraction. Un BANDEAU, pas un modale : le monde ne s'arrete
@@ -1897,6 +1981,17 @@ par
   );
 ```
 
+`front/src/main.ts`, `setPaused` (l.479-485, posé par la passe interfaces) : après
+`el('draft').toggleAttribute('inert', value);`, ajouter
+
+```ts
+    // Etape 17 : la carte du portail reprend le pointeur ; sous le menu Echap,
+    // ses boutons ne doivent pas non plus repondre a Tab/Entree.
+    el('portal-layer').toggleAttribute('inert', value);
+```
+
+(le `RUN_OVER`, l.499-501, rend déjà `#portal-layer` inerte : rien à y ajouter.)
+
 - [ ] **Étape 5 : les relancer, ils passent**
 
 Run : `cd front && npx vitest run src/ui/portal.test.ts src/main.test.ts && npx tsc --noEmit -p .`
@@ -1918,7 +2013,7 @@ git commit -m "feat(front): le portail en carte compacte, un montant par bouton"
 **Fichiers :**
 - Modifier : `front/src/ui/portal.ts` (une fonction exportée après `stayGold`, une méthode publique
   après `update`), `front/src/main.ts` (un écouteur `keydown` juste après la construction de
-  `portalScreen`, l.~634 ; l'import l.45)
+  `portalScreen`, l.~665 ; l'import l.45)
 - Tester : `front/src/ui/portal.test.ts`
 
 **Interfaces :**
@@ -2080,7 +2175,7 @@ après la construction de `portalScreen` (la `);` qui ferme `new PortalScreen(�
   });
 ```
 
-(`paused`, `hud` et `summary` sont ceux qu'emploie déjà l'écouteur `keydown` de la l.567, dans la
+(`paused`, `hud` et `summary` sont ceux qu'emploie déjà l'écouteur `keydown` de la l.591, dans la
 même fonction `join`.)
 
 - [ ] **Étape 4 : les relancer, ils passent**
@@ -2322,8 +2417,8 @@ l'étalage, une carte compacte de 520 px, les touches 1 / 2, aucun octet de plus
    monde immobile sur le fil, deux « rester » avant l'échéance, monde qui repart) et sa
    contre-épreuve (le message d'échec noté à la tâche 5) ; les deux tests existants inversés à la
    tâche 1.
-2. **Ce qui est livré** — un tableau pièce / où : le garde du portail et la reprise
-   (`back/src/room.ts`) ; le gel daté et rejoué, `freezeIsPortal`, l'étalage vidé
+2. **Ce qui est livré** — un tableau pièce / où : le garde du portail, le verbe refusé pendant le
+   vote et la reprise (`back/src/room.ts`) ; le gel daté et rejoué, `freezeIsPortal`, l'étalage vidé
    (`front/src/net/client.ts`) ; le badge « Portail — pause… » (`front/src/ui/hud.ts`) ; la carte
    (`front/src/ui/portal.ts`, `front/index.html`, `front/src/styles/main.css`) ; les touches
    (`portalKeyChoice`, `PortalScreen#vote`, `front/src/main.ts`).
@@ -2342,9 +2437,11 @@ l'étalage, une carte compacte de 520 px, les touches 1 / 2, aucun octet de plus
 
    Plus les risques du §6 de la spec à surveiller : un joueur qui rejoint pendant le portail ne
    sait pas que le monde est gelé ; un absent bloque l'équipe jusqu'à 20 s (réglage d'une ligne :
-   `PORTAL_WINDOW_TICKS`) ; le portail n'est plus une source de tension. Et un constat hors
-   périmètre, déjà vrai pendant un étalage : `Room#useAbility` agit hors de `step`, donc pendant
-   le gel (un Relais téléporte, une Amorce pose sa zone).
+   `PORTAL_WINDOW_TICKS`) ; le portail n'est plus une source de tension. Et deux suites de la
+   passe interfaces (`3c1b007`) : `Room#useAbility`, qui agit hors de `step`, refusait déjà les
+   verbes pendant un étalage et le gel — l'étape 17 y ajoute le vote du portail ; le point 6 de
+   son §3 (« Extraction réussie + 0 » quand effacement et « partir » tombent au même tick) est
+   refermé, le vote ne tournant plus qu'à monde gelé.
 
 - [ ] **Étape 4 : le README**
 
@@ -2367,7 +2464,8 @@ git commit -m "docs: le bilan de l etape 17 (verification manuelle ouverte)"
 
 **Couverture de la spec.**
 - §1 le gel au serveur (garde avant l'étalage, `#stepPortal` retiré de la fin, rien ne bouge, tick
-  qui compte, `T + 1` premier gelé, reprise après « rester », « partir » termine) → tâche 1 ;
+  qui compte, `T + 1` premier gelé, reprise après « rester », « partir » termine, aucun verbe
+  pendant le vote) → tâche 1 ;
   au client (début `deadlineTick − PORTAL_WINDOW_TICKS + 1`, fin `effectTick`, `isFrozen`, roue de
   ping fermée par `canOpen`) → tâche 2, avec l'écart n° 1 (le rejeu que la spec croyait exister).
 - §2 portail et étalage → tâche 1 (étalage dû qui attend, « partir » qui l'abandonne).
