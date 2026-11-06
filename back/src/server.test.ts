@@ -641,11 +641,15 @@ describe('le portail sur le fil (etape 6a, tache 9)', () => {
       }
       expect(room.palier).toBe(avant + 1);
       // Puis jusqu'au portail, qui a son propre rythme (`PORTAL_EVERY_WAVES`).
+      // ⚠️ Etape 17 : `balayer`, pas un massacre general. Le boss suivant peut
+      // naitre dans la vague qui ouvre le portail ; tue par `horde.kill`,
+      // hors du chemin de mort du salon (gele des l'ouverture),
+      // `bossEntityId` designerait un mort et le palier suivant ne tomberait
+      // jamais. Le boss epargne, on releve le joueur qu'il frappe.
       for (let t = 0; t < 300 * TICK_HZ && !room.portalOpen; t++) {
         room.step(1 / TICK_HZ);
-        room.horde.kill(
-          Array.from({ length: room.horde.count }, (_, i) => room.horde.entityIdAt(i)),
-        );
+        balayer();
+        room.debugRevive(playerId);
       }
       expect(room.portalOpen).toBe(true);
     };
