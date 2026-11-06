@@ -28,6 +28,7 @@ import {
   MAX_ENTITIES,
   MAX_PLAYERS,
   PLAYER_SPEED,
+  PORTAL_WINDOW_TICKS,
   PROJECTILE_CAPACITY,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
@@ -86,6 +87,7 @@ import {
   type PingShownMessage,
   type PlayerSnapshot,
   quantizeAxis,
+  VOTE_CHOICE,
   type WaveOrderMessage,
   type ZoneMessage,
   zoneElement,
@@ -1478,6 +1480,19 @@ export class GameClient {
    * ce tick.
    */
   #freezeStartTick = -1;
+  /**
+   * Les bornes du gel PRECEDENT, qui valent pour les ticks d'avant
+   * `#freezeStartTick` (voir `#untilAt`).
+   *
+   * ⚠️ **Sans elles, le gel s'appliquerait a la reception** : un `LEVEL_UP` ou
+   * un `PORTAL_OPEN` arrive souvent avant que la horde du client n'ait simule
+   * les derniers ticks que le serveur a fait tourner, et les bornes poussees a
+   * l'infini les gelaient (ecart n° 1 de l'etape 17).
+   */
+  #prevFreezeUntilTick = -1;
+  #prevResumeEndTick = -1;
+  /** Le gel courant est-il celui d'un portail (etape 17) ? Le badge du HUD le dit. */
+  #freezeIsPortal = false;
 
   /** L'etalage en cours, vide hors draft. Le client l'AFFICHE, il n'en decide rien. */
   #draftCards: readonly Card[] = [];
@@ -1865,6 +1880,11 @@ export class GameClient {
     return (
       this.#lastHordeTick >= this.#freezeStartTick && this.#lastHordeTick <= this.#resumeEndTick
     );
+  }
+
+  /** Le gel courant (et sa rampe) vient-il d'un portail ? Voir `#freezeIsPortal`. */
+  get freezeIsPortal(): boolean {
+    return this.#freezeIsPortal;
   }
 
   /** Ennemis abattus depuis le debut de la run (ou du WELCOME pour un retardataire). */
@@ -2530,9 +2550,7 @@ export class GameClient {
       // Gel d'une duree INCONNUE : il commence au tick date, et ne finira que
       // quand `DRAFT_RESULT` l'annoncera. D'ici la, les deux bornes hautes sont
       // repoussees a l'infini plutot que devinees.
-      this.#freezeStartTick = msg.tick;
-      this.#freezeUntilTick = Number.MAX_SAFE_INTEGER;
-      this.#resumeEndTick = Number.MAX_SAFE_INTEGER;
+      this.#freezeFrom(msg.tick, false);
       // Contrairement au gel, le niveau affiche au HUD peut se mettre a jour
       // des la reception : ce n'est pas une simulation partagee qui doit
       // diverger identiquement des deux cotes, seulement un chiffre a
@@ -2590,8 +2608,7 @@ export class GameClient {
       // l'ecran qui decide quand il arrete de dessiner. Le prochain
       // `DRAFT_OPEN` remplace l'etalage.
       this.#draftSettled = true;
-      this.#freezeUntilTick = msg.deadlineTick;
-      this.#resumeEndTick = msg.deadlineTick + LEVEL_RESUME_TICKS;
+      this.#thawAt(msg.deadlineTick);
       return;
     }
     if (msg.type === MSG.PORTAL_OPEN) {
@@ -2607,6 +2624,15 @@ export class GameClient {
       // Fenetre de duree INCONNUE, jusqu'a `PORTAL_RESULT` : voir
       // `#portalCloseTick`.
       this.#portalCloseTick = Number.MAX_SAFE_INTEGER;
+      // Etape 17 : le portail GELE le monde. Le salon l'ouvre dans le pas de T
+      // (`deadlineTick = T + PORTAL_WINDOW_TICKS`), apres que le monde a tourne :
+      // le premier tick gele est T + 1. Duree inconnue, comme un etalage.
+      this.#freezeFrom(msg.deadlineTick - PORTAL_WINDOW_TICKS + 1, true);
+      // L'etalage d'avant survit a sa fermeture pour sa revelation, et
+      // `DraftScreen` le montre tant que `isFrozen` : sans ce vidage, il
+      // reapparaitrait sous le portail. Aucun etalage n'est ouvert ici : un
+      // etalage gele le monde, aucune vague ne sort.
+      this.#draftCards = [];
       return;
     }
 
@@ -2622,6 +2648,11 @@ export class GameClient {
       // ⚠️ **`msg.effectTick` est le tick d'EFFET, pas celui de la
       // reception** : voir `#portalCloseTick`.
       this.#portalCloseTick = msg.effectTick;
+      // Etape 17 : « rester » reprend comme apres un etalage, le tick du verdict
+      // encore gele. « Partir » ne reprend rien : le salon a fini la run.
+      if (msg.decision === VOTE_CHOICE.STAY) {
+        this.#thawAt(msg.effectTick);
+      }
       return;
     }
 
@@ -2765,7 +2796,7 @@ export class GameClient {
     // gel : le serveur ne les execute pas non plus pendant le gel (`Room.step`
     // revient avant d'y arriver). Sans ce garde, `targetField` se
     // desynchroniserait.
-    if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
+    if (tick > this.#untilAt(tick) && tick % STEPS_PER_FIELD === 0) {
       this.#feedFields(tick, true);
     }
 
@@ -2803,7 +2834,7 @@ export class GameClient {
     //
     // ⚠️ Les projectiles ne sont PAS rejoues par `#replayTick` : leur position
     // ne depend pas de la horde, et les rejouer les ferait avancer deux fois.
-    if (tick > this.#freezeUntilTick) {
+    if (tick > this.#untilAt(tick)) {
       this.#anchorPlayers = snapshot?.players ?? [];
       this.#fireWeapons(tick, snapshot?.players ?? [], nowMs);
       this.#pulseGuards(tick, nowMs);
@@ -3759,12 +3790,66 @@ export class GameClient {
    * phase de recalcul de trajectoire, pas un compteur propre au rejeu.
    */
   #replayTick(tick: number): void {
-    if (tick > this.#freezeUntilTick && tick % STEPS_PER_FIELD === 0) {
+    if (tick > this.#untilAt(tick) && tick % STEPS_PER_FIELD === 0) {
       this.#feedFields(tick, true);
     }
     const scale = this.#movementScale(tick);
     this.horde.step(FIXED_DT * scale, this.#fields, tick, this.zones, this.#bossCharge);
     this.#hordeHistory.record(tick, this.horde);
+  }
+
+  /**
+   * Un gel commence a `startTick` (`LEVEL_UP`, `PORTAL_OPEN`), pour une duree
+   * inconnue : ses deux bornes hautes sont repoussees a l'infini jusqu'a ce que
+   * `#thawAt` les pose.
+   *
+   * ⚠️ **Date, jamais applique a la reception** : les ticks d'avant `startTick`
+   * gardent les bornes du gel precedent (`#untilAt`). Et si la horde a deja
+   * simule `startTick` (message en retard), ces ticks sont REJOUES geles, comme
+   * une mort tardive (`#replayFrom`).
+   */
+  #freezeFrom(startTick: number, portal: boolean): void {
+    this.#prevFreezeUntilTick = this.#freezeUntilTick;
+    this.#prevResumeEndTick = this.#resumeEndTick;
+    this.#freezeStartTick = startTick;
+    this.#freezeUntilTick = Number.MAX_SAFE_INTEGER;
+    this.#resumeEndTick = Number.MAX_SAFE_INTEGER;
+    this.#freezeIsPortal = portal;
+    this.#replayFrom(startTick);
+  }
+
+  /**
+   * La fin du gel (`DRAFT_RESULT`, `PORTAL_RESULT` « rester ») : gele jusqu'a
+   * `endTick` inclus, puis `LEVEL_RESUME_TICKS` de rampe. Les ticks deja
+   * simules apres `endTick` (message en retard) sont rejoues avec la rampe.
+   */
+  #thawAt(endTick: number): void {
+    this.#freezeUntilTick = endTick;
+    this.#resumeEndTick = endTick + LEVEL_RESUME_TICKS;
+    this.#replayFrom(endTick + 1);
+  }
+
+  /**
+   * Rejoue depuis `fromTick`, avec les bornes qui viennent d'arriver, les ticks
+   * que la horde a DEJA simules. Rien si elle ne l'a pas encore atteint.
+   *
+   * ponytail: trop vieux pour l'anneau (`ROLLBACK_DEPTH_TICKS`), on ne rejoue
+   * pas et l'ecart reste ; un compteur au HUD comme `lateDeaths` si ca se voit.
+   */
+  #replayFrom(fromTick: number): void {
+    const current = this.#lastHordeTick - 1;
+    if (fromTick > current || !this.#hordeHistory.restore(fromTick - 1, this.horde)) {
+      return;
+    }
+    this.#primeFieldForReplay(fromTick - 1);
+    for (let t = fromTick; t <= current; t++) {
+      this.#replayTick(t);
+    }
+  }
+
+  /** Le dernier tick gele qui vaut pour `tick` : celui du gel courant des son debut, du precedent avant. */
+  #untilAt(tick: number): number {
+    return tick < this.#freezeStartTick ? this.#prevFreezeUntilTick : this.#freezeUntilTick;
   }
 
   /**
@@ -3775,10 +3860,11 @@ export class GameClient {
    * d'un tick gele ou en reprise avance exactement comme le serveur l'a fait.
    */
   #movementScale(tick: number): number {
-    if (tick > this.#resumeEndTick) {
+    const resumeEnd = tick < this.#freezeStartTick ? this.#prevResumeEndTick : this.#resumeEndTick;
+    if (tick > resumeEnd) {
       return 1;
     }
-    const sinceFreezeEnd = tick - this.#freezeUntilTick;
+    const sinceFreezeEnd = tick - this.#untilAt(tick);
     return Math.min(1, Math.max(0, sinceFreezeEnd / LEVEL_RESUME_TICKS));
   }
 

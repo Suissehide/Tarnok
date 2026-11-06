@@ -83,6 +83,8 @@ export interface HudSource {
   readonly porteurBannerOn?: boolean;
   /** L'etalage en cours est un etalage d'evenement (etape 14). Absent : non. */
   readonly draftIsEvent?: boolean;
+  /** Le gel en cours vient d'un portail (etape 17) : le bandeau de gel le dit. Absent : non. */
+  readonly freezeIsPortal?: boolean;
   /** Le texte du bandeau d'evenement, ou `null` (etape 14). Absent : rien. */
   readonly eventBanner?: string | null;
   /** L'evenement en cours (etape 14), ou `null`. Absent : rien. */
@@ -289,12 +291,16 @@ export function paintHud(
   // Seule indication du gel avant l'etalage de cartes : sans elle, la pause
   // se lit comme un plantage.
   el.freeze.classList.toggle('hidden', !info.frozen);
-  // Etape 11 : un coffre gele comme un niveau, mais il le dit.
-  el.freeze.textContent = source.draftIsChest
-    ? 'Coffre — pause…'
-    : source.draftIsEvent
-      ? 'Événement — pause…'
-      : 'Niveau supérieur — pause…';
+  // Etape 11 : un coffre gele comme un niveau, mais il le dit. Etape 17 : le
+  // portail aussi, et il passe AVANT — `draftIsChest` garde la valeur du
+  // dernier etalage.
+  el.freeze.textContent = source.freezeIsPortal
+    ? 'Portail — pause…'
+    : source.draftIsChest
+      ? 'Coffre — pause…'
+      : source.draftIsEvent
+        ? 'Événement — pause…'
+        : 'Niveau supérieur — pause…';
   el.porteur?.classList.toggle('hidden', source.porteurBannerOn !== true);
   // Etape 14 : le bandeau passager, puis l'etat tant qu'un evenement court.
   const banniere = source.eventBanner ?? null;

@@ -204,6 +204,7 @@ class FakeSource implements HudSource {
   localMaxHp = 146;
   kills = 0;
   draftIsChest = false;
+  freezeIsPortal = false;
   porteurBannerOn = false;
   draftIsEvent = false;
   eventBanner: string | null = null;
@@ -452,6 +453,14 @@ describe('paintHud — chaque case du HUD recoit son ecriture', () => {
     source.draftIsChest = false;
     paintHud(el, { ...INFO, frozen: true }, 0, 0, source);
     expect(el.freeze.textContent).toBe('Niveau supérieur — pause…');
+  });
+
+  it('etape 17 : le bandeau de gel dit « Portail » pendant un vote, meme apres un coffre', () => {
+    // `draftIsChest` garde la valeur du DERNIER etalage : le portail passe avant.
+    source.draftIsChest = true;
+    source.freezeIsPortal = true;
+    paintHud(el, { ...INFO, frozen: true }, 0, 0, source);
+    expect(el.freeze.textContent).toBe('Portail — pause…');
   });
 
   it('etape 11 : le bandeau du porteur suit porteurBannerOn', () => {
