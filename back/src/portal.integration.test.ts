@@ -33,7 +33,7 @@ import { buildServer } from './server';
  * Le portail de bout en bout, sur quatre sockets reelles : le boss meurt, le
  * portail s'ouvre, les votes se voient, la majorite tranche, l'egalite
  * continue, et **l'or bouge dans les DEUX sens** (acquis et majore en partant,
- * efface avec l'equipe). Le monde ne s'arrete pas pendant qu'on negocie.
+ * efface avec l'equipe). Le monde est gele pendant qu'on negocie (etape 17).
  *
  * ⚠️ Il faut quatre sockets : une seule ne produit ni majorite ni egalite, ne
  * voit pas les votes des autres, et ne peut pas porter l'or majore du SECOND
@@ -41,8 +41,8 @@ import { buildServer } from './server';
  *
  * ⚠️ **Le salon est avance DEPUIS LE TEST**, en plus de la boucle du serveur :
  * atteindre un boss prend une trentaine de secondes d'horloge murale, et ce
- * test en enchaine deux. **Les phases mesurees — le vote, le monde qui tourne
- * — ne sont JAMAIS accelerees**, sinon les sockets n'ont pas le temps de parler.
+ * test en enchaine deux. **Les phases mesurees — le vote, le monde gele — ne
+ * sont JAMAIS accelerees**, sinon les sockets n'ont pas le temps de parler.
  *
  * ⚠️ **La derive de replication ne se mesure pas ici** mais dans
  * `shared/horde.replication.test.ts` : le decor balaie la horde avec
@@ -72,24 +72,16 @@ if (DISTANCE_BOSS >= PORTEE_DAGUE) {
 }
 
 /**
- * Distance a laquelle le temoin de « le monde tourne » est pose DERRIERE les
- * joueurs, qui marchent vers la gauche.
+ * Distance a laquelle le temoin du gel est pose DERRIERE les joueurs, qui
+ * envoient « marcher vers la gauche ».
  *
- * ⚠️ **Derriere, pas devant** : sur le chemin, il blesserait les votants. A
- * ~95 px/s contre 260, il ne rattrape personne.
+ * ⚠️ **Derriere, pas devant** : un monde qui tournerait par erreur le ferait
+ * marcher sur les votants.
  */
 const DISTANCE_TEMOIN = 900;
 
-/** Duree de la mesure « le monde tourne », en ticks de jeu. */
+/** Duree de la mesure du gel, en ticks de jeu. */
 const TICKS_MESURE = 45;
-
-/**
- * Seuils de la mesure, en pixels monde : bien sous les ~390 px (joueur) et
- * ~150 px (pietaille) parcourus en `TICKS_MESURE`. On teste un mouvement, pas
- * une vitesse.
- */
-const SEUIL_JOUEUR_PX = 100;
-const SEUIL_HORDE_PX = 30;
 
 /** Ticks avances d'affilee avant de rendre la main a la boucle du serveur. */
 const TICKS_PAR_RESPIRATION = 60;
@@ -644,15 +636,13 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const silences = new Map(clients.map((x) => [x.playerId, NO_VOTE]));
     await tousVoient(clients, silences, 'les quatre silences a l ouverture');
 
-    // ---- 3. LE MONDE NE S ARRETE PAS pendant qu'on negocie ----------------
+    // ---- 3. LE MONDE EST GELE pendant qu'on negocie (etape 17) -------------
     //
-    // ⚠️ **La horde ET les joueurs** : un `if (portail ouvert) return;` calque
-    // sur le gel du draft arreterait les deux, et n'en mesurer qu'un laisserait
-    // passer la moitie du defaut.
-    // ⚠️ **Les joueurs marchent vers la GAUCHE, le temoin est a DROITE** : le
-    // boss a laisse son orbe a `DISTANCE_BOSS` a droite de A, juste hors de
-    // `ORB_PICKUP_RADIUS`. Marcher vers elle ferait ramasser une piece
-    // eventuelle a un tick non reproductible.
+    // ⚠️ **La horde ET les joueurs**, et les joueurs ENVOIENT leurs entrees :
+    // un gel qui n'arreterait que la horde laisserait marcher les votants.
+    // ⚠️ **Les joueurs « marchent » vers la GAUCHE, le temoin est a DROITE** :
+    // le boss a laisse son orbe a `DISTANCE_BOSS` a droite de A ; un gel rate
+    // ferait ramasser une piece a un tick non reproductible.
     const ancreA = positionDuFil(a);
     const temoin = poseCible(room, 9500, ancreA.x + DISTANCE_TEMOIN, ancreA.y);
     const posTemoin = (): { x: number; y: number } => {
@@ -683,7 +673,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
 
       await waitFor(
         () => (room.tick >= tickDebut + TICKS_MESURE ? true : null),
-        'le monde qui tourne pendant le vote',
+        'le monde gele pendant le vote',
         20_000,
       );
 
@@ -696,18 +686,13 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       expect(verdictsDe(a)).toHaveLength(0);
       expect(dernierReleve).toBeLessThan(open1.deadlineTick);
 
-      // La horde avance...
-      expect(
-        Math.hypot(monstreApres.x - monstreAvant.x, monstreApres.y - monstreAvant.y),
-        'la horde est figee pendant le vote',
-      ).toBeGreaterThan(SEUIL_HORDE_PX);
-      // ...et les joueurs aussi, les quatre.
+      // La horde est figee...
+      expect(monstreApres, 'la horde bouge pendant le vote').toEqual(monstreAvant);
+      // ...et les joueurs aussi, les quatre, alors qu'ils envoient « a gauche ».
       for (const client of clients) {
-        const avant = joueursAvant.get(client.playerId) ?? 0;
-        expect(
-          avant - positionDuFil(client).x,
-          `le joueur ${client.playerId} est fige pendant le vote`,
-        ).toBeGreaterThan(SEUIL_JOUEUR_PX);
+        expect(positionDuFil(client).x, `le joueur ${client.playerId} bouge pendant le vote`).toBe(
+          joueursAvant.get(client.playerId),
+        );
       }
 
       // ---- 4. Les votes se voient, et ils sont REVOCABLES -----------------
@@ -878,8 +863,9 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
    * **La moitie NEGATIVE, et c'est elle qui porte le sens** : « l'or est acquis
    * quand on part » passerait aussi avec un or qui ne bouge jamais.
    *
-   * Meme decor que la moitie positive jusqu'a la mort du boss ; ensuite,
-   * l'equipe est effacee **pendant** qu'elle negocie, et la cagnotte tombe a
+   * Meme decor que la moitie positive jusqu'a la mort du boss. Etape 17 : le
+   * vote gele le monde, personne ne tombe pendant qu'on negocie — l'equipe
+   * choisit de RESTER, puis elle est effacee, et la cagnotte reportee tombe a
    * `WIPE_GOLD_KEPT`.
    */
   it('l effacement de l equipe efface l or, sur le fil', async () => {
@@ -911,6 +897,15 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       10_000,
     );
     expect(cagnotte).toBeGreaterThan(0);
+
+    // Les quatre restent : le portail se ferme avant l'echeance, et c'est la
+    // cagnotte REPORTEE qui sera perdue.
+    for (const client of clients) {
+      client.ws.send(encodeVote(VOTE_CHOICE.STAY));
+    }
+    const verdict = await verdictVuParTous(clients, 1);
+    expect(verdict.decision).toBe(VOTE_CHOICE.STAY);
+    expect(verdict.effectTick).toBeLessThan(open.deadlineTick);
 
     // Un bourreau increvable epingle sur chaque joueur : seul l'effacement de
     // l'equipe entiere coute la cagnotte.
@@ -958,8 +953,8 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     // montait a 1, l'attente ci-dessus expirerait sans dire pourquoi.
     expect(WIPE_GOLD_KEPT).toBeLessThan(1);
 
-    // ⚠️ **Et le portail n'a jamais tranche** : une fois `#runOver` vrai, `step`
-    // ne rappelle plus personne. Une equipe effacee ne part pas avec la mise.
-    expect(verdictsDe(a)).toHaveLength(0);
+    // ⚠️ **Un seul verdict, « rester »** : une fois `#runOver` vrai, `step` ne
+    // rappelle plus personne. Une equipe effacee ne part pas avec la mise.
+    expect(verdictsDe(a)).toHaveLength(1);
   }, 120_000);
 });

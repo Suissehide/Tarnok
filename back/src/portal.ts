@@ -15,12 +15,12 @@ export type PortalPhase = 'closed' | 'open';
  * | --- | --- | --- |
  * | ce qu'on choisit | une carte parmi N | deux faces |
  * | ce qui tranche | un tirage | une **majorite** |
- * | le monde | **gele** | **continue de tourner** |
+ * | le monde | **gele** | **gele** (etape 17) |
  *
- * ⚠️ **Le gel n'est pas absent par oubli.** C'est `Room#step` qui gele ou non,
- * mais la raison se lit ici : un choix de carte n'a pas d'enjeu temporel, alors
- * que pour le vote **le temps EST l'enjeu** — la vague suivante approche
- * pendant qu'on negocie.
+ * ⚠️ **Le gel vit dans `Room#step`, pas ici** (etape 17) : decider en pleine
+ * horde s'est revele une gene plus qu'un enjeu. On vote a l'abri, et
+ * `PORTAL_WINDOW_TICKS` n'est plus qu'un plafond pour l'absent. Cette classe ne
+ * fait que compter les voix.
  *
  * Aucune source aleatoire : l'egalite a une regle (on continue), pas un tirage.
  */
