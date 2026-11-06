@@ -1,6 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import {
   EXTRACT_MULTIPLIER_STEP,
+  LEVEL_RESUME_TICKS,
   PORTAL_WINDOW_TICKS,
   TICK_HZ,
   WIPE_GOLD_KEPT,
@@ -956,5 +957,150 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     // ⚠️ **Un seul verdict, « rester »** : une fois `#runOver` vrai, `step` ne
     // rappelle plus personne. Une equipe effacee ne part pas avec la mise.
     expect(verdictsDe(a)).toHaveLength(1);
+  }, 120_000);
+});
+
+describe('etape 17 : le portail gele le monde, sur deux sockets reelles', () => {
+  /**
+   * **Le livrable de l'etape 17.** Deux joueurs, un portail qui s'ouvre a son
+   * rythme ; pendant le vote, les SNAPSHOT montrent un monde IMMOBILE alors que
+   * les deux joueurs envoient « marcher a gauche » et qu'un monstre a une
+   * cible ; deux « rester » ferment le portail AVANT l'echeance, et le monde
+   * repart.
+   *
+   * ⚠️ **Le gel se lit sur le FIL** (positions des joueurs, or), et le temoin
+   * dans le salon : un gel du seul client ne passerait pas.
+   */
+  it('les SNAPSHOT montrent un monde immobile, deux RESTER ferment le portail, le monde repart', async () => {
+    const code = await createRoomCode();
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('le registre de salons doit etre accessible depuis l app');
+    }
+    const a = await connect(code);
+    const b = await connect(code);
+    const clients = [a, b];
+    await waitFor(
+      () => (a.lastSnapshot?.players.length === 2 ? true : null),
+      'les deux joueurs dans le SNAPSHOT',
+      3000,
+    );
+
+    // Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues : on y va en
+    // accelerant, horde videe, comme `tuerLeBoss`.
+    await avancerJusqua(
+      room,
+      () => room.portalOpen,
+      "l'ouverture du portail",
+      300 * TICK_HZ,
+      () => {
+        viderSauf(room, []);
+      },
+    );
+    const open = await waitFor(() => ouverturesDe(a)[0] ?? null, 'PORTAL_OPEN pour A', 15_000);
+    await waitFor(() => ouverturesDe(b)[0] ?? null, 'PORTAL_OPEN pour B', 15_000);
+    // Le premier tick gele, tel que le client le deduit (aucun octet de plus).
+    const premierGele = open.deadlineTick - PORTAL_WINDOW_TICKS + 1;
+
+    const ancre = positionDuFil(a);
+    const temoin = poseCible(room, 9800, ancre.x + DISTANCE_TEMOIN, ancre.y);
+    const posTemoin = (): { x: number; y: number } => {
+      const slot = room.horde.slotOf(temoin);
+      expect(slot).toBeGreaterThanOrEqual(0);
+      return { x: room.horde.x[slot] ?? 0, y: room.horde.y[slot] ?? 0 };
+    };
+    const posDans = (s: SnapshotMessage, id: number): { x: number; y: number } => {
+      const p = s.players.find((q) => q.id === id);
+      if (!p) {
+        throw new Error(`le joueur ${id} est absent du snapshot`);
+      }
+      return { x: p.x, y: p.y };
+    };
+
+    // Les deux « marchent a gauche » a l'horloge REELLE, pendant tout le test.
+    const stopPilote = piloter(() => {
+      viderSauf(room, [temoin]);
+      const slot = room.horde.slotOf(temoin);
+      if (slot >= 0) {
+        room.horde.hp[slot] = 1e6;
+      }
+      for (const client of clients) {
+        envoyer(client, -127, 0, 0, 0);
+      }
+    });
+
+    try {
+      // ---- 1. Le gel, sur le fil -------------------------------------------
+      const reference = await waitFor(
+        () => (a.lastSnapshot && a.lastSnapshot.tick >= premierGele ? a.lastSnapshot : null),
+        'un SNAPSHOT du gel',
+        5000,
+      );
+      const temoinAvant = posTemoin();
+      await waitFor(
+        () =>
+          a.lastSnapshot && a.lastSnapshot.tick >= reference.tick + TICKS_MESURE ? true : null,
+        'des SNAPSHOT pendant le gel',
+        20_000,
+      );
+      const apres = a.lastSnapshot;
+      if (!apres) {
+        throw new Error('un SNAPSHOT attendu');
+      }
+      // Le tick avance (il date le verdict)...
+      expect(apres.tick).toBeGreaterThanOrEqual(reference.tick + TICKS_MESURE);
+      // ...rien d'autre : ni les joueurs, qui envoient pourtant leurs entrees,
+      // ni la horde, ni l'or.
+      for (const client of clients) {
+        expect(posDans(apres, client.playerId), `le joueur ${client.playerId} bouge`).toEqual(
+          posDans(reference, client.playerId),
+        );
+      }
+      expect(posTemoin(), 'la horde bouge pendant le vote').toEqual(temoinAvant);
+      expect(apres.gold).toBe(reference.gold);
+      expect(room.portalOpen).toBe(true);
+      expect(verdictsDe(a)).toHaveLength(0);
+
+      // ---- 2. Deux « rester » ferment le portail AVANT l'echeance ----------
+      for (const client of clients) {
+        client.ws.send(encodeVote(VOTE_CHOICE.STAY));
+      }
+      const verdict = await waitFor(() => verdictsDe(a)[0] ?? null, 'PORTAL_RESULT pour A', 15_000);
+      const verdictB = await waitFor(
+        () => verdictsDe(b)[0] ?? null,
+        'PORTAL_RESULT pour B',
+        15_000,
+      );
+      expect(verdictB).toEqual(verdict);
+      expect(verdict.decision).toBe(VOTE_CHOICE.STAY);
+      expect(verdict.effectTick).toBeLessThan(open.deadlineTick);
+
+      // ---- 3. Et le monde repart, apres la rampe ---------------------------
+      const repartie = verdict.effectTick + LEVEL_RESUME_TICKS + TICKS_MESURE;
+      await waitFor(
+        () => (a.lastSnapshot && a.lastSnapshot.tick >= repartie ? true : null),
+        'des SNAPSHOT apres la reprise',
+        20_000,
+      );
+      const fin = a.lastSnapshot;
+      if (!fin) {
+        throw new Error('un SNAPSHOT attendu');
+      }
+      // Un mouvement, pas une vitesse : ~130 px de rampe puis ~390 px a pleine
+      // vitesse pour un joueur, ~70 px au moins pour le temoin.
+      for (const client of clients) {
+        expect(
+          posDans(reference, client.playerId).x - posDans(fin, client.playerId).x,
+          `le joueur ${client.playerId} reste fige apres le verdict`,
+        ).toBeGreaterThan(100);
+      }
+      const temoinFin = posTemoin();
+      expect(
+        Math.hypot(temoinFin.x - temoinAvant.x, temoinFin.y - temoinAvant.y),
+        'la horde reste figee apres le verdict',
+      ).toBeGreaterThan(30);
+    } finally {
+      stopPilote();
+    }
   }, 120_000);
 });
