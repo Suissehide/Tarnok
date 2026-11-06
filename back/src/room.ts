@@ -449,10 +449,10 @@ export class Room {
   /**
    * Le vote d'extraction en cours. `phase === 'closed'` : aucun portail ouvert.
    *
-   * ⚠️ **Il n'est PAS le pendant de `#draft` dans `step`.** Un etalage ouvert
-   * gele le monde ; un portail ouvert non : la horde avance, les vagues
-   * tombent. Le draft gele parce qu'un choix de carte n'a pas d'enjeu
-   * temporel ; le vote ne gele pas parce que le temps est son enjeu.
+   * ⚠️ **Il est gele en tete de `step`, comme l'etalage.** Verdict et etalage
+   * ne se chevauchent jamais : un etalage du pendant le vote attend le
+   * verdict, et un « rester » le libere au pas suivant ; un « partir »
+   * l'abandonne.
    */
   readonly #portal = new Portal();
   /** Ouvertures de portail depuis le dernier drainage. Voir `PortalOpenEvent`. */
@@ -766,7 +766,7 @@ export class Room {
     return this.#portal.deadlineTick;
   }
 
-  /** Vrai tant que le vote d'extraction est ouvert. Le monde tourne quand meme. */
+  /** Vrai tant que le vote d'extraction est ouvert. Le monde est alors gele (etape 17, `step`). */
   get portalOpen(): boolean {
     return this.#portal.phase === 'open';
   }
@@ -1312,8 +1312,14 @@ export class Room {
    */
   useAbility(playerId: number, aimX: number, aimY: number): AbilityUsed | null {
     // Memes gardes que `step` : rien ne se joue apres la fin, pendant un
-    // etalage ni pendant le gel — un verbe pose la s'appliquerait a un monde fige.
-    if (this.#runOver || this.#draft.phase !== 'closed' || this.#tick <= this.#freezeUntilTick) {
+    // etalage, pendant le vote du portail (etape 17) ni pendant le gel — un
+    // verbe pose la s'appliquerait a un monde fige.
+    if (
+      this.#runOver ||
+      this.#draft.phase !== 'closed' ||
+      this.portalOpen ||
+      this.#tick <= this.#freezeUntilTick
+    ) {
       return null;
     }
     const p = this.#players.get(playerId);
@@ -1344,7 +1350,8 @@ export class Room {
    * Sequence (voir aussi `combat.ts`, qui porte les etapes 7 a 9) :
    *
    * ```
-   * 1. tick++
+   * 1. tick++ — puis, portail ouvert (etape 17) : seul le vote avance, et
+   *    `step` rend la main (le monde est gele, comme pendant un etalage)
    * 2. deplacer les joueurs (les vivants)
    * 3. relever les positions des vivants (arrondi !) pour les vagues
    * 4. rafraichir les champs si du (tick % stepsPerField)
@@ -1378,6 +1385,18 @@ export class Room {
     if (this.#runOver) {
       // Fin de run : plus rien n'avance, mais le tick continue de compter —
       // c'est lui qui date le message deja mis en file.
+      return;
+    }
+
+    // Etape 17 : le portail GELE le monde, comme l'etalage. Ni joueurs, ni
+    // horde, ni tirs, ni contact, ni ramassages, ni minuteur d'evenement, ni
+    // directeur : seul le vote avance, et le tick (il date le verdict).
+    //
+    // ⚠️ **AVANT l'ouverture d'un etalage du** : un niveau, un coffre ou un
+    // evenement reussi pendant le vote attend le verdict, et s'ouvre au premier
+    // pas qui suit un « rester ». Portail et etalage ne se chevauchent jamais.
+    if (this.portalOpen) {
+      this.#stepPortal();
       return;
     }
 
@@ -1566,9 +1585,14 @@ export class Room {
     // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, et
     // seulement la : la mort d'un boss ne l'ouvre pas. Une vague = un groupe,
     // quel que soit son nombre d'ordres.
+    //
+    // Etape 17 : il s'ouvre ICI, apres les ordres, et le monde finit ce pas ;
+    // le gel commence au pas suivant (`deadlineTick − PORTAL_WINDOW_TICKS + 1`,
+    // ce que le client deduit). Aucune vague ne sort pendant un vote : le
+    // garde de tete a deja rendu la main.
     if (vague.length > 0) {
       this.#wavesSincePortal++;
-      if (this.#wavesSincePortal >= PORTAL_EVERY_WAVES && !this.portalOpen) {
+      if (this.#wavesSincePortal >= PORTAL_EVERY_WAVES) {
         this.#wavesSincePortal = 0;
         this.#openPortal();
       }
@@ -1877,14 +1901,8 @@ export class Room {
     // l'evenement lit les positions de CE tick.
     this.#stepEvent(dt);
     this.#checkRunOver();
-    // ⚠️ **APRES `#checkRunOver`, et SANS garde de fin de run.** Si l'equipe
-    // est effacee au tick ou le portail tranche, l'effacement a deja ramene la
-    // cagnotte a `WIPE_GOLD_KEPT` : un « partir » resolu juste apres majore
-    // cette cagnotte-la, ce que le snapshot du meme tick dit aussi.
-    //
-    // Rien au-dessus de cette ligne ne consulte le portail : le monde a tourne
-    // tout entier pendant le vote.
-    this.#stepPortal();
+    // Etape 17 : le vote avance en tete de `step`, monde gele — jamais ici. Une
+    // equipe ne peut donc plus etre effacee pendant qu'elle negocie.
 
     // Arrondies, comme sur le fil : le client ne connait que la version
     // quantifiee en int16 (`encodeSnapshot`). Avec des positions flottantes,
@@ -1939,8 +1957,7 @@ export class Room {
     // `#xp`, `#synergy`, `#gold` et le boss dans l'EN-TETE : donnees
     // d'equipe, aucun bloc de joueur ne les porte.
     //
-    // ⚠️ **L'or part a CHAQUE tick, pas au vote** : c'est l'enjeu du portail,
-    // et il bouge pendant la fenetre.
+    // ⚠️ **L'or part a CHAQUE tick, pas au vote** : c'est l'enjeu du portail.
     const buf = encodeSnapshot(
       this.#tick,
       this.#xp,
@@ -2751,6 +2768,10 @@ export class Room {
    * Partir reutilise `RUN_OVER` via `#endRun` : extraction et effacement
    * finissent par le meme evenement, et c'est l'OR (dans le `SNAPSHOT`) qui
    * les distingue.
+   *
+   * Etape 17 : appele seulement depuis le garde de tete de `step`, monde gele.
+   * « Rester » pose la MEME reprise qu'un etalage : le tick du verdict reste
+   * gele, puis `LEVEL_RESUME_TICKS` de rampe.
    */
   #stepPortal(): void {
     const decision = this.#portal.step(this.#tick);
@@ -2766,6 +2787,10 @@ export class Room {
       // Rester laisse la cagnotte NON SECURISEE, c'est tout le risque ; ce qui
       // monte, c'est ce qu'elle vaudra au bout du palier suivant.
       this.#extractMultiplier += EXTRACT_MULTIPLIER_STEP;
+      // Etape 17 : la reprise d'un etalage, au tick pres — le client la deduit
+      // de `effectTick` (`PORTAL_RESULT`).
+      this.#freezeUntilTick = this.#tick;
+      this.#resumeEndTick = this.#tick + LEVEL_RESUME_TICKS;
     }
     this.#pendingPortalResults.push({
       effectTick: this.#tick,

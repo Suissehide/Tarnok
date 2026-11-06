@@ -9,11 +9,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import indexHtml from '../../index.html?raw';
 import {
   formatGold,
-  formatMultiplier,
   leaveGold,
   PortalScreen,
   type PortalSource,
-  stakeLines,
+  portalKeyChoice,
   stayGold,
   THIN_SPACE,
   voteLabel,
@@ -59,7 +58,6 @@ class FakeClient implements PortalSource {
 interface Harness {
   root: HTMLElement;
   status: HTMLElement;
-  stakes: HTMLElement;
   choices: HTMLElement;
   voters: HTMLElement;
   client: FakeClient;
@@ -82,20 +80,18 @@ function harness(): Harness {
   root.id = 'portal';
   root.className = 'hidden';
   const status = document.createElement('p');
-  const stakes = document.createElement('div');
   const choices = document.createElement('div');
   const voters = document.createElement('div');
-  root.append(status, stakes, choices, voters);
+  root.append(status, choices, voters);
   document.body.append(root);
   const client = new FakeClient();
   return {
     root,
     status,
-    stakes,
     choices,
     voters,
     client,
-    screen: new PortalScreen(root, status, stakes, choices, voters, client),
+    screen: new PortalScreen(root, status, choices, voters, client),
   };
 }
 
@@ -135,42 +131,36 @@ function votants(h: Harness): { id: string; choice: string; label: string }[] {
   });
 }
 
-function stakeText(h: Harness, which: 'leave' | 'stay'): string {
-  return h.stakes.querySelector(`[data-stake="${which}"]`)?.textContent ?? '';
+/** Le montant sous un bouton, tel qu'il s'affiche. */
+function goldText(h: Harness, which: 'leave' | 'stay'): string {
+  return h.choices.querySelector(`[data-gold="${which}"]`)?.textContent ?? '';
 }
 
 describe('le cablage vers index.html', () => {
-  it('trouve les cinq elements que main.ts va chercher', () => {
+  it('trouve les quatre elements que main.ts va chercher', () => {
     // `el()` dans `main.ts` LEVE quand un identifiant manque : renommer l'un
-    // d'eux casse le demarrage du jeu entier, pas seulement le vote. Rien
-    // d'autre dans la chaine (`typecheck`, `build`) ne relit ce fichier.
-    for (const id of [
-      'portal',
-      'portal-status',
-      'portal-stakes',
-      'portal-choices',
-      'portal-voters',
-    ]) {
+    // d'eux casse le demarrage du jeu entier, pas seulement le vote.
+    for (const id of ['portal', 'portal-status', 'portal-choices', 'portal-voters']) {
       expect(indexHtml).toContain(`id="${id}"`);
     }
+    // Les lignes d'enjeu ont disparu : un element orphelin ne se verrait pas.
+    expect(indexHtml).not.toContain('id="portal-stakes"');
   });
 
   /**
-   * ⚠️ **Le vote n'est PAS un modale.** Le draft gele le monde, donc `#draft`
-   * peut prendre `inset-0` ; le vote ne gele rien, et un voile plein ecran
-   * cacherait la horde qui avance pendant qu'on negocie.
+   * ⚠️ **Etape 17 : le vote GELE le monde**, comme l'etalage : un voile, mais
+   * LEGER, et qui ne vole aucun clic hors de la carte.
    */
-  it('pose le vote en bandeau, jamais en voile plein ecran comme le draft', () => {
+  it('pose le vote en carte sur un voile plein ecran, le pointeur rendu hors de la carte', () => {
     document.body.innerHTML = indexHtml;
     const portal = document.getElementById('portal');
-    const draft = document.getElementById('draft');
+    const carte = document.getElementById('portal-status')?.parentElement;
 
-    expect(draft?.className).toContain('inset-0');
-    expect(portal?.className).not.toContain('inset-0');
-    // Et le pointeur ne revient qu'aux boutons : le reste du bandeau ne doit
-    // pas voler un clic destine au jeu.
+    expect(portal?.className).toContain('veil');
+    expect(portal?.className).toContain('inset-0');
     expect(portal?.className).toContain('pointer-events-none');
-    expect(document.getElementById('portal-choices')?.className).toContain('pointer-events-auto');
+    expect(carte?.className).toContain('pointer-events-auto');
+    expect(carte?.className).toContain('w-[520px]');
   });
 });
 
@@ -186,24 +176,16 @@ describe('formatGold — un montant qui se lit pendant une vague', () => {
   });
 });
 
-describe('formatMultiplier — la progression de la mise', () => {
-  /** ⚠️ **Deux decimales TOUJOURS, meme sur 1** : voir `formatMultiplier`. */
-  it('ecrit deux decimales et une virgule, meme sur un entier', () => {
-    expect(formatMultiplier(1)).toBe('×1,00');
-    expect(formatMultiplier(1.25)).toBe('×1,25');
-    expect(formatMultiplier(2.5)).toBe('×2,50');
-  });
-});
-
 describe('voteLabel — l abstention est un etat A PART', () => {
-  /** ⚠️ **« n'a pas voté » ne doit JAMAIS se lire comme « reste »** : voir `voteLabel`. */
-  it('donne trois mots DIFFERENTS aux trois etats', () => {
+  /** ⚠️ **« … » ne doit JAMAIS se lire comme « reste »** : voir `voteLabel`. */
+  it('donne trois mots DIFFERENTS et courts aux trois etats', () => {
     const mots = [voteLabel(VOTE_CHOICE.LEAVE), voteLabel(VOTE_CHOICE.STAY), voteLabel(NO_VOTE)];
 
     expect(new Set(mots).size).toBe(3);
     expect(voteLabel(VOTE_CHOICE.LEAVE)).toBe('part');
     expect(voteLabel(VOTE_CHOICE.STAY)).toBe('reste');
-    expect(voteLabel(NO_VOTE)).toBe('n’a pas voté');
+    // Etape 17 : pas de libelle long sur une pastille.
+    expect(voteLabel(NO_VOTE)).toBe('…');
   });
 
   it('traite tout octet inconnu comme une abstention, jamais comme une voix', () => {
@@ -234,12 +216,6 @@ describe("les deux chiffres de l'enjeu", () => {
       extractGold(CAGNOTTE, MULTIPLICATEUR + EXTRACT_MULTIPLIER_STEP),
     );
     expect(stayGold(CAGNOTTE, MULTIPLICATEUR)).toBeGreaterThan(leaveGold(CAGNOTTE, MULTIPLICATEUR));
-  });
-
-  it('dit AUSSI que tout se perd, parce que le chiffre seul ne le dit pas', () => {
-    // L'effacement de l'equipe fait tout perdre : « 12 000 au prochain
-    // portail » seul ne montrerait que la moitie positive de la decision.
-    expect(stakeLines(CAGNOTTE, MULTIPLICATEUR).stay).toMatch(/perdu/i);
   });
 });
 
@@ -274,12 +250,12 @@ describe('PortalScreen — ce que le joueur voit', () => {
   it('decompte les secondes a partir du TICK de horde', () => {
     ouvert(h);
     h.screen.update();
-    expect(h.status.textContent).toBe('Le portail est ouvert — 8 s');
+    expect(h.status.textContent).toBe('Portail — 8 s');
 
     // Cinq secondes de simulation plus tard, et RIEN d'autre n'a bouge.
     h.client.hordeTick = TICK + 5 * TICK_HZ;
     h.screen.update();
-    expect(h.status.textContent).toBe('Le portail est ouvert — 3 s');
+    expect(h.status.textContent).toBe('Portail — 3 s');
   });
 
   it('ne descend jamais sous zero, meme apres l echeance', () => {
@@ -287,38 +263,65 @@ describe('PortalScreen — ce que le joueur voit', () => {
     h.client.hordeTick = ECHEANCE + 3 * TICK_HZ;
     h.screen.update();
 
-    expect(h.status.textContent).toBe('Le portail est ouvert — 0 s');
+    expect(h.status.textContent).toBe('Portail — 0 s');
   });
 
-  it('affiche les DEUX montants, et ils sont differents', () => {
+  it('affiche un montant sous chaque bouton, et « si l equipe tient » sous Rester seulement', () => {
     ouvert(h);
     h.screen.update();
 
-    const partir = stakeText(h, 'leave');
-    const rester = stakeText(h, 'stay');
-    expect(partir).toContain(formatGold(extractGold(CAGNOTTE, MULTIPLICATEUR)));
-    expect(partir).toContain(formatMultiplier(MULTIPLICATEUR));
-    expect(rester).toContain(
-      formatGold(extractGold(CAGNOTTE, MULTIPLICATEUR + EXTRACT_MULTIPLIER_STEP)),
+    expect(goldText(h, 'leave')).toBe(`${formatGold(extractGold(CAGNOTTE, MULTIPLICATEUR))} or`);
+    expect(goldText(h, 'stay')).toBe(
+      `${formatGold(extractGold(CAGNOTTE, MULTIPLICATEUR + EXTRACT_MULTIPLIER_STEP))} or`,
     );
-    expect(rester).toContain(formatMultiplier(MULTIPLICATEUR + EXTRACT_MULTIPLIER_STEP));
-    expect(partir).not.toBe(rester);
+    expect(goldText(h, 'leave')).not.toBe(goldText(h, 'stay'));
+    // Le multiplicateur ne s'ecrit plus en toutes lettres (spec §3).
+    expect(h.root.textContent).not.toContain('×');
+    expect(boutonDe(h, VOTE_CHOICE.STAY).parentElement?.textContent).toContain('si l’équipe tient');
+    expect(boutonDe(h, VOTE_CHOICE.LEAVE).parentElement?.textContent).not.toContain('tient');
+  });
+
+  it('montre la touche de chaque bouton : 1 part, 2 reste', () => {
+    ouvert(h);
+    h.screen.update();
+
+    expect(boutonDe(h, VOTE_CHOICE.LEAVE).querySelector('.portal-choice__label')?.textContent).toBe(
+      'Partir',
+    );
+    expect(boutonDe(h, VOTE_CHOICE.STAY).querySelector('.portal-choice__label')?.textContent).toBe(
+      'Rester',
+    );
+    expect(boutonDe(h, VOTE_CHOICE.LEAVE).querySelector('kbd')?.textContent).toBe('1');
+  });
+
+  it('porte les attributs ARIA du clavier : kbd masque, raccourci sur le bouton', () => {
+    ouvert(h);
+    h.screen.update();
+
+    const partir = boutonDe(h, VOTE_CHOICE.LEAVE);
+    const rester = boutonDe(h, VOTE_CHOICE.STAY);
+
+    expect(partir.querySelector('kbd')?.getAttribute('aria-hidden')).toBe('true');
+    expect(rester.querySelector('kbd')?.getAttribute('aria-hidden')).toBe('true');
+    expect(partir.getAttribute('aria-keyshortcuts')).toBe('1');
+    expect(rester.getAttribute('aria-keyshortcuts')).toBe('2');
   });
 
   /**
-   * ⚠️ **L'or vient du SNAPSHOT, donc il bouge PENDANT la fenetre** : figer le
-   * montant a l'ouverture mentirait des le tick suivant. Le multiplicateur,
+   * ⚠️ **L'or vient du SNAPSHOT, relu a chaque image** : le monde est gele
+   * pendant le vote, mais figer le montant a la reception de `PORTAL_OPEN`
+   * mentirait si un snapshot en retard le corrige. Le multiplicateur,
    * annonce une fois, ne bouge pas.
    */
   it('suit l or du snapshot d une image a l autre', () => {
     ouvert(h);
     h.screen.update();
-    expect(stakeText(h, 'leave')).toContain(formatGold(extractGold(CAGNOTTE, MULTIPLICATEUR)));
+    expect(goldText(h, 'leave')).toBe(`${formatGold(extractGold(CAGNOTTE, MULTIPLICATEUR))} or`);
 
     h.client.gold = CAGNOTTE + 2_500;
     h.screen.update();
-    expect(stakeText(h, 'leave')).toContain(
-      formatGold(extractGold(CAGNOTTE + 2_500, MULTIPLICATEUR)),
+    expect(goldText(h, 'leave')).toBe(
+      `${formatGold(extractGold(CAGNOTTE + 2_500, MULTIPLICATEUR))} or`,
     );
   });
 
@@ -341,7 +344,7 @@ describe('PortalScreen — ce que le joueur voit', () => {
     expect(votants(h)).toEqual([
       { id: '1', choice: 'leave', label: 'part' },
       { id: '3', choice: 'stay', label: 'reste' },
-      { id: '4', choice: 'none', label: 'n’a pas voté' },
+      { id: '4', choice: 'none', label: '…' },
     ]);
   });
 
@@ -459,22 +462,19 @@ describe('PortalScreen — ce que le joueur voit', () => {
     h.client.portalGold = 14_723;
     h.screen.update();
 
-    expect(h.status.textContent).toBe(`L’équipe part — 14${THIN_SPACE}723 or acquis.`);
+    expect(h.status.textContent).toBe(`L’équipe part — 14${THIN_SPACE}723 or`);
     expect(h.root.dataset.settled).toBe('true');
     expect(boutons(h).map((b) => b.disabled)).toEqual([true, true]);
   });
 
-  it('affiche le verdict RESTER avec l or toujours en jeu', () => {
-    // ⚠️ Les DEUX verdicts : `PORTAL_RESULT` porte un seul champ d'or dont le
-    // sens se lit dans la decision. Un ecran qui ne lirait qu'un des deux
-    // afficherait « acquis » sur une cagnotte encore risquee.
+  it('affiche le verdict RESTER, sans montant : la cagnotte reste en jeu', () => {
     ouvert(h);
     h.screen.update();
     h.client.portalDecision = VOTE_CHOICE.STAY;
     h.client.portalGold = 14_723;
     h.screen.update();
 
-    expect(h.status.textContent).toBe(`L’équipe reste — 14${THIN_SPACE}723 or toujours en jeu.`);
+    expect(h.status.textContent).toBe('L’équipe reste');
   });
 
   it('disparait quand le client ferme le vote', () => {
@@ -502,5 +502,75 @@ describe('PortalScreen — ce que le joueur voit', () => {
     // Meme noeud : une reconstruction par image perdrait le focus clavier et
     // relancerait toute animation CSS a chaque image.
     expect(boutonDe(h, VOTE_CHOICE.LEAVE)).toBe(premier);
+  });
+});
+
+describe('portalKeyChoice — 1 part, 2 reste (etape 17)', () => {
+  it('lit le CODE physique : rangee du haut et pave numerique, AZERTY compris', () => {
+    // `e.code`, pas `e.key` : en AZERTY, la touche 1 sans majuscule donne « & ».
+    expect(portalKeyChoice('Digit1', false)).toBe(VOTE_CHOICE.LEAVE);
+    expect(portalKeyChoice('Numpad1', false)).toBe(VOTE_CHOICE.LEAVE);
+    expect(portalKeyChoice('Digit2', false)).toBe(VOTE_CHOICE.STAY);
+    expect(portalKeyChoice('Numpad2', false)).toBe(VOTE_CHOICE.STAY);
+  });
+
+  it('ignore toute autre touche', () => {
+    for (const code of ['Digit3', 'Numpad0', 'KeyA', 'Space', 'Escape', 'Enter']) {
+      expect(portalKeyChoice(code, false)).toBeNull();
+    }
+  });
+
+  /**
+   * ⚠️ **Menu Echap ouvert, bilan affiche, HUD cache, touche tenue** :
+   * `main.ts` le dit par `blocked`, et rien ne part.
+   */
+  it('ne rend rien quand les entrees sont bloquees', () => {
+    expect(portalKeyChoice('Digit1', true)).toBeNull();
+    expect(portalKeyChoice('Numpad2', true)).toBeNull();
+  });
+});
+
+describe('PortalScreen#vote — le clavier suit la regle du clic', () => {
+  let h: Harness;
+
+  beforeEach(() => {
+    h = harness();
+  });
+
+  it('vote, puis RETIRE sa voix sur la meme touche', () => {
+    ouvert(h);
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.LEAVE);
+    // Le serveur rediffuse : c'est lui qui dit ce que j'ai vote.
+    h.client.votes([[2, VOTE_CHOICE.LEAVE]]);
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.LEAVE);
+
+    expect(h.client.sent).toEqual([VOTE_CHOICE.LEAVE, NO_VOTE]);
+  });
+
+  it('change de voix sur l AUTRE touche', () => {
+    ouvert(h);
+    h.client.votes([[2, VOTE_CHOICE.LEAVE]]);
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.STAY);
+
+    expect(h.client.sent).toEqual([VOTE_CHOICE.STAY]);
+  });
+
+  it('est inerte une fois le verdict tombe (la rampe de reprise comprise)', () => {
+    ouvert(h);
+    h.client.portalDecision = VOTE_CHOICE.STAY;
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.LEAVE);
+
+    expect(h.client.sent).toEqual([]);
+  });
+
+  it('est inerte sans portail ouvert', () => {
+    h.screen.update();
+    h.screen.vote(VOTE_CHOICE.STAY);
+
+    expect(h.client.sent).toEqual([]);
   });
 });

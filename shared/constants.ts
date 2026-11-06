@@ -558,11 +558,12 @@ export const WIPE_GOLD_KEPT = 0;
  * Duree de la fenetre du vote d'extraction, en ticks (20 s).
  *
  * ⚠️ **Le meme nombre que `DRAFT_WINDOW_TICKS`, et deux constantes quand
- * meme** : celle du draft est un PLAFOND sur un choix sans enjeu temporel, que
- * le solo court-circuite ; celle-ci est l'enjeu lui-meme — la vague suivante
- * approche pendant qu'on decide.
+ * meme** : deux plafonds sur deux decisions differentes, que le solo
+ * court-circuite toutes deux.
  *
- * ⚠️ **Elle ne gele RIEN** : le monde continue de tourner. Voir `Room#step`.
+ * ⚠️ **Etape 17 : le vote GELE le monde**, comme l'etalage (`Room#step`). Cette
+ * fenetre n'est plus l'enjeu, seulement l'attente maximale d'un absent. Le
+ * client en deduit le premier tick gele : `deadlineTick − PORTAL_WINDOW_TICKS + 1`.
  */
 export const PORTAL_WINDOW_TICKS = 600;
 

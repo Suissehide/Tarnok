@@ -1319,32 +1319,66 @@
     color: var(--color-slate-title);
   }
 
-  /* --- Vote d'extraction (bandeau, ne gele rien) -------------------------- */
+  /* --- Vote d'extraction (etape 17 : une carte au centre, le monde gele) --- */
 
-  .portal-choice {
-    min-width: 260px;
+  /* Un voile LEGER, plus clair que celui de l'etalage : le monde gele reste
+     lisible derriere la carte. */
+  #portal.veil {
+    background: rgb(18 14 16 / 0.35);
+  }
+
+  .portal-option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    min-width: 200px;
   }
 
   .portal-choice[data-mine="true"] {
     filter: brightness(1.15);
   }
 
+  .portal-choice__key {
+    margin-left: 10px;
+    font-family: inherit;
+    opacity: 0.75;
+  }
+
+  .portal-option__gold {
+    font-size: 32px;
+  }
+
+  .portal-option__note {
+    font-size: 16px;
+    color: var(--color-slate-soft);
+  }
+
   .portal-voter {
     display: flex;
     align-items: center;
-    gap: 8px;
-    font-size: 20px;
+    gap: 6px;
+    padding: 2px 10px 2px 2px;
+    border: 3px solid;
+    border-radius: 999px;
+    font-size: 18px;
+  }
+
+  /* Pas encore vote : une pastille CREUSE, distincte de « reste » sans lire le mot. */
+  .portal-voter[data-choice="none"] {
+    border-style: dashed;
+    opacity: 0.7;
   }
 
   .portal-voter__badge {
     display: flex;
     align-items: center;
     justify-content: center;
-    width: 28px;
-    height: 28px;
-    border: 2px solid var(--color-outline);
+    width: 26px;
+    height: 26px;
+    border-radius: 999px;
     font-family: var(--font-jer);
-    font-size: 20px;
+    font-size: 18px;
     font-style: normal;
     color: var(--color-outline);
   }

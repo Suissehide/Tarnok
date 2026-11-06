@@ -555,8 +555,9 @@ class Session {
     // Le portail, dans le meme ordre que le draft : l'ouverture, les votes en
     // continu, puis le verdict — et tout cela AVANT le snapshot du meme tick.
     //
-    // ⚠️ **Rien de tout ceci n'annonce un gel**, a la difference de
-    // `DRAFT_OPEN` : le monde continue de tourner pendant le vote.
+    // Etape 17 : comme `LEVEL_UP`, `PORTAL_OPEN` annonce un gel, sans un octet
+    // de plus — il commence a `deadlineTick − PORTAL_WINDOW_TICKS + 1` et finit
+    // a l'`effectTick` du verdict.
     for (const open of this.room.drainPortalOpens()) {
       // ⚠️ **Le multiplicateur part ICI, avec l'ouverture, et nulle part
       // ailleurs** : il est constant sur toute la fenetre. Zero octet par tick

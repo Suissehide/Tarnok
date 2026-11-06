@@ -1,6 +1,7 @@
 import type { AddressInfo } from 'node:net';
 import {
   EXTRACT_MULTIPLIER_STEP,
+  LEVEL_RESUME_TICKS,
   PORTAL_WINDOW_TICKS,
   TICK_HZ,
   WIPE_GOLD_KEPT,
@@ -33,7 +34,7 @@ import { buildServer } from './server';
  * Le portail de bout en bout, sur quatre sockets reelles : le boss meurt, le
  * portail s'ouvre, les votes se voient, la majorite tranche, l'egalite
  * continue, et **l'or bouge dans les DEUX sens** (acquis et majore en partant,
- * efface avec l'equipe). Le monde ne s'arrete pas pendant qu'on negocie.
+ * efface avec l'equipe). Le monde est gele pendant qu'on negocie (etape 17).
  *
  * ⚠️ Il faut quatre sockets : une seule ne produit ni majorite ni egalite, ne
  * voit pas les votes des autres, et ne peut pas porter l'or majore du SECOND
@@ -41,8 +42,8 @@ import { buildServer } from './server';
  *
  * ⚠️ **Le salon est avance DEPUIS LE TEST**, en plus de la boucle du serveur :
  * atteindre un boss prend une trentaine de secondes d'horloge murale, et ce
- * test en enchaine deux. **Les phases mesurees — le vote, le monde qui tourne
- * — ne sont JAMAIS accelerees**, sinon les sockets n'ont pas le temps de parler.
+ * test en enchaine deux. **Les phases mesurees — le vote, le monde gele — ne
+ * sont JAMAIS accelerees**, sinon les sockets n'ont pas le temps de parler.
  *
  * ⚠️ **La derive de replication ne se mesure pas ici** mais dans
  * `shared/horde.replication.test.ts` : le decor balaie la horde avec
@@ -72,24 +73,16 @@ if (DISTANCE_BOSS >= PORTEE_DAGUE) {
 }
 
 /**
- * Distance a laquelle le temoin de « le monde tourne » est pose DERRIERE les
- * joueurs, qui marchent vers la gauche.
+ * Distance a laquelle le temoin du gel est pose DERRIERE les joueurs, qui
+ * envoient « marcher vers la gauche ».
  *
- * ⚠️ **Derriere, pas devant** : sur le chemin, il blesserait les votants. A
- * ~95 px/s contre 260, il ne rattrape personne.
+ * ⚠️ **Derriere, pas devant** : un monde qui tournerait par erreur le ferait
+ * marcher sur les votants.
  */
 const DISTANCE_TEMOIN = 900;
 
-/** Duree de la mesure « le monde tourne », en ticks de jeu. */
+/** Duree de la mesure du gel, en ticks de jeu. */
 const TICKS_MESURE = 45;
-
-/**
- * Seuils de la mesure, en pixels monde : bien sous les ~390 px (joueur) et
- * ~150 px (pietaille) parcourus en `TICKS_MESURE`. On teste un mouvement, pas
- * une vitesse.
- */
-const SEUIL_JOUEUR_PX = 100;
-const SEUIL_HORDE_PX = 30;
 
 /** Ticks avances d'affilee avant de rendre la main a la boucle du serveur. */
 const TICKS_PAR_RESPIRATION = 60;
@@ -644,15 +637,13 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     const silences = new Map(clients.map((x) => [x.playerId, NO_VOTE]));
     await tousVoient(clients, silences, 'les quatre silences a l ouverture');
 
-    // ---- 3. LE MONDE NE S ARRETE PAS pendant qu'on negocie ----------------
+    // ---- 3. LE MONDE EST GELE pendant qu'on negocie (etape 17) -------------
     //
-    // ⚠️ **La horde ET les joueurs** : un `if (portail ouvert) return;` calque
-    // sur le gel du draft arreterait les deux, et n'en mesurer qu'un laisserait
-    // passer la moitie du defaut.
-    // ⚠️ **Les joueurs marchent vers la GAUCHE, le temoin est a DROITE** : le
-    // boss a laisse son orbe a `DISTANCE_BOSS` a droite de A, juste hors de
-    // `ORB_PICKUP_RADIUS`. Marcher vers elle ferait ramasser une piece
-    // eventuelle a un tick non reproductible.
+    // ⚠️ **La horde ET les joueurs**, et les joueurs ENVOIENT leurs entrees :
+    // un gel qui n'arreterait que la horde laisserait marcher les votants.
+    // ⚠️ **Les joueurs « marchent » vers la GAUCHE, le temoin est a DROITE** :
+    // le boss a laisse son orbe a `DISTANCE_BOSS` a droite de A ; un gel rate
+    // ferait ramasser une piece a un tick non reproductible.
     const ancreA = positionDuFil(a);
     const temoin = poseCible(room, 9500, ancreA.x + DISTANCE_TEMOIN, ancreA.y);
     const posTemoin = (): { x: number; y: number } => {
@@ -683,7 +674,7 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
 
       await waitFor(
         () => (room.tick >= tickDebut + TICKS_MESURE ? true : null),
-        'le monde qui tourne pendant le vote',
+        'le monde gele pendant le vote',
         20_000,
       );
 
@@ -696,18 +687,13 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       expect(verdictsDe(a)).toHaveLength(0);
       expect(dernierReleve).toBeLessThan(open1.deadlineTick);
 
-      // La horde avance...
-      expect(
-        Math.hypot(monstreApres.x - monstreAvant.x, monstreApres.y - monstreAvant.y),
-        'la horde est figee pendant le vote',
-      ).toBeGreaterThan(SEUIL_HORDE_PX);
-      // ...et les joueurs aussi, les quatre.
+      // La horde est figee...
+      expect(monstreApres, 'la horde bouge pendant le vote').toEqual(monstreAvant);
+      // ...et les joueurs aussi, les quatre, alors qu'ils envoient « a gauche ».
       for (const client of clients) {
-        const avant = joueursAvant.get(client.playerId) ?? 0;
-        expect(
-          avant - positionDuFil(client).x,
-          `le joueur ${client.playerId} est fige pendant le vote`,
-        ).toBeGreaterThan(SEUIL_JOUEUR_PX);
+        expect(positionDuFil(client).x, `le joueur ${client.playerId} bouge pendant le vote`).toBe(
+          joueursAvant.get(client.playerId),
+        );
       }
 
       // ---- 4. Les votes se voient, et ils sont REVOCABLES -----------------
@@ -878,8 +864,9 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
    * **La moitie NEGATIVE, et c'est elle qui porte le sens** : « l'or est acquis
    * quand on part » passerait aussi avec un or qui ne bouge jamais.
    *
-   * Meme decor que la moitie positive jusqu'a la mort du boss ; ensuite,
-   * l'equipe est effacee **pendant** qu'elle negocie, et la cagnotte tombe a
+   * Meme decor que la moitie positive jusqu'a la mort du boss. Etape 17 : le
+   * vote gele le monde, personne ne tombe pendant qu'on negocie — l'equipe
+   * choisit de RESTER, puis elle est effacee, et la cagnotte reportee tombe a
    * `WIPE_GOLD_KEPT`.
    */
   it('l effacement de l equipe efface l or, sur le fil', async () => {
@@ -911,6 +898,15 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
       10_000,
     );
     expect(cagnotte).toBeGreaterThan(0);
+
+    // Les quatre restent : le portail se ferme avant l'echeance, et c'est la
+    // cagnotte REPORTEE qui sera perdue.
+    for (const client of clients) {
+      client.ws.send(encodeVote(VOTE_CHOICE.STAY));
+    }
+    const verdict = await verdictVuParTous(clients, 1);
+    expect(verdict.decision).toBe(VOTE_CHOICE.STAY);
+    expect(verdict.effectTick).toBeLessThan(open.deadlineTick);
 
     // Un bourreau increvable epingle sur chaque joueur : seul l'effacement de
     // l'equipe entiere coute la cagnotte.
@@ -958,8 +954,153 @@ describe('le livrable du §13 sur quatre sockets reelles (etape 6a, tache 11)', 
     // montait a 1, l'attente ci-dessus expirerait sans dire pourquoi.
     expect(WIPE_GOLD_KEPT).toBeLessThan(1);
 
-    // ⚠️ **Et le portail n'a jamais tranche** : une fois `#runOver` vrai, `step`
-    // ne rappelle plus personne. Une equipe effacee ne part pas avec la mise.
-    expect(verdictsDe(a)).toHaveLength(0);
+    // ⚠️ **Un seul verdict, « rester »** : une fois `#runOver` vrai, `step` ne
+    // rappelle plus personne. Une equipe effacee ne part pas avec la mise.
+    expect(verdictsDe(a)).toHaveLength(1);
+  }, 120_000);
+});
+
+describe('etape 17 : le portail gele le monde, sur deux sockets reelles', () => {
+  /**
+   * **Le livrable de l'etape 17.** Deux joueurs, un portail qui s'ouvre a son
+   * rythme ; pendant le vote, les SNAPSHOT montrent un monde IMMOBILE alors que
+   * les deux joueurs envoient « marcher a gauche » et qu'un monstre a une
+   * cible ; deux « rester » ferment le portail AVANT l'echeance, et le monde
+   * repart.
+   *
+   * ⚠️ **Le gel se lit sur le FIL** (positions des joueurs, or), et le temoin
+   * dans le salon : un gel du seul client ne passerait pas.
+   */
+  it('les SNAPSHOT montrent un monde immobile, deux RESTER ferment le portail, le monde repart', async () => {
+    const code = await createRoomCode();
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('le registre de salons doit etre accessible depuis l app');
+    }
+    const a = await connect(code);
+    const b = await connect(code);
+    const clients = [a, b];
+    await waitFor(
+      () => (a.lastSnapshot?.players.length === 2 ? true : null),
+      'les deux joueurs dans le SNAPSHOT',
+      3000,
+    );
+
+    // Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues : on y va en
+    // accelerant, horde videe, comme `tuerLeBoss`.
+    await avancerJusqua(
+      room,
+      () => room.portalOpen,
+      "l'ouverture du portail",
+      300 * TICK_HZ,
+      () => {
+        viderSauf(room, []);
+      },
+    );
+    const open = await waitFor(() => ouverturesDe(a)[0] ?? null, 'PORTAL_OPEN pour A', 15_000);
+    await waitFor(() => ouverturesDe(b)[0] ?? null, 'PORTAL_OPEN pour B', 15_000);
+    // Le premier tick gele, tel que le client le deduit (aucun octet de plus).
+    const premierGele = open.deadlineTick - PORTAL_WINDOW_TICKS + 1;
+
+    const ancre = positionDuFil(a);
+    const temoin = poseCible(room, 9800, ancre.x + DISTANCE_TEMOIN, ancre.y);
+    const posTemoin = (): { x: number; y: number } => {
+      const slot = room.horde.slotOf(temoin);
+      expect(slot).toBeGreaterThanOrEqual(0);
+      return { x: room.horde.x[slot] ?? 0, y: room.horde.y[slot] ?? 0 };
+    };
+    const posDans = (s: SnapshotMessage, id: number): { x: number; y: number } => {
+      const p = s.players.find((q) => q.id === id);
+      if (!p) {
+        throw new Error(`le joueur ${id} est absent du snapshot`);
+      }
+      return { x: p.x, y: p.y };
+    };
+
+    // Les deux « marchent a gauche » a l'horloge REELLE, pendant tout le test.
+    const stopPilote = piloter(() => {
+      viderSauf(room, [temoin]);
+      const slot = room.horde.slotOf(temoin);
+      if (slot >= 0) {
+        room.horde.hp[slot] = 1e6;
+      }
+      for (const client of clients) {
+        envoyer(client, -127, 0, 0, 0);
+      }
+    });
+
+    try {
+      // ---- 1. Le gel, sur le fil -------------------------------------------
+      const reference = await waitFor(
+        () => (a.lastSnapshot && a.lastSnapshot.tick >= premierGele ? a.lastSnapshot : null),
+        'un SNAPSHOT du gel',
+        5000,
+      );
+      const temoinAvant = posTemoin();
+      await waitFor(
+        () =>
+          a.lastSnapshot && a.lastSnapshot.tick >= reference.tick + TICKS_MESURE ? true : null,
+        'des SNAPSHOT pendant le gel',
+        20_000,
+      );
+      const apres = a.lastSnapshot;
+      if (!apres) {
+        throw new Error('un SNAPSHOT attendu');
+      }
+      // Le tick avance (il date le verdict)...
+      expect(apres.tick).toBeGreaterThanOrEqual(reference.tick + TICKS_MESURE);
+      // ...rien d'autre : ni les joueurs, qui envoient pourtant leurs entrees,
+      // ni la horde, ni l'or.
+      for (const client of clients) {
+        expect(posDans(apres, client.playerId), `le joueur ${client.playerId} bouge`).toEqual(
+          posDans(reference, client.playerId),
+        );
+      }
+      expect(posTemoin(), 'la horde bouge pendant le vote').toEqual(temoinAvant);
+      expect(apres.gold).toBe(reference.gold);
+      expect(room.portalOpen).toBe(true);
+      expect(verdictsDe(a)).toHaveLength(0);
+
+      // ---- 2. Deux « rester » ferment le portail AVANT l'echeance ----------
+      for (const client of clients) {
+        client.ws.send(encodeVote(VOTE_CHOICE.STAY));
+      }
+      const verdict = await waitFor(() => verdictsDe(a)[0] ?? null, 'PORTAL_RESULT pour A', 15_000);
+      const verdictB = await waitFor(
+        () => verdictsDe(b)[0] ?? null,
+        'PORTAL_RESULT pour B',
+        15_000,
+      );
+      expect(verdictB).toEqual(verdict);
+      expect(verdict.decision).toBe(VOTE_CHOICE.STAY);
+      expect(verdict.effectTick).toBeLessThan(open.deadlineTick);
+
+      // ---- 3. Et le monde repart, apres la rampe ---------------------------
+      const repartie = verdict.effectTick + LEVEL_RESUME_TICKS + TICKS_MESURE;
+      await waitFor(
+        () => (a.lastSnapshot && a.lastSnapshot.tick >= repartie ? true : null),
+        'des SNAPSHOT apres la reprise',
+        20_000,
+      );
+      const fin = a.lastSnapshot;
+      if (!fin) {
+        throw new Error('un SNAPSHOT attendu');
+      }
+      // Un mouvement, pas une vitesse : ~130 px de rampe puis ~390 px a pleine
+      // vitesse pour un joueur, ~70 px au moins pour le temoin.
+      for (const client of clients) {
+        expect(
+          posDans(reference, client.playerId).x - posDans(fin, client.playerId).x,
+          `le joueur ${client.playerId} reste fige apres le verdict`,
+        ).toBeGreaterThan(100);
+      }
+      const temoinFin = posTemoin();
+      expect(
+        Math.hypot(temoinFin.x - temoinAvant.x, temoinFin.y - temoinAvant.y),
+        'la horde reste figee apres le verdict',
+      ).toBeGreaterThan(30);
+    } finally {
+      stopPilote();
+    }
   }, 120_000);
 });

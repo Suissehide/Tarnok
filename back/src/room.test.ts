@@ -4844,46 +4844,225 @@ describe("le portail s'ouvre toutes les PORTAL_EVERY_WAVES vagues (etape 6a, tac
     expect(room.portalVotes().size).toBe(0);
   }, 60_000);
 
-  it('LE MONDE NE S ARRETE PAS : la horde avance et le joueur bouge pendant le vote', () => {
-    // ⚠️ **Le seul test qui rougirait** si un `if (portail ouvert) {
-    // #stepPortal(); return; }` etait calque sur le gel du draft dans
-    // `Room#step`. Le draft gele parce qu'un choix de carte n'a pas d'enjeu
-    // temporel ; le vote ne gele pas parce que le temps EST son enjeu.
+  it('LE MONDE GELE pendant le vote : joueur, horde, vagues et or immobiles, le tick compte (etape 17)', () => {
+    // ⚠️ **Le test qui rougit sans le garde du portail** en tete de
+    // `Room#step`. Le joueur ENVOIE des entrees et un monstre a une cible : un
+    // gel partiel (la horde seule, ou les joueurs seuls) se verrait.
     const room = new Room(4242);
     room.join(1);
+    room.debugSetGold(240);
     ouvrirLePortail(room);
     expect(room.portalOpen).toBe(true);
 
-    const joueurAvant = positionOf(room, 1);
-    const suiveur = spawnMonsterAt(room, 8100, joueurAvant.x + 900, joueurAvant.y);
-    const distance = (): number => {
-      const slot = room.horde.slotOf(suiveur);
-      expect(slot).toBeGreaterThanOrEqual(0);
-      const p = positionOf(room, 1);
-      return Math.hypot((room.horde.x[slot] ?? 0) - p.x, (room.horde.y[slot] ?? 0) - p.y);
-    };
-    const depart = distance();
+    const joueurAvant = room.positionOf(1);
+    const p = positionOf(room, 1);
+    const suiveur = spawnMonsterAt(room, 8100, p.x + 900, p.y);
+    const horde = (): number[] => [
+      ...Array.from(room.horde.x.subarray(0, room.horde.count)),
+      ...Array.from(room.horde.y.subarray(0, room.horde.count)),
+    ];
+    const hordeAvant = horde();
+    const orAvant = room.gold;
     const tickAvant = room.tick;
+    let vagues = 0;
 
-    for (let t = 0; t < 3 * TICK_HZ; t++) {
-      viderSauf(room, [suiveur]);
-      // Increvable : ce qui est mesure est un DEPLACEMENT, pas une mise a mort
-      // — et le tir automatique du joueur part tout seul.
-      room.horde.hp[room.horde.slotOf(suiveur)] = 1e6;
-      // Le joueur, lui, marche vers la droite : un gel l'arreterait aussi.
+    // Sept secondes : plus qu'une periode de vague (6 s), le directeur en
+    // sortirait une si le monde tournait.
+    for (let t = 0; t < 7 * TICK_HZ; t++) {
       room.applyInput(1, 20_000 + room.tick, 127, 0);
-      pas(room);
+      room.step(DT);
+      vagues += room.drainWaveOrders().length;
     }
 
-    // Le vote court toujours : personne n'a tranche, l'echeance est loin.
+    // Le vote court toujours, et le tick a compte chaque pas : c'est lui qui
+    // date le verdict.
     expect(room.portalOpen).toBe(true);
-    expect(room.tick).toBe(tickAvant + 3 * TICK_HZ);
+    expect(room.tick).toBe(tickAvant + 7 * TICK_HZ);
+    // ⚠️ **Les DEUX moities du monde** : le joueur qui veut marcher, la horde
+    // qui a une cible.
+    expect(room.positionOf(1)).toEqual(joueurAvant);
+    expect(room.horde.slotOf(suiveur)).toBeGreaterThanOrEqual(0);
+    expect(horde()).toEqual(hordeAvant);
+    expect(vagues).toBe(0);
+    expect(room.gold).toBe(orAvant);
+  }, 60_000);
 
-    // ⚠️ **Les DEUX moities du monde qui tourne.** La horde se rapproche...
-    expect(distance()).toBeLessThan(depart - 100);
-    // ...et le joueur se deplace. Un gel arreterait les deux, et une seule des
-    // deux assertions laisserait passer un gel partiel.
-    expect(positionOf(room, 1).x).toBeGreaterThan(joueurAvant.x + 100);
+  it('etape 17 : en solo, un vote ferme le portail au tick suivant ; RESTER rend le monde par la rampe', () => {
+    const room = new Room(4242);
+    room.join(1);
+    ouvrirLePortail(room);
+    room.drainPortalOpens();
+    const avant = room.positionOf(1);
+    if (!avant) {
+      throw new Error('le joueur 1 doit etre dans le salon');
+    }
+
+    expect(room.setVote(1, VOTE_CHOICE.STAY)).toBe(true);
+    // Le joueur veut marcher a droite des maintenant : seul le gel le retient.
+    room.applyInput(1, 20_000 + room.tick, 127, 0);
+    pas(room);
+    const verdict = room.tick;
+    expect(room.portalOpen).toBe(false);
+    expect(room.drainPortalResults()).toEqual([
+      { effectTick: verdict, decision: VOTE_CHOICE.STAY, gold: room.gold },
+    ]);
+    // Le tick du verdict est encore gele : `#freezeUntilTick = C`, comme a la
+    // fermeture d'un etalage.
+    expect(room.positionOf(1)).toEqual(avant);
+
+    // C + 1, puis C + 2 : un, puis deux trentiemes d'un pas plein — la meme
+    // rampe qu'apres un etalage (`#movementScale`). Le rapport, pas la vitesse :
+    // les bonus de classe ou de compte n'y changent rien.
+    pas(room);
+    const x1 = room.positionOf(1)?.x ?? 0;
+    pas(room);
+    const x2 = room.positionOf(1)?.x ?? 0;
+    expect(x1 - avant.x).toBeGreaterThan(0);
+    expect(x1 - avant.x).toBeLessThan((PLAYER_SPEED * DT) / 2);
+    expect(x2 - x1).toBeCloseTo(2 * (x1 - avant.x), 6);
+  }, 60_000);
+
+  it('etape 17 : un etalage du pendant le vote attend le verdict RESTER, et s ouvre au tick qui suit', () => {
+    const room = new Room(4242);
+    room.join(1);
+    ouvrirLePortail(room);
+    room.drainLevelUps();
+    room.drainDraftOpens();
+    // Un coffre ET un niveau dus pendant le vote : la priorite fixe joue apres.
+    room.debugOweChests(1);
+    room.debugOweLevels(1);
+    for (let t = 0; t < TICK_HZ; t++) {
+      pas(room);
+    }
+    expect(room.portalOpen).toBe(true);
+    expect(room.drainLevelUps()).toEqual([]);
+    expect(room.drainDraftOpens()).toEqual([]);
+
+    room.setVote(1, VOTE_CHOICE.STAY);
+    pas(room);
+    const verdict = room.tick;
+    expect(room.drainPortalResults().map((r) => r.effectTick)).toEqual([verdict]);
+    // Le tick du verdict n'ouvre rien : le garde du portail a rendu la main
+    // AVANT l'ouverture d'un etalage du.
+    expect(room.drainDraftOpens()).toEqual([]);
+
+    pas(room);
+    // Un seul etalage, le coffre, au premier pas qui suit le verdict.
+    expect(room.drainLevelUps().map((l) => l.tick)).toEqual([verdict + 1]);
+    expect(room.drainDraftOpens()).toHaveLength(1);
+  }, 60_000);
+
+  it('etape 17 : PARTIR termine la run sans ouvrir l etalage du', () => {
+    const room = new Room(4242);
+    room.join(1);
+    ouvrirLePortail(room);
+    room.drainLevelUps();
+    room.drainDraftOpens();
+    room.debugOweLevels(1);
+
+    room.setVote(1, VOTE_CHOICE.LEAVE);
+    pas(room);
+    expect(room.drainPortalResults().map((r) => r.decision)).toEqual([VOTE_CHOICE.LEAVE]);
+    expect(room.drainRunOver()).not.toBeNull();
+
+    // L'etalage du est abandonne avec la run : `#runOver` rend la main avant.
+    for (let t = 0; t < TICK_HZ; t++) {
+      pas(room);
+    }
+    expect(room.drainLevelUps()).toEqual([]);
+    expect(room.drainDraftOpens()).toEqual([]);
+  }, 60_000);
+
+  it('etape 17 : un vote pendant la rampe de reprise est refuse, sans second verdict', () => {
+    const room = new Room(4242);
+    room.join(1);
+    ouvrirLePortail(room);
+    room.setVote(1, VOTE_CHOICE.STAY);
+    pas(room);
+    expect(room.drainPortalResults()).toHaveLength(1);
+
+    // C + 1 : la rampe a commence, le portail est ferme au salon.
+    pas(room);
+    expect(room.setVote(1, VOTE_CHOICE.LEAVE)).toBe(false);
+    for (let t = 0; t < LEVEL_RESUME_TICKS; t++) {
+      pas(room);
+    }
+    expect(room.drainPortalResults()).toEqual([]);
+    expect(room.drainRunOver()).toBeNull();
+    expect(room.portalOpen).toBe(false);
+  }, 60_000);
+
+  it('etape 17 : un MORT vote pendant le gel, sa voix compte, et il reste a terre', () => {
+    const room = new Room(4242);
+    room.join(1);
+    room.join(2);
+    room.debugKill(1);
+    expect(room.hpOf(1)).toBe(0);
+    ouvrirLePortail(room);
+
+    for (let t = 0; t < TICK_HZ; t++) {
+      pas(room);
+    }
+    expect(room.hpOf(1)).toBe(0);
+    // Le mort et le vif partent : deux voix sur deux, le portail se ferme
+    // avant l'echeance.
+    expect(room.setVote(1, VOTE_CHOICE.LEAVE)).toBe(true);
+    expect(room.setVote(2, VOTE_CHOICE.LEAVE)).toBe(true);
+    pas(room);
+    expect(room.drainPortalResults().map((r) => r.decision)).toEqual([VOTE_CHOICE.LEAVE]);
+    expect(room.hpOf(1)).toBe(0);
+  }, 60_000);
+
+  it('etape 17 : le minuteur d un evenement dort pendant le vote et sa rampe, puis repart', () => {
+    // Le premier evenement et le premier portail tombent tous deux vers la
+    // vague 20 (`EVENT_FIRST_WAVE`, `PORTAL_EVERY_WAVES`) : un evenement qui
+    // court pendant le vote est le cas ORDINAIRE.
+    const room = new Room(4242);
+    room.join(1);
+    ouvrirLePortail(room);
+    room.drainEvents();
+    room.debugStartEvent(7 * 0x4_6a2b + EVENT_KIND.SCEAUX);
+    expect(room.drainEvents().map((m) => m.type)).toEqual([MSG.EVENT_START]);
+
+    for (let t = 0; t < 3 * TICK_HZ; t++) {
+      pas(room);
+    }
+    // Trois secondes de vote : a 5 Hz, quinze EVENT_STATE si le minuteur
+    // tournait.
+    expect(room.drainEvents()).toEqual([]);
+
+    room.setVote(1, VOTE_CHOICE.STAY);
+    pas(room);
+    for (let t = 0; t < LEVEL_RESUME_TICKS; t++) {
+      pas(room);
+    }
+    // La rampe aussi : `#stepEvent` dort tant que `#tick <= #resumeEndTick`.
+    expect(room.drainEvents()).toEqual([]);
+
+    for (let t = 0; t < EVENT_STATE_PERIOD_TICKS; t++) {
+      pas(room);
+    }
+    expect(room.drainEvents().map((m) => m.type)).toContain(MSG.EVENT_STATE);
+  }, 60_000);
+
+  it('etape 17 : un verbe est refuse pendant le vote et au tick du verdict, comme pendant un etalage', () => {
+    // La passe interfaces (3c1b007) refuse deja les verbes pendant un etalage
+    // et le gel qui le suit (`verbes.test.ts`) ; le portail, que
+    // `#freezeUntilTick` ne couvre pas, doit faire de meme.
+    const room = new Room(4242);
+    room.join(1, undefined, undefined, 0); // Amorce
+    ouvrirLePortail(room);
+    const p = positionOf(room, 1);
+    expect(room.useAbility(1, p.x, p.y)).toBeNull();
+
+    room.setVote(1, VOTE_CHOICE.STAY);
+    pas(room);
+    expect(room.drainPortalResults()).toHaveLength(1);
+    // Le tick du verdict est encore gele (`#freezeUntilTick = C`).
+    expect(room.useAbility(1, p.x, p.y)).toBeNull();
+
+    pas(room);
+    expect(room.useAbility(1, p.x, p.y)).not.toBeNull();
   }, 60_000);
 
   it("PARTIR termine la run avec l'or ACQUIS, par le RUN_OVER de l'etape 3", () => {

@@ -992,6 +992,10 @@ export class Horde {
    * ⚠️ Leve si un champ a ete rafraichi entre le dernier `step` et cet appel :
    * l'erreur d'ordre ci-dessus devient un echec net plutot qu'une derive
    * silencieuse. Voir `#assertFieldsNotRefreshed`.
+   *
+   * `scaleAt(tick)` (etape 17) : le facteur de `dt` du tick rattrape, comme
+   * `step` le recoit — `0` pendant un gel (le pas ne fait rien, comme le garde
+   * `dt > 0` de `step`), la rampe a la reprise. Absent : `1` partout.
    */
   spawnCatchingUp(
     order: WaveOrder,
@@ -1000,6 +1004,7 @@ export class Horde {
     fields: readonly FlowField[],
     zones?: ZoneField,
     charge?: BossCharge | null,
+    scaleAt?: (tick: number) => number,
   ): void {
     if (missedTicks > 0) {
       this.#assertFieldsNotRefreshed(fields);
@@ -1013,6 +1018,10 @@ export class Horde {
     this.spawn(order, fields[0]);
     for (let step = 0; step < missedTicks; step++) {
       const tick = order.spawnTick + step;
+      const pas = dt * (scaleAt ? scaleAt(tick) : 1);
+      if (pas <= 0) {
+        continue;
+      }
       // `zones` passe aussi a `#computeFieldSign` (fuite de la Chaux) et a
       // `#recomputeSteering` (derapage du Verglas) : sans eux, une entite
       // rattrapee dans une flaque se comporterait comme sur sol nu.
@@ -1021,7 +1030,7 @@ export class Horde {
       // Sans cet appel, `#slow` porterait encore les valeurs du dernier `step`,
       // appliquees a des entites qui viennent de naitre.
       this.#computeSlow(zones, tick);
-      this.#advanceByVelocity(before, this.#count, dt, tick);
+      this.#advanceByVelocity(before, this.#count, pas, tick);
       this.#applyDeoverlap(before, this.#count);
       // Charge du boss comprise : rare (une charge annoncee moins de
       // `missedTicks` apres l'apparition du boss), mais l'omettre laisserait un

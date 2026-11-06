@@ -109,8 +109,8 @@ describe('le portail : la majorite tranche', () => {
 
     portal.setVote(2, LEAVE);
     expect(portal.step(2)).toBe(LEAVE);
-    // Et bien avant l'echeance : vingt secondes de monde qui tourne sont
-    // rendues a l'equipe qui a decide vite.
+    // Et bien avant l'echeance : le gel se referme tot pour l'equipe qui a
+    // decide vite, au lieu de courir jusqu'au bout de la fenetre.
     expect(2).toBeLessThan(portal.deadlineTick);
   });
 });

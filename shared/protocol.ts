@@ -395,13 +395,12 @@ export interface DraftResultMessage {
 /**
  * S -> C : le portail s'ouvre, et il se refermera a `deadlineTick`.
  *
- * ⚠️ **Calque sur `DRAFT_OPEN`, sauf que LE MONDE NE S'ARRETE PAS** : le draft
- * gele parce qu'un choix de carte n'a pas d'enjeu temporel ; le vote ne gele
- * pas parce que le temps EST son enjeu. Ce message annonce une echeance, pas
- * un gel.
+ * ⚠️ **Ce message marque le DEBUT du gel**, a
+ * `deadlineTick - PORTAL_WINDOW_TICKS + 1` : comme l'etalage, le monde
+ * s'arrete, seul le vote avance.
  *
- * ⚠️ **Il ne porte PAS l'or en jeu** : l'or BOUGE pendant la fenetre (les
- * monstres continuent de laisser des pieces), il vit donc dans le `SNAPSHOT`.
+ * ⚠️ **Il ne porte PAS l'or en jeu** : l'or voyage dans le `SNAPSHOT` comme un
+ * total courant, meme gele.
  *
  * ⚠️ **Il porte le MULTIPLICATEUR**, qui n'est pas dans le `SNAPSHOT` et ne
  * bouge pas pendant la fenetre : la seule ligne qui le change, dans

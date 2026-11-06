@@ -42,7 +42,7 @@ import {
 } from './ui/loading';
 import { Minimap, minimapEnemies, minimapPorteur } from './ui/minimap';
 import { wireOptions } from './ui/options';
-import { formatGold, PortalScreen } from './ui/portal';
+import { formatGold, PortalScreen, portalKeyChoice } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
 import { loadPick, loadSettings, savePick, saveSettings } from './ui/settings';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
@@ -482,6 +482,9 @@ function join(code: string): void {
     // Sous le voile, le HUD et l'etalage ne doivent plus repondre a Tab/Entree.
     hud.toggleAttribute('inert', value);
     el('draft').toggleAttribute('inert', value);
+    // Etape 17 : la carte du portail reprend le pointeur ; sous le menu Echap,
+    // ses boutons ne doivent pas non plus repondre a Tab/Entree.
+    el('portal-layer').toggleAttribute('inert', value);
   };
   const leave = (): void => {
     client.disconnect();
@@ -653,16 +656,34 @@ function join(code: string): void {
   // des quatre joueurs.
   const draftScreen = new DraftScreen(el('draft'), el('draft-status'), el('draft-cards'), client);
 
-  // Le vote d'extraction. Un BANDEAU, pas un modale : le monde ne s'arrete
-  // pas pendant qu'on vote (voir `ui/portal.ts`).
+  // Le vote d'extraction : une carte au centre, le monde gele (etape 17, voir
+  // `ui/portal.ts`).
   const portalScreen = new PortalScreen(
     el('portal'),
     el('portal-status'),
-    el('portal-stakes'),
     el('portal-choices'),
     el('portal-voters'),
     client,
   );
+
+  // Etape 17 : 1 part, 2 reste, tant que la carte est ouverte et non tranchee
+  // (`PortalScreen#vote`) — jamais menu Echap ouvert, bilan affiche ou touche
+  // tenue (`portalKeyChoice`).
+  window.addEventListener('keydown', (e) => {
+    const choice = portalKeyChoice(
+      e.code,
+      e.repeat ||
+        e.ctrlKey ||
+        e.metaKey ||
+        e.altKey ||
+        paused ||
+        hud.classList.contains('hidden') ||
+        !summary.classList.contains('hidden'),
+    );
+    if (choice !== null) {
+      portalScreen.vote(choice);
+    }
+  });
 
   lobby.classList.add('hidden');
   room.classList.remove('hidden');
