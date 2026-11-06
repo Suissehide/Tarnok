@@ -1,7 +1,7 @@
 import { CARD, type Card } from '@shared/cards';
 import { DRAFT_WINDOW_TICKS, WEAPON_SLOTS } from '@shared/constants';
 import { Loadout } from '@shared/loadout';
-import { OUTCOME } from '@shared/protocol';
+import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { BASE_WEAPON_ID, WEAPONS } from '@shared/weapons';
 import { describe, expect, it } from 'vitest';
 
@@ -379,5 +379,45 @@ describe('Draft — le solo', () => {
     const d = ouvert([1]);
     expect(d.step(150, fixe(0))).toBeNull();
     expect(d.phase).toBe('open');
+  });
+});
+
+describe('Draft — le retrait, les partis et les morts', () => {
+  it('NO_TOKEN retire le jeton, et le joueur redevient attendu', () => {
+    const d = ouvert();
+    expect(d.setToken(1, 0)).toBe(true);
+    expect(d.setToken(2, 1)).toBe(true);
+    expect(d.setToken(3, 2)).toBe(true);
+    // Le retrait est accepte : `#spread[255]` n'existe pas, et sans ce chemin
+    // le jeton resterait pose.
+    expect(d.setToken(3, NO_TOKEN)).toBe(true);
+    expect(d.intents().has(3)).toBe(false);
+    expect(d.step(101, fixe(0)), 'ferme alors qu un jeton a ete retire').toBeNull();
+    expect(d.phase).toBe('open');
+  });
+
+  it('un joueur parti (forget) ne tient plus la fenetre et ne recoit rien', () => {
+    const d = ouvert();
+    expect(d.setToken(3, 2)).toBe(true);
+    d.forget(3);
+    expect(d.intents().has(3)).toBe(false);
+    expect(d.setToken(3, 0)).toBe(false);
+    expect(d.setToken(1, 0)).toBe(true);
+    expect(d.setToken(2, 1)).toBe(true);
+    const issues = d.step(101, fixe(0));
+    expect(issues).not.toBeNull();
+    expect(d.phase).toBe('closed');
+    expect(issues?.some((r) => r.playerId === 3)).toBe(false);
+  });
+
+  it('n attend que les vivants : un mort est servi d office sans tenir la fenetre', () => {
+    const d = new Draft();
+    d.open(100, spread(), JOUEURS, new Map(), [1, 2]);
+    expect(d.setToken(1, 0)).toBe(true);
+    expect(d.step(101, fixe(0)), 'ferme avant le dernier vivant').toBeNull();
+    expect(d.setToken(2, 1)).toBe(true);
+    const issues = d.step(102, fixe(0));
+    expect(d.phase).toBe('closed');
+    expect(issues).toContainEqual({ playerId: 3, cardIndex: 2, outcome: OUTCOME.AUTO });
   });
 });

@@ -1,7 +1,7 @@
 import type { Card } from '@shared/cards';
 import { DRAFT_WINDOW_TICKS } from '@shared/constants';
 import type { Loadout } from '@shared/loadout';
-import { OUTCOME } from '@shared/protocol';
+import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 
 /**
  * Pas de phase de repioche : la resolution est un seul moment. Le perdant voit
@@ -29,6 +29,11 @@ export class Draft {
   #spread: Card[] = [];
   /** Qui participe : tous les joueurs du salon a l'ouverture. */
   #pending: number[] = [];
+  /**
+   * Qui l'on ATTEND : les vivants a l'ouverture. Un mort participe (il est
+   * servi d'office a la resolution) mais ne tient pas la fenetre ouverte.
+   */
+  #awaited: number[] = [];
   /**
    * Ce que chacun possede, pour decider ce qu'il peut prendre. L'eligibilite ne
    * voyage pas sur la carte : la meme carte peut etre prenable par l'un et pas
@@ -65,10 +70,12 @@ export class Draft {
     spread: Card[],
     playerIds: readonly number[],
     loadouts: ReadonlyMap<number, Loadout> = new Map(),
+    awaited: readonly number[] = playerIds,
   ): void {
     this.#phase = 'open';
     this.#spread = spread;
     this.#pending = [...playerIds];
+    this.#awaited = [...awaited];
     this.#loadouts = loadouts;
     this.#taken.clear();
     this.#tokens.clear();
@@ -86,6 +93,11 @@ export class Draft {
   setToken(playerId: number, cardIndex: number): boolean {
     if (this.#phase === 'closed' || !this.#pending.includes(playerId)) {
       return false;
+    }
+    // Le retrait : le joueur redevient attendu, la fenetre reste ouverte.
+    if (cardIndex === NO_TOKEN) {
+      this.#tokens.delete(playerId);
+      return true;
     }
     const card = this.#spread[cardIndex];
     if (!card) {
@@ -109,6 +121,16 @@ export class Draft {
   }
 
   /**
+   * Un joueur parti ne participe plus, n'est plus attendu, et son jeton tombe :
+   * sans ca un deconnecte tiendrait la fenetre ouverte jusqu'a l'echeance.
+   */
+  forget(playerId: number): void {
+    this.#pending = this.#pending.filter((id) => id !== playerId);
+    this.#awaited = this.#awaited.filter((id) => id !== playerId);
+    this.#tokens.delete(playerId);
+  }
+
+  /**
    * Fait avancer la machine. Rend les issues quand le draft se ferme, `null`
    * tant qu'il faut attendre. **Un seul lot d'issues par draft.**
    *
@@ -120,7 +142,7 @@ export class Draft {
     if (this.#phase === 'closed') {
       return null;
     }
-    const tousPoses = this.#pending.every((id) => this.#tokens.has(id));
+    const tousPoses = this.#awaited.every((id) => this.#tokens.has(id));
     const echu = tick >= this.#deadlineTick;
     if (!tousPoses && !echu) {
       return null;
