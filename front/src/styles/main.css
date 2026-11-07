@@ -1097,9 +1097,41 @@
     min-height: 520px;
     padding: 26px 12px 40px;
     text-align: center;
+    /* Le cadre a la couleur du joueur qui vise (`--token-color`, posee par
+       `ui/draft.ts`), juste au-dela de l'anneau de rarete. */
+    outline: 5px solid var(--token-color, transparent);
+    outline-offset: 5px;
     transition:
       transform 80ms linear,
       opacity 300ms ease-out;
+  }
+
+  .draft-card:focus-visible {
+    outline-color: #fff;
+  }
+
+  /* Ma carte se souleve ; contestee (deux jetons), elle vibre une fois. */
+  .draft-card[data-mine="true"] {
+    transform: translateY(-10px);
+  }
+
+  .draft-card[data-contested="true"] {
+    animation: draft-conteste 300ms ease-in-out 2;
+  }
+
+  .draft-card[data-rarity="3"][data-contested="true"] {
+    animation:
+      draft-conteste 300ms ease-in-out 2,
+      draft-legendaire 1800ms ease-in-out infinite;
+  }
+
+  @keyframes draft-conteste {
+    25% {
+      translate: -2px 0;
+    }
+    75% {
+      translate: 2px 0;
+    }
   }
 
   /* `joueurs + SPREAD_BONUS` cartes : a cinq et plus, elles sont reduites
@@ -1183,10 +1215,110 @@
     font-size: 24px;
     font-style: normal;
     color: var(--color-outline);
+    /* Le rebond a la pose : joue a l'insertion, et `ui/draft.ts` n'insere
+       qu'un jeton NOUVEAU. */
+    animation: draft-pose 220ms ease-out;
   }
 
   .draft-token[data-local="true"] {
     border-color: #fff;
+  }
+
+  @keyframes draft-pose {
+    from {
+      transform: scale(0.6);
+    }
+    60% {
+      transform: scale(1.1);
+    }
+    to {
+      transform: scale(1);
+    }
+  }
+
+  /* Le jeton garde ses 34 px quelle que soit la reduction de la carte. */
+  #draft-cards:has(> :nth-child(5)) .draft-token {
+    zoom: calc(1 / 0.8);
+  }
+
+  #draft-cards:has(> :nth-child(6)) .draft-token {
+    zoom: calc(1 / 0.66);
+  }
+
+  #draft-cards:has(> :nth-child(7)) .draft-token {
+    zoom: calc(1 / 0.58);
+  }
+
+  /* Le bandeau du gagnant, en bas de toute carte prise : portrait et numero
+     sur sa couleur. Vide tant que rien n'est decide. */
+  .draft-card__winner {
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: -100px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    padding: 4px 10px;
+    border: 3px solid var(--color-outline);
+    font-family: var(--font-jer);
+    font-size: 26px;
+    color: #fff;
+  }
+
+  .draft-card__winner:empty {
+    display: none;
+  }
+
+  .draft-card__winner img {
+    width: 40px;
+    height: 40px;
+  }
+
+  /* Sur MA carte perdue, le bandeau monte a la place des jetons (retires a la
+     revelation) : la consomption efface tout ce qui est sous le haut de la carte. */
+  .draft-card[data-state="lost"] .draft-card__winner {
+    bottom: auto;
+    top: -70px;
+  }
+
+  /* Les cendres : trois etincelles qui montent et s'effacent, sous `lost` seul. */
+  .draft-card__cendre {
+    position: absolute;
+    display: none;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #ff9a3c;
+    box-shadow: 0 0 8px 2px rgb(255 120 40 / 0.8);
+    pointer-events: none;
+  }
+
+  .draft-card[data-state="lost"] .draft-card__cendre {
+    display: block;
+    top: 30%;
+    left: 20%;
+    animation: draft-cendre 800ms ease-out forwards;
+  }
+
+  .draft-card[data-state="lost"] .draft-card__cendre + .draft-card__cendre {
+    top: 45%;
+    left: 70%;
+    animation-delay: 120ms;
+  }
+
+  .draft-card[data-state="lost"] .draft-card__cendre + .draft-card__cendre + .draft-card__cendre {
+    top: 20%;
+    left: 50%;
+    animation-delay: 240ms;
+  }
+
+  @keyframes draft-cendre {
+    to {
+      transform: translateY(-280px) translateX(12px);
+      opacity: 0;
+    }
   }
 
   /* La rarete, quatre paliers : gris, bleu, violet, or. Declaree AVANT les
@@ -1240,7 +1372,9 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .draft-card[data-rarity="3"] {
+    .draft-card[data-rarity="3"],
+    .draft-card[data-contested="true"],
+    .draft-token {
       animation: none;
     }
   }
@@ -1264,8 +1398,11 @@
     animation: draft-illumine 500ms ease-out 2;
   }
 
+  /* La consomption, de bas en haut : la decoupe monte jusqu'a effacer la
+     carte ; la marge negative en haut laisse visibles le bandeau et les
+     cendres qui s'elevent au-dessus. */
   .draft-card[data-state="lost"] {
-    animation: draft-consume 700ms ease-in forwards;
+    animation: draft-consume 900ms ease-in forwards;
   }
 
   @keyframes draft-illumine {
@@ -1276,12 +1413,15 @@
   }
 
   @keyframes draft-consume {
+    from {
+      clip-path: inset(-300px 0 0 0);
+    }
     40% {
       filter: sepia(1) hue-rotate(-30deg) saturate(3);
     }
     to {
+      clip-path: inset(-300px 0 100% 0);
       filter: grayscale(1) brightness(0.5);
-      opacity: 0.45;
     }
   }
 

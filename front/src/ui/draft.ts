@@ -21,7 +21,7 @@ import {
 } from '@shared/weapons';
 
 import { elementBadge } from './element-icons';
-import { bonusIcon, ICON_WEAPON } from './icons';
+import { avatar, bonusIcon, ICON_WEAPON } from './icons';
 
 /**
  * L'ecran de draft.
@@ -55,8 +55,20 @@ export interface DraftSource {
   readonly draftIsEvent?: boolean;
   /** Le miroir d'inventaire, pour l'indicateur d'empilement de chaque carte. */
   loadoutOf?(playerId: number): Loadout;
+  /** La classe d'un joueur, pour son portrait sur le bandeau du gagnant. Optionnel : repli sur la premiere classe. */
+  classOf?(playerId: number): number | undefined;
   placeToken(cardIndex: number): void;
 }
+
+/**
+ * Combien de temps la revelation reste a l'ecran apres le `DRAFT_RESULT`.
+ *
+ * ⚠️ **Horloge murale, pas le gel** : le serveur ferme le gel AU tick du
+ * resultat, et `isFrozen` ne couvre plus que la rampe (`LEVEL_RESUME_TICKS`,
+ * une seconde) — trop court pour lire qui a pris quoi. Le monde reprend
+ * dessous ; le voile est deja presque transparent a la revelation.
+ */
+export const DRAFT_REVEAL_MS = 3000;
 
 export interface DraftOutcomeView {
   playerId: number;
@@ -347,6 +359,8 @@ export function cssColor(tint: number): string {
 interface CardCell {
   root: HTMLButtonElement;
   tokens: HTMLElement;
+  /** Le bandeau du gagnant, vide (donc invisible) tant que la carte n'est pas prise. */
+  winner: HTMLElement;
   /** Le joueur local ne peut pas accueillir cette carte — fige a la construction, l'inventaire ne bouge pas pendant un draft. */
   blocked: boolean;
 }
@@ -375,6 +389,8 @@ export class DraftScreen {
    */
   #outcomes: DraftOutcomeView[] = [];
   #lastOutcomesSeen: readonly DraftOutcomeView[] = [];
+  /** L'instant (`Date.now()`) ou la revelation a commence ; `null` tant que la negociation est ouverte. */
+  #settledAt: number | null = null;
 
   constructor(root: HTMLElement, status: HTMLElement, list: HTMLElement, source: DraftSource) {
     this.#root = root;
@@ -393,7 +409,11 @@ export class DraftScreen {
       this.#spread = spread;
       this.#outcomes = [];
       this.#lastOutcomesSeen = source.draftOutcomes;
+      this.#settledAt = null;
       this.#build(spread);
+    }
+    if (source.draftSettled && this.#settledAt === null) {
+      this.#settledAt = Date.now();
     }
 
     // Identite, pas contenu : `GameClient` decode un tableau neuf a chaque
@@ -404,9 +424,10 @@ export class DraftScreen {
     }
 
     // ⚠️ **L'etalage survit a la fermeture** (`draftSettled`) : l'ecran reste
-    // jusqu'a la fin de la rampe de reprise (`isFrozen` couvre le gel ET sa
-    // rampe), le temps que le monde redemarre.
-    const visible = spread.length > 0 && (!source.draftSettled || source.isFrozen);
+    // `DRAFT_REVEAL_MS`, et au moins jusqu'a la fin de la rampe de reprise
+    // (`isFrozen` couvre le gel ET sa rampe), le temps de lire qui a pris quoi.
+    const revealing = this.#settledAt !== null && Date.now() - this.#settledAt < DRAFT_REVEAL_MS;
+    const visible = spread.length > 0 && (!source.draftSettled || source.isFrozen || revealing);
     this.#root.classList.toggle('hidden', !visible);
     this.#root.classList.toggle('flex', visible);
     if (!visible) {
@@ -473,7 +494,18 @@ export class DraftScreen {
       const tokens = document.createElement('span');
       tokens.className = 'draft-card__tokens';
 
-      root.append(tokens, frame, rarete, nature, name, stacks, detail);
+      // Rempli a la revelation (`#paint`), pour toute carte prise.
+      const winner = document.createElement('span');
+      winner.className = 'draft-card__winner ol';
+
+      root.append(tokens, frame, rarete, nature, name, stacks, detail, winner);
+      // Les cendres de la consomption : trois etincelles, animees en CSS seul
+      // sous `data-state="lost"`, invisibles sinon.
+      for (let i = 0; i < 3; i++) {
+        const cendre = document.createElement('span');
+        cendre.className = 'draft-card__cendre';
+        root.append(cendre);
+      }
 
       // Ce que la carte COUTE, sous sa magnitude.
       if (card.nature === CARD.PASSIVE) {
@@ -499,7 +531,7 @@ export class DraftScreen {
         this.#onPick(index);
       });
       this.#list.append(root);
-      return { root, tokens, blocked: reason !== null };
+      return { root, tokens, winner, blocked: reason !== null };
     });
   }
 
@@ -573,7 +605,44 @@ export class DraftScreen {
       // d'arrivee des messages, donc la latence. Les jetons sauteraient de
       // place a chaque rafraichissement.
       const holders = (byCard.get(index) ?? []).slice().sort((a, b) => a - b);
-      cell.tokens.replaceChildren(...holders.map((id) => tokenFor(id, id === mine)));
+      // Le cadre a la couleur du premier jeton ; contestee des le deuxieme.
+      const first = holders[0];
+      if (first === undefined) {
+        cell.root.style.removeProperty('--token-color');
+      } else {
+        cell.root.style.setProperty('--token-color', playerColor(first));
+      }
+      cell.root.dataset.contested = holders.length > 1 ? 'true' : 'false';
+      // ⚠️ Pas de `replaceChildren` : un jeton recree a chaque image rejouerait
+      // son rebond en boucle. On retire ceux qui partent, on insere ceux qui
+      // arrivent a leur rang (les deux listes sont triees par identifiant).
+      const idOf = (t: Element): number => Number((t as HTMLElement).dataset.player);
+      for (const t of [...cell.tokens.children]) {
+        if (!holders.includes(idOf(t))) {
+          t.remove();
+        }
+      }
+      for (const id of holders) {
+        const present = [...cell.tokens.children];
+        if (present.some((t) => idOf(t) === id)) {
+          continue;
+        }
+        cell.tokens.insertBefore(
+          tokenFor(id, id === mine),
+          present.find((t) => idOf(t) > id) ?? null,
+        );
+      }
+
+      const winner = settled ? this.#winnerOf(index) : null;
+      if (winner !== null && cell.winner.dataset.player !== `${winner}`) {
+        cell.winner.dataset.player = `${winner}`;
+        cell.winner.style.background = playerColor(winner);
+        const portrait = document.createElement('img');
+        portrait.src = avatar(winner, source.classOf?.(winner) ?? 0);
+        portrait.alt = '';
+        // Le protocole ne porte pas de nom de joueur : son numero, comme le jeton.
+        cell.winner.replaceChildren(portrait, `Joueur ${winner}`);
+      }
     });
 
     this.#status.textContent = this.#statusLine(spread, mine, settled);
@@ -623,6 +692,12 @@ export class DraftScreen {
     }
     void card;
     return 'idle';
+  }
+
+  /** Qui a pris la carte `index` (`WON` ou `AUTO`), ou `null` si personne. */
+  #winnerOf(index: number): number | null {
+    const issue = this.#outcomes.find((o) => o.cardIndex === index && o.outcome !== OUTCOME.LOST);
+    return issue ? issue.playerId : null;
   }
 
   #statusLine(spread: readonly Card[], mine: number | null, settled: boolean): string {

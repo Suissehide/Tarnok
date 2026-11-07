@@ -7,7 +7,7 @@ import { PASSIVES, passiveOf } from '@shared/passives';
 import { NO_TOKEN, OUTCOME } from '@shared/protocol';
 import { RARITY } from '@shared/rarity';
 import { UPGRADE, WEAPONS, weaponOf } from '@shared/weapons';
-import { beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 // `?raw` de Vite : le HTML entre dans le bundle de test tel quel, sans que le
 // test ait a deviner un chemin sur le disque (`import.meta.url` n'est pas une
@@ -17,11 +17,13 @@ import {
   blockedReason,
   cardDetail,
   cssColor,
+  DRAFT_REVEAL_MS,
   type DraftOutcomeView,
   DraftScreen,
   type DraftSource,
   magnitudeLabel,
   malusLabel,
+  playerColor,
   RARITY_NAMES,
   rarityLabel,
   remainingSeconds,
@@ -500,6 +502,46 @@ describe("DraftScreen — les jetons (§7.2 point 3 : sans eux, la mecanique n'e
     expect(tokensOn(h, 0)).toEqual([]);
     expect(tokensOn(h, 3)).toEqual(['2']);
   });
+
+  it('garde le jeton deja pose d une image a l autre, et n insere que le nouveau a son rang', () => {
+    // ⚠️ Un jeton recree a chaque image rejouerait son rebond CSS en boucle :
+    // c'est l'identite DOM qui le garantit.
+    h.client.intents([[3, 1]]);
+    h.screen.update();
+    const premier = cards(h)[1]?.querySelector('.draft-token');
+    h.client.intents([
+      [3, 1],
+      [2, 1],
+    ]);
+    h.screen.update();
+    h.screen.update();
+
+    expect(tokensOn(h, 1)).toEqual(['2', '3']);
+    expect(cards(h)[1]?.querySelectorAll('.draft-token')[1]).toBe(premier);
+  });
+
+  it('encadre la carte visee a la couleur du joueur, et la marque contestee au second jeton', () => {
+    h.client.intents([[3, 2]]);
+    h.screen.update();
+    const carte = cards(h)[2];
+    expect(carte?.style.getPropertyValue('--token-color')).toBe(playerColor(3));
+    expect(carte?.dataset.contested).toBe('false');
+    expect(cards(h)[0]?.style.getPropertyValue('--token-color')).toBe('');
+
+    // Deux jetons : la couleur du PREMIER par identifiant, pas par arrivee.
+    h.client.intents([
+      [3, 2],
+      [2, 2],
+    ]);
+    h.screen.update();
+    expect(carte?.style.getPropertyValue('--token-color')).toBe(playerColor(2));
+    expect(carte?.dataset.contested).toBe('true');
+
+    // Le jeton parti, le cadre aussi.
+    h.client.intents([]);
+    h.screen.update();
+    expect(carte?.style.getPropertyValue('--token-color')).toBe('');
+  });
 });
 
 describe('DraftScreen — le geste (§4.1 : poser un jeton EST la selection)', () => {
@@ -652,6 +694,31 @@ describe('DraftScreen — la revelation (§4.2)', () => {
     expect(h.client.sent).toEqual([]);
   });
 
+  it('affiche sur une carte prise par un autre le bandeau de son gagnant, nom et couleur', () => {
+    h.client.result([{ playerId: 3, cardIndex: 1, outcome: OUTCOME.WON }]);
+    h.screen.update();
+
+    const bandeau = cards(h)[1]?.querySelector('.draft-card__winner') as HTMLElement | null;
+    expect(cards(h)[1]?.dataset.state).toBe('taken');
+    expect(bandeau?.textContent).toBe('Joueur 3');
+    expect(bandeau?.dataset.player).toBe('3');
+    expect(bandeau?.style.background).toBe(rgbOf(parseInt(playerColor(3).slice(1), 16)));
+    expect(bandeau?.querySelector('img')?.getAttribute('src')).toContain('Avatars_');
+    // Une carte que personne n'a prise n'a pas de bandeau.
+    expect(cards(h)[0]?.querySelector('.draft-card__winner')?.textContent).toBe('');
+  });
+
+  it('ma carte perdue porte l etat lost ET le gagnant qui me l a prise', () => {
+    h.client.result([
+      { playerId: 4, cardIndex: 2, outcome: OUTCOME.WON },
+      { playerId: 1, cardIndex: 2, outcome: OUTCOME.LOST },
+    ]);
+    h.screen.update();
+
+    expect(cards(h)[2]?.dataset.state).toBe('lost');
+    expect(cards(h)[2]?.querySelector('.draft-card__winner')?.textContent).toBe('Joueur 4');
+  });
+
   it('remet les issues a zero au draft suivant', () => {
     h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]);
     h.screen.update();
@@ -669,12 +736,16 @@ describe('DraftScreen — la revelation (§4.2)', () => {
 describe("DraftScreen — quand l'ecran s'arrete de dessiner (F2)", () => {
   let h: Harness;
   beforeEach(() => {
+    vi.useFakeTimers();
     h = harness();
     h.client.draftCards = spread();
     h.screen.update();
   });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
-  it('tient l etalage pendant toute la rampe de reprise, puis disparait', () => {
+  it('tient l etalage DRAFT_REVEAL_MS apres la revelation, meme le monde reparti, puis disparait', () => {
     h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]);
     h.screen.update();
     // L'etalage SURVIT a la fermeture (`draftSettled` ne veut pas dire « il
@@ -682,11 +753,24 @@ describe("DraftScreen — quand l'ecran s'arrete de dessiner (F2)", () => {
     expect(h.root.classList.contains('hidden')).toBe(false);
     expect(h.root.dataset.settled).toBe('true');
 
-    // Fin de la rampe : le monde a repris, l'ecran se retire — sans attendre
-    // un `DRAFT_OPEN` qui ne viendra qu'au niveau suivant.
+    // ⚠️ Le serveur ferme le gel AU tick du resultat : la rampe (une seconde)
+    // est trop courte pour lire qui a pris quoi. L'ecran tient a l'horloge.
     h.client.isFrozen = false;
+    vi.advanceTimersByTime(DRAFT_REVEAL_MS - 1);
+    h.screen.update();
+    expect(h.root.classList.contains('hidden')).toBe(false);
+
+    vi.advanceTimersByTime(1);
     h.screen.update();
     expect(h.root.classList.contains('hidden')).toBe(true);
+  });
+
+  it('tient aussi tant que le monde est gele, au-dela de DRAFT_REVEAL_MS', () => {
+    h.client.result([{ playerId: 1, cardIndex: 0, outcome: OUTCOME.WON }]);
+    h.screen.update();
+    vi.advanceTimersByTime(DRAFT_REVEAL_MS + 500);
+    h.screen.update();
+    expect(h.root.classList.contains('hidden')).toBe(false);
   });
 });
 
