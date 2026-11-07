@@ -19,7 +19,8 @@ const sockets: WebSocket[] = [];
 
 beforeEach(async () => {
   await accounts.prisma.account.deleteMany();
-  app = await buildServer({ roomSeed: 1 });
+  // Etape 18 : sans grace, un depart est immediat, comme ces tests le supposent.
+  app = await buildServer({ roomSeed: 1, graceMs: 0 });
   await app.listen({ port: 0, host: '127.0.0.1' });
   port = (app.server.address() as AddressInfo).port;
 });

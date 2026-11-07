@@ -1,6 +1,16 @@
 import { describe, expect, it } from 'vitest';
 
-import { decode, encodeLobby, encodePick, encodeStart, MSG, NO_WEAPON } from './protocol';
+import {
+  decode,
+  encodeLobby,
+  encodePick,
+  encodeStart,
+  LOBBY_ENTRY_BYTES,
+  LOBBY_HEADER_BYTES,
+  MSG,
+  NO_SHOT_BONUS,
+  NO_WEAPON,
+} from './protocol';
 import { BASE_WEAPON_ID, startingWeapons, WEAPONS } from './weapons';
 
 describe('salle d attente', () => {
@@ -9,7 +19,13 @@ describe('salle d attente', () => {
       { playerId: 1, weaponId: 3, classId: 1 },
       { playerId: 2, weaponId: NO_WEAPON, classId: 0 },
     ];
-    expect(decode(encodeLobby(2, players))).toEqual({ type: MSG.LOBBY, you: 2, players });
+    // Les bonus de compte (etape 18 bis) sont toujours decodes : zero quand
+    // l'encodage ne les porte pas.
+    expect(decode(encodeLobby(2, players))).toEqual({
+      type: MSG.LOBBY,
+      you: 2,
+      players: players.map((p) => ({ ...p, bonuses: NO_SHOT_BONUS })),
+    });
     expect(decode(encodePick(7, 2))).toEqual({ type: MSG.PICK, weaponId: 7, classId: 2 });
     expect(decode(encodeStart())).toEqual({ type: MSG.START });
   });
@@ -27,8 +43,8 @@ describe('salle d attente', () => {
       { playerId: 1, weaponId: NO_WEAPON, classId: 0 },
       { playerId: 2, weaponId: WEAPONS[1]?.id ?? 1, classId: 3 },
     ]);
-    // 3 d'en-tete + 2 entrees x 3 octets : CALCULE, pas devine.
-    expect(buf.byteLength).toBe(9);
+    // L'en-tete + 2 entrees (arme, classe, bonus de compte) : CALCULE, pas devine.
+    expect(buf.byteLength).toBe(LOBBY_HEADER_BYTES + 2 * LOBBY_ENTRY_BYTES);
     const msg = decode(buf);
     expect(msg?.type).toBe(MSG.LOBBY);
     expect(msg).toMatchObject({
