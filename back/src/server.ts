@@ -1,13 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
-import {
-  MAX_PLAYERS,
-  RECONNECT_GRACE_MS,
-  SNAPSHOT_HZ,
-  START_GRACE_MS,
-  TICK_HZ,
-} from '@shared/constants';
+import { MAX_PLAYERS, RECONNECT_GRACE_MS, START_GRACE_MS, TICK_HZ } from '@shared/constants';
 import { clampToMap, PING_BURST, PING_INTENTS, PING_WINDOW_TICKS } from '@shared/ping';
 import {
   CLOSE_CODES,
@@ -60,7 +54,6 @@ import type { AccountGrants, Outbox, Room } from './room';
 import { RoomRegistry } from './rooms';
 
 const STEP_MS = 1000 / TICK_HZ;
-const BROADCAST_MS = 1000 / SNAPSHOT_HZ;
 
 /**
  * Plafond de rattrapage. Voir `FixedStepAccumulator` : sans lui, une pause du
@@ -137,23 +130,26 @@ class Session {
 
     const start = performance.now();
     const sim = new FixedStepAccumulator(STEP_MS, MAX_CATCH_UP_STEPS, start);
-    // Un seul pas de rattrapage pour la diffusion : reenvoyer trois snapshots
-    // d'affilee apres un a-coup n'aide personne, ils seraient tous perimes.
-    const broadcast = new FixedStepAccumulator(BROADCAST_MS, 1, start);
 
     this.#timer = setInterval(() => {
       const now = performance.now();
       const steps = sim.advance(now);
-      const diffuse = broadcast.advance(now) > 0;
       // Les accumulateurs avancent quand meme en salle d'attente : sans ca, le
       // lancement rattraperait d'un coup tout le temps passe a attendre.
       if (!this.#started) {
         return;
       }
+      // Etape 17b : UNE diffusion par pas, rattrapage compris (`SNAPSHOT_HZ`
+      // = `TICK_HZ`). Le client inscrit chaque snapshot a l'historique des
+      // joueurs, sous son tick : un tick sans snapshot y laisse un trou que
+      // `PlayerHistory#delayed` comble par une ligne plus vieille qu'au salon,
+      // et le champ de la horde diverge (`room-client.replication.test.ts`,
+      // « rattrapage du serveur »). Un second accumulateur de diffusion
+      // (plafond 1, remis a zero a chaque tir) se dephasait de celui-ci :
+      // mesure, 45 pas sur 90 sans leur snapshot, et des snapshots en double
+      // d'un meme tick.
       for (let i = 0; i < steps; i++) {
         this.room.step(STEP_MS / 1000);
-      }
-      if (diffuse) {
         this.#broadcast();
       }
     }, STEP_MS / 2);

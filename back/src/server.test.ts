@@ -1102,3 +1102,36 @@ describe('etape 18 : la grace', () => {
     expect(resync.players.map((p) => p.id)).toEqual([1, 2]);
   });
 });
+
+describe('etape 17b : un snapshot par pas, rattrapage compris', () => {
+  it('un a-coup du process (rattrapage de plusieurs pas) : chaque tick a son snapshot, dans l ordre', async () => {
+    const code = await createRoomCode();
+    const { ws } = await connect(code);
+    const ticks: number[] = [];
+    ws.on('message', (data: ArrayBuffer) => {
+      const msg = decode(data);
+      if (msg.type === MSG.SNAPSHOT) {
+        ticks.push(msg.tick);
+      }
+    });
+    const dormir = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+    await dormir(300);
+    // Attente active : la boucle d'evenements bloquee, le tour suivant du
+    // salon rattrape ses pas d'un coup (`MAX_CATCH_UP_STEPS`).
+    const fin = performance.now() + 250;
+    let tours = 0;
+    while (performance.now() < fin) {
+      tours++;
+    }
+    expect(tours).toBeGreaterThan(0);
+    await dormir(300);
+
+    // Les trous et les doublons, lisibles d'un coup : `[tick precedent, tick]`.
+    const ecarts = ticks.flatMap((t, i) => {
+      const avant = ticks[i - 1];
+      return avant === undefined || t === avant + 1 ? [] : [[avant, t]];
+    });
+    expect(ecarts).toEqual([]);
+    expect(ticks.length).toBeGreaterThan(10);
+  });
+});
