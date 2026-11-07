@@ -173,6 +173,13 @@ interface Banc {
   stalls: number;
   frozenSeen: boolean;
   portalStay: boolean;
+  /**
+   * Fix 1, point 1 : nombre de fois ou la comparaison reglee a VRAIMENT
+   * tourne (anneau et reference presents). Une mesure manquante sautait la
+   * comparaison en silence (`continue`) ; un scenario a 0 mesure passerait
+   * sans rien avoir compare. Voir `exigeMesures`.
+   */
+  measured: number;
 }
 
 interface Options {
@@ -202,17 +209,30 @@ interface Options {
   resyncAt?: number;
   /** Vrai : la diffusion de ce tick part avec celle du suivant (hoquet d'une image). */
   stall?: (tick: number, msgs: ArrayBuffer[]) => boolean;
+  /**
+   * Fix 1, point 2 : rattrapage du serveur (back/src/server.ts l.139-158,
+   * `MAX_CATCH_UP_STEPS` pas de `Room#step` par callback, l'accumulateur de
+   * diffusion plafonne a 1 pas). Toutes les `every` images, `k` pas de
+   * `Room#step` partagent UN SEUL cycle de diffusion — meme drain-tout que
+   * `#broadcast` (tous les lots accumules, un seul snapshot, celui du
+   * DERNIER tick). `k` doit tenir dans les 5 pas de rattrapage de
+   * `GameClient#update` (`front/src/net/client.ts`).
+   */
+  catchUp?: { every: number; k: number };
 }
 
 /**
- * Fait tourner le salon et le client ensemble, une image par tick. L'ecart se
- * mesure « regle » : au tick `room.tick − latency`, tout ce que le salon a
- * diffuse pour ce tick est arrive, et l'anneau du client (`hordeAt`) doit
- * egaler l'etat que le salon avait a la fin de ce tick, entite par entite.
+ * Fait tourner le salon et le client ensemble, une image par tick (ou par
+ * groupe de `catchUp.k` tics, fix 1 point 2). L'ecart se mesure « regle » :
+ * au tick `room.tick − latency`, tout ce que le salon a diffuse pour ce tick
+ * est arrive, et l'anneau du client (`hordeAt`) doit egaler l'etat que le
+ * salon avait a la fin de ce tick, entite par entite.
  *
  * Une entite que le salon porte deja mais dont l'ordre est date du tick
  * SUIVANT (les petits, `spawnTick = T + 1`, inseres a la fin de `T`) n'est
- * pas encore nee pour le client : elle ne compte pas comme manquante.
+ * pas encore nee pour le client : elle ne compte pas comme manquante — SAUF
+ * si le client la tient deja (fix 1, point 3) : une naissance en avance est
+ * alors en trop.
  */
 function banc(opts: Options): Banc {
   const players = [...opts.players];
@@ -243,31 +263,41 @@ function banc(opts: Options): Banc {
     stalls: 0,
     frozenSeen: false,
     portalStay: false,
+    measured: 0,
   };
   const spawnTickOf = new Map<number, number>();
   const queue: { at: number; data: ArrayBuffer }[] = [];
   const past = new Map<number, Etat>();
   const scratch = new Horde(MAX_ENTITIES);
   let seq = 1;
-  for (let f = 1; f <= opts.ticks; f++) {
-    const next = room.tick + 1;
-    let k = 0;
-    for (const id of players.filter((i) => room.positionOf(i))) {
-      const a = next * 0.01 + k++ * 2;
-      const mx = Math.round(Math.cos(a) * 127);
-      const my = Math.round(Math.sin(a) * 127);
-      room.applyInput(id, seq, mx, my, opts.aim ? mx : 0, opts.aim ? my : 0);
-      // Personne ne meurt : le banc mesure la horde, pas la survie.
-      room.debugSetHp(id, room.maxHpOf(id));
-    }
-    seq++;
-    if (next === opts.resyncAt) {
-      ({ client, socket } = brancher(room.tick));
-    }
+  while (room.tick < opts.ticks) {
+    // Rattrapage du serveur (fix 1, point 2) : un groupe de `steps` pas
+    // partage UN SEUL cycle de diffusion plus bas, comme `#broadcast`.
+    const voulu = opts.catchUp && (room.tick + 1) % opts.catchUp.every === 0 ? opts.catchUp.k : 1;
+    const steps = Math.min(voulu, opts.ticks - room.tick);
     const horsDiffusion: ArrayBuffer[] = [];
-    opts.before?.(room, next, players, (m) => horsDiffusion.push(m));
-    room.step(STEP);
-    const resync = room.tick === opts.resyncAt;
+    let resync = false;
+    for (let s = 0; s < steps; s++) {
+      const next = room.tick + 1;
+      let k = 0;
+      for (const id of players.filter((i) => room.positionOf(i))) {
+        const a = next * 0.01 + k++ * 2;
+        const mx = Math.round(Math.cos(a) * 127);
+        const my = Math.round(Math.sin(a) * 127);
+        room.applyInput(id, seq, mx, my, opts.aim ? mx : 0, opts.aim ? my : 0);
+        // Personne ne meurt : le banc mesure la horde, pas la survie.
+        room.debugSetHp(id, room.maxHpOf(id));
+      }
+      seq++;
+      if (next === opts.resyncAt) {
+        ({ client, socket } = brancher(room.tick));
+      }
+      opts.before?.(room, next, players, (m) => horsDiffusion.push(m));
+      room.step(STEP);
+      resync ||= room.tick === opts.resyncAt;
+      past.set(room.tick, etatDe(room.horde));
+      past.delete(room.tick - 12);
+    }
     const msgs = [...horsDiffusion, ...drainLikeServer(room, out.orders, resync)];
     for (const o of out.orders) {
       spawnTickOf.set(o.waveId, o.spawnTick);
@@ -295,29 +325,35 @@ function banc(opts: Options): Banc {
     }
     // Le `RESYNC` de `T` pose la horde de `T` : pas de pas client cette image.
     if (!resync) {
-      client.update(room.tick * STEP * 1000, STEP);
+      client.update(room.tick * STEP * 1000, steps * STEP);
     }
     expect(client.hordeTick - 1).toBe(room.tick);
     out.frozenSeen ||= client.isFrozen;
 
-    past.set(room.tick, etatDe(room.horde));
-    past.delete(room.tick - 12);
     const t = room.tick - opts.latency - (stall ? 1 : 0);
     const ref = past.get(t);
     if (!ref || !client.hordeAt(t, scratch)) {
       continue;
     }
+    out.measured++;
     const slots = new Map<number, number>();
     for (let i = 0; i < scratch.count; i++) {
       slots.set(scratch.entityIdAt(i), i);
     }
     const attendus = new Set<number>();
     ref.ids.forEach((id, i) => {
-      if ((spawnTickOf.get(Math.floor(id / MAX_PER_WAVE)) ?? 0) > t) {
+      const enAvance = (spawnTickOf.get(Math.floor(id / MAX_PER_WAVE)) ?? 0) > t;
+      const j = slots.get(id);
+      if (enAvance) {
+        // Pas encore nee cote client a `t` (le petit insere en fin de `T`) :
+        // excusee — SAUF si le client la tient deja (fix 1, point 3), une
+        // naissance en avance, comptee en trop.
+        if (j !== undefined) {
+          out.lost.add(id);
+        }
         return;
       }
       attendus.add(id);
-      const j = slots.get(id);
       if (j === undefined) {
         out.lost.add(id);
         return;
@@ -328,7 +364,8 @@ function banc(opts: Options): Banc {
       );
       out.drift = Math.max(out.drift, d);
     });
-    // En trop : ni attendue, ni pas encore nee au salon.
+    // En trop : ni attendue, ni au salon (les naissances en avance sont
+    // deja tranchees ci-dessus, meme si leur id est dans `ref.ids`).
     const auSalon = new Set(ref.ids);
     for (const id of slots.keys()) {
       if (!attendus.has(id) && !auSalon.has(id)) {
@@ -339,10 +376,25 @@ function banc(opts: Options): Banc {
   return out;
 }
 
+/**
+ * Fix 1, point 1 : une mesure manquante ne doit jamais se taire. Plancher
+ * justifie : `ticks − latency − 1` tics tentent la comparaison (les tout
+ * premiers, `t ≤ 0`, ne la tentent jamais) ; un hoquet decale `t` d'un cran
+ * de plus pour son image (`r.stalls`) ; un rattrapage du serveur ne tente
+ * la comparaison qu'UNE fois par groupe de `k` tics au lieu de `k` (fix 1,
+ * point 2) — `k − 1` tentatives perdues par groupe declenche.
+ */
+function exigeMesures(r: Banc, opts: Options): void {
+  const groupes = opts.catchUp ? Math.floor(opts.ticks / opts.catchUp.every) : 0;
+  const perduAuRattrapage = opts.catchUp ? groupes * (opts.catchUp.k - 1) : 0;
+  const plancher = opts.ticks - opts.latency - 1 - r.stalls - perduAuRattrapage;
+  expect(r.measured).toBeGreaterThanOrEqual(plancher);
+}
+
 function rapport(nom: string, r: Banc): void {
   process.stdout.write(
     `[etape 17b] ${nom} : ecart regle ${r.drift.toFixed(3)} px, ${r.lost.size} perdues, ` +
-      `${r.orders.length} ordres, ${r.deaths} morts, ${r.stalls} hoquets\n`,
+      `${r.orders.length} ordres, ${r.deaths} morts, ${r.stalls} hoquets, ${r.measured} mesures\n`,
   );
 }
 
@@ -350,14 +402,15 @@ const LATENCE =
   'latence %i : 1 200 ticks de vagues, de morts, de diviseurs et de necromanciens — 0,000 px, 0 perte';
 
 function latence(latency: number): void {
-  const r = banc({
+  const opts: Options = {
     mapSeed: 0xd1a6_0005,
     players: [1, 2],
     ticks: 1200,
     latency,
     aim: true,
     level: 6,
-  });
+  };
+  const r = banc(opts);
   rapport(`latence ${latency}`, r);
   // Ce que le scenario doit contenir, sans quoi « 0,000 px » ne dirait rien.
   const directeur = r.orders.filter((o) => !CHILD_ARCHETYPES.has(o.archetype));
@@ -365,6 +418,7 @@ function latence(latency: number): void {
   expect(r.orders.some((o) => o.archetype === archetypeIdOf(SPLIT_CHILD))).toBe(true);
   expect(r.orders.some((o) => o.archetype === archetypeIdOf(NECRO_CHILD))).toBe(true);
   expect(r.deaths).toBeGreaterThan(0);
+  exigeMesures(r, opts);
   expect(r.drift).toBeLessThan(0.0005);
   expect(r.lost.size).toBe(0);
 }
@@ -372,7 +426,7 @@ function latence(latency: number): void {
 it.fails.each([0, 1, 2, 3])(LATENCE, latence);
 
 it.fails('hoquet d une image sur les ticks qui emettent des petits — 0,000 px, 0 perte', () => {
-  const r = banc({
+  const opts: Options = {
     mapSeed: 0xd1a6_0002,
     players: [1, 2],
     ticks: 1500,
@@ -388,9 +442,11 @@ it.fails('hoquet d une image sur les ticks qui emettent des petits — 0,000 px,
         !ordres.some((o) => o.spawnTick === tick)
       );
     },
-  });
+  };
+  const r = banc(opts);
   rapport('hoquet', r);
   expect(r.stalls).toBeGreaterThan(0);
+  exigeMesures(r, opts);
   expect(r.drift).toBeLessThan(0.0005);
   expect(r.lost.size).toBe(0);
 });
@@ -403,7 +459,7 @@ it.fails.each([
   'resync',
 ] as const)('gel d etalage avec un(e) %s — 0,000 px, 0 perte', (mode) => {
   let leurre = false;
-  const r = banc({
+  const opts: Options = {
     mapSeed: 0xd1a6_0007,
     players: [1, 2],
     ticks: 1400,
@@ -436,12 +492,14 @@ it.fails.each([
         send(encodePresence(2, false));
       }
     },
-  });
+  };
+  const r = banc(opts);
   rapport(`gel d etalage, ${mode}`, r);
   expect(r.frozenSeen).toBe(true);
   if (mode === 'leurre') {
     expect(leurre).toBe(true);
   }
+  exigeMesures(r, opts);
   expect(r.drift).toBeLessThan(0.0005);
   expect(r.lost.size).toBe(0);
 });
@@ -449,7 +507,7 @@ it.fails.each([
 const PORTAIL = 'portail traverse, « rester », latence %i — 0,000 px, 0 perte';
 
 function portail(latency: number): void {
-  const r = banc({
+  const opts: Options = {
     mapSeed: 4242,
     players: [1, 2],
     ticks: 4200,
@@ -462,11 +520,42 @@ function portail(latency: number): void {
         room.setVote(2, VOTE_CHOICE.STAY);
       }
     },
-  });
+  };
+  const r = banc(opts);
   rapport(`portail, latence ${latency}`, r);
   expect(r.portalStay).toBe(true);
+  exigeMesures(r, opts);
   expect(r.drift).toBeLessThan(0.0005);
   expect(r.lost.size).toBe(0);
 }
 
 it.fails.each([0, 2])(PORTAIL, portail);
+
+it.fails('rattrapage du serveur : 3 pas groupes toutes les 50 images, latence 1 — 0,000 px, 0 perte', () => {
+  // Fix 1, point 2 : le serveur reel peut faire jusqu'a 5 pas de
+  // `Room#step` par callback alors que l'accumulateur de diffusion
+  // plafonne a 1 (back/src/server.ts l.139-158) — un seul `#broadcast`
+  // draine alors plusieurs tics, entrelaces par type de message, et
+  // n'envoie que le DERNIER snapshot. `catchUp` reproduit cet entrelacement
+  // avec `drainLikeServer` (meme drain-tout) au lieu d'un par tick.
+  const opts: Options = {
+    mapSeed: 0xd1a6_0005,
+    players: [1, 2],
+    ticks: 1200,
+    latency: 1,
+    aim: true,
+    level: 6,
+    catchUp: { every: 50, k: 3 },
+  };
+  const r = banc(opts);
+  rapport('rattrapage du serveur', r);
+  // Ce que le scenario doit contenir, sans quoi « 0,000 px » ne dirait rien.
+  const directeur = r.orders.filter((o) => !CHILD_ARCHETYPES.has(o.archetype));
+  expect(directeur.filter((o) => o.spawnTick % STEPS_PER_FIELD === 0).length).toBeGreaterThan(3);
+  expect(r.orders.some((o) => o.archetype === archetypeIdOf(SPLIT_CHILD))).toBe(true);
+  expect(r.orders.some((o) => o.archetype === archetypeIdOf(NECRO_CHILD))).toBe(true);
+  expect(r.deaths).toBeGreaterThan(0);
+  exigeMesures(r, opts);
+  expect(r.drift).toBeLessThan(0.0005);
+  expect(r.lost.size).toBe(0);
+});
