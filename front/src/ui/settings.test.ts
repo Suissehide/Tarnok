@@ -3,8 +3,10 @@ import { describe, expect, it } from 'vitest';
 import {
   CONTROLS,
   DEFAULT_SETTINGS,
+  loadName,
   loadPick,
   loadSettings,
+  saveName,
   savePick,
   saveSettings,
 } from './settings';
@@ -74,5 +76,25 @@ describe('le dernier choix de salle d attente', () => {
     expect(loadPick(s)).toEqual({ weaponId: 3, classId: 2 });
     s.setItem('tarnok.pick', '{"weaponId":"x"');
     expect(loadPick(s)).toBeNull();
+  });
+});
+
+describe('le pseudo garde', () => {
+  it('relit le nom garde, vide sans rien, et survit a un stockage qui leve', () => {
+    const s = memoire();
+    expect(loadName(s)).toBe('');
+    saveName('Léo', s);
+    expect(loadName(s)).toBe('Léo');
+    const casse = {
+      getItem: () => {
+        throw new Error('non');
+      },
+      setItem: () => {
+        throw new Error('non');
+      },
+    };
+    expect(() => saveName('x', casse)).not.toThrow();
+    expect(loadName(casse)).toBe('');
+    expect(loadName(null)).toBe('');
   });
 });

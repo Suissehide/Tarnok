@@ -6008,6 +6008,86 @@ describe('etape 18 : le RESYNC', () => {
 });
 
 describe('la classe des autres joueurs, pour le portrait de l etalage', () => {
+  it('rename envoie NAME juste apres le HELLO a l ouverture, puis a chaque changement', () => {
+    const token = new Uint8Array(TOKEN_BYTES).fill(7);
+    const client = new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      undefined,
+      undefined,
+      token,
+    );
+    client.rename('  Léo ');
+    client.connect();
+    const socket = latestSocket();
+    expect(socket.sent).toHaveLength(0);
+    socket.emit('open', {});
+    expect(socket.sent.map((f) => decode(f).type)).toEqual([MSG.HELLO, MSG.NAME]);
+    expect(decode(socket.sent[1] as ArrayBuffer)).toEqual({ type: MSG.NAME, name: 'Léo' });
+    client.rename('Zoé');
+    expect(decode(socket.sent[2] as ArrayBuffer)).toEqual({ type: MSG.NAME, name: 'Zoé' });
+  });
+
+  it('nameOf lit le pseudo du LOBBY puis du RESYNC, et dit « Joueur N » sans nom', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    expect(client.nameOf(2)).toBe('Joueur 2');
+    socket.emit('message', {
+      data: encodeLobby(1, [
+        { playerId: 1, weaponId: NO_WEAPON, classId: 0 },
+        { playerId: 2, weaponId: NO_WEAPON, classId: 2, name: 'Zoé' },
+      ]),
+    });
+    expect(client.nameOf(1)).toBe('Joueur 1');
+    expect(client.nameOf(2)).toBe('Zoé');
+    socket.emit('message', { data: encodeWelcome(1, 0, 0x1234) });
+    socket.emit('message', {
+      data: encodeResync({
+        tick: 0,
+        level: 1,
+        kills: 0,
+        freezeUntilTick: -1,
+        chestsOwed: 0,
+        eventDraftsOwed: 0,
+        draft: null,
+        portal: null,
+        event: null,
+        charge: null,
+        players: [
+          {
+            id: 1,
+            classId: 0,
+            absent: false,
+            name: 'Léo',
+            weapons: [],
+            passives: PASSIVES.map(() => 0),
+          },
+          { id: 2, classId: 2, absent: false, weapons: [], passives: PASSIVES.map(() => 0) },
+        ],
+        history: Array.from({ length: RESYNC_HISTORY_TICKS }, () => ({ ids: [], x: [], y: [] })),
+        fieldTargets: [],
+        horde: new Horde(1),
+        orbs: [],
+        zones: [],
+        decoys: [],
+      }),
+    });
+    expect(client.nameOf(1)).toBe('Léo');
+    // Le RESYNC sans nom pour le 2 : il l a perdu (le serveur l a efface).
+    expect(client.nameOf(2)).toBe('Joueur 2');
+  });
+
+  it('replay envoie REPLAY, un octet', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    client.replay();
+    expect(decode(socket.sent[0] as ArrayBuffer)).toEqual({ type: MSG.REPLAY });
+  });
+
   it('classOf lit la classe de l allie recue au LOBBY, avant et apres le WELCOME', () => {
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
     client.connect();
