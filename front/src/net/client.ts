@@ -53,7 +53,7 @@ import {
   shotDamage,
 } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
-import { entityIdOf, Horde, leavesDrop, pushOutOfGuards } from '@shared/horde';
+import { entityIdOf, Horde, type HordeState, leavesDrop, pushOutOfGuards } from '@shared/horde';
 import { HordeHistory } from '@shared/horde-history';
 import { Loadout, maxHpOf } from '@shared/loadout';
 import {
@@ -87,6 +87,7 @@ import {
   type PingShownMessage,
   type PlayerSnapshot,
   quantizeAxis,
+  type ResyncMessage,
   VOTE_CHOICE,
   type WaveOrderMessage,
   type ZoneMessage,
@@ -157,8 +158,10 @@ export interface RenderState {
   synergy: number;
   /** Positions a dessiner : les autres interpolees, la sienne predite. */
   players: PlayerSnapshot[];
-  /** La classe de chaque joueur, lue au salon (`LOBBY`) : son unite a l'ecran. */
+  /** La classe de chaque joueur, lue au salon (`LOBBY`) ou au `RESYNC` : son unite a l'ecran. */
   classes?: ReadonlyMap<number, number>;
+  /** Les joueurs en grace (etape 18, `PRESENCE`) : un socle gris sous leur personnage. */
+  absent?: ReadonlySet<number>;
 }
 
 /**
@@ -1166,6 +1169,30 @@ const POISON_VISUAL_TICKS = 75;
 const POISON_BUBBLE_EVERY = 8;
 const POISON_TINT = 0x7ccf3a;
 
+/** Un `HordeState` a la capacite `capacity` : la meme fabrique que `HordeHistory`. */
+function makeHordeState(capacity: number): HordeState {
+  return {
+    count: 0,
+    x: new Float32Array(capacity),
+    y: new Float32Array(capacity),
+    vx: new Float32Array(capacity),
+    vy: new Float32Array(capacity),
+    archetype: new Uint8Array(capacity),
+    waveId: new Uint16Array(capacity),
+    indexInWave: new Uint16Array(capacity),
+    animPhase: new Uint8Array(capacity),
+    targetField: new Uint8Array(capacity),
+    stopped: new Uint8Array(capacity),
+    fleeing: new Uint8Array(capacity),
+    aimX: [],
+    aimY: [],
+    hp: new Float32Array(capacity),
+    mark: new Uint8Array(capacity),
+    markBy: new Uint8Array(capacity),
+    markUntil: new Float64Array(capacity),
+  };
+}
+
 /**
  * Le client de jeu : une socket, un tampon d'interpolation, une prediction.
  *
@@ -1389,8 +1416,22 @@ export class GameClient {
   readonly #pendingDecoys: Decoy[] = [];
   /** Leurres plantes, que l'entree du champ substitue (`#feedFields`). */
   #decoys: Decoy[] = [];
-  /** La classe du joueur local, lue du dernier `LOBBY` au WELCOME ; `null` sans salle d'attente. */
+  /** La classe du joueur local, lue du dernier `LOBBY` au WELCOME ou du `RESYNC` ; `null` sinon. */
   #localClassId: number | null = null;
+  /** La classe de chaque joueur, du `LOBBY` au WELCOME ou du `RESYNC` (etape 18 : plus de `LOBBY` apres rechargement). */
+  readonly #classes = new Map<number, number>();
+  /** Les joueurs en grace (etape 18), poses par `PRESENCE` et par le bit du `RESYNC`. */
+  readonly #absent = new Set<number>();
+  /**
+   * L'entree d'historique du dernier snapshot, filtree A LA RECEPTION (vivants
+   * presents) : un `PRESENCE` qui arrive entre ce snapshot et le prochain pas
+   * ne doit pas retoucher un tick que le serveur a enregistre avec lui.
+   */
+  #lastPositions: { tick: number; x: number[]; y: number[]; ids: number[] } | null = null;
+  /** Tampon du `RESYNC`, a la capacite de la horde, alloue une fois (meme fabrique que `HordeHistory`). */
+  #resyncState: HordeState | null = null;
+  /** Appele a chaque `RESYNC` recu : l'etat complet vient d'etre pose. */
+  onResync: () => void = () => undefined;
   /** Leurres annonces trop tard pour l'anneau, plantes au present. */
   #lateDecoys = 0;
   /** Tick du dernier verbe ACCEPTE du joueur local ; `-Infinity` : jamais. */
@@ -2131,6 +2172,16 @@ export class GameClient {
     return this.#localClassId;
   }
 
+  /** Qui est dans le salon et sa classe, du `LOBBY` ou du `RESYNC` (etape 18). */
+  get roster(): readonly { playerId: number; classId: number }[] {
+    return [...this.#classes].map(([playerId, classId]) => ({ playerId, classId }));
+  }
+
+  /** Ce joueur est-il en grace (etape 18) ? */
+  isAbsent(playerId: number): boolean {
+    return this.#absent.has(playerId);
+  }
+
   /**
    * Ticks avant que le verbe local soit de nouveau pret, `0` s'il l'est. Derive
    * de la DERNIERE annonce recue et de la recharge partagee : zero octet par
@@ -2400,13 +2451,13 @@ export class GameClient {
     this.orbFlights.expire(now);
     this.orbs.capture(players, this.orbFlights, now);
 
-    const classes = new Map((this.#lobby?.players ?? []).map((p) => [p.playerId, p.classId]));
     return {
       localId: this.#localId,
       xp: this.#teamXp,
       synergy: this.#teamSynergy,
       players,
-      classes,
+      classes: this.#classes,
+      absent: this.#absent,
     };
   }
 
@@ -2487,6 +2538,7 @@ export class GameClient {
           choisi.addWeapon(p.weaponId);
           this.#loadouts.set(p.playerId, choisi);
         }
+        this.#classes.set(p.playerId, p.classId);
         if (p.playerId === msg.playerId) {
           this.#localClassId = p.classId;
         }
@@ -2500,6 +2552,18 @@ export class GameClient {
     if (msg.type === MSG.LOBBY) {
       this.#lobby = msg;
       this.onLobby(msg);
+      return;
+    }
+    if (msg.type === MSG.PRESENCE) {
+      if (msg.present) {
+        this.#absent.delete(msg.playerId);
+      } else {
+        this.#absent.add(msg.playerId);
+      }
+      return;
+    }
+    if (msg.type === MSG.RESYNC) {
+      this.#onResync(msg);
       return;
     }
     if (msg.type === MSG.WAVE_ORDER) {
@@ -2723,6 +2787,17 @@ export class GameClient {
     // Etape 16 : l'EVENT_STATE d'un changement de porteur est parti juste
     // avant CE snapshot (meme envoi) : il vaut a partir de msg.tick + 1.
     this.#dateCarrier(msg.tick, msg.players);
+    // Les vivants PRESENTS, comme `Room.step` (un mort n'est pas une cible, un
+    // absent non plus) : filtres ICI, au tick du snapshot, pas au prochain pas.
+    const presents = msg.players.filter((p) => p.hp > 0 && !this.#absent.has(p.id));
+    this.#lastPositions = {
+      tick: msg.tick,
+      x: presents.map((p) => p.x),
+      y: presents.map((p) => p.y),
+      // Le meme ordre que le serveur, et les identifiants avec : un leurre
+      // retrouve son lanceur par son id (`shared/decoys.ts`).
+      ids: presents.map((p) => p.id),
+    };
 
     // Donnees d'EQUIPE, dans l'en-tete du snapshot et pas dans un bloc
     // joueur : lues AVANT le `return` ci-dessous, meme quand `mine` est
@@ -2749,6 +2824,176 @@ export class GameClient {
     } else {
       this.#local.reconcile(mine.x, mine.y);
     }
+  }
+
+  /**
+   * Etape 18 : l'etat complet, une fois, a l'entree dans un salon lance. Il
+   * REMPLIT un client neuf (la page s'est rechargee), il ne vide rien — sauf
+   * les files datees `<= T`, deja dans l'instantane.
+   *
+   * ⚠️ **Pris au tick `T` apres les drains, avant le `SNAPSHOT(T)`** : la horde
+   * repart de `T + 1`, et tout message date `<= T` recu avant lui est perime.
+   */
+  #onResync(msg: ResyncMessage): void {
+    const T = msg.tick;
+    this.#lastHordeTick = T + 1;
+    this.#hordeAcc = 0;
+    this.#level = msg.level;
+    this.#kills = msg.kills;
+    this.#chestsOwed = msg.chestsOwed;
+    this.#eventDraftsOwed = msg.eventDraftsOwed;
+
+    // Le gel : une fenetre ouverte gele pour une duree inconnue (comme
+    // `LEVEL_UP` / `PORTAL_OPEN`) ; sinon le dernier gel fini date sa rampe.
+    if (msg.draft || msg.portal) {
+      this.#freezeStartTick = T;
+      this.#freezeUntilTick = Number.MAX_SAFE_INTEGER;
+      this.#resumeEndTick = Number.MAX_SAFE_INTEGER;
+      this.#freezeIsPortal = msg.portal !== null;
+    } else if (msg.freezeUntilTick >= 0) {
+      this.#freezeStartTick = msg.freezeUntilTick;
+      this.#freezeUntilTick = msg.freezeUntilTick;
+      this.#resumeEndTick = msg.freezeUntilTick + LEVEL_RESUME_TICKS;
+    }
+
+    // Les inventaires, par l'API publique de `Loadout` : le meme chemin que les
+    // cartes draftees, jamais un chemin d'ecriture prive.
+    this.#absent.clear();
+    for (const p of msg.players) {
+      const loadout = new Loadout();
+      const last = new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY);
+      for (const w of p.weapons) {
+        loadout.addWeapon(w.weaponId);
+        w.upgrades.forEach((n, aspect) => {
+          for (let k = 0; k < n; k++) {
+            loadout.addWeapon(w.weaponId, aspect);
+          }
+        });
+        last[w.weaponId] = w.lastFireTick;
+      }
+      p.passives.forEach((n, id) => {
+        for (let k = 0; k < n; k++) {
+          loadout.addPassive(id);
+        }
+      });
+      this.#loadouts.set(p.id, loadout);
+      this.#lastFireTick.set(p.id, last);
+      this.#classes.set(p.id, p.classId);
+      if (p.id === this.#localId) {
+        this.#localClassId = p.classId;
+      }
+      if (p.absent) {
+        this.#absent.add(p.id);
+      }
+    }
+
+    // L'historique des positions : les enregistrements que le serveur a faits
+    // (un tick gele n'en fait pas — un enregistrement vide ne vaut pas un
+    // enregistrement absent, `delayed` s'accroche au precedent).
+    msg.history.forEach((h, i) => {
+      if (h.ids.length > 0) {
+        this.#history.record(T - msg.history.length + 1 + i, h.x, h.y, h.ids);
+      }
+    });
+
+    // Les champs : une fonction pure de (masque, cellule cible), donc les memes
+    // que ceux du serveur sans qu'une cellule ne transite. Puis l'accuse : ces
+    // `update` hors pas ne sont pas un rafraichissement intercale.
+    const tx = msg.fieldTargets.map((t) => t.x);
+    const ty = msg.fieldTargets.map((t) => t.y);
+    for (let f = 0; f < tx.length && f < this.#fields.length; f++) {
+      this.#fields[f]?.update(tx[f] ?? 0, ty[f] ?? 0);
+    }
+    this.#fieldInputs = [{ tick: T - (T % STEPS_PER_FIELD), x: tx, y: ty }];
+
+    // La horde, en f32 : `restoreState` la pose au meme tick, aux memes
+    // vitesses — derive 0,000 px par construction, comme l'anneau.
+    const state = (this.#resyncState ??= makeHordeState(this.horde.capacity));
+    const h = msg.horde;
+    state.count = h.count;
+    state.x.fill(0).set(h.x);
+    state.y.fill(0).set(h.y);
+    state.vx.fill(0).set(h.vx);
+    state.vy.fill(0).set(h.vy);
+    state.archetype.fill(0).set(h.archetype);
+    state.waveId.fill(0).set(h.waveId);
+    state.indexInWave.fill(0).set(h.indexInWave);
+    state.animPhase.fill(0).set(h.animPhase);
+    state.targetField.fill(0).set(h.targetField);
+    state.stopped.fill(0).set(h.stopped);
+    state.fleeing.fill(0).set(h.fleeing);
+    state.aimX = tx;
+    state.aimY = ty;
+    this.horde.restoreState(state);
+    this.horde.acknowledgeFields(this.#fields);
+    // L'anneau connait `T` : un message date `T + 1` en retard peut rejouer.
+    this.#hordeHistory.record(T, this.horde);
+
+    this.#porteurId = null;
+    for (let slot = 0; slot < this.horde.count; slot++) {
+      if (this.horde.archetype[slot] === PORTEUR_ARCHETYPE) {
+        this.#porteurId = this.horde.entityIdAt(slot);
+        break;
+      }
+    }
+
+    for (const z of msg.zones) {
+      this.zones.spawn(z.kind, z.x, z.y, z.by, z.bornTick);
+    }
+    for (const o of msg.orbs) {
+      this.orbs.spawn(o.id, o.x, o.y, T);
+    }
+    this.#decoys = msg.decoys.map((d) => ({ ...d }));
+    this.#bossCharge = msg.charge ? { ...msg.charge } : null;
+
+    if (msg.draft) {
+      this.#draftCards = msg.draft.cards.map((c) => ({ ...c }));
+      this.#draftDeadlineTick = msg.draft.deadlineTick;
+      this.#draftOutcomes = [];
+      this.#draftSettled = false;
+      this.#draftIntents = new Map();
+      this.#draftIsChest = msg.draft.kind === 'chest';
+      this.#draftIsEvent = msg.draft.kind === 'event';
+    }
+    if (msg.portal) {
+      this.#portalDeadlineTick = msg.portal.deadlineTick;
+      this.#portalMultiplier = msg.portal.multiplier;
+      this.#portalVotes = new Map();
+      this.#portalDecision = null;
+      this.#portalCloseTick = Number.MAX_SAFE_INTEGER;
+    }
+    if (msg.event) {
+      const e = msg.event;
+      this.#onEvent({
+        type: MSG.EVENT_START,
+        kind: e.kind,
+        solo: e.solo,
+        durationTicks: e.durationTicks,
+        points: [...e.points],
+      });
+      this.#onEvent({
+        type: MSG.EVENT_STATE,
+        progress: e.progress,
+        cartX: e.cartX,
+        cartY: e.cartY,
+        cartHp: e.cartHp,
+      });
+      const ev = this.#event;
+      if (ev) {
+        // Le compte a rebours reprend ou le serveur en est.
+        ev.deadline = this.#pingClock + e.durationTicks - e.elapsed;
+        ev.cartFrom = ev.cartTo;
+      }
+    }
+
+    // Tout ce qui est date `<= T` est dans l'instantane : une vague deja nee
+    // renaitrait, une mort deja compactee tuerait un autre creneau.
+    this.#pendingOrders.length = 0;
+    this.#pendingDeaths.length = 0;
+    this.#pendingZones.length = 0;
+    this.#pendingCharges.length = 0;
+    this.#pendingDecoys.length = 0;
+    this.onResync();
   }
 
   /**
@@ -2813,18 +3058,11 @@ export class GameClient {
     // pendant le gel ; le gater ouvrirait un trou dans l'anneau court de
     // `PlayerHistory`.
     const snapshot = this.#buffer.latest();
-    if (snapshot) {
-      // Les vivants seuls, comme `Room.step` (un mort n'est pas une cible) :
+    const positions = this.#lastPositions;
+    if (positions) {
+      // Les vivants presents seuls, filtres a la reception (voir `#lastPositions`) :
       // le serveur enregistre en fin de pas, avec les PV que ce snapshot porte.
-      const vivants = snapshot.players.filter((p) => p.hp > 0);
-      this.#history.record(
-        snapshot.tick,
-        vivants.map((p) => p.x),
-        vivants.map((p) => p.y),
-        // Le meme ordre que le serveur, et les identifiants avec : un leurre
-        // retrouve son lanceur par son id (`shared/decoys.ts`).
-        vivants.map((p) => p.id),
-      );
+      this.#history.record(positions.tick, positions.x, positions.y, positions.ids);
     }
 
     // Le rafraichissement du champ et le reciblage, eux, SONT gates par le

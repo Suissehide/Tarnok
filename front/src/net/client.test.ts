@@ -24,6 +24,7 @@ import {
   ZONE_REFRESH_INTERVAL_TICKS,
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
+import { EVENT_DURATION_TICKS, EVENT_KIND } from '@shared/evenements';
 import { critOf } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
@@ -42,7 +43,9 @@ import {
   encodePickups,
   encodePortalOpen,
   encodePortalResult,
+  encodePresence,
   encodeReaction,
+  encodeResync,
   encodeRunOver,
   encodeSnapshot,
   encodeVotes,
@@ -54,6 +57,8 @@ import {
   OUTCOME,
   packElementPair,
   packZoneKind,
+  RESYNC_HISTORY_TICKS,
+  type ResyncState,
   TOKEN_BYTES,
   VOTE_CHOICE,
 } from '@shared/protocol';
@@ -67,6 +72,7 @@ import {
   ORBIT_BREATH,
   ORBIT_RADIUS,
   stackGain,
+  UPGRADE_KINDS,
   WEAPONS,
   type Weapon,
   weaponOf,
@@ -5645,5 +5651,354 @@ describe('etape 17, revue 2 : une vague en retard ne rejoue la horde que si un g
     expect(
       rattrapage((socket) => socket.emit('message', { data: encodeLevelUp(5004, 2) })),
     ).toEqual([0]);
+  });
+});
+
+describe('etape 18 : le RESYNC', () => {
+  const SEED = 0x18_18_18;
+  const JOUEURS = [1, 2, 3, 4];
+
+  /** Quatre joueurs qui tournent VITE : chaque rafraichissement change de cellule. */
+  function positionsA(tick: number): { xs: number[]; ys: number[] } {
+    return {
+      xs: JOUEURS.map((p) => Math.round(3000 + Math.cos(tick * 0.3 + p) * 1500)),
+      ys: JOUEURS.map((p) => Math.round(3000 + Math.sin(tick * 0.3 + p) * 1500)),
+    };
+  }
+
+  function snapshotA(tick: number): ArrayBuffer {
+    const { xs, ys } = positionsA(tick);
+    return encodeSnapshot(
+      tick,
+      0,
+      0,
+      JOUEURS.map((id, i) => ({
+        id,
+        x: xs[i] ?? 0,
+        y: ys[i] ?? 0,
+        hp: 100,
+        aimX: 0,
+        aimY: 0,
+        pickupRadius: ORB_PICKUP_RADIUS,
+        shield: 0,
+      })),
+    );
+  }
+
+  /** Un pas du serveur de reference, dans l'ordre de `Room.step` : champ, vagues, horde. */
+  function pasDeReference(ref: ReferenceServer, tick: number, orders: readonly WaveOrder[]): void {
+    if (tick % STEPS_PER_FIELD === 0) {
+      const seen = ref.playerHistory.delayed(tick);
+      if (seen) {
+        for (let f = 0; f < 4; f++) {
+          ref.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
+        }
+        ref.horde.retarget(seen.x, seen.y);
+      }
+    }
+    for (const o of orders) {
+      if (o.spawnTick === tick) {
+        ref.horde.spawn(o, ref.fields[0]);
+      }
+    }
+    ref.horde.step(STEP, ref.fields, tick);
+    const { xs, ys } = positionsA(tick);
+    ref.playerHistory.record(tick, xs, ys, JOUEURS);
+  }
+
+  function vide(tick: number): ResyncState {
+    return {
+      tick,
+      level: 1,
+      kills: 0,
+      freezeUntilTick: -1,
+      chestsOwed: 0,
+      eventDraftsOwed: 0,
+      draft: null,
+      portal: null,
+      event: null,
+      charge: null,
+      players: JOUEURS.map((id) => ({
+        id,
+        classId: 0,
+        absent: false,
+        weapons: [],
+        passives: PASSIVES.map(() => 0),
+      })),
+      history: Array.from({ length: RESYNC_HISTORY_TICKS }, () => ({ ids: [], x: [], y: [] })),
+      fieldTargets: [],
+      horde: new Horde(1),
+      orbs: [],
+      zones: [],
+      decoys: [],
+    };
+  }
+
+  /** L'instantane de la reference au tick `T`, comme `Room.resyncState`. */
+  function instantane(ref: ReferenceServer, T: number, avecHistorique: boolean): ResyncState {
+    const history: ResyncState['history'][number][] = [];
+    for (let t = T - RESYNC_HISTORY_TICKS + 1; t <= T; t++) {
+      const h = avecHistorique ? ref.playerHistory.at(t) : null;
+      history.push(h ? { ids: h.ids, x: h.x, y: h.y } : { ids: [], x: [], y: [] });
+    }
+    return {
+      ...vide(T),
+      history,
+      fieldTargets: ref.horde.aimX.map((x, f) => ({ x, y: ref.horde.aimY[f] ?? 0 })),
+      horde: ref.horde,
+    };
+  }
+
+  function clientNeuf(): { client: GameClient; socket: FakeSocket } {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    return { client, socket };
+  }
+
+  const idsVivants = (h: Horde): number[] => {
+    const out: number[] = [];
+    for (let i = 0; i < h.count; i++) {
+      out.push(h.entityIdAt(i));
+    }
+    return out.sort((a, b) => a - b);
+  };
+
+  /**
+   * 120 ticks de reference, un `RESYNC` a `T`, puis 300 ticks de plus des deux
+   * cotes avec une vague en retard : la derive, et le nombre d'entites.
+   */
+  function suivi(avecHistorique: boolean): {
+    drift: number;
+    ref: Horde;
+    client: GameClient;
+    countApresResync: number;
+  } {
+    const ref = makeReferenceServer(SEED, 2000);
+    const vague = (waveId: number, spawnTick: number, count: number): WaveOrder => ({
+      waveId,
+      spawnTick,
+      seed: 0x51ee_d000 + waveId,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 1200 + waveId * 300,
+      anchorY: 1200,
+      count,
+    });
+    const T = 119;
+    // Des ticks qui ne sont PAS des rafraichissements : voir la note ponytail
+    // de `GameClient#applyPendingOrders` (ecart anterieur a l'etape 17).
+    const orders = [vague(1, 1, 150), vague(2, 40, 100), vague(3, 80, 100), vague(4, T + 50, 120)];
+    for (let tick = 0; tick <= T; tick++) {
+      pasDeReference(ref, tick, orders);
+    }
+
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, T - 2, SEED) });
+    client.update(0, STEP);
+    // Le piege du §3.3 : un ordre date <= T, livre AVANT le RESYNC — il est
+    // deja dans l'instantane et ne doit pas renaitre.
+    socket.emit('message', { data: encodeWaveOrder(orders[2] as WaveOrder) });
+    socket.emit('message', { data: encodeResync(instantane(ref, T, avecHistorique)) });
+    socket.emit('message', { data: snapshotA(T) });
+    let countApresResync = -1;
+
+    // Un `update` par tick, snapshot recu avant : chaque tick entre dans
+    // l'historique du client, comme en jeu a 30 Hz.
+    for (let tick = T + 1; tick <= T + 300; tick++) {
+      pasDeReference(ref, tick, orders);
+      for (const o of orders) {
+        if (o.spawnTick === tick) {
+          socket.emit('message', { data: encodeWaveOrder(o) });
+        }
+      }
+      socket.emit('message', { data: snapshotA(tick) });
+      client.update((tick - T) * STEP, STEP);
+      if (tick === T + 1) {
+        countApresResync = client.horde.count;
+      }
+    }
+    return {
+      drift: measureDriftById(ref.horde, client.horde, idsVivants(ref.horde)),
+      ref: ref.horde,
+      client,
+      countApresResync,
+    };
+  }
+
+  it('suit la reference a 0,000 px sur 300 ticks, et l ordre date <= T ne double rien', () => {
+    const r = suivi(true);
+    expect(r.countApresResync).toBe(470 - 120);
+    expect(r.client.horde.count).toBe(r.ref.count);
+    expect(idsVivants(r.client.horde)).toEqual(idsVivants(r.ref));
+    expect(r.drift).toBe(0);
+    expect(r.client.hordeTick).toBe(119 + 301);
+  });
+
+  it('contre-epreuve : sans l historique des positions, la horde derive', () => {
+    expect(suivi(false).drift).toBeGreaterThan(0);
+  });
+
+  it('les inventaires se reconstruisent par addWeapon/addPassive, et le tir repart de lastFireTick', () => {
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, 100, SEED) });
+    const arme = WEAPONS.find((w) => w.id !== BASE_WEAPON_ID && w.kind === 'tir')?.id ?? 1;
+    const passif = PASSIVES[0]?.id ?? 0;
+    const s = vide(100);
+    s.players = [
+      {
+        id: 2,
+        classId: 3,
+        absent: false,
+        weapons: [
+          {
+            weaponId: BASE_WEAPON_ID,
+            upgrades: Array.from({ length: UPGRADE_KINDS }, () => 0),
+            lastFireTick: Number.NEGATIVE_INFINITY,
+          },
+          {
+            weaponId: arme,
+            upgrades: Array.from({ length: UPGRADE_KINDS }, (_, a) => (a === 1 ? 2 : 0)),
+            lastFireTick: 97,
+          },
+        ],
+        passives: PASSIVES.map((p) => (p.id === passif ? 3 : 0)),
+      },
+      { id: 1, classId: 2, absent: false, weapons: [], passives: PASSIVES.map(() => 0) },
+    ];
+    socket.emit('message', { data: encodeResync(s) });
+    const l = client.loadoutOf(2);
+    expect(l.weaponIds).toEqual([BASE_WEAPON_ID, arme]);
+    expect(l.upgradesOf(arme, 1)).toBe(2);
+    expect(l.upgradesOf(arme, 0)).toBe(0);
+    expect(l.stacksOf(passif)).toBe(3);
+    expect(client.lastFireTickOf(2, arme)).toBe(97);
+    expect(client.lastFireTickOf(2, BASE_WEAPON_ID)).toBe(Number.NEGATIVE_INFINITY);
+    expect(client.localClassId).toBe(2);
+    expect(client.roster).toEqual([
+      { playerId: 2, classId: 3 },
+      { playerId: 1, classId: 2 },
+    ]);
+  });
+
+  it('l etalage ouvert : cartes, echeance, gel, coffre selon le bit', () => {
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, 100, SEED) });
+    const cards = [
+      { nature: CARD.PASSIVE, refId: 0, upgrade: 0, rarity: 0 },
+      { nature: CARD.WEAPON, refId: 1, upgrade: 0, rarity: 1 },
+    ];
+    socket.emit('message', {
+      data: encodeResync({ ...vide(100), draft: { deadlineTick: 700, cards, kind: 'chest' } }),
+    });
+    expect(client.draftCards).toEqual(cards);
+    expect(client.draftDeadlineTick).toBe(700);
+    expect(client.isFrozen).toBe(true);
+    expect(client.draftIsChest).toBe(true);
+    expect(client.draftIsEvent).toBe(false);
+    expect(client.portalOpen).toBe(false);
+  });
+
+  it('le portail ouvert : multiplicateur, echeance, gel', () => {
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, 100, SEED) });
+    socket.emit('message', {
+      data: encodeResync({ ...vide(100), portal: { deadlineTick: 650, multiplier: 1.5 } }),
+    });
+    expect(client.portalOpen).toBe(true);
+    expect(client.portalMultiplier).toBe(1.5);
+    expect(client.portalDeadlineTick).toBe(650);
+    expect(client.isFrozen).toBe(true);
+  });
+
+  it('un gel fini a F : gele (en rampe) jusqu a F + LEVEL_RESUME_TICKS, puis libre', () => {
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, 100, SEED) });
+    socket.emit('message', { data: encodeResync({ ...vide(100), freezeUntilTick: 98 }) });
+    expect(client.hordeTick).toBe(101);
+    expect(client.isFrozen).toBe(true);
+    for (let t = 101; t <= 98 + LEVEL_RESUME_TICKS; t++) {
+      client.update(t * STEP, STEP);
+    }
+    expect(client.hordeTick).toBe(98 + LEVEL_RESUME_TICKS + 1);
+    expect(client.isFrozen).toBe(false);
+  });
+
+  it('l evenement en cours : genre, solo, compte a rebours depuis elapsed', () => {
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, 100, SEED) });
+    socket.emit('message', {
+      data: encodeResync({
+        ...vide(100),
+        event: {
+          kind: EVENT_KIND.CONVOI,
+          solo: true,
+          durationTicks: EVENT_DURATION_TICKS,
+          elapsed: 300,
+          progress: 128,
+          cartX: 2000,
+          cartY: 2100,
+          cartHp: 255,
+          points: [
+            { x: 1000, y: 1000 },
+            { x: 4000, y: 4000 },
+          ],
+        },
+      }),
+    });
+    const ev = client.event;
+    expect(ev?.kind).toBe(EVENT_KIND.CONVOI);
+    expect(ev?.solo).toBe(true);
+    expect(ev?.secondsLeft).toBeCloseTo((EVENT_DURATION_TICKS - 300) / TICK_HZ, 5);
+    expect(ev?.progress).toBeCloseTo(128 / 255, 5);
+    expect(ev?.cart).toEqual({ x: 2000, y: 2100 });
+  });
+
+  it('niveau, kills, porteur dans la horde, et PRESENCE', () => {
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, 100, SEED) });
+    const horde = new Horde(10);
+    horde.spawn({
+      waveId: 7,
+      spawnTick: 100,
+      seed: 1,
+      archetype: PORTEUR_ARCHETYPE,
+      formation: FORMATION.POINT,
+      anchorX: 2500,
+      anchorY: 2600,
+      count: 1,
+    });
+    const s = vide(100);
+    s.players = s.players.map((p) => ({ ...p, absent: p.id === 3 }));
+    socket.emit('message', {
+      data: encodeResync({ ...s, level: 7, kills: 1234, chestsOwed: 1, horde }),
+    });
+    expect(client.level).toBe(7);
+    expect(client.kills).toBe(1234);
+    expect(client.porteur).not.toBeNull();
+    expect(client.isAbsent(3)).toBe(true);
+    expect(client.update(0, 0).absent?.has(3)).toBe(true);
+    socket.emit('message', { data: encodePresence(3, true) });
+    expect(client.isAbsent(3)).toBe(false);
+    socket.emit('message', { data: encodePresence(2, false) });
+    expect(client.isAbsent(2)).toBe(true);
+    expect(client.update(0, 0).absent?.has(2)).toBe(true);
+    // Un coffre du : le prochain LEVEL_UP est un coffre.
+    socket.emit('message', { data: encodeLevelUp(101, 8) });
+    expect(client.draftIsChest).toBe(true);
+  });
+
+  it('un absent du snapshot n alimente pas l historique du champ', () => {
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, 100, SEED) });
+    socket.emit('message', { data: encodeResync(vide(100)) });
+    socket.emit('message', { data: encodePresence(2, false) });
+    socket.emit('message', { data: snapshotA(101) });
+    // Au rafraichissement de 105 (qui lit 102, donc s accroche a 101) : trois
+    // cibles, pas quatre.
+    for (let t = 101; t <= 105; t++) {
+      client.update(t * STEP, STEP);
+    }
+    expect(client.horde.aimX).toHaveLength(3);
   });
 });

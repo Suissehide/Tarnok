@@ -1466,6 +1466,17 @@ export class Horde {
     }
   }
 
+  /**
+   * Etape 18 : apres un `restoreState` venu du fil (`RESYNC`), le client remet
+   * ses champs a ceux du serveur PAR `update`, entre deux `step` — ce que
+   * `#assertFieldsNotRefreshed` prendrait pour un rafraichissement intercale.
+   * Ici on dit « ces revisions-la sont celles du dernier pas » : le premier
+   * ordre en retard qui suit ne leve plus.
+   */
+  acknowledgeFields(fields: readonly FlowField[]): void {
+    this.#recordFieldRevisions(fields);
+  }
+
   /** Releve la revision courante de chaque champ. Appele a la fin de `step`. */
   #recordFieldRevisions(fields: readonly FlowField[]): void {
     const revisions = this.#lastFieldRevisions ?? new Map<FlowField, number>();

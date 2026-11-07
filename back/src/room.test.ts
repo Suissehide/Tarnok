@@ -7073,11 +7073,13 @@ describe('etape 18 : resyncState, l instantane sans reseau', () => {
     room.setDraftToken(1, 0);
     room.setDraftToken(2, 1);
     room.step(DT);
-    // Le gel de fin d etalage, puis la rampe : `freezeUntilTick` le dit.
+    // Le gel de fin d etalage, puis la rampe : `freezeUntilTick` le dit, et
+    // reste dit pendant la rampe (le client en derive `resumeEnd`).
     expect(room.resyncState().draft).toBeNull();
-    expect(room.resyncState().freezeUntilTick).toBe(room.tick);
+    const fin = room.tick;
+    expect(room.resyncState().freezeUntilTick).toBe(fin);
     room.step(DT);
-    expect(room.resyncState().freezeUntilTick).toBe(-1);
+    expect(room.resyncState().freezeUntilTick).toBe(fin);
 
     room.debugOweChests(1);
     room.step(DT);

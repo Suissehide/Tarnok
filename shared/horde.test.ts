@@ -452,6 +452,26 @@ describe('Horde.spawnCatchingUp — garde-fou de fraicheur des champs', () => {
     }).not.toThrow();
   });
 
+  it('etape 18 : apres acknowledgeFields, un champ mis a jour entre deux pas ne leve plus', () => {
+    const horde = new Horde(1000);
+    const fields = fieldsTowards(4000, 4000);
+    horde.step(DT, fields, 0);
+    // Le `RESYNC` pose les cibles du serveur par `update`, hors de tout pas.
+    fields[0]?.update(1000, 1000);
+    expect(() => {
+      horde.spawnCatchingUp(order({ count: 50 }), 2, DT, fields);
+    }).toThrow(/avant tout appel a FlowField\.update/);
+    horde.acknowledgeFields(fields);
+    expect(() => {
+      horde.spawnCatchingUp(order({ count: 50 }), 2, DT, fields);
+    }).not.toThrow();
+    // Un rafraichissement APRES l'accuse leve de nouveau : la garde vit toujours.
+    fields[1]?.update(2000, 2000);
+    expect(() => {
+      horde.spawnCatchingUp(order({ count: 50 }), 2, DT, fields);
+    }).toThrow();
+  });
+
   it("n'affecte pas le comportement nominal de step", () => {
     const horde = new Horde(1000);
     const fields = fieldsTowards(4000, 4000);

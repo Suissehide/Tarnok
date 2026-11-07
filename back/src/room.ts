@@ -2085,7 +2085,9 @@ export class Room {
       tick,
       level: this.#level,
       kills: this.#totalKills,
-      freezeUntilTick: tick <= this.#freezeUntilTick ? this.#freezeUntilTick : -1,
+      // Brut, meme passe : le client en derive la rampe de reprise
+      // (`+ LEVEL_RESUME_TICKS`), qui court encore apres la fin du gel.
+      freezeUntilTick: this.#freezeUntilTick,
       chestsOwed: this.#chestsOwed,
       eventDraftsOwed: this.#eventDraftsOwed,
       draft:
