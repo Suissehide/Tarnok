@@ -10,6 +10,7 @@ import {
   MSG,
   NO_WEAPON,
 } from '@shared/protocol';
+import { BONUS_ZERO, bonusesOf, priceOf, SHOP_ITEMS } from '@shared/shop';
 import { BASE_WEAPON_ID, startingWeapons } from '@shared/weapons';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { WebSocket } from 'ws';
@@ -37,9 +38,12 @@ afterEach(async () => {
   await app.close();
 });
 
-/** Une socket authentifiee, et la file de tout ce qu'elle recoit. */
-async function entre(code: string): Promise<{ ws: WebSocket; recus: Message[] }> {
-  const { token } = await accounts.createAccount();
+/** Une socket authentifiee (un compte neuf, ou `jeton`), et la file de tout ce qu'elle recoit. */
+async function entre(
+  code: string,
+  jeton?: Uint8Array,
+): Promise<{ ws: WebSocket; recus: Message[] }> {
+  const token = jeton ?? (await accounts.createAccount()).token;
   const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${code}`);
   ws.binaryType = 'arraybuffer';
   sockets.push(ws);
@@ -181,6 +185,41 @@ describe('salle d attente', () => {
       throw new Error('classe inconnue');
     }
     expect(room?.useAbility(1, 1, 0)?.verb).toBe(VERB_IDS[classe.verb]);
+  });
+});
+
+describe('les bonus de compte de chaque joueur voyagent dans LOBBY', () => {
+  it('un achat de puissance se lit dans l entree LOBBY de son auteur, zero chez l autre', async () => {
+    const puissance = SHOP_ITEMS.find((i) => i.bonusKind === 'damage');
+    if (!puissance) {
+      throw new Error('aucun article de puissance');
+    }
+    const { id: accountId, token } = await accounts.createAccount();
+    await accounts.creditAccounts([accountId], BigInt(priceOf(puissance, 1)));
+    expect(await accounts.buyItem(accountId, puissance.id)).toBe('ok');
+    const attendu = bonusesOf(new Map([[puissance.id, 1]]));
+
+    const code = (await app.inject({ method: 'POST', url: '/rooms' })).json<{ code: string }>()
+      .code;
+    const hote = await entre(code, token);
+    await entre(code);
+    // L'ordre des slots suit la fin des HELLO, pas leur depart : on lit par `you`.
+    const lobby = await jusqua(() => {
+      const l = dernierLobby(hote.recus);
+      return l?.players.length === 2 ? l : undefined;
+    });
+    const sien = lobby.players.find((p) => p.playerId === lobby.you);
+    const autre = lobby.players.find((p) => p.playerId !== lobby.you);
+    expect(sien?.bonuses).toEqual({
+      fireRate: attendu.fireRate,
+      damage: attendu.damage,
+      maxHp: attendu.maxHp,
+    });
+    expect(autre?.bonuses).toEqual({
+      fireRate: BONUS_ZERO.fireRate,
+      damage: BONUS_ZERO.damage,
+      maxHp: BONUS_ZERO.maxHp,
+    });
   });
 });
 

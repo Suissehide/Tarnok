@@ -25,9 +25,10 @@ import {
 } from '@shared/constants';
 import { ELEMENT } from '@shared/elements';
 import { EVENT_DURATION_TICKS, EVENT_KIND } from '@shared/evenements';
-import { critOf } from '@shared/firing';
+import { critOf, shotDamage } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, Horde, leavesDrop } from '@shared/horde';
+import { maxHpOf } from '@shared/loadout';
 import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
 import { PASSIVES, passiveOf } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
@@ -6022,5 +6023,126 @@ describe('la classe des autres joueurs, pour le portrait de l etalage', () => {
     expect(client.classOf(2)).toBe(2);
     expect(client.classOf(1)).toBe(0);
     expect(client.classOf(9)).toBeUndefined();
+  });
+});
+
+describe('les chiffres de degats des allies lisent les bonus de compte du TIREUR', () => {
+  const joueurs = [
+    {
+      id: 1,
+      x: 2000,
+      y: 2000,
+      hp: 100,
+      aimX: 127,
+      aimY: 0,
+      pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
+    },
+    {
+      id: 2,
+      x: 3000,
+      y: 3000,
+      hp: 100,
+      aimX: 127,
+      aimY: 0,
+      pickupRadius: ORB_PICKUP_RADIUS,
+      shield: 0,
+    },
+  ];
+  const bonus = { fireRate: 0.25, damage: 0.8, maxHp: 50 };
+
+  /** La premiere salve de la dague de chaque joueur : `(damage, playerId)`. */
+  function salves(client: GameClient, socket: FakeSocket): Map<number, number> {
+    const spy = vi.spyOn(client.projectiles, 'fireSalvoDirected');
+    for (let tick = 1; tick <= 3; tick++) {
+      socket.emit('message', { data: encodeSnapshot(tick, 0, 0, joueurs) });
+      client.update((tick * 1000) / TICK_HZ, STEP);
+    }
+    const out = new Map<number, number>();
+    for (const c of spy.mock.calls) {
+      const by = c[8] ?? -1;
+      if (c[0].id === BASE_WEAPON_ID && !out.has(by)) {
+        out.set(by, c[6] ?? Number.NaN);
+      }
+    }
+    return out;
+  }
+
+  /** Ce que `Room#fireOne` arbitre pour la dague d un joueur a ces bonus. */
+  function attendu(client: GameClient, id: number, b: typeof bonus): number {
+    const loadout = client.loadoutOf(id);
+    return shotDamage(weaponOf(BASE_WEAPON_ID), loadout, b.damage, maxHpOf(loadout, b.maxHp));
+  }
+
+  /** Le joueur local vise a droite (sa visee vient de `readAim`, pas du snapshot). */
+  const viseur = () =>
+    new GameClient(
+      'ws://test',
+      () => ({ x: 0, y: 0 }),
+      vi.fn(),
+      undefined,
+      () => ({ x: 1, y: 0 }),
+    );
+
+  it('LOBBY : deux joueurs aux bonus differents, deux chiffres distincts, ceux du salon', () => {
+    const client = viseur();
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', {
+      data: encodeLobby(1, [
+        { playerId: 1, weaponId: NO_WEAPON, classId: 0 },
+        { playerId: 2, weaponId: NO_WEAPON, classId: 0, bonuses: bonus },
+      ]),
+    });
+    socket.emit('message', { data: encodeWelcome(1, 0, 0x2222) });
+    const s = salves(client, socket);
+    expect(s.get(1)).toBeCloseTo(attendu(client, 1, { fireRate: 0, damage: 0, maxHp: 0 }), 6);
+    expect(s.get(2)).toBeCloseTo(attendu(client, 2, bonus), 6);
+    expect(s.get(2)).not.toBeCloseTo(s.get(1) ?? 0, 3);
+  });
+
+  it('RESYNC : le revenant lit les bonus de chacun sans LOBBY', () => {
+    const client = viseur();
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, 0, 0x2222) });
+    socket.emit('message', {
+      data: encodeResync({
+        tick: 0,
+        level: 1,
+        kills: 0,
+        freezeUntilTick: -1,
+        chestsOwed: 0,
+        eventDraftsOwed: 0,
+        draft: null,
+        portal: null,
+        event: null,
+        charge: null,
+        // La dague est dans les slots (`Room.join`) : le RESYNC la porte toujours.
+        players: [1, 2].map((id) => ({
+          id,
+          classId: 0,
+          absent: false,
+          bonuses: id === 2 ? bonus : undefined,
+          weapons: [
+            {
+              weaponId: BASE_WEAPON_ID,
+              upgrades: Array.from({ length: UPGRADE_KINDS }, () => 0),
+              lastFireTick: Number.NEGATIVE_INFINITY,
+            },
+          ],
+          passives: PASSIVES.map(() => 0),
+        })),
+        history: Array.from({ length: RESYNC_HISTORY_TICKS }, () => ({ ids: [], x: [], y: [] })),
+        fieldTargets: [],
+        horde: new Horde(1),
+        orbs: [],
+        zones: [],
+        decoys: [],
+      }),
+    });
+    const s = salves(client, socket);
+    expect(s.get(2)).toBeCloseTo(attendu(client, 2, bonus), 6);
+    expect(s.get(2)).not.toBeCloseTo(s.get(1) ?? 0, 3);
   });
 });

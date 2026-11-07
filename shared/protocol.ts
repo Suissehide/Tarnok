@@ -9,6 +9,7 @@
 import { FIELD_INPUT_DELAY_TICKS, FLOWFIELD_HZ, TICK_HZ } from './constants';
 import { EVENT_SOLO_FLAG } from './evenements';
 import { PASSIVES } from './passives';
+import type { BonusKind } from './shop';
 import { UPGRADE_KINDS } from './weapons';
 
 export const MSG = {
@@ -1581,6 +1582,45 @@ export interface LobbyEntry {
   weaponId: number;
   /** Classe choisie (voir `shared/classes.ts`), `DEFAULT_CLASS_ID` si rien choisi. */
   classId: number;
+  /**
+   * Ses bonus de compte qui pesent sur une salve, pour le miroir de tir des
+   * autres. Optionnel a l'encodage (zero : les doubles de test s'en passent),
+   * toujours present au decodage.
+   */
+  bonuses?: ShotBonuses;
+}
+
+/**
+ * Les bonus de compte (boutique) qui entrent dans une salve : la cadence, les
+ * degats et le PV max (Colosse). Le client en a besoin pour CHAQUE joueur,
+ * puisqu'il derive les salves de tous (`GameClient#fireOne`) : avec ses seuls
+ * achats, chaque client affichait un chiffre different pour le meme tir.
+ *
+ * Sur le fil : `fireRate u8 · damage u8 · maxHp u8`, les deux premiers en
+ * centiemes (`maxBonus` : 0,25 et 0,80 → 25 et 80), le dernier en PV (50).
+ * Voyage dans `LOBBY` et `RESYNC`, jamais par tick : zero octet de plus par
+ * tick. `shop.test.ts` epingle que les maximums tiennent dans un octet.
+ */
+export type ShotBonuses = Pick<Record<BonusKind, number>, 'fireRate' | 'damage' | 'maxHp'>;
+
+/** `fireRate u8 · damage u8 · maxHp u8`. */
+export const SHOT_BONUS_BYTES = 3;
+
+/** Aucun bonus : un compte sans achat, ou un joueur dont on ne sait rien encore. */
+export const NO_SHOT_BONUS: ShotBonuses = Object.freeze({ fireRate: 0, damage: 0, maxHp: 0 });
+
+function writeShotBonuses(v: DataView, o: number, b: ShotBonuses = NO_SHOT_BONUS): void {
+  v.setUint8(o, u8(b.fireRate * 100));
+  v.setUint8(o + 1, u8(b.damage * 100));
+  v.setUint8(o + 2, u8(b.maxHp));
+}
+
+function readShotBonuses(v: DataView, o: number): ShotBonuses {
+  return {
+    fireRate: v.getUint8(o) / 100,
+    damage: v.getUint8(o + 1) / 100,
+    maxHp: v.getUint8(o + 2),
+  };
 }
 
 /**
@@ -1645,8 +1685,8 @@ export interface AbilityUsedMessage {
 
 /** `type u8 · you u8 · count u8`. */
 export const LOBBY_HEADER_BYTES = 3;
-/** Une entree : `playerId u8 · weaponId u8 · classId u8`. */
-export const LOBBY_ENTRY_BYTES = 3;
+/** Une entree : `playerId u8 · weaponId u8 · classId u8 · bonus (`SHOT_BONUS_BYTES`)`. */
+export const LOBBY_ENTRY_BYTES = 3 + SHOT_BONUS_BYTES;
 /** `type u8 · weaponId u8 · classId u8`. */
 export const PICK_BYTES = 3;
 
@@ -1661,6 +1701,7 @@ export function encodeLobby(you: number, players: readonly LobbyEntry[]): ArrayB
     v.setUint8(o, p.playerId);
     v.setUint8(o + 1, p.weaponId);
     v.setUint8(o + 2, p.classId);
+    writeShotBonuses(v, o + 3, p.bonuses);
     o += LOBBY_ENTRY_BYTES;
   }
   return buf;
@@ -1677,6 +1718,7 @@ function decodeLobby(buf: ArrayBuffer): LobbyMessage {
       playerId: v.getUint8(o),
       weaponId: v.getUint8(o + 1),
       classId: v.getUint8(o + 2),
+      bonuses: readShotBonuses(v, o + 3),
     });
     o += LOBBY_ENTRY_BYTES;
   }
@@ -1981,8 +2023,8 @@ export const PRESENCE_BYTES = 3;
  * chestsOwed u8 · eventDraftsOwed u8 · flags u8 · playerCount u8`.
  */
 export const RESYNC_HEADER_BYTES = 19;
-/** `id u8 · classId u8 · flags u8 · nWeapons u8`, puis les armes et les passifs. */
-export const RESYNC_PLAYER_BYTES = 4;
+/** `id u8 · classId u8 · flags u8 · nWeapons u8 · bonus (`SHOT_BONUS_BYTES`)`, puis les armes et les passifs. */
+export const RESYNC_PLAYER_BYTES = 4 + SHOT_BONUS_BYTES;
 /** `weaponId u8 · upgrades UPGRADE_KINDS x u8 · lastFireTick u32`. */
 export const RESYNC_WEAPON_BYTES = 1 + UPGRADE_KINDS + 4;
 /** `PASSIVES.length x u16` : les exemplaires de chaque passif, « sans plafond ». */
@@ -2051,6 +2093,8 @@ export interface ResyncPlayer {
   id: number;
   classId: number;
   absent: boolean;
+  /** Comme `LobbyEntry.bonuses` : le revenant n'a plus de `LOBBY`. */
+  bonuses?: ShotBonuses;
   /** Dans l'ordre des slots (`Loadout.weaponIds`). */
   weapons: ResyncWeapon[];
   /** `PASSIVES.length` entrees : `Loadout.stacksOf(id)`. */
@@ -2186,6 +2230,7 @@ export function encodeResync(s: ResyncState): ArrayBuffer {
     v.setUint8(o + 1, p.classId);
     v.setUint8(o + 2, p.absent ? RESYNC_PLAYER_ABSENT : 0);
     v.setUint8(o + 3, p.weapons.length);
+    writeShotBonuses(v, o + 4, p.bonuses);
     o += RESYNC_PLAYER_BYTES;
     for (const w of p.weapons) {
       v.setUint8(o, w.weaponId);
@@ -2338,6 +2383,7 @@ export function decodeResync(buf: ArrayBuffer): ResyncMessage {
       id: v.getUint8(o),
       classId: v.getUint8(o + 1),
       absent: (v.getUint8(o + 2) & RESYNC_PLAYER_ABSENT) !== 0,
+      bonuses: readShotBonuses(v, o + 4),
       weapons: [],
       passives: [],
     };

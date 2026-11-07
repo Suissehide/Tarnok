@@ -30,7 +30,7 @@ import {
   MSG,
   NO_WEAPON,
 } from '@shared/protocol';
-import { bonusesOf } from '@shared/shop';
+import { BONUS_ZERO, bonusesOf } from '@shared/shop';
 import { startingWeapons } from '@shared/weapons';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { type WebSocket, WebSocketServer } from 'ws';
@@ -386,7 +386,12 @@ class Session {
   #sendLobby(): void {
     const players = [...this.#lobby]
       .sort(([a], [b]) => a - b)
-      .map(([playerId, e]) => ({ playerId, weaponId: e.weaponId, classId: e.classId }));
+      .map(([playerId, e]) => ({
+        playerId,
+        weaponId: e.weaponId,
+        classId: e.classId,
+        bonuses: e.grants?.bonuses ?? BONUS_ZERO,
+      }));
     for (const [id, ws] of this.#clients) {
       if (ws.readyState === ws.OPEN) {
         ws.send(encodeLobby(id, players));

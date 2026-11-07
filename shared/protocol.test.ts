@@ -22,7 +22,7 @@ import {
   lightRadius,
   relicSpeedFactor,
 } from './evenements';
-import { entityIdOf } from './horde';
+import { entityIdOf, Horde } from './horde';
 import { bossHp, palierGold } from './paliers';
 import { PASSIVES } from './passives';
 import {
@@ -71,6 +71,7 @@ import {
   encodeHello,
   encodeInput,
   encodeLevelUp,
+  encodeLobby,
   encodePickups,
   encodePing,
   encodePingShown,
@@ -90,10 +91,13 @@ import {
   HELLO_BYTES,
   INPUT_BYTES,
   LEVEL_UP_BYTES,
+  LOBBY_ENTRY_BYTES,
+  LOBBY_HEADER_BYTES,
   MSG,
   NO_BOSS_ID,
   NO_TOKEN,
   NO_VOTE,
+  NO_WEAPON,
   PING_BYTES,
   PING_SHOWN_BYTES,
   type PlayerSnapshot,
@@ -119,6 +123,7 @@ import {
   RESYNC_ZONE_BYTES,
   type ResyncState,
   RUN_OVER_BYTES,
+  SHOT_BONUS_BYTES,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
   TOKEN_BYTES,
@@ -131,6 +136,7 @@ import {
   zoneElement,
   zoneReaction,
 } from './protocol';
+import { maxBonus } from './shop';
 import { UPGRADE_KINDS } from './weapons';
 
 describe('encodeInput / decodeInput', () => {
@@ -2042,6 +2048,7 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
         id,
         classId: id % 3,
         absent: id === 3,
+        bonuses: { fireRate: id * 0.25, damage: id * 0.5, maxHp: id * 10 },
         weapons: Array.from({ length: id }, (_, w) => ({
           weaponId: w + id,
           upgrades: aspects(w + id),
@@ -2085,7 +2092,16 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
       portal: null,
       event: null,
       charge: null,
-      players: [{ id: 1, classId: 0, absent: false, weapons: [], passives: PASSIVES.map(() => 0) }],
+      players: [
+        {
+          id: 1,
+          classId: 0,
+          absent: false,
+          bonuses: { fireRate: 0, damage: 0, maxHp: 0 },
+          weapons: [],
+          passives: PASSIVES.map(() => 0),
+        },
+      ],
       history: Array.from({ length: RESYNC_HISTORY_TICKS }, () => ({ ids: [], x: [], y: [] })),
       fieldTargets: [],
       horde: horde(0),
@@ -2235,5 +2251,68 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
       expect(buf.byteLength).toBe(PRESENCE_BYTES);
       expect(decode(buf)).toEqual({ type: MSG.PRESENCE, playerId: 3, present });
     }
+  });
+});
+
+describe('les bonus de compte d une salve voyagent dans LOBBY et RESYNC', () => {
+  const bonus = { fireRate: 0.25, damage: 0.8, maxHp: 50 };
+
+  it('les maximums du catalogue tiennent dans les trois octets', () => {
+    expect(SHOT_BONUS_BYTES).toBe(3);
+    expect(maxBonus('fireRate') * 100).toBeLessThanOrEqual(255);
+    expect(maxBonus('damage') * 100).toBeLessThanOrEqual(255);
+    expect(maxBonus('maxHp')).toBeLessThanOrEqual(255);
+  });
+
+  it('LOBBY : aller-retour des bonus de chaque joueur, zero sans bonus', () => {
+    const buf = encodeLobby(2, [
+      { playerId: 1, weaponId: NO_WEAPON, classId: 0 },
+      { playerId: 2, weaponId: 3, classId: 1, bonuses: bonus },
+    ]);
+    expect(buf.byteLength).toBe(LOBBY_HEADER_BYTES + 2 * LOBBY_ENTRY_BYTES);
+    const d = decode(buf);
+    if (d.type !== MSG.LOBBY) {
+      throw new Error('pas un LOBBY');
+    }
+    expect(d.players[0]?.bonuses).toEqual({ fireRate: 0, damage: 0, maxHp: 0 });
+    expect(d.players[1]?.bonuses).toEqual(bonus);
+  });
+
+  it('RESYNC : aller-retour des bonus par joueur', () => {
+    const buf = encodeResync({
+      tick: 1,
+      level: 1,
+      kills: 0,
+      freezeUntilTick: -1,
+      chestsOwed: 0,
+      eventDraftsOwed: 0,
+      draft: null,
+      portal: null,
+      event: null,
+      charge: null,
+      players: [
+        { id: 1, classId: 0, absent: false, weapons: [], passives: PASSIVES.map(() => 0) },
+        {
+          id: 2,
+          classId: 0,
+          absent: false,
+          bonuses: bonus,
+          weapons: [],
+          passives: PASSIVES.map(() => 0),
+        },
+      ],
+      history: Array.from({ length: RESYNC_HISTORY_TICKS }, () => ({ ids: [], x: [], y: [] })),
+      fieldTargets: [],
+      horde: new Horde(1),
+      orbs: [],
+      zones: [],
+      decoys: [],
+    });
+    const d = decode(buf);
+    if (d.type !== MSG.RESYNC) {
+      throw new Error('pas un RESYNC');
+    }
+    expect(d.players[0]?.bonuses).toEqual({ fireRate: 0, damage: 0, maxHp: 0 });
+    expect(d.players[1]?.bonuses).toEqual(bonus);
   });
 });

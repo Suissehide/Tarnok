@@ -82,12 +82,14 @@ import {
   encodeVote,
   type LobbyMessage,
   MSG,
+  NO_SHOT_BONUS,
   NO_WEAPON,
   OUTCOME,
   type PingShownMessage,
   type PlayerSnapshot,
   quantizeAxis,
   type ResyncMessage,
+  type ShotBonuses,
   VOTE_CHOICE,
   type WaveOrderMessage,
   type ZoneMessage,
@@ -1672,9 +1674,10 @@ export class GameClient {
      * Les bonus PERMANENTS du compte (boutique), tels que `bonusesOf` les
      * derive de ses achats.
      *
-     * ⚠️ **ZERO octet sur le fil** : le client lit SES PROPRES achats en HTTP
-     * au chargement (`GET /accounts/me`) et derive ces bonus avec la fonction
-     * partagee.
+     * Le client lit SES PROPRES achats en HTTP au chargement
+     * (`GET /accounts/me`) et derive ces bonus avec la fonction partagee. Pour
+     * les salves (cadence, degats, PV max), le `LOBBY`/`RESYNC` fait foi pour
+     * tous les joueurs (`#shotBonuses`) ; il reste ici la vitesse predite.
      *
      * ⚠️ **Fige a la construction** : le serveur les pose une seule fois au
      * `join`, constants sur toute la run (voir `Room.join`).
@@ -1922,7 +1925,7 @@ export class GameClient {
         last[w] ?? Number.NEGATIVE_INFINITY,
         d.from,
         this.#lastHordeTick,
-        fireCooldown(loadout, w, this.accountBonuses.fireRate),
+        fireCooldown(loadout, w, this.#bonusesOf(d.released).fireRate),
       );
     }
   }
@@ -1986,7 +1989,7 @@ export class GameClient {
     if (id === null) {
       return maxHpOf(new Loadout(), this.accountBonuses.maxHp);
     }
-    return maxHpOf(this.loadoutOf(id), this.accountBonuses.maxHp);
+    return maxHpOf(this.loadoutOf(id), this.#bonusesOf(id).maxHp);
   }
 
   /**
@@ -2041,6 +2044,20 @@ export class GameClient {
 
   /** Dernier etat de la salle d'attente, `null` avant le premier `LOBBY`. */
   #lobby: LobbyMessage | null = null;
+  /**
+   * Les bonus de compte de CHAQUE joueur qui pesent sur une salve, du `LOBBY`
+   * (au `WELCOME`) ou du `RESYNC`. Sans eux, `#fireOne` appliquait les achats
+   * du joueur LOCAL aux salves d'un allie : un chiffre different par client.
+   */
+  readonly #shotBonuses = new Map<number, ShotBonuses>();
+
+  /** Les bonus de compte d'un joueur ; a defaut, ceux du compte local pour lui, zero pour un allie. */
+  #bonusesOf(playerId: number): ShotBonuses {
+    return (
+      this.#shotBonuses.get(playerId) ??
+      (playerId === this.#localId ? this.accountBonuses : NO_SHOT_BONUS)
+    );
+  }
   /** Appele a chaque `LOBBY` recu, jusqu'au lancement. */
   onLobby: (lobby: LobbyMessage) => void = () => undefined;
 
@@ -2551,6 +2568,7 @@ export class GameClient {
           this.#loadouts.set(p.playerId, choisi);
         }
         this.#classes.set(p.playerId, p.classId);
+        this.#shotBonuses.set(p.playerId, p.bonuses ?? NO_SHOT_BONUS);
         if (p.playerId === msg.playerId) {
           this.#localClassId = p.classId;
         }
@@ -2891,6 +2909,7 @@ export class GameClient {
       this.#loadouts.set(p.id, loadout);
       this.#lastFireTick.set(p.id, last);
       this.#classes.set(p.id, p.classId);
+      this.#shotBonuses.set(p.id, p.bonuses ?? NO_SHOT_BONUS);
       if (p.id === this.#localId) {
         this.#localClassId = p.classId;
       }
@@ -3599,7 +3618,8 @@ export class GameClient {
     // La MEME fonction que `Room#fireOne` (`shared/firing.ts`), passifs
     // globaux (Volee, Ampleur) compris.
     const weapon = armedWeapon(loadout, weaponId);
-    const cooldown = fireCooldown(loadout, weaponId, this.accountBonuses.fireRate);
+    const bonus = this.#bonusesOf(playerId);
+    const cooldown = fireCooldown(loadout, weaponId, bonus.fireRate);
     let last = this.#lastFireTick.get(playerId);
     if (!last) {
       last = new Float64Array(WEAPONS.length).fill(Number.NEGATIVE_INFINITY);
@@ -3608,19 +3628,14 @@ export class GameClient {
     if (tick - (last[weaponId] ?? Number.NEGATIVE_INFINITY) < cooldown) {
       return;
     }
-    // ⚠️ Le PV max d'un ALLIE se derive ici avec les bonus de compte du joueur
-    // LOCAL, la meme approximation que `accountBonuses.damage`. Cosmetique.
+    // Les bonus de compte du TIREUR (`LOBBY`/`RESYNC`), pas ceux du joueur
+    // local : le meme chiffre sur tous les clients.
     //
     // ⚠️ **`maxHpOf`, pas une copie de la somme** : Colosse
     // (`shared/firing.ts`) echelonne ses degats sur ce `maxHp`, et
     // Transcendance le modifie. Une copie predirait des degats que le serveur
     // n'arbitre pas.
-    const damage = shotDamage(
-      weapon,
-      loadout,
-      this.accountBonuses.damage,
-      maxHpOf(loadout, this.accountBonuses.maxHp),
-    );
+    const damage = shotDamage(weapon, loadout, bonus.damage, maxHpOf(loadout, bonus.maxHp));
     // Meme fonctions (`armedWeapon`, `shotDamage`) que `Room#fireOne` : deux
     // formules divergeraient, et le joueur verrait une salve que le serveur
     // n'arbitre pas.

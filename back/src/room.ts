@@ -2117,6 +2117,7 @@ export class Room {
         id: p.id,
         classId: p.classId,
         absent: p.absent,
+        bonuses: p.accountBonuses,
         weapons: p.loadout.weaponIds.map((weaponId) => ({
           weaponId,
           upgrades: Array.from({ length: UPGRADE_KINDS }, (_, a) =>
