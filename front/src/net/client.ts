@@ -1426,12 +1426,6 @@ export class GameClient {
   readonly #classes = new Map<number, number>();
   /** Les joueurs en grace (etape 18), poses par `PRESENCE` et par le bit du `RESYNC`. */
   readonly #absent = new Set<number>();
-  /**
-   * L'entree d'historique du dernier snapshot, filtree A LA RECEPTION (vivants
-   * presents) : un `PRESENCE` qui arrive entre ce snapshot et le prochain pas
-   * ne doit pas retoucher un tick que le serveur a enregistre avec lui.
-   */
-  #lastPositions: { tick: number; x: number[]; y: number[]; ids: number[] } | null = null;
   /** Tampon du `RESYNC`, a la capacite de la horde, alloue une fois (meme fabrique que `HordeHistory`). */
   #resyncState: HordeState | null = null;
   /** Appele a chaque `RESYNC` recu : l'etat complet vient d'etre pose. */
@@ -2871,17 +2865,24 @@ export class GameClient {
     // Etape 16 : l'EVENT_STATE d'un changement de porteur est parti juste
     // avant CE snapshot (meme envoi) : il vaut a partir de msg.tick + 1.
     this.#dateCarrier(msg.tick, msg.players);
-    // Les vivants PRESENTS, comme `Room.step` (un mort n'est pas une cible, un
-    // absent non plus) : filtres ICI, au tick du snapshot, pas au prochain pas.
+    // Etape 17b : CHAQUE snapshot entre a l'historique, a son arrivee, sous le
+    // tick SERVEUR de ses positions — jamais le seul dernier de l'image : deux
+    // snapshots recus ensemble laisseraient un trou que `delayed()` comblerait
+    // par une autre ligne qu'au salon. Non gate par le gel : le salon
+    // enregistre aussi chaque tick gele (`Room#recordHistory`).
+    //
+    // Les vivants PRESENTS, comme `Room#recordHistory` (un mort n'est pas une
+    // cible, un absent non plus — etape 18), filtres a la reception : un
+    // `PRESENCE` recu apres ce snapshot ne retouche pas un tick que le salon a
+    // enregistre sans lui. Le meme ordre que le serveur, et les identifiants
+    // avec : un leurre retrouve son lanceur par son id (`shared/decoys.ts`).
     const presents = msg.players.filter((p) => p.hp > 0 && !this.#absent.has(p.id));
-    this.#lastPositions = {
-      tick: msg.tick,
-      x: presents.map((p) => p.x),
-      y: presents.map((p) => p.y),
-      // Le meme ordre que le serveur, et les identifiants avec : un leurre
-      // retrouve son lanceur par son id (`shared/decoys.ts`).
-      ids: presents.map((p) => p.id),
-    };
+    this.#history.record(
+      msg.tick,
+      presents.map((p) => p.x),
+      presents.map((p) => p.y),
+      presents.map((p) => p.id),
+    );
 
     // Donnees d'EQUIPE, dans l'en-tete du snapshot et pas dans un bloc
     // joueur : lues AVANT le `return` ci-dessous, meme quand `mine` est
@@ -3134,21 +3135,8 @@ export class GameClient {
     // file plutot qu'une application a la reception.
     this.#applyPendingOrders(tick, dt);
 
-    // Les positions telles que le client les connait : celles du dernier
-    // snapshot recu, enregistrees sous le tick SERVEUR auquel elles ont ete
-    // calculees, jamais sous le tick local `tick` : sinon `delayed()` ne
-    // lirait plus la meme chose des deux cotes.
-    //
-    // ⚠️ Non gate par le gel : le serveur continue d'emettre des snapshots
-    // pendant le gel ; le gater ouvrirait un trou dans l'anneau court de
-    // `PlayerHistory`.
+    // L'historique des joueurs s'enregistre a la reception (`#onFrame`).
     const snapshot = this.#buffer.latest();
-    const positions = this.#lastPositions;
-    if (positions) {
-      // Les vivants presents seuls, filtres a la reception (voir `#lastPositions`) :
-      // le serveur enregistre en fin de pas, avec les PV que ce snapshot porte.
-      this.#history.record(positions.tick, positions.x, positions.y, positions.ids);
-    }
 
     // Le rafraichissement du champ et le reciblage, eux, SONT gates par le
     // gel : le serveur ne les execute pas non plus pendant le gel (`Room.step`
@@ -4203,8 +4191,12 @@ export class GameClient {
     if (this.#pendingOrders.length === 0) {
       return;
     }
+    // Etape 17b : un ordre du FUTUR (un petit ne a `T + 1`, ou une horloge en
+    // retard sur le salon) reste en file jusqu'a son tick.
+    const all = this.#pendingOrders.splice(0);
+    this.#pendingOrders.push(...all.filter((o) => o.spawnTick > tick));
     // Tri stable : a tick egal, l'ordre d'arrivee, celui du salon.
-    const orders = this.#pendingOrders.splice(0).sort((a, b) => a.spawnTick - b.spawnTick);
+    const orders = all.filter((o) => o.spawnTick <= tick).sort((a, b) => a.spawnTick - b.spawnTick);
     const first = orders[0];
     if (!first) {
       return;

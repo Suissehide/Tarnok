@@ -6237,3 +6237,90 @@ describe('un choix d arme parti trop tard pour le lancement se voit au WELCOME',
     expect(client.lateChoice).toBeNull();
   });
 });
+
+describe('etape 17b : la synchro exacte, cote client', () => {
+  const JOUEURS = [0, 1, 2, 3].map((i) => ({
+    id: i,
+    x: 3000 + i * 200,
+    y: 3000,
+    hp: 100,
+    aimX: 0,
+    aimY: 0,
+    pickupRadius: ORB_PICKUP_RADIUS,
+    shield: 0,
+  }));
+
+  function ouvrir(welcomeTick: number): { client: GameClient; socket: FakeSocket } {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, welcomeTick, 0xd8a5_0017) });
+    return { client, socket };
+  }
+
+  function vague(waveId: number, spawnTick: number, count = 10): WaveOrder {
+    return {
+      waveId,
+      spawnTick,
+      seed: 0x51ee_d000 + waveId,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count,
+    };
+  }
+
+  /** Une image : le snapshot du tick que le client va simuler, puis ce pas. */
+  function image(client: GameClient, socket: FakeSocket, tick: number): void {
+    socket.emit('message', { data: encodeSnapshot(tick, 0, 0, JOUEURS) });
+    client.update(tick * STEP, STEP);
+  }
+
+  it('un ordre du futur reste en file jusqu a son tick (horloge du client en retard apres le WELCOME)', () => {
+    const { client, socket } = ouvrir(5000);
+    const spy = vi.spyOn(client.horde, 'spawnCatchingUp');
+    // Le salon a deja simule 5003 quand l'ordre arrive ; le client, rien.
+    socket.emit('message', { data: encodeWaveOrder(vague(1, 5003)) });
+    for (let t = 5000; t < 5003; t++) {
+      image(client, socket, t);
+      expect(client.horde.count).toBe(0);
+    }
+    image(client, socket, 5003);
+    expect(client.horde.count).toBe(10);
+    // Ne a son tick, sans pas rattrape.
+    expect(spy.mock.calls.map((c) => c[1])).toEqual([0]);
+  });
+
+  it.each([
+    false,
+    true,
+  ])('deux snapshots dans la meme image : chacun entre a l historique (gel : %s)', (gel) => {
+    const { client, socket } = ouvrir(0);
+    const aux = (t: number) => JOUEURS.map((p) => ({ ...p, x: 1000 + t * 10 + p.id * 500 }));
+    const retarget = vi.spyOn(client.horde, 'retarget');
+    let lu: number | undefined;
+    for (let t = 0; t <= 9; t++) {
+      // Les snapshots arrivent par deux : rien aux ticks pairs, `t − 1` et `t` aux impairs.
+      if (t % 2 === 1) {
+        socket.emit('message', { data: encodeSnapshot(t - 1, 0, 0, aux(t - 1)) });
+        socket.emit('message', { data: encodeSnapshot(t, 0, 0, aux(t)) });
+      }
+      // Gel de 3 a 8 inclus : le rafraichissement de 9 lit la ligne 6, un tick gele.
+      if (gel && t === 2) {
+        socket.emit('message', { data: encodeLevelUp(3, 2) });
+      }
+      if (gel && t === 8) {
+        socket.emit('message', { data: encodeDraftResult(8, []) });
+      }
+      retarget.mockClear();
+      client.update(t * STEP, STEP);
+      if (t === 9) {
+        lu = retarget.mock.calls[0]?.[0][0];
+      }
+    }
+    // Le tick pair 6 est arrive dans la meme image que 7 : sans lui, `delayed()`
+    // retomberait sur la ligne 5.
+    expect(lu).toBe(1000 + 6 * 10);
+  });
+});

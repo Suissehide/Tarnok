@@ -424,7 +424,8 @@ function latence(latency: number): void {
   expect(r.lost.size).toBe(0);
 }
 
-it.fails.each([0, 1, 2, 3])(LATENCE, latence);
+it.each([0])(LATENCE, latence);
+it.fails.each([1, 2, 3])(LATENCE, latence);
 
 it.fails('hoquet d une image sur les ticks qui emettent des petits — 0,000 px, 0 perte', () => {
   const opts: Options = {
