@@ -6,7 +6,14 @@ import { BASE_WEAPON_ID, startingWeapons, WEAPONS, weaponOf } from '@shared/weap
 import { describe, expect, it } from 'vitest';
 
 import indexHtml from '../../index.html?raw';
-import { type RoomElements, type RoomStep, renderClasses, renderRoom, renderWeapons } from './room';
+import {
+  playerName,
+  type RoomElements,
+  type RoomStep,
+  renderClasses,
+  renderRoom,
+  renderWeapons,
+} from './room';
 
 function cases(): RoomElements {
   return {
@@ -156,5 +163,67 @@ describe('le focus clavier survit au repeint de chaque LOBBY', () => {
     els.classes.querySelector<HTMLElement>('[data-classe="3"]')?.focus();
     renderRoom(els, lobby(2), 'classe', rien, rien);
     expect((document.activeElement as HTMLElement).dataset.classe).toBe('3');
+  });
+});
+
+describe('le pseudo dans la salle d attente', () => {
+  const nommes = (you: number) => ({
+    type: MSG.LOBBY,
+    you,
+    players: [
+      { playerId: 1, weaponId: NO_WEAPON, classId: 1, name: 'Léo' },
+      { playerId: 2, weaponId: arme, classId: 3, name: '' },
+    ],
+  });
+
+  it('playerName : le nom recu, ou « Joueur N » sans nom', () => {
+    expect(playerName({ playerId: 2, name: 'Zoé' })).toBe('Zoé');
+    expect(playerName({ playerId: 2, name: '' })).toBe('Joueur 2');
+    expect(playerName({ playerId: 2 })).toBe('Joueur 2');
+  });
+
+  it('ma carte porte un champ preempli, bornee a 16, qui envoie au change et a Entree', () => {
+    const els = cases();
+    const noms: string[] = [];
+    renderRoom(els, nommes(1), 'classe', rien, rien, (n) => noms.push(n));
+    const champ = els.players.querySelector<HTMLInputElement>('[data-local="true"] input');
+    expect(champ?.value).toBe('Léo');
+    expect(champ?.maxLength).toBe(16);
+    expect(champ?.getAttribute('aria-label')).toBeTruthy();
+    if (!champ) {
+      throw new Error('champ attendu');
+    }
+    champ.value = 'Zoé';
+    champ.dispatchEvent(new Event('change'));
+    champ.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter' }));
+    expect(noms).toEqual(['Zoé', 'Zoé']);
+    // L autre carte affiche le nom recu, ou « Joueur N ».
+    expect(els.players.querySelector('[data-player="2"] .room-player__name')?.textContent).toBe(
+      'Joueur 2',
+    );
+    renderRoom(els, nommes(2), 'classe', rien, rien);
+    expect(els.players.querySelector('[data-player="1"] .room-player__name')?.textContent).toBe(
+      'Léo',
+    );
+    expect(els.players.querySelectorAll('input')).toHaveLength(1);
+  });
+
+  it('le champ garde le focus et la frappe en cours au repeint du LOBBY suivant', () => {
+    const els = cases();
+    document.body.replaceChildren(els.players);
+    renderRoom(els, nommes(1), 'classe', rien, rien);
+    const champ = els.players.querySelector<HTMLInputElement>('input');
+    if (!champ) {
+      throw new Error('champ attendu');
+    }
+    champ.focus();
+    champ.value = 'Lé';
+    renderRoom(els, nommes(1), 'arme', rien, rien);
+    expect(document.activeElement).toBe(champ);
+    expect(champ.value).toBe('Lé');
+    // Sans focus, le nom nettoye par le serveur reprend le dessus.
+    champ.blur();
+    renderRoom(els, nommes(1), 'arme', rien, rien);
+    expect(champ.value).toBe('Léo');
   });
 });

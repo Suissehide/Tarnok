@@ -2050,6 +2050,7 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
         classId: id % 3,
         absent: id === 3,
         bonuses: { fireRate: id * 0.25, damage: id * 0.5, maxHp: id * 10 },
+        name: ['', 'Léo', 'Zoé 🐉', 'a'.repeat(16)][id - 1] as string,
         weapons: Array.from({ length: id }, (_, w) => ({
           weaponId: w + id,
           upgrades: aspects(w + id),
@@ -2099,6 +2100,7 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
           classId: 0,
           absent: false,
           bonuses: { fireRate: 0, damage: 0, maxHp: 0 },
+          name: '',
           weapons: [],
           passives: PASSIVES.map(() => 0),
         },
@@ -2128,6 +2130,8 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
     expect(MSG.RESYNC).toBe(31);
     expect(MSG.PRESENCE).toBe(32);
     expect(MSG.RESYNC_REQUEST).toBe(33);
+    expect(MSG.NAME).toBe(34);
+    expect(MSG.REPLAY).toBe(35);
     expect(new Set(Object.values(MSG)).size).toBe(Object.values(MSG).length);
   });
 
@@ -2162,6 +2166,16 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
     const buf = encodeResync(s);
     expect(buf.byteLength).toBe(TAILLE_VIDE);
     expect(decode(buf)).toEqual({ type: MSG.RESYNC, ...s });
+  });
+
+  it('le pseudo pese ses octets UTF-8 dans RESYNC, et revient tel quel', () => {
+    const s = vide();
+    s.players = [{ ...(s.players[0] as ResyncState['players'][number]), name: 'Léo' }];
+    expect(encodeResync(s).byteLength).toBe(TAILLE_VIDE + 4);
+    expect(decode(encodeResync(s))).toMatchObject({ players: [{ name: 'Léo' }] });
+    expect(() =>
+      decode(encodeResync(s).slice(0, RESYNC_HEADER_BYTES + RESYNC_PLAYER_BYTES + 2)),
+    ).toThrow(/tronqu/i);
   });
 
   it('N entites coutent base + N x RESYNC_ENTITY_BYTES', () => {

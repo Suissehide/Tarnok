@@ -6,7 +6,7 @@
  * Tout est en little-endian, l'ordre natif de x86 et d'ARM.
  */
 
-import { FIELD_INPUT_DELAY_TICKS, FLOWFIELD_HZ, TICK_HZ } from './constants';
+import { FIELD_INPUT_DELAY_TICKS, FLOWFIELD_HZ, NAME_MAX_CHARS, TICK_HZ } from './constants';
 import { EVENT_SOLO_FLAG } from './evenements';
 import { PASSIVES } from './passives';
 import type { BonusKind } from './shop';
@@ -47,6 +47,10 @@ export const MSG = {
   PRESENCE: 32,
   /** Client -> salon, 1 octet : « renvoie-moi l'etat complet » (onglet revenu). */
   RESYNC_REQUEST: 33,
+  /** Client -> salon : « voici mon pseudo » (`type u8 · len u8 · utf8[len]`). */
+  NAME: 34,
+  /** Client -> salon, 1 octet : apres `RUN_OVER`, remets le salon en salle d'attente. */
+  REPLAY: 35,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -378,7 +382,9 @@ export type Message =
   | EventEndMessage
   | ResyncMessage
   | PresenceMessage
-  | ResyncRequestMessage;
+  | ResyncRequestMessage
+  | NameMessage
+  | ReplayMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -1275,6 +1281,10 @@ export function decode(buf: ArrayBuffer): Message {
       return { type: MSG.START };
     case MSG.RESYNC_REQUEST:
       return { type: MSG.RESYNC_REQUEST };
+    case MSG.NAME:
+      return { type: MSG.NAME, name: readName(buf, 1)[0] };
+    case MSG.REPLAY:
+      return { type: MSG.REPLAY };
     case MSG.ABILITY:
       return decodeAbility(buf);
     case MSG.ABILITY_USED:
@@ -1593,6 +1603,76 @@ export interface LobbyEntry {
    * toujours present au decodage.
    */
   bonuses?: ShotBonuses;
+  /** Son pseudo (`NAME`), nettoye par le serveur ; `''` sans nom (le client dit « Joueur N »). Optionnel a l'encodage. */
+  name?: string;
+}
+
+/**
+ * Le pseudo sur le fil : `len u8 · utf8[len]`, `len` en OCTETS. Voyage dans
+ * `NAME`, `LOBBY` et `RESYNC`, jamais par tick : zero octet de plus par tick.
+ * `NAME_MAX_CHARS` (16) points de code font au plus 64 octets en UTF-8.
+ */
+export const NAME_MAX_BYTES = 64;
+
+const utf8 = new TextEncoder();
+const utf8Decoder = new TextDecoder();
+
+/**
+ * Ce que le serveur garde d'un pseudo : sans caracteres de controle, sans
+ * blancs aux bords, `NAME_MAX_CHARS` points de code au plus. Vide = pas de nom.
+ */
+export function cleanName(raw: string): string {
+  return [...raw.replace(/\p{Cc}/gu, '').trim()].slice(0, NAME_MAX_CHARS).join('').trimEnd();
+}
+
+function nameBytes(name = ''): Uint8Array {
+  const bytes = utf8.encode(name);
+  if (bytes.length > NAME_MAX_BYTES) {
+    throw new Error(`nom de ${bytes.length} octets, ${NAME_MAX_BYTES} au plus`);
+  }
+  return bytes;
+}
+
+/** Ecrit `len u8 · utf8[len]` a `o`, rend les octets ecrits. */
+function writeName(buf: ArrayBuffer, o: number, bytes: Uint8Array): number {
+  new DataView(buf).setUint8(o, bytes.length);
+  new Uint8Array(buf, o + 1, bytes.length).set(bytes);
+  return 1 + bytes.length;
+}
+
+/** Lit `len u8 · utf8[len]` a `o` ; leve si tronque ou au-dela de `NAME_MAX_BYTES`. */
+function readName(buf: ArrayBuffer, o: number): [name: string, bytes: number] {
+  const len = viewOf(buf, o + 1).getUint8(o);
+  if (len > NAME_MAX_BYTES) {
+    throw new Error(`nom de ${len} octets, ${NAME_MAX_BYTES} au plus`);
+  }
+  viewOf(buf, o + 1 + len);
+  return [utf8Decoder.decode(new Uint8Array(buf, o + 1, len)), 1 + len];
+}
+
+/** C -> S : mon pseudo. `type u8 · len u8 · utf8[len]`. */
+export interface NameMessage {
+  type: typeof MSG.NAME;
+  name: string;
+}
+
+export function encodeName(name: string): ArrayBuffer {
+  const bytes = nameBytes(name);
+  const buf = new ArrayBuffer(2 + bytes.length);
+  new DataView(buf).setUint8(0, MSG.NAME);
+  writeName(buf, 1, bytes);
+  return buf;
+}
+
+/** C -> S, 1 octet : rejouer ensemble (apres `RUN_OVER` seulement). */
+export interface ReplayMessage {
+  type: typeof MSG.REPLAY;
+}
+
+export function encodeReplay(): ArrayBuffer {
+  const buf = new ArrayBuffer(1);
+  new DataView(buf).setUint8(0, MSG.REPLAY);
+  return buf;
 }
 
 /**
@@ -1695,42 +1775,54 @@ export interface AbilityUsedMessage {
 
 /** `type u8 · you u8 · count u8`. */
 export const LOBBY_HEADER_BYTES = 3;
-/** Une entree : `playerId u8 · weaponId u8 · classId u8 · bonus (`SHOT_BONUS_BYTES`)`. */
-export const LOBBY_ENTRY_BYTES = 3 + SHOT_BONUS_BYTES;
+/**
+ * La part FIXE d'une entree : `playerId u8 · weaponId u8 · classId u8 · bonus
+ * (`SHOT_BONUS_BYTES`) · len u8`, suivie des `len` octets du pseudo. Les entrees
+ * sont donc de taille variable ; sans nom, une entree fait exactement ceci.
+ */
+export const LOBBY_ENTRY_BYTES = 3 + SHOT_BONUS_BYTES + 1;
 /** `type u8 · weaponId u8 · classId u8`. */
 export const PICK_BYTES = 3;
 
 export function encodeLobby(you: number, players: readonly LobbyEntry[]): ArrayBuffer {
-  const buf = new ArrayBuffer(LOBBY_HEADER_BYTES + players.length * LOBBY_ENTRY_BYTES);
+  const noms = players.map((p) => nameBytes(p.name));
+  const buf = new ArrayBuffer(
+    LOBBY_HEADER_BYTES +
+      players.length * LOBBY_ENTRY_BYTES +
+      noms.reduce((n, b) => n + b.length, 0),
+  );
   const v = new DataView(buf);
   v.setUint8(0, MSG.LOBBY);
   v.setUint8(1, you);
   v.setUint8(2, players.length);
   let o = LOBBY_HEADER_BYTES;
-  for (const p of players) {
+  players.forEach((p, i) => {
     v.setUint8(o, p.playerId);
     v.setUint8(o + 1, p.weaponId);
     v.setUint8(o + 2, p.classId);
     writeShotBonuses(v, o + 3, p.bonuses);
-    o += LOBBY_ENTRY_BYTES;
-  }
+    o += LOBBY_ENTRY_BYTES - 1 + writeName(buf, o + LOBBY_ENTRY_BYTES - 1, noms[i] as Uint8Array);
+  });
   return buf;
 }
 
 function decodeLobby(buf: ArrayBuffer): LobbyMessage {
   const v = viewOf(buf, LOBBY_HEADER_BYTES);
   const count = v.getUint8(2);
-  viewOf(buf, LOBBY_HEADER_BYTES + count * LOBBY_ENTRY_BYTES);
   const players: LobbyEntry[] = [];
   let o = LOBBY_HEADER_BYTES;
   for (let i = 0; i < count; i++) {
+    // Entrees de taille variable : chacune exige sa part fixe, puis son nom.
+    viewOf(buf, o + LOBBY_ENTRY_BYTES);
+    const [name, lu] = readName(buf, o + LOBBY_ENTRY_BYTES - 1);
     players.push({
       playerId: v.getUint8(o),
       weaponId: v.getUint8(o + 1),
       classId: v.getUint8(o + 2),
       bonuses: readShotBonuses(v, o + 3),
+      name,
     });
-    o += LOBBY_ENTRY_BYTES;
+    o += LOBBY_ENTRY_BYTES - 1 + lu;
   }
   return { type: MSG.LOBBY, you: v.getUint8(1), players };
 }
@@ -2040,8 +2132,12 @@ export const PRESENCE_BYTES = 3;
  * chestsOwed u8 · eventDraftsOwed u8 · flags u8 · playerCount u8`.
  */
 export const RESYNC_HEADER_BYTES = 19;
-/** `id u8 · classId u8 · flags u8 · nWeapons u8 · bonus (`SHOT_BONUS_BYTES`)`, puis les armes et les passifs. */
-export const RESYNC_PLAYER_BYTES = 4 + SHOT_BONUS_BYTES;
+/**
+ * La part FIXE d'un joueur : `id u8 · classId u8 · flags u8 · nWeapons u8 ·
+ * bonus (`SHOT_BONUS_BYTES`) · len u8`, puis les `len` octets du pseudo, puis
+ * les armes et les passifs.
+ */
+export const RESYNC_PLAYER_BYTES = 4 + SHOT_BONUS_BYTES + 1;
 /** `weaponId u8 · upgrades UPGRADE_KINDS x u8 · lastFireTick u32`. */
 export const RESYNC_WEAPON_BYTES = 1 + UPGRADE_KINDS + 4;
 /** `PASSIVES.length x u16` : les exemplaires de chaque passif, « sans plafond ». */
@@ -2112,6 +2208,8 @@ export interface ResyncPlayer {
   absent: boolean;
   /** Comme `LobbyEntry.bonuses` : le revenant n'a plus de `LOBBY`. */
   bonuses?: ShotBonuses;
+  /** Comme `LobbyEntry.name` : `''` sans nom. Optionnel a l'encodage. */
+  name?: string;
   /** Dans l'ordre des slots (`Loadout.weaponIds`). */
   weapons: ResyncWeapon[];
   /** `PASSIVES.length` entrees : `Loadout.stacksOf(id)`. */
@@ -2187,11 +2285,15 @@ const u8 = (v: number): number => Math.min(255, Math.max(0, Math.round(v)));
 const u16 = (v: number): number => Math.min(0xffff, Math.max(0, Math.round(v)));
 const i16 = (v: number): number => Math.min(32767, Math.max(-32768, Math.round(v)));
 
-function resyncBytes(s: ResyncState): number {
+function resyncBytes(s: ResyncState, noms: readonly Uint8Array[]): number {
   let n = RESYNC_HEADER_BYTES;
-  for (const p of s.players) {
-    n += RESYNC_PLAYER_BYTES + p.weapons.length * RESYNC_WEAPON_BYTES + RESYNC_PASSIVES_BYTES;
-  }
+  s.players.forEach((p, i) => {
+    n +=
+      RESYNC_PLAYER_BYTES +
+      (noms[i]?.length ?? 0) +
+      p.weapons.length * RESYNC_WEAPON_BYTES +
+      RESYNC_PASSIVES_BYTES;
+  });
   for (let i = 0; i < RESYNC_HISTORY_TICKS; i++) {
     n += 1 + (s.history[i]?.ids.length ?? 0) * RESYNC_HISTORY_ENTRY_BYTES;
   }
@@ -2222,7 +2324,8 @@ function resyncBytes(s: ResyncState): number {
  * etalage, portail) selon `flags`.
  */
 export function encodeResync(s: ResyncState): ArrayBuffer {
-  const buf = new ArrayBuffer(resyncBytes(s));
+  const noms = s.players.map((p) => nameBytes(p.name));
+  const buf = new ArrayBuffer(resyncBytes(s, noms));
   const v = new DataView(buf);
   const flags =
     (s.draft ? RESYNC_FLAG.DRAFT_OPEN : 0) |
@@ -2242,13 +2345,14 @@ export function encodeResync(s: ResyncState): ArrayBuffer {
   v.setUint8(18, s.players.length);
   let o = RESYNC_HEADER_BYTES;
 
-  for (const p of s.players) {
+  s.players.forEach((p, i) => {
     v.setUint8(o, p.id);
     v.setUint8(o + 1, p.classId);
     v.setUint8(o + 2, p.absent ? RESYNC_PLAYER_ABSENT : 0);
     v.setUint8(o + 3, p.weapons.length);
     writeShotBonuses(v, o + 4, p.bonuses);
-    o += RESYNC_PLAYER_BYTES;
+    o +=
+      RESYNC_PLAYER_BYTES - 1 + writeName(buf, o + RESYNC_PLAYER_BYTES - 1, noms[i] as Uint8Array);
     for (const w of p.weapons) {
       v.setUint8(o, w.weaponId);
       for (let a = 0; a < UPGRADE_KINDS; a++) {
@@ -2259,11 +2363,11 @@ export function encodeResync(s: ResyncState): ArrayBuffer {
       v.setUint32(o + 1 + UPGRADE_KINDS, w.lastFireTick > 0 ? w.lastFireTick >>> 0 : 0, true);
       o += RESYNC_WEAPON_BYTES;
     }
-    for (let i = 0; i < PASSIVES.length; i++) {
-      v.setUint16(o + i * 2, u16(p.passives[i] ?? 0), true);
+    for (let k = 0; k < PASSIVES.length; k++) {
+      v.setUint16(o + k * 2, u16(p.passives[k] ?? 0), true);
     }
     o += RESYNC_PASSIVES_BYTES;
-  }
+  });
 
   for (let i = 0; i < RESYNC_HISTORY_TICKS; i++) {
     const h = s.history[i];
@@ -2396,15 +2500,17 @@ export function decodeResync(buf: ArrayBuffer): ResyncMessage {
   for (let i = 0; i < playerCount; i++) {
     viewOf(buf, o + RESYNC_PLAYER_BYTES);
     const nWeapons = v.getUint8(o + 3);
+    const [name, lu] = readName(buf, o + RESYNC_PLAYER_BYTES - 1);
     const player: ResyncPlayer = {
       id: v.getUint8(o),
       classId: v.getUint8(o + 1),
       absent: (v.getUint8(o + 2) & RESYNC_PLAYER_ABSENT) !== 0,
       bonuses: readShotBonuses(v, o + 4),
+      name,
       weapons: [],
       passives: [],
     };
-    o += RESYNC_PLAYER_BYTES;
+    o += RESYNC_PLAYER_BYTES - 1 + lu;
     viewOf(buf, o + nWeapons * RESYNC_WEAPON_BYTES + RESYNC_PASSIVES_BYTES);
     for (let w = 0; w < nWeapons; w++) {
       const upgrades: number[] = [];

@@ -908,6 +908,20 @@
     line-height: 1.3;
   }
 
+  /* Mon pseudo : le meme rendu que le nom des autres, un trait dessous pour dire qu'il se tape. */
+  .room-player__name-input {
+    font-family: var(--font-meta);
+    font-size: 26px;
+    letter-spacing: 0;
+    text-align: left;
+    text-transform: none;
+    text-shadow: none;
+    padding: 0;
+    width: 100%;
+    border-bottom: 2px dotted currentColor;
+    outline-offset: 2px;
+  }
+
   .room-player__weapon {
     font-size: 22px;
     color: var(--color-ink-label);

@@ -1,9 +1,11 @@
 import type { AddressInfo } from 'node:net';
 import { VERB_IDS } from '@shared/abilities';
 import { CLASSES, classOf, DEFAULT_CLASS_ID } from '@shared/classes';
+import { NAME_MAX_CHARS } from '@shared/constants';
 import {
   decode,
   encodeHello,
+  encodeName,
   encodePick,
   encodeStart,
   type Message,
@@ -241,6 +243,45 @@ describe('les bonus de compte de chaque joueur voyagent dans LOBBY', () => {
       damage: BONUS_ZERO.damage,
       maxHp: BONUS_ZERO.maxHp,
     });
+  });
+});
+
+describe('le pseudo (NAME) dans LOBBY', () => {
+  async function deux(): Promise<{
+    salon: string;
+    hote: Awaited<ReturnType<typeof entre>>;
+    invite: Awaited<ReturnType<typeof entre>>;
+  }> {
+    const res = await app.inject({ method: 'POST', url: '/rooms' });
+    const salon = res.json<{ code: string }>().code;
+    const hote = await entre(salon);
+    await jusqua(() => dernierLobby(hote.recus));
+    const invite = await entre(salon);
+    await jusqua(() => (dernierLobby(hote.recus)?.players.length === 2 ? true : undefined));
+    return { salon, hote, invite };
+  }
+
+  it('un NAME se relit dans l entree LOBBY de son auteur, chez l autre joueur aussi', async () => {
+    const { hote, invite } = await deux();
+    invite.ws.send(encodeName('  Zoé '));
+    await jusqua(() => (dernierLobby(hote.recus).players[1]?.name === 'Zoé' ? true : undefined));
+    expect(dernierLobby(invite.recus).players.map((p) => p.name)).toEqual(['', 'Zoé']);
+  });
+
+  it('un nom trop long est tronque a NAME_MAX_CHARS, les controles retires', async () => {
+    const { hote, invite } = await deux();
+    invite.ws.send(encodeName(`\u0007${'é'.repeat(NAME_MAX_CHARS + 4)}`));
+    await jusqua(() => (dernierLobby(hote.recus).players[1]?.name ? true : undefined));
+    expect(dernierLobby(hote.recus).players[1]?.name).toBe('é'.repeat(NAME_MAX_CHARS));
+  });
+
+  it('un nom vide efface le pseudo : plus de nom dans LOBBY', async () => {
+    const { hote, invite } = await deux();
+    invite.ws.send(encodeName('Zoé'));
+    await jusqua(() => (dernierLobby(hote.recus).players[1]?.name === 'Zoé' ? true : undefined));
+    invite.ws.send(encodeName(' \t '));
+    await jusqua(() => (dernierLobby(hote.recus).players[1]?.name === '' ? true : undefined));
+    expect(dernierLobby(hote.recus).players[1]?.name).toBe('');
   });
 });
 

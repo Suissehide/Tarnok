@@ -98,6 +98,28 @@ export function savePick(
   }
 }
 
+const NAME_KEY = 'tarnok.name';
+
+/** Le pseudo garde dans le navigateur, `''` sans ; le serveur le nettoie encore. */
+export function loadName(storage: Pick<Storage, 'getItem'> | null = safeStorage()): string {
+  try {
+    return storage?.getItem(NAME_KEY) ?? '';
+  } catch {
+    return '';
+  }
+}
+
+export function saveName(
+  name: string,
+  storage: Pick<Storage, 'setItem'> | null = safeStorage(),
+): void {
+  try {
+    storage?.setItem(NAME_KEY, name);
+  } catch {
+    // Stockage refuse : le pseudo vaut pour ce salon seulement.
+  }
+}
+
 function safeStorage(): Storage | null {
   try {
     return window.localStorage;

@@ -57,6 +57,8 @@ export interface DraftSource {
   loadoutOf?(playerId: number): Loadout;
   /** La classe d'un joueur, pour son portrait sur le bandeau du gagnant. Optionnel : repli sur la premiere classe. */
   classOf?(playerId: number): number | undefined;
+  /** Le pseudo d'un joueur pour le bandeau du gagnant. Optionnel : repli sur « Joueur N ». */
+  nameOf?(playerId: number): string;
   placeToken(cardIndex: number): void;
 }
 
@@ -640,8 +642,7 @@ export class DraftScreen {
         const portrait = document.createElement('img');
         portrait.src = avatar(winner, source.classOf?.(winner) ?? 0);
         portrait.alt = '';
-        // Le protocole ne porte pas de nom de joueur : son numero, comme le jeton.
-        cell.winner.replaceChildren(portrait, `Joueur ${winner}`);
+        cell.winner.replaceChildren(portrait, source.nameOf?.(winner) ?? `Joueur ${winner}`);
       }
     });
 

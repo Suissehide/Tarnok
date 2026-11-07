@@ -125,7 +125,8 @@ Restent ouverts, de moindre importance : le bilan « Extraction réussie + 0 » 
 le vote « partir » tombent au même tick (`room.ts` `#checkRunOver` puis `#stepPortal`, rare) ;
 le seuil d'XP qui compte les morts (**assumé par Léo**, ne pas reproposer) ; un monstre devant un
 tronc dessiné derrière (`#horde` est un `ParticleContainer` entier sous `#depth`, non
-entrelaçable) ; le nouveau code de salon à chaque partie.
+entrelaçable). Le pseudo et « rejouer ensemble » sont l'étape 19
+(`2026-11-07-etape-19-pseudo-et-rejouer.md`).
 
 L'étalage à plusieurs a été retravaillé le même jour (`094c116`) : cadre à la couleur du joueur
 qui vise, carte soulevée, jeton qui rebondit, cadre qui vibre quand deux jetons se disputent une
@@ -177,9 +178,9 @@ Depuis une machine qui a les clés (`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, voir
 `tools/fetch-assets.sh`) :
 
 ```bash
+cp deploy/.env.example .env      # renseigner les MINIO_* (cle avec s3:PutObject)
 python3 tools/build_monster_atlas.py
-aws s3 cp assets/tinyswords/derived/monsters.png  s3://tiny-swords/derived/monsters.png  --endpoint-url https://s3.qwetle.fr
-aws s3 cp assets/tinyswords/derived/monsters.json s3://tiny-swords/derived/monsters.json --endpoint-url https://s3.qwetle.fr
+./tools/push-atlas.sh
 ```
 
 Le manifeste porte `"prescaled": true` : dès qu'il est en ligne, le renderer passe en `nearest`

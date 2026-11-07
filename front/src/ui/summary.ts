@@ -60,6 +60,8 @@ export function paintSummary(
   tone: ReturnType<typeof summaryTone>,
   localId: number | null,
   classId: number | null,
+  /** Mon pseudo (`GameClient.nameOf`) ; a defaut « Joueur N ». */
+  name: string | null = null,
 ): void {
   const info = formatSummary(result);
   el.root.classList.toggle('veil--defeat', !tone.victory);
@@ -70,7 +72,7 @@ export function paintSummary(
   // Defaite : portrait desature.
   el.portrait.style.filter = tone.victory ? '' : 'grayscale(0.7) brightness(0.8)';
   el.portrait.src = localId === null ? '' : avatar(localId, classId ?? 0);
-  el.name.textContent = localId === null ? '' : `Joueur ${localId}`;
+  el.name.textContent = localId === null ? '' : name || `Joueur ${localId}`;
   el.time.textContent = info.time;
   el.level.textContent = `${info.level}`;
   el.kills.textContent = formatGold(info.kills);

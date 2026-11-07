@@ -71,14 +71,17 @@ import { type Anchor, distanceToSegmentSquared, Projectiles } from '@shared/proj
 import {
   type AbilityUsedMessage,
   type BossChargeMessage,
+  cleanName,
   decode,
   type EventMessage,
   encodeAbility,
   encodeDraftToken,
   encodeHello,
   encodeInput,
+  encodeName,
   encodePick,
   encodePing,
+  encodeReplay,
   encodeResyncRequest,
   encodeStart,
   encodeVote,
@@ -2096,6 +2099,39 @@ export class GameClient {
   /** Appele a chaque `LOBBY` recu, jusqu'au lancement. */
   onLobby: (lobby: LobbyMessage) => void = () => undefined;
 
+  /** Les pseudos recus (`LOBBY`, `RESYNC`) ; absent = « Joueur N ». */
+  readonly #names = new Map<number, string>();
+  /** Mon pseudo, envoye juste apres le `HELLO` a chaque ouverture, et a chaque `rename`. */
+  #name = '';
+
+  /** Change mon pseudo (`NAME`). Avant l'ouverture, il part avec le `HELLO`. */
+  rename(name: string): void {
+    this.#name = cleanName(name);
+    if (this.#ws?.readyState === WebSocket.OPEN) {
+      this.#ws.send(encodeName(this.#name));
+    }
+  }
+
+  /** Le pseudo d'un joueur, ou « Joueur N » sans nom. */
+  nameOf(playerId: number): string {
+    return this.#names.get(playerId) || `Joueur ${playerId}`;
+  }
+
+  /** Apres `RUN_OVER` : « rejouer ensemble », le salon repasse en salle d'attente. */
+  replay(): void {
+    this.#ws?.send(encodeReplay());
+  }
+
+  #setNames(players: readonly { id: number; name?: string }[]): void {
+    for (const p of players) {
+      if (p.name) {
+        this.#names.set(p.id, p.name);
+      } else {
+        this.#names.delete(p.id);
+      }
+    }
+  }
+
   /**
    * Salle d'attente : choisit l'arme de depart (`NO_WEAPON` : la dague) et la
    * classe. **Les deux ensemble**, puisque `PICK` porte les deux : l'ecran
@@ -2441,6 +2477,9 @@ export class GameClient {
       if (this.accountToken) {
         ws.send(encodeHello(this.accountToken));
       }
+      if (this.#name) {
+        ws.send(encodeName(this.#name));
+      }
       this.#setStatus('open');
       // Cadence d'envoi, pas cadence de simulation : un peu de gigue ici n'a
       // aucune consequence, le serveur horodate par son propre tick.
@@ -2659,6 +2698,7 @@ export class GameClient {
     }
     if (msg.type === MSG.LOBBY) {
       this.#lobby = msg;
+      this.#setNames(msg.players.map((p) => ({ id: p.playerId, name: p.name })));
       this.onLobby(msg);
       return;
     }
@@ -3002,6 +3042,7 @@ export class GameClient {
       this.#lastFireTick.set(p.id, last);
       this.#classes.set(p.id, p.classId);
       this.#shotBonuses.set(p.id, p.bonuses ?? NO_SHOT_BONUS);
+      this.#setNames([p]);
       if (p.id === this.#localId) {
         this.#localClassId = p.classId;
       }

@@ -1,5 +1,5 @@
 import { CLASSES, classOf, DEFAULT_CLASS_ID, type TraitKind, type VerbKind } from '@shared/classes';
-import { MAX_PLAYERS } from '@shared/constants';
+import { MAX_PLAYERS, NAME_MAX_CHARS } from '@shared/constants';
 import { ELEMENT, ELEMENTS } from '@shared/elements';
 import { type LobbyMessage, NO_WEAPON } from '@shared/protocol';
 import { BASE_WEAPON_ID, startingWeapons, weaponOf } from '@shared/weapons';
@@ -66,6 +66,10 @@ export function keepFocus(root: HTMLElement, attr: string, paint: () => void): v
     root.querySelector<HTMLElement>(`button[${attr}="${key}"], [${attr}="${key}"] button`)?.focus();
   }
 }
+
+/** Le pseudo d'une entree, ou « Joueur N » sans nom (le protocole le porte vide). */
+export const playerName = (p: { playerId: number; name?: string }): string =>
+  p.name || `Joueur ${p.playerId}`;
 
 /**
  * Etape 1 : les quatre classes, leur verbe et leur trait.
@@ -174,6 +178,10 @@ export function renderWeapons(
  * L'hote est le premier de la liste (le serveur la trie par slot) : seul lui
  * voit « Lancer » actif. Chaque choix renvoie le couple complet (arme,
  * classe), puisque `PICK` porte les deux.
+ *
+ * Ma carte porte un champ pour mon pseudo (`onRename` au `change` et a
+ * Entree). Le champ est REUTILISE d'un repeint a l'autre : chaque `LOBBY`
+ * repeint tout, et un champ neuf perdrait ce qui est en train d'etre tape.
  */
 export function renderRoom(
   els: RoomElements,
@@ -181,16 +189,21 @@ export function renderRoom(
   step: RoomStep,
   onPick: (weaponId: number, classId: number) => void,
   onStep: (step: RoomStep) => void,
+  onRename: (name: string) => void = () => undefined,
 ): void {
   const hoteId = lobby.players[0]?.playerId;
   const moi = lobby.players.find((p) => p.playerId === lobby.you);
   const monArme = moi?.weaponId ?? NO_WEAPON;
   const maClasse = moi?.classId ?? DEFAULT_CLASS_ID;
+  const champ = els.players.querySelector<HTMLInputElement>('input') ?? nameInput(onRename);
+  // Deplacer le champ dans sa carte neuve lui fait perdre le focus : on le rend apres.
+  const typing = document.activeElement === champ;
 
   const cards: HTMLElement[] = lobby.players.map((p) => {
     const card = document.createElement('li');
     card.className = 'k k-banner room-player';
     card.dataset.local = p.playerId === lobby.you ? 'true' : 'false';
+    card.dataset.player = `${p.playerId}`;
 
     const portrait = document.createElement('div');
     portrait.className = 'k k-paperx room-player__portrait';
@@ -202,9 +215,18 @@ export function renderRoom(
 
     const body = document.createElement('div');
     body.className = 'flex flex-col';
-    const name = document.createElement('span');
-    name.className = 'room-player__name ol';
-    name.textContent = `Joueur ${p.playerId}${p.playerId === lobby.you ? ' (vous)' : ''}`;
+    let name: HTMLElement;
+    if (p.playerId === lobby.you) {
+      name = champ;
+      // Le serveur a nettoye le nom : on le reflete, sauf pendant la frappe.
+      if (!typing) {
+        champ.value = p.name ?? '';
+      }
+    } else {
+      name = document.createElement('span');
+      name.className = 'room-player__name ol';
+      name.textContent = playerName(p);
+    }
     // Le nom porte la couleur du joueur, comme ses jetons de draft.
     name.style.color = playerColor(p.playerId);
     const classe = document.createElement('span');
@@ -231,6 +253,9 @@ export function renderRoom(
     cards.push(empty);
   }
   els.players.replaceChildren(...cards);
+  if (typing) {
+    champ.focus();
+  }
 
   // Les deux etapes : un onglet chacune, l'etape courante seule visible.
   els.stepClass.setAttribute('aria-pressed', step === 'classe' ? 'true' : 'false');
@@ -254,4 +279,23 @@ export function renderRoom(
   els.hint.textContent = hote
     ? 'Choisissez votre classe, puis votre arme, et lancez quand tout le monde est là.'
     : 'Choisissez votre classe, puis votre arme. L’hôte lance la partie.';
+}
+
+/** Le champ du pseudo : `NAME_MAX_CHARS` au plus, envoye au `change` et a Entree. */
+function nameInput(onRename: (name: string) => void): HTMLInputElement {
+  const input = document.createElement('input');
+  input.className = 'ui-input room-player__name room-player__name-input';
+  input.maxLength = NAME_MAX_CHARS;
+  input.placeholder = 'Votre pseudo';
+  input.autocomplete = 'off';
+  input.spellcheck = false;
+  input.setAttribute('aria-label', 'Votre pseudo');
+  input.addEventListener('change', () => onRename(input.value));
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      onRename(input.value);
+    }
+  });
+  return input;
 }

@@ -13,8 +13,10 @@ import {
   forgetRejoin,
   REJOIN_RETRY_MS,
   readRejoin,
+  readReplay,
   rememberRejoin,
   shouldRejoin,
+  writeReplay,
 } from './net/rejoin';
 import { composeFrame } from './render/frame';
 import { livePings } from './render/ping-renderer';
@@ -53,7 +55,7 @@ import { Minimap, minimapEnemies, minimapPorteur } from './ui/minimap';
 import { wireOptions } from './ui/options';
 import { formatGold, PortalScreen, portalKeyChoice } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
-import { loadPick, loadSettings, savePick, saveSettings } from './ui/settings';
+import { loadName, loadPick, loadSettings, saveName, savePick, saveSettings } from './ui/settings';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
 import { applySkin } from './ui/skin';
 import { paintSummary, type SummaryElements, summaryTone } from './ui/summary';
@@ -396,8 +398,14 @@ const rejoinCode = readRejoin(window.sessionStorage, Date.now());
 if (rejoinCode) {
   join(rejoinCode, true);
 }
+// « Rejouer ensemble » : la page s'est rechargee sur le LOBBY du rejeu, on
+// retombe dans la salle d'attente du meme salon (voir `net/rejoin.ts`).
+const replayCode = readReplay(window.sessionStorage);
+if (replayCode && !rejoinCode) {
+  join(replayCode, false, true);
+}
 
-function join(code: string, rejoining = false): void {
+function join(code: string, rejoining = false, replaying = false): void {
   if (!/^[A-Z]{4}$/.test(code)) {
     errorLine.textContent = 'Un code de salon fait quatre lettres.';
     return;
@@ -559,6 +567,7 @@ function join(code: string, rejoining = false): void {
         summaryTone(client.portalDecision, client.portalGold, client.gold),
         client.localId,
         client.localClassId,
+        client.localId === null ? null : client.nameOf(client.localId),
       );
     },
     () => (paused ? { x: 0, y: 0 } : aimHeld()),
@@ -638,12 +647,28 @@ function join(code: string, rejoining = false): void {
           roomStep = step;
           paintRoom();
         },
+        (name) => {
+          saveName(name);
+          client.rename(name);
+        },
       );
     }
   };
+  // Le pseudo garde : `rename` avant `connect()` le fait partir juste apres le HELLO.
+  client.rename(loadName());
   client.onLobby = (state) => {
-    // Premier LOBBY de la page (quitter recharge) : on rejoue le dernier choix garde.
-    const saved = lastLobby === null ? loadPick() : null;
+    // Un LOBBY sur le bilan : le salon rejoue. La page se recharge pour
+    // repartir propre, avec le code pour rejoindre (`net/rejoin.ts`).
+    if (!summary.classList.contains('hidden')) {
+      quitting = true;
+      writeReplay(window.sessionStorage, code);
+      client.disconnect();
+      window.location.reload();
+      return;
+    }
+    // Premier LOBBY de la page (quitter recharge) : on rejoue le dernier choix
+    // garde — sauf au rejeu, ou le serveur vient de reposer le dernier choix.
+    const saved = lastLobby === null && !replaying ? loadPick() : null;
     if (saved) {
       client.pick(saved.weaponId, saved.classId);
     }
@@ -905,6 +930,7 @@ function join(code: string, rejoining = false): void {
   stage.run(renderFrame);
 
   el<HTMLButtonElement>('summary-restart').addEventListener('click', leave);
+  el<HTMLButtonElement>('summary-replay').addEventListener('click', () => client.replay());
 
   // Poignee de debogage, en developpement seulement. Le ticker Pixi passe par
   // `requestAnimationFrame`, suspendu dans un onglet en arriere-plan : une
