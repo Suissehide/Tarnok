@@ -209,6 +209,7 @@ class FakeSource implements HudSource {
   draftIsEvent = false;
   eventBanner: string | null = null;
   event: EventView | null = null;
+  draftCards: readonly unknown[] = [];
   readonly loadouts = new Map<number, Loadout>();
 
   loadoutOf(playerId: number): Loadout {
@@ -613,5 +614,23 @@ describe('etape 14 : l evenement au HUD', () => {
     expect(el.evenement?.textContent).toBe("La forge s'allume !");
     expect(el.evenementEtat?.classList.contains('hidden')).toBe(false);
     expect(el.evenementEtat?.textContent).toBe('La forge — 62 % — 0:41');
+  });
+
+  it('les bandeaux se taisent pendant un etalage, et reviennent apres', () => {
+    const el = hudElements();
+    const source = new FakeSource();
+    source.porteurBannerOn = true;
+    source.eventBanner = "La forge s'allume !";
+    source.event = forge;
+    source.draftCards = [{}];
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.porteur?.classList.contains('hidden')).toBe(true);
+    expect(el.evenement?.classList.contains('hidden')).toBe(true);
+    expect(el.evenementEtat?.classList.contains('hidden')).toBe(true);
+    source.draftCards = [];
+    paintHud(el, INFO, 0, 0, source);
+    expect(el.porteur?.classList.contains('hidden')).toBe(false);
+    expect(el.evenement?.classList.contains('hidden')).toBe(false);
+    expect(el.evenementEtat?.classList.contains('hidden')).toBe(false);
   });
 });

@@ -89,6 +89,8 @@ export interface HudSource {
   readonly eventBanner?: string | null;
   /** L'evenement en cours (etape 14), ou `null`. Absent : rien. */
   readonly event?: EventView | null;
+  /** Les cartes de l'etalage en cours : non vide, les bandeaux se taisent. Absent : vide. */
+  readonly draftCards?: readonly unknown[];
   loadoutOf(playerId: number): Loadout;
 }
 
@@ -301,16 +303,19 @@ export function paintHud(
       : source.draftIsEvent
         ? 'Événement — pause…'
         : 'Niveau supérieur — pause…';
-  el.porteur?.classList.toggle('hidden', source.porteurBannerOn !== true);
+  // Pendant un etalage, les bandeaux se taisent : le voile (0,15) les
+  // laisserait lire entre les cartes.
+  const etalage = (source.draftCards?.length ?? 0) > 0;
+  el.porteur?.classList.toggle('hidden', etalage || source.porteurBannerOn !== true);
   // Etape 14 : le bandeau passager, puis l'etat tant qu'un evenement court.
   const banniere = source.eventBanner ?? null;
   if (el.evenement) {
-    el.evenement.classList.toggle('hidden', banniere === null);
+    el.evenement.classList.toggle('hidden', etalage || banniere === null);
     el.evenement.textContent = banniere ?? '';
   }
   const ev = source.event ?? null;
   if (el.evenementEtat) {
-    el.evenementEtat.classList.toggle('hidden', ev === null);
+    el.evenementEtat.classList.toggle('hidden', etalage || ev === null);
     el.evenementEtat.textContent = ev ? eventStatusText(ev) : '';
   }
 }
