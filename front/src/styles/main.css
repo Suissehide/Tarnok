@@ -28,6 +28,8 @@
   --color-off-text: #e8dcc0;
   --font-meta: "Metamorphous", serif;
   --font-jer: "Jersey 15", sans-serif;
+  /* Jersey 15 est une police pixel : ses tailles sont des multiples de 15
+     (30, 45, 60, 90) partout ou la place le permet, sauf les petits jetons. */
   --font-ale: "Alegreya Sans", sans-serif;
   --font-mono: "Space Mono", monospace;
 }
@@ -809,7 +811,7 @@
 
   .stat-row b {
     font-family: var(--font-jer);
-    font-size: 38px;
+    font-size: 45px;
     font-weight: normal;
     color: var(--color-ink);
   }
@@ -821,7 +823,7 @@
     /* Le focus clavier de la couche `base` reste visible, dans le cadre. */
     outline-offset: -8px;
     font-family: var(--font-jer);
-    font-size: 46px;
+    font-size: 45px;
     letter-spacing: 0.3em;
     text-align: center;
     text-transform: uppercase;
@@ -861,7 +863,7 @@
 
   .shop-card__level {
     font-family: var(--font-jer);
-    font-size: 34px;
+    font-size: 30px;
     color: var(--color-ink);
   }
 
@@ -1182,7 +1184,7 @@
 
   .draft-card__stacks {
     font-family: var(--font-jer);
-    font-size: 28px;
+    font-size: 30px;
     color: var(--color-ink);
   }
 
@@ -1346,7 +1348,7 @@
   .draft-card__rarity {
     min-height: 1em;
     font-family: var(--font-jer);
-    font-size: 26px;
+    font-size: 30px;
     letter-spacing: 2px;
     text-transform: uppercase;
   }
