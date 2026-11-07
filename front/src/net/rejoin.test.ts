@@ -6,9 +6,12 @@ import {
   DEFINITIVE_CLOSE_CODES,
   forgetRejoin,
   REJOIN_KEY,
+  REPLAY_KEY,
   readRejoin,
+  readReplay,
   rememberRejoin,
   shouldRejoin,
+  writeReplay,
 } from './rejoin';
 
 function memoire(): Pick<Storage, 'getItem' | 'setItem' | 'removeItem'> & {
@@ -97,5 +100,23 @@ describe('etape 18 : le mot dans le stockage', () => {
     expect(() => rememberRejoin(s, 'ABCD', 0)).not.toThrow();
     expect(readRejoin(s, 0)).toBeNull();
     expect(() => forgetRejoin(s)).not.toThrow();
+  });
+});
+
+describe('rejouer ensemble : le mot dans le stockage', () => {
+  it('rend le code une fois, puis plus rien', () => {
+    const s = memoire();
+    expect(readReplay(s)).toBeNull();
+    writeReplay(s, 'ABCD');
+    expect(s.data.get(REPLAY_KEY)).toBe('ABCD');
+    expect(readReplay(s)).toBe('ABCD');
+    expect(readReplay(s)).toBeNull();
+    expect(s.data.has(REPLAY_KEY)).toBe(false);
+  });
+
+  it('un stockage qui leve ne casse rien', () => {
+    const s = casse();
+    expect(() => writeReplay(s, 'ABCD')).not.toThrow();
+    expect(readReplay(s)).toBeNull();
   });
 });

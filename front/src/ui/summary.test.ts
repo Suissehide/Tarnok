@@ -1,7 +1,9 @@
+// @vitest-environment jsdom
 import { WIPE_GOLD_KEPT } from '@shared/constants';
 import { VOTE_CHOICE } from '@shared/protocol';
 import { describe, expect, it } from 'vitest';
 
+import indexHtml from '../../index.html?raw';
 import { summaryTone } from './summary';
 
 describe('summaryTone : deux fins, un ecran', () => {
@@ -29,5 +31,15 @@ describe('summaryTone : deux fins, un ecran', () => {
       goldLabel: 'Or perdu',
       gold: perdu,
     });
+  });
+});
+
+describe('le cablage du bilan vers index.html', () => {
+  it('trouve les deux boutons que main.ts branche : menu principal et rejouer ensemble', () => {
+    document.body.innerHTML = indexHtml;
+    for (const id of ['summary-restart', 'summary-replay', 'summary-name']) {
+      expect(document.getElementById(id), id).not.toBeNull();
+    }
+    expect(document.getElementById('summary-replay')?.textContent?.trim()).toBe('Rejouer ensemble');
   });
 });

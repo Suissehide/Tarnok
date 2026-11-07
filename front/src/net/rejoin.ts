@@ -80,3 +80,30 @@ export function forgetRejoin(storage: RejoinStorage): void {
     // Idem : un stockage qui leve n'empeche pas de quitter.
   }
 }
+
+/**
+ * « Rejouer ensemble » : au `LOBBY` recu sur le bilan, la page se recharge
+ * (un client et une scene neufs, comme la reprise) avec le code du salon ;
+ * `main.ts` le lit, l'efface et rejoint. Pas de fenetre : le serveur tient le
+ * salon `REPLAY_HOLD_MS`, et un salon ferme repond `UNKNOWN_ROOM` comme a la main.
+ */
+export const REPLAY_KEY = 'tarnok.replay';
+
+export function writeReplay(storage: RejoinStorage, code: string): void {
+  try {
+    storage.setItem(REPLAY_KEY, code);
+  } catch {
+    // Sans mot, le joueur retape le code : le serveur garde son slot.
+  }
+}
+
+/** Le code a rejoindre, et le mot est efface ; `null` sans mot. */
+export function readReplay(storage: RejoinStorage): string | null {
+  try {
+    const code = storage.getItem(REPLAY_KEY);
+    storage.removeItem(REPLAY_KEY);
+    return code || null;
+  } catch {
+    return null;
+  }
+}
