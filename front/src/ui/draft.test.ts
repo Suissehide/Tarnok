@@ -51,6 +51,8 @@ class FakeClient implements DraftSource {
   draftIsEvent?: boolean;
   /** Absent par defaut, comme chez les doubles qui n'ont pas de miroir d'inventaire. */
   loadoutOf?(playerId: number): Loadout;
+  /** Idem : sans pseudo, le bandeau dit « Joueur N ». */
+  nameOf?(playerId: number): string;
   /** Ce qui est parti sur le fil — c'est la seule chose que l'ecran envoie. */
   readonly sent: number[] = [];
 
@@ -706,6 +708,13 @@ describe('DraftScreen — la revelation (§4.2)', () => {
     expect(bandeau?.querySelector('img')?.getAttribute('src')).toContain('Avatars_');
     // Une carte que personne n'a prise n'a pas de bandeau.
     expect(cards(h)[0]?.querySelector('.draft-card__winner')?.textContent).toBe('');
+  });
+
+  it('le bandeau du gagnant porte son pseudo quand la source en a un', () => {
+    h.client.nameOf = (id) => (id === 3 ? 'Zoé' : `Joueur ${id}`);
+    h.client.result([{ playerId: 3, cardIndex: 1, outcome: OUTCOME.WON }]);
+    h.screen.update();
+    expect(cards(h)[1]?.querySelector('.draft-card__winner')?.textContent).toBe('Zoé');
   });
 
   it('ma carte perdue porte l etat lost ET le gagnant qui me l a prise', () => {

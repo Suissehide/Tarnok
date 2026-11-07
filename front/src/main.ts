@@ -53,7 +53,7 @@ import { Minimap, minimapEnemies, minimapPorteur } from './ui/minimap';
 import { wireOptions } from './ui/options';
 import { formatGold, PortalScreen, portalKeyChoice } from './ui/portal';
 import { type RoomStep, renderRoom } from './ui/room';
-import { loadPick, loadSettings, savePick, saveSettings } from './ui/settings';
+import { loadName, loadPick, loadSettings, saveName, savePick, saveSettings } from './ui/settings';
 import { type EtatBoutique, messageAchat, renderShop } from './ui/shop';
 import { applySkin } from './ui/skin';
 import { paintSummary, type SummaryElements, summaryTone } from './ui/summary';
@@ -559,6 +559,7 @@ function join(code: string, rejoining = false): void {
         summaryTone(client.portalDecision, client.portalGold, client.gold),
         client.localId,
         client.localClassId,
+        client.localId === null ? null : client.nameOf(client.localId),
       );
     },
     () => (paused ? { x: 0, y: 0 } : aimHeld()),
@@ -638,9 +639,15 @@ function join(code: string, rejoining = false): void {
           roomStep = step;
           paintRoom();
         },
+        (name) => {
+          saveName(name);
+          client.rename(name);
+        },
       );
     }
   };
+  // Le pseudo garde : `rename` avant `connect()` le fait partir juste apres le HELLO.
+  client.rename(loadName());
   client.onLobby = (state) => {
     // Premier LOBBY de la page (quitter recharge) : on rejoue le dernier choix garde.
     const saved = lastLobby === null ? loadPick() : null;
