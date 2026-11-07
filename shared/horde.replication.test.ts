@@ -424,11 +424,16 @@ describe("le livrable de l'etape 2", () => {
   });
 
   it('reproduit la configuration reelle : un serveur et quatre clients, chacun dans son propre ordre de tick', () => {
-    // Les deux tests precedents ne valident chacun qu'un seul ordre. La partie
-    // reelle confronte UN serveur qui suit `Room.step`
-    // (enregistrement -> rafraichissement -> spawn simple -> avancement) a
-    // QUATRE clients qui suivent `GameClient#advanceHorde`
+    // Les deux tests precedents ne valident chacun qu'un seul ordre. Celui-ci
+    // confronte UN serveur (enregistrement -> rafraichissement -> spawn simple
+    // -> avancement) a QUATRE clients qui rattrapent en tete de tick
     // (rattrapage -> enregistrement -> rafraichissement -> avancement).
+    // ⚠️ Ce sont les sequences d'AVANT l'etape 17b, gardees comme garde-fou de
+    // compatibilite des deux physiques. Depuis l'etape 17b, `Room#step` fait
+    // naitre les ordres du tick AVANT le rafraichissement et enregistre en fin
+    // de pas ; le client fait naitre chaque ordre a son tick
+    // (`GameClient#applyPendingOrders`) et rejoue les retards depuis l'anneau
+    // (`GameClient#replayLate`), sans rattrapage approche.
     const mapSeed = 0x5eed_1a7e;
     const parts = Array.from({ length: PARTICIPANTS }, () => makeParticipant(mapSeed));
     const reference = parts[0];
@@ -463,7 +468,7 @@ describe("le livrable de l'etape 2", () => {
 
       parts.forEach((p, i) => {
         if (i === 0) {
-          // Sequence du serveur (`Room.step`) : enregistrement,
+          // Sequence serveur d'avant l'etape 17b : enregistrement,
           // rafraichissement periodique, puis apparition simple — le serveur
           // n'est jamais en retard sur son propre tick, donc pas de
           // rattrapage a faire.
@@ -491,8 +496,8 @@ describe("le livrable de l'etape 2", () => {
           return;
         }
 
-        // Sequence du client (`GameClient#advanceHorde`) : les
-        // ordres en attente s'appliquent EN TETE de tick, avant tout
+        // Sequence client d'avant l'etape 17b : les ordres en attente
+        // s'appliquent EN TETE de tick, rattrapage compris, avant tout
         // enregistrement et tout rafraichissement du champ.
         const delay = SPAWN_DELAY[i] ?? 0;
         if (tick === SPAWN_TICK + delay) {

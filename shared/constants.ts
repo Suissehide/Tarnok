@@ -6,6 +6,10 @@ export const TICK_HZ = 30;
  * 60 ms contienne plus d'un intervalle : a 20 Hz il n'en contenait que 1,2, et
  * la moindre gigue le vidait. La bande passante le permet (moins d'1 ko/s par
  * joueur).
+ *
+ * Etape 17b : plus lu par le serveur, qui diffuse une fois par `Room#step`
+ * (boucle de `back/src/server.ts`). DOIT donc valoir `TICK_HZ` ; garde pour
+ * les tests et les estimations.
  */
 export const SNAPSHOT_HZ = 30;
 

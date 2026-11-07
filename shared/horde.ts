@@ -984,10 +984,15 @@ export class Horde {
    * ⚠️ **Ordre d'appel.** `fields` doit etre le champ d'AVANT le
    * rafraichissement periodique du tick courant : un champ deja rafraichi est
    * une entree que le serveur n'a vue qu'au tick suivant, et la derive repasse
-   * dans les centaines de pixels. Concretement : appeler a la reception du
-   * `WAVE_ORDER` (`#onFrame`), *avant* `#advanceHorde`.
+   * dans les centaines de pixels.
    *
-   * `missedTicks` vaut `tickCourant - order.spawnTick`, borne a zero.
+   * Etape 17b, cote client : surtout `missedTicks = 0`, une naissance a son
+   * tick exact, en tete de pas avant le rafraichissement
+   * (`GameClient#applyPendingOrders`) ou dans le rejeu (`GameClient#replayTick`).
+   * Le vrai rattrapage ne sert plus qu'au chemin degrade d'un ordre trop
+   * vieux pour l'anneau (`GameClient#replayLate`), APRES le pas du tick
+   * courant : `missedTicks = tick + 1 - order.spawnTick`, compte dans
+   * `lateOrders`.
    *
    * ⚠️ Leve si un champ a ete rafraichi entre le dernier `step` et cet appel :
    * l'erreur d'ordre ci-dessus devient un echec net plutot qu'une derive

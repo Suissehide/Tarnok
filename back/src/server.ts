@@ -134,7 +134,7 @@ class Session {
     this.#timer = setInterval(() => {
       const now = performance.now();
       const steps = sim.advance(now);
-      // Les accumulateurs avancent quand meme en salle d'attente : sans ca, le
+      // L'accumulateur avance quand meme en salle d'attente : sans ca, le
       // lancement rattraperait d'un coup tout le temps passe a attendre.
       if (!this.#started) {
         return;

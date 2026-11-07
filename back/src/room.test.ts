@@ -7115,10 +7115,17 @@ describe('etape 17b : la synchro exacte, cote salon', () => {
       spawn.mockClear();
       retarget.mockClear();
       room.step(DT);
-      if (room.drainWaveOrders().length > 0 && retarget.mock.calls.length > 0) {
+      // Les ordres DE ce tick seuls : des petits du meme pas (`spawnTick =
+      // tick + 1`) naissent apres le reciblage, a bon droit.
+      const duTick = room.drainWaveOrders().some((o) => o.spawnTick === room.tick);
+      if (duTick && retarget.mock.calls.length > 0) {
         vu = true;
-        // Toutes les naissances du pas precedent le reciblage du pas.
-        const derniereNaissance = Math.max(...spawn.mock.invocationCallOrder);
+        // Toutes les naissances du tick precedent le reciblage du pas.
+        const derniereNaissance = Math.max(
+          ...spawn.mock.calls.flatMap(([o], i) =>
+            o.spawnTick === room.tick ? [spawn.mock.invocationCallOrder[i] ?? 0] : [],
+          ),
+        );
         expect(derniereNaissance).toBeLessThan(retarget.mock.invocationCallOrder[0] ?? 0);
       }
     }
