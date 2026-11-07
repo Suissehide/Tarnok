@@ -229,10 +229,13 @@ interface Options {
  * salon avait a la fin de ce tick, entite par entite.
  *
  * Une entite que le salon porte deja mais dont l'ordre est date du tick
- * SUIVANT (les petits, `spawnTick = T + 1`, inseres a la fin de `T`) n'est
- * pas encore nee pour le client : elle ne compte pas comme manquante — SAUF
- * si le client la tient deja (fix 1, point 3) : une naissance en avance est
- * alors en trop.
+ * SUIVANT (les petits, `spawnTick = T + 1`, inseres a la fin de `T`,
+ * `#afterDeaths`/`#spawnAt`, back/src/room.ts ~l.2842-2884) n'est pas encore
+ * nee pour le client : elle ne compte pas comme manquante tant que le client
+ * ne la tient pas encore. Si le client la tient DEJA (fix 1 point 3, corrige
+ * au round 2 : a latence nulle, le client peut suivre exactement le meme
+ * "insere en fin de T" que le salon), les deux cotes sont d'accord : c'est
+ * une naissance ordinaire, comptee et mesuree comme les autres.
  */
 function banc(opts: Options): Banc {
   const players = [...opts.players];
@@ -344,15 +347,14 @@ function banc(opts: Options): Banc {
     ref.ids.forEach((id, i) => {
       const enAvance = (spawnTickOf.get(Math.floor(id / MAX_PER_WAVE)) ?? 0) > t;
       const j = slots.get(id);
-      if (enAvance) {
-        // Pas encore nee cote client a `t` (le petit insere en fin de `T`) :
-        // excusee — SAUF si le client la tient deja (fix 1, point 3), une
-        // naissance en avance, comptee en trop.
-        if (j !== undefined) {
-          out.lost.add(id);
-        }
+      if (enAvance && j === undefined) {
+        // Le salon la porte deja (inseree en fin de `T`) mais le client ne
+        // la tient pas encore : excusee, pas encore nee cote client.
         return;
       }
+      // Soit une naissance ordinaire, soit une naissance en avance que le
+      // client tient DEJA (fix 1 point 3, corrige au round 2) : les deux
+      // cotes sont d'accord, comptee et mesuree normalement.
       attendus.add(id);
       if (j === undefined) {
         out.lost.add(id);
@@ -364,8 +366,7 @@ function banc(opts: Options): Banc {
       );
       out.drift = Math.max(out.drift, d);
     });
-    // En trop : ni attendue, ni au salon (les naissances en avance sont
-    // deja tranchees ci-dessus, meme si leur id est dans `ref.ids`).
+    // En trop : ni attendue, ni au salon.
     const auSalon = new Set(ref.ids);
     for (const id of slots.keys()) {
       if (!attendus.has(id) && !auSalon.has(id)) {
