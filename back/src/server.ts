@@ -11,6 +11,7 @@ import {
 import { clampToMap, PING_BURST, PING_INTENTS, PING_WINDOW_TICKS } from '@shared/ping';
 import {
   CLOSE_CODES,
+  cleanName,
   decode,
   encodeAbilityUsed,
   encodeBossCharge,
@@ -112,6 +113,12 @@ class Session {
    * sur ce code le reprend. `stop()` efface les minuteurs.
    */
   readonly #graces = new Map<string, { id: number; timer: NodeJS.Timeout }>();
+  /**
+   * Les pseudos (`NAME`), par COMPTE : ils survivent au `#start()` (qui vide
+   * `#lobby`) et a la grace. Nettoyes par `cleanName` ; absent = pas de nom.
+   * Ils voyagent dans `LOBBY` et `RESYNC` seulement, jamais par tick.
+   */
+  readonly #names = new Map<string, string>();
   /**
    * Les sockets qui attendent leur `RESYNC` : tout joueur entre dans un salon
    * lance (reconnexion ou non). Servies dans `#broadcast`, APRES les drains et
@@ -401,12 +408,19 @@ class Session {
         weaponId: e.weaponId,
         classId: e.classId,
         bonuses: e.grants?.bonuses ?? BONUS_ZERO,
+        name: this.#nameOf(playerId),
       }));
     for (const [id, ws] of this.#clients) {
       if (ws.readyState === ws.OPEN) {
         ws.send(encodeLobby(id, players));
       }
     }
+  }
+
+  /** Le pseudo du slot `id`, connecte ou en grace ; `undefined` sans nom. */
+  #nameOf(id: number): string | undefined {
+    const accountId = this.#accounts.get(id) ?? [...this.#graces].find(([, g]) => g.id === id)?.[0];
+    return accountId === undefined ? undefined : this.#names.get(accountId);
   }
 
   /**
@@ -495,6 +509,23 @@ class Session {
       // Une trame illisible ferme cette socket-la, jamais le salon : un client
       // buggue ne doit pas pouvoir couper la partie des autres.
       ws.close(CLOSE_CODES.BAD_FRAME, 'trame illisible');
+      return;
+    }
+    if (msg.type === MSG.NAME) {
+      // En salle d'attente comme en run : la table par compte, et un `LOBBY`
+      // rediffuse tant qu'on attend ; en run, le prochain `RESYNC` la porte.
+      const accountId = this.#accounts.get(id);
+      if (accountId !== undefined) {
+        const name = cleanName(msg.name);
+        if (name) {
+          this.#names.set(accountId, name);
+        } else {
+          this.#names.delete(accountId);
+        }
+        if (!this.#started) {
+          this.#sendLobby();
+        }
+      }
       return;
     }
     if (!this.#started) {
@@ -749,7 +780,11 @@ class Session {
     // `onFirst`, il serait pris a `T` avec les files de `T` non drainees :
     // des vagues en double et des morts fantomes chez le revenant.
     if (this.#resyncPending.size > 0) {
-      const buf = encodeResync(this.room.resyncState());
+      const state = this.room.resyncState();
+      const buf = encodeResync({
+        ...state,
+        players: state.players.map((p) => ({ ...p, name: this.#nameOf(p.id) })),
+      });
       for (const ws of this.#resyncPending) {
         if (ws.readyState === ws.OPEN) {
           ws.send(buf);

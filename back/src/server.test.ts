@@ -14,6 +14,7 @@ import {
   encodeAbility,
   encodeHello,
   encodeInput,
+  encodeName,
   encodeResyncRequest,
   encodeStart,
   encodeVote,
@@ -953,6 +954,31 @@ describe('etape 18 : la grace', () => {
     expect(resync.tick).toBe(snapshot.tick);
     expect(resync.players.map((p) => p.id)).toEqual([1, 2]);
     expect(resync.players.find((p) => p.id === 2)?.absent).toBe(false);
+  });
+
+  it('le RESYNC porte le pseudo de chacun : le nom survit au lancement et a la grace', async () => {
+    const { code, joueurs } = await lancer(2);
+    const [j1, j2] = joueurs;
+    if (!j1 || !j2) {
+      throw new Error('deux joueurs attendus');
+    }
+    // Un nom pose en run entre dans la table par compte : aucun LOBBY ne suit.
+    const lobbies = j1.recus.filter((m) => m.type === MSG.LOBBY).length;
+    j1.ws.send(encodeName('Léo'));
+    j2.ws.send(encodeName('Zoé'));
+    await dormir(100);
+    expect(j1.recus.filter((m) => m.type === MSG.LOBBY).length).toBe(lobbies);
+    j2.ws.close();
+    await jusqua(() => j1.recus.find((m) => m.type === MSG.PRESENCE), 'PRESENCE');
+    const retour = await entre(code, j2.token);
+    const resync = await jusqua(() => retour.recus.find((m) => m.type === MSG.RESYNC), 'RESYNC');
+    if (resync.type !== MSG.RESYNC) {
+      throw new Error('RESYNC attendu');
+    }
+    expect(resync.players.map((p) => [p.id, p.name])).toEqual([
+      [1, 'Léo'],
+      [2, 'Zoé'],
+    ]);
   });
 
   it('PRESENCE : (2, absent) a la coupure, (2, present) au retour', async () => {
