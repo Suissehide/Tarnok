@@ -7,6 +7,14 @@ import { Mouse } from './input/mouse';
 import { PingWheel } from './input/ping-wheel';
 import { acheter, fetchCompte, tokenBytes, tokenText } from './net/account';
 import { type ConnectionStatus, GameClient, type InputAxes, type RenderState } from './net/client';
+import {
+  DEFINITIVE_CLOSE_CODES,
+  forgetRejoin,
+  REJOIN_RETRY_MS,
+  readRejoin,
+  rememberRejoin,
+  shouldRejoin,
+} from './net/rejoin';
 import { composeFrame } from './render/frame';
 import { livePings } from './render/ping-renderer';
 import { unitSheets } from './render/player-renderer';
@@ -379,7 +387,16 @@ async function createRoom(): Promise<void> {
   }
 }
 
-function join(code: string): void {
+/**
+ * Etape 18 : si la page s'est rechargee sur une coupure en run et que la
+ * fenetre de grace court encore, on rejoint tout seul (voir `net/rejoin.ts`).
+ */
+const rejoinCode = readRejoin(window.sessionStorage, Date.now());
+if (rejoinCode) {
+  join(rejoinCode, true);
+}
+
+function join(code: string, rejoining = false): void {
   if (!/^[A-Z]{4}$/.test(code)) {
     errorLine.textContent = 'Un code de salon fait quatre lettres.';
     return;
@@ -486,17 +503,50 @@ function join(code: string): void {
     // ses boutons ne doivent pas non plus repondre a Tab/Entree.
     el('portal-layer').toggleAttribute('inert', value);
   };
+  /** Vrai des que CE joueur a demande a partir : un depart voulu ne rejoint pas. */
+  let quitting = false;
   const leave = (): void => {
+    quitting = true;
+    forgetRejoin(window.sessionStorage);
     client.disconnect();
     // Meme reinitialisation que le bilan : `Stage`/`Keyboard` ne se
     // demontent pas proprement, et le lobby se recharge de toute facon.
     window.location.reload();
   };
 
+  /**
+   * Etape 18 : une socket qui tombe EN RUN, sans que `leave()` l'ait demande
+   * et sans refus du serveur, recharge la page avec un mot pour la suite.
+   * Pendant une reprise, un serveur encore injoignable se retente apres
+   * `REJOIN_RETRY_MS` tant que la fenetre court ; un refus ou la fenetre
+   * passee rendent la main a l'affichage ordinaire.
+   */
+  const onClientStatus = (status: ConnectionStatus, closeCode?: number): void => {
+    if (status === 'closed') {
+      const inRun =
+        (loading.mapReady || !hud.classList.contains('hidden')) &&
+        summary.classList.contains('hidden');
+      if (shouldRejoin(closeCode, inRun, quitting)) {
+        rememberRejoin(window.sessionStorage, code, Date.now());
+        window.location.reload();
+        return;
+      }
+      if (rejoining && !loading.mapReady) {
+        const definitif = closeCode !== undefined && DEFINITIVE_CLOSE_CODES.has(closeCode);
+        if (!definitif && readRejoin(window.sessionStorage, Date.now()) === code) {
+          window.setTimeout(() => client.connect(), REJOIN_RETRY_MS);
+          return;
+        }
+        forgetRejoin(window.sessionStorage);
+      }
+    }
+    onStatus(status, closeCode);
+  };
+
   const client = new GameClient(
     gameSocketUrl(code),
     () => (paused ? { x: 0, y: 0 } : keyboard.axes()),
-    onStatus,
+    onClientStatus,
     (result) => {
       setPaused(false);
       hud.toggleAttribute('inert', true);
@@ -519,16 +569,7 @@ function join(code: string): void {
       loading.mapReady = true;
       showLoading();
       // Les unites de CETTE partie : une par joueur, sa classe et sa couleur.
-      const unites = (lastLobby?.players ?? []).flatMap((p) => {
-        const u = unitSheets(p.playerId, p.classId);
-        return [u.idle, u.run];
-      });
-      unitsTotal = unites.length;
-      syncAssets();
-      void preloadSheets(ASSETS_BASE, unites, (n) => {
-        unitsLoaded = n;
-        syncAssets();
-      });
+      preloadUnits(lastLobby?.players ?? []);
       void stage.drawObstacles(map).then(() => {
         loading.terrainReady = true;
       });
@@ -544,6 +585,24 @@ function join(code: string): void {
     // `join()` est appelee, donc `accountPurchases` ne change plus.
     bonusesOf(new Map(Object.entries(accountPurchases))),
   );
+  /** Les planches des unites de ces joueurs, comptees dans l'ecran de chargement. */
+  const preloadUnits = (joueurs: readonly { playerId: number; classId: number }[]): void => {
+    const unites = joueurs.flatMap((p) => {
+      const u = unitSheets(p.playerId, p.classId);
+      return [u.idle, u.run];
+    });
+    unitsTotal = unites.length;
+    syncAssets();
+    void preloadSheets(ASSETS_BASE, unites, (n) => {
+      unitsLoaded = n;
+      syncAssets();
+    });
+  };
+  // Etape 18 : sans salle d'attente (reprise, entree en cours de run), c'est
+  // le `RESYNC` qui dit qui joue quoi.
+  client.onResync = () => {
+    preloadUnits(client.roster);
+  };
   const roomElements = {
     players: el('room-players'),
     stepClass: el<HTMLButtonElement>('room-step-class'),
@@ -705,7 +764,7 @@ function join(code: string): void {
         }, 1500);
       });
   };
-  roomElements.hint.textContent = 'Connexion au salon…';
+  roomElements.hint.textContent = rejoining ? 'Reconnexion…' : 'Connexion au salon…';
   hudCode.textContent = code;
 
   /**
@@ -873,6 +932,7 @@ function join(code: string): void {
 const CLOSE_HINTS: Record<number, string> = {
   [CLOSE_CODES.UNKNOWN_ROOM]: 'Salon introuvable — vérifie le code.',
   [CLOSE_CODES.ROOM_FULL]: 'Salon plein.',
+  [CLOSE_CODES.ROOM_CLOSED]: 'Salon fermé — la run est terminée ou le salon a été dissous.',
 };
 
 function onStatus(status: ConnectionStatus, code?: number): void {
