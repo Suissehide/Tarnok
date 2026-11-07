@@ -100,10 +100,12 @@ Le 7 novembre, Léo a demandé de tout traiter (« fais les correctifs 1 à 8 »
 
 1. **Reconnexion** → étape 18, exécutée le 7 novembre ; voir son bilan
    `2026-11-07-etape-18-resultats.md`.
-2. **Chiffres de dégâts des alliés** → phase 2 du 7 novembre (les bonus de compte voyagent
-   dans `LOBBY`).
-3. **Horde après un onglet en arrière-plan** → phase 2 du 7 novembre.
-4. **`PICK` en vol au `START`** → phase 2 du 7 novembre.
+2. **Chiffres de dégâts des alliés** → fait (`1bfe4dc`, les bonus de compte voyagent dans
+   `LOBBY` et `RESYNC`).
+3. **Horde après un onglet en arrière-plan** → fait (`e334be4`, `RESYNC_REQUEST` après 2 s
+   caché).
+4. **`PICK` en vol au `START`** → fait (`e334be4`, `START_GRACE_MS` 400 ms, choix tardif
+   annoncé au HUD).
 5. **Focus clavier** → fait (`07b2f94`, `keepFocus` dans `room.ts`, repris par `shop.ts`).
 6. **Caméra non bornée** → non fait, volontairement : `terrain-renderer.ts` dessine l'eau sur
    une carte entière autour de chaque bord, on ne voit jamais le vide. Un clamp serait du code

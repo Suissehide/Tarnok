@@ -86,8 +86,32 @@ Neuf commits, un par tâche du plan :
 
 ## 5. Le portique
 
-À remplir après la phase 2 du 7 novembre (chiffres des alliés, `RESYNC_REQUEST` au retour
-d'onglet, grâce au `START`) : lancé seul, voir le bas de ce document.
+Lancé seul, après la phase 2 du 7 novembre (`1bfe4dc` les bonus de compte dans `LOBBY` et
+`RESYNC` ; `e334be4` `RESYNC_REQUEST` au retour d'onglet, `START_GRACE_MS`, choix tardif annoncé ;
+`1c2a0a3` tests) :
+
+| | Résultat |
+| --- | --- |
+| `npm run lint` | 0 erreur (3 avertissements CSS préexistants) |
+| `npm run typecheck` | front et back OK |
+| `npm test` front | 47 fichiers, **916 / 916** |
+| `npm test` back | 68 fichiers, **1769 / 1769** |
+
+Le premier passage avait cinq rouges, tous des tests qui supposaient un départ immédiat
+(`handshake`, `elements-5c` : `graceMs: 0` posé) ou l'ancienne largeur du `LOBBY`
+(`shared/lobby.test.ts` : les bonus de compte sont toujours décodés). Second passage vert.
+
+### 5 bis. La phase 2 du 7 novembre, sur le même fil
+
+- **Les chiffres de dégâts des alliés sont les mêmes partout** : `LOBBY` et `RESYNC` portent
+  les bonus de compte de chaque joueur (`fireRate u8 · damage u8 · maxHp u8`, en centièmes et
+  en PV, 3 octets par joueur, jamais par tick) ; `#fireOne` lit ceux du tireur.
+- **Un onglet revenu de l'arrière-plan** (plus de `RESYNC_AFTER_HIDDEN_MS` = 2 s) envoie
+  `RESYNC_REQUEST` (message 33, un octet) ; le salon le sert à sa diffusion suivante comme un
+  rejoignant, avant le snapshot, et le client vide ses files datées à la réception.
+- **Le `START` attend `START_GRACE_MS`** (400 ms) pendant lesquels les `PICK` en vol sont
+  encore appliqués ; si le `WELCOME` ne reflète pas le dernier choix, le HUD le dit
+  (« choix arrivé trop tard — tu pars avec … »).
 
 ## 6. Vérification manuelle — ouverte
 
