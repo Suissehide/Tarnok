@@ -3025,7 +3025,8 @@ export class GameClient {
 
     // La horde, en f32 : `restoreState` la pose au meme tick, aux memes
     // vitesses — derive 0,000 px par construction, comme l'anneau.
-    const state = (this.#resyncState ??= makeHordeState(this.horde.capacity));
+    this.#resyncState ??= makeHordeState(this.horde.capacity);
+    const state = this.#resyncState;
     const h = msg.horde;
     state.count = h.count;
     state.x.fill(0).set(h.x);
