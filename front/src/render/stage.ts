@@ -334,6 +334,8 @@ export class Stage {
       (id) => state.classes?.get(id) ?? 0,
       state.localId,
       performance.now(),
+      // Etape 18 : les joueurs en grace, socle gris.
+      state.absent,
     );
 
     this.#centerOn(state);
