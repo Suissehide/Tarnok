@@ -177,9 +177,9 @@ Depuis une machine qui a les clés (`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, voir
 `tools/fetch-assets.sh`) :
 
 ```bash
+cp deploy/.env.example .env      # renseigner les MINIO_* (cle avec s3:PutObject)
 python3 tools/build_monster_atlas.py
-aws s3 cp assets/tinyswords/derived/monsters.png  s3://tiny-swords/derived/monsters.png  --endpoint-url https://s3.qwetle.fr
-aws s3 cp assets/tinyswords/derived/monsters.json s3://tiny-swords/derived/monsters.json --endpoint-url https://s3.qwetle.fr
+./tools/push-atlas.sh
 ```
 
 Le manifeste porte `"prescaled": true` : dès qu'il est en ligne, le renderer passe en `nearest`
