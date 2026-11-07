@@ -25,7 +25,12 @@ import {
   SPLIT_COUNT,
   THIEF_STEAL_SHARE,
 } from '@shared/archetypes';
-import { BOSS_CHARGE_COOLDOWN_TICKS, type BossCharge, makeBossCharge } from '@shared/boss';
+import {
+  BOSS_CHARGE_COOLDOWN_TICKS,
+  type BossCharge,
+  chargeHoldsAt,
+  makeBossCharge,
+} from '@shared/boss';
 import { applyCardToLoadout, CARD, type Card, drawSpread } from '@shared/cards';
 import { classOf, DEFAULT_CLASS_ID, type VerbKind } from '@shared/classes';
 import {
@@ -71,6 +76,7 @@ import {
   ondeIsAlive,
 } from '@shared/onde-frappe';
 import { bossHp, extractGold, levelHpScale, monsterHp, palierGold } from '@shared/paliers';
+import { PASSIVES } from '@shared/passives';
 import { PlayerHistory } from '@shared/player-history';
 import { type Anchor, Projectiles } from '@shared/projectiles';
 import {
@@ -80,7 +86,9 @@ import {
   OUTCOME,
   type PlayerSnapshot,
   packZoneKind,
+  RESYNC_HISTORY_TICKS,
   type ResyncDraftKind,
+  type ResyncState,
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
@@ -94,6 +102,7 @@ import {
   guardCenter,
   guardIsAlive,
   guardPulsesAt,
+  UPGRADE_KINDS,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -2034,6 +2043,94 @@ export class Room {
     this.#metrics.snapshots++;
 
     out.push(buf);
+  }
+
+  /**
+   * Etape 18 : l'instantane complet du salon, pour le `RESYNC` d'un joueur
+   * qui entre dans un salon lance. Une LECTURE : rien n'est ecrit, rien n'est
+   * draine ; elle n'alloue que l'objet rendu (une fois par entree, jamais par
+   * tick). L'encodage vit dans `shared/protocol.ts` : `Room` ne connait pas le
+   * reseau.
+   *
+   * ⚠️ **A appeler apres les drains et avant `snapshot`, au meme tick** : les
+   * ordres et les morts dates `<= tick` sont DANS la horde copiee ici, un
+   * client qui les rejouerait par-dessus doublerait les vagues.
+   */
+  resyncState(): ResyncState {
+    const tick = this.#tick;
+    const history: ResyncState['history'][number][] = [];
+    for (let t = tick - RESYNC_HISTORY_TICKS + 1; t <= tick; t++) {
+      const h = this.#history.at(t);
+      history.push(h ? { ids: h.ids, x: h.x, y: h.y } : { ids: [], x: [], y: [] });
+    }
+    const zones: ResyncState['zones'][number][] = [];
+    for (let i = 0; i < this.#zones.count; i++) {
+      if (this.#zones.aliveAt(i, tick)) {
+        zones.push({
+          kind: this.#zones.kind[i] ?? 0,
+          x: this.#zones.x[i] ?? 0,
+          y: this.#zones.y[i] ?? 0,
+          bornTick: this.#zones.bornTick[i] ?? 0,
+          by: this.#zones.by[i] ?? 0,
+        });
+      }
+    }
+    const orbs: ResyncState['orbs'][number][] = [];
+    for (let i = 0; i < this.#orbs.count; i++) {
+      orbs.push({ id: this.#orbs.id[i] ?? 0, x: this.#orbs.x[i] ?? 0, y: this.#orbs.y[i] ?? 0 });
+    }
+    const ev = this.#event;
+    const charge = this.#charge;
+    return {
+      tick,
+      level: this.#level,
+      kills: this.#totalKills,
+      freezeUntilTick: tick <= this.#freezeUntilTick ? this.#freezeUntilTick : -1,
+      chestsOwed: this.#chestsOwed,
+      eventDraftsOwed: this.#eventDraftsOwed,
+      draft:
+        this.#draft.phase === 'open'
+          ? {
+              deadlineTick: this.#draft.deadlineTick,
+              cards: this.#draft.spread,
+              kind: this.#draftKind,
+            }
+          : null,
+      portal:
+        this.#portal.phase === 'open'
+          ? { deadlineTick: this.#portal.deadlineTick, multiplier: this.#extractMultiplier }
+          : null,
+      event: ev
+        ? {
+            kind: ev.kind,
+            solo: ev.solo,
+            durationTicks: EVENT_DURATION_TICKS,
+            elapsed: ev.elapsed,
+            points: ev.points,
+            ...ev.wireState(),
+          }
+        : null,
+      charge: charge && chargeHoldsAt(charge, tick) ? charge : null,
+      players: [...this.#players.values()].map((p) => ({
+        id: p.id,
+        classId: p.classId,
+        absent: p.absent,
+        weapons: p.loadout.weaponIds.map((weaponId) => ({
+          weaponId,
+          upgrades: Array.from({ length: UPGRADE_KINDS }, (_, a) =>
+            p.loadout.upgradesOf(weaponId, a),
+          ),
+          lastFireTick: p.lastFireTick[weaponId] ?? Number.NEGATIVE_INFINITY,
+        })),
+        passives: PASSIVES.map((passive) => p.loadout.stacksOf(passive.id)),
+      })),
+      history,
+      fieldTargets: this.horde.aimX.map((x, f) => ({ x, y: this.horde.aimY[f] ?? 0 })),
+      horde: this.horde,
+      orbs,
+      zones,
+      decoys: this.#decoys.filter((d) => tick - d.bornTick < DECOY_LIFETIME_TICKS),
+    };
   }
 
   /** Rend les compteurs accumules et les remet a zero. */

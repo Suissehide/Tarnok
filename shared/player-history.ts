@@ -92,6 +92,15 @@ export class PlayerHistory {
     return null;
   }
 
+  /**
+   * L'enregistrement EXACT du tick `tick`, ou `null` s'il n'a pas ete
+   * enregistre (etape 18 : le `RESYNC` transporte les derniers enregistrements
+   * tels quels, sans s'accrocher a un voisin).
+   */
+  at(tick: number): PlayerPositions | null {
+    return this.#at(tick);
+  }
+
   #at(tick: number): PlayerPositions | null {
     if (tick < 0) {
       return null;

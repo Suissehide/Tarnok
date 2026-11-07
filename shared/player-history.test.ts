@@ -71,3 +71,18 @@ describe('etape 8 tache 6 : l historique retient les identifiants', () => {
     expect(h.delayed(10 + FIELD_INPUT_DELAY_TICKS)?.ids).toEqual([0, 0]);
   });
 });
+
+describe('etape 18 : la lecture exacte at(tick)', () => {
+  it('rend l enregistrement exact, ou null, sans s accrocher a un voisin', () => {
+    const h = new PlayerHistory();
+    h.record(10, [100, 200], [1, 2], [1, 2]);
+    h.record(12, [300], [3], [2]);
+    expect(h.at(10)).toEqual({ tick: 10, x: [100, 200], y: [1, 2], ids: [1, 2] });
+    expect(h.at(12)).toEqual({ tick: 12, x: [300], y: [3], ids: [2] });
+    expect(h.at(11)).toBeNull();
+    expect(h.at(-1)).toBeNull();
+    // Un creneau reecrit DEPTH ticks plus tard n est plus celui d avant.
+    h.record(10 + 16, [7], [7], [1]);
+    expect(h.at(10)).toBeNull();
+  });
+});

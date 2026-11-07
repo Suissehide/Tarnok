@@ -64,6 +64,7 @@ import {
 import { fireCooldown, lastFireAfterCarry } from '@shared/firing';
 import { FlowField } from '@shared/flowfield';
 import { dropsCoin, dropsOrb, entityIdOf, leavesDrop } from '@shared/horde';
+import { Loadout } from '@shared/loadout';
 import { FRAPPE_DELAY_TICKS } from '@shared/onde-frappe';
 import { bossHp, extractGold, monsterHp, palierGold } from '@shared/paliers';
 import { PASSIVES, type PassiveKind, passiveOf } from '@shared/passives';
@@ -75,6 +76,7 @@ import {
   NO_VOTE,
   OUTCOME,
   packElementPair,
+  RESYNC_HISTORY_TICKS,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
   VOTE_CHOICE,
@@ -91,6 +93,7 @@ import {
   MAX_FIRE_RATE_BONUS,
   ORBIT_RADIUS,
   stackGain,
+  UPGRADE_KINDS,
   WEAPONS,
   weaponOf,
 } from '@shared/weapons';
@@ -6945,5 +6948,155 @@ describe('etape 18 : l absent', () => {
     const avant = hpOf(room, 2);
     avanceTicks(room, 3);
     expect(hpOf(room, 2)).toBeLessThan(avant);
+  });
+});
+
+describe('etape 18 : resyncState, l instantane sans reseau', () => {
+  const graine = (genre: number): number => 7 * 0x4_6a2b + genre;
+
+  function salonPeuple(): Room {
+    const room = new Room(18);
+    room.join(1, undefined, undefined, 2); // Appat : un leurre et une zone a la fois
+    room.join(2);
+    const arme = WEAPONS.find((w) => w.id !== BASE_WEAPON_ID && w.kind === 'tir')?.id ?? 1;
+    room.grantCard(2, { nature: CARD.WEAPON, refId: arme });
+    room.grantCard(2, { nature: CARD.WEAPON, refId: arme, upgrade: 1 });
+    room.grantCard(2, { nature: CARD.WEAPON, refId: arme, upgrade: 1 });
+    room.grantCard(2, { nature: CARD.PASSIVE, refId: PASSIVES[0]?.id ?? 0 });
+    room.grantCard(2, { nature: CARD.PASSIVE, refId: PASSIVES[0]?.id ?? 0 });
+    room.grantCard(2, { nature: CARD.PASSIVE, refId: PASSIVES[2]?.id ?? 2 });
+    const p = room.positionOf(2) ?? { x: 0, y: 0 };
+    spawnWaveAt(room, 3, 20, p.x + 400, p.y + 400);
+    avanceTicks(room, 60);
+    const p1 = room.positionOf(1) ?? { x: 0, y: 0 };
+    expect(room.useAbility(1, p1.x + 50, p1.y)).not.toBeNull();
+    room.debugDropOrb(entityIdOf(3, 0), 10, 20);
+    return room;
+  }
+
+  it('la horde : memes comptes, memes x/y/vx/vy, les cibles des champs', () => {
+    const room = salonPeuple();
+    const s = room.resyncState();
+    const n = room.horde.count;
+    expect(n).toBeGreaterThan(0);
+    expect(s.horde.count).toBe(n);
+    expect(s.horde.x.subarray(0, n)).toEqual(room.horde.x.subarray(0, n));
+    expect(s.horde.vx.subarray(0, n)).toEqual(room.horde.vx.subarray(0, n));
+    expect(s.fieldTargets).toEqual(room.horde.aimX.map((x, f) => ({ x, y: room.horde.aimY[f] })));
+    expect(s.tick).toBe(room.tick);
+    expect(s.level).toBe(1);
+    expect(s.freezeUntilTick).toBe(-1);
+  });
+
+  it('l historique : RESYNC_HISTORY_TICKS entrees, la derniere est celle du tick courant', () => {
+    const room = salonPeuple();
+    const s = room.resyncState();
+    expect(s.history).toHaveLength(RESYNC_HISTORY_TICKS);
+    const dernier = s.history[RESYNC_HISTORY_TICKS - 1];
+    const p1 = room.positionOf(1) ?? { x: 0, y: 0 };
+    const p2 = room.positionOf(2) ?? { x: 0, y: 0 };
+    expect(dernier).toEqual({
+      ids: [1, 2],
+      x: [Math.round(p1.x), Math.round(p2.x)],
+      y: [Math.round(p1.y), Math.round(p2.y)],
+    });
+    // Un absent n y figure pas, et son bloc le dit.
+    room.setAbsent(2, true);
+    room.step(DT);
+    const apres = room.resyncState();
+    expect(apres.history[RESYNC_HISTORY_TICKS - 1]?.ids).toEqual([1]);
+    expect(apres.players.find((p) => p.id === 2)?.absent).toBe(true);
+    expect(apres.players.find((p) => p.id === 1)?.absent).toBe(false);
+  });
+
+  it('les inventaires se reconstruisent par addWeapon/addPassive, a l identique', () => {
+    const room = salonPeuple();
+    const s = room.resyncState();
+    for (const bloc of s.players) {
+      const original = room.loadoutOf(bloc.id);
+      if (!original) {
+        throw new Error('inventaire attendu');
+      }
+      const copie = new Loadout();
+      for (const w of bloc.weapons) {
+        copie.addWeapon(w.weaponId);
+        w.upgrades.forEach((n, aspect) => {
+          for (let k = 0; k < n; k++) {
+            copie.addWeapon(w.weaponId, aspect);
+          }
+        });
+        expect(w.lastFireTick).toBe(room.lastFireTickOf(bloc.id, w.weaponId));
+      }
+      bloc.passives.forEach((n, id) => {
+        for (let k = 0; k < n; k++) {
+          copie.addPassive(id);
+        }
+      });
+      expect(copie.weaponIds).toEqual(original.weaponIds);
+      for (const id of original.weaponIds) {
+        for (let a = 0; a < UPGRADE_KINDS; a++) {
+          expect(copie.upgradesOf(id, a)).toBe(original.upgradesOf(id, a));
+        }
+      }
+      for (const passive of PASSIVES) {
+        expect(copie.stacksOf(passive.id)).toBe(original.stacksOf(passive.id));
+      }
+      expect(bloc.classId).toBe(bloc.id === 1 ? 2 : 0);
+    }
+    expect(s.players.find((p) => p.id === 2)?.weapons.length).toBe(2);
+  });
+
+  it('les orbes, les zones vivantes et les leurres vivants', () => {
+    const room = salonPeuple();
+    const s = room.resyncState();
+    expect(s.orbs.some((o) => o.id === entityIdOf(3, 0) && o.x === 10 && o.y === 20)).toBe(true);
+    expect(s.zones).toHaveLength(1);
+    expect(s.decoys).toHaveLength(1);
+    expect(s.decoys[0]?.playerId).toBe(1);
+    avanceTicks(room, ZONE_LIFETIME_TICKS + 1);
+    expect(room.resyncState().zones).toHaveLength(0);
+  });
+
+  it('l etalage ouvert, et son genre', () => {
+    const room = salonPeuple();
+    expect(room.resyncState().draft).toBeNull();
+    room.debugOweLevels(1);
+    room.step(DT);
+    const open = room.drainDraftOpens()[0];
+    const s = room.resyncState();
+    expect(s.draft).toEqual({
+      deadlineTick: open?.deadlineTick,
+      cards: open?.cards,
+      kind: 'level',
+    });
+    expect(s.freezeUntilTick).toBe(-1);
+    room.setDraftToken(1, 0);
+    room.setDraftToken(2, 1);
+    room.step(DT);
+    // Le gel de fin d etalage, puis la rampe : `freezeUntilTick` le dit.
+    expect(room.resyncState().draft).toBeNull();
+    expect(room.resyncState().freezeUntilTick).toBe(room.tick);
+    room.step(DT);
+    expect(room.resyncState().freezeUntilTick).toBe(-1);
+
+    room.debugOweChests(1);
+    room.step(DT);
+    expect(room.resyncState().draft?.kind).toBe('chest');
+  });
+
+  it('l evenement en cours : elapsed egal a celui de la machine, l etat du fil', () => {
+    const room = salonPeuple();
+    expect(room.resyncState().event).toBeNull();
+    room.debugStartEvent(graine(EVENT_KIND.CONVOI));
+    avanceTicks(room, 12);
+    const s = room.resyncState();
+    expect(s.event).not.toBeNull();
+    expect(s.event?.kind).toBe(EVENT_KIND.CONVOI);
+    expect(s.event?.solo).toBe(false);
+    expect(s.event?.durationTicks).toBe(EVENT_DURATION_TICKS);
+    expect(s.event?.elapsed).toBe(12);
+    expect(s.event?.points).toEqual(room.eventPoints);
+    expect(s.charge).toBeNull();
+    expect(s.portal).toBeNull();
   });
 });
