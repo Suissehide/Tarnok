@@ -2177,6 +2177,18 @@ export class GameClient {
     return [...this.#classes].map(([playerId, classId]) => ({ playerId, classId }));
   }
 
+  /**
+   * La classe d'un joueur, pour son portrait (bandeau du gagnant de
+   * l'etalage) ; `undefined` s'il est inconnu. Avant le `WELCOME`, le dernier
+   * `LOBBY` fait foi.
+   */
+  classOf(playerId: number): number | undefined {
+    return (
+      this.#classes.get(playerId) ??
+      this.#lobby?.players.find((p) => p.playerId === playerId)?.classId
+    );
+  }
+
   /** Ce joueur est-il en grace (etape 18) ? */
   isAbsent(playerId: number): boolean {
     return this.#absent.has(playerId);

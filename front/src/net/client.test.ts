@@ -40,6 +40,7 @@ import {
   encodeDraftOpen,
   encodeDraftResult,
   encodeLevelUp,
+  encodeLobby,
   encodePickups,
   encodePortalOpen,
   encodePortalResult,
@@ -54,6 +55,7 @@ import {
   encodeZone,
   MSG,
   NO_VOTE,
+  NO_WEAPON,
   OUTCOME,
   packElementPair,
   packZoneKind,
@@ -6000,5 +6002,25 @@ describe('etape 18 : le RESYNC', () => {
       client.update(t * STEP, STEP);
     }
     expect(client.horde.aimX).toHaveLength(3);
+  });
+});
+
+describe('la classe des autres joueurs, pour le portrait de l etalage', () => {
+  it('classOf lit la classe de l allie recue au LOBBY, avant et apres le WELCOME', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    expect(client.classOf(2)).toBeUndefined();
+    socket.emit('message', {
+      data: encodeLobby(1, [
+        { playerId: 1, weaponId: NO_WEAPON, classId: 0 },
+        { playerId: 2, weaponId: NO_WEAPON, classId: 2 },
+      ]),
+    });
+    expect(client.classOf(2)).toBe(2);
+    socket.emit('message', { data: encodeWelcome(1, 0, 0x1234) });
+    expect(client.classOf(2)).toBe(2);
+    expect(client.classOf(1)).toBe(0);
+    expect(client.classOf(9)).toBeUndefined();
   });
 });
