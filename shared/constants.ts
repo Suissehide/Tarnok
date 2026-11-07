@@ -808,3 +808,17 @@ export const RESYNC_AFTER_HIDDEN_MS = 2000;
  * clic parait ne rien faire.
  */
 export const START_GRACE_MS = 400;
+
+/**
+ * Le pseudo d'un joueur (`NAME`) : au plus ce nombre de caracteres (points de
+ * code), nettoye par le serveur. Sur le fil, la longueur est en OCTETS UTF-8,
+ * bornee par `NAME_MAX_BYTES` (`shared/protocol.ts`).
+ */
+export const NAME_MAX_CHARS = 16;
+
+/**
+ * « Rejouer ensemble » : apres `RUN_OVER`, un `REPLAY` remet le salon en salle
+ * d'attente et les clients se rechargent. Pendant ce delai, la `Session` ne se
+ * ferme pas a zero client — le temps que chacun revienne par `HELLO`.
+ */
+export const REPLAY_HOLD_MS = 30_000;
