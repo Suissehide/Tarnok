@@ -49,6 +49,40 @@ export const UNIT_SCALE = 0.5;
 export const GHOST_ALPHA = 0.35;
 /** Rayon du socle, en px monde : un peu plus large que l'unite, jamais autant qu'un monstre. */
 export const BASE_RADIUS_PX = 22;
+/**
+ * Le socle d'un joueur en grace (etape 18) : le gris du totem (etape 16). La
+ * meme lecture qu'un mort — « il est la, il ne joue pas » — sans bandeau.
+ */
+export const ABSENT_BASE = 0x8a8f99;
+const NO_ABSENT: ReadonlySet<number> = new Set();
+
+/**
+ * Le socle, PUR : sa couleur et son opacite selon l'etat du joueur. Un absent
+ * est gris, mort ou pas (l'absence se lit meme au sol), a l'opacite du mort.
+ */
+export function baseStyle(
+  color: number,
+  absent: boolean,
+  dead: boolean,
+  local: boolean,
+): { color: number; alpha: number } {
+  if (absent) {
+    return { color: ABSENT_BASE, alpha: 0.25 };
+  }
+  return { color, alpha: dead ? 0.25 : local ? 1 : 0.7 };
+}
+
+/** (Re)dessine le cercle du socle a cette couleur. */
+function paintBase(g: Graphics, color: number): Graphics {
+  // Un cercle, pas une ellipse : c'est la camera qui decide de l'ecrasement
+  // (`VERTICAL_SQUASH`), uniformement pour tout le monde.
+  return g
+    .clear()
+    .circle(0, 0, BASE_RADIUS_PX)
+    .fill({ color, alpha: 0.22 })
+    .circle(0, 0, BASE_RADIUS_PX)
+    .stroke({ color, width: 2.5, alpha: 0.9 });
+}
 /** Un deplacement plus petit, d'une image a l'autre, ne compte pas comme une course. */
 const RUN_EPSILON_PX = 0.4;
 /** Le joueur court encore ce long apres son dernier pas : pas de clignotement. */
@@ -72,6 +106,9 @@ interface Body {
   ghost: AnimatedSprite | null;
   /** Le socle a la couleur du joueur : ce qui le distingue de la horde. */
   base: Graphics;
+  /** La couleur du joueur, et celle que le socle porte en ce moment (gris en grace). */
+  color: number;
+  baseColor: number;
   fallback: Graphics;
   lastX: number;
   lastY: number;
@@ -121,6 +158,8 @@ export class PlayerRenderer {
     classOf: (playerId: number) => number,
     localId: number | null,
     nowMs: number,
+    /** Les joueurs en grace (etape 18, `RenderState.absent`) : socle gris. */
+    absent: ReadonlySet<number> = NO_ABSENT,
   ): void {
     const seen = new Set<number>();
     for (const p of players) {
@@ -148,7 +187,12 @@ export class PlayerRenderer {
       // Juste SOUS son propre sprite dans le calque trie, donc au-dessus de la
       // horde : c'est tout l'interet du socle, se voir au milieu des monstres.
       b.base.zIndex = depth - 1;
-      b.base.alpha = dead ? 0.25 : p.id === localId ? 1 : 0.7;
+      const socle = baseStyle(b.color, absent.has(p.id), dead, p.id === localId);
+      if (socle.color !== b.baseColor) {
+        b.baseColor = socle.color;
+        paintBase(b.base, socle.color);
+      }
+      b.base.alpha = socle.alpha;
       b.fallback.position.set(p.x, p.y);
       b.fallback.zIndex = depth;
       b.fallback.visible = b.body === null;
@@ -199,13 +243,7 @@ export class PlayerRenderer {
       existing.fallback.destroy();
     }
     const color = this.fallbackColor(id);
-    // Un cercle, pas une ellipse : c'est la camera qui decide de l'ecrasement
-    // (`VERTICAL_SQUASH`), uniformement pour tout le monde.
-    const baseRing = new Graphics()
-      .circle(0, 0, BASE_RADIUS_PX)
-      .fill({ color, alpha: 0.22 })
-      .circle(0, 0, BASE_RADIUS_PX)
-      .stroke({ color, width: 2.5, alpha: 0.9 });
+    const baseRing = paintBase(new Graphics(), color);
     const fallback = new Graphics().rect(-18, -18, 36, 36).fill(color);
     this.depth.addChild(baseRing, fallback);
     const b: Body = {
@@ -213,6 +251,8 @@ export class PlayerRenderer {
       body: null,
       ghost: null,
       base: baseRing,
+      color,
+      baseColor: color,
       fallback,
       lastX: x,
       lastY: y,
