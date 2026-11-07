@@ -218,6 +218,18 @@ interface Options {
    * pas de rattrapage de `GameClient#update` (`front/src/net/client.ts`).
    */
   catchUp?: { every: number; k: number };
+  /**
+   * Le client tourne une image derriere la livraison : il simule `T` quand les
+   * messages de `T + 1` sont deja arrives (retard tolere par
+   * `HORDE_TICK_LAG_TOLERANCE`, sans saut de rattrapage). Il a donc
+   * `latency + 1` ticks de retard sur le salon.
+   */
+  behind?: boolean;
+}
+
+/** Retard du client sur le salon, en ticks : 0, ou `latency + 1` (`Options#behind`). */
+function retardClient(opts: Options): number {
+  return opts.behind ? opts.latency + 1 : 0;
 }
 
 /**
@@ -274,6 +286,7 @@ function banc(opts: Options): Banc {
   let seq = 1;
   /** Les ticks des images envoyees, du plus vieux encore utile au plus recent. */
   const images: number[] = [];
+  const lag = retardClient(opts);
   while (room.tick < opts.ticks) {
     // Rattrapage du serveur (fix 1, point 2) : un groupe de `steps` pas, une
     // diffusion par pas (`#broadcast`), le tout dans la meme image.
@@ -330,10 +343,11 @@ function banc(opts: Options): Banc {
       socket.emit('message', { data: queue.shift()?.data });
     }
     // Le `RESYNC` de `T` pose la horde de `T` : pas de pas client cette image.
-    if (!resync) {
-      client.update(room.tick * STEP * 1000, steps * STEP);
+    // En retard (`behind`) : les `lag` premieres images ne simulent rien.
+    if (!resync && room.tick > lag) {
+      client.update((room.tick - lag) * STEP * 1000, steps * STEP);
     }
-    expect(client.hordeTick - 1).toBe(room.tick);
+    expect(client.hordeTick - 1).toBe(Math.max(room.tick - lag, 0));
     out.frozenSeen ||= client.isFrozen;
 
     // Le dernier tick REGLE : celui de la derniere image dont tous les
@@ -341,7 +355,7 @@ function banc(opts: Options): Banc {
     // apres un rattrapage, les ticks du groupe avant le dernier ne partent
     // qu'avec lui, et ne sont donc pas regles plus tot (sans tick d'image
     // propre, ils ne sont jamais compares).
-    const regle = room.tick - opts.latency - (stall ? 1 : 0);
+    const regle = room.tick - Math.max(opts.latency, lag) - (stall ? 1 : 0);
     while ((images[1] ?? Number.POSITIVE_INFINITY) <= regle) {
       images.shift();
     }
@@ -406,7 +420,8 @@ function exigeMesures(r: Banc, opts: Options): void {
   for (let g = 1; opts.catchUp && g * opts.catchUp.every <= opts.ticks; g++) {
     perduAuRattrapage += Math.min(opts.catchUp.k, opts.ticks - g * opts.catchUp.every + 1) - 1;
   }
-  const plancher = opts.ticks - opts.latency - 1 - r.stalls - perduAuRattrapage;
+  const plancher =
+    opts.ticks - Math.max(opts.latency, retardClient(opts)) - 1 - r.stalls - perduAuRattrapage;
   expect(r.measured).toBeGreaterThanOrEqual(plancher);
 }
 
@@ -573,6 +588,26 @@ it('rattrapage du serveur : 3 pas groupes toutes les 50 images, latence 1 — 0,
   expect(directeur.filter((o) => o.spawnTick % STEPS_PER_FIELD === 0).length).toBeGreaterThan(3);
   expect(r.orders.some((o) => o.archetype === archetypeIdOf(SPLIT_CHILD))).toBe(true);
   expect(r.orders.some((o) => o.archetype === archetypeIdOf(NECRO_CHILD))).toBe(true);
+  expect(r.deaths).toBeGreaterThan(0);
+  exigeMesures(r, opts);
+  expect(r.drift).toBeLessThan(0.0005);
+  expect(r.lost.size).toBe(0);
+});
+
+it('client une image derriere la livraison (morts et ordres du futur), latence 1 — 0,000 px, 0 perte', () => {
+  // Les messages de `T + 1` arrivent avant que le client simule `T` : une
+  // mort du futur doit attendre son tick, pas partir au chemin trop vieux.
+  const opts: Options = {
+    mapSeed: 0xd1a6_0005,
+    players: [1, 2],
+    ticks: 1200,
+    latency: 1,
+    aim: true,
+    level: 6,
+    behind: true,
+  };
+  const r = banc(opts);
+  rapport('client en retard d une image', r);
   expect(r.deaths).toBeGreaterThan(0);
   exigeMesures(r, opts);
   expect(r.drift).toBeLessThan(0.0005);

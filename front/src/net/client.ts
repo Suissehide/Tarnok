@@ -3011,12 +3011,15 @@ export class GameClient {
     }
 
     // L'historique des positions : les enregistrements que le serveur a faits,
-    // ticks geles compris (etape 17b, `Room#recordHistory`). Une entree vide
-    // n'est pas enregistree : vide ne vaut pas absent, `delayed` s'accroche au
-    // precedent.
+    // ticks geles compris (etape 17b, `Room#recordHistory`). Une ligne vide
+    // (tous morts ou absents) est enregistree aussi, comme au pas vivant : le
+    // salon l'a enregistree et `delayed` la rend. Seuls les ticks d'avant le
+    // premier enregistrement du salon (`Room#step` enregistre des le tick 1)
+    // sont sautes.
     msg.history.forEach((h, i) => {
-      if (h.ids.length > 0) {
-        this.#history.record(T - msg.history.length + 1 + i, h.x, h.y, h.ids);
+      const t = T - msg.history.length + 1 + i;
+      if (t > 0) {
+        this.#history.record(t, h.x, h.y, h.ids);
       }
     });
 
@@ -3032,7 +3035,8 @@ export class GameClient {
 
     // La horde, en f32 : `restoreState` la pose au meme tick, aux memes
     // vitesses — derive 0,000 px par construction, comme l'anneau.
-    const state = (this.#resyncState ??= makeHordeState(this.horde.capacity));
+    this.#resyncState ??= makeHordeState(this.horde.capacity);
+    const state = this.#resyncState;
     const h = msg.horde;
     state.count = h.count;
     state.x.fill(0).set(h.x);
@@ -3939,6 +3943,12 @@ export class GameClient {
       base = Math.min(base, this.#applyZone(zone, tick));
     }
     for (const charge of this.#pendingCharges.splice(0)) {
+      // Une charge du futur attend la fin de son tick : le salon la cree
+      // APRES le pas de horde de `windupTick`, qui se fait donc sans elle.
+      if (charge.windupTick > tick) {
+        this.#pendingCharges.push(charge);
+        continue;
+      }
       base = Math.min(base, this.#applyBossCharge(charge, tick));
     }
     for (const decoy of this.#pendingDecoys.splice(0)) {
@@ -3947,6 +3957,12 @@ export class GameClient {
     const deaths: PendingDeathBatch[] = [];
     const tooOldDeaths: PendingDeathBatch[] = [];
     for (const batch of this.#pendingDeaths.splice(0)) {
+      // Une mort du futur (client une image en retard, tolere par
+      // `HORDE_TICK_LAG_TOLERANCE`) attend son tick, comme un ordre.
+      if (batch.tick > tick) {
+        this.#pendingDeaths.push(batch);
+        continue;
+      }
       this.#kills += batch.ids.length;
       if (this.#replayable(batch.tick, tick)) {
         deaths.push(batch);
@@ -3959,11 +3975,14 @@ export class GameClient {
     // Tri stable par tick de mort : la boucle ci-dessous les tue dans l'ordre.
     deaths.sort((a, b) => a.tick - b.tick);
     if (base !== NO_REPLAY) {
-      this.#hordeHistory.restore(base, this.horde);
-      // ⚠️ Le champ n'est pas dans l'anneau : sans cette amorce, le rejeu
-      // partirait du champ du DERNIER rafraichissement reel. Inutile (et
-      // nuisible au garde de `spawnCatchingUp`) quand rien n'est rejoue.
+      // `base === tick` : rien a rejouer. Le creneau vient d'etre enregistre
+      // depuis cette horde meme (`#advanceHorde`), le restaurer ne changerait
+      // rien.
       if (base < tick) {
+        this.#hordeHistory.restore(base, this.horde);
+        // ⚠️ Le champ n'est pas dans l'anneau : sans cette amorce, le rejeu
+        // partirait du champ du DERNIER rafraichissement reel. Inutile (et
+        // nuisible au garde de `spawnCatchingUp`) quand rien n'est rejoue.
         this.#primeFieldForReplay(base);
       }
       let d = 0;

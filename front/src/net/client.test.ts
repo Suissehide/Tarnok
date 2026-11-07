@@ -5839,6 +5839,21 @@ describe('etape 18 : le RESYNC', () => {
     expect(r.client.hordeTick).toBe(119 + 301);
   });
 
+  it('une ligne d historique vide est enregistree, comme au salon : le champ la lit telle quelle', () => {
+    // Le pas suivant (`T + 1`) rafraichit le champ et lit la ligne `T + 1 − 3`.
+    const T = 10 * STEPS_PER_FIELD - 1;
+    const { client, socket } = clientNeuf();
+    socket.emit('message', { data: encodeWelcome(1, T, SEED) });
+    // La plus vieille ligne porte des joueurs ; les suivantes sont vides
+    // (tous morts ou absents), et le salon les a enregistrees telles quelles.
+    const s = vide(T);
+    const history = [{ ids: [1, 2], x: [1000, 2000], y: [1000, 2000] }, ...s.history.slice(1)];
+    socket.emit('message', { data: encodeResync({ ...s, history }) });
+    const retarget = vi.spyOn(client.horde, 'retarget');
+    client.update(0, STEP);
+    expect(retarget.mock.calls[0]?.[0]).toEqual([]);
+  });
+
   it('contre-epreuve : sans l historique des positions, la horde derive', () => {
     expect(suivi(false).drift).toBeGreaterThan(0);
   });
@@ -6427,6 +6442,18 @@ describe('etape 17b : le journal des ordres et le rejeu unique', () => {
     const id = entityIdOf(1, 0);
     expect(client.horde.x[client.horde.slotOf(id)]).toBe(veille.x[veille.slotOf(id)]);
     expect(client.horde.y[client.horde.slotOf(id)]).toBe(veille.y[veille.slotOf(id)]);
+  });
+
+  it('une mort du futur attend son tick', () => {
+    const { client, socket } = avecUneVague(20);
+    // Le client a une image de retard (tolere) : la mort de 21 arrive avant le pas 20.
+    socket.emit('message', { data: encodeDeaths(21, [entityIdOf(5, 3)]) });
+    image(client, socket, 20);
+    expect(client.horde.slotOf(entityIdOf(5, 3))).toBeGreaterThanOrEqual(0);
+    image(client, socket, 21);
+    expect(client.horde.slotOf(entityIdOf(5, 3))).toBe(-1);
+    expect(client.lateDeaths).toBe(0);
+    expect(client.kills).toBe(1);
   });
 
   it('un ordre plus vieux que l anneau nait au present, compte, et aucun rejeu ulterieur ne le perd', () => {
