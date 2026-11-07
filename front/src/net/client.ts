@@ -3920,6 +3920,9 @@ export class GameClient {
   }
 
   /**
+   * ponytail: un rejeu de 8 pas coute ~28 ms a 4 000 entites en formation dense (bench:sep,
+   * pas de 3,51 ms) ; prochain levier : ne rejouer que jusqu'au tick courant du serveur.
+   *
    * Etape 17b : **UN SEUL rejeu par pas**, en fin de pas, pour tout ce qui
    * est arrive en retard : ordres de vague, zones, charges, leurres, morts, et
    * le gel recu par `#replayFrom`.
