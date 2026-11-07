@@ -1974,6 +1974,15 @@ export class GameClient {
     return this.#lateFreezes;
   }
 
+  /**
+   * Etape 17b : copie dans `into` l'etat de la horde que l'anneau du rejeu
+   * tient pour `tick`. Lecture de test (le banc salon ↔ client), comme
+   * `lateDeaths` : rend `false` si l'anneau ne tient pas ce tick.
+   */
+  hordeAt(tick: number, into: Horde): boolean {
+    return this.#hordeHistory.restore(tick, into);
+  }
+
   /** Ennemis abattus depuis le debut de la run (ou du WELCOME pour un retardataire). */
   get kills(): number {
     return this.#kills;
