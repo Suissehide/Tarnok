@@ -1,7 +1,7 @@
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
-import { MAX_PLAYERS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
+import { MAX_PLAYERS, RECONNECT_GRACE_MS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
 import { clampToMap, PING_BURST, PING_INTENTS, PING_WINDOW_TICKS } from '@shared/ping';
 import {
   CLOSE_CODES,
@@ -19,7 +19,9 @@ import {
   encodePingShown,
   encodePortalOpen,
   encodePortalResult,
+  encodePresence,
   encodeReaction,
+  encodeResync,
   encodeRunOver,
   encodeVotes,
   encodeWaveOrder,
@@ -98,12 +100,26 @@ class Session {
     number,
     { grants: AccountGrants | undefined; weaponId: number; classId: number }
   >();
+  /**
+   * Etape 18 : les comptes en grace, par compte. Le slot `id` reste tenu dans
+   * `Room` (absent) le temps du minuteur ; le meme compte qui refait `HELLO`
+   * sur ce code le reprend. `stop()` efface les minuteurs.
+   */
+  readonly #graces = new Map<string, { id: number; timer: NodeJS.Timeout }>();
+  /**
+   * Les sockets qui attendent leur `RESYNC` : tout joueur entre dans un salon
+   * lance (reconnexion ou non). Servies dans `#broadcast`, APRES les drains et
+   * AVANT le snapshot — jamais depuis `onFirst`, qui tombe entre deux
+   * diffusions avec des files datees `<= T` non drainees.
+   */
+  readonly #resyncPending = new Set<WebSocket>();
 
   constructor(
     readonly code: string,
     readonly room: Room,
     private readonly onEmpty: (code: string) => void,
     waitingRoom = false,
+    private readonly graceMs = RECONNECT_GRACE_MS,
   ) {
     this.#started = !waitingRoom;
     const buffers: ArrayBuffer[] = [];
@@ -208,6 +224,32 @@ class Session {
         return;
       }
 
+      // Etape 18 : le compte est en grace sur CE code — il reprend son slot,
+      // avec tout son `PlayerState`. Pas de `purchasesOf` : ses bonus de compte
+      // y sont deja. La run finie pendant l'absence : salon ferme, son or est
+      // au compte (§1.7).
+      const grace = this.#graces.get(accountId);
+      if (grace) {
+        if (this.room.runOver) {
+          this.#expire(accountId);
+          ws.close(CLOSE_CODES.ROOM_CLOSED, 'salon ferme');
+          return;
+        }
+        clearTimeout(grace.timer);
+        this.#graces.delete(accountId);
+        id = grace.id;
+        this.#clients.set(grace.id, ws);
+        this.#accounts.set(grace.id, accountId);
+        this.room.setAbsent(grace.id, false);
+        ws.send(encodeWelcome(grace.id, this.room.tick, this.room.mapSeed));
+        this.#resyncPending.add(ws);
+        this.#send(encodePresence(grace.id, true));
+        ws.on('message', (frame: ArrayBuffer) => {
+          this.#onFrame(grace.id, ws, frame);
+        });
+        return;
+      }
+
       // ⚠️ **Second `await` sur ce chemin : chaque frontiere asynchrone ici
       // exige de relire les gardes ci-dessus.** Son echec est attrape sur place :
       // une panne de lecture ne doit pas refuser la partie. Le joueur entre sans
@@ -243,6 +285,11 @@ class Session {
         this.#sendLobby();
         return;
       }
+      // Etape 18 : un salon dont la run est finie n'accueille plus personne.
+      if (this.room.runOver) {
+        ws.close(CLOSE_CODES.ROOM_CLOSED, 'salon ferme');
+        return;
+      }
       if (freeId === null || !this.room.join(freeId, grants)) {
         ws.close(CLOSE_CODES.ROOM_FULL, 'salon plein');
         return;
@@ -252,6 +299,9 @@ class Session {
       this.#clients.set(freeId, ws);
       this.#accounts.set(freeId, accountId);
       ws.send(encodeWelcome(freeId, this.room.tick, this.room.mapSeed));
+      // Etape 18 : un salon lance a une horde, des zones, peut-etre un gel —
+      // le `RESYNC` les lui donne a la prochaine diffusion.
+      this.#resyncPending.add(ws);
       ws.on('message', (frame: ArrayBuffer) => {
         this.#onFrame(freeId, ws, frame);
       });
@@ -275,16 +325,60 @@ class Session {
   }
 
   remove(id: number): void {
-    this.#clients.delete(id);
-    this.#pings.delete(id);
-    this.#accounts.delete(id);
-    this.room.leave(id);
-    if (this.#clients.size === 0) {
-      this.onEmpty(this.code);
+    // Idempotente : `'error'` puis `'close'` arrivent pour le meme evenement,
+    // et un slot deja en grace ne doit pas etre evince une seconde fois.
+    if (!this.#clients.has(id)) {
       return;
     }
+    const accountId = this.#accounts.get(id);
+    this.#clients.delete(id);
+    // La fenetre de ping n'est pas heritee, ni par un compte neuf ni par le
+    // revenant (etape 9, etape 18).
+    this.#pings.delete(id);
+    this.#accounts.delete(id);
+    // Etape 18 : en run, le slot est garde `graceMs` et le joueur passe absent.
+    // Hors run (salle d'attente, apres `RUN_OVER`), rien ne change : le depart
+    // est immediat. Un second onglet du meme compte deja en grace part aussi
+    // tout de suite : une grace par compte.
+    if (
+      this.#started &&
+      !this.room.runOver &&
+      this.graceMs > 0 &&
+      accountId !== undefined &&
+      !this.#graces.has(accountId) &&
+      this.room.positionOf(id) !== null
+    ) {
+      this.room.setAbsent(id, true);
+      this.#send(encodePresence(id, false));
+      this.#graces.set(accountId, {
+        id,
+        timer: setTimeout(() => this.#expire(accountId), this.graceMs),
+      });
+      return;
+    }
+    this.room.leave(id);
+    this.#closeIfEmpty();
     if (this.#lobby.delete(id)) {
       this.#sendLobby();
+    }
+  }
+
+  /** La grace echue : le depart reel, comme `remove` hors grace. */
+  #expire(accountId: string): void {
+    const grace = this.#graces.get(accountId);
+    if (!grace) {
+      return;
+    }
+    clearTimeout(grace.timer);
+    this.#graces.delete(accountId);
+    this.room.leave(grace.id);
+    this.#closeIfEmpty();
+  }
+
+  /** `onEmpty` quand plus personne n'est connecte NI en grace. */
+  #closeIfEmpty(): void {
+    if (this.#clients.size === 0 && this.#graces.size === 0 && !this.#stopped) {
+      this.onEmpty(this.code);
     }
   }
 
@@ -313,6 +407,13 @@ class Session {
   stop(): void {
     this.#stopped = true;
     clearInterval(this.#timer);
+    // ⚠️ Les minuteurs de grace aussi : un `setTimeout` de 60 s oublie fait
+    // attendre Vitest apres `app.close()` et retient la `Room`.
+    for (const grace of this.#graces.values()) {
+      clearTimeout(grace.timer);
+    }
+    this.#graces.clear();
+    this.#resyncPending.clear();
     for (const ws of this.#clients.values()) {
       ws.close();
     }
@@ -441,11 +542,17 @@ class Session {
       return;
     }
     // `remove` retire un slot de `#accounts` en meme temps que de `#clients` :
-    // ses valeurs SONT les comptes encore connectes.
-    const groupes = partsFortune(
-      montant,
-      [...this.#accounts].map(([id, accountId]) => [accountId, this.room.goldBonusOf(id)] as const),
-    );
+    // ses valeurs SONT les comptes encore connectes. Etape 18 : les comptes en
+    // grace sont de la run aussi — une coupure n'est pas un choix, et
+    // l'absent ne gagne jamais plus qu'un present. Cle = compte, dedoublonne.
+    const groupes = partsFortune(montant, [
+      ...[...this.#accounts].map(
+        ([id, accountId]) => [accountId, this.room.goldBonusOf(id)] as const,
+      ),
+      ...[...this.#graces].map(
+        ([accountId, grace]) => [accountId, this.room.goldBonusOf(grace.id)] as const,
+      ),
+    ]);
     // ⚠️ Les essais sont PAR GROUPE : rejouer le tout apres un echec partiel
     // crediterait deux fois les groupes deja passes.
     for (const [du, comptes] of groupes) {
@@ -591,6 +698,21 @@ class Session {
       void this.#creditAccounts();
     }
 
+    // Etape 18 : le `RESYNC`, APRES tous les drains et AVANT le snapshot du
+    // meme tick. Un tampon pour toutes les sockets en attente. Envoye depuis
+    // `onFirst`, il serait pris a `T` avec les files de `T` non drainees :
+    // des vagues en double et des morts fantomes chez le revenant.
+    if (this.#resyncPending.size > 0) {
+      const buf = encodeResync(this.room.resyncState());
+      for (const ws of this.#resyncPending) {
+        if (ws.readyState === ws.OPEN) {
+          ws.send(buf);
+          this.#wireBytes += buf.byteLength;
+        }
+      }
+      this.#resyncPending.clear();
+    }
+
     this.#outbox.buffers.length = 0;
     this.room.snapshot(this.#outbox);
     for (const buf of this.#outbox.buffers) {
@@ -598,10 +720,14 @@ class Session {
     }
   }
 
-  /** Le plus petit identifiant libre : les places se reutilisent. */
+  /**
+   * Le plus petit identifiant libre : les places se reutilisent. Etape 18 : un
+   * slot en grace est RESERVE, un cinquieme compte recoit `ROOM_FULL`.
+   */
   #freeId(): number | null {
+    const reserves = new Set([...this.#graces.values()].map((g) => g.id));
     for (let id = 1; id <= MAX_PLAYERS; id++) {
-      if (!this.#clients.has(id)) {
+      if (!this.#clients.has(id) && !reserves.has(id)) {
         return id;
       }
     }
@@ -659,6 +785,12 @@ export interface ServerOptions {
    * attendent un `WELCOME` des le `HELLO`, restent ce qu'ils sont.
    */
   waitingRoom?: boolean;
+  /**
+   * Etape 18 : la fenetre de grace apres la chute d'une socket en run, en
+   * millisecondes. `RECONNECT_GRACE_MS` par defaut ; `0` pour les tests qui
+   * attendent un depart immediat.
+   */
+  graceMs?: number;
 }
 
 /**
@@ -701,7 +833,7 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   app.post('/rooms', async (_req, reply) => {
     const { code, room } = registry.create(options.roomSeed);
-    sessions.set(code, new Session(code, room, closeSession, options.waitingRoom));
+    sessions.set(code, new Session(code, room, closeSession, options.waitingRoom, options.graceMs));
     return reply.code(201).send({ code });
   });
 

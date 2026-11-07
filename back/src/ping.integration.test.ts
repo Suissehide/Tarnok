@@ -23,7 +23,7 @@ const sockets: WebSocket[] = [];
 
 beforeEach(async () => {
   await accounts.prisma.account.deleteMany();
-  app = await buildServer({ roomSeed: 1, waitingRoom: true });
+  app = await buildServer({ roomSeed: 1, waitingRoom: true, graceMs: 0 });
   await app.listen({ port: 0, host: '127.0.0.1' });
   port = (app.server.address() as AddressInfo).port;
 });

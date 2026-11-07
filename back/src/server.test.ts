@@ -9,10 +9,12 @@ import {
 import { ELEMENT } from '@shared/elements';
 import { EVENT_KIND, EVENT_OUTCOME } from '@shared/evenements';
 import {
+  CLOSE_CODES,
   decode,
   encodeAbility,
   encodeHello,
   encodeInput,
+  encodeStart,
   encodeVote,
   type Message,
   MSG,
@@ -40,7 +42,9 @@ const openSockets: WebSocket[] = [];
 
 beforeEach(async () => {
   await prisma.account.deleteMany();
-  app = await buildServer();
+  // Etape 18 : `graceMs: 0`, un depart est definitif ici — la grace a son
+  // propre `describe`, qui rebatit le serveur avec la sienne.
+  app = await buildServer({ graceMs: 0 });
   await app.listen({ port: 0, host: '127.0.0.1' });
   port = (app.server.address() as AddressInfo).port;
 });
@@ -816,4 +820,256 @@ describe('etape 14 : les evenements sur le fil', () => {
     expect(iUp).toBeGreaterThan(iFin);
     expect(types.lastIndexOf(MSG.EVENT_STATE)).toBeLessThan(iFin);
   }, 15_000);
+});
+
+describe('etape 18 : la grace', () => {
+  interface Joueur {
+    ws: WebSocket;
+    token: Uint8Array;
+    /** Tout ce qui arrive, dans l ordre, snapshots compris. */
+    recus: Message[];
+    playerId: number;
+  }
+
+  const GRACE_MS = 400;
+
+  async function rebatir(options: Parameters<typeof buildServer>[0]): Promise<void> {
+    await app.close();
+    app = await buildServer({ waitingRoom: true, graceMs: GRACE_MS, ...options });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+    port = (app.server.address() as AddressInfo).port;
+  }
+
+  beforeEach(async () => {
+    await rebatir({});
+  });
+
+  const dormir = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+
+  async function jusqua<T>(lire: () => T | undefined, what: string, ms = 3000): Promise<T> {
+    const fin = Date.now() + ms;
+    for (;;) {
+      const v = lire();
+      if (v !== undefined) {
+        return v;
+      }
+      if (Date.now() > fin) {
+        throw new Error(`${what} : rien en ${ms} ms`);
+      }
+      await dormir(10);
+    }
+  }
+
+  /** Ouvre une socket et presente `token` (un compte neuf si absent). N attend rien. */
+  async function entre(code: string, token?: Uint8Array): Promise<Joueur> {
+    const jeton = token ?? (await createAccount()).token;
+    const ws = new WebSocket(`ws://127.0.0.1:${port}/ws?room=${code}`);
+    ws.binaryType = 'arraybuffer';
+    openSockets.push(ws);
+    const j: Joueur = { ws, token: jeton, recus: [], playerId: 0 };
+    ws.on('message', (data: ArrayBuffer) => {
+      const m = decode(data);
+      j.recus.push(m);
+      if (m.type === MSG.WELCOME) {
+        j.playerId = m.playerId;
+      }
+    });
+    await new Promise<void>((res, rej) => {
+      ws.once('open', () => res());
+      ws.once('error', rej);
+    });
+    ws.send(encodeHello(jeton));
+    return j;
+  }
+
+  const welcome = (j: Joueur): Promise<number> =>
+    jusqua(() => (j.playerId !== 0 ? j.playerId : undefined), 'WELCOME');
+
+  const lobbyDe = (j: Joueur, n: number): Promise<Message> =>
+    jusqua(
+      () => j.recus.find((m) => m.type === MSG.LOBBY && m.players.length === n),
+      `LOBBY a ${n}`,
+    );
+
+  /** `n` joueurs en salle d attente, puis l hote lance : tous ont leur WELCOME. */
+  async function lancer(n: number): Promise<{ code: string; joueurs: Joueur[]; room: Room }> {
+    const code = await createRoomCode();
+    const joueurs: Joueur[] = [];
+    for (let i = 0; i < n; i++) {
+      const j = await entre(code);
+      joueurs.push(j);
+      await lobbyDe(j, i + 1);
+    }
+    joueurs[0]?.ws.send(encodeStart());
+    for (const j of joueurs) {
+      await welcome(j);
+    }
+    const room = app.rooms.get(code);
+    if (!room) {
+      throw new Error('salon introuvable');
+    }
+    return { code, joueurs, room };
+  }
+
+  const fermeture = (ws: WebSocket): Promise<number> =>
+    new Promise((res) => ws.once('close', (code: number) => res(code)));
+
+  it('le slot d un tombe est reserve : un compte neuf prend le suivant, un cinquieme est refuse', async () => {
+    const { code, joueurs, room } = await lancer(2);
+    joueurs[1]?.ws.close();
+    await dormir(100);
+    const neuf = await entre(code);
+    expect(await welcome(neuf)).toBe(3);
+    expect(room.playerCount).toBe(3);
+
+    const quatrieme = await entre(code);
+    expect(await welcome(quatrieme)).toBe(4);
+    const cinquieme = await entre(code);
+    expect(await fermeture(cinquieme.ws)).toBe(CLOSE_CODES.ROOM_FULL);
+  });
+
+  it('le meme compte reprend son slot : WELCOME, puis RESYNC avant le premier SNAPSHOT, au meme tick', async () => {
+    const { code, joueurs } = await lancer(2);
+    const j2 = joueurs[1];
+    if (!j2) {
+      throw new Error('deux joueurs attendus');
+    }
+    j2.ws.close();
+    await dormir(100);
+    const retour = await entre(code, j2.token);
+    expect(await welcome(retour)).toBe(2);
+    await jusqua(() => retour.recus.find((m) => m.type === MSG.SNAPSHOT), 'SNAPSHOT');
+    const types = retour.recus.map((m) => m.type);
+    const iResync = types.indexOf(MSG.RESYNC);
+    const iSnapshot = types.indexOf(MSG.SNAPSHOT);
+    expect(iResync).toBeGreaterThan(types.indexOf(MSG.WELCOME));
+    expect(iResync).toBeLessThan(iSnapshot);
+    const resync = retour.recus[iResync];
+    const snapshot = retour.recus[iSnapshot];
+    if (resync?.type !== MSG.RESYNC || snapshot?.type !== MSG.SNAPSHOT) {
+      throw new Error('RESYNC et SNAPSHOT attendus');
+    }
+    expect(resync.tick).toBe(snapshot.tick);
+    expect(resync.players.map((p) => p.id)).toEqual([1, 2]);
+    expect(resync.players.find((p) => p.id === 2)?.absent).toBe(false);
+  });
+
+  it('PRESENCE : (2, absent) a la coupure, (2, present) au retour', async () => {
+    const { code, joueurs } = await lancer(2);
+    const [j1, j2] = joueurs;
+    if (!j1 || !j2) {
+      throw new Error('deux joueurs attendus');
+    }
+    j2.ws.close();
+    await jusqua(
+      () => j1.recus.find((m) => m.type === MSG.PRESENCE && m.playerId === 2 && !m.present),
+      'PRESENCE absent',
+    );
+    const retour = await entre(code, j2.token);
+    await welcome(retour);
+    await jusqua(
+      () => j1.recus.find((m) => m.type === MSG.PRESENCE && m.playerId === 2 && m.present),
+      'PRESENCE present',
+    );
+    expect(j1.recus.filter((m) => m.type === MSG.PRESENCE)).toHaveLength(2);
+  });
+
+  it('sans retour, la grace expire : le joueur part, pas avant', async () => {
+    const { joueurs, room } = await lancer(2);
+    joueurs[1]?.ws.close();
+    await dormir(GRACE_MS - 100);
+    expect(room.playerCount).toBe(2);
+    expect(room.isAbsent(2)).toBe(true);
+    await dormir(200);
+    expect(room.playerCount).toBe(1);
+  });
+
+  it('le dernier joueur qui tombe ne ferme pas le salon avant la grace', async () => {
+    const { code, joueurs, room } = await lancer(1);
+    joueurs[0]?.ws.close();
+    await dormir(200);
+    expect(app.rooms.get(code)).toBe(room);
+    const tick = room.tick;
+    await dormir(100);
+    expect(room.tick).toBeGreaterThan(tick);
+    await dormir(GRACE_MS);
+    expect(app.rooms.get(code)).toBeUndefined();
+  });
+
+  it('graceMs: 0 : le depart est immediat, le chemin des tests existants', async () => {
+    await rebatir({ graceMs: 0 });
+    const { joueurs, room } = await lancer(2);
+    joueurs[1]?.ws.close();
+    await jusqua(() => (room.playerCount === 1 ? true : undefined), 'depart');
+    expect(joueurs[0]?.recus.some((m) => m.type === MSG.PRESENCE)).toBe(false);
+  });
+
+  it('pas de grace en salle d attente : fermer retire du LOBBY tout de suite', async () => {
+    const code = await createRoomCode();
+    const hote = await entre(code);
+    await lobbyDe(hote, 1);
+    const invite = await entre(code);
+    await lobbyDe(hote, 2);
+    invite.ws.close();
+    // Un second LOBBY a un seul joueur : celui du depart, apres celui de l arrivee.
+    const seuls = (): number =>
+      hote.recus.filter((m) => m.type === MSG.LOBBY && m.players.length === 1).length;
+    await jusqua(() => (seuls() === 2 ? true : undefined), 'LOBBY a 1');
+  });
+
+  it('pas de grace apres RUN_OVER : ni PRESENCE, le joueur part', async () => {
+    const { joueurs, room } = await lancer(2);
+    const [j1, j2] = joueurs;
+    if (!j1 || !j2) {
+      throw new Error('deux joueurs attendus');
+    }
+    room.debugKill(1);
+    room.debugKill(2);
+    await jusqua(() => j1.recus.find((m) => m.type === MSG.RUN_OVER), 'RUN_OVER');
+    j2.ws.close();
+    await jusqua(() => (room.playerCount === 1 ? true : undefined), 'depart');
+    expect(j1.recus.some((m) => m.type === MSG.PRESENCE)).toBe(false);
+  });
+
+  it('la run finit pendant la grace : le revenant trouve le salon ferme', async () => {
+    const { code, joueurs, room } = await lancer(2);
+    const [j1, j2] = joueurs;
+    if (!j1 || !j2) {
+      throw new Error('deux joueurs attendus');
+    }
+    j2.ws.close();
+    await jusqua(() => j1.recus.find((m) => m.type === MSG.PRESENCE), 'PRESENCE');
+    // L absent compte comme mort : la mort du seul present efface l equipe.
+    room.debugKill(1);
+    await jusqua(() => j1.recus.find((m) => m.type === MSG.RUN_OVER), 'RUN_OVER');
+    const retour = await entre(code, j2.token);
+    expect(await fermeture(retour.ws)).toBe(CLOSE_CODES.ROOM_CLOSED);
+  });
+
+  it('stop() efface les minuteurs : app.close() revient vite avec une grace de 60 s en cours', async () => {
+    await rebatir({ graceMs: undefined });
+    const { joueurs, room } = await lancer(2);
+    joueurs[1]?.ws.close();
+    await jusqua(() => (room.isAbsent(2) ? true : undefined), 'grace');
+    const debut = Date.now();
+    for (const ws of openSockets.splice(0)) {
+      ws.close();
+    }
+    await app.close();
+    expect(Date.now() - debut).toBeLessThan(200);
+    // `afterEach` refermera une app deja close : on lui en donne une neuve.
+    app = await buildServer({ waitingRoom: true, graceMs: GRACE_MS });
+    await app.listen({ port: 0, host: '127.0.0.1' });
+  });
+
+  it('un compte neuf qui entre dans un salon lance recoit WELCOME puis RESYNC', async () => {
+    const { code } = await lancer(1);
+    const neuf = await entre(code);
+    expect(await welcome(neuf)).toBe(2);
+    const resync = await jusqua(() => neuf.recus.find((m) => m.type === MSG.RESYNC), 'RESYNC');
+    expect(neuf.recus.indexOf(resync)).toBeGreaterThan(0);
+    expect(
+      neuf.recus.slice(0, neuf.recus.indexOf(resync)).some((m) => m.type === MSG.SNAPSHOT),
+    ).toBe(false);
+  });
 });
