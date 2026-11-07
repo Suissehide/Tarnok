@@ -16,6 +16,7 @@ import {
   PLAYER_SPEED,
   PORTAL_WINDOW_TICKS,
   PROJECTILE_HIT_RADIUS,
+  RESYNC_AFTER_HIDDEN_MS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
   TRANSCENDANCE_MAX_HP,
@@ -6144,5 +6145,95 @@ describe('les chiffres de degats des allies lisent les bonus de compte du TIREUR
     const s = salves(client, socket);
     expect(s.get(2)).toBeCloseTo(attendu(client, 2, bonus), 6);
     expect(s.get(2)).not.toBeCloseTo(s.get(1) ?? 0, 3);
+  });
+});
+
+describe('etape 18 bis : un onglet revenu de l arriere-plan demande un RESYNC', () => {
+  // Pas de jsdom ici : un `document` minimal, juste ce que le client lit.
+  const doc = Object.assign(new EventTarget(), { visibilityState: 'visible' });
+  function visibilite(etat: 'hidden' | 'visible'): void {
+    doc.visibilityState = etat;
+    doc.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  /** Les demandes parties sur la socket (les INPUT periodiques ne comptent pas). */
+  const demandes = (socket: FakeSocket): number =>
+    socket.sent.filter((b) => new DataView(b).getUint8(0) === MSG.RESYNC_REQUEST).length;
+
+  beforeEach(() => {
+    doc.visibilityState = 'visible';
+    vi.stubGlobal('document', doc);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('cache plus de RESYNC_AFTER_HIDDEN_MS : la demande part au retour', () => {
+    vi.useFakeTimers();
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('open', {});
+    visibilite('hidden');
+    vi.advanceTimersByTime(RESYNC_AFTER_HIDDEN_MS);
+    visibilite('visible');
+
+    expect(demandes(socket)).toBe(1);
+  });
+
+  it('cache moins longtemps : rien ne part, la fenetre de rejeu suffit', () => {
+    vi.useFakeTimers();
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('open', {});
+    visibilite('hidden');
+    vi.advanceTimersByTime(RESYNC_AFTER_HIDDEN_MS - 1);
+    visibilite('visible');
+
+    expect(demandes(socket)).toBe(0);
+  });
+
+  it('une fois deconnecte, le retour d onglet ne parle plus', () => {
+    vi.useFakeTimers();
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('open', {});
+    client.disconnect();
+
+    visibilite('hidden');
+    vi.advanceTimersByTime(RESYNC_AFTER_HIDDEN_MS);
+    visibilite('visible');
+
+    expect(demandes(socket)).toBe(0);
+  });
+});
+
+describe('un choix d arme parti trop tard pour le lancement se voit au WELCOME', () => {
+  it('garde ce avec quoi le joueur entre vraiment quand le LOBBY ne reflete pas son PICK', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('open', {});
+    client.pick(7, 2);
+    socket.emit('message', {
+      data: encodeLobby(1, [{ playerId: 1, weaponId: NO_WEAPON, classId: 0 }]),
+    });
+    socket.emit('message', { data: encodeWelcome(1, 0, 0x51ee_d0) });
+    expect(client.lateChoice).toEqual({ weaponId: NO_WEAPON, classId: 0 });
+  });
+
+  it('reste nul quand le LOBBY porte bien son dernier choix', () => {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('open', {});
+    client.pick(7, 2);
+    socket.emit('message', { data: encodeLobby(1, [{ playerId: 1, weaponId: 7, classId: 2 }]) });
+    socket.emit('message', { data: encodeWelcome(1, 0, 0x51ee_d0) });
+    expect(client.lateChoice).toBeNull();
   });
 });

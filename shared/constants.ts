@@ -791,3 +791,20 @@ export const TRANSCENDANCE_MAX_HP = 1;
  * une minute borne ce poids. Un jugement, a regler au playtest.
  */
 export const RECONNECT_GRACE_MS = 60_000;
+
+/**
+ * Onglet reste cache au moins ce temps (etape 18 bis) : au retour, le client
+ * demande un `RESYNC` (`RESYNC_REQUEST`) plutot que de rejouer des files de
+ * morts et de vagues devenues trop vieilles pour sa fenetre de rejeu.
+ * 2 s : au-dessous, `ROLLBACK_DEPTH_TICKS` absorbe l'ecart ; au-dessus, non.
+ */
+export const RESYNC_AFTER_HIDDEN_MS = 2000;
+
+/**
+ * Le `START` de l'hote ne lance la run qu'apres ce delai, pendant lequel les
+ * `PICK` encore en vol sont appliques : sans lui, un choix d'arme parti au
+ * meme instant que le lancement entrait dans la branche run et se perdait.
+ * 400 ms : au-dela d'un aller-retour reseau ordinaire, sous le seuil ou un
+ * clic parait ne rien faire.
+ */
+export const START_GRACE_MS = 400;

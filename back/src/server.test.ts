@@ -14,6 +14,7 @@ import {
   encodeAbility,
   encodeHello,
   encodeInput,
+  encodeResyncRequest,
   encodeStart,
   encodeVote,
   type Message,
@@ -1071,5 +1072,33 @@ describe('etape 18 : la grace', () => {
     expect(
       neuf.recus.slice(0, neuf.recus.indexOf(resync)).some((m) => m.type === MSG.SNAPSHOT),
     ).toBe(false);
+  });
+
+  it('etape 18 bis : un RESYNC_REQUEST en run vaut un RESYNC avant le snapshot suivant, au meme tick', async () => {
+    const { joueurs } = await lancer(2);
+    const j1 = joueurs[0];
+    if (!j1) {
+      throw new Error('un joueur attendu');
+    }
+    await jusqua(() => j1.recus.find((m) => m.type === MSG.SNAPSHOT), 'SNAPSHOT');
+    const avant = j1.recus.length;
+    j1.ws.send(encodeResyncRequest());
+    const resync = await jusqua(
+      () => j1.recus.slice(avant).find((m) => m.type === MSG.RESYNC),
+      'RESYNC',
+    );
+    if (resync.type !== MSG.RESYNC) {
+      throw new Error('RESYNC attendu');
+    }
+    const i = j1.recus.indexOf(resync);
+    const snapshot = await jusqua(
+      () => j1.recus.slice(i + 1).find((m) => m.type === MSG.SNAPSHOT),
+      'SNAPSHOT apres RESYNC',
+    );
+    if (snapshot.type !== MSG.SNAPSHOT) {
+      throw new Error('SNAPSHOT attendu');
+    }
+    expect(snapshot.tick).toBe(resync.tick);
+    expect(resync.players.map((p) => p.id)).toEqual([1, 2]);
   });
 });

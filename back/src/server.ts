@@ -1,7 +1,13 @@
 import { pathToFileURL } from 'node:url';
 import cors from '@fastify/cors';
 import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
-import { MAX_PLAYERS, RECONNECT_GRACE_MS, SNAPSHOT_HZ, TICK_HZ } from '@shared/constants';
+import {
+  MAX_PLAYERS,
+  RECONNECT_GRACE_MS,
+  SNAPSHOT_HZ,
+  START_GRACE_MS,
+  TICK_HZ,
+} from '@shared/constants';
 import { clampToMap, PING_BURST, PING_INTENTS, PING_WINDOW_TICKS } from '@shared/ping';
 import {
   CLOSE_CODES,
@@ -113,6 +119,8 @@ class Session {
    * diffusions avec des files datees `<= T` non drainees.
    */
   readonly #resyncPending = new Set<WebSocket>();
+  /** Le lancement differe de `startGraceMs` (un seul, le second `START` est ignore). */
+  #startTimer: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly code: string,
@@ -120,6 +128,8 @@ class Session {
     private readonly onEmpty: (code: string) => void,
     waitingRoom = false,
     private readonly graceMs = RECONNECT_GRACE_MS,
+    /** Le `START` attend ce delai, les `PICK` en vol passent encore. `0` : immediat. */
+    private readonly startGraceMs = START_GRACE_MS,
   ) {
     this.#started = !waitingRoom;
     const buffers: ArrayBuffer[] = [];
@@ -399,6 +409,27 @@ class Session {
     }
   }
 
+  /**
+   * Le `START` de l'hote : la run part apres `startGraceMs`, le temps que les
+   * `PICK` deja en vol arrivent (ils restent appliques tant que `#started`
+   * est faux). Un second `START` pendant l'attente ne fait rien.
+   */
+  #scheduleStart(): void {
+    if (this.#startTimer !== null) {
+      return;
+    }
+    if (this.startGraceMs <= 0) {
+      this.#start();
+      return;
+    }
+    this.#startTimer = setTimeout(() => {
+      this.#startTimer = null;
+      if (!this.#stopped && !this.#started) {
+        this.#start();
+      }
+    }, this.startGraceMs);
+  }
+
   /** L'hote (le plus petit slot) lance : chacun entre dans `Room` avec son arme et sa classe. */
   #start(): void {
     this.#started = true;
@@ -412,6 +443,10 @@ class Session {
   stop(): void {
     this.#stopped = true;
     clearInterval(this.#timer);
+    if (this.#startTimer !== null) {
+      clearTimeout(this.#startTimer);
+      this.#startTimer = null;
+    }
     // ⚠️ Les minuteurs de grace aussi : un `setTimeout` de 60 s oublie fait
     // attendre Vitest apres `app.close()` et retient la `Room`.
     for (const grace of this.#graces.values()) {
@@ -481,8 +516,14 @@ class Session {
         }
         this.#sendLobby();
       } else if (msg.type === MSG.START && id === Math.min(...this.#lobby.keys())) {
-        this.#start();
+        this.#scheduleStart();
       }
+      return;
+    }
+    if (msg.type === MSG.RESYNC_REQUEST) {
+      // Etape 18 bis : un onglet revenu de l'arriere-plan demande l'etat
+      // complet ; `#broadcast` le sert comme un rejoignant, avant le snapshot.
+      this.#resyncPending.add(ws);
       return;
     }
     if (msg.type === MSG.INPUT) {
@@ -796,6 +837,8 @@ export interface ServerOptions {
    * attendent un depart immediat.
    */
   graceMs?: number;
+  /** Le delai du `START` (les `PICK` en vol passent encore). `START_GRACE_MS` par defaut, `0` pour un lancement immediat. */
+  startGraceMs?: number;
 }
 
 /**
@@ -838,7 +881,17 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
 
   app.post('/rooms', async (_req, reply) => {
     const { code, room } = registry.create(options.roomSeed);
-    sessions.set(code, new Session(code, room, closeSession, options.waitingRoom, options.graceMs));
+    sessions.set(
+      code,
+      new Session(
+        code,
+        room,
+        closeSession,
+        options.waitingRoom,
+        options.graceMs,
+        options.startGraceMs,
+      ),
+    );
     return reply.code(201).send({ code });
   });
 

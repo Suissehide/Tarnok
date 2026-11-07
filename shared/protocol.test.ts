@@ -80,6 +80,7 @@ import {
   encodePresence,
   encodeReaction,
   encodeResync,
+  encodeResyncRequest,
   encodeRunOver,
   encodeSnapshot,
   encodeVote,
@@ -2126,6 +2127,7 @@ describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
   it('RESYNC et PRESENCE ont leurs numeros, et ne percutent aucun autre', () => {
     expect(MSG.RESYNC).toBe(31);
     expect(MSG.PRESENCE).toBe(32);
+    expect(MSG.RESYNC_REQUEST).toBe(33);
     expect(new Set(Object.values(MSG)).size).toBe(Object.values(MSG).length);
   });
 
@@ -2314,5 +2316,13 @@ describe('les bonus de compte d une salve voyagent dans LOBBY et RESYNC', () => 
     }
     expect(d.players[0]?.bonuses).toEqual({ fireRate: 0, damage: 0, maxHp: 0 });
     expect(d.players[1]?.bonuses).toEqual(bonus);
+  });
+});
+
+describe('RESYNC_REQUEST (etape 18 bis) : un octet, aller-retour', () => {
+  it('encode un seul octet et se decode en message vide', () => {
+    const buf = encodeResyncRequest();
+    expect(buf.byteLength).toBe(1);
+    expect(decode(buf)).toEqual({ type: MSG.RESYNC_REQUEST });
   });
 });

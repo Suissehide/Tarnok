@@ -1,4 +1,5 @@
-import { CLOSE_CODES, type LobbyMessage } from '@shared/protocol';
+import { classOf } from '@shared/classes';
+import { CLOSE_CODES, type LobbyMessage, NO_WEAPON } from '@shared/protocol';
 import { bonusesOf } from '@shared/shop';
 import { weaponOf } from '@shared/weapons';
 
@@ -567,6 +568,13 @@ function join(code: string, rejoining = false): void {
     (map) => {
       loading.launched = true;
       loading.mapReady = true;
+      // Un choix d'arme ou de classe parti trop tard pour le lancement : le
+      // dire, plutot que de laisser le joueur decouvrir sa dague en jeu.
+      const tard = client.lateChoice;
+      if (tard) {
+        const arme = tard.weaponId === NO_WEAPON ? 'la dague' : weaponOf(tard.weaponId).name;
+        hudStatus.textContent = `choix arrivé trop tard — tu pars avec ${arme} (${classOf(tard.classId)?.label ?? 'classe par défaut'})`;
+      }
       showLoading();
       // Les unites de CETTE partie : une par joueur, sa classe et sa couleur.
       preloadUnits(lastLobby?.players ?? []);

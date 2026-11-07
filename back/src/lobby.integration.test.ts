@@ -98,6 +98,27 @@ describe('salle d attente', () => {
     expect(room?.loadoutOf(1)?.weaponIds).toEqual([BASE_WEAPON_ID]);
   });
 
+  /**
+   * Le `START` attend `START_GRACE_MS` : un `PICK` parti au meme instant que
+   * le lancement arrive encore en salle d'attente et compte. Apres la
+   * fenetre, la run est lancee et le `PICK` tombe dans la branche run, ignore.
+   */
+  it('un PICK juste apres le START compte encore, un PICK apres le WELCOME non', async () => {
+    const res = await app.inject({ method: 'POST', url: '/rooms' });
+    const salon = res.json<{ code: string }>().code;
+    const hote = await entre(salon);
+    await jusqua(() => dernierLobby(hote.recus));
+
+    const [tot, tard] = startingWeapons() as [number, number];
+    hote.ws.send(encodeStart());
+    hote.ws.send(encodePick(tot, DEFAULT_CLASS_ID));
+    await jusqua(() => hote.recus.find((m) => m.type === MSG.WELCOME));
+    hote.ws.send(encodePick(tard, DEFAULT_CLASS_ID));
+    await new Promise((r) => setTimeout(r, 100));
+
+    expect(app.rooms.get(salon)?.loadoutOf(1)?.weaponIds).toEqual([tot]);
+  });
+
   // Un classId inconnu, hors catalogue, ou invalide — le
   // client peut envoyer n'importe quoi, le choix n'est simplement pas
   // enregistre, exactement comme une arme hors liste.

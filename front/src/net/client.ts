@@ -30,6 +30,7 @@ import {
   PLAYER_SPEED,
   PORTAL_WINDOW_TICKS,
   PROJECTILE_CAPACITY,
+  RESYNC_AFTER_HIDDEN_MS,
   ROLLBACK_DEPTH_TICKS,
   TICK_HZ,
   ZONE_RADIUS,
@@ -78,6 +79,7 @@ import {
   encodeInput,
   encodePick,
   encodePing,
+  encodeResyncRequest,
   encodeStart,
   encodeVote,
   type LobbyMessage,
@@ -2067,8 +2069,40 @@ export class GameClient {
    * renvoie toujours le couple complet, jamais une moitie.
    */
   pick(weaponId: number, classId: number): void {
+    this.#lastPick = { weaponId, classId };
     this.#ws?.send(encodePick(weaponId, classId));
   }
+
+  /** Le dernier `PICK` envoye, pour le comparer a ce que le `WELCOME` donne. */
+  #lastPick: { weaponId: number; classId: number } | null = null;
+
+  /**
+   * Le choix d'arme ou de classe arrive trop tard au salon (`START` deja
+   * parti) : ce avec quoi le joueur entre VRAIMENT, pour le lui dire. `null`
+   * si son dernier choix a ete pris.
+   */
+  lateChoice: { weaponId: number; classId: number } | null = null;
+
+  /** Depuis quand l'onglet est cache (horloge murale), `null` s'il est visible. */
+  #hiddenSinceMs: number | null = null;
+
+  /**
+   * Etape 18 bis : un onglet revenu apres `RESYNC_AFTER_HIDDEN_MS` demande
+   * l'etat complet au salon, plutot que de rejouer des files de morts et de
+   * vagues devenues trop vieilles pour `ROLLBACK_DEPTH_TICKS`. Le `RESYNC`
+   * vide ces files a la reception (`#onResync`).
+   */
+  readonly #onVisibility = (): void => {
+    if (document.visibilityState === 'hidden') {
+      this.#hiddenSinceMs = Date.now();
+      return;
+    }
+    const since = this.#hiddenSinceMs;
+    this.#hiddenSinceMs = null;
+    if (since !== null && Date.now() - since >= RESYNC_AFTER_HIDDEN_MS) {
+      this.#ws?.send(encodeResyncRequest());
+    }
+  };
 
   /** Salle d'attente : lance la run (le serveur ignore si on n'est pas l'hote). */
   startRun(): void {
@@ -2364,6 +2398,9 @@ export class GameClient {
     const ws = new WebSocket(this.url);
     ws.binaryType = 'arraybuffer';
     this.#ws = ws;
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', this.#onVisibility);
+    }
 
     ws.addEventListener('open', () => {
       // Le PREMIER octet que ce client envoie, toujours — avant le moindre
@@ -2395,6 +2432,9 @@ export class GameClient {
     }
     this.#ws?.close();
     this.#ws = null;
+    if (typeof document !== 'undefined') {
+      document.removeEventListener('visibilitychange', this.#onVisibility);
+    }
     this.#setStatus('closed', code);
   }
 
@@ -2571,6 +2611,11 @@ export class GameClient {
         this.#shotBonuses.set(p.playerId, p.bonuses ?? NO_SHOT_BONUS);
         if (p.playerId === msg.playerId) {
           this.#localClassId = p.classId;
+          const pick = this.#lastPick;
+          this.lateChoice =
+            pick && (pick.weaponId !== p.weaponId || pick.classId !== p.classId)
+              ? { weaponId: p.weaponId, classId: p.classId }
+              : null;
         }
       }
       // Meme `mask` et meme geometrie que `#fields` : le rendu dessine les

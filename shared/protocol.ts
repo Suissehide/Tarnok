@@ -45,6 +45,8 @@ export const MSG = {
   EVENT_END: 30,
   RESYNC: 31,
   PRESENCE: 32,
+  /** Client -> salon, 1 octet : « renvoie-moi l'etat complet » (onglet revenu). */
+  RESYNC_REQUEST: 33,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -375,7 +377,8 @@ export type Message =
   | EventStateMessage
   | EventEndMessage
   | ResyncMessage
-  | PresenceMessage;
+  | PresenceMessage
+  | ResyncRequestMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -1270,6 +1273,8 @@ export function decode(buf: ArrayBuffer): Message {
     }
     case MSG.START:
       return { type: MSG.START };
+    case MSG.RESYNC_REQUEST:
+      return { type: MSG.RESYNC_REQUEST };
     case MSG.ABILITY:
       return decodeAbility(buf);
     case MSG.ABILITY_USED:
@@ -1651,6 +1656,11 @@ export interface StartMessage {
   type: typeof MSG.START;
 }
 
+/** `type u8` : le client demande un `RESYNC` (etape 18 bis, retour d'onglet). */
+export interface ResyncRequestMessage {
+  type: typeof MSG.RESYNC_REQUEST;
+}
+
 /**
  * C -> S : le joueur demande son verbe.
  *
@@ -1737,6 +1747,13 @@ export function encodePick(weaponId: number, classId: number): ArrayBuffer {
 export function encodeStart(): ArrayBuffer {
   const buf = new ArrayBuffer(1);
   new DataView(buf).setUint8(0, MSG.START);
+  return buf;
+}
+
+/** Un octet : le salon repond par un `RESYNC` a sa prochaine diffusion. */
+export function encodeResyncRequest(): ArrayBuffer {
+  const buf = new ArrayBuffer(1);
+  new DataView(buf).setUint8(0, MSG.RESYNC_REQUEST);
   return buf;
 }
 
