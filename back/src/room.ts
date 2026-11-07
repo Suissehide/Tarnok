@@ -1424,8 +1424,9 @@ export class Room {
    *    `step` rend la main (le monde est gele, comme pendant un etalage)
    * 2. deplacer les joueurs (les vivants)
    * 3. relever les positions des vivants (arrondi !) pour les vagues
-   * 4. rafraichir les champs si du (tick % stepsPerField)
-   * 5. appliquer les ordres de vague en attente
+   * 4. faire naitre les vagues du directeur, puis les proies d'un evenement
+   * 5. rafraichir les champs si du (tick % stepsPerField), et recibler toute
+   *    la horde — nouveau-nes compris
    * 6. avancer la horde — `Horde.step` recalcule d'abord la trajectoire des
    *    entites dont c'est le tour (direction du champ + repulsion sommee),
    *    puis avance tout le monde
@@ -1439,15 +1440,21 @@ export class Room {
    * 9. resoudre les ramassages d'orbes
    * 10. mettre en file morts et ramassages pour diffusion
    * 11. enregistrer l'historique de positions des vivants, en FIN de pas
+   *     (`#recordHistory`) — aussi a chaque tick gele (portail, etalage, gel)
    * ```
    *
    * ⚠️ **Etape 7 bis : l'annonce vient APRES la reaction.** `#announceZones`
    * ne reconnait une pose qu'a `bornTick === #tick`, et les zones naissent de
    * `applyReactions` : annoncer avant laisserait chaque champ sans message.
    *
-   * ⚠️ **Etapes 4 et 5 : le rafraichissement precede l'engendrement.**
-   * `shared/horde.replication.test.ts` verifie cet ordre a 0 px de derive avec
-   * rejeu (scenario 9). Ne pas inverser sans rejouer ce scenario.
+   * ⚠️ **Etapes 4 et 5 : l'engendrement precede le rafraichissement**, comme
+   * au client (`GameClient#advanceHorde`, `#replayTick`) et dans tous les
+   * scenarios partages : `PERIOD_TICKS` est un multiple de la cadence du
+   * champ, donc CHAQUE vague du directeur tombe sur un rafraichissement, et
+   * l'ordre inverse (avant l'etape 17b) decalait le client de centaines de
+   * pixels. Les petits (`#spawnAt`, `spawnTick = T + 1`) sont inseres a la fin
+   * de `T` : avant le rafraichissement de `T + 1`, la aussi. Verifie par le
+   * banc salon ↔ client (`front/src/net/room-client.replication.test.ts`).
    */
   step(dt: number): void {
     this.#tick++;
@@ -1467,6 +1474,7 @@ export class Room {
     // pas qui suit un « rester ». Portail et etalage ne se chevauchent jamais.
     if (this.portalOpen) {
       this.#stepPortal();
+      this.#recordHistory();
       return;
     }
 
@@ -1482,6 +1490,7 @@ export class Room {
     // Un etalage est ouvert : le monde est gele, seule la machine avance.
     if (this.#draft.phase !== 'closed') {
       this.#stepDraft();
+      this.#recordHistory();
       return;
     }
 
@@ -1493,6 +1502,7 @@ export class Room {
       // ⚠️ Ce garde n'est PAS redondant avec `#movementScale()` plus bas, qui
       // ne module que le deplacement : sans ce retour, le tir, le contact et
       // les ramassages continueraient pendant le gel.
+      this.#recordHistory();
       return;
     }
 
@@ -1567,25 +1577,6 @@ export class Room {
       }
     }
 
-    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
-    if (this.#tick % stepsPerField === 0) {
-      // ⚠️ Les positions **retardees**, pas les courantes. Le serveur s'impose
-      // le retard qu'il inflige au client : c'est ce qui rend les deux champs
-      // identiques.
-      const seen = this.#history.delayed(this.#tick);
-      if (seen) {
-        this.#fieldInputTick = seen.tick;
-        // ⚠️ Les leurres remplacent leur lanceur, au tick des POSITIONS
-        // (`seen.tick`), jamais au tick courant : c'est lui que le client
-        // partage. Meme fonction que les sites du miroir client.
-        const cible = substituteDecoys(seen.ids, seen.x, seen.y, this.#decoys, seen.tick);
-        for (let f = 0; f < cible.x.length && f < this.#fields.length; f++) {
-          this.#fields[f]?.update(cible.x[f] ?? 0, cible.y[f] ?? 0);
-        }
-        this.horde.retarget(cible.x, cible.y);
-      }
-    }
-
     // Une vague est un GROUPE d'ordres (principal, escorte) : chacun nait dans
     // l'ordre, et la vague ne compte qu'UNE fois pour le portail.
     const vague = this.#director.dueWave(this.#tick, xs, ys, this.#level);
@@ -1654,6 +1645,28 @@ export class Room {
       // Dans le pas, apres les ordres et AVANT horde.step : les proies sont datees de CE tick.
       this.#startEvent(graineEvenement, this.#tick);
     }
+
+    // Etape 17b : APRES les naissances du pas (directeur, proies), comme le
+    // client — un nouveau-ne est recible a son tick de naissance.
+    const stepsPerField = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
+    if (this.#tick % stepsPerField === 0) {
+      // ⚠️ Les positions **retardees**, pas les courantes. Le serveur s'impose
+      // le retard qu'il inflige au client : c'est ce qui rend les deux champs
+      // identiques.
+      const seen = this.#history.delayed(this.#tick);
+      if (seen) {
+        this.#fieldInputTick = seen.tick;
+        // ⚠️ Les leurres remplacent leur lanceur, au tick des POSITIONS
+        // (`seen.tick`), jamais au tick courant : c'est lui que le client
+        // partage. Meme fonction que les sites du miroir client.
+        const cible = substituteDecoys(seen.ids, seen.x, seen.y, this.#decoys, seen.tick);
+        for (let f = 0; f < cible.x.length && f < this.#fields.length; f++) {
+          this.#fields[f]?.update(cible.x[f] ?? 0, cible.y[f] ?? 0);
+        }
+        this.horde.retarget(cible.x, cible.y);
+      }
+    }
+
     // ⚠️ **Le portail s'ouvre toutes les `PORTAL_EVERY_WAVES` vagues**, et
     // seulement la : la mort d'un boss ne l'ouvre pas. Une vague = un groupe,
     // quel que soit son nombre d'ordres.
@@ -1986,6 +1999,18 @@ export class Room {
     // snapshot de ce tick, qui porte les PV de FIN de pas. Enregistrer avant
     // le contact ferait viser un tick de plus le joueur qui vient de tomber.
     // Le reciblage plus haut lit `tick - FIELD_INPUT_DELAY_TICKS`, jamais ce tick.
+    this.#recordHistory();
+  }
+
+  /**
+   * Enregistre les positions des vivants de ce tick, arrondies comme sur le
+   * fil. Etape 17b : appele aussi par les trois retours geles de `step`
+   * (portail, etalage, gel) — le client enregistre chaque snapshot gele, et
+   * apres le degel `delayed()` doit lire la meme ligne des deux cotes (un
+   * depart, une arrivee ou un leurre pendant le gel). Jamais apres
+   * `#runOver` : plus rien n'y lit le champ.
+   */
+  #recordHistory(): void {
     const ids: number[] = [];
     const rxs: number[] = [];
     const rys: number[] = [];

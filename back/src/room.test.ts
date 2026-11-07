@@ -7102,3 +7102,59 @@ describe('etape 18 : resyncState, l instantane sans reseau', () => {
     expect(s.portal).toBeNull();
   });
 });
+
+describe('etape 17b : la synchro exacte, cote salon', () => {
+  it('une vague nait AVANT le rafraichissement du champ de son tick, et le reciblage la voit', () => {
+    const room = new Room(4242);
+    room.join(1);
+    room.join(2);
+    const spawn = vi.spyOn(room.horde, 'spawn');
+    const retarget = vi.spyOn(room.horde, 'retarget');
+    let vu = false;
+    for (let t = 0; t < 30 * TICK_HZ && !vu; t++) {
+      spawn.mockClear();
+      retarget.mockClear();
+      room.step(DT);
+      if (room.drainWaveOrders().length > 0 && retarget.mock.calls.length > 0) {
+        vu = true;
+        // Toutes les naissances du pas precedent le reciblage du pas.
+        const derniereNaissance = Math.max(...spawn.mock.invocationCallOrder);
+        expect(derniereNaissance).toBeLessThan(retarget.mock.invocationCallOrder[0] ?? 0);
+      }
+    }
+    // `PERIOD_TICKS` est un multiple de la cadence du champ : chaque vague du
+    // directeur tombe sur un rafraichissement. Sans ce garde, le test ne dirait rien.
+    expect(vu).toBe(true);
+  }, 60_000);
+
+  it('au premier rafraichissement apres un degel, le champ lit tick − FIELD_INPUT_DELAY_TICKS', () => {
+    const room = new Room(4242);
+    room.join(1);
+    for (let t = 0; t < TICK_HZ; t++) {
+      room.step(DT);
+    }
+    room.debugOweLevels(1);
+    room.step(DT);
+    expect(room.drainDraftOpens()).toHaveLength(1);
+    // Une seconde de gel : bien plus que le retard de lecture du champ.
+    for (let t = 0; t < TICK_HZ; t++) {
+      room.step(DT);
+    }
+    // Spec 17b §7 : le `RESYNC` d'un revenant pendant le gel porte les lignes
+    // des ticks geles, la derniere celle du tick courant (etape 18).
+    expect(room.resyncState().history.map((h) => h.ids)).toEqual(
+      Array.from({ length: RESYNC_HISTORY_TICKS }, () => [1]),
+    );
+    room.setDraftToken(1, 0);
+    // Le monde gele ne rafraichit rien : le premier rafraichissement qui
+    // bouge `fieldInputTick` est celui d'apres le degel.
+    const gele = room.fieldInputTick;
+    for (let t = 0; t < 60 * TICK_HZ && room.fieldInputTick === gele; t++) {
+      room.step(DT);
+    }
+    expect(room.fieldInputTick).not.toBe(gele);
+    // Sans l'historique pendant le gel, `delayed()` retomberait sur la
+    // derniere ligne d'avant le gel.
+    expect(room.tick - room.fieldInputTick).toBe(FIELD_INPUT_DELAY_TICKS);
+  }, 60_000);
+});
