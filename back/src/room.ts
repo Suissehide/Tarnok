@@ -80,6 +80,7 @@ import {
   OUTCOME,
   type PlayerSnapshot,
   packZoneKind,
+  type ResyncDraftKind,
   VOTE_CHOICE,
 } from '@shared/protocol';
 import { makeRandom } from '@shared/random';
@@ -211,6 +212,13 @@ export interface PlayerState extends ContactPlayer {
   readonly classId: number;
   /** Tick du dernier verbe ACCEPTE. `-Infinity` : jamais utilise. */
   lastAbilityTick: number;
+  /**
+   * Etape 18 : sa socket est tombee, son slot est garde le temps de la grace.
+   * Comme un mort — ni cible, ni ramassage, ne tient aucune fenetre, compte
+   * comme mort pour la fin de run — sauf qu'il reste vulnerable et qu'il peut
+   * revenir. Pose par `setAbsent`.
+   */
+  absent: boolean;
   /**
    * L'armure EFFECTIVE de ce tick, celle que `resolveContact` lit : le maximum
    * de l'armure du compte et de toute protection de Rempart qui couvre le
@@ -434,6 +442,8 @@ export class Room {
   #pendingLevelUps: LevelUpEvent[] = [];
   /** L'etalage en cours. `phase === 'closed'` : aucun draft, le monde tourne. */
   readonly #draft = new Draft();
+  /** Ce que l'etalage ouvert tire (etape 18) : le `RESYNC` le dit au revenant. */
+  #draftKind: ResyncDraftKind = 'level';
   /**
    * Source aleatoire du draft, derivee de `mapSeed` comme celle du generateur
    * de vagues — avec une constante de melange differente, pour que deux
@@ -876,6 +886,16 @@ export class Room {
     return this.#tick;
   }
 
+  /** Vrai une fois `RUN_OVER` mis en file : un revenant tombe sur un salon ferme. */
+  get runOver(): boolean {
+    return this.#runOver;
+  }
+
+  /** Ce que l'etalage ouvert tire : niveau, coffre ou evenement (etape 18). */
+  get draftKind(): ResyncDraftKind {
+    return this.#draftKind;
+  }
+
   /**
    * Tick dont proviennent les positions ayant servi au dernier calcul des
    * champs. Doit rester en retard de `FIELD_INPUT_DELAY_TICKS` sur le tick
@@ -1038,6 +1058,11 @@ export class Room {
       p.x = x;
       p.y = y;
     }
+  }
+
+  /** Ecriture de test, meme statut que `debugSetGold` : pose un orbe au sol. */
+  debugDropOrb(entityId: number, x: number, y: number): void {
+    this.#orbs.spawn(entityId, x, y);
   }
 
   debugKill(playerId: number): void {
@@ -1248,7 +1273,12 @@ export class Room {
       loadout,
       classId,
       lastAbilityTick: Number.NEGATIVE_INFINITY,
+      absent: false,
     });
+    // Etape 18 : un joueur qui rejoint un salon lance pendant un etalage ou un
+    // vote y participe (sans ca `setToken` le refuse : il n'est pas attendu).
+    this.#draft.rejoin(id, true);
+    this.#portal.rejoin(id);
     return true;
   }
 
@@ -1260,6 +1290,37 @@ export class Room {
     // Un parti ne tient ni l'etalage ni le portail ouverts jusqu'a l'echeance.
     this.#draft.forget(id);
     this.#portal.forget(id);
+  }
+
+  /**
+   * Etape 18 : entre en grace (`absent = true`) ou en revient. A l'entree, les
+   * axes tombent a zero — plus aucun `INPUT` n'arrive, la derniere entree
+   * resterait appliquee et il marcherait jusqu'au mur ; `aim = (0, 0)` vaut
+   * « ne tire pas » — et il lache l'etalage, le portail et l'evenement, comme
+   * `leave`. Au retour, il reprend part aux fenetres ouvertes.
+   */
+  setAbsent(id: number, absent: boolean): void {
+    const p = this.#players.get(id);
+    if (!p || p.absent === absent) {
+      return;
+    }
+    p.absent = absent;
+    p.moveX = 0;
+    p.moveY = 0;
+    p.aimX = 0;
+    p.aimY = 0;
+    if (absent) {
+      this.#event?.forget(id);
+      this.#draft.forget(id);
+      this.#portal.forget(id);
+    } else {
+      this.#draft.rejoin(id, p.hp > 0);
+      this.#portal.rejoin(id);
+    }
+  }
+
+  isAbsent(id: number): boolean {
+    return this.#players.get(id)?.absent ?? false;
   }
 
   /**
@@ -1431,7 +1492,9 @@ export class Room {
 
     for (const p of this.#players.values()) {
       // Un mort ne bouge plus (la prediction du client fait de meme : `#localSpeed`).
-      if (p.hp <= 0) {
+      // Un absent non plus (etape 18) : ses axes sont a zero, et la poussee
+      // des gardiens ne le deplace pas davantage.
+      if (p.hp <= 0 || p.absent) {
         continue;
       }
       // Vitesse propre a ce joueur : les cartes « fougue » empilees s'ajoutent
@@ -1489,7 +1552,7 @@ export class Room {
     const xs: number[] = [];
     const ys: number[] = [];
     for (const p of this.#players.values()) {
-      if (p.hp > 0) {
+      if (p.hp > 0 && !p.absent) {
         xs.push(Math.round(p.x));
         ys.push(Math.round(p.y));
       }
@@ -1864,10 +1927,10 @@ export class Room {
       spreadMarkOnDeath(this.horde, fallenMarks, this.#tick);
     }
 
-    // Un mort ne ramasse rien.
+    // Un mort ne ramasse rien, un absent non plus.
     const pickedIds = this.#orbs.resolvePickups(
       [...this.#players.values()]
-        .filter((p) => p.hp > 0)
+        .filter((p) => p.hp > 0 && !p.absent)
         .map((p) => ({
           x: p.x,
           y: p.y,
@@ -1918,7 +1981,7 @@ export class Room {
     const rxs: number[] = [];
     const rys: number[] = [];
     for (const p of this.#players.values()) {
-      if (p.hp > 0) {
+      if (p.hp > 0 && !p.absent) {
         ids.push(p.id);
         rxs.push(Math.round(p.x));
         rys.push(Math.round(p.y));
@@ -2444,6 +2507,7 @@ export class Room {
     } else {
       this.#pendingLevels--;
     }
+    this.#draftKind = coffre ? 'chest' : evenement ? 'event' : 'level';
     const loadouts = new Map<number, Loadout>();
     for (const [id, p] of this.#players) {
       loadouts.set(id, p.loadout);
@@ -2452,7 +2516,10 @@ export class Room {
     const spread = drawSpread(loadouts, this.#draftRng, plancher);
     // Tous participent (un mort est servi d'office), mais seuls les vivants
     // sont attendus : un mort ne tient pas la fenetre ouverte.
-    const vivants = [...this.#players.values()].filter((p) => p.hp > 0).map((p) => p.id);
+    // Un absent (etape 18) non plus : il est servi d'office, comme un mort.
+    const vivants = [...this.#players.values()]
+      .filter((p) => p.hp > 0 && !p.absent)
+      .map((p) => p.id);
     this.#draft.open(this.#tick, spread, [...this.#players.keys()], loadouts, vivants);
     // ⚠️ **Le niveau annonce pour un coffre est celui d'AVANT tout niveau
     // encore en file.** `#level` inclut deja les niveaux montes mais pas
@@ -2509,7 +2576,7 @@ export class Room {
    * du tout, aucun message. Les points annonces sont ceux des proies NEES.
    */
   #startEvent(seed: number, spawnTick: number): void {
-    const vivants = [...this.#players.values()].filter((p) => p.hp > 0);
+    const vivants = [...this.#players.values()].filter((p) => p.hp > 0 && !p.absent);
     if (vivants.length === 0) {
       return;
     }
@@ -2555,7 +2622,12 @@ export class Room {
     if (ev === null || this.#tick <= this.#resumeEndTick) {
       return;
     }
-    const issue = ev.step([...this.#players.values()], this.horde, dt);
+    // Un absent (etape 18) ne compte pas : plante sur un sceau, il ne le tient pas.
+    const issue = ev.step(
+      [...this.#players.values()].filter((p) => !p.absent),
+      this.horde,
+      dt,
+    );
     if (issue === null) {
       // ⚠️ Lu AVANT la cadence (ecart n° 9) : un `||` court-circuiterait le
       // drapeau, qui pousserait un etat de trop au tick suivant.
@@ -2591,7 +2663,10 @@ export class Room {
    * chaque snapshot.
    */
   #openPortal(): void {
-    this.#portal.open(this.#tick, [...this.#players.keys()]);
+    // Un absent (etape 18) ne vote pas : il ne tiendrait la fenetre ouverte
+    // que jusqu'a l'echeance. Il la rejoint s'il revient avant (`setAbsent`).
+    const presents = [...this.#players.values()].filter((p) => !p.absent).map((p) => p.id);
+    this.#portal.open(this.#tick, presents);
     this.#pendingPortalOpens.push({
       deadlineTick: this.#portal.deadlineTick,
       multiplier: this.#extractMultiplier,
@@ -2953,10 +3028,13 @@ export class Room {
    * celui de tete de `step()` porte seul cette garantie.
    */
   #checkRunOver(): void {
-    if (this.#players.size === 0) {
+    // Etape 18 : les PRESENTS seuls decident ; un absent compte comme un mort.
+    // Aucun present (un solo qui tombe) : rien ne se decide, la run attend.
+    const presents = [...this.#players.values()].filter((p) => !p.absent);
+    if (presents.length === 0) {
       return;
     }
-    for (const p of this.#players.values()) {
+    for (const p of presents) {
       if (p.hp > 0) {
         return;
       }

@@ -6843,3 +6843,107 @@ describe('le mort n est pas un leurre invulnerable', () => {
     expect(results[0]?.outcomes).toEqual([{ playerId: 2, cardIndex: 0, outcome: OUTCOME.WON }]);
   });
 });
+
+describe('etape 18 : l absent', () => {
+  function salonADeux(): Room {
+    const room = new Room(18);
+    room.join(1);
+    room.join(2);
+    return room;
+  }
+
+  it('ne bouge pas et ne tire pas : la derniere entree tombe avec lui', () => {
+    const room = salonADeux();
+    room.applyInput(2, 1, 127, 0, 127, 0);
+    room.setAbsent(2, true);
+    const avant = room.positionOf(2);
+    avanceTicks(room, 10);
+    expect(room.positionOf(2)).toEqual(avant);
+    expect(room.lastFireTickOf(2, BASE_WEAPON_ID)).toBe(Number.NEGATIVE_INFINITY);
+    expect(room.isAbsent(2)).toBe(true);
+  });
+
+  it('n est pas une cible : hors des positions qui nourrissent les champs', () => {
+    const room = salonADeux();
+    avanceTicks(room, 9);
+    expect(room.horde.aimX).toHaveLength(2);
+    room.setAbsent(2, true);
+    avanceTicks(room, 9);
+    expect(room.horde.aimX).toHaveLength(1);
+    room.setAbsent(2, false);
+    avanceTicks(room, 9);
+    expect(room.horde.aimX).toHaveLength(2);
+  });
+
+  it('ne ramasse rien : un orbe sous lui reste au sol', () => {
+    const room = salonADeux();
+    room.setAbsent(2, true);
+    const { x, y } = room.positionOf(2) ?? { x: 0, y: 0 };
+    // Une identite qui laisse un orbe, derivee de la regle, jamais devinee.
+    let index = 0;
+    while (!dropsOrb(entityIdOf(900, index))) {
+      index++;
+    }
+    room.debugDropOrb(entityIdOf(900, index), x, y);
+    avanceTicks(room, 3);
+    expect(room.drainPickups()).toEqual([]);
+    expect(room.orbCount).toBe(1);
+    room.setAbsent(2, false);
+    avanceTicks(room, 3);
+    expect(room.drainPickups().flatMap((lot) => lot.ids)).toEqual([entityIdOf(900, index)]);
+  });
+
+  it('ne tient pas l etalage : la fenetre se ferme des que le present a pose', () => {
+    const room = salonADeux();
+    room.setAbsent(2, true);
+    room.debugOweLevels(1);
+    room.step(DT);
+    expect(room.drainDraftOpens()).toHaveLength(1);
+    expect(room.setDraftToken(1, 0)).toBe(true);
+    room.step(DT);
+    const results = room.drainDraftResults();
+    expect(results).toHaveLength(1);
+    // Servi d office, comme un mort : il n est pas prive de carte.
+    expect(results[0]?.outcomes.some((o) => o.playerId === 2)).toBe(true);
+  });
+
+  it('revenu pendant l etalage, il peut poser son jeton', () => {
+    const room = salonADeux();
+    room.setAbsent(2, true);
+    room.debugOweLevels(1);
+    room.step(DT);
+    room.setAbsent(2, false);
+    expect(room.setDraftToken(2, 0)).toBe(true);
+    expect(room.setDraftToken(1, 1)).toBe(true);
+    room.step(DT);
+    expect(room.drainDraftResults()).toHaveLength(1);
+  });
+
+  it('compte comme un mort pour la fin de run : un present mort, un absent vivant', () => {
+    const room = salonADeux();
+    room.setAbsent(2, true);
+    room.debugKill(1);
+    room.step(DT);
+    expect(room.drainRunOver()).not.toBeNull();
+    expect(room.runOver).toBe(true);
+  });
+
+  it('aucun present : rien ne se decide, la run attend', () => {
+    const room = salonADeux();
+    room.setAbsent(1, true);
+    room.setAbsent(2, true);
+    avanceTicks(room, 30);
+    expect(room.drainRunOver()).toBeNull();
+    expect(room.runOver).toBe(false);
+  });
+
+  it('reste vulnerable : un monstre au contact le blesse', () => {
+    const room = salonADeux();
+    const { x, y } = room.positionOf(2) ?? { x: 0, y: 0 };
+    room.setAbsent(2, true);
+    spawnMonsterAt(room, 5, x, y);
+    const avant = hpOf(room, 2);
+    avanceTicks(room, 3);
+    expect(hpOf(room, 2)).toBeLessThan(avant);
+  });
+});
