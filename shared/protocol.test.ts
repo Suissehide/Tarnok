@@ -3,10 +3,13 @@ import { describe, expect, it } from 'vitest';
 import { ABILITY_COOLDOWN_TICKS, VERB_IDS } from './abilities';
 import { makeBossCharge } from './boss';
 import {
+  FIELD_INPUT_DELAY_TICKS,
+  FLOWFIELD_HZ,
   MAX_PER_WAVE,
   MAX_PLAYERS,
   PLAYER_MAX_HP,
   SYNERGY_MAX,
+  TICK_HZ,
   ZONE_LIFETIME_TICKS,
 } from './constants';
 import { ELEMENT, ELEMENTS } from './elements';
@@ -21,6 +24,7 @@ import {
 } from './evenements';
 import { entityIdOf } from './horde';
 import { bossHp, palierGold } from './paliers';
+import { PASSIVES } from './passives';
 import {
   ABILITY_BYTES,
   ABILITY_USED_BYTES,
@@ -72,7 +76,9 @@ import {
   encodePingShown,
   encodePortalOpen,
   encodePortalResult,
+  encodePresence,
   encodeReaction,
+  encodeResync,
   encodeRunOver,
   encodeSnapshot,
   encodeVote,
@@ -93,9 +99,25 @@ import {
   type PlayerSnapshot,
   PORTAL_OPEN_BYTES,
   PORTAL_RESULT_BYTES,
+  PRESENCE_BYTES,
   packElementPair,
   packZoneKind,
   REACTION_BYTES,
+  RESYNC_CHARGE_BYTES,
+  RESYNC_DECOY_BYTES,
+  RESYNC_DRAFT_HEADER_BYTES,
+  RESYNC_ENTITY_BYTES,
+  RESYNC_EVENT_HEADER_BYTES,
+  RESYNC_FLAG,
+  RESYNC_HEADER_BYTES,
+  RESYNC_HISTORY_TICKS,
+  RESYNC_ORB_BYTES,
+  RESYNC_PASSIVES_BYTES,
+  RESYNC_PLAYER_BYTES,
+  RESYNC_PORTAL_BYTES,
+  RESYNC_WEAPON_BYTES,
+  RESYNC_ZONE_BYTES,
+  type ResyncState,
   RUN_OVER_BYTES,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
@@ -109,6 +131,7 @@ import {
   zoneElement,
   zoneReaction,
 } from './protocol';
+import { UPGRADE_KINDS } from './weapons';
 
 describe('encodeInput / decodeInput', () => {
   it("rend exactement l'entree encodee, visee comprise (tache 13)", () => {
@@ -1940,5 +1963,277 @@ describe('etape 16 : le bit solo d EVENT_START, l octet d etat d EVENT_STATE', (
     expect(relicSpeedFactor(true)).toBe(0.8);
     expect(lightRadius(false)).toBe(350);
     expect(lightRadius(true)).toBe(500);
+  });
+});
+
+describe('etape 18 : RESYNC et PRESENCE, l etat complet hors tick', () => {
+  /** Une horde de `n` entites a positions et vitesses NON representables en i16. */
+  function horde(n: number): ResyncState['horde'] {
+    const h = {
+      count: n,
+      x: new Float32Array(n),
+      y: new Float32Array(n),
+      vx: new Float32Array(n),
+      vy: new Float32Array(n),
+      archetype: new Uint8Array(n),
+      waveId: new Uint16Array(n),
+      indexInWave: new Uint16Array(n),
+      animPhase: new Uint8Array(n),
+      targetField: new Uint8Array(n),
+      stopped: new Uint8Array(n),
+      fleeing: new Uint8Array(n),
+    };
+    for (let i = 0; i < n; i++) {
+      h.x[i] = 1234.5678 + i * 0.001;
+      h.y[i] = 5999.9991 - i * 0.37;
+      h.vx[i] = -83.123456 * (i + 1);
+      h.vy[i] = 0.000123 * (i + 1);
+      h.archetype[i] = i % 7;
+      h.waveId[i] = 12 + i;
+      h.indexInWave[i] = 4000 - i;
+      h.animPhase[i] = (i * 3) % 8;
+      h.targetField[i] = i % MAX_PLAYERS;
+      h.stopped[i] = i % 2;
+      h.fleeing[i] = i % 3 === 0 ? 1 : 0;
+    }
+    return h;
+  }
+
+  const passifs = (seed: number): number[] => PASSIVES.map((_, i) => (i * 7 + seed) % 300);
+  const aspects = (seed: number): number[] =>
+    Array.from({ length: UPGRADE_KINDS }, (_, a) => (a + seed) % 5);
+
+  function plein(): ResyncState {
+    const charge = makeBossCharge(entityIdOf(9, 0), 1000.4, 2000.6, 1600, 2800, 17_900);
+    return {
+      tick: 18_000,
+      level: 300,
+      kills: 70_000,
+      freezeUntilTick: 18_010,
+      chestsOwed: 2,
+      eventDraftsOwed: 1,
+      draft: {
+        deadlineTick: 18_600,
+        kind: 'chest',
+        cards: Array.from({ length: 7 }, (_, i) => ({
+          nature: i % 2,
+          refId: i,
+          upgrade: i % 3,
+          rarity: i % 4,
+        })),
+      },
+      portal: { deadlineTick: 18_599, multiplier: 2.25 },
+      event: {
+        kind: EVENT_KIND.CONVOI,
+        solo: true,
+        durationTicks: EVENT_DURATION_TICKS,
+        elapsed: 450,
+        progress: 128,
+        cartX: 3001,
+        cartY: -5,
+        cartHp: 200,
+        points: [
+          { x: 100, y: 200 },
+          { x: 5900, y: 5800 },
+        ],
+      },
+      charge,
+      players: [1, 2, 3, 4].map((id) => ({
+        id,
+        classId: id % 3,
+        absent: id === 3,
+        weapons: Array.from({ length: id }, (_, w) => ({
+          weaponId: w + id,
+          upgrades: aspects(w + id),
+          lastFireTick: w === 0 ? Number.NEGATIVE_INFINITY : 17_990 + w,
+        })),
+        passives: passifs(id),
+      })),
+      history: Array.from({ length: RESYNC_HISTORY_TICKS }, (_, t) => ({
+        ids: [1, 2, 4].slice(0, (t % 3) + 1),
+        x: [3000 + t, 2990 - t, -7].slice(0, (t % 3) + 1),
+        y: [100, 32_767, -32_768].slice(0, (t % 3) + 1),
+      })),
+      fieldTargets: [
+        { x: 1, y: 2 },
+        { x: 3000, y: 2999 },
+        { x: -1, y: 6000 },
+        { x: 0, y: 0 },
+      ],
+      horde: horde(3),
+      orbs: [
+        { id: entityIdOf(3, 7), x: 10, y: 20 },
+        { id: 0xffff_ffff, x: -30, y: 6000 },
+      ],
+      zones: [
+        { kind: 0x3a, x: 1, y: 2, bornTick: 17_000, by: 1 },
+        { kind: 0x01, x: 5999, y: 5999, bornTick: 17_999, by: 4 },
+      ],
+      decoys: [{ playerId: 2, x: 1500, y: 1600, bornTick: 17_950 }],
+    };
+  }
+
+  function vide(): ResyncState {
+    return {
+      tick: 1,
+      level: 1,
+      kills: 0,
+      freezeUntilTick: -1,
+      chestsOwed: 0,
+      eventDraftsOwed: 0,
+      draft: null,
+      portal: null,
+      event: null,
+      charge: null,
+      players: [{ id: 1, classId: 0, absent: false, weapons: [], passives: PASSIVES.map(() => 0) }],
+      history: Array.from({ length: RESYNC_HISTORY_TICKS }, () => ({ ids: [], x: [], y: [] })),
+      fieldTargets: [],
+      horde: horde(0),
+      orbs: [],
+      zones: [],
+      decoys: [],
+    };
+  }
+
+  /** La taille d'un `RESYNC` sans aucune section, DERIVEE des constantes. */
+  const TAILLE_VIDE =
+    RESYNC_HEADER_BYTES +
+    RESYNC_PLAYER_BYTES +
+    RESYNC_PASSIVES_BYTES +
+    RESYNC_HISTORY_TICKS * 1 +
+    1 +
+    2 +
+    2 +
+    1 +
+    1;
+
+  it('RESYNC et PRESENCE ont leurs numeros, et ne percutent aucun autre', () => {
+    expect(MSG.RESYNC).toBe(31);
+    expect(MSG.PRESENCE).toBe(32);
+    expect(new Set(Object.values(MSG)).size).toBe(Object.values(MSG).length);
+  });
+
+  it('les tailles derivent des constantes du jeu', () => {
+    expect(RESYNC_HEADER_BYTES).toBe(19);
+    expect(RESYNC_WEAPON_BYTES).toBe(1 + UPGRADE_KINDS + 4);
+    expect(RESYNC_PASSIVES_BYTES).toBe(PASSIVES.length * 2);
+    expect(RESYNC_HISTORY_TICKS).toBe(FIELD_INPUT_DELAY_TICKS + Math.round(TICK_HZ / FLOWFIELD_HZ));
+    expect(RESYNC_ZONE_BYTES).toBe(ZONE_BYTES - 1);
+    expect(RESYNC_CHARGE_BYTES).toBe(BOSS_CHARGE_BYTES - 1);
+    expect(PRESENCE_BYTES).toBe(3);
+  });
+
+  it('un RESYNC plein fait l aller-retour, a l egalite stricte sur les f32', () => {
+    const s = plein();
+    const decoded = decode(encodeResync(s));
+    expect(decoded).toEqual({ type: MSG.RESYNC, ...s });
+    if (decoded.type !== MSG.RESYNC) {
+      throw new Error('RESYNC attendu');
+    }
+    // Les f32 : les memes bits, pas « a peu pres ».
+    for (let i = 0; i < 3; i++) {
+      expect(decoded.horde.x[i]).toBe(Math.fround(1234.5678 + i * 0.001));
+      expect(decoded.horde.vx[i]).toBe(Math.fround(-83.123456 * (i + 1)));
+    }
+    expect(decoded.horde.x).toBeInstanceOf(Float32Array);
+    expect(decoded.horde.x.length).toBe(3);
+  });
+
+  it('un RESYNC vide pese la somme des constantes, et fait l aller-retour', () => {
+    const s = vide();
+    const buf = encodeResync(s);
+    expect(buf.byteLength).toBe(TAILLE_VIDE);
+    expect(decode(buf)).toEqual({ type: MSG.RESYNC, ...s });
+  });
+
+  it('N entites coutent base + N x RESYNC_ENTITY_BYTES', () => {
+    for (const n of [1, 17, 1200]) {
+      const s = { ...vide(), horde: horde(n) };
+      expect(encodeResync(s).byteLength).toBe(TAILLE_VIDE + n * RESYNC_ENTITY_BYTES);
+    }
+  });
+
+  it('chaque bit de flags allume exactement sa section', () => {
+    const base = vide();
+    const p = plein();
+    const flagsDe = (s: ResyncState): number => new DataView(encodeResync(s)).getUint8(17);
+    const taille = (s: ResyncState): number => encodeResync(s).byteLength;
+    expect(flagsDe(base)).toBe(0);
+
+    const etalage = p.draft ?? { deadlineTick: 0, cards: [], kind: 'level' as const };
+    const niveau = { ...base, draft: { ...etalage, kind: 'level' as const } };
+    expect(flagsDe(niveau)).toBe(RESYNC_FLAG.DRAFT_OPEN);
+    expect(taille(niveau)).toBe(TAILLE_VIDE + RESYNC_DRAFT_HEADER_BYTES + 7 * DRAFT_CARD_BYTES);
+    expect(decode(encodeResync(niveau))).toMatchObject({ draft: { kind: 'level' } });
+
+    const coffre = { ...base, draft: { ...etalage, kind: 'chest' as const } };
+    expect(flagsDe(coffre)).toBe(RESYNC_FLAG.DRAFT_OPEN | RESYNC_FLAG.DRAFT_CHEST);
+    expect(decode(encodeResync(coffre))).toMatchObject({ draft: { kind: 'chest' } });
+
+    const evenement = { ...base, draft: { ...etalage, kind: 'event' as const } };
+    expect(flagsDe(evenement)).toBe(RESYNC_FLAG.DRAFT_OPEN | RESYNC_FLAG.DRAFT_EVENT);
+    expect(decode(encodeResync(evenement))).toMatchObject({ draft: { kind: 'event' } });
+
+    const portail = { ...base, portal: p.portal };
+    expect(flagsDe(portail)).toBe(RESYNC_FLAG.PORTAL_OPEN);
+    expect(taille(portail)).toBe(TAILLE_VIDE + RESYNC_PORTAL_BYTES);
+    expect(decode(encodeResync(portail))).toMatchObject({ portal: p.portal });
+
+    const ev = { ...base, event: p.event };
+    expect(flagsDe(ev)).toBe(RESYNC_FLAG.EVENT);
+    expect(taille(ev)).toBe(TAILLE_VIDE + RESYNC_EVENT_HEADER_BYTES + 2 * EVENT_POINT_BYTES);
+    expect(decode(encodeResync(ev))).toMatchObject({ event: p.event });
+
+    const charge = { ...base, charge: p.charge };
+    expect(flagsDe(charge)).toBe(RESYNC_FLAG.CHARGE);
+    expect(taille(charge)).toBe(TAILLE_VIDE + RESYNC_CHARGE_BYTES);
+    expect(decode(encodeResync(charge))).toMatchObject({ charge: p.charge });
+
+    // Les sections par compte, sans bit : orbes, zones, leurres.
+    expect(taille({ ...base, orbs: p.orbs })).toBe(TAILLE_VIDE + 2 * RESYNC_ORB_BYTES);
+    expect(taille({ ...base, zones: p.zones })).toBe(TAILLE_VIDE + 2 * RESYNC_ZONE_BYTES);
+    expect(taille({ ...base, decoys: p.decoys })).toBe(TAILLE_VIDE + RESYNC_DECOY_BYTES);
+  });
+
+  it('lastFireTick : -Infinity (jamais tire) fait l aller-retour, un tick aussi', () => {
+    const s = vide();
+    s.players = [
+      {
+        id: 2,
+        classId: 1,
+        absent: true,
+        weapons: [
+          { weaponId: 0, upgrades: aspects(0), lastFireTick: Number.NEGATIVE_INFINITY },
+          { weaponId: 3, upgrades: aspects(1), lastFireTick: 1 },
+        ],
+        passives: passifs(2),
+      },
+    ];
+    const d = decode(encodeResync(s));
+    expect(d).toMatchObject({
+      players: [
+        {
+          absent: true,
+          weapons: [{ lastFireTick: Number.NEGATIVE_INFINITY }, { lastFireTick: 1 }],
+        },
+      ],
+    });
+    expect(encodeResync(s).byteLength).toBe(TAILLE_VIDE + 2 * RESYNC_WEAPON_BYTES);
+  });
+
+  it('un RESYNC tronque au milieu de la horde leve, comme decodeSnapshot', () => {
+    const buf = encodeResync({ ...vide(), horde: horde(5) });
+    const tronque = buf.slice(0, buf.byteLength - RESYNC_ENTITY_BYTES - 3);
+    expect(() => decode(tronque)).toThrow(/tronque/);
+    // Tronque dans l en-tete aussi.
+    expect(() => decode(buf.slice(0, RESYNC_HEADER_BYTES - 1))).toThrow(/tronque/);
+  });
+
+  it('PRESENCE : 3 octets, present fait l aller-retour en booleen', () => {
+    for (const present of [true, false]) {
+      const buf = encodePresence(3, present);
+      expect(buf.byteLength).toBe(PRESENCE_BYTES);
+      expect(decode(buf)).toEqual({ type: MSG.PRESENCE, playerId: 3, present });
+    }
   });
 });

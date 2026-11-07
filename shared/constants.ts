@@ -778,3 +778,16 @@ export const SHIELD_REGEN_PER_SEC = 20;
  * le porteur a l'instant ou la carte s'applique.
  */
 export const TRANSCENDANCE_MAX_HP = 1;
+
+/**
+ * Fenetre de grace apres la chute d'une socket EN RUN (etape 18) : le slot et
+ * le `PlayerState` sont gardes ce temps-la, et le meme compte qui revient sur
+ * le meme code reprend sa place avec tout son etat (`RESYNC`). Lue par le
+ * serveur (le minuteur) ET le client (la reprise automatique apres
+ * rechargement).
+ *
+ * 60 s : un rechargement de page tient en 2 s, une bascule Wi-Fi/4G en 10 a
+ * 30 s. Au-dela, l'absent pese sur l'equipe (seuil de niveau, PV du boss) :
+ * une minute borne ce poids. Un jugement, a regler au playtest.
+ */
+export const RECONNECT_GRACE_MS = 60_000;

@@ -6,7 +6,10 @@
  * Tout est en little-endian, l'ordre natif de x86 et d'ARM.
  */
 
+import { FIELD_INPUT_DELAY_TICKS, FLOWFIELD_HZ, TICK_HZ } from './constants';
 import { EVENT_SOLO_FLAG } from './evenements';
+import { PASSIVES } from './passives';
+import { UPGRADE_KINDS } from './weapons';
 
 export const MSG = {
   WELCOME: 1,
@@ -39,6 +42,8 @@ export const MSG = {
   EVENT_START: 28,
   EVENT_STATE: 29,
   EVENT_END: 30,
+  RESYNC: 31,
+  PRESENCE: 32,
 } as const;
 
 export type MsgType = (typeof MSG)[keyof typeof MSG];
@@ -367,7 +372,9 @@ export type Message =
   | PingShownMessage
   | EventStartMessage
   | EventStateMessage
-  | EventEndMessage;
+  | EventEndMessage
+  | ResyncMessage
+  | PresenceMessage;
 
 export interface DraftOpenMessage {
   type: typeof MSG.DRAFT_OPEN;
@@ -1276,6 +1283,10 @@ export function decode(buf: ArrayBuffer): Message {
       return decodeEventState(buf);
     case MSG.EVENT_END:
       return decodeEventEnd(buf);
+    case MSG.RESYNC:
+      return decodeResync(buf);
+    case MSG.PRESENCE:
+      return decodePresence(buf);
     default:
       throw new Error(`type de message inconnu : ${type}`);
   }
@@ -1951,4 +1962,614 @@ function decodeEventState(buf: ArrayBuffer): EventStateMessage {
 function decodeEventEnd(buf: ArrayBuffer): EventEndMessage {
   const v = viewOf(buf, EVENT_END_BYTES);
   return { type: MSG.EVENT_END, outcome: v.getUint8(1) };
+}
+
+/*
+ * Etape 18 : la reconnexion avec etat complet.
+ *
+ * `RESYNC` part UNE fois, hors tick, a tout joueur qui entre dans un salon
+ * lance (reconnexion ou non) : la horde en f32 (0,000 px par `restoreState`),
+ * l'historique des positions qui nourrit les champs, les cibles des champs,
+ * les inventaires, les orbes, les zones, les leurres, et les fenetres ouvertes.
+ * `PRESENCE` fait 3 octets, sur changement. **Zero octet de plus par tick.**
+ */
+
+/** `type u8 · playerId u8 · present u8`. */
+export const PRESENCE_BYTES = 3;
+/**
+ * `type u8 · tick u32 · level u16 · kills u32 · freezeUntilTick i32 ·
+ * chestsOwed u8 · eventDraftsOwed u8 · flags u8 · playerCount u8`.
+ */
+export const RESYNC_HEADER_BYTES = 19;
+/** `id u8 · classId u8 · flags u8 · nWeapons u8`, puis les armes et les passifs. */
+export const RESYNC_PLAYER_BYTES = 4;
+/** `weaponId u8 · upgrades UPGRADE_KINDS x u8 · lastFireTick u32`. */
+export const RESYNC_WEAPON_BYTES = 1 + UPGRADE_KINDS + 4;
+/** `PASSIVES.length x u16` : les exemplaires de chaque passif, « sans plafond ». */
+export const RESYNC_PASSIVES_BYTES = PASSIVES.length * 2;
+/**
+ * Enregistrements d'historique transportes : le retard des champs plus un
+ * cycle de rafraichissement, ticks `T - (n-1) … T`. Sans eux, le client
+ * sauterait les rafraichissements que le serveur a faits sur ces positions.
+ */
+export const RESYNC_HISTORY_TICKS = FIELD_INPUT_DELAY_TICKS + Math.round(TICK_HZ / FLOWFIELD_HZ);
+/** Un enregistrement d'historique : `id u8 · x i16 · y i16`. */
+const RESYNC_HISTORY_ENTRY_BYTES = 5;
+/** Une cible de champ : `x i16 · y i16`. */
+const RESYNC_FIELD_TARGET_BYTES = 4;
+/**
+ * `waveId u16 · indexInWave u16 · x f32 · y f32 · vx f32 · vy f32 · archetype
+ * u8 · animPhase u8 · targetField u8 · flags u8`. ⚠️ Des FLOTTANTS : la horde
+ * ne passe jamais quantifiee sur le fil, 0,000 px exige les memes bits.
+ */
+export const RESYNC_ENTITY_BYTES = 24;
+/** `id u32 · x i16 · y i16` : la position ne sert qu'a dessiner. */
+export const RESYNC_ORB_BYTES = 8;
+/** Le corps de `ZONE` sans son octet de type. */
+export const RESYNC_ZONE_BYTES = ZONE_BYTES - 1;
+/** `playerId u8 · x i16 · y i16 · bornTick u32`. */
+export const RESYNC_DECOY_BYTES = 9;
+/** Le corps de `BOSS_CHARGE` sans son octet de type. */
+export const RESYNC_CHARGE_BYTES = BOSS_CHARGE_BYTES - 1;
+/**
+ * `genre|solo u8 · durationTicks u16 · elapsed u16 · progress u8 · cartX i16 ·
+ * cartY i16 · cartHp u8 · n u8`, puis `n x (x i16 · y i16)`.
+ */
+export const RESYNC_EVENT_HEADER_BYTES = 12;
+/** `deadlineTick u32 · n u8`, puis `n x DRAFT_CARD_BYTES`. */
+export const RESYNC_DRAFT_HEADER_BYTES = 5;
+/** `deadlineTick u32 · multiplier u16`, comme `PORTAL_OPEN`. */
+export const RESYNC_PORTAL_BYTES = 6;
+
+/** Les bits de `flags` : chaque section conditionnelle n'est presente que si son bit est leve. */
+export const RESYNC_FLAG = {
+  DRAFT_OPEN: 1,
+  DRAFT_CHEST: 2,
+  DRAFT_EVENT: 4,
+  PORTAL_OPEN: 8,
+  EVENT: 16,
+  CHARGE: 32,
+} as const;
+
+/** Le bit « absent » du bloc joueur. */
+const RESYNC_PLAYER_ABSENT = 1;
+const RESYNC_ENTITY_STOPPED = 1;
+const RESYNC_ENTITY_FLEEING = 2;
+
+export type ResyncDraftKind = 'level' | 'chest' | 'event';
+
+/** Une arme tenue : ses aspects ameliores et son dernier tick de tir. */
+export interface ResyncWeapon {
+  weaponId: number;
+  /** `UPGRADE_KINDS` entrees : `Loadout.upgradesOf(id, aspect)`. */
+  upgrades: number[];
+  /** `-Infinity` = jamais (encode `0` : le tick 0 n'est jamais un tick de tir). */
+  lastFireTick: number;
+}
+
+export interface ResyncPlayer {
+  id: number;
+  classId: number;
+  absent: boolean;
+  /** Dans l'ordre des slots (`Loadout.weaponIds`). */
+  weapons: ResyncWeapon[];
+  /** `PASSIVES.length` entrees : `Loadout.stacksOf(id)`. */
+  passives: number[];
+}
+
+/**
+ * La horde telle que `encodeResync` la lit — structurel, jamais `Horde` : le
+ * protocole n'importe pas la simulation. Les tableaux peuvent depasser `count`
+ * (ceux de `Horde`) ; `decodeResync` les rend dimensionnes a `count`.
+ */
+export interface ResyncHorde {
+  count: number;
+  x: Float32Array;
+  y: Float32Array;
+  vx: Float32Array;
+  vy: Float32Array;
+  archetype: Uint8Array;
+  waveId: Uint16Array;
+  indexInWave: Uint16Array;
+  animPhase: Uint8Array;
+  targetField: Uint8Array;
+  stopped: Uint8Array;
+  fleeing: Uint8Array;
+}
+
+/** Ce que `Room.resyncState()` rassemble et que `RESYNC` transporte. */
+export interface ResyncState {
+  tick: number;
+  level: number;
+  kills: number;
+  /** `-1` hors gel. */
+  freezeUntilTick: number;
+  chestsOwed: number;
+  eventDraftsOwed: number;
+  draft: { deadlineTick: number; cards: readonly WireCard[]; kind: ResyncDraftKind } | null;
+  portal: { deadlineTick: number; multiplier: number } | null;
+  event: {
+    kind: number;
+    solo: boolean;
+    durationTicks: number;
+    elapsed: number;
+    progress: number;
+    cartX: number;
+    cartY: number;
+    cartHp: number;
+    points: readonly { x: number; y: number }[];
+  } | null;
+  charge: Omit<BossChargeMessage, 'type'> | null;
+  players: readonly ResyncPlayer[];
+  /** `RESYNC_HISTORY_TICKS` enregistrements, du plus ancien au tick `T` ; vivants presents, arrondis. */
+  history: readonly { ids: readonly number[]; x: readonly number[]; y: readonly number[] }[];
+  /** `Horde.aimX/aimY` : les positions retardees du dernier `retarget`. */
+  fieldTargets: readonly { x: number; y: number }[];
+  horde: ResyncHorde;
+  orbs: readonly { id: number; x: number; y: number }[];
+  zones: readonly { kind: number; x: number; y: number; bornTick: number; by: number }[];
+  decoys: readonly { playerId: number; x: number; y: number; bornTick: number }[];
+}
+
+export interface ResyncMessage extends ResyncState {
+  type: typeof MSG.RESYNC;
+}
+
+/** S -> C : un joueur entre en grace (`present = false`) ou revient. */
+export interface PresenceMessage {
+  type: typeof MSG.PRESENCE;
+  playerId: number;
+  present: boolean;
+}
+
+const u8 = (v: number): number => Math.min(255, Math.max(0, Math.round(v)));
+const u16 = (v: number): number => Math.min(0xffff, Math.max(0, Math.round(v)));
+const i16 = (v: number): number => Math.min(32767, Math.max(-32768, Math.round(v)));
+
+function resyncBytes(s: ResyncState): number {
+  let n = RESYNC_HEADER_BYTES;
+  for (const p of s.players) {
+    n += RESYNC_PLAYER_BYTES + p.weapons.length * RESYNC_WEAPON_BYTES + RESYNC_PASSIVES_BYTES;
+  }
+  for (let i = 0; i < RESYNC_HISTORY_TICKS; i++) {
+    n += 1 + (s.history[i]?.ids.length ?? 0) * RESYNC_HISTORY_ENTRY_BYTES;
+  }
+  n += 1 + s.fieldTargets.length * RESYNC_FIELD_TARGET_BYTES;
+  n += 2 + s.horde.count * RESYNC_ENTITY_BYTES;
+  n += 2 + s.orbs.length * RESYNC_ORB_BYTES;
+  n += 1 + s.zones.length * RESYNC_ZONE_BYTES;
+  n += 1 + s.decoys.length * RESYNC_DECOY_BYTES;
+  if (s.charge) {
+    n += RESYNC_CHARGE_BYTES;
+  }
+  if (s.event) {
+    n += RESYNC_EVENT_HEADER_BYTES + s.event.points.length * EVENT_POINT_BYTES;
+  }
+  if (s.draft) {
+    n += RESYNC_DRAFT_HEADER_BYTES + s.draft.cards.length * DRAFT_CARD_BYTES;
+  }
+  if (s.portal) {
+    n += RESYNC_PORTAL_BYTES;
+  }
+  return n;
+}
+
+/**
+ * S -> C : l'etat complet, une fois, hors tick. Les sections dans l'ordre du
+ * §3.1 de la spec : en-tete, joueurs, historique, cibles des champs, horde,
+ * orbes, zones, leurres, puis les conditionnelles (charge, evenement,
+ * etalage, portail) selon `flags`.
+ */
+export function encodeResync(s: ResyncState): ArrayBuffer {
+  const buf = new ArrayBuffer(resyncBytes(s));
+  const v = new DataView(buf);
+  const flags =
+    (s.draft ? RESYNC_FLAG.DRAFT_OPEN : 0) |
+    (s.draft?.kind === 'chest' ? RESYNC_FLAG.DRAFT_CHEST : 0) |
+    (s.draft?.kind === 'event' ? RESYNC_FLAG.DRAFT_EVENT : 0) |
+    (s.portal ? RESYNC_FLAG.PORTAL_OPEN : 0) |
+    (s.event ? RESYNC_FLAG.EVENT : 0) |
+    (s.charge ? RESYNC_FLAG.CHARGE : 0);
+  v.setUint8(0, MSG.RESYNC);
+  v.setUint32(1, s.tick >>> 0, true);
+  v.setUint16(5, u16(s.level), true);
+  v.setUint32(7, s.kills >>> 0, true);
+  v.setInt32(11, s.freezeUntilTick | 0, true);
+  v.setUint8(15, u8(s.chestsOwed));
+  v.setUint8(16, u8(s.eventDraftsOwed));
+  v.setUint8(17, flags);
+  v.setUint8(18, s.players.length);
+  let o = RESYNC_HEADER_BYTES;
+
+  for (const p of s.players) {
+    v.setUint8(o, p.id);
+    v.setUint8(o + 1, p.classId);
+    v.setUint8(o + 2, p.absent ? RESYNC_PLAYER_ABSENT : 0);
+    v.setUint8(o + 3, p.weapons.length);
+    o += RESYNC_PLAYER_BYTES;
+    for (const w of p.weapons) {
+      v.setUint8(o, w.weaponId);
+      for (let a = 0; a < UPGRADE_KINDS; a++) {
+        v.setUint8(o + 1 + a, u8(w.upgrades[a] ?? 0));
+      }
+      // `-Infinity` (jamais tire) voyage comme 0 : `step` commence par `tick++`,
+      // le tick 0 n'est jamais un tick de tir.
+      v.setUint32(o + 1 + UPGRADE_KINDS, w.lastFireTick > 0 ? w.lastFireTick >>> 0 : 0, true);
+      o += RESYNC_WEAPON_BYTES;
+    }
+    for (let i = 0; i < PASSIVES.length; i++) {
+      v.setUint16(o + i * 2, u16(p.passives[i] ?? 0), true);
+    }
+    o += RESYNC_PASSIVES_BYTES;
+  }
+
+  for (let i = 0; i < RESYNC_HISTORY_TICKS; i++) {
+    const h = s.history[i];
+    const count = h?.ids.length ?? 0;
+    v.setUint8(o, count);
+    o += 1;
+    for (let k = 0; k < count; k++) {
+      v.setUint8(o, h?.ids[k] ?? 0);
+      v.setInt16(o + 1, i16(h?.x[k] ?? 0), true);
+      v.setInt16(o + 3, i16(h?.y[k] ?? 0), true);
+      o += RESYNC_HISTORY_ENTRY_BYTES;
+    }
+  }
+
+  v.setUint8(o, s.fieldTargets.length);
+  o += 1;
+  for (const t of s.fieldTargets) {
+    v.setInt16(o, i16(t.x), true);
+    v.setInt16(o + 2, i16(t.y), true);
+    o += RESYNC_FIELD_TARGET_BYTES;
+  }
+
+  const h = s.horde;
+  v.setUint16(o, h.count, true);
+  o += 2;
+  for (let i = 0; i < h.count; i++) {
+    v.setUint16(o, h.waveId[i] ?? 0, true);
+    v.setUint16(o + 2, h.indexInWave[i] ?? 0, true);
+    v.setFloat32(o + 4, h.x[i] ?? 0, true);
+    v.setFloat32(o + 8, h.y[i] ?? 0, true);
+    v.setFloat32(o + 12, h.vx[i] ?? 0, true);
+    v.setFloat32(o + 16, h.vy[i] ?? 0, true);
+    v.setUint8(o + 20, h.archetype[i] ?? 0);
+    v.setUint8(o + 21, h.animPhase[i] ?? 0);
+    v.setUint8(o + 22, h.targetField[i] ?? 0);
+    v.setUint8(
+      o + 23,
+      (h.stopped[i] ? RESYNC_ENTITY_STOPPED : 0) | (h.fleeing[i] ? RESYNC_ENTITY_FLEEING : 0),
+    );
+    o += RESYNC_ENTITY_BYTES;
+  }
+
+  v.setUint16(o, s.orbs.length, true);
+  o += 2;
+  for (const orb of s.orbs) {
+    v.setUint32(o, orb.id >>> 0, true);
+    v.setInt16(o + 4, i16(orb.x), true);
+    v.setInt16(o + 6, i16(orb.y), true);
+    o += RESYNC_ORB_BYTES;
+  }
+
+  v.setUint8(o, s.zones.length);
+  o += 1;
+  for (const z of s.zones) {
+    v.setUint8(o, z.kind);
+    v.setInt16(o + 1, i16(z.x), true);
+    v.setInt16(o + 3, i16(z.y), true);
+    v.setUint32(o + 5, z.bornTick >>> 0, true);
+    v.setUint8(o + 9, z.by);
+    o += RESYNC_ZONE_BYTES;
+  }
+
+  v.setUint8(o, s.decoys.length);
+  o += 1;
+  for (const d of s.decoys) {
+    v.setUint8(o, d.playerId);
+    v.setInt16(o + 1, i16(d.x), true);
+    v.setInt16(o + 3, i16(d.y), true);
+    v.setUint32(o + 5, d.bornTick >>> 0, true);
+    o += RESYNC_DECOY_BYTES;
+  }
+
+  if (s.charge) {
+    // Le corps de `BOSS_CHARGE`, octet de type exclu : meme encodeur.
+    new Uint8Array(buf, o, RESYNC_CHARGE_BYTES).set(
+      new Uint8Array(encodeBossCharge(s.charge), 1, RESYNC_CHARGE_BYTES),
+    );
+    o += RESYNC_CHARGE_BYTES;
+  }
+
+  if (s.event) {
+    const e = s.event;
+    v.setUint8(o, (e.kind & 0x7f) | (e.solo ? EVENT_SOLO_FLAG : 0));
+    v.setUint16(o + 1, u16(e.durationTicks), true);
+    v.setUint16(o + 3, u16(e.elapsed), true);
+    v.setUint8(o + 5, u8(e.progress));
+    v.setInt16(o + 6, i16(e.cartX), true);
+    v.setInt16(o + 8, i16(e.cartY), true);
+    v.setUint8(o + 10, u8(e.cartHp));
+    v.setUint8(o + 11, e.points.length);
+    o += RESYNC_EVENT_HEADER_BYTES;
+    for (const p of e.points) {
+      v.setInt16(o, i16(p.x), true);
+      v.setInt16(o + 2, i16(p.y), true);
+      o += EVENT_POINT_BYTES;
+    }
+  }
+
+  if (s.draft) {
+    v.setUint32(o, s.draft.deadlineTick >>> 0, true);
+    v.setUint8(o + 4, s.draft.cards.length);
+    o += RESYNC_DRAFT_HEADER_BYTES;
+    for (const c of s.draft.cards) {
+      v.setUint8(o, c.nature);
+      v.setUint8(o + 1, c.refId);
+      v.setUint8(o + 2, c.upgrade ?? 0);
+      v.setUint8(o + 3, c.rarity ?? 0);
+      o += DRAFT_CARD_BYTES;
+    }
+  }
+
+  if (s.portal) {
+    v.setUint32(o, s.portal.deadlineTick >>> 0, true);
+    v.setUint16(o + 4, u16(s.portal.multiplier * EXTRACT_MULTIPLIER_SCALE), true);
+    o += RESYNC_PORTAL_BYTES;
+  }
+
+  return buf;
+}
+
+export function decodeResync(buf: ArrayBuffer): ResyncMessage {
+  // Chaque section exige sa longueur AVANT de la lire : un message tronque au
+  // milieu de la horde leve, comme `decodeSnapshot`.
+  const v = viewOf(buf, RESYNC_HEADER_BYTES);
+  const flags = v.getUint8(17);
+  const playerCount = v.getUint8(18);
+  let o = RESYNC_HEADER_BYTES;
+
+  const players: ResyncPlayer[] = [];
+  for (let i = 0; i < playerCount; i++) {
+    viewOf(buf, o + RESYNC_PLAYER_BYTES);
+    const nWeapons = v.getUint8(o + 3);
+    const player: ResyncPlayer = {
+      id: v.getUint8(o),
+      classId: v.getUint8(o + 1),
+      absent: (v.getUint8(o + 2) & RESYNC_PLAYER_ABSENT) !== 0,
+      weapons: [],
+      passives: [],
+    };
+    o += RESYNC_PLAYER_BYTES;
+    viewOf(buf, o + nWeapons * RESYNC_WEAPON_BYTES + RESYNC_PASSIVES_BYTES);
+    for (let w = 0; w < nWeapons; w++) {
+      const upgrades: number[] = [];
+      for (let a = 0; a < UPGRADE_KINDS; a++) {
+        upgrades.push(v.getUint8(o + 1 + a));
+      }
+      const last = v.getUint32(o + 1 + UPGRADE_KINDS, true);
+      player.weapons.push({
+        weaponId: v.getUint8(o),
+        upgrades,
+        lastFireTick: last === 0 ? Number.NEGATIVE_INFINITY : last,
+      });
+      o += RESYNC_WEAPON_BYTES;
+    }
+    for (let p = 0; p < PASSIVES.length; p++) {
+      player.passives.push(v.getUint16(o + p * 2, true));
+    }
+    o += RESYNC_PASSIVES_BYTES;
+    players.push(player);
+  }
+
+  const history: { ids: number[]; x: number[]; y: number[] }[] = [];
+  for (let i = 0; i < RESYNC_HISTORY_TICKS; i++) {
+    viewOf(buf, o + 1);
+    const count = v.getUint8(o);
+    o += 1;
+    viewOf(buf, o + count * RESYNC_HISTORY_ENTRY_BYTES);
+    const entry = { ids: [] as number[], x: [] as number[], y: [] as number[] };
+    for (let k = 0; k < count; k++) {
+      entry.ids.push(v.getUint8(o));
+      entry.x.push(v.getInt16(o + 1, true));
+      entry.y.push(v.getInt16(o + 3, true));
+      o += RESYNC_HISTORY_ENTRY_BYTES;
+    }
+    history.push(entry);
+  }
+
+  viewOf(buf, o + 1);
+  const nTargets = v.getUint8(o);
+  o += 1;
+  viewOf(buf, o + nTargets * RESYNC_FIELD_TARGET_BYTES);
+  const fieldTargets: { x: number; y: number }[] = [];
+  for (let i = 0; i < nTargets; i++) {
+    fieldTargets.push({ x: v.getInt16(o, true), y: v.getInt16(o + 2, true) });
+    o += RESYNC_FIELD_TARGET_BYTES;
+  }
+
+  viewOf(buf, o + 2);
+  const count = v.getUint16(o, true);
+  o += 2;
+  viewOf(buf, o + count * RESYNC_ENTITY_BYTES);
+  const horde: ResyncHorde = {
+    count,
+    x: new Float32Array(count),
+    y: new Float32Array(count),
+    vx: new Float32Array(count),
+    vy: new Float32Array(count),
+    archetype: new Uint8Array(count),
+    waveId: new Uint16Array(count),
+    indexInWave: new Uint16Array(count),
+    animPhase: new Uint8Array(count),
+    targetField: new Uint8Array(count),
+    stopped: new Uint8Array(count),
+    fleeing: new Uint8Array(count),
+  };
+  for (let i = 0; i < count; i++) {
+    horde.waveId[i] = v.getUint16(o, true);
+    horde.indexInWave[i] = v.getUint16(o + 2, true);
+    horde.x[i] = v.getFloat32(o + 4, true);
+    horde.y[i] = v.getFloat32(o + 8, true);
+    horde.vx[i] = v.getFloat32(o + 12, true);
+    horde.vy[i] = v.getFloat32(o + 16, true);
+    horde.archetype[i] = v.getUint8(o + 20);
+    horde.animPhase[i] = v.getUint8(o + 21);
+    horde.targetField[i] = v.getUint8(o + 22);
+    const f = v.getUint8(o + 23);
+    horde.stopped[i] = f & RESYNC_ENTITY_STOPPED ? 1 : 0;
+    horde.fleeing[i] = f & RESYNC_ENTITY_FLEEING ? 1 : 0;
+    o += RESYNC_ENTITY_BYTES;
+  }
+
+  viewOf(buf, o + 2);
+  const nOrbs = v.getUint16(o, true);
+  o += 2;
+  viewOf(buf, o + nOrbs * RESYNC_ORB_BYTES);
+  const orbs: { id: number; x: number; y: number }[] = [];
+  for (let i = 0; i < nOrbs; i++) {
+    orbs.push({ id: v.getUint32(o, true), x: v.getInt16(o + 4, true), y: v.getInt16(o + 6, true) });
+    o += RESYNC_ORB_BYTES;
+  }
+
+  viewOf(buf, o + 1);
+  const nZones = v.getUint8(o);
+  o += 1;
+  viewOf(buf, o + nZones * RESYNC_ZONE_BYTES);
+  const zones: ResyncState['zones'][number][] = [];
+  for (let i = 0; i < nZones; i++) {
+    zones.push({
+      kind: v.getUint8(o),
+      x: v.getInt16(o + 1, true),
+      y: v.getInt16(o + 3, true),
+      bornTick: v.getUint32(o + 5, true),
+      by: v.getUint8(o + 9),
+    });
+    o += RESYNC_ZONE_BYTES;
+  }
+
+  viewOf(buf, o + 1);
+  const nDecoys = v.getUint8(o);
+  o += 1;
+  viewOf(buf, o + nDecoys * RESYNC_DECOY_BYTES);
+  const decoys: ResyncState['decoys'][number][] = [];
+  for (let i = 0; i < nDecoys; i++) {
+    decoys.push({
+      playerId: v.getUint8(o),
+      x: v.getInt16(o + 1, true),
+      y: v.getInt16(o + 3, true),
+      bornTick: v.getUint32(o + 5, true),
+    });
+    o += RESYNC_DECOY_BYTES;
+  }
+
+  let charge: ResyncState['charge'] = null;
+  if (flags & RESYNC_FLAG.CHARGE) {
+    viewOf(buf, o + RESYNC_CHARGE_BYTES);
+    const corps = new ArrayBuffer(BOSS_CHARGE_BYTES);
+    new Uint8Array(corps).set(new Uint8Array(buf, o, RESYNC_CHARGE_BYTES), 1);
+    const { type: _type, ...reste } = decodeBossCharge(corps);
+    charge = reste;
+    o += RESYNC_CHARGE_BYTES;
+  }
+
+  let event: ResyncState['event'] = null;
+  if (flags & RESYNC_FLAG.EVENT) {
+    viewOf(buf, o + RESYNC_EVENT_HEADER_BYTES);
+    const genre = v.getUint8(o);
+    const n = v.getUint8(o + 11);
+    const points: { x: number; y: number }[] = [];
+    event = {
+      kind: genre & 0x7f,
+      solo: (genre & EVENT_SOLO_FLAG) !== 0,
+      durationTicks: v.getUint16(o + 1, true),
+      elapsed: v.getUint16(o + 3, true),
+      progress: v.getUint8(o + 5),
+      cartX: v.getInt16(o + 6, true),
+      cartY: v.getInt16(o + 8, true),
+      cartHp: v.getUint8(o + 10),
+      points,
+    };
+    o += RESYNC_EVENT_HEADER_BYTES;
+    viewOf(buf, o + n * EVENT_POINT_BYTES);
+    for (let i = 0; i < n; i++) {
+      points.push({ x: v.getInt16(o, true), y: v.getInt16(o + 2, true) });
+      o += EVENT_POINT_BYTES;
+    }
+  }
+
+  let draft: ResyncState['draft'] = null;
+  if (flags & RESYNC_FLAG.DRAFT_OPEN) {
+    viewOf(buf, o + RESYNC_DRAFT_HEADER_BYTES);
+    const n = v.getUint8(o + 4);
+    const cards: WireCard[] = [];
+    draft = {
+      deadlineTick: v.getUint32(o, true),
+      cards,
+      kind:
+        flags & RESYNC_FLAG.DRAFT_CHEST
+          ? 'chest'
+          : flags & RESYNC_FLAG.DRAFT_EVENT
+            ? 'event'
+            : 'level',
+    };
+    o += RESYNC_DRAFT_HEADER_BYTES;
+    viewOf(buf, o + n * DRAFT_CARD_BYTES);
+    for (let i = 0; i < n; i++) {
+      cards.push({
+        nature: v.getUint8(o),
+        refId: v.getUint8(o + 1),
+        upgrade: v.getUint8(o + 2),
+        rarity: v.getUint8(o + 3),
+      });
+      o += DRAFT_CARD_BYTES;
+    }
+  }
+
+  let portal: ResyncState['portal'] = null;
+  if (flags & RESYNC_FLAG.PORTAL_OPEN) {
+    viewOf(buf, o + RESYNC_PORTAL_BYTES);
+    portal = {
+      deadlineTick: v.getUint32(o, true),
+      multiplier: v.getUint16(o + 4, true) / EXTRACT_MULTIPLIER_SCALE,
+    };
+    o += RESYNC_PORTAL_BYTES;
+  }
+
+  return {
+    type: MSG.RESYNC,
+    tick: v.getUint32(1, true),
+    level: v.getUint16(5, true),
+    kills: v.getUint32(7, true),
+    freezeUntilTick: v.getInt32(11, true),
+    chestsOwed: v.getUint8(15),
+    eventDraftsOwed: v.getUint8(16),
+    draft,
+    portal,
+    event,
+    charge,
+    players,
+    history,
+    fieldTargets,
+    horde,
+    orbs,
+    zones,
+    decoys,
+  };
+}
+
+/** S -> C : un joueur entre en grace ou en revient, 3 octets, sur changement. */
+export function encodePresence(playerId: number, present: boolean): ArrayBuffer {
+  const buf = new ArrayBuffer(PRESENCE_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, MSG.PRESENCE);
+  v.setUint8(1, playerId);
+  v.setUint8(2, present ? 1 : 0);
+  return buf;
+}
+
+export function decodePresence(buf: ArrayBuffer): PresenceMessage {
+  const v = viewOf(buf, PRESENCE_BYTES);
+  return { type: MSG.PRESENCE, playerId: v.getUint8(1), present: v.getUint8(2) !== 0 };
 }
