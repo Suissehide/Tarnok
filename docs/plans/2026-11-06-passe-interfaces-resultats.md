@@ -96,49 +96,39 @@ Quatre constats de l'audit des interactions, tous tracés dans le code et reprod
 
 ## 3. Ce qui est constaté et laissé ouvert
 
-Par ordre d'importance, avec la ligne — pour une étape à venir, pas pour cette passe.
+Le 7 novembre, Léo a demandé de tout traiter (« fais les correctifs 1 à 8 »). État :
 
-1. **Aucune reconnexion, et rejoindre en cours de run donne un monde fantôme.** `Room.leave`
-   détruit le `PlayerState` (`back/src/server.ts` `remove`), `#creditAccounts` ne verse qu'aux
-   comptes encore connectés : une coupure de Wi-Fi une seconde avant l'extraction perd le
-   loadout *et* l'or. Celui qui revient entre sans `WAVE_ORDER` passés, sans zones, sans classe
-   (`server.ts` `Session.add`, `client.ts` `WELCOME`) : horde invisible, monde qui le tue.
-   **Refuser l'entrée en cours de run a été essayé puis retiré** : un test de l'étape 9
-   (`ping.integration.test.ts`, « un joueur qui revient sur le même id ») suppose ce retour
-   possible. La vraie réponse est une fenêtre de grâce par compte avec un état complet au
-   retour — une étape, pas un patch. À trancher.
-2. **Les chiffres de dégâts des alliés sont faux et diffèrent d'un client à l'autre**
-   (`client.ts` `#fireOne` applique les `accountBonuses` du joueur *local* aux salves d'un
-   allié). Soit n'afficher que les siens, soit faire voyager les bonus dans `LOBBY`.
-3. **Horde désynchronisée après un onglet en arrière-plan** (`client.ts`, `#pending*` sans
-   borne, morts « trop vieilles » au retour) : vider et reposer les ordres au `visibilitychange`.
-4. **Un `PICK` en vol au `START` est perdu** (`server.ts`) : le joueur entre avec la dague et la
-   classe par défaut, sans retour. Un état « prêt » réglerait aussi le double clic.
-5. **Le seuil d'XP et les PV de boss comptent les morts** (`room.ts` `#xpToNextLevel`,
-   `#players.size`) : une équipe à un vivant sur quatre monte quatre fois plus lentement. Choix
-   de design à trancher.
-6. **Bilan « Extraction réussie + 0 »** quand le wipe et le vote « partir » tombent au même tick
-   (`room.ts` `#checkRunOver` puis `#stepPortal`). Rare.
-7. **Caméra non bornée** (`stage.ts` `#centerOn`) : en bord de carte on voit le vide.
-8. **Focus clavier perdu à chaque `LOBBY`** (`room.ts` `replaceChildren`) et après chaque achat.
-9. **Monstre devant un tronc dessiné derrière** : `#horde` est un `ParticleContainer` entier sous
-   `#depth`, non entrelaçable. À documenter plutôt qu'à corriger.
-10. **Pixel art à échelle non entière** : traité au second passage (§2, rendu), sauf la police
-    Jersey 15 à des tailles non multiples de 15 (faible) et l'échelle de la horde, à cuire dans
-    l'atlas un jour.
-11. Détails : barre d'XP mordue de 3 px par le badge de niveau ; bandeaux porteur/événement
-    visibles entre les cartes une fois l'étalage réglé ; roue de ping non mise à l'échelle ;
-    ombres du mortier au-dessus des monstres ; secousse qui fait trembler les flèches de bord ;
-    marche d'opacité au bord du trou de lumière ; chemins `/tinyswords/` en dur dans
-    `orb-renderer.ts` et `skin.ts` ; DPR figé à l'init.
-12. Après une run, le retour passe par le menu principal et un **nouveau code** : l'équipe doit
-    se redonner rendez-vous à chaque partie.
+1. **Reconnexion** → étape 18, exécutée le 7 novembre ; voir son bilan
+   `2026-11-07-etape-18-resultats.md`.
+2. **Chiffres de dégâts des alliés** → phase 2 du 7 novembre (les bonus de compte voyagent
+   dans `LOBBY`).
+3. **Horde après un onglet en arrière-plan** → phase 2 du 7 novembre.
+4. **`PICK` en vol au `START`** → phase 2 du 7 novembre.
+5. **Focus clavier** → fait (`07b2f94`, `keepFocus` dans `room.ts`, repris par `shop.ts`).
+6. **Caméra non bornée** → non fait, volontairement : `terrain-renderer.ts` dessine l'eau sur
+   une carte entière autour de chaque bord, on ne voit jamais le vide. Un clamp serait du code
+   pour rien.
+7. **Détails** → faits : badge de niveau (`b0ad4e3`), bandeaux porteur/événement tus pendant
+   l'étalage (`c8ce6a7`), roue de ping à l'échelle de l'interface (`3de4a01`), ombres du mortier
+   au sol, secousse hors des flèches de bord, DPR suivi (`5aa4246`), marche du trou de lumière
+   lissée (`139aa7b`), chemins d'actifs par `ASSETS_BASE` (`f44eb7c`).
+8. **Actifs** → faits : l'échelle des monstres est cuite dans l'atlas (`c6a5fa7`,
+   `tools/build_monster_atlas.py`, manifeste `prescaled`, le renderer dessine à 1 en
+   `nearest` et avertit si l'outil et `BODY_SCALE` divergent) ; Jersey 15 à des tailles
+   multiples de 15 (`9d183ef`), sauf les petits jetons. ⚠️ **L'atlas cuit n'est que local** :
+   `assets/tinyswords/derived/monsters.{png,json}` sont à redéposer sur MinIO (voir §6) ; en
+   attendant, la production lit l'ancien manifeste et garde l'échelle dérivée, en `linear`.
 
-Les audits ont aussi vérifié et trouvé corrects : les planches et atlas (toutes les cellules dans
-leurs images, 9-slices dans leurs planches), l'ordre des calques entre eux, le culling, la
-réinitialisation par `reload`, la pile `z-index` du DOM, les `alt`, les cibles de clic, l'hôte qui
-part (salon et run), le 5ᵉ joueur, deux jetons sur une carte, le porteur qui meurt ou part, le
-`blur` qui vide le clavier, Espace sans répétition.
+Restent ouverts, de moindre importance : le bilan « Extraction réussie + 0 » quand le wipe et
+le vote « partir » tombent au même tick (`room.ts` `#checkRunOver` puis `#stepPortal`, rare) ;
+le seuil d'XP qui compte les morts (**assumé par Léo**, ne pas reproposer) ; un monstre devant un
+tronc dessiné derrière (`#horde` est un `ParticleContainer` entier sous `#depth`, non
+entrelaçable) ; le nouveau code de salon à chaque partie.
+
+L'étalage à plusieurs a été retravaillé le même jour (`094c116`) : cadre à la couleur du joueur
+qui vise, carte soulevée, jeton qui rebondit, cadre qui vibre quand deux jetons se disputent une
+carte, bandeau du gagnant (portrait et « Joueur N ») sur chaque carte prise, consomption de bas
+en haut avec cendres sur ma carte perdue, révélation tenue 3 s à l'horloge murale.
 
 ## 4. Le portique
 
@@ -178,3 +168,17 @@ Les points que les tests ne jugent pas, à regarder en jouant :
 6. **Vote d'extraction** : bandeau, bloc ÉCHAP et armes séparés.
 7. **Salon** : onglet Armes, « Vif-argent » et « Homoncule de mercure » ; « Joueur 4 (vous) ».
 8. **Code faux / salon plein** : les deux messages distincts sous le champ CODE.
+
+## 6. Déposer l'atlas cuit sur MinIO
+
+Depuis une machine qui a les clés (`MINIO_ACCESS_KEY`/`MINIO_SECRET_KEY`, voir
+`tools/fetch-assets.sh`) :
+
+```bash
+python3 tools/build_monster_atlas.py
+aws s3 cp assets/tinyswords/derived/monsters.png  s3://tiny-swords/derived/monsters.png  --endpoint-url https://s3.qwetle.fr
+aws s3 cp assets/tinyswords/derived/monsters.json s3://tiny-swords/derived/monsters.json --endpoint-url https://s3.qwetle.fr
+```
+
+Le manifeste porte `"prescaled": true` : dès qu'il est en ligne, le renderer passe en `nearest`
+à l'échelle 1 sans redéploiement du front.
