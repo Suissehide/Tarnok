@@ -16,6 +16,7 @@ import {
   readReplay,
   rememberRejoin,
   shouldRejoin,
+  writeReplay,
 } from './net/rejoin';
 import { composeFrame } from './render/frame';
 import { livePings } from './render/ping-renderer';
