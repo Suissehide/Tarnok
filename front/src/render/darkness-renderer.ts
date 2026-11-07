@@ -91,10 +91,11 @@ export class DarknessRenderer {
     g.circle(x, y, r + NOIR_FEATHER_PX).cut();
     // Quatre anneaux, de plus en plus sombres vers le DEHORS : un bord doux
     // (ecart au §9.4 de la spec, dont la boucle assombrissait le dedans).
+    // Le dernier anneau est a `a`, comme le voile : pas de marche au bord.
     for (let k = 0; k < 4; k++) {
       g.circle(x, y, r + ((k + 1) * NOIR_FEATHER_PX) / 4).fill({
         color: NOIR_COLOR,
-        alpha: (a * (k + 1)) / 5,
+        alpha: (a * (k + 1)) / 4,
       });
       g.circle(x, y, r + (k * NOIR_FEATHER_PX) / 4).cut();
     }

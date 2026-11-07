@@ -76,11 +76,12 @@ describe('etape 16 : DarknessRenderer — le cout d une image', () => {
     const alphas = remplissages(g);
     expect(alphas).toHaveLength(5);
     expect(alphas[0]).toBeCloseTo(NOIR_DARK_ALPHA, 6);
+    // Croissants, et le dernier a l'alpha du voile : sans marche au bord.
     expect(alphas.slice(1).map((a) => a / NOIR_DARK_ALPHA)).toEqual([
-      expect.closeTo(0.2, 6),
-      expect.closeTo(0.4, 6),
-      expect.closeTo(0.6, 6),
-      expect.closeTo(0.8, 6),
+      expect.closeTo(0.25, 6),
+      expect.closeTo(0.5, 6),
+      expect.closeTo(0.75, 6),
+      expect.closeTo(1, 6),
     ]);
     // Ni filtre, ni masque. `Graphics.mask` par defaut est `undefined` en
     // Pixi 8, pas `null` : le brief le supposait `null` (ecart, repli au
