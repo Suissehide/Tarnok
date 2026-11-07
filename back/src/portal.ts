@@ -98,6 +98,19 @@ export class Portal {
     this.#votes.delete(playerId);
   }
 
+  /**
+   * L'inverse de `forget` (etape 18) : un joueur revenu vote de nouveau, a
+   * `NO_VOTE` jusqu'a son clic. Sans effet si le portail est ferme ; un id
+   * deja present garde sa voix.
+   */
+  rejoin(playerId: number): void {
+    if (this.#phase === 'closed' || this.#pending.includes(playerId)) {
+      return;
+    }
+    this.#pending.push(playerId);
+    this.#votes.set(playerId, NO_VOTE);
+  }
+
   /** Qui a vote quoi — ce que `VOTES` rediffuse. Vide hors vote. */
   votes(): ReadonlyMap<number, number> {
     return this.#votes;

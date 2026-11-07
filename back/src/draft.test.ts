@@ -421,3 +421,50 @@ describe('Draft — le retrait, les partis et les morts', () => {
     expect(issues).toContainEqual({ playerId: 3, cardIndex: 2, outcome: OUTCOME.AUTO });
   });
 });
+
+describe('etape 18 : rejoin, l inverse de forget', () => {
+  it('un revenu attendu peut poser, et la fenetre l attend', () => {
+    const d = ouvert([1, 2]);
+    d.forget(2);
+    d.rejoin(2, true);
+    expect(d.setToken(1, 0)).toBe(true);
+    expect(d.step(101, fixe(0)), 'la fenetre attend 2').toBeNull();
+    expect(d.setToken(2, 1)).toBe(true);
+    expect(d.step(102, fixe(0))).not.toBeNull();
+  });
+
+  it('un revenu mort peut poser mais ne tient pas la fenetre', () => {
+    const d = ouvert([1, 2]);
+    d.forget(2);
+    d.rejoin(2, false);
+    expect(d.setToken(2, 1)).toBe(true);
+    expect(d.setToken(1, 0)).toBe(true);
+    expect(d.step(101, fixe(0))).not.toBeNull();
+  });
+
+  it('un mort revenu sans jeton est servi d office', () => {
+    const d = ouvert([1, 2]);
+    d.forget(2);
+    d.rejoin(2, false);
+    expect(d.setToken(1, 0)).toBe(true);
+    const issues = d.step(101, fixe(0));
+    expect(issues?.some((r) => r.playerId === 2 && r.outcome === OUTCOME.AUTO)).toBe(true);
+  });
+
+  it('sur une fenetre fermee, rejoin ne fait rien', () => {
+    const d = new Draft();
+    d.rejoin(2, true);
+    expect(d.setToken(2, 0)).toBe(false);
+    expect(d.phase).toBe('closed');
+  });
+
+  it('un id deja present n est pas double : un seul jeton attendu', () => {
+    const d = ouvert([1, 2]);
+    d.rejoin(2, true);
+    d.rejoin(2, true);
+    expect(d.setToken(1, 0)).toBe(true);
+    expect(d.setToken(2, 1)).toBe(true);
+    const issues = d.step(101, fixe(0));
+    expect(issues?.filter((r) => r.playerId === 2)).toHaveLength(1);
+  });
+});

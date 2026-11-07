@@ -263,3 +263,36 @@ describe('le portail : un seul verdict, et rien ne lui survit', () => {
     expect(portal.step(1001)).toBe(LEAVE);
   });
 });
+
+describe('etape 18 : rejoin, l inverse de forget', () => {
+  it('un revenu retrouve une voix NO_VOTE, peut voter, et la fenetre l attend', () => {
+    const portal = new Portal();
+    portal.open(100, [1, 2]);
+    portal.forget(2);
+    portal.rejoin(2);
+    expect(portal.votes().get(2)).toBe(NO_VOTE);
+    expect(portal.setVote(1, LEAVE)).toBe(true);
+    expect(portal.step(101), 'la fenetre attend 2').toBeNull();
+    expect(portal.setVote(2, LEAVE)).toBe(true);
+    expect(portal.step(102)).toBe(LEAVE);
+  });
+
+  it('sur un portail ferme, rejoin ne fait rien', () => {
+    const portal = new Portal();
+    portal.rejoin(2);
+    expect(portal.votes().size).toBe(0);
+    expect(portal.setVote(2, LEAVE)).toBe(false);
+  });
+
+  it('un id deja present n est pas double, et son vote reste', () => {
+    const portal = new Portal();
+    portal.open(100, [1, 2]);
+    expect(portal.setVote(2, LEAVE)).toBe(true);
+    portal.rejoin(2);
+    expect(portal.votes().get(2)).toBe(LEAVE);
+    expect(decompte(portal)).toEqual({ rester: 0, partir: 1, silencieux: 1 });
+    expect(portal.setVote(1, STAY)).toBe(true);
+    // 1-1 : egalite, on continue — un 2 double aurait fait 2-1.
+    expect(portal.step(101)).toBe(STAY);
+  });
+});

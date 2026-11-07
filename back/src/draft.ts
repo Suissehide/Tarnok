@@ -131,6 +131,23 @@ export class Draft {
   }
 
   /**
+   * L'inverse de `forget` (etape 18) : un joueur revenu participe de nouveau
+   * et, s'il est vivant, tient la fenetre. Sans effet si elle est fermee ;
+   * jamais de doublon, sinon `step` compterait deux jetons attendus.
+   */
+  rejoin(playerId: number, awaited: boolean): void {
+    if (this.#phase === 'closed') {
+      return;
+    }
+    if (!this.#pending.includes(playerId)) {
+      this.#pending.push(playerId);
+    }
+    if (awaited && !this.#awaited.includes(playerId)) {
+      this.#awaited.push(playerId);
+    }
+  }
+
+  /**
    * Fait avancer la machine. Rend les issues quand le draft se ferme, `null`
    * tant qu'il faut attendre. **Un seul lot d'issues par draft.**
    *
