@@ -210,13 +210,12 @@ interface Options {
   /** Vrai : la diffusion de ce tick part avec celle du suivant (hoquet d'une image). */
   stall?: (tick: number, msgs: ArrayBuffer[]) => boolean;
   /**
-   * Fix 1, point 2 : rattrapage du serveur (back/src/server.ts l.139-158,
-   * `MAX_CATCH_UP_STEPS` pas de `Room#step` par callback, l'accumulateur de
-   * diffusion plafonne a 1 pas). Toutes les `every` images, `k` pas de
-   * `Room#step` partagent UN SEUL cycle de diffusion — meme drain-tout que
-   * `#broadcast` (tous les lots accumules, un seul snapshot, celui du
-   * DERNIER tick). `k` doit tenir dans les 5 pas de rattrapage de
-   * `GameClient#update` (`front/src/net/client.ts`).
+   * Fix 1, point 2 : rattrapage du serveur (back/src/server.ts, jusqu'a
+   * `MAX_CATCH_UP_STEPS` pas de `Room#step` par callback). Toutes les `every`
+   * images, `k` pas d'un coup, chacun suivi de SA diffusion (etape 17b,
+   * revue de la tache 4 : un `#broadcast` par pas, donc un snapshot par
+   * tick), et le tout livre dans la MEME image. `k` doit tenir dans les 5
+   * pas de rattrapage de `GameClient#update` (`front/src/net/client.ts`).
    */
   catchUp?: { every: number; k: number };
 }
@@ -273,12 +272,14 @@ function banc(opts: Options): Banc {
   const past = new Map<number, Etat>();
   const scratch = new Horde(MAX_ENTITIES);
   let seq = 1;
+  /** Les ticks des images envoyees, du plus vieux encore utile au plus recent. */
+  const images: number[] = [];
   while (room.tick < opts.ticks) {
-    // Rattrapage du serveur (fix 1, point 2) : un groupe de `steps` pas
-    // partage UN SEUL cycle de diffusion plus bas, comme `#broadcast`.
+    // Rattrapage du serveur (fix 1, point 2) : un groupe de `steps` pas, une
+    // diffusion par pas (`#broadcast`), le tout dans la meme image.
     const voulu = opts.catchUp && (room.tick + 1) % opts.catchUp.every === 0 ? opts.catchUp.k : 1;
     const steps = Math.min(voulu, opts.ticks - room.tick);
-    const horsDiffusion: ArrayBuffer[] = [];
+    const msgs: ArrayBuffer[] = [];
     let resync = false;
     for (let s = 0; s < steps; s++) {
       const next = room.tick + 1;
@@ -295,13 +296,15 @@ function banc(opts: Options): Banc {
       if (next === opts.resyncAt) {
         ({ client, socket } = brancher(room.tick));
       }
-      opts.before?.(room, next, players, (m) => horsDiffusion.push(m));
+      opts.before?.(room, next, players, (m) => msgs.push(m));
       room.step(STEP);
-      resync ||= room.tick === opts.resyncAt;
+      const resyncIci = room.tick === opts.resyncAt;
+      resync ||= resyncIci;
+      msgs.push(...drainLikeServer(room, out.orders, resyncIci));
       past.set(room.tick, etatDe(room.horde));
       past.delete(room.tick - 12);
     }
-    const msgs = [...horsDiffusion, ...drainLikeServer(room, out.orders, resync)];
+    images.push(room.tick);
     for (const o of out.orders) {
       spawnTickOf.set(o.waveId, o.spawnTick);
     }
@@ -333,7 +336,16 @@ function banc(opts: Options): Banc {
     expect(client.hordeTick - 1).toBe(room.tick);
     out.frozenSeen ||= client.isFrozen;
 
-    const t = room.tick - opts.latency - (stall ? 1 : 0);
+    // Le dernier tick REGLE : celui de la derniere image dont tous les
+    // messages sont arrives. Une image envoie les messages de tous ses ticks ;
+    // apres un rattrapage, les ticks du groupe avant le dernier ne partent
+    // qu'avec lui, et ne sont donc pas regles plus tot (sans tick d'image
+    // propre, ils ne sont jamais compares).
+    const regle = room.tick - opts.latency - (stall ? 1 : 0);
+    while ((images[1] ?? Number.POSITIVE_INFINITY) <= regle) {
+      images.shift();
+    }
+    const t = images[0] !== undefined && images[0] <= regle ? images[0] : regle;
     const ref = past.get(t);
     if (!ref || !client.hordeAt(t, scratch)) {
       continue;
@@ -383,11 +395,17 @@ function banc(opts: Options): Banc {
  * premiers, `t ≤ 0`, ne la tentent jamais) ; un hoquet decale `t` d'un cran
  * de plus pour son image (`r.stalls`) ; un rattrapage du serveur ne tente
  * la comparaison qu'UNE fois par groupe de `k` tics au lieu de `k` (fix 1,
- * point 2) — `k − 1` tentatives perdues par groupe declenche.
+ * point 2) — `k − 1` tentatives perdues par groupe declenche, moins pour un
+ * dernier groupe tronque. A l'image d'un groupe, le tick compare est le
+ * dernier tick d'image regle (voir `banc`), pas un tick du groupe.
  */
 function exigeMesures(r: Banc, opts: Options): void {
-  const groupes = opts.catchUp ? Math.floor(opts.ticks / opts.catchUp.every) : 0;
-  const perduAuRattrapage = opts.catchUp ? groupes * (opts.catchUp.k - 1) : 0;
+  // Un groupe commence a `g * every` ; le dernier peut etre tronque par la
+  // fin de la partie (1 200 = 24 * 50 : le 24e ne fait qu'un pas).
+  let perduAuRattrapage = 0;
+  for (let g = 1; opts.catchUp && g * opts.catchUp.every <= opts.ticks; g++) {
+    perduAuRattrapage += Math.min(opts.catchUp.k, opts.ticks - g * opts.catchUp.every + 1) - 1;
+  }
   const plancher = opts.ticks - opts.latency - 1 - r.stalls - perduAuRattrapage;
   expect(r.measured).toBeGreaterThanOrEqual(plancher);
 }
@@ -532,13 +550,13 @@ function portail(latency: number): void {
 
 it.each([0, 2])(PORTAIL, portail);
 
-it.fails('rattrapage du serveur : 3 pas groupes toutes les 50 images, latence 1 — 0,000 px, 0 perte', () => {
+it('rattrapage du serveur : 3 pas groupes toutes les 50 images, latence 1 — 0,000 px, 0 perte', () => {
   // Fix 1, point 2 : le serveur reel peut faire jusqu'a 5 pas de
-  // `Room#step` par callback alors que l'accumulateur de diffusion
-  // plafonne a 1 (back/src/server.ts l.139-158) — un seul `#broadcast`
-  // draine alors plusieurs tics, entrelaces par type de message, et
-  // n'envoie que le DERNIER snapshot. `catchUp` reproduit cet entrelacement
-  // avec `drainLikeServer` (meme drain-tout) au lieu d'un par tick.
+  // `Room#step` par callback (back/src/server.ts). Etape 17b : chacun suivi
+  // de sa diffusion, donc un snapshot par tick — avant, un seul `#broadcast`
+  // drainait tout le groupe et n'envoyait que le DERNIER snapshot (mesure :
+  // 1000,601 px, le champ lisait une ligne d'historique plus vieille qu'au
+  // salon). Le client recoit le groupe dans une seule image.
   const opts: Options = {
     mapSeed: 0xd1a6_0005,
     players: [1, 2],
