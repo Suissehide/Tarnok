@@ -80,7 +80,7 @@ export class HordeHistory {
 
   /** Vrai si l'anneau tient ce tick precis : `restore(tick)` reussira. */
   holds(tick: number): boolean {
-    return this.#ticks[this.#slotOf(tick)] === tick;
+    return tick >= 0 && this.#ticks[this.#slotOf(tick)] === tick;
   }
 
   /**

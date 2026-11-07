@@ -2792,7 +2792,8 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
 
   it('une mort par BRULURE part dans le meme lot DEATHS que les morts par projectile', () => {
     // ⚠️ **La regle du fil** : un seul lot `DEATHS` par tick
-    // (`GameClient#replayLate` les rejoue de toute facon dans l'ordre). Ce test met en scene un tick ou les deux chemins
+    // (`GameClient#replayLate` les rejoue de toute facon dans l'ordre). Ce
+    // test met en scene un tick ou les deux chemins
     // tuent : un monstre acheve par la brulure seule (PV mis a un cheveu de
     // zero, marque a la main) et un autre acheve par un projectile.
     const GRAINE = 0xbaa1_5e01;
@@ -3170,7 +3171,8 @@ describe('la reaction dans le salon (etape 5a, tache 7)', () => {
 
   it('les morts d une reaction partent dans le lot DEATHS EXISTANT, un seul par tick', () => {
     // ⚠️ **La regle du fil** : un seul lot `DEATHS` par tick
-    // (`GameClient#replayLate` les rejoue de toute facon dans l'ordre). Un amas de pietaille lourde marquee Braise, un
+    // (`GameClient#replayLate` les rejoue de toute facon dans l'ordre). Un
+    // amas de pietaille lourde marquee Braise, un
     // projectile de Givre : la reaction en tue plusieurs D UN COUP, et tout
     // doit tenir dans le lot du tick.
     const room = new Room(0xbaa1_5e09);

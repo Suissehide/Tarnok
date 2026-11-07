@@ -1269,7 +1269,10 @@ export class GameClient {
   #hordeAcc = 0;
   #lastHordeTick = 0;
 
-  /** Anneau d'etats de horde, pour le rejeu des morts en retard. */
+  /**
+   * Anneau d'etats de horde, pour le rejeu unique de fin de pas
+   * (`#replayLate`) : ordres, zones, charges, leurres, morts et gels en retard.
+   */
   readonly #hordeHistory = new HordeHistory(MAX_ENTITIES);
   /**
    * Les zones au sol, ANNONCEES par le serveur et jamais derivees : le client
@@ -1744,9 +1747,8 @@ export class GameClient {
    *
    * ⚠️ **Mesuree UNE SEULE FOIS par appel a `update()`**, sur l'ECART du tick
    * de horde entre le debut et la fin de cet appel — jamais depuis
-   * `#advanceHorde` : le rejeu (`#replayTick`) peut executer ce dernier
-   * plusieurs fois pour le MEME tick, et compterait alors deux fois le meme
-   * pas. `isFrozen` est stable sur toute la duree d'un `update()` : seul
+   * `#advanceHorde` : le rejeu (`#replayTick`) repasse sur des ticks deja
+   * avances, et un compteur pose la-bas compterait deux fois le meme pas. `isFrozen` est stable sur toute la duree d'un `update()` : seul
    * `#onFrame` (jamais appele depuis `update()`) fait avancer les bornes du
    * gel.
    */
@@ -2516,8 +2518,8 @@ export class GameClient {
       this.#hordeAcc = 0;
     }
     // ⚠️ `pingClock` se mesure ICI, une fois par appel, jamais dans
-    // `#advanceHorde`, que le rejeu peut executer plusieurs fois pour le meme
-    // tick. `#onFrame` ne s'execute jamais depuis `update()` (handler
+    // `#advanceHorde` ni le rejeu (`#replayTick`), qui repasse sur des ticks
+    // deja avances. `#onFrame` ne s'execute jamais depuis `update()` (handler
     // WebSocket), donc `isFrozen` est stable sur toute la boucle ci-dessus.
     if (!this.isFrozen) {
       this.#pingClock += this.#lastHordeTick - hordeTickAvant;
@@ -2888,6 +2890,13 @@ export class GameClient {
     // onglet remis au premier plan après une pause ne rattrape jamais les pas
     // perdus. Voir `HORDE_TICK_LAG_TOLERANCE`.
     if (msg.tick - this.#lastHordeTick > HORDE_TICK_LAG_TOLERANCE) {
+      // Etape 17b : un saut plus long que l'anneau (onglet cache) le laisse
+      // tenir des ticks perimes ; un retard date de l'un d'eux rejouerait
+      // jusqu'au present, des centaines de pas dans une image. Oublies : ces
+      // retards prennent le chemin degrade, compte (`#replayLate`).
+      if (msg.tick - this.#lastHordeTick >= ROLLBACK_DEPTH_TICKS) {
+        this.#hordeHistory.clear();
+      }
       this.#lastHordeTick = msg.tick;
     }
     // Etape 16 : l'EVENT_STATE d'un changement de porteur est parti juste
@@ -3888,11 +3897,27 @@ export class GameClient {
    * l'arbitrage (degats, contact, ramassages), prerogative du serveur.
    */
   #replayLate(tick: number, dt: number): void {
+    if (
+      this.#freezeReplayFrom === NO_REPLAY &&
+      this.#pendingOrders.length === 0 &&
+      this.#pendingZones.length === 0 &&
+      this.#pendingCharges.length === 0 &&
+      this.#pendingDecoys.length === 0 &&
+      this.#pendingDeaths.length === 0
+    ) {
+      // Rien d'arrive en retard : la plupart des pas, sans allocation.
+      return;
+    }
     let base = NO_REPLAY;
     // Le gel recu en retard : ses bornes sont deja posees (`#freezeFrom`,
-    // `#thawAt`), et `#replayFrom` a verifie que l'anneau le tient encore.
+    // `#thawAt`). `#replayFrom` a verifie l'anneau a la reception, mais un
+    // saut d'horloge a pu le vider depuis : reverifie, sinon compte.
     if (this.#freezeReplayFrom !== NO_REPLAY) {
-      base = this.#freezeReplayFrom - 1;
+      if (this.#replayable(this.#freezeReplayFrom - 1, tick)) {
+        base = this.#freezeReplayFrom - 1;
+      } else {
+        this.#lateFreezes++;
+      }
       this.#freezeReplayFrom = NO_REPLAY;
     }
     // Les ordres du passe (`#applyPendingOrders` ne fait naitre que ceux du
@@ -3902,7 +3927,7 @@ export class GameClient {
       for (const order of this.#pendingOrders.splice(0)) {
         if (order.spawnTick > tick) {
           this.#pendingOrders.push(order);
-        } else if (this.#hordeHistory.holds(order.spawnTick - 1)) {
+        } else if (this.#replayable(order.spawnTick - 1, tick)) {
           this.#journal(order, tick);
           base = Math.min(base, order.spawnTick - 1);
         } else {
@@ -3923,7 +3948,7 @@ export class GameClient {
     const tooOldDeaths: PendingDeathBatch[] = [];
     for (const batch of this.#pendingDeaths.splice(0)) {
       this.#kills += batch.ids.length;
-      if (this.#hordeHistory.holds(batch.tick)) {
+      if (this.#replayable(batch.tick, tick)) {
         deaths.push(batch);
         base = Math.min(base, batch.tick);
       } else {
@@ -3969,6 +3994,10 @@ export class GameClient {
     }
     // Tri stable : a tick egal, l'ordre d'arrivee, celui du salon. Les pas
     // `spawnTick..tick` rattrapes : le pas `tick` vient d'etre fait sans eux.
+    // ⚠️ Apres le pas, `Horde#assertFieldsNotRefreshed` ne protege plus rien :
+    // `step` vient de relever les revisions, et sur un tick de rafraichissement
+    // les pas rattrapes lisent le champ deja rafraichi, plus frais que celui
+    // du salon. Chemin degrade assume, compte dans `lateOrders`.
     tooOld.sort((a, b) => a.spawnTick - b.spawnTick);
     for (const order of tooOld) {
       this.#lateOrders++;
@@ -3988,6 +4017,15 @@ export class GameClient {
     if (tooOldDeaths.length > 0 || tooOld.length > 0) {
       this.#hordeHistory.record(tick, this.horde);
     }
+  }
+
+  /**
+   * Etape 17b : `t` peut-il servir de depart au rejeu de fin du pas `tick` ?
+   * Tenu par l'anneau ET dans sa profondeur : un rejeu ne fait jamais plus de
+   * `ROLLBACK_DEPTH_TICKS` pas, meme si l'anneau garde un creneau perime.
+   */
+  #replayable(t: number, tick: number): boolean {
+    return t > tick - ROLLBACK_DEPTH_TICKS && this.#hordeHistory.holds(t);
   }
 
   /**
@@ -4011,7 +4049,7 @@ export class GameClient {
     if (zone.bornTick >= currentTick) {
       return NO_REPLAY;
     }
-    if (!this.#hordeHistory.holds(zone.bornTick)) {
+    if (!this.#replayable(zone.bornTick, currentTick)) {
       // Trop vieux pour l'anneau : posee au present, et SIGNALEE — meme
       // degradation assumee que pour une mort trop vieille. Voir `#lateZones`.
       this.#lateZones++;
@@ -4050,7 +4088,7 @@ export class GameClient {
     if (charge.windupTick >= currentTick) {
       return NO_REPLAY;
     }
-    if (!this.#hordeHistory.holds(charge.windupTick)) {
+    if (!this.#replayable(charge.windupTick, currentTick)) {
       // Trop vieille pour l'anneau : installee au present, et SIGNALEE.
       this.#lateCharges++;
       return NO_REPLAY;
@@ -4165,7 +4203,7 @@ export class GameClient {
     if (decoy.bornTick >= currentTick) {
       return NO_REPLAY;
     }
-    if (!this.#hordeHistory.holds(decoy.bornTick)) {
+    if (!this.#replayable(decoy.bornTick, currentTick)) {
       // Trop vieux pour l'anneau : plante au present, et SIGNALE — meme
       // degradation assumee que pour une charge ou une zone trop vieille.
       this.#lateDecoys++;

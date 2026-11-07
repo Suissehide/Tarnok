@@ -6492,4 +6492,34 @@ describe('etape 17b : le journal des ordres et le rejeu unique', () => {
     image(client, socket, 7);
     expect(client.horde.count).toBe(0);
   });
+
+  it.each([
+    {
+      nom: 'un ordre',
+      msg: () => encodeWaveOrder(vague(6, 5008, 4)),
+      compte: (c: GameClient) => c.lateOrders,
+    },
+    { nom: 'un gel', msg: () => encodeLevelUp(5008, 2), compte: (c: GameClient) => c.lateFreezes },
+    {
+      nom: 'une mort',
+      msg: () => encodeDeaths(5007, [entityIdOf(5, 1)]),
+      compte: (c: GameClient) => c.lateDeaths,
+    },
+  ])('$nom tenu par l anneau puis un saut d horloge (onglet cache) : rejeu borne, retard compte', ({
+    msg,
+    compte,
+  }) => {
+    const { client, socket } = ouvrir(5000);
+    socket.emit('message', { data: encodeWaveOrder(vague(5, 5000)) });
+    for (let t = 5000; t < 5010; t++) {
+      image(client, socket, t);
+    }
+    const step = vi.spyOn(client.horde, 'step');
+    socket.emit('message', { data: msg() });
+    // L'onglet revient : le snapshot de 6000 fait sauter l'horloge de la horde.
+    image(client, socket, 6000);
+    expect(client.hordeTick).toBe(6001);
+    expect(step.mock.calls.length).toBeLessThanOrEqual(ROLLBACK_DEPTH_TICKS + 1);
+    expect(compte(client)).toBeGreaterThan(0);
+  });
 });

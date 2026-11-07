@@ -190,4 +190,15 @@ describe('HordeHistory', () => {
     expect(horde.count).toBe(5);
     expect(horde.slotOf(cible)).not.toBe(-1);
   });
+
+  it('holds : jamais un tick negatif, meme sur un creneau vide ou vide par clear', () => {
+    const history = new HordeHistory(8);
+    // Les creneaux vides valent -1 : sans garde, `holds(-1)` serait vrai.
+    expect(history.holds(-1)).toBe(false);
+    history.record(3, new Horde(8));
+    expect(history.holds(3)).toBe(true);
+    history.clear();
+    expect(history.holds(3)).toBe(false);
+    expect(history.holds(-1)).toBe(false);
+  });
 });
