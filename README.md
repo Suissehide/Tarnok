@@ -39,6 +39,7 @@ Des chevaliers, une forge, des hordes. Le détail est dans
 | 16 | Événements bonus, deuxième fournée : siège, relique, chasse, noir — **zéro octet de plus par tick** | 📝 — [spec](docs/specs/2026-11-05-etape-16-evenements-2.md) · [plan](docs/plans/2026-11-05-etape-16-evenements-2.md) · [résultats](docs/plans/2026-11-05-etape-16-resultats.md) |
 | 17 | L'extraction retravaillée : un portail qui gèle, une carte compacte | 📝 — [spec](docs/specs/2026-11-06-etape-17-extraction.md) · [plan](docs/plans/2026-11-06-etape-17-extraction.md) · [résultats](docs/plans/2026-11-06-etape-17-resultats.md) |
 | 18 | La reconnexion avec état complet : grâce de 60 s, `RESYNC` hors tick — **zéro octet de plus par tick** | 📝 — [spec](docs/specs/2026-11-06-etape-18-reconnexion.md) · [plan](docs/plans/2026-11-06-etape-18-reconnexion.md) · [résultats](docs/plans/2026-11-07-etape-18-resultats.md) |
+| 19 | Le pseudo sur le fil, et « rejouer ensemble » sur le même code — **zéro octet de plus par tick** | ✅ — [spec et résultats](docs/plans/2026-11-07-etape-19-pseudo-et-rejouer.md) |
 | — | Passe interfaces, textures, interactions (6 novembre) | ✅ — [résultats](docs/plans/2026-11-06-passe-interfaces-resultats.md) |
 
 L'or gagné en run, qui survit depuis l'étape 7a, se dépense depuis l'étape 7b : une boutique à

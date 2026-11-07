@@ -125,7 +125,8 @@ Restent ouverts, de moindre importance : le bilan « Extraction réussie + 0 » 
 le vote « partir » tombent au même tick (`room.ts` `#checkRunOver` puis `#stepPortal`, rare) ;
 le seuil d'XP qui compte les morts (**assumé par Léo**, ne pas reproposer) ; un monstre devant un
 tronc dessiné derrière (`#horde` est un `ParticleContainer` entier sous `#depth`, non
-entrelaçable) ; le nouveau code de salon à chaque partie.
+entrelaçable). Le pseudo et « rejouer ensemble » sont l'étape 19
+(`2026-11-07-etape-19-pseudo-et-rejouer.md`).
 
 L'étalage à plusieurs a été retravaillé le même jour (`094c116`) : cadre à la couleur du joueur
 qui vise, carte soulevée, jeton qui rebondit, cadre qui vibre quand deux jetons se disputent une
