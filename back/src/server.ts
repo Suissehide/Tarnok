@@ -4,6 +4,7 @@ import { classOf, DEFAULT_CLASS_ID } from '@shared/classes';
 import {
   MAX_PLAYERS,
   RECONNECT_GRACE_MS,
+  REPLAY_HOLD_MS,
   SNAPSHOT_HZ,
   START_GRACE_MS,
   TICK_HZ,
@@ -128,15 +129,29 @@ class Session {
   readonly #resyncPending = new Set<WebSocket>();
   /** Le lancement differe de `startGraceMs` (un seul, le second `START` est ignore). */
   #startTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * « Rejouer ensemble » : le slot et les derniers choix de chaque compte, pris
+   * a l'entree dans `Room`, pour les reposer dans la salle d'attente suivante.
+   */
+  readonly #choices = new Map<
+    string,
+    { id: number; grants: AccountGrants | undefined; weaponId: number; classId: number }
+  >();
+  /** Le minuteur de `replayHoldMs` : tant qu'il court, zero client ne ferme pas le salon. */
+  #replayHold: ReturnType<typeof setTimeout> | null = null;
 
   constructor(
     readonly code: string,
-    readonly room: Room,
+    /** Remplace par `#replay()` : un `Room` neuf sous le meme code. */
+    public room: Room,
     private readonly onEmpty: (code: string) => void,
+    /** Le `Room` neuf du rejeu, pose dans le registre par l'appelant. */
+    private readonly renew: () => Room,
     waitingRoom = false,
     private readonly graceMs = RECONNECT_GRACE_MS,
     /** Le `START` attend ce delai, les `PICK` en vol passent encore. `0` : immediat. */
     private readonly startGraceMs = START_GRACE_MS,
+    private readonly replayHoldMs = REPLAY_HOLD_MS,
   ) {
     this.#started = !waitingRoom;
     const buffers: ArrayBuffer[] = [];
@@ -289,13 +304,19 @@ class Session {
         return;
       }
 
-      const freeId = this.#freeId();
+      // Apres un rejeu, un compte connu reprend son slot s'il est libre, et ses choix.
+      const choix = this.#choices.get(accountId);
+      const freeId = choix && this.#isFree(choix.id) ? choix.id : this.#freeId();
       if (freeId !== null && !this.#started) {
         // Salle d'attente : un slot, mais pas encore de place dans `Room`.
         id = freeId;
         this.#clients.set(freeId, ws);
         this.#accounts.set(freeId, accountId);
-        this.#lobby.set(freeId, { grants, weaponId: NO_WEAPON, classId: DEFAULT_CLASS_ID });
+        this.#lobby.set(freeId, {
+          grants,
+          weaponId: choix?.weaponId ?? NO_WEAPON,
+          classId: choix?.classId ?? DEFAULT_CLASS_ID,
+        });
         ws.on('message', (frame: ArrayBuffer) => {
           this.#onFrame(freeId, ws, frame);
         });
@@ -315,6 +336,12 @@ class Session {
 
       this.#clients.set(freeId, ws);
       this.#accounts.set(freeId, accountId);
+      this.#choices.set(accountId, {
+        id: freeId,
+        grants,
+        weaponId: NO_WEAPON,
+        classId: DEFAULT_CLASS_ID,
+      });
       ws.send(encodeWelcome(freeId, this.room.tick, this.room.mapSeed));
       // Etape 18 : un salon lance a une horde, des zones, peut-etre un gel —
       // le `RESYNC` les lui donne a la prochaine diffusion.
@@ -392,11 +419,47 @@ class Session {
     this.#closeIfEmpty();
   }
 
-  /** `onEmpty` quand plus personne n'est connecte NI en grace. */
+  /** `onEmpty` quand plus personne n'est connecte NI en grace, hors fenetre de rejeu. */
   #closeIfEmpty(): void {
-    if (this.#clients.size === 0 && this.#graces.size === 0 && !this.#stopped) {
+    if (
+      this.#clients.size === 0 &&
+      this.#graces.size === 0 &&
+      this.#replayHold === null &&
+      !this.#stopped
+    ) {
       this.onEmpty(this.code);
     }
+  }
+
+  /**
+   * « Rejouer ensemble » (apres `RUN_OVER`) : un `Room` neuf sous le meme
+   * code, la salle d'attente reconstruite avec les connectes et leurs derniers
+   * choix, un `LOBBY` diffuse. Les clients vont se recharger : pendant
+   * `replayHoldMs`, zero client ne ferme pas le salon, et chaque compte qui
+   * revient par `HELLO` retrouve son slot et ses choix (`#choices`).
+   */
+  #replay(): void {
+    for (const grace of this.#graces.values()) {
+      clearTimeout(grace.timer);
+    }
+    this.#graces.clear();
+    this.#resyncPending.clear();
+    this.#pings.clear();
+    this.room = this.renew();
+    this.#started = false;
+    for (const [id, accountId] of this.#accounts) {
+      const choix = this.#choices.get(accountId);
+      this.#lobby.set(id, {
+        grants: choix?.grants,
+        weaponId: choix?.weaponId ?? NO_WEAPON,
+        classId: choix?.classId ?? DEFAULT_CLASS_ID,
+      });
+    }
+    this.#sendLobby();
+    this.#replayHold = setTimeout(() => {
+      this.#replayHold = null;
+      this.#closeIfEmpty();
+    }, this.replayHoldMs);
   }
 
   /** Chaque client recoit la liste, avec SON slot dans `you`. */
@@ -449,6 +512,10 @@ class Session {
     this.#started = true;
     for (const [id, e] of [...this.#lobby].sort(([a], [b]) => a - b)) {
       this.room.join(id, e.grants, e.weaponId === NO_WEAPON ? undefined : e.weaponId, e.classId);
+      const accountId = this.#accounts.get(id);
+      if (accountId !== undefined) {
+        this.#choices.set(accountId, { id, ...e });
+      }
       this.#clients.get(id)?.send(encodeWelcome(id, this.room.tick, this.room.mapSeed));
     }
     this.#lobby.clear();
@@ -460,6 +527,10 @@ class Session {
     if (this.#startTimer !== null) {
       clearTimeout(this.#startTimer);
       this.#startTimer = null;
+    }
+    if (this.#replayHold !== null) {
+      clearTimeout(this.#replayHold);
+      this.#replayHold = null;
     }
     // ⚠️ Les minuteurs de grace aussi : un `setTimeout` de 60 s oublie fait
     // attendre Vitest apres `app.close()` et retient la `Room`.
@@ -548,6 +619,13 @@ class Session {
         this.#sendLobby();
       } else if (msg.type === MSG.START && id === Math.min(...this.#lobby.keys())) {
         this.#scheduleStart();
+      }
+      return;
+    }
+    if (msg.type === MSG.REPLAY) {
+      // Avant `RUN_OVER`, rien ; en salle d'attente, la branche du haut l'ignore deja.
+      if (this.room.runOver) {
+        this.#replay();
       }
       return;
     }
@@ -806,13 +884,16 @@ class Session {
    * slot en grace est RESERVE, un cinquieme compte recoit `ROOM_FULL`.
    */
   #freeId(): number | null {
-    const reserves = new Set([...this.#graces.values()].map((g) => g.id));
     for (let id = 1; id <= MAX_PLAYERS; id++) {
-      if (!this.#clients.has(id) && !reserves.has(id)) {
+      if (this.#isFree(id)) {
         return id;
       }
     }
     return null;
+  }
+
+  #isFree(id: number): boolean {
+    return !this.#clients.has(id) && ![...this.#graces.values()].some((g) => g.id === id);
   }
 }
 
@@ -874,6 +955,8 @@ export interface ServerOptions {
   graceMs?: number;
   /** Le delai du `START` (les `PICK` en vol passent encore). `START_GRACE_MS` par defaut, `0` pour un lancement immediat. */
   startGraceMs?: number;
+  /** « Rejouer ensemble » : le temps que les clients recharges reviennent. `REPLAY_HOLD_MS` par defaut. */
+  replayHoldMs?: number;
 }
 
 /**
@@ -922,9 +1005,11 @@ export async function buildServer(options: ServerOptions = {}): Promise<FastifyI
         code,
         room,
         closeSession,
+        () => registry.replace(code, options.roomSeed),
         options.waitingRoom,
         options.graceMs,
         options.startGraceMs,
+        options.replayHoldMs,
       ),
     );
     return reply.code(201).send({ code });

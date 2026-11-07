@@ -15,12 +15,15 @@ import {
   encodeHello,
   encodeInput,
   encodeName,
+  encodePick,
+  encodeReplay,
   encodeResyncRequest,
   encodeStart,
   encodeVote,
   type Message,
   MSG,
   NO_VOTE,
+  NO_WEAPON,
   packElementPair,
   SNAPSHOT_HEADER_BYTES,
   SNAPSHOT_PLAYER_BYTES,
@@ -1087,6 +1090,126 @@ describe('etape 18 : la grace', () => {
     // `afterEach` refermera une app deja close : on lui en donne une neuve.
     app = await buildServer({ waitingRoom: true, graceMs: GRACE_MS });
     await app.listen({ port: 0, host: '127.0.0.1' });
+  });
+
+  describe('rejouer ensemble (REPLAY)', () => {
+    const arme = WEAPONS[1]?.id ?? 1;
+
+    /** Deux joueurs, le second avec un choix, la run lancee puis finie. */
+    async function finie(): Promise<{ code: string; joueurs: Joueur[]; room: Room }> {
+      const code = await createRoomCode();
+      const j1 = await entre(code);
+      await lobbyDe(j1, 1);
+      const j2 = await entre(code);
+      await lobbyDe(j2, 2);
+      j2.ws.send(encodePick(arme, 2));
+      await jusqua(
+        () =>
+          j1.recus.find((m) =>
+            m.type === MSG.LOBBY && m.players[1]?.weaponId === arme ? true : undefined,
+          ),
+        'PICK',
+      );
+      j1.ws.send(encodeStart());
+      await welcome(j1);
+      await welcome(j2);
+      const room = app.rooms.get(code);
+      if (!room) {
+        throw new Error('salon introuvable');
+      }
+      room.debugKill(1);
+      room.debugKill(2);
+      await jusqua(() => j1.recus.find((m) => m.type === MSG.RUN_OVER), 'RUN_OVER');
+      return { code, joueurs: [j1, j2], room };
+    }
+
+    const lobbyApres = (j: Joueur, depuis: number): Promise<Message> =>
+      jusqua(() => j.recus.slice(depuis).find((m) => m.type === MSG.LOBBY), 'LOBBY du rejeu');
+
+    it('apres RUN_OVER, un REPLAY de n importe qui rend un LOBBY au meme code, memes choix, Room neuf', async () => {
+      const { code, joueurs, room } = await finie();
+      const [j1, j2] = joueurs as [Joueur, Joueur];
+      const avant = j1.recus.length;
+      j2.ws.send(encodeReplay());
+      const lobby = await lobbyApres(j1, avant);
+      if (lobby.type !== MSG.LOBBY) {
+        throw new Error('LOBBY attendu');
+      }
+      expect(lobby.players.map((p) => [p.playerId, p.weaponId, p.classId])).toEqual([
+        [1, NO_WEAPON, 0],
+        [2, arme, 2],
+      ]);
+      const neuf = app.rooms.get(code);
+      expect(neuf).toBeDefined();
+      expect(neuf).not.toBe(room);
+      expect(neuf?.tick).toBe(0);
+      // Un second REPLAY en salle d attente ne fait rien.
+      const n = j1.recus.length;
+      j2.ws.send(encodeReplay());
+      await dormir(100);
+      expect(j1.recus.length).toBe(n);
+    });
+
+    it('tous partis puis revenus dans la fenetre : meme salon, memes slots, memes choix', async () => {
+      const { code, joueurs } = await finie();
+      const [j1, j2] = joueurs as [Joueur, Joueur];
+      j1.ws.send(encodeReplay());
+      await lobbyApres(j1, 0);
+      j1.ws.close();
+      j2.ws.close();
+      await dormir(100);
+      // Le second revient le premier : il garde le slot 2, l hote garde le 1.
+      const r2 = await entre(code, j2.token);
+      const l2 = await lobbyDe(r2, 1);
+      const r1 = await entre(code, j1.token);
+      const l1 = await lobbyDe(r1, 2);
+      if (l2.type !== MSG.LOBBY || l1.type !== MSG.LOBBY) {
+        throw new Error('LOBBY attendu');
+      }
+      expect(l2.you).toBe(2);
+      expect(l1.you).toBe(1);
+      expect(l1.players.map((p) => [p.playerId, p.weaponId, p.classId])).toEqual([
+        [1, NO_WEAPON, 0],
+        [2, arme, 2],
+      ]);
+    });
+
+    it('un REPLAY avant RUN_OVER est ignore', async () => {
+      const { joueurs } = await lancer(2);
+      const j1 = joueurs[0] as Joueur;
+      const n = j1.recus.filter((m) => m.type === MSG.LOBBY).length;
+      j1.ws.send(encodeReplay());
+      await dormir(100);
+      expect(j1.recus.filter((m) => m.type === MSG.LOBBY).length).toBe(n);
+      expect(j1.recus.some((m) => m.type === MSG.SNAPSHOT)).toBe(true);
+    });
+
+    it('passe la fenetre sans personne, le salon se ferme ; stop() efface le minuteur', async () => {
+      await rebatir({ replayHoldMs: 100 });
+      const { code, joueurs } = await finie();
+      const [j1, j2] = joueurs as [Joueur, Joueur];
+      j1.ws.send(encodeReplay());
+      await lobbyApres(j1, 0);
+      j1.ws.close();
+      j2.ws.close();
+      await dormir(50);
+      expect(app.rooms.get(code)).toBeDefined();
+      await dormir(200);
+      expect(app.rooms.get(code)).toBeUndefined();
+
+      await rebatir({});
+      const fin = await finie();
+      (fin.joueurs[0] as Joueur).ws.send(encodeReplay());
+      await lobbyApres(fin.joueurs[0] as Joueur, 0);
+      for (const ws of openSockets.splice(0)) {
+        ws.close();
+      }
+      const debut = Date.now();
+      await app.close();
+      expect(Date.now() - debut).toBeLessThan(200);
+      app = await buildServer({ waitingRoom: true, graceMs: GRACE_MS });
+      await app.listen({ port: 0, host: '127.0.0.1' });
+    });
   });
 
   it('un compte neuf qui entre dans un salon lance recoit WELCOME puis RESYNC', async () => {

@@ -38,6 +38,16 @@ export class RoomRegistry {
     return { code, room };
   }
 
+  /**
+   * « Rejouer ensemble » : un `Room` neuf sous le MEME code, qui remplace
+   * l'ancien dans le registre. Meme regle de graine que `create`.
+   */
+  replace(code: string, seed?: number): Room {
+    const room = new Room(seed);
+    this.#rooms.set(code.toUpperCase(), room);
+    return room;
+  }
+
   get(code: string): Room | undefined {
     return this.#rooms.get(code.toUpperCase());
   }
