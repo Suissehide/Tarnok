@@ -8,6 +8,7 @@ import {
   type OrbFlights,
   type PickupTarget,
 } from '../net/client';
+import { ASSETS_BASE } from '../ui/config';
 
 /**
  * Rendu des orbes d'experience et des pieces (`DerivedOrbs` et `OrbFlights`,
@@ -313,7 +314,7 @@ function drawCoin(ctx: CanvasRenderingContext2D, cx: number, cy: number, r: numb
 }
 
 /** L'icone d'or du HUD : la piece au sol est LA MEME, recollee au chargement. */
-const COIN_ICON = '/tinyswords/UI%20Elements/UI%20Elements/Icons/Icon_03.png';
+const COIN_ICON = `${ASSETS_BASE}/UI%20Elements/UI%20Elements/Icons/Icon_03.png`;
 
 /** Cuit les deux cases cote a cote : l'orbe a gauche, la piece a droite. */
 function makeDropAtlas(): { atlas: Texture; canvas: HTMLCanvasElement } {

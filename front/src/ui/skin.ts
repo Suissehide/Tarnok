@@ -15,7 +15,9 @@
  * se lit `[finDeCellule - m, m]`. Si une planche manque, la variable reste
  * absente, `data-skin` n'est pas pose, et `main.css` garde des cadres unis.
  */
-const PACK = '/tinyswords/';
+import { ASSETS_BASE } from './config';
+
+const PACK = `${ASSETS_BASE}/`;
 const UIE = 'UI%20Elements/UI%20Elements/';
 
 /** Un rectangle source : `[x, y, largeur, hauteur]`. */
