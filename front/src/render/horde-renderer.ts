@@ -43,11 +43,21 @@ export interface ContentBounds {
 export interface AtlasManifest {
   image: string;
   size: number;
+  /**
+   * L'echelle est CUITE dans l'atlas (`tools/build_monster_atlas.py`, depuis
+   * le 7 novembre 2026) : chaque contenu mesure `targetPx`, ce que `spriteScale`
+   * dessinerait a 1. Le renderer dessine alors a 1, en `nearest` — un texel,
+   * un pixel entier d'ecran. Absent (atlas ancien) : echelle derivee et
+   * `linear`, parce qu'une echelle non entiere en `nearest` rampe.
+   */
+  prescaled?: boolean;
   archetypes: {
     id: number;
     name: string;
     cell: number;
     bounds: ContentBounds;
+    /** La taille de contenu visee par la cuisson (manifeste `prescaled`). */
+    targetPx?: number;
     clips: { run: AtlasClip; attack: AtlasClip };
   }[];
 }
@@ -451,14 +461,6 @@ export class HordeRenderer {
     // `Texture.from` est synchrone : elle ne telecharge rien. Il faut passer
     // par `Assets.load` pour recuperer l'atlas depuis son URL.
     const atlas = await Assets.load<Texture>(`${this.assetsBase}/derived/${manifest.image}`);
-    // ⚠️ **`linear`, pas `nearest` comme les unites et le sol** : l'echelle
-    // d'un monstre est DERIVEE de sa hitbox (`spriteScale`), donc jamais
-    // entiere (0,5 a 0,8 selon l'archetype). En `nearest`, une echelle non
-    // entiere perd des rangees de pixels irregulierement et le contour rampe
-    // a chaque pas ; lisser est le moindre mal. Le vrai remede est de cuire
-    // l'echelle dans l'atlas (`tools/build_monster_atlas.py`) pour dessiner a
-    // 1 — un actif a redeposer sur MinIO.
-    atlas.source.scaleMode = 'linear';
     this.adoptAtlas(manifest, atlas);
   }
 
@@ -473,6 +475,10 @@ export class HordeRenderer {
    * `draw` pose reellement sur les particules (ancre, echelle).
    */
   adoptAtlas(manifest: AtlasManifest, atlas: Texture): void {
+    // Atlas cuit : echelle 1, `nearest` (pixel art a echelle entiere). Atlas
+    // ancien : echelle derivee de la hitbox, jamais entiere, donc `linear` —
+    // en `nearest`, elle perdrait des rangees et le contour ramperait.
+    atlas.source.scaleMode = manifest.prescaled ? 'nearest' : 'linear';
     const texturesOf = (clip: AtlasClip): Texture[] =>
       clip.rects.map(
         (r) =>
@@ -499,7 +505,20 @@ export class HordeRenderer {
       // (`contentSizePx`), pas de la cellule. Les archetypes n'ont pas tous la meme
       // cellule native (192 a 384 px, `shared/archetypes.ts`), la hitbox de
       // tir, elle, ne varie pas : chacun doit donc recevoir SON propre facteur.
-      sizesPx[a.id] = contentSizePx(a.bounds);
+      const content = contentSizePx(a.bounds);
+      if (manifest.prescaled && a.targetPx) {
+        // La cible de la cuisson, pas le contenu mesure : `spriteScale` rend
+        // alors exactement 1. Si l'outil et `BODY_SCALE` ont diverge, le
+        // contenu s'eloigne de la cible : on le dit, sans casser le rendu.
+        sizesPx[a.id] = a.targetPx;
+        if (Math.abs(content / a.targetPx - 1) > 0.06) {
+          console.warn(
+            `atlas : ${a.name} cuit a ${content} px pour ${a.targetPx} vises — relancer tools/build_monster_atlas.py`,
+          );
+        }
+      } else {
+        sizesPx[a.id] = content;
+      }
       this.#anchorX[a.id] = (a.bounds.x + a.bounds.w / 2) / a.cell;
     }
     // ⚠️ **Le porteur de coffre n'a PAS d'entree dans l'atlas** — c'est un

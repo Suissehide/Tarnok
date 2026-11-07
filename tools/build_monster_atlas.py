@@ -20,6 +20,16 @@ TRANSPARENT (union des deux clips, pour une echelle stable d'une image a
 l'autre). C'est elle, pas la cellule en grande partie vide, que
 `front/src/render/horde-renderer.ts` met a l'echelle de `PROJECTILE_HIT_RADIUS`.
 
+**L'echelle est CUITE ici (`prescaled`), depuis le 7 novembre 2026.** Chaque
+archetype est reechantillonne (Lanczos) pour que son contenu mesure exactement
+`2 * PROJECTILE_HIT_RADIUS * BODY_SCALE * bodyScale` px : le renderer le
+dessine alors a l'echelle 1, en `nearest`, un texel = un pixel entier d'ecran.
+Avant, l'echelle (0,28 a 0,86) etait appliquee au rendu, et du pixel art a
+echelle non entiere perd des rangees et rampe. `bodyScale` et
+`PROJECTILE_HIT_RADIUS` sont lus dans `shared/` via `npx tsx` : une seule
+source de verite. `BODY_SCALE` (1,25) est recopie de `horde-renderer.ts` ;
+le renderer verifie l'accord et avertit en console s'il derive.
+
 ⚠️ **Parmi les elites, seul le boss (troll) est range, et c'est une MESURE.**
 Les six elites ont des cellules de 256 a 384 px et de longs clips d'attaque :
 avec la pietaille, elles saturent l'atlas de 4096. Les cinq autres
@@ -47,6 +57,11 @@ MONSTERS = ROOT / "assets" / "tinyswords" / "Monsters"
 OUT_DIR = ROOT / "assets" / "tinyswords" / "derived"
 
 ATLAS_SIZE = 4096
+
+# Recopie de `BODY_SCALE` dans front/src/render/horde-renderer.ts (le front
+# n'est pas importable hors navigateur : il tire pixi.js). Le renderer compare
+# le contenu cuit a sa propre cible et avertit si les deux divergent.
+BODY_SCALE = 1.25
 
 # Doit rester d'accord avec `ARCHETYPES` de shared/archetypes.ts, dans le meme
 # ordre : l'index dans cette liste EST l'identifiant d'archetype.
@@ -127,6 +142,46 @@ class Shelf:
         return placed
 
 
+def shared_scales() -> tuple[int, dict[str, float]]:
+    """`PROJECTILE_HIT_RADIUS` et `bodyScale` par nom, lus dans `shared/` par tsx."""
+    import subprocess
+
+    script = (
+        "Promise.all([import('./shared/archetypes.ts'), import('./shared/constants.ts')])"
+        ".then(([a, c]) => console.log(JSON.stringify({hit: c.PROJECTILE_HIT_RADIUS,"
+        " body: Object.fromEntries(a.ARCHETYPES.map((x) => [x.name, x.bodyScale]))})))"
+    )
+    try:
+        out = subprocess.run(
+            ["npx", "tsx", "-e", script], cwd=ROOT, capture_output=True, text=True, check=True
+        ).stdout
+    except (OSError, subprocess.CalledProcessError) as e:
+        sys.exit(f"impossible de lire shared/ via `npx tsx` : {e}")
+    data = json.loads(out.strip().splitlines()[-1])
+    return int(data["hit"]), {k: float(v) for k, v in data["body"].items()}
+
+
+def sheet_bbox(sheet: Image.Image) -> tuple[int, int, int, int] | None:
+    """Union des boites de contenu de toutes les images d'une planche (repere cellule)."""
+    cell = sheet.height
+    union = None
+    for f in range(sheet.width // cell):
+        bbox = frame_bbox(sheet.crop((f * cell, 0, (f + 1) * cell, cell)))
+        if bbox is None:
+            continue
+        union = (
+            bbox
+            if union is None
+            else (
+                min(union[0], bbox[0]),
+                min(union[1], bbox[1]),
+                max(union[2], bbox[2]),
+                max(union[3], bbox[3]),
+            )
+        )
+    return union
+
+
 def load_sheet(path: Path) -> Image.Image:
     if not path.is_file():
         sys.exit(f"planche manquante : {path}")
@@ -146,7 +201,9 @@ def frame_bbox(frame: Image.Image) -> tuple[int, int, int, int] | None:
     Passe par le canal alpha plutot que par `Image.getbbox(alpha_only=True)`,
     qui n'existe que depuis Pillow 9.2.
     """
-    return frame.split()[-1].getbbox()
+    # Seuil sur l'alpha : le reechantillonnage Lanczos laisse un halo presque
+    # transparent qui gonflerait la boite de quelques pixels.
+    return frame.split()[-1].point(lambda a: 255 if a > 16 else 0).getbbox()
 
 
 def pack_clip(
@@ -154,21 +211,25 @@ def pack_clip(
     shelf: Shelf,
     sheet: Image.Image,
     name: str,
+    cell: int,
 ) -> tuple[dict, tuple[int, int, int, int] | None]:
     """
     Range toutes les images d'UNE planche (un clip) sur les etageres
-    partagees, colle chaque image dans `atlas`, et rend :
+    partagees, reechantillonnees a `cell` px (Lanczos), colle chaque image
+    dans `atlas`, et rend :
     - le clip du manifeste (`frames`, `rects`) ;
-    - la boite englobante UNION de ses propres images (repere cellule),
-      ou `None` si le clip entier est transparent.
+    - la boite englobante UNION de ses propres images APRES cuisson (repere
+      cellule), ou `None` si le clip entier est transparent.
     """
-    cell = sheet.height
-    frames = sheet.width // cell
+    native = sheet.height
+    frames = sheet.width // native
     rects = []
     union: tuple[int, int, int, int] | None = None
 
     for f in range(frames):
-        frame = sheet.crop((f * cell, 0, (f + 1) * cell, cell))
+        frame = sheet.crop((f * native, 0, (f + 1) * native, native))
+        if cell != native:
+            frame = frame.resize((cell, cell), Image.LANCZOS)
         x, y = shelf.place(cell, name, f)
         atlas.paste(frame, (x, y))
         rects.append({"x": x, "y": y, "w": cell, "h": cell})
@@ -195,8 +256,15 @@ def main() -> None:
             "  cp deploy/.env.example .env && ./tools/fetch-assets.sh"
         )
 
+    hit_radius, body_scales = shared_scales()
     atlas = Image.new("RGBA", (ATLAS_SIZE, ATLAS_SIZE), (0, 0, 0, 0))
-    manifest = {"image": "monsters.png", "size": ATLAS_SIZE, "archetypes": []}
+    manifest = {
+        "image": "monsters.png",
+        "size": ATLAS_SIZE,
+        # L'echelle est cuite : le renderer dessine a 1, en `nearest`.
+        "prescaled": True,
+        "archetypes": [],
+    }
     shelf = Shelf()
 
     for archetype_id, source in enumerate(SOURCES):
@@ -213,10 +281,18 @@ def main() -> None:
                 f"d'attaque ({attack_sheet.height}px) different — les deux "
                 "clips d'un meme archetype doivent partager leur cellule."
             )
-        cell = run_sheet.height
+        native = run_sheet.height
 
-        run_clip, run_bbox = pack_clip(atlas, shelf, run_sheet, f"{name} (course)")
-        attack_clip, attack_bbox = pack_clip(atlas, shelf, attack_sheet, f"{name} (attaque)")
+        # La cible : le contenu cuit mesure ce que le renderer dessinerait a 1.
+        # Le facteur se calcule sur l'union NATIVE des deux clips, comme le
+        # renderer le faisait sur `bounds`.
+        boxes = [b for b in (sheet_bbox(run_sheet), sheet_bbox(attack_sheet)) if b]
+        content = max(max(b[2] - b[0] for b in boxes), max(b[3] - b[1] for b in boxes)) if boxes else native
+        target = round(2 * hit_radius * BODY_SCALE * body_scales[name])
+        cell = max(1, round(native * target / content))
+
+        run_clip, run_bbox = pack_clip(atlas, shelf, run_sheet, f"{name} (course)", cell)
+        attack_clip, attack_bbox = pack_clip(atlas, shelf, attack_sheet, f"{name} (attaque)", cell)
 
         # Boite englobante du CONTENU, union des deux clips : une echelle
         # unique par archetype.
@@ -238,13 +314,15 @@ def main() -> None:
                 "name": name,
                 "cell": cell,
                 "bounds": bounds,
+                "targetPx": target,
                 "clips": {"run": run_clip, "attack": attack_clip},
             }
         )
         print(
             f"  {name:<18} course {run_clip['frames']} images, "
             f"attaque {attack_clip['frames']} images, "
-            f"contenu {bounds['w']}x{bounds['h']}px (cellule {cell}px)"
+            f"contenu {bounds['w']}x{bounds['h']}px pour {target} vises "
+            f"(cellule {native} -> {cell}px)"
         )
 
     OUT_DIR.mkdir(parents=True, exist_ok=True)

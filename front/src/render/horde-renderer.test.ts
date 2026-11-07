@@ -314,17 +314,22 @@ function clipAt(x: number): AtlasClip {
   return { frames: 1, rects: [{ x, y: 0, w: FIXTURE_CELL_PX, h: FIXTURE_CELL_PX }] };
 }
 
-function syntheticAtlas(id = 0): { manifest: AtlasManifest; atlas: Texture } {
+function syntheticAtlas(
+  id = 0,
+  prescaled?: { targetPx: number },
+): { manifest: AtlasManifest; atlas: Texture } {
   return {
     manifest: {
       image: 'atlas.png',
       size: 128,
+      ...(prescaled ? { prescaled: true } : {}),
       archetypes: [
         {
           id,
           name: 'synthetique',
           cell: FIXTURE_CELL_PX,
           bounds: { ...FIXTURE_BOUNDS },
+          ...(prescaled ? { targetPx: prescaled.targetPx } : {}),
           clips: { run: clipAt(FIXTURE_RUN_X), attack: clipAt(FIXTURE_ATTACK_X) },
         },
       ],
@@ -332,6 +337,38 @@ function syntheticAtlas(id = 0): { manifest: AtlasManifest; atlas: Texture } {
     atlas: new Texture({ source: new TextureSource({ width: 128, height: 64 }) }),
   };
 }
+
+/**
+ * Un atlas CUIT (`prescaled`, `tools/build_monster_atlas.py` depuis le
+ * 7 novembre 2026) se dessine a 1 et en `nearest` : l'echelle vient de la
+ * cible de cuisson, pas du contenu mesure (que le halo du reechantillonnage
+ * gonfle de quelques pixels). Un atlas ancien garde l'echelle derivee, en
+ * `linear`.
+ */
+describe('HordeRenderer.adoptAtlas — un atlas cuit se dessine a 1, en nearest', () => {
+  it('prend la cible de cuisson pour echelle, et nearest', () => {
+    const r = new HordeRenderer('/x');
+    const { manifest, atlas } = syntheticAtlas(0, {
+      targetPx: 2 * PROJECTILE_HIT_RADIUS * BODY_SCALE,
+    });
+    r.adoptAtlas(manifest, atlas);
+    const world = new Container();
+    r.attach(world);
+    const horde = twoEnemies();
+    r.draw(horde, new Rectangle(0, 0, MAP_SIZE, MAP_SIZE), 0);
+    const particles = (world.children[0] as ParticleContainer).particleChildren as Particle[];
+    const particle = particleOf([...particles], horde, 0);
+    expect(particle.scaleY).toBe(1);
+    expect(atlas.source.scaleMode).toBe('nearest');
+  });
+
+  it('garde l echelle derivee du contenu et linear sans cuisson', () => {
+    const r = new HordeRenderer('/x');
+    const { manifest, atlas } = syntheticAtlas(0);
+    r.adoptAtlas(manifest, atlas);
+    expect(atlas.source.scaleMode).toBe('linear');
+  });
+});
 
 function drawnParticles(horde: Horde, atlasId = 0): Particle[] {
   const renderer = new HordeRenderer('/assets-de-test');
