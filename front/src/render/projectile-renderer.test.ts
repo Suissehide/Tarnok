@@ -993,4 +993,17 @@ describe('ProjectileRenderer.draw — le mortier monte en cloche au-dessus de so
     expect(heads[0]?.y).toBeCloseTo(p.y[0] ?? 0, 6);
     expect(shadows.bounds.width).toBe(0);
   });
+
+  it('les ombres restent au sol quand `Stage` les y a posees avant `attach`', () => {
+    // Seul, le groupe garde les ombres (voir `drawnLayers`) ; posees au sol
+    // d'abord, elles n'y sont pas reprises : sous la horde, pas au-dessus.
+    const renderer = new ProjectileRenderer();
+    const world = new Container();
+    const sol = new Container();
+    sol.addChild(renderer.shadows);
+    renderer.attach(world);
+    const group = world.children[0] as Container;
+    expect(renderer.shadows.parent).toBe(sol);
+    expect(group.children).toHaveLength(2);
+  });
 });

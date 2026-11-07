@@ -1020,7 +1020,11 @@ export class ProjectileRenderer {
    * est interne, personne ne peut l'inverser en reordonnant `Stage.#layers`.
    */
   attach(parent: Container): void {
-    this.#group.addChild(this.#shadows);
+    // Les ombres (le mortier) vont AU SOL, sous la horde, quand `Stage` les y
+    // a deja posees ; seul (tests), le groupe les garde.
+    if (!this.#shadows.parent) {
+      this.#group.addChild(this.#shadows);
+    }
     this.#group.addChild(this.#trails);
     this.#group.addChild(this.#heads);
     parent.addChild(this.#group);

@@ -89,6 +89,8 @@ interface ProceduralLayer extends SceneLayer {
 export class Stage {
   readonly #app = new Application();
   readonly #world = new Container();
+  /** Ce que la secousse deplace : le monde, jamais le calque ecran (les pings). */
+  readonly #shaken = new Container();
   /** Joueurs et objets hauts, tries par la hauteur de leurs pieds (`zIndex`). */
   readonly #depth = new Container({ sortableChildren: true });
   /** Les fantomes des joueurs, au-dessus de tout le decor (`PlayerRenderer`). */
@@ -223,10 +225,27 @@ export class Stage {
     });
     parent.appendChild(this.#app.canvas);
 
+    // Le DPR change quand la fenetre change d'ecran (ou de zoom) : la
+    // resolution suit, au lieu de rester figee a l'init. La requete ne vaut
+    // que pour le DPR courant, donc elle se rearme a chaque changement.
+    const suitDpr = (): void => {
+      const dpr = window.devicePixelRatio;
+      if (this.#app.renderer.resolution !== dpr) {
+        this.#app.renderer.resolution = dpr;
+        this.#app.resize();
+      }
+      window
+        .matchMedia?.(`(resolution: ${dpr}dppx)`)
+        .addEventListener('change', suitDpr, { once: true });
+    };
+    suitDpr();
+
     this.#world.scale.set(1, VERTICAL_SQUASH);
-    this.#app.stage.addChild(this.#world);
-    // Les fleches de bord : en coordonnees ECRAN, donc hors de `#world`.
-    // Ajoutees APRES le monde, elles passent au-dessus de lui.
+    this.#shaken.addChild(this.#world);
+    this.#app.stage.addChild(this.#shaken);
+    // Les fleches de bord : en coordonnees ECRAN, donc hors de `#world` et
+    // hors de `#shaken` (la secousse ne les fait pas trembler). Ajoutees
+    // APRES le monde, elles passent au-dessus de lui.
     this.#pings.attachScreen(this.#app.stage);
     this.#world.addChild(this.#grid);
 
@@ -265,6 +284,11 @@ export class Stage {
    */
   composeWorld(world: Container): void {
     for (const layer of this.#layers) {
+      // Les ombres du mortier au sol, SOUS la horde qu'elles menacent : voir
+      // `ProjectileRenderer.attach`.
+      if (layer === this.#horde) {
+        world.addChild(this.#projectiles.shadows);
+      }
       layer.attach(world);
       // Les joueurs et les arbres (puis leurs fantomes) juste au-dessus du
       // noir : eclaires dans la nuit, mais SOUS les pings et les chiffres,
@@ -489,11 +513,13 @@ export class Stage {
   /**
    * La secousse de camera : une explosion et une reaction se SENTENT.
    *
-   * ⚠️ **Posee sur `app.stage`, JAMAIS sur `#world`.** `screenToWorld` et
-   * `viewRect` derivent tous les deux de `#world.x/y` : secouer le monde aurait
-   * fait trembler la VISEE avec l'image, c'est-a-dire que le tir serait parti a
-   * cote pendant la secousse. Le parent, lui, deplace ce qui est dessine sans
-   * rien dire a la camera — la conversion curseur -> monde reste intacte.
+   * ⚠️ **Posee sur `#shaken`, JAMAIS sur `#world` ni sur `app.stage`.**
+   * `screenToWorld` et `viewRect` derivent tous les deux de `#world.x/y` :
+   * secouer le monde aurait fait trembler la VISEE avec l'image, c'est-a-dire
+   * que le tir serait parti a cote pendant la secousse. Le parent, lui, deplace
+   * ce qui est dessine sans rien dire a la camera — la conversion curseur ->
+   * monde reste intacte. Et `app.stage` porte aussi le calque ecran (les
+   * fleches de bord) : le secouer les faisait trembler avec le monde.
    *
    * ⚠️ **`prefers-reduced-motion` coupe l'effet, pas le jeu.** Une secousse est
    * du confort ; la refuser ne retire aucune information (le flash et la gerbe
@@ -501,8 +527,16 @@ export class Stage {
    */
   shakeCamera(hits: HitFlashes, reactions: ReactionFlashes, nowMs: number): void {
     const { x, y } = prefersReducedMotion() ? { x: 0, y: 0 } : cameraShake(hits, reactions, nowMs);
-    this.#app.stage.x = x;
-    this.#app.stage.y = y;
+    this.#shaken.x = x;
+    this.#shaken.y = y;
+  }
+
+  /** Pour `stage.test.ts` : ce que la secousse deplace, et le calque ecran qu'elle laisse. */
+  get shakeOffsets(): { shaken: { x: number; y: number }; screen: { x: number; y: number } } {
+    return {
+      shaken: { x: this.#shaken.x, y: this.#shaken.y },
+      screen: { x: this.#app.stage.x, y: this.#app.stage.y },
+    };
   }
 
   /**

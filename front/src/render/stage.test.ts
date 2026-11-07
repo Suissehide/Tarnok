@@ -370,9 +370,19 @@ describe('Stage.composeWorld — chaque calque attache ET charge', () => {
     new Stage().composeWorld(world);
 
     // Seize calques (voir le test suivant pour la liste), plus les joueurs et
-    // leurs fantomes inseres au-dessus du noir : un calque oublie est un
-    // calque invisible.
-    expect(world.children).toHaveLength(18);
+    // leurs fantomes inseres au-dessus du noir, plus les ombres du mortier
+    // posees au sol sous la horde : un calque oublie est un calque invisible.
+    expect(world.children).toHaveLength(19);
+  });
+
+  it('la secousse deplace le monde, jamais le calque ecran des fleches de bord', () => {
+    const stage = new Stage();
+    const hits = new HitFlashes(8);
+    hits.spawn(0, 0, 0xffffff, ZONE_RADIUS, 10, 0);
+    stage.shakeCamera(hits, new ReactionFlashes(8), 0);
+    const { shaken, screen } = stage.shakeOffsets;
+    expect(Math.hypot(shaken.x, shaken.y)).toBeGreaterThan(0);
+    expect(screen).toEqual({ x: 0, y: 0 });
   });
 
   it('charge la texture de chaque calque procedural, et laisse l atlas de la horde a `init`', () => {
