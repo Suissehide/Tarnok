@@ -232,6 +232,9 @@ const HORDE_TICK_LAG_TOLERANCE = 1;
 /** Pas fixe de la simulation de horde, partage entre l'avancement normal et le rejeu. */
 const FIXED_DT = 1 / TICK_HZ;
 
+/** Etape 17b : « aucun tick a restaurer » pour le rejeu unique (`GameClient#replayLate`). */
+const NO_REPLAY = Number.MAX_SAFE_INTEGER;
+
 /** Cadence de rafraichissement du champ, en pas : meme calcul que `Room.step` et `Horde.replication.test.ts`. */
 const STEPS_PER_FIELD = Math.max(1, Math.round(TICK_HZ / FLOWFIELD_HZ));
 /**
@@ -376,7 +379,7 @@ export function flashLifeMs(b: BlastFlash): number {
  * `PICKUPS` dit quelles identites ont ete ramassees ; l'existence et la
  * position de l'orbe, elles, ne transitent jamais — `GameClient` les pose a la
  * position de l'entite au moment de sa mort, lue depuis la horde restauree par
- * `HordeHistory` (voir `GameClient#applyDeaths`), avant compaction par `kill`.
+ * `HordeHistory` (voir `GameClient#replayLate`), avant compaction par `kill`.
  *
  * Tableaux types, jamais un objet par orbe, comme `Horde` et `Projectiles`.
  */
@@ -1545,6 +1548,13 @@ export class GameClient {
   #prevFreezeIsPortal = false;
   /** Voir le getter `lateFreezes`. */
   #lateFreezes = 0;
+  /** Voir le getter `lateOrders`. */
+  #lateOrders = 0;
+  /**
+   * Etape 17b : le premier tick d'un gel recu en retard (`#replayFrom`), a
+   * rejouer avec le reste au rejeu unique de fin de pas (`#replayLate`).
+   */
+  #freezeReplayFrom = Number.MAX_SAFE_INTEGER;
   /**
    * Les entrees des derniers rafraichissements du champ, par tick (pas
    * courant et rejeu, jamais l'amorce).
@@ -1622,11 +1632,20 @@ export class GameClient {
   /**
    * Ordres recus mais pas encore appliques.
    *
-   * Le gestionnaire de message ne fait QUE empiler. L'application a lieu dans
-   * `#advanceHorde`, avant le rafraichissement du champ — l'ordre inverse
-   * multiplie la derive par trente-cinq.
+   * Le gestionnaire de message ne fait QUE empiler. Un ordre de CE tick nait
+   * dans `#advanceHorde`, avant le rafraichissement du champ — l'ordre inverse
+   * multiplie la derive par trente-cinq ; un ordre du passe, au rejeu unique
+   * de fin de pas (`#replayLate`) ; un ordre du futur attend son tick.
    */
   readonly #pendingOrders: WaveOrderMessage[] = [];
+
+  /**
+   * Etape 17b : le journal des ordres nes, tries comme au salon (`spawnTick`,
+   * puis l'arrivee). `#replayTick` y refait naitre les ordres de son tick :
+   * sans lui, un rejeu reparti d'avant une naissance la perdrait pour toujours.
+   * Elague au-dela de l'anneau (`#journal`).
+   */
+  readonly #spawned: WaveOrderMessage[] = [];
 
   /**
    * Visee locale, quantifiee : memes entiers que ceux du prochain `INPUT`.
@@ -1966,6 +1985,15 @@ export class GameClient {
    */
   get lateFreezes(): number {
     return this.#lateFreezes;
+  }
+
+  /**
+   * Etape 17b : ordres de vague arrives trop tard pour l'anneau
+   * (`ROLLBACK_DEPTH_TICKS`), nes au present par rattrapage approche. Meme
+   * degradation signalee que `lateDeaths`. Voir `#replayLate`.
+   */
+  get lateOrders(): number {
+    return this.#lateOrders;
   }
 
   /**
@@ -2668,7 +2696,7 @@ export class GameClient {
     if (msg.type === MSG.DEATHS) {
       // Comme les ordres de vague : le gestionnaire ne fait QU'empiler,
       // l'application (restauration, rejeu) a lieu dans `#advanceHorde`, au
-      // tick local qui vient d'etre simule — voir `#applyDeaths`.
+      // tick local qui vient d'etre simule — voir `#replayLate`.
       this.#pendingDeaths.push({ tick: msg.tick, ids: msg.ids });
       // Lu A LA RECEPTION, sur les identites du message — sans
       // attendre que le rejeu l'applique. Le `LEVEL_UP` qui suit est le coffre.
@@ -2973,9 +3001,10 @@ export class GameClient {
       }
     }
 
-    // L'historique des positions : les enregistrements que le serveur a faits
-    // (un tick gele n'en fait pas — un enregistrement vide ne vaut pas un
-    // enregistrement absent, `delayed` s'accroche au precedent).
+    // L'historique des positions : les enregistrements que le serveur a faits,
+    // ticks geles compris (etape 17b, `Room#recordHistory`). Une entree vide
+    // n'est pas enregistree : vide ne vaut pas absent, `delayed` s'accroche au
+    // precedent.
     msg.history.forEach((h, i) => {
       if (h.ids.length > 0) {
         this.#history.record(T - msg.history.length + 1 + i, h.x, h.y, h.ids);
@@ -3013,7 +3042,15 @@ export class GameClient {
     this.horde.restoreState(state);
     this.horde.acknowledgeFields(this.#fields);
     // L'anneau connait `T` : un message date `T + 1` en retard peut rejouer.
+    // Etape 17b : et RIEN d'autre. Un onglet revenu (`RESYNC_REQUEST`) a pu
+    // simuler au-dela de `T` avec sa horde perimee : un rejeu qui restaurerait
+    // l'un de ces ticks la ressusciterait, et le journal (`#spawned`) referait
+    // naitre des ordres deja dans l'instantane. Un gel note pour le rejeu
+    // (`#freezeReplayFrom`) visait l'ancien anneau.
+    this.#hordeHistory.clear();
     this.#hordeHistory.record(T, this.horde);
+    this.#spawned.length = 0;
+    this.#freezeReplayFrom = NO_REPLAY;
 
     this.#porteurId = null;
     for (let slot = 0; slot < this.horde.count; slot++) {
@@ -3073,7 +3110,9 @@ export class GameClient {
     }
 
     // Tout ce qui est date `<= T` est dans l'instantane : une vague deja nee
-    // renaitrait, une mort deja compactee tuerait un autre creneau.
+    // renaitrait, une mort deja compactee tuerait un autre creneau. Etape 17b :
+    // les ordres du futur aussi — le salon n'en draine qu'a `T + 1` (les
+    // petits), qu'il a deja inseres dans sa horde a la fin de `T`.
     this.#pendingOrders.length = 0;
     this.#pendingDeaths.length = 0;
     this.#pendingZones.length = 0;
@@ -3129,10 +3168,9 @@ export class GameClient {
     }
     const tick = this.#lastHordeTick++;
 
-    // ⚠️ LES ORDRES EN ATTENTE S'APPLIQUENT ICI, EN PREMIER, avant le
-    // rafraichissement du champ : dans l'ordre inverse, la derive due a la
-    // latence devient pire que sans rattrapage du tout. C'est la raison de la
-    // file plutot qu'une application a la reception.
+    // ⚠️ LES ORDRES DE CE TICK NAISSENT ICI, EN PREMIER, avant le
+    // rafraichissement du champ — l'ordre de `Room#step` (etape 17b). Ceux du
+    // passe attendent le rejeu unique de fin de pas (`#replayLate`).
     this.#applyPendingOrders(tick, dt);
 
     // L'historique des joueurs s'enregistre a la reception (`#onFrame`).
@@ -3278,16 +3316,7 @@ export class GameClient {
     // pas, sans quoi une mort qui viserait un tick gele serait « trop vieille »
     // a tort — l'anneau la jugerait absente plutot que simplement inchangee.
     this.#hordeHistory.record(tick, this.horde);
-    this.#drainPendingZones(tick);
-    this.#drainPendingCharges(tick);
-    // Les leurres reecrivent l'anneau comme une charge : AVANT les morts.
-    while (this.#pendingDecoys.length > 0) {
-      const decoy = this.#pendingDecoys.shift();
-      if (decoy) {
-        this.#applyDecoy(decoy, tick);
-      }
-    }
-    this.#drainPendingDeaths(tick);
+    this.#replayLate(tick, dt);
   }
 
   /**
@@ -3837,30 +3866,133 @@ export class GameClient {
   }
 
   /**
-   * Applique toutes les zones recues mais pas encore posees, au tick local
-   * `currentTick`.
+   * Etape 17b : **UN SEUL rejeu par pas**, en fin de pas, pour tout ce qui
+   * est arrive en retard : ordres de vague, zones, charges, leurres, morts, et
+   * le gel recu par `#replayFrom`.
    *
-   * ⚠️ **APPELE AVANT `#drainPendingDeaths`, et l'ordre n'est pas
-   * interchangeable.** Les deux rejouent, et un rejeu REECRIT l'anneau depuis
-   * son tick de depart. Si une mort du tick `D` etait rejouee d'abord, puis
-   * une zone du tick `Z < D`, la restauration au tick `Z` rendrait un etat
-   * d'AVANT la mort, et le rejeu de `Z+1..present` ecraserait l'anneau avec
-   * une horde ou l'entite tuee est toujours vivante : **la mort serait
-   * perdue**. Dans l'autre sens, la zone est deja posee quand la mort rejoue,
-   * donc le rejeu de la mort la reapplique — quel que soit l'ordre des ticks.
+   * Chaque retard pose d'abord ce qui ne depend pas de la horde (la zone, la
+   * charge, le leurre, l'ordre au journal, les bornes du gel) et rend le tick
+   * d'ou repartir ; la horde repart UNE fois du plus ancien, refait naitre les
+   * ordres du journal a leur tick (`#replayTick`), tue chaque lot de morts a
+   * son tick, et rejoue jusqu'au present. Un seul passage, dans l'ordre des
+   * ticks : plus d'ordre d'application a respecter entre zones, charges et
+   * morts (avant l'etape 17b, une mort rejouee avant une zone plus ancienne
+   * etait perdue).
+   *
+   * Hors de l'anneau (`ROLLBACK_DEPTH_TICKS`) : applique au present, et
+   * COMPTE (`lateDeaths`, `lateZones`, `lateCharges`, `lateDecoys`,
+   * `lateFreezes`, `lateOrders`). Un ordre trop vieux vide l'anneau : un rejeu
+   * ulterieur reparti d'avant sa naissance approchee le perdrait.
+   *
+   * ⚠️ Le rejeu ne rejoue QUE le mouvement — champ, horde, separation — jamais
+   * l'arbitrage (degats, contact, ramassages), prerogative du serveur.
    */
-  #drainPendingZones(currentTick: number): void {
-    while (this.#pendingZones.length > 0) {
-      const zone = this.#pendingZones.shift();
-      if (zone) {
-        this.#applyZone(zone, currentTick);
+  #replayLate(tick: number, dt: number): void {
+    let base = NO_REPLAY;
+    // Le gel recu en retard : ses bornes sont deja posees (`#freezeFrom`,
+    // `#thawAt`), et `#replayFrom` a verifie que l'anneau le tient encore.
+    if (this.#freezeReplayFrom !== NO_REPLAY) {
+      base = this.#freezeReplayFrom - 1;
+      this.#freezeReplayFrom = NO_REPLAY;
+    }
+    // Les ordres du passe (`#applyPendingOrders` ne fait naitre que ceux du
+    // tick) : au journal, ils naitront a leur tick pendant le rejeu.
+    const tooOld: WaveOrderMessage[] = [];
+    if (this.#pendingOrders.length > 0) {
+      for (const order of this.#pendingOrders.splice(0)) {
+        if (order.spawnTick > tick) {
+          this.#pendingOrders.push(order);
+        } else if (this.#hordeHistory.holds(order.spawnTick - 1)) {
+          this.#journal(order, tick);
+          base = Math.min(base, order.spawnTick - 1);
+        } else {
+          tooOld.push(order);
+        }
       }
+    }
+    for (const zone of this.#pendingZones.splice(0)) {
+      base = Math.min(base, this.#applyZone(zone, tick));
+    }
+    for (const charge of this.#pendingCharges.splice(0)) {
+      base = Math.min(base, this.#applyBossCharge(charge, tick));
+    }
+    for (const decoy of this.#pendingDecoys.splice(0)) {
+      base = Math.min(base, this.#applyDecoy(decoy, tick));
+    }
+    const deaths: PendingDeathBatch[] = [];
+    const tooOldDeaths: PendingDeathBatch[] = [];
+    for (const batch of this.#pendingDeaths.splice(0)) {
+      this.#kills += batch.ids.length;
+      if (this.#hordeHistory.holds(batch.tick)) {
+        deaths.push(batch);
+        base = Math.min(base, batch.tick);
+      } else {
+        tooOldDeaths.push(batch);
+      }
+    }
+
+    // Tri stable par tick de mort : la boucle ci-dessous les tue dans l'ordre.
+    deaths.sort((a, b) => a.tick - b.tick);
+    if (base !== NO_REPLAY) {
+      this.#hordeHistory.restore(base, this.horde);
+      // ⚠️ Le champ n'est pas dans l'anneau : sans cette amorce, le rejeu
+      // partirait du champ du DERNIER rafraichissement reel. Inutile (et
+      // nuisible au garde de `spawnCatchingUp`) quand rien n'est rejoue.
+      if (base < tick) {
+        this.#primeFieldForReplay(base);
+      }
+      let d = 0;
+      for (let t = base; t <= tick; t++) {
+        if (t > base) {
+          this.#replayTick(t);
+        }
+        for (let batch = deaths[d]; batch && batch.tick === t; batch = deaths[++d]) {
+          // Les orbes a la position restauree, juste avant `kill`, comme
+          // `resolveProjectileDamage` au salon (voir `back/src/combat.ts`).
+          this.#spawnOrbs(batch.ids, t);
+          this.horde.kill(batch.ids);
+          this.#forgetChargeOf(batch.ids);
+          // ⚠️ Reecrire le creneau de la mort lui-meme : un rejeu suivant qui
+          // le restaurerait y retrouverait sinon les victimes vivantes.
+          this.#hordeHistory.record(t, this.horde);
+        }
+      }
+    }
+
+    // Trop vieux pour l'anneau : au present, APRES le rejeu (qui sinon les
+    // effacerait), et comptes.
+    for (const batch of tooOldDeaths) {
+      this.#spawnOrbs(batch.ids, batch.tick);
+      this.#lateDeaths += batch.ids.length;
+      this.horde.kill(batch.ids);
+      this.#forgetChargeOf(batch.ids);
+    }
+    // Tri stable : a tick egal, l'ordre d'arrivee, celui du salon. Les pas
+    // `spawnTick..tick` rattrapes : le pas `tick` vient d'etre fait sans eux.
+    tooOld.sort((a, b) => a.spawnTick - b.spawnTick);
+    for (const order of tooOld) {
+      this.#lateOrders++;
+      this.horde.spawnCatchingUp(
+        order,
+        tick + 1 - order.spawnTick,
+        dt,
+        this.#fields,
+        this.zones,
+        this.#bossCharge,
+        (t) => this.#movementScale(t),
+      );
+    }
+    if (tooOld.length > 0) {
+      this.#hordeHistory.clear();
+    }
+    if (tooOldDeaths.length > 0 || tooOld.length > 0) {
+      this.#hordeHistory.record(tick, this.horde);
     }
   }
 
   /**
-   * Pose une zone annoncee, par rejeu — meme mecanique que `#applyDeaths`, et
-   * pour la meme raison.
+   * Pose une zone annoncee et rend le tick d'ou rejouer (`#replayLate`), ou
+   * `NO_REPLAY`.
    *
    * ⚠️ **L'effet est DATE PAR TICK, jamais applique a la reception.** Le
    * serveur ralentit depuis `bornTick` ; le message arrive quelques ticks plus
@@ -3871,66 +4003,37 @@ export class GameClient {
    * partir du tick SUIVANT sa pose (voir `ZoneField.slowsAt`), donc son effet
    * est encore entierement devant nous.
    *
-   * ⚠️ **La zone est posee AVANT le rejeu**, sans quoi le rejeu avancerait la
-   * horde sans elle et ne corrigerait rien.
+   * La zone est posee AVANT le rejeu, sans quoi le rejeu avancerait la horde
+   * sans elle et ne corrigerait rien.
    */
-  #applyZone(zone: ZoneMessage, currentTick: number): void {
-    if (zone.bornTick >= currentTick) {
-      this.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
-      return;
-    }
-    if (!this.#hordeHistory.restore(zone.bornTick, this.horde)) {
-      // Trop vieux pour l'anneau : pose au present, et SIGNALE — meme
-      // degradation assumee que pour une mort trop vieille, meme refus de la
-      // faire en silence. Voir `#lateZones`.
-      this.#lateZones++;
-      this.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
-      return;
-    }
+  #applyZone(zone: ZoneMessage, currentTick: number): number {
     this.zones.spawn(zone.kind, zone.x, zone.y, zone.by, zone.bornTick);
-    this.#primeFieldForReplay(zone.bornTick);
-    for (let t = zone.bornTick + 1; t <= currentTick; t++) {
-      this.#replayTick(t);
+    if (zone.bornTick >= currentTick) {
+      return NO_REPLAY;
     }
+    if (!this.#hordeHistory.holds(zone.bornTick)) {
+      // Trop vieux pour l'anneau : posee au present, et SIGNALEE — meme
+      // degradation assumee que pour une mort trop vieille. Voir `#lateZones`.
+      this.#lateZones++;
+      return NO_REPLAY;
+    }
+    return zone.bornTick;
   }
 
   /**
-   * Applique toutes les charges recues mais pas encore installees, au tick local
-   * `currentTick`.
+   * Installe une charge annoncee et rend le tick d'ou rejouer (`#replayLate`),
+   * ou `NO_REPLAY`.
    *
-   * ⚠️ **APPELE AVANT `#drainPendingDeaths`, comme les zones et pour la meme
-   * raison** : un rejeu REECRIT l'anneau depuis son tick de depart, donc une
-   * mort rejouee d'abord puis une charge plus ancienne rejouee ensuite
-   * ressusciterait l'entite tuee. Dans cet ordre-ci, la charge est deja
-   * installee quand la mort rejoue, et le rejeu de la mort la reapplique.
-   */
-  #drainPendingCharges(currentTick: number): void {
-    while (this.#pendingCharges.length > 0) {
-      const charge = this.#pendingCharges.shift();
-      if (charge) {
-        this.#applyBossCharge(charge, currentTick);
-      }
-    }
-  }
-
-  /**
-   * Installe une charge annoncee, par rejeu — meme mecanique que `#applyZone`,
-   * et pour une raison plus forte encore.
-   *
-   * ⚠️ **UNE CHARGE DEPLACE LE BOSS.** Une zone ralentit ; une charge, elle,
-   * PILOTE une position. L'installer au present ferait deriver le boss de la
-   * latence exacte du message pendant tout le reste de la traversee — et le
-   * rejeu ramene cet ecart a zero (scenario 11 de
+   * ⚠️ **UNE CHARGE DEPLACE LE BOSS.** L'installer au present ferait deriver
+   * le boss de la latence exacte du message pendant tout le reste de la
+   * traversee — et le rejeu ramene cet ecart a zero (scenario 11 de
    * `shared/horde.replication.test.ts`).
    *
    * `windupTick >= currentTick` : rien a rejouer. C'est le cas NOMINAL, le
    * chargement (`BOSS_CHARGE_WINDUP_TICKS`) durant bien plus que le trajet
-   * d'un message ; le rejeu ne sert qu'a la queue de distribution.
-   *
-   * ⚠️ **La charge est installee AVANT le rejeu**, sans quoi le rejeu avancerait
-   * le boss sans elle et ne corrigerait rien.
+   * d'un message.
    */
-  #applyBossCharge(msg: BossChargeMessage, currentTick: number): void {
+  #applyBossCharge(msg: BossChargeMessage, currentTick: number): number {
     const charge: BossCharge = {
       entityId: msg.entityId,
       x: msg.x,
@@ -3945,85 +4048,14 @@ export class GameClient {
     };
     this.#bossCharge = charge;
     if (charge.windupTick >= currentTick) {
-      return;
+      return NO_REPLAY;
     }
-    if (!this.#hordeHistory.restore(charge.windupTick, this.horde)) {
-      // Trop vieille pour l'anneau : installee au present, et SIGNALEE — meme
-      // degradation assumee que pour une mort ou une zone trop vieille.
+    if (!this.#hordeHistory.holds(charge.windupTick)) {
+      // Trop vieille pour l'anneau : installee au present, et SIGNALEE.
       this.#lateCharges++;
-      return;
+      return NO_REPLAY;
     }
-    this.#primeFieldForReplay(charge.windupTick);
-    for (let t = charge.windupTick + 1; t <= currentTick; t++) {
-      this.#replayTick(t);
-    }
-  }
-
-  /**
-   * Applique tous les lots de morts recus mais pas encore traites, au tick
-   * local `currentTick` — celui que `#advanceHorde` vient de simuler et
-   * d'enregistrer dans `#hordeHistory`.
-   *
-   * ⚠️ Suppose la file triee par tick SERVEUR, sans le reverifier : `Room.step`
-   * n'emet qu'UN `DEATHS` par tick, et WebSocket livre les trames dans leur
-   * ordre d'emission. Rejouer un lot plus recent AVANT un plus ancien
-   * effacerait la correction du second par le rejeu du premier.
-   */
-  #drainPendingDeaths(currentTick: number): void {
-    while (this.#pendingDeaths.length > 0) {
-      const batch = this.#pendingDeaths.shift();
-      if (batch) {
-        this.#applyDeaths(batch.tick, batch.ids, currentTick);
-      }
-    }
-  }
-
-  /**
-   * Applique un lot de morts par rejeu : restaure la horde au tick de la mort,
-   * tue, rejoue jusqu'au present. Appliquer directement au present laisserait
-   * un ecart s'installer, que la separation propage aux voisines : sans rejeu,
-   * la derive croit sans borne (scenario 8 de `horde.replication.test.ts`).
-   *
-   * Les orbes sont derives ICI, a la position lue dans la horde restauree —
-   * juste avant `kill`, comme `resolveProjectileDamage` cote serveur lit la
-   * position juste avant sa propre compaction (voir `back/src/combat.ts`).
-   *
-   * ⚠️ Le rejeu ne rejoue QUE le mouvement — champ, horde, separation — jamais
-   * l'arbitrage (degats, contact, ramassages), prerogative du serveur. Un
-   * client qui le rejouerait prononcerait des morts que le serveur n'a pas
-   * decidees.
-   */
-  #applyDeaths(deathTick: number, ids: readonly number[], currentTick: number): void {
-    this.#kills += ids.length;
-    if (!this.#hordeHistory.restore(deathTick, this.horde)) {
-      // Trop vieux pour l'anneau (`ROLLBACK_DEPTH_TICKS`) : applique au
-      // present, et SIGNALE au HUD : une degradation silencieuse est un piege.
-      // Le scenario 10 de `horde.replication.test.ts` mesure la derive
-      // residuelle de ce chemin.
-      this.#spawnOrbs(ids, deathTick);
-      this.#lateDeaths += ids.length;
-      this.horde.kill(ids);
-      this.#forgetChargeOf(ids);
-      return;
-    }
-    this.#spawnOrbs(ids, deathTick);
-    this.horde.kill(ids);
-    this.#forgetChargeOf(ids);
-    // ⚠️ **Reecrire le creneau `deathTick` lui-meme**, pas seulement ceux du
-    // rejeu : un rejeu suivant qui restaurerait CE tick (un gel date
-    // `deathTick + 1` et livre en retard, `#replayFrom`) y retrouverait sinon
-    // les victimes vivantes, ressuscitees pour toujours.
-    this.#hordeHistory.record(deathTick, this.horde);
-    // ⚠️ Le champ de flux n'est pas dans l'anneau : `HordeHistory.restore`
-    // remet la HORDE au tick de la mort, mais `FlowField` est un objet mutable
-    // PARTAGE que l'anneau ne sauvegarde jamais. Sans ce reamorcage, le rejeu
-    // demarrerait avec le contenu du DERNIER rafraichissement reel — celui du
-    // tick present, plus frais que ce que le serveur avait au tick restaure,
-    // et le rejeu deriverait.
-    this.#primeFieldForReplay(deathTick);
-    for (let t = deathTick + 1; t <= currentTick; t++) {
-      this.#replayTick(t);
-    }
+    return charge.windupTick;
   }
 
   /**
@@ -4111,15 +4143,16 @@ export class GameClient {
   }
 
   /**
-   * Plante un leurre annonce, par rejeu — le patron de `#applyBossCharge`,
-   * eprouve a 0,000 px par le scenario AP2 de `shared/horde.replication.test.ts`.
+   * Plante un leurre annonce et rend le tick d'ou rejouer (`#replayLate`), ou
+   * `NO_REPLAY` — le patron de `#applyBossCharge`, eprouve a 0,000 px par le
+   * scenario AP2 de `shared/horde.replication.test.ts`.
    *
    * Un leurre n'agit que sur des positions de `bornTick` ou plus recentes, et
    * l'entree du champ est lue `FIELD_INPUT_DELAY_TICKS` en retard : tant que
    * l'annonce arrive dans ce delai, aucun pas deja simule ne l'a manque. Au-dela,
-   * on restaure l'anneau a la naissance du leurre et on rejoue.
+   * le rejeu unique repart de la naissance du leurre.
    */
-  #applyDecoy(decoy: Decoy, currentTick: number): void {
+  #applyDecoy(decoy: Decoy, currentTick: number): number {
     // Garde un leurre au-dela de sa vie le temps qu'un rejeu puisse encore
     // revisiter ses ticks (`ROLLBACK_DEPTH_TICKS`) : `substituteDecoys` ignore
     // de toute facon un leurre expire au tick des positions.
@@ -4130,24 +4163,22 @@ export class GameClient {
     );
     this.#decoys.push(decoy);
     if (decoy.bornTick >= currentTick) {
-      return;
+      return NO_REPLAY;
     }
-    if (!this.#hordeHistory.restore(decoy.bornTick, this.horde)) {
+    if (!this.#hordeHistory.holds(decoy.bornTick)) {
       // Trop vieux pour l'anneau : plante au present, et SIGNALE — meme
       // degradation assumee que pour une charge ou une zone trop vieille.
       this.#lateDecoys++;
-      return;
+      return NO_REPLAY;
     }
-    this.#primeFieldForReplay(decoy.bornTick);
-    for (let t = decoy.bornTick + 1; t <= currentTick; t++) {
-      this.#replayTick(t);
-    }
+    return decoy.bornTick;
   }
 
   /**
-   * Un pas de rejeu : rafraichit le champ si du, recalcule la trajectoire des
-   * entites en phase puis avance la horde — les etapes 4 et 6 de la sequence
-   * serveur, jamais l'arbitrage (7 a 9). Reecrit aussi l'anneau pour ce tick :
+   * Un pas de rejeu : fait renaitre les ordres du journal dates de ce tick,
+   * rafraichit le champ si du, recalcule la trajectoire des entites en phase
+   * puis avance la horde — les etapes 4 a 6 de la sequence serveur, jamais
+   * l'arbitrage (7 a 9). Reecrit aussi l'anneau pour ce tick :
    * une mort suivante qui viserait l'un de ces ticks doit restaurer la
    * version rejouee, pas l'ancienne version d'avant correction.
    *
@@ -4156,6 +4187,13 @@ export class GameClient {
    * phase de recalcul de trajectoire, pas un compteur propre au rejeu.
    */
   #replayTick(tick: number): void {
+    // Etape 17b : les ordres de ce tick renaissent d'abord, AVANT le
+    // rafraichissement, comme au salon et au pas courant.
+    for (const order of this.#spawned) {
+      if (order.spawnTick === tick) {
+        this.horde.spawnCatchingUp(order, 0, FIXED_DT, this.#fields);
+      }
+    }
     if (tick > this.#untilAt(tick) && tick % STEPS_PER_FIELD === 0) {
       this.#feedFields(tick, true);
     }
@@ -4165,89 +4203,46 @@ export class GameClient {
   }
 
   /**
-   * Fait naitre les vagues en attente. D'ordinaire par `spawnCatchingUp` : les
-   * seules nouvelles entites rattrapent les pas manques, residu documente
-   * la-bas.
+   * Fait naitre les ordres DE ce tick, avant le rafraichissement du champ —
+   * l'ordre du salon (`Room#step`, etape 17b) — et les inscrit au journal.
    *
-   * Etape 17 : quand un gel ou sa rampe touche la fenetre rattrapee (la vague
-   * du tick d'ouverture d'un portail, livree en retard avec lui), par REJEU,
-   * comme une mort tardive — restaurer la veille de la plus ancienne, faire
-   * naitre chaque vague a son tick, rejouer jusqu'au present : tout le monde
-   * avance et se repousse ensemble, gel et rampe compris.
-   *
-   * ⚠️ **Jamais pour une vague ordinaire** : le client tourne en avance de la
-   * latence, presque chaque `WAVE_ORDER` arrive en retard, et rejouer toute la
-   * horde coute 7 a 14 ms par lot a 4 000 entites (revue 2). Au plus une fois
-   * par etalage ou portail ici. Hors de l'anneau : `spawnCatchingUp`, la mise a
-   * l'echelle par tick y fait au moins respecter le gel.
-   *
-   * ⚠️ **Toutes les vagues en attente d'un coup** : un salon sort plusieurs
-   * ordres au meme tick, et un rejeu par ordre effacerait, en restaurant la
-   * veille, la vague que l'ordre precedent venait de poser.
+   * Etape 17b : un ordre du FUTUR (un petit ne a `T + 1`, ou une horloge en
+   * retard sur le salon) reste en file jusqu'a son tick ; un ordre du PASSE
+   * attend le rejeu unique de fin de pas (`#replayLate`), qui le fait naitre a
+   * son tick exact. Plus de rattrapage approche dans l'anneau.
    */
   #applyPendingOrders(tick: number, dt: number): void {
-    // Rien a faire la plupart des ticks : sortir avant `splice` evite une
-    // allocation de tableau vide a chaque pas.
+    // Rien a faire la plupart des ticks.
     if (this.#pendingOrders.length === 0) {
       return;
     }
-    // Etape 17b : un ordre du FUTUR (un petit ne a `T + 1`, ou une horloge en
-    // retard sur le salon) reste en file jusqu'a son tick.
-    const all = this.#pendingOrders.splice(0);
-    this.#pendingOrders.push(...all.filter((o) => o.spawnTick > tick));
-    // Tri stable : a tick egal, l'ordre d'arrivee, celui du salon.
-    const orders = all.filter((o) => o.spawnTick <= tick).sort((a, b) => a.spawnTick - b.spawnTick);
-    const first = orders[0];
-    if (!first) {
-      return;
-    }
-    let k = 0;
-    if (
-      this.#freezeTouches(first.spawnTick, tick) &&
-      this.#hordeHistory.restore(first.spawnTick - 1, this.horde)
-    ) {
-      this.#primeFieldForReplay(first.spawnTick - 1);
-      for (let t = first.spawnTick; t < tick; t++) {
-        // L'ordre du CLIENT (`#advanceHorde`) : les vagues avant le champ.
-        //
-        // ponytail: le salon fait l'inverse — rafraichissement du champ et
-        // reciblage (`room.ts` l.~1511), PUIS les vagues du directeur
-        // (l.~1528) et les proies (`#startEvent`), puis la horde. Ecart
-        // anterieur a l'etape 17, au tick d'un rafraichissement seulement
-        // (~4 px mesures pour une vague sortie ce tick-la), a l'heure comme
-        // en retard. Remede : dire au client si un ordre nait avant ou apres
-        // le rafraichissement de son tick.
-        for (let o = orders[k]; o && o.spawnTick <= t; o = orders[++k]) {
-          this.horde.spawnCatchingUp(o, 0, dt, this.#fields);
-        }
-        this.#replayTick(t);
+    let kept = 0;
+    for (const order of this.#pendingOrders) {
+      if (order.spawnTick === tick) {
+        this.horde.spawnCatchingUp(order, 0, dt, this.#fields);
+        this.#journal(order, tick);
+      } else {
+        this.#pendingOrders[kept++] = order;
       }
     }
-    for (; k < orders.length; k++) {
-      const order = orders[k];
-      if (order) {
-        // Les pas que le serveur a deja fait faire pendant que l'ordre voyageait.
-        this.horde.spawnCatchingUp(
-          order,
-          Math.max(0, tick - order.spawnTick),
-          dt,
-          this.#fields,
-          this.zones,
-          this.#bossCharge,
-          (t) => this.#movementScale(t),
-        );
-      }
-    }
+    this.#pendingOrders.length = kept;
   }
 
-  /** Un tick de `[from, to)` est-il gele ou en rampe, bornes datees ? Vide si `from >= to`. */
-  #freezeTouches(from: number, to: number): boolean {
-    for (let t = from; t < to; t++) {
-      if (this.#movementScale(t) !== 1) {
-        return true;
-      }
+  /**
+   * Inscrit un ordre au journal, a sa place : apres tous ceux de `spawnTick`
+   * inferieur ou egal (a tick egal, l'ordre d'arrivee, celui du salon).
+   * Elague ce qu'aucun rejeu ne peut plus revisiter : l'anneau ne remonte pas
+   * au-dela de `tick − ROLLBACK_DEPTH_TICKS`.
+   */
+  #journal(order: WaveOrderMessage, tick: number): void {
+    while ((this.#spawned[0]?.spawnTick ?? tick) < tick - ROLLBACK_DEPTH_TICKS) {
+      this.#spawned.shift();
     }
-    return false;
+    let at = this.#spawned.length;
+    while (at > 0 && (this.#spawned[at - 1]?.spawnTick ?? 0) > order.spawnTick) {
+      at--;
+    }
+    this.#spawned.splice(at, 0, order);
   }
 
   /**
@@ -4284,8 +4279,12 @@ export class GameClient {
   }
 
   /**
-   * Rejoue depuis `fromTick`, avec les bornes qui viennent d'arriver, les ticks
-   * que la horde a DEJA simules. Rien si elle ne l'a pas encore atteint.
+   * Fait rejouer depuis `fromTick`, avec les bornes qui viennent d'arriver, les
+   * ticks que la horde a DEJA simules. Rien si elle ne l'a pas encore atteint.
+   * Etape 17b : plus a la reception — au rejeu unique du prochain pas
+   * (`#replayLate`), avec les morts et les ordres du meme lot. Le garde
+   * `> lastHordeTick − ROLLBACK_DEPTH_TICKS` dit que l'anneau tiendra encore
+   * `fromTick − 1` apres l'enregistrement de ce pas.
    *
    * ponytail: trop vieux pour l'anneau (`ROLLBACK_DEPTH_TICKS`), on ne rejoue
    * pas et l'ecart reste, compte dans `lateFreezes` ; l'afficher au HUD comme
@@ -4296,14 +4295,14 @@ export class GameClient {
     if (fromTick > current) {
       return;
     }
-    if (!this.#hordeHistory.restore(fromTick - 1, this.horde)) {
+    if (
+      fromTick - 1 <= this.#lastHordeTick - ROLLBACK_DEPTH_TICKS ||
+      !this.#hordeHistory.holds(fromTick - 1)
+    ) {
       this.#lateFreezes++;
       return;
     }
-    this.#primeFieldForReplay(fromTick - 1);
-    for (let t = fromTick; t <= current; t++) {
-      this.#replayTick(t);
-    }
+    this.#freezeReplayFrom = Math.min(this.#freezeReplayFrom, fromTick);
   }
 
   /**

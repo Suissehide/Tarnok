@@ -211,7 +211,9 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
     client.update(STEP, STEP);
 
     // L'ordre a ete emis au tick serveur 5000 : le client, qui en est
-    // maintenant a 5002, doit rattraper deux pas.
+    // maintenant a 5002, n'a aucun instantane de 4999 dans son anneau. Etape
+    // 17b : il nait au present, en fin de pas, et rattrape 5000, 5001 et 5002
+    // (ce dernier vient d'etre simule sans lui) — compte dans `lateOrders`.
     socket.emit('message', {
       data: encodeWaveOrder({
         waveId: 1,
@@ -230,7 +232,7 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy).toHaveBeenCalledWith(
       expect.objectContaining({ spawnTick: 5000 }),
-      2,
+      3,
       STEP,
       expect.anything(),
       // Les zones : le rattrapage doit ralentir comme le serveur l'a fait
@@ -244,6 +246,7 @@ describe('GameClient — alignement du tick de la horde sur le WELCOME', () => {
       expect.any(Function),
     );
     expect(client.horde.count).toBe(10);
+    expect(client.lateOrders).toBe(1);
   });
 });
 
@@ -883,7 +886,7 @@ describe('GameClient — morts appliquees par rejeu (rollback + replay, tache 10
       'sont tous les deux appliques (la file se draine entierement, pas un lot par tick)',
     () => {
       // Les tests precedents ne mettent jamais plus d'un lot en attente : rien
-      // n'y distingue `#drainPendingDeaths` qui vide la file de sa mutation
+      // n'y distingue `#replayLate` qui vide la file de sa mutation
       // qui n'en traiterait qu'UN par tick. Un retard reseau variable peut
       // pourtant livrer au meme tick local des morts de deux ticks serveur.
       const WAVE_ID = 23;
@@ -3665,8 +3668,8 @@ describe('GameClient — zones et morts livrees ensemble (etape 5a, tache 6)', (
     // et un rejeu REECRIT l'anneau depuis son tick de depart. Deaths d'abord,
     // puis une zone plus ancienne : la restauration au `bornTick` rend un etat
     // d'AVANT la mort, et le rejeu ecrase l'anneau avec une horde ou l'entite
-    // tuee est toujours vivante — la mort disparait. Les zones passent donc
-    // AVANT (voir `GameClient#drainPendingZones`).
+    // tuee est toujours vivante — la mort disparait. Etape 17b : un seul
+    // rejeu applique tout dans l'ordre des ticks (`GameClient#replayLate`).
     const WAVE_ID = 42;
     const ENTITIES = 200;
     const ZONE_TICK = 102;
@@ -5391,11 +5394,8 @@ function runClientPortalScenario(params: {
     const ys = [0, 1, 2, 3].map((p) => Math.round(3000 + Math.sin(vivant * 0.02 + p) * 1500));
 
     if (tick === OUVERTURE) {
-      // ⚠️ L'ordre du CLIENT (les vagues avant le champ), PAS celui de
-      // `Room#step`, qui fait naitre ses vagues APRES le rafraichissement du
-      // champ et le reciblage : un ecart anterieur a l'etape 17, documente
-      // dans `GameClient#applyPendingOrders`. Cette reference mesure le
-      // rejeu du gel, pas cet ecart.
+      // Les vagues avant le champ : l'ordre de `Room#step` depuis l'etape
+      // 17b, et celui du client.
       ref.horde.spawn(vague, ref.fields[0]);
     }
     if (!gele) {
@@ -5613,11 +5613,11 @@ describe('etape 17, revue 1 : un gel en retard ne ressuscite pas un mort de la v
   });
 });
 
-describe('etape 17, revue 2 : une vague en retard ne rejoue la horde que si un gel touche sa fenetre', () => {
+describe('etape 17b : toute vague en retard dans l anneau passe par le rejeu (revue 2 de l etape 17, inversee)', () => {
   /**
-   * Le chemin cher (restaurer, faire naitre, rejouer toute la horde) se
-   * reconnait a son `spawnCatchingUp(order, 0, …)` ; le rattrapage ordinaire
-   * passe les pas manques, `missed > 0`.
+   * Le rejeu (restaurer, faire naitre a son tick, rejouer toute la horde) se
+   * reconnait a son `spawnCatchingUp(order, 0, …)` ; le rattrapage approche,
+   * reserve aux ordres plus vieux que l'anneau, passe les pas manques.
    */
   function rattrapage(gel: ((socket: FakeSocket) => void) | null): number[] {
     const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
@@ -5647,8 +5647,8 @@ describe('etape 17, revue 2 : une vague en retard ne rejoue la horde que si un g
     return spy.mock.calls.map((c) => c[1]);
   }
 
-  it('vague ordinaire en retard : rattrapage des seules nouvelles entites, aucun rejeu', () => {
-    expect(rattrapage(null)).toEqual([4]);
+  it('vague ordinaire en retard : rejeu, elle nait a son tick', () => {
+    expect(rattrapage(null)).toEqual([0]);
   });
 
   it('un gel dans la fenetre (LEVEL_UP date 5004) : rejeu', () => {
@@ -5689,8 +5689,13 @@ describe('etape 18 : le RESYNC', () => {
     );
   }
 
-  /** Un pas du serveur de reference, dans l'ordre de `Room.step` : champ, vagues, horde. */
+  /** Un pas du serveur de reference, dans l'ordre de `Room.step` (etape 17b) : vagues, champ, horde. */
   function pasDeReference(ref: ReferenceServer, tick: number, orders: readonly WaveOrder[]): void {
+    for (const o of orders) {
+      if (o.spawnTick === tick) {
+        ref.horde.spawn(o, ref.fields[0]);
+      }
+    }
     if (tick % STEPS_PER_FIELD === 0) {
       const seen = ref.playerHistory.delayed(tick);
       if (seen) {
@@ -5698,11 +5703,6 @@ describe('etape 18 : le RESYNC', () => {
           ref.fields[f]?.update(seen.x[f] ?? 0, seen.y[f] ?? 0);
         }
         ref.horde.retarget(seen.x, seen.y);
-      }
-    }
-    for (const o of orders) {
-      if (o.spawnTick === tick) {
-        ref.horde.spawn(o, ref.fields[0]);
       }
     }
     ref.horde.step(STEP, ref.fields, tick);
@@ -5790,8 +5790,8 @@ describe('etape 18 : le RESYNC', () => {
       count,
     });
     const T = 119;
-    // Des ticks qui ne sont PAS des rafraichissements : voir la note ponytail
-    // de `GameClient#applyPendingOrders` (ecart anterieur a l'etape 17).
+    // Des ticks qui ne sont PAS des rafraichissements (avant l'etape 17b, le
+    // salon y faisait naitre APRES le champ, le client avant).
     const orders = [vague(1, 1, 150), vague(2, 40, 100), vague(3, 80, 100), vague(4, T + 50, 120)];
     for (let tick = 0; tick <= T; tick++) {
       pasDeReference(ref, tick, orders);
@@ -6322,5 +6322,174 @@ describe('etape 17b : la synchro exacte, cote client', () => {
     // Le tick pair 6 est arrive dans la meme image que 7 : sans lui, `delayed()`
     // retomberait sur la ligne 5.
     expect(lu).toBe(1000 + 6 * 10);
+  });
+});
+
+describe('etape 17b : le journal des ordres et le rejeu unique', () => {
+  const JOUEURS = [0, 1, 2, 3].map((i) => ({
+    id: i,
+    x: 3000 + i * 200,
+    y: 3000,
+    hp: 100,
+    aimX: 0,
+    aimY: 0,
+    pickupRadius: ORB_PICKUP_RADIUS,
+    shield: 0,
+  }));
+
+  function ouvrir(welcomeTick: number): { client: GameClient; socket: FakeSocket } {
+    const client = new GameClient('ws://test', () => ({ x: 0, y: 0 }), vi.fn());
+    client.connect();
+    const socket = latestSocket();
+    socket.emit('message', { data: encodeWelcome(1, welcomeTick, 0xd8a5_0017) });
+    return { client, socket };
+  }
+
+  function vague(waveId: number, spawnTick: number, count = 10): WaveOrder {
+    return {
+      waveId,
+      spawnTick,
+      seed: 0x51ee_d000 + waveId,
+      archetype: 0,
+      formation: FORMATION.CLUSTER,
+      anchorX: 3000,
+      anchorY: 3000,
+      count,
+    };
+  }
+
+  function image(client: GameClient, socket: FakeSocket, tick: number): void {
+    socket.emit('message', { data: encodeSnapshot(tick, 0, 0, JOUEURS) });
+    client.update(tick * STEP, STEP);
+  }
+
+  /** Une vague de 10 nee a l'heure au tick 0, puis les images `0..jusqua − 1`. */
+  function avecUneVague(jusqua: number): { client: GameClient; socket: FakeSocket } {
+    const { client, socket } = ouvrir(0);
+    socket.emit('message', { data: encodeWaveOrder(vague(5, 0)) });
+    for (let t = 0; t < jusqua; t++) {
+      image(client, socket, t);
+    }
+    return { client, socket };
+  }
+
+  it('un petit ne dans le meme lot que la mort de son parent est present apres le rejeu', () => {
+    const { client, socket } = avecUneVague(20);
+    // Latence 1 : le salon a tue le parent a 18 et sorti ses petits pour 19.
+    socket.emit('message', {
+      data: encodeWaveOrder({
+        ...vague(6, 19, 2),
+        archetype: archetypeIdOf(SPLIT_CHILD),
+        formation: FORMATION.POINT,
+      }),
+    });
+    socket.emit('message', { data: encodeDeaths(18, [entityIdOf(5, 3)]) });
+    image(client, socket, 20);
+    expect(client.horde.slotOf(entityIdOf(5, 3))).toBe(-1);
+    expect(client.horde.slotOf(entityIdOf(6, 0))).toBeGreaterThanOrEqual(0);
+    expect(client.horde.slotOf(entityIdOf(6, 1))).toBeGreaterThanOrEqual(0);
+    expect(client.horde.count).toBe(10 - 1 + 2);
+  });
+
+  it.each([
+    { ordre: 17, mort: 18 },
+    { ordre: 18, mort: 16 },
+  ])('un lot qui apporte un ordre ($ordre) et une mort ($mort) en retard : UN rejeu, depuis le plus ancien', ({
+    ordre,
+    mort,
+  }) => {
+    const { client, socket } = avecUneVague(20);
+    const step = vi.spyOn(client.horde, 'step');
+    socket.emit('message', { data: encodeWaveOrder(vague(6, ordre, 4)) });
+    socket.emit('message', { data: encodeDeaths(mort, [entityIdOf(5, 3)]) });
+    image(client, socket, 20);
+    // Le pas courant, puis UN rejeu de `min(ordre − 1, mort) + 1` a 20 inclus.
+    expect(step).toHaveBeenCalledTimes(1 + 20 - Math.min(ordre - 1, mort));
+    expect(client.horde.slotOf(entityIdOf(5, 3))).toBe(-1);
+    expect(client.horde.slotOf(entityIdOf(6, 0))).toBeGreaterThanOrEqual(0);
+    expect(client.horde.count).toBe(10 - 1 + 4);
+  });
+
+  it('une vague en retard dont la fenetre croise le debut d un gel : un rejeu, et la vague gele avec le monde', () => {
+    const { client, socket } = ouvrir(5000);
+    for (let t = 5000; t < 5006; t++) {
+      image(client, socket, t);
+    }
+    // Espionne AVANT les messages : un rejeu a la reception compterait aussi.
+    const step = vi.spyOn(client.horde, 'step');
+    socket.emit('message', { data: encodeWaveOrder(vague(1, 5002)) });
+    socket.emit('message', { data: encodeLevelUp(5004, 2) });
+    image(client, socket, 5006);
+    expect(step).toHaveBeenCalledTimes(1 + 5006 - 5001);
+    // Nee a 5002, avancee a 5002 et 5003, gelee depuis 5004.
+    const veille = new Horde(client.horde.capacity);
+    expect(client.hordeAt(5003, veille)).toBe(true);
+    const id = entityIdOf(1, 0);
+    expect(client.horde.x[client.horde.slotOf(id)]).toBe(veille.x[veille.slotOf(id)]);
+    expect(client.horde.y[client.horde.slotOf(id)]).toBe(veille.y[veille.slotOf(id)]);
+  });
+
+  it('un ordre plus vieux que l anneau nait au present, compte, et aucun rejeu ulterieur ne le perd', () => {
+    const { client, socket } = ouvrir(5000);
+    for (let t = 5000; t < 5012; t++) {
+      image(client, socket, t);
+    }
+    socket.emit('message', { data: encodeWaveOrder(vague(1, 5001)) });
+    image(client, socket, 5012);
+    expect(client.horde.count).toBe(10);
+    expect(client.lateOrders).toBe(1);
+    // Datee d'avant sa naissance au present : plus rejouable, comptee.
+    socket.emit('message', { data: encodeZone(ELEMENT.GIVRE, 3000, 3000, 5011, 1) });
+    image(client, socket, 5013);
+    expect(client.lateZones).toBe(1);
+    expect(client.horde.count).toBe(10);
+    // Une mort rejouable ensuite : la vague survit au rejeu.
+    socket.emit('message', { data: encodeDeaths(5013, [entityIdOf(1, 2)]) });
+    image(client, socket, 5014);
+    expect(client.lateDeaths).toBe(0);
+    expect(client.horde.count).toBe(9);
+    expect(client.horde.slotOf(entityIdOf(1, 0))).toBeGreaterThanOrEqual(0);
+  });
+
+  it('un RESYNC repart a neuf : ni l anneau ni le journal d avant ne ressuscitent la horde', () => {
+    const { client, socket } = ouvrir(0);
+    socket.emit('message', { data: encodeWaveOrder(vague(5, 5)) });
+    for (let t = 0; t < 10; t++) {
+      image(client, socket, t);
+    }
+    // L'onglet revient (`RESYNC_REQUEST`) : l'etat complet du tick 4, sans la
+    // vague 5 — le client, lui, a deja simule jusqu'a 9 avec elle.
+    socket.emit('message', {
+      data: encodeResync({
+        tick: 4,
+        level: 1,
+        kills: 0,
+        freezeUntilTick: -1,
+        chestsOwed: 0,
+        eventDraftsOwed: 0,
+        draft: null,
+        portal: null,
+        event: null,
+        charge: null,
+        players: [],
+        history: Array.from({ length: RESYNC_HISTORY_TICKS }, () => ({ ids: [], x: [], y: [] })),
+        fieldTargets: [],
+        horde: new Horde(1),
+        orbs: [],
+        zones: [],
+        decoys: [],
+      }),
+    });
+    // Une mort datee de 8, le futur du client : l'anneau ne doit plus tenir
+    // son ancien 8.
+    socket.emit('message', { data: encodeDeaths(8, [entityIdOf(5, 0)]) });
+    image(client, socket, 5);
+    expect(client.horde.count).toBe(0);
+    image(client, socket, 6);
+    // Un gel en retard qui fait rejouer depuis 4 : le journal ne doit plus
+    // refaire naitre la vague 5 a son tick.
+    socket.emit('message', { data: encodeLevelUp(5, 2) });
+    image(client, socket, 7);
+    expect(client.horde.count).toBe(0);
   });
 });

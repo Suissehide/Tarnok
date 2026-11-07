@@ -831,8 +831,8 @@ function shareAmalgameDamage(
  * d'un couple ; on ne branche que sur `ReactionDef.id`.
  *
  * ⚠️ **Les morts passent par le `DEATHS` EXISTANT** : `Room.step` les fusionne
- * avec celles des projectiles et des brulures, car
- * `GameClient#drainPendingDeaths` suppose un seul lot par tick.
+ * avec celles des projectiles et des brulures — un seul lot par tick sur le
+ * fil (`GameClient#replayLate` les rejoue de toute facon dans l'ordre).
  *
  * ⚠️ **Les champs se posent d'abord, tous, puis les degats, puis la
  * compaction.** Deux reactions voisines doivent voir la meme reserve de zones
@@ -1766,9 +1766,8 @@ export const VENOM_MIN_RESERVE = 0.1;
  * AVANT la compaction.
  *
  * ⚠️ **Les morts passent par le `DEATHS` EXISTANT** : `Room.step` les fusionne
- * avec celles des projectiles, car `GameClient#drainPendingDeaths` suppose un
- * seul `DEATHS` par tick (un lot rejoue apres un autre effacerait la
- * correction du premier).
+ * avec celles des projectiles — un seul `DEATHS` par tick sur le fil
+ * (`GameClient#replayLate` les rejoue de toute facon dans l'ordre).
  *
  * ⚠️ **La Surchauffe est un SECOND balayage dans la MEME fonction** : un seul
  * `dead`, une seule compaction. Elle ne peut pas passer par la marque : sa

@@ -975,7 +975,7 @@ describe('etape 3 : les morts survivent a la separation, avec et sans rejeu', ()
    * mort, applique, rejoue jusqu'au present. Si ce tick est sorti de l'anneau
    * (`ROLLBACK_DEPTH_TICKS`), retombe sur une application au present et le
    * SIGNALE via `p.lateDeaths` plutot que de le faire en silence — le pendant
-   * de `GameClient#applyDeaths`.
+   * de `GameClient#replayLate`.
    */
   function applyDeathWithReplay(
     p: DeathParticipant,

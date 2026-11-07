@@ -67,16 +67,29 @@ export class HordeHistory {
    * trop vieux (hors de `ROLLBACK_DEPTH_TICKS`) ou jamais enregistre.
    */
   restore(tick: number, horde: Horde): boolean {
-    const slot = this.#slotOf(tick);
-    if (this.#ticks[slot] !== tick) {
+    if (!this.holds(tick)) {
       return false;
     }
-    const state = this.#states[slot];
+    const state = this.#states[this.#slotOf(tick)];
     if (!state) {
       return false;
     }
     horde.restoreState(state);
     return true;
+  }
+
+  /** Vrai si l'anneau tient ce tick precis : `restore(tick)` reussira. */
+  holds(tick: number): boolean {
+    return this.#ticks[this.#slotOf(tick)] === tick;
+  }
+
+  /**
+   * Oublie tous les ticks tenus : plus aucun `restore` ne reussit avant le
+   * prochain `record`. Pour un changement applique au present qu'un rejeu
+   * ulterieur, reparti d'avant lui, effacerait (`GameClient#replayLate`).
+   */
+  clear(): void {
+    this.#ticks.fill(-1);
   }
 
   /** Le plus vieux tick actuellement tenu par l'anneau, ou -1 s'il est vide. */

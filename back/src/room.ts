@@ -1834,10 +1834,9 @@ export class Room {
       ...poisonedIds,
       ...collidedIds,
     ]);
-    // ⚠️ **UN SEUL lot de morts par tick, toutes passes comprises.**
-    // `GameClient` s'appuie dessus : deux lots vises au meme tick, rejoues
-    // l'un apres l'autre, verraient le second effacer la correction du premier
-    // (`#drainPendingDeaths`). Aucune passe n'a donc de chemin de mort a elle.
+    // ⚠️ **UN SEUL lot de morts par tick, toutes passes comprises** : la regle
+    // du fil (`GameClient#replayLate` rejoue de toute facon les lots dans
+    // l'ordre des ticks). Aucune passe n'a donc de chemin de mort a elle.
     //
     // Aucun doublon possible, et l'ORDRE le garantit : chaque passe tourne
     // APRES la compaction de la precedente, donc les identites deja listees

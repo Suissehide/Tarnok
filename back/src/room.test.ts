@@ -2791,9 +2791,8 @@ describe('les zones, les marques et les brulures dans le salon (etape 5a, tache 
   });
 
   it('une mort par BRULURE part dans le meme lot DEATHS que les morts par projectile', () => {
-    // ⚠️ **Le rejeu client en depend** : `GameClient#drainPendingDeaths`
-    // suppose « un seul lot par tick » et rejouerait le second par-dessus la
-    // correction du premier. Ce test met en scene un tick ou les deux chemins
+    // ⚠️ **La regle du fil** : un seul lot `DEATHS` par tick
+    // (`GameClient#replayLate` les rejoue de toute facon dans l'ordre). Ce test met en scene un tick ou les deux chemins
     // tuent : un monstre acheve par la brulure seule (PV mis a un cheveu de
     // zero, marque a la main) et un autre acheve par un projectile.
     const GRAINE = 0xbaa1_5e01;
@@ -3170,9 +3169,8 @@ describe('la reaction dans le salon (etape 5a, tache 7)', () => {
   });
 
   it('les morts d une reaction partent dans le lot DEATHS EXISTANT, un seul par tick', () => {
-    // ⚠️ **Le rejeu client en depend** : `GameClient#drainPendingDeaths`
-    // suppose « un seul lot par tick » et rejouerait le second par-dessus la
-    // correction du premier. Un amas de pietaille lourde marquee Braise, un
+    // ⚠️ **La regle du fil** : un seul lot `DEATHS` par tick
+    // (`GameClient#replayLate` les rejoue de toute facon dans l'ordre). Un amas de pietaille lourde marquee Braise, un
     // projectile de Givre : la reaction en tue plusieurs D UN COUP, et tout
     // doit tenir dans le lot du tick.
     const room = new Room(0xbaa1_5e09);
@@ -3275,8 +3273,8 @@ describe('la reaction traverse le salon en entier (etape 5a, tache 7)', () => {
   it('une mort par REACTION part dans le meme lot DEATHS qu une mort par projectile', () => {
     // ⚠️ Des morts de reaction dans un lot A PART passeraient inapercues tant
     // que la reaction est la SEULE a tuer ce tick-la : il faut un tick ou les
-    // DEUX chemins tuent. `GameClient#drainPendingDeaths` suppose « un seul lot
-    // par tick » et rejouerait le second par-dessus la correction du premier.
+    // DEUX chemins tuent : la regle du fil est un seul lot par tick
+    // (`GameClient#replayLate` les rejoue de toute facon dans l'ordre).
     //
     // ⚠️ **Deux joueurs qui visent dans deux directions opposees** : un
     // ATELIER a reactions (une cible remarquee de Braise a chaque tick, arrosee

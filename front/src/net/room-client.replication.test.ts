@@ -424,10 +424,9 @@ function latence(latency: number): void {
   expect(r.lost.size).toBe(0);
 }
 
-it.each([0])(LATENCE, latence);
-it.fails.each([1, 2, 3])(LATENCE, latence);
+it.each([0, 1, 2, 3])(LATENCE, latence);
 
-it.fails('hoquet d une image sur les ticks qui emettent des petits — 0,000 px, 0 perte', () => {
+it('hoquet d une image sur les ticks qui emettent des petits — 0,000 px, 0 perte', () => {
   const opts: Options = {
     mapSeed: 0xd1a6_0002,
     players: [1, 2],
@@ -531,8 +530,7 @@ function portail(latency: number): void {
   expect(r.lost.size).toBe(0);
 }
 
-it.each([0])(PORTAIL, portail);
-it.fails.each([2])(PORTAIL, portail);
+it.each([0, 2])(PORTAIL, portail);
 
 it.fails('rattrapage du serveur : 3 pas groupes toutes les 50 images, latence 1 — 0,000 px, 0 perte', () => {
   // Fix 1, point 2 : le serveur reel peut faire jusqu'a 5 pas de
