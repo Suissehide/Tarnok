@@ -50,6 +50,24 @@ export const weaponLabel = (weaponId: number): string =>
   weaponOf(weaponId === NO_WEAPON ? BASE_WEAPON_ID : weaponId).name;
 
 /**
+ * Repeint `root` sans perdre le clavier : la case qui avait le focus, reperee
+ * par la valeur de `attr` sur elle ou son ancetre, le retrouve apres le
+ * `replaceChildren`. Chaque `LOBBY` (ou chaque achat) repeint tout l'ecran ;
+ * sans cela, le focus tombait sur `body` a chaque message.
+ */
+export function keepFocus(root: HTMLElement, attr: string, paint: () => void): void {
+  const active = document.activeElement;
+  const key =
+    active instanceof HTMLElement && root.contains(active)
+      ? active.closest(`[${attr}]`)?.getAttribute(attr)
+      : null;
+  paint();
+  if (key != null) {
+    root.querySelector<HTMLElement>(`button[${attr}="${key}"], [${attr}="${key}"] button`)?.focus();
+  }
+}
+
+/**
  * Etape 1 : les quatre classes, leur verbe et leur trait.
  *
  * ⚠️ **Les doublons sont libres** : rien n'est desactive ni
@@ -60,32 +78,34 @@ export function renderClasses(
   chosen: number,
   onPick: (classId: number) => void,
 ): void {
-  root.replaceChildren(
-    ...CLASSES.map((c) => {
-      const card = document.createElement('button');
-      card.type = 'button';
-      card.className = 'k k-paperx class-card';
-      card.dataset.classe = `${c.id}`;
-      card.dataset.choisie = c.id === chosen ? 'true' : 'false';
+  keepFocus(root, 'data-classe', () =>
+    root.replaceChildren(
+      ...CLASSES.map((c) => {
+        const card = document.createElement('button');
+        card.type = 'button';
+        card.className = 'k k-paperx class-card';
+        card.dataset.classe = `${c.id}`;
+        card.dataset.choisie = c.id === chosen ? 'true' : 'false';
 
-      const head = document.createElement('span');
-      head.className = 'flex items-center justify-between gap-[8px]';
-      const name = document.createElement('span');
-      name.className = 'class-card__name f-meta ol';
-      name.textContent = c.label;
-      head.append(name);
+        const head = document.createElement('span');
+        head.className = 'flex items-center justify-between gap-[8px]';
+        const name = document.createElement('span');
+        name.className = 'class-card__name f-meta ol';
+        name.textContent = c.label;
+        head.append(name);
 
-      const verb = document.createElement('span');
-      verb.className = 'class-card__verb';
-      verb.textContent = VERB_TEXT[c.verb];
-      const trait = document.createElement('span');
-      trait.className = 'class-card__trait';
-      trait.textContent = `Trait : ${TRAIT_TEXT[c.trait]}`;
+        const verb = document.createElement('span');
+        verb.className = 'class-card__verb';
+        verb.textContent = VERB_TEXT[c.verb];
+        const trait = document.createElement('span');
+        trait.className = 'class-card__trait';
+        trait.textContent = `Trait : ${TRAIT_TEXT[c.trait]}`;
 
-      card.append(head, verb, trait);
-      card.addEventListener('click', () => onPick(c.id));
-      return card;
-    }),
+        card.append(head, verb, trait);
+        card.addEventListener('click', () => onPick(c.id));
+        return card;
+      }),
+    ),
   );
 }
 
@@ -100,49 +120,51 @@ export function renderWeapons(
   onPick: (weaponId: number) => void,
 ): void {
   const ids = [BASE_WEAPON_ID, ...startingWeapons()];
-  root.replaceChildren(
-    ...ELEMENTS.map((element) => {
-      const row = document.createElement('div');
-      row.className = 'weapon-family';
-      row.dataset.element = `${element.id}`;
-      row.style.setProperty('--tint', `#${element.tint.toString(16).padStart(6, '0')}`);
-      // Une teinte sombre (la Poix) se confond avec le contour sombre : elle
-      // prend un contour clair.
-      const r = (element.tint >> 16) & 0xff;
-      const g = (element.tint >> 8) & 0xff;
-      const b = element.tint & 0xff;
-      row.dataset.dark = 0.299 * r + 0.587 * g + 0.114 * b < 96 ? 'true' : 'false';
+  keepFocus(root, 'data-weapon-id', () =>
+    root.replaceChildren(
+      ...ELEMENTS.map((element) => {
+        const row = document.createElement('div');
+        row.className = 'weapon-family';
+        row.dataset.element = `${element.id}`;
+        row.style.setProperty('--tint', `#${element.tint.toString(16).padStart(6, '0')}`);
+        // Une teinte sombre (la Poix) se confond avec le contour sombre : elle
+        // prend un contour clair.
+        const r = (element.tint >> 16) & 0xff;
+        const g = (element.tint >> 8) & 0xff;
+        const b = element.tint & 0xff;
+        row.dataset.dark = 0.299 * r + 0.587 * g + 0.114 * b < 96 ? 'true' : 'false';
 
-      const head = document.createElement('span');
-      head.className = 'weapon-family__head';
-      const label = document.createElement('span');
-      label.className = 'f-meta ol';
-      label.textContent = elementLabel(element.id);
-      head.append(elementBadge(element.id, 32), label);
+        const head = document.createElement('span');
+        head.className = 'weapon-family__head';
+        const label = document.createElement('span');
+        label.className = 'f-meta ol';
+        label.textContent = elementLabel(element.id);
+        head.append(elementBadge(element.id, 32), label);
 
-      const list = document.createElement('span');
-      list.className = 'weapon-family__list';
-      for (const id of ids.filter((w) => weaponOf(w).element === element.id)) {
-        const value = id === BASE_WEAPON_ID ? NO_WEAPON : id;
-        const button = document.createElement('button');
-        button.type = 'button';
-        button.className = 'btn btn--tab room-weapon ol';
-        button.dataset.weaponId = `${value}`;
-        button.setAttribute('aria-pressed', value === chosen ? 'true' : 'false');
-        button.textContent = weaponOf(id).name;
-        button.title = `${weaponOf(id).name} — ${elementLabel(element.id)}`;
-        button.addEventListener('click', () => onPick(value));
-        list.append(button);
-      }
-      row.append(head, list);
-      if (element.id === ELEMENT.NEUTRE) {
-        const note = document.createElement('span');
-        note.className = 'weapon-family__note';
-        note.textContent = `Ne combine rien : ${NEUTRE_HELP}.`;
-        row.append(note);
-      }
-      return row;
-    }),
+        const list = document.createElement('span');
+        list.className = 'weapon-family__list';
+        for (const id of ids.filter((w) => weaponOf(w).element === element.id)) {
+          const value = id === BASE_WEAPON_ID ? NO_WEAPON : id;
+          const button = document.createElement('button');
+          button.type = 'button';
+          button.className = 'btn btn--tab room-weapon ol';
+          button.dataset.weaponId = `${value}`;
+          button.setAttribute('aria-pressed', value === chosen ? 'true' : 'false');
+          button.textContent = weaponOf(id).name;
+          button.title = `${weaponOf(id).name} — ${elementLabel(element.id)}`;
+          button.addEventListener('click', () => onPick(value));
+          list.append(button);
+        }
+        row.append(head, list);
+        if (element.id === ELEMENT.NEUTRE) {
+          const note = document.createElement('span');
+          note.className = 'weapon-family__note';
+          note.textContent = `Ne combine rien : ${NEUTRE_HELP}.`;
+          row.append(note);
+        }
+        return row;
+      }),
+    ),
   );
 }
 

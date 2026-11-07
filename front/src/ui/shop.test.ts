@@ -209,4 +209,18 @@ describe('renderShop — le cablage vers index.html, et le grisage a l ecran', (
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(bouton?.disabled).toBe(false);
   });
+
+  it('le focus clavier survit au repeint qui suit un achat', () => {
+    const article = SHOP_ITEMS[0];
+    if (!article) {
+      throw new Error('catalogue vide');
+    }
+    const etat: EtatBoutique = { gold: BigInt(priceOf(article, 1)), purchases: {} };
+    renderShop(root, etat, IGNORER_ACHAT);
+    root.querySelector<HTMLButtonElement>(`[data-item-id="${article.id}"] button`)?.focus();
+    renderShop(root, etat, IGNORER_ACHAT);
+    const actif = document.activeElement as HTMLElement;
+    expect(actif.closest<HTMLElement>('[data-item-id]')?.dataset.itemId).toBe(article.id);
+    expect(actif.tagName).toBe('BUTTON');
+  });
 });

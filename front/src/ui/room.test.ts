@@ -142,3 +142,19 @@ describe('les armes, rangees par element', () => {
     expect(choisie?.textContent).toBe(weaponOf(BASE_WEAPON_ID).name);
   });
 });
+
+describe('le focus clavier survit au repeint de chaque LOBBY', () => {
+  it('l arme et la classe qui avaient le focus le retrouvent', () => {
+    const els = cases();
+    document.body.replaceChildren(els.classes, els.weapons);
+    renderRoom(els, lobby(2), 'arme', rien, rien);
+    els.weapons.querySelector<HTMLElement>(`[data-weapon-id="${arme}"]`)?.focus();
+    renderRoom(els, lobby(2), 'arme', rien, rien);
+    expect((document.activeElement as HTMLElement).dataset.weaponId).toBe(`${arme}`);
+
+    renderRoom(els, lobby(2), 'classe', rien, rien);
+    els.classes.querySelector<HTMLElement>('[data-classe="3"]')?.focus();
+    renderRoom(els, lobby(2), 'classe', rien, rien);
+    expect((document.activeElement as HTMLElement).dataset.classe).toBe('3');
+  });
+});

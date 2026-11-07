@@ -1,6 +1,7 @@
 import { priceOf, SHOP_ITEMS, type ShopItem } from '@shared/shop';
 
 import { bonusIcon, slot } from './icons';
+import { keepFocus } from './room';
 
 /**
  * La boutique du lobby.
@@ -98,76 +99,78 @@ export function renderShop(
   etat: EtatBoutique,
   onBuy: (itemId: string) => Promise<void>,
 ): void {
-  root.replaceChildren(
-    ...SHOP_ITEMS.map((item) => {
-      const palierPossede = etat.purchases[item.id] ?? 0;
-      const auMax = palierPossede >= item.levels;
-      const peut = achetable(item, etat);
-      const prix = auMax ? 'Au maximum' : `${priceOf(item, palierPossede + 1)} or`;
+  keepFocus(root, 'data-item-id', () =>
+    root.replaceChildren(
+      ...SHOP_ITEMS.map((item) => {
+        const palierPossede = etat.purchases[item.id] ?? 0;
+        const auMax = palierPossede >= item.levels;
+        const peut = achetable(item, etat);
+        const prix = auMax ? 'Au maximum' : `${priceOf(item, palierPossede + 1)} or`;
 
-      const card = document.createElement('div');
-      // Le parchemin de la boutique du pack, pave a l'echelle 1.
-      card.className = 'k k-scroll shop-card shop-item';
-      card.dataset.itemId = item.id;
-      card.dataset.achetable = peut ? 'true' : 'false';
+        const card = document.createElement('div');
+        // Le parchemin de la boutique du pack, pave a l'echelle 1.
+        card.className = 'k k-scroll shop-card shop-item';
+        card.dataset.itemId = item.id;
+        card.dataset.achetable = peut ? 'true' : 'false';
 
-      const frame = slot('', { src: bonusIcon(item.bonusKind), count: null, title: item.label });
+        const frame = slot('', { src: bonusIcon(item.bonusKind), count: null, title: item.label });
 
-      const label = document.createElement('span');
-      label.className = 'shop-card__name ol';
-      label.textContent = item.label;
+        const label = document.createElement('span');
+        label.className = 'shop-card__name ol';
+        label.textContent = item.label;
 
-      const effet = document.createElement('span');
-      effet.className = 'shop-card__effect';
-      effet.textContent = `${effetLabel(item)} par palier`;
+        const effet = document.createElement('span');
+        effet.className = 'shop-card__effect';
+        effet.textContent = `${effetLabel(item)} par palier`;
 
-      const palier = document.createElement('span');
-      palier.className = 'shop-card__level';
-      palier.textContent = `${palierPossede} / ${item.levels}`;
+        const palier = document.createElement('span');
+        palier.className = 'shop-card__level';
+        palier.textContent = `${palierPossede} / ${item.levels}`;
 
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'btn btn--tab shop-card__buy ol';
-      button.disabled = !peut;
-      button.textContent = prix;
-      const desarme = (): void => {
-        delete button.dataset.confirm;
-        button.classList.remove('btn--red');
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn btn--tab shop-card__buy ol';
+        button.disabled = !peut;
         button.textContent = prix;
-      };
-      button.addEventListener('blur', desarme);
-      button.addEventListener('click', () => {
-        if (button.dataset.confirm !== 'true') {
-          button.dataset.confirm = 'true';
-          button.classList.add('btn--red');
-          button.textContent = 'Confirmer ?';
-          return;
-        }
-        desarme();
-        button.disabled = true;
-        onBuy(item.id)
-          .finally(() => {
-            button.disabled = false;
-          })
-          .catch(() => {
-            // L'appelant (`main.ts`, `onBuy`) affiche deja l'echec ; ce
-            // `catch` n'existe que pour que la promesse rejetee ne remonte pas
-            // en erreur non geree une fois le bouton reactive.
-          });
-      });
+        const desarme = (): void => {
+          delete button.dataset.confirm;
+          button.classList.remove('btn--red');
+          button.textContent = prix;
+        };
+        button.addEventListener('blur', desarme);
+        button.addEventListener('click', () => {
+          if (button.dataset.confirm !== 'true') {
+            button.dataset.confirm = 'true';
+            button.classList.add('btn--red');
+            button.textContent = 'Confirmer ?';
+            return;
+          }
+          desarme();
+          button.disabled = true;
+          onBuy(item.id)
+            .finally(() => {
+              button.disabled = false;
+            })
+            .catch(() => {
+              // L'appelant (`main.ts`, `onBuy`) affiche deja l'echec ; ce
+              // `catch` n'existe que pour que la promesse rejetee ne remonte pas
+              // en erreur non geree une fois le bouton reactive.
+            });
+        });
 
-      const titre = document.createElement('div');
-      titre.className = 'flex flex-col items-start text-left';
-      titre.append(label, effet);
-      const haut = document.createElement('div');
-      haut.className = 'flex items-center gap-[16px] self-stretch';
-      haut.append(frame, titre);
-      const bas = document.createElement('div');
-      bas.className = 'flex items-center justify-between self-stretch';
-      bas.append(palier, button);
+        const titre = document.createElement('div');
+        titre.className = 'flex flex-col items-start text-left';
+        titre.append(label, effet);
+        const haut = document.createElement('div');
+        haut.className = 'flex items-center gap-[16px] self-stretch';
+        haut.append(frame, titre);
+        const bas = document.createElement('div');
+        bas.className = 'flex items-center justify-between self-stretch';
+        bas.append(palier, button);
 
-      card.append(haut, bas);
-      return card;
-    }),
+        card.append(haut, bas);
+        return card;
+      }),
+    ),
   );
 }
