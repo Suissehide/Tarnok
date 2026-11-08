@@ -17,7 +17,8 @@ nouveau code de salon à chaque partie ». Une petite étape, spec et bilan dans
 - Il voyage dans `LOBBY` (chaque entrée) et dans `RESYNC` (chaque joueur) : un revenant n'a plus
   de `LOBBY`. **Zéro octet de plus par tick.**
 - Il s'affiche sur les cartes du salon, sur le bandeau du gagnant à la révélation de l'étalage,
-  et sur le bilan. Pas dans le HUD. Sans pseudo : « Joueur N ».
+  sur le bilan, et **au-dessus de la tête des alliés** en jeu (8 novembre, jamais au-dessus de
+  soi). Sans pseudo : « Joueur N ».
 
 ### Rejouer ensemble
 
@@ -52,6 +53,8 @@ Rien par tick.
 | `fad0749` | `REPLAY` : `Room` neuf sous le même code (`RoomRegistry.replace`), choix reposés, `LOBBY`, fenêtre `REPLAY_HOLD_MS` qui diffère la fermeture, `stop()` efface le minuteur | `server.test` 33 / 33 : même code et mêmes choix, tous partis puis revenus → mêmes slots, avant `RUN_OVER` ignoré, fermeture passé le délai |
 | `7b72562`, `485f240` | `writeReplay` / `readReplay`, rechargement et reprise, les deux boutons du bilan | `rejoin.test` 9 / 9, `summary.test` 4 / 4 |
 | `fba2598` | une affectation sortie d'une expression (lint) | — |
+| `8407c95` | **le pseudo flotte au-dessus des alliés** (`Text` Jersey 15 à la couleur du joueur, calque des fantômes, jamais pour soi) ; les états génériques de bouton passent avant le kit (0 avertissement Biome) | `player-renderer.test` (`nameLabelOf`) |
+| `263447c` | **le pseudo part au premier `LOBBY`**, plus collé au `HELLO` : le salon n'écoute une socket qu'une fois le compte résolu, une trame envoyée entre-temps était perdue — mesuré en navigateur (« Joueur 1 » malgré un pseudo gardé) | `client.test` : `HELLO` seul à l'ouverture, `NAME` au premier `LOBBY`, pas au second |
 
 Vérifié en navigateur à deux onglets : le pseudo saisi sur ma carte apparaît chez l'autre, le
 bilan le porte, « Rejouer ensemble » ramène les deux onglets dans le salon `BWCG` avec les
@@ -60,8 +63,8 @@ est par compte, donc identique des deux côtés dans cet essai.)
 
 ## 4. Le portique
 
-Lancé seul : lint 0 erreur (3 avertissements CSS préexistants), typecheck OK, front 47 fichiers
-**927 / 927**, back 68 fichiers **1784 / 1784**.
+Lancé seul le 8 novembre, après l'étiquette et le correctif du `NAME` : lint **0 erreur,
+0 avertissement**, typecheck OK, front 48 fichiers **957 / 957**, back 68 fichiers **1788 / 1788**.
 
 ## 5. Vérification manuelle — ouverte
 
