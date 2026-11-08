@@ -1,4 +1,12 @@
-import { AnimatedSprite, Assets, type Container, Graphics, Rectangle, Texture } from 'pixi.js';
+import {
+  AnimatedSprite,
+  Assets,
+  type Container,
+  Graphics,
+  Rectangle,
+  Text,
+  Texture,
+} from 'pixi.js';
 
 /**
  * Les joueurs dessines avec les unites du pack (`Units/<Couleur> Units/`) :
@@ -49,6 +57,26 @@ export const UNIT_SCALE = 0.5;
 export const GHOST_ALPHA = 0.35;
 /** Rayon du socle, en px monde : un peu plus large que l'unite, jamais autant qu'un monstre. */
 export const BASE_RADIUS_PX = 22;
+
+/** Le pseudo d'un allie flotte a cette hauteur au-dessus de sa position (au-dessus de la tete). */
+export const NAME_LABEL_OFFSET_PX = 70;
+
+/**
+ * Le texte du pseudo a dessiner au-dessus d'un joueur : rien pour soi (on sait
+ * qui l'on est, et l'etiquette masquerait le curseur), le nom pour un allie.
+ * Pur, pour le test ; `draw` ne fait que le poser.
+ */
+export function nameLabelOf(
+  playerId: number,
+  localId: number | null,
+  nameOf: ((playerId: number) => string) | undefined,
+): string | null {
+  if (!nameOf || playerId === localId) {
+    return null;
+  }
+  const name = nameOf(playerId).trim();
+  return name === '' ? null : name;
+}
 /**
  * Le socle d'un joueur en grace (etape 18) : le gris du totem (etape 16). La
  * meme lecture qu'un mort — « il est la, il ne joue pas » — sans bandeau.
@@ -104,6 +132,8 @@ interface Body {
   key: string;
   body: AnimatedSprite | null;
   ghost: AnimatedSprite | null;
+  /** Le pseudo au-dessus de la tete d'un allie (etape 19), dans le calque des fantomes. */
+  label: Text | null;
   /** Le socle a la couleur du joueur : ce qui le distingue de la horde. */
   base: Graphics;
   /** La couleur du joueur, et celle que le socle porte en ce moment (gris en grace). */
@@ -160,6 +190,8 @@ export class PlayerRenderer {
     nowMs: number,
     /** Les joueurs en grace (etape 18, `RenderState.absent`) : socle gris. */
     absent: ReadonlySet<number> = NO_ABSENT,
+    /** Le pseudo de chaque joueur (etape 19) ; absent, aucune etiquette. */
+    nameOf?: (playerId: number) => string,
   ): void {
     const seen = new Set<number>();
     for (const p of players) {
@@ -212,6 +244,18 @@ export class PlayerRenderer {
         s.scale.set(UNIT_SCALE * b.facing, UNIT_SCALE);
         s.alpha = a;
       }
+      const label = nameLabelOf(p.id, localId, nameOf);
+      if (label !== null) {
+        b.label ??= this.#makeLabel(b.color);
+        if (b.label.text !== label) {
+          b.label.text = label;
+        }
+        b.label.position.set(p.x, p.y - NAME_LABEL_OFFSET_PX);
+        b.label.alpha = dead ? 0.35 : 0.9;
+        b.label.visible = true;
+      } else if (b.label) {
+        b.label.visible = false;
+      }
       if (b.body && b.ghost && b.ghost.currentFrame !== b.body.currentFrame) {
         b.ghost.gotoAndPlay(b.body.currentFrame);
       }
@@ -221,11 +265,28 @@ export class PlayerRenderer {
       if (!seen.has(id)) {
         b.body?.destroy();
         b.ghost?.destroy();
+        b.label?.destroy();
         b.base.destroy();
         b.fallback.destroy();
         this.#bodies.delete(id);
       }
     }
+  }
+
+  /** Une etiquette de pseudo a la couleur du joueur, contour sombre, au-dessus de tout le decor. */
+  #makeLabel(color: number): Text {
+    const t = new Text({
+      text: '',
+      style: {
+        fontFamily: '"Jersey 15", monospace',
+        fontSize: 30,
+        fill: color,
+        stroke: { color: 0x1a1612, width: 4, join: 'round' },
+      },
+    });
+    t.anchor.set(0.5, 1);
+    this.ghosts.addChild(t);
+    return t;
   }
 
   #bodyFor(id: number, classId: number, x: number, y: number): Body {
@@ -250,6 +311,7 @@ export class PlayerRenderer {
       key,
       body: null,
       ghost: null,
+      label: null,
       base: baseRing,
       color,
       baseColor: color,

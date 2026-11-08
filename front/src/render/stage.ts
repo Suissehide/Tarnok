@@ -336,6 +336,8 @@ export class Stage {
       performance.now(),
       // Etape 18 : les joueurs en grace, socle gris.
       state.absent,
+      // Etape 19 : le pseudo au-dessus des allies.
+      state.nameOf,
     );
 
     this.#centerOn(state);

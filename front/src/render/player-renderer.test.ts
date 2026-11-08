@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 
-import { ABSENT_BASE, baseStyle, UNIT_COLORS, UNIT_OF_CLASS, unitSheets } from './player-renderer';
+import {
+  ABSENT_BASE,
+  baseStyle,
+  nameLabelOf,
+  UNIT_COLORS,
+  UNIT_OF_CLASS,
+  unitSheets,
+} from './player-renderer';
 
 describe('unitSheets — une unite par classe, une couleur par joueur', () => {
   it('la classe choisit l unite, le joueur la couleur', () => {
@@ -37,5 +44,20 @@ describe('etape 18 : le socle gris de l absent', () => {
 
   it('absent ET mort : le gris — l absence se lit meme au sol', () => {
     expect(baseStyle(COULEUR, true, true, false)).toEqual({ color: ABSENT_BASE, alpha: 0.25 });
+  });
+});
+
+describe('etape 19 : le pseudo au-dessus des allies', () => {
+  const noms = (id: number): string => (id === 2 ? 'Zoé' : id === 3 ? '   ' : `Joueur ${id}`);
+
+  it('etiquette un allie, jamais soi', () => {
+    expect(nameLabelOf(2, 1, noms)).toBe('Zoé');
+    expect(nameLabelOf(1, 1, noms)).toBeNull();
+  });
+
+  it('sans pseudo, le repli « Joueur N » ; un nom blanc ne pose rien', () => {
+    expect(nameLabelOf(4, 1, noms)).toBe('Joueur 4');
+    expect(nameLabelOf(3, 1, noms)).toBeNull();
+    expect(nameLabelOf(2, 1, undefined)).toBeNull();
   });
 });

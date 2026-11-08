@@ -343,6 +343,18 @@
     color: var(--color-off-text);
   }
 
+  /* Les etats generiques d'abord, les habillages du kit ensuite : la
+     specificite va croissant (Biome, noDescendingSpecificity). */
+  .btn:not(:disabled):hover,
+  .bbtn:not(:disabled):hover {
+    filter: brightness(1.06);
+  }
+
+  .btn:not(:disabled):active,
+  .bbtn:not(:disabled):active {
+    transform: translateY(2px);
+  }
+
   html[data-skin] .btn {
     background: none;
     border-image: var(--k-pbblue) 64 fill / 1 / 0 repeat;
@@ -394,11 +406,6 @@
     border-image-source: url("/tinyswords/UI/Buttons/Button_Disable_3Slides.png");
   }
 
-  .btn:not(:disabled):active,
-  .bbtn:not(:disabled):active {
-    transform: translateY(2px);
-  }
-
   /* Les grands boutons du pack : actions majeures des pieds d'ecran. */
   .bbtn {
     position: relative;
@@ -442,11 +449,6 @@
 
   html[data-skin] .bbtn--red:not(:disabled):active {
     border-image-source: var(--k-bbredP);
-  }
-
-  .btn:not(:disabled):hover,
-  .bbtn:not(:disabled):hover {
-    filter: brightness(1.06);
   }
 
   /* --- Rubans ------------------------------------------------------------- */
@@ -1042,15 +1044,11 @@
   }
 
   /* La colonne fixe la largeur, pas le nom : un nom long mord sur les bouts
-     arrondis du bouton plutot que d'elargir la grille hors du parchemin. */
-  .weapon-family__list .room-weapon {
-    width: 100%;
-    min-width: 0;
-  }
-
+     arrondis du bouton plutot que d'elargir la grille hors du parchemin.
+     « Homoncule de mercure » a 18 px depasse le bouton (223 px). */
   .room-weapon {
     width: 100%;
-    /* « Homoncule de mercure » a 18 px depasse le bouton (223 px). */
+    min-width: 0;
     font-size: 16px;
   }
 

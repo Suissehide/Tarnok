@@ -169,6 +169,8 @@ export interface RenderState {
   classes?: ReadonlyMap<number, number>;
   /** Les joueurs en grace (etape 18, `PRESENCE`) : un socle gris sous leur personnage. */
   absent?: ReadonlySet<number>;
+  /** Le pseudo de chaque joueur (etape 19), pour l'etiquette au-dessus des allies. */
+  nameOf?: (playerId: number) => string;
 }
 
 /**
@@ -2599,6 +2601,7 @@ export class GameClient {
       players,
       classes: this.#classes,
       absent: this.#absent,
+      nameOf: (id) => this.nameOf(id),
     };
   }
 
