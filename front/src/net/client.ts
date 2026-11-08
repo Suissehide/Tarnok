@@ -2106,12 +2106,31 @@ export class GameClient {
   /** Mon pseudo, envoye juste apres le `HELLO` a chaque ouverture, et a chaque `rename`. */
   #name = '';
 
-  /** Change mon pseudo (`NAME`). Avant l'ouverture, il part avec le `HELLO`. */
+  /**
+   * Change mon pseudo (`NAME`).
+   *
+   * ⚠️ **Jamais juste apres le `HELLO`** : le salon n'ecoute cette socket
+   * qu'une fois le compte resolu (`Session.onFirst`, asynchrone), et une
+   * trame arrivee entre-temps est perdue. Le pseudo part au premier message
+   * qui prouve le slot (`LOBBY` ou `WELCOME`, `#flushName`), puis a chaque
+   * changement.
+   */
   rename(name: string): void {
     this.#name = cleanName(name);
-    if (this.#ws?.readyState === WebSocket.OPEN) {
+    if (this.#nameSent && this.#ws?.readyState === WebSocket.OPEN) {
       this.#ws.send(encodeName(this.#name));
     }
+  }
+
+  /** Vrai des que le pseudo a ete envoye sur CETTE socket (slot connu). */
+  #nameSent = false;
+
+  #flushName(): void {
+    if (this.#nameSent || !this.#name || this.#ws?.readyState !== WebSocket.OPEN) {
+      return;
+    }
+    this.#nameSent = true;
+    this.#ws.send(encodeName(this.#name));
   }
 
   /** Le pseudo d'un joueur, ou « Joueur N » sans nom. */
@@ -2479,9 +2498,7 @@ export class GameClient {
       if (this.accountToken) {
         ws.send(encodeHello(this.accountToken));
       }
-      if (this.#name) {
-        ws.send(encodeName(this.#name));
-      }
+      this.#nameSent = false;
       this.#setStatus('open');
       // Cadence d'envoi, pas cadence de simulation : un peu de gigue ici n'a
       // aucune consequence, le serveur horodate par son propre tick.
@@ -2655,6 +2672,7 @@ export class GameClient {
     const msg = decode(data);
 
     if (msg.type === MSG.WELCOME) {
+      this.#flushName();
       this.#localId = msg.playerId;
       // Le tick du salon est ABSOLU et grandit pendant toute sa vie. Sans cet
       // alignement, `spawnTick - tickLocal` serait negatif pour tout joueur qui
@@ -2701,6 +2719,7 @@ export class GameClient {
     }
     if (msg.type === MSG.LOBBY) {
       this.#lobby = msg;
+      this.#flushName();
       this.#setNames(msg.players.map((p) => ({ id: p.playerId, name: p.name })));
       this.onLobby(msg);
       return;

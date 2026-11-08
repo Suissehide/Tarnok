@@ -6023,7 +6023,7 @@ describe('etape 18 : le RESYNC', () => {
 });
 
 describe('la classe des autres joueurs, pour le portrait de l etalage', () => {
-  it('rename envoie NAME juste apres le HELLO a l ouverture, puis a chaque changement', () => {
+  it('rename envoie NAME au premier LOBBY, jamais colle au HELLO, puis a chaque changement', () => {
     const token = new Uint8Array(TOKEN_BYTES).fill(7);
     const client = new GameClient(
       'ws://test',
@@ -6039,10 +6039,21 @@ describe('la classe des autres joueurs, pour le portrait de l etalage', () => {
     const socket = latestSocket();
     expect(socket.sent).toHaveLength(0);
     socket.emit('open', {});
+    // Pas de NAME colle au HELLO : le salon n'ecoute la socket qu'une fois le
+    // compte resolu, une trame envoyee avant est perdue. Il part au LOBBY.
+    expect(socket.sent.map((f) => decode(f).type)).toEqual([MSG.HELLO]);
+    socket.emit('message', {
+      data: encodeLobby(1, [{ playerId: 1, weaponId: NO_WEAPON, classId: 0 }]),
+    });
     expect(socket.sent.map((f) => decode(f).type)).toEqual([MSG.HELLO, MSG.NAME]);
     expect(decode(socket.sent[1] as ArrayBuffer)).toEqual({ type: MSG.NAME, name: 'Léo' });
     client.rename('Zoé');
     expect(decode(socket.sent[2] as ArrayBuffer)).toEqual({ type: MSG.NAME, name: 'Zoé' });
+    // Un second LOBBY ne le renvoie pas.
+    socket.emit('message', {
+      data: encodeLobby(1, [{ playerId: 1, weaponId: NO_WEAPON, classId: 0 }]),
+    });
+    expect(socket.sent).toHaveLength(3);
   });
 
   it('nameOf lit le pseudo du LOBBY puis du RESYNC, et dit « Joueur N » sans nom', () => {
