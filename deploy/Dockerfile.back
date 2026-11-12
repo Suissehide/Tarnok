@@ -2,7 +2,11 @@ FROM node:22-alpine AS build
 WORKDIR /app
 # Prisma detecte la version d'OpenSSL pour choisir son moteur : absente de
 # l'image alpine, il en prendrait un qui ne charge pas au runtime.
-RUN apk add --no-cache openssl
+# ⚠️ `apk` depend du DNS de l'hote de build, qui tousse parfois (Dokploy,
+# 12 novembre 2026 : « DNS: transient error »). Cinq essais espaces de 5 s,
+# puis `apk info -e` pour que l'etape echoue franchement si rien n'est installe.
+RUN for i in 1 2 3 4 5; do apk add --no-cache openssl && break; echo "apk: essai $i rate"; sleep 5; done \
+  && apk info -e openssl
 
 COPY package*.json ./
 COPY front/package.json front/
@@ -18,7 +22,9 @@ RUN npm run db:generate -w back && npm run build -w back
 FROM node:22-alpine
 WORKDIR /app
 ENV NODE_ENV=production
-RUN apk add --no-cache openssl
+# Memes essais que dans l'etage de build (DNS de l'hote de build).
+RUN for i in 1 2 3 4 5; do apk add --no-cache openssl && break; echo "apk: essai $i rate"; sleep 5; done \
+  && apk info -e openssl
 
 # esbuild bundle avec `--packages=external` : les dependances runtime restent
 # dans node_modules, il faut donc les emporter.
